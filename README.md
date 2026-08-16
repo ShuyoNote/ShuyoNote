@@ -1,36 +1,55 @@
 # ShuyoNote
 
-本地优先（local-first）的类 Notion 笔记应用。基于 **Tauri 2 + Lexical + SQLite** 构建，数据全部存储在本机，离线可用，支持多设备同步。
+<p align="center">
+  <strong>本地优先 · 类 Notion 的知识管理桌面应用</strong><br>
+  基于 Tauri 2 + Lexical + SQLite，数据完全存储在本机，离线可用，支持多设备同步。
+</p>
 
-> **版本 1.0.0** —— 已实现方案路线图全部阶段（0–5）：MVP 编辑器、块系统、全文检索、多设备同步、标签/反链、文件夹、看板、回收站、版本历史、备份、暗色模式、多窗口等。
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
+  <img src="https://img.shields.io/badge/Lexical-0.49-2383e2" alt="lexical">
+  <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
+  <img src="https://img.shields.io/badge/React-19-61dafb" alt="react">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
+</p>
 
-## 功能
+## 简介
 
-### 编辑与块
-- **富文本编辑**：标题、段落、粗体/斜体/删除线、链接、引用、代码块、列表
-- **块系统**：斜杠菜单（`/`）插入 12 种块 —— 标题 1/2/3、正文、引用、Callout、代码块、待办、无序/有序列表、分隔线、表格
-- **图片**：粘贴图片自动落盘（内容寻址 sha256 去重）
-- **Markdown**：快捷键输入、一键导入/导出
+ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它借鉴了 Notion 的块编辑器体验，但将全部数据保存在本地 SQLite 数据库中——无需注册、无云端依赖、离线即可使用。需要多设备协作时，可自建轻量同步服务，通过变更日志实现增量同步与冲突合并。
 
-### 组织与检索
-- **页面树**：页面无限嵌套、**文件夹**（📁/📄 区分）、拖拽排序（上/下半区精确插入）
-- **全文搜索**：FTS5 + trigram 分词，中文子串检索、结果高亮、点击跳转定位
-- **编辑器内查找**：Ctrl+F 实时高亮所有匹配、上一个/下一个导航、计数
-- **标签**：页面标签 + 侧边栏按标签筛选
-- **反链**：正文 `[[标题]]` 双链语法，页面底部显示反向链接
-- **看板视图**：按标签分列，卡片拖拽跨列切换标签
+## 特性
 
-### 数据与安全
-- **自动保存**：输入即持久化，防抖写入 SQLite，无「保存」按钮
-- **版本历史**：保存前自动快照（去重 + 每页上限 50），一键恢复
+### 编辑体验
+- **块编辑器**：基于 Lexical，支持标题、引用、Callout、代码块、列表、待办、表格、分隔线等 12 种块类型
+- **斜杠菜单**：输入 `/` 快速插入任意块
+- **图片粘贴**：截图/复制图片直接粘贴，内容寻址（SHA-256）去重存储
+- **Markdown**：快捷键输入、一键导入/导出、导出 HTML
+
+### 知识组织
+- **页面树**：无限层级嵌套，页面与文件夹（`kind`）区分，拖拽精确排序
+- **标签系统**：页面打标签，侧边栏按标签筛选
+- **反向链接**：正文 `[[标题]]` 双链语法，页面底部自动聚合引用
+- **看板视图**：按标签分列，卡片拖拽跨列切换
+- **全文搜索**：SQLite FTS5 + trigram 分词，支持中文子串检索、命中高亮与定位
+
+### 数据安全
+- **自动保存**：防抖写入 SQLite，无「保存」按钮
+- **版本历史**：每次保存前自动快照，可一键回滚（每页保留 50 份，自动去重）
 - **回收站**：软删除 + 恢复 + 彻底删除
-- **整库备份**：导出/导入 zip（数据库一致性快照 + 附件）
-- **多设备同步**：outbox 变更日志 + 页面级 LWW + 附件同步 + 自动定时同步
+- **整库备份**：导出/导入 zip（数据库一致性快照 + 附件目录）
 
-### 体验
-- **暗色模式**：亮色/暗色/跟随系统三态切换
-- **命令面板**：Ctrl+K 调用插件命令
+### 多设备同步
+- **Outbox 变更日志**：本地每次写入记录变更，离线排队
+- **LWW 冲突合并**：页面级 last-write-wins + 墓碑
+- **附件同步**：内容寻址去重，双向增量
+- **自动定时同步**：启动即同步，之后每 5 分钟周期同步
+
+### 体验优化
+- **暗色模式**：亮色 / 暗色 / 跟随系统三态
+- **命令面板**：`Ctrl+K` 统一调用插件命令
 - **全局快捷键**：见下表
+- **多窗口**：页面可弹出到独立窗口编辑
 
 ## 快捷键
 
@@ -38,67 +57,108 @@
 |--------|------|
 | `Ctrl+N` | 新建页面 |
 | `Ctrl+Shift+F` | 聚焦搜索 |
-| `Ctrl+E` | 切换笔记/看板视图 |
+| `Ctrl+E` | 切换笔记 / 看板视图 |
 | `Ctrl+K` | 打开命令面板 |
-| `Ctrl+F` | 编辑器内查找（Enter/Shift+Enter 导航） |
-| `Esc` | 关闭查找栏/命令面板/弹层 |
+| `Ctrl+F` | 编辑器内查找（`Enter` / `Shift+Enter` 导航） |
+| `Esc` | 关闭查找栏 / 命令面板 / 弹层 |
+| `/` | 打开斜杠菜单 |
+
+## 架构
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    前端 (React)                       │
+│  ┌───────────────┐  ┌────────────────────────────┐  │
+│  │   Lexical     │  │  Zustand (notes / theme)    │  │
+│  │   编辑器       │  │  侧边栏 / 看板 / 各面板       │  │
+│  └──────┬────────┘  └─────────────┬──────────────┘  │
+│         │           Tauri IPC      │                  │
+└─────────┼──────────────────────────┼──────────────────┘
+          ▼                          ▼
+┌─────────────────────────────────────────────────────┐
+│                  Rust 后端 (src-tauri)                │
+│  commands · search · sync · attachments · backlinks  │
+│  tags · trash · versions · backup · windows          │
+│                    │                                 │
+│     ┌──────────────┴──────────────┐                  │
+│     ▼                             ▼                  │
+│  SQLite (WAL + FTS5)        附件目录 (SHA-256)       │
+└─────────────────────────────────────────────────────┘
+          ▲
+          │ HTTP (push / pull)
+┌─────────┴───────────────────────────────────────────┐
+│        同步服务端 (sync-server, 独立二进制)           │
+│        Axum + SQLite（变更日志 / 附件元数据）         │
+└─────────────────────────────────────────────────────┘
+```
+
+**数据模型**：一页 = 一个 Lexical 文档。块映射为 Lexical 根级节点，页面层级用 `parent_id` 树表达。
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
 | 桌面壳 | Tauri 2.x（Rust 后端 + 系统 WebView） |
-| 编辑器 | Lexical（`@lexical/react`） |
-| 前端 | React 19 + TypeScript + Vite |
+| 编辑器 | Lexical 0.49（`@lexical/react`） |
+| 前端 | React 19 · TypeScript · Vite 7 |
 | 状态管理 | Zustand |
-| 本地数据库 | SQLite（rusqlite，bundled）+ FTS5 |
-| 同步 | outbox 变更日志 + LWW + 自建 Rust Axum 服务端 |
-| 备份 | rusqlite 在线 backup + zip |
+| 本地存储 | SQLite（rusqlite, bundled）· FTS5 全文检索 |
+| 同步 | outbox 变更日志 + LWW · reqwest · 自建 Axum 服务端 |
+| 备份 | rusqlite 在线 backup API + zip |
 
 ## 开发环境要求
 
-- Node.js ≥ 20、pnpm
-- Rust stable（1.94+）、cargo
+- **Node.js** ≥ 20 与 **pnpm**
+- **Rust** stable（1.94+）与 cargo
 - Windows / macOS / Linux
 
-## 本地开发
+## 快速开始
 
-```powershell
+```bash
+# 1. 安装依赖
 pnpm install
 
-# 若 cargo 使用镜像源且遇 SSL 撤销错误（如 USTC），临时关闭撤销检查：
-$env:CARGO_HTTP_CHECK_REVOKE="false"
-
+# 2. 启动开发模式
 pnpm tauri dev
 ```
 
-首次启动会在系统应用数据目录（Windows 为 `%APPDATA%\com.cnzen.shuyonote\`）创建 `shuyonote.db`（SQLite，WAL 模式）。
+> **Windows 提示**：若 cargo 使用镜像源且遇到 SSL 撤销错误（如 USTC），先执行
+> `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再运行。
+
+首次启动会在系统应用数据目录（Windows：`%APPDATA%\com.cnzen.shuyonote\`）创建 SQLite 数据库（WAL 模式）。
 
 ## 构建发布
 
-```powershell
+```bash
 pnpm tauri build
 ```
+
+产物位于 `src-tauri/target/release/`。
 
 ## 多设备同步
 
 ### 1. 启动同步服务端
 
-```powershell
+```bash
 cd sync-server
 cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
-# 或直接运行编译产物：
-# .\target\debug\shuyonote-sync-server.exe --port 8787 --db <path>
 ```
 
-### 2. 在应用中配置并同步
+参数：
 
-1. 侧边栏点「同步」
-2. 填写服务器地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址）
-3. （可选）填写令牌
-4. 点「立即同步」（已配置服务器时会自动定时同步）
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--port` | 监听端口 | `8787` |
+| `--db` | SQLite 数据库路径 | 系统临时目录 |
 
-**同步机制**：本地每次写操作都会在 `changes` 表记录一条 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。
+### 2. 在应用中配置
+
+1. 侧边栏点击「同步」
+2. 填写服务地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址）
+3. 可选填写访问令牌
+4. 点击「立即同步」
+
+**同步机制**：本地每次写操作在 `changes` 表记录 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。
 
 ## 项目结构
 
@@ -106,14 +166,15 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 ShuyoNote/
 ├── src/                      # 前端（React + Lexical）
 │   ├── editor/               # 编辑器、自定义节点（Callout/Image）、插件
-│   ├── components/           # 侧边栏 / 页面树 / 搜索 / 看板 / 面板
+│   ├── components/           # 侧边栏、页面树、搜索、看板、各面板
 │   ├── store/                # Zustand（notes / theme）
 │   ├── hooks/                # 自动同步 / 全局快捷键
+│   ├── plugins/              # 插件注册表（命令面板扩展点）
 │   └── lib/                  # Tauri IPC 封装
 ├── src-tauri/                # Tauri 后端（Rust）
 │   └── src/
 │       ├── db.rs             # SQLite 连接 / 迁移
-│       ├── commands.rs       # 页面 CRUD 命令
+│       ├── commands.rs       # 页面 CRUD
 │       ├── search.rs         # FTS5 检索
 │       ├── sync.rs           # outbox / LWW / push-pull
 │       ├── attachments.rs    # 图片 / 附件
@@ -121,18 +182,29 @@ ShuyoNote/
 │       ├── tags.rs           # 标签 / 看板
 │       ├── trash.rs          # 回收站
 │       ├── versions.rs       # 版本历史
-│       └── backup.rs         # 备份导出 / 导入
+│       ├── backup.rs         # 备份导出 / 导入
+│       └── windows.rs        # 多窗口
 ├── sync-server/              # 同步服务端（独立 Rust 二进制）
-└── docs/plans/               # 开发方案文档
+└── docs/plans/               # 架构与开发方案文档
 ```
 
 ## 设计文档
 
 完整架构与开发方案见 [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md)，包含需求分析、数据模型、ADR、同步协议与路线图。
 
-## 后续计划
+## 路线图
 
-- 端到端加密
-- 导出 PDF / HTML
-- 多窗口
-- 移动端适配
+- [x] MVP：页面树 + 富文本 + 自动保存
+- [x] 块系统：斜杠菜单 / 待办 / 表格 / Callout
+- [x] 全文检索：FTS5 + trigram 中文搜索
+- [x] 多设备同步：outbox + LWW + 附件同步
+- [x] 标签 / 反链 / 文件夹 / 看板
+- [x] 回收站 / 版本历史 / 整库备份
+- [x] 暗色模式 / 命令面板 / 多窗口
+- [ ] 端到端加密
+- [ ] 导出 PDF
+- [ ] 移动端适配
+
+## License
+
+MIT
