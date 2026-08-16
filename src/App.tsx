@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
@@ -14,11 +14,34 @@ import { useNotes } from "./store/notes";
 import "./App.css";
 
 function NoteEditor({ pageId }: { pageId: string }) {
-  const { current, updateCurrent, loadPages, error, searchQuery } = useNotes();
+  const { current, updateCurrent, loadPages, error, searchQuery, pages } = useNotes();
   const [title, setTitle] = useState(current?.title ?? "");
   const [contentJson, setContentJson] = useState(current?.content_json ?? "");
   const [saved, setSaved] = useState(true);
   const debounceRef = useRef<number | null>(null);
+
+  // Build breadcrumb trail from the page tree.
+  const breadcrumbs = useMemo(() => {
+    const chain: { id: string; title: string }[] = [];
+    const map = new Map(pages.map((p) => [p.id, p]));
+    let cur = map.get(pageId);
+    const visited = new Set<string>();
+    while (cur && cur.parent_id && !visited.has(cur.id)) {
+      visited.add(cur.id);
+      const parent = map.get(cur.parent_id);
+      if (parent) {
+        chain.unshift({ id: parent.id, title: parent.title || "未命名" });
+        cur = parent;
+      } else {
+        break;
+      }
+    }
+    return chain;
+  }, [pages, pageId]);
+
+  const openPage = (id: string) => {
+    useNotes.getState().openPage(id);
+  };
 
   // Sync local state when switching pages.
   useEffect(() => {
@@ -65,6 +88,18 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
   return (
     <div className="main">
+      {breadcrumbs.length > 0 && (
+        <div className="breadcrumbs">
+          {breadcrumbs.map((b, i) => (
+            <span key={b.id}>
+              {i > 0 && <span className="crumb-sep">/</span>}
+              <button className="crumb" onClick={() => openPage(b.id)}>
+                {b.title}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="editor-head">
         <input
           className="title-input"
