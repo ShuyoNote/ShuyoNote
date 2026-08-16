@@ -9,6 +9,7 @@ mod sync;
 mod tags;
 mod trash;
 mod versions;
+mod windows;
 
 use db::Db;
 use std::sync::Mutex;
@@ -61,6 +62,7 @@ pub fn run() {
             backup::export_backup,
             backup::import_backup,
             backup::write_text_file,
+            windows::open_page_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

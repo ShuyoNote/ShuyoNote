@@ -103,6 +103,9 @@ function App() {
   useAutoSync();
   useGlobalShortcuts(() => setView((v) => (v === "board" ? "notes" : "board")));
 
+  // Standalone window mode: ?page=<id> renders a single-page editor only.
+  const standaloneId = new URLSearchParams(window.location.search).get("page");
+
   useEffect(() => {
     loadPages();
   }, []);
@@ -113,6 +116,17 @@ function App() {
       useNotes.getState().openPage(pages[0].id);
     }
   }, [pages, currentId]);
+
+  if (standaloneId) {
+    return (
+      <div className="app">
+        <div className="main">
+          <NoteEditor pageId={standaloneId} />
+        </div>
+        <CommandPalette />
+      </div>
+    );
+  }
 
   return (
     <div className="app">

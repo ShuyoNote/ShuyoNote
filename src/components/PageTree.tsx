@@ -115,6 +115,15 @@ function TreeItem({
         <span className="tree-title">{node.title || (isFolder ? "新建文件夹" : "未命名")}</span>
         <span className="tree-actions">
           <button
+            title="在新窗口打开"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isFolder) api.openPageWindow(node.id);
+            }}
+          >
+            ⧉
+          </button>
+          <button
             title="新建子页面"
             onClick={(e) => {
               e.stopPropagation();

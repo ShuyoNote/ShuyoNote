@@ -72,4 +72,5 @@ export const api = {
   importBackup: (srcPath: string) => invoke<void>("import_backup", { srcPath }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
+  openPageWindow: (pageId: string) => invoke<void>("open_page_window", { pageId }),
 };
