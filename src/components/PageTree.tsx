@@ -1,0 +1,142 @@
+import { useMemo, useState } from "react";
+import { useNotes } from "../store/notes";
+import type { PageMeta } from "../types";
+import { SearchPanel } from "./SearchPanel";
+import { SyncPanel } from "./SyncPanel";
+
+interface TreeNode extends PageMeta {
+  children: TreeNode[];
+}
+
+function buildTree(pages: PageMeta[]): TreeNode[] {
+  const map = new Map<string, TreeNode>();
+  for (const p of pages) map.set(p.id, { ...p, children: [] });
+  const roots: TreeNode[] = [];
+  for (const p of map.values()) {
+    if (p.parent_id && map.has(p.parent_id)) {
+      map.get(p.parent_id)!.children.push(p);
+    } else {
+      roots.push(p);
+    }
+  }
+  const sortRec = (nodes: TreeNode[]) => {
+    nodes.sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
+    for (const n of nodes) sortRec(n.children);
+  };
+  sortRec(roots);
+  return roots;
+}
+
+function TreeItem({
+  node,
+  depth,
+}: {
+  node: TreeNode;
+  depth: number;
+}) {
+  const { currentId, openPage, createPage, deletePage, movePage } = useNotes();
+  const [expanded, setExpanded] = useState(true);
+  const [dragging, setDragging] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  const isCurrent = currentId === node.id;
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const id = e.dataTransfer.getData("text/plain");
+    if (id && id !== node.id) {
+      await movePage(id, node.id, Date.now());
+    }
+  };
+
+  return (
+    <div>
+      <div
+        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${dragOver ? "tree-row-over" : ""}`}
+        style={{ paddingLeft: depth * 16 + 8 }}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", node.id);
+          setDragging(true);
+        }}
+        onDragEnd={() => setDragging(false)}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={() => openPage(node.id)}
+      >
+        <span
+          className="tree-toggle"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+        >
+          {node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
+        </span>
+        <span className="tree-title">{node.title || "未命名"}</span>
+        <span className="tree-actions">
+          <button
+            title="新建子页面"
+            onClick={(e) => {
+              e.stopPropagation();
+              createPage(node.id);
+            }}
+          >
+            +
+          </button>
+          <button
+            title="删除"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm(`删除「${node.title || "未命名"}」及其所有子页面？`)) {
+                deletePage(node.id);
+              }
+            }}
+          >
+            ×
+          </button>
+        </span>
+      </div>
+      {expanded &&
+        node.children.map((child) => (
+          <TreeItem key={child.id} node={child} depth={depth + 1} />
+        ))}
+      {dragging && null}
+    </div>
+  );
+}
+
+export function PageTree() {
+  const { pages, createPage } = useNotes();
+  const tree = useMemo(() => buildTree(pages), [pages]);
+
+  return (
+    <div className="sidebar">
+      <div className="sidebar-header">
+        <span className="sidebar-title">ShuyoNote</span>
+        <div className="sidebar-header-actions">
+          <SyncPanel />
+          <button className="btn-new" onClick={() => createPage(null)}>
+            新建页面
+          </button>
+        </div>
+      </div>
+      <div className="sidebar-search">
+        <SearchPanel />
+      </div>
+      <div className="sidebar-tree">
+        {tree.length === 0 ? (
+          <div className="sidebar-empty">暂无页面，点击「新建页面」开始</div>
+        ) : (
+          tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)
+        )}
+      </div>
+    </div>
+  );
+}
