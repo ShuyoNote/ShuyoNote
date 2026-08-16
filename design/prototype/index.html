@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShuyoNote · UI/UX 原型</title>
+<style>
+/* ============ Design tokens (v2.0) ============ */
+:root {
+  --accent: #3370FF;
+  --accent-strong: #2952CC;
+  --accent-soft: #EBF1FF;
+  --on-accent: #FFFFFF;
+  --bg: #FFFFFF;
+  --bg-sidebar: #F7F8FA;
+  --surface: #FFFFFF;
+  --border: #E5E8EE;
+  --border-strong: #D4D8DF;
+  --text: #1F2329;
+  --text-dim: #646A73;
+  --text-faint: #8F959E;
+  --hover: #F2F3F5;
+  --hover-strong: #E8EAED;
+  --danger: #F54A45;
+  --danger-soft: #FDECEC;
+  --success: #00B578;
+  --warning: #FF9A2E;
+  --mark-bg: #FFF3CC;
+  --highlight-bg: #FFE08A;
+  --highlight-active-bg: #FFB347;
+  --code-bg: #F2F3F5;
+  --codeblock-bg: #F7F8FA;
+  --callout-bg: #EBF1FF;
+  --callout-border: #C4D6FF;
+  --block-hover: #F7F8FA;
+
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-full: 999px;
+  --shadow-xs: 0 1px 2px rgba(16,24,40,.06);
+  --shadow-sm: 0 1px 3px rgba(16,24,40,.08), 0 1px 2px rgba(16,24,40,.04);
+  --shadow-md: 0 4px 16px rgba(16,24,40,.12);
+  --shadow-lg: 0 12px 32px rgba(16,24,40,.16);
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 40px; --space-8: 64px;
+  --transition-fast: 120ms cubic-bezier(.2,0,0,1);
+  --transition: 200ms cubic-bezier(.2,0,0,1);
+  --transition-slow: 280ms cubic-bezier(.2,0,0,1);
+}
+[data-theme="dark"] {
+  --accent: #4D8DFF; --accent-strong: #6BA0FF; --accent-soft: #22304A; --on-accent: #0B1220;
+  --bg: #17181A; --bg-sidebar: #1F2023; --surface: #242529;
+  --border: #2E3034; --border-strong: #3A3C41;
+  --text: #E6E8EB; --text-dim: #9CA3AF; --text-faint: #6B7280;
+  --hover: #2A2B2E; --hover-strong: #34353A;
+  --danger: #FF6B6B; --danger-soft: #3A2324;
+  --mark-bg: #4A3F1F;
+  --highlight-bg: rgba(255,200,80,.45); --highlight-active-bg: rgba(255,150,40,.6);
+  --code-bg: #2A2B2E; --codeblock-bg: #222326;
+  --callout-bg: #1F2A3A; --callout-border: #2F4A63;
+  --block-hover: #222326;
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.5);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.55);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,.6);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  color: var(--text); background: var(--bg);
+  font-size: 14px; -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+kbd {
+  display: inline-block; padding: 1px 6px; font-size: 12px; line-height: 18px;
+  border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--radius-xs);
+  background: var(--surface); color: var(--text-dim); font-family: inherit;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ============ Layout ============ */
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ============ Sidebar ============ */
+.sidebar {
+  width: 264px; min-width: 264px; background: var(--bg-sidebar);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;
+}
+.sidebar-head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; }
+.logo { font-size: 14px; font-weight: 700; letter-spacing: .01em; display: flex; align-items: center; gap: 8px; }
+.logo-dot { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, #3370FF, #7B61FF); box-shadow: var(--shadow-xs); }
+.sidebar-head .spacer { flex: 1; }
+.icon-btn {
+  width: 28px; height: 28px; border: none; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-dim); font-size: 14px; display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+
+.sidebar-body { flex: 1; overflow-y: auto; padding: 0 10px 16px; }
+.search-wrap { position: relative; margin: 4px 0 10px; }
+.search-wrap input {
+  width: 100%; height: 32px; padding: 0 10px 0 32px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 13px;
+}
+.search-wrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+.search-wrap .s-icon { position: absolute; left: 10px; top: 9px; color: var(--text-faint); font-size: 13px; }
+
+.view-switch { display: flex; gap: 4px; padding: 2px; background: var(--hover); border-radius: var(--radius-sm); margin-bottom: 10px; }
+.view-switch button {
+  flex: 1; height: 28px; border: none; border-radius: 5px; background: transparent; color: var(--text-dim);
+  font-size: 13px; transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.view-switch button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+
+.section-label { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); padding: 6px 8px 4px; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 10px; }
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-full); background: var(--surface);
+  color: var(--text-dim); font-size: 12px; transition: all var(--transition-fast);
+}
+.tag-chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+.tag-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.tag-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.tree { display: flex; flex-direction: column; }
+.tree-row {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border-radius: var(--radius-sm);
+  color: var(--text-dim); cursor: pointer; font-size: 13px; position: relative;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.tree-row:hover { background: var(--hover); color: var(--text); }
+.tree-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.tree-row .tw { width: 16px; text-align: center; color: var(--text-faint); font-size: 11px; flex: none; }
+.tree-row .ic { font-size: 13px; flex: none; }
+.tree-row .tt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .acts { display: none; gap: 2px; }
+.tree-row:hover .acts { display: inline-flex; }
+.tree-row .acts button {
+  width: 20px; height: 20px; border: none; border-radius: 4px; background: transparent; color: var(--text-faint);
+  font-size: 12px; display: inline-flex; align-items: center; justify-content: center;
+}
+.tree-row .acts button:hover { background: var(--hover-strong); color: var(--text); }
+
+.sidebar-foot { border-top: 1px solid var(--border); padding: 8px 12px; font-size: 12px; color: var(--text-faint); display: flex; align-items: center; gap: 8px; }
+.sidebar-foot .ok { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+
+/* ============ Main ============ */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+.crumbs { display: flex; align-items: center; gap: 4px; padding: 12px 48px 0; max-width: 816px; width: 100%; margin: 0 auto; font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; }
+.crumbs button { border: none; background: transparent; color: var(--text-dim); font-size: 13px; padding: 2px 4px; border-radius: 4px; }
+.crumbs button:hover { background: var(--hover); color: var(--text); }
+.crumbs .sep { color: var(--text-faint); margin: 0 2px; }
+
+.editor-head { display: flex; align-items: center; gap: 12px; padding: 8px 48px; max-width: 816px; width: 100%; margin: 0 auto; }
+.title-input { flex: 1; border: none; outline: none; font-size: 32px; font-weight: 700; line-height: 1.2; color: var(--text); background: transparent; min-width: 0; }
+.title-input::placeholder { color: var(--text-faint); }
+.save-ind { font-size: 12px; color: var(--success); white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.save-ind .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+.pill-btn {
+  height: 28px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-dim); font-size: 13px; transition: all var(--transition-fast);
+}
+.pill-btn:hover { border-color: var(--border-strong); color: var(--text); background: var(--hover); }
+
+.editor { flex: 1; overflow-y: auto; position: relative; padding: 8px 48px 40vh; }
+.editor-inner { max-width: 720px; margin: 0 auto; }
+.proto-block { position: relative; border-radius: var(--radius-xs); padding: 2px 4px; margin: 1px 0; transition: background var(--transition-fast); }
+.proto-block:hover { background: var(--block-hover); }
+.proto-block .handle {
+  position: absolute; left: -30px; top: 3px; width: 24px; height: 22px;
+  display: flex; align-items: center; justify-content: center; border-radius: 4px;
+  color: var(--text-faint); font-size: 12px; letter-spacing: -2px; cursor: grab; opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+.proto-block:hover .handle { opacity: 1; }
+.proto-block .handle:hover { background: var(--hover-strong); color: var(--text-dim); }
+
+.h1 { font-size: 30px; font-weight: 700; line-height: 1.3; margin: 8px 0 4px; }
+.h2 { font-size: 24px; font-weight: 700; line-height: 1.35; margin: 8px 0 4px; }
+.h3 { font-size: 20px; font-weight: 600; line-height: 1.4; margin: 6px 0 3px; }
+.p { font-size: 16px; line-height: 1.7; }
+.p b { font-weight: 600; }
+.p code { font-family: "SF Mono", Consolas, monospace; font-size: .88em; background: var(--code-bg); border-radius: 4px; padding: 1px 5px; }
+.quote { border-left: 3px solid var(--border-strong); padding: 2px 14px; color: var(--text-dim); font-size: 16px; line-height: 1.7; margin: 4px 0; }
+.callout { display: flex; gap: 10px; background: var(--callout-bg); border: 1px solid var(--callout-border); border-radius: var(--radius-md); padding: 12px 14px; font-size: 15px; line-height: 1.6; margin: 6px 0; }
+.callout .emoji { flex: none; }
+.todo { display: flex; align-items: flex-start; gap: 8px; font-size: 16px; line-height: 1.7; margin: 2px 0; }
+.todo .box { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-radius: 4px; margin-top: 3px; flex: none; }
+.todo.done .box { background: var(--accent); border-color: var(--accent); position: relative; }
+.todo.done .box::after { content: "✓"; position: absolute; inset: -3px; color: #fff; font-size: 10px; text-align: center; line-height: 16px; }
+.todo.done span { color: var(--text-faint); text-decoration: line-through; }
+.codeblock { background: var(--codeblock-bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px 14px; font-family: "SF Mono", Consolas, monospace; font-size: 13px; line-height: 1.6; overflow-x: auto; margin: 6px 0; }
+.codeblock .c-kw { color: #7B61FF; }
+.codeblock .c-fn { color: #3370FF; }
+.codeblock .c-str { color: #00A97F; }
+.hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+.tag-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 16px 48px; max-width: 816px; width: 100%; margin: 0 auto; }
+.tag-bar .tag-chip .x { border: none; background: transparent; color: inherit; font-size: 13px; padding: 0; line-height: 1; display: none; }
+.tag-bar .tag-chip:hover .x { display: inline; }
+.tag-add { border: 1px dashed var(--border-strong); background: transparent; color: var(--text-faint); height: 24px; padding: 0 10px; border-radius: var(--radius-full); font-size: 12px; }
+.tag-add:hover { color: var(--text-dim); border-color: var(--accent); }
+
+.backlinks { padding: 0 48px 24px; max-width: 816px; width: 100%; margin: 0 auto; }
+.backlinks .bl-title { font-size: 12px; font-weight: 600; letter-spacing: .03em; color: var(--text-faint); margin-bottom: 8px; text-transform: uppercase; }
+.backlinks .bl-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  color: var(--text-dim); font-size: 13px; margin-bottom: 6px; transition: all var(--transition-fast);
+}
+.backlinks .bl-item:hover { border-color: var(--border-strong); color: var(--text); background: var(--hover); }
+
+/* ============ Board view ============ */
+.board { flex: 1; overflow-x: auto; overflow-y: hidden; display: flex; gap: 16px; padding: 16px 24px; align-items: flex-start; }
+.board-col { width: 280px; min-width: 280px; max-height: 100%; display: flex; flex-direction: column; background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.board-col.drag-over { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.board-col-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; }
+.board-col-head .dot { width: 8px; height: 8px; border-radius: 50%; }
+.board-col-head .t { font-size: 13px; font-weight: 600; }
+.board-col-head .n { margin-left: auto; font-size: 12px; color: var(--text-faint); background: var(--hover); border-radius: var(--radius-full); padding: 1px 8px; }
+.board-col-body { flex: 1; overflow-y: auto; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.board-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; font-size: 13px; cursor: pointer; box-shadow: var(--shadow-xs); transition: all var(--transition-fast); }
+.board-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.board-card .tags { display: flex; gap: 4px; margin-top: 8px; }
+.board-empty { border: 1px dashed var(--border-strong); border-radius: var(--radius-md); padding: 16px; text-align: center; color: var(--text-faint); font-size: 12px; }
+
+/* ============ Overlays ============ */
+.overlay { position: fixed; inset: 0; background: rgba(15,18,25,.32); z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.overlay.hidden { display: none; }
+
+.palette { width: 560px; max-width: calc(100vw - 40px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); overflow: hidden; animation: pop .16s ease; }
+@keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
+.palette-input { width: 100%; height: 52px; border: none; border-bottom: 1px solid var(--border); outline: none; padding: 0 18px; font-size: 16px; color: var(--text); background: transparent; }
+.palette-list { padding: 8px; max-height: 380px; overflow-y: auto; }
+.palette-group { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); padding: 10px 10px 4px; }
+.palette-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 9px 10px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: 14px; }
+.palette-item:hover, .palette-item.sel { background: var(--accent-soft); }
+.palette-item .ic { width: 22px; height: 22px; border-radius: 5px; background: var(--hover); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex: none; }
+.palette-item .desc { margin-left: auto; color: var(--text-faint); font-size: 12px; }
+.palette-foot { display: flex; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-faint); }
+
+.find-bar { position: fixed; top: 12px; right: 24px; z-index: 70; display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 5px 8px; }
+.find-bar.hidden { display: none; }
+.find-bar input { border: none; outline: none; font-size: 13px; width: 140px; background: transparent; color: var(--text); }
+.find-count { font-size: 12px; color: var(--text-dim); min-width: 40px; text-align: center; }
+.find-btn { width: 26px; height: 26px; border: none; border-radius: 5px; background: transparent; color: var(--text-dim); font-size: 13px; }
+.find-btn:hover { background: var(--hover); color: var(--text); }
+
+.popover { position: absolute; top: 100%; right: 0; margin-top: 6px; width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); z-index: 55; padding: 10px; animation: pop .16s ease; }
+.popover.hidden { display: none; }
+.popover .p-title { font-size: 12px; font-weight: 600; color: var(--text-faint); padding: 4px 6px 8px; text-transform: uppercase; letter-spacing: .03em; }
+.pop-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-dim); }
+.pop-item:hover { background: var(--hover); }
+.pop-item .tt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-item .tm { font-size: 11px; color: var(--text-faint); }
+.mini-btn { height: 24px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-dim); font-size: 12px; }
+.mini-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.mini-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.mini-btn.primary:hover { background: var(--accent-strong); }
+.mini-btn.danger { color: var(--danger); }
+.mini-btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
+.pop-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pop-row label { width: 74px; font-size: 12px; color: var(--text-dim); flex: none; }
+.pop-row input { flex: 1; height: 30px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font-size: 13px; }
+.pop-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+.pop-status { font-size: 12px; color: var(--success); padding: 4px 6px 8px; }
+.pop-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* ============ Slash menu (demo) ============ */
+.slash { position: fixed; z-index: 65; width: 300px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); padding: 8px; animation: pop .16s ease; }
+.slash.hidden { display: none; }
+.slash-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text); font-size: 14px; }
+.slash-item:hover, .slash-item.sel { background: var(--accent-soft); }
+.slash-item .ic { width: 24px; height: 24px; border-radius: 5px; background: var(--hover); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex: none; }
+
+/* ============ Demo control bar ============ */
+.demo-bar {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 80;
+  display: flex; gap: 6px; padding: 6px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-full); box-shadow: var(--shadow-lg);
+}
+.demo-bar button { height: 30px; padding: 0 14px; border: 1px solid var(--border); border-radius: var(--radius-full); background: var(--surface); color: var(--text-dim); font-size: 12px; white-space: nowrap; transition: all var(--transition-fast); }
+.demo-bar button:hover { color: var(--text); border-color: var(--border-strong); background: var(--hover); }
+.demo-bar .sep { width: 1px; background: var(--border); margin: 4px 2px; }
+.demo-hint { position: fixed; left: 18px; bottom: 18px; z-index: 80; font-size: 12px; color: var(--text-faint); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-full); padding: 6px 12px; box-shadow: var(--shadow-sm); }
+
+.toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 90; background: var(--text); color: var(--bg); border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 10px 16px; font-size: 13px; display: flex; align-items: center; gap: 8px; animation: pop .18s ease; }
+.toast.hidden { display: none; }
+.toast.ok::before { content: "✓"; color: #2BD49B; font-weight: 700; }
+.toast.err::before { content: "✕"; color: #FF6B6B; font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <div class="logo"><span class="logo-dot"></span>ShuyoNote</div>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="btn-trash" title="回收站">🗑</button>
+      <button class="icon-btn" id="btn-sync" title="同步设置">⇅</button>
+      <button class="icon-btn" id="btn-backup" title="备份">⬇</button>
+      <button class="icon-btn" id="btn-theme" title="主题">🌙</button>
+      <button class="icon-btn" id="btn-new" title="新建">＋</button>
+    </div>
+
+    <div class="sidebar-body">
+      <div class="search-wrap">
+        <span class="s-icon">🔍</span>
+        <input placeholder="搜索笔记…" />
+      </div>
+
+      <div class="view-switch" id="view-switch">
+        <button data-view="notes" class="active">📝 笔记</button>
+        <button data-view="board">📋 看板</button>
+      </div>
+
+      <div class="section-label">标签</div>
+      <div class="tag-list">
+        <span class="tag-chip active"><span class="dot" style="background:#3370FF"></span>全部</span>
+        <span class="tag-chip"><span class="dot" style="background:#00B578"></span>工作</span>
+        <span class="tag-chip"><span class="dot" style="background:#7B61FF"></span>学习</span>
+        <span class="tag-chip"><span class="dot" style="background:#FF8A1E"></span>灵感</span>
+      </div>
+
+      <div class="section-label">页面</div>
+      <div class="tree" id="tree">
+        <div class="tree-row active" style="padding-left:8px"><span class="tw">▾</span><span class="ic">📄</span><span class="tt">产品设计规范</span><span class="acts"><button>⧉</button><button>＋</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:26px"><span class="tw">·</span><span class="ic">📄</span><span class="tt">竞品分析</span><span class="acts"><button>⧉</button><button>＋</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:26px"><span class="tw">·</span><span class="ic">📄</span><span class="tt">用户访谈纪要</span><span class="acts"><button>⧉</button><button>＋</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:8px"><span class="tw">▸</span><span class="ic">📁</span><span class="tt">项目</span><span class="acts"><button>＋</button><button>📁</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:8px"><span class="tw">▾</span><span class="ic">📁</span><span class="tt">知识库</span><span class="acts"><button>＋</button><button>📁</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:26px"><span class="tw">·</span><span class="ic">📄</span><span class="tt">Tauri 开发笔记</span><span class="acts"><button>⧉</button><button>＋</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:26px"><span class="tw">·</span><span class="ic">📄</span><span class="tt">Lexical 编辑器调研</span><span class="acts"><button>⧉</button><button>＋</button><button>×</button></span></div>
+        <div class="tree-row" style="padding-left:8px"><span class="tw">·</span><span class="ic">📄</span><span class="tt">周计划 2026</span><span class="acts"><button>⧉</button><button>＋</button><button>×</button></span></div>
+      </div>
+    </div>
+
+    <div class="sidebar-foot"><span class="ok"></span>本地已保存 · 上次同步 2 分钟前</div>
+  </aside>
+
+  <!-- ============ Main: Notes view ============ -->
+  <main class="main" id="view-notes">
+    <div class="crumbs">
+      <button>知识库</button><span class="sep">/</span><button>产品设计规范</button>
+    </div>
+    <div class="editor-head">
+      <input class="title-input" value="产品设计规范" />
+      <span class="save-ind"><span class="dot"></span>已保存</span>
+      <button class="pill-btn" id="btn-history">历史</button>
+      <button class="pill-btn" id="btn-export">导出</button>
+    </div>
+    <div class="editor">
+      <div class="editor-inner" id="editor-inner">
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="h1">产品设计规范</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="p">本文档沉淀 ShuyoNote 的<b>设计原则</b>与<code>视觉 token</code>，用于指导后续迭代。</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="h2">设计原则</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="p">内容优先、克制的色彩、一致的节奏、可及性内建。</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="quote">「本地优先」意味着：所有数据默认留在本机，同步是可选的增强，而非依赖。</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="callout"><span class="emoji">💡</span><span>参考 FlowUs 的明快蓝与中性面、Wolai 的多彩分类标签，收敛出一套统一设计语言。</span></div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="h3">待办事项</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="todo done"><span class="box"></span><span>完成设计系统 tokens</span></div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="todo"><span class="box"></span><span>落地高保真原型</span></div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="todo"><span class="box"></span><span>编写实现计划</span></div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="codeblock"><span class="c-kw">const</span> accent = <span class="c-str">'#3370FF'</span>;<br/><span class="c-kw">function</span> <span class="c-fn">theme</span>(mode) { <span class="c-kw">return</span> mode === <span class="c-str">'dark'</span> ? dark : light; }</div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="hr"></div></div>
+        <div class="proto-block"><div class="handle">⋮⋮</div><div class="p"><i>悬停任意块，左侧会出现 ⋮⋮ 拖拽手柄。</i></div></div>
+      </div>
+    </div>
+    <div class="tag-bar">
+      <span class="tag-chip"><span class="dot" style="background:#3370FF"></span>设计 <button class="x">×</button></span>
+      <span class="tag-chip"><span class="dot" style="background:#7B61FF"></span>规范 <button class="x">×</button></span>
+      <button class="tag-add">＋ 添加标签</button>
+    </div>
+    <div class="backlinks">
+      <div class="bl-title">反向链接</div>
+      <button class="bl-item">📄 竞品分析</button>
+      <button class="bl-item">📄 周计划 2026</button>
+    </div>
+  </main>
+
+  <!-- ============ Main: Board view ============ -->
+  <main class="main" id="view-board" style="display:none">
+    <div class="crumbs"><button>看板</button><span class="sep">/</span><span style="color:var(--text-faint)">按标签分列</span></div>
+    <div class="board" id="board">
+      <div class="board-col">
+        <div class="board-col-head"><span class="dot" style="background:#3370FF"></span><span class="t">工作</span><span class="n">3</span></div>
+        <div class="board-col-body">
+          <div class="board-card">产品设计规范<div class="tags"><span class="tag-chip"><span class="dot" style="background:#3370FF"></span>设计</span></div></div>
+          <div class="board-card">周计划 2026</div>
+          <div class="board-card">竞品分析</div>
+        </div>
+      </div>
+      <div class="board-col">
+        <div class="board-col-head"><span class="dot" style="background:#7B61FF"></span><span class="t">学习</span><span class="n">2</span></div>
+        <div class="board-col-body">
+          <div class="board-card">Tauri 开发笔记</div>
+          <div class="board-card">Lexical 编辑器调研</div>
+        </div>
+      </div>
+      <div class="board-col">
+        <div class="board-col-head"><span class="dot" style="background:#FF8A1E"></span><span class="t">灵感</span><span class="n">1</span></div>
+        <div class="board-col-body">
+          <div class="board-card">用户访谈纪要</div>
+        </div>
+      </div>
+      <div class="board-col">
+        <div class="board-col-head"><span class="dot" style="background:#646A73"></span><span class="t">未分类</span><span class="n">0</span></div>
+        <div class="board-col-body"><div class="board-empty">拖拽卡片到这里</div></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ============ Command palette ============ -->
+<div class="overlay hidden" id="palette-overlay">
+  <div class="palette">
+    <input class="palette-input" id="palette-input" placeholder="输入命令或搜索页面…" />
+    <div class="palette-list">
+      <div class="palette-group">页面</div>
+      <button class="palette-item sel"><span class="ic">📄</span>产品设计规范<span class="desc">打开页面</span></button>
+      <button class="palette-item"><span class="ic">📄</span>竞品分析</button>
+      <button class="palette-item"><span class="ic">📄</span>Tauri 开发笔记</button>
+      <div class="palette-group">命令</div>
+      <button class="palette-item"><span class="ic">📝</span>新建页面<span class="desc">Ctrl+N</span></button>
+      <button class="palette-item"><span class="ic">📊</span>统计当前页字数</button>
+      <button class="palette-item"><span class="ic">🌙</span>切换主题</button>
+    </div>
+    <div class="palette-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> 导航</span><span><kbd>Enter</kbd> 确认</span><span><kbd>Esc</kbd> 关闭</span></div>
+  </div>
+</div>
+
+<!-- ============ Find bar ============ -->
+<div class="find-bar hidden" id="find-bar">
+  <input id="find-input" placeholder="查找…" />
+  <span class="find-count" id="find-count">1 / 3</span>
+  <button class="find-btn">↑</button><button class="find-btn">↓</button><button class="find-btn" id="find-close">×</button>
+</div>
+
+<!-- ============ Slash menu ============ -->
+<div class="slash hidden" id="slash">
+  <button class="slash-item sel"><span class="ic">H1</span>标题 1</button>
+  <button class="slash-item"><span class="ic">H2</span>标题 2</button>
+  <button class="slash-item"><span class="ic">H3</span>标题 3</button>
+  <button class="slash-item"><span class="ic">¶</span>正文</button>
+  <button class="slash-item"><span class="ic">❝</span>引用</button>
+  <button class="slash-item"><span class="ic">💡</span>Callout 提示框</button>
+  <button class="slash-item"><span class="ic">{}</span>代码块</button>
+  <button class="slash-item"><span class="ic">☑</span>待办事项</button>
+  <button class="slash-item"><span class="ic">▦</span>表格</button>
+</div>
+
+<!-- ============ Trash popover ============ -->
+<div class="popover hidden" id="trash-pop">
+  <div class="p-title">回收站</div>
+  <div class="pop-item"><span>📄</span><span class="tt">旧版设计稿</span><span class="tm">3 天前</span><button class="mini-btn">恢复</button><button class="mini-btn danger">删除</button></div>
+  <div class="pop-item"><span>📄</span><span class="tt">临时笔记</span><span class="tm">1 周前</span><button class="mini-btn">恢复</button><button class="mini-btn danger">删除</button></div>
+</div>
+
+<!-- ============ Sync popover ============ -->
+<div class="popover hidden" id="sync-pop">
+  <div class="p-title">同步设置</div>
+  <div class="pop-row"><label>服务器地址</label><input value="http://localhost:8787" /></div>
+  <div class="pop-row"><label>令牌（可选）</label><input type="password" placeholder="同步服务 token" /></div>
+  <div class="pop-status">设备 ID：a3f9… · 已推 128 / 已拉 96</div>
+  <div class="pop-actions"><button class="mini-btn">保存</button><button class="mini-btn primary">立即同步</button></div>
+</div>
+
+<!-- ============ History popover ============ -->
+<div class="popover hidden" id="history-pop">
+  <div class="p-title">版本历史</div>
+  <div class="pop-item"><span class="tt">今天 14:02</span><span class="tm">「…统一设计语言」</span><button class="mini-btn">恢复</button></div>
+  <div class="pop-item"><span class="tt">今天 10:31</span><span class="tm">「…设计原则」</span><button class="mini-btn">恢复</button></div>
+  <div class="pop-item"><span class="tt">昨天 18:44</span><span class="tm">「…待办事项」</span><button class="mini-btn">恢复</button></div>
+</div>
+
+<!-- ============ Toast ============ -->
+<div class="toast hidden" id="toast"></div>
+
+<!-- ============ Demo controls ============ -->
+<div class="demo-hint">Ctrl+K 命令面板 · Ctrl+F 查找 · 点击右侧按钮体验各界面</div>
+<div class="demo-bar">
+  <button id="d-palette">命令面板</button>
+  <button id="d-find">查找</button>
+  <button id="d-slash">斜杠菜单</button>
+  <button id="d-board">笔记/看板</button>
+  <span class="sep"></span>
+  <button id="d-trash">回收站</button>
+  <button id="d-sync">同步设置</button>
+  <button id="d-history">版本历史</button>
+  <button id="d-theme">🌙 暗色</button>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var root = document.documentElement;
+  var view = "notes";
+
+  function showToast(msg, kind) {
+    var t = $("toast");
+    t.textContent = msg;
+    t.className = "toast " + (kind || "ok");
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function () { t.className = "toast hidden"; }, 2200);
+  }
+  function toggle(el) { el.classList.toggle("hidden"); }
+
+  /* Theme */
+  function setTheme(mode) {
+    root.setAttribute("data-theme", mode);
+    $("d-theme").textContent = mode === "dark" ? "☀️ 亮色" : "🌙 暗色";
+    $("btn-theme").textContent = mode === "dark" ? "☀️" : "🌙";
+  }
+  $("btn-theme").addEventListener("click", function () {
+    setTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+  $("d-theme").addEventListener("click", function () {
+    setTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark");
+  });
+
+  /* View switch (notes / board) */
+  function setView(v) {
+    view = v;
+    $("view-notes").style.display = v === "notes" ? "flex" : "none";
+    $("view-board").style.display = v === "board" ? "flex" : "none";
+    document.querySelectorAll("#view-switch button").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.view === v);
+    });
+  }
+  document.querySelectorAll("#view-switch button").forEach(function (b) {
+    b.addEventListener("click", function () { setView(b.dataset.view); });
+  });
+  $("d-board").addEventListener("click", function () { setView(view === "notes" ? "board" : "notes"); });
+
+  /* Tree selection (demo) */
+  document.querySelectorAll("#tree .tree-row").forEach(function (row) {
+    row.addEventListener("click", function () {
+      document.querySelectorAll("#tree .tree-row").forEach(function (r) { r.classList.remove("active"); });
+      row.classList.add("active");
+    });
+  });
+
+  /* Command palette */
+  function openPalette() { $("palette-overlay").classList.remove("hidden"); $("palette-input").focus(); }
+  function closePalette() { $("palette-overlay").classList.add("hidden"); }
+  $("palette-overlay").addEventListener("click", function (e) { if (e.target === this) closePalette(); });
+  $("d-palette").addEventListener("click", openPalette);
+
+  /* Find bar */
+  function openFind() { $("find-bar").classList.remove("hidden"); $("find-input").focus(); }
+  function closeFind() { $("find-bar").classList.add("hidden"); }
+  $("d-find").addEventListener("click", openFind);
+  $("find-close").addEventListener("click", closeFind);
+
+  /* Slash menu (demo: position near first block) */
+  function openSlash() {
+    var s = $("slash"); var b = document.querySelector("#editor-inner .proto-block");
+    var r = b.getBoundingClientRect();
+    s.style.left = (r.left + 40) + "px"; s.style.top = (r.bottom + 6) + "px";
+    s.classList.remove("hidden");
+  }
+  function closeSlash() { $("slash").classList.add("hidden"); }
+  $("d-slash").addEventListener("click", openSlash);
+
+  /* Popovers (anchored to their sidebar buttons) */
+  function anchorPop(btnId, popId) {
+    var btn = $(btnId), pop = $(popId);
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      document.querySelectorAll(".popover").forEach(function (p) { if (p !== pop) p.classList.add("hidden"); });
+      var r = btn.getBoundingClientRect();
+      pop.style.position = "fixed";
+      pop.style.top = (r.bottom + 6) + "px";
+      pop.style.left = Math.min(r.left, window.innerWidth - 340) + "px";
+      pop.style.right = "auto";
+      toggle(pop);
+    });
+  }
+  anchorPop("btn-trash", "trash-pop");
+  anchorPop("btn-sync", "sync-pop");
+  anchorPop("btn-history", "history-pop");
+  $("d-trash").addEventListener("click", function () { $("btn-trash").click(); });
+  $("d-sync").addEventListener("click", function () { $("btn-sync").click(); });
+  $("d-history").addEventListener("click", function () { $("btn-history").click(); });
+
+  /* Click outside closes popovers */
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest(".popover") && !e.target.closest("#btn-trash,#btn-sync,#btn-history")) {
+      document.querySelectorAll(".popover").forEach(function (p) { p.classList.add("hidden"); });
+    }
+    if (!e.target.closest("#slash") && !e.target.closest("#d-slash")) closeSlash();
+  });
+
+  /* Keyboard */
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") { e.preventDefault(); openFind(); }
+    else if (e.key === "Escape") { closePalette(); closeFind(); closeSlash(); document.querySelectorAll(".popover").forEach(function (p) { p.classList.add("hidden"); }); }
+  });
+
+  /* Board demo interactions */
+  document.querySelectorAll("#board .board-col").forEach(function (col) {
+    col.addEventListener("dragover", function (e) { e.preventDefault(); col.classList.add("drag-over"); });
+    col.addEventListener("dragleave", function () { col.classList.remove("drag-over"); });
+    col.addEventListener("drop", function () { col.classList.remove("drag-over"); showToast("卡片已移动到该列"); });
+  });
+  document.querySelectorAll("#board .board-card").forEach(function (c) {
+    c.addEventListener("dragstart", function (e) { e.dataTransfer.setData("text/plain", "card"); });
+  });
+  document.querySelectorAll(".mini-btn.primary").forEach(function (b) {
+    b.addEventListener("click", function () { showToast("同步完成：上传 2 条，拉取 1 条"); });
+  });
+  document.querySelectorAll(".mini-btn:not(.primary)").forEach(function (b) {
+    b.addEventListener("click", function () { showToast("操作成功"); });
+  });
+})();
+</script>
+</body>
+</html>
