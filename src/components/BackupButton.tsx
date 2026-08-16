@@ -1,10 +1,13 @@
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { useState } from "react";
+import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
+import { DownloadIcon, UploadIcon } from "./icons";
 
 export function BackupButton() {
   const { loadPages } = useNotes();
+  const [openMenu, setOpenMenu] = useState(false);
 
   const doExport = async () => {
     try {
@@ -30,7 +33,7 @@ export function BackupButton() {
         multiple: false,
       });
       if (!path) return;
-      if (!confirm("导入将覆盖当前全部数据（页面、标签、附件），且不可撤销。确定继续？")) return;
+      if (!(await confirm("导入将覆盖当前全部数据（页面、标签、附件），且不可撤销。确定继续？"))) return;
       await api.importBackup(path as string);
       await loadPages();
       toast("备份导入完成", "success");
@@ -41,12 +44,35 @@ export function BackupButton() {
 
   return (
     <div className="backup-menu">
-      <button className="btn-backup" onClick={doExport} title="导出整库备份">
-        ⬇
+      <button
+        className="btn-backup"
+        onClick={() => setOpenMenu((v) => !v)}
+        title="备份 / 恢复"
+      >
+        <DownloadIcon />
       </button>
-      <button className="btn-import" onClick={doImport} title="从备份恢复">
-        ⬆
-      </button>
+      {openMenu && (
+        <div className="backup-dropdown">
+          <button
+            onClick={() => {
+              setOpenMenu(false);
+              doExport();
+            }}
+          >
+            <DownloadIcon width={14} height={14} />
+            导出备份
+          </button>
+          <button
+            onClick={() => {
+              setOpenMenu(false);
+              doImport();
+            }}
+          >
+            <UploadIcon width={14} height={14} />
+            从备份恢复
+          </button>
+        </div>
+      )}
     </div>
   );
 }

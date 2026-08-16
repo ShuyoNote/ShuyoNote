@@ -1,4 +1,5 @@
 import { useTheme, type Theme } from "../store/theme";
+import { MonitorIcon, MoonIcon, SunIcon } from "./icons";
 
 const CYCLE: Theme[] = ["system", "light", "dark"];
 
@@ -8,11 +9,11 @@ const LABEL: Record<Theme, string> = {
   dark: "暗色",
 };
 
-const ICON: Record<Theme, string> = {
-  system: "🖥️",
-  light: "☀️",
-  dark: "🌙",
-};
+function ThemeIcon({ theme }: { theme: Theme }) {
+  if (theme === "dark") return <MoonIcon />;
+  if (theme === "light") return <SunIcon />;
+  return <MonitorIcon />;
+}
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -24,7 +25,7 @@ export function ThemeToggle() {
 
   return (
     <button className="btn-theme" onClick={next} title={`主题：${LABEL[theme]}（点击切换）`}>
-      {ICON[theme]}
+      <ThemeIcon theme={theme} />
     </button>
   );
 }

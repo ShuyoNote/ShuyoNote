@@ -19,7 +19,6 @@ import {
   $createParagraphNode,
   $getSelection,
   $isRangeSelection,
-  $createTextNode,
   type ElementNode,
   type LexicalEditor,
   type TextNode,
@@ -74,12 +73,7 @@ function makeOptions(): SlashOption[] {
         const topLevel = anchor.getTopLevelElement();
         if (!topLevel) return;
         const codeNode = $createCodeNode("javascript");
-        const text = topLevel.getTextContent();
-        if (text) {
-          codeNode.append($createCodeHighlightNode(text));
-        } else {
-          codeNode.append($createTextNode(""));
-        }
+        codeNode.append($createCodeHighlightNode(topLevel.getTextContent()));
         topLevel.replace(codeNode);
         codeNode.selectStart();
       });

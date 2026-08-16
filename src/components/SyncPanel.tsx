@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type SyncConfig } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { SyncIcon } from "./icons";
 
 export function SyncPanel() {
   const { loadPages } = useNotes();
@@ -50,7 +51,7 @@ export function SyncPanel() {
   return (
     <div className="sync-panel">
       <button className="btn-sync" onClick={() => setOpen((v) => !v)} title="同步设置">
-        ⇅
+        <SyncIcon />
       </button>
       {open && (
         <div className="sync-popover">

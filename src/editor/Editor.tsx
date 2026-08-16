@@ -13,10 +13,11 @@ import { TableNode, TableCellNode, TableRowNode } from "@lexical/table";
 import { TRANSFORMERS } from "@lexical/markdown";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
-import { CodeNode } from "@lexical/code";
+import { CodeNode, CodeHighlightNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
 import { $getRoot, type EditorState, type LexicalEditor } from "lexical";
 import { useMemo } from "react";
+import { toast } from "../store/toast";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
@@ -56,6 +57,7 @@ const theme = {
   code: "editor-codeblock",
   hr: "editor-hr",
   table: "editor-table",
+  tableScrollableWrapper: "editor-table-scrollable-wrapper",
   tableCell: "editor-table-cell",
   tableCellHeader: "editor-table-cell-header",
   tableRow: "editor-table-row",
@@ -87,7 +89,17 @@ function isValidLexicalNode(node: any): boolean {
 function parseEditorState(contentJson: string): string | null {
   try {
     const parsed = JSON.parse(contentJson);
-    if (parsed && parsed.root && isValidLexicalNode(parsed.root)) return contentJson;
+    const root = parsed && parsed.root;
+    // An empty root (no children) is not a valid editor state; let Lexical
+    // seed a default paragraph instead.
+    if (
+      root &&
+      Array.isArray(root.children) &&
+      root.children.length > 0 &&
+      isValidLexicalNode(root)
+    ) {
+      return contentJson;
+    }
   } catch {
     // fall through to empty
   }
@@ -105,6 +117,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searc
         ListNode,
         ListItemNode,
         CodeNode,
+        CodeHighlightNode,
         LinkNode,
         CalloutNode,
         HorizontalRuleNode,
@@ -113,7 +126,10 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searc
         TableCellNode,
         TableRowNode,
       ],
-      onError: (error: Error) => console.error(error),
+      onError: (error: Error) => {
+        console.error(error);
+        toast(`编辑器错误：${error.message || String(error)}`, "error");
+      },
       editorState: parseEditorState(contentJson),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSidebar } from "../store/sidebar";
@@ -10,6 +11,7 @@ import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeToggle } from "./ThemeToggle";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -192,7 +194,7 @@ function TreeItem({
             title="删除"
             onClick={async (e) => {
               e.stopPropagation();
-              if (confirm(`删除「${node.title || "未命名"}」及其所有子节点？`)) {
+              if (await confirm(`删除「${node.title || "未命名"}」及其所有子节点？`)) {
                 await deletePage(node.id);
                 toast("已移到回收站", "success");
               }
@@ -253,49 +255,50 @@ export function PageTree({
             ShuyoNote
           </span>
         )}
-        <div className="sidebar-header-actions">
-          {!collapsed && (
-            <>
-              <TrashPanel />
-              <SyncPanel />
-              <BackupButton />
-              <ThemeToggle />
-              <div className="new-menu">
-                <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
-                  新建 ▾
-                </button>
-                {newMenuOpen && (
-                  <div className="new-menu-dropdown">
-                    <button
-                      onClick={() => {
-                        setNewMenuOpen(false);
-                        createPage(null);
-                      }}
-                    >
-                      📄 新建页面
-                    </button>
-                    <button
-                      onClick={() => {
-                        setNewMenuOpen(false);
-                        createFolder(null);
-                      }}
-                    >
-                      📁 新建文件夹
-                    </button>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-          <button
-            className="btn-sidebar-toggle"
-            onClick={toggle}
-            title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
-          >
-            {collapsed ? "»" : "«"}
-          </button>
-        </div>
+        <button
+          className="btn-sidebar-toggle"
+          onClick={toggle}
+          title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+        >
+          {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+        </button>
       </div>
+      {!collapsed && (
+        <div className="sidebar-header-actions">
+          <div className="sidebar-actions-group">
+            <TrashPanel />
+            <SyncPanel />
+            <BackupButton />
+            <ThemeToggle />
+          </div>
+          <div className="new-menu">
+            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
+              <span className="btn-new-label">新建</span>
+              <ChevronDownIcon width={14} height={14} className="btn-new-caret" />
+            </button>
+            {newMenuOpen && (
+              <div className="new-menu-dropdown">
+                <button
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    createPage(null);
+                  }}
+                >
+                  📄 新建页面
+                </button>
+                <button
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    createFolder(null);
+                  }}
+                >
+                  📁 新建文件夹
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {!collapsed && (
         <>
           <div className="sidebar-search">

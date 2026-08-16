@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { PageMeta } from "../types";
+import { TrashIcon } from "./icons";
 
 export function TrashPanel() {
   const { loadPages } = useNotes();
@@ -27,7 +29,7 @@ export function TrashPanel() {
   };
 
   const purge = async (id: string, title: string) => {
-    if (!confirm(`彻底删除「${title || "未命名"}」？此操作不可恢复。`)) return;
+    if (!(await confirm(`彻底删除「${title || "未命名"}」？此操作不可恢复。`))) return;
     try {
       await api.purgePage(id);
       setItems(await api.listDeleted());
@@ -40,7 +42,7 @@ export function TrashPanel() {
   return (
     <div className="trash-panel">
       <button className="btn-trash" onClick={() => setOpen((v) => !v)} title="回收站">
-        🗑
+        <TrashIcon />
       </button>
       {open && (
         <div className="trash-popover">

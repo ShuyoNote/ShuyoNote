@@ -202,11 +202,19 @@ body,
 .sidebar-header-actions {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
+  padding: 0 12px 10px;
+}
+
+.sidebar-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .sidebar-header {
-  padding: 14px 12px 10px;
+  padding: 14px 12px 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -250,7 +258,15 @@ body,
 .sidebar-header-actions {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
+  padding: 0 12px 10px;
+}
+
+.sidebar-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .sync-panel {
@@ -355,19 +371,41 @@ body,
 }
 
 .btn-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
   border: none;
   background: var(--accent);
   color: var(--on-accent);
-  border-radius: var(--radius-full);
-  padding: 6px 12px;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  font-size: 13px;
   font-weight: 600;
+  line-height: 1;
   cursor: pointer;
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .btn-new:hover {
   background: var(--accent-strong);
+  box-shadow: 0 3px 10px rgba(51, 112, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-new:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+}
+
+.btn-new-label {
+  line-height: 1;
+}
+
+.btn-new-caret {
+  opacity: 0.7;
+  margin-left: 1px;
 }
 
 .new-menu {
@@ -456,8 +494,40 @@ body,
 }
 
 .backup-menu {
+  position: relative;
+}
+
+.backup-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  z-index: 40;
+  min-width: 150px;
+  padding: 4px;
+  animation: pop 0.16s ease;
+}
+
+.backup-dropdown button {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+}
+
+.backup-dropdown button:hover {
+  background: var(--hover);
 }
 
 .btn-import {
@@ -1460,6 +1530,11 @@ body,
 }
 
 /* Tables */
+.editor-table-scrollable-wrapper {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
 .editor-table {
   border-collapse: collapse;
   margin: 0.5em 0;
