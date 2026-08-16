@@ -9,7 +9,8 @@ function getTopLevelKey(editor: ReturnType<typeof useLexicalComposerContext>[0],
   let el = dom instanceof HTMLElement ? dom : dom?.parentElement ?? null;
   if (!el) return null;
   let key: string | null = null;
-  editor.getEditorState().read(() => {
+  // Must use editor.read (not getEditorState().read) so getActiveEditor() is set.
+  editor.read(() => {
     const node = $getNearestNodeFromDOMNode(el);
     const top = node?.getTopLevelElement();
     key = top ? top.getKey() : null;
