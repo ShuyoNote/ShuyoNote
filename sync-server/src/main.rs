@@ -1,16 +1,20 @@
 use axum::{
-    body::Bytes,
+    body::Body,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use futures_util::StreamExt;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
 };
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 
 #[derive(Clone)]
 struct AppState {
@@ -256,15 +260,36 @@ async fn upload_attachment(
     State(state): State<AppState>,
     Path(hash): Path<String>,
     Query(query): Query<UploadQuery>,
-    body: Bytes,
+    body: Body,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     if hash.is_empty() || hash.len() > 128 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    // Dedup: skip write if already present.
+    // Dedup: skip write if already present (still drain the incoming body).
     let path = state.attachments_dir.join(&hash);
-    if !path.exists() {
-        std::fs::write(&path, &body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if path.exists() {
+        let mut stream = body.into_data_stream();
+        while stream.next().await.is_some() {}
+    } else {
+        let tmp = state.attachments_dir.join(format!("{hash}.part"));
+        let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| {
+            eprintln!("create tmp: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        let mut stream = body.into_data_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| StatusCode::BAD_REQUEST)?;
+            file.write_all(&chunk).await.map_err(|e| {
+                eprintln!("write: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        }
+        file.flush().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        drop(file);
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            eprintln!("rename: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
     let mime = query.mime.unwrap_or_else(|| "application/octet-stream".to_string());
     let conn = state.db.lock().expect("db mutex poisoned");
@@ -279,7 +304,12 @@ async fn upload_attachment(
 async fn download_attachment(
     State(state): State<AppState>,
     Path(hash): Path<String>,
-) -> Result<Vec<u8>, StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
     let path = hash_file_path(state.attachments_dir.as_ref(), &hash);
-    std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], body))
 }

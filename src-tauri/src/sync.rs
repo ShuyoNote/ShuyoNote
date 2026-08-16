@@ -1,11 +1,14 @@
 use crate::db::Db;
 use crate::models::PageDetail;
 use crate::search;
+use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tauri::{Manager, State};
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 
 const KEY_DEVICE_ID: &str = "device_id";
 const KEY_SERVER_URL: &str = "server_url";
@@ -431,13 +434,12 @@ async fn sync_attachments(
         }
     }
 
-    // 3. Upload local attachments missing on server.
+    // 3. Upload local attachments missing on server (streaming).
     for hash in local_set.difference(&remote_set) {
         let path = match find_file_by_stem(&attachments_dir, hash) {
             Some(p) => p,
             None => continue,
         };
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         // Determine mime from local DB row.
         let mime = {
             let c = db.0.lock().expect("db mutex poisoned");
@@ -451,10 +453,12 @@ async fn sync_attachments(
             .flatten()
             .unwrap_or_else(|| "application/octet-stream".to_string())
         };
+        let file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
+        let stream = ReaderStream::new(file);
         let mut req = client
             .post(format!("{server_url}/attachments/{hash}"))
             .query(&[("mime", mime)])
-            .body(bytes);
+            .body(reqwest::Body::wrap_stream(stream));
         if !token.is_empty() {
             req = req.bearer_auth(token);
         }
@@ -493,17 +497,26 @@ async fn sync_attachments(
         if !resp.status().is_success() {
             continue;
         }
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
         let ext = ext_from_mime(&item.mime);
         let path = attachments_dir.join(format!("{}.{}", item.hash, ext));
+        let mut size: i64 = 0;
         if !path.exists() {
-            std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+            let tmp = attachments_dir.join(format!("{}.part", item.hash));
+            let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+            let mut stream = resp.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| e.to_string())?;
+                size += chunk.len() as i64;
+                file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            }
+            file.flush().await.map_err(|e| e.to_string())?;
+            drop(file);
+            std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
         }
         // Insert/ignore into attachments table.
         {
             let c = db.0.lock().expect("db mutex poisoned");
             let id = uuid::Uuid::new_v4().to_string();
-            let size = bytes.len() as i64;
             c.execute(
                 "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
                  VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
