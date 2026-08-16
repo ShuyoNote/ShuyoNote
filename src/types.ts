@@ -34,6 +34,15 @@ export interface Tag {
   name: string;
 }
 
+export interface AttachmentMeta {
+  id: string;
+  name: string;
+  hash: string;
+  mime: string;
+  size: number;
+  path: string;
+}
+
 export interface BoardColumn {
   tag: Tag | null;
   pages: PageMeta[];

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BoardColumn, PageDetail, PageMeta, PageVersion, SearchResult, Tag } from "../types";
+import type { AttachmentMeta, BoardColumn, PageDetail, PageMeta, PageVersion, SearchResult, Tag } from "../types";
 
 export interface SyncConfig {
   server_url: string;
@@ -14,15 +14,6 @@ export interface SyncReport {
   pulled: number;
   last_pushed_seq: number;
   last_pulled_seq: number;
-}
-
-export interface AttachmentMeta {
-  id: string;
-  name: string;
-  hash: string;
-  mime: string;
-  size: number;
-  path: string;
 }
 
 export const api = {
@@ -54,6 +45,11 @@ export const api = {
     data: number[];
   }) => invoke<AttachmentMeta>("save_image", { args }),
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
+  importAttachmentFiles: (pageId: string | null, paths: string[]) =>
+    invoke<AttachmentMeta[]>("import_attachment_files", { pageId, paths }),
+  listPageAttachments: (pageId: string) =>
+    invoke<AttachmentMeta[]>("list_page_attachments", { pageId }),
+  removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
   getBacklinks: (id: string) => invoke<PageMeta[]>("get_backlinks", { id }),
   listTags: () => invoke<Tag[]>("list_tags"),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),

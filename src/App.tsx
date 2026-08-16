@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
+import { AttachmentPanel } from "./components/AttachmentPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
@@ -132,6 +133,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
       </ErrorBoundary>
       <BacklinksPanel pageId={pageId} />
       <TagBar pageId={pageId} />
+      <AttachmentPanel pageId={pageId} />
     </div>
   );
 }
