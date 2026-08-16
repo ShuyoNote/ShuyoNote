@@ -493,6 +493,31 @@ body,
   border-radius: 6px;
 }
 
+/* Tables */
+.editor-table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.editor-table-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-table-cell {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  min-width: 60px;
+  vertical-align: top;
+  outline: none;
+}
+
+.editor-table-cell-header {
+  background: var(--bg-sidebar);
+  font-weight: 600;
+}
+
 /* Backlinks */
 .backlinks {
   max-width: 720px;

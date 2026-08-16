@@ -8,6 +8,8 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
+import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
+import { TableNode, TableCellNode, TableRowNode } from "@lexical/table";
 import { TRANSFORMERS } from "@lexical/markdown";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
@@ -50,6 +52,10 @@ const theme = {
   link: "editor-link",
   code: "editor-codeblock",
   hr: "editor-hr",
+  table: "editor-table",
+  tableCell: "editor-table-cell",
+  tableCellHeader: "editor-table-cell-header",
+  tableRow: "editor-table-row",
 };
 
 interface EditorProps {
@@ -85,6 +91,9 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId }: Edi
         CalloutNode,
         HorizontalRuleNode,
         ImageNode,
+        TableNode,
+        TableCellNode,
+        TableRowNode,
       ],
       onError: (error: Error) => console.error(error),
       editorState: parseEditorState(contentJson),
@@ -111,6 +120,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId }: Edi
         <ListPlugin />
         <CheckListPlugin />
         <HorizontalRulePlugin />
+        <TablePlugin hasHorizontalScroll />
         <OnChangePlugin onChange={onChange} />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin />

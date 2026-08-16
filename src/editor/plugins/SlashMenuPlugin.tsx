@@ -13,6 +13,7 @@ import {
   INSERT_UNORDERED_LIST_COMMAND,
 } from "@lexical/list";
 import { INSERT_HORIZONTAL_RULE_COMMAND } from "@lexical/react/LexicalHorizontalRuleNode";
+import { INSERT_TABLE_COMMAND } from "@lexical/table";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import {
   $createParagraphNode,
@@ -94,6 +95,13 @@ function makeOptions(): SlashOption[] {
     ),
     new SlashOption("hr", "分隔线", "—", (editor) =>
       editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined),
+    ),
+    new SlashOption("table", "表格", "▦", (editor) =>
+      editor.dispatchCommand(INSERT_TABLE_COMMAND, {
+        columns: "3",
+        rows: "3",
+        includeHeaders: { rows: true, columns: false },
+      }),
     ),
   ];
 }
