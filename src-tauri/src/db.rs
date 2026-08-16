@@ -69,6 +69,18 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS attachments (
+            id         TEXT PRIMARY KEY,
+            page_id    TEXT,
+            name       TEXT NOT NULL,
+            hash       TEXT NOT NULL,
+            mime       TEXT NOT NULL,
+            size       INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_attachments_hash ON attachments(hash);
+        CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
         "#,
     )?;
 

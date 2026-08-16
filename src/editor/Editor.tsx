@@ -16,8 +16,10 @@ import { LinkNode } from "@lexical/link";
 import { $getRoot, type EditorState, type LexicalEditor } from "lexical";
 import { useMemo } from "react";
 import { CalloutNode } from "./nodes/CalloutNode";
+import { ImageNode } from "./nodes/ImageNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { MarkdownToolbar } from "./plugins/MarkdownToolbar";
+import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 
 const theme = {
   heading: {
@@ -55,6 +57,7 @@ interface EditorProps {
   onSave: (contentJson: string, contentText: string) => void;
   onExport?: (markdown: string) => void;
   autoFocus?: boolean;
+  pageId: string;
 }
 
 function parseEditorState(contentJson: string): string | null {
@@ -67,7 +70,7 @@ function parseEditorState(contentJson: string): string | null {
   return null;
 }
 
-export function Editor({ contentJson, onSave, onExport, autoFocus }: EditorProps) {
+export function Editor({ contentJson, onSave, onExport, autoFocus, pageId }: EditorProps) {
   const initialConfig = useMemo(
     () => ({
       namespace: "shuyonote-editor",
@@ -81,6 +84,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus }: EditorProps
         LinkNode,
         CalloutNode,
         HorizontalRuleNode,
+        ImageNode,
       ],
       onError: (error: Error) => console.error(error),
       editorState: parseEditorState(contentJson),
@@ -110,6 +114,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus }: EditorProps
         <OnChangePlugin onChange={onChange} />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin />
+        <ImagePastePlugin pageId={pageId} />
         {onExport && <MarkdownToolbar onExport={onExport} />}
       </div>
     </LexicalComposer>

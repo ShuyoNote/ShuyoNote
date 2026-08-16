@@ -71,6 +71,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
       </div>
       <Editor
         key={pageId}
+        pageId={pageId}
         contentJson={contentJson}
         onSave={onEditorSave}
         onExport={async (markdown) => {

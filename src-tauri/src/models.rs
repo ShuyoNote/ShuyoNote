@@ -31,3 +31,14 @@ pub struct SearchResult {
     pub title: String,
     pub snippet: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AttachmentMeta {
+    pub id: String,
+    pub name: String,
+    pub hash: String,
+    pub mime: String,
+    pub size: i64,
+    /// Local file path for display via convertFileSrc.
+    pub path: String,
+}

@@ -16,6 +16,15 @@ export interface SyncReport {
   last_pulled_seq: number;
 }
 
+export interface AttachmentMeta {
+  id: string;
+  name: string;
+  hash: string;
+  mime: string;
+  size: number;
+  path: string;
+}
+
 export const api = {
   listPages: () => invoke<PageMeta[]>("list_pages"),
   getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
@@ -36,4 +45,11 @@ export const api = {
   setSyncConfig: (args: { server_url: string; token?: string }) =>
     invoke<void>("set_sync_config", { args }),
   syncNow: () => invoke<SyncReport>("sync_now"),
+  saveImage: (args: {
+    page_id: string | null;
+    name: string | null;
+    mime: string;
+    data: number[];
+  }) => invoke<AttachmentMeta>("save_image", { args }),
+  attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
 };
