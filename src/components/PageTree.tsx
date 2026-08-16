@@ -126,7 +126,7 @@ function TreeItem({
         >
           {node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
-        <span className="tree-icon">{isFolder ? "📁" : "📄"}</span>
+        <span className={`tree-icon${isFolder ? " tree-icon-folder" : ""}`}>{isFolder ? "📁" : "📄"}</span>
         {editing ? (
           <input
             className="tree-rename-input"
@@ -247,7 +247,12 @@ export function PageTree({
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       <div className="sidebar-header">
-        {!collapsed && <span className="sidebar-title">ShuyoNote</span>}
+        {!collapsed && (
+          <span className="sidebar-title">
+            <span className="logo-mark" />
+            ShuyoNote
+          </span>
+        )}
         <div className="sidebar-header-actions">
           {!collapsed && (
             <>

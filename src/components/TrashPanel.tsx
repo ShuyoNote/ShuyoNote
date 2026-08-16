@@ -40,7 +40,7 @@ export function TrashPanel() {
   return (
     <div className="trash-panel">
       <button className="btn-trash" onClick={() => setOpen((v) => !v)} title="回收站">
-        回收站
+        🗑
       </button>
       {open && (
         <div className="trash-popover">

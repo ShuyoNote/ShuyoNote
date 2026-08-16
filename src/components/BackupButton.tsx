@@ -42,10 +42,10 @@ export function BackupButton() {
   return (
     <div className="backup-menu">
       <button className="btn-backup" onClick={doExport} title="导出整库备份">
-        备份
+        ⬇
       </button>
       <button className="btn-import" onClick={doImport} title="从备份恢复">
-        恢复
+        ⬆
       </button>
     </div>
   );

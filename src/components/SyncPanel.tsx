@@ -50,7 +50,7 @@ export function SyncPanel() {
   return (
     <div className="sync-panel">
       <button className="btn-sync" onClick={() => setOpen((v) => !v)} title="同步设置">
-        同步
+        ⇅
       </button>
       {open && (
         <div className="sync-popover">
