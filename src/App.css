@@ -230,12 +230,30 @@ body,
 }
 
 .logo-mark {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, var(--accent), #7b61ff);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent-soft), var(--cat-purple-soft));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   box-shadow: var(--shadow-xs);
+}
+
+.sidebar-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.workspace-rename-input {
+  width: 120px;
 }
 
 .btn-sidebar-toggle {
@@ -1195,14 +1213,12 @@ body,
   display: flex;
   align-items: center;
   gap: 4px;
-  max-width: 816px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 12px 48px 0;
   font-size: 13px;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
+  flex: 1;
+  min-width: 0;
 }
 
 .crumb {
@@ -1256,6 +1272,43 @@ body,
 .error-badge {
   color: var(--danger);
   font-size: 12px;
+}
+
+/* Editor toolbar */
+.editor-toolbar-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 16px;
+  flex-shrink: 0;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.toolbar-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.toolbar-btn:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 /* ---------- Editor ---------- */
@@ -1372,8 +1425,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  letter-spacing: -2px;
+  font-size: 14px;
+  letter-spacing: -1px;
   color: var(--text-faint);
   cursor: grab;
   border-radius: var(--radius-xs);
@@ -1421,6 +1474,55 @@ body,
   border-radius: 50%;
   background: var(--accent);
   transform: translateY(-50%);
+}
+
+/* Block handle menu (click the ⋮⋮ grip) */
+.block-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  animation: pop 0.14s ease;
+}
+
+.block-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.block-menu button:hover {
+  background: var(--hover);
+}
+
+.block-menu button.danger {
+  color: var(--danger);
+}
+
+.block-menu button.danger:hover {
+  background: var(--danger-soft);
+}
+
+.block-menu-hint {
+  padding: 6px 10px 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
 }
 
 .is-dragging-block,
@@ -2024,9 +2126,11 @@ body,
 }
 
 .editor-codeblock {
+  display: block;
+  white-space: pre;
   background: var(--codeblock-bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 12px;
   font-family: "SF Mono", Consolas, monospace;
   font-size: 0.9em;

@@ -1,11 +1,12 @@
-import { useCallback } from "react";
-import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $convertFromMarkdownString, $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
 import { save } from "@tauri-apps/plugin-dialog";
 import { $getRoot } from "lexical";
-import { api } from "../../lib/api";
-import { toast } from "../../store/toast";
+import { api } from "../lib/api";
+import { useEditorStore } from "../store/editor";
+import { toast } from "../store/toast";
+import { HistoryPanel } from "./HistoryPanel";
+import { DownloadIcon, FileCodeIcon, SearchIcon, UploadIcon } from "./icons";
 
 const HTML_TEMPLATE = (title: string, body: string) => `<!doctype html>
 <html lang="zh-CN">
@@ -32,27 +33,29 @@ ${body}
 </body>
 </html>`;
 
-export function MarkdownToolbar({ onExport }: { onExport: (markdown: string) => void }) {
-  const [editor] = useLexicalComposerContext();
+function triggerFind() {
+  // The find bar listens for Ctrl+F on document; simulate it.
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }),
+  );
+}
 
-  const handleExport = useCallback(() => {
+export function EditorToolbar({ pageId }: { pageId: string }) {
+  const editor = useEditorStore((s) => s.editor);
+
+  const exportMarkdown = () => {
+    if (!editor) return;
     editor.update(() => {
       const markdown = $convertToMarkdownString(TRANSFORMERS);
-      onExport(markdown);
+      navigator.clipboard
+        .writeText(markdown)
+        .then(() => toast("已复制 Markdown 到剪贴板", "success"))
+        .catch(() => toast("复制失败", "error"));
     });
-  }, [editor, onExport]);
+  };
 
-  const handleImport = useCallback(() => {
-    const text = window.prompt("粘贴 Markdown 内容（将清空当前页面）：");
-    if (text === null) return;
-    editor.update(() => {
-      const root = $getRoot();
-      root.clear();
-      $convertFromMarkdownString(text, TRANSFORMERS, root);
-    });
-  }, [editor]);
-
-  const handleExportHtml = useCallback(async () => {
+  const exportHtml = async () => {
+    if (!editor) return;
     try {
       const path = await save({
         title: "导出 HTML",
@@ -63,27 +66,42 @@ export function MarkdownToolbar({ onExport }: { onExport: (markdown: string) => 
       let html = "";
       editor.read(() => {
         const body = $generateHtmlFromNodes(editor);
-        const title = document.querySelector(".title-input")?.getAttribute("value") || "未命名";
+        const title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
         html = HTML_TEMPLATE(title, body);
       });
       await api.writeTextFile(path, html);
-      toast(`已导出 HTML：${path}`, "success");
+      toast("已导出 HTML", "success");
     } catch (e) {
       toast(`导出失败：${e}`, "error");
     }
-  }, [editor]);
+  };
+
+  const importMarkdown = () => {
+    if (!editor) return;
+    const text = window.prompt("粘贴 Markdown 内容（将清空当前页面）：");
+    if (text === null) return;
+    editor.update(() => {
+      const root = $getRoot();
+      root.clear();
+      $convertFromMarkdownString(text, TRANSFORMERS, root);
+    });
+  };
 
   return (
-    <div className="markdown-toolbar">
-      <button title="导出为 Markdown" onClick={handleExport}>
-        Markdown
+    <div className="editor-toolbar">
+      <button className="toolbar-btn" onClick={triggerFind} title="查找 (Ctrl+F)">
+        <SearchIcon />
       </button>
-      <button title="导出为 HTML" onClick={handleExportHtml}>
-        HTML
+      <button className="toolbar-btn" onClick={importMarkdown} title="从 Markdown 导入">
+        <UploadIcon />
       </button>
-      <button title="从 Markdown 导入（清空当前页）" onClick={handleImport}>
-        导入
+      <button className="toolbar-btn" onClick={exportMarkdown} title="导出为 Markdown">
+        <DownloadIcon />
       </button>
+      <button className="toolbar-btn" onClick={exportHtml} title="导出为 HTML">
+        <FileCodeIcon />
+      </button>
+      <HistoryPanel pageId={pageId} />
     </div>
   );
 }

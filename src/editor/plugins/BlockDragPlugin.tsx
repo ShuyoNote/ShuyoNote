@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNearestNodeFromDOMNode, $getRoot } from "lexical";
+import { $cloneWithProperties, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot } from "lexical";
 
 // Notion-style block drag handle: a "⋮⋮" grip appears to the left of the
-// top-level block under the cursor; dragging it reorders blocks.
+// top-level block under the cursor. Clicking it opens a small menu
+// (duplicate / delete); holding and dragging reorders the block.
 //
 // Implementation notes:
 // 1. We avoid HTML5 drag-and-drop (WebView2 / contenteditable interferes) and
@@ -13,9 +14,10 @@ import { $getNearestNodeFromDOMNode, $getRoot } from "lexical";
 //    area reaches the content edge with no gap.
 // 3. Target detection during drag walks the top-level blocks directly via
 //    `$getRoot().getChildren()` + `getElementByKey()` and compares
-//    `getBoundingClientRect()` — it does NOT rely on `$getNearestNodeFromDOMNode`
-//    / `elementFromPoint`, which can fail while the editor is mid-reconcile
-//    after `setEditable(false)`.
+//    `getBoundingClientRect()`.
+// 4. We distinguish click vs drag by a movement threshold so a simple click
+//    never calls `setEditable(false)` (which could otherwise leave the editor
+//    non-editable if the drag did not complete).
 
 function getTopLevelKey(
   editor: ReturnType<typeof useLexicalComposerContext>[0],
@@ -34,6 +36,7 @@ function getTopLevelKey(
 
 type BlockRef = { key: string; el: HTMLElement; rect: DOMRect };
 type DropLine = { top: number; left: number; width: number };
+type HandleState = { top: number; left: number; key: string };
 const HANDLE_OFFSET = 30; // handle spans [contentLeft - 30, contentLeft]
 
 function getTopLevelBlocks(
@@ -72,13 +75,17 @@ function findTargetBlock(
 
 export function BlockDragPlugin() {
   const [editor] = useLexicalComposerContext();
-  const [handle, setHandle] = useState<{ top: number; left: number; key: string } | null>(null);
+  const [handle, setHandle] = useState<HandleState | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
+  const [menu, setMenu] = useState<HandleState | null>(null);
   const [ghostTop, setGhostTop] = useState(0);
   const [dropLine, setDropLine] = useState<DropLine | null>(null);
   const draggingRef = useRef(false);
+  const movedRef = useRef(false);
+  const downRef = useRef<{ x: number; y: number } | null>(null);
   const ghostLeftRef = useRef(0);
   const handleRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
 
   // Show the handle for the top-level block under the cursor.
@@ -181,16 +188,78 @@ export function BlockDragPlugin() {
     };
   }, [dragKey, editor]);
 
-  const startDrag = (e: ReactMouseEvent) => {
+  // Close the block menu when clicking elsewhere.
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [menu]);
+
+  const beginDrag = (h: HandleState, clientY: number) => {
+    draggingRef.current = true;
+    ghostLeftRef.current = h.left;
+    editor.setEditable(false);
+    setDragKey(h.key);
+    setGhostTop(clientY);
+    setHandle(null);
+    setMenu(null);
+  };
+
+  const onHandleMouseDown = (e: ReactMouseEvent) => {
     if (!handle) return;
     e.preventDefault();
     e.stopPropagation();
-    draggingRef.current = true;
-    ghostLeftRef.current = handle.left;
-    editor.setEditable(false);
-    setDragKey(handle.key);
-    setGhostTop(e.clientY);
-    setHandle(null);
+    const h = handle;
+    downRef.current = { x: e.clientX, y: e.clientY };
+    movedRef.current = false;
+
+    const onMove = (ev: MouseEvent) => {
+      if (movedRef.current) return;
+      const dx = ev.clientX - downRef.current!.x;
+      const dy = ev.clientY - downRef.current!.y;
+      if (dx * dx + dy * dy > 25) {
+        movedRef.current = true;
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("mouseup", onUp, true);
+        beginDrag(h, ev.clientY);
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+      if (!movedRef.current) {
+        // A click (no movement): open the block menu.
+        setMenu({ top: h.top, left: h.left, key: h.key });
+        setHandle(null);
+      }
+    };
+
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+  };
+
+  const deleteBlock = (key: string) => {
+    editor.update(() => {
+      const node = $getNodeByKey(key);
+      if (node) node.remove();
+    });
+    setMenu(null);
+  };
+
+  const duplicateBlock = (key: string) => {
+    editor.update(() => {
+      const node = $getNodeByKey(key);
+      if (!node) return;
+      const clone = $cloneWithProperties(node);
+      node.insertAfter(clone);
+      clone.selectStart();
+    });
+    setMenu(null);
   };
 
   return (
@@ -200,8 +269,8 @@ export function BlockDragPlugin() {
           ref={handleRef}
           className="block-handle"
           style={{ top: handle.top, left: handle.left }}
-          onMouseDown={startDrag}
-          title="拖拽排序"
+          onMouseDown={onHandleMouseDown}
+          title="点击菜单 · 按住拖动排序"
         >
           ⋮⋮
         </div>
@@ -221,6 +290,20 @@ export function BlockDragPlugin() {
           className="block-drop-line"
           style={{ top: dropLine.top, left: dropLine.left, width: dropLine.width }}
         />
+      )}
+
+      {menu && (
+        <div
+          ref={menuRef}
+          className="block-menu"
+          style={{ top: menu.top, left: menu.left + 24 }}
+        >
+          <button onClick={() => duplicateBlock(menu.key)}>⧉ 复制块</button>
+          <button className="danger" onClick={() => deleteBlock(menu.key)}>
+            🗑 删除块
+          </button>
+          <div className="block-menu-hint">按住 ⋮⋮ 拖动可排序</div>
+        </div>
       )}
     </>
   );

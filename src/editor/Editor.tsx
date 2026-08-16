@@ -15,13 +15,14 @@ import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
 import { CodeNode, CodeHighlightNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, type EditorState, type LexicalEditor } from "lexical";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { toast } from "../store/toast";
+import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
-import { MarkdownToolbar } from "./plugins/MarkdownToolbar";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
@@ -66,7 +67,6 @@ const theme = {
 interface EditorProps {
   contentJson: string;
   onSave: (contentJson: string, contentText: string) => void;
-  onExport?: (markdown: string) => void;
   autoFocus?: boolean;
   pageId: string;
   searchQuery?: string;
@@ -106,7 +106,7 @@ function parseEditorState(contentJson: string): string | null {
   return null;
 }
 
-export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searchQuery }: EditorProps) {
+export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
   const initialConfig = useMemo(
     () => ({
       namespace: "shuyonote-editor",
@@ -162,8 +162,20 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searc
         <BlockDragPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         <FindPlugin />
-        {onExport && <MarkdownToolbar onExport={onExport} />}
+        <EditorStoreSync />
       </div>
     </LexicalComposer>
   );
+}
+
+// Expose the active editor instance to the top toolbar (outside the editor tree).
+function EditorStoreSync() {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    useEditorStore.getState().setEditor(editor);
+    return () => {
+      useEditorStore.getState().setEditor(null);
+    };
+  }, [editor]);
+  return null;
 }

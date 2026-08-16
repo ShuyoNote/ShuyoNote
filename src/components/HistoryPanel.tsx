@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { PageVersion } from "../types";
+import { ClockIcon } from "./icons";
 
 function formatTime(ms: number): string {
   const d = new Date(ms);
@@ -36,8 +37,8 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
 
   return (
     <div className="history-panel">
-      <button className="btn-history" onClick={() => setOpen((v) => !v)} title="版本历史">
-        历史
+      <button className="toolbar-btn" onClick={() => setOpen((v) => !v)} title="版本历史">
+        <ClockIcon />
       </button>
       {open && (
         <div className="history-popover">

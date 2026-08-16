@@ -18,6 +18,8 @@ export interface SyncReport {
 
 export const api = {
   listPages: () => invoke<PageMeta[]>("list_pages"),
+  getWorkspaceName: () => invoke<string>("get_workspace_name"),
+  renameWorkspace: (name: string) => invoke<void>("rename_workspace", { name }),
   getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
   createPage: (args: { parent_id: string | null; title?: string }) =>
     invoke<PageDetail>("create_page", { args }),

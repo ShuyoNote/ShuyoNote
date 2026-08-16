@@ -31,6 +31,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_pages,
+            commands::get_workspace_name,
+            commands::rename_workspace,
             commands::get_page,
             commands::create_page,
             commands::create_folder,

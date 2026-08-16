@@ -226,9 +226,22 @@ export function PageTree({
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [taggedIds, setTaggedIds] = useState<Set<string> | null>(null);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("ShuyoNote");
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState("");
 
   useEffect(() => {
     api.listTags().then(setTags).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    api
+      .getWorkspaceName()
+      .then(setWorkspaceName)
+      .catch((e) => {
+        console.error("get workspace name failed", e);
+        toast(`加载空间名失败：${e}`, "error");
+      });
   }, []);
 
   useEffect(() => {
@@ -246,13 +259,53 @@ export function PageTree({
 
   const tree = useMemo(() => buildTree(visiblePages), [visiblePages]);
 
+  const commitName = async () => {
+    const v = nameValue.trim();
+    setEditingName(false);
+    if (v && v !== workspaceName) {
+      try {
+        await api.renameWorkspace(v);
+        setWorkspaceName(v);
+      } catch (e) {
+        toast(`重命名失败：${e}`, "error");
+      }
+    }
+  };
+
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       <div className="sidebar-header">
         {!collapsed && (
           <span className="sidebar-title">
-            <span className="logo-mark" />
-            ShuyoNote
+            <span className="logo-mark">{workspaceName.charAt(0) || "S"}</span>
+            {editingName ? (
+              <input
+                className="tree-rename-input workspace-rename-input"
+                autoFocus
+                value={nameValue}
+                onChange={(e) => setNameValue(e.target.value)}
+                onBlur={commitName}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitName();
+                  } else if (e.key === "Escape") {
+                    setEditingName(false);
+                  }
+                }}
+              />
+            ) : (
+              <span
+                className="sidebar-title-text"
+                title="双击重命名空间"
+                onDoubleClick={() => {
+                  setNameValue(workspaceName);
+                  setEditingName(true);
+                }}
+              >
+                {workspaceName}
+              </span>
+            )}
           </span>
         )}
         <button

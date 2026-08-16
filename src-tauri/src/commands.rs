@@ -11,6 +11,32 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
     db.0.lock().expect("db mutex poisoned")
 }
 
+#[tauri::command]
+pub fn get_workspace_name(db: State<'_, Db>) -> Result<String, String> {
+    let c = conn(&db);
+    c.query_row(
+        "SELECT name FROM workspaces ORDER BY created_at ASC LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_workspace(db: State<'_, Db>, name: String) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("名称不能为空".to_string());
+    }
+    let c = conn(&db);
+    c.execute(
+        "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3",
+        params![trimmed, now_ms(), DEFAULT_WORKSPACE],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
         "SELECT id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at

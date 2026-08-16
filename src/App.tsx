@@ -6,7 +6,7 @@ import { AttachmentPanel } from "./components/AttachmentPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
-import { HistoryPanel } from "./components/HistoryPanel";
+import { EditorToolbar } from "./components/EditorToolbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
@@ -18,7 +18,6 @@ import "./App.css";
 function NoteEditor({ pageId }: { pageId: string }) {
   const { current, updateCurrent, loadPages, error, searchQuery, pages } = useNotes();
   const [title, setTitle] = useState(current?.title ?? "");
-  const [contentJson, setContentJson] = useState(current?.content_json ?? "");
   const [saved, setSaved] = useState(true);
   const debounceRef = useRef<number | null>(null);
 
@@ -48,7 +47,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
   // Sync local state when switching pages.
   useEffect(() => {
     setTitle(current?.title ?? "");
-    setContentJson(current?.content_json ?? "");
     setSaved(true);
   }, [pageId]);
 
@@ -77,7 +75,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
   };
 
   const onEditorSave = (json: string, text: string) => {
-    setContentJson(json);
     persist({ content_json: json, content_text: text });
   };
 
@@ -90,18 +87,21 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
   return (
     <div className="main">
-      {breadcrumbs.length > 0 && (
-        <div className="breadcrumbs">
-          {breadcrumbs.map((b, i) => (
-            <span key={b.id}>
-              {i > 0 && <span className="crumb-sep">/</span>}
-              <button className="crumb" onClick={() => openPage(b.id)}>
-                {b.title}
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
+      <div className="editor-toolbar-bar">
+        {breadcrumbs.length > 0 && (
+          <div className="breadcrumbs">
+            {breadcrumbs.map((b, i) => (
+              <span key={b.id}>
+                {i > 0 && <span className="crumb-sep">/</span>}
+                <button className="crumb" onClick={() => openPage(b.id)}>
+                  {b.title}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <EditorToolbar pageId={pageId} />
+      </div>
       <div className="editor-head">
         <input
           className="title-input"
@@ -112,23 +112,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <span className={`save-indicator ${saved ? "saved" : ""}`}>
           {saved ? "已保存" : "保存中…"}
         </span>
-        <HistoryPanel pageId={pageId} />
         {error && <span className="error-badge">{error}</span>}
       </div>
       <ErrorBoundary>
         <Editor
           key={pageId}
           pageId={pageId}
-          contentJson={contentJson}
+          contentJson={current?.content_json ?? ""}
           onSave={onEditorSave}
           searchQuery={searchQuery}
-          onExport={async (markdown) => {
-            try {
-              await navigator.clipboard.writeText(markdown);
-            } catch (e) {
-              console.error("clipboard write failed", e);
-            }
-          }}
         />
       </ErrorBoundary>
       <BacklinksPanel pageId={pageId} />
