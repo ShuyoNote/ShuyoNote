@@ -5,6 +5,7 @@ import type { PageMeta } from "../types";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
+import { BackupButton } from "./BackupButton";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -174,6 +175,7 @@ export function PageTree({
         <div className="sidebar-header-actions">
           <TrashPanel />
           <SyncPanel />
+          <BackupButton />
           <div className="new-menu">            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
               新建 ▾
             </button>

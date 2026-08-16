@@ -67,4 +67,6 @@ export const api = {
   purgePage: (id: string) => invoke<void>("purge_page", { id }),
   listVersions: (pageId: string) => invoke<PageVersion[]>("list_versions", { pageId }),
   restoreVersion: (versionId: string) => invoke<PageDetail>("restore_version", { versionId }),
+  exportBackup: (destPath: string) =>
+    invoke<{ path: string; size: number }>("export_backup", { destPath }),
 };

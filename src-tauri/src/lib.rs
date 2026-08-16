@@ -1,5 +1,6 @@
 mod attachments;
 mod backlinks;
+mod backup;
 mod commands;
 mod db;
 mod models;
@@ -17,6 +18,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let conn = db::init(app_data_dir).map_err(|e| {
@@ -56,6 +58,7 @@ pub fn run() {
             trash::purge_page,
             versions::list_versions,
             versions::restore_version,
+            backup::export_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
