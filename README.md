@@ -1,4 +1,8 @@
-# ShuyoNote
+<p align="center">
+  <img src="design/logo/app-icon.png" alt="ShuyoNote Logo" width="128" height="128" />
+</p>
+
+<h1 align="center">ShuyoNote</h1>
 
 <p align="center">
   <strong>本地优先 · 类 Notion 的知识管理桌面应用</strong><br>
@@ -14,11 +18,13 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
 
-## 简介
+---
+
+## 📖 简介
 
 ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它借鉴了 Notion 的块编辑器体验，但将全部数据保存在本地 SQLite 数据库中——无需注册、无云端依赖、离线即可使用。需要多设备协作时，可自建轻量同步服务，通过变更日志实现增量同步与冲突合并。
 
-## 特性
+## ✨ 特性
 
 ### 编辑体验
 - **块编辑器**：基于 Lexical，支持标题、引用、Callout、代码块、列表、待办、表格、分隔线等 12 种块类型
@@ -60,7 +66,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **编辑器查找**：`Ctrl+F` 高亮全部命中并逐个导航
 - **多窗口**：页面可弹出到独立窗口编辑
 
-## 快捷键
+## ⌨️ 快捷键
 
 | 快捷键 | 功能 |
 |--------|------|
@@ -72,7 +78,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 | `Esc` | 关闭查找栏 / 命令面板 / 弹层 |
 | `/` | 打开斜杠菜单 |
 
-## 架构
+## 🏗️ 架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -103,7 +109,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 
 **数据模型**：一页 = 一个 Lexical 文档。块映射为 Lexical 根级节点，页面层级用 `parent_id` 树表达。
 
-## 技术栈
+## 🧰 技术栈
 
 | 层 | 技术 |
 |----|------|
@@ -115,13 +121,13 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 | 同步 | outbox 变更日志 + LWW · reqwest · 自建 Axum 服务端 |
 | 备份 | rusqlite 在线 backup API + zip |
 
-## 开发环境要求
+## 🛠️ 开发环境要求
 
 - **Node.js** ≥ 20 与 **pnpm**
 - **Rust** stable（1.94+）与 cargo
 - Windows / macOS / Linux
 
-## 快速开始
+## 🚀 快速开始
 
 ```bash
 # 1. 安装依赖
@@ -136,7 +142,7 @@ pnpm tauri dev
 
 首次启动会在系统应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`）创建 SQLite 数据库（WAL 模式）。
 
-## 构建发布
+## 📦 构建发布
 
 ```bash
 pnpm tauri build
@@ -144,7 +150,7 @@ pnpm tauri build
 
 产物位于 `src-tauri/target/release/`。
 
-## 多设备同步
+## 🔄 多设备同步
 
 ### 1. 启动同步服务端
 
@@ -169,7 +175,7 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 
 **同步机制**：本地每次写操作在 `changes` 表记录 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。
 
-## 项目结构
+## 📁 项目结构
 
 ```
 ShuyoNote/
@@ -194,20 +200,21 @@ ShuyoNote/
 │       ├── backup.rs         # 备份导出 / 导入
 │       └── windows.rs        # 多窗口
 ├── sync-server/              # 同步服务端（独立 Rust 二进制）
-├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划）
+├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划 / Logo）
 ├── docs/plans/               # 架构与开发方案文档
 └── CHANGELOG.md              # 版本变更日志
 ```
 
-## 文档体系
+## 📚 文档体系
 
 | 文档 | 内容 |
 |------|------|
 | [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md) | 需求分析、数据模型、ADR、同步协议与路线图 |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
+| [design/logo/README.md](design/logo/README.md) | 应用 Logo（应用图标 / 单色图形 / 字标 / 主图） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
-## 路线图
+## 🗺️ 路线图
 
 - [x] MVP：页面树 + 富文本 + 自动保存
 - [x] 块系统：斜杠菜单 / 待办 / 表格 / Callout
@@ -223,6 +230,6 @@ ShuyoNote/
 - [ ] 导出 PDF
 - [ ] 移动端适配
 
-## License
+## 📄 License
 
 MIT
