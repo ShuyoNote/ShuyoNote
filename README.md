@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
-  <img src="https://img.shields.io/badge/Lexical-0.49-2383e2" alt="lexical">
+  <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
   <img src="https://img.shields.io/badge/React-19-61dafb" alt="react">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
@@ -23,6 +23,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 ### 编辑体验
 - **块编辑器**：基于 Lexical，支持标题、引用、Callout、代码块、列表、待办、表格、分隔线等 12 种块类型
 - **斜杠菜单**：输入 `/` 快速插入任意块
+- **块拖拽排序**：悬停块左侧出现 `⋮⋮` 手柄，拖拽实时显示插入指示线，松手重排
 - **图片粘贴**：截图/复制图片直接粘贴，内容寻址（SHA-256）去重存储
 - **Markdown**：快捷键输入、一键导入/导出、导出 HTML
 
@@ -46,9 +47,11 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **自动定时同步**：启动即同步，之后每 5 分钟周期同步
 
 ### 体验优化
+- **设计系统 v2**：品牌蓝 + 中性面 + 多彩分类色的统一 token 体系，参考 FlowUs / Wolai
 - **暗色模式**：亮色 / 暗色 / 跟随系统三态
-- **命令面板**：`Ctrl+K` 统一调用插件命令
-- **全局快捷键**：见下表
+- **命令面板**：`Ctrl+K` 搜索页面与命令，分组展示、键盘导航
+- **Toast 反馈**：保存 / 同步 / 备份 / 删除 / 恢复等操作底部提示，替代系统弹窗
+- **编辑器查找**：`Ctrl+F` 高亮全部命中并逐个导航
 - **多窗口**：页面可弹出到独立窗口编辑
 
 ## 快捷键
@@ -167,10 +170,10 @@ ShuyoNote/
 ├── src/                      # 前端（React + Lexical）
 │   ├── editor/               # 编辑器、自定义节点（Callout/Image）、插件
 │   ├── components/           # 侧边栏、页面树、搜索、看板、各面板
-│   ├── store/                # Zustand（notes / theme）
+│   ├── store/                # Zustand（notes / theme / sidebar / toast）
 │   ├── hooks/                # 自动同步 / 全局快捷键
 │   ├── plugins/              # 插件注册表（命令面板扩展点）
-│   └── lib/                  # Tauri IPC 封装
+│   └── lib/                  # Tauri IPC 封装 / 标签分类色
 ├── src-tauri/                # Tauri 后端（Rust）
 │   └── src/
 │       ├── db.rs             # SQLite 连接 / 迁移
@@ -185,12 +188,18 @@ ShuyoNote/
 │       ├── backup.rs         # 备份导出 / 导入
 │       └── windows.rs        # 多窗口
 ├── sync-server/              # 同步服务端（独立 Rust 二进制）
-└── docs/plans/               # 架构与开发方案文档
+├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划）
+├── docs/plans/               # 架构与开发方案文档
+└── CHANGELOG.md              # 版本变更日志
 ```
 
-## 设计文档
+## 文档体系
 
-完整架构与开发方案见 [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md)，包含需求分析、数据模型、ADR、同步协议与路线图。
+| 文档 | 内容 |
+|------|------|
+| [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md) | 需求分析、数据模型、ADR、同步协议与路线图 |
+| [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
+| [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
 ## 路线图
 
@@ -201,6 +210,8 @@ ShuyoNote/
 - [x] 标签 / 反链 / 文件夹 / 看板
 - [x] 回收站 / 版本历史 / 整库备份
 - [x] 暗色模式 / 命令面板 / 多窗口
+- [x] 块拖拽排序 / 编辑器查找
+- [x] UI/UX 设计系统 v2（token / Toast / 分类色 / 命令面板增强 / 骨架屏）
 - [ ] 端到端加密
 - [ ] 导出 PDF
 - [ ] 移动端适配
