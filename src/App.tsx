@@ -5,6 +5,7 @@ import { TagBar } from "./components/TagBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { BoardView } from "./components/BoardView";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
@@ -77,20 +78,22 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <HistoryPanel pageId={pageId} />
         {error && <span className="error-badge">{error}</span>}
       </div>
-      <Editor
-        key={pageId}
-        pageId={pageId}
-        contentJson={contentJson}
-        onSave={onEditorSave}
-        searchQuery={searchQuery}
-        onExport={async (markdown) => {
-          try {
-            await navigator.clipboard.writeText(markdown);
-          } catch (e) {
-            console.error("clipboard write failed", e);
-          }
-        }}
-      />
+      <ErrorBoundary>
+        <Editor
+          key={pageId}
+          pageId={pageId}
+          contentJson={contentJson}
+          onSave={onEditorSave}
+          searchQuery={searchQuery}
+          onExport={async (markdown) => {
+            try {
+              await navigator.clipboard.writeText(markdown);
+            } catch (e) {
+              console.error("clipboard write failed", e);
+            }
+          }}
+        />
+      </ErrorBoundary>
       <BacklinksPanel pageId={pageId} />
       <TagBar pageId={pageId} />
     </div>

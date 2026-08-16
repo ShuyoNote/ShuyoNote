@@ -69,10 +69,24 @@ interface EditorProps {
   searchQuery?: string;
 }
 
+function isValidLexicalNode(node: any): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (typeof node.type !== "string") return false;
+  // listitem must have a paragraph (or another block) child, never bare text.
+  if (node.type === "listitem") {
+    const kids = Array.isArray(node.children) ? node.children : [];
+    for (const k of kids) {
+      if (k && k.type === "text") return false;
+    }
+  }
+  const children = Array.isArray(node.children) ? node.children : [];
+  return children.every(isValidLexicalNode);
+}
+
 function parseEditorState(contentJson: string): string | null {
   try {
     const parsed = JSON.parse(contentJson);
-    if (parsed && parsed.root) return contentJson;
+    if (parsed && parsed.root && isValidLexicalNode(parsed.root)) return contentJson;
   } catch {
     // fall through to empty
   }
