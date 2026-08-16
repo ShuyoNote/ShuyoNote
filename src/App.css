@@ -6,20 +6,52 @@
   --text-dim: #9b9a97;
   --accent: #2383e2;
   --hover: #efefed;
+  --hover-strong: #dddddd;
+  --on-accent: #ffffff;
+  --danger: #e03e3e;
+  --mark-bg: #fdeec3;
+  --chip-bg: #eef2f6;
+  --code-bg: #f1f1ef;
+  --codeblock-bg: #f7f7f5;
+  --callout-bg: #f1f8fe;
+  --callout-border: #d3e5f7;
+  --highlight-bg: #ffe08a;
+  --highlight-active-bg: #ffb347;
+}
+
+[data-theme="dark"] {
+  --bg: #191919;
+  --bg-sidebar: #202020;
+  --border: #333333;
+  --text: #d4d4d4;
+  --text-dim: #9b9b9b;
+  --accent: #529cff;
+  --hover: #2a2a2a;
+  --hover-strong: #3a3a3a;
+  --on-accent: #ffffff;
+  --danger: #ff6b6b;
+  --mark-bg: #4a3f1f;
+  --chip-bg: #2f3a44;
+  --code-bg: #2a2a2a;
+  --codeblock-bg: #222222;
+  --callout-bg: #1f2a35;
+  --callout-border: #2f4a63;
+  --highlight-bg: rgba(255, 200, 80, 0.45);
+  --highlight-active-bg: rgba(255, 150, 40, 0.6);
 }
 
 ::highlight(shuyo-search) {
-  background-color: #ffe08a;
+  background-color: var(--highlight-bg);
   color: inherit;
 }
 
 ::highlight(shuyo-find) {
-  background-color: #ffe08a;
+  background-color: var(--highlight-bg);
   color: inherit;
 }
 
 ::highlight(shuyo-find-active) {
-  background-color: #ffb347;
+  background-color: var(--highlight-active-bg);
   color: inherit;
 }
 
@@ -171,7 +203,7 @@ body,
 .btn-new {
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
@@ -247,6 +279,20 @@ body,
 .btn-backup:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+.btn-theme {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.btn-theme:hover {
+  background: var(--hover);
 }
 
 .backup-menu {
@@ -362,7 +408,7 @@ body,
 
 .view-switch-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -614,7 +660,7 @@ body,
 }
 
 .search-item-snippet mark {
-  background: #fdeec3;
+  background: var(--mark-bg);
   color: inherit;
   border-radius: 2px;
 }
@@ -691,7 +737,7 @@ body,
 }
 
 .tree-actions button:hover {
-  background: #ddd;
+  background: var(--hover-strong);
   color: var(--text);
 }
 
@@ -745,7 +791,7 @@ body,
 }
 
 .error-badge {
-  color: #e03e3e;
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -829,7 +875,7 @@ body,
 }
 
 .editor-error {
-  color: #e03e3e;
+  color: var(--danger);
   padding: 16px;
 }
 
@@ -860,8 +906,8 @@ body,
 }
 
 .editor-callout {
-  background: #f1f8fe;
-  border: 1px solid #d3e5f7;
+  background: var(--callout-bg);
+  border: 1px solid var(--callout-border);
   border-left: 4px solid var(--accent);
   border-radius: 6px;
   padding: 10px 14px;
@@ -1002,7 +1048,7 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #eef2f6;
+  background: var(--chip-bg);
   color: var(--text);
   border-radius: 12px;
   padding: 2px 8px;
@@ -1056,7 +1102,7 @@ body,
 
 .tag-filter-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -1171,7 +1217,7 @@ body,
 }
 
 .editor-code {
-  background: #f1f1ef;
+  background: var(--code-bg);
   border-radius: 4px;
   padding: 1px 4px;
   font-family: "SF Mono", Consolas, monospace;
@@ -1184,7 +1230,7 @@ body,
 }
 
 .editor-codeblock {
-  background: #f7f7f5;
+  background: var(--codeblock-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;

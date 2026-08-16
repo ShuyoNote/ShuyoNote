@@ -6,6 +6,7 @@ import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -195,6 +196,7 @@ export function PageTree({
           <TrashPanel />
           <SyncPanel />
           <BackupButton />
+          <ThemeToggle />
           <div className="new-menu">            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
               新建 ▾
             </button>
