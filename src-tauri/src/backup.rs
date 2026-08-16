@@ -115,8 +115,7 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn import_backup(app: tauri::AppHandle, db: State<'_, Db>, src_path: String) -> Result<(), String> {
-    let src = PathBuf::from(&src_path);
+pub fn import_backup(app: tauri::AppHandle, db: State<'_, Db>, src_path: String) -> Result<(), String> {    let src = PathBuf::from(&src_path);
     if !src.exists() {
         return Err("备份文件不存在".to_string());
     }
@@ -177,4 +176,12 @@ pub fn import_backup(app: tauri::AppHandle, db: State<'_, Db>, src_path: String)
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    if let Some(parent) = Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())
 }

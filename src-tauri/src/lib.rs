@@ -60,6 +60,7 @@ pub fn run() {
             versions::restore_version,
             backup::export_backup,
             backup::import_backup,
+            backup::write_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -70,4 +70,6 @@ export const api = {
   exportBackup: (destPath: string) =>
     invoke<{ path: string; size: number }>("export_backup", { destPath }),
   importBackup: (srcPath: string) => invoke<void>("import_backup", { srcPath }),
+  writeTextFile: (path: string, content: string) =>
+    invoke<void>("write_text_file", { path, content }),
 };
