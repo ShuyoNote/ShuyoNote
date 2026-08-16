@@ -199,6 +199,95 @@ body,
   background: var(--hover);
 }
 
+/* Trash */
+.trash-panel {
+  position: relative;
+}
+
+.btn-trash {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-trash:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.trash-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  z-index: 40;
+  padding: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.trash-empty {
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+.trash-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.trash-item:hover {
+  background: var(--hover);
+}
+
+.trash-icon {
+  flex-shrink: 0;
+}
+
+.trash-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-actions {
+  display: none;
+  gap: 4px;
+}
+
+.trash-item:hover .trash-actions {
+  display: inline-flex;
+}
+
+.trash-actions button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.trash-actions button:hover {
+  background: var(--hover);
+}
+
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;

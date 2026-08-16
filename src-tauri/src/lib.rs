@@ -6,6 +6,7 @@ mod models;
 mod search;
 mod sync;
 mod tags;
+mod trash;
 
 use db::Db;
 use std::sync::Mutex;
@@ -47,6 +48,9 @@ pub fn run() {
             tags::add_tag,
             tags::remove_tag,
             tags::pages_by_tag,
+            trash::list_deleted,
+            trash::restore_page,
+            trash::purge_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

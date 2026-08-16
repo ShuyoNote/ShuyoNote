@@ -4,6 +4,7 @@ import { useNotes } from "../store/notes";
 import type { PageMeta } from "../types";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
+import { TrashPanel } from "./TrashPanel";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -165,6 +166,7 @@ export function PageTree() {
       <div className="sidebar-header">
         <span className="sidebar-title">ShuyoNote</span>
         <div className="sidebar-header-actions">
+          <TrashPanel />
           <SyncPanel />
           <div className="new-menu">
             <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>

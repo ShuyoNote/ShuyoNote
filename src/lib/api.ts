@@ -60,4 +60,7 @@ export const api = {
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),
   removeTag: (pageId: string, tagId: string) => invoke<void>("remove_tag", { pageId, tagId }),
   pagesByTag: (tagId: string) => invoke<PageMeta[]>("pages_by_tag", { tagId }),
+  listDeleted: () => invoke<PageMeta[]>("list_deleted"),
+  restorePage: (id: string) => invoke<void>("restore_page", { id }),
+  purgePage: (id: string) => invoke<void>("purge_page", { id }),
 };
