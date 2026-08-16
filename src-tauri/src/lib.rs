@@ -59,6 +59,7 @@ pub fn run() {
             versions::list_versions,
             versions::restore_version,
             backup::export_backup,
+            backup::import_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

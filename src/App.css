@@ -234,6 +234,26 @@ body,
   color: var(--text);
 }
 
+.backup-menu {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-import {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-import:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 .trash-popover {
   position: absolute;
   top: calc(100% + 6px);
