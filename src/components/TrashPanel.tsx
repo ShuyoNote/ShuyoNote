@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { toast } from "../store/toast";
 import type { PageMeta } from "../types";
 
 export function TrashPanel() {
@@ -19,8 +20,9 @@ export function TrashPanel() {
       await api.restorePage(id);
       setItems(await api.listDeleted());
       await loadPages();
+      toast("已恢复", "success");
     } catch (e) {
-      console.error(e);
+      toast(`恢复失败：${e}`, "error");
     }
   };
 
@@ -29,8 +31,9 @@ export function TrashPanel() {
     try {
       await api.purgePage(id);
       setItems(await api.listDeleted());
+      toast("已彻底删除", "success");
     } catch (e) {
-      console.error(e);
+      toast(`删除失败：${e}`, "error");
     }
   };
 

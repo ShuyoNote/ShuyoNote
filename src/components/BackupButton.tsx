@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { toast } from "../store/toast";
 
 export function BackupButton() {
   const { loadPages } = useNotes();
@@ -15,9 +16,9 @@ export function BackupButton() {
       });
       if (!path) return;
       const result = await api.exportBackup(path);
-      alert(`备份完成：${result.path}\n大小 ${(result.size / 1024).toFixed(1)} KB`);
+      toast(`备份完成：大小 ${(result.size / 1024).toFixed(1)} KB`, "success");
     } catch (e) {
-      alert(`导出失败：${e}`);
+      toast(`导出失败：${e}`, "error");
     }
   };
 
@@ -32,9 +33,9 @@ export function BackupButton() {
       if (!confirm("导入将覆盖当前全部数据（页面、标签、附件），且不可撤销。确定继续？")) return;
       await api.importBackup(path as string);
       await loadPages();
-      alert("备份导入完成");
+      toast("备份导入完成", "success");
     } catch (e) {
-      alert(`导入失败：${e}`);
+      toast(`导入失败：${e}`, "error");
     }
   };
 

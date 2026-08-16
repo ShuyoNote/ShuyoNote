@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { toast } from "../store/toast";
 import type { PageVersion } from "../types";
 
 function formatTime(ms: number): string {
@@ -26,8 +27,9 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
       updateCurrent(page);
       setOpen(false);
       openPage(page.id);
+      toast("已恢复该版本", "success");
     } catch (e) {
-      console.error(e);
+      toast(`恢复失败：${e}`, "error");
     }
   };
 

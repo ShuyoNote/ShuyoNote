@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSidebar } from "../store/sidebar";
+import { toast } from "../store/toast";
+import { tagColor } from "../lib/tagColor";
 import type { PageMeta } from "../types";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
@@ -188,10 +190,11 @@ function TreeItem({
           )}
           <button
             title="删除"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
               if (confirm(`删除「${node.title || "未命名"}」及其所有子节点？`)) {
-                deletePage(node.id);
+                await deletePage(node.id);
+                toast("已移到回收站", "success");
               }
             }}
           >
@@ -215,7 +218,7 @@ export function PageTree({
   view: "notes" | "board";
   onViewChange: (v: "notes" | "board") => void;
 }) {
-  const { pages, createPage, createFolder } = useNotes();
+  const { pages, createPage, createFolder, loading } = useNotes();
   const { collapsed, toggle } = useSidebar();
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -321,6 +324,7 @@ export function PageTree({
                   className={`tag-filter ${activeTag === t.id ? "tag-filter-active" : ""}`}
                   onClick={() => setActiveTag(t.id)}
                 >
+                  <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
                   {t.name}
                 </button>
               ))}
@@ -329,7 +333,13 @@ export function PageTree({
         </>
       )}
       <div className="sidebar-tree">
-        {tree.length === 0 ? (
+        {loading && pages.length === 0 ? (
+          <div className="sidebar-skeleton">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="skeleton-row" style={{ width: `${100 - i * 12}%` }} />
+            ))}
+          </div>
+        ) : tree.length === 0 ? (
           <div className="sidebar-empty">
             {collapsed ? "·" : activeTag ? "该标签下暂无页面" : "暂无页面，点击「新建页面」开始"}
           </div>

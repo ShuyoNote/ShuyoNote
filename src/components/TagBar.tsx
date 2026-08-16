@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
 
 export function TagBar({ pageId }: { pageId: string }) {
@@ -34,7 +35,8 @@ export function TagBar({ pageId }: { pageId: string }) {
   return (
     <div className="tag-bar">
       {tags.map((t) => (
-        <span key={t.id} className="tag-chip">
+        <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name).soft }}>
+          <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
           {t.name}
           <button className="tag-remove" onClick={() => remove(t.id)} title="移除标签">
             ×

@@ -3,6 +3,7 @@ import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
 import { CommandPalette } from "./components/CommandPalette";
+import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -162,6 +163,7 @@ function App() {
           <NoteEditor pageId={standaloneId} />
         </div>
         <CommandPalette />
+        <Toaster />
       </div>
     );
   }
@@ -191,6 +193,7 @@ function App() {
         </div>
       )}
       <CommandPalette />
+      <Toaster />
     </div>
   );
 }
