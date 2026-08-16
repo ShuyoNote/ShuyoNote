@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import type { PageMeta } from "../types";
 import { SearchPanel } from "./SearchPanel";
@@ -114,7 +115,28 @@ function TreeItem({
 
 export function PageTree() {
   const { pages, createPage } = useNotes();
-  const tree = useMemo(() => buildTree(pages), [pages]);
+  const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [taggedIds, setTaggedIds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    api.listTags().then(setTags).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeTag) {
+      api.pagesByTag(activeTag).then((ps) => setTaggedIds(new Set(ps.map((p) => p.id))));
+    } else {
+      setTaggedIds(null);
+    }
+  }, [activeTag]);
+
+  const visiblePages = useMemo(() => {
+    if (!taggedIds) return pages;
+    return pages.filter((p) => taggedIds.has(p.id));
+  }, [pages, taggedIds]);
+
+  const tree = useMemo(() => buildTree(visiblePages), [visiblePages]);
 
   return (
     <div className="sidebar">
@@ -130,9 +152,30 @@ export function PageTree() {
       <div className="sidebar-search">
         <SearchPanel />
       </div>
+      {tags.length > 0 && (
+        <div className="sidebar-tags">
+          <button
+            className={`tag-filter ${activeTag === null ? "tag-filter-active" : ""}`}
+            onClick={() => setActiveTag(null)}
+          >
+            全部
+          </button>
+          {tags.map((t) => (
+            <button
+              key={t.id}
+              className={`tag-filter ${activeTag === t.id ? "tag-filter-active" : ""}`}
+              onClick={() => setActiveTag(t.id)}
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="sidebar-tree">
         {tree.length === 0 ? (
-          <div className="sidebar-empty">暂无页面，点击「新建页面」开始</div>
+          <div className="sidebar-empty">
+            {activeTag ? "该标签下暂无页面" : "暂无页面，点击「新建页面」开始"}
+          </div>
         ) : (
           tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)
         )}

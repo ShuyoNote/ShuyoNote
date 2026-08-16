@@ -26,3 +26,8 @@ export interface SearchResult {
   title: string;
   snippet: string;
 }
+
+export interface Tag {
+  id: string;
+  name: string;
+}

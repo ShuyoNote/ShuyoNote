@@ -531,6 +531,80 @@ body,
   background: var(--hover);
 }
 
+/* Tags */
+.tag-bar {
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 8px 0 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eef2f6;
+  color: var(--text);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.tag-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  line-height: 1;
+}
+
+.tag-remove:hover {
+  color: var(--text);
+}
+
+.tag-input {
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text);
+  font-family: inherit;
+  background: transparent;
+  width: 90px;
+}
+
+.sidebar-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 12px 8px;
+}
+
+.tag-filter {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tag-filter:hover {
+  background: var(--hover);
+}
+
+.tag-filter-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 .editor-ul {
   padding-left: 1.4em;
   margin: 0.3em 0;

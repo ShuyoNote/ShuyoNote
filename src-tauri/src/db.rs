@@ -88,6 +88,18 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             PRIMARY KEY (source_id, target_id)
         );
         CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_id);
+
+        CREATE TABLE IF NOT EXISTS tags (
+            id   TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS page_tags (
+            page_id TEXT NOT NULL,
+            tag_id  TEXT NOT NULL,
+            PRIMARY KEY (page_id, tag_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag_id);
         "#,
     )?;
 

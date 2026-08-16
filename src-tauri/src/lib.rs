@@ -5,6 +5,7 @@ mod db;
 mod models;
 mod search;
 mod sync;
+mod tags;
 
 use db::Db;
 use std::sync::Mutex;
@@ -37,6 +38,11 @@ pub fn run() {
             attachments::save_image,
             attachments::attachment_path,
             backlinks::get_backlinks,
+            tags::list_tags,
+            tags::page_tags,
+            tags::add_tag,
+            tags::remove_tag,
+            tags::pages_by_tag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

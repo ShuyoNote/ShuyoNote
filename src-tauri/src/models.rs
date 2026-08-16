@@ -42,3 +42,9 @@ pub struct AttachmentMeta {
     /// Local file path for display via convertFileSrc.
     pub path: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+}
