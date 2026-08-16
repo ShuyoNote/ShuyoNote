@@ -1616,6 +1616,138 @@ body,
   background: var(--danger-soft);
 }
 
+/* Table toolbar (Wolai-style) */
+.table-menu {
+  position: fixed;
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: pop 0.14s ease;
+}
+
+.table-menu button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.table-menu button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.table-menu button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.table-menu button.danger {
+  color: var(--danger);
+}
+
+.table-menu button.danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.table-menu-sep {
+  display: block;
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--border);
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.table-menu-swatch {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+}
+
+/* Background color palette */
+.table-palette {
+  position: fixed;
+  z-index: 57;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 152px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: pop 0.12s ease;
+}
+
+.table-palette button {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  position: relative;
+  padding: 0;
+}
+
+.table-palette button:hover {
+  transform: scale(1.12);
+}
+
+.table-palette button.picked {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.palette-clear {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 14px;
+  height: 2px;
+  background: var(--danger);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+/* Cell selection highlight */
+.table-selecting {
+  user-select: none;
+}
+
+.table-selecting ::selection {
+  background: transparent;
+}
+
+.editor-table-cell-selected {
+  background: var(--accent-soft) !important;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.table-resize-handle {
+  position: fixed;
+  z-index: 56;
+  width: 6px;
+  cursor: col-resize;
+}
+
 .is-dragging-block,
 .is-dragging-block * {
   cursor: grabbing !important;
@@ -1708,8 +1840,21 @@ body,
 
 .editor-hr {
   border: none;
-  border-top: 1px solid var(--border);
-  margin: 1em 0;
+  background: none;
+  height: 22px;
+  margin: 0.4em 0;
+  position: relative;
+}
+
+.editor-hr::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--border);
 }
 
 .editor-image-container {

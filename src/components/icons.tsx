@@ -206,3 +206,158 @@ export function FileCodeIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function GripVerticalIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
+export function AlignLeftIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="10" x2="14" y2="10" />
+      <line x1="3" y1="14" x2="21" y2="14" />
+      <line x1="3" y1="18" x2="14" y2="18" />
+    </Icon>
+  );
+}
+
+export function AlignCenterIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="6" y1="10" x2="18" y2="10" />
+      <line x1="3" y1="14" x2="21" y2="14" />
+      <line x1="6" y1="18" x2="18" y2="18" />
+    </Icon>
+  );
+}
+
+export function AlignRightIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="10" y1="10" x2="21" y2="10" />
+      <line x1="3" y1="14" x2="21" y2="14" />
+      <line x1="10" y1="18" x2="21" y2="18" />
+    </Icon>
+  );
+}
+
+export function FillIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3s6 6.4 6 11a6 6 0 0 1-12 0C6 9.4 12 3 12 3Z" />
+    </Icon>
+  );
+}
+
+export function InsertRowAboveIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="9" width="18" height="12" rx="2" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="9" y1="9" x2="9" y2="21" />
+      <line x1="15" y1="9" x2="15" y2="21" />
+      <path d="M12 3v4" />
+      <path d="M9 5.5 12 3l3 2.5" />
+    </Icon>
+  );
+}
+
+export function InsertRowBelowIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="12" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="9" y1="3" x2="9" y2="15" />
+      <line x1="15" y1="3" x2="15" y2="15" />
+      <path d="M12 21v-4" />
+      <path d="m9 18.5 3 2.5 3-2.5" />
+    </Icon>
+  );
+}
+
+export function InsertColumnLeftIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="9" y="3" width="12" height="18" rx="2" />
+      <line x1="9" y1="9" x2="21" y2="9" />
+      <line x1="9" y1="15" x2="21" y2="15" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+      <path d="M3 12h4" />
+      <path d="M5.5 9 3 12l2.5 3" />
+    </Icon>
+  );
+}
+
+export function InsertColumnRightIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="12" height="18" rx="2" />
+      <line x1="3" y1="9" x2="15" y2="9" />
+      <line x1="3" y1="15" x2="15" y2="15" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+      <path d="M21 12h-4" />
+      <path d="M18.5 9 21 12l-2.5 3" />
+    </Icon>
+  );
+}
+
+export function HeaderRowIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="9" y1="9" x2="9" y2="21" />
+      <line x1="15" y1="9" x2="15" y2="21" />
+      <rect x="3" y="3" width="18" height="6" fill="currentColor" stroke="none" opacity="0.35" />
+    </Icon>
+  );
+}
+
+export function HeaderColumnIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+      <rect x="3" y="3" width="6" height="18" fill="currentColor" stroke="none" opacity="0.35" />
+    </Icon>
+  );
+}
+
+export function DeleteRowIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="7" width="18" height="10" rx="2" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="9" y1="7" x2="9" y2="17" />
+      <line x1="15" y1="7" x2="15" y2="17" />
+      <line x1="4" y1="3" x2="20" y2="21" />
+    </Icon>
+  );
+}
+
+export function DeleteColumnIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="7" y="3" width="10" height="18" rx="2" />
+      <line x1="7" y1="9" x2="17" y2="9" />
+      <line x1="7" y1="15" x2="17" y2="15" />
+      <line x1="12" y1="3" x2="12" y2="21" />
+      <line x1="4" y1="3" x2="20" y2="21" />
+    </Icon>
+  );
+}

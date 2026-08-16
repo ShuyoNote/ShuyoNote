@@ -29,6 +29,8 @@ import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
 import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
 import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
+import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
+import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
 
 const theme = {
@@ -62,8 +64,10 @@ const theme = {
   hr: "editor-hr",
   table: "editor-table",
   tableScrollableWrapper: "editor-table-scrollable-wrapper",
+  tableSelection: "table-selecting",
   tableCell: "editor-table-cell",
   tableCellHeader: "editor-table-cell-header",
+  tableCellSelected: "editor-table-cell-selected",
   tableRow: "editor-table-row",
 };
 
@@ -168,6 +172,8 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <FindPlugin />
         <SelectionToolbarPlugin />
         <LinkPopoverPlugin />
+        <TableMenuPlugin />
+        <TableResizerPlugin />
         <EditorStoreSync />
       </div>
     </LexicalComposer>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $cloneWithProperties, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot } from "lexical";
+import { $findTableNode } from "@lexical/table";
 
 // Notion-style block drag handle: a "⋮⋮" grip appears to the left of the
 // top-level block under the cursor. Clicking it opens a small menu
@@ -28,7 +29,15 @@ function getTopLevelKey(
   let key: string | null = null;
   editor.read(() => {
     const node = $getNearestNodeFromDOMNode(el);
-    const top = node?.getTopLevelElement();
+    if (!node) return;
+    const table = $findTableNode(node);
+    if (table) {
+      // Hovering anywhere inside a table targets the table as a whole: show a
+      // single handle on the table (not a per-cell handle).
+      key = table.getKey();
+      return;
+    }
+    const top = node.getTopLevelElement();
     key = top ? top.getKey() : null;
   });
   return key;

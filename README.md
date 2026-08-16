@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -25,6 +25,8 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **斜杠菜单**：输入 `/` 快速插入任意块
 - **块拖拽排序**：悬停块左侧出现 `⋮⋮` 手柄，拖拽实时显示插入指示线，松手重排
 - **块菜单**：点击 `⋮⋮` 手柄弹出「复制块 / 删除块」菜单
+- **表格交互**：Wolai 式悬浮工具栏（增删行列 / 表头行·列切换 / 对齐 / 背景色）+ 列宽拖拽调整 + 单元格选区高亮
+- **分隔线**：Wolai 风格细分隔线，垂直居中，悬停显示块手柄
 - **图片粘贴**：截图/复制图片直接粘贴，内容寻址（SHA-256）去重存储
 - **文件附件**：通用文件附件（多选导入、超大文件流式存取、打开 / 定位 / 移除）
 - **Markdown**：快捷键输入、一键导入/导出、导出 HTML
@@ -216,6 +218,7 @@ ShuyoNote/
 - [x] 暗色模式 / 命令面板 / 多窗口
 - [x] 块拖拽排序 / 编辑器查找
 - [x] UI/UX 设计系统 v2（token / Toast / 分类色 / 命令面板增强 / 骨架屏）
+- [x] 表格交互（悬浮工具栏 / 列宽拖拽 / 选区高亮）
 - [ ] 端到端加密
 - [ ] 导出 PDF
 - [ ] 移动端适配
