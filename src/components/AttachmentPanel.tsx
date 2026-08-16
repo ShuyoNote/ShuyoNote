@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import type { AttachmentMeta } from "../types";
+
+interface ImportProgressEvent {
+  index: number;
+  total: number;
+  name: string;
+  done: number;
+  size: number;
+}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -32,6 +41,7 @@ function iconFor(mime: string): string {
 export function AttachmentPanel({ pageId }: { pageId: string }) {
   const [attachments, setAttachments] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -46,6 +56,22 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     };
   }, [pageId]);
 
+  // Listen to streaming import progress emitted from the backend.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<ImportProgressEvent>("attachment-import-progress", (event) => {
+      const p = event.payload;
+      const current = p.size > 0 ? p.done / p.size : 1;
+      const overall = ((p.index + current) / p.total) * 100;
+      setProgress({ name: p.name, percent: Math.min(100, Math.round(overall)) });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   const addFiles = async () => {
     let selected: string | string[] | null;
     try {
@@ -58,6 +84,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     if (paths.length === 0) return;
 
     setImporting(true);
+    setProgress({ name: paths[0] ?? "", percent: 0 });
     try {
       const metas = await api.importAttachmentFiles(pageId, paths);
       setAttachments((prev) => [...metas, ...prev]);
@@ -66,6 +93,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
       toast(`添加失败：${e}`, "error");
     } finally {
       setImporting(false);
+      setProgress(null);
     }
   };
 
@@ -105,6 +133,17 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
           {importing ? "导入中…" : "＋ 添加文件"}
         </button>
       </div>
+      {progress && (
+        <div className="attachment-progress">
+          <div className="attachment-progress-label">
+            <span>导入中：{progress.name}</span>
+            <span>{progress.percent}%</span>
+          </div>
+          <div className="attachment-progress-track">
+            <div className="attachment-progress-fill" style={{ width: `${progress.percent}%` }} />
+          </div>
+        </div>
+      )}
       {attachments.length === 0 ? (
         <div className="attachment-empty">暂无附件，点击「添加文件」从本机导入（支持超大文件流式存取）</div>
       ) : (
