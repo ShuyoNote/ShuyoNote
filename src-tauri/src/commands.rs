@@ -1,6 +1,6 @@
 use crate::db::{now_ms, Db};
 use crate::models::{PageDetail, PageMeta};
-use crate::{backlinks, search, sync};
+use crate::{backlinks, search, sync, versions};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
@@ -11,7 +11,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
     db.0.lock().expect("db mutex poisoned")
 }
 
-fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
+pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
         "SELECT id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at
          FROM pages WHERE id = ?1 AND deleted_at IS NULL",
@@ -152,6 +152,9 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     let title = args.title.unwrap_or(cur_title);
     let content_json = args.content_json.unwrap_or(cur_json);
     let content_text = args.content_text.unwrap_or(cur_text);
+
+    // Snapshot the current state before overwriting (version history).
+    versions::snapshot_before_save(&c, &args.id, &title, &content_json, &content_text)?;
 
     c.execute(
         "UPDATE pages SET title = ?1, content_json = ?2, content_text = ?3, updated_at = ?4 WHERE id = ?5",

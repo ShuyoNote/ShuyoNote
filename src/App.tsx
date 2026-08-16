@@ -4,6 +4,7 @@ import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { BoardView } from "./components/BoardView";
+import { HistoryPanel } from "./components/HistoryPanel";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { api } from "./lib/api";
@@ -72,6 +73,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <span className={`save-indicator ${saved ? "saved" : ""}`}>
           {saved ? "已保存" : "保存中…"}
         </span>
+        <HistoryPanel pageId={pageId} />
         {error && <span className="error-badge">{error}</span>}
       </div>
       <Editor

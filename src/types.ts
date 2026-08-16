@@ -38,3 +38,11 @@ export interface BoardColumn {
   tag: Tag | null;
   pages: PageMeta[];
 }
+
+export interface PageVersion {
+  id: string;
+  page_id: string;
+  title: string;
+  content_text: string;
+  created_at: number;
+}

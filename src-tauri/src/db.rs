@@ -101,6 +101,16 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             PRIMARY KEY (page_id, tag_id)
         );
         CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag_id);
+
+        CREATE TABLE IF NOT EXISTS page_versions (
+            id           TEXT PRIMARY KEY,
+            page_id      TEXT NOT NULL,
+            title        TEXT NOT NULL DEFAULT '',
+            content_json TEXT NOT NULL DEFAULT '{}',
+            content_text TEXT NOT NULL DEFAULT '',
+            created_at   INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_page_versions_page ON page_versions(page_id, created_at DESC);
         "#,
     )?;
 
