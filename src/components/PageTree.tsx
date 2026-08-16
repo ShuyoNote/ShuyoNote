@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { useSidebar } from "../store/sidebar";
 import type { PageMeta } from "../types";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
@@ -173,6 +174,7 @@ export function PageTree({
   onViewChange: (v: "notes" | "board") => void;
 }) {
   const { pages, createPage, createFolder } = useNotes();
+  const { collapsed, toggle } = useSidebar();
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [taggedIds, setTaggedIds] = useState<Set<string> | null>(null);
@@ -198,80 +200,96 @@ export function PageTree({
   const tree = useMemo(() => buildTree(visiblePages), [visiblePages]);
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       <div className="sidebar-header">
-        <span className="sidebar-title">ShuyoNote</span>
+        {!collapsed && <span className="sidebar-title">ShuyoNote</span>}
         <div className="sidebar-header-actions">
-          <TrashPanel />
-          <SyncPanel />
-          <BackupButton />
-          <ThemeToggle />
-          <div className="new-menu">            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
-              新建 ▾
-            </button>
-            {newMenuOpen && (
-              <div className="new-menu-dropdown">
-                <button
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    createPage(null);
-                  }}
-                >
-                  📄 新建页面
+          {!collapsed && (
+            <>
+              <TrashPanel />
+              <SyncPanel />
+              <BackupButton />
+              <ThemeToggle />
+              <div className="new-menu">
+                <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
+                  新建 ▾
                 </button>
-                <button
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    createFolder(null);
-                  }}
-                >
-                  📁 新建文件夹
-                </button>
+                {newMenuOpen && (
+                  <div className="new-menu-dropdown">
+                    <button
+                      onClick={() => {
+                        setNewMenuOpen(false);
+                        createPage(null);
+                      }}
+                    >
+                      📄 新建页面
+                    </button>
+                    <button
+                      onClick={() => {
+                        setNewMenuOpen(false);
+                        createFolder(null);
+                      }}
+                    >
+                      📁 新建文件夹
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="sidebar-search">
-        <SearchPanel />
-      </div>
-      <div className="view-switch">
-        <button
-          className={`view-switch-btn ${view === "notes" ? "view-switch-active" : ""}`}
-          onClick={() => onViewChange("notes")}
-        >
-          📝 笔记
-        </button>
-        <button
-          className={`view-switch-btn ${view === "board" ? "view-switch-active" : ""}`}
-          onClick={() => onViewChange("board")}
-        >
-          📋 看板
-        </button>
-      </div>
-      {tags.length > 0 && (
-        <div className="sidebar-tags">
+            </>
+          )}
           <button
-            className={`tag-filter ${activeTag === null ? "tag-filter-active" : ""}`}
-            onClick={() => setActiveTag(null)}
+            className="btn-sidebar-toggle"
+            onClick={toggle}
+            title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
           >
-            全部
+            {collapsed ? "»" : "«"}
           </button>
-          {tags.map((t) => (
-            <button
-              key={t.id}
-              className={`tag-filter ${activeTag === t.id ? "tag-filter-active" : ""}`}
-              onClick={() => setActiveTag(t.id)}
-            >
-              {t.name}
-            </button>
-          ))}
         </div>
+      </div>
+      {!collapsed && (
+        <>
+          <div className="sidebar-search">
+            <SearchPanel />
+          </div>
+          <div className="view-switch">
+            <button
+              className={`view-switch-btn ${view === "notes" ? "view-switch-active" : ""}`}
+              onClick={() => onViewChange("notes")}
+            >
+              📝 笔记
+            </button>
+            <button
+              className={`view-switch-btn ${view === "board" ? "view-switch-active" : ""}`}
+              onClick={() => onViewChange("board")}
+            >
+              📋 看板
+            </button>
+          </div>
+          {tags.length > 0 && (
+            <div className="sidebar-tags">
+              <button
+                className={`tag-filter ${activeTag === null ? "tag-filter-active" : ""}`}
+                onClick={() => setActiveTag(null)}
+              >
+                全部
+              </button>
+              {tags.map((t) => (
+                <button
+                  key={t.id}
+                  className={`tag-filter ${activeTag === t.id ? "tag-filter-active" : ""}`}
+                  onClick={() => setActiveTag(t.id)}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
       <div className="sidebar-tree">
         {tree.length === 0 ? (
           <div className="sidebar-empty">
-            {activeTag ? "该标签下暂无页面" : "暂无页面，点击「新建页面」开始"}
+            {collapsed ? "·" : activeTag ? "该标签下暂无页面" : "暂无页面，点击「新建页面」开始"}
           </div>
         ) : (
           tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)
