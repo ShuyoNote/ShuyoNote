@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 160" width="720" height="160">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4D8DFF"/>
+      <stop offset="1" stop-color="#2952CC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 图标 -->
+  <g transform="translate(0,0)">
+    <rect x="0" y="0" width="160" height="160" rx="40" fill="url(#bg)"/>
+    <rect x="38" y="50" width="38" height="60" rx="7" fill="#FFFFFF"/>
+    <rect x="84" y="50" width="38" height="60" rx="7" fill="#FFFFFF"/>
+    <rect x="45" y="62" width="24" height="3" rx="1.5" fill="#C7D6FF"/>
+    <rect x="45" y="72" width="24" height="3" rx="1.5" fill="#C7D6FF"/>
+    <rect x="45" y="82" width="17" height="3" rx="1.5" fill="#C7D6FF"/>
+    <rect x="91" y="62" width="24" height="3" rx="1.5" fill="#C7D6FF"/>
+    <rect x="91" y="72" width="24" height="3" rx="1.5" fill="#C7D6FF"/>
+    <rect x="91" y="82" width="17" height="3" rx="1.5" fill="#C7D6FF"/>
+    <path d="M 122 38 Q 123 42, 128 43 Q 123 44, 122 48 Q 121 44, 116 43 Q 121 42, 122 38 Z" fill="#FFFFFF"/>
+  </g>
+
+  <!-- 字标 -->
+  <text x="196" y="104" font-family="system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="64" font-weight="700" letter-spacing="-1">
+    <tspan fill="#1F2329">Shuyo</tspan><tspan fill="#3370FF">Note</tspan>
+  </text>
+</svg>

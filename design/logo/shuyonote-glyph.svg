@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 单色/透明底图标：用于浅色界面、favicon、文档水印等 -->
+
+  <!-- 翻开的笔记：两页（品牌蓝） -->
+  <rect x="248" y="318" width="250" height="388" rx="42" fill="#3370FF"/>
+  <rect x="526" y="318" width="250" height="388" rx="42" fill="#3370FF"/>
+
+  <!-- 正文行（白） -->
+  <rect x="290" y="388" width="166" height="18" rx="9" fill="#FFFFFF" opacity="0.85"/>
+  <rect x="290" y="450" width="166" height="18" rx="9" fill="#FFFFFF" opacity="0.85"/>
+  <rect x="290" y="512" width="118" height="18" rx="9" fill="#FFFFFF" opacity="0.85"/>
+  <rect x="568" y="388" width="166" height="18" rx="9" fill="#FFFFFF" opacity="0.85"/>
+  <rect x="568" y="450" width="166" height="18" rx="9" fill="#FFFFFF" opacity="0.85"/>
+  <rect x="568" y="512" width="118" height="18" rx="9" fill="#FFFFFF" opacity="0.85"/>
+
+  <!-- 灵感火花 -->
+  <path d="M 770 238
+           Q 775.4 262.6, 800 268
+           Q 775.4 273.4, 770 298
+           Q 764.6 273.4, 740 268
+           Q 764.6 262.6, 770 238 Z"
+        fill="#3370FF"/>
+</svg>
