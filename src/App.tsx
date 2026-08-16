@@ -7,6 +7,7 @@ import { BoardView } from "./components/BoardView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
+import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
 import "./App.css";
@@ -100,6 +101,7 @@ function App() {
   const { pages, currentId, loadPages, error } = useNotes();
   const [view, setView] = useState<"notes" | "board">("notes");
   useAutoSync();
+  useGlobalShortcuts(() => setView((v) => (v === "board" ? "notes" : "board")));
 
   useEffect(() => {
     loadPages();

@@ -75,6 +75,7 @@ export function SearchPanel() {
   return (
     <div className="search-box" ref={boxRef}>
       <input
+        id="global-search-input"
         className="search-input"
         value={query}
         placeholder="搜索笔记…"
