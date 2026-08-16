@@ -1,15 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNearestNodeFromDOMNode, $getRoot } from "lexical";
 
 // Notion-style block drag handle: a "⋮⋮" grip appears to the left of the
 // top-level block under the cursor; dragging it reorders blocks.
+//
+// Implementation notes:
+// 1. We avoid HTML5 drag-and-drop (WebView2 / contenteditable interferes) and
+//    do a manual mousedown → mousemove → mouseup drag.
+// 2. The handle sits in the left gutter OUTSIDE the contenteditable, so hover
+//    detection runs on `document` (not the editor root) and the handle's hit
+//    area reaches the content edge with no gap.
+// 3. Target detection during drag walks the top-level blocks directly via
+//    `$getRoot().getChildren()` + `getElementByKey()` and compares
+//    `getBoundingClientRect()` — it does NOT rely on `$getNearestNodeFromDOMNode`
+//    / `elementFromPoint`, which can fail while the editor is mid-reconcile
+//    after `setEditable(false)`.
 
-function getTopLevelKey(editor: ReturnType<typeof useLexicalComposerContext>[0], dom: Node | null): string | null {
+function getTopLevelKey(
+  editor: ReturnType<typeof useLexicalComposerContext>[0],
+  dom: Node | null
+): string | null {
   let el = dom instanceof HTMLElement ? dom : dom?.parentElement ?? null;
   if (!el) return null;
   let key: string | null = null;
-  // Must use editor.read (not getEditorState().read) so getActiveEditor() is set.
   editor.read(() => {
     const node = $getNearestNodeFromDOMNode(el);
     const top = node?.getTopLevelElement();
@@ -18,107 +32,196 @@ function getTopLevelKey(editor: ReturnType<typeof useLexicalComposerContext>[0],
   return key;
 }
 
+type BlockRef = { key: string; el: HTMLElement; rect: DOMRect };
+type DropLine = { top: number; left: number; width: number };
+const HANDLE_OFFSET = 30; // handle spans [contentLeft - 30, contentLeft]
+
+function getTopLevelBlocks(
+  editor: ReturnType<typeof useLexicalComposerContext>[0]
+): BlockRef[] {
+  const result: BlockRef[] = [];
+  editor.read(() => {
+    for (const child of $getRoot().getChildren()) {
+      const el = editor.getElementByKey(child.getKey());
+      if (el) result.push({ key: child.getKey(), el, rect: el.getBoundingClientRect() });
+    }
+  });
+  return result;
+}
+
+function findTargetBlock(
+  blocks: BlockRef[],
+  excludeKey: string | null,
+  clientY: number
+): (BlockRef & { after: boolean }) | null {
+  let best: BlockRef | null = null;
+  let bestDist = Infinity;
+  for (const b of blocks) {
+    if (b.key === excludeKey) continue;
+    const center = b.rect.top + b.rect.height / 2;
+    const dist = Math.abs(clientY - center);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = b;
+    }
+  }
+  if (!best) return null;
+  const after = clientY > best.rect.top + best.rect.height / 2;
+  return { ...best, after };
+}
+
 export function BlockDragPlugin() {
   const [editor] = useLexicalComposerContext();
-  const [handle, setHandle] = useState<{ top: number; left: number } | null>(null);
-  const dragKeyRef = useRef<string | null>(null);
-  const hoverKeyRef = useRef<string | null>(null);
+  const [handle, setHandle] = useState<{ top: number; left: number; key: string } | null>(null);
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [ghostTop, setGhostTop] = useState(0);
+  const [dropLine, setDropLine] = useState<DropLine | null>(null);
+  const draggingRef = useRef(false);
+  const ghostLeftRef = useRef(0);
+  const handleRef = useRef<HTMLDivElement | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
 
   // Show the handle for the top-level block under the cursor.
   useEffect(() => {
-    const root = editor.getRootElement();
-    if (!root) return;
+    const clearHide = () => {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+    };
 
     const onMove = (e: MouseEvent) => {
+      if (draggingRef.current) return;
       const target = e.target as Node;
-      const key = getTopLevelKey(editor, target);
-      if (!key) {
-        setHandle(null);
+
+      if (handleRef.current && handleRef.current.contains(target)) {
+        clearHide();
         return;
       }
+
+      const key = getTopLevelKey(editor, target);
+      if (!key) {
+        if (hideTimerRef.current === null) {
+          hideTimerRef.current = window.setTimeout(() => setHandle(null), 120);
+        }
+        return;
+      }
+
+      clearHide();
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
-        setHandle({ top: rect.top, left: rect.left - 28 });
-        hoverKeyRef.current = key;
+        setHandle({ top: rect.top, left: rect.left - HANDLE_OFFSET, key });
       }
     };
 
-    const onLeave = () => setHandle(null);
-
-    root.addEventListener("mousemove", onMove);
-    root.addEventListener("mouseleave", onLeave);
+    document.addEventListener("mousemove", onMove, true);
     return () => {
-      root.removeEventListener("mousemove", onMove);
-      root.removeEventListener("mouseleave", onLeave);
+      document.removeEventListener("mousemove", onMove, true);
+      clearHide();
     };
   }, [editor]);
 
-  // Handle drop anywhere within the editor content.
+  // Manual drag.
   useEffect(() => {
-    const root = editor.getRootElement();
-    if (!root) return;
+    if (!dragKey) return;
+    document.body.classList.add("is-dragging-block");
 
-    const onDragOver = (e: DragEvent) => {
-      if (!dragKeyRef.current) return;
+    const onMove = (e: MouseEvent) => {
       e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    };
+      setGhostTop(e.clientY);
 
-    const onDrop = (e: DragEvent) => {
-      const srcKey = dragKeyRef.current;
-      dragKeyRef.current = null;
-      if (!srcKey) return;
-      e.preventDefault();
-
-      const targetKey = getTopLevelKey(editor, e.target as Node);
-      if (!targetKey || targetKey === srcKey) return;
-
-      const targetEl = editor.getElementByKey(targetKey);
-      const after = targetEl
-        ? e.clientY > targetEl.getBoundingClientRect().top + targetEl.getBoundingClientRect().height / 2
-        : false;
-
-      editor.update(() => {
-        const children = $getRoot().getChildren();
-        const src = children.find((c) => c.getKey() === srcKey);
-        const target = children.find((c) => c.getKey() === targetKey);
-        if (!src || !target) return;
-        src.remove();
-        if (after) {
-          target.insertAfter(src);
-        } else {
-          target.insertBefore(src);
-        }
+      const blocks = getTopLevelBlocks(editor);
+      const target = findTargetBlock(blocks, dragKey, e.clientY);
+      if (!target) {
+        setDropLine(null);
+        return;
+      }
+      setDropLine({
+        top: target.after ? target.rect.bottom : target.rect.top,
+        left: target.rect.left,
+        width: target.rect.width,
       });
     };
 
-    root.addEventListener("dragover", onDragOver);
-    root.addEventListener("drop", onDrop);
-    return () => {
-      root.removeEventListener("dragover", onDragOver);
-      root.removeEventListener("drop", onDrop);
-    };
-  }, [editor]);
+    const onUp = (e: MouseEvent) => {
+      const srcKey = dragKey;
+      const blocks = getTopLevelBlocks(editor);
+      const target = findTargetBlock(blocks, srcKey, e.clientY);
 
-  if (!handle) return null;
+      if (target) {
+        const after = target.after;
+        editor.update(() => {
+          const children = $getRoot().getChildren();
+          const src = children.find((c) => c.getKey() === srcKey);
+          const dst = children.find((c) => c.getKey() === target.key);
+          if (!src || !dst) return;
+          src.remove();
+          if (after) {
+            dst.insertAfter(src);
+          } else {
+            dst.insertBefore(src);
+          }
+        });
+      }
+
+      draggingRef.current = false;
+      setDragKey(null);
+      setDropLine(null);
+    };
+
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+    return () => {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", onUp, true);
+      document.body.classList.remove("is-dragging-block");
+      editor.setEditable(true);
+      draggingRef.current = false;
+    };
+  }, [dragKey, editor]);
+
+  const startDrag = (e: ReactMouseEvent) => {
+    if (!handle) return;
+    e.preventDefault();
+    e.stopPropagation();
+    draggingRef.current = true;
+    ghostLeftRef.current = handle.left;
+    editor.setEditable(false);
+    setDragKey(handle.key);
+    setGhostTop(e.clientY);
+    setHandle(null);
+  };
 
   return (
-    <div
-      className="block-handle"
-      style={{ top: handle.top, left: handle.left }}
-      draggable
-      onDragStart={(e) => {
-        dragKeyRef.current = hoverKeyRef.current;
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", hoverKeyRef.current ?? "");
-      }}
-      onDragEnd={() => {
-        dragKeyRef.current = null;
-      }}
-      title="拖拽排序"
-    >
-      ⋮⋮
-    </div>
+    <>
+      {handle && !dragKey && (
+        <div
+          ref={handleRef}
+          className="block-handle"
+          style={{ top: handle.top, left: handle.left }}
+          onMouseDown={startDrag}
+          title="拖拽排序"
+        >
+          ⋮⋮
+        </div>
+      )}
+
+      {dragKey && (
+        <div
+          className="block-handle block-handle--dragging"
+          style={{ top: ghostTop - 12, left: ghostLeftRef.current }}
+        >
+          ⋮⋮
+        </div>
+      )}
+
+      {dropLine && (
+        <div
+          className="block-drop-line"
+          style={{ top: dropLine.top, left: dropLine.left, width: dropLine.width }}
+        />
+      )}
+    </>
   );
 }
