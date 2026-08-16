@@ -3,6 +3,7 @@ import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
 import { Editor } from "./editor/Editor";
+import { useAutoSync } from "./hooks/useAutoSync";
 import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
 import "./App.css";
@@ -92,6 +93,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
 function App() {
   const { pages, currentId, loadPages, error } = useNotes();
+  useAutoSync();
 
   useEffect(() => {
     loadPages();
