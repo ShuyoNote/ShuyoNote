@@ -3,7 +3,9 @@ use crate::models::PageDetail;
 use crate::search;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use tauri::{Manager, State};
 
 const KEY_DEVICE_ID: &str = "device_id";
 const KEY_SERVER_URL: &str = "server_url";
@@ -353,7 +355,7 @@ async fn do_pull(
 }
 
 #[tauri::command]
-pub async fn sync_now(db: State<'_, Db>) -> Result<SyncReport, String> {
+pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<SyncReport, String> {
     let (server_url, token) = {
         let c = db.0.lock().expect("db mutex poisoned");
         (
@@ -367,6 +369,7 @@ pub async fn sync_now(db: State<'_, Db>) -> Result<SyncReport, String> {
 
     let (pushed, last_pushed_seq) = do_push(&db, &server_url, &token).await?;
     let (pulled, last_pulled_seq) = do_pull(&db, &server_url, &token).await?;
+    sync_attachments(&app, &db, &server_url, &token).await?;
 
     Ok(SyncReport {
         pushed,
@@ -374,4 +377,165 @@ pub async fn sync_now(db: State<'_, Db>) -> Result<SyncReport, String> {
         last_pushed_seq,
         last_pulled_seq,
     })
+}
+
+#[derive(Deserialize)]
+struct RemoteAttachment {
+    hash: String,
+    mime: String,
+}
+
+#[derive(Deserialize)]
+struct RemoteAttachmentList {
+    items: Vec<RemoteAttachment>,
+}
+
+async fn sync_attachments(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
+    server_url: &str,
+    token: &str,
+) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+
+    let client = reqwest::Client::new();
+
+    // 1. List remote hashes.
+    let mut req = client.get(format!("{server_url}/attachments"));
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    let remote: RemoteAttachmentList = req
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let remote_set: HashSet<String> = remote.items.iter().map(|i| i.hash.clone()).collect();
+
+    // 2. Local hashes (files on disk).
+    let mut local_set = HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.split('.').next() {
+                local_set.insert(stem.to_string());
+            }
+        }
+    }
+
+    // 3. Upload local attachments missing on server.
+    for hash in local_set.difference(&remote_set) {
+        let path = match find_file_by_stem(&attachments_dir, hash) {
+            Some(p) => p,
+            None => continue,
+        };
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        // Determine mime from local DB row.
+        let mime = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            c.query_row(
+                "SELECT mime FROM attachments WHERE hash = ?1 LIMIT 1",
+                params![hash],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "application/octet-stream".to_string())
+        };
+        let mut req = client
+            .post(format!("{server_url}/attachments/{hash}"))
+            .query(&[("mime", mime)])
+            .body(bytes);
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+        req.send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 4. Download remote attachments missing locally.
+    let local_mimes: std::collections::HashMap<String, String> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut map = std::collections::HashMap::new();
+        let mut stmt = c
+            .prepare("SELECT hash, mime FROM attachments")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            map.insert(r.0, r.1);
+        }
+        map
+    };
+
+    for item in &remote.items {
+        if local_set.contains(&item.hash) {
+            continue;
+        }
+        let mut req = client.get(format!("{server_url}/attachments/{}", item.hash));
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            continue;
+        }
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        let ext = ext_from_mime(&item.mime);
+        let path = attachments_dir.join(format!("{}.{}", item.hash, ext));
+        if !path.exists() {
+            std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        }
+        // Insert/ignore into attachments table.
+        {
+            let c = db.0.lock().expect("db mutex poisoned");
+            let id = uuid::Uuid::new_v4().to_string();
+            let size = bytes.len() as i64;
+            c.execute(
+                "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+                params![id, format!("{}.{}", item.hash, ext), item.hash, item.mime, size, crate::db::now_ms()],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Reuse local mimes for hash resolution (kept for future use).
+    let _ = local_mimes;
+    Ok(())
+}
+
+fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.split('.').next() == Some(stem) {
+                return Some(entry.path());
+            }
+        }
+    }
+    None
+}
+
+fn ext_from_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "application/pdf" => "pdf",
+        _ => "bin",
+    }
 }

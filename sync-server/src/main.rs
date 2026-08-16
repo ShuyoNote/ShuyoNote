@@ -1,5 +1,6 @@
 use axum::{
-    extract::{Query, State},
+    body::Bytes,
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -7,13 +8,14 @@ use axum::{
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
-    path::PathBuf,
+    path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
 };
 
 #[derive(Clone)]
 struct AppState {
     db: Arc<Mutex<Connection>>,
+    attachments_dir: Arc<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +75,11 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
             UNIQUE(device_id, device_seq)
         );
         CREATE INDEX IF NOT EXISTS idx_changes_seq ON changes(seq);
+
+        CREATE TABLE IF NOT EXISTS attachment_meta (
+            hash TEXT PRIMARY KEY,
+            mime TEXT NOT NULL
+        );
         "#,
     )?;
     Ok(conn)
@@ -175,14 +182,24 @@ async fn main() {
     }
 
     let conn = init_db(&db_path).expect("failed to init db");
+    let attachments_dir = db_path
+        .parent()
+        .map(|p| p.join("attachments"))
+        .unwrap_or_else(|| PathBuf::from("attachments"));
+    std::fs::create_dir_all(&attachments_dir).expect("failed to create attachments dir");
+
     let state = AppState {
         db: Arc::new(Mutex::new(conn)),
+        attachments_dir: Arc::new(attachments_dir.clone()),
     };
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/push", post(push))
         .route("/pull", get(pull))
+        .route("/attachments", get(list_attachments))
+        .route("/attachments/{hash}", post(upload_attachment))
+        .route("/attachments/{hash}", get(download_attachment))
         .with_state(state)
         .layer(tower_http::cors::CorsLayer::permissive());
 
@@ -190,5 +207,79 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind failed");
     println!("ShuyoNote sync server listening on http://{addr}");
     println!("DB: {}", db_path.display());
+    println!("Attachments: {}", attachments_dir.display());
     axum::serve(listener, app).await.expect("server error");
+}
+
+// ---- attachment endpoints ----
+
+#[derive(Serialize)]
+struct AttachmentItem {
+    hash: String,
+    mime: String,
+}
+
+#[derive(Serialize)]
+struct AttachmentList {
+    items: Vec<AttachmentItem>,
+}
+
+fn hash_file_path(dir: &FsPath, hash: &str) -> PathBuf {
+    dir.join(hash)
+}
+
+async fn list_attachments(State(state): State<AppState>) -> Result<Json<AttachmentList>, StatusCode> {
+    let conn = state.db.lock().expect("db mutex poisoned");
+    let mut stmt = conn
+        .prepare("SELECT hash, mime FROM attachment_meta ORDER BY hash ASC")
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AttachmentItem {
+                hash: row.get(0)?,
+                mime: row.get(1)?,
+            })
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let items = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(AttachmentList { items }))
+}
+
+#[derive(Deserialize)]
+struct UploadQuery {
+    mime: Option<String>,
+}
+
+async fn upload_attachment(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+    Query(query): Query<UploadQuery>,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if hash.is_empty() || hash.len() > 128 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    // Dedup: skip write if already present.
+    let path = state.attachments_dir.join(&hash);
+    if !path.exists() {
+        std::fs::write(&path, &body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let mime = query.mime.unwrap_or_else(|| "application/octet-stream".to_string());
+    let conn = state.db.lock().expect("db mutex poisoned");
+    conn.execute(
+        "INSERT OR IGNORE INTO attachment_meta (hash, mime) VALUES (?1, ?2)",
+        params![hash, mime],
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn download_attachment(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Vec<u8>, StatusCode> {
+    let path = hash_file_path(state.attachments_dir.as_ref(), &hash);
+    std::fs::read(&path).map_err(|_| StatusCode::NOT_FOUND)
 }

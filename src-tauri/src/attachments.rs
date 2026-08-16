@@ -108,3 +108,78 @@ pub fn attachment_path(app: tauri::AppHandle, hash: String) -> Result<String, St
     }
     Err("附件不存在".to_string())
 }
+
+#[tauri::command]
+pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    let mut hashes = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.split('.').next() {
+                if !stem.is_empty() {
+                    hashes.push(stem.to_string());
+                }
+            }
+        }
+    }
+    hashes.sort();
+    hashes.dedup();
+    Ok(hashes)
+}
+
+#[tauri::command]
+pub fn read_attachment_bytes(app: tauri::AppHandle, hash: String) -> Result<Vec<u8>, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    let entries = std::fs::read_dir(&attachments_dir).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(stem) = name.split('.').next() {
+            if stem == hash {
+                return std::fs::read(entry.path()).map_err(|e| e.to_string());
+            }
+        }
+    }
+    Err("附件不存在".to_string())
+}
+
+#[tauri::command]
+pub fn write_attachment_bytes(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hash: String,
+    mime: String,
+    name: String,
+    data: Vec<u8>,
+) -> Result<AttachmentMeta, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir = app_data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+
+    let ext = ext_from_mime(&mime);
+    let path = attachments_dir.join(format!("{hash}.{ext}"));
+    if !path.exists() {
+        std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+    }
+
+    let c = db.0.lock().expect("db mutex poisoned");
+    let id = uuid::Uuid::new_v4().to_string();
+    let size = data.len() as i64;
+    c.execute(
+        "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+        params![id, name, hash, mime, size, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(AttachmentMeta {
+        id,
+        name,
+        hash,
+        mime,
+        size,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
