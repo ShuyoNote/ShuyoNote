@@ -130,6 +130,53 @@ export function PlusIcon(props: IconProps) {
   );
 }
 
+export function BoldIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 4h8a4 4 0 0 1 0 8H6z" />
+      <path d="M6 12h9a4 4 0 0 1 0 8H6z" />
+    </Icon>
+  );
+}
+
+export function ItalicIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <line x1="19" y1="4" x2="10" y2="4" />
+      <line x1="14" y1="20" x2="5" y2="20" />
+      <line x1="15" y1="4" x2="9" y2="20" />
+    </Icon>
+  );
+}
+
+export function UnderlineIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 4v6a6 6 0 0 0 12 0V4" />
+      <line x1="4" y1="20" x2="20" y2="20" />
+    </Icon>
+  );
+}
+
+export function StrikethroughIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M16 4H9a3 3 0 0 0-2.83 4" />
+      <path d="M14 12a4 4 0 0 1 0 8H6" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+    </Icon>
+  );
+}
+
+export function CodeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </Icon>
+  );
+}
+
 export function ClockIcon(props: IconProps) {
   return (
     <Icon {...props}>

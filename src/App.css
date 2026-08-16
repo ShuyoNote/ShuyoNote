@@ -1518,6 +1518,104 @@ body,
   margin-top: 2px;
 }
 
+/* Selection formatting toolbar */
+.selection-toolbar {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  transform: translate(-50%, calc(-100% - 8px));
+  animation: pop 0.14s ease;
+}
+
+.selection-toolbar button {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.selection-toolbar button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Link popover */
+.link-popover {
+  position: fixed;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 320px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: pop 0.14s ease;
+}
+
+.link-url {
+  font-size: 12px;
+  color: var(--accent);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+}
+
+.link-input {
+  width: 180px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.link-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.link-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.link-btn.danger {
+  color: var(--danger);
+}
+
+.link-btn.danger:hover {
+  background: var(--danger-soft);
+}
+
 .is-dragging-block,
 .is-dragging-block * {
   cursor: grabbing !important;
@@ -2145,7 +2243,6 @@ body,
 
 /* Slash menu */
 .slash-menu {
-  position: absolute;
   z-index: 30;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2191,6 +2288,22 @@ body,
 
 .slash-title {
   flex: 1;
+}
+
+.slash-group {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 8px 10px 4px;
+}
+
+.slash-empty {
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
 }
 
 /* Markdown toolbar */

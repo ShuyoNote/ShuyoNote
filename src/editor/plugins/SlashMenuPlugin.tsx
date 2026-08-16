@@ -1,13 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  LexicalTypeaheadMenuPlugin,
-  MenuOption,
-  useBasicTypeaheadTriggerMatch,
-} from "@lexical/react/LexicalTypeaheadMenuPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createHeadingNode, $createQuoteNode } from "@lexical/rich-text";
+import { $createLinkNode } from "@lexical/link";
 import { $createCodeHighlightNode, $createCodeNode } from "@lexical/code";
 import {
   INSERT_CHECK_LIST_COMMAND,
@@ -23,30 +19,25 @@ import { $createImageNode } from "../nodes/ImageNode";
 import { $createVideoNode } from "../nodes/VideoNode";
 import {
   $createParagraphNode,
+  $createTextNode,
   $getSelection,
   $isRangeSelection,
+  $isTextNode,
+  COMMAND_PRIORITY_LOW,
+  KEY_DOWN_COMMAND,
   type ElementNode,
   type LexicalEditor,
   type LexicalNode,
-  type TextNode,
 } from "lexical";
 
-class SlashOption extends MenuOption {
+type Run = (editor: LexicalEditor) => void | Promise<void>;
+
+interface SlashOption {
+  key: string;
   title: string;
   badge: string;
-  run: (editor: LexicalEditor) => void | Promise<void>;
-
-  constructor(
-    key: string,
-    title: string,
-    badge: string,
-    run: (editor: LexicalEditor) => void | Promise<void>,
-  ) {
-    super(key);
-    this.title = title;
-    this.badge = badge;
-    this.run = run;
-  }
+  group: string;
+  run: Run;
 }
 
 // Replace the current top-level block with a new element, moving children over.
@@ -83,30 +74,40 @@ function $insertBlockNode(node: LexicalNode) {
 
 function makeOptions(pageId: string): SlashOption[] {
   return [
-    new SlashOption("h1", "标题 1", "H1", (editor) =>
-      editor.update(() => $replaceBlock($createHeadingNode("h1"))),
-    ),
-    new SlashOption("h2", "标题 2", "H2", (editor) =>
-      editor.update(() => $replaceBlock($createHeadingNode("h2"))),
-    ),
-    new SlashOption("h3", "标题 3", "H3", (editor) =>
-      editor.update(() => $replaceBlock($createHeadingNode("h3"))),
-    ),
-    new SlashOption("p", "正文", "¶", (editor) =>
-      editor.update(() => $replaceBlock($createParagraphNode())),
-    ),
-    new SlashOption("quote", "引用", "❝", (editor) =>
-      editor.update(() => $replaceBlock($createQuoteNode())),
-    ),
-    new SlashOption("callout", "Callout 提示框", "💡", (editor) =>
-      editor.update(() => $replaceBlock($createCalloutNode())),
-    ),
-    new SlashOption("image", "图片", "🖼", async (editor) => {
+    { key: "h1", title: "标题 1", badge: "H1", group: "基础", run: (editor) =>
+      editor.update(() => $replaceBlock($createHeadingNode("h1"))) },
+    { key: "h2", title: "标题 2", badge: "H2", group: "基础", run: (editor) =>
+      editor.update(() => $replaceBlock($createHeadingNode("h2"))) },
+    { key: "h3", title: "标题 3", badge: "H3", group: "基础", run: (editor) =>
+      editor.update(() => $replaceBlock($createHeadingNode("h3"))) },
+    { key: "p", title: "正文", badge: "¶", group: "基础", run: (editor) =>
+      editor.update(() => $replaceBlock($createParagraphNode())) },
+    { key: "quote", title: "引用", badge: "❝", group: "基础", run: (editor) =>
+      editor.update(() => $replaceBlock($createQuoteNode())) },
+    { key: "link", title: "链接", badge: "🔗", group: "基础", run: (editor) =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        const anchor = selection.anchor.getNode();
+        const topLevel = anchor.getTopLevelElement();
+        if (!topLevel) return;
+        const text = topLevel.getTextContent() || "链接";
+        const linkNode = $createLinkNode("https://").append($createTextNode(text));
+        const paragraph = $createParagraphNode();
+        paragraph.append(linkNode);
+        topLevel.replace(paragraph);
+        linkNode.selectStart();
+      }) },
+    { key: "todo", title: "待办事项", badge: "☑", group: "列表", run: (editor) => {
+      editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined); } },
+    { key: "ul", title: "无序列表", badge: "•", group: "列表", run: (editor) => {
+      editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined); } },
+    { key: "ol", title: "有序列表", badge: "1.", group: "列表", run: (editor) => {
+      editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined); } },
+    { key: "image", title: "图片", badge: "🖼", group: "媒体", run: async (editor) => {
       const selected = await open({
         title: "选择图片",
-        filters: [
-          { name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
-        ],
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] }],
         multiple: false,
       });
       if (!selected) return;
@@ -119,8 +120,8 @@ function makeOptions(pageId: string): SlashOption[] {
       } catch (e) {
         toast(`插入图片失败：${e}`, "error");
       }
-    }),
-    new SlashOption("video", "视频", "🎬", async (editor) => {
+    } },
+    { key: "video", title: "视频", badge: "🎬", group: "媒体", run: async (editor) => {
       const selected = await open({
         title: "选择视频",
         filters: [{ name: "视频", extensions: ["mp4", "webm", "mov", "m4v"] }],
@@ -136,8 +137,10 @@ function makeOptions(pageId: string): SlashOption[] {
       } catch (e) {
         toast(`插入视频失败：${e}`, "error");
       }
-    }),
-    new SlashOption("code", "代码块", "{}", (editor) =>
+    } },
+    { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", run: (editor) =>
+      editor.update(() => $replaceBlock($createCalloutNode())) },
+    { key: "code", title: "代码块", badge: "{}", group: "嵌入", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
@@ -148,83 +151,184 @@ function makeOptions(pageId: string): SlashOption[] {
         codeNode.append($createCodeHighlightNode(topLevel.getTextContent()));
         topLevel.replace(codeNode);
         codeNode.selectStart();
-      }),
-    ),
-    new SlashOption("todo", "待办事项", "☑", (editor) => {
-      editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined);
-    }),
-    new SlashOption("ul", "无序列表", "•", (editor) => {
-      editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined);
-    }),
-    new SlashOption("ol", "有序列表", "1.", (editor) => {
-      editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined);
-    }),
-    new SlashOption("hr", "分隔线", "—", (editor) => {
-      editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined);
-    }),
-    new SlashOption("table", "表格", "▦", (editor) => {
+      }) },
+    { key: "hr", title: "分隔线", badge: "—", group: "嵌入", run: (editor) => {
+      editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined); } },
+    { key: "table", title: "表格", badge: "▦", group: "嵌入", run: (editor) => {
       editor.dispatchCommand(INSERT_TABLE_COMMAND, {
         columns: "3",
         rows: "3",
         includeHeaders: { rows: true, columns: false },
-      });
-    }),
+      }); } },
   ];
 }
 
 export function SlashMenuPlugin({ pageId }: { pageId: string }) {
   const [editor] = useLexicalComposerContext();
-  const options = makeOptions(pageId);
+  const options = useMemo(() => makeOptions(pageId), [pageId]);
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const [sel, setSel] = useState(0);
 
-  const triggerFn = useBasicTypeaheadTriggerMatch("/", { minLength: 0 });
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? options.filter((o) => o.title.toLowerCase().includes(q)) : options;
+  }, [options, query]);
 
-  const onQueryChange = useCallback(() => {}, []);
+  const stateRef = useRef({ filtered, sel, editor });
+  stateRef.current = { filtered, sel, editor };
 
-  const onSelectOption = useCallback(
-    (option: MenuOption, _textNode: TextNode | null, closeMenu: () => void) => {
-      closeMenu();
-      const slashOption = option as SlashOption;
-      slashOption.run(editor);
+  const select = useCallback(
+    (option: SlashOption) => {
+      setOpen(false);
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+        const anchor = selection.anchor;
+        const node = anchor.getNode();
+        if ($isTextNode(node)) {
+          const full = node.getTextContent();
+          const before = full.slice(0, anchor.offset);
+          const match = before.match(/(\/)([^\s/]*)$/);
+          if (match && match.index !== undefined) {
+            node.spliceText(match.index, anchor.offset - match.index, "");
+          }
+        }
+      });
+      option.run(editor);
     },
     [editor],
   );
+  const selectRef = useRef(select);
+  selectRef.current = select;
 
-  const menuRenderFn = useCallback(
-    (
-      anchorElementRef: React.RefObject<HTMLElement | null>,
-      { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }: {
-        selectedIndex: number | null;
-        selectOptionAndCleanUp: (option: SlashOption) => void;
-        setHighlightedIndex: (index: number) => void;
+  // Detect trigger + query + position.
+  useEffect(() => {
+    return editor.registerUpdateListener(({ editorState }) => {
+      editorState.read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+          setOpen(false);
+          return;
+        }
+        const node = selection.anchor.getNode();
+        if (!$isTextNode(node)) {
+          setOpen(false);
+          return;
+        }
+        const before = node.getTextContent().slice(0, selection.anchor.offset);
+        const match = before.match(/(\/)([^\s/]*)$/);
+        if (!match) {
+          setOpen(false);
+          return;
+        }
+        setQuery(match[2] || "");
+        setSel(0);
+        const dom = editor.getElementByKey(node.getKey());
+        if (dom) {
+          const rect = dom.getBoundingClientRect();
+          setPos({ top: rect.bottom + 4, left: rect.left });
+        }
+        setOpen(true);
+      });
+    });
+  }, [editor]);
+
+  // Keyboard navigation.
+  useEffect(() => {
+    if (!open) return;
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (e: KeyboardEvent) => {
+        const { filtered: f, sel: s } = stateRef.current;
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSel((v) => Math.min(v + 1, f.length - 1));
+          return true;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSel((v) => Math.max(v - 1, 0));
+          return true;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const o = f[s];
+          if (o) selectRef.current(o);
+          return true;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setOpen(false);
+          return true;
+        }
+        return false;
       },
-    ) => {
-      if (anchorElementRef.current === null) return null;
-      return (
-        <div className="slash-menu">
-          {options.map((option, i) => (
+      COMMAND_PRIORITY_LOW,
+    );
+  }, [open, editor]);
+
+  // Reposition on scroll instead of closing.
+  useEffect(() => {
+    if (!open) return;
+    const reposition = () => {
+      const ed = stateRef.current.editor;
+      ed.read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        const node = selection.anchor.getNode();
+        const dom = ed.getElementByKey(node.getKey());
+        if (dom) {
+          const rect = dom.getBoundingClientRect();
+          setPos({ top: rect.bottom + 4, left: rect.left });
+        }
+      });
+    };
+    document.addEventListener("scroll", reposition, true);
+    return () => document.removeEventListener("scroll", reposition, true);
+  }, [open]);
+
+  if (!open) return null;
+
+  const rows: { group?: string; option?: SlashOption; index: number }[] = [];
+  let lastGroup: string | null = null;
+  filtered.forEach((option, i) => {
+    if (option.group !== lastGroup) {
+      rows.push({ group: option.group, index: i });
+      lastGroup = option.group;
+    }
+    rows.push({ option, index: i });
+  });
+
+  return (
+    <div className="slash-menu" style={{ position: "fixed", top: pos.top, left: pos.left }}>
+      {filtered.length === 0 ? (
+        <div className="slash-empty">无匹配块</div>
+      ) : (
+        rows.map((row) => {
+          if (row.group) {
+            return (
+              <div key={`g-${row.group}`} className="slash-group">
+                {row.group}
+              </div>
+            );
+          }
+          const option = row.option!;
+          return (
             <button
               key={option.key}
-              className={`slash-item ${selectedIndex === i ? "slash-item-active" : ""}`}
-              onClick={() => selectOptionAndCleanUp(option)}
-              onMouseEnter={() => setHighlightedIndex(i)}
+              className={`slash-item ${sel === row.index ? "slash-item-active" : ""}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => select(option)}
+              onMouseEnter={() => setSel(row.index)}
             >
               <span className="slash-icon">{option.badge}</span>
               <span className="slash-title">{option.title}</span>
             </button>
-          ))}
-        </div>
-      );
-    },
-    [options],
-  );
-
-  return (
-    <LexicalTypeaheadMenuPlugin<SlashOption>
-      options={options}
-      triggerFn={triggerFn}
-      onQueryChange={onQueryChange}
-      onSelectOption={onSelectOption}
-      menuRenderFn={menuRenderFn}
-    />
+          );
+        })
+      )}
+    </div>
   );
 }

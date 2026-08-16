@@ -27,6 +27,8 @@ import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
+import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
+import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
 
 const theme = {
@@ -164,6 +166,8 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <BlockDragPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         <FindPlugin />
+        <SelectionToolbarPlugin />
+        <LinkPopoverPlugin />
         <EditorStoreSync />
       </div>
     </LexicalComposer>
