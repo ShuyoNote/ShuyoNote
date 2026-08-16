@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
+import { CommandPalette } from "./components/CommandPalette";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { api } from "./lib/api";
@@ -117,6 +118,7 @@ function App() {
           {error && <div className="error-badge">{error}</div>}
         </div>
       )}
+      <CommandPalette />
     </div>
   );
 }
