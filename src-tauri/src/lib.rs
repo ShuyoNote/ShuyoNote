@@ -1,4 +1,5 @@
 mod attachments;
+mod backlinks;
 mod commands;
 mod db;
 mod models;
@@ -35,6 +36,7 @@ pub fn run() {
             sync::sync_now,
             attachments::save_image,
             attachments::attachment_path,
+            backlinks::get_backlinks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

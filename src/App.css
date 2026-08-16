@@ -493,6 +493,44 @@ body,
   border-radius: 6px;
 }
 
+/* Backlinks */
+.backlinks {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px 0 40px;
+  width: 100%;
+  border-top: 1px solid var(--border);
+}
+
+.backlinks-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+
+.backlinks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.backlink-item {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.backlink-item:hover {
+  background: var(--hover);
+}
+
 .editor-ul {
   padding-left: 1.4em;
   margin: 0.3em 0;

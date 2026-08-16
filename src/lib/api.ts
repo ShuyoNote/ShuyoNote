@@ -52,4 +52,5 @@ export const api = {
     data: number[];
   }) => invoke<AttachmentMeta>("save_image", { args }),
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
+  getBacklinks: (id: string) => invoke<PageMeta[]>("get_backlinks", { id }),
 };

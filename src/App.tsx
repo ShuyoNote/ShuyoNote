@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
+import { BacklinksPanel } from "./components/BacklinksPanel";
 import { Editor } from "./editor/Editor";
 import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
@@ -82,6 +83,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
           }
         }}
       />
+      <BacklinksPanel pageId={pageId} />
     </div>
   );
 }

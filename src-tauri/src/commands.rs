@@ -1,7 +1,6 @@
 use crate::db::{now_ms, Db};
 use crate::models::{PageDetail, PageMeta};
-use crate::search;
-use crate::sync;
+use crate::{backlinks, search, sync};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
@@ -141,6 +140,7 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     .map_err(|e| e.to_string())?;
 
     search::sync_fts(&c, &args.id, &title, &content_text)?;
+    backlinks::rebuild_backlinks(&c, &args.id, &content_text)?;
 
     let page = fetch_page(&c, &args.id)?;
     sync::record_page_upsert(&c, &page)?;
@@ -170,15 +170,17 @@ pub fn delete_page(db: State<Db>, id: String) -> Result<(), String> {
         }
     }
 
-    for pid in all {
+    for pid in &all {
         c.execute(
             "UPDATE pages SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![now, pid],
         )
         .map_err(|e| e.to_string())?;
-        search::remove_fts(&c, &pid)?;
-        sync::record_change(&c, "page", &pid, "delete", None, now)?;
+        search::remove_fts(&c, pid)?;
+        sync::record_change(&c, "page", pid, "delete", None, now)?;
     }
+
+    backlinks::remove_backlinks(&c, &all)?;
 
     Ok(())
 }
