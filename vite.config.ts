@@ -16,7 +16,9 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind IPv4 explicitly: WebView2 connects via 127.0.0.1, and vite 7
+    // defaults to IPv6 localhost (::1) which the WebView cannot reach.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
