@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSidebar } from "../store/sidebar";
@@ -225,7 +226,14 @@ export function PageTree({
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [taggedIds, setTaggedIds] = useState<Set<string> | null>(null);
-  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const {
+    open: newMenuOpen,
+    pos: newMenuPos,
+    triggerRef: newMenuRef,
+    contentRef: newMenuContentRef,
+    toggle: toggleNewMenu,
+    close: closeNewMenu,
+  } = usePopover<HTMLButtonElement>();
   const [workspaceName, setWorkspaceName] = useState("ShuyoNote");
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
@@ -325,15 +333,15 @@ export function PageTree({
             <ThemeToggle />
           </div>
           <div className="new-menu">
-            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
+            <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu}>
               <span className="btn-new-label">新建</span>
               <ChevronDownIcon width={14} height={14} className="btn-new-caret" />
             </button>
             {newMenuOpen && (
-              <div className="new-menu-dropdown">
+              <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
                 <button
                   onClick={() => {
-                    setNewMenuOpen(false);
+                    closeNewMenu();
                     createPage(null);
                   }}
                 >
@@ -341,7 +349,7 @@ export function PageTree({
                 </button>
                 <button
                   onClick={() => {
-                    setNewMenuOpen(false);
+                    closeNewMenu();
                     createFolder(null);
                   }}
                 >

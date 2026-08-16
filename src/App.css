@@ -307,9 +307,7 @@ body,
 }
 
 .sync-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   width: 260px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -431,9 +429,7 @@ body,
 }
 
 .new-menu-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -516,9 +512,7 @@ body,
 }
 
 .backup-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -597,9 +591,7 @@ body,
 }
 
 .trash-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   width: 280px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1290,6 +1282,7 @@ body,
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .toolbar-btn {
@@ -1628,7 +1621,19 @@ body,
 
 .editor-image {
   max-width: 100%;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.editor-video-container {
+  display: block;
+  margin: 0.5em 0;
+}
+
+.editor-video {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  display: block;
 }
 
 /* Tables */

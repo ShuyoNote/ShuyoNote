@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
@@ -8,7 +9,7 @@ import { TrashIcon } from "./icons";
 
 export function TrashPanel() {
   const { loadPages } = useNotes();
-  const [open, setOpen] = useState(false);
+  const { open, pos, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>();
   const [items, setItems] = useState<PageMeta[]>([]);
 
   useEffect(() => {
@@ -41,11 +42,11 @@ export function TrashPanel() {
 
   return (
     <div className="trash-panel">
-      <button className="btn-trash" onClick={() => setOpen((v) => !v)} title="回收站">
+      <button ref={triggerRef} className="btn-trash" onClick={toggle} title="回收站">
         <TrashIcon />
       </button>
       {open && (
-        <div className="trash-popover">
+        <div ref={contentRef} className="trash-popover" style={{ top: pos.top, left: pos.left }}>
           {items.length === 0 ? (
             <div className="trash-empty">回收站为空</div>
           ) : (

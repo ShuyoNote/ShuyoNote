@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -42,6 +42,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   const [attachments, setAttachments] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
+  const importingRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -60,6 +61,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen<ImportProgressEvent>("attachment-import-progress", (event) => {
+      if (!importingRef.current) return;
       const p = event.payload;
       const current = p.size > 0 ? p.done / p.size : 1;
       const overall = ((p.index + current) / p.total) * 100;
@@ -84,6 +86,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     if (paths.length === 0) return;
 
     setImporting(true);
+    importingRef.current = true;
     setProgress({ name: paths[0] ?? "", percent: 0 });
     try {
       const metas = await api.importAttachmentFiles(pageId, paths);
@@ -92,6 +95,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     } catch (e) {
       toast(`添加失败：${e}`, "error");
     } finally {
+      importingRef.current = false;
       setImporting(false);
       setProgress(null);
     }

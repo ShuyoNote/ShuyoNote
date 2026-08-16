@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
@@ -7,7 +7,7 @@ import { DownloadIcon, UploadIcon } from "./icons";
 
 export function BackupButton() {
   const { loadPages } = useNotes();
-  const [openMenu, setOpenMenu] = useState(false);
+  const { open: openMenu, pos, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
 
   const doExport = async () => {
     try {
@@ -45,17 +45,18 @@ export function BackupButton() {
   return (
     <div className="backup-menu">
       <button
+        ref={triggerRef}
         className="btn-backup"
-        onClick={() => setOpenMenu((v) => !v)}
+        onClick={toggle}
         title="备份 / 恢复"
       >
         <DownloadIcon />
       </button>
       {openMenu && (
-        <div className="backup-dropdown">
+        <div ref={contentRef} className="backup-dropdown" style={{ top: pos.top, left: pos.left }}>
           <button
             onClick={() => {
-              setOpenMenu(false);
+              close();
               doExport();
             }}
           >
@@ -64,7 +65,7 @@ export function BackupButton() {
           </button>
           <button
             onClick={() => {
-              setOpenMenu(false);
+              close();
               doImport();
             }}
           >

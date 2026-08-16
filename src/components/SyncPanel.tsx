@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { usePopover } from "../hooks/usePopover";
 import { api, type SyncConfig } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { SyncIcon } from "./icons";
 
 export function SyncPanel() {
   const { loadPages } = useNotes();
-  const [open, setOpen] = useState(false);
+  const { open, pos, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>();
   const [config, setConfig] = useState<SyncConfig | null>(null);
   const [serverUrl, setServerUrl] = useState("");
   const [token, setToken] = useState("");
@@ -50,11 +51,11 @@ export function SyncPanel() {
 
   return (
     <div className="sync-panel">
-      <button className="btn-sync" onClick={() => setOpen((v) => !v)} title="同步设置">
+      <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
         <SyncIcon />
       </button>
       {open && (
-        <div className="sync-popover">
+        <div ref={contentRef} className="sync-popover" style={{ top: pos.top, left: pos.left }}>
           <div className="sync-row">
             <label>服务器地址</label>
             <input

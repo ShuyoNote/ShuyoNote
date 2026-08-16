@@ -22,6 +22,7 @@ import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { ImageNode } from "./nodes/ImageNode";
+import { VideoNode } from "./nodes/VideoNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
@@ -122,6 +123,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         CalloutNode,
         HorizontalRuleNode,
         ImageNode,
+        VideoNode,
         TableNode,
         TableCellNode,
         TableRowNode,
@@ -157,7 +159,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <TablePlugin hasHorizontalScroll />
         <OnChangePlugin onChange={onChange} />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
-        <SlashMenuPlugin />
+        <SlashMenuPlugin pageId={pageId} />
         <ImagePastePlugin pageId={pageId} />
         <BlockDragPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
