@@ -145,9 +145,15 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         let now = now_ms();
         conn.execute(
             "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params!["default", "默认工作区", now, now],
+            params!["default", "默认空间", now, now],
         )?;
     }
+
+    // Migrate the legacy default workspace name to the current wording.
+    conn.execute(
+        "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE name = ?3",
+        params!["默认空间", now_ms(), "默认工作区"],
+    )?;
 
     // Ensure a persistent device id exists.
     let device_count: i64 =
