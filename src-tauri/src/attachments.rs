@@ -4,7 +4,16 @@ use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
+
+#[derive(Clone, serde::Serialize)]
+pub struct ImportProgress {
+    pub index: usize,
+    pub total: usize,
+    pub name: String,
+    pub done: u64,
+    pub size: u64,
+}
 
 fn ext_from_mime(mime: &str) -> &'static str {
     match mime {
@@ -79,8 +88,14 @@ fn find_path_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
 }
 
 /// Stream-copy `src` to `dst` while computing SHA-256, without loading the
-/// whole file into memory. Returns (hex hash, byte size).
-fn copy_and_hash(src: &Path, dst: &Path) -> Result<(String, i64), String> {
+/// whole file into memory. Returns (hex hash, byte size). Invokes `on_progress`
+/// after each chunk with (bytes_done, total_bytes).
+fn copy_and_hash<F: FnMut(u64, u64)>(
+    src: &Path,
+    dst: &Path,
+    mut on_progress: F,
+) -> Result<(String, i64), String> {
+    let total = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
     let mut input = std::fs::File::open(src)
         .map_err(|e| format!("无法打开 {}: {e}", src.display()))?;
     let mut output = std::fs::File::create(dst).map_err(|e| e.to_string())?;
@@ -101,6 +116,7 @@ fn copy_and_hash(src: &Path, dst: &Path) -> Result<(String, i64), String> {
             e.to_string()
         })?;
         size += n as i64;
+        on_progress(size as u64, total);
     }
     Ok((format!("{:x}", hasher.finalize()), size))
 }
@@ -285,8 +301,9 @@ pub fn import_attachment_files(
     let attachments_dir = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
+    let total_files = paths.len();
     let mut results = Vec::new();
-    for p in paths {
+    for (index, p) in paths.into_iter().enumerate() {
         let src = PathBuf::from(&p);
         let name = src
             .file_name()
@@ -295,7 +312,20 @@ pub fn import_attachment_files(
         let (mime, ext) = mime_from_path(&src);
 
         let tmp = attachments_dir.join(format!("{}.part", uuid::Uuid::new_v4()));
-        let (hash, size) = match copy_and_hash(&src, &tmp) {
+        let app_progress = app.clone();
+        let name_progress = name.clone();
+        let (hash, size) = match copy_and_hash(&src, &tmp, move |done, total| {
+            let _ = app_progress.emit(
+                "attachment-import-progress",
+                ImportProgress {
+                    index,
+                    total: total_files,
+                    name: name_progress.clone(),
+                    done,
+                    size: total,
+                },
+            );
+        }) {
             Ok(v) => v,
             Err(e) => return Err(e),
         };
