@@ -13,6 +13,16 @@
   color: inherit;
 }
 
+::highlight(shuyo-find) {
+  background-color: #ffe08a;
+  color: inherit;
+}
+
+::highlight(shuyo-find-active) {
+  background-color: #ffb347;
+  color: inherit;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -745,6 +755,57 @@ body,
   overflow-y: auto;
   position: relative;
   padding: 8px 48px 40vh;
+}
+
+/* Find bar */
+.find-bar {
+  position: absolute;
+  top: 8px;
+  right: 24px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px 6px;
+}
+
+.find-input {
+  border: none;
+  outline: none;
+  font-size: 13px;
+  width: 140px;
+  font-family: inherit;
+}
+
+.find-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 40px;
+  text-align: center;
+}
+
+.find-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.find-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.find-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .editor-content {

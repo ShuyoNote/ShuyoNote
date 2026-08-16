@@ -23,6 +23,7 @@ import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { MarkdownToolbar } from "./plugins/MarkdownToolbar";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
+import { FindPlugin } from "./plugins/FindPlugin";
 
 const theme = {
   heading: {
@@ -128,6 +129,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searc
         <SlashMenuPlugin />
         <ImagePastePlugin pageId={pageId} />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
+        <FindPlugin />
         {onExport && <MarkdownToolbar onExport={onExport} />}
       </div>
     </LexicalComposer>
