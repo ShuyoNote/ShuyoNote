@@ -24,6 +24,7 @@ import { MarkdownToolbar } from "./plugins/MarkdownToolbar";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
+import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
 
 const theme = {
   heading: {
@@ -142,6 +143,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searc
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin />
         <ImagePastePlugin pageId={pageId} />
+        <BlockDragPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         <FindPlugin />
         {onExport && <MarkdownToolbar onExport={onExport} />}
