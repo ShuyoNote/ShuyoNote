@@ -177,8 +177,17 @@ function App() {
         <NoteEditor pageId={currentId} />
       ) : (
         <div className="main empty">
-          <div className="empty-hint">选择或新建一个页面开始记录</div>
-          {error && <div className="error-badge">{error}</div>}
+          <div className="empty-state">
+            <div className="empty-icon">📝</div>
+            <div className="empty-title">开始你的第一页</div>
+            <div className="empty-desc">
+              点击下方按钮新建页面，或按 <kbd>Ctrl</kbd> + <kbd>N</kbd>
+            </div>
+            <button className="empty-cta" onClick={() => useNotes.getState().createPage(null)}>
+              ＋ 新建页面
+            </button>
+            {error && <div className="error-badge">{error}</div>}
+          </div>
         </div>
       )}
       <CommandPalette />

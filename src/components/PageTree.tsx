@@ -39,13 +39,25 @@ function TreeItem({
   node: TreeNode;
   depth: number;
 }) {
-  const { currentId, openPage, createPage, createFolder, deletePage, movePage, pages } = useNotes();
+  const { currentId, openPage, createPage, createFolder, deletePage, movePage, renamePage, pages } = useNotes();
   const [expanded, setExpanded] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(node.title);
 
   const isCurrent = currentId === node.id;
   const isFolder = node.kind === "folder";
+
+  const commitRename = async () => {
+    const v = editValue.trim();
+    setEditing(false);
+    if (v && v !== node.title) {
+      await renamePage(node.id, v);
+    } else {
+      setEditValue(node.title);
+    }
+  };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -113,7 +125,37 @@ function TreeItem({
           {node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
         <span className="tree-icon">{isFolder ? "📁" : "📄"}</span>
-        <span className="tree-title">{node.title || (isFolder ? "新建文件夹" : "未命名")}</span>
+        {editing ? (
+          <input
+            className="tree-rename-input"
+            autoFocus
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitRename();
+              } else if (e.key === "Escape") {
+                setEditing(false);
+                setEditValue(node.title);
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            className="tree-title"
+            title="双击重命名"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditValue(node.title || "");
+              setEditing(true);
+            }}
+          >
+            {node.title || (isFolder ? "新建文件夹" : "未命名")}
+          </span>
+        )}
         <span className="tree-actions">
           <button
             title="在新窗口打开"
