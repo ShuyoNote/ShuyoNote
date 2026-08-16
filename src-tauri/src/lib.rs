@@ -28,6 +28,7 @@ pub fn run() {
             commands::list_pages,
             commands::get_page,
             commands::create_page,
+            commands::create_folder,
             commands::save_page,
             commands::delete_page,
             commands::move_page,

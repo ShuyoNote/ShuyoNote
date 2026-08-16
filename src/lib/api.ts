@@ -30,6 +30,8 @@ export const api = {
   getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
   createPage: (args: { parent_id: string | null; title?: string }) =>
     invoke<PageDetail>("create_page", { args }),
+  createFolder: (args: { parent_id: string | null; title?: string }) =>
+    invoke<PageDetail>("create_folder", { args }),
   savePage: (args: {
     id: string;
     title?: string;

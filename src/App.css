@@ -163,6 +163,42 @@ body,
   cursor: pointer;
 }
 
+.new-menu {
+  position: relative;
+}
+
+.new-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  z-index: 40;
+  min-width: 130px;
+  padding: 4px;
+}
+
+.new-menu-dropdown button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+}
+
+.new-menu-dropdown button:hover {
+  background: var(--hover);
+}
+
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
@@ -283,6 +319,13 @@ body,
   color: var(--text-dim);
   flex-shrink: 0;
   text-align: center;
+}
+
+.tree-icon {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 13px;
 }
 
 .tree-title {

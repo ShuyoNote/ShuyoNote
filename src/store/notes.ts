@@ -12,6 +12,7 @@ interface NoteState {
   loadPages: () => Promise<void>;
   openPage: (id: string) => Promise<void>;
   createPage: (parentId: string | null) => Promise<string | null>;
+  createFolder: (parentId: string | null) => Promise<void>;
   deletePage: (id: string) => Promise<void>;
   renamePage: (id: string, title: string) => Promise<void>;
   movePage: (id: string, parentId: string | null, sortOrder: number) => Promise<void>;
@@ -53,6 +54,15 @@ export const useNotes = create<NoteState>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       return null;
+    }
+  },
+
+  createFolder: async (parentId) => {
+    try {
+      await api.createFolder({ parent_id: parentId, title: "新建文件夹" });
+      await get().loadPages();
+    } catch (e) {
+      set({ error: String(e) });
     }
   },
 

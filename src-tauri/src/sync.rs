@@ -91,14 +91,15 @@ fn apply_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
     }
 
     c.execute(
-        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)
          ON CONFLICT(id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            parent_id = excluded.parent_id,
            title = excluded.title,
            content_json = excluded.content_json,
            content_text = excluded.content_text,
+           kind = excluded.kind,
            sort_order = excluded.sort_order,
            updated_at = excluded.updated_at,
            deleted_at = NULL",
@@ -109,6 +110,7 @@ fn apply_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
             page.title,
             page.content_json,
             page.content_text,
+            page.kind,
             page.sort_order,
             page.created_at,
             page.updated_at

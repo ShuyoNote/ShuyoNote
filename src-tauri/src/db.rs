@@ -36,6 +36,7 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             title        TEXT NOT NULL DEFAULT '',
             content_json TEXT NOT NULL DEFAULT '{}',
             content_text TEXT NOT NULL DEFAULT '',
+            kind         TEXT NOT NULL DEFAULT 'page',
             sort_order   REAL NOT NULL DEFAULT 0,
             created_at   INTEGER NOT NULL,
             updated_at   INTEGER NOT NULL,
@@ -110,6 +111,19 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute(
             "INSERT INTO page_fts (page_id, title, body)
              SELECT id, title, content_text FROM pages WHERE deleted_at IS NULL",
+            [],
+        )?;
+    }
+
+    // Add kind column for existing databases (idempotent).
+    let has_kind: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(pages)")?;
+        let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        cols.any(|c| c.map(|name| name == "kind").unwrap_or(false))
+    };
+    if !has_kind {
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN kind TEXT NOT NULL DEFAULT 'page'",
             [],
         )?;
     }

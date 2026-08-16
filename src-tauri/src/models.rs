@@ -6,6 +6,8 @@ pub struct PageMeta {
     pub workspace_id: String,
     pub parent_id: Option<String>,
     pub title: String,
+    #[serde(default = "default_kind")]
+    pub kind: String,
     pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -20,9 +22,15 @@ pub struct PageDetail {
     pub title: String,
     pub content_json: String,
     pub content_text: String,
+    #[serde(default = "default_kind")]
+    pub kind: String,
     pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_kind() -> String {
+    "page".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

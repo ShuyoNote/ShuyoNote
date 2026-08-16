@@ -35,12 +35,13 @@ function TreeItem({
   node: TreeNode;
   depth: number;
 }) {
-  const { currentId, openPage, createPage, deletePage, movePage } = useNotes();
+  const { currentId, openPage, createPage, createFolder, deletePage, movePage } = useNotes();
   const [expanded, setExpanded] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
   const isCurrent = currentId === node.id;
+  const isFolder = node.kind === "folder";
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -49,6 +50,14 @@ function TreeItem({
     const id = e.dataTransfer.getData("text/plain");
     if (id && id !== node.id) {
       await movePage(id, node.id, Date.now());
+    }
+  };
+
+  const handleClick = () => {
+    if (isFolder) {
+      setExpanded((v) => !v);
+    } else {
+      openPage(node.id);
     }
   };
 
@@ -69,7 +78,7 @@ function TreeItem({
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
-        onClick={() => openPage(node.id)}
+        onClick={handleClick}
       >
         <span
           className="tree-toggle"
@@ -80,7 +89,8 @@ function TreeItem({
         >
           {node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
-        <span className="tree-title">{node.title || "未命名"}</span>
+        <span className="tree-icon">{isFolder ? "📁" : "📄"}</span>
+        <span className="tree-title">{node.title || (isFolder ? "新建文件夹" : "未命名")}</span>
         <span className="tree-actions">
           <button
             title="新建子页面"
@@ -91,11 +101,22 @@ function TreeItem({
           >
             +
           </button>
+          {isFolder && (
+            <button
+              title="新建子文件夹"
+              onClick={(e) => {
+                e.stopPropagation();
+                createFolder(node.id);
+              }}
+            >
+              📁
+            </button>
+          )}
           <button
             title="删除"
             onClick={(e) => {
               e.stopPropagation();
-              if (confirm(`删除「${node.title || "未命名"}」及其所有子页面？`)) {
+              if (confirm(`删除「${node.title || "未命名"}」及其所有子节点？`)) {
                 deletePage(node.id);
               }
             }}
@@ -114,10 +135,11 @@ function TreeItem({
 }
 
 export function PageTree() {
-  const { pages, createPage } = useNotes();
+  const { pages, createPage, createFolder } = useNotes();
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [taggedIds, setTaggedIds] = useState<Set<string> | null>(null);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
 
   useEffect(() => {
     api.listTags().then(setTags).catch(() => {});
@@ -144,9 +166,31 @@ export function PageTree() {
         <span className="sidebar-title">ShuyoNote</span>
         <div className="sidebar-header-actions">
           <SyncPanel />
-          <button className="btn-new" onClick={() => createPage(null)}>
-            新建页面
-          </button>
+          <div className="new-menu">
+            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
+              新建 ▾
+            </button>
+            {newMenuOpen && (
+              <div className="new-menu-dropdown">
+                <button
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    createPage(null);
+                  }}
+                >
+                  📄 新建页面
+                </button>
+                <button
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    createFolder(null);
+                  }}
+                >
+                  📁 新建文件夹
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="sidebar-search">

@@ -13,7 +13,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
 
 fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
-        "SELECT id, workspace_id, parent_id, title, content_json, content_text, sort_order, created_at, updated_at
+        "SELECT id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at
          FROM pages WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| {
@@ -24,9 +24,10 @@ fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 title: row.get(3)?,
                 content_json: row.get(4)?,
                 content_text: row.get(5)?,
-                sort_order: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                kind: row.get(6)?,
+                sort_order: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         },
     )
@@ -40,7 +41,7 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
     let mut stmt = c
         .prepare(
-            "SELECT id, workspace_id, parent_id, title, sort_order, created_at, updated_at, deleted_at
+            "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
              FROM pages WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -52,10 +53,11 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
                 workspace_id: row.get(1)?,
                 parent_id: row.get(2)?,
                 title: row.get(3)?,
-                sort_order: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                deleted_at: row.get(7)?,
+                kind: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                deleted_at: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -66,7 +68,11 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
 #[tauri::command]
 pub fn get_page(db: State<Db>, id: String) -> Result<PageDetail, String> {
     let c = conn(&db);
-    fetch_page(&c, &id)
+    let page = fetch_page(&c, &id)?;
+    if page.kind != "page" {
+        return Err("该节点不是页面".to_string());
+    }
+    Ok(page)
 }
 
 #[derive(Deserialize)]
@@ -77,24 +83,38 @@ pub struct CreatePageArgs {
 
 #[tauri::command]
 pub fn create_page(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
+    create_node(db, args.parent_id, args.title, "page")
+}
+
+#[tauri::command]
+pub fn create_folder(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
+    create_node(db, args.parent_id, args.title, "folder")
+}
+
+fn create_node(
+    db: State<Db>,
+    parent_id: Option<String>,
+    title: Option<String>,
+    kind: &str,
+) -> Result<PageDetail, String> {
     let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
-    let title = args.title.unwrap_or_default();
+    let title = title.unwrap_or_default();
 
-    // Place new page at the end among siblings.
+    // Place new node at the end among siblings.
     let sort_order: f64 = c
         .query_row(
             "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM pages WHERE parent_id IS ?1",
-            params![args.parent_id],
+            params![parent_id],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
 
     c.execute(
-        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, '{}', '', ?5, ?6, ?7, NULL)",
-        params![id, DEFAULT_WORKSPACE, args.parent_id, title, sort_order, now, now],
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, '{}', '', ?5, ?6, ?7, ?8, NULL)",
+        params![id, DEFAULT_WORKSPACE, parent_id, title, kind, sort_order, now, now],
     )
     .map_err(|e| e.to_string())?;
 

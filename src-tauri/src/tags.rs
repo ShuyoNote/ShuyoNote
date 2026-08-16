@@ -95,7 +95,7 @@ pub fn pages_by_tag(db: State<'_, Db>, tag_id: String) -> Result<Vec<PageMeta>, 
     let c = conn(&db);
     let mut stmt = c
         .prepare(
-            "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.sort_order, p.created_at, p.updated_at, p.deleted_at
+            "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
              FROM pages p JOIN page_tags pt ON p.id = pt.page_id
              WHERE pt.tag_id = ?1 AND p.deleted_at IS NULL
              ORDER BY p.updated_at DESC",
@@ -108,10 +108,11 @@ pub fn pages_by_tag(db: State<'_, Db>, tag_id: String) -> Result<Vec<PageMeta>, 
                 workspace_id: row.get(1)?,
                 parent_id: row.get(2)?,
                 title: row.get(3)?,
-                sort_order: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                deleted_at: row.get(7)?,
+                kind: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                deleted_at: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;

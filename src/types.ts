@@ -3,6 +3,7 @@ export interface PageMeta {
   workspace_id: string;
   parent_id: string | null;
   title: string;
+  kind: string;
   sort_order: number;
   created_at: number;
   updated_at: number;
@@ -16,6 +17,7 @@ export interface PageDetail {
   title: string;
   content_json: string;
   content_text: string;
+  kind: string;
   sort_order: number;
   created_at: number;
   updated_at: number;

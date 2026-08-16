@@ -45,7 +45,7 @@ pub fn rebuild_backlinks(c: &Connection, source_id: &str, content_text: &str) ->
     for title in extract_titles(content_text) {
         let target_id: Option<String> = c
             .query_row(
-                "SELECT id FROM pages WHERE title = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
+                "SELECT id FROM pages WHERE title = ?1 AND kind = 'page' AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1",
                 params![title],
                 |row| row.get(0),
             )
@@ -79,7 +79,7 @@ pub fn get_backlinks(db: State<'_, Db>, id: String) -> Result<Vec<PageMeta>, Str
     let c = db.0.lock().expect("db mutex poisoned");
     let mut stmt = c
         .prepare(
-            "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.sort_order, p.created_at, p.updated_at, p.deleted_at
+            "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
              FROM backlinks b JOIN pages p ON b.source_id = p.id
              WHERE b.target_id = ?1 AND p.deleted_at IS NULL
              ORDER BY p.updated_at DESC",
@@ -93,10 +93,11 @@ pub fn get_backlinks(db: State<'_, Db>, id: String) -> Result<Vec<PageMeta>, Str
                 workspace_id: row.get(1)?,
                 parent_id: row.get(2)?,
                 title: row.get(3)?,
-                sort_order: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                deleted_at: row.get(7)?,
+                kind: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                deleted_at: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;
