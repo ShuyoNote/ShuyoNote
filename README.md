@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.1.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -132,7 +132,7 @@ pnpm tauri dev
 > **Windows 提示**：若 cargo 使用镜像源且遇到 SSL 撤销错误（如 USTC），先执行
 > `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再运行。
 
-首次启动会在系统应用数据目录（Windows：`%APPDATA%\com.cnzen.shuyonote\`）创建 SQLite 数据库（WAL 模式）。
+首次启动会在系统应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`）创建 SQLite 数据库（WAL 模式）。
 
 ## 构建发布
 

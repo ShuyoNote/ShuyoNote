@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-> `v1.0.0` 之后的增量工作（块拖拽、查找、UI/UX 设计体系落地）。
+## [1.1.0] - 2026-08-16
 
 ### 新增
 
@@ -24,6 +24,7 @@
 - **块菜单**：点击 `⋮⋮` 手柄弹出「复制块 / 删除块」菜单
 - **顶部工具栏**：页面顶部图标工具栏（查找 / 导入 / 导出 Markdown / 导出 HTML / 版本历史）
 - **空间名称**：侧栏显示空间名称，双击可重命名
+- **图片块 / 视频块**：斜杠菜单插入本地图片/视频（流式导入 + 内容寻址），视频带播放控件
 
 ### 修复
 
@@ -31,6 +32,9 @@
 - 代码块插入/显示：补注册 `CodeHighlightNode`、斜杠菜单空块改用 `CodeHighlightNode`、代码块样式补 `display:block` + `white-space:pre`
 - 切页内容错乱：编辑器初始内容改为直接读取 `current.content_json`，消除 `useEffect` 滞后导致的旧内容初始化
 - `dialog.confirm` 权限：`window.confirm` 改为 Tauri 对话框插件 `confirm()`
+- 附件导入进度条不消失：事件竞态（迟到进度事件覆盖 null），用 ref 守卫忽略导入结束后的事件
+- 侧边栏弹窗被裁切：改为 `position: fixed` + JS 定位，并支持点击外部关闭
+- 应用标识变更：`com.cnzen.shuyonote` → `cn.shuyo.shuyonote`（数据目录随之迁移）
 
 ### 文档
 
