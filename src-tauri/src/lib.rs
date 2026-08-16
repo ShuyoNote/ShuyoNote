@@ -48,6 +48,8 @@ pub fn run() {
             tags::add_tag,
             tags::remove_tag,
             tags::pages_by_tag,
+            tags::board_data,
+            tags::move_card,
             trash::list_deleted,
             trash::restore_page,
             trash::purge_page,

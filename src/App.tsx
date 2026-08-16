@@ -3,6 +3,7 @@ import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
 import { CommandPalette } from "./components/CommandPalette";
+import { BoardView } from "./components/BoardView";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { api } from "./lib/api";
@@ -94,6 +95,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
 function App() {
   const { pages, currentId, loadPages, error } = useNotes();
+  const [view, setView] = useState<"notes" | "board">("notes");
   useAutoSync();
 
   useEffect(() => {
@@ -109,8 +111,12 @@ function App() {
 
   return (
     <div className="app">
-      <PageTree />
-      {currentId ? (
+      <PageTree view={view} onViewChange={setView} />
+      {view === "board" ? (
+        <div className="main">
+          <BoardView />
+        </div>
+      ) : currentId ? (
         <NoteEditor pageId={currentId} />
       ) : (
         <div className="main empty">

@@ -135,7 +135,13 @@ function TreeItem({
   );
 }
 
-export function PageTree() {
+export function PageTree({
+  view,
+  onViewChange,
+}: {
+  view: "notes" | "board";
+  onViewChange: (v: "notes" | "board") => void;
+}) {
   const { pages, createPage, createFolder } = useNotes();
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -168,8 +174,7 @@ export function PageTree() {
         <div className="sidebar-header-actions">
           <TrashPanel />
           <SyncPanel />
-          <div className="new-menu">
-            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
+          <div className="new-menu">            <button className="btn-new" onClick={() => setNewMenuOpen((v) => !v)}>
               新建 ▾
             </button>
             {newMenuOpen && (
@@ -197,6 +202,20 @@ export function PageTree() {
       </div>
       <div className="sidebar-search">
         <SearchPanel />
+      </div>
+      <div className="view-switch">
+        <button
+          className={`view-switch-btn ${view === "notes" ? "view-switch-active" : ""}`}
+          onClick={() => onViewChange("notes")}
+        >
+          📝 笔记
+        </button>
+        <button
+          className={`view-switch-btn ${view === "board" ? "view-switch-active" : ""}`}
+          onClick={() => onViewChange("board")}
+        >
+          📋 看板
+        </button>
       </div>
       {tags.length > 0 && (
         <div className="sidebar-tags">

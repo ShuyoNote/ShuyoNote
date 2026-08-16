@@ -33,3 +33,8 @@ export interface Tag {
   id: string;
   name: string;
 }
+
+export interface BoardColumn {
+  tag: Tag | null;
+  pages: PageMeta[];
+}

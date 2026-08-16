@@ -56,3 +56,9 @@ pub struct Tag {
     pub id: String,
     pub name: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BoardColumn {
+    pub tag: Option<Tag>,
+    pub pages: Vec<PageMeta>,
+}

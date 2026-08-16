@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::models::{PageMeta, Tag};
+use crate::models::{BoardColumn, PageMeta, Tag};
 use rusqlite::{params, OptionalExtension};
 use tauri::State;
 
@@ -93,6 +93,10 @@ pub fn remove_tag(db: State<'_, Db>, page_id: String, tag_id: String) -> Result<
 #[tauri::command]
 pub fn pages_by_tag(db: State<'_, Db>, tag_id: String) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
+    pages_by_tag_impl(&c, &tag_id)
+}
+
+fn pages_by_tag_impl(c: &rusqlite::Connection, tag_id: &str) -> Result<Vec<PageMeta>, String> {
     let mut stmt = c
         .prepare(
             "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
@@ -117,4 +121,82 @@ pub fn pages_by_tag(db: State<'_, Db>, tag_id: String) -> Result<Vec<PageMeta>, 
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
+    let c = conn(&db);
+
+    let tags = {
+        let mut stmt = c
+            .prepare("SELECT id, name FROM tags ORDER BY name ASC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Tag {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+
+    let mut columns = Vec::new();
+    for tag in &tags {
+        let pages = pages_by_tag_impl(&c, &tag.id)?;
+        columns.push(BoardColumn {
+            tag: Some(tag.clone()),
+            pages,
+        });
+    }
+
+    // Untagged column (pages with no tag at all).
+    let untagged: Vec<PageMeta> = {
+        let mut stmt = c
+            .prepare(
+                "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
+                 FROM pages p
+                 WHERE p.deleted_at IS NULL AND p.kind = 'page'
+                   AND NOT EXISTS (SELECT 1 FROM page_tags pt WHERE pt.page_id = p.id)
+                 ORDER BY p.updated_at DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(PageMeta {
+                    id: row.get(0)?,
+                    workspace_id: row.get(1)?,
+                    parent_id: row.get(2)?,
+                    title: row.get(3)?,
+                    kind: row.get(4)?,
+                    sort_order: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    deleted_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    columns.push(BoardColumn {
+        tag: None,
+        pages: untagged,
+    });
+
+    Ok(columns)
+}
+
+#[tauri::command]
+pub fn move_card(db: State<'_, Db>, page_id: String, tag_id: String) -> Result<(), String> {
+    let c = conn(&db);
+    // Remove the page from all columns first, then assign the target tag.
+    c.execute("DELETE FROM page_tags WHERE page_id = ?1", params![page_id])
+        .map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?1, ?2)",
+        params![page_id, tag_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }

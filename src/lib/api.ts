@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PageDetail, PageMeta, SearchResult, Tag } from "../types";
+import type { BoardColumn, PageDetail, PageMeta, SearchResult, Tag } from "../types";
 
 export interface SyncConfig {
   server_url: string;
@@ -60,6 +60,8 @@ export const api = {
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),
   removeTag: (pageId: string, tagId: string) => invoke<void>("remove_tag", { pageId, tagId }),
   pagesByTag: (tagId: string) => invoke<PageMeta[]>("pages_by_tag", { tagId }),
+  boardData: () => invoke<BoardColumn[]>("board_data"),
+  moveCard: (pageId: string, tagId: string) => invoke<void>("move_card", { pageId, tagId }),
   listDeleted: () => invoke<PageMeta[]>("list_deleted"),
   restorePage: (id: string) => invoke<void>("restore_page", { id }),
   purgePage: (id: string) => invoke<void>("purge_page", { id }),
