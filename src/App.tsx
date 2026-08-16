@@ -12,7 +12,7 @@ import { useNotes } from "./store/notes";
 import "./App.css";
 
 function NoteEditor({ pageId }: { pageId: string }) {
-  const { current, updateCurrent, loadPages, error } = useNotes();
+  const { current, updateCurrent, loadPages, error, searchQuery } = useNotes();
   const [title, setTitle] = useState(current?.title ?? "");
   const [contentJson, setContentJson] = useState(current?.content_json ?? "");
   const [saved, setSaved] = useState(true);
@@ -81,6 +81,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         pageId={pageId}
         contentJson={contentJson}
         onSave={onEditorSave}
+        searchQuery={searchQuery}
         onExport={async (markdown) => {
           try {
             await navigator.clipboard.writeText(markdown);

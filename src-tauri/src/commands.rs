@@ -244,8 +244,36 @@ pub fn move_page(db: State<Db>, args: MovePageArgs) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // Re-normalize sibling sort_order to a clean integer sequence.
+    renumber_siblings(&c, args.new_parent_id.as_deref())?;
+
     let page = fetch_page(&c, &args.id)?;
     sync::record_page_upsert(&c, &page)?;
 
+    Ok(())
+}
+
+// Renumber all children of `parent_id` to 0,1,2,... by their current sort_order.
+fn renumber_siblings(c: &Connection, parent_id: Option<&str>) -> Result<(), String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT id FROM pages
+             WHERE parent_id IS ?1 AND deleted_at IS NULL
+             ORDER BY sort_order ASC, created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<String> = stmt
+        .query_map(params![parent_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    for (i, id) in ids.iter().enumerate() {
+        c.execute(
+            "UPDATE pages SET sort_order = ?1 WHERE id = ?2",
+            params![i as f64, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

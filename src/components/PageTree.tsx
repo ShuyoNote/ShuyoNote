@@ -37,7 +37,7 @@ function TreeItem({
   node: TreeNode;
   depth: number;
 }) {
-  const { currentId, openPage, createPage, createFolder, deletePage, movePage } = useNotes();
+  const { currentId, openPage, createPage, createFolder, deletePage, movePage, pages } = useNotes();
   const [expanded, setExpanded] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -50,9 +50,28 @@ function TreeItem({
     e.stopPropagation();
     setDragOver(false);
     const id = e.dataTransfer.getData("text/plain");
-    if (id && id !== node.id) {
-      await movePage(id, node.id, Date.now());
+    if (!id || id === node.id) return;
+
+    // Insert before or after the target based on mouse Y (top half = before).
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const insertAfter = e.clientY > rect.top + rect.height / 2;
+
+    // Siblings (same parent, excluding the dragged node), already sorted.
+    const siblings = pages
+      .filter((p) => p.parent_id === node.parent_id && p.id !== id)
+      .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
+
+    const targetIdx = siblings.findIndex((s) => s.id === node.id);
+    let sortOrder: number;
+    if (insertAfter) {
+      const next = siblings[targetIdx + 1];
+      sortOrder = next ? (node.sort_order + next.sort_order) / 2 : node.sort_order + 1;
+    } else {
+      const prev = siblings[targetIdx - 1];
+      sortOrder = prev ? (prev.sort_order + node.sort_order) / 2 : node.sort_order - 1;
     }
+
+    await movePage(id, node.parent_id, sortOrder);
   };
 
   const handleClick = () => {

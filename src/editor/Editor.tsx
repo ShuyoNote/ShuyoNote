@@ -22,6 +22,7 @@ import { ImageNode } from "./nodes/ImageNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { MarkdownToolbar } from "./plugins/MarkdownToolbar";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
+import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 
 const theme = {
   heading: {
@@ -64,6 +65,7 @@ interface EditorProps {
   onExport?: (markdown: string) => void;
   autoFocus?: boolean;
   pageId: string;
+  searchQuery?: string;
 }
 
 function parseEditorState(contentJson: string): string | null {
@@ -76,7 +78,7 @@ function parseEditorState(contentJson: string): string | null {
   return null;
 }
 
-export function Editor({ contentJson, onSave, onExport, autoFocus, pageId }: EditorProps) {
+export function Editor({ contentJson, onSave, onExport, autoFocus, pageId, searchQuery }: EditorProps) {
   const initialConfig = useMemo(
     () => ({
       namespace: "shuyonote-editor",
@@ -125,6 +127,7 @@ export function Editor({ contentJson, onSave, onExport, autoFocus, pageId }: Edi
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin />
         <ImagePastePlugin pageId={pageId} />
+        {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         {onExport && <MarkdownToolbar onExport={onExport} />}
       </div>
     </LexicalComposer>

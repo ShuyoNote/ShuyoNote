@@ -21,7 +21,7 @@ function Highlighted({ text }: { text: string }) {
 }
 
 export function SearchPanel() {
-  const { openPage } = useNotes();
+  const { openPage, setSearchQuery } = useNotes();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -65,7 +65,9 @@ export function SearchPanel() {
   }, []);
 
   const select = (id: string) => {
+    const q = query.trim();
     openPage(id);
+    setSearchQuery(q);
     setOpen(false);
     setQuery("");
   };

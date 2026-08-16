@@ -8,6 +8,11 @@
   --hover: #efefed;
 }
 
+::highlight(shuyo-search) {
+  background-color: #ffe08a;
+  color: inherit;
+}
+
 * {
   box-sizing: border-box;
 }
