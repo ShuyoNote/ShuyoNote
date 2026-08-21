@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
 import type { PageMeta } from "../types";
 
@@ -79,6 +80,23 @@ registerPlugin({
         const page = await api.getPage(ctx.currentId);
         await navigator.clipboard.writeText(JSON.stringify(page, null, 2));
         return "已复制当前页 JSON 到剪贴板";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "database",
+  name: "数据库",
+  commands: [
+    {
+      id: "database.create",
+      title: "新建数据库",
+      description: "创建一个数据库表格视图页面",
+      closeOnRun: true,
+      run: async () => {
+        await useNotes.getState().createDatabase(null);
+        return "已创建数据库";
       },
     },
   ],

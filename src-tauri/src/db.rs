@@ -117,6 +117,13 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_page_props_attr ON page_props(attr_id);
 
+        CREATE TABLE IF NOT EXISTS database_columns (
+            db_page_id TEXT NOT NULL REFERENCES pages(id),
+            attr_id    TEXT NOT NULL REFERENCES attr_defs(id),
+            sort_order REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (db_page_id, attr_id)
+        );
+
         CREATE TABLE IF NOT EXISTS tags (
             id   TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE

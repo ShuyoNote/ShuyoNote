@@ -81,3 +81,16 @@ pub struct PageProp {
     #[serde(default)]
     pub options: Vec<String>,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatabaseRow {
+    pub page_id: String,
+    pub title: String,
+    pub values: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatabaseQuery {
+    pub columns: Vec<AttrDef>,
+    pub rows: Vec<DatabaseRow>,
+}

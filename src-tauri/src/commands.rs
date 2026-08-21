@@ -95,7 +95,7 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
 pub fn get_page(db: State<Db>, id: String) -> Result<PageDetail, String> {
     let c = conn(&db);
     let page = fetch_page(&c, &id)?;
-    if page.kind != "page" {
+    if page.kind != "page" && page.kind != "database" {
         return Err("该节点不是页面".to_string());
     }
     Ok(page)
@@ -115,6 +115,11 @@ pub fn create_page(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, St
 #[tauri::command]
 pub fn create_folder(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
     create_node(db, args.parent_id, args.title, "folder")
+}
+
+#[tauri::command]
+pub fn create_database(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
+    create_node(db, args.parent_id, args.title, "database")
 }
 
 fn create_node(

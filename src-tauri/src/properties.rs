@@ -9,7 +9,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> MutexGuard<'a, Connection> {
     db.0.lock().expect("db mutex poisoned")
 }
 
-fn parse_options(json: &str) -> Vec<String> {
+pub(crate) fn parse_options(json: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(json).unwrap_or_default()
 }
 

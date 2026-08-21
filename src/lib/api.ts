@@ -5,6 +5,7 @@ import type {
   BlockBacklink,
   BlockInfo,
   BoardColumn,
+  DatabaseQuery,
   GraphData,
   PageBlock,
   PageDetail,
@@ -40,6 +41,8 @@ export const api = {
     invoke<PageDetail>("create_page", { args }),
   createFolder: (args: { parent_id: string | null; title?: string }) =>
     invoke<PageDetail>("create_folder", { args }),
+  createDatabase: (args: { parent_id: string | null; title?: string }) =>
+    invoke<PageDetail>("create_database", { args }),
   savePage: (args: {
     id: string;
     title?: string;
@@ -87,6 +90,14 @@ export const api = {
     invoke<void>("remove_page_prop", { page_id: pageId, attr_id: attrId }),
   getPageProps: (pageId: string) =>
     invoke<PageProp[]>("get_page_props", { page_id: pageId }),
+  getDbColumns: (dbPageId: string) =>
+    invoke<AttrDef[]>("get_db_columns", { db_page_id: dbPageId }),
+  addDbColumn: (dbPageId: string, attrId: string) =>
+    invoke<AttrDef[]>("add_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
+  removeDbColumn: (dbPageId: string, attrId: string) =>
+    invoke<AttrDef[]>("remove_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
+  queryDatabase: (dbPageId: string) =>
+    invoke<DatabaseQuery>("query_database", { db_page_id: dbPageId }),
   listTags: () => invoke<Tag[]>("list_tags"),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),

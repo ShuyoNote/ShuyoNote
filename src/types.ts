@@ -125,3 +125,14 @@ export interface PageProp {
   value: string;
   options: string[];
 }
+
+export interface DatabaseRow {
+  page_id: string;
+  title: string;
+  values: Record<string, string>;
+}
+
+export interface DatabaseQuery {
+  columns: AttrDef[];
+  rows: DatabaseRow[];
+}

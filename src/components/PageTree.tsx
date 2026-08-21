@@ -53,6 +53,7 @@ function TreeItem({
 
   const isCurrent = currentId === node.id;
   const isFolder = node.kind === "folder";
+  const isDatabase = node.kind === "database";
 
   const commitRename = async () => {
     const v = editValue.trim();
@@ -129,7 +130,9 @@ function TreeItem({
         >
           {node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
-        <span className={`tree-icon${isFolder ? " tree-icon-folder" : ""}`}>{isFolder ? "📁" : "📄"}</span>
+        <span className={`tree-icon${isFolder ? " tree-icon-folder" : ""}`}>
+          {isFolder ? "📁" : isDatabase ? "🗂" : "📄"}
+        </span>
         {editing ? (
           <input
             className="tree-rename-input"
@@ -221,7 +224,7 @@ export function PageTree({
   view: "notes" | "board" | "graph";
   onViewChange: (v: "notes" | "board" | "graph") => void;
 }) {
-  const { pages, createPage, createFolder, loading } = useNotes();
+  const { pages, createPage, createFolder, createDatabase, loading } = useNotes();
   const { collapsed, toggle } = useSidebar();
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -354,6 +357,14 @@ export function PageTree({
                   }}
                 >
                   📁 新建文件夹
+                </button>
+                <button
+                  onClick={() => {
+                    closeNewMenu();
+                    createDatabase(null);
+                  }}
+                >
+                  🗂 新建数据库
                 </button>
               </div>
             )}

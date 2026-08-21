@@ -3181,3 +3181,290 @@ select.prop-value {
   max-width: 120px;
   outline: none;
 }
+
+/* ---------- Database view ---------- */
+.database-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px 32px;
+  overflow: hidden;
+}
+
+.database-empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.database-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.database-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-filter {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  width: 220px;
+  outline: none;
+}
+
+.database-filter:focus {
+  border-color: var(--accent);
+}
+
+.database-count {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.database-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  position: relative;
+}
+
+.database-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.database-table th,
+.database-table td {
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  padding: 0;
+}
+
+.database-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.db-th {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 8px 10px !important;
+  white-space: nowrap;
+}
+
+.db-th:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.db-th-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.db-col-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  visibility: hidden;
+}
+
+.db-th:hover .db-col-remove {
+  visibility: visible;
+}
+
+.db-col-remove:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.db-th-add {
+  cursor: default;
+  width: 64px;
+}
+
+.db-add-col {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.db-add-col:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.db-cell {
+  padding: 4px 8px !important;
+  min-width: 120px;
+  max-width: 260px;
+}
+
+.db-cell-title {
+  min-width: 160px;
+}
+
+.db-cell-empty {
+  min-width: 40px;
+}
+
+.db-title {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+}
+
+.db-title:hover {
+  color: var(--accent);
+}
+
+.db-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: 4px 6px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.db-input:hover {
+  border-color: var(--border);
+}
+
+.db-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.db-checkbox {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  margin: 0;
+}
+
+.db-empty {
+  padding: 24px !important;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.db-add-col-panel {
+  position: absolute;
+  top: 52px;
+  right: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+  width: 220px;
+  z-index: 20;
+}
+
+.db-add-col-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 4px 8px 6px;
+}
+
+.db-add-col-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.db-add-col-item:hover {
+  background: var(--hover);
+}
+
+.db-add-col-type {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.db-add-col-empty {
+  padding: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.db-new-attr {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.db-new-attr .db-input {
+  border: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
+}
+
+.db-new-attr-btn {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: var(--radius-xs);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}

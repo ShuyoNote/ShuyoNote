@@ -4,6 +4,7 @@ import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
 import { AttachmentPanel } from "./components/AttachmentPanel";
 import { PropertiesPanel } from "./components/PropertiesPanel";
+import { DatabaseView } from "./components/DatabaseView";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
@@ -90,6 +91,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
   }, []);
+
+  // A database page renders a table view instead of the block editor.
+  if (current?.kind === "database") {
+    return (
+      <div className="main">
+        <DatabaseView pageId={pageId} title={current.title} />
+      </div>
+    );
+  }
 
   return (
     <div className="main">

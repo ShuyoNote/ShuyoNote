@@ -3,6 +3,7 @@ mod backlinks;
 mod backup;
 mod blocks;
 mod commands;
+mod database;
 mod db;
 mod graph;
 mod models;
@@ -39,6 +40,7 @@ pub fn run() {
             commands::get_page,
             commands::create_page,
             commands::create_folder,
+            commands::create_database,
             commands::save_page,
             commands::delete_page,
             commands::move_page,
@@ -66,6 +68,10 @@ pub fn run() {
             properties::set_page_prop,
             properties::remove_page_prop,
             properties::get_page_props,
+            database::get_db_columns,
+            database::add_db_column,
+            database::remove_db_column,
+            database::query_database,
             tags::list_tags,
             tags::page_tags,
             tags::add_tag,
