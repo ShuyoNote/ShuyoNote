@@ -73,13 +73,13 @@ export const api = {
   removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
   getBacklinks: (id: string) => invoke<PageMeta[]>("get_backlinks", { id }),
   resolveBlock: (blockId: string) =>
-    invoke<BlockInfo>("resolve_block", { block_id: blockId }),
+    invoke<BlockInfo>("resolve_block", { blockId }),
   getPageBlocks: (pageId: string) =>
-    invoke<PageBlock[]>("get_page_blocks", { page_id: pageId }),
+    invoke<PageBlock[]>("get_page_blocks", { pageId }),
   searchBlocks: (query: string) =>
     invoke<SearchBlock[]>("search_blocks", { query }),
   listBlockBacklinks: (pageId: string) =>
-    invoke<BlockBacklink[]>("list_block_backlinks", { page_id: pageId }),
+    invoke<BlockBacklink[]>("list_block_backlinks", { pageId }),
   getGraph: () => invoke<GraphData>("get_graph"),
   listAttrDefs: () => invoke<AttrDef[]>("list_attr_defs"),
   createAttr: (args: { name: string; attr_type: string; options?: string[] }) =>
@@ -90,17 +90,17 @@ export const api = {
   setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
     invoke<void>("set_page_prop", { args }),
   removePageProp: (pageId: string, attrId: string) =>
-    invoke<void>("remove_page_prop", { page_id: pageId, attr_id: attrId }),
+    invoke<void>("remove_page_prop", { pageId, attrId }),
   getPageProps: (pageId: string) =>
-    invoke<PageProp[]>("get_page_props", { page_id: pageId }),
+    invoke<PageProp[]>("get_page_props", { pageId }),
   getDbColumns: (dbPageId: string) =>
-    invoke<AttrDef[]>("get_db_columns", { db_page_id: dbPageId }),
+    invoke<AttrDef[]>("get_db_columns", { dbPageId }),
   addDbColumn: (dbPageId: string, attrId: string) =>
     invoke<AttrDef[]>("add_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
   removeDbColumn: (dbPageId: string, attrId: string) =>
     invoke<AttrDef[]>("remove_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
   queryDatabase: (dbPageId: string) =>
-    invoke<DatabaseQuery>("query_database", { db_page_id: dbPageId }),
+    invoke<DatabaseQuery>("query_database", { dbPageId }),
   listTags: () => invoke<Tag[]>("list_tags"),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),
@@ -108,7 +108,7 @@ export const api = {
   pagesByTag: (tagId: string) => invoke<PageMeta[]>("pages_by_tag", { tagId }),
   boardData: () => invoke<BoardColumn[]>("board_data"),
   boardByAttr: (attrId: string) =>
-    invoke<BoardGroup[]>("board_by_attr", { attr_id: attrId }),
+    invoke<BoardGroup[]>("board_by_attr", { attrId }),
   moveCard: (pageId: string, tagId: string) => invoke<void>("move_card", { pageId, tagId }),
   listDeleted: () => invoke<PageMeta[]>("list_deleted"),
   restorePage: (id: string) => invoke<void>("restore_page", { id }),
