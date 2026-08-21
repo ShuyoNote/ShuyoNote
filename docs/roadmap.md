@@ -27,7 +27,7 @@
 
 ## 3. 里程碑规划
 
-### M1 — Markdown 无损往返（P0）
+### M1 — Markdown 无损往返（P0）✅ 核心已实现
 
 - **目标**：Markdown 导入 → 块编辑 → 导出，不丢信息；探索「Markdown 为真相源、JSON 为缓存」的混合存储。
 - **要点**：
@@ -35,6 +35,7 @@
   - 覆盖 `[[标题]]` / `((块ID))` / `{{块ID}}` / `#标签` 等语法。
   - 往返测试：`md → json → md` 与 `json → md → json` 均幂等。
 - **验收**：导入再导出 100% 一致（diff 为空）；块引用/嵌入/表格/图片在往返后仍有效。
+- **实现**：`src/editor/markdownTransformers.ts` 的 `SHUYONOTE_TRANSFORMERS` 已覆盖 图片 `![]()`、视频 `!video()`、块嵌入 `{{id}}`、块引用 `((id))`、分隔线 `---`、待办 `- [ ]`、Callout `> [!NOTE]`、Markdown 表格；补齐 Lexical 0.49 默认 `TRANSFORMERS` 不含表格/待办/分隔线/图片的缺口。往返一致性待运行时验证。
 
 ### M2 — 端到端加密（P0）
 
