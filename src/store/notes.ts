@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
+import { useViewStore } from "./view";
 
 interface NoteState {
   pages: PageMeta[];
@@ -46,6 +47,8 @@ export const useNotes = create<NoteState>((set, get) => ({
     try {
       const current = await api.getPage(id);
       set({ currentId: id, current });
+      // Opening a page/database switches back to the editor view.
+      useViewStore.getState().setView("notes");
     } catch (e) {
       set({ error: String(e) });
     }
@@ -56,6 +59,7 @@ export const useNotes = create<NoteState>((set, get) => ({
       const page = await api.createPage({ parent_id: parentId, title: "" });
       await get().loadPages();
       set({ currentId: page.id, current: page });
+      useViewStore.getState().setView("notes");
       return page.id;
     } catch (e) {
       set({ error: String(e) });
@@ -77,6 +81,7 @@ export const useNotes = create<NoteState>((set, get) => ({
       const db = await api.createDatabase({ parent_id: parentId, title: "新建数据库" });
       await get().loadPages();
       set({ currentId: db.id, current: db });
+      useViewStore.getState().setView("notes");
       return db.id;
     } catch (e) {
       set({ error: String(e) });
