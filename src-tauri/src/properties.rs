@@ -1,6 +1,6 @@
 use crate::db::{now_ms, Db};
 use crate::models::{AttrDef, PageProp};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use std::sync::MutexGuard;
 use tauri::State;
@@ -79,6 +79,42 @@ pub fn create_attr(db: State<'_, Db>, args: CreateAttrArgs) -> Result<AttrDef, S
         id,
         name,
         attr_type: args.attr_type,
+        options: args.options,
+    })
+}
+
+#[derive(Deserialize)]
+pub struct UpdateAttrArgs {
+    pub id: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+#[tauri::command]
+pub fn update_attr(db: State<'_, Db>, args: UpdateAttrArgs) -> Result<AttrDef, String> {
+    let c = conn(&db);
+    let options_json = serde_json::to_string(&args.options).unwrap_or_else(|_| "[]".to_string());
+    let now = now_ms();
+    c.execute(
+        "UPDATE attr_defs SET options = ?1, updated_at = ?2 WHERE id = ?3",
+        params![options_json, now, args.id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let (id, name, attr_type): (String, String, String) = c
+        .query_row(
+            "SELECT id, name, type FROM attr_defs WHERE id = ?1",
+            params![args.id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "属性不存在".to_string())?;
+
+    Ok(AttrDef {
+        id,
+        name,
+        attr_type,
         options: args.options,
     })
 }

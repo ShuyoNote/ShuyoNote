@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AttrDef, DatabaseQuery } from "../types";
@@ -22,6 +23,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [addingCol, setAddingCol] = useState(false);
+  const [viewType, setViewType] = useState<"table" | "gallery">("table");
+  const [editingOptionsCol, setEditingOptionsCol] = useState<string | null>(null);
+  const [optionsText, setOptionsText] = useState("");
 
   const load = () => {
     api.queryDatabase(pageId).then(setQuery).catch((e) => toast(String(e), "error"));
@@ -64,13 +68,30 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     }
   };
 
-  const createAndAddColumn = async (name: string, type: string) => {
+  const createAndAddColumn = async (name: string, type: string, options: string[]) => {
     try {
-      const attr = await api.createAttr({ name, attr_type: type, options: [] });
+      const attr = await api.createAttr({ name, attr_type: type, options });
       setAttrs((as) => [...as, attr]);
       await addColumn(attr.id);
     } catch (e) {
       toast(`新建列失败：${e}`, "error");
+    }
+  };
+
+  const openOptionsEditor = (c: AttrDef) => {
+    setEditingOptionsCol(c.id);
+    setOptionsText(c.options.join(", "));
+  };
+
+  const saveOptions = async (attrId: string) => {
+    const options = optionsText.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    try {
+      const updated = await api.updateAttr({ id: attrId, options });
+      setQuery((q) => q && { ...q, columns: q.columns.map((c) => (c.id === attrId ? updated : c)) });
+      setAttrs((as) => as.map((a) => (a.id === attrId ? updated : a)));
+      setEditingOptionsCol(null);
+    } catch (e) {
+      toast(`更新选项失败：${e}`, "error");
     }
   };
 
@@ -123,76 +144,129 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <div className="db-view-switch">
+          <button
+            className={viewType === "table" ? "db-view-active" : ""}
+            onClick={() => setViewType("table")}
+          >
+            ☰ 表格
+          </button>
+          <button
+            className={viewType === "gallery" ? "db-view-active" : ""}
+            onClick={() => setViewType("gallery")}
+          >
+            ▦ 画廊
+          </button>
+        </div>
         <span className="database-count">{rows.length} 条</span>
       </div>
 
-      <div className="database-table-wrap">
-        <table className="database-table">
-          <thead>
-            <tr>
-              <th className="db-th" onClick={() => toggleSort("__title")}>
-                页面{sort?.key === "__title" ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
-              </th>
-              {query.columns.map((c) => (
-                <th
-                  key={c.id}
-                  className="db-th"
-                  title={TYPE_LABELS[c.attr_type] ?? c.attr_type}
-                  onClick={() => toggleSort(c.id)}
-                >
-                  <span className="db-th-name">
-                    {c.name}
-                    {sort?.key === c.id ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
-                  </span>
-                  <button
-                    className="db-col-remove"
-                    title="移除列"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeColumn(c.id);
-                    }}
+      {viewType === "table" ? (
+        <div className="database-table-wrap">
+          <table className="database-table">
+            <thead>
+              <tr>
+                <th className="db-th" onClick={() => toggleSort("__title")}>
+                  页面{sort?.key === "__title" ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+                </th>
+                {query.columns.map((c) => (
+                  <th
+                    key={c.id}
+                    className="db-th"
+                    title={TYPE_LABELS[c.attr_type] ?? c.attr_type}
+                    onClick={() => toggleSort(c.id)}
                   >
-                    ×
+                    <span className="db-th-name">
+                      {c.name}
+                      {sort?.key === c.id ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+                    </span>
+                    {(c.attr_type === "select" || c.attr_type === "multi") && (
+                      <button
+                        className="db-col-options"
+                        title="编辑选项"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openOptionsEditor(c);
+                        }}
+                      >
+                        ⚙
+                      </button>
+                    )}
+                    <button
+                      className="db-col-remove"
+                      title="移除列"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeColumn(c.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </th>
+                ))}
+                <th className="db-th db-th-add">
+                  <button className="db-add-col" onClick={() => setAddingCol((v) => !v)}>
+                    ＋ 列
                   </button>
                 </th>
-              ))}
-              <th className="db-th db-th-add">
-                <button className="db-add-col" onClick={() => setAddingCol((v) => !v)}>
-                  ＋ 列
-                </button>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.page_id}>
-                <td className="db-cell db-cell-title">
-                  <button className="db-title" onClick={() => openPage(r.page_id)}>
-                    {r.title || "未命名"}
-                  </button>
-                </td>
-                {query.columns.map((c) => (
-                  <td key={c.id} className="db-cell">
-                    <DbCellEditor
-                      attr={c}
-                      value={r.values[c.id] ?? ""}
-                      onChange={(v) => setCell(r.page_id, c.id, v)}
-                    />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.page_id}>
+                  <td className="db-cell db-cell-title">
+                    <button className="db-title" onClick={() => openPage(r.page_id)}>
+                      {r.title || "未命名"}
+                    </button>
                   </td>
-                ))}
-                <td className="db-cell db-cell-empty" />
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td className="db-empty" colSpan={query.columns.length + 2}>
-                  {query.columns.length === 0 ? "点击「＋ 列」添加属性列" : "无匹配页面"}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                  {query.columns.map((c) => (
+                    <td key={c.id} className="db-cell">
+                      <DbCellEditor
+                        attr={c}
+                        value={r.values[c.id] ?? ""}
+                        onChange={(v) => setCell(r.page_id, c.id, v)}
+                      />
+                    </td>
+                  ))}
+                  <td className="db-cell db-cell-empty" />
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td className="db-empty" colSpan={query.columns.length + 2}>
+                    {query.columns.length === 0 ? "点击「＋ 列」添加属性列" : "无匹配页面"}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="db-gallery">
+          {rows.map((r) => {
+            const firstSelect = query.columns
+              .filter((c) => c.attr_type === "select" && (r.values[c.id] ?? "") !== "")
+              .map((c) => ({ value: r.values[c.id] }))[0];
+            return (
+              <div key={r.page_id} className="db-gallery-card" onClick={() => openPage(r.page_id)}>
+                <div className="db-gallery-title">{r.title || "未命名"}</div>
+                {firstSelect && (
+                  <span
+                    className="db-gallery-badge"
+                    style={{
+                      background: tagColor(firstSelect.value).soft,
+                      color: tagColor(firstSelect.value).solid,
+                    }}
+                  >
+                    {firstSelect.value}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+          {rows.length === 0 && <div className="db-empty">无匹配页面</div>}
+        </div>
+      )}
 
       {addingCol && (
         <div className="db-add-col-panel">
@@ -212,11 +286,31 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           ))}
           {availableAttrs.length === 0 && <div className="db-add-col-empty">暂无可用属性</div>}
           <DbNewAttr
-            onCreate={(name, type) => {
-              createAndAddColumn(name, type);
+            onCreate={(name, type, options) => {
+              createAndAddColumn(name, type, options);
               setAddingCol(false);
             }}
           />
+        </div>
+      )}
+
+      {editingOptionsCol && (
+        <div className="db-add-col-panel">
+          <div className="db-add-col-title">编辑选项（逗号分隔）</div>
+          <input
+            className="db-input db-options-input"
+            value={optionsText}
+            onChange={(e) => setOptionsText(e.target.value)}
+            placeholder="选项，逗号分隔"
+          />
+          <div className="db-options-actions">
+            <button className="db-new-attr-btn" onClick={() => saveOptions(editingOptionsCol)}>
+              保存
+            </button>
+            <button className="db-options-cancel" onClick={() => setEditingOptionsCol(null)}>
+              取消
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -264,9 +358,24 @@ function DbCellEditor({
   );
 }
 
-function DbNewAttr({ onCreate }: { onCreate: (name: string, type: string) => void }) {
+function DbNewAttr({
+  onCreate,
+}: {
+  onCreate: (name: string, type: string, options: string[]) => void;
+}) {
   const [name, setName] = useState("");
   const [type, setType] = useState<string>("text");
+  const [options, setOptions] = useState("");
+  const needsOptions = type === "select" || type === "multi";
+
+  const commit = () => {
+    if (!name.trim()) return;
+    const opts = needsOptions
+      ? options.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+      : [];
+    onCreate(name.trim(), type, opts);
+  };
+
   return (
     <div className="db-new-attr">
       <input
@@ -274,7 +383,7 @@ function DbNewAttr({ onCreate }: { onCreate: (name: string, type: string) => voi
         placeholder="新属性名"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && name.trim() && onCreate(name.trim(), type)}
+        onKeyDown={(e) => e.key === "Enter" && commit()}
       />
       <select className="db-input" value={type} onChange={(e) => setType(e.target.value)}>
         {TYPES.map((t) => (
@@ -283,10 +392,15 @@ function DbNewAttr({ onCreate }: { onCreate: (name: string, type: string) => voi
           </option>
         ))}
       </select>
-      <button
-        className="db-new-attr-btn"
-        onClick={() => name.trim() && onCreate(name.trim(), type)}
-      >
+      {needsOptions && (
+        <input
+          className="db-input"
+          placeholder="选项，逗号分隔"
+          value={options}
+          onChange={(e) => setOptions(e.target.value)}
+        />
+      )}
+      <button className="db-new-attr-btn" onClick={commit}>
         新建
       </button>
     </div>

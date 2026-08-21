@@ -64,6 +64,7 @@ pub fn run() {
             graph::get_graph,
             properties::list_attr_defs,
             properties::create_attr,
+            properties::update_attr,
             properties::delete_attr,
             properties::set_page_prop,
             properties::remove_page_prop,

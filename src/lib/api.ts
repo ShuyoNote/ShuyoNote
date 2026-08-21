@@ -84,6 +84,8 @@ export const api = {
   listAttrDefs: () => invoke<AttrDef[]>("list_attr_defs"),
   createAttr: (args: { name: string; attr_type: string; options?: string[] }) =>
     invoke<AttrDef>("create_attr", { args }),
+  updateAttr: (args: { id: string; options: string[] }) =>
+    invoke<AttrDef>("update_attr", { args }),
   deleteAttr: (id: string) => invoke<void>("delete_attr", { id }),
   setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
     invoke<void>("set_page_prop", { args }),
