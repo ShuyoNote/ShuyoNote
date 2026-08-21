@@ -10,7 +10,7 @@ import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
 import { TableNode, TableCellNode, TableRowNode } from "@lexical/table";
-import { TRANSFORMERS } from "@lexical/markdown";
+import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
 import { CodeNode, CodeHighlightNode } from "@lexical/code";
@@ -316,7 +316,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <BlockRefPlugin pageId={pageId} />
         <BlockRefSyncPlugin />
         <BlockSelectorPlugin />
-        <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
+        <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <ImagePastePlugin pageId={pageId} />
         <BlockDragPlugin />

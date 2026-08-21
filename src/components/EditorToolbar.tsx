@@ -1,4 +1,4 @@
-import { $convertFromMarkdownString, $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown";
+import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
 import { save } from "@tauri-apps/plugin-dialog";
 import { $getRoot } from "lexical";
@@ -7,6 +7,7 @@ import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { DownloadIcon, FileCodeIcon, SearchIcon, UploadIcon } from "./icons";
+import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 
 const HTML_TEMPLATE = (title: string, body: string) => `<!doctype html>
 <html lang="zh-CN">
@@ -46,7 +47,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const exportMarkdown = () => {
     if (!editor) return;
     editor.update(() => {
-      const markdown = $convertToMarkdownString(TRANSFORMERS);
+      const markdown = $convertToMarkdownString(SHUYONOTE_TRANSFORMERS);
       navigator.clipboard
         .writeText(markdown)
         .then(() => toast("已复制 Markdown 到剪贴板", "success"))
@@ -83,7 +84,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
     editor.update(() => {
       const root = $getRoot();
       root.clear();
-      $convertFromMarkdownString(text, TRANSFORMERS, root);
+      $convertFromMarkdownString(text, SHUYONOTE_TRANSFORMERS, root);
     });
   };
 
