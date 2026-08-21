@@ -220,6 +220,7 @@ ShuyoNote/
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
 | [docs/roadmap.md](docs/roadmap.md) | 下一阶段演进路线图与里程碑规划 |
+| [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [design/logo/README.md](design/logo/README.md) | 应用 Logo（应用图标 / 单色图形 / 字标 / 主图） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
