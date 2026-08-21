@@ -81,5 +81,6 @@ export interface BlockBacklink {
   source_block_id: string;
   source_snippet: string;
   target_block_id: string;
+  target_snippet: string;
   kind: string;
 }

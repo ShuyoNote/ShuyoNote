@@ -33,6 +33,7 @@ pub struct BlockBacklink {
     pub source_block_id: String,
     pub source_snippet: String,
     pub target_block_id: String,
+    pub target_snippet: String,
     pub kind: String,
 }
 
@@ -322,6 +323,17 @@ pub fn search_blocks(db: State<'_, Db>, query: String) -> Result<Vec<SearchBlock
 pub fn list_block_backlinks(db: State<'_, Db>, page_id: String) -> Result<Vec<BlockBacklink>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
 
+    // Target snippets all live in the current page.
+    let target_json: String = c
+        .query_row(
+            "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+            params![page_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "{}".to_string());
+
     let mut stmt = c
         .prepare(
             "SELECT b.source_page_id, p.title, b.source_block_id, b.target_block_id, b.kind,
@@ -354,12 +366,14 @@ pub fn list_block_backlinks(db: State<'_, Db>, page_id: String) -> Result<Vec<Bl
             .as_deref()
             .map(|j| snippet_for_block(j, &source_block_id))
             .unwrap_or_default();
+        let target_snippet = snippet_for_block(&target_json, &target_block_id);
         out.push(BlockBacklink {
             source_page_id,
             source_page_title,
             source_block_id,
             source_snippet,
             target_block_id,
+            target_snippet,
             kind,
         });
     }

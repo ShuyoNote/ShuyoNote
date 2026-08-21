@@ -1947,6 +1947,70 @@ body,
   background: var(--hover);
 }
 
+.backlinks-group {
+  margin-bottom: 14px;
+}
+
+.backlinks-subtitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.backlinks-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.backlink-block-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.backlink-block-card {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.backlink-block-card:hover {
+  background: var(--hover);
+}
+
+.backlink-block-page {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.backlink-block-snippet {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.backlink-block-arrow {
+  align-self: center;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
 /* Tags */
 .tag-bar {
   max-width: 720px;
