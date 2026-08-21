@@ -89,6 +89,7 @@ export interface BlockBacklink {
 export interface GraphPage {
   id: string;
   title: string;
+  tags: string[];
 }
 
 export interface GraphEdge {

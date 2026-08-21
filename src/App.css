@@ -2995,3 +2995,14 @@ body,
   background: var(--border);
   margin: 0 2px;
 }
+
+.graph-select {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 12px;
+  max-width: 120px;
+  outline: none;
+}

@@ -8,6 +8,7 @@ use tauri::State;
 pub struct GraphPage {
     pub id: String,
     pub title: String,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,16 +57,42 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
     let mut stmt = c
         .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
-    let pages: Vec<GraphPage> = stmt
+    let mut pages: Vec<GraphPage> = stmt
         .query_map([], |r| {
             Ok(GraphPage {
                 id: r.get(0)?,
                 title: r.get(1)?,
+                tags: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
+
+    // Attach tags to each page.
+    let mut tags_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut stmt = c
+        .prepare(
+            "SELECT pt.page_id, t.name
+             FROM page_tags pt
+             JOIN tags t ON t.id = pt.tag_id
+             JOIN pages p ON p.id = pt.page_id
+             WHERE p.deleted_at IS NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let tag_rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    for (page_id, name) in tag_rows {
+        tags_map.entry(page_id).or_default().push(name);
+    }
+    for p in pages.iter_mut() {
+        if let Some(tags) = tags_map.remove(&p.id) {
+            p.tags = tags;
+        }
+    }
 
     // --- Page-level edges (aggregated) ---
     let mut stmt = c

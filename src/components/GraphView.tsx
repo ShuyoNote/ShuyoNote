@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { tagColor } from "../lib/tagColor";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import type { GraphBlock, GraphData, GraphEdge } from "../types";
@@ -9,6 +10,7 @@ interface SimNode {
   label: string;
   kind: "page" | "block";
   pageId?: string;
+  tags?: string[];
   x: number;
   y: number;
   vx: number;
@@ -127,6 +129,8 @@ export function GraphView() {
   const [error, setError] = useState<string | null>(null);
   const [showBlocks, setShowBlocks] = useState(false);
   const [mode, setMode] = useState<"all" | "local">("all");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [colorByTag, setColorByTag] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [frame, setFrame] = useState(0);
@@ -187,32 +191,48 @@ export function GraphView() {
     if (!graph) return;
     const allPageEdges = graph.edges.filter((e) => e.source !== e.target);
 
-    let pageNodes = graph.pages;
-    let pageEdges = allPageEdges;
-    let blockNodes: GraphBlock[] = showBlocks ? graph.blocks : [];
-    let blockEdges: GraphEdge[] = showBlocks ? graph.block_edges : [];
+    // Determine visible page ids (null = all), composing local-graph + tag filter.
+    let visiblePageIds: Set<string> | null = null;
 
     const localFocus = mode === "local" ? currentId : null;
     if (localFocus && graph.pages.some((p) => p.id === localFocus)) {
-      const visiblePages = new Set<string>([localFocus]);
+      const s = new Set<string>([localFocus]);
       for (const e of allPageEdges) {
-        if (e.source === localFocus) visiblePages.add(e.target);
-        else if (e.target === localFocus) visiblePages.add(e.source);
+        if (e.source === localFocus) s.add(e.target);
+        else if (e.target === localFocus) s.add(e.source);
       }
-      pageNodes = graph.pages.filter((p) => visiblePages.has(p.id));
-      pageEdges = allPageEdges.filter(
-        (e) => visiblePages.has(e.source) && visiblePages.has(e.target),
+      visiblePageIds = s;
+    }
+
+    if (tagFilter) {
+      const tagged = new Set(
+        graph.pages.filter((p) => p.tags.includes(tagFilter)).map((p) => p.id),
       );
-      if (showBlocks) {
-        blockNodes = graph.blocks.filter((b) => visiblePages.has(b.page_id));
-        const visibleIds = new Set<string>([
-          ...visiblePages,
-          ...blockNodes.map((b) => b.id),
-        ]);
-        blockEdges = graph.block_edges.filter(
-          (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
-        );
-      }
+      visiblePageIds = visiblePageIds
+        ? new Set([...visiblePageIds].filter((id) => tagged.has(id)))
+        : tagged;
+    }
+
+    const pageNodes = visiblePageIds
+      ? graph.pages.filter((p) => visiblePageIds!.has(p.id))
+      : graph.pages;
+    const pageEdges = allPageEdges.filter((e) =>
+      visiblePageIds
+        ? visiblePageIds.has(e.source) && visiblePageIds.has(e.target)
+        : true,
+    );
+
+    let blockNodes: GraphBlock[] = showBlocks ? graph.blocks : [];
+    let blockEdges: GraphEdge[] = showBlocks ? graph.block_edges : [];
+    if (showBlocks && visiblePageIds) {
+      blockNodes = blockNodes.filter((b) => visiblePageIds!.has(b.page_id));
+      const visibleIds = new Set<string>([
+        ...visiblePageIds,
+        ...blockNodes.map((b) => b.id),
+      ]);
+      blockEdges = blockEdges.filter(
+        (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
+      );
     }
 
     const edges = [...pageEdges, ...blockEdges];
@@ -221,7 +241,17 @@ export function GraphView() {
     const degree = new Map<string, number>();
     const pageSimNodes: SimNode[] = pageNodes.map((p) => {
       degree.set(p.id, 0);
-      return { id: p.id, label: p.title, kind: "page" as const, x: 0, y: 0, vx: 0, vy: 0, degree: 0 };
+      return {
+        id: p.id,
+        label: p.title,
+        kind: "page" as const,
+        tags: p.tags,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        degree: 0,
+      };
     });
     const blockSimNodes: SimNode[] = blockNodes.map((b) => {
       degree.set(b.id, 0);
@@ -257,7 +287,7 @@ export function GraphView() {
 
     simRef.current = allNodes;
     setNodes(allNodes);
-  }, [graph, size, showBlocks, mode, currentId]);
+  }, [graph, size, showBlocks, mode, currentId, tagFilter]);
 
   // Force-directed simulation loop.
   useEffect(() => {
@@ -299,6 +329,13 @@ export function GraphView() {
       else if (e.target === focusId) neighborSet.add(e.source);
     }
   }
+
+  const allTags = useMemo(() => {
+    if (!graph) return [];
+    const s = new Set<string>();
+    for (const p of graph.pages) for (const t of p.tags) s.add(t);
+    return [...s].sort();
+  }, [graph]);
 
   const beginNodeDrag = (id: string, e: React.PointerEvent) => {
     e.stopPropagation();
@@ -422,6 +459,14 @@ export function GraphView() {
           })}
           {displayNodes.map((n) => {
             const dimmed = focusId && !neighborSet.has(n.id);
+            const tagFill =
+              colorByTag &&
+              n.kind === "page" &&
+              n.tags &&
+              n.tags.length > 0 &&
+              currentId !== n.id
+                ? tagColor(n.tags[0]).solid
+                : undefined;
             return (
               <g
                 key={n.id}
@@ -434,7 +479,11 @@ export function GraphView() {
                 onMouseEnter={() => setHoveredId(n.id)}
                 onMouseLeave={() => setHoveredId((h) => (h === n.id ? null : h))}
               >
-                <circle r={nodeRadius(n)} className="graph-node-circle" />
+                <circle
+                  r={nodeRadius(n)}
+                  className="graph-node-circle"
+                  style={tagFill ? { fill: tagFill } : undefined}
+                />
                 <text y={n.kind === "block" ? -8 : 4} className="graph-node-label">
                   {n.kind === "block" ? shortLabel(n.label) : n.label || "未命名"}
                 </text>
@@ -462,6 +511,27 @@ export function GraphView() {
           disabled={!currentId}
         >
           局部
+        </button>
+        <span className="graph-controls-sep" />
+        <select
+          className="graph-select"
+          value={tagFilter ?? ""}
+          onChange={(e) => setTagFilter(e.target.value || null)}
+          title="按标签过滤"
+        >
+          <option value="">全部标签</option>
+          {allTags.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <button
+          className={colorByTag ? "graph-toggle-active" : ""}
+          onClick={() => setColorByTag((v) => !v)}
+          title="按标签着色"
+        >
+          🎨
         </button>
       </div>
 
