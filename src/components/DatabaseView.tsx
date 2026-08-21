@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
-import type { AttrDef, DatabaseQuery } from "../types";
+import type { AttrDef, DatabaseQuery, DatabaseRow } from "../types";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag"] as const;
 const TYPE_LABELS: Record<string, string> = {
@@ -23,7 +23,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [addingCol, setAddingCol] = useState(false);
-  const [viewType, setViewType] = useState<"table" | "gallery">("table");
+  const [viewType, setViewType] = useState<"table" | "gallery" | "board">("table");
+  const [boardGroupAttr, setBoardGroupAttr] = useState<string | null>(null);
+  const [boardDragOver, setBoardDragOver] = useState<string | null>(null);
   const [editingOptionsCol, setEditingOptionsCol] = useState<string | null>(null);
   const [optionsText, setOptionsText] = useState("");
 
@@ -130,6 +132,39 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     return attrs.filter((a) => !used.has(a.id));
   }, [attrs, query]);
 
+  const selectColumns = useMemo(
+    () => (query ? query.columns.filter((c) => c.attr_type === "select") : []),
+    [query],
+  );
+  const boardAttr = selectColumns.find((c) => c.id === boardGroupAttr) ?? selectColumns[0] ?? null;
+
+  const boardGroups = useMemo(() => {
+    if (!boardAttr) {
+      return [{ id: "__none", name: "未设置", rows }];
+    }
+    const groups = boardAttr.options.map((o) => ({ id: o, name: o, rows: [] as DatabaseRow[] }));
+    const unset = { id: "__none", name: "未设置", rows: [] as DatabaseRow[] };
+    for (const r of rows) {
+      const v = r.values[boardAttr.id] ?? "";
+      const g = groups.find((g) => g.id === v);
+      if (g) g.rows.push(r);
+      else unset.rows.push(r);
+    }
+    return [...groups, unset];
+  }, [boardAttr, rows]);
+
+  const moveBoardCard = async (pageId: string, colId: string) => {
+    if (!boardAttr) return;
+    try {
+      if (colId === "__none") await api.removePageProp(pageId, boardAttr.id);
+      else await api.setPageProp({ page_id: pageId, attr_id: boardAttr.id, value: colId });
+      setBoardDragOver(null);
+      load();
+    } catch (e) {
+      toast(`移动失败：${e}`, "error");
+    }
+  };
+
   if (!query) {
     return <div className="database-view database-empty">加载中…</div>;
   }
@@ -156,6 +191,12 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
             onClick={() => setViewType("gallery")}
           >
             ▦ 画廊
+          </button>
+          <button
+            className={viewType === "board" ? "db-view-active" : ""}
+            onClick={() => setViewType("board")}
+          >
+            📋 看板
           </button>
         </div>
         <span className="database-count">{rows.length} 条</span>
@@ -240,6 +281,63 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               )}
             </tbody>
           </table>
+        </div>
+      ) : viewType === "board" ? (
+        <div className="db-board">
+          <div className="db-board-toolbar">
+            <label className="db-board-label">分组字段</label>
+            <select
+              className="db-board-select"
+              value={boardAttr?.id ?? ""}
+              onChange={(e) => setBoardGroupAttr(e.target.value)}
+            >
+              {selectColumns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            {selectColumns.length === 0 && (
+              <span className="db-board-hint">需先添加 select 类型列</span>
+            )}
+          </div>
+          <div className="db-board-columns">
+            {boardGroups.map((g) => (
+              <div
+                key={g.id}
+                className={`db-board-col ${boardDragOver === g.id ? "db-board-col-over" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setBoardDragOver(g.id);
+                }}
+                onDragLeave={() => setBoardDragOver((v) => (v === g.id ? null : v))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const pageId = e.dataTransfer.getData("text/plain");
+                  if (pageId) moveBoardCard(pageId, g.id);
+                }}
+              >
+                <div className="db-board-col-header">
+                  <span className="db-board-dot" style={{ background: tagColor(g.name).solid }} />
+                  <span className="db-board-col-name">{g.name}</span>
+                  <span className="db-board-col-count">{g.rows.length}</span>
+                </div>
+                <div className="db-board-col-body">
+                  {g.rows.map((r) => (
+                    <div
+                      key={r.page_id}
+                      className="db-board-card"
+                      draggable
+                      onDragStart={(e) => e.dataTransfer.setData("text/plain", r.page_id)}
+                      onClick={() => openPage(r.page_id)}
+                    >
+                      {r.title || "未命名"}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="db-gallery">
