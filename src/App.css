@@ -2849,6 +2849,15 @@ body,
   stroke-width: 1;
 }
 
+.graph-edge-active {
+  stroke-opacity: 0.9;
+  stroke-width: 2;
+}
+
+.graph-edge-dim {
+  stroke-opacity: 0.08;
+}
+
 .graph-node {
   cursor: pointer;
 }
@@ -2874,6 +2883,10 @@ body,
 .graph-node-block .graph-node-circle {
   fill: #14b8a6;
   stroke-width: 1;
+}
+
+.graph-node-dim {
+  opacity: 0.15;
 }
 
 .graph-node-label {
@@ -2933,4 +2946,52 @@ body,
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.graph-controls {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: var(--shadow-sm);
+}
+
+.graph-controls button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 24px;
+}
+
+.graph-controls button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.graph-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.graph-controls .graph-toggle-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.graph-controls-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
 }
