@@ -28,7 +28,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 
 ### 编辑体验
 - **块编辑器**：基于 Lexical，支持标题、引用、Callout、代码块、列表、待办、表格、分隔线等 12 种块类型
-- **斜杠菜单**：输入 `/` 快速插入任意块
+- **斜杠菜单**：输入 `/` 快速插入任意块（含 `/引用块`、`/嵌入块`）
 - **块拖拽排序**：悬停块左侧出现 `⋮⋮` 手柄，拖拽实时显示插入指示线，松手重排
 - **块菜单**：点击 `⋮⋮` 手柄弹出「复制块 / 删除块」菜单
 - **表格交互**：Wolai 式悬浮工具栏（增删行列 / 表头行·列切换 / 对齐 / 背景色）+ 列宽拖拽调整 + 单元格选区高亮
@@ -40,7 +40,9 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 ### 知识组织
 - **页面树**：无限层级嵌套，页面与文件夹（`kind`）区分，拖拽精确排序
 - **标签系统**：页面打标签，侧边栏按标签筛选
-- **反向链接**：正文 `[[标题]]` 双链语法，页面底部自动聚合引用
+- **双向链接**：`[[标题]]` 页面双链 + `((块ID))` 块引用 + `{{块ID}}` 块嵌入
+- **块级反链**：页面底部反链面板分「页面引用 / 块级引用」两组，精确到「谁引用了本页哪一块」
+- **关系图**：力导向关系图，页面/块节点、按引用类型着色、块级图层开关、拖拽与点击跳转
 - **看板视图**：按标签分列，卡片拖拽跨列切换
 - **全文搜索**：SQLite FTS5 + trigram 分词，支持中文子串检索、命中高亮与定位
 
@@ -72,7 +74,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 |--------|------|
 | `Ctrl+N` | 新建页面 |
 | `Ctrl+Shift+F` | 聚焦搜索 |
-| `Ctrl+E` | 切换笔记 / 看板视图 |
+| `Ctrl+E` | 循环笔记 / 看板 / 关系图视图 |
 | `Ctrl+K` | 打开命令面板 |
 | `Ctrl+F` | 编辑器内查找（`Enter` / `Shift+Enter` 导航） |
 | `Esc` | 关闭查找栏 / 命令面板 / 弹层 |
@@ -93,7 +95,8 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 ┌─────────────────────────────────────────────────────┐
 │                  Rust 后端 (src-tauri)                │
 │  commands · search · sync · attachments · backlinks  │
-│  tags · trash · versions · backup · windows          │
+│  blocks · graph · tags · trash · versions · backup   │
+│  windows                                              │
 │                    │                                 │
 │     ┌──────────────┴──────────────┐                  │
 │     ▼                             ▼                  │
@@ -107,7 +110,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 └─────────────────────────────────────────────────────┘
 ```
 
-**数据模型**：一页 = 一个 Lexical 文档。块映射为 Lexical 根级节点，页面层级用 `parent_id` 树表达。
+**数据模型**：一页 = 一个 Lexical 文档。块映射为 Lexical 根级节点（每个顶层块带稳定 `blockId`），页面层级用 `parent_id` 树表达；`blocks` 表维护「块 → 页」反向索引，`backlinks` 表记录页面级 + 块级引用关系。
 
 ## 🧰 技术栈
 
@@ -180,9 +183,9 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 ```
 ShuyoNote/
 ├── src/                      # 前端（React + Lexical）
-│   ├── editor/               # 编辑器、自定义节点（Callout/Image）、插件
-│   ├── components/           # 侧边栏、页面树、搜索、看板、各面板
-│   ├── store/                # Zustand（notes / theme / sidebar / toast）
+│   ├── editor/               # 编辑器、自定义节点（Callout/Image/BlockRef/BlockEmbed）、插件
+│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板
+│   ├── store/                # Zustand（notes / theme / sidebar / toast / view / blockCache）
 │   ├── hooks/                # 自动同步 / 全局快捷键
 │   ├── plugins/              # 插件注册表（命令面板扩展点）
 │   └── lib/                  # Tauri IPC 封装 / 标签分类色
@@ -194,6 +197,8 @@ ShuyoNote/
 │       ├── sync.rs           # outbox / LWW / push-pull
 │       ├── attachments.rs    # 图片 / 附件
 │       ├── backlinks.rs      # 反向链接
+│       ├── blocks.rs         # 块索引 / 块级引用 / 块级反链
+│       ├── graph.rs          # 关系图数据
 │       ├── tags.rs           # 标签 / 看板
 │       ├── trash.rs          # 回收站
 │       ├── versions.rs       # 版本历史
@@ -210,6 +215,7 @@ ShuyoNote/
 | 文档 | 内容 |
 |------|------|
 | [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md) | 需求分析、数据模型、ADR、同步协议与路线图 |
+| [docs/plans/2026-08-20-block-reference-plan.md](docs/plans/2026-08-20-block-reference-plan.md) | 块级引用 + 反链升级 + 关系图方案（M1–M5 已实现） |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [design/logo/README.md](design/logo/README.md) | 应用 Logo（应用图标 / 单色图形 / 字标 / 主图） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
@@ -226,6 +232,8 @@ ShuyoNote/
 - [x] 块拖拽排序 / 编辑器查找
 - [x] UI/UX 设计系统 v2（token / Toast / 分类色 / 命令面板增强 / 骨架屏）
 - [x] 表格交互（悬浮工具栏 / 列宽拖拽 / 选区高亮）
+- [x] 块级引用 / 块嵌入 / 块级反链
+- [x] 关系图（页面 / 块级图层）
 - [ ] 端到端加密
 - [ ] 导出 PDF
 - [ ] 移动端适配
