@@ -216,6 +216,7 @@ ShuyoNote/
 |------|------|
 | [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md) | 需求分析、数据模型、ADR、同步协议与路线图 |
 | [docs/plans/2026-08-20-block-reference-plan.md](docs/plans/2026-08-20-block-reference-plan.md) | 块级引用 + 反链升级 + 关系图方案（M1–M5 已实现） |
+| [docs/plans/2026-08-21-properties-database-plan.md](docs/plans/2026-08-21-properties-database-plan.md) | 属性系统 + 数据库视图统一方案（合并思源数据库 + Obsidian Properties） |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [design/logo/README.md](design/logo/README.md) | 应用 Logo（应用图标 / 单色图形 / 字标 / 主图） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
