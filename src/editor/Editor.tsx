@@ -24,6 +24,7 @@ import { CalloutNode } from "./nodes/CalloutNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { BlockRefNode } from "./nodes/BlockRefNode";
+import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
@@ -273,6 +274,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         ImageNode,
         VideoNode,
         BlockRefNode,
+        BlockEmbedNode,
         TableNode,
         TableCellNode,
         TableRowNode,

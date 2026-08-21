@@ -10,6 +10,7 @@ pub struct BlockInfo {
     pub page_id: String,
     pub page_title: String,
     pub snippet: String,
+    pub content: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,9 +116,9 @@ pub fn upsert_blocks(c: &Connection, page_id: &str, content_json: &str) -> Resul
 fn collect_block_refs(node: &Value, top_block_id: &str, out: &mut Vec<(String, String, String)>) {
     if let Some(ty) = node.get("type").and_then(|v| v.as_str()) {
         if ty == "blockref" || ty == "blockembed" {
-            if let Some(block_id) = node.get("blockId").and_then(|v| v.as_str()) {
+            if let Some(target_id) = node.get("targetId").and_then(|v| v.as_str()) {
                 let kind = if ty == "blockembed" { "embed" } else { "link" };
-                out.push((top_block_id.to_string(), block_id.to_string(), kind.to_string()));
+                out.push((top_block_id.to_string(), target_id.to_string(), kind.to_string()));
             }
         }
     }
@@ -191,21 +192,28 @@ pub fn rebuild_block_graph(
     Ok(())
 }
 
-fn snippet_for_block(content_json: &str, block_id: &str) -> String {
-    match parse_json(content_json) {
-        Ok(v) => {
-            for child in root_children(&v) {
-                if child.get("blockId").and_then(|v| v.as_str()) == Some(block_id) {
-                    let text = node_text(child).trim().to_string();
-                    if text.is_empty() {
-                        return "(空块)".to_string();
-                    }
-                    return truncate_chars(&text, 200);
-                }
-            }
-            "(块已删除)".to_string()
+// Full text of a top-level block by id, if it exists in the serialized state.
+fn block_text(content_json: &str, block_id: &str) -> Option<String> {
+    let v = parse_json(content_json).ok()?;
+    for child in root_children(&v) {
+        if child.get("blockId").and_then(|v| v.as_str()) == Some(block_id) {
+            return Some(node_text(child));
         }
-        Err(_) => "(内容不可读)".to_string(),
+    }
+    None
+}
+
+fn snippet_for_block(content_json: &str, block_id: &str) -> String {
+    match block_text(content_json, block_id) {
+        Some(text) => {
+            let trimmed = text.trim().to_string();
+            if trimmed.is_empty() {
+                "(空块)".to_string()
+            } else {
+                truncate_chars(&trimmed, 200)
+            }
+        }
+        None => "(块已删除)".to_string(),
     }
 }
 
@@ -234,11 +242,15 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
         .ok_or_else(|| "页面不存在".to_string())?;
 
     let snippet = snippet_for_block(&content_json, &block_id);
+    let content = block_text(&content_json, &block_id)
+        .map(|t| t.trim().to_string())
+        .unwrap_or_default();
     Ok(BlockInfo {
         block_id,
         page_id,
         page_title: title,
         snippet,
+        content,
     })
 }
 

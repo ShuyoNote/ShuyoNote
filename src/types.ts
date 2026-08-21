@@ -61,6 +61,7 @@ export interface BlockInfo {
   page_id: string;
   page_title: string;
   snippet: string;
+  content: string;
 }
 
 export interface PageBlock {

@@ -163,6 +163,8 @@ function makeOptions(pageId: string): SlashOption[] {
       }); } },
     { key: "blockref", title: "引用块", badge: "⛓", group: "引用", run: () => {
       useBlockSelector.getState().openSelector("ref"); } },
+    { key: "blockembed", title: "嵌入块", badge: "🧩", group: "引用", run: () => {
+      useBlockSelector.getState().openSelector("embed"); } },
   ];
 }
 

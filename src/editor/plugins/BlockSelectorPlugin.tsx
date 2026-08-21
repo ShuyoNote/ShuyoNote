@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getSelection, $isRangeSelection } from "lexical";
+import { $createParagraphNode, $getSelection, $isRangeSelection } from "lexical";
 import { api } from "../../lib/api";
 import type { SearchBlock } from "../../types";
 import { useBlockSelector } from "../../store/blockSelector";
 import { toast } from "../../store/toast";
 import { $createBlockRefNode } from "../nodes/BlockRefNode";
+import { $createBlockEmbedNode } from "../nodes/BlockEmbedNode";
 
 // Block picker for /引用块 and /嵌入块: searches blocks by content, then inserts
 // a block reference (or embed) at the current caret.
@@ -61,7 +62,22 @@ export function BlockSelectorPlugin() {
   const insert = (block: SearchBlock) => {
     editor.update(() => {
       const selection = $getSelection();
-      if ($isRangeSelection(selection)) {
+      if (!$isRangeSelection(selection)) return;
+      if (mode === "embed") {
+        // Block-level embed: replace the current block, then add an empty paragraph.
+        const anchor = selection.anchor.getNode();
+        const topLevel = anchor.getTopLevelElement();
+        const embed = $createBlockEmbedNode(block.block_id);
+        if (topLevel) {
+          topLevel.replace(embed);
+          const paragraph = $createParagraphNode();
+          const parent = embed.getParent();
+          if (parent) {
+            parent.splice(embed.getIndexWithinParent() + 1, 0, [paragraph]);
+            paragraph.select();
+          }
+        }
+      } else {
         selection.insertNodes([$createBlockRefNode(block.block_id, block.snippet)]);
       }
     });

@@ -10,7 +10,7 @@ import {
 
 export type SerializedBlockRefNode = Spread<
   {
-    blockId: string;
+    targetId: string;
   },
   SerializedTextNode
 >;
@@ -53,13 +53,13 @@ export class BlockRefNode extends TextNode {
     return {
       ...super.exportJSON(),
       type: "blockref",
-      blockId: this.__blockId,
+      targetId: this.__blockId,
       version: 1,
     };
   }
 
   static importJSON(serializedNode: SerializedBlockRefNode): BlockRefNode {
-    const node = $createBlockRefNode(serializedNode.blockId, serializedNode.text);
+    const node = $createBlockRefNode(serializedNode.targetId, serializedNode.text);
     node.setFormat(serializedNode.format);
     node.setDetail(serializedNode.detail);
     node.setMode(serializedNode.mode);
