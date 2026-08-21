@@ -79,6 +79,7 @@ export function SearchPanel() {
         className="search-input"
         value={query}
         placeholder="搜索笔记…"
+        title="支持 prop:属性=值 过滤（如 prop:状态=进行中）"
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => query.trim() && setOpen(true)}
       />

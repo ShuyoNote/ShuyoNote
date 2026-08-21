@@ -5,10 +5,17 @@ use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 #[derive(Debug, Serialize)]
+pub struct GraphProp {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct GraphPage {
     pub id: String,
     pub title: String,
     pub tags: Vec<String>,
+    pub props: Vec<GraphProp>,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +70,7 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
                 id: r.get(0)?,
                 title: r.get(1)?,
                 tags: Vec::new(),
+                props: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -91,6 +99,33 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
     for p in pages.iter_mut() {
         if let Some(tags) = tags_map.remove(&p.id) {
             p.tags = tags;
+        }
+    }
+
+    // Attach select-type attribute values (categorical, for graph filter/color).
+    let mut props_map: HashMap<String, Vec<GraphProp>> = HashMap::new();
+    let mut stmt = c
+        .prepare(
+            "SELECT pp.page_id, a.name, pp.value
+             FROM page_props pp
+             JOIN attr_defs a ON a.id = pp.attr_id
+             WHERE a.type = 'select' AND pp.value != ''",
+        )
+        .map_err(|e| e.to_string())?;
+    let prop_rows: Vec<(String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    for (page_id, name, value) in prop_rows {
+        props_map
+            .entry(page_id)
+            .or_default()
+            .push(GraphProp { name, value });
+    }
+    for p in pages.iter_mut() {
+        if let Some(props) = props_map.remove(&p.id) {
+            p.props = props;
         }
     }
 

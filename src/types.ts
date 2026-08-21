@@ -92,10 +92,16 @@ export interface BlockBacklink {
   kind: string;
 }
 
+export interface GraphProp {
+  name: string;
+  value: string;
+}
+
 export interface GraphPage {
   id: string;
   title: string;
   tags: string[];
+  props: GraphProp[];
 }
 
 export interface GraphEdge {

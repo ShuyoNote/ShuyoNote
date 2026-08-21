@@ -2,6 +2,7 @@ use crate::db::Db;
 use crate::models::SearchResult;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
+use std::collections::HashSet;
 use tauri::State;
 
 // Sync the FTS index for a page (upsert = delete + insert).
@@ -63,20 +64,101 @@ pub struct SearchArgs {
     pub limit: Option<usize>,
 }
 
+// Split a query into a text part + `prop:名称=值` filters.
+fn parse_prop_filters(query: &str) -> (String, Vec<(String, String)>) {
+    let mut text = Vec::new();
+    let mut filters = Vec::new();
+    for token in query.split_whitespace() {
+        if let Some(rest) = token.strip_prefix("prop:") {
+            if let Some((name, value)) = rest.split_once('=') {
+                let name = name.trim();
+                let value = value.trim();
+                if !name.is_empty() {
+                    filters.push((name.to_string(), value.to_string()));
+                    continue;
+                }
+            }
+        }
+        text.push(token);
+    }
+    (text.join(" "), filters)
+}
+
+// Page ids matching ALL the given prop filters (intersection).
+fn pages_matching_filters(
+    c: &Connection,
+    filters: &[(String, String)],
+) -> Result<HashSet<String>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT pp.page_id
+             FROM page_props pp JOIN attr_defs a ON a.id = pp.attr_id
+             WHERE a.name = ?1 AND pp.value = ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut result: Option<HashSet<String>> = None;
+    for (name, value) in filters {
+        let ids: HashSet<String> = stmt
+            .query_map(params![name, value], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        result = match result {
+            None => Some(ids),
+            Some(prev) => Some(prev.intersection(&ids).cloned().collect()),
+        };
+    }
+    Ok(result.unwrap_or_default())
+}
+
+// All pages as brief search results (used when only prop filters are given).
+fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT id, title, content_text FROM pages
+             WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit as i64], |r| {
+            let id: String = r.get(0)?;
+            let title: String = r.get(1)?;
+            let text: String = r.get(2)?;
+            Ok(SearchResult {
+                id,
+                title,
+                snippet: truncate(&text, 120),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn search(db: State<Db>, args: SearchArgs) -> Result<Vec<SearchResult>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    let query = args.query.trim();
     let limit = args.limit.unwrap_or(50).min(200);
-    if query.is_empty() {
+    let (text, filters) = parse_prop_filters(args.query.trim());
+    if text.is_empty() && filters.is_empty() {
         return Ok(vec![]);
     }
 
-    // trigram tokenizer needs >=3 chars to match; fall back to LIKE for short queries.
-    if query.chars().count() < 3 {
-        return search_like(&c, query, limit);
+    // Base results: by text (FTS/LIKE), or all pages when only filters given.
+    let mut results = if text.is_empty() {
+        list_pages_brief(&c, 200)?
+    } else if text.chars().count() < 3 {
+        search_like(&c, &text, limit)?
+    } else {
+        search_fts(&c, &text, limit)?
+    };
+
+    if !filters.is_empty() {
+        let ids = pages_matching_filters(&c, &filters)?;
+        results.retain(|r| ids.contains(&r.id));
     }
-    search_fts(&c, query, limit)
+
+    results.truncate(limit);
+    Ok(results)
 }
 
 fn search_fts(c: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {

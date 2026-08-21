@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
-import type { GraphBlock, GraphData, GraphEdge } from "../types";
+import type { GraphBlock, GraphData, GraphEdge, GraphProp } from "../types";
 
 interface SimNode {
   id: string;
@@ -11,6 +11,7 @@ interface SimNode {
   kind: "page" | "block";
   pageId?: string;
   tags?: string[];
+  props?: GraphProp[];
   x: number;
   y: number;
   vx: number;
@@ -123,14 +124,25 @@ function shortLabel(label: string, max = 14): string {
   return s.slice(0, max) + "…";
 }
 
+// Values of a page for the current grouping dimension ("tag" or "attr:<name>").
+function pageDimValues(
+  p: { tags?: string[]; props?: GraphProp[] },
+  dimension: string,
+): string[] {
+  if (dimension === "tag") return p.tags ?? [];
+  const name = dimension.startsWith("attr:") ? dimension.slice(5) : "";
+  return (p.props ?? []).filter((pr) => pr.name === name).map((pr) => pr.value);
+}
+
 export function GraphView() {
   const { currentId, openPage } = useNotes();
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showBlocks, setShowBlocks] = useState(false);
   const [mode, setMode] = useState<"all" | "local">("all");
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [colorByTag, setColorByTag] = useState(false);
+  const [dimension, setDimension] = useState("tag"); // "tag" | "attr:<name>"
+  const [valueFilter, setValueFilter] = useState<string | null>(null);
+  const [colorBy, setColorBy] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [frame, setFrame] = useState(0);
@@ -204,13 +216,13 @@ export function GraphView() {
       visiblePageIds = s;
     }
 
-    if (tagFilter) {
-      const tagged = new Set(
-        graph.pages.filter((p) => p.tags.includes(tagFilter)).map((p) => p.id),
+    if (valueFilter) {
+      const matching = new Set(
+        graph.pages.filter((p) => pageDimValues(p, dimension).includes(valueFilter)).map((p) => p.id),
       );
       visiblePageIds = visiblePageIds
-        ? new Set([...visiblePageIds].filter((id) => tagged.has(id)))
-        : tagged;
+        ? new Set([...visiblePageIds].filter((id) => matching.has(id)))
+        : matching;
     }
 
     const pageNodes = visiblePageIds
@@ -246,6 +258,7 @@ export function GraphView() {
         label: p.title,
         kind: "page" as const,
         tags: p.tags,
+        props: p.props,
         x: 0,
         y: 0,
         vx: 0,
@@ -287,7 +300,7 @@ export function GraphView() {
 
     simRef.current = allNodes;
     setNodes(allNodes);
-  }, [graph, size, showBlocks, mode, currentId, tagFilter]);
+  }, [graph, size, showBlocks, mode, currentId, dimension, valueFilter]);
 
   // Force-directed simulation loop.
   useEffect(() => {
@@ -330,12 +343,20 @@ export function GraphView() {
     }
   }
 
-  const allTags = useMemo(() => {
+  // Select-attribute names (grouping dimensions) + values of the current dimension.
+  const dimensionNames = useMemo(() => {
     if (!graph) return [];
     const s = new Set<string>();
-    for (const p of graph.pages) for (const t of p.tags) s.add(t);
+    for (const p of graph.pages) for (const pr of p.props) s.add(pr.name);
     return [...s].sort();
   }, [graph]);
+
+  const dimensionValues = useMemo(() => {
+    if (!graph) return [];
+    const s = new Set<string>();
+    for (const p of graph.pages) for (const v of pageDimValues(p, dimension)) s.add(v);
+    return [...s].sort();
+  }, [graph, dimension]);
 
   const beginNodeDrag = (id: string, e: React.PointerEvent) => {
     e.stopPropagation();
@@ -459,14 +480,11 @@ export function GraphView() {
           })}
           {displayNodes.map((n) => {
             const dimmed = focusId && !neighborSet.has(n.id);
-            const tagFill =
-              colorByTag &&
-              n.kind === "page" &&
-              n.tags &&
-              n.tags.length > 0 &&
-              currentId !== n.id
-                ? tagColor(n.tags[0]).solid
-                : undefined;
+            const dimValues =
+              colorBy && n.kind === "page" && currentId !== n.id
+                ? pageDimValues(n, dimension)
+                : [];
+            const tagFill = dimValues.length > 0 ? tagColor(dimValues[0]).solid : undefined;
             return (
               <g
                 key={n.id}
@@ -515,21 +533,37 @@ export function GraphView() {
         <span className="graph-controls-sep" />
         <select
           className="graph-select"
-          value={tagFilter ?? ""}
-          onChange={(e) => setTagFilter(e.target.value || null)}
-          title="按标签过滤"
+          value={dimension}
+          onChange={(e) => {
+            setDimension(e.target.value);
+            setValueFilter(null);
+          }}
+          title="分组维度"
         >
-          <option value="">全部标签</option>
-          {allTags.map((t) => (
-            <option key={t} value={t}>
-              {t}
+          <option value="tag">标签</option>
+          {dimensionNames.map((name) => (
+            <option key={name} value={`attr:${name}`}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          className="graph-select"
+          value={valueFilter ?? ""}
+          onChange={(e) => setValueFilter(e.target.value || null)}
+          title="按值过滤"
+        >
+          <option value="">全部</option>
+          {dimensionValues.map((v) => (
+            <option key={v} value={v}>
+              {v}
             </option>
           ))}
         </select>
         <button
-          className={colorByTag ? "graph-toggle-active" : ""}
-          onClick={() => setColorByTag((v) => !v)}
-          title="按标签着色"
+          className={colorBy ? "graph-toggle-active" : ""}
+          onClick={() => setColorBy((v) => !v)}
+          title="按维度着色"
         >
           🎨
         </button>
