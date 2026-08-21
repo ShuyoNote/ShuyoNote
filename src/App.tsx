@@ -6,6 +6,7 @@ import { AttachmentPanel } from "./components/AttachmentPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
+import { GraphView } from "./components/GraphView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
@@ -13,6 +14,7 @@ import { useAutoSync } from "./hooks/useAutoSync";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
+import { useViewStore } from "./store/view";
 import "./App.css";
 
 function NoteEditor({ pageId }: { pageId: string }) {
@@ -132,9 +134,12 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
 function App() {
   const { pages, currentId, loadPages, error } = useNotes();
-  const [view, setView] = useState<"notes" | "board">("notes");
+  const view = useViewStore((s) => s.view);
+  const setView = useViewStore((s) => s.setView);
   useAutoSync();
-  useGlobalShortcuts(() => setView((v) => (v === "board" ? "notes" : "board")));
+  useGlobalShortcuts(() =>
+    setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
+  );
 
   // Standalone window mode: ?page=<id> renders a single-page editor only.
   const standaloneId = new URLSearchParams(window.location.search).get("page");
@@ -165,7 +170,11 @@ function App() {
   return (
     <div className="app">
       <PageTree view={view} onViewChange={setView} />
-      {view === "board" ? (
+      {view === "graph" ? (
+        <div className="main">
+          <GraphView />
+        </div>
+      ) : view === "board" ? (
         <div className="main">
           <BoardView />
         </div>

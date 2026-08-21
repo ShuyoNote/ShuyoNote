@@ -4,6 +4,7 @@ mod backup;
 mod blocks;
 mod commands;
 mod db;
+mod graph;
 mod models;
 mod search;
 mod sync;
@@ -57,6 +58,7 @@ pub fn run() {
             blocks::get_page_blocks,
             blocks::search_blocks,
             blocks::list_block_backlinks,
+            graph::get_graph,
             tags::list_tags,
             tags::page_tags,
             tags::add_tag,

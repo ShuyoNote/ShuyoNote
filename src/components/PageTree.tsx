@@ -218,8 +218,8 @@ export function PageTree({
   view,
   onViewChange,
 }: {
-  view: "notes" | "board";
-  onViewChange: (v: "notes" | "board") => void;
+  view: "notes" | "board" | "graph";
+  onViewChange: (v: "notes" | "board" | "graph") => void;
 }) {
   const { pages, createPage, createFolder, loading } = useNotes();
   const { collapsed, toggle } = useSidebar();
@@ -377,6 +377,12 @@ export function PageTree({
               onClick={() => onViewChange("board")}
             >
               📋 看板
+            </button>
+            <button
+              className={`view-switch-btn ${view === "graph" ? "view-switch-active" : ""}`}
+              onClick={() => onViewChange("graph")}
+            >
+              🕸 关系图
             </button>
           </div>
           {tags.length > 0 && (

@@ -85,3 +85,19 @@ export interface BlockBacklink {
   target_snippet: string;
   kind: string;
 }
+
+export interface GraphPage {
+  id: string;
+  title: string;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+export interface GraphData {
+  pages: GraphPage[];
+  edges: GraphEdge[];
+}

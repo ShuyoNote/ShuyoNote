@@ -4,6 +4,7 @@ import type {
   BlockBacklink,
   BlockInfo,
   BoardColumn,
+  GraphData,
   PageBlock,
   PageDetail,
   PageMeta,
@@ -73,6 +74,7 @@ export const api = {
     invoke<SearchBlock[]>("search_blocks", { query }),
   listBlockBacklinks: (pageId: string) =>
     invoke<BlockBacklink[]>("list_block_backlinks", { page_id: pageId }),
+  getGraph: () => invoke<GraphData>("get_graph"),
   listTags: () => invoke<Tag[]>("list_tags"),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),

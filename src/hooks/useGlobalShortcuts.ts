@@ -35,7 +35,7 @@ export function useGlobalShortcuts(onToggleView: () => void) {
         return;
       }
 
-      // Ctrl+E: toggle notes/board view.
+      // Ctrl+E: cycle notes → board → graph view.
       if (key === "e" && !inEditable) {
         e.preventDefault();
         onToggleView();

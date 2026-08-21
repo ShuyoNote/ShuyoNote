@@ -67,6 +67,7 @@ export function CommandPalette() {
     try {
       const msg = await cmd.run(ctx);
       setResult(msg);
+      if (cmd.closeOnRun) setOpen(false);
     } catch (e) {
       setResult(String(e));
     }

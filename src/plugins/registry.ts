@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { useViewStore } from "../store/view";
 import type { PageMeta } from "../types";
 
 // A lightweight plugin system: plugins register commands that are
@@ -15,6 +16,8 @@ export interface PluginCommand {
   id: string;
   title: string;
   description?: string;
+  /** Close the command palette after running (e.g. view switches). */
+  closeOnRun?: boolean;
   run: (ctx: CommandContext) => Promise<string> | string;
 }
 
@@ -76,6 +79,33 @@ registerPlugin({
         const page = await api.getPage(ctx.currentId);
         await navigator.clipboard.writeText(JSON.stringify(page, null, 2));
         return "已复制当前页 JSON 到剪贴板";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "view",
+  name: "视图",
+  commands: [
+    {
+      id: "view.graph",
+      title: "打开关系图",
+      description: "切换到关系图视图",
+      closeOnRun: true,
+      run: () => {
+        useViewStore.getState().setView("graph");
+        return "已切换到关系图";
+      },
+    },
+    {
+      id: "view.board",
+      title: "打开看板",
+      description: "切换到看板视图",
+      closeOnRun: true,
+      run: () => {
+        useViewStore.getState().setView("board");
+        return "已切换到看板";
       },
     },
   ],
