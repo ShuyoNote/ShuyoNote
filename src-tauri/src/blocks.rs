@@ -110,7 +110,74 @@ pub fn upsert_blocks(c: &Connection, page_id: &str, content_json: &str) -> Resul
     Ok(())
 }
 
-// Rebuild the whole block graph for a page after a save: blocks index + page-level backlinks.
+// Collect block references/embeds under `node`, attributing each to its top-level block.
+fn collect_block_refs(node: &Value, top_block_id: &str, out: &mut Vec<(String, String, String)>) {
+    if let Some(ty) = node.get("type").and_then(|v| v.as_str()) {
+        if ty == "blockref" || ty == "blockembed" {
+            if let Some(block_id) = node.get("blockId").and_then(|v| v.as_str()) {
+                let kind = if ty == "blockembed" { "embed" } else { "link" };
+                out.push((top_block_id.to_string(), block_id.to_string(), kind.to_string()));
+            }
+        }
+    }
+    if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+        for child in children {
+            collect_block_refs(child, top_block_id, out);
+        }
+    }
+}
+
+// Rebuild block-level backlinks: scan `((blockId))` / `{{blockId}}` references in the
+// structured JSON and record (source block → target block) links.
+pub fn rebuild_block_backlinks(
+    c: &Connection,
+    page_id: &str,
+    content_json: &str,
+) -> Result<(), String> {
+    c.execute(
+        "DELETE FROM backlinks WHERE source_page_id = ?1 AND source_block_id != ''",
+        params![page_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let v = parse_json(content_json)?;
+    let mut refs: Vec<(String, String, String)> = Vec::new();
+    for child in root_children(&v) {
+        let top_id = child
+            .get("blockId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if top_id.is_empty() {
+            continue;
+        }
+        collect_block_refs(child, &top_id, &mut refs);
+    }
+
+    for (source_block_id, target_block_id, kind) in refs {
+        let target_page_id: Option<String> = c
+            .query_row(
+                "SELECT page_id FROM blocks WHERE block_id = ?1",
+                params![target_block_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        if let Some(target_page_id) = target_page_id {
+            c.execute(
+                "INSERT OR IGNORE INTO backlinks (source_page_id, source_block_id, target_page_id, target_block_id, kind)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![page_id, source_block_id, target_page_id, target_block_id, kind],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+// Rebuild the whole block graph for a page after a save: blocks index + page-level backlinks
+// + block-level backlinks.
 pub fn rebuild_block_graph(
     c: &Connection,
     page_id: &str,
@@ -119,6 +186,7 @@ pub fn rebuild_block_graph(
 ) -> Result<(), String> {
     upsert_blocks(c, page_id, content_json)?;
     crate::backlinks::rebuild_backlinks(c, page_id, content_text)?;
+    rebuild_block_backlinks(c, page_id, content_json)?;
     Ok(())
 }
 

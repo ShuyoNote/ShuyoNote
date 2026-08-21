@@ -23,6 +23,7 @@ import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
+import { BlockRefNode } from "./nodes/BlockRefNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
@@ -32,6 +33,8 @@ import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
+import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
+import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 
 const theme = {
   heading: {
@@ -166,9 +169,26 @@ function serializeWithBlockIds(editorState: EditorState, map: Map<string, string
   return JSON.stringify(json);
 }
 
-// Seed the block-id map once, on mount, by matching the editor's top-level
-// children (in order) to the persisted ids from the saved document.
-function BlockIdSeedPlugin({
+// Tag each top-level block's DOM element with `data-block-id` so block-reference
+// jumps can locate and scroll to it.
+function tagBlockDoms(editor: LexicalEditor, map: Map<string, string>, editorState: EditorState) {
+  const pairs: [string, string][] = [];
+  editorState.read(() => {
+    const root = $getRoot();
+    root.getChildren().forEach((child) => {
+      const id = map.get(child.getKey());
+      if (id) pairs.push([child.getKey(), id]);
+    });
+  });
+  pairs.forEach(([key, id]) => {
+    const dom = editor.getElementByKey(key);
+    if (dom) dom.setAttribute("data-block-id", id);
+  });
+}
+
+// Seed the block-id map on mount (matching persisted order), keep DOM tags in
+// sync, and scroll to a pending focus target after block-reference jumps.
+function BlockIdPlugin({
   seedIds,
   map,
 }: {
@@ -176,17 +196,57 @@ function BlockIdSeedPlugin({
   map: Map<string, string>;
 }) {
   const [editor] = useLexicalComposerContext();
+  const focusBlockId = useEditorStore((s) => s.focusBlockId);
+
+  // Seed ids once, matching persisted order.
   useEffect(() => {
     editor.getEditorState().read(() => {
       const root = $getRoot();
-      const children = root.getChildren();
-      children.forEach((child, i) => {
-        const id = seedIds[i] ?? newBlockId();
-        map.set(child.getKey(), id);
+      root.getChildren().forEach((child, i) => {
+        map.set(child.getKey(), seedIds[i] ?? newBlockId());
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
+
+  // Tag DOMs on mount and on every update.
+  useEffect(() => {
+    tagBlockDoms(editor, map, editor.getEditorState());
+    return editor.registerUpdateListener(({ editorState }) => {
+      tagBlockDoms(editor, map, editorState);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
+
+  // Scroll to + highlight the focused block. Retries briefly so cross-page jumps
+  // land after the new editor mounts (the old editor unmounts and cancels here).
+  useEffect(() => {
+    if (!focusBlockId) return;
+    let cancelled = false;
+    let attempts = 0;
+    const attempt = () => {
+      if (cancelled) return;
+      tagBlockDoms(editor, map, editor.getEditorState());
+      const el = document.querySelector(`[data-block-id="${focusBlockId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("block-flash");
+        window.setTimeout(() => el.classList.remove("block-flash"), 1800);
+        useEditorStore.getState().clearFocusBlockId();
+      } else if (attempts < 30) {
+        attempts += 1;
+        window.setTimeout(attempt, 100);
+      } else {
+        useEditorStore.getState().clearFocusBlockId();
+      }
+    };
+    const raf = requestAnimationFrame(attempt);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [focusBlockId, editor, map]);
+
   return null;
 }
 
@@ -212,6 +272,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         HorizontalRuleNode,
         ImageNode,
         VideoNode,
+        BlockRefNode,
         TableNode,
         TableCellNode,
         TableRowNode,
@@ -246,7 +307,9 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <HorizontalRulePlugin />
         <TablePlugin hasHorizontalScroll />
         <OnChangePlugin onChange={onChange} />
-        <BlockIdSeedPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
+        <BlockIdPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
+        <BlockRefPlugin pageId={pageId} />
+        <BlockSelectorPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <ImagePastePlugin pageId={pageId} />

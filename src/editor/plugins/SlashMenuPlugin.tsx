@@ -14,6 +14,7 @@ import { INSERT_HORIZONTAL_RULE_COMMAND } from "@lexical/react/LexicalHorizontal
 import { INSERT_TABLE_COMMAND } from "@lexical/table";
 import { api } from "../../lib/api";
 import { toast } from "../../store/toast";
+import { useBlockSelector } from "../../store/blockSelector";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createVideoNode } from "../nodes/VideoNode";
@@ -160,6 +161,8 @@ function makeOptions(pageId: string): SlashOption[] {
         rows: "3",
         includeHeaders: { rows: true, columns: false },
       }); } },
+    { key: "blockref", title: "引用块", badge: "⛓", group: "引用", run: () => {
+      useBlockSelector.getState().openSelector("ref"); } },
   ];
 }
 

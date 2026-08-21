@@ -2451,6 +2451,148 @@ body,
   text-align: center;
 }
 
+/* Block reference ((blockId)) */
+.block-ref {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.block-ref:hover {
+  background: var(--accent-soft);
+}
+
+.block-flash {
+  animation: block-flash 1.6s ease;
+}
+
+@keyframes block-flash {
+  0% { background: var(--accent-soft); }
+  100% { background: transparent; }
+}
+
+.block-ref-preview {
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+  max-width: 340px;
+  animation: pop 0.14s ease;
+}
+
+.block-ref-preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.block-ref-preview-snippet {
+  font-size: 13px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Block picker (block selector) */
+.block-selector-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.block-selector {
+  width: 480px;
+  max-width: 90vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: pop 0.16s ease;
+}
+
+.block-selector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.block-selector-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.block-selector-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.block-selector-results {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.block-selector-empty {
+  padding: 18px 12px;
+  color: var(--text-faint);
+  font-size: 13px;
+  text-align: center;
+}
+
+.block-selector-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.block-selector-item:hover {
+  background: var(--hover);
+}
+
+.block-selector-item-active {
+  background: var(--accent-soft);
+}
+
+.block-selector-snippet {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-selector-page {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 /* Markdown toolbar */
 .markdown-toolbar {
   position: absolute;
