@@ -203,7 +203,7 @@ fn block_text(content_json: &str, block_id: &str) -> Option<String> {
     None
 }
 
-fn snippet_for_block(content_json: &str, block_id: &str) -> String {
+pub(crate) fn snippet_for_block(content_json: &str, block_id: &str) -> String {
     match block_text(content_json, block_id) {
         Some(text) => {
             let trimmed = text.trim().to_string();

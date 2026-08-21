@@ -14,6 +14,7 @@ import { useAutoSync } from "./hooks/useAutoSync";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
+import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
 import "./App.css";
 
@@ -65,6 +66,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
         updateCurrent(updated);
         setSaved(true);
         loadPages();
+        // Invalidate block-reference/embed caches so mirrors refresh.
+        useBlockCache.getState().bump();
       } catch (e) {
         console.error("save failed", e);
       }

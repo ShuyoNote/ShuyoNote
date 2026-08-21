@@ -2843,6 +2843,12 @@ body,
   stroke-width: 2;
 }
 
+.graph-edge-belongs {
+  stroke-dasharray: 3 3;
+  stroke-opacity: 0.3;
+  stroke-width: 1;
+}
+
 .graph-node {
   cursor: pointer;
 }
@@ -2863,6 +2869,11 @@ body,
   fill: #f59e0b;
   stroke: var(--text);
   stroke-width: 2;
+}
+
+.graph-node-block .graph-node-circle {
+  fill: #14b8a6;
+  stroke-width: 1;
 }
 
 .graph-node-label {
@@ -2901,4 +2912,25 @@ body,
   height: 3px;
   border-radius: 2px;
   display: inline-block;
+}
+
+.graph-toggle {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.graph-toggle-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }

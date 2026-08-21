@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { JSX } from "react";
 import { api } from "../../lib/api";
 import type { BlockInfo } from "../../types";
+import { useBlockCache } from "../../store/blockCache";
 import { useEditorStore } from "../../store/editor";
 import { useNotes } from "../../store/notes";
 
@@ -91,6 +92,7 @@ export function $isBlockEmbedNode(node: LexicalNode | null | undefined): node is
 
 function BlockEmbedView({ blockId }: { blockId: string }) {
   const currentId = useNotes((s) => s.currentId);
+  const revision = useBlockCache((s) => s.revision);
   const [info, setInfo] = useState<BlockInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -104,7 +106,7 @@ function BlockEmbedView({ blockId }: { blockId: string }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, revision]);
 
   const jump = () => {
     useEditorStore.getState().setFocusBlockId(blockId);

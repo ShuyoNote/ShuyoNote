@@ -97,7 +97,15 @@ export interface GraphEdge {
   kind: string;
 }
 
+export interface GraphBlock {
+  id: string;
+  label: string;
+  page_id: string;
+}
+
 export interface GraphData {
   pages: GraphPage[];
   edges: GraphEdge[];
+  blocks: GraphBlock[];
+  block_edges: GraphEdge[];
 }

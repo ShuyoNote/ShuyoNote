@@ -36,6 +36,7 @@ import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
+import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
 
 const theme = {
   heading: {
@@ -289,7 +290,9 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
     [],
   );
 
-  const onChange = (_editorState: EditorState, _editor: LexicalEditor) => {
+  const onChange = (_editorState: EditorState, _editor: LexicalEditor, tags: Set<string>) => {
+    // Internal block-reference text sync should not trigger a save.
+    if (tags.has("blockref-sync")) return;
     const json = serializeWithBlockIds(_editorState, blockIdMapRef.current);
     const text = _editorState.read(() => $getRoot().getTextContent());
     onSave(json, text);
@@ -311,6 +314,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <OnChangePlugin onChange={onChange} />
         <BlockIdPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
         <BlockRefPlugin pageId={pageId} />
+        <BlockRefSyncPlugin />
         <BlockSelectorPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
