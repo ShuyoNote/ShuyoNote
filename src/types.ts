@@ -55,3 +55,31 @@ export interface PageVersion {
   content_text: string;
   created_at: number;
 }
+
+export interface BlockInfo {
+  block_id: string;
+  page_id: string;
+  page_title: string;
+  snippet: string;
+}
+
+export interface PageBlock {
+  block_id: string;
+  text: string;
+}
+
+export interface SearchBlock {
+  block_id: string;
+  page_id: string;
+  page_title: string;
+  snippet: string;
+}
+
+export interface BlockBacklink {
+  source_page_id: string;
+  source_page_title: string;
+  source_block_id: string;
+  source_snippet: string;
+  target_block_id: string;
+  kind: string;
+}

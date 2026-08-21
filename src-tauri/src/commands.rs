@@ -1,6 +1,6 @@
 use crate::db::{now_ms, Db};
 use crate::models::{PageDetail, PageMeta};
-use crate::{backlinks, search, sync, versions};
+use crate::{backlinks, blocks, search, sync, versions};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
@@ -189,7 +189,7 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     .map_err(|e| e.to_string())?;
 
     search::sync_fts(&c, &args.id, &title, &content_text)?;
-    backlinks::rebuild_backlinks(&c, &args.id, &content_text)?;
+    blocks::rebuild_block_graph(&c, &args.id, &content_json, &content_text)?;
 
     let page = fetch_page(&c, &args.id)?;
     sync::record_page_upsert(&c, &page)?;

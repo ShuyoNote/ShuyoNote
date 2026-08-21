@@ -1,6 +1,7 @@
 mod attachments;
 mod backlinks;
 mod backup;
+mod blocks;
 mod commands;
 mod db;
 mod models;
@@ -52,6 +53,10 @@ pub fn run() {
             attachments::list_page_attachments,
             attachments::remove_attachment,
             backlinks::get_backlinks,
+            blocks::resolve_block,
+            blocks::get_page_blocks,
+            blocks::search_blocks,
+            blocks::list_block_backlinks,
             tags::list_tags,
             tags::page_tags,
             tags::add_tag,

@@ -84,11 +84,21 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
 
         CREATE TABLE IF NOT EXISTS backlinks (
-            source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            PRIMARY KEY (source_id, target_id)
+            source_page_id  TEXT NOT NULL,
+            source_block_id TEXT NOT NULL DEFAULT '',
+            target_page_id  TEXT NOT NULL,
+            target_block_id TEXT NOT NULL DEFAULT '',
+            kind            TEXT NOT NULL DEFAULT 'link',
+            PRIMARY KEY (source_page_id, source_block_id, target_page_id, target_block_id)
         );
-        CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_id);
+
+        CREATE TABLE IF NOT EXISTS blocks (
+            block_id   TEXT PRIMARY KEY,
+            page_id    TEXT NOT NULL REFERENCES pages(id),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_blocks_page ON blocks(page_id);
 
         CREATE TABLE IF NOT EXISTS tags (
             id   TEXT PRIMARY KEY,
@@ -137,6 +147,36 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             [],
         )?;
     }
+
+    // Migrate backlinks from the legacy page-level schema (source_id, target_id)
+    // to the block-granular schema (source_page_id, source_block_id, ...).
+    let has_old_backlinks: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(backlinks)")?;
+        let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        cols.any(|c| c.map(|name| name == "source_id").unwrap_or(false))
+    };
+    if has_old_backlinks {
+        conn.execute_batch(
+            r#"
+            ALTER TABLE backlinks RENAME TO backlinks_old;
+            CREATE TABLE backlinks (
+                source_page_id  TEXT NOT NULL,
+                source_block_id TEXT NOT NULL DEFAULT '',
+                target_page_id  TEXT NOT NULL,
+                target_block_id TEXT NOT NULL DEFAULT '',
+                kind            TEXT NOT NULL DEFAULT 'link',
+                PRIMARY KEY (source_page_id, source_block_id, target_page_id, target_block_id)
+            );
+            INSERT INTO backlinks (source_page_id, source_block_id, target_page_id, target_block_id, kind)
+            SELECT source_id, '', target_id, '', 'link' FROM backlinks_old;
+            DROP TABLE backlinks_old;
+            "#,
+        )?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_page_id, target_block_id)",
+        [],
+    )?;
 
     // Ensure a default workspace exists.
     let count: i64 =

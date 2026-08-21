@@ -17,7 +17,7 @@ import { CodeNode, CodeHighlightNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, type EditorState, type LexicalEditor } from "lexical";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
@@ -113,7 +113,89 @@ function parseEditorState(contentJson: string): string | null {
   return null;
 }
 
+// Generate a stable block id (UUID v4). Falls back to crypto.getRandomValues when
+// crypto.randomUUID is unavailable (non-secure contexts).
+function newBlockId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// Read the persisted block ids from a serialized editor state, in top-level
+// child order (null where a block has no id yet, e.g. legacy documents).
+function extractSeedIds(contentJson: string): (string | null)[] {
+  try {
+    const parsed = JSON.parse(contentJson);
+    const children = parsed?.root?.children;
+    if (!Array.isArray(children)) return [];
+    return children.map((c: any) =>
+      typeof c?.blockId === "string" && c.blockId.length > 0 ? (c.blockId as string) : null,
+    );
+  } catch {
+    return [];
+  }
+}
+
+// Serialize an editor state, injecting a stable `blockId` into every top-level
+// block. Ids are memoized by Lexical node key so reordering/copy-paste keeps
+// each block's identity, while pasted/duplicated blocks get fresh ids.
+function serializeWithBlockIds(editorState: EditorState, map: Map<string, string>): string {
+  const json: any = editorState.toJSON();
+  editorState.read(() => {
+    const root = $getRoot();
+    const children = root.getChildren();
+    const rootChildren = json?.root?.children;
+    if (Array.isArray(rootChildren)) {
+      children.forEach((child, i) => {
+        if (i >= rootChildren.length) return;
+        let id = map.get(child.getKey());
+        if (!id) {
+          id = newBlockId();
+          map.set(child.getKey(), id);
+        }
+        rootChildren[i].blockId = id;
+      });
+    }
+  });
+  return JSON.stringify(json);
+}
+
+// Seed the block-id map once, on mount, by matching the editor's top-level
+// children (in order) to the persisted ids from the saved document.
+function BlockIdSeedPlugin({
+  seedIds,
+  map,
+}: {
+  seedIds: (string | null)[];
+  map: Map<string, string>;
+}) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    editor.getEditorState().read(() => {
+      const root = $getRoot();
+      const children = root.getChildren();
+      children.forEach((child, i) => {
+        const id = seedIds[i] ?? newBlockId();
+        map.set(child.getKey(), id);
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
+  return null;
+}
+
 export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
+  // Stable block identity: node key → block id, and the persisted ids (in
+  // top-level child order) read from the saved document at mount.
+  const blockIdMapRef = useRef<Map<string, string>>(new Map());
+  const seedIdsRef = useRef<(string | null)[]>(extractSeedIds(contentJson));
+
   const initialConfig = useMemo(
     () => ({
       namespace: "shuyonote-editor",
@@ -144,9 +226,9 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
     [],
   );
 
-  const onChange = (_editorState: EditorState, editor: LexicalEditor) => {
-    const json = JSON.stringify(editor.getEditorState().toJSON());
-    const text = editor.getEditorState().read(() => $getRoot().getTextContent());
+  const onChange = (_editorState: EditorState, _editor: LexicalEditor) => {
+    const json = serializeWithBlockIds(_editorState, blockIdMapRef.current);
+    const text = _editorState.read(() => $getRoot().getTextContent());
     onSave(json, text);
   };
 
@@ -164,6 +246,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <HorizontalRulePlugin />
         <TablePlugin hasHorizontalScroll />
         <OnChangePlugin onChange={onChange} />
+        <BlockIdSeedPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <ImagePastePlugin pageId={pageId} />

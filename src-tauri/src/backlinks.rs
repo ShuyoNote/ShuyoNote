@@ -37,10 +37,14 @@ fn extract_titles(text: &str) -> Vec<String> {
     titles
 }
 
-// Rebuild backlinks for a source page: remove stale, resolve titles to page ids, insert.
+// Rebuild page-level backlinks for a source page: remove stale, resolve titles to page ids, insert.
+// Block-level backlinks are rebuilt separately by blocks::rebuild_block_backlinks.
 pub fn rebuild_backlinks(c: &Connection, source_id: &str, content_text: &str) -> Result<(), String> {
-    c.execute("DELETE FROM backlinks WHERE source_id = ?1", params![source_id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "DELETE FROM backlinks WHERE source_page_id = ?1 AND source_block_id = ''",
+        params![source_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     for title in extract_titles(content_text) {
         let target_id: Option<String> = c
@@ -55,7 +59,7 @@ pub fn rebuild_backlinks(c: &Connection, source_id: &str, content_text: &str) ->
         if let Some(target_id) = target_id {
             if target_id != source_id {
                 c.execute(
-                    "INSERT OR IGNORE INTO backlinks (source_id, target_id) VALUES (?1, ?2)",
+                    "INSERT OR IGNORE INTO backlinks (source_page_id, source_block_id, target_page_id, target_block_id, kind) VALUES (?1, '', ?2, '', 'link')",
                     params![source_id, target_id],
                 )
                 .map_err(|e| e.to_string())?;
@@ -68,8 +72,11 @@ pub fn rebuild_backlinks(c: &Connection, source_id: &str, content_text: &str) ->
 // Remove all backlinks involving a set of page ids (as source or target).
 pub fn remove_backlinks(c: &Connection, ids: &[String]) -> Result<(), String> {
     for id in ids {
-        c.execute("DELETE FROM backlinks WHERE source_id = ?1 OR target_id = ?1", params![id])
-            .map_err(|e| e.to_string())?;
+        c.execute(
+            "DELETE FROM backlinks WHERE source_page_id = ?1 OR target_page_id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -80,8 +87,8 @@ pub fn get_backlinks(db: State<'_, Db>, id: String) -> Result<Vec<PageMeta>, Str
     let mut stmt = c
         .prepare(
             "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
-             FROM backlinks b JOIN pages p ON b.source_id = p.id
-             WHERE b.target_id = ?1 AND p.deleted_at IS NULL
+             FROM backlinks b JOIN pages p ON b.source_page_id = p.id
+             WHERE b.target_page_id = ?1 AND b.target_block_id = '' AND p.deleted_at IS NULL
              ORDER BY p.updated_at DESC",
         )
         .map_err(|e| e.to_string())?;

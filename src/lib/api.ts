@@ -1,5 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AttachmentMeta, BoardColumn, PageDetail, PageMeta, PageVersion, SearchResult, Tag } from "../types";
+import type {
+  AttachmentMeta,
+  BlockBacklink,
+  BlockInfo,
+  BoardColumn,
+  PageBlock,
+  PageDetail,
+  PageMeta,
+  PageVersion,
+  SearchBlock,
+  SearchResult,
+  Tag,
+} from "../types";
 
 export interface SyncConfig {
   server_url: string;
@@ -53,6 +65,14 @@ export const api = {
     invoke<AttachmentMeta[]>("list_page_attachments", { pageId }),
   removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
   getBacklinks: (id: string) => invoke<PageMeta[]>("get_backlinks", { id }),
+  resolveBlock: (blockId: string) =>
+    invoke<BlockInfo>("resolve_block", { block_id: blockId }),
+  getPageBlocks: (pageId: string) =>
+    invoke<PageBlock[]>("get_page_blocks", { page_id: pageId }),
+  searchBlocks: (query: string) =>
+    invoke<SearchBlock[]>("search_blocks", { query }),
+  listBlockBacklinks: (pageId: string) =>
+    invoke<BlockBacklink[]>("list_block_backlinks", { page_id: pageId }),
   listTags: () => invoke<Tag[]>("list_tags"),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),

@@ -105,7 +105,7 @@ pub fn restore_version(db: State<'_, Db>, version_id: String) -> Result<PageDeta
     .map_err(|e| e.to_string())?;
 
     crate::search::sync_fts(&c, &page_id, &title, &content_text)?;
-    crate::backlinks::rebuild_backlinks(&c, &page_id, &content_text)?;
+    crate::blocks::rebuild_block_graph(&c, &page_id, &content_json, &content_text)?;
 
     let page = crate::commands::fetch_page(&c, &page_id)?;
     crate::sync::record_page_upsert(&c, &page)?;

@@ -137,10 +137,12 @@ pub fn purge_page(db: State<'_, Db>, id: String) -> Result<(), String> {
         c.execute("DELETE FROM page_tags WHERE page_id = ?1", params![pid])
             .map_err(|e| e.to_string())?;
         c.execute(
-            "DELETE FROM backlinks WHERE source_id = ?1 OR target_id = ?1",
+            "DELETE FROM backlinks WHERE source_page_id = ?1 OR target_page_id = ?1",
             params![pid],
         )
         .map_err(|e| e.to_string())?;
+        c.execute("DELETE FROM blocks WHERE page_id = ?1", params![pid])
+            .map_err(|e| e.to_string())?;
         c.execute("DELETE FROM attachments WHERE page_id = ?1", params![pid])
             .map_err(|e| e.to_string())?;
         c.execute("DELETE FROM pages WHERE id = ?1", params![pid])
