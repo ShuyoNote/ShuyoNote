@@ -1200,6 +1200,181 @@ body,
   margin: 0 auto;
 }
 
+/* Properties panel */
+.properties {
+  max-width: 816px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 48px 4px;
+}
+
+.properties-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.properties-toggle:hover {
+  color: var(--text);
+}
+
+.properties-toggle-caret {
+  font-size: 11px;
+}
+
+.properties-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 10px;
+}
+
+.prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.prop-name {
+  flex-shrink: 0;
+  width: 120px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-value {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: 4px 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.prop-value:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.prop-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+select.prop-value {
+  cursor: pointer;
+}
+
+.prop-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+}
+
+.prop-remove:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.prop-add-btn {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: var(--radius-xs);
+  font-family: inherit;
+}
+
+.prop-add-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.prop-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prop-add-name,
+.prop-add-options,
+.prop-add-type {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.prop-add-name {
+  flex: 1;
+  min-width: 120px;
+}
+
+.prop-add-options {
+  flex: 1;
+  min-width: 120px;
+}
+
+.prop-add-name:focus,
+.prop-add-options:focus,
+.prop-add-type:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.prop-add-confirm,
+.prop-add-cancel {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.prop-add-confirm {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.prop-add-confirm:hover {
+  filter: brightness(1.05);
+}
+
+.prop-add-cancel:hover {
+  background: var(--hover);
+}
+
 /* Breadcrumbs */
 .breadcrumbs {
   display: flex;

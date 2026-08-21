@@ -3,6 +3,7 @@ import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { TagBar } from "./components/TagBar";
 import { AttachmentPanel } from "./components/AttachmentPanel";
+import { PropertiesPanel } from "./components/PropertiesPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
@@ -119,6 +120,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         </span>
         {error && <span className="error-badge">{error}</span>}
       </div>
+      <PropertiesPanel pageId={pageId} />
       <ErrorBoundary>
         <Editor
           key={pageId}

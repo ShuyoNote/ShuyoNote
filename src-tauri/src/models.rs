@@ -62,3 +62,22 @@ pub struct BoardColumn {
     pub tag: Option<Tag>,
     pub pages: Vec<PageMeta>,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AttrDef {
+    pub id: String,
+    pub name: String,
+    pub attr_type: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PageProp {
+    pub attr_id: String,
+    pub name: String,
+    pub attr_type: String,
+    pub value: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}

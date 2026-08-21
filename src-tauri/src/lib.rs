@@ -6,6 +6,7 @@ mod commands;
 mod db;
 mod graph;
 mod models;
+mod properties;
 mod search;
 mod sync;
 mod tags;
@@ -59,6 +60,12 @@ pub fn run() {
             blocks::search_blocks,
             blocks::list_block_backlinks,
             graph::get_graph,
+            properties::list_attr_defs,
+            properties::create_attr,
+            properties::delete_attr,
+            properties::set_page_prop,
+            properties::remove_page_prop,
+            properties::get_page_props,
             tags::list_tags,
             tags::page_tags,
             tags::add_tag,

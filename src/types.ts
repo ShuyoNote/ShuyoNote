@@ -110,3 +110,18 @@ export interface GraphData {
   blocks: GraphBlock[];
   block_edges: GraphEdge[];
 }
+
+export interface AttrDef {
+  id: string;
+  name: string;
+  attr_type: string;
+  options: string[];
+}
+
+export interface PageProp {
+  attr_id: string;
+  name: string;
+  attr_type: string;
+  value: string;
+  options: string[];
+}

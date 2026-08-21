@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AttachmentMeta,
+  AttrDef,
   BlockBacklink,
   BlockInfo,
   BoardColumn,
@@ -8,6 +9,7 @@ import type {
   PageBlock,
   PageDetail,
   PageMeta,
+  PageProp,
   PageVersion,
   SearchBlock,
   SearchResult,
@@ -75,6 +77,16 @@ export const api = {
   listBlockBacklinks: (pageId: string) =>
     invoke<BlockBacklink[]>("list_block_backlinks", { page_id: pageId }),
   getGraph: () => invoke<GraphData>("get_graph"),
+  listAttrDefs: () => invoke<AttrDef[]>("list_attr_defs"),
+  createAttr: (args: { name: string; attr_type: string; options?: string[] }) =>
+    invoke<AttrDef>("create_attr", { args }),
+  deleteAttr: (id: string) => invoke<void>("delete_attr", { id }),
+  setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
+    invoke<void>("set_page_prop", { args }),
+  removePageProp: (pageId: string, attrId: string) =>
+    invoke<void>("remove_page_prop", { page_id: pageId, attr_id: attrId }),
+  getPageProps: (pageId: string) =>
+    invoke<PageProp[]>("get_page_props", { page_id: pageId }),
   listTags: () => invoke<Tag[]>("list_tags"),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),
