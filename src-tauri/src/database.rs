@@ -111,7 +111,7 @@ pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQ
         }
     }
 
-    let rows: Vec<DatabaseRow> = pages
+    let mut rows: Vec<DatabaseRow> = pages
         .into_iter()
         .map(|(page_id, title)| DatabaseRow {
             values: prop_map.remove(&page_id).unwrap_or_default(),
@@ -119,6 +119,38 @@ pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQ
             title,
         })
         .collect();
+
+    // `tag` type columns read from the real tags system.
+    let tag_cols: Vec<String> = columns
+        .iter()
+        .filter(|c| c.attr_type == "tag")
+        .map(|c| c.id.clone())
+        .collect();
+    if !tag_cols.is_empty() {
+        let mut stmt = c
+            .prepare(
+                "SELECT pt.page_id, t.name FROM page_tags pt JOIN tags t ON t.id = pt.tag_id
+                 ORDER BY t.name",
+            )
+            .map_err(|e| e.to_string())?;
+        let tag_rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut tag_map: HashMap<String, Vec<String>> = HashMap::new();
+        for (page_id, name) in tag_rows {
+            tag_map.entry(page_id).or_default().push(name);
+        }
+        for row in rows.iter_mut() {
+            if let Some(names) = tag_map.get(&row.page_id) {
+                let joined = names.join(", ");
+                for col_id in &tag_cols {
+                    row.values.insert(col_id.clone(), joined.clone());
+                }
+            }
+        }
+    }
 
     Ok(DatabaseQuery { columns, rows })
 }
