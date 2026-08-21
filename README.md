@@ -218,6 +218,7 @@ ShuyoNote/
 | [docs/plans/2026-08-20-block-reference-plan.md](docs/plans/2026-08-20-block-reference-plan.md) | 块级引用 + 反链升级 + 关系图方案（M1–M5 已实现） |
 | [docs/plans/2026-08-21-properties-database-plan.md](docs/plans/2026-08-21-properties-database-plan.md) | 属性系统 + 数据库视图统一方案（合并思源数据库 + Obsidian Properties） |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
+| [docs/roadmap.md](docs/roadmap.md) | 下一阶段演进路线图与里程碑规划 |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [design/logo/README.md](design/logo/README.md) | 应用 Logo（应用图标 / 单色图形 / 字标 / 主图） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
@@ -236,9 +237,15 @@ ShuyoNote/
 - [x] 表格交互（悬浮工具栏 / 列宽拖拽 / 选区高亮）
 - [x] 块级引用 / 块嵌入 / 块级反链
 - [x] 关系图（页面 / 块级图层）
+- [x] 属性系统 + 数据库视图（表格 / 画廊 / 看板）
+- [ ] Markdown 无损往返
 - [ ] 端到端加密
+- [ ] 主题 / 插件生态
+- [ ] 属性驱动仪表盘聚合
 - [ ] 导出 PDF
 - [ ] 移动端适配
+
+> 详细演进路线与里程碑见 [docs/roadmap.md](docs/roadmap.md)。
 
 ## 📄 License
 
