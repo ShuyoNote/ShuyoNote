@@ -64,6 +64,13 @@ pub struct BoardColumn {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BoardGroup {
+    pub id: String,
+    pub name: String,
+    pub pages: Vec<PageMeta>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AttrDef {
     pub id: String,
     pub name: String,

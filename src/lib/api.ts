@@ -5,6 +5,7 @@ import type {
   BlockBacklink,
   BlockInfo,
   BoardColumn,
+  BoardGroup,
   DatabaseQuery,
   GraphData,
   PageBlock,
@@ -104,6 +105,8 @@ export const api = {
   removeTag: (pageId: string, tagId: string) => invoke<void>("remove_tag", { pageId, tagId }),
   pagesByTag: (tagId: string) => invoke<PageMeta[]>("pages_by_tag", { tagId }),
   boardData: () => invoke<BoardColumn[]>("board_data"),
+  boardByAttr: (attrId: string) =>
+    invoke<BoardGroup[]>("board_by_attr", { attr_id: attrId }),
   moveCard: (pageId: string, tagId: string) => invoke<void>("move_card", { pageId, tagId }),
   listDeleted: () => invoke<PageMeta[]>("list_deleted"),
   restorePage: (id: string) => invoke<void>("restore_page", { id }),

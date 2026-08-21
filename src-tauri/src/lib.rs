@@ -72,6 +72,7 @@ pub fn run() {
             database::add_db_column,
             database::remove_db_column,
             database::query_database,
+            database::board_by_attr,
             tags::list_tags,
             tags::page_tags,
             tags::add_tag,

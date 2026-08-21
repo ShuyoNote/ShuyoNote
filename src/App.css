@@ -688,11 +688,45 @@ body,
 /* Board */
 .board {
   display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 16px;
-  overflow-x: auto;
   height: 100%;
+}
+
+.board-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.board-group-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.board-group-select {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.board-group-select:focus {
+  border-color: var(--accent);
+}
+
+.board-columns {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
   align-items: flex-start;
+  flex: 1;
+  min-height: 0;
 }
 
 .board-column {

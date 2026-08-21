@@ -48,6 +48,12 @@ export interface BoardColumn {
   pages: PageMeta[];
 }
 
+export interface BoardGroup {
+  id: string;
+  name: string;
+  pages: PageMeta[];
+}
+
 export interface PageVersion {
   id: string;
   page_id: string;

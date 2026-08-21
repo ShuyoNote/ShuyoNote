@@ -1,7 +1,7 @@
 use crate::db::Db;
-use crate::models::{AttrDef, DatabaseQuery, DatabaseRow};
+use crate::models::{AttrDef, BoardGroup, DatabaseQuery, DatabaseRow, PageMeta};
 use crate::properties::parse_options;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::MutexGuard;
@@ -121,4 +121,85 @@ pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQ
         .collect();
 
     Ok(DatabaseQuery { columns, rows })
+}
+
+fn list_page_metas(c: &Connection) -> Result<Vec<PageMeta>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
+             FROM pages WHERE kind = 'page' AND deleted_at IS NULL
+             ORDER BY updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(PageMeta {
+                id: r.get(0)?,
+                workspace_id: r.get(1)?,
+                parent_id: r.get(2)?,
+                title: r.get(3)?,
+                kind: r.get(4)?,
+                sort_order: r.get(5)?,
+                created_at: r.get(6)?,
+                updated_at: r.get(7)?,
+                deleted_at: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+// Board grouped by a `select` attribute: one column per option + an "unset" column.
+#[tauri::command]
+pub fn board_by_attr(db: State<'_, Db>, attr_id: String) -> Result<Vec<BoardGroup>, String> {
+    let c = conn(&db);
+    let options_json: String = c
+        .query_row(
+            "SELECT options FROM attr_defs WHERE id = ?1",
+            params![attr_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "属性不存在".to_string())?;
+    let options = parse_options(&options_json);
+
+    let pages = list_page_metas(&c)?;
+
+    let mut stmt = c
+        .prepare("SELECT page_id, value FROM page_props WHERE attr_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let values: HashMap<String, String> = stmt
+        .query_map(params![attr_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut groups: Vec<BoardGroup> = options
+        .iter()
+        .map(|o| BoardGroup {
+            id: o.clone(),
+            name: o.clone(),
+            pages: Vec::new(),
+        })
+        .collect();
+    let mut unset: Vec<PageMeta> = Vec::new();
+
+    for page in pages {
+        match values.get(&page.id) {
+            Some(v) if !v.is_empty() => {
+                if let Some(g) = groups.iter_mut().find(|g| g.id == *v) {
+                    g.pages.push(page);
+                }
+            }
+            _ => unset.push(page),
+        }
+    }
+
+    groups.push(BoardGroup {
+        id: "__none".to_string(),
+        name: "未设置".to_string(),
+        pages: unset,
+    });
+    Ok(groups)
 }
