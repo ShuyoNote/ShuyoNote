@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
+import { useAttachmentsStore } from "../store/attachments";
 import type { AttachmentMeta } from "../types";
 
 interface ImportProgressEvent {
@@ -43,6 +44,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
+  const revision = useAttachmentsStore((s) => s.revision);
 
   useEffect(() => {
     let alive = true;
@@ -55,7 +57,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     return () => {
       alive = false;
     };
-  }, [pageId]);
+  }, [pageId, revision]);
 
   // Listen to streaming import progress emitted from the backend.
   useEffect(() => {
@@ -91,6 +93,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     try {
       const metas = await api.importAttachmentFiles(pageId, paths);
       setAttachments((prev) => [...metas, ...prev]);
+      useAttachmentsStore.getState().bump();
       toast(`已添加 ${metas.length} 个文件`, "success");
     } catch (e) {
       toast(`添加失败：${e}`, "error");
@@ -128,6 +131,10 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
       toast(`移除失败：${e}`, "error");
     }
   };
+
+  // Don't occupy fixed display space when the page has no attachments — only show
+  // the panel once there's something to show (or while importing).
+  if (attachments.length === 0 && !importing) return null;
 
   return (
     <div className="attachment-panel">

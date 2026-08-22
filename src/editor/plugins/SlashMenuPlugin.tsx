@@ -15,6 +15,7 @@ import { INSERT_TABLE_COMMAND } from "@lexical/table";
 import { api } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { useBlockSelector } from "../../store/blockSelector";
+import { useAttachmentsStore } from "../../store/attachments";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createVideoNode } from "../nodes/VideoNode";
@@ -139,9 +140,24 @@ function makeOptions(pageId: string): SlashOption[] {
         toast(`插入视频失败：${e}`, "error");
       }
     } },
+    { key: "attachment", title: "附件", badge: "📎", group: "媒体", run: async (editor) => {
+      const selected = await open({
+        title: "选择文件",
+        multiple: true,
+      });
+      const paths = Array.isArray(selected) ? selected : selected ? [selected as string] : [];
+      if (paths.length === 0) return;
+      try {
+        const metas = await api.importAttachmentFiles(pageId, paths);
+        useAttachmentsStore.getState().bump();
+        toast(`已添加 ${metas.length} 个附件`, "success");
+        editor.focus();
+      } catch (e) {
+        toast(`添加附件失败：${e}`, "error");
+      }
+    } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", run: (editor) =>
-      editor.update(() => $replaceBlock($createCalloutNode())) },
-    { key: "code", title: "代码块", badge: "{}", group: "嵌入", run: (editor) =>
+      editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
