@@ -126,6 +126,49 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     setSort((s) => (s && s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
   };
 
+  // Dashboard aggregation: per-select-attribute value counts + number sums/averages.
+  const summary = useMemo(() => {
+    if (!query) return [];
+    const items: {
+      kind: "select" | "number";
+      name: string;
+      values?: { v: string; n: number }[];
+      sum?: number;
+      count?: number;
+      avg?: number;
+    }[] = [];
+    for (const col of query.columns) {
+      if (col.attr_type === "select") {
+        const counts = new Map<string, number>();
+        for (const r of rows) {
+          const v = r.values[col.id] ?? "";
+          if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+        }
+        if (counts.size > 0) {
+          items.push({
+            kind: "select",
+            name: col.name,
+            values: [...counts.entries()].map(([v, n]) => ({ v, n })),
+          });
+        }
+      } else if (col.attr_type === "number") {
+        let sum = 0;
+        let count = 0;
+        for (const r of rows) {
+          const n = parseFloat(r.values[col.id] ?? "");
+          if (!Number.isNaN(n)) {
+            sum += n;
+            count++;
+          }
+        }
+        if (count > 0) {
+          items.push({ kind: "number", name: col.name, sum, count, avg: sum / count });
+        }
+      }
+    }
+    return items;
+  }, [query, rows]);
+
   const availableAttrs = useMemo(() => {
     if (!query) return attrs;
     const used = new Set(query.columns.map((c) => c.id));
@@ -201,6 +244,31 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         </div>
         <span className="database-count">{rows.length} 条</span>
       </div>
+
+      {summary.length > 0 && (
+        <div className="db-summary">
+          {summary.map((item) => (
+            <div key={item.name} className="db-summary-item">
+              <span className="db-summary-name">{item.name}</span>
+              {item.kind === "select"
+                ? item.values!.map(({ v, n }) => (
+                    <span
+                      key={v}
+                      className="db-summary-chip"
+                      style={{ background: tagColor(v).soft, color: tagColor(v).solid }}
+                    >
+                      {v} × {n}
+                    </span>
+                  ))
+                : (
+                    <span className="db-summary-value">
+                      合计 {item.sum} · 均值 {item.avg!.toFixed(1)}
+                    </span>
+                  )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {viewType === "table" ? (
         <div className="database-table-wrap">

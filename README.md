@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.3.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -240,10 +240,10 @@ ShuyoNote/
 - [x] 块级引用 / 块嵌入 / 块级反链
 - [x] 关系图（页面 / 块级图层）
 - [x] 属性系统 + 数据库视图（表格 / 画廊 / 看板）
-- [ ] Markdown 无损往返
+- [x] Markdown 无损往返
+- [x] 属性驱动仪表盘聚合
 - [ ] 端到端加密
 - [ ] 主题 / 插件生态
-- [ ] 属性驱动仪表盘聚合
 - [ ] 导出 PDF
 - [ ] 移动端适配
 

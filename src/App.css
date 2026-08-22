@@ -3272,6 +3272,38 @@ select.prop-value {
   white-space: nowrap;
 }
 
+.db-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.db-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.db-summary-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.db-summary-chip {
+  font-size: 12px;
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+
+.db-summary-value {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 .database-table-wrap {
   flex: 1;
   min-height: 0;
