@@ -10,7 +10,7 @@ import {
   INSERT_ORDERED_LIST_COMMAND,
   INSERT_UNORDERED_LIST_COMMAND,
 } from "@lexical/list";
-import { INSERT_HORIZONTAL_RULE_COMMAND } from "@lexical/react/LexicalHorizontalRuleNode";
+import { $createHorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { INSERT_TABLE_COMMAND } from "@lexical/table";
 import { api } from "../../lib/api";
 import { toast } from "../../store/toast";
@@ -172,7 +172,19 @@ function makeOptions(pageId: string): SlashOption[] {
         codeNode.selectStart();
       }) },
     { key: "hr", title: "分隔线", badge: "—", group: "嵌入", shortcut: "Ctrl+Alt+M", pinyin: "fgx", run: (editor) => {
-      editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined); } },
+      // Replace the current block in place with the divider, then drop a fresh
+      // paragraph below it (same behavior as the Ctrl+Alt+M shortcut) — no leftover/extra block.
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        const topLevel = selection.anchor.getNode().getTopLevelElement();
+        if (!topLevel) return;
+        const hr = $createHorizontalRuleNode();
+        topLevel.replace(hr);
+        const paragraph = $createParagraphNode();
+        hr.insertAfter(paragraph);
+        paragraph.select();
+      }); } },
     { key: "table", title: "表格", badge: "▦", group: "嵌入", pinyin: "bg", run: (editor) => {
       editor.dispatchCommand(INSERT_TABLE_COMMAND, {
         columns: "3",
