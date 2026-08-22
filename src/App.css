@@ -2264,10 +2264,12 @@ select.prop-value {
 
 /* Inline images (emblem/badge rows) sit in the text line, small and centered. */
 .editor-image-container.editor-image-inline-container {
-  display: inline;
+  display: inline !important;
   margin: 0 4px 0 0;
+  text-align: initial;
 }
 .editor-image.editor-image-inline {
+  display: inline;
   max-height: 28px;
   max-width: 200px;
   vertical-align: middle;
