@@ -57,7 +57,7 @@ export function TagRow({ pageId }: { pageId: string }) {
   );
 }
 
-// "＋ 添加标签" button with the picker/manager popup (placed in the footer).
+// "＋ 添加标签" button with the picker/manager popup (opened from the actions row).
 export function TagAddButton({ pageId }: { pageId: string }) {
   const { tags: pageTags, bump } = usePageTags(pageId);
   const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -66,6 +66,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const revision = useTagManagerStore((s) => s.revision);
+  const tagAnchor = usePropertyUiStore((s) => s.tagAnchor);
   const [open, setOpen] = useState(false);
 
   const load = async () => {
@@ -153,16 +154,38 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   const doClose = () => {
     setOpen(false);
     setManage(false);
-    setQuery("");
-    setEditing(null);
+    setQuery("");    setEditing(null);
   };
+
+  // Position the picker next to the "添加标签" action button (below it), clamped
+  // to the viewport; flip above when there's no room below.
+  const anchor = tagAnchor;
+  const PICKER_H = 430;
+  const PICKER_W = 316;
+  let pickerTop = anchor ? anchor.top + 6 : window.innerHeight / 2 - PICKER_H / 2;
+  let pickerLeft = anchor
+    ? Math.max(8, Math.min(anchor.left, window.innerWidth - PICKER_W))
+    : window.innerWidth / 2 - 150;
+  if (anchor && pickerTop + PICKER_H > window.innerHeight - 8) {
+    pickerTop = Math.max(8, anchor.top - PICKER_H - 6);
+  }
 
   return (
     <>
       {open && (
         <>
           <div className="tag-picker-backdrop" onClick={() => setOpen(false)} />
-          <div className="tag-picker tag-picker-modal">
+          <div
+            className="tag-picker"
+            style={{
+              position: "fixed",
+              top: pickerTop,
+              left: pickerLeft,
+              maxHeight: 420,
+              overflowY: "auto",
+              zIndex: 70,
+            }}
+          >
           <div className="tag-picker-head">
             <span className="tag-picker-title">{manage ? "标签管理" : "添加标签"}</span>
             <span className="tag-picker-actions">

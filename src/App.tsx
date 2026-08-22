@@ -183,7 +183,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
             </button>
             <button
               className="page-action-btn"
-              onClick={() => usePropertyUiStore.getState().requestAddTag()}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                usePropertyUiStore.getState().setTagAnchor({ top: r.bottom, left: r.left, width: r.width });
+                usePropertyUiStore.getState().requestAddTag();
+              }}
             >
               <TagIcon className="page-action-icon" /> 添加标签
             </button>
