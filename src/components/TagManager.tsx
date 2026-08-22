@@ -71,8 +71,8 @@ export function TagManager() {
 
   return (
     <>
-      <button ref={triggerRef} className="sidebar-tags-manage" onClick={toggle} title="标签管理">
-        🏷 标签管理
+      <button ref={triggerRef} className="tag-trigger" onClick={toggle} title="标签管理">
+        🏷 管理
       </button>
       {open && (
         <div ref={contentRef} className="tag-manager" style={{ position: "fixed", top: pos.top, left: pos.left }}>

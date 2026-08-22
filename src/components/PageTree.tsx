@@ -14,7 +14,6 @@ import { useViewStore } from "../store/view";
 import { useTagManagerStore } from "../store/tagManager";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
-import { TagManager } from "./TagManager";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeSettings } from "./ThemeSettings";
@@ -475,7 +474,6 @@ export function PageTree({
               🕸 关系图
             </button>
           </div>
-          <TagManager />
           {tags.length > 0 && (
             <div className="sidebar-tags">
               <button

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
+import { TagManager } from "./TagManager";
 
 export function TagBar({ pageId }: { pageId: string }) {
   const [tags, setTags] = useState<Tag[]>([]);
@@ -56,6 +57,7 @@ export function TagBar({ pageId }: { pageId: string }) {
         }}
         onBlur={add}
       />
+      <TagManager />
     </div>
   );
 }

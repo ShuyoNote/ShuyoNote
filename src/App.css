@@ -4804,23 +4804,23 @@ select.prop-value {
   background: var(--hover);
 }
 
-/* Tag manager */
-.sidebar-tags-manage {
-  display: block;
-  width: 100%;
-  border: none;
-  background: transparent;
+/* Tag manager trigger (shown in the page tag bar) */
+.tag-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
   color: var(--text-dim);
-  font-size: 13px;
-  padding: 6px 12px;
-  margin: 2px 0 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-full);
+  height: 22px;
+  padding: 0 9px;
+  font-size: 11px;
   cursor: pointer;
-  text-align: left;
   font-family: inherit;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-.sidebar-tags-manage:hover {
+.tag-trigger:hover {
   background: var(--hover);
   color: var(--text);
 }
