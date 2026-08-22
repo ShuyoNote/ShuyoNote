@@ -4425,12 +4425,19 @@ select.prop-value {
 }
 
 .file-manager-bigicon {
-  font-size: 44px;
-  line-height: 1;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
 }
 
 .file-manager-title {
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 700;
   color: var(--text);
   margin: 0;
@@ -4531,7 +4538,7 @@ select.prop-value {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-dim);
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   position: sticky;
@@ -4540,9 +4547,12 @@ select.prop-value {
   z-index: 1;
 }
 .file-manager-table td {
-  padding: 6px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+}
+.file-manager-table tbody tr {
+  transition: background var(--transition-fast);
 }
 .file-manager-table tbody tr:hover {
   background: var(--hover);
@@ -4585,7 +4595,7 @@ select.prop-value {
 .fm-name-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: none;
   background: transparent;
   color: var(--text);
@@ -4595,13 +4605,39 @@ select.prop-value {
   padding: 4px 0;
   text-align: left;
   font-family: inherit;
+  max-width: 100%;
+  min-width: 0;
 }
 .fm-name-btn:hover {
   color: var(--accent);
 }
 .fm-kind-icon {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--hover);
   color: var(--text-dim);
+  flex: none;
+}
+.fm-name-btn:hover .fm-kind-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.fm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Reveal file actions on row hover. */
+.fm-ops-col .fm-file-actions {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.file-manager-table tbody tr:hover .fm-ops-col .fm-file-actions {
+  opacity: 1;
 }
 .fm-empty {
   padding: 32px !important;

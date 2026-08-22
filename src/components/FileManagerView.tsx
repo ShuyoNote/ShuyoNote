@@ -238,7 +238,9 @@ export function FileManagerView() {
     <div className="file-manager">
       <div className="file-manager-head">
         <div className="file-manager-title-block">
-          <span className="file-manager-bigicon">🗂</span>
+          <span className="file-manager-bigicon">
+            <FolderIcon width={26} height={26} />
+          </span>
           <h1 className="file-manager-title">文件管理</h1>
         </div>
         <div className="file-manager-actions">
