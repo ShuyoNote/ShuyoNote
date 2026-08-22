@@ -10,6 +10,8 @@ export interface TemplateItem {
   cover: string; // CSS gradient (placeholder cover)
   content_json: string; // Lexical editor state used to seed a new page
   content_text: string; // plain-text mirror (for FTS indexing)
+  kind?: "page" | "database"; // database templates preset columns via database_json
+  database_json?: string; // JSON string: { columns: [{name,type,options?}] }
 }
 
 export const TEMPLATE_CATEGORIES = ["全部", "个人", "工作", "教育", "健康", "我的模板"] as const;
@@ -63,6 +65,19 @@ function tmpl(
   id: string, name: string, category: string, icon: string, cover: string, blocks: Block[],
 ): TemplateItem {
   return { id, name, category, icon, cover, content_json: rootJson(blocks), content_text: textOf(blocks) };
+}
+
+// A database template: presets the database page's columns (attr_defs + database_columns).
+function dbtmpl(
+  id: string, name: string, category: string, icon: string, cover: string,
+  columns: { name: string; type: string; options?: string[] }[],
+): TemplateItem {
+  return {
+    id, name, category, icon, cover,
+    content_json: rootJson([]), content_text: "",
+    kind: "database",
+    database_json: JSON.stringify({ columns }),
+  };
 }
 
 export const TEMPLATES: TemplateItem[] = [
@@ -129,5 +144,16 @@ export const TEMPLATES: TemplateItem[] = [
     para("我是谁 / 我在做什么 / 我相信什么。"),
     rule(),
     bullet(["爱好：", "目标：", "联系我："]),
+  ]),
+  dbtmpl("content-db", "内容管理库", "工作", "🗃", "linear-gradient(135deg, #d1f0e8 0%, #8ee0c4 100%)", [
+    { name: "标题", type: "text" },
+    { name: "状态", type: "select", options: ["未开始", "进行中", "已完成"] },
+    { name: "优先级", type: "select", options: ["高", "中", "低"] },
+    { name: "截止日期", type: "date" },
+  ]),
+  dbtmpl("movie-db", "观影清单", "个人", "🎬", "linear-gradient(135deg, #e3dcff 0%, #b3a5ff 100%)", [
+    { name: "片名", type: "text" },
+    { name: "评分", type: "number" },
+    { name: "状态", type: "select", options: ["想看", "已看"] },
   ]),
 ];

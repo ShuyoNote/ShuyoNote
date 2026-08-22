@@ -16,6 +16,8 @@ type GalleryItem = {
   cover: string;
   content_json: string;
   content_text: string;
+  kind: "page" | "database";
+  database_json: string;
   user: boolean;
 };
 
@@ -49,7 +51,7 @@ function MockPreview({ id, cover }: { id: string; cover: string }) {
 // "我的模板" (persisted in DB). Clicking a card creates a page with content.
 export function TemplateCenterView() {
   const setOpen = useTemplateCenterStore((s) => s.setOpen);
-  const { createPage } = useNotes();
+  const { createPage, createDatabase } = useNotes();
   const userTemplates = useTemplates((s) => s.userTemplates);
   const loadTemplates = useTemplates((s) => s.load);
   const removeTemplate = useTemplates((s) => s.remove);
@@ -61,13 +63,15 @@ export function TemplateCenterView() {
   }, [loadTemplates]);
 
   const all: GalleryItem[] = useMemo(() => {
-    const built = TEMPLATES.map((t) => ({
+    const built = TEMPLATES.map((t): GalleryItem => ({
       id: t.id, name: t.name, category: t.category, icon: t.icon, cover: t.cover,
-      content_json: t.content_json, content_text: t.content_text, user: false,
+      content_json: t.content_json, content_text: t.content_text,
+      kind: (t.kind ?? "page") as GalleryItem["kind"], database_json: t.database_json ?? "", user: false,
     }));
-    const user = userTemplates.map((t) => ({
+    const user = userTemplates.map((t): GalleryItem => ({
       id: t.id, name: t.name, category: t.category, icon: t.icon, cover: t.cover,
-      content_json: t.content_json, content_text: t.content_text, user: true,
+      content_json: t.content_json, content_text: t.content_text,
+      kind: "page", database_json: "", user: true,
     }));
     return [...built, ...user];
   }, [userTemplates]);
@@ -89,7 +93,33 @@ export function TemplateCenterView() {
   };
 
   const useTemplate = async (t: GalleryItem) => {
-    // Expand `{{date}}` placeholders to today's date before seeding the page.
+    // Database template → create a database page and preset its columns.
+    if (t.kind === "database" && t.database_json) {
+      let config: any = null;
+      try {
+        config = JSON.parse(t.database_json);
+      } catch {
+        config = null;
+      }
+      const dbId = await createDatabase(null);
+      if (dbId && config && Array.isArray(config.columns)) {
+        for (const col of config.columns) {
+          try {
+            const attr = await api.createAttr({
+              name: col.name,
+              attr_type: col.type,
+              options: col.options ?? [],
+            });
+            await api.addDbColumn(dbId, attr.id);
+          } catch {
+            /* skip a failed column */
+          }
+        }
+      }
+      setOpen(false);
+      return;
+    }
+    // Page template → expand `{{date}}` placeholders to today's date before seeding.
     const date = today();
     const json = t.content_json.replace(/\{\{date\}\}/g, date);
     const text = t.content_text.replace(/\{\{date\}\}/g, date);
