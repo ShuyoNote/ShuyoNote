@@ -418,12 +418,6 @@ export function PageTree({
             >
               🕸 关系图
             </button>
-            <button
-              className={`view-switch-btn ${view === "files" ? "view-switch-active" : ""}`}
-              onClick={() => onViewChange("files")}
-            >
-              🗂 文件
-            </button>
           </div>
           {tags.length > 0 && (
             <div className="sidebar-tags">

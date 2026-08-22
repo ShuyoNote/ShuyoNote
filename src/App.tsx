@@ -192,15 +192,7 @@ function App() {
   const setView = useViewStore((s) => s.setView);
   useAutoSync();
   useGlobalShortcuts(() =>
-    setView(
-      view === "notes"
-        ? "board"
-        : view === "board"
-          ? "graph"
-          : view === "graph"
-            ? "files"
-            : "notes",
-    ),
+    setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
   );
 
   // Standalone window mode: ?page=<id> renders a single-page editor only.
