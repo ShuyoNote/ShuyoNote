@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
@@ -23,6 +23,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [addingCol, setAddingCol] = useState(false);
+  const addColPanelRef = useRef<HTMLDivElement>(null);
+  const optionsPanelRef = useRef<HTMLDivElement>(null);
   const [viewType, setViewType] = useState<
     "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory"
   >("table");
@@ -40,6 +42,19 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     api.listAttrDefs().then(setAttrs).catch(() => {});
   };
   useEffect(load, [pageId]);
+
+  // Close the add-column / options panels when clicking outside them.
+  useEffect(() => {
+    if (!addingCol && !editingOptionsCol) return;
+    const onDown = (e: MouseEvent) => {
+      if (addColPanelRef.current?.contains(e.target as Node)) return;
+      if (optionsPanelRef.current?.contains(e.target as Node)) return;
+      setAddingCol(false);
+      setEditingOptionsCol(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [addingCol, editingOptionsCol]);
 
   const setCell = async (rowPageId: string, attrId: string, value: string) => {
     setQuery(
@@ -588,8 +603,13 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       )}
 
       {addingCol && (
-        <div className="db-add-col-panel">
-          <div className="db-add-col-title">添加列</div>
+        <div ref={addColPanelRef} className="db-add-col-panel">
+          <div className="db-add-col-title">
+            添加列
+            <button className="db-panel-close" onClick={() => setAddingCol(false)} title="关闭">
+              ×
+            </button>
+          </div>
           {availableAttrs.map((a) => (
             <button
               key={a.id}
@@ -614,8 +634,13 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       )}
 
       {editingOptionsCol && (
-        <div className="db-add-col-panel">
-          <div className="db-add-col-title">编辑选项（逗号分隔）</div>
+        <div ref={optionsPanelRef} className="db-add-col-panel">
+          <div className="db-add-col-title">
+            编辑选项（逗号分隔）
+            <button className="db-panel-close" onClick={() => setEditingOptionsCol(null)} title="关闭">
+              ×
+            </button>
+          </div>
           <input
             className="db-input db-options-input"
             value={optionsText}

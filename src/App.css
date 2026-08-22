@@ -3523,10 +3523,29 @@ select.prop-value {
 }
 
 .db-add-col-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-dim);
   padding: 4px 8px 6px;
+}
+
+.db-panel-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: var(--radius-xs);
+}
+
+.db-panel-close:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 
 .db-add-col-item {
