@@ -72,16 +72,25 @@ function NoteEditor({ pageId }: { pageId: string }) {
     setSaved(true);
   }, [pageId]);
 
+  const pendingSaveRef = useRef<{
+    pageId: string;
+    patch: { title?: string; content_json?: string; content_text?: string };
+  } | null>(null);
+
   const persist = (patch: {
     title?: string;
     content_json?: string;
     content_text?: string;
   }) => {
     setSaved(false);
+    pendingSaveRef.current = { pageId, patch };
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
+      const p = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      if (!p) return;
       try {
-        const updated = await api.savePage({ id: pageId, ...patch });
+        const updated = await api.savePage({ id: p.pageId, ...p.patch });
         updateCurrent(updated);
         setSaved(true);
         loadPages();
@@ -103,10 +112,19 @@ function NoteEditor({ pageId }: { pageId: string }) {
     persist({ content_json: json, content_text: text });
   };
 
-  // Flush pending save on unmount / page switch.
+  // Flush a pending save on unmount / page switch instead of dropping it, so
+  // imported/edited content is never lost to the debounce (e.g. switching view
+  // or closing the app within the 600ms window).
   useEffect(() => {
     return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      const p = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      if (p) {
+        api.savePage({ id: p.pageId, ...p.patch }).catch((e) => {
+          console.error("flush save failed", e);
+          toast(`保存失败：${e}`, "error");
+        });
+      }
     };
   }, []);
 

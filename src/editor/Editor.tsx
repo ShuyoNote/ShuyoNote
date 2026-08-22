@@ -84,28 +84,14 @@ interface EditorProps {
   searchQuery?: string;
 }
 
-function isValidLexicalNode(node: any): boolean {
-  if (!node || typeof node !== "object") return false;
-  if (typeof node.type !== "string") return false;
-  // All children must themselves be valid Lexical nodes. Note: we intentionally
-  // do NOT reject a `listitem` with bare `text` children here — Lexical's own
-  // markdown importer emits exactly that shape, and Lexical parses it fine.
-  const children = Array.isArray(node.children) ? node.children : [];
-  return children.every(isValidLexicalNode);
-}
-
 function parseEditorState(contentJson: string): string | null {
   try {
     const parsed = JSON.parse(contentJson);
     const root = parsed && parsed.root;
-    // An empty root (no children) is not a valid editor state; let Lexical
-    // seed a default paragraph instead.
-    if (
-      root &&
-      Array.isArray(root.children) &&
-      root.children.length > 0 &&
-      isValidLexicalNode(root)
-    ) {
+    // A page with any top-level blocks has real content; use it on reload even
+    // if a specific node fails our structural validation (Lexical tolerates it,
+    // and losing valid imported content is worse than a graceful edge case).
+    if (root && Array.isArray(root.children) && root.children.length > 0) {
       return contentJson;
     }
   } catch {
