@@ -59,11 +59,12 @@
 - **验收**：数据库页顶部显示各 select 值的计数与 number 列汇总。
 - **实现**：`DatabaseView` 顶部汇总条——select 列按值着色计数徽标、number 列合计/均值（纯前端从行数据聚合，尊重筛选）。
 
-### M5 — PDF 导出（P2）
+### M5 — PDF 导出（P2）✅
 
 - **目标**：页面/数据库导出为 PDF。
 - **要点**：复用 HTML 导出 + Tauri 系统打印 / 无头渲染。
 - **验收**：导出 PDF 与页面渲染一致。
+- **实现**：工具栏「🖨 导出 PDF」——复用 `$generateHtmlFromNodes` + `HTML_TEMPLATE` 生成页面 HTML，注入隐藏 iframe 后调用 `window.print()`（系统打印 → 另存为 PDF），WebView2 支持。数据库页 PDF 为后续项。
 
 ### M6 — 移动端适配（P2，长周期）
 

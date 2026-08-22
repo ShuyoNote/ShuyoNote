@@ -41,6 +41,27 @@ function triggerFind() {
   );
 }
 
+// Render an HTML document into a hidden iframe and trigger the system print
+// dialog (user can "Save as PDF"). Works in WebView2.
+function printHTML(html: string) {
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  document.body.appendChild(iframe);
+  const doc = iframe.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write(html);
+  doc.close();
+  iframe.contentWindow?.focus();
+  iframe.contentWindow?.print();
+  setTimeout(() => iframe.remove(), 1200);
+}
+
 export function EditorToolbar({ pageId }: { pageId: string }) {
   const editor = useEditorStore((s) => s.editor);
 
@@ -77,6 +98,15 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
     }
   };
 
+  const exportPdf = () => {
+    if (!editor) return;
+    editor.read(() => {
+      const body = $generateHtmlFromNodes(editor);
+      const title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
+      printHTML(HTML_TEMPLATE(title, body));
+    });
+  };
+
   const importMarkdown = () => {
     if (!editor) return;
     const text = window.prompt("粘贴 Markdown 内容（将清空当前页面）：");
@@ -101,6 +131,9 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       </button>
       <button className="toolbar-btn" onClick={exportHtml} title="导出为 HTML">
         <FileCodeIcon />
+      </button>
+      <button className="toolbar-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
+        🖨
       </button>
       <HistoryPanel pageId={pageId} />
     </div>
