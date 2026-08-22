@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
+import { useTemplateCenterStore } from "./templateCenter";
 
 interface NoteState {
   pages: PageMeta[];
@@ -47,8 +48,10 @@ export const useNotes = create<NoteState>((set, get) => ({
     try {
       const current = await api.getPage(id);
       set({ currentId: id, current, error: null });
-      // Opening a page/database switches back to the editor view.
+      // Opening a page/database switches back to the editor view and closes any
+      // overlay (template center).
       useViewStore.getState().setView("notes");
+      useTemplateCenterStore.getState().setOpen(false);
     } catch (e) {
       set({ error: String(e) });
     }
