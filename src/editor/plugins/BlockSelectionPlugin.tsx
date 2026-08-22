@@ -44,12 +44,12 @@ export function BlockSelectionPlugin() {
     );
   }, [editor]);
 
-  // Clear the selection when clicking inside the editor content (not a handle/button).
+  // Clear the selection when clicking anywhere that isn't a handle/button.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (t.closest(".block-handle, .block-selection-bar")) return;
-      if (t.closest(".editor-content")) useBlockSelection.getState().clear();
+      useBlockSelection.getState().clear();
     };
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);

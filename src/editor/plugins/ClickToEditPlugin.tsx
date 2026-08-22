@@ -15,6 +15,7 @@ export function ClickToEditPlugin() {
     if (!rootEl || !shell) return;
 
     let downStart: { x: number; y: number } | null = null;
+    let downTarget: HTMLElement | null = null;
     let boxEl: HTMLDivElement | null = null;
     let selecting = false;
 
@@ -49,8 +50,14 @@ export function ClickToEditPlugin() {
 
     const onMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (target !== rootEl && target !== shell) return;
+      // Don't box-select from block handles / selection bar / popovers.
+      if (target.closest(".block-handle, .block-selection-bar, .tag-picker, .slash-menu")) {
+        return;
+      }
+      // Only within the editor content area (any direction/start point).
+      if (!target.closest(".editor-content, .editor-shell")) return;
       downStart = { x: e.clientX, y: e.clientY };
+      downTarget = target;
       selecting = false;
       createBox();
     };
@@ -76,14 +83,14 @@ export function ClickToEditPlugin() {
     const onMouseUp = (e: MouseEvent) => {
       if (!downStart || !boxEl) return;
       const wasSelect = selecting;
+      const blankClick = downTarget === rootEl || downTarget === shell;
       removeBox();
       downStart = null;
+      downTarget = null;
       selecting = false;
-      if (wasSelect) {
-        // Keep the box-selected blocks (already highlighted by setKeys).
-        return;
-      }
-      // Plain click → place the caret in the nearest block (Blank area).
+      if (wasSelect) return; // box-select done (blocks highlighted)
+      if (!blankClick) return; // block/text click → browser placed the caret
+      // Plain blank click → place the caret in the nearest block.
       if (useBlockSelection.getState().keys.length > 0) return;
       const y = e.clientY;
       editor.update(() => {
