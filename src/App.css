@@ -1354,17 +1354,14 @@ body.is-toc-open .main {
   display: flex;
   align-items: center;
   gap: 16px;
-  max-height: 0;
-  margin-top: 0;
+  height: 36px;
+  margin-top: 8px;
   opacity: 0;
-  overflow: hidden;
   pointer-events: none;
-  transition: max-height var(--transition-fast), opacity var(--transition-fast);
+  transition: opacity var(--transition-fast);
 }
 .title-area:hover .page-actions,
 .title-area:focus-within .page-actions {
-  max-height: 44px;
-  margin-top: 10px;
   opacity: 1;
   pointer-events: auto;
 }
