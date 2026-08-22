@@ -11,7 +11,6 @@ import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
-import { ThemeToggle } from "./ThemeToggle";
 import { ThemeSettings } from "./ThemeSettings";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
@@ -334,7 +333,6 @@ export function PageTree({
             <TrashPanel />
             <SyncPanel />
             <BackupButton />
-            <ThemeToggle />
             <ThemeSettings />
           </div>
           <div className="new-menu">
