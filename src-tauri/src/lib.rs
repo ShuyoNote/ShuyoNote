@@ -36,7 +36,7 @@ pub fn run() {
             // never drifts from the packaged version on a new release.
             let version = app.package_info().version.to_string();
             if let Some(win) = app.get_webview_window("main") {
-                let _ = win.set_title(&format!("ShuyoNote · 数友笔记 · v{version}"));
+                let _ = win.set_title(&format!("ShuyoNote 数友笔记 · v{version}"));
             }
             Ok(())
         })
