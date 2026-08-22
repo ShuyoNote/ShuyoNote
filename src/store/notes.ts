@@ -16,7 +16,7 @@ interface NoteState {
 
   loadPages: () => Promise<void>;
   openPage: (id: string) => Promise<void>;
-  createPage: (parentId: string | null) => Promise<string | null>;
+  createPage: (parentId: string | null, content?: { content_json: string; content_text: string }) => Promise<string | null>;
   createFolder: (parentId: string | null) => Promise<void>;
   createDatabase: (parentId: string | null) => Promise<string | null>;
   deletePage: (id: string) => Promise<void>;
@@ -58,9 +58,14 @@ export const useNotes = create<NoteState>((set, get) => ({
     }
   },
 
-  createPage: async (parentId) => {
+  createPage: async (parentId, content?) => {
     try {
-      const page = await api.createPage({ parent_id: parentId, title: "" });
+      const page = await api.createPage({
+        parent_id: parentId,
+        title: "",
+        content_json: content?.content_json,
+        content_text: content?.content_text,
+      });
       await get().loadPages();
       set({ currentId: page.id, current: page });
       useViewStore.getState().setView("notes");

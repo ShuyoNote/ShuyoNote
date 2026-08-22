@@ -105,21 +105,30 @@ pub fn get_page(db: State<Db>, id: String) -> Result<PageDetail, String> {
 pub struct CreatePageArgs {
     pub parent_id: Option<String>,
     pub title: Option<String>,
+    pub content_json: Option<String>,
+    pub content_text: Option<String>,
 }
 
 #[tauri::command]
 pub fn create_page(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
-    create_node(db, args.parent_id, args.title, "page")
+    create_node(
+        db,
+        args.parent_id,
+        args.title,
+        "page",
+        args.content_json,
+        args.content_text,
+    )
 }
 
 #[tauri::command]
 pub fn create_folder(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
-    create_node(db, args.parent_id, args.title, "folder")
+    create_node(db, args.parent_id, args.title, "folder", None, None)
 }
 
 #[tauri::command]
 pub fn create_database(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail, String> {
-    create_node(db, args.parent_id, args.title, "database")
+    create_node(db, args.parent_id, args.title, "database", None, None)
 }
 
 fn create_node(
@@ -127,6 +136,8 @@ fn create_node(
     parent_id: Option<String>,
     title: Option<String>,
     kind: &str,
+    content_json: Option<String>,
+    content_text: Option<String>,
 ) -> Result<PageDetail, String> {
     let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
@@ -142,14 +153,17 @@ fn create_node(
         )
         .map_err(|e| e.to_string())?;
 
+    let json = content_json.unwrap_or_else(|| "{}".to_string());
+    let text = content_text.unwrap_or_default();
+
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, '{}', '', ?5, ?6, ?7, ?8, NULL)",
-        params![id, DEFAULT_WORKSPACE, parent_id, title, kind, sort_order, now, now],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
+        params![id, DEFAULT_WORKSPACE, parent_id, title, json, text, kind, sort_order, now, now],
     )
     .map_err(|e| e.to_string())?;
 
-    search::sync_fts(&c, &id, &title, "")?;
+    search::sync_fts(&c, &id, &title, &text)?;
 
     let page = fetch_page(&c, &id)?;
     sync::record_page_upsert(&c, &page)?;

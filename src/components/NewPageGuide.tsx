@@ -3,6 +3,7 @@ import { $createParagraphNode, $getRoot, type ElementNode } from "lexical";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
+import { useTemplateCenterStore } from "../store/templateCenter";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import {
   SparkleIcon,
@@ -72,7 +73,7 @@ export function NewPageGuide() {
             <button className="npg-act" onClick={() => toast("AI 创作即将推出", "info")}>
               <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
             </button>
-            <button className="npg-act" onClick={() => toast("模板中心即将推出", "info")}>
+            <button className="npg-act" onClick={() => useTemplateCenterStore.getState().setOpen(true)}>
               <TemplateIcon className="npg-act-icon" /> 从模板中心创建...
             </button>
             <button className="npg-act" onClick={importMarkdown}>

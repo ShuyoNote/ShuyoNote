@@ -49,10 +49,9 @@ export function TemplateCenterView() {
   }, [tab, query]);
 
   const useTemplate = async (t: TemplateItem) => {
-    // Skeleton: create a blank page; template content fill comes later.
-    await createPage(null);
+    // Seed a real page with the template's Lexical content (not a blank page).
+    await createPage(null, { content_json: t.content_json, content_text: t.content_text });
     setOpen(false);
-    void t;
   };
 
   return (
