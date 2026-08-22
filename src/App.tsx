@@ -167,6 +167,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         {error && <span className="error-badge">{error}</span>}
       </div>
       <PropertiesPanel pageId={pageId} />
+      <TagBar pageId={pageId} />
       <div className="editor-stage">
         <ErrorBoundary>
           <Editor
@@ -180,7 +181,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
         {current && !hasBlockContent(current.content_json) && <NewPageGuide />}
       </div>
       <BacklinksPanel pageId={pageId} />
-      <TagBar pageId={pageId} />
       <AttachmentPanel pageId={pageId} />
     </div>
   );

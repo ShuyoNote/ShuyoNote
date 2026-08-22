@@ -2410,7 +2410,7 @@ select.prop-value {
   max-width: var(--doc-width);
   margin: 0 auto;
   width: 100%;
-  padding: 4px var(--doc-pad) 8px;
+  padding: 2px var(--doc-pad) 10px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
