@@ -8,7 +8,14 @@ export function ConfirmDialog() {
   return (
     <div className="confirm-overlay" onClick={() => close(false)}>
       <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
-        {options.title && <div className="confirm-title">{options.title}</div>}
+        {options.title && (
+          <div className="confirm-head">
+            <span className={`confirm-icon ${options.danger ? "confirm-icon-danger" : ""}`}>
+              {options.danger ? "!" : "✓"}
+            </span>
+            <span className="confirm-title">{options.title}</span>
+          </div>
+        )}
         <div className="confirm-message">{options.message}</div>
         <div className="confirm-actions">
           <button className="confirm-cancel" onClick={() => close(false)}>

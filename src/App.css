@@ -19,6 +19,8 @@
   /* Semantic */
   --danger: #f54a45;
   --danger-soft: #fdecec;
+  --danger-strong: #d23631;
+  --on-danger: #ffffff;
   --success: #00b578;
   --warning: #ff9a2e;
   --mark-bg: #fff3cc;
@@ -93,6 +95,8 @@
   --hover-strong: #34353a;
   --danger: #ff6b6b;
   --danger-soft: #3a2324;
+  --danger-strong: #ff8080;
+  --on-danger: #0b1220;
   --success: #2bd49b;
   --warning: #ffb04d;
   --mark-bg: #4a3f1f;
@@ -4909,34 +4913,108 @@ select.prop-value {
 .tc-card-tag { font-size: 11px; color: var(--text-faint); }
 .tc-empty { color: var(--text-faint); font-size: 13px; padding: 40px 0; text-align: center; }
 
-/* In-app confirm dialog (centered in the app window). */
+/* In-app confirm dialog (centered in the app window), theme-consistent card. */
 .confirm-overlay {
   position: fixed;
   inset: 0;
   z-index: 90;
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(15, 23, 42, 0.34);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .confirm-box {
+  width: min(360px, calc(100vw - 48px));
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
   padding: 18px 18px 14px;
-  min-width: 300px;
-  max-width: 420px;
 }
-.confirm-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
-.confirm-message { font-size: 13px; color: var(--text-dim); line-height: 1.6; white-space: pre-wrap; }
-.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.confirm-cancel { border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 13px; }
-.confirm-cancel:hover { background: var(--hover); }
-.confirm-ok { border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 13px; }
-.confirm-ok:hover { filter: brightness(1.06); }
-.confirm-ok-danger { border-color: var(--danger); background: var(--danger); color: #fff; }
-.confirm-ok-danger:hover { filter: brightness(1.06); }
+.confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.confirm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+.confirm-icon-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.confirm-message {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.confirm-cancel {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.confirm-cancel:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.confirm-ok {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background var(--transition-fast), filter var(--transition-fast);
+}
+.confirm-ok:hover {
+  background: var(--accent-strong);
+}
+.confirm-ok-danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+.confirm-ok-danger:hover {
+  background: var(--danger-strong);
+}
+.confirm-ok:focus-visible,
+.confirm-cancel:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+}
 
 /* Theme settings popover */
 .theme-settings {
