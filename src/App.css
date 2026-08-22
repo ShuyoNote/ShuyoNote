@@ -1341,15 +1341,32 @@ body.is-toc-open .main {
   margin: 0 auto;
 }
 
-/* Page-actions row (Notion-style: add icon / cover / property / tag). */
-.page-actions {
+/* Page-actions row (Notion-style: add icon / cover / property / tag). It only
+   shows when the pointer is over the title area (so the page stays clean). */
+.title-area {
   max-width: var(--doc-width);
   width: 100%;
-  margin: 12px auto 0;
+  margin: 0 auto;
+}
+.page-actions {
+  width: 100%;
   padding: 0 var(--doc-pad);
   display: flex;
   align-items: center;
   gap: 16px;
+  max-height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height var(--transition-fast), opacity var(--transition-fast);
+}
+.title-area:hover .page-actions,
+.title-area:focus-within .page-actions {
+  max-height: 44px;
+  margin-top: 10px;
+  opacity: 1;
+  pointer-events: auto;
 }
 .page-action-btn {
   display: flex;
