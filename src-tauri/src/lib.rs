@@ -89,6 +89,7 @@ pub fn run() {
             backup::export_backup,
             backup::import_backup,
             backup::write_text_file,
+            backup::read_text_file,
             windows::open_page_window,
         ])
         .run(tauri::generate_context!())

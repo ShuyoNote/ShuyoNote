@@ -120,5 +120,6 @@ export const api = {
   importBackup: (srcPath: string) => invoke<void>("import_backup", { srcPath }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   openPageWindow: (pageId: string) => invoke<void>("open_page_window", { pageId }),
 };

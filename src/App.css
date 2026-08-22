@@ -4136,3 +4136,85 @@ select.prop-value {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* Markdown import dialog */
+.markdown-import-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.markdown-import {
+  width: 560px;
+  max-width: 90vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 16px;
+}
+
+.markdown-import-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.markdown-import-textarea {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.markdown-import-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.markdown-import-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.markdown-import-spacer {
+  flex: 1;
+}
+
+.markdown-import-file,
+.markdown-import-cancel,
+.markdown-import-confirm {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.markdown-import-file:hover,
+.markdown-import-cancel:hover {
+  background: var(--hover);
+}
+
+.markdown-import-confirm {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

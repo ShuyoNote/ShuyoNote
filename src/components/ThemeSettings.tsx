@@ -1,4 +1,5 @@
 import { usePopover } from "../hooks/usePopover";
+import { PaletteIcon } from "./icons";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision } from "../plugins/registry";
 
@@ -18,7 +19,7 @@ export function ThemeSettings() {
   return (
     <>
       <button ref={triggerRef} className="btn-theme" onClick={toggle} title="主题设置">
-        🎨
+        <PaletteIcon />
       </button>
       {open && (
         <div

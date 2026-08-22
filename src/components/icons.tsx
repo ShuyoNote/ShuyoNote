@@ -361,3 +361,25 @@ export function DeleteColumnIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function PaletteIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="13.5" cy="6.5" r=".8" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".8" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".8" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".8" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.12-.29-.29-.44-.65-.44-1.12a1.64 1.64 0 0 1 1.67-1.67h2C19.5 16.4 22 13.9 22 10.8 22 5.95 17.5 2 12 2z" />
+    </Icon>
+  );
+}
+
+export function PrintIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <polyline points="6 9 6 2 18 2 18 9" />
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+      <rect x="6" y="14" width="12" height="8" />
+    </Icon>
+  );
+}

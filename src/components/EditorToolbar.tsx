@@ -1,13 +1,14 @@
-import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
+import { useState } from "react";
+import { $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
 import { save } from "@tauri-apps/plugin-dialog";
-import { $getRoot } from "lexical";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, SearchIcon, UploadIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon } from "./icons";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
+import { MarkdownImportDialog } from "./MarkdownImportDialog";
 
 const HTML_TEMPLATE = (title: string, body: string) => `<!doctype html>
 <html lang="zh-CN">
@@ -64,6 +65,7 @@ function printHTML(html: string) {
 
 export function EditorToolbar({ pageId }: { pageId: string }) {
   const editor = useEditorStore((s) => s.editor);
+  const [importing, setImporting] = useState(false);
 
   const exportMarkdown = () => {
     if (!editor) return;
@@ -107,16 +109,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
     });
   };
 
-  const importMarkdown = () => {
-    if (!editor) return;
-    const text = window.prompt("粘贴 Markdown 内容（将清空当前页面）：");
-    if (text === null) return;
-    editor.update(() => {
-      const root = $getRoot();
-      root.clear();
-      $convertFromMarkdownString(text, SHUYONOTE_TRANSFORMERS, root);
-    });
-  };
+  const importMarkdown = () => setImporting(true);
 
   return (
     <div className="editor-toolbar">
@@ -133,9 +126,10 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         <FileCodeIcon />
       </button>
       <button className="toolbar-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
-        🖨
+        <PrintIcon />
       </button>
       <HistoryPanel pageId={pageId} />
+      {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
     </div>
   );
 }
