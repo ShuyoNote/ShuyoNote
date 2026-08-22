@@ -72,7 +72,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 
 ### M10 — 多工作空间（P0，[规划](plans/2026-08-22-multi-workspace-plan.md)）
 - **M10.1 隔离底座** ✅（v1.9.0）：`active_workspace_id`（持久化 `sync_state`）+ `list_workspaces`/`create_workspace`/`get_set_active_workspace_id` + 侧栏空间切换器 + `list_pages`/`create_node` 按活动空间过滤/写入。注：tags/回收站/搜索/关系图的按空间过滤归入 M10.3。
-- **M10.2 生命周期**：`rename_workspace`（作用于指定空间）+ `delete_workspace`（软删 + 导出提醒 + 确认）+ `export_workspace`。
+- **M10.2 生命周期** ✅（v1.10.0）：空间切换器中非当前空间可删除（二次确认 → 软删 `workspaces.deleted_at`，内容保留）；删除活动空间时 `get_active_workspace_id` 自动回退到最早未删除空间。注：`export_workspace` / `rename_workspace(id)` 为 M10.2b，暂未实现。
 - **M10.3 每空间设置**：空间名/图标、独立回收站、关系图仅含本空间节点。
 - **M10.4（可选）**：全空间搜索、共享模板库、跨空间复制页面。
 

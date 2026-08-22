@@ -346,6 +346,26 @@ export function PageTree({
     setEditingName(false);
   };
 
+  const removeSpace = async (id: string) => {
+    const name = spaces.find((s) => s.id === id)?.name ?? "该工作空间";
+    if (
+      !(await confirmDialog({
+        title: "删除工作空间",
+        message: `删除「${name}」及其所有内容？（软删除，可在数据目录恢复）`,
+        danger: true,
+      }))
+    ) {
+      return;
+    }
+    const ok = await useSpaceStore.getState().remove(id);
+    if (ok) {
+      await useNotes.getState().loadPages();
+      setWorkspaceName("默认空间");
+    }
+    spaceChooser.close();
+    setEditingName(false);
+  };
+
   const tree = useMemo(() => buildTree(pages), [pages]);
 
   const commitName = async () => {
@@ -414,7 +434,7 @@ export function PageTree({
                   <div className="space-switcher-empty">暂无工作空间</div>
                 ) : (
                   spaces.map((s) => (
-                    <button
+                    <div
                       key={s.id}
                       className={`space-item ${s.id === activeSpaceId ? "space-item-active" : ""}`}
                       onClick={() => switchSpace(s.id)}
@@ -422,7 +442,19 @@ export function PageTree({
                       <span className="space-item-mark">{s.name.charAt(0)}</span>
                       <span className="space-item-name">{s.name}</span>
                       {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
-                    </button>
+                      {spaces.length > 1 && s.id !== activeSpaceId && (
+                        <button
+                          className="space-item-del"
+                          title="删除工作空间"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeSpace(s.id);
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
                   ))
                 )}
                 <button className="space-item space-item-new" onClick={createSpace}>

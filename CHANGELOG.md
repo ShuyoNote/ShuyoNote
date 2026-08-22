@@ -2,6 +2,25 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.10.0] - 2026-08-22
+
+### 新增
+
+- **删除工作空间（生命周期）**：空间切换器中非当前空间可**删除**（悬停出现删除按钮）——二次确认后**软删除**（`workspaces.deleted_at`），内容保留可恢复
+- **活动空间自动回退**：若删除的是当前活动空间，`get_active_workspace_id` 自动回退到最早的未删除空间，应用切换过去而不是停留在失效空间
+- **软删除列迁移**：`workspaces` 表新增 `deleted_at`（幂等 `ALTER TABLE`），兼容既有数据库
+
+### 变更
+
+- `list_workspaces` 过滤已删除空间；`get_active_workspace_id` 校验持久化活动空间未被删除，失效则回退并重写
+- **文档**：路线图 M10.2 标记已实现（软删 + 确认 + 自动回退）；`export_workspace`、`rename_workspace(id)` 为 M10.2 后续项（M10.2b）
+
+### 说明
+
+- `export_workspace`（按空间导出备份）与 `rename_workspace`（显式指定空间）归入 M10.2b，暂未实现。
+
+---
+
 ## [1.9.0] - 2026-08-22
 
 ### 新增

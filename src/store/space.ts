@@ -10,6 +10,7 @@ interface SpaceState {
   load: () => Promise<void>;
   create: (name?: string) => Promise<boolean>;
   switchTo: (id: string) => Promise<boolean>;
+  remove: (id: string) => Promise<boolean>;
 }
 
 export const useSpaceStore = create<SpaceState>((set) => ({
@@ -44,6 +45,20 @@ export const useSpaceStore = create<SpaceState>((set) => ({
       return true;
     } catch (e) {
       console.error("switch workspace failed", e);
+      return false;
+    }
+  },
+  remove: async (id) => {
+    try {
+      await api.deleteWorkspace(id);
+      const [spaces, activeId] = await Promise.all([
+        api.listWorkspaces(),
+        api.getActiveWorkspaceId(),
+      ]);
+      set({ spaces, activeId });
+      return true;
+    } catch (e) {
+      console.error("delete workspace failed", e);
       return false;
     }
   },

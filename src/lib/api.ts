@@ -43,6 +43,7 @@ export const api = {
   createWorkspace: (name?: string | null) => invoke<WorkspaceMeta>("create_workspace", { name }),
   getActiveWorkspaceId: () => invoke<string>("get_active_workspace_id"),
   setActiveWorkspaceId: (id: string) => invoke<void>("set_active_workspace_id", { id }),
+  deleteWorkspace: (id: string) => invoke<void>("delete_workspace", { id }),
   getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke<TemplateMeta[]>("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; space_id?: string | null }) =>

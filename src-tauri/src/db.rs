@@ -218,6 +218,17 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             "#,
         )?;
     }
+
+    // Soft-delete column for workspaces (deleting a space is recoverable).
+    let ws_has_deleted: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'deleted_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_deleted == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN deleted_at INTEGER", [])?;
+    }
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_page_id, target_block_id)",
         [],

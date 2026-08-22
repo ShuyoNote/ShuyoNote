@@ -374,6 +374,24 @@ body,
   color: var(--accent);
   font-size: 12px;
 }
+.space-item-del {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+.space-item:hover .space-item-del {
+  opacity: 1;
+}
+.space-item-del:hover {
+  color: var(--danger);
+}
 .space-item-new {
   color: var(--accent);
   border-top: 1px solid var(--border);
