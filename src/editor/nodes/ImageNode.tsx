@@ -58,6 +58,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
         alt={this.__altText}
         className="editor-image"
         draggable={false}
+        onError={(e) => e.currentTarget.classList.add("editor-image-broken")}
+        onLoad={(e) => e.currentTarget.classList.remove("editor-image-broken")}
       />
     );
   }

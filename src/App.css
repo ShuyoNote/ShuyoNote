@@ -2145,13 +2145,26 @@ select.prop-value {
 
 .editor-image-container {
   display: block;
-  margin: 0.5em 0;
+  margin: 6px 0;
+  text-align: center;
 }
 
 .editor-image {
+  display: inline-block;
   max-width: 100%;
+  max-height: 480px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
   border-radius: var(--radius-sm);
-  display: block;
+}
+
+/* A broken/404 image collapses to a small file name placeholder instead of a
+   huge empty region (e.g. a relative path from an imported Markdown doc). */
+.editor-image.editor-image-broken {
+  max-height: none;
+  max-width: 220px;
+  opacity: 0.55;
 }
 
 .editor-video-container {
