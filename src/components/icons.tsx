@@ -466,9 +466,10 @@ export function SparkleIcon(props: IconProps) {
 export function TemplateIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="3" y1="9" x2="21" y2="9" />
-      <line x1="8" y1="4" x2="8" y2="9" />
+      <rect x="3.5" y="4" width="17" height="16" rx="2.5" />
+      <path d="M3.5 9h17" />
+      <path d="M7.5 12.8h9" />
+      <path d="M7.5 16.2h5.5" />
     </Icon>
   );
 }

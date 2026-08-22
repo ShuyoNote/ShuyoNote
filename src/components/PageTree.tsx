@@ -16,7 +16,7 @@ import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -477,7 +477,7 @@ export function PageTree({
             className="sidebar-bottom-btn"
             onClick={() => useTemplateCenterStore.getState().setOpen(true)}
           >
-            <span className="sidebar-bottom-icon">🗂</span> 模板中心
+            <TemplateIcon className="sidebar-bottom-icon" /> 模板中心
           </button>
         </div>
       )}
