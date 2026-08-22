@@ -2592,6 +2592,22 @@ select.prop-value {
   display: flex;
   flex-direction: column;
 }
+/* Centered modal variant (opened from the page-actions "添加标签" row). */
+.tag-picker.tag-picker-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 70;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.tag-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  background: rgba(0, 0, 0, 0.24);
+}
 .tag-picker-head {
   display: flex;
   align-items: center;

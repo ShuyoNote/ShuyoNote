@@ -4,7 +4,6 @@ import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTagManagerStore } from "../store/tagManager";
 import { usePropertyUiStore } from "../store/propertyUi";
-import { usePopover } from "../hooks/usePopover";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
 
@@ -67,7 +66,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const revision = useTagManagerStore((s) => s.revision);
-  const { open, pos, triggerRef, contentRef, toggle: togglePop, close } = usePopover<HTMLButtonElement>();
+  const [open, setOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -90,7 +89,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
       setQuery("");
       setEditing(null);
       load();
-      togglePop();
+      setOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addTagSeq]);
@@ -151,19 +150,8 @@ export function TagAddButton({ pageId }: { pageId: string }) {
     }
   };
 
-  const onAddClick = () => {
-    if (open) {
-      close();
-      return;
-    }
-    setManage(false);
-    setQuery("");
-    setEditing(null);
-    load();
-    togglePop();
-  };
   const doClose = () => {
-    close();
+    setOpen(false);
     setManage(false);
     setQuery("");
     setEditing(null);
@@ -171,11 +159,10 @@ export function TagAddButton({ pageId }: { pageId: string }) {
 
   return (
     <>
-      <button ref={triggerRef} className="property-add-btn" onClick={onAddClick} title="添加标签">
-        ＋ 添加标签
-      </button>
       {open && (
-        <div ref={contentRef} className="tag-picker" style={{ position: "fixed", top: pos.top, left: pos.left }}>
+        <>
+          <div className="tag-picker-backdrop" onClick={() => setOpen(false)} />
+          <div className="tag-picker tag-picker-modal">
           <div className="tag-picker-head">
             <span className="tag-picker-title">{manage ? "标签管理" : "添加标签"}</span>
             <span className="tag-picker-actions">
@@ -248,6 +235,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
             )}
           </div>
         </div>
+        </>
       )}
     </>
   );

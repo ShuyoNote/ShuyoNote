@@ -13,6 +13,7 @@ import { GraphView } from "./components/GraphView";
 import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
+import { TagAddButton } from "./components/TagBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
@@ -216,6 +217,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <BacklinksPanel pageId={pageId} />
         <AttachmentPanel pageId={pageId} />
       </div>
+      {/* Tag picker modal, opened by the page-actions "添加标签" row. */}
+      <TagAddButton pageId={pageId} />
       <TableOfContents />
     </div>
   );

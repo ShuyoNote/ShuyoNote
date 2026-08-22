@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { usePropertyUiStore } from "../store/propertyUi";
 import type { AttrDef, PageProp } from "../types";
-import { TagRow, TagAddButton } from "./TagBar";
+import { TagRow } from "./TagBar";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi"] as const;
 const TYPE_LABELS: Record<string, string> = {
@@ -175,12 +175,6 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
               </button>
             </div>
           ) : null}
-          <div className="property-actions">
-            <TagAddButton pageId={pageId} />
-            <button className="property-add-btn" onClick={() => setAdding(true)}>
-              ＋ 添加属性
-            </button>
-          </div>
         </div>
       )}
       </div>
