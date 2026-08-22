@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $cloneWithProperties, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot } from "lexical";
+import { $cloneWithProperties, $getNodeByKey, $getRoot } from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
 import { toast } from "../../store/toast";
 
@@ -52,21 +52,14 @@ export function BlockSelectionPlugin() {
       const s = useBlockSelection.getState();
       if (s.keys.length === 0) return;
       const target = e.target as HTMLElement;
-      let key: string | null = null;
-      editor.getEditorState().read(() => {
-        const node = $getNearestNodeFromDOMNode(target);
-        if (node) {
-          const top = node.getTopLevelElement();
-          if (top) key = top.getKey();
-        }
-      });
-      if (!key || !s.keys.includes(key)) return;
+      // Only when the right-click is inside a highlighted (selected) block.
+      if (!target.closest(".block-selected")) return;
       e.preventDefault();
       setMenu({ x: e.clientX, y: e.clientY });
     };
-    document.addEventListener("contextmenu", onContext);
-    return () => document.removeEventListener("contextmenu", onContext);
-  }, [editor]);
+    document.addEventListener("contextmenu", onContext, true);
+    return () => document.removeEventListener("contextmenu", onContext, true);
+  }, []);
 
   // Delete/Backspace remove selected blocks; Escape clears.
   useEffect(() => {
