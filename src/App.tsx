@@ -10,6 +10,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
 import { GraphView } from "./components/GraphView";
+import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
@@ -171,7 +172,15 @@ function App() {
   const setView = useViewStore((s) => s.setView);
   useAutoSync();
   useGlobalShortcuts(() =>
-    setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
+    setView(
+      view === "notes"
+        ? "board"
+        : view === "board"
+          ? "graph"
+          : view === "graph"
+            ? "files"
+            : "notes",
+    ),
   );
 
   // Standalone window mode: ?page=<id> renders a single-page editor only.
@@ -210,6 +219,10 @@ function App() {
       ) : view === "board" ? (
         <div className="main">
           <BoardView />
+        </div>
+      ) : view === "files" ? (
+        <div className="main">
+          <FileManagerView />
         </div>
       ) : currentId ? (
         <NoteEditor pageId={currentId} />

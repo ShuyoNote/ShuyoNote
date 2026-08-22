@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type AppView = "notes" | "board" | "graph";
+export type AppView = "notes" | "board" | "graph" | "files";
 
 interface ViewState {
   view: AppView;

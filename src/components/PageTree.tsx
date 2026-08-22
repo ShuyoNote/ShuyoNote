@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSidebar } from "../store/sidebar";
 import { toast } from "../store/toast";
+import type { AppView } from "../store/view";
 import { tagColor } from "../lib/tagColor";
 import type { PageMeta } from "../types";
 import { SearchPanel } from "./SearchPanel";
@@ -221,8 +222,8 @@ export function PageTree({
   view,
   onViewChange,
 }: {
-  view: "notes" | "board" | "graph";
-  onViewChange: (v: "notes" | "board" | "graph") => void;
+  view: AppView;
+  onViewChange: (v: AppView) => void;
 }) {
   const { pages, createPage, createFolder, createDatabase, loading } = useNotes();
   const { collapsed, toggle } = useSidebar();
@@ -411,6 +412,12 @@ export function PageTree({
               onClick={() => onViewChange("graph")}
             >
               🕸 关系图
+            </button>
+            <button
+              className={`view-switch-btn ${view === "files" ? "view-switch-active" : ""}`}
+              onClick={() => onViewChange("files")}
+            >
+              🗂 文件
             </button>
           </div>
           {tags.length > 0 && (
