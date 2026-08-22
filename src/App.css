@@ -4718,10 +4718,12 @@ select.prop-value {
   inset: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 16px;
   padding: 8px 24px 40px;
+  max-width: var(--doc-width);
+  margin: 0 auto;
   background: var(--bg);
   z-index: 5;
 }
@@ -4767,7 +4769,7 @@ select.prop-value {
   margin-top: 24px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 .npg-db-title {
