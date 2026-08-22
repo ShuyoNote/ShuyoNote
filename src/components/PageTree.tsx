@@ -108,9 +108,16 @@ function TreeItem({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.title);
 
-  const isCurrent = currentId === node.id;
   const isFolder = node.kind === "folder";
   const isDatabase = node.kind === "database";
+  // Highlight the focused folder while browsing the file manager; otherwise
+  // highlight the open page/database in the notes/board/graph views.
+  const view = useViewStore((s) => s.view);
+  const fmFolderId = useFileManagerStore((s) => s.folderId);
+  const isCurrent =
+    view === "files"
+      ? isFolder && fmFolderId === node.id
+      : currentId === node.id;
 
   const commitRename = async () => {
     const v = editValue.trim();
@@ -154,12 +161,10 @@ function TreeItem({
   const handleClick = () => {
     if (isFolder) {
       // Clicking a folder opens the file manager focused on it; the ▸/▾ toggle
-      // still expands/collapses the tree. Close any overlay (template center) and
-      // deselect the current page so nothing stays highlighted.
+      // still expands/collapses the tree. Close any overlay (template center).
       useFileManagerStore.getState().setFolderId(node.id);
       useViewStore.getState().setView("files");
       useTemplateCenterStore.getState().setOpen(false);
-      useNotes.getState().clearCurrent();
     } else {
       openPage(node.id);
     }
