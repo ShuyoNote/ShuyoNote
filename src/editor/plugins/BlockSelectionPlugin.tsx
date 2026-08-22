@@ -51,9 +51,11 @@ export function BlockSelectionPlugin() {
     const onContext = (e: MouseEvent) => {
       const s = useBlockSelection.getState();
       if (s.keys.length === 0) return;
+      // Only when the right-click is inside the editor while blocks are selected.
+      // (Kept broad — not tied to the .block-selected highlight class — so the
+      // menu reliably appears even if highlight timing/class application lags.)
       const target = e.target as HTMLElement;
-      // Only when the right-click is inside a highlighted (selected) block.
-      if (!target.closest(".block-selected")) return;
+      if (!target.closest(".editor-content, .editor-shell")) return;
       e.preventDefault();
       setMenu({ x: e.clientX, y: e.clientY });
     };
