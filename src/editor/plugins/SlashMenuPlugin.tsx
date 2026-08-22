@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -184,6 +184,23 @@ function makeOptions(pageId: string): SlashOption[] {
   ];
 }
 
+// Clamp the slash menu position within the viewport. The menu can be up to
+// MENU_MAX_H tall; if it wouldn't fit below the caret, flip it above; then clamp
+// so the measured height never overflows the bottom or top edges.
+const MENU_MAX_H = 340;
+const MENU_W = 240;
+function computeMenuPos(rect: DOMRect, menuHeight: number = MENU_MAX_H): { top: number; left: number } {
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - MENU_W - 8));
+  let top = rect.bottom + 4;
+  if (top + menuHeight > window.innerHeight - 8) {
+    // Not enough room below → open above the caret.
+    top = rect.top - menuHeight - 8;
+  }
+  // Final clamp so the menu always fits (handles both below & above cases).
+  top = Math.max(8, Math.min(top, window.innerHeight - menuHeight - 8));
+  return { top, left };
+}
+
 export function SlashMenuPlugin({ pageId }: { pageId: string }) {
   const [editor] = useLexicalComposerContext();
   const options = useMemo(() => makeOptions(pageId), [pageId]);
@@ -191,6 +208,7 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const [sel, setSel] = useState(0);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -199,6 +217,15 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
 
   const stateRef = useRef({ filtered, sel, editor });
   stateRef.current = { filtered, sel, editor };
+
+  // Re-clamp once the menu is rendered, using its true measured height, so a
+  // short menu doesn't over-flip above nor a tall one overflow the bottom.
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current) return;
+    const h = menuRef.current.offsetHeight;
+    if (h <= 0) return;
+    setPos((p) => ({ ...p, top: Math.max(8, Math.min(p.top, window.innerHeight - h - 8)) }));
+  }, [open, filtered.length]);
 
   const select = useCallback(
     (option: SlashOption) => {
@@ -249,14 +276,7 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
         const dom = editor.getElementByKey(node.getKey());
         if (dom) {
           const rect = dom.getBoundingClientRect();
-          const menuWidth = 240;
-          const menuHeight = 340;
-          const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
-          let top = rect.bottom + 4;
-          if (top + 80 > window.innerHeight) {
-            top = Math.max(8, rect.top - menuHeight - 8);
-          }
-          setPos({ top, left });
+          setPos(computeMenuPos(rect));
         }
         setOpen(true);
       });
@@ -309,7 +329,7 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
         const dom = ed.getElementByKey(node.getKey());
         if (dom) {
           const rect = dom.getBoundingClientRect();
-          setPos({ top: rect.bottom + 4, left: rect.left });
+          setPos(computeMenuPos(rect));
         }
       });
     };
@@ -343,7 +363,7 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
   });
 
   return (
-    <div className="slash-menu" style={{ position: "fixed", top: pos.top, left: pos.left }}>
+    <div ref={menuRef} className="slash-menu" style={{ position: "fixed", top: pos.top, left: pos.left }}>
       {filtered.length === 0 ? (
         <div className="slash-empty">无匹配块</div>
       ) : (
