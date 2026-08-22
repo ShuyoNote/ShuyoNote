@@ -7,10 +7,59 @@ import { usePopover } from "../hooks/usePopover";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
 
-// Notion-style tag row inside the properties block: a "标签" field whose value
-// is the page's tags as chips, with a popup to pick/create/manage tags.
-export function TagRow({ pageId }: { pageId: string }) {
+function usePageTags(pageId: string) {
   const [tags, setTags] = useState<Tag[]>([]);
+  const revision = useTagManagerStore((s) => s.revision);
+  const load = async () => {
+    try {
+      setTags(await api.pageTags(pageId));
+    } catch {
+      /* ignore */
+    }
+  };
+  useEffect(() => {
+    load();
+  }, [pageId, revision]);
+  return { tags, reload: load, bump: () => useTagManagerStore.getState().bump() };
+}
+
+// The page's tags shown as a Notion-style property row (label + chips). Hidden
+// when empty; the add button lives in the property-actions footer.
+export function TagRow({ pageId }: { pageId: string }) {
+  const { tags, reload, bump } = usePageTags(pageId);
+  const removeTag = async (t: Tag) => {
+    try {
+      await api.removeTag(pageId, t.id);
+      reload();
+      bump();
+    } catch (e) {
+      toast(`移除失败：${e}`, "error");
+    }
+  };
+  if (tags.length === 0) return null;
+  return (
+    <div className="prop-row prop-row-tag">
+      <span className="prop-name" title="标签">
+        标签
+      </span>
+      <div className="prop-value prop-tag-value">
+        {tags.map((t) => (
+          <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name).soft }}>
+            <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
+            {t.name}
+            <button className="tag-remove" onClick={() => removeTag(t)} title="移除标签">
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// "＋ 添加标签" button with the picker/manager popup (placed in the footer).
+export function TagAddButton({ pageId }: { pageId: string }) {
+  const { tags: pageTags, bump } = usePageTags(pageId);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [manage, setManage] = useState(false);
   const [query, setQuery] = useState("");
@@ -19,40 +68,29 @@ export function TagRow({ pageId }: { pageId: string }) {
   const { open, pos, triggerRef, contentRef, toggle: togglePop, close } = usePopover<HTMLButtonElement>();
 
   const load = async () => {
-    const [pt, at] = await Promise.all([api.pageTags(pageId), api.listTags()]);
-    setTags(pt);
-    setAllTags(at);
+    try {
+      setAllTags(await api.listTags());
+    } catch {
+      /* ignore */
+    }
   };
   useEffect(() => {
     load();
-  }, [pageId]);
+  }, []);
 
-  const pageTagIds = new Set(tags.map((t) => t.id));
+  const pageTagIds = new Set(pageTags.map((t) => t.id));
   const q = query.trim().toLowerCase();
   const filtered = allTags.filter((t) => !q || t.name.toLowerCase().includes(q));
-  const bump = () => useTagManagerStore.getState().bump();
-
-  const removeTag = async (t: Tag) => {
-    try {
-      await api.removeTag(pageId, t.id);
-      await load();
-      bump();
-    } catch (e) {
-      toast(`移除失败：${e}`, "error");
-    }
-  };
 
   const toggle = async (t: Tag) => {
     try {
       if (pageTagIds.has(t.id)) await api.removeTag(pageId, t.id);
       else await api.addTag(pageId, t.name);
-      await load();
       bump();
     } catch (e) {
       toast(`操作失败：${e}`, "error");
     }
   };
-
   const commitInput = async () => {
     const n = query.trim();
     if (!n) return;
@@ -60,13 +98,11 @@ export function TagRow({ pageId }: { pageId: string }) {
       if (manage) await api.createTag(n);
       else await api.addTag(pageId, n);
       setQuery("");
-      await load();
       bump();
     } catch (e) {
       toast(`创建失败：${e}`, "error");
     }
   };
-
   const startEdit = (t: Tag) => {
     setEditing(t.id);
     setEditVal(t.name);
@@ -79,7 +115,6 @@ export function TagRow({ pageId }: { pageId: string }) {
     if (n) {
       try {
         await api.renameTag(id, n);
-        await load();
         bump();
         toast("已重命名标签", "success");
       } catch (e) {
@@ -91,7 +126,6 @@ export function TagRow({ pageId }: { pageId: string }) {
     if (await confirm(`删除标签「${t.name}」？将从 ${t.page_count ?? 0} 个页面移除。`)) {
       try {
         await api.deleteTag(t.id);
-        await load();
         bump();
         toast("已删除标签", "success");
       } catch (e) {
@@ -108,6 +142,7 @@ export function TagRow({ pageId }: { pageId: string }) {
     setManage(false);
     setQuery("");
     setEditing(null);
+    load();
     togglePop();
   };
   const doClose = () => {
@@ -118,25 +153,10 @@ export function TagRow({ pageId }: { pageId: string }) {
   };
 
   return (
-    <div className="prop-row prop-row-tag">
-      <span className="prop-name" title="标签">
-        标签
-      </span>
-      <div className="prop-value prop-tag-value">
-        {tags.map((t) => (
-          <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name).soft }}>
-            <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
-            {t.name}
-            <button className="tag-remove" onClick={() => removeTag(t)} title="移除标签">
-              ×
-            </button>
-          </span>
-        ))}
-        <button ref={triggerRef} className="property-add-btn" onClick={onAddClick} title="添加标签">
-          ＋ 添加标签
-        </button>
-      </div>
-
+    <>
+      <button ref={triggerRef} className="property-add-btn" onClick={onAddClick} title="添加标签">
+        ＋ 添加标签
+      </button>
       {open && (
         <div ref={contentRef} className="tag-picker" style={{ position: "fixed", top: pos.top, left: pos.left }}>
           <div className="tag-picker-head">
@@ -212,6 +232,6 @@ export function TagRow({ pageId }: { pageId: string }) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

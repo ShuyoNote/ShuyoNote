@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import type { AttrDef, PageProp } from "../types";
-import { TagRow } from "./TagBar";
+import { TagRow, TagAddButton } from "./TagBar";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag"] as const;
 const TYPE_LABELS: Record<string, string> = {
@@ -135,11 +135,13 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
                 取消
               </button>
             </div>
-          ) : (
+          ) : null}
+          <div className="property-actions">
+            <TagAddButton pageId={pageId} />
             <button className="property-add-btn" onClick={() => setAdding(true)}>
               ＋ 添加属性
             </button>
-          )}
+          </div>
         </div>
       )}
     </div>

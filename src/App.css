@@ -1454,6 +1454,14 @@ select.prop-value {
   flex: none;
 }
 
+/* Footer action row in the properties block (添加标签 / 添加属性). */
+.property-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 .prop-add-row {
   display: flex;
   align-items: center;
