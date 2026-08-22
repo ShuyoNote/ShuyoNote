@@ -163,19 +163,21 @@ function NoteEditor({ pageId }: { pageId: string }) {
         )}
         <EditorToolbar pageId={pageId} />
       </div>
-      <div className="editor-head">
-        <input
-          className="title-input"
-          value={title}
-          placeholder="无标题"
-          onChange={(e) => onTitleChange(e.target.value)}
-        />
-        <span className={`save-indicator ${saved ? "saved" : ""}`}>
-          {saved ? "已保存" : "保存中…"}
-        </span>
-        {error && <span className="error-badge">{error}</span>}
+      <div className="metadata-card">
+        <div className="editor-head">
+          <input
+            className="title-input"
+            value={title}
+            placeholder="无标题"
+            onChange={(e) => onTitleChange(e.target.value)}
+          />
+          <span className={`save-indicator ${saved ? "saved" : ""}`}>
+            {saved ? "已保存" : "保存中…"}
+          </span>
+          {error && <span className="error-badge">{error}</span>}
+        </div>
+        <PropertiesPanel pageId={pageId} />
       </div>
-      <PropertiesPanel pageId={pageId} />
       <div className="editor-stage">
         <ErrorBoundary>
           <Editor

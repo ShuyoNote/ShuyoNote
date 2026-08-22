@@ -1339,6 +1339,30 @@ body.is-toc-open .main {
   margin: 0 auto;
 }
 
+/* Metadata card: groups the title + properties into a light Notion-style card so
+   the metadata area reads as a distinct block from the page content. */
+.metadata-card {
+  max-width: var(--doc-width);
+  width: 100%;
+  margin: 16px auto 6px;
+  padding: 20px var(--doc-pad) 14px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.metadata-card .editor-head {
+  max-width: none;
+  margin: 0;
+  padding: 0 0 6px;
+}
+.metadata-card .properties {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+}
+
 /* Properties panel */
 .properties {
   max-width: var(--doc-width);
