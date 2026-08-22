@@ -2437,11 +2437,9 @@ select.prop-value {
   background: var(--accent-soft);
 }
 
-/* Tag picker / manager popup (opened from the tag bar). */
+/* Tag picker / manager popup (opened from the tag bar; positioned fixed by the
+   usePopover hook, so it is not clipped and closes on outside click). */
 .tag-picker {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
   width: 300px;
   background: var(--surface);
   border: 1px solid var(--border);

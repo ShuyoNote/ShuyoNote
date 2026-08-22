@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTagManagerStore } from "../store/tagManager";
+import { usePopover } from "../hooks/usePopover";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
 
@@ -11,12 +12,11 @@ import type { Tag } from "../types";
 export function TagBar({ pageId }: { pageId: string }) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
-  const [open, setOpen] = useState(false);
   const [manage, setManage] = useState(false);
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
-  const popRef = useRef<HTMLDivElement | null>(null);
+  const { open, pos, triggerRef, contentRef, toggle: togglePop, close } = usePopover<HTMLButtonElement>();
 
   const load = async () => {
     const [pt, at] = await Promise.all([api.pageTags(pageId), api.listTags()]);
@@ -26,16 +26,6 @@ export function TagBar({ pageId }: { pageId: string }) {
   useEffect(() => {
     load();
   }, [pageId]);
-
-  // Close the popup when clicking outside it.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
 
   const pageTagIds = new Set(tags.map((t) => t.id));
   const q = query.trim().toLowerCase();
@@ -111,6 +101,24 @@ export function TagBar({ pageId }: { pageId: string }) {
     }
   };
 
+  const onAddClick = () => {
+    if (open) {
+      close();
+      return;
+    }
+    setManage(false);
+    setQuery("");
+    setEditing(null);
+    togglePop();
+  };
+
+  const doClose = () => {
+    close();
+    setManage(false);
+    setQuery("");
+    setEditing(null);
+  };
+
   return (
     <div className="tag-bar">
       {tags.map((t) => (
@@ -122,26 +130,19 @@ export function TagBar({ pageId }: { pageId: string }) {
           </button>
         </span>
       ))}
-      <button
-        className="tag-add-trigger"
-        onClick={() => {
-          setOpen((v) => !v);
-          setManage(false);
-          setQuery("");
-        }}
-      >
+      <button ref={triggerRef} className="tag-add-trigger" onClick={onAddClick}>
         ＋ 添加标签
       </button>
 
       {open && (
-        <div ref={popRef} className="tag-picker">
+        <div ref={contentRef} className="tag-picker" style={{ position: "fixed", top: pos.top, left: pos.left }}>
           <div className="tag-picker-head">
             <span className="tag-picker-title">{manage ? "标签管理" : "添加标签"}</span>
             <span className="tag-picker-actions">
               <button className="tag-picker-mode" onClick={() => setManage((m) => !m)}>
                 {manage ? "选择" : "管理"}
               </button>
-              <button className="tag-picker-close" onClick={() => setOpen(false)} title="关闭">
+              <button className="tag-picker-close" onClick={doClose} title="关闭">
                 ×
               </button>
             </span>
