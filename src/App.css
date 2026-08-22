@@ -2281,6 +2281,29 @@ select.prop-value {
   max-width: none;
 }
 
+/* A flex row of images (GitHub-style badge row): side by side and centered. */
+.editor-image-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.editor-image-row img {
+  max-height: 36px;
+  max-width: 220px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  vertical-align: middle;
+}
+.editor-image-row img.editor-image-broken {
+  max-height: none;
+  max-width: 220px;
+  opacity: 0.55;
+}
+
 .editor-video-container {
   display: block;
   margin: 0.5em 0;

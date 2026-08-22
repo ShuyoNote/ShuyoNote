@@ -12,6 +12,7 @@ import { $createLinkNode } from "@lexical/link";
 import { $createCodeNode } from "@lexical/code";
 import { $createTableCellNode, $createTableNode, $createTableRowNode } from "@lexical/table";
 import { $createImageNode } from "./nodes/ImageNode";
+import { $createImageRowNode, type ImageRowItem } from "./nodes/ImageRowNode";
 
 // Direct HTML → Lexical import (used when an imported document contains HTML).
 // Walks the parsed DOM and builds real Lexical nodes one-to-one so structure is
@@ -178,18 +179,35 @@ function renderInlineBlock(el: Element, target: ElementNode) {
       c.nodeType === Node.ELEMENT_NODE ||
       (c.nodeType === Node.TEXT_NODE && (c.textContent ?? "").trim() !== ""),
   );
-  const imgCount = meaningful.filter(isImg).length;
-  const onlyImage = imgCount > 0 && meaningful.every(isImg);
+  const imgs = meaningful.filter(isImg);
+  const onlyImage = imgs.length > 0 && meaningful.every(isImg);
 
-  // A lone, non-aligned block image (e.g. a pasted screenshot) stays a block
-  // image. Multiple <img> inside <p align="center"> (shield badges) or any
-  // aligned container become INLINE images in a single aligned paragraph so the
-  // row renders horizontally and centers as a group.
-  if (!align && onlyImage && imgCount === 1) {
-    renderImg(meaningful[0] as Element, target);
+  // Multiple sibling <img> in one container (e.g. a GitHub README's
+  // <p align="center"> shield badges) → a flex row node, laid out side by side
+  // and centered. Lexical's inline images don't flow in a paragraph here, so a
+  // dedicated row node is the reliable way to keep them on one line.
+  if (onlyImage && imgs.length >= 2) {
+    const items: ImageRowItem[] = imgs.map((img) => {
+      const el = img as Element;
+      return {
+        src: el.getAttribute("src") ?? "",
+        alt: el.getAttribute("alt") ?? "",
+        width: el.getAttribute("width") ? +el.getAttribute("width")! : null,
+        height: el.getAttribute("height") ? +el.getAttribute("height")! : null,
+      };
+    });
+    target.append($createImageRowNode(items));
     return;
   }
 
+  // A single image in its own container (logo, pasted screenshot) → a centered
+  // block image. `.editor-image-container` centers block images.
+  if (onlyImage && imgs.length === 1) {
+    renderImg(imgs[0] as Element, target);
+    return;
+  }
+
+  // Mixed text + inline content → a paragraph, honoring the container alignment.
   const current = $createParagraphNode();
   for (const c of children) {
     if (isImg(c)) {

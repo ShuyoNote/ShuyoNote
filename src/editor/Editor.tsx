@@ -22,6 +22,7 @@ import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { ImageNode } from "./nodes/ImageNode";
+import { ImageRowNode } from "./nodes/ImageRowNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { BlockRefNode } from "./nodes/BlockRefNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
@@ -256,6 +257,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         CalloutNode,
         HorizontalRuleNode,
         ImageNode,
+        ImageRowNode,
         VideoNode,
         BlockRefNode,
         BlockEmbedNode,
