@@ -5003,12 +5003,14 @@ select.prop-value {
 .confirm-ok:hover {
   background: var(--accent-strong);
 }
+/* Danger confirms use the theme accent for the action button (harmonized with
+   the theme); the destructive cue is carried by the red "!" icon badge. */
 .confirm-ok-danger {
-  background: var(--danger);
-  color: var(--on-danger);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .confirm-ok-danger:hover {
-  background: var(--danger-strong);
+  background: var(--accent-strong);
 }
 .confirm-ok:focus-visible,
 .confirm-cancel:focus-visible {
