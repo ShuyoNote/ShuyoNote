@@ -4721,7 +4721,7 @@ select.prop-value {
   align-items: flex-start;
   justify-content: flex-start;
   gap: 16px;
-  padding: 8px 24px 40px;
+  padding: 8px var(--doc-pad) 40px;
   max-width: var(--doc-width);
   margin: 0 auto;
   background: var(--bg);
