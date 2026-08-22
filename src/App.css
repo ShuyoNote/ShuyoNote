@@ -1830,12 +1830,12 @@ select.prop-value {
 
 .editor-placeholder {
   position: absolute;
-  top: 8px;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%);
   width: var(--doc-width);
   max-width: 100%;
-  padding: 0 var(--doc-pad);
+  padding: 0 0 0 calc(var(--doc-pad) + 4px);
   box-sizing: border-box;
   color: var(--text-dim);
   pointer-events: none;
