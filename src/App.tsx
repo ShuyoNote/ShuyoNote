@@ -248,9 +248,11 @@ function App() {
     loadPages();
   }, []);
 
-  // Auto-open the first page/database (never a folder) when none is selected.
+  // Auto-open the first page/database (never a folder) when none is selected —
+  // but only while sitting in the notes view, so navigating to a folder (files
+  // view) or a board/graph doesn't yank the user back to a page.
   useEffect(() => {
-    if (!currentId && pages.length > 0) {
+    if (!currentId && pages.length > 0 && useViewStore.getState().view === "notes") {
       const first = pages.find((p) => p.kind === "page" || p.kind === "database");
       if (first) useNotes.getState().openPage(first.id);
     }

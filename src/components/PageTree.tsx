@@ -154,10 +154,12 @@ function TreeItem({
   const handleClick = () => {
     if (isFolder) {
       // Clicking a folder opens the file manager focused on it; the ▸/▾ toggle
-      // still expands/collapses the tree. Close any overlay (template center).
+      // still expands/collapses the tree. Close any overlay (template center) and
+      // deselect the current page so nothing stays highlighted.
       useFileManagerStore.getState().setFolderId(node.id);
       useViewStore.getState().setView("files");
       useTemplateCenterStore.getState().setOpen(false);
+      useNotes.getState().clearCurrent();
     } else {
       openPage(node.id);
     }

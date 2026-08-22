@@ -23,6 +23,7 @@ interface NoteState {
   renamePage: (id: string, title: string) => Promise<void>;
   movePage: (id: string, parentId: string | null, sortOrder: number) => Promise<void>;
   updateCurrent: (patch: Partial<PageDetail>) => void;
+  clearCurrent: () => void;
   setSearchQuery: (q: string) => void;
   clearSearchQuery: () => void;
 }
@@ -138,6 +139,8 @@ export const useNotes = create<NoteState>((set, get) => ({
     const { current } = get();
     if (current) set({ current: { ...current, ...patch } });
   },
+
+  clearCurrent: () => set({ currentId: null, current: null }),
 
   setSearchQuery: (q) => set({ searchQuery: q }),
   clearSearchQuery: () => set({ searchQuery: "" }),
