@@ -1,5 +1,6 @@
 use crate::db::Db;
 use crate::models::{BoardColumn, PageMeta, Tag};
+use crate::workspaces;
 use rusqlite::{params, OptionalExtension};
 use tauri::State;
 
@@ -10,18 +11,19 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
 #[tauri::command]
 pub fn list_tags(db: State<'_, Db>) -> Result<Vec<Tag>, String> {
     let c = conn(&db);
+    let ws = workspaces::active_workspace_id(&c)?;
     let mut stmt = c
         .prepare(
             "SELECT t.id, t.name, COUNT(pt.page_id) AS page_count
              FROM tags t
              LEFT JOIN page_tags pt ON t.id = pt.tag_id
-             LEFT JOIN pages p ON p.id = pt.page_id AND p.deleted_at IS NULL
+             LEFT JOIN pages p ON p.id = pt.page_id AND p.deleted_at IS NULL AND p.workspace_id = ?1
              GROUP BY t.id, t.name
              ORDER BY t.name ASC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![ws], |row| {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -196,20 +198,21 @@ pub fn remove_tag(db: State<'_, Db>, page_id: String, tag_id: String) -> Result<
 #[tauri::command]
 pub fn pages_by_tag(db: State<'_, Db>, tag_id: String) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
-    pages_by_tag_impl(&c, &tag_id)
+    let ws = workspaces::active_workspace_id(&c)?;
+    pages_by_tag_impl(&c, &tag_id, &ws)
 }
 
-fn pages_by_tag_impl(c: &rusqlite::Connection, tag_id: &str) -> Result<Vec<PageMeta>, String> {
+fn pages_by_tag_impl(c: &rusqlite::Connection, tag_id: &str, ws: &str) -> Result<Vec<PageMeta>, String> {
     let mut stmt = c
         .prepare(
             "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
              FROM pages p JOIN page_tags pt ON p.id = pt.page_id
-             WHERE pt.tag_id = ?1 AND p.deleted_at IS NULL
+             WHERE pt.tag_id = ?1 AND p.deleted_at IS NULL AND p.workspace_id = ?2
              ORDER BY p.updated_at DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![tag_id], |row| {
+        .query_map(params![tag_id, ws], |row| {
             Ok(PageMeta {
                 id: row.get(0)?,
                 workspace_id: row.get(1)?,
@@ -229,6 +232,7 @@ fn pages_by_tag_impl(c: &rusqlite::Connection, tag_id: &str) -> Result<Vec<PageM
 #[tauri::command]
 pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
     let c = conn(&db);
+    let ws = workspaces::active_workspace_id(&c)?;
 
     let tags = {
         let mut stmt = c
@@ -248,7 +252,7 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
 
     let mut columns = Vec::new();
     for tag in &tags {
-        let pages = pages_by_tag_impl(&c, &tag.id)?;
+        let pages = pages_by_tag_impl(&c, &tag.id, &ws)?;
         columns.push(BoardColumn {
             tag: Some(tag.clone()),
             pages,
@@ -261,13 +265,13 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
             .prepare(
                 "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
                  FROM pages p
-                 WHERE p.deleted_at IS NULL AND p.kind = 'page'
+                 WHERE p.deleted_at IS NULL AND p.kind = 'page' AND p.workspace_id = ?1
                    AND NOT EXISTS (SELECT 1 FROM page_tags pt WHERE pt.page_id = p.id)
                  ORDER BY p.updated_at DESC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params![ws], |row| {
                 Ok(PageMeta {
                     id: row.get(0)?,
                     workspace_id: row.get(1)?,

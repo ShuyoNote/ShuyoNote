@@ -2,6 +2,7 @@ use crate::db::{now_ms, Db};
 use crate::models::{PageDetail, PageMeta};
 use crate::search;
 use crate::sync;
+use crate::workspaces;
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
 
@@ -58,15 +59,16 @@ fn collect_descendants(c: &Connection, root: &str) -> Result<Vec<String>, String
 #[tauri::command]
 pub fn list_deleted(db: State<'_, Db>) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
+    let ws = workspaces::active_workspace_id(&c)?;
     let mut stmt = c
         .prepare(
             "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
-             FROM pages WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+             FROM pages WHERE deleted_at IS NOT NULL AND workspace_id = ?1 ORDER BY deleted_at DESC",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![ws], |row| {
             Ok(PageMeta {
                 id: row.get(0)?,
                 workspace_id: row.get(1)?,

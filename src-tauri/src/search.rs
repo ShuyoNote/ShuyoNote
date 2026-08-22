@@ -1,5 +1,6 @@
 use crate::db::Db;
 use crate::models::SearchResult;
+use crate::workspaces;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -112,15 +113,15 @@ fn pages_matching_filters(
 }
 
 // All pages as brief search results (used when only prop filters are given).
-fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, String> {
+fn list_pages_brief(c: &Connection, limit: usize, ws: &str) -> Result<Vec<SearchResult>, String> {
     let mut stmt = c
         .prepare(
             "SELECT id, title, content_text FROM pages
-             WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?1",
+             WHERE deleted_at IS NULL AND workspace_id = ?1 ORDER BY updated_at DESC LIMIT ?2",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![limit as i64], |r| {
+        .query_map(params![ws, limit as i64], |r| {
             let id: String = r.get(0)?;
             let title: String = r.get(1)?;
             let text: String = r.get(2)?;
@@ -144,12 +145,13 @@ pub fn search(db: State<Db>, args: SearchArgs) -> Result<Vec<SearchResult>, Stri
     }
 
     // Base results: by text (FTS/LIKE), or all pages when only filters given.
+    let ws = workspaces::active_workspace_id(&c)?;
     let mut results = if text.is_empty() {
-        list_pages_brief(&c, 200)?
+        list_pages_brief(&c, 200, &ws)?
     } else if text.chars().count() < 3 {
-        search_like(&c, &text, limit)?
+        search_like(&c, &text, limit, &ws)?
     } else {
-        search_fts(&c, &text, limit)?
+        search_fts(&c, &text, limit, &ws)?
     };
 
     if !filters.is_empty() {
@@ -161,20 +163,23 @@ pub fn search(db: State<Db>, args: SearchArgs) -> Result<Vec<SearchResult>, Stri
     Ok(results)
 }
 
-fn search_fts(c: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+fn search_fts(c: &Connection, query: &str, limit: usize, ws: &str) -> Result<Vec<SearchResult>, String> {
     // Wrap as a phrase for substring matching; strip embedded double quotes.
     let phrase = format!("\"{}\"", query.replace('"', ""));
     let mut stmt = c
         .prepare(
-            "SELECT page_id, title,
-                    snippet(page_fts, 2, '[[', ']]', '…', 24) AS body_snip,
-                    snippet(page_fts, 1, '[[', ']]', '…', 12) AS title_snip
-             FROM page_fts WHERE page_fts MATCH ?1 ORDER BY rank LIMIT ?2",
+            "SELECT f.page_id, f.title,
+                    snippet(f, 2, '[[', ']]', '…', 24) AS body_snip,
+                    snippet(f, 1, '[[', ']]', '…', 12) AS title_snip
+             FROM page_fts f
+             JOIN pages p ON p.id = f.page_id
+             WHERE f.page_fts MATCH ?1 AND p.deleted_at IS NULL AND p.workspace_id = ?2
+             ORDER BY rank LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![phrase, limit as i64], |row| {
+        .query_map(params![phrase, ws, limit as i64], |row| {
             let id: String = row.get(0)?;
             let title: String = row.get(1)?;
             let body_snip: String = row.get(2)?;
@@ -195,19 +200,19 @@ fn search_fts(c: &Connection, query: &str, limit: usize) -> Result<Vec<SearchRes
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
-fn search_like(c: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
+fn search_like(c: &Connection, query: &str, limit: usize, ws: &str) -> Result<Vec<SearchResult>, String> {
     let pattern = format!("%{}%", escape_like(query));
     let mut stmt = c
         .prepare(
             "SELECT id, title, content_text FROM pages
-             WHERE deleted_at IS NULL AND (title LIKE ?1 ESCAPE '\\' OR content_text LIKE ?1 ESCAPE '\\')
-             ORDER BY updated_at DESC LIMIT ?2",
+             WHERE deleted_at IS NULL AND workspace_id = ?1 AND (title LIKE ?2 ESCAPE '\\' OR content_text LIKE ?2 ESCAPE '\\')
+             ORDER BY updated_at DESC LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
 
     let q = query.to_string();
     let rows = stmt
-        .query_map(params![pattern, limit as i64], move |row| {
+        .query_map(params![ws, pattern, limit as i64], move |row| {
             let id: String = row.get(0)?;
             let title: String = row.get(1)?;
             let text: String = row.get(2)?;

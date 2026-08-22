@@ -22,9 +22,7 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
 
 /// The workspace the app is currently operating on (persisted). Falls back to the
 /// oldest non-deleted workspace (the "default"/"默认空间" seeded on first run).
-#[tauri::command]
-pub fn get_active_workspace_id(db: State<Db>) -> Result<String, String> {
-    let c = conn(&db);
+pub(crate) fn active_workspace_id(c: &Connection) -> Result<String, String> {
     let persisted: Option<String> = c
         .query_row(
             "SELECT value FROM sync_state WHERE key = ?1",
@@ -60,6 +58,12 @@ pub fn get_active_workspace_id(db: State<Db>) -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
     Ok(id)
+}
+
+#[tauri::command]
+pub fn get_active_workspace_id(db: State<Db>) -> Result<String, String> {
+    let c = conn(&db);
+    active_workspace_id(&c)
 }
 
 #[tauri::command]

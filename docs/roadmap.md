@@ -20,7 +20,7 @@
 
 **半就绪 / 骨架（待里程碑落地）**：
 - 模板中心 = 纯 UI 骨架（点模板建**空白页**，无内容填充；「我的模板/保存为模板/从模板中心创建」为占位）
-- 多空间 = **数据层半就绪**（`workspaces` 表 + `workspace_id` FK，但无切换/新建/删除，`list_pages` 未按空间过滤）
+- 多工作空间 = **已实现**（M10 里程碑达成：隔离 + 切换 + 生命周期 + 每空间内容过滤）
 - 插件 = 硬编码命令注册表 + 启停开关（`enabled` 存内存、无磁盘加载）
 
 ## 2. 下一阶段优先级
@@ -28,7 +28,7 @@
 | 优先级 | 方向 | 对标 | 理由 | 状态 |
 |--------|------|------|------|------|
 | **P0** | **模板**（结构预设建页 + 保存为模板） | Notion / FlowUs / 思源模板 | 冷启动 + 复用效率；当前点模板是空白页 | 规划：[template-plan](plans/2026-08-22-template-plan.md) |
-| **P0** | **多工作空间**（隔离 + 切换 + 查询 scope 修正） | Notion workspace / Obsidian vault | 生活/工作/项目分离、独立备份/导出/加密；数据层半就绪 | 规划：[multi-workspace-plan](plans/2026-08-22-multi-workspace-plan.md) |
+| **P0** | **多工作空间**（隔离 + 切换 + 查询 scope 修正） | Notion workspace / Obsidian vault | 生活/工作/项目分离、独立备份/导出/加密 | ✅ M10（v1.11.0） |
 | **P0** | 端到端加密 | 思源 / Obsidian Sync | 数据安全最高优先级 | M2 待做 |
 | **P1** | **插件**（磁盘加载命令插件 + 受限 API） | Obsidian 社区插件 | 扩展性从「命令注册表」升级为「可安装插件」 | 规划：[plugin-plan](plans/2026-08-22-plugin-plan.md)；M3 雏形已做 |
 | **P1** | 主题 / 外观自定义 | Obsidian 主题 | 扩展性雏形 | ✅ M3 |
@@ -73,7 +73,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 ### M10 — 多工作空间（P0，[规划](plans/2026-08-22-multi-workspace-plan.md)）
 - **M10.1 隔离底座** ✅（v1.9.0）：`active_workspace_id`（持久化 `sync_state`）+ `list_workspaces`/`create_workspace`/`get_set_active_workspace_id` + 侧栏空间切换器 + `list_pages`/`create_node` 按活动空间过滤/写入。注：tags/回收站/搜索/关系图的按空间过滤归入 M10.3。
 - **M10.2 生命周期** ✅（v1.10.0）：空间切换器中非当前空间可删除（二次确认 → 软删 `workspaces.deleted_at`，内容保留）；删除活动空间时 `get_active_workspace_id` 自动回退到最早未删除空间。注：`export_workspace` / `rename_workspace(id)` 为 M10.2b，暂未实现。
-- **M10.3 每空间设置**：空间名/图标、独立回收站、关系图仅含本空间节点。
+- **M10.3 每空间设置** ✅（v1.11.0）：所有内容查询按活动空间过滤——回收站 `list_deleted`、标签 `list_tags`/`pages_by_tag`/`board_data`、全文搜索 `search`、关系图 `get_graph`、反链 `get_backlinks`。**M10 多工作空间里程碑达成**。
 - **M10.4（可选）**：全空间搜索、共享模板库、跨空间复制页面。
 
 ### M11 — 插件（P1，[规划](plans/2026-08-22-plugin-plan.md)）

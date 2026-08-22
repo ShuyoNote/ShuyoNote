@@ -1,30 +1,12 @@
 use crate::db::{now_ms, Db};
 use crate::models::{PageDetail, PageMeta};
-use crate::{backlinks, blocks, search, sync, versions};
+use crate::{backlinks, blocks, search, sync, versions, workspaces};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
 
 fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connection> {
     db.0.lock().expect("db mutex poisoned")
-}
-
-/// The currently-active workspace. Stored in the `sync_state` key-value table;
-/// falls back to the oldest workspace (the seeded default) if unset.
-fn active_workspace_id(c: &Connection) -> Result<String, String> {
-    if let Ok(id) = c.query_row(
-        "SELECT value FROM sync_state WHERE key = ?1",
-        params!["active_workspace_id"],
-        |row| row.get::<_, String>(0),
-    ) {
-        return Ok(id);
-    }
-    c.query_row(
-        "SELECT id FROM workspaces ORDER BY created_at ASC, id ASC LIMIT 1",
-        [],
-        |row| row.get(0),
-    )
-    .map_err(|e| e.to_string())
 }
 
 pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
@@ -55,7 +37,7 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
 #[tauri::command]
 pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
-    let ws = active_workspace_id(&c)?;
+    let ws = workspaces::active_workspace_id(&c)?;
     let mut stmt = c
         .prepare(
             "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
@@ -146,7 +128,7 @@ fn create_node(
 
     let json = content_json.unwrap_or_else(|| "{}".to_string());
     let text = content_text.unwrap_or_default();
-    let ws = active_workspace_id(&c)?;
+    let ws = workspaces::active_workspace_id(&c)?;
 
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
