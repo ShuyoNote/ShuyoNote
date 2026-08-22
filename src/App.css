@@ -2167,6 +2167,17 @@ select.prop-value {
   opacity: 0.55;
 }
 
+/* Inline images (emblem/badge rows) sit in the text line, small and centered. */
+.editor-image-container.editor-image-inline-container {
+  display: inline;
+  margin: 0 4px 0 0;
+}
+.editor-image.editor-image-inline {
+  max-height: 24px;
+  max-width: 96px;
+  vertical-align: middle;
+}
+
 .editor-video-container {
   display: block;
   margin: 0.5em 0;

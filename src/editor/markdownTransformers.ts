@@ -43,14 +43,17 @@ import { VideoNode, $createVideoNode, $isVideoNode } from "./nodes/VideoNode";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
-// `![alt](src)`
+// `![alt](src)` (block image; optional ` =WxH` size hint)
 export const IMAGE: ElementTransformer = {
   dependencies: [ImageNode],
   export: (node: LexicalNode) =>
     $isImageNode(node) ? `![${node.__altText || ""}](${node.__src})` : null,
-  regExp: /^!\[([^\]]*)\]\(([^)]+)\)\s?$/,
+  regExp: /^!\[([^\]]*)\]\(([^)=]+?)(?:\s*=\s*(\d+)x(\d+))?\)\s?$/,
   replace: (parentNode: ElementNode, _children: LexicalNode[], match: string[]) => {
-    parentNode.replace($createImageNode(match[2], match[1]));
+    const src = match[2].trim();
+    const width = match[3] ? +match[3] : null;
+    const height = match[4] ? +match[4] : null;
+    parentNode.replace($createImageNode(src, match[1], false, width, height));
   },
   type: "element",
 };
@@ -273,11 +276,17 @@ function nodeToMarkdown(node: Node): string {
     case "a":
       return `[${cleaned}](${el.getAttribute("href") ?? ""})`;
     case "img": {
-      // Emit each image as its own block so stacked badges all become
-      // ImageNodes (an element transformer needs the whole line to be an image).
+      // Emit each image as its own block so it converts into an ImageNode
+      // (inline images aren't reliably supported by the markdown importer).
+      // Carry the explicit size hint so explicitly-sized images (e.g. a 128px
+      // logo) render small instead of stretching to the column width.
       const src = el.getAttribute("src") ?? "";
+      if (!src) return "";
       const alt = el.getAttribute("alt") ?? "";
-      return src ? `\n\n![${alt}](${src})\n\n` : "";
+      const w = el.getAttribute("width");
+      const h = el.getAttribute("height");
+      const size = w && h ? ` =${w}x${h}` : "";
+      return `\n\n![${alt}](${src.trim()}${size})\n\n`;
     }
     case "br":
       return "  \n";
