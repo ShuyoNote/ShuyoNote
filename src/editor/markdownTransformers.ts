@@ -85,10 +85,20 @@ export const HORIZONTAL_RULE: ElementTransformer = {
   dependencies: [HorizontalRuleNode],
   export: (node: LexicalNode) => ($isHorizontalRuleNode(node) ? "---" : null),
   regExp: /^(---|\*\*\*|___)\s?$/,
-  replace: (parentNode: ElementNode) => {
-    parentNode.replace($createHorizontalRuleNode());
+  replace: (parentNode: ElementNode, _children: LexicalNode[], _match: string[], isImport: boolean) => {
+    const hr = $createHorizontalRuleNode();
+    parentNode.replace(hr);
+    // When typed (not imported), drop an empty paragraph below so the caret can
+    // keep typing right after the divider (matches the slash-menu behavior).
+    if (!isImport) {
+      const paragraph = $createParagraphNode();
+      hr.insertAfter(paragraph);
+      paragraph.select();
+    }
   },
   type: "element",
+  // Allow `---` + Enter to convert (Notion-style), not just `--- ` + space.
+  triggerOnEnter: true,
 };
 
 // `((blockId))` (inline block reference)
