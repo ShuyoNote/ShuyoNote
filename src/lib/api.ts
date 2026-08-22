@@ -16,6 +16,7 @@ import type {
   SearchBlock,
   SearchResult,
   Tag,
+  TemplateMeta,
 } from "../types";
 
 export interface SyncConfig {
@@ -38,6 +39,10 @@ export const api = {
   getWorkspaceName: () => invoke<string>("get_workspace_name"),
   renameWorkspace: (name: string) => invoke<void>("rename_workspace", { name }),
   getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
+  listTemplates: (spaceId?: string | null) => invoke<TemplateMeta[]>("list_templates", { spaceId }),
+  saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; space_id?: string | null }) =>
+    invoke<TemplateMeta>("save_as_template", { args }),
+  deleteTemplate: (id: string) => invoke<void>("delete_template", { id }),
   createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string }) =>
     invoke<PageDetail>("create_page", { args }),
   createFolder: (args: { parent_id: string | null; title?: string }) =>

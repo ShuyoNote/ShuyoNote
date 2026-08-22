@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
+import { useTemplates } from "../store/templates";
 import type { PageMeta } from "../types";
 
 // A lightweight plugin system: plugins register commands that are
@@ -125,6 +126,33 @@ registerPlugin({
       run: async () => {
         await useNotes.getState().createDatabase(null);
         return "已创建数据库";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "template",
+  name: "模板",
+  commands: [
+    {
+      id: "template.save-current",
+      title: "保存当前页为模板",
+      description: "把当前页面结构保存到「我的模板」",
+      run: async (ctx) => {
+        if (!ctx.currentId) return "未打开页面";
+        const page = await api.getPage(ctx.currentId);
+        if (!page || (page.kind !== "page" && page.kind !== "database")) {
+          return "当前不是可保存为模板的页面";
+        }
+        const ok = await useTemplates
+          .getState()
+          .saveAs({
+            name: page.title || "未命名",
+            content_json: page.content_json,
+            content_text: page.content_text,
+          });
+        return ok ? `已保存为模板「${page.title || "未命名"}」` : "保存失败";
       },
     },
   ],

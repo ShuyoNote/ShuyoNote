@@ -34,6 +34,25 @@ fn default_kind() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TemplateMeta {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub kind: String,
+    pub icon: String,
+    pub cover: String,
+    pub summary: String,
+    pub content_json: String,
+    pub content_text: String,
+    #[serde(default)]
+    pub built_in: i64,
+    pub space_id: Option<String>,
+    pub sort_order: f64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SearchResult {
     pub id: String,
     pub title: String,

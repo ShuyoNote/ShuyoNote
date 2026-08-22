@@ -63,6 +63,23 @@ export interface PageVersion {
   created_at: number;
 }
 
+export interface TemplateMeta {
+  id: string;
+  name: string;
+  category: string;
+  kind: string;
+  icon: string;
+  cover: string;
+  summary: string;
+  content_json: string;
+  content_text: string;
+  built_in: number;
+  space_id: string | null;
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface BlockInfo {
   block_id: string;
   page_id: string;

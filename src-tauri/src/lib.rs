@@ -11,6 +11,7 @@ mod properties;
 mod search;
 mod sync;
 mod tags;
+mod templates;
 mod trash;
 mod versions;
 mod windows;
@@ -91,6 +92,9 @@ pub fn run() {
             tags::pages_by_tag,
             tags::board_data,
             tags::move_card,
+            templates::list_templates,
+            templates::save_as_template,
+            templates::delete_template,
             trash::list_deleted,
             trash::restore_page,
             trash::purge_page,

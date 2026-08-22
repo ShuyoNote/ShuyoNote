@@ -46,6 +46,27 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(workspace_id, parent_id, sort_order);
         CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at);
 
+        CREATE TABLE IF NOT EXISTS templates (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            category      TEXT NOT NULL DEFAULT '我的模板',
+            kind          TEXT NOT NULL DEFAULT 'page',
+            icon          TEXT NOT NULL DEFAULT '',
+            cover         TEXT NOT NULL DEFAULT '',
+            summary       TEXT NOT NULL DEFAULT '',
+            content_json  TEXT NOT NULL DEFAULT '{}',
+            content_text  TEXT NOT NULL DEFAULT '',
+            props_json    TEXT NOT NULL DEFAULT '{}',
+            database_json TEXT NOT NULL DEFAULT '{}',
+            tags          TEXT NOT NULL DEFAULT '[]',
+            built_in      INTEGER NOT NULL DEFAULT 0,
+            space_id      TEXT,          -- NULL = 应用级（内置）；非空 = 某空间的「我的模板」
+            sort_order    REAL NOT NULL DEFAULT 0,
+            created_at    INTEGER NOT NULL,
+            updated_at    INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_templates_space ON templates(space_id);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS page_fts USING fts5(
             page_id UNINDEXED,
             title,

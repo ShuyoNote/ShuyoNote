@@ -1,12 +1,23 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNotes } from "../store/notes";
 import { useTemplateCenterStore } from "../store/templateCenter";
-import { TEMPLATES, TEMPLATE_CATEGORIES, type TemplateItem } from "../templates";
+import { useTemplates } from "../store/templates";
+import { TEMPLATES, TEMPLATE_CATEGORIES } from "../templates";
 import { SearchIcon } from "./icons";
 
+type GalleryItem = {
+  id: string;
+  name: string;
+  category: string;
+  icon: string;
+  cover: string;
+  content_json: string;
+  content_text: string;
+  user: boolean;
+};
+
 // Deterministic mock "thumbnail" per template: a cover-gradient background with a
-// mini white content card (page-screenshot look) at the top of the card, until
-// real template thumbnails exist.
+// mini white content card (page-screenshot look), until real thumbnails exist.
 function MockPreview({ id, cover }: { id: string; cover: string }) {
   let seed = 0;
   for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) % 997;
@@ -31,25 +42,43 @@ function MockPreview({ id, cover }: { id: string; cover: string }) {
   );
 }
 
-// Template-center gallery (UI skeleton). Templates are hardcoded; clicking a card
-// creates a blank page for now — filling template content comes with the backend.
+// Template-center gallery: built-in templates (bundled) merged with the user's
+// "我的模板" (persisted in DB). Clicking a card creates a page with content.
 export function TemplateCenterView() {
   const setOpen = useTemplateCenterStore((s) => s.setOpen);
   const { createPage } = useNotes();
+  const userTemplates = useTemplates((s) => s.userTemplates);
+  const loadTemplates = useTemplates((s) => s.load);
+  const removeTemplate = useTemplates((s) => s.remove);
   const [tab, setTab] = useState<string>(TEMPLATE_CATEGORIES[0]);
   const [query, setQuery] = useState("");
 
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
+
+  const all: GalleryItem[] = useMemo(() => {
+    const built = TEMPLATES.map((t) => ({
+      id: t.id, name: t.name, category: t.category, icon: t.icon, cover: t.cover,
+      content_json: t.content_json, content_text: t.content_text, user: false,
+    }));
+    const user = userTemplates.map((t) => ({
+      id: t.id, name: t.name, category: t.category, icon: t.icon, cover: t.cover,
+      content_json: t.content_json, content_text: t.content_text, user: true,
+    }));
+    return [...built, ...user];
+  }, [userTemplates]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return TEMPLATES.filter(
+    return all.filter(
       (t) =>
         (tab === TEMPLATE_CATEGORIES[0] || t.category === tab) &&
         (!q || t.name.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)),
     );
-  }, [tab, query]);
+  }, [all, tab, query]);
 
-  const useTemplate = async (t: TemplateItem) => {
-    // Seed a real page with the template's Lexical content (not a blank page).
+  const useTemplate = async (t: GalleryItem) => {
     await createPage(null, { content_json: t.content_json, content_text: t.content_text });
     setOpen(false);
   };
@@ -93,13 +122,27 @@ export function TemplateCenterView() {
           </div>
         ) : (
           filtered.map((t) => (
-            <button key={t.id} className="tc-card" onClick={() => useTemplate(t)}>
+            <div key={t.id} className="tc-card" onClick={() => useTemplate(t)}>
+              {t.user && (
+                <button
+                  className="tc-card-del"
+                  title="删除模板"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeTemplate(t.id);
+                  }}
+                >
+                  ×
+                </button>
+              )}
               <MockPreview id={t.id} cover={t.cover} />
               <div className="tc-card-body">
                 <span className="tc-card-name">{t.name}</span>
-                <span className="tc-card-tag">ShuyoNote · 模板</span>
+                <span className="tc-card-tag">
+                  {t.user ? "我的模板" : "ShuyoNote · 模板"}
+                </span>
               </div>
-            </button>
+            </div>
           ))
         )}
       </div>

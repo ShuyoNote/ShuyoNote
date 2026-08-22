@@ -67,7 +67,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 
 ### M9 — 模板（P0，[规划](plans/2026-08-22-template-plan.md)）
 - **M9.1 建页填内容** ✅（v1.7.0）：内置模板携带真实 Lexical 内容，点击模板卡片建**带内容的页面**；后端 `create_page` 支持 `content_json`/`content_text` 注入；修入口（NPG 打开模板中心）+ 修分类 tab（补「全部/健康」）。注：本期用「前端模板内容 + 后端注入」路径，`templates` 表 / `create_page_from_template` 归入 M9.2。
-- **M9.2 保存为模板**：`templates` 表 + `save_as_template` + 「我的模板」CRUD（每空间归属）+ 数据库模板（`database_json` 预设列/视图）。
+- **M9.2 保存为模板** ✅（v1.8.0）：`templates` 表 + `save_as_template` + 「我的模板」CRUD（`list_templates`/`delete_template`，按空间归属）+ 模板中心合并展示「我的模板」+ 命令面板「保存当前页为模板」。注：数据库模板（`database_json` 预设列/视图）为 M9.2 后续项（M9.2b），暂未实现。
 - **M9.3 共享打磨**：模板导入/导出、内置内容丰富化、图标/封面去 emoji、`{{date}}`/`{{title}}` 变量；跨空间模板同步延后。
 
 ### M10 — 多工作空间（P0，[规划](plans/2026-08-22-multi-workspace-plan.md)）
