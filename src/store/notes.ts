@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
 import { useTemplateCenterStore } from "./templateCenter";
+import { useFileManagerStore } from "./fileManager";
 
 interface NoteState {
   pages: PageMeta[];
@@ -100,6 +101,13 @@ export const useNotes = create<NoteState>((set, get) => ({
         set({ currentId: null, current: null });
       }
       await get().loadPages();
+      // If the file-manager view is focused on a folder that was just deleted
+      // (directly or as an ancestor), reset it to the workspace root so it
+      // doesn't linger on a stale, non-existent folder.
+      const fmFolderId = useFileManagerStore.getState().folderId;
+      if (fmFolderId && !get().pages.some((p) => p.id === fmFolderId)) {
+        useFileManagerStore.getState().setFolderId(null);
+      }
     } catch (e) {
       set({ error: String(e) });
     }
