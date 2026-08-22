@@ -1431,7 +1431,7 @@ select.prop-value {
   background: var(--hover);
 }
 
-.prop-add-btn {
+.property-add-btn {
   align-self: flex-start;
   border: none;
   background: transparent;
@@ -1443,9 +1443,15 @@ select.prop-value {
   font-family: inherit;
 }
 
-.prop-add-btn:hover {
+.property-add-btn:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+/* The add-tag button sits inside the tag value row; keep it vertically centered. */
+.prop-tag-value .property-add-btn {
+  align-self: center;
+  flex: none;
 }
 
 .prop-add-row {

@@ -132,8 +132,8 @@ export function TagRow({ pageId }: { pageId: string }) {
             </button>
           </span>
         ))}
-        <button ref={triggerRef} className="tag-add-trigger" onClick={onAddClick} title="添加标签">
-          ＋
+        <button ref={triggerRef} className="property-add-btn" onClick={onAddClick} title="添加标签">
+          ＋ 添加标签
         </button>
       </div>
 

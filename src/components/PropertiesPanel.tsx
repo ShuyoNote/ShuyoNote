@@ -136,7 +136,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
               </button>
             </div>
           ) : (
-            <button className="prop-add-btn" onClick={() => setAdding(true)}>
+            <button className="property-add-btn" onClick={() => setAdding(true)}>
               ＋ 添加属性
             </button>
           )}
