@@ -128,15 +128,6 @@ export function BlockSelectionPlugin() {
       <button className="danger" onClick={() => { del(); setMenu(null); }}>
         🗑 删除
       </button>
-      <button
-        className="block-context-cancel"
-        onClick={() => {
-          useBlockSelection.getState().clear();
-          setMenu(null);
-        }}
-      >
-        取消
-      </button>
     </div>
   );
 }

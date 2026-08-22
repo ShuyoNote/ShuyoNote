@@ -2072,9 +2072,6 @@ select.prop-value {
 .block-context-menu button.danger:hover {
   background: var(--danger-soft);
 }
-.block-context-menu .block-context-cancel {
-  color: var(--text-faint);
-}
 
 /* Selection formatting toolbar */
 .selection-toolbar {
