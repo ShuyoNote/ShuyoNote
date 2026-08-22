@@ -24,12 +24,21 @@ function textOf(n: Node): string {
   return (n.textContent ?? "").replace(/\u00a0/g, " ");
 }
 
+// Collapse intra-element whitespace (including the newlines HTML puts between
+// inline children) to a single space, then trim, so line breaks between inline
+// images/elements don't split one logical paragraph into vertical rows.
+function inlineText(n: Node): string {
+  return textOf(n).replace(/\s+/g, " ").trim();
+}
+
 function inlineFmt(el: Element, target: ElementNode, fmt: Fmt) {
   for (const c of Array.from(el.childNodes)) {
     if (c.nodeType === Node.TEXT_NODE) {
-      const t = $createTextNode(textOf(c));
-      t.toggleFormat(fmt);
-      target.append(t);
+      const t = inlineText(c);
+      if (!t) continue;
+      const tn = $createTextNode(t);
+      tn.toggleFormat(fmt);
+      target.append(tn);
     } else if (c.nodeType === Node.ELEMENT_NODE) {
       // Preserve nesting by re-applying the format on nested inline runs.
       applyInlineFmt(c as Element, target, fmt);
@@ -40,9 +49,11 @@ function inlineFmt(el: Element, target: ElementNode, fmt: Fmt) {
 function applyInlineFmt(el: Element, target: ElementNode, fmt: Fmt) {
   for (const c of Array.from(el.childNodes)) {
     if (c.nodeType === Node.TEXT_NODE) {
-      const t = $createTextNode(textOf(c));
-      t.toggleFormat(fmt);
-      target.append(t);
+      const t = inlineText(c);
+      if (!t) continue;
+      const tn = $createTextNode(t);
+      tn.toggleFormat(fmt);
+      target.append(tn);
     } else if (c.nodeType === Node.ELEMENT_NODE) {
       applyInlineFmt(c as Element, target, fmt);
     }
@@ -51,7 +62,7 @@ function applyInlineFmt(el: Element, target: ElementNode, fmt: Fmt) {
 
 function appendInline(node: Node, target: ElementNode) {
   if (node.nodeType === Node.TEXT_NODE) {
-    const t = textOf(node);
+    const t = inlineText(node);
     if (t) target.append($createTextNode(t));
     return;
   }

@@ -2268,9 +2268,15 @@ select.prop-value {
   margin: 0 4px 0 0;
 }
 .editor-image.editor-image-inline {
-  max-height: 24px;
-  max-width: 96px;
+  max-height: 28px;
+  max-width: 200px;
   vertical-align: middle;
+}
+/* An inline image carrying an explicit size (e.g. a 128px logo) keeps that size
+   instead of being shrunk to the small badge row cap. */
+.editor-image.editor-image-inline.editor-image-sized {
+  max-height: none;
+  max-width: none;
 }
 
 .editor-video-container {

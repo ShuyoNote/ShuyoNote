@@ -78,11 +78,14 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     const style: CSSProperties = {};
     if (this.__width) style.width = `${this.__width}px`;
     else if (this.__height) style.height = `${this.__height}px`;
+    const sized = this.__inline && (this.__width || this.__height) ? " editor-image-sized" : "";
     return (
       <img
         src={this.__src}
         alt={this.__altText}
-        className={this.__inline ? "editor-image editor-image-inline" : "editor-image"}
+        className={
+          this.__inline ? `editor-image editor-image-inline${sized}` : "editor-image"
+        }
         style={style}
         draggable={false}
         onError={(e) => e.currentTarget.classList.add("editor-image-broken")}
