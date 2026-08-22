@@ -2,6 +2,7 @@ import {
   $createLineBreakNode,
   $createParagraphNode,
   $createTextNode,
+  type ElementFormatType,
   type ElementNode,
 } from "lexical";
 import { $createHeadingNode, $createQuoteNode } from "@lexical/rich-text";
@@ -114,6 +115,29 @@ function renderImg(el: Element, target: ElementNode) {
   );
 }
 
+function renderImgInline(el: Element, target: ElementNode) {
+  const w = el.getAttribute("width");
+  const h = el.getAttribute("height");
+  target.append(
+    $createImageNode(
+      el.getAttribute("src") ?? "",
+      el.getAttribute("alt") ?? "",
+      true,
+      w ? +w : null,
+      h ? +h : null,
+    ),
+  );
+}
+
+// Apply the HTML `align` attribute to a Lexical block node so a centered
+// `<p align="center">`/`<h1 align="center">` keeps its alignment.
+function applyAlign(el: Element, node: ElementNode) {
+  const a = (el.getAttribute("align") || el.getAttribute("data-align") || "").toLowerCase();
+  if (a === "center" || a === "left" || a === "right" || a === "justify") {
+    node.setFormat(a as ElementFormatType);
+  }
+}
+
 function renderTable(el: Element, target: ElementNode) {
   const tbl = $createTableNode();
   for (const tr of Array.from(el.querySelectorAll("tr"))) {
@@ -135,21 +159,37 @@ function isImg(n: Node): boolean {
 }
 
 function renderInlineBlock(el: Element, target: ElementNode) {
-  // Render a paragraph-ish container, splitting inline content and images into
-  // block-level nodes (a lone/embedded <img> becomes its own ImageNode).
-  let current = $createParagraphNode();
-  for (const c of Array.from(el.childNodes)) {
+  const align = el.getAttribute("align") || el.getAttribute("data-align") || "";
+  const children = Array.from(el.childNodes);
+  const meaningful = children.filter(
+    (c) =>
+      c.nodeType === Node.ELEMENT_NODE ||
+      (c.nodeType === Node.TEXT_NODE && (c.textContent ?? "").trim() !== ""),
+  );
+  const imgCount = meaningful.filter(isImg).length;
+  const onlyImage = imgCount > 0 && meaningful.every(isImg);
+
+  // A lone, non-aligned block image (e.g. a pasted screenshot) stays a block
+  // image. Multiple <img> inside <p align="center"> (shield badges) or any
+  // aligned container become INLINE images in a single aligned paragraph so the
+  // row renders horizontally and centers as a group.
+  if (!align && onlyImage && imgCount === 1) {
+    renderImg(meaningful[0] as Element, target);
+    return;
+  }
+
+  const current = $createParagraphNode();
+  for (const c of children) {
     if (isImg(c)) {
-      if (current.getTextContentSize() > 0) target.append(current);
-      current = $createParagraphNode();
-      renderImg(c as Element, target);
+      renderImgInline(c as Element, current);
     } else if (c.nodeType === Node.ELEMENT_NODE && (c as Element).tagName.toLowerCase() === "br") {
       current.append($createLineBreakNode());
     } else {
       appendInline(c, current);
     }
   }
-  if (current.getTextContentSize() > 0 || current.getChildrenSize() > 0) target.append(current);
+  if (align) applyAlign(el, current);
+  target.append(current);
 }
 
 function renderBlock(el: Element, target: ElementNode) {
@@ -165,6 +205,7 @@ function renderBlock(el: Element, target: ElementNode) {
         `h${tag[1]}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
       );
       for (const c of Array.from(el.childNodes)) appendInline(c, h);
+      applyAlign(el, h);
       target.append(h);
       return;
     }

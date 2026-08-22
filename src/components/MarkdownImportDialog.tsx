@@ -4,6 +4,7 @@ import { $convertFromMarkdownString } from "@lexical/markdown";
 import { $getRoot } from "lexical";
 import { SHUYONOTE_TRANSFORMERS, preprocessMarkdownImport } from "../editor/markdownTransformers";
 import { $importHtml } from "../editor/htmlToLexical";
+import { mdToHtml } from "../editor/mdToHtml";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
@@ -40,17 +41,19 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
     }
     let ok = false;
     try {
-      // Elegant routing: a purely-HTML document is imported direct-to-Lexical
-      // (faithful structure). Pure Markdown, or Markdown with HTML embedded in
-      // it, goes through the Markdown pipeline so Markdown structure is kept.
+      // Elegant routing. Pure Markdown has no block HTML → lossless
+      // $convertFromMarkdownString (round-trip preserved). Any content that
+      // contains block HTML (a GitHub README, for instance) is first normalised:
+      // Markdown constructs are converted to HTML (mdToHtml) and the existing
+      // inline HTML (align="center", <img>, <br>…) is passed through, then the
+      // whole document is imported direct-to-Lexical so structure is preserved
+      // (badges stay inline in a centered paragraph instead of stacking).
       const hasBlockHtml = /<(p|h[1-6]|div|img|table|ul|ol|li|blockquote|pre|hr|section|article|iframe)\b/i.test(text);
-      const hasMarkdown = /(^|\n)[ \t]*(#{1,6} |[-*] |\d+\. |\||>\s?|```)/m.test(text);
-      const useHtmlImport = hasBlockHtml && !hasMarkdown;
       editor.update(() => {
         const root = $getRoot();
         root.clear();
-        if (useHtmlImport) {
-          $importHtml(text, root);
+        if (hasBlockHtml) {
+          $importHtml(mdToHtml(text), root);
         } else {
           $convertFromMarkdownString(preprocessMarkdownImport(text), SHUYONOTE_TRANSFORMERS, root);
         }
