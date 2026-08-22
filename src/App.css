@@ -3167,11 +3167,11 @@ select.prop-value {
   flex-shrink: 0;
   margin-left: auto;
   padding-left: 12px;
-  font-size: 11px;
-  color: var(--text-faint);
+  font-size: 13px;
+  color: var(--text-dim);
   font-family: inherit;
   white-space: nowrap;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .slash-empty {
