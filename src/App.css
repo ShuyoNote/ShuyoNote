@@ -7,6 +7,7 @@
   --bg: #ffffff;
   --bg-sidebar: #f7f8fa;
   --surface: #ffffff;
+  --card-bg: #fafafb;
   --border: #e5e8ee;
   --border-strong: #d4d8df;
   --text: #1f2329;
@@ -82,6 +83,7 @@
   --bg: #17181a;
   --bg-sidebar: #1f2023;
   --surface: #242529;
+  --card-bg: #1b1c1f;
   --border: #2e3034;
   --border-strong: #3a3c41;
   --text: #e6e8eb;
@@ -1345,15 +1347,10 @@ body.is-toc-open .main {
   max-width: var(--doc-width);
   width: 100%;
   margin: 16px auto 6px;
-  padding: 20px var(--doc-pad) 14px;
-  background: var(--bg-sidebar);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.metadata-card .editor-head {
-  max-width: none;
-  margin: 0;
-  padding: 0 0 6px;
+  padding: 16px var(--doc-pad) 12px;
+  background: var(--card-bg);
+  border: none;
+  border-radius: var(--radius-sm);
 }
 .metadata-card .properties {
   max-width: none;
@@ -1375,8 +1372,7 @@ body.content-full .editor-content {
   max-width: var(--doc-width);
   width: 100%;
   margin: 0 auto;
-  padding: 6px var(--doc-pad) 18px;
-  border-bottom: 1px solid var(--border);
+  padding: 6px var(--doc-pad) 4px;
 }
 
 .properties-toggle {

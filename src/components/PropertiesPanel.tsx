@@ -18,6 +18,7 @@ const TYPE_LABELS: Record<string, string> = {
 export function PropertiesPanel({ pageId }: { pageId: string }) {
   const [props, setProps] = useState<PageProp[]>([]);
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
+  const [pageTags, setPageTags] = useState<{ id: string; name: string }[]>([]);
   const [open, setOpen] = useState(true);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
@@ -28,13 +29,18 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
     api
       .getPageProps(pageId)
       .then((ps) => {
-        console.log("[ShuyoNote] props loaded", { pageId, count: ps.length, values: ps.map((p) => `${p.name}=${p.value}`) });
         setProps(ps);
       })
       .catch((e) => console.error(e));
     api.listAttrDefs().then(setAttrs).catch((e) => console.error(e));
+    api.pageTags(pageId).then(setPageTags).catch((e) => console.error(e));
   };
   useEffect(load, [pageId]);
+
+  // The metadata card only shows when the page actually has properties (tag rows
+  // or non-tag property rows); otherwise the title connects straight to content.
+  const nonTagProps = props.filter((p) => p.attr_type !== "tag");
+  const hasProps = nonTagProps.length > 0 || pageTags.length > 0;
 
   // Serialize writes per attribute so a later value is never overwritten by an
   // earlier, out-of-order set_page_prop call. Each edit is saved immediately.
@@ -95,10 +101,9 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
     }
   };
 
-  const nonTagProps = props.filter((p) => p.attr_type !== "tag");
-
   return (
-    <div className="properties">
+    <div className={hasProps ? "metadata-card" : ""}>
+      <div className="properties">
       <button className="properties-toggle" onClick={() => setOpen((v) => !v)}>
         <span className="properties-toggle-title">
           属性{nonTagProps.length > 0 ? `（${nonTagProps.length}）` : ""}
@@ -164,6 +169,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
