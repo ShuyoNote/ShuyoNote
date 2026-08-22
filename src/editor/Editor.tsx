@@ -87,13 +87,9 @@ interface EditorProps {
 function isValidLexicalNode(node: any): boolean {
   if (!node || typeof node !== "object") return false;
   if (typeof node.type !== "string") return false;
-  // listitem must have a paragraph (or another block) child, never bare text.
-  if (node.type === "listitem") {
-    const kids = Array.isArray(node.children) ? node.children : [];
-    for (const k of kids) {
-      if (k && k.type === "text") return false;
-    }
-  }
+  // All children must themselves be valid Lexical nodes. Note: we intentionally
+  // do NOT reject a `listitem` with bare `text` children here — Lexical's own
+  // markdown importer emits exactly that shape, and Lexical parses it fine.
   const children = Array.isArray(node.children) ? node.children : [];
   return children.every(isValidLexicalNode);
 }
