@@ -15,6 +15,7 @@ mod templates;
 mod trash;
 mod versions;
 mod windows;
+mod workspaces;
 
 use db::Db;
 use std::sync::Mutex;
@@ -43,8 +44,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_pages,
-            commands::get_workspace_name,
-            commands::rename_workspace,
+            workspaces::list_workspaces,
+            workspaces::create_workspace,
+            workspaces::get_active_workspace_id,
+            workspaces::set_active_workspace_id,
+            workspaces::get_workspace_name,
+            workspaces::rename_workspace,
             commands::get_page,
             commands::create_page,
             commands::create_folder,

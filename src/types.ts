@@ -63,6 +63,13 @@ export interface PageVersion {
   created_at: number;
 }
 
+export interface WorkspaceMeta {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface TemplateMeta {
   id: string;
   name: string;

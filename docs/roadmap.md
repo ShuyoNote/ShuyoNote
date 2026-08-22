@@ -71,7 +71,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 - **M9.3 共享打磨**：模板导入/导出、内置内容丰富化、图标/封面去 emoji、`{{date}}`/`{{title}}` 变量；跨空间模板同步延后。
 
 ### M10 — 多工作空间（P0，[规划](plans/2026-08-22-multi-workspace-plan.md)）
-- **M10.1 隔离底座**：`active_space_id` + `useSpaceStore` + `list_workspaces/create_workspace` + **所有查询按 `workspace_id` 过滤**（修 `list_pages` 混空间）+ 侧栏空间切换器。
+- **M10.1 隔离底座** ✅（v1.9.0）：`active_workspace_id`（持久化 `sync_state`）+ `list_workspaces`/`create_workspace`/`get_set_active_workspace_id` + 侧栏空间切换器 + `list_pages`/`create_node` 按活动空间过滤/写入。注：tags/回收站/搜索/关系图的按空间过滤归入 M10.3。
 - **M10.2 生命周期**：`rename_workspace`（作用于指定空间）+ `delete_workspace`（软删 + 导出提醒 + 确认）+ `export_workspace`。
 - **M10.3 每空间设置**：空间名/图标、独立回收站、关系图仅含本空间节点。
 - **M10.4（可选）**：全空间搜索、共享模板库、跨空间复制页面。

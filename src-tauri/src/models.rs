@@ -34,6 +34,14 @@ fn default_kind() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkspaceMeta {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TemplateMeta {
     pub id: String,
     pub name: String,

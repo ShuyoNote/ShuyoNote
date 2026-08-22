@@ -284,6 +284,103 @@ body,
   cursor: text;
 }
 
+.sidebar-title-switch {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+  flex: none;
+}
+.sidebar-title-switch:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+/* Space (workspace) switcher dropdown */
+.space-switcher {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 5px;
+}
+.space-switcher-title {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 5px 8px 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+}
+.space-switcher-empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 8px;
+}
+.space-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.space-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.space-item-active {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.space-item-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--hover-strong);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.space-item-active .space-item-mark {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.space-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-item-check {
+  color: var(--accent);
+  font-size: 12px;
+}
+.space-item-new {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+  margin-top: 3px;
+  padding-top: 7px;
+}
+
 .workspace-rename-input {
   width: 120px;
 }

@@ -39,6 +39,12 @@ export const useNotes = create<NoteState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const pages = await api.listPages();
+      // If the current page is no longer reachable (e.g. we switched spaces or it
+      // was deleted), clear the selection so the sidebar/auto-open resets.
+      const { currentId } = get();
+      if (currentId && !pages.some((p) => p.id === currentId)) {
+        set({ currentId: null, current: null });
+      }
       set({ pages, loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });

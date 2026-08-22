@@ -9,6 +9,7 @@ import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
+import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { confirmDialog } from "../store/confirm";
 import { SearchPanel } from "./SearchPanel";
@@ -306,6 +307,10 @@ export function PageTree({
   const [workspaceName, setWorkspaceName] = useState("默认空间");
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const spaceChooser = usePopover<HTMLButtonElement>();
+
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeSpaceId = useSpaceStore((s) => s.activeId);
 
   useEffect(() => {
     api
@@ -315,7 +320,31 @@ export function PageTree({
         console.error("get workspace name failed", e);
         toast(`加载空间名失败：${e}`, "error");
       });
+    useSpaceStore.getState().load();
   }, []);
+
+  const switchSpace = async (id: string) => {
+    const ok = await useSpaceStore.getState().switchTo(id);
+    if (ok) {
+      await useNotes.getState().loadPages();
+      const name = useSpaceStore
+        .getState()
+        .spaces.find((s) => s.id === id)?.name;
+      if (name) setWorkspaceName(name);
+    }
+    spaceChooser.close();
+    setEditingName(false);
+  };
+
+  const createSpace = async () => {
+    const ok = await useSpaceStore.getState().create();
+    if (ok) {
+      await useNotes.getState().loadPages();
+      setWorkspaceName("新建工作区");
+    }
+    spaceChooser.close();
+    setEditingName(false);
+  };
 
   const tree = useMemo(() => buildTree(pages), [pages]);
 
@@ -357,7 +386,7 @@ export function PageTree({
             ) : (
               <span
                 className="sidebar-title-text"
-                title="双击重命名空间"
+                title="双击重命名空间 · 单点右侧切换"
                 onDoubleClick={() => {
                   setNameValue(workspaceName);
                   setEditingName(true);
@@ -365,6 +394,42 @@ export function PageTree({
               >
                 {workspaceName}
               </span>
+            )}
+            <button
+              ref={spaceChooser.triggerRef}
+              className="sidebar-title-switch"
+              onClick={spaceChooser.toggle}
+              title="切换工作空间"
+            >
+              ▾
+            </button>
+            {spaceChooser.open && (
+              <div
+                ref={spaceChooser.contentRef}
+                className="space-switcher"
+                style={{ top: spaceChooser.pos.top, left: spaceChooser.pos.left }}
+              >
+                <div className="space-switcher-title">切换工作空间</div>
+                {spaces.length === 0 ? (
+                  <div className="space-switcher-empty">暂无工作空间</div>
+                ) : (
+                  spaces.map((s) => (
+                    <button
+                      key={s.id}
+                      className={`space-item ${s.id === activeSpaceId ? "space-item-active" : ""}`}
+                      onClick={() => switchSpace(s.id)}
+                    >
+                      <span className="space-item-mark">{s.name.charAt(0)}</span>
+                      <span className="space-item-name">{s.name}</span>
+                      {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
+                    </button>
+                  ))
+                )}
+                <button className="space-item space-item-new" onClick={createSpace}>
+                  <span className="space-item-mark">＋</span>
+                  <span className="space-item-name">新建工作空间</span>
+                </button>
+              </div>
             )}
           </span>
         )}
