@@ -39,6 +39,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
 
   // "添加属性" from the page-actions row: open the panel and focus the add input.
   const addPropSeq = usePropertyUiStore((s) => s.addPropSeq);
+  const tagVisible = usePropertyUiStore((s) => s.tagVisible);
   useEffect(() => {
     if (addPropSeq > 0) {
       setOpen(true);
@@ -109,6 +110,10 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
       toast(`添加属性失败：${e}`, "error");
     }
   };
+
+  // Hide the whole properties panel when the page has no properties/tags (the
+  // page-actions row is the entry to add). Show while adding a property/tag.
+  if (!hasProps && !adding && !tagVisible) return null;
 
   return (
     <div className={hasProps ? "metadata-card" : ""}>
