@@ -36,15 +36,41 @@ function readOutline(editor: LexicalEditor): TocItem[] {
 export function TableOfContents() {
   const editor = useEditorStore((s) => s.editor);
   const [items, setItems] = useState<TocItem[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [active, setActive] = useState<string | null>(null);
 
+  // Collect the heading outline live as the editor changes.
   useEffect(() => {
     if (!editor) return;
     const update = () => setItems(readOutline(editor));
     update();
     return editor.registerUpdateListener(update);
   }, [editor]);
+
+  // Follow scroll: highlight the heading of the section currently at the top of
+  // the editor scroll container (GitHub-style).
+  useEffect(() => {
+    if (!editor) return;
+    const rootEl = editor.getRootElement();
+    const scrollEl =
+      (rootEl?.closest?.(".editor-shell") as HTMLElement | null) ??
+      (rootEl?.parentElement as HTMLElement | null) ??
+      null;
+    if (!scrollEl) return;
+
+    const onScroll = () => {
+      const viewportTop = scrollEl.getBoundingClientRect().top;
+      let act = items[0]?.key ?? null;
+      for (const it of items) {
+        const el = editor.getElementByKey(it.key);
+        if (el && el.getBoundingClientRect().top <= viewportTop + 48) act = it.key;
+      }
+      setActive(act);
+    };
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => scrollEl.removeEventListener("scroll", onScroll);
+  }, [editor, items]);
 
   if (!editor) return null;
 
@@ -54,7 +80,7 @@ export function TableOfContents() {
       if (node && node.isAttached()) node.selectStart();
     });
     const el = editor.getElementByKey(key);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
     setActive(key);
   };
 
