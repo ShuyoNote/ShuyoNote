@@ -28,6 +28,7 @@ import { BlockRefNode } from "./nodes/BlockRefNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
+import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
@@ -307,6 +308,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <BlockDragPlugin />
         <BlockSelectionPlugin />
         <InsertShortcutPlugin />
+        <ClickToEditPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         <FindPlugin />
         <SelectionToolbarPlugin />
