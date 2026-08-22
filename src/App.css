@@ -4467,15 +4467,6 @@ select.prop-value {
   background: var(--hover);
   border-color: var(--border-strong);
 }
-.fm-btn-primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  border-color: var(--accent);
-}
-.fm-btn-primary:hover {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
-}
 
 .file-manager-toolbar {
   display: flex;

@@ -247,7 +247,7 @@ export function FileManagerView() {
           <button className="fm-btn" onClick={newFolder}>
             ＋ 新建文件夹
           </button>
-          <button className="fm-btn fm-btn-primary" onClick={newPage}>
+          <button className="fm-btn" onClick={newPage}>
             ＋ 新建页面
           </button>
           <button
