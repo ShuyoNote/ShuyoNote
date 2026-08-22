@@ -37,13 +37,21 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
       toast("内容为空，请粘贴或从文件导入", "info");
       return;
     }
-    editor.update(() => {
-      const root = $getRoot();
-      root.clear();
-      $convertFromMarkdownString(text, SHUYONOTE_TRANSFORMERS, root);
-    });
-    toast("已从 Markdown 导入", "success");
-    onClose();
+    let ok = false;
+    try {
+      editor.update(() => {
+        const root = $getRoot();
+        root.clear();
+        $convertFromMarkdownString(text, SHUYONOTE_TRANSFORMERS, root);
+      });
+      ok = true;
+    } catch (e) {
+      toast(`导入失败：${e}`, "error");
+    }
+    if (ok) {
+      toast("已从 Markdown 导入", "success");
+      onClose();
+    }
   };
 
   return (

@@ -21,6 +21,20 @@ import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
 import "./App.css";
 
+// A page "has content" if its serialized root has at least one top-level block.
+// Used to show the new-page guide only for genuinely empty pages (a page with
+// only an image/embed/table has empty `content_text` but does contain content).
+function hasBlockContent(contentJson: string): boolean {
+  if (!contentJson) return false;
+  try {
+    const parsed = JSON.parse(contentJson);
+    const children = parsed?.root?.children;
+    return Array.isArray(children) && children.length > 0;
+  } catch {
+    return contentJson.length > 0;
+  }
+}
+
 function NoteEditor({ pageId }: { pageId: string }) {
   const { current, updateCurrent, loadPages, error, searchQuery, pages } = useNotes();
   const [title, setTitle] = useState(current?.title ?? "");
@@ -142,7 +156,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
             searchQuery={searchQuery}
           />
         </ErrorBoundary>
-        {current && current.content_text.length === 0 && <NewPageGuide />}
+        {current && !hasBlockContent(current.content_json) && <NewPageGuide />}
       </div>
       <BacklinksPanel pageId={pageId} />
       <TagBar pageId={pageId} />
