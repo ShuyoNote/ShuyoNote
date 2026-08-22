@@ -80,7 +80,9 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           className="tree-row tree-file-row"
           style={{ paddingLeft: depth * 16 + 8 }}
           title={f.name}
-          onClick={() => openPath(f.path)}
+          onClick={() =>
+            openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"))
+          }
         >
           <span className="tree-toggle" style={{ visibility: "hidden" }} />
           <span className="tree-icon">{treeFileIcon(f.mime)}</span>
