@@ -233,3 +233,79 @@ export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   ...TEXT_MATCH_TRANSFORMERS,
   BLOCK_REF,
 ];
+
+// Lexical's markdown parser treats raw HTML as plain text, so importing a
+// README-style document (full of <p>/<h1>/<img>/<strong>) shows the source
+// tags instead of rendered content. Convert the common HTML tags down to
+// markdown before the lexer runs so they parse into real blocks/nodes.
+const HTML_RE = /<[a-zA-Z!/][^>]*>/;
+
+function nodeToMarkdown(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return (node.textContent ?? "").replace(/\u00a0/g, " ");
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+  const el = node as Element;
+  const tag = el.tagName.toLowerCase();
+  const inner = Array.from(el.childNodes, (c) => nodeToMarkdown(c)).join("");
+  const cleaned = inner.replace(/[ \t]{2,}/g, " ").replace(/ ?\n ?/g, "\n").trim();
+
+  switch (tag) {
+    case "h1": case "h2": case "h3": case "h4": case "h5": case "h6":
+      return `\n\n${"#".repeat(+tag[1])} ${cleaned}\n\n`;
+    case "p":
+    case "div":
+    case "section":
+    case "article":
+    case "header":
+    case "footer":
+    case "main":
+    case "aside":
+      return `\n\n${cleaned}\n\n`;
+    case "strong": case "b":
+      return `**${cleaned}**`;
+    case "em": case "i":
+      return `*${cleaned}*`;
+    case "del": case "s":
+      return `~~${cleaned}~~`;
+    case "code":
+      return `\`${cleaned}\``;
+    case "a":
+      return `[${cleaned}](${el.getAttribute("href") ?? ""})`;
+    case "img": {
+      // Emit each image as its own block so stacked badges all become
+      // ImageNodes (an element transformer needs the whole line to be an image).
+      const src = el.getAttribute("src") ?? "";
+      const alt = el.getAttribute("alt") ?? "";
+      return src ? `\n\n![${alt}](${src})\n\n` : "";
+    }
+    case "br":
+      return "  \n";
+    case "hr":
+      return `\n\n---\n\n`;
+    case "li":
+      return `\n- ${cleaned}`;
+    case "ul":
+    case "ol": {
+      const items = Array.from(el.children)
+        .map((li) => nodeToMarkdown(li))
+        .join("");
+      return `\n${items}\n`;
+    }
+    case "blockquote":
+      return `\n\n> ${cleaned}\n\n`;
+    case "pre":
+      return `\n\n\`\`\`\n${el.textContent ?? ""}\n\`\`\`\n\n`;
+    default:
+      // Unknown tag: keep inner content (used for <div> children, spans, etc.).
+      return cleaned;
+  }
+}
+
+// Normalize any HTML embedded in imported Markdown into markdown syntax. Pure
+// markdown (no HTML tags) is returned unchanged so the lexer sees it verbatim.
+export function preprocessMarkdownImport(text: string): string {
+  if (!HTML_RE.test(text)) return text;
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  return nodeToMarkdown(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+}

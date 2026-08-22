@@ -2,7 +2,7 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { $convertFromMarkdownString } from "@lexical/markdown";
 import { $getRoot } from "lexical";
-import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
+import { SHUYONOTE_TRANSFORMERS, preprocessMarkdownImport } from "../editor/markdownTransformers";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
@@ -39,10 +39,11 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
     }
     let ok = false;
     try {
+      const md = preprocessMarkdownImport(text);
       editor.update(() => {
         const root = $getRoot();
         root.clear();
-        $convertFromMarkdownString(text, SHUYONOTE_TRANSFORMERS, root);
+        $convertFromMarkdownString(md, SHUYONOTE_TRANSFORMERS, root);
       });
       ok = true;
     } catch (e) {
