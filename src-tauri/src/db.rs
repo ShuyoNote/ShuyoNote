@@ -19,7 +19,7 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
-fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS workspaces (

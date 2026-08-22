@@ -52,11 +52,17 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   };
 
   const remove = async (attrId: string) => {
+    console.log("[ShuyoNote] prop remove start", { pageId, attrId });
     setProps((ps) => ps.filter((p) => p.attr_id !== attrId));
     try {
       await api.removePageProp(pageId, attrId);
+      console.log("[ShuyoNote] prop removed", { pageId, attrId });
+      // Re-sync from the DB so the panel always reflects what really persisted.
+      load();
+      toast("已移除属性", "success");
     } catch (e) {
       toast(`移除属性失败：${e}`, "error");
+      console.error("[ShuyoNote] prop remove FAILED", { pageId, attrId, e });
     }
   };
 
@@ -89,28 +95,30 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
     }
   };
 
+  const nonTagProps = props.filter((p) => p.attr_type !== "tag");
+
   return (
     <div className="properties">
       <button className="properties-toggle" onClick={() => setOpen((v) => !v)}>
         <span className="properties-toggle-title">
-          属性{props.length > 0 ? `（${props.length}）` : ""}
+          属性{nonTagProps.length > 0 ? `（${nonTagProps.length}）` : ""}
         </span>
         <span className="properties-toggle-caret">{open ? "▾" : "▸"}</span>
       </button>
       {open && (
         <div className="properties-body">
           <TagRow pageId={pageId} />
-          {props.map((p) => (
-            <div key={p.attr_id} className="prop-row">
-              <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>
-                {p.name}
-              </span>
-              <ValueEditor prop={p} onChange={(v) => persist(p.attr_id, v)} />
-              <button className="prop-remove" onClick={() => remove(p.attr_id)} title="移除属性">
-                ×
-              </button>
-            </div>
-          ))}
+          {nonTagProps.map((p) => (
+              <div key={p.attr_id} className="prop-row">
+                <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>
+                  {p.name}
+                </span>
+                <ValueEditor prop={p} onChange={(v) => persist(p.attr_id, v)} />
+                <button className="prop-remove" onClick={() => remove(p.attr_id)} title="移除属性">
+                  ×
+                </button>
+              </div>
+            ))}
           {adding ? (
             <div className="prop-add-row">
               <input
