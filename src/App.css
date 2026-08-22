@@ -4549,6 +4549,7 @@ select.prop-value {
 .editor-stage {
   flex: 1;
   min-height: 0;
+  margin-top: 20px;
   display: flex;
   flex-direction: column;
   position: relative;
