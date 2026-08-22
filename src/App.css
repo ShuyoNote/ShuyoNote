@@ -4731,7 +4731,7 @@ select.prop-value {
 .new-page-guide-desc {
   font-size: 14px;
   color: var(--text-dim);
-  margin-bottom: 12px;
+  margin-bottom: 24px;
 }
 
 /* Action list */
@@ -4739,7 +4739,7 @@ select.prop-value {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
 }
 .npg-act {
   display: flex;
@@ -4766,11 +4766,11 @@ select.prop-value {
 
 /* "Create as database" view row */
 .new-page-guide-db {
-  margin-top: 24px;
+  margin-top: 90px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: 14px;
 }
 .npg-db-title {
   font-size: 12px;
@@ -4778,17 +4778,17 @@ select.prop-value {
 }
 .npg-db-row {
   display: flex;
-  gap: 6px;
+  gap: 26px;
 }
 .npg-db-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   border: none;
   background: transparent;
   color: var(--text-dim);
-  padding: 8px 10px;
+  padding: 6px 4px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
@@ -4798,11 +4798,12 @@ select.prop-value {
   background: var(--hover);
 }
 .npg-db-icon {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 .npg-db-name {
   font-size: 12px;
+  color: var(--text-dim);
 }
 
 /* Theme settings popover */
