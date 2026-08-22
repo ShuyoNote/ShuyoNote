@@ -24,11 +24,12 @@ function textOf(n: Node): string {
   return (n.textContent ?? "").replace(/\u00a0/g, " ");
 }
 
-// Collapse intra-element whitespace (including the newlines HTML puts between
-// inline children) to a single space, then trim, so line breaks between inline
-// images/elements don't split one logical paragraph into vertical rows.
+// Collapse intra-element whitespace to a single space (keep it). This keeps a
+// separating space between inline images so a row of <img> inside one <p> flows
+// horizontally instead of each wrapping to its own line (which happened when the
+// whitespace text nodes carried literal newlines).
 function inlineText(n: Node): string {
-  return textOf(n).replace(/\s+/g, " ").trim();
+  return textOf(n).replace(/\s+/g, " ");
 }
 
 function inlineFmt(el: Element, target: ElementNode, fmt: Fmt) {
