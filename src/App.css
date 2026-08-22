@@ -231,7 +231,6 @@ body,
   justify-content: space-between;
   gap: 6px;
   padding: 0 12px 10px;
-  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-actions-group {
@@ -306,7 +305,6 @@ body,
   justify-content: space-between;
   gap: 6px;
   padding: 0 12px 10px;
-  border-bottom: 1px solid var(--border);
 }
 
 .sidebar-actions-group {
