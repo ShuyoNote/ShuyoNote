@@ -4,7 +4,7 @@ import { toast } from "../store/toast";
 import type { AttrDef, PageProp } from "../types";
 import { TagRow, TagAddButton } from "./TagBar";
 
-const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag"] as const;
+const TYPES = ["text", "number", "date", "checkbox", "select", "multi"] as const;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -12,7 +12,6 @@ const TYPE_LABELS: Record<string, string> = {
   checkbox: "布尔",
   select: "单选",
   multi: "多选",
-  tag: "标签",
 };
 
 export function PropertiesPanel({ pageId }: { pageId: string }) {
@@ -40,7 +39,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   // The metadata card only shows when the page actually has properties (tag rows
   // or non-tag property rows); otherwise the title connects straight to content.
   const nonTagProps = props.filter((p) => p.attr_type !== "tag");
-  const hasProps = nonTagProps.length > 0 || pageTags.length > 0;
+  const hasProps = nonTagProps.length > 0 || pageTags.length > 0; // card shown iff metadata present
 
   // Serialize writes per attribute so a later value is never overwritten by an
   // earlier, out-of-order set_page_prop call. Each edit is saved immediately.
