@@ -53,6 +53,20 @@ export function LinkPopoverPlugin() {
     });
   }, [editor]);
 
+  // Close link popover when clicking outside it (e.g. on the sidebar).
+  useEffect(() => {
+    if (!state) return;
+    const onDown = (e: MouseEvent) => {
+      const el = document.querySelector(".link-popover");
+      if (el && !el.contains(e.target as Node)) {
+        setState(null);
+        setEditing(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [state]);
+
   if (!state) return null;
 
   const applyUrl = (url: string) => {

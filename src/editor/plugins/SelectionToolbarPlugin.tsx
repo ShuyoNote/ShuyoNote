@@ -41,6 +41,17 @@ export function SelectionToolbarPlugin() {
     });
   }, [editor]);
 
+  // Close selection toolbar when clicking outside it.
+  useEffect(() => {
+    if (!pos) return;
+    const onDown = (e: MouseEvent) => {
+      const el = document.querySelector(".selection-toolbar");
+      if (el && !el.contains(e.target as Node)) setPos(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pos]);
+
   if (!pos) return null;
 
   const apply = (format: TextFormatType) => {

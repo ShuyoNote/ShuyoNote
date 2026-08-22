@@ -294,6 +294,19 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
     return () => document.removeEventListener("scroll", reposition, true);
   }, [open]);
 
+  // Close slash menu when clicking outside it (e.g. on the sidebar or empty area).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const menu = document.querySelector(".slash-menu");
+      if (menu && !menu.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
   if (!open) return null;
 
   const rows: { group?: string; option?: SlashOption; index: number }[] = [];

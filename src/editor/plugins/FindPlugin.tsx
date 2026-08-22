@@ -113,6 +113,21 @@ export function FindPlugin() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Close find bar when clicking outside it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const el = document.querySelector(".find-bar");
+      if (el && !el.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+        clearHighlights();
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, clearHighlights]);
+
   const go = (dir: 1 | -1) => {
     const ranges = rangesRef.current;
     if (ranges.length === 0) return;

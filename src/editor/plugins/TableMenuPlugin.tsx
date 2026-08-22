@@ -119,6 +119,21 @@ export function TableMenuPlugin() {
     };
   }, [showPalette]);
 
+  // Close the table toolbar when clicking outside the editor (e.g. the sidebar).
+  useEffect(() => {
+    if (!state) return;
+    const onDown = (e: MouseEvent) => {
+      const editorRoot = document.querySelector(".editor-shell");
+      const t = e.target as Node;
+      if (editorRoot && !editorRoot.contains(t)) {
+        setState(null);
+        setShowPalette(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [state]);
+
   if (!state) return null;
 
   const run = (fn: () => void) => editor.update(() => fn());
