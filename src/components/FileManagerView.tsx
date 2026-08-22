@@ -1,8 +1,45 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useNotes } from "../store/notes";
 import { useFileManagerStore } from "../store/fileManager";
-import type { PageMeta } from "../types";
+import { api } from "../lib/api";
+import { toast } from "../store/toast";
+import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes;
+  let i = -1;
+  do {
+    v /= 1024;
+    i++;
+  } while (v >= 1024 && i < units.length - 1);
+  return `${v.toFixed(1)} ${units[i]}`;
+}
+
+function fileIcon(mime: string): string {
+  if (mime.startsWith("image/")) return "🖼";
+  if (mime.startsWith("video/")) return "🎬";
+  if (mime.startsWith("audio/")) return "🎵";
+  if (mime === "application/pdf") return "📕";
+  if (mime.includes("zip") || mime.includes("gzip") || mime.includes("7z")) return "🗜";
+  if (mime.includes("sheet") || mime.includes("excel") || mime === "text/csv") return "📊";
+  if (mime.includes("word") || mime === "text/markdown") return "📄";
+  if (mime.startsWith("text/")) return "📝";
+  return "📎";
+}
+
+interface ImportProgressEvent {
+  index: number;
+  total: number;
+  name: string;
+  done: number;
+  size: number;
+}
 
 const KIND_LABELS: Record<string, string> = {
   page: "页面",
@@ -29,6 +66,93 @@ export function FileManagerView() {
   const { pages, openPage, createPage, createFolder } = useNotes();
   const { folderId, setFolderId } = useFileManagerStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [files, setFiles] = useState<AttachmentMeta[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
+  const importingRef = useRef(false);
+
+  const loadFiles = () => {
+    if (!folderId) {
+      setFiles([]);
+      return;
+    }
+    api
+      .listPageAttachments(folderId)
+      .then(setFiles)
+      .catch(() => {});
+  };
+  useEffect(loadFiles, [folderId]);
+
+  // Streaming import progress from the backend (content-addressed, large-file safe).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<ImportProgressEvent>("attachment-import-progress", (event) => {
+      if (!importingRef.current) return;
+      const p = event.payload;
+      const current = p.size > 0 ? p.done / p.size : 1;
+      const overall = ((p.index + current) / p.total) * 100;
+      setProgress({ name: p.name, percent: Math.min(100, Math.round(overall)) });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  const uploadFiles = async () => {
+    if (!folderId) return;
+    let selectedPath: string | string[] | null;
+    try {
+      selectedPath = await open({ multiple: true, title: "选择文件" });
+    } catch (e) {
+      toast(`选择文件失败：${e}`, "error");
+      return;
+    }
+    const paths = Array.isArray(selectedPath) ? selectedPath : selectedPath ? [selectedPath] : [];
+    if (paths.length === 0) return;
+
+    setImporting(true);
+    importingRef.current = true;
+    setProgress({ name: paths[0] ?? "", percent: 0 });
+    try {
+      const metas = await api.importAttachmentFiles(folderId, paths);
+      setFiles((prev) => [...metas, ...prev]);
+      toast(`已上传 ${metas.length} 个文件`, "success");
+    } catch (e) {
+      toast(`上传失败：${e}`, "error");
+    } finally {
+      importingRef.current = false;
+      setImporting(false);
+      setProgress(null);
+    }
+  };
+
+  const openFile = async (path: string) => {
+    if (!path) return;
+    try {
+      await openPath(path);
+    } catch (e) {
+      toast(`打开失败：${e}`, "error");
+    }
+  };
+  const revealFile = async (path: string) => {
+    if (!path) return;
+    try {
+      await revealItemInDir(path);
+    } catch (e) {
+      toast(`打开失败：${e}`, "error");
+    }
+  };
+  const removeFile = async (id: string) => {
+    try {
+      await api.removeAttachment(id);
+      setFiles((prev) => prev.filter((f) => f.id !== id));
+      toast("已移除文件", "success");
+    } catch (e) {
+      toast(`移除失败：${e}`, "error");
+    }
+  };
 
   const all = useMemo(() => pages.filter((p) => !p.deleted_at), [pages]);
   const entries = useMemo(
@@ -167,6 +291,56 @@ export function FileManagerView() {
             )}
           </tbody>
         </table>
+
+        {folderId && (
+          <div className="fm-files">
+            <div className="fm-files-head">
+              <span className="fm-files-title">文件（{files.length}）</span>
+              <button className="fm-btn" onClick={uploadFiles} disabled={importing}>
+                {importing ? "上传中…" : "＋ 上传文件"}
+              </button>
+            </div>
+            {progress && (
+              <div className="fm-progress">
+                <div className="fm-progress-label">
+                  <span>上传：{progress.name}</span>
+                  <span>{progress.percent}%</span>
+                </div>
+                <div className="fm-progress-track">
+                  <div className="fm-progress-fill" style={{ width: `${progress.percent}%` }} />
+                </div>
+              </div>
+            )}
+            {files.length === 0 ? (
+              <div className="fm-files-empty">
+                从本机批量上传文件（支持超大文件流式存取，多选一次导入）
+              </div>
+            ) : (
+              <div className="fm-files-list">
+                {files.map((f) => (
+                  <div key={f.id} className="fm-file-row">
+                    <span className="fm-file-icon">{fileIcon(f.mime)}</span>
+                    <span className="fm-file-name" title={f.name}>
+                      {f.name}
+                    </span>
+                    <span className="fm-file-size">{formatSize(f.size)}</span>
+                    <span className="fm-file-actions">
+                      <button title="打开" onClick={() => openFile(f.path)}>
+                        ↗
+                      </button>
+                      <button title="在文件夹中显示" onClick={() => revealFile(f.path)}>
+                        📂
+                      </button>
+                      <button title="移除文件" onClick={() => removeFile(f.id)}>
+                        ×
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

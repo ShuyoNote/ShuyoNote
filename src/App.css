@@ -4588,3 +4588,100 @@ select.prop-value {
   color: var(--text-faint);
   font-size: 13px;
 }
+
+/* Folder file list (batch upload of large files) */
+.fm-files {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.fm-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.fm-files-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fm-progress {
+  margin-bottom: 10px;
+}
+.fm-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.fm-progress-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--hover);
+  overflow: hidden;
+}
+.fm-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  transition: width var(--transition);
+}
+.fm-files-empty {
+  padding: 20px 8px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.fm-files-list {
+  display: flex;
+  flex-direction: column;
+}
+.fm-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+}
+.fm-file-row:hover {
+  background: var(--hover);
+}
+.fm-file-icon {
+  font-size: 15px;
+  flex: none;
+}
+.fm-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-file-size {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.fm-file-actions {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+}
+.fm-file-actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+}
+.fm-file-actions button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
