@@ -4,27 +4,29 @@ import { useTemplateCenterStore } from "../store/templateCenter";
 import { TEMPLATES, TEMPLATE_CATEGORIES, type TemplateItem } from "../templates";
 import { SearchIcon } from "./icons";
 
-// Deterministic mock "content snapshot" per template (title bar + lines + image
-// block), simulating the page structure until real template thumbnails exist.
+// Deterministic mock "thumbnail" per template: a cover-gradient background with a
+// mini white content card (page-screenshot look) at the top of the card, until
+// real template thumbnails exist.
 function MockPreview({ id, cover }: { id: string; cover: string }) {
   let seed = 0;
   for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) % 997;
-  const lines = 3 + (seed % 3); // 3–5 text lines
-  const widths = ["82%", "64%", "72%", "55%", "78%", "60%"];
+  const lines = 3 + (seed % 2); // 3–4 lines
+  const widths = ["72%", "52%", "64%", "45%"];
   const start = seed % widths.length;
   return (
-    <div className="tc-preview">
-      <div className="tc-pv-title" />
-      <div className="tc-pv-line" style={{ width: widths[start % widths.length] }} />
-      <div className="tc-pv-line" style={{ width: widths[(start + 1) % widths.length] }} />
-      <div className="tc-pv-img" style={{ background: cover }} />
-      {Array.from({ length: lines }).map((_, i) => (
-        <div
-          key={i}
-          className="tc-pv-line"
-          style={{ width: widths[(start + i + 2) % widths.length] }}
-        />
-      ))}
+    <div className="tc-preview" style={{ background: cover }}>
+      <div className="tc-pv-card">
+        <div className="tc-pv-title" />
+        <div className="tc-pv-line" style={{ width: widths[start % widths.length] }} />
+        <div className="tc-pv-line" style={{ width: widths[(start + 1) % widths.length] }} />
+        {Array.from({ length: lines }).map((_, i) => (
+          <div
+            key={i}
+            className="tc-pv-line"
+            style={{ width: widths[(start + 2 + i) % widths.length] }}
+          />
+        ))}
+      </div>
     </div>
   );
 }

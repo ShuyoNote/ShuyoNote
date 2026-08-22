@@ -4845,11 +4845,11 @@ select.prop-value {
 .tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
 .tc-card { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
 .tc-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-/* Mini "content snapshot" preview of the template. */
-.tc-preview { height: 150px; padding: 14px; display: flex; flex-direction: column; gap: 7px; border-bottom: 1px solid var(--border); background: var(--bg); }
-.tc-pv-title { height: 14px; width: 55%; border-radius: 3px; background: var(--accent-soft); }
-.tc-pv-line { height: 8px; border-radius: 3px; background: var(--hover-strong); }
-.tc-pv-img { height: 40px; border-radius: 4px; }
+/* Thumbnail at the top of the card (cover bg + mini white page card). */
+.tc-preview { height: 130px; position: relative; display: flex; align-items: center; justify-content: center; }
+.tc-pv-card { background: #fff; border-radius: 5px; padding: 10px 12px; width: 82%; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16); display: flex; flex-direction: column; gap: 6px; }
+.tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
+.tc-pv-line { height: 6px; border-radius: 2px; background: #eef0f4; }
 .tc-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
 .tc-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .tc-card-tag { font-size: 11px; color: var(--text-faint); }
