@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useTemplates } from "../store/templates";
+import { toast } from "../store/toast";
 import { TEMPLATES, TEMPLATE_CATEGORIES } from "../templates";
 import { SearchIcon } from "./icons";
 
@@ -78,9 +81,58 @@ export function TemplateCenterView() {
     );
   }, [all, tab, query]);
 
+  const today = () => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  };
+
   const useTemplate = async (t: GalleryItem) => {
-    await createPage(null, { content_json: t.content_json, content_text: t.content_text });
+    // Expand `{{date}}` placeholders to today's date before seeding the page.
+    const date = today();
+    const json = t.content_json.replace(/\{\{date\}\}/g, date);
+    const text = t.content_text.replace(/\{\{date\}\}/g, date);
+    await createPage(null, { content_json: json, content_text: text });
     setOpen(false);
+  };
+
+  const exportTemplate = async (t: GalleryItem) => {
+    try {
+      const path = await save({
+        title: "导出模板",
+        defaultPath: `${t.name}.shuyo-template.json`,
+        filters: [{ name: "ShuyoNote 模板", extensions: ["json"] }],
+      });
+      if (!path) return;
+      const payload = JSON.stringify({
+        name: t.name, category: t.category, icon: t.icon, cover: t.cover,
+        content_json: t.content_json, content_text: t.content_text,
+      });
+      await api.writeTextFile(path, payload);
+    } catch (e) {
+      console.error("export template failed", e);
+    }
+  };
+
+  const importTemplate = async () => {
+    try {
+      const selected = await open({ multiple: false, title: "导入模板" });
+      if (!selected || Array.isArray(selected)) return;
+      const text = await api.readTextFile(selected);
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed.content_json !== "string") {
+        throw new Error("不是有效的模板文件");
+      }
+      await useTemplates.getState().saveAs({
+        name: parsed.name ?? "导入的模板",
+        category: parsed.category ?? "我的模板",
+        content_json: parsed.content_json,
+        content_text: parsed.content_text ?? "",
+      });
+    } catch (e) {
+      toast(`导入模板失败：${e}`, "error");
+    }
   };
 
   return (
@@ -100,6 +152,9 @@ export function TemplateCenterView() {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
+        <button className="tc-import" title="导入模板文件" onClick={importTemplate}>
+          ⬆ 导入
+        </button>
         <button className="tc-close" title="关闭" onClick={() => setOpen(false)}>
           ×
         </button>
@@ -124,16 +179,21 @@ export function TemplateCenterView() {
           filtered.map((t) => (
             <div key={t.id} className="tc-card" onClick={() => useTemplate(t)}>
               {t.user && (
-                <button
-                  className="tc-card-del"
-                  title="删除模板"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeTemplate(t.id);
-                  }}
-                >
-                  ×
-                </button>
+                <div className="tc-card-actions">
+                  <button className="tc-card-del" title="导出模板" onClick={(e) => { e.stopPropagation(); exportTemplate(t); }}>
+                    ⬇
+                  </button>
+                  <button
+                    className="tc-card-del"
+                    title="删除模板"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeTemplate(t.id);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               )}
               <MockPreview id={t.id} cover={t.cover} />
               <div className="tc-card-body">

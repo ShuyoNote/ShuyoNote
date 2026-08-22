@@ -5017,10 +5017,16 @@ select.prop-value {
 .tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
 .tc-card { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
 .tc-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-.tc-card-del {
+.tc-card-actions {
   position: absolute;
   top: 8px;
   right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 2;
+}
+.tc-card-del {
   width: 22px;
   height: 22px;
   border-radius: var(--radius-full);
@@ -5035,10 +5041,23 @@ select.prop-value {
   justify-content: center;
   opacity: 0;
   transition: opacity var(--transition-fast), background var(--transition-fast);
-  z-index: 2;
 }
 .tc-card:hover .tc-card-del { opacity: 1; }
 .tc-card-del:hover { background: var(--danger); }
+.tc-import {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.tc-import:hover {
+  color: var(--text);
+  background: var(--hover);
+}
 /* Thumbnail at the top of the card (cover bg + mini white page card). */
 .tc-preview { height: 130px; position: relative; display: flex; align-items: center; justify-content: center; }
 .tc-pv-card { background: #fff; border-radius: 5px; padding: 10px 12px; width: 82%; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16); display: flex; flex-direction: column; gap: 6px; }
