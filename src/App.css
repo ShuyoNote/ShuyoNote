@@ -4842,13 +4842,16 @@ select.prop-value {
 .tc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); }
 .tc-search-input { width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px 7px 32px; font-size: 13px; outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
 .tc-search-input:focus { border-color: var(--accent); }
-.tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
 .tc-card { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
-.tc-card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
-.tc-cover { height: 90px; display: flex; align-items: center; justify-content: center; }
-.tc-cover-icon { font-size: 28px; }
-.tc-card-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
-.tc-card-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.tc-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+/* Mini "content snapshot" preview of the template. */
+.tc-preview { height: 150px; padding: 14px; display: flex; flex-direction: column; gap: 7px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.tc-pv-title { height: 14px; width: 55%; border-radius: 3px; background: var(--accent-soft); }
+.tc-pv-line { height: 8px; border-radius: 3px; background: var(--hover-strong); }
+.tc-pv-img { height: 40px; border-radius: 4px; }
+.tc-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.tc-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .tc-card-tag { font-size: 11px; color: var(--text-faint); }
 .tc-empty { color: var(--text-faint); font-size: 13px; padding: 40px 0; text-align: center; }
 

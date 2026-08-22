@@ -4,6 +4,31 @@ import { useTemplateCenterStore } from "../store/templateCenter";
 import { TEMPLATES, TEMPLATE_CATEGORIES, type TemplateItem } from "../templates";
 import { SearchIcon } from "./icons";
 
+// Deterministic mock "content snapshot" per template (title bar + lines + image
+// block), simulating the page structure until real template thumbnails exist.
+function MockPreview({ id, cover }: { id: string; cover: string }) {
+  let seed = 0;
+  for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) % 997;
+  const lines = 3 + (seed % 3); // 3–5 text lines
+  const widths = ["82%", "64%", "72%", "55%", "78%", "60%"];
+  const start = seed % widths.length;
+  return (
+    <div className="tc-preview">
+      <div className="tc-pv-title" />
+      <div className="tc-pv-line" style={{ width: widths[start % widths.length] }} />
+      <div className="tc-pv-line" style={{ width: widths[(start + 1) % widths.length] }} />
+      <div className="tc-pv-img" style={{ background: cover }} />
+      {Array.from({ length: lines }).map((_, i) => (
+        <div
+          key={i}
+          className="tc-pv-line"
+          style={{ width: widths[(start + i + 2) % widths.length] }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // Template-center gallery (UI skeleton). Templates are hardcoded; clicking a card
 // creates a blank page for now — filling template content comes with the backend.
 export function TemplateCenterView() {
@@ -68,9 +93,7 @@ export function TemplateCenterView() {
         ) : (
           filtered.map((t) => (
             <button key={t.id} className="tc-card" onClick={() => useTemplate(t)}>
-              <div className="tc-cover" style={{ background: t.cover }}>
-                <span className="tc-cover-icon">{t.icon}</span>
-              </div>
+              <MockPreview id={t.id} cover={t.cover} />
               <div className="tc-card-body">
                 <span className="tc-card-name">{t.name}</span>
                 <span className="tc-card-tag">ShuyoNote · 模板</span>
