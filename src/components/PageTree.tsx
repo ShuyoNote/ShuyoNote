@@ -13,7 +13,7 @@ import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeToggle } from "./ThemeToggle";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -344,29 +344,46 @@ export function PageTree({
             </button>
             {newMenuOpen && (
               <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
+                <div className="new-menu-title">新建</div>
                 <button
+                  className="new-menu-item"
                   onClick={() => {
                     closeNewMenu();
                     createPage(null);
                   }}
                 >
-                  📄 新建页面
+                  <span className="new-menu-icon"><PageIcon /></span>
+                  <span className="new-menu-body">
+                    <span className="new-menu-name">页面</span>
+                    <span className="new-menu-desc">空白文书</span>
+                  </span>
+                  <kbd className="new-menu-kbd">Ctrl+N</kbd>
                 </button>
                 <button
+                  className="new-menu-item"
                   onClick={() => {
                     closeNewMenu();
                     createFolder(null);
                   }}
                 >
-                  📁 新建文件夹
+                  <span className="new-menu-icon"><FolderIcon /></span>
+                  <span className="new-menu-body">
+                    <span className="new-menu-name">文件夹</span>
+                    <span className="new-menu-desc">组织子页面</span>
+                  </span>
                 </button>
                 <button
+                  className="new-menu-item"
                   onClick={() => {
                     closeNewMenu();
                     createDatabase(null);
                   }}
                 >
-                  🗂 新建数据库
+                  <span className="new-menu-icon"><DatabaseIcon /></span>
+                  <span className="new-menu-body">
+                    <span className="new-menu-name">数据库</span>
+                    <span className="new-menu-desc">表格 / 画廊 / 看板</span>
+                  </span>
                 </button>
               </div>
             )}
