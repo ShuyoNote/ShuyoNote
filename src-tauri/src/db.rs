@@ -202,21 +202,24 @@ fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
-    // Ensure a default workspace exists.
+    // Ensure a default workspace exists. The sidebar logo area shows the
+    // workspace (space) name — not the app brand — so default to a neutral
+    // space name that the user can rename.
     let count: i64 =
         conn.query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))?;
     if count == 0 {
         let now = now_ms();
         conn.execute(
             "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params!["default", "数友笔记", now, now],
+            params!["default", "默认空间", now, now],
         )?;
     }
 
-    // Migrate the legacy placeholder workspace names to the current brand wording.
+    // Migrate legacy placeholder/space names to the neutral space wording
+    // (including the app-brand name that was previously used as a default).
     conn.execute(
         "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE name IN (?3, ?4)",
-        params!["数友笔记", now_ms(), "默认工作区", "默认空间"],
+        params!["默认空间", now_ms(), "默认工作区", "数友笔记"],
     )?;
 
     // Ensure a persistent device id exists.

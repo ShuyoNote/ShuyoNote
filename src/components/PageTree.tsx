@@ -243,7 +243,7 @@ export function PageTree({
     toggle: toggleNewMenu,
     close: closeNewMenu,
   } = usePopover<HTMLButtonElement>();
-  const [workspaceName, setWorkspaceName] = useState("数友笔记");
+  const [workspaceName, setWorkspaceName] = useState("默认空间");
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
 
