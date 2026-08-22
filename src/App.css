@@ -4689,68 +4689,87 @@ select.prop-value {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
-  padding: 8px 24px;
+  gap: 16px;
+  padding: 8px 24px 40px;
   background: var(--bg);
   z-index: 5;
-}
-
-.new-page-guide-title {
-  font-size: 30px;
-  font-weight: 700;
-  color: var(--text);
 }
 
 .new-page-guide-desc {
   font-size: 14px;
   color: var(--text-dim);
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
-.new-page-guide-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 280px));
-  gap: 12px;
+/* Action list */
+.new-page-guide-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
-
-.new-page-guide-item {
+.npg-act {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: var(--radius-lg);
-  padding: 14px 16px;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  text-align: left;
   font-family: inherit;
 }
-
-.new-page-guide-item:hover {
-  border-color: var(--accent);
+.npg-act:hover {
+  color: var(--text);
   background: var(--hover);
 }
-
-.npg-icon {
-  font-size: 22px;
+.npg-act-icon {
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
-.npg-main {
+/* "Create as database" view row */
+.new-page-guide-db {
+  margin-top: 24px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
 }
-
-.npg-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.npg-sub {
+.npg-db-title {
   font-size: 12px;
   color: var(--text-faint);
+}
+.npg-db-row {
+  display: flex;
+  gap: 6px;
+}
+.npg-db-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.npg-db-item:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.npg-db-icon {
+  width: 18px;
+  height: 18px;
+}
+.npg-db-name {
+  font-size: 12px;
 }
 
 /* Theme settings popover */
