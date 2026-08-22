@@ -4556,6 +4556,15 @@ select.prop-value {
   width: 88px;
   color: var(--text-faint);
 }
+.fm-size-col {
+  width: 90px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fm-ops-col {
+  width: 64px;
+  text-align: right;
+}
 .fm-date {
   color: var(--text-dim);
   white-space: nowrap;

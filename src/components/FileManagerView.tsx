@@ -192,6 +192,44 @@ export function FileManagerView() {
     });
   };
 
+  // Unified file list: folders/pages/databases + uploaded files, as table rows.
+  const rows = useMemo(() => {
+    type FmRow = {
+      key: string;
+      kind: "page" | "folder" | "database" | "file";
+      name: string;
+      size: string;
+      updated: string;
+      created: string;
+      pageId?: string;
+      file?: AttachmentMeta;
+    };
+    const out: FmRow[] = [];
+    for (const p of sorted) {
+      out.push({
+        key: p.id,
+        kind: p.kind as FmRow["kind"],
+        name: p.title || (p.kind === "folder" ? "新建文件夹" : "未命名"),
+        size: "—",
+        updated: fmtDate(p.updated_at),
+        created: fmtDate(p.created_at),
+        pageId: p.id,
+      });
+    }
+    for (const f of files) {
+      out.push({
+        key: "file:" + f.id,
+        kind: "file",
+        name: f.name,
+        size: formatSize(f.size),
+        updated: "—",
+        created: "—",
+        file: f,
+      });
+    }
+    return out;
+  }, [sorted, files]);
+
   const newFolder = () => createFolder(folderId);
   // createPage navigates to the editor with the new page already open.
   const newPage = () => createPage(folderId);
@@ -209,6 +247,14 @@ export function FileManagerView() {
           </button>
           <button className="fm-btn fm-btn-primary" onClick={newPage}>
             ＋ 新建页面
+          </button>
+          <button
+            className="fm-btn"
+            onClick={uploadFiles}
+            disabled={importing || !folderId}
+            title={folderId ? "批量上传文件" : "进入文件夹后可上传"}
+          >
+            {importing ? "上传中…" : "＋ 上传文件"}
           </button>
         </div>
       </div>
@@ -233,8 +279,20 @@ export function FileManagerView() {
             </span>
           ))}
         </div>
-        <span className="fm-count">{sorted.length} 项</span>
+        <span className="fm-count">{rows.length} 项</span>
       </div>
+
+      {progress && (
+        <div className="fm-progress">
+          <div className="fm-progress-label">
+            <span>上传：{progress.name}</span>
+            <span>{progress.percent}%</span>
+          </div>
+          <div className="fm-progress-track">
+            <div className="fm-progress-fill" style={{ width: `${progress.percent}%` }} />
+          </div>
+        </div>
+      )}
 
       <div className="file-manager-table-wrap">
         <table className="file-manager-table">
@@ -245,22 +303,24 @@ export function FileManagerView() {
               </th>
               <th className="fm-name-col">文件名</th>
               <th className="fm-kind-col">类型</th>
+              <th className="fm-size-col">大小</th>
               <th>上次修改时间</th>
               <th>创建时间</th>
+              <th className="fm-ops-col" />
             </tr>
           </thead>
           <tbody>
-            {sorted.map((p) => (
+            {rows.map((row) => (
               <tr
-                key={p.id}
-                className={selected.has(p.id) ? "fm-row-selected" : ""}
-                onClick={() => toggleSelect(p.id)}
+                key={row.key}
+                className={selected.has(row.key) ? "fm-row-selected" : ""}
+                onClick={() => toggleSelect(row.key)}
               >
                 <td className="fm-check-col">
                   <input
                     type="checkbox"
-                    checked={selected.has(p.id)}
-                    onChange={() => toggleSelect(p.id)}
+                    checked={selected.has(row.key)}
+                    onChange={() => toggleSelect(row.key)}
                     onClick={(e) => e.stopPropagation()}
                   />
                 </td>
@@ -269,78 +329,58 @@ export function FileManagerView() {
                     className="fm-name-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (p.kind === "folder") setFolderId(p.id);
-                      else openPage(p.id);
+                      if (row.kind === "file") openFile(row.file!.path);
+                      else if (row.kind === "folder") setFolderId(row.pageId!);
+                      else openPage(row.pageId!);
                     }}
                   >
-                    <span className="fm-kind-icon"><KindIcon kind={p.kind} /></span>
-                    <span className="fm-name">{p.title || "未命名"}</span>
+                    <span className="fm-kind-icon">
+                      {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
+                    </span>
+                    <span className="fm-name">{row.name}</span>
                   </button>
                 </td>
-                <td className="fm-kind-col">{KIND_LABELS[p.kind] ?? p.kind}</td>
-                <td className="fm-date">{fmtDate(p.updated_at)}</td>
-                <td className="fm-date">{fmtDate(p.created_at)}</td>
+                <td className="fm-kind-col">
+                  {row.kind === "file" ? "文件" : KIND_LABELS[row.kind] ?? row.kind}
+                </td>
+                <td className="fm-size-col">{row.size}</td>
+                <td className="fm-date">{row.updated}</td>
+                <td className="fm-date">{row.created}</td>
+                <td className="fm-ops-col">
+                  {row.kind === "file" && (
+                    <span className="fm-file-actions">
+                      <button
+                        title="在文件夹中显示"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          revealFile(row.file!.path);
+                        }}
+                      >
+                        📂
+                      </button>
+                      <button
+                        title="移除文件"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFile(row.file!.id);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
+                </td>
               </tr>
             ))}
-            {sorted.length === 0 && (
+            {rows.length === 0 && (
               <tr>
-                <td className="fm-empty" colSpan={5}>
-                  {folderId === null ? "没有内容，点击右上角新建" : "此文件夹为空"}
+                <td className="fm-empty" colSpan={7}>
+                  {folderId === null ? "没有内容，点击右上角新建" : "此文件夹为空，可上传文件"}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-
-        {folderId && (
-          <div className="fm-files">
-            <div className="fm-files-head">
-              <span className="fm-files-title">文件（{files.length}）</span>
-              <button className="fm-btn" onClick={uploadFiles} disabled={importing}>
-                {importing ? "上传中…" : "＋ 上传文件"}
-              </button>
-            </div>
-            {progress && (
-              <div className="fm-progress">
-                <div className="fm-progress-label">
-                  <span>上传：{progress.name}</span>
-                  <span>{progress.percent}%</span>
-                </div>
-                <div className="fm-progress-track">
-                  <div className="fm-progress-fill" style={{ width: `${progress.percent}%` }} />
-                </div>
-              </div>
-            )}
-            {files.length === 0 ? (
-              <div className="fm-files-empty">
-                从本机批量上传文件（支持超大文件流式存取，多选一次导入）
-              </div>
-            ) : (
-              <div className="fm-files-list">
-                {files.map((f) => (
-                  <div key={f.id} className="fm-file-row">
-                    <span className="fm-file-icon">{fileIcon(f.mime)}</span>
-                    <span className="fm-file-name" title={f.name}>
-                      {f.name}
-                    </span>
-                    <span className="fm-file-size">{formatSize(f.size)}</span>
-                    <span className="fm-file-actions">
-                      <button title="打开" onClick={() => openFile(f.path)}>
-                        ↗
-                      </button>
-                      <button title="在文件夹中显示" onClick={() => revealFile(f.path)}>
-                        📂
-                      </button>
-                      <button title="移除文件" onClick={() => removeFile(f.id)}>
-                        ×
-                      </button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
