@@ -1344,7 +1344,8 @@ body.is-toc-open .main {
   max-width: var(--doc-width);
   width: 100%;
   margin: 0 auto;
-  padding: 6px var(--doc-pad) 4px;
+  padding: 6px var(--doc-pad) 18px;
+  border-bottom: 1px solid var(--border);
 }
 
 .properties-toggle {
