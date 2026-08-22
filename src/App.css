@@ -1739,8 +1739,8 @@ select.prop-value {
 .block-handle {
   position: fixed;
   z-index: 25;
-  width: 30px;
-  height: 22px;
+  width: 34px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1750,7 +1750,12 @@ select.prop-value {
   cursor: grab;
   border-radius: var(--radius-xs);
   user-select: none;
-  transition: color var(--transition-fast), background var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
+}
+.block-handle::before {
+  content: "";
+  position: absolute;
+  inset: -4px; /* enlarge the invisible hover hit area so it doesn't flicker */
 }
 
 .block-handle:hover {

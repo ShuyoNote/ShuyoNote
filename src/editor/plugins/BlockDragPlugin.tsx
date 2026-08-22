@@ -48,6 +48,8 @@ type BlockRef = { key: string; el: HTMLElement; rect: DOMRect };
 type DropLine = { top: number; left: number; width: number };
 type HandleState = { top: number; left: number; key: string };
 const HANDLE_OFFSET = 30; // handle spans [contentLeft - 30, contentLeft]
+const HANDLE_H = 24; // handle height, used to vertically center it on the block
+const HIDE_DELAY = 400; // ms — linger long enough to grab the handle
 
 function getTopLevelBlocks(
   editor: ReturnType<typeof useLexicalComposerContext>[0]
@@ -117,7 +119,7 @@ export function BlockDragPlugin() {
       const key = getTopLevelKey(editor, target);
       if (!key) {
         if (hideTimerRef.current === null) {
-          hideTimerRef.current = window.setTimeout(() => setHandle(null), 120);
+          hideTimerRef.current = window.setTimeout(() => setHandle(null), HIDE_DELAY);
         }
         return;
       }
@@ -126,7 +128,11 @@ export function BlockDragPlugin() {
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
-        setHandle({ top: rect.top, left: rect.left - HANDLE_OFFSET, key });
+        setHandle({
+          top: rect.top + rect.height / 2 - HANDLE_H / 2,
+          left: rect.left - HANDLE_OFFSET,
+          key,
+        });
       }
     };
 
