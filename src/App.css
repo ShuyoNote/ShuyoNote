@@ -1237,6 +1237,12 @@ body,
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
+  transition: padding-right var(--transition-fast);
+}
+/* When the TOC rail is open, reserve its width on the right so the page content
+   re-centers in the space beside it (not overlapped). */
+body.is-toc-open .main {
+  padding-right: 280px;
 }
 
 .main.empty {

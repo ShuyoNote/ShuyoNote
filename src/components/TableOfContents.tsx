@@ -39,6 +39,12 @@ export function TableOfContents() {
   const [open, setOpen] = useState(true);
   const [active, setActive] = useState<string | null>(null);
 
+  // Reserve the rail width on the right so the page content re-centers beside it.
+  useEffect(() => {
+    document.body.classList.toggle("is-toc-open", open);
+    return () => document.body.classList.remove("is-toc-open");
+  }, [open]);
+
   // Collect the heading outline live as the editor changes.
   useEffect(() => {
     if (!editor) return;
