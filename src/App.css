@@ -1363,6 +1363,13 @@ body.is-toc-open .main {
   border-bottom: none;
 }
 
+/* Adaptive full-width content: drop the fixed doc column cap so the content
+   fills the available width (toggled by the toolbar width button). */
+body.content-full .metadata-card,
+body.content-full .editor-content {
+  max-width: none;
+}
+
 /* Properties panel */
 .properties {
   max-width: var(--doc-width);

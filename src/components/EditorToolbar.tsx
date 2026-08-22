@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
+import { useViewStore } from "../store/view";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon } from "./icons";
@@ -66,6 +67,17 @@ function printHTML(html: string) {
 export function EditorToolbar({ pageId }: { pageId: string }) {
   const editor = useEditorStore((s) => s.editor);
   const [importing, setImporting] = useState(false);
+  const contentWidth = useViewStore((s) => s.contentWidth);
+  const setContentWidth = useViewStore((s) => s.setContentWidth);
+
+  // Apply the adaptive-width body class so content fills the available width.
+  useEffect(() => {
+    document.body.classList.toggle("content-full", contentWidth === "full");
+    return () => document.body.classList.remove("content-full");
+  }, [contentWidth]);
+
+  const toggleWidth = () =>
+    setContentWidth(contentWidth === "full" ? "centered" : "full");
 
   const exportMarkdown = () => {
     if (!editor) return;
@@ -127,6 +139,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       </button>
       <button className="toolbar-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
         <PrintIcon />
+      </button>
+      <button
+        className={`toolbar-btn ${contentWidth === "full" ? "active" : ""}`}
+        onClick={toggleWidth}
+        title={contentWidth === "full" ? "内容宽度：自适应（点击恢复居中）" : "内容宽度：居中（点击自适应全宽）"}
+      >
+        ⇔
       </button>
       <HistoryPanel pageId={pageId} />
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
