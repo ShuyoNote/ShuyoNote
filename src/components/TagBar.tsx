@@ -65,6 +65,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
+  const revision = useTagManagerStore((s) => s.revision);
   const { open, pos, triggerRef, contentRef, toggle: togglePop, close } = usePopover<HTMLButtonElement>();
 
   const load = async () => {
@@ -74,9 +75,11 @@ export function TagAddButton({ pageId }: { pageId: string }) {
       /* ignore */
     }
   };
+  // Reload the tag list whenever the global tag revision bumps (rename / delete /
+  // create / merge) so an open manager menu reflects the latest tag set.
   useEffect(() => {
     load();
-  }, []);
+  }, [revision]);
 
   const pageTagIds = new Set(pageTags.map((t) => t.id));
   const q = query.trim().toLowerCase();
