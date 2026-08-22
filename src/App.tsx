@@ -4,6 +4,7 @@ import { BacklinksPanel } from "./components/BacklinksPanel";
 import { AttachmentPanel } from "./components/AttachmentPanel";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DatabaseView } from "./components/DatabaseView";
+import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
@@ -189,6 +190,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
       </div>
       <BacklinksPanel pageId={pageId} />
       <AttachmentPanel pageId={pageId} />
+      <TableOfContents />
     </div>
   );
 }
