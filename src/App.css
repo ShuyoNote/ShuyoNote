@@ -64,6 +64,10 @@
   --space-7: 40px;
   --space-8: 64px;
 
+  /* Reading/document column */
+  --doc-width: 780px;
+  --doc-pad: 40px;
+
   /* Motion */
   --transition-fast: 120ms cubic-bezier(0.2, 0, 0, 1);
   --transition: 200ms cubic-bezier(0.2, 0, 0, 1);
@@ -135,6 +139,28 @@
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Refined, quiet scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1274,20 +1300,20 @@ body,
 
 .editor-head {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
-  padding: 8px 48px 8px;
-  max-width: 816px;
+  padding: 20px var(--doc-pad) 2px;
+  max-width: var(--doc-width);
   width: 100%;
   margin: 0 auto;
 }
 
 /* Properties panel */
 .properties {
-  max-width: 816px;
+  max-width: var(--doc-width);
   width: 100%;
   margin: 0 auto;
-  padding: 0 48px 4px;
+  padding: 6px var(--doc-pad) 4px;
 }
 
 .properties-toggle {
@@ -1495,7 +1521,7 @@ select.prop-value {
   flex: 1;
   border: none;
   outline: none;
-  font-size: 32px;
+  font-size: 34px;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);
@@ -1566,7 +1592,7 @@ select.prop-value {
   flex: 1;
   overflow-y: auto;
   position: relative;
-  padding: 8px 48px 40vh;
+  padding: 4px 0 20vh;
 }
 
 /* Find bar */
@@ -1625,9 +1651,9 @@ select.prop-value {
   outline: none;
   font-size: 16px;
   line-height: 1.7;
-  max-width: 720px;
+  max-width: var(--doc-width);
   margin: 0 auto;
-  padding-left: 4px;
+  padding: 0 var(--doc-pad);
 }
 
 /* Block hover affordance (Notion-style): highlight the block under the cursor. */
@@ -1653,9 +1679,12 @@ select.prop-value {
 .editor-placeholder {
   position: absolute;
   top: 8px;
-  left: 48px;
-  max-width: 720px;
-  margin: 0 auto;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--doc-width);
+  max-width: 100%;
+  padding: 0 var(--doc-pad);
+  box-sizing: border-box;
   color: var(--text-dim);
   pointer-events: none;
   font-size: 16px;
@@ -2168,9 +2197,9 @@ select.prop-value {
 
 /* Backlinks */
 .backlinks {
-  max-width: 720px;
+  max-width: var(--doc-width);
   margin: 0 auto;
-  padding: 16px 0 40px;
+  padding: 24px var(--doc-pad) 12px;
   width: 100%;
   border-top: 1px solid var(--border);
 }
@@ -2270,10 +2299,10 @@ select.prop-value {
 
 /* Tags */
 .tag-bar {
-  max-width: 720px;
+  max-width: var(--doc-width);
   margin: 0 auto;
   width: 100%;
-  padding: 8px 0 16px;
+  padding: 4px var(--doc-pad) 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2325,10 +2354,10 @@ select.prop-value {
 
 /* Attachments */
 .attachment-panel {
-  max-width: 720px;
+  max-width: var(--doc-width);
   margin: 0 auto;
   width: 100%;
-  padding: 8px 0 24px;
+  padding: 12px var(--doc-pad) 40px;
 }
 
 .attachment-head {
