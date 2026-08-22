@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNotes } from "../store/notes";
+import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import {
@@ -20,7 +21,24 @@ import {
 // and a "create as database" view row.
 export function NewPageGuide() {
   const { createDatabase } = useNotes();
+  const [dismissed, setDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
+  const editor = useEditorStore((s) => s.editor);
+
+  // Press Enter (anywhere while the guide shows) to start editing: dismiss the
+  // guide and focus the editor.
+  useEffect(() => {
+    if (dismissed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        setDismissed(true);
+        editor?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [dismissed, editor]);
 
   const importMarkdown = () => setImporting(true);
 
@@ -36,9 +54,9 @@ export function NewPageGuide() {
 
   return (
     <>
-      <div className="new-page-guide" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>
-          <div className="new-page-guide-list">
+      {!dismissed && (
+        <div className="new-page-guide" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>          <div className="new-page-guide-list">
             <button className="npg-act" onClick={() => toast("AI 创作即将推出", "info")}>
               <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
             </button>
@@ -69,7 +87,8 @@ export function NewPageGuide() {
             </div>
           </div>
         </div>
-        {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
+      )}
+      {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
       </>
   );
 }
