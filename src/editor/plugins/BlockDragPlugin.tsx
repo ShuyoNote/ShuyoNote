@@ -47,7 +47,7 @@ function getTopLevelKey(
 type BlockRef = { key: string; el: HTMLElement; rect: DOMRect };
 type DropLine = { top: number; left: number; width: number };
 type HandleState = { top: number; left: number; key: string };
-const HANDLE_OFFSET = 40; // handle spans [contentLeft - 40, contentLeft] (flush)
+const HANDLE_OFFSET = 48; // matches the visible handle width (flush against content)
 const HIDE_DELAY = 400; // ms — linger long enough to grab the handle
 
 function getTopLevelBlocks(
