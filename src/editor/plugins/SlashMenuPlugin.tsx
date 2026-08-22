@@ -233,7 +233,14 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
         const dom = editor.getElementByKey(node.getKey());
         if (dom) {
           const rect = dom.getBoundingClientRect();
-          setPos({ top: rect.bottom + 4, left: rect.left });
+          const menuWidth = 240;
+          const menuHeight = 340;
+          const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
+          let top = rect.bottom + 4;
+          if (top + 80 > window.innerHeight) {
+            top = Math.max(8, rect.top - menuHeight - 8);
+          }
+          setPos({ top, left });
         }
         setOpen(true);
       });

@@ -33,7 +33,10 @@ export function SelectionToolbarPlugin() {
         const domSelection = window.getSelection();
         if (domSelection && domSelection.rangeCount > 0) {
           const rect = domSelection.getRangeAt(0).getBoundingClientRect();
-          setPos({ top: rect.top, left: rect.left + rect.width / 2 });
+          const tw = 200;
+          const left = Math.max(tw / 2 + 8, Math.min(rect.left + rect.width / 2, window.innerWidth - tw / 2 - 8));
+          const top = Math.max(56, rect.top);
+          setPos({ top, left });
         } else {
           setPos(null);
         }
