@@ -3163,6 +3163,17 @@ select.prop-value {
   padding: 8px 10px 4px;
 }
 
+.slash-shortcut {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: inherit;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
 .slash-empty {
   padding: 12px;
   color: var(--text-dim);

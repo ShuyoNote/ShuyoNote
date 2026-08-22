@@ -40,6 +40,7 @@ interface SlashOption {
   badge: string;
   group: string;
   run: Run;
+  shortcut?: string;
 }
 
 // Replace the current top-level block with a new element, moving children over.
@@ -76,17 +77,17 @@ function $insertBlockNode(node: LexicalNode) {
 
 function makeOptions(pageId: string): SlashOption[] {
   return [
-    { key: "h1", title: "标题 1", badge: "H1", group: "基础", run: (editor) =>
+    { key: "h1", title: "标题 1", badge: "H1", group: "基础", shortcut: "Ctrl+Alt+1", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h1"))) },
-    { key: "h2", title: "标题 2", badge: "H2", group: "基础", run: (editor) =>
+    { key: "h2", title: "标题 2", badge: "H2", group: "基础", shortcut: "Ctrl+Alt+2", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h2"))) },
-    { key: "h3", title: "标题 3", badge: "H3", group: "基础", run: (editor) =>
+    { key: "h3", title: "标题 3", badge: "H3", group: "基础", shortcut: "Ctrl+Alt+3", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h3"))) },
     { key: "p", title: "正文", badge: "¶", group: "基础", run: (editor) =>
       editor.update(() => $replaceBlock($createParagraphNode())) },
-    { key: "quote", title: "引用", badge: "❝", group: "基础", run: (editor) =>
+    { key: "quote", title: "引用", badge: "❝", group: "基础", shortcut: "Ctrl+Alt+Q", run: (editor) =>
       editor.update(() => $replaceBlock($createQuoteNode())) },
-    { key: "link", title: "链接", badge: "🔗", group: "基础", run: (editor) =>
+    { key: "link", title: "链接", badge: "🔗", group: "基础", shortcut: "Ctrl+Alt+L", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
@@ -100,11 +101,11 @@ function makeOptions(pageId: string): SlashOption[] {
         topLevel.replace(paragraph);
         linkNode.selectStart();
       }) },
-    { key: "todo", title: "待办事项", badge: "☑", group: "列表", run: (editor) => {
+    { key: "todo", title: "待办事项", badge: "☑", group: "列表", shortcut: "Ctrl+Alt+T", run: (editor) => {
       editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined); } },
-    { key: "ul", title: "无序列表", badge: "•", group: "列表", run: (editor) => {
+    { key: "ul", title: "无序列表", badge: "•", group: "列表", shortcut: "Ctrl+Alt+U", run: (editor) => {
       editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined); } },
-    { key: "ol", title: "有序列表", badge: "1.", group: "列表", run: (editor) => {
+    { key: "ol", title: "有序列表", badge: "1.", group: "列表", shortcut: "Ctrl+Alt+O", run: (editor) => {
       editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined); } },
     { key: "image", title: "图片", badge: "🖼", group: "媒体", run: async (editor) => {
       const selected = await open({
@@ -157,7 +158,7 @@ function makeOptions(pageId: string): SlashOption[] {
       }
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", run: (editor) =>
-      editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", run: (editor) =>
+      editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", shortcut: "Ctrl+Alt+C", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
@@ -169,7 +170,7 @@ function makeOptions(pageId: string): SlashOption[] {
         topLevel.replace(codeNode);
         codeNode.selectStart();
       }) },
-    { key: "hr", title: "分隔线", badge: "—", group: "嵌入", run: (editor) => {
+    { key: "hr", title: "分隔线", badge: "—", group: "嵌入", shortcut: "Ctrl+Alt+M", run: (editor) => {
       editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined); } },
     { key: "table", title: "表格", badge: "▦", group: "嵌入", run: (editor) => {
       editor.dispatchCommand(INSERT_TABLE_COMMAND, {
@@ -386,6 +387,7 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
             >
               <span className="slash-icon">{option.badge}</span>
               <span className="slash-title">{option.title}</span>
+              {option.shortcut && <span className="slash-shortcut">{option.shortcut}</span>}
             </button>
           );
         })
