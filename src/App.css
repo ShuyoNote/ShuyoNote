@@ -4490,7 +4490,6 @@ select.prop-value {
   flex-direction: column;
   background: var(--bg);
   border-left: 1px solid var(--border);
-  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.18);
   transform: translateX(100%);
   transition: transform var(--transition-fast);
 }
