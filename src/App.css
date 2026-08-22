@@ -1816,6 +1816,63 @@ select.prop-value {
   margin-top: 2px;
 }
 
+/* Selected top-level block (multi-select). */
+.editor-content > .block-selected {
+  background: var(--accent-soft) !important;
+  border-radius: var(--radius-sm);
+}
+
+/* Batch action bar for selected blocks. */
+.block-selection-bar {
+  position: fixed;
+  top: 12px;
+  right: 24px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 5px 8px 5px 12px;
+  font-size: 13px;
+}
+.block-selection-count {
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-right: 2px;
+}
+.block-selection-bar button {
+  border: none;
+  background: var(--hover);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.block-selection-bar button:hover {
+  background: var(--hover-strong);
+}
+.block-selection-bar button.danger {
+  color: var(--danger);
+}
+.block-selection-bar button.danger:hover {
+  background: var(--danger-soft);
+}
+.block-selection-bar .block-selection-close {
+  background: transparent;
+  color: var(--text-faint);
+  padding: 4px 6px;
+  font-size: 15px;
+}
+.block-selection-bar .block-selection-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
 /* Selection formatting toolbar */
 .selection-toolbar {
   position: fixed;

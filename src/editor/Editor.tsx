@@ -34,6 +34,7 @@ import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
+import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
@@ -302,6 +303,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <SlashMenuPlugin pageId={pageId} />
         <ImagePastePlugin pageId={pageId} />
         <BlockDragPlugin />
+        <BlockSelectionPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         <FindPlugin />
         <SelectionToolbarPlugin />
