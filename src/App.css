@@ -1850,11 +1850,9 @@ select.prop-value {
   border-radius: var(--radius-sm);
 }
 
-/* Batch action bar for selected blocks. */
+/* Batch action bar for selected blocks (positioned near the first block). */
 .block-selection-bar {
   position: fixed;
-  top: 12px;
-  right: 24px;
   z-index: 40;
   display: flex;
   align-items: center;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import type { AttrDef, PageProp } from "../types";
@@ -30,14 +30,48 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   };
   useEffect(load, [pageId]);
 
-  const persist = async (attrId: string, value: string) => {
+  const saveTimers = useRef<Record<string, number>>({});
+  const saveValues = useRef<Record<string, string>>({});
+
+  // Debounced per-attribute save: only the last edited value is written, so a
+  // burst of keystrokes doesn't fire concurrent, out-of-order IPC writes (which
+  // could leave a stale value in the DB).
+  const persist = (attrId: string, value: string) => {
     setProps((ps) => ps.map((p) => (p.attr_id === attrId ? { ...p, value } : p)));
-    try {
-      await api.setPageProp({ page_id: pageId, attr_id: attrId, value });
-    } catch (e) {
-      toast(`保存属性失败：${e}`, "error");
-    }
+    saveValues.current[attrId] = value;
+    if (saveTimers.current[attrId]) window.clearTimeout(saveTimers.current[attrId]);
+    saveTimers.current[attrId] = window.setTimeout(() => {
+      const v = saveValues.current[attrId];
+      delete saveValues.current[attrId];
+      delete saveTimers.current[attrId];
+      api
+        .setPageProp({ page_id: pageId, attr_id: attrId, value: v })
+        .catch((e) => toast(`保存属性失败：${e}`, "error"));
+    }, 450);
   };
+
+  // Flush a pending save immediately (on blur / unmount) so nothing is lost.
+  const flush = (attrId: string, value: string) => {
+    if (saveTimers.current[attrId]) {
+      window.clearTimeout(saveTimers.current[attrId]);
+      delete saveTimers.current[attrId];
+    }
+    delete saveValues.current[attrId];
+    api
+      .setPageProp({ page_id: pageId, attr_id: attrId, value })
+      .catch((e) => toast(`保存属性失败：${e}`, "error"));
+  };
+
+  // Flush pending property saves when the panel unmounts (page switch).
+  useEffect(() => {
+    return () => {
+      for (const id of Object.keys(saveValues.current)) {
+        api
+          .setPageProp({ page_id: pageId, attr_id: id, value: saveValues.current[id] })
+          .catch(() => {});
+      }
+    };
+  }, [pageId]);
 
   const remove = async (attrId: string) => {
     setProps((ps) => ps.filter((p) => p.attr_id !== attrId));
@@ -93,7 +127,11 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
               <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>
                 {p.name}
               </span>
-              <ValueEditor prop={p} onChange={(v) => persist(p.attr_id, v)} />
+              <ValueEditor
+                prop={p}
+                onChange={(v) => persist(p.attr_id, v)}
+                onCommit={(v) => flush(p.attr_id, v)}
+              />
               <button className="prop-remove" onClick={() => remove(p.attr_id)} title="移除属性">
                 ×
               </button>
@@ -148,7 +186,15 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   );
 }
 
-function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
+function ValueEditor({
+  prop,
+  onChange,
+  onCommit,
+}: {
+  prop: PageProp;
+  onChange: (v: string) => void;
+  onCommit?: (v: string) => void;
+}) {
   if (prop.attr_type === "checkbox") {
     return (
       <input
@@ -161,7 +207,12 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
   }
   if (prop.attr_type === "select") {
     return (
-      <select className="prop-value" value={prop.value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className="prop-value"
+        value={prop.value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={(e) => onCommit?.(e.target.value)}
+      >
         <option value="">—</option>
         {prop.options.map((o) => (
           <option key={o} value={o}>
@@ -177,6 +228,7 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
       value={prop.value}
       placeholder="输入值"
       onChange={(e) => onChange(e.target.value)}
+      onBlur={(e) => onCommit?.(e.target.value)}
     />
   );
 }

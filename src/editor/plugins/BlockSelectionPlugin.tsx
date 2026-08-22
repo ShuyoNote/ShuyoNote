@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $cloneWithProperties, $getNodeByKey, $getRoot } from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
@@ -18,6 +18,20 @@ function syncHighlight(editor: ReturnType<typeof useLexicalComposerContext>[0], 
 export function BlockSelectionPlugin() {
   const [editor] = useLexicalComposerContext();
   const keys = useBlockSelection((s) => s.keys);
+  const [barPos, setBarPos] = useState<{ top: number; left: number }>({ top: 12, left: 12 });
+
+  // Position the action bar near the first selected block.
+  useEffect(() => {
+    if (keys.length === 0) return;
+    const el = editor.getElementByKey(keys[0]);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const w = 200;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+    let top = r.top - 8;
+    if (top < 8) top = r.bottom + 8;
+    setBarPos({ top, left });
+  }, [keys, editor]);
 
   useEffect(() => {
     syncHighlight(editor, keys);
@@ -93,7 +107,7 @@ export function BlockSelectionPlugin() {
   };
 
   return (
-    <div className="block-selection-bar">
+    <div className="block-selection-bar" style={{ top: barPos.top, left: barPos.left }}>
       <span className="block-selection-count">已选 {keys.length} 块</span>
       <button onClick={copy}>⧉ 复制</button>
       <button className="danger" onClick={del}>
