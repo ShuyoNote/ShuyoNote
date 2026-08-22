@@ -46,7 +46,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   openPage: async (id) => {
     try {
       const current = await api.getPage(id);
-      set({ currentId: id, current });
+      set({ currentId: id, current, error: null });
       // Opening a page/database switches back to the editor view.
       useViewStore.getState().setView("notes");
     } catch (e) {

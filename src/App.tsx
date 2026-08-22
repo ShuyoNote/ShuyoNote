@@ -19,6 +19,7 @@ import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
+import { useFileManagerStore } from "./store/fileManager";
 import { toast } from "./store/toast";
 import "./App.css";
 
@@ -44,7 +45,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
   // Build breadcrumb trail from the page tree.
   const breadcrumbs = useMemo(() => {
-    const chain: { id: string; title: string }[] = [];
+    const chain: { id: string; title: string; kind: string }[] = [];
     const map = new Map(pages.map((p) => [p.id, p]));
     let cur = map.get(pageId);
     const visited = new Set<string>();
@@ -52,7 +53,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
       visited.add(cur.id);
       const parent = map.get(cur.parent_id);
       if (parent) {
-        chain.unshift({ id: parent.id, title: parent.title || "未命名" });
+        chain.unshift({ id: parent.id, title: parent.title || "未命名", kind: parent.kind });
         cur = parent;
       } else {
         break;
@@ -144,7 +145,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
             {breadcrumbs.map((b, i) => (
               <span key={b.id}>
                 {i > 0 && <span className="crumb-sep">/</span>}
-                <button className="crumb" onClick={() => openPage(b.id)}>
+                <button
+                  className="crumb"
+                  onClick={() =>
+                    b.kind === "folder"
+                      ? (useFileManagerStore.getState().setFolderId(b.id),
+                        useViewStore.getState().setView("files"))
+                      : openPage(b.id)
+                  }
+                >
                   {b.title}
                 </button>
               </span>
@@ -200,10 +209,11 @@ function App() {
     loadPages();
   }, []);
 
-  // Auto-open first page if none selected.
+  // Auto-open the first page/database (never a folder) when none is selected.
   useEffect(() => {
     if (!currentId && pages.length > 0) {
-      useNotes.getState().openPage(pages[0].id);
+      const first = pages.find((p) => p.kind === "page" || p.kind === "database");
+      if (first) useNotes.getState().openPage(first.id);
     }
   }, [pages, currentId]);
 
