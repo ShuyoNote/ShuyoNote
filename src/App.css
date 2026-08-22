@@ -1967,6 +1967,16 @@ select.prop-value {
   border-radius: var(--radius-sm);
 }
 
+/* Rectangular box-select overlay drawn while dragging across blocks. */
+.block-box-select {
+  position: fixed;
+  z-index: 28;
+  background: rgba(51, 112, 255, 0.14);
+  border: 1px solid rgba(51, 112, 255, 0.7);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 /* Batch action bar for selected blocks (positioned near the first block). */
 .block-selection-bar {
   position: fixed;
