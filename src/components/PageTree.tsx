@@ -7,11 +7,9 @@ import { useNotes } from "../store/notes";
 import { useSidebar } from "../store/sidebar";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
-import { tagColor } from "../lib/tagColor";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
-import { useTagManagerStore } from "../store/tagManager";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
@@ -286,9 +284,6 @@ export function PageTree({
 }) {
   const { pages, createPage, createFolder, createDatabase, loading } = useNotes();
   const { collapsed, toggle } = useSidebar();
-  const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [taggedIds, setTaggedIds] = useState<Set<string> | null>(null);
   const {
     open: newMenuOpen,
     pos: newMenuPos,
@@ -301,11 +296,6 @@ export function PageTree({
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
 
-  const tagRevision = useTagManagerStore((s) => s.revision);
-  useEffect(() => {
-    api.listTags().then(setTags).catch(() => {});
-  }, [tagRevision]);
-
   useEffect(() => {
     api
       .getWorkspaceName()
@@ -316,20 +306,7 @@ export function PageTree({
       });
   }, []);
 
-  useEffect(() => {
-    if (activeTag) {
-      api.pagesByTag(activeTag).then((ps) => setTaggedIds(new Set(ps.map((p) => p.id))));
-    } else {
-      setTaggedIds(null);
-    }
-  }, [activeTag]);
-
-  const visiblePages = useMemo(() => {
-    if (!taggedIds) return pages;
-    return pages.filter((p) => taggedIds.has(p.id));
-  }, [pages, taggedIds]);
-
-  const tree = useMemo(() => buildTree(visiblePages), [visiblePages]);
+  const tree = useMemo(() => buildTree(pages), [pages]);
 
   const commitName = async () => {
     const v = nameValue.trim();
@@ -474,26 +451,6 @@ export function PageTree({
               🕸 关系图
             </button>
           </div>
-          {tags.length > 0 && (
-            <div className="sidebar-tags">
-              <button
-                className={`tag-filter ${activeTag === null ? "tag-filter-active" : ""}`}
-                onClick={() => setActiveTag(null)}
-              >
-                全部
-              </button>
-              {tags.map((t) => (
-                <button
-                  key={t.id}
-                  className={`tag-filter ${activeTag === t.id ? "tag-filter-active" : ""}`}
-                  onClick={() => setActiveTag(t.id)}
-                >
-                  <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
-                  {t.name}
-                </button>
-              ))}
-            </div>
-          )}
         </>
       )}
       <div className="sidebar-tree">
@@ -505,7 +462,7 @@ export function PageTree({
           </div>
         ) : tree.length === 0 ? (
           <div className="sidebar-empty">
-            {collapsed ? "·" : activeTag ? "该标签下暂无页面" : "暂无页面，点击「新建页面」开始"}
+            {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
           </div>
         ) : (
           tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)

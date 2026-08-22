@@ -2405,6 +2405,7 @@ select.prop-value {
 
 /* Tags */
 .tag-bar {
+  position: relative;
   max-width: var(--doc-width);
   margin: 0 auto;
   width: 100%;
@@ -2413,6 +2414,175 @@ select.prop-value {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.tag-add-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-full);
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+.tag-add-trigger:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Tag picker / manager popup (opened from the tag bar). */
+.tag-picker {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 8px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+}
+.tag-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 8px;
+}
+.tag-picker-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.tag-picker-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tag-picker-mode {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.tag-picker-mode:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.tag-picker-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+.tag-picker-close:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.tag-picker-input {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  font-family: inherit;
+  margin-bottom: 6px;
+}
+.tag-picker-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tag-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.tag-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--radius-xs);
+}
+.tag-picker-row:hover {
+  background: var(--hover);
+}
+.tag-picker-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font-family: inherit;
+}
+.tag-picker-check {
+  width: 14px;
+  font-size: 12px;
+  color: var(--accent);
+  flex: none;
+}
+.tag-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag-picker-count {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex: none;
+}
+.tag-picker-ops {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+}
+.tag-picker-ops button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
+}
+.tag-picker-ops button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.tag-picker-empty {
+  padding: 16px 8px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
 }
 
 .tag-chip {
@@ -4804,129 +4974,7 @@ select.prop-value {
   background: var(--hover);
 }
 
-/* Tag manager trigger (shown in the page tag bar) */
-.tag-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-full);
-  height: 22px;
-  padding: 0 9px;
-  font-size: 11px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-}
-.tag-trigger:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.tag-manager {
-  width: 280px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  padding: 8px;
-  z-index: 60;
-}
-.tag-manager-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px 8px;
-}
-.tag-manager-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-}
-.tag-manager-create {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding: 0 8px;
-}
-.tag-manager-create .tag-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 5px 8px;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg);
-  font-family: inherit;
-}
-.tag-manager-create .tag-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.tag-manager-add {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  border-radius: var(--radius-sm);
-  height: 28px;
-  width: 28px;
-  cursor: pointer;
-  flex: none;
-}
-.tag-manager-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.tag-manager-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--radius-xs);
-}
-.tag-manager-row:hover {
-  background: var(--hover);
-}
-.tag-manager-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tag-manager-count {
-  font-size: 12px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  flex: none;
-}
-.tag-manager-actions {
-  display: inline-flex;
-  gap: 2px;
-  flex: none;
-}
-.tag-manager-actions button {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 5px;
-  border-radius: var(--radius-xs);
-}
-.tag-manager-actions button:hover {
-  color: var(--text);
-  background: var(--hover);
-}
+/* Inline rename input used by the tag picker. */
 .tag-manager-edit {
   flex: 1;
   min-width: 0;
@@ -4938,10 +4986,4 @@ select.prop-value {
   color: var(--text);
   background: var(--bg);
   outline: none;
-}
-.tag-manager-empty {
-  padding: 16px 8px;
-  text-align: center;
-  color: var(--text-faint);
-  font-size: 13px;
 }
