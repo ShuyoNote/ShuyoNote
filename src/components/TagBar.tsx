@@ -3,6 +3,7 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTagManagerStore } from "../store/tagManager";
+import { usePropertyUiStore } from "../store/propertyUi";
 import { usePopover } from "../hooks/usePopover";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
@@ -80,6 +81,19 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   useEffect(() => {
     load();
   }, [revision]);
+
+  // "添加标签" from the page-actions row: open the picker (fresh).
+  const addTagSeq = usePropertyUiStore((s) => s.addTagSeq);
+  useEffect(() => {
+    if (addTagSeq > 0) {
+      setManage(false);
+      setQuery("");
+      setEditing(null);
+      load();
+      togglePop();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addTagSeq]);
 
   const pageTagIds = new Set(pageTags.map((t) => t.id));
   const q = query.trim().toLowerCase();

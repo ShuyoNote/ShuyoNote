@@ -1341,6 +1341,38 @@ body.is-toc-open .main {
   margin: 0 auto;
 }
 
+/* Page-actions row (Notion-style: add icon / cover / property / tag). */
+.page-actions {
+  max-width: var(--doc-width);
+  width: 100%;
+  margin: 12px auto 0;
+  padding: 0 var(--doc-pad);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.page-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-xs);
+  font-family: inherit;
+}
+.page-action-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.page-action-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
 /* Metadata card: groups the title + properties into a light Notion-style card so
    the metadata area reads as a distinct block from the page content. */
 .metadata-card {
@@ -1595,7 +1627,7 @@ select.prop-value {
   flex: 1;
   border: none;
   outline: none;
-  font-size: 34px;
+  font-size: 40px;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);

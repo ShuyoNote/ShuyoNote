@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
+import { usePropertyUiStore } from "../store/propertyUi";
 import type { AttrDef, PageProp } from "../types";
 import { TagRow, TagAddButton } from "./TagBar";
 
@@ -35,6 +36,15 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
     api.pageTags(pageId).then(setPageTags).catch((e) => console.error(e));
   };
   useEffect(load, [pageId]);
+
+  // "添加属性" from the page-actions row: open the panel and focus the add input.
+  const addPropSeq = usePropertyUiStore((s) => s.addPropSeq);
+  useEffect(() => {
+    if (addPropSeq > 0) {
+      setOpen(true);
+      setAdding(true);
+    }
+  }, [addPropSeq]);
 
   // The metadata card only shows when the page actually has properties (tag rows
   // or non-tag property rows); otherwise the title connects straight to content.
