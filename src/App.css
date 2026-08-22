@@ -987,6 +987,37 @@ body,
   padding-bottom: 16px;
 }
 
+/* Pinned bottom actions (回收站 / 模板中心), Wolai-style. */
+.sidebar-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.sidebar-bottom-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.sidebar-bottom-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.sidebar-bottom-icon {
+  font-size: 14px;
+}
+
 .sidebar-search {
   padding: 0 8px 8px;
   position: relative;
@@ -1104,12 +1135,12 @@ body,
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 8px;
+  padding: 7px 8px;
   cursor: pointer;
   font-size: 14px;
   user-select: none;
   border-radius: var(--radius-sm);
-  margin: 1px 6px;
+  margin: 2px 6px;
   color: var(--text);
   transition: background var(--transition-fast), color var(--transition-fast);
 }

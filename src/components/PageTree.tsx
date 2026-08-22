@@ -370,7 +370,6 @@ export function PageTree({
       {!collapsed && (
         <div className="sidebar-header-actions">
           <div className="sidebar-actions-group">
-            <TrashPanel />
             <SyncPanel />
             <BackupButton />
             <ThemeSettings />
@@ -470,6 +469,14 @@ export function PageTree({
           tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)
         )}
       </div>
+      {!collapsed && (
+        <div className="sidebar-bottom">
+          <TrashPanel />
+          <button className="sidebar-bottom-btn" onClick={() => toast("模板中心即将推出", "info")}>
+            <span className="sidebar-bottom-icon">🗂</span> 模板中心
+          </button>
+        </div>
+      )}
     </div>
   );
 }
