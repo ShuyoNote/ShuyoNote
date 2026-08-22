@@ -15,7 +15,6 @@ export function NewPageGuide() {
     <>
       {!dismissed && (
         <div className="new-page-guide" onMouseDown={(e) => e.stopPropagation()}>
-          <div className="new-page-guide-title">新页面</div>
           <div className="new-page-guide-desc">开始编辑，或从下方选择类型</div>
           <div className="new-page-guide-options">
             <button className="new-page-guide-item" onClick={() => setDismissed(true)}>
