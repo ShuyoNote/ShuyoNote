@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.4.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -244,8 +244,8 @@ ShuyoNote/
 - [x] 属性驱动仪表盘聚合
 - [ ] 端到端加密
 - [ ] 主题 / 插件生态
-- [ ] 数据库视图扩展（列表 / 日历 / 时间轴 / 目录）
-- [ ] 新页面引导层（页面 / 数据库 / 模板 / 导入 / AI 入口）
+- [x] 数据库视图扩展（列表 / 日历 / 时间轴 / 目录）
+- [x] 新页面引导层（页面 / 数据库 / 模板 / 导入 / AI 入口）
 - [ ] 导出 PDF
 - [ ] 移动端适配
 

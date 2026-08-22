@@ -17,15 +17,21 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export function DatabaseView({ pageId, title }: { pageId: string; title: string }) {
-  const { openPage } = useNotes();
+  const { openPage, pages } = useNotes();
   const [query, setQuery] = useState<DatabaseQuery | null>(null);
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [addingCol, setAddingCol] = useState(false);
-  const [viewType, setViewType] = useState<"table" | "gallery" | "board">("table");
+  const [viewType, setViewType] = useState<
+    "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory"
+  >("table");
   const [boardGroupAttr, setBoardGroupAttr] = useState<string | null>(null);
   const [boardDragOver, setBoardDragOver] = useState<string | null>(null);
+  const [calMonth, setCalMonth] = useState(() => {
+    const d = new Date();
+    return { y: d.getFullYear(), m: d.getMonth() };
+  });
   const [editingOptionsCol, setEditingOptionsCol] = useState<string | null>(null);
   const [optionsText, setOptionsText] = useState("");
 
@@ -208,6 +214,60 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     }
   };
 
+  const dateCol = query?.columns.find((c) => c.attr_type === "date") ?? null;
+
+  const directoryTree = useMemo(() => {
+    const map = new Map<string, { id: string; title: string; children: any[] }>();
+    const inRows = new Set(rows.map((r) => r.page_id));
+    for (const p of pages) {
+      if (inRows.has(p.id)) map.set(p.id, { id: p.id, title: p.title, children: [] as any[] });
+    }
+    const roots: { id: string; title: string; children: any[] }[] = [];
+    for (const p of pages) {
+      const node = map.get(p.id);
+      if (!node) continue;
+      const parent = p.parent_id ? map.get(p.parent_id) : null;
+      if (parent) parent.children.push(node);
+      else roots.push(node);
+    }
+    return roots;
+  }, [pages, rows]);
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const calendarCells = useMemo(() => {
+    const first = new Date(calMonth.y, calMonth.m, 1);
+    const last = new Date(calMonth.y, calMonth.m + 1, 0);
+    const cells: { key: string; day: number | null; rows: DatabaseRow[] }[] = [];
+    for (let i = 0; i < first.getDay(); i++) cells.push({ key: "b" + i, day: null, rows: [] });
+    for (let d = 1; d <= last.getDate(); d++) cells.push({ key: "d" + d, day: d, rows: [] });
+    const byDate = new Map<string, DatabaseRow[]>();
+    if (dateCol) {
+      for (const r of rows) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.values[dateCol.id] ?? "");
+        if (m) {
+          const key = `${m[1]}-${m[2]}-${m[3]}`;
+          const arr = byDate.get(key) ?? [];
+          arr.push(r);
+          byDate.set(key, arr);
+        }
+      }
+    }
+    for (const cell of cells) {
+      if (cell.day !== null) {
+        const key = `${calMonth.y}-${pad2(calMonth.m + 1)}-${pad2(cell.day)}`;
+        cell.rows = byDate.get(key) ?? [];
+      }
+    }
+    return cells;
+  }, [calMonth, rows, dateCol]);
+
+  const timelineRows = useMemo(() => {
+    if (!dateCol) return [];
+    return [...rows].sort((a, b) =>
+      (a.values[dateCol.id] ?? "").localeCompare(b.values[dateCol.id] ?? ""),
+    );
+  }, [rows, dateCol]);
+
   if (!query) {
     return <div className="database-view database-empty">加载中…</div>;
   }
@@ -240,6 +300,30 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
             onClick={() => setViewType("board")}
           >
             📋 看板
+          </button>
+          <button
+            className={viewType === "list" ? "db-view-active" : ""}
+            onClick={() => setViewType("list")}
+          >
+            ☷ 列表
+          </button>
+          <button
+            className={viewType === "calendar" ? "db-view-active" : ""}
+            onClick={() => setViewType("calendar")}
+          >
+            📅 日历
+          </button>
+          <button
+            className={viewType === "timeline" ? "db-view-active" : ""}
+            onClick={() => setViewType("timeline")}
+          >
+            📈 时间轴
+          </button>
+          <button
+            className={viewType === "directory" ? "db-view-active" : ""}
+            onClick={() => setViewType("directory")}
+          >
+            🗂 目录
           </button>
         </div>
         <span className="database-count">{rows.length} 条</span>
@@ -407,6 +491,75 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
             ))}
           </div>
         </div>
+      ) : viewType === "list" ? (
+        <div className="db-list">
+          {rows.map((r) => (
+            <div key={r.page_id} className="db-list-item" onClick={() => openPage(r.page_id)}>
+              <span className="db-list-title">{r.title || "未命名"}</span>
+              <span className="db-list-props">
+                {query.columns.slice(0, 3).map((c) => {
+                  const v = r.values[c.id];
+                  return v ? (
+                    <span key={c.id} className="db-list-prop">
+                      {c.name}: {v}
+                    </span>
+                  ) : null;
+                })}
+              </span>
+            </div>
+          ))}
+          {rows.length === 0 && <div className="db-empty">无匹配页面</div>}
+        </div>
+      ) : viewType === "calendar" ? (
+        <div className="db-cal">
+          <div className="db-cal-toolbar">
+            <button
+              onClick={() => setCalMonth((s) => (s.m === 0 ? { y: s.y - 1, m: 11 } : { y: s.y, m: s.m - 1 }))}
+            >
+              ‹
+            </button>
+            <span className="db-cal-title">
+              {calMonth.y} 年 {calMonth.m + 1} 月
+            </span>
+            <button
+              onClick={() => setCalMonth((s) => (s.m === 11 ? { y: s.y + 1, m: 0 } : { y: s.y, m: s.m + 1 }))}
+            >
+              ›
+            </button>
+            {!dateCol && <span className="db-cal-hint">需先添加 date 类型列</span>}
+          </div>
+          <div className="db-cal-grid">
+            {calendarCells.map((cell) => (
+              <div key={cell.key} className={`db-cal-cell ${cell.day === null ? "db-cal-empty" : ""}`}>
+                {cell.day !== null && <span className="db-cal-day">{cell.day}</span>}
+                {cell.rows.map((r) => (
+                  <button key={r.page_id} className="db-cal-event" onClick={() => openPage(r.page_id)}>
+                    {r.title || "未命名"}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : viewType === "timeline" ? (
+        <div className="db-timeline">
+          {timelineRows.map((r) => (
+            <div key={r.page_id} className="db-timeline-item">
+              <span className="db-timeline-date">{dateCol ? r.values[dateCol.id] : ""}</span>
+              <button className="db-timeline-title" onClick={() => openPage(r.page_id)}>
+                {r.title || "未命名"}
+              </button>
+            </div>
+          ))}
+          {!dateCol && <div className="db-empty">需先添加 date 类型列</div>}
+        </div>
+      ) : viewType === "directory" ? (
+        <div className="db-directory">
+          {directoryTree.map((n) => (
+            <DirectoryNode key={n.id} node={n} openPage={openPage} />
+          ))}
+          {directoryTree.length === 0 && <div className="db-empty">无匹配页面</div>}
+        </div>
       ) : (
         <div className="db-gallery">
           {rows.map((r) => {
@@ -569,6 +722,27 @@ function DbNewAttr({
       <button className="db-new-attr-btn" onClick={commit}>
         新建
       </button>
+    </div>
+  );
+}
+
+function DirectoryNode({
+  node,
+  openPage,
+  depth = 0,
+}: {
+  node: { id: string; title: string; children: any[] };
+  openPage: (id: string) => void;
+  depth?: number;
+}) {
+  return (
+    <div className="db-dir-item" style={{ paddingLeft: depth * 16 }}>
+      <button className="db-dir-title" onClick={() => openPage(node.id)}>
+        {node.title || "未命名"}
+      </button>
+      {node.children.map((c) => (
+        <DirectoryNode key={c.id} node={c} openPage={openPage} depth={depth + 1} />
+      ))}
     </div>
   );
 }

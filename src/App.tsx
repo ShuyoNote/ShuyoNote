@@ -5,6 +5,7 @@ import { TagBar } from "./components/TagBar";
 import { AttachmentPanel } from "./components/AttachmentPanel";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DatabaseView } from "./components/DatabaseView";
+import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { BoardView } from "./components/BoardView";
@@ -131,15 +132,18 @@ function NoteEditor({ pageId }: { pageId: string }) {
         {error && <span className="error-badge">{error}</span>}
       </div>
       <PropertiesPanel pageId={pageId} />
-      <ErrorBoundary>
-        <Editor
-          key={pageId}
-          pageId={pageId}
-          contentJson={current?.content_json ?? ""}
-          onSave={onEditorSave}
-          searchQuery={searchQuery}
-        />
-      </ErrorBoundary>
+      <div className="editor-stage">
+        <ErrorBoundary>
+          <Editor
+            key={pageId}
+            pageId={pageId}
+            contentJson={current?.content_json ?? ""}
+            onSave={onEditorSave}
+            searchQuery={searchQuery}
+          />
+        </ErrorBoundary>
+        {current && current.content_text.length === 0 && <NewPageGuide />}
+      </div>
       <BacklinksPanel pageId={pageId} />
       <TagBar pageId={pageId} />
       <AttachmentPanel pageId={pageId} />
