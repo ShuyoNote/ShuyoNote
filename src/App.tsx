@@ -166,8 +166,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
         </span>
         {error && <span className="error-badge">{error}</span>}
       </div>
-      <PropertiesPanel pageId={pageId} />
       <TagBar pageId={pageId} />
+      <PropertiesPanel pageId={pageId} />
       <div className="editor-stage">
         <ErrorBoundary>
           <Editor
