@@ -3747,6 +3747,52 @@ select.prop-value {
   padding: 5px 10px;
   font-size: 13px;
   outline: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+}
+
+.db-board-select:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
+.db-select-caret {
+  font-size: 10px;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+.db-board-group {
+  position: relative;
+}
+
+/* Anchor the group-field panel right below its trigger button. */
+.db-board-group .db-add-col-panel {
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  width: 190px;
+}
+
+.db-pop-panel .db-add-col-item {
+  gap: 6px;
+}
+
+.db-item-active {
+  background: var(--accent-soft) !important;
+  color: var(--accent);
+}
+
+.db-sort-caret {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.db-th-sorted {
+  color: var(--accent);
 }
 
 .db-board-hint {

@@ -25,6 +25,10 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [addingCol, setAddingCol] = useState(false);
   const addColPanelRef = useRef<HTMLDivElement>(null);
   const optionsPanelRef = useRef<HTMLDivElement>(null);
+  const [boardGroupOpen, setBoardGroupOpen] = useState(false);
+  const boardGroupPanelRef = useRef<HTMLDivElement>(null);
+  const [sortMenuKey, setSortMenuKey] = useState<string | null>(null);
+  const sortMenuPanelRef = useRef<HTMLDivElement>(null);
   const [viewType, setViewType] = useState<
     "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory"
   >("table");
@@ -43,18 +47,56 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   };
   useEffect(load, [pageId]);
 
-  // Close the add-column / options panels when clicking outside them.
+  // Close the add-column / options / board-group / sort panels when clicking
+  // outside them (a single consistent "click background to close" behavior).
   useEffect(() => {
-    if (!addingCol && !editingOptionsCol) return;
+    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey) return;
     const onDown = (e: MouseEvent) => {
-      if (addColPanelRef.current?.contains(e.target as Node)) return;
-      if (optionsPanelRef.current?.contains(e.target as Node)) return;
+      const t = e.target as Node;
+      if (addColPanelRef.current?.contains(t)) return;
+      if (optionsPanelRef.current?.contains(t)) return;
+      if (boardGroupPanelRef.current?.contains(t)) return;
+      if (sortMenuPanelRef.current?.contains(t)) return;
       setAddingCol(false);
       setEditingOptionsCol(null);
+      setBoardGroupOpen(false);
+      setSortMenuKey(null);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [addingCol, editingOptionsCol]);
+  }, [addingCol, editingOptionsCol, boardGroupOpen, sortMenuKey]);
+
+  // Only one floating panel is open at a time; opening one clears the rest.
+  const closeDbPanels = () => {
+    setAddingCol(false);
+    setEditingOptionsCol(null);
+    setSortMenuKey(null);
+    setBoardGroupOpen(false);
+  };
+  const toggleAddCol = () => {
+    if (addingCol) {
+      setAddingCol(false);
+    } else {
+      closeDbPanels();
+      setAddingCol(true);
+    }
+  };
+  const toggleBoardGroup = () => {
+    if (boardGroupOpen) {
+      setBoardGroupOpen(false);
+    } else {
+      closeDbPanels();
+      setBoardGroupOpen(true);
+    }
+  };
+  const toggleSortMenu = (key: string) => {
+    if (sortMenuKey === key) {
+      setSortMenuKey(null);
+    } else {
+      closeDbPanels();
+      setSortMenuKey(key);
+    }
+  };
 
   const setCell = async (rowPageId: string, attrId: string, value: string) => {
     setQuery(
@@ -102,6 +144,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   };
 
   const openOptionsEditor = (c: AttrDef) => {
+    closeDbPanels();
     setEditingOptionsCol(c.id);
     setOptionsText(c.options.join(", "));
   };
@@ -142,10 +185,6 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     }
     return rs;
   }, [query, filter, sort]);
-
-  const toggleSort = (key: string) => {
-    setSort((s) => (s && s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
-  };
 
   // Dashboard aggregation: per-select-attribute value counts + number sums/averages.
   const summary = useMemo(() => {
@@ -374,15 +413,21 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           <table className="database-table">
             <thead>
               <tr>
-                <th className="db-th" onClick={() => toggleSort("__title")}>
+                <th
+                  className={`db-th ${sort?.key === "__title" ? "db-th-sorted" : ""}`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => toggleSortMenu("__title")}
+                  title="排序"
+                >
                   页面{sort?.key === "__title" ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
                 </th>
                 {query.columns.map((c) => (
                   <th
                     key={c.id}
-                    className="db-th"
+                    className={`db-th ${sort?.key === c.id ? "db-th-sorted" : ""}`}
                     title={TYPE_LABELS[c.attr_type] ?? c.attr_type}
-                    onClick={() => toggleSort(c.id)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => toggleSortMenu(c.id)}
                   >
                     <span className="db-th-name">
                       {c.name}
@@ -392,6 +437,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                       <button
                         className="db-col-options"
                         title="编辑选项"
+                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           openOptionsEditor(c);
@@ -403,6 +449,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                     <button
                       className="db-col-remove"
                       title="移除列"
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeColumn(c.id);
@@ -413,7 +460,11 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   </th>
                 ))}
                 <th className="db-th db-th-add">
-                  <button className="db-add-col" onClick={() => setAddingCol((v) => !v)}>
+                  <button
+                    className="db-add-col"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={toggleAddCol}
+                  >
                     ＋ 列
                   </button>
                 </th>
@@ -453,17 +504,45 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         <div className="db-board">
           <div className="db-board-toolbar">
             <label className="db-board-label">分组字段</label>
-            <select
-              className="db-board-select"
-              value={boardAttr?.id ?? ""}
-              onChange={(e) => setBoardGroupAttr(e.target.value)}
-            >
-              {selectColumns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            <div className="db-board-group" ref={boardGroupPanelRef}>
+              <button
+                className="db-board-select"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={toggleBoardGroup}
+              >
+                {boardAttr?.name ?? "请选择"}
+                <span className="db-select-caret">▾</span>
+              </button>
+              {boardGroupOpen && (
+                <div className="db-add-col-panel db-pop-panel">
+                  <div className="db-add-col-title">
+                    分组字段
+                    <button
+                      className="db-panel-close"
+                      onClick={() => setBoardGroupOpen(false)}
+                      title="关闭"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {selectColumns.map((c) => (
+                    <button
+                      key={c.id}
+                      className={`db-add-col-item ${boardGroupAttr === c.id ? "db-item-active" : ""}`}
+                      onClick={() => {
+                        setBoardGroupAttr(c.id);
+                        setBoardGroupOpen(false);
+                      }}
+                    >
+                      <span>{c.name}</span>
+                    </button>
+                  ))}
+                  {selectColumns.length === 0 && (
+                    <div className="db-add-col-empty">需先添加 select 类型列</div>
+                  )}
+                </div>
+              )}
+            </div>
             {selectColumns.length === 0 && (
               <span className="db-board-hint">需先添加 select 类型列</span>
             )}
@@ -655,6 +734,51 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               取消
             </button>
           </div>
+        </div>
+      )}
+
+      {sortMenuKey && (
+        <div ref={sortMenuPanelRef} className="db-add-col-panel db-pop-panel">
+          <div className="db-add-col-title">
+            排序：
+            {sortMenuKey === "__title"
+              ? "页面"
+              : query.columns.find((c) => c.id === sortMenuKey)?.name ?? ""}
+            <button className="db-panel-close" onClick={() => setSortMenuKey(null)} title="关闭">
+              ×
+            </button>
+          </div>
+          <button
+            className={`db-add-col-item ${sort?.key === sortMenuKey && sort?.dir === 1 ? "db-item-active" : ""}`}
+            onClick={() => {
+              setSort({ key: sortMenuKey, dir: 1 });
+              setSortMenuKey(null);
+            }}
+          >
+            <span>升序</span>
+            <span className="db-sort-caret">↑</span>
+          </button>
+          <button
+            className={`db-add-col-item ${sort?.key === sortMenuKey && sort?.dir === -1 ? "db-item-active" : ""}`}
+            onClick={() => {
+              setSort({ key: sortMenuKey, dir: -1 });
+              setSortMenuKey(null);
+            }}
+          >
+            <span>降序</span>
+            <span className="db-sort-caret">↓</span>
+          </button>
+          {sort?.key === sortMenuKey && (
+            <button
+              className="db-add-col-item"
+              onClick={() => {
+                setSort(null);
+                setSortMenuKey(null);
+              }}
+            >
+              <span>取消排序</span>
+            </button>
+          )}
         </div>
       )}
     </div>
