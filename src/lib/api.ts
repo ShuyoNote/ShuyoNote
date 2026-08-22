@@ -102,6 +102,9 @@ export const api = {
   queryDatabase: (dbPageId: string) =>
     invoke<DatabaseQuery>("query_database", { dbPageId }),
   listTags: () => invoke<Tag[]>("list_tags"),
+  createTag: (name: string) => invoke<Tag>("create_tag", { name }),
+  renameTag: (tagId: string, name: string) => invoke<Tag>("rename_tag", { tagId, name }),
+  deleteTag: (tagId: string) => invoke<void>("delete_tag", { tagId }),
   pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),
   removeTag: (pageId: string, tagId: string) => invoke<void>("remove_tag", { pageId, tagId }),

@@ -55,6 +55,8 @@ pub struct AttachmentMeta {
 pub struct Tag {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub page_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -11,8 +11,10 @@ import { tagColor } from "../lib/tagColor";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
+import { useTagManagerStore } from "../store/tagManager";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
+import { TagManager } from "./TagManager";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeSettings } from "./ThemeSettings";
@@ -300,9 +302,10 @@ export function PageTree({
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
 
+  const tagRevision = useTagManagerStore((s) => s.revision);
   useEffect(() => {
     api.listTags().then(setTags).catch(() => {});
-  }, []);
+  }, [tagRevision]);
 
   useEffect(() => {
     api
@@ -472,6 +475,7 @@ export function PageTree({
               🕸 关系图
             </button>
           </div>
+          <TagManager />
           {tags.length > 0 && (
             <div className="sidebar-tags">
               <button

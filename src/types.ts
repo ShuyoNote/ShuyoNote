@@ -32,6 +32,7 @@ export interface SearchResult {
 export interface Tag {
   id: string;
   name: string;
+  page_count?: number;
 }
 
 export interface AttachmentMeta {
