@@ -2,7 +2,7 @@
   <img src="design/logo/app-icon.png" alt="ShuyoNote Logo" width="128" height="128" />
 </p>
 
-<h1 align="center">ShuyoNote</h1>
+<h1 align="center">数友笔记（ShuyoNote）</h1>
 
 <p align="center">
   <strong>本地优先 · 类 Notion 的知识管理桌面应用</strong><br>

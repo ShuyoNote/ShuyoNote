@@ -237,7 +237,7 @@ export function PageTree({
     toggle: toggleNewMenu,
     close: closeNewMenu,
   } = usePopover<HTMLButtonElement>();
-  const [workspaceName, setWorkspaceName] = useState("ShuyoNote");
+  const [workspaceName, setWorkspaceName] = useState("数友笔记");
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
 
