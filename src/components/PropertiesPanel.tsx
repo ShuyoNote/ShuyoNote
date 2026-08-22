@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import type { AttrDef, PageProp } from "../types";
+import { TagRow } from "./TagBar";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag"] as const;
 const TYPE_LABELS: Record<string, string> = {
@@ -86,6 +87,7 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
       </button>
       {open && (
         <div className="properties-body">
+          <TagRow pageId={pageId} />
           {props.map((p) => (
             <div key={p.attr_id} className="prop-row">
               <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>

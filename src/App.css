@@ -2419,22 +2419,34 @@ select.prop-value {
 .tag-add-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border: 1px dashed var(--border);
   background: transparent;
   color: var(--text-dim);
   border-radius: var(--radius-full);
-  height: 24px;
-  padding: 0 10px;
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
+  flex: none;
   transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
 }
 .tag-add-trigger:hover {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* Tag value area inside the properties row (chips + add button). */
+.prop-tag-value {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  display: flex;
 }
 
 /* Tag picker / manager popup (opened from the tag bar; positioned fixed by the

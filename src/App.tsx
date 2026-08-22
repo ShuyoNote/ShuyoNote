@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
-import { TagBar } from "./components/TagBar";
 import { AttachmentPanel } from "./components/AttachmentPanel";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DatabaseView } from "./components/DatabaseView";
@@ -166,7 +165,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
         </span>
         {error && <span className="error-badge">{error}</span>}
       </div>
-      <TagBar pageId={pageId} />
       <PropertiesPanel pageId={pageId} />
       <div className="editor-stage">
         <ErrorBoundary>

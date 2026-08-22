@@ -7,9 +7,9 @@ import { usePopover } from "../hooks/usePopover";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
 
-// Page tag bar: shows the page's tags as chips and a "＋ 添加标签" button that
-// opens a popup to pick/create tags, with an inline 标签管理 mode (rename/delete).
-export function TagBar({ pageId }: { pageId: string }) {
+// Notion-style tag row inside the properties block: a "标签" field whose value
+// is the page's tags as chips, with a popup to pick/create/manage tags.
+export function TagRow({ pageId }: { pageId: string }) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [manage, setManage] = useState(false);
@@ -31,6 +31,16 @@ export function TagBar({ pageId }: { pageId: string }) {
   const q = query.trim().toLowerCase();
   const filtered = allTags.filter((t) => !q || t.name.toLowerCase().includes(q));
   const bump = () => useTagManagerStore.getState().bump();
+
+  const removeTag = async (t: Tag) => {
+    try {
+      await api.removeTag(pageId, t.id);
+      await load();
+      bump();
+    } catch (e) {
+      toast(`移除失败：${e}`, "error");
+    }
+  };
 
   const toggle = async (t: Tag) => {
     try {
@@ -61,7 +71,6 @@ export function TagBar({ pageId }: { pageId: string }) {
     setEditing(t.id);
     setEditVal(t.name);
   };
-
   const commitEdit = async () => {
     if (!editing) return;
     const id = editing;
@@ -72,12 +81,12 @@ export function TagBar({ pageId }: { pageId: string }) {
         await api.renameTag(id, n);
         await load();
         bump();
+        toast("已重命名标签", "success");
       } catch (e) {
         toast(`重命名失败：${e}`, "error");
       }
     }
   };
-
   const removeGlobal = async (t: Tag) => {
     if (await confirm(`删除标签「${t.name}」？将从 ${t.page_count ?? 0} 个页面移除。`)) {
       try {
@@ -91,16 +100,6 @@ export function TagBar({ pageId }: { pageId: string }) {
     }
   };
 
-  const removeFromPage = async (t: Tag) => {
-    try {
-      await api.removeTag(pageId, t.id);
-      await load();
-      bump();
-    } catch (e) {
-      toast(`移除失败：${e}`, "error");
-    }
-  };
-
   const onAddClick = () => {
     if (open) {
       close();
@@ -111,7 +110,6 @@ export function TagBar({ pageId }: { pageId: string }) {
     setEditing(null);
     togglePop();
   };
-
   const doClose = () => {
     close();
     setManage(false);
@@ -120,19 +118,24 @@ export function TagBar({ pageId }: { pageId: string }) {
   };
 
   return (
-    <div className="tag-bar">
-      {tags.map((t) => (
-        <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name).soft }}>
-          <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
-          {t.name}
-          <button className="tag-remove" onClick={() => removeFromPage(t)} title="移除标签">
-            ×
-          </button>
-        </span>
-      ))}
-      <button ref={triggerRef} className="tag-add-trigger" onClick={onAddClick}>
-        ＋ 添加标签
-      </button>
+    <div className="prop-row prop-row-tag">
+      <span className="prop-name" title="标签">
+        标签
+      </span>
+      <div className="prop-value prop-tag-value">
+        {tags.map((t) => (
+          <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name).soft }}>
+            <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
+            {t.name}
+            <button className="tag-remove" onClick={() => removeTag(t)} title="移除标签">
+              ×
+            </button>
+          </span>
+        ))}
+        <button ref={triggerRef} className="tag-add-trigger" onClick={onAddClick} title="添加标签">
+          ＋
+        </button>
+      </div>
 
       {open && (
         <div ref={contentRef} className="tag-picker" style={{ position: "fixed", top: pos.top, left: pos.left }}>
