@@ -4541,6 +4541,14 @@ select.prop-value {
   position: relative;
 }
 
+/* Single scroll container for the whole page (title + properties + content), so
+   the title scrolls away with the content instead of being pinned. */
+.note-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Table of contents (right-hand drawer) */
 .toc-toggle {
   position: fixed;

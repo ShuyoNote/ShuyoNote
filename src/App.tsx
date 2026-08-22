@@ -165,55 +165,57 @@ function NoteEditor({ pageId }: { pageId: string }) {
         )}
         <EditorToolbar pageId={pageId} />
       </div>
-      <div className="title-area">
-        <div className="page-actions">
-          <button className="page-action-btn" onClick={() => toast("页面图标即将推出", "info")}>
-            <SmileIcon className="page-action-icon" /> 添加图标
-          </button>
-          <button className="page-action-btn" onClick={() => toast("题头图即将推出", "info")}>
-            <ImageIcon className="page-action-icon" /> 添加题头图
-          </button>
-          <button
-            className="page-action-btn"
-            onClick={() => usePropertyUiStore.getState().requestAddProp()}
-          >
-            <PropertyIcon className="page-action-icon" /> 添加属性
-          </button>
-          <button
-            className="page-action-btn"
-            onClick={() => usePropertyUiStore.getState().requestAddTag()}
-          >
-            <TagIcon className="page-action-icon" /> 添加标签
-          </button>
+      <div className="note-scroll">
+        <div className="title-area">
+          <div className="page-actions">
+            <button className="page-action-btn" onClick={() => toast("页面图标即将推出", "info")}>
+              <SmileIcon className="page-action-icon" /> 添加图标
+            </button>
+            <button className="page-action-btn" onClick={() => toast("题头图即将推出", "info")}>
+              <ImageIcon className="page-action-icon" /> 添加题头图
+            </button>
+            <button
+              className="page-action-btn"
+              onClick={() => usePropertyUiStore.getState().requestAddProp()}
+            >
+              <PropertyIcon className="page-action-icon" /> 添加属性
+            </button>
+            <button
+              className="page-action-btn"
+              onClick={() => usePropertyUiStore.getState().requestAddTag()}
+            >
+              <TagIcon className="page-action-icon" /> 添加标签
+            </button>
+          </div>
+          <div className="editor-head">
+            <input
+              className="title-input"
+              value={title}
+              placeholder="新页面"
+              onChange={(e) => onTitleChange(e.target.value)}
+            />
+            <span className={`save-indicator ${saved ? "saved" : ""}`}>
+              {saved ? "已保存" : "保存中…"}
+            </span>
+            {error && <span className="error-badge">{error}</span>}
+          </div>
         </div>
-        <div className="editor-head">
-          <input
-            className="title-input"
-            value={title}
-            placeholder="新页面"
-            onChange={(e) => onTitleChange(e.target.value)}
-          />
-          <span className={`save-indicator ${saved ? "saved" : ""}`}>
-            {saved ? "已保存" : "保存中…"}
-          </span>
-          {error && <span className="error-badge">{error}</span>}
+        <PropertiesPanel pageId={pageId} />
+        <div className="editor-stage">
+          <ErrorBoundary>
+            <Editor
+              key={pageId}
+              pageId={pageId}
+              contentJson={current?.content_json ?? ""}
+              onSave={onEditorSave}
+              searchQuery={searchQuery}
+            />
+          </ErrorBoundary>
+          {current && !hasBlockContent(current.content_json) && <NewPageGuide />}
         </div>
+        <BacklinksPanel pageId={pageId} />
+        <AttachmentPanel pageId={pageId} />
       </div>
-      <PropertiesPanel pageId={pageId} />
-      <div className="editor-stage">
-        <ErrorBoundary>
-          <Editor
-            key={pageId}
-            pageId={pageId}
-            contentJson={current?.content_json ?? ""}
-            onSave={onEditorSave}
-            searchQuery={searchQuery}
-          />
-        </ErrorBoundary>
-        {current && !hasBlockContent(current.content_json) && <NewPageGuide />}
-      </div>
-      <BacklinksPanel pageId={pageId} />
-      <AttachmentPanel pageId={pageId} />
       <TableOfContents />
     </div>
   );
