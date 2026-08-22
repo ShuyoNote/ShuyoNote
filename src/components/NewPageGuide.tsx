@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { $createParagraphNode, $getRoot, type ElementNode } from "lexical";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
@@ -26,14 +27,24 @@ export function NewPageGuide() {
   const editor = useEditorStore((s) => s.editor);
 
   // Press Enter (anywhere while the guide shows) to start editing: dismiss the
-  // guide and focus the editor.
+  // guide, ensure a paragraph block exists, and place the caret in it.
   useEffect(() => {
     if (dismissed) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
         setDismissed(true);
-        editor?.focus();
+        if (!editor) return;
+        editor.update(() => {
+          const root = $getRoot();
+          let block = root.getChildren()[0] as ElementNode | undefined;
+          if (!block) {
+            block = $createParagraphNode();
+            root.append(block);
+          }
+          block.selectStart();
+        });
+        editor.focus();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -56,7 +67,8 @@ export function NewPageGuide() {
     <>
       {!dismissed && (
         <div className="new-page-guide" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>          <div className="new-page-guide-list">
+        <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>
+        <div className="new-page-guide-list">
             <button className="npg-act" onClick={() => toast("AI 创作即将推出", "info")}>
               <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
             </button>
