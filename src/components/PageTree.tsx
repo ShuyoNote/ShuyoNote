@@ -57,6 +57,7 @@ function treeFileIcon(mime: string): string {
 // folder in the sidebar (loaded lazily when the folder is expanded).
 function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
+  const revision = useFileManagerStore((s) => s.revision);
   useEffect(() => {
     let alive = true;
     api
@@ -68,7 +69,7 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     return () => {
       alive = false;
     };
-  }, [folderId]);
+  }, [folderId, revision]);
 
   if (files.length === 0) return null;
 
@@ -265,14 +266,11 @@ function TreeItem({
           </button>
         </span>
       </div>
-      {expanded && (
-        <>
-          {node.children.map((child) => (
-            <TreeItem key={child.id} node={child} depth={depth + 1} />
-          ))}
-          {isFolder && <TreeFiles folderId={node.id} depth={depth + 1} />}
-        </>
-      )}
+      {expanded &&
+        node.children.map((child) => (
+          <TreeItem key={child.id} node={child} depth={depth + 1} />
+        ))}
+      {isFolder && <TreeFiles folderId={node.id} depth={depth + 1} />}
       {dragging && null}
     </div>
   );

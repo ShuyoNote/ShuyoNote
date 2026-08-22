@@ -118,6 +118,7 @@ export function FileManagerView() {
     try {
       const metas = await api.importAttachmentFiles(folderId, paths);
       setFiles((prev) => [...metas, ...prev]);
+      useFileManagerStore.getState().bumpRevision();
       toast(`已上传 ${metas.length} 个文件`, "success");
     } catch (e) {
       toast(`上传失败：${e}`, "error");
@@ -148,6 +149,7 @@ export function FileManagerView() {
     try {
       await api.removeAttachment(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
+      useFileManagerStore.getState().bumpRevision();
       toast("已移除文件", "success");
     } catch (e) {
       toast(`移除失败：${e}`, "error");
