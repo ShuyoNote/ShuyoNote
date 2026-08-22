@@ -2026,6 +2026,50 @@ select.prop-value {
   background: var(--hover);
 }
 
+/* Right-click context menu for selected blocks. */
+.block-context-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 5px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.block-context-count {
+  color: var(--text-dim);
+  font-weight: 600;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+}
+.block-context-menu button {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+.block-context-menu button:hover {
+  background: var(--hover);
+}
+.block-context-menu button.danger {
+  color: var(--danger);
+}
+.block-context-menu button.danger:hover {
+  background: var(--danger-soft);
+}
+.block-context-menu .block-context-cancel {
+  color: var(--text-faint);
+}
+
 /* Selection formatting toolbar */
 .selection-toolbar {
   position: fixed;

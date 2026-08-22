@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $cloneWithProperties, $getNodeByKey, $getRoot } from "lexical";
+import { $cloneWithProperties, $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot } from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
 import { toast } from "../../store/toast";
 
@@ -14,54 +14,66 @@ function syncHighlight(editor: ReturnType<typeof useLexicalComposerContext>[0], 
   });
 }
 
-// Multi-select toolbar + highlight + keyboard for selected top-level blocks.
+// Multi-select of top-level blocks: box-select / handle selects and highlights,
+// and a right-click context menu (copy/delete/cancel) pops on the selected blocks.
 export function BlockSelectionPlugin() {
   const [editor] = useLexicalComposerContext();
   const keys = useBlockSelection((s) => s.keys);
-  const [barPos, setBarPos] = useState<{ top: number; left: number }>({ top: 12, left: 12 });
-
-  // Position the action bar near the first selected block.
-  useEffect(() => {
-    if (keys.length === 0) return;
-    const el = editor.getElementByKey(keys[0]);
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const w = 200;
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
-    let top = r.top - 8;
-    if (top < 8) top = r.bottom + 8;
-    setBarPos({ top, left });
-  }, [keys, editor]);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     syncHighlight(editor, keys);
   }, [keys, editor]);
 
-  // Re-apply highlights after any editor update (e.g. typing, reorder).
+  // Re-apply highlights after any update (typing, reorder).
   useEffect(() => {
     return editor.registerUpdateListener(() =>
       syncHighlight(editor, useBlockSelection.getState().keys),
     );
   }, [editor]);
 
-  // Clear the selection when clicking anywhere that isn't a handle/button.
+  // Clear selection on any mousedown that isn't a handle/button.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
-      if (t.closest(".block-handle, .block-selection-bar")) return;
+      if (t.closest(".block-handle, .block-context-menu")) return;
       useBlockSelection.getState().clear();
+      setMenu(null);
     };
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);
   }, []);
 
-  // Delete/Backspace remove the selected blocks; Escape clears the selection.
+  // Right-click a selected block → show the context menu at the cursor.
+  useEffect(() => {
+    const onContext = (e: MouseEvent) => {
+      const s = useBlockSelection.getState();
+      if (s.keys.length === 0) return;
+      const target = e.target as HTMLElement;
+      let key: string | null = null;
+      editor.getEditorState().read(() => {
+        const node = $getNearestNodeFromDOMNode(target);
+        if (node) {
+          const top = node.getTopLevelElement();
+          if (top) key = top.getKey();
+        }
+      });
+      if (!key || !s.keys.includes(key)) return;
+      e.preventDefault();
+      setMenu({ x: e.clientX, y: e.clientY });
+    };
+    document.addEventListener("contextmenu", onContext);
+    return () => document.removeEventListener("contextmenu", onContext);
+  }, [editor]);
+
+  // Delete/Backspace remove selected blocks; Escape clears.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const s = useBlockSelection.getState();
       if (s.keys.length === 0) return;
       if (e.key === "Escape") {
         s.clear();
+        setMenu(null);
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -73,6 +85,7 @@ export function BlockSelectionPlugin() {
           }
         });
         s.clear();
+        setMenu(null);
       }
     };
     document.addEventListener("keydown", onKey, true);
@@ -104,21 +117,28 @@ export function BlockSelectionPlugin() {
       }
     });
     useBlockSelection.getState().clear();
+    setMenu(null);
   };
 
+  if (!menu) return null;
   return (
-    <div className="block-selection-bar" style={{ top: barPos.top, left: barPos.left }}>
-      <span className="block-selection-count">已选 {keys.length} 块</span>
-      <button onClick={copy}>⧉ 复制</button>
-      <button className="danger" onClick={del}>
+    <div
+      className="block-context-menu"
+      style={{ position: "fixed", top: menu.y + 4, left: menu.x, zIndex: 50 }}
+    >
+      <div className="block-context-count">已选 {keys.length} 块</div>
+      <button onClick={() => { copy(); setMenu(null); }}>⧉ 复制</button>
+      <button className="danger" onClick={() => { del(); setMenu(null); }}>
         🗑 删除
       </button>
       <button
-        className="block-selection-close"
-        onClick={() => useBlockSelection.getState().clear()}
-        title="取消选择"
+        className="block-context-cancel"
+        onClick={() => {
+          useBlockSelection.getState().clear();
+          setMenu(null);
+        }}
       >
-        ×
+        取消
       </button>
     </div>
   );
