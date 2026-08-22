@@ -1344,11 +1344,12 @@ body,
 .properties-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   width: 100%;
   border: none;
   background: transparent;
   padding: 4px 0;
+  margin-bottom: 2px;
   cursor: pointer;
   color: var(--text-dim);
   font-size: 12px;
@@ -1383,7 +1384,7 @@ body,
   width: 120px;
   font-size: 13px;
   color: var(--text-dim);
-  text-align: right;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
