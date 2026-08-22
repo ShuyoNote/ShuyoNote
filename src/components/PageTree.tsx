@@ -8,6 +8,8 @@ import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
 import { tagColor } from "../lib/tagColor";
 import type { PageMeta } from "../types";
+import { useFileManagerStore } from "../store/fileManager";
+import { useViewStore } from "../store/view";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
@@ -97,7 +99,10 @@ function TreeItem({
 
   const handleClick = () => {
     if (isFolder) {
-      setExpanded((v) => !v);
+      // Clicking a folder opens the file manager focused on it; the ▸/▾ toggle
+      // still expands/collapses the tree.
+      useFileManagerStore.getState().setFolderId(node.id);
+      useViewStore.getState().setView("files");
     } else {
       openPage(node.id);
     }

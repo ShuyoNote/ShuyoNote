@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNotes } from "../store/notes";
+import { useFileManagerStore } from "../store/fileManager";
 import type { PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
@@ -26,7 +27,7 @@ function KindIcon({ kind }: { kind: string }) {
 // type + modified/created columns, and create pages/folders inside a folder.
 export function FileManagerView() {
   const { pages, openPage, createPage, createFolder } = useNotes();
-  const [folderId, setFolderId] = useState<string | null>(null);
+  const { folderId, setFolderId } = useFileManagerStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const all = useMemo(() => pages.filter((p) => !p.deleted_at), [pages]);
