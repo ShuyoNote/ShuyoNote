@@ -12,6 +12,7 @@ import { BoardView } from "./components/BoardView";
 import { GraphView } from "./components/GraphView";
 import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
+import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
@@ -167,22 +168,22 @@ function NoteEditor({ pageId }: { pageId: string }) {
       <div className="title-area">
         <div className="page-actions">
           <button className="page-action-btn" onClick={() => toast("页面图标即将推出", "info")}>
-            <span className="page-action-icon">😊</span> 添加图标
+            <SmileIcon className="page-action-icon" /> 添加图标
           </button>
           <button className="page-action-btn" onClick={() => toast("题头图即将推出", "info")}>
-            <span className="page-action-icon">🖼</span> 添加题头图
+            <ImageIcon className="page-action-icon" /> 添加题头图
           </button>
           <button
             className="page-action-btn"
             onClick={() => usePropertyUiStore.getState().requestAddProp()}
           >
-            <span className="page-action-icon">🗂</span> 添加属性
+            <PropertyIcon className="page-action-icon" /> 添加属性
           </button>
           <button
             className="page-action-btn"
             onClick={() => usePropertyUiStore.getState().requestAddTag()}
           >
-            <span className="page-action-icon">🏷</span> 添加标签
+            <TagIcon className="page-action-icon" /> 添加标签
           </button>
         </div>
         <div className="editor-head">

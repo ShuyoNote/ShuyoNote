@@ -410,3 +410,45 @@ export function DatabaseIcon(props: IconProps) {
     </Icon>
   );
 }
+
+// Page-actions row icons (Notion-style: add icon / cover / property / tag).
+export function SmileIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+      <line x1="9" y1="9" x2="9.01" y2="9" />
+      <line x1="15" y1="9" x2="15.01" y2="9" />
+    </Icon>
+  );
+}
+
+export function ImageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="m21 15-5-5L9 17" />
+    </Icon>
+  );
+}
+
+export function TagIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20.59 13.41 12 22 2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
+    </Icon>
+  );
+}
+
+export function PropertyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="5" width="9" height="4" rx="1" />
+      <rect x="3" y="13" width="9" height="4" rx="1" />
+      <line x1="14" y1="7" x2="20" y2="7" />
+      <line x1="14" y1="15" x2="20" y2="15" />
+    </Icon>
+  );
+}

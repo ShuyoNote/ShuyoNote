@@ -1386,8 +1386,9 @@ body.is-toc-open .main {
   background: var(--hover);
 }
 .page-action-icon {
-  font-size: 14px;
-  line-height: 1;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 
 /* Metadata card: groups the title + properties into a light Notion-style card so
