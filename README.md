@@ -213,8 +213,11 @@ ShuyoNote/
 
 ## 📚 文档体系
 
+> 全量文档统一入口见 [docs/README.md](docs/README.md)（按主题组织的索引）。
+
 | 文档 | 内容 |
 |------|------|
+| [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 方案 / 对比 / 设计交付 / 变更记录 |
 | [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md) | 需求分析、数据模型、ADR、同步协议与路线图 |
 | [docs/plans/2026-08-20-block-reference-plan.md](docs/plans/2026-08-20-block-reference-plan.md) | 块级引用 + 反链升级 + 关系图方案（M1–M5 已实现） |
 | [docs/plans/2026-08-21-properties-database-plan.md](docs/plans/2026-08-21-properties-database-plan.md) | 属性系统 + 数据库视图统一方案（合并思源数据库 + Obsidian Properties） |
@@ -241,6 +244,11 @@ ShuyoNote/
 - [x] 块级引用 / 块嵌入 / 块级反链
 - [x] 关系图（页面 / 块级图层）
 - [x] 属性系统 + 数据库视图（表格 / 画廊 / 看板）
+- [x] 属性 Notion 风格统一（标签属性行 + 底部「＋ 添加标签 / ＋ 添加属性」双按钮）
+- [x] 文件管理视图（文件夹 / 批量超大文件上传 / 侧边栏文件）
+- [x] 全局标签管理（新建 / 重命名合并 / 删除 / 使用页数）
+- [x] 块多选 + 批量删除
+- [x] HTML/Markdown 混排导入（保留 `align` 居中 / 徽章成排 / 图片尺寸）
 - [x] Markdown 无损往返
 - [x] 属性驱动仪表盘聚合
 - [ ] 端到端加密
