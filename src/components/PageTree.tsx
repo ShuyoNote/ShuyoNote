@@ -190,7 +190,7 @@ function TreeItem({
         >
           {isFolder ? (expanded ? "▾" : "▸") : node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
-        <span className={`tree-icon${isFolder ? " tree-icon-folder" : ""}`}>
+        <span className={`tree-icon${isFolder ? " tree-icon-folder" : isDatabase ? " tree-icon-database" : ""}`}>
           {isFolder ? "📁" : isDatabase ? "🗂" : "📄"}
         </span>
         {editing ? (
