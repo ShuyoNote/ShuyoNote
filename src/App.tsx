@@ -14,6 +14,8 @@ import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
+import { TemplateCenterView } from "./components/TemplateCenterView";
+import { useTemplateCenterStore } from "./store/templateCenter";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
@@ -232,6 +234,7 @@ function App() {
   const { pages, currentId, loadPages, error } = useNotes();
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
+  const templateOpen = useTemplateCenterStore((s) => s.open);
   useAutoSync();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
@@ -267,7 +270,11 @@ function App() {
   return (
     <div className="app">
       <PageTree view={view} onViewChange={setView} />
-      {view === "graph" ? (
+      {templateOpen ? (
+        <div className="main">
+          <TemplateCenterView />
+        </div>
+      ) : view === "graph" ? (
         <div className="main">
           <GraphView />
         </div>

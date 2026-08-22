@@ -10,6 +10,7 @@ import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
+import { useTemplateCenterStore } from "../store/templateCenter";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
@@ -472,7 +473,10 @@ export function PageTree({
       {!collapsed && (
         <div className="sidebar-bottom">
           <TrashPanel />
-          <button className="sidebar-bottom-btn" onClick={() => toast("模板中心即将推出", "info")}>
+          <button
+            className="sidebar-bottom-btn"
+            onClick={() => useTemplateCenterStore.getState().setOpen(true)}
+          >
             <span className="sidebar-bottom-icon">🗂</span> 模板中心
           </button>
         </div>
