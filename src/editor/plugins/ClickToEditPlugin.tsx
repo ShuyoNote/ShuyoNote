@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createParagraphNode, $getRoot, $isElementNode, type LexicalNode } from "lexical";
+import { useBlockSelection } from "../../store/blockSelection";
 
 // Clicking a blank area of the page view (gaps between blocks or below the
 // content) places the caret in the nearest block instead of being a no-op.
@@ -18,6 +19,8 @@ export function ClickToEditPlugin() {
       // shell (margins / gaps / empty area below), never on block content or
       // popovers, where the browser already positions the caret.
       if (target !== rootEl && target !== shell) return;
+      // Don't disturb an active block selection (multi-select via ⋮⋮ handle).
+      if (useBlockSelection.getState().keys.length > 0) return;
       e.preventDefault();
       const y = e.clientY;
 
