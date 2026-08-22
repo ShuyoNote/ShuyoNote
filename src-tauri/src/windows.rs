@@ -12,8 +12,9 @@ pub fn open_page_window(app: AppHandle, page_id: String) -> Result<(), String> {
     }
 
     let url = WebviewUrl::App(format!("index.html?page={page_id}").into());
+    let version = app.package_info().version.to_string();
     let win = WebviewWindowBuilder::new(&app, &label, url)
-        .title("ShuyoNote · 数友笔记")
+        .title(format!("ShuyoNote · 数友笔记 · v{version}"))
         .inner_size(900.0, 700.0)
         .build()
         .map_err(|e| e.to_string())?;

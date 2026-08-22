@@ -31,6 +31,13 @@ pub fn run() {
                 std::io::Error::other(e.to_string())
             })?;
             app.manage(Db(Mutex::new(conn)));
+
+            // Title bar shows both product names + the live build version, so it
+            // never drifts from the packaged version on a new release.
+            let version = app.package_info().version.to_string();
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_title(&format!("ShuyoNote · 数友笔记 · v{version}"));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
