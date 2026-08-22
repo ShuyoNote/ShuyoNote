@@ -93,7 +93,6 @@ export function TableOfContents() {
       >
         📑
       </button>
-      <div className={`toc-scrim ${open ? "visible" : ""}`} onClick={() => setOpen(false)} />
       <div className={`toc-panel ${open ? "open" : ""}`}>
         <div className="toc-head">
           <span className="toc-title">目录</span>

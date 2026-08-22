@@ -4472,23 +4472,13 @@ select.prop-value {
   color: var(--accent);
   background: var(--hover);
 }
-
-/* Dimmed backdrop behind the drawer; click it to close. */
-.toc-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 39;
-  background: rgba(0, 0, 0, 0.24);
+/* Hide the toggle while the outline rail is open (the × closes it). */
+.toc-toggle.open {
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--transition-fast);
-}
-.toc-scrim.visible {
-  opacity: 1;
-  pointer-events: auto;
 }
 
-/* Drawer: slides in from the right edge, full height. */
+/* Outline rail: slides in from the right edge, full height, GitHub-style. */
 .toc-panel {
   position: fixed;
   top: 0;
@@ -4544,26 +4534,30 @@ select.prop-value {
 }
 .toc-item {
   border: none;
+  border-left: 3px solid transparent;
   background: transparent;
   color: var(--text-dim);
   font-size: 13px;
   text-align: left;
   padding: 5px 8px;
-  border-radius: var(--radius-xs);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: inherit;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
 .toc-item:hover {
   background: var(--hover);
   color: var(--text);
 }
+/* GitHub-style active section: a left accent bar + light tint + accent text. */
 .toc-item.active {
   color: var(--accent);
-  font-weight: 600;
-  background: var(--accent-soft, rgba(51, 112, 255, 0.08));
+  font-weight: 500;
+  border-left-color: var(--accent);
+  background: var(--accent-soft, rgba(51, 112, 255, 0.07));
 }
 .toc-empty {
   color: var(--text-faint);
