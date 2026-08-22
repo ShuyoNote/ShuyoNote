@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
+import { confirmDialog } from "../store/confirm";
 import type { PageMeta } from "../types";
 import { TrashIcon } from "./icons";
 
@@ -30,7 +30,7 @@ export function TrashPanel() {
   };
 
   const purge = async (id: string, title: string) => {
-    if (!(await confirm(`彻底删除「${title || "未命名"}」？此操作不可恢复。`))) return;
+    if (!(await confirmDialog({ title: "彻底删除", message: `彻底删除「${title || "未命名"}」？此操作不可恢复。`, danger: true }))) return;
     try {
       await api.purgePage(id);
       setItems(await api.listDeleted());

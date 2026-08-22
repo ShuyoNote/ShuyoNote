@@ -1,8 +1,9 @@
-import { confirm, open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
+import { confirmDialog } from "../store/confirm";
 import { DownloadIcon, UploadIcon } from "./icons";
 
 export function BackupButton() {
@@ -33,7 +34,7 @@ export function BackupButton() {
         multiple: false,
       });
       if (!path) return;
-      if (!(await confirm("导入将覆盖当前全部数据（页面、标签、附件），且不可撤销。确定继续？"))) return;
+      if (!(await confirmDialog({ title: "导入备份", message: "导入将覆盖当前全部数据（页面、标签、附件），且不可撤销。确定继续？", danger: true }))) return;
       await api.importBackup(path as string);
       await loadPages();
       toast("备份导入完成", "success");

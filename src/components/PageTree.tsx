@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
@@ -11,6 +10,7 @@ import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useTemplateCenterStore } from "../store/templateCenter";
+import { confirmDialog } from "../store/confirm";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
@@ -258,7 +258,7 @@ function TreeItem({
             title="删除"
             onClick={async (e) => {
               e.stopPropagation();
-              if (await confirm(`删除「${node.title || "未命名"}」及其所有子节点？`)) {
+              if (await confirmDialog({ title: "删除页面", message: `删除「${node.title || "未命名"}」及其所有子节点？`, danger: true })) {
                 await deletePage(node.id);
                 toast("已移到回收站", "success");
               }

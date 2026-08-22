@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useTagManagerStore } from "../store/tagManager";
 import { usePropertyUiStore } from "../store/propertyUi";
+import { confirmDialog } from "../store/confirm";
 import { tagColor } from "../lib/tagColor";
 import type { Tag } from "../types";
 
@@ -140,7 +140,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
     }
   };
   const removeGlobal = async (t: Tag) => {
-    if (await confirm(`删除标签「${t.name}」？将从 ${t.page_count ?? 0} 个页面移除。`)) {
+    if (await confirmDialog({ title: "删除标签", message: `删除标签「${t.name}」？将从 ${t.page_count ?? 0} 个页面移除。`, danger: true })) {
       try {
         await api.deleteTag(t.id);
         bump();

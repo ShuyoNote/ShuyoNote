@@ -4855,6 +4855,35 @@ select.prop-value {
 .tc-card-tag { font-size: 11px; color: var(--text-faint); }
 .tc-empty { color: var(--text-faint); font-size: 13px; padding: 40px 0; text-align: center; }
 
+/* In-app confirm dialog (centered in the app window). */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.confirm-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 18px 18px 14px;
+  min-width: 300px;
+  max-width: 420px;
+}
+.confirm-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.confirm-message { font-size: 13px; color: var(--text-dim); line-height: 1.6; white-space: pre-wrap; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.confirm-cancel { border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 13px; }
+.confirm-cancel:hover { background: var(--hover); }
+.confirm-ok { border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 13px; }
+.confirm-ok:hover { filter: brightness(1.06); }
+.confirm-ok-danger { border-color: var(--danger); background: var(--danger); color: #fff; }
+.confirm-ok-danger:hover { filter: brightness(1.06); }
+
 /* Theme settings popover */
 .theme-settings {
   z-index: 60;

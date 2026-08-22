@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
+import { confirmDialog } from "../store/confirm";
 import type { PageVersion } from "../types";
 import { ClockIcon } from "./icons";
 
@@ -23,7 +23,7 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
   }, [open, pageId]);
 
   const restore = async (versionId: string) => {
-    if (!(await confirm("恢复到该版本？当前内容将被覆盖。"))) return;
+    if (!(await confirmDialog({ title: "恢复版本", message: "恢复到该版本？当前内容将被覆盖。" }))) return;
     try {
       const page = await api.restoreVersion(versionId);
       updateCurrent(page);
