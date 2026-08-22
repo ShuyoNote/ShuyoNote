@@ -36,6 +36,15 @@ export function TemplateCenterView() {
           <span className="tc-crumb-sep">/</span>
           <span className="tc-crumb-current">{tab}</span>
         </div>
+        <div className="tc-search">
+          <SearchIcon className="tc-search-icon" />
+          <input
+            className="tc-search-input"
+            placeholder="搜索模板库…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
         <button className="tc-close" title="关闭" onClick={() => setOpen(false)}>
           ×
         </button>
@@ -50,15 +59,6 @@ export function TemplateCenterView() {
             {c}
           </button>
         ))}
-      </div>
-      <div className="tc-search">
-        <SearchIcon className="tc-search-icon" />
-        <input
-          className="tc-search-input"
-          placeholder="搜索模板库…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
       </div>
       <div className="tc-grid">
         {filtered.length === 0 ? (

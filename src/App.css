@@ -4817,7 +4817,6 @@ select.prop-value {
 .tc-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -4826,20 +4825,22 @@ select.prop-value {
   align-items: center;
   gap: 6px;
   font-size: 14px;
+  flex: 1;
+  min-width: 0;
 }
 .tc-crumb { color: var(--text-dim); }
 .tc-crumb-sep { color: var(--text-faint); }
 .tc-crumb-current { color: var(--text); font-weight: 600; }
-.tc-close { border: none; background: transparent; color: var(--text-faint); font-size: 20px; cursor: pointer; padding: 0 6px; border-radius: var(--radius-xs); }
+.tc-close { border: none; background: transparent; color: var(--text-faint); font-size: 20px; cursor: pointer; padding: 0 6px; border-radius: var(--radius-xs); flex-shrink: 0; }
 .tc-close:hover { color: var(--text); background: var(--hover); }
 .tc-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
 .tc-tab { border: none; background: transparent; padding: 8px 12px; color: var(--text-dim); font-size: 14px; cursor: pointer; position: relative; font-family: inherit; }
 .tc-tab:hover { color: var(--text); }
 .tc-tab-active { color: var(--accent); font-weight: 600; }
 .tc-tab-active::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
-.tc-search { position: relative; margin-bottom: 16px; }
+.tc-search { position: relative; flex-shrink: 0; }
 .tc-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); }
-.tc-search-input { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px 8px 32px; font-size: 13px; outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
+.tc-search-input { width: 240px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px 7px 32px; font-size: 13px; outline: none; background: var(--bg); color: var(--text); font-family: inherit; }
 .tc-search-input:focus { border-color: var(--accent); }
 .tc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
 .tc-card { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; text-align: left; padding: 0; font-family: inherit; display: flex; flex-direction: column; transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast); }
