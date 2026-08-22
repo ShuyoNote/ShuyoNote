@@ -41,6 +41,7 @@ interface SlashOption {
   group: string;
   run: Run;
   shortcut?: string;
+  pinyin?: string;
 }
 
 // Replace the current top-level block with a new element, moving children over.
@@ -77,17 +78,17 @@ function $insertBlockNode(node: LexicalNode) {
 
 function makeOptions(pageId: string): SlashOption[] {
   return [
-    { key: "h1", title: "标题 1", badge: "H1", group: "基础", shortcut: "Ctrl+Alt+1", run: (editor) =>
+    { key: "h1", title: "标题 1", badge: "H1", group: "基础", shortcut: "Ctrl+Alt+1", pinyin: "h1", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h1"))) },
-    { key: "h2", title: "标题 2", badge: "H2", group: "基础", shortcut: "Ctrl+Alt+2", run: (editor) =>
+    { key: "h2", title: "标题 2", badge: "H2", group: "基础", shortcut: "Ctrl+Alt+2", pinyin: "h2", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h2"))) },
-    { key: "h3", title: "标题 3", badge: "H3", group: "基础", shortcut: "Ctrl+Alt+3", run: (editor) =>
+    { key: "h3", title: "标题 3", badge: "H3", group: "基础", shortcut: "Ctrl+Alt+3", pinyin: "h3", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h3"))) },
-    { key: "p", title: "正文", badge: "¶", group: "基础", run: (editor) =>
+    { key: "p", title: "正文", badge: "¶", group: "基础", pinyin: "zw", run: (editor) =>
       editor.update(() => $replaceBlock($createParagraphNode())) },
-    { key: "quote", title: "引用", badge: "❝", group: "基础", shortcut: "Ctrl+Alt+Q", run: (editor) =>
+    { key: "quote", title: "引用", badge: "❝", group: "基础", shortcut: "Ctrl+Alt+Q", pinyin: "yy", run: (editor) =>
       editor.update(() => $replaceBlock($createQuoteNode())) },
-    { key: "link", title: "链接", badge: "🔗", group: "基础", shortcut: "Ctrl+Alt+L", run: (editor) =>
+    { key: "link", title: "链接", badge: "🔗", group: "基础", shortcut: "Ctrl+Alt+L", pinyin: "lj", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
@@ -101,13 +102,13 @@ function makeOptions(pageId: string): SlashOption[] {
         topLevel.replace(paragraph);
         linkNode.selectStart();
       }) },
-    { key: "todo", title: "待办事项", badge: "☑", group: "列表", shortcut: "Ctrl+Alt+T", run: (editor) => {
+    { key: "todo", title: "待办事项", badge: "☑", group: "列表", shortcut: "Ctrl+Alt+T", pinyin: "dblb", run: (editor) => {
       editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined); } },
-    { key: "ul", title: "无序列表", badge: "•", group: "列表", shortcut: "Ctrl+Alt+U", run: (editor) => {
+    { key: "ul", title: "无序列表", badge: "•", group: "列表", shortcut: "Ctrl+Alt+U", pinyin: "wxlb", run: (editor) => {
       editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined); } },
-    { key: "ol", title: "有序列表", badge: "1.", group: "列表", shortcut: "Ctrl+Alt+O", run: (editor) => {
+    { key: "ol", title: "有序列表", badge: "1.", group: "列表", shortcut: "Ctrl+Alt+O", pinyin: "yxlb", run: (editor) => {
       editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined); } },
-    { key: "image", title: "图片", badge: "🖼", group: "媒体", run: async (editor) => {
+    { key: "image", title: "图片", badge: "🖼", group: "媒体", pinyin: "tp", run: async (editor) => {
       const selected = await open({
         title: "选择图片",
         filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] }],
@@ -124,7 +125,7 @@ function makeOptions(pageId: string): SlashOption[] {
         toast(`插入图片失败：${e}`, "error");
       }
     } },
-    { key: "video", title: "视频", badge: "🎬", group: "媒体", run: async (editor) => {
+    { key: "video", title: "视频", badge: "🎬", group: "媒体", pinyin: "sp", run: async (editor) => {
       const selected = await open({
         title: "选择视频",
         filters: [{ name: "视频", extensions: ["mp4", "webm", "mov", "m4v"] }],
@@ -141,7 +142,7 @@ function makeOptions(pageId: string): SlashOption[] {
         toast(`插入视频失败：${e}`, "error");
       }
     } },
-    { key: "attachment", title: "附件", badge: "📎", group: "媒体", run: async (editor) => {
+    { key: "attachment", title: "附件", badge: "📎", group: "媒体", pinyin: "fj", run: async (editor) => {
       const selected = await open({
         title: "选择文件",
         multiple: true,
@@ -157,8 +158,8 @@ function makeOptions(pageId: string): SlashOption[] {
         toast(`添加附件失败：${e}`, "error");
       }
     } },
-    { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", run: (editor) =>
-      editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", shortcut: "Ctrl+Alt+C", run: (editor) =>
+    { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>
+      editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", shortcut: "Ctrl+Alt+C", pinyin: "dmk", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
@@ -170,17 +171,17 @@ function makeOptions(pageId: string): SlashOption[] {
         topLevel.replace(codeNode);
         codeNode.selectStart();
       }) },
-    { key: "hr", title: "分隔线", badge: "—", group: "嵌入", shortcut: "Ctrl+Alt+M", run: (editor) => {
+    { key: "hr", title: "分隔线", badge: "—", group: "嵌入", shortcut: "Ctrl+Alt+M", pinyin: "fgx", run: (editor) => {
       editor.dispatchCommand(INSERT_HORIZONTAL_RULE_COMMAND, undefined); } },
-    { key: "table", title: "表格", badge: "▦", group: "嵌入", run: (editor) => {
+    { key: "table", title: "表格", badge: "▦", group: "嵌入", pinyin: "bg", run: (editor) => {
       editor.dispatchCommand(INSERT_TABLE_COMMAND, {
         columns: "3",
         rows: "3",
         includeHeaders: { rows: true, columns: false },
       }); } },
-    { key: "blockref", title: "引用块", badge: "⛓", group: "引用", run: () => {
+    { key: "blockref", title: "引用块", badge: "⛓", group: "引用", pinyin: "yyk", run: () => {
       useBlockSelector.getState().openSelector("ref"); } },
-    { key: "blockembed", title: "嵌入块", badge: "🧩", group: "引用", run: () => {
+    { key: "blockembed", title: "嵌入块", badge: "🧩", group: "引用", pinyin: "qrk", run: () => {
       useBlockSelector.getState().openSelector("embed"); } },
   ];
 }
@@ -213,7 +214,14 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? options.filter((o) => o.title.toLowerCase().includes(q)) : options;
+    return q
+      ? options.filter(
+          (o) =>
+            o.title.toLowerCase().includes(q) ||
+            (o.pinyin && o.pinyin.includes(q)) ||
+            (o.key && o.key.toLowerCase().includes(q)),
+        )
+      : options;
   }, [options, query]);
 
   const stateRef = useRef({ filtered, sel, editor });
@@ -227,6 +235,19 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
     if (h <= 0) return;
     setPos((p) => ({ ...p, top: Math.max(8, Math.min(p.top, window.innerHeight - h - 8)) }));
   }, [open, filtered.length]);
+
+  // ↑/↓ navigation: keep the active item in view by scrolling only the menu
+  // container (not ancestor pages).
+  useEffect(() => {
+    if (!open || !menuRef.current) return;
+    const menu = menuRef.current;
+    const active = menu.querySelector(".slash-item-active") as HTMLElement | null;
+    if (!active) return;
+    const m = menu.getBoundingClientRect();
+    const a = active.getBoundingClientRect();
+    if (a.top < m.top + 8) menu.scrollTop += a.top - (m.top + 8);
+    else if (a.bottom > m.bottom - 8) menu.scrollTop += a.bottom - (m.bottom - 8);
+  }, [sel, open, filtered.length]);
 
   const select = useCallback(
     (option: SlashOption) => {
@@ -387,7 +408,7 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
             >
               <span className="slash-icon">{option.badge}</span>
               <span className="slash-title">{option.title}</span>
-              {option.shortcut && <span className="slash-shortcut">{option.shortcut}</span>}
+              {option.pinyin && <span className="slash-shortcut">/{option.pinyin}</span>}
             </button>
           );
         })
