@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNotes } from "../store/notes";
-import { getAllCommands, type CommandContext } from "../plugins/registry";
+import { getAllCommands, usePluginRevision, type CommandContext } from "../plugins/registry";
 
 type Item =
   | { kind: "page"; id: string; title: string }
@@ -42,12 +42,14 @@ export function CommandPalette() {
         .map((p) => ({ kind: "page", id: p.id, title: p.title || "未命名" })),
     [pages, q],
   );
+  const pluginRevision = usePluginRevision();
   const cmdItems = useMemo<Item[]>(
     () =>
       getAllCommands()
         .filter((c) => c.title.toLowerCase().includes(q))
         .map((c) => ({ kind: "command", id: c.id, title: c.title, description: c.description })),
-    [q],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [q, pluginRevision],
   );
 
   const flat = useMemo(() => [...pageItems, ...cmdItems], [pageItems, cmdItems]);

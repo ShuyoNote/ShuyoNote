@@ -1,3 +1,4 @@
+import { create } from "zustand";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
@@ -30,6 +31,16 @@ export interface Plugin {
 
 const registry: Plugin[] = [];
 
+// Plugin enable/disable state (persisted in-memory; default enabled).
+const usePluginState = create<{
+  enabled: Record<string, boolean>;
+  toggle: (id: string) => void;
+}>((set) => ({
+  enabled: {},
+  toggle: (id) =>
+    set((s) => ({ enabled: { ...s.enabled, [id]: !(s.enabled[id] ?? true) } })),
+}));
+
 export function registerPlugin(plugin: Plugin) {
   registry.push(plugin);
 }
@@ -38,8 +49,25 @@ export function getPlugins(): Plugin[] {
   return registry;
 }
 
+export function getEnabledPlugins(): Plugin[] {
+  return registry.filter((p) => usePluginState.getState().enabled[p.id] !== false);
+}
+
 export function getAllCommands(): PluginCommand[] {
-  return registry.flatMap((p) => p.commands);
+  return getEnabledPlugins().flatMap((p) => p.commands);
+}
+
+// Re-render hook for consumers that list plugins/commands (e.g. command palette).
+export function usePluginRevision() {
+  return usePluginState((s) => s.enabled);
+}
+
+export function togglePlugin(id: string) {
+  usePluginState.getState().toggle(id);
+}
+
+export function isPluginEnabled(id: string): boolean {
+  return usePluginState.getState().enabled[id] !== false;
 }
 
 // ---- built-in plugins ----

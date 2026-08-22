@@ -12,6 +12,7 @@ import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeToggle } from "./ThemeToggle";
+import { ThemeSettings } from "./ThemeSettings";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
@@ -334,6 +335,7 @@ export function PageTree({
             <SyncPanel />
             <BackupButton />
             <ThemeToggle />
+            <ThemeSettings />
           </div>
           <div className="new-menu">
             <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu}>
