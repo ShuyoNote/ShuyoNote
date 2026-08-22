@@ -1168,6 +1168,18 @@ body,
   white-space: nowrap;
 }
 
+/* Uploaded files shown as leaf items under a folder. */
+.tree-file-row {
+  color: var(--text-dim);
+}
+.tree-file-row:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.tree-file-row .tree-title {
+  font-size: 13px;
+}
+
 .tree-rename-input {
   flex: 1;
   min-width: 0;

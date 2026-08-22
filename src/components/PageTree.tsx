@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
@@ -7,7 +8,7 @@ import { useSidebar } from "../store/sidebar";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
 import { tagColor } from "../lib/tagColor";
-import type { PageMeta } from "../types";
+import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { SearchPanel } from "./SearchPanel";
@@ -38,6 +39,56 @@ function buildTree(pages: PageMeta[]): TreeNode[] {
   };
   sortRec(roots);
   return roots;
+}
+
+function treeFileIcon(mime: string): string {
+  if (mime.startsWith("image/")) return "🖼";
+  if (mime.startsWith("video/")) return "🎬";
+  if (mime.startsWith("audio/")) return "🎵";
+  if (mime === "application/pdf") return "📕";
+  if (mime.includes("zip") || mime.includes("gzip") || mime.includes("7z")) return "🗜";
+  if (mime.includes("sheet") || mime.includes("excel") || mime === "text/csv") return "📊";
+  if (mime.includes("word") || mime === "text/markdown") return "📄";
+  if (mime.startsWith("text/")) return "📝";
+  return "📎";
+}
+
+// Files uploaded into a folder, shown as non-expandable leaf items under the
+// folder in the sidebar (loaded lazily when the folder is expanded).
+function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
+  const [files, setFiles] = useState<AttachmentMeta[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api
+      .listPageAttachments(folderId)
+      .then((fs) => {
+        if (alive) setFiles(fs);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [folderId]);
+
+  if (files.length === 0) return null;
+
+  return (
+    <>
+      {files.map((f) => (
+        <div
+          key={f.id}
+          className="tree-row tree-file-row"
+          style={{ paddingLeft: depth * 16 + 8 }}
+          title={f.name}
+          onClick={() => openPath(f.path)}
+        >
+          <span className="tree-toggle" style={{ visibility: "hidden" }} />
+          <span className="tree-icon">{treeFileIcon(f.mime)}</span>
+          <span className="tree-title">{f.name}</span>
+        </div>
+      ))}
+    </>
+  );
 }
 
 function TreeItem({
@@ -134,7 +185,7 @@ function TreeItem({
             setExpanded((v) => !v);
           }}
         >
-          {node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
+          {isFolder ? (expanded ? "▾" : "▸") : node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
         <span className={`tree-icon${isFolder ? " tree-icon-folder" : ""}`}>
           {isFolder ? "📁" : isDatabase ? "🗂" : "📄"}
@@ -214,10 +265,14 @@ function TreeItem({
           </button>
         </span>
       </div>
-      {expanded &&
-        node.children.map((child) => (
-          <TreeItem key={child.id} node={child} depth={depth + 1} />
-        ))}
+      {expanded && (
+        <>
+          {node.children.map((child) => (
+            <TreeItem key={child.id} node={child} depth={depth + 1} />
+          ))}
+          {isFolder && <TreeFiles folderId={node.id} depth={depth + 1} />}
+        </>
+      )}
       {dragging && null}
     </div>
   );
