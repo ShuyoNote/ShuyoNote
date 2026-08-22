@@ -20,6 +20,7 @@ import { api } from "./lib/api";
 import { useNotes } from "./store/notes";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
+import { toast } from "./store/toast";
 import "./App.css";
 
 // A page "has content" if its serialized root has at least one top-level block.
@@ -88,6 +89,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         useBlockCache.getState().bump();
       } catch (e) {
         console.error("save failed", e);
+        toast(`保存失败：${e}`, "error");
       }
     }, 600);
   };
