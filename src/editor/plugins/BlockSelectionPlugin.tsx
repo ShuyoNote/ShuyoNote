@@ -32,9 +32,11 @@ export function BlockSelectionPlugin() {
     );
   }, [editor]);
 
-  // Clear selection on any mousedown that isn't a handle/button.
+  // Clear selection on any mousedown that isn't a handle/button or a right-click
+  // (right-click opens the context menu, so the selection must persist).
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
+      if (e.button === 2) return;
       const t = e.target as HTMLElement;
       if (t.closest(".block-handle, .block-context-menu")) return;
       useBlockSelection.getState().clear();
