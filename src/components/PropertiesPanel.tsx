@@ -25,7 +25,13 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   const [newOptions, setNewOptions] = useState("");
 
   const load = () => {
-    api.getPageProps(pageId).then(setProps).catch((e) => console.error(e));
+    api
+      .getPageProps(pageId)
+      .then((ps) => {
+        console.log("[ShuyoNote] props loaded", { pageId, count: ps.length, values: ps.map((p) => `${p.name}=${p.value}`) });
+        setProps(ps);
+      })
+      .catch((e) => console.error(e));
     api.listAttrDefs().then(setAttrs).catch((e) => console.error(e));
   };
   useEffect(load, [pageId]);
@@ -35,9 +41,12 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   const writeQueue = useRef<Record<string, Promise<unknown>>>({});
 
   const persist = (attrId: string, value: string) => {
+    console.log("[ShuyoNote] prop persist", { pageId, attrId, value });
     setProps((ps) => ps.map((p) => (p.attr_id === attrId ? { ...p, value } : p)));
     const next = (writeQueue.current[attrId] ?? Promise.resolve()).then(() =>
-      api.setPageProp({ page_id: pageId, attr_id: attrId, value }),
+      api
+        .setPageProp({ page_id: pageId, attr_id: attrId, value })
+        .then((r) => console.log("[ShuyoNote] prop saved", { pageId, attrId, value, r })),
     );
     writeQueue.current[attrId] = next.catch((e) => toast(`保存属性失败：${e}`, "error"));
   };
