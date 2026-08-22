@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { $convertFromMarkdownString } from "@lexical/markdown";
 import { $getRoot } from "lexical";
 import { SHUYONOTE_TRANSFORMERS, preprocessMarkdownImport } from "../editor/markdownTransformers";
+import { $importHtml } from "../editor/htmlToLexical";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
@@ -39,11 +40,20 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
     }
     let ok = false;
     try {
-      const md = preprocessMarkdownImport(text);
+      // Elegant routing: a purely-HTML document is imported direct-to-Lexical
+      // (faithful structure). Pure Markdown, or Markdown with HTML embedded in
+      // it, goes through the Markdown pipeline so Markdown structure is kept.
+      const hasBlockHtml = /<(p|h[1-6]|div|img|table|ul|ol|li|blockquote|pre|hr|section|article|iframe)\b/i.test(text);
+      const hasMarkdown = /(^|\n)[ \t]*(#{1,6} |[-*] |\d+\. |\||>\s?|```)/m.test(text);
+      const useHtmlImport = hasBlockHtml && !hasMarkdown;
       editor.update(() => {
         const root = $getRoot();
         root.clear();
-        $convertFromMarkdownString(md, SHUYONOTE_TRANSFORMERS, root);
+        if (useHtmlImport) {
+          $importHtml(text, root);
+        } else {
+          $convertFromMarkdownString(preprocessMarkdownImport(text), SHUYONOTE_TRANSFORMERS, root);
+        }
       });
       ok = true;
     } catch (e) {
