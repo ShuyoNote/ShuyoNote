@@ -165,6 +165,36 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
             }
         }
     }
+    // `ref`-type property values are graph edges too (database ↔ graph, 图谱贯通).
+    let mut stmt = c
+        .prepare(
+            "SELECT pp.page_id, substr(pp.value, 3) FROM page_props pp
+             JOIN attr_defs a ON a.id = pp.attr_id
+             WHERE a.type = 'ref' AND pp.value LIKE 'p:%'",
+        )
+        .map_err(|e| e.to_string())?;
+    let ref_rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    for (source, target) in ref_rows {
+        if source == target {
+            continue;
+        }
+        let key = (source, target);
+        match best.get_mut(&key) {
+            Some(existing) => {
+                if edge_kind_priority("ref") > edge_kind_priority(existing.as_str()) {
+                    *existing = "ref".to_string();
+                }
+            }
+            None => {
+                best.insert(key, "ref".to_string());
+            }
+        }
+    }
+
     let edges: Vec<GraphEdge> = best
         .into_iter()
         .map(|((source, target), kind)| GraphEdge { source, target, kind })
