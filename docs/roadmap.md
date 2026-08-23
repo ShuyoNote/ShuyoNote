@@ -113,9 +113,9 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 
 ### M15 — 每工作空间独立存储（物理隔离，[规划](plans/2026-08-22-per-workspace-storage-plan.md)）
 > 把多空间从「单库 + 全局附件（逻辑隔离 workspace_id）」升级为「每空间独立 SQLite 库文件 + 独立附件目录（物理隔离）」，实现单空间可搬移/单独备份/单独加密/故障隔离。**高成本高风险**，采用「新增+校验+切换指针+原库保留可回滚」的安全分阶段迁移。
-- **M15.0 元数据库 + 存储底座** ⏳：`meta.db`（workspaces/sync_state/templates/plugin_state）+ `spaces/<ws_id>/` 布局 + 多连接托管；`active_workspace_id` 改读 meta。
-- **M15.1 拆库迁移器** ⏳：单库 → 每空间库 + 附件子集（幂等/可续/校验/回滚；迁移前整库备份、原库保留）。
-- **M15.2 命令层改造** ⏳：所有内容命令走 `conn_for(space)`，查询去掉 `workspace_id` 过滤；回归各内容查询。
+- **M15.0 元数据库 + 存储底座** ✅（v1.39.0）：`meta.db`（workspaces/sync_state/templates/plugin_state）+ `spaces/<ws_id>/` 每空间库 + 每空间附件目录；`Db.0` 连当前空间库 + `meta` ATTACH；空间命令/active 改读 `meta.*`；创建/切换/删除空间重开主连接（`reopen_space`）；旧库清理、首启重建。
+- **M15.1 拆库迁移器** 🗓（用户确认清理旧库、不迁移 → 以「首启重建」代替）。
+- **M15.2 命令层改造** ⏳：内容命令去掉 `workspace_id` 过滤（每库单空间）；`templates`/`sync_state`/`plugin_state` 全面落 meta；回归各内容查询。
 - **M15.3 单空间备份/导出** ⏳：`export_workspace`/`import_workspace`（空间 = 库 + 附件 zip，可独立导入）。
 - **M15.4 跨空间适配** ⏳：全空间搜索跨库合并、跨空间复制跨库 + 附件拷贝、空间清理按各自空间。
 - **M15.5 验收 + 清理** ⏳：全功能回归；归档原单库。

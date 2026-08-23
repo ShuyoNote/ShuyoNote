@@ -1,22 +1,159 @@
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::OnceLock;
+
+/// App-level (meta) DB path inside the app data dir.
+pub const META_DB: &str = "meta.db";
+/// Key for the active workspace id in meta.sync_state.
+pub const ACTIVE_KEY: &str = "active_workspace_id";
 
 pub struct Db(pub Mutex<Connection>);
 
+static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Resolve data paths for the app-data dir.
+pub(crate) fn meta_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(META_DB)
+}
+pub(crate) fn spaces_dir(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("spaces")
+}
+pub(crate) fn space_db_path(app_data_dir: &Path, space_id: &str) -> PathBuf {
+    spaces_dir(app_data_dir).join(format!("{space_id}.db"))
+}
+
+/// Reopen the main (active space) connection to point at `space_id`'s DB file,
+/// re-attaching meta.db. Used when creating/switching/deleting a workspace.
+pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), String> {
+    let dir = APP_DATA_DIR
+        .get()
+        .ok_or_else(|| "app data dir not initialised".to_string())?;
+    let _ = std::mem::replace(c, Connection::open(space_db_path(dir, space_id)).map_err(|e| e.to_string())?);
+    c.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
+    c.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
+    c.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+    migrate(c).map_err(|e| e.to_string())?;
+    let meta = meta_path(dir).display().to_string().replace('\'', "''");
+    c.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
+        .map_err(|e| format!("attach meta failed: {e}"))?;
+    Ok(())
+}
+
 pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
-    let db_path = app_data_dir.join("shuyonote.db");
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).expect("failed to create app data dir");
+    let _ = APP_DATA_DIR.set(app_data_dir.clone());
+    std::fs::create_dir_all(&app_data_dir).expect("failed to create app data dir");
+    std::fs::create_dir_all(spaces_dir(&app_data_dir)).ok();
+
+    // meta.db: app-level shared state (workspaces / sync_state / templates / plugin_state).
+    {
+        let meta_conn = Connection::open(meta_path(&app_data_dir))?;
+        meta_migrate(&meta_conn)?;
+        let count: i64 = meta_conn
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |r| r.get(0))
+            .unwrap_or(0);
+        if count == 0 {
+            let now = now_ms();
+            meta_conn.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES ('default','默认空间','#3370FF','',1,?1,?1)",
+                params![now],
+            )?;
+        }
+        let active: String = meta_conn
+            .query_row(
+                "SELECT value FROM sync_state WHERE key = ?1",
+                params![ACTIVE_KEY],
+                |r| r.get(0),
+            )
+            .ok()
+            .unwrap_or_else(|| {
+                meta_conn
+                    .query_row("SELECT id FROM workspaces ORDER BY created_at ASC, id ASC LIMIT 1", [], |r| r.get(0))
+                    .unwrap_or_else(|_| "default".to_string())
+            });
+        meta_conn
+            .execute(
+                "INSERT INTO sync_state (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![ACTIVE_KEY, active],
+            )
+            .ok();
     }
 
-    let conn = Connection::open(&db_path)?;
+    // Open the active space's DB as the MAIN connection, then ATTACH meta.db as `meta`.
+    let active: String = {
+        let meta_conn = Connection::open(meta_path(&app_data_dir))?;
+        meta_conn
+            .query_row(
+                "SELECT value FROM sync_state WHERE key = ?1",
+                params![ACTIVE_KEY],
+                |r| r.get(0),
+            )
+            .map_err(|_| rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some("no active workspace".to_string()),
+            ))?
+    };
+    let conn = Connection::open(space_db_path(&app_data_dir, &active))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-
     migrate(&conn)?;
+    let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
+    conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
+        .map_err(|e| {
+            eprintln!("failed to attach meta db: {e}");
+            rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some(format!("attach meta failed: {e}")),
+            )
+        })?;
     Ok(conn)
+}
+
+/// Schema for the app-level `meta.db` (cross-workspace shared state).
+fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            theme       TEXT,
+            icon        TEXT NOT NULL DEFAULT '',
+            sort_order  REAL NOT NULL DEFAULT 0,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            deleted_at  INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS sync_state (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS templates (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            category      TEXT NOT NULL DEFAULT '我的模板',
+            kind          TEXT NOT NULL DEFAULT 'page',
+            icon          TEXT NOT NULL DEFAULT '',
+            cover         TEXT NOT NULL DEFAULT '',
+            summary       TEXT NOT NULL DEFAULT '',
+            content_json  TEXT NOT NULL DEFAULT '{}',
+            content_text  TEXT NOT NULL DEFAULT '',
+            props_json    TEXT NOT NULL DEFAULT '{}',
+            database_json TEXT NOT NULL DEFAULT '{}',
+            tags          TEXT NOT NULL DEFAULT '[]',
+            built_in      INTEGER NOT NULL DEFAULT 0,
+            space_id      TEXT,
+            sort_order    REAL NOT NULL DEFAULT 0,
+            created_at    INTEGER NOT NULL,
+            updated_at    INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS plugin_state (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        "#,
+    )?;
+    Ok(())
 }
 
 pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {

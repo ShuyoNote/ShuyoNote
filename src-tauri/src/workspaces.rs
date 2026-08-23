@@ -31,10 +31,11 @@ const ACCENTS: [&str; 8] = [
 
 /// The workspace the app is currently operating on (persisted). Falls back to the
 /// oldest non-deleted workspace (the "default"/"默认空间" seeded on first run).
+/// Reads from `meta.sync_state` (meta.db is ATTACHed as `meta` on the connection).
 pub(crate) fn active_workspace_id(c: &Connection) -> Result<String, String> {
     let persisted: Option<String> = c
         .query_row(
-            "SELECT value FROM sync_state WHERE key = ?1",
+            "SELECT value FROM meta.sync_state WHERE key = ?1",
             params![ACTIVE_KEY],
             |row| row.get(0),
         )
@@ -43,7 +44,7 @@ pub(crate) fn active_workspace_id(c: &Connection) -> Result<String, String> {
     if let Some(id) = persisted {
         let ok: bool = c
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+                "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
                 params![id],
                 |row| row.get(0),
             )
@@ -55,13 +56,13 @@ pub(crate) fn active_workspace_id(c: &Connection) -> Result<String, String> {
     // Fallback: oldest non-deleted workspace; persist it so state stays consistent.
     let id: String = c
         .query_row(
-            "SELECT id FROM workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1",
+            "SELECT id FROM meta.workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1",
             [],
             |row| row.get(0),
         )
         .map_err(|_| "没有可用的工作空间".to_string())?;
     c.execute(
-        "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
+        "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![ACTIVE_KEY, id],
     )
@@ -77,19 +78,26 @@ pub async fn get_active_workspace_id(db: State<'_, Db>) -> Result<String, String
 
 #[tauri::command]
 pub async fn set_active_workspace_id(db: State<'_, Db>, id: String) -> Result<(), String> {
-    let c = conn(&db);
-    let exists: bool = c
-        .query_row("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)", params![id], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
+    let exists: bool = {
+        let c = conn(&db);
+        c.query_row("SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1)", params![id], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+    };
     if !exists {
         return Err("工作空间不存在".to_string());
     }
-    c.execute(
-        "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![ACTIVE_KEY, id],
-    )
-    .map_err(|e| e.to_string())?;
+    {
+        let c = conn(&db);
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_KEY, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    // Re-point the main connection to the target space's DB file.
+    let mut c = db.0.lock().expect("db mutex poisoned");
+    crate::db::reopen_space(&mut c, &id)?;
     Ok(())
 }
 
@@ -98,10 +106,10 @@ pub async fn set_active_workspace_id(db: State<'_, Db>, id: String) -> Result<()
 pub async fn get_workspace_name(db: State<'_, Db>) -> Result<String, String> {
     let c = conn(&db);
     let active = active_workspace_id(&c)?;
-    c.query_row("SELECT name FROM workspaces WHERE id = ?1", params![active], |row| row.get(0))
+    c.query_row("SELECT name FROM meta.workspaces WHERE id = ?1", params![active], |row| row.get(0))
         .or_else(|_| {
             c.query_row(
-                "SELECT name FROM workspaces ORDER BY created_at ASC LIMIT 1",
+                "SELECT name FROM meta.workspaces ORDER BY created_at ASC LIMIT 1",
                 [],
                 |row| row.get(0),
             )
@@ -119,7 +127,7 @@ pub async fn rename_workspace(db: State<'_, Db>, id: String, name: String) -> Re
     let c = conn(&db);
     let n = c
         .execute(
-            "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            "UPDATE meta.workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![trimmed, now_ms(), id],
         )
         .map_err(|e| e.to_string())?;
@@ -141,7 +149,7 @@ pub async fn set_workspace_settings(
     let c = conn(&db);
     let n = c
         .execute(
-            "UPDATE workspaces SET theme = ?1, icon = ?2, sort_order = ?3, updated_at = ?4
+            "UPDATE meta.workspaces SET theme = ?1, icon = ?2, sort_order = ?3, updated_at = ?4
              WHERE id = ?5 AND deleted_at IS NULL",
             params![theme, icon.unwrap_or_default(), sort_order.unwrap_or(0.0), now_ms(), id],
         )
@@ -160,7 +168,7 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
     {
         let ids: Vec<String> = c
             .prepare(
-                "SELECT id FROM workspaces WHERE deleted_at IS NULL AND (theme IS NULL OR theme = '') ORDER BY created_at ASC, id ASC",
+                "SELECT id FROM meta.workspaces WHERE deleted_at IS NULL AND (theme IS NULL OR theme = '') ORDER BY created_at ASC, id ASC",
             )
             .map_err(|e| e.to_string())?
             .query_map([], |r| r.get(0))
@@ -170,7 +178,7 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
         for (i, wid) in ids.iter().enumerate() {
             let color = ACCENTS[i % ACCENTS.len()];
             c.execute(
-                "UPDATE workspaces SET theme = ?1 WHERE id = ?2 AND (theme IS NULL OR theme = '')",
+                "UPDATE meta.workspaces SET theme = ?1 WHERE id = ?2 AND (theme IS NULL OR theme = '')",
                 params![color, wid],
             )
             .map_err(|e| e.to_string())?;
@@ -178,7 +186,7 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
     }
     let mut stmt = c
         .prepare(&format!(
-            "SELECT {WS_COLS} FROM workspaces WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC, id ASC"
+            "SELECT {WS_COLS} FROM meta.workspaces WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC, id ASC"
         ))
         .map_err(|e| e.to_string())?;
     let mapped = stmt
@@ -193,29 +201,38 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
 
 #[tauri::command]
 pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result<WorkspaceMeta, String> {
-    let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     let trimmed = name.unwrap_or_default().trim().to_string();
     let name = if trimmed.is_empty() { "新建工作区".to_string() } else { trimmed };
 
-    let count: i64 = c
-        .query_row(
-            "SELECT COUNT(*) FROM workspaces WHERE deleted_at IS NULL",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?;
+    let count: i64 = {
+        let c = conn(&db);
+        c.query_row("SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NULL", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+    };
     let theme = ACCENTS[(count as usize) % ACCENTS.len()].to_string();
     let sort_order = (count + 1) as f64;
 
-    c.execute(
-        "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
-         VALUES (?1, ?2, ?3, '', ?4, ?5, ?6)",
-        params![id, name, theme, sort_order, now, now],
-    )
-    .map_err(|e| e.to_string())?;
+    {
+        let c = conn(&db);
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, '', ?4, ?5, ?6)",
+            params![id, name, theme, sort_order, now, now],
+        )
+        .map_err(|e| e.to_string())?;
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_KEY, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
+    // Re-point the main connection to the new space's DB file (creates + migrates it).
+    let mut c = db.0.lock().expect("db mutex poisoned");
+    crate::db::reopen_space(&mut c, &id)?;
     // Seed a default home page so a new space isn't blank.
     let home_id = uuid::Uuid::new_v4().to_string();
     let home_json = r#"{"root":{"children":[{"type":"heading","tag":"h1","version":1,"children":[{"type":"text","text":"你好，这是你的新空间","detail":0,"format":0,"style":"","mode":"normal","version":1}],"direction":"ltr","format":"","indent":0,"style":"","mode":"normal","textFormat":0,"textStyle":""}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}"#;
@@ -226,16 +243,8 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
     )
     .map_err(|e| e.to_string())?;
 
-    // Make the new workspace active so the user lands in it immediately.
-    c.execute(
-        "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![ACTIVE_KEY, id],
-    )
-    .map_err(|e| e.to_string())?;
-
     c.query_row(
-        &format!("SELECT {WS_COLS} FROM workspaces WHERE id = ?1"),
+        &format!("SELECT id,name,theme,icon,sort_order,created_at,updated_at FROM meta.workspaces WHERE id = ?1"),
         params![id],
         |row| row_to_meta(row),
     )
@@ -252,7 +261,7 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), Strin
     let now = now_ms();
     let n = c
         .execute(
-            "UPDATE workspaces SET deleted_at = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            "UPDATE meta.workspaces SET deleted_at = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![now, now, id],
         )
         .map_err(|e| e.to_string())?;
@@ -283,7 +292,7 @@ pub fn copy_page_to_workspace(
     // Validate targets.
     let ws_ok: bool = c
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1 AND deleted_at IS NULL)",
+            "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
             params![target_workspace_id],
             |r| r.get(0),
         )

@@ -2,6 +2,25 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.39.0] - 2026-08-22
+
+### 新增
+
+- **每工作空间独立存储（物理隔离，M15.0 底座）**：把多空间从「单库 + 全局附件（逻辑隔离）」升级为「**每空间独立 SQLite 库 + 独立附件目录**」的结构
+  - `meta.db`（应用级：workspaces / sync_state / templates / plugin_state）+ `spaces/<ws_id>/shuyonote.db`（每空间内容）+ 每空间 `attachments/`
+  - `Db.0` 连**当前空间库**，`meta.db` 以 `ATTACH ... AS meta` 挂载——内容命令几乎不变，只把「空间/应用级」查询切到 `meta.*`
+  - `active_workspace_id` / `create_workspace` / `set_active_workspace_id` / `delete_workspace` / `list_workspaces` / `rename` / `set_settings` / `get_workspace_name` 全部改为读写 `meta.*`；空间切换/创建/删除时**重开主连接**到目标空间库（`reopen_space`）
+  - 旧库按用户要求**清理，不做迁移**：首启新建 `meta.db` + 默认空间库，旧 `shuyonote.db` 不再使用
+- 后端 15 项单测、编译通过
+
+### 变更
+
+- `db.rs`：`meta_migrate` + `reopen_space` + `APP_DATA_DIR` 全局 + `init` 建立 meta/每空间库并 ATTACH
+- `workspaces.rs`：空间命令切 `meta.*`
+- **说明（待 M15.2+）**：内容命令仍保留 `workspace_id` 过滤（每空间库单空间，冗余但可用）；跨空间搜索/复制/单空间导出、`templates`/`sync_state`/`plugin_state` 全面落到 meta、去掉 `workspace_id` 列为后续阶段
+
+---
+
 ## [1.38.6] - 2026-08-22
 
 ### 变更
