@@ -77,6 +77,9 @@ pub struct SearchResult {
     pub id: String,
     pub title: String,
     pub snippet: String,
+    /// Workspace name, populated when searching across all workspaces.
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

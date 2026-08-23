@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.27.0] - 2026-08-22
+
+### 新增
+
+- **全空间搜索（M10.4a）**：搜索框新增「本空间 / 全空间」切换——跨所有工作空间全文搜索（FTS / LIKE / `prop:` 过滤均适用）
+  - 后端 `search` 增加 `all_spaces` 参数：传 `true` 时忽略活动空间过滤，结果按 `workspace_id` 关联显示所属空间名（`SearchResult.space`）
+  - 前端 `SearchPanel` 增加空间切换按钮与结果空间徽章；`api.search` 增加 `allSpaces` 参数
+  - 默认仍限定当前空间，切换「全空间」后一次检索全部工作空间（多空间隔离仍保留）
+
+### 变更
+
+- `SearchArgs` 增加 `all_spaces`；`SearchResult` 增加可选 `space` 字段（跨空间模式填充）
+- 搜索 SQL 按 `all_spaces` 动态拼接：有工作空间过滤时绑定 `(ws, query, limit)`，否则 `(query, limit)`，并用 `params_from_iter` 传递可变长度参数
+- **文档**：路线图 M10.4 全空间搜索标记已实现
+
+---
+
 ## [1.26.0] - 2026-08-22
 
 ### 新增

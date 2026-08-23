@@ -63,6 +63,8 @@ fn escape_like(s: &str) -> String {
 pub struct SearchArgs {
     pub query: String,
     pub limit: Option<usize>,
+    /// When true, search across all workspaces (results carry their space name).
+    pub all_spaces: Option<bool>,
 }
 
 // Split a query into a text part + `prop:名称=值` filters.
@@ -113,22 +115,35 @@ fn pages_matching_filters(
 }
 
 // All pages as brief search results (used when only prop filters are given).
-fn list_pages_brief(c: &Connection, limit: usize, ws: &str) -> Result<Vec<SearchResult>, String> {
-    let mut stmt = c
-        .prepare(
-            "SELECT id, title, content_text FROM pages
-             WHERE deleted_at IS NULL AND workspace_id = ?1 ORDER BY updated_at DESC LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
+// When `ws` is None, search spans all workspaces and results carry their space name.
+fn list_pages_brief(c: &Connection, limit: usize, ws: Option<&str>) -> Result<Vec<SearchResult>, String> {
+    let sql = if ws.is_some() {
+        "SELECT p.id, p.title, p.content_text, w.name FROM pages p
+         JOIN workspaces w ON w.id = p.workspace_id
+         WHERE p.deleted_at IS NULL AND p.workspace_id = ?1 ORDER BY p.updated_at DESC LIMIT ?2"
+    } else {
+        "SELECT p.id, p.title, p.content_text, w.name FROM pages p
+         JOIN workspaces w ON w.id = p.workspace_id
+         WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT ?1"
+    };
+    let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
+    let ws_owned = ws.map(|s| s.to_string());
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(w) = ws_owned {
+        params_vec.push(Box::new(w));
+    }
+    params_vec.push(Box::new(limit as i64));
     let rows = stmt
-        .query_map(params![ws, limit as i64], |r| {
+        .query_map(rusqlite::params_from_iter(params_vec.iter().map(|b| b.as_ref())), |r| {
             let id: String = r.get(0)?;
             let title: String = r.get(1)?;
             let text: String = r.get(2)?;
+            let space: String = r.get(3)?;
             Ok(SearchResult {
                 id,
                 title,
                 snippet: truncate(&text, 120),
+                space: Some(space),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -145,13 +160,17 @@ pub fn search(db: State<Db>, args: SearchArgs) -> Result<Vec<SearchResult>, Stri
     }
 
     // Base results: by text (FTS/LIKE), or all pages when only filters given.
-    let ws = workspaces::active_workspace_id(&c)?;
-    let mut results = if text.is_empty() {
-        list_pages_brief(&c, 200, &ws)?
-    } else if text.chars().count() < 3 {
-        search_like(&c, &text, limit, &ws)?
+    let ws = if args.all_spaces.unwrap_or(false) {
+        None
     } else {
-        search_fts(&c, &text, limit, &ws)?
+        Some(workspaces::active_workspace_id(&c)?)
+    };
+    let mut results = if text.is_empty() {
+        list_pages_brief(&c, 200, ws.as_deref())?
+    } else if text.chars().count() < 3 {
+        search_like(&c, &text, limit, ws.as_deref())?
+    } else {
+        search_fts(&c, &text, limit, ws.as_deref())?
     };
 
     if !filters.is_empty() {
@@ -163,61 +182,114 @@ pub fn search(db: State<Db>, args: SearchArgs) -> Result<Vec<SearchResult>, Stri
     Ok(results)
 }
 
-fn search_fts(c: &Connection, query: &str, limit: usize, ws: &str) -> Result<Vec<SearchResult>, String> {
+fn search_fts(
+    c: &Connection,
+    query: &str,
+    limit: usize,
+    ws: Option<&str>,
+) -> Result<Vec<SearchResult>, String> {
     // Wrap as a phrase for substring matching; strip embedded double quotes.
     let phrase = format!("\"{}\"", query.replace('"', ""));
-    let mut stmt = c
-        .prepare(
-            "SELECT f.page_id, f.title,
-                    snippet(f, 2, '[[', ']]', '…', 24) AS body_snip,
-                    snippet(f, 1, '[[', ']]', '…', 12) AS title_snip
-             FROM page_fts f
-             JOIN pages p ON p.id = f.page_id
-             WHERE f.page_fts MATCH ?1 AND p.deleted_at IS NULL AND p.workspace_id = ?2
-             ORDER BY rank LIMIT ?3",
-        )
-        .map_err(|e| e.to_string())?;
+    let sql = if ws.is_some() {
+        "SELECT f.page_id, f.title, w.name,
+                snippet(f, 2, '[[', ']]', '…', 24) AS body_snip,
+                snippet(f, 1, '[[', ']]', '…', 12) AS title_snip
+         FROM page_fts f
+         JOIN pages p ON p.id = f.page_id
+         JOIN workspaces w ON w.id = p.workspace_id
+         WHERE f.page_fts MATCH ?1 AND p.deleted_at IS NULL AND p.workspace_id = ?2
+         ORDER BY rank LIMIT ?3"
+    } else {
+        "SELECT f.page_id, f.title, w.name,
+                snippet(f, 2, '[[', ']]', '…', 24) AS body_snip,
+                snippet(f, 1, '[[', ']]', '…', 12) AS title_snip
+         FROM page_fts f
+         JOIN pages p ON p.id = f.page_id
+         JOIN workspaces w ON w.id = p.workspace_id
+         WHERE f.page_fts MATCH ?1 AND p.deleted_at IS NULL
+         ORDER BY rank LIMIT ?2"
+    };
+    let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
 
-    let rows = stmt
-        .query_map(params![phrase, ws, limit as i64], |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let body_snip: String = row.get(2)?;
-            let title_snip: String = row.get(3)?;
-            let snippet = if body_snip.trim().is_empty() {
-                if title_snip.trim().is_empty() {
-                    title.clone()
-                } else {
-                    title_snip
-                }
+    let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<SearchResult> {
+        let id: String = row.get(0)?;
+        let title: String = row.get(1)?;
+        let space: String = row.get(2)?;
+        let body_snip: String = row.get(3)?;
+        let title_snip: String = row.get(4)?;
+        let snippet = if body_snip.trim().is_empty() {
+            if title_snip.trim().is_empty() {
+                title.clone()
             } else {
-                body_snip
-            };
-            Ok(SearchResult { id, title, snippet })
+                title_snip
+            }
+        } else {
+            body_snip
+        };
+        Ok(SearchResult {
+            id,
+            title,
+            snippet,
+            space: Some(space),
         })
+    };
+
+    let ws_owned = ws.map(|s| s.to_string());
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(phrase)];
+    if let Some(w) = ws_owned {
+        params_vec.push(Box::new(w));
+    }
+    params_vec.push(Box::new(limit as i64));
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params_vec.iter().map(|b| b.as_ref())), map_row)
         .map_err(|e| e.to_string())?;
 
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
-fn search_like(c: &Connection, query: &str, limit: usize, ws: &str) -> Result<Vec<SearchResult>, String> {
+fn search_like(
+    c: &Connection,
+    query: &str,
+    limit: usize,
+    ws: Option<&str>,
+) -> Result<Vec<SearchResult>, String> {
     let pattern = format!("%{}%", escape_like(query));
-    let mut stmt = c
-        .prepare(
-            "SELECT id, title, content_text FROM pages
-             WHERE deleted_at IS NULL AND workspace_id = ?1 AND (title LIKE ?2 ESCAPE '\\' OR content_text LIKE ?2 ESCAPE '\\')
-             ORDER BY updated_at DESC LIMIT ?3",
-        )
-        .map_err(|e| e.to_string())?;
+    let sql = if ws.is_some() {
+        "SELECT p.id, p.title, p.content_text, w.name FROM pages p
+         JOIN workspaces w ON w.id = p.workspace_id
+         WHERE p.deleted_at IS NULL AND p.workspace_id = ?1
+           AND (p.title LIKE ?2 ESCAPE '\\' OR p.content_text LIKE ?2 ESCAPE '\\')
+         ORDER BY p.updated_at DESC LIMIT ?3"
+    } else {
+        "SELECT p.id, p.title, p.content_text, w.name FROM pages p
+         JOIN workspaces w ON w.id = p.workspace_id
+         WHERE p.deleted_at IS NULL
+           AND (p.title LIKE ?1 ESCAPE '\\' OR p.content_text LIKE ?1 ESCAPE '\\')
+         ORDER BY p.updated_at DESC LIMIT ?2"
+    };
+    let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
 
     let q = query.to_string();
+    let ws_owned = ws.map(|s| s.to_string());
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(w) = ws_owned {
+        params_vec.push(Box::new(w));
+    }
+    params_vec.push(Box::new(pattern));
+    params_vec.push(Box::new(limit as i64));
     let rows = stmt
-        .query_map(params![ws, pattern, limit as i64], move |row| {
-            let id: String = row.get(0)?;
-            let title: String = row.get(1)?;
-            let text: String = row.get(2)?;
+        .query_map(rusqlite::params_from_iter(params_vec.iter().map(|b| b.as_ref())), move |r| {
+            let id: String = r.get(0)?;
+            let title: String = r.get(1)?;
+            let text: String = r.get(2)?;
+            let space: String = r.get(3)?;
             let snippet = build_like_snippet(&text, &q, 120);
-            Ok(SearchResult { id, title, snippet })
+            Ok(SearchResult {
+                id,
+                title,
+                snippet,
+                space: Some(space),
+            })
         })
         .map_err(|e| e.to_string())?;
 

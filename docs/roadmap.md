@@ -80,7 +80,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 - **M10.1 隔离底座** ✅（v1.9.0）：`active_workspace_id`（持久化 `sync_state`）+ `list_workspaces`/`create_workspace`/`get_set_active_workspace_id` + 侧栏空间切换器 + `list_pages`/`create_node` 按活动空间过滤/写入。注：tags/回收站/搜索/关系图的按空间过滤归入 M10.3。
 - **M10.2 生命周期** ✅（v1.10.0）：空间切换器中非当前空间可删除（二次确认 → 软删 `workspaces.deleted_at`，内容保留）；删除活动空间时 `get_active_workspace_id` 自动回退到最早未删除空间。注：`export_workspace` / `rename_workspace(id)` 为 M10.2b，暂未实现。
 - **M10.3 每空间设置** ✅（v1.11.0）：所有内容查询按活动空间过滤——回收站 `list_deleted`、标签 `list_tags`/`pages_by_tag`/`board_data`、全文搜索 `search`、关系图 `get_graph`、反链 `get_backlinks`。**M10 多工作空间里程碑达成**。
-- **M10.4（可选）**：全空间搜索、共享模板库、跨空间复制页面。
+- **M10.4a 全空间搜索** ✅（v1.27.0）：搜索框「本空间 / 全空间」切换——`search` 增 `all_spaces` 参数，忽略活动空间过滤并返回结果所属空间名（`SearchResult.space`）；FTS / LIKE / `prop:` 过滤均支持。说明：共享模板库、跨空间复制页面为 M10.4b 可选后续项。
 
 ### M11 — 插件（P1，[规划](plans/2026-08-22-plugin-plan.md)）
 - **M11.1 插件底座** ✅（v1.14.0）：插件目录扫描 + `manifest.json` 校验 + **boa 受限运行时 + 白名单 API**（`register`/`__get_current_page`/`__pages`/`__toast`）+ 命令并入命令面板 + `enabled` 持久化；内置示例插件 + Rust 单元测试。

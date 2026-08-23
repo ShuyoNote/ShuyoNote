@@ -26,6 +26,7 @@ export function SearchPanel() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [allSpaces, setAllSpaces] = useState(false);
   const debounceRef = useRef<number | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -39,7 +40,7 @@ export function SearchPanel() {
     setLoading(true);
     debounceRef.current = window.setTimeout(async () => {
       try {
-        const r = await api.search(query.trim());
+        const r = await api.search(query.trim(), 50, allSpaces);
         setResults(r);
         setOpen(true);
       } catch (e) {
@@ -51,7 +52,7 @@ export function SearchPanel() {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, [query]);
+  }, [query, allSpaces]);
 
   // Close on outside click.
   useEffect(() => {
@@ -74,15 +75,24 @@ export function SearchPanel() {
 
   return (
     <div className="search-box" ref={boxRef}>
-      <input
-        id="global-search-input"
-        className="search-input"
-        value={query}
-        placeholder="搜索笔记…"
-        title="支持 prop:属性=值 过滤（如 prop:状态=进行中）"
-        onChange={(e) => setQuery(e.target.value)}
-        onFocus={() => query.trim() && setOpen(true)}
-      />
+      <div className="search-input-row">
+        <input
+          id="global-search-input"
+          className="search-input"
+          value={query}
+          placeholder="搜索笔记…"
+          title="支持 prop:属性=值 过滤（如 prop:状态=进行中）"
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => query.trim() && setOpen(true)}
+        />
+        <button
+          className={`search-all-toggle ${allSpaces ? "on" : ""}`}
+          title="在所有工作空间搜索"
+          onClick={() => setAllSpaces((v) => !v)}
+        >
+          {allSpaces ? "全空间" : "本空间"}
+        </button>
+      </div>
       {open && (
         <div className="search-results">
           {loading && <div className="search-hint">搜索中…</div>}
@@ -98,7 +108,10 @@ export function SearchPanel() {
                 select(r.id);
               }}
             >
-              <div className="search-item-title">{r.title || "未命名"}</div>
+              <div className="search-item-title">
+                {r.title || "未命名"}
+                {allSpaces && r.space && <span className="search-item-space">{r.space}</span>}
+              </div>
               {r.snippet && (
                 <div className="search-item-snippet">
                   <Highlighted text={r.snippet} />

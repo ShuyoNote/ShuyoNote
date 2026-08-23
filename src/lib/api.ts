@@ -78,8 +78,8 @@ export const api = {
   deletePage: (id: string) => invoke<void>("delete_page", { id }),
   movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
     invoke<void>("move_page", { args }),
-  search: (query: string, limit = 50) =>
-    invoke<SearchResult[]>("search", { args: { query, limit } }),
+  search: (query: string, limit = 50, allSpaces = false) =>
+    invoke<SearchResult[]>("search", { args: { query, limit, all_spaces: allSpaces } }),
   getSyncConfig: () => invoke<SyncConfig>("get_sync_config"),
   setSyncConfig: (args: { server_url: string; token?: string }) =>
     invoke<void>("set_sync_config", { args }),
