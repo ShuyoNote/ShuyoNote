@@ -70,12 +70,13 @@ function $insertBlockNode(node: LexicalNode) {
   const topLevel = anchor.getTopLevelElement();
   if (!topLevel) return;
   topLevel.replace(node);
+  // Always leave a valid selection on a fresh paragraph after the inserted block,
+  // even if the parent lookup fails — never leave the caret pointing at a removed node.
   const paragraph = $createParagraphNode();
-  const parent = node.getParent();
-  if (parent) {
-    parent.splice(node.getIndexWithinParent() + 1, 0, [paragraph]);
-    paragraph.select();
+  if (node.getParent()) {
+    node.insertAfter(paragraph);
   }
+  paragraph.selectStart();
 }
 
 function makeOptions(pageId: string): SlashOption[] {
@@ -187,19 +188,11 @@ function makeOptions(pageId: string): SlashOption[] {
       if (!u) return;
       if (!u.includes("://")) u = `https://${u}`;
       editor.update(() => {
-        const sel = $getSelection();
-        const anchor = sel && $isRangeSelection(sel) ? sel.anchor.getNode() : null;
-        const top = anchor?.getTopLevelElement() ?? null;
-        const node = $createWebBookmarkNode(u);
-        if (top && top.getParent()) {
-          top.replace(node);
-        }
-        // Insert a fresh paragraph after the bookmark and move the selection
-        // there, so typing continues (replacing the selected block otherwise
-        // orphans the selection → "selection has been lost").
-        const next = $createParagraphNode();
-        node.insertAfter(next);
-        next.selectStart();
+        // Reuse the proven block-insert path: replace the current (which holds
+        // the "/wzsq" text) with the bookmark, then insert a fresh paragraph
+        // and move the caret there. This avoids orphaned selection pointing at
+        // a removed node — the same reliable path used by image/video inserts.
+        $insertBlockNode($createWebBookmarkNode(u));
       });
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>
