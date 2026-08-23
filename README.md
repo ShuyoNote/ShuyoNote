@@ -15,6 +15,7 @@
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
   <img src="https://img.shields.io/badge/React-19-61dafb" alt="react">
+  <img src="https://img.shields.io/badge/Vite-8-646cff" alt="vite">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
 
@@ -24,6 +25,25 @@
 
 ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它借鉴了 Notion 的块编辑器体验，但将全部数据保存在本地 SQLite 数据库中——无需注册、无云端依赖、离线即可使用。需要多设备协作时，可自建轻量同步服务，通过变更日志实现增量同步与冲突合并。
 
+- **本地优先**：数据即文件，存储在本机，离线可用。
+- **内容寻址去重**：附件按 SHA-256 哈希存储，跨页/夹/空间去重，省空间。
+- **可自建同步**：无云锁定，可选自建 sync-server（outbox + LWW + 附件增量）。
+- **可扩展**：磁盘加载命令插件（受限白名单 API）+ 主题/外观自定义。
+
+## 📑 目录
+
+- **特性** — 编辑体验 / 知识组织 / 数据安全 / 多设备同步 / 体验优化
+- **架构** — 前端 / Rust 后端 / SQLite / 同步服务端分层
+- **技术栈** — 各层技术一览
+- **开发环境要求** — Node / Rust / 平台
+- **快速开始** — 安装与启动
+- **构建发布** — 产物
+- **多设备同步** — sync-server + 配置
+- **项目结构** — 目录说明
+- **文档体系** — 文档索引
+- **路线图** — 里程碑
+- **License**
+
 ## ✨ 特性
 
 ### 编辑体验
@@ -31,19 +51,19 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **斜杠菜单**：输入 `/` 快速插入任意块（含 `/引用块`、`/嵌入块`）
 - **块拖拽排序**：悬停块左侧出现 `⋮⋮` 手柄，拖拽实时显示插入指示线，松手重排
 - **块多选**：点击 `⋮⋮` 手柄选中块（Shift 选连续范围），批量操作条「复制 / 删除」，`Delete`/`Esc` 快捷键，选中块高亮
-- **表格交互**：Wolai 式悬浮工具栏（增删行列 / 表头行·列切换 / 对齐 / 背景色）+ 列宽拖拽调整 + 单元格选区高亮
-- **分隔线**：Wolai 风格细分隔线，垂直居中，悬停显示块手柄
+- **表格交互**：悬浮工具栏（增删行列 / 表头行·列切换 / 对齐 / 背景色）+ 列宽拖拽调整 + 单元格选区高亮
 - **图片粘贴**：截图/复制图片直接粘贴，内容寻址（SHA-256）去重存储
 - **文件附件**：通用文件附件（多选导入、超大文件流式存取、打开 / 定位 / 移除）
 - **Markdown**：快捷键输入、一键导入/导出、导出 HTML
 
 ### 知识组织
 - **页面树**：无限层级嵌套，页面与文件夹（`kind`）区分，拖拽精确排序
-- **文件管理**：从侧边栏点文件夹进入文件管理页——文件/文件夹/文件列表（类型、大小、时间），文件夹内批量上传超大文件（流式）、侧边栏同步展示
-- **标签系统**：页面打标签，侧边栏按标签筛选；标签管理（全局标签库，重命名/合并/删除）
+- **文件管理 / 网盘**：从侧边栏点文件夹进入文件管理页——文件/文件夹/文件列表（类型、大小、时间），文件夹内批量上传超大文件（流式）、侧边栏同步展示；文件引用到页面（文件卡片 + 系统打开）；同名文件历史版本（保留/恢复）
+- **标签系统**：页面打标签，侧边栏按标签筛选；标签管理（全局标签库，重命名/合并/删除/使用页数）
 - **双向链接**：`[[标题]]` 页面双链 + `((块ID))` 块引用 + `{{块ID}}` 块嵌入
 - **块级反链**：页面底部反链面板分「页面引用 / 块级引用」两组，精确到「谁引用了本页哪一块」
 - **关系图**：力导向关系图，页面/块节点、按引用类型着色、块级图层开关、拖拽与点击跳转
+- **数据库视图**：表格 / 画廊 / 看板 / 列表 / 日历 / 时间轴 / 目录 七种视图；查询型数据库（规则收页）+ 保存视图 + `ref` 关联属性 + 公式列 + 跨库 rollup 聚合
 - **看板视图**：按标签分列，卡片拖拽跨列切换
 - **全文搜索**：SQLite FTS5 + trigram 分词，支持中文子串检索、命中高亮与定位
 - **多工作空间（物理隔离）**：每空间独立 SQLite 库（`meta.db` 管理空间清单，`spaces/<ws_id>/` 每空间库）；空间切换器（新建 / 重命名 / 主题色 / 排序 / 删除）；全空间搜索跨库合并；跨空间复制页面；单空间导出/导入（自包含 zip）
@@ -52,6 +72,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **自动保存**：防抖写入 SQLite，无「保存」按钮
 - **版本历史**：每次保存前自动快照，可一键回滚（每页保留 50 份，自动去重）
 - **回收站**：软删除 + 恢复 + 彻底删除
+- **端到端加密**：Argon2id 密钥派生 + XChaCha20-Poly1305；同步加密 + 设置 UI + 口令解锁/锁定，每空间独立密钥
 - **整库备份**：导出/导入 zip（数据库一致性快照 + 附件目录；流式 + 进度）
 - **单空间备份/导出**：`export_workspace` 把当前空间打成自包含 zip（空间库 + 该空间引用附件 + 元数据）；`import_workspace` 导入为新空间
 - **空间清理 / 存储管理**：占用统计（数据库/附件/回收站/版本/临时）+ 清空回收站 / 清理孤立附件 / 清理版本历史 / 清理临时文件 / 清理软删工作空间
@@ -66,8 +87,8 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **设计系统 v2**：品牌蓝 + 中性面 + 多彩分类色的统一 token 体系，参考 FlowUs / Wolai
 - **暗色模式**：亮色 / 暗色 / 跟随系统三态
 - **命令面板**：`Ctrl+K` 搜索页面与命令，分组展示、键盘导航
-- **顶部工具栏**：页面顶部图标工具栏（查找 / 导入 / 导出 Markdown / 导出 HTML / 版本历史）
-- **空间名称**：侧栏显示空间名称，双击可重命名
+- **顶部工具栏**：页面顶部图标工具栏（查找 / 导入 / 导出 Markdown / 导出 HTML / 版本历史 / PDF）
+- **模板中心**：结构预设建页（页面/数据库）+ 保存为模板 + 共享打磨
 - **Toast 反馈**：保存 / 同步 / 备份 / 删除 / 恢复等操作底部提示，替代系统弹窗
 - **编辑器查找**：`Ctrl+F` 高亮全部命中并逐个导航
 - **多窗口**：页面可弹出到独立窗口编辑
@@ -100,12 +121,13 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 │                  Rust 后端 (src-tauri)                │
 │  commands · search · sync · attachments · backlinks  │
 │  blocks · graph · tags · trash · versions · backup   │
-│  windows                                              │
+│  workspace_io · storage · security · plugins          │
+│  workspaces · templates · crypto · database · props  │
 │                    │                                 │
 │     ┌──────────────┴──────────────┐                  │
 │     ▼                             ▼                  │
 │  SQLite (WAL + FTS5)        附件目录 (SHA-256)       │
-│  每空间库 spaces/<id>.db + meta.db                    │
+│  meta.db(应用级) + spaces/<id>.db(每空间)              │
 └─────────────────────────────────────────────────────┘
           ▲
           │ HTTP (push / pull)
@@ -115,7 +137,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 └─────────────────────────────────────────────────────┘
 ```
 
-**数据模型**：一页 = 一个 Lexical 文档。块映射为 Lexical 根级节点（每个顶层块带稳定 `blockId`），页面层级用 `parent_id` 树表达；`blocks` 表维护「块 → 页」反向索引，`backlinks` 表记录页面级 + 块级引用关系。
+**数据模型**：一页 = 一个 Lexical 文档。块映射为 Lexical 根级节点（每个顶层块带稳定 `blockId`），页面层级用 `parent_id` 树表达；`blocks` 表维护「块 → 页」反向索引，`backlinks` 表记录页面级 + 块级引用关系。**物理隔离**：每个工作空间一个独立 SQLite 库（`spaces/<ws_id>/`），应用级共享状态（workspaces / 模板 / 插件状态 / 同步配置）放 `meta.db`；附件字节全局内容寻址（跨空间去重），单空间可搬移经空间级附件子集导出实现。
 
 ## 🧰 技术栈
 
@@ -123,11 +145,13 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 |----|------|
 | 桌面壳 | Tauri 2.x（Rust 后端 + 系统 WebView） |
 | 编辑器 | Lexical 0.49（`@lexical/react`） |
-| 前端 | React 19 · TypeScript · Vite 7 |
+| 前端 | React 19 · TypeScript · Vite 8 |
 | 状态管理 | Zustand |
-| 本地存储 | SQLite（rusqlite, bundled）· FTS5 全文检索 |
+| 本地存储 | SQLite（rusqlite 0.40, bundled）· FTS5 全文检索 |
+| 加密 | Argon2id + XChaCha20-Poly1305（RustCrypto） |
 | 同步 | outbox 变更日志 + LWW · reqwest · 自建 Axum 服务端 |
-| 备份 | rusqlite 在线 backup API + zip |
+| 备份/导出 | rusqlite 在线 backup API + zip |
+| 插件 | boa_engine（受限 JS 运行时）+ 白名单 API |
 
 ## 🛠️ 开发环境要求
 
@@ -181,37 +205,49 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 3. 可选填写访问令牌
 4. 点击「立即同步」
 
-**同步机制**：本地每次写操作在 `changes` 表记录 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。
+**同步机制**：本地每次写操作在 `changes` 表记录 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。若开启端到端加密，push 前加密、pull 后解密（服务端仅存密文），锁定会话时同步被拒。
 
 ## 📁 项目结构
 
 ```
 ShuyoNote/
 ├── src/                      # 前端（React + Lexical）
-│   ├── editor/               # 编辑器、自定义节点（Callout/Image/BlockRef/BlockEmbed）、插件
-│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板
-│   ├── store/                # Zustand（notes / theme / sidebar / toast / view / blockCache）
-│   ├── hooks/                # 自动同步 / 全局快捷键
-│   ├── plugins/              # 插件注册表（命令面板扩展点）
-│   └── lib/                  # Tauri IPC 封装 / 标签分类色
+│   ├── editor/               # 编辑器、自定义节点（Callout/Image/BlockRef/BlockEmbed）、Markdown 转换
+│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板（27+ 组件）
+│   ├── store/                # Zustand（notes / theme / sidebar / toast / view / space / blockCache / ...）
+│   ├── hooks/                # 自动同步 / 全局快捷键 / Popover
+│   ├── plugins/              # 插件命令注册表（命令面板扩展点）
+│   ├── lib/                  # Tauri IPC 封装 / 标签分类色 / Markdown 导出 / PDF 打印
+│   ├── App.tsx               # 根组件
+│   ├── App.css               # 设计系统 token 与全局样式
+│   └── types.ts              # 共享类型
 ├── src-tauri/                # Tauri 后端（Rust）
 │   └── src/
-│       ├── db.rs             # SQLite 连接 / 迁移 / meta.db + spaces/<id>.db 每空间库
+│       ├── db.rs             # SQLite 连接/迁移；meta.db + spaces/<id>.db 每空间库
 │       ├── commands.rs       # 页面 CRUD
-│       ├── search.rs         # FTS5 检索
-│       ├── sync.rs           # outbox / LWW / push-pull
-│       ├── attachments.rs    # 图片 / 附件
+│       ├── search.rs         # FTS5 检索（含全空间跨库合并）
+│       ├── sync.rs           # outbox / LWW / push-pull / 附件同步
+│       ├── attachments.rs    # 图片 / 附件（内容寻址）
 │       ├── backlinks.rs      # 反向链接
 │       ├── blocks.rs         # 块索引 / 块级引用 / 块级反链
 │       ├── graph.rs          # 关系图数据
 │       ├── tags.rs           # 标签 / 看板
 │       ├── trash.rs          # 回收站
 │       ├── versions.rs       # 版本历史
-│       ├── backup.rs         # 备份导出 / 导入
+│       ├── backup.rs         # 整库备份导出 / 导入
+│       ├── workspace_io.rs   # 单空间导出 / 导入（自包含 zip）
+│       ├── storage.rs        # 存储统计 / 清理（回收站/孤立附件/版本/临时/软删空间）
+│       ├── workspaces.rs     # 工作空间命令 + 跨空间复制
+│       ├── templates.rs      # 模板（meta.templates）
+│       ├── plugins.rs        # 插件加载（boa 运行时 + 白名单 API）
+│       ├── security.rs       # 端到端加密（口令加解锁 / 同步门）
+│       ├── crypto.rs         # Argon2id + XChaCha20-Poly1305 原语
+│       ├── database.rs       # 数据库视图 / 查询型 / 公式
+│       ├── properties.rs     # 属性系统
 │       └── windows.rs        # 多窗口
-├── sync-server/              # 同步服务端（独立 Rust 二进制）
-├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划 / Logo）
-├── docs/plans/               # 架构与开发方案文档
+├── sync-server/              # 同步服务端（独立 Rust 二进制，Axum + SQLite）
+├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划）
+├── docs/                     # 产品/方案/对比文档（见 docs/README.md 索引）
 └── CHANGELOG.md              # 版本变更日志
 ```
 
@@ -222,15 +258,13 @@ ShuyoNote/
 | 文档 | 内容 |
 |------|------|
 | [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 方案 / 对比 / 设计交付 / 变更记录 |
-| [docs/plans/2026-08-15-local-first-note-app-plan.md](docs/plans/2026-08-15-local-first-note-app-plan.md) | 需求分析、数据模型、ADR、同步协议与路线图 |
-| [docs/plans/2026-08-20-block-reference-plan.md](docs/plans/2026-08-20-block-reference-plan.md) | 块级引用 + 反链升级 + 关系图方案（M1–M5 已实现） |
-| [docs/plans/2026-08-21-properties-database-plan.md](docs/plans/2026-08-21-properties-database-plan.md) | 属性系统 + 数据库视图统一方案（合并思源数据库 + Obsidian Properties） |
+| [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M15 已达；M6/移动与 M11.3/M11.4 已评估未做） |
+| [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
-| [docs/roadmap.md](docs/roadmap.md) | 下一阶段演进路线图与里程碑规划 |
-| [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
+| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作区 CRUD / 物理隔离 |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
-| [design/logo/README.md](design/logo/README.md) | 应用 Logo（应用图标 / 单色图形 / 字标 / 主图） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
 ## 🗺️ 路线图
@@ -253,7 +287,7 @@ ShuyoNote/
 - [x] 文件引用到页面（正文插入文件卡片 / 系统默认打开）
 - [x] 文件历史版本（同名文件保留/恢复）
 - [x] 全局标签管理（新建 / 重命名合并 / 删除 / 使用页数）
-- [x] 跨空间复制页面（把页面樹复制到其他工作空间）
+- [x] 跨空间复制页面（把页面树复制到其他工作空间）
 - [x] 工作空间管理（新建种子首页 / 按 id 重命名 / 空间主题色与排序）
 - [x] 全空间搜索（本空间 / 全空间切换，跨工作空间全文检索）
 - [x] 块多选 + 批量删除
@@ -269,10 +303,12 @@ ShuyoNote/
 - [x] 新页面引导层（页面 / 数据库 / 模板 / 导入 / AI 入口）
 - [x] 导出 PDF（页面 + 数据库视图）
 - [x] 每工作空间独立存储（物理隔离：`meta.db` + `spaces/<ws_id>/` 每空间库；全空间搜索跨库合并 / 跨空间复制 / 单空间导出导入）
-- [ ] 移动端适配
+- [ ] 移动端适配（环境受限：缺 iOS/Android 工具链，已评估）
 
 > 详细演进路线与里程碑见 [docs/roadmap.md](docs/roadmap.md)。
 
 ## 📄 License
 
 MIT
+
+> 注：仓库暂未附带 `LICENSE` 文件，正式发布前建议补充。
