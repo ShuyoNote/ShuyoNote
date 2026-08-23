@@ -50,8 +50,8 @@
 
 ### 新增
 
-- **每工作空间独立存储（物理隔离，M15.0 底座）**：把多空间从「单库 + 全局附件（逻辑隔离）」升级为「**每空间独立 SQLite 库 + 独立附件目录**」的结构
-  - `meta.db`（应用级：workspaces / sync_state / templates / plugin_state）+ `spaces/<ws_id>/shuyonote.db`（每空间内容）+ 每空间 `attachments/`
+- **每工作空间独立存储（物理隔离，M15.0 底座）**：把多空间从「单库 + 全局附件（逻辑隔离）」升级为「**每空间独立 SQLite 库**（物理隔离）+ 附件字节保持**全局内容寻址**」的结构
+  - `meta.db`（应用级：workspaces / sync_state / templates / plugin_state）+ `spaces/<ws_id>/shuyonote.db`（每空间内容）+ 全局 `attachments/`（附件字节按内容寻址去重；「每空间附件目录」为原始提议，见 [per-workspace-storage-plan](docs/plans/2026-08-22-per-workspace-storage-plan.md) 实现落地说明）
   - `Db.0` 连**当前空间库**，`meta.db` 以 `ATTACH ... AS meta` 挂载——内容命令几乎不变，只把「空间/应用级」查询切到 `meta.*`
   - `active_workspace_id` / `create_workspace` / `set_active_workspace_id` / `delete_workspace` / `list_workspaces` / `rename` / `set_settings` / `get_workspace_name` 全部改为读写 `meta.*`；空间切换/创建/删除时**重开主连接**到目标空间库（`reopen_space`）
   - 旧库按用户要求**清理，不做迁移**：首启新建 `meta.db` + 默认空间库，旧 `shuyonote.db` 不再使用
