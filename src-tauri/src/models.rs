@@ -37,6 +37,13 @@ fn default_kind() -> String {
 pub struct WorkspaceMeta {
     pub id: String,
     pub name: String,
+    /// Accent color (hex) for the space switcher/header; empty = default theme.
+    #[serde(default)]
+    pub theme: Option<String>,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
 }

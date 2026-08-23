@@ -40,7 +40,10 @@ export interface SyncReport {
 export const api = {
   listPages: () => invoke<PageMeta[]>("list_pages"),
   getWorkspaceName: () => invoke<string>("get_workspace_name"),
-  renameWorkspace: (name: string) => invoke<void>("rename_workspace", { name }),
+  renameWorkspace: (id: string, name: string) =>
+    invoke<void>("rename_workspace", { id, name }),
+  setWorkspaceSettings: (id: string, theme?: string | null, icon?: string | null, sortOrder?: number | null) =>
+    invoke<void>("set_workspace_settings", { id, theme, icon, sortOrder }),
   listWorkspaces: () => invoke<WorkspaceMeta[]>("list_workspaces"),
   createWorkspace: (name?: string | null) => invoke<WorkspaceMeta>("create_workspace", { name }),
   getActiveWorkspaceId: () => invoke<string>("get_active_workspace_id"),

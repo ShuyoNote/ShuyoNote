@@ -10,6 +10,8 @@ interface SpaceState {
   load: () => Promise<void>;
   create: (name?: string) => Promise<boolean>;
   switchTo: (id: string) => Promise<boolean>;
+  rename: (id: string, name: string) => Promise<boolean>;
+  setSettings: (id: string, theme?: string | null, icon?: string | null, sortOrder?: number) => Promise<boolean>;
   remove: (id: string) => Promise<boolean>;
 }
 
@@ -45,6 +47,26 @@ export const useSpaceStore = create<SpaceState>((set) => ({
       return true;
     } catch (e) {
       console.error("switch workspace failed", e);
+      return false;
+    }
+  },
+  rename: async (id, name) => {
+    try {
+      await api.renameWorkspace(id, name);
+      await useSpaceStore.getState().load();
+      return true;
+    } catch (e) {
+      console.error("rename workspace failed", e);
+      return false;
+    }
+  },
+  setSettings: async (id, theme, icon, sortOrder) => {
+    try {
+      await api.setWorkspaceSettings(id, theme, icon, sortOrder);
+      await useSpaceStore.getState().load();
+      return true;
+    } catch (e) {
+      console.error("set workspace settings failed", e);
       return false;
     }
   },

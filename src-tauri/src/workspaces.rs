@@ -15,10 +15,19 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
     Ok(WorkspaceMeta {
         id: row.get(0)?,
         name: row.get(1)?,
-        created_at: row.get(2)?,
-        updated_at: row.get(3)?,
+        theme: row.get(2)?,
+        icon: row.get(3)?,
+        sort_order: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
+
+const WS_COLS: &str = "id,name,theme,icon,sort_order,created_at,updated_at";
+
+const ACCENTS: [&str; 8] = [
+    "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
+];
 
 /// The workspace the app is currently operating on (persisted). Falls back to the
 /// oldest non-deleted workspace (the "default"/"默认空间" seeded on first run).
@@ -100,20 +109,46 @@ pub fn get_workspace_name(db: State<Db>) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Rename the **active** workspace (keeps the old UI signature).
+/// Rename a workspace by id.
 #[tauri::command]
-pub fn rename_workspace(db: State<Db>, name: String) -> Result<(), String> {
+pub fn rename_workspace(db: State<Db>, id: String, name: String) -> Result<(), String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err("名称不能为空".to_string());
     }
-    let active = get_active_workspace_id(db.clone())?;
     let c = conn(&db);
-    c.execute(
-        "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3",
-        params![trimmed, now_ms(), active],
-    )
-    .map_err(|e| e.to_string())?;
+    let n = c
+        .execute(
+            "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            params![trimmed, now_ms(), id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("工作空间不存在".to_string());
+    }
+    Ok(())
+}
+
+/// Set per-workspace settings (accent color / icon / sort order).
+#[tauri::command]
+pub fn set_workspace_settings(
+    db: State<Db>,
+    id: String,
+    theme: Option<String>,
+    icon: Option<String>,
+    sort_order: Option<f64>,
+) -> Result<(), String> {
+    let c = conn(&db);
+    let n = c
+        .execute(
+            "UPDATE workspaces SET theme = ?1, icon = ?2, sort_order = ?3, updated_at = ?4
+             WHERE id = ?5 AND deleted_at IS NULL",
+            params![theme, icon.unwrap_or_default(), sort_order.unwrap_or(0.0), now_ms(), id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("工作空间不存在".to_string());
+    }
     Ok(())
 }
 
@@ -121,7 +156,9 @@ pub fn rename_workspace(db: State<Db>, name: String) -> Result<(), String> {
 pub fn list_workspaces(db: State<Db>) -> Result<Vec<WorkspaceMeta>, String> {
     let c = conn(&db);
     let mut stmt = c
-        .prepare("SELECT id, name, created_at, updated_at FROM workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC")
+        .prepare(&format!(
+            "SELECT {WS_COLS} FROM workspaces WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC, id ASC"
+        ))
         .map_err(|e| e.to_string())?;
     let mapped = stmt
         .query_map([], |row| row_to_meta(row))
@@ -141,9 +178,30 @@ pub fn create_workspace(db: State<Db>, name: Option<String>) -> Result<Workspace
     let trimmed = name.unwrap_or_default().trim().to_string();
     let name = if trimmed.is_empty() { "新建工作区".to_string() } else { trimmed };
 
+    let count: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE deleted_at IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let theme = ACCENTS[(count as usize) % ACCENTS.len()].to_string();
+    let sort_order = (count + 1) as f64;
+
     c.execute(
-        "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-        params![id, name, now, now],
+        "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
+         VALUES (?1, ?2, ?3, '', ?4, ?5, ?6)",
+        params![id, name, theme, sort_order, now, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Seed a default home page so a new space isn't blank.
+    let home_id = uuid::Uuid::new_v4().to_string();
+    let home_json = r#"{"root":{"children":[{"type":"heading","tag":"h1","version":1,"children":[{"type":"text","text":"你好，这是你的新空间","detail":0,"format":0,"style":"","mode":"normal","version":1}],"direction":"ltr","format":"","indent":0,"style":"","mode":"normal","textFormat":0,"textStyle":""}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}"#;
+    c.execute(
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, 'page', 0, ?6, ?6, NULL)",
+        params![home_id, id, "开始", home_json, "你好，这是你的新空间\n点击上方“＋”开始创建页面。", now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -156,7 +214,7 @@ pub fn create_workspace(db: State<Db>, name: Option<String>) -> Result<Workspace
     .map_err(|e| e.to_string())?;
 
     c.query_row(
-        "SELECT id, name, created_at, updated_at FROM workspaces WHERE id = ?1",
+        &format!("SELECT {WS_COLS} FROM workspaces WHERE id = ?1"),
         params![id],
         |row| row_to_meta(row),
     )

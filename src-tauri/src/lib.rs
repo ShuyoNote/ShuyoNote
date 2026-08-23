@@ -57,6 +57,7 @@ pub fn run() {
             workspaces::delete_workspace,
             workspaces::get_workspace_name,
             workspaces::rename_workspace,
+            workspaces::set_workspace_settings,
             commands::get_page,
             commands::create_page,
             commands::create_folder,

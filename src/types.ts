@@ -83,6 +83,9 @@ export interface PluginMeta {
 export interface WorkspaceMeta {
   id: string;
   name: string;
+  theme?: string | null;
+  icon?: string;
+  sort_order?: number;
   created_at: number;
   updated_at: number;
 }

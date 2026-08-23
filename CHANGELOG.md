@@ -2,6 +2,26 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.35.0] - 2026-08-22
+
+### 新增
+
+- **工作空间增删改补全（M10.2b / M10.3b）**：
+  - **种子默认首页**：新建工作空间时自动生成一棵「开始」首页（不再是纯空白），并设为活动空间。
+  - **空间主题色**：每个空间分配一个主题色（自动从 8 色调色板按创建顺序取）；侧边栏顶部空间名与切换器里的空间项均以该色高亮（色点 + 首字）。
+  - **按 id 重命名**：空间切换器里每个空间项新增「✎ 重命名」→ 行内输入改名（`rename_workspace(id, name)`）；支持改非当前空间；顶部双击空间名仍是重命名当前空间。
+  - **删除前导出提醒**：删除工作空间确认弹窗提示「建议先导出/备份」。
+  - **空间级设置命令**：`set_workspace_settings(id, theme/icon/sort_order)`；`WorkspaceMeta` 暴露 `theme/icon/sort_order`；空间按 `sort_order` 排序。
+  - 后端新增 `set_workspace_settings` 命令；`rename_workspace` 改为按 id；`create_workspace` 种子首页 + 主题 + 排序。
+
+### 变更
+
+- 切到某空间后若改/删非当前空间，不影响当前；`WorkspaceMeta` 与切换器反映主题/排序/重命名。
+- 后端 13 项单测通过；tsc + vite build 通过。
+- **文档**：路线图 M10.2b/M10.3b 标记已实现主体；CHANGELOG 记录。
+
+---
+
 ## [1.34.0] - 2026-08-22
 
 ### 优化

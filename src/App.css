@@ -399,6 +399,38 @@ body,
   padding-top: 7px;
 }
 
+.space-item-op {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+.space-item:hover .space-item-op {
+  opacity: 1;
+}
+.space-item-op:hover {
+  color: var(--text);
+}
+
+.space-item-rename-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
 .workspace-rename-input {
   width: 120px;
 }

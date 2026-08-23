@@ -371,10 +371,14 @@ export function PageTree({
   const [workspaceName, setWorkspaceName] = useState("默认空间");
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
+  const [renameSpaceValue, setRenameSpaceValue] = useState("");
   const spaceChooser = usePopover<HTMLButtonElement>();
 
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
+  const activeSpace = spaces.find((s) => s.id === activeSpaceId);
+  const activeTheme = activeSpace?.theme ?? "";
 
   useEffect(() => {
     api
@@ -404,7 +408,9 @@ export function PageTree({
     const ok = await useSpaceStore.getState().create();
     if (ok) {
       await useNotes.getState().loadPages();
-      setWorkspaceName("新建工作区");
+      const newActive = useSpaceStore.getState().activeId;
+      const name = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
+      if (name) setWorkspaceName(name);
     }
     spaceChooser.close();
     setEditingName(false);
@@ -415,7 +421,7 @@ export function PageTree({
     if (
       !(await confirmDialog({
         title: "删除工作空间",
-        message: `删除「${name}」及其所有内容？（软删除，可在数据目录恢复）`,
+        message: `删除「${name}」及其所有内容？建议先导出/备份（软删除，可在数据目录恢复）。`,
         danger: true,
       }))
     ) {
@@ -424,7 +430,9 @@ export function PageTree({
     const ok = await useSpaceStore.getState().remove(id);
     if (ok) {
       await useNotes.getState().loadPages();
-      setWorkspaceName("默认空间");
+      const newActive = useSpaceStore.getState().activeId;
+      const newName = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
+      setWorkspaceName(newName ?? "默认空间");
     }
     spaceChooser.close();
     setEditingName(false);
@@ -435,13 +443,37 @@ export function PageTree({
   const commitName = async () => {
     const v = nameValue.trim();
     setEditingName(false);
-    if (v && v !== workspaceName) {
+    if (v && v !== workspaceName && activeSpaceId) {
       try {
-        await api.renameWorkspace(v);
+        await api.renameWorkspace(activeSpaceId, v);
         setWorkspaceName(v);
+        useSpaceStore.getState().load();
       } catch (e) {
         toast(`重命名失败：${e}`, "error");
       }
+    }
+  };
+
+  const startRenameSpace = (s: { id: string; name: string }) => {
+    setRenamingSpace(s.id);
+    setRenameSpaceValue(s.name);
+  };
+
+  const commitRenameSpace = async () => {
+    if (!renamingSpace) return;
+    const v = renameSpaceValue.trim();
+    const targetId = renamingSpace;
+    setRenamingSpace(null);
+    if (!v) return;
+    const ok = await useSpaceStore.getState().rename(targetId, v);
+    if (ok) {
+      if (targetId === activeSpaceId) setWorkspaceName(v);
+      else {
+        const nm = useSpaceStore.getState().spaces.find((s) => s.id === targetId)?.name;
+        if (nm) setWorkspaceName(nm);
+      }
+    } else {
+      toast("重命名失败", "error");
     }
   };
 
@@ -450,7 +482,16 @@ export function PageTree({
       <div className="sidebar-header">
         {!collapsed && (
           <span className="sidebar-title">
-            <span className="logo-mark">{workspaceName.charAt(0) || "S"}</span>
+            <span
+              className="logo-mark"
+              style={
+                activeTheme
+                  ? { background: activeTheme, color: "#fff" }
+                  : undefined
+              }
+            >
+              {workspaceName.charAt(0) || "S"}
+            </span>
             {editingName ? (
               <input
                 className="tree-rename-input workspace-rename-input"
@@ -503,9 +544,46 @@ export function PageTree({
                       className={`space-item ${s.id === activeSpaceId ? "space-item-active" : ""}`}
                       onClick={() => switchSpace(s.id)}
                     >
-                      <span className="space-item-mark">{s.name.charAt(0)}</span>
-                      <span className="space-item-name">{s.name}</span>
+                      <span
+                        className="space-item-mark"
+                        style={s.theme ? { background: s.theme, color: "#fff", border: "none" } : undefined}
+                      >
+                        {s.name.charAt(0)}
+                      </span>
+                      {renamingSpace === s.id ? (
+                        <input
+                          className="space-item-rename-input"
+                          autoFocus
+                          value={renameSpaceValue}
+                          onChange={(e) => setRenameSpaceValue(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.stopPropagation();
+                              commitRenameSpace();
+                            } else if (e.key === "Escape") {
+                              e.stopPropagation();
+                              setRenamingSpace(null);
+                            }
+                          }}
+                          onBlur={commitRenameSpace}
+                        />
+                      ) : (
+                        <span className="space-item-name">{s.name}</span>
+                      )}
                       {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
+                      {renamingSpace !== s.id && (
+                        <button
+                          className="space-item-op"
+                          title="重命名工作空间"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startRenameSpace(s);
+                          }}
+                        >
+                          ✎
+                        </button>
+                      )}
                       {spaces.length > 1 && s.id !== activeSpaceId && (
                         <button
                           className="space-item-del"

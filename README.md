@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.34.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.35.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -250,6 +250,7 @@ ShuyoNote/
 - [x] 文件历史版本（同名文件保留/恢复）
 - [x] 全局标签管理（新建 / 重命名合并 / 删除 / 使用页数）
 - [x] 跨空间复制页面（把页面樹复制到其他工作空间）
+- [x] 工作空间管理（新建种子首页 / 按 id 重命名 / 空间主题色与排序）
 - [x] 全空间搜索（本空间 / 全空间切换，跨工作空间全文检索）
 - [x] 块多选 + 批量删除
 - [x] HTML/Markdown 混排导入（保留 `align` 居中 / 徽章成排 / 图片尺寸）
