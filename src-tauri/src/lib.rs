@@ -3,6 +3,7 @@ mod backlinks;
 mod backup;
 mod blocks;
 mod commands;
+mod crypto;
 mod database;
 mod db;
 mod graph;

@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.16.0] - 2026-08-22
+
+### 新增
+
+- **端到端加密地基（M2.1）**：新增 `src-tauri/src/crypto.rs`——
+  - **密钥派生**：Argon2id 从口令 + 盐派生 256-bit 密钥
+  - **认证加密**：XChaCha20-Poly1305（24 字节 nonce 独立随机），密文格式 `nonce(24) || ciphertext`
+  - 3 个 Rust 单元测试通过（加解密往返、同盐确定性、错误密钥拒绝）
+- 引入 `chacha20poly1305` / `argon2` / `rand_core` 依赖
+
+### 说明
+
+- M2.1 为加密原语地基；**M2.2** 将把加密接入同步（outbox 上传前加密、拉取后解密、每工作空间独立密钥），尚未完成。
+
+---
+
 ## [1.15.0] - 2026-08-22
 
 ### 新增
