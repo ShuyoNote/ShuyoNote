@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
-import type { AttachmentMeta, PageMeta } from "../types";
+import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
@@ -52,15 +52,22 @@ function buildTree(pages: PageMeta[]): TreeNode[] {
 // blocks outside the copied subtree are documented to not resolve in the target.
 function CopyPageAction({ pageId }: { pageId: string }) {
   const [open, setOpen] = useState(false);
+  const [spaces, setSpaces] = useState<WorkspaceMeta[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const ref = useRef<HTMLSpanElement>(null);
-  const spaces = useSpaceStore((s) => s.spaces);
-  const activeId = useSpaceStore((s) => s.activeId);
-  const loadSpaces = useSpaceStore((s) => s.load);
 
+  // Read spaces lazily (only when the menu opens) so a space change doesn't
+  // re-render every page row's CopyPageAction — this was causing UI to freeze
+  // on delete/switch for large trees.
   useEffect(() => {
     if (!open) return;
-    loadSpaces();
-  }, [open, loadSpaces]);
+    useSpaceStore.getState().load();
+    api.listWorkspaces().then(setSpaces).catch(() => {});
+    api
+      .getActiveWorkspaceId()
+      .then(setActiveId)
+      .catch(() => {});
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.38.4] - 2026-08-22
+
+### 优化
+
+- **删除/切换工作空间不再卡 UI**：此前每个页面行都渲染一个 `CopyPageAction` 并**订阅** `spaces/activeId/load`——删除或切换空间时 `spaces` 变化会触发**整棵页面树所有行**同步重渲染，页面越多越卡（大库甚至「卡死」）
+  - 修复：`CopyPageAction` 改为**惰性获取**——仅在菜单打开时 `load()` + `listWorkspaces`/`getActiveWorkspaceId`，不再订阅全局空间状态；空间变化不再触发逐行重渲染
+- 纯前端；tsc + vite build 通过
+
+---
+
 ## [1.38.3] - 2026-08-22
 
 ### 变更
