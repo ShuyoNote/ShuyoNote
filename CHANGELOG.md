@@ -2,6 +2,21 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.38.2] - 2026-08-22
+
+### 修复
+
+- **清空回收站仍失败的剩余外键**：除了 `pages.parent_id`，`database_columns.db_page_id` 也引用 `pages(id)`——删除回收站里的**数据库页**时，其列仍引用它 → FK 错误
+  - 修复：级联删除新增 `DELETE FROM database_columns WHERE db_page_id = ?1`（`clear_trash` 与 `purge_deleted_workspaces` 均补）
+  - 用真实库副本验证：83 个回收站页完整级联删除成功（剩余为在用空间页面）；后端 15 项测试全过（回归测试覆盖「数据库页 + database_columns」场景）
+
+### 变更
+
+- `storage.rs`：两处级联补 `database_columns` 清理
+- **文档**：无 roadmap 变化（M14 已达成，bugfix）
+
+---
+
 ## [1.38.1] - 2026-08-22
 
 ### 修复

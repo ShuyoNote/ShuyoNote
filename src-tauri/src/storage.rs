@@ -184,6 +184,7 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
                 "DELETE FROM page_props WHERE page_id = ?1",
                 "DELETE FROM page_tags WHERE page_id = ?1",
                 "DELETE FROM page_versions WHERE page_id = ?1",
+                "DELETE FROM database_columns WHERE db_page_id = ?1",
                 "DELETE FROM backlinks WHERE source_page_id = ?1 OR target_page_id = ?1",
                 "DELETE FROM blocks WHERE page_id = ?1",
                 "DELETE FROM attachments WHERE page_id = ?1",
@@ -390,6 +391,7 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
                 "DELETE FROM page_props WHERE page_id = ?1",
                 "DELETE FROM page_tags WHERE page_id = ?1",
                 "DELETE FROM page_versions WHERE page_id = ?1",
+                "DELETE FROM database_columns WHERE db_page_id = ?1",
                 "DELETE FROM backlinks WHERE source_page_id = ?1 OR target_page_id = ?1",
                 "DELETE FROM blocks WHERE page_id = ?1",
                 "DELETE FROM attachments WHERE page_id = ?1",
@@ -452,6 +454,22 @@ mod tests {
         let page = "INSERT INTO pages (id,workspace_id,parent_id,title,content_json,content_text,kind,sort_order,created_at,updated_at,deleted_at) VALUES (?1,'w1',?2,'t','{}','','page',0,1,1,1)";
         c.execute(page, params!["p", rusqlite::types::Null]).unwrap();
         c.execute(page, params!["c", "p"]).unwrap();
+        // A database page with a column referencing it (FK via database_columns).
+        c.execute(
+            "INSERT INTO pages (id,workspace_id,parent_id,title,content_json,content_text,kind,sort_order,created_at,updated_at,deleted_at) VALUES ('db1','w1',NULL,'db','{}','','database',0,1,1,1)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO attr_defs (id,name,type,options,created_at,updated_at) VALUES ('a1','test','text','[]',1,1)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO database_columns (db_page_id, attr_id, sort_order) VALUES ('db1','a1',0)",
+            [],
+        )
+        .unwrap();
 
         let tx = c.transaction().unwrap();
         // Break parent-child FK links (clear_trash / purge_deleted_workspaces pattern).
@@ -461,9 +479,12 @@ mod tests {
         )
         .unwrap();
         tx.execute("UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL", []).unwrap();
+        // Database page references via database_columns must be cleared too.
+        tx.execute("DELETE FROM database_columns WHERE db_page_id = 'db1'", []).unwrap();
         // Delete in a parent-then-child order; must not violate FK.
         tx.execute("DELETE FROM pages WHERE id = 'p'", []).unwrap();
         tx.execute("DELETE FROM pages WHERE id = 'c'", []).unwrap();
+        tx.execute("DELETE FROM pages WHERE id = 'db1'", []).unwrap();
         tx.commit().unwrap();
 
         let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
