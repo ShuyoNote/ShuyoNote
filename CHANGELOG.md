@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.38.5] - 2026-08-22
+
+### 优化
+
+- **删除/新增/切换/重命名/改设置工作空间不再卡 UI**：把 `list_workspaces` / `get_active_workspace_id` / `set_active_workspace_id` / `delete_workspace` / `create_workspace` / `rename_workspace` / `set_workspace_settings` / `get_workspace_name` 全部改为 **`async` 命令**（跑在 tokio 运行时，离开主线程）
+  - 与之前备份「卡死」同类：同步命令在 Tauri 主线程执行，会让 UI 短暂冻结；转 async 后主线程永不阻塞
+  - `delete_workspace` 内部改为用同一连接的同步 `active_workspace_id`，避免 async await 与已持有锁的死锁
+- 后端 15 项单测、编译通过
+
+---
+
 ## [1.38.4] - 2026-08-22
 
 ### 优化

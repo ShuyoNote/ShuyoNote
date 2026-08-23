@@ -70,13 +70,13 @@ pub(crate) fn active_workspace_id(c: &Connection) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn get_active_workspace_id(db: State<Db>) -> Result<String, String> {
+pub async fn get_active_workspace_id(db: State<'_, Db>) -> Result<String, String> {
     let c = conn(&db);
     active_workspace_id(&c)
 }
 
 #[tauri::command]
-pub fn set_active_workspace_id(db: State<Db>, id: String) -> Result<(), String> {
+pub async fn set_active_workspace_id(db: State<'_, Db>, id: String) -> Result<(), String> {
     let c = conn(&db);
     let exists: bool = c
         .query_row("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)", params![id], |row| row.get(0))
@@ -95,9 +95,9 @@ pub fn set_active_workspace_id(db: State<Db>, id: String) -> Result<(), String> 
 
 /// The active workspace's name (for the sidebar title), falling back to the first workspace.
 #[tauri::command]
-pub fn get_workspace_name(db: State<Db>) -> Result<String, String> {
-    let active = get_active_workspace_id(db.clone())?;
+pub async fn get_workspace_name(db: State<'_, Db>) -> Result<String, String> {
     let c = conn(&db);
+    let active = active_workspace_id(&c)?;
     c.query_row("SELECT name FROM workspaces WHERE id = ?1", params![active], |row| row.get(0))
         .or_else(|_| {
             c.query_row(
@@ -111,7 +111,7 @@ pub fn get_workspace_name(db: State<Db>) -> Result<String, String> {
 
 /// Rename a workspace by id.
 #[tauri::command]
-pub fn rename_workspace(db: State<Db>, id: String, name: String) -> Result<(), String> {
+pub async fn rename_workspace(db: State<'_, Db>, id: String, name: String) -> Result<(), String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err("名称不能为空".to_string());
@@ -131,8 +131,8 @@ pub fn rename_workspace(db: State<Db>, id: String, name: String) -> Result<(), S
 
 /// Set per-workspace settings (accent color / icon / sort order).
 #[tauri::command]
-pub fn set_workspace_settings(
-    db: State<Db>,
+pub async fn set_workspace_settings(
+    db: State<'_, Db>,
     id: String,
     theme: Option<String>,
     icon: Option<String>,
@@ -153,7 +153,7 @@ pub fn set_workspace_settings(
 }
 
 #[tauri::command]
-pub fn list_workspaces(db: State<Db>) -> Result<Vec<WorkspaceMeta>, String> {
+pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, String> {
     let c = conn(&db);
     // Backfill theme colors for legacy workspaces created before the per-space
     // color feature (idempotent: only fills empty themes, distinct by creation order).
@@ -192,7 +192,7 @@ pub fn list_workspaces(db: State<Db>) -> Result<Vec<WorkspaceMeta>, String> {
 }
 
 #[tauri::command]
-pub fn create_workspace(db: State<Db>, name: Option<String>) -> Result<WorkspaceMeta, String> {
+pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result<WorkspaceMeta, String> {
     let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
@@ -246,9 +246,9 @@ pub fn create_workspace(db: State<Db>, name: Option<String>) -> Result<Workspace
 /// the app falls back to another workspace. Content (pages etc.) is retained and
 /// recoverable; queries no longer surface the soft-deleted workspace.
 #[tauri::command]
-pub fn delete_workspace(db: State<Db>, id: String) -> Result<(), String> {
-    let c = conn(&db);
-    let active = get_active_workspace_id(db.clone())?;
+pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), String> {
+    let mut c = conn(&db);
+    let active = active_workspace_id(&c)?;
     let now = now_ms();
     let n = c
         .execute(
