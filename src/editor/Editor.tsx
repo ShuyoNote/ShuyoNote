@@ -26,6 +26,7 @@ import { ImageRowNode } from "./nodes/ImageRowNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { BlockRefNode } from "./nodes/BlockRefNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
+import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
@@ -262,6 +263,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         VideoNode,
         BlockRefNode,
         BlockEmbedNode,
+        AttachmentRefNode,
         TableNode,
         TableCellNode,
         TableRowNode,

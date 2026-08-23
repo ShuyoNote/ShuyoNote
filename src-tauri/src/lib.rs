@@ -77,6 +77,7 @@ pub fn run() {
             attachments::list_page_attachments,
             attachments::remove_attachment,
             attachments::move_attachment,
+            attachments::get_attachment,
             backlinks::get_backlinks,
             blocks::resolve_block,
             blocks::get_page_blocks,

@@ -129,6 +129,27 @@ pub struct SaveImageArgs {
     pub data: Vec<u8>,
 }
 
+/// Resolve a single attachment by id, including its on-disk path (for the
+/// "file reference card" node, which shows a snapshot of metadata and can open
+/// the file with the system default app).
+#[tauri::command]
+pub fn get_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<AttachmentMeta, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir = app_data_dir.join("attachments");
+    let c = db.0.lock().expect("db mutex poisoned");
+    let (name, hash, mime, size): (String, String, String, i64) = c
+        .query_row(
+            "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| "附件不存在".to_string())?;
+    let path = find_path_by_hash(&attachments_dir, &hash)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(AttachmentMeta { id, name, hash, mime, size, path })
+}
+
 #[tauri::command]
 pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

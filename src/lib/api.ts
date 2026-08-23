@@ -91,6 +91,7 @@ export const api = {
     data: number[];
   }) => invoke<AttachmentMeta>("save_image", { args }),
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
+  getAttachment: (id: string) => invoke<AttachmentMeta>("get_attachment", { id }),
   copyAttachment: (hash: string, destPath: string) =>
     invoke<void>("copy_attachment", { hash, destPath }),
   importAttachmentFiles: (pageId: string | null, paths: string[]) =>

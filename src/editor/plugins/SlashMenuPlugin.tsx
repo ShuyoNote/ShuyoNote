@@ -19,6 +19,7 @@ import { useAttachmentsStore } from "../../store/attachments";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createVideoNode } from "../nodes/VideoNode";
+import { $createAttachmentRefNode } from "../nodes/AttachmentRefNode";
 import {
   $createParagraphNode,
   $createTextNode,
@@ -156,6 +157,26 @@ function makeOptions(pageId: string): SlashOption[] {
         editor.focus();
       } catch (e) {
         toast(`添加附件失败：${e}`, "error");
+      }
+    } },
+    { key: "fileref", title: "文件引用", badge: "▤", group: "媒体", pinyin: "wjyy", run: async (editor) => {
+      const selected = await open({
+        title: "选择要引用的文件",
+        multiple: true,
+      });
+      const paths = Array.isArray(selected) ? selected : selected ? [selected as string] : [];
+      if (paths.length === 0) return;
+      try {
+        const metas = await api.importAttachmentFiles(pageId, paths);
+        useAttachmentsStore.getState().bump();
+        editor.update(() => {
+          for (const m of metas) {
+            $insertBlockNode($createAttachmentRefNode(m.id, m.name, m.size, m.mime, m.hash, m.path));
+          }
+        });
+        toast(`已插入 ${metas.length} 个文件引用`, "success");
+      } catch (e) {
+        toast(`插入文件引用失败：${e}`, "error");
       }
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>
