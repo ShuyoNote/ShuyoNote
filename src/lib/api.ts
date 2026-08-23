@@ -15,6 +15,7 @@ import type {
   PageVersion,
   SearchBlock,
   SearchResult,
+  StorageStats,
   Tag,
   TemplateMeta,
   WorkspaceMeta,
@@ -104,6 +105,11 @@ export const api = {
   listPageAttachments: (pageId: string) =>
     invoke<AttachmentMeta[]>("list_page_attachments", { pageId }),
   removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
+  storageStats: () => invoke<StorageStats>("storage_stats"),
+  clearTrash: () => invoke<number>("clear_trash"),
+  cleanupOrphanAttachments: () => invoke<number>("cleanup_orphan_attachments"),
+  cleanupOldVersions: (maxKeep?: number) => invoke<number>("cleanup_old_versions", { maxKeep }),
+  cleanupTempFiles: () => invoke<number>("cleanup_temp_files"),
   moveAttachment: (id: string, newPageId: string) =>
     invoke<void>("move_attachment", { id, newPageId }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>

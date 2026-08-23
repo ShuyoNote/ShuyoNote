@@ -12,6 +12,7 @@ mod plugins;
 mod properties;
 mod search;
 mod security;
+mod storage;
 mod sync;
 mod tags;
 mod templates;
@@ -127,6 +128,11 @@ pub fn run() {
             backup::import_backup,
             backup::write_text_file,
             backup::read_text_file,
+            storage::storage_stats,
+            storage::clear_trash,
+            storage::cleanup_orphan_attachments,
+            storage::cleanup_old_versions,
+            storage::cleanup_temp_files,
             windows::open_page_window,
             plugins::list_plugins,
             plugins::set_plugin_enabled,

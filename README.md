@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.36.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.37.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -51,7 +51,8 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **自动保存**：防抖写入 SQLite，无「保存」按钮
 - **版本历史**：每次保存前自动快照，可一键回滚（每页保留 50 份，自动去重）
 - **回收站**：软删除 + 恢复 + 彻底删除
-- **整库备份**：导出/导入 zip（数据库一致性快照 + 附件目录）
+- **整库备份**：导出/导入 zip（数据库一致性快照 + 附件目录；流式 + 进度）
+- **空间清理 / 存储管理**：占用统计（数据库/附件/回收站/版本/临时）+ 清空回收站 / 清理孤立附件 / 清理版本历史 / 清理临时文件
 
 ### 多设备同步
 - **Outbox 变更日志**：本地每次写入记录变更，离线排队

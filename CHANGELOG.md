@@ -2,6 +2,25 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.37.0] - 2026-08-22
+
+### 新增
+
+- **空间清理 / 存储管理（M14）**：侧边栏「备份」旁新增「▦ 存储 / 空间管理」面板——展示各分项占用 + 安全清理，遵循「只清真孤儿、零引用才删、可恢复性优先」
+  - **M14.1 空间统计**：`storage_stats` → 数据库 / 附件（个数+大小）/ 回收站 / 版本历史 / 软删空间 / 临时文件 各分项（长任务 `spawn_blocking`，UI 不卡）
+  - **M14.2 清空回收站**：`clear_trash` 物理删除软删页面树 + 级联属性/标签/版本/反链/块/附件，并释放零引用字节（事务内级联 + 二次确认 + 释放量提示）
+  - **M14.3 清理孤立附件**：`cleanup_orphan_attachments` 删除「hash 无任何引用」的磁盘字节（内容寻址差集）
+  - **M14.4 清理版本/临时**：`cleanup_old_versions`（每页保留最近 50 份，`ROW_NUMBER` 窗口函数）+ `cleanup_temp_files`（备份/恢复临时目录 + `.part` 上传残留）
+  - 所有清理均二次确认 + 返回「释放 X」；前端忙碌态禁用按钮
+
+### 变更
+
+- 新增 `src-tauri/src/storage.rs`（`storage_stats`/`clear_trash`/`cleanup_orphan_attachments`/`cleanup_old_versions`/`cleanup_temp_files`）+ `src/components/StoragePanel.tsx` 面板
+- 后端 14 项单测、tsc、vite build 通过
+- **文档**：路线图 M14 标记已实现（14.1–14.4）
+
+---
+
 ## [1.36.0] - 2026-08-22
 
 ### 新增

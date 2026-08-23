@@ -6277,6 +6277,89 @@ select.prop-value {
   padding: 6px 8px;
 }
 
+/* Storage / space management panel */
+.storage-panel {
+  min-width: 360px;
+  max-width: 460px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+}
+.storage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.storage-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  cursor: pointer;
+}
+.storage-loading {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.storage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.storage-stat {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.storage-stat-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.storage-stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.storage-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.storage-actions button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-align: left;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.storage-actions button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+.storage-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.storage-busy {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
 .fm-move-title {
   font-size: 12px;
   color: var(--text-faint);

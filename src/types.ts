@@ -90,6 +90,18 @@ export interface WorkspaceMeta {
   updated_at: number;
 }
 
+export interface StorageStats {
+  db_bytes: number;
+  attachment_bytes: number;
+  attachment_count: number;
+  trash_count: number;
+  trash_bytes: number;
+  version_count: number;
+  version_bytes: number;
+  deleted_workspace_count: number;
+  temp_bytes: number;
+}
+
 export interface TemplateMeta {
   id: string;
   name: string;

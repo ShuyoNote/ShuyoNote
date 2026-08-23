@@ -15,6 +15,7 @@ import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
+import { StoragePanel } from "./StoragePanel";
 import { ThemeSettings } from "./ThemeSettings";
 import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon } from "./icons";
 
@@ -650,6 +651,7 @@ export function PageTree({
           <div className="sidebar-actions-group">
             <SyncPanel />
             <BackupButton />
+            <StoragePanel />
             <ThemeSettings />
           </div>
           <div className="new-menu">
