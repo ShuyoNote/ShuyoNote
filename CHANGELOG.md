@@ -2,6 +2,24 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.34.0] - 2026-08-22
+
+### 优化
+
+- **备份导出 / 恢复不再卡死**：导出与恢复此前是**同步命令**，在 Tauri 主线程上执行，附件越多/越大界面越像冻结；现改为 `async` + `spawn_blocking`，主线程与 UI 保持响应
+- **流式文件读写**：附件不再整块 `std::fs::read` 进内存，改用 `std::io::copy` 边读边压缩/解包——大文件不撑爆内存、速度更快
+- **实时进度反馈**：后端在导出/导入期间发出 `backup-progress` 事件（阶段/文件数/字节），前端以底部进度条展示（含百分比与阶段提示、无限进度动画），期间按钮置忙、无法重复触发
+- 临时快照/解包目录仍做清理；数据库快照与恢复经 rusqlite 在线备份 API（WAL 下保持一致）
+
+### 变更
+
+- `backup.rs`：`export_backup`/`import_backup` 改为 `async`；新增 `BackupProgress` 与 `backup-progress` 事件；`add_dir_to_zip`/`extract_backup` 流式化
+- `BackupButton.tsx`：监听进度事件 + 进度条 + 忙碌态
+- 后端 13 项单测通过；tsc + vite build 通过
+- **文档**：README 不做改动，体验优化见 CHANGELOG
+
+---
+
 ## [1.33.1] - 2026-08-22
 
 ### 修复

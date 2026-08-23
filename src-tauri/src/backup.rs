@@ -1,8 +1,7 @@
 use crate::db::Db;
 use serde::Serialize;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[derive(Serialize)]
 pub struct BackupResult {
@@ -10,8 +9,19 @@ pub struct BackupResult {
     pub size: i64,
 }
 
-// Create a consistent snapshot of the SQLite database via rusqlite's
-// online backup API, then zip it together with the attachments directory.
+/// Progress emitted during export/import so the UI can show a live bar (the
+/// work is genuinely long-running; the old sync command froze the UI thread).
+#[derive(Clone, Serialize)]
+pub struct BackupProgress {
+    pub phase: String,     // "export" | "import"
+    pub done: usize,       // files processed so far
+    pub total: usize,      // total files
+    pub bytes: u64,        // bytes processed
+    pub message: String,   // human-readable stage label
+}
+
+// Create a consistent snapshot of the SQLite database via rusqlite's online
+// backup API (safe under WAL), then zip it with the attachments directory.
 fn backup_db(src: &rusqlite::Connection, dst: &Path) -> Result<(), String> {
     let mut dst_conn = rusqlite::Connection::open(dst).map_err(|e| e.to_string())?;
     let backup = rusqlite::backup::Backup::new(src, &mut dst_conn).map_err(|e| e.to_string())?;
@@ -21,10 +31,35 @@ fn backup_db(src: &rusqlite::Connection, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Count files + total bytes under a directory (recursive), for progress.
+fn count_dir(dir: &Path) -> (usize, u64) {
+    let mut n = 0usize;
+    let mut b = 0u64;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let (dn, db) = count_dir(&p);
+                n += dn;
+                b += db;
+            } else if p.is_file() {
+                n += 1;
+                b += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    (n, b)
+}
+
+/// Stream-copy files into the zip (bounded memory) and emit progress.
 fn add_dir_to_zip(
     zip: &mut zip::ZipWriter<std::fs::File>,
     base: &Path,
     dir: &Path,
+    app: &tauri::AppHandle,
+    done: &mut usize,
+    bytes: &mut u64,
+    total: usize,
 ) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
@@ -34,58 +69,103 @@ fn add_dir_to_zip(
         if path.is_dir() {
             zip.add_directory(format!("{name}/"), zip::write::SimpleFileOptions::default())
                 .map_err(|e| e.to_string())?;
-            add_dir_to_zip(zip, base, &path)?;
+            add_dir_to_zip(zip, base, &path, app, done, bytes, total)?;
         } else if path.is_file() {
             zip.start_file(name, zip::write::SimpleFileOptions::default())
                 .map_err(|e| e.to_string())?;
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            zip.write_all(&bytes).map_err(|e| e.to_string())?;
+            let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+            let copied = std::io::copy(&mut f, zip).map_err(|e| e.to_string())?;
+            *bytes += copied;
+            *done += 1;
+            // Throttle emits (every file).
+            let _ = app.emit(
+                "backup-progress",
+                BackupProgress {
+                    phase: "export".to_string(),
+                    done: *done,
+                    total,
+                    bytes: *bytes,
+                    message: "打包附件…".to_string(),
+                },
+            );
         }
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn export_backup(app: tauri::AppHandle, db: State<'_, Db>, dest_path: String) -> Result<BackupResult, String> {
+pub async fn export_backup(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    dest_path: String,
+) -> Result<BackupResult, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
-
     let dest = PathBuf::from(&dest_path);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    // Snapshot db to a temp file (consistent even under WAL).
+    // Snapshot the DB to a temp file (brief DB lock; online backup is WAL-safe).
     let tmp_db = std::env::temp_dir().join(format!("shuyonote-backup-{}.db", uuid::Uuid::new_v4()));
     {
         let conn = db.0.lock().expect("db mutex poisoned");
         backup_db(&conn, &tmp_db)?;
     }
 
-    let file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipWriter::new(file);
-    let opts = zip::write::SimpleFileOptions::default();
+    let app2 = app.clone();
+    let attachments2 = attachments_dir;
+    let dest2 = dest.clone();
+    let tmp_db2 = tmp_db;
+    tauri::async_runtime::spawn_blocking(move || -> Result<BackupResult, String> {
+        let file = std::fs::File::create(&dest2).map_err(|e| e.to_string())?;
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
 
-    // Add database snapshot.
-    zip.start_file("shuyonote.db", opts).map_err(|e| e.to_string())?;
-    let db_bytes = std::fs::read(&tmp_db).map_err(|e| e.to_string())?;
-    zip.write_all(&db_bytes).map_err(|e| e.to_string())?;
+        // Add the DB snapshot (streaming).
+        zip.start_file("shuyonote.db", opts).map_err(|e| e.to_string())?;
+        let mut f = std::fs::File::open(&tmp_db2).map_err(|e| e.to_string())?;
+        std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
 
-    // Add attachments directory.
-    if attachments_dir.exists() {
-        add_dir_to_zip(&mut zip, &attachments_dir, &attachments_dir)?;
-    }
+        let (total_files, total_bytes) = count_dir(&attachments2);
+        let _ = app2.emit(
+            "backup-progress",
+            BackupProgress {
+                phase: "export".to_string(),
+                done: 0,
+                total: total_files,
+                bytes: 0,
+                message: "开始打包附件…".to_string(),
+            },
+        );
 
-    let finished = zip.finish().map_err(|e| e.to_string())?;
-    let size = finished.metadata().map_err(|e| e.to_string())?.len() as i64;
+        let mut done = 0usize;
+        let mut bytes = 0u64;
+        if attachments2.exists() {
+            add_dir_to_zip(&mut zip, &attachments2, &attachments2, &app2, &mut done, &mut bytes, total_files)?;
+        }
 
-    // Clean up temp snapshot.
-    let _ = std::fs::remove_file(&tmp_db);
-
-    Ok(BackupResult {
-        path: dest.to_string_lossy().into_owned(),
-        size,
+        let _ = app2.emit(
+            "backup-progress",
+            BackupProgress {
+                phase: "export".to_string(),
+                done,
+                total: total_files,
+                bytes,
+                message: "压缩完成…".to_string(),
+            },
+        );
+        let finished = zip.finish().map_err(|e| e.to_string())?;
+        let size = finished.metadata().map_err(|e| e.to_string())?.len() as i64;
+        let _ = std::fs::remove_file(&tmp_db2);
+        let _ = total_bytes;
+        Ok(BackupResult {
+            path: dest2.to_string_lossy().into_owned(),
+            size,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // Restore the database from a backup snapshot into the live connection.
@@ -114,8 +194,62 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Extract a backup zip into a temp dir, streaming each entry (bounded memory)
+/// and emitting progress. Returns (db snapshot path, attachments src dir).
+fn extract_backup(
+    app: &tauri::AppHandle,
+    src: &Path,
+    tmp_dir: &Path,
+) -> Result<(PathBuf, Option<PathBuf>), String> {
+    std::fs::create_dir_all(tmp_dir).map_err(|e| e.to_string())?;
+    let file = std::fs::File::open(src).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let total = zip.len();
+    let mut done = 0usize;
+
+    let mut db_snapshot: Option<PathBuf> = None;
+    let mut attachments_src: Option<PathBuf> = None;
+
+    for i in 0..total {
+        let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
+        let name = entry.name().to_string();
+        let out_path = tmp_dir.join(&name);
+        if name == "shuyonote.db" || (name.starts_with("attachments/") && !name.ends_with('/')) {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            done += 1;
+            let _ = app.emit(
+                "backup-progress",
+                BackupProgress {
+                    phase: "import".to_string(),
+                    done,
+                    total,
+                    bytes: 0,
+                    message: "解包备份…".to_string(),
+                },
+            );
+            if name == "shuyonote.db" {
+                db_snapshot = Some(out_path);
+            } else {
+                attachments_src = Some(tmp_dir.join("attachments"));
+            }
+        }
+    }
+
+    let db_snapshot = db_snapshot.ok_or_else(|| "备份中缺少数据库文件".to_string())?;
+    Ok((db_snapshot, attachments_src))
+}
+
 #[tauri::command]
-pub fn import_backup(app: tauri::AppHandle, db: State<'_, Db>, src_path: String) -> Result<(), String> {    let src = PathBuf::from(&src_path);
+pub async fn import_backup(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    src_path: String,
+) -> Result<(), String> {
+    let src = PathBuf::from(&src_path);
     if !src.exists() {
         return Err("备份文件不存在".to_string());
     }
@@ -123,57 +257,62 @@ pub fn import_backup(app: tauri::AppHandle, db: State<'_, Db>, src_path: String)
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
 
-    // Extract the zip into a temp dir.
     let tmp_dir = std::env::temp_dir().join(format!("shuyonote-restore-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
 
-    let file = std::fs::File::open(&src).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    // Extract zip off the main thread (no DB needed).
+    let app2 = app.clone();
+    let tmp_dir2 = tmp_dir.clone();
+    let src2 = src.clone();
+    let (db_snapshot, attachments_src) = tauri::async_runtime::spawn_blocking(move || {
+        extract_backup(&app2, &src2, &tmp_dir2)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
-    let mut db_snapshot: Option<PathBuf> = None;
-    let mut attachments_src: Option<PathBuf> = None;
-
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
-        let name = entry.name().to_string();
-        let out_path = tmp_dir.join(&name);
-        if name == "shuyonote.db" {
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-            std::fs::write(&out_path, &bytes).map_err(|e| e.to_string())?;
-            db_snapshot = Some(out_path);
-        } else if name.starts_with("attachments/") && !name.ends_with('/') {
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-            std::fs::write(&out_path, &bytes).map_err(|e| e.to_string())?;
-            attachments_src = Some(tmp_dir.join("attachments"));
-        }
-    }
-
-    let db_snapshot = db_snapshot.ok_or_else(|| "备份中缺少数据库文件".to_string())?;
-
-    // Restore database into live connection.
+    // Restore the database into the live connection (brief DB lock).
     {
         let mut conn = db.0.lock().expect("db mutex poisoned");
         restore_db(&mut conn, &db_snapshot)?;
     }
 
-    // Restore attachments directory.
-    if let Some(att) = attachments_src {
-        if att.exists() {
-            // Clear existing attachments dir, then copy over.
-            if attachments_dir.exists() {
-                std::fs::remove_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    // Restore attachments (streaming copy, off the main thread).
+    let app3 = app.clone();
+    let att_dir = attachments_dir;
+    let tmp_dir3 = tmp_dir;
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let _ = app3.emit(
+            "backup-progress",
+            BackupProgress {
+                phase: "import".to_string(),
+                done: 0,
+                total: 1,
+                bytes: 0,
+                message: "恢复附件…".to_string(),
+            },
+        );
+        if let Some(att) = attachments_src {
+            if att.exists() {
+                if att_dir.exists() {
+                    std::fs::remove_dir_all(&att_dir).map_err(|e| e.to_string())?;
+                }
+                copy_dir(&att, &att_dir)?;
             }
-            copy_dir(&att, &attachments_dir)?;
         }
-    }
-
-    // Clean up temp dir.
-    let _ = std::fs::remove_dir_all(&tmp_dir);
+        let _ = std::fs::remove_dir_all(&tmp_dir3);
+        let _ = app3.emit(
+            "backup-progress",
+            BackupProgress {
+                phase: "import".to_string(),
+                done: 1,
+                total: 1,
+                bytes: 0,
+                message: "恢复完成…".to_string(),
+            },
+        );
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     Ok(())
 }
