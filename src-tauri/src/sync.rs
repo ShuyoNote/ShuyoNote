@@ -40,8 +40,32 @@ pub fn set_state(c: &Connection, key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// App-level key-value state lives in meta.db (shared across every workspace).
+// Only these go to meta: device_id + server_url + token. Per-workspace state
+// (E2EE keys, sync cursor) stays in the space DB's own `sync_state`.
+pub fn get_meta_state(c: &Connection, key: &str) -> Option<String> {
+    c.query_row(
+        "SELECT value FROM meta.sync_state WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+pub fn set_meta_state(c: &Connection, key: &str, value: &str) -> Result<(), String> {
+    c.execute(
+        "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn device_id(c: &Connection) -> Result<String, String> {
-    get_state(c, KEY_DEVICE_ID).ok_or_else(|| "设备 ID 未初始化".to_string())
+    get_meta_state(c, KEY_DEVICE_ID).ok_or_else(|| "设备 ID 未初始化".to_string())
 }
 
 // ---- outbox recording ----
@@ -217,8 +241,8 @@ pub fn get_sync_config(db: State<'_, Db>) -> Result<SyncConfig, String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let device_id = device_id(&c)?;
     Ok(SyncConfig {
-        server_url: get_state(&c, KEY_SERVER_URL).unwrap_or_default(),
-        token: get_state(&c, KEY_TOKEN).unwrap_or_default(),
+        server_url: get_meta_state(&c, KEY_SERVER_URL).unwrap_or_default(),
+        token: get_meta_state(&c, KEY_TOKEN).unwrap_or_default(),
         device_id,
         last_pushed_seq: state_i64(&c, KEY_LAST_PUSHED),
         last_pulled_seq: state_i64(&c, KEY_LAST_PULLED),
@@ -229,8 +253,8 @@ pub fn get_sync_config(db: State<'_, Db>) -> Result<SyncConfig, String> {
 pub fn set_sync_config(db: State<'_, Db>, args: SyncConfigArgs) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let url = args.server_url.trim().trim_end_matches('/').to_string();
-    set_state(&c, KEY_SERVER_URL, &url)?;
-    set_state(&c, KEY_TOKEN, args.token.as_deref().unwrap_or(""))?;
+    set_meta_state(&c, KEY_SERVER_URL, &url)?;
+    set_meta_state(&c, KEY_TOKEN, args.token.as_deref().unwrap_or(""))?;
     Ok(())
 }
 
@@ -383,8 +407,8 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<SyncRe
     let (server_url, token) = {
         let c = db.0.lock().expect("db mutex poisoned");
         (
-            get_state(&c, KEY_SERVER_URL).unwrap_or_default(),
-            get_state(&c, KEY_TOKEN).unwrap_or_default(),
+            get_meta_state(&c, KEY_SERVER_URL).unwrap_or_default(),
+            get_meta_state(&c, KEY_TOKEN).unwrap_or_default(),
         )
     };
     if server_url.is_empty() {

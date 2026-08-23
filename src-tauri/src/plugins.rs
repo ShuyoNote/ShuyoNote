@@ -339,7 +339,7 @@ fn enabled_key(id: &str) -> String {
 
 fn enabled(c: &Connection, id: &str) -> bool {
     c.query_row(
-        "SELECT value FROM sync_state WHERE key = ?1",
+        "SELECT value FROM meta.plugin_state WHERE key = ?1",
         params![enabled_key(id)],
         |r| r.get::<_, String>(0),
     )
@@ -349,7 +349,7 @@ fn enabled(c: &Connection, id: &str) -> bool {
 
 fn set_enabled(c: &Connection, id: &str, on: bool) -> Result<(), String> {
     c.execute(
-        "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
+        "INSERT INTO meta.plugin_state (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![enabled_key(id), if on { "1" } else { "0" }],
     )

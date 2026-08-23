@@ -373,15 +373,10 @@ mod tests {
         conn.pragma_update(None, "journal_mode", "WAL").unwrap();
         conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        migrate(&conn).unwrap();
+        migrate(&conn, "ws").unwrap();
 
         let now = 1_000_000_000i64;
-        // workspace (pages has FK to workspaces)
-        conn.execute(
-            "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('ws','默认空间',?1,?1)",
-            params![now],
-        )
-        .unwrap();
+        // workspace row already seeded by migrate(space_id="ws"); no duplicate insert.
         let page_id = "p1";
         conn.execute(
             "INSERT INTO pages (id, workspace_id, title, created_at, updated_at) VALUES (?1,'ws','测试页',?2,?2)",

@@ -256,7 +256,7 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
 /// recoverable; queries no longer surface the soft-deleted workspace.
 #[tauri::command]
 pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), String> {
-    let mut c = conn(&db);
+    let c = conn(&db);
     let active = active_workspace_id(&c)?;
     let now = now_ms();
     let n = c
@@ -269,7 +269,7 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), Strin
         return Err("工作空间不存在或已删除".to_string());
     }
     if active == id {
-        c.execute("DELETE FROM sync_state WHERE key = ?1", params![ACTIVE_KEY])
+        c.execute("DELETE FROM meta.sync_state WHERE key = ?1", params![ACTIVE_KEY])
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -288,6 +288,15 @@ pub fn copy_page_to_workspace(
     new_parent_id: Option<String>,
 ) -> Result<String, String> {
     let c = conn(&db);
+
+    // M15 物理隔离：跨空间复制需要跨库 DML（目标空间库 + 附件拷贝），在 M15.4 实现。
+    // 在此前的单库模型里 "copy to another space" 会把页面字节写进当前库而 target_id
+    // 只是标记，导致物理隔离后内容错库。现在是物理隔离稳定期，跨空间复制尚未实现，
+    // 明确报错而非静默写错库。
+    let active = active_workspace_id(&c)?;
+    if target_workspace_id != active {
+        return Err("跨空间复制将在后续版本支持（单空间可复制到本空间的新位置）".to_string());
+    }
 
     // Validate targets.
     let ws_ok: bool = c

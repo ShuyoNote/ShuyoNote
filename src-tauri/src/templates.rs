@@ -35,7 +35,7 @@ const COLS: &str = "id,name,category,kind,icon,cover,summary,content_json,conten
 pub fn list_templates(db: State<Db>, space_id: Option<String>) -> Result<Vec<TemplateMeta>, String> {
     let c = conn(&db);
     let sql = format!(
-        "SELECT {COLS} FROM templates WHERE built_in = 0 AND (?1 IS NULL OR space_id = ?1) ORDER BY sort_order ASC, created_at ASC"
+        "SELECT {COLS} FROM meta.templates WHERE built_in = 0 AND (?1 IS NULL OR space_id = ?1) ORDER BY sort_order ASC, created_at ASC"
     );
     let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
     let mapped = stmt
@@ -67,14 +67,14 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
     let now = now_ms();
     let next_sort: f64 = c
         .query_row(
-            "SELECT COALESCE(MAX(sort_order),0) + 1 FROM templates WHERE built_in = 0",
+            "SELECT COALESCE(MAX(sort_order),0) + 1 FROM meta.templates WHERE built_in = 0",
             [],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
 
     c.execute(
-        "INSERT INTO templates (id, name, category, kind, icon, cover, summary, content_json, content_text, props_json, database_json, tags, built_in, space_id, sort_order, created_at, updated_at)
+        "INSERT INTO meta.templates (id, name, category, kind, icon, cover, summary, content_json, content_text, props_json, database_json, tags, built_in, space_id, sort_order, created_at, updated_at)
          VALUES (?1, ?2, ?3, 'page', ?4, ?5, ?6, ?7, ?8, '{}', '{}', '[]', 0, ?9, ?10, ?11, ?12)",
         params![
             id,
@@ -94,7 +94,7 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
     .map_err(|e| e.to_string())?;
 
     c.query_row(
-        &format!("SELECT {COLS} FROM templates WHERE id = ?1"),
+        &format!("SELECT {COLS} FROM meta.templates WHERE id = ?1"),
         params![id],
         |row| row_to_meta(row),
     )
@@ -105,7 +105,7 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
 pub fn delete_template(db: State<Db>, id: String) -> Result<(), String> {
     let c = conn(&db);
     let n = c
-        .execute("DELETE FROM templates WHERE id = ?1 AND built_in = 0", params![id])
+        .execute("DELETE FROM meta.templates WHERE id = ?1 AND built_in = 0", params![id])
         .map_err(|e| e.to_string())?;
     if n == 0 {
         return Err("模板不存在或为内置模板".to_string());

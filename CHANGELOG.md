@@ -2,6 +2,24 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.40.0] - 2026-08-22
+
+### 变更
+
+- **每工作空间独立存储（物理隔离，M15.2 命令层改造）**：物理隔离全面落地到命令层
+  - **内容命令去掉 `workspace_id` 过滤**（每空间库单空间）：`list_pages` / `query_database` / `get_graph` / `get_backlinks` / `list_tags` / `pages_by_tag` / `board_data` / `list_deleted` / `search` 不再按 workspace 过滤，直接读当前空间库
+  - **应用级状态归拢到 `meta`**：`device_id` / `server_url` / `token` 迁移到 `meta.sync_state`（跨空间共享，修复「每空间各自一个 device_id」的同步 bug）；插件启停 `plugin_enabled::{id}` 迁移到 `meta.plugin_state`；`templates` 全面落到 `meta.templates`
+  - **同步游标 / E2EE 密钥保持每空间**：`last_pushed_seq` / `last_pulled_seq`、加密密钥（`encryption_*`）仍存于各空间库的 `sync_state`（每库单游标、每空间一钥，符合规划的每空间同步线/加密隔离）
+  - **修复 `create_workspace` 的长期 FK bug**：`migrate()` 现在接收 `space_id`，为新建空间库播种**该空间自己的** `workspaces` 行；此前只播种 `'default'`，导致新建空间插入首页页时触发 `pages.workspace_id` 外键错误
+  - **修复跨空间复制的静默写错库**：物理隔离期跨空间复制需要跨库 DML（M15.4 实现），现目标空间 ≠ 当前空间时明确报错「将在后续版本支持」，避免把页面写进当前库
+- 后端由 15 项单测增至 **17 项**（新增：第二空间创建 + 首页插入 E2E、空间库接受自有 workspace_id 页面）；编译通过
+
+### 说明
+
+- **已知待办**：跨空间搜索聚合 / 跨空间复制（跨库 + 附件拷贝）/ 单空间导出、每空间清理，均为 **M15.3/M15.4**；「全空间搜索」的 `all_spaces` 标志暂按当前空间生效
+
+---
+
 ## [1.39.0] - 2026-08-22
 
 ### 新增

@@ -1,6 +1,5 @@
 use crate::db::Db;
 use crate::models::PageMeta;
-use crate::workspaces;
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
 
@@ -85,18 +84,17 @@ pub fn remove_backlinks(c: &Connection, ids: &[String]) -> Result<(), String> {
 #[tauri::command]
 pub fn get_backlinks(db: State<'_, Db>, id: String) -> Result<Vec<PageMeta>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    let ws = workspaces::active_workspace_id(&c)?;
     let mut stmt = c
         .prepare(
             "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
              FROM backlinks b JOIN pages p ON b.source_page_id = p.id
-             WHERE b.target_page_id = ?1 AND b.target_block_id = '' AND p.deleted_at IS NULL AND p.workspace_id = ?2
+             WHERE b.target_page_id = ?1 AND b.target_block_id = '' AND p.deleted_at IS NULL
              ORDER BY p.updated_at DESC",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![id, ws], |row| {
+        .query_map(params![id], |row| {
             Ok(PageMeta {
                 id: row.get(0)?,
                 workspace_id: row.get(1)?,

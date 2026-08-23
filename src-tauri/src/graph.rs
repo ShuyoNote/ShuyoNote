@@ -1,5 +1,4 @@
 use crate::db::Db;
-use crate::workspaces;
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -60,14 +59,13 @@ fn edge_kind_priority(kind: &str) -> u8 {
 #[tauri::command]
 pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    let ws = workspaces::active_workspace_id(&c)?;
 
     // --- Page nodes ---
     let mut stmt = c
-        .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL AND workspace_id = ?1 ORDER BY updated_at DESC")
+        .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
     let mut pages: Vec<GraphPage> = stmt
-        .query_map(params![ws], |r| {
+        .query_map([], |r| {
             Ok(GraphPage {
                 id: r.get(0)?,
                 title: r.get(1)?,
@@ -87,11 +85,11 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
              FROM page_tags pt
              JOIN tags t ON t.id = pt.tag_id
              JOIN pages p ON p.id = pt.page_id
-             WHERE p.deleted_at IS NULL AND p.workspace_id = ?1",
+             WHERE p.deleted_at IS NULL",
         )
         .map_err(|e| e.to_string())?;
     let tag_rows: Vec<(String, String)> = stmt
-        .query_map(params![ws], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;

@@ -33,7 +33,7 @@ pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), Str
     c.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     c.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
     c.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
-    migrate(c).map_err(|e| e.to_string())?;
+    migrate(c, space_id).map_err(|e| e.to_string())?;
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
     c.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
         .map_err(|e| format!("attach meta failed: {e}"))?;
@@ -77,6 +77,17 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
                 params![ACTIVE_KEY, active],
             )
             .ok();
+        // App-level device id lives in meta (shared across every space), so the
+        // sync outbox from all spaces claims the SAME physical device.
+        let dev_count: i64 = meta_conn
+            .query_row("SELECT COUNT(*) FROM sync_state WHERE key = 'device_id'", [], |r| r.get(0))
+            .unwrap_or(0);
+        if dev_count == 0 {
+            meta_conn.execute(
+                "INSERT INTO sync_state (key, value) VALUES ('device_id', ?1)",
+                params![uuid::Uuid::new_v4().to_string()],
+            )?;
+        }
     }
 
     // Open the active space's DB as the MAIN connection, then ATTACH meta.db as `meta`.
@@ -97,7 +108,7 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    migrate(&conn)?;
+    migrate(&conn, &active)?;
     let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
     conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
         .map_err(|e| {
@@ -156,7 +167,7 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS workspaces (
@@ -418,16 +429,16 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
-    // Ensure a default workspace exists. The sidebar logo area shows the
-    // workspace (space) name — not the app brand — so default to a neutral
-    // space name that the user can rename.
+    // Seed the workspace row for THIS space DB. Each space DB is single-space,
+    // so pages.workspace_id = space_id must satisfy the FK (pages references
+    // workspaces). Previously this hard-coded 'default', which broke create_workspace.
     let count: i64 =
         conn.query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))?;
     if count == 0 {
         let now = now_ms();
         conn.execute(
             "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params!["default", "默认空间", now, now],
+            params![space_id, "默认空间", now, now],
         )?;
     }
 
@@ -437,19 +448,6 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         "UPDATE workspaces SET name = ?1, updated_at = ?2 WHERE name IN (?3, ?4)",
         params!["默认空间", now_ms(), "默认工作区", "数友笔记"],
     )?;
-
-    // Ensure a persistent device id exists.
-    let device_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM sync_state WHERE key = 'device_id'", [], |row| {
-            row.get(0)
-        })?;
-    if device_count == 0 {
-        let device_id = uuid::Uuid::new_v4().to_string();
-        conn.execute(
-            "INSERT INTO sync_state (key, value) VALUES ('device_id', ?1)",
-            params![device_id],
-        )?;
-    }
 
     Ok(())
 }
@@ -466,7 +464,7 @@ mod tests {
     fn migrate_adds_workspace_settings_columns() {
         let conn = Connection::open_in_memory().unwrap();
         // Fresh DB: workspaces has only id/name/created_at/updated_at initially.
-        migrate(&conn).unwrap();
+        migrate(&conn, "default").unwrap();
         for col in ["theme", "icon", "sort_order", "deleted_at"] {
             let has: i64 = conn
                 .query_row(
@@ -478,6 +476,54 @@ mod tests {
             assert_eq!(has, 1, "workspaces missing expected column: {col}");
         }
         // migrate is idempotent (re-run does not error).
-        migrate(&conn).unwrap();
+        migrate(&conn, "default").unwrap();
+    }
+
+    // A fresh space DB (migrate'd) must accept a page whose workspace_id is the
+    // space's own id — create_workspace inserts the home page that way. With
+    // foreign_keys=ON this previously failed because migrate only seeded 'default'.
+    #[test]
+    fn fresh_space_db_accepts_own_workspace_id_page() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        migrate(&conn, "ws-abc123").unwrap();
+        conn.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+             VALUES ('p', 'ws-abc123', NULL, 'start', '{}', '', 'page', 0, 1, 1, NULL)",
+            [],
+        )
+        .unwrap();
+        // The page also appears when queried.
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = 'ws-abc123'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    // End-to-end: init meta+default, then reopen_space to a SECOND space and insert
+    // that space's home page — the exact path create_workspace takes. Previously this
+    // violated the pages.workspace_id FK because migrate only seeded 'default'.
+    #[test]
+    fn reopen_to_second_space_then_insert_home_page() {
+        let dir = std::env::temp_dir().join(format!("shuyonote-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = init(dir.clone()).unwrap();
+
+        let second = "ws-second";
+        let mut c = conn;
+        reopen_space(&mut c, second).unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+             VALUES ('home', ?1, NULL, 'start', '{}', '', 'page', 0, 1, 1, NULL)",
+            params![second],
+        )
+        .unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -448,9 +448,8 @@ mod tests {
     fn clear_trash_breaks_parent_fk_before_delete() {
         let mut c = Connection::open_in_memory().unwrap();
         c.pragma_update(None, "foreign_keys", "ON").unwrap();
-        migrate(&c).unwrap();
-        c.execute("INSERT INTO workspaces (id,name,created_at,updated_at) VALUES ('w1','ws',1,1)", [])
-            .unwrap();
+        migrate(&c, "w1").unwrap();
+        // workspace 'w1' row is seeded by migrate(space_id="w1"); no duplicate insert.
         let page = "INSERT INTO pages (id,workspace_id,parent_id,title,content_json,content_text,kind,sort_order,created_at,updated_at,deleted_at) VALUES (?1,'w1',?2,'t','{}','','page',0,1,1,1)";
         c.execute(page, params!["p", rusqlite::types::Null]).unwrap();
         c.execute(page, params!["c", "p"]).unwrap();

@@ -37,16 +37,15 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
 #[tauri::command]
 pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
-    let ws = workspaces::active_workspace_id(&c)?;
     let mut stmt = c
         .prepare(
             "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
-             FROM pages WHERE deleted_at IS NULL AND workspace_id = ?1 ORDER BY sort_order ASC, created_at ASC",
+             FROM pages WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![ws], |row| {
+        .query_map([], |row| {
             Ok(PageMeta {
                 id: row.get(0)?,
                 workspace_id: row.get(1)?,
