@@ -240,6 +240,32 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute("ALTER TABLE workspaces ADD COLUMN deleted_at INTEGER", [])?;
     }
 
+    // Per-workspace settings columns (accent color / icon / sort order).
+    let ws_has_theme: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'theme'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_theme == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN theme TEXT", [])?;
+    }
+    let ws_has_icon: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'icon'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_icon == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    let ws_has_sort: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'sort_order'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_sort == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+
     // Membership rule for database pages (query-type database: auto-collect by rule).
     let pages_has_db_rule: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'db_rule'",
@@ -293,4 +319,28 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_adds_workspace_settings_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Fresh DB: workspaces has only id/name/created_at/updated_at initially.
+        migrate(&conn).unwrap();
+        for col in ["theme", "icon", "sort_order", "deleted_at"] {
+            let has: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = ?1",
+                    params![col],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(has, 1, "workspaces missing expected column: {col}");
+        }
+        // migrate is idempotent (re-run does not error).
+        migrate(&conn).unwrap();
+    }
 }
