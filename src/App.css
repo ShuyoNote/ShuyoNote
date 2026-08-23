@@ -4588,6 +4588,10 @@ select.prop-value {
   background: var(--accent-soft);
   text-decoration: underline;
 }
+.db-formula {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 
 .db-col-options {
   border: none;

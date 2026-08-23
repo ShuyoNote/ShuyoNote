@@ -5,7 +5,7 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 
-const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref"] as const;
+const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula"] as const;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -15,7 +15,60 @@ const TYPE_LABELS: Record<string, string> = {
   multi: "多选",
   tag: "标签",
   ref: "引用",
+  formula: "公式",
 };
+
+// Safe arithmetic evaluator (numbers + - * / ( ) only; no `eval`).
+function safeArith(expr: string): number {
+  const tokens = expr.match(/\d+\.?\d*|[+\-*/()]/g) ?? [];
+  let i = 0;
+  const parseFactor = (): number => {
+    const t = tokens[i++];
+    if (t === "(") {
+      const v = parseExpr();
+      tokens[i++];
+      return v;
+    }
+    const n = parseFloat(t);
+    return isNaN(n) ? 0 : n;
+  };
+  const parseTerm = (): number => {
+    let v = parseFactor();
+    while (tokens[i] === "*" || tokens[i] === "/") {
+      const op = tokens[i++];
+      const r = parseFactor();
+      v = op === "*" ? v * r : (r === 0 ? 0 : v / r);
+    }
+    return v;
+  };
+  const parseExpr = (): number => {
+    let v = parseTerm();
+    while (tokens[i] === "+" || tokens[i] === "-") {
+      const op = tokens[i++];
+      const r = parseTerm();
+      v = op === "+" ? v + r : v - r;
+    }
+    return v;
+  };
+  try {
+    return parseExpr();
+  } catch {
+    return 0;
+  }
+}
+
+// Compute a formula column's value from the row's other column values (by name).
+function computeFormula(expr: string, values: Record<string, string>, columns: AttrDef[]): string {
+  let s = expr;
+  const order = [...columns].sort((a, b) => b.name.length - a.name.length);
+  for (const col of order) {
+    if (col.attr_type === "formula" || !col.name) continue;
+    const num = parseFloat(values[col.id] ?? "");
+    s = s.split(col.name).join(isNaN(num) ? "0" : String(num));
+  }
+  const v = safeArith(s);
+  return Number.isFinite(v) ? String(Math.round(v * 100) / 100) : "—";
+}
 
 export function DatabaseView({ pageId, title }: { pageId: string; title: string }) {
   const { openPage, pages } = useNotes();
@@ -652,7 +705,11 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   </td>
                   {query.columns.map((c) => (
                     <td key={c.id} className="db-cell">
-                      {c.attr_type === "ref" ? (
+                      {c.attr_type === "formula" ? (
+                        <span className="db-formula">
+                          {computeFormula(c.options[0] ?? "", r.values, query.columns)}
+                        </span>
+                      ) : c.attr_type === "ref" ? (
                         <RefCell value={r.values[c.id] ?? ""} titles={refTitles} onOpen={openRef} />
                       ) : (
                         <DbCellEditor
@@ -1028,12 +1085,15 @@ function DbNewAttr({
   const [type, setType] = useState<string>("text");
   const [options, setOptions] = useState("");
   const needsOptions = type === "select" || type === "multi";
+  const needsFormula = type === "formula";
 
   const commit = () => {
     if (!name.trim()) return;
     const opts = needsOptions
       ? options.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
-      : [];
+      : needsFormula
+        ? [options.trim()]
+        : [];
     onCreate(name.trim(), type, opts);
   };
 
@@ -1057,6 +1117,14 @@ function DbNewAttr({
         <input
           className="db-input"
           placeholder="选项，逗号分隔"
+          value={options}
+          onChange={(e) => setOptions(e.target.value)}
+        />
+      )}
+      {needsFormula && (
+        <input
+          className="db-input"
+          placeholder="公式，如 数量*单价 或 总分/人数"
           value={options}
           onChange={(e) => setOptions(e.target.value)}
         />

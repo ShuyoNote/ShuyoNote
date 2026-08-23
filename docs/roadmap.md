@@ -92,11 +92,11 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 - **M12.2 拖拽 + 移动** ✅（v1.19.0）：拖拽 OS 文件进打开文件夹上传 + 文件跨夹移动（`move_attachment`）。
 - **M12.3（可选）**：文件元信息/引用到页面、版本。
 
-### M13 — 数据库 = 透镜（P2，[规划](plans/2026-08-22-database-lens-plan.md)）
+### M13 — 数据库 = 透镜（P2，✅ 达成，[规划](plans/2026-08-22-database-lens-plan.md)）
 - **M13.1 保存视图** ✅（v1.20.0）：`db_views` 表 + `save/list/delete_db_view` + 数据库工具栏「视图」切换/保存/删除（记录 view_type/filter/sort/board_group_attr）。
 - **M13.2 查询型数据库** ✅（v1.21.0）：`pages.db_rule` + `set/get_db_rule`；`query_database` 按规则（属性值/tag，AND）过滤收页；未设规则行为不变。
 - **M13.3 ref 关联属性** ✅（v1.22.0）：`ref` 列类型 + `resolve_refs`（`p:<id>`→标题）+ 数据库表格 ref 列可点击跳转。**M13.3b**（v1.23.0）：ref 属性值并入关系图边（kind=`ref`），数据库 ↔ 图谱贯通。
-- **M13.4（可选）**：公式列 / 汇总 rollup。
+- **M13.4 公式列** ✅（v1.24.0）：「公式」列类型 + 前端受限算术解析（`+ - * / ( )`），按列名引用同行数字列计算。**M13 里程碑达成**。
 
 ## 4. 竞品差距跟踪
 
