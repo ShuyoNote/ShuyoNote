@@ -447,6 +447,7 @@ export function PageTree({
       const newActive = useSpaceStore.getState().activeId;
       const newName = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
       setWorkspaceName(newName ?? "默认空间");
+      toast(`已删除工作空间「${name}」`, "success");
     }
     spaceChooser.close();
     setEditingName(false);
