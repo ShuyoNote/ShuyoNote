@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.31.0] - 2026-08-22
+
+### 新增
+
+- **导出工作空间为 Markdown（数据可移植性强化）**：命令面板（Ctrl+K）新增「导出工作空间为 Markdown」——选择目录后，把当前工作空间的**所有页面**批量导出为 `.md` 文件（每页一文件，文件名取标题、非法字符清洗、去重）
+  - 用 offscreen `createEditor` + `$convertToMarkdownString`（`SHUYONOTE_TRANSFORMERS`）复用与单页一致的 Markdown 保留往返，无需打开页面
+  - 文件头部写入注释元信息（title / id），导出后天然可 git / 任意编辑器可读——兑现「数据主权 / 可移植」价值主张（本地优先的最终保障：你的内容永远能离开）
+
+### 变更
+
+- 命令面板「导出」插件新增命令；新增 `src/lib/exportMarkdown.ts`（headless 转换 + 写文件）
+- 说明：文件引用卡片等富文本节点在 Markdown 中以纯文本（文件名）兜底；附件字节不随 Markdown 导出（如需完整备份可用整库备份）
+- **文档**：路线图补记「Markdown 批量导出（M1 可移植性增强）」已实现
+
+---
+
 ## [1.30.0] - 2026-08-22
 
 ### 新增

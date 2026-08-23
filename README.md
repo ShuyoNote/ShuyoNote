@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.30.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.31.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -253,6 +253,7 @@ ShuyoNote/
 - [x] 块多选 + 批量删除
 - [x] HTML/Markdown 混排导入（保留 `align` 居中 / 徽章成排 / 图片尺寸）
 - [x] Markdown 无损往返
+- [x] 导出工作空间为 Markdown（批量 .md，可 git / 可移植）
 - [x] 属性驱动仪表盘聚合
 - [ ] 端到端加密
 - [x] 主题自定义 + 插件启停

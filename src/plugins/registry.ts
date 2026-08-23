@@ -4,6 +4,7 @@ import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
 import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
+import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
 // A lightweight plugin system: plugins register commands that are
@@ -111,6 +112,13 @@ registerPlugin({
         await navigator.clipboard.writeText(JSON.stringify(page, null, 2));
         return "已复制当前页 JSON 到剪贴板";
       },
+    },
+    {
+      id: "export.workspace-markdown",
+      title: "导出工作空间为 Markdown",
+      description: "把本工作空间所有页面导出为 .md 文件到所选目录",
+      closeOnRun: true,
+      run: () => exportWorkspaceToMarkdown(),
     },
   ],
 });

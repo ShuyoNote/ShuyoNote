@@ -44,7 +44,7 @@
 ## 3. 里程碑规划
 
 ### M1 — Markdown 无损往返（P2）✅
-`markdownTransformers.ts` 的 `SHUYONOTE_TRANSFORMERS` 已覆盖图片/视频/块嵌入/块引用/分隔线/待办/Callout/表格，补齐 Lexical 0.49 默认缺口。往返一致性待运行验证。
+`markdownTransformers.ts` 的 `SHUYONOTE_TRANSFORMERS` 已覆盖图片/视频/块嵌入/块引用/分隔线/待办/Callout/表格，补齐 Lexical 0.49 默认缺口。往返一致性待运行验证。**Markdown 批量导出**（v1.31.0）：命令面板「导出工作空间为 Markdown」用 offscreen `createEditor` 把本空间所有页面批量导出为 `.md` 文件（可 git / 任意编辑器可读），强化数据可移植。
 
 ### M2 — 端到端加密（P0）
 本地加密后上传，服务端不可读；`content_json`/`content_text`/附件加密同步；每空间独立密钥（见[多空间方案](plans/2026-08-22-multi-workspace-plan.md#8-同步与加密)）。密钥仅存本机。
