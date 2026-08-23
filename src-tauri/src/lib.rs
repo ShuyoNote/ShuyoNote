@@ -53,6 +53,7 @@ pub fn run() {
             workspaces::create_workspace,
             workspaces::get_active_workspace_id,
             workspaces::set_active_workspace_id,
+            workspaces::copy_page_to_workspace,
             workspaces::delete_workspace,
             workspaces::get_workspace_name,
             workspaces::rename_workspace,

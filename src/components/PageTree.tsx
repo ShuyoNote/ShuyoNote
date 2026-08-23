@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
@@ -40,6 +40,70 @@ function buildTree(pages: PageMeta[]): TreeNode[] {
   };
   sortRec(roots);
   return roots;
+}
+
+// Copy a page (and its descendants) into another workspace, choosing the target
+// from a small dropdown. Block graphs stay workspace-scoped, so references to
+// blocks outside the copied subtree are documented to not resolve in the target.
+function CopyPageAction({ pageId }: { pageId: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
+  const loadSpaces = useSpaceStore((s) => s.load);
+
+  useEffect(() => {
+    if (!open) return;
+    loadSpaces();
+  }, [open, loadSpaces]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const copyTo = async (wsId: string) => {
+    setOpen(false);
+    try {
+      await api.copyPageToWorkspace(pageId, wsId, null);
+      toast("已复制到目标工作空间", "success");
+    } catch (e) {
+      toast(`复制失败：${e}`, "error");
+    }
+  };
+
+  return (
+    <span ref={ref} className="copy-page-wrap">
+      <button
+        title="复制到其他工作空间"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        ⇄
+      </button>
+      {open && (
+        <div className="copy-page-menu">
+          <div className="copy-page-title">复制到…</div>
+          {spaces
+            .filter((s) => s.id !== activeId)
+            .map((s) => (
+              <button key={s.id} className="copy-page-item" onClick={() => copyTo(s.id)}>
+                {s.name}
+              </button>
+            ))}
+          {spaces.filter((s) => s.id !== activeId).length === 0 && (
+            <div className="copy-page-empty">没有其他工作空间</div>
+          )}
+        </div>
+      )}
+    </span>
+  );
 }
 
 function treeFileIcon(mime: string): string {
@@ -243,6 +307,7 @@ function TreeItem({
           >
             ⧉
           </button>
+          <CopyPageAction pageId={node.id} />
           <button
             title="新建子页面"
             onClick={(e) => {

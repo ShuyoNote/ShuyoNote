@@ -46,6 +46,8 @@ export const api = {
   getActiveWorkspaceId: () => invoke<string>("get_active_workspace_id"),
   setActiveWorkspaceId: (id: string) => invoke<void>("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke<void>("delete_workspace", { id }),
+  copyPageToWorkspace: (pageId: string, targetWorkspaceId: string, newParentId?: string | null) =>
+    invoke<string>("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
   listPlugins: () => invoke<PluginMeta[]>("list_plugins"),
   setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
   runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null) =>
