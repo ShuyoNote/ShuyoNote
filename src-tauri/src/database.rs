@@ -78,16 +78,24 @@ pub fn remove_db_column(db: State<'_, Db>, args: DbColumnArgs) -> Result<Vec<Att
 #[tauri::command]
 pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQuery, String> {
     let c = conn(&db);
+    // M10 红线：内容查询必须按空间隔离——数据库页只呈现「同工作空间」的页面。
+    let ws: String = c
+        .query_row(
+            "SELECT workspace_id FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+            params![db_page_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "数据库页不存在".to_string())?;
     let columns = db_columns(&c, &db_page_id)?;
     let attr_ids: Vec<String> = columns.iter().map(|a| a.id.clone()).collect();
 
     let mut stmt = c
         .prepare(
-            "SELECT id, title FROM pages WHERE kind = 'page' AND deleted_at IS NULL ORDER BY updated_at DESC",
+            "SELECT id, title FROM pages WHERE kind = 'page' AND deleted_at IS NULL AND workspace_id = ?1 ORDER BY updated_at DESC",
         )
         .map_err(|e| e.to_string())?;
     let pages: Vec<(String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map(params![ws], |r| Ok((r.get(0)?, r.get(1)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
