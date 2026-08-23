@@ -2,6 +2,24 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.17.0] - 2026-08-22
+
+### 新增
+
+- **端到端加密同步（M2.2，默认关闭）**：把 M2.1 加密原语接入同步——
+  - 新增 `security.rs`：`set_encryption`（口令+盐派生密钥，落 `sync_state`）、`encryption_status`、`disable_encryption`；密钥/盐经 base64 存于本机（服务端永远拿不到密钥）
+  - **同步加密钩子**：`push` 前把页面变更 `payload` 加密（`base64(nonce||密文)`），`pull` 后解密再解析——服务端存密文、不可读
+  - 默认关闭：未启用时纯透传（零行为变化）；启用后每变更载荷认证加密
+- 引入 `base64` 依赖
+- 前端 `api`：`setEncryption` / `encryptionStatus` / `disableEncryption`
+- 验证：`cargo test` 全量 **10 通过**（含 `payload_roundtrip_when_enabled` / `payload_passthrough_when_disabled`）
+
+### 说明
+
+- 加密为应用级开关（每工作空间可用 `set_encryption` 启用）；设置面板开关 UI 与「口令解锁/锁定」为后续项；自建 sync-server 的端到端往返未在本环境跑（无服务器），加密/解密路径经单测验证。
+
+---
+
 ## [1.16.0] - 2026-08-22
 
 ### 新增

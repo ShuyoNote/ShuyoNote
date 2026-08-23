@@ -11,6 +11,7 @@ mod models;
 mod plugins;
 mod properties;
 mod search;
+mod security;
 mod sync;
 mod tags;
 mod templates;
@@ -121,6 +122,9 @@ pub fn run() {
             plugins::uninstall_plugin,
             plugins::install_plugin,
             plugins::open_plugin_dir,
+            security::set_encryption,
+            security::encryption_status,
+            security::disable_encryption,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,6 @@
 use argon2::Argon2;
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use rand_core::OsRng;
@@ -6,6 +8,29 @@ use rand_core::RngCore;
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
+
+/// `sync_state` keys for the opt-in per-workspace encryption.
+pub const ENC_ENABLED: &str = "encryption_enabled";
+pub const ENC_SALT: &str = "encryption_salt";
+pub const ENC_KEY: &str = "encryption_key";
+
+pub fn b64_encode(data: &[u8]) -> String {
+    B64.encode(data)
+}
+pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
+    B64.decode(s).map_err(|e| e.to_string())
+}
+
+/// Encrypt a UTF-8 string; result is base64 `nonce(24)||ciphertext`.
+pub fn encrypt_str(s: &str, key: &[u8; 32]) -> Result<String, String> {
+    Ok(B64.encode(encrypt(s.as_bytes(), key)?))
+}
+/// Decrypt a base64 `nonce||ciphertext` produced by [`encrypt_str`].
+pub fn decrypt_str(s: &str, key: &[u8; 32]) -> Result<String, String> {
+    let bytes = b64_decode(s)?;
+    let plain = decrypt(&bytes, key)?;
+    String::from_utf8(plain).map_err(|e| format!("解密结果非 UTF-8: {e}"))
+}
 
 /// Derive a 256-bit key from a passphrase + salt (Argon2id, default params).
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {

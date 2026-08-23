@@ -1,6 +1,7 @@
 use crate::db::Db;
 use crate::models::PageDetail;
 use crate::search;
+use crate::security;
 use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -263,6 +264,19 @@ async fn do_push(
         let changes = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+        // If E2EE is enabled, encrypt each payload before it leaves the device.
+        let changes = if security::key_if_enabled(&c).is_some() {
+            let mut out = Vec::with_capacity(changes.len());
+            for mut ch in changes {
+                if let Some(p) = ch.payload.take() {
+                    ch.payload = Some(security::encrypt_payload(&c, &p)?);
+                }
+                out.push(ch);
+            }
+            out
+        } else {
+            changes
+        };
         (device_id, last_pushed, changes)
     };
 
@@ -340,9 +354,12 @@ async fn do_pull(
             match (change.entity.as_str(), change.op.as_str()) {
                 ("page", "upsert") => {
                     if let Some(payload) = &change.payload {
-                        if let Ok(page) = serde_json::from_str::<PageDetail>(payload) {
-                            apply_upsert(&c, &page)?;
-                            count += 1;
+                        // Decrypt if E2EE is enabled (passthrough otherwise).
+                        if let Ok(plain) = security::decrypt_payload(&c, payload) {
+                            if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
+                                apply_upsert(&c, &page)?;
+                                count += 1;
+                            }
                         }
                     }
                 }
