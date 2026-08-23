@@ -5693,6 +5693,68 @@ select.prop-value {
   padding: 30px;
   text-align: center;
 }
+.fm-drop-zone {
+  position: fixed;
+  inset: 0;
+  z-index: 94;
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.fm-move-popover {
+  position: fixed;
+  z-index: 96;
+  top: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+}
+.fm-move-title {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 5px 8px 4px;
+}
+.fm-move-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.fm-move-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.fm-move-empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 8px;
+}
+.fm-move-cancel {
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  margin-top: 3px;
+}
 
 .file-manager-table-wrap {
   flex: 1;

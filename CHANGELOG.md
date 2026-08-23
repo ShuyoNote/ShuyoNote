@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.19.0] - 2026-08-22
+
+### 新增
+
+- **文件夹 = 网盘（M12.2 拖拽 + 移动）**
+  - **拖拽上传**：拖 OS 文件进打开的文件夹 → 直接上传（Tauri `onDragDropEvent`，复用流式进度；拖入时显示「松开上传」提示层）
+  - **文件跨夹移动**：文件行「↔ 移动到」→ 弹出文件夹列表，选目标夹即移动（后端 `move_attachment` 更新 `attachments.page_id`，目标夹必须存在）
+- 后端新增 `move_attachment`；文件行操作扩为「移动/预览/下载/显示/移除」
+
+### 变更
+
+- FileManagerView 复用 `importPaths` 处理对话框上传与拖拽上传；新增拖拽提示层与移动弹层
+- **文档**：路线图 M12.2 标记已实现
+
+---
+
 ## [1.18.0] - 2026-08-22
 
 ### 新增

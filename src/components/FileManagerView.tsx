@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useNotes } from "../store/notes";
@@ -71,6 +72,8 @@ export function FileManagerView() {
   const [importing, setImporting] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
   const [preview, setPreview] = useState<AttachmentMeta | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [moving, setMoving] = useState<AttachmentMeta | null>(null);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
 
@@ -114,7 +117,11 @@ export function FileManagerView() {
     }
     const paths = Array.isArray(selectedPath) ? selectedPath : selectedPath ? [selectedPath] : [];
     if (paths.length === 0) return;
+    await importPaths(paths);
+  };
 
+  const importPaths = async (paths: string[]) => {
+    if (!folderId || paths.length === 0) return;
     setImporting(true);
     importingRef.current = true;
     setProgress({ name: paths[0] ?? "", percent: 0 });
@@ -130,6 +137,37 @@ export function FileManagerView() {
       setImporting(false);
       setProgress(null);
     }
+  };
+
+  // Drag OS files into an open folder to upload them (Tauri drag-drop event).
+  useEffect(() => {
+    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === "over") setDragging(true);
+      else if (event.payload.type === "leave") setDragging(false);
+      else if (event.payload.type === "drop") {
+        setDragging(false);
+        importPaths(event.payload.paths);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderId]);
+
+  const moveTo = async (f: AttachmentMeta, targetFolderId: string) => {
+    if (targetFolderId === folderId) {
+      setMoving(null);
+      return;
+    }
+    try {
+      await api.moveAttachment(f.id, targetFolderId);
+      setFiles((prev) => prev.filter((x) => x.id !== f.id));
+      toast("已移动", "success");
+    } catch (e) {
+      toast(`移动失败：${e}`, "error");
+    }
+    setMoving(null);
   };
 
   const openFile = async (path: string) => {
@@ -247,6 +285,10 @@ export function FileManagerView() {
   const visibleRows = useMemo(
     () => (q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows),
     [rows, q],
+  );
+  const folderTargets = useMemo(
+    () => pages.filter((p) => p.kind === "folder" && p.id !== folderId),
+    [pages, folderId],
   );
 
   const downloadFile = async (f: AttachmentMeta) => {
@@ -386,6 +428,15 @@ export function FileManagerView() {
                   {row.kind === "file" && (
                     <span className="fm-file-actions">
                       <button
+                        title="移动到文件夹"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMoving(row.file!);
+                        }}
+                      >
+                        ↔
+                      </button>
+                      <button
                         title="预览"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -436,6 +487,33 @@ export function FileManagerView() {
           </tbody>
         </table>
       </div>
+
+      {dragging && (
+        <div className="fm-drop-zone">松开鼠标，上传到当前文件夹</div>
+      )}
+
+      {moving && (
+        <div className="fm-move-popover">
+          <div className="fm-move-title">移动「{moving.name}」到</div>
+          {folderTargets.length === 0 ? (
+            <div className="fm-move-empty">没有其他文件夹</div>
+          ) : (
+            folderTargets.map((f) => (
+              <button
+                key={f.id}
+                className="fm-move-item"
+                onClick={() => moveTo(moving, f.id)}
+              >
+                <FolderIcon width={14} height={14} />
+                <span>{f.title || "未命名"}</span>
+              </button>
+            ))
+          )}
+          <button className="fm-move-item fm-move-cancel" onClick={() => setMoving(null)}>
+            取消
+          </button>
+        </div>
+      )}
 
       {preview && (
         <div className="fm-preview-overlay" onClick={() => setPreview(null)}>

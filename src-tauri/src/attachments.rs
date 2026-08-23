@@ -443,3 +443,29 @@ pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -
     }
     Ok(())
 }
+
+/// Move an attachment to another folder/page container (update its page_id).
+#[tauri::command]
+pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Result<(), String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    let exists: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND deleted_at IS NULL)",
+            params![new_page_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Err("目标文件夹不存在".to_string());
+    }
+    let n = c
+        .execute(
+            "UPDATE attachments SET page_id = ?1 WHERE id = ?2",
+            params![new_page_id, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("附件不存在".to_string());
+    }
+    Ok(())
+}
