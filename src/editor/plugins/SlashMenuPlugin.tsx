@@ -194,8 +194,12 @@ function makeOptions(pageId: string): SlashOption[] {
         if (top && top.getParent()) {
           top.replace(node);
         }
-        // Keep a paragraph after so typing continues.
-        node.insertAfter($createParagraphNode());
+        // Insert a fresh paragraph after the bookmark and move the selection
+        // there, so typing continues (replacing the selected block otherwise
+        // orphans the selection → "selection has been lost").
+        const next = $createParagraphNode();
+        node.insertAfter(next);
+        next.selectStart();
       });
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>

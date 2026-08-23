@@ -81,7 +81,10 @@ export function BookmarkPastePlugin() {
     editor.update(() => {
       const link = $createLinkNode(prompt.url);
       link.append($createTextNode(prompt.url));
-      $insertNodes([link, $createParagraphNode()]);
+      $insertNodes([link]);
+      const next = $createParagraphNode();
+      link.insertAfter(next);
+      next.selectStart();
     });
     setPrompt(null);
   };
@@ -89,7 +92,10 @@ export function BookmarkPastePlugin() {
   const insertBookmark = () => {
     editor.update(() => {
       const node = $createWebBookmarkNode(prompt.url);
-      $insertNodes([node, $createParagraphNode()]);
+      $insertNodes([node]);
+      const next = $createParagraphNode();
+      node.insertAfter(next);
+      next.selectStart();
     });
     setPrompt(null);
   };
