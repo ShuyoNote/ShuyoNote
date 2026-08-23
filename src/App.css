@@ -431,6 +431,44 @@ body,
   outline: none;
 }
 
+.space-color-btn {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--hover-strong);
+  opacity: 0;
+}
+.space-item:hover .space-color-btn {
+  opacity: 1;
+}
+.space-color-btn.on {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.space-color-palette {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px 6px;
+  padding-left: 34px;
+}
+.space-color-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  flex: none;
+  transition: transform var(--transition-fast);
+}
+.space-color-swatch:hover {
+  transform: scale(1.15);
+}
+.space-color-swatch.on {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
 .workspace-rename-input {
   width: 120px;
 }

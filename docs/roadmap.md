@@ -81,7 +81,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 - **M10.2 生命周期** ✅（v1.10.0）：空间切换器中非当前空间可删除（二次确认 → 软删 `workspaces.deleted_at`，内容保留）；删除活动空间时 `get_active_workspace_id` 自动回退到最早未删除空间。注：`export_workspace` / `rename_workspace(id)` 为 M10.2b，暂未实现。
 - **M10.2b 空间增删改补全** ✅（v1.35.0，[规划](plans/2026-08-22-workspace-crud-plan.md)）：`create_workspace` 种子默认首页；`rename_workspace(id, name)` 按 id 重命名（切换器逐项 ✎ 改名 + 顶部双击改当前）；删除前导出/备份提醒；软删保留、物理清理归 M14。
 - **M10.3 每空间设置** ✅（v1.11.0）：所有内容查询按活动空间过滤——回收站 `list_deleted`、标签 `list_tags`/`pages_by_tag`/`board_data`、全文搜索 `search`、关系图 `get_graph`、反链 `get_backlinks`。**M10 多工作空间里程碑达成**。补记（v1.33.1）：`query_database` 按数据库页所属工作空间收窄作用域（此前遗漏的串空间修复）。
-- **M10.3b 空间级设置落地** ✅（v1.35.0，[规划](plans/2026-08-22-workspace-crud-plan.md)）：`WorkspaceMeta` 增 `theme/icon/sort_order`；每空间自动分配主题色（切换器色点 + 顶部高亮）；`set_workspace_settings`；空间按 `sort_order` 排序。说明：每空间主题（覆盖应用主题）为后续项。
+- **M10.3b 空间级设置落地** ✅（v1.35.0，[规划](plans/2026-08-22-workspace-crud-plan.md)）：`WorkspaceMeta` 增 `theme/icon/sort_order`；每空间自动分配主题色（切换器色点 + 顶部高亮）；`set_workspace_settings`；空间按 `sort_order` 排序。**补记（v1.36.0）**：切换器逐空间「颜色按钮」+ 8 色调色板，每空间主题色可自定义。说明：每空间主题（覆盖应用主题）为后续项。
 - **M10.4a 全空间搜索** ✅（v1.27.0）：搜索框「本空间 / 全空间」切换——`search` 增 `all_spaces` 参数，忽略活动空间过滤并返回结果所属空间名（`SearchResult.space`）；FTS / LIKE / `prop:` 过滤均支持。
 - **M10.4b 跨空间复制页面** ✅（v1.29.0）：侧边栏页面行「复制到其他工作空间」→ `copy_page_to_workspace` 递归复制子树（新 id + 重设空间/父级）+ 属性/标签/附件行（内容寻址共享）+ 重建 FTS/块图/反链 + 记录同步 upsert；保留 blockId，子树内块引用仍解析，跨子树引用不解析（块图空间内红线）。说明：共享模板库（模板默认全局）已满足；插入指定父级为后续项。
 

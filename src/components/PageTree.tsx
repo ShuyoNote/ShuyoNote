@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
@@ -21,6 +21,11 @@ import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon } fro
 interface TreeNode extends PageMeta {
   children: TreeNode[];
 }
+
+// Mirrors the backend ACCENTS palette (workspaces.rs).
+const SPACE_ACCENTS = [
+  "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
+];
 
 function buildTree(pages: PageMeta[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
@@ -373,6 +378,7 @@ export function PageTree({
   const [nameValue, setNameValue] = useState("");
   const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
+  const [colorFor, setColorFor] = useState<string | null>(null);
   const spaceChooser = usePopover<HTMLButtonElement>();
 
   const spaces = useSpaceStore((s) => s.spaces);
@@ -477,6 +483,12 @@ export function PageTree({
     }
   };
 
+  const setSpaceColor = async (id: string, color: string) => {
+    setColorFor(null);
+    const ok = await useSpaceStore.getState().setSettings(id, color);
+    if (!ok) toast("设置颜色失败", "error");
+  };
+
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       <div className="sidebar-header">
@@ -539,64 +551,90 @@ export function PageTree({
                   <div className="space-switcher-empty">暂无工作空间</div>
                 ) : (
                   spaces.map((s) => (
-                    <div
-                      key={s.id}
-                      className={`space-item ${s.id === activeSpaceId ? "space-item-active" : ""}`}
-                      onClick={() => switchSpace(s.id)}
-                    >
-                      <span
-                        className="space-item-mark"
-                        style={s.theme ? { background: s.theme, color: "#fff", border: "none" } : undefined}
+                    <Fragment key={s.id}>
+                      <div
+                        className={`space-item ${s.id === activeSpaceId ? "space-item-active" : ""}`}
+                        onClick={() => switchSpace(s.id)}
                       >
-                        {s.name.charAt(0)}
-                      </span>
-                      {renamingSpace === s.id ? (
-                        <input
-                          className="space-item-rename-input"
-                          autoFocus
-                          value={renameSpaceValue}
-                          onChange={(e) => setRenameSpaceValue(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                        <span
+                          className="space-item-mark"
+                          style={s.theme ? { background: s.theme, color: "#fff", border: "none" } : undefined}
+                        >
+                          {s.name.charAt(0)}
+                        </span>
+                        {renamingSpace === s.id ? (
+                          <input
+                            className="space-item-rename-input"
+                            autoFocus
+                            value={renameSpaceValue}
+                            onChange={(e) => setRenameSpaceValue(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.stopPropagation();
+                                commitRenameSpace();
+                              } else if (e.key === "Escape") {
+                                e.stopPropagation();
+                                setRenamingSpace(null);
+                              }
+                            }}
+                            onBlur={commitRenameSpace}
+                          />
+                        ) : (
+                          <span className="space-item-name">{s.name}</span>
+                        )}
+                        {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
+                        {renamingSpace !== s.id && (
+                          <button
+                            className="space-item-op"
+                            title="重命名工作空间"
+                            onClick={(e) => {
                               e.stopPropagation();
-                              commitRenameSpace();
-                            } else if (e.key === "Escape") {
-                              e.stopPropagation();
-                              setRenamingSpace(null);
-                            }
+                              startRenameSpace(s);
+                            }}
+                          >
+                            ✎
+                          </button>
+                        )}
+                        <button
+                          className={`space-item-op space-color-btn ${colorFor === s.id ? "on" : ""}`}
+                          title="设置空间颜色"
+                          style={s.theme ? { background: s.theme } : undefined}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setColorFor((c) => (c === s.id ? null : s.id));
                           }}
-                          onBlur={commitRenameSpace}
                         />
-                      ) : (
-                        <span className="space-item-name">{s.name}</span>
+                        {spaces.length > 1 && s.id !== activeSpaceId && (
+                          <button
+                            className="space-item-del"
+                            title="删除工作空间"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeSpace(s.id);
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                      {colorFor === s.id && (
+                        <div className="space-color-palette">
+                          {SPACE_ACCENTS.map((c) => (
+                            <button
+                              key={c}
+                              className={`space-color-swatch ${s.theme === c ? "on" : ""}`}
+                              style={{ background: c }}
+                              title={c}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSpaceColor(s.id, c);
+                              }}
+                            />
+                          ))}
+                        </div>
                       )}
-                      {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
-                      {renamingSpace !== s.id && (
-                        <button
-                          className="space-item-op"
-                          title="重命名工作空间"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startRenameSpace(s);
-                          }}
-                        >
-                          ✎
-                        </button>
-                      )}
-                      {spaces.length > 1 && s.id !== activeSpaceId && (
-                        <button
-                          className="space-item-del"
-                          title="删除工作空间"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeSpace(s.id);
-                          }}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
+                    </Fragment>
                   ))
                 )}
                 <button className="space-item space-item-new" onClick={createSpace}>
