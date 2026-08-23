@@ -2,6 +2,21 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.38.1] - 2026-08-22
+
+### 修复
+
+- **清空回收站 / 清理软删工作空间的外键错误**：`pages.parent_id` 外键**无 ON DELETE CASCADE**，且应用开了 `foreign_keys=ON`——清空回收站按任意顺序删除页树时，删除父页会因其**仍被回收站内的子页引用**而触发外键约束错误（`清空回收站失败`）
+  - 修复：删除前先在事务内**断开页树父子外键链接**（把回收站相关页的 `parent_id` 置 `NULL`），再删除，任意顺序都安全
+  - 新增回归测试 `clear_trash_breaks_parent_fk_before_delete`（在开 FK 的库上软删父+子页→断链→删除成功；后端 15 项测试全过）
+
+### 变更
+
+- `storage.rs`：`clear_trash` / `purge_deleted_workspaces` 事务内先断父链再删除
+- **文档**：无 roadmap 变化（M14 已达成，bugfix）
+
+---
+
 ## [1.38.0] - 2026-08-22
 
 ### 新增

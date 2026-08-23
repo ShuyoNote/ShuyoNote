@@ -169,6 +169,16 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
     {
         let mut c = db.0.lock().expect("db mutex poisoned");
         let tx = c.transaction().map_err(|e| e.to_string())?;
+        // Break parent-child FK links for trash pages (pages.parent_id has no
+        // ON DELETE CASCADE and foreign_keys=ON), so deleting in any order
+        // won't violate the constraint.
+        tx.execute(
+            "UPDATE pages SET parent_id = NULL WHERE parent_id IN (SELECT id FROM pages WHERE deleted_at IS NOT NULL)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute("UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL", [])
+            .map_err(|e| e.to_string())?;
         for pid in &trash_ids {
             for sql in [
                 "DELETE FROM page_props WHERE page_id = ?1",
@@ -364,6 +374,17 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     {
         let mut c = db.0.lock().expect("db mutex poisoned");
         let tx = c.transaction().map_err(|e| e.to_string())?;
+        // Break parent-child FK links (pages.parent_id has no ON DELETE CASCADE).
+        tx.execute(
+            "UPDATE pages SET parent_id = NULL WHERE parent_id IN (SELECT id FROM pages WHERE workspace_id IN (SELECT id FROM workspaces WHERE deleted_at IS NOT NULL))",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE pages SET parent_id = NULL WHERE workspace_id IN (SELECT id FROM workspaces WHERE deleted_at IS NOT NULL)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
         for pid in &page_ids {
             for sql in [
                 "DELETE FROM page_props WHERE page_id = ?1",
@@ -413,4 +434,39 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     .map_err(|e| e.to_string())??;
 
     Ok(WorkspacePurgeResult { freed, workspaces: ws_ids.len() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrate;
+    use rusqlite::Connection;
+
+    #[test]
+    fn clear_trash_breaks_parent_fk_before_delete() {
+        let mut c = Connection::open_in_memory().unwrap();
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        migrate(&c).unwrap();
+        c.execute("INSERT INTO workspaces (id,name,created_at,updated_at) VALUES ('w1','ws',1,1)", [])
+            .unwrap();
+        let page = "INSERT INTO pages (id,workspace_id,parent_id,title,content_json,content_text,kind,sort_order,created_at,updated_at,deleted_at) VALUES (?1,'w1',?2,'t','{}','','page',0,1,1,1)";
+        c.execute(page, params!["p", rusqlite::types::Null]).unwrap();
+        c.execute(page, params!["c", "p"]).unwrap();
+
+        let tx = c.transaction().unwrap();
+        // Break parent-child FK links (clear_trash / purge_deleted_workspaces pattern).
+        tx.execute(
+            "UPDATE pages SET parent_id = NULL WHERE parent_id IN (SELECT id FROM pages WHERE deleted_at IS NOT NULL)",
+            [],
+        )
+        .unwrap();
+        tx.execute("UPDATE pages SET parent_id = NULL WHERE deleted_at IS NOT NULL", []).unwrap();
+        // Delete in a parent-then-child order; must not violate FK.
+        tx.execute("DELETE FROM pages WHERE id = 'p'", []).unwrap();
+        tx.execute("DELETE FROM pages WHERE id = 'c'", []).unwrap();
+        tx.commit().unwrap();
+
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+    }
 }
