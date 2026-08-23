@@ -153,7 +153,105 @@ pub fn query_database(db: State<'_, Db>, db_page_id: String) -> Result<DatabaseQ
         }
     }
 
+    // Membership rule (query-type database): keep only pages matching the rule.
+    if let Some(ids) = matching_page_ids(&c, &db_rule(&c, &db_page_id)?)? {
+        rows.retain(|r| ids.contains(&r.page_id));
+    }
+
     Ok(DatabaseQuery { columns, rows })
+}
+
+fn db_rule(c: &Connection, db_page_id: &str) -> Result<String, String> {
+    let v = c
+        .query_row("SELECT db_rule FROM pages WHERE id = ?1", params![db_page_id], |r| r.get::<_, String>(0))
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "{}".to_string());
+    Ok(v)
+}
+
+fn set_intersect(cur: Option<Vec<String>>, next: Vec<String>) -> Option<Vec<String>> {
+    match cur {
+        None => Some(next),
+        Some(prev) => Some(prev.into_iter().filter(|id| next.contains(id)).collect()),
+    }
+}
+
+fn prop_page_ids(c: &Connection, name: &str, value: &str) -> Result<Vec<String>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT pp.page_id FROM page_props pp JOIN attr_defs a ON a.id = pp.attr_id
+             WHERE a.name = ?1 AND pp.value = ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map(params![name, value], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
+fn tag_page_ids(c: &Connection, tag: &str) -> Result<Vec<String>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT pt.page_id FROM page_tags pt JOIN tags t ON t.id = pt.tag_id
+             WHERE t.name = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map(params![tag], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
+/// Evaluate a rule JSON `{ "prop": {name,value}, "tag": "name" }` (AND) into the
+/// set of matching page ids; `None` when no rule is set (no filter).
+fn matching_page_ids(c: &Connection, rule: &str) -> Result<Option<Vec<String>>, String> {
+    let trimmed = rule.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return Ok(None);
+    }
+    let parsed: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
+    let mut all: Option<Vec<String>> = None;
+    if let Some(prop) = parsed.get("prop") {
+        let name = prop.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let value = prop.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        if !name.is_empty() {
+            all = set_intersect(all, prop_page_ids(c, name, value)?);
+        }
+    }
+    if let Some(tag) = parsed.get("tag").and_then(|v| v.as_str()) {
+        if !tag.is_empty() {
+            all = set_intersect(all, tag_page_ids(c, tag)?);
+        }
+    }
+    Ok(all)
+}
+
+#[tauri::command]
+pub fn set_db_rule(db: State<'_, Db>, db_page_id: String, rule: String) -> Result<(), String> {
+    let c = conn(&db);
+    serde_json::from_str::<serde_json::Value>(&rule)
+        .map_err(|e| format!("规则格式错误: {e}"))?;
+    let n = c
+        .execute(
+            "UPDATE pages SET db_rule = ?1 WHERE id = ?2 AND kind = 'database'",
+            params![rule, db_page_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("该数据库页不存在".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_db_rule(db: State<'_, Db>, db_page_id: String) -> Result<String, String> {
+    let c = conn(&db);
+    db_rule(&c, &db_page_id)
 }
 
 fn list_page_metas(c: &Connection) -> Result<Vec<PageMeta>, String> {

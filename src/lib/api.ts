@@ -144,6 +144,8 @@ export const api = {
   saveDbView: (args: { db_page_id: string; name: string; view_type: string; config: string }) =>
     invoke<DbViewMeta>("save_db_view", { args }),
   deleteDbView: (id: string) => invoke<void>("delete_db_view", { id }),
+  setDbRule: (dbPageId: string, rule: string) => invoke<void>("set_db_rule", { dbPageId, rule }),
+  getDbRule: (dbPageId: string) => invoke<string>("get_db_rule", { dbPageId }),
   listDeleted: () => invoke<PageMeta[]>("list_deleted"),
   restorePage: (id: string) => invoke<void>("restore_page", { id }),
   purgePage: (id: string) => invoke<void>("purge_page", { id }),

@@ -94,7 +94,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 
 ### M13 — 数据库 = 透镜（P2，[规划](plans/2026-08-22-database-lens-plan.md)）
 - **M13.1 保存视图** ✅（v1.20.0）：`db_views` 表 + `save/list/delete_db_view` + 数据库工具栏「视图」切换/保存/删除（记录 view_type/filter/sort/board_group_attr）。
-- **M13.2（待做）**：查询型数据库（`db_rule` 成员规则，按属性/标签自动收页）。
+- **M13.2 查询型数据库** ✅（v1.21.0）：`pages.db_rule` + `set/get_db_rule`；`query_database` 按规则（属性值/tag，AND）过滤收页；未设规则行为不变。
 - **M13.3（待做）**：ref 关联属性（列显示/跳转 + 关系图/反链边）。
 - **M13.4（可选）**：公式列 / 汇总 rollup。
 

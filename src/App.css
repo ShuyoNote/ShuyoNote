@@ -4526,6 +4526,47 @@ select.prop-value {
   color: var(--text);
   background: var(--hover-strong);
 }
+.db-rule-wrap {
+  position: relative;
+}
+.db-rule-pop {
+  width: 240px;
+}
+.db-rule-from {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 8px;
+}
+.db-rule-select {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  margin: 4px 0;
+  font-family: inherit;
+}
+.db-rule-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.db-rule-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.db-rule-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
 
 .db-col-options {
   border: none;

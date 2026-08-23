@@ -98,6 +98,8 @@ pub fn run() {
             database::list_db_views,
             database::save_db_view,
             database::delete_db_view,
+            database::set_db_rule,
+            database::get_db_rule,
             tags::list_tags,
             tags::create_tag,
             tags::rename_tag,

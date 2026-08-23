@@ -43,6 +43,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [views, setViews] = useState<DbViewMeta[]>([]);
   const [viewsPop, setViewsPop] = useState(false);
   const [viewName, setViewName] = useState("");
+  const [ruleOpen, setRuleOpen] = useState(false);
+  const [ruleCol, setRuleCol] = useState("");
+  const [ruleValue, setRuleValue] = useState("");
 
   const loadViews = () => {
     api.listDbViews(pageId).then(setViews).catch(() => {});
@@ -76,6 +79,33 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const delView = async (v: DbViewMeta) => {
     await api.deleteDbView(v.id);
     loadViews();
+  };
+
+  const ruleCols = useMemo(
+    () =>
+      (query?.columns ?? []).filter(
+        (c) => c.attr_type === "select" || c.attr_type === "multi" || c.attr_type === "tag",
+      ),
+    [query],
+  );
+  const applyRule = async () => {
+    const col = ruleCols.find((c) => c.id === ruleCol);
+    const rule =
+      col && ruleValue.trim()
+        ? JSON.stringify({ prop: { name: col.name, value: ruleValue.trim() } })
+        : "{}";
+    try {
+      await api.setDbRule(pageId, rule);
+      load();
+      setRuleOpen(false);
+    } catch (e) {
+      toast(`保存规则失败：${e}`, "error");
+    }
+  };
+  const clearRule = async () => {
+    await api.setDbRule(pageId, "{}");
+    load();
+    setRuleOpen(false);
   };
 
   const load = () => {
@@ -453,6 +483,38 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   }}
                 />
                 <button onClick={saveCurrentView}>保存当前</button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="db-rule-wrap">
+          <button className="db-views-btn" onClick={() => setRuleOpen((v) => !v)} title="成员规则">
+            规则 ∿
+          </button>
+          {ruleOpen && (
+            <div className="db-views-pop db-rule-pop">
+              <div className="db-views-title">成员规则（按属性自动收页）</div>
+              <select
+                className="db-rule-select"
+                value={ruleCol}
+                onChange={(e) => setRuleCol(e.target.value)}
+              >
+                <option value="">— 选择属性列 —</option>
+                {ruleCols.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="db-views-input"
+                placeholder="匹配值（如 进行中）"
+                value={ruleValue}
+                onChange={(e) => setRuleValue(e.target.value)}
+              />
+              <div className="db-rule-actions">
+                <button onClick={applyRule}>应用规则</button>
+                <button onClick={clearRule}>清除</button>
               </div>
             </div>
           )}

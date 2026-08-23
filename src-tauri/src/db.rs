@@ -240,6 +240,16 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute("ALTER TABLE workspaces ADD COLUMN deleted_at INTEGER", [])?;
     }
 
+    // Membership rule for database pages (query-type database: auto-collect by rule).
+    let pages_has_db_rule: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'db_rule'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pages_has_db_rule == 0 {
+        conn.execute("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'", [])?;
+    }
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_page_id, target_block_id)",
         [],
