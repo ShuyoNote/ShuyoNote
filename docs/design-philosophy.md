@@ -117,6 +117,7 @@ attr_defs（共享属性定义 / 共享 schema）
 
 ### 5.5 多空间是隔离容器，不是文件夹
 - 空间 = **顶层隔离容器**：页面树、标签、数据库、块引用 / 嵌入 / 反链图、回收站、属性、附件引用、同步版本线、E2EE 密钥、空间级设置各自独立。
+- **物理隔离（M15 已实现）**：每空间一个独立 SQLite 库（`meta.db` 管理空间清单，`spaces/<ws_id>/` 每空间库）+ 全空间搜索跨库合并 + 跨空间复制 + 单空间导出/导入。附件字节保持**全局内容寻址**（跨空间去重），以「空间级附件子集导出」实现单空间可搬移——这是「去重」与「可独立搬移」的取舍。
 - **红线**：块引用 / 反链图**必须留在空间内**，否则删除一个空间会产生悬空引用；跨空间块引用推迟。
 - **不要**把空间做成文件夹：两者职责不同，避免冗余。
 
@@ -240,7 +241,7 @@ attr_defs（共享属性定义 / 共享 schema）
 | 本地优先 + 数据主权 + 离线 | [positioning](positioning.md)、[local-first-note-app-plan](plans/2026-08-15-local-first-note-app-plan.md) §7 |
 | 差异化的「私有网盘」 | [folder-netdisk-plan](plans/2026-08-22-folder-netdisk-plan.md)、[design-philosophy](design-philosophy.md) §5.4 |
 | 块是一等公民（引用 / 嵌入 / 反链 / 图谱） | [block-reference-plan](plans/2026-08-20-block-reference-plan.md) |
-| 多空间隔离 + 红色边界 | [multi-workspace-plan](plans/2026-08-22-multi-workspace-plan.md) §3 |
+| 多空间隔离 + 红色边界（物理化） | [per-workspace-storage-plan](plans/2026-08-22-per-workspace-storage-plan.md)、[multi-workspace-plan](plans/2026-08-22-multi-workspace-plan.md) §3 |
 | 模板 = 结构预设 + 深拷贝解耦 | [template-plan](plans/2026-08-22-template-plan.md) §3 |
 | 扩展分层 + 插件安全红线 | [plugin-plan](plans/2026-08-22-plugin-plan.md) §3、§4 |
 | 不丢数据 + LWW + 冲突粒度演进 | [local-first-note-app-plan](plans/2026-08-15-local-first-note-app-plan.md) §7.3–7.4 |

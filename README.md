@@ -46,12 +46,14 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **关系图**：力导向关系图，页面/块节点、按引用类型着色、块级图层开关、拖拽与点击跳转
 - **看板视图**：按标签分列，卡片拖拽跨列切换
 - **全文搜索**：SQLite FTS5 + trigram 分词，支持中文子串检索、命中高亮与定位
+- **多工作空间（物理隔离）**：每空间独立 SQLite 库（`meta.db` 管理空间清单，`spaces/<ws_id>/` 每空间库）；空间切换器（新建 / 重命名 / 主题色 / 排序 / 删除）；全空间搜索跨库合并；跨空间复制页面；单空间导出/导入（自包含 zip）
 
 ### 数据安全
 - **自动保存**：防抖写入 SQLite，无「保存」按钮
 - **版本历史**：每次保存前自动快照，可一键回滚（每页保留 50 份，自动去重）
 - **回收站**：软删除 + 恢复 + 彻底删除
 - **整库备份**：导出/导入 zip（数据库一致性快照 + 附件目录；流式 + 进度）
+- **单空间备份/导出**：`export_workspace` 把当前空间打成自包含 zip（空间库 + 该空间引用附件 + 元数据）；`import_workspace` 导入为新空间
 - **空间清理 / 存储管理**：占用统计（数据库/附件/回收站/版本/临时）+ 清空回收站 / 清理孤立附件 / 清理版本历史 / 清理临时文件 / 清理软删工作空间
 
 ### 多设备同步
@@ -103,6 +105,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 │     ┌──────────────┴──────────────┐                  │
 │     ▼                             ▼                  │
 │  SQLite (WAL + FTS5)        附件目录 (SHA-256)       │
+│  每空间库 spaces/<id>.db + meta.db                    │
 └─────────────────────────────────────────────────────┘
           ▲
           │ HTTP (push / pull)
@@ -145,7 +148,7 @@ pnpm tauri dev
 > **Windows 提示**：若 cargo 使用镜像源且遇到 SSL 撤销错误（如 USTC），先执行
 > `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再运行。
 
-首次启动会在系统应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`）创建 SQLite 数据库（WAL 模式）。
+首次启动会在系统应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`）创建数据（WAL 模式）：`meta.db`（应用级：空间/同步/模板/插件状态）+ `spaces/<ws_id>/`（每空间独立 SQLite 库）+ `attachments/`（全局内容寻址附件）。
 
 ## 📦 构建发布
 
@@ -193,7 +196,7 @@ ShuyoNote/
 │   └── lib/                  # Tauri IPC 封装 / 标签分类色
 ├── src-tauri/                # Tauri 后端（Rust）
 │   └── src/
-│       ├── db.rs             # SQLite 连接 / 迁移
+│       ├── db.rs             # SQLite 连接 / 迁移 / meta.db + spaces/<id>.db 每空间库
 │       ├── commands.rs       # 页面 CRUD
 │       ├── search.rs         # FTS5 检索
 │       ├── sync.rs           # outbox / LWW / push-pull
@@ -258,13 +261,14 @@ ShuyoNote/
 - [x] Markdown 无损往返
 - [x] 导出工作空间为 Markdown（批量 .md，可 git / 可移植）
 - [x] 属性驱动仪表盘聚合
-- [ ] 端到端加密
+- [x] 端到端加密（Argon2id 派生 + XChaCha20-Poly1305；同步加密 + 设置 UI + 口令解锁/锁定，每空间独立密钥）
 - [x] 主题自定义 + 插件启停
 - [x] 插件（磁盘加载命令 + 受限白名单 API，可插入内容）
 - [x] 数据库视图扩展（列表 / 日历 / 时间轴 / 目录）
 - [x] 跨库统计（rollup：数据库列引用另一库的行并聚合 count / sum / avg）
 - [x] 新页面引导层（页面 / 数据库 / 模板 / 导入 / AI 入口）
 - [x] 导出 PDF（页面 + 数据库视图）
+- [x] 每工作空间独立存储（物理隔离：`meta.db` + `spaces/<ws_id>/` 每空间库；全空间搜索跨库合并 / 跨空间复制 / 单空间导出导入）
 - [ ] 移动端适配
 
 > 详细演进路线与里程碑见 [docs/roadmap.md](docs/roadmap.md)。
