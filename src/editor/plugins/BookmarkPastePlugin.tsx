@@ -104,7 +104,7 @@ export function BookmarkPastePlugin() {
     <div ref={menuRef} className="bookmark-paste-menu" style={{ top: prompt.top, left: prompt.left }}>
       <div className="bookmark-paste-hint">粘贴了链接</div>
       <button className="bookmark-paste-opt primary" onClick={insertBookmark}>
-        <span className="bpi-icon">🔗</span> 转换为网页书签
+        <span className="bpi-icon">🔗</span> 转换为网址书签
       </button>
       <button className="bookmark-paste-opt" onClick={insertLink}>
         保持链接形式

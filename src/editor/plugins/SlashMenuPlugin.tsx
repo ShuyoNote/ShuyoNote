@@ -180,7 +180,7 @@ function makeOptions(pageId: string): SlashOption[] {
         toast(`插入文件引用失败：${e}`, "error");
       }
     } },
-    { key: "webbookmark", title: "网页书签", badge: "🔗", group: "媒体", pinyin: "wzsq", run: async (editor) => {
+    { key: "webbookmark", title: "网址书签", badge: "🔗", group: "媒体", pinyin: "wzsq", run: async (editor) => {
       const url = prompt("输入网址（URL），如 https://example.com/article");
       if (!url) return;
       let u = url.trim();
