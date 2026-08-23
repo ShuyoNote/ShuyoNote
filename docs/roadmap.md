@@ -1,6 +1,6 @@
 # ShuyoNote 路线图
 
-> 基于三方对比（见 [compare-obsidian-siyuan-shuyonote.md](compare-obsidian-siyuan-shuyonote.md)）梳理的演进路线。按「价值 ÷ 工程量」排序。**✅ = 已实现并合入**；「规划」= 已出 [方案](README.md#方案与规划-plans)，待里程碑落地。
+> 基于三方对比（见 [compare-obsidian-siyuan-shuyonote.md](compare-obsidian-siyuan-shuyonote.md)）梳理的演进路线。按「价值 ÷ 工程量」排序。**✅ = 已实现并合入**；「规划」= 已出 [方案](README.md#方案与规划-plans)，待里程碑落地。设计走向遵循 [设计哲学](design-philosophy.md)。
 
 ## 1. 现状（已实现）
 
@@ -32,6 +32,8 @@
 | **P0** | 端到端加密 | 思源 / Obsidian Sync | 数据安全最高优先级 | M2 待做 |
 | **P1** | **插件**（磁盘加载命令插件 + 受限 API） | Obsidian 社区插件 | 扩展性从「命令注册表」升级为「可安装插件」 | 规划：[plugin-plan](plans/2026-08-22-plugin-plan.md)；M3 雏形已做 |
 | **P1** | 主题 / 外观自定义 | Obsidian 主题 | 扩展性雏形 | ✅ M3 |
+| **P2** | **文件夹 = 网盘**（文件库增强：拖拽上传 / 在线预览 / 搜索 / 下载 / 每夹统计） | FlowUs / Wolai / 有道 | 文件夹同时承载页面与文件，本地优先+去重+可加密形成差异化私域网盘 | 规划：[design-philosophy](design-philosophy.md) |
+| **P2** | 数据库贯通：查询型数据库 / 保存视图 / ref 关联属性 / 公式汇总 | Notion / Dataview | 数据库从「表格」升级为「数据工作台」 | 规划：[design-philosophy](design-philosophy.md) |
 | **P2** | 移动端适配 | 思源 / Obsidian | 多端能力 | M6 待做 |
 | **P2** | Markdown 无损往返 | Obsidian 存储哲学 | 消除「格式锁定」顾虑 | ✅ M1（往返一致性待运行验证） |
 | **P2** | 属性驱动仪表盘聚合 | 思源数据库 + Dataview | 释放属性数据库价值 | ✅ M4 |

@@ -19,6 +19,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [design-philosophy.md](design-philosophy.md) | **设计哲学**：页面是本源 / 属性是语义 / 数据库是透镜 / 文件夹是容器（网盘）；核心信条与取舍 |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M8 里程碑规划、竞品差距跟踪 |
 
