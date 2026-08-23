@@ -4386,6 +4386,13 @@ select.prop-value {
   min-width: 0;
 }
 
+.db-input-rollup {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  resize: vertical;
+  min-height: 40px;
+}
+
 .db-new-attr-btn {
   border: 1px solid var(--accent);
   background: var(--accent);

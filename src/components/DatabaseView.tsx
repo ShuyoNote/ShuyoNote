@@ -5,7 +5,7 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 
-const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula"] as const;
+const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula", "rollup"] as const;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -16,6 +16,7 @@ const TYPE_LABELS: Record<string, string> = {
   tag: "标签",
   ref: "引用",
   formula: "公式",
+  rollup: "统计",
 };
 
 // Safe arithmetic evaluator (numbers + - * / ( ) only; no `eval`).
@@ -70,6 +71,36 @@ function computeFormula(expr: string, values: Record<string, string>, columns: A
   return Number.isFinite(v) ? String(Math.round(v * 100) / 100) : "—";
 }
 
+// Compute a rollup column's value: aggregate `col` over target-db rows whose
+// `ref` column points to the current page. config = {ref, db, col, fn}.
+function computeRollup(
+  configStr: string,
+  currentPageId: string,
+  target: { rows: DatabaseRow[]; colId: string; refId: string } | null,
+): string {
+  if (!target) return "—";
+  let cfg: any = {};
+  try {
+    cfg = JSON.parse(configStr);
+  } catch {
+    return "—";
+  }
+  const targetColId = target.colId;
+  const refId = target.refId;
+  const matched = target.rows.filter((r) =>
+    (r.values[refId] ?? "").includes(currentPageId),
+  );
+  const fn = cfg.fn ?? "count";
+  if (fn === "count") return String(matched.length);
+  const nums = matched
+    .map((r) => parseFloat(r.values[targetColId] ?? ""))
+    .filter((n) => !isNaN(n));
+  if (nums.length === 0) return "—";
+  const sum = nums.reduce((a, b) => a + b, 0);
+  if (fn === "avg") return String(Math.round((sum / nums.length) * 100) / 100);
+  return String(Math.round(sum * 100) / 100);
+}
+
 export function DatabaseView({ pageId, title }: { pageId: string; title: string }) {
   const { openPage, pages } = useNotes();
   const [query, setQuery] = useState<DatabaseQuery | null>(null);
@@ -101,6 +132,51 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [ruleCol, setRuleCol] = useState("");
   const [ruleValue, setRuleValue] = useState("");
   const [refTitles, setRefTitles] = useState<Record<string, string>>({});
+  const [rollupTargets, setRollupTargets] = useState<
+    Record<string, { rows: DatabaseRow[]; colId: string; refId: string } | null>
+  >({});
+
+  // Load target-db rows for `rollup` columns (cross-db aggregation).
+  useEffect(() => {
+    const rollupCols = (query?.columns ?? []).filter((c) => c.attr_type === "rollup");
+    if (rollupCols.length === 0) {
+      setRollupTargets({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const out: Record<string, { rows: DatabaseRow[]; colId: string; refId: string } | null> = {};
+      for (const col of rollupCols) {
+        let cfg: any = {};
+        try {
+          cfg = JSON.parse(col.options[0] ?? "{}");
+        } catch {
+          cfg = {};
+        }
+        if (!cfg.db) {
+          out[col.id] = null;
+          continue;
+        }
+        const targetPage = pages.find((p) => p.kind === "database" && p.title === cfg.db);
+        if (!targetPage) {
+          out[col.id] = null;
+          continue;
+        }
+        try {
+          const q = await api.queryDatabase(targetPage.id);
+          const colId = q.columns.find((c) => c.name === cfg.col)?.id ?? "";
+          const refId = q.columns.find((c) => c.name === cfg.ref)?.id ?? "";
+          out[col.id] = { rows: q.rows, colId, refId };
+        } catch {
+          out[col.id] = null;
+        }
+      }
+      if (!cancelled) setRollupTargets(out);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [query, pages]);
 
   // Resolve `ref` column values (`p:<id>`) to target titles for clickable display.
   useEffect(() => {
@@ -709,6 +785,10 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                         <span className="db-formula">
                           {computeFormula(c.options[0] ?? "", r.values, query.columns)}
                         </span>
+                      ) : c.attr_type === "rollup" ? (
+                        <span className="db-formula">
+                          {computeRollup(c.options[0] ?? "", r.page_id, rollupTargets[c.id] ?? null)}
+                        </span>
                       ) : c.attr_type === "ref" ? (
                         <RefCell value={r.values[c.id] ?? ""} titles={refTitles} onOpen={openRef} />
                       ) : (
@@ -1086,12 +1166,13 @@ function DbNewAttr({
   const [options, setOptions] = useState("");
   const needsOptions = type === "select" || type === "multi";
   const needsFormula = type === "formula";
+  const needsRollup = type === "rollup";
 
   const commit = () => {
     if (!name.trim()) return;
     const opts = needsOptions
       ? options.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
-      : needsFormula
+      : needsFormula || needsRollup
         ? [options.trim()]
         : [];
     onCreate(name.trim(), type, opts);
@@ -1125,6 +1206,14 @@ function DbNewAttr({
         <input
           className="db-input"
           placeholder="公式，如 数量*单价 或 总分/人数"
+          value={options}
+          onChange={(e) => setOptions(e.target.value)}
+        />
+      )}
+      {needsRollup && (
+        <textarea
+          className="db-input db-input-rollup"
+          placeholder='统计配置 JSON，如 {"ref":"专题","db":"项目库","col":"工时","fn":"sum"}'
           value={options}
           onChange={(e) => setOptions(e.target.value)}
         />
