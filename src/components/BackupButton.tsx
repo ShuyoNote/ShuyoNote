@@ -48,9 +48,21 @@ export function BackupButton() {
   const doExport = async () => {
     try {
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      let spaceName = "backup";
+      try {
+        spaceName = (await api.getWorkspaceName()) || "backup";
+      } catch {
+        /* keep default */
+      }
+      // Sanitize for a filename (strip path-invalid chars, collapse spaces).
+      const safe = spaceName
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+        .replace(/\s+/g, "-")
+        .trim()
+        .slice(0, 40);
       const path = await save({
         title: "导出备份",
-        defaultPath: `shuyonote-backup-${stamp}.zip`,
+        defaultPath: `shuyonote-${safe || "space"}-${stamp}.zip`,
         filters: [{ name: "ZIP", extensions: ["zip"] }],
       });
       if (!path) return;

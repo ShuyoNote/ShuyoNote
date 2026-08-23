@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.38.3] - 2026-08-22
+
+### 变更
+
+- **备份文件名嵌入空间名**：导出备份默认文件名由 `shuyonote-backup-<时间>.zip` 改为 `shuyonote-<空间名>-<时间>.zip`（对空间名做文件名字符清洗 / 空格转连字符 / 截断，含中文），便于按空间区分备份
+- 纯前端；`api.getWorkspaceName()` 取当前空间名；tsc + vite build 通过
+
+---
+
 ## [1.38.2] - 2026-08-22
 
 ### 修复
