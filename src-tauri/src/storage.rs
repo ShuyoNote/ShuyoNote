@@ -313,3 +313,104 @@ pub async fn cleanup_temp_files(app: tauri::AppHandle) -> Result<u64, String> {
     .map_err(|e| e.to_string())??;
     Ok(freed)
 }
+
+#[derive(Serialize)]
+pub struct WorkspacePurgeResult {
+    pub freed: u64,
+    pub workspaces: usize,
+}
+
+/// M14.4 — Permanently delete soft-deleted workspaces and their whole page tree.
+#[tauri::command]
+pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) -> Result<WorkspacePurgeResult, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachment_dir = app_data_dir.join("attachments");
+
+    let (ws_ids, page_ids, hashes) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut wstmt = c.prepare("SELECT id FROM workspaces WHERE deleted_at IS NOT NULL").map_err(|e| e.to_string())?;
+        let ws_ids: Vec<String> = wstmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+
+        let mut page_ids = Vec::new();
+        let mut hashes = Vec::new();
+        if !ws_ids.is_empty() {
+            let mut pg = c.prepare("SELECT id FROM pages WHERE workspace_id = ?1").map_err(|e| e.to_string())?;
+            let mut ha = c.prepare("SELECT hash FROM attachments WHERE page_id = ?1").map_err(|e| e.to_string())?;
+            for wid in &ws_ids {
+                let pids: Vec<String> = pg
+                    .query_map(params![wid], |r| r.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<_, _>>()
+                    .map_err(|e| e.to_string())?;
+                for pid in &pids {
+                    let hs: Vec<String> = ha
+                        .query_map(params![pid], |r| r.get::<_, String>(0))
+                        .map_err(|e| e.to_string())?
+                        .collect::<Result<_, _>>()
+                        .map_err(|e| e.to_string())?;
+                    hashes.extend(hs);
+                }
+                page_ids.extend(pids);
+            }
+        }
+        (ws_ids, page_ids, hashes)
+    };
+
+    // Delete cascade + workspaces in a transaction.
+    {
+        let mut c = db.0.lock().expect("db mutex poisoned");
+        let tx = c.transaction().map_err(|e| e.to_string())?;
+        for pid in &page_ids {
+            for sql in [
+                "DELETE FROM page_props WHERE page_id = ?1",
+                "DELETE FROM page_tags WHERE page_id = ?1",
+                "DELETE FROM page_versions WHERE page_id = ?1",
+                "DELETE FROM backlinks WHERE source_page_id = ?1 OR target_page_id = ?1",
+                "DELETE FROM blocks WHERE page_id = ?1",
+                "DELETE FROM attachments WHERE page_id = ?1",
+                "DELETE FROM page_fts WHERE page_id = ?1",
+                "DELETE FROM pages WHERE id = ?1",
+            ] {
+                tx.execute(sql, params![pid]).map_err(|e| e.to_string())?;
+            }
+        }
+        for wid in &ws_ids {
+            tx.execute("DELETE FROM workspaces WHERE id = ?1", params![wid]).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+
+    let orphaned: std::collections::HashSet<String> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut set = std::collections::HashSet::new();
+        for hash in &hashes {
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM attachments WHERE hash = ?1", params![hash], |r| r.get(0))
+                .unwrap_or(0);
+            if n == 0 {
+                set.insert(hash.clone());
+            }
+        }
+        set
+    };
+
+    let att_dir = attachment_dir;
+    let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
+        let mut freed: u64 = 0;
+        for hash in orphaned {
+            if let Some(p) = find_file_by_hash(&att_dir, &hash) {
+                freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        Ok(freed)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    Ok(WorkspacePurgeResult { freed, workspaces: ws_ids.len() })
+}

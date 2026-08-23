@@ -114,6 +114,24 @@ export function StoragePanel() {
               >
                 清理临时文件
               </button>
+              <button
+                disabled={busy || !stats}
+                onClick={async () => {
+                  if (!(await confirmDialog({ title: "清理软删工作空间", message: "将永久删除所有「已软删工作空间」及其整个页面树（建议先导出备份），不可撤销。确定继续？", danger: true }))) return;
+                  setBusy(true);
+                  try {
+                    const r = await api.purgeDeletedWorkspaces();
+                    toast(`清理软删工作空间：删除 ${r.workspaces} 个，释放 ${fmt(r.freed)}`, "success");
+                    await refresh();
+                  } catch (e) {
+                    toast(`操作失败：${e}`, "error");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                清理软删工作空间（{stats?.deleted_workspace_count ?? 0}）
+              </button>
             </div>
             {busy && <div className="storage-busy">处理中…</div>}
           </div>

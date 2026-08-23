@@ -110,6 +110,7 @@ export const api = {
   cleanupOrphanAttachments: () => invoke<number>("cleanup_orphan_attachments"),
   cleanupOldVersions: (maxKeep?: number) => invoke<number>("cleanup_old_versions", { maxKeep }),
   cleanupTempFiles: () => invoke<number>("cleanup_temp_files"),
+  purgeDeletedWorkspaces: () => invoke<{ freed: number; workspaces: number }>("purge_deleted_workspaces"),
   moveAttachment: (id: string, newPageId: string) =>
     invoke<void>("move_attachment", { id, newPageId }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>

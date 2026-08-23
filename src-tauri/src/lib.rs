@@ -133,6 +133,7 @@ pub fn run() {
             storage::cleanup_orphan_attachments,
             storage::cleanup_old_versions,
             storage::cleanup_temp_files,
+            storage::purge_deleted_workspaces,
             windows::open_page_window,
             plugins::list_plugins,
             plugins::set_plugin_enabled,
