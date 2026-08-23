@@ -37,6 +37,7 @@
 | [plans/2026-08-22-database-lens-plan.md](plans/2026-08-22-database-lens-plan.md) | **「数据库 = 透镜」贯通方案**：查询型数据库 / 多视图保存 / ref 关联属性 / 公式（从表格到数据工作台） |
 | [plans/2026-08-22-storage-cleanup-plan.md](plans/2026-08-22-storage-cleanup-plan.md) | **空间清理 / 存储管理方案**：空间可归因统计 + 安全可控清理（清空回收站 / 清理孤立附件 / 版本历史 / 临时文件） |
 | [plans/2026-08-22-workspace-crud-plan.md](plans/2026-08-22-workspace-crud-plan.md) | **工作空间增删改补全方案**：种子默认首页 / 按 id 重命名 / 空间级设置（图标·主题·排序）/ 删除前导出提醒（物理清理归 M14） |
+| [plans/2026-08-22-per-workspace-storage-plan.md](plans/2026-08-22-per-workspace-storage-plan.md) | **每工作空间独立存储（物理隔离）方案**：每空间独立 SQLite 库 + 独立附件目录；单空间可搬移/单独备份/单独加密；安全分阶段拆库迁移（M15） |
 
 ## 竞品对比
 
