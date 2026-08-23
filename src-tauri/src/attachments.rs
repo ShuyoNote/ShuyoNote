@@ -6,6 +6,16 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager, State};
 
+/// Lowercase-hex a byte slice (sha2 0.11's `Output` no longer implements
+/// `LowerHex`, so we format it ourselves).
+fn hex_of(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
     pub index: usize,
@@ -118,7 +128,7 @@ fn copy_and_hash<F: FnMut(u64, u64)>(
         size += n as i64;
         on_progress(size as u64, total);
     }
-    Ok((format!("{:x}", hasher.finalize()), size))
+    Ok((hex_of(&hasher.finalize()), size))
 }
 
 #[derive(Deserialize)]
@@ -159,7 +169,7 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
     // Content-addressed storage: filename = sha256 + extension.
     let mut hasher = Sha256::new();
     hasher.update(&args.data);
-    let hash = format!("{:x}", hasher.finalize());
+    let hash = hex_of(&hasher.finalize());
     let ext = ext_from_mime(&args.mime);
     let filename = format!("{hash}.{ext}");
     let path = attachments_dir.join(&filename);

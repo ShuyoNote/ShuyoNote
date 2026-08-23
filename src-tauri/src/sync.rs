@@ -358,8 +358,7 @@ async fn do_pull(
 
     let client = reqwest::Client::new();
     let mut req = client
-        .get(format!("{server_url}/pull"))
-        .query(&[("since", last_pulled.to_string()), ("limit", "500".to_string())]);
+        .get(format!("{server_url}/pull?since={last_pulled}&limit=500"));
     if !token.is_empty() {
         req = req.bearer_auth(token);
     }
@@ -499,8 +498,7 @@ async fn sync_attachments(
         let file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
         let stream = ReaderStream::new(file);
         let mut req = client
-            .post(format!("{server_url}/attachments/{hash}"))
-            .query(&[("mime", mime)])
+            .post(format!("{server_url}/attachments/{hash}?mime={mime}"))
             .body(reqwest::Body::wrap_stream(stream));
         if !token.is_empty() {
             req = req.bearer_auth(token);

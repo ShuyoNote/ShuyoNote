@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.42.0] - 2026-08-22
+
+### 变更
+
+- **依赖全面升级**（Rust / 前端均升至 crates.io / npm 最新，并适配破坏性变更）：
+  - **后端**：
+    - `rusqlite` 0.32 → **0.40.2**（bundled SQLite 升级；`Backup`/`Connection` 适配编译通过）
+    - `zip` 2 → **8.6.0**（导出/备份/空间包读写适配）
+    - `reqwest` 0.12 → **0.13.4**（`RequestBuilder::query` 移除，改为 URL 内联 query 串）
+    - `sha2` 0.10 → **0.11.0**（`Output` 不再实现 `LowerHex`，改用自建 `hex_of` 编码）
+    - `uuid` 1.24 → 1.25.0；tauri 2.11.5 / boa_engine 0.21.1 / chacha20poly1305 0.11.0 / argon2 0.5.3 / base64 0.23.1 已是最新
+    - **注**：`rand_core` 保持 0.6——crypto 树（chacha20poly1305 0.11 / argon2 0.5）已是最新且锁定 `rand_core 0.6`，单独升 0.10 会引发 `OsRng`/`RngCore` 双版本冲突，故按依赖树正确锁定（非落后）。
+  - **前端**：`@tauri-apps/api` 2.11.1 / `@tauri-apps/cli` 2.11.4 / `plugin-opener` 2.5.4 / `react`+`react-dom` 19.2.8 / `zustand` 5.0.15 / `@types/react` 19.2.18 等升至最新。
+- 后端 20 项单测、`tsc` 无错、前端构建（156 模块）均通过；应用以新依赖正常启动（meta/default 空间数据完整）。
+
+---
+
 ## [1.41.0] - 2026-08-22
 
 ### 新增
