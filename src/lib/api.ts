@@ -146,6 +146,7 @@ export const api = {
   deleteDbView: (id: string) => invoke<void>("delete_db_view", { id }),
   setDbRule: (dbPageId: string, rule: string) => invoke<void>("set_db_rule", { dbPageId, rule }),
   getDbRule: (dbPageId: string) => invoke<string>("get_db_rule", { dbPageId }),
+  resolveRefs: (values: string[]) => invoke<Record<string, string>>("resolve_refs", { values }),
   listDeleted: () => invoke<PageMeta[]>("list_deleted"),
   restorePage: (id: string) => invoke<void>("restore_page", { id }),
   purgePage: (id: string) => invoke<void>("purge_page", { id }),

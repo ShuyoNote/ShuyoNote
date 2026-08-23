@@ -100,6 +100,7 @@ pub fn run() {
             database::delete_db_view,
             database::set_db_rule,
             database::get_db_rule,
+            database::resolve_refs,
             tags::list_tags,
             tags::create_tag,
             tags::rename_tag,

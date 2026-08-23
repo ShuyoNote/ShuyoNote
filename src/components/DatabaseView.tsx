@@ -5,7 +5,7 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 
-const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag"] as const;
+const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref"] as const;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -14,6 +14,7 @@ const TYPE_LABELS: Record<string, string> = {
   select: "单选",
   multi: "多选",
   tag: "标签",
+  ref: "引用",
 };
 
 export function DatabaseView({ pageId, title }: { pageId: string; title: string }) {
@@ -46,6 +47,31 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [ruleOpen, setRuleOpen] = useState(false);
   const [ruleCol, setRuleCol] = useState("");
   const [ruleValue, setRuleValue] = useState("");
+  const [refTitles, setRefTitles] = useState<Record<string, string>>({});
+
+  // Resolve `ref` column values (`p:<id>`) to target titles for clickable display.
+  useEffect(() => {
+    const refCols = (query?.columns ?? []).filter((c) => c.attr_type === "ref");
+    if (refCols.length === 0) {
+      setRefTitles({});
+      return;
+    }
+    const values: string[] = [];
+    for (const r of query?.rows ?? []) {
+      for (const col of refCols) {
+        const v = r.values[col.id] ?? "";
+        if (v) values.push(v);
+      }
+    }
+    if (values.length === 0) {
+      setRefTitles({});
+      return;
+    }
+    api
+      .resolveRefs(values)
+      .then(setRefTitles)
+      .catch(() => {});
+  }, [query]);
 
   const loadViews = () => {
     api.listDbViews(pageId).then(setViews).catch(() => {});
@@ -106,6 +132,13 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     await api.setDbRule(pageId, "{}");
     load();
     setRuleOpen(false);
+  };
+
+  const openRef = (v: string) => {
+    if (v.startsWith("p:")) {
+      const id = v.slice(2);
+      if (id) openPage(id);
+    }
   };
 
   const load = () => {
@@ -619,11 +652,15 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   </td>
                   {query.columns.map((c) => (
                     <td key={c.id} className="db-cell">
-                      <DbCellEditor
-                        attr={c}
-                        value={r.values[c.id] ?? ""}
-                        onChange={(v) => setCell(r.page_id, c.id, v)}
-                      />
+                      {c.attr_type === "ref" ? (
+                        <RefCell value={r.values[c.id] ?? ""} titles={refTitles} onOpen={openRef} />
+                      ) : (
+                        <DbCellEditor
+                          attr={c}
+                          value={r.values[c.id] ?? ""}
+                          onChange={(v) => setCell(r.page_id, c.id, v)}
+                        />
+                      )}
                     </td>
                   ))}
                   <td className="db-cell db-cell-empty" />
@@ -921,6 +958,23 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         </div>
       )}
     </div>
+  );
+}
+
+function RefCell({
+  value,
+  titles,
+  onOpen,
+}: {
+  value: string;
+  titles: Record<string, string>;
+  onOpen: (v: string) => void;
+}) {
+  if (!value) return <span className="db-cell-muted">—</span>;
+  return (
+    <button className="db-ref" title="打开引用页面" onClick={() => onOpen(value)}>
+      {titles[value] ?? value}
+    </button>
   );
 }
 

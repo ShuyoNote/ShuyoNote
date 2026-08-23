@@ -4567,6 +4567,27 @@ select.prop-value {
   color: var(--text);
   background: var(--hover-strong);
 }
+.db-cell-muted {
+  color: var(--text-faint);
+}
+.db-ref {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-ref:hover {
+  background: var(--accent-soft);
+  text-decoration: underline;
+}
 
 .db-col-options {
   border: none;

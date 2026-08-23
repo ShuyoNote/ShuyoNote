@@ -254,6 +254,32 @@ pub fn get_db_rule(db: State<'_, Db>, db_page_id: String) -> Result<String, Stri
     db_rule(&c, &db_page_id)
 }
 
+/// Resolve page-reference values (`p:<id>`) to their target page titles.
+#[tauri::command]
+pub fn resolve_refs(db: State<'_, Db>, values: Vec<String>) -> Result<HashMap<String, String>, String> {
+    let c = conn(&db);
+    let mut out: HashMap<String, String> = HashMap::new();
+    for v in values {
+        if let Some(pid) = v.strip_prefix("p:") {
+            let title: Option<String> = c
+                .query_row(
+                    "SELECT title FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                    params![pid],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let label = title
+                .map(|t| format!("⇄ {t}"))
+                .unwrap_or_else(|| "已失效引用".to_string());
+            out.insert(v, label);
+        } else {
+            out.insert(v.clone(), v);
+        }
+    }
+    Ok(out)
+}
+
 fn list_page_metas(c: &Connection) -> Result<Vec<PageMeta>, String> {
     let mut stmt = c
         .prepare(
