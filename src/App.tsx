@@ -9,6 +9,7 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { PluginManager } from "./components/PluginManager";
 import { BoardView } from "./components/BoardView";
 import { GraphView } from "./components/GraphView";
 import { FileManagerView } from "./components/FileManagerView";
@@ -310,6 +311,7 @@ function App() {
       <CommandPalette />
       <Toaster />
       <ConfirmDialog />
+      <PluginManager />
     </div>
   );
 }

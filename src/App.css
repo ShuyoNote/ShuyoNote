@@ -2188,6 +2188,126 @@ select.prop-value {
   background: var(--danger-soft);
 }
 
+/* Plugin manager */
+.plugin-manager-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(15, 23, 42, 0.34);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+}
+.plugin-manager {
+  width: min(520px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: 16px 16px 12px;
+}
+.pm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.pm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+.pm-actions {
+  display: flex;
+  gap: 6px;
+}
+.pm-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+.pm-actions .pm-close {
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  font-size: 16px;
+}
+.pm-empty {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 20px 0;
+  text-align: center;
+}
+.pm-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+}
+.pm-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.pm-item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pm-item-ver {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.pm-item-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 2px 0;
+}
+.pm-item-cmds {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.pm-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.pm-item-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-item-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+.pm-item-actions button.danger {
+  color: var(--danger);
+}
+.pm-item-actions button.danger:hover {
+  background: var(--danger-soft);
+}
+
 /* Selection formatting toolbar */
 .selection-toolbar {
   position: fixed;

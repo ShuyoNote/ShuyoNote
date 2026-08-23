@@ -6,13 +6,20 @@ import type { PluginMeta } from "../types";
 // restricted boa runtime). Persisted enabled state lives in the DB.
 interface PluginsState {
   plugins: PluginMeta[];
+  managerOpen: boolean;
+  setManagerOpen: (open: boolean) => void;
   load: () => Promise<void>;
   toggle: (id: string) => Promise<void>;
+  uninstall: (id: string) => Promise<void>;
+  install: (sourcePath: string) => Promise<void>;
+  openDir: () => Promise<void>;
   runCommand: (pluginId: string, commandId: string, currentId?: string | null) => Promise<string>;
 }
 
 export const usePlugins = create<PluginsState>((set) => ({
   plugins: [],
+  managerOpen: false,
+  setManagerOpen: (managerOpen) => set({ managerOpen }),
   load: () =>
     api
       .listPlugins()
@@ -26,6 +33,29 @@ export const usePlugins = create<PluginsState>((set) => ({
       await usePlugins.getState().load();
     } catch (e) {
       console.error("toggle plugin failed", e);
+    }
+  },
+  uninstall: async (id) => {
+    try {
+      await api.uninstallPlugin(id);
+      await usePlugins.getState().load();
+    } catch (e) {
+      console.error("uninstall plugin failed", e);
+    }
+  },
+  install: async (sourcePath) => {
+    try {
+      await api.installPlugin(sourcePath);
+      await usePlugins.getState().load();
+    } catch (e) {
+      console.error("install plugin failed", e);
+    }
+  },
+  openDir: async () => {
+    try {
+      await api.openPluginDir();
+    } catch (e) {
+      console.error("open plugin dir failed", e);
     }
   },
   runCommand: (pluginId, commandId, currentId) =>

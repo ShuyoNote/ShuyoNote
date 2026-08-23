@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
+import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
 import type { PageMeta } from "../types";
 
@@ -153,6 +154,23 @@ registerPlugin({
             content_text: page.content_text,
           });
         return ok ? `已保存为模板「${page.title || "未命名"}」` : "保存失败";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "plugin",
+  name: "插件",
+  commands: [
+    {
+      id: "plugin.manage",
+      title: "管理插件",
+      description: "打开插件管理面板（安装/启停/卸载）",
+      closeOnRun: true,
+      run: () => {
+        usePlugins.getState().setManagerOpen(true);
+        return "已打开插件管理";
       },
     },
   ],

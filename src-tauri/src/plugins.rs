@@ -403,6 +403,65 @@ pub fn run_plugin_command(
     run_command(&source, &command_id, &state)
 }
 
+fn copy_dir(src: &Path, dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
+        let from = entry.path();
+        let to = dest.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn uninstall_plugin(app: AppHandle, id: String) -> Result<(), String> {
+    let root = plugins_root(&app)?;
+    let dir = root.join(&id);
+    if !dir.is_dir() {
+        return Err("插件不存在".to_string());
+    }
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn install_plugin(app: AppHandle, source_path: String) -> Result<PluginMeta, String> {
+    let src = PathBuf::from(&source_path);
+    if !src.is_dir() {
+        return Err("插件源目录不存在".to_string());
+    }
+    let manifest = read_manifest(&src)?;
+    let dest = plugins_root(&app)?.join(&manifest.id);
+    if dest.exists() {
+        return Err("同名插件已存在".to_string());
+    }
+    copy_dir(&src, &dest)?;
+    let source = load_plugin_source(&dest, &manifest)?;
+    let commands = discover_commands(&source, &RunState::default()).unwrap_or_default();
+    Ok(PluginMeta {
+        id: manifest.id,
+        name: manifest.name,
+        version: manifest.version,
+        description: manifest.description,
+        enabled: true,
+        commands,
+    })
+}
+
+#[tauri::command]
+pub fn open_plugin_dir(app: AppHandle) -> Result<String, String> {
+    let root = plugins_root(&app)?;
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer").arg(&root).spawn();
+    }
+    Ok(root.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
