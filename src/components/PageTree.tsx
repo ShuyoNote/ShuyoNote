@@ -3,7 +3,6 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
-import { useSidebar } from "../store/sidebar";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta } from "../types";
@@ -17,7 +16,7 @@ import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon } from "./icons";
+import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -360,7 +359,7 @@ export function PageTree({
   onViewChange: (v: AppView) => void;
 }) {
   const { pages, createPage, createFolder, createDatabase, loading } = useNotes();
-  const { collapsed, toggle } = useSidebar();
+  const collapsed = false;
   const {
     open: newMenuOpen,
     pos: newMenuPos,
@@ -530,15 +529,7 @@ export function PageTree({
             )}
           </span>
         )}
-        <button
-          className="btn-sidebar-toggle"
-          onClick={toggle}
-          title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
-        >
-          {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-        </button>
-      </div>
-      {!collapsed && (
+        </div>
         <div className="sidebar-header-actions">
           <div className="sidebar-actions-group">
             <SyncPanel />
@@ -597,7 +588,6 @@ export function PageTree({
             )}
           </div>
         </div>
-      )}
       {!collapsed && (
         <>
           <div className="sidebar-search">
