@@ -212,6 +212,14 @@ pub fn attachment_path(app: tauri::AppHandle, hash: String) -> Result<String, St
     Err("附件不存在".to_string())
 }
 
+/// Copy an attachment (by hash) to a user-chosen destination path (download).
+#[tauri::command]
+pub fn copy_attachment(app: tauri::AppHandle, hash: String, dest_path: String) -> Result<(), String> {
+    let src = attachment_path(app, hash)?;
+    std::fs::copy(&src, &dest_path).map_err(|e| format!("复制失败: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

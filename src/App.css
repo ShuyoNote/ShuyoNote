@@ -5587,6 +5587,112 @@ select.prop-value {
   color: var(--text-faint);
   white-space: nowrap;
 }
+.fm-search {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  width: 180px;
+  font-family: inherit;
+}
+.fm-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* File actions + preview */
+.fm-file-actions button {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 2px 3px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.fm-file-actions button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.fm-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(15, 23, 42, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fm-preview {
+  width: min(760px, calc(100vw - 48px));
+  max-height: 86vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fm-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.fm-preview-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-preview-size {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.fm-preview-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+}
+.fm-preview-close:hover {
+  color: var(--text);
+}
+.fm-preview-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: auto;
+}
+.fm-preview-body img,
+.fm-preview-body video {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+.fm-preview-body iframe {
+  width: 100%;
+  height: 70vh;
+  border: none;
+}
+.fm-preview-unsupported {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 30px;
+  text-align: center;
+}
 
 .file-manager-table-wrap {
   flex: 1;

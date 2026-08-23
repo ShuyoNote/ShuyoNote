@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useNotes } from "../store/notes";
 import { useFileManagerStore } from "../store/fileManager";
@@ -68,6 +69,8 @@ export function FileManagerView() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
+  const [fileQuery, setFileQuery] = useState("");
+  const [preview, setPreview] = useState<AttachmentMeta | null>(null);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
 
@@ -236,6 +239,27 @@ export function FileManagerView() {
   // createPage navigates to the editor with the new page already open.
   const newPage = () => createPage(folderId);
 
+  const fileTotalBytes = useMemo(
+    () => files.reduce((s, f) => s + (f.size || 0), 0),
+    [files],
+  );
+  const q = fileQuery.trim().toLowerCase();
+  const visibleRows = useMemo(
+    () => (q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows),
+    [rows, q],
+  );
+
+  const downloadFile = async (f: AttachmentMeta) => {
+    const dest = await save({ title: "保存文件", defaultPath: f.name });
+    if (!dest) return;
+    try {
+      await api.copyAttachment(f.hash, dest);
+      toast("已保存", "success");
+    } catch (e) {
+      toast(`下载失败：${e}`, "error");
+    }
+  };
+
   return (
     <div className="file-manager">
       <div className="file-manager-head">
@@ -283,7 +307,15 @@ export function FileManagerView() {
             </span>
           ))}
         </div>
-        <span className="fm-count">{rows.length} 项</span>
+        <span className="fm-count">
+          {files.length} 个文件 · 共 {formatSize(fileTotalBytes)} · {visibleRows.length} 项
+        </span>
+        <input
+          className="fm-search"
+          placeholder="搜索文件…"
+          value={fileQuery}
+          onChange={(e) => setFileQuery(e.target.value)}
+        />
       </div>
 
       {progress && (
@@ -314,7 +346,7 @@ export function FileManagerView() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {visibleRows.map((row) => (
               <tr
                 key={row.key}
                 className={selected.has(row.key) ? "fm-row-selected" : ""}
@@ -354,6 +386,24 @@ export function FileManagerView() {
                   {row.kind === "file" && (
                     <span className="fm-file-actions">
                       <button
+                        title="预览"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreview(row.file!);
+                        }}
+                      >
+                        👁
+                      </button>
+                      <button
+                        title="下载"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadFile(row.file!);
+                        }}
+                      >
+                        ⬇
+                      </button>
+                      <button
                         title="在文件夹中显示"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -376,7 +426,7 @@ export function FileManagerView() {
                 </td>
               </tr>
             ))}
-            {rows.length === 0 && (
+            {visibleRows.length === 0 && (
               <tr>
                 <td className="fm-empty" colSpan={7}>
                   {folderId === null ? "没有内容，点击右上角新建" : "此文件夹为空，可上传文件"}
@@ -386,6 +436,37 @@ export function FileManagerView() {
           </tbody>
         </table>
       </div>
+
+      {preview && (
+        <div className="fm-preview-overlay" onClick={() => setPreview(null)}>
+          <div className="fm-preview" onClick={(e) => e.stopPropagation()}>
+            <div className="fm-preview-head">
+              <span className="fm-preview-name">{preview.name}</span>
+              <span className="fm-preview-size">{formatSize(preview.size)}</span>
+              <button className="fm-preview-close" title="关闭" onClick={() => setPreview(null)}>
+                ×
+              </button>
+            </div>
+            <div className="fm-preview-body">
+              {preview.mime.startsWith("image/") ? (
+                <img src={convertFileSrc(preview.path)} alt={preview.name} />
+              ) : preview.mime.startsWith("video/") ? (
+                <video src={convertFileSrc(preview.path)} controls />
+              ) : preview.mime.startsWith("audio/") ? (
+                <audio src={convertFileSrc(preview.path)} controls />
+              ) : preview.mime === "application/pdf" ? (
+                <iframe src={convertFileSrc(preview.path)} title={preview.name} />
+              ) : preview.mime.startsWith("text/") ? (
+                <div className="fm-preview-unsupported">文本文件：请在文件夹中打开查看。</div>
+              ) : (
+                <div className="fm-preview-unsupported">
+                  该文件类型暂不支持内嵌预览，可在文件夹中打开或用系统打开。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

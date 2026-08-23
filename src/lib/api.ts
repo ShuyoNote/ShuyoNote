@@ -88,6 +88,8 @@ export const api = {
     data: number[];
   }) => invoke<AttachmentMeta>("save_image", { args }),
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
+  copyAttachment: (hash: string, destPath: string) =>
+    invoke<void>("copy_attachment", { hash, destPath }),
   importAttachmentFiles: (pageId: string | null, paths: string[]) =>
     invoke<AttachmentMeta[]>("import_attachment_files", { pageId, paths }),
   listPageAttachments: (pageId: string) =>

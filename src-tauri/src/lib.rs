@@ -69,6 +69,7 @@ pub fn run() {
             sync::sync_now,
             attachments::save_image,
             attachments::attachment_path,
+            attachments::copy_attachment,
             attachments::list_attachment_hashes,
             attachments::read_attachment_bytes,
             attachments::write_attachment_bytes,
