@@ -13,7 +13,7 @@ interface PluginsState {
   uninstall: (id: string) => Promise<void>;
   install: (sourcePath: string) => Promise<void>;
   openDir: () => Promise<void>;
-  runCommand: (pluginId: string, commandId: string, currentId?: string | null) => Promise<string>;
+  runCommand: (pluginId: string, commandId: string, currentId?: string | null) => Promise<{ message: string; insert?: string | null }>;
 }
 
 export const usePlugins = create<PluginsState>((set) => ({

@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.32.0] - 2026-08-22
+
+### 新增
+
+- **插件可往页面插入内容（M11 L1 增强）**：为受限插件运行时新增 `__insert(text)` 白名单 API——插件在 `run()` 里调用即可把文本插入当前页面
+  - 后端 `run_plugin_command` 返回 `{message, insert}`（`PluginRunResult`）；`RunState` 记录 `insert_text`
+  - 前端命令面板：运行磁盘插件命令后，若返回 `insert`，在光标处（或页面末尾）插入该文本段落，并聚焦
+  - 内置示例插件新增「插入文本」命令演示；新增 Rust 单测 `collect_insert_request_from_plugin`（共 13 项通过）
+  - 安全面不变：插件仅能经 `__insert` 生成文本，不经此 API 无法触碰编辑器/写入任意内容
+
+### 变更
+
+- `api.runPluginCommand` 返回对象；`CommandPalette` 接入 `insert`（`$createParagraphNode` + `$createTextNode`）
+- **文档**：路线图 M11 补记「插件可插入内容（`__insert`）」已实现
+
+---
+
 ## [1.31.0] - 2026-08-22
 
 ### 新增

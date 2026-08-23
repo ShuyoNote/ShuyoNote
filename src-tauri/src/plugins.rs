@@ -37,6 +37,16 @@ thread_local! {
 struct RunState {
     current_page_json: String,
     page_count: usize,
+    /// Text a plugin requested to insert at the cursor via `__insert(...)`.
+    insert_text: String,
+}
+
+/// Result of running a plugin command: a display `message`, plus an optional
+/// `insert` payload the plugin wants to drop into the current page.
+#[derive(Serialize, Clone)]
+pub struct PluginRunResult {
+    pub message: String,
+    pub insert: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +160,23 @@ fn host_toast(
     Ok(JsValue::undefined())
 }
 
+// `__insert(text)`: request the plugin's text be inserted into the current page.
+fn host_insert(
+    _this: &JsValue,
+    args: &[JsValue],
+    _ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    let text = args
+        .get(0)
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default();
+    if !text.is_empty() {
+        RUN_STATE.with(|s| s.borrow_mut().insert_text.push_str(&text));
+    }
+    Ok(JsValue::undefined())
+}
+
 // `register(cmd)` host fn: capture command metadata during discovery.
 thread_local! {
     static DISCOVERED: RefCell<Vec<PluginCommandMeta>> = RefCell::new(vec![]);
@@ -237,9 +264,16 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
         NativeFunction::from_fn_ptr(host_toast),
     )
     .map_err(|e| e.to_string())?;
+    ctx.register_global_callable(
+        JsString::from("__insert"),
+        1,
+        NativeFunction::from_fn_ptr(host_insert),
+    )
+    .map_err(|e| e.to_string())?;
     RUN_STATE.with(|s| *s.borrow_mut() = RunState {
         current_page_json: state.current_page_json.clone(),
         page_count: state.page_count,
+        insert_text: String::new(),
     });
     Ok(())
 }
@@ -292,6 +326,7 @@ pub fn ensure_demo_plugin(app: &AppHandle) -> Result<(), String> {
         r#"
 register({ id: "demo.hello", title: "你好", description: "示例命令", closeOnRun: false, run: function(){ return "你好，ShuyoNote！页面数=" + __pages(); } });
 register({ id: "demo.toast", title: "提示", description: "调用 toast", closeOnRun: false, run: function(){ __toast("来自示例插件的提示"); return "已调用 toast"; } });
+register({ id: "demo.insert", title: "插入文本", description: "把一段文本插入到当前页面", closeOnRun: false, run: function(){ __insert("由示例插件插入的一段文本。"); return "已请求插入文本"; } });
 "#,
     )
     .map_err(|e| e.to_string())?;
@@ -374,7 +409,7 @@ pub fn run_plugin_command(
     plugin_id: String,
     command_id: String,
     current_id: Option<String>,
-) -> Result<String, String> {
+) -> Result<PluginRunResult, String> {
     let root = plugins_root(&app)?;
     let dir = root.join(&plugin_id);
     let manifest = read_manifest(&dir)?;
@@ -399,8 +434,14 @@ pub fn run_plugin_command(
     let state = RunState {
         page_count,
         current_page_json,
+        insert_text: String::new(),
     };
-    run_command(&source, &command_id, &state)
+    let message = run_command(&source, &command_id, &state)?;
+    let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
+    Ok(PluginRunResult {
+        message: if message.is_empty() { "已执行".to_string() } else { message },
+        insert: if insert.is_empty() { None } else { Some(insert) },
+    })
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> Result<(), String> {
@@ -472,7 +513,7 @@ mod tests {
 register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
   run: function(){ return "hi " + __pages(); } });
 "#;
-        let state = RunState { current_page_json: String::new(), page_count: 7 };
+        let state = RunState { current_page_json: String::new(), page_count: 7, insert_text: String::new() };
         let res = run_command(source, "t.hello", &state).unwrap();
         assert_eq!(res, "hi 7");
     }
@@ -480,8 +521,22 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
     #[test]
     fn reports_missing_command() {
         let source = r#"register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false, run: function(){ return "x"; } });"#;
-        let state = RunState { current_page_json: String::new(), page_count: 0 };
+        let state = RunState { current_page_json: String::new(), page_count: 0, insert_text: String::new() };
         let res = run_command(source, "t.nope", &state).unwrap();
         assert!(res.contains("命令不存在"));
+    }
+
+    #[test]
+    fn collect_insert_request_from_plugin() {
+        // A plugin may call __insert(text) to request content be dropped into the page.
+        let source = r#"
+register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
+  run: function(){ __insert("hello from plugin"); return "ok"; } });
+"#;
+        let state = RunState { current_page_json: String::new(), page_count: 0, insert_text: String::new() };
+        let message = run_command(source, "t.ins", &state).unwrap();
+        assert_eq!(message, "ok");
+        let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
+        assert_eq!(insert, "hello from plugin");
     }
 }

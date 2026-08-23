@@ -86,6 +86,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
 ### M11 — 插件（P1，[规划](plans/2026-08-22-plugin-plan.md)）
 - **M11.1 插件底座** ✅（v1.14.0）：插件目录扫描 + `manifest.json` 校验 + **boa 受限运行时 + 白名单 API**（`register`/`__get_current_page`/`__pages`/`__toast`）+ 命令并入命令面板 + `enabled` 持久化；内置示例插件 + Rust 单元测试。
 - **M11.2 管理生命周期** ✅（v1.15.0）：插件管理面板（列表/启用禁用/卸载/从文件夹安装/打开插件目录）+ `uninstall_plugin`/`install_plugin`/`open_plugin_dir` 命令。
+- **M11.2b 插件可插入内容** ✅（v1.32.0）：`__insert(text)` 白名单 API——插件 `run()` 调用即可把文本插入当前页面；`run_plugin_command` 返回 `{message, insert}`；命令面板在光标处插入；示例插件新增「插入文本」。
 - **M11.3（可选 L2）**：UI 型插件（沙盒 WebView + postMessage 桥）。
 - **M11.4（可选 L3）**：插件市场 / 签名 / 信任评分。
 

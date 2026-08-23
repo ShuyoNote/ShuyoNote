@@ -51,7 +51,7 @@ export const api = {
   listPlugins: () => invoke<PluginMeta[]>("list_plugins"),
   setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
   runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null) =>
-    invoke<string>("run_plugin_command", { pluginId, commandId, currentId }),
+    invoke<{ message: string; insert?: string | null }>("run_plugin_command", { pluginId, commandId, currentId }),
   uninstallPlugin: (id: string) => invoke<void>("uninstall_plugin", { id }),
   installPlugin: (sourcePath: string) => invoke<PluginMeta>("install_plugin", { sourcePath }),
   openPluginDir: () => invoke<string>("open_plugin_dir"),

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection } from "lexical";
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
+import { useEditorStore } from "../store/editor";
 import { getAllCommands, usePluginRevision, type CommandContext } from "../plugins/registry";
 
 type Item =
@@ -8,6 +10,28 @@ type Item =
   | { kind: "command"; id: string; title: string; description?: string }
   | { kind: "plugin"; pluginId: string; id: string; title: string; description?: string }
   | { kind: "plugin-toggle"; pluginId: string; title: string };
+
+// Insert a text paragraph into the active editor (at cursor if possible, else
+// append to the end of the page).
+function insertText(text: string) {
+  const editor = useEditorStore.getState().editor;
+  if (!editor) return;
+  editor.update(() => {
+    const para = $createParagraphNode();
+    para.append($createTextNode(text));
+    const sel = $getSelection();
+    if ($isRangeSelection(sel) && !sel.isCollapsed()) {
+      const top = sel.anchor.getNode().getTopLevelElement();
+      if (top) {
+        top.insertAfter(para);
+        para.selectStart();
+        return;
+      }
+    }
+    $getRoot().append(para);
+    para.selectStart();
+  });
+}
 
 export function CommandPalette() {
   const { pages, currentId, openPage } = useNotes();
@@ -95,8 +119,9 @@ export function CommandPalette() {
     }
     if (item.kind === "plugin") {
       try {
-        const msg = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId);
-        setResult(msg);
+        const res = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId);
+        setResult(res.message);
+        if (res.insert) insertText(res.insert);
       } catch (e) {
         setResult(String(e));
       }
