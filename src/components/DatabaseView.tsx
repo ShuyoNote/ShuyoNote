@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
+import { printDoc } from "../lib/print";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula", "rollup"] as const;
@@ -555,6 +556,35 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     return <div className="database-view database-empty">加载中…</div>;
   }
 
+  // Export the current (filtered) database view to the system print dialog
+  // ("Save as PDF"). Reuses the page PDF helper but renders a data table.
+  const exportPdf = () => {
+    const cell = (col: AttrDef, r: DatabaseRow) => {
+      if (col.attr_type === "formula") {
+        return computeFormula(col.options[0] ?? "", r.values, query.columns);
+      }
+      if (col.attr_type === "rollup") {
+        return computeRollup(col.options[0] ?? "", r.page_id, rollupTargets[col.id] ?? null);
+      }
+      const v = r.values[col.id] ?? "";
+      if (col.attr_type === "ref") return refTitles[v] ?? v;
+      return v;
+    };
+    const ths = ["页面", ...query.columns.map((c) => c.name || TYPE_LABELS[c.attr_type] || c.attr_type)]
+      .map((h) => `<th>${h}</th>`)
+      .join("");
+    const trs = rows
+      .map(
+        (r) =>
+          `<tr><td><strong>${r.title || "未命名"}</strong></td>${query.columns
+            .map((c) => `<td>${cell(c, r)}</td>`)
+            .join("")}</tr>`,
+      )
+      .join("");
+    const body = `<h1>${title || "数据库"}</h1><div class="db-count">共 ${rows.length} 行</div><table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+    printDoc(body, { title });
+  };
+
   return (
     <div className="database-view">
       <div className="database-head">
@@ -565,6 +595,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <button className="db-views-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
+          ⤓ PDF
+        </button>
         <div className="db-view-switch">
           <button
             className={viewType === "table" ? "db-view-active" : ""}

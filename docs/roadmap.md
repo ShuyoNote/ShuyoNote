@@ -59,7 +59,7 @@
 `DatabaseView` 顶部汇总条——select 列按值着色计数徽标、number 列合计/均值（纯前端聚合，尊重筛选）。
 
 ### M5 — PDF 导出（P2）✅
-复用 `$generateHtmlFromNodes` + `HTML_TEMPLATE` → 隐藏 iframe → `window.print()` 另存为 PDF。数据库页 PDF 为后续项。
+复用 `$generateHtmlFromNodes` + `HTML_TEMPLATE` → 隐藏 iframe → `window.print()` 另存为 PDF。**数据库页 PDF**（v1.30.0）：数据库「⤓ PDF」把当前视图渲染为 HTML 表格并打印——抽取 `src/lib/print.ts` 供页面与数据库共用。
 
 ### M6 — 移动端适配（P2，长周期）
 Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。
