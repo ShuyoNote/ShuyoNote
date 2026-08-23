@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.32.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.33.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -247,6 +247,7 @@ ShuyoNote/
 - [x] 属性 Notion 风格统一（标签属性行 + 底部「＋ 添加标签 / ＋ 添加属性」双按钮）
 - [x] 文件管理视图（文件夹 / 批量超大文件上传 / 侧边栏文件）
 - [x] 文件引用到页面（正文插入文件卡片 / 系统默认打开）
+- [x] 文件历史版本（同名文件保留/恢复）
 - [x] 全局标签管理（新建 / 重命名合并 / 删除 / 使用页数）
 - [x] 跨空间复制页面（把页面樹复制到其他工作空间）
 - [x] 全空间搜索（本空间 / 全空间切换，跨工作空间全文检索）

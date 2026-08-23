@@ -490,3 +490,36 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
     }
     Ok(())
 }
+
+/// Restore a historical version: clone the given attachment (by content hash) as
+/// a NEW current attachment in `target_page_id`, so the chosen version becomes
+/// the newest same-named file. Content-addressed bytes are shared (no rewrite).
+#[tauri::command]
+pub fn restore_attachment(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    target_page_id: String,
+    source_id: String,
+) -> Result<AttachmentMeta, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir = app_data_dir.join("attachments");
+    let c = db.0.lock().expect("db mutex poisoned");
+    let (name, hash, mime, size): (String, String, String, i64) = c
+        .query_row(
+            "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
+            params![source_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|_| "附件不存在".to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    c.execute(
+        "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, target_page_id, name, hash, mime, size, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    let path = find_path_by_hash(&attachments_dir, &hash)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(AttachmentMeta { id, name, hash, mime, size, path })
+}

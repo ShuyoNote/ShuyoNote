@@ -103,6 +103,8 @@ export const api = {
   removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
   moveAttachment: (id: string, newPageId: string) =>
     invoke<void>("move_attachment", { id, newPageId }),
+  restoreAttachment: (targetPageId: string, sourceId: string) =>
+    invoke<AttachmentMeta>("restore_attachment", { targetPageId, sourceId }),
   getBacklinks: (id: string) => invoke<PageMeta[]>("get_backlinks", { id }),
   resolveBlock: (blockId: string) =>
     invoke<BlockInfo>("resolve_block", { blockId }),

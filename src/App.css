@@ -6103,6 +6103,110 @@ select.prop-value {
   box-shadow: var(--shadow-md);
   padding: 6px;
 }
+
+/* File versions popover */
+.fm-version-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fm-version-pop {
+  min-width: 340px;
+  max-width: 460px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 12px;
+}
+.fm-version-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.fm-version-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fm-version-close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  cursor: pointer;
+}
+.fm-version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fm-version-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.fm-version-current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.fm-version-badge {
+  font-size: 11px;
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  white-space: nowrap;
+}
+.fm-version-old {
+  color: var(--text-dim);
+  background: var(--hover);
+}
+.fm-version-name {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.fm-version-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fm-version-hash {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+}
+.fm-version-restore {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fm-version-restore:hover {
+  background: var(--hover);
+}
+.fm-version-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 6px 8px;
+}
+
 .fm-move-title {
   font-size: 12px;
   color: var(--text-faint);

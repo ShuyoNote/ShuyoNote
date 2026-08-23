@@ -74,6 +74,7 @@ export function FileManagerView() {
   const [preview, setPreview] = useState<AttachmentMeta | null>(null);
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState<AttachmentMeta | null>(null);
+  const [versionTarget, setVersionTarget] = useState<AttachmentMeta | null>(null);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
 
@@ -236,6 +237,22 @@ export function FileManagerView() {
   };
 
   // Unified file list: folders/pages/databases + uploaded files, as table rows.
+  // Same-named files in a folder are grouped (the first = current, the rest are
+  // implicitly content-addressed historical versions).
+  const fileGroups = useMemo(() => {
+    const map = new Map<string, AttachmentMeta[]>();
+    for (const f of files) {
+      const arr = map.get(f.name) ?? [];
+      arr.push(f);
+      map.set(f.name, arr);
+    }
+    const out: { current: AttachmentMeta; versions: AttachmentMeta[] }[] = [];
+    for (const arr of map.values()) {
+      out.push({ current: arr[0], versions: arr.slice(1) });
+    }
+    return out;
+  }, [files]);
+
   const rows = useMemo(() => {
     type FmRow = {
       key: string;
@@ -246,6 +263,7 @@ export function FileManagerView() {
       created: string;
       pageId?: string;
       file?: AttachmentMeta;
+      versions?: AttachmentMeta[];
     };
     const out: FmRow[] = [];
     for (const p of sorted) {
@@ -259,19 +277,20 @@ export function FileManagerView() {
         pageId: p.id,
       });
     }
-    for (const f of files) {
+    for (const g of fileGroups) {
       out.push({
-        key: "file:" + f.id,
+        key: "file:" + g.current.id,
         kind: "file",
-        name: f.name,
-        size: formatSize(f.size),
+        name: g.current.name,
+        size: formatSize(g.current.size),
         updated: "—",
         created: "—",
-        file: f,
+        file: g.current,
+        versions: g.versions,
       });
     }
     return out;
-  }, [sorted, files]);
+  }, [sorted, fileGroups]);
 
   const newFolder = () => createFolder(folderId);
   // createPage navigates to the editor with the new page already open.
@@ -299,6 +318,18 @@ export function FileManagerView() {
       toast("已保存", "success");
     } catch (e) {
       toast(`下载失败：${e}`, "error");
+    }
+  };
+
+  const restoreVersion = async (sourceId: string) => {
+    if (!folderId) return;
+    try {
+      await api.restoreAttachment(folderId, sourceId);
+      loadFiles();
+      setVersionTarget(null);
+      toast("已恢复到此版本", "success");
+    } catch (e) {
+      toast(`恢复失败：${e}`, "error");
     }
   };
 
@@ -427,6 +458,17 @@ export function FileManagerView() {
                 <td className="fm-ops-col">
                   {row.kind === "file" && (
                     <span className="fm-file-actions">
+                      {row.versions && row.versions.length > 0 && (
+                        <button
+                          title={`${row.versions.length + 1} 个历史版本`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setVersionTarget(row.file!);
+                          }}
+                        >
+                          ↻
+                        </button>
+                      )}
                       <button
                         title="移动到文件夹"
                         onClick={(e) => {
@@ -487,6 +529,47 @@ export function FileManagerView() {
           </tbody>
         </table>
       </div>
+
+      {versionTarget && (
+        <div className="fm-version-overlay" onClick={() => setVersionTarget(null)}>
+          <div className="fm-version-pop" onClick={(e) => e.stopPropagation()}>
+            <div className="fm-version-head">
+              <span className="fm-version-title">「{versionTarget.name}」的历史版本</span>
+              <button className="fm-version-close" title="关闭" onClick={() => setVersionTarget(null)}>
+                ×
+              </button>
+            </div>
+            <div className="fm-version-list">
+              <div className="fm-version-item fm-version-current">
+                <span className="fm-version-badge">当前</span>
+                <span className="fm-version-name">{versionTarget.name}</span>
+                <span className="fm-version-meta">{formatSize(versionTarget.size)}</span>
+                <span className="fm-version-hash">#{versionTarget.hash.slice(0, 8)}</span>
+              </div>
+              {(fileGroups.find((g) => g.current.id === versionTarget.id)?.versions ?? []).map(
+                (v, i) => (
+                  <div key={v.id} className="fm-version-item">
+                    <span className="fm-version-badge fm-version-old">v{fileGroups.find((g) => g.current.id === versionTarget.id)!.versions.length - i}</span>
+                    <span className="fm-version-name">{v.name}</span>
+                    <span className="fm-version-meta">{formatSize(v.size)}</span>
+                    <span className="fm-version-hash">#{v.hash.slice(0, 8)}</span>
+                    <button
+                      className="fm-version-restore"
+                      onClick={() => restoreVersion(v.id)}
+                      title="恢复到此版本（作为当前文件）"
+                    >
+                      恢复
+                    </button>
+                  </div>
+                ),
+              )}
+              {(fileGroups.find((g) => g.current.id === versionTarget.id)?.versions.length ?? 0) === 0 && (
+                <div className="fm-version-empty">暂无更早版本</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {dragging && (
         <div className="fm-drop-zone">松开鼠标，上传到当前文件夹</div>
