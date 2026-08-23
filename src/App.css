@@ -403,7 +403,16 @@ body,
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: 4px;
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.space-switcher-io-title {
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .space-switcher-io button {
   display: flex;
@@ -949,20 +958,34 @@ body,
 /* View switch */
 .view-switch {
   display: flex;
-  gap: 4px;
-  padding: 0 12px 8px;
+  gap: 3px;
+  padding: 0 8px 8px;
+  background: var(--surface-2, var(--bg));
+  margin: 8px 8px 10px;
+  border-radius: var(--radius-md);
+  padding: 3px;
 }
 
 .view-switch-btn {
   flex: 1;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-dim);
-  border-radius: 8px;
-  padding: 6px 0;
+  border-radius: var(--radius-sm);
+  padding: 7px 0;
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.view-switch-btn svg {
+  flex-shrink: 0;
+  opacity: 0.8;
 }
 
 .view-switch-btn:hover {
@@ -970,11 +993,20 @@ body,
   color: var(--text);
 }
 
+.view-switch-btn:hover svg {
+  opacity: 1;
+}
+
 .view-switch-active {
-  background: var(--accent-soft);
+  background: var(--surface);
   color: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--border);
   font-weight: 500;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06));
+}
+
+.view-switch-active svg {
+  opacity: 1;
 }
 
 /* Board */
@@ -1234,7 +1266,7 @@ body,
 }
 
 .sidebar-search {
-  padding: 0 8px 8px;
+  padding: 4px 8px 4px;
   position: relative;
 }
 
@@ -1244,31 +1276,47 @@ body,
 
 .search-input {
   width: 100%;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
+  padding: 7px 10px 7px 30px;
   font-size: 13px;
   outline: none;
   font-family: inherit;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
+.search-input-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-input-row::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: contain;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 .search-input:hover {
-  background: var(--hover);
+  border-color: var(--border-strong, var(--border));
 }
 
 .search-input:focus {
   border-color: var(--accent);
   background: var(--bg);
   box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.search-input-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .search-input-row .search-input {
@@ -1278,13 +1326,14 @@ body,
 
 .search-all-toggle {
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  font-size: 12px;
+  border-radius: var(--radius-full);
+  padding: 4px 10px;
+  font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .search-all-toggle:hover {
@@ -1295,6 +1344,7 @@ body,
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent);
+  font-weight: 500;
 }
 
 .search-results {
@@ -1418,12 +1468,13 @@ body,
 .tree-row-active::before {
   content: "";
   position: absolute;
-  left: 0;
-  top: 20%;
-  bottom: 20%;
+  left: -2px;
+  top: 24%;
+  bottom: 24%;
   width: 3px;
   border-radius: 2px;
   background: var(--accent);
+  opacity: 0.85;
 }
 
 .tree-row-over {
@@ -1448,16 +1499,22 @@ body,
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  font-size: 12px;
+  color: var(--text-dim);
   background: var(--hover);
+}
+
+.tree-icon svg {
+  display: block;
 }
 
 .tree-icon-folder {
   background: var(--cat-orange-soft);
+  color: var(--cat-orange, #b45309);
 }
 
 .tree-icon-database {
   background: var(--cat-purple-soft);
+  color: var(--cat-purple, #7c3aed);
 }
 
 .tree-icon-file {
@@ -3913,6 +3970,117 @@ select.prop-value {
   padding: 2px 4px;
 }
 
+/* Webpage bookmark card */
+.editor-webbookmark {
+  margin: 0.5em 0;
+}
+.webbookmark-card {
+  display: flex;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.webbookmark-card:hover {
+  border-color: var(--border-strong, var(--accent));
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.08));
+}
+.webbookmark-thumb {
+  flex: 0 0 180px;
+  min-height: 110px;
+  background: var(--hover);
+}
+.webbookmark-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.webbookmark-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.webbookmark-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.webbookmark-desc {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.webbookmark-site {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.webbookmark-domain {
+  font-weight: 500;
+}
+.webbookmark-err {
+  color: var(--danger, #e5484d);
+}
+
+/* "Pasted a link" choice bubble */
+.bookmark-paste-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+}
+.bookmark-paste-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 4px 8px 6px;
+}
+.bookmark-paste-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.bookmark-paste-opt:hover {
+  background: var(--hover);
+}
+.bookmark-paste-opt.primary {
+  color: var(--accent);
+  font-weight: 500;
+}
+.bpi-icon {
+  font-size: 14px;
+}
+
 .block-embed-refresh:hover {
   color: var(--text);
 }
@@ -4338,13 +4506,14 @@ select.prop-value {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .database-title {
   font-size: 22px;
   font-weight: 700;
   margin: 0;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4664,16 +4833,26 @@ select.prop-value {
 .db-view-switch {
   display: flex;
   gap: 4px;
+  flex: 0 0 auto;
 }
 
 .db-view-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-dim);
   border-radius: var(--radius-sm);
-  padding: 5px 10px;
+  padding: 6px 9px;
   font-size: 13px;
   cursor: pointer;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.db-view-switch button svg {
+  flex-shrink: 0;
 }
 
 .db-view-switch button:hover {
@@ -4685,6 +4864,19 @@ select.prop-value {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* Right-side actions (PDF / views / rule), visually separated from the switch. */
+.db-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.db-rule-glyph {
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
 .db-views-wrap {

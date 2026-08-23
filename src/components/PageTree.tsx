@@ -18,7 +18,7 @@ import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon } from "./icons";
+import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -277,7 +277,13 @@ function TreeItem({
           {isFolder ? (expanded ? "▾" : "▸") : node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
         <span className={`tree-icon${isFolder ? " tree-icon-folder" : isDatabase ? " tree-icon-database" : ""}`}>
-          {isFolder ? "📁" : isDatabase ? "🗂" : "📄"}
+          {isFolder ? (
+            <FolderIcon width={16} height={16} />
+          ) : isDatabase ? (
+            <DatabaseIcon width={16} height={16} />
+          ) : (
+            <PageIcon width={16} height={16} />
+          )}
         </span>
         {editing ? (
           <input
@@ -702,13 +708,14 @@ export function PageTree({
                   <span className="space-item-name">新建工作空间</span>
                 </button>
                 <div className="space-switcher-io">
+                  <div className="space-switcher-io-title">单空间迁移</div>
                   <button onClick={exportSpace}>
                     <span className="space-item-mark">⇪</span>
                     <span className="space-item-name">导出当前空间</span>
                   </button>
                   <button onClick={importSpace}>
                     <span className="space-item-mark">⇣</span>
-                    <span className="space-item-name">导入空间包</span>
+                    <span className="space-item-name">导入空间包（新建空间）</span>
                   </button>
                 </div>
               </div>
@@ -755,7 +762,7 @@ export function PageTree({
                   <span className="new-menu-icon"><FolderIcon /></span>
                   <span className="new-menu-body">
                     <span className="new-menu-name">文件夹</span>
-                    <span className="new-menu-desc">组织子页面</span>
+                    <span className="new-menu-desc">归类嵌套页面 · 也可存放文件</span>
                   </span>
                 </button>
                 <button
@@ -785,19 +792,22 @@ export function PageTree({
               className={`view-switch-btn ${view === "notes" ? "view-switch-active" : ""}`}
               onClick={() => onViewChange("notes")}
             >
-              📝 笔记
+              <PageIcon width={15} height={15} />
+              <span>笔记</span>
             </button>
             <button
               className={`view-switch-btn ${view === "board" ? "view-switch-active" : ""}`}
               onClick={() => onViewChange("board")}
             >
-              📋 看板
+              <BoardIcon width={15} height={15} />
+              <span>看板</span>
             </button>
             <button
               className={`view-switch-btn ${view === "graph" ? "view-switch-active" : ""}`}
               onClick={() => onViewChange("graph")}
             >
-              🕸 关系图
+              <GraphIcon width={15} height={15} />
+              <span>关系图</span>
             </button>
           </div>
         </>

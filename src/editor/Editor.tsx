@@ -26,11 +26,13 @@ import { ImageRowNode } from "./nodes/ImageRowNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { BlockRefNode } from "./nodes/BlockRefNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
+import { WebBookmarkNode } from "./nodes/WebBookmarkNode";
 import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
+import { BookmarkPastePlugin } from "./plugins/BookmarkPastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
 import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
@@ -263,6 +265,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         VideoNode,
         BlockRefNode,
         BlockEmbedNode,
+        WebBookmarkNode,
         AttachmentRefNode,
         TableNode,
         TableCellNode,
@@ -307,6 +310,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <ImagePastePlugin pageId={pageId} />
+        <BookmarkPastePlugin />
         <BlockDragPlugin />
         <BlockSelectionPlugin />
         <InsertShortcutPlugin />

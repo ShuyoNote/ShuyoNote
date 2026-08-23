@@ -98,6 +98,15 @@ export const api = {
   }) => invoke<AttachmentMeta>("save_image", { args }),
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
   getAttachment: (id: string) => invoke<AttachmentMeta>("get_attachment", { id }),
+  fetchBookmarkMetadata: (url: string) =>
+    invoke<{
+      url: string;
+      title: string;
+      description: string;
+      site_name: string;
+      image_hash: string;
+      image_mime: string;
+    }>("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
     invoke<void>("copy_attachment", { hash, destPath }),
   importAttachmentFiles: (pageId: string | null, paths: string[]) =>

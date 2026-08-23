@@ -5,6 +5,15 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import { printDoc } from "../lib/print";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
+import {
+  TableIcon,
+  GalleryIcon,
+  BoardIcon,
+  ListIcon,
+  CalendarIcon,
+  TimelineIcon,
+  DirectoryIcon,
+} from "./icons";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula", "rollup"] as const;
 const TYPE_LABELS: Record<string, string> = {
@@ -115,6 +124,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const boardGroupPanelRef = useRef<HTMLDivElement>(null);
   const [sortMenuKey, setSortMenuKey] = useState<string | null>(null);
   const sortMenuPanelRef = useRef<HTMLDivElement>(null);
+  const viewsWrapRef = useRef<HTMLDivElement>(null);
+  const ruleWrapRef = useRef<HTMLDivElement>(null);
   const [viewType, setViewType] = useState<
     "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory"
   >("table");
@@ -277,24 +288,28 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   };
   useEffect(load, [pageId]);
 
-  // Close the add-column / options / board-group / sort panels when clicking
-  // outside them (a single consistent "click background to close" behavior).
+  // Close the add-column / options / board-group / sort / views / rule panels when
+  // clicking outside them (a single consistent "click background to close" behavior).
   useEffect(() => {
-    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey) return;
+    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey && !viewsPop && !ruleOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (addColPanelRef.current?.contains(t)) return;
       if (optionsPanelRef.current?.contains(t)) return;
       if (boardGroupPanelRef.current?.contains(t)) return;
       if (sortMenuPanelRef.current?.contains(t)) return;
+      if (viewsWrapRef.current?.contains(t)) return;
+      if (ruleWrapRef.current?.contains(t)) return;
       setAddingCol(false);
       setEditingOptionsCol(null);
       setBoardGroupOpen(false);
       setSortMenuKey(null);
+      setViewsPop(false);
+      setRuleOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [addingCol, editingOptionsCol, boardGroupOpen, sortMenuKey]);
+  }, [addingCol, editingOptionsCol, boardGroupOpen, sortMenuKey, viewsPop, ruleOpen]);
 
   // Only one floating panel is open at a time; opening one clears the rest.
   const closeDbPanels = () => {
@@ -595,124 +610,133 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        <button className="db-views-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
-          ⤓ PDF
-        </button>
         <div className="db-view-switch">
           <button
             className={viewType === "table" ? "db-view-active" : ""}
             onClick={() => setViewType("table")}
           >
-            ☰ 表格
+            <TableIcon width={15} height={15} />
+            <span>表格</span>
           </button>
           <button
             className={viewType === "gallery" ? "db-view-active" : ""}
             onClick={() => setViewType("gallery")}
           >
-            ▦ 画廊
+            <GalleryIcon width={15} height={15} />
+            <span>画廊</span>
           </button>
           <button
             className={viewType === "board" ? "db-view-active" : ""}
             onClick={() => setViewType("board")}
           >
-            📋 看板
+            <BoardIcon width={15} height={15} />
+            <span>看板</span>
           </button>
           <button
             className={viewType === "list" ? "db-view-active" : ""}
             onClick={() => setViewType("list")}
           >
-            ☷ 列表
+            <ListIcon width={15} height={15} />
+            <span>列表</span>
           </button>
           <button
             className={viewType === "calendar" ? "db-view-active" : ""}
             onClick={() => setViewType("calendar")}
           >
-            📅 日历
+            <CalendarIcon width={15} height={15} />
+            <span>日历</span>
           </button>
           <button
             className={viewType === "timeline" ? "db-view-active" : ""}
             onClick={() => setViewType("timeline")}
           >
-            📈 时间轴
+            <TimelineIcon width={15} height={15} />
+            <span>时间轴</span>
           </button>
           <button
             className={viewType === "directory" ? "db-view-active" : ""}
             onClick={() => setViewType("directory")}
           >
-            🗂 目录
+            <DirectoryIcon width={15} height={15} />
+            <span>目录</span>
           </button>
         </div>
-        <div className="db-views-wrap">
-          <button className="db-views-btn" onClick={() => setViewsPop((v) => !v)}>
-            视图 {views.length > 0 ? `(${views.length})` : ""} ▾
+        <div className="db-actions">
+          <button className="db-views-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
+            <span>⤓</span> PDF
           </button>
-          {viewsPop && (
-            <div className="db-views-pop">
-              <div className="db-views-title">已保存视图</div>
-              {views.length === 0 ? (
-                <div className="db-views-empty">暂无保存视图</div>
-              ) : (
-                views.map((v) => (
-                  <div key={v.id} className="db-views-item">
-                    <button className="db-views-item-main" onClick={() => applyView(v)}>
-                      {v.name}
-                    </button>
-                    <button
-                      className="db-views-item-del"
-                      title="删除视图"
-                      onClick={() => delView(v)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))
-              )}
-              <div className="db-views-save-row">
+          <div className="db-views-wrap" ref={viewsWrapRef}>
+            <button className="db-views-btn" onClick={() => setViewsPop((v) => !v)}>
+              视图{views.length > 0 ? ` (${views.length})` : ""} ▾
+            </button>
+            {viewsPop && (
+              <div className="db-views-pop">
+                <div className="db-views-title">已保存视图</div>
+                {views.length === 0 ? (
+                  <div className="db-views-empty">暂无保存视图</div>
+                ) : (
+                  views.map((v) => (
+                    <div key={v.id} className="db-views-item">
+                      <button className="db-views-item-main" onClick={() => applyView(v)}>
+                        {v.name}
+                      </button>
+                      <button
+                        className="db-views-item-del"
+                        title="删除视图"
+                        onClick={() => delView(v)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))
+                )}
+                <div className="db-views-save-row">
+                  <input
+                    className="db-views-input"
+                    placeholder="视图名"
+                    value={viewName}
+                    onChange={(e) => setViewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveCurrentView();
+                    }}
+                  />
+                  <button onClick={saveCurrentView}>保存当前</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="db-rule-wrap" ref={ruleWrapRef}>
+            <button className="db-views-btn" onClick={() => setRuleOpen((v) => !v)} title="成员规则">
+              规则 <span className="db-rule-glyph">∿</span>
+            </button>
+            {ruleOpen && (
+              <div className="db-views-pop db-rule-pop">
+                <div className="db-views-title">成员规则（按属性自动收页）</div>
+                <select
+                  className="db-rule-select"
+                  value={ruleCol}
+                  onChange={(e) => setRuleCol(e.target.value)}
+                >
+                  <option value="">— 选择属性列 —</option>
+                  {ruleCols.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
                 <input
                   className="db-views-input"
-                  placeholder="视图名"
-                  value={viewName}
-                  onChange={(e) => setViewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") saveCurrentView();
-                  }}
+                  placeholder="匹配值（如 进行中）"
+                  value={ruleValue}
+                  onChange={(e) => setRuleValue(e.target.value)}
                 />
-                <button onClick={saveCurrentView}>保存当前</button>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="db-rule-wrap">
-          <button className="db-views-btn" onClick={() => setRuleOpen((v) => !v)} title="成员规则">
-            规则 ∿
-          </button>
-          {ruleOpen && (
-            <div className="db-views-pop db-rule-pop">
-              <div className="db-views-title">成员规则（按属性自动收页）</div>
-              <select
-                className="db-rule-select"
-                value={ruleCol}
-                onChange={(e) => setRuleCol(e.target.value)}
-              >
-                <option value="">— 选择属性列 —</option>
-                {ruleCols.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="db-views-input"
-                placeholder="匹配值（如 进行中）"
-                value={ruleValue}
-                onChange={(e) => setRuleValue(e.target.value)}
-              />
               <div className="db-rule-actions">
                 <button onClick={applyRule}>应用规则</button>
                 <button onClick={clearRule}>清除</button>
               </div>
             </div>
           )}
+        </div>
         </div>
         <span className="database-count">{rows.length} 条</span>
       </div>

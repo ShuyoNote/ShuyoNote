@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.42.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.43.0-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -53,6 +53,7 @@ ShuyoNote 是一款**本地优先（local-first）**的知识管理应用。它�
 - **块多选**：点击 `⋮⋮` 手柄选中块（Shift 选连续范围），批量操作条「复制 / 删除」，`Delete`/`Esc` 快捷键，选中块高亮
 - **表格交互**：悬浮工具栏（增删行列 / 表头行·列切换 / 对齐 / 背景色）+ 列宽拖拽调整 + 单元格选区高亮
 - **图片粘贴**：截图/复制图片直接粘贴，内容寻址（SHA-256）去重存储
+- **网页书签**：`/wzsq` 或 `/bookmark` 插入 URL 为书签卡片（自动抓 Open Graph 标题/摘要/预览图）；粘贴纯网址可一键「转换为网页书签」；预览图复用附件内容寻址存储
 - **文件附件**：通用文件附件（多选导入、超大文件流式存取、打开 / 定位 / 移除）
 - **Markdown**：快捷键输入、一键导入/导出、导出 HTML
 

@@ -20,6 +20,7 @@ import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createVideoNode } from "../nodes/VideoNode";
 import { $createAttachmentRefNode } from "../nodes/AttachmentRefNode";
+import { $createWebBookmarkNode } from "../nodes/WebBookmarkNode";
 import {
   $createParagraphNode,
   $createTextNode,
@@ -178,6 +179,24 @@ function makeOptions(pageId: string): SlashOption[] {
       } catch (e) {
         toast(`插入文件引用失败：${e}`, "error");
       }
+    } },
+    { key: "webbookmark", title: "网页书签", badge: "🔗", group: "媒体", pinyin: "wzsq", run: async (editor) => {
+      const url = prompt("输入网址（URL），如 https://example.com/article");
+      if (!url) return;
+      let u = url.trim();
+      if (!u) return;
+      if (!u.includes("://")) u = `https://${u}`;
+      editor.update(() => {
+        const sel = $getSelection();
+        const anchor = sel && $isRangeSelection(sel) ? sel.anchor.getNode() : null;
+        const top = anchor?.getTopLevelElement() ?? null;
+        const node = $createWebBookmarkNode(u);
+        if (top && top.getParent()) {
+          top.replace(node);
+        }
+        // Keep a paragraph after so typing continues.
+        node.insertAfter($createParagraphNode());
+      });
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>
       editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", shortcut: "Ctrl+Alt+C", pinyin: "dmk", run: (editor) =>

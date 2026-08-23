@@ -2,6 +2,7 @@ mod attachments;
 mod backlinks;
 mod backup;
 mod blocks;
+mod bookmark;
 mod commands;
 mod crypto;
 mod database;
@@ -83,6 +84,7 @@ pub fn run() {
             attachments::move_attachment,
             attachments::get_attachment,
             attachments::restore_attachment,
+            bookmark::fetch_bookmark_metadata,
             backlinks::get_backlinks,
             blocks::resolve_block,
             blocks::get_page_blocks,

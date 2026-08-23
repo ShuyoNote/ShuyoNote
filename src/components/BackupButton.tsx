@@ -119,7 +119,7 @@ export function BackupButton() {
             }}
           >
             <DownloadIcon width={14} height={14} />
-            导出备份
+            导出完整备份（全库）
           </button>
           <button
             onClick={() => {
@@ -128,7 +128,7 @@ export function BackupButton() {
             }}
           >
             <UploadIcon width={14} height={14} />
-            从备份恢复
+            从备份恢复（覆盖全库）
           </button>
         </div>
       )}

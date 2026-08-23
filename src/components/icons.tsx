@@ -549,6 +549,17 @@ export function TimelineIcon(props: IconProps) {
   );
 }
 
+export function GraphIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="6" cy="6" r="2.4" />
+      <circle cx="18" cy="7" r="2.4" />
+      <circle cx="12" cy="18" r="2.4" />
+      <path d="M8 7.2 9.8 16M15.8 8.4 13.2 16M8.4 6 15.6 6.6" />
+    </Icon>
+  );
+}
+
 export function DirectoryIcon(props: IconProps) {
   return (
     <Icon {...props}>
