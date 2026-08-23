@@ -7,6 +7,7 @@ mod database;
 mod db;
 mod graph;
 mod models;
+mod plugins;
 mod properties;
 mod search;
 mod sync;
@@ -33,6 +34,8 @@ pub fn run() {
                 std::io::Error::other(e.to_string())
             })?;
             app.manage(Db(Mutex::new(conn)));
+            // Seed a bundled demo plugin so the plugin system has something to load.
+            let _ = plugins::ensure_demo_plugin(&app.handle());
 
             // Title bar shows both product names + the live build version, so it
             // never drifts from the packaged version on a new release.
@@ -111,6 +114,9 @@ pub fn run() {
             backup::write_text_file,
             backup::read_text_file,
             windows::open_page_window,
+            plugins::list_plugins,
+            plugins::set_plugin_enabled,
+            plugins::run_plugin_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

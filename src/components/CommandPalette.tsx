@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNotes } from "../store/notes";
+import { usePlugins } from "../store/plugins";
 import { getAllCommands, usePluginRevision, type CommandContext } from "../plugins/registry";
 
 type Item =
   | { kind: "page"; id: string; title: string }
-  | { kind: "command"; id: string; title: string; description?: string };
+  | { kind: "command"; id: string; title: string; description?: string }
+  | { kind: "plugin"; pluginId: string; id: string; title: string; description?: string }
+  | { kind: "plugin-toggle"; pluginId: string; title: string };
 
 export function CommandPalette() {
   const { pages, currentId, openPage } = useNotes();
@@ -13,6 +16,8 @@ export function CommandPalette() {
   const [result, setResult] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const plugins = usePlugins((s) => s.plugins);
 
   // Ctrl/Cmd+K toggles; focus and reset on open.
   useEffect(() => {
@@ -33,6 +38,10 @@ export function CommandPalette() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  useEffect(() => {
+    usePlugins.getState().load();
+  }, []);
+
   const q = query.trim().toLowerCase();
   const pageItems = useMemo<Item[]>(
     () =>
@@ -51,8 +60,29 @@ export function CommandPalette() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [q, pluginRevision],
   );
+  const pluginItems = useMemo<Item[]>(() => {
+    const out: Item[] = [];
+    for (const p of plugins) {
+      if (p.enabled) {
+        out.push({ kind: "plugin-toggle", pluginId: p.id, title: `禁用插件「${p.name}」` });
+        for (const c of p.commands) {
+          if (!q || c.title.toLowerCase().includes(q)) {
+            out.push({
+              kind: "plugin", pluginId: p.id, id: c.id, title: c.title, description: c.description,
+            });
+          }
+        }
+      } else if (!q || p.name.toLowerCase().includes(q)) {
+        out.push({ kind: "plugin-toggle", pluginId: p.id, title: `启用插件「${p.name}」` });
+      }
+    }
+    return out;
+  }, [plugins, q]);
 
-  const flat = useMemo(() => [...pageItems, ...cmdItems], [pageItems, cmdItems]);
+  const flat = useMemo(
+    () => [...pageItems, ...cmdItems, ...pluginItems],
+    [pageItems, cmdItems, pluginItems],
+  );
   useEffect(() => setSel(0), [query]);
 
   if (!open) return null;
@@ -61,6 +91,20 @@ export function CommandPalette() {
     if (item.kind === "page") {
       openPage(item.id);
       setOpen(false);
+      return;
+    }
+    if (item.kind === "plugin") {
+      try {
+        const msg = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId);
+        setResult(msg);
+      } catch (e) {
+        setResult(String(e));
+      }
+      return;
+    }
+    if (item.kind === "plugin-toggle") {
+      await usePlugins.getState().toggle(item.pluginId);
+      setResult("已切换插件状态");
       return;
     }
     const cmd = getAllCommands().find((c) => c.id === item.id);
@@ -90,16 +134,18 @@ export function CommandPalette() {
 
   const renderItem = (it: Item, idx: number) => (
     <button
-      key={`${it.kind}-${it.id}`}
+      key={`${it.kind}-${"id" in it ? it.id : it.pluginId}`}
       className={`palette-item ${idx === sel ? "palette-item-active" : ""}`}
       onClick={() => run(it)}
       onMouseEnter={() => setSel(idx)}
     >
       <span className="palette-title">
-        {it.kind === "page" ? "📄 " : ""}
+        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : ""}
         {it.title}
       </span>
-      <span className="palette-desc">{it.kind === "page" ? "打开页面" : it.description ?? ""}</span>
+      <span className="palette-desc">
+        {it.kind === "page" ? "打开页面" : it.kind === "plugin-toggle" ? "切换插件" : it.description ?? ""}
+      </span>
     </button>
   );
 
@@ -119,6 +165,10 @@ export function CommandPalette() {
           {pageItems.map((it, i) => renderItem(it, i))}
           {cmdItems.length > 0 && <div className="palette-group">命令</div>}
           {cmdItems.map((it, i) => renderItem(it, pageItems.length + i))}
+          {pluginItems.length > 0 && (
+            <div className="palette-group">插件</div>
+          )}
+          {pluginItems.map((it, i) => renderItem(it, pageItems.length + cmdItems.length + i))}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}
         </div>
         {result && <div className="palette-result">{result}</div>}

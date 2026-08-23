@@ -63,6 +63,22 @@ export interface PageVersion {
   created_at: number;
 }
 
+export interface PluginCommandMeta {
+  id: string;
+  title: string;
+  description: string;
+  close_on_run: boolean;
+}
+
+export interface PluginMeta {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  commands: PluginCommandMeta[];
+}
+
 export interface WorkspaceMeta {
   id: string;
   name: string;

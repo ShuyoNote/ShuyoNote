@@ -1,6 +1,6 @@
 [package]
 name = "shuyonote"
-version = "1.13.0"
+version = "1.14.0"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
@@ -29,3 +29,4 @@ tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 sha2 = "0.10"
 zip = "2"
+boa_engine = "0.21.1"

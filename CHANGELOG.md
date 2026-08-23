@@ -2,6 +2,29 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.14.0] - 2026-08-22
+
+### 新增
+
+- **插件系统底座（M11.1）**：从本地插件目录加载**命令插件**——
+  - 插件目录：`<appdata>/plugins/<id>/`，含 `manifest.json`（校验 `id==目录名`、`main` 必须同级文件名）+ `main.js`
+  - **受限 JS 运行时**（`bona_engine`，纯 Rust 沙盒）：插件在主程序里以受限 `register()`/`__get_current_page()`/`__pages()`/`__toast()` 白名单 API 执行，无任意 `fs`/DOM/网络
+  - 命令插件注册的命令进入**命令面板**（分组「插件」），点击执行并返回结果；支持启用/禁用
+  - **启用状态持久化**：插件启停落库（`sync_state`，修复此前内存态重启即失）
+  - 内置**示例插件**（首次运行 seed 到插件目录）；`list_plugins` / `set_plugin_enabled` / `run_plugin_command` 命令
+- **验证**：新增 2 个 Rust 单元测试跑通 boa 执行管道（`runs_a_command_and_reads_page_count` / `reports_missing_command`）
+
+### 变更
+
+- 引入 `boa_engine` 依赖（纯 Rust JS 引擎）；`CommandPalette` 合并磁盘插件命令
+- **文档**：路线图 M11.1（插件底座）标记已实现；插件管理面板（M11.2）仍待做
+
+### 说明
+
+- 插件的 `toast` 暂经 stderr 输出，UI toast 桥接归入后续；`__get_current_page` 已填充当前页 JSON。
+
+---
+
 ## [1.13.0] - 2026-08-22
 
 ### 新增

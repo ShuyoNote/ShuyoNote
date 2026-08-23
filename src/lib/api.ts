@@ -18,6 +18,7 @@ import type {
   Tag,
   TemplateMeta,
   WorkspaceMeta,
+  PluginMeta,
 } from "../types";
 
 export interface SyncConfig {
@@ -44,6 +45,10 @@ export const api = {
   getActiveWorkspaceId: () => invoke<string>("get_active_workspace_id"),
   setActiveWorkspaceId: (id: string) => invoke<void>("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke<void>("delete_workspace", { id }),
+  listPlugins: () => invoke<PluginMeta[]>("list_plugins"),
+  setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
+  runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null) =>
+    invoke<string>("run_plugin_command", { pluginId, commandId, currentId }),
   getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke<TemplateMeta[]>("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; space_id?: string | null }) =>
