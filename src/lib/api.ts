@@ -19,6 +19,7 @@ import type {
   TemplateMeta,
   WorkspaceMeta,
   PluginMeta,
+  DbViewMeta,
 } from "../types";
 
 export interface SyncConfig {
@@ -139,6 +140,10 @@ export const api = {
   boardByAttr: (attrId: string) =>
     invoke<BoardGroup[]>("board_by_attr", { attrId }),
   moveCard: (pageId: string, tagId: string) => invoke<void>("move_card", { pageId, tagId }),
+  listDbViews: (dbPageId: string) => invoke<DbViewMeta[]>("list_db_views", { dbPageId }),
+  saveDbView: (args: { db_page_id: string; name: string; view_type: string; config: string }) =>
+    invoke<DbViewMeta>("save_db_view", { args }),
+  deleteDbView: (id: string) => invoke<void>("delete_db_view", { id }),
   listDeleted: () => invoke<PageMeta[]>("list_deleted"),
   restorePage: (id: string) => invoke<void>("restore_page", { id }),
   purgePage: (id: string) => invoke<void>("purge_page", { id }),

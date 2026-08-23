@@ -4423,6 +4423,110 @@ select.prop-value {
   border-color: var(--accent);
 }
 
+.db-views-wrap {
+  position: relative;
+}
+.db-views-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.db-views-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.db-views-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 5px;
+}
+.db-views-title {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 4px 8px 3px;
+}
+.db-views-empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 8px;
+}
+.db-views-item {
+  display: flex;
+  align-items: center;
+}
+.db-views-item-main {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.db-views-item-main:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.db-views-item-del {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.db-views-item-del:hover {
+  color: var(--danger);
+}
+.db-views-save-row {
+  display: flex;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 3px;
+  padding-top: 6px;
+  padding-left: 4px;
+}
+.db-views-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+}
+.db-views-save-row button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.db-views-save-row button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
 .db-col-options {
   border: none;
   background: transparent;

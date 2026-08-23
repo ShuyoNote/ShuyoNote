@@ -1,6 +1,7 @@
 use crate::db::Db;
-use crate::models::{AttrDef, BoardGroup, DatabaseQuery, DatabaseRow, PageMeta};
+use crate::models::{AttrDef, BoardGroup, DatabaseQuery, DatabaseRow, DbViewMeta, PageMeta};
 use crate::properties::parse_options;
+use crate::db::now_ms;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -234,4 +235,77 @@ pub fn board_by_attr(db: State<'_, Db>, attr_id: String) -> Result<Vec<BoardGrou
         pages: unset,
     });
     Ok(groups)
+}
+
+fn row_to_view(row: &rusqlite::Row) -> rusqlite::Result<DbViewMeta> {
+    Ok(DbViewMeta {
+        id: row.get(0)?,
+        db_page_id: row.get(1)?,
+        name: row.get(2)?,
+        view_type: row.get(3)?,
+        config: row.get(4)?,
+        sort_order: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+#[tauri::command]
+pub fn list_db_views(db: State<'_, Db>, db_page_id: String) -> Result<Vec<DbViewMeta>, String> {
+    let c = conn(&db);
+    let mut stmt = c
+        .prepare(
+            "SELECT id, db_page_id, name, view_type, config, sort_order, created_at
+             FROM db_views WHERE db_page_id = ?1 ORDER BY sort_order ASC, created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(params![db_page_id], |row| row_to_view(row))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in mapped {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+pub struct SaveDbViewArgs {
+    pub db_page_id: String,
+    pub name: String,
+    pub view_type: String,
+    pub config: String,
+}
+
+#[tauri::command]
+pub fn save_db_view(db: State<'_, Db>, args: SaveDbViewArgs) -> Result<DbViewMeta, String> {
+    let c = conn(&db);
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = now_ms();
+    let next: f64 = c
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order),0) + 1 FROM db_views WHERE db_page_id = ?1",
+            params![args.db_page_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT INTO db_views (id, db_page_id, name, view_type, config, sort_order, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, args.db_page_id, args.name, args.view_type, args.config, next, now],
+    )
+    .map_err(|e| e.to_string())?;
+    c.query_row(
+        "SELECT id, db_page_id, name, view_type, config, sort_order, created_at FROM db_views WHERE id = ?1",
+        params![id],
+        |row| row_to_view(row),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_db_view(db: State<'_, Db>, id: String) -> Result<(), String> {
+    let c = conn(&db);
+    c.execute("DELETE FROM db_views WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

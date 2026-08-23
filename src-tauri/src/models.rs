@@ -61,6 +61,18 @@ pub struct TemplateMeta {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DbViewMeta {
+    pub id: String,
+    pub db_page_id: String,
+    pub name: String,
+    pub view_type: String,
+    #[serde(default)]
+    pub config: String,
+    pub sort_order: f64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SearchResult {
     pub id: String,
     pub title: String,

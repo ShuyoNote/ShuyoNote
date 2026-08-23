@@ -179,6 +179,16 @@ export interface PageProp {
   options: string[];
 }
 
+export interface DbViewMeta {
+  id: string;
+  db_page_id: string;
+  name: string;
+  view_type: string;
+  config: string;
+  sort_order: number;
+  created_at: number;
+}
+
 export interface DatabaseRow {
   page_id: string;
   title: string;

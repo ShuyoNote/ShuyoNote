@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.20.0] - 2026-08-22
+
+### 新增
+
+- **数据库 = 透镜（M13.1 多保存视图）**：数据库页工具栏新增「视图 ▾」——列出已保存视图、点击应用、删除、并可「保存当前视图」
+  - 每个保存视图记录 `{view_type, filter, sort, board_group_attr}` 配置（JSON），存于 `db_views` 表
+  - 后端 `save_db_view` / `list_db_views` / `delete_db_view`；数据库模板建库后可保存多套视图
+- 新增 `db_views` 表 + `DbViewMeta` 模型
+
+### 变更
+
+- DatabaseView 支持多视图保存/切换/删除；视图配置随库持久化
+- **文档**：路线图 M13（数据库贯通）新增，M13.1 标记已实现
+
+---
+
 ## [1.19.0] - 2026-08-22
 
 ### 新增

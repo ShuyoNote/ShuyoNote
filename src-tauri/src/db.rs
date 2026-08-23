@@ -67,6 +67,17 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_templates_space ON templates(space_id);
 
+        CREATE TABLE IF NOT EXISTS db_views (
+            id          TEXT PRIMARY KEY,
+            db_page_id  TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            view_type   TEXT NOT NULL,             -- table|kanban|gallery|list|calendar|timeline|directory
+            config      TEXT NOT NULL DEFAULT '{}', -- {filter,sort,board_group_attr}
+            sort_order  REAL NOT NULL DEFAULT 0,
+            created_at  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_db_views_page ON db_views(db_page_id);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS page_fts USING fts5(
             page_id UNINDEXED,
             title,

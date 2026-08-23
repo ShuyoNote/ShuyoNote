@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
-import type { AttrDef, DatabaseQuery, DatabaseRow } from "../types";
+import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag"] as const;
 const TYPE_LABELS: Record<string, string> = {
@@ -40,6 +40,43 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   });
   const [editingOptionsCol, setEditingOptionsCol] = useState<string | null>(null);
   const [optionsText, setOptionsText] = useState("");
+  const [views, setViews] = useState<DbViewMeta[]>([]);
+  const [viewsPop, setViewsPop] = useState(false);
+  const [viewName, setViewName] = useState("");
+
+  const loadViews = () => {
+    api.listDbViews(pageId).then(setViews).catch(() => {});
+  };
+  useEffect(loadViews, [pageId]);
+
+  const applyView = (v: DbViewMeta) => {
+    let cfg: any = {};
+    try {
+      cfg = JSON.parse(v.config);
+    } catch {
+      /* ignore */
+    }
+    setViewType(v.view_type as Parameters<typeof setViewType>[0]);
+    setFilter(cfg.filter ?? "");
+    setSort(cfg.sort ?? null);
+    setBoardGroupAttr(cfg.board_group_attr ?? null);
+    setViewsPop(false);
+  };
+  const saveCurrentView = async () => {
+    const name = viewName.trim() || `视图 ${views.length + 1}`;
+    const config = JSON.stringify({ filter, sort, board_group_attr: boardGroupAttr });
+    try {
+      await api.saveDbView({ db_page_id: pageId, name, view_type: viewType, config });
+      setViewName("");
+      loadViews();
+    } catch (e) {
+      toast(`保存视图失败：${e}`, "error");
+    }
+  };
+  const delView = async (v: DbViewMeta) => {
+    await api.deleteDbView(v.id);
+    loadViews();
+  };
 
   const load = () => {
     api.queryDatabase(pageId).then(setQuery).catch((e) => toast(String(e), "error"));
@@ -379,6 +416,46 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           >
             🗂 目录
           </button>
+        </div>
+        <div className="db-views-wrap">
+          <button className="db-views-btn" onClick={() => setViewsPop((v) => !v)}>
+            视图 {views.length > 0 ? `(${views.length})` : ""} ▾
+          </button>
+          {viewsPop && (
+            <div className="db-views-pop">
+              <div className="db-views-title">已保存视图</div>
+              {views.length === 0 ? (
+                <div className="db-views-empty">暂无保存视图</div>
+              ) : (
+                views.map((v) => (
+                  <div key={v.id} className="db-views-item">
+                    <button className="db-views-item-main" onClick={() => applyView(v)}>
+                      {v.name}
+                    </button>
+                    <button
+                      className="db-views-item-del"
+                      title="删除视图"
+                      onClick={() => delView(v)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+              <div className="db-views-save-row">
+                <input
+                  className="db-views-input"
+                  placeholder="视图名"
+                  value={viewName}
+                  onChange={(e) => setViewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveCurrentView();
+                  }}
+                />
+                <button onClick={saveCurrentView}>保存当前</button>
+              </div>
+            </div>
+          )}
         </div>
         <span className="database-count">{rows.length} 条</span>
       </div>
