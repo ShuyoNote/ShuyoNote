@@ -155,6 +155,27 @@ pub fn set_workspace_settings(
 #[tauri::command]
 pub fn list_workspaces(db: State<Db>) -> Result<Vec<WorkspaceMeta>, String> {
     let c = conn(&db);
+    // Backfill theme colors for legacy workspaces created before the per-space
+    // color feature (idempotent: only fills empty themes, distinct by creation order).
+    {
+        let ids: Vec<String> = c
+            .prepare(
+                "SELECT id FROM workspaces WHERE deleted_at IS NULL AND (theme IS NULL OR theme = '') ORDER BY created_at ASC, id ASC",
+            )
+            .map_err(|e| e.to_string())?
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        for (i, wid) in ids.iter().enumerate() {
+            let color = ACCENTS[i % ACCENTS.len()];
+            c.execute(
+                "UPDATE workspaces SET theme = ?1 WHERE id = ?2 AND (theme IS NULL OR theme = '')",
+                params![color, wid],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
     let mut stmt = c
         .prepare(&format!(
             "SELECT {WS_COLS} FROM workspaces WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC, id ASC"

@@ -408,7 +408,7 @@ body,
   padding: 0 2px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.55;
   transition: opacity var(--transition-fast), color var(--transition-fast);
 }
 .space-item:hover .space-item-op {
@@ -437,7 +437,7 @@ body,
   border-radius: 50%;
   border: 1px solid var(--border);
   background: var(--hover-strong);
-  opacity: 0;
+  opacity: 0.6;
 }
 .space-item:hover .space-color-btn {
   opacity: 1;
