@@ -133,6 +133,8 @@ pub fn run() {
             security::set_encryption,
             security::encryption_status,
             security::disable_encryption,
+            security::lock_encryption,
+            security::unlock_encryption,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

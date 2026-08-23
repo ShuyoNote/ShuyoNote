@@ -49,7 +49,8 @@
 ### M2 — 端到端加密（P0）
 本地加密后上传，服务端不可读；`content_json`/`content_text`/附件加密同步；每空间独立密钥（见[多空间方案](plans/2026-08-22-multi-workspace-plan.md#8-同步与加密)）。密钥仅存本机。
 - **M2.1 加密原语** ✅（v1.16.0）：Argon2id 密钥派生 + XChaCha20-Poly1305（`nonce||ciphertext`）+ 单元测试。
-- **M2.2 同步加密** ✅（v1.17.0，默认关）：`set_encryption`/`encryption_status`/`disable_encryption`（密钥/盐存本机）；`push` 加密 / `pull` 解密（服务端存密文）；未启用纯透传。注：设置面板 UI 与「口令解锁/锁定」为后续项；自建服务端端到端往返未在本环境验证（加密路径经单测）。
+- **M2.2 同步加密** ✅（v1.17.0，默认关）：`set_encryption`/`encryption_status`/`disable_encryption`（密钥/盐存本机）；`push` 加密 / `pull` 解密（服务端存密文）；未启用纯透传。
+- **M2.3 设置 UI + 口令解锁/锁定** ✅（v1.26.0）：主题设置弹层「端到端加密」区块（开启/关闭/状态徽章）；`lock_encryption`/`unlock_encryption` 会话锁定——锁定后同步被拒（`sync_gate`），须口令解锁；口令校验密文（sentinel）验证，密钥仅存本机。注：自建服务端端到端往返未在本环境验证（加密路径经单测）。
 
 ### M3 — 主题 / 外观自定义 + 插件雏形（P1）✅
 主题设置弹层（系统/亮/暗 + 6 色强调色，CSS 变量覆盖）+ 插件启停开关（`registry` 加 enabled，命令面板按启用过滤）。「本地目录扫描安装」归入 [插件方案](plans/2026-08-22-plugin-plan.md)。

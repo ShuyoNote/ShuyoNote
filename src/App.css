@@ -5567,6 +5567,48 @@ select.prop-value {
   border-color: var(--accent);
 }
 
+/* End-to-end encryption settings */
+.enc-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.enc-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.enc-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.enc-status-text {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.enc-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.enc-form .db-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.enc-form .plugin-toggle[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Markdown import dialog */
 .markdown-import-overlay {
   position: fixed;

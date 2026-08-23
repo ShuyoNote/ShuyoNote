@@ -241,6 +241,7 @@ async fn do_push(
 ) -> Result<(usize, i64), String> {
     let (device_id, last_pushed, changes): (String, i64, Vec<OutgoingChange>) = {
         let c = db.0.lock().expect("db mutex poisoned");
+        security::sync_gate(&c)?;
         let device_id = device_id(&c)?;
         let last_pushed = state_i64(&c, KEY_LAST_PUSHED);
         let mut stmt = c
@@ -327,6 +328,7 @@ async fn do_pull(
 ) -> Result<(usize, i64), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
+        security::sync_gate(&c)?;
         state_i64(&c, KEY_LAST_PULLED)
     };
 
