@@ -172,6 +172,10 @@ export const api = {
   exportBackup: (destPath: string) =>
     invoke<{ path: string; size: number }>("export_backup", { destPath }),
   importBackup: (srcPath: string) => invoke<void>("import_backup", { srcPath }),
+  exportWorkspace: (destPath: string) =>
+    invoke<{ path: string; size: number; pages: number; attachments: number }>("export_workspace", { destPath }),
+  importWorkspace: (srcPath: string, name?: string | null) =>
+    invoke<WorkspaceMeta>("import_workspace", { srcPath, name }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),

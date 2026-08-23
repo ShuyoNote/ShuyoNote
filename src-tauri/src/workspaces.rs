@@ -275,11 +275,15 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), Strin
     Ok(())
 }
 
-/// Copy a page (and its descendant tree) into another workspace. The copied rows
-/// keep their blockIds so intra-subtree block references still resolve; references
-/// to blocks outside the copied subtree become unresolved (documented limit, since
-/// block graphs are workspace-scoped). Properties, tags and attachment rows are
-/// re-parented to the new page ids (attachment bytes are content-addressed/shared).
+/// Copy a page (and its descendant tree) into another workspace, **across DBs**.
+/// The source rows are read from the current (active) space's DB; the rows are
+/// inserted into the TARGET space's DB (opened independently via open_space_conn).
+/// The copied rows keep their blockIds so intra-subtree block references still
+/// resolve; references to blocks outside the copied subtree become unresolved
+/// (documented limit, since block graphs are workspace-scoped). Properties, tags
+/// and attachment rows are re-parented to the new page ids. Attachment BYTES live
+/// in the global content-addressed store (shared across spaces), so only the
+/// attachment rows are copied — no byte duplication.
 #[tauri::command]
 pub fn copy_page_to_workspace(
     db: State<Db>,
@@ -287,19 +291,10 @@ pub fn copy_page_to_workspace(
     target_workspace_id: String,
     new_parent_id: Option<String>,
 ) -> Result<String, String> {
-    let c = conn(&db);
+    let src = conn(&db);
 
-    // M15 物理隔离：跨空间复制需要跨库 DML（目标空间库 + 附件拷贝），在 M15.4 实现。
-    // 在此前的单库模型里 "copy to another space" 会把页面字节写进当前库而 target_id
-    // 只是标记，导致物理隔离后内容错库。现在是物理隔离稳定期，跨空间复制尚未实现，
-    // 明确报错而非静默写错库。
-    let active = active_workspace_id(&c)?;
-    if target_workspace_id != active {
-        return Err("跨空间复制将在后续版本支持（单空间可复制到本空间的新位置）".to_string());
-    }
-
-    // Validate targets.
-    let ws_ok: bool = c
+    // Validate the target workspace exists (in meta).
+    let ws_ok: bool = src
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL)",
             params![target_workspace_id],
@@ -309,17 +304,21 @@ pub fn copy_page_to_workspace(
     if !ws_ok {
         return Err("目标工作空间不存在".to_string());
     }
-    if let Some(np) = &new_parent_id {
-        let parent_ok: bool = c
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND deleted_at IS NULL AND workspace_id = ?2)",
-                params![np, target_workspace_id],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if !parent_ok {
-            return Err("目标父页面不存在于目标工作空间".to_string());
-        }
+
+    // If copying within the same space, the target conn is the main connection.
+    let active = active_workspace_id(&src)?;
+    let same_space = target_workspace_id == active;
+
+    // Validate the source page exists in the source space.
+    let src_exists: bool = src
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND deleted_at IS NULL)",
+            params![page_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !src_exists {
+        return Err("源页面不存在".to_string());
     }
 
     // Collect the source subtree in BFS order, mapping old -> new id.
@@ -330,7 +329,7 @@ pub fn copy_page_to_workspace(
         let nid = uuid::Uuid::new_v4().to_string();
         id_map.insert(pid.clone(), nid.clone());
         order.push(pid.clone());
-        let mut stmt = c
+        let mut stmt = src
             .prepare("SELECT id FROM pages WHERE parent_id = ?1 AND deleted_at IS NULL")
             .map_err(|e| e.to_string())?;
         let kids: Vec<String> = stmt
@@ -343,9 +342,31 @@ pub fn copy_page_to_workspace(
         }
     }
 
+    // Open the target space's connection (may re-open the active file if same_space).
+    let tgt = if same_space {
+        None
+    } else {
+        Some(crate::db::open_space_conn(&target_workspace_id)?)
+    };
+    let tgt = tgt.as_ref().unwrap_or(&src);
+
+    // Validate the new parent against the TARGET space.
+    if let Some(np) = &new_parent_id {
+        let parent_ok: bool = tgt
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pages WHERE id = ?1 AND deleted_at IS NULL)",
+                params![np],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !parent_ok {
+            return Err("目标父页面不存在于目标工作空间".to_string());
+        }
+    }
+
     let now = now_ms();
     for old_id in &order {
-        // Fetch source row.
+        // Fetch source row from the SOURCE connection.
         let (parent, title, content_json, content_text, kind, sort_order, created_at): (
             Option<String>,
             String,
@@ -354,7 +375,7 @@ pub fn copy_page_to_workspace(
             String,
             f64,
             i64,
-        ) = c
+        ) = src
             .query_row(
                 "SELECT parent_id, title, content_json, content_text, kind, sort_order, created_at
                  FROM pages WHERE id = ?1 AND deleted_at IS NULL",
@@ -378,43 +399,41 @@ pub fn copy_page_to_workspace(
         let new_parent = if old_id == &page_id {
             new_parent_id.clone()
         } else {
-            let old_parent = parent.as_deref().map(|p| id_map.get(p).cloned()).flatten();
-            old_parent
+            parent.as_deref().map(|p| id_map.get(p).cloned()).flatten()
         };
 
-        c.execute(
+        tgt.execute(
             "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
             params![new_id, target_workspace_id, new_parent, title, content_json, content_text, kind, sort_order, created_at, now],
         )
         .map_err(|e| e.to_string())?;
 
-        // Copy page props (global attr_defs), tags, and attachment rows.
-        c.execute(
+        // Copy page props, tags, and attachment rows (bytes are content-addressed/global).
+        tgt.execute(
             "INSERT INTO page_props (page_id, attr_id, value)
              SELECT ?1, attr_id, value FROM page_props WHERE page_id = ?2",
             params![new_id, old_id],
         )
         .map_err(|e| e.to_string())?;
-        c.execute(
+        tgt.execute(
             "INSERT INTO page_tags (page_id, tag_id)
              SELECT ?1, tag_id FROM page_tags WHERE page_id = ?2",
             params![new_id, old_id],
         )
         .map_err(|e| e.to_string())?;
-        c.execute(
+        tgt.execute(
             "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
              SELECT ?1, ?2, name, hash, mime, size, created_at FROM attachments WHERE page_id = ?3",
             params![uuid::Uuid::new_v4().to_string(), new_id, old_id],
         )
         .map_err(|e| e.to_string())?;
 
-        // Rebuild indexes for the new page so search/blocks/backlinks/graph work
-        // in the target workspace.
-        crate::search::sync_fts(&c, &new_id, &title, &content_text)?;
-        crate::blocks::rebuild_block_graph(&c, &new_id, &content_json, &content_text)?;
+        // Rebuild indexes in the TARGET space so search/blocks/backlinks/graph work.
+        crate::search::sync_fts(tgt, &new_id, &title, &content_text)?;
+        crate::blocks::rebuild_block_graph(tgt, &new_id, &content_json, &content_text)?;
 
-        // Record a sync upsert so the copied page propagates to the server.
+        // Record a sync upsert (against the target's changes outbox).
         let detail = crate::models::PageDetail {
             id: new_id.clone(),
             workspace_id: target_workspace_id.clone(),
@@ -427,8 +446,10 @@ pub fn copy_page_to_workspace(
             created_at,
             updated_at: now,
         };
-        crate::sync::record_page_upsert(&c, &detail)?;
+        crate::sync::record_page_upsert(tgt, &detail)?;
     }
 
+    // The temporary target connection (if any) drops at end of scope; the ref
+    // binding `tgt` borrows either it or the main conn.
     Ok(id_map.get(&page_id).cloned().unwrap_or_default())
 }

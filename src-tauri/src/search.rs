@@ -137,30 +137,72 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// Run one search pass against a single connection (a single space's DB).
+fn search_in_conn(
+    c: &Connection,
+    text: &str,
+    filters: &[(String, String)],
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
+    let mut results = if text.is_empty() {
+        list_pages_brief(c, 200)?
+    } else if text.chars().count() < 3 {
+        search_like(c, text, limit)?
+    } else {
+        search_fts(c, text, limit)?
+    };
+    if !filters.is_empty() {
+        let ids = pages_matching_filters(c, filters)?;
+        results.retain(|r| ids.contains(&r.id));
+    }
+    results.truncate(limit);
+    Ok(results)
+}
+
 #[tauri::command]
-pub fn search(db: State<Db>, args: SearchArgs) -> Result<Vec<SearchResult>, String> {
-    let c = db.0.lock().expect("db mutex poisoned");
+pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchResult>, String> {
     let limit = args.limit.unwrap_or(50).min(200);
     let (text, filters) = parse_prop_filters(args.query.trim());
     if text.is_empty() && filters.is_empty() {
         return Ok(vec![]);
     }
 
-    // Base results: by text (FTS/LIKE), or all pages when only filters given.
-    // M15 物理隔离：连接即当前空间库，搜索自然限定在该空间；跨空间聚合将在 M15.4 实现。
-    let mut results = if text.is_empty() {
-        list_pages_brief(&c, 200)?
-    } else if text.chars().count() < 3 {
-        search_like(&c, &text, limit)?
-    } else {
-        search_fts(&c, &text, limit)?
-    };
+    // Determine target space(s). all_spaces -> iterate every non-deleted space's
+    // own DB and merge (cross-space aggregation). Otherwise search only the
+    // active space's DB (the main connection).
+    if args.all_spaces.unwrap_or(false) {
+        // Collect (workspace_id, name) from meta.
+        let spaces: Vec<(String, String)> = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            let mut stmt = c
+                .prepare("SELECT id, name FROM meta.workspaces WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC, id ASC")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        };
 
-    if !filters.is_empty() {
-        let ids = pages_matching_filters(&c, &filters)?;
-        results.retain(|r| ids.contains(&r.id));
+        let mut out: Vec<SearchResult> = Vec::new();
+        // Each space gets a fair share of the global limit (integer ceiling).
+        let n = spaces.len().max(1);
+        let per_limit = (limit + n - 1) / n;
+        for (sid, sname) in spaces {
+            let conn = crate::db::open_space_conn(&sid)?;
+            let mut hits = search_in_conn(&conn, &text, &filters, per_limit)?;
+            for h in hits.iter_mut() {
+                if h.space.is_none() {
+                    h.space = Some(sname.clone());
+                }
+            }
+            out.append(&mut hits);
+        }
+        out.truncate(limit);
+        return Ok(out);
     }
 
+    let c = db.0.lock().expect("db mutex poisoned");
+    let mut results = search_in_conn(&c, &text, &filters, limit)?;
     results.truncate(limit);
     Ok(results)
 }

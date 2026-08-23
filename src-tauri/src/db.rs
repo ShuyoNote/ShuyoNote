@@ -40,6 +40,26 @@ pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), Str
     Ok(())
 }
 
+/// Open a SECOND, independent connection to an arbitrary space's DB file (with
+/// meta re-attached), WITHOUT disturbing the main connection. Used by cross-space
+/// operations (all-space search, cross-space copy/cleanup) that need to read/write
+/// a non-active space's content. `space_id` must already exist on disk.
+pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
+    let dir = APP_DATA_DIR
+        .get()
+        .ok_or_else(|| "app data dir not initialised".to_string())?;
+    let conn = Connection::open(space_db_path(dir, space_id)).map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+    // Only migrate if the file is empty/brand new; an existing DB migrates idempotently.
+    migrate(&conn, space_id).map_err(|e| e.to_string())?;
+    let meta = meta_path(dir).display().to_string().replace('\'', "''");
+    conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
+        .map_err(|e| format!("attach meta failed: {e}"))?;
+    Ok(conn)
+}
+
 pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     let _ = APP_DATA_DIR.set(app_data_dir.clone());
     std::fs::create_dir_all(&app_data_dir).expect("failed to create app data dir");
@@ -460,6 +480,22 @@ pub fn now_ms() -> i64 {
 mod tests {
     use super::*;
 
+    // Serializes tests that call init() (which sets the global APP_DATA_DIR
+    // OnceLock). Running such tests in parallel clobbers the shared dir.
+    static INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // APP_DATA_DIR is set by the FIRST init() and never changes, so every test
+    // that calls init() must use the SAME directory.
+    static TEST_DIR: OnceLock<PathBuf> = OnceLock::new();
+    fn test_dir() -> &'static Path {
+        TEST_DIR.get_or_init(|| {
+            let d = std::env::temp_dir().join("shuyonote-tests");
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        })
+    }
+
     #[test]
     fn migrate_adds_workspace_settings_columns() {
         let conn = Connection::open_in_memory().unwrap();
@@ -505,17 +541,15 @@ mod tests {
     // violated the pages.workspace_id FK because migrate only seeded 'default'.
     #[test]
     fn reopen_to_second_space_then_insert_home_page() {
-        let dir = std::env::temp_dir().join(format!("shuyonote-e2e-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let conn = init(dir.clone()).unwrap();
+        let _guard = INIT_LOCK.lock().unwrap();
+        let conn = init(test_dir().to_path_buf()).unwrap();
 
-        let second = "ws-second";
+        let second = "ws-e2e2";
         let mut c = conn;
         reopen_space(&mut c, second).unwrap();
         c.execute(
             "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
-             VALUES ('home', ?1, NULL, 'start', '{}', '', 'page', 0, 1, 1, NULL)",
+             VALUES ('home-e2e2', ?1, NULL, 'start', '{}', '', 'page', 0, 1, 1, NULL)",
             params![second],
         )
         .unwrap();
@@ -524,6 +558,46 @@ mod tests {
             .unwrap();
         assert_eq!(n, 1);
         drop(c);
-        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // open_space_conn opens an independent connection to a non-active space's DB,
+    // reading/writing it WITHOUT disturbing the main connection.
+    #[test]
+    fn open_space_conn_reads_other_space() {
+        let _guard = INIT_LOCK.lock().unwrap();
+        let conn = init(test_dir().to_path_buf()).unwrap();
+
+        let second = "ws-conn2";
+        let mut c = conn;
+        reopen_space(&mut c, second).unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
+             VALUES ('home-conn2', ?1, NULL, 'start', '{}', '', 'page', 0, 1, 1, NULL)",
+            params![second],
+        )
+        .unwrap();
+        // The main conn is currently pointing at the second space.
+        let main_now: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .unwrap();
+        assert_eq!(main_now, 1);
+
+        // Reopen the main conn back to 'default' (so we are NOT on the second space).
+        reopen_space(&mut c, "default").unwrap();
+
+        // Open an independent conn to the second space and read its page.
+        let other = open_space_conn(second).unwrap();
+        let n: i64 = other
+            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        // And the main ('default') conn has no page for the second space.
+        let main_def: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages WHERE workspace_id = ?1", params![second], |r| r.get(0))
+            .unwrap();
+        assert_eq!(main_def, 0);
+
+        drop(other);
+        drop(c);
     }
 }

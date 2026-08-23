@@ -80,22 +80,30 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
                 |r| r.get(0),
             )
             .unwrap_or(0);
+        // Soft-deleted workspaces live in meta (app-level), not per-space.
         let deleted_workspace_count: i64 = c
-            .query_row("SELECT COUNT(*) FROM workspaces WHERE deleted_at IS NOT NULL", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NOT NULL", [], |r| r.get(0))
             .unwrap_or(0);
         (trash_count, trash_bytes, version_count, version_bytes, deleted_workspace_count)
     };
 
-    let db_dir = app_data_dir.clone();
     let att_dir = attachment_dir.clone();
     let tmp = std::env::temp_dir();
-    let db_path2 = app_data_dir.join("shuyonote.db");
+    // Physical isolation: DB bytes = sum of all per-space DB files under spaces/.
+    let spaces_dir = app_data_dir.join("spaces");
     let att_dir2 = attachment_dir.clone();
     let (db_bytes, attachment_bytes, attachment_count, temp_bytes) =
         tauri::async_runtime::spawn_blocking(move || {
-            let db_bytes = std::fs::metadata(&db_path2).map(|m| m.len()).unwrap_or(0) as i64
-                + std::fs::metadata(db_dir.join("shuyonote.db-wal")).map(|m| m.len()).unwrap_or(0) as i64
-                + std::fs::metadata(db_dir.join("shuyonote.db-shm")).map(|m| m.len()).unwrap_or(0) as i64;
+            // Sum every per-space DB file (db + wal + shm) under spaces/.
+            let mut db_bytes: i64 = 0;
+            if let Ok(entries) = std::fs::read_dir(&spaces_dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.is_file() {
+                        db_bytes += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) as i64;
+                    }
+                }
+            }
             let att = dir_size(&att_dir);
             let mut temp_bytes: i64 = 0;
             if let Ok(entries) = std::fs::read_dir(&tmp) {
@@ -331,98 +339,110 @@ pub struct WorkspacePurgeResult {
     pub workspaces: usize,
 }
 
-/// M14.4 — Permanently delete soft-deleted workspaces and their whole page tree.
+/// M14.4 / M15.4c — Permanently delete soft-deleted workspaces. Under physical
+/// isolation each deleted workspace's content lives in its OWN `spaces/<id>.db`,
+/// so purging removes that DB file (and WAL) rather than deleting rows from the
+/// active DB. The soft-deleted rows come from meta.workspaces. Then any attachment
+/// bytes unreferenced by every remaining space's DB are freed (global store).
 #[tauri::command]
 pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) -> Result<WorkspacePurgeResult, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
+    let spaces_dir = app_data_dir.join("spaces");
 
-    let (ws_ids, page_ids, hashes) = {
+    // Soft-deleted workspace ids from meta.
+    let deleted_ids: Vec<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let mut wstmt = c.prepare("SELECT id FROM workspaces WHERE deleted_at IS NOT NULL").map_err(|e| e.to_string())?;
-        let ws_ids: Vec<String> = wstmt
+        let mut stmt = c
+            .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows: Result<Vec<String>, _> = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())?;
-
-        let mut page_ids = Vec::new();
-        let mut hashes = Vec::new();
-        if !ws_ids.is_empty() {
-            let mut pg = c.prepare("SELECT id FROM pages WHERE workspace_id = ?1").map_err(|e| e.to_string())?;
-            let mut ha = c.prepare("SELECT hash FROM attachments WHERE page_id = ?1").map_err(|e| e.to_string())?;
-            for wid in &ws_ids {
-                let pids: Vec<String> = pg
-                    .query_map(params![wid], |r| r.get::<_, String>(0))
-                    .map_err(|e| e.to_string())?
-                    .collect::<Result<_, _>>()
-                    .map_err(|e| e.to_string())?;
-                for pid in &pids {
-                    let hs: Vec<String> = ha
-                        .query_map(params![pid], |r| r.get::<_, String>(0))
-                        .map_err(|e| e.to_string())?
-                        .collect::<Result<_, _>>()
-                        .map_err(|e| e.to_string())?;
-                    hashes.extend(hs);
-                }
-                page_ids.extend(pids);
-            }
-        }
-        (ws_ids, page_ids, hashes)
+            .collect();
+        rows.map_err(|e| e.to_string())?
     };
 
-    // Delete cascade + workspaces in a transaction.
-    {
-        let mut c = db.0.lock().expect("db mutex poisoned");
-        let tx = c.transaction().map_err(|e| e.to_string())?;
-        // Break parent-child FK links (pages.parent_id has no ON DELETE CASCADE).
-        tx.execute(
-            "UPDATE pages SET parent_id = NULL WHERE parent_id IN (SELECT id FROM pages WHERE workspace_id IN (SELECT id FROM workspaces WHERE deleted_at IS NOT NULL))",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-        tx.execute(
-            "UPDATE pages SET parent_id = NULL WHERE workspace_id IN (SELECT id FROM workspaces WHERE deleted_at IS NOT NULL)",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-        for pid in &page_ids {
-            for sql in [
-                "DELETE FROM page_props WHERE page_id = ?1",
-                "DELETE FROM page_tags WHERE page_id = ?1",
-                "DELETE FROM page_versions WHERE page_id = ?1",
-                "DELETE FROM database_columns WHERE db_page_id = ?1",
-                "DELETE FROM backlinks WHERE source_page_id = ?1 OR target_page_id = ?1",
-                "DELETE FROM blocks WHERE page_id = ?1",
-                "DELETE FROM attachments WHERE page_id = ?1",
-                "DELETE FROM page_fts WHERE page_id = ?1",
-                "DELETE FROM pages WHERE id = ?1",
-            ] {
-                tx.execute(sql, params![pid]).map_err(|e| e.to_string())?;
+    // For each deleted space, open its DB to collect the hashes it referenced, then
+    // delete its DB + WAL files. Also collect the set of hashes still referenced by
+    // any REMAINING space (so we only free truly-orphaned bytes).
+    let deleted_for_files = deleted_ids.clone();
+    let (hashes_to_free, freed_bytes) = tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<String>, u64), String> {
+        let mut freed_bytes: u64 = 0u64;
+        let mut released_hashes: Vec<String> = Vec::new();
+
+        for sid in &deleted_for_files {
+            // Collect this space's referenced hashes by opening its DB (read-only intent).
+            if let Ok(conn) = crate::db::open_space_conn(sid) {
+                if let Ok(mut stmt) = conn.prepare(
+                    "SELECT DISTINCT a.hash FROM attachments a JOIN pages p ON p.id = a.page_id",
+                ) {
+                    if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                        for h in rows.flatten() {
+                            released_hashes.push(h);
+                        }
+                    }
+                }
+            }
+            // Delete the space DB + WAL/shm.
+            for suffix in ["", "-wal", "-shm"] {
+                let p = spaces_dir.join(format!("{sid}.db{suffix}"));
+                if let Ok(m) = std::fs::metadata(&p) {
+                    if m.is_file() {
+                        freed_bytes += m.len();
+                        let _ = std::fs::remove_file(p);
+                    }
+                }
             }
         }
-        for wid in &ws_ids {
-            tx.execute("DELETE FROM workspaces WHERE id = ?1", params![wid]).map_err(|e| e.to_string())?;
+
+        Ok((released_hashes, freed_bytes))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    // Remove the soft-deleted meta.workspaces rows (now that their DBs are gone).
+    {
+        let c = db.0.lock().expect("db mutex poisoned");
+        for sid in &deleted_ids {
+            c.execute("DELETE FROM meta.workspaces WHERE id = ?1", params![sid])
+                .map_err(|e| e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
     }
 
-    let orphaned: std::collections::HashSet<String> = {
+    // Free orphaned attachment bytes: hashes referenced ONLY by deleted spaces.
+    // Compute the set of hashes still referenced by any remaining space's DB.
+    let remaining_ids: Vec<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let mut set = std::collections::HashSet::new();
-        for hash in &hashes {
-            let n: i64 = c
-                .query_row("SELECT COUNT(*) FROM attachments WHERE hash = ?1", params![hash], |r| r.get(0))
-                .unwrap_or(0);
-            if n == 0 {
-                set.insert(hash.clone());
+        let mut stmt = c
+            .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NULL")
+            .map_err(|e| e.to_string())?;
+        let rows: Result<Vec<String>, _> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect();
+        rows.map_err(|e| e.to_string())?
+    };
+    let mut referenced_remaining: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for sid in remaining_ids {
+        if let Ok(conn) = crate::db::open_space_conn(&sid) {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT DISTINCT a.hash FROM attachments a JOIN pages p ON p.id = a.page_id",
+            ) {
+                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                    referenced_remaining.extend(rows.flatten());
+                }
             }
         }
-        set
-    };
+    }
+
+    let orphaned: Vec<String> = hashes_to_free
+        .into_iter()
+        .filter(|h| !referenced_remaining.contains(h))
+        .collect();
 
     let att_dir = attachment_dir;
-    let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
+    let freed_att_bytes = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
         let mut freed: u64 = 0;
         for hash in orphaned {
             if let Some(p) = find_file_by_hash(&att_dir, &hash) {
@@ -435,7 +455,7 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     .await
     .map_err(|e| e.to_string())??;
 
-    Ok(WorkspacePurgeResult { freed, workspaces: ws_ids.len() })
+    Ok(WorkspacePurgeResult { freed: freed_bytes + freed_att_bytes, workspaces: deleted_ids.len() })
 }
 
 #[cfg(test)]

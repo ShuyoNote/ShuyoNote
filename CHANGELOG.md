@@ -2,6 +2,32 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.41.0] - 2026-08-22
+
+### 新增
+
+- **每工作空间独立存储（物理隔离，M15.3–M15.5，里程碑达成）**：
+  - **单空间备份/导出（M15.3）**：`export_workspace` 把**当前空间**打包成自包含 zip（空间库快照 + 该空间引用的附件字节 + `workspace.json` 元数据）；`import_workspace` 导入为**新空间**（永不覆盖现有空间），抽取空间库到 `spaces/<id>.db`、附件字节复制进全局内容寻址库、注册 meta.workspaces
+  - **跨空间适配（M15.4）**：
+    - **全空间搜索跨库合并**：`search(all_spaces)` 遍历各空间库聚合结果（空间名在结果中标注）
+    - **跨空间复制跨库**：`copy_page_to_workspace` 打开目标空间库插行（重映射父级 + 复制属性/标签/附件行 + 重建 FTS/块图 + 记录同步 upsert）；附件字节全局共享不重复
+    - **空间清理按各自空间**：`purge_deleted_workspaces` 物理删除各软删空间库文件 + 释放跨空间孤儿附件
+  - **验收 + 清理（M15.5）**：全功能回归（后端 20 项单测 + `tsc` 无错 + Vite 生产构建 + 应用运行验证）；**归档原单库 `shuyonote.db`** 为 `.archived`（可回滚恢复）
+- 后端由 15 项单测增至 **20 项**（新增：空间包解析、跨空间引用哈希、`open_space_conn` 独立读非活动空间、第二空间创建 E2E）；编译 + 测试 + 前端构建通过
+
+### 变更
+
+- `db.rs`：新增 `open_space_conn(space_id)` —— 打开任意空间的独立连接（含 ATTACH meta），供跨空间搜索/复制/清理使用；`migrate(space_id)` 播种各空间自己的 `workspaces` 行
+- `storage.rs`：`storage_stats` 的 `db_bytes` 改为统计 `spaces/*.db` 之和（原 `shuyonote.db` 已归档）；`deleted_workspace_count` 改读 `meta.workspaces`；`purge_deleted_workspaces` 重写为物理删除软删空间库
+- `workspaces.rs`：`copy_page_to_workspace` 支持**跨空间**（此前仅同空间可用）；去重/清理跨空间复用 `open_space_conn`
+
+### 说明
+
+- **评估未做（可选/环境受限，已在路线图标注）**：M11.3 UI 型插件、M11.4 插件市场/签名（L2/L3 高阶，收益/风险与规模受限）；M6 移动端（缺 iOS/Android 工具链，环境受限）
+- **取舍**：附件字节保持**全局内容寻址**（跨空间去重），以「空间级附件子集导出」实现单空间可搬移；E2EE 密钥与同步游标保持每空间
+
+---
+
 ## [1.40.0] - 2026-08-22
 
 ### 变更

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
@@ -430,6 +431,56 @@ export function PageTree({
     setEditingName(false);
   };
 
+  const exportSpace = async () => {
+    try {
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      const safe = (workspaceName || "space")
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+        .replace(/\s+/g, "-")
+        .trim()
+        .slice(0, 40);
+      const path = await save({
+        title: "导出当前工作空间",
+        defaultPath: `space-${safe}-${stamp}.zip`,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      });
+      if (!path) return;
+      const result = await api.exportWorkspace(path);
+      toast(
+        `空间导出完成：大小 ${(result.size / 1024).toFixed(1)} KB${result.attachments ? ` · 附件 ${result.attachments} 个` : ""}`,
+        "success",
+      );
+    } catch (e) {
+      toast(`空间导出失败：${e}`, "error");
+    }
+    spaceChooser.close();
+  };
+
+  const importSpace = async () => {
+    try {
+      const path = await open({
+        title: "导入工作空间",
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+        multiple: false,
+      });
+      if (!path) return;
+      if (
+        !(await confirmDialog({
+          title: "导入工作空间",
+          message: "导入将新建一个工作空间（不会覆盖现有空间）。确定继续？",
+        }))
+      ) {
+        return;
+      }
+      const meta = await api.importWorkspace(path as string);
+      toast(`已导入工作空间「${meta.name}」`, "success");
+      await useSpaceStore.getState().load();
+    } catch (e) {
+      toast(`空间导入失败：${e}`, "error");
+    }
+    spaceChooser.close();
+  };
+
   const removeSpace = async (id: string) => {
     const name = spaces.find((s) => s.id === id)?.name ?? "该工作空间";
     if (
@@ -650,6 +701,16 @@ export function PageTree({
                   <span className="space-item-mark">＋</span>
                   <span className="space-item-name">新建工作空间</span>
                 </button>
+                <div className="space-switcher-io">
+                  <button onClick={exportSpace}>
+                    <span className="space-item-mark">⇪</span>
+                    <span className="space-item-name">导出当前空间</span>
+                  </button>
+                  <button onClick={importSpace}>
+                    <span className="space-item-mark">⇣</span>
+                    <span className="space-item-name">导入空间包</span>
+                  </button>
+                </div>
               </div>
             )}
           </span>

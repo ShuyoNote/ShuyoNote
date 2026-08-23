@@ -399,6 +399,30 @@ body,
   padding-top: 7px;
 }
 
+.space-switcher-io {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+}
+.space-switcher-io button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.space-switcher-io button:hover {
+  background: var(--hover);
+}
+
 .space-item-op {
   border: none;
   background: transparent;

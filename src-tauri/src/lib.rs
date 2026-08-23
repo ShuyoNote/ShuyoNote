@@ -19,6 +19,7 @@ mod templates;
 mod trash;
 mod versions;
 mod windows;
+mod workspace_io;
 mod workspaces;
 
 use db::Db;
@@ -128,6 +129,8 @@ pub fn run() {
             backup::import_backup,
             backup::write_text_file,
             backup::read_text_file,
+            workspace_io::export_workspace,
+            workspace_io::import_workspace,
             storage::storage_stats,
             storage::clear_trash,
             storage::cleanup_orphan_attachments,
