@@ -242,6 +242,14 @@ export class SqliteStore {
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS page_versions (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        content_json TEXT NOT NULL DEFAULT '',
+        content_text TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_pages_ws ON pages(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id);
       CREATE INDEX IF NOT EXISTS idx_pages_deleted ON pages(deleted_at);
@@ -249,6 +257,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_db_views ON db_views(db_page_id);
       CREATE INDEX IF NOT EXISTS idx_page_props ON page_props(page_id);
       CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
+      CREATE INDEX IF NOT EXISTS idx_page_versions ON page_versions(page_id, created_at DESC);
     `);
     // Safe migration for pre-existing DBs whose `pages` table predates db_rule.
     try {

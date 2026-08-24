@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.54.0] - 2026-08-24
+
+### 新增（Web 平台版本历史）
+
+- **浏览器版支持「版本历史」**（对齐桌面，恢复误改内容的能力）：
+  - `sqliteStore` 加 `page_versions` 表（id/page_id/title/content_json/content_text/created_at + 索引）。
+  - `save_page` 在覆盖前调用 `snapshotBeforeSave`——**快照当前内容到版本历史**，**去重连续相同快照** + **每页保留最近 50 版**（对齐 Rust `MAX_VERSIONS_PER_PAGE`）。
+  - 实现 `list_versions`（按 page_id 倒序列出，限 100）、`restore_version`（把版本内容写回页面并返回 `PageDetail`，供前端 `updateCurrent`+重开页面）。
+  - `cleanup_old_versions(maxKeep)`：删除每页「超过 maxKeep 的旧版本」，返回释放数量；`storage_stats` 的 `version_count` 改为真实 `page_versions` 计数。
+  - `scripts/smoke-web.mjs` 50→**56 项全绿**（新增：list_versions 返回快照 / save_page 触发快照 / restore_version 返回 PageDetail / cleanup_old_versions 释放计数 / 上限回收 / storage_stats 版本计数）。
+
+---
+
 ## [1.53.0] - 2026-08-24
 
 ### 新增（Web 平台属性 / 数据库透镜）

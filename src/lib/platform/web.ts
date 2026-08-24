@@ -195,6 +195,30 @@ function resolveRefLabels(store: SqliteStore, values: string[]): Record<string, 
   return out;
 }
 
+// Snapshot a page's content into page_versions before it is mutated. Dedups
+// identical consecutive snapshots and caps history at MAX per page.
+const MAX_VERSIONS_PER_PAGE = 50;
+function snapshotBeforeSave(store: SqliteStore, pageId: string, title: string, contentJson: string, contentText: string): void {
+  const last = store.query<{ title: string; content_json: string; content_text: string }>(
+    "SELECT title, content_json, content_text FROM page_versions WHERE page_id = ? ORDER BY created_at DESC LIMIT 1",
+    [pageId],
+  )[0];
+  if (last && last.title === title && last.content_json === contentJson && last.content_text === contentText) return;
+  const id = uid();
+  store.run("INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
+    id, pageId, title ?? "", contentJson ?? "", contentText ?? "", Date.now(),
+  ]);
+  // Cap history: keep the newest MAX per page.
+  store.run(
+    "DELETE FROM page_versions WHERE page_id = ? AND id NOT IN (SELECT id FROM page_versions WHERE page_id = ? ORDER BY created_at DESC LIMIT ?)",
+    [pageId, pageId, MAX_VERSIONS_PER_PAGE],
+  );
+}
+
+function toPageVersion(row: any) {
+  return { id: row.id, page_id: row.page_id, title: row.title, content_text: row.content_text, created_at: row.created_at };
+}
+
 // ---- The executor. Core CRUD runs real SQL; everything else degrades safely. ----
 
 function makeInvoke(store: SqliteStore) {
@@ -245,6 +269,8 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "save_page") {
       const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [a.id])[0];
       if (p) {
+        // Snapshot the current content BEFORE we overwrite it (version history).
+        snapshotBeforeSave(store, a.id, str(a.title ?? p.id), str(a.content_json ?? ""), str(a.content_text ?? ""));
         store.run(
           `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?
            WHERE id = ?`,
@@ -681,12 +707,12 @@ function makeInvoke(store: SqliteStore) {
 
     // ---- Storage / cleanup ----
     if (cmd === "storage_stats") {
-      const pages = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL")[0]?.n ?? 0;
       const trash = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NOT NULL")[0]?.n ?? 0;
       const atts = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments")[0]?.n ?? 0;
+      const versions = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions")[0]?.n ?? 0;
       return {
         db_bytes: 0, attachment_bytes: 0, attachment_count: atts,
-        trash_count: trash, trash_bytes: 0, version_count: pages,
+        trash_count: trash, trash_bytes: 0, version_count: versions,
         version_bytes: 0, deleted_workspace_count: 0, temp_bytes: 0,
       } as T;
     }
@@ -694,12 +720,41 @@ function makeInvoke(store: SqliteStore) {
       store.run("DELETE FROM pages WHERE deleted_at IS NOT NULL");
       return 0 as T;
     }
-    if (cmd === "cleanup_orphan_attachments" || cmd === "cleanup_old_versions" || cmd === "cleanup_temp_files") return 0 as T;
+    if (cmd === "cleanup_orphan_attachments" || cmd === "cleanup_temp_files") return 0 as T;
+    if (cmd === "cleanup_old_versions") {
+      const maxKeep = Number(a.maxKeep ?? 50);
+      const before = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions")[0]?.n ?? 0;
+      store.run(
+        `DELETE FROM page_versions WHERE id NOT IN (
+           SELECT id FROM page_versions pv
+           WHERE (SELECT COUNT(*) FROM page_versions v2 WHERE v2.page_id = pv.page_id AND v2.created_at >= pv.created_at) <= ?
+         )`,
+        [maxKeep],
+      );
+      const after = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions")[0]?.n ?? 0;
+      return (before - after) as T;
+    }
     if (cmd === "purge_deleted_workspaces") return { freed: 0, workspaces: 0 } as T;
 
     // ---- Versions ----
-    if (cmd === "list_versions") return [] as T;
-    if (cmd === "restore_version") return null as T;
+    if (cmd === "list_versions") {
+      const rows = store.query(
+        "SELECT id, page_id, title, content_text, created_at FROM page_versions WHERE page_id = ? ORDER BY created_at DESC LIMIT 100",
+        [a.pageId ?? a.page_id ?? ""],
+      );
+      return rows.map(toPageVersion) as T;
+    }
+    if (cmd === "restore_version") {
+      const r = store.query<{ page_id: string; title: string; content_json: string; content_text: string }>(
+        "SELECT page_id, title, content_json, content_text FROM page_versions WHERE id = ?",
+        [a.versionId ?? a.id ?? ""],
+      )[0];
+      if (!r) throw new Error("版本不存在");
+      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ? WHERE id = ?", [
+        r.title, r.content_json, r.content_text, Date.now(), r.page_id,
+      ]);
+      return store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0] as T;
+    }
 
     // ---- Backup / export / import (browser: no-op, no real file I/O) ----
     if (cmd === "export_backup") return { path: "", size: 0 } as T;

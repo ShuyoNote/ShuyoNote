@@ -285,6 +285,25 @@ await invoke("move_card", { pageId: created.id, tagId: tag2.id });
 const afterMove = await invoke("page_tags", { page_id: created.id });
 assert("move_card reassigns tag", Array.isArray(afterMove) && afterMove.some((t) => t.id === tag2.id));
 
+// 10g. Version history: save_page snapshots, list/restore/cleanup.
+// The page `created` was already saved several times, so versions exist.
+const vBeforeSave = await invoke("list_versions", { pageId: created.id });
+assert("list_versions returns snapshots", Array.isArray(vBeforeSave) && vBeforeSave.length >= 1, `${vBeforeSave?.length} version(s)`);
+// Save a change → new snapshot.
+await invoke("save_page", { id: created.id, title: "改名后", content_json: '{"root":{"children":[]}}', content_text: "v2 内容" });
+const vAfter = await invoke("list_versions", { pageId: created.id });
+assert("save_page adds a version snapshot", Array.isArray(vAfter) && vAfter.length > vBeforeSave.length);
+// Restore the second snapshot (an older one) and confirm content changes back.
+const restoredVer = await invoke("restore_version", { versionId: vAfter[vAfter.length - 1].id });
+assert("restore_version returns PageDetail", restoredVer && typeof restoredVer.id === "string" && typeof restoredVer.content_text === "string");
+// cleanup_old_versions with a tiny keep limit removes extras.
+const cleaned = await invoke("cleanup_old_versions", { maxKeep: 1 });
+assert("cleanup_old_versions returns freed count", typeof cleaned === "number" && cleaned >= 0);
+const vAfterClean = await invoke("list_versions", { pageId: created.id });
+assert("cleanup caps versions to maxKeep", Array.isArray(vAfterClean) && vAfterClean.length <= 1, `${vAfterClean?.length} after cleanup`);
+const statsV = await invoke("storage_stats", {});
+assert("storage_stats version_count reflects versions", typeof statsV?.version_count === "number");
+
 // 11. Persistence: a NEW platform instance reads the same SQLite file.
 const platform2 = newPlatform();
 const pagesAgain = await platform2.executor.invoke("list_pages", {});
