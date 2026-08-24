@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.22] - 2026-08-24
+
+### 修复
+
+- **桌面版侧边栏节点无法拖动**：Tauri v2 默认开启 `dragDropEnabled`，会**禁用 WebView 的 HTML5 拖拽**，所以可拖节点在浏览器能拖、在桌面 app 里拖不动。修复：把侧边栏树拖动改为**指针事件拖动**（mousedown → move 达阈值 → 命中目标行计算落点 → mouseup 执行 move），不依赖 HTML5 DataTransfer，桌面/浏览器一致，也不与 OS 文件拖放（dragDropEnabled）冲突。
+  - 新增 `store/treeDrag.ts` 共享拖动状态；`PageTree` 统一协调 mousedown/mousemove/mouseup，命中行 `data-node-id` 计算 before/after/inside 三区；完成拖动后抑制紧跟的 click 以免误打开节点。
+  - 提取 `computeReorder`（inside=子页面 / before/after=同级排序），与多选批量移动共用同一落点计算。
+- `scripts/smoke-web.mjs` 仍 **117 项全绿**；`vite build` 通过。
+
+---
+
 ## [1.59.21] - 2026-08-24
 
 ### 修复

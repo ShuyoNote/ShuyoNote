@@ -11,6 +11,7 @@ import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useTreeSelection } from "../store/treeSelection";
+import { useTreeDrag } from "../store/treeDrag";
 import { confirmDialog } from "../store/confirm";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
@@ -29,12 +30,9 @@ const SPACE_ACCENTS = [
   "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
 ];
 
-// Drag-drop zones by vertical position within a tree row. The top/bottom bands
-// reorder the dragged node as a sibling (before/after); the middle band nests it
-// as a child of the target. Kept as one source of truth for both onDragOver and
-// handleDrop so they never drift apart.
-const DROP_BEFORE_MAX = 0.3;   // ratio below this → insert before target
-const DROP_AFTER_MIN = 0.7;    // ratio above this → insert after target
+// A pointer-drag ending fires a click on mouseup; this one-shot flag lets the row
+// onClick drop that trailing click so a dropped node isn't also opened.
+const dragJustFinishedRef = { current: false };
 
 function buildTree(pages: PageMeta[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
@@ -53,6 +51,41 @@ function buildTree(pages: PageMeta[]): TreeNode[] {
   };
   sortRec(roots);
   return roots;
+}
+
+// Compute the target { parentId, sortOrder } for a completed drag.
+// zone "inside" nests the dragged node as the first child of the target; the other
+// zones insert it as a sibling before/after the target (midpoint sort order).
+function computeReorder(
+  pages: PageMeta[],
+  dragId: string,
+  targetId: string,
+  zone: "before" | "after" | "inside",
+): { parentId: string | null; sortOrder: number } | null {
+  if (dragId === targetId) return null;
+  const target = pages.find((p) => p.id === targetId);
+  if (!target) return null;
+  if (zone === "inside") {
+    const children = pages
+      .filter((p) => p.parent_id === targetId && p.id !== dragId)
+      .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
+    const sortOrder = children.length ? (children[children.length - 1].sort_order ?? 0) + 1 : 0;
+    return { parentId: targetId, sortOrder };
+  }
+  const insertAfter = zone === "after";
+  const siblings = pages
+    .filter((p) => p.parent_id === target.parent_id && p.id !== dragId)
+    .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
+  const targetIdx = siblings.findIndex((s) => s.id === targetId);
+  let sortOrder: number;
+  if (insertAfter) {
+    const next = siblings[targetIdx + 1];
+    sortOrder = next ? (target.sort_order + next.sort_order) / 2 : target.sort_order + 1;
+  } else {
+    const prev = siblings[targetIdx - 1];
+    sortOrder = prev ? (prev.sort_order + target.sort_order) / 2 : target.sort_order - 1;
+  }
+  return { parentId: target.parent_id, sortOrder };
 }
 
 // Copy a page (and its descendants) into another workspace, choosing the target
@@ -182,18 +215,20 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
 function TreeItem({
   node,
   depth,
+  onRowPointerDown,
 }: {
   node: TreeNode;
   depth: number;
+  onRowPointerDown: (id: string, e: React.MouseEvent) => void;
 }) {
-  const { currentId, openPage, createPage, createFolder, deletePage, movePage, renamePage, pages } = useNotes();
+  const { currentId, openPage, createPage, createFolder, deletePage, renamePage } = useNotes();
   const selectedIds = useTreeSelection((s) => s.ids);
   const toggleSelect = useTreeSelection((s) => s.toggle);
   const clearSelection = useTreeSelection((s) => s.clear);
+  const draggingId = useTreeDrag((s) => s.draggingId);
+  const overId = useTreeDrag((s) => s.overId);
+  const zone = useTreeDrag((s) => s.zone);
   const [expanded, setExpanded] = useState(true);
-  const [dragging, setDragging] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [dropZone, setDropZone] = useState<"before" | "after" | "inside" | null>(null);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.title);
 
@@ -208,6 +243,7 @@ function TreeItem({
       ? isFolder && fmFolderId === node.id
       : currentId === node.id;
   const isSelected = selectedIds.has(node.id);
+  const isDragTarget = draggingId !== null && node.id !== draggingId && overId === node.id;
 
   const commitRename = async () => {
     const v = editValue.trim();
@@ -219,53 +255,14 @@ function TreeItem({
     }
   };
 
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    setDropZone(null);
-    const id = e.dataTransfer.getData("text/plain");
-    if (!id || id === node.id) return;
-
-    // Zone by vertical position: ~top 1/3 = insert before, ~bottom 1/3 = insert
-    // after, middle 1/3 = nest as a CHILD of the target (folder, page, or db).
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const ratio = (e.clientY - rect.top) / rect.height;
-    const zone: "before" | "after" | "inside" = ratio < DROP_BEFORE_MAX ? "before" : ratio > DROP_AFTER_MIN ? "after" : "inside";
-
-    if (zone === "inside") {
-      const children = pages
-        .filter((p) => p.parent_id === node.id && p.id !== id)
-        .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
-      const sortOrder = children.length
-        ? (children[children.length - 1].sort_order ?? 0) + 1
-        : 0;
-      await movePage(id, node.id, sortOrder);
+  const handleClick = (e: React.MouseEvent) => {
+    // A completed pointer-drag fires a click afterward; suppress it so the node
+    // isn't opened after being dropped.
+    if (dragJustFinishedRef.current) {
+      dragJustFinishedRef.current = false;
+      e.preventDefault();
       return;
     }
-
-    // Sibling insert before/after the target.
-    const insertAfter = zone === "after";
-
-    // Siblings (same parent, excluding the dragged node), already sorted.
-    const siblings = pages
-      .filter((p) => p.parent_id === node.parent_id && p.id !== id)
-      .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
-
-    const targetIdx = siblings.findIndex((s) => s.id === node.id);
-    let sortOrder: number;
-    if (insertAfter) {
-      const next = siblings[targetIdx + 1];
-      sortOrder = next ? (node.sort_order + next.sort_order) / 2 : node.sort_order + 1;
-    } else {
-      const prev = siblings[targetIdx - 1];
-      sortOrder = prev ? (prev.sort_order + node.sort_order) / 2 : node.sort_order - 1;
-    }
-
-    await movePage(id, node.parent_id, sortOrder);
-  };
-
-  const handleClick = (e: React.MouseEvent) => {
     // Ctrl/⌘+click toggles a node into/out of the multi-select set without
     // navigating (the standard "select without opening" gesture in file managers).
     if (e.ctrlKey || e.metaKey) {
@@ -289,28 +286,16 @@ function TreeItem({
   return (
     <div>
       <div
-        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${dragOver ? "tree-row-over" : ""} ${dropZone ? `tree-drop-${dropZone}` : ""}`}
+        data-node-id={node.id}
+        data-node-kind={isFolder ? "folder" : isDatabase ? "database" : "page"}
+        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData("text/plain", node.id);
-          setDragging(true);
+        onMouseDown={(e) => {
+          // Left-button on a row starts a potential pointer-drag (works in Tauri's
+          // WebView where HTML5 drag-and-drop is suppressed by dragDropEnabled).
+          if (e.button !== 0 || editing) return;
+          onRowPointerDown(node.id, e);
         }}
-        onDragEnd={() => setDragging(false)}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(true);
-          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          const ratio = (e.clientY - rect.top) / rect.height;
-          // ~top 1/3 = insert before, ~bottom 1/3 = insert after, middle = nest.
-          setDropZone(ratio < DROP_BEFORE_MAX ? "before" : ratio > DROP_AFTER_MIN ? "after" : "inside");
-        }}
-        onDragLeave={() => {
-          setDragOver(false);
-          setDropZone(null);
-        }}
-        onDrop={handleDrop}
         onClick={handleClick}
       >
         <span
@@ -414,10 +399,9 @@ function TreeItem({
       </div>
       {expanded &&
         node.children.map((child) => (
-          <TreeItem key={child.id} node={child} depth={depth + 1} />
+          <TreeItem key={child.id} node={child} depth={depth + 1} onRowPointerDown={onRowPointerDown} />
         ))}
       {isFolder && <TreeFiles folderId={node.id} depth={depth + 1} />}
-      {dragging && null}
     </div>
   );
 }
@@ -525,7 +509,7 @@ export function PageTree({
   view: AppView;
   onViewChange: (v: AppView) => void;
 }) {
-  const { pages, createPage, createFolder, createDatabase, loading } = useNotes();
+  const { pages, createPage, createFolder, createDatabase, loading, movePage } = useNotes();
   const collapsed = false;
   const {
     open: newMenuOpen,
@@ -699,6 +683,63 @@ export function PageTree({
   };
 
   const tree = useMemo(() => buildTree(pages), [pages]);
+
+  // ---- Pointer-based drag (works in Tauri's WebView where HTML5 drag-drop is
+  // suppressed by dragDropEnabled). A row mousedown arms a potential drag; after a
+  // small movement threshold we hit-test rows (via data-node-id) and compute the
+  // drop zone, then perform the move on mouseup. ----
+  const dragRef = useRef<{ id: string; startX: number; startY: number; armed: boolean } | null>(null);
+  const onRowPointerDown = (id: string, e: React.MouseEvent) => {
+    // Ignore drag start from interactive children (toggle / actions / rename).
+    const target = e.target as HTMLElement;
+    if (target.closest(".tree-toggle, .tree-actions, .tree-rename-input, button, input")) return;
+    dragRef.current = { id, startX: e.clientX, startY: e.clientY, armed: false };
+  };
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d || d.id === null) return;
+      if (!d.armed) {
+        if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 5) return;
+        d.armed = true;
+        useTreeDrag.getState().start(d.id);
+      }
+      // Hit-test the row under the cursor to find the drop target + zone.
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-node-id]") as HTMLElement | null;
+      if (!el) {
+        useTreeDrag.getState().move(null, null);
+        return;
+      }
+      const targetId = el.getAttribute("data-node-id")!;
+      if (targetId === d.id) {
+        useTreeDrag.getState().move(null, null);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const ratio = (e.clientY - rect.top) / rect.height;
+      const z: "before" | "after" | "inside" = ratio < 0.3 ? "before" : ratio > 0.7 ? "after" : "inside";
+      useTreeDrag.getState().move(targetId, z);
+    };
+    const onUp = async () => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      const { draggingId, overId, zone } = useTreeDrag.getState();
+      useTreeDrag.getState().end();
+      // Suppress the trailing click that follows a real drag.
+      if (d?.armed) dragJustFinishedRef.current = true;
+      if (draggingId && overId) {
+        const choice = computeReorder(pages, draggingId, overId, zone ?? "inside");
+        if (choice) await movePage(draggingId, choice.parentId, choice.sortOrder);
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pages, movePage]);
 
   const commitName = async () => {
     const v = nameValue.trim();
@@ -1026,7 +1067,7 @@ export function PageTree({
             {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
           </div>
         ) : (
-          tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)
+          tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)
         )}
         <BatchToolbar pages={pages} />
       </div>
