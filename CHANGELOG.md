@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.4] - 2026-08-24
+
+### 修复
+
+- **上传失败：table attachments has no column named path**：web 端 `save_image`/`import_attachment_files`/`attachment_path` 之前用**固定列** `INSERT ... (id, page_id, name, hash, mime, size, path)` / `SELECT path, ...`。但导入桌面版 zip 后，`attachments` 表是**桌面 schema**（`created_at`，**无 `path` 列**），于是报"no column named path"。修复：抽出**schema 感知**的 `insertAttachmentRow`/`attachmentColumns`（读 `PRAGMA table_info(attachments)` 动态拼列）——`path` 存在才写、`created_at` 存在才补值（桌面表 `created_at NOT NULL`），`attachment_path` 改用 `SELECT *` 并在无 `path` 列时回落到 blob store。同库同时兼容 web 简化 schema 与桌面完整 schema。`scripts/smoke-web.mjs` 76→**78 项全绿**（新增：桌面 schema 无 `path` 插入 + web schema 有 `path` 插入）。
+
+---
+
 ## [1.59.3] - 2026-08-24
 
 ### 修复

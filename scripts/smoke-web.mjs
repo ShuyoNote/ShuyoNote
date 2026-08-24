@@ -412,6 +412,39 @@ assert("import_backup restores pages", Array.isArray(backupAfterPages) && backup
   assert("workspace seed includes created_at on desktop schema", wsRow && typeof wsRow.created_at === "number", String(wsRow && wsRow.created_at));
 }
 
+// 10k. Desktop-format backup's attachments schema has NO `path` column (it has
+// `created_at` instead). Web's helpers are schema-aware (read PRAGMA table_info),
+// so saving into such a table must NOT raise "no column named path".
+{
+  const { SqliteStore } = mod;
+  // Isolate each store with its own in-memory adapter (the default fs adapter is
+  // shared across all SqliteStore instances, so `web.init()` would otherwise
+  // reopen the desktop-schema db file and inherit its no-`path` table).
+  const memAdapter = () => {
+    let bytes = new Uint8Array(0);
+    return { load: async () => (bytes.length ? bytes : null), save: async (b) => { bytes = b; } };
+  };
+
+  const desk = new SqliteStore(memAdapter());
+  await desk.init();
+  desk.run("DROP TABLE IF EXISTS attachments");
+  desk.run(
+    "CREATE TABLE attachments (id TEXT PRIMARY KEY, page_id TEXT, name TEXT NOT NULL, hash TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL)",
+  );
+  // The exact helper save_image/import_attachment_files route through. This now
+  // must succeed where the old fixed `(... path)` INSERT raised "no column named path".
+  mod.insertAttachmentRow(desk, { id: "att-desktop", page_id: "p1", name: "desktop.png", hash: "h1", mime: "image/png", size: 3 });
+  const attRow = desk.query("SELECT id, name, hash, created_at FROM attachments WHERE id = ?", ["att-desktop"])[0];
+  assert("insertAttachmentRow inserts on desktop schema (no path)", attRow && attRow.id === "att-desktop" && typeof attRow.created_at === "number", String(attRow && attRow.created_at));
+
+  // Also prove it works on the web-native schema (which HAS path, no created_at).
+  const web = new SqliteStore(memAdapter());
+  await web.init();
+  mod.insertAttachmentRow(web, { id: "att-web", name: "web.png", hash: "h2", mime: "image/png", size: 3 });
+  const webRow = web.query("SELECT id, path FROM attachments WHERE id = ?", ["att-web"])[0];
+  assert("insertAttachmentRow still inserts on web schema (has path)", webRow && webRow.id === "att-web" && webRow.path === "", String(webRow && webRow.path));
+}
+
 // 11. Persistence: a NEW platform instance reads the same SQLite file.
 const platform2 = newPlatform();
 const pagesAgain = await platform2.executor.invoke("list_pages", {});

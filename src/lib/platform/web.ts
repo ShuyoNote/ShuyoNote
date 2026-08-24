@@ -27,6 +27,49 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// ---- schema-aware attachments helpers ----
+// The web-native `attachments` table is `id/page_id/name/hash/mime/size/path`,
+// while a desktop-format DB restored by `import_backup` uses
+// `id/page_id/name/hash/mime/size/created_at` (no `path`, has `created_at`).
+// Rather than assume one shape, read the live columns and only touch what exists
+// (same pattern as `seedWorkspaceMeta`), so both schemas work after a restore.
+const attachmentColumns = (store: SqliteStore): Set<string> => {
+  try {
+    return new Set((store.query("PRAGMA table_info(attachments)") as any[]).map((c) => String(c.name)));
+  } catch {
+    return new Set();
+  }
+};
+
+// Insert an attachment row compatibly with whichever `attachments` schema is live.
+export const insertAttachmentRow = (
+  store: SqliteStore,
+  fields: { id: string; page_id?: string | null; name: string; hash: string; mime: string; size: number; path?: string },
+): void => {
+  const cols = attachmentColumns(store);
+  const ids: string[] = [];
+  const vals: (string | number | null)[] = [];
+  const add = (name: string, val: string | number | null) => {
+    if (cols.has(name)) {
+      ids.push(name);
+      vals.push(val);
+    }
+  };
+  add("id", fields.id);
+  add("page_id", fields.page_id ?? null);
+  add("name", fields.name);
+  add("hash", fields.hash);
+  add("mime", fields.mime);
+  add("size", fields.size);
+  // `path` is only meaningful in the web schema; stored as "" since display bytes
+  // live in the blob store (see list_page_attachments resolution).
+  add("path", fields.path ?? "");
+  // Desktop schema requires `created_at INTEGER NOT NULL` (no default); supply it.
+  add("created_at", Date.now());
+  if (ids.length === 0) throw new Error("attachments 表没有可用列");
+  store.run(`INSERT INTO attachments (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
+};
+
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -718,17 +761,18 @@ function makeInvoke(store: SqliteStore) {
       const att = { id: uid(), name, hash, mime, size: data.length, path };
       // Always insert a row (id-based) so each occurrence can carry its own
       // page_id ownership; bytes are content-addressed and deduped in blobStore.
-      store.run("INSERT INTO attachments (id, page_id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)", [
-        att.id, pageId, att.name, att.hash, att.mime, att.size, "",
-      ]);
+      insertAttachmentRow(store, { id: att.id, page_id: pageId ?? null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
       return att as T;
     }
     if (cmd === "attachment_path") {
-      const rows = store.query("SELECT path, hash, mime FROM attachments WHERE hash = ?", [a.hash]);
-      if (rows[0] && rows[0].path) return (rows[0].path as string) as T;
+      // `path` may not exist in a desktop-restored schema; select everything and
+      // fall back to the blob store (which holds the actual bytes) if absent.
+      const rows = store.query("SELECT * FROM attachments WHERE hash = ?", [a.hash]);
+      const pathVal = rows[0] ? (rows[0] as any).path : "";
+      if (pathVal) return pathVal as T;
       const bytes = await blobStore.get(String(a.hash));
       if (bytes) {
-        const mime = String(rows[0]?.mime ?? "image/png");
+        const mime = String((rows[0] as any)?.mime ?? "image/png");
         return (`data:${mime};base64,${bytesToBase64(bytes)}`) as T;
       }
       return "" as T;
@@ -766,9 +810,7 @@ function makeInvoke(store: SqliteStore) {
         const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: "" };
         const existing = store.query("SELECT id FROM attachments WHERE hash = ?", [hash])[0];
         if (!existing) {
-          store.run("INSERT INTO attachments (id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)", [
-            att.id, att.name, att.hash, att.mime, att.size, "",
-          ]);
+          insertAttachmentRow(store, { id: att.id, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
         }
         fileRegistry.delete(baseName(p));
         metas.push(att);
