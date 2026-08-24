@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.13] - 2026-08-24
+
+### 优化
+
+- **空间导出改为流式压缩**：之前 web 版用 `zipSync` 一次性同步压完所有文件，附件多时末尾会整段卡住主线程。现在改用 fflate 的**流式 `Zip`**，逐文件压缩、文件间让出事件循环，压缩过程实时派发 `workspace-progress`（进度条随每个文件推进，而不只是打包前/后跳两次）。导出大空间时界面不再冻结。
+- `scripts/smoke-web.mjs` 保持 **96 项全绿**（流式压缩产物仍能被 `unzipSync` 正确解压并含 db/workspace.json/attachments）。
+
+---
+
 ## [1.59.12] - 2026-08-24
 
 ### 新增

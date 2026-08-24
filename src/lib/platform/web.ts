@@ -15,7 +15,7 @@
 import type { Platform } from "./types";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { blobStore, contentHash } from "./blobStore";
-import { zipSync, unzipSync } from "fflate";
+import { zipSync, unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -427,6 +427,44 @@ function emitPageEvent(name: string, payload: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+// Stream a set of `{name,bytes}` entries into a zip using fflate's streaming Zip,
+// yielding back to the event loop between files so the UI stays responsive and the
+// progress callback updates as each file is compressed (unlike zipSync, which
+// blocks the main thread for the entire archive). Resolves with the full zip bytes.
+async function streamZip(
+  entries: { name: string; bytes: Uint8Array }[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  const zip = new Zip((err, data) => {
+    if (err) throw err;
+    if (data) chunks.push(data);
+  });
+  const total = entries.length;
+  let done = 0;
+  for (const e of entries) {
+    // Each entry compresses synchronously on the main thread, but yielding after
+    // every one keeps a large export from freezing the whole UI at the end.
+    const def = new ZipDeflate(e.name);
+    zip.add(def);
+    def.push(e.bytes, true);
+    done++;
+    onProgress?.(done, total);
+    if (done % 8 === 0) await new Promise((r) => setTimeout(r, 0));
+  }
+  zip.end();
+  // Concatenate the emitted chunks into one buffer.
+  let len = 0;
+  for (const c of chunks) len += c.length;
+  const out = new Uint8Array(len);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
 }
 
 function makeInvoke(store: SqliteStore) {
@@ -1223,9 +1261,8 @@ function makeInvoke(store: SqliteStore) {
 
       emit(0, "准备导出…");
       const dbBytes = store.snapshot();
-      const entries: Record<string, Uint8Array> = { "shuyonote.db": dbBytes };
       // workspace.json metadata (same shape the desktop importer expects).
-      entries["workspace.json"] = new TextEncoder().encode(JSON.stringify({ id: ws.id, name: ws.name ?? "", theme: ws.theme ?? "", icon: ws.icon ?? "" }));
+      const metaBytes = new TextEncoder().encode(JSON.stringify({ id: ws.id, name: ws.name ?? "", theme: ws.theme ?? "", icon: ws.icon ?? "" }));
       emit(1, "打包空间数据库…", dbBytes.length);
 
       // Only the attachment bytes this space references (via page_id) — self-contained.
@@ -1236,33 +1273,24 @@ function makeInvoke(store: SqliteStore) {
       const pages = (store.query("SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws.id]) as any[]).length;
       const atts = await blobStore.entries();
       const candidates = atts.filter((a) => refHashes.size === 0 || refHashes.has(a.hash));
-      let matched = 0;
-      let bytesSoFar = dbBytes.length;
-      if (candidates.length === 0) {
-        emit(2, "没有附件需要打包", bytesSoFar);
-      } else {
-        for (let i = 0; i < candidates.length; i++) {
-          const a = candidates[i];
-          entries[`attachments/${a.hash}`] = a.bytes;
-          matched++;
-          bytesSoFar += a.bytes.length;
-          // Yield + report throughput so the bar (and a big export's ~200 char
-          // messages) stay responsive; the zip is created at the end.
-          if (i % 5 === 0) {
-            emit(2, `打包附件 ${matched}/${candidates.length}…`, bytesSoFar);
-            await new Promise((r) => setTimeout(r, 0));
-          }
-        }
-        emit(2, `打包附件 ${matched}/${candidates.length}…`, bytesSoFar);
-      }
 
-      const zip = zipSync(entries);
+      // Build the ordered list to stream (db first, then meta, then attachments).
+      const fileList: { name: string; bytes: Uint8Array }[] = [
+        { name: "shuyonote.db", bytes: dbBytes },
+        { name: "workspace.json", bytes: metaBytes },
+      ];
+      for (const a of candidates) fileList.push({ name: `attachments/${a.hash}`, bytes: a.bytes });
+      const zip = await streamZip(fileList, (done, total) => {
+        // Progress by file count; phase ramps from 2 (packing) toward 3 (finalizing).
+        emit(Math.round(2 + Math.min(1, done / Math.max(1, total))), `流式打包 ${done}/${total}…`);
+      });
+
       emit(3, "写入下载…", zip.length);
       const name = String(a.destPath ?? "space-export.zip").split(/[\\/]/).pop() || "space-export.zip";
       if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so a same-session re-import (and the Node smoke test) can read it.
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
-      return { path: name, size: zip.length, pages, attachments: matched } as T;
+      return { path: name, size: zip.length, pages, attachments: candidates.length } as T;
     }
     if (cmd === "import_workspace") return null as T;
     if (cmd === "write_text_file") {
