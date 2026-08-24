@@ -201,6 +201,20 @@ assert("create_folder (args wrapper) works", argsFolder && argsFolder.kind === "
 await invoke("move_page", { args: { id: created.id, new_parent_id: argsFolder.id, sort_order: 0 } });
 const movedInto = await invoke("get_page", { id: created.id });
 assert("move into folder sets parent_id", movedInto && movedInto.parent_id === argsFolder.id, `parent_id=${movedInto?.parent_id}`);
+
+// 3b-1. move_page guards against cycles: moving a folder under its own child
+// (or itself) must be rejected, or the tree corrupts into an infinite loop.
+{
+  const parentF = await invoke("create_folder", { parent_id: null, title: "父夹" });
+  const childF = await invoke("create_folder", { parent_id: parentF.id, title: "子夹" });
+  await invoke("move_page", { id: parentF.id, new_parent_id: childF.id, sort_order: 0 });
+  const afterCycle = await invoke("get_page", { id: parentF.id });
+  assert("move_page block self-under-descendant cycle", afterCycle && afterCycle.parent_id !== childF.id, `parent_id=${afterCycle?.parent_id}`);
+  await invoke("move_page", { id: parentF.id, new_parent_id: parentF.id, sort_order: 0 });
+  const afterSelf = await invoke("get_page", { id: parentF.id });
+  assert("move_page block move-under-self", afterSelf && afterSelf.parent_id !== parentF.id);
+}
+
 const argsPage = await invoke("create_page", { args: { parent_id: argsFolder.id, title: "夹内页", content_json: "", content_text: "" } });
 assert("create_page (args wrapper) honors parent_id", argsPage && argsPage.parent_id === argsFolder.id, `parent_id=${argsPage?.parent_id}`);
 assert("create_page honors an explicit title", argsPage && argsPage.title === "夹内页", argsPage?.title);

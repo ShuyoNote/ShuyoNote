@@ -10,6 +10,7 @@ import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
+import { useTreeSelection } from "../store/treeSelection";
 import { confirmDialog } from "../store/confirm";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
@@ -179,6 +180,9 @@ function TreeItem({
   depth: number;
 }) {
   const { currentId, openPage, createPage, createFolder, deletePage, movePage, renamePage, pages } = useNotes();
+  const selectedIds = useTreeSelection((s) => s.ids);
+  const toggleSelect = useTreeSelection((s) => s.toggle);
+  const clearSelection = useTreeSelection((s) => s.clear);
   const [expanded, setExpanded] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -195,6 +199,7 @@ function TreeItem({
     view === "files"
       ? isFolder && fmFolderId === node.id
       : currentId === node.id;
+  const isSelected = selectedIds.has(node.id);
 
   const commitRename = async () => {
     const v = editValue.trim();
@@ -247,7 +252,16 @@ function TreeItem({
     await movePage(id, node.parent_id, sortOrder);
   };
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
+    // Ctrl/⌘+click toggles a node into/out of the multi-select set without
+    // navigating (the standard "select without opening" gesture in file managers).
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      toggleSelect(node.id);
+      return;
+    }
+    // A plain click drops any pending multi-selection and opens the node.
+    if (selectedIds.size > 0) clearSelection();
     if (isFolder) {
       // Clicking a folder opens the file manager focused on it; the ▸/▾ toggle
       // still expands/collapses the tree. Close any overlay (template center).
@@ -262,7 +276,7 @@ function TreeItem({
   return (
     <div>
       <div
-        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${dragOver ? "tree-row-over" : ""}`}
+        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${dragOver ? "tree-row-over" : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         draggable
         onDragStart={(e) => {
@@ -287,6 +301,11 @@ function TreeItem({
         >
           {isFolder ? (expanded ? "▾" : "▸") : node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
         </span>
+        {isSelected && (
+          <span className="tree-select-mark" aria-hidden="true">
+            ✓
+          </span>
+        )}
         <span className={`tree-icon${isFolder ? " tree-icon-folder" : isDatabase ? " tree-icon-database" : ""}`}>
           {isFolder ? (
             <FolderIcon width={16} height={16} />
@@ -378,6 +397,102 @@ function TreeItem({
         ))}
       {isFolder && <TreeFiles folderId={node.id} depth={depth + 1} />}
       {dragging && null}
+    </div>
+  );
+}
+
+// Batch-action bar shown when one or more tree nodes are multi-selected
+// (Ctrl/⌘+click). Offers "移动到文件夹" and "移入回收站" over the whole selection.
+function BatchToolbar({ pages }: { pages: PageMeta[] }) {
+  const selectedIds = useTreeSelection((s) => s.ids);
+  const clearSelection = useTreeSelection((s) => s.clear);
+  const { movePage, deletePage } = useNotes();
+  const [moveOpen, setMoveOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const count = selectedIds.size;
+  const selected = [...selectedIds];
+
+  useEffect(() => {
+    if (!moveOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setMoveOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [moveOpen]);
+
+  if (count === 0) return null;
+
+  // Candidate move targets: every folder except the ones being moved, plus
+  // workspace root (move to top level).
+  const folders = pages.filter((p) => p.kind === "folder" && !selected.includes(p.id));
+
+  const moveTo = async (parentId: string | null) => {
+    setMoveOpen(false);
+    try {
+      // Append each moved node to the end of the target (deterministic order).
+      let order = parentId
+        ? Math.max(0, ...pages.filter((p) => p.parent_id === parentId).map((p) => p.sort_order ?? 0)) + 1
+        : 0;
+      for (const id of selected) {
+        await movePage(id, parentId, order++);
+      }
+      clearSelection();
+      toast(`已移动 ${selected.length} 个节点`, "success");
+    } catch (e) {
+      toast(`移动失败：${e}`, "error");
+    }
+  };
+
+  const deleteBatch = async () => {
+    if (
+      await confirmDialog({
+        title: "删除页面",
+        message: `删除选中的 ${count} 个节点及其所有子节点？`,
+        danger: true,
+      })
+    ) {
+      try {
+        for (const id of selected) {
+          await deletePage(id);
+        }
+        clearSelection();
+        toast(`已删除 ${selected.length} 个节点`, "success");
+      } catch (e) {
+        toast(`删除失败：${e}`, "error");
+      }
+    }
+  };
+
+  return (
+    <div className="tree-batch" ref={ref}>
+      <span className="tree-batch-count">已选 {count} 项</span>
+      <div className="tree-batch-menu">
+        <button
+          className="tree-batch-btn"
+          onClick={() => setMoveOpen((v) => !v)}
+        >
+          移动到…
+        </button>
+        {moveOpen && (
+          <div className="tree-batch-dropdown">
+            <button className="tree-batch-item" onClick={() => moveTo(null)}>
+              ⟨ 工作空间根目录 ⟩
+            </button>
+            {folders.map((f) => (
+              <button key={f.id} className="tree-batch-item" onClick={() => moveTo(f.id)}>
+                ⟨ {f.title || "新建文件夹"} ⟩
+              </button>
+            ))}
+          </div>
+        )}
+        <button className="tree-batch-btn tree-batch-danger" onClick={deleteBatch}>
+          移入回收站
+        </button>
+        <button className="tree-batch-btn" onClick={clearSelection}>
+          取消
+        </button>
+      </div>
     </div>
   );
 }
@@ -837,6 +952,7 @@ export function PageTree({
         ) : (
           tree.map((node) => <TreeItem key={node.id} node={node} depth={0} />)
         )}
+        <BatchToolbar pages={pages} />
       </div>
       {!collapsed && (
         <div className="sidebar-bottom">

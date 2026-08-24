@@ -246,6 +246,26 @@ function resolveRefLabels(store: SqliteStore, values: string[]): Record<string, 
   return out;
 }
 
+// Whether `candidateId` is `rootId` itself or one of its (non-deleted)
+// descendants. Used by move_page to forbid moving a node under its own subtree.
+function isSelfOrDescendant(store: SqliteStore, rootId: string, candidateId: string): boolean {
+  if (candidateId === rootId) return true;
+  const seen = new Set<string>([rootId]);
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const parent = queue.shift()!;
+    const children = store.query<{ id: string }>("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [parent]);
+    for (const c of children) {
+      if (c.id === candidateId) return true;
+      if (!seen.has(c.id)) {
+        seen.add(c.id);
+        queue.push(c.id);
+      }
+    }
+  }
+  return false;
+}
+
 // Snapshot a page's content into page_versions before it is mutated. Dedups
 // identical consecutive snapshots and caps history at MAX per page.
 const MAX_VERSIONS_PER_PAGE = 50;
@@ -551,7 +571,16 @@ function makeInvoke(store: SqliteStore) {
       const sortOrder = typeof args.sort_order === "number" ? args.sort_order : 0;
       const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [id])[0];
       if (p) {
-        store.run("UPDATE pages SET parent_id = ?, sort_order = ? WHERE id = ?", [parentId ?? null, sortOrder, id]);
+        // Guard against cycles: don't move a node under itself or one of its own
+        // descendants (a batch move of a folder into its own child would otherwise
+        // corrupt the tree). Skip that parent silently.
+        if (parentId && parentId !== id && isSelfOrDescendant(store, id, parentId)) {
+          return undefined as T;
+        }
+        const target = parentId ?? null;
+        if (target !== id) {
+          store.run("UPDATE pages SET parent_id = ?, sort_order = ? WHERE id = ?", [target, sortOrder, id]);
+        }
       }
       return undefined as T;
     }
