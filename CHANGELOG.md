@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.61] - 2026-08-24
+
+### 修复
+
+- **编辑器崩溃（二次）**：上一版防御校验只递归 `children`，漏掉**非 children 位置**的缺 `type` 节点，且会误拒图片行等「无 type 的纯数据项」。现改为**启发式校验**（`src/lib/lexicalValidate.ts`）：只把「有节点特征（version/children/text/format…）却无 `type`」的对象判为损坏并回退空态，纯数据项（如图片行 `items`）放行；`lexicalStateValid` 替换原校验。
+- `scripts/smoke-web.mjs` 179→**183 项全绿**（新增：接受合法/图片行、拒绝缺 type 节点、拒绝空根）。
+
+---
+
 ## [1.59.60] - 2026-08-24
 
 ### 修复

@@ -90,37 +90,10 @@ interface EditorProps {
   searchQuery?: string;
 }
 
-// Every child of a Lexical node tree must itself be a node with a string `type`.
-// A malformed saved doc (a node object missing `type`, which renders as the
-// string "undefined") otherwise makes Lexical's parseEditorState throw and the
-// whole editor crash. If we spot such a node we treat the page as empty instead.
-function nodeChildrenValid(children: unknown): boolean {
-  if (!Array.isArray(children)) return true;
-  return children.every((child) => {
-    if (child && typeof child === "object") {
-      const c = child as Record<string, unknown>;
-      if (typeof c.type !== "string" || !c.type) return false;
-      return nodeChildrenValid(c.children);
-    }
-    return false;
-  });
-}
+import { lexicalStateValid } from "../lib/lexicalValidate";
 
 function parseEditorState(contentJson: string): string | null {
-  try {
-    const parsed = JSON.parse(contentJson);
-    const root = parsed && parsed.root;
-    // A page with any top-level blocks has real content; use it on reload even
-    // if a specific node fails our structural validation (Lexical tolerates it,
-    // and losing valid imported content is worse than a graceful edge case).
-    if (root && Array.isArray(root.children) && root.children.length > 0) {
-      if (!nodeChildrenValid(root.children)) return null;
-      return contentJson;
-    }
-  } catch {
-    // fall through to empty
-  }
-  return null;
+  return lexicalStateValid(contentJson);
 }
 
 // Generate a stable block id (UUID v4). Falls back to crypto.getRandomValues when

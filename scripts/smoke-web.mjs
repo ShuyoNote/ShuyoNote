@@ -73,7 +73,8 @@ await esbuild.build({
       'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
-      'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n',
+      'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n' +
+      'export { lexicalStateValid } from "./src/lib/lexicalValidate";\n',
     resolveDir: root,
     loader: "js",
     sourcefile: "ai-entry.js",
@@ -1155,6 +1156,17 @@ assert("workspace name persists across instances", wsAgain !== "");
     srv6.closeAllConnections?.();
     await new Promise((resolve) => srv6.close(resolve));
   }
+}
+
+// 20. Defensive Lexical editor-state validation (guards the type "undefined" crash).
+{
+  const valid = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"hi","version":1}]}],"type":"root","version":1}}';
+  const imagerow = '{"root":{"children":[{"type":"imagerow","items":[{"src":"a","alt":"b"}],"version":1}],"type":"root","version":1}}';
+  const corrupt = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"text":"hi","version":1}]}],"type":"root","version":1}}';
+  assert("lexicalValid accepts valid doc", aiMod.lexicalStateValid(valid) === valid);
+  assert("lexicalValid accepts data-only items (imagerow)", aiMod.lexicalStateValid(imagerow) === imagerow);
+  assert("lexicalValid rejects node missing type", aiMod.lexicalStateValid(corrupt) === null);
+  assert("lexicalValid rejects empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
