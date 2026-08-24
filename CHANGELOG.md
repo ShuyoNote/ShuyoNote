@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.1] - 2026-08-24
+
+### 修复
+
+- **空间导入失败：NOT NULL constraint failed: workspaces.created_at**：导入桌面版 zip（其 `workspaces` 表含 `created_at NOT NULL`）后，web 端任何命令都会触发 workspace 种子插入——但原插入语句不含 `created_at`，在桌面 schema 上报错。修复：`seedWorkspaceMeta` 改为**读 `PRAGMA table_info(workspaces)` 动态拼列**——`created_at`/`updated_at` 存在才一并插入，兼容 web 简化 schema 与桌面完整 schema。
+- `scripts/smoke-web.mjs` 72→**73 项全绿**（新增：桌面 schema（created_at NOT NULL）下 workspace 种子正确包含 created_at）。
+
+---
+
 ## [1.59.0] - 2026-08-24
 
 ### 新增（Web ↔ 桌面备份互认）

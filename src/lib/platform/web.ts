@@ -361,11 +361,37 @@ function makeInvoke(store: SqliteStore) {
       [WS_KEY],
     )[0] ?? null;
 
+  // Whether the workspace table has a created_at column (desktop schema does,
+  // the web demo schema may not). Used to insert compatibly across both.
+  const workspaceColumns = () => {
+    try {
+      return (store.query("PRAGMA table_info(workspaces)") as any[]).map((c) => String(c.name));
+    } catch {
+      return [];
+    }
+  };
+
   const seedWorkspaceMeta = () => {
     const ws = getWs();
-    if (!ws) {
-      store.run("INSERT INTO workspaces (id, name, theme, icon) VALUES (?, ?, NULL, '')", [WS_KEY, "我的工作空间"]);
+    if (ws) return;
+    const cols = workspaceColumns();
+    const hasCreated = cols.includes("created_at");
+    const hasUpdated = cols.includes("updated_at");
+    const now = Date.now();
+    const ids = ["id", "name", "theme", "icon"];
+    const vals: (string | number | null)[] = [WS_KEY, "我的工作空间", null, ""];
+    if (hasCreated) {
+      ids.push("created_at");
+      vals.push(now);
     }
+    if (hasUpdated) {
+      ids.push("updated_at");
+      vals.push(now);
+    }
+    store.run(
+      `INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`,
+      vals,
+    );
   };
 
   return async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {

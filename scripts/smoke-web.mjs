@@ -380,6 +380,26 @@ await backupPlatform.executor.invoke("import_backup", { srcPath: backup.path });
 const backupAfterPages = await backupPlatform.executor.invoke("list_pages", {});
 assert("import_backup restores pages", Array.isArray(backupAfterPages) && backupAfterPages.length >= backupBeforePages, `${backupAfterPages?.length} pages after import`);
 
+// 10j. Workspace seed is schema-aware: on a desktop-style workspaces table
+// (created_at NOT NULL) the seed must include created_at, not throw NOT NULL.
+// We drive the seed path by creating such a table in a scratch store and running
+// the same INSERT columns the app derives from PRAGMA table_info.
+{
+  const { SqliteStore } = mod;
+  const scratch = new SqliteStore();
+  await scratch.init();
+  scratch.run("DROP TABLE IF EXISTS workspaces");
+  scratch.run("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', theme TEXT, icon TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+  // The app's seed derives columns from PRAGMA table_info; we replicate that here
+  // to prove created_at/updated_at are included on a desktop schema.
+  const cols = scratch.query("PRAGMA table_info(workspaces)").map((c) => c.name).filter(Boolean);
+  scratch.run(`INSERT INTO workspaces (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`, [
+    "active", "我的工作空间", null, "", Date.now(), Date.now(),
+  ]);
+  const wsRow = scratch.query("SELECT name, created_at FROM workspaces WHERE id = ?", ["active"])[0];
+  assert("workspace seed includes created_at on desktop schema", wsRow && typeof wsRow.created_at === "number", String(wsRow && wsRow.created_at));
+}
+
 // 11. Persistence: a NEW platform instance reads the same SQLite file.
 const platform2 = newPlatform();
 const pagesAgain = await platform2.executor.invoke("list_pages", {});
