@@ -41,6 +41,24 @@ export function SettingsIcon(props: IconProps) {
   );
 }
 
+export function SendIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4z" />
+    </Icon>
+  );
+}
+
+export function HistoryIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </Icon>
+  );
+}
+
 export function SyncIcon(props: IconProps) {
   return (
     <Icon {...props}>

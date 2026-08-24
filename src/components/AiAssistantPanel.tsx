@@ -2,13 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { useNotes } from "../store/notes";
-import { SparkleIcon, SettingsIcon } from "./icons";
+import { SparkleIcon, SettingsIcon, SendIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { draftPreview } from "../lib/ai/preview";
 import { AiSettingsDialog } from "./AiSettingsDialog";
 
-// Context-aware one-click actions (like FlowUs/Wolai AI): they adapt to whether a
-// page is open, and "换一批" rotates through a larger pool.
+// Context-aware one-click suggestions (Adapted to the current page), with 换一批.
 const PAGE_POOL = [
   "总结当前页",
   "为当前页列提纲",
@@ -25,12 +24,6 @@ const EMPTY_POOL = [
   "整理重复的笔记",
 ];
 
-// Floating AI assistant. Entry points (NewPageGuide, sidebar, command palette)
-// open it via store.setOpen(true). It renders a docked panel bottom-right with a
-// prompt box; the model's writes surface as draft cards the user must confirm.
-// The floating button is ALWAYS visible (even when disabled) so a first-time user
-// can reach the settings to enable AI; the panel body shows an enable notice when
-// the feature is off.
 export function AiAssistantPanel() {
   const {
     config,
@@ -50,14 +43,14 @@ export function AiAssistantPanel() {
   const setOpen = useRightPanel((s) => s.openAi);
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const currentId = useNotes((s) => s.currentId);
+  const pageOpen = Boolean(currentId);
 
   // Reserve right rail space while the panel is open (content shifts, Wolai-style).
   useEffect(() => {
     document.body.classList.toggle("is-ai-open", open);
     return () => document.body.classList.remove("is-ai-open");
   }, [open]);
-  const currentId = useNotes((s) => s.currentId);
-  const pageOpen = Boolean(currentId);
 
   // Contextual suggestions (page open ⇒ page-specific prompts), "换一批" rotates.
   const [suggestionOffset, setSuggestionOffset] = useState(0);
@@ -93,19 +86,21 @@ export function AiAssistantPanel() {
     useAiStore.getState().run(t);
   };
 
-  // Collapsed state: the right-edge rail (RightRail) is the launcher, so the panel
-  // renders nothing until opened via the rail / sidebar / command palette.
   if (!open) return null;
 
   return (
     <>
       <div className="ai-panel">
         <div className="ai-header">
-          <SparkleIcon className="ai-header-icon" />
-          <span className="ai-title">AI 助手</span>
-          <span className="ai-model" title="当前模型">{config.model}</span>
+          <div className="ai-header-main">
+            <div className="ai-title-row">
+              <SparkleIcon className="ai-header-icon" />
+              <span className="ai-title">AI 助手</span>
+            </div>
+            <div className="ai-header-sub">基于当前空间你所有有权限的页面进行回答</div>
+          </div>
           <button className="ai-header-btn ai-settings" title="AI 设置" onClick={() => setSettingsOpen(true)} aria-label="AI 设置">
-            <SettingsIcon width={15} height={15} />
+            <SettingsIcon width={16} height={16} />
           </button>
           <button className="ai-header-btn ai-close" title="关闭" onClick={() => setOpen(false)} aria-label="关闭">
             ×
@@ -125,86 +120,88 @@ export function AiAssistantPanel() {
             </div>
           )}
 
-          {config.enabled && reply && (
-            <div className="ai-reply">
-              <div className="ai-reply-head">
-                <SparkleIcon className="ai-reply-head-icon" />
-                <span className="ai-reply-label">回复</span>
-                <button className="ai-reply-clear" title="清空对话" onClick={clearResult}>
-                  清空
-                </button>
-              </div>
-              <div className="ai-reply-text"><Markdown text={reply} /></div>
-              {activity.length > 0 && (
-                <div className="ai-activity">
-                  <span className="ai-activity-label">工具</span>
-                  {activity.map((a, i) => (
-                    <span key={`${a.tool}-${i}`} className="ai-activity-item">{a.note}</span>
-                  ))}
-                </div>
-              )}
-              <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
-            </div>
-          )}
-
-          {config.enabled && drafts.length > 0 && (
-            <div className="ai-drafts">
-              <div className="ai-drafts-title">
-                待确认操作（{drafts.length}）
-              </div>
-              {drafts.map((d) => {
-                const preview = draftPreview(d.payload);
-                return (
-                  <div key={d.key} className="ai-draft-item">
-                    <div className="ai-draft-main">
-                      <span className="ai-draft-summary">{d.summary}</span>
-                      {preview && <pre className="ai-draft-preview">{preview}</pre>}
-                    </div>
-                    <div className="ai-draft-actions">
-                      <button className="ai-draft-apply" onClick={() => confirm(d.key)}>
-                        应用
-                      </button>
-                      <button className="ai-draft-discard" onClick={() => dismiss(d.key)}>
-                        弃用
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {config.enabled && error && (
-            <div className="ai-error" onClick={resetError}>
-              <span>{error}</span>
-              <button className="ai-error-close" title="关闭">×</button>
-            </div>
-          )}
-
-          {config.enabled && !reply && drafts.length === 0 && !error && (
-            <div className="ai-empty">
+          {config.enabled && (
+            <>
               <div className="ai-welcome">
-                <SparkleIcon className="ai-welcome-icon" />
-                <div className="ai-welcome-text">Hi，我是 ShuyoNote 的 AI 助手。可以针对当前笔记提问，或让我新建页面、追加内容。写入前需你确认。</div>
+                <span className="ai-welcome-text">Hi，我是 ShuyoNote 的 AI 助手，可以针对当前笔记或整个空间进行提问，写操作需你确认。</span>
               </div>
+
               <div className="ai-suggestions">
                 <div className="ai-suggestions-head">
-                  <span className="ai-suggestions-label">你可以试试</span>
+                  <span className="ai-suggestions-label">你可以尝试以下问题</span>
                   <button className="ai-suggestions-shuffle" onClick={() => setSuggestionOffset((o) => o + SUGGESTION_COUNT)} title="换一批">
                     换一批
                   </button>
                 </div>
                 <div className="ai-suggestions-list">
-                  {suggestions.map((s) => (
-                    <button key={s} className="ai-chip" onClick={() => runText(s)}>
-                      {s}
+                  {suggestions.map((s, i) => (
+                    <button key={s} className="ai-suggestion-card" onClick={() => runText(s)}>
+                      <span className="ai-suggestion-num">{i + 1}.</span>
+                      <span className="ai-suggestion-text">{s}</span>
                     </button>
                   ))}
                 </div>
               </div>
-            </div>
+
+              {reply && (
+                <div className="ai-reply">
+                  <div className="ai-reply-head">
+                    <SparkleIcon className="ai-reply-head-icon" />
+                    <span className="ai-reply-label">回复</span>
+                    <button className="ai-reply-clear" title="清空对话" onClick={clearResult}>
+                      清空
+                    </button>
+                  </div>
+                  <div className="ai-reply-text"><Markdown text={reply} /></div>
+                  {activity.length > 0 && (
+                    <div className="ai-activity">
+                      <span className="ai-activity-label">工具</span>
+                      {activity.map((a, i) => (
+                        <span key={`${a.tool}-${i}`} className="ai-activity-item">{a.note}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
+                </div>
+              )}
+
+              {drafts.length > 0 && (
+                <div className="ai-drafts">
+                  <div className="ai-drafts-title">待确认操作（{drafts.length}）</div>
+                  {drafts.map((d) => {
+                    const preview = draftPreview(d.payload);
+                    return (
+                      <div key={d.key} className="ai-draft-item">
+                        <div className="ai-draft-main">
+                          <span className="ai-draft-summary">{d.summary}</span>
+                          {preview && <pre className="ai-draft-preview">{preview}</pre>}
+                        </div>
+                        <div className="ai-draft-actions">
+                          <button className="ai-draft-apply" onClick={() => confirm(d.key)}>应用</button>
+                          <button className="ai-draft-discard" onClick={() => dismiss(d.key)}>弃用</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {error && (
+                <div className="ai-error" onClick={resetError}>
+                  <span>{error}</span>
+                  <button className="ai-error-close" title="关闭">×</button>
+                </div>
+              )}
+            </>
           )}
         </div>
+
+        {config.enabled && (
+          <div className="ai-footer">
+            <button className="ai-footer-btn" onClick={newConversation} title="开始一段新对话">＋ 新会话</button>
+            <span className="ai-footer-model" title="当前模型">{config.model}</span>
+          </div>
+        )}
 
         <div className="ai-input-row">
           <textarea
@@ -221,17 +218,11 @@ export function AiAssistantPanel() {
             className="ai-send"
             disabled={!config.enabled || (!running && !prompt.trim())}
             onClick={running ? stop : send}
+            title={running ? "停止" : "发送"}
           >
-            {running ? "停止" : "发送"}
+            {running ? <span className="ai-send-stop" /> : <SendIcon width={16} height={16} />}
           </button>
         </div>
-        {config.enabled && (
-          <div className="ai-footer">
-            <button className="ai-footer-btn" onClick={newConversation} title="开始一段新对话">
-              ＋ 新会话
-            </button>
-          </div>
-        )}
       </div>
 
       {settingsOpen && <AiSettingsDialog onClose={() => setSettingsOpen(false)} />}

@@ -7315,20 +7315,38 @@ select.prop-value {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;
+  padding: 10px 14px 9px;
   border-bottom: 1px solid var(--border);
 }
+.ai-header-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ai-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 .ai-header-icon {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   color: var(--accent);
 }
 .ai-title {
-  flex: 1;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
   letter-spacing: 0.2px;
+}
+.ai-header-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ai-header-btn {
   display: grid;
@@ -7347,21 +7365,43 @@ select.prop-value {
   background: var(--hover);
 }
 .ai-header-btn.ai-close {
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1;
 }
 .ai-header-btn.ai-settings {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
 }
 .ai-header-btn.ai-settings svg {
   display: block;
 }
-.ai-model {
+
+.ai-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px 10px;
+}
+.ai-footer-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-footer-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.ai-footer-model {
   font-size: 11px;
   color: var(--text-faint);
-  max-width: 120px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7613,37 +7653,22 @@ select.prop-value {
   font-size: 14px;
   cursor: pointer;
 }
-.ai-empty {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
 .ai-welcome {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
 }
-.ai-welcome-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--accent);
-  flex-shrink: 0;
-  margin-top: 1px;
-}
 .ai-welcome-text {
   font-size: 12px;
-  color: var(--text-dim);
-  line-height: 1.6;
+  color: var(--text);
+  line-height: 1.7;
 }
 .ai-suggestions-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin: 4px 0 8px;
 }
 .ai-suggestions-label {
   font-size: 12px;
@@ -7653,7 +7678,7 @@ select.prop-value {
 .ai-suggestions-shuffle {
   border: none;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--accent);
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
@@ -7661,54 +7686,41 @@ select.prop-value {
   border-radius: var(--radius-sm);
 }
 .ai-suggestions-shuffle:hover {
-  color: var(--text);
-  background: var(--hover);
+  text-decoration: underline;
 }
 .ai-suggestions-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-.ai-suggestions-list .ai-chip {
-  text-align: left;
-  width: 100%;
-  white-space: normal;
-  line-height: 1.4;
-}
-.ai-empty-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--accent);
-  opacity: 0.85;
-}
-.ai-empty-text {
-  font-size: 12px;
-  color: var(--text-dim);
-  line-height: 1.6;
-  max-width: 260px;
-}
-.ai-empty-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
   gap: 8px;
-  margin-top: 4px;
 }
-.ai-chip {
+.ai-suggestion-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text-dim);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
   font-size: 12px;
-  padding: 5px 12px;
-  border-radius: var(--radius-lg);
+  text-align: left;
+  padding: 12px 14px;
   cursor: pointer;
   font-family: inherit;
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  line-height: 1.6;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
-.ai-chip:hover {
-  color: var(--accent);
+.ai-suggestion-card:hover {
   border-color: var(--accent);
-  background: transparent;
+  background: var(--hover);
+}
+.ai-suggestion-num {
+  color: var(--text-faint);
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.ai-suggestion-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .ai-disabled {
@@ -7769,43 +7781,31 @@ select.prop-value {
 }
 .ai-send {
   align-self: flex-end;
-  border: 1px solid var(--border);
-  background: var(--accent);
-  color: #fff;
-  font-size: 13px;
-  padding: 7px 15px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-  min-width: 58px;
-  transition: opacity 0.12s ease;
-}
-.ai-send:hover {
-  opacity: 0.92;
-}
-.ai-send:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.ai-footer {
-  display: flex;
-  align-items: center;
-  padding: 4px 12px 10px;
-}
-.ai-footer-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
   border: 1px solid var(--border);
   background: transparent;
-  color: var(--text-dim);
-  font-size: 12px;
-  padding: 4px 10px;
+  color: var(--accent);
   border-radius: var(--radius-md);
   cursor: pointer;
   font-family: inherit;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
-.ai-footer-btn:hover {
-  color: var(--text);
+.ai-send:hover {
   background: var(--hover);
+}
+.ai-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ai-send-stop {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: currentColor;
 }
 
 /* ---- AI settings dialog ---- */
