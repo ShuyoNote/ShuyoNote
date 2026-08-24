@@ -84,12 +84,15 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     imageHash: string,
     imageMime: string,
   ): void {
-    this.__title = title;
-    this.__description = description;
-    this.__siteName = siteName;
-    this.__imageHash = imageHash;
-    this.__imageMime = imageMime;
-    this.markDirty();
+    // Must write through the writable proxy: node fields are read-only on the
+    // frozen node outside of a mutation, and `getWritable()` gives the proxy.
+    const w = this.getWritable();
+    w.__title = title;
+    w.__description = description;
+    w.__siteName = siteName;
+    w.__imageHash = imageHash;
+    w.__imageMime = imageMime;
+    w.markDirty();
   }
 
   decorate(): JSX.Element {
