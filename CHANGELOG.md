@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.30] - 2026-08-24
+
+### 优化
+
+- **自动化测试补强**（P1-4）：把拖拽排序的纯函数 `computeReorder` 抽到 `src/lib/treeReorder.ts`（无 React/DOM 依赖），并导出 `tokenize` 供测试；`scripts/smoke-web.mjs` 新增纯逻辑单测（inside 嵌套 / before-after 同级取中 / 拒绝自移动 / CJK+英文 tokenize）。129→**133 项全绿**。
+
+---
+
 ## [1.59.29] - 2026-08-24
 
 ### 修复

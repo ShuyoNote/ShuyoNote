@@ -47,6 +47,18 @@ await esbuild.build({
 
 const mod = await import(pathToFileURL(outfile).href + "?v=" + Date.now());
 
+// Also bundle the pure drag-reorder module to unit-test computeReorder (no DOM deps).
+const roOutfile = join(tmpDir, "treeReorder.mjs");
+await esbuild.build({
+  entryPoints: [join(root, "src/lib/treeReorder.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node20",
+  outfile: roOutfile,
+});
+const roMod = await import(pathToFileURL(roOutfile).href + "?v=" + Date.now());
+
 // --- Set up the sqlite store's wasm URL + bytes (fs-backed) + fs persist (Node) ---
 const { setDefaultAdapter, setWasmUrl, setWasmBytesProvider, SqliteStore } = mod;
 const sqljsRoot = join(root, "node_modules/.pnpm/sql.js@1.14.2/node_modules/sql.js");
@@ -719,6 +731,25 @@ assert("workspace name persists across instances", wsAgain !== "");
   // onPersistError is async (fire-and-forget); wait a tick for it to fire.
   await new Promise((r) => setTimeout(r, 20));
   assert("persist failure surfaced via onPersistError", gotErr !== null, String(gotErr));
+}
+
+// 13. Pure-logic unit tests for drag reorder + search tokenization.
+{
+  const pk = (id, parent_id, sort_order) => ({ id, parent_id, sort_order, title: id, created_at: 0 });
+  // computeReorder: nested (inside) appends as first child.
+  const pages1 = [pk("a", null, 0), pk("b", null, 1), pk("c", "a", 0)];
+  const optInside = roMod.computeReorder(pages1, "b", "a", "inside");
+  assert("computeReorder inside nests as child", optInside && optInside.parentId === "a" && optInside.sortOrder === 1, JSON.stringify(optInside));
+  // sibling before/after midpoint.
+  const optAfter = roMod.computeReorder(pages1, "a", "b", "after");
+  assert("computeReorder after -> sibling midpoint", optAfter && optAfter.parentId === null && optAfter.sortOrder > 1, JSON.stringify(optAfter));
+  // self-move rejected.
+  const optSelf = roMod.computeReorder(pages1, "a", "a", "inside");
+  assert("computeReorder rejects self-move", optSelf === null);
+
+  // tokenize: CJK bigrams + english words, no dup.
+  const toks = mod.tokenize("压舱石 hello 世界");
+  assert("tokenize yields CJK+words", toks.includes("压舱") && toks.includes("hello") && toks.includes("世界"), JSON.stringify(toks));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

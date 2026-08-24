@@ -425,6 +425,9 @@ function tokenize(q: string): string[] {
   return [...tokens];
 }
 
+// Keep exported for unit tests (see scripts/smoke-web.mjs).
+export { tokenize };
+
 // Rank pages by matched-token score (TF over title/content) with recency tiebreak.
 // Returns pages that match at least one token, ordered by relevance.
 function rankPagesForSearch(query: string, pages: { id: string; title: string; content_text: string; updated_at: number }[]): { id: string; title: string; content_text: string }[] {
