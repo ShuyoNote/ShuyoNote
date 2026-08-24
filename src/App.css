@@ -4049,21 +4049,24 @@ select.prop-value {
   top: 8px;
   right: 8px;
   border: none;
-  background: var(--surface);
+  background: var(--hover);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.75;
   transition: opacity var(--transition-fast), background var(--transition-fast);
 }
 .webbookmark-card:hover .webbookmark-edit-trigger {
   opacity: 1;
 }
 .webbookmark-edit-trigger:hover {
-  background: var(--hover);
+  background: var(--surface);
   color: var(--text);
 }
 .webbookmark-edit {
