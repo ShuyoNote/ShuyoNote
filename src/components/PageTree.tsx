@@ -213,6 +213,18 @@ function TreeItem({
     const id = e.dataTransfer.getData("text/plain");
     if (!id || id === node.id) return;
 
+    // Dropping onto a folder moves the page INTO that folder (parent = folder id).
+    if (isFolder) {
+      const folderChildren = pages
+        .filter((p) => p.parent_id === node.id && p.id !== id)
+        .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
+      const sortOrder = folderChildren.length
+        ? (folderChildren[folderChildren.length - 1].sort_order ?? 0) + 1
+        : 0;
+      await movePage(id, node.id, sortOrder);
+      return;
+    }
+
     // Insert before or after the target based on mouse Y (top half = before).
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const insertAfter = e.clientY > rect.top + rect.height / 2;

@@ -384,6 +384,8 @@ function makeInvoke(store: SqliteStore) {
       return (rows[0] ?? null) as T;
     }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
+      // api wraps args in `{ args }`.
+      const args = a.args ?? a;
       const kind = cmd === "create_folder" ? "folder" : cmd === "create_database" ? "database" : "page";
       const id = uid();
       const wsId = getWs()?.id ?? WS_KEY;
@@ -392,21 +394,23 @@ function makeInvoke(store: SqliteStore) {
       store.run(
         `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
          VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?)`,
-        [id, wsId, a.parent_id ?? null, title, kind, now, now, a.content_json ?? "", a.content_text ?? ""],
+        [id, wsId, args.parent_id ?? null, title, kind, now, now, args.content_json ?? "", args.content_text ?? ""],
       );
       return store.query("SELECT * FROM pages WHERE id = ?", [id])[0] as T;
     }
     if (cmd === "save_page") {
-      const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [a.id])[0];
+      const args = a.args ?? a;
+      const id = String(args.id ?? "");
+      const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [id])[0];
       if (p) {
         // Snapshot the current content BEFORE we overwrite it (version history).
-        snapshotBeforeSave(store, a.id, str(a.title ?? p.id), str(a.content_json ?? ""), str(a.content_text ?? ""));
+        snapshotBeforeSave(store, id, str(args.title ?? p.id), str(args.content_json ?? ""), str(args.content_text ?? ""));
         store.run(
           `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?
            WHERE id = ?`,
-          [str(a.title ?? p.id), str(a.content_json ?? ""), str(a.content_text ?? ""), Date.now(), a.id],
+          [str(args.title ?? p.id), str(args.content_json ?? ""), str(args.content_text ?? ""), Date.now(), id],
         );
-        return store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] as T;
+        return store.query("SELECT * FROM pages WHERE id = ?", [id])[0] as T;
       }
       return null as T;
     }
@@ -419,13 +423,14 @@ function makeInvoke(store: SqliteStore) {
       return undefined as T;
     }
     if (cmd === "move_page") {
-      const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [a.id])[0];
+      // api wraps move args in `{ args }`.
+      const args = a.args ?? a;
+      const id = String(args.id ?? args.page_id ?? "");
+      const parentId = args.new_parent_id !== undefined ? args.new_parent_id : args.parent_id ?? null;
+      const sortOrder = typeof args.sort_order === "number" ? args.sort_order : 0;
+      const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [id])[0];
       if (p) {
-        store.run("UPDATE pages SET parent_id = ?, sort_order = ? WHERE id = ?", [
-          a.new_parent_id ?? null,
-          typeof a.sort_order === "number" ? a.sort_order : 0,
-          a.id,
-        ]);
+        store.run("UPDATE pages SET parent_id = ?, sort_order = ? WHERE id = ?", [parentId ?? null, sortOrder, id]);
       }
       return undefined as T;
     }

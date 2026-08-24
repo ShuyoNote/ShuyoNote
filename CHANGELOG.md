@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.58.3] - 2026-08-24
+
+### 修复
+
+- **页面不能移动到文件夹**：
+  - 前端 `PageTree.handleDrop`：拖到**文件夹**行上时，把页面 `parent_id` 设为该文件夹（移入），而非仅同级重排。
+  - **Web 平台 `move_page`/`create_page`/`save_page`/`create_folder`/`create_database` 参数解包 bug**：前端 api 把这些命令的实参包在 `{ args }` 里，但 web handler 直接读 `a.xxx`（读到 undefined）——导致 Web 版移动/新建/保存时 `parent_id`/`title` 等全部失效（也解释了「移到文件夹」在 Web 版无效）。改为 `a.args ?? a` 统一解包。
+  - `scripts/smoke-web.mjs` 66→**70 项全绿**（新增：`{ args }` 包裹的真实 api 调用——create_page/save_page/move_page 均正确读参数，move 进文件夹设置 parent_id）。
+
+---
+
 ## [1.58.2] - 2026-08-24
 
 ### 修复

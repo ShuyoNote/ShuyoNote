@@ -186,6 +186,19 @@ assert("get_page returns saved detail", got?.title === "改名后");
 const moved = await invoke("move_page", { id: created.id, new_parent_id: null, sort_order: 5 });
 assert("move_page doesn't throw", moved === undefined);
 
+// 3b. The FRONTEND api wraps create/move args in `{ args }` — this caught the
+// "页面不能移到文件夹" bug (web handler read a.xxx instead of a.args.xxx).
+const argsFolder = await invoke("create_folder", { args: { parent_id: null, title: "移动目标夹" } });
+assert("create_folder (args wrapper) works", argsFolder && argsFolder.kind === "folder", argsFolder?.title);
+await invoke("move_page", { args: { id: created.id, new_parent_id: argsFolder.id, sort_order: 0 } });
+const movedInto = await invoke("get_page", { id: created.id });
+assert("move into folder sets parent_id", movedInto && movedInto.parent_id === argsFolder.id, `parent_id=${movedInto?.parent_id}`);
+const argsPage = await invoke("create_page", { args: { parent_id: argsFolder.id, title: "夹内页", content_json: "", content_text: "" } });
+assert("create_page (args wrapper) honors parent_id", argsPage && argsPage.parent_id === argsFolder.id, `parent_id=${argsPage?.parent_id}`);
+await invoke("save_page", { args: { id: argsPage.id, title: "夹内改名", content_json: "{}", content_text: "x" } });
+const savedArgs = await invoke("get_page", { id: argsPage.id });
+assert("save_page (args wrapper) updates title", savedArgs && savedArgs.title === "夹内改名", savedArgs?.title);
+
 // 4. Soft-delete + trash + restore round-trip.
 await invoke("delete_page", { id: created.id });
 const trash = await invoke("list_deleted", {});

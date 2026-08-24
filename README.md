@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.58.2-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.58.3-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
