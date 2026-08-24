@@ -243,6 +243,7 @@ function TreeItem({
       ? isFolder && fmFolderId === node.id
       : currentId === node.id;
   const isSelected = selectedIds.has(node.id);
+  const isDragSource = draggingId === node.id;
   const isDragTarget = draggingId !== null && node.id !== draggingId && overId === node.id;
 
   const commitRename = async () => {
@@ -288,7 +289,7 @@ function TreeItem({
       <div
         data-node-id={node.id}
         data-node-kind={isFolder ? "folder" : isDatabase ? "database" : "page"}
-        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
+        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragSource ? "tree-row-dragging" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         onMouseDown={(e) => {
           // Left-button on a row starts a potential pointer-drag (works in Tauri's
@@ -528,6 +529,16 @@ export function PageTree({
   const spaceChooser = usePopover<HTMLButtonElement>();
   const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
 
+  // Drag-ghost state (title + cursor position while dragging a tree node).
+  const dragLabel = useTreeDrag((s) => s.label);
+  const dragX = useTreeDrag((s) => s.x);
+  const dragY = useTreeDrag((s) => s.y);
+  const dragKind = useTreeDrag((s) => s.kind);
+  const dragIcon =
+    dragKind === "folder" ? <FolderIcon width={15} height={15} /> :
+    dragKind === "database" ? <DatabaseIcon width={15} height={15} /> :
+    <PageIcon width={15} height={15} />;
+
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const activeSpace = spaces.find((s) => s.id === activeSpaceId);
@@ -689,6 +700,7 @@ export function PageTree({
   // small movement threshold we hit-test rows (via data-node-id) and compute the
   // drop zone, then perform the move on mouseup. ----
   const dragRef = useRef<{ id: string; startX: number; startY: number; armed: boolean } | null>(null);
+  const lastOverRef = useRef<{ targetId: string; zone: "before" | "after" | "inside" } | null>(null);
   const onRowPointerDown = (id: string, e: React.MouseEvent) => {
     // Ignore drag start from interactive children (toggle / actions / rename).
     const target = e.target as HTMLElement;
@@ -702,29 +714,43 @@ export function PageTree({
       if (!d.armed) {
         if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < 5) return;
         d.armed = true;
-        useTreeDrag.getState().start(d.id);
+        const srcNode = pages.find((p) => p.id === d.id);
+        useTreeDrag.getState().start(d.id, srcNode?.title || "未命名", srcNode?.kind || "page");
       }
-      // Hit-test the row under the cursor to find the drop target + zone.
+      useTreeDrag.getState().cursor(e.clientX, e.clientY);
+      // Hit-test the row under the cursor; fall back to the previous target so the
+      // highlight doesn't flash off while moving between rows or over a gap.
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-node-id]") as HTMLElement | null;
-      if (!el) {
-        useTreeDrag.getState().move(null, null);
-        return;
+      let targetId: string | null = null;
+      let z: "before" | "after" | "inside" | null = null;
+      if (el) {
+        const id = el.getAttribute("data-node-id")!;
+        if (id !== d.id) {
+          targetId = id;
+          const rect = el.getBoundingClientRect();
+          const ratio = (e.clientY - rect.top) / rect.height;
+          z = ratio < 0.3 ? "before" : ratio > 0.7 ? "after" : "inside";
+        }
       }
-      const targetId = el.getAttribute("data-node-id")!;
-      if (targetId === d.id) {
-        useTreeDrag.getState().move(null, null);
-        return;
+      // No row under cursor → keep the last over target (sticky), so a drop still
+      // lands somewhere sensible instead of being dropped on nothing.
+      if (targetId === null && lastOverRef.current && lastOverRef.current.targetId !== d.id) {
+        targetId = lastOverRef.current.targetId;
+        z = lastOverRef.current.zone;
       }
-      const rect = el.getBoundingClientRect();
-      const ratio = (e.clientY - rect.top) / rect.height;
-      const z: "before" | "after" | "inside" = ratio < 0.3 ? "before" : ratio > 0.7 ? "after" : "inside";
-      useTreeDrag.getState().move(targetId, z);
+      if (targetId && z) {
+        lastOverRef.current = { targetId, zone: z };
+        useTreeDrag.getState().move(targetId, z);
+      } else {
+        useTreeDrag.getState().move(null, null);
+      }
     };
     const onUp = async () => {
       const d = dragRef.current;
       dragRef.current = null;
       const { draggingId, overId, zone } = useTreeDrag.getState();
       useTreeDrag.getState().end();
+      lastOverRef.current = null;
       // Suppress the trailing click that follows a real drag.
       if (d?.armed) dragJustFinishedRef.current = true;
       if (draggingId && overId) {
@@ -1100,6 +1126,14 @@ export function PageTree({
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Drag ghost: follows the cursor to show what's being moved. */}
+      {dragLabel && (
+        <div className="tree-drag-ghost" style={{ left: dragX + 12, top: dragY + 8 }}>
+          <span className="tree-ghost-icon">{dragIcon}</span>
+          <span className="tree-ghost-title">{dragLabel}</span>
         </div>
       )}
     </div>

@@ -10,18 +10,32 @@ export type DropZone = "before" | "after" | "inside";
 
 interface TreeDragState {
   draggingId: string | null;
+  /** Title of the dragged node, used to render a floating ghost at the cursor. */
+  label: string | null;
+  /** Node kind ("folder"/"database"/"page") for the ghost icon. */
+  kind: string | null;
+  /** Cursor position for the ghost (viewport coords). */
+  x: number;
+  y: number;
   overId: string | null;
   zone: DropZone | null;
-  start: (id: string) => void;
+  start: (id: string, label: string, kind?: string) => void;
   move: (overId: string | null, zone: DropZone | null) => void;
+  /** Update the ghost position (called on every mousemove while dragging). */
+  cursor: (x: number, y: number) => void;
   end: () => void;
 }
 
 export const useTreeDrag = create<TreeDragState>((set) => ({
   draggingId: null,
+  label: null,
+  kind: null,
+  x: 0,
+  y: 0,
   overId: null,
   zone: null,
-  start: (id) => set({ draggingId: id }),
+  start: (id, label, kind = "page") => set({ draggingId: id, label, kind }),
   move: (overId, zone) => set({ overId, zone }),
-  end: () => set({ draggingId: null, overId: null, zone: null }),
+  cursor: (x, y) => set({ x, y }),
+  end: () => set({ draggingId: null, label: null, kind: null, overId: null, zone: null }),
 }));

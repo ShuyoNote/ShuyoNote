@@ -1531,6 +1531,50 @@ body,
   outline-offset: -2px;
 }
 
+/* The node currently being dragged: dim it and mark it as a movable ghost so the
+   user sees what they're moving (the drop target highlight is on the row below). */
+.tree-row-dragging {
+  opacity: 0.4;
+  outline: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+  cursor: grabbing;
+}
+
+.tree-row-dragging .tree-title {
+  color: var(--accent);
+}
+
+/* Floating drag ghost that follows the cursor, showing the moved node. */
+.tree-drag-ghost {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  max-width: 260px;
+}
+
+.tree-ghost-icon {
+  display: inline-flex;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.tree-ghost-title {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Drag-drop landing zones: top/bottom bands insert the dragged node as a
    sibling before/after (shown as a clear accent line); the middle band nests it
    as a child of the target (accent outline + left indent hint). */
