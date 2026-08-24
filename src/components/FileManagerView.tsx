@@ -62,7 +62,7 @@ function KindIcon({ kind }: { kind: string }) {
 // FlowUs-style file manager: browse the page/folder hierarchy as a table with
 // type + modified/created columns, and create pages/folders inside a folder.
 export function FileManagerView() {
-  const { pages, openPage, createPage, createFolder } = useNotes();
+  const { pages, openPage, createPage, createFolder, deletePage } = useNotes();
   const { folderId, setFolderId } = useFileManagerStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
@@ -298,46 +298,64 @@ export function FileManagerView() {
     return out;
   }, [sorted, fileGroups]);
 
-  // --- Multi-select batch operations (files only; page/folder rows select via checkbox too) ---
   const selectedFileIds = useMemo(
     () => rows.filter((r) => r.kind === "file" && selected.has(r.key)).map((r) => r.file!.id),
     [rows, selected],
   );
+  const selectedPageIds = useMemo(
+    () => rows.filter((r) => r.kind !== "file" && selected.has(r.key)).map((r) => r.pageId!),
+    [rows, selected],
+  );
+  const selectedCount = selected.size;
 
-  const allSelected =
-    rows.length > 0 && rows.filter((r) => r.kind === "file").every((r) => selected.has(r.key));
+  // Select-all covers every visible row (pages / folders / databases / files).
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.key));
 
   const toggleSelectAll = () => {
     setSelected((s) => {
       const next = new Set(s);
       if (allSelected) {
-        for (const r of rows) if (r.kind === "file") next.delete(r.key);
+        for (const r of rows) next.delete(r.key);
       } else {
-        for (const r of rows) if (r.kind === "file") next.add(r.key);
+        for (const r of rows) next.add(r.key);
       }
       return next;
     });
   };
 
-  const batchRemoveFiles = async () => {
-    if (selectedFileIds.length === 0) return;
-    if (
-      !(await confirmDialog({
-        title: "批量移除文件",
-        message: `移除 ${selectedFileIds.length} 个文件？移除后，不再被任何页面/文件夹引用的文件，其磁盘存储也会被清除。`,
-        danger: true,
-      }))
-    ) {
+  const batchRemove = async () => {
+    if (selectedCount === 0) return;
+    const fileCount = selectedFileIds.length;
+    const pageCount = selectedPageIds.length;
+    const parts: string[] = [];
+    if (pageCount) parts.push(`${pageCount} 个页面/文件夹`);
+    if (fileCount) parts.push(`${fileCount} 个文件`);
+    if (!(await confirmDialog({
+      title: "批量删除",
+      message: `删除选中的 ${parts.join("、")}？${fileCount ? "文件若无引用其磁盘存储也会被清除。" : ""}`,
+      danger: true,
+    }))) {
       return;
     }
     try {
-      const n = await api.removeAttachments(selectedFileIds);
-      setFiles((prev) => prev.filter((f) => !selectedFileIds.includes(f.id)));
+      // Delete pages/folders first (children then parents), then files.
+      for (const pageId of selectedPageIds) {
+        await deletePage(pageId);
+      }
+      if (fileCount > 0) {
+        const n = await api.removeAttachments(selectedFileIds);
+        setFiles((prev) => prev.filter((f) => !selectedFileIds.includes(f.id)));
+        toast(`已删除 ${parts.join("、")}`, "success");
+        if (n !== fileCount) {
+          toast(`文件删除完成：${n} 个`, "info");
+        }
+      } else {
+        toast(`已删除 ${pageCount} 个页面/文件夹`, "success");
+      }
       setSelected(new Set());
       useFileManagerStore.getState().bumpRevision();
-      toast(`已移除 ${n} 个文件`, "success");
     } catch (e) {
-      toast(`批量移除失败：${e}`, "error");
+      toast(`批量删除失败：${e}`, "error");
     }
   };
 
@@ -394,11 +412,11 @@ export function FileManagerView() {
         <div className="file-manager-actions">
           <button
             className="fm-btn fm-btn-danger"
-            onClick={batchRemoveFiles}
-            disabled={selectedFileIds.length === 0}
-            title="移除所选文件（无引用的将清除磁盘存储）"
+            onClick={batchRemove}
+            disabled={selectedCount === 0}
+            title="删除选中的页面/文件夹/文件"
           >
-            {selectedFileIds.length > 0 ? `删除所选 (${selectedFileIds.length})` : "删除所选"}
+            {selectedCount > 0 ? `删除所选 (${selectedCount})` : "删除所选"}
           </button>
           <button className="fm-btn" onClick={newFolder}>
             ＋ 新建文件夹
@@ -469,7 +487,7 @@ export function FileManagerView() {
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
-                  title="全选/取消全选（文件）"
+                  title="全选/取消全选"
                 />
               </th>
               <th className="fm-name-col">文件名</th>

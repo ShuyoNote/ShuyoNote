@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.58.5] - 2026-08-24
+
+### 修复
+
+- **文件管理不能一键多选**：表头「全选」checkbox 之前只作用于 `kind === "file"`（附件）行——因为可见行多为页面/文件夹，`allSelected` 误判为已全选（空数组 `.every()` = true），而 `toggleSelectAll` 又只选文件，所以点全选不生效、表头状态也是错的。修复：
+  - `allSelected`/`toggleSelectAll` 作用于**所有可见行**（页面/文件夹/数据库/文件），全选/反选一致。
+  - 批量删除(`batchRemove`) 现在同时删除**选中的页面/文件夹/数据库**(`deletePage`) + **文件**(`removeAttachments`)，按钮显示所选总数，确认文案与操作匹配。
+  - 表头 title 由「全选/取消全选（文件）」改为「全选/取消全选」。
+
+---
+
 ## [1.58.4] - 2026-08-24
 
 ### 修复
