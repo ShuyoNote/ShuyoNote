@@ -10,6 +10,7 @@ import {
   type Spread,
 } from "lexical";
 import type { CSSProperties, JSX } from "react";
+import { MediaResolver } from "./MediaResolver";
 
 export type SerializedImageNode = Spread<
   {
@@ -18,6 +19,8 @@ export type SerializedImageNode = Spread<
     inline?: boolean;
     width?: number | null;
     height?: number | null;
+    hash?: string | null;
+    mime?: string | null;
   },
   SerializedLexicalNode
 >;
@@ -28,6 +31,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   __inline: boolean;
   __width: number | null;
   __height: number | null;
+  __hash: string | null;
+  __mime: string | null;
 
   static getType(): string {
     return "image";
@@ -40,6 +45,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       node.__inline,
       node.__width,
       node.__height,
+      node.__hash,
+      node.__mime,
       node.__key,
     );
   }
@@ -50,6 +57,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     inline = false,
     width: number | null = null,
     height: number | null = null,
+    hash: string | null = null,
+    mime: string | null = null,
     key?: NodeKey,
   ) {
     super(key);
@@ -58,6 +67,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     this.__inline = inline;
     this.__width = width;
     this.__height = height;
+    this.__hash = hash;
+    this.__mime = mime;
   }
 
   $config() {
@@ -75,25 +86,32 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
-    // Guard: an empty src would make React emit an "empty string passed to src"
-    // warning (and the browser may refetch the page). Render nothing and let the
-    // editor show an empty line placeholder instead.
-    if (!this.__src) return <span className="editor-image editor-image-empty" />;
     const style: CSSProperties = {};
     if (this.__width) style.width = `${this.__width}px`;
     else if (this.__height) style.height = `${this.__height}px`;
     const sized = this.__inline && (this.__width || this.__height) ? " editor-image-sized" : "";
     return (
-      <img
+      <MediaResolver
+        hash={this.__hash}
+        mime={this.__mime}
         src={this.__src}
-        alt={this.__altText}
-        className={
-          this.__inline ? `editor-image editor-image-inline${sized}` : "editor-image"
+        render={(url) =>
+          url ? (
+            <img
+              src={url}
+              alt={this.__altText}
+              className={
+                this.__inline ? `editor-image editor-image-inline${sized}` : "editor-image"
+              }
+              style={style}
+              draggable={false}
+              onError={(e) => e.currentTarget.classList.add("editor-image-broken")}
+              onLoad={(e) => e.currentTarget.classList.remove("editor-image-broken")}
+            />
+          ) : (
+            <span className="editor-image editor-image-empty" />
+          )
         }
-        style={style}
-        draggable={false}
-        onError={(e) => e.currentTarget.classList.add("editor-image-broken")}
-        onLoad={(e) => e.currentTarget.classList.remove("editor-image-broken")}
       />
     );
   }
@@ -115,6 +133,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       inline: this.__inline,
       width: this.__width,
       height: this.__height,
+      hash: this.__hash ?? undefined,
+      mime: this.__mime ?? undefined,
     };
   }
 
@@ -125,6 +145,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       serializedNode.inline ?? false,
       serializedNode.width ?? null,
       serializedNode.height ?? null,
+      serializedNode.hash ?? null,
+      serializedNode.mime ?? null,
     );
   }
 
@@ -139,8 +161,10 @@ export function $createImageNode(
   inline = false,
   width: number | null = null,
   height: number | null = null,
+  hash?: string | null,
+  mime?: string | null,
 ): ImageNode {
-  return $applyNodeReplacement(new ImageNode(src, altText, inline, width, height));
+  return $applyNodeReplacement(new ImageNode(src, altText, inline, width, height, hash, mime));
 }
 
 export function $isImageNode(node: LexicalNode | null | undefined): node is ImageNode {

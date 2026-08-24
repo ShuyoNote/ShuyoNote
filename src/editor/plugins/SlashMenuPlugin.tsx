@@ -123,7 +123,7 @@ function makeOptions(pageId: string): SlashOption[] {
         const metas = await api.importAttachmentFiles(pageId, paths);
         if (metas.length === 0) return;
         const src = platform.asset.convertFileSrc(metas[0].path);
-        editor.update(() => $insertBlockNode($createImageNode(src)));
+        editor.update(() => $insertBlockNode($createImageNode(src, "", false, null, null, metas[0].hash, metas[0].mime)));
       } catch (e) {
         toast(`插入图片失败：${e}`, "error");
       }
@@ -140,7 +140,7 @@ function makeOptions(pageId: string): SlashOption[] {
         const metas = await api.importAttachmentFiles(pageId, paths);
         if (metas.length === 0) return;
         const src = platform.asset.convertFileSrc(metas[0].path);
-        editor.update(() => $insertBlockNode($createVideoNode(src)));
+        editor.update(() => $insertBlockNode($createVideoNode(src, metas[0].hash, metas[0].mime)));
       } catch (e) {
         toast(`插入视频失败：${e}`, "error");
       }

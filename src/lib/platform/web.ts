@@ -28,6 +28,23 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// Cheap, lazy display URL for a media blob. Unlike a base64 data-URL this does
+// NOT expand the file ~1.33x into a JS string, so it's safe for large images/videos.
+// A blob URL is session-scoped; editors resolve from the content hash instead and
+// only use this for one-off previews (file-manager), so a reload isn't affected.
+function blobUrl(bytes: Uint8Array, mime: string): string {
+  try {
+    if (typeof URL !== "undefined" && URL.createObjectURL) {
+      const buf = new Uint8Array(bytes.byteLength);
+      buf.set(bytes);
+      return URL.createObjectURL(new Blob([buf], { type: mime || "application/octet-stream" }));
+    }
+  } catch {
+    /* fall back to data URL */
+  }
+  return `data:${mime};base64,${bytesToBase64(bytes)}`;
+}
+
 // ---- schema-aware attachments helpers ----
 // The web-native `attachments` table is `id/page_id/name/hash/mime/size/path`,
 // while a desktop-format DB restored by `import_backup` uses
@@ -927,8 +944,9 @@ function makeInvoke(store: SqliteStore) {
       const pageId = args.page_id ?? null;
       const hash = await contentHash(bytes);
       await blobStore.put(hash, bytes);
-      // Durable, self-contained URL for immediate display (survives reload).
-      const path = `data:${mime};base64,${bytesToBase64(bytes)}`;
+      // Cheap, lazy display URL for one-off previews (editors resolve from the
+      // content hash instead, so large media never embeds base64 in content).
+      const path = blobUrl(bytes, mime);
       const att = { id: uid(), name, hash, mime, size: data.length, path };
       // Always insert a row (id-based) so each occurrence can carry its own
       // page_id ownership; bytes are content-addressed and deduped in blobStore.
@@ -982,10 +1000,9 @@ function makeInvoke(store: SqliteStore) {
         if (!reg) continue;
         const hash = await contentHash(reg.bytes);
         await blobStore.put(hash, reg.bytes);
-        // Return a self-contained display src (data URL) so `convertFileSrc(path)`
-        // yields a real, playable URL for inserted image/video nodes. Previously
-        // `path` was always "" — so inserting a video produced `<video src="">`.
-        const displaySrc = `data:${reg.mime};base64,${bytesToBase64(reg.bytes)}`;
+        // Cheap, lazy display URL for one-off previews (editors resolve from the
+        // content hash instead, so large media never embeds base64 in content).
+        const displaySrc = blobUrl(reg.bytes, reg.mime);
         const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: displaySrc };
         // Always insert a fresh row (like desktop + save_image) so each import
         // carries its own page_id ownership. Previously this skipped when a row

@@ -304,7 +304,7 @@ assert("list_templates has built-in demos", Array.isArray(templates) && template
 const imgBytes = Array.from(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4, 5, 6, 7, 8]));
 const att = await invoke("save_image", { page_id: null, name: "test.png", mime: "image/png", data: imgBytes });
 assert("save_image returns attachment with hash", att && typeof att.hash === "string" && att.hash.length > 0, att?.hash);
-assert("save_image path is a data URL for display", typeof att?.path === "string" && att.path.startsWith("data:image/png"));
+assert("save_image path is a usable display URL", typeof att?.path === "string" && (att.path.startsWith("data:image/png") || att.path.startsWith("blob:")), String(att?.path));
 // attachment_path resolves the bytes from the blob store.
 assert("attachment_path resolves from blob store", (await invoke("attachment_path", { hash: att.hash })).startsWith("data:image/png"));
 const seen = await invoke("list_page_attachments", {});
@@ -324,7 +324,7 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
   const imported = await invoke("import_attachment_files", { pageId: argsFolder.id, paths: ["uploads/readme.md"] });
   assert("import_attachment_files returns metas", Array.isArray(imported) && imported.length === 1, `${imported?.length}`);
   assert("import keeps the file name", imported?.[0]?.name === "readme.md", String(imported?.[0]?.name));
-  assert("import returns a usable display src (data URL)", typeof imported?.[0]?.path === "string" && imported?.[0]?.path.startsWith("data:"), String(imported?.[0]?.path));
+  assert("import returns a usable display src (data/blob URL)", typeof imported?.[0]?.path === "string" && (imported?.[0]?.path.startsWith("data:") || imported?.[0]?.path.startsWith("blob:")), String(imported?.[0]?.path));
   const inFolderImported = await invoke("list_page_attachments", { pageId: argsFolder.id });
   assert("imported file is owned by the folder (has page_id)", Array.isArray(inFolderImported) && inFolderImported.some((x) => x.name === "readme.md" && x.page_id === argsFolder.id), `${inFolderImported?.length}`);
   const notInOtherImported = await invoke("list_page_attachments", { pageId: created.id });

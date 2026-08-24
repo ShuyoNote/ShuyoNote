@@ -10,23 +10,31 @@ import {
   type Spread,
 } from "lexical";
 import type { JSX } from "react";
+import { MediaResolver } from "./MediaResolver";
 
-export type SerializedVideoNode = Spread<{ src: string }, SerializedLexicalNode>;
+export type SerializedVideoNode = Spread<
+  { src: string; hash?: string | null; mime?: string | null },
+  SerializedLexicalNode
+>;
 
 export class VideoNode extends DecoratorNode<JSX.Element> {
   __src: string;
+  __hash: string | null;
+  __mime: string | null;
 
   static getType(): string {
     return "video";
   }
 
   static clone(node: VideoNode): VideoNode {
-    return new VideoNode(node.__src, node.__key);
+    return new VideoNode(node.__src, node.__hash, node.__mime, node.__key);
   }
 
-  constructor(src: string, key?: NodeKey) {
+  constructor(src: string, hash: string | null = null, mime: string | null = null, key?: NodeKey) {
     super(key);
     this.__src = src;
+    this.__hash = hash;
+    this.__mime = mime;
   }
 
   $config() {
@@ -44,8 +52,20 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
-    if (!this.__src) return <span className="editor-video editor-image-empty" />;
-    return <video src={this.__src} controls className="editor-video" />;
+    return (
+      <MediaResolver
+        hash={this.__hash}
+        mime={this.__mime}
+        src={this.__src}
+        render={(url) =>
+          url ? (
+            <video src={url} controls className="editor-video" />
+          ) : (
+            <span className="editor-video editor-image-empty" />
+          )
+        }
+      />
+    );
   }
 
   exportDOM(_editor: LexicalEditor): DOMExportOutput {
@@ -61,11 +81,13 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
       type: "video",
       version: 1,
       src: this.__src,
+      hash: this.__hash ?? undefined,
+      mime: this.__mime ?? undefined,
     };
   }
 
   static importJSON(serializedNode: SerializedVideoNode): VideoNode {
-    return $createVideoNode(serializedNode.src);
+    return $createVideoNode(serializedNode.src, serializedNode.hash ?? null, serializedNode.mime ?? null);
   }
 
   isInline(): false {
@@ -73,8 +95,8 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createVideoNode(src: string): VideoNode {
-  return $applyNodeReplacement(new VideoNode(src));
+export function $createVideoNode(src: string, hash?: string | null, mime?: string | null): VideoNode {
+  return $applyNodeReplacement(new VideoNode(src, hash ?? null, mime ?? null));
 }
 
 export function $isVideoNode(node: LexicalNode | null | undefined): node is VideoNode {

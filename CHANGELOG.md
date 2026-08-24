@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.18] - 2026-08-24
+
+### 优化
+
+- **媒体不再内嵌 base64（省内存）**：之前插入图片/视频会在编辑器内容里存 base64 data-URL，大文件显著占用内存、DB 快照也膨胀。改为：
+  - 图片/视频节点**改存稳定的内容 `hash`**，渲染时从 blob store（IndexedDB）现取字节 → 创建 **Blob URL**（`MediaResolver` 组件完成，卸载时 `revokeObjectURL`）。省内存且跨刷新存活（桌面端无 blob store 时回落到 `convertFileSrc(path)`）。
+  - `save_image`/`import_attachment_files` 的返回 `path` 由 base64 data-URL 改为**惰性 blob URL**（`blobUrl` 助手），一次性预览用，不再展开 base64。
+  - `scripts/smoke-web.mjs` 仍 **113 项全绿**（save_image/import 的显示地址断言改为接受 data:/blob:）。
+
+---
+
 ## [1.59.17] - 2026-08-24
 
 ### 修复

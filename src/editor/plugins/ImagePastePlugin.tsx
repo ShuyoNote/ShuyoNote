@@ -10,17 +10,17 @@ import {
 import { platform } from "../../lib/platform";
 import { $createImageNode } from "../nodes/ImageNode";
 import { api } from "../../lib/api";
+import type { AttachmentMeta } from "../../types";
 
-async function saveBlob(blob: Blob, pageId: string | null): Promise<string | null> {
+async function saveBlob(blob: Blob, pageId: string | null): Promise<AttachmentMeta | null> {
   try {
     const buf = new Uint8Array(await blob.arrayBuffer());
-    const meta = await api.saveImage({
+    return await api.saveImage({
       page_id: pageId,
       name: null,
       mime: blob.type || "image/png",
       data: Array.from(buf),
     });
-    return platform.asset.convertFileSrc(meta.path);
   } catch (e) {
     console.error("save image failed", e);
     return null;
@@ -43,12 +43,12 @@ export function ImagePastePlugin({ pageId }: { pageId: string }) {
             const blob = item.getAsFile();
             if (!blob) continue;
             clipboardEvent.preventDefault();
-            saveBlob(blob, pageId).then((src) => {
-              if (!src) return;
+            saveBlob(blob, pageId).then((meta) => {
+              if (!meta) return;
               editor.update(() => {
                 const selection = $getSelection();
                 if (!$isRangeSelection(selection)) return;
-                $insertNodes([$createImageNode(src)]);
+                $insertNodes([$createImageNode(platform.asset.convertFileSrc(meta.path), "", false, null, null, meta.hash, meta.mime)]);
               });
             });
             return true;
