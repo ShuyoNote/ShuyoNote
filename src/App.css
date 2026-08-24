@@ -7479,6 +7479,26 @@ select.prop-value {
   font-size: 11px;
   color: var(--text-faint);
 }
+.ai-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+}
+.ai-activity-label {
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.ai-activity-item {
+  color: var(--text-dim);
+  background: var(--hover);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
 
 .ai-drafts-title {
   font-size: 12px;
@@ -7488,7 +7508,7 @@ select.prop-value {
 }
 .ai-draft-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -7497,13 +7517,32 @@ select.prop-value {
   background: var(--bg);
 }
 .ai-draft-summary {
-  flex: 1;
   font-size: 13px;
   color: var(--text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ai-draft-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ai-draft-preview {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: hidden;
 }
 .ai-draft-actions {
   display: flex;

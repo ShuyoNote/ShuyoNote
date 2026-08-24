@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAiStore } from "../store/ai";
 import { SparkleIcon, SettingsIcon } from "./icons";
 import { Markdown } from "./Markdown";
+import { draftPreview } from "../lib/ai/preview";
 import { AiSettingsDialog } from "./AiSettingsDialog";
 
 // Clickable quick prompts shown in the empty state, so a new user has an example
@@ -15,8 +16,22 @@ const QUICK_PROMPTS = ["总结当前页", "新建一篇周计划", "为当前页
 // can reach the settings to enable AI; the panel body shows an enable notice when
 // the feature is off.
 export function AiAssistantPanel() {
-  const { config, open, running, reply, drafts, error, setOpen, run, confirm, dismiss, clearResult, resetError } =
-    useAiStore();
+  const {
+    config,
+    open,
+    running,
+    reply,
+    drafts,
+    error,
+    activity,
+    setOpen,
+    run,
+    stop,
+    confirm,
+    dismiss,
+    clearResult,
+    resetError,
+  } = useAiStore();
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -92,6 +107,14 @@ export function AiAssistantPanel() {
                 </button>
               </div>
               <div className="ai-reply-text"><Markdown text={reply} /></div>
+              {activity.length > 0 && (
+                <div className="ai-activity">
+                  <span className="ai-activity-label">工具</span>
+                  {activity.map((a, i) => (
+                    <span key={`${a.tool}-${i}`} className="ai-activity-item">{a.note}</span>
+                  ))}
+                </div>
+              )}
               <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
             </div>
           )}
@@ -101,19 +124,25 @@ export function AiAssistantPanel() {
               <div className="ai-drafts-title">
                 待确认操作（{drafts.length}）
               </div>
-              {drafts.map((d) => (
-                <div key={d.key} className="ai-draft-item">
-                  <span className="ai-draft-summary">{d.summary}</span>
-                  <div className="ai-draft-actions">
-                    <button className="ai-draft-apply" onClick={() => confirm(d.key)}>
-                      应用
-                    </button>
-                    <button className="ai-draft-discard" onClick={() => dismiss(d.key)}>
-                      弃用
-                    </button>
+              {drafts.map((d) => {
+                const preview = draftPreview(d.payload);
+                return (
+                  <div key={d.key} className="ai-draft-item">
+                    <div className="ai-draft-main">
+                      <span className="ai-draft-summary">{d.summary}</span>
+                      {preview && <pre className="ai-draft-preview">{preview}</pre>}
+                    </div>
+                    <div className="ai-draft-actions">
+                      <button className="ai-draft-apply" onClick={() => confirm(d.key)}>
+                        应用
+                      </button>
+                      <button className="ai-draft-discard" onClick={() => dismiss(d.key)}>
+                        弃用
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -150,8 +179,12 @@ export function AiAssistantPanel() {
             autoFocus
             disabled={!config.enabled}
           />
-          <button className="ai-send" disabled={!config.enabled || running || !prompt.trim()} onClick={send}>
-            {running ? "思考中…" : "发送"}
+          <button
+            className="ai-send"
+            disabled={!config.enabled || (!running && !prompt.trim())}
+            onClick={running ? stop : send}
+          >
+            {running ? "停止" : "发送"}
           </button>
         </div>
       </div>

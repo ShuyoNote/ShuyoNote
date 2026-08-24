@@ -65,4 +65,6 @@ export interface AiRunResult {
   drafts: Array<{ key: string; summary: string; payload: unknown }>;
   /** Any hard error surfaced to the UI. */
   error?: string;
+  /** Tool calls performed this run (for transparency in the UI). */
+  activity?: Array<{ tool: string; note: string }>;
 }

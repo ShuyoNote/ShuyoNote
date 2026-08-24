@@ -44,6 +44,34 @@ function toolSchema(tool: AiTool): Record<string, unknown> {
   return { type: "function", function: { name: tool.id, description: tool.description, parameters: tool.argsSchema } };
 }
 
+/** Short human label for a tool call, for the UI's transparency log. */
+function toolNote(
+  toolId: string,
+  args: Record<string, unknown>,
+  pages: Array<{ id: string; title: string }>,
+): string {
+  const a = (s: string) => String(args[s] ?? "");
+  const pageLabel = (id: string) => pages.find((p) => p.id === id)?.title || id;
+  switch (toolId) {
+    case "search_pages":
+      return `搜索「${a("query")}」`;
+    case "read_page":
+      return `读取页面 «${pageLabel(a("pageId"))}»`;
+    case "read_block":
+      return `读取页面块 «${pageLabel(a("pageId"))}»`;
+    case "get_backlinks":
+      return `反链 «${pageLabel(a("pageId"))}»`;
+    case "list_files":
+      return `列出附件 «${pageLabel(a("pageId"))}»`;
+    case "create_page":
+      return `新建页面「${a("title")}」`;
+    case "append_block":
+      return `追加内容到 «${pageLabel(a("pageId"))}»`;
+    default:
+      return toolId;
+  }
+}
+
 export async function runAiLoop(
   userPrompt: string,
   pages: Array<{ id: string; title: string }>,
@@ -60,6 +88,7 @@ export async function runAiLoop(
   }
   const drafts = new Map<string, { key: string; summary: string; payload: unknown }>();
   const errors: string[] = [];
+  const activity: Array<{ tool: string; note: string }> = [];
   let assistantText = "";
   let prevToolResults: AiMessage[] = [];
 
@@ -108,6 +137,7 @@ export async function runAiLoop(
         continue;
       }
       const safeArgs = filterArgs(call.args, tool);
+      activity.push({ tool: tool.id, note: toolNote(tool.id, safeArgs, ctx.allPages) });
       let raw: unknown;
       try {
         raw = await tool.run(safeArgs, { currentPageId: ctx.currentPageId, pages: ctx.allPages });
@@ -147,5 +177,6 @@ export async function runAiLoop(
     reply: assistantText.trim(),
     drafts: Array.from(drafts.values()),
     error: errors[0],
+    activity: activity.length ? activity : undefined,
   };
 }

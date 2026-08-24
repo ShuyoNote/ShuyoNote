@@ -13,6 +13,7 @@ import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
 
 const CFG_KEY = "shuyonote.ai.config";
+const HISTORY_KEY = "shuyonote.ai.history";
 
 export interface AiConfig {
   enabled: boolean;
@@ -23,6 +24,8 @@ export interface AiConfig {
 }
 
 const HISTORY_LIMIT = 16; // cap on stored turns (8 exchanges) to bound context.
+// Monotonic token: a stop() or a newer run() invalidates an in-flight result.
+let runSeq = 0;
 
 interface AiState {
   config: AiConfig;
@@ -36,10 +39,13 @@ interface AiState {
   error: string | null;
   /** Prior user/assistant turns, so follow-ups keep context. */
   history: Array<{ role: "user" | "assistant"; content: string }>;
+  /** Tool calls performed last run (for transparency). */
+  activity: Array<{ tool: string; note: string }>;
 
   setOpen: (open: boolean) => void;
   update: (patch: Partial<AiConfig>) => void;
   run: (prompt: string) => Promise<void>;
+  stop: () => void;
   confirm: (key: string) => Promise<void>;
   dismiss: (key: string) => void;
   clearResult: () => void;
@@ -74,6 +80,28 @@ function saveConfig(c: AiConfig) {
   }
 }
 
+function loadHistory(): Array<{ role: "user" | "assistant"; content: string }> {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((m: any) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .slice(-HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(h: Array<{ role: "user" | "assistant"; content: string }>) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(-HISTORY_LIMIT)));
+  } catch {
+    // ignore
+  }
+}
+
 export const useAiStore = create<AiState>((set, get) => ({
   config: loadConfig(),
   open: false,
@@ -81,7 +109,8 @@ export const useAiStore = create<AiState>((set, get) => ({
   reply: "",
   drafts: [],
   error: null,
-  history: [],
+  history: loadHistory(),
+  activity: [],
 
   setOpen: (open) => set({ open }),
 
@@ -101,6 +130,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
     const notes = useNotes.getState();
     const allPages = notes.pages.map((p) => ({ id: p.id, title: p.title, parent_id: p.parent_id }));
+    const seq = ++runSeq;
     set({ running: true, error: null });
 
     try {
@@ -111,21 +141,31 @@ export const useAiStore = create<AiState>((set, get) => ({
         { currentPageId: notes.currentId, allPages },
         { transport, history: get().history },
       );
+      // A newer run() or a stop() invalidates this result (stale discard).
+      if (seq !== runSeq) return;
       // Keep existing drafts, replace reply/error with the fresh run; keep the
       // last assistant reply in history so follow-ups ("再详细点") stay in context.
       const history = [...get().history, { role: "user" as const, content: trimmed }];
       if (result.reply) history.push({ role: "assistant" as const, content: result.reply });
       const historyCapped = result.ok ? history.slice(-HISTORY_LIMIT) : get().history;
+      saveHistory(historyCapped);
       set({
         running: false,
         reply: result.reply,
         drafts: result.drafts.length ? result.drafts : get().drafts,
         error: result.ok ? null : result.error ?? null,
         history: historyCapped,
+        activity: result.activity ?? [],
       });
     } catch (e) {
+      if (seq !== runSeq) return;
       set({ running: false, error: String((e as Error)?.message ?? e) });
     }
+  },
+
+  stop: () => {
+    runSeq++;
+    set({ running: false });
   },
 
   confirm: async (key: string) => {
@@ -154,6 +194,9 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   dismiss: (key: string) => set({ drafts: get().drafts.filter((d) => d.key !== key) }),
 
-  clearResult: () => set({ reply: "", drafts: [], error: null, history: [] }),
+  clearResult: () => {
+    saveHistory([]);
+    set({ reply: "", drafts: [], error: null, history: [], activity: [] });
+  },
   resetError: () => set({ error: null }),
 }));

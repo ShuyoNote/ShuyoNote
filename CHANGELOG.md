@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.46] - 2026-08-24
+
+### 新增/优化
+
+- **停止/取消**：请求进行中「发送」变为「停止」按钮；`store` 用 `runSeq` 使过期结果/异常被丢弃，跨平台无需后端改动。
+- **工具调用透明化**：`runAiLoop` 收集 `activity`（如「搜索『…』」「读取页面«…»」「新建页面『…』」），在回复卡下方以标签显示模型调用了哪些工具。
+- **草稿预览**：`create_page`/`append_block` 草稿卡片展开预览将写入的标题/正文/追加文本（`src/lib/ai/preview.ts`），确认前可见。
+- **会话持久化**：`history` 存入 localStorage（`shuyonote.ai.history`），刷新后保留多轮上下文。
+- `scripts/smoke-web.mjs` 170→**174 项全绿**（新增：create_page activity、草稿预览三态）。
+
+---
+
 ## [1.59.45] - 2026-08-24
 
 ### 新增

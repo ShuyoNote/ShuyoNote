@@ -72,6 +72,7 @@ await esbuild.build({
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
+      'export { draftPreview } from "./src/lib/ai/preview";\n' +
       'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n',
     resolveDir: root,
     loader: "js",
@@ -884,6 +885,7 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("runAiLoop create_page drafts exactly one", r1.drafts.length === 1 && r1.drafts[0].payload.kind === "create_page", JSON.stringify(r1.drafts));
   assert("runAiLoop create_page carries title", r1.drafts[0].payload.args.title === "会议");
   assert("runAiLoop create_page builds content_json", r1.drafts[0].payload.args.content_json.includes("要点一") && r1.drafts[0].payload.args.content_json.includes("要点二"));
+  assert("runAiLoop records activity for create_page", Array.isArray(r1.activity) && r1.activity.some((a) => a.tool === "create_page"), JSON.stringify(r1.activity));
 
   // append_block returns a draft with pageId + text.
   const respSeq2 = [
@@ -1041,6 +1043,15 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("markdown blocks javascript: link", unsafe[0].children.every((c) => c.kind !== "link"), JSON.stringify(unsafe));
   const html = aiMod.parseMarkdown("<script>alert(1)</script>");
   assert("markdown keeps raw html as text", html[0].kind === "p" && html[0].children[0].text === "<script>alert(1)</script>");
+}
+
+// 16. Draft preview helper.
+{
+  const cp = aiMod.draftPreview({ kind: "create_page", args: { title: "会议", content_text: "要点一\n要点二", content_json: "" } });
+  assert("draftPreview create_page shows title+text", cp.includes("标题：会议") && cp.includes("要点一"), JSON.stringify(cp));
+  const ab = aiMod.draftPreview({ kind: "append_block", pageId: "p1", text: "新增一行" });
+  assert("draftPreview append_block shows text", ab.includes("将追加") && ab.includes("新增一行"), JSON.stringify(ab));
+  assert("draftPreview unknown -> empty", aiMod.draftPreview({ kind: "?x" }) === "");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
