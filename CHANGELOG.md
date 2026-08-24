@@ -2,6 +2,21 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.49.0] - 2026-08-24
+
+### 重构（M16.1 第一步）
+
+- **Web 平台改用真实 SQLite（WASM）**：把浏览器版从「localStorage JSON mock」升级为**真正的 SQLite 数据库**，核心笔记 CRUD 跑真实 SQL：
+  - 新增 `src/lib/platform/sqliteStore.ts`：基于 `sql.js`（WASM SQLite）的异步存储封装——`SqliteStore`（`run`/`query`），浏览器用 **IndexedDB** 持久化整库（`db.export()`），并带 `setWasmUrl`/`setWasmBytesProvider`/`setDefaultAdapter` 可注入点（供测试用 fs/内存适配器）。**首次加载后即开即用**，schema 含 workspaces/pages/tags/page_tags/attachments。
+  - 新增 `src/lib/platform/sqljs-types.ts`：为 sql.js（无类型）补最小类型声明。
+  - `web.ts` 的 `executor.invoke` 核心命令改为操作真实 SQL：pages CRUD、软删/回收站/恢复、tags 关联、按标签过滤、搜索（`LIKE`）、工作空间设置、关系图节点、图片附件；其余命令仍安全降级空值（同步/加密/插件/数据库透镜等 Tauri 专属能力）。
+  - 种子：欢迎页 + 快速上手 + 「入门」标签（首次打开即演示）。
+  - **wasm 加载修正**：sql.js 浏览器构建默认的 `locateFile`/`fetch` 在 Vite 模块图里会拿到 HTML，改为**自行 fetch wasm 字节并以 `wasmBinary` 传入**（含 `\0asm` 魔数校验），生产构建正确产出 `sql-wasm-browser-*.js`。
+  - IndexedDB 增加**超时回退**（受限/无痕环境优雅降级为内存库，绝不阻塞）。
+  - `scripts/smoke-web.mjs` 在 Node 下用 `createWebPlatform()` + fs 适配器跑真实 SQLite，**32 项断言全绿**（新增软删→回收站→恢复、跨实例持久化；sql.js 在 Node 一并验证）。
+
+---
+
 ## [1.48.0] - 2026-08-24
 
 ### 优化（Web 平台体验完整化）
