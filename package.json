@@ -1,10 +1,11 @@
 {
   "name": "shuyonote",
   "private": true,
-  "version": "1.46.0",
+  "version": "1.47.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite --config vite.web.config.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

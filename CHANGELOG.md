@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.47.0] - 2026-08-24
+
+### 新增
+
+- **浏览器 Web 平台（M16.0b）**：`pnpm dev:web` 让 ShuyoNote 在**纯浏览器**（无需 Tauri/Rust 后端）跑起来：
+  - 新增 `src/lib/platform/web.ts`（`createWebPlatform`）：`executor.invoke` 用 **localStorage 持久化的 mock 后端**——核心笔记 CRUD（list/create/get/save/delete/move/page、workspaces、tags、search、templates、graph、attachments、sync/encryption）真实可用，其余命令**返回安全空值、绝不抛错**（UI 优雅降级）；dialog/opener/event/asset/webview 用浏览器原生驱动（`openUrl`→`window.open`、`convertFileSrc`→透传、event→EventTarget、drag-drop→no-op）。
+  - `src/lib/platform/index.ts` 按环境**自动选择** `tauriPlatform`/`webPlatform`（探测 `window.__TAURI_INTERNALS__`），现有 Tauri 桌面行为不变。
+  - 新增 `dev:web` 脚本（`vite --config vite.web.config.ts`，独立 5173 端口）。
+  - **已在 Edge 无头浏览器验证**：app 真实挂载、渲染出种子页「欢迎页」并进入 Lexical 编辑器；`scripts/smoke-web.mjs` 22 项断言通过。
+
+---
+
 ## [1.46.0] - 2026-08-24
 
 ### 重构

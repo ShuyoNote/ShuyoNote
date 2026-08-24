@@ -98,14 +98,15 @@ ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 19 + Lexical + TS（
 
 > 本方案为**规划**，未落地。下列 M16.x 是建议顺序，仍沿用「新增 + 校验 + 切换 + 保留可回滚」的风险控制。
 
-- **M16.1 `api.ts` 抽 driver 接口（零行为变化，最高优先）**：定义 `StorageDriver`/`FsDriver`/`OpenerDriver` 接口，Tauri 实现即现状。**这一阶段纯收益、不返工，无论最终走哪条路径都用得上。**
+- **M16.0 `api.ts` 抽 driver 接口（零行为变化，最高优先，✅ v1.46.0）**：定义 `Executor`/`DialogDriver`/`OpenerDriver`/`EventDriver`/`AssetDriver`/`WebviewDriver` 接口，`tauri.ts` 唯一宿主 `@tauri-apps/*`，Tauri 实现即现状。**这一阶段纯收益、不返工，无论最终走哪条路径都用得上。**
+- **M16.0b 浏览器 Web 平台可跑（✅ v1.47.0）**：`web.ts`（`createWebPlatform`）——`index.ts` 按环境（`window.__TAURI_INTERNALS__`）自动选 Tauri/Web；`web.ts` 的 `invoke` 用 localStorage 持久化 mock 后端（核心笔记 CRUD + 其余命令安全空值不抛错），dialog/opener/event/asset/webview 用浏览器原生驱动；`pnpm dev:web`（独立 5173 端口）。已验证 app 在浏览器引擎真实挂载并渲染、进入编辑器。
 - **M16.2 核心语义 TS 化（先以 Rust 驱动跑通）**：`pkg/core` 重写 Schema/迁移/附件寻址/加密/备份格式的 TS 语义，仍走 rusqlite 驱动保证现有数据兼容。
 - **M16.3 Web/WASM driver**：`wa-sqlite`+OPFS 落地，逐命令回归（list/tags/search/graph/backlinks/db/属性/版本/附件/同步）。
 - **M16.4 插件运行时降级迁移**：`boa_engine` 移入 WASM/浏览器，权限模型对齐。
 - **M16.5 各平台壳**：浏览器 PWA → 安卓 WebView → iOS WKWebView → 鸿蒙 ArkWeb（各平台 JSBridge 补齐文件/外链/对话框）。
 - **M16.6 验收 + 回归**：全功能回归（存储/加密/同步/插件/附件/备份），生产构建 + 运行验证；原 Tauri 桌面形态保留为 driver A 不回归。
 
-> **里程碑拆分建议**：先做 **M16.1**（零风险、纯收益），跑通 driver 抽象后再决定是否继续 M16.2–M16.6——先验证「分层是否真的降成本」，再投入存储重写。
+> **里程碑拆分建议**：**M16.0（driver 抽象）+ M16.0b（浏览器可跑）都已完成**——先用 `pnpm dev:web` 让 app 在纯浏览器跑起来验证分层可行，然后再决定是否继续 M16.1–M16.5（存储/语义 TS 化）。
 
 ## 8. 后端 / 前端改造要点
 
@@ -133,6 +134,6 @@ ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 19 + Lexical + TS（
 
 ## 11. 结论
 
-「全平台通吃」值得做，但**不是重写，而是分层换壳**：把 `api.ts` 抽成可插拔 driver，核心语义在 `pkg/core` 沉淀，先用 Tauri 驱动跑通现有数据，WASM/浏览器驱动逐条补齐。这让你**既拿到跨浏览器 + 安卓 + iOS + 鸿蒙的终局，又不用停摆现在的 app**。**第一步（M16.1 `api.ts` driver 抽象）零风险、纯收益，建议先做**；跑通后再按里程碑推进。若你只是要鸿蒙（尤其桌面），路径 B（Tauri→OpenHarmony）可比本方案更省。
+「全平台通吃」值得做，但**不是重写，而是分层换壳**：把 `api.ts` 抽成可插拔 driver，核心语义在 `pkg/core` 沉淀，先用 Tauri 驱动跑通现有数据，WASM/浏览器驱动逐条补齐。这让你**既拿到跨浏览器 + 安卓 + iOS + 鸿蒙的终局，又不用停摆现在的 app**。**M16.0（driver 抽象）+ M16.0b（浏览器可跑）已完成**——现在 `pnpm dev:web` 就能在纯浏览器跑起来（localStorage mock 后端）。若你只是要鸿蒙（尤其桌面），路径 B（Tauri→OpenHarmony）可比本方案更省。
 
 配套取舍见[设计哲学](design-philosophy.md)（本地优先 + 数据可移植）。

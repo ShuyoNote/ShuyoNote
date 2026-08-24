@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Transient transpile dir used by scripts/smoke-web.mjs
+.smoke-tmp
+
 # Rust build artifacts
 src-tauri/target
 sync-server/target
