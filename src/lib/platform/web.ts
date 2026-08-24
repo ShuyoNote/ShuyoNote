@@ -1305,10 +1305,26 @@ function makeInvoke(store: SqliteStore) {
       const trash = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NOT NULL")[0]?.n ?? 0;
       const atts = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments")[0]?.n ?? 0;
       const versions = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions")[0]?.n ?? 0;
+      // Precise byte accounting: DB = live snapshot length; attachments = sum of
+      // blob-store bytes actually stored; trash/version = sum of their content lengths.
+      const dbBytes = store.snapshot().length;
+      // Attachment bytes: sum the blob-store entries referenced by rows (dedupe by
+      // hash so shared bytes aren't double-counted). Falls back to 0 for big sets.
+      const attHashes = new Set((store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments") as any[]).map((r) => String(r.hash)));
+      let attBytes = 0;
+      try {
+        for (const e of await blobStore.entries()) {
+          if (attHashes.has(e.hash)) attBytes += e.bytes.length;
+        }
+      } catch {
+        /* keep 0 */
+      }
+      const trashBytes = (store.query<{ s: number }>("SELECT COALESCE(SUM(LENGTH(content_json) + LENGTH(content_text)), 0) AS s FROM pages WHERE deleted_at IS NOT NULL")[0]?.s ?? 0);
+      const versionBytes = (store.query<{ s: number }>("SELECT COALESCE(SUM(LENGTH(content_json) + LENGTH(content_text)), 0) AS s FROM page_versions")[0]?.s ?? 0);
       return {
-        db_bytes: 0, attachment_bytes: 0, attachment_count: atts,
-        trash_count: trash, trash_bytes: 0, version_count: versions,
-        version_bytes: 0, deleted_workspace_count: 0, temp_bytes: 0,
+        db_bytes: dbBytes, attachment_bytes: attBytes, attachment_count: atts,
+        trash_count: trash, trash_bytes: trashBytes, version_count: versions,
+        version_bytes: versionBytes, deleted_workspace_count: 0, temp_bytes: 0,
       } as T;
     }
     if (cmd === "clear_trash") {

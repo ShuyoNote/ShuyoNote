@@ -389,6 +389,7 @@ const graph = await invoke("get_graph", {});
 assert("get_graph has page nodes", Array.isArray(graph?.pages) && graph.pages.length >= 1, `${graph?.pages?.length} node(s)`);
 const stats = await invoke("storage_stats", {});
 assert("storage_stats is object", typeof stats === "object" && stats !== null);
+assert("storage_stats has real db_bytes (>0)", typeof stats?.db_bytes === "number" && stats.db_bytes > 0, `${stats?.db_bytes}`);
 
 // ---- Properties / database lens (Web platform now supports real attrs/db) ----
 // 10a. Create an attribute and set it on a page.

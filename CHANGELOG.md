@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.25] - 2026-08-24
+
+### 优化
+
+- **存储统计精确化**（P0-2）：`storage_stats` 之前 `db_bytes`/`attachment_bytes`/`trash_bytes`/`version_bytes` 全为 0，存储面板显示不准。修复：`db_bytes` 取实时快照长度；`attachment_bytes` 按附件行引用的 hash 累加 blob-store 实际字节（跨空间共享字节不重复计）；`trash_bytes`/`version_bytes` 按对应表的内容长度累加。
+- `scripts/smoke-web.mjs` 123→**124 项全绿**（新增：storage_stats 真实 `db_bytes > 0`）。
+
+---
+
 ## [1.59.24] - 2026-08-24
 
 ### 修复
