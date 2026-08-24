@@ -3,6 +3,10 @@ import { useAiStore } from "../store/ai";
 import { SparkleIcon, SettingsIcon } from "./icons";
 import { AiSettingsDialog } from "./AiSettingsDialog";
 
+// Clickable quick prompts shown in the empty state, so a new user has an example
+// of what to ask and the empty panel isn't a bare void.
+const QUICK_PROMPTS = ["总结当前页", "新建一篇周计划", "为当前页补充提纲", "列出今日待办"];
+
 // Floating AI assistant. Entry points (NewPageGuide, sidebar, command palette)
 // open it via store.setOpen(true). It renders a docked panel bottom-right with a
 // prompt box; the model's writes surface as draft cards the user must confirm.
@@ -27,6 +31,12 @@ export function AiAssistantPanel() {
       e.preventDefault();
       send();
     }
+  };
+
+  // Run a quick prompt directly (skips the textarea state machine).
+  const runText = (t: string) => {
+    if (running || !config.enabled) return;
+    useAiStore.getState().run(t);
   };
 
   // Collapsed floating toggle.
@@ -115,7 +125,15 @@ export function AiAssistantPanel() {
 
           {config.enabled && !reply && drafts.length === 0 && !error && (
             <div className="ai-empty">
-              询问笔记内容，或让我新建页面、追加内容。写入前需你确认。
+              <SparkleIcon className="ai-empty-icon" />
+              <div className="ai-empty-text">询问笔记内容，或让我新建页面、追加内容。写入前需你确认。</div>
+              <div className="ai-empty-chips">
+                {QUICK_PROMPTS.map((p) => (
+                  <button key={p} className="ai-chip" onClick={() => runText(p)}>
+                    {p}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
