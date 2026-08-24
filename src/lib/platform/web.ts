@@ -1403,7 +1403,20 @@ function makeInvoke(store: SqliteStore) {
       store.run("DELETE FROM pages WHERE deleted_at IS NOT NULL");
       return 0 as T;
     }
-    if (cmd === "cleanup_orphan_attachments" || cmd === "cleanup_temp_files") return 0 as T;
+    if (cmd === "cleanup_orphan_attachments") {
+      // Free blob bytes whose hash is no longer referenced by any attachment row
+      // (content-addressed: a hash can be safely removed only when zero rows use it).
+      const referenced = new Set((store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments") as any[]).map((r) => String(r.hash)));
+      let freed = 0;
+      for (const e of await blobStore.entries()) {
+        if (!referenced.has(e.hash)) {
+          freed += e.bytes.length;
+          await blobStore.delete(e.hash).catch(() => {});
+        }
+      }
+      return freed as T;
+    }
+    if (cmd === "cleanup_temp_files") return 0 as T;
     if (cmd === "cleanup_old_versions") {
       const maxKeep = Number(a.maxKeep ?? 50);
       const before = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions")[0]?.n ?? 0;

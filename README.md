@@ -9,7 +9,7 @@
   基于 Tauri 2 + Lexical + SQLite，数据完全存储在本机，离线可用，支持多设备同步�?</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.59.31-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.59.32-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">

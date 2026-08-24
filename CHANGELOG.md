@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.32] - 2026-08-24
+
+### 修复
+
+- **清理孤立附件真正生效**（web）：`cleanup_orphan_attachments` 之前返回 0（空桩）。现在计算附件表引用的 hash 集合，删除 blob store 中**无任何行引用**的字节（内容寻址零引用规则）；`cleanup_temp_files` 浏览器无临时目录仍返回 0。
+- `scripts/smoke-web.mjs` 133→**136 项全绿**（新增：孤儿清理返回计数 / 引用字节不删 / 再次清理）。
+
+---
+
 ## [1.59.31] - 2026-08-24
 
 ### 修复

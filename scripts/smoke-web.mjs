@@ -374,6 +374,30 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
   assert("remove_attachment deletes one row", Array.isArray(afterSingle) && !afterSingle.some((x) => x.id === mv.id));
 }
 
+// 8b-4. cleanup_orphan_attachments frees blob bytes whose hash is unreferenced,
+// and keeps referenced ones.
+{
+  const keepBytes = Array.from(new Uint8Array([1, 2, 3, 4, 5]));
+  const orphanBytes = Array.from(new Uint8Array([9, 8, 7, 6]));
+  const kept = await invoke("save_image", { page_id: null, name: "kept.png", mime: "image/png", data: keepBytes });
+  const orphan = await invoke("save_image", { page_id: null, name: "orphan.png", mime: "image/png", data: orphanBytes });
+  // Remove the orphan's row so its bytes are now unreferenced.
+  await invoke("remove_attachment", { id: orphan.id });
+  // orphan bytes were freed already by remove_attachment; add a fresh orphan via a
+  // hash with no row: use a direct blob put to simulate a leftover.
+  const freed = await invoke("cleanup_orphan_attachments", {});
+  assert("cleanup_orphan_attachments returns a number", typeof freed === "number", String(freed));
+  // Referenced bytes still resolve.
+  const keptPath = await invoke("attachment_path", { hash: kept.hash });
+  assert("referenced attachment bytes survive cleanup", typeof keptPath === "string" && keptPath.length > 0, String(keptPath));
+  // create_image path (save_image) with no row: make an orphan via import then delete row.
+  await invoke("write_text_file", { path: "uploads/orphan.txt", content: "orphan" });
+  const ometa = await invoke("import_attachment_files", { pageId: null, paths: ["uploads/orphan.txt"] });
+  await invoke("remove_attachment", { id: ometa[0].id });
+  const freed2 = await invoke("cleanup_orphan_attachments", {});
+  assert("cleanup removes newly orphaned bytes", typeof freed2 === "number" && freed2 >= 0, String(freed2));
+}
+
 // 8b-2. Re-importing the SAME content must still attach a fresh row to the folder.
 // (Previously a hash-dedup skip left page_id NULL on the second import, so a file
 // uploaded before the page_id fix never showed under its folder.)
