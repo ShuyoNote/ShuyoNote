@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.56.0] - 2026-08-24
+
+### 新增（Web 平台块级引用 / 反链）
+
+- **浏览器版支持「块级引用 + 反链面板」**（对齐桌面，`((id))` 块引用 / `{{id}}` 块嵌入 / `[[标题]]` 页面引用）：
+  - `web.ts` 新增解析 `content_json` 的块级辅助（`parseJson`/`rootChildren`/`nodeText`/`collectBlockRefs`/`snippetForBlock`/`blockTextOf`），不用额外表——直接解析序列化 Lexical JSON。
+  - 实现命令：
+    - **`get_page_blocks`**：解析页面 `content_json` 里带 `blockId` 的顶层块 → `{block_id,text}`。
+    - **`resolve_block`**：全局查块 → `BlockInfo`（block_id/page_id/page_title/snippet/content）。
+    - **`get_backlinks`**：`[[标题]]` 页面引用 → 引用的来源页（`PageMeta[]`）。
+    - **`list_block_backlinks`**：本页块被 `blockref`/`blockembed` 引用的来源块对（`BlockBacklink[]`，含 source/target snippet）。
+    - **`search_blocks`**：按块内容搜索 → `SearchBlock[]`（含 block_id/page_id/page_title/snippet）。
+  - `scripts/smoke-web.mjs` 56→**61 项全绿**（新增：get_page_blocks 提取块 / resolve_block 返回 BlockInfo / get_backlinks 引 `[[标题]]` / list_block_backlinks 找块引用 / search_blocks 按内容搜块）。
+
+---
+
 ## [1.55.0] - 2026-08-24
 
 ### 新增（Web 平台文件读写 / 导入导出）

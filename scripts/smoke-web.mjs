@@ -304,6 +304,38 @@ assert("cleanup caps versions to maxKeep", Array.isArray(vAfterClean) && vAfterC
 const statsV = await invoke("storage_stats", {});
 assert("storage_stats version_count reflects versions", typeof statsV?.version_count === "number");
 
+// ---- Block references / backlinks (Web platform parses content_json) ----
+// 10h. Target page with a stable blockId; citing page references it.
+const targetPage = await invoke("create_page", { parent_id: null, title: "被引用页" });
+const targetJson = JSON.stringify({
+  root: {
+    children: [
+      { blockId: "blk-target", type: "paragraph", children: [{ type: "text", text: "目标块内容" }] },
+    ],
+  },
+});
+await invoke("save_page", { id: targetPage.id, title: "被引用页", content_json: targetJson, content_text: "目标块内容" });
+const pageBlocks = await invoke("get_page_blocks", { pageId: targetPage.id });
+assert("get_page_blocks extracts blocks", Array.isArray(pageBlocks) && pageBlocks.some((b) => b.block_id === "blk-target" && b.text.includes("目标块内容")));
+const resolvedBlock = await invoke("resolve_block", { blockId: "blk-target" });
+assert("resolve_block returns BlockInfo", resolvedBlock && resolvedBlock.page_id === targetPage.id && typeof resolvedBlock.snippet === "string" && resolvedBlock.snippet.includes("目标块内容"));
+
+const citeJson = JSON.stringify({
+  root: {
+    children: [
+      { blockId: "blk-cite", type: "paragraph", children: [{ type: "text", text: "引用文字" }, { type: "blockref", targetId: "blk-target", children: [] }] },
+    ],
+  },
+});
+const citePage = await invoke("create_page", { parent_id: null, title: "引用页" });
+await invoke("save_page", { id: citePage.id, title: "引用页", content_json: citeJson, content_text: "引用文字 [[被引用页]]" });
+const backlinks = await invoke("get_backlinks", { id: targetPage.id });
+assert("get_backlinks finds citing page", Array.isArray(backlinks) && backlinks.some((p) => p.id === citePage.id));
+const blockBacklinks = await invoke("list_block_backlinks", { pageId: targetPage.id });
+assert("list_block_backlinks finds block ref", Array.isArray(blockBacklinks) && blockBacklinks.some((b) => b.target_block_id === "blk-target" && b.source_page_id === citePage.id));
+const blockSearch = await invoke("search_blocks", { args: { query: "目标块内容" } });
+assert("search_blocks finds block by text", Array.isArray(blockSearch) && blockSearch.some((b) => b.block_id === "blk-target" && b.page_id === targetPage.id));
+
 // 11. Persistence: a NEW platform instance reads the same SQLite file.
 const platform2 = newPlatform();
 const pagesAgain = await platform2.executor.invoke("list_pages", {});
