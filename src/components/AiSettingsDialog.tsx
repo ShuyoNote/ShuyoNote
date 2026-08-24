@@ -22,6 +22,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const [testing, setTesting] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
 
   const isOpenAI = provider === "openai";
 
@@ -59,6 +60,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
       const r = await probeApi(resolved());
       setTestOk(r.ok);
       setTestMsg(r.message);
+      if (r.models?.length) setDiscoveredModels(r.models);
     } catch (e) {
       setTestOk(false);
       setTestMsg(String((e as Error)?.message ?? e));
@@ -139,8 +141,16 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             onChange={(e) => setModel(e.target.value)}
             placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL}
             spellCheck={false}
+            list="ai-model-list"
           />
         </label>
+        {isOpenAI && discoveredModels.length > 0 && (
+          <datalist id="ai-model-list">
+            {discoveredModels.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        )}
 
         <div className="ai-settings-test">
           <button className="ai-settings-test-btn" onClick={test} disabled={testing}>
