@@ -432,6 +432,32 @@ body,
   background: var(--hover);
 }
 
+/* Space-export progress bar (shown in the space switcher while exporting). */
+.space-export-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 2px;
+}
+.space-export-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.space-export-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.space-export-progress-fill {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width var(--transition-fast);
+}
+
 .space-item-op {
   border: none;
   background: transparent;

@@ -542,6 +542,7 @@ export function PageTree({
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
   const [colorFor, setColorFor] = useState<string | null>(null);
   const spaceChooser = usePopover<HTMLButtonElement>();
+  const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
 
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
@@ -598,12 +599,29 @@ export function PageTree({
         filters: [{ name: "ZIP", extensions: ["zip"] }],
       });
       if (!path) return;
-      const result = await api.exportWorkspace(path);
+      // Stream wiring `workspace-progress` events → the progress bar. Desktop emits
+      // the real event; web dispatches it via CustomEvent (same listener works both).
+      setExporting({ done: 0, total: 1, message: "准备导出…" });
+      const unlisten = await platform.event.listen<{ done: number; total: number; message: string }>(
+        "workspace-progress",
+        (e) => {
+          const p = e.payload;
+          if (p && typeof p.done === "number") setExporting({ done: p.done, total: p.total || 1, message: p.message || "导出中…" });
+        },
+      );
+      let result: { size: number; attachments: number };
+      try {
+        result = await api.exportWorkspace(path);
+      } finally {
+        setExporting(null);
+        unlisten();
+      }
       toast(
         `空间导出完成：大小 ${(result.size / 1024).toFixed(1)} KB${result.attachments ? ` · 附件 ${result.attachments} 个` : ""}`,
         "success",
       );
     } catch (e) {
+      setExporting(null);
       toast(`空间导出失败：${e}`, "error");
     }
     spaceChooser.close();
@@ -864,6 +882,20 @@ export function PageTree({
                     <span className="space-item-mark">⇣</span>
                     <span className="space-item-name">导入空间包（新建空间）</span>
                   </button>
+                  {exporting && (
+                    <div className="space-export-progress">
+                      <div className="space-export-progress-label">
+                        <span>{exporting.message}</span>
+                        <span>{Math.round((exporting.done / Math.max(1, exporting.total)) * 100)}%</span>
+                      </div>
+                      <div className="space-export-progress-track">
+                        <div
+                          className="space-export-progress-fill"
+                          style={{ width: `${Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

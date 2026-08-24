@@ -415,6 +415,20 @@ function collectBlockRefs(node: any, topId: string, out: { source: string; targe
 
 // ---- The executor. Core CRUD runs real SQL; everything else degrades safely. ----
 
+// Emit a backend-style event to the running page. The web EventDriver's `listen`
+// forwards these (via window CustomEvent) so the SAME frontend listener code works
+// in-browser and in Tauri (where tauri emits the real event). Returns false when
+// the browser has no event bus (e.g. the Node smoke test), so callers can skip.
+function emitPageEvent(name: string, payload: unknown): boolean {
+  try {
+    if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return false;
+    window.dispatchEvent(new CustomEvent(name, { detail: payload }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function makeInvoke(store: SqliteStore) {
   // Workspace is single-user in the browser demo; its settings live in a KV row.
   const WS_KEY = "active";
@@ -1199,26 +1213,51 @@ function makeInvoke(store: SqliteStore) {
       // desktop format: `shuyonote.db` (DB snapshot) + `workspace.json` (metadata)
       // + `attachments/<hash>` for each referenced attachment. Previously this was
       // a stub returning size 0, so the web "空间导出" yielded an empty download.
+      // We emit `workspace-progress` events so the UI can show a progress bar
+      // (same event name the desktop backend uses).
       const ws = getWs();
       if (!ws) throw new Error("工作空间不存在");
+      const totalPhase = 3;
+      const emit = (done: number, message: string, bytes = 0) =>
+        emitPageEvent("workspace-progress", { phase: "export", done, total: totalPhase, bytes, message });
+
+      emit(0, "准备导出…");
       const dbBytes = store.snapshot();
       const entries: Record<string, Uint8Array> = { "shuyonote.db": dbBytes };
       // workspace.json metadata (same shape the desktop importer expects).
       entries["workspace.json"] = new TextEncoder().encode(JSON.stringify({ id: ws.id, name: ws.name ?? "", theme: ws.theme ?? "", icon: ws.icon ?? "" }));
+      emit(1, "打包空间数据库…", dbBytes.length);
+
       // Only the attachment bytes this space references (via page_id) — self-contained.
-      const atts = await blobStore.entries();
       const refHashes = new Set(
         (store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments WHERE page_id IN (SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL)", [ws.id]) as any[])
           .map((r) => String(r.hash)),
       );
       const pages = (store.query("SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws.id]) as any[]).length;
+      const atts = await blobStore.entries();
+      const candidates = atts.filter((a) => refHashes.size === 0 || refHashes.has(a.hash));
       let matched = 0;
-      for (const a of atts) {
-        if (refHashes.size > 0 && !refHashes.has(a.hash)) continue;
-        entries[`attachments/${a.hash}`] = a.bytes;
-        matched++;
+      let bytesSoFar = dbBytes.length;
+      if (candidates.length === 0) {
+        emit(2, "没有附件需要打包", bytesSoFar);
+      } else {
+        for (let i = 0; i < candidates.length; i++) {
+          const a = candidates[i];
+          entries[`attachments/${a.hash}`] = a.bytes;
+          matched++;
+          bytesSoFar += a.bytes.length;
+          // Yield + report throughput so the bar (and a big export's ~200 char
+          // messages) stay responsive; the zip is created at the end.
+          if (i % 5 === 0) {
+            emit(2, `打包附件 ${matched}/${candidates.length}…`, bytesSoFar);
+            await new Promise((r) => setTimeout(r, 0));
+          }
+        }
+        emit(2, `打包附件 ${matched}/${candidates.length}…`, bytesSoFar);
       }
+
       const zip = zipSync(entries);
+      emit(3, "写入下载…", zip.length);
       const name = String(a.destPath ?? "space-export.zip").split(/[\\/]/).pop() || "space-export.zip";
       if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so a same-session re-import (and the Node smoke test) can read it.
@@ -1395,7 +1434,18 @@ export function createWebPlatform(): Platform {
       revealItemInDir: async () => {},
     },
     event: {
-      listen: async () => () => {},
+      // In the browser, backend-style events (e.g. workspace-progress) are
+      // dispatched as CustomEvents on window (see emitPageEvent), so forwarding
+      // them here lets the SAME listener code work on web and in Tauri.
+      listen: async (name, handler) => {
+        if (typeof window === "undefined" || typeof window.addEventListener !== "function") return () => {};
+        const onEvent = (e: Event) => {
+          const ce = e as CustomEvent;
+          handler({ payload: ce.detail });
+        };
+        window.addEventListener(name, onEvent);
+        return () => window.removeEventListener(name, onEvent);
+      },
     },
     asset: {
       convertFileSrc: (path) => path,

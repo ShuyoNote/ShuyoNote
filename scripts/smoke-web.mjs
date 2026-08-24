@@ -76,7 +76,32 @@ const platform = createWebPlatform();
 const invoke = platform.executor.invoke;
 
 // The platform's opener uses `window.open` (browser) — provide a stub for Node.
-globalThis.window = globalThis.window ?? { open: () => {} };
+// Minimal window+CustomEvent bus so blobStore + progress events work in Node.
+globalThis.window = globalThis.window ?? (() => {
+  const listeners = new Map();
+  return {
+    open: () => {},
+    addEventListener: (name, fn) => {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name).add(fn);
+    },
+    removeEventListener: (name, fn) => {
+      listeners.get(name)?.delete(fn);
+    },
+    dispatchEvent: (e) => {
+      (listeners.get(e.type) ?? new Set()).forEach((fn) => fn(e));
+      return true;
+    },
+  };
+})();
+if (typeof globalThis.CustomEvent !== "function") {
+  globalThis.CustomEvent = class CustomEvent {
+    constructor(type, opts) {
+      this.type = type;
+      this.detail = opts?.detail;
+    }
+  };
+}
 
 // Minimal in-memory IndexedDB shim so blobStore (ImageDB "blobs") works in Node.
 if (!globalThis.indexedDB) {
@@ -459,6 +484,16 @@ assert("import_backup restores pages", Array.isArray(backupAfterPages) && backup
   assert("export_workspace zip contains shuyonote.db", wsZip && wsZip["shuyonote.db"] && wsZip["shuyonote.db"].length > 0, Object.keys(wsZip).join(","));
   assert("export_workspace zip contains workspace.json", wsZip && wsZip["workspace.json"] && wsZip["workspace.json"].length > 0);
   assert("export_workspace zip contains attachments dir", Object.keys(wsZip).some((k) => k.startsWith("attachments/")));
+
+  // 10i-3. export emits workspace-progress events (via the browser CustomEvent bus)
+  // so the UI can show a progress bar.
+  const events = [];
+  const onWs = (e) => { events.push(e.detail); };
+  globalThis.window.addEventListener("workspace-progress", onWs);
+  await wsInvoke("export_workspace", { destPath: "space-export.zip" });
+  globalThis.window.removeEventListener("workspace-progress", onWs);
+  assert("workspace-progress events emitted during export", events.length >= 1, `${events.length} event(s)`);
+  assert("progress event has done/total/message", events[0] && typeof events[0].done === "number" && typeof events[0].total === "number" && typeof events[0].message === "string", JSON.stringify(events[0]));
 }
 
 

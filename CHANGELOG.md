@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.12] - 2026-08-24
+
+### 新增
+
+- **空间导出进度条**：之前「导出当前空间」点击后没有任何反馈，直接等结果（大空间会卡住没提示）。现在：
+  - web 端 `export_workspace` 在导出过程中**分阶段派发 `workspace-progress` 事件**（准备 → 打包数据库 → 逐个打包附件 → 写入下载）。
+  - web 平台 `event.listen` 现在转发浏览器的 `CustomEvent`，所以**同一套前端监听代码**在 web 和桌面（Tauri 原生事件）都能收到进度。
+  - 空间切换器里在「导出当前空间」下新增**进度条**（消息 + 百分比 + 填充条），导出完成后提示大小/附件数。
+- `scripts/smoke-web.mjs` 94→**96 项全绿**（新增：导出期间派发 `workspace-progress` 事件 / 事件含 done/total/message）。
+
+---
+
 ## [1.59.11] - 2026-08-24
 
 ### 修复
