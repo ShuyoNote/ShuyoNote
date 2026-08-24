@@ -7600,6 +7600,22 @@ select.prop-value {
 .ai-settings-input:focus {
   border-color: var(--accent);
 }
+.ai-settings-select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 8px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+.ai-settings-select:focus {
+  border-color: var(--accent);
+}
 .ai-toggle {
   position: relative;
   width: 40px;

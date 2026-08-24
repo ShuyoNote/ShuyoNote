@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { runAiLoop } from "../lib/ai/host";
 import { applyDraft as commitDraft } from "../lib/ai/apply";
-import { createOllamaTransport, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL } from "../lib/ai/llm";
+import {
+  createProviderTransport,
+  OLLAMA_DEFAULT_MODEL,
+  OLLAMA_DEFAULT_URL,
+  OPENAI_COMPAT_DEFAULT_BASE,
+  OPENAI_COMPAT_DEFAULT_MODEL,
+  type ProviderConfig,
+} from "../lib/ai/llm";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
 
@@ -9,9 +16,10 @@ const CFG_KEY = "shuyonote.ai.config";
 
 export interface AiConfig {
   enabled: boolean;
-  provider: "ollama";
+  provider: "ollama" | "openai";
   baseUrl: string;
   model: string;
+  apiKey: string;
 }
 
 interface AiState {
@@ -37,16 +45,20 @@ interface AiState {
 function loadConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(CFG_KEY);
-    if (!raw) return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL };
+    if (!raw) {
+      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "" };
+    }
     const c = JSON.parse(raw);
+    const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
     return {
       enabled: !!c.enabled,
-      provider: c.provider === "ollama" ? "ollama" : "ollama",
-      baseUrl: String(c.baseUrl || OLLAMA_DEFAULT_URL),
-      model: String(c.model || OLLAMA_DEFAULT_MODEL),
+      provider,
+      baseUrl: String(c.baseUrl || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL)),
+      model: String(c.model || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL)),
+      apiKey: String(c.apiKey ?? ""),
     };
   } catch {
-    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL };
+    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "" };
   }
 }
 
@@ -87,7 +99,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     set({ running: true, error: null });
 
     try {
-      const transport = createOllamaTransport(config.baseUrl, config.model);
+      const transport = createProviderTransport(config as ProviderConfig);
       const result: AiRunResult = await runAiLoop(
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),

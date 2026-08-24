@@ -69,6 +69,7 @@ await esbuild.build({
     contents:
       'export { extractToolCalls } from "./src/lib/ai/llm";\n' +
       'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
+      'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n',
     resolveDir: root,
@@ -922,13 +923,59 @@ assert("workspace name persists across instances", wsAgain !== "");
   const aiBase = `http://127.0.0.1:${port}`;
   try {
     const conn = await aiMod.testOllamaConnection(aiBase, "qwen2.5:7b", 4000);
-    assert("testOllamaConnection ok + model found", conn.ok && conn.message.includes("已安装") && conn.models.includes("qwen2.5:7b"), conn.message);
+    assert("testOllamaConnection ok + model found", conn.ok && (conn.message.includes("已可用") || conn.message.includes("已安装")) && conn.models.includes("qwen2.5:7b"), conn.message);
     const transport = aiMod.createOllamaTransport(aiBase, "qwen2.5:7b");
     const out = await transport.complete([{ role: "user", content: "hi" }]);
     assert("ollama transport returns assistant content", out.content === "hi from ollama mock");
   } finally {
     server.closeAllConnections?.();
     await new Promise((resolve) => server.close(resolve));
+  }
+
+  // OpenAI-compatible (DeepSeek-style) flow against a mock /v1/* server.
+  const http2 = await import("node:http");
+  const server2 = http2.createServer((req, res) => {
+    const auth = req.headers.authorization === "Bearer sk-test";
+    if (req.url === "/v1/models") {
+      if (!auth) { res.writeHead(401); res.end(); return; }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: [{ id: "deepseek-chat" }, { id: "deepseek-reasoner" }] }));
+      return;
+    }
+    if (req.url === "/v1/chat/completions") {
+      if (!auth) { res.writeHead(401); res.end(); return; }
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ index: 0, message: { role: "assistant", content: "hi from deepseek mock" }, finish_reason: "stop" }],
+          }),
+        );
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server2.listen(0, "127.0.0.1", resolve));
+  const port2 = server2.address().port;
+  const aiBase2 = `http://127.0.0.1:${port2}`;
+  try {
+    const conn2 = await aiMod.testOpenAICompatConnection(aiBase2, "deepseek-chat", "sk-test", 4000);
+    assert("openai-compat probe ok + model list", conn2.ok && conn2.models.includes("deepseek-chat"), conn2.message);
+    const auth2 = await aiMod.testOpenAICompatConnection(aiBase2, "deepseek-chat", "sk-wrong", 4000);
+    assert("openai-compat probe flags bad key", !auth2.ok && auth2.message.includes("鉴权"), auth2.message);
+    const t2 = aiMod.createOpenAICompatTransport(aiBase2, "deepseek-chat", "sk-test");
+    const out2 = await t2.complete([{ role: "user", content: "hi" }]);
+    assert("openai-compat transport returns assistant content", out2.content === "hi from deepseek mock");
+    const tp = aiMod.createProviderTransport({ provider: "openai", baseUrl: aiBase2, model: "deepseek-chat", apiKey: "sk-test" });
+    const out3 = await tp.complete([{ role: "user", content: "hi" }]);
+    assert("createProviderTransport routes openai", out3.content === "hi from deepseek mock");
+  } finally {
+    server2.closeAllConnections?.();
+    await new Promise((resolve) => server2.close(resolve));
   }
 }
 

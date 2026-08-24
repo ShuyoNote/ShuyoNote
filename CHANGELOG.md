@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.39] - 2026-08-24
+
+### 新增
+
+- **支持 OpenAI 兼容服务（DeepSeek / OpenAI 等）**：之前只实现了 Ollama 协议（`/api/chat`），用户填 DeepSeek 这类 OpenAI 兼容地址时「没生效」。现在：
+  - `llm.ts` 新增 `createOpenAICompatTransport`（`POST {base}/v1/chat/completions`，Bearer 鉴权，解析 `choices[0].message` 与 `tool_calls`）与 `testOpenAICompatConnection`（`GET /v1/models`）。
+  - 设置面板新增**服务商**选择（`Ollama 本地` / `OpenAI 兼容`）与 **API Key** 字段；默认模型与地址随服务商联动（OpenAI 兼容默认 `deepseek-chat` / `https://api.deepseek.com`）。
+  - `store/ai.ts` 配置新增 `provider`/`apiKey`；`run`/「测试连接」按服务商路由（`createProviderTransport` / `testProviderConnection`）。
+  - 鉴权失败（401/403）提示检查 API Key；`tool_calls` 的 `arguments` 兼容「对象」与「JSON 字符串」两种形态。
+  - `scripts/smoke-web.mjs` 155→**159 项全绿**（新增：OpenAI 兼容探测 / 错 Key 鉴权失败 / OpenAI 兼容传输往返 / `createProviderTransport` 路由）。
+
+---
+
 ## [1.59.38] - 2026-08-24
 
 ### 优化

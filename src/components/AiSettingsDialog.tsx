@@ -1,25 +1,53 @@
 import { useState } from "react";
 import { useAiStore } from "../store/ai";
-import { testOllamaConnection, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL } from "../lib/ai/llm";
+import {
+  testProviderConnection,
+  OLLAMA_DEFAULT_MODEL,
+  OLLAMA_DEFAULT_URL,
+  OPENAI_COMPAT_DEFAULT_BASE,
+  OPENAI_COMPAT_DEFAULT_MODEL,
+  type AiProvider,
+  type ProviderConfig,
+} from "../lib/ai/llm";
 
-// Configure the AI feature: enable/disable + local model endpoint. Defaults are
-// Off and a local Ollama endpoint (no cloud, no API key required).
+// Configure the AI feature: enable/disable + provider (local Ollama, or an
+// OpenAI-compatible cloud like DeepSeek that needs an API key).
 export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const { config, update } = useAiStore();
   const [enabled, setEnabled] = useState(config.enabled);
+  const [provider, setProvider] = useState<AiProvider>(config.provider);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [model, setModel] = useState(config.model);
+  const [apiKey, setApiKey] = useState(config.apiKey);
   const [testing, setTesting] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testMsg, setTestMsg] = useState<string | null>(null);
 
+  const isOpenAI = provider === "openai";
+
+  // When switching provider, swap the default base/model rather than leaving the
+  // other provider's placeholder in place.
+  const switchProvider = (next: AiProvider) => {
+    setProvider(next);
+    if (next === "openai") {
+      if (baseUrl === OLLAMA_DEFAULT_URL) setBaseUrl(OPENAI_COMPAT_DEFAULT_BASE);
+      if (model === OLLAMA_DEFAULT_MODEL) setModel(OPENAI_COMPAT_DEFAULT_MODEL);
+    } else {
+      if (baseUrl === OPENAI_COMPAT_DEFAULT_BASE) setBaseUrl(OLLAMA_DEFAULT_URL);
+      if (model === OPENAI_COMPAT_DEFAULT_MODEL) setModel(OLLAMA_DEFAULT_MODEL);
+    }
+  };
+
+  const resolved = (): ProviderConfig => ({
+    provider,
+    baseUrl: (baseUrl.trim() || (isOpenAI ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL)).replace(/\/$/, ""),
+    model: model.trim() || (isOpenAI ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL),
+    apiKey: apiKey.trim(),
+  });
+
   const save = () => {
-    update({
-      enabled,
-      provider: "ollama",
-      baseUrl: baseUrl.trim() || OLLAMA_DEFAULT_URL,
-      model: model.trim() || OLLAMA_DEFAULT_MODEL,
-    });
+    const c = resolved();
+    update({ enabled, provider, baseUrl: c.baseUrl, model: c.model, apiKey: c.apiKey });
     onClose();
   };
 
@@ -28,10 +56,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
     setTestMsg(null);
     setTestOk(null);
     try {
-      const r = await testOllamaConnection(
-        baseUrl.trim() || OLLAMA_DEFAULT_URL,
-        model.trim() || OLLAMA_DEFAULT_MODEL,
-      );
+      const r = await testProviderConnection(resolved());
       setTestOk(r.ok);
       setTestMsg(r.message);
     } catch (e) {
@@ -52,7 +77,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
       <div className="ai-settings">
         <div className="ai-settings-title">AI 设置</div>
         <p className="ai-settings-desc">
-          配置后可在助手面板中与笔记对话。功能默认关闭；只调用你配置的本地模型服务。若「没生效」，先点「测试连接」确认服务和模型可达。
+          Ollama 为本地模型（无需密钥）；OpenAI 兼容支持 DeepSeek 等云服务（需 API Key）。若「没生效」，先点「测试连接」确认服务和模型可达。
         </p>
 
         <label className="ai-settings-row ai-settings-enable">
@@ -69,15 +94,42 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
         </label>
 
         <label className="ai-settings-row">
+          <span className="ai-settings-label">服务商</span>
+          <select
+            className="ai-settings-select"
+            value={provider}
+            onChange={(e) => switchProvider(e.target.value as AiProvider)}
+          >
+            <option value="ollama">Ollama（本地）</option>
+            <option value="openai">OpenAI 兼容（DeepSeek 等）</option>
+          </select>
+        </label>
+
+        <label className="ai-settings-row">
           <span className="ai-settings-label">服务地址</span>
           <input
             className="ai-settings-input"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder={OLLAMA_DEFAULT_URL}
+            placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL}
             spellCheck={false}
           />
         </label>
+
+        {isOpenAI && (
+          <label className="ai-settings-row">
+            <span className="ai-settings-label">API Key</span>
+            <input
+              className="ai-settings-input"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-…"
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </label>
+        )}
 
         <label className="ai-settings-row">
           <span className="ai-settings-label">模型</span>
@@ -85,7 +137,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             className="ai-settings-input"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={OLLAMA_DEFAULT_MODEL}
+            placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL}
             spellCheck={false}
           />
         </label>
