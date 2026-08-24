@@ -5913,12 +5913,13 @@ select.prop-value {
   background: var(--hover);
   color: var(--text);
 }
-/* GitHub-style active section: a left accent bar + light tint + accent text. */
+/* Current section: a filled accent pill (Wolai-style) so the active heading pops. */
 .toc-item.active {
-  color: var(--accent);
-  font-weight: 500;
+  color: #fff;
+  font-weight: 600;
   border-left-color: var(--accent);
-  background: var(--accent-soft, rgba(51, 112, 255, 0.07));
+  background: var(--accent);
+  border-radius: var(--radius-sm);
 }
 .toc-empty {
   color: var(--text-faint);
