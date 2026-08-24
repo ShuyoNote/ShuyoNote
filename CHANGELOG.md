@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.58.1] - 2026-08-24
+
+### 修复（Web 平台保存失败）
+
+- **修复「保存失败：Wrong API use : tried to bind a value of an unknown type (undefined)」**：sql.js 在绑定 `undefined` 参数时会抛"unknown type"错误。给 `SqliteStore.run`/`query` 加了**参数归一化**（`undefined → null`），防御所有调用点——凡是命令参数缺省/未传时不再崩。
+- `scripts/smoke-web.mjs` 64→**66 项全绿**（新增：`save_page` 容忍 undefined 字段 / undefined 参数不再抛 raw sql 错误）。
+
+---
+
 ## [1.58.0] - 2026-08-24
 
 ### 文档

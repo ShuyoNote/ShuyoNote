@@ -152,6 +152,13 @@ function pickAdapter(): PersistAdapter {
   return defaultAdapter ?? browserAdapter();
 }
 
+// sql.js throws "tried to bind a value of an unknown type (undefined)" when a
+// param is `undefined`. Normalize every param: undefined → null (SQL NULL), and
+// coerce number/bignum/string/blob as-is. This guards every call site.
+function normalizeParams(params: SqlValue[]): SqlValue[] {
+  return params.map((p) => (p === undefined ? null : p));
+}
+
 // ---- The store ----
 
 export class SqliteStore {
@@ -287,7 +294,7 @@ export class SqliteStore {
   /** Run a mutation; persist the DB snapshot after. */
   run(sql: string, params: SqlValue[] = []): void {
     if (!this.db) throw new Error("SqliteStore not initialized");
-    this.db.run(sql, params);
+    this.db.run(sql, normalizeParams(params));
     this.persist();
   }
 
@@ -296,7 +303,7 @@ export class SqliteStore {
     if (!this.db) throw new Error("SqliteStore not initialized");
     const stmt = this.db.prepare(sql);
     try {
-      stmt.bind(params);
+      stmt.bind(normalizeParams(params));
       const rows: T[] = [];
       while (stmt.step()) {
         rows.push(stmt.getAsObject() as T);

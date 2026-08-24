@@ -309,6 +309,13 @@ assert("cleanup caps versions to maxKeep", Array.isArray(vAfterClean) && vAfterC
 const statsV = await invoke("storage_stats", {});
 assert("storage_stats version_count reflects versions", typeof statsV?.version_count === "number");
 
+// 10x. Guard: sql.js must not throw on undefined bind params (was "unknown type
+// (undefined)"). Pass a save_page with some fields intentionally undefined.
+const undefinedSave = await invoke("save_page", { id: created.id, content_json: undefined, content_text: undefined });
+assert("save_page tolerates undefined fields", undefinedSave && typeof undefinedSave.id === "string");
+const attrUndefined = await invoke("rename_tag", { id: "nonexistent", name: undefined }).catch((e) => e);
+assert("undefined param doesn't throw raw sql error", !(attrUndefined instanceof Error && /bind a value of an unknown type/.test(String(attrUndefined))));
+
 // ---- Block references / backlinks (Web platform parses content_json) ----
 // 10h. Target page with a stable blockId; citing page references it.
 const targetPage = await invoke("create_page", { parent_id: null, title: "被引用页" });
