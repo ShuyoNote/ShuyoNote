@@ -2,6 +2,21 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.52.0] - 2026-08-24
+
+### 新增（Web 平台 PWA / 离线安装）
+
+- **可安装离线 PWA**：把浏览器版变成可安装、可离线的本地 app：
+  - `public/manifest.webmanifest`：`name`/`short_name`/`start_url`/`scope`/`display:standalone`/`orientation`/`theme_color`/`background_color`/`categories` + SVG 图标（普通 + maskable）。
+  - `public/icons/icon.svg`：单色圆角方块 + 白页 + 内容线条的图标（与 anti-slop 一致）。
+  - `public/sw.js`：Service Worker——install 预缓存应用壳（`/`、manifest、icon）、activate 清理旧缓存、fetch 策略：导航 = 网络优先回退缓存壳、静态资源 = 缓存优先 + 网络回填、跨域透传。
+  - `index.html`：注入 `manifest` link、`theme-color`、apple-touch icon、`apple-mobile-web-app-*` meta、`lang="zh-CN"`、标题 `ShuyoNote`。
+  - `main.tsx`：**仅 production**（`import.meta.env.PROD`）注册 `navigator.serviceWorker.register("/sw.js")`（dev 下跳过，避免与 Vite dev/HMR 缓存冲突）。
+  - 关键点：笔记数据在 IndexedDB（SQLite via sql.js），不在 HTTP 缓存，与 SW 缓存不冲突——离线打开仍能读/写本机数据。
+  - 已验证：`dist/` 正确产出 manifest/sw/icon；dev server 以正确 content-type（`application/manifest+json` / `text/javascript` / `image/svg+xml`）serve；manifest 是合法 JSON（name/display:standalone/start_url/icons/theme 均正确）；SW `node --check` 通过；`dist/index.html` manifest/theme-color/apple-touch 注入正确。
+
+---
+
 ## [1.51.0] - 2026-08-24
 
 ### 新增（Web 平台数据安全）

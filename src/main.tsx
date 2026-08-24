@@ -10,6 +10,16 @@ window.addEventListener("unhandledrejection", (e) => {
   console.error("[ShuyoNote] unhandled rejection:", e.reason);
 });
 
+// Register the offline Service Worker in production builds only. In dev it would
+// fight the Vite dev server's module/HMR caching, so we gate it on PROD.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .catch((e) => console.error("[ShuyoNote] SW register failed", e));
+  });
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />
