@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.34] - 2026-08-24
+
+### 修复
+
+- **`get_attachment` 返回真实元数据**（web）：之前返回 null。现在按 id 读取附件行并从 blob store 解析显示地址；`list_page_attachments` 的路径改用惰性 `blobUrl`（而非 base64 data-URL，大媒体更省内存）。
+- **回收站恢复走通**：删除页面后其附件（按 `page_id` 保留）随页面 `restore_page` 重新出现，`get_attachment` 恢复后仍可解析。
+- `scripts/smoke-web.mjs` 139→**142 项全绿**（新增：get_attachment 元数据 / 恢复后附件重现 / 恢复后仍可解析）。
+
+---
+
 ## [1.59.33] - 2026-08-24
 
 ### 修复

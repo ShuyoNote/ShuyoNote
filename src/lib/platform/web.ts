@@ -1112,7 +1112,16 @@ function makeInvoke(store: SqliteStore) {
       }
       return "" as T;
     }
-    if (cmd === "get_attachment") return null as T;
+    if (cmd === "get_attachment") {
+      const id = String(a.id ?? "");
+      const row = store.query<{ id: string; page_id: string | null; name: string; hash: string; mime: string; size: number }>(
+        "SELECT id, page_id, name, hash, mime, size FROM attachments WHERE id = ?",
+        [id],
+      )[0];
+      if (!row) throw new Error("附件不存在");
+      const bytes = await blobStore.get(row.hash);
+      return { id: row.id, name: row.name, hash: row.hash, mime: row.mime, size: row.size, path: bytes ? blobUrl(bytes, row.mime) : "" } as T;
+    }
     if (cmd === "list_page_attachments") {
       // File-manager lists attachments owned by a folder/page (by page_id). When
       // no folder is open, list all (root). Attachments with a deleted owner are
@@ -1122,13 +1131,14 @@ function makeInvoke(store: SqliteStore) {
         ? store.query("SELECT * FROM attachments WHERE page_id = ?", [pageId])
         : store.query("SELECT * FROM attachments");
       // Resolve a display path from the byte store (which survives reload) so the
-      // file-manager previews/images render even after a refresh.
+      // file-manager previews/images render even after a refresh. Use a lazy blob
+      // URL rather than an inlined base64 data-URL (memory-friendly for large media).
       const resolved = await Promise.all(
         rows.map(async (r: any) => {
           if (r.path) return r;
           const bytes = await blobStore.get(String(r.hash));
           if (!bytes) return r;
-          return { ...r, path: `data:${r.mime};base64,${bytesToBase64(bytes)}` };
+          return { ...r, path: blobUrl(bytes, r.mime) };
         }),
       );
       return resolved as T;

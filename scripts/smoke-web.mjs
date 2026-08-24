@@ -320,7 +320,7 @@ assert("save_image path is a usable display URL", typeof att?.path === "string" 
 // attachment_path resolves the bytes from the blob store.
 assert("attachment_path resolves from blob store", (await invoke("attachment_path", { hash: att.hash })).startsWith("data:image/png"));
 const seen = await invoke("list_page_attachments", {});
-assert("list_page_attachments includes image with a display path", Array.isArray(seen) && seen.some((x) => x.id === att.id && (x.path || "").startsWith("data:image/png")));
+assert("list_page_attachments includes image with a display path", Array.isArray(seen) && seen.some((x) => x.id === att.id && (x.path || "").startsWith("data:") || (x.path || "").startsWith("blob:")));
 // Folder-scoped listing: save an image owned by a folder, then filter by page_id.
 const attFolder = await invoke("save_image", { page_id: argsFolder.id, name: "夹内图.png", mime: "image/png", data: imgBytes });
 const inFolder = await invoke("list_page_attachments", { pageId: argsFolder.id });
@@ -396,6 +396,23 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
   await invoke("remove_attachment", { id: ometa[0].id });
   const freed2 = await invoke("cleanup_orphan_attachments", {});
   assert("cleanup removes newly orphaned bytes", typeof freed2 === "number" && freed2 >= 0, String(freed2));
+}
+
+// 8b-5. get_attachment returns the meta; recycle-bin restore re-surfaces a page's
+// attachments (page restore clears deleted_at; attachments keep their page_id).
+{
+  const pageForAtt = await invoke("create_page", { parent_id: null, title: "带附件页", content_json: '{"root":{"children":[]}}', content_text: "x" });
+  const f = await invoke("save_image", { page_id: pageForAtt.id, name: "trash.png", mime: "image/png", data: imgBytes });
+  const g = await invoke("get_attachment", { id: f.id });
+  assert("get_attachment returns meta", g && g.id === f.id && g.hash === f.hash && (g.path || "").length > 0, String(g?.name));
+  // Trash then restore the page; the attachment (kept by page_id) is still queryable.
+  await invoke("delete_page", { id: pageForAtt.id });
+  await invoke("restore_page", { id: pageForAtt.id });
+  const afterRestore = await invoke("list_page_attachments", { pageId: pageForAtt.id });
+  assert("attachments re-surface after page restore", Array.isArray(afterRestore) && afterRestore.some((x) => x.id === f.id), `${afterRestore?.length}`);
+  // get_attachment still resolves after restore.
+  const g2 = await invoke("get_attachment", { id: f.id });
+  assert("get_attachment resolves after restore", g2 && g2.id === f.id && (g2.path || "").length > 0, String(g2?.name));
 }
 
 // 8b-2. Re-importing the SAME content must still attach a fresh row to the folder.
