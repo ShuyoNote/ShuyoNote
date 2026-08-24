@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.29] - 2026-08-24
+
+### 修复
+
+- **写库失败不再静默丢数据**（P1-3）：`sqliteStore.persist()` 之前 `adapter.save` 失败是 fire-and-forget 静默。现在持久化失败会**保留内存状态**（不阻断 CRUD），并通过 `onPersistError` 回调 + `persist-error` 事件暴露给 UI，可提示"有未保存改动"，避免崩溃/吞错。
+- `scripts/smoke-web.mjs` 126→**129 项全绿**（新增：persist 失败时内存写入成功 / 内存行可读 / onPersistError 被触发）。
+
+---
+
 ## [1.59.28] - 2026-08-24
 
 ### 优化

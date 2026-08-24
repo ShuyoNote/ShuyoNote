@@ -694,5 +694,32 @@ assert("sqlite persistence (2nd instance sees created page)", pagesAgain.some((p
 const wsAgain = await platform2.executor.invoke("get_workspace_name", {});
 assert("workspace name persists across instances", wsAgain !== "");
 
+// 12. Write-failure safety: a failing persist (adapter.save throws) must NOT break
+// the in-memory mutation, and must surface via onPersistError (non-blocking).
+{
+  const errAdapter = {
+    load: async () => null,
+    save: async () => { throw new Error("disk full"); },
+  };
+  const safe = new SqliteStore(errAdapter);
+  await safe.init();
+  let gotErr = null;
+  safe.onPersistError = (e) => { gotErr = e; };
+  let ran = false;
+  try {
+    safe.run("CREATE TABLE t (id TEXT PRIMARY KEY)");
+    safe.run("INSERT INTO t (id) VALUES ('x')");
+    ran = true;
+  } catch (e) {
+    ran = false;
+  }
+  assert("write still succeeds in memory when persist fails", ran);
+  const row = safe.query("SELECT id FROM t WHERE id = ?", ["x"])[0];
+  assert("in-memory row is readable despite persist failure", row && row.id === "x");
+  // onPersistError is async (fire-and-forget); wait a tick for it to fire.
+  await new Promise((r) => setTimeout(r, 20));
+  assert("persist failure surfaced via onPersistError", gotErr !== null, String(gotErr));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

@@ -1775,6 +1775,14 @@ async function reconcileAfterRestore(store: SqliteStore): Promise<void> {
 function getSharedStore(): Promise<SqliteStore> {
   if (!sharedInit) {
     const store = new SqliteStore();
+    // Surface persistence failures so the UI can warn about unsaved changes
+    // (in-memory state is NOT rolled back — we only make the problem visible).
+    store.onPersistError = (err) => {
+      if (err) {
+        console.error("[web] persist failed", err);
+        emitPageEvent("persist-error", { error: String(err) });
+      }
+    };
     sharedInit = store
       .init()
       .then(async () => {

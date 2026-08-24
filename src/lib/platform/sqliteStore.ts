@@ -164,6 +164,8 @@ function normalizeParams(params: SqlValue[]): SqlValue[] {
 export class SqliteStore {
   private db: Database | null = null;
   private adapter: PersistAdapter;
+  /** Optional hook fired after each persist attempt (null on success, error on fail). */
+  onPersistError: ((err: unknown | null) => void) | null = null;
 
   constructor(adapter?: PersistAdapter) {
     this.adapter = adapter ?? pickAdapter();
@@ -327,7 +329,14 @@ export class SqliteStore {
     if (!this.db) return;
     const bytes = this.db.export();
     // Fire-and-forget; persistence is best-effort (never blocks the UI loop).
-    void this.adapter.save(bytes);
+    // In-memory state stays intact; a failed save is surfaced via onPersistError so
+    // the UI can warn "unsaved changes" instead of silently dropping data.
+    void this.adapter
+      .save(bytes)
+      .then(() => { if (this.onPersistError) this.onPersistError(null); })
+      .catch((e) => { if (this.onPersistError) {
+        try { this.onPersistError(e); } catch { /* no-op */ }
+      } });
   }
 }
 
