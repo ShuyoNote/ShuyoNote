@@ -234,6 +234,16 @@ function TreeItem({
 
   const isFolder = node.kind === "folder";
   const isDatabase = node.kind === "database";
+
+  // Auto-expand this folder when a drag requests it (hovering its "inside" zone).
+  const dragExpandId = useTreeDrag((s) => s.expandId);
+  useEffect(() => {
+    if (isFolder && node.id === dragExpandId) {
+      setExpanded(true);
+      useTreeDrag.getState().requestExpand(null); // one-shot
+    }
+  }, [dragExpandId, node.id, isFolder]);
+
   // Highlight the focused folder while browsing the file manager; otherwise
   // highlight the open page/database in the notes/board/graph views.
   const view = useViewStore((s) => s.view);
@@ -701,6 +711,8 @@ export function PageTree({
   // drop zone, then perform the move on mouseup. ----
   const dragRef = useRef<{ id: string; startX: number; startY: number; armed: boolean } | null>(null);
   const lastOverRef = useRef<{ targetId: string; zone: "before" | "after" | "inside" } | null>(null);
+  const treeContainerRef = useRef<HTMLDivElement | null>(null);
+  const expandTimerRef = useRef<number | null>(null);
   const onRowPointerDown = (id: string, e: React.MouseEvent) => {
     // Ignore drag start from interactive children (toggle / actions / rename).
     const target = e.target as HTMLElement;
@@ -718,11 +730,20 @@ export function PageTree({
         useTreeDrag.getState().start(d.id, srcNode?.title || "未命名", srcNode?.kind || "page");
       }
       useTreeDrag.getState().cursor(e.clientX, e.clientY);
+      // Auto-scroll the tree container when near its top/bottom edges.
+      const cont = treeContainerRef.current;
+      if (cont) {
+        const rect = cont.getBoundingClientRect();
+        const zone = 40; // px threshold
+        if (e.clientY < rect.top + zone) cont.scrollBy({ top: -8 });
+        else if (e.clientY > rect.bottom - zone) cont.scrollBy({ top: 8 });
+      }
       // Hit-test the row under the cursor; fall back to the previous target so the
       // highlight doesn't flash off while moving between rows or over a gap.
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-node-id]") as HTMLElement | null;
       let targetId: string | null = null;
       let z: "before" | "after" | "inside" | null = null;
+      let isFolder = false;
       if (el) {
         const id = el.getAttribute("data-node-id")!;
         if (id !== d.id) {
@@ -730,6 +751,7 @@ export function PageTree({
           const rect = el.getBoundingClientRect();
           const ratio = (e.clientY - rect.top) / rect.height;
           z = ratio < 0.3 ? "before" : ratio > 0.7 ? "after" : "inside";
+          isFolder = el.getAttribute("data-node-kind") === "folder";
         }
       }
       // No row under cursor → keep the last over target (sticky), so a drop still
@@ -737,17 +759,38 @@ export function PageTree({
       if (targetId === null && lastOverRef.current && lastOverRef.current.targetId !== d.id) {
         targetId = lastOverRef.current.targetId;
         z = lastOverRef.current.zone;
+        isFolder = pages.find((p) => p.id === targetId)?.kind === "folder";
       }
       if (targetId && z) {
         lastOverRef.current = { targetId, zone: z };
         useTreeDrag.getState().move(targetId, z);
+        // Auto-expand a folder when hovering its before/inside zone briefly.
+        if (isFolder && z !== "after") {
+          if (expandTimerRef.current === null && useTreeDrag.getState().expandId !== targetId) {
+            expandTimerRef.current = window.setTimeout(() => {
+              expandTimerRef.current = null;
+              // If still hovering this folder, ask it to expand.
+              if (useTreeDrag.getState().overId === targetId) {
+                useTreeDrag.getState().requestExpand(targetId);
+              }
+            }, 450);
+          }
+        } else if (expandTimerRef.current !== null) {
+          window.clearTimeout(expandTimerRef.current);
+          expandTimerRef.current = null;
+        }
       } else {
         useTreeDrag.getState().move(null, null);
+        if (expandTimerRef.current !== null) {
+          window.clearTimeout(expandTimerRef.current);
+          expandTimerRef.current = null;
+        }
       }
     };
     const onUp = async () => {
       const d = dragRef.current;
       dragRef.current = null;
+      if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
       const { draggingId, overId, zone } = useTreeDrag.getState();
       useTreeDrag.getState().end();
       lastOverRef.current = null;
@@ -763,6 +806,7 @@ export function PageTree({
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages, movePage]);
@@ -1081,7 +1125,7 @@ export function PageTree({
           </div>
         </>
       )}
-      <div className="sidebar-tree">
+      <div className="sidebar-tree" ref={treeContainerRef}>
         {loading && pages.length === 0 ? (
           <div className="sidebar-skeleton">
             {[0, 1, 2, 3, 4].map((i) => (

@@ -19,10 +19,14 @@ interface TreeDragState {
   y: number;
   overId: string | null;
   zone: DropZone | null;
+  /** A folder to auto-expand (set after hovering its "inside" zone briefly). */
+  expandId: string | null;
   start: (id: string, label: string, kind?: string) => void;
   move: (overId: string | null, zone: DropZone | null) => void;
   /** Update the ghost position (called on every mousemove while dragging). */
   cursor: (x: number, y: number) => void;
+  /** Request a folder to auto-expand during a drag. */
+  requestExpand: (id: string | null) => void;
   end: () => void;
 }
 
@@ -34,8 +38,10 @@ export const useTreeDrag = create<TreeDragState>((set) => ({
   y: 0,
   overId: null,
   zone: null,
+  expandId: null,
   start: (id, label, kind = "page") => set({ draggingId: id, label, kind }),
   move: (overId, zone) => set({ overId, zone }),
   cursor: (x, y) => set({ x, y }),
-  end: () => set({ draggingId: null, label: null, kind: null, overId: null, zone: null }),
+  requestExpand: (id) => set({ expandId: id }),
+  end: () => set({ draggingId: null, label: null, kind: null, overId: null, zone: null, expandId: null }),
 }));
