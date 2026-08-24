@@ -391,6 +391,21 @@ const stats = await invoke("storage_stats", {});
 assert("storage_stats is object", typeof stats === "object" && stats !== null);
 assert("storage_stats has real db_bytes (>0)", typeof stats?.db_bytes === "number" && stats.db_bytes > 0, `${stats?.db_bytes}`);
 
+// 10b. Search ranks by relevance (term frequency), not just LIKE order.
+{
+  // Reuse `created` (which has text "hello" from an earlier save) — add two pages
+  // where "压舱石" appears many times in one but once in the other.
+  const many = await invoke("create_page", { parent_id: null, title: "压舱石压舱石压舱石", content_json: '{"root":{"children":[]}}', content_text: "压舱石 压舱石 压舱石 压舱石 压舱石 核心关键词" });
+  await invoke("save_page", { id: many.id, title: "很多次压舱石", content_json: '{"root":{"children":[]}}', content_text: "压舱石 压舱石 压舱石 压舱石 压舱石 核心关键词" });
+  const few = await invoke("create_page", { parent_id: null, title: "一次压舱石", content_json: '{"root":{"children":[]}}', content_text: "压舱石" });
+  const searchRel = await invoke("search", { args: { query: "压舱石", limit: 10 } });
+  const idxMany = searchRel.findIndex((s) => s.id === many.id);
+  const idxFew = searchRel.findIndex((s) => s.id === few.id);
+  assert("search ranks higher TF page first", idxMany !== -1 && idxFew !== -1 && idxMany < idxFew, `many=${idxMany} few=${idxFew}`);
+  const snip = searchRel.find((s) => s.id === many.id)?.snippet || "";
+  assert("search snippet anchors around the match", snip.includes("压舱石"), String(snip));
+}
+
 // ---- Properties / database lens (Web platform now supports real attrs/db) ----
 // 10a. Create an attribute and set it on a page.
 const statusAttr = await invoke("create_attr", { args: { name: "状态", attr_type: "select", options: ["待办", "进行中"] } });

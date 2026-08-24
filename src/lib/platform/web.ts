@@ -401,6 +401,67 @@ function truncateChars(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
+// Lightweight relevance tokenizer: split into ASCII words + CJK bigrams so both
+// English phrases and Chinese text get useful matches without an external FTS.
+function tokenize(q: string): string[] {
+  const tokens = new Set<string>();
+  const lower = q.toLowerCase();
+  const words = lower.split(/[\s,，。.!！?？:：;；'"()\[\]{}<>/\\|_-]+/).filter(Boolean);
+  for (const w of words) tokens.add(w);
+  // CJK: emit each contiguous run's bigrams + the whole run.
+  const cjkRuns = lower.match(/[\u4e00-\u9fff\u3040-\u30ff]+/g) ?? [];
+  for (const run of cjkRuns) {
+    tokens.add(run);
+    for (let i = 0; i + 1 < run.length; i++) tokens.add(run.slice(i, i + 2));
+    if (run.length === 1) tokens.add(run);
+  }
+  return [...tokens];
+}
+
+// Rank pages by matched-token score (TF over title/content) with recency tiebreak.
+// Returns pages that match at least one token, ordered by relevance.
+function rankPagesForSearch(query: string, pages: { id: string; title: string; content_text: string; updated_at: number }[]): { id: string; title: string; content_text: string }[] {
+  const tokens = tokenize(query);
+  if (tokens.length === 0) return [];
+  const now = Date.now();
+  const scored = pages.map((p) => {
+    const title = (p.title ?? "").toLowerCase();
+    const text = (p.content_text ?? "").toLowerCase();
+    let score = 0;
+    let matched = 0;
+    for (const t of tokens) {
+      let tf = 0;
+      let idx = title.indexOf(t);
+      while (idx !== -1) { score += 8; tf++; idx = title.indexOf(t, idx + 1); }
+      idx = text.indexOf(t);
+      while (idx !== -1) { score += 1; tf++; idx = text.indexOf(t, idx + 1); }
+      if (tf > 0) matched++;
+    }
+    // Require at least one token matched; reward full coverage + recency.
+    if (matched === 0) return null;
+    const coverage = matched / tokens.length;
+    const recency = Math.max(0, 1 - (now - (p.updated_at || now)) / 1000 / 60 / 60 / 24 / 365);
+    score = score * (0.5 + 0.5 * coverage) + recency * 6;
+    return { id: p.id, title: p.title, content_text: p.content_text, score };
+  }).filter((s): s is NonNullable<typeof s> => s !== null);
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((s) => ({ id: s.id, title: s.title, content_text: s.content_text }));
+}
+
+// Build a snippet around the first query-token match in `text`.
+function snippetForQuery(text: string, query: string): string {
+  const tokens = tokenize(query);
+  for (const t of tokens) {
+    const idx = text.toLowerCase().indexOf(t);
+    if (idx !== -1) {
+      const start = Math.max(0, idx - 30);
+      const end = Math.min(text.length, idx + t.length + 60);
+      return truncateChars((start > 0 ? "…" : "") + text.slice(start, end).trim(), 120);
+    }
+  }
+  return truncateChars(text.trim(), 120);
+}
+
 function snippetForBlock(contentJson: string, blockId: string): string {
   const v = parseJson(contentJson);
   for (const child of rootChildren(v)) {
@@ -834,20 +895,21 @@ function makeInvoke(store: SqliteStore) {
     // ---- Search (SQL LIKE over title + text) ----
     if (cmd === "search") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
-      const query = String(req.query ?? a.query ?? "").toLowerCase();
+      const query = String(req.query ?? a.query ?? "");
       const lim = Number(req.limit ?? a.limit ?? 50);
+      const wsId = getWs()?.id ?? getActiveWsId();
       if (!query) return [] as T;
-      const like = `%${query}%`;
-      const rows = store.query(
-        `SELECT id, title, content_text FROM pages
-         WHERE deleted_at IS NULL AND (LOWER(title) LIKE ? OR LOWER(content_text) LIKE ?)
-         ORDER BY updated_at DESC LIMIT ?`,
-        [like, like, lim],
+      // Rank by relevance (tokenized TF) over the active workspace's pages.
+      const rows = store.query<{ id: string; title: string; content_text: string; updated_at: number }>(
+        `SELECT id, title, content_text, updated_at FROM pages
+         WHERE deleted_at IS NULL AND workspace_id = ?`,
+        [wsId],
       );
-      return rows.map((r: any) => ({
+      const ranked = rankPagesForSearch(query, rows);
+      return ranked.slice(0, lim).map((r: any) => ({
         id: r.id,
         title: r.title,
-        snippet: String(r.content_text ?? "").slice(0, 120),
+        snippet: snippetForQuery(String(r.content_text ?? ""), query),
         space: getWs()?.name ?? "",
       })) as T;
     }
