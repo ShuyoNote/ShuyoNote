@@ -2,6 +2,21 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.53.0] - 2026-08-24
+
+### 新增（Web 平台属性 / 数据库透镜）
+
+- **浏览器版支持「数据库=透镜」**：把 Web 平台从「只有 pages/tags/搜索」补全到**属性 + 数据库视图**：
+  - 新增支撑表：`attr_defs`（id/name/type/options）、`page_props`（page_id/attr_id/value，可多值）、`database_columns`（db 页 × 属性列）、`db_views`；`pages` 表加 `db_rule` 列（含对旧库的 `ALTER TABLE ADD COLUMN` 安全迁移）。
+  - `web.ts` 实现命令：
+    - **属性**：`list_attr_defs`/`create_attr`（重名校验 + select 选项）/`update_attr`/`delete_attr`（级联清 page_props/database_columns）/`get_page_props`（含 tag 类型视图）/`set_page_prop`（upsert）/`remove_page_prop`。
+    - **数据库**：`get_db_columns`/`add_db_column`/`remove_db_column`/`query_database`（收集页 + 属性列值 + tag 列视图 + **db_rule 会员规则过滤**）/`list_db_views`/`save_db_view`/`delete_db_view`/`set_db_rule`（JSON 校验）/`get_db_rule`。
+    - **看板 / 引用**：`board_data`（按标签分组）/`board_by_attr`（select 选项分组 + 「未设置」列）/`move_card`（清页面旧标签 + 赋目标标签）/`resolve_refs`（`p:<id>` → `⇄ 标题`）。
+  - 删除了 search 块里遗留的空 `resolve_refs`（与新实现冲突）。
+  - `scripts/smoke-web.mjs` 37→**50 项全绿**（新增：create_attr/设属性/属性列表/建库/加列/query_database 行含值 + 规则过滤/看板分组/保存与列出视图/get+set_db_rule/ref 解析/move_card 换标签）。
+
+---
+
 ## [1.52.0] - 2026-08-24
 
 ### 新增（Web 平台 PWA / 离线安装）

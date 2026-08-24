@@ -193,7 +193,8 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL,
         deleted_at INTEGER,
         content_json TEXT NOT NULL DEFAULT '',
-        content_text TEXT NOT NULL DEFAULT ''
+        content_text TEXT NOT NULL DEFAULT '',
+        db_rule TEXT NOT NULL DEFAULT '{}'
       );
       CREATE TABLE IF NOT EXISTS tags (
         id TEXT PRIMARY KEY,
@@ -212,10 +213,49 @@ export class SqliteStore {
         size INTEGER NOT NULL,
         path TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS attr_defs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL DEFAULT 'text',
+        options TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS page_props (
+        page_id TEXT NOT NULL,
+        attr_id TEXT NOT NULL,
+        value TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (page_id, attr_id)
+      );
+      CREATE TABLE IF NOT EXISTS database_columns (
+        db_page_id TEXT NOT NULL,
+        attr_id TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (db_page_id, attr_id)
+      );
+      CREATE TABLE IF NOT EXISTS db_views (
+        id TEXT PRIMARY KEY,
+        db_page_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        view_type TEXT NOT NULL,
+        config TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_pages_ws ON pages(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id);
       CREATE INDEX IF NOT EXISTS idx_pages_deleted ON pages(deleted_at);
+      CREATE INDEX IF NOT EXISTS idx_db_columns ON database_columns(db_page_id);
+      CREATE INDEX IF NOT EXISTS idx_db_views ON db_views(db_page_id);
+      CREATE INDEX IF NOT EXISTS idx_page_props ON page_props(page_id);
+      CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
     `);
+    // Safe migration for pre-existing DBs whose `pages` table predates db_rule.
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'");
+    } catch {
+      /* already exists */
+    }
   }
 
   /** Run a mutation; persist the DB snapshot after. */

@@ -242,6 +242,49 @@ assert("get_graph has page nodes", Array.isArray(graph?.pages) && graph.pages.le
 const stats = await invoke("storage_stats", {});
 assert("storage_stats is object", typeof stats === "object" && stats !== null);
 
+// ---- Properties / database lens (Web platform now supports real attrs/db) ----
+// 10a. Create an attribute and set it on a page.
+const statusAttr = await invoke("create_attr", { args: { name: "状态", attr_type: "select", options: ["待办", "进行中"] } });
+assert("create_attr returns a select attr", statusAttr && statusAttr.id && statusAttr.attr_type === "select", statusAttr?.name);
+await invoke("set_page_prop", { args: { page_id: created.id, attr_id: statusAttr.id, value: "待办" } });
+const pageProps = await invoke("get_page_props", { pageId: created.id });
+assert("get_page_props returns the value", Array.isArray(pageProps) && pageProps.some((p) => p.attr_id === statusAttr.id && p.value === "待办"));
+
+const attrList = await invoke("list_attr_defs", {});
+assert("list_attr_defs includes the attr", Array.isArray(attrList) && attrList.some((a) => a.id === statusAttr.id));
+
+// 10b. Create a database page, attach the attr as a column, query it.
+const db = await invoke("create_database", { parent_id: null, title: "任务库" });
+assert("create_database returns a db page", db && db.kind === "database", db?.kind);
+const added = await invoke("add_db_column", { args: { db_page_id: db.id, attr_id: statusAttr.id } });
+assert("add_db_column returns columns", Array.isArray(added) && added.some((c) => c.id === statusAttr.id));
+const q = await invoke("query_database", { dbPageId: db.id });
+assert("query_database has columns+rows", Array.isArray(q?.columns) && q?.columns.length >= 1 && Array.isArray(q?.rows));
+assert("query_database row has the page", q?.rows?.some((r) => r.page_id === created.id && r.values?.[statusAttr.id] === "待办"));
+
+// 10c. Board grouped by the select attr.
+const board = await invoke("board_by_attr", { attrId: statusAttr.id });
+assert("board_by_attr groups ok", Array.isArray(board) && board.some((g) => g.id === "待办"));
+
+// 10d. Save/list a db view.
+const view = await invoke("save_db_view", { args: { db_page_id: db.id, name: "表格", view_type: "table", config: "{}" } });
+assert("save_db_view returns a view", view && view.id && view.view_type === "table");
+const views = await invoke("list_db_views", { dbPageId: db.id });
+assert("list_db_views includes the view", Array.isArray(views) && views.some((v) => v.id === view.id));
+
+// 10e. db_rule round-trip + ref resolution.
+await invoke("set_db_rule", { dbPageId: db.id, rule: '{"prop":{"name":"状态","value":"待办"}}' });
+const rule = await invoke("get_db_rule", { dbPageId: db.id });
+assert("get_db_rule returns the rule", rule === '{"prop":{"name":"状态","value":"待办"}}');
+const refs = await invoke("resolve_refs", { values: [`p:${created.id}`, "plain"] });
+assert("resolve_refs resolves page refs", String(refs[`p:${created.id}`]).includes("⇄") && refs["plain"] === "plain");
+
+// 10f. move_card (board column) reassigns the page's tag.
+const tag2 = await invoke("create_tag", { name: "测试列" });
+await invoke("move_card", { pageId: created.id, tagId: tag2.id });
+const afterMove = await invoke("page_tags", { page_id: created.id });
+assert("move_card reassigns tag", Array.isArray(afterMove) && afterMove.some((t) => t.id === tag2.id));
+
 // 11. Persistence: a NEW platform instance reads the same SQLite file.
 const platform2 = newPlatform();
 const pagesAgain = await platform2.executor.invoke("list_pages", {});
