@@ -1,13 +1,28 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAiStore } from "../store/ai";
+import { useNotes } from "../store/notes";
 import { SparkleIcon, SettingsIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { draftPreview } from "../lib/ai/preview";
 import { AiSettingsDialog } from "./AiSettingsDialog";
 
-// Clickable quick prompts shown in the empty state, so a new user has an example
-// of what to ask and the empty panel isn't a bare void.
-const QUICK_PROMPTS = ["总结当前页", "新建一篇周计划", "为当前页补充提纲", "列出今日待办"];
+// Context-aware one-click actions (like FlowUs/Wolai AI): they adapt to whether a
+// page is open, and "换一批" rotates through a larger pool.
+const PAGE_POOL = [
+  "总结当前页",
+  "为当前页列提纲",
+  "列出今日待办",
+  "校对当前页的错别字",
+  "用一句话概括当前页",
+  "把当前页改写得更简明",
+];
+const EMPTY_POOL = [
+  "新建一篇周计划",
+  "新建一篇会议纪要",
+  "总结这个工作区",
+  "列出最近更新的页面",
+  "整理重复的笔记",
+];
 
 // Floating AI assistant. Entry points (NewPageGuide, sidebar, command palette)
 // open it via store.setOpen(true). It renders a docked panel bottom-right with a
@@ -34,6 +49,22 @@ export function AiAssistantPanel() {
   } = useAiStore();
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const currentId = useNotes((s) => s.currentId);
+  const pageOpen = Boolean(currentId);
+
+  // Contextual suggestions (page open ⇒ page-specific prompts), "换一批" rotates.
+  const [suggestionOffset, setSuggestionOffset] = useState(0);
+  const pool = useMemo(() => (pageOpen ? PAGE_POOL : EMPTY_POOL), [pageOpen]);
+  const SUGGESTION_COUNT = 3;
+  const suggestions = useMemo(() => {
+    const start = (suggestionOffset % pool.length + pool.length) % pool.length;
+    return Array.from({ length: Math.min(SUGGESTION_COUNT, pool.length) }, (_, i) => pool[(start + i) % pool.length]);
+  }, [pool, suggestionOffset]);
+
+  const newConversation = () => {
+    clearResult();
+    setPrompt("");
+  };
 
   const send = async () => {
     const p = prompt.trim();
@@ -76,6 +107,7 @@ export function AiAssistantPanel() {
         <div className="ai-header">
           <SparkleIcon className="ai-header-icon" />
           <span className="ai-title">AI 助手</span>
+          <span className="ai-model" title="当前模型">{config.model}</span>
           <button className="ai-header-btn ai-settings" title="AI 设置" onClick={() => setSettingsOpen(true)} aria-label="AI 设置">
             <SettingsIcon width={15} height={15} />
           </button>
@@ -155,14 +187,24 @@ export function AiAssistantPanel() {
 
           {config.enabled && !reply && drafts.length === 0 && !error && (
             <div className="ai-empty">
-              <SparkleIcon className="ai-empty-icon" />
-              <div className="ai-empty-text">询问笔记内容，或让我新建页面、追加内容。写入前需你确认。</div>
-              <div className="ai-empty-chips">
-                {QUICK_PROMPTS.map((p) => (
-                  <button key={p} className="ai-chip" onClick={() => runText(p)}>
-                    {p}
+              <div className="ai-welcome">
+                <SparkleIcon className="ai-welcome-icon" />
+                <div className="ai-welcome-text">Hi，我是 ShuyoNote 的 AI 助手。可以针对当前笔记提问，或让我新建页面、追加内容。写入前需你确认。</div>
+              </div>
+              <div className="ai-suggestions">
+                <div className="ai-suggestions-head">
+                  <span className="ai-suggestions-label">你可以试试</span>
+                  <button className="ai-suggestions-shuffle" onClick={() => setSuggestionOffset((o) => o + SUGGESTION_COUNT)} title="换一批">
+                    换一批
                   </button>
-                ))}
+                </div>
+                <div className="ai-suggestions-list">
+                  {suggestions.map((s) => (
+                    <button key={s} className="ai-chip" onClick={() => runText(s)}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -171,7 +213,7 @@ export function AiAssistantPanel() {
         <div className="ai-input-row">
           <textarea
             className="ai-textarea"
-            placeholder={config.enabled ? "向 AI 提问或下达指令…" : "启用 AI 后可开始对话"}
+            placeholder={config.enabled ? "问我你的问题…" : "启用 AI 后可开始对话"}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={onKeyDown}
@@ -187,6 +229,16 @@ export function AiAssistantPanel() {
             {running ? "停止" : "发送"}
           </button>
         </div>
+        {config.enabled && (
+          <div className="ai-footer">
+            <button className="ai-footer-btn" onClick={newConversation} title="开始一段新对话">
+              ＋ 新会话
+            </button>
+            <span className="ai-footer-right">
+              <span className="ai-footer-model" title="当前模型">{config.model}</span>
+            </span>
+          </div>
+        )}
       </div>
 
       {settingsOpen && <AiSettingsDialog onClose={() => setSettingsOpen(false)} />}
