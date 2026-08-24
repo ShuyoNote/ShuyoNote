@@ -4069,34 +4069,6 @@ select.prop-value {
   background: var(--surface);
   color: var(--text);
 }
-.webbookmark-edit {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.webbookmark-edit-input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  padding: 6px 8px;
-  font-size: 13px;
-  outline: none;
-}
-.webbookmark-edit-btn {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius-sm);
-  padding: 5px 9px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.webbookmark-edit-btn:hover {
-  background: var(--hover);
-}
 
 /* "Pasted a link" choice bubble */
 .bookmark-paste-menu {
