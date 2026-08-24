@@ -8,7 +8,10 @@
 // The pure fetch-based transports in llm.ts remain for that web handler and tests.
 
 import { api } from "../api";
+import { platform } from "../platform";
 import { parseToolArgs, type LlmTransport, type ProviderConfig, type ProviderProbe } from "./llm";
+
+let streamSeq = 0;
 
 export function createApiTransport(config: ProviderConfig): LlmTransport {
   return {
@@ -40,4 +43,48 @@ export async function probeApi(config: ProviderConfig): Promise<ProviderProbe> {
     api_key: config.apiKey || undefined,
   });
   return { ok: r?.ok ?? false, message: r?.message ?? "（无返回）", models: r?.models ?? [] };
+}
+
+/** Desktop streaming transport: streams via the Rust `ai_complete_stream` command,
+ *  which emits per-run events (`ai-stream:{runId}`) that we subscribe to. Falls
+ *  back to non-streaming `api.aiComplete` when no onDelta is provided. */
+export function createBackendStreamingTransport(config: ProviderConfig): LlmTransport {
+  return {
+    async complete(messages, opts = {}) {
+      if (!opts.onDelta) return createApiTransport(config).complete(messages, opts);
+
+      const runId = `run-${++streamSeq}-${Date.now()}`;
+      const evtName = `ai-stream:${runId}`;
+      let content = "";
+      let doneResolve: () => void = () => {};
+      const done = new Promise<void>((resolve) => {
+        doneResolve = resolve;
+      });
+      const unlisten = await platform.event.listen<{ delta?: string; done?: boolean }>(evtName, (e) => {
+        const p = e.payload;
+        if (p?.done) {
+          doneResolve();
+        } else if (typeof p?.delta === "string" && p.delta) {
+          content += p.delta;
+          opts.onDelta?.(p.delta);
+        }
+      });
+      try {
+        const args = {
+          provider: config.provider,
+          base_url: config.baseUrl,
+          model: config.model,
+          api_key: config.apiKey || undefined,
+          messages,
+          temperature: opts.temperature,
+          max_tokens: opts.maxTokens,
+        };
+        void api.aiCompleteStream(args, runId);
+        await done;
+      } finally {
+        unlisten();
+      }
+      return { content };
+    },
+  };
 }

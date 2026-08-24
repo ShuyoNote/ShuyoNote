@@ -155,6 +155,7 @@ pub fn run() {
             security::unlock_encryption,
             ai::ai_complete,
             ai::ai_probe,
+            ai::ai_complete_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

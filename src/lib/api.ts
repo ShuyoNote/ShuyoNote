@@ -218,4 +218,13 @@ export const api = {
     ),
   aiProbe: (args: { provider: string; base_url: string; model: string; api_key?: string }) =>
     invoke<{ ok: boolean; message: string; models?: string[] }>("ai_probe", { args }),
+  aiCompleteStream: (args: {
+    provider: string;
+    base_url: string;
+    model: string;
+    api_key?: string;
+    messages: Array<{ role: string; content: string }>;
+    temperature?: number;
+    max_tokens?: number;
+  }, runId: string) => invoke<void>("ai_complete_stream", { args, run_id: runId }),
 };

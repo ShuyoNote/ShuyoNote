@@ -9,7 +9,7 @@ import {
   OPENAI_COMPAT_DEFAULT_MODEL,
   type ProviderConfig,
 } from "../lib/ai/llm";
-import { createApiTransport } from "../lib/ai/transport";
+import { createBackendStreamingTransport } from "../lib/ai/transport";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
 
@@ -154,12 +154,14 @@ export const useAiStore = create<AiState>((set, get) => ({
     };
 
     try {
-      const transport = IS_WEB ? createProviderTransport(config as ProviderConfig) : createApiTransport(config as ProviderConfig);
+      const transport = IS_WEB
+        ? createProviderTransport(config as ProviderConfig)
+        : createBackendStreamingTransport(config as ProviderConfig);
       const result: AiRunResult = await runAiLoop(
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),
         { currentPageId: notes.currentId, allPages },
-        { transport, history: get().history, onDelta: IS_WEB ? onDelta : undefined },
+        { transport, history: get().history, onDelta },
       );
       // A newer run() or a stop() invalidates this result (stale discard).
       if (seq !== runSeq) return;

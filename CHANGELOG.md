@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.48] - 2026-08-24
+
+### 新增
+
+- **桌面端流式输出（后端事件总线）**：新增 `ai_complete_stream` Rust 命令（`reqwest` 以 `stream:true` 拉取，逐 token 通过 `app.emit("ai-stream:{runId}", {delta}/{done})` 推回）；前端新增 `createBackendStreamingTransport`（订阅事件并累积增量）。桌面端云/本地 LLM 现在也逐字显示，不再回退非流式。
+- `store` 以 `IS_WEB` 分流：Web 用直接 fetch 流式，桌面用后端事件总线流式；两者都用 `onDelta` 节流实时更新回复卡。
+- `cargo check` 编译 v1.59.48；`smoke-web` 176 全绿（Web 流式累积已覆盖，桌面事件总线为运行时验证）。
+
+---
+
 ## [1.59.47] - 2026-08-24
 
 ### 新增

@@ -4,16 +4,18 @@
 // LLMs (DeepSeek/OpenAI/…) — the frontend never fetches those origins directly.
 // It exposes ONLY LLM proxying; nothing else (no shell/files/arbitrary URLs).
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tauri::{AppHandle, Emitter};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AiMessageIn {
     pub role: String,
     pub content: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct AiCompleteArgs {
     pub provider: String, // "ollama" | "openai"
     pub base_url: String,
@@ -229,4 +231,125 @@ pub async fn ai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
     } else {
         ai_ollama_probe(args).await
     }
+}
+
+// ---- Streaming (desktop) ----
+// The command spawns a task that POSTs with stream:true, reads the body's byte
+// stream, and emits each content delta to a per-run event (`ai-stream:{run_id}`)
+// with payload {delta} / {done}. The frontend subscribes via `platform.event.listen`.
+
+fn ollama_stream_token(line: &str) -> Option<String> {
+    let l = line.strip_prefix("data:").unwrap_or(line).trim();
+    if l.is_empty() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(l).ok()?;
+    let c = v["message"]["content"].as_str().or(v["response"].as_str())?;
+    if c.is_empty() {
+        None
+    } else {
+        Some(c.to_string())
+    }
+}
+
+fn openai_stream_token(line: &str) -> Option<String> {
+    let l = line.strip_prefix("data:").map(str::trim).unwrap_or("");
+    if l.is_empty() || l == "[DONE]" {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(l).ok()?;
+    let c = v["choices"][0]["delta"]["content"].as_str()?;
+    if c.is_empty() {
+        None
+    } else {
+        Some(c.to_string())
+    }
+}
+
+async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) {
+    let is_openai = args.provider == "openai";
+    let url = if is_openai {
+        append_v1(&args.base_url, "/chat/completions")
+    } else {
+        format!("{}/api/chat", base_of(&args.base_url))
+    };
+    let mut req = reqwest::Client::new().post(&url);
+    if is_openai {
+        let body = json!({
+            "model": args.model,
+            "messages": args.messages,
+            "stream": true,
+            "temperature": args.temperature.unwrap_or(0.7),
+            "max_tokens": args.max_tokens.unwrap_or(512),
+        });
+        req = req.json(&body);
+        if let Some(key) = args.api_key.filter(|k| !k.is_empty()) {
+            req = req.bearer_auth(key);
+        }
+    } else {
+        let body = json!({
+            "model": args.model,
+            "messages": args.messages,
+            "stream": true,
+            "options": {
+                "num_ctx": 8192,
+                "temperature": args.temperature.unwrap_or(0.7),
+                "num_predict": args.max_tokens.unwrap_or(512),
+            }
+        });
+        req = req.json(&body);
+    }
+
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            // Surface a reachable error as a single delta so the UI shows why.
+            emit(describe_net(&e, &url));
+            return;
+        }
+    };
+    if !resp.status().is_success() {
+        emit(format!("【请求失败 {}】", resp.status()));
+        return;
+    }
+    let extract = if is_openai { openai_stream_token } else { ollama_stream_token };
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(c) => c,
+            Err(_) => break,
+        };
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(pos) = buf.find('\n') {
+            let line: String = buf[..pos].trim().to_string();
+            buf = buf[pos + 1..].to_string();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(tok) = extract(&line) {
+                emit(tok);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn ai_complete_stream(
+    args: AiCompleteArgs,
+    run_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    // Spawn so the invoke returns immediately; deltas arrive via events.
+    tauri::async_runtime::spawn(async move {
+        let evt = format!("ai-stream:{run_id}");
+        let app_delta = app.clone();
+        let evt_delta = evt.clone();
+        let emit = move |t: String| {
+            let _ = app_delta.emit(&evt_delta, json!({ "delta": t }));
+        };
+        stream_model(args, emit).await;
+        let _ = app.emit(&evt, json!({ "done": true }));
+    });
+    Ok(())
 }
