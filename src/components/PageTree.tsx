@@ -186,6 +186,7 @@ function TreeItem({
   const [expanded, setExpanded] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [dropZone, setDropZone] = useState<"before" | "after" | "inside" | null>(null);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.title);
 
@@ -215,24 +216,28 @@ function TreeItem({
     e.preventDefault();
     e.stopPropagation();
     setDragOver(false);
+    setDropZone(null);
     const id = e.dataTransfer.getData("text/plain");
     if (!id || id === node.id) return;
 
-    // Dropping onto a folder moves the page INTO that folder (parent = folder id).
-    if (isFolder) {
-      const folderChildren = pages
+    // Middle zone (25%–75% of the row) → nest the dragged node as a CHILD of the
+    // target, whether the target is a folder, a page, or a database. This makes
+    // dragging a page onto another page turn it into that page's subpage.
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const ratio = (e.clientY - rect.top) / rect.height;
+    if (ratio >= 0.25 && ratio <= 0.75) {
+      const children = pages
         .filter((p) => p.parent_id === node.id && p.id !== id)
         .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
-      const sortOrder = folderChildren.length
-        ? (folderChildren[folderChildren.length - 1].sort_order ?? 0) + 1
+      const sortOrder = children.length
+        ? (children[children.length - 1].sort_order ?? 0) + 1
         : 0;
       await movePage(id, node.id, sortOrder);
       return;
     }
 
-    // Insert before or after the target based on mouse Y (top half = before).
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const insertAfter = e.clientY > rect.top + rect.height / 2;
+    // Top/bottom band → insert before/after the target as its sibling.
+    const insertAfter = ratio > 0.75;
 
     // Siblings (same parent, excluding the dragged node), already sorted.
     const siblings = pages
@@ -276,7 +281,7 @@ function TreeItem({
   return (
     <div>
       <div
-        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${dragOver ? "tree-row-over" : ""}`}
+        className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${dragOver ? "tree-row-over" : ""} ${dropZone ? `tree-drop-${dropZone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         draggable
         onDragStart={(e) => {
@@ -286,9 +291,18 @@ function TreeItem({
         onDragEnd={() => setDragging(false)}
         onDragOver={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           setDragOver(true);
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const ratio = (e.clientY - rect.top) / rect.height;
+          // Middle = nest as child; top/bottom = sibling before/after.
+          if (ratio >= 0.25 && ratio <= 0.75) setDropZone("inside");
+          else setDropZone(ratio > 0.75 ? "after" : "before");
         }}
-        onDragLeave={() => setDragOver(false)}
+        onDragLeave={() => {
+          setDragOver(false);
+          setDropZone(null);
+        }}
         onDrop={handleDrop}
         onClick={handleClick}
       >

@@ -1482,6 +1482,22 @@ body,
   outline-offset: -2px;
 }
 
+/* Drag-drop landing zones: middle of a row nests the dragged node as a child,
+   top/bottom bands insert it as a sibling before/after. */
+.tree-drop-inside {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
+
+.tree-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tree-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 /* Multi-selected node (Ctrl/⌘+click) — visually distinct from the single active
    node so the user can tell which nodes a batch move/delete will act on. */
 .tree-row-selected {
