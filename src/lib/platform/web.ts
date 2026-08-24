@@ -247,8 +247,9 @@ function pickBrowserFiles(options: { multiple?: boolean; directory?: boolean; ac
     input.style.display = "none";
     document.body.appendChild(input);
     const cleanup = () => {
+      // `input.remove()` detaches the node and is a no-op if already removed,
+      // so it's safe to call once (a second removeChild would throw NotFoundError).
       input.remove();
-      document.body.removeChild(input);
     };
     input.onchange = async () => {
       const files = Array.from(input.files ?? []);

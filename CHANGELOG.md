@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.58.2] - 2026-08-24
+
+### 修复
+
+- **文件选择器 `removeChild` NotFoundError**：`pickBrowserFiles` 的 `cleanup()` 里 `input.remove()` 后又 `document.body.removeChild(input)`——控件已移除后再次 removeChild 抛错（选文件后会崩）。改为只调一次幂等的 `input.remove()`。
+- **PWA meta 弃用告警**：`index.html` 补 `mobile-web-app-capable`（`apple-mobile-web-app-capable` 已弃用但仍保留以兼容 iOS）。
+
+---
+
 ## [1.58.1] - 2026-08-24
 
 ### 修复（Web 平台保存失败）
