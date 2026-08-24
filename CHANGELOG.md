@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.62] - 2026-08-24
+
+### 修复
+
+- **编辑器崩溃（根治方案）**：不再只靠启发式校验，改用**探针编辑器**——`Editor.tsx` 用与真实编辑相同的节点注册表 `createEditor` 建一个临时 editor，在把 `content_json` 交给 LexicalComposer 前**先 `probeEditor.parseEditorState` 试读一次**；任何解析异常（含 `type "undefined"`）都被捕获并**回退为空态**，绝不让真实编辑器崩。
+- `parseEditorState` 现返回 `EditorState | null`；`lexicalStateValid` 保留为快速预检。
+
+---
+
 ## [1.59.61] - 2026-08-24
 
 ### 修复

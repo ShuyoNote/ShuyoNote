@@ -16,7 +16,7 @@ import { ListNode, ListItemNode } from "@lexical/list";
 import { CodeNode, CodeHighlightNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getRoot, type EditorState, type LexicalEditor } from "lexical";
+import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
 import { useEffect, useMemo, useRef } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
@@ -92,8 +92,42 @@ interface EditorProps {
 
 import { lexicalStateValid } from "../lib/lexicalValidate";
 
-function parseEditorState(contentJson: string): string | null {
-  return lexicalStateValid(contentJson);
+const EDITOR_NODES = [
+  HeadingNode,
+  QuoteNode,
+  ListNode,
+  ListItemNode,
+  CodeNode,
+  CodeHighlightNode,
+  LinkNode,
+  CalloutNode,
+  HorizontalRuleNode,
+  ImageNode,
+  ImageRowNode,
+  VideoNode,
+  BlockRefNode,
+  BlockEmbedNode,
+  WebBookmarkNode,
+  AttachmentRefNode,
+  TableNode,
+  TableCellNode,
+  TableRowNode,
+];
+
+// A throwaway editor with the same node registry, used to PRE-PARSE a saved
+// content string. If any node is malformed (e.g. a missing `type`, which Lexical
+// reports as `parseEditorState: type "undefined"`), this throws and we fall back
+// to an empty editor instead of crashing the real one.
+const probeEditor = createEditor({ nodes: EDITOR_NODES });
+
+/** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
+function parseEditorState(contentJson: string): EditorState | null {
+  if (contentJson && !lexicalStateValid(contentJson)) return null;
+  try {
+    return probeEditor.parseEditorState(contentJson ?? "");
+  } catch {
+    return null;
+  }
 }
 
 // Generate a stable block id (UUID v4). Falls back to crypto.getRandomValues when
@@ -240,27 +274,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
     () => ({
       namespace: "shuyonote-editor",
       theme,
-      nodes: [
-        HeadingNode,
-        QuoteNode,
-        ListNode,
-        ListItemNode,
-        CodeNode,
-        CodeHighlightNode,
-        LinkNode,
-        CalloutNode,
-        HorizontalRuleNode,
-        ImageNode,
-        ImageRowNode,
-        VideoNode,
-        BlockRefNode,
-        BlockEmbedNode,
-        WebBookmarkNode,
-        AttachmentRefNode,
-        TableNode,
-        TableCellNode,
-        TableRowNode,
-      ],
+      nodes: EDITOR_NODES,
       onError: (error: Error) => {
         console.error(error);
         toast(`编辑器错误：${error.message || String(error)}`, "error");
