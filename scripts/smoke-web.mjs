@@ -413,6 +413,28 @@ await backupPlatform.executor.invoke("import_backup", { srcPath: backup.path });
 const backupAfterPages = await backupPlatform.executor.invoke("list_pages", {});
 assert("import_backup restores pages", Array.isArray(backupAfterPages) && backupAfterPages.length >= backupBeforePages, `${backupAfterPages?.length} pages after import`);
 
+// 10i-2. export_workspace (space export) must build a real self-contained zip, not
+// a size-0 stub: shuyonote.db + workspace.json + attachments/<hash>, with a real
+// byte size and attachment count.
+{
+  const wsPlatform = newPlatform();
+  const wsInvoke = wsPlatform.executor.invoke;
+  // Seed a page + attachment so the export has something to carry.
+  const imgBytes = new Uint8Array([2, 4, 6, 8, 10]);
+  const att = await wsInvoke("save_image", { page_id: null, name: "cover.png", mime: "image/png", data: Array.from(imgBytes) });
+  await wsInvoke("create_page", { parent_id: null, title: "导出页", content_json: '{"root":{"children":[]}}', content_text: "导出测试" });
+  const res = await wsInvoke("export_workspace", { destPath: "space-export.zip" });
+  assert("export_workspace returns a real size (not 0)", res && typeof res.size === "number" && res.size > 0, `${res?.size} bytes`);
+  assert("export_workspace counts its pages", res && typeof res.pages === "number" && res.pages >= 1, `${res?.pages}`);
+  assert("export_workspace counts its attachments", res && typeof res.attachments === "number" && res.attachments >= 1, `${res?.attachments}`);
+  const wsRaw = await wsInvoke("read_file_bytes", { path: res.path });
+  const wsZip = unzipSync(new Uint8Array(wsRaw));
+  assert("export_workspace zip contains shuyonote.db", wsZip && wsZip["shuyonote.db"] && wsZip["shuyonote.db"].length > 0, Object.keys(wsZip).join(","));
+  assert("export_workspace zip contains workspace.json", wsZip && wsZip["workspace.json"] && wsZip["workspace.json"].length > 0);
+  assert("export_workspace zip contains attachments dir", Object.keys(wsZip).some((k) => k.startsWith("attachments/")));
+}
+
+
 // 10j. Workspace seed is schema-aware: on a desktop-style workspaces table
 // (created_at NOT NULL) the seed must include created_at, not throw NOT NULL.
 // We drive the seed path by creating such a table in a scratch store and running

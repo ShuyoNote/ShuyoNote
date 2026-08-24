@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.9] - 2026-08-24
+
+### 修复
+
+- **web 版空间导出不正确（导出为 0 字节）**：`export_workspace` 之前是个空桩，返回 `size: 0`，所以「空间导出」下载到的是一个空文件。修复：web 端真正打包出**自包含 zip**，与桌面格式一致——
+  - `shuyonote.db`（SQLite 快照）+ `workspace.json`（空间元数据）+ `attachments/<hash>`（该空间页面引用的附件字节）。
+  - 返回真实的 `size / pages / attachments` 计数，提示不再显示「大小 0.0 KB」。
+  - `scripts/smoke-web.mjs` 82→**88 项全绿**（新增：空间导出非零大小 / 页面计数 / 附件计数 / zip 含 db+json+attachments）。
+
+---
+
 ## [1.59.8] - 2026-08-24
 
 ### 优化

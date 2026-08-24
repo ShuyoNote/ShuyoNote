@@ -1189,7 +1189,37 @@ function makeInvoke(store: SqliteStore) {
       }
       return undefined as T;
     }
-    if (cmd === "export_workspace") return { path: "", size: 0, pages: 0, attachments: 0 } as T;
+    if (cmd === "export_workspace") {
+      // Export the current (single) workspace as a self-contained zip matching the
+      // desktop format: `shuyonote.db` (DB snapshot) + `workspace.json` (metadata)
+      // + `attachments/<hash>` for each referenced attachment. Previously this was
+      // a stub returning size 0, so the web "空间导出" yielded an empty download.
+      const ws = getWs();
+      if (!ws) throw new Error("工作空间不存在");
+      const dbBytes = store.snapshot();
+      const entries: Record<string, Uint8Array> = { "shuyonote.db": dbBytes };
+      // workspace.json metadata (same shape the desktop importer expects).
+      entries["workspace.json"] = new TextEncoder().encode(JSON.stringify({ id: ws.id, name: ws.name ?? "", theme: ws.theme ?? "", icon: ws.icon ?? "" }));
+      // Only the attachment bytes this space references (via page_id) — self-contained.
+      const atts = await blobStore.entries();
+      const refHashes = new Set(
+        (store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments WHERE page_id IN (SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL)", [ws.id]) as any[])
+          .map((r) => String(r.hash)),
+      );
+      const pages = (store.query("SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws.id]) as any[]).length;
+      let matched = 0;
+      for (const a of atts) {
+        if (refHashes.size > 0 && !refHashes.has(a.hash)) continue;
+        entries[`attachments/${a.hash}`] = a.bytes;
+        matched++;
+      }
+      const zip = zipSync(entries);
+      const name = String(a.destPath ?? "space-export.zip").split(/[\\/]/).pop() || "space-export.zip";
+      if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
+      // Register so a same-session re-import (and the Node smoke test) can read it.
+      fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
+      return { path: name, size: zip.length, pages, attachments: matched } as T;
+    }
     if (cmd === "import_workspace") return null as T;
     if (cmd === "write_text_file") {
       // Write text to a browser-side "file": trigger a real download named after
