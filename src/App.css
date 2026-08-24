@@ -4040,6 +4040,61 @@ select.prop-value {
   color: var(--danger, #e5484d);
 }
 
+/* Edit affordance on the bookmark card */
+.webbookmark-card {
+  position: relative;
+}
+.webbookmark-edit-trigger {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+.webbookmark-card:hover .webbookmark-edit-trigger {
+  opacity: 1;
+}
+.webbookmark-edit-trigger:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.webbookmark-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.webbookmark-edit-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+}
+.webbookmark-edit-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.webbookmark-edit-btn:hover {
+  background: var(--hover);
+}
+
 /* "Pasted a link" choice bubble */
 .bookmark-paste-menu {
   position: fixed;

@@ -1,5 +1,6 @@
 import {
   $applyNodeReplacement,
+  $getNodeByKey,
   DecoratorNode,
   type DOMExportOutput,
   type EditorConfig,
@@ -12,6 +13,8 @@ import {
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { api } from "../../lib/api";
 
 export type SerializedWebBookmarkNode = Spread<
@@ -76,6 +79,7 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
   decorate(): JSX.Element {
     return (
       <WebBookmarkCard
+        nodeKey={this.getKey()}
         url={this.__url}
         title={this.__title}
         description={this.__description}
@@ -151,6 +155,7 @@ function hostOf(url: string): string {
 }
 
 function WebBookmarkCard(props: {
+  nodeKey: NodeKey;
   url: string;
   title: string;
   description: string;
@@ -158,6 +163,7 @@ function WebBookmarkCard(props: {
   imageHash: string;
   imageMime: string;
 }) {
+  const [editor] = useLexicalComposerContext();
   const [meta, setMeta] = useState({
     title: props.title,
     description: props.description,
@@ -167,6 +173,8 @@ function WebBookmarkCard(props: {
   const [imageSrc, setImageSrc] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draftUrl, setDraftUrl] = useState(props.url);
 
   // Fetch metadata lazily if the node was created with a bare URL (e.g. pasted).
   useEffect(() => {
@@ -210,28 +218,101 @@ function WebBookmarkCard(props: {
       .catch(() => setImageSrc(""));
   }, [meta.imageHash]);
 
+  // Open the URL via Tauri's opener (system default browser). `window.open` is
+  // blocked in the WebView, so this is the reliable way to open links.
   const open = () => {
-    window.open(props.url, "_blank", "noopener,noreferrer");
+    openUrl(props.url).catch(() => {});
+  };
+
+  const startEdit = () => {
+    setDraftUrl(props.url);
+    setEditing(true);
+  };
+
+  const commitEdit = () => {
+    let u = draftUrl.trim();
+    if (u && !u.includes("://")) u = `https://${u}`;
+    if (u && u !== props.url) {
+      editor.update(() => {
+        const cur = $getNodeByKey<WebBookmarkNode>(props.nodeKey);
+        if (cur) {
+          // Replace with a fresh node (re-fetches metadata), keeping position.
+          cur.replace($createWebBookmarkNode(u));
+        }
+      });
+    }
+    setEditing(false);
   };
 
   return (
-    <div className="webbookmark-card" onClick={open} title={props.url}>
+    <div className="webbookmark-card" onClick={editing ? undefined : open} title={props.url}>
       {imageSrc && (
         <div className="webbookmark-thumb">
           <img src={imageSrc} alt="" loading="lazy" />
         </div>
       )}
       <div className="webbookmark-body">
-        <div className="webbookmark-title">
-          {loading ? "获取网页信息…" : meta.title || hostOf(props.url)}
-        </div>
-        {meta.description && !loading && (
-          <div className="webbookmark-desc">{meta.description}</div>
+        {editing ? (
+          <div className="webbookmark-edit">
+            <input
+              className="webbookmark-edit-input"
+              autoFocus
+              value={draftUrl}
+              placeholder="输入网址（URL）"
+              onChange={(e) => setDraftUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitEdit();
+                } else if (e.key === "Escape") {
+                  setEditing(false);
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              className="webbookmark-edit-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                commitEdit();
+              }}
+            >
+              确定
+            </button>
+            <button
+              className="webbookmark-edit-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing(false);
+              }}
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="webbookmark-title">
+              {loading ? "获取网页信息…" : meta.title || hostOf(props.url)}
+            </div>
+            {meta.description && !loading && (
+              <div className="webbookmark-desc">{meta.description}</div>
+            )}
+            <div className="webbookmark-site">
+              {error ? <span className="webbookmark-err">无法获取摘要</span> : null}
+              <span className="webbookmark-domain">{meta.siteName}</span>
+            </div>
+            <button
+              className="webbookmark-edit-trigger"
+              title="编辑网址"
+              onClick={(e) => {
+                e.stopPropagation();
+                startEdit();
+              }}
+            >
+              ✎
+            </button>
+          </>
         )}
-        <div className="webbookmark-site">
-          {error ? <span className="webbookmark-err">无法获取摘要</span> : null}
-          <span className="webbookmark-domain">{meta.siteName}</span>
-        </div>
       </div>
     </div>
   );
