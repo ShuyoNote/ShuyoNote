@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.33] - 2026-08-24
+
+### 修复
+
+- **跨工作空间复制页面**（web）：`copy_page_to_workspace` 之前空操作。现在实现：从当前空间读取目标页面**子树**（BFS 收集），按新 id 重写，连同 page_props/page_tags/attachments 一起写入目标空间的快照（同空间则直接写入当前库）；附件字节保持全局内容寻址共享。返回新根 id。
+- `scripts/smoke-web.mjs` 136→**139 项全绿**（新增：跨空间复制返回新 id / 目标空间出现副本 / 副本保留内容）。
+
+---
+
 ## [1.59.32] - 2026-08-24
 
 ### 修复

@@ -848,7 +848,81 @@ function makeInvoke(store: SqliteStore) {
       }
       return undefined as T;
     }
-    if (cmd === "copy_page_to_workspace") return undefined as T;
+    if (cmd === "copy_page_to_workspace") {
+      // Copy a page subtree from the CURRENT (active) space into another workspace.
+      // Web is snapshot-isolated per space, so we read the source from the live
+      // store, then write the re-keyed copy into the target (a temp store loaded
+      // from the target snapshot, or the live store if same space), and return the
+      // new root id. Attachment bytes stay global/content-addressed (shared).
+      const pageId = String(a.pageId ?? a.page_id ?? "");
+      const targetWsId = String(a.targetWorkspaceId ?? a.target_workspace_id ?? "");
+      const newParentId = a.newParentId ?? a.new_parent_id ?? null;
+      if (!pageId || !targetWsId) throw new Error("缺少参数");
+      const activeId = getActiveWsId();
+      const src = store.query<{ id: string; workspace_id: string; parent_id: string | null; title: string; content_json: string; content_text: string; kind: string; sort_order: number; created_at: number }>(
+        "SELECT id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at FROM pages WHERE id = ? AND deleted_at IS NULL",
+        [pageId],
+      )[0];
+      if (!src) throw new Error("源页面不存在");
+
+      // BFS collect subtree (old id → order).
+      const queue = [pageId];
+      const order: string[] = [];
+      const idMap = new Map<string, string>();
+      while (queue.length) {
+        const pid = queue.shift()!;
+        const nid = uid();
+        idMap.set(pid, nid);
+        order.push(pid);
+        for (const kid of store.query<{ id: string }>("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [pid]) as any[]) {
+          queue.push(String(kid.id));
+        }
+      }
+
+      const doCopy = (t: SqliteStore) => {
+        const now = Date.now();
+        for (const oldId of order) {
+          const row = store.query<{ parent_id: string | null; title: string; content_json: string; content_text: string; kind: string; sort_order: number; created_at: number }>(
+            "SELECT parent_id, title, content_json, content_text, kind, sort_order, created_at FROM pages WHERE id = ? AND deleted_at IS NULL",
+            [oldId],
+          )[0] as any;
+          if (!row) continue;
+          const nid = idMap.get(oldId)!;
+          const newParent = oldId === pageId ? newParentId : (row.parent_id ? idMap.get(row.parent_id) ?? null : null);
+          t.run(
+            `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+            [nid, targetWsId, newParent, row.title ?? "", row.kind ?? "page", row.sort_order ?? 0, row.created_at ?? now, now, row.content_json ?? "", row.content_text ?? ""],
+          );
+          // copy props/tags/attachments rows for this page
+          for (const p of store.query<{ attr_id: string; value: string }>("SELECT attr_id, value FROM page_props WHERE page_id = ?", [oldId]) as any[]) {
+            t.run("INSERT OR IGNORE INTO page_props (page_id, attr_id, value) VALUES (?, ?, ?)", [nid, p.attr_id, p.value ?? ""]);
+          }
+          for (const tg of store.query<{ tag_id: string }>("SELECT tag_id FROM page_tags WHERE page_id = ?", [oldId]) as any[]) {
+            t.run("INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?, ?)", [nid, tg.tag_id]);
+          }
+          for (const att of store.query<{ name: string; hash: string; mime: string; size: number; path?: string }>("SELECT name, hash, mime, size FROM attachments WHERE page_id = ?", [oldId]) as any[]) {
+            const aid = uid();
+            insertAttachmentRow(t, { id: aid, page_id: nid, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
+          }
+        }
+      };
+
+      if (targetWsId === activeId) {
+        // Same-space copy: write into the live store.
+        doCopy(store);
+        return idMap.get(pageId) as T;
+      }
+      // Cross-space: load the target snapshot, copy, snapshot back.
+      const targetBytes = await spaceStore.getSnapshot(targetWsId);
+      if (!targetBytes) throw new Error("目标工作空间不存在或没有快照");
+      const tempStore = new SqliteStore();
+      await tempStore.init();
+      await tempStore.restore(targetBytes);
+      doCopy(tempStore);
+      await spaceStore.putSnapshot(targetWsId, tempStore.snapshot());
+      return idMap.get(pageId) as T;
+    }
 
     // ---- Tags (real SQL) ----
     if (cmd === "list_tags") {

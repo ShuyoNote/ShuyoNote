@@ -689,6 +689,26 @@ assert("import_backup restores a workspace list", Array.isArray(wsListAfterBacku
   await invoke("set_active_workspace_id", { id: "active" });
 }
 
+// 10j-3. copy_page_to_workspace copies a page subtree to another workspace.
+{
+  const srcSpace = await invoke("get_active_workspace_id", {});
+  const targetSpace = await invoke("create_workspace", { name: "复制目标空间" });
+  // create_workspace switches active to target; go back to source to create+copy.
+  await invoke("set_active_workspace_id", { id: srcSpace });
+  const srcPage = await invoke("create_page", { parent_id: null, title: "待复制页", content_json: '{"root":{"children":[]}}', content_text: "复制内容 123" });
+  const newId = await invoke("copy_page_to_workspace", { pageId: srcPage.id, targetWorkspaceId: targetSpace.id });
+  assert("copy_page_to_workspace returns a new page id", typeof newId === "string" && newId.length > 0 && newId !== srcPage.id, String(newId));
+  // Switch to the target space: the copied page should exist with content.
+  await invoke("set_active_workspace_id", { id: targetSpace.id });
+  const targetPages = await invoke("list_pages", {});
+  assert("copied page appears in target space", Array.isArray(targetPages) && targetPages.some((p) => p.id === newId), `${targetPages?.length}`);
+  const copied = await invoke("get_page", { id: newId });
+  assert("copied page keeps content", copied && copied.content_text === "复制内容 123", String(copied?.content_text));
+  // Cleanup: return to the source space and delete the copy space.
+  await invoke("set_active_workspace_id", { id: srcSpace });
+  await invoke("delete_workspace", { id: targetSpace.id });
+}
+
 
 // 10k. Desktop-format backup's attachments schema has NO `path` column (it has
 // `created_at` instead). Web's helpers are schema-aware (read PRAGMA table_info),
