@@ -6,17 +6,18 @@ import { AiSettingsDialog } from "./AiSettingsDialog";
 // Floating AI assistant. Entry points (NewPageGuide, sidebar, command palette)
 // open it via store.setOpen(true). It renders a docked panel bottom-right with a
 // prompt box; the model's writes surface as draft cards the user must confirm.
+// The floating button is ALWAYS visible (even when disabled) so a first-time user
+// can reach the settings to enable AI; the panel body shows an enable notice when
+// the feature is off.
 export function AiAssistantPanel() {
   const { config, open, running, reply, drafts, error, setOpen, run, confirm, dismiss, clearResult, resetError } =
     useAiStore();
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  if (!config.enabled) return null;
-
   const send = async () => {
     const p = prompt.trim();
-    if (!p || running) return;
+    if (!p || running || !config.enabled) return;
     setPrompt("");
     await run(p);
   };
@@ -58,7 +59,19 @@ export function AiAssistantPanel() {
         </div>
 
         <div className="ai-body">
-          {reply && (
+          {!config.enabled && (
+            <div className="ai-disabled">
+              <div className="ai-disabled-title">AI 助手尚未启用</div>
+              <div className="ai-disabled-desc">
+                默认关闭以保护隐私。启用后只调用你配置的本地模型端点，写操作需你确认。
+              </div>
+              <button className="ai-disabled-cta" onClick={() => setSettingsOpen(true)}>
+                打开设置并启用
+              </button>
+            </div>
+          )}
+
+          {config.enabled && reply && (
             <div className="ai-reply">
               <div className="ai-reply-head">
                 <SparkleIcon className="ai-reply-head-icon" />
@@ -72,7 +85,7 @@ export function AiAssistantPanel() {
             </div>
           )}
 
-          {drafts.length > 0 && (
+          {config.enabled && drafts.length > 0 && (
             <div className="ai-drafts">
               <div className="ai-drafts-title">
                 待确认操作（{drafts.length}）
@@ -93,14 +106,14 @@ export function AiAssistantPanel() {
             </div>
           )}
 
-          {error && (
+          {config.enabled && error && (
             <div className="ai-error" onClick={resetError}>
               <span>{error}</span>
               <button className="ai-error-close" title="关闭">×</button>
             </div>
           )}
 
-          {!reply && drafts.length === 0 && !error && (
+          {config.enabled && !reply && drafts.length === 0 && !error && (
             <div className="ai-empty">
               询问笔记内容，或让我新建页面、追加内容。写入前需你确认。
             </div>
@@ -110,14 +123,15 @@ export function AiAssistantPanel() {
         <div className="ai-input-row">
           <textarea
             className="ai-textarea"
-            placeholder="向 AI 提问或下达指令…"
+            placeholder={config.enabled ? "向 AI 提问或下达指令…" : "启用 AI 后可开始对话"}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={onKeyDown}
             rows={2}
             autoFocus
+            disabled={!config.enabled}
           />
-          <button className="ai-send" disabled={running || !prompt.trim()} onClick={send}>
+          <button className="ai-send" disabled={!config.enabled || running || !prompt.trim()} onClick={send}>
             {running ? "思考中…" : "发送"}
           </button>
         </div>
