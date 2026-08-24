@@ -123,7 +123,7 @@ export function TemplateCenterView() {
     const date = today();
     const json = t.content_json.replace(/\{\{date\}\}/g, date);
     const text = t.content_text.replace(/\{\{date\}\}/g, date);
-    await createPage(null, { content_json: json, content_text: text });
+    await createPage(null, { content_json: json, content_text: text, title: t.name });
     setOpen(false);
   };
 

@@ -474,14 +474,22 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "save_page") {
       const args = a.args ?? a;
       const id = String(args.id ?? "");
-      const p = store.query<{ id: string }>("SELECT id FROM pages WHERE id = ?", [id])[0];
+      const p = store.query<{ id: string; title: string }>("SELECT id, title FROM pages WHERE id = ?", [id])[0];
       if (p) {
+        // Only overwrite the title when a new one is actually provided; otherwise
+        // KEEP the existing title (matches the desktop backend's
+        // `title = args.title.unwrap_or(cur_title)`). Previously this fell back to
+        // `p.id`, so a content-only save (e.g. from the template center, whose
+        // auto-save fires with no title) renamed the page to its own UUID.
+        const newTitle = typeof args.title === "string" ? args.title : p.title;
+        const json = str(args.content_json ?? "");
+        const text = str(args.content_text ?? "");
         // Snapshot the current content BEFORE we overwrite it (version history).
-        snapshotBeforeSave(store, id, str(args.title ?? p.id), str(args.content_json ?? ""), str(args.content_text ?? ""));
+        snapshotBeforeSave(store, id, newTitle, json, text);
         store.run(
           `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?
            WHERE id = ?`,
-          [str(args.title ?? p.id), str(args.content_json ?? ""), str(args.content_text ?? ""), Date.now(), id],
+          [newTitle, json, text, Date.now(), id],
         );
         return store.query("SELECT * FROM pages WHERE id = ?", [id])[0] as T;
       }

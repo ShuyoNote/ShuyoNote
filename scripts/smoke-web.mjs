@@ -184,6 +184,13 @@ assert("save_page updates content_text", saved?.content_text === "hello", saved?
 const got = await invoke("get_page", { id: created.id });
 assert("get_page returns saved detail", got?.title === "改名后");
 
+// 3a. A content-only save (no `title`) must KEEP the existing title, not replace
+// it with the page UUID — this is what made template-created pages show a UUID
+// as their name (the editor's content auto-save fires without a title).
+const titleKept = await invoke("save_page", { id: created.id, content_json: '{"root":{"children":[]}}', content_text: "只改正文" });
+assert("save_page keeps title on content-only save", titleKept?.title === "改名后", String(titleKept?.title));
+assert("save_page content-only still updates content_text", titleKept?.content_text === "只改正文", String(titleKept?.content_text));
+
 const moved = await invoke("move_page", { id: created.id, new_parent_id: null, sort_order: 5 });
 assert("move_page doesn't throw", moved === undefined);
 
