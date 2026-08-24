@@ -36,22 +36,27 @@ export const OLLAMA_DEFAULT_NUM_CTX = 8192;
 export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLAMA_DEFAULT_MODEL): LlmTransport {
   return {
     async complete(messages, opts = {}) {
-      const resp = await fetch(`${baseUrl.replace(/\/$/, "")}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: false,
-          options: {
-            num_ctx: OLLAMA_DEFAULT_NUM_CTX,
-            temperature: opts.temperature ?? 0.7,
-            num_predict: opts.maxTokens ?? 512,
-          },
-        }),
-      });
+      let resp: Response;
+      try {
+        resp = await fetch(`${baseUrl.replace(/\/$/, "")}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream: false,
+            options: {
+              num_ctx: OLLAMA_DEFAULT_NUM_CTX,
+              temperature: opts.temperature ?? 0.7,
+              num_predict: opts.maxTokens ?? 512,
+            },
+          }),
+        });
+      } catch (e) {
+        throw new Error(describeFetchError(e, baseUrl));
+      }
       if (!resp.ok) {
-        throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动。`);
+        throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);
       }
       const data = await resp.json();
       const content = typeof data?.message?.content === "string" ? data.message.content : "";
@@ -64,6 +69,69 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
       return { content, nativeToolCalls: nativeToolCalls.length ? nativeToolCalls : undefined };
     },
   };
+}
+
+/** Human-readable message for a failed network fetch (down server / CORS). */
+export function describeFetchError(e: unknown, baseUrl: string): string {
+  const msg = String((e as Error)?.message ?? e).toLowerCase();
+  if (msg.includes("failed to fetch") || msg.includes("network") || msg.includes("load failed")) {
+    return `无法连接到 ${baseUrl}。请确认本地 Ollama 已运行（ollama serve），且地址正确。`;
+  }
+  if (msg.includes("cors") || msg.includes("origin")) {
+    return `浏览器阻止了跨域请求（CORS）。请设置 OLLAMA_ORIGINS=* 后重启 Ollama，或使用应用同源的代理。`;
+  }
+  return `连接失败：${String((e as Error)?.message ?? e)}`;
+}
+
+// ---- Connection test (settings "测试连接" button) ----
+
+export interface OllamaConnectionResult {
+  ok: boolean;
+  message: string;
+  models?: string[];
+}
+
+/** Ping the Ollama server (`/api/tags`) and report reachability + installed models.
+ *  Used so the user can tell immediately whether the endpoint/model is usable —
+ *  the most common reason "AI settings seem not to take effect". */
+export async function testOllamaConnection(
+  baseUrl = OLLAMA_DEFAULT_URL,
+  model = OLLAMA_DEFAULT_MODEL,
+  timeoutMs = 6000,
+): Promise<OllamaConnectionResult> {
+  const url = `${baseUrl.replace(/\/$/, "")}/api/tags`;
+  let resp: Response;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    resp = await fetch(url, { method: "GET", signal: ctrl.signal });
+    clearTimeout(t);
+  } catch (e) {
+    const timeout = String((e as Error)?.message ?? "").toLowerCase().includes("abort");
+    return {
+      ok: false,
+      message: timeout
+        ? `连接 ${baseUrl} 超时（${timeoutMs / 1000}s）。请确认本地 Ollama 已启动。`
+        : describeFetchError(e, baseUrl),
+    };
+  }
+  if (!resp.ok) {
+    return { ok: false, message: `Ollama 服务响应异常 (${resp.status})。` };
+  }
+  try {
+    const data = await resp.json();
+    const models: string[] = (data?.models ?? []).map((m: any) => String(m?.name ?? "")).filter(Boolean);
+    const installed = models.length > 0;
+    const found = !model ? null : models.find((n) => n === model || n.startsWith(`${model}:`));
+    const message = !installed
+      ? `服务可达，但尚未安装任何模型。请在终端运行：ollama pull ${model}`
+      : found
+        ? `连接成功。模型「${model}」已安装（共 ${models.length} 个）。`
+        : `连接成功（共 ${models.length} 个模型），但「${model}」不在其中。可用：${models.slice(0, 8).join(", ")}${models.length > 8 ? "…" : ""}`;
+    return { ok: true, message, models };
+  } catch {
+    return { ok: false, message: "服务可达，但返回内容无法解析（可能不是 Ollama 端点）。" };
+  }
 }
 
 // ---- Canonical tool-call framing (text fallback for any model) ----

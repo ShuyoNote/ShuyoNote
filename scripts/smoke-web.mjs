@@ -68,6 +68,7 @@ await esbuild.build({
   stdin: {
     contents:
       'export { extractToolCalls } from "./src/lib/ai/llm";\n' +
+      'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n',
     resolveDir: root,
@@ -894,7 +895,45 @@ assert("workspace name persists across instances", wsAgain !== "");
   // Final-answer-only turn → no drafts.
   const r3 = await aiMod.runAiLoop("你好", [{ id: "a", title: "A" }], ctx, { transport: { complete: async () => ({ content: "你好，有什么可以帮你？" }) } });
   assert("runAiLoop final answer has no drafts", r3.drafts.length === 0);
+
+  // Ollama connection live test against a local HTTP server (node:http), proving
+  // the transport + testOllamaConnection round-trip and the /api/tags model list.
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    if (req.url === "/api/tags") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ models: [{ name: "qwen2.5:7b" }, { name: "llama3.2:3b" }] }));
+      return;
+    }
+    if (req.url === "/api/chat") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ model: "qwen2.5:7b", message: { role: "assistant", content: "hi from ollama mock" } }));
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const aiBase = `http://127.0.0.1:${port}`;
+  try {
+    const conn = await aiMod.testOllamaConnection(aiBase, "qwen2.5:7b", 4000);
+    assert("testOllamaConnection ok + model found", conn.ok && conn.message.includes("已安装") && conn.models.includes("qwen2.5:7b"), conn.message);
+    const transport = aiMod.createOllamaTransport(aiBase, "qwen2.5:7b");
+    const out = await transport.complete([{ role: "user", content: "hi" }]);
+    assert("ollama transport returns assistant content", out.content === "hi from ollama mock");
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail === 0 ? 0 : 1);
+// Use exitCode (not process.exit()) so any still-closing libuv handles drain
+// before the process exits; process.exit() races teardown and hits a Windows
+// libuv assert when the smoke server was used.
+process.exitCode = fail === 0 ? 0 : 1;

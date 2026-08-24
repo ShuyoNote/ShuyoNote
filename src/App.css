@@ -7635,6 +7635,51 @@ select.prop-value {
   gap: 8px;
   margin-top: 6px;
 }
+
+.ai-settings-test {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.ai-settings-test-btn {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-settings-test-btn:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+.ai-settings-test-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ai-settings-test-msg {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--bg);
+  word-break: break-word;
+}
+.ai-settings-test-msg.ok {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--hover);
+}
+.ai-settings-test-msg.bad {
+  color: var(--danger);
+  border-color: var(--danger);
+}
 .ai-settings-cancel,
 .ai-settings-save {
   border: 1px solid var(--border);

@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.38] - 2026-08-24
+
+### 优化
+
+- **AI 设置「测试连接」**：设置面板新增「测试连接」按钮，调用 `/api/tags` 检测本地 Ollama 是否可达、列出已安装模型，并提示当前模型是否可用——直接对症「设置了却像没生效」（多为服务未运行 / 地址错误 / 模型名不符）。
+- **更可读的连接报错**：`llm.ts` 区分「服务未启动 / 地址错」（提示 `ollama serve`）与「CORS 被拦」（提示 `OLLAMA_ORIGINS=*`），不再抛笼统的 `Failed to fetch`。
+- `scripts/smoke-web.mjs` 153→**155 项全绿**（新增：`testOllamaConnection` 对本地 HTTP 服务端到端往返 + 模型列表识别；`createOllamaTransport` 往返返回 assistant 内容）；改用 `process.exitCode` 退出，避免 Windows libuv 断言。
+
+---
+
 ## [1.59.37] - 2026-08-24
 
 ### 修复
