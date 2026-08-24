@@ -7,7 +7,13 @@
 //
 // The hash is content-addressed (a 32-byte hex digest over the bytes), so the
 // same bytes store once and dedupe across pages.
-const BLOB_DB = "shuyonote";
+//
+// NOTE: this uses its OWN database name, distinct from the SQLite store's DB
+// (which is also "shuyonote" but uses the "db" object store). Sharing one DB
+// name across two stores at the same version means whichever opens first wins
+// the upgrade, and the other's object store is never created → NotFoundError on
+// transaction. A separate DB name isolates them cleanly.
+const BLOB_DB = "shuyonote-blobs";
 const BLOB_OS = "blobs";
 
 function openDb(): Promise<IDBDatabase> {

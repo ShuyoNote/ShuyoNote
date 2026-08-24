@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.3] - 2026-08-24
+
+### 修复
+
+- **上传失败：NotFoundError: One of the specified object stores was not found**：`blobStore` 和 `sqliteStore` 都用了 `indexedDB.open("shuyonote", 1)`，但各自想要不同的 object store（`blobs` vs `db`）。先打开的那个完成 v1 升级后，后打开的 `onupgradeneeded` 不再触发，其 object store 从未创建——`blobStore.put` 对不存在的 store 做事务就抛 NotFoundError。修复：`blobStore` 改用**独立数据库名 `shuyonote-blobs`**，与 SQLite 库彻底隔离，避免升级顺序竞争。
+
+---
+
 ## [1.59.2] - 2026-08-24
 
 ### 修复
