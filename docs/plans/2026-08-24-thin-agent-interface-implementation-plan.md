@@ -65,14 +65,74 @@
 ### 改动
 | 文件 | 改动 |
 |------|------|
-| `src/plugins/registry.ts` | 新增 `registerPlugin({id:"ai", ...})`，加一条「AI 助手」命令（复用命令面板入口）；`CommandContext` 暂不扩，AI 用独立面板。 |
+| `src/plugins/registry.ts` | 新增 `registerPlugin({id:"ai", ...})`，加一条「AI 助手」命令（复用命令面板 `Ctrl+K` 入口）。 |
 | `src/lib/api.ts` | 新增 `appendBlock(pageId, text)` 命令（Rust 侧加 `append_block`，见 §5）。 |
-| `src/App.tsx` / 侧边栏 | 挂载 `AiAssistantPanel` 与 `AiSettingsDialog`（条件渲染，按 `ai.enabled`）。 |
+| `src/components/NewPageGuide.tsx` | 把「用 AI 开始创作」占位（当前 `toast("AI 创作即将推出")`）接上 → 打开 `AiAssistantPanel`。 |
+| `src/App.tsx` / 侧边栏 | 挂载 `AiAssistantPanel` 与 `AiSettingsDialog`（条件渲染，按 `ai.enabled`）；侧边栏底部加「AI 助手」入口（`SparkleIcon`）。 |
 | `src-tauri/src/commands.rs` + `lib.rs` | 新增 `append_block(pageId, text)` 命令（页尾追加一个文本块），走 `save_page` 同路径（保持事务/版本一致）。 |
 
 > 说明：`append_block` 是唯一的**新后端命令**，且只允许"往指定页追加文本块"——不是任意 SQL/文件写入，符合"最小暴露面"。
 
-## 4. 关键实现细节
+## 3.5 交互界面
+
+> 遵循现有 UI 范式：`CommandPalette`（Ctrl+K）、侧边浮层面板（`SyncPanel`/`StoragePanel`/`PluginManager`）、`NewPageGuide` 向导、`ConfirmDialog`/`InputDialog`/`toast`、`SparkleIcon`。见 [薄 Agent 界面方案](plans/2026-08-24-thin-agent-interface-plan.md) §7（对应交互模块映射）。
+
+### 入口（3 处，按 `ai.enabled` 显隐）
+| 入口 | 位置 | 触发 |
+|------|------|------|
+| **「用 AI 开始创作」** | `NewPageGuide`（已有占位，接通） | 打开 AI 助手面板 |
+| **命令面板** | `Ctrl+K`（注册为插件命令） | 选「AI 助手」→ 打开面板 |
+| **侧边栏底部** | 与「模板中心」并列（`SparkleIcon` + 文案） | 打开面板 |
+
+> 未启用时三处均不显示，不占空间、不误导。
+
+### 主交互：AI 助手面板（浮层，沿用 `PluginManager` overlay 范式）
+```
+┌─ AI 助手 ─────────────────── × ─┐
+│ (对话流: 用户提问 / AI 只读结果 / 草稿卡) │
+│ 你: 找出引用了本页但没回链的页面          │
+│ AI: ·《A》引用了本页 [跳转]            │
+│     · 建议给《B》加反向引用            │
+│ ────────────────────────────│
+│ [输入框 ...................] (回车发送) │
+│                        [SparkleIcon] [发送] │
+└────────────────────────────┘
+```
+- **状态**：`running` 禁用输入 + 轻转圈 + 「正在调用模型…」；`history` 每条可跳转相关页。
+- **只读结果**：`read_page`/`get_backlinks`/`search_pages`/`list_files`/`read_block` 直接展示，页可点击打开。
+- **写草稿**：`create_page`/`append_block` 结果**不落库**，以**草稿卡**出现在对话流，带「确认 / 丢弃」。
+
+### 草稿确认（安全关键）
+```
+⬛ 草稿 · 新建页面「读书笔记」
+   内容预览（前 N 字 + 展开）
+   [确认创建] [丢弃]
+```
+- 确认 → `api.createPage` / `api.appendBlock`，Toast「已创建/已追加」。
+- 丢弃 → 仅清草稿，不动库。
+- 关闭面板时若有未确认草稿，提示「有未确认的 AI 草稿」。
+
+### 设置对话框（`AiSettingsDialog`，沿用 `ThemeSettings` 分节）
+```
+AI 设置
+  [ ] 启用 AI 助手            ← 默认关
+  模型端点 [http://localhost:11434/api/chat]  (本地 Ollama 示例)
+  模型名   [llama3]
+  API Key  [•••••]             (可选, OpenAI 兼容)
+  ⚠ 启用后将把「笔记子集」发送到该端点；建议本地模型。
+```
+
+### 状态与可感知
+- 未启用：三处入口隐藏。
+- 运行中：禁用输入 + 转圈 + 状态文案。
+- 未确认草稿：面板顶角标「● N 个未确认」。
+- 失败：`toast('AI 请求失败：…','error')`，保留输入可重试。
+
+### 视觉/文案守则（对齐设计哲学 §7 反 AI 味）
+- 入口用 `SparkleIcon`（非 emoji 当图标）；克制，浮层收纳、不常驻占屏。
+- 只读分析标注「由 AI 生成，仅供参考」，不把 AI 输出当事实源。
+
+
 
 ### 4.1 工具白名单（`tools.ts`）
 ```ts
