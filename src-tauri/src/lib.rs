@@ -81,6 +81,7 @@ pub fn run() {
             attachments::import_attachment_files,
             attachments::list_page_attachments,
             attachments::remove_attachment,
+            attachments::remove_attachments,
             attachments::move_attachment,
             attachments::get_attachment,
             attachments::restore_attachment,

@@ -6210,6 +6210,18 @@ select.prop-value {
   background: var(--hover);
   border-color: var(--border-strong);
 }
+.fm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.fm-btn-danger {
+  color: var(--danger, #e5484d);
+  border-color: var(--danger-soft, rgba(229,72,77,0.35));
+}
+.fm-btn-danger:hover:not(:disabled) {
+  background: var(--danger-soft, rgba(229,72,77,0.1));
+  border-color: var(--danger, #e5484d);
+}
 
 .file-manager-toolbar {
   display: flex;

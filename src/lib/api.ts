@@ -114,6 +114,7 @@ export const api = {
   listPageAttachments: (pageId: string) =>
     invoke<AttachmentMeta[]>("list_page_attachments", { pageId }),
   removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
+  removeAttachments: (ids: string[]) => invoke<number>("remove_attachments", { ids }),
   storageStats: () => invoke<StorageStats>("storage_stats"),
   clearTrash: () => invoke<number>("clear_trash"),
   cleanupOrphanAttachments: () => invoke<number>("cleanup_orphan_attachments"),

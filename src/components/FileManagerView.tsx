@@ -6,6 +6,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useNotes } from "../store/notes";
 import { useFileManagerStore } from "../store/fileManager";
+import { confirmDialog } from "../store/confirm";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import type { AttachmentMeta, PageMeta } from "../types";
@@ -188,6 +189,15 @@ export function FileManagerView() {
     }
   };
   const removeFile = async (id: string) => {
+    if (
+      !(await confirmDialog({
+        title: "移除文件",
+        message: "移除后，若该文件不再被任何页面/文件夹引用，其磁盘存储也会被清除。确定移除？",
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     try {
       await api.removeAttachment(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
@@ -292,6 +302,49 @@ export function FileManagerView() {
     return out;
   }, [sorted, fileGroups]);
 
+  // --- Multi-select batch operations (files only; page/folder rows select via checkbox too) ---
+  const selectedFileIds = useMemo(
+    () => rows.filter((r) => r.kind === "file" && selected.has(r.key)).map((r) => r.file!.id),
+    [rows, selected],
+  );
+
+  const allSelected =
+    rows.length > 0 && rows.filter((r) => r.kind === "file").every((r) => selected.has(r.key));
+
+  const toggleSelectAll = () => {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (allSelected) {
+        for (const r of rows) if (r.kind === "file") next.delete(r.key);
+      } else {
+        for (const r of rows) if (r.kind === "file") next.add(r.key);
+      }
+      return next;
+    });
+  };
+
+  const batchRemoveFiles = async () => {
+    if (selectedFileIds.length === 0) return;
+    if (
+      !(await confirmDialog({
+        title: "批量移除文件",
+        message: `移除 ${selectedFileIds.length} 个文件？移除后，不再被任何页面/文件夹引用的文件，其磁盘存储也会被清除。`,
+        danger: true,
+      }))
+    ) {
+      return;
+    }
+    try {
+      const n = await api.removeAttachments(selectedFileIds);
+      setFiles((prev) => prev.filter((f) => !selectedFileIds.includes(f.id)));
+      setSelected(new Set());
+      useFileManagerStore.getState().bumpRevision();
+      toast(`已移除 ${n} 个文件`, "success");
+    } catch (e) {
+      toast(`批量移除失败：${e}`, "error");
+    }
+  };
+
   const newFolder = () => createFolder(folderId);
   // createPage navigates to the editor with the new page already open.
   const newPage = () => createPage(folderId);
@@ -343,6 +396,14 @@ export function FileManagerView() {
           <h1 className="file-manager-title">文件管理</h1>
         </div>
         <div className="file-manager-actions">
+          <button
+            className="fm-btn fm-btn-danger"
+            onClick={batchRemoveFiles}
+            disabled={selectedFileIds.length === 0}
+            title="移除所选文件（无引用的将清除磁盘存储）"
+          >
+            {selectedFileIds.length > 0 ? `删除所选 (${selectedFileIds.length})` : "删除所选"}
+          </button>
           <button className="fm-btn" onClick={newFolder}>
             ＋ 新建文件夹
           </button>
@@ -408,7 +469,12 @@ export function FileManagerView() {
           <thead>
             <tr>
               <th className="fm-check-col">
-                <input type="checkbox" />
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  title="全选/取消全选（文件）"
+                />
               </th>
               <th className="fm-name-col">文件名</th>
               <th className="fm-kind-col">类型</th>

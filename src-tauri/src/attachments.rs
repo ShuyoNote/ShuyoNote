@@ -442,7 +442,16 @@ pub fn list_page_attachments(
 pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
+    remove_attachment_inner(&db, &attachments_dir, &id)
+}
 
+// Delete a single attachment row; remove its on-disk bytes only when no other
+// row references the hash (true global zero-reference).
+fn remove_attachment_inner(
+    db: &State<'_, Db>,
+    attachments_dir: &Path,
+    id: &str,
+) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let hash: Option<String> = c
         .query_row(
@@ -468,11 +477,25 @@ pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -
         )
         .map_err(|e| e.to_string())?;
     if count == 0 {
-        if let Some(p) = find_path_by_hash(&attachments_dir, &hash) {
+        if let Some(p) = find_path_by_hash(attachments_dir, &hash) {
             let _ = std::fs::remove_file(p);
         }
     }
     Ok(())
+}
+
+/// Batch-remove attachments. Each is deleted via the same zero-reference rule:
+/// its disk bytes are freed only when no row references the hash anymore.
+#[tauri::command]
+pub fn remove_attachments(app: tauri::AppHandle, db: State<'_, Db>, ids: Vec<String>) -> Result<usize, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir = app_data_dir.join("attachments");
+    let mut removed = 0usize;
+    for id in &ids {
+        remove_attachment_inner(&db, &attachments_dir, id)?;
+        removed += 1;
+    }
+    Ok(removed)
 }
 
 /// Move an attachment to another folder/page container (update its page_id).
