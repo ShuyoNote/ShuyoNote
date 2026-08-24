@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { unzipSync } from "fflate";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -363,12 +364,15 @@ const blockSearch = await invoke("search_blocks", { args: { query: "目标块内
 assert("search_blocks finds block by text", Array.isArray(blockSearch) && blockSearch.some((b) => b.block_id === "blk-target" && b.page_id === targetPage.id));
 
 // ---- Backup export / import (Web: self-contained JSON container) ----
-// 10i. Export a backup, then import it into a fresh store and verify data returns.
-const backup = await invoke("export_backup", { destPath: "shuyo-backup.json" });
+// 10i. Export a backup (standard zip w/ shuyonote.db + attachments/), then import
+// it into a fresh store and verify data returns.
+const backup = await invoke("export_backup", { destPath: "shuyo-backup.zip" });
 assert("export_backup returns path+size", backup && typeof backup.path === "string" && backup.path.length > 0 && typeof backup.size === "number" && backup.size > 0, `${backup?.size} bytes`);
-// export_backup registered the container into fileRegistry under the filename.
-const containerContent = JSON.parse(await invoke("read_text_file", { path: backup.path }));
-assert("export_backup builds a parseable container", containerContent.format === "shuyonote-web-backup" && typeof containerContent.db === "string" && typeof containerContent.attachments === "object");
+// Backups are a standard zip (matches desktop): verify structure via fflate.
+const rawBytes = await invoke("read_file_bytes", { path: backup.path });
+const backupZip = unzipSync(new Uint8Array(rawBytes));
+assert("export_backup builds a zip with shuyonote.db", backupZip && backupZip["shuyonote.db"] && backupZip["shuyonote.db"].length > 0, Object.keys(backupZip).join(","));
+assert("export_backup zip has attachments dir entries", Object.keys(backupZip).some((k) => k.startsWith("attachments/")));
 const backupBeforePages = (await invoke("list_pages", {})).length;
 // Import into a fresh platform instance.
 const backupPlatform = newPlatform();

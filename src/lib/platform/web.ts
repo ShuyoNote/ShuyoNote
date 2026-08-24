@@ -15,6 +15,7 @@
 import type { Platform } from "./types";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { blobStore, contentHash } from "./blobStore";
+import { zipSync, unzipSync } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -986,39 +987,52 @@ function makeInvoke(store: SqliteStore) {
       return store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0] as T;
     }
 
-    // ---- Backup / export / import (browser: custom self-contained JSON container) ----
+    // ---- Backup / export / import (standard zip, matches the desktop format) ----
+    // Desktop export_backup produces a zip with `shuyonote.db` (SQLite snapshot) +
+    // `attachments/<hash>` (content-addressed bytes). We produce/consume the SAME
+    // structure so a backup written by the desktop app can be imported here, and
+    // vice-versa (manual data transfer between the web and desktop worlds).
     if (cmd === "export_backup") {
       const dbBytes = store.snapshot();
       const atts = await blobStore.entries();
-      const container = {
-        format: "shuyonote-web-backup",
-        version: 1,
-        exported_at: Date.now(),
-        db: bytesToBase64(dbBytes),
-        attachments: Object.fromEntries(atts.map((a) => [a.hash, bytesToBase64(a.bytes)])),
-      };
-      const json = JSON.stringify(container);
-      const name = String(a.destPath ?? "shuyonote-web-backup.json").split(/[\\/]/).pop() || "shuyonote-web-backup.json";
-      if (typeof document !== "undefined") downloadBytes(name, new TextEncoder().encode(json), "application/json");
+      const entries: Record<string, Uint8Array> = { "shuyonote.db": dbBytes };
+      for (const a of atts) entries[`attachments/${a.hash}`] = a.bytes;
+      const zip = zipSync(entries);
+      const name = String(a.destPath ?? "shuyonote-backup.zip").split(/[\\/]/).pop() || "shuyonote-backup.zip";
+      if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so same-session import (and the Node smoke test) can read it back.
-      fileRegistry.set(name, { bytes: new TextEncoder().encode(json), mime: "application/json", name });
-      const data = new TextEncoder().encode(json);
-      return { path: name, size: data.length } as T;
+      fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
+      return { path: name, size: zip.length } as T;
     }
     if (cmd === "import_backup") {
-      // Read the container (browser picker registered it by name, or Node map).
+      // Read the zip (browser picker registered it by name, or Node map).
       const src = String(a.srcPath ?? "");
       const reg = fileRegistry.get(baseName(src));
       if (!reg) throw new Error("备份文件不存在");
-      const text = new TextDecoder().decode(reg.bytes);
-      const container = JSON.parse(text);
-      if (container.format !== "shuyonote-web-backup") throw new Error("不是有效的 ShuyoNote 备份");
-      if (typeof container.db !== "string") throw new Error("备份缺少数据库");
-      // Restore DB bytes.
-      await store.restore(base64ToBytes(container.db));
-      // Re-put attachment bytes into blobStore.
-      for (const [hash, b64] of Object.entries(container.attachments ?? {})) {
-        await blobStore.put(hash, base64ToBytes(String(b64)));
+      let files: Record<string, Uint8Array>;
+      try {
+        files = unzipSync(reg.bytes);
+      } catch {
+        // Not a zip — fall back to the old JSON container if present.
+        const text = new TextDecoder().decode(reg.bytes);
+        const container = JSON.parse(text);
+        if (container.format === "shuyonote-web-backup" && typeof container.db === "string") {
+          files = { "shuyonote.db": base64ToBytes(container.db) };
+          for (const [hash, b64] of Object.entries(container.attachments ?? {})) {
+            files[`attachments/${hash}`] = base64ToBytes(String(b64));
+          }
+        } else {
+          throw new Error("不是有效的 ShuyoNote 备份");
+        }
+      }
+      const dbBytes = files["shuyonote.db"];
+      if (!dbBytes) throw new Error("备份缺少数据库文件");
+      await store.restore(dbBytes);
+      for (const [k, bytes] of Object.entries(files)) {
+        if (k.startsWith("attachments/") && !k.endsWith("/")) {
+          const hash = k.slice("attachments/".length);
+          await blobStore.put(hash, bytes);
+        }
       }
       return undefined as T;
     }
@@ -1038,6 +1052,12 @@ function makeInvoke(store: SqliteStore) {
       const reg = fileRegistry.get(baseName(String(a.path ?? "")));
       if (reg) return new TextDecoder().decode(reg.bytes) as T;
       return "" as T;
+    }
+    if (cmd === "read_file_bytes") {
+      // Return raw bytes (as a number array) for binary assets (e.g. zip).
+      const reg = fileRegistry.get(baseName(String(a.path ?? "")));
+      if (reg) return Array.from(reg.bytes) as T;
+      return ([] as number[]) as T;
     }
     if (cmd === "open_page_window") return undefined as T;
 

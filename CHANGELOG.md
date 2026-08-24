@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.0] - 2026-08-24
+
+### 新增（Web ↔ 桌面备份互认）
+
+- **Web 版备份改为标准 zip**（与桌面 `export_backup` 结构一致），使 web 与桌面能**手动搬数据互认**：
+  - 引入 `fflate`（纯 JS zip，~8KB）。`web.ts` 的 `export_backup` 用 `zipSync` 产出标准 zip：`shuyonote.db`（SQLite 快照）+ `attachments/<hash>`（内容寻址字节）。
+  - `import_backup` 用 `unzipSync` 解析 zip：取 `shuyonote.db` 恢复库、`attachments/*` 回填 `blobStore`；并兼容旧的 web 自定义 JSON 容器（回退路径）。
+  - 新增 `read_file_bytes` 命令（返回原始字节，供二进制资产读取/测试）。
+  - `scripts/smoke-web.mjs` 71→**72 项全绿**（新增：export_backup 产出标准 zip 含 shuyonote.db + attachments/、import_backup 解析恢复）。
+- ⚠️ **诚实边界**：web 数据仍存自己的 IndexedDB，与桌面的「**自动互通**」仍需自建 sync-server（此为长期项）。本步只做到「**备份手动互认**」——两边导出/导入同构 zip 即可搬数据。但因桌面库是完整多库 schema、web 是简化库，**跨端导入后表结构差异可能需数据清洗**，实际用桌面 zip 导入 web 前建议先确认。
+
+---
+
 ## [1.58.5] - 2026-08-24
 
 ### 修复
