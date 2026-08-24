@@ -334,8 +334,15 @@ function pickBrowserFiles(options: { multiple?: boolean; directory?: boolean; ac
     };
     input.onchange = async () => {
       const files = Array.from(input.files ?? []);
+      const MAX_BYTES = 50 * 1024 * 1024; // 50MB — guard against OOM from huge files
       const names: string[] = [];
       for (const f of files) {
+        if (f.size > MAX_BYTES) {
+          // Too large to safely buffer in memory for the Web platform; skip it and
+          // surface a clear message instead of risking a crash on a huge blob.
+          try { window.alert(`「${f.name}」过大（单个文件超过 ${(MAX_BYTES / 1024 / 1024).toFixed(0)} MB），Web 版暂不支持。请用桌面版。`); } catch { /* no-op */ }
+          continue;
+        }
         const bytes = new Uint8Array(await f.arrayBuffer());
         // Register by both the file name and a stable synthetic path so the
         // path-string API can resolve it later.

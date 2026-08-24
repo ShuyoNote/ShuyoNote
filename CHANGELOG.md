@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.28] - 2026-08-24
+
+### 优化
+
+- **大媒体内存保护**（P1-2）：web 端文件选择/上传增加**单文件 50MB 上限**，超限跳过并提示改用桌面版，避免超大文件缓冲进内存导致 OOM/卡死；媒体节点仍用 `MediaResolver` 按需从 blob store 取字节生成 Blob URL（不 base64 内嵌）。
+
+---
+
 ## [1.59.27] - 2026-08-24
 
 ### 优化
