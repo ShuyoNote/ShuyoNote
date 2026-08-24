@@ -9,6 +9,7 @@
 |---|---|
 | 产品是什么、定位与目标用户 | [产品定位](positioning.md) |
 | 功能怎么用、有哪些能力 | [README](../README.md) 功能清单 |
+| **系统怎么搭起来的、分层与存储模型** | [系统架构](architecture.md) |
 | 下一步做什么 | [路线图](roadmap.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
@@ -19,6 +20,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M15 里程碑规划（M1–M5、M7–M15 已达，M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |

@@ -123,8 +123,8 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > ⚠️ 取舍（诚实标注，与[规划](plans/2026-08-22-per-workspace-storage-plan.md)一致）：**附件字节保持全局内容寻址**（跨空间相同文件共享一份字节），而非每空间独立附件目录——这是取舍：换取「跨空间附件去重」与「不受每空间附件目录整改爆炸半径影响」，同时用「空间级附件子集导出」实现单空间可搬移；`attr_defs`/标签/模板按每空间库存；E2EE 密钥与同步游标保持每空间。**M15 已达成**。
 
 ### M16 — 跨平台适配（全平台通吃，[规划](plans/2026-08-24-cross-platform-plan.md)）
-> 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」，同一 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，不再依赖 `window.__TAURI__`。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。
-> **已达成**：M16.0（driver 抽象）+ M16.0b（浏览器 Web 平台）+ M16.1a（真实 SQLite）+ M16.1b 起的 Web 平台能力扩展（属性/数据库/版本/块引用/备份/PWA）。**待做**：`pkg/core` 完整语义、OPFS/wa-sqlite 增量、插件运行时、其余平台壳。**现有 Tauri 桌面形态无回归**（架构隔离：`index.ts` 按环境自动切 tauri/web）。
+> 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」，同一 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，不再依赖 `window.__TAURI__`。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。**系统分层、存储模型与平台 driver 详见 [系统架构](architecture.md)**。
+> **已达成**：M16.0（driver 抽象）+ M16.0b（浏览器 Web 平台）+ M16.1a（真实 SQLite）+ M16.1b 起的 Web 平台能力扩展（属性/数据库/版本/块引用/备份/PWA）+ **M16.6–M16.8（web 能力补齐 / 体验优化 / 数据安全，v1.59.24–35）**。**待做**：`pkg/core` 完整语义、OPFS/wa-sqlite 增量、插件运行时、其余平台壳。**现有 Tauri 桌面形态无回归**（架构隔离：`index.ts` 按环境自动切 tauri/web）。
 - **M16.0 存储/能力 driver 抽象** ✅（v1.46.0）：新增 `src/lib/platform/`（`types.ts` 接口 + `tauri.ts` `@tauri-apps/*` 唯一宿主 + `index.ts` `platform` 聚合/`setPlatform`）；`api.ts` ~60 个 `invoke` 改走 `platform.executor`（对外 API 不变）；12+ 组件内联的 dialog/opener/event/asset/webview 调用改消费 `platform`。**零行为变化**。
 - **M16.0b 浏览器 Web 平台可跑** ✅（v1.47.0）：`web.ts`（`createWebPlatform`）+ `pnpm dev:web`（独立 5173）。已用 Edge 无头验证 app 真实挂载、渲染种子页。
 - **M16.1a Web 平台真实 SQLite 化** ✅（v1.49.0）：`sqliteStore.ts`（sql.js WASM）+ IndexedDB 持久化；`web.ts` 核心 CRUD 改跑真实 SQL；图片字节改存 IndexedDB blob（M16.1c，v1.50.0）；`persist()` 防淘汰（v1.51.0）。
