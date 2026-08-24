@@ -2,7 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
-## [1.59.35] - 2026-08-24
+## [1.59.36] - 2026-08-24
+
+### 新增
+
+- **薄 Agent 接口（M17，前端实现）**：按 `docs/plans/2026-08-24-thin-agent-interface-implementation-plan.md` 落地一个**最小暴露面**的 AI 助手。
+  - `src/lib/ai/`：`types.ts`（AI 工具/消息契约）、`lexical.ts`（纯文本→Lexical JSON 助手）、`tools.ts`（**7 个白名单工具**：search_pages / read_page / read_block / get_backlinks / list_files / create_page / append_block）、`llm.ts`（可 mock 的 Ollama 传输 + 工具调用解析）、`host.ts`（受限宿主循环：读工具直接执行，写工具只产出**草稿**，绝不提交）、`apply.ts`（在用户确认后把草稿落到语义命令层）。
+  - `src/store/ai.ts`：启用/禁用开关 + 本地模型端点配置（默认**关闭**，默认 Ollama `http://localhost:11434`）、运行状态与会话草稿。
+  - `src/components/AiAssistantPanel.tsx` + `AiSettingsDialog.tsx`：右下角助手面板（输入框 + 回复 + 「由 AI 生成，仅供参考」+ 待确认操作列表）与设置对话框。
+  - 入口按 `config.enabled` 显隐：新建页引导「用 AI 开始创作」、侧边栏「AI 助手」、命令面板 `ai.open`（`registry.ts` 新增带 `when` 门的命令）。
+  - **安全红线**：无 shell / 任意文件读写 / 默认联网；`create_page`/`append_block` 均为草稿，需用户确认后才 `create_page`/`save_page`；全部复用既有语义命令，**未新增任何后端命令**（append 通过前端对 `save_page` 的包装实现）。
+  - `scripts/smoke-web.mjs` 142→**153 项全绿**（新增：工具调用解析 / Lexical 追加与文本抽取 / `runAiLoop` 写路径只产草稿且不触达后端）。
+
+---
 
 ### 优化
 

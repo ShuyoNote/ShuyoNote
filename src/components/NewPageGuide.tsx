@@ -4,6 +4,7 @@ import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
 import { useTemplateCenterStore } from "../store/templateCenter";
+import { useAiStore } from "../store/ai";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import {
   SparkleIcon,
@@ -26,6 +27,8 @@ export function NewPageGuide() {
   const [dismissed, setDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
   const editor = useEditorStore((s) => s.editor);
+  // Show the "用 AI 开始创作" action only when the AI feature is enabled.
+  const aiEnabled = useAiStore((s) => s.config.enabled);
 
   // Press Enter (anywhere while the guide shows) to start editing: dismiss the
   // guide, ensure a paragraph block exists, and place the caret in it.
@@ -70,9 +73,11 @@ export function NewPageGuide() {
         <div className="new-page-guide" onMouseDown={(e) => e.stopPropagation()}>
         <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>
         <div className="new-page-guide-list">
-            <button className="npg-act" onClick={() => toast("AI 创作即将推出", "info")}>
-              <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
-            </button>
+            {aiEnabled && (
+              <button className="npg-act" onClick={() => useAiStore.getState().setOpen(true)}>
+                <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
+              </button>
+            )}
             <button className="npg-act" onClick={() => useTemplateCenterStore.getState().setOpen(true)}>
               <TemplateIcon className="npg-act-icon" /> 从模板中心创建...
             </button>

@@ -59,6 +59,41 @@ await esbuild.build({
 });
 const roMod = await import(pathToFileURL(roOutfile).href + "?v=" + Date.now());
 
+// Bundle the AI core (thin-agent) modules for pure-logic tests. We stub the
+// `../api` import with a throwing proxy so the WRITE tools (create_page /
+// append_block) can be exercised without touching the real platform, since they
+// never actually call the backend — they only build DraftResults.
+const aiOutfile = join(tmpDir, "aicore.mjs");
+await esbuild.build({
+  stdin: {
+    contents:
+      'export { extractToolCalls } from "./src/lib/ai/llm";\n' +
+      'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
+      'export { runAiLoop } from "./src/lib/ai/host";\n',
+    resolveDir: root,
+    loader: "js",
+    sourcefile: "ai-entry.js",
+  },
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node20",
+  outfile: aiOutfile,
+  plugins: [
+    {
+      name: "ai-api-stub",
+      setup(build) {
+        build.onResolve({ filter: /^\.\.\/api$/ }, () => ({ path: "ai-api-stub", namespace: "ai-api-stub" }));
+        build.onLoad({ filter: /.*/, namespace: "ai-api-stub" }, () => ({
+          contents: "export const api = new Proxy({}, { get: () => () => { throw new Error('api stub called'); } });",
+          loader: "js",
+        }));
+      },
+    },
+  ],
+});
+const aiMod = await import(pathToFileURL(aiOutfile).href + "?v=" + Date.now());
+
 // --- Set up the sqlite store's wasm URL + bytes (fs-backed) + fs persist (Node) ---
 const { setDefaultAdapter, setWasmUrl, setWasmBytesProvider, SqliteStore } = mod;
 const sqljsRoot = join(root, "node_modules/.pnpm/sql.js@1.14.2/node_modules/sql.js");
@@ -811,6 +846,54 @@ assert("workspace name persists across instances", wsAgain !== "");
   // tokenize: CJK bigrams + english words, no dup.
   const toks = mod.tokenize("压舱石 hello 世界");
   assert("tokenize yields CJK+words", toks.includes("压舱") && toks.includes("hello") && toks.includes("世界"), JSON.stringify(toks));
+}
+
+// 14. Pure-logic unit tests for the thin-AI layer (transforms + write-draft loop).
+{
+  // extractToolCalls: explicit <tool_calls> fence.
+  const fenced = aiMod.extractToolCalls('<tool_calls>[{"name":"search_pages","arguments":{"query":"会议"}}]</tool_calls>');
+  assert("extractToolCalls parses fence", fenced.length === 1 && fenced[0].name === "search_pages" && fenced[0].arguments.query === "会议", JSON.stringify(fenced));
+  // ```json block fallback.
+  const jsonBlock = aiMod.extractToolCalls('```json\n[{"name":"read_page","arguments":{"pageId":"p1"}}]\n```');
+  assert("extractToolCalls parses json block", jsonBlock.length === 1 && jsonBlock[0].name === "read_page" && jsonBlock[0].arguments.pageId === "p1");
+  // Garbage → no calls.
+  assert("extractToolCalls ignores prose", aiMod.extractToolCalls("没有工具调用") .length === 0);
+
+  // appendBlocksToJson: split on newlines, produce paragraph nodes with blockId.
+  const base = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"hi","version":1}]}],"type":"root","version":1}}';
+  let n = 0;
+  const next = aiMod.appendBlocksToJson(base, "a\nb", () => `blk-${++n}`);
+  const parsed = JSON.parse(next);
+  assert("appendBlocksToJson adds 2 paragraph nodes", parsed.root.children.length === 3, `len=${parsed.root.children.length}`);
+  const last2 = parsed.root.children[2];
+  assert("appendBlocksToJson assigns blockId", last2.blockId === "blk-2" && last2.children[0].text === "b");
+  // contentTextOf flattens text.
+  assert("contentTextOf extracts text", aiMod.contentTextOf(next) === "hi a b");
+
+  // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
+  const respSeq = [
+    { content: '<tool_calls>[{"name":"create_page","arguments":{"title":"会议","content":"要点一\\n要点二"}}]</tool_calls>' },
+    { content: "我为你起草了一个新页面。" },
+  ];
+  const transport = { complete: async () => respSeq.shift() || { content: "done" } };
+  const ctx = { currentPageId: null, allPages: [{ id: "a", title: "A", parent_id: null }] };
+  const r1 = await aiMod.runAiLoop("帮我新建一个会议页", [{ id: "a", title: "A" }], ctx, { transport });
+  assert("runAiLoop create_page drafts exactly one", r1.drafts.length === 1 && r1.drafts[0].payload.kind === "create_page", JSON.stringify(r1.drafts));
+  assert("runAiLoop create_page carries title", r1.drafts[0].payload.args.title === "会议");
+  assert("runAiLoop create_page builds content_json", r1.drafts[0].payload.args.content_json.includes("要点一") && r1.drafts[0].payload.args.content_json.includes("要点二"));
+
+  // append_block returns a draft with pageId + text.
+  const respSeq2 = [
+    { content: '<tool_calls>[{"name":"append_block","arguments":{"pageId":"p1","text":"新增行"}}]</tool_calls>' },
+    { content: "已起草追加。" },
+  ];
+  const transport2 = { complete: async () => respSeq2.shift() || { content: "done" } };
+  const r2 = await aiMod.runAiLoop("追加到 p1", [{ id: "p1", title: "P1" }], ctx, { transport: transport2 });
+  assert("runAiLoop append_block drafts with pageId+text", r2.drafts.length === 1 && r2.drafts[0].payload.kind === "append_block" && r2.drafts[0].payload.pageId === "p1" && r2.drafts[0].payload.text === "新增行");
+
+  // Final-answer-only turn → no drafts.
+  const r3 = await aiMod.runAiLoop("你好", [{ id: "a", title: "A" }], ctx, { transport: { complete: async () => ({ content: "你好，有什么可以帮你？" }) } });
+  assert("runAiLoop final answer has no drafts", r3.drafts.length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

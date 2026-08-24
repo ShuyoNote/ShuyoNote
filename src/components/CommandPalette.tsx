@@ -3,6 +3,7 @@ import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRang
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
 import { useEditorStore } from "../store/editor";
+import { useAiStore } from "../store/ai";
 import { getAllCommands, usePluginRevision, type CommandContext } from "../plugins/registry";
 
 type Item =
@@ -76,13 +77,15 @@ export function CommandPalette() {
     [pages, q],
   );
   const pluginRevision = usePluginRevision();
+  // Subscribe so the gated "AI 助手" command appears/disappears when AI toggles.
+  const aiEnabled = useAiStore((s) => s.config.enabled);
   const cmdItems = useMemo<Item[]>(
     () =>
       getAllCommands()
         .filter((c) => c.title.toLowerCase().includes(q))
         .map((c) => ({ kind: "command", id: c.id, title: c.title, description: c.description })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [q, pluginRevision],
+    [q, pluginRevision, aiEnabled],
   );
   const pluginItems = useMemo<Item[]>(() => {
     const out: Item[] = [];

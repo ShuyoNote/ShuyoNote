@@ -15,6 +15,7 @@ import { BoardView } from "./components/BoardView";
 import { GraphView } from "./components/GraphView";
 import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
+import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { TemplateCenterView } from "./components/TemplateCenterView";
@@ -270,6 +271,7 @@ function App() {
         <Toaster />
         <ConfirmDialog />
         <InputDialog />
+        <AiAssistantPanel />
       </div>
     );
   }
@@ -315,6 +317,7 @@ function App() {
       <ConfirmDialog />
       <InputDialog />
       <PluginManager />
+      <AiAssistantPanel />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
 import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
+import { useAiStore } from "../store/ai";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
@@ -23,6 +24,8 @@ export interface PluginCommand {
   description?: string;
   /** Close the command palette after running (e.g. view switches). */
   closeOnRun?: boolean;
+  /** Optional gate: return false to hide this command (e.g. AI disabled). */
+  when?: () => boolean;
   run: (ctx: CommandContext) => Promise<string> | string;
 }
 
@@ -57,7 +60,7 @@ export function getEnabledPlugins(): Plugin[] {
 }
 
 export function getAllCommands(): PluginCommand[] {
-  return getEnabledPlugins().flatMap((p) => p.commands);
+  return getEnabledPlugins().flatMap((p) => p.commands).filter((c) => c.when?.() ?? true);
 }
 
 // Re-render hook for consumers that list plugins/commands (e.g. command palette).
@@ -179,6 +182,24 @@ registerPlugin({
       run: () => {
         usePlugins.getState().setManagerOpen(true);
         return "已打开插件管理";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "ai",
+  name: "AI 助手",
+  commands: [
+    {
+      id: "ai.open",
+      title: "AI 助手",
+      description: "打开 AI 助手面板",
+      closeOnRun: true,
+      when: () => useAiStore.getState().config.enabled,
+      run: () => {
+        useAiStore.getState().setOpen(true);
+        return "已打开 AI 助手";
       },
     },
   ],

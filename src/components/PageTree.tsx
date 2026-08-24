@@ -10,6 +10,7 @@ import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
+import { useAiStore } from "../store/ai";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import * as reorder from "../lib/treeReorder";
@@ -20,7 +21,7 @@ import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon } from "./icons";
+import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -516,6 +517,7 @@ export function PageTree({
   const [colorFor, setColorFor] = useState<string | null>(null);
   const spaceChooser = usePopover<HTMLButtonElement>();
   const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
+  const aiEnabled = useAiStore((s) => s.config.enabled);
 
   // Drag-ghost state (title + cursor position while dragging a tree node).
   const dragLabel = useTreeDrag((s) => s.label);
@@ -1122,6 +1124,14 @@ export function PageTree({
       {!collapsed && (
         <div className="sidebar-bottom">
           <TrashPanel />
+          {aiEnabled && (
+            <button
+              className="sidebar-bottom-btn"
+              onClick={() => useAiStore.getState().setOpen(true)}
+            >
+              <SparkleIcon className="sidebar-bottom-icon sidebar-bottom-ai" /> AI 助手
+            </button>
+          )}
           <button
             className="sidebar-bottom-btn"
             onClick={() => useTemplateCenterStore.getState().setOpen(true)}
