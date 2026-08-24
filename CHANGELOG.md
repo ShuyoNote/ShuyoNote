@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.14] - 2026-08-24
+
+### 新增
+
+- **导入/恢复流式进度条**：
+  - **导入备份（覆盖全库）**：web 端 `import_backup` 现在在读取、恢复数据库、逐个恢复附件时都派发 **`backup-progress`** 事件（`phase: "import"`），备份按钮的进度条随附件逐条推进，不再干等。
+  - **导入空间包**：`import_workspace` 之前是空桩，现在真正实现——读取 `space-export.zip`（`shuyonote.db` + `workspace.json` + `attachments/<hash>`），恢复数据库、按 `workspace.json` 应用空间名、逐条恢复附件，并派发 **`workspace-progress`**（`phase: "import"`）。
+  - **导出备份**：`export_backup` 也改为流式压缩并派发 `backup-progress`（与大空间导出一致）。
+  - 空间切换器里的导入按钮现在也有进度条。
+- `scripts/smoke-web.mjs` 96→**101 项全绿**（新增：备份导入派发 `backup-progress` / 事件含 phase/done/total；空间导入返回元数据并应用 `workspace.json` 名称 / 派发 `workspace-progress`）。
+
+---
+
 ## [1.59.13] - 2026-08-24
 
 ### 优化

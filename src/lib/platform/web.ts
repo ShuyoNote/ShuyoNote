@@ -15,7 +15,7 @@
 import type { Platform } from "./types";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { blobStore, contentHash } from "./blobStore";
-import { zipSync, unzipSync, Zip, ZipDeflate } from "fflate";
+import { unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -1205,9 +1205,11 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "export_backup") {
       const dbBytes = store.snapshot();
       const atts = await blobStore.entries();
-      const entries: Record<string, Uint8Array> = { "shuyonote.db": dbBytes };
-      for (const a of atts) entries[`attachments/${a.hash}`] = a.bytes;
-      const zip = zipSync(entries);
+      const fileList: { name: string; bytes: Uint8Array }[] = [{ name: "shuyonote.db", bytes: dbBytes }];
+      for (const a of atts) fileList.push({ name: `attachments/${a.hash}`, bytes: a.bytes });
+      const zip = await streamZip(fileList, (done, total) => {
+        emitPageEvent("backup-progress", { phase: "export", done, total, bytes: 0, message: `打包 ${done}/${total}…` });
+      });
       const name = String(a.destPath ?? "shuyonote-backup.zip").split(/[\\/]/).pop() || "shuyonote-backup.zip";
       if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so same-session import (and the Node smoke test) can read it back.
@@ -1219,6 +1221,10 @@ function makeInvoke(store: SqliteStore) {
       const src = String(a.srcPath ?? "");
       const reg = fileRegistry.get(baseName(src));
       if (!reg) throw new Error("备份文件不存在");
+      const emit = (done: number, total: number, message: string) =>
+        emitPageEvent("backup-progress", { phase: "import", done, total, bytes: 0, message });
+
+      emit(0, 1, "读取备份…");
       let files: Record<string, Uint8Array>;
       try {
         files = unzipSync(reg.bytes);
@@ -1237,13 +1243,25 @@ function makeInvoke(store: SqliteStore) {
       }
       const dbBytes = files["shuyonote.db"];
       if (!dbBytes) throw new Error("备份缺少数据库文件");
+
+      emit(1, 3, "恢复数据库…");
       await store.restore(dbBytes);
-      for (const [k, bytes] of Object.entries(files)) {
-        if (k.startsWith("attachments/") && !k.endsWith("/")) {
-          const hash = k.slice("attachments/".length);
-          await blobStore.put(hash, bytes);
-        }
+
+      // Import attachment bytes one at a time, yielding + reporting progress so a
+      // backup with many/large files shows a real advancing bar instead of freezing.
+      const attEntries = Object.entries(files).filter(([k]) => k.startsWith("attachments/") && !k.endsWith("/"));
+      const total = attEntries.length;
+      let done = 0;
+      let bytesDone = 0;
+      for (const [k, bytes] of attEntries) {
+        const hash = k.slice("attachments/".length);
+        await blobStore.put(hash, bytes);
+        done++;
+        bytesDone += bytes.length;
+        emit(2 + (total === 0 ? 1 : Math.round((done / total) * 1)), total, `恢复附件 ${done}/${total}…`);
+        if (done % 8 === 0) await new Promise((r) => setTimeout(r, 0));
       }
+      emit(3, 3, "恢复完成");
       return undefined as T;
     }
     if (cmd === "export_workspace") {
@@ -1292,7 +1310,54 @@ function makeInvoke(store: SqliteStore) {
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
       return { path: name, size: zip.length, pages, attachments: candidates.length } as T;
     }
-    if (cmd === "import_workspace") return null as T;
+    if (cmd === "import_workspace") {
+      // Import a workspace package (same format as export_workspace): a zip with
+      // `shuyonote.db` + `workspace.json` + `attachments/<hash>`. Web is
+      // single-workspace, so this restores the DB snapshot into the active store,
+      // applies the metadata name, and imports only referenced attachment bytes.
+      const src = String(a.srcPath ?? "");
+      const reg = fileRegistry.get(baseName(src));
+      if (!reg) throw new Error("空间包不存在");
+      const emit = (done: number, total: number, message: string) =>
+        emitPageEvent("workspace-progress", { phase: "import", done, total, bytes: 0, message });
+
+      emit(0, 3, "读取空间包…");
+      let files: Record<string, Uint8Array>;
+      try {
+        files = unzipSync(reg.bytes);
+      } catch {
+        throw new Error("不是有效的空间包");
+      }
+      const dbBytes = files["shuyonote.db"];
+      if (!dbBytes) throw new Error("空间包缺少数据库文件");
+
+      emit(1, 3, "恢复空间数据库…");
+      await store.restore(dbBytes);
+      // Apply the workspace name from workspace.json (fallback to the caller name).
+      let wsName = String(a.name ?? "导入空间");
+      try {
+        const meta = JSON.parse(new TextDecoder().decode(files["workspace.json"]?.length ? files["workspace.json"] : new Uint8Array()));
+        if (meta && typeof meta.name === "string" && meta.name) wsName = meta.name;
+      } catch {
+        /* keep fallback */
+      }
+      seedWorkspaceMeta();
+      // Keep the active key stable; only the display name changes.
+      store.run("UPDATE workspaces SET name = ? WHERE id = ?", [wsName, WS_KEY]);
+
+      const attEntries = Object.entries(files).filter(([k]) => k.startsWith("attachments/") && !k.endsWith("/"));
+      const total = attEntries.length;
+      let done = 0;
+      for (const [k, bytes] of attEntries) {
+        const hash = k.slice("attachments/".length);
+        await blobStore.put(hash, bytes);
+        done++;
+        emit(2 + (total === 0 ? 1 : Math.round((done / total) * 1)), total, `恢复附件 ${done}/${total}…`);
+        if (done % 8 === 0) await new Promise((r) => setTimeout(r, 0));
+      }
+      emit(3, 3, "导入完成");
+      return { id: WS_KEY, name: wsName, created_at: Date.now(), updated_at: Date.now() } as T;
+    }
     if (cmd === "write_text_file") {
       // Write text to a browser-side "file": trigger a real download named after
       // the target so content actually leaves the browser.

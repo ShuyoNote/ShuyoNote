@@ -461,9 +461,15 @@ assert("export_backup zip has attachments dir entries", Object.keys(backupZip).s
 const backupBeforePages = (await invoke("list_pages", {})).length;
 // Import into a fresh platform instance.
 const backupPlatform = newPlatform();
+const backupProgress = [];
+const onBackupProgress = (e) => backupProgress.push(e.detail);
+globalThis.window.addEventListener("backup-progress", onBackupProgress);
 await backupPlatform.executor.invoke("import_backup", { srcPath: backup.path });
+globalThis.window.removeEventListener("backup-progress", onBackupProgress);
 const backupAfterPages = await backupPlatform.executor.invoke("list_pages", {});
 assert("import_backup restores pages", Array.isArray(backupAfterPages) && backupAfterPages.length >= backupBeforePages, `${backupAfterPages?.length} pages after import`);
+assert("import_backup emits backup-progress events", backupProgress.length >= 1, `${backupProgress.length} event(s)`);
+assert("backup-progress event has phase/done/total", backupProgress[0] && backupProgress[0].phase === "import" && typeof backupProgress[0].done === "number" && typeof backupProgress[0].total === "number", JSON.stringify(backupProgress[0]));
 
 // 10i-2. export_workspace (space export) must build a real self-contained zip, not
 // a size-0 stub: shuyonote.db + workspace.json + attachments/<hash>, with a real
@@ -494,6 +500,17 @@ assert("import_backup restores pages", Array.isArray(backupAfterPages) && backup
   globalThis.window.removeEventListener("workspace-progress", onWs);
   assert("workspace-progress events emitted during export", events.length >= 1, `${events.length} event(s)`);
   assert("progress event has done/total/message", events[0] && typeof events[0].done === "number" && typeof events[0].total === "number" && typeof events[0].message === "string", JSON.stringify(events[0]));
+
+  // 10i-4. import_workspace restores the workspace zip and emits workspace-progress
+  // events on phase "import"; it also applies the workspace.json name.
+  const importEvents = [];
+  const onImp = (e) => importEvents.push(e.detail);
+  globalThis.window.addEventListener("workspace-progress", onImp);
+  const importedMeta = await wsPlatform.executor.invoke("import_workspace", { srcPath: "space-export.zip" });
+  globalThis.window.removeEventListener("workspace-progress", onImp);
+  assert("import_workspace returns workspace meta", importedMeta && typeof importedMeta.id === "string" && typeof importedMeta.name === "string", String(importedMeta?.name));
+  assert("import_workspace applies workspace.json name", importedMeta?.name === "我的工作空间", String(importedMeta?.name));
+  assert("import_workspace emits workspace-progress (import)", importEvents.length >= 1 && importEvents[0].phase === "import", `${importEvents.length} event(s)`);
 }
 
 

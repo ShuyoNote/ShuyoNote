@@ -643,7 +643,21 @@ export function PageTree({
       ) {
         return;
       }
-      const meta = await api.importWorkspace(path as string);
+      setExporting({ done: 0, total: 1, message: "准备导入…" });
+      const unlisten = await platform.event.listen<{ done: number; total: number; message: string }>(
+        "workspace-progress",
+        (e) => {
+          const p = e.payload;
+          if (p && typeof p.done === "number") setExporting({ done: p.done, total: p.total || 1, message: p.message || "导入中…" });
+        },
+      );
+      let meta: { name: string };
+      try {
+        meta = await api.importWorkspace(path as string);
+      } finally {
+        setExporting(null);
+        unlisten();
+      }
       toast(`已导入工作空间「${meta.name}」`, "success");
       await useSpaceStore.getState().load();
     } catch (e) {
