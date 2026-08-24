@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
@@ -26,7 +25,7 @@ export function BackupButton() {
 
   // Live progress emitted by the backend during export/import.
   useEffect(() => {
-    const un = listen<BackupProgress>("backup-progress", (e) => setProg(e.payload));
+    const un = platform.event.listen<BackupProgress>("backup-progress", (e) => setProg(e.payload));
     return () => {
       un.then((fn) => fn());
     };
@@ -60,7 +59,7 @@ export function BackupButton() {
         .replace(/\s+/g, "-")
         .trim()
         .slice(0, 40);
-      const path = await save({
+      const path = await platform.dialog.save({
         title: "导出备份",
         defaultPath: `shuyonote-${safe || "space"}-${stamp}.zip`,
         filters: [{ name: "ZIP", extensions: ["zip"] }],
@@ -78,7 +77,7 @@ export function BackupButton() {
 
   const doImport = async () => {
     try {
-      const path = await open({
+      const path = await platform.dialog.open({
         title: "选择备份文件",
         filters: [{ name: "ZIP", extensions: ["zip"] }],
         multiple: false,

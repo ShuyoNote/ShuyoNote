@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useTemplateCenterStore } from "../store/templateCenter";
@@ -129,7 +129,7 @@ export function TemplateCenterView() {
 
   const exportTemplate = async (t: GalleryItem) => {
     try {
-      const path = await save({
+      const path = await platform.dialog.save({
         title: "导出模板",
         defaultPath: `${t.name}.shuyo-template.json`,
         filters: [{ name: "ShuyoNote 模板", extensions: ["json"] }],
@@ -147,7 +147,7 @@ export function TemplateCenterView() {
 
   const importTemplate = async () => {
     try {
-      const selected = await open({ multiple: false, title: "导入模板" });
+      const selected = await platform.dialog.open({ multiple: false, title: "导入模板" });
       if (!selected || Array.isArray(selected)) return;
       const text = await api.readTextFile(selected);
       const parsed = JSON.parse(text);

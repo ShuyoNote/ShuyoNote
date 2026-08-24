@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { platform } from "../lib/platform";
 import { $convertFromMarkdownString } from "@lexical/markdown";
 import { $getRoot } from "lexical";
 import { SHUYONOTE_TRANSFORMERS, preprocessMarkdownImport } from "../editor/markdownTransformers";
@@ -17,7 +17,7 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
 
   const importFromFile = async () => {
     try {
-      const selected = await open({
+      const selected = await platform.dialog.open({
         title: "选择 Markdown 文件",
         filters: [
           { name: "Markdown", extensions: ["md", "markdown", "txt"] },

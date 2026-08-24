@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useAttachmentsStore } from "../store/attachments";
@@ -62,7 +60,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   // Listen to streaming import progress emitted from the backend.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<ImportProgressEvent>("attachment-import-progress", (event) => {
+    platform.event.listen<ImportProgressEvent>("attachment-import-progress", (event) => {
       if (!importingRef.current) return;
       const p = event.payload;
       const current = p.size > 0 ? p.done / p.size : 1;
@@ -79,7 +77,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   const addFiles = async () => {
     let selected: string | string[] | null;
     try {
-      selected = await open({ multiple: true, title: "选择文件" });
+      selected = await platform.dialog.open({ multiple: true, title: "选择文件" });
     } catch (e) {
       toast(`选择文件失败：${e}`, "error");
       return;
@@ -107,7 +105,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   const openFile = async (path: string) => {
     if (!path) return;
     try {
-      await openPath(path);
+      await platform.opener.openPath(path);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }
@@ -116,7 +114,7 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
   const revealFile = async (path: string) => {
     if (!path) return;
     try {
-      await revealItemInDir(path);
+      await platform.opener.revealItemInDir(path);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }

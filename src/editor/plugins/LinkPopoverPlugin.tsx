@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { platform } from "../../lib/platform";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getSelection, $isRangeSelection, type LexicalNode } from "lexical";
 import { $isLinkNode, type LinkNode } from "@lexical/link";
@@ -80,7 +80,7 @@ export function LinkPopoverPlugin() {
   };
 
   const open = () => {
-    if (state.url) openUrl(state.url).catch(() => {});
+    if (state.url) platform.opener.openUrl(state.url).catch(() => {});
     setState(null);
   };
 

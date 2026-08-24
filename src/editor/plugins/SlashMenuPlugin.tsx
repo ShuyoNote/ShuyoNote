@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { platform } from "../../lib/platform";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createHeadingNode, $createQuoteNode } from "@lexical/rich-text";
 import { $createLinkNode } from "@lexical/link";
@@ -113,7 +112,7 @@ function makeOptions(pageId: string): SlashOption[] {
     { key: "ol", title: "有序列表", badge: "1.", group: "列表", shortcut: "Ctrl+Alt+O", pinyin: "yxlb", run: (editor) => {
       editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined); } },
     { key: "image", title: "图片", badge: "🖼", group: "媒体", pinyin: "tp", run: async (editor) => {
-      const selected = await open({
+      const selected = await platform.dialog.open({
         title: "选择图片",
         filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] }],
         multiple: false,
@@ -123,14 +122,14 @@ function makeOptions(pageId: string): SlashOption[] {
       try {
         const metas = await api.importAttachmentFiles(pageId, paths);
         if (metas.length === 0) return;
-        const src = convertFileSrc(metas[0].path);
+        const src = platform.asset.convertFileSrc(metas[0].path);
         editor.update(() => $insertBlockNode($createImageNode(src)));
       } catch (e) {
         toast(`插入图片失败：${e}`, "error");
       }
     } },
     { key: "video", title: "视频", badge: "🎬", group: "媒体", pinyin: "sp", run: async (editor) => {
-      const selected = await open({
+      const selected = await platform.dialog.open({
         title: "选择视频",
         filters: [{ name: "视频", extensions: ["mp4", "webm", "mov", "m4v"] }],
         multiple: false,
@@ -140,14 +139,14 @@ function makeOptions(pageId: string): SlashOption[] {
       try {
         const metas = await api.importAttachmentFiles(pageId, paths);
         if (metas.length === 0) return;
-        const src = convertFileSrc(metas[0].path);
+        const src = platform.asset.convertFileSrc(metas[0].path);
         editor.update(() => $insertBlockNode($createVideoNode(src)));
       } catch (e) {
         toast(`插入视频失败：${e}`, "error");
       }
     } },
     { key: "attachment", title: "附件", badge: "📎", group: "媒体", pinyin: "fj", run: async (editor) => {
-      const selected = await open({
+      const selected = await platform.dialog.open({
         title: "选择文件",
         multiple: true,
       });
@@ -163,7 +162,7 @@ function makeOptions(pageId: string): SlashOption[] {
       }
     } },
     { key: "fileref", title: "文件引用", badge: "▤", group: "媒体", pinyin: "wjyy", run: async (editor) => {
-      const selected = await open({
+      const selected = await platform.dialog.open({
         title: "选择要引用的文件",
         multiple: true,
       });

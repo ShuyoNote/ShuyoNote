@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
-import { save } from "@tauri-apps/plugin-dialog";
+import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { useViewStore } from "../store/view";
@@ -48,7 +48,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const exportHtml = async () => {
     if (!editor) return;
     try {
-      const path = await save({
+      const path = await platform.dialog.save({
         title: "导出 HTML",
         defaultPath: "note.html",
         filters: [{ name: "HTML", extensions: ["html"] }],

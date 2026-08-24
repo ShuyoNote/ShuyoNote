@@ -7,7 +7,7 @@ import {
   COMMAND_PRIORITY_LOW,
   PASTE_COMMAND,
 } from "lexical";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { platform } from "../../lib/platform";
 import { $createImageNode } from "../nodes/ImageNode";
 import { api } from "../../lib/api";
 
@@ -20,7 +20,7 @@ async function saveBlob(blob: Blob, pageId: string | null): Promise<string | nul
       mime: blob.type || "image/png",
       data: Array.from(buf),
     });
-    return convertFileSrc(meta.path);
+    return platform.asset.convertFileSrc(meta.path);
   } catch (e) {
     console.error("save image failed", e);
     return null;

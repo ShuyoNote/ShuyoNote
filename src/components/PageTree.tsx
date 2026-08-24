@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { openPath } from "@tauri-apps/plugin-opener";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
@@ -160,7 +159,7 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           style={{ paddingLeft: depth * 16 + 8 }}
           title={f.name}
           onClick={() =>
-            openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"))
+            platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"))
           }
         >
           <span className="tree-toggle" style={{ visibility: "hidden" }} />
@@ -445,7 +444,7 @@ export function PageTree({
         .replace(/\s+/g, "-")
         .trim()
         .slice(0, 40);
-      const path = await save({
+      const path = await platform.dialog.save({
         title: "导出当前工作空间",
         defaultPath: `space-${safe}-${stamp}.zip`,
         filters: [{ name: "ZIP", extensions: ["zip"] }],
@@ -464,7 +463,7 @@ export function PageTree({
 
   const importSpace = async () => {
     try {
-      const path = await open({
+      const path = await platform.dialog.open({
         title: "导入工作空间",
         filters: [{ name: "ZIP", extensions: ["zip"] }],
         multiple: false,

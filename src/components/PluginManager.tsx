@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { platform } from "../lib/platform";
 import { usePlugins } from "../store/plugins";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
@@ -15,7 +15,7 @@ export function PluginManager() {
   if (!managerOpen) return null;
 
   const pickInstall = async () => {
-    const sel = await open({ multiple: false, directory: true, title: "选择插件目录" });
+    const sel = await platform.dialog.open({ multiple: false, directory: true, title: "选择插件目录" });
     if (typeof sel === "string") await install(sel);
   };
 

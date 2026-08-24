@@ -1,4 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
+import { platform } from "./platform";
+// Route every backend command through the platform executor so a future non-Tauri
+// shell can swap the bridge without touching the ~60 call sites below.
+const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
+  platform.executor.invoke<T>(cmd, args);
 import type {
   AttachmentMeta,
   AttrDef,

@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { platform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useFileManagerStore } from "../store/fileManager";
 import { confirmDialog } from "../store/confirm";
@@ -94,7 +90,7 @@ export function FileManagerView() {
   // Streaming import progress from the backend (content-addressed, large-file safe).
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<ImportProgressEvent>("attachment-import-progress", (event) => {
+    platform.event.listen<ImportProgressEvent>("attachment-import-progress", (event) => {
       if (!importingRef.current) return;
       const p = event.payload;
       const current = p.size > 0 ? p.done / p.size : 1;
@@ -112,7 +108,7 @@ export function FileManagerView() {
     if (!folderId) return;
     let selectedPath: string | string[] | null;
     try {
-      selectedPath = await open({ multiple: true, title: "选择文件" });
+      selectedPath = await platform.dialog.open({ multiple: true, title: "选择文件" });
     } catch (e) {
       toast(`选择文件失败：${e}`, "error");
       return;
@@ -143,7 +139,7 @@ export function FileManagerView() {
 
   // Drag OS files into an open folder to upload them (Tauri drag-drop event).
   useEffect(() => {
-    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
+    const unlisten = platform.webview.onDragDropEvent((event) => {
       if (event.payload.type === "over") setDragging(true);
       else if (event.payload.type === "leave") setDragging(false);
       else if (event.payload.type === "drop") {
@@ -175,7 +171,7 @@ export function FileManagerView() {
   const openFile = async (path: string) => {
     if (!path) return;
     try {
-      await openPath(path);
+      await platform.opener.openPath(path);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }
@@ -183,7 +179,7 @@ export function FileManagerView() {
   const revealFile = async (path: string) => {
     if (!path) return;
     try {
-      await revealItemInDir(path);
+      await platform.opener.revealItemInDir(path);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }
@@ -364,7 +360,7 @@ export function FileManagerView() {
   );
 
   const downloadFile = async (f: AttachmentMeta) => {
-    const dest = await save({ title: "保存文件", defaultPath: f.name });
+    const dest = await platform.dialog.save({ title: "保存文件", defaultPath: f.name });
     if (!dest) return;
     try {
       await api.copyAttachment(f.hash, dest);
@@ -676,13 +672,13 @@ export function FileManagerView() {
             </div>
             <div className="fm-preview-body">
               {preview.mime.startsWith("image/") ? (
-                <img src={convertFileSrc(preview.path)} alt={preview.name} />
+                <img src={platform.asset.convertFileSrc(preview.path)} alt={preview.name} />
               ) : preview.mime.startsWith("video/") ? (
-                <video src={convertFileSrc(preview.path)} controls />
+                <video src={platform.asset.convertFileSrc(preview.path)} controls />
               ) : preview.mime.startsWith("audio/") ? (
-                <audio src={convertFileSrc(preview.path)} controls />
+                <audio src={platform.asset.convertFileSrc(preview.path)} controls />
               ) : preview.mime === "application/pdf" ? (
-                <iframe src={convertFileSrc(preview.path)} title={preview.name} />
+                <iframe src={platform.asset.convertFileSrc(preview.path)} title={preview.name} />
               ) : preview.mime.startsWith("text/") ? (
                 <div className="fm-preview-unsupported">文本文件：请在文件夹中打开查看。</div>
               ) : (

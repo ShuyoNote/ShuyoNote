@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.46.0] - 2026-08-24
+
+### 重构
+
+- **M16.0 存储/能力 driver 抽象（零行为变化）**：把全部 `@tauri-apps/*` 原生调用收敛到一个平台层，为「Web/ArkWeb/安卓/iOS 换壳」打地基（见[跨平台适配方案](docs/plans/2026-08-24-cross-platform-plan.md)）：
+  - 新增 `src/lib/platform/`：`types.ts`（`Executor`/`DialogDriver`/`OpenerDriver`/`EventDriver`/`AssetDriver`/`WebviewDriver` 接口）、`tauri.ts`（**唯一**保留 `@tauri-apps/*` import 的模块）、`index.ts`（`platform` 聚合 + `setPlatform` 换壳入口）。
+  - `api.ts` 的 ~60 个 `invoke` 命令改走 `platform.executor`，对外公开 API 不变。
+  - 12+ 组件的内联 `@tauri-apps/*` 调用（dialog/open·save、opener/openPath·openUrl·revealItemInDir、event/listen、asset/convertFileSrc、webview/onDragDropEvent）改为消费 `platform` 驱动。
+  - `tsc` 无错 + Vite 生产构建通过；现有桌面功能行为不变。
+
+---
+
 ## [1.45.0] - 2026-08-22
 
 ### 优化

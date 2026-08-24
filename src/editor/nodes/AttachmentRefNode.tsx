@@ -9,7 +9,7 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { platform } from "../../lib/platform";
 import type { JSX } from "react";
 
 export type SerializedAttachmentRefNode = Spread<
@@ -130,7 +130,7 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
   decorate(): JSX.Element {
     const open = () => {
       if (this.__path) {
-        void openPath(this.__path);
+        void platform.opener.openPath(this.__path);
       }
     };
     return (

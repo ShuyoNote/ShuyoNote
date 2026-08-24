@@ -125,7 +125,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 ### M16 — 跨平台适配（全平台通吃，[规划](plans/2026-08-24-cross-platform-plan.md)，待落地）
 > 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」，同一 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，不再依赖 `window.__TAURI__`。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。**高成本、改架构**，采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。
 > ⚠️ **本里程碑为规划，未实现**；现有 app 保持 Tauri 桌面形态。**M16.0 `api.ts` driver 抽象**（零行为变化、纯收益）建议**最先做**，无论走哪条路径都不返工。
-- **M16.0 存储/能力 driver 抽象** 🗓（规划）：`api.ts` 的 60 个 `invoke` 命令抽成 `StorageDriver`/`FsDriver`/`OpenerDriver` 接口；Tauri 实现即现状（**行为零变化**），Web/WASM 实现后续补齐。
+- **M16.0 存储/能力 driver 抽象** ✅（v1.46.0）：新增 `src/lib/platform/`（`types.ts` 接口 + `tauri.ts` `@tauri-apps/*` 唯一宿主 + `index.ts` `platform` 聚合/`setPlatform`）；`api.ts` ~60 个 `invoke` 改走 `platform.executor`（对外 API 不变）；12+ 组件内联的 dialog/opener/event/asset/webview 调用改消费 `platform`。**零行为变化**（tsc + Vite 构建通过）。
 - **M16.1 核心语义 TS 化** 🗓（规划）：`pkg/core` 重写 Schema/迁移/附件寻址/加密/备份格式（先以 rusqlite 驱动跑通，保证现有数据兼容）。
 - **M16.2 Web/WASM driver** 🗓（规划）：`wa-sqlite`+OPFS，逐命令回归（list/tags/search/graph/backlinks/db/属性/版本/附件/同步）。
 - **M16.3 插件运行时降级迁移** 🗓（规划）：`boa_engine` 移入 WASM/浏览器，权限模型对齐。

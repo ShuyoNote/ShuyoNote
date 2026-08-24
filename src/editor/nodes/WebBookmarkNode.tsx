@@ -12,9 +12,8 @@ import {
 } from "lexical";
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { platform } from "../../lib/platform";
 import { api } from "../../lib/api";
 import { inputDialog } from "../../store/input";
 
@@ -243,14 +242,14 @@ function WebBookmarkCard(props: {
     }
     api
       .attachmentPath(meta.imageHash)
-      .then((p) => setImageSrc(convertFileSrc(p)))
+      .then((p) => setImageSrc(platform.asset.convertFileSrc(p)))
       .catch(() => setImageSrc(""));
   }, [meta.imageHash]);
 
-  // Open the URL via Tauri's opener (system default browser). `window.open` is
-  // blocked in the WebView, so this is the reliable way to open links.
+  // Open the URL via the host's opener (system default browser). `window.open`
+  // is blocked in the WebView, so the opener driver is the reliable way.
   const open = () => {
-    openUrl(props.url).catch(() => {});
+    platform.opener.openUrl(props.url).catch(() => {});
   };
 
   // Edit URL via the in-app dialog (immune to Lexical decorator re-renders).

@@ -1,6 +1,6 @@
 import { createEditor } from "lexical";
 import { $convertToMarkdownString } from "@lexical/markdown";
-import { open } from "@tauri-apps/plugin-dialog";
+import { platform } from "./platform";
 import { api } from "./api";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
@@ -48,7 +48,7 @@ function sanitizeName(name: string): string {
 
 /** Export every page in the active workspace to Markdown files in a chosen folder. */
 export async function exportWorkspaceToMarkdown(): Promise<string> {
-  const dir = await open({ directory: true, title: "选择导出目录" });
+  const dir = await platform.dialog.open({ directory: true, title: "选择导出目录" });
   if (!dir || Array.isArray(dir)) return "已取消导出";
   const pages = await api.listPages();
   const editor = createEditor({ nodes: NODES, namespace: "shuyonote-export" });
