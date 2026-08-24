@@ -1833,8 +1833,16 @@ async function bootSpaces(store: SqliteStore): Promise<void> {
     activeId = metas[0]?.id ?? activeId ?? "active";
     await spaceStore.setActiveId(activeId);
   }
+  // The live store was loaded from IndexedDB at init, which ALWAYS holds the last
+  // active workspace's most recent bytes (every mutation persists there). On a
+  // plain refresh that data is fresh (deletes applied), so we must NOT clobber it
+  // with the possibly-stale spaceStore snapshot — instead keep it and refresh this
+  // space's snapshot so a later switch-back/reload is correct too.
+  const liveHasPages = (store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages")[0]?.n ?? 0) > 0;
   const snap = await spaceStore.getSnapshot(activeId);
-  if (snap && snap.length > 0) {
+  if (liveHasPages) {
+    await spaceStore.putSnapshot(activeId, store.snapshot());
+  } else if (snap && snap.length > 0) {
     await store.restore(snap);
   } else {
     // Active space has no snapshot yet — seed + capture one.
