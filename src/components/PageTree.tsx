@@ -29,6 +29,13 @@ const SPACE_ACCENTS = [
   "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
 ];
 
+// Drag-drop zones by vertical position within a tree row. The top/bottom bands
+// reorder the dragged node as a sibling (before/after); the middle band nests it
+// as a child of the target. Kept as one source of truth for both onDragOver and
+// handleDrop so they never drift apart.
+const DROP_BEFORE_MAX = 0.3;   // ratio below this → insert before target
+const DROP_AFTER_MIN = 0.7;    // ratio above this → insert after target
+
 function buildTree(pages: PageMeta[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
   for (const p of pages) map.set(p.id, { ...p, children: [] });
@@ -220,12 +227,13 @@ function TreeItem({
     const id = e.dataTransfer.getData("text/plain");
     if (!id || id === node.id) return;
 
-    // Middle zone (25%–75% of the row) → nest the dragged node as a CHILD of the
-    // target, whether the target is a folder, a page, or a database. This makes
-    // dragging a page onto another page turn it into that page's subpage.
+    // Zone by vertical position: ~top 1/3 = insert before, ~bottom 1/3 = insert
+    // after, middle 1/3 = nest as a CHILD of the target (folder, page, or db).
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const ratio = (e.clientY - rect.top) / rect.height;
-    if (ratio >= 0.25 && ratio <= 0.75) {
+    const zone: "before" | "after" | "inside" = ratio < DROP_BEFORE_MAX ? "before" : ratio > DROP_AFTER_MIN ? "after" : "inside";
+
+    if (zone === "inside") {
       const children = pages
         .filter((p) => p.parent_id === node.id && p.id !== id)
         .sort((a, b) => a.sort_order - b.sort_order || a.created_at - b.created_at);
@@ -236,8 +244,8 @@ function TreeItem({
       return;
     }
 
-    // Top/bottom band → insert before/after the target as its sibling.
-    const insertAfter = ratio > 0.75;
+    // Sibling insert before/after the target.
+    const insertAfter = zone === "after";
 
     // Siblings (same parent, excluding the dragged node), already sorted.
     const siblings = pages
@@ -295,9 +303,8 @@ function TreeItem({
           setDragOver(true);
           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
           const ratio = (e.clientY - rect.top) / rect.height;
-          // Middle = nest as child; top/bottom = sibling before/after.
-          if (ratio >= 0.25 && ratio <= 0.75) setDropZone("inside");
-          else setDropZone(ratio > 0.75 ? "after" : "before");
+          // ~top 1/3 = insert before, ~bottom 1/3 = insert after, middle = nest.
+          setDropZone(ratio < DROP_BEFORE_MAX ? "before" : ratio > DROP_AFTER_MIN ? "after" : "inside");
         }}
         onDragLeave={() => {
           setDragOver(false);
