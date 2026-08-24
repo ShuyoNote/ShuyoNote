@@ -224,6 +224,7 @@ export const api = {
     model: string;
     api_key?: string;
     messages: Array<{ role: string; content: string }>;
+    tools?: unknown[];
     temperature?: number;
     max_tokens?: number;
   }, runId: string) => invoke<void>("ai_complete_stream", { args, run_id: runId }),

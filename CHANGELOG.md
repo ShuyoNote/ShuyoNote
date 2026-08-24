@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.49] - 2026-08-24
+
+### 修复
+
+- **流式时写操作能真正产出草稿**：此前流式请求**未把 `tools` 传给模型、也未捕获流式响应里的 `tool_calls`**，导致模型只能用文字“叙述”要建页/追加，而无草稿可确认（表现像“卡死/没干活”）。现：
+  - `llm.ts` 流式请求带上 `tools`，并从 NDJSON/SSE 流里**累计捕获 `tool_calls`**（Ollama 整段 / OpenAI 按增量索引拼装），流式路径返回 `nativeToolCalls`。
+  - 桌面端 `ai_complete_stream` 同样传 `tools`、捕获 `tool_calls`，并在 `done` 事件里带回。
+  - `createBackendStreamingTransport` 从 `done` 事件的 `toolCalls` 还原原生工具调用。
+  - `scripts/smoke-web.mjs` 176→**178 项全绿**（新增：流式捕获原生 tool_call、流式写操作产出草稿）。
+
+---
+
 ## [1.59.48] - 2026-08-24
 
 ### 新增

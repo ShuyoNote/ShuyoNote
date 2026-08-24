@@ -1098,6 +1098,35 @@ assert("workspace name persists across instances", wsAgain !== "");
   }
 }
 
+// 18. Streaming + native tool_call: a WRITE arrives as a captured tool call (not
+// just narration), so runAiLoop produces a confirmable draft.
+{
+  const http5 = await import("node:http");
+  const srv5 = http5.createServer((req, res) => {
+    if (req.url === "/api/chat") {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write('{"message":{"content":""}}\n');
+      res.end('{"message":{"content":"","tool_calls":[{"function":{"name":"create_page","arguments":{"title":"周计划"}}}]},"done":true}\n');
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => srv5.listen(0, "127.0.0.1", resolve));
+  const port5 = srv5.address().port;
+  const base5 = `http://127.0.0.1:${port5}`;
+  try {
+    const transport5 = aiMod.createOllamaTransport(base5, "qwen2.5:7b");
+    const res5b = await transport5.complete([{ role: "user", content: "新建周计划" }], { onDelta: () => {} });
+    assert("streaming captures native tool_call", Array.isArray(res5b.nativeToolCalls) && res5b.nativeToolCalls[0].name === "create_page", JSON.stringify(res5b.nativeToolCalls));
+    const loopRes = await aiMod.runAiLoop("帮我新建周计划", [{ id: "a", title: "A" }], { currentPageId: null, allPages: [{ id: "a", title: "A", parent_id: null }] }, { transport: transport5, maxSteps: 2, onDelta: () => {} });
+    assert("streaming write turns into a draft", loopRes.drafts.length === 1 && loopRes.drafts[0].payload.kind === "create_page", JSON.stringify(loopRes.drafts));
+  } finally {
+    srv5.closeAllConnections?.();
+    await new Promise((resolve) => srv5.close(resolve));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 // Use exitCode (not process.exit()) so any still-closing libuv handles drain
 // before the process exits; process.exit() races teardown and hits a Windows

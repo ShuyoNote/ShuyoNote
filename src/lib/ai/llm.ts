@@ -109,17 +109,79 @@ async function safeFetch(url: string, init: RequestInit, timeoutMs: number): Pro
   }
 }
 
-// Read a streaming response body, splitting on lines, extracting a token per
-// line, and forwarding it to onDelta. Returns the fully accumulated text.
+interface StreamChunk {
+  content?: string;
+  toolCalls?: any[];
+}
+
+// Ollama /api/chat streams NDJSON: {"message":{"content":"token"}} … {"message":{"tool_calls":[...]},"done":true}.
+function ollamaLineChunk(line: string): StreamChunk {
+  if (line.startsWith("data:")) line = line.slice(5).trim();
+  try {
+    const j = JSON.parse(line);
+    const content =
+      typeof j?.message?.content === "string"
+        ? j.message.content
+        : typeof j?.response === "string"
+          ? j.response
+          : "";
+    return { content, toolCalls: Array.isArray(j?.message?.tool_calls) ? j.message.tool_calls : undefined };
+  } catch {
+    return { content: "" };
+  }
+}
+
+// OpenAI-compatible streams SSE: `data: {"choices":[{"delta":{"content":"token"}}]}` … `data: [DONE]`.
+// tool_calls arrive incrementally (delta.tool_calls[i].function.arguments concatenated).
+function openaiLineChunk(line: string): StreamChunk {
+  if (!line.startsWith("data:")) return { content: "" };
+  const payload = line.slice(5).trim();
+  if (payload === "[DONE]") return { content: "" };
+  try {
+    const j = JSON.parse(payload);
+    const content = j?.choices?.[0]?.delta?.content ?? "";
+    const tcs = j?.choices?.[0]?.delta?.tool_calls;
+    return { content, toolCalls: Array.isArray(tcs) ? tcs : undefined };
+  } catch {
+    return { content: "" };
+  }
+}
+
+/** Read a streaming body, streaming content deltas to onDelta AND capturing any
+ *  tool_calls so the host loop can still execute writes during streaming. */
 async function readBodyStream(
   resp: Response,
-  extract: (line: string) => string,
+  chunk: (line: string) => StreamChunk,
   onDelta: (text: string) => void,
-): Promise<string> {
+): Promise<{ content: string; nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined }> {
   const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
   const dec = new TextDecoder();
   let buf = "";
   let content = "";
+  // tool_calls arrive either as a full array (Ollama, final) or fragmented by
+  // index (OpenAI, delta.tool_calls). Accumulate the OpenAI fragments by index.
+  const tcByIdx: Record<number, { name: string; args: string }> = {};
+  let direct: Array<{ name: string; arguments: unknown }> = [];
+
+  const absorb = (toolCalls: any[]) => {
+    if (toolCalls.length === 0) return;
+    if (toolCalls[0]?.index !== undefined) {
+      // OpenAI incremental fragments (delta.tool_calls[i])
+      for (const tc of toolCalls) {
+        const idx = tc.index ?? 0;
+        const cur = tcByIdx[idx] ?? { name: "", args: "" };
+        if (tc?.function?.name) cur.name = tc.function.name;
+        if (typeof tc?.function?.arguments === "string") cur.args += tc.function.arguments;
+        tcByIdx[idx] = cur;
+      }
+    } else {
+      // Ollama full array (replace any accumulated fragments)
+      direct = toolCalls
+        .map((tc) => ({ name: tc?.function?.name ?? tc?.name ?? "", arguments: tc?.function?.arguments ?? tc?.arguments }))
+        .filter((t) => t.name);
+    }
+  };
+
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -129,42 +191,25 @@ async function readBodyStream(
       const line = buf.slice(0, idx).trim();
       buf = buf.slice(idx + 1);
       if (!line) continue;
-      const token = extract(line);
-      if (token) {
-        content += token;
-        onDelta(token);
+      const c = chunk(line);
+      if (c.content) {
+        content += c.content;
+        onDelta(c.content);
       }
+      if (c.toolCalls) absorb(c.toolCalls);
     }
   }
-  return content;
-}
 
-// Ollama /api/chat streams NDJSON: {"message":{"content":"token"}} … {"done":true}.
-function ollamaLineExtract(line: string): string {
-  if (line.startsWith("data:")) line = line.slice(5).trim();
-  try {
-    const j = JSON.parse(line);
-    return typeof j?.message?.content === "string"
-      ? j.message.content
-      : typeof j?.response === "string"
-        ? j.response
-        : "";
-  } catch {
-    return "";
+  let nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined;
+  if (direct.length) {
+    nativeToolCalls = direct.map((t) => ({ name: t.name, arguments: parseToolArgs(t.arguments) }));
+  } else {
+    const frags = Object.values(tcByIdx)
+      .filter((t) => t.name)
+      .map((t) => ({ name: t.name, arguments: parseToolArgs(t.args) }));
+    if (frags.length) nativeToolCalls = frags;
   }
-}
-
-// OpenAI-compatible streams SSE: `data: {"choices":[{"delta":{"content":"token"}}]}` … `data: [DONE]`.
-function openaiLineExtract(line: string): string {
-  if (!line.startsWith("data:")) return "";
-  const payload = line.slice(5).trim();
-  if (payload === "[DONE]") return "";
-  try {
-    const j = JSON.parse(payload);
-    return j?.choices?.[0]?.delta?.content ?? "";
-  } catch {
-    return "";
-  }
+  return { content, nativeToolCalls };
 }
 
 function isStreaming(opts: LlmOptions): opts is LlmOptions & { onDelta: (text: string) => void } {
@@ -188,6 +233,7 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
               model,
               messages,
               stream: streaming,
+              tools: opts.tools as any[] | undefined,
               options: {
                 num_ctx: OLLAMA_DEFAULT_NUM_CTX,
                 temperature: opts.temperature ?? 0.7,
@@ -202,7 +248,8 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
       }
       if (!resp.ok) throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);
       if (streaming) {
-        return { content: await readBodyStream(resp, ollamaLineExtract, opts.onDelta), nativeToolCalls: undefined };
+        const { content, nativeToolCalls } = await readBodyStream(resp, ollamaLineChunk, opts.onDelta);
+        return { content, nativeToolCalls };
       }
       const data = await resp.json();
       return {
@@ -236,6 +283,7 @@ export function createOpenAICompatTransport(
               model,
               messages,
               stream: streaming,
+              tools: opts.tools as any[] | undefined,
               temperature: opts.temperature ?? 0.7,
               max_tokens: opts.maxTokens ?? 512,
             }),
@@ -256,7 +304,8 @@ export function createOpenAICompatTransport(
         throw new Error(`OpenAI 兼容接口请求失败 (${resp.status})${detail}`);
       }
       if (streaming) {
-        return { content: await readBodyStream(resp, openaiLineExtract, opts.onDelta), nativeToolCalls: undefined };
+        const { content, nativeToolCalls } = await readBodyStream(resp, openaiLineChunk, opts.onDelta);
+        return { content, nativeToolCalls };
       }
       const data = await resp.json();
       const msg = data?.choices?.[0]?.message ?? {};

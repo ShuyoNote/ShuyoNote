@@ -24,6 +24,8 @@ pub struct AiCompleteArgs {
     pub messages: Vec<AiMessageIn>,
     pub temperature: Option<f64>,
     pub max_tokens: Option<i64>,
+    #[serde(default)]
+    pub tools: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,56 +240,32 @@ pub async fn ai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
 // stream, and emits each content delta to a per-run event (`ai-stream:{run_id}`)
 // with payload {delta} / {done}. The frontend subscribes via `platform.event.listen`.
 
-fn ollama_stream_token(line: &str) -> Option<String> {
-    let l = line.strip_prefix("data:").unwrap_or(line).trim();
-    if l.is_empty() {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_str(l).ok()?;
-    let c = v["message"]["content"].as_str().or(v["response"].as_str())?;
-    if c.is_empty() {
-        None
-    } else {
-        Some(c.to_string())
-    }
-}
-
-fn openai_stream_token(line: &str) -> Option<String> {
-    let l = line.strip_prefix("data:").map(str::trim).unwrap_or("");
-    if l.is_empty() || l == "[DONE]" {
-        return None;
-    }
-    let v: serde_json::Value = serde_json::from_str(l).ok()?;
-    let c = v["choices"][0]["delta"]["content"].as_str()?;
-    if c.is_empty() {
-        None
-    } else {
-        Some(c.to_string())
-    }
-}
-
-async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) {
+async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Vec<serde_json::Value> {
     let is_openai = args.provider == "openai";
     let url = if is_openai {
         append_v1(&args.base_url, "/chat/completions")
     } else {
         format!("{}/api/chat", base_of(&args.base_url))
     };
+    let tools = args.tools.clone();
     let mut req = reqwest::Client::new().post(&url);
     if is_openai {
-        let body = json!({
+        let mut body = json!({
             "model": args.model,
             "messages": args.messages,
             "stream": true,
             "temperature": args.temperature.unwrap_or(0.7),
             "max_tokens": args.max_tokens.unwrap_or(512),
         });
+        if let Some(t) = &tools {
+            body["tools"] = t.clone();
+        }
         req = req.json(&body);
         if let Some(key) = args.api_key.filter(|k| !k.is_empty()) {
             req = req.bearer_auth(key);
         }
     } else {
-        let body = json!({
+        let mut body = json!({
             "model": args.model,
             "messages": args.messages,
             "stream": true,
@@ -297,6 +275,9 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) {
                 "num_predict": args.max_tokens.unwrap_or(512),
             }
         });
+        if let Some(t) = &tools {
+            body["tools"] = t.clone();
+        }
         req = req.json(&body);
     }
 
@@ -305,16 +286,19 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) {
         Err(e) => {
             // Surface a reachable error as a single delta so the UI shows why.
             emit(describe_net(&e, &url));
-            return;
+            return Vec::new();
         }
     };
     if !resp.status().is_success() {
         emit(format!("【请求失败 {}】", resp.status()));
-        return;
+        return Vec::new();
     }
-    let extract = if is_openai { openai_stream_token } else { ollama_stream_token };
+
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();
+    let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+    let mut tc_frags: std::collections::HashMap<usize, (String, String)> = std::collections::HashMap::new();
+    let mut use_frags = false;
     while let Some(chunk) = stream.next().await {
         let chunk = match chunk {
             Ok(c) => c,
@@ -327,11 +311,97 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) {
             if line.is_empty() {
                 continue;
             }
-            if let Some(tok) = extract(&line) {
-                emit(tok);
+            if is_openai {
+                if let Some((tok, tcs)) = openai_stream_chunk(&line) {
+                    if !tok.is_empty() {
+                        emit(tok);
+                    }
+                    if let Some(t) = tcs {
+                        use_frags = true;
+                        for tc in t {
+                            let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                            let e = tc_frags.entry(idx).or_default();
+                            if tc["function"]["name"].is_string() {
+                                e.0 = tc["function"]["name"].as_str().unwrap_or("").to_string();
+                            }
+                            if let Some(a) = tc["function"]["arguments"].as_str() {
+                                e.1.push_str(a);
+                            }
+                        }
+                    }
+                }
+            } else if let Some((tok, tcs)) = ollama_stream_chunk(&line) {
+                if !tok.is_empty() {
+                    emit(tok);
+                }
+                if let Some(t) = tcs {
+                    tool_calls = t;
+                }
             }
         }
     }
+
+    if use_frags {
+        let mut keys: Vec<usize> = tc_frags.keys().copied().collect();
+        keys.sort_unstable();
+        keys.into_iter()
+            .filter_map(|k| {
+                let (name, args) = tc_frags.get(&k)?;
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(json!({ "name": name, "arguments": args }))
+                }
+            })
+            .collect()
+    } else {
+        tool_calls
+            .into_iter()
+            .filter_map(|tc| {
+                let name = tc["function"]["name"].as_str().or(tc["name"].as_str()).unwrap_or("");
+                if name.is_empty() {
+                    return None;
+                }
+                let args = match tc["function"]["arguments"].clone() {
+                    serde_json::Value::String(s) => s,
+                    v => v.to_string(),
+                };
+                Some(json!({ "name": name, "arguments": args }))
+            })
+            .collect()
+    }
+}
+
+fn ollama_stream_chunk(line: &str) -> Option<(String, Option<Vec<serde_json::Value>>)> {
+    let l = line.strip_prefix("data:").unwrap_or(line).trim();
+    if l.is_empty() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(l).ok()?;
+    let content = v["message"]["content"]
+        .as_str()
+        .or(v["response"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let tcs = v["message"]["tool_calls"]
+        .as_array()
+        .cloned()
+        .filter(|a| !a.is_empty());
+    Some((content, tcs))
+}
+
+fn openai_stream_chunk(line: &str) -> Option<(String, Option<Vec<serde_json::Value>>)> {
+    let l = line.strip_prefix("data:").map(str::trim).unwrap_or("");
+    if l.is_empty() || l == "[DONE]" {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(l).ok()?;
+    let content = v["choices"][0]["delta"]["content"].as_str().unwrap_or("").to_string();
+    let tcs = v["choices"][0]["delta"]["tool_calls"]
+        .as_array()
+        .cloned()
+        .filter(|a| !a.is_empty());
+    Some((content, tcs))
 }
 
 #[tauri::command]
@@ -348,8 +418,8 @@ pub async fn ai_complete_stream(
         let emit = move |t: String| {
             let _ = app_delta.emit(&evt_delta, json!({ "delta": t }));
         };
-        stream_model(args, emit).await;
-        let _ = app.emit(&evt, json!({ "done": true }));
+        let tcs = stream_model(args, emit).await;
+        let _ = app.emit(&evt, json!({ "done": true, "toolCalls": tcs }));
     });
     Ok(())
 }

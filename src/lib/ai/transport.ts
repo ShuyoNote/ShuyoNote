@@ -56,13 +56,15 @@ export function createBackendStreamingTransport(config: ProviderConfig): LlmTran
       const runId = `run-${++streamSeq}-${Date.now()}`;
       const evtName = `ai-stream:${runId}`;
       let content = "";
+      let toolCalls: Array<{ name: string; arguments: string }> | undefined;
       let doneResolve: () => void = () => {};
       const done = new Promise<void>((resolve) => {
         doneResolve = resolve;
       });
-      const unlisten = await platform.event.listen<{ delta?: string; done?: boolean }>(evtName, (e) => {
+      const unlisten = await platform.event.listen<{ delta?: string; done?: boolean; toolCalls?: Array<{ name: string; arguments: string }> }>(evtName, (e) => {
         const p = e.payload;
         if (p?.done) {
+          if (Array.isArray(p.toolCalls) && p.toolCalls.length) toolCalls = p.toolCalls;
           doneResolve();
         } else if (typeof p?.delta === "string" && p.delta) {
           content += p.delta;
@@ -76,6 +78,7 @@ export function createBackendStreamingTransport(config: ProviderConfig): LlmTran
           model: config.model,
           api_key: config.apiKey || undefined,
           messages,
+          tools: opts.tools,
           temperature: opts.temperature,
           max_tokens: opts.maxTokens,
         };
@@ -84,7 +87,12 @@ export function createBackendStreamingTransport(config: ProviderConfig): LlmTran
       } finally {
         unlisten();
       }
-      return { content };
+      return {
+        content,
+        nativeToolCalls: toolCalls
+          ? toolCalls.map((tc) => ({ name: tc.name, arguments: parseToolArgs(tc.arguments) }))
+          : undefined,
+      };
     },
   };
 }
