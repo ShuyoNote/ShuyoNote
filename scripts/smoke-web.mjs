@@ -324,6 +324,7 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
   const imported = await invoke("import_attachment_files", { pageId: argsFolder.id, paths: ["uploads/readme.md"] });
   assert("import_attachment_files returns metas", Array.isArray(imported) && imported.length === 1, `${imported?.length}`);
   assert("import keeps the file name", imported?.[0]?.name === "readme.md", String(imported?.[0]?.name));
+  assert("import returns a usable display src (data URL)", typeof imported?.[0]?.path === "string" && imported?.[0]?.path.startsWith("data:"), String(imported?.[0]?.path));
   const inFolderImported = await invoke("list_page_attachments", { pageId: argsFolder.id });
   assert("imported file is owned by the folder (has page_id)", Array.isArray(inFolderImported) && inFolderImported.some((x) => x.name === "readme.md" && x.page_id === argsFolder.id), `${inFolderImported?.length}`);
   const notInOtherImported = await invoke("list_page_attachments", { pageId: created.id });

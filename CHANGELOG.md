@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.17] - 2026-08-24
+
+### 修复
+
+- **web 版插入视频出错（插入后空白/无法播放）**：web 平台 `import_attachment_files` 之前**恒返回 `path: ""`**，所以插入图片/视频时 `convertFileSrc(metas[0].path)` 得到空字符串，视频节点 `src` 为空（上一版只加了占位符防止警告，但视频仍是坏的）。修复：web 端 `import_attachment_files` 返回**自包含的 data-URL 显示地址**（与 `save_image` 一致），插入的图片/视频现在有真实可播放的 `src`。DB 行内 `path` 仍为空以保持轻量，显示时由 `list_page_attachments` 从 blob store 回填。
+- `scripts/smoke-web.mjs` 112→**113 项全绿**（新增：import 返回 data-URL 显示地址）。
+
+---
+
 ## [1.59.16] - 2026-08-24
 
 ### 修复

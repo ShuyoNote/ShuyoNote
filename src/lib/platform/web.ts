@@ -982,7 +982,11 @@ function makeInvoke(store: SqliteStore) {
         if (!reg) continue;
         const hash = await contentHash(reg.bytes);
         await blobStore.put(hash, reg.bytes);
-        const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: "" };
+        // Return a self-contained display src (data URL) so `convertFileSrc(path)`
+        // yields a real, playable URL for inserted image/video nodes. Previously
+        // `path` was always "" — so inserting a video produced `<video src="">`.
+        const displaySrc = `data:${reg.mime};base64,${bytesToBase64(reg.bytes)}`;
+        const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: displaySrc };
         // Always insert a fresh row (like desktop + save_image) so each import
         // carries its own page_id ownership. Previously this skipped when a row
         // with the same hash already existed, so a re-upload never attached the
