@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.31] - 2026-08-24
+
+### 修复
+
+- **文件夹折叠时附件不折叠**：侧边栏 `TreeFiles`（文件夹内附件列表）之前**不受 `expanded` 控制**，文件夹折叠了附件仍显示。改为 `isFolder && expanded` 才渲染，与子页面一起折叠/展开。
+
+---
+
 ## [1.59.30] - 2026-08-24
 
 ### 优化

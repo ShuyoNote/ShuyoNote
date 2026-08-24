@@ -390,7 +390,7 @@ function TreeItem({
         node.children.map((child) => (
           <TreeItem key={child.id} node={child} depth={depth + 1} onRowPointerDown={onRowPointerDown} />
         ))}
-      {isFolder && <TreeFiles folderId={node.id} depth={depth + 1} />}
+      {isFolder && expanded && <TreeFiles folderId={node.id} depth={depth + 1} />}
     </div>
   );
 }
