@@ -123,16 +123,21 @@ const probeEditor = createEditor({ nodes: EDITOR_NODES });
 /** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
 function parseEditorState(contentJson: string): EditorState | null {
   if (contentJson && !lexicalStateValid(contentJson)) return null;
+  // Lexical logs a "type undefined" console.error for a malformed node instead of
+  // throwing. Silence that transient noise during the probe; we decide outcome by
+  // whether the parsed state is empty. Restored unconditionally in finally.
+  const origError = console.error;
+  console.error = () => {};
   try {
     const state = probeEditor.parseEditorState(contentJson ?? "");
-    // On a malformed node Lexical swallows the error, logs "type undefined" and
-    // returns an EMPTY state — passing that to the real composer makes it throw
-    // "editor state is empty". An empty result means the parse failed, so fall
-    // back to the composer's safe empty editor state instead.
+    // On a malformed node Lexical swallows the error and returns an EMPTY state —
+    // passing that to the real composer makes it throw "editor state is empty".
     if (!state || state.isEmpty()) return null;
     return state;
   } catch {
     return null;
+  } finally {
+    console.error = origError;
   }
 }
 

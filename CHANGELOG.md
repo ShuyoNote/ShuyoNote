@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.64] - 2026-08-24
+
+### 修复
+
+- **消除控制台 `type "undefined"` 噪音**：崩溃（`editor state is empty`）在上一版已由 `state.isEmpty()` 兜底；本版再**在探针解析的极短窗口内静音 `console.error`**（Lexical 对坏节点是 console.error 而非抛异常），`finally` 恢复，彻底移除这条用户可见的错误日志。编辑器对坏页显示空页、无报错。
+
+---
+
 ## [1.59.63] - 2026-08-24
 
 ### 修复
