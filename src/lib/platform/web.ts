@@ -837,6 +837,10 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "import_attachment_files") {
       // paths are file names registered by dialog.open → blobStore, metadata row.
+      // The owning folder/page comes in as `pageId` (api passes `{ pageId, paths }`,
+      // NOT wrapped in `{ args }`); desktop stores it on the row so the file shows
+      // up under its folder in the sidebar/file-manager.
+      const pageId = a.pageId ?? a.page_id ?? null;
       const paths = (a.paths ?? []).map(String);
       const metas = [];
       for (const p of paths) {
@@ -847,7 +851,7 @@ function makeInvoke(store: SqliteStore) {
         const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: "" };
         const existing = store.query("SELECT id FROM attachments WHERE hash = ?", [hash])[0];
         if (!existing) {
-          insertAttachmentRow(store, { id: att.id, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
+          insertAttachmentRow(store, { id: att.id, page_id: pageId ?? null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
         }
         fileRegistry.delete(baseName(p));
         metas.push(att);

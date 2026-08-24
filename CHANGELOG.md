@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.10] - 2026-08-24
+
+### 修复
+
+- **web 版侧边栏文件夹不显示文件名**：`import_attachment_files`（web 处理器）之前**忽略了传入的 `page_id`**，插入 `attachments` 行时没有写归属文件夹，导致 `list_page_attachments(folderId)` 按 `page_id` 过滤后返回空——上传到文件夹里的文件根本不出现在侧边栏/文件管理，看起来就是「文件名不显示」。修复：读取 `a.pageId ?? a.page_id` 并写入行的 `page_id`（与桌面后端一致）。`scripts/smoke-web.mjs` 88→**92 项全绿**（新增：导入保留文件名 / 文件归属文件夹 / 不在其它文件夹下）。
+
+---
+
 ## [1.59.9] - 2026-08-24
 
 ### 修复

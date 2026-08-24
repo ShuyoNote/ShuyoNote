@@ -279,6 +279,22 @@ const inFolder = await invoke("list_page_attachments", { pageId: argsFolder.id }
 const inOther = await invoke("list_page_attachments", { pageId: created.id });
 assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && inFolder.some((x) => x.id === attFolder.id) && !inOther.some((x) => x.id === attFolder.id));
 
+// 8b-1. import_attachment_files must attach the file to the folder (page_id), so
+// it shows up (with its name) under that folder — "web 版侧边栏文件夹不显示文件名".
+{
+  // Register a file in the shared fileRegistry (via write_text_file) so the
+  // browser-import command has bytes to pull.
+  await invoke("write_text_file", { path: "uploads/readme.md", content: "# hello" });
+  const imported = await invoke("import_attachment_files", { pageId: argsFolder.id, paths: ["uploads/readme.md"] });
+  assert("import_attachment_files returns metas", Array.isArray(imported) && imported.length === 1, `${imported?.length}`);
+  assert("import keeps the file name", imported?.[0]?.name === "readme.md", String(imported?.[0]?.name));
+  const inFolderImported = await invoke("list_page_attachments", { pageId: argsFolder.id });
+  assert("imported file is owned by the folder (has page_id)", Array.isArray(inFolderImported) && inFolderImported.some((x) => x.name === "readme.md" && x.page_id === argsFolder.id), `${inFolderImported?.length}`);
+  const notInOtherImported = await invoke("list_page_attachments", { pageId: created.id });
+  assert("imported file not listed under a different folder", Array.isArray(notInOtherImported) && !notInOtherImported.some((x) => x.name === "readme.md"));
+}
+
+
 // 8c. Persistent-storage request returns a safe object (Node: no navigator).
 const persist = await invoke("request_persistent_storage", {});
 assert("request_persistent_storage is a safe object", persist && typeof persist === "object" && typeof persist.persisted === "boolean" && typeof persist.supported === "boolean");
