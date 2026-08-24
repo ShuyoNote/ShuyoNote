@@ -331,6 +331,37 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
   assert("imported file not listed under a different folder", Array.isArray(notInOtherImported) && !notInOtherImported.some((x) => x.name === "readme.md"));
 }
 
+// 8b-3. Attachment move / remove / batch-remove / restore must actually work
+// (these were stubs in web.ts before P0-1).
+{
+  const mv = await invoke("save_image", { page_id: argsFolder.id, name: "移动我.png", mime: "image/png", data: imgBytes });
+  // move to another folder (created is a page, used as a container → move there).
+  const targetContainer = argsFolder; // same folder works as a target too; use a distinct one.
+  const otherFolder = await invoke("create_folder", { parent_id: null, title: "移动目标夹" });
+  await invoke("move_attachment", { id: mv.id, newPageId: otherFolder.id });
+  const afterMove = await invoke("list_page_attachments", { pageId: otherFolder.id });
+  assert("move_attachment reassigns page_id", Array.isArray(afterMove) && afterMove.some((x) => x.id === mv.id && x.page_id === otherFolder.id), `${afterMove?.length}`);
+
+  // restore_attachment clones a historical version into a target page (new id, shared bytes).
+  const restored = await invoke("restore_attachment", { targetPageId: argsFolder.id, sourceId: mv.id });
+  assert("restore_attachment clones a new attachment", restored && typeof restored.id === "string" && restored.id !== mv.id && restored.hash === mv.hash, String(restored?.id));
+  const afterRestore = await invoke("list_page_attachments", { pageId: argsFolder.id });
+  assert("restored attachment shows up in target folder", Array.isArray(afterRestore) && afterRestore.some((x) => x.id === restored.id));
+
+  // batch remove deletes exactly the requested ids.
+  const b1 = await invoke("save_image", { page_id: null, name: "b1.png", mime: "image/png", data: imgBytes });
+  const b2 = await invoke("save_image", { page_id: null, name: "b2.png", mime: "image/png", data: imgBytes });
+  const removedCount = await invoke("remove_attachments", { ids: [b1.id, b2.id] });
+  assert("remove_attachments returns the removed count", removedCount === 2, String(removedCount));
+  const afterBatch = await invoke("list_page_attachments", {});
+  assert("remove_attachments actually deletes the rows", Array.isArray(afterBatch) && !afterBatch.some((x) => x.id === b1.id || x.id === b2.id));
+
+  // single remove deletes one row.
+  await invoke("remove_attachment", { id: mv.id });
+  const afterSingle = await invoke("list_page_attachments", {});
+  assert("remove_attachment deletes one row", Array.isArray(afterSingle) && !afterSingle.some((x) => x.id === mv.id));
+}
+
 // 8b-2. Re-importing the SAME content must still attach a fresh row to the folder.
 // (Previously a hash-dedup skip left page_id NULL on the second import, so a file
 // uploaded before the page_id fix never showed under its folder.)

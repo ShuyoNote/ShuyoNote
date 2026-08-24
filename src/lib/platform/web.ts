@@ -1023,9 +1023,60 @@ function makeInvoke(store: SqliteStore) {
       }
       return undefined as T;
     }
-    if (cmd === "remove_attachment" || cmd === "move_attachment") return undefined as T;
-    if (cmd === "remove_attachments") return 0 as T;
-    if (cmd === "restore_attachment") return null as T;
+    if (cmd === "remove_attachment") {
+      const id = String(a.id ?? "");
+      // Delete the row; free blob bytes only when no other row references the hash.
+      const row = store.query<{ hash: string }>("SELECT hash FROM attachments WHERE id = ?", [id])[0];
+      if (row) {
+        store.run("DELETE FROM attachments WHERE id = ?", [id]);
+        const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
+        if (refs === 0) {
+          await blobStore.delete(row.hash).catch(() => {});
+        }
+      }
+      return undefined as T;
+    }
+    if (cmd === "remove_attachments") {
+      const ids = (a.ids ?? []).map(String);
+      let removed = 0;
+      for (const id of ids) {
+        const row = store.query<{ hash: string }>("SELECT hash FROM attachments WHERE id = ?", [id])[0];
+        if (!row) continue;
+        store.run("DELETE FROM attachments WHERE id = ?", [id]);
+        removed++;
+        const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
+        if (refs === 0) {
+          await blobStore.delete(row.hash).catch(() => {});
+        }
+      }
+      return removed as T;
+    }
+    if (cmd === "move_attachment") {
+      const id = String(a.id ?? "");
+      const newPageId = String(a.newPageId ?? a.new_page_id ?? "");
+      const exists = store.query("SELECT id FROM pages WHERE id = ? AND deleted_at IS NULL", [newPageId])[0];
+      if (!exists) throw new Error("目标文件夹不存在");
+      const n = store.query("SELECT id FROM attachments WHERE id = ?", [id]).length;
+      if (n === 0) throw new Error("附件不存在");
+      store.run("UPDATE attachments SET page_id = ? WHERE id = ?", [newPageId, id]);
+      return undefined as T;
+    }
+    if (cmd === "restore_attachment") {
+      // Clone a historical attachment as a NEW row in the target page (shared bytes).
+      const targetPageId = String(a.targetPageId ?? a.target_page_id ?? "");
+      const sourceId = String(a.sourceId ?? a.source_id ?? "");
+      const row = store.query<{ name: string; hash: string; mime: string; size: number }>(
+        "SELECT name, hash, mime, size FROM attachments WHERE id = ?",
+        [sourceId],
+      )[0];
+      if (!row) throw new Error("附件不存在");
+      const id = uid();
+      insertAttachmentRow(store, {
+        id, page_id: targetPageId || null, name: row.name, hash: row.hash, mime: row.mime, size: row.size,
+      });
+      const bytes = await blobStore.get(row.hash);
+      return { id, name: row.name, hash: row.hash, mime: row.mime, size: row.size, path: bytes ? blobUrl(bytes, row.mime) : "" } as T;
+    }
 
     // ---- Bookmark metadata (browser can't fetch OG reliably; return the URL) ----
     if (cmd === "fetch_bookmark_metadata") {

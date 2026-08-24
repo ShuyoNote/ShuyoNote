@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.24] - 2026-08-24
+
+### 修复
+
+- **附件移动/批量删除/恢复真正生效**（P0-1）：web 端 `move_attachment`/`remove_attachments`/`restore_attachment` 之前是空桩/占位，文件管理器里"移动 / 批量删除 / 从回收站恢复附件"点了没反应。修复：
+  - `move_attachment`：校验目标容器存在 → `UPDATE attachments SET page_id`。
+  - `remove_attachment`/`remove_attachments`：删行 + **仅当无其它行引用同一 hash 时**才删 blob 字节（内容寻址零引用规则，与桌面一致）。
+  - `restore_attachment`：把历史版本克隆为新行（新 id、共享字节）放入目标容器。
+  - `blobStore` 补 `delete`。
+- `scripts/smoke-web.mjs` 117→**123 项全绿**（新增：移动归属 / 克隆恢复 / 批量删除计数与行删除 / 单个删除）。
+
+---
+
 ## [1.59.23] - 2026-08-24
 
 ### 优化

@@ -88,6 +88,16 @@ export const blobStore = {
       req.onerror = () => reject(req.error);
     });
   },
+  /** Remove a blob entry (used when an attachment's bytes have no remaining refs). */
+  async delete(hash: string): Promise<void> {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BLOB_OS, "readwrite");
+      tx.objectStore(BLOB_OS).delete(hash);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
   /** Enumerate all (hash, bytes) for backup/export. */
   async entries(): Promise<{ hash: string; bytes: Uint8Array }[]> {
     const db = await openDb();
