@@ -1169,6 +1169,17 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("lexicalValid rejects empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === null);
 }
 
+// 21. AI-style create_page -> delete_page -> gone from list (web delete path).
+{
+  const made = await invoke("create_page", {
+    args: { parent_id: null, title: "待删页", content_json: '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"x","version":1}]}],"type":"root","version":1}}', content_text: "x" },
+  });
+  assert("ai create_page returns a page", made && made.id);
+  await invoke("delete_page", { id: made.id });
+  const pagesAfter = await invoke("list_pages", {});
+  assert("delete_page removes AI-created page from list", Array.isArray(pagesAfter) && !pagesAfter.some((p) => p.id === made.id), JSON.stringify(pagesAfter.map((p) => p.id).slice(0, 6)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 // Use exitCode (not process.exit()) so any still-closing libuv handles drain
 // before the process exits; process.exit() races teardown and hits a Windows
