@@ -2,6 +2,27 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.45.0] - 2026-08-22
+
+### 优化
+
+- **网址书签卡片编辑与交互完善**：
+  - 卡片内嵌「✎ 编辑」按钮改为**悬停显示**（`opacity: 0 → 1`，`focus-within` 也显示），不再常驻遮挡，视觉更干净
+  - 点击「✎」改用**全局 `inputDialog`** 输入新网址——避开 Lexical 装饰器组件重渲染导致按钮点击失效的问题，一次点击即可打开编辑框
+  - 编辑框支持回车提交 / Esc 取消 / 自动聚焦
+  - 修复「闪动」：元数据（标题/摘要/站点/预览图）直接**写入节点持久化**，重载不再重复抓取闪跳
+  - 修复「不能打开」：改由 Tauri `openUrl` 打开外部链接（WebView 内禁 `window.open`）
+  - 修复 `Cannot assign to read only property '__title'`：改用 `node.replace($createWebBookmarkNode(...))` 整体替换，不再写冻结字段
+  - 卡片根节点与编辑按钮加 `onMouseDown` 阻止默认行为，避免 Lexical 抢走点击
+- **直接输入网址后回车转换**：光标停在「只含一个 URL 的文本块」时按回车，自动转换成网址书签卡片（与粘贴转换一致）；气泡里也支持回车=转换 / Esc=关闭
+
+### 变更
+
+- `BookmarkPastePlugin` 新增 `KEY_DOWN_COMMAND` 处理：检测单个纯 URL 块并回车书签化
+- 后端 25 项单测通过
+
+---
+
 ## [1.44.0] - 2026-08-22
 
 ### 新增

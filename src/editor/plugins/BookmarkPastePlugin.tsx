@@ -6,7 +6,9 @@ import {
   $getSelection,
   $insertNodes,
   $isRangeSelection,
+  COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_HIGH,
+  KEY_DOWN_COMMAND,
   PASTE_COMMAND,
 } from "lexical";
 import { $createLinkNode } from "@lexical/link";
@@ -20,6 +22,11 @@ function isOnlyUrl(text: string): boolean {
   if (!t) return false;
   if (/\s/.test(t)) return false;
   return URL_RE.test(t);
+}
+
+function toFullUrl(url: string): string {
+  const u = url.trim();
+  return u.includes("://") ? u : `https://${u}`;
 }
 
 export function BookmarkPastePlugin() {
@@ -36,8 +43,7 @@ export function BookmarkPastePlugin() {
         if (!text || !isOnlyUrl(text)) return false;
 
         // Normalize to a full URL for the node.
-        let url = text.trim();
-        if (!url.includes("://")) url = `https://${url}`;
+        const url = toFullUrl(text);
 
         // Position the choice bubble near the caret.
         let top = 0;
@@ -63,7 +69,46 @@ export function BookmarkPastePlugin() {
     );
   }, [editor]);
 
-  // Close the choice bubble on outside click.
+  // Pressing Enter on a block that contains exactly one typed URL converts it
+  // into a bookmark card (matching the paste flow), instead of a plain newline.
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (e: KeyboardEvent) => {
+        if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) {
+          return false;
+        }
+        let url = "";
+        editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) return;
+          const topLevel = selection.anchor.getNode().getTopLevelElement();
+          if (!topLevel) return;
+          const text = topLevel.getTextContent();
+          if (!isOnlyUrl(text)) return;
+          // Only when the cursor sits in the single URL block (not a selection
+          // across multiple blocks) do we treat it as a convertible URL.
+          url = text.trim();
+        });
+        if (!url) return false;
+        e.preventDefault();
+        const full = toFullUrl(url);
+        editor.update(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) return;
+          const topLevel = selection.anchor.getNode().getTopLevelElement();
+          if (!topLevel) return;
+          const node = $createWebBookmarkNode(full);
+          topLevel.replace(node);
+          const p = $createParagraphNode();
+          if (node.getParent()) node.insertAfter(p);
+          p.selectStart();
+        });
+        return true;
+      },
+      COMMAND_PRIORITY_EDITOR,
+    );
+  }, [editor]);
   useEffect(() => {
     if (!prompt) return;
     const onDown = (e: MouseEvent) => {
@@ -96,7 +141,21 @@ export function BookmarkPastePlugin() {
   };
 
   return (
-    <div ref={menuRef} className="bookmark-paste-menu" style={{ top: prompt.top, left: prompt.left }}>
+    <div
+      ref={menuRef}
+      className="bookmark-paste-menu"
+      style={{ top: prompt.top, left: prompt.left }}
+      onKeyDown={(e) => {
+        // Enter converts to bookmark, Escape dismisses (leaving nothing pasted).
+        if (e.key === "Enter") {
+          e.preventDefault();
+          insertBookmark();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setPrompt(null);
+        }
+      }}
+    >
       <div className="bookmark-paste-hint">粘贴了链接</div>
       <button className="bookmark-paste-opt primary" onClick={insertBookmark}>
         <span className="bpi-icon">🔗</span> 转换为网址书签
