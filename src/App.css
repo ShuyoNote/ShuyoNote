@@ -458,6 +458,28 @@ body,
   transition: width var(--transition-fast);
 }
 
+/* Fixed progress bar for space export/import, always visible regardless of the
+   space-switcher popover being open/closed during the async work. */
+.space-export-overlay {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 14px;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.space-export-overlay .space-export-progress {
+  width: min(480px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+}
+
 .space-item-op {
   border: none;
   background: transparent;

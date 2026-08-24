@@ -1032,6 +1032,26 @@ export function PageTree({
           </button>
         </div>
       )}
+
+      {/* Space export/import progress: a fixed overlay so it's always visible while a
+          space is being exported/imported — independent of the space-switcher popover
+          (which may close or be off-screen during the async work). */}
+      {exporting && (
+        <div className="space-export-overlay">
+          <div className="space-export-progress">
+            <div className="space-export-progress-label">
+              <span>{exporting.message}</span>
+              <span>{Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%</span>
+            </div>
+            <div className="space-export-progress-track">
+              <div
+                className="space-export-progress-fill"
+                style={{ width: `${Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

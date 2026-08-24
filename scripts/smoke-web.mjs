@@ -513,6 +513,15 @@ assert("backup-progress event has phase/done/total", backupProgress[0] && backup
   assert("workspace-progress events emitted during export", events.length >= 1, `${events.length} event(s)`);
   assert("progress event has done/total/message", events[0] && typeof events[0].done === "number" && typeof events[0].total === "number" && typeof events[0].message === "string", JSON.stringify(events[0]));
 
+  // The UI subscribes via platform.event.listen (web forwards window CustomEvents),
+  // so prove that exact path also receives progress during a real export.
+  const viaListen = [];
+  const un = await wsPlatform.event.listen("workspace-progress", (e) => viaListen.push(e.payload));
+  await wsInvoke("export_workspace", { destPath: "space-export.zip" });
+  un();
+  assert("platform.event.listen receives export progress", viaListen.length >= 1, `${viaListen.length} event(s)`);
+  assert("forwarded event carries done/total", viaListen[0] && typeof viaListen[0].done === "number" && typeof viaListen[0].total === "number", JSON.stringify(viaListen[0]));
+
   // 10i-4. import_workspace restores the workspace zip and emits workspace-progress
   // events on phase "import"; it also applies the workspace.json name.
   const importEvents = [];
