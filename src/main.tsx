@@ -1,6 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { version } from "../package.json";
+
+// Browser tab / window title carries the live build version (mirrors the desktop
+// window title set in src-tauri/src/lib.rs).
+document.title = `ShuyoNote 数友笔记 · v${version}`;
 
 // Surface uncaught runtime errors for diagnosis (production-safe: console only).
 window.addEventListener("error", (e) => {

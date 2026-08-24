@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.66] - 2026-08-24
+
+### 优化
+
+- **浏览器标签/窗口标题带版本号**：web 版运行后标签显示「ShuyoNote 数友笔记 · v{version}」（`main.tsx` 从 `package.json` 读版本设置 `document.title`，与桌面窗标题一致）；静态 `<title>` 改为「ShuyoNote 数友笔记」。
+
+---
+
 ## [1.59.65] - 2026-08-24
 
 ### 修复
