@@ -201,6 +201,13 @@ await invoke("save_page", { args: { id: argsPage.id, title: "夹内改名", cont
 const savedArgs = await invoke("get_page", { id: argsPage.id });
 assert("save_page (args wrapper) updates title", savedArgs && savedArgs.title === "夹内改名", savedArgs?.title);
 
+// 3c. Deleting a folder cascades soft-delete to its descendants (page inside).
+await invoke("delete_page", { id: argsFolder.id });
+const afterFolderDelete = await invoke("get_page", { id: argsPage.id });
+const folderTrash = await invoke("list_deleted", {});
+assert("delete_page cascade soft-deletes child page", afterFolderDelete === null || afterFolderDelete.deleted_at !== null);
+assert("folder delete puts descendant in trash", Array.isArray(folderTrash) && folderTrash.some((p) => p.id === argsPage.id));
+
 // 4. Soft-delete + trash + restore round-trip.
 await invoke("delete_page", { id: created.id });
 const trash = await invoke("list_deleted", {});
@@ -245,6 +252,11 @@ assert("save_image path is a data URL for display", typeof att?.path === "string
 assert("attachment_path resolves from blob store", (await invoke("attachment_path", { hash: att.hash })).startsWith("data:image/png"));
 const seen = await invoke("list_page_attachments", {});
 assert("list_page_attachments includes image with a display path", Array.isArray(seen) && seen.some((x) => x.id === att.id && (x.path || "").startsWith("data:image/png")));
+// Folder-scoped listing: save an image owned by a folder, then filter by page_id.
+const attFolder = await invoke("save_image", { page_id: argsFolder.id, name: "夹内图.png", mime: "image/png", data: imgBytes });
+const inFolder = await invoke("list_page_attachments", { pageId: argsFolder.id });
+const inOther = await invoke("list_page_attachments", { pageId: created.id });
+assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && inFolder.some((x) => x.id === attFolder.id) && !inOther.some((x) => x.id === attFolder.id));
 
 // 8c. Persistent-storage request returns a safe object (Node: no navigator).
 const persist = await invoke("request_persistent_storage", {});

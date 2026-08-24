@@ -444,8 +444,48 @@ function makeInvoke(store: SqliteStore) {
       }
       return null as T;
     }
-    if (cmd === "delete_page" || cmd === "purge_page") {
-      store.run("UPDATE pages SET deleted_at = ? WHERE id = ?", [Date.now(), a.id]);
+    if (cmd === "delete_page") {
+      // Soft-delete the page AND recursively all of its descendants (folders'
+      // children, databases' pages, ...), so removing a folder empties it from
+      // the tree rather than leaving orphaned children behind.
+      const rootId = String(a.id ?? "");
+      const now = Date.now();
+      const all = [rootId];
+      const queue = [rootId];
+      while (queue.length > 0) {
+        const parent = queue.shift()!;
+        const children = store.query("SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [parent]);
+        for (const child of children) {
+          const cid = String((child as any).id);
+          all.push(cid);
+          queue.push(cid);
+        }
+      }
+      for (const pid of all) {
+        store.run("UPDATE pages SET deleted_at = ?, updated_at = ? WHERE id = ?", [now, now, pid]);
+      }
+      return undefined as T;
+    }
+    if (cmd === "purge_page") {
+      // Physical purge: also cascade to descendants.
+      const rootId = String(a.id ?? "");
+      const all = [rootId];
+      const queue = [rootId];
+      while (queue.length > 0) {
+        const parent = queue.shift()!;
+        const children = store.query("SELECT id FROM pages WHERE parent_id = ?", [parent]);
+        for (const child of children) {
+          const cid = String((child as any).id);
+          all.push(cid);
+          queue.push(cid);
+        }
+      }
+      for (const pid of all) {
+        store.run("DELETE FROM pages WHERE id = ?", [pid]);
+        store.run("DELETE FROM page_tags WHERE page_id = ?", [pid]);
+        store.run("DELETE FROM page_props WHERE page_id = ?", [pid]);
+        store.run("DELETE FROM page_versions WHERE page_id = ?", [pid]);
+      }
       return undefined as T;
     }
     if (cmd === "restore_page") {
@@ -664,21 +704,23 @@ function makeInvoke(store: SqliteStore) {
     // ---- Attachments (bytes in IndexedDB blob store; SQLite holds metadata only,
     //      so the DB never bloats with base64 as images grow) ----
     if (cmd === "save_image") {
-      const data = (a.data as number[]) ?? [];
+      // api wraps args in `{ args }`.
+      const args = a.args ?? a;
+      const data = (args.data as number[]) ?? [];
       const bytes = new Uint8Array(data);
-      const mime = String(a.mime || "image/png");
-      const name = String(a.name ?? "image.png");
+      const mime = String(args.mime || "image/png");
+      const name = String(args.name ?? "image.png");
+      const pageId = args.page_id ?? null;
       const hash = await contentHash(bytes);
       await blobStore.put(hash, bytes);
       // Durable, self-contained URL for immediate display (survives reload).
       const path = `data:${mime};base64,${bytesToBase64(bytes)}`;
       const att = { id: uid(), name, hash, mime, size: data.length, path };
-      const existing = store.query("SELECT id FROM attachments WHERE hash = ?", [hash])[0];
-      if (!existing) {
-        store.run("INSERT INTO attachments (id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)", [
-          att.id, att.name, att.hash, att.mime, att.size, "",
-        ]);
-      }
+      // Always insert a row (id-based) so each occurrence can carry its own
+      // page_id ownership; bytes are content-addressed and deduped in blobStore.
+      store.run("INSERT INTO attachments (id, page_id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+        att.id, pageId, att.name, att.hash, att.mime, att.size, "",
+      ]);
       return att as T;
     }
     if (cmd === "attachment_path") {
@@ -693,7 +735,13 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "get_attachment") return null as T;
     if (cmd === "list_page_attachments") {
-      const rows = store.query("SELECT * FROM attachments");
+      // File-manager lists attachments owned by a folder/page (by page_id). When
+      // no folder is open, list all (root). Attachments with a deleted owner are
+      // hidden via their page_id being absent from live pages.
+      const pageId = String(a.pageId ?? a.page_id ?? "");
+      const rows = pageId
+        ? store.query("SELECT * FROM attachments WHERE page_id = ?", [pageId])
+        : store.query("SELECT * FROM attachments");
       // Resolve a display path from the byte store (which survives reload) so the
       // file-manager previews/images render even after a refresh.
       const resolved = await Promise.all(

@@ -231,6 +231,7 @@ export class SqliteStore {
       );
       CREATE TABLE IF NOT EXISTS attachments (
         id TEXT PRIMARY KEY,
+        page_id TEXT,
         name TEXT NOT NULL,
         hash TEXT NOT NULL,
         mime TEXT NOT NULL,
@@ -282,7 +283,15 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_page_props ON page_props(page_id);
       CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
       CREATE INDEX IF NOT EXISTS idx_page_versions ON page_versions(page_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
     `);
+    // Safe migration for pre-existing DBs whose `attachments` table predates
+    // the page_id column (owns → which folder/page a file belongs to).
+    try {
+      this.db.run("ALTER TABLE attachments ADD COLUMN page_id TEXT");
+    } catch {
+      /* already exists */
+    }
     // Safe migration for pre-existing DBs whose `pages` table predates db_rule.
     try {
       this.db.run("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'");

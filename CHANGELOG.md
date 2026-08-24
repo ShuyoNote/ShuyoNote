@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.2] - 2026-08-24
+
+### 修复
+
+- **删除文件夹时里面的页面和文件还在**：
+  - **级联软删子内容**：web 版 `delete_page` 之前只软删当前节点。改为**递归收集所有未删后代**（子页面/子文件夹/数据库）逐一软删，`purge_page` 同理**级联物理删除**（含 page_tags/page_props/page_versions）。删除文件夹后，树里不再残留其子页面。
+  - **附件归属（`attachments.page_id`）**：web 附件表补 `page_id` 列（含对旧库的 `ALTER TABLE ADD COLUMN` 迁移 + 索引）；`save_image`/`import_attachment_files` 记录归属，`list_page_attachments` 按 `page_id` 过滤——文件管理按文件夹展示附件、不串夹。
+  - **`save_image` 始终插一行**：之前按内容 hash 去重跳过插入，导致同内容二次保存丢失 page_id 归属。改为 id-based 恒插入（字节仍内容寻址去重）。
+  - 顺带修复 `save_image` 的 `{ args }` 解包 bug（之前读 `a.data` 是 undefined）。
+  - `scripts/smoke-web.mjs` 73→**76 项全绿**（新增：delete 级联软删子页面 / 级联入回收站 / 附件按 page_id 过滤）。
+
+---
+
 ## [1.59.1] - 2026-08-24
 
 ### 修复
