@@ -26,6 +26,13 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 // Re-export the sqlite store hooks so a test harness (or another shell) can wire
 // the wasm URL + bytes and an fs/memory persist adapter without importing
 // sqliteStore directly.
@@ -970,9 +977,42 @@ function makeInvoke(store: SqliteStore) {
       return store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0] as T;
     }
 
-    // ---- Backup / export / import (browser: no-op, no real file I/O) ----
-    if (cmd === "export_backup") return { path: "", size: 0 } as T;
-    if (cmd === "import_backup") return undefined as T;
+    // ---- Backup / export / import (browser: custom self-contained JSON container) ----
+    if (cmd === "export_backup") {
+      const dbBytes = store.snapshot();
+      const atts = await blobStore.entries();
+      const container = {
+        format: "shuyonote-web-backup",
+        version: 1,
+        exported_at: Date.now(),
+        db: bytesToBase64(dbBytes),
+        attachments: Object.fromEntries(atts.map((a) => [a.hash, bytesToBase64(a.bytes)])),
+      };
+      const json = JSON.stringify(container);
+      const name = String(a.destPath ?? "shuyonote-web-backup.json").split(/[\\/]/).pop() || "shuyonote-web-backup.json";
+      if (typeof document !== "undefined") downloadBytes(name, new TextEncoder().encode(json), "application/json");
+      // Register so same-session import (and the Node smoke test) can read it back.
+      fileRegistry.set(name, { bytes: new TextEncoder().encode(json), mime: "application/json", name });
+      const data = new TextEncoder().encode(json);
+      return { path: name, size: data.length } as T;
+    }
+    if (cmd === "import_backup") {
+      // Read the container (browser picker registered it by name, or Node map).
+      const src = String(a.srcPath ?? "");
+      const reg = fileRegistry.get(baseName(src));
+      if (!reg) throw new Error("备份文件不存在");
+      const text = new TextDecoder().decode(reg.bytes);
+      const container = JSON.parse(text);
+      if (container.format !== "shuyonote-web-backup") throw new Error("不是有效的 ShuyoNote 备份");
+      if (typeof container.db !== "string") throw new Error("备份缺少数据库");
+      // Restore DB bytes.
+      await store.restore(base64ToBytes(container.db));
+      // Re-put attachment bytes into blobStore.
+      for (const [hash, b64] of Object.entries(container.attachments ?? {})) {
+        await blobStore.put(hash, base64ToBytes(String(b64)));
+      }
+      return undefined as T;
+    }
     if (cmd === "export_workspace") return { path: "", size: 0, pages: 0, attachments: 0 } as T;
     if (cmd === "import_workspace") return null as T;
     if (cmd === "write_text_file") {

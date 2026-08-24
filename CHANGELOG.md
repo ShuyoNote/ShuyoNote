@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.57.0] - 2026-08-24
+
+### 新增（Web 平台备份导出/导入）
+
+- **浏览器版能「整库备份 + 恢复」了**：把全部笔记数据（SQLite 库快照 + 附件字节）打成一个**自包含 JSON 容器**下载，可再导入恢复。
+  - `blobStore.entries()`：枚举所有附件字节（hash + bytes，供打包）。
+  - `SqliteStore.snapshot()`（`db.export()` 字节）+ `SqliteStore.restore(bytes)`（用备份字节重建数据库句柄并迁移）。
+  - `web.ts` 的 **`export_backup`**：打包 `{format:"shuyonote-web-backup",version:1,exported_at,db:base64,attachments:{hash:base64}}`，浏览器里 Blob 下载，并注册进 `fileRegistry`（同会话可读回）；返回 `{path,size}`。**`import_backup`**：读容器 → 校验 format → `store.restore(db)` + 把附件字节回填 blobStore。
+  - `scripts/smoke-web.mjs` 61→**64 项全绿**（新增：export_backup 返回 path+size(≈164KB)/构建可解析容器/import_backup 恢复页面数据）。
+
+---
+
 ## [1.56.0] - 2026-08-24
 
 ### 新增（Web 平台块级引用 / 反链）

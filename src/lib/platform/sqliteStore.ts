@@ -173,6 +173,23 @@ export class SqliteStore {
     return this.db !== null;
   }
 
+  /** Snapshot the whole DB as bytes (for backup/export). */
+  snapshot(): Uint8Array {
+    if (!this.db) throw new Error("SqliteStore not initialized");
+    return this.db.export();
+  }
+
+  /** Replace the DB with the given bytes (for backup restore) and persist. As
+   *  sql.js can't reopen a new Database from an existing handle, we rebuild the
+   *  handle from the bytes. The caller must re-init/refresh surrounding state. */
+  async restore(bytes: Uint8Array): Promise<void> {
+    const SQL = await getSqlModule();
+    if (this.db) this.db.close();
+    this.db = new SQL.Database(bytes);
+    this.migrate();
+    await this.adapter.save(bytes);
+  }
+
   private migrate(): void {
     if (!this.db) return;
     this.db.run(`

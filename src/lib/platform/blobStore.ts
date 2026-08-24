@@ -82,4 +82,36 @@ export const blobStore = {
       req.onerror = () => reject(req.error);
     });
   },
+  /** Enumerate all (hash, bytes) for backup/export. */
+  async entries(): Promise<{ hash: string; bytes: Uint8Array }[]> {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BLOB_OS, "readonly");
+      const store = tx.objectStore(BLOB_OS);
+      const keysReq = store.getAllKeys();
+      keysReq.onsuccess = () => {
+        const keys = (keysReq.result ?? []) as string[];
+        if (keys.length === 0) {
+          resolve([]);
+          return;
+        }
+        const out: { hash: string; bytes: Uint8Array }[] = [];
+        let done = 0;
+        for (const k of keys) {
+          const getReq = store.get(k);
+          getReq.onsuccess = () => {
+            const v = getReq.result as Uint8Array | undefined;
+            if (v) out.push({ hash: k, bytes: new Uint8Array(v) });
+            done++;
+            if (done === keys.length) resolve(out);
+          };
+          getReq.onerror = () => {
+            done++;
+            if (done === keys.length) resolve(out);
+          };
+        }
+      };
+      keysReq.onerror = () => reject(keysReq.error);
+    });
+  },
 };

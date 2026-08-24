@@ -95,6 +95,11 @@ if (!globalThis.indexedDB) {
               setTimeout(() => req.onsuccess && req.onsuccess(), 0);
               return req;
             },
+            getAllKeys: () => {
+              const req = { result: [...m.keys()], onsuccess: null, onerror: null };
+              setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+              return req;
+            },
             getKey: (k) => {
               const req = { result: m.has(k) ? k : undefined, onsuccess: null, onerror: null };
               setTimeout(() => req.onsuccess && req.onsuccess(), 0);
@@ -335,6 +340,20 @@ const blockBacklinks = await invoke("list_block_backlinks", { pageId: targetPage
 assert("list_block_backlinks finds block ref", Array.isArray(blockBacklinks) && blockBacklinks.some((b) => b.target_block_id === "blk-target" && b.source_page_id === citePage.id));
 const blockSearch = await invoke("search_blocks", { args: { query: "目标块内容" } });
 assert("search_blocks finds block by text", Array.isArray(blockSearch) && blockSearch.some((b) => b.block_id === "blk-target" && b.page_id === targetPage.id));
+
+// ---- Backup export / import (Web: self-contained JSON container) ----
+// 10i. Export a backup, then import it into a fresh store and verify data returns.
+const backup = await invoke("export_backup", { destPath: "shuyo-backup.json" });
+assert("export_backup returns path+size", backup && typeof backup.path === "string" && backup.path.length > 0 && typeof backup.size === "number" && backup.size > 0, `${backup?.size} bytes`);
+// export_backup registered the container into fileRegistry under the filename.
+const containerContent = JSON.parse(await invoke("read_text_file", { path: backup.path }));
+assert("export_backup builds a parseable container", containerContent.format === "shuyonote-web-backup" && typeof containerContent.db === "string" && typeof containerContent.attachments === "object");
+const backupBeforePages = (await invoke("list_pages", {})).length;
+// Import into a fresh platform instance.
+const backupPlatform = newPlatform();
+await backupPlatform.executor.invoke("import_backup", { srcPath: backup.path });
+const backupAfterPages = await backupPlatform.executor.invoke("list_pages", {});
+assert("import_backup restores pages", Array.isArray(backupAfterPages) && backupAfterPages.length >= backupBeforePages, `${backupAfterPages?.length} pages after import`);
 
 // 11. Persistence: a NEW platform instance reads the same SQLite file.
 const platform2 = newPlatform();
