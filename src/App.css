@@ -7280,12 +7280,43 @@ select.prop-value {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 6px;
   cursor: col-resize;
-  z-index: 1;
+  z-index: 2;
 }
-.ai-resizer:hover {
-  outline: 1px solid var(--accent);
+/* A 1px highlight line hugging the panel's exact left edge (the content boundary). */
+.ai-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+/* Small centered grip pill so the user can see where to grab. */
+.ai-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+.ai-resizer:hover::before,
+.ai-resizer:active::before {
+  background: var(--accent);
+}
+.ai-resizer:hover::after,
+.ai-resizer:active::after {
+  opacity: 1;
+  background: var(--accent);
 }
 .is-ai-resizing {
   user-select: none;
