@@ -22,6 +22,16 @@ function treeValid(value: unknown): boolean {
     }
     for (const k of Object.keys(o)) {
       if (k === "type") continue;
+      // `children` are always Lexical nodes (paragraphs, text, …), each of which
+      // must carry a string `type`. A data array (e.g. ImageRow's `items`) is not
+      // `children` and is left alone.
+      if (k === "children" && Array.isArray(o[k])) {
+        for (const child of o[k] as unknown[]) {
+          if (!child || typeof child !== "object" || typeof (child as any).type !== "string" || !(child as any).type) {
+            return false;
+          }
+        }
+      }
       if (!treeValid(o[k])) return false;
     }
     return true;

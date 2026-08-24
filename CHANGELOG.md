@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.63] - 2026-08-24
+
+### 修复
+
+- **编辑器崩溃（根因确认）**：堆栈显示错误从**探针编辑器** `parseEditorState` 抛出——Lexical 解析到损坏节点时**不抛异常而是吞掉错误、打 log 并返回空 EditorState**；我把这个空状态又交给了真实 LexicalComposer，导致 `setEditorState: editor state is empty` 崩溃。现：
+  - `Editor.parseEditorState` 在探针解析后**检查 `state.isEmpty()`**，空结果视为解析失败 → 返回 `null`，让 LexicalComposer 用安全的空编辑器态；
+  - `lexicalValidate.treeValid` 增加**每个 `children` 元素必须带字符串 `type`**（children 必为节点；图片行 `items` 非 children 不受影响），在交给探针前就拒绝坏文档，避免 Lexical 的 `type "undefined"` 内部日志。
+- `scripts/smoke-web.mjs` 185 全绿。
+
+---
+
 ## [1.59.62] - 2026-08-24
 
 ### 修复
