@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { useNotes } from "../store/notes";
@@ -49,6 +49,43 @@ export function AiAssistantPanel() {
   const currentId = useNotes((s) => s.currentId);
   const pageOpen = Boolean(currentId);
 
+  // Resizable panel width (persisted), applied as a CSS var so .main lets space follow.
+  const PANEL_W_KEY = "shuyonote.ai.panelWidth";
+  const loadWidth = () => {
+    try {
+      const n = Number(localStorage.getItem(PANEL_W_KEY));
+      return Number.isFinite(n) && n >= 300 ? n : 380;
+    } catch {
+      return 380;
+    }
+  };
+  const [width, setWidth] = useState(loadWidth);
+  const widthRef = useRef(width);
+  useEffect(() => {
+    widthRef.current = width;
+    document.body.style.setProperty("--ai-w", `${width}px`);
+  }, [width]);
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = widthRef.current;
+    const clamp = (w: number) => Math.min(640, Math.max(300, w));
+    const onMove = (ev: PointerEvent) => setWidth(clamp(startW + (startX - ev.clientX)));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-ai-resizing");
+      try {
+        localStorage.setItem(PANEL_W_KEY, String(widthRef.current));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.classList.add("is-ai-resizing");
+  };
+
   // Reserve right rail space while the panel is open (content shifts, Wolai-style).
   useEffect(() => {
     document.body.classList.toggle("is-ai-open", open);
@@ -94,6 +131,7 @@ export function AiAssistantPanel() {
   return (
     <>
       <div className="ai-panel">
+        <div className="ai-resizer" onPointerDown={onResizeStart} title="拖动调整宽度" />
         <div className="ai-header">
           <div className="ai-header-main">
             <div className="ai-title-row">

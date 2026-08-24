@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ShuyoNote",
-  "version": "1.59.57",
+  "version": "1.59.58",
   "identifier": "cn.shuyo.shuyonote",
   "build": {
     "beforeDevCommand": "pnpm dev",

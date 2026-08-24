@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.58] - 2026-08-24
+
+### 新增
+
+- **AI 助手窗口可拖拽调宽**：右抽屉左缘新增拖动条（`col-resize`），拖拽在 300–640px 间实时调整宽度；宽度存为 CSS 变量 `--ai-w` 并持久化到 localStorage（`shuyonote.ai.panelWidth`），内容让位 `.main` 同步跟随。
+
+---
+
 ## [1.59.57] - 2026-08-24
 
 ### 新增

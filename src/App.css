@@ -1889,7 +1889,7 @@ body.is-toc-open .main {
   padding-right: 280px;
 }
 body.is-ai-open .main {
-  padding-right: 380px;
+  padding-right: var(--ai-w, 380px);
 }
 
 .main.empty {
@@ -7261,7 +7261,8 @@ select.prop-value {
   right: 0;
   bottom: 0;
   z-index: 75;
-  width: min(380px, calc(100vw - 48px));
+  width: var(--ai-w, 380px);
+  max-width: calc(100vw - 64px);
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -7273,6 +7274,24 @@ select.prop-value {
 @keyframes ai-slide-in {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
+}
+.ai-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 1;
+}
+.ai-resizer:hover {
+  outline: 1px solid var(--accent);
+}
+.is-ai-resizing {
+  user-select: none;
+}
+.is-ai-resizing .ai-panel {
+  transition: none;
 }
 
 /* Right-edge vertical launcher rail (Wolai-style) */
