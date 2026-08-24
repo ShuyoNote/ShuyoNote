@@ -9,6 +9,7 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { BoardView } from "./components/BoardView";
 import { GraphView } from "./components/GraphView";
@@ -268,6 +269,7 @@ function App() {
         <CommandPalette />
         <Toaster />
         <ConfirmDialog />
+        <InputDialog />
       </div>
     );
   }
@@ -311,6 +313,7 @@ function App() {
       <CommandPalette />
       <Toaster />
       <ConfirmDialog />
+      <InputDialog />
       <PluginManager />
     </div>
   );

@@ -76,6 +76,22 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     return false;
   }
 
+  // Persist fetched metadata into this node (call inside an editor.update).
+  updateMeta(
+    title: string,
+    description: string,
+    siteName: string,
+    imageHash: string,
+    imageMime: string,
+  ): void {
+    this.__title = title;
+    this.__description = description;
+    this.__siteName = siteName;
+    this.__imageHash = imageHash;
+    this.__imageMime = imageMime;
+    this.markDirty();
+  }
+
   decorate(): JSX.Element {
     return (
       <WebBookmarkCard
@@ -176,7 +192,9 @@ function WebBookmarkCard(props: {
   const [editing, setEditing] = useState(false);
   const [draftUrl, setDraftUrl] = useState(props.url);
 
-  // Fetch metadata lazily if the node was created with a bare URL (e.g. pasted).
+  // Fetch metadata lazily ONLY if the node has no persisted metadata yet.
+  // On success, write it back into the node so a reload/remount never re-fetches
+  // (this is what caused the "获取网页信息…" flash).
   useEffect(() => {
     if (props.title || props.imageHash) {
       setMeta({
@@ -188,21 +206,41 @@ function WebBookmarkCard(props: {
       setLoading(false);
       return;
     }
-    if (loading) return;
+    let alive = true;
     setLoading(true);
     setError(null);
     api
       .fetchBookmarkMetadata(props.url)
       .then((m) => {
+        if (!alive) return;
+        const title = m.title || hostOf(props.url);
         setMeta({
-          title: m.title || hostOf(props.url),
+          title,
           description: m.description,
           siteName: m.site_name || hostOf(props.url),
           imageHash: m.image_hash,
         });
+        // Persist to the node so subsequent renders read it from props.
+        editor.update(() => {
+          const cur = $getNodeByKey<WebBookmarkNode>(props.nodeKey);
+          cur?.updateMeta(
+            title,
+            m.description,
+            m.site_name || hostOf(props.url),
+            m.image_hash,
+            m.image_mime,
+          );
+        });
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (alive) setError(String(e));
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.url]);
 

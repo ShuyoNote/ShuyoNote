@@ -5922,6 +5922,23 @@ select.prop-value {
   line-height: 1.6;
   white-space: pre-wrap;
 }
+.input-dialog-field {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 13px;
+  outline: none;
+  margin-top: 2px;
+  font-family: inherit;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.input-dialog-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .confirm-actions {
   display: flex;
   justify-content: flex-end;

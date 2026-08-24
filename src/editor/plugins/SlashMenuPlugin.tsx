@@ -16,6 +16,7 @@ import { api } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { useBlockSelector } from "../../store/blockSelector";
 import { useAttachmentsStore } from "../../store/attachments";
+import { inputDialog } from "../../store/input";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createVideoNode } from "../nodes/VideoNode";
@@ -181,18 +182,22 @@ function makeOptions(pageId: string): SlashOption[] {
         toast(`插入文件引用失败：${e}`, "error");
       }
     } },
-    { key: "webbookmark", title: "网址书签", badge: "🔗", group: "媒体", pinyin: "wzsq", run: async (editor) => {
-      const url = prompt("输入网址（URL），如 https://example.com/article");
-      if (!url) return;
-      let u = url.trim();
-      if (!u) return;
-      if (!u.includes("://")) u = `https://${u}`;
-      editor.update(() => {
-        // Reuse the proven block-insert path: replace the current (which holds
-        // the "/wzsq" text) with the bookmark, then insert a fresh paragraph
-        // and move the caret there. This avoids orphaned selection pointing at
-        // a removed node — the same reliable path used by image/video inserts.
-        $insertBlockNode($createWebBookmarkNode(u));
+    { key: "webbookmark", title: "网址书签", badge: "🔗", group: "媒体", pinyin: "wzsq", run: (editor) => {
+      inputDialog({
+        title: "网址书签",
+        placeholder: "输入网址（URL），如 https://example.com/article",
+        okLabel: "插入",
+        onSubmit: (raw) => {
+          let u = raw.trim();
+          if (!u) return;
+          if (!u.includes("://")) u = `https://${u}`;
+          editor.update(() => {
+            // Reuse the proven block-insert path: replace the current (which holds
+            // the "/wzsq" text) with the bookmark, then insert a fresh paragraph
+            // and move the caret there — the same reliable path as image/video inserts.
+            $insertBlockNode($createWebBookmarkNode(u));
+          });
+        },
       });
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>
