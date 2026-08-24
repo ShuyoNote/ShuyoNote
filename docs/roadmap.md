@@ -148,8 +148,8 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > 追加闭环（web 剩余缺口）：孤儿附件清理 / 跨空间复制 / `get_attachment` / 回收站恢复（v1.59.32–34）。
 > ⚠️ 取舍（诚实标注）：浏览器壳（sql.js + IndexedDB + persist()）是**可比 OPFS/wa-sqlite 验证、可落地**的方案；OPFS/wa-sqlite 增量列为需真实浏览器验证的长期项。多文件目录导出受浏览器权限限制（单文件导出/整库备份已可用）；备份格式为 Web 自包含 JSON（与桌面 zip 不互认）。web 的加密/同步/插件归为**平台能力边界**（浏览器无对应原生能力），保留桌面实现、web 维持降级不崩。
 
-### M17 — AI 增强（薄 Agent 接口，[方案](plans/2026-08-24-thin-agent-interface-plan.md)）
-> 给 ShuyoNote 加**可选、本地优先、安全**的 AI 能力，而**不是**嵌入能跑任意命令的 Agent 运行时。ShuyoNote 暴露**语义化工具**（`search_pages`/`read_page`/`create_page`/`append_block`/`get_backlinks`…，多为现有命令），配**受限 Agent 宿主**——默认关、倾向本地模型、**写操作经用户审核**，遵守「IPC 最小暴露面 / 插件沙盒」红线。诚实的利弊见方案 §5：收益是「AI 对笔记库多步语义操作」，代价是不支持「AI 运维本地/调外部系统」（刻意取舍）。
+### M17 — AI 增强（薄 Agent 接口，[方案](plans/2026-08-24-thin-agent-interface-plan.md)，[实现](plans/2026-08-24-thin-agent-interface-implementation-plan.md)）
+> 给 ShuyoNote 加**可选、本地优先、安全**的 AI 能力，而**不是**嵌入能跑任意命令的 Agent 运行时。ShuyoNote 暴露**语义化工具**（`search_pages`/`read_page`/`create_page`/`append_block`/`get_backlinks`…，多为现有命令），配**受限 Agent 宿主**——默认关、倾向本地模型、**写操作经用户审核**，遵守「IPC 最小暴露面 / 插件沙盒」红线。诚实的利弊见方案 §5：收益是「AI 对笔记库多步语义操作」，代价是不支持「AI 运维本地/调外部系统」（刻意取舍）。**实现路径见[实现方案](plans/2026-08-24-thin-agent-interface-implementation-plan.md)**：复用 `registry.ts` 插件宿主 + 语义命令，新增白名单工具/前端 LLM 循环/审核落库，唯一新后端命令为受限的 `append_block`。
 - **M17.0 语义工具层** 🗓：封装搜索/读页/读块/建页/追加块/反链/文件列表；新增 `append_block`。
 - **M17.1 受限 Agent 宿主** 🗓：本地/可选 LLM；白名单工具 + 会话隔离；「只读分析」优先。
 - **M17.2 审核落库 UI** 🗓：AI 新建/追加先预览确认；「AI 建议」侧栏。
