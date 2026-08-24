@@ -2,6 +2,20 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.15] - 2026-08-24
+
+### 新增
+
+- **web 版多工作空间并存**（方案 A：空间快照隔离）：
+  - **每个空间一份独立 DB 快照**，存于独立 IndexedDB 库 `shuyonote-spaces`（catalog 存空间元数据 + active id，snapshots 存各空间 DB 字节）；切换空间 = 把当前 live 库快照存档、再 restore 目标空间快照。与桌面"每空间一个 DB 文件"模型一致。
+  - **工作空间 CRUD 真正可用**：`list_workspaces` 返回全部空间；`create_workspace` 新建空空间并切到它（新建时先快照当前空间，避免丢改动）；`rename_workspace`/`set_workspace_settings` 按 id 更新；`delete_workspace` 清除该空间快照并（若删除的是 active）切到剩余第一个；`set_active_workspace_id` 负责快照/切换。
+  - `import_workspace` 改为**新建空间**（不覆盖现有）；`import_backup` 仍是覆盖全库。
+  - **隔离**：各空间页面/标签/数据库/附件互不可见（查询按 active 作用域；附件字节 blob store 全局去重共享，归属按空间过滤）。
+- 前端空间切换器无需改动（已按 `spaces` 多列表渲染）；`space.ts`/`notes.ts` 由平台层过滤，无需改。
+- `scripts/smoke-web.mjs` 101→**112 项全绿**（新增：创建空间并切换 / 空间隔离（新空间页首选项不串）/ 切换回后保留 / 重命名更新 catalog / 删除空间 / 快照切换后改动不丢）。IndexedDB shim 补 `getAll`/`delete` 以支撑 catalog。
+
+---
+
 ## [1.59.14] - 2026-08-24
 
 ### 新增

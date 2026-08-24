@@ -131,6 +131,17 @@ if (!globalThis.indexedDB) {
               setTimeout(() => req.onsuccess && req.onsuccess(), 0);
               return req;
             },
+            getAll: () => {
+              const req = { result: [...m.values()], onsuccess: null, onerror: null };
+              setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+              return req;
+            },
+            delete: (k) => {
+              m.delete(k);
+              const req = { onsuccess: null, onerror: null };
+              setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+              return req;
+            },
             put: (v, k) => {
               m.set(k, v);
               const req = { onsuccess: null, onerror: null };
@@ -533,6 +544,52 @@ assert("backup-progress event has phase/done/total", backupProgress[0] && backup
   const wsRow = scratch.query("SELECT name, created_at FROM workspaces WHERE id = ?", ["active"])[0];
   assert("workspace seed includes created_at on desktop schema", wsRow && typeof wsRow.created_at === "number", String(wsRow && wsRow.created_at));
 }
+
+// 10j-2. Multi-space: create a second workspace, switch to it, add a page there,
+// then switch back and verify the spaces are isolated (the new page stays put).
+{
+  const before = await invoke("list_workspaces", {});
+  const firstId = before[0]?.id;
+  const beforeCount = before.length;
+  const ws2 = await invoke("create_workspace", { name: "第二空间" });
+  assert("create_workspace returns a new workspace", ws2 && typeof ws2.id === "string" && ws2.id !== firstId, String(ws2?.id));
+  assert("create_workspace switches active to the new space", (await invoke("get_active_workspace_id", {})) === ws2.id, `${await invoke("get_active_workspace_id", {})}`);
+  const list2 = await invoke("list_workspaces", {});
+  assert("list_workspaces grows by one after create", Array.isArray(list2) && list2.length === beforeCount + 1, `${list2?.length} vs ${beforeCount}`);
+  assert("list_workspaces includes the new space name", list2.some((s) => s.name === "第二空间"));
+
+  // In the new (empty) space, list_pages should NOT show the first space's pages.
+  const pagesInNew = await invoke("list_pages", {});
+  assert("new space starts with seeded pages", Array.isArray(pagesInNew) && pagesInNew.length >= 1, `${pagesInNew?.length}`);
+  const pageInNew = await invoke("create_page", { parent_id: null, title: "只在新空间" });
+  assert("create_page works in the new space", pageInNew && typeof pageInNew.id === "string", String(pageInNew?.title));
+
+  // Switch back to the first space: that page must NOT appear.
+  await invoke("set_active_workspace_id", { id: firstId });
+  assert("switch back sets active to first space", (await invoke("get_active_workspace_id", {})) === firstId);
+  const pagesBack = await invoke("list_pages", {});
+  assert("first space does NOT see the new-space page", Array.isArray(pagesBack) && !pagesBack.some((p) => p.title === "只在新空间"), `${pagesBack?.length} pages`);
+
+  // Switch to the new space again: the page is still there.
+  await invoke("set_active_workspace_id", { id: ws2.id });
+  const pagesAgain2 = await invoke("list_pages", {});
+  assert("second space still has its page after switching back", Array.isArray(pagesAgain2) && pagesAgain2.some((p) => p.title === "只在新空间"), `${pagesAgain2?.length} pages`);
+
+  // Rename + settings on the new space persist in the catalog.
+  await invoke("rename_workspace", { id: ws2.id, name: "改名后的第二空间" });
+  const listAfterRename = await invoke("list_workspaces", {});
+  assert("rename_workspace updates the catalog", listAfterRename.some((s) => s.id === ws2.id && s.name === "改名后的第二空间"), JSON.stringify(listAfterRename));
+
+  // Cleanup: delete the second space and go back to the first.
+  await invoke("delete_workspace", { id: ws2.id });
+  const listAfterDelete = await invoke("list_workspaces", {});
+  assert("delete_workspace removes the space", Array.isArray(listAfterDelete) && listAfterDelete.length === beforeCount && listAfterDelete.some((s) => s.id === firstId), `${listAfterDelete?.length} vs ${beforeCount}`);
+
+  // Restore the active space to the default ("active") so later blocks see the
+  // pages created there (e.g. the persistence check uses `created.id`).
+  await invoke("set_active_workspace_id", { id: "active" });
+}
+
 
 // 10k. Desktop-format backup's attachments schema has NO `path` column (it has
 // `created_at` instead). Web's helpers are schema-aware (read PRAGMA table_info),

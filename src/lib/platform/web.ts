@@ -15,6 +15,7 @@
 import type { Platform } from "./types";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { blobStore, contentHash } from "./blobStore";
+import { spaceStore, useSpaceCatalog } from "./spaceStore";
 import { unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 
@@ -134,10 +135,9 @@ function welcomeContent(): string {
 }
 
 // Seed a fresh (empty) database with a welcome page + onboarding page + tag.
-function seedIfEmpty(store: SqliteStore): void {
+function seedIfEmpty(store: SqliteStore, wsId: string): void {
   const count = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages")[0]?.n ?? 0;
   if (count > 0) return;
-  const wsId = uid();
   const welcomeId = uid();
   const demoId = uid();
   const tagId = uid();
@@ -468,12 +468,15 @@ async function streamZip(
 }
 
 function makeInvoke(store: SqliteStore) {
-  // Workspace is single-user in the browser demo; its settings live in a KV row.
-  const WS_KEY = "active";
+  // The live store represents the ACTIVE workspace only (snapshot isolation — see
+  // bootSpaces in getSharedStore). Workspace list/active/id come from the catalog.
+  // Each workspace's own DB snapshot carries a single `workspaces` row for itself,
+  // so getWs() reads the row keyed by the active id.
+  const getActiveWsId = (): string => useSpaceCatalog.getState().activeId ?? "active";
   const getWs = () =>
     store.query<{ id: string; name: string; theme: string | null; icon: string }>(
       "SELECT id, name, theme, icon FROM workspaces WHERE id = ?",
-      [WS_KEY],
+      [getActiveWsId()],
     )[0] ?? null;
 
   // Whether the workspace table has a created_at column (desktop schema does,
@@ -489,12 +492,13 @@ function makeInvoke(store: SqliteStore) {
   const seedWorkspaceMeta = () => {
     const ws = getWs();
     if (ws) return;
+    const id = getActiveWsId();
     const cols = workspaceColumns();
     const hasCreated = cols.includes("created_at");
     const hasUpdated = cols.includes("updated_at");
     const now = Date.now();
     const ids = ["id", "name", "theme", "icon"];
-    const vals: (string | number | null)[] = [WS_KEY, "我的工作空间", null, ""];
+    const vals: (string | number | null)[] = [id, "我的工作空间", null, ""];
     if (hasCreated) {
       ids.push("created_at");
       vals.push(now);
@@ -530,7 +534,7 @@ function makeInvoke(store: SqliteStore) {
       const args = a.args ?? a;
       const kind = cmd === "create_folder" ? "folder" : cmd === "create_database" ? "database" : "page";
       const id = uid();
-      const wsId = getWs()?.id ?? WS_KEY;
+      const wsId = getWs()?.id ?? getActiveWsId();
       const now = Date.now();
       // Honor an explicit title; fall back to a per-kind default (folders/databases
       // get a descriptive name, plain pages get 未命名).
@@ -646,39 +650,117 @@ function makeInvoke(store: SqliteStore) {
     // ---- Workspaces (single-user demo) ----
     if (cmd === "list_workspaces") {
       const ws = getWs();
-      return [
-        {
-          id: ws?.id ?? WS_KEY,
-          name: ws?.name ?? "我的工作空间",
-          theme: ws?.theme,
-          icon: ws?.icon,
-          sort_order: 0,
-          created_at: Date.now(),
-          updated_at: Date.now(),
-        },
-      ] as T;
+      const wsList = await spaceStore.listMetas();
+      // If the catalog is empty (e.g. the live DB predates multi-space), fall back
+      // to the workspace row present in the live DB so the UI still lists it.
+      const metas = wsList.map((m) => ({
+        id: m.id,
+        name: m.name,
+        theme: m.theme,
+        icon: m.icon,
+        sort_order: m.sort_order,
+        created_at: m.created_at,
+        updated_at: m.updated_at,
+      }));
+      if (metas.length === 0 && ws) {
+        metas.push({
+          id: ws.id, name: ws.name ?? "我的工作空间", theme: ws.theme, icon: ws.icon ?? "",
+          sort_order: 0, created_at: Date.now(), updated_at: Date.now(),
+        });
+      }
+      return metas as T;
     }
     if (cmd === "get_workspace_name") return (getWs()?.name ?? "我的工作空间") as T;
-    if (cmd === "get_active_workspace_id") return (getWs()?.id ?? WS_KEY) as T;
-    if (cmd === "set_active_workspace_id") return undefined as T;
+    if (cmd === "get_active_workspace_id") return (getActiveWsId()) as T;
+    if (cmd === "set_active_workspace_id") {
+      // Snapshot isolation: persist the current live DB under the OLD active id,
+      // then load the target workspace's snapshot into the live store.
+      const targetId = String(a.id ?? a.workspace_id ?? "");
+      if (!targetId) return undefined as T;
+      const currentId = getActiveWsId();
+      if (currentId !== targetId) {
+        await spaceStore.putSnapshot(currentId, store.snapshot());
+        const snap = await spaceStore.getSnapshot(targetId);
+        if (snap) await store.restore(snap);
+        await spaceStore.setActiveId(targetId);
+        seedWorkspaceMeta();
+      }
+      return undefined as T;
+    }
     if (cmd === "rename_workspace") {
-      if (typeof a.name === "string") {
-        store.run("UPDATE workspaces SET name = ? WHERE id = ?", [a.name, WS_KEY]);
+      const id = String(a.id ?? getActiveWsId());
+      const name = String(a.name ?? "").trim();
+      if (name) {
+        // Update the catalog meta AND the workspace row in the live DB (if active).
+        const meta = await spaceStore.getMeta(id);
+        if (meta) {
+          await spaceStore.putMeta({ ...meta, name, updated_at: Date.now() });
+        }
+        if (id === getActiveWsId()) {
+          store.run("UPDATE workspaces SET name = ? WHERE id = ?", [name, id]);
+        }
       }
       return undefined as T;
     }
     if (cmd === "set_workspace_settings") {
-      store.run("UPDATE workspaces SET theme = ?, icon = ? WHERE id = ?", [
-        typeof a.theme === "string" ? a.theme : null,
-        typeof a.icon === "string" ? a.icon : "",
-        WS_KEY,
-      ]);
+      const id = String(a.id ?? getActiveWsId());
+      const theme = typeof a.theme === "string" ? a.theme : null;
+      const icon = typeof a.icon === "string" ? a.icon : "";
+      const meta = await spaceStore.getMeta(id);
+      if (meta) {
+        await spaceStore.putMeta({ ...meta, theme, icon, updated_at: Date.now() });
+      }
+      if (id === getActiveWsId()) {
+        store.run("UPDATE workspaces SET theme = ?, icon = ? WHERE id = ?", [theme, icon, id]);
+      }
       return undefined as T;
     }
     if (cmd === "create_workspace") {
-      return { id: uid(), name: String(a.name ?? "新工作空间"), created_at: Date.now(), updated_at: Date.now() } as T;
+      // Create a fresh empty workspace: a brand-new DB (its own workspace row +
+      // seed content), snapshotted into the catalog, then made active.
+      const id = uid();
+      const name = String(a.name ?? "新工作空间");
+      const now = Date.now();
+      // Persist the CURRENT active space before we clobber the live store with the
+      // new workspace (so its recent edits aren't lost on later switch-back).
+      await spaceStore.putSnapshot(getActiveWsId(), store.snapshot());
+      // Reset the live store to a brand-new database, write the new space's
+      // workspace row directly (id = the new space id), seed demo content, snapshot.
+      await store.restore(new Uint8Array());
+      const cols = workspaceColumns();
+      const hasCreated = cols.includes("created_at");
+      const hasUpdated = cols.includes("updated_at");
+      const ids = ["id", "name", "theme", "icon"];
+      const vals: (string | number | null)[] = [id, name, null, ""];
+      if (hasCreated) { ids.push("created_at"); vals.push(now); }
+      if (hasUpdated) { ids.push("updated_at"); vals.push(now); }
+      store.run(`INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
+      seedIfEmpty(store, id);
+      await spaceStore.putMeta({ id, name, theme: null, icon: "", sort_order: now, created_at: now, updated_at: now });
+      await spaceStore.putSnapshot(id, store.snapshot());
+      await spaceStore.setActiveId(id);
+      return { id, name, created_at: now, updated_at: now } as T;
     }
-    if (cmd === "copy_page_to_workspace" || cmd === "delete_workspace") return undefined as T;
+    if (cmd === "delete_workspace") {
+      // Remove the workspace's catalog entry + snapshot; if it was active, switch
+      // to the first remaining space.
+      const id = String(a.id ?? "");
+      if (id) {
+        await spaceStore.purge(id);
+        if (id === getActiveWsId()) {
+          const remaining = await spaceStore.listMetas();
+          const next = remaining[0]?.id ?? "active";
+          if (next !== id) {
+            const snap = await spaceStore.getSnapshot(next);
+            if (snap) await store.restore(snap);
+            await spaceStore.setActiveId(next);
+            seedWorkspaceMeta();
+          }
+        }
+      }
+      return undefined as T;
+    }
+    if (cmd === "copy_page_to_workspace") return undefined as T;
 
     // ---- Tags (real SQL) ----
     if (cmd === "list_tags") {
@@ -1312,9 +1394,9 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "import_workspace") {
       // Import a workspace package (same format as export_workspace): a zip with
-      // `shuyonote.db` + `workspace.json` + `attachments/<hash>`. Web is
-      // single-workspace, so this restores the DB snapshot into the active store,
-      // applies the metadata name, and imports only referenced attachment bytes.
+      // `shuyonote.db` + `workspace.json` + `attachments/<hash>`. With multi-space
+      // support this creates a NEW workspace (never clobbers an existing one): the
+      // imported DB is snapshotted under a fresh id and made active.
       const src = String(a.srcPath ?? "");
       const reg = fileRegistry.get(baseName(src));
       if (!reg) throw new Error("空间包不存在");
@@ -1331,19 +1413,34 @@ function makeInvoke(store: SqliteStore) {
       const dbBytes = files["shuyonote.db"];
       if (!dbBytes) throw new Error("空间包缺少数据库文件");
 
-      emit(1, 3, "恢复空间数据库…");
-      await store.restore(dbBytes);
+      // Decide a fresh workspace id (import never overwrites an existing space).
+      const newId = uid();
       // Apply the workspace name from workspace.json (fallback to the caller name).
-      let wsName = String(a.name ?? "导入空间");
+      let name = String(a.name ?? "导入空间");
       try {
         const meta = JSON.parse(new TextDecoder().decode(files["workspace.json"]?.length ? files["workspace.json"] : new Uint8Array()));
-        if (meta && typeof meta.name === "string" && meta.name) wsName = meta.name;
+        if (meta && typeof meta.name === "string" && meta.name) name = meta.name;
       } catch {
         /* keep fallback */
       }
-      seedWorkspaceMeta();
-      // Keep the active key stable; only the display name changes.
-      store.run("UPDATE workspaces SET name = ? WHERE id = ?", [wsName, WS_KEY]);
+
+      emit(1, 3, "恢复空间数据库…");
+      // Persist the CURRENT active space before we clobber the live store with the
+      // imported workspace (so its recent edits aren't lost on later switch-back).
+      await spaceStore.putSnapshot(getActiveWsId(), store.snapshot());
+      await store.restore(dbBytes);
+      // Re-key the imported DB's workspace row to the new id: drop any existing
+      // rows and write one for the new space id.
+      store.run("DELETE FROM workspaces");
+      const cols = workspaceColumns();
+      const hasCreated = cols.includes("created_at");
+      const hasUpdated = cols.includes("updated_at");
+      const now0 = Date.now();
+      const ids = ["id", "name", "theme", "icon"];
+      const vals: (string | number | null)[] = [newId, name, null, ""];
+      if (hasCreated) { ids.push("created_at"); vals.push(now0); }
+      if (hasUpdated) { ids.push("updated_at"); vals.push(now0); }
+      store.run(`INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
 
       const attEntries = Object.entries(files).filter(([k]) => k.startsWith("attachments/") && !k.endsWith("/"));
       const total = attEntries.length;
@@ -1355,8 +1452,13 @@ function makeInvoke(store: SqliteStore) {
         emit(2 + (total === 0 ? 1 : Math.round((done / total) * 1)), total, `恢复附件 ${done}/${total}…`);
         if (done % 8 === 0) await new Promise((r) => setTimeout(r, 0));
       }
+
+      const now = Date.now();
+      await spaceStore.putMeta({ id: newId, name, theme: null, icon: "", sort_order: now, created_at: now, updated_at: now });
+      await spaceStore.putSnapshot(newId, store.snapshot());
+      await spaceStore.setActiveId(newId);
       emit(3, 3, "导入完成");
-      return { id: WS_KEY, name: wsName, created_at: Date.now(), updated_at: Date.now() } as T;
+      return { id: newId, name, created_at: now, updated_at: now } as T;
     }
     if (cmd === "write_text_file") {
       // Write text to a browser-side "file": trigger a real download named after
@@ -1398,13 +1500,92 @@ function makeInvoke(store: SqliteStore) {
 
 let sharedInit: Promise<SqliteStore> | null = null;
 
+// Boot multi-space state: ensure a catalog exists and load the active workspace's
+// DB snapshot into the live store. Plan A — snapshot isolation. The live store
+// always represents ONE (active) workspace; switching snapshots current then
+// restores the target.
+async function bootSpaces(store: SqliteStore): Promise<void> {
+  let metas = await spaceStore.listMetas();
+  // Fresh install (or a browser whose IndexedDB was cleared): create the default
+  // workspace. If the live DB already holds pages (e.g. it predates multi-space),
+  // reuse it as the default; otherwise seed a fresh default.
+  if (metas.length === 0) {
+    const defaultId = "active";
+    const now = Date.now();
+    const hasPages = (store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages")[0]?.n ?? 0) > 0;
+    if (!hasPages) {
+      // Brand-new DB: write the default workspace row + seed content.
+      await store.restore(new Uint8Array());
+    }
+    const cols = workspaceColumns(store);
+    const rows = store.query<{ id: string }>("SELECT id FROM workspaces").map((r) => r.id);
+    if (rows.length === 0) {
+      const ids = ["id", "name", "theme", "icon"];
+      const vals: (string | number | null)[] = [defaultId, "我的工作空间", null, ""];
+      if (cols.includes("created_at")) { ids.push("created_at"); vals.push(now); }
+      if (cols.includes("updated_at")) { ids.push("updated_at"); vals.push(now); }
+      store.run(`INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
+    }
+    seedIfEmpty(store, defaultId);
+    await spaceStore.putMeta({ id: defaultId, name: "我的工作空间", theme: null, icon: "", sort_order: now, created_at: now, updated_at: now });
+    await spaceStore.putSnapshot(defaultId, store.snapshot());
+    await spaceStore.setActiveId(defaultId);
+    metas = await spaceStore.listMetas();
+  }
+
+  // Load the active workspace's snapshot into the live store.
+  let activeId = await spaceStore.getActiveId();
+  if (!activeId || !metas.some((m) => m.id === activeId)) {
+    activeId = metas[0]?.id ?? activeId ?? "active";
+    await spaceStore.setActiveId(activeId);
+  }
+  const snap = await spaceStore.getSnapshot(activeId);
+  if (snap && snap.length > 0) {
+    await store.restore(snap);
+  } else {
+    // Active space has no snapshot yet — seed + capture one.
+    const meta = metas.find((m) => m.id === activeId);
+    if (meta) {
+      const rows = store.query<{ id: string }>("SELECT id FROM workspaces").map((r) => r.id);
+      if (rows.length === 0) {
+        const cols = workspaceColumns(store);
+        const ids = ["id", "name", "theme", "icon"];
+        const vals: (string | number | null)[] = [activeId, meta.name, meta.theme, meta.icon];
+        if (cols.includes("created_at")) { ids.push("created_at"); vals.push(Date.now()); }
+        if (cols.includes("updated_at")) { ids.push("updated_at"); vals.push(Date.now()); }
+        store.run(`INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
+      }
+      seedIfEmpty(store, activeId);
+      await spaceStore.putSnapshot(activeId, store.snapshot());
+    }
+  }
+  // Sync the synchronous catalog so makeInvoke's getActiveWsId() reads instantly.
+  useSpaceCatalog.getState().setActiveId(activeId);
+}
+
+function workspaceColumns(store: SqliteStore): string[] {
+  try {
+    return (store.query("PRAGMA table_info(workspaces)") as any[]).map((c) => String(c.name));
+  } catch {
+    return [];
+  }
+}
+
 function getSharedStore(): Promise<SqliteStore> {
   if (!sharedInit) {
     const store = new SqliteStore();
-    sharedInit = store.init().then(() => {
-      seedIfEmpty(store);
-      return store;
-    });
+    sharedInit = store
+      .init()
+      .then(async () => {
+        await bootSpaces(store);
+        return store;
+      })
+      .catch((e) => {
+        // If boot fails (e.g. odd IndexedDB state), fall back to a fresh store so
+        // the app still loads; seeding the default workspace retries on next run.
+        console.error("[web] boot spaces failed", e);
+        return store;
+      });
   }
   return sharedInit;
 }
