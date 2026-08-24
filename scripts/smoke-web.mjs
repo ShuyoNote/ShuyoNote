@@ -71,7 +71,8 @@ await esbuild.build({
       'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
-      'export { runAiLoop } from "./src/lib/ai/host";\n',
+      'export { runAiLoop } from "./src/lib/ai/host";\n' +
+      'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n',
     resolveDir: root,
     loader: "js",
     sourcefile: "ai-entry.js",
@@ -1014,6 +1015,32 @@ assert("workspace name persists across instances", wsAgain !== "");
     server3.closeAllConnections?.();
     await new Promise((resolve) => server3.close(resolve));
   }
+}
+
+// 15. Pure-logic tests for the safe Markdown parser used in AI replies.
+{
+  const b = aiMod.parseMarkdown("# 标题\n\n这是**加粗**和*斜体*，还有`code`与[链接](https://example.com)。\n\n- 项目一\n- 项目二\n\n> 引用一段\n\n```js\nconst x = 1;\n```\n\n1. 第一\n2. 第二\n\n---\n");
+  assert("markdown heading h1", b[0].kind === "h1" && b[0].children[0].text === "标题");
+  const para = b[1];
+  assert("markdown paragraph + inline bold/italic/code/link",
+    para.kind === "p" &&
+    para.children.some((c) => c.kind === "bold" && c.children[0].text === "加粗") &&
+    para.children.some((c) => c.kind === "italic" && c.children[0].text === "斜体") &&
+    para.children.some((c) => c.kind === "code" && c.text === "code") &&
+    para.children.some((c) => c.kind === "link" && c.href === "https://example.com" && c.label === "链接"),
+    JSON.stringify(para));
+  const ul = b[2];
+  assert("markdown ul two items", ul.kind === "ul" && ul.items.length === 2 && ul.items[0][0].text === "项目一");
+  assert("markdown quote", b[3].kind === "quote" && b[3].children[0].kind === "p");
+  assert("markdown fenced code", b[4].kind === "code" && b[4].lang === "js" && b[4].text.trim() === "const x = 1;");
+  assert("markdown ol two items", b[5].kind === "ol" && b[5].items.length === 2);
+  assert("markdown hr", b[6].kind === "hr");
+
+  // XSS: unsafe link protocol is dropped (kept as literal text), HTML is data.
+  const unsafe = aiMod.parseMarkdown("[x](javascript:alert(1))");
+  assert("markdown blocks javascript: link", unsafe[0].children.every((c) => c.kind !== "link"), JSON.stringify(unsafe));
+  const html = aiMod.parseMarkdown("<script>alert(1)</script>");
+  assert("markdown keeps raw html as text", html[0].kind === "p" && html[0].children[0].text === "<script>alert(1)</script>");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

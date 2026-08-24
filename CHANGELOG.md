@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.45] - 2026-08-24
+
+### 新增
+
+- **AI 回复 Markdown 渲染**：`src/lib/markdown.ts`（纯 `parseMarkdown`/`parseInline`）+ `src/components/Markdown.tsx`。支持标题/加粗/斜体/行内代码/链接/有序无序列表/引用/围栏代码/分隔线；**XSS 安全**——不输出原始 HTML、链接仅允许 http/https。回复卡改为渲染后的富文本。
+- **多轮对话上下文**：`store/ai.ts` 维护限长 `history`（最近 8 轮），`runAiLoop` 接受 history 种子；追问（如「再详细点」）会带上之前对话，不再每次从头。回复卡「清空」即开新对话。
+- `scripts/smoke-web.mjs` 161→**170 项全绿**（新增：Markdown 各级结构 + javascript: 链接被拒 + HTML 按纯文本处理）。
+
+---
+
 ## [1.59.44] - 2026-08-24
 
 ### 样式

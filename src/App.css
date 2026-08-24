@@ -7390,11 +7390,89 @@ select.prop-value {
 .ai-reply-text {
   font-size: 13px;
   color: var(--text);
-  white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.6;
   max-height: 220px;
   overflow-y: auto;
+}
+/* Markdown-rendered reply (scoped to the reply card) */
+.ai-reply-text .md > :first-child,
+.ai-reply-text .md > .md-p:first-child {
+  margin-top: 0;
+}
+.ai-reply-text .md > :last-child {
+  margin-bottom: 0;
+}
+.ai-reply-text .md p,
+.ai-reply-text .md ul,
+.ai-reply-text .md ol,
+.ai-reply-text .md blockquote,
+.ai-reply-text .md pre,
+.ai-reply-text .md h1,
+.ai-reply-text .md h2,
+.ai-reply-text .md h3,
+.ai-reply-text .md h4 {
+  margin: 0 0 8px;
+}
+.ai-reply-text .md p {
+  line-height: 1.6;
+}
+.ai-reply-text .md h1,
+.ai-reply-text .md h2,
+.ai-reply-text .md h3,
+.ai-reply-text .md h4 {
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+}
+.ai-reply-text .md h1 { font-size: 16px; }
+.ai-reply-text .md h2 { font-size: 15px; }
+.ai-reply-text .md h3 { font-size: 14px; }
+.ai-reply-text .md h4 { font-size: 13px; }
+.ai-reply-text .md ul,
+.ai-reply-text .md ol {
+  padding-left: 18px;
+}
+.ai-reply-text .md li {
+  margin: 2px 0;
+}
+.ai-reply-text .md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.ai-reply-text .md pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.ai-reply-text .md pre code {
+  background: transparent;
+  padding: 0;
+}
+.ai-reply-text .md blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  color: var(--text-dim);
+}
+.ai-reply-text .md blockquote p {
+  margin-bottom: 6px;
+}
+.ai-reply-text .md a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.ai-reply-text .md a:hover {
+  text-decoration: underline;
+}
+.ai-reply-text .md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 10px 0;
 }
 .ai-disclaimer {
   margin-top: 8px;

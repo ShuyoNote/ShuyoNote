@@ -22,6 +22,8 @@ export interface AiConfig {
   apiKey: string;
 }
 
+const HISTORY_LIMIT = 16; // cap on stored turns (8 exchanges) to bound context.
+
 interface AiState {
   config: AiConfig;
   open: boolean;
@@ -32,6 +34,8 @@ interface AiState {
   drafts: Array<{ key: string; summary: string; payload: unknown }>;
   /** Transient error from the last run. */
   error: string | null;
+  /** Prior user/assistant turns, so follow-ups keep context. */
+  history: Array<{ role: "user" | "assistant"; content: string }>;
 
   setOpen: (open: boolean) => void;
   update: (patch: Partial<AiConfig>) => void;
@@ -77,6 +81,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   reply: "",
   drafts: [],
   error: null,
+  history: [],
 
   setOpen: (open) => set({ open }),
 
@@ -104,14 +109,19 @@ export const useAiStore = create<AiState>((set, get) => ({
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),
         { currentPageId: notes.currentId, allPages },
-        { transport },
+        { transport, history: get().history },
       );
-      // Keep existing drafts, replace reply/error with the fresh run.
+      // Keep existing drafts, replace reply/error with the fresh run; keep the
+      // last assistant reply in history so follow-ups ("再详细点") stay in context.
+      const history = [...get().history, { role: "user" as const, content: trimmed }];
+      if (result.reply) history.push({ role: "assistant" as const, content: result.reply });
+      const historyCapped = result.ok ? history.slice(-HISTORY_LIMIT) : get().history;
       set({
         running: false,
         reply: result.reply,
         drafts: result.drafts.length ? result.drafts : get().drafts,
         error: result.ok ? null : result.error ?? null,
+        history: historyCapped,
       });
     } catch (e) {
       set({ running: false, error: String((e as Error)?.message ?? e) });
@@ -144,6 +154,6 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   dismiss: (key: string) => set({ drafts: get().drafts.filter((d) => d.key !== key) }),
 
-  clearResult: () => set({ reply: "", drafts: [], error: null }),
+  clearResult: () => set({ reply: "", drafts: [], error: null, history: [] }),
   resetError: () => set({ error: null }),
 }));

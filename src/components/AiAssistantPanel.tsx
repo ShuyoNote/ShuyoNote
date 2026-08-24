@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAiStore } from "../store/ai";
 import { SparkleIcon, SettingsIcon } from "./icons";
+import { Markdown } from "./Markdown";
 import { AiSettingsDialog } from "./AiSettingsDialog";
 
 // Clickable quick prompts shown in the empty state, so a new user has an example
@@ -86,11 +87,11 @@ export function AiAssistantPanel() {
               <div className="ai-reply-head">
                 <SparkleIcon className="ai-reply-head-icon" />
                 <span className="ai-reply-label">回复</span>
-                <button className="ai-reply-clear" title="清空" onClick={clearResult}>
+                <button className="ai-reply-clear" title="清空对话" onClick={clearResult}>
                   清空
                 </button>
               </div>
-              <div className="ai-reply-text">{reply}</div>
+              <div className="ai-reply-text"><Markdown text={reply} /></div>
               <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
             </div>
           )}

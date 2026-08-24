@@ -14,6 +14,8 @@ export interface HostOptions {
   maxSteps?: number;
   /** Cap on accumulated drafts before we force a stop. */
   maxDrafts?: number;
+  /** Prior user/assistant turns to seed the conversation (multi-turn context). */
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
 const DEFAULT_MAX_STEPS = 6;
@@ -52,6 +54,10 @@ export async function runAiLoop(
   const maxDrafts = opts.maxDrafts ?? DEFAULT_MAX_DRAFTS;
 
   const messages: AiMessage[] = [{ role: "system", content: buildSystemPrompt({ pages }) }];
+  // Seed prior conversation turns so follow-ups ("再详细点") have context.
+  for (const h of opts.history ?? []) {
+    messages.push({ role: h.role, content: h.content });
+  }
   const drafts = new Map<string, { key: string; summary: string; payload: unknown }>();
   const errors: string[] = [];
   let assistantText = "";
