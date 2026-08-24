@@ -122,18 +122,26 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 - **M15.5 验收 + 清理** ✅（v1.41.0）：全功能回归（后端 20 项单测 + `tsc` 无错 + Vite 生产构建 + 应用运行验证）；归档原单库 `shuyonote.db`（重命名为 `*.archived`，可回滚恢复）。**M15 每工作空间独立存储（物理隔离）里程碑达成**。
 > ⚠️ 取舍（诚实标注，与[规划](plans/2026-08-22-per-workspace-storage-plan.md)一致）：**附件字节保持全局内容寻址**（跨空间相同文件共享一份字节），而非每空间独立附件目录——这是取舍：换取「跨空间附件去重」与「不受每空间附件目录整改爆炸半径影响」，同时用「空间级附件子集导出」实现单空间可搬移；`attr_defs`/标签/模板按每空间库存；E2EE 密钥与同步游标保持每空间。**M15 已达成**。
 
-### M16 — 跨平台适配（全平台通吃，[规划](plans/2026-08-24-cross-platform-plan.md)，待落地）
-> 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」，同一 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，不再依赖 `window.__TAURI__`。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。**高成本、改架构**，采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。
-> ⚠️ **本里程碑为规划，未实现**；现有 app 保持 Tauri 桌面形态。**M16.0 `api.ts` driver 抽象**（零行为变化、纯收益）建议**最先做**，无论走哪条路径都不返工。
-- **M16.0 存储/能力 driver 抽象** ✅（v1.46.0）：新增 `src/lib/platform/`（`types.ts` 接口 + `tauri.ts` `@tauri-apps/*` 唯一宿主 + `index.ts` `platform` 聚合/`setPlatform`）；`api.ts` ~60 个 `invoke` 改走 `platform.executor`（对外 API 不变）；12+ 组件内联的 dialog/opener/event/asset/webview 调用改消费 `platform`。**零行为变化**（tsc + Vite 构建通过）。
-- **M16.0b 浏览器 Web 平台可跑** ✅（v1.47.0）：新增 `src/lib/platform/web.ts`（`createWebPlatform`）——`index.ts` 按环境自动选 `tauriPlatform`/`webPlatform`（探测 `window.__TAURI_INTERNALS__`）；`web.ts` 的 `executor.invoke` 用 **localStorage 持久化 mock 后端**（核心笔记 CRUD + 其余命令安全空值，绝不抛错），dialog/opener/event/asset/webview 用浏览器原生驱动；新增 `pnpm dev:web`（`vite --config vite.web.config.ts`，独立 5173 端口）。**已用 Edge 无头验证**：app 在浏览器引擎真实挂载、渲染出种子页「欢迎页」并进入 Lexical 编辑器。
-- **M16.1a Web 平台真实 SQLite 化** ✅（v1.49.0）：新增 `src/lib/platform/sqliteStore.ts`（基于 **`sql.js`** WASM SQLite）——浏览器用 **IndexedDB** 持久化整库（`db.export()`），带 `setWasmUrl`/`setWasmBytesProvider`/`setDefaultAdapter` 注入点；`web.ts` 核心 CRUD（pages CRUD/软删回收站恢复/tags 关联/按标签过滤/搜索 `LIKE`/工作空间设置/关系图节点/图片附件）改跑**真实 SQL**，其余命令仍安全降级；种子欢迎页+快速上手+「入门」标签。**wasm 加载修正**（自取字节 `wasmBinary` + `\0asm` 校验），IndexedDB 加超时回退。`scripts/smoke-web.mjs` 30→**32 项全绿**（新增软删→恢复、跨实例持久化）。
-- **M16.1 核心语义 TS 化** 🗓（规划，部分达成）：M16.1a 已用真实 SQLite 承载 Web 平台核心 CRUD；`pkg/core` 完整语义（迁移/附件寻址/加密/备份格式，先以 rusqlite 驱动跑通）仍待做。
-- **M16.2 Web/WASM driver** 🗓（规划）：`wa-sqlite`+OPFS 全量回归（list/tags/search/graph/backlinks/db/属性/版本/附件/同步）。
-- **M16.3 插件运行时降级迁移** 🗓（规划）：`boa_engine` 移入 WASM/浏览器，权限模型对齐。
-- **M16.4 各平台壳** 🗓（规划）：浏览器 PWA → 安卓 → iOS → 鸿蒙 ArkWeb（各平台 JSBridge 补文件/外链/对话框）。
-- **M16.5 验收 + 回归** 🗓（规划）：全功能回归；原 Tauri 桌面形态保留为 driver A 不回归。
-> ⚠️ 取舍（诚实标注）：核心语义在 TS/WASM 侧重写是最大成本（schema/加密/附件/同步/插件 JS 引擎）；浏览器壳**丢失真实文件 / 系统对话框 / 跨窗口**能力，靠各平台 JSBridge 补救；WASM SQLite 性能与事务/锁语义需重测；备份格式在 Rust zip ↔ Web zip 间需互操作兼容。**建议只做 M16.0 后再决定是否继续**——先验证「分层是否真的降成本」。
+### M16 — 跨平台适配（全平台通吃，[规划](plans/2026-08-24-cross-platform-plan.md)）
+> 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」，同一 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，不再依赖 `window.__TAURI__`。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。
+> **已达成**：M16.0（driver 抽象）+ M16.0b（浏览器 Web 平台）+ M16.1a（真实 SQLite）+ M16.1b 起的 Web 平台能力扩展（属性/数据库/版本/块引用/备份/PWA）。**待做**：`pkg/core` 完整语义、OPFS/wa-sqlite 增量、插件运行时、其余平台壳。**现有 Tauri 桌面形态无回归**（架构隔离：`index.ts` 按环境自动切 tauri/web）。
+- **M16.0 存储/能力 driver 抽象** ✅（v1.46.0）：新增 `src/lib/platform/`（`types.ts` 接口 + `tauri.ts` `@tauri-apps/*` 唯一宿主 + `index.ts` `platform` 聚合/`setPlatform`）；`api.ts` ~60 个 `invoke` 改走 `platform.executor`（对外 API 不变）；12+ 组件内联的 dialog/opener/event/asset/webview 调用改消费 `platform`。**零行为变化**。
+- **M16.0b 浏览器 Web 平台可跑** ✅（v1.47.0）：`web.ts`（`createWebPlatform`）+ `pnpm dev:web`（独立 5173）。已用 Edge 无头验证 app 真实挂载、渲染种子页。
+- **M16.1a Web 平台真实 SQLite 化** ✅（v1.49.0）：`sqliteStore.ts`（sql.js WASM）+ IndexedDB 持久化；`web.ts` 核心 CRUD 改跑真实 SQL；图片字节改存 IndexedDB blob（M16.1c，v1.50.0）；`persist()` 防淘汰（v1.51.0）。
+- **M16.1b Web 平台能力扩展（浏览器版完整对齐桌面核心）** ✅：
+  - **可安装离线 PWA**（v1.52.0）：`manifest.webmanifest` + `public/sw.js`（install 缓存壳 / fetch 网络优先离线回退）+ SVG 图标；仅 production 注册 SW。
+  - **属性 / 数据库透镜**（v1.53.0）：`attr_defs`/`page_props`/`database_columns`/`db_views`/`pages.db_rule` 表；`list_attr_defs`/`create_attr`/`update_attr`/`delete_attr`/`get_page_props`/`set_page_prop`/`remove_page_prop`/`get_db_columns`/`add_db_column`/`remove_db_column`/`query_database`（含 db_rule 会员规则）/`list_db_views`/`save_db_view`/`delete_db_view`/`set_db_rule`/`get_db_rule`/`board_data`/`board_by_attr`/`move_card`/`resolve_refs`。
+  - **版本历史**（v1.54.0）：`page_versions` 表 + save_page 快照（去重 + 每页 50 版）+ `list_versions`/`restore_version`/`cleanup_old_versions`。
+  - **文件读写 / 导入导出**（v1.55.0）：`fileRegistry` + `pickBrowserFiles`（input 选文件）+ `downloadBytes`/`downloadText`（Blob 下载）；`dialog.open/save`/`write_text_file`/`read_text_file`/`import_attachment_files`/`copy_attachment`。
+  - **块级引用 / 反链**（v1.56.0）：解析 `content_json` 的块级命令 `get_page_blocks`/`resolve_block`/`get_backlinks`/`list_block_backlinks`/`search_blocks`。
+  - **整库备份 / 恢复**（v1.57.0）：`export_backup`/`import_backup`（自包含 JSON：db 快照 + 附件字节；`blobStore.entries()`、`SqliteStore.snapshot()`/`restore()`）。
+  - `scripts/smoke-web.mjs` 已扩到 **64 项**全绿（覆盖 SQLite CRUD/属性/数据库/版本/块引用/备份/persist）。
+- **M16.1 核心语义 TS 化** 🗓（规划，部分达成）：Web 平台核心 CRUD 已用真实 SQLite；`pkg/core` 完整语义（迁移/加密/备份格式互操作，先以 rusqlite 驱动跑通）仍待做。**注**：浏览器壳用 sql.js + IndexedDB blob，未用 OPFS/wa-sqlite（见取舍）。
+- **M16.2 OPFS/wa-sqlite 增量持久化** 🗓（规划）：**已评估为「需真实浏览器验证」的长期项**——wa-sqlite 异步查询在 Node 报 code 21、OPFS 必须 Worker 且无头无法验证，故维持 sql.js + IndexedDB + persist() 作为当前正解（M16.1b 已覆盖核心能力）。
+- **M16.3 插件运行时降级迁移** 🗓（规划）：`boa_engine` 移入 WASM/浏览器——浏览器网页无法跑 Rust `boa_engine`，需重做 JS 沙盒；**根本性限制**，待后续。
+- **M16.4 各平台壳** 🗓（规划）：安卓 / iOS / 鸿蒙 ArkWeb（各平台 JSBridge 补文件/外链/对话框）。浏览器 PWA（M16.1b）已作为首个 Web 壳。
+- **M16.5 验收 + 回归** 🗓（规划）：全功能回归；原 Tauri 桌面形态保留为 driver A。**已验证桌面无回归**（编译 + 进程运行）。
+> ⚠️ 取舍（诚实标注）：浏览器壳（sql.js + IndexedDB + persist()）是**可比 OPFS/wa-sqlite 验证、可落地**的方案；OPFS/wa-sqlite 增量列为需真实浏览器验证的长期项。多文件目录导出受浏览器权限限制（单文件导出/整库备份已可用）；备份格式为 Web 自包含 JSON（与桌面 zip 不互认）。
 
 ## 4. 竞品差距跟踪
 

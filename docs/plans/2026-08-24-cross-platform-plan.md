@@ -94,19 +94,21 @@ ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 19 + Lexical + TS（
 
 > 诚实的取舍：**「真实文件」能力在浏览器里是不存在的**（用户无法在系统文件管理器看到、拖进去）。这主要是**产品能力损失**，不只是实现改动。移动 / 鸿蒙可用 JSBridge 还原一部分，但要按平台逐个补坑。
 
-## 7. 里程碑（M16）规划
+## 7. 里程碑（M16）落地状态
 
-> 本方案为**规划**，未落地。下列 M16.x 是建议顺序，仍沿用「新增 + 校验 + 切换 + 保留可回滚」的风险控制。
+> 本方案 M16.0 / M16.0b / M16.1a / M16.1b 已经落地（见 [roadmap M16](roadmap.md)），其余为建议顺序。
 
-- **M16.0 `api.ts` 抽 driver 接口（零行为变化，最高优先，✅ v1.46.0）**：定义 `Executor`/`DialogDriver`/`OpenerDriver`/`EventDriver`/`AssetDriver`/`WebviewDriver` 接口，`tauri.ts` 唯一宿主 `@tauri-apps/*`，Tauri 实现即现状。**这一阶段纯收益、不返工，无论最终走哪条路径都用得上。**
-- **M16.0b 浏览器 Web 平台可跑（✅ v1.47.0）**：`web.ts`（`createWebPlatform`）——`index.ts` 按环境（`window.__TAURI_INTERNALS__`）自动选 Tauri/Web；`web.ts` 的 `invoke` 用 localStorage 持久化 mock 后端（核心笔记 CRUD + 其余命令安全空值不抛错），dialog/opener/event/asset/webview 用浏览器原生驱动；`pnpm dev:web`（独立 5173 端口）。已验证 app 在浏览器引擎真实挂载并渲染、进入编辑器。
-- **M16.2 核心语义 TS 化（先以 Rust 驱动跑通）**：`pkg/core` 重写 Schema/迁移/附件寻址/加密/备份格式的 TS 语义，仍走 rusqlite 驱动保证现有数据兼容。
-- **M16.3 Web/WASM driver**：`wa-sqlite`+OPFS 落地，逐命令回归（list/tags/search/graph/backlinks/db/属性/版本/附件/同步）。
-- **M16.4 插件运行时降级迁移**：`boa_engine` 移入 WASM/浏览器，权限模型对齐。
-- **M16.5 各平台壳**：浏览器 PWA → 安卓 WebView → iOS WKWebView → 鸿蒙 ArkWeb（各平台 JSBridge 补齐文件/外链/对话框）。
-- **M16.6 验收 + 回归**：全功能回归（存储/加密/同步/插件/附件/备份），生产构建 + 运行验证；原 Tauri 桌面形态保留为 driver A 不回归。
+- **M16.0 `api.ts` 抽 driver 接口** ✅ v1.46.0：`Executor`/`DialogDriver`/`OpenerDriver`/`EventDriver`/`AssetDriver`/`WebviewDriver` 接口 + `tauri.ts` 唯一宿主 + `index.ts` 自动切换。纯收益、不返工。
+- **M16.0b 浏览器 Web 平台可跑** ✅ v1.47.0：`web.ts`（`createWebPlatform`）+ `pnpm dev:web`（5173）。
+- **M16.1a Web 平台真实 SQLite 化** ✅ v1.49.0：`sqliteStore.ts`（sql.js WASM + IndexedDB 持久化）；M16.1c 图片字节改 blob（v1.50.0）；`persist()` 防淘汰（v1.51.0）。
+- **M16.1b Web 平台能力扩展（浏览器版对齐桌面核心）** ✅ v1.52.0–v1.57.0：PWA / 属性/数据库透镜 / 版本历史 / 文件导入导出 / 块引用反链 / 整库备份。`smoke-web.mjs` 64 项全绿。
+- **M16.2 核心语义 TS 化（`pkg/core` 完整语义：迁移/加密/备份格式互操作）** 🗓：Web 平台核心 CRUD 已用真实 SQLite；完整 `pkg/core` + 与桌面格式互操作仍待做。
+- **M16.3 OPFS/wa-sqlite 增量持久化** 🗓（长期）：**已评估为「需真实浏览器验证」**——wa-sqlite 异步查询在 Node 报 code 21、OPFS 必须 Worker 且无头无法验证；维持 sql.js + IndexedDB + persist() 为当前正解。
+- **M16.4 插件运行时降级迁移** 🗓：`boa_engine` 移入 WASM/浏览器——浏览器网页无法跑 Rust `boa_engine`，**根本性限制**，需重做 JS 沙盒。
+- **M16.5 各平台壳** 🗓：安卓 WebView → iOS WKWebView → 鸿蒙 ArkWeb（各平台 JSBridge 补齐文件/外链/对话框）。浏览器 PWA（M16.1b）为首个 Web 壳。
+- **M16.6 验收 + 回归** 🗓：全功能回归；原 Tauri 桌面形态保留为 driver A。**已验证桌面无回归**（编译 + 进程运行）。
 
-> **里程碑拆分建议**：**M16.0（driver 抽象）+ M16.0b（浏览器可跑）都已完成**——先用 `pnpm dev:web` 让 app 在纯浏览器跑起来验证分层可行，然后再决定是否继续 M16.1–M16.5（存储/语义 TS 化）。
+> **落地说明**：M16.0 + M16.0b + M16.1a + M16.1b 已完成（浏览器版含 真实SQLite/属性数据库/版本/块引用/备份/PWA）。OPFS/wa-sqlite 与插件运行时列为需真实浏览器验证或根本性限制的长期项；多文件目录导出受浏览器权限限制（单文件导出 + 整库备份已可用）。
 
 ## 8. 后端 / 前端改造要点
 

@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.58.0] - 2026-08-24
+
+### 文档
+
+- **跨平台方案里程碑落地状态更新**：`docs/roadmap.md` 的 M16 段、`docs/plans/2026-08-24-cross-platform-plan.md` 里程碑、`docs/README.md` 方案索引，从「规划中」如实更新为**实际已落地状态**——M16.0/M16.0b/M16.1a/M16.1b 已完成（浏览器 Web 平台 / 真实 SQLite / 属性数据库 / 版本历史 / 块引用反链 / 文件导入导出 / 整库备份 / 可离线 PWA，`smoke-web.mjs` 64 项全绿），并把 OPFS/wa-sqlite 增量、插件运行时标注为「需真实浏览器验证」或「根本性限制」的长期项。
+- **桌面无回归确认**：在引入全部 platform-driver/Web 改动后重新运行桌面 Tauri dev，编译成功、进程运行正常——`index.ts` 按环境自动切 tauri/web，Rust 后端未触碰。
+
+---
+
 ## [1.57.0] - 2026-08-24
 
 ### 新增（Web 平台备份导出/导入）
