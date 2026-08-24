@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.58.4] - 2026-08-24
+
+### 修复
+
+- **新建页面永远叫「未命名」**：Web 平台 `create_page`/`create_folder`/`create_database` 之前忽略传入的 `title`，固定用「未命名/新建文件夹/新建数据库」。修复：优先用 `args.title`（非空），否则按类型回退默认名——所以文件管理里新建的页面不再全是「未命名」。
+- `scripts/smoke-web.mjs` 70→**71 项全绿**（新增：`create_page` 尊重显式标题）。
+
+---
+
 ## [1.58.3] - 2026-08-24
 
 ### 修复

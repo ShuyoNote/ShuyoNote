@@ -195,6 +195,7 @@ const movedInto = await invoke("get_page", { id: created.id });
 assert("move into folder sets parent_id", movedInto && movedInto.parent_id === argsFolder.id, `parent_id=${movedInto?.parent_id}`);
 const argsPage = await invoke("create_page", { args: { parent_id: argsFolder.id, title: "夹内页", content_json: "", content_text: "" } });
 assert("create_page (args wrapper) honors parent_id", argsPage && argsPage.parent_id === argsFolder.id, `parent_id=${argsPage?.parent_id}`);
+assert("create_page honors an explicit title", argsPage && argsPage.title === "夹内页", argsPage?.title);
 await invoke("save_page", { args: { id: argsPage.id, title: "夹内改名", content_json: "{}", content_text: "x" } });
 const savedArgs = await invoke("get_page", { id: argsPage.id });
 assert("save_page (args wrapper) updates title", savedArgs && savedArgs.title === "夹内改名", savedArgs?.title);

@@ -390,7 +390,10 @@ function makeInvoke(store: SqliteStore) {
       const id = uid();
       const wsId = getWs()?.id ?? WS_KEY;
       const now = Date.now();
-      const title = kind === "folder" ? "新建文件夹" : kind === "database" ? "新建数据库" : "未命名";
+      // Honor an explicit title; fall back to a per-kind default (folders/databases
+      // get a descriptive name, plain pages get 未命名).
+      const fallback = kind === "folder" ? "新建文件夹" : kind === "database" ? "新建数据库" : "未命名";
+      const title = typeof args.title === "string" && args.title.trim() ? args.title : fallback;
       store.run(
         `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
          VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?)`,
