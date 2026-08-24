@@ -4059,10 +4059,11 @@ select.prop-value {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0;
   transition: opacity var(--transition-fast), background var(--transition-fast);
 }
-.webbookmark-card:hover .webbookmark-edit-trigger {
+.webbookmark-card:hover .webbookmark-edit-trigger,
+.webbookmark-card:focus-within .webbookmark-edit-trigger {
   opacity: 1;
 }
 .webbookmark-edit-trigger:hover {
