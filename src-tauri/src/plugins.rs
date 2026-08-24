@@ -29,7 +29,7 @@ pub struct PluginMeta {
     pub commands: Vec<PluginCommandMeta>,
 }
 
-/// The `__od` host object methods read the current invocation from here.
+// The `__od` host object methods read the current invocation from here.
 thread_local! {
     static RUN_STATE: RefCell<RunState> = RefCell::new(RunState::default());
 }
@@ -62,6 +62,7 @@ struct Manifest {
     #[serde(default)]
     description: String,
     #[serde(default)]
+    #[allow(dead_code)] // parsed manifest metadata; not currently surfaced
     author: Option<String>,
     #[serde(default = "default_main")]
     main: String,

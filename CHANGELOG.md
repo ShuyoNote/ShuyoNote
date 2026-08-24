@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.35] - 2026-08-24
+
+### 优化
+
+- **静默 Rust 编译警告**：`plugins.rs` 的 `thread_local!` 上误用 rustdoc 注释 + `Manifest.author` 未读字段——改为普通注释 + `#[allow(dead_code)]`，`cargo check` 干净。
+- **文档同步**：`docs/roadmap.md` 把 M16.6 / M16.7 / M16.8（web 能力补齐 / 体验优化 / 数据安全）从「规划」追记为 **✅ 已实现**（对应 v1.59.24–30），并追加闭环：孤儿附件清理 / 跨空间复制 / `get_attachment` / 回收站恢复（v1.59.32–34）。
+
+---
+
 ## [1.59.34] - 2026-08-24
 
 ### 修复
