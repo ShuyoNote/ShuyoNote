@@ -17,7 +17,9 @@ function draft(key: string, summary: string, payload: unknown): DraftResult {
 
 // Build a Lexical content_json for a new page from a plain-text `content` string.
 function pageJsonFromText(content: string): { content_json: string; content_text: string } {
-  const content_json = appendBlocksToJson("", content, makeId);
+  const content_json = String(content ?? "").trim()
+    ? appendBlocksToJson("", content, makeId)
+    : '{"root":{"children":[]}}';
   return { content_json, content_text: contentTextOf(content_json) };
 }
 

@@ -21,7 +21,7 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const page = await api.createPage({
         parent_id: p.args?.parent_id ?? null,
         title: String(p.args?.title ?? ""),
-        content_json: String(p.args?.content_json ?? ""),
+        content_json: String(p.args?.content_json || '{"root":{"children":[]}}'),
         content_text: String(p.args?.content_text ?? ""),
       });
       return { ok: true, message: `已创建页面「${page.title}」`, page };

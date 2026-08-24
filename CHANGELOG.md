@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.59] - 2026-08-24
+
+### 修复
+
+- **编辑器崩溃「parseEditorState: type "undefined"」**：某页面 `content_json` 里若含**缺 `type` 字段的节点**，Lexical 解析时 type 为 undefined 会直接崩溃（连带 `setEditorState: editor state is empty`）。`Editor.tsx` 的 `parseEditorState` 现**递归校验节点树**，遇到这类损坏节点即回退为空态而非崩溃。
+- **AI 写页加固**：`create_page` 空内容也产出合法 `{"root":{"children":[]}}`（`tools.ts` `pageJsonFromText` / `apply.ts`），不再写入空字符串，避免潜在空态异常。
+
+---
+
 ## [1.59.58] - 2026-08-24
 
 ### 新增
