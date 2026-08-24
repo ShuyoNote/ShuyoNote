@@ -314,9 +314,12 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
         if ($isTextNode(node)) {
           const full = node.getTextContent();
           const before = full.slice(0, anchor.offset);
-          const match = before.match(/(\/)([^\s/]*)$/);
+          // Trigger only on a "/" at start-of-text or after whitespace, so URLs
+          // like http://... (the "/" follows ":") never open the menu.
+          const match = before.match(/(^|\s)(\/[^\s/]*)$/);
           if (match && match.index !== undefined) {
-            node.spliceText(match.index, anchor.offset - match.index, "");
+            const slash = match.index + match[1].length;
+            node.spliceText(slash, anchor.offset - slash, "");
           }
         }
       });
@@ -342,12 +345,14 @@ export function SlashMenuPlugin({ pageId }: { pageId: string }) {
           return;
         }
         const before = node.getTextContent().slice(0, selection.anchor.offset);
-        const match = before.match(/(\/)([^\s/]*)$/);
+        // Only trigger on a "/" at start-of-text or after whitespace, so URLs
+        // like http://... never open the menu mid-typing.
+        const match = before.match(/(^|\s)(\/[^\s/]*)$/);
         if (!match) {
           setOpen(false);
           return;
         }
-        setQuery(match[2] || "");
+        setQuery(match[2].slice(1) || "");
         setSel(0);
         const dom = editor.getElementByKey(node.getKey());
         if (dom) {

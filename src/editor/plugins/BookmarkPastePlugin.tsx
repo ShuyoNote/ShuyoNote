@@ -5,8 +5,8 @@ import {
   $createTextNode,
   $getSelection,
   $insertNodes,
+  $isParagraphNode,
   $isRangeSelection,
-  COMMAND_PRIORITY_EDITOR,
   COMMAND_PRIORITY_HIGH,
   KEY_DOWN_COMMAND,
   PASTE_COMMAND,
@@ -82,12 +82,12 @@ export function BookmarkPastePlugin() {
         editor.getEditorState().read(() => {
           const selection = $getSelection();
           if (!$isRangeSelection(selection)) return;
+          if (!selection.isCollapsed()) return;
           const topLevel = selection.anchor.getNode().getTopLevelElement();
-          if (!topLevel) return;
+          if (!topLevel || !$isParagraphNode(topLevel)) return;
           const text = topLevel.getTextContent();
           if (!isOnlyUrl(text)) return;
-          // Only when the cursor sits in the single URL block (not a selection
-          // across multiple blocks) do we treat it as a convertible URL.
+          // Only when the cursor sits in a single URL paragraph do we convert.
           url = text.trim();
         });
         if (!url) return false;
@@ -106,7 +106,7 @@ export function BookmarkPastePlugin() {
         });
         return true;
       },
-      COMMAND_PRIORITY_EDITOR,
+      COMMAND_PRIORITY_HIGH,
     );
   }, [editor]);
   useEffect(() => {
