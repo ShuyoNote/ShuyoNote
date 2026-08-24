@@ -67,7 +67,7 @@ export class ImageRowNode extends DecoratorNode<JSX.Element> {
           const style: CSSProperties = {};
           if (it.width) style.width = `${it.width}px`;
           else if (it.height) style.height = `${it.height}px`;
-          return (
+          return it.src ? (
             <img
               key={i}
               src={it.src}
@@ -77,6 +77,8 @@ export class ImageRowNode extends DecoratorNode<JSX.Element> {
               onError={(e) => e.currentTarget.classList.add("editor-image-broken")}
               onLoad={(e) => e.currentTarget.classList.remove("editor-image-broken")}
             />
+          ) : (
+            <span key={i} className="editor-image editor-image-empty" />
           );
         })}
       </div>

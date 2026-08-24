@@ -75,6 +75,10 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
+    // Guard: an empty src would make React emit an "empty string passed to src"
+    // warning (and the browser may refetch the page). Render nothing and let the
+    // editor show an empty line placeholder instead.
+    if (!this.__src) return <span className="editor-image editor-image-empty" />;
     const style: CSSProperties = {};
     if (this.__width) style.width = `${this.__width}px`;
     else if (this.__height) style.height = `${this.__height}px`;

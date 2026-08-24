@@ -44,6 +44,7 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
+    if (!this.__src) return <span className="editor-video editor-image-empty" />;
     return <video src={this.__src} controls className="editor-video" />;
   }
 

@@ -689,14 +689,16 @@ export function FileManagerView() {
               </button>
             </div>
             <div className="fm-preview-body">
-              {preview.mime.startsWith("image/") ? (
+              {preview.mime.startsWith("image/") && preview.path ? (
                 <img src={platform.asset.convertFileSrc(preview.path)} alt={preview.name} />
-              ) : preview.mime.startsWith("video/") ? (
+              ) : preview.mime.startsWith("video/") && preview.path ? (
                 <video src={platform.asset.convertFileSrc(preview.path)} controls />
-              ) : preview.mime.startsWith("audio/") ? (
+              ) : preview.mime.startsWith("audio/") && preview.path ? (
                 <audio src={platform.asset.convertFileSrc(preview.path)} controls />
-              ) : preview.mime === "application/pdf" ? (
+              ) : preview.mime === "application/pdf" && preview.path ? (
                 <iframe src={platform.asset.convertFileSrc(preview.path)} title={preview.name} />
+              ) : preview.mime.startsWith("image/") || preview.mime.startsWith("video/") || preview.mime.startsWith("audio/") ? (
+                <div className="fm-preview-unsupported">预览地址不可用，请在文件夹中打开查看。</div>
               ) : preview.mime.startsWith("text/") ? (
                 <div className="fm-preview-unsupported">文本文件：请在文件夹中打开查看。</div>
               ) : (

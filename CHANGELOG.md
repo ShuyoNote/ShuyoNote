@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.16] - 2026-08-24
+
+### 修复
+
+- **控制台警告：An empty string ("") was passed to the src attribute**：部分图片/视频节点没有 `src` 时仍渲染 `<img src="">`/`<video src="">`，触发 React 警告并可能让浏览器重新拉取整页。修复：
+  - `ImageNode`/`ImageRowNode`/`VideoNode`：`src` 为空时不渲染真实节点，改渲染一个 `.editor-image-empty` 占位块（不再产生空 `src`）。
+  - 文件管理预览：`preview.path` 为空时不再给 `<img/video/audio/iframe>` 传空 src，改为显示"预览地址不可用"提示。
+- `scripts/smoke-web.mjs` 仍 **112 项全绿**；`vite build` 通过。
+
+---
+
 ## [1.59.15] - 2026-08-24
 
 ### 新增

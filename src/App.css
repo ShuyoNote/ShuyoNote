@@ -3095,6 +3095,22 @@ select.prop-value {
   opacity: 0.55;
 }
 
+/* Empty-src image/video placeholder (no src → render nothing meaningful rather
+   than an <img src=""> which triggers a React warning + full-page refetch). */
+.editor-image.editor-image-empty {
+  display: inline-block;
+  min-width: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  max-width: 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  opacity: 0.6;
+  width: 24px;
+  height: 24px;
+}
+
 /* Inline images (emblem/badge rows) sit in the text line, small and centered. */
 .editor-image-container.editor-image-inline-container {
   display: inline !important;
