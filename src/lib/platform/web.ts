@@ -1349,6 +1349,9 @@ function makeInvoke(store: SqliteStore) {
 
       emit(1, 3, "恢复数据库…");
       await store.restore(dbBytes);
+      // Reconcile the multi-space catalog + active id with the restored DB so the
+      // sidebar space name / list reflect the backup, not the pre-restore catalog.
+      await reconcileAfterRestore(store);
 
       // Import attachment bytes one at a time, yielding + reporting progress so a
       // backup with many/large files shows a real advancing bar instead of freezing.
@@ -1590,6 +1593,47 @@ function workspaceColumns(store: SqliteStore): string[] {
   } catch {
     return [];
   }
+}
+
+// Reconcile the multi-space catalog with the live store AFTER a hard restore
+// (import_backup overwrites the whole DB). The restored DB carries its own
+// workspace row(s); re-sync catalog + active id + its snapshot so the sidebar name
+// and workspace list reflect the restored data, not the pre-restore catalog.
+async function reconcileAfterRestore(store: SqliteStore): Promise<void> {
+  type WsRow = { id: string; name: string; theme: string | null; icon: string; created_at?: number; updated_at?: number };
+  const cols = workspaceColumns(store);
+  // SELECT only the columns that actually exist (web-native table has no
+  // created_at/updated_at; a desktop-restored table may).
+  const selectCols = ["id", "name", "theme", "icon"]
+    .concat(cols.includes("created_at") ? ["created_at"] : [])
+    .concat(cols.includes("updated_at") ? ["updated_at"] : []);
+  const rows = store.query<WsRow>(`SELECT ${selectCols.join(", ")} FROM workspaces`) as any[];
+  const now = Date.now();
+  if (rows.length === 0) {
+    // Restored DB has no workspace row — seed the default one.
+    const id = "active";
+    const ids = ["id", "name", "theme", "icon"];
+    const vals: (string | number | null)[] = [id, "我的工作空间", null, ""];
+    if (cols.includes("created_at")) { ids.push("created_at"); vals.push(now); }
+    if (cols.includes("updated_at")) { ids.push("updated_at"); vals.push(now); }
+    store.run(`INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
+    rows.push({ id, name: "我的工作空间", theme: null, icon: "", created_at: now, updated_at: now });
+  }
+
+  // Rebuild the catalog from the (restored) workspace rows.
+  for (const r of rows) {
+    await spaceStore.putMeta({
+      id: r.id, name: r.name ?? "我的工作空间", theme: r.theme, icon: r.icon ?? "",
+      sort_order: r.created_at ?? now, created_at: r.created_at ?? now, updated_at: r.updated_at ?? now,
+    });
+  }
+  // The active workspace becomes the first restored row (backup has one active space).
+  const activeId = rows[0].id;
+  await spaceStore.setActiveId(activeId);
+  useSpaceCatalog.getState().setActiveId(activeId);
+  // Persist the restored DB as the active space's snapshot so a later switch-back
+  // and a reload both reflect the restored data.
+  await spaceStore.putSnapshot(activeId, store.snapshot());
 }
 
 function getSharedStore(): Promise<SqliteStore> {

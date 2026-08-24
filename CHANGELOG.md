@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.20] - 2026-08-24
+
+### 修复
+
+- **全库恢复后空间名称不对**：`import_backup`（覆盖全库）之前只 `restore` 数据库，但没有同步多空间 catalog——恢复后 `spaceStore` 仍保留恢复前的空间元数据与 active id，而 live 库里的 `workspaces` 行（来自备份）可能 id 不同，导致侧边栏空间名回到"我的工作空间"/"默认空间"，如备份里空间名不同则显示错误。修复：
+  - 新增 `reconcileAfterRestore`：读取恢复后 live 库的 `workspaces` 行（按 `PRAGMA table_info` 动态列，兼容 web/桌面两种 schema），重建 `spaceStore` catalog、把 active id 设为恢复的行、并快照存档。
+  - 侧边栏空间名改为**随 active 空间变化自动刷新**（`useEffect` 订阅 `activeSpaceId`），恢复/切换后不再陈旧。
+  - BackupButton 恢复后刷新 `useSpaceStore.load()`。
+- `scripts/smoke-web.mjs` 115→**117 项全绿**（新增：恢复后 `get_workspace_name` 返回备份的空间名 / `list_workspaces` 返回恢复后的空间列表）。
+
+---
+
 ## [1.59.19] - 2026-08-24
 
 ### 优化

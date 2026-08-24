@@ -3,6 +3,7 @@ import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { useSpaceStore } from "../store/space";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { DownloadIcon, UploadIcon } from "./icons";
@@ -87,6 +88,9 @@ export function BackupButton() {
       setBusying("正在导入备份…");
       await api.importBackup(path as string);
       await loadPages();
+      // Reload workspaces so the sidebar space name/list react to the restored DB
+      // (import_backup may have changed the active workspace identity).
+      useSpaceStore.getState().load();
       toast("备份导入完成", "success");
     } catch (e) {
       toast(`导入失败：${e}`, "error");

@@ -560,6 +560,15 @@ export function PageTree({
     useSpaceStore.getState().load();
   }, []);
 
+  // Re-fetch the sidebar space name whenever the active space changes (including
+  // after a full back-up restore or a switch), so the title isn't stale.
+  useEffect(() => {
+    api
+      .getWorkspaceName()
+      .then(setWorkspaceName)
+      .catch(() => {});
+  }, [activeSpaceId]);
+
   const switchSpace = async (id: string) => {
     const ok = await useSpaceStore.getState().switchTo(id);
     if (ok) {

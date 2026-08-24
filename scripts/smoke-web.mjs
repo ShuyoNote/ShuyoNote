@@ -482,6 +482,12 @@ const backupAfterPages = await backupPlatform.executor.invoke("list_pages", {});
 assert("import_backup restores pages", Array.isArray(backupAfterPages) && backupAfterPages.length >= backupBeforePages, `${backupAfterPages?.length} pages after import`);
 assert("import_backup emits backup-progress events", backupProgress.length >= 1, `${backupProgress.length} event(s)`);
 assert("backup-progress event has phase/done/total", backupProgress[0] && backupProgress[0].phase === "import" && typeof backupProgress[0].done === "number" && typeof backupProgress[0].total === "number", JSON.stringify(backupProgress[0]));
+// Full restore must also reconcile the workspace catalog so the sidebar name/list
+// reflect the restored DB (not the pre-restore catalog).
+const wsNameAfterBackup = await backupPlatform.executor.invoke("get_workspace_name", {});
+assert("import_backup restores the workspace name", typeof wsNameAfterBackup === "string" && wsNameAfterBackup.length > 0 && wsNameAfterBackup !== "默认空间", String(wsNameAfterBackup));
+const wsListAfterBackup = await backupPlatform.executor.invoke("list_workspaces", {});
+assert("import_backup restores a workspace list", Array.isArray(wsListAfterBackup) && wsListAfterBackup.length >= 1, `${wsListAfterBackup?.length} space(s)`);
 
 // 10i-2. export_workspace (space export) must build a real self-contained zip, not
 // a size-0 stub: shuyonote.db + workspace.json + attachments/<hash>, with a real
