@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.21] - 2026-08-24
+
+### 修复
+
+- **桌面端全库恢复后空间名称不对**：桌面 `export_backup` 只快照空间 DB（`spaces/<id>.db`），**不含** meta.db；而前端空间名读自 `meta.workspaces`。所以恢复全库后 `meta.workspaces.name` 还是恢复前的旧名，侧边栏显示错误。修复：`import_backup` 在恢复数据库后，从**恢复的空间 DB 的 `workspaces` 行**读取空间名，并同步到 `meta.workspaces`（active 空间），侧边栏空间名随之正确。
+- Rust 端：`backup.rs` 的 `import_backup` 增加 name 同步；`cargo check` 通过。
+
+---
+
 ## [1.59.20] - 2026-08-24
 
 ### 修复

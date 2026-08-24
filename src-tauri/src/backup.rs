@@ -1,4 +1,5 @@
 use crate::db::Db;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager, State};
@@ -273,6 +274,26 @@ pub async fn import_backup(
     {
         let mut conn = db.0.lock().expect("db mutex poisoned");
         restore_db(&mut conn, &db_snapshot)?;
+        // The backup only snapshots the space DB (spaces/<id>.db), NOT meta.db, so
+        // the authoritative space name lives in the restored space DB's `workspaces`
+        // row. Sync it into meta.workspaces for the active space, otherwise the
+        // sidebar shows the pre-restore (stale) name.
+        let active = crate::workspaces::active_workspace_id(&conn)?;
+        let restored_name: Option<String> = conn
+            .query_row(
+                "SELECT name FROM workspaces WHERE id = ?1 LIMIT 1",
+                rusqlite::params![active],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(name) = restored_name {
+            conn.execute(
+                "UPDATE meta.workspaces SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![name, crate::db::now_ms(), active],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
 
     // Restore attachments (streaming copy, off the main thread).
