@@ -977,6 +977,43 @@ assert("workspace name persists across instances", wsAgain !== "");
     server2.closeAllConnections?.();
     await new Promise((resolve) => server2.close(resolve));
   }
+
+  // Web platform: ai_complete / ai_probe handlers route through the pure HTTP
+  // transports (local Ollama). Exercised via the platform's own invoke.
+  const http3 = await import("node:http");
+  const server3 = http3.createServer((req, res) => {
+    if (req.url === "/api/tags") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ models: [{ name: "qwen2.5:7b" }] }));
+      return;
+    }
+    if (req.url === "/api/chat") {
+      req.on("data", () => {});
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ model: "qwen2.5:7b", message: { role: "assistant", content: "hi from web ai" } }));
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server3.listen(0, "127.0.0.1", resolve));
+  const port3 = server3.address().port;
+  const aiBase3 = `http://127.0.0.1:${port3}`;
+  try {
+    const webChat = await invoke("ai_complete", {
+      args: { provider: "ollama", base_url: aiBase3, model: "qwen2.5:7b", messages: [{ role: "user", content: "hi" }] },
+    });
+    assert("web ai_complete routes through platform", webChat.content === "hi from web ai");
+    const webProbe = await invoke("ai_probe", {
+      args: { provider: "ollama", base_url: aiBase3, model: "qwen2.5:7b" },
+    });
+    assert("web ai_probe lists models", webProbe.ok && webProbe.models.includes("qwen2.5:7b"), webProbe.message);
+  } finally {
+    server3.closeAllConnections?.();
+    await new Promise((resolve) => server3.close(resolve));
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

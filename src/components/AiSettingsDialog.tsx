@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAiStore } from "../store/ai";
+import { probeApi } from "../lib/ai/transport";
 import {
-  testProviderConnection,
   OLLAMA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_URL,
   OPENAI_COMPAT_DEFAULT_BASE,
@@ -56,7 +56,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
     setTestMsg(null);
     setTestOk(null);
     try {
-      const r = await testProviderConnection(resolved());
+      const r = await probeApi(resolved());
       setTestOk(r.ok);
       setTestMsg(r.message);
     } catch (e) {

@@ -2,13 +2,13 @@ import { create } from "zustand";
 import { runAiLoop } from "../lib/ai/host";
 import { applyDraft as commitDraft } from "../lib/ai/apply";
 import {
-  createProviderTransport,
   OLLAMA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_URL,
   OPENAI_COMPAT_DEFAULT_BASE,
   OPENAI_COMPAT_DEFAULT_MODEL,
   type ProviderConfig,
 } from "../lib/ai/llm";
+import { createApiTransport } from "../lib/ai/transport";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
 
@@ -99,7 +99,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     set({ running: true, error: null });
 
     try {
-      const transport = createProviderTransport(config as ProviderConfig);
+      const transport = createApiTransport(config as ProviderConfig);
       const result: AiRunResult = await runAiLoop(
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),

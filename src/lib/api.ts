@@ -202,4 +202,20 @@ export const api = {
       usage: number;
       supported: boolean;
     }>("request_persistent_storage"),
+  // ---- AI proxy (desktop Rust forwards the LLM request, bypassing CORS) ----
+  aiComplete: (args: {
+    provider: string;
+    base_url: string;
+    model: string;
+    api_key?: string;
+    messages: Array<{ role: string; content: string }>;
+    temperature?: number;
+    max_tokens?: number;
+  }) =>
+    invoke<{ content: string; native_tool_calls?: Array<{ name: string; arguments: string }> }>(
+      "ai_complete",
+      { args },
+    ),
+  aiProbe: (args: { provider: string; base_url: string; model: string; api_key?: string }) =>
+    invoke<{ ok: boolean; message: string; models?: string[] }>("ai_probe", { args }),
 };

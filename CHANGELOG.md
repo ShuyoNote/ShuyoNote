@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.40] - 2026-08-24
+
+### 新增
+
+- **云 LLM 后端代理（绕过 CORS）**：前端直连 DeepSeek/OpenAI 等会被浏览器/WebView2 以 CORS 拦截，此前云服务「没生效」。现按用户选择改为**受限后端代理**：
+  - `src-tauri/src/ai.rs` 新增 `ai_complete`（`reqwest` 转发 `/api/chat` 或 `/v1/chat/completions`，解析 `content`/`tool_calls`）与 `ai_probe`（`/api/tags` 或 `/v1/models` 探测）。
+  - `api.ts` 新增 `api.aiComplete` / `api.aiProbe`；桌面端走 Rust（无 CORS），Web 端 web handler 复用纯 HTTP 逻辑（本地 Ollama 可用，云受 CORS 限制——为已接受取舍）。
+  - `src/lib/ai/transport.ts` 新增 `createApiTransport` / `probeApi`；store 发送与「测试连接」改走 `api.*`。
+  - `llm.ts` 保留纯 HTTP 实现（供 web handler + 测试），`parseToolArgs` 导出。
+  - `scripts/smoke-web.mjs` 159→**161 项全绿**（新增：web 平台 `ai_complete`/`ai_probe` 端到端）。
+
+---
+
 ## [1.59.39] - 2026-08-24
 
 ### 新增

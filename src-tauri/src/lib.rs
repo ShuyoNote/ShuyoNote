@@ -1,3 +1,4 @@
+mod ai;
 mod attachments;
 mod backlinks;
 mod backup;
@@ -152,6 +153,8 @@ pub fn run() {
             security::disable_encryption,
             security::lock_encryption,
             security::unlock_encryption,
+            ai::ai_complete,
+            ai::ai_probe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

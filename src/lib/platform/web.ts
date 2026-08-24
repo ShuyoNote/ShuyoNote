@@ -18,6 +18,7 @@ import { blobStore, contentHash } from "./blobStore";
 import { spaceStore, useSpaceCatalog } from "./spaceStore";
 import { unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
+import { createOllamaTransport, createOpenAICompatTransport, testOllamaConnection, testOpenAICompatConnection } from "../ai/llm";
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -1238,6 +1239,39 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "fetch_bookmark_metadata") {
       const url = String(a.url ?? "");
       return { url, title: url, description: "", site_name: "", image_hash: "", image_mime: "" } as T;
+    }
+
+    // ---- AI proxy (web fallback: pure HTTP; local Ollama works, cloud is CORS-bound) ----
+    if (cmd === "ai_complete") {
+      const args = a.args ?? a;
+      const provider = String(args.provider ?? "ollama");
+      const baseUrl = String(args.base_url ?? "http://localhost:11434");
+      const model = String(args.model ?? "qwen2.5:7b");
+      const apiKey = args.api_key ? String(args.api_key) : undefined;
+      const messages = Array.isArray(args.messages) ? args.messages : [];
+      const temperature = typeof args.temperature === "number" ? args.temperature : undefined;
+      const maxTokens = typeof args.max_tokens === "number" ? args.max_tokens : undefined;
+      const t = provider === "openai"
+        ? createOpenAICompatTransport(baseUrl, model, apiKey)
+        : createOllamaTransport(baseUrl, model);
+      const res = await t.complete(messages, { temperature, maxTokens });
+      return {
+        content: res.content,
+        native_tool_calls: res.nativeToolCalls
+          ? res.nativeToolCalls.map((tc) => ({ name: tc.name, arguments: JSON.stringify(tc.arguments) }))
+          : undefined,
+      } as T;
+    }
+    if (cmd === "ai_probe") {
+      const args = a.args ?? a;
+      const provider = String(args.provider ?? "ollama");
+      const baseUrl = String(args.base_url ?? "http://localhost:11434");
+      const model = String(args.model ?? "qwen2.5:7b");
+      const apiKey = args.api_key ? String(args.api_key) : undefined;
+      const res = provider === "openai"
+        ? await testOpenAICompatConnection(baseUrl, model, apiKey)
+        : await testOllamaConnection(baseUrl, model);
+      return { ok: res.ok, message: res.message, models: res.models ?? [] } as T;
     }
 
     // ---- Properties / attributes / database ----

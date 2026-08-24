@@ -59,7 +59,7 @@ function appendV1(base: string, path: string): string {
 }
 
 /** Tool-call `arguments` may be an object (Ollama) or a JSON string (OpenAI). */
-function parseToolArgs(a: unknown): Record<string, unknown> {
+export function parseToolArgs(a: unknown): Record<string, unknown> {
   if (typeof a === "string") {
     try {
       const v = JSON.parse(a);
