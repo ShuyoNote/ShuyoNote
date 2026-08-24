@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.47] - 2026-08-24
+
+### 新增
+
+- **流式输出（Web）**：纯 HTTP 传输在收到 `onDelta` 回调时改走 `stream:true` 逐 token 解析——Ollama 用 NDJSON、OpenAI 兼容用 SSE；store 在 **Web 平台**用直接 fetch 流式并节流实时更新回复卡，桌面端维持后端非流式（绕过 CORS）。工具循环照常执行，每步模型输出皆可流式显示。
+- `host.ts` 透传 `onDelta` 到传输层；store 以 `IS_WEB` 区分流式/非流式。
+- `scripts/smoke-web.mjs` 174→**176 项全绿**（新增：NDJSON/SSE 流式累积）。
+
+---
+
 ## [1.59.46] - 2026-08-24
 
 ### 新增/优化

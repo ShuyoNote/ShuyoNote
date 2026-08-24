@@ -18,6 +18,8 @@ export interface LlmOptions {
   tools?: unknown[];
   temperature?: number;
   maxTokens?: number;
+  /** When set, the transport streams deltas to this callback as they arrive. */
+  onDelta?: (text: string) => void;
 }
 
 export interface LlmResult {
@@ -107,11 +109,74 @@ async function safeFetch(url: string, init: RequestInit, timeoutMs: number): Pro
   }
 }
 
+// Read a streaming response body, splitting on lines, extracting a token per
+// line, and forwarding it to onDelta. Returns the fully accumulated text.
+async function readBodyStream(
+  resp: Response,
+  extract: (line: string) => string,
+  onDelta: (text: string) => void,
+): Promise<string> {
+  const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let content = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      const token = extract(line);
+      if (token) {
+        content += token;
+        onDelta(token);
+      }
+    }
+  }
+  return content;
+}
+
+// Ollama /api/chat streams NDJSON: {"message":{"content":"token"}} … {"done":true}.
+function ollamaLineExtract(line: string): string {
+  if (line.startsWith("data:")) line = line.slice(5).trim();
+  try {
+    const j = JSON.parse(line);
+    return typeof j?.message?.content === "string"
+      ? j.message.content
+      : typeof j?.response === "string"
+        ? j.response
+        : "";
+  } catch {
+    return "";
+  }
+}
+
+// OpenAI-compatible streams SSE: `data: {"choices":[{"delta":{"content":"token"}}]}` … `data: [DONE]`.
+function openaiLineExtract(line: string): string {
+  if (!line.startsWith("data:")) return "";
+  const payload = line.slice(5).trim();
+  if (payload === "[DONE]") return "";
+  try {
+    const j = JSON.parse(payload);
+    return j?.choices?.[0]?.delta?.content ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function isStreaming(opts: LlmOptions): opts is LlmOptions & { onDelta: (text: string) => void } {
+  return typeof opts?.onDelta === "function";
+}
+
 // ---- Ollama chat transport ----
 export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLAMA_DEFAULT_MODEL): LlmTransport {
   return {
     async complete(messages, opts = {}) {
       const url = `${baseUrlOf(baseUrl)}/api/chat`;
+      const streaming = isStreaming(opts);
       let resp: Response;
       try {
         resp = await safeFetch(
@@ -122,7 +187,7 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
             body: JSON.stringify({
               model,
               messages,
-              stream: false,
+              stream: streaming,
               options: {
                 num_ctx: OLLAMA_DEFAULT_NUM_CTX,
                 temperature: opts.temperature ?? 0.7,
@@ -136,6 +201,9 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
         throw new Error(describeFetchError(e, baseUrl));
       }
       if (!resp.ok) throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);
+      if (streaming) {
+        return { content: await readBodyStream(resp, ollamaLineExtract, opts.onDelta), nativeToolCalls: undefined };
+      }
       const data = await resp.json();
       return {
         content: typeof data?.message?.content === "string" ? data.message.content : "",
@@ -156,6 +224,7 @@ export function createOpenAICompatTransport(
   return {
     async complete(messages, opts = {}) {
       const url = appendV1(baseUrl, "/chat/completions");
+      const streaming = isStreaming(opts);
       let resp: Response;
       try {
         resp = await safeFetch(
@@ -166,7 +235,7 @@ export function createOpenAICompatTransport(
             body: JSON.stringify({
               model,
               messages,
-              stream: false,
+              stream: streaming,
               temperature: opts.temperature ?? 0.7,
               max_tokens: opts.maxTokens ?? 512,
             }),
@@ -185,6 +254,9 @@ export function createOpenAICompatTransport(
           /* ignore body parse */
         }
         throw new Error(`OpenAI 兼容接口请求失败 (${resp.status})${detail}`);
+      }
+      if (streaming) {
+        return { content: await readBodyStream(resp, openaiLineExtract, opts.onDelta), nativeToolCalls: undefined };
       }
       const data = await resp.json();
       const msg = data?.choices?.[0]?.message ?? {};

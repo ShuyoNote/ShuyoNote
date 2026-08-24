@@ -1054,6 +1054,50 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("draftPreview unknown -> empty", aiMod.draftPreview({ kind: "?x" }) === "");
 }
 
+// 17. Streaming: NDJSON (Ollama) and SSE (OpenAI-compat) parse into deltas.
+{
+  const http4 = await import("node:http");
+  const srv4 = http4.createServer((req, res) => {
+    if (req.url === "/api/chat") {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write('{"message":{"content":"he"}}\n');
+      res.write('{"message":{"content":"llo"}}\n');
+      res.end('{"message":{"content":"!"},"done":true}\n');
+      return;
+    }
+    if (req.url === "/v1/chat/completions") {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"!"}}]}\n\n');
+      res.end("data: [DONE]\n\n");
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => srv4.listen(0, "127.0.0.1", resolve));
+  const port4 = srv4.address().port;
+  const base4 = `http://127.0.0.1:${port4}`;
+  try {
+    const deltas4 = [];
+    const res4 = await aiMod.createOllamaTransport(base4, "qwen2.5:7b").complete(
+      [{ role: "user", content: "hi" }],
+      { onDelta: (t) => deltas4.push(t) },
+    );
+    assert("ollama streaming accumulates deltas", deltas4.join("") === "he" + "llo" + "!" && res4.content === "he" + "llo" + "!", JSON.stringify(deltas4));
+
+    const deltas5 = [];
+    const res5 = await aiMod.createOpenAICompatTransport(base4, "deepseek-chat").complete(
+      [{ role: "user", content: "hi" }],
+      { onDelta: (t) => deltas5.push(t) },
+    );
+    assert("openai-compat streaming accumulates deltas", deltas5.join("") === "hi" + "!" && res5.content === "hi" + "!", JSON.stringify(deltas5));
+  } finally {
+    srv4.closeAllConnections?.();
+    await new Promise((resolve) => srv4.close(resolve));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 // Use exitCode (not process.exit()) so any still-closing libuv handles drain
 // before the process exits; process.exit() races teardown and hits a Windows

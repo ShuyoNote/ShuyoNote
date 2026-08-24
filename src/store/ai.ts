@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { runAiLoop } from "../lib/ai/host";
 import { applyDraft as commitDraft } from "../lib/ai/apply";
 import {
+  createProviderTransport,
   OLLAMA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_URL,
   OPENAI_COMPAT_DEFAULT_BASE,
@@ -14,6 +15,9 @@ import { useNotes } from "./notes";
 
 const CFG_KEY = "shuyonote.ai.config";
 const HISTORY_KEY = "shuyonote.ai.history";
+// Web (browser) can stream cloud/local LLMs directly via fetch; desktop goes
+// through the backend proxy (non-streaming) to bypass CORS.
+const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
 export interface AiConfig {
   enabled: boolean;
@@ -133,16 +137,35 @@ export const useAiStore = create<AiState>((set, get) => ({
     const seq = ++runSeq;
     set({ running: true, error: null });
 
+    // Live-stream window (throttled) so web replies appear token-by-token.
+    let buffered = "";
+    let timer: number | null = null;
+    const flush = () => {
+      timer = null;
+      if (buffered) {
+        const chunk = buffered;
+        buffered = "";
+        set((s) => ({ reply: s.reply + chunk }));
+      }
+    };
+    const onDelta = (t: string) => {
+      buffered += t;
+      if (timer === null) timer = window.setTimeout(flush, 40);
+    };
+
     try {
-      const transport = createApiTransport(config as ProviderConfig);
+      const transport = IS_WEB ? createProviderTransport(config as ProviderConfig) : createApiTransport(config as ProviderConfig);
       const result: AiRunResult = await runAiLoop(
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),
         { currentPageId: notes.currentId, allPages },
-        { transport, history: get().history },
+        { transport, history: get().history, onDelta: IS_WEB ? onDelta : undefined },
       );
       // A newer run() or a stop() invalidates this result (stale discard).
       if (seq !== runSeq) return;
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      buffered = "";
       // Keep existing drafts, replace reply/error with the fresh run; keep the
       // last assistant reply in history so follow-ups ("再详细点") stay in context.
       const history = [...get().history, { role: "user" as const, content: trimmed }];
@@ -159,6 +182,9 @@ export const useAiStore = create<AiState>((set, get) => ({
       });
     } catch (e) {
       if (seq !== runSeq) return;
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      buffered = "";
       set({ running: false, error: String((e as Error)?.message ?? e) });
     }
   },
