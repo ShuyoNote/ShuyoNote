@@ -76,25 +76,6 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     return false;
   }
 
-  // Persist fetched metadata into this node (call inside an editor.update).
-  updateMeta(
-    title: string,
-    description: string,
-    siteName: string,
-    imageHash: string,
-    imageMime: string,
-  ): void {
-    // Must write through the writable proxy: node fields are read-only on the
-    // frozen node outside of a mutation, and `getWritable()` gives the proxy.
-    const w = this.getWritable();
-    w.__title = title;
-    w.__description = description;
-    w.__siteName = siteName;
-    w.__imageHash = imageHash;
-    w.__imageMime = imageMime;
-    w.markDirty();
-  }
-
   decorate(): JSX.Element {
     return (
       <WebBookmarkCard
@@ -217,22 +198,30 @@ function WebBookmarkCard(props: {
       .then((m) => {
         if (!alive) return;
         const title = m.title || hostOf(props.url);
+        const siteName = m.site_name || hostOf(props.url);
         setMeta({
           title,
           description: m.description,
-          siteName: m.site_name || hostOf(props.url),
+          siteName,
           imageHash: m.image_hash,
         });
-        // Persist to the node so subsequent renders read it from props.
+        // Replace the node with a fresh one carrying the fetched metadata, so it
+        // persists and the card never re-fetches. (Writing fields on the frozen
+        // node is read-only; replacing with a new node is the safe lexical way.)
         editor.update(() => {
           const cur = $getNodeByKey<WebBookmarkNode>(props.nodeKey);
-          cur?.updateMeta(
-            title,
-            m.description,
-            m.site_name || hostOf(props.url),
-            m.image_hash,
-            m.image_mime,
-          );
+          if (cur) {
+            cur.replace(
+              $createWebBookmarkNode(
+                props.url,
+                title,
+                m.description,
+                siteName,
+                m.image_hash,
+                m.image_mime,
+              ),
+            );
+          }
         });
       })
       .catch((e) => {
