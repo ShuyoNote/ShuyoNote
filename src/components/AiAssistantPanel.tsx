@@ -93,20 +93,9 @@ export function AiAssistantPanel() {
     useAiStore.getState().run(t);
   };
 
-  // Collapsed floating toggle.
-  if (!open) {
-    return (
-      <div className="ai-fab-wrap">
-        <button
-          className="ai-fab"
-          title="AI 助手"
-          onClick={() => setOpen(true)}
-        >
-          <SparkleIcon className="ai-fab-icon" />
-        </button>
-      </div>
-    );
-  }
+  // Collapsed state: the right-edge rail (RightRail) is the launcher, so the panel
+  // renders nothing until opened via the rail / sidebar / command palette.
+  if (!open) return null;
 
   return (
     <>

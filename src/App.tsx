@@ -16,6 +16,7 @@ import { GraphView } from "./components/GraphView";
 import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
+import { RightRail } from "./components/RightRail";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { TemplateCenterView } from "./components/TemplateCenterView";
@@ -272,6 +273,7 @@ function App() {
         <ConfirmDialog />
         <InputDialog />
         <AiAssistantPanel />
+        <RightRail />
       </div>
     );
   }
@@ -318,6 +320,7 @@ function App() {
       <InputDialog />
       <PluginManager />
       <AiAssistantPanel />
+      <RightRail />
     </div>
   );
 }
