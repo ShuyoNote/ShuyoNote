@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.11] - 2026-08-24
+
+### 修复
+
+- **web 版侧边栏文件夹仍不显示文件名（上一版修复无效）**：问题不止于没读 `page_id` —— web 版 `import_attachment_files` 还做**按 hash 去重跳过插入**：若内容相同的行已存在（例如在补 `page_id` 之前上传过、留下 `page_id = NULL` 的孤儿行），再次上传会命中 `existing` 而**跳过插入**，新的 `page_id` 根本没写进去，文件依旧不出现在文件夹下。修复：**每次都插入新行**（与桌面后端、`save_image` 一致，每行自带 `page_id` 归属；字节仍内容寻址去重写入 blob store）。`scripts/smoke-web.mjs` 92→**94 项全绿**（新增：重复导入同内容仍归属文件夹）。
+
+---
+
 ## [1.59.10] - 2026-08-24
 
 ### 修复

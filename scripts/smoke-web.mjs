@@ -294,6 +294,17 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
   assert("imported file not listed under a different folder", Array.isArray(notInOtherImported) && !notInOtherImported.some((x) => x.name === "readme.md"));
 }
 
+// 8b-2. Re-importing the SAME content must still attach a fresh row to the folder.
+// (Previously a hash-dedup skip left page_id NULL on the second import, so a file
+// uploaded before the page_id fix never showed under its folder.)
+{
+  await invoke("write_text_file", { path: "uploads/readme.md", content: "# hello" });
+  const again = await invoke("import_attachment_files", { pageId: argsFolder.id, paths: ["uploads/readme.md"] });
+  assert("re-import of same hash still returns a row", Array.isArray(again) && again.length === 1, `${again?.length}`);
+  const owned = await invoke("list_page_attachments", { pageId: argsFolder.id });
+  assert("re-imported file is owned by the folder", Array.isArray(owned) && owned.filter((x) => x.name === "readme.md" && x.page_id === argsFolder.id).length >= 1, `${owned?.length}`);
+}
+
 
 // 8c. Persistent-storage request returns a safe object (Node: no navigator).
 const persist = await invoke("request_persistent_storage", {});

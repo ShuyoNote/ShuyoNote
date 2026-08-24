@@ -849,10 +849,11 @@ function makeInvoke(store: SqliteStore) {
         const hash = await contentHash(reg.bytes);
         await blobStore.put(hash, reg.bytes);
         const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: "" };
-        const existing = store.query("SELECT id FROM attachments WHERE hash = ?", [hash])[0];
-        if (!existing) {
-          insertAttachmentRow(store, { id: att.id, page_id: pageId ?? null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
-        }
+        // Always insert a fresh row (like desktop + save_image) so each import
+        // carries its own page_id ownership. Previously this skipped when a row
+        // with the same hash already existed, so a re-upload never attached the
+        // folder (page_id stayed NULL) and the file never showed in the sidebar.
+        insertAttachmentRow(store, { id: att.id, page_id: pageId ?? null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
         fileRegistry.delete(baseName(p));
         metas.push(att);
       }
