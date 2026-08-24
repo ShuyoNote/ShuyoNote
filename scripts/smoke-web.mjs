@@ -105,24 +105,51 @@ assert("get_page returns saved detail", got?.title === "改名后");
 const moved = await invoke("move_page", { id: created.id, new_parent_id: null, sort_order: 5 });
 assert("move_page doesn't throw", moved === undefined);
 
-// 4. Security: unknown commands return an object, never throw.
+// 6. Tags: create, associate with a page, list with counts, filter pages.
+const tag = await invoke("create_tag", { name: "工作" });
+assert("create_tag returns a tag", tag && typeof tag.id === "string");
+await invoke("add_tag", { page_id: created.id, tag_id: tag.id });
+const pt = await invoke("page_tags", { page_id: created.id });
+assert("page_tags returns the new tag", Array.isArray(pt) && pt.length === 1 && pt[0].id === tag.id);
+const tagList = await invoke("list_tags", {});
+assert("list_tags counts pages", Array.isArray(tagList) && tagList.find((t) => t.id === tag.id)?.page_count === 1);
+const byTag = await invoke("pages_by_tag", { tag_id: tag.id });
+assert("pages_by_tag finds the page", Array.isArray(byTag) && byTag.some((p) => p.id === created.id));
+await invoke("remove_tag", { page_id: created.id, tag_id: tag.id });
+const pt2 = await invoke("page_tags", { page_id: created.id });
+assert("remove_tag clears association", Array.isArray(pt2) && pt2.length === 0);
+
+// 7. Search returns the saved page by title.
+const search = await invoke("search", { query: "改名后", limit: 10 });
+assert("search finds page by title", Array.isArray(search) && search.some((r) => r.id === created.id && r.title === "改名后"));
+
+// 8. Workspace settings persist.
+await invoke("set_workspace_settings", { theme: "dark", icon: "🚀" });
+const ws = await invoke("list_workspaces", {});
+assert("workspace settings persist (theme/icon)", Array.isArray(ws) && ws[0]?.theme === "dark" && ws[0]?.icon === "🚀");
+
+// 9. Templates (built-in demos) are non-empty.
+const templates = await invoke("list_templates", {});
+assert("list_templates has built-in demos", Array.isArray(templates) && templates.length >= 1, `${templates?.length} template(s)`);
+
+// 10. Security: unknown commands return an object, never throw.
 const unknown = await invoke("totally_unknown_cmd", {});
 assert("unknown command returns object (no throw)", typeof unknown === "object" && unknown !== null);
 
-// 5. Database/tags/graph return empty-safe shapes.
+// 11. Database/tags/graph return safe shapes (graph has seeded page nodes).
 const cols = await invoke("query_database", {});
 assert("query_database has columns+rows arrays", Array.isArray(cols?.columns) && Array.isArray(cols?.rows));
 const graph = await invoke("get_graph", {});
-assert("get_graph has pages/edges arrays", Array.isArray(graph?.pages) && Array.isArray(graph?.edges));
-const tags = await invoke("list_tags", {});
-assert("list_tags is array", Array.isArray(tags));
+assert("get_graph has page nodes", Array.isArray(graph?.pages) && graph.pages.length >= 1, `${graph?.pages?.length} node(s)`);
 const stats = await invoke("storage_stats", {});
 assert("storage_stats is object", typeof stats === "object" && stats !== null);
 
-// 6. Persistence: a second platform instance reads the same localStorage.
+// 12. Persistence: a second platform instance reads the same localStorage.
 const platform2 = createWebPlatform();
 const pagesAgain = await platform2.executor.invoke("list_pages", {});
 assert("localStorage persistence (2nd instance sees created page)", pagesAgain.some((p) => p.id === created.id));
+const wsAgain = await platform2.executor.invoke("get_workspace_name", {});
+assert("workspace rename persists across instances", wsAgain !== "");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

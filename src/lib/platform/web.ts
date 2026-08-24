@@ -32,8 +32,11 @@ interface MockPage {
 interface MockDb {
   workspaceId: string;
   workspaceName: string;
+  workspaceTheme: string | null;
+  workspaceIcon: string;
   pages: MockPage[];
   tags: { id: string; name: string }[];
+  pageTags: { page_id: string; tag_id: string }[];
   attachments: { id: string; name: string; hash: string; mime: string; size: number; path: string }[];
 }
 
@@ -83,9 +86,14 @@ function welcomeContent(): string {
 
 function seed(): MockDb {
   const id = uid();
+  const demoId = uid();
+  const readTagId = uid();
+  const now = Date.now();
   return {
     workspaceId: id,
     workspaceName: "我的工作空间",
+    workspaceTheme: null,
+    workspaceIcon: "",
     pages: [
       {
         id,
@@ -94,14 +102,28 @@ function seed(): MockDb {
         title: "欢迎页",
         kind: "page",
         sort_order: 0,
-        created_at: Date.now(),
-        updated_at: Date.now(),
+        created_at: now,
+        updated_at: now,
         deleted_at: null,
         content_json: welcomeContent(),
         content_text: "欢迎使用 ShuyoNote 网页演示版（Web Platform）。",
       },
+      {
+        id: demoId,
+        workspace_id: id,
+        parent_id: null,
+        title: "快速上手",
+        kind: "page",
+        sort_order: 1,
+        created_at: now,
+        updated_at: now,
+        deleted_at: null,
+        content_json: "",
+        content_text: "点击左侧新建页面，输入内容会自动保存到浏览器本地。",
+      },
     ],
-    tags: [],
+    tags: [{ id: readTagId, name: "入门" }],
+    pageTags: [{ page_id: demoId, tag_id: readTagId }],
     attachments: [],
   };
 }
@@ -237,6 +259,9 @@ function makeInvoke(db: MockDb) {
         {
           id: db.workspaceId,
           name: db.workspaceName,
+          theme: db.workspaceTheme,
+          icon: db.workspaceIcon,
+          sort_order: 0,
           created_at: Date.now(),
           updated_at: Date.now(),
         },
@@ -252,10 +277,32 @@ function makeInvoke(db: MockDb) {
       }
       return undefined as T;
     }
+    if (cmd === "set_workspace_settings") {
+      if (typeof a.theme === "string") db.workspaceTheme = a.theme || null;
+      if (typeof a.icon === "string") db.workspaceIcon = a.icon || "";
+      saveDb(db);
+      return undefined as T;
+    }
+    if (cmd === "create_workspace") {
+      const ws = {
+        id: uid(),
+        name: String(a.name ?? "新工作空间"),
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      };
+      return ws as T;
+    }
+    if (cmd === "copy_page_to_workspace" || cmd === "delete_workspace") {
+      return undefined as T;
+    }
 
     // ---- Tags ----
     if (cmd === "list_tags") {
-      return db.tags.map((t) => ({ id: t.id, name: t.name, page_count: 0 })) as T;
+      return db.tags.map((t) => ({
+        id: t.id,
+        name: t.name,
+        page_count: db.pageTags.filter((x) => x.tag_id === t.id).length,
+      })) as T;
     }
     if (cmd === "create_tag") {
       const tag = { id: uid(), name: String(a.name ?? "新标签") };
@@ -273,21 +320,70 @@ function makeInvoke(db: MockDb) {
     }
     if (cmd === "delete_tag") {
       db.tags = db.tags.filter((x) => x.id !== a.id);
+      db.pageTags = db.pageTags.filter((x) => x.tag_id !== a.id);
       saveDb(db);
       return undefined as T;
     }
-    if (cmd === "page_tags" || cmd === "pages_by_tag") return [] as T;
+    if (cmd === "add_tag") {
+      if (typeof a.page_id === "string" && typeof a.tag_id === "string") {
+        if (!db.pageTags.some((x) => x.page_id === a.page_id && x.tag_id === a.tag_id)) {
+          db.pageTags.push({ page_id: a.page_id, tag_id: a.tag_id });
+          saveDb(db);
+        }
+      }
+      return undefined as T;
+    }
+    if (cmd === "remove_tag") {
+      db.pageTags = db.pageTags.filter(
+        (x) => !(x.page_id === a.page_id && x.tag_id === a.tag_id),
+      );
+      saveDb(db);
+      return undefined as T;
+    }
+    if (cmd === "page_tags") {
+      const ids = db.pageTags.filter((x) => x.page_id === a.page_id).map((x) => x.tag_id);
+      return db.tags.filter((t) => ids.includes(t.id)).map((t) => ({ id: t.id, name: t.name })) as T;
+    }
+    if (cmd === "pages_by_tag") {
+      const pageIds = db.pageTags.filter((x) => x.tag_id === a.tag_id).map((x) => x.page_id);
+      return db.pages
+        .filter((p) => p.deleted_at === null && pageIds.includes(p.id))
+        .map(toPageMeta) as T;
+    }
 
-    // ---- Search ----
-    if (cmd === "search" || cmd === "search_blocks") return [] as T;
+    // ---- Search (FTS-lite: title + text contains) ----
+    if (cmd === "search") {
+      const q = String(a.query ?? "").toLowerCase();
+      const limit = Number(a.limit ?? 50);
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      const query = String(req.query ?? q).toLowerCase();
+      const lim = Number(req.limit ?? limit);
+      if (!query) return [] as T;
+      return db.pages
+        .filter((p) => p.deleted_at === null)
+        .filter((p) => p.title.toLowerCase().includes(query) || p.content_text.toLowerCase().includes(query))
+        .slice(0, lim)
+        .map((p) => ({ id: p.id, title: p.title, snippet: p.content_text.slice(0, 120), space: db.workspaceName })) as T;
+    }
+    if (cmd === "search_blocks") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      const query = String(req.query ?? "").toLowerCase();
+      if (!query) return [] as T;
+      return db.pages
+        .filter((p) => p.deleted_at === null && p.content_text.toLowerCase().includes(query))
+        .map((p) => ({ block_id: "", page_id: p.id, page_title: p.title, snippet: p.content_text.slice(0, 120) })) as T;
+    }
     if (cmd === "resolve_refs") return {} as T;
     if (cmd === "get_backlinks" || cmd === "list_block_backlinks") return [] as T;
     if (cmd === "resolve_block") return { block_id: "", page_id: "", page_title: "", snippet: "", content: "" } as T;
     if (cmd === "get_page_blocks") return [] as T;
 
-    // ---- Graph ----
+    // ---- Graph (nodes from pages; no edges in the browser demo) ----
     if (cmd === "get_graph") {
-      return { pages: [], edges: [], blocks: [], block_edges: [] } as T;
+      const pages = db.pages
+        .filter((p) => p.deleted_at === null)
+        .map((p) => ({ id: p.id, title: p.title, tags: [], props: [] }));
+      return { pages, edges: [], blocks: [], block_edges: [] } as T;
     }
 
     // ---- Attachments (browser: data-URI backed so pasted images preview) ----
@@ -331,8 +427,45 @@ function makeInvoke(db: MockDb) {
       return undefined as T;
     }
 
-    // ---- Templates ----
-    if (cmd === "list_templates") return [] as T;
+    // ---- Templates (built-in demos so the template center shows content) ----
+    if (cmd === "list_templates") {
+      const now = Date.now();
+      const base = {
+        built_in: 1,
+        space_id: null,
+        sort_order: 0,
+        created_at: now,
+        updated_at: now,
+      };
+      return [
+        {
+          ...base,
+          id: uid(),
+          name: "会议纪要",
+          category: "效率",
+          kind: "page",
+          icon: "📝",
+          cover: "",
+          summary: "会议主题 / 结论 / 待办的标准结构。",
+          content_json:
+            '{"root":{"children":[{"children":[{"type":"text","text":"会议主题","detail":0,"format":0,"mode":"normal","style":"","version":1}],"direction":"ltr","format":"","indent":0,"type":"heading","tag":"h1","version":1},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}',
+          content_text: "会议主题",
+        },
+        {
+          ...base,
+          id: uid(),
+          name: "读书笔记",
+          category: "学习",
+          kind: "page",
+          icon: "📚",
+          cover: "",
+          summary: "书名 / 金句 / 思考的模板。",
+          content_json:
+            '{"root":{"children":[{"children":[{"type":"text","text":"书名","detail":0,"format":0,"mode":"normal","style":"","version":1}],"direction":"ltr","format":"","indent":0,"type":"heading","tag":"h1","version":1},{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}',
+          content_text: "书名",
+        },
+      ] as T;
+    }
 
     // ---- Plugins ----
     if (cmd === "list_plugins") return [] as T;

@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.48.0] - 2026-08-24
+
+### 优化（Web 平台体验完整化）
+
+- **浏览器 Web 平台核心能力补齐**：`src/lib/platform/web.ts` 的 mock 后端从「空值降级」升级为「核心交互真实可用」：
+  - **标签系统**：`add_tag`/`remove_tag`/`page_tags`/`pages_by_tag` 真实关联——标签栏显示、按标签过滤、标签页计数、删除标签级联清关联。
+  - **搜索**：`search`/`search_blocks` 按标题+正文命中，返回真实页面结果（FTS-lite）。
+  - **工作空间设置**：`rename_workspace`/`set_workspace_settings`（主题/图标）持久化到 localStorage。
+  - **内置模板**：`list_templates` 返回「会议纪要 / 读书笔记」两个演示模板，模板中心不再空白。
+  - **关系图 / 左列数据**：`get_graph` 返回真实页面节点；`list_workspaces` 返回主题/图标/排序。
+- 种子数据增强（欢迎页 + 快速上手 + 「入门」标签），首次打开即可看到完整演示。
+- `scripts/smoke-web.mjs` 断言从 22 项扩展到 **30 项**（新增标签关联/按标签过滤/搜索/工作空间设置/模板/图中节点等）；全部通过。
+- 已在 Edge 无头浏览器验证：app 渲染出两个种子页 + 编辑器 contenteditable。
+
+---
+
 ## [1.47.0] - 2026-08-24
 
 ### 新增
