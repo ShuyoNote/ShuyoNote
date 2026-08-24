@@ -3,7 +3,7 @@
 //   createWebPlatform() → sql.js WASM SQLite → core CRUD via SQL.
 //
 // Run:  node scripts/smoke-web.mjs
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +54,9 @@ setWasmUrl(wasmPath);
 setWasmBytesProvider(async (url) => new Uint8Array(readFileSync(url)));
 
 const dbFile = join(tmpDir, "db.sqlite");
+// Fresh state each run: drop the persisted SQLite file so a re-run doesn't
+// carry over rows whose blob bytes (fresh in-memory shim) no longer exist.
+if (existsSync(dbFile)) rmSync(dbFile, { force: true });
 let dbSnapshot = new Uint8Array(0);
 setDefaultAdapter({
   async load() {
@@ -73,6 +76,52 @@ const invoke = platform.executor.invoke;
 
 // The platform's opener uses `window.open` (browser) — provide a stub for Node.
 globalThis.window = globalThis.window ?? { open: () => {} };
+
+// Minimal in-memory IndexedDB shim so blobStore (ImageDB "blobs") works in Node.
+if (!globalThis.indexedDB) {
+  const stores = new Map();
+  globalThis.indexedDB = {
+    open: () => {
+      const obj = { result: null, onupgradeneeded: null, onsuccess: null, onerror: null, error: null };
+      const db = {
+        objectStoreNames: { contains: (name) => stores.has(name) },
+        createObjectStore: (name) => { if (!stores.has(name)) stores.set(name, new Map()); return { name }; },
+        objectStore: (name) => {
+          if (!stores.has(name)) stores.set(name, new Map());
+          const m = stores.get(name);
+          return {
+            get: (k) => {
+              const req = { result: m.get(k), onsuccess: null, onerror: null };
+              setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+              return req;
+            },
+            getKey: (k) => {
+              const req = { result: m.has(k) ? k : undefined, onsuccess: null, onerror: null };
+              setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+              return req;
+            },
+            put: (v, k) => {
+              m.set(k, v);
+              const req = { onsuccess: null, onerror: null };
+              setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+              return req;
+            },
+          };
+        },
+        transaction: (name, mode) => {
+          const tx = { objectStore: () => db.objectStore(name), oncomplete: null, onerror: null };
+          // Fire oncomplete shortly after (mirrors real IDB transaction commit).
+          setTimeout(() => tx.oncomplete && tx.oncomplete(), 10);
+          return tx;
+        },
+      };
+      obj.result = db;
+      setTimeout(() => obj.onupgradeneeded && obj.onupgradeneeded(), 0);
+      setTimeout(() => obj.onsuccess && obj.onsuccess(), 5);
+      return obj;
+    },
+  };
+}
 
 // Small helper to force a fresh store instance in "second instance" persistence.
 function newPlatform() {
@@ -166,6 +215,16 @@ assert("workspace settings persist (theme/icon)", Array.isArray(ws2) && ws2[0]?.
 // 8. Templates (built-in demos) are non-empty.
 const templates = await invoke("list_templates", {});
 assert("list_templates has built-in demos", Array.isArray(templates) && templates.length >= 1, `${templates?.length} template(s)`);
+
+// 8b. Image attachment: bytes go to the blob store, NOT into the SQLite DB.
+const imgBytes = Array.from(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4, 5, 6, 7, 8]));
+const att = await invoke("save_image", { page_id: null, name: "test.png", mime: "image/png", data: imgBytes });
+assert("save_image returns attachment with hash", att && typeof att.hash === "string" && att.hash.length > 0, att?.hash);
+assert("save_image path is a data URL for display", typeof att?.path === "string" && att.path.startsWith("data:image/png"));
+// attachment_path resolves the bytes from the blob store.
+assert("attachment_path resolves from blob store", (await invoke("attachment_path", { hash: att.hash })).startsWith("data:image/png"));
+const seen = await invoke("list_page_attachments", {});
+assert("list_page_attachments includes image with a display path", Array.isArray(seen) && seen.some((x) => x.id === att.id && (x.path || "").startsWith("data:image/png")));
 
 // 9. Unknown commands return an object, never throw.
 const unknown = await invoke("totally_unknown_cmd", {});

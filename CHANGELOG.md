@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.50.0] - 2026-08-24
+
+### 优化（Web 平台存储结构修正）
+
+- **图片字节不再造入库（M16.1 结构修正）**：把 Web 平台的附件字节从「base64 塞进 SQLite」改为**独立二进制 blob 存储**，库只存元数据 + 内容寻址 hash：
+  - 新增 `src/lib/platform/blobStore.ts`：IndexedDB 按 `hash`（**内容寻址**）存图片/视频/音频原始字节，附 SHA-256 摘要（不可用时 FNV-1a 回退）；同内容去重。
+  - `web.ts` 的 `save_image`：字节存 `blobStore`（hash = `contentHash(bytes)`，不再是随机 uid），SQLite `attachments` 只插 `id/name/hash/mime/size`（`path` 留空）；返回 `AttachmentMeta.path` = **data URL**（供 `<img>` 立即且跨重载显示）。
+  - `attachment_path(hash)` / `list_page_attachments`：从 `blobStore` 读字节 → 还原可显示 data URL。
+  - **效果**：SQLite 库体积不再随图片增长；每次写入不再重导大量 base64。字节存 IndexedDB blob（真实浏览器），与桌面「字节落盘、库只引用」模型对齐。
+  - `scripts/smoke-web.mjs` 32→**36 项全绿**（新增 `save_image` 返回内容 hash / `path` 为 data URL / `attachment_path` 从 blob 还原 / `list_page_attachments` 含显示 path，附件用 IndexedDB shim）。
+
+---
+
 ## [1.49.0] - 2026-08-24
 
 ### 重构（M16.1 第一步）

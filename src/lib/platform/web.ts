@@ -14,7 +14,17 @@
 // gracefully instead of crashing.
 import type { Platform } from "./types";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
+import { blobStore, contentHash } from "./blobStore";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000; // avoid stack overflow on large images
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 
 // Re-export the sqlite store hooks so a test harness (or another shell) can wire
 // the wasm URL + bytes and an fs/memory persist adapter without importing
@@ -312,26 +322,50 @@ function makeInvoke(store: SqliteStore) {
       return { pages: rows.map((r: any) => ({ id: r.id, title: r.title, tags: [], props: [] })), edges: [], blocks: [], block_edges: [] } as T;
     }
 
-    // ---- Attachments (data-URI backed so pasted images preview) ----
+    // ---- Attachments (bytes in IndexedDB blob store; SQLite holds metadata only,
+    //      so the DB never bloats with base64 as images grow) ----
     if (cmd === "save_image") {
       const data = (a.data as number[]) ?? [];
+      const bytes = new Uint8Array(data);
       const mime = String(a.mime || "image/png");
       const name = String(a.name ?? "image.png");
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(data)));
-      const path = `data:${mime};base64,${base64}`;
-      const att = { id: uid(), name, hash: uid(), mime, size: data.length, path };
-      store.run("INSERT INTO attachments (id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)", [
-        att.id, att.name, att.hash, att.mime, att.size, att.path,
-      ]);
+      const hash = await contentHash(bytes);
+      await blobStore.put(hash, bytes);
+      // Durable, self-contained URL for immediate display (survives reload).
+      const path = `data:${mime};base64,${bytesToBase64(bytes)}`;
+      const att = { id: uid(), name, hash, mime, size: data.length, path };
+      const existing = store.query("SELECT id FROM attachments WHERE hash = ?", [hash])[0];
+      if (!existing) {
+        store.run("INSERT INTO attachments (id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)", [
+          att.id, att.name, att.hash, att.mime, att.size, "",
+        ]);
+      }
       return att as T;
     }
     if (cmd === "attachment_path") {
-      const rows = store.query("SELECT path FROM attachments WHERE hash = ?", [a.hash]);
-      return (rows[0]?.path ?? "") as T;
+      const rows = store.query("SELECT path, hash, mime FROM attachments WHERE hash = ?", [a.hash]);
+      if (rows[0] && rows[0].path) return (rows[0].path as string) as T;
+      const bytes = await blobStore.get(String(a.hash));
+      if (bytes) {
+        const mime = String(rows[0]?.mime ?? "image/png");
+        return (`data:${mime};base64,${bytesToBase64(bytes)}`) as T;
+      }
+      return "" as T;
     }
     if (cmd === "get_attachment") return null as T;
     if (cmd === "list_page_attachments") {
-      return store.query("SELECT * FROM attachments") as T;
+      const rows = store.query("SELECT * FROM attachments");
+      // Resolve a display path from the byte store (which survives reload) so the
+      // file-manager previews/images render even after a refresh.
+      const resolved = await Promise.all(
+        rows.map(async (r: any) => {
+          if (r.path) return r;
+          const bytes = await blobStore.get(String(r.hash));
+          if (!bytes) return r;
+          return { ...r, path: `data:${r.mime};base64,${bytesToBase64(bytes)}` };
+        }),
+      );
+      return resolved as T;
     }
     if (cmd === "import_attachment_files") return [] as T;
     if (cmd === "remove_attachment" || cmd === "move_attachment" || cmd === "copy_attachment") return undefined as T;
