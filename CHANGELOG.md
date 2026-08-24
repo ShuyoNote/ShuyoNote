@@ -2,6 +2,20 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.55.0] - 2026-08-24
+
+### 新增（Web 平台文件读写 / 导入导出）
+
+- **浏览器版能「把内容取出来 / 读进来」了**：文件读写、附件导入导出不再空值降级：
+  - `web.ts` 新增浏览器文件桥：`fileRegistry`（会话注册表，按文件名映射字节）+ `pickBrowserFiles`（隐藏 `<input type=file>` 选文件，读入内存）+ `downloadBytes`/`downloadText`（Blob 下载，让内容真正离开浏览器）。
+  - **`dialog.open`**：浏览器里用文件选择器（支持多选、filters 映射到 `accept`），返回所选文件名作路径；`directory: true` 无浏览器映射 → 返回 null。**`dialog.save`**：返回 `defaultPath` 作为写入目标（浏览器外返回 null）。
+  - **`write_text_file`**：把文本按目标文件名 **Blob 下载**出来（内容真正落到用户下载目录），并注册进 `fileRegistry` 供同会话 `read_text_file` 往返。**`read_text_file`**：从注册表按文件名返回内容。
+  - **`import_attachment_files`**：把 dialog.open 选中的 File 字节存 `blobStore`（内容寻址）+ 插附件元数据行；**`copy_attachment`**：把附件字节按文件名下载出来。
+  - 非浏览器（Node 测试）安全降级：dialog.open/save 返回 null、write_text_file 不触发下载但仍注册、import/read 走注册表不崩。
+  - `scripts/smoke-web.mjs` **56 项保持全绿**（dialog 在 Node 安全降级不崩）。
+
+---
+
 ## [1.54.0] - 2026-08-24
 
 ### 新增（Web 平台版本历史）

@@ -219,6 +219,70 @@ function toPageVersion(row: any) {
   return { id: row.id, page_id: row.page_id, title: row.title, content_text: row.content_text, created_at: row.created_at };
 }
 
+// ---- Browser file picker & download helpers (web platform) ----
+// Because the browser has no filesystem paths, we bridge the path-string API
+// with a session registry keyed by the file's base name. `dialog.open` reads a
+// File into memory (registered by name) and returns that name as a "path";
+// `read_text_file`/`import_attachment_files` look it up there. `dialog.save`
+// returns the default name, and `write_text_file` turns it into a real download.
+const fileRegistry = new Map<string, { bytes: Uint8Array; mime: string; name: string }>();
+
+function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+function pickBrowserFiles(options: { multiple?: boolean; directory?: boolean; accept?: string }): Promise<string | string[] | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = !!options.multiple;
+    if (!options.directory && options.accept) input.accept = options.accept;
+    input.style.display = "none";
+    document.body.appendChild(input);
+    const cleanup = () => {
+      input.remove();
+      document.body.removeChild(input);
+    };
+    input.onchange = async () => {
+      const files = Array.from(input.files ?? []);
+      const names: string[] = [];
+      for (const f of files) {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        // Register by both the file name and a stable synthetic path so the
+        // path-string API can resolve it later.
+        fileRegistry.set(f.name, { bytes, mime: f.type || "application/octet-stream", name: f.name });
+        names.push(f.name);
+      }
+      cleanup();
+      resolve(options.multiple ? names : names[0] ?? null);
+    };
+    input.oncancel = () => {
+      cleanup();
+      resolve(null);
+    };
+    input.click();
+  });
+}
+
+function downloadBytes(name: string, bytes: Uint8Array, mime: string): void {
+  // Copy into a clean ArrayBuffer so Blob typing is satisfied (TS7 strict).
+  const buf = new Uint8Array(bytes.length);
+  buf.set(bytes);
+  const blob = new Blob([buf.buffer], { type: mime || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadText(name: string, text: string): void {
+  downloadBytes(name, new TextEncoder().encode(text), "text/plain;charset=utf-8");
+}
+
 // ---- The executor. Core CRUD runs real SQL; everything else degrades safely. ----
 
 function makeInvoke(store: SqliteStore) {
@@ -478,8 +542,37 @@ function makeInvoke(store: SqliteStore) {
       );
       return resolved as T;
     }
-    if (cmd === "import_attachment_files") return [] as T;
-    if (cmd === "remove_attachment" || cmd === "move_attachment" || cmd === "copy_attachment") return undefined as T;
+    if (cmd === "import_attachment_files") {
+      // paths are file names registered by dialog.open → blobStore, metadata row.
+      const paths = (a.paths ?? []).map(String);
+      const metas = [];
+      for (const p of paths) {
+        const reg = fileRegistry.get(baseName(p));
+        if (!reg) continue;
+        const hash = await contentHash(reg.bytes);
+        await blobStore.put(hash, reg.bytes);
+        const att = { id: uid(), name: reg.name, hash, mime: reg.mime, size: reg.bytes.length, path: "" };
+        const existing = store.query("SELECT id FROM attachments WHERE hash = ?", [hash])[0];
+        if (!existing) {
+          store.run("INSERT INTO attachments (id, name, hash, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)", [
+            att.id, att.name, att.hash, att.mime, att.size, "",
+          ]);
+        }
+        fileRegistry.delete(baseName(p));
+        metas.push(att);
+      }
+      return metas as T;
+    }
+    if (cmd === "copy_attachment") {
+      // Copy an attachment's bytes to a save location (download in the browser).
+      const rows = store.query("SELECT hash, name, mime FROM attachments WHERE hash = ?", [a.hash ?? a.hash]);
+      if (rows[0]) {
+        const bytes = await blobStore.get(String((rows[0] as any).hash));
+        if (bytes) downloadBytes(String((rows[0] as any).name ?? "file"), bytes, String((rows[0] as any).mime ?? ""));
+      }
+      return undefined as T;
+    }
+    if (cmd === "remove_attachment" || cmd === "move_attachment") return undefined as T;
     if (cmd === "remove_attachments") return 0 as T;
     if (cmd === "restore_attachment") return null as T;
 
@@ -761,8 +854,21 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "import_backup") return undefined as T;
     if (cmd === "export_workspace") return { path: "", size: 0, pages: 0, attachments: 0 } as T;
     if (cmd === "import_workspace") return null as T;
-    if (cmd === "write_text_file") return undefined as T;
-    if (cmd === "read_text_file") return "" as T;
+    if (cmd === "write_text_file") {
+      // Write text to a browser-side "file": trigger a real download named after
+      // the target so content actually leaves the browser.
+      const path = String(a.path ?? "output.txt");
+      const content = String(a.content ?? "");
+      if (typeof document !== "undefined") downloadText(baseName(path), content);
+      // Register in-memory so later reads (same session) can round-trip.
+      fileRegistry.set(baseName(path), { bytes: new TextEncoder().encode(content), mime: "text/plain;charset=utf-8", name: baseName(path) });
+      return undefined as T;
+    }
+    if (cmd === "read_text_file") {
+      const reg = fileRegistry.get(baseName(String(a.path ?? "")));
+      if (reg) return new TextDecoder().decode(reg.bytes) as T;
+      return "" as T;
+    }
     if (cmd === "open_page_window") return undefined as T;
 
     // ---- Persistent storage ----
@@ -887,8 +993,21 @@ export function createWebPlatform(): Platform {
         invokeWhenReady<T>(cmd, args),
     },
     dialog: {
-      open: async () => null,
-      save: async () => null,
+      open: async (options) => {
+        // Non-browser (Node test) or `directory` has no browser mapping.
+        if (typeof document === "undefined") return null;
+        if (options.directory) return null;
+        const accept =
+          options.filters && options.filters.length > 0
+            ? options.filters.map((f) => f.extensions.map((e) => "." + e).join(",")).join(",")
+            : undefined;
+        return pickBrowserFiles({ multiple: options.multiple, accept });
+      },
+      save: async (options) => {
+        // Non-browser returns null; browser returns the default name.
+        if (typeof document === "undefined") return null;
+        return options.defaultPath ?? null;
+      },
     },
     opener: {
       openUrl: async (url) => {
