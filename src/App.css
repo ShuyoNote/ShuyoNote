@@ -5809,37 +5809,6 @@ select.prop-value {
 }
 
 /* Table of contents (right-hand drawer) */
-.toc-toggle {
-  position: fixed;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 41;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
-}
-.toc-toggle:hover,
-.toc-toggle.open {
-  color: var(--accent);
-  background: var(--hover);
-}
-/* Hide the toggle while the outline rail is open (the × closes it). */
-.toc-toggle.open {
-  opacity: 0;
-  pointer-events: none;
-}
-
 /* Outline rail: slides in from the right edge, full height, GitHub-style. */
 .toc-panel {
   position: fixed;
