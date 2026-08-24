@@ -12,6 +12,7 @@ import {
 import { createBackendStreamingTransport } from "../lib/ai/transport";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
+import { useRightPanel } from "./rightPanel";
 
 const CFG_KEY = "shuyonote.ai.config";
 const HISTORY_KEY = "shuyonote.ai.history";
@@ -129,7 +130,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     if (!trimmed || get().running) return;
     const { config } = get();
     if (!config.enabled) {
-      set({ error: "AI 功能未启用，请先在设置中开启并配置模型。", open: true });
+      set({ error: "AI 功能未启用，请先在设置中开启并配置模型。" });
+      useRightPanel.getState().openAi(true);
       return;
     }
     const notes = useNotes.getState();

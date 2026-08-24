@@ -1888,6 +1888,9 @@ body,
 body.is-toc-open .main {
   padding-right: 280px;
 }
+body.is-ai-open .main {
+  padding-right: 380px;
+}
 
 .main.empty {
   align-items: center;

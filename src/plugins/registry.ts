@@ -5,6 +5,7 @@ import { useViewStore } from "../store/view";
 import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
+import { useRightPanel } from "../store/rightPanel";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
@@ -198,7 +199,7 @@ registerPlugin({
       closeOnRun: true,
       when: () => useAiStore.getState().config.enabled,
       run: () => {
-        useAiStore.getState().setOpen(true);
+        useRightPanel.getState().openAi(true);
         return "已打开 AI 助手";
       },
     },

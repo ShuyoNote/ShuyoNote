@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { $getNodeByKey, $getRoot, $isElementNode, type LexicalEditor, type LexicalNode } from "lexical";
 import { $isHeadingNode } from "@lexical/rich-text";
 import { useEditorStore } from "../store/editor";
+import { useRightPanel } from "../store/rightPanel";
 
 // Page table of contents: lists the page's heading outline (h1–h6, indented by
 // level) in a right-hand toggle panel. Clicking an entry scrolls to the heading
@@ -36,7 +37,8 @@ function readOutline(editor: LexicalEditor): TocItem[] {
 export function TableOfContents() {
   const editor = useEditorStore((s) => s.editor);
   const [items, setItems] = useState<TocItem[]>([]);
-  const [open, setOpen] = useState(true);
+  const open = useRightPanel((s) => s.toc);
+  const setOpen = useRightPanel((s) => s.openToc);
   const [active, setActive] = useState<string | null>(null);
 
   // Reserve the rail width on the right so the page content re-centers beside it.
@@ -95,7 +97,7 @@ export function TableOfContents() {
       <button
         className={`toc-toggle ${open ? "open" : ""}`}
         title="目录"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
       >
         📑
       </button>

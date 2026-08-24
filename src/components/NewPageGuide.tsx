@@ -5,6 +5,7 @@ import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useAiStore } from "../store/ai";
+import { useRightPanel } from "../store/rightPanel";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import {
   SparkleIcon,
@@ -74,7 +75,7 @@ export function NewPageGuide() {
         <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>
         <div className="new-page-guide-list">
             {aiEnabled && (
-              <button className="npg-act" onClick={() => useAiStore.getState().setOpen(true)}>
+              <button className="npg-act" onClick={() => useRightPanel.getState().openAi(true)}>
                 <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
               </button>
             )}

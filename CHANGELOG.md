@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.51] - 2026-08-24
+
+### 新增/样式
+
+- **右侧抽屉互斥（对齐 Wolai 单右栏）**：新增 `src/store/rightPanel.ts` 统一协调「AI 助手」与「目录」两个右侧抽屉——开 AI 自动关目录、开目录自动关 AI，避免叠放；所有 AI 入口（新建页引导/侧边栏/命令面板/悬浮钮）改走 `rightPanel.openAi`。
+- **内容让位**：AI 面板打开时给 `.main` 加 `is-ai-open` 预留 380px 右侧空间（内容左移而非被覆盖，Wolai 风格）；目录沿用 `is-toc-open` 预留 280px。
+- 目录样式保持 GitHub 式（当前节高亮彩条），与 Wolai 大纲一致。
+- `tsc`/`vite build`/`cargo check` 均过；`scripts/smoke-web.mjs` 178 全绿。
+
+---
+
 ## [1.59.50] - 2026-08-24
 
 ### 新增/样式

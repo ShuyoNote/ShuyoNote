@@ -11,6 +11,7 @@ import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useAiStore } from "../store/ai";
+import { useRightPanel } from "../store/rightPanel";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import * as reorder from "../lib/treeReorder";
@@ -1127,7 +1128,7 @@ export function PageTree({
           {aiEnabled && (
             <button
               className="sidebar-bottom-btn"
-              onClick={() => useAiStore.getState().setOpen(true)}
+              onClick={() => useRightPanel.getState().openAi(true)}
             >
               <SparkleIcon className="sidebar-bottom-icon sidebar-bottom-ai" /> AI 助手
             </button>

@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAiStore } from "../store/ai";
+import { useRightPanel } from "../store/rightPanel";
 import { useNotes } from "../store/notes";
 import { SparkleIcon, SettingsIcon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -33,13 +34,11 @@ const EMPTY_POOL = [
 export function AiAssistantPanel() {
   const {
     config,
-    open,
     running,
     reply,
     drafts,
     error,
     activity,
-    setOpen,
     run,
     stop,
     confirm,
@@ -47,8 +46,16 @@ export function AiAssistantPanel() {
     clearResult,
     resetError,
   } = useAiStore();
+  const open = useRightPanel((s) => s.ai);
+  const setOpen = useRightPanel((s) => s.openAi);
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Reserve right rail space while the panel is open (content shifts, Wolai-style).
+  useEffect(() => {
+    document.body.classList.toggle("is-ai-open", open);
+    return () => document.body.classList.remove("is-ai-open");
+  }, [open]);
   const currentId = useNotes((s) => s.currentId);
   const pageOpen = Boolean(currentId);
 
