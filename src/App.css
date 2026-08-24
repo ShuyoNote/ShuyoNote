@@ -7458,80 +7458,80 @@ select.prop-value {
   overflow-y: auto;
 }
 /* Markdown-rendered reply (scoped to the reply card) */
-.ai-reply-text .md > :first-child,
-.ai-reply-text .md > .md-p:first-child {
+.ai-bubble-text .md > :first-child,
+.ai-bubble-text .md > .md-p:first-child {
   margin-top: 0;
 }
-.ai-reply-text .md > :last-child {
+.ai-bubble-text .md > :last-child {
   margin-bottom: 0;
 }
-.ai-reply-text .md p,
-.ai-reply-text .md ul,
-.ai-reply-text .md ol,
-.ai-reply-text .md blockquote,
-.ai-reply-text .md pre,
-.ai-reply-text .md h1,
-.ai-reply-text .md h2,
-.ai-reply-text .md h3,
-.ai-reply-text .md h4 {
+.ai-bubble-text .md p,
+.ai-bubble-text .md ul,
+.ai-bubble-text .md ol,
+.ai-bubble-text .md blockquote,
+.ai-bubble-text .md pre,
+.ai-bubble-text .md h1,
+.ai-bubble-text .md h2,
+.ai-bubble-text .md h3,
+.ai-bubble-text .md h4 {
   margin: 0 0 8px;
 }
-.ai-reply-text .md p {
+.ai-bubble-text .md p {
   line-height: 1.6;
 }
-.ai-reply-text .md h1,
-.ai-reply-text .md h2,
-.ai-reply-text .md h3,
-.ai-reply-text .md h4 {
+.ai-bubble-text .md h1,
+.ai-bubble-text .md h2,
+.ai-bubble-text .md h3,
+.ai-bubble-text .md h4 {
   font-weight: 600;
   color: var(--text);
   line-height: 1.4;
 }
-.ai-reply-text .md h1 { font-size: 16px; }
-.ai-reply-text .md h2 { font-size: 15px; }
-.ai-reply-text .md h3 { font-size: 14px; }
-.ai-reply-text .md h4 { font-size: 13px; }
-.ai-reply-text .md ul,
-.ai-reply-text .md ol {
+.ai-bubble-text .md h1 { font-size: 16px; }
+.ai-bubble-text .md h2 { font-size: 15px; }
+.ai-bubble-text .md h3 { font-size: 14px; }
+.ai-bubble-text .md h4 { font-size: 13px; }
+.ai-bubble-text .md ul,
+.ai-bubble-text .md ol {
   padding-left: 18px;
 }
-.ai-reply-text .md li {
+.ai-bubble-text .md li {
   margin: 2px 0;
 }
-.ai-reply-text .md code {
+.ai-bubble-text .md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   background: var(--hover);
   padding: 1px 5px;
   border-radius: 4px;
 }
-.ai-reply-text .md pre {
+.ai-bubble-text .md pre {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   overflow-x: auto;
 }
-.ai-reply-text .md pre code {
+.ai-bubble-text .md pre code {
   background: transparent;
   padding: 0;
 }
-.ai-reply-text .md blockquote {
+.ai-bubble-text .md blockquote {
   border-left: 3px solid var(--border);
   padding-left: 10px;
   color: var(--text-dim);
 }
-.ai-reply-text .md blockquote p {
+.ai-bubble-text .md blockquote p {
   margin-bottom: 6px;
 }
-.ai-reply-text .md a {
+.ai-bubble-text .md a {
   color: var(--accent);
   text-decoration: none;
 }
-.ai-reply-text .md a:hover {
+.ai-bubble-text .md a:hover {
   text-decoration: underline;
 }
-.ai-reply-text .md hr {
+.ai-bubble-text .md hr {
   border: none;
   border-top: 1px solid var(--border);
   margin: 10px 0;
@@ -7540,6 +7540,72 @@ select.prop-value {
   margin-top: 8px;
   font-size: 11px;
   color: var(--text-faint);
+}
+/* Chat transcript bubbles (Wolai-style) */
+.ai-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ai-bubble {
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ai-bubble-user {
+  align-self: flex-end;
+  max-width: 90%;
+  background: var(--accent);
+  color: #fff;
+}
+.ai-bubble-user .ai-bubble-text {
+  color: #fff;
+}
+.ai-bubble-assistant {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.ai-bubble-text {
+  word-break: break-word;
+}
+.ai-bubble-assistant .ai-bubble-text {
+  max-height: 260px;
+  overflow-y: auto;
+}
+/* Collapsible "deep thinking" block */
+.ai-think {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+.ai-think-summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+  list-style: none;
+}
+.ai-think-summary::-webkit-details-marker {
+  display: none;
+}
+.ai-think-summary::before {
+  content: "▸ ";
+  color: var(--text-faint);
+}
+.ai-think[open] .ai-think-summary::before {
+  content: "▾ ";
+}
+.ai-think-body {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+  line-height: 1.6;
 }
 .ai-activity {
   display: flex;

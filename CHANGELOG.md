@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.57] - 2026-08-24
+
+### 新增
+
+- **对话式界面（对齐 Wolai）**：AI 面板改为**聊天气泡**——`history` 里的用户/助手消息渲染成气泡（用户右侧 accent 底 / 助手左侧卡片），并支持流式中的实时用户/助手气泡。
+- **「已深度思考」可折叠块**：采集模型推理（`reasoning_content`，非流式 + Web/桌面流式），在最新助手气泡下用 `<details>` 折叠展示。
+- `llm.ts` 增加 `thinking`（Ollama `/api/chat`、OpenAI 兼容的 `message/delta.reasoning_content`）；`host.ts` 把 `thinking` 透出；`store` 记录 `thinking` 与流式中的 `currentPrompt`。
+- `scripts/smoke-web.mjs` 178→**179 项全绿**（新增：流式采集 `reasoning_content`）。
+
+---
+
 ## [1.59.56] - 2026-08-24
 
 ### 新增/样式

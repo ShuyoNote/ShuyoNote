@@ -32,6 +32,9 @@ export function AiAssistantPanel() {
     drafts,
     error,
     activity,
+    history,
+    currentPrompt,
+    thinking,
     run,
     stop,
     confirm,
@@ -122,46 +125,71 @@ export function AiAssistantPanel() {
 
           {config.enabled && (
             <>
-              <div className="ai-welcome">
-                <span className="ai-welcome-text">Hi，我是 ShuyoNote 的 AI 助手，可以针对当前笔记或整个空间进行提问，写操作需你确认。</span>
-              </div>
-
-              <div className="ai-suggestions">
-                <div className="ai-suggestions-head">
-                  <span className="ai-suggestions-label">你可以尝试以下问题</span>
-                  <button className="ai-suggestions-shuffle" onClick={() => setSuggestionOffset((o) => o + SUGGESTION_COUNT)} title="换一批">
-                    换一批
-                  </button>
-                </div>
-                <div className="ai-suggestions-list">
-                  {suggestions.map((s, i) => (
-                    <button key={s} className="ai-suggestion-card" onClick={() => runText(s)}>
-                      <span className="ai-suggestion-num">{i + 1}.</span>
-                      <span className="ai-suggestion-text">{s}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {reply && (
-                <div className="ai-reply">
-                  <div className="ai-reply-head">
-                    <SparkleIcon className="ai-reply-head-icon" />
-                    <span className="ai-reply-label">回复</span>
-                    <button className="ai-reply-clear" title="清空对话" onClick={clearResult}>
-                      清空
-                    </button>
+              {history.length === 0 && !running && !currentPrompt && !reply ? (
+                <>
+                  <div className="ai-welcome">
+                    <span className="ai-welcome-text">Hi，我是 ShuyoNote 的 AI 助手，可以针对当前笔记或整个空间进行提问，写操作需你确认。</span>
                   </div>
-                  <div className="ai-reply-text"><Markdown text={reply} /></div>
-                  {activity.length > 0 && (
-                    <div className="ai-activity">
-                      <span className="ai-activity-label">工具</span>
-                      {activity.map((a, i) => (
-                        <span key={`${a.tool}-${i}`} className="ai-activity-item">{a.note}</span>
+                  <div className="ai-suggestions">
+                    <div className="ai-suggestions-head">
+                      <span className="ai-suggestions-label">你可以尝试以下问题</span>
+                      <button className="ai-suggestions-shuffle" onClick={() => setSuggestionOffset((o) => o + SUGGESTION_COUNT)} title="换一批">
+                        换一批
+                      </button>
+                    </div>
+                    <div className="ai-suggestions-list">
+                      {suggestions.map((s, i) => (
+                        <button key={s} className="ai-suggestion-card" onClick={() => runText(s)}>
+                          <span className="ai-suggestion-num">{i + 1}.</span>
+                          <span className="ai-suggestion-text">{s}</span>
+                        </button>
                       ))}
                     </div>
+                  </div>
+                </>
+              ) : (
+                <div className="ai-transcript">
+                  {history.map((m, i) => (
+                    <div key={i} className={`ai-bubble ai-bubble-${m.role}`}>
+                      {m.role === "assistant" ? (
+                        <>
+                          <div className="ai-bubble-text"><Markdown text={m.content} /></div>
+                          {i === history.length - 1 && thinking && <ThinkingBlock text={thinking} />}
+                          {i === history.length - 1 && activity.length > 0 && (
+                            <div className="ai-activity">
+                              <span className="ai-activity-label">工具</span>
+                              {activity.map((a, j) => (
+                                <span key={`${a.tool}-${j}`} className="ai-activity-item">{a.note}</span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
+                        </>
+                      ) : (
+                        <div className="ai-bubble-text">{m.content}</div>
+                      )}
+                    </div>
+                  ))}
+                  {running && currentPrompt && (
+                    <div className="ai-bubble ai-bubble-user">
+                      <div className="ai-bubble-text">{currentPrompt}</div>
+                    </div>
                   )}
-                  <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
+                  {running && reply && (
+                    <div className="ai-bubble ai-bubble-assistant">
+                      <div className="ai-bubble-text"><Markdown text={reply} /></div>
+                      {thinking && <ThinkingBlock text={thinking} />}
+                      {activity.length > 0 && (
+                        <div className="ai-activity">
+                          <span className="ai-activity-label">工具</span>
+                          {activity.map((a, j) => (
+                            <span key={`${a.tool}-${j}`} className="ai-activity-item">{a.note}</span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -227,5 +255,14 @@ export function AiAssistantPanel() {
 
       {settingsOpen && <AiSettingsDialog onClose={() => setSettingsOpen(false)} />}
     </>
+  );
+}
+
+function ThinkingBlock({ text }: { text: string }) {
+  return (
+    <details className="ai-think">
+      <summary className="ai-think-summary">已深度思考</summary>
+      <div className="ai-think-body">{text}</div>
+    </details>
   );
 }

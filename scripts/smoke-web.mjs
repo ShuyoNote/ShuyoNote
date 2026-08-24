@@ -1127,6 +1127,36 @@ assert("workspace name persists across instances", wsAgain !== "");
   }
 }
 
+// 19. Reasoning ("thinking") capture: OpenAI-compat SSE delta.reasoning_content.
+{
+  const http6 = await import("node:http");
+  const srv6 = http6.createServer((req, res) => {
+    if (req.url === "/v1/chat/completions") {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"我先理解"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"再作答"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"答案是"}}]}\n\n');
+      res.end("data: [DONE]\n\n");
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => srv6.listen(0, "127.0.0.1", resolve));
+  const port6 = srv6.address().port;
+  const base6 = `http://127.0.0.1:${port6}`;
+  try {
+    const res6 = await aiMod.createOpenAICompatTransport(base6, "deepseek-r1").complete(
+      [{ role: "user", content: "hi" }],
+      { onDelta: () => {} },
+    );
+    assert("streaming captures reasoning_content", res6.thinking === "我先理解" + "再作答" && res6.content === "答案是", JSON.stringify({ thinking: res6.thinking, content: res6.content }));
+  } finally {
+    srv6.closeAllConnections?.();
+    await new Promise((resolve) => srv6.close(resolve));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 // Use exitCode (not process.exit()) so any still-closing libuv handles drain
 // before the process exits; process.exit() races teardown and hits a Windows

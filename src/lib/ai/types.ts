@@ -67,4 +67,6 @@ export interface AiRunResult {
   error?: string;
   /** Tool calls performed this run (for transparency in the UI). */
   activity?: Array<{ tool: string; note: string }>;
+  /** Model thinking / reasoning chain (e.g. DeepSeek-R1). */
+  thinking?: string;
 }

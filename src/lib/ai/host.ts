@@ -92,6 +92,7 @@ export async function runAiLoop(
   const errors: string[] = [];
   const activity: Array<{ tool: string; note: string }> = [];
   let assistantText = "";
+  let assistantThinking = "";
   let prevToolResults: AiMessage[] = [];
 
   for (let step = 0; step < maxSteps; step++) {
@@ -107,7 +108,7 @@ export async function runAiLoop(
     }
 
     // 2. Call the model.
-    let llm: { content: string; nativeToolCalls?: Array<{ name: string; arguments: unknown }> };
+    let llm: { content: string; nativeToolCalls?: Array<{ name: string; arguments: unknown }>; thinking?: string };
     try {
       llm = await opts.transport.complete(toLlmMessages(messages), {
         tools: aiTools.map((t) => toolSchema(t)),
@@ -120,6 +121,8 @@ export async function runAiLoop(
 
     const content = String(llm?.content ?? "");
     if (content) assistantText = content;
+    const thinking = String(llm?.thinking ?? "");
+    if (thinking) assistantThinking = thinking;
 
     // 3. Resolve calls: prefer native tool-calling, else parse the text fence.
     const native = (llm?.nativeToolCalls ?? []).map(whitelistCall).filter(Boolean) as AiToolCall[];
@@ -181,5 +184,6 @@ export async function runAiLoop(
     drafts: Array.from(drafts.values()),
     error: errors[0],
     activity: activity.length ? activity : undefined,
+    thinking: assistantThinking || undefined,
   };
 }

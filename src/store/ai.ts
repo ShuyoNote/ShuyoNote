@@ -46,6 +46,10 @@ interface AiState {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   /** Tool calls performed last run (for transparency). */
   activity: Array<{ tool: string; note: string }>;
+  /** In-flight user prompt (shown as a live bubble while running). */
+  currentPrompt: string;
+  /** Last run's model thinking / reasoning (collapsible "思考" block). */
+  thinking: string;
 
   setOpen: (open: boolean) => void;
   update: (patch: Partial<AiConfig>) => void;
@@ -116,6 +120,8 @@ export const useAiStore = create<AiState>((set, get) => ({
   error: null,
   history: loadHistory(),
   activity: [],
+  currentPrompt: "",
+  thinking: "",
 
   setOpen: (open) => set({ open }),
 
@@ -137,7 +143,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     const notes = useNotes.getState();
     const allPages = notes.pages.map((p) => ({ id: p.id, title: p.title, parent_id: p.parent_id }));
     const seq = ++runSeq;
-    set({ running: true, error: null });
+    set({ running: true, error: null, currentPrompt: trimmed });
 
     // Live-stream window (throttled) so web replies appear token-by-token.
     let buffered = "";
@@ -183,13 +189,15 @@ export const useAiStore = create<AiState>((set, get) => ({
         error: result.ok ? null : result.error ?? null,
         history: historyCapped,
         activity: result.activity ?? [],
+        currentPrompt: "",
+        thinking: result.thinking ?? "",
       });
     } catch (e) {
       if (seq !== runSeq) return;
       if (timer !== null) clearTimeout(timer);
       timer = null;
       buffered = "";
-      set({ running: false, error: String((e as Error)?.message ?? e) });
+      set({ running: false, error: String((e as Error)?.message ?? e), currentPrompt: "" });
     }
   },
 
@@ -226,7 +234,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   clearResult: () => {
     saveHistory([]);
-    set({ reply: "", drafts: [], error: null, history: [], activity: [] });
+    set({ reply: "", drafts: [], error: null, history: [], activity: [], currentPrompt: "", thinking: "" });
   },
   resetError: () => set({ error: null }),
 }));

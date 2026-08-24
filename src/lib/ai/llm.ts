@@ -26,6 +26,8 @@ export interface LlmResult {
   content: string;
   /** Vendor-native tool calls when the endpoint speaks a tool-calling protocol. */
   nativeToolCalls?: Array<{ name: string; arguments: Record<string, unknown> }>;
+  /** Model "thinking" / reasoning chain (e.g. DeepSeek-R1 reasoning_content). */
+  thinking?: string;
 }
 
 export interface LlmTransport {
@@ -111,6 +113,7 @@ async function safeFetch(url: string, init: RequestInit, timeoutMs: number): Pro
 
 interface StreamChunk {
   content?: string;
+  thinking?: string;
   toolCalls?: any[];
 }
 
@@ -125,7 +128,8 @@ function ollamaLineChunk(line: string): StreamChunk {
         : typeof j?.response === "string"
           ? j.response
           : "";
-    return { content, toolCalls: Array.isArray(j?.message?.tool_calls) ? j.message.tool_calls : undefined };
+    const thinking = typeof j?.message?.reasoning_content === "string" ? j.message.reasoning_content : "";
+    return { content, thinking, toolCalls: Array.isArray(j?.message?.tool_calls) ? j.message.tool_calls : undefined };
   } catch {
     return { content: "" };
   }
@@ -139,9 +143,11 @@ function openaiLineChunk(line: string): StreamChunk {
   if (payload === "[DONE]") return { content: "" };
   try {
     const j = JSON.parse(payload);
-    const content = j?.choices?.[0]?.delta?.content ?? "";
-    const tcs = j?.choices?.[0]?.delta?.tool_calls;
-    return { content, toolCalls: Array.isArray(tcs) ? tcs : undefined };
+    const delta = j?.choices?.[0]?.delta ?? {};
+    const content = delta?.content ?? "";
+    const thinking = typeof delta?.reasoning_content === "string" ? delta.reasoning_content : "";
+    const tcs = delta?.tool_calls;
+    return { content, thinking, toolCalls: Array.isArray(tcs) ? tcs : undefined };
   } catch {
     return { content: "" };
   }
@@ -153,11 +159,12 @@ async function readBodyStream(
   resp: Response,
   chunk: (line: string) => StreamChunk,
   onDelta: (text: string) => void,
-): Promise<{ content: string; nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined }> {
+): Promise<{ content: string; nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined; thinking: string }> {
   const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
   const dec = new TextDecoder();
   let buf = "";
   let content = "";
+  let thinking = "";
   // tool_calls arrive either as a full array (Ollama, final) or fragmented by
   // index (OpenAI, delta.tool_calls). Accumulate the OpenAI fragments by index.
   const tcByIdx: Record<number, { name: string; args: string }> = {};
@@ -196,6 +203,7 @@ async function readBodyStream(
         content += c.content;
         onDelta(c.content);
       }
+      if (c.thinking) thinking += c.thinking;
       if (c.toolCalls) absorb(c.toolCalls);
     }
   }
@@ -209,7 +217,7 @@ async function readBodyStream(
       .map((t) => ({ name: t.name, arguments: parseToolArgs(t.args) }));
     if (frags.length) nativeToolCalls = frags;
   }
-  return { content, nativeToolCalls };
+  return { content, nativeToolCalls, thinking };
 }
 
 function isStreaming(opts: LlmOptions): opts is LlmOptions & { onDelta: (text: string) => void } {
@@ -248,13 +256,14 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
       }
       if (!resp.ok) throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);
       if (streaming) {
-        const { content, nativeToolCalls } = await readBodyStream(resp, ollamaLineChunk, opts.onDelta);
-        return { content, nativeToolCalls };
+        const { content, nativeToolCalls, thinking } = await readBodyStream(resp, ollamaLineChunk, opts.onDelta);
+        return { content, nativeToolCalls, thinking };
       }
       const data = await resp.json();
       return {
         content: typeof data?.message?.content === "string" ? data.message.content : "",
         nativeToolCalls: toNativeToolCalls(data?.message?.tool_calls),
+        thinking: typeof data?.message?.reasoning_content === "string" ? data.message.reasoning_content : undefined,
       };
     },
   };
@@ -304,14 +313,15 @@ export function createOpenAICompatTransport(
         throw new Error(`OpenAI 兼容接口请求失败 (${resp.status})${detail}`);
       }
       if (streaming) {
-        const { content, nativeToolCalls } = await readBodyStream(resp, openaiLineChunk, opts.onDelta);
-        return { content, nativeToolCalls };
+        const { content, nativeToolCalls, thinking } = await readBodyStream(resp, openaiLineChunk, opts.onDelta);
+        return { content, nativeToolCalls, thinking };
       }
       const data = await resp.json();
       const msg = data?.choices?.[0]?.message ?? {};
       return {
         content: typeof msg?.content === "string" ? msg.content : "",
         nativeToolCalls: toNativeToolCalls(msg?.tool_calls),
+        thinking: typeof msg?.reasoning_content === "string" ? msg.reasoning_content : undefined,
       };
     },
   };
