@@ -230,9 +230,6 @@ export function AiAssistantPanel() {
             <button className="ai-footer-btn" onClick={newConversation} title="开始一段新对话">
               ＋ 新会话
             </button>
-            <span className="ai-footer-right">
-              <span className="ai-footer-model" title="当前模型">{config.model}</span>
-            </span>
           </div>
         )}
       </div>

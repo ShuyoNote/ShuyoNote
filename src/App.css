@@ -7748,7 +7748,7 @@ select.prop-value {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 10px 12px 12px;
+  padding: 8px 12px 6px;
   border-top: 1px solid var(--border);
 }
 .ai-textarea {
@@ -7791,16 +7791,14 @@ select.prop-value {
 .ai-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px 12px;
+  padding: 4px 12px 10px;
 }
 .ai-footer-btn {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-dim);
   font-size: 12px;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border-radius: var(--radius-md);
   cursor: pointer;
   font-family: inherit;
@@ -7808,19 +7806,6 @@ select.prop-value {
 .ai-footer-btn:hover {
   color: var(--text);
   background: var(--hover);
-}
-.ai-footer-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.ai-footer-model {
-  font-size: 11px;
-  color: var(--text-faint);
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ---- AI settings dialog ---- */
