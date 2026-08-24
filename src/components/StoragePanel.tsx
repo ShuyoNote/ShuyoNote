@@ -25,21 +25,47 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+interface PersistInfo {
+  persisted: boolean;
+  quota: number;
+  usage: number;
+  supported: boolean;
+}
+
 // Storage / space management: show where disk is used and run safe cleanups.
 export function StoragePanel() {
   const [open, setOpen] = useState(false);
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [busy, setBusy] = useState(false);
+  const [persist, setPersist] = useState<PersistInfo | null>(null);
+  const [persistBusy, setPersistBusy] = useState(false);
 
   const refresh = () => {
     api
       .storageStats()
       .then(setStats)
       .catch((e) => toast(`统计失败：${e}`, "error"));
+    api
+      .requestPersistentStorage()
+      .then((r) => setPersist({ persisted: r.persisted, quota: r.quota, usage: r.usage, supported: r.supported }))
+      .catch(() => setPersist(null));
   };
   useEffect(() => {
     if (open) refresh();
   }, [open]);
+
+  const requestPersist = async () => {
+    setPersistBusy(true);
+    try {
+      const r = await api.requestPersistentStorage();
+      setPersist({ persisted: r.persisted, quota: r.quota, usage: r.usage, supported: r.supported });
+      toast(r.persisted ? "已启用持久化存储，浏览器将保留你的数据" : "浏览器未授予持久化存储", r.persisted ? "success" : "info");
+    } catch (e) {
+      toast(`持久化存储失败：${e}`, "error");
+    } finally {
+      setPersistBusy(false);
+    }
+  };
 
   const run = async (title: string, message: string, fn: () => Promise<number>, okLabel: string) => {
     if (!(await confirmDialog({ title, message, danger: true }))) return;
@@ -81,6 +107,22 @@ export function StoragePanel() {
                 <Stat label="临时文件" value={fmt(stats.temp_bytes)} />
               </div>
             )}
+            <div className="storage-persist">
+              <div className="storage-persist-label">
+                {!persist ? (
+                  <span>持久化状态：…</span>
+                ) : !persist.supported ? (
+                  <span>持久化状态：此浏览器不支持</span>
+                ) : persist.persisted ? (
+                  <span>持久化状态：<b className="storage-persist-on">已启用</b>（{fmt(persist.usage)} / {fmt(persist.quota)}）</span>
+                ) : (
+                  <span>持久化状态：<b className="storage-persist-off">未启用</b>（{fmt(persist.usage)} / {fmt(persist.quota)}）</span>
+                )}
+              </div>
+              <button className="storage-persist-btn" disabled={persistBusy || !persist?.supported} onClick={requestPersist}>
+                {persistBusy ? "请求中…" : persist?.persisted ? "已请求持久化" : "启用持久化"}
+              </button>
+            </div>
             <div className="storage-actions">
               <button
                 disabled={busy || !stats}

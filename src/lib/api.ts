@@ -194,4 +194,12 @@ export const api = {
     invoke<void>("write_text_file", { path, content }),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   openPageWindow: (pageId: string) => invoke<void>("open_page_window", { pageId }),
+  requestPersistentStorage: () =>
+    invoke<{
+      persisted: boolean;
+      persistedBefore: boolean;
+      quota: number;
+      usage: number;
+      supported: boolean;
+    }>("request_persistent_storage"),
 };

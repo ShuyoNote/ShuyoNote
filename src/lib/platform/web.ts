@@ -455,6 +455,14 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "read_text_file") return "" as T;
     if (cmd === "open_page_window") return undefined as T;
 
+    // ---- Persistent storage ----
+    // Ask the browser to mark this origin as persistent so it won't auto-evict
+    // the database (which would lose the user's notes). Returns the outcome and
+    // the current quota/usage so the UI can surface it.
+    if (cmd === "request_persistent_storage") {
+      return (await requestPersistentStorage()) as T;
+    }
+
     // ---- Unknown: return an empty object so the UI never crashes ----
     return {} as T;
   };
@@ -483,6 +491,83 @@ function invokeWhenReady<T>(cmd: string, args?: Record<string, unknown>): Promis
       console.error("[web] invoke error", cmd, e);
       throw e;
     });
+}
+
+// Result of a persistent-storage request: whether the browser granted it, and
+// the current quota/usage (so the app can show "X used of Y").
+export interface PersistentStorageInfo {
+  persisted: boolean;
+  persistedBefore: boolean;
+  quota: number; // bytes
+  usage: number; // bytes
+  supported: boolean;
+}
+
+function humanBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+async function requestPersistentStorage(): Promise<{
+  persisted: boolean;
+  persistedBefore: boolean;
+  quota: number;
+  usage: number;
+  supported: boolean;
+}> {
+  const storage = typeof navigator !== "undefined" ? (navigator as any).storage : undefined;
+  if (!storage || typeof storage.persisted !== "function") {
+    return {
+      persisted: false,
+      persistedBefore: false,
+      quota: 0,
+      usage: 0,
+      supported: false,
+    };
+  }
+  try {
+    const persistedBefore = Boolean(await storage.persisted());
+    // Advance: request persistence so the browser won't evict our notes DB.
+    const persisted = (await storage.persist()) || persistedBefore;
+    const est = (await storage.estimate()) ?? {};
+    return {
+      persisted,
+      persistedBefore,
+      quota: Number(est.quota ?? 0),
+      usage: Number(est.usage ?? 0),
+      supported: true,
+    };
+  } catch {
+    return {
+      persisted: false,
+      persistedBefore: false,
+      quota: 0,
+      usage: 0,
+      supported: true,
+    };
+  }
+}
+
+/** Human-readable helper for surfaces that want a "持久化" label. */
+export function formatPersistentSummary(info: PersistentStorageInfo): string {
+  const used = humanBytes(info.usage);
+  const quota = humanBytes(info.quota);
+  if (!info.supported) return "浏览器不支持持久化存储";
+  if (info.persisted) return `已持久化（${used} / ${quota}）`;
+  return `未持久化（${used} / ${quota}）`;
+}
+
+// Request persistence as soon as the Web platform loads (fire-and-forget). This
+// is keyed on the same module so it runs once per page.
+if (typeof window !== "undefined") {
+  requestPersistentStorage().catch(() => {});
 }
 
 export function createWebPlatform(): Platform {

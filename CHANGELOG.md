@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.51.0] - 2026-08-24
+
+### 新增（Web 平台数据安全）
+
+- **持久化存储（`navigator.storage.persist()`）**：请求浏览器把本 Origin 标记为持久化，避免磁盘紧张时自动清理数据库导致笔记丢失（对治 IndexedDB best-effort 淘汰风险）：
+  - `web.ts` 新增 `request_persistent_storage` 命令：调用 `storage.persisted()` → `persist()` → `estimate()`，返回 `{ persisted, persistedBefore, quota, usage, supported }`；模块加载时自动请求一次（fire-and-forget）。
+  - `api.requestPersistentStorage()` 暴露给前端；`StoragePanel`（▦ 存储面板）新增**持久化状态行**——「已启用/未启用 + 用量/配额」，并提供「启用持久化」按钮（按钮点击 = 用户手势，满足 Chrome 等要求 persist() 需用户交互的限制；自动请求可能被拒，按钮可补上）。
+  - `scripts/smoke-web.mjs` 36→**37 项全绿**（新增 persist 返回安全对象的断言；Node 无 navigator → `supported:false` 安全降级）。
+
+---
+
 ## [1.50.0] - 2026-08-24
 
 ### 优化（Web 平台存储结构修正）

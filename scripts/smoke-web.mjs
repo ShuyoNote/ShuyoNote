@@ -226,6 +226,10 @@ assert("attachment_path resolves from blob store", (await invoke("attachment_pat
 const seen = await invoke("list_page_attachments", {});
 assert("list_page_attachments includes image with a display path", Array.isArray(seen) && seen.some((x) => x.id === att.id && (x.path || "").startsWith("data:image/png")));
 
+// 8c. Persistent-storage request returns a safe object (Node: no navigator).
+const persist = await invoke("request_persistent_storage", {});
+assert("request_persistent_storage is a safe object", persist && typeof persist === "object" && typeof persist.persisted === "boolean" && typeof persist.supported === "boolean");
+
 // 9. Unknown commands return an object, never throw.
 const unknown = await invoke("totally_unknown_cmd", {});
 assert("unknown command returns object (no throw)", typeof unknown === "object" && unknown !== null);
