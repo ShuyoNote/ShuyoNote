@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAiStore } from "../store/ai";
-import { SparkleIcon } from "./icons";
+import { SparkleIcon, SettingsIcon } from "./icons";
 import { AiSettingsDialog } from "./AiSettingsDialog";
 
 // Floating AI assistant. Entry points (NewPageGuide, sidebar, command palette)
@@ -50,10 +50,10 @@ export function AiAssistantPanel() {
         <div className="ai-header">
           <SparkleIcon className="ai-header-icon" />
           <span className="ai-title">AI 助手</span>
-          <button className="ai-header-btn ai-settings" title="设置" onClick={() => setSettingsOpen(true)}>
-            设置
+          <button className="ai-header-btn ai-settings" title="AI 设置" onClick={() => setSettingsOpen(true)} aria-label="AI 设置">
+            <SettingsIcon width={15} height={15} />
           </button>
-          <button className="ai-header-btn ai-close" title="关闭" onClick={() => setOpen(false)}>
+          <button className="ai-header-btn ai-close" title="关闭" onClick={() => setOpen(false)} aria-label="关闭">
             ×
           </button>
         </div>
