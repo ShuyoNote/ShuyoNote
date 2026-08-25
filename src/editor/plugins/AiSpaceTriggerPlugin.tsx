@@ -18,6 +18,7 @@ export function AiSpaceTriggerPlugin() {
   const [editor] = useLexicalComposerContext();
   const setAiBarOpen = useEditorStore((s) => s.setAiBarOpen);
   const setAiBarPos = useEditorStore((s) => s.setAiBarPos);
+  const setAiBarAnchorKey = useEditorStore((s) => s.setAiBarAnchorKey);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -34,6 +35,7 @@ export function AiSpaceTriggerPlugin() {
           const top = sel.anchor.getNode().getTopLevelElement();
           if (top && top.getTextContent().trim().length === 0) {
             onBlankLine = true;
+            setAiBarAnchorKey(top.getKey());
             const dom = editor.getElementByKey(top.getKey());
             if (dom) {
               const r = dom.getBoundingClientRect();
@@ -57,7 +59,7 @@ export function AiSpaceTriggerPlugin() {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [editor, setAiBarOpen, setAiBarPos]);
+  }, [editor, setAiBarOpen, setAiBarPos, setAiBarAnchorKey]);
 
   return null;
 }

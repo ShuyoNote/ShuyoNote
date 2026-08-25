@@ -11,11 +11,14 @@ interface EditorState {
   aiBarOpen: boolean;
   /** Screen position (fixed) where the floating inline AI bar should be anchored. */
   aiBarPos: { top: number; left: number } | null;
+  /** Lexical key of the block where space was pressed — the AI draft inserts here. */
+  aiBarAnchorKey: string | null;
   setEditor: (editor: LexicalEditor | null) => void;
   setFocusBlockId: (id: string | null) => void;
   clearFocusBlockId: () => void;
   setAiBarOpen: (v: boolean) => void;
   setAiBarPos: (pos: { top: number; left: number } | null) => void;
+  setAiBarAnchorKey: (k: string | null) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -23,9 +26,11 @@ export const useEditorStore = create<EditorState>((set) => ({
   focusBlockId: null,
   aiBarOpen: false,
   aiBarPos: null,
+  aiBarAnchorKey: null,
   setEditor: (editor) => set({ editor }),
   setFocusBlockId: (id) => set({ focusBlockId: id }),
   clearFocusBlockId: () => set({ focusBlockId: null }),
   setAiBarOpen: (v) => set({ aiBarOpen: v }),
   setAiBarPos: (pos) => set({ aiBarPos: pos }),
+  setAiBarAnchorKey: (k) => set({ aiBarAnchorKey: k }),
 }));

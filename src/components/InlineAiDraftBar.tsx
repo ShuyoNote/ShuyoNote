@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { $createParagraphNode, $createTextNode, $getRoot } from "lexical";
+import { $createParagraphNode, $createTextNode, $getNodeByKey, $getRoot } from "lexical";
 import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
@@ -139,14 +139,23 @@ export function InlineAiDraftBar() {
     if (!content.trim()) { reset(); return; }
     const editor = useEditorStore.getState().editor;
     if (editor) {
-      // Insert as real content (untagged → Editor.onChange persists it), then close.
+      // Insert as real content AT the block where space was pressed (untagged →
+      // Editor.onChange persists it), falling back to the end if the anchor is gone.
       editor.update(() => {
-        const root = $getRoot();
+        let anchor = (() => {
+          const k = useEditorStore.getState().aiBarAnchorKey;
+          return k ? $getNodeByKey(k) : null;
+        })();
         const lines = content.split("\n").map((s) => s.trim()).filter(Boolean);
         for (const line of lines) {
           const p = $createParagraphNode();
           p.append($createTextNode(line));
-          root.append(p);
+          if (anchor) {
+            anchor.insertAfter(p);
+            anchor = p;
+          } else {
+            $getRoot().append(p);
+          }
         }
       });
     } else {
@@ -164,6 +173,7 @@ export function InlineAiDraftBar() {
     setThinking("");
     setError(null);
     setTemplatesOpen(false);
+    useEditorStore.getState().setAiBarAnchorKey(null);
   };
 
   // Keep the floating popup fully inside the viewport (no matter how tall the
