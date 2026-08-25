@@ -1163,9 +1163,11 @@ assert("workspace name persists across instances", wsAgain !== "");
   const valid = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"hi","version":1}]}],"type":"root","version":1}}';
   const imagerow = '{"root":{"children":[{"type":"imagerow","items":[{"src":"a","alt":"b"}],"version":1}],"type":"root","version":1}}';
   const corrupt = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"text":"hi","version":1}]}],"type":"root","version":1}}';
+  const genericChild = '{"root":{"children":[{"foo":"bar"}],"type":"root","version":1}}';
   assert("lexicalValid accepts valid doc", aiMod.lexicalStateValid(valid) === valid);
   assert("lexicalValid accepts data-only items (imagerow)", aiMod.lexicalStateValid(imagerow) === imagerow);
   assert("lexicalValid rejects node missing type", aiMod.lexicalStateValid(corrupt) === null);
+  assert("lexicalValid rejects generic child without type", aiMod.lexicalStateValid(genericChild) === null);
   assert("lexicalValid rejects empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === null);
 }
 

@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.69] - 2026-08-24
+
+### 修复
+
+- **彻底拦截 `type "undefined"` 错误**：此前 `lexicalStateValid` 用「节点特征启发式」，漏掉「无 type 且无任何特征键」的坏对象，探针仍会解析它并让 Lexical 打 `type "undefined"` 日志。现改为**严格规则**：`root.children` 及其所有嵌套 `children` 的**每个元素必须是带字符串 type 的节点**（`validateNodes`），否则整页回退空态；探针不再跑到坏文档（不崩、也不再刷错误日志）。图片行 `items` 等非 `children` 数据数组不受影响。
+- `scripts/smoke-web.mjs` 185→**186 全绿**（新增：拒绝「通用对象子节点」用例）。
+
+---
+
 ## [1.59.68] - 2026-08-24
 
 ### 修复
