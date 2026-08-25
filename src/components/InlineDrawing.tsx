@@ -3,6 +3,7 @@ import { Excalidraw, restore, exportToBlob, exportToSvg, serializeAsJSON, export
 import "@excalidraw/excalidraw/index.css";
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
+import { useResolvedTheme } from "../store/theme";
 import { api } from "../lib/api";
 import { blobStore } from "../lib/platform/blobStore";
 import { toast } from "../store/toast";
@@ -39,6 +40,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const [busy, setBusy] = useState(false);
   const [height, setHeight] = useState<number>(node.__height ?? DEFAULT_HEIGHT);
   const heightRef = useRef<number>(height);
+  const isDark = useResolvedTheme() === "dark";
 
   const hash = node.__hash;
 
@@ -241,6 +243,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
           initialData={initialData}
           excalidrawAPI={(a) => (apiRef.current = a)}
           viewModeEnabled={!editing}
+          theme={isDark ? "dark" : "light"}
           UIOptions={{ canvasActions: { export: false } }}
           langCode="zh-CN"
         />

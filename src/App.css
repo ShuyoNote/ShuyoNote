@@ -4842,7 +4842,7 @@ select.prop-value {
 .inline-drawing-canvas {
   position: relative;
   height: 420px;
-  background: #fff;
+  background: var(--surface);
 }
 
 /* Bottom-center drag handle to resize the embed height (Feishu-style). */

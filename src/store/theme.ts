@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useEffect, useState } from "react";
 
 export type Theme = "light" | "dark" | "system";
 export type AccentId = "blue" | "green" | "purple" | "orange" | "red" | "teal";
@@ -78,6 +79,26 @@ export const useTheme = create<ThemeState>((set) => ({
 
 // Apply on startup.
 applyTheme((localStorage.getItem(STORAGE_KEY) as Theme) || "system");
+
+// Reactively resolve the app's effective theme ("light" | "dark"), respecting
+// the "system" preference. Used by embedded surfaces (e.g. the page-inline
+// Excalidraw) so they stay in sync with the app theme.
+export function useResolvedTheme(): "light" | "dark" {
+  const theme = useTheme((s) => s.theme);
+  const resolve = (): "light" | "dark" =>
+    theme === "system" ? (systemPrefersDark() ? "dark" : "light") : theme;
+  const [resolved, setResolved] = useState<"light" | "dark">(resolve);
+  useEffect(() => {
+    setResolved(resolve());
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setResolved(systemPrefersDark() ? "dark" : "light");
+    mq.addEventListener?.("change", update);
+    return () => mq.removeEventListener?.("change", update);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]);
+  return resolved;
+}
 
 // React to system theme changes when in "system" mode.
 window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {

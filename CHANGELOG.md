@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.141] - 2026-08-24
+
+### 变更
+
+- **绘图主题与 App 一致**：**页面内嵌 Excalidraw** 现在跟随 App 的主题（`theme` 传入 `useResolvedTheme()`，浅色→`light`、深色→`dark`，`system` 跟随系统并响应系统切换），深色模式下内嵌画布与工具栏随之变暗（`.inline-drawing-canvas` 背景由硬编码 `#fff` 改为 `var(--surface)`）。全屏画板本就在默认「跟随系统」下与 App 一致，此改动补齐内嵌绘图的同步。`src/store/theme.ts` 新增 `useResolvedTheme` 响应式 Hook。`tsc` 无错、`smoke` 223 全绿；无头浏览器实测 light 无 `theme--dark`、dark 下 `.excalidraw` 出现 `theme--dark` 类，无运行时错误。
+
+---
+
 ## [1.59.140] - 2026-08-24
 
 ### 修复
