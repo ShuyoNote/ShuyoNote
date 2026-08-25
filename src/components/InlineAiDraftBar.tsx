@@ -15,14 +15,23 @@ import { Markdown } from "./Markdown";
 export function InlineAiDraftBar() {
   const config = useAiStore((s) => s.config);
   const notes = useNotes();
-  // Context-aware dropdown: a page WITH content gets edit actions, an EMPTY page
-  // gets content-generation prompts.
+  // Context-aware dropdown: a page WITH real text gets edit actions, an EMPTY page
+  // gets content-generation prompts. An empty placeholder paragraph does NOT count
+  // as content — only actual text does.
   const hasContent = (() => {
     if ((notes.current?.content_text ?? "").trim()) return true;
     try {
       const j = JSON.parse(notes.current?.content_json ?? "");
       const children = j?.root?.children;
-      if (Array.isArray(children) && children.length > 0) return true;
+      if (Array.isArray(children)) {
+        const realText = (n: any): boolean => {
+          if (!n || typeof n !== "object") return false;
+          if (n.type === "text" && typeof n.text === "string" && n.text.trim()) return true;
+          if (Array.isArray(n.children)) return n.children.some(realText);
+          return false;
+        };
+        return children.some(realText);
+      }
     } catch {
       /* ignore */
     }
