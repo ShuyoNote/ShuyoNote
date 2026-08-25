@@ -75,6 +75,7 @@ await esbuild.build({
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
+      'export { emptyScene, sceneToSvg, fitView, normRect, polygonPoints, shapeBounds, sceneBounds } from "./src/lib/scene";\n' +
       'export { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "./src/lib/ai/imageGen";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
@@ -936,6 +937,20 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("detectMermaidSyntax mindmap", aiMod.detectMermaidSyntax("mindmap\n  root((主题))") === "mindmap", aiMod.detectMermaidSyntax("mindmap"));
   assert("detectMermaidSyntax sequence", aiMod.detectMermaidSyntax("sequenceDiagram\n  A->>B: hi") === "sequence", aiMod.detectMermaidSyntax("sequenceDiagram"));
   assert("mermaidRenderable needs ≥2 lines", aiMod.mermaidRenderable("graph TD") === false && aiMod.mermaidRenderable("graph TD\n  A-->B") === true, "renderable");
+  // M22 进阶 scene: empty scene, bounds, polygon, SVG export, fitView.
+  const sc = aiMod.emptyScene();
+  assert("emptyScene starts with one layer", sc.layers.length === 1 && sc.layers[0].visible, JSON.stringify(sc.layers.length));
+  const rect = aiMod.normRect({ x: 10, y: 10 }, { x: 40, y: 30 });
+  assert("normRect normalizes corners", rect.x === 10 && rect.w === 30 && rect.h === 20, JSON.stringify(rect));
+  const tri = aiMod.polygonPoints("triangle", { x: 0, y: 0 }, { x: 100, y: 100 });
+  assert("polygonPoints triangle has 3 points", tri.length === 3, JSON.stringify(tri));
+  const scene2 = { layers: [{ id: "l1", name: "L", visible: true, shapes: [{ kind: "rect", color: "#111", width: 2, a: { x: 0, y: 0 }, b: { x: 50, y: 40 } }, { kind: "text", color: "#111", size: 20, pos: { x: 5, y: 5 }, text: "hi" }] }] };
+  const sb = aiMod.sceneBounds(scene2);
+  assert("sceneBounds covers shapes", sb !== null && sb.w >= 50 && sb.h >= 40, JSON.stringify(sb));
+  const svg = aiMod.sceneToSvg(scene2);
+  assert("sceneToSvg emits matching elements", svg.svg.includes("<rect") && svg.svg.includes("<text") && svg.svg.includes('viewBox'), svg.svg.slice(0, 120));
+  const fit = aiMod.fitView(scene2, { w: 800, h: 600 });
+  assert("fitView produces a positive zoom", fit.zoom > 0 && isFinite(fit.x) && isFinite(fit.y), JSON.stringify(fit));
   // M-C imageGen helpers: url building, body shape, b64 parse, base64 roundtrip.
   assert("buildImageGenUrl normalizes trailing slash", aiMod.buildImageGenUrl("http://x/v1/") === "http://x/v1/images/generations", aiMod.buildImageGenUrl("http://x/v1/"));
   const igb = JSON.parse(aiMod.buildImageGenBody({ baseUrl: "http://x", model: "dall-e", apiKey: "" }, "一只猫", "512x512"));

@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.127] - 2026-08-24
+
+### 新增
+
+- **绘图高级功能（M22.1 进阶）**：`DrawCanvas` 重构为「矢量形状 + 图层 + 视口」模型（世界坐标 + `ctx.setTransform` 映射，任意缩放/平移下鼠标与落笔严格对齐）：
+  - **文字标注**（点画布输入文字）＋ **更多形状**（三角形/菱形/五角星/星形，+原有 线/矩形/椭圆/箭头）；
+  - **无限画布**：`✋` 拖动平移 + 滚轮/按钮缩放 + `⤢` 适应内容；
+  - **图层系统**：新增/上移/下移/显示隐藏/删除图层（预览块快照不变，仍导 PNG 落内容寻址附件）；
+  - **插入图片**（选文件 → 走附件）＋ **AI 插图**（文生图）/ **mermaid 流程图**（渲染为画布图元）；
+  - **矢量导出 SVG**（`sceneToSvg`）。新增纯函数模块 `src/lib/scene.ts`（`emptyScene`/`sceneToSvg`/`fitView`/`normRect`/`polygonPoints`/`shapeBounds`/`sceneBounds`）。`scripts/smoke-web.mjs` 221→**227 全绿**。
+
+---
+
 ## [1.59.126] - 2026-08-24
 
 ### 修复
