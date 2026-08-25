@@ -8115,25 +8115,6 @@ select.prop-value {
 .ai-inline.open {
   position: relative;
 }
-.ai-inline-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  border: 1px dashed var(--border);
-  color: var(--text-dim);
-  background: transparent;
-  border-radius: var(--radius-xs);
-  padding: 4px 10px;
-  font-size: 13px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.ai-inline-pill:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
 .ai-inline-bar {
   display: flex;
   align-items: center;

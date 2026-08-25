@@ -156,12 +156,6 @@ export function InlineAiDraftBar() {
 
   return (
     <div className={`ai-inline ${open ? "open" : ""}`}>
-      {!open && (
-        <button className="ai-inline-pill" onClick={() => setOpen(true)} title="用 AI 起草">
-          <SparkleIcon width={14} height={14} /> 用 AI 起草
-        </button>
-      )}
-
       {open && (
         <>
           <div className="ai-inline-bar">

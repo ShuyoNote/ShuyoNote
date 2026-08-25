@@ -476,6 +476,8 @@ function EditorStoreSync() {
     useEditorStore.getState().setEditor(editor);
     return () => {
       useEditorStore.getState().setEditor(null);
+      // Closing the editor (page switch) should also collapse the inline AI bar.
+      useEditorStore.getState().setAiBarOpen(false);
     };
   }, [editor]);
   return null;
