@@ -8109,6 +8109,8 @@ select.prop-value {
 .ai-inline-pop {
   width: var(--doc-width);
   max-width: calc(100vw - 24px);
+  max-height: 70vh;
+  overflow-y: auto;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);

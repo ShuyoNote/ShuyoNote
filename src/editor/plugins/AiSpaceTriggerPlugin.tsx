@@ -37,7 +37,15 @@ export function AiSpaceTriggerPlugin() {
             const dom = editor.getElementByKey(top.getKey());
             if (dom) {
               const r = dom.getBoundingClientRect();
-              pos = { top: r.bottom + 6, left: r.left };
+              const viewW = window.innerWidth;
+              const viewH = window.innerHeight;
+              const below = viewH - r.bottom;
+              // Flip the popup ABOVE the caret when there isn't enough room below,
+              // and clamp it to the viewport so it's never cut off.
+              const popTop = below < 340 ? Math.max(8, r.top - 360) : r.bottom + 6;
+              const popW = Math.min(780, viewW - 24);
+              const left = Math.max(8, Math.min(r.left, viewW - popW - 8));
+              pos = { top: popTop, left };
             }
           }
         }
