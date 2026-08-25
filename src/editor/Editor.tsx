@@ -127,9 +127,52 @@ const ALLOWED_NODE_TYPES = new Set<string>([
 
 // A throwaway editor with the same node registry, used to PRE-PARSE a saved
 // content string. If any node is malformed (e.g. a missing `type`, which Lexical
-// reports as `parseEditorState: type "undefined"`), this throws and we fall back
-// to an empty editor instead of crashing the real one.
-const probeEditor = createEditor({ nodes: EDITOR_NODES });
+// reports as `parseEditorState: type "undefined"`), Lexical catches the error
+// internally and routes it to `editor._onError` — which by default is
+// `console.error` (spamming the console). We install a no-op so pre-parsing is
+// silent; we decide the outcome purely by whether the resulting state is empty.
+const probeEditor = createEditor({ nodes: EDITOR_NODES, onError: () => {} });
+
+/** Rebuild the doc from only the top-level blocks that Lexical can parse. A block
+ *  that fails (bad node in `children` or `$slots`) is dropped; good blocks are
+ *  kept so a mostly-valid page still renders instead of showing blank. */
+function salvageByBlock(contentJson: string | null | undefined): EditorState | null {
+  if (!contentJson) return null;
+  try {
+    const parsed = JSON.parse(contentJson);
+    const root = parsed?.root;
+    if (!root || !Array.isArray(root.children) || root.children.length === 0) return null;
+    const origError = console.error;
+    const kept: unknown[] = [];
+    for (const block of root.children) {
+      const probeDoc = JSON.stringify({ type: "root", version: 1, children: [block] });
+      console.error = () => {};
+      let ok = false;
+      try {
+        const st = probeEditor.parseEditorState(probeDoc);
+        ok = !!st && !st.isEmpty();
+      } catch {
+        ok = false;
+      } finally {
+        console.error = origError;
+      }
+      if (ok) kept.push(block);
+    }
+    if (kept.length === 0) return null;
+    root.children = kept;
+    console.error = () => {};
+    try {
+      const st = probeEditor.parseEditorState(JSON.stringify(parsed));
+      return st && !st.isEmpty() ? st : null;
+    } catch {
+      return null;
+    } finally {
+      console.error = origError;
+    }
+  } catch {
+    return null;
+  }
+}
 
 /** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
 function parseEditorState(contentJson: string): EditorState | null {
@@ -140,25 +183,24 @@ function parseEditorState(contentJson: string): EditorState | null {
     // isn't parseable. Log a clear marker when we have to fall back to empty so
     // we can confirm which build the browser is running and capture the raw JSON.
     const valid = lexicalStateValid(contentJson, ALLOWED_NODE_TYPES);
-    if (!valid) {
-      console.warn("[ShuyoNote] rejected content_json (opened empty editor). Raw:", contentJson);
-      return null;
-    }
+    if (!valid) return null;
     contentJson = valid;
   }
-  // Lexical logs a "type undefined" console.error for a malformed node instead of
-  // throwing. Silence that transient noise during the probe; we decide outcome by
-  // whether the parsed state is empty. Restored unconditionally in finally.
+  // Lexical catches a malformed node internally and routes it to the editor's
+  // onError (a no-op here), returning an EMPTY state — so `probeEditor` never
+  // throws; we decide the outcome by whether the parsed state is empty.
   const origError = console.error;
   console.error = () => {};
   try {
     const state = probeEditor.parseEditorState(contentJson ?? "");
-    // On a malformed node Lexical swallows the error and returns an EMPTY state —
-    // passing that to the real composer makes it throw "editor state is empty".
-    if (!state || state.isEmpty()) return null;
+    if (!state || state.isEmpty()) {
+      // Some node survived sanitization in a non-`children` spot (e.g. `$slots`);
+      // rescue the good top-level blocks rather than showing a blank page.
+      return salvageByBlock(contentJson);
+    }
     return state;
   } catch {
-    return null;
+    return salvageByBlock(contentJson);
   } finally {
     console.error = origError;
   }

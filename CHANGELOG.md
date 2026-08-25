@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.76] - 2026-08-24
+
+### 修复
+
+- **彻底消除 Console 的 `type "undefined"` 报错（静默预解析）**：此前 `probeEditor` 未配置 `onError`，Lexical 在预解析碰到坏节点时会内部捕获并把错误路由到默认的 `console.error`（DevTools 显示为 `Error: parseEditorState: type "undefined" + not found`），导致每次打开损坏页都刷 Console。现给探针编辑器配置 `onError: () => {}`，预解析完全静默，不再刷 Console。
+- **坏节点位置不止 `children`，还可能是 `$slots`**：Lexical 0.49 的 shadow-root 槽帧把节点放在节点的 `$slots` 对象里，之前净化器只遍历 `children`，会漏掉这类坏节点。现同时净化 `$slots`（缺 `type` / 未注册类型一并剔除）。
+- **好内容按块兜底保留**：整页预解析若仍失败（个别块坏到净化器无法识别），会**逐顶层块**单独预解析，保留能解析的好块、丢弃坏块，页面不再整页空白。
+- `scripts/smoke-web.mjs` 194→**195 全绿**（新增：`$slots` 坏节点剔除用例）；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.75] - 2026-08-24
 
 ### 新增

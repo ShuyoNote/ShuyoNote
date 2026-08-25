@@ -1282,6 +1282,11 @@ assert("workspace name persists across instances", wsAgain !== "");
   const unregistered = '{"root":{"children":[{"type":"mypluginblock","version":1},{"type":"paragraph","version":1,"children":[{"type":"text","text":"keep","version":1}]}],"type":"root","version":1}}';
   const salvagedReg = aiMod.lexicalStateValid(unregistered, allowed);
   assert("lexicalValid drops unregistered type when allowedTypes given", salvagedReg !== null && salvagedReg.includes('"text":"keep"') && !salvagedReg.includes('mypluginblock'));
+  // A bad node inside a node's `$slots` (a non-`children` node container Lexical
+  // also parses) must be dropped too — otherwise Lexical still reports "not found".
+  const slotsDoc = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"ok","version":1}],"$slots":{"bad":{"type":"undefined","version":1}}}],"type":"root","version":1}}';
+  const salvagedSlots = aiMod.lexicalStateValid(slotsDoc);
+  assert("lexicalValid drops bad $slots node", salvagedSlots !== null && salvagedSlots.includes('"text":"ok"') && !salvagedSlots.includes('"type":"undefined"'), JSON.stringify(salvagedSlots));
 }
 
 // 21. AI-style create_page -> delete_page -> gone from list (web delete path).

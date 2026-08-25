@@ -24,6 +24,27 @@ function isNode(c: unknown): c is NodeRecord & { type: string } {
   return typeof t === "string" && t.length > 0 && t !== "undefined" && t !== "null";
 }
 
+// Also sanitize a node's `$slots` object (shadow-root slot frames): each slot
+// value is itself a node JSON that Lexical parses, so a bad slot would otherwise
+// survive the `children`-only walk and still throw "type ... not found".
+function sanitizeSlots(slots: unknown, allowedTypes?: ReadonlySet<string>): void {
+  if (!slots || typeof slots !== "object" || Array.isArray(slots)) return;
+  const rec = slots as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    const val = rec[key];
+    if (!isNode(val)) {
+      delete rec[key];
+      continue;
+    }
+    if (allowedTypes && !allowedTypes.has(val.type)) {
+      delete rec[key];
+      continue;
+    }
+    if (Array.isArray(val.children)) val.children = sanitizeChildren(val.children, allowedTypes);
+    sanitizeSlots(val.$slots, allowedTypes);
+  }
+}
+
 function sanitizeChildren(children: unknown, allowedTypes?: ReadonlySet<string>): unknown[] {
   if (!Array.isArray(children)) return [];
   const out: unknown[] = [];
@@ -36,6 +57,7 @@ function sanitizeChildren(children: unknown, allowedTypes?: ReadonlySet<string>)
     if (Array.isArray(child.children)) {
       child.children = sanitizeChildren(child.children, allowedTypes);
     }
+    sanitizeSlots(child.$slots, allowedTypes);
     out.push(child);
   }
   return out;
