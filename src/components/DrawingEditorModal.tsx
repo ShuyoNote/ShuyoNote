@@ -95,6 +95,8 @@ export default function DrawingEditorModal() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
+  const [themeMode, setThemeMode] = useState<"auto" | "light" | "dark">("auto");
+  const [menuOpen, setMenuOpen] = useState(false);
   const selectedRef = useRef<string[]>([]);
 
   useEffect(() => {
@@ -104,7 +106,7 @@ export default function DrawingEditorModal() {
     setReady(false);
     setInitialData(null);
     const load = async () => {
-      let scene: SceneSnapshot = { elements: [], appState: {}, files: {} };
+      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: true }, files: {} };
       if (drawingEdit.hash) {
         try {
           const bytes = await blobStore.get(drawingEdit.hash);
@@ -116,7 +118,7 @@ export default function DrawingEditorModal() {
               null,
               null,
             );
-            scene = { elements: restored.elements, appState: restored.appState, files: restored.files };
+            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: true }, files: restored.files };
           }
         } catch (e) {
           if (alive) setErr(`读取绘图失败：${e}`);
@@ -399,20 +401,23 @@ export default function DrawingEditorModal() {
 
   if (!drawingEdit) return null;
   if (!ready || !initialData) return null;
-  const isDark = (document.documentElement.getAttribute("data-theme") ?? "") === "dark";
+  const systemDark = (document.documentElement.getAttribute("data-theme") ?? "") === "dark";
+  const isDark = themeMode === "dark" || (themeMode === "auto" && systemDark);
 
   return createPortal(
     <div className="drawing-modal">
       <div className="drawing-modal-head">
         <div className="drawing-modal-title-box">
-          <span className="drawing-modal-title">绘图</span>
-          <span className="drawing-modal-sub">Excalidraw</span>
+          <span className="drawing-modal-title">画板</span>
+          <button className={`drawing-modal-tool ${readOnly ? "drawing-modal-tool-on" : ""}`} onClick={() => setReadOnly((v) => !v)} title="只读 / 编辑切换">
+            {readOnly ? "✏️" : "👁"}
+          </button>
         </div>
         <div className="drawing-modal-actions">
           <div className="drawing-modal-group">
             <button className="drawing-modal-tool" onClick={insertImage} title="插入图片">🖼</button>
             <button className="drawing-modal-tool" onClick={aiDraw} title="AI 插图">🤖</button>
-            <button className="drawing-modal-tool" onClick={mermaidDraw} title="流程图 / 思维导图">📊</button>
+            <button className="drawing-modal-tool" onClick={() => setMenuOpen((v) => !v)} title="绘图 / 主题 / Mermaid">＋</button>
             <button className="drawing-modal-tool" onClick={linkSelected} title="链接选中的图形到页面">🔗</button>
           </div>
           <span className="drawing-modal-sep" />
@@ -420,9 +425,6 @@ export default function DrawingEditorModal() {
             <button className="drawing-modal-tool" onClick={exportSvg} title="导出 SVG">⇩</button>
             <button className="drawing-modal-tool" onClick={exportPng} title="导出 PNG">⭳</button>
             <button className="drawing-modal-tool" onClick={copyPng} title="复制到剪贴板">⧉</button>
-            <button className={`drawing-modal-tool ${readOnly ? "drawing-modal-tool-on" : ""}`} onClick={() => setReadOnly((v) => !v)} title="只读 / 编辑切换">
-              {readOnly ? "编辑" : "👁"}
-            </button>
           </div>
           <span className="drawing-modal-sep" />
           <div className="drawing-modal-group">
@@ -436,6 +438,24 @@ export default function DrawingEditorModal() {
         </div>
       </div>
       <div className="drawing-modal-body">
+        {menuOpen ? (
+          <div className="drawing-menu" onMouseLeave={() => setMenuOpen(false)}>
+            <div className="drawing-menu-title">绘图 / 主题</div>
+            <button className="drawing-menu-item" onClick={() => { setThemeMode("auto"); setMenuOpen(false); }}>
+              主题 · 跟随系统 {themeMode === "auto" ? "✓" : ""}
+            </button>
+            <button className="drawing-menu-item" onClick={() => { setThemeMode("light"); setMenuOpen(false); }}>
+              主题 · 浅色 {themeMode === "light" ? "✓" : ""}
+            </button>
+            <button className="drawing-menu-item" onClick={() => { setThemeMode("dark"); setMenuOpen(false); }}>
+              主题 · 深色 {themeMode === "dark" ? "✓" : ""}
+            </button>
+            <div className="drawing-menu-sep" />
+            <button className="drawing-menu-item" onClick={() => { setMenuOpen(false); mermaidDraw(); }}>
+              Mermaid 绘图
+            </button>
+          </div>
+        ) : null}
         <Excalidraw
           onChange={onChange}
           initialData={initialData}

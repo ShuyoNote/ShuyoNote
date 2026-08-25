@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.135] - 2026-08-24
+
+### 新增 / 变更
+
+- **绘图「画板化」改进**：Excalidraw 编辑器新增**点阵网格背景**（`gridModeEnabled`）、**「＋」折叠菜单**（主题跟随系统/浅色/深色 + Mermaid 绘图）、标题改为「画板」、只读切换移入顶部、图标按钮分组。**移除 PlantUML**（需联网端点且触发依赖优化问题）；Mermaid / AI 插图 / 图片注入 / 导出 / 只读保留。`scripts/smoke-web.mjs` 225→**223 全绿**（移除 PlantUML 断言）。
+> ⚠️ 已知：**`dev:web`（浏览器开发）下 Excalidraw 0.17.1 的 UMD 包在 Vite 8 依赖预打包时触发 `css-loader` 运行时兼容错误**（与 PlantUML 无关，生产构建 `vite build` 正常）。桌面/Tauri 生产构建不受影响；如遇 dev:web 绘图报错，可用生产构建验证，或调研 Vite 8 + Excalidraw 打包兼容（Vite 7 改触 Excalidraw 嵌套 React 问题）。
+
+---
+
 ## [1.59.134] - 2026-08-24
 
 ### 修复

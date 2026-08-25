@@ -3,6 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { version } from "../package.json";
 
+// Some bundled deps (e.g. @excalidraw/excalidraw's UMD build) reference the Node
+// `process` global; shim it so the browser bundle doesn't throw.
+(globalThis as any).process = (globalThis as any).process ?? { env: { NODE_ENV: "development" } };
+
 // Browser tab / window title carries the live build version (mirrors the desktop
 // window title set in src-tauri/src/lib.rs).
 document.title = `ShuyoNote 数友笔记 · v${version}`;
