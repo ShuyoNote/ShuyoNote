@@ -159,16 +159,20 @@ export function InlineAiDraftBar() {
     if (open) setTemplatesOpen(true);
   }, [open]);
 
-  // ESC to stop/close while running.
+  // ESC cancels the AI popup (and stops a running generation) whenever it's open.
   useEffect(() => {
-    if (!running) return;
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") stop();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (running) stop();
+        reset();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+  }, [open, running]);
 
   // Close on background click (anywhere outside the floating bar).
   useEffect(() => {
