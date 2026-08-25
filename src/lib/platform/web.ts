@@ -405,6 +405,16 @@ function topBlockId(node: any): string {
   return typeof node?.blockId === "string" ? node.blockId : "";
 }
 
+// M19.2: does `text` contain a page link to `title` — `[[Title]]`, `[[Title|alias]]`,
+// `[[Title#block]]` or `[[Title|alias#block]]`? (Alias/block forms are recognized
+// so they create real backlinks even though they display differently.)
+function backlinkRefMatches(text: string, title: string): boolean {
+  const esc = String(title ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!esc) return false;
+  const re = new RegExp(`\\[\\[${esc}(?:\\|[^\\]]*)?(?:#[^\\]]*)?\\]\\]`);
+  return re.test(String(text ?? ""));
+}
+
 function truncateChars(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
@@ -1026,15 +1036,15 @@ function makeInvoke(store: SqliteStore) {
       return blocks as T;
     }
     if (cmd === "get_backlinks") {
-      // Page-level backlinks: pages whose content_text references `[[target title]]`.
+      // Page-level backlinks: pages whose content_text references the target page
+      // via `[[Title]]`, `[[Title|alias]]`, `[[Title#block]]` or `[[Title|alias#block]]`.
       const targetId = String(a.id ?? "");
       const target = store.query<{ title: string }>("SELECT title FROM pages WHERE id = ?", [targetId])[0];
       if (!target) return [] as T;
-      const ref = `[[${target.title}]]`;
       const metas: any[] = [];
       const all = store.query("SELECT id, title, content_text, parent_id, kind, sort_order, created_at, updated_at FROM pages WHERE deleted_at IS NULL");
       for (const p of all as any[]) {
-        if (String(p.content_text ?? "").includes(ref) && p.id !== targetId) {
+        if (backlinkRefMatches(String(p.content_text ?? ""), target.title) && p.id !== targetId) {
           metas.push({ id: p.id, workspace_id: getWs()?.id ?? "", parent_id: p.parent_id ?? null, title: p.title, kind: p.kind, sort_order: p.sort_order ?? 0, created_at: p.created_at, updated_at: p.updated_at, deleted_at: null });
         }
       }

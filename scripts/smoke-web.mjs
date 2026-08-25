@@ -598,6 +598,14 @@ const citePage = await invoke("create_page", { parent_id: null, title: "引用�
 await invoke("save_page", { id: citePage.id, title: "引用页", content_json: citeJson, content_text: "引用文字 [[被引用页]]" });
 const backlinks = await invoke("get_backlinks", { id: targetPage.id });
 assert("get_backlinks finds citing page", Array.isArray(backlinks) && backlinks.some((p) => p.id === citePage.id));
+// M19.2: alias `[[标题|别名]]` and block `[[标题#块]]` forms also create page backlinks.
+const citeAlias = await invoke("create_page", { parent_id: null, title: "别名引用页" });
+await invoke("save_page", { id: citeAlias.id, title: "别名引用页", content_json: '{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"见[[被引用页|别名]]"}]}]}}', content_text: "见[[被引用页|别名]]" });
+const citeBlock = await invoke("create_page", { parent_id: null, title: "块引用页" });
+await invoke("save_page", { id: citeBlock.id, title: "块引用页", content_json: '{"root":{"children":[{"type":"paragraph","children":[{"type":"text","text":"见[[被引用页#blk-target]]"}]}]}}', content_text: "见[[被引用页#blk-target]]" });
+const backlinks2 = await invoke("get_backlinks", { id: targetPage.id });
+assert("get_backlinks finds alias link", Array.isArray(backlinks2) && backlinks2.some((p) => p.id === citeAlias.id), JSON.stringify(backlinks2.map((p) => p.id)));
+assert("get_backlinks finds block link", Array.isArray(backlinks2) && backlinks2.some((p) => p.id === citeBlock.id), JSON.stringify(backlinks2.map((p) => p.id)));
 const blockBacklinks = await invoke("list_block_backlinks", { pageId: targetPage.id });
 assert("list_block_backlinks finds block ref", Array.isArray(blockBacklinks) && blockBacklinks.some((b) => b.target_block_id === "blk-target" && b.source_page_id === citePage.id));
 const blockSearch = await invoke("search_blocks", { args: { query: "目标块内容" } });
