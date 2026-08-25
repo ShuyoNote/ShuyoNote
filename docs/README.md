@@ -62,6 +62,9 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-24-thin-agent-interface-plan.md](plans/2026-08-24-thin-agent-interface-plan.md) | **「薄 Agent 接口」AI 能力方案**：不嵌入能跑任意命令的 Agent 运行时（如全量 dsh），而是 ShuyoNote 暴露**语义化工具**（search/read/create/append/get_backlinks）+ **受限 Agent 宿主**（默认关、倾向本地模型、写操作经审核）；对比两条路线、标注利弊与安全红线（**规划，建议**） |
 | [plans/2026-08-24-thin-agent-interface-implementation-plan.md](plans/2026-08-24-thin-agent-interface-implementation-plan.md) | **「薄 Agent 接口」实现方案**：复用现有插件宿主(`registry.ts`)+ 语义命令，新增白名单工具/前端 LLM 循环/审核落库；唯一新后端命令为受限的 `append_block`；含文件清单、验收与 M17 里程碑（**规划，可执行**） |
 | [plans/2026-08-24-inline-ai-draft-plan.md](plans/2026-08-24-inline-ai-draft-plan.md) | **「内联 AI 起草」方案**：把 AI 从「右侧聊天面板 + 二段确认」扩展为「**内嵌文档流 + 流式写入 + 高亮待定块 + 一组快捷动作**」（完成/新建页/续写/扩写/重新生成/关闭 + R/ESC），对标 wolai / FlowUs / Notion AI；**含「嵌入式 vs 侧边栏」职责划分**（内联＝就地写、侧边栏＝全局问/做），写操作仍先落「预览高亮待定块」、点「完成」才落库，不丢确认红线（**规划，建议**） |
+| [plans/2026-08-24-wiki-weave-plan.md](plans/2026-08-24-wiki-weave-plan.md) | **「Wiki 织网增强」方案（M19）**：未链接提及（Unlinked Mentions）/ 双链别名 `[[标题|别名]]` / 精确块链 `[[页面#块]]` / 链接建议增强（**规划**） |
+| [plans/2026-08-24-template-var-semantic-search-plan.md](plans/2026-08-24-template-var-semantic-search-plan.md) | **「模板变量 + 语义检索」方案（M20）**：模板变量 `{{date}}/{{title}}/{{selected}}` 自动填充；embedding 语义检索（保留 FTS 兜底）+ 接入 AI 问答（**规划**） |
+| [plans/2026-08-24-static-wiki-export-graph-plan.md](plans/2026-08-24-static-wiki-export-graph-plan.md) | **「静态 wiki 导出 + 关系图探索」方案（M21）**：把当前空间导成可浏览的静态 HTML wiki（双链跳转/反链/标签/索引页）；关系图按标签/属性着色分组、关键词高亮、聚类（**规划**） |
 
 ## 竞品对比
 
@@ -90,7 +93,7 @@ CHANGELOG.md             # 版本变更日志
 
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.59.111`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.59.112`）。
 
 ## 约定
 

@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.112] - 2026-08-24
+
+### 新增
+
+- **补充 M19–M21 方案文档**：新增 `docs/plans/2026-08-24-wiki-weave-plan.md`（Wiki 织网增强）、`2026-08-24-template-var-semantic-search-plan.md`（模板变量 + 语义检索）、`2026-08-24-static-wiki-export-graph-plan.md`（静态 wiki 导出 + 关系图探索），并在 `docs/README.md` 索引、`docs/roadmap.md` 里程碑头加上方案链接。
+
+---
+
 ## [1.59.111] - 2026-08-24
 
 ### 新增
