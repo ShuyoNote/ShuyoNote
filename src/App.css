@@ -4845,6 +4845,18 @@ select.prop-value {
   background: var(--surface);
 }
 
+/* Hide Excalidraw's built-in footer/system chrome (the bottom bar with the "≡"
+   main-menu button, plus any footer zoom/help) inside the page-embedded drawing,
+   so only the drawing canvas shows. The block's own hover control bar
+   (编辑/保存/导出/复制/全屏) supplies the actions. The left tool palette in edit
+   mode is kept. */
+.inline-drawing .excalidraw .layer-ui__wrapper__footer,
+.inline-drawing .excalidraw .layer-ui__wrapper__footer-left,
+.inline-drawing .excalidraw .layer-ui__wrapper__footer-right,
+.inline-drawing .excalidraw .main-menu-trigger {
+  display: none !important;
+}
+
 /* Bottom-center drag handle to resize the embed height (Feishu-style). */
 .inline-drawing-resize {
   position: absolute;

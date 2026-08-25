@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.144] - 2026-08-24
+
+### 变更
+
+- **内嵌绘图块隐藏 Excalidraw 自带的“系统按钮”**：页面内嵌绘图默认会带一条 Excalidraw 底部系统栏（含 `≡` 主菜单按钮），现通过作用域 CSS（`.inline-drawing .excalidraw .layer-ui__wrapper__footer / .main-menu-trigger` 等）隐藏，嵌入块只显示干净画布；绘图块自身的控制条（编辑/保存/导出/复制/全屏，悬停显现）与底部缩放手柄仍保留。全屏弹窗（`.drawing-modal`）不受影响。无头浏览器实测内嵌块 `.main-menu-trigger` 为 `display:none`，控制条/缩放手柄默认 `opacity:0`（悬停显现），无运行时错误。`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.143] - 2026-08-24
 
 ### 修复
