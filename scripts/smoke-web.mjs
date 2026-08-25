@@ -74,7 +74,6 @@ await esbuild.build({
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
-      'export { excalidrawText, drawingTextFromJson, drawingHasContent } from "./src/lib/drawing";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "./src/lib/ai/imageGen";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
@@ -932,18 +931,6 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("wiki backlinks section lists referrers", proj.includes("反向链接") && proj.includes("首页"), proj);
   assert("wiki index lists pages", (wiki.files.find((f) => f.name === "index.html")?.content || "").includes("测试空间"), "index missing space name");
   assert("wiki slug keeps CJK + dedupes", aiMod.wikiSlug("会议", new Set()) === "会议.html", aiMod.wikiSlug("会议", new Set()));
-  // M-A excalidrawText extracts label/sticky text; drawingTextFromJson safe-parses.
-  const dt = aiMod.excalidrawText([
-    { type: "text", text: "会议安排" },
-    { type: "rectangle", text: undefined },
-    { type: "text", text: "  " },
-    { type: "freedraw" },
-  ]);
-  assert("excalidrawText extracts text elements only", dt === "会议安排", JSON.stringify(dt));
-  const sceneJson = JSON.stringify({ type: "excalidraw", elements: [{ type: "text", text: "动手画" }] });
-  assert("drawingTextFromJson parses scene text", aiMod.drawingTextFromJson(sceneJson) === "动手画", aiMod.drawingTextFromJson(sceneJson));
-  assert("drawingHasContent detects elements", aiMod.drawingHasContent(sceneJson) === true && aiMod.drawingHasContent("{}") === false, "hasContent");
-  assert("drawingTextFromJson tolerates garbage", aiMod.drawingTextFromJson("not json") === "", "garbage");
   // M-B detectMermaidSyntax maps the leading directive to a canonical type.
   assert("detectMermaidSyntax flowchart", aiMod.detectMermaidSyntax("graph TD\n  A-->B") === "flowchart", aiMod.detectMermaidSyntax("graph TD"));
   assert("detectMermaidSyntax mindmap", aiMod.detectMermaidSyntax("mindmap\n  root((主题))") === "mindmap", aiMod.detectMermaidSyntax("mindmap"));

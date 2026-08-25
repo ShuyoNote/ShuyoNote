@@ -1,61 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Excalidraw, restore, exportToBlob } from "@excalidraw/excalidraw";
-import "@excalidraw/excalidraw/index.css";
-import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
 import { api } from "../lib/api";
 import { blobStore } from "../lib/platform/blobStore";
-import { excalidrawText } from "../lib/drawing";
+import { bytesToDataUrl } from "../lib/ai/imageGen";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
-
-interface SavedScene {
-  type: string;
-  elements: ExcalidrawElement[];
-  appState: Partial<AppState>;
-  files: BinaryFiles;
-}
-
-const EMPTY: SavedScene = { type: "excalidraw", elements: [], appState: {}, files: {} };
+import { DrawCanvas, type DrawCanvasHandle } from "./DrawCanvas";
 
 export default function DrawingEditorModal() {
   const drawingEdit = useEditorStore((s) => s.drawingEdit);
   const close = useEditorStore((s) => s.closeDrawingEdit);
-  const [scene, setScene] = useState<SavedScene>(EMPTY);
-  const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const drawRef = useRef<DrawCanvasHandle | null>(null);
+  const [initialImage, setInitialImage] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Load the saved scene whenever the modal opens.
+  // Load the existing drawing (PNG) as a data URL when the modal opens.
   useEffect(() => {
     if (!drawingEdit) return;
     let alive = true;
     setErr(null);
+    setReady(false);
+    setInitialImage(null);
     const load = async () => {
-      if (!drawingEdit.hash) {
-        setScene(EMPTY);
-        return;
-      }
-      try {
-        const bytes = await blobStore.get(drawingEdit.hash);
-        if (!bytes) {
-          setScene(EMPTY);
-          return;
-        }
-        const parsed = JSON.parse(new TextDecoder().decode(bytes) || "{}");
-        const elements = Array.isArray(parsed?.elements) ? parsed.elements : [];
-        const restored = await restore(elements, parsed?.appState ?? {}, parsed?.files ?? {});
-        if (alive) {
-          setScene({ type: "excalidraw", elements: restored.elements, appState: restored.appState, files: restored.files });
-        }
-      } catch (e) {
-        if (alive) {
-          setErr(`读取绘图失败：${e}`);
-          setScene(EMPTY);
+      if (drawingEdit.hash) {
+        try {
+          const bytes = await blobStore.get(drawingEdit.hash);
+          if (bytes && alive) {
+            setInitialImage(bytesToDataUrl(bytes, drawingEdit.mime ?? "image/png"));
+            if (alive) setReady(true);
+            return;
+          }
+        } catch (e) {
+          if (alive) setErr(`读取绘图失败：${e}`);
         }
       }
+      if (alive) setReady(true);
     };
     load();
     return () => {
@@ -63,55 +45,32 @@ export default function DrawingEditorModal() {
     };
   }, [drawingEdit]);
 
-  const onChange = useCallback(
-    (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
-      setScene({ type: "excalidraw", elements: [...elements], appState, files });
-    },
-    [],
-  );
-
   const save = useCallback(async () => {
     const d = useEditorStore.getState().drawingEdit;
-    if (!d) return;
+    if (!d || !drawRef.current) return;
     setBusy(true);
     setErr(null);
     try {
-      const json = JSON.stringify(scene);
-      const jsonMeta = await api.saveImage({
-        page_id: null,
-        name: "drawing.json",
-        mime: "application/json",
-        data: Array.from(new TextEncoder().encode(json)),
-      });
-      const png = await exportToBlob({
-        elements: scene.elements,
-        appState: scene.appState,
-        files: scene.files,
-        mimeType: "image/png",
-        exportPadding: 16,
-        maxWidthOrHeight: 1400,
-        background: true,
-      });
-      const pngBytes = new Uint8Array(await png.arrayBuffer());
+      const pngBlob = await drawRef.current.exportBlob();
+      if (!pngBlob) throw new Error("绘图内容为空");
+      const bytes = new Uint8Array(await pngBlob.arrayBuffer());
       const pngMeta = await api.saveImage({
         page_id: null,
-        name: "drawing-thumb.png",
+        name: "drawing.png",
         mime: "image/png",
-        data: Array.from(pngBytes),
+        data: Array.from(bytes),
       });
-
-      const text = excalidrawText(scene.elements);
       const editor = useEditorStore.getState().editor;
       if (editor) {
         editor.update(() => {
           const node = $getNodeByKey(d.nodeKey);
           if (node && $isDrawingNode(node)) {
             node.setDrawing({
-              hash: jsonMeta.hash,
-              mime: "application/json",
+              hash: pngMeta.hash,
+              mime: "image/png",
               thumbHash: pngMeta.hash,
               thumbMime: "image/png",
-              text,
+              text: "",
             });
           }
         });
@@ -121,9 +80,10 @@ export default function DrawingEditorModal() {
       setErr(`保存绘图失败：${e}`);
       setBusy(false);
     }
-  }, [scene, close]);
+  }, [close]);
 
   if (!drawingEdit) return null;
+  if (!ready) return null;
 
   return createPortal(
     <div className="drawing-modal">
@@ -139,13 +99,7 @@ export default function DrawingEditorModal() {
         </span>
       </div>
       <div className="drawing-modal-body">
-        <Excalidraw
-          onChange={onChange}
-          initialData={{ elements: scene.elements, appState: scene.appState as AppState, files: scene.files }}
-          excalidrawAPI={(api) => (apiRef.current = api)}
-          UIOptions={{ canvasActions: { export: false } }}
-          langCode="zh-CN"
-        />
+        <DrawCanvas ref={drawRef} initialImage={initialImage} />
         {err ? <div className="drawing-modal-err">{err}</div> : null}
       </div>
     </div>,

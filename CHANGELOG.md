@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.125] - 2026-08-24
+
+### 修复 / 重构
+
+- **绘图块引擎改用无依赖 HTML5 Canvas（M22.1 重构）**：Excalidraw 0.18 内置的 Radix Portal 在 React 19 下触发 `Maximum update depth` 无限循环（已复现确认），故弃用。改为自研 `DrawCanvas`（自由手绘 + 线条/矩形/椭圆/箭头 + 橡皮 + 颜色/粗细 + 撤销/重做/清空），零外部依赖、离线、无 Portal 兼容问题；画布导出 PNG 存内容寻址附件，块内仍用 `MediaResolver` 预览。移除 `@excalidraw/excalidraw` 依赖与相关纯函数。无头浏览器验证「`/绘图` → 画布绘制 → 保存 → 块内预览」全链路无报错。`scripts/smoke-web.mjs` 225→**221 全绿**（移除 Excalidraw 相关断言）。
+
+---
+
 ## [1.59.124] - 2026-08-24
 
 ### 新增
