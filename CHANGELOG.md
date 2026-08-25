@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.84] - 2026-08-24
+
+### 新增
+
+- **文档体系落地「内联 AI 起草」方案**：新增 [docs/plans/2026-08-24-inline-ai-draft-plan.md](docs/plans/2026-08-24-inline-ai-draft-plan.md) —— 把 AI 从「右侧聊天面板 + 二段确认」扩展为「内嵌文档流 + 流式写入 + 高亮待定块 + 动作菜单/快捷键」（对标 wolai/FlowUs/Notion AI），并给出 ShuyoNote 的安全折中（写操作先落「预览高亮待定块」、点「完成」才落库、不丢确认红线）；已登记进 `docs/README.md` 方案索引。
+
+---
+
 ## [1.59.83] - 2026-08-24
 
 ### 修改
