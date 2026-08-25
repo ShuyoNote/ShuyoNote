@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.140] - 2026-08-24
+
+### 修复
+
+- **Service Worker 在网络失败时不再崩溃告警（`Failed to fetch`）**：`fetch` 分支把静态资源从「cache-first」改为**网络优先、回退缓存**，并为每个资源请求加 `.catch` —— 当页面因重建引用了已删除的哈希资源（如 `index-2fUVPugP.css`）而请求失败时，会优雅回退到缓存或返回 `503`，**不再让 `FetchEvent` 被拒绝**并打印 `Failed to fetch`。缓存名升到 `shuyonote-shell-v2`（`activate` 自动清掉旧 `v1` 缓存），刷新后即自愈拉到最新构建版本；网络优先也让本地优先应用在重建后始终拿到新鲜资源。`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.139] - 2026-08-24
 
 ### 变更
