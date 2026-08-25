@@ -233,12 +233,19 @@ export function InlineAiDraftBar() {
 
       {templatesOpen && (
         <div className="ai-inline-templates">
-          <div className="ai-inline-templates-head">用 AI 起草</div>
-          {INLINE_TEMPLATES.map((t) => (
-            <button key={t.key} className="ai-inline-template" onClick={() => pickTemplate(t)}>
-              <span className="ai-inline-template-label">{t.label}</span>
-            </button>
-          ))}
+          <div className="ai-inline-templates-head">用 AI 写作</div>
+          {INLINE_TEMPLATES.map((t, i) => {
+            const prev = INLINE_TEMPLATES[i - 1];
+            const isNewGroup = !!t.group && (!prev || prev.group !== t.group);
+            return (
+              <div key={t.key}>
+                {isNewGroup && <div className="ai-inline-group">{t.group}</div>}
+                <button className="ai-inline-template" onClick={() => pickTemplate(t)}>
+                  <span className="ai-inline-template-label">{t.label}</span>
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 

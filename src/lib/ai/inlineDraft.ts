@@ -11,20 +11,21 @@ import { appendBlocksToJson } from "./lexical";
 
 const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
-/** Quick-start templates shown in the "用 AI 起草" dropdown. */
+/** Quick-start actions shown in the "用 AI 写作" dropdown (grouped). */
 export interface InlineTemplate {
   key: string;
   label: string;
   promptTemplate: string;
+  /** Group header; empty string = top-level (no header). */
+  group: string;
 }
 
 export const INLINE_TEMPLATES: InlineTemplate[] = [
-  { key: "outline", label: "文章大纲", promptTemplate: "为当前主题写一篇文章大纲。" },
-  { key: "summary", label: "内容简介", promptTemplate: "写一段内容简介。" },
-  { key: "social", label: "社交媒体帖子", promptTemplate: "写一条社交媒体帖子。" },
-  { key: "email", label: "电子邮件", promptTemplate: "写一封电子邮件。" },
-  { key: "ad", label: "广告文案", promptTemplate: "写一段广告文案。" },
-  { key: "story", label: "短篇故事", promptTemplate: "帮我写一则短篇故事。" },
+  { key: "continue", label: "续写", promptTemplate: "继续接着当前内容往下写。", group: "" },
+  { key: "summary", label: "总结", promptTemplate: "总结当前页面的核心内容。", group: "根据页面内容生成" },
+  { key: "translate", label: "翻译", promptTemplate: "把当前页面内容翻译成中文/英文（按需求）。", group: "根据页面内容生成" },
+  { key: "polish", label: "文本润色", promptTemplate: "润色当前页面文字，使其更通顺自然。", group: "编辑页面内容" },
+  { key: "correct", label: "智能纠错", promptTemplate: "校对并纠正当前页面的错别字与语法问题。", group: "编辑页面内容" },
 ];
 
 export interface InlineDraftOpts {
