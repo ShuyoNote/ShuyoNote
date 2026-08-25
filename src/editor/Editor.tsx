@@ -183,8 +183,14 @@ function parseEditorState(contentJson: string): EditorState | null {
     // isn't parseable. Log a clear marker when we have to fall back to empty so
     // we can confirm which build the browser is running and capture the raw JSON.
     const valid = lexicalStateValid(contentJson, ALLOWED_NODE_TYPES);
-    if (!valid) return null;
+    if (!valid) {
+      console.warn("[ShuyoNote] 页面内容不可用(打开空白)。content_json 长度:", contentJson.length, "片段:", contentJson.slice(0, 300));
+      return null;
+    }
     contentJson = valid;
+  } else {
+    // contentJson is empty/undefined — the page genuinely has no saved content.
+    console.warn("[ShuyoNote] 页面无 content_json(空内容)。");
   }
   // Lexical catches a malformed node internally and routes it to the editor's
   // onError (a no-op here), returning an EMPTY state — so `probeEditor` never
@@ -196,7 +202,11 @@ function parseEditorState(contentJson: string): EditorState | null {
     if (!state || state.isEmpty()) {
       // Some node survived sanitization in a non-`children` spot (e.g. `$slots`);
       // rescue the good top-level blocks rather than showing a blank page.
-      return salvageByBlock(contentJson);
+      const salvaged = salvageByBlock(contentJson);
+      if (!salvaged && contentJson) {
+        console.warn("[ShuyoNote] 页面逐块兜底也失败(确定为空白)。content_json:", contentJson.slice(0, 300));
+      }
+      return salvaged;
     }
     return state;
   } catch {

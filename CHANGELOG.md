@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.77] - 2026-08-24
+
+### 修复
+
+- **空白页诊断**：页面内容为空或被判为不可用时，会在 Console 打印 `[ShuyoNote] 页面内容不可用/无 content_json/逐块兜底失败…`（含 content_json 长度与前 300 字片段），用于精确定位「该页确实没有保存内容」还是「内容被判定为损坏」。
+- `scripts/smoke-web.mjs` 保持 **195 全绿**；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.76] - 2026-08-24
 
 ### 修复
