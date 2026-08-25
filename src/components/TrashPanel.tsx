@@ -46,7 +46,7 @@ export function TrashPanel() {
         <TrashIcon />
       </button>
       {open && (
-        <div ref={contentRef} className="trash-popover" style={{ top: pos.top, left: pos.left }}>
+        <div ref={contentRef} className="trash-popover" style={{ top: pos.top, left: pos.left, bottom: pos.bottom }}>
           {items.length === 0 ? (
             <div className="trash-empty">回收站为空</div>
           ) : (

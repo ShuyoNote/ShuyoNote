@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // popover when clicking outside the trigger or the popover content.
 export function usePopover<T extends HTMLElement = HTMLButtonElement>() {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const [pos, setPos] = useState<{ top?: number; left: number; bottom?: number }>({ left: 0 });
   const triggerRef = useRef<T | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -15,10 +15,15 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>() {
     } else {
       if (triggerRef.current) {
         const rect = triggerRef.current.getBoundingClientRect();
-        setPos({
-          top: rect.bottom + 6,
-          left: Math.max(8, Math.min(rect.left, window.innerWidth - 340)),
-        });
+        const left = Math.max(8, Math.min(rect.left, window.innerWidth - 340));
+        const belowSpace = window.innerHeight - rect.bottom;
+        // Anchor the trigger near the viewport bottom? Open UPWARD (bottom-anchored)
+        // so the popover isn't pushed off-screen (e.g. the sidebar's 回收站 button).
+        if (belowSpace < 360) {
+          setPos({ left, bottom: window.innerHeight - rect.top + 6 });
+        } else {
+          setPos({ left, top: rect.bottom + 6 });
+        }
       }
       setOpen(true);
     }
