@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.137] - 2026-08-24
+
+### 变更
+
+- **Excalidraw 0.17.1 → 0.18.1**：实测确认 0.18.1 在 React 18 下正常（构建通过、编辑器/`/绘图` Excalidraw 渲染正常、无 Radix 循环/无 `ReactCurrentOwner`、`ERRORS=[]`）。**0.18.1 不再硬编码 unpkg 字体依赖**——引入 `@excalidraw/excalidraw/index.css` 后，字体打进 `dist/assets/` 本地加载（无 CDN、离线可用，解决 0.17.1 的 unpkg + 浏览器跟踪防护告警）。打包也更规范（正式 ESM 结构）。`scripts/smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.136] - 2026-08-24
 
 ### 变更（重要）

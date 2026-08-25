@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Excalidraw, restore, exportToBlob, exportToSvg, exportToClipboard, serializeAsJSON } from "@excalidraw/excalidraw";
+import "@excalidraw/excalidraw/index.css";
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
 import { api } from "../lib/api";
