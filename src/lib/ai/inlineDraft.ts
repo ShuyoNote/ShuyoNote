@@ -31,11 +31,12 @@ export const INLINE_EDIT_TEMPLATES: InlineTemplate[] = [
 
 // Context-aware: EMPTY pages → generate fresh content.
 export const INLINE_CREATE_TEMPLATES: InlineTemplate[] = [
-  { key: "outline", label: "文章大纲", promptTemplate: "为当前主题写一篇文章大纲。", group: "" },
-  { key: "story", label: "短篇故事", promptTemplate: "帮我写一则短篇故事。", group: "内容创作" },
-  { key: "article", label: "文章", promptTemplate: "帮我写一篇文章。", group: "内容创作" },
-  { key: "meeting", label: "会议纪要", promptTemplate: "帮我写一份会议纪要。", group: "内容创作" },
-  { key: "todo", label: "待办清单", promptTemplate: "帮我列一份待办清单。", group: "内容创作" },
+  { key: "outline", label: "文章大纲", promptTemplate: "帮我写一篇文章大纲，主题/要求是...", group: "" },
+  { key: "story", label: "短篇故事", promptTemplate: "帮我写一则短篇故事，故事主题/要求是...", group: "内容创作" },
+  { key: "xhs", label: "小红书种草笔记", promptTemplate: "帮我写一篇小红书种草笔记，内容主题/要求是...", group: "内容创作" },
+  { key: "article", label: "文章", promptTemplate: "帮我写一篇文章，主题/要求是...", group: "内容创作" },
+  { key: "meeting", label: "会议纪要", promptTemplate: "帮我写一份会议纪要，会议主题/要点是...", group: "内容创作" },
+  { key: "todo", label: "待办清单", promptTemplate: "帮我列一份待办清单，针对的是...", group: "内容创作" },
 ];
 
 export interface InlineDraftOpts {
