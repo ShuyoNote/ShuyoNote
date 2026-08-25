@@ -4828,7 +4828,7 @@ select.prop-value {
   color: var(--bg);
 }
 
-/* Fullscreen drawing modal */
+/* Fullscreen drawing (Excalidraw) modal */
 .drawing-modal {
   position: fixed;
   inset: 0;
@@ -4842,53 +4842,120 @@ select.prop-value {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
+  gap: 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  flex-wrap: wrap;
+}
+
+.drawing-modal-title-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .drawing-modal-title {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
+  font-size: 14px;
+  letter-spacing: 0.2px;
+}
+
+.drawing-modal-sub {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 7px;
+  border-radius: 999px;
 }
 
 .drawing-modal-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.drawing-modal-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-light);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.drawing-modal-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
 }
 
 .drawing-modal-btn {
-  background: var(--surface-light);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 14px;
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-}
-
-.drawing-modal-tool {
-  background: var(--surface-light);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
-  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
   white-space: nowrap;
 }
 
-.drawing-modal-tool:hover {
+.drawing-modal-btn:active {
+  transform: translateY(1px);
+}
+
+.drawing-modal-btn-primary {
   background: var(--accent);
   color: var(--bg);
+  box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.25);
+}
+
+.drawing-modal-btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+.drawing-modal-btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.drawing-modal-btn-ghost:hover {
+  background: var(--surface-light);
+  border-color: var(--accent-strong);
+}
+
+.drawing-modal-tool {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 8px;
+  min-width: 32px;
+  height: 32px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.drawing-modal-tool:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .drawing-modal-tool-on {
-  background: var(--accent);
-  color: var(--bg);
-  border-color: var(--accent);
-}
-
-.drawing-modal-btn:hover {
   background: var(--accent);
   color: var(--bg);
 }

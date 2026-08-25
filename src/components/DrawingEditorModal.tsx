@@ -395,29 +395,41 @@ export default function DrawingEditorModal() {
 
   if (!drawingEdit) return null;
   if (!ready || !initialData) return null;
+  const isDark = (document.documentElement.getAttribute("data-theme") ?? "") === "dark";
 
   return createPortal(
     <div className="drawing-modal">
       <div className="drawing-modal-head">
-        <span className="drawing-modal-title">绘图（Excalidraw）</span>
-        <span className="drawing-modal-actions">
-          <button className="drawing-modal-tool" onClick={insertImage} title="插入图片">🖼 图</button>
-          <button className="drawing-modal-tool" onClick={aiDraw} title="AI 插图">🤖 AI</button>
-          <button className="drawing-modal-tool" onClick={mermaidDraw} title="流程图/思维导图">📊 图</button>
-          <button className="drawing-modal-tool" onClick={linkSelected} title="链接选中的图形到页面">🔗 链接</button>
-          <button className="drawing-modal-tool" onClick={exportSvg} title="导出 SVG">⇩ SVG</button>
-          <button className="drawing-modal-tool" onClick={exportPng} title="导出 PNG">⇩ PNG</button>
-          <button className="drawing-modal-tool" onClick={copyPng} title="复制到剪贴板">⧉</button>
-          <button className={`drawing-modal-tool ${readOnly ? "drawing-modal-tool-on" : ""}`} onClick={() => setReadOnly((v) => !v)} title="只读/编辑切换">
-            {readOnly ? "编辑" : "只读"}
-          </button>
-          <button className="drawing-modal-btn" onClick={save} disabled={busy || readOnly}>
-            {busy ? "保存中…" : "保存"}
-          </button>
-          <button className="drawing-modal-btn" onClick={close}>
-            取消
-          </button>
-        </span>
+        <div className="drawing-modal-title-box">
+          <span className="drawing-modal-title">绘图</span>
+          <span className="drawing-modal-sub">Excalidraw</span>
+        </div>
+        <div className="drawing-modal-actions">
+          <div className="drawing-modal-group">
+            <button className="drawing-modal-tool" onClick={insertImage} title="插入图片">🖼</button>
+            <button className="drawing-modal-tool" onClick={aiDraw} title="AI 插图">🤖</button>
+            <button className="drawing-modal-tool" onClick={mermaidDraw} title="流程图 / 思维导图">📊</button>
+            <button className="drawing-modal-tool" onClick={linkSelected} title="链接选中的图形到页面">🔗</button>
+          </div>
+          <span className="drawing-modal-sep" />
+          <div className="drawing-modal-group">
+            <button className="drawing-modal-tool" onClick={exportSvg} title="导出 SVG">⇩</button>
+            <button className="drawing-modal-tool" onClick={exportPng} title="导出 PNG">⭳</button>
+            <button className="drawing-modal-tool" onClick={copyPng} title="复制到剪贴板">⧉</button>
+            <button className={`drawing-modal-tool ${readOnly ? "drawing-modal-tool-on" : ""}`} onClick={() => setReadOnly((v) => !v)} title="只读 / 编辑切换">
+              {readOnly ? "编辑" : "👁"}
+            </button>
+          </div>
+          <span className="drawing-modal-sep" />
+          <div className="drawing-modal-group">
+            <button className="drawing-modal-btn drawing-modal-btn-primary" onClick={save} disabled={busy || readOnly}>
+              {busy ? "保存中…" : "保存"}
+            </button>
+            <button className="drawing-modal-btn drawing-modal-btn-ghost" onClick={close}>
+              取消
+            </button>
+          </div>
+        </div>
       </div>
       <div className="drawing-modal-body">
         <Excalidraw
@@ -426,6 +438,7 @@ export default function DrawingEditorModal() {
           excalidrawAPI={(api) => (apiRef.current = api)}
           viewModeEnabled={readOnly}
           onPointerDown={handlePointerDown}
+          theme={isDark ? "dark" : "light"}
           UIOptions={{ canvasActions: { export: false } }}
           langCode="zh-CN"
         />
