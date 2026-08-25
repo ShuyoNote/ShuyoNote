@@ -27,7 +27,7 @@ const TOOL_LIST: AiTool[] = [
   {
     id: "search_pages",
     description:
-      "在全库中检索页面。参数: query (必填, 关键词), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
+      "在全库中检索页面，按相关度排序(关键词匹配 + 语义相近, 意思相近的内容也能命中)。参数: query (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
     argsSchema: {
       type: "object",
       properties: { query: { type: "string" }, limit: { type: "number" } },
