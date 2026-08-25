@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.124] - 2026-08-24
+
+### 新增
+
+- **AI 文生图（M22.3）**：斜杠 `/AI 绘图` 输入画面描述 → 调用已配置的 OpenAI 兼容文生图端点（`/images/generations`，沿用 AI 设置）→ 图片存为内容寻址附件 → 插入 `ImageNode`；provider 未启用/不支持/请求失败时 toast 降级，不阻塞正文。新增纯函数 `buildImageGenUrl`/`buildImageGenBody`/`parseImageGenResponse`/`b64ToBytes`/`bytesToDataUrl`。`scripts/smoke-web.mjs` 220→**225 全绿**。
+
+---
+
 ## [1.59.123] - 2026-08-24
 
 ### 新增

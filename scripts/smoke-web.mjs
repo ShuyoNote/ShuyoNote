@@ -76,6 +76,7 @@ await esbuild.build({
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { excalidrawText, drawingTextFromJson, drawingHasContent } from "./src/lib/drawing";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
+      'export { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "./src/lib/ai/imageGen";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
@@ -948,6 +949,15 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("detectMermaidSyntax mindmap", aiMod.detectMermaidSyntax("mindmap\n  root((主题))") === "mindmap", aiMod.detectMermaidSyntax("mindmap"));
   assert("detectMermaidSyntax sequence", aiMod.detectMermaidSyntax("sequenceDiagram\n  A->>B: hi") === "sequence", aiMod.detectMermaidSyntax("sequenceDiagram"));
   assert("mermaidRenderable needs ≥2 lines", aiMod.mermaidRenderable("graph TD") === false && aiMod.mermaidRenderable("graph TD\n  A-->B") === true, "renderable");
+  // M-C imageGen helpers: url building, body shape, b64 parse, base64 roundtrip.
+  assert("buildImageGenUrl normalizes trailing slash", aiMod.buildImageGenUrl("http://x/v1/") === "http://x/v1/images/generations", aiMod.buildImageGenUrl("http://x/v1/"));
+  const igb = JSON.parse(aiMod.buildImageGenBody({ baseUrl: "http://x", model: "dall-e", apiKey: "" }, "一只猫", "512x512"));
+  assert("buildImageGenBody includes model/prompt/size", igb.model === "dall-e" && igb.prompt === "一只猫" && igb.size === "512x512" && igb.response_format === "b64_json", JSON.stringify(igb));
+  const igp = aiMod.parseImageGenResponse(JSON.stringify({ data: [{ b64_json: "aGVsbG8=" }] }));
+  assert("parseImageGenResponse extracts b64", igp !== null && "b64" in igp && igp.b64 === "aGVsbG8=", JSON.stringify(igp));
+  assert("parseImageGenResponse tolerates garbage", aiMod.parseImageGenResponse("not json") === null, "garbage");
+  const rt = aiMod.bytesToDataUrl(aiMod.b64ToBytes("aGVsbG8="), "image/png");
+  assert("b64ToBytes + bytesToDataUrl roundtrip", rt === "data:image/png;base64,aGVsbG8=", rt);
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

@@ -17,6 +17,8 @@ import { useBlockSelector } from "../../store/blockSelector";
 import { useAttachmentsStore } from "../../store/attachments";
 import { inputDialog } from "../../store/input";
 import { useEditorStore } from "../../store/editor";
+import { useAiStore } from "../../store/ai";
+import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../../lib/ai/imageGen";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createDrawingNode } from "../nodes/DrawingNode";
@@ -146,6 +148,58 @@ function makeOptions(pageId: string): SlashOption[] {
       editor.update(() =>
         $insertBlockNode($createMermaidNode("graph TD\n  A[开始] --> B[结束]", "flowchart")),
       );
+    } },
+    { key: "aidraw", title: "AI 绘图", badge: "🎨", group: "媒体", pinyin: "aizt", run: (editor) => {
+      inputDialog({
+        title: "AI 绘图",
+        placeholder: "描述你想生成的画面…",
+        okLabel: "生成",
+        onSubmit: async (prompt) => {
+          const p = (prompt ?? "").trim();
+          if (!p) return;
+          const { config } = useAiStore.getState();
+          if (!config.enabled || config.provider !== "openai") {
+            toast("AI 绘图需在设置里启用并配置 OpenAI 兼容文生图端点", "error");
+            return;
+          }
+          toast("正在生成图片…", "info");
+          try {
+            const res = await fetch(buildImageGenUrl(config.baseUrl), {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+              },
+              body: buildImageGenBody(config, p),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const parsed = parseImageGenResponse(await res.text());
+            if (!parsed) throw new Error("响应中没有图片数据");
+            let bytes: Uint8Array;
+            let mime = parsed.mime;
+            if ("b64" in parsed) {
+              bytes = b64ToBytes(parsed.b64);
+            } else {
+              const imgRes = await fetch(parsed.url);
+              if (!imgRes.ok) throw new Error(`下载图片失败 HTTP ${imgRes.status}`);
+              mime = imgRes.headers.get("content-type") || "image/png";
+              bytes = new Uint8Array(await imgRes.arrayBuffer());
+            }
+            const dataUrl = bytesToDataUrl(bytes, mime);
+            const att = await api.saveImage({
+              page_id: pageId,
+              name: `ai-draw-${Date.now()}.png`,
+              mime,
+              data: Array.from(bytes),
+            });
+            editor.update(() =>
+              $insertBlockNode($createImageNode(dataUrl, "", false, null, null, att.hash, att.mime)),
+            );
+          } catch (e) {
+            toast(`AI 绘图失败：${e}`, "error");
+          }
+        },
+      });
     } },
     { key: "video", title: "视频", badge: "🎬", group: "媒体", pinyin: "sp", run: async (editor) => {
       const selected = await platform.dialog.open({

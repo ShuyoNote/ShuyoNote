@@ -189,7 +189,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > 「动手画」能力：自由手绘/涂鸦、结构化流程图/思维导图、AI 生成图片。大字节统一走内容寻址附件（节点只存 `hash` 引用），双平台无需新增 Rust 命令。
 - **M22.1 绘图块（Excalidraw）** ✅（v1.59.122）：斜杠 `/绘图` 插入绘图块，点击打开全屏 Excalidraw 编辑器（笔/形状/箭头/文字/便签）；保存时把场景 JSON + 导出 PNG 落为内容寻址附件，节点只存 `hash` 引用，幂等去重；文字元素抽取进 `content_text`（可搜/反链）；Excalidraw 按需懒加载（独立大 chunk）。
 - **M22.2 mermaid 块** ✅（v1.59.123）：`/流程图/思维导图` 插入 mermaid 块（syntax 可选），离线渲染 SVG，解析失败内联报错 + 可编辑源文本；源文本进 `content_text`（可搜）；mermaid 按需懒加载。
-- **M22.3 AI 文生图** 🗓：`/AI 绘图` 调 provider 生成图 → 附件落库 → 插入 `ImageNode`；provider 失败降级。
+- **M22.3 AI 文生图** ✅（v1.59.124）：`/AI 绘图` 输入描述 → OpenAI 兼容文生图端点 → 图片落内容寻址附件 → 插入 `ImageNode`；provider 未启用/不支持/失败时 toast 降级。纯函数 `buildImageGenUrl`/`buildImageGenBody`/`parseImageGenResponse`/`b64ToBytes`/`bytesToDataUrl`。
 
 ## 4. 竞品差距跟踪
 
