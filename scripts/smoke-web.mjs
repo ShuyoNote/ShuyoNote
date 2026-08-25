@@ -264,6 +264,8 @@ assert("list_workspaces has 1 workspace", Array.isArray(wsList) && wsList.length
 const created = await invoke("create_page", { parent_id: null, title: "测试页" });
 assert("create_page returns a page with id", created && typeof created.id === "string", created?.title);
 assert("create_page persists kind=page", created?.kind === "page");
+const titledDefault = await invoke("create_page", { parent_id: null });
+assert("create_page defaults a plain page title to 新页面", titledDefault?.title === "新页面", String(titledDefault?.title));
 
 const saved = await invoke("save_page", { id: created.id, title: "改名后", content_json: '{"root":{"children":[{"type":"paragraph","children":[]}]}}', content_text: "hello" });
 assert("save_page updates title", saved?.title === "改名后", saved?.title);

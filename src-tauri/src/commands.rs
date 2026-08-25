@@ -114,7 +114,14 @@ fn create_node(
     let c = conn(&db);
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
-    let title = title.unwrap_or_default();
+    // Honor an explicit title; fall back to a per-kind default (plain pages → 新页面).
+    let title = title
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| match kind {
+            "folder" => "新建文件夹".to_string(),
+            "database" => "新建数据库".to_string(),
+            _ => "新页面".to_string(),
+        });
 
     // Place new node at the end among siblings.
     let sort_order: f64 = c
