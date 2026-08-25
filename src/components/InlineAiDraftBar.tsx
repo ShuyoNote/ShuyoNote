@@ -3,7 +3,7 @@ import { $createParagraphNode, $createTextNode, $getNodeByKey, $getRoot } from "
 import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
-import { runInlineDraft, INLINE_EDIT_TEMPLATES, INLINE_CREATE_TEMPLATES, type InlineTemplate } from "../lib/ai/inlineDraft";
+import { runInlineDraft, INLINE_EDIT_TEMPLATES, INLINE_CREATE_TEMPLATES, draftBlocksToContentJson, type InlineTemplate } from "../lib/ai/inlineDraft";
 import { cleanDraftText } from "../lib/ai/lexical";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { SparkleIcon, SendIcon } from "./icons";
@@ -165,6 +165,18 @@ export function InlineAiDraftBar() {
     reset();
   };
 
+  // M18 二期 — create a NEW page from the draft (instead of inserting into the
+  // current page), then reset.
+  const commitNewPage = () => {
+    const content = cleanDraftText(draft);
+    if (!content.trim()) return;
+    const content_json = draftBlocksToContentJson(content);
+    useNotes
+      .getState()
+      .createPage(null, { content_json, content_text: content, title: content.slice(0, 24) || "AI 生成" })
+      .then(() => reset());
+  };
+
   const reset = () => {
     setOpen(false);
     setPrompt("");
@@ -321,6 +333,9 @@ export function InlineAiDraftBar() {
             <div className="ai-inline-draft-actions">
               <button className="ai-inline-act" onClick={commit} disabled={running || !draft.trim()} title="完成：插入正文并保存">
                 完成
+              </button>
+              <button className="ai-inline-act" onClick={commitNewPage} disabled={running || !draft.trim()} title="创建新页面并插入内容">
+                新建页
               </button>
               <button className="ai-inline-act" onClick={() => !running && start(prompt || draft)} disabled={running}>
                 续写
