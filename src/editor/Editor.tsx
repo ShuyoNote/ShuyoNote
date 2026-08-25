@@ -230,9 +230,6 @@ function parseEditorState(contentJson: string): EditorState | null {
       return null;
     }
     contentJson = valid;
-  } else {
-    // contentJson is empty/undefined — the page genuinely has no saved content.
-    console.warn("[ShuyoNote] 页面无 content_json(空内容)。");
   }
   // Lexical catches a malformed node internally and routes it to the editor's
   // onError (a no-op here), returning an EMPTY state — so `probeEditor` never
