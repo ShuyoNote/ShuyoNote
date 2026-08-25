@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.136] - 2026-08-24
+
+### 变更（重要）
+
+- **React 19 → 18.3.1 降级，让 Excalidraw 正常**：Excalidraw 0.17.1 / 0.18.1 均与 React 19 硬性不兼容（0.17.1 读 React 19 已移除的 `ReactCurrentOwner` 内部字段；0.18.1 内置 Radix Portal 在 React 19 下触发无限循环）。生产构建把 Excalidraw 打成独立 chunk 后，加载即崩（`编辑器加载失败`）。降至 **React 18.3.1**（Excalidraw peer 支持 18）后，编辑器与 `/绘图` Excalidraw 画板在生产构建下均正常。`tsc` 无错（应用未用 React 19 专属 API）、`smoke` 223 全绿。另：`main.tsx` 加 `process` 垫片（NODE_ENV=production，供懒加载 Excalidraw 读 `process.env.NODE_ENV`）；`ErrorBoundary` 现会显示具体错误文案便于定位。`dev:web`（Vite 8 开发服务器）仍受 Excalidraw css-loader 预打包问题影响，生产 `dist` 静态服务/桌面版不受影响。
+
+---
+
 ## [1.59.135] - 2026-08-24
 
 ### 新增 / 变更

@@ -3,9 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { version } from "../package.json";
 
-// Some bundled deps (e.g. @excalidraw/excalidraw's UMD build) reference the Node
-// `process` global; shim it so the browser bundle doesn't throw.
-(globalThis as any).process = (globalThis as any).process ?? { env: { NODE_ENV: "development" } };
+// The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
+// module top-level; define `process` in the browser so it doesn't throw
+// "process is not defined", and keep NODE_ENV as "production" (never "development").
+(globalThis as any).process = (globalThis as any).process ?? Object.assign(Object.create(null), { env: { NODE_ENV: "production" } });
 
 // Browser tab / window title carries the live build version (mirrors the desktop
 // window title set in src-tauri/src/lib.rs).

@@ -2462,6 +2462,14 @@ select.prop-value {
   padding: 16px;
 }
 
+.editor-error-detail {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-top: 8px;
+  word-break: break-all;
+  max-width: 640px;
+}
+
 /* Block drag handle */
 .block-handle {
   position: fixed;

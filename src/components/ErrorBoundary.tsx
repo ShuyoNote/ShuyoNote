@@ -7,6 +7,7 @@ interface Props {
 
 interface State {
   hasError: boolean;
+  error?: Error | null;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
@@ -21,13 +22,17 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error) {
     console.error("[ShuyoNote] editor error:", error);
+    this.setState({ error: error });
   }
 
   render() {
     if (this.state.hasError) {
       return (
         this.props.fallback ?? (
-          <div className="editor-error">编辑器加载失败，请切换到其他页面。</div>
+          <div className="editor-error">
+            编辑器加载失败，请切换到其他页面。
+            <div className="editor-error-detail">{String(this.state.error?.message || this.state.error || "")}</div>
+          </div>
         )
       );
     }
