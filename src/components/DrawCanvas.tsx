@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -8,8 +9,11 @@ import {
 
 // A dependency-free HTML5 canvas paint editor (freehand + basic shapes). Avoids
 // the React 19 incompatibility that broke Excalidraw's bundled Radix portals.
-// Scene = a list of strokes that are re-rendered onto the canvas each change, so
-// undo/redo and clear are trivial and memory-light. Exports a PNG blob.
+//
+// Coordinate model: strokes are stored in NORMALIZED coords (0..1) and the canvas
+// buffer is sized to its displayed size. This keeps pointer→drawing alignment
+// exact at any fullscreen size (otherwise the CSS-stretched canvas misplaces the
+// cursor). An existing drawing is kept as a base bitmap so redraws never erase it.
 
 export interface DrawCanvasHandle {
   exportBlob: () => Promise<Blob | null>;
@@ -38,31 +42,51 @@ const WIDTHS = [2, 4, 8];
 
 const BG = "#ffffff";
 
-function render(canvas: HTMLCanvasElement, strokes: Stroke[]) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (const s of strokes) drawStroke(ctx, s);
+function sizeCanvas(canvas: HTMLCanvasElement) {
+  const r = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.round(r.width));
+  const h = Math.max(1, Math.round(r.height));
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
 }
 
-function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
+function render(canvas: HTMLCanvasElement, strokes: Stroke[], baseImage: HTMLImageElement | null) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, w, h);
+  if (baseImage) ctx.drawImage(baseImage, 0, 0, w, h);
+  for (const s of strokes) drawStroke(ctx, s, w, h);
+}
+
+function normalized(canvas: HTMLCanvasElement, e: { clientX: number; clientY: number }) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: r.width > 0 ? (e.clientX - r.left) / r.width : 0,
+    y: r.height > 0 ? (e.clientY - r.top) / r.height : 0,
+  };
+}
+
+function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, w: number, h: number) {
   if (s.points.length === 0) return;
+  const pts = s.points.map((p) => ({ x: p.x * w, y: p.y * h }));
   ctx.strokeStyle = s.color;
   ctx.fillStyle = s.color;
   ctx.lineWidth = s.width;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   const tool: string = s.tool;
-  const p0 = s.points[0];
+  const p0 = pts[0];
   if (tool === "pen" || tool === "eraser") {
     ctx.beginPath();
     ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < s.points.length; i++) ctx.lineTo(s.points[i].x, s.points[i].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
     ctx.stroke();
     return;
   }
-  const last = s.points[s.points.length - 1];
+  const last = pts[pts.length - 1];
   if (tool === "line") {
     ctx.beginPath();
     ctx.moveTo(p0.x, p0.y);
@@ -77,10 +101,10 @@ function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke) {
   } else if (tool === "rect") {
     const x = Math.min(p0.x, last.x);
     const y = Math.min(p0.y, last.y);
-    const w = Math.abs(p0.x - last.x);
-    const h = Math.abs(p0.y - last.y);
+    const rw = Math.abs(p0.x - last.x);
+    const rh = Math.abs(p0.y - last.y);
     ctx.beginPath();
-    ctx.rect(x, y, w, h);
+    ctx.rect(x, y, rw, rh);
     ctx.stroke();
   } else if (tool === "ellipse") {
     const cx = (p0.x + last.x) / 2;
@@ -104,10 +128,6 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, a: { x: number; y: number 
   ctx.stroke();
 }
 
-function strokeCanvasRect(canvas: HTMLCanvasElement): DOMRect {
-  return canvas.getBoundingClientRect();
-}
-
 export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string | null }>(function DrawCanvas(
   { initialImage },
   ref,
@@ -117,6 +137,7 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
   const redoRef = useRef<Stroke[]>([]);
   const currentRef = useRef<Stroke | null>(null);
   const drawingRef = useRef(false);
+  const baseImageRef = useRef<HTMLImageElement | null>(null);
   const [tool, setTool] = useState<Tool>("pen");
   const [color, setColor] = useState(COLORS[0]);
   const [width, setWidth] = useState(4);
@@ -124,39 +145,47 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
   const bump = useCallback(() => force((n) => n + 1), []);
   const [hasImage, setHasImage] = useState(!!initialImage);
 
-  // Load existing drawing (data URL) onto the canvas.
-  const loadInitial = useCallback((img?: string | null) => {
+  const redraw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (canvas) render(canvas, strokesRef.current, baseImageRef.current);
+  }, []);
+
+  // Size the canvas buffer to its displayed size; redraw on resize.
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (!img) {
-      render(canvas, []);
-      strokesRef.current = [];
+    sizeCanvas(canvas);
+    render(canvas, strokesRef.current, baseImageRef.current);
+    const ro = new ResizeObserver(() => {
+      if (!drawingRef.current) {
+        sizeCanvas(canvas);
+        render(canvas, strokesRef.current, baseImageRef.current);
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  // Load an existing drawing (data URL) as the base bitmap.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (!initialImage) {
+      baseImageRef.current = null;
       setHasImage(false);
+      sizeCanvas(canvas);
+      render(canvas, [], null);
       return;
     }
     const im = new Image();
     im.onload = () => {
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.fillStyle = BG;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(im, 0, 0, canvas.width, canvas.height);
+      baseImageRef.current = im;
       setHasImage(true);
+      sizeCanvas(canvas);
+      render(canvas, strokesRef.current, im);
     };
-    im.src = img;
-  }, []);
-
-  // Set initial image once (when the modal opens).
-  const initRef = useRef(false);
-  if (canvasRef.current && !initRef.current && initialImage) {
-    initRef.current = true;
-    loadInitial(initialImage);
-  }
-
-  const redraw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (canvas) render(canvas, strokesRef.current);
-  }, []);
+    im.src = initialImage;
+  }, [initialImage]);
 
   useImperativeHandle(
     ref,
@@ -171,40 +200,38 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
     [],
   );
 
-  const pointFrom = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const r = strokeCanvasRect(canvasRef.current!);
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
-  }, []);
-
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       e.preventDefault();
       const canvas = canvasRef.current;
       if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
       canvas.setPointerCapture(e.pointerId);
       drawingRef.current = true;
       const stroke: Stroke = {
         tool,
         color: tool === "eraser" ? "rgba(0,0,0,0)" : color,
         width: (tool === "eraser" ? width * 3 : width) || 2,
-        points: [pointFrom(e)],
+        points: [normalized(canvas, e)],
       };
       currentRef.current = stroke;
       strokesRef.current.push(stroke);
       bump();
     },
-    [tool, color, width, pointFrom, bump],
+    [tool, color, width, bump],
   );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       if (!drawingRef.current) return;
       const s = currentRef.current;
-      if (!s) return;
-      s.points.push(pointFrom(e));
+      const canvas = canvasRef.current;
+      if (!s || !canvas) return;
+      s.points.push(normalized(canvas, e));
       redraw();
     },
-    [pointFrom, redraw],
+    [redraw],
   );
 
   const onPointerUp = useCallback(() => {
@@ -212,8 +239,7 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
     drawingRef.current = false;
     const s = currentRef.current;
     currentRef.current = null;
-    // Drop an empty gesture (a click with no movement) for shape tools.
-    if (s && s.tool !== "pen" && s.tool !== "eraser" && s.points.length < 2) {
+    if (s && s.points.length < 2 && s.tool !== "pen" && s.tool !== "eraser") {
       strokesRef.current = strokesRef.current.filter((x) => x !== s);
     }
     redoRef.current = [];
@@ -222,8 +248,7 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
 
   const undo = useCallback(() => {
     if (strokesRef.current.length === 0) return;
-    const s = strokesRef.current.pop()!;
-    redoRef.current.push(s);
+    redoRef.current.push(strokesRef.current.pop()!);
     redraw();
     bump();
   }, [redraw, bump]);
@@ -239,8 +264,9 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
   const clear = useCallback(() => {
     strokesRef.current = [];
     redoRef.current = [];
-    redraw();
+    baseImageRef.current = null;
     setHasImage(false);
+    redraw();
     bump();
   }, [redraw, bump]);
 
@@ -290,13 +316,10 @@ export const DrawCanvas = forwardRef<DrawCanvasHandle, { initialImage?: string |
       <canvas
         ref={canvasRef}
         className="draw-canvas-surface"
-        width={960}
-        height={540}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onPointerLeave={onPointerUp}
       />
       {!hasImage && strokesRef.current.length === 0 ? (
         <div className="draw-canvas-hint">在此绘制</div>
