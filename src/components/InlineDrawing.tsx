@@ -1,13 +1,11 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Excalidraw, restore, exportToBlob, exportToSvg, serializeAsJSON, exportToClipboard } from "@excalidraw/excalidraw";
+import { Excalidraw, restore, exportToBlob, exportToSvg, exportToClipboard } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
 import { useResolvedTheme } from "../store/theme";
-import { api } from "../lib/api";
 import { blobStore } from "../lib/platform/blobStore";
 import { toast } from "../store/toast";
-import { excalidrawSceneText } from "../lib/drawingText";
 import { $isDrawingNode, type DrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
@@ -70,9 +68,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   // `initialData` is set once and never mutated; Excalidraw re-initializes loops if it changes.
   const [initialData, setInitialData] = useState<SceneSnapshot | null>(null);
   const [ready, setReady] = useState(false);
-  const [editing, setEditing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [height, setHeight] = useState<number>(node.__height ?? DEFAULT_HEIGHT);
   const heightRef = useRef<number>(height);
   const isDark = useResolvedTheme() === "dark";
@@ -149,13 +145,14 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     [fitContent],
   );
 
-  // Re-fit & center when returning to read-only view (after editing), so the
-  // content stays neatly fitted. Not applied while editing (user controls zoom).
+  // Re-fit & center whenever the scene loads (initial load, or after the
+  // fullscreen editor saves a new version), so the read-only block always shows
+  // the drawing fitted & centered.
   useEffect(() => {
-    if (editing) return;
+    if (!initialData) return;
     const id = requestAnimationFrame(fitContent);
     return () => cancelAnimationFrame(id);
-  }, [editing, fitContent]);
+  }, [initialData, fitContent]);
 
   const persistHeight = useCallback(
     (h: number) => {
@@ -192,57 +189,6 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     },
     [persistHeight],
   );
-
-  const save = useCallback(async () => {
-    const scene = liveRef.current;
-    if (!scene) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const json = serializeAsJSON(scene.elements, scene.appState, scene.files, "local");
-      const jsonMeta = await api.saveImage({
-        page_id: null,
-        name: "drawing.excalidraw",
-        mime: "application/json",
-        data: Array.from(new TextEncoder().encode(json)),
-      });
-      const png = await exportToBlob({
-        elements: scene.elements,
-        appState: scene.appState,
-        files: scene.files,
-        mimeType: "image/png",
-        exportPadding: 16,
-      });
-      const pngBytes = new Uint8Array(await png.arrayBuffer());
-      const pngMeta = await api.saveImage({
-        page_id: null,
-        name: "drawing-thumb.png",
-        mime: "image/png",
-        data: Array.from(pngBytes),
-      });
-      const text = excalidrawSceneText(scene.elements);
-      const editor = useEditorStore.getState().editor;
-      if (editor) {
-        editor.update(() => {
-          const n = $getNodeByKey(node.getKey());
-          if (n && $isDrawingNode(n)) {
-            n.setDrawing({
-              hash: jsonMeta.hash,
-              mime: "application/json",
-              thumbHash: pngMeta.hash,
-              thumbMime: "image/png",
-              text,
-            });
-          }
-        });
-      }
-      setEditing(false);
-      toast("已保存", "success");
-    } catch (e) {
-      setErr(`保存失败：${e}`);
-      setBusy(false);
-    }
-  }, [node]);
 
   const downloadSvg = useCallback(async () => {
     const scene = liveRef.current;
@@ -288,26 +234,18 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   }
 
   return (
-    <div className={`inline-drawing${editing ? " editing" : ""}`} contentEditable={false}>
+    <div className="inline-drawing" contentEditable={false}>
       <div className="inline-drawing-bar">
-        <button className="inline-drawing-btn" onClick={() => setEditing((v) => !v)} title="编辑 / 只读">
-          {editing ? "完成" : "编辑"}
-        </button>
-        {editing ? (
-          <button className="inline-drawing-btn" onClick={save} disabled={busy}>
-            {busy ? "保存中…" : "保存"}
-          </button>
-        ) : null}
+        <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
         <button className="inline-drawing-btn" onClick={downloadSvg} title="导出 SVG">⇩</button>
         <button className="inline-drawing-btn" onClick={downloadPng} title="导出 PNG">⭳</button>
         <button className="inline-drawing-btn" onClick={copyPng} title="复制">⧉</button>
-        <button className="inline-drawing-btn" onClick={fullscreen} title="全屏编辑">⛶</button>
         {err ? <span className="inline-drawing-err">{err}</span> : null}
       </div>
       <div className="inline-drawing-canvas" style={{ height }}>
         <InlineExcalidraw
           initialData={initialData}
-          viewMode={!editing}
+          viewMode={true}
           isDark={isDark}
           onChange={onChange}
           onApi={setApi}
