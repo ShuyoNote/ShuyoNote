@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.131] - 2026-08-24
+
+### 新增
+
+- **白板导航（M23.3）**：绘图编辑器新增「🔗 链接」——选中图形后链接到任意页面（元素 `link` 存 `shuyonote://page/<id>`）；**只读模式**下点击带链接的图形即**应用内跳转**到该页面（`onPointerDown` 命中检测 + `openPage`）。白板节点→页面，让画布成为织网导航的一部分。`scripts/smoke-web.mjs` 221 全绿（不变）。
+
+---
+
 ## [1.59.130] - 2026-08-24
 
 ### 新增

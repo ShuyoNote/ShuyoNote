@@ -9,6 +9,7 @@ import { blobStore } from "../lib/platform/blobStore";
 import { toast } from "../store/toast";
 import { inputDialog } from "../store/input";
 import { useAiStore } from "../store/ai";
+import { useNotes } from "../store/notes";
 import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../lib/ai/imageGen";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
@@ -93,6 +94,7 @@ export default function DrawingEditorModal() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
+  const selectedRef = useRef<string[]>([]);
 
   useEffect(() => {
     if (!drawingEdit) return;
@@ -129,6 +131,9 @@ export default function DrawingEditorModal() {
 
   const onChange = useCallback((elements: any, appState: any, files: any) => {
     liveRef.current = { elements, appState, files };
+    if (appState?.selectedElementIds && typeof appState.selectedElementIds === "object") {
+      selectedRef.current = Object.keys(appState.selectedElementIds).filter((k) => appState.selectedElementIds[k]);
+    }
   }, []);
 
   const save = useCallback(async () => {
@@ -327,6 +332,69 @@ export default function DrawingEditorModal() {
     });
   }, [injectImage]);
 
+  // Link the selected element(s) to a ShuyoNote page (stored on the element link).
+  const linkSelected = useCallback(async () => {
+    const a = apiRef.current;
+    if (!a) return;
+    if (selectedRef.current.length === 0) {
+      toast("请先选中一个图形", "error");
+      return;
+    }
+    inputDialog({
+      title: "链接到页面",
+      placeholder: "输入要链接的页面标题…",
+      okLabel: "链接",
+      onSubmit: (title) => {
+        const t = (title ?? "").trim();
+        if (!t) return;
+        const notes = useNotes.getState();
+        const page = notes.pages.find((p) => p.title === t) ?? notes.pages.find((p) => p.title.includes(t));
+        if (!page) {
+          toast(`未找到页面「${t}」`, "error");
+          return;
+        }
+        const link = `shuyonote://page/${page.id}`;
+        const els = a.getSceneElements();
+        const next = els.map((e: any) => (selectedRef.current.includes(e.id) ? { ...e, link } : e));
+        a.updateScene({ elements: next });
+        toast(`已链接到「${page.title}」`, "success");
+      },
+    });
+  }, []);
+
+  // In read-only mode, clicking a linked element navigates to the page in-app.
+  const handlePointerDown = useCallback(
+    (_activeTool: any, state: any) => {
+      if (!readOnly) return;
+      const a = apiRef.current;
+      if (!a) return;
+      const origin = state?.origin;
+      if (!origin || typeof origin.x !== "number" || typeof origin.y !== "number") return;
+      try {
+        const els = a.getSceneElements();
+        for (const el of els) {
+          if (el?.isDeleted) continue;
+          const left = el.x;
+          const top = el.y;
+          const right = el.x + (el.width ?? 0);
+          const bottom = el.y + (el.height ?? 0);
+          if (origin.x >= left && origin.x <= right && origin.y >= top && origin.y <= bottom) {
+            const link = el?.link;
+            if (typeof link === "string" && link.startsWith("shuyonote://page/")) {
+              const pageId = link.slice("shuyonote://page/".length);
+              close();
+              useNotes.getState().openPage(pageId);
+              return;
+            }
+          }
+        }
+      } catch {
+        /* hit-test requires scene coords; ignore misses */
+      }
+    },
+    [readOnly, close],
+  );
+
   if (!drawingEdit) return null;
   if (!ready || !initialData) return null;
 
@@ -338,6 +406,7 @@ export default function DrawingEditorModal() {
           <button className="drawing-modal-tool" onClick={insertImage} title="插入图片">🖼 图</button>
           <button className="drawing-modal-tool" onClick={aiDraw} title="AI 插图">🤖 AI</button>
           <button className="drawing-modal-tool" onClick={mermaidDraw} title="流程图/思维导图">📊 图</button>
+          <button className="drawing-modal-tool" onClick={linkSelected} title="链接选中的图形到页面">🔗 链接</button>
           <button className="drawing-modal-tool" onClick={exportSvg} title="导出 SVG">⇩ SVG</button>
           <button className="drawing-modal-tool" onClick={exportPng} title="导出 PNG">⇩ PNG</button>
           <button className="drawing-modal-tool" onClick={copyPng} title="复制到剪贴板">⧉</button>
@@ -358,6 +427,7 @@ export default function DrawingEditorModal() {
           initialData={initialData}
           excalidrawAPI={(api) => (apiRef.current = api)}
           viewModeEnabled={readOnly}
+          onPointerDown={handlePointerDown}
           UIOptions={{ canvasActions: { export: false } }}
           langCode="zh-CN"
         />
