@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.146] - 2026-08-24
+
+### 修复
+
+- **含绘图块的页面不再抖动**：Excalidraw 组件渲染/绘制较重，而绘图块（`DecoratorNode`）会在整页编辑器状态变化（如其它位置输入）时反复重渲染，传回新的 `UIOptions`/`excalidrawAPI` 引用，导致画布反复重绘、页面出现明显抖动。现将内嵌 `Excalidraw` 拆成 `memo` 子组件（`InlineExcalidraw`），仅依赖于场景与 view/theme 等低频状态；并用 `useCallback` 稳定 `onChange`/`excalidrawAPI` 回调、用 `as const` 固化 `UIOptions`，使无关的编辑器更新不再触碰画布。无头浏览器实测：绘图渲染/编辑正常、输入其它文字后绘图块保持挂载、无运行时错误。`tsc` 无错、`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.145] - 2026-08-24
 
 ### 变更

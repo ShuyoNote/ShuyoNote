@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Excalidraw, restore, exportToBlob, exportToSvg, serializeAsJSON, exportToClipboard } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { $getNodeByKey } from "lexical";
@@ -19,6 +19,41 @@ interface SceneSnapshot {
 const DEFAULT_HEIGHT = 420;
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 4000;
+
+// Stable UIOptions object — a fresh object on every render would make the
+// memoized Excalidraw re-render (and repaint the canvas), causing page jitter.
+const INLINE_UI_OPTIONS = { canvasActions: { export: false } } as const;
+
+// `Excalidraw` is memory/render heavy; a DecoratorNode re-renders on every editor
+// state change (e.g. typing anywhere in the page), which would otherwise repaint
+// the whole canvas and make pages with drawings jitter. Memoize it on stable,
+// rarely-changing props (scene, view/theme booleans, stable callbacks) so unrelated
+// editor updates don't touch it.
+const InlineExcalidraw = memo(function InlineExcalidraw({
+  initialData,
+  viewMode,
+  isDark,
+  onChange,
+  onApi,
+}: {
+  initialData: SceneSnapshot;
+  viewMode: boolean;
+  isDark: boolean;
+  onChange: (elements: any, appState: any, files: any) => void;
+  onApi: (api: any) => void;
+}) {
+  return (
+    <Excalidraw
+      onChange={onChange}
+      initialData={initialData}
+      excalidrawAPI={onApi}
+      viewModeEnabled={viewMode}
+      theme={isDark ? "dark" : "light"}
+      UIOptions={INLINE_UI_OPTIONS}
+      langCode="zh-CN"
+    />
+  );
+});
 
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -88,6 +123,12 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
 
   const onChange = useCallback((elements: any, appState: any, files: any) => {
     liveRef.current = { elements, appState, files };
+  }, []);
+
+  // Stable ref-backed callback so the memoized Excalidraw doesn't see a new
+  // function identity on every parent render.
+  const setApi = useCallback((a: any) => {
+    apiRef.current = a;
   }, []);
 
   const persistHeight = useCallback(
@@ -238,14 +279,12 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
         {err ? <span className="inline-drawing-err">{err}</span> : null}
       </div>
       <div className="inline-drawing-canvas" style={{ height }}>
-        <Excalidraw
-          onChange={onChange}
+        <InlineExcalidraw
           initialData={initialData}
-          excalidrawAPI={(a) => (apiRef.current = a)}
-          viewModeEnabled={!editing}
-          theme={isDark ? "dark" : "light"}
-          UIOptions={{ canvasActions: { export: false } }}
-          langCode="zh-CN"
+          viewMode={!editing}
+          isDark={isDark}
+          onChange={onChange}
+          onApi={setApi}
         />
       </div>
       <div className="inline-drawing-resize" onPointerDown={onResizeDown} title="拖拽调整高度" />
