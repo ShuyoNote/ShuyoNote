@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.83] - 2026-08-24
+
+### 修改
+
+- **页面标题左对齐**：给 `.title-input` 显式加 `text-align: left`，确保页面标题始终靠左（与 wolai / FlowUs 对齐）。
+
+---
+
 ## [1.59.82] - 2026-08-24
 
 ### 新增

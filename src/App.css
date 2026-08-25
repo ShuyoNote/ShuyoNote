@@ -2294,6 +2294,7 @@ select.prop-value {
   font-family: inherit;
   background: transparent;
   min-width: 0;
+  text-align: left;
 }
 
 .title-input::placeholder {
