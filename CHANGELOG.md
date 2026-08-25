@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.132] - 2026-08-24
+
+### 新增
+
+- **数据/检索集成（M23.4）**：把绘图文字抽取收敛为可测纯函数 `excalidrawSceneText`/`excalidrawSceneHasContent`（→ `content_text`，供搜索/反链）；`.excalidraw` JSON 内容寻址 + 版本快照沿用原链路；元素级命中归于 M23.3。`scripts/smoke-web.mjs` 221→**223 全绿**。
+
+---
+
 ## [1.59.131] - 2026-08-24
 
 ### 新增

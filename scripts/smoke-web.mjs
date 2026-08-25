@@ -75,6 +75,7 @@ await esbuild.build({
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
+      'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
       'export { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "./src/lib/ai/imageGen";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
@@ -936,6 +937,14 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("detectMermaidSyntax mindmap", aiMod.detectMermaidSyntax("mindmap\n  root((主题))") === "mindmap", aiMod.detectMermaidSyntax("mindmap"));
   assert("detectMermaidSyntax sequence", aiMod.detectMermaidSyntax("sequenceDiagram\n  A->>B: hi") === "sequence", aiMod.detectMermaidSyntax("sequenceDiagram"));
   assert("mermaidRenderable needs ≥2 lines", aiMod.mermaidRenderable("graph TD") === false && aiMod.mermaidRenderable("graph TD\n  A-->B") === true, "renderable");
+  // M23.4 excalidrawSceneText extracts searchable label text; hasContent skips deleted.
+  const ext = aiMod.excalidrawSceneText([
+    { type: "text", text: "架构图" },
+    { type: "text", text: "  " },
+    { type: "rectangle", text: "x" },
+  ]);
+  assert("excalidrawSceneText extracts text labels", ext === "架构图", JSON.stringify(ext));
+  assert("excalidrawSceneHasContent skips deleted", aiMod.excalidrawSceneHasContent([{ type: "rect", isDeleted: false }]) === true && aiMod.excalidrawSceneHasContent([{ type: "rect", isDeleted: true }]) === false, "hasContent");
   // M-C imageGen helpers: url building, body shape, b64 parse, base64 roundtrip.
   assert("buildImageGenUrl normalizes trailing slash", aiMod.buildImageGenUrl("http://x/v1/") === "http://x/v1/images/generations", aiMod.buildImageGenUrl("http://x/v1/"));
   const igb = JSON.parse(aiMod.buildImageGenBody({ baseUrl: "http://x", model: "dall-e", apiKey: "" }, "一只猫", "512x512"));

@@ -11,6 +11,7 @@ import { inputDialog } from "../store/input";
 import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../lib/ai/imageGen";
+import { excalidrawSceneText } from "../lib/drawingText";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
@@ -164,10 +165,7 @@ export default function DrawingEditorModal() {
         mime: "image/png",
         data: Array.from(pngBytes),
       });
-      const text = (scene.elements as { type?: string; text?: string }[])
-        .filter((e) => e.type === "text" && typeof e.text === "string")
-        .map((e) => e.text ?? "")
-        .join(" ");
+      const text = excalidrawSceneText(scene.elements);
       const editor = useEditorStore.getState().editor;
       if (editor) {
         editor.update(() => {

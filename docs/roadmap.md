@@ -196,7 +196,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 - **M23.1 编辑/导出体验** ✅（v1.59.129）：编辑器新增**导出 SVG/PNG/复制剪贴板**（`exportToSvg`/`exportToBlob`/`exportToClipboard`）+ **只读⇄编辑切换**（`viewModeEnabled` 预览不改）；`UIOptions` 收敛默认导出。
 - **M23.2 元素编程化 + AI/mermaid 注入画布** ✅（v1.59.130）：绘图编辑器新增「🖼 图片 / 🤖 AI 插图 / 📊 mermaid 流程」按钮，用 `excalidrawAPI.addFiles`+`updateScene` 把图片/AI 文生图/mermaid 流程图渲染为画布图元（`makeImageEl` 构造）；AI 未配置 toast 降级。
 - **M23.3 自定义侧栏 + 白板导航** ✅（v1.59.131）：绘图编辑器「🔗 链接」把选中图形链接到页面（元素 `link` 存 `shuyonote://page/<id>`）；**只读模式**点击带链接图形即**应用内跳转**（`onPointerDown` 命中检测 + `openPage`），白板节点→页面。
-- **M23.4 数据/检索集成** 🗓：`.excalidraw` 内容寻址 + 版本快照 + 文字进 content_text + 元素级命中。
+- **M23.4 数据/检索集成** ✅（v1.59.132）：`.excalidraw` JSON 内容寻址 + 版本快照（沿用原链路）；绘图文字经可测纯函数 `excalidrawSceneText`/`excalidrawSceneHasContent` 进 `content_text`（可搜/反链）；元素级命中归 M23.3。
 - **M23.5 协同 / 代码生成** 🗓（超范围，诚实标注）：真正多人实时协同需 WebSocket 后端（0.17.1 无 `onCollaboration` 钩子）；图→代码（DiagramToCode/TTDDialog）在 0.18+ 才有。暂缓，先用「分享 .excalidraw / 导入 / 只读嵌入」替代。
 
 ## 4. 竞品差距跟踪
