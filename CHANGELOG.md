@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.87] - 2026-08-24
+
+### 新增
+
+- **内联 AI 起草（M18 最小闭环）**：页面向导新增「✦ 用 AI 起草」入口 → 唤起内联起草条（输入 + 模型 + 「用 AI 起草」模板下拉：文章大纲/内容简介/社交媒体帖子/电子邮件/广告文案/短篇故事）→ 发送后流式写入**高亮待定草案卡**（含「已深度思考」块 + 「AI 正在创作···」状态 + Esc 停止）→ 动作：**完成**（插入正文并自动保存）/ **续写** / **重新生成** / **关闭**（丢弃）。复用 `runAiLoop` 底座，写操作先落「待定草案」、点「完成」才落库。
+- 新增 `src/lib/ai/inlineDraft.ts`（模板 + 运行/校验助手）、`src/components/InlineAiDraftBar.tsx` 及相关 CSS。
+- `scripts/smoke-web.mjs` 保持 **196 全绿**；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.86] - 2026-08-24
 
 ### 新增

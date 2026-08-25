@@ -17,6 +17,7 @@ import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { RightRail } from "./components/RightRail";
+import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { TemplateCenterView } from "./components/TemplateCenterView";
@@ -212,6 +213,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
             {error && <span className="error-badge">{error}</span>}
           </div>
         </div>
+        <InlineAiDraftBar />
         <PropertiesPanel pageId={pageId} />
         <div className="editor-stage">
           <ErrorBoundary>

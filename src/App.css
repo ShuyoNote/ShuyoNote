@@ -8104,3 +8104,193 @@ select.prop-value {
 .ai-settings-save:hover {
   opacity: 0.92;
 }
+
+/* ===== Inline AI drafting (M18) ===== */
+.ai-inline {
+  max-width: var(--doc-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--doc-pad);
+}
+.ai-inline.open {
+  position: relative;
+}
+.ai-inline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  background: transparent;
+  border-radius: var(--radius-xs);
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-inline-pill:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ai-inline-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+}
+.ai-inline-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.ai-inline-bar-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+.ai-inline-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 15px;
+  color: var(--text);
+  font-family: inherit;
+}
+.ai-inline-input::placeholder {
+  color: var(--text-faint);
+}
+.ai-inline-model {
+  border: none;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-dim);
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.ai-inline-model:hover {
+  color: var(--accent);
+}
+.ai-inline-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  flex: none;
+}
+.ai-inline-send:hover {
+  opacity: 0.9;
+}
+.ai-inline-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ai-inline-send .ai-send-stop {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: currentColor;
+  display: block;
+}
+.ai-inline-templates {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,0.08));
+  max-width: 280px;
+}
+.ai-inline-templates-head {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-inline-template {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-inline-template:hover {
+  background: var(--block-hover, #f2f2f2);
+}
+.ai-inline-draft {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, pink 6%, var(--bg));
+  padding: 10px 14px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+}
+.ai-inline-draft-body {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.ai-inline-draft-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ai-inline-draft-status {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ai-inline-draft-actions {
+  display: flex;
+  gap: 6px;
+}
+.ai-inline-act {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-inline-act:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ai-inline-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ai-inline-act.danger:hover {
+  border-color: var(--danger, #e5484d);
+  color: var(--danger, #e5484d);
+}
+.ai-inline-error {
+  margin-top: 8px;
+  color: var(--danger, #e5484d);
+  font-size: 13px;
+}
