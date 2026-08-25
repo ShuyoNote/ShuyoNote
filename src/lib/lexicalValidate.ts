@@ -76,6 +76,11 @@ export function lexicalStateValid(contentJson: string, allowedTypes?: ReadonlySe
     const root = parsed && (parsed as Record<string, unknown>).root;
     if (!root || typeof root !== "object") return null;
     const rootRec = root as Record<string, unknown>;
+    // A doc whose ROOT node is missing `type:"root"` (e.g. some AI-generated
+    // content) makes Lexical throw `type "undefined" + not found`. Normalize it so
+    // existing pages with this shape recover instead of opening blank.
+    rootRec.type = "root";
+    if (typeof rootRec.version !== "number") rootRec.version = 1;
     const children = sanitizeChildren(rootRec.children, allowedTypes);
     rootRec.children = children;
     if (children.length === 0) return null;

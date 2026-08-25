@@ -1287,6 +1287,11 @@ assert("workspace name persists across instances", wsAgain !== "");
   const slotsDoc = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"ok","version":1}],"$slots":{"bad":{"type":"undefined","version":1}}}],"type":"root","version":1}}';
   const salvagedSlots = aiMod.lexicalStateValid(slotsDoc);
   assert("lexicalValid drops bad $slots node", salvagedSlots !== null && salvagedSlots.includes('"text":"ok"') && !salvagedSlots.includes('"type":"undefined"'), JSON.stringify(salvagedSlots));
+  // A doc whose ROOT node is missing `type:"root"` (AI-generated shape) must be
+  // healed so Lexical doesn't throw `type "undefined" + not found`.
+  const noRootType = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"ok","version":1}]}]}}';
+  const healedRoot = aiMod.lexicalStateValid(noRootType);
+  assert("lexicalValid heals root missing type:root", healedRoot !== null && healedRoot.includes('"type":"root"') && healedRoot.includes('"text":"ok"'), JSON.stringify(healedRoot));
 }
 
 // 21. AI-style create_page -> delete_page -> gone from list (web delete path).

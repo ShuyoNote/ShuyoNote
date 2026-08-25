@@ -19,7 +19,7 @@ function draft(key: string, summary: string, payload: unknown): DraftResult {
 function pageJsonFromText(content: string): { content_json: string; content_text: string } {
   const content_json = String(content ?? "").trim()
     ? appendBlocksToJson("", content, makeId)
-    : '{"root":{"children":[]}}';
+    : '{"root":{"children":[],"type":"root","version":1}}';
   return { content_json, content_text: contentTextOf(content_json) };
 }
 

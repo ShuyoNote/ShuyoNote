@@ -28,12 +28,19 @@ function paraNode(text: string, blockId: string): LexicalBlock {
   };
 }
 
-function safeRoot(contentJson: string): { root: { children: unknown[] } } {
+function safeRoot(contentJson: string): { root: { children: unknown[]; type: string; version: number } } {
   try {
     const v = JSON.parse(contentJson || "{}");
-    return { root: v?.root && Array.isArray(v.root.children) ? v.root : { children: [] } };
+    const root = (v?.root && Array.isArray(v.root.children) ? v.root : { children: [] }) as {
+      children: unknown[];
+      version?: unknown;
+    };
+    // Lexical requires the root node to carry `type: "root"` (and a version) or it
+    // throws `type "undefined" + not found`. Normalize so all AI-generated docs are
+    // parseable even when the source omitted it.
+    return { root: { ...root, type: "root", version: typeof root.version === "number" ? root.version : 1 } };
   } catch {
-    return { root: { children: [] } };
+    return { root: { children: [], type: "root", version: 1 } };
   }
 }
 

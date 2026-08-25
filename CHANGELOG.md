@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.81] - 2026-08-24
+
+### 修复
+
+- **彻底修复 AI 写入产生空白页（根因）**：定位到 AI 内容生成器 `appendBlocksToJson`/`pageJsonFromText` 产出的 Lexical 文档，其 `root` 节点**缺少 `type:"root"`**（只有 `children`）。Lexical 解析要求 `root` 节点带 `type:"root"`，否则抛 `parseEditorState: type "undefined" + not found` → 整页回退空白。已修复：
+  - `safeRoot`（`src/lib/ai/lexical.ts`）给 `root` 节点的类型加 `type:"root"` 与 `version`；
+  - `pageJsonFromText` 的空文档默认值补上 `"type":"root","version":1`；
+  - `lexicalStateValid`（`src/lib/lexicalValidate.ts`）在解析前**规范化 root**（缺失则补 `type:"root"`/`version`），让已存库的旧坏文档也能自动恢复，而非空白。
+- `scripts/smoke-web.mjs` 195→**196 全绿**（新增：root 缺 `type:"root"` 自愈用例）；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.80] - 2026-08-24
 
 ### 修复
