@@ -8107,8 +8107,8 @@ select.prop-value {
 
 /* ===== Inline AI drafting (M18) ===== */
 .ai-inline-pop {
-  min-width: 360px;
-  max-width: 480px;
+  width: var(--doc-width);
+  max-width: calc(100vw - 24px);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
