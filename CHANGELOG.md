@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.138] - 2026-08-24
+
+### 新增
+
+- **绘图页面内嵌（飞书式）**：绘图块从「PNG 缩略图 + 全屏弹窗」改为**页面内嵌 Excalidraw 画板**——`DrawingNode` 直接渲染 `InlineDrawing`（画布内嵌在页面流，点阵网格 + 顶部控制条「编辑/下载/导出/复制/全屏」）；`/绘图` 插入后不再自动弹窗；「编辑」就地在页面内编辑、「保存」把 `.excalidraw` JSON + PNG 落内容寻址附件并更新节点（文字进 `content_text`）；「⛶」仍打开全屏弹窗。新增 `src/components/InlineDrawing.tsx`。`scripts/smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.137] - 2026-08-24
 
 ### 变更

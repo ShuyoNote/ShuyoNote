@@ -16,7 +16,6 @@ import { toast } from "../../store/toast";
 import { useBlockSelector } from "../../store/blockSelector";
 import { useAttachmentsStore } from "../../store/attachments";
 import { inputDialog } from "../../store/input";
-import { useEditorStore } from "../../store/editor";
 import { useAiStore } from "../../store/ai";
 import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../../lib/ai/imageGen";
 import { $createCalloutNode } from "../nodes/CalloutNode";
@@ -134,15 +133,9 @@ function makeOptions(pageId: string): SlashOption[] {
       }
     } },
     { key: "drawing", title: "绘图", badge: "✏️", group: "媒体", pinyin: "ht", run: (editor) => {
-      let key: string | null = null;
       editor.update(() => {
-        const node = $createDrawingNode();
-        $insertBlockNode(node);
-        key = node.getKey();
+        $insertBlockNode($createDrawingNode());
       });
-      if (key) {
-        useEditorStore.getState().openDrawingEdit({ nodeKey: key, hash: null, mime: null, text: "" });
-      }
     } },
     { key: "mermaid", title: "流程图/思维导图", badge: "📊", group: "媒体", pinyin: "lct", run: (editor) => {
       editor.update(() =>

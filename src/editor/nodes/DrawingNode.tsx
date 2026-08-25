@@ -10,8 +10,7 @@ import {
   type Spread,
 } from "lexical";
 import type { JSX } from "react";
-import { MediaResolver } from "./MediaResolver";
-import { useEditorStore } from "../../store/editor";
+import { InlineDrawing } from "../../components/InlineDrawing";
 
 export type SerializedDrawingNode = Spread<
   {
@@ -107,53 +106,7 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
-    const edit = () => {
-      useEditorStore.getState().openDrawingEdit({
-        nodeKey: this.getKey(),
-        hash: this.__hash,
-        mime: this.__mime,
-        text: this.__text,
-      });
-    };
-    const style: React.CSSProperties = {};
-    if (this.__width) style.width = `${this.__width}px`;
-    else if (this.__height) style.height = `${this.__height}px`;
-
-    return (
-      <div className="editor-drawing">
-        <div className="editor-drawing-canvas">
-          {this.__thumbHash ? (
-            <MediaResolver
-              hash={this.__thumbHash}
-              mime={this.__thumbMime ?? "image/png"}
-              render={(url) =>
-                url ? (
-                  <img src={url} className="editor-drawing-img" style={style} alt="绘图" draggable={false} />
-                ) : (
-                  <span className="editor-drawing-placeholder">（绘图缩略图不可用）</span>
-                )
-              }
-            />
-          ) : (
-            <span className="editor-drawing-placeholder">
-              {this.__text ? this.__text : "（空白绘图）"}
-            </span>
-          )}
-        </div>
-        <div className="editor-drawing-toolbar">
-          <button
-            className="editor-drawing-btn"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              edit();
-            }}
-          >
-            {this.__thumbHash ? "编辑绘图" : "点击绘制/编辑"}
-          </button>
-        </div>
-      </div>
-    );
+    return <InlineDrawing node={this} />;
   }
 
   exportDOM(_editor: LexicalEditor): DOMExportOutput {

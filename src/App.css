@@ -4786,6 +4786,58 @@ select.prop-value {
   user-select: none;
 }
 
+/* Inline drawing (page-embedded Excalidraw) */
+.inline-drawing {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  margin: 6px 0;
+}
+
+.inline-drawing-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-light);
+  flex-wrap: wrap;
+}
+
+.inline-drawing-btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.inline-drawing-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.inline-drawing-canvas {
+  position: relative;
+  height: 420px;
+  background: #fff;
+}
+
+.inline-drawing-loading {
+  color: var(--text-faint);
+  padding: 16px;
+  font-size: 13px;
+}
+
+.inline-drawing-err {
+  color: var(--danger);
+  font-size: 12px;
+}
+
 .editor-drawing {
   border: 1px solid var(--border);
   border-radius: 8px;
