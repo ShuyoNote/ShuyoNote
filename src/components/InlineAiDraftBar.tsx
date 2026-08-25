@@ -225,8 +225,9 @@ export function InlineAiDraftBar() {
 
   const runningDraft = running;
   const pickTemplate = (t: InlineTemplate) => {
-    setPrompt(t.promptTemplate);
     setTemplatesOpen(false);
+    setPrompt(t.promptTemplate);
+    start(t.promptTemplate); // run immediately — no extra send click
   };
 
   if (!open) return null;
