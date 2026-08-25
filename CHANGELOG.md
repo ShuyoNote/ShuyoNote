@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.94] - 2026-08-24
+
+### 修改
+
+- **内联 AI 起草条改为"随光标走 + 背景关闭"的浮动弹层**：`InlineAiDraftBar` 由「标题下方的固定行」改为 `position:fixed` **跟随光标**的浮层（在空行按空格时锚定到光标位置），支持 **点击背景即关闭**（`mousedown` 在浮层外则关闭）、Esc 关闭；`useEditorStore` 增加 `aiBarPos` 保存锚点坐标。
+- **空格触发可靠性修复**：`AiSpaceTriggerPlugin` 不再在挂载时取 `getRootElement()`（此时可能为 null 导致监听器从未挂上），改为**在 keydown 时实时取根元素**，并始终挂 `document` 捕获监听，避免"调不出"。
+
+---
+
 ## [1.59.93] - 2026-08-24
 
 ### 修复

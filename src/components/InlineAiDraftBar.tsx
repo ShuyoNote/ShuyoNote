@@ -8,15 +8,16 @@ import type { ProviderConfig } from "../lib/ai/llm";
 import { SparkleIcon, SendIcon } from "./icons";
 import { Markdown } from "./Markdown";
 
-// Inline "AI drafting" bar + highlighted pending draft (M18 minimal loop):
-//   invoke → stream reply into a highlighted pending card → 完成(insert into doc &
-//   auto-save) / 关闭(discard) / 重新生成. It reuses the same thin-agent core as the
-//   sidebar, but is scoped to writing into the current page.
+// Floating "AI drafting" popover (M18): opens anchored to the caret via the space
+// trigger, follows the cursor, and closes on background click. Streams the reply
+// into a highlighted pending draft → 完成(insert into doc & auto-save) / 关闭.
 export function InlineAiDraftBar() {
   const config = useAiStore((s) => s.config);
   const notes = useNotes();
   const open = useEditorStore((s) => s.aiBarOpen);
   const setOpen = useEditorStore((s) => s.setAiBarOpen);
+  const pos = useEditorStore((s) => s.aiBarPos);
+  const barRef = useRef<HTMLDivElement>(null);
   const [prompt, setPrompt] = useState("");
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -141,6 +142,18 @@ export function InlineAiDraftBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
+  // Close on background click (anywhere outside the floating bar).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (barRef.current && !barRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, setOpen]);
+
   // Clean any pending flush timer on unmount.
   useEffect(() => {
     return () => {
@@ -154,83 +167,85 @@ export function InlineAiDraftBar() {
     setTemplatesOpen(false);
   };
 
+  if (!open) return null;
+
   return (
-    <div className={`ai-inline ${open ? "open" : ""}`}>
-      {open && (
-        <>
-          <div className="ai-inline-bar">
-            <span className="ai-inline-bar-icon"><SparkleIcon width={16} height={16} /></span>
-            <input
-              className="ai-inline-input"
-              placeholder="告诉 AI 你想写什么…"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  start(prompt);
-                }
-              }}
-              autoFocus
-              disabled={running}
-            />
-            <button className="ai-inline-model" onClick={() => setTemplatesOpen((v) => !v)} title="选择起草模板">
-              {config.model || "模型"} ▾
+    <div
+      ref={barRef}
+      className="ai-inline-pop"
+      style={{ position: "fixed", top: pos?.top ?? 0, left: pos?.left ?? 0, zIndex: 80 }}
+    >
+      <div className="ai-inline-bar">
+        <span className="ai-inline-bar-icon"><SparkleIcon width={16} height={16} /></span>
+        <input
+          className="ai-inline-input"
+          placeholder="告诉 AI 你想写什么…"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              start(prompt);
+            }
+          }}
+          autoFocus
+          disabled={running}
+        />
+        <button className="ai-inline-model" onClick={() => setTemplatesOpen((v) => !v)} title="选择起草模板">
+          {config.model || "模型"} ▾
+        </button>
+        <button
+          className="ai-inline-send"
+          onClick={running ? stop : () => start(prompt)}
+          title={running ? "停止 (Esc)" : "发送"}
+        >
+          {running ? <span className="ai-send-stop" /> : <SendIcon width={16} height={16} />}
+        </button>
+      </div>
+
+      {templatesOpen && (
+        <div className="ai-inline-templates">
+          <div className="ai-inline-templates-head">用 AI 起草</div>
+          {INLINE_TEMPLATES.map((t) => (
+            <button key={t.key} className="ai-inline-template" onClick={() => pickTemplate(t)}>
+              <span className="ai-inline-template-label">{t.label}</span>
             </button>
-            <button
-              className="ai-inline-send"
-              onClick={running ? stop : () => start(prompt)}
-              title={running ? "停止 (Esc)" : "发送"}
-            >
-              {running ? <span className="ai-send-stop" /> : <SendIcon width={16} height={16} />}
-            </button>
+          ))}
+        </div>
+      )}
+
+      {(runningDraft || draft || error) && (
+        <div className="ai-inline-draft">
+          {thinking && (
+            <details className="ai-think">
+              <summary className="ai-think-summary">已深度思考</summary>
+              <div className="ai-think-body">{thinking}</div>
+            </details>
+          )}
+          <div className="ai-inline-draft-body">
+            <Markdown text={draft || (runningDraft ? "正在创作…" : "")} />
           </div>
-
-          {templatesOpen && (
-            <div className="ai-inline-templates">
-              <div className="ai-inline-templates-head">用 AI 起草</div>
-              {INLINE_TEMPLATES.map((t) => (
-                <button key={t.key} className="ai-inline-template" onClick={() => pickTemplate(t)}>
-                  <span className="ai-inline-template-label">{t.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {(runningDraft || draft || error) && (
-            <div className="ai-inline-draft">
-              {thinking && (
-                <details className="ai-think">
-                  <summary className="ai-think-summary">已深度思考</summary>
-                  <div className="ai-think-body">{thinking}</div>
-                </details>
+          <div className="ai-inline-draft-foot">
+            <span className="ai-inline-draft-status">
+              {runningDraft ? "AI 正在创作···" : "AI 回复的内容可能与实际结果有偏差，仅供参考。"}
+            </span>
+            <div className="ai-inline-draft-actions">
+              <button className="ai-inline-act" onClick={commit} disabled={running || !draft.trim()} title="完成：插入正文并保存">
+                完成
+              </button>
+              <button className="ai-inline-act" onClick={() => !running && start(prompt || draft)} disabled={running}>
+                续写
+              </button>
+              {running ? (
+                <button className="ai-inline-act" onClick={stop} title="停止 (Esc)">停止</button>
+              ) : (
+                <button className="ai-inline-act" onClick={() => start(prompt || draft)}>重新生成</button>
               )}
-              <div className="ai-inline-draft-body">
-                <Markdown text={draft || (runningDraft ? "正在创作…" : "")} />
-              </div>
-              <div className="ai-inline-draft-foot">
-                <span className="ai-inline-draft-status">
-                  {runningDraft ? "AI 正在创作···" : "AI 回复的内容可能与实际结果有偏差，仅供参考。"}
-                </span>
-                <div className="ai-inline-draft-actions">
-                  <button className="ai-inline-act" onClick={commit} disabled={running || !draft.trim()} title="完成：插入正文并保存">
-                    完成
-                  </button>
-                  <button className="ai-inline-act" onClick={() => !running && start(prompt || draft)} disabled={running}>
-                    续写
-                  </button>
-                  {running ? (
-                    <button className="ai-inline-act" onClick={stop} title="停止 (Esc)">停止</button>
-                  ) : (
-                    <button className="ai-inline-act" onClick={() => start(prompt || draft)}>重新生成</button>
-                  )}
-                  <button className="ai-inline-act danger" onClick={reset}>关闭</button>
-                </div>
-              </div>
-              {error && <div className="ai-inline-error">{error}</div>}
+              <button className="ai-inline-act danger" onClick={reset}>关闭</button>
             </div>
-          )}
-        </>
+          </div>
+          {error && <div className="ai-inline-error">{error}</div>}
+        </div>
       )}
     </div>
   );

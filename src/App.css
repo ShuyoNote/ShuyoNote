@@ -8106,14 +8106,17 @@ select.prop-value {
 }
 
 /* ===== Inline AI drafting (M18) ===== */
-.ai-inline {
-  max-width: var(--doc-width);
-  width: 100%;
-  margin: 0 auto;
-  padding: 0 var(--doc-pad);
+.ai-inline-pop {
+  min-width: 360px;
+  max-width: 480px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 8px;
 }
-.ai-inline.open {
-  position: relative;
+.ai-inline-pop .ai-inline-bar {
+  margin-top: 0;
 }
 .ai-inline-bar {
   display: flex;
