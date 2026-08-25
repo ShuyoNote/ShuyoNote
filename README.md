@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.59.110-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.59.111-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -271,7 +271,7 @@ ShuyoNote/
 | [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 架构 / 方案 / 对比 / 设计交付 / 变更记录 |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
-| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M15 + M16 跨平台/Web + **M17 薄 Agent AI 已达成**；**M18 内联起草规划中**；M6 移动端 / M11.3 / M11.4 已评估未做） |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M15 + M16 跨平台/Web + **M17 薄 Agent AI 已达成**；**M18 内联起草 / M19 织网 / M20 模板变量+语义检索 / M21 wiki 导出** 规划中；M6 移动端 / M11.3 / M11.4 已评估未做） |
 | [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
