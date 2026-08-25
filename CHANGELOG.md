@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.93] - 2026-08-24
+
+### 修复
+
+- **「空格打开 AI」仍失效**：`KEY_DOWN_COMMAND` 路由对单独的空格键在该编辑器里不可靠；改为 **`document` 捕获阶段**监听 `keydown`（先于事件到达编辑器），且仅当目标在编辑器根元素内、且当前为**空行**时才拦截并打开 AI。保留临时诊断 `[ShuyoNote-debug] space in editor; blank=…`，用于确认触发路径与空行判定是否命中。
+
+---
+
 ## [1.59.92] - 2026-08-24
 
 ### 修复
