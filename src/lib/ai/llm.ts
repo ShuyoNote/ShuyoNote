@@ -208,8 +208,22 @@ async function readBodyStream(
     }
   };
 
+  // Idle-timeout each read so a stream that stalls after the headers can never
+  // hold the AI in "running" forever — it surfaces an error instead.
+  const READ_TIMEOUT_MS = 90000;
+  const readOnce = () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_r, reject) => {
+      timer = setTimeout(() => reject(new Error("AI 响应超时（90 秒无数据）。请重试，或检查该模型端点是否支持流式。")), READ_TIMEOUT_MS);
+    });
+    return Promise.race([reader.read(), timeout]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+  };
+
   for (;;) {
-    const { done, value } = await reader.read();
+    const res = await readOnce();
+    const { done, value } = res;
     if (done) break;
     const text = dec.decode(value, { stream: true });
     raw += text;
@@ -238,11 +252,23 @@ async function readBodyStream(
     if (c.thinking) thinking += c.thinking;
     if (c.toolCalls) absorb(c.toolCalls);
   }
-  // Some gateways return an error as HTTP 200 with an `error` field — surface it
-  // instead of silently returning an empty (no-reply) result.
-  if (!content && Object.keys(tcByIdx).length === 0 && direct.length === 0 && raw.trim()) {
+  // Some gateways return an error as HTTP 200 with an `error` field; others return
+  // an empty completion. Either way, never return a silent empty (no-reply) result:
+  // surface the raw response so the failure is diagnosable.
+  let nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined;
+  if (direct.length) {
+    nativeToolCalls = direct.map((t) => ({ name: t.name, arguments: parseToolArgs(t.arguments) }));
+  } else {
+    const frags = Object.values(tcByIdx).filter((t) => t.name).map((t) => ({ name: t.name, arguments: parseToolArgs(t.args) }));
+    if (frags.length) nativeToolCalls = frags;
+  }
+  if (!content && !nativeToolCalls && raw.trim()) {
+    const body = raw.trim();
+    // Diagnostics: log the raw body (truncated) so the exact endpoint reply is
+    // visible in the browser console for troubleshooting.
+    console.warn("[ShuyoNote] AI 未返回内容，原始响应：", body.slice(0, 1200));
     try {
-      const j = JSON.parse(raw.trim());
+      const j = JSON.parse(body);
       if (j && j.error) {
         const msg = typeof j.error?.message === "string" ? j.error.message : JSON.stringify(j.error);
         throw new Error(`AI 接口返回错误：${msg}`);
@@ -250,16 +276,7 @@ async function readBodyStream(
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("AI 接口返回错误")) throw e;
     }
-  }
-
-  let nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined;
-  if (direct.length) {
-    nativeToolCalls = direct.map((t) => ({ name: t.name, arguments: parseToolArgs(t.arguments) }));
-  } else {
-    const frags = Object.values(tcByIdx)
-      .filter((t) => t.name)
-      .map((t) => ({ name: t.name, arguments: parseToolArgs(t.args) }));
-    if (frags.length) nativeToolCalls = frags;
+    throw new Error(`模型未返回内容。响应片段：${body.slice(0, 400)}`);
   }
   return { content, nativeToolCalls, thinking };
 }
@@ -298,8 +315,7 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
       } catch (e) {
         throw new Error(describeFetchError(e, baseUrl));
       }
-      if (!resp.ok) throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);
-      if (streaming) {
+      if (!resp.ok) throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);      if (streaming) {
         const { content, nativeToolCalls, thinking } = await readBodyStream(resp, ollamaLineChunk, opts.onDelta);
         return { content, nativeToolCalls, thinking };
       }
@@ -349,8 +365,10 @@ export function createOpenAICompatTransport(
       if (!resp.ok) {
         let detail = "";
         try {
-          const j = await resp.json();
-          detail = j?.error?.message ? `：${j.error.message}` : "";
+          const text = await resp.text();
+          if (text) console.warn("[ShuyoNote] AI 请求失败响应体：", text.slice(0, 1200));
+          const j = JSON.parse(text);
+          detail = j?.error?.message ? `：${j.error.message}` : text ? `：${text.slice(0, 200)}` : "";
         } catch {
           /* ignore body parse */
         }
