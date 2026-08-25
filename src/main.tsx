@@ -32,7 +32,27 @@ window.addEventListener("unhandledrejection", (e) => {
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   const host = window.location.hostname;
   const isLocalhost = host === "localhost" || host === "127.0.0.1";
-  if (!isLocalhost) {
+  if (isLocalhost) {
+    // A previous build may have registered a SW here; it still controls this
+    // page and serves a stale cached shell + old hashed assets. Unregister it,
+    // clear the caches, and reload once so the user lands on the fresh bundle.
+    window.addEventListener("load", () => {
+      (async () => {
+        const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
+        const hadSw = regs.length > 0 || !!navigator.serviceWorker.controller;
+        await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
+        if (window.caches?.keys) {
+          const keys = await window.caches.keys().catch(() => []);
+          await Promise.all(keys.map((k) => window.caches.delete(k).catch(() => false)));
+        }
+        if (hadSw && !window.location.search.includes("swreload")) {
+          const u = new URL(window.location.href);
+          u.searchParams.set("swreload", "1");
+          window.location.replace(u.toString());
+        }
+      })();
+    });
+  } else {
     window.addEventListener("load", () => {
       navigator.serviceWorker
         .register("/sw.js")

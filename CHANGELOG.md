@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.143] - 2026-08-24
+
+### 修复
+
+- **localhost 上旧版 SW 残留导致仍显示旧版本**：仅「不再注册 SW」无法移除浏览器**已注册**的旧 SW——它仍控制页面并继续提供缓存的旧壳（如 v1.59.140）。`main.tsx` 现改为：localhost 下于加载时**主动 `unregister()` 旧 SW + 清空该源缓存**，并**自动 reload 一次**（带 `?swreload=1`，仅触发一次、不会循环），让用户不手动硬刷新也会落到最新构建；非 localhost 生产域名才注册 SW（离线 PWA）。无头浏览器实测：注册一个 SW 后刷新 → 被自动卸载（`sw=none`）、URL 带 `?swreload=1`、`bootstrap v1.59.142`、`ERRORS=[]`、无循环。
+
+---
+
 ## [1.59.142] - 2026-08-24
 
 ### 修复
