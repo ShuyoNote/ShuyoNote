@@ -71,7 +71,7 @@ await esbuild.build({
       'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
-      'export { findUnlinkedMentions } from "./src/lib/mention";\n' +
+      'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
@@ -895,6 +895,9 @@ assert("workspace name persists across instances", wsAgain !== "");
   // M20.1 substituteTemplateVars fills date/title/selected.
   const tv = aiMod.substituteTemplateVars("日期：{{date}}\n标题：{{title}}·{{selected}}", { date: "2026-08-24", title: "每日小记", selected: "备注" });
   assert("substituteTemplateVars fills date/title/selected", tv === "日期：2026-08-24\n标题：每日小记·备注", tv);
+  // M19.3 suggestPageLinks ranks match/relevance (prefix > substring).
+  const sug = aiMod.suggestPageLinks("会议", [{ id: "1", title: "会议纪要", updated_at: 10 }, { id: "2", title: "项目会议", updated_at: 20 }, { id: "3", title: "周报", updated_at: 99 }]);
+  assert("suggestPageLinks ranks matches", sug[0] === "会议纪要" && sug.includes("项目会议") && !sug.includes("周报"), JSON.stringify(sug));
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

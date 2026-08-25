@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.116] - 2026-08-24
+
+### 新增
+
+- **链接建议增强（M19.3）**：输入 `[[` 弹出按匹配度 + 最近编辑排序的页面候选下拉（`PageLinkSuggestPlugin`），Enter/方向键/点击选择并插入 `[[标题]]`；新增纯函数 `suggestPageLinks`。`scripts/smoke-web.mjs` 203→**204 全绿**。
+
+---
+
 ## [1.59.115] - 2026-08-24
 
 ### 新增

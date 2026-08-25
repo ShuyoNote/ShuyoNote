@@ -3403,6 +3403,37 @@ select.prop-value {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* M19.3 [[ link suggestions */
+.page-link-suggest {
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 180px;
+  max-width: 320px;
+}
+.page-link-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 14px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-family: inherit;
+}
+.page-link-suggest-item:hover,
+.page-link-suggest-item.active {
+  background: var(--block-hover, #f2f2f2);
+  color: var(--accent);
+}
+
 .backlinks-list {
   display: flex;
   flex-wrap: wrap;
