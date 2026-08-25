@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
+import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
 import { AttachmentPanel } from "./components/AttachmentPanel";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DatabaseView } from "./components/DatabaseView";
@@ -228,6 +229,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
           {current && !hasBlockContent(current.content_json) && <NewPageGuide />}
         </div>
         <BacklinksPanel pageId={pageId} />
+        <UnlinkedMentionsPanel />
         <AttachmentPanel pageId={pageId} />
       </div>
       {/* Tag picker modal, opened by the page-actions "添加标签" row. */}

@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.113] - 2026-08-24
+
+### 新增
+
+- **未链接提及（M19.1）**：页面底部（反链区）新增「未链接提及」——扫描当前页正文里以纯文本出现、未打 `[[ ]]` 的其它页面标题，显示「改为链接」按钮，点击即把该处文字包成 `[[标题]]`（复用现有双链解析，形成页面反链）。新增 `src/lib/mention.ts`（纯函数）、`src/components/UnlinkedMentionsPanel.tsx`、相关样式；`scripts/smoke-web.mjs` 198→**200 全绿**（新增两条断言）。
+
+---
+
 ## [1.59.112] - 2026-08-24
 
 ### 新增

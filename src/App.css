@@ -3352,6 +3352,57 @@ select.prop-value {
   margin-bottom: 8px;
 }
 
+.unlinked-mentions {
+  margin: 18px auto;
+  padding: 0 var(--doc-pad);
+  max-width: var(--doc-width);
+  width: 100%;
+}
+.unlinked-mentions-summary {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.unlinked-mentions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.unlinked-mention {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.unlinked-mention-title {
+  font-weight: 600;
+}
+.unlinked-mention-desc {
+  color: var(--text-dim);
+  font-size: 12px;
+  flex: 1;
+}
+.unlinked-mention-link {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.unlinked-mention-link:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 .backlinks-list {
   display: flex;
   flex-wrap: wrap;

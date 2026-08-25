@@ -71,6 +71,7 @@ await esbuild.build({
       'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
+      'export { findUnlinkedMentions } from "./src/lib/mention";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
       'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n' +
@@ -878,6 +879,10 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("contentTextOf extracts text", aiMod.contentTextOf(next) === "hi a b");
   // cleanDraftText strips markdown + sentence dividers for the inline writer.
   assert("cleanDraftText strips markdown + dividers", aiMod.cleanDraftText("**《路灯下的伞》**\n---\n正文内容") === "《路灯下的伞》\n正文内容", aiMod.cleanDraftText("**《路灯下的伞》**\n---\n正文内容"));
+  // M19.1 findUnlinkedMentions: bare titles are found, already-[[ ]] linked ones skipped.
+  const um = aiMod.findUnlinkedMentions("会议纪要已发，稍后同步。详见[[项目文档]]。", ["会议纪要", "项目文档", "周报"], "当前页");
+  assert("findUnlinkedMentions finds bare title", um.some((m) => m.title === "会议纪要"), JSON.stringify(um));
+  assert("findUnlinkedMentions skips already-linked title", !um.some((m) => m.title === "项目文档"), JSON.stringify(um));
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [
