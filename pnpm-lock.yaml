@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@excalidraw/excalidraw':
+        specifier: 0.17.1
+        version: 0.17.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@lexical/code':
         specifier: ^0.49.0
         version: 0.49.0(typescript@7.0.2)
@@ -254,6 +257,12 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@excalidraw/excalidraw@0.17.1':
+    resolution: {integrity: sha512-W35xl8+bmhBqJ4U/6qepKdJJSIYnbwCxJOZbFrBKGJ85HmBrsjszSTJ1YFdKM2Ba5BLdMmpgu8gMC1TnvRzaoA==}
+    peerDependencies:
+      react: ^17.0.2 || ^18.2.0
+      react-dom: ^17.0.2 || ^18.2.0
 
   '@floating-ui/core@1.8.0':
     resolution: {integrity: sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ==}
@@ -1530,6 +1539,11 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.2':
     optional: true
+
+  '@excalidraw/excalidraw@0.17.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
 
   '@floating-ui/core@1.8.0':
     dependencies:

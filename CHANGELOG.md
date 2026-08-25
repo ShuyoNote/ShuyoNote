@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.128] - 2026-08-24
+
+### 重构
+
+- **绘图块改用 Excalidraw（React 19 兼容版 0.17.1）**：找到了 React 19 可用版本——**Excalidraw 0.18.1** 触发 `Maximum update depth` 无限循环；**0.17.1**（`patch` 稳定版）在 React 19 下正常渲染，已用无头浏览器验证（挂载/工具栏/保存→块内 PNG 预览，全程无报错）。`DrawingEditorModal` 改为内嵌 Excalidraw，绘制内容以 **`.excalidraw` JSON**（`serializeAsJSON`）+ **PNG 预览**（`exportToBlob`）落内容寻址附件；文字元素抽取进 `content_text`（`init` `restore` 载入旧场景可再编辑）。移除自研 `DrawCanvas` 与 `scene.ts`（其高级能力由 Excalidraw 原生文字/形状/图片/导出等替代）。`scripts/smoke-web.mjs` 227→**221 全绿**。
+
+---
+
 ## [1.59.127] - 2026-08-24
 
 ### 新增

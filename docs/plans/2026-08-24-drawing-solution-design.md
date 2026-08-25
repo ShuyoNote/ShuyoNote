@@ -1,8 +1,8 @@
 # 「绘图方案」设计（Excalidraw + mermaid + AI 文生图）
 
 > 目标版本：v1.60.x（提议）。关联：[路线图](../roadmap.md)、[AI 薄 Agent 方案](./2026-08-24-thin-agent-interface-plan.md)、[本地优先方案](./2026-08-15-local-first-note-app-plan.md)。
-> 状态：**已实现（部分修正）**。为 ShuyoNote 补齐「动手画」能力：自由手绘/涂鸦、结构化流程图/思维导图、以及 AI 生成图片，三块能力共用一套「内容寻址附件」底座。
-> ⚠️ **修正（v1.59.125）**：绘图块（原方案用 Excalidraw）因 Excalidraw 0.18 内置 Radix Portal 在 React 19 下触发 `Maximum update depth` 无限循环（已复现确认），**改为自研无依赖 HTML5 Canvas 绘图编辑器（`DrawCanvas`）**；mermaid 块与 AI 文生图仍按方案实现。
+> 状态：**已实现（最终版）**。为 ShuyoNote 补齐「动手画」能力：自由手绘/涂鸦、结构化流程图/思维导图、以及 AI 生成图片，三块能力共用一套「内容寻址附件」底座。
+> ⚠️ **最终修正（v1.59.128）**：绘图块改用 **Excalidraw 0.17.1**——Excalidraw **0.18.1** 内置 Radix Portal 在 React 19 下触发 `Maximum update depth` 无限循环（复现确认），而 **0.17.1**（`patch` 稳定版）在 React 19 正常。故废弃自研 `DrawCanvas`，绘图块内嵌 Excalidraw（手绘/文字/形状/图片/导出 JSON·SVG 原生能力）。mermaid 块（`/流程图`）与 AI 文生图（`/AI 绘图`）仍按方案实现。
 
 ## 1. 背景与目标
 
