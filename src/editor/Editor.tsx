@@ -126,12 +126,17 @@ const ALLOWED_NODE_TYPES = new Set<string>([
 ]);
 
 // A throwaway editor with the same node registry, used to PRE-PARSE a saved
-// content string. If any node is malformed (e.g. a missing `type`, which Lexical
-// reports as `parseEditorState: type "undefined"`), Lexical catches the error
-// internally and routes it to `editor._onError` — which by default is
-// `console.error` (spamming the console). We install a no-op so pre-parsing is
-// silent; we decide the outcome purely by whether the resulting state is empty.
-const probeEditor = createEditor({ nodes: EDITOR_NODES, onError: () => {} });
+// content string. If any node is malformed, Lexical catches the error internally
+// and routes it to `editor._onError` — by default `console.error` (which spams the
+// console). We install a handler that records the reason so we can surface WHY a
+// page fell back to empty, without flooding the console on every keystroke.
+let lastProbeError: unknown = null;
+const probeEditor = createEditor({
+  nodes: EDITOR_NODES,
+  onError: (e) => {
+    lastProbeError = e;
+  },
+});
 
 /** Rebuild the doc from only the top-level blocks that Lexical can parse. A block
  *  that fails (bad node in `children` or `$slots`) is dropped; good blocks are
@@ -198,13 +203,20 @@ function parseEditorState(contentJson: string): EditorState | null {
   const origError = console.error;
   console.error = () => {};
   try {
+    lastProbeError = null;
     const state = probeEditor.parseEditorState(contentJson ?? "");
     if (!state || state.isEmpty()) {
+      const wholeDocErr = lastProbeError;
       // Some node survived sanitization in a non-`children` spot (e.g. `$slots`);
       // rescue the good top-level blocks rather than showing a blank page.
       const salvaged = salvageByBlock(contentJson);
       if (!salvaged && contentJson) {
-        console.warn("[ShuyoNote] 页面逐块兜底也失败(确定为空白)。content_json:", contentJson.slice(0, 300));
+        console.warn(
+          "[ShuyoNote] 页面整页/逐块均失败(确定为空白)。parse error:",
+          String((wholeDocErr as Error)?.message ?? wholeDocErr),
+          "content_json:",
+          contentJson.slice(0, 300),
+        );
       }
       return salvaged;
     }

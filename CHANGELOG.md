@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.78] - 2026-08-24
+
+### 修复
+
+- **空白页定位到解析原因**：上次诊断确认该页 `content_json` 是「正常段落 + 文字」，但整页/逐块预解析都为空（此前错误被 `onError` 静默吞掉）。现将 Lexical 的预解析错误记录下来，并在「空白页」诊断里一并打印 `parse error: …`，用于精确判断是哪种 Lexical 解析异常导致回退为空。
+- `scripts/smoke-web.mjs` 保持 **195 全绿**；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.77] - 2026-08-24
 
 ### 修复
