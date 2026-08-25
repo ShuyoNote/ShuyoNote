@@ -125,11 +125,37 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     liveRef.current = { elements, appState, files };
   }, []);
 
-  // Stable ref-backed callback so the memoized Excalidraw doesn't see a new
-  // function identity on every parent render.
-  const setApi = useCallback((a: any) => {
-    apiRef.current = a;
+  // Fit & center the whole drawing content in the embed (auto zoom-to-fit) so the
+  // drawing isn't stuck at the default canvas zoom. No-op for an empty scene.
+  const fitContent = useCallback(() => {
+    const a = apiRef.current;
+    const scene = liveRef.current;
+    if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
+    try {
+      a.scrollToContent(scene.elements, { fitToContent: true, animate: false });
+    } catch {
+      /* best-effort */
+    }
   }, []);
+
+  // Stable ref-backed callback so the memoized Excalidraw doesn't see a new
+  // function identity on every parent render. Also triggers the initial fit once
+  // Excalidraw has mounted (and the scene is loaded).
+  const setApi = useCallback(
+    (a: any) => {
+      apiRef.current = a;
+      requestAnimationFrame(fitContent);
+    },
+    [fitContent],
+  );
+
+  // Re-fit & center when returning to read-only view (after editing), so the
+  // content stays neatly fitted. Not applied while editing (user controls zoom).
+  useEffect(() => {
+    if (editing) return;
+    const id = requestAnimationFrame(fitContent);
+    return () => cancelAnimationFrame(id);
+  }, [editing, fitContent]);
 
   const persistHeight = useCallback(
     (h: number) => {
