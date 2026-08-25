@@ -18,6 +18,7 @@ export function InlineAiDraftBar() {
   const open = useEditorStore((s) => s.aiBarOpen);
   const setOpen = useEditorStore((s) => s.setAiBarOpen);
   const pos = useEditorStore((s) => s.aiBarPos);
+  const setPos = useEditorStore((s) => s.setAiBarPos);
   const barRef = useRef<HTMLDivElement>(null);
   const [prompt, setPrompt] = useState("");
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -133,6 +134,25 @@ export function InlineAiDraftBar() {
     setError(null);
     setTemplatesOpen(false);
   };
+
+  // Keep the floating popup fully inside the viewport (no matter how tall the
+  // content grows), and auto-scroll to the newest text while streaming.
+  useEffect(() => {
+    if (!open || !pos || !barRef.current) return;
+    const el = barRef.current;
+    const h = el.offsetHeight || el.scrollHeight;
+    const w = el.offsetWidth || el.scrollWidth;
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    let top = pos.top;
+    let left = pos.left;
+    if (top + h > vh - 8) top = Math.max(8, vh - 8 - h);
+    if (top < 8) top = 8;
+    if (left + w > vw - 8) left = Math.max(8, vw - 8 - w);
+    if (left < 8) left = 8;
+    if (running) el.scrollTop = el.scrollHeight;
+    if (top !== pos.top || left !== pos.left) setPos({ top, left });
+  }, [open, pos, draft, thinking, error, running, setPos]);
 
   // Template dropdown opens by default whenever the bar appears.
   useEffect(() => {
