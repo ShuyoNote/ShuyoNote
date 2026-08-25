@@ -4788,6 +4788,7 @@ select.prop-value {
 
 /* Inline drawing (page-embedded Excalidraw) */
 .inline-drawing {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
@@ -4795,6 +4796,7 @@ select.prop-value {
   margin: 6px 0;
 }
 
+/* Control bar: floats over the canvas when not editing, shown on hover (Feishu-style). */
 .inline-drawing-bar {
   display: flex;
   align-items: center;
@@ -4803,6 +4805,22 @@ select.prop-value {
   border-bottom: 1px solid var(--border);
   background: var(--surface-light);
   flex-wrap: wrap;
+  position: relative;
+  z-index: 6;
+  transition: opacity 0.15s ease;
+}
+
+.inline-drawing:not(.editing) .inline-drawing-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-bottom: 1px solid transparent;
+}
+
+.inline-drawing:not(.editing):not(:hover) .inline-drawing-bar {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .inline-drawing-btn {
@@ -4825,6 +4843,42 @@ select.prop-value {
   position: relative;
   height: 420px;
   background: #fff;
+}
+
+/* Bottom-center drag handle to resize the embed height (Feishu-style). */
+.inline-drawing-resize {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 72px;
+  height: 14px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  z-index: 7;
+  transition: opacity 0.15s ease;
+}
+
+.inline-drawing-resize::after {
+  content: "";
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+
+.inline-drawing:hover .inline-drawing-resize::after,
+.inline-drawing.editing .inline-drawing-resize::after {
+  background: var(--accent);
+}
+
+.inline-drawing:not(.editing):not(:hover) .inline-drawing-resize {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .inline-drawing-loading {

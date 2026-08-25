@@ -15,6 +15,10 @@ interface SceneSnapshot {
   files: any;
 }
 
+const DEFAULT_HEIGHT = 420;
+const MIN_HEIGHT = 160;
+const MAX_HEIGHT = 4000;
+
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -33,6 +37,8 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const [editing, setEditing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [height, setHeight] = useState<number>(node.__height ?? DEFAULT_HEIGHT);
+  const heightRef = useRef<number>(height);
 
   const hash = node.__hash;
 
@@ -41,8 +47,13 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     let alive = true;
     setErr(null);
     setReady(false);
+    // Sync resize height to the node's persisted value.
+    const nextH = node.__height ?? DEFAULT_HEIGHT;
+    heightRef.current = nextH;
+    setHeight(nextH);
     const load = async () => {
-      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: true }, files: {} };
+      // Grid is off by default; a fresh inline drawing shows a clean canvas.
+      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false }, files: {} };
       if (hash) {
         try {
           const bytes = await blobStore.get(hash);
@@ -54,7 +65,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
               null,
               null,
             );
-            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: true }, files: restored.files };
+            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: false }, files: restored.files };
           }
         } catch (e) {
           if (alive) setErr(String(e));
@@ -70,11 +81,48 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
 
   const onChange = useCallback((elements: any, appState: any, files: any) => {
     liveRef.current = { elements, appState, files };
   }, []);
+
+  const persistHeight = useCallback(
+    (h: number) => {
+      const editor = useEditorStore.getState().editor;
+      if (editor) {
+        editor.update(() => {
+          const n = $getNodeByKey(node.getKey());
+          if (n && $isDrawingNode(n)) n.setDrawing({ height: h });
+        });
+      }
+    },
+    [node],
+  );
+
+  const onResizeDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = heightRef.current;
+      const onMove = (ev: PointerEvent) => {
+        const next = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, startH + (ev.clientY - startY)));
+        heightRef.current = next;
+        setHeight(next);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        persistHeight(heightRef.current);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [persistHeight],
+  );
 
   const save = useCallback(async () => {
     const scene = liveRef.current;
@@ -171,7 +219,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   }
 
   return (
-    <div className="inline-drawing" contentEditable={false}>
+    <div className={`inline-drawing${editing ? " editing" : ""}`} contentEditable={false}>
       <div className="inline-drawing-bar">
         <button className="inline-drawing-btn" onClick={() => setEditing((v) => !v)} title="编辑 / 只读">
           {editing ? "完成" : "编辑"}
@@ -187,7 +235,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
         <button className="inline-drawing-btn" onClick={fullscreen} title="全屏编辑">⛶</button>
         {err ? <span className="inline-drawing-err">{err}</span> : null}
       </div>
-      <div className="inline-drawing-canvas">
+      <div className="inline-drawing-canvas" style={{ height }}>
         <Excalidraw
           onChange={onChange}
           initialData={initialData}
@@ -197,6 +245,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
           langCode="zh-CN"
         />
       </div>
+      <div className="inline-drawing-resize" onPointerDown={onResizeDown} title="拖拽调整高度" />
     </div>
   );
 }

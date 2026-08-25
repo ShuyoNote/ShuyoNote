@@ -107,7 +107,7 @@ export default function DrawingEditorModal() {
     setReady(false);
     setInitialData(null);
     const load = async () => {
-      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: true }, files: {} };
+      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false }, files: {} };
       if (drawingEdit.hash) {
         try {
           const bytes = await blobStore.get(drawingEdit.hash);
@@ -119,7 +119,7 @@ export default function DrawingEditorModal() {
               null,
               null,
             );
-            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: true }, files: restored.files };
+            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: false }, files: restored.files };
           }
         } catch (e) {
           if (alive) setErr(`读取绘图失败：${e}`);

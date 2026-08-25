@@ -187,7 +187,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 
 ### M22 — 绘图方案（[设计](plans/2026-08-24-drawing-solution-design.md)）
 > 「动手画」能力：自由手绘/涂鸦、结构化流程图/思维导图、AI 生成图片。大字节统一走内容寻址附件（节点只存 `hash` 引用），双平台无需新增 Rust 命令。
-- **M22.1 绘图块** ✅（v1.59.138）：斜杠 `/绘图` 插入**页面内嵌 Excalidraw 画板**（飞书式，`InlineDrawing`：画布直接嵌在页面流 + 顶栏「编辑/下载/导出/复制/全屏」，点阵网格）；「编辑」就地编辑、「保存」落 `.excalidraw` JSON + PNG 内容寻址附件、文字进 `content_text`；内置 0.18.1（React 18 下调 React 19 兼容：0.17.1 读 `ReactCurrentOwner`、0.18.1 内置 Radix Portal 在 React 19 循环；0.18.1 本地字体无 CDN）。曾自研 `DrawCanvas` 为过渡，现被 Excalidraw 内嵌取代。
+- **M22.1 绘图块** ✅（v1.59.139）：斜杠 `/绘图` 插入**页面内嵌 Excalidraw 画板**（飞书式，`InlineDrawing`：画布直接嵌在页面流 + 顶部控制条「编辑/保存/下载/导出/复制/全屏」，**默认无网格**、**控制条平时隐藏仅悬停显现**、**底部拖拽手柄可缩放高度**）；「编辑」就地编辑、「保存」落 `.excalidraw` JSON + PNG 内容寻址附件、文字进 `content_text`；内置 0.18.1（React 18 下调 React 19 兼容：0.17.1 读 `ReactCurrentOwner`、0.18.1 内置 Radix Portal 在 React 19 循环；0.18.1 本地字体无 CDN）。曾自研 `DrawCanvas` 为过渡，现被 Excalidraw 内嵌取代。
 - **M22.2 mermaid 块** ✅（v1.59.123）：`/流程图/思维导图` 插入 mermaid 块（syntax 可选），离线渲染 SVG，解析失败内联报错 + 可编辑源文本；源文本进 `content_text`（可搜）；mermaid 按需懒加载。
 - **M22.3 AI 文生图** ✅（v1.59.124）：`/AI 绘图` 输入描述 → OpenAI 兼容文生图端点 → 图片落内容寻址附件 → 插入 `ImageNode`；provider 未启用/不支持/失败时 toast 降级。纯函数 `buildImageGenUrl`/`buildImageGenBody`/`parseImageGenResponse`/`b64ToBytes`/`bytesToDataUrl`。
 

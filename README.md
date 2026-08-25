@@ -10,11 +10,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.59.138-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.59.139-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
-  <img src="https://img.shields.io/badge/React-19-61dafb" alt="react">
+  <img src="https://img.shields.io/badge/React-18-61dafb" alt="react">
   <img src="https://img.shields.io/badge/Vite-8-646cff" alt="vite">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
