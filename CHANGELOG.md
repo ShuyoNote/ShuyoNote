@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.85] - 2026-08-24
+
+### 新增
+
+- **落地「嵌入式 vs 侧边栏 AI 助手」职责划分**：在 [docs/plans/2026-08-24-inline-ai-draft-plan.md](docs/plans/2026-08-24-inline-ai-draft-plan.md) 新增「职责划分」章节（职责矩阵 / 边界规则 / 快速判断），明确两者共用薄 Agent 核心、但内联＝就地写、侧边栏＝全局问/做；`docs/README.md` 方案索引同步更新。
+
+---
+
 ## [1.59.84] - 2026-08-24
 
 ### 新增
