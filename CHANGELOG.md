@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.68] - 2026-08-24
+
+### 修复
+
+- **AI 确认后无反应（追加到当前页）**：确认草稿后 `updateCurrent` 改了 `current.content_json`，但 Lexical 编辑器有自身状态、`initialConfig` 是空 deps 的 `useMemo`，不会重解析——当前页看不到追加内容。现给 notes store 加 `reloadTick`，编辑器 key 改为 `${pageId}:${reloadTick}`；AI 确认追加到当前页时 `bumpReload()`，强制编辑器重载并展示追加内容（正常手动编辑不会触发，不丢光标/撤销）。
+- `tsc`/`vite build`/`cargo check` 均过；`scripts/smoke-web.mjs` 185 全绿。
+
+---
+
 ## [1.59.67] - 2026-08-24
 
 ### 修复

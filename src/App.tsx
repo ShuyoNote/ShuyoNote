@@ -49,7 +49,7 @@ function hasBlockContent(contentJson: string): boolean {
 }
 
 function NoteEditor({ pageId }: { pageId: string }) {
-  const { current, updateCurrent, loadPages, error, searchQuery, pages } = useNotes();
+  const { current, updateCurrent, loadPages, error, searchQuery, pages, reloadTick } = useNotes();
   const [title, setTitle] = useState(current?.title ?? "");
   const [saved, setSaved] = useState(true);
   const debounceRef = useRef<number | null>(null);
@@ -216,7 +216,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <div className="editor-stage">
           <ErrorBoundary>
             <Editor
-              key={pageId}
+              key={`${pageId}:${reloadTick}`}
               pageId={pageId}
               contentJson={current?.content_json ?? ""}
               onSave={onEditorSave}

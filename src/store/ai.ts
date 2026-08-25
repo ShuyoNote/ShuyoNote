@@ -219,6 +219,10 @@ export const useAiStore = create<AiState>((set, get) => ({
       if (res.page) {
         if (res.page.id === notes.currentId) {
           notes.updateCurrent({ title: res.page.title, content_json: res.page.content_json, content_text: res.page.content_text });
+          // The live Lexical editor keeps its own state, so an externally-applied
+          // change (e.g. AI append) wouldn't show on the current page. Bumping the
+          // reload tick remounts the editor, re-parsing the updated content.
+          notes.bumpReload();
         } else {
           await notes.openPage(res.page.id);
         }

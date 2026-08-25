@@ -13,6 +13,8 @@ interface NoteState {
   error: string | null;
   /** Non-empty query highlights & scrolls to matches in the editor. */
   searchQuery: string;
+  /** Bumped on EXTERNAL (e.g. AI-confirmed) content changes so the editor reloads. */
+  reloadTick: number;
 
   loadPages: () => Promise<void>;
   openPage: (id: string) => Promise<void>;
@@ -23,6 +25,7 @@ interface NoteState {
   renamePage: (id: string, title: string) => Promise<void>;
   movePage: (id: string, parentId: string | null, sortOrder: number) => Promise<void>;
   updateCurrent: (patch: Partial<PageDetail>) => void;
+  bumpReload: () => void;
   setSearchQuery: (q: string) => void;
   clearSearchQuery: () => void;
 }
@@ -34,6 +37,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   loading: false,
   error: null,
   searchQuery: "",
+  reloadTick: 0,
 
   loadPages: async () => {
     set({ loading: true, error: null });
@@ -149,6 +153,8 @@ export const useNotes = create<NoteState>((set, get) => ({
     const { current } = get();
     if (current) set({ current: { ...current, ...patch } });
   },
+
+  bumpReload: () => set((s) => ({ reloadTick: s.reloadTick + 1 })),
 
   setSearchQuery: (q) => set({ searchQuery: q }),
   clearSearchQuery: () => set({ searchQuery: "" }),
