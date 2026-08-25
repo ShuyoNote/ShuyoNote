@@ -4,6 +4,7 @@ import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
 import { runInlineDraft, INLINE_TEMPLATES, type InlineTemplate } from "../lib/ai/inlineDraft";
+import { cleanDraftText } from "../lib/ai/lexical";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { SparkleIcon, SendIcon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -101,12 +102,15 @@ export function InlineAiDraftBar() {
 
   const commit = () => {
     if (!draft.trim()) return;
+    // Strip AI narration/markdown residue so only the clean content lands in the page.
+    const content = cleanDraftText(draft);
+    if (!content.trim()) { reset(); return; }
     const editor = useEditorStore.getState().editor;
     if (editor) {
       // Insert as real content (untagged → Editor.onChange persists it), then close.
       editor.update(() => {
         const root = $getRoot();
-        const lines = (draft ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+        const lines = content.split("\n").map((s) => s.trim()).filter(Boolean);
         for (const line of lines) {
           const p = $createParagraphNode();
           p.append($createTextNode(line));
@@ -114,9 +118,8 @@ export function InlineAiDraftBar() {
         }
       });
     } else {
-      // No live editor (shouldn't happen) — fall back to a direct save via the AI draft path.
       // eslint-disable-next-line no-console
-      console.warn("[ShuyoNote] inline commit without a live editor; draft dropped.", draft);
+      console.warn("[ShuyoNote] inline commit without a live editor; draft dropped.", content);
     }
     reset();
   };

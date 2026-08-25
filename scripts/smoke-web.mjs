@@ -70,7 +70,7 @@ await esbuild.build({
       'export { extractToolCalls } from "./src/lib/ai/llm";\n' +
       'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
-      'export { appendBlocksToJson, contentTextOf } from "./src/lib/ai/lexical";\n' +
+      'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
       'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n' +
@@ -876,6 +876,8 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("appendBlocksToJson assigns blockId", last2.blockId === "blk-2" && last2.children[0].text === "b");
   // contentTextOf flattens text.
   assert("contentTextOf extracts text", aiMod.contentTextOf(next) === "hi a b");
+  // cleanDraftText strips markdown + sentence dividers for the inline writer.
+  assert("cleanDraftText strips markdown + dividers", aiMod.cleanDraftText("**《路灯下的伞》**\n---\n正文内容") === "《路灯下的伞》\n正文内容", aiMod.cleanDraftText("**《路灯下的伞》**\n---\n正文内容"));
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

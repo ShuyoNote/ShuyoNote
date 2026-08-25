@@ -32,7 +32,19 @@ export interface InlineDraftOpts {
   onThinking?: (text: string) => void;
 }
 
-/** Run the inline drafting loop against the configured provider. */
+// For the inline writer we want ONLY the content (a story/outline/summary…), not
+// the conversational framing the general assistant tends to add ("草稿已生成…",
+// "确认无误的话…", markdown markers). A content-only system prompt keeps those out.
+const CONTENT_SYSTEM_PROMPT = [
+  "你是 ShuyoNote 的内联写作助手，会直接把内容写到用户当前页面。",
+  "只输出「内容本身」，严格遵守：",
+  "1. 直接给出要写的内容（故事/大纲/摘要/帖子/邮件等），不要任何开场白（如“好的”“草稿已生成”“以下是我准备的”）。",
+  "2. 不要任何结尾说明（如“确认无误的话…”“需要修改可以告诉我”“我已…”，以及任何询问或等待确认的话）。",
+  "3. 不要 markdown 标记（**、*、`、---、```、> 等），纯文本即可；留出自然分段空行。",
+  "4. 不要声称“已保存/已创建/已追加”——你只是给出内容。",
+].join("\n");
+
+/** Run the inline drafting loop against the configured provider (content-only). */
 export async function runInlineDraft(
   config: ProviderConfig,
   prompt: string,
@@ -43,7 +55,12 @@ export async function runInlineDraft(
   const transport = IS_WEB
     ? createProviderTransport(config)
     : createBackendStreamingTransport(config);
-  return runAiLoop(prompt, pages, ctx, { transport, onDelta: opts.onDelta, onThinking: opts.onThinking });
+  return runAiLoop(prompt, pages, ctx, {
+    transport,
+    onDelta: opts.onDelta,
+    onThinking: opts.onThinking,
+    systemPrompt: CONTENT_SYSTEM_PROMPT,
+  });
 }
 
 function makeId(): string {

@@ -70,3 +70,18 @@ export function contentTextOf(contentJson: string): string {
   (doc.root.children as any[]).forEach(walk);
   return out.join(" ");
 }
+
+/** Strip markdown markers and pure-separator/HR lines so AI-drafted content can be
+ *  committed as clean plain text (a residue-safe belt for the inline writer). */
+export function cleanDraftText(text: string): string {
+  return String(text ?? "")
+    .split("\n")
+    .map((line) => {
+      const t = line.trim();
+      // separator / horizontal-rule only lines
+      if (/^[-*_=]{3,}$/.test(t)) return "";
+      return t.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/`([^`]+)`/g, "$1");
+    })
+    .filter(Boolean)
+    .join("\n");
+}

@@ -20,6 +20,8 @@ export interface HostOptions {
   onDelta?: (text: string) => void;
   /** Forwarded to the transport: stream model thinking/reasoning deltas as they arrive. */
   onThinking?: (text: string) => void;
+  /** Override the system prompt (e.g. content-only drafting for the inline writer). */
+  systemPrompt?: string;
 }
 
 const DEFAULT_MAX_STEPS = 6;
@@ -85,7 +87,7 @@ export async function runAiLoop(
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
   const maxDrafts = opts.maxDrafts ?? DEFAULT_MAX_DRAFTS;
 
-  const messages: AiMessage[] = [{ role: "system", content: buildSystemPrompt({ pages }) }];
+  const messages: AiMessage[] = [{ role: "system", content: opts.systemPrompt ?? buildSystemPrompt({ pages }) }];
   // Seed prior conversation turns so follow-ups ("再详细点") have context.
   for (const h of opts.history ?? []) {
     messages.push({ role: h.role, content: h.content });
