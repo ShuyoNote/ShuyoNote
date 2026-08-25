@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.99] - 2026-08-24
+
+### 修改
+
+- **内联 AI 弹层改用小圆角**：`.ai-inline-pop` 及其内部（起草条/模板下拉/草案卡）的 `border-radius` 由 `--radius` 统一改为 `--radius-sm`（6px）。
+
+---
+
 ## [1.59.98] - 2026-08-24
 
 ### 修复
