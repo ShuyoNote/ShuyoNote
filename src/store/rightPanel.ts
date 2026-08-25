@@ -12,7 +12,7 @@ interface RightPanelState {
 
 export const useRightPanel = create<RightPanelState>((set) => ({
   ai: false,
-  toc: true,
+  toc: false,
   openAi: (v) => set((s) => ({ ai: v, toc: v ? false : s.toc })),
   openToc: (v) => set((s) => ({ toc: v, ai: v ? false : s.ai })),
 }));
