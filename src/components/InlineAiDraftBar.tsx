@@ -3,7 +3,7 @@ import { $createParagraphNode, $createTextNode, $getRoot } from "lexical";
 import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
-import { runInlineDraft, INLINE_TEMPLATES, type InlineTemplate } from "../lib/ai/inlineDraft";
+import { runInlineDraft, INLINE_EDIT_TEMPLATES, INLINE_CREATE_TEMPLATES, type InlineTemplate } from "../lib/ai/inlineDraft";
 import { cleanDraftText } from "../lib/ai/lexical";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { SparkleIcon, SendIcon } from "./icons";
@@ -15,6 +15,20 @@ import { Markdown } from "./Markdown";
 export function InlineAiDraftBar() {
   const config = useAiStore((s) => s.config);
   const notes = useNotes();
+  // Context-aware dropdown: a page WITH content gets edit actions, an EMPTY page
+  // gets content-generation prompts.
+  const hasContent = (() => {
+    if ((notes.current?.content_text ?? "").trim()) return true;
+    try {
+      const j = JSON.parse(notes.current?.content_json ?? "");
+      const children = j?.root?.children;
+      if (Array.isArray(children) && children.length > 0) return true;
+    } catch {
+      /* ignore */
+    }
+    return false;
+  })();
+  const templates = hasContent ? INLINE_EDIT_TEMPLATES : INLINE_CREATE_TEMPLATES;
   const open = useEditorStore((s) => s.aiBarOpen);
   const setOpen = useEditorStore((s) => s.setAiBarOpen);
   const pos = useEditorStore((s) => s.aiBarPos);
@@ -238,8 +252,8 @@ export function InlineAiDraftBar() {
       {templatesOpen && (
         <div className="ai-inline-templates">
           <div className="ai-inline-templates-head">用 AI 写作</div>
-          {INLINE_TEMPLATES.map((t, i) => {
-            const prev = INLINE_TEMPLATES[i - 1];
+          {templates.map((t, i) => {
+            const prev = templates[i - 1];
             const isNewGroup = !!t.group && (!prev || prev.group !== t.group);
             return (
               <div key={t.key}>

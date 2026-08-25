@@ -20,12 +20,22 @@ export interface InlineTemplate {
   group: string;
 }
 
-export const INLINE_TEMPLATES: InlineTemplate[] = [
+// Context-aware: pages WITH content → edit/continue actions.
+export const INLINE_EDIT_TEMPLATES: InlineTemplate[] = [
   { key: "continue", label: "续写", promptTemplate: "继续接着当前内容往下写。", group: "" },
   { key: "summary", label: "总结", promptTemplate: "总结当前页面的核心内容。", group: "根据页面内容生成" },
   { key: "translate", label: "翻译", promptTemplate: "把当前页面内容翻译成中文/英文（按需求）。", group: "根据页面内容生成" },
   { key: "polish", label: "文本润色", promptTemplate: "润色当前页面文字，使其更通顺自然。", group: "编辑页面内容" },
   { key: "correct", label: "智能纠错", promptTemplate: "校对并纠正当前页面的错别字与语法问题。", group: "编辑页面内容" },
+];
+
+// Context-aware: EMPTY pages → generate fresh content.
+export const INLINE_CREATE_TEMPLATES: InlineTemplate[] = [
+  { key: "outline", label: "文章大纲", promptTemplate: "为当前主题写一篇文章大纲。", group: "" },
+  { key: "story", label: "短篇故事", promptTemplate: "帮我写一则短篇故事。", group: "内容创作" },
+  { key: "article", label: "文章", promptTemplate: "帮我写一篇文章。", group: "内容创作" },
+  { key: "meeting", label: "会议纪要", promptTemplate: "帮我写一份会议纪要。", group: "内容创作" },
+  { key: "todo", label: "待办清单", promptTemplate: "帮我列一份待办清单。", group: "内容创作" },
 ];
 
 export interface InlineDraftOpts {
