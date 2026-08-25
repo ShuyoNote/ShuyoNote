@@ -124,6 +124,16 @@ registerPlugin({
       closeOnRun: true,
       run: () => exportWorkspaceToMarkdown(),
     },
+    {
+      id: "export.workspace-wiki",
+      title: "导出当前空间为 wiki",
+      description: "把当前空间导出为可独立浏览的静态 HTML wiki（双链/反链/索引页）",
+      closeOnRun: true,
+      run: async () => {
+        const result = await api.exportWiki("wiki-export.zip");
+        return `已导出 ${result.pages} 个页面（${result.files} 个文件）为 wiki：${result.path}`;
+      },
+    },
   ],
 });
 

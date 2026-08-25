@@ -73,6 +73,7 @@ await esbuild.build({
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
+      'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
@@ -911,6 +912,23 @@ assert("workspace name persists across instances", wsAgain !== "");
     { id: "c", title: "周报", content_text: "项目进展" },
   ]);
   assert("semanticRank drops unrelated docs", ranks.length === 1 && ranks[0].id === "a", JSON.stringify(ranks));
+  // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.
+  const wiki = aiMod.buildWikiExport(
+    [
+      { id: "p1", title: "首页", content_text: "欢迎来到 [[项目]] 和 [[周报]]", parent_id: null, sort_order: 0 },
+      { id: "p2", title: "项目", content_text: "# 项目\n看 [[首页]] 的链接过来", parent_id: null, sort_order: 1 },
+      { id: "p3", title: "周报", content_text: "本周进展", parent_id: "p1", sort_order: 0 },
+    ],
+    { space: "测试空间" },
+  );
+  const names = wiki.files.map((f) => f.name);
+  assert("wiki export emits index.html + a page per title", names.includes("index.html") && names.includes("项目.html") && names.includes("首页.html") && names.includes("周报.html"), JSON.stringify(names));
+  const home = wiki.files.find((f) => f.name === "首页.html")?.content || "";
+  const proj = wiki.files.find((f) => f.name === "项目.html")?.content || "";
+  assert("wiki links [[项目]] to its page", home.includes('href="项目.html"') && home.includes("项目"), home);
+  assert("wiki backlinks section lists referrers", proj.includes("反向链接") && proj.includes("首页"), proj);
+  assert("wiki index lists pages", (wiki.files.find((f) => f.name === "index.html")?.content || "").includes("测试空间"), "index missing space name");
+  assert("wiki slug keeps CJK + dedupes", aiMod.wikiSlug("会议", new Set()) === "会议.html", aiMod.wikiSlug("会议", new Set()));
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

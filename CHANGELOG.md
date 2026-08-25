@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.120] - 2026-08-24
+
+### 新增
+
+- **静态 wiki 导出（M21.1）**：命令面板新增「导出当前空间为 wiki」，把当前空间导出为可独立浏览的静态 HTML wiki——每页一个 `.html`（`[[标题]]` 双链渲染为可点击链接 + 反向链接区 + 标签），并生成含页面树的 `index.html`，整体打包为 `wiki-export.zip`，可投喂任意静态托管（GitHub Pages / file://）。纯函数 `buildWikiExport`/`wikiSlug`/`renderWikiBody`。`scripts/smoke-web.mjs` 207→**212 全绿**。
+
+---
+
 ## [1.59.119] - 2026-08-24
 
 ### 新增

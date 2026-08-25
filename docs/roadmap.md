@@ -182,7 +182,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 
 ### M21 — 静态 wiki 导出 + 关系图探索（P2，[方案](plans/2026-08-24-static-wiki-export-graph-plan.md)）
 > 「本地优先 + wiki」的终局：把你的空间导成可独立浏览的 wiki 网站。
-- **M21.1 静态 wiki 导出** 🗓：把当前空间导出为 HTML wiki（页面 + `[[ ]]` 双链跳转 + 反链 + 标签），可投喂到任意托管。
+- **M21.1 静态 wiki 导出** ✅（v1.59.120）：命令面板新增「导出当前空间为 wiki」，把当前空间导出为可独立浏览的静态 HTML wiki——每页一个 `.html`（`[[标题]]` 双链+反链+标签）+ 含页面树的 `index.html`，打包为 `wiki-export.zip`，适配任意静态托管。纯函数 `buildWikiExport`/`wikiSlug`/`renderWikiBody`。Tauri 后端镜像命令为后续增强。
 - **M21.2 关系图探索增强** 🗓：关系图按标签/属性着色分组、关键词高亮、聚类；点击即跳。
 
 ## 4. 竞品差距跟踪

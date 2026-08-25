@@ -188,6 +188,8 @@ export const api = {
   importBackup: (srcPath: string) => invoke<void>("import_backup", { srcPath }),
   exportWorkspace: (destPath: string) =>
     invoke<{ path: string; size: number; pages: number; attachments: number }>("export_workspace", { destPath }),
+  exportWiki: (destPath: string) =>
+    invoke<{ path: string; size: number; pages: number; files: number }>("export_wiki", { destPath }),
   importWorkspace: (srcPath: string, name?: string | null) =>
     invoke<WorkspaceMeta>("import_workspace", { srcPath, name }),
   writeTextFile: (path: string, content: string) =>

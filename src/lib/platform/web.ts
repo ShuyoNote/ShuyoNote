@@ -1,4 +1,6 @@
 import { semanticScore } from "../searchSemantic";
+import { buildWikiExport } from "../wikiExport";
+import type { WikiPageInput } from "../wikiExport";
 
 // Browser (non-Tauri) implementation of the Platform drivers.
 //
@@ -1708,6 +1710,27 @@ function makeInvoke(store: SqliteStore) {
       // Register so a same-session re-import (and the Node smoke test) can read it.
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
       return { path: name, size: zip.length, pages, attachments: candidates.length } as T;
+    }
+    if (cmd === "export_wiki") {
+      // Export the current workspace as a self-contained static HTML wiki: one
+      // `<slug>.html` per page (with `[[…]]` double-links + backlinks) plus an
+      // `index.html` page tree, zipped for download / static hosting.
+      const ws = getWs();
+      if (!ws) throw new Error("工作空间不存在");
+      const pages = store.query<WikiPageInput>(
+        "SELECT id, title, content_text, kind, parent_id, sort_order, updated_at FROM pages WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY parent_id, sort_order, title",
+        [ws.id],
+      ) as any[];
+      const wiki = buildWikiExport(pages, { space: ws.name ?? "" });
+      const fileList = wiki.files.map((f) => ({
+        name: f.name,
+        bytes: new TextEncoder().encode(f.content),
+      }));
+      const zip = await streamZip(fileList);
+      const name = String(a.destPath ?? "wiki-export.zip").split(/[\\/]/).pop() || "wiki-export.zip";
+      if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
+      fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
+      return { path: name, size: zip.length, pages: wiki.pageCount, files: wiki.files.length } as T;
     }
     if (cmd === "import_workspace") {
       // Import a workspace package (same format as export_workspace): a zip with
