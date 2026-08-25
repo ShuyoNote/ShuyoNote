@@ -43,6 +43,7 @@ export function InlineAiDraftBar() {
   const pos = useEditorStore((s) => s.aiBarPos);
   const setPos = useEditorStore((s) => s.setAiBarPos);
   const barRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [prompt, setPrompt] = useState("");
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -226,8 +227,15 @@ export function InlineAiDraftBar() {
   const runningDraft = running;
   const pickTemplate = (t: InlineTemplate) => {
     setTemplatesOpen(false);
-    // Fill the input with a suitable prompt; the user then sends manually.
     setPrompt(t.promptTemplate);
+    // Put the caret right after the "…" so the user can type the theme/requirements.
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      const len = t.promptTemplate.length;
+      el.setSelectionRange(len, len);
+    });
   };
 
   if (!open) return null;
@@ -241,6 +249,7 @@ export function InlineAiDraftBar() {
       <div className="ai-inline-bar">
         <span className="ai-inline-bar-icon"><SparkleIcon width={16} height={16} /></span>
         <input
+          ref={inputRef}
           className="ai-inline-input"
           placeholder="告诉 AI 你想写什么…"
           value={prompt}
