@@ -2,6 +2,15 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.80] - 2026-08-24
+
+### 修复
+
+- **空白页定位到具体坏节点**：上次确认解析错误是 `type "undefined"`，但可见片段是合法段落——坏节点在被截断的更后面。现增加「扫描坏节点」诊断：整页/逐块均失败时，会在 Console 打印 `| offending node: …`（该节点 JSON 片段，含缺失/未注册 `type`），并放宽 content_json 片段到 600 字，便于一眼锁定罪魁节点。
+- `scripts/smoke-web.mjs` 保持 **195 全绿**；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.79] - 2026-08-24
 
 ### 修改

@@ -179,6 +179,42 @@ function salvageByBlock(contentJson: string | null | undefined): EditorState | n
   }
 }
 
+/** Walk a content doc (children + $slots) and return the FIRST node that would
+ *  make Lexical throw — a missing/blank/`"undefined"`/unregistered `type`. Returns
+ *  a short JSON snippet of that node so the exact offender is identifiable. */
+function scanBadNode(contentJson: string | null | undefined, allowed: Set<string>): string | null {
+  if (!contentJson) return null;
+  try {
+    const parsed = JSON.parse(contentJson);
+    const root = parsed?.root;
+    if (!root || typeof root !== "object") return null;
+    const bad = (n: unknown): string | null => {
+      if (!n || typeof n !== "object" || Array.isArray(n)) return null;
+      const node = n as Record<string, unknown>;
+      const t = node.type;
+      if (typeof t !== "string" || !t || t === "undefined" || t === "null" || !allowed.has(t)) {
+        return JSON.stringify(node).slice(0, 200);
+      }
+      if (Array.isArray(node.children)) {
+        for (const c of node.children) {
+          const r = bad(c);
+          if (r) return r;
+        }
+      }
+      if (node.$slots && typeof node.$slots === "object") {
+        for (const k of Object.keys(node.$slots)) {
+          const r = bad((node.$slots as Record<string, unknown>)[k]);
+          if (r) return r;
+        }
+      }
+      return null;
+    };
+    return bad(root);
+  } catch {
+    return null;
+  }
+}
+
 /** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
 function parseEditorState(contentJson: string): EditorState | null {
   if (contentJson) {
@@ -214,8 +250,10 @@ function parseEditorState(contentJson: string): EditorState | null {
         console.warn(
           "[ShuyoNote] 页面整页/逐块均失败(确定为空白)。parse error:",
           String((wholeDocErr as Error)?.message ?? wholeDocErr),
-          "content_json:",
-          contentJson.slice(0, 300),
+          "| offending node:",
+          scanBadNode(contentJson, ALLOWED_NODE_TYPES) ?? "(none found)",
+          "| content_json:",
+          contentJson.slice(0, 600),
         );
       }
       return salvaged;
