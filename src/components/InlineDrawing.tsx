@@ -72,6 +72,8 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const [height, setHeight] = useState<number>(node.__height ?? DEFAULT_HEIGHT);
   const heightRef = useRef<number>(height);
   const isDark = useResolvedTheme() === "dark";
+  const savedViewRef = useRef(false);
+  const viewTimerRef = useRef<number | null>(null);
 
   const hash = node.__hash;
 
@@ -84,9 +86,21 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     const nextH = node.__height ?? DEFAULT_HEIGHT;
     heightRef.current = nextH;
     setHeight(nextH);
+    // Remember whether a viewport (zoom/scroll) was previously saved so we restore
+    // it instead of re-fitting to content.
+    const hasSavedView = node.__zoom != null || node.__scrollX != null || node.__scrollY != null;
+    savedViewRef.current = hasSavedView;
+    const savedView =
+      node.__zoom != null || node.__scrollX != null || node.__scrollY != null
+        ? {
+            ...(node.__zoom != null ? { zoom: node.__zoom } : {}),
+            ...(node.__scrollX != null ? { scrollX: node.__scrollX } : {}),
+            ...(node.__scrollY != null ? { scrollY: node.__scrollY } : {}),
+          }
+        : {};
     const load = async () => {
       // Grid is off by default; a fresh inline drawing shows a clean canvas.
-      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false }, files: {} };
+      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false, ...savedView }, files: {} };
       if (hash) {
         try {
           const bytes = await blobStore.get(hash);
@@ -98,7 +112,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
               null,
               null,
             );
-            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: false }, files: restored.files };
+            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: false, ...savedView }, files: restored.files };
           }
         } catch (e) {
           if (alive) setErr(String(e));
@@ -117,13 +131,82 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
 
-  const onChange = useCallback((elements: any, appState: any, files: any) => {
-    liveRef.current = { elements, appState, files };
+  // Persist the read-only viewport (zoom/scroll) onto the drawing node so the
+  // block reopens as the user left it (auto-save after pan/zoom).
+  const persistView = useCallback(
+    (appState: any) => {
+      const z = appState?.zoom;
+      const sx = appState?.scrollX;
+      const sy = appState?.scrollY;
+      if (typeof z !== "number" && typeof sx !== "number" && typeof sy !== "number") return;
+      const editor = useEditorStore.getState().editor;
+      if (!editor) return;
+      editor.update(() => {
+        const n = $getNodeByKey(node.getKey());
+        if (n && $isDrawingNode(n)) {
+          n.setDrawing({
+            zoom: typeof z === "number" ? z : null,
+            scrollX: typeof sx === "number" ? sx : null,
+            scrollY: typeof sy === "number" ? sy : null,
+          });
+        }
+      });
+    },
+    [node],
+  );
+
+  // Debounced persist of the viewport, so pan/zoom doesn't spam saves.
+  const scheduleViewSave = useCallback(
+    (appState: any) => {
+      if (viewTimerRef.current !== null) window.clearTimeout(viewTimerRef.current);
+      viewTimerRef.current = window.setTimeout(() => persistView(appState), 400);
+    },
+    [persistView],
+  );
+
+  const onChange = useCallback(
+    (elements: any, appState: any, files: any) => {
+      liveRef.current = { elements, appState, files };
+      scheduleViewSave(appState);
+    },
+    [scheduleViewSave],
+  );
+
+  // Zoom around the current canvas viewport center (keeps the center fixed).
+  const zoomTo = useCallback((targetZoom: number) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const st = a.getAppState();
+    const w = st.width || 0;
+    const h = st.height || 0;
+    const cz = st.zoom || 1;
+    const nz = Math.min(16, Math.max(0.05, targetZoom));
+    const sceneCx = st.scrollX + w / 2 / cz;
+    const sceneCy = st.scrollY + h / 2 / cz;
+    try {
+      a.updateScene({
+        appState: { zoom: nz, scrollX: sceneCx - w / 2 / nz, scrollY: sceneCy - h / 2 / nz },
+      });
+    } catch {
+      /* best-effort */
+    }
   }, []);
 
-  // Fit & center the whole drawing content in the embed (auto zoom-to-fit) so the
-  // drawing isn't stuck at the default canvas zoom. No-op for an empty scene.
-  const fitContent = useCallback(() => {
+  const zoomIn = useCallback(() => {
+    const a = apiRef.current;
+    if (a) zoomTo((a.getAppState().zoom || 1) * 1.25);
+  }, [zoomTo]);
+
+  const zoomOut = useCallback(() => {
+    const a = apiRef.current;
+    if (a) zoomTo((a.getAppState().zoom || 1) / 1.25);
+  }, [zoomTo]);
+
+  const zoomReset = useCallback(() => zoomTo(1), [zoomTo]);
+
+  // Fit & center the whole drawing content in the embed (used by the 适配 button
+  // and for the initial view when no viewport has been saved yet).
+  const fitNow = useCallback(() => {
     const a = apiRef.current;
     const scene = liveRef.current;
     if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
@@ -134,15 +217,25 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     }
   }, []);
 
+  // Automatic fit on load only when the user hasn't previously saved their view.
+  const fitContent = useCallback(() => {
+    if (savedViewRef.current) return;
+    fitNow();
+  }, [fitNow]);
+
   // Stable ref-backed callback so the memoized Excalidraw doesn't see a new
-  // function identity on every parent render. Also triggers the initial fit once
-  // Excalidraw has mounted (and the scene is loaded).
+  // function identity on every parent render. Registers the scroll/view callback
+  // (so pan/zoom auto-saves) and triggers the initial fit once Excalidraw has
+  // mounted (and the scene is loaded).
   const setApi = useCallback(
     (a: any) => {
       apiRef.current = a;
+      a?.onScrollChange?.((scrollX: number, scrollY: number, zoom: number) => {
+        scheduleViewSave({ zoom, scrollX, scrollY });
+      });
       requestAnimationFrame(fitContent);
     },
-    [fitContent],
+    [fitContent, scheduleViewSave],
   );
 
   // Re-fit & center whenever the scene loads (initial load, or after the
@@ -153,6 +246,13 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     const id = requestAnimationFrame(fitContent);
     return () => cancelAnimationFrame(id);
   }, [initialData, fitContent]);
+
+  // Clear any pending viewport-save timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (viewTimerRef.current !== null) window.clearTimeout(viewTimerRef.current);
+    };
+  }, []);
 
   const persistHeight = useCallback(
     (h: number) => {
@@ -237,6 +337,10 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     <div className="inline-drawing" contentEditable={false}>
       <div className="inline-drawing-bar">
         <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
+        <button className="inline-drawing-btn" onClick={zoomIn} title="放大">＋</button>
+        <button className="inline-drawing-btn" onClick={zoomOut} title="缩小">－</button>
+        <button className="inline-drawing-btn" onClick={zoomReset} title="重置为 100%">100%</button>
+        <button className="inline-drawing-btn" onClick={fitNow} title="适配内容">◎</button>
         <button className="inline-drawing-btn" onClick={downloadSvg} title="导出 SVG">⇩</button>
         <button className="inline-drawing-btn" onClick={downloadPng} title="导出 PNG">⭳</button>
         <button className="inline-drawing-btn" onClick={copyPng} title="复制">⧉</button>

@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.149] - 2026-08-24
+
+### 新增
+
+- **内嵌绘图块控制条新增缩放按钮 + 拖动/缩放自动保存视图**：控制条在「编辑/下载/复制」基础上新增 **＋ 放大 / － 缩小 / 100% 重置 / ◎ 适配内容** 四个缩放按钮（通过 `excalidrawAPI.updateScene({appState:{zoom,scrollX,scrollY}})` 围绕视口中心缩放）。**拖动(平移)或缩放画布后自动保存视角**：`onScrollChange`/`onChange` 捕获 `zoom/scrollX/scrollY`，400ms 防抖写入绘图节点新增的 `zoom/scrollX/scrollY` 字段，重新打开该块时按保存视角恢复（无保存视角时才自动适配居中）。`DrawingNode` 新增 `zoom/scrollX/scrollY` 序列化字段。`tsc` 无错、`smoke-web.mjs` 223 全绿；无头浏览器实测控制条 `[编辑,＋,－,100%,◎,⇩,⭳,⧉]`、各缩放按钮无运行时错误。
+
+---
+
 ## [1.59.148] - 2026-08-24
 
 ### 变更

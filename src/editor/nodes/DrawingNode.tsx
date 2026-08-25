@@ -25,6 +25,10 @@ export type SerializedDrawingNode = Spread<
     text: string;
     width?: number | null;
     height?: number | null;
+    /** remembered read-only viewport (zoom + scroll), so the embed reopens as the user left it. */
+    zoom?: number | null;
+    scrollX?: number | null;
+    scrollY?: number | null;
   },
   SerializedLexicalNode
 >;
@@ -37,6 +41,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   __text: string;
   __width: number | null;
   __height: number | null;
+  __zoom: number | null;
+  __scrollX: number | null;
+  __scrollY: number | null;
 
   static getType(): string {
     return "drawing";
@@ -51,6 +58,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       node.__text,
       node.__width,
       node.__height,
+      node.__zoom,
+      node.__scrollX,
+      node.__scrollY,
       node.__key,
     );
   }
@@ -63,6 +73,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     text = "",
     width: number | null = null,
     height: number | null = null,
+    zoom: number | null = null,
+    scrollX: number | null = null,
+    scrollY: number | null = null,
     key?: NodeKey,
   ) {
     super(key);
@@ -73,6 +86,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     this.__text = text;
     this.__width = width;
     this.__height = height;
+    this.__zoom = zoom;
+    this.__scrollX = scrollX;
+    this.__scrollY = scrollY;
   }
 
   $config() {
@@ -98,6 +114,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     if (typeof patch.text === "string") writable.__text = patch.text;
     if (typeof patch.width === "number" || patch.width === null) writable.__width = patch.width;
     if (typeof patch.height === "number" || patch.height === null) writable.__height = patch.height;
+    if (typeof patch.zoom === "number" || patch.zoom === null) writable.__zoom = patch.zoom;
+    if (typeof patch.scrollX === "number" || patch.scrollX === null) writable.__scrollX = patch.scrollX;
+    if (typeof patch.scrollY === "number" || patch.scrollY === null) writable.__scrollY = patch.scrollY;
   }
 
   // Surface the drawing's text so `content_text` (and thus search/backlinks) sees it.
@@ -127,6 +146,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       text: this.__text,
       width: this.__width,
       height: this.__height,
+      zoom: this.__zoom,
+      scrollX: this.__scrollX,
+      scrollY: this.__scrollY,
     };
   }
 
@@ -139,6 +161,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       serializedNode.text ?? "",
       serializedNode.width ?? null,
       serializedNode.height ?? null,
+      serializedNode.zoom ?? null,
+      serializedNode.scrollX ?? null,
+      serializedNode.scrollY ?? null,
     );
   }
 }
@@ -151,8 +176,11 @@ export function $createDrawingNode(
   text = "",
   width: number | null = null,
   height: number | null = null,
+  zoom: number | null = null,
+  scrollX: number | null = null,
+  scrollY: number | null = null,
 ): DrawingNode {
-  return $applyNodeReplacement(new DrawingNode(hash, mime, thumbHash, thumbMime, text, width, height));
+  return $applyNodeReplacement(new DrawingNode(hash, mime, thumbHash, thumbMime, text, width, height, zoom, scrollX, scrollY));
 }
 
 export function $isDrawingNode(node: LexicalNode | null | undefined): node is DrawingNode {
