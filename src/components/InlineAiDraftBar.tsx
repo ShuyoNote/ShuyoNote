@@ -134,6 +134,11 @@ export function InlineAiDraftBar() {
     setTemplatesOpen(false);
   };
 
+  // Template dropdown opens by default whenever the bar appears.
+  useEffect(() => {
+    if (open) setTemplatesOpen(true);
+  }, [open]);
+
   // ESC to stop/close while running.
   useEffect(() => {
     if (!running) return;
