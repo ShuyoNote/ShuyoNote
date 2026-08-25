@@ -85,9 +85,16 @@ export function InlineAiDraftBar() {
     setPrompt("");
     setTemplatesOpen(false);
     try {
+      // For edit-type actions (总结/翻译/润色/纠错/续写) the model must SEE the
+      // current page's text, or it answers "内容为空". Pass the page body with the
+      // prompt when the page has real content.
+      const pageContent = (notes.current?.content_text ?? "").trim();
+      const promptForModel = pageContent
+        ? `${trimmed}\n\n请针对当前页面的如下正文进行处理（不要复述，直接给结果）：\n${pageContent.slice(0, 6000)}`
+        : trimmed;
       const res = await runInlineDraft(
         config as ProviderConfig,
-        trimmed,
+        promptForModel,
         allPages.map((p) => ({ id: p.id, title: p.title })),
         { currentPageId: notes.currentId, allPages },
         {
