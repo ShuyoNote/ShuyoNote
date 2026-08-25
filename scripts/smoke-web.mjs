@@ -1217,6 +1217,44 @@ assert("workspace name persists across instances", wsAgain !== "");
   }
 }
 
+// 19d. A reasoning stream that ends with finish_reason=length and NO content
+// (max_tokens exhausted during thinking) must surface a clear truncation error
+// instead of a silent empty reply.
+{
+  const http9 = await import("node:http");
+  const srv9 = http9.createServer((req, res) => {
+    if (req.url === "/v1/chat/completions") {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"思考一"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"reasoning_content":"思考二"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n');
+      res.end("data: [DONE]\n\n");
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => srv9.listen(0, "127.0.0.1", resolve));
+  const port9 = srv9.address().port;
+  const base9 = `http://127.0.0.1:${port9}`;
+  try {
+    let threw = false;
+    try {
+      await aiMod.createOpenAICompatTransport(base9, "deepseek-v4-flash").complete(
+        [{ role: "user", content: "hi" }],
+        { onDelta: () => {} },
+      );
+    } catch (e) {
+      threw = true;
+      assert("length truncation surfaces a clear error", String((e && e.message) || e).includes("长度上限"), String((e && e.message) || e));
+    }
+    assert("length truncation throws", threw);
+  } finally {
+    srv9.closeAllConnections?.();
+    await new Promise((resolve) => srv9.close(resolve));
+  }
+}
+
 // 20. Defensive Lexical editor-state sanitation (guards the type "undefined" crash).
 {
   const valid = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"hi","version":1}]}],"type":"root","version":1}}';

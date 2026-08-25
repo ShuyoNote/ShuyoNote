@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.73] - 2026-08-24
+
+### 修复
+
+- **推理型模型（如 deepseek-v4-flash）「只思考不回答」**：根因是请求把 `max_tokens` 上限设为 **512**，而推理模型的 `reasoning_content` 会先消耗大量 token，导致在产出最终 `content` 前就被截断（`finish_reason=length`）——界面只见思考、无回答、也无报错。现将默认最大输出提升到 **8192**，给「思考 + 回答/工具调用」留足空间。
+- **截断可识别**：当流在作答前以 `finish_reason=length` 结束，提示「模型输出达到长度上限（max_tokens）时被截断…」，而不是笼统的「未返回内容」。
+- `scripts/smoke-web.mjs` 189→**191 全绿**（新增：`finish_reason=length` 截断报错用例）；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.72] - 2026-08-24
 
 ### 修复

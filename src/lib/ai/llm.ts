@@ -51,6 +51,12 @@ export const OLLAMA_DEFAULT_NUM_CTX = 8192;
 export const OPENAI_COMPAT_DEFAULT_BASE = "https://api.deepseek.com";
 export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-chat";
 
+// Default max output tokens. Reasoning models (DeepSeek V3.1/R1-style) consume a
+// large share of this budget on `reasoning_content` before emitting `content`; a
+// too-small cap (e.g. 512) gets exhausted during thinking and the answer is
+// truncated away. 8192 leaves room for reasoning + answer.
+export const DEFAULT_MAX_TOKENS = 8192;
+
 // ---- small helpers ----
 function baseUrlOf(u: string): string {
   return String(u ?? "").replace(/\/$/, "");
@@ -115,6 +121,7 @@ interface StreamChunk {
   content?: string;
   thinking?: string;
   toolCalls?: any[];
+  finishReason?: string;
 }
 
 /** Extract content/thinking/tool_calls from EITHER a STREAMED delta chunk
@@ -142,7 +149,8 @@ function extractFromJson(j: any): StreamChunk {
     (Array.isArray(msg?.tool_calls) ? msg.tool_calls : undefined) ||
     (Array.isArray(j?.message?.tool_calls) ? j.message.tool_calls : undefined) ||
     (Array.isArray(j?.tool_calls) ? j.tool_calls : undefined);
-  return { content, thinking, toolCalls };
+  const finishReason = choice?.finish_reason ?? j?.finish_reason ?? null;
+  return { content, thinking, toolCalls, finishReason };
 }
 
 // Ollama /api/chat streams NDJSON or SSE: {"message":{"content":"token"}} … {"message":{"tool_calls":[...]},"done":true}.
@@ -184,6 +192,7 @@ async function readBodyStream(
   let raw = "";
   let content = "";
   let thinking = "";
+  let lastFinishReason: string | undefined;
   // tool_calls arrive either as a full array (Ollama, final) or fragmented by
   // index (OpenAI, delta.tool_calls). Accumulate the OpenAI fragments by index.
   const tcByIdx: Record<number, { name: string; args: string }> = {};
@@ -240,6 +249,7 @@ async function readBodyStream(
       }
       if (c.thinking) thinking += c.thinking;
       if (c.toolCalls) absorb(c.toolCalls);
+      if (c.finishReason) lastFinishReason = c.finishReason;
     }
   }
   // A JSON completion sent WITHOUT a trailing newline stays in `buf`; parse it.
@@ -251,6 +261,7 @@ async function readBodyStream(
     }
     if (c.thinking) thinking += c.thinking;
     if (c.toolCalls) absorb(c.toolCalls);
+    if (c.finishReason) lastFinishReason = c.finishReason;
   }
   // Some gateways return an error as HTTP 200 with an `error` field; others return
   // an empty completion. Either way, never return a silent empty (no-reply) result:
@@ -275,6 +286,9 @@ async function readBodyStream(
       }
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("AI 接口返回错误")) throw e;
+    }
+    if (lastFinishReason === "length") {
+      throw new Error("模型输出达到长度上限（max_tokens）时被截断，未产出最终回答。请调大模型的最大输出长度后重试。");
     }
     throw new Error(`模型未返回内容。响应片段：${body.slice(0, 400)}`);
   }
@@ -306,7 +320,7 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
               options: {
                 num_ctx: OLLAMA_DEFAULT_NUM_CTX,
                 temperature: opts.temperature ?? 0.7,
-                num_predict: opts.maxTokens ?? 512,
+                num_predict: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
               },
             }),
           },
@@ -354,7 +368,7 @@ export function createOpenAICompatTransport(
               stream: streaming,
               tools: opts.tools as any[] | undefined,
               temperature: opts.temperature ?? 0.7,
-              max_tokens: opts.maxTokens ?? 512,
+              max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
             }),
           },
           120000,
