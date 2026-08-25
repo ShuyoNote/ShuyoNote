@@ -1270,6 +1270,16 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("lexicalValid drops a corrupt text node (keeps parent block)", salvagedBadText !== null && !salvagedBadText.includes('"text":"hi"'));
   assert("lexicalValid rejects generic child without type", aiMod.lexicalStateValid(genericChild) === null);
   assert("lexicalValid rejects empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === null);
+  // A node whose `type` is the literal string "undefined" (not a real Lexical type)
+  // must be dropped, not kept — keeping it makes Lexical throw "type undefined not found".
+  const literalUndef = '{"root":{"children":[{"type":"undefined","version":1},{"type":"paragraph","version":1,"children":[{"type":"text","text":"ok","version":1}]}],"type":"root","version":1}}';
+  const salvagedUndef = aiMod.lexicalStateValid(literalUndef);
+  assert("lexicalValid drops literal 'undefined' type, keeps good block", salvagedUndef !== null && salvagedUndef.includes('"text":"ok"') && !salvagedUndef.includes('"type":"undefined"'));
+  // When the editor's known node types are supplied, an unregistered type is dropped too.
+  const allowed = new Set(["root", "paragraph", "text"]);
+  const unregistered = '{"root":{"children":[{"type":"mypluginblock","version":1},{"type":"paragraph","version":1,"children":[{"type":"text","text":"keep","version":1}]}],"type":"root","version":1}}';
+  const salvagedReg = aiMod.lexicalStateValid(unregistered, allowed);
+  assert("lexicalValid drops unregistered type when allowedTypes given", salvagedReg !== null && salvagedReg.includes('"text":"keep"') && !salvagedReg.includes('mypluginblock'));
 }
 
 // 21. AI-style create_page -> delete_page -> gone from list (web delete path).

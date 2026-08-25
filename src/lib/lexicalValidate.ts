@@ -17,22 +17,24 @@
 type NodeRecord = Record<string, unknown> & { type?: unknown };
 
 function isNode(c: unknown): c is NodeRecord & { type: string } {
-  return (
-    !!c &&
-    typeof c === "object" &&
-    !Array.isArray(c) &&
-    typeof (c as NodeRecord).type === "string" &&
-    ((c as NodeRecord).type as string).length > 0
-  );
+  if (!c || typeof c !== "object" || Array.isArray(c)) return false;
+  const t = (c as NodeRecord).type;
+  // A non-empty string `type` is required; the literal "undefined"/"null" are not
+  // real Lexical node types and would make parseEditorState throw "not found".
+  return typeof t === "string" && t.length > 0 && t !== "undefined" && t !== "null";
 }
 
-function sanitizeChildren(children: unknown): unknown[] {
+function sanitizeChildren(children: unknown, allowedTypes?: ReadonlySet<string>): unknown[] {
   if (!Array.isArray(children)) return [];
   const out: unknown[] = [];
   for (const child of children) {
     if (!isNode(child)) continue;
+    // When we know the editor's node registry, drop any type it cannot deserialize
+    // (e.g. a stray/unregistered type) so it can never crash the editor or spam the
+    // console with "type ... not found".
+    if (allowedTypes && !allowedTypes.has(child.type)) continue;
     if (Array.isArray(child.children)) {
-      child.children = sanitizeChildren(child.children);
+      child.children = sanitizeChildren(child.children, allowedTypes);
     }
     out.push(child);
   }
@@ -40,17 +42,19 @@ function sanitizeChildren(children: unknown): unknown[] {
 }
 
 /**
- * @returns a usable, well-formed Lexical doc string — with malformed children
- * dropped — or null if the content is not a usable Lexical document (unparseable,
- * no `root`, or nothing survives sanitization).
+ * @returns a usable, well-formed Lexical doc string — with malformed or
+ * unregistered children dropped — or null if the content is not a usable Lexical
+ * document (unparseable, no `root`, or nothing survives sanitization).
+ * @param allowedTypes optional set of node types the editor can deserialize;
+ * when provided, any node with a type outside it is dropped.
  */
-export function lexicalStateValid(contentJson: string): string | null {
+export function lexicalStateValid(contentJson: string, allowedTypes?: ReadonlySet<string>): string | null {
   try {
     const parsed = JSON.parse(contentJson);
     const root = parsed && (parsed as Record<string, unknown>).root;
     if (!root || typeof root !== "object") return null;
     const rootRec = root as Record<string, unknown>;
-    const children = sanitizeChildren(rootRec.children);
+    const children = sanitizeChildren(rootRec.children, allowedTypes);
     rootRec.children = children;
     if (children.length === 0) return null;
     return JSON.stringify(parsed);

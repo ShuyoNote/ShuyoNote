@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.74] - 2026-08-24
+
+### 修复
+
+- **彻底移除 `type "undefined"` 报错并保留好内容**：此前净化器只拒绝「`type` 缺失」的节点，却放过了「`type` 为字符串 `"undefined"`」或其它**未注册类型**的节点——Lexical 无法解析它们，抛出 `type "undefined" + not found`（只降级为空、不崩，但会刷 Console 且丢失相邻好内容）。现净化器：① 丢弃 `type` 为字面 `"undefined"`/`"null"` 的节点；② 传入编辑器已知节点类型集合时，丢弃任何**不在注册表内**的 `type`。坏块被剔除、好内容保留，不再崩、Console 不再刷错误。
+- **Editor.tsx** 依据 `EDITOR_NODES`（并补充 root/paragraph/text/linebreak/tab 等核心类型）构建允许类型集合，传给净化器。
+- `scripts/smoke-web.mjs` 191→**193 全绿**（新增：字面 `"undefined"` 剔除、未注册类型剔除两个用例）；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.73] - 2026-08-24
 
 ### 修复

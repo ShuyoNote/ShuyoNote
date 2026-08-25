@@ -114,6 +114,17 @@ const EDITOR_NODES = [
   TableRowNode,
 ];
 
+// Every node type this editor can deserialize: Lexical's always-core types plus
+// the ones we register above. A serialized node whose `type` is outside this set
+// (e.g. the literal string "undefined", or a stray/unregistered type) cannot be
+// parsed by Lexical and is dropped by lexicalStateValid so it can't crash the
+// editor or spam the console with "type ... not found".
+const CORE_NODE_TYPES = ["root", "paragraph", "text", "linebreak", "tab"];
+const ALLOWED_NODE_TYPES = new Set<string>([
+  ...CORE_NODE_TYPES,
+  ...EDITOR_NODES.map((n) => (n as { getType?: () => string }).getType?.()).filter((t): t is string => typeof t === "string"),
+]);
+
 // A throwaway editor with the same node registry, used to PRE-PARSE a saved
 // content string. If any node is malformed (e.g. a missing `type`, which Lexical
 // reports as `parseEditorState: type "undefined"`), this throws and we fall back
@@ -128,7 +139,7 @@ function parseEditorState(contentJson: string): EditorState | null {
     // still renders. It returns null only when nothing usable remains or the doc
     // isn't parseable. Log a clear marker when we have to fall back to empty so
     // we can confirm which build the browser is running and capture the raw JSON.
-    const valid = lexicalStateValid(contentJson);
+    const valid = lexicalStateValid(contentJson, ALLOWED_NODE_TYPES);
     if (!valid) {
       console.warn("[ShuyoNote] rejected content_json (opened empty editor). Raw:", contentJson);
       return null;
