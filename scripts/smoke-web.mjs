@@ -1158,6 +1158,65 @@ assert("workspace name persists across instances", wsAgain !== "");
   }
 }
 
+// 19b. Endpoints that ignore `stream:true` and return a plain JSON completion
+// (no SSE `data:` prefix, no trailing newline) must still yield content — this is
+// the silent "sent but no reply" case fixed by extractFromJson.
+{
+  const http7 = await import("node:http");
+  const srv7 = http7.createServer((req, res) => {
+    if (req.url === "/v1/chat/completions") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "完整答案" } }] }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => srv7.listen(0, "127.0.0.1", resolve));
+  const port7 = srv7.address().port;
+  const base7 = `http://127.0.0.1:${port7}`;
+  try {
+    const deltas7 = [];
+    const res7 = await aiMod.createOpenAICompatTransport(base7, "deepseek-chat").complete(
+      [{ role: "user", content: "hi" }],
+      { onDelta: (t) => deltas7.push(t) },
+    );
+    assert("openai non-SSE JSON completion yields content", res7.content === "完整答案" && deltas7.join("") === "完整答案", JSON.stringify({ content: res7.content, deltas: deltas7 }));
+  } finally {
+    srv7.closeAllConnections?.();
+    await new Promise((resolve) => srv7.close(resolve));
+  }
+}
+
+// 19c. Bare NDJSON frames (no `data:` prefix) on an OpenAI-compatible endpoint:
+// the streamed deltas must still be captured.
+{
+  const http8 = await import("node:http");
+  const srv8 = http8.createServer((req, res) => {
+    if (req.url === "/v1/chat/completions") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.write('{"choices":[{"delta":{"content":"a"}}]}\n');
+      res.end('{"choices":[{"delta":{"content":"b"}}]}\n');
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => srv8.listen(0, "127.0.0.1", resolve));
+  const port8 = srv8.address().port;
+  const base8 = `http://127.0.0.1:${port8}`;
+  try {
+    const res8 = await aiMod.createOpenAICompatTransport(base8, "deepseek-chat").complete(
+      [{ role: "user", content: "hi" }],
+      { onDelta: () => {} },
+    );
+    assert("openai bare-NDJSON frames yield content", res8.content === "ab", JSON.stringify(res8.content));
+  } finally {
+    srv8.closeAllConnections?.();
+    await new Promise((resolve) => srv8.close(resolve));
+  }
+}
+
 // 20. Defensive Lexical editor-state sanitation (guards the type "undefined" crash).
 {
   const valid = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"hi","version":1}]}],"type":"root","version":1}}';

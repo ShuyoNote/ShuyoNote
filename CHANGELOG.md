@@ -2,6 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.71] - 2026-08-24
+
+### 修复
+
+- **AI 助手「发送后无回应」**：Web 端直接 fetch 云端模型时，若端点忽略 `stream:true`、返回普通 JSON 完成体（或裸 NDJSON / 不带 `data:` 前缀的流），旧解析器只认 SSE `data:` 帧 → 内容为空 → 界面只见用户气泡、无 LLM 回应、也无报错。现改为**容错解析**：`extractFromJson` 同时读取增量 delta 与一条完整 message 的 `content`/`reasoning_content`/`tool_calls`；`readBodyStream` 处理末尾不带换行的单条 JSON，并识别 HTTP 200 但含 `error` 字段的返回（转为可读报错，不再是静默空白）。
+- **空回应不再静默**：`run` 即便成功、若无回复且无待确认草稿，会提示「模型没有返回内容…」（据此可到设置里「测试连接」）。
+- `scripts/smoke-web.mjs` 187→**189 全绿**（新增：非 SSE JSON 完成体、裸 NDJSON 帧两个用例）。
+
+---
+
 ## [1.59.70] - 2026-08-24
 
 ### 修复

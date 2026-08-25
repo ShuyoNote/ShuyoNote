@@ -117,44 +117,62 @@ interface StreamChunk {
   toolCalls?: any[];
 }
 
-// Ollama /api/chat streams NDJSON: {"message":{"content":"token"}} … {"message":{"tool_calls":[...]},"done":true}.
+/** Extract content/thinking/tool_calls from EITHER a STREAMED delta chunk
+ *  (`choices[0].delta`) OR a COMPLETED message JSON (`choices[0].message`), and
+ *  from Ollama's `message.content`/`response` shape. This lets us tolerate
+ *  endpoints that ignore `stream:true` and return a plain JSON completion, or
+ *  stream bare NDJSON lines instead of SSE `data:` frames. */
+function extractFromJson(j: any): StreamChunk {
+  const choice = j?.choices?.[0] ?? {};
+  const delta = choice?.delta ?? {};
+  const msg = choice?.message ?? {};
+  const content =
+    typeof delta?.content === "string" ? delta.content :
+    typeof msg?.content === "string" ? msg.content :
+    typeof j?.message?.content === "string" ? j.message.content :
+    typeof j?.content === "string" ? j.content :
+    typeof j?.response === "string" ? j.response : "";
+  const thinking =
+    typeof delta?.reasoning_content === "string" ? delta.reasoning_content :
+    typeof msg?.reasoning_content === "string" ? msg.reasoning_content :
+    typeof j?.message?.reasoning_content === "string" ? j.message.reasoning_content :
+    typeof j?.reasoning_content === "string" ? j.reasoning_content : "";
+  const toolCalls =
+    (Array.isArray(delta?.tool_calls) ? delta.tool_calls : undefined) ||
+    (Array.isArray(msg?.tool_calls) ? msg.tool_calls : undefined) ||
+    (Array.isArray(j?.message?.tool_calls) ? j.message.tool_calls : undefined) ||
+    (Array.isArray(j?.tool_calls) ? j.tool_calls : undefined);
+  return { content, thinking, toolCalls };
+}
+
+// Ollama /api/chat streams NDJSON or SSE: {"message":{"content":"token"}} … {"message":{"tool_calls":[...]},"done":true}.
 function ollamaLineChunk(line: string): StreamChunk {
-  if (line.startsWith("data:")) line = line.slice(5).trim();
+  let payload = line.trim();
+  if (payload.startsWith("data:")) payload = payload.slice(5).trim();
+  if (!payload || payload === "[DONE]") return { content: "" };
   try {
-    const j = JSON.parse(line);
-    const content =
-      typeof j?.message?.content === "string"
-        ? j.message.content
-        : typeof j?.response === "string"
-          ? j.response
-          : "";
-    const thinking = typeof j?.message?.reasoning_content === "string" ? j.message.reasoning_content : "";
-    return { content, thinking, toolCalls: Array.isArray(j?.message?.tool_calls) ? j.message.tool_calls : undefined };
+    return extractFromJson(JSON.parse(payload));
   } catch {
     return { content: "" };
   }
 }
 
-// OpenAI-compatible streams SSE: `data: {"choices":[{"delta":{"content":"token"}}]}` … `data: [DONE]`.
+// OpenAI-compatible SSE (`data: {...}`, `data: [DONE]`) or bare NDJSON frames.
 // tool_calls arrive incrementally (delta.tool_calls[i].function.arguments concatenated).
 function openaiLineChunk(line: string): StreamChunk {
-  if (!line.startsWith("data:")) return { content: "" };
-  const payload = line.slice(5).trim();
-  if (payload === "[DONE]") return { content: "" };
+  let payload = line.trim();
+  if (payload.startsWith("data:")) payload = payload.slice(5).trim();
+  if (!payload || payload === "[DONE]") return { content: "" };
   try {
-    const j = JSON.parse(payload);
-    const delta = j?.choices?.[0]?.delta ?? {};
-    const content = delta?.content ?? "";
-    const thinking = typeof delta?.reasoning_content === "string" ? delta.reasoning_content : "";
-    const tcs = delta?.tool_calls;
-    return { content, thinking, toolCalls: Array.isArray(tcs) ? tcs : undefined };
+    return extractFromJson(JSON.parse(payload));
   } catch {
     return { content: "" };
   }
 }
 
 /** Read a streaming body, streaming content deltas to onDelta AND capturing any
- *  tool_calls so the host loop can still execute writes during streaming. */
+ *  tool_calls so the host loop can still execute writes during streaming. Handles
+ *  SSE (`data:`), bare NDJSON, and a single JSON completion with no newline. */
 async function readBodyStream(
   resp: Response,
   chunk: (line: string) => StreamChunk,
@@ -163,6 +181,7 @@ async function readBodyStream(
   const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
   const dec = new TextDecoder();
   let buf = "";
+  let raw = "";
   let content = "";
   let thinking = "";
   // tool_calls arrive either as a full array (Ollama, final) or fragmented by
@@ -192,7 +211,9 @@ async function readBodyStream(
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += dec.decode(value, { stream: true });
+    const text = dec.decode(value, { stream: true });
+    raw += text;
+    buf += text;
     let idx: number;
     while ((idx = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, idx).trim();
@@ -205,6 +226,29 @@ async function readBodyStream(
       }
       if (c.thinking) thinking += c.thinking;
       if (c.toolCalls) absorb(c.toolCalls);
+    }
+  }
+  // A JSON completion sent WITHOUT a trailing newline stays in `buf`; parse it.
+  if (buf.trim()) {
+    const c = chunk(buf.trim());
+    if (c.content) {
+      content += c.content;
+      onDelta(c.content);
+    }
+    if (c.thinking) thinking += c.thinking;
+    if (c.toolCalls) absorb(c.toolCalls);
+  }
+  // Some gateways return an error as HTTP 200 with an `error` field — surface it
+  // instead of silently returning an empty (no-reply) result.
+  if (!content && Object.keys(tcByIdx).length === 0 && direct.length === 0 && raw.trim()) {
+    try {
+      const j = JSON.parse(raw.trim());
+      if (j && j.error) {
+        const msg = typeof j.error?.message === "string" ? j.error.message : JSON.stringify(j.error);
+        throw new Error(`AI 接口返回错误：${msg}`);
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("AI 接口返回错误")) throw e;
     }
   }
 

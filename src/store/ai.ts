@@ -182,11 +182,19 @@ export const useAiStore = create<AiState>((set, get) => ({
       if (result.reply) history.push({ role: "assistant" as const, content: result.reply });
       const historyCapped = result.ok ? history.slice(-HISTORY_LIMIT) : get().history;
       saveHistory(historyCapped);
+      // A run that yields neither a reply nor a pending draft is a silent dead-end
+      // (e.g. the endpoint ignored streaming / returned empty). Surface it so the
+      // user isn't left staring at an unanswered bubble.
+      const emptyReply = result.ok && !result.reply && result.drafts.length === 0;
       set({
         running: false,
         reply: result.reply,
         drafts: result.drafts.length ? result.drafts : get().drafts,
-        error: result.ok ? null : result.error ?? null,
+        error: result.ok
+          ? emptyReply
+            ? "模型没有返回内容。请确认模型名/服务地址正确（可在设置里点「测试连接」），或该端点是否支持你当前使用的接入方式。"
+            : null
+          : result.error ?? null,
         history: historyCapped,
         activity: result.activity ?? [],
         currentPrompt: "",
