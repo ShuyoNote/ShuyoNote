@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.142] - 2026-08-24
+
+### 修复
+
+- **web 版（`localhost` / `pnpm preview`）不再出现旧版本 + `Failed to load resource … 503 (Offline)`**：根因是 Service Worker 在本地预览时缓存了应用外壳与哈希资源，每次重建后失效哈希（如 `index-*.css`）仍被旧页面引用而 404/503，且导航回退到缓存的旧外壳导致显示旧版本。修复：
+  - `main.tsx`：**localhost（`localhost`/`127.0.0.1`）不再注册 SW**，预览/开发流保持缓存干净、永远拿到最新构建；真实生产域名仍启用离线 PWA。
+  - `sw.js`：缓存升到 `shuyonote-shell-v3`，`activate` 时**自动清理当前外壳不再引用的旧 `/assets/*`**（跨构建自愈，避免旧哈希残留）；资源失败不再合成误导性的「503 Offline」，改为回退缓存或 `Response.error()`（绝不 reject `FetchEvent`）。
+  - 无头浏览器实测：localhost 下 `serviceWorker` **未注册**、`bootstrap v1.59.141`、无任何 SW/缓存/503 错误。`tsc` 无错、`smoke` 223 全绿。
+
+---
+
 ## [1.59.141] - 2026-08-24
 
 ### 变更

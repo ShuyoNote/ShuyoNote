@@ -24,13 +24,21 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 // Register the offline Service Worker in production builds only. In dev it would
-// fight the Vite dev server's module/HMR caching, so we gate it on PROD.
+// fight the Vite dev server's module/HMR caching, so we gate it on PROD. We also
+// skip it on localhost (the `pnpm preview` / dev host): there the SW caches an
+// app shell + hashed assets that go stale across rebuilds, showing an old
+// version and "Failed to load resource" errors after each build. A real
+// production domain keeps the offline PWA; localhost stays cache-fresh.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("/sw.js")
-      .catch((e) => console.error("[ShuyoNote] SW register failed", e));
-  });
+  const host = window.location.hostname;
+  const isLocalhost = host === "localhost" || host === "127.0.0.1";
+  if (!isLocalhost) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .catch((e) => console.error("[ShuyoNote] SW register failed", e));
+    });
+  }
 }
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

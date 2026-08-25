@@ -1,20 +1,44 @@
-// ShuyoNote Service Worker — offline PWA.
+// ShuyoNote Service Worker — offline PWA (production domains only; skipped on
+// localhost in main.tsx to avoid stale hashed assets across rebuilds).
 //
 // Strategy:
 //   - install: pre-cache the app shell (root HTML + manifest + icon).
-//   - activate: drop stale caches from previous versions.
+//   - activate: drop caches from other versions, then prune cached assets no
+//     longer referenced by the current shell HTML (self-healing across builds).
 //   - fetch:
 //       * navigation (document) → network-first, fall back to cached shell.
 //       * static assets (same-origin) → network-first, fall back to cache.
 //       * everything else → network only.
-// Network-first for assets keeps the app fresh across rebuilds (stale hashed
-// assets can linger in old tabs); the cache is the offline fallback. A failed
-// asset fetch is caught and never rejects the FetchEvent, so a stale page
-// referencing a deleted hashed file can't spam "Failed to fetch".
-// This is a "local-first" friendly approach: the note data lives in IndexedDB
-// (SQLite via sql.js), not in the HTTP cache, so tables don't conflict.
-const CACHE = "shuyonote-shell-v2";
+// The app is local-first (note data in IndexedDB), so the HTTP cache only holds
+// the static shell + assets; a failed asset fetch resolves to Response.error()
+// (never rejects the FetchEvent) instead of a misleading "Offline" response.
+const CACHE = "shuyonote-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon.svg"];
+
+// Remove cached /assets/* entries that the current build's HTML no longer
+// references, so an old build's hashed files can't linger and 404 later.
+async function pruneStaleAssets() {
+  try {
+    const res = await fetch("/", { cache: "no-cache" });
+    if (!res.ok) return;
+    const html = await res.text();
+    const keep = new Set();
+    for (const m of html.matchAll(/\/assets\/[^"'\s)]+/g)) keep.add(m[0]);
+    const cache = await caches.open(CACHE);
+    const keys = await cache.keys();
+    await Promise.all(
+      keys
+        .filter((req) => {
+          const url = new URL(req.url);
+          if (url.origin !== self.location.origin) return false;
+          return url.pathname.startsWith("/assets/") && !keep.has(url.pathname) && !keep.has(url.href);
+        })
+        .map((req) => cache.delete(req)),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -30,6 +54,7 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => pruneStaleAssets())
       .then(() => self.clients.claim()),
   );
 });
@@ -47,8 +72,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put("/", copy)).catch(() => {});
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((cache) => cache.put("/", copy)).catch(() => {});
+          }
           return res;
         })
         .catch(() => caches.match("/").then((r) => r || new Response("", { status: 503 }))),
@@ -56,9 +83,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: network-first, fall back to cache. Never reject the event —
-  // an uncached asset that fails to fetch resolves to a graceful 503 response
-  // instead of an unresolved (rejected) FetchEvent.
+  // Static assets: network-first, fall back to cache. A failure never rejects
+  // the FetchEvent — it resolves to Response.error() so the browser reports the
+  // real problem without us fabricating an "Offline" status.
   event.respondWith(
     fetch(req)
       .then((res) => {
@@ -68,8 +95,6 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       })
-      .catch(() =>
-        caches.match(req).then((r) => r || new Response("", { status: 503, statusText: "Offline" })),
-      ),
+      .catch(() => caches.match(req).then((r) => r || Response.error())),
   );
 });
