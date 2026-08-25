@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.110] - 2026-08-24
+
+### 修改
+
+- **更新整理文档体系**：根 `README.md` 补充「**AI 助手（薄 Agent + 内联起草）**」特性块、路线图 **M17（已达成）/ M18（规划中）**、文档体系索引（登记 `docs/development.md` 开发指南与 `docs/plans/2026-08-24-inline-ai-draft-plan.md`、项目结构补 `src/lib/ai/`），并同步版本徽章。
+
+---
+
 ## [1.59.109] - 2026-08-24
 
 ### 修复

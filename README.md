@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.59.109-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.59.110-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -32,7 +32,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 
 ## 📑 目录
 
-- **特性** —— 编辑体验 / 知识组织 / 数据安全 / 多设备同步 / 体验优化
+- **特性** —— 编辑体验 / AI 助手 / 知识组织 / 数据安全 / 多设备同步 / 体验优化
 - **架构** —— 前端 / Rust 后端 / SQLite / 同步服务端分层；以及可插拔平台 driver（桌面 Tauri / Web 浏览器）
 - **技术栈** —— 各层技术一览
 - **开发环境要求** —— Node / Rust / 平台
@@ -93,6 +93,12 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 - **Toast 反馈**：保存 / 同步 / 备份 / 删除 / 恢复等操作底部提示，替代系统弹窗。
 - **编辑器查找**：`Ctrl+F` 高亮全部命中并逐个导航。
 - **多窗口**：页面可弹出到独立窗口编辑。
+
+### AI 助手（薄 Agent + 内联起草）
+- **可选、本地优先、安全**：AI 默认关闭，仅调用你配置的模型端点（本地 Ollama / OpenAI 兼容云）；白名单语义工具（搜索 / 读页 / 读块 / 建页 / 追加块 / 反链），无 shell / 任意文件 / 联网；写操作需确认（详见 [薄 Agent 方案](docs/plans/2026-08-24-thin-agent-interface-plan.md)）。
+- **侧边栏 AI 助手**：右侧 ✦ 面板，全局问答 / 总结 / 跨页检索 / 建页（草稿确认后落库），多轮上下文（支持"再详细点"）。
+- **内联 AI 起草**：空行按**空格**打开**跟随光标**的起草浮层；「用 AI 写作」下拉**按当前页上下文自适应**（有内容 → 续写 / 总结 / 翻译 / 润色 / 纠错；空页 → 创作类·小红书等）；选中即填入提示词、光标定位到省略号后；**流式创作** + 高亮待定草案 +「完成」插入到你按空格所在的块 /「关闭」丢弃 /「重新生成」；点击背景或 **Esc** 取消。
+- **思考过程实时流式**：推理型模型的 `reasoning_content` 边想边显示；R 重新生成 / Esc 停止。
 
 ## ⌨️ 快捷键
 
@@ -221,7 +227,8 @@ ShuyoNote/
 │   ├── hooks/                # 自动同步 / 全局快捷键 / Popover
 │   ├── plugins/              # 插件命令注册表（命令面板扩展点）
 │   ├── lib/                  # Tauri IPC 封装 / 标签分类表 / Markdown 导出 / PDF 打印 / treeReorder(拖拽重排纯函数)
-│   │   └── platform/         # 平台 driver 抽象：types(接口) / tauri.ts / web.ts / sqliteStore.ts / blobStore.ts / spaceStore.ts
+│   │   ├── platform/         # 平台 driver 抽象：types(接口) / tauri.ts / web.ts / sqliteStore.ts / blobStore.ts / spaceStore.ts
+│   │   └── ai/               # 薄 Agent 核心：llm(传输) / host(受限循环) / transport / apply / tools / inlineDraft / lexical(文本辅助)
 │   ├── App.tsx               # 根组件
 │   ├── App.css               # 设计系统 token 与全局样式
 │   └── types.ts              # 共享类型
@@ -264,11 +271,12 @@ ShuyoNote/
 | [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 架构 / 方案 / 对比 / 设计交付 / 变更记录 |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
-| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M15 + M16 跨平台 / Web 已达成；M6 移动端 / M11.3 / M11.4 已评估未做） |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M15 + M16 跨平台/Web + **M17 薄 Agent AI 已达成**；**M18 内联起草规划中**；M6 移动端 / M11.3 / M11.4 已评估未做） |
+| [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
-| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 |
+| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草（含嵌入式 vs 侧边栏职责划分）** |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
@@ -309,6 +317,8 @@ ShuyoNote/
 - [x] 导出 PDF（页面 + 数据库视图）
 - [x] 每工作空间独立存储（物理隔离：`meta.db` + `spaces/<ws_id>/` 每空间库；全空间搜索跨库合并 / 跨空间复制 / 单空间导出导入）
 - [x] **Web 全平台**（M16：`src/lib/platform/` driver 抽象 → 浏览器可跑 → sql.js 真实 SQLite → 属性/数据库/版本/块引用/备份/PWA；web 能力补齐与体验优化 + 数据安全，见 [M16 里程碑](docs/roadmap.md)）
+- [x] **AI 增强（薄 Agent）**（M17：语义工具 + 受限宿主 + 草稿确认 + 隐私开关，默认关，见 [方案](docs/plans/2026-08-24-thin-agent-interface-plan.md)）
+- [ ] **内联 AI 起草**（M18：空行空格唤起随光标浮层 + 上下文自适应下拉 + 流式创作 + 完成/关闭，见 [方案](docs/plans/2026-08-24-inline-ai-draft-plan.md)）
 - [ ] 移动端适配（环境受限：缺 iOS/Android 工具链，已评估）
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
