@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.82] - 2026-08-24
+
+### 新增
+
+- **落地文档体系**：新增 [docs/development.md](docs/development.md)（开发指南：技术栈与目录、运行、测试与验证权威循环、**版本号提升规则**、CHANGELOG 与文档约定、常见坑），根目录新增 `CONTRIBUTING.md` 作为贡献入口；`docs/README.md` 索引补充「目录结构」树与「工程开发」导航/章节，并把版本引用同步到 v1.59.82。
+
+---
+
 ## [1.59.81] - 2026-08-24
 
 ### 修复

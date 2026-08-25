@@ -14,7 +14,24 @@
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
+| 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
 | 版本演进 | [变更记录](#变更记录-changelog) |
+
+## 目录结构
+
+```
+docs/
+├── README.md            # 本文档：统一入口 / 导航 / 索引
+├── development.md       # 开发指南：运行、测试、验证、提版规则
+├── architecture.md      # 系统架构与存储模型
+├── positioning.md       # 产品定位
+├── design-philosophy.md # 设计哲学
+├── roadmap.md           # 演进路线图（M1–M17 里程碑）
+├── compare-*.md         # 竞品对比
+└── plans/               # 各功能技术方案（按日期）
+design/                  # UI/UX 设计交付（设计系统 / UX 流程 / 实现计划）
+CHANGELOG.md             # 版本变更日志
+```
 
 ## 产品与定位
 
@@ -64,9 +81,15 @@
 | [../design/README.md](../design/README.md) | UI/UX 设计交付总索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [../design/logo/README.md](../design/logo/README.md) | **应用 Logo**：应用图标 / 单色图形 / 字标 / 主图 |
 
+## 工程开发（development）
+
+| 文档 | 内容 |
+|---|---|
+| [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
+
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.59.81`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.59.82`）。
 
 ## 约定
 

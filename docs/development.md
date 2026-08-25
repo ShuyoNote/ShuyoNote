@@ -1,0 +1,101 @@
+# ShuyoNote 开发指南
+
+> 面向想要**跑起来、改代码、验证、提版**的人。本文档是工程侧的"怎么干"，与 `docs/README.md` 的产品/架构/方案文档互补。
+> 版本：v1.59.82
+
+## 1. 技术栈与目录
+
+| 层 | 技术 | 位置 |
+|---|---|---|
+| 前端 | React 19 · TypeScript · Vite 8 | `src/` |
+| 编辑器 | Lexical 0.49（块编辑器） | `src/editor/` |
+| 状态 | zustand | `src/store/` |
+| 平台层 | 可插拔 driver（桌面 Tauri / 浏览器 Web） | `src/lib/platform/` |
+| 后端（桌面） | Rust · Tauri 2 · SQLite | `src-tauri/` |
+| Web 存储 | sql.js WASM SQLite + IndexedDB + blob 内容寻址 | `src/lib/platform/web.ts` |
+| AI 薄 Agent | 语义工具 + 受限宿主 + 审核落库 | `src/lib/ai/` |
+
+关键分层：`src/lib/platform/` 定义 `Executor` / driver 接口，`tauri.ts` 桌面宿主、`web.ts` 浏览器宿主（含 sql.js + IndexedDB），`index.ts` 按 `__TAURI_INTERNALS__` 自动切换。**同一套前端可跑桌面与浏览器。**
+
+## 2. 环境准备
+
+- Node.js ≥ 20，pnpm（`corepack enable` 或 `npm i -g pnpm`）。
+- Rust toolchain（`rustup`），需 Tauri 系统依赖（Windows 需 WebView2；见 Tauri 官方 pre-reqs）。
+
+## 3. 运行
+
+| 目标 | 命令 | 说明 |
+|---|---|---|
+| 浏览器 Web 开发 | `pnpm dev:web` | Vite（`vite.web.config.ts`），默认 `http://localhost:5173/`。**改源码后需 Ctrl+Shift+R 强刷**（浏览器缓存旧的 Vite 模块）。 |
+| 桌面开发 | `pnpm tauri dev` | 启动 Tauri 窗口（端口 1420），Rust 后端实时编译。 |
+| 生产构建（前端） | `pnpm build` | 即 `tsc && vite build`，产物到 `dist/`。 |
+| 生产构建（桌面） | `pnpm tauri build` | 打包桌面安装包。 |
+| 预览 | `pnpm preview` | 本地预览 `dist/`。 |
+
+## 4. 测试与验证（权威循环）
+
+> **`scripts/smoke-web.mjs` 是 web 平台行为的事实标准**：它用 esbuild 打包 `web.ts` + IndexedDB shim + fs 适配器，在 Node 里跑真实 SQLite，对 CRUD / 属性 / 数据库 / 版本 / 块引用 / 备份 / 多空间 / 搜索 / AI / Lexical 净化等做断言。**每次改动都应让它在"全绿"基础上只增不减。**
+
+按顺序跑，全部通过才算稳：
+
+```powershell
+# 1. 冒烟测试（权威，断言数随功能增长）
+node scripts/smoke-web.mjs            # 期望 "N passed, 0 failed"
+
+# 2. 类型检查
+npx tsc --noEmit
+
+# 3. 前端构建
+pnpm build                            # tsc + vite build
+
+# 4. Rust 检查（会重生成 src-tauri/Cargo.lock，版本号改动后必跑）
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+**判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
+- `cargo check` → 出现 **`Finished \`dev\` profile …`**。
+- `git push` → 出现 **`main -> main`**。
+- `node scripts/smoke-web.mjs` → 出现 **`N passed, 0 failed`**。
+
+## 5. 版本号提升规则（重要）
+
+每次发版（哪怕只改文档）都要**同步改齐并验证**，否则 tab 标题 / Cargo / README 徽章会不一致：
+
+1. `package.json` → `"version"`
+2. `src-tauri/Cargo.toml` → `version =`
+3. `src-tauri/tauri.conf.json` → `"version"`
+4. `README.md` → 徽章 `version-X.Y.Z-blue`
+5. `docs/README.md` → "当前 \`vX.Y.Z\`"
+6. `CHANGELOG.md` → 顶部新增 `## [X.Y.Z] - 日期` 条目（Keep a Changelog）
+7. `src-tauri/Cargo.lock` → 由 `cargo check` 自动把 `shuyonote` 的 `version` 对齐上一步
+
+> ⚠️ **绝对不要用 shell 重写含中文的 UTF-8 文件**（`Get-Content -Raw` + `WriteAllText` 会产生乱码）。用编辑工具（edit/write）改。
+
+## 6. CHANGELOG 约定
+
+- 顶部按版本倒序；每版分 `新增` / `修复` / `修改`。
+- 每条写明**现象 + 根因 + 改动**，并附验证结果（如 `scripts/smoke-web.mjs` 从 N→M 全绿，`tsc`/`vite build`/`cargo check` 通过）。
+- 里程碑/功能落地会标注 ✅ 并指向具体文档。
+
+## 7. 文档体系约定
+
+| 类型 | 归属 |
+|---|---|
+| 产品定位 / 架构 / 设计哲学 / 路线图 | `docs/` 顶层 |
+| 某功能的技术方案（需求·ADR·里程碑） | `docs/plans/`（按日期命名） |
+| 竞品对比 | `docs/compare-*.md` |
+| 像素级 UI/UX 设计交付 | `design/`（设计系统 / UX 流程 / 实现计划） |
+| 版本演进 | `CHANGELOG.md` |
+| 工程/构建/验证/提版约定 | 本文档 `docs/development.md` |
+
+- `docs/` 聚焦"是什么 / 为什么 / 怎么做"；版本演进以 `CHANGELOG.md` 为准。
+- 文档统一入口：`docs/README.md`（导航表 + 方案索引）。新增文档记得登记进去。
+
+## 8. 常见坑
+
+- **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏。
+- **git autocrlf**：Windows 提交时出现 `LF will be replaced by CRLF` 是**正常的**，忽略。
+- **提交信息**：`git commit -m "..."` 里避免内嵌 `"` 或 `·`，否则会被拆断导致 pathspec 报错。
+- **浏览器缓存**：web 端改源码后必须 **Ctrl+Shift+R**，否则还在跑旧模块（以 `[ShuyoNote] bootstrap vX.Y.Z` 确认版本）。
+- **`ERR_CACHE_READ_FAILURE` / 模块 re-hash**：Vite dep 优化缓存与浏览器缓存不对齐时，重启 `pnpm dev:web` + 强刷即可。
+- **怀疑坏了**：先看 Console 是否打印 `[ShuyoNote] bootstrap v…`，确认跑的是不是当前构建。
