@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.129] - 2026-08-24
+
+### 新增
+
+- **绘图导出/只读（M23.1）**：Excalidraw 编辑器新增工具栏——**导出 SVG / PNG / 复制到剪贴板**（`exportToSvg`/`exportToBlob`/`exportToClipboard`），以及**只读⇄编辑切换**（`viewModeEnabled`，预览不改）；`UIOptions` 收敛默认导出菜单，统一走 ShuyoNote 入口。`scripts/smoke-web.mjs` 221 全绿（不变）。
+
+---
+
 ## [1.59.128] - 2026-08-24
 
 ### 重构

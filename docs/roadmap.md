@@ -191,6 +191,14 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 - **M22.2 mermaid 块** ✅（v1.59.123）：`/流程图/思维导图` 插入 mermaid 块（syntax 可选），离线渲染 SVG，解析失败内联报错 + 可编辑源文本；源文本进 `content_text`（可搜）；mermaid 按需懒加载。
 - **M22.3 AI 文生图** ✅（v1.59.124）：`/AI 绘图` 输入描述 → OpenAI 兼容文生图端点 → 图片落内容寻址附件 → 插入 `ImageNode`；provider 未启用/不支持/失败时 toast 降级。纯函数 `buildImageGenUrl`/`buildImageGenBody`/`parseImageGenResponse`/`b64ToBytes`/`bytesToDataUrl`。
 
+### M23 — Excalidraw 绘图高级功能（[方案](plans/2026-08-24-excalidraw-advanced-plan.md)）
+> 基于 Excalidraw 0.17.1 深挖：汇可编程、可搜索、可导航、可导出、可联动 AI 的白板。
+- **M23.1 编辑/导出体验** ✅（v1.59.129）：编辑器新增**导出 SVG/PNG/复制剪贴板**（`exportToSvg`/`exportToBlob`/`exportToClipboard`）+ **只读⇄编辑切换**（`viewModeEnabled` 预览不改）；`UIOptions` 收敛默认导出。
+- **M23.2 元素编程化 + AI/mermaid 注入画布** 🗓：`convertToExcalidrawElements` + `excalidrawAPI.addFiles`/`updateScene` 把文生图/ mermaid / 图片注入为画布图元。
+- **M23.3 自定义侧栏 + 白板导航** 🗓：属性侧栏；`onPointerDown` 命中检测（`elementsOverlappingBBox`）把画布节点映射到页面跳转。
+- **M23.4 数据/检索集成** 🗓：`.excalidraw` 内容寻址 + 版本快照 + 文字进 content_text + 元素级命中。
+- **M23.5 协同 / 代码生成** 🗓（超范围，诚实标注）：真正多人实时协同需 WebSocket 后端（0.17.1 无 `onCollaboration` 钩子）；图→代码（DiagramToCode/TTDDialog）在 0.18+ 才有。暂缓，先用「分享 .excalidraw / 导入 / 只读嵌入」替代。
+
 ## 4. 竞品差距跟踪
 
 | 维度 | 当前差距 | 计划 |

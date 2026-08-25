@@ -4866,6 +4866,28 @@ select.prop-value {
   cursor: pointer;
 }
 
+.drawing-modal-tool {
+  background: var(--surface-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.drawing-modal-tool:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.drawing-modal-tool-on {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
 .drawing-modal-btn:hover {
   background: var(--accent);
   color: var(--bg);

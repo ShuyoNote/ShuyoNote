@@ -1,16 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Excalidraw, restore, exportToBlob, serializeAsJSON } from "@excalidraw/excalidraw";
+import { Excalidraw, restore, exportToBlob, exportToSvg, exportToClipboard, serializeAsJSON } from "@excalidraw/excalidraw";
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
 import { api } from "../lib/api";
 import { blobStore } from "../lib/platform/blobStore";
+import { toast } from "../store/toast";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
   elements: any[];
   appState: any;
   files: any;
+}
+
+function downloadBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadText(text: string, name: string, mime = "image/svg+xml") {
+  downloadBlob(new Blob([text], { type: mime }), name);
 }
 
 export default function DrawingEditorModal() {
@@ -24,6 +38,7 @@ export default function DrawingEditorModal() {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [readOnly, setReadOnly] = useState(false);
 
   useEffect(() => {
     if (!drawingEdit) return;
@@ -116,6 +131,44 @@ export default function DrawingEditorModal() {
     }
   }, [close]);
 
+  const exportSvg = useCallback(async () => {
+    const scene = liveRef.current;
+    if (!scene) return;
+    setErr(null);
+    try {
+      const svgEl = await exportToSvg({ elements: scene.elements, appState: scene.appState, files: scene.files, exportPadding: 16 });
+      downloadText(new XMLSerializer().serializeToString(svgEl), "drawing.svg");
+      toast("已导出 SVG", "success");
+    } catch (e) {
+      setErr(`导出 SVG 失败：${e}`);
+    }
+  }, []);
+
+  const exportPng = useCallback(async () => {
+    const scene = liveRef.current;
+    if (!scene) return;
+    setErr(null);
+    try {
+      const blob = await exportToBlob({ elements: scene.elements, appState: scene.appState, files: scene.files, mimeType: "image/png", exportPadding: 16 });
+      downloadBlob(blob, "drawing.png");
+      toast("已导出 PNG", "success");
+    } catch (e) {
+      setErr(`导出 PNG 失败：${e}`);
+    }
+  }, []);
+
+  const copyPng = useCallback(async () => {
+    const scene = liveRef.current;
+    if (!scene) return;
+    setErr(null);
+    try {
+      await exportToClipboard({ elements: scene.elements, appState: scene.appState, files: scene.files, type: "png" });
+      toast("已复制到剪贴板", "success");
+    } catch (e) {
+      setErr(`复制失败：${e}`);
+    }
+  }, []);
+
   if (!drawingEdit) return null;
   if (!ready || !initialData) return null;
 
@@ -124,7 +177,13 @@ export default function DrawingEditorModal() {
       <div className="drawing-modal-head">
         <span className="drawing-modal-title">绘图（Excalidraw）</span>
         <span className="drawing-modal-actions">
-          <button className="drawing-modal-btn" onClick={save} disabled={busy}>
+          <button className="drawing-modal-tool" onClick={exportSvg} title="导出 SVG">⇩ SVG</button>
+          <button className="drawing-modal-tool" onClick={exportPng} title="导出 PNG">⇩ PNG</button>
+          <button className="drawing-modal-tool" onClick={copyPng} title="复制到剪贴板">⧉</button>
+          <button className={`drawing-modal-tool ${readOnly ? "drawing-modal-tool-on" : ""}`} onClick={() => setReadOnly((v) => !v)} title="只读/编辑切换">
+            {readOnly ? "编辑" : "只读"}
+          </button>
+          <button className="drawing-modal-btn" onClick={save} disabled={busy || readOnly}>
             {busy ? "保存中…" : "保存"}
           </button>
           <button className="drawing-modal-btn" onClick={close}>
@@ -137,6 +196,7 @@ export default function DrawingEditorModal() {
           onChange={onChange}
           initialData={initialData}
           excalidrawAPI={(api) => (apiRef.current = api)}
+          viewModeEnabled={readOnly}
           UIOptions={{ canvasActions: { export: false } }}
           langCode="zh-CN"
         />
