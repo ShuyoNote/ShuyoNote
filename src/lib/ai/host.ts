@@ -16,8 +16,10 @@ export interface HostOptions {
   maxDrafts?: number;
   /** Prior user/assistant turns to seed the conversation (multi-turn context). */
   history?: Array<{ role: "user" | "assistant"; content: string }>;
-  /** Forwarded to the transport: stream deltas to this callback as they arrive. */
+  /** Forwarded to the transport: stream content deltas to this callback as they arrive. */
   onDelta?: (text: string) => void;
+  /** Forwarded to the transport: stream model thinking/reasoning deltas as they arrive. */
+  onThinking?: (text: string) => void;
 }
 
 const DEFAULT_MAX_STEPS = 6;
@@ -113,6 +115,7 @@ export async function runAiLoop(
       llm = await opts.transport.complete(toLlmMessages(messages), {
         tools: aiTools.map((t) => toolSchema(t)),
         onDelta: opts.onDelta,
+        onThinking: opts.onThinking,
       });
     } catch (e) {
       errors.push(String((e as Error)?.message ?? e));

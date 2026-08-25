@@ -61,10 +61,16 @@ export function AiAssistantPanel() {
   };
   const [width, setWidth] = useState(loadWidth);
   const widthRef = useRef(width);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     widthRef.current = width;
     document.body.style.setProperty("--ai-w", `${width}px`);
   }, [width]);
+  // Keep the live transcript pinned to the bottom as tokens/thinking stream in.
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [running, reply, thinking, currentPrompt, history.length]);
   const onResizeStart = (e: React.PointerEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -186,7 +192,7 @@ export function AiAssistantPanel() {
                   </div>
                 </>
               ) : (
-                <div className="ai-transcript">
+                <div className="ai-transcript" ref={transcriptRef}>
                   {history.map((m, i) => (
                     <div key={i} className={`ai-bubble ai-bubble-${m.role}`}>
                       {m.role === "assistant" ? (
@@ -213,11 +219,11 @@ export function AiAssistantPanel() {
                       <div className="ai-bubble-text">{currentPrompt}</div>
                     </div>
                   )}
-                  {running && reply && (
+                  {running && (thinking || reply) && (
                     <div className="ai-bubble ai-bubble-assistant">
-                      <div className="ai-bubble-text"><Markdown text={reply} /></div>
+                      {reply && <div className="ai-bubble-text"><Markdown text={reply} /></div>}
                       {thinking && <ThinkingBlock text={thinking} />}
-                      {activity.length > 0 && (
+                      {reply && activity.length > 0 && (
                         <div className="ai-activity">
                           <span className="ai-activity-label">工具</span>
                           {activity.map((a, j) => (
@@ -225,7 +231,7 @@ export function AiAssistantPanel() {
                           ))}
                         </div>
                       )}
-                      <div className="ai-disclaimer">由 AI 生成，仅供参考</div>
+                      {reply && <div className="ai-disclaimer">由 AI 生成，仅供参考</div>}
                     </div>
                   )}
                 </div>

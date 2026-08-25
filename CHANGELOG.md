@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.75] - 2026-08-24
+
+### 新增
+
+- **思考过程实时流式显示**：推理型模型（`deepseek-v4-flash` 等）的 `reasoning_content` 现在**边想边显示**到「已深度思考」块，而不是等整段思考结束才整个出现。为此把思考增量从 transport → host → store 一路透传（`onThinking`），并调整面板渲染：内容尚未产出时「思考」块也先展示，且随流式内容自动滚动到底部。
+
+### 修改
+
+- `llm.ts` 新增 `onThinking` 回调，流式读取 `reasoning_content` 时实时回调；`host`/`store` 逐层透传；面板运行中即显示思考块并自动滚到底。
+- `scripts/smoke-web.mjs` 193→**194 全绿**（新增：`onThinking` 实时收到思考增量用例）；`tsc`/`vite build`/`cargo check` 均通过。
+
+---
+
 ## [1.59.74] - 2026-08-24
 
 ### 修复

@@ -18,8 +18,10 @@ export interface LlmOptions {
   tools?: unknown[];
   temperature?: number;
   maxTokens?: number;
-  /** When set, the transport streams deltas to this callback as they arrive. */
+  /** When set, the transport streams content deltas to this callback as they arrive. */
   onDelta?: (text: string) => void;
+  /** When set, the transport streams model thinking/reasoning deltas as they arrive. */
+  onThinking?: (text: string) => void;
 }
 
 export interface LlmResult {
@@ -185,6 +187,7 @@ async function readBodyStream(
   resp: Response,
   chunk: (line: string) => StreamChunk,
   onDelta: (text: string) => void,
+  onThinking?: (text: string) => void,
 ): Promise<{ content: string; nativeToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> | undefined; thinking: string }> {
   const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
   const dec = new TextDecoder();
@@ -247,7 +250,10 @@ async function readBodyStream(
         content += c.content;
         onDelta(c.content);
       }
-      if (c.thinking) thinking += c.thinking;
+      if (c.thinking) {
+        thinking += c.thinking;
+        onThinking?.(c.thinking);
+      }
       if (c.toolCalls) absorb(c.toolCalls);
       if (c.finishReason) lastFinishReason = c.finishReason;
     }
@@ -259,7 +265,10 @@ async function readBodyStream(
       content += c.content;
       onDelta(c.content);
     }
-    if (c.thinking) thinking += c.thinking;
+    if (c.thinking) {
+      thinking += c.thinking;
+      onThinking?.(c.thinking);
+    }
     if (c.toolCalls) absorb(c.toolCalls);
     if (c.finishReason) lastFinishReason = c.finishReason;
   }
@@ -330,7 +339,7 @@ export function createOllamaTransport(baseUrl = OLLAMA_DEFAULT_URL, model = OLLA
         throw new Error(describeFetchError(e, baseUrl));
       }
       if (!resp.ok) throw new Error(`Ollama 请求失败 (${resp.status})，请确认本地模型服务已启动、地址正确。`);      if (streaming) {
-        const { content, nativeToolCalls, thinking } = await readBodyStream(resp, ollamaLineChunk, opts.onDelta);
+        const { content, nativeToolCalls, thinking } = await readBodyStream(resp, ollamaLineChunk, opts.onDelta, opts.onThinking);
         return { content, nativeToolCalls, thinking };
       }
       const data = await resp.json();
@@ -389,7 +398,7 @@ export function createOpenAICompatTransport(
         throw new Error(`OpenAI 兼容接口请求失败 (${resp.status})${detail}`);
       }
       if (streaming) {
-        const { content, nativeToolCalls, thinking } = await readBodyStream(resp, openaiLineChunk, opts.onDelta);
+        const { content, nativeToolCalls, thinking } = await readBodyStream(resp, openaiLineChunk, opts.onDelta, opts.onThinking);
         return { content, nativeToolCalls, thinking };
       }
       const data = await resp.json();

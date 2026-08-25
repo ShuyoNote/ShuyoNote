@@ -143,7 +143,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     const notes = useNotes.getState();
     const allPages = notes.pages.map((p) => ({ id: p.id, title: p.title, parent_id: p.parent_id }));
     const seq = ++runSeq;
-    set({ running: true, error: null, currentPrompt: trimmed });
+    // Fresh thinking buffer at the start of every run.
+    set({ running: true, error: null, currentPrompt: trimmed, thinking: "" });
 
     // Live-stream window (throttled) so web replies appear token-by-token.
     let buffered = "";
@@ -160,6 +161,22 @@ export const useAiStore = create<AiState>((set, get) => ({
       buffered += t;
       if (timer === null) timer = window.setTimeout(flush, 40);
     };
+    // Live-stream the model's thinking/reasoning the same way, so the "已深度思考"
+    // block grows while the model is still thinking (not only after completion).
+    let thinkBuf = "";
+    let thinkTimer: number | null = null;
+    const flushThinking = () => {
+      thinkTimer = null;
+      if (thinkBuf) {
+        const chunk = thinkBuf;
+        thinkBuf = "";
+        set((s) => ({ thinking: s.thinking + chunk }));
+      }
+    };
+    const onThinking = (t: string) => {
+      thinkBuf += t;
+      if (thinkTimer === null) thinkTimer = window.setTimeout(flushThinking, 40);
+    };
 
     try {
       const transport = IS_WEB
@@ -169,13 +186,16 @@ export const useAiStore = create<AiState>((set, get) => ({
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),
         { currentPageId: notes.currentId, allPages },
-        { transport, history: get().history, onDelta },
+        { transport, history: get().history, onDelta, onThinking },
       );
       // A newer run() or a stop() invalidates this result (stale discard).
       if (seq !== runSeq) return;
       if (timer !== null) clearTimeout(timer);
       timer = null;
       buffered = "";
+      if (thinkTimer !== null) clearTimeout(thinkTimer);
+      thinkTimer = null;
+      thinkBuf = "";
       // Keep existing drafts, replace reply/error with the fresh run; keep the
       // last assistant reply in history so follow-ups ("再详细点") stay in context.
       const history = [...get().history, { role: "user" as const, content: trimmed }];
@@ -198,7 +218,8 @@ export const useAiStore = create<AiState>((set, get) => ({
         history: historyCapped,
         activity: result.activity ?? [],
         currentPrompt: "",
-        thinking: result.thinking ?? "",
+        // Prefer the transport's complete thinking; fall back to what we streamed.
+        thinking: result.thinking || get().thinking,
       });
     } catch (e) {
       if (seq !== runSeq) return;

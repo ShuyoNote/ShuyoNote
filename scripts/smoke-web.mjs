@@ -1147,11 +1147,13 @@ assert("workspace name persists across instances", wsAgain !== "");
   const port6 = srv6.address().port;
   const base6 = `http://127.0.0.1:${port6}`;
   try {
+    const thinkingDeltas = [];
     const res6 = await aiMod.createOpenAICompatTransport(base6, "deepseek-r1").complete(
       [{ role: "user", content: "hi" }],
-      { onDelta: () => {} },
+      { onDelta: () => {}, onThinking: (t) => thinkingDeltas.push(t) },
     );
     assert("streaming captures reasoning_content", res6.thinking === "我先理解" + "再作答" && res6.content === "答案是", JSON.stringify({ thinking: res6.thinking, content: res6.content }));
+    assert("onThinking streams thinking deltas live", thinkingDeltas.join("") === "我先理解" + "再作答", JSON.stringify(thinkingDeltas));
   } finally {
     srv6.closeAllConnections?.();
     await new Promise((resolve) => srv6.close(resolve));
