@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.122] - 2026-08-24
+
+### 新增
+
+- **绘图块（M22.1，Excalidraw）**：斜杠 `/绘图` 插入绘图块，点击打开全屏 Excalidraw 编辑器（笔/橡皮/形状/箭头/文字/便签）；保存时把场景 JSON + 导出 PNG 落为内容寻址附件（节点只存 `hash` 引用，幂等去重）；文字元素抽取进 `content_text`（可搜/进反链）。新增 `DrawingNode`、`DrawingEditorModal`、纯函数 `excalidrawText`/`drawingTextFromJson`/`drawingHasContent`；Excalidraw 按需懒加载（独立大 chunk，不拖大首屏）。`scripts/smoke-web.mjs` 212→**216 全绿**。
+
+---
+
 ## [1.59.121] - 2026-08-24
 
 ### 新增

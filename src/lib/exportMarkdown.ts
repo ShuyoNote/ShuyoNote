@@ -16,6 +16,7 @@ import { VideoNode } from "../editor/nodes/VideoNode";
 import { BlockRefNode } from "../editor/nodes/BlockRefNode";
 import { BlockEmbedNode } from "../editor/nodes/BlockEmbedNode";
 import { AttachmentRefNode } from "../editor/nodes/AttachmentRefNode";
+import { DrawingNode } from "../editor/nodes/DrawingNode";
 
 const NODES = [
   HeadingNode,
@@ -33,6 +34,7 @@ const NODES = [
   BlockRefNode,
   BlockEmbedNode,
   AttachmentRefNode,
+  DrawingNode,
   TableNode,
   TableCellNode,
   TableRowNode,

@@ -4771,6 +4771,124 @@ select.prop-value {
   font-size: 12px;
 }
 
+/* Drawing block */
+.editor-drawing-container {
+  display: block;
+  margin: 6px 0;
+  user-select: none;
+}
+
+.editor-drawing {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.editor-drawing-canvas {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+}
+
+.editor-drawing-img {
+  max-width: 100%;
+  max-height: 360px;
+  display: block;
+  margin: 0 auto;
+}
+
+.editor-drawing-placeholder {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 24px;
+}
+
+.editor-drawing-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.editor-drawing-btn {
+  background: var(--surface-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.editor-drawing-btn:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* Fullscreen drawing modal */
+.drawing-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.drawing-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.drawing-modal-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.drawing-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.drawing-modal-btn {
+  background: var(--surface-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.drawing-modal-btn:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.drawing-modal-body {
+  flex: 1;
+  position: relative;
+}
+
+.drawing-modal-err {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fde8e8;
+  color: #b91c1c;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  z-index: 10;
+}
+
 .graph-node-label {
   font-size: 11px;
   fill: var(--text);

@@ -17,7 +17,7 @@ import { CodeNode, CodeHighlightNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
-import { useEffect, useMemo, useRef } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
@@ -28,8 +28,8 @@ import { BlockRefNode } from "./nodes/BlockRefNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { WebBookmarkNode } from "./nodes/WebBookmarkNode";
 import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
-import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
-import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
+import { DrawingNode } from "./nodes/DrawingNode";
+import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { AiSpaceTriggerPlugin } from "./plugins/AiSpaceTriggerPlugin";
 import { PageLinkSuggestPlugin } from "./plugins/PageLinkSuggestPlugin";
@@ -111,6 +111,7 @@ const EDITOR_NODES = [
   BlockEmbedNode,
   WebBookmarkNode,
   AttachmentRefNode,
+  DrawingNode,
   TableNode,
   TableCellNode,
   TableRowNode,
@@ -399,6 +400,10 @@ function BlockIdPlugin({
   return null;
 }
 
+// Lazy-load the drawing editor modal so the (large) Excalidraw bundle is split
+// into its own chunk and only fetched when a user actually edits a drawing.
+const DrawingEditorModal = lazy(() => import("../components/DrawingEditorModal"));
+
 export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
   // Stable block identity: node key → block id, and the persisted ids (in
   // top-level child order) read from the saved document at mount.
@@ -463,6 +468,9 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <TableMenuPlugin />
         <TableResizerPlugin />
         <EditorStoreSync />
+        <Suspense fallback={null}>
+          <DrawingEditorModal />
+        </Suspense>
       </div>
     </LexicalComposer>
   );

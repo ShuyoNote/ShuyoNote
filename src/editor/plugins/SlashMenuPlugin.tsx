@@ -16,8 +16,10 @@ import { toast } from "../../store/toast";
 import { useBlockSelector } from "../../store/blockSelector";
 import { useAttachmentsStore } from "../../store/attachments";
 import { inputDialog } from "../../store/input";
+import { useEditorStore } from "../../store/editor";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
+import { $createDrawingNode } from "../nodes/DrawingNode";
 import { $createVideoNode } from "../nodes/VideoNode";
 import { $createAttachmentRefNode } from "../nodes/AttachmentRefNode";
 import { $createWebBookmarkNode } from "../nodes/WebBookmarkNode";
@@ -126,6 +128,17 @@ function makeOptions(pageId: string): SlashOption[] {
         editor.update(() => $insertBlockNode($createImageNode(src, "", false, null, null, metas[0].hash, metas[0].mime)));
       } catch (e) {
         toast(`插入图片失败：${e}`, "error");
+      }
+    } },
+    { key: "drawing", title: "绘图", badge: "✏️", group: "媒体", pinyin: "ht", run: (editor) => {
+      let key: string | null = null;
+      editor.update(() => {
+        const node = $createDrawingNode();
+        $insertBlockNode(node);
+        key = node.getKey();
+      });
+      if (key) {
+        useEditorStore.getState().openDrawingEdit({ nodeKey: key, hash: null, mime: null, text: "" });
       }
     } },
     { key: "video", title: "视频", badge: "🎬", group: "媒体", pinyin: "sp", run: async (editor) => {
