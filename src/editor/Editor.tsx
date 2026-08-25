@@ -31,6 +31,7 @@ import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
+import { AiSpaceTriggerPlugin } from "./plugins/AiSpaceTriggerPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { BookmarkPastePlugin } from "./plugins/BookmarkPastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
@@ -434,7 +435,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
       <div className="editor-shell">
         <RichTextPlugin
           contentEditable={<ContentEditable className="editor-content" autoFocus={autoFocus} />}
-          placeholder={<div className="editor-placeholder">输入内容，或使用 "/" 命令 / Markdown 语法…</div>}
+          placeholder={<div className="editor-placeholder">输入 '/' 选择，按 '空格' 打开 AI...</div>}
           ErrorBoundary={(props) => <div className="editor-error">{props.children}</div>}
         />
         <HistoryPlugin />
@@ -449,6 +450,7 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
         <BlockSelectorPlugin />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
+        <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
         <BlockDragPlugin />

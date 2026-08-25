@@ -15,7 +15,8 @@ import { Markdown } from "./Markdown";
 export function InlineAiDraftBar() {
   const config = useAiStore((s) => s.config);
   const notes = useNotes();
-  const [open, setOpen] = useState(false);
+  const open = useEditorStore((s) => s.aiBarOpen);
+  const setOpen = useEditorStore((s) => s.setAiBarOpen);
   const [prompt, setPrompt] = useState("");
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [running, setRunning] = useState(false);
