@@ -17,6 +17,7 @@ import { BlockRefNode } from "../editor/nodes/BlockRefNode";
 import { BlockEmbedNode } from "../editor/nodes/BlockEmbedNode";
 import { AttachmentRefNode } from "../editor/nodes/AttachmentRefNode";
 import { DrawingNode } from "../editor/nodes/DrawingNode";
+import { MermaidNode } from "../editor/nodes/MermaidNode";
 
 const NODES = [
   HeadingNode,
@@ -35,6 +36,7 @@ const NODES = [
   BlockEmbedNode,
   AttachmentRefNode,
   DrawingNode,
+  MermaidNode,
   TableNode,
   TableCellNode,
   TableRowNode,

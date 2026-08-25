@@ -4889,6 +4889,97 @@ select.prop-value {
   z-index: 10;
 }
 
+/* Mermaid block */
+.editor-mermaid-container {
+  display: block;
+  margin: 6px 0;
+  user-select: none;
+}
+
+.editor-mermaid {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.editor-mermaid-render {
+  padding: 12px;
+  overflow-x: auto;
+  background: #fff;
+}
+
+.editor-mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.editor-mermaid-err {
+  color: #b91c1c;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.editor-mermaid-placeholder {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.editor-mermaid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.editor-mermaid-syntax-label {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-right: auto;
+}
+
+.editor-mermaid-btn {
+  background: var(--surface-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.editor-mermaid-btn:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.editor-mermaid-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.editor-mermaid-syntax {
+  background: var(--surface-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .graph-node-label {
   font-size: 11px;
   fill: var(--text);

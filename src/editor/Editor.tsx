@@ -29,6 +29,7 @@ import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { WebBookmarkNode } from "./nodes/WebBookmarkNode";
 import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
 import { DrawingNode } from "./nodes/DrawingNode";
+import { MermaidNode } from "./nodes/MermaidNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { AiSpaceTriggerPlugin } from "./plugins/AiSpaceTriggerPlugin";
@@ -112,6 +113,7 @@ const EDITOR_NODES = [
   WebBookmarkNode,
   AttachmentRefNode,
   DrawingNode,
+  MermaidNode,
   TableNode,
   TableCellNode,
   TableRowNode,

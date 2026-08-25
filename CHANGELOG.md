@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.123] - 2026-08-24
+
+### 新增
+
+- **mermaid 块（M22.2）**：斜杠 `/流程图/思维导图` 插入 mermaid 块，选择 syntax（flowchart/sequence/class/state/er/mindmap/timeline/kanban/gantt/pie），离线渲染 SVG（无 CDN）；解析失败内联报错 + 可编辑源文本，绝不崩；源文本进 `content_text`（可搜）。新增 `MermaidNode`、纯函数 `detectMermaidSyntax`/`mermaidRenderable`/`mermaidSyntaxOptions`；mermaid 按需懒加载（独立 chunk）。`scripts/smoke-web.mjs` 216→**220 全绿**。
+
+---
+
 ## [1.59.122] - 2026-08-24
 
 ### 新增

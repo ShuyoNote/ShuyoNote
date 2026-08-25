@@ -75,6 +75,7 @@ await esbuild.build({
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { excalidrawText, drawingTextFromJson, drawingHasContent } from "./src/lib/drawing";\n' +
+      'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
@@ -942,6 +943,11 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("drawingTextFromJson parses scene text", aiMod.drawingTextFromJson(sceneJson) === "动手画", aiMod.drawingTextFromJson(sceneJson));
   assert("drawingHasContent detects elements", aiMod.drawingHasContent(sceneJson) === true && aiMod.drawingHasContent("{}") === false, "hasContent");
   assert("drawingTextFromJson tolerates garbage", aiMod.drawingTextFromJson("not json") === "", "garbage");
+  // M-B detectMermaidSyntax maps the leading directive to a canonical type.
+  assert("detectMermaidSyntax flowchart", aiMod.detectMermaidSyntax("graph TD\n  A-->B") === "flowchart", aiMod.detectMermaidSyntax("graph TD"));
+  assert("detectMermaidSyntax mindmap", aiMod.detectMermaidSyntax("mindmap\n  root((主题))") === "mindmap", aiMod.detectMermaidSyntax("mindmap"));
+  assert("detectMermaidSyntax sequence", aiMod.detectMermaidSyntax("sequenceDiagram\n  A->>B: hi") === "sequence", aiMod.detectMermaidSyntax("sequenceDiagram"));
+  assert("mermaidRenderable needs ≥2 lines", aiMod.mermaidRenderable("graph TD") === false && aiMod.mermaidRenderable("graph TD\n  A-->B") === true, "renderable");
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

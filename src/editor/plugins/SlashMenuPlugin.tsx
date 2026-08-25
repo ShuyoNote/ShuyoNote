@@ -20,6 +20,7 @@ import { useEditorStore } from "../../store/editor";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createDrawingNode } from "../nodes/DrawingNode";
+import { $createMermaidNode } from "../nodes/MermaidNode";
 import { $createVideoNode } from "../nodes/VideoNode";
 import { $createAttachmentRefNode } from "../nodes/AttachmentRefNode";
 import { $createWebBookmarkNode } from "../nodes/WebBookmarkNode";
@@ -140,6 +141,11 @@ function makeOptions(pageId: string): SlashOption[] {
       if (key) {
         useEditorStore.getState().openDrawingEdit({ nodeKey: key, hash: null, mime: null, text: "" });
       }
+    } },
+    { key: "mermaid", title: "流程图/思维导图", badge: "📊", group: "媒体", pinyin: "lct", run: (editor) => {
+      editor.update(() =>
+        $insertBlockNode($createMermaidNode("graph TD\n  A[开始] --> B[结束]", "flowchart")),
+      );
     } },
     { key: "video", title: "视频", badge: "🎬", group: "媒体", pinyin: "sp", run: async (editor) => {
       const selected = await platform.dialog.open({
