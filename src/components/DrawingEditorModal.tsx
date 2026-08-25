@@ -4,8 +4,12 @@ import { Excalidraw, restore, exportToBlob, exportToSvg, exportToClipboard, seri
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
 import { api } from "../lib/api";
+import { platform } from "../lib/platform";
 import { blobStore } from "../lib/platform/blobStore";
 import { toast } from "../store/toast";
+import { inputDialog } from "../store/input";
+import { useAiStore } from "../store/ai";
+import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../lib/ai/imageGen";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
@@ -25,6 +29,56 @@ function downloadBlob(blob: Blob, name: string) {
 
 function downloadText(text: string, name: string, mime = "image/svg+xml") {
   downloadBlob(new Blob([text], { type: mime }), name);
+}
+
+function makeId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// A minimal but valid Excalidraw image element (base fields + image extras).
+function makeImageEl(fileId: string, x: number, y: number, w: number, h: number, mime: string): any {
+  const seed = Math.floor(Math.random() * 1e9);
+  return {
+    type: "image",
+    id: makeId(),
+    x,
+    y,
+    width: w,
+    height: h,
+    angle: 0,
+    strokeColor: "transparent",
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 1,
+    strokeStyle: "solid",
+    roundness: null,
+    roughness: 0,
+    opacity: 100,
+    seed,
+    version: 1,
+    versionNonce: seed,
+    isDeleted: false,
+    groupIds: [],
+    frameId: null,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    fileId,
+    status: "saved",
+    scale: [1, 1],
+    mimeType: mime,
+  };
+}
+
+function preloadImg(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("图片加载失败"));
+    img.src = dataUrl;
+  });
 }
 
 export default function DrawingEditorModal() {
@@ -169,6 +223,110 @@ export default function DrawingEditorModal() {
     }
   }, []);
 
+  // Inject an image (data URL) as an Excalidraw image element near the scene.
+  const injectImage = useCallback(async (dataUrl: string, mime: string) => {
+    const a = apiRef.current;
+    if (!a) return;
+    setErr(null);
+    try {
+      const img = await preloadImg(dataUrl);
+      const scale = Math.min(640 / img.naturalWidth, 480 / img.naturalHeight, 2);
+      const w = img.naturalWidth * scale;
+      const h = img.naturalHeight * scale;
+      const existing = a.getSceneElements();
+      const fileId = makeId();
+      a.addFiles([{ id: fileId, dataURL: dataUrl, mimeType: mime, created: Date.now() }]);
+      const el = makeImageEl(fileId, 40 + (existing.length % 6) * 60, 40 + (existing.length % 6) * 60, w, h, mime);
+      a.updateScene({ elements: [...existing, el] });
+      toast("已插入到画布", "success");
+    } catch (e) {
+      setErr(`插入图片失败：${e}`);
+    }
+  }, []);
+
+  const insertImage = useCallback(async () => {
+    const picked = await platform.dialog.open({ title: "插入图片", multiple: false, filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }] });
+    if (!picked) return;
+    const path = Array.isArray(picked) ? picked[0] : picked;
+    try {
+      const metas = await api.importAttachmentFiles(null, [path]);
+      const src = platform.asset.convertFileSrc(metas[0].path ?? "");
+      const bytes = await (await fetch(src)).arrayBuffer();
+      const dataUrl = `data:${metas[0].mime};base64,${btoa(String.fromCharCode(...new Uint8Array(bytes)))}`;
+      await injectImage(dataUrl, metas[0].mime);
+    } catch (e) {
+      toast(`插入图片失败：${e}`, "error");
+    }
+  }, [injectImage]);
+
+  const aiDraw = useCallback(async () => {
+    const { config } = useAiStore.getState();
+    if (!config.enabled || config.provider !== "openai") {
+      toast("AI 绘图需在设置里启用并配置 OpenAI 兼容文生图端点", "error");
+      return;
+    }
+    inputDialog({
+      title: "AI 绘图",
+      placeholder: "描述你想生成的画面…",
+      okLabel: "生成",
+      onSubmit: async (prompt) => {
+        const p = (prompt ?? "").trim();
+        if (!p) return;
+        try {
+          const res = await fetch(buildImageGenUrl(config.baseUrl), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}) },
+            body: buildImageGenBody(config, p),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const parsed = parseImageGenResponse(await res.text());
+          if (!parsed) throw new Error("响应中没有图片数据");
+          const dataUrl = "b64" in parsed ? bytesToDataUrl(b64ToBytes(parsed.b64), parsed.mime) : parsed.url;
+          await injectImage(dataUrl, "image/png");
+        } catch (e) {
+          toast(`AI 绘图失败：${e}`, "error");
+        }
+      },
+    });
+  }, [injectImage]);
+
+  const mermaidDraw = useCallback(async () => {
+    inputDialog({
+      title: "流程图 / 思维导图",
+      placeholder: "graph TD\n  A[开始] --> B[结束]",
+      okLabel: "生成",
+      onSubmit: async (srcText) => {
+        const src = (srcText ?? "").trim();
+        if (!src) return;
+        try {
+          const mod = await import("mermaid");
+          const mermaid = mod.default;
+          mermaid.initialize({ startOnLoad: false, theme: "default" });
+          const id = `sn-${Math.random().toString(36).slice(2, 10)}`;
+          const { svg } = await mermaid.render(id, src);
+          const blob = new Blob([svg], { type: "image/svg+xml" });
+          const url = URL.createObjectURL(blob);
+          const dataUrl = await new Promise<string>((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const c = document.createElement("canvas");
+              c.width = img.naturalWidth + 20;
+              c.height = img.naturalHeight + 20;
+              const ctx = c.getContext("2d");
+              if (ctx) ctx.drawImage(img, 10, 10);
+              resolve(c.toDataURL("image/png"));
+              URL.revokeObjectURL(url);
+            };
+            img.src = url;
+          });
+          await injectImage(dataUrl, "image/png");
+        } catch (e) {
+          toast(`生成流程图失败：${e}`, "error");
+        }
+      },
+    });
+  }, [injectImage]);
+
   if (!drawingEdit) return null;
   if (!ready || !initialData) return null;
 
@@ -177,6 +335,9 @@ export default function DrawingEditorModal() {
       <div className="drawing-modal-head">
         <span className="drawing-modal-title">绘图（Excalidraw）</span>
         <span className="drawing-modal-actions">
+          <button className="drawing-modal-tool" onClick={insertImage} title="插入图片">🖼 图</button>
+          <button className="drawing-modal-tool" onClick={aiDraw} title="AI 插图">🤖 AI</button>
+          <button className="drawing-modal-tool" onClick={mermaidDraw} title="流程图/思维导图">📊 图</button>
           <button className="drawing-modal-tool" onClick={exportSvg} title="导出 SVG">⇩ SVG</button>
           <button className="drawing-modal-tool" onClick={exportPng} title="导出 PNG">⇩ PNG</button>
           <button className="drawing-modal-tool" onClick={copyPng} title="复制到剪贴板">⧉</button>

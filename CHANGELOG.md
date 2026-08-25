@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.130] - 2026-08-24
+
+### 新增
+
+- **元素编程化 + AI/mermaid 注入画布（M23.2）**：绘图编辑器新增「🖼 图片 / 🤖 AI 插图 / 📊 mermaid 流程」按钮，用 `excalidrawAPI.addFiles` + `updateScene` 把**图片/AI 文生图/mermaid 流程图渲染为画布图元**，可选中再编辑；`makeImageEl` 构造合法 Excalidraw image 元素，走内容寻址。AI 未配置时 toast 降级；无头浏览器验证「📊 图 → 输入 → 生成」全链路无报错。
+
+---
+
 ## [1.59.129] - 2026-08-24
 
 ### 新增
