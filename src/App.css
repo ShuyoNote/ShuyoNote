@@ -4745,6 +4745,32 @@ select.prop-value {
   opacity: 0.15;
 }
 
+.graph-node-match .graph-node-circle {
+  stroke: #f59e0b;
+  stroke-width: 3;
+  fill: #fde68a;
+}
+
+.graph-node-pinned .graph-node-circle {
+  stroke: #ef4444;
+  stroke-width: 2.5;
+}
+
+.graph-node-pin {
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.graph-search {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-width: 110px;
+  font-size: 12px;
+}
+
 .graph-node-label {
   font-size: 11px;
   fill: var(--text);

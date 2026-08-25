@@ -42,11 +42,14 @@ function tick(
   edges: GraphEdge[],
   size: { w: number; h: number },
   dragId: string | null,
+  dimension: string,
+  pinned: Set<string>,
 ) {
   const nodeById = new Map(ns.map((n) => [n.id, n]));
   const cx = size.w / 2;
   const cy = size.h / 2;
   const damping = 0.9;
+  const isFree = (id: string) => dragId !== id && !pinned.has(id);
 
   for (let i = 0; i < ns.length; i++) {
     for (let j = i + 1; j < ns.length; j++) {
@@ -64,11 +67,11 @@ function tick(
       const f = 5000 / d2;
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
-      if (dragId !== a.id) {
+      if (isFree(a.id)) {
         a.vx += fx;
         a.vy += fy;
       }
-      if (dragId !== b.id) {
+      if (isFree(b.id)) {
         b.vx -= fx;
         b.vy -= fy;
       }
@@ -86,18 +89,42 @@ function tick(
     const f = 0.04 * (d - ideal);
     const fx = (dx / d) * f;
     const fy = (dy / d) * f;
-    if (dragId !== a.id) {
+    if (isFree(a.id)) {
       a.vx += fx;
       a.vy += fy;
     }
-    if (dragId !== b.id) {
+    if (isFree(b.id)) {
       b.vx -= fx;
       b.vy -= fy;
     }
   }
 
+  // Clustering force (M21.2): pull each page node toward its same-group centroid
+  // so pages sharing a tag/attr value naturally clump together.
+  const groups = new Map<string, { x: number; y: number; count: number }>();
   for (const n of ns) {
-    if (dragId === n.id) {
+    const k = nodeClusterKey(n, dimension);
+    if (!k) continue;
+    const g = groups.get(k) ?? { x: 0, y: 0, count: 0 };
+    g.x += n.x;
+    g.y += n.y;
+    g.count++;
+    groups.set(k, g);
+  }
+  for (const n of ns) {
+    if (!isFree(n.id)) continue;
+    const k = nodeClusterKey(n, dimension);
+    if (!k) continue;
+    const g = groups.get(k)!;
+    if (g.count < 2) continue;
+    const gx = g.x / g.count;
+    const gy = g.y / g.count;
+    n.vx += (gx - n.x) * 0.02;
+    n.vy += (gy - n.y) * 0.02;
+  }
+
+  for (const n of ns) {
+    if (!isFree(n.id)) {
       n.vx = 0;
       n.vy = 0;
       continue;
@@ -134,6 +161,15 @@ function pageDimValues(
   return (p.props ?? []).filter((pr) => pr.name === name).map((pr) => pr.value);
 }
 
+// The cluster key for a node in the current grouping dimension ("tag" | "attr:<name>").
+// Page nodes group by their first value; block nodes never cluster. Returns null
+// when the node has no grouping value (it then drifts freely, no cluster pull).
+function nodeClusterKey(n: SimNode, dimension: string): string | null {
+  if (n.kind !== "page") return null;
+  const vals = pageDimValues(n, dimension);
+  return vals.length > 0 ? `${dimension}:${vals[0]}` : null;
+}
+
 export function GraphView() {
   const { currentId, openPage } = useNotes();
   const [graph, setGraph] = useState<GraphData | null>(null);
@@ -143,6 +179,8 @@ export function GraphView() {
   const [dimension, setDimension] = useState("tag"); // "tag" | "attr:<name>"
   const [valueFilter, setValueFilter] = useState<string | null>(null);
   const [colorBy, setColorBy] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [frame, setFrame] = useState(0);
@@ -156,6 +194,8 @@ export function GraphView() {
   const dragRef = useRef<{ id: string; scx: number; scy: number; nx: number; ny: number } | null>(null);
   const panRef = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(null);
   const movedRef = useRef(false);
+  const pinnedIdsRef = useRef<Set<string>>(new Set());
+  pinnedIdsRef.current = pinnedIds;
 
   // Measure container.
   useEffect(() => {
@@ -311,7 +351,7 @@ export function GraphView() {
     let iterations = 0;
     const loop = () => {
       if (!running) return;
-      tick(simRef.current, edgesRef.current, size, dragRef.current?.id ?? null);
+      tick(simRef.current, edgesRef.current, size, dragRef.current?.id ?? null, dimension, pinnedIdsRef.current);
       settled = maxSpeed(simRef.current) < 0.05 ? settled + 1 : 0;
       iterations += 1;
       setFrame((f) => f + 1);
@@ -324,7 +364,7 @@ export function GraphView() {
       running = false;
       cancelAnimationFrame(raf);
     };
-  }, [nodes, size]);
+  }, [nodes, size, dimension]);
 
   const displayNodes = simRef.current;
   const nodeMap = useMemo(
@@ -342,6 +382,23 @@ export function GraphView() {
       else if (e.target === focusId) neighborSet.add(e.source);
     }
   }
+
+  // Keyword highlight (M21.2): nodes whose label contains the term get a
+  // highlight ring; matching set also drives the highlight of non-matches.
+  const kw = keyword.trim().toLowerCase();
+  const nodeLabel = (n: SimNode) => (n.label || "未命名").toLowerCase().includes(kw);
+  const kwActive = kw.length > 0;
+
+  const togglePin = (id: string) => {
+    const next = new Set(pinnedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPinnedIds(next);
+  };
+  const pinFocus = () => {
+    const id = hoveredId ?? focusId;
+    if (id) togglePin(id);
+  };
 
   // Select-attribute names (grouping dimensions) + values of the current dimension.
   const dimensionNames = useMemo(() => {
@@ -480,6 +537,9 @@ export function GraphView() {
           })}
           {displayNodes.map((n) => {
             const dimmed = focusId && !neighborSet.has(n.id);
+            const isPinned = pinnedIds.has(n.id);
+            const isMatch = kwActive && nodeLabel(n);
+            const isDimByKw = kwActive && !isMatch;
             const dimValues =
               colorBy && n.kind === "page" && currentId !== n.id
                 ? pageDimValues(n, dimension)
@@ -491,11 +551,17 @@ export function GraphView() {
                 transform={`translate(${n.x}, ${n.y})`}
                 className={`graph-node ${n.kind === "block" ? "graph-node-block" : ""} ${
                   currentId === n.id ? "graph-node-current" : ""
-                } ${dimmed ? "graph-node-dim" : ""}`}
+                } ${dimmed ? "graph-node-dim" : ""} ${isPinned ? "graph-node-pinned" : ""} ${
+                  isMatch ? "graph-node-match" : ""
+                } ${isDimByKw ? "graph-node-dim" : ""}`}
                 onPointerDown={(e) => beginNodeDrag(n.id, e)}
                 onClick={() => openNode(n)}
                 onMouseEnter={() => setHoveredId(n.id)}
                 onMouseLeave={() => setHoveredId((h) => (h === n.id ? null : h))}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  togglePin(n.id);
+                }}
               >
                 <circle
                   r={nodeRadius(n)}
@@ -505,6 +571,11 @@ export function GraphView() {
                 <text y={n.kind === "block" ? -8 : 4} className="graph-node-label">
                   {n.kind === "block" ? shortLabel(n.label) : n.label || "未命名"}
                 </text>
+                {isPinned ? (
+                  <text x={nodeRadius(n) + 2} y={-6} className="graph-node-pin">
+                    📌
+                  </text>
+                ) : null}
                 <title>{n.kind === "block" ? n.label || "(空块)" : n.label || "未命名"}</title>
               </g>
             );
@@ -566,6 +637,23 @@ export function GraphView() {
           title="按维度着色"
         >
           🎨
+        </button>
+        <span className="graph-controls-sep" />
+        <input
+          className="graph-search"
+          type="text"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          placeholder="高亮关键词…"
+          title="按关键词高亮节点"
+        />
+        <button
+          className={pinnedIds.size > 0 ? "graph-toggle-active" : ""}
+          onClick={pinFocus}
+          disabled={!(hoveredId ?? focusId)}
+          title="锁定/解锁悬停节点（双击节点亦可）"
+        >
+          📌
         </button>
       </div>
 
