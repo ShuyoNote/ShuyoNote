@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.145] - 2026-08-24
+
+### 变更
+
+- **去掉内嵌绘图块底部残留的灰色横条**：上版隐藏了 Excalidraw 底部系统栏，但只读模式下 Excalidraw 还渲染了一条 `.Island` 底部悬浮灰条（底部居中的长条）。新增作用域规则 `.inline-drawing:not(.editing) .excalidraw .Island { display:none }`——只读（查看）模式下该 `.Island` 就是底部灰条，隐藏后嵌入块只剩干净画布；编辑模式（`.editing`）的左侧工具栏（同为 `.Island`）不受影响。无头浏览器实测底部 `.Island` 消失、仅剩画布，无运行时错误。`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.144] - 2026-08-24
 
 ### 变更

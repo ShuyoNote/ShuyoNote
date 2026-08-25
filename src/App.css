@@ -4857,6 +4857,14 @@ select.prop-value {
   display: none !important;
 }
 
+/* In read-only (view) mode the only remaining Excalidraw `Island` is the bottom
+   footer bar (the floating grey pill) — hide it so the embed is just the drawing
+   canvas. Edit mode keeps the tool palette (also an `Island`), so this applies
+   only while not editing. */
+.inline-drawing:not(.editing) .excalidraw .Island {
+  display: none !important;
+}
+
 /* Bottom-center drag handle to resize the embed height (Feishu-style). */
 .inline-drawing-resize {
   position: absolute;
