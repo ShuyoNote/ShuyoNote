@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.134] - 2026-08-24
+
+### 修复
+
+- **加载已有绘图报错**：`读取绘图失败：TypeError: items.reduce is not a function`。根因：Excalidraw 0.17.1 的 `restore` 签名是 `restore(data, localAppState, localElements)`（第一参数是**整个场景对象** `{elements, appState, files}`），而代码误传 `(elements, appState, files)`，把数组当成了 `data`。已改为 `restore({ elements, appState, files }, null, null)`，现在**打开已保存的绘图（其 `.excalidraw` JSON）能正常载入**。`scripts/smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.133] - 2026-08-24
 
 ### 美化

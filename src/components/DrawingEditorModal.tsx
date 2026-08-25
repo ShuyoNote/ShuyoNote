@@ -111,7 +111,11 @@ export default function DrawingEditorModal() {
           if (bytes) {
             const parsed = JSON.parse(new TextDecoder().decode(bytes) || "{}");
             const elems = Array.isArray(parsed?.elements) ? parsed.elements : [];
-            const restored = await restore(elems, parsed?.appState ?? {}, parsed?.files ?? {});
+            const restored = await restore(
+              { elements: elems, appState: parsed?.appState ?? {}, files: parsed?.files ?? {} },
+              null,
+              null,
+            );
             scene = { elements: restored.elements, appState: restored.appState, files: restored.files };
           }
         } catch (e) {
