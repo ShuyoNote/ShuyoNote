@@ -122,7 +122,19 @@ const probeEditor = createEditor({ nodes: EDITOR_NODES });
 
 /** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
 function parseEditorState(contentJson: string): EditorState | null {
-  if (contentJson && !lexicalStateValid(contentJson)) return null;
+  if (contentJson) {
+    // lexicalStateValid now SANITIZES: it drops malformed children (e.g. nodes
+    // missing `type`) and keeps the good block content, so a mostly-valid page
+    // still renders. It returns null only when nothing usable remains or the doc
+    // isn't parseable. Log a clear marker when we have to fall back to empty so
+    // we can confirm which build the browser is running and capture the raw JSON.
+    const valid = lexicalStateValid(contentJson);
+    if (!valid) {
+      console.warn("[ShuyoNote] rejected content_json (opened empty editor). Raw:", contentJson);
+      return null;
+    }
+    contentJson = valid;
+  }
   // Lexical logs a "type undefined" console.error for a malformed node instead of
   // throwing. Silence that transient noise during the probe; we decide outcome by
   // whether the parsed state is empty. Restored unconditionally in finally.

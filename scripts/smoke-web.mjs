@@ -1158,15 +1158,19 @@ assert("workspace name persists across instances", wsAgain !== "");
   }
 }
 
-// 20. Defensive Lexical editor-state validation (guards the type "undefined" crash).
+// 20. Defensive Lexical editor-state sanitation (guards the type "undefined" crash).
 {
   const valid = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"hi","version":1}]}],"type":"root","version":1}}';
   const imagerow = '{"root":{"children":[{"type":"imagerow","items":[{"src":"a","alt":"b"}],"version":1}],"type":"root","version":1}}';
-  const corrupt = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"text":"hi","version":1}]}],"type":"root","version":1}}';
+  const mixed = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"good","version":1}]},{"foo":"bar"}],"type":"root","version":1}}';
+  const onlyBadText = '{"root":{"children":[{"type":"paragraph","version":1,"children":[{"text":"hi","version":1}]}],"type":"root","version":1}}';
   const genericChild = '{"root":{"children":[{"foo":"bar"}],"type":"root","version":1}}';
   assert("lexicalValid accepts valid doc", aiMod.lexicalStateValid(valid) === valid);
   assert("lexicalValid accepts data-only items (imagerow)", aiMod.lexicalStateValid(imagerow) === imagerow);
-  assert("lexicalValid rejects node missing type", aiMod.lexicalStateValid(corrupt) === null);
+  const salvagedMixed = aiMod.lexicalStateValid(mixed);
+  assert("lexicalValid salvages good blocks, drops corrupt ones", salvagedMixed !== null && salvagedMixed.includes('"text":"good"') && !salvagedMixed.includes('"foo"'));
+  const salvagedBadText = aiMod.lexicalStateValid(onlyBadText);
+  assert("lexicalValid drops a corrupt text node (keeps parent block)", salvagedBadText !== null && !salvagedBadText.includes('"text":"hi"'));
   assert("lexicalValid rejects generic child without type", aiMod.lexicalStateValid(genericChild) === null);
   assert("lexicalValid rejects empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === null);
 }
