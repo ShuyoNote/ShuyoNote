@@ -1,3 +1,5 @@
+import { semanticScore } from "../searchSemantic";
+
 // Browser (non-Tauri) implementation of the Platform drivers.
 //
 // This makes the app runnable in a plain browser (and, later, any non-Tauri
@@ -441,7 +443,7 @@ export { tokenize };
 
 // Rank pages by matched-token score (TF over title/content) with recency tiebreak.
 // Returns pages that match at least one token, ordered by relevance.
-function rankPagesForSearch(query: string, pages: { id: string; title: string; content_text: string; updated_at: number }[]): { id: string; title: string; content_text: string }[] {
+function rankPagesForSearch(query: string, pages: { id: string; title: string; content_text: string; updated_at: number }[]): { id: string; title: string; content_text: string; score: number }[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
   const now = Date.now();
@@ -466,7 +468,7 @@ function rankPagesForSearch(query: string, pages: { id: string; title: string; c
     return { id: p.id, title: p.title, content_text: p.content_text, score };
   }).filter((s): s is NonNullable<typeof s> => s !== null);
   scored.sort((a, b) => b.score - a.score);
-  return scored.map((s) => ({ id: s.id, title: s.title, content_text: s.content_text }));
+  return scored;
 }
 
 // Build a snippet around the first query-token match in `text`.
@@ -1000,7 +1002,18 @@ function makeInvoke(store: SqliteStore) {
          WHERE deleted_at IS NULL AND workspace_id = ?`,
         [wsId],
       );
-      const ranked = rankPagesForSearch(query, rows);
+      // Semantic refinement (M20.2): char-bigram Jaccard nudges order among
+      // TF-matched pages, but the token-TF backbone stays dominant so a page
+      // that matches the query many times still ranks above a near-exact
+      // short page. semanticBonus is bounded to a small fraction of TF.
+      const SEMANTIC_BONUS = 5;
+      const ranked = rankPagesForSearch(query, rows)
+        .map((r: any) => ({
+          r,
+          score: r.score + SEMANTIC_BONUS * (semanticScore(query, String(r.title ?? "")) + semanticScore(query, String(r.content_text ?? ""))),
+        }))
+        .sort((a: any, b: any) => b.score - a.score)
+        .map((x: any) => x.r);
       return ranked.slice(0, lim).map((r: any) => ({
         id: r.id,
         title: r.title,

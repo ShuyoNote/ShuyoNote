@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.118] - 2026-08-24
+
+### 新增
+
+- **语义检索（M20.2）**：搜索在原有词频（TF）匹配基础上，新增基于字符二元组（char-bigram）Jaccard 的语义排序，优先展示语义更贴近的页面；纯函数 `charBigrams`/`semanticScore`/`semanticRank`，语义作为 TF 之上的有界加分，不改变「命中次数多者优先」的主排序。`scripts/smoke-web.mjs` 204→**207 全绿**。
+
+---
+
 ## [1.59.117] - 2026-08-24
 
 ### 新增

@@ -72,6 +72,7 @@ await esbuild.build({
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
+      'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
@@ -898,6 +899,18 @@ assert("workspace name persists across instances", wsAgain !== "");
   // M19.3 suggestPageLinks ranks match/relevance (prefix > substring).
   const sug = aiMod.suggestPageLinks("会议", [{ id: "1", title: "会议纪要", updated_at: 10 }, { id: "2", title: "项目会议", updated_at: 20 }, { id: "3", title: "周报", updated_at: 99 }]);
   assert("suggestPageLinks ranks matches", sug[0] === "会议纪要" && sug.includes("项目会议") && !sug.includes("周报"), JSON.stringify(sug));
+  // M20.2 semanticScore/charBigrams: near-repeats score high, unrelated score 0.
+  const cb = aiMod.charBigrams("会议纪要");
+  assert("charBigrams emits CJK bigrams", cb.has("会议") && cb.has("议纪") && cb.has("纪要"), JSON.stringify([...cb]));
+  const s1 = aiMod.semanticScore("会议纪要", "会议纪要安排");
+  const s2 = aiMod.semanticScore("会议纪要", "今天天气不错");
+  assert("semanticScore ranks related above unrelated", s1 > 0.3 && s2 === 0, `s1=${s1} s2=${s2}`);
+  const ranks = aiMod.semanticRank("会议纪要", [
+    { id: "a", title: "会议纪要", content_text: "本周会议纪要" },
+    { id: "b", title: "天气", content_text: "今天晴" },
+    { id: "c", title: "周报", content_text: "项目进展" },
+  ]);
+  assert("semanticRank drops unrelated docs", ranks.length === 1 && ranks[0].id === "a", JSON.stringify(ranks));
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

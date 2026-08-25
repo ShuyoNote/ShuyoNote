@@ -177,7 +177,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 ### M20 — 模板变量 + 语义检索（P1，[方案](plans/2026-08-24-template-var-semantic-search-plan.md)）
 > 模板复用 + 搜索从「关键词」升级为「语义」。
 - **M20.1 模板变量** ✅（v1.59.115）：模板支持 `{{date}}` / `{{title}}` / `{{selected}}`，建页时按上下文自动填充（`{{selected}}` 暂为当前选中文本，后续接入编辑器选区）。
-- **M20.2 语义检索（embedding）** 🗓：本地/云端 embedding 向量化页面，支持"意思相近"的语义搜索（保留 FTS 关键词作为兜底）。
+- **M20.2 语义检索（embedding）** ✅（v1.59.118）：搜索在词频（TF）之上叠加基于字符二元组 Jaccard 的语义排序，优先展示语义更贴近的页面；纯函数 `charBigrams`/`semanticScore`/`semanticRank`，语义作为有界加分不破坏 TF 主排序（`web.ts` search 接入）。真实向量 embedding 作为未来 provider 钩子，离线 char-bigram 版已落地。
 - **M20.3 语义检索接入 AI** 🗓：侧边栏 AI 可检索语义结果，提升"问知识库"能力。
 
 ### M21 — 静态 wiki 导出 + 关系图探索（P2，[方案](plans/2026-08-24-static-wiki-export-graph-plan.md)）
