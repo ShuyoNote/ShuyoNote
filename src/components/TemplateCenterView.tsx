@@ -5,7 +5,7 @@ import { useNotes } from "../store/notes";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
-import { TEMPLATES, TEMPLATE_CATEGORIES } from "../templates";
+import { TEMPLATES, TEMPLATE_CATEGORIES, substituteTemplateVars } from "../templates";
 import { SearchIcon } from "./icons";
 
 type GalleryItem = {
@@ -119,10 +119,11 @@ export function TemplateCenterView() {
       setOpen(false);
       return;
     }
-    // Page template → expand `{{date}}` placeholders to today's date before seeding.
-    const date = today();
-    const json = t.content_json.replace(/\{\{date\}\}/g, date);
-    const text = t.content_text.replace(/\{\{date\}\}/g, date);
+    // Page template → expand template vars (`{{date}}`/`{{title}}`/`{{selected}}`)
+    // with the create-time context before seeding.
+    const vars = { date: today(), title: t.name, selected: "" };
+    const json = substituteTemplateVars(t.content_json, vars);
+    const text = substituteTemplateVars(t.content_text, vars);
     await createPage(null, { content_json: json, content_text: text, title: t.name });
     setOpen(false);
   };

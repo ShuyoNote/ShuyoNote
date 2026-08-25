@@ -72,6 +72,7 @@ await esbuild.build({
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions } from "./src/lib/mention";\n' +
+      'export { substituteTemplateVars } from "./src/templates/index";\n' +
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
       'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n' +
@@ -891,6 +892,9 @@ assert("workspace name persists across instances", wsAgain !== "");
   const um = aiMod.findUnlinkedMentions("会议纪要已发，稍后同步。详见[[项目文档]]。", ["会议纪要", "项目文档", "周报"], "当前页");
   assert("findUnlinkedMentions finds bare title", um.some((m) => m.title === "会议纪要"), JSON.stringify(um));
   assert("findUnlinkedMentions skips already-linked title", !um.some((m) => m.title === "项目文档"), JSON.stringify(um));
+  // M20.1 substituteTemplateVars fills date/title/selected.
+  const tv = aiMod.substituteTemplateVars("日期：{{date}}\n标题：{{title}}·{{selected}}", { date: "2026-08-24", title: "每日小记", selected: "备注" });
+  assert("substituteTemplateVars fills date/title/selected", tv === "日期：2026-08-24\n标题：每日小记·备注", tv);
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [

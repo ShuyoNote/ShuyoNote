@@ -16,6 +16,18 @@ export interface TemplateItem {
 
 export const TEMPLATE_CATEGORIES = ["全部", "个人", "工作", "教育", "健康", "我的模板"] as const;
 
+// M20.1 — substitute template variables (`{{date}}` / `{{title}}` / `{{selected}}`)
+// with the create-time context (today, page title, currently selected text).
+export function substituteTemplateVars(
+  str: string,
+  ctx: { date?: string; title?: string; selected?: string },
+): string {
+  return String(str ?? "")
+    .replace(/\{\{date\}\}/g, ctx.date ?? "")
+    .replace(/\{\{title\}\}/g, ctx.title ?? "")
+    .replace(/\{\{selected\}\}/g, ctx.selected ?? "");
+}
+
 // ---- Lexical block builders (standard nodes only — avoid custom nodes so
 // template content is always valid) ----
 type Block = Record<string, any>;

@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.115] - 2026-08-24
+
+### 新增
+
+- **模板变量（M20.1）**：新增 `substituteTemplateVars` 纯函数，模板建页时把 `{{date}}`/`{{title}}`/`{{selected}}` 替换为创建时上下文（日期/模板名/选中文本）。`scripts/smoke-web.mjs` 202→**203 全绿**。
+
+---
+
 ## [1.59.114] - 2026-08-24
 
 ### 新增
