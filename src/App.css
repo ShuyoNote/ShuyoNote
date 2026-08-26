@@ -2587,6 +2587,9 @@ select.prop-value {
   animation: pop 0.16s ease;
   top: 0;
   left: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .block-insert-popover[data-above="1"] {
@@ -4456,7 +4459,9 @@ select.prop-value {
 }
 
 .insert-block-scroll {
-  max-height: 380px;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
   overflow-y: auto;
 }
 
