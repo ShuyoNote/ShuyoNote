@@ -4907,7 +4907,14 @@ select.prop-value {
 /* Control bar: floats just ABOVE the drawing box (outside the canvas), shown on
    hover (Feishu-style). Because it sits outside `overflow:hidden`, it must be
    anchored to the outer wrap and pulled up by its own height so it never
-   overlaps the drawing canvas. */
+   overlaps the drawing canvas.
+   - `bottom: 100%` (NOT `calc(100% + 6px)`): a gap between the bar and the box
+     creates a dead-zone where the cursor is over neither, so the wrap's `:hover`
+     drops and the bar goes `pointer-events:none` before a button can be clicked.
+     Sitting flush means moving the cursor straight up from the box onto the bar
+     keeps `:hover` active the whole way.
+   - Opaque `--bg` (NOT `--surface-light`): that token is never defined anywhere in
+     the project, so it resolved to transparent and the bar was invisible/unreadable. */
 .inline-drawing-bar {
   display: flex;
   align-items: center;
@@ -4915,11 +4922,11 @@ select.prop-value {
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface-light);
+  background: var(--bg);
   box-shadow: var(--shadow-md);
   flex-wrap: wrap;
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: 100%;
   left: 0;
   z-index: 8;
   transition: opacity 0.15s ease;
@@ -4931,7 +4938,7 @@ select.prop-value {
 }
 
 .inline-drawing-btn {
-  background: transparent;
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
