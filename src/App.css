@@ -2535,6 +2535,49 @@ select.prop-value {
   transform: translateY(-50%);
 }
 
+/* Feishu-style inline "+" (insert-block) handle: shown over an EMPTY top-level
+   block, in the left gutter, instead of the ⋮⋮ grip. Outlined on hover. */
+.block-insert-plus {
+  position: fixed;
+  z-index: 25;
+  width: 48px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  user-select: none;
+  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.block-insert-plus::before {
+  content: "";
+  position: absolute;
+  inset: -16px;
+}
+
+.block-insert-plus:hover {
+  background: var(--hover);
+  color: var(--text-dim);
+}
+
+/* Block-insert popover (Feishu-style grouped panel) reuses the insert-block
+   classes (.insert-block-search/.insert-group/.insert-item/.insert-name/etc.). */
+.block-insert-popover {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+  animation: pop 0.16s ease;
+}
+
 /* Block handle menu (click the ⋮⋮ grip) */
 .block-menu {
   position: fixed;

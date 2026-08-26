@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNearestNodeFromDOMNode, $getRoot } from "lexical";
+import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot } from "lexical";
 import { $findTableNode } from "@lexical/table";
 import { useBlockSelection } from "../../store/blockSelection";
+import { isEmptyBlock } from "../blockUtils";
 
 // Notion-style block drag handle: a "⋮⋮" grip appears to the left of the
 // top-level block under the cursor. Clicking it opens a small menu
@@ -123,13 +124,22 @@ export function BlockDragPlugin() {
         return;
       }
 
+      // The inline "+" insert affordance owns the gutter of empty blocks; don't
+      // also show the ⋮⋮ drag grip there (Feishu-style).
+      const isEmpty = editor.getEditorState().read(() => isEmptyBlock($getNodeByKey(key)));
+      if (isEmpty) {
+        if (hideTimerRef.current === null) {
+          hideTimerRef.current = window.setTimeout(() => setHandle(null), HIDE_DELAY);
+        }
+        return;
+      }
+
       clearHide();
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
         setHandle({ top: rect.top, left: rect.left - HANDLE_OFFSET, key });
-      }
-    };
+      }    };
 
     document.addEventListener("mousemove", onMove, true);
     return () => {
