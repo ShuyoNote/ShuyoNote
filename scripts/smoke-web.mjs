@@ -1346,6 +1346,12 @@ assert("workspace name persists across instances", wsAgain !== "");
   const genericChild = '{"root":{"children":[{"foo":"bar"}],"type":"root","version":1}}';
   assert("lexicalValid accepts valid doc", aiMod.lexicalStateValid(valid) === valid);
   assert("lexicalValid accepts data-only items (imagerow)", aiMod.lexicalStateValid(imagerow) === imagerow);
+  // A serialized 分栏 block (columns -> column -> paragraph -> text) must be accepted
+  // by the editor's known-type set, so existing columns docs round-trip (Tier-1).
+  const columnsDoc = '{"root":{"children":[{"type":"columns","count":2,"version":1,"children":[{"type":"column","version":1,"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"左","version":1}]}]},{"type":"column","version":1,"children":[{"type":"paragraph","version":1,"children":[{"type":"text","text":"右","version":1}]}]}]}],"type":"root","version":1}}';
+  const allowedCols = new Set(["root", "paragraph", "text", "columns", "column"]);
+  const salvagedCols = aiMod.lexicalStateValid(columnsDoc, allowedCols);
+  assert("lexicalValid accepts nested columns block", salvagedCols !== null && salvagedCols.includes('"type":"columns"') && salvagedCols.includes('"text":"左"') && salvagedCols.includes('"text":"右"'), JSON.stringify(salvagedCols));
   const salvagedMixed = aiMod.lexicalStateValid(mixed);
   assert("lexicalValid salvages good blocks, drops corrupt ones", salvagedMixed !== null && salvagedMixed.includes('"text":"good"') && !salvagedMixed.includes('"foo"'));
   const salvagedBadText = aiMod.lexicalStateValid(onlyBadText);

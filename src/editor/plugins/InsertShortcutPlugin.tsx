@@ -4,6 +4,7 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   COMMAND_PRIORITY_EDITOR,
   KEY_DOWN_COMMAND,
@@ -18,6 +19,7 @@ import {
 import { $createCodeNode } from "@lexical/code";
 import { $createLinkNode } from "@lexical/link";
 import { $createHorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
+import { $getInsertTargetBlock } from "../blockUtils";
 
 // Keyboard shortcuts to insert/replace blocks, so common blocks are a keystroke
 // away (no need to open the "/" menu). Combos use Ctrl/Cmd+Alt so they don't clash
@@ -32,10 +34,10 @@ function $replaceBlock(newNode: ElementNode) {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return;
   const anchor = selection.anchor.getNode();
-  const topLevel = anchor.getTopLevelElement();
-  if (!topLevel) return;
-  for (const child of topLevel.getChildren()) newNode.append(child);
-  topLevel.replace(newNode);
+  const target = $getInsertTargetBlock(anchor);
+  if (!target || !$isElementNode(target)) return;
+  for (const child of target.getChildren()) newNode.append(child);
+  target.replace(newNode);
   newNode.selectStart();
 }
 
@@ -89,9 +91,9 @@ export function InsertShortcutPlugin() {
           editor.update(() => {
             const selection = $getSelection();
             if (!$isRangeSelection(selection)) return;
-            const topLevel = selection.anchor.getNode().getTopLevelElement();
+            const topLevel = $getInsertTargetBlock(selection.anchor.getNode());
             const code = $createCodeNode();
-            if (topLevel) {
+            if (topLevel && $isElementNode(topLevel)) {
               for (const child of topLevel.getChildren()) code.append(child);
               topLevel.replace(code);
               code.selectStart();
@@ -104,7 +106,7 @@ export function InsertShortcutPlugin() {
           editor.update(() => {
             const selection = $getSelection();
             if (!$isRangeSelection(selection)) return;
-            const topLevel = selection.anchor.getNode().getTopLevelElement();
+            const topLevel = $getInsertTargetBlock(selection.anchor.getNode());
             if (!topLevel) return;
             const text = topLevel.getTextContent() || "链接";
             const paragraph = $createParagraphNode();
@@ -119,7 +121,7 @@ export function InsertShortcutPlugin() {
           editor.update(() => {
             const selection = $getSelection();
             if (!$isRangeSelection(selection)) return;
-            const topLevel = selection.anchor.getNode().getTopLevelElement();
+            const topLevel = $getInsertTargetBlock(selection.anchor.getNode());
             if (!topLevel) return;
             const hr = $createHorizontalRuleNode();
             topLevel.replace(hr);
