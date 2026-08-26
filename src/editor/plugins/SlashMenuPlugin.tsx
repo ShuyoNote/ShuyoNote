@@ -38,14 +38,14 @@ import {
   type LexicalNode,
 } from "lexical";
 
-type Run = (editor: LexicalEditor) => void | Promise<void>;
+export type SlashRun = (editor: LexicalEditor) => void | Promise<void>;
 
-interface SlashOption {
+export interface SlashOption {
   key: string;
   title: string;
   badge: string;
   group: string;
-  run: Run;
+  run: SlashRun;
   shortcut?: string;
   pinyin?: string;
 }
@@ -83,7 +83,7 @@ function $insertBlockNode(node: LexicalNode) {
   paragraph.selectStart();
 }
 
-function makeOptions(pageId: string): SlashOption[] {
+export function makeOptions(pageId: string): SlashOption[] {
   return [
     { key: "h1", title: "标题 1", badge: "H1", group: "基础", shortcut: "Ctrl+Alt+1", pinyin: "h1", run: (editor) =>
       editor.update(() => $replaceBlock($createHeadingNode("h1"))) },

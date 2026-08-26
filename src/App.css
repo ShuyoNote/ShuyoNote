@@ -4237,6 +4237,107 @@ select.prop-value {
   text-align: center;
 }
 
+/* "+" insert-block menu (Feishu-style) */
+.insert-block-menu {
+  position: relative;
+}
+
+.insert-block-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  z-index: 60;
+  padding: 6px;
+  animation: pop 0.16s ease;
+}
+
+.insert-block-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.insert-block-search:focus {
+  border-color: var(--accent);
+}
+
+.insert-block-scroll {
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.insert-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 8px 10px 4px;
+}
+
+.insert-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text);
+  text-align: left;
+}
+
+.insert-item:hover {
+  background: var(--hover);
+}
+
+.insert-icon {
+  width: 22px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.insert-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.insert-shortcut {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.insert-block-empty {
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
 /* Block reference ((blockId)) */
 .block-ref {
   color: var(--accent);
