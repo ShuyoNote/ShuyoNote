@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.162] - 2026-08-24
+
+### 修复
+
+- **内联绘图块控制条移到绘图区外侧，不再遮挡画布**。此前控制条以 `position:absolute; top:0` 浮在画布顶部，悬停时会盖住绘图上半部分，影响看图。现把控制条改为绘制盒子**外侧、紧贴其上**的浮动条（外层套 `inline-drawing-wrap` 作为定位锚点，控制条 `bottom: calc(100% + 6px)`），悬停时才显现、移开即隐，且**永远不覆盖画布**。无头浏览器实测：控制条底部位于画布盒子上方（`barAboveBox:true`、`barOverlapsCanvas:false`），悬停 `opacity:1/pointer-events:auto`、移开 `opacity:0/pointer-events:none`，无运行时错误；`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.161] - 2026-08-24
 
 ### 新增

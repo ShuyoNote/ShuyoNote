@@ -445,7 +445,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   }
 
   return (
-    <div className="inline-drawing" contentEditable={false}>
+    <div className="inline-drawing-wrap" contentEditable={false}>
       <div className="inline-drawing-bar">
         <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
         <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomOut} title="缩小"><ZoomOutIcon /></button>
@@ -457,16 +457,18 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
         <button className="inline-drawing-btn" onClick={copyPng} title="复制">⧉</button>
         {err ? <span className="inline-drawing-err">{err}</span> : null}
       </div>
-      <div className="inline-drawing-canvas" style={{ height }}>
-        <InlineExcalidraw
-          initialData={initialData}
-          viewMode={true}
-          isDark={isDark}
-          onChange={onChange}
-          onApi={setApi}
-        />
+      <div className="inline-drawing">
+        <div className="inline-drawing-canvas" style={{ height }}>
+          <InlineExcalidraw
+            initialData={initialData}
+            viewMode={true}
+            isDark={isDark}
+            onChange={onChange}
+            onApi={setApi}
+          />
+        </div>
+        <div className="inline-drawing-resize" onPointerDown={onResizeDown} title="拖拽调整高度" />
       </div>
-      <div className="inline-drawing-resize" onPointerDown={onResizeDown} title="拖拽调整高度" />
     </div>
   );
 }

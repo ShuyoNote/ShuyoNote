@@ -4888,39 +4888,44 @@ select.prop-value {
 }
 
 /* Inline drawing (page-embedded Excalidraw) */
+/* Outer shell: position anchor for the floating control bar. The control bar is
+   rendered OUTSIDE the drawing box (just above it) so it never covers the canvas
+   and never blocks 看图 (viewing the drawing). */
+.inline-drawing-wrap {
+  position: relative;
+  margin: 6px 0;
+}
+
 .inline-drawing {
   position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   background: var(--surface);
-  margin: 6px 0;
 }
 
-/* Control bar: floats over the canvas, shown on hover (Feishu-style), so the
-   drawing canvas is unobstructed until the user brings up the toolbar. */
+/* Control bar: floats just ABOVE the drawing box (outside the canvas), shown on
+   hover (Feishu-style). Because it sits outside `overflow:hidden`, it must be
+   anchored to the outer wrap and pulled up by its own height so it never
+   overlaps the drawing canvas. */
 .inline-drawing-bar {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background: var(--surface-light);
+  box-shadow: var(--shadow-md);
   flex-wrap: wrap;
-  position: relative;
-  z-index: 6;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 8;
   transition: opacity 0.15s ease;
 }
 
-.inline-drawing:not(.editing) .inline-drawing-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  border-bottom: 1px solid transparent;
-}
-
-.inline-drawing:not(.editing):not(:hover) .inline-drawing-bar {
+.inline-drawing-wrap:not(:hover) .inline-drawing-bar {
   opacity: 0;
   pointer-events: none;
 }
