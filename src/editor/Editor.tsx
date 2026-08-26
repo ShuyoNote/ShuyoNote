@@ -46,7 +46,6 @@ import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
-import { ColumnsPickerPlugin } from "./plugins/ColumnsPickerPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
@@ -478,7 +477,6 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <LinkPopoverPlugin />
         <TableMenuPlugin />
         <TableResizerPlugin />
-        <ColumnsPickerPlugin />
         <EditorStoreSync />
         <Suspense fallback={null}>
           <DrawingEditorModal />

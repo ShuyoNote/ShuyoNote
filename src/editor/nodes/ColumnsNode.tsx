@@ -116,8 +116,11 @@ export class ColumnsNode extends ElementNode {
 export function $createColumnsNode(count = 0): ColumnsNode {
   const node = new ColumnsNode(count);
   // Always seed at least one column so the element is never empty (Lexical drops
-  // empty element nodes). With count=0 the picker still shows until the user picks.
-  if (count === 0) {
+  // empty element nodes). When a count>0 is requested (e.g. picked from the "+"
+  // submenu), materialize exactly that many columns right away.
+  const n = Math.max(1, Math.min(8, Math.floor(count) || 0));
+  const cols = n > 0 ? n : 1;
+  for (let i = 0; i < cols; i++) {
     const col = $createColumnNode();
     col.append($createParagraphNode());
     node.append(col);

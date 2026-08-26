@@ -59,23 +59,21 @@
 - `src/editor/nodes/ColumnNode.tsx`
   - `ColumnNode extends ElementNode`，`createDOM` → `div.editor-column`；提供 `$createColumnNode` / `$isColumnNode`。
 
-### 5.2 选择栏数拾取器
+### 5.2 选择栏数
 
-- `src/editor/plugins/ColumnsPickerPlugin.tsx`
-  - 参照 `TableMenuPlugin` 的「监听编辑器更新 + 锚定块 DOM 渲染 React 覆盖层」。
-  - 监听 `registerUpdateListener`：当选中位于 `ColumnsNode` 且其 `getChildren().length <= 1`（仍是占位态）时，按块 `getBoundingClientRect()` 位置弹出「选择栏数」面板。
-  - 点 2/3/4 → 走 `$setColumnsCount` 生成列；用 `getChildren().length > 1` 判断已选栏数并**隐藏面板**（不依赖可能未提交的 `__count`）。
-  - 聚焦/面板打开时用 `editor.update` 内 `$getSelection` 向上走父链找 `ColumnsNode`。
+- 栏数在「+」插入菜单的**分栏行二级子菜单**中选择：点击「分栏」行展开 2/3/4 栏缩略图（`.insert-columns-sub`），选中后 `$createColumnsNode(count)` **直接生成对应列数并插入**——不再有插入后的浮层选择器。
+- 曾实现并已移除 `ColumnsPickerPlugin`（插入后浮层选择栏数），其职责并入「+」二级子菜单；`/` 斜杠菜单的分栏默认插入 2 栏。
 
 ### 5.3 注册与入口
 
-- `src/editor/Editor.tsx`：`EDITOR_NODES` 加 `ColumnsNode`、`ColumnNode`；`theme` 加 `columns` / `column`；挂载 `<ColumnsPickerPlugin />`。
-- `src/editor/plugins/SlashMenuPlugin.tsx`：`makeOptions` 的「嵌入」组新增 `{ key:"columns", title:"分栏", badge:"▥", run: ... $insertBlockNode($createColumnsNode(0)) }`（同时出现在 `/` 与「+」插入菜单，因为「+」复用同一份 `makeOptions`）。
+- `src/editor/Editor.tsx`：`EDITOR_NODES` 加 `ColumnsNode`、`ColumnNode`；`theme` 加 `columns` / `column`。
+- `src/editor/plugins/SlashMenuPlugin.tsx`：`makeOptions` 的「嵌入」组新增 `{ key:"columns", title:"分栏", badge:"▥", run: ... $insertBlockNode($createColumnsNode(2)) }`（同时出现在 `/` 与「+」插入菜单，因为「+」复用同一份 `makeOptions`）。
+- `src/editor/plugins/BlockInsertPlugin.tsx`：「+」菜单对 `key==="columns"` 项特殊渲染——点击展开 `.insert-columns-sub` 子菜单，选中栏数调 `insertColumns(count)`（先在目标空块上 `selectEnd`，再 `topLevel.replace($createColumnsNode(count))`）。
 
 ### 5.4 样式（`src/App.css`）
 
 - `.editor-columns`：`display:flex; gap` + 虚线外框 + `[data-count="0"]` 最小高度；`.editor-column`：`flex:1 1 0` + 内边距/描边。
-- `.columns-picker` 及其 `.columns-pick` / `.columns-pick-bar`：浮动面板 + 2/3/4 条形缩略图，`var(--accent)` 高亮。
+- 「+」菜单分栏二级子菜单：`.insert-columns-sub` / `.insert-columns-label` / `.insert-columns-row` / `.insert-columns-opt` / `.insert-columns-thumb` / `.insert-columns-bar`，2/3/4 条形缩略图，`var(--accent)` 高亮。
 - 「+」插入菜单的**基础区**改为飞书式**横向图标网格**（`.insert-basic-grid`，2 列），H1/H2/H3、正文、引用、链接、待办、无序/有序列表、代码块、分隔线以图块平铺；「常用」等其它分组保持竖排行。
 
 ### 5.5 序列化 / 保存
@@ -88,8 +86,7 @@
 
 **轻量版（M-分栏-轻量，已实现）**
 
-- [x] `/分栏` 与「+」插入「分栏」块。
-- [x] 光标进入空分栏块 → 「选择栏数」面板（2/3/4），点选生成对应列数。
+- [x] `/分栏` 与「+」插入「分栏」块；「+」分栏行展开**二级子菜单**选 2/3/4 栏，选中直接插入对应列数。
 - [x] 多列并排（flex）、每列独立输入；分栏块作为单个顶层块参与拖拽/多选。
 - [x] `tsc` / `vite build` / `cargo check` 通过；`scripts/smoke-web.mjs` 223 全绿；无头浏览器实测插入→拾取→并排→输入可用、无运行时错误。
 

@@ -4,6 +4,7 @@ import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNo
 import { $findTableNode } from "@lexical/table";
 import { useEditorStore } from "../../store/editor";
 import { makeOptions, type SlashOption } from "./SlashMenuPlugin";
+import { $createColumnsNode } from "../nodes/ColumnsNode";
 import { isEmptyBlock } from "../blockUtils";
 
 // Feishu-style inline "+": when the cursor is over an EMPTY top-level block, show a
@@ -116,6 +117,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
   const [handle, setHandle] = useState<{ top: number; left: number; key: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAbove, setPanelAbove] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
@@ -221,6 +223,37 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
     activeKeyRef.current = null;
   };
 
+  // Insert a columns block with a chosen column count directly (no post-insert
+  // picker): place the caret in the target block, then replace it with $createColumnsNode(count).
+  const insertColumns = (count: number) => {
+    const key = activeKeyRef.current;
+    setPanelOpen(false);
+    setColumnsOpen(false);
+    setHandle(null);
+    activeKeyRef.current = null;
+    editor.update(() => {
+      const node = key ? $getNodeByKey(key) : null;
+      let target = node;
+      if (!target || !target.isAttached()) {
+        const root = $getRoot();
+        let last = root.getLastChild();
+        if (!last) {
+          last = $createParagraphNode();
+          root.append(last);
+        }
+        target = last;
+      }
+      // Place a collapsed selection inside the target so the replace targets it.
+      target.selectEnd();
+      // Replace it with the columns block and drop a paragraph after for the caret.
+      const topLevel = target.getTopLevelElement();
+      if (topLevel) {
+        topLevel.replace($createColumnsNode(count));
+      }
+    });
+    editor.focus();
+  };
+
   const aiHelp = () => {
     const key = activeKeyRef.current;
     setPanelOpen(false);
@@ -305,13 +338,50 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                           ))}
                         </div>
                       ) : (
-                        items.map((o) => (
-                          <button key={o.key} className="insert-item" onClick={() => select(o)}>
-                            <span className="insert-icon">{o.badge}</span>
-                            <span className="insert-name">{o.title}</span>
-                            {o.shortcut && <span className="insert-shortcut">{o.shortcut}</span>}
-                          </button>
-                        ))
+                        <div className="insert-rows">
+                          {items.map((o) =>
+                            o.key === "columns" ? (
+                              <div key={o.key} className="insert-item-wrap">
+                                <button
+                                  className={`insert-item ${columnsOpen ? "active" : ""}`}
+                                  onClick={() => setColumnsOpen((v) => !v)}
+                                  title="选择栏数"
+                                >
+                                  <span className="insert-icon">{o.badge}</span>
+                                  <span className="insert-name">{o.title}</span>
+                                  <span className="insert-caret">›</span>
+                                </button>
+                                {columnsOpen && (
+                                  <div className="insert-columns-sub">
+                                    <div className="insert-columns-label">选择栏数</div>
+                                    <div className="insert-columns-row">
+                                      {[2, 3, 4].map((n) => (
+                                        <button
+                                          key={n}
+                                          className="insert-columns-opt"
+                                          title={`${n} 栏`}
+                                          onClick={() => insertColumns(n)}
+                                        >
+                                          <span className="insert-columns-thumb">
+                                            {Array.from({ length: n }, (_, i) => (
+                                              <span key={i} className="insert-columns-bar" />
+                                            ))}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <button key={o.key} className="insert-item" onClick={() => select(o)}>
+                                <span className="insert-icon">{o.badge}</span>
+                                <span className="insert-name">{o.title}</span>
+                                {o.shortcut && <span className="insert-shortcut">{o.shortcut}</span>}
+                              </button>
+                            )
+                          )}
+                        </div>
                       )}
                     </div>
                   ))

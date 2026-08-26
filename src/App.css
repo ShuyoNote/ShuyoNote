@@ -4532,6 +4532,82 @@ select.prop-value {
   opacity: 0.85;
 }
 
+/* Wrapper so a submenu row can host an expanding child submenu. */
+.insert-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.insert-item-wrap {
+  position: relative;
+}
+
+.insert-caret {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.insert-item.active {
+  background: var(--hover);
+}
+
+/* Second-level submenu (分栏 count picker) that appears under the 分栏 row. */
+.insert-columns-sub {
+  margin: 2px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 8px 8px 6px;
+}
+
+.insert-columns-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.insert-columns-row {
+  display: flex;
+  gap: 8px;
+}
+
+.insert-columns-opt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.insert-columns-opt:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.insert-columns-thumb {
+  display: flex;
+  gap: 3px;
+}
+
+.insert-columns-bar {
+  display: block;
+  width: 12px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+
+.insert-columns-opt:hover .insert-columns-bar {
+  background: var(--accent);
+}
+
 .insert-block-empty {
   padding: 12px;
   color: var(--text-dim);
