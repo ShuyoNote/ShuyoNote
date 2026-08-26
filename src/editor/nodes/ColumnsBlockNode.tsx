@@ -60,8 +60,11 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   }
 
   createDOM(_config: EditorConfig): HTMLElement {
+    // Plain block host — the actual styled flex container is rendered by the React
+    // view (ColumnsBlockView). Returning `.editor-columns` here too would nest
+    // `.editor-columns` inside itself and let the inner one shrink-wrap to content.
     const el = document.createElement("div");
-    el.className = "editor-columns";
+    el.className = "editor-columns-host";
     el.dataset.count = String(this.__cols.length);
     return el;
   }

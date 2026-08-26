@@ -3207,6 +3207,13 @@ select.prop-value {
   background: var(--surface);
 }
 
+/* Block host for a Route-B columns node: full-width block; the styled flex
+   container (.editor-columns) lives inside it (rendered by the React view). */
+.editor-columns-host {
+  display: block;
+  width: 100%;
+}
+
 .editor-columns[data-count="0"] {
   /* Empty (count not chosen) — the picker overlay floats above; keep a minimal
      slot so the block has a visible footprint. */
