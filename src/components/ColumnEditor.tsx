@@ -59,7 +59,7 @@ export function ColumnEditor({
   };
 
   return (
-    <div className="editor-column" data-column-key={columnKey}>
+    <div className="editor-column-body" data-column-key={columnKey}>
       {err ? <div className="editor-column-error">{err}</div> : null}
       <LexicalComposer initialConfig={initialConfig}>
         <RichTextPlugin

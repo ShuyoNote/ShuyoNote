@@ -3284,6 +3284,11 @@ select.prop-value {
 
 /* Route-B nested editor inside a column: the contenteditable owns the column's full
    block stack; reset to a clean block so paragraphs/headings fill the column. */
+.editor-column-body {
+  position: relative;
+  min-height: 44px;
+}
+
 .editor-column-editable {
   outline: none;
   min-height: 44px;
