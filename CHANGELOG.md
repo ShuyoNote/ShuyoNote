@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.167] - 2026-08-24
+
+### 修复
+
+- **内联绘图块外框改直角**。`.inline-drawing` 的 `border-radius` 从 `10px` 改为 `0`，绘图盒子的外层边框变为直角（方框）。无头浏览器确认构建产物规则 `border-radius: 0px`；`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.166] - 2026-08-24
 
 ### 变更
