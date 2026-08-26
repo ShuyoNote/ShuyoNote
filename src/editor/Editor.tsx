@@ -17,7 +17,7 @@ import { CodeNode, CodeHighlightNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
-import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
@@ -406,7 +406,7 @@ function BlockIdPlugin({
 // into its own chunk and only fetched when a user actually edits a drawing.
 const DrawingEditorModal = lazy(() => import("../components/DrawingEditorModal"));
 
-export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
+const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
   // Stable block identity: node key → block id, and the persisted ids (in
   // top-level child order) read from the saved document at mount.
   const blockIdMapRef = useRef<Map<string, string>>(new Map());
@@ -477,6 +477,18 @@ export function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: 
     </LexicalComposer>
   );
 }
+
+// The editor's Lexical state is authoritative; a page autosave only rewrites
+// `contentJson`/`onSave`, which the editor ignores after mount. Skip those
+// re-renders so the whole decorator tree (e.g. embedded Excalidraw drawings)
+// doesn't remount/re-init on every save — that was the visible "刷新" jitter.
+export const Editor = memo(
+  EditorImpl,
+  (prev, next) =>
+    prev.pageId === next.pageId &&
+    prev.searchQuery === next.searchQuery &&
+    prev.autoFocus === next.autoFocus,
+);
 
 // Expose the active editor instance to the top toolbar (outside the editor tree).
 function EditorStoreSync() {
