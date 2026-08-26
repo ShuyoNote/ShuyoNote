@@ -155,7 +155,14 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
-        setHandle({ top: rect.top, left: rect.left - HANDLE_OFFSET, key });
+        // Anchor the "+" to the document column's LEFT EDGE (the editor root), not the
+        // block's own box, so it sits in the clear left gutter (between the sidebar and
+        // the content column) instead of overlapping the content. Clamp so it never goes
+        // off the viewport or under the column.
+        const rootEl = editor.getRootElement();
+        const colLeft = rootEl ? rootEl.getBoundingClientRect().left : rect.left;
+        const gutterLeft = Math.max(4, Math.min(colLeft - HANDLE_OFFSET, rect.left - HANDLE_OFFSET));
+        setHandle({ top: rect.top, left: gutterLeft, key });
       }
     };
     document.addEventListener("mousemove", onMove, true);
