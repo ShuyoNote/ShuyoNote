@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.164] - 2026-08-24
+
+### 优化
+
+- **内联绘图块控制条背景色略显醒目**。控制条背景从纯白 `var(--bg)` 改为**淡淡的主题蓝**（`color-mix(in srgb, var(--accent) 8%, var(--surface))`），描边用 `color-mix(in srgb, var(--accent) 30%, var(--border))`——浮在白色画布上方能一眼看出是工具栏，但又不会过于鲜艳；深色模式同样生效。其余不变（仍悬停显现、紧贴盒子无空隙）。无头浏览器截图确认背景为淡蓝 `color(srgb 0.936 0.955 1)`、边框为淡蓝 `color(srgb 0.689 0.769 0.953)`，无运行时错误；`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.163] - 2026-08-24
 
 ### 修复

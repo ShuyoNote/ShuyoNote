@@ -4920,9 +4920,11 @@ select.prop-value {
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  border: 1px solid var(--border);
+  /* Light accent tint so the floating bar reads clearly over the white canvas
+     (slightly more eye-catching than plain white), but not garish. */
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   border-radius: 8px;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
   box-shadow: var(--shadow-md);
   flex-wrap: wrap;
   position: absolute;
