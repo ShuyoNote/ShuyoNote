@@ -2,6 +2,32 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.170] - 2026-08-26
+
+### 新增
+
+- **分栏进化——路线 B（每列独立子编辑器）**：在轻量版分栏基础上，新增 `ColumnsBlockNode`（`DecoratorNode`，每列存一份独立 `EditorState` JSON），经 `ColumnsBlockView`/`ColumnEditor` 渲染为 N 个独立嵌套编辑器；复用共享 `config.ts`（`EDITOR_NODES`/`editorTheme`）。列内可用 `/` 插标题/正文/引用/Callout/无序列表/表格/代码块/分隔线，列内 `Ctrl+Alt` 快捷键，列内独立撤销（`HistoryPlugin`）、跨列独立输入。列内文字并入页面 `content_text`（搜索/反链/关系图不丢）；Markdown 导出注册 `ColumnsBlockNode` 并展开各列文本，列内容不丢失。
+- **列增删（＋/×，1–4 列）**：每列右上角 ＋（末列）与 × 按钮，增删即持久化。
+- **列宽拖拽**：列间分隔手柄，拖动调整各列 `flex-grow` 宽度并持久化。
+
+### 修复
+
+- **分栏列宽塌陷/溢出根治**：`.editor-column-body`（解耦 `ColumnEditor` 根类）避免 `.editor-column` 自嵌套；`createDOM` 返回 `.editor-columns-host` 避免 `.editor-columns` 自嵌套；列改用 `flex-grow`（替代百分比+gap 溢出）。无头实测 2/3 列均分占满、不越界。
+- **列内列表 #117**：空列 JSON 补 `indent:0`/`direction`/`format`，避免 `ListItemNode.setIndent` 收到非数字。
+- **列内 `/表格`**：`ColumnEditor` 挂 `TablePlugin`，`INSERT_TABLE_COMMAND` 有处理器。
+
+### 阶段边界（诚实标注，均不做）
+
+- **列内块级拖拽/跨列复制**：`BlockDragPlugin` 基于顶层块设计，列内拖块需全新跨编辑器机制（成本高/风险大）；现有「分栏整体可拖/重排」满足主要诉求。
+- **旧数据自动迁移**：`columns`/`column`（ElementNode）保留注册可读兼容；自动改写线上 `content_json` 风险高、收益低，不实施（新插入均走路线 B）。
+- 列内 AI 草稿、`{{blockId}}` 对列内块暂不适用（诚实标注）。
+
+### 验证
+
+- `npx tsc --noEmit` / `pnpm build` / `node scripts/smoke-web.mjs`（225 全绿）；无头浏览器实测列内 `/` 插标题/列表/Callout/代码块/分隔线/表格、列增删、列宽拖拽、跨列独立输入、列内撤销、列文本并入,均无运行时错误。
+
+---
+
 ## [1.59.169] - 2026-08-26
 
 ### 新增
