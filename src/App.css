@@ -2535,11 +2535,18 @@ select.prop-value {
   transform: translateY(-50%);
 }
 
-/* Feishu-style inline "+" (insert-block) handle: shown over an EMPTY top-level
-   block, in the left gutter, instead of the ⋮⋮ grip. Outlined on hover. */
-.block-insert-plus {
+/* Feishu-style inline "+" (insert-block): shown over an EMPTY top-level block, in
+   the left gutter, instead of the ⋮⋮ grip. The anchor wraps the "+" handle and the
+   popover so hovering either keeps the panel open (the popover opens on hover over
+   "+", not on click, and stays while the cursor is on the handle or panel). */
+.block-insert-anchor {
   position: fixed;
   z-index: 25;
+  width: 48px;
+  height: 32px;
+}
+
+.block-insert-plus {
   width: 48px;
   height: 32px;
   display: flex;
@@ -2550,7 +2557,7 @@ select.prop-value {
   cursor: pointer;
   border-radius: var(--radius-xs);
   user-select: none;
-  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .block-insert-plus::before {
@@ -2565,17 +2572,62 @@ select.prop-value {
 }
 
 /* Block-insert popover (Feishu-style grouped panel) reuses the insert-block
-   classes (.insert-block-search/.insert-group/.insert-item/.insert-name/etc.). */
+   classes (.insert-block-search/.insert-group/.insert-item/.insert-name/etc.).
+   Anchored to the "+" (via the anchor container), opening to the right/top. */
 .block-insert-popover {
-  position: fixed;
+  position: absolute;
   z-index: 60;
   width: 300px;
+  max-height: 440px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   padding: 6px;
   animation: pop 0.16s ease;
+  top: 0;
+  left: calc(100% + 6px);
+}
+
+.block-insert-popover[data-above="1"] {
+  top: auto;
+  bottom: 0;
+}
+
+/* Pinned "AI 帮我写" entry at the top of the insert panel. */
+.insert-ai-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.insert-ai-entry:hover {
+  background: var(--hover);
+}
+
+.insert-ai-icon {
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.insert-ai-name {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
 }
 
 /* Block handle menu (click the ⋮⋮ grip) */
