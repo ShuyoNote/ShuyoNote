@@ -2546,8 +2546,7 @@ select.prop-value {
   height: 32px;
   display: flex;
   align-items: center;
-  justify-content: flex-end; /* button hugs the content column edge */
-  padding-right: 2px;
+  justify-content: center; /* center the "+" so its center aligns with the ⋮⋮ handle */
   box-sizing: border-box;
 }
 
