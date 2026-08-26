@@ -106,11 +106,17 @@
 
 **完整版（M-分栏-完整，未做，候选）—— 建议分档推进**
 
-**1 档：列内多块（轻 ElementNode 方案，优先）**
+**1 档：列内多块（轻 ElementNode 方案，优先）—— 已实现（v1.59.169 之后的增量）**
 
-- [ ] 放开 `ColumnNode` 为多块堆栈（复用 Callout 的「ElementNode 包多子块」能力），列内可放标题/列表/段落。
-- [ ] 无子编辑器、不引入焦点/IME/撤销桥接；跨列点击可用，列内 `/` 触发范围受限可接受。
-- [ ] 保证分栏文本并入页面 `content_text`（搜索/反链/关系图不丢）。
+- [x] 放开 `ColumnNode` 为多块堆栈（复用 Callout 的「ElementNode 包多子块」能力），列内可放标题/列表/段落。
+- [x] **列内 `/` 插入按列作用域（关键修复）**：新增 `blockUtils.$getInsertTargetBlock(anchor)`——沿父链上溯，**遇到 `ColumnNode` 边界或根停止**，返回列内当前块作为替换目标；`SlashMenuPlugin` 的 `$replaceBlock`/`$insertBlockNode` 及 link/code/hr 三处改用该 helper，避免「列内 `/` 误替换整个 ColumnsNode」。顶层 `/` 行为不变（回归已验证）。
+- [x] `ColumnNode` 覆写 `insertNewAfter`（列尾回车在列内加兄弟块，不逃出分栏）/`collapseAtStart`/`canMergeWhenEmpty`。
+- [x] 无子编辑器、不引入焦点/IME/撤销桥接；跨列点击可用；列内 `/` 触发范围受限（列内多块）可接受。
+- [x] 无头浏览器实测：列内打字 + Enter → 同列分出第二个段落（`["左列A","左列B"]`、分栏保留）；列内 `/` → 标题插入列内（`col0ChildTags:["h1"]`、`columnsStillPresent:true`）；顶层 `/` 插入不受影响；无运行时错误；`smoke-web.mjs` 223 全绿。
+- [x] **列内文本并入 `content_text`**：`ColumnsNode`/`ColumnNode` 为 ElementNode，`$getRoot().getTextContent()` 递归包含列内文字（实测 `hasColumnText:true`），搜索/反链/关系图不丢。
+
+**1 档（未完成项 / 待办）**
+
 - [ ] 保证现有旧分栏块（ElementNode）仍可读、不判为非法节点。
 
 **2 档：每列独立子编辑器（路线 B，按需）**

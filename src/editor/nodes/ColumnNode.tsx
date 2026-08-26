@@ -1,11 +1,14 @@
 import {
   $applyNodeReplacement,
+  $createParagraphNode,
   ElementNode,
+  ParagraphNode,
   type DOMExportOutput,
   type EditorConfig,
   type LexicalEditor,
   type LexicalNode,
   type NodeKey,
+  type RangeSelection,
   type SerializedElementNode,
 } from "lexical";
 
@@ -63,6 +66,29 @@ export class ColumnNode extends ElementNode {
     node.setIndent(serializedNode.indent);
     node.setDirection(serializedNode.direction);
     return node;
+  }
+
+  // Pressing Enter at the end of the column's last block should stay inside the
+  // column (add a sibling block there), not insert a paragraph after the ColumnsNode.
+  insertNewAfter(_: RangeSelection, restoreSelection?: boolean): ParagraphNode {
+    const newBlock = $createParagraphNode();
+    this.append(newBlock);
+    if (restoreSelection) newBlock.selectStart();
+    return newBlock;
+  }
+
+  // Backspace at the very start of an EMPTY column collapses it into a paragraph
+  // (so the empty column can be removed/closed), rather than breaking the layout.
+  collapseAtStart(): boolean {
+    const paragraph = $createParagraphNode();
+    const children = this.getChildren();
+    children.forEach((child) => paragraph.append(child));
+    this.replace(paragraph);
+    return true;
+  }
+
+  canMergeWhenEmpty(): boolean {
+    return true;
   }
 
   isInline(): false {

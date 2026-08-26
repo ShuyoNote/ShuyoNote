@@ -14,6 +14,7 @@ import { INSERT_TABLE_COMMAND } from "@lexical/table";
 import { api } from "../../lib/api";
 import { toast } from "../../store/toast";
 import { useBlockSelector } from "../../store/blockSelector";
+import { $getInsertTargetBlock } from "../blockUtils";
 import { useAttachmentsStore } from "../../store/attachments";
 import { inputDialog } from "../../store/input";
 import { useAiStore } from "../../store/ai";
@@ -30,6 +31,7 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_LOW,
@@ -51,30 +53,31 @@ export interface SlashOption {
   pinyin?: string;
 }
 
-// Replace the current top-level block with a new element, moving children over.
+// Replace the current block (scoped to its column if inside one) with a new
+// element, moving children over.
 function $replaceBlock(newNode: ElementNode) {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return;
   const anchor = selection.anchor.getNode();
-  const topLevel = anchor.getTopLevelElement();
-  if (!topLevel) return;
-  const children = topLevel.getChildren();
+  const target = $getInsertTargetBlock(anchor);
+  if (!target || !$isElementNode(target)) return;
+  const children = target.getChildren();
   for (const child of children) {
     newNode.append(child);
   }
-  topLevel.replace(newNode);
+  target.replace(newNode);
   newNode.selectStart();
 }
 
-// Replace the current top-level block with a decorator (image/video), then
-// insert an empty paragraph after it and move the caret there.
+// Replace the current block (scoped to its column if inside one) with a decorator
+// (image/video), then insert an empty paragraph after it and move the caret there.
 function $insertBlockNode(node: LexicalNode) {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return;
   const anchor = selection.anchor.getNode();
-  const topLevel = anchor.getTopLevelElement();
-  if (!topLevel) return;
-  topLevel.replace(node);
+  const target = $getInsertTargetBlock(anchor);
+  if (!target) return;
+  target.replace(node);
   // Always leave a valid selection on a fresh paragraph after the inserted block,
   // even if the parent lookup fails — never leave the caret pointing at a removed node.
   const paragraph = $createParagraphNode();
@@ -101,7 +104,7 @@ export function makeOptions(pageId: string): SlashOption[] {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
         const anchor = selection.anchor.getNode();
-        const topLevel = anchor.getTopLevelElement();
+        const topLevel = $getInsertTargetBlock(anchor);
         if (!topLevel) return;
         const text = topLevel.getTextContent() || "链接";
         const linkNode = $createLinkNode("https://").append($createTextNode(text));
@@ -273,7 +276,7 @@ export function makeOptions(pageId: string): SlashOption[] {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
         const anchor = selection.anchor.getNode();
-        const topLevel = anchor.getTopLevelElement();
+        const topLevel = $getInsertTargetBlock(anchor);
         if (!topLevel) return;
         const codeNode = $createCodeNode("javascript");
         codeNode.append($createCodeHighlightNode(topLevel.getTextContent()));
@@ -286,7 +289,7 @@ export function makeOptions(pageId: string): SlashOption[] {
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;
-        const topLevel = selection.anchor.getNode().getTopLevelElement();
+        const topLevel = $getInsertTargetBlock(selection.anchor.getNode());
         if (!topLevel) return;
         const hr = $createHorizontalRuleNode();
         topLevel.replace(hr);
