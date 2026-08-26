@@ -124,6 +124,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
   const columnsBtnRef = useRef<HTMLButtonElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const columnsCloseTimerRef = useRef<number | null>(null);
   const activeKeyRef = useRef<string | null>(null);
 
   const clearHide = () => {
@@ -195,6 +196,19 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
       setHandle(null);
       setQuery("");
     }, CLOSE_DELAY);
+  };
+
+  // Close only the columns submenu after a short linger so the cursor can travel
+  // from the 分栏 row to the submenu without it flickering shut.
+  const scheduleColumnsClose = () => {
+    if (columnsCloseTimerRef.current !== null) window.clearTimeout(columnsCloseTimerRef.current);
+    columnsCloseTimerRef.current = window.setTimeout(() => setColumnsOpen(false), CLOSE_DELAY);
+  };
+  const cancelColumnsClose = () => {
+    if (columnsCloseTimerRef.current !== null) {
+      window.clearTimeout(columnsCloseTimerRef.current);
+      columnsCloseTimerRef.current = null;
+    }
   };
 
   const grouped = useMemo(() => {
@@ -283,6 +297,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
     return () => {
       if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
       if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+      if (columnsCloseTimerRef.current !== null) window.clearTimeout(columnsCloseTimerRef.current);
     };
   }, []);
 
@@ -347,7 +362,8 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                                 key={o.key}
                                 ref={(el) => { if (el) columnsBtnRef.current = el; }}
                                 className={`insert-item ${columnsOpen ? "active" : ""}`}
-                                onClick={() => {
+                                onMouseEnter={() => {
+                                  cancelColumnsClose();
                                   const el = columnsBtnRef.current;
                                   if (!el) return;
                                   const r = el.getBoundingClientRect();
@@ -355,8 +371,9 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                                   const x = Math.min(r.right + 4, window.innerWidth - subW - 8);
                                   const y = Math.max(8, r.top - 8);
                                   setColumnsSubPos({ top: y, left: x });
-                                  setColumnsOpen((v) => !v);
+                                  setColumnsOpen(true);
                                 }}
+                                onMouseLeave={scheduleColumnsClose}
                                 title="选择栏数"
                               >
                                 <span className="insert-icon">{o.badge}</span>
@@ -384,7 +401,12 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
               of the popover so popover's overflow:hidden can't clip it. Opens to
               the RIGHT of the 分栏 row. */}
           {columnsOpen && columnsSubPos && (
-            <div className="insert-columns-sub" style={{ top: columnsSubPos.top, left: columnsSubPos.left }}>
+            <div
+              className="insert-columns-sub"
+              style={{ top: columnsSubPos.top, left: columnsSubPos.left }}
+              onMouseEnter={cancelColumnsClose}
+              onMouseLeave={scheduleColumnsClose}
+            >
               <div className="insert-columns-label">选择栏数</div>
               <div className="insert-columns-row">
                 {[2, 3, 4].map((n) => (
