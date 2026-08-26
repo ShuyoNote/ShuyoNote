@@ -138,6 +138,24 @@
 
 > 副标题「权衡结论」见第 4 节「建议落地顺序」。**是否上路线 B 取决于对「列内任意块」的看重程度**——产品对标必需则值得，但应「先 1 档列内多块 → 再按需 2 档子编辑器」，而非一步到位。
 
+## 6.5 演示/验证截图（Web 版实测，media/columns-demo）
+
+以下为在网页演示版（`pnpm preview`，`dist`）上用无头浏览器实测分栏路线 B 的截图（存 `docs/media/columns-demo/`）。全程无运行时错误；列宽实测 `[201,201,201] → [256,173,173]`（第 1 列拖宽）。
+
+| 图 | 说明 |
+|---|---|
+| `01-insert-menu.png` | 空块左侧「+」→ 插入菜单（AI 帮我写 + 基础/常用块） |
+| `02-column-count-picker.png` | 「分栏」行右侧二级子菜单「选择栏数」，蓝条高亮前 N 根 |
+| `03-inserted-3-columns.png` | 插入 3 列：均分占满宽度，每列独立编辑框 + 占位符 |
+| `04-column-0-text.png` | 列 0 输入「左侧专栏内容」 |
+| `05-column-1-list.png` | 列 1 `/` → 无序列表 |
+| `06-column-2-table.png` | 列 2 `/` → **3×3 表格**（`TablePlugin` 生效） |
+| `07-4th-column-added.png` | 末列 `＋` → 新增第 4 列，原 3 列内容保留 |
+| `08-widths-before-drag.png` | 拖拽前：3 列等宽 [201,201,201] |
+| `09-widths-after-drag.png` | 拖宽第 1 列后：[256,173,173]，不越界 |
+
+> 路径：`docs/media/columns-demo/*.png`（从 `demo-shots/` 归档）。
+
 ## 7. 相关文档
 
 - [本地优先方案](./2026-08-15-local-first-note-app-plan.md)（块模型 / 串行化约束）

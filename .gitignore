@@ -15,6 +15,10 @@ dist-ssr
 # Transient transpile dir used by scripts/smoke-web.mjs
 .smoke-tmp
 
+# Local scratch / CDP test temp + Edge profiles (never committed)
+tmp
+demo-shots
+
 # Rust build artifacts
 src-tauri/target
 sync-server/target
