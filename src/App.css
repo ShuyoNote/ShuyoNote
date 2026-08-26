@@ -2589,7 +2589,7 @@ select.prop-value {
    classes (.insert-block-search/.insert-group/.insert-item/.insert-name/etc.).
    Anchored to the "+" (via the anchor container), opening to the right/top. */
 .block-insert-popover {
-  position: absolute;
+  position: fixed;
   z-index: 60;
   width: 300px;
   max-height: 440px;
@@ -2599,16 +2599,10 @@ select.prop-value {
   box-shadow: var(--shadow-md);
   padding: 6px;
   animation: pop 0.16s ease;
-  top: 0;
-  left: calc(100% + 6px);
+  /* top/left come from inline style (clamped beside the "+" button) */
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.block-insert-popover[data-above="1"] {
-  top: auto;
-  bottom: 0;
 }
 
 /* Pinned "AI 帮我写" entry at the top of the insert panel. */

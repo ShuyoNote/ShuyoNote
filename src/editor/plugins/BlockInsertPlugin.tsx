@@ -117,6 +117,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
   const [handle, setHandle] = useState<{ top: number; left: number; key: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAbove, setPanelAbove] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsSubPos, setColumnsSubPos] = useState<{ top: number; left: number } | null>(null);
   const [columnsHover, setColumnsHover] = useState(2); // 1-based count under the cursor
@@ -186,8 +187,17 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
     clearClose();
     activeKeyRef.current = h.key;
     setQuery("");
-    // Feishu anchors the panel near the "+"; flip above if there isn't room below.
-    setPanelAbove(window.innerHeight - h.top < 420);
+    // Feishu anchors the panel near the "+"; flip above if there isn't enough room.
+    const above = window.innerHeight - h.top < 440;
+    setPanelAbove(above);
+    // Open to the LEFT of the "+" button (the anchor spans anchorLeft..anchorLeft+48).
+    // Clamp so the panel never overflows the viewport's left edge.
+    const MENU_W = 300;
+    const MENU_H = 440;
+    const anchorRight = h.left + 48;
+    const left = Math.max(8, Math.min(anchorRight - MENU_W - 6, window.innerWidth - MENU_W - 8));
+    const top = above ? Math.max(8, h.top - MENU_H) : h.top;
+    setMenuPos({ top, left });
     setPanelOpen(true);
   };
 
@@ -320,8 +330,13 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
             </svg>
           </div>
 
-          {panelOpen && (
-            <div className="block-insert-popover" ref={popoverRef} data-above={panelAbove ? "1" : "0"}>
+          {panelOpen && menuPos && (
+            <div
+              className="block-insert-popover"
+              ref={popoverRef}
+              data-above={panelAbove ? "1" : "0"}
+              style={{ top: menuPos.top, left: menuPos.left }}
+            >
               <button className="insert-ai-entry" onClick={aiHelp}>
                 <span className="insert-ai-icon">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
