@@ -118,8 +118,10 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAbove, setPanelAbove] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [columnsSubPos, setColumnsSubPos] = useState<{ top: number; left: number } | null>(null);
   const [query, setQuery] = useState("");
   const anchorRef = useRef<HTMLDivElement | null>(null);
+  const columnsBtnRef = useRef<HTMLButtonElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const activeKeyRef = useRef<string | null>(null);
@@ -341,38 +343,26 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                         <div className="insert-rows">
                           {items.map((o) =>
                             o.key === "columns" ? (
-                              <div key={o.key} className="insert-item-wrap">
-                                <button
-                                  className={`insert-item ${columnsOpen ? "active" : ""}`}
-                                  onClick={() => setColumnsOpen((v) => !v)}
-                                  title="选择栏数"
-                                >
-                                  <span className="insert-icon">{o.badge}</span>
-                                  <span className="insert-name">{o.title}</span>
-                                  <span className="insert-caret">›</span>
-                                </button>
-                                {columnsOpen && (
-                                  <div className="insert-columns-sub">
-                                    <div className="insert-columns-label">选择栏数</div>
-                                    <div className="insert-columns-row">
-                                      {[2, 3, 4].map((n) => (
-                                        <button
-                                          key={n}
-                                          className="insert-columns-opt"
-                                          title={`${n} 栏`}
-                                          onClick={() => insertColumns(n)}
-                                        >
-                                          <span className="insert-columns-thumb">
-                                            {Array.from({ length: n }, (_, i) => (
-                                              <span key={i} className="insert-columns-bar" />
-                                            ))}
-                                          </span>
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
+                              <button
+                                key={o.key}
+                                ref={(el) => { if (el) columnsBtnRef.current = el; }}
+                                className={`insert-item ${columnsOpen ? "active" : ""}`}
+                                onClick={() => {
+                                  const el = columnsBtnRef.current;
+                                  if (!el) return;
+                                  const r = el.getBoundingClientRect();
+                                  const subW = 150;
+                                  const x = Math.min(r.right + 4, window.innerWidth - subW - 8);
+                                  const y = Math.max(8, r.top - 8);
+                                  setColumnsSubPos({ top: y, left: x });
+                                  setColumnsOpen((v) => !v);
+                                }}
+                                title="选择栏数"
+                              >
+                                <span className="insert-icon">{o.badge}</span>
+                                <span className="insert-name">{o.title}</span>
+                                <span className="insert-caret">›</span>
+                              </button>
                             ) : (
                               <button key={o.key} className="insert-item" onClick={() => select(o)}>
                                 <span className="insert-icon">{o.badge}</span>
@@ -386,6 +376,32 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Second-level submenu (分栏 count picker), rendered as a FIXED sibling
+              of the popover so popover's overflow:hidden can't clip it. Opens to
+              the RIGHT of the 分栏 row. */}
+          {columnsOpen && columnsSubPos && (
+            <div className="insert-columns-sub" style={{ top: columnsSubPos.top, left: columnsSubPos.left }}>
+              <div className="insert-columns-label">选择栏数</div>
+              <div className="insert-columns-row">
+                {[2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    className="insert-columns-opt"
+                    title={`${n} 栏`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertColumns(n)}
+                  >
+                    <span className="insert-columns-thumb">
+                      {Array.from({ length: n }, (_, i) => (
+                        <span key={i} className="insert-columns-bar" />
+                      ))}
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           )}

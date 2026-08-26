@@ -4532,14 +4532,10 @@ select.prop-value {
   opacity: 0.85;
 }
 
-/* Wrapper so a submenu row can host an expanding child submenu. */
+/* Vertical row stacking for "常用"/"多维表格" items. */
 .insert-rows {
   display: flex;
   flex-direction: column;
-}
-
-.insert-item-wrap {
-  position: relative;
 }
 
 .insert-caret {
@@ -4554,13 +4550,17 @@ select.prop-value {
   background: var(--hover);
 }
 
-/* Second-level submenu (分栏 count picker) that appears under the 分栏 row. */
+/* Second-level submenu (分栏 count picker). Fixed position, opens to the RIGHT
+   of the 分栏 row (anchored via inline top/left from its rect). */
 .insert-columns-sub {
-  margin: 2px 6px 6px;
+  position: fixed;
+  z-index: 70;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  padding: 8px 8px 6px;
+  box-shadow: var(--shadow-md);
+  padding: 8px;
+  animation: pop 0.16s ease;
 }
 
 .insert-columns-label {
