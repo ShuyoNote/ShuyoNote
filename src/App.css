@@ -4913,18 +4913,17 @@ select.prop-value {
      drops and the bar goes `pointer-events:none` before a button can be clicked.
      Sitting flush means moving the cursor straight up from the box onto the bar
      keeps `:hover` active the whole way.
-   - Opaque `--bg` (NOT `--surface-light`): that token is never defined anywhere in
-     the project, so it resolved to transparent and the bar was invisible/unreadable. */
+   - Colors match the app's other popup toolbars (slash menu / history popover):
+     a neutral `--surface` panel, `--border` outline and `--shadow-md`, with
+     borderless transparent buttons that highlight on hover. No accent tint. */
 .inline-drawing-bar {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px;
-  /* Light accent tint so the floating bar reads clearly over the white canvas
-     (slightly more eye-catching than plain white), but not garish. */
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   box-shadow: var(--shadow-md);
   flex-wrap: wrap;
   position: absolute;
@@ -4940,19 +4939,20 @@ select.prop-value {
 }
 
 .inline-drawing-btn {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 10px;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .inline-drawing-btn:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
 }
 
 /* Compact magnifier-style zoom buttons (icon-only) + the live percentage label. */

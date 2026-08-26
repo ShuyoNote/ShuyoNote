@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.165] - 2026-08-24
+
+### 修复
+
+- **内联绘图块控制条配色对齐其它弹出工具栏**。上一版给控制条加了主题蓝底色与蓝色描边，显得突兀。现改为与应用的其它弹出工具栏（斜杠菜单 / 历史版本弹窗 / 工具栏按钮）一致的**中性配色**：面板 `background: var(--surface)`、描边 `1px solid var(--border)`、圆角 `var(--radius-lg)`（12px）、`box-shadow: var(--shadow-md)`；按钮改为**无边框透明**（`color: var(--text-dim)`），悬停 `var(--hover)` 高亮、文字变 `var(--text)`。不再有蓝色描边/彩色按钮。无头浏览器截图确认：背景 `rgb(255,255,255)`、边 `rgb(229,232,238)`、12px 圆角、按钮透明无边框；无运行时错误；`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.164] - 2026-08-24
 
 ### 优化
