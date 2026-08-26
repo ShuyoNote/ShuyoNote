@@ -31,8 +31,10 @@ export type SerializedColumnsBlockNode = Spread<
   SerializedLexicalNode
 >;
 
-// An empty column's serialized EditorState (a single empty paragraph).
-export const EMPTY_COLUMN_JSON = JSON.stringify({ root: { children: [{ type: "paragraph", version: 1, children: [] }], type: "root", version: 1 } });
+// An empty column's serialized EditorState (a single empty paragraph with an empty
+// text node — Lexical's natural shape for a fresh block, so list/selection commands
+// resolve points reliably; a zero-children paragraph can trip selection invariants).
+export const EMPTY_COLUMN_JSON = JSON.stringify({ root: { children: [{ type: "paragraph", version: 1, children: [{ type: "text", text: "", version: 1 }] }], type: "root", version: 1 } });
 const EMPTY_COL = EMPTY_COLUMN_JSON;
 
 export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {

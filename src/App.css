@@ -3225,6 +3225,40 @@ select.prop-value {
   border-left-width: 1px;
 }
 
+/* Route-B nested editor inside a column: the contenteditable owns the column's full
+   block stack; reset to a clean block so paragraphs/headings fill the column. */
+.editor-column-editable {
+  outline: none;
+  min-height: 44px;
+  font-size: 15px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.editor-column-placeholder {
+  position: absolute;
+  color: var(--text-faint);
+  font-size: 14px;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+}
+
+.editor-column {
+  position: relative;
+}
+
+.editor-column-error {
+  color: var(--danger);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.editor-columns-loading {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
 /* Column-count picker (选择栏数) over an empty columns block. */
 .columns-picker {
   position: fixed;
