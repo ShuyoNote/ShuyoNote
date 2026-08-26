@@ -27,7 +27,7 @@ const ColumnsBlockView = lazy(() =>
 // as N independent nested editors. `cols.length` = column count.
 
 export type SerializedColumnsBlockNode = Spread<
-  { count: number; cols: string[] },
+  { count: number; cols: string[]; widths?: number[] },
   SerializedLexicalNode
 >;
 
@@ -39,18 +39,20 @@ const EMPTY_COL = EMPTY_COLUMN_JSON;
 
 export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   __cols: string[];
+  __widths: number[];
 
   static getType(): string {
     return "columnsBlock";
   }
 
   static clone(node: ColumnsBlockNode): ColumnsBlockNode {
-    return new ColumnsBlockNode(node.__cols.slice(), node.__key);
+    return new ColumnsBlockNode(node.__cols.slice(), node.__widths.slice(), node.__key);
   }
 
-  constructor(cols: string[] = [], key?: NodeKey) {
+  constructor(cols: string[] = [], widths: number[] = [], key?: NodeKey) {
     super(key);
     this.__cols = cols;
+    this.__widths = widths;
   }
 
   $config() {
@@ -73,6 +75,7 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
     return (
       <ColumnsBlockInner
         cols={this.__cols.slice()}
+        widths={this.__widths.slice()}
         nodeKey={this.getKey()}
       />
     );
@@ -90,6 +93,7 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
       type: "columnsBlock",
       count: this.__cols.length,
       cols: this.__cols.slice(),
+      widths: this.__widths.slice(),
       version: 1,
     };
   }
@@ -98,7 +102,8 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
     const cols = Array.isArray(serializedNode.cols)
       ? serializedNode.cols.slice()
       : new Array(Math.max(1, Math.floor(serializedNode.count) || 2)).fill(EMPTY_COL);
-    return $createColumnsBlockNode(cols);
+    const widths = Array.isArray(serializedNode.widths) ? serializedNode.widths.slice() : [];
+    return $createColumnsBlockNode(cols, widths);
   }
 
   isInline(): false {
@@ -106,9 +111,9 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createColumnsBlockNode(cols: string[] = []): ColumnsBlockNode {
+export function $createColumnsBlockNode(cols: string[] = [], widths: number[] = []): ColumnsBlockNode {
   const c = cols.length > 0 ? cols.slice() : [EMPTY_COL, EMPTY_COL];
-  return $applyNodeReplacement(new ColumnsBlockNode(c));
+  return $applyNodeReplacement(new ColumnsBlockNode(c, widths.slice()));
 }
 
 export function $isColumnsBlockNode(node: LexicalNode | null | undefined): node is ColumnsBlockNode {
@@ -116,8 +121,8 @@ export function $isColumnsBlockNode(node: LexicalNode | null | undefined): node 
 }
 
 // Renders the column editors and, on each column change, persists the aggregated
-// cols back onto the node inside an editor.update (so it commits to the page).
-function ColumnsBlockInner({ cols, nodeKey }: { cols: string[]; nodeKey: string }) {
+// cols (and column widths) back onto the node inside an editor.update so it commits.
+function ColumnsBlockInner({ cols, widths, nodeKey }: { cols: string[]; widths: number[]; nodeKey: string }) {
   const [editor] = useLexicalComposerContext();
   const pageId = useNotes((s) => s.currentId) ?? "";
 
@@ -128,9 +133,16 @@ function ColumnsBlockInner({ cols, nodeKey }: { cols: string[]; nodeKey: string 
     });
   };
 
+  const handleWidths = (next: number[]) => {
+    editor.update(() => {
+      const n = $getNodeByKey(nodeKey);
+      if (n && $isColumnsBlockNode(n)) n.__widths = next.slice();
+    });
+  };
+
   return (
     <Suspense fallback={<div className="editor-columns editor-columns-loading">加载分栏…</div>}>
-      <ColumnsBlockView cols={cols} pageId={pageId} onChange={handleChange} />
+      <ColumnsBlockView cols={cols} widths={widths} pageId={pageId} onChange={handleChange} onWidthsChange={handleWidths} />
     </Suspense>
   );
 }

@@ -3198,6 +3198,7 @@ select.prop-value {
 /* Feishu-style 分栏: a flex row of N columns sitting side by side. */
 .editor-columns {
   display: flex;
+  width: 100%;
   gap: 10px;
   margin: 0.5em 0;
   border: 1px dashed var(--border);
@@ -3215,6 +3216,7 @@ select.prop-value {
 .editor-column {
   flex: 1 1 0;
   min-width: 0;
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
@@ -3225,20 +3227,21 @@ select.prop-value {
   border-left-width: 1px;
 }
 
-/* Per-column row: the editor plus tiny add/remove controls on the right edge. */
-.editor-column-row {
-  position: relative;
-  flex: 1 1 0;
-  min-width: 0;
+/* Resizable divider between columns (drag to adjust column widths). */
+.editor-column-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -5px;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 6;
+  transition: background var(--transition-fast);
 }
 
-.editor-column-actions {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: flex;
-  gap: 4px;
-  z-index: 5;
+.editor-column-divider:hover,
+.editor-column-divider:active {
+  background: var(--accent-soft, rgba(59, 130, 246, 0.16));
 }
 
 .editor-column-add,
@@ -3268,6 +3271,15 @@ select.prop-value {
   background: var(--danger-soft, #ffe9e9);
   border-color: var(--danger);
   color: var(--danger);
+}
+
+.editor-column-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
 }
 
 /* Route-B nested editor inside a column: the contenteditable owns the column's full
