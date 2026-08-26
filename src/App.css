@@ -4569,42 +4569,46 @@ select.prop-value {
   margin-bottom: 8px;
 }
 
-.insert-columns-row {
-  display: flex;
-  gap: 8px;
+/* Feishu-style count track: a single row of vertical bars; the bars up to the
+   selected count are highlighted (blue = on, others = dark), like the reference
+   "选择栏数" picker. Hovering a bar selects that many columns. */
+.insert-columns-sub {
+  position: fixed;
+  z-index: 70;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  padding: 8px;
+  animation: pop 0.16s ease;
 }
 
-.insert-columns-opt {
+.insert-columns-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.insert-columns-track {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px;
+  gap: 3px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
   cursor: pointer;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
-.insert-columns-opt:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.insert-columns-thumb {
-  display: flex;
-  gap: 3px;
-}
-
-.insert-columns-bar {
+.insert-columns-cell {
   display: block;
-  width: 12px;
-  height: 36px;
+  width: 22px;
+  height: 52px;
   border-radius: 2px;
   background: var(--text-faint);
+  transition: background var(--transition-fast);
 }
 
-.insert-columns-opt:hover .insert-columns-bar {
+.insert-columns-cell.on {
   background: var(--accent);
 }
 

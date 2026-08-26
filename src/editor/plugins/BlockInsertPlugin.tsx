@@ -119,6 +119,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
   const [panelAbove, setPanelAbove] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsSubPos, setColumnsSubPos] = useState<{ top: number; left: number } | null>(null);
+  const [columnsHover, setColumnsHover] = useState(2); // 1-based count under the cursor
   const [query, setQuery] = useState("");
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const columnsBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -408,21 +409,20 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
               onMouseLeave={scheduleColumnsClose}
             >
               <div className="insert-columns-label">选择栏数</div>
-              <div className="insert-columns-row">
-                {[2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    className="insert-columns-opt"
-                    title={`${n} 栏`}
+              <div
+                className="insert-columns-track"
+                role="radiogroup"
+                onMouseLeave={() => setColumnsHover(2)}
+              >
+                {[1, 2, 3, 4].map((idx) => (
+                  <span
+                    key={idx}
+                    className={`insert-columns-cell ${idx <= columnsHover ? "on" : ""}`}
+                    onMouseEnter={() => setColumnsHover(idx)}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => insertColumns(n)}
-                  >
-                    <span className="insert-columns-thumb">
-                      {Array.from({ length: n }, (_, i) => (
-                        <span key={i} className="insert-columns-bar" />
-                      ))}
-                    </span>
-                  </button>
+                    onClick={() => insertColumns(idx)}
+                    title={`${idx} 栏`}
+                  />
                 ))}
               </div>
             </div>
