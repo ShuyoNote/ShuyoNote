@@ -151,6 +151,9 @@ export default function DrawingEditorModal() {
     setBusy(true);
     setErr(null);
     try {
+      // 1) Persist the drawing CONTENT (.excalidraw JSON) — fast and deterministic
+      //    (content-hashded blob store). This is what makes the drawing recoverable,
+      //    so we save it first and close the modal as soon as it lands.
       const json = serializeAsJSON(scene.elements, scene.appState, scene.files, "local");
       const jsonMeta = await api.saveImage({
         page_id: null,
@@ -158,37 +161,49 @@ export default function DrawingEditorModal() {
         mime: "application/json",
         data: Array.from(new TextEncoder().encode(json)),
       });
-      const png = await exportToBlob({
-        elements: scene.elements,
-        appState: scene.appState,
-        files: scene.files,
-        mimeType: "image/png",
-        exportPadding: 16,
-      });
-      const pngBytes = new Uint8Array(await png.arrayBuffer());
-      const pngMeta = await api.saveImage({
-        page_id: null,
-        name: "drawing-thumb.png",
-        mime: "image/png",
-        data: Array.from(pngBytes),
-      });
       const text = excalidrawSceneText(scene.elements);
       const editor = useEditorStore.getState().editor;
       if (editor) {
         editor.update(() => {
           const node = $getNodeByKey(d.nodeKey);
           if (node && $isDrawingNode(node)) {
-            node.setDrawing({
-              hash: jsonMeta.hash,
-              mime: "application/json",
-              thumbHash: pngMeta.hash,
-              thumbMime: "image/png",
-              text,
-            });
+            node.setDrawing({ hash: jsonMeta.hash, mime: "application/json", text });
           }
         });
       }
       close();
+      setBusy(false);
+      // 2) Render + persist the PNG thumbnail in the BACKGROUND (never blocks the
+      //    modal, so the Save button can't get stuck at "保存中…"). PNG export of a
+      //    large scene can be slow; making it non-blocking keeps saving responsive.
+      exportToBlob({
+        elements: scene.elements,
+        appState: scene.appState,
+        files: scene.files,
+        mimeType: "image/png",
+        exportPadding: 16,
+      })
+        .then(async (png: Blob) => {
+          const pngBytes = new Uint8Array(await png.arrayBuffer());
+          const pngMeta = await api.saveImage({
+            page_id: null,
+            name: "drawing-thumb.png",
+            mime: "image/png",
+            data: Array.from(pngBytes),
+          });
+          const ed = useEditorStore.getState().editor;
+          if (ed) {
+            ed.update(() => {
+              const node = $getNodeByKey(d.nodeKey);
+              if (node && $isDrawingNode(node)) {
+                node.setDrawing({ thumbHash: pngMeta.hash, thumbMime: "image/png" });
+              }
+            });
+          }
+        })
+        .catch(() => {
+          // Thumbnail is best-effort; a failed PNG export must never break saving.
+        });
     } catch (e) {
       setErr(`保存绘图失败：${e}`);
       setBusy(false);
