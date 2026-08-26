@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.160] - 2026-08-24
+
+### 变更
+
+- **内联绘图块：适配=缩放内容+居中；缩放=仅居中不自动适配**。之前缩放按钮用 `scrollToContent` 可能会在点击后再次「适配到内容」而改动缩放（与手动缩放冲突）。现从 Excalidraw 的视口变换推导出正确映射（`sceneX = scrollX + canvasX − canvasX/zoom`），缩放按钮改为：**`updateScene` 只设 `zoom`，再按 `scrollX = ccx − w/2 + w/(2·zoom)` 精确把内容包围盒中心对准视口中心**——只居中、不额外适配；「适配内容」仍用 `scrollToContent({fitToContent})` 做**缩放适配 + 居中**。无头浏览器实测：点放大 `100%→125%→156%`、缩小回 `125%`（缩放按步生效、无自动适配重置）、无运行时错误；`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.159] - 2026-08-24
 
 ### 变更
