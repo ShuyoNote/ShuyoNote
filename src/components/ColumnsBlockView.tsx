@@ -9,11 +9,13 @@ import { EMPTY_COLUMN_JSON } from "../editor/nodes/ColumnsBlockNode";
 
 const MIN_COLS = 1;
 const MAX_COLS = 4;
-const MIN_PCT = 20; // a column's width share can't go below 20%
 
 function shareWeight(widths: number[], idx: number, total: number): number {
-  if (widths.length === total) return widths[idx] ?? 100 / total;
-  return 100 / total;
+  // Default to equal weight (1) so columns share the container evenly; explicit
+  // widths otherwise. Using flex-grow weights (not % bases) lets flexbox distribute
+  // the space INCLUDING the gap, so columns never overflow the container.
+  if (widths.length === total) return widths[idx] ?? 1;
+  return 1;
 }
 
 export function ColumnsBlockView({
@@ -31,7 +33,7 @@ export function ColumnsBlockView({
 }) {
   const [localCols, setLocalCols] = useState<string[]>(cols);
   const [localWidths, setLocalWidths] = useState<number[]>(widths);
-  const dragRef = useRef<{ idx: number; startX: number; startPct: number; trackW: number } | null>(null);
+  const dragRef = useRef<{ idx: number; startX: number; startW: number; trackW: number } | null>(null);
   const localColsRef = useRef<string[]>(cols);
   const localWidthsRef = useRef<number[]>(widths);
   localColsRef.current = localCols;
@@ -71,25 +73,20 @@ export function ColumnsBlockView({
     apply(next, w.length === next.length ? w : []);
   }, [apply]);
 
-  // Drag a divider to resize the LEFT column at idx; its share (pct) grows/shrinks,
-  // and the last column absorbs the remainder so widths stay ~100.
+  // Drag a divider to resize the LEFT column at idx; its weight grows/shrinks and
+  // the others scale proportionally so the share changes without overflow.
   const onDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
-    const deltaPct = ((e.clientX - d.startX) / Math.max(d.trackW, 1)) * 100;
-    const newPct = Math.max(MIN_PCT, Math.min(100 - MIN_PCT, d.startPct + deltaPct));
+    const deltaFrac = (e.clientX - d.startX) / Math.max(d.trackW, 1);
+    // Convert the drag to a weight multiplier (bounded so a column can't vanish).
+    const newW = Math.max(0.2, Math.min(6, d.startW * (1 + deltaFrac * 4)));
     const n = localColsRef.current.length;
     const base = Array.from({ length: n }, (_, i) => shareWeight(localWidthsRef.current, i, n));
     const next = base.slice();
-    next[d.idx] = newPct;
-    const othersSum = next.reduce((a, b) => a + b, 0) - newPct;
-    const lastIdx = n - 1;
-    if (lastIdx !== d.idx) next[lastIdx] = Math.max(MIN_PCT, 100 - othersSum);
-    // Normalize to sum 100.
-    const sum = next.reduce((a, b) => a + b, 0);
-    const norm = next.map((v) => (v / sum) * 100);
-    setLocalWidths(norm);
-    onWidthsChange?.(norm);
+    next[d.idx] = newW;
+    setLocalWidths(next);
+    onWidthsChange?.(next);
   }, [onWidthsChange]);
 
   const endDrag = useCallback(() => {
@@ -102,7 +99,7 @@ export function ColumnsBlockView({
     e.preventDefault();
     const container = (e.currentTarget as HTMLElement).closest(".editor-columns") as HTMLElement | null;
     const trackW = container ? container.getBoundingClientRect().width : 640;
-    dragRef.current = { idx, startX: e.clientX, startPct: shareWeight(localWidthsRef.current, idx, localColsRef.current.length), trackW };
+    dragRef.current = { idx, startX: e.clientX, startW: shareWeight(localWidthsRef.current, idx, localColsRef.current.length), trackW };
     document.addEventListener("pointermove", onDrag);
     document.addEventListener("pointerup", endDrag);
   }, [onDrag, endDrag]);
@@ -110,9 +107,9 @@ export function ColumnsBlockView({
   return (
     <div className="editor-columns" data-count={String(localCols.length)}>
       {localCols.map((c, i) => {
-        const pct = shareWeight(localWidths, i, localCols.length);
+        const w = shareWeight(localWidths, i, localCols.length);
         return (
-          <div key={`col-${i}`} className="editor-column" style={{ width: `${pct}%`, flex: `0 0 ${pct}%` }}>
+          <div key={`col-${i}`} className="editor-column" style={{ flex: `${w} 1 0` }}>
             {i < localCols.length - 1 && (
               <div className="editor-column-divider" onPointerDown={startDrag(i)} title="拖拽调整列宽" />
             )}
