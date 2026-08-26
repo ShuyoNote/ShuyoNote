@@ -3225,6 +3225,51 @@ select.prop-value {
   border-left-width: 1px;
 }
 
+/* Per-column row: the editor plus tiny add/remove controls on the right edge. */
+.editor-column-row {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.editor-column-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+}
+
+.editor-column-add,
+.editor-column-remove {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.editor-column-add:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editor-column-remove:hover {
+  background: var(--danger-soft, #ffe9e9);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 /* Route-B nested editor inside a column: the contenteditable owns the column's full
    block stack; reset to a clean block so paragraphs/headings fill the column. */
 .editor-column-editable {
