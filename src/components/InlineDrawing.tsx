@@ -246,57 +246,27 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     [scheduleViewSave],
   );
 
-  // Center of the drawing content's bounding box, in scene coords (used so zoom
-  // stays anchored on the content rather than jumping to the viewport center).
-  const getContentCenter = useCallback(() => {
-    const scene = liveRef.current;
-    if (!scene || !Array.isArray(scene.elements)) return null;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
-    for (const el of scene.elements) {
-      if (el?.isDeleted) continue;
-      if (typeof el.x !== "number" || typeof el.y !== "number") continue;
-      const ew = typeof el.width === "number" ? el.width : 0;
-      const eh = typeof el.height === "number" ? el.height : 0;
-      minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
-      maxX = Math.max(maxX, el.x + ew); maxY = Math.max(maxY, el.y + eh);
-      has = true;
-    }
-    if (!has) return null;
-    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-  }, []);
-
-  // Zoom anchored on the content's center point (so the drawing stays centered as
-  // you zoom), falling back to the viewport center for an empty scene.
-  const zoomTo = useCallback(
-    (targetZoom: number) => {
-      const a = apiRef.current;
-      if (!a) return;
-      const st = a.getAppState();
-      const w = typeof st.width === "number" && st.width > 0 ? st.width : 1;
-      const h = typeof st.height === "number" && st.height > 0 ? st.height : 1;
-      const czRaw = st.zoom;
-      const cz = (typeof czRaw === "number" ? czRaw : czRaw?.value) || 1;
-      const sx0 = typeof st.scrollX === "number" && isFinite(st.scrollX) ? st.scrollX : 0;
-      const sy0 = typeof st.scrollY === "number" && isFinite(st.scrollY) ? st.scrollY : 0;
-      const raw = Number.isFinite(targetZoom) ? targetZoom : 1;
-      const nz = Math.min(16, Math.max(0.05, raw));
-      const center = getContentCenter();
-      const ccx = center ? center.x : sx0 + w / 2 / cz;
-      const ccy = center ? center.y : sy0 + h / 2 / cz;
-      const nsx = Number.isFinite(ccx) ? ccx - w / 2 / nz : sx0;
-      const nsy = Number.isFinite(ccy) ? ccy - h / 2 / nz : sy0;
-      try {
-        a.updateScene({
-          appState: { zoom: { value: nz }, scrollX: nsx, scrollY: nsy },
-          captureUpdate: CaptureUpdateAction.NEVER,
-        });
-      } catch {
-        /* best-effort */
+  // Zoom to the target factor and auto-center the drawing content in the viewport
+  // (Excalidraw's own `scrollToContent` uses the exact viewport transform, so the
+  // content is reliably centered — including frames / rotated elements).
+  const zoomTo = useCallback((targetZoom: number) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const raw = Number.isFinite(targetZoom) ? targetZoom : 1;
+    const nz = Math.min(16, Math.max(0.05, raw));
+    try {
+      a.updateScene({ appState: { zoom: { value: nz } }, captureUpdate: CaptureUpdateAction.NEVER });
+      // Auto-center the content at this zoom (doesn't re-fit — it only scrolls to
+      // center the content, preserving the zoom you chose).
+      const scene = liveRef.current;
+      if (scene && Array.isArray(scene.elements) && scene.elements.length > 0) {
+        a.scrollToContent(scene.elements, { animate: false });
       }
-      setZoomPct(Math.round(nz * 100));
-    },
-    [getContentCenter],
-  );
+    } catch {
+      /* best-effort */
+    }
+    setZoomPct(Math.round(nz * 100));
+  }, []);
 
   // The appState.zoom is a `{ value }` object (and can be undefined before the
   // canvas settles); coerce to a positive number (default 1) so zoom always steps
