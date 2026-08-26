@@ -18,7 +18,7 @@ import { $getInsertTargetBlock } from "../blockUtils";
 import { useAttachmentsStore } from "../../store/attachments";
 import { inputDialog } from "../../store/input";
 import { $createCalloutNode } from "../nodes/CalloutNode";
-import { $createColumnsNode } from "../nodes/ColumnsNode";
+import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
 import { $createImageNode } from "../nodes/ImageNode";
 import { $createDrawingNode } from "../nodes/DrawingNode";
 import { $createVideoNode } from "../nodes/VideoNode";
@@ -211,7 +211,7 @@ export function makeOptions(pageId: string): SlashOption[] {
     } },
     { key: "callout", title: "Callout 提示框", badge: "💡", group: "嵌入", pinyin: "ctsx", run: (editor) =>
       editor.update(() => $replaceBlock($createCalloutNode())) },    { key: "columns", title: "分栏", badge: "▥", group: "嵌入", pinyin: "fl", run: (editor) =>
-      editor.update(() => $insertBlockNode($createColumnsNode(2))) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", shortcut: "Ctrl+Alt+C", pinyin: "dmk", run: (editor) =>
+      editor.update(() => $insertBlockNode($createColumnsBlockNode([EMPTY_COLUMN_JSON, EMPTY_COLUMN_JSON]))) },    { key: "code", title: "代码块", badge: "{}", group: "嵌入", shortcut: "Ctrl+Alt+C", pinyin: "dmk", run: (editor) =>
       editor.update(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return;

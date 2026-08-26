@@ -4,7 +4,7 @@ import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNo
 import { $findTableNode } from "@lexical/table";
 import { useEditorStore } from "../../store/editor";
 import { makeOptions, type SlashOption } from "./SlashMenuPlugin";
-import { $createColumnsNode } from "../nodes/ColumnsNode";
+import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
 import { isEmptyBlock } from "../blockUtils";
 
 // Feishu-style inline "+": when the cursor is over an EMPTY top-level block, show a
@@ -270,10 +270,10 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
       }
       // Place a collapsed selection inside the target so the replace targets it.
       target.selectEnd();
-      // Replace it with the columns block and drop a paragraph after for the caret.
+      // Replace it with the columns block (new Route-B node) with `count` empty columns.
       const topLevel = target.getTopLevelElement();
       if (topLevel) {
-        topLevel.replace($createColumnsNode(count));
+        topLevel.replace($createColumnsBlockNode(new Array(count).fill(EMPTY_COLUMN_JSON)));
       }
     });
     editor.focus();

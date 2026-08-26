@@ -11,6 +11,7 @@ import type { Klass, LexicalNode } from "lexical";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { ColumnsNode } from "./nodes/ColumnsNode";
 import { ColumnNode } from "./nodes/ColumnNode";
+import { ColumnsBlockNode } from "./nodes/ColumnsBlockNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { ImageRowNode } from "./nodes/ImageRowNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -35,6 +36,7 @@ export const EDITOR_NODES: Klass<LexicalNode>[] = [
   CalloutNode,
   ColumnsNode,
   ColumnNode,
+  ColumnsBlockNode,
   HorizontalRuleNode,
   ImageNode,
   ImageRowNode,

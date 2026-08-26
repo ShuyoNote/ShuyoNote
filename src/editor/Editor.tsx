@@ -32,7 +32,8 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
 
-import { editorTheme as theme } from "./config";
+import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
+import { collectColumnsText } from "../lib/columnsText";
 
 interface EditorProps {
   contentJson: string;
@@ -43,7 +44,6 @@ interface EditorProps {
 }
 
 import { lexicalStateValid } from "../lib/lexicalValidate";
-import { EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
 
 // A throwaway editor with the same node registry, used to PRE-PARSE a saved
 // content string. If any node is malformed, Lexical catches the error internally
@@ -347,7 +347,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
     if (tags.has("blockref-sync")) return;
     const json = serializeWithBlockIds(_editorState, blockIdMapRef.current);
     const text = _editorState.read(() => $getRoot().getTextContent());
-    onSave(json, text);
+    onSave(json, text + collectColumnsText(json));
   };
 
   return (

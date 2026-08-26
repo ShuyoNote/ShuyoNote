@@ -81,7 +81,8 @@ await esbuild.build({
       'export { runAiLoop } from "./src/lib/ai/host";\n' +
       'export { draftPreview } from "./src/lib/ai/preview";\n' +
       'export { parseMarkdown, parseInline } from "./src/lib/markdown";\n' +
-      'export { lexicalStateValid } from "./src/lib/lexicalValidate";\n',
+      'export { lexicalStateValid } from "./src/lib/lexicalValidate";\n' +
+      'export { collectColumnsText } from "./src/lib/columnsText";\n',
     resolveDir: root,
     loader: "js",
     sourcefile: "ai-entry.js",
@@ -1352,6 +1353,12 @@ assert("workspace name persists across instances", wsAgain !== "");
   const allowedCols = new Set(["root", "paragraph", "text", "columns", "column"]);
   const salvagedCols = aiMod.lexicalStateValid(columnsDoc, allowedCols);
   assert("lexicalValid accepts nested columns block", salvagedCols !== null && salvagedCols.includes('"type":"columns"') && salvagedCols.includes('"text":"左"') && salvagedCols.includes('"text":"右"'), JSON.stringify(salvagedCols));
+  // Route-B columnsBlock node: its columns are full nested EditorState JSON; the page
+  // text (for search/backlinks) must be merged from those columns. collectColumnsText
+  // pulls every text token out of a columnsBlock node's `cols`.
+  const colsBlockDoc = '{"root":{"children":[{"type":"columnsBlock","count":2,"cols":["{\\"root\\":{\\"children\\":[{\\"type\\":\\"paragraph\\",\\"version\\":1,\\"children\\":[{\\"type\\":\\"text\\",\\"text\\":\\"甲列内容\\",\\"version\\":1}]}],\\"type\\":\\"root\\",\\"version\\":1}}","{\\"root\\":{\\"children\\":[{\\"type\\":\\"paragraph\\",\\"version\\":1,\\"children\\":[{\\"type\\":\\"text\\",\\"text\\":\\"乙列内容\\",\\"version\\":1}]}],\\"type\\":\\"root\\",\\"version\\":1}}"],"version":1}],"type":"root","version":1}}';
+  const colsText = aiMod.collectColumnsText(colsBlockDoc);
+  assert("collectColumnsText merges columns block text", colsText.includes("甲列内容") && colsText.includes("乙列内容"), colsText);
   const salvagedMixed = aiMod.lexicalStateValid(mixed);
   assert("lexicalValid salvages good blocks, drops corrupt ones", salvagedMixed !== null && salvagedMixed.includes('"text":"good"') && !salvagedMixed.includes('"foo"'));
   const salvagedBadText = aiMod.lexicalStateValid(onlyBadText);
