@@ -14,7 +14,7 @@ import { isEmptyBlock } from "../blockUtils";
 // are shown (unimplemented Feishu blocks are omitted), reusing makeOptions so the
 // insert logic matches the "/" slash menu.
 
-const HANDLE_OFFSET = 50; // anchor-left distance so the "+" button hugs the content column edge
+const HANDLE_OFFSET = 48; // same as the ⋮⋮ block drag handle: 48px gutter width
 const CLOSE_DELAY = 260; // linger so the cursor can travel onto the panel
 const HIDE_DELAY_MS = 400;
 
@@ -163,14 +163,11 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
-        // Anchor the "+" to the document column's LEFT EDGE (the editor root), not the
-        // block's own box, so it sits in the clear left gutter (between the sidebar and
-        // the content column) instead of overlapping the content. Clamp so it never goes
-        // off the viewport or under the column.
-        const rootEl = editor.getRootElement();
-        const colLeft = rootEl ? rootEl.getBoundingClientRect().left : rect.left;
-        const gutterLeft = Math.max(4, Math.min(colLeft - HANDLE_OFFSET, rect.left - HANDLE_OFFSET));
-        setHandle({ top: rect.top, left: gutterLeft, key });
+        // Place the "+" at the same gutter position as the ⋮⋮ block drag handle:
+        // `rect.left - HANDLE_OFFSET` (48px, flush against the content column).
+        // Clamp so it never goes off the viewport.
+        const left = Math.max(4, rect.left - HANDLE_OFFSET);
+        setHandle({ top: rect.top, left, key });
       }
     };
     document.addEventListener("mousemove", onMove, true);
