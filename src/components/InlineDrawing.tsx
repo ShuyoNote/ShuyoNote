@@ -278,10 +278,13 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const nz = Math.min(16, Math.max(0.05, raw));
       const center = getContentCenter();
       try {
+        // Excalidraw maps canvas→scene as `sceneX = canvasX/zoom - scrollX`. To place
+        // the content center at the viewport center (canvasX = w/2), solve scrollX:
+        //   center.x = (w/2)/zoom - scrollX  ⇒  scrollX = w/(2·zoom) - center.x.
         const appState: Record<string, unknown> = { zoom: { value: nz } };
         if (center) {
-          appState.scrollX = center.x - w / 2 + w / (2 * nz);
-          appState.scrollY = center.y - h / 2 + h / (2 * nz);
+          appState.scrollX = w / (2 * nz) - center.x;
+          appState.scrollY = h / (2 * nz) - center.y;
         }
         a.updateScene({ appState, captureUpdate: CaptureUpdateAction.NEVER });
       } catch {
