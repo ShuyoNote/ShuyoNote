@@ -121,15 +121,18 @@
 - [x] 每列 `createEditor`/独立 EditorState；懒挂载视图（`ColumnsBlockNode` 用 `lazy()` 动态导入 `ColumnsBlockView`，打破与 `config.ts` 的循环依赖），列编辑器复用 `config.ts` 的 `EDITOR_NODES`/`editorTheme`。
 - [x] 序列化聚合：`ColumnsBlockNode.__cols: string[]`（每列 EditorState JSON），`decorate` 聚合写回 → `content_json`；`importJSON` 支持 `cols[]`。
 - [x] 文本抽取：`src/lib/columnsText.ts` `collectColumnsText()` 合并各列文本进 `content_text`（搜索/反链/关系图），smoke 断言通过。
-- [x] 列内块插入（`/` 与快捷键）：列内 `/` 插标题/正文/引用/**Callout**/列表（`$replaceBlock`/`$insertBlockNode` 作用到列编辑器）；列内 `Ctrl+Alt+*` 快捷键（`InsertShortcutPlugin`）。关键修复：`EMPTY_COLUMN_JSON` 补 `indent:0`/`direction`/`format`，否则 `ListItemNode.setIndent` 收到非数字 → Lexical #117。
+- [x] 列内块插入（`/` 与快捷键）：列内 `/` 插标题/正文/引用/**Callout**/列表/**代码块**/**分隔线**/**表格**（`$replaceBlock`/`$insertBlockNode`/`INSERT_*_COMMAND` 作用到列编辑器）；列内 `Ctrl+Alt+*` 快捷键（`InsertShortcutPlugin`）。关键修复：`EMPTY_COLUMN_JSON` 补 `indent:0`/`direction`/`format`（否则 `ListItemNode.setIndent` 收到非数字 → Lexical #117）；`ColumnEditor` 挂 `TablePlugin` 让 `/表格` 可用。
 - [x] 列增删：`ColumnsBlockView` 本地 state + ＋/− 按钮（1–4 列），变更经 `onChange` 持久化。
-- [ ] 焦点管理：主↔列切换、Tab 切列、失焦不闪；IME 跨编辑器。
-- [ ] 撤销栈：列内独立撤销（`HistoryPlugin` 已在列编辑器）；跨列/整块撤销列为可选。
-- [ ] 列宽拖拽、列间复制移动、跨列光标导航。
-- [ ] Markdown/HTML 导出递归降级；块引用/`{{blockId}}` 对列内块不适用（诚实标注）。
-- [ ] 旧文档迁移：ElementNode 分栏 → 新列 EditorState 结构的迁移路径与兼容（目前旧分栏按 ElementNode 读取、新插入走 Route-B）。
-- [ ] 旧文档迁移：ElementNode 分栏 → 新列 EditorState 结构的迁移路径与兼容。
-- [ ] `smoke` 新增列/拾取/串行化断言，且原断言无回归；多分栏场景性能（懒挂载）验证。
+- [x] 列宽拖拽：列间分隔手柄，拖动调 `flex-grow` 权重（`flex: <weight> 1 0`），`onWidthsChange` 持久化。
+- [x] 焦点/IME/撤销：每列独立 `LexicalComposer`，插件经编辑器作用域注册 → 跨列打字、列内 Ctrl+Z（列内独立撤销）实测可用，跨列不串扰。
+- [x] Markdown 导出：`exportMarkdown.ts` 注册 `ColumnsBlockNode` + 展开各列文本为段落，列内容不丢（否则含分栏页面导出会因 `type columnsBlock not found` 被跳过）。
+- [x] 布局修复：`ColumnEditor` 根类改 `.editor-column-body`（避免 `.editor-column` 自嵌套）；`createDOM` 返回 `.editor-columns-host`（避免 `.editor-columns` 自嵌套）；列用 `flex-grow`（避免百分比+gap 溢出）。无头实测 2/3 列均分占满、不越界。
+
+**路线 B 已知边界 / 后续（诚实标注）**
+
+- [ ] 列内**块级拖拽/跨列复制移动**：未做。`BlockDragPlugin` 只作用于顶层块（`getTopLevelElement()`），列内方为安全边界——分栏整体可拖/重排，列内子块不单独拖（避免跨编辑器拖拽复杂度）。若需列内拖块，需在列编辑器挂 `BlockDragPlugin` 并做跨编辑器协调（高成本/风险，未做）。
+- [ ] 旧轻量版分栏（ElementNode）**自动迁移**到 `columnsBlock`：未做。`columns`/`column` 保留注册，旧文档仍可读（兼容）；自动迁移会改写线上内容，风险高，推迟。新插入均走 Route-B。
+- [ ] 列内 AI 草稿插入、`{{blockId}}` 块引用对列内块不适用（诚实标注）；`smoke` 暂无多分栏性能（懒加载）断言。
 
 > 副标题「权衡结论」见第 4 节「建议落地顺序」。**是否上路线 B 取决于对「列内任意块」的看重程度**——产品对标必需则值得，但应「先 1 档列内多块 → 再按需 2 档子编辑器」，而非一步到位。
 
