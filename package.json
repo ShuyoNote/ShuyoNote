@@ -1,7 +1,7 @@
 {
   "name": "shuyonote",
   "private": true,
-  "version": "1.59.153",
+  "version": "1.59.154",
   "type": "module",
   "scripts": {
     "dev": "vite",

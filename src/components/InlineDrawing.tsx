@@ -22,6 +22,9 @@ const MAX_HEIGHT = 4000;
 // parsed/restored scene by blob-hash so a remount restores instantly instead of
 // re-fetching the blob and flashing "加载绘图…" (which is the visible jitter).
 const sceneCache = new Map<string, SceneSnapshot>();
+// Also cache the last viewport (zoom/scroll) so a remount restores the exact view
+// instead of re-fitting (which would jump the drawing on page save).
+const viewCache = new Map<string, { zoom: number | null; scrollX: number | null; scrollY: number | null }>();
 
 // Stable UIOptions object — a fresh object on every render would make the
 // memoized Excalidraw re-render (and repaint the canvas), causing page jitter.
@@ -96,15 +99,29 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     // it instead of re-fitting to content. Only finite values count (a transient
     // NaN must not be persisted, or the view would lock into broken zoom).
     const fin = (v: number | null | undefined): v is number => typeof v === "number" && isFinite(v);
-    const hasSavedView = fin(node.__zoom) || fin(node.__scrollX) || fin(node.__scrollY);
+    let hasSavedView = fin(node.__zoom) || fin(node.__scrollX) || fin(node.__scrollY);
     savedViewRef.current = hasSavedView;
-    const savedView = hasSavedView
+    let savedView: Record<string, unknown> = hasSavedView
       ? {
           ...(fin(node.__zoom) ? { zoom: { value: node.__zoom! } } : {}),
           ...(fin(node.__scrollX) ? { scrollX: node.__scrollX! } : {}),
           ...(fin(node.__scrollY) ? { scrollY: node.__scrollY! } : {}),
         }
       : {};
+    // If the node has no persisted view, fall back to the last view remembered for
+    // this blob (a remount shouldn't re-fit and jump the drawing).
+    if (!hasSavedView) {
+      const vc = viewCache.get(hash ?? "");
+      if (vc && (fin(vc.zoom) || fin(vc.scrollX) || fin(vc.scrollY))) {
+        hasSavedView = true;
+        savedViewRef.current = true;
+        savedView = {
+          ...(fin(vc.zoom) ? { zoom: { value: vc.zoom! } } : {}),
+          ...(fin(vc.scrollX) ? { scrollX: vc.scrollX! } : {}),
+          ...(fin(vc.scrollY) ? { scrollY: vc.scrollY! } : {}),
+        };
+      }
+    }
     // If the scene is already cached (e.g. this block just remounted), restore it
     // synchronously so the reader never flashes "加载绘图…".
     const cached = sceneCache.get(hash ?? "");
@@ -172,6 +189,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const lv = lastViewRef.current;
       if (lv.zoom === zF && lv.scrollX === sxF && lv.scrollY === syF) return;
       lastViewRef.current = { zoom: zF, scrollX: sxF, scrollY: syF };
+      viewCache.set(node.__hash ?? "", { zoom: zF, scrollX: sxF, scrollY: syF });
       const editor = useEditorStore.getState().editor;
       if (!editor) return;
       editor.update(() => {
