@@ -123,6 +123,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
   const [query, setQuery] = useState("");
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const columnsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const hideTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const columnsCloseTimerRef = useRef<number | null>(null);
@@ -320,7 +321,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
           </div>
 
           {panelOpen && (
-            <div className="block-insert-popover" data-above={panelAbove ? "1" : "0"}>
+            <div className="block-insert-popover" ref={popoverRef} data-above={panelAbove ? "1" : "0"}>
               <button className="insert-ai-entry" onClick={aiHelp}>
                 <span className="insert-ai-icon">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -366,11 +367,15 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                                 onMouseEnter={() => {
                                   cancelColumnsClose();
                                   const el = columnsBtnRef.current;
-                                  if (!el) return;
-                                  const r = el.getBoundingClientRect();
+                                  const pop = popoverRef.current;
+                                  if (!el || !pop) return;
+                                  const rowRect = el.getBoundingClientRect();
+                                  const popRect = pop.getBoundingClientRect();
                                   const subW = 150;
-                                  const x = Math.min(r.right + 4, window.innerWidth - subW - 8);
-                                  const y = Math.max(8, r.top - 8);
+                                  // Anchor to the HOST menu's right edge + 6 so the
+                                  // submenu opens entirely beside it (no overlap).
+                                  const x = Math.min(popRect.right + 6, window.innerWidth - subW - 8);
+                                  const y = Math.max(8, Math.min(rowRect.top - 8, window.innerHeight - 120));
                                   setColumnsSubPos({ top: y, left: x });
                                   setColumnsOpen(true);
                                 }}
