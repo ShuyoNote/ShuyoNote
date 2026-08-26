@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [Unreleased] - 2026-08-24
+
+### 新增
+
+- **分栏块（轻量版，飞书式）**：`/分栏` 或「+」插入菜单新增「分栏」块。插入后是空的 `ColumnsNode`，光标进入后显示飞书式「选择栏数」面板（2/3/4 列条形缩略图）；点选即生成对应数量的 `ColumnNode` 并排（CSS flex），每列一个可独立编辑的段落框。复用 CalloutNode 的嵌套 ElementNode 模式；`ColumnsPickerPlugin` 采用与 TableMenuPlugin 相同的「监听编辑器更新 + 锚定块 DOM 渲染 React 覆盖层」写法。块不会破坏现有顶层块拖拽/多选/id 机制。仅显示 ShuyoNote 真实支持的块。无头浏览器实测：插入分栏 → 选择栏数面板（3 项）→ 选 2 栏 → 两列并排出现、面板关闭、每列可输入文字；无运行时错误；`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.168] - 2026-08-24
 
 ### 变更

@@ -21,6 +21,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { CalloutNode } from "./nodes/CalloutNode";
+import { ColumnsNode } from "./nodes/ColumnsNode";
+import { ColumnNode } from "./nodes/ColumnNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { ImageRowNode } from "./nodes/ImageRowNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -44,6 +46,7 @@ import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
+import { ColumnsPickerPlugin } from "./plugins/ColumnsPickerPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
@@ -56,6 +59,8 @@ const theme = {
   },
   quote: "editor-quote",
   callout: "editor-callout",
+  columns: "editor-columns",
+  column: "editor-column",
   list: {
     ul: "editor-ul",
     ol: "editor-ol",
@@ -105,6 +110,8 @@ const EDITOR_NODES = [
   CodeHighlightNode,
   LinkNode,
   CalloutNode,
+  ColumnsNode,
+  ColumnNode,
   HorizontalRuleNode,
   ImageNode,
   ImageRowNode,
@@ -471,6 +478,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <LinkPopoverPlugin />
         <TableMenuPlugin />
         <TableResizerPlugin />
+        <ColumnsPickerPlugin />
         <EditorStoreSync />
         <Suspense fallback={null}>
           <DrawingEditorModal />

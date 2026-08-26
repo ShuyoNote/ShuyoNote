@@ -3185,6 +3185,93 @@ select.prop-value {
   margin-right: 8px;
 }
 
+/* Feishu-style 分栏: a flex row of N columns sitting side by side. */
+.editor-columns {
+  display: flex;
+  gap: 10px;
+  margin: 0.5em 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.editor-columns[data-count="0"] {
+  /* Empty (count not chosen) — the picker overlay floats above; keep a minimal
+     slot so the block has a visible footprint. */
+  min-height: 64px;
+}
+
+.editor-column {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.editor-column + .editor-column {
+  border-left-width: 1px;
+}
+
+/* Column-count picker (选择栏数) over an empty columns block. */
+.columns-picker {
+  position: fixed;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+  animation: pop 0.16s ease;
+}
+
+.columns-picker-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.columns-picker-row {
+  display: flex;
+  gap: 8px;
+}
+
+.columns-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.columns-pick:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.columns-pick-thumb {
+  display: flex;
+  gap: 3px;
+}
+
+.columns-pick-bar {
+  display: block;
+  width: 12px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+
+.columns-pick:hover .columns-pick-bar {
+  background: var(--accent);
+}
+
 .editor-checklist {
   padding-left: 1.4em;
   margin: 0.3em 0;
