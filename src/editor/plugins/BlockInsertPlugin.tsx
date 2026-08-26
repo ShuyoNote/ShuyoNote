@@ -14,7 +14,7 @@ import { isEmptyBlock } from "../blockUtils";
 // are shown (unimplemented Feishu blocks are omitted), reusing makeOptions so the
 // insert logic matches the "/" slash menu.
 
-const HANDLE_OFFSET = 48; // same gutter as the drag grip; flush against content
+const HANDLE_OFFSET = 50; // anchor-left distance so the "+" button hugs the content column edge
 const CLOSE_DELAY = 260; // linger so the cursor can travel onto the panel
 const HIDE_DELAY_MS = 400;
 
