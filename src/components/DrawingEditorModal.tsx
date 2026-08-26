@@ -163,11 +163,25 @@ export default function DrawingEditorModal() {
       });
       const text = excalidrawSceneText(scene.elements);
       const editor = useEditorStore.getState().editor;
+      // Preserve the user's current viewport (zoom/scroll) from the fullscreen editor
+      // so the read-only inline embed reopens at the SAME view instead of auto-fitting
+      // the content (which would jump the drawing after save).
+      const a = apiRef.current;
+      let zoom: number | null = null, scrollX: number | null = null, scrollY: number | null = null;
+      try {
+        const st = a?.getAppState?.();
+        const zv = typeof st?.zoom === "number" ? st.zoom : st?.zoom?.value;
+        if (typeof zv === "number" && isFinite(zv) && zv > 0) zoom = zv;
+        if (typeof st?.scrollX === "number" && isFinite(st.scrollX)) scrollX = st.scrollX;
+        if (typeof st?.scrollY === "number" && isFinite(st.scrollY)) scrollY = st.scrollY;
+      } catch {
+        /* best-effort viewport capture */
+      }
       if (editor) {
         editor.update(() => {
           const node = $getNodeByKey(d.nodeKey);
           if (node && $isDrawingNode(node)) {
-            node.setDrawing({ hash: jsonMeta.hash, mime: "application/json", text });
+            node.setDrawing({ hash: jsonMeta.hash, mime: "application/json", text, zoom, scrollX, scrollY });
           }
         });
       }
