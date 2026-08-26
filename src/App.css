@@ -2592,7 +2592,7 @@ select.prop-value {
   position: fixed;
   z-index: 60;
   width: 300px;
-  max-height: 440px;
+  max-height: 560px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);

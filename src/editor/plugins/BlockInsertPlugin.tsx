@@ -190,7 +190,7 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
     // Open to the LEFT of the "+" button (the anchor spans anchorLeft..anchorLeft+48).
     // Clamp so the panel never overflows the viewport's left edge.
     const MENU_W = 300;
-    const MENU_H = 440;
+    const MENU_H = 560;
     const anchorRight = h.left + 48;
     const left = Math.max(8, Math.min(anchorRight - MENU_W - 6, window.innerWidth - MENU_W - 8));
     const top = above ? Math.max(8, h.top - MENU_H) : h.top;
