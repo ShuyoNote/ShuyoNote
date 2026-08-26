@@ -70,6 +70,29 @@ function downloadBlob(blob: Blob, name: string) {
   URL.revokeObjectURL(url);
 }
 
+// Magnifier-style zoom in/out icons (lens + handle + +/−), matching the drawing
+// block's zoom control affordance.
+function ZoomInIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <line x1="16.4" y1="16.4" x2="21" y2="21" />
+      <line x1="7.5" y1="10.5" x2="13.5" y2="10.5" />
+      <line x1="10.5" y1="7.5" x2="10.5" y2="13.5" />
+    </svg>
+  );
+}
+
+function ZoomOutIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <line x1="16.4" y1="16.4" x2="21" y2="21" />
+      <line x1="7.5" y1="10.5" x2="13.5" y2="10.5" />
+    </svg>
+  );
+}
+
 export function InlineDrawing({ node }: { node: DrawingNode }) {
   const apiRef = useRef<any>(null);
   const liveRef = useRef<SceneSnapshot | null>(null);
@@ -431,9 +454,9 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     <div className="inline-drawing" contentEditable={false}>
       <div className="inline-drawing-bar">
         <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
-        <button className="inline-drawing-btn" onClick={zoomIn} title="放大">＋</button>
-        <button className="inline-drawing-btn" onClick={zoomOut} title="缩小">－</button>
-        <button className="inline-drawing-btn" onClick={zoomReset} title="重置为 100%">{zoomPct}%</button>
+        <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomOut} title="缩小"><ZoomOutIcon /></button>
+        <button className="inline-drawing-btn inline-drawing-pct" onClick={zoomReset} title="重置为 100%">{zoomPct}%</button>
+        <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomIn} title="放大"><ZoomInIcon /></button>
         <button className="inline-drawing-btn" onClick={fitNow} title="适配内容">◎</button>
         <button className="inline-drawing-btn" onClick={downloadSvg} title="导出 SVG">⇩</button>
         <button className="inline-drawing-btn" onClick={downloadPng} title="导出 PNG">⭳</button>

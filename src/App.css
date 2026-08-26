@@ -4839,6 +4839,24 @@ select.prop-value {
   color: var(--accent);
 }
 
+/* Compact magnifier-style zoom buttons (icon-only) + the live percentage label. */
+.inline-drawing-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+}
+
+.inline-drawing-zoom-btn svg {
+  display: block;
+}
+
+.inline-drawing-pct {
+  min-width: 46px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .inline-drawing-canvas {
   position: relative;
   height: 420px;
