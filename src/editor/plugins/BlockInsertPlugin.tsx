@@ -387,9 +387,9 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                                   const rowRect = el.getBoundingClientRect();
                                   const popRect = pop.getBoundingClientRect();
                                   const subW = 150;
-                                  // Anchor to the HOST menu's right edge + 6 so the
-                                  // submenu opens entirely beside it (no overlap).
-                                  const x = Math.min(popRect.right + 6, window.innerWidth - subW - 8);
+                                  // Anchor to the HOST menu's right edge + 2 so the
+                                  // submenu opens tight beside it (no overlap, small gap).
+                                  const x = Math.min(popRect.right + 2, window.innerWidth - subW - 8);
                                   const y = Math.max(8, Math.min(rowRect.top - 8, window.innerHeight - 120));
                                   setColumnsSubPos({ top: y, left: x });
                                   setColumnsOpen(true);
