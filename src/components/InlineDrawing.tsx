@@ -18,6 +18,11 @@ const DEFAULT_HEIGHT = 420;
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 4000;
 
+// The drawing DecoratorNode can remount on unrelated editor commits. Cache the
+// parsed/restored scene by blob-hash so a remount restores instantly instead of
+// re-fetching the blob and flashing "加载绘图…" (which is the visible jitter).
+const sceneCache = new Map<string, SceneSnapshot>();
+
 // Stable UIOptions object — a fresh object on every render would make the
 // memoized Excalidraw re-render (and repaint the canvas), causing page jitter.
 const INLINE_UI_OPTIONS = { canvasActions: { export: false } } as const;
@@ -83,7 +88,6 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   useEffect(() => {
     let alive = true;
     setErr(null);
-    setReady(false);
     // Sync resize height to the node's persisted value.
     const nextH = node.__height ?? DEFAULT_HEIGHT;
     heightRef.current = nextH;
@@ -101,9 +105,22 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
           ...(fin(node.__scrollY) ? { scrollY: node.__scrollY! } : {}),
         }
       : {};
+    // If the scene is already cached (e.g. this block just remounted), restore it
+    // synchronously so the reader never flashes "加载绘图…".
+    const cached = sceneCache.get(hash ?? "");
+    if (cached) {
+      const scene: SceneSnapshot = { elements: cached.elements, appState: { ...cached.appState, ...savedView }, files: cached.files };
+      liveRef.current = scene;
+      setInitialData(scene);
+      setReady(true);
+      return () => {
+        alive = false;
+      };
+    }
+    setReady(false);
     const load = async () => {
       // Grid is off by default; a fresh inline drawing shows a clean canvas.
-      let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false, ...savedView }, files: {} };
+      let base: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false }, files: {} };
       if (hash) {
         try {
           const bytes = await blobStore.get(hash);
@@ -115,12 +132,14 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
               null,
               null,
             );
-            scene = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: false, ...savedView }, files: restored.files };
+            base = { elements: restored.elements, appState: { ...restored.appState, gridModeEnabled: false }, files: restored.files };
           }
         } catch (e) {
           if (alive) setErr(String(e));
         }
       }
+      sceneCache.set(hash ?? "", base);
+      const scene: SceneSnapshot = { elements: base.elements, appState: { ...base.appState, ...savedView }, files: base.files };
       if (alive) {
         liveRef.current = scene;
         setInitialData(scene);
