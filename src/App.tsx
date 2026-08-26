@@ -112,6 +112,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
       } catch (e) {
         console.error("save failed", e);
         toast(`保存失败：${e}`, "error");
+      } finally {
+        // Never leave the "保存中…" indicator stuck (e.g. a failed save).
+        setSaved(true);
       }
     }, 600);
   };
