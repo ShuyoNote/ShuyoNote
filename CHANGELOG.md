@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.151] - 2026-08-24
+
+### 修复
+
+- **内嵌绘图块缩放按钮出现 `NaN%`（不正常）**：Excalidraw 在画布初始化的瞬间 `appState.zoom.value` 可能是 `NaN`（`NaN` 的 type 仍是 number），而 `onScrollChange`/`persistView` 直接用了它，导致缩放倍数标签变 `NaN%` 且把 `NaN` 持久化进节点，重开仍 `NaN%`。现对整条缩放链路做**有限值校验**：`onScrollChange` 仅在 `zoom` 为有限正数时才更新标签/保存视角；`persistView` 只写入有限值（否则置 `null`）；恢复视角时同样忽略非有限 `zoom/scroll`。无头浏览器实测：初始 `100%`、缩放后显示 `125%`、可回到 `100%`，加载/重开均无 `NaN%`、无运行时错误。`tsc` 无错、`smoke-web.mjs` 223 全绿。
+
+---
+
 ## [1.59.150] - 2026-08-24
 
 ### 变更

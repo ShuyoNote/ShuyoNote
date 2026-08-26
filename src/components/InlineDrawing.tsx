@@ -88,17 +88,18 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     heightRef.current = nextH;
     setHeight(nextH);
     // Remember whether a viewport (zoom/scroll) was previously saved so we restore
-    // it instead of re-fitting to content.
-    const hasSavedView = node.__zoom != null || node.__scrollX != null || node.__scrollY != null;
+    // it instead of re-fitting to content. Only finite values count (a transient
+    // NaN must not be persisted, or the view would lock into broken zoom).
+    const fin = (v: number | null | undefined): v is number => typeof v === "number" && isFinite(v);
+    const hasSavedView = fin(node.__zoom) || fin(node.__scrollX) || fin(node.__scrollY);
     savedViewRef.current = hasSavedView;
-    const savedView =
-      node.__zoom != null || node.__scrollX != null || node.__scrollY != null
-        ? {
-            ...(node.__zoom != null ? { zoom: { value: node.__zoom } } : {}),
-            ...(node.__scrollX != null ? { scrollX: node.__scrollX } : {}),
-            ...(node.__scrollY != null ? { scrollY: node.__scrollY } : {}),
-          }
-        : {};
+    const savedView = hasSavedView
+      ? {
+          ...(fin(node.__zoom) ? { zoom: { value: node.__zoom! } } : {}),
+          ...(fin(node.__scrollX) ? { scrollX: node.__scrollX! } : {}),
+          ...(fin(node.__scrollY) ? { scrollY: node.__scrollY! } : {}),
+        }
+      : {};
     const load = async () => {
       // Grid is off by default; a fresh inline drawing shows a clean canvas.
       let scene: SceneSnapshot = { elements: [], appState: { gridModeEnabled: false, ...savedView }, files: {} };
@@ -141,15 +142,19 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const sx = appState?.scrollX;
       const sy = appState?.scrollY;
       if (typeof z !== "number" && typeof sx !== "number" && typeof sy !== "number") return;
+      const zF = typeof z === "number" && isFinite(z) ? z : null;
+      const sxF = typeof sx === "number" && isFinite(sx) ? sx : null;
+      const syF = typeof sy === "number" && isFinite(sy) ? sy : null;
+      if (zF === null && sxF === null && syF === null) return;
       const editor = useEditorStore.getState().editor;
       if (!editor) return;
       editor.update(() => {
         const n = $getNodeByKey(node.getKey());
         if (n && $isDrawingNode(n)) {
           n.setDrawing({
-            zoom: typeof z === "number" ? z : null,
-            scrollX: typeof sx === "number" ? sx : null,
-            scrollY: typeof sy === "number" ? sy : null,
+            zoom: zF,
+            scrollX: sxF,
+            scrollY: syF,
           });
         }
       });
@@ -271,7 +276,9 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       apiRef.current = a;
       a?.onScrollChange?.((scrollX: number, scrollY: number, zoom: { value: number }) => {
         const zv = typeof zoom === "number" ? zoom : zoom?.value;
-        if (typeof zv === "number") {
+        // Guard against a transient NaN zoom (before the canvas settles): never
+        // persist it or paint it into the label, or the block locks into NaN%.
+        if (typeof zv === "number" && isFinite(zv) && zv > 0) {
           scheduleViewSave({ zoom: zv, scrollX, scrollY });
           setZoomPct(Math.round(zv * 100));
         }
