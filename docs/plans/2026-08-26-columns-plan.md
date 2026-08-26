@@ -116,15 +116,18 @@
 - [x] **列内文本并入 `content_text`**：`ColumnsNode`/`ColumnNode` 为 ElementNode，`$getRoot().getTextContent()` 递归包含列内文字（实测 `hasColumnText:true`），搜索/反链/关系图不丢。
 - [x] **旧分栏块可读**：`columns`/`column` 已注册进 `EDITOR_NODES`（自动进 `ALLOWED_NODE_TYPES`），`lexicalStateValid` 递归处理嵌套 `children`；smoke 新增「嵌套 columns 块」往返断言（224 通过）。
 
-**2 档：每列独立子编辑器（路线 B，按需）**
+**2 档：每列独立子编辑器（路线 B，已实现主体）**
 
-- [ ] 每列 `createEditor`/独立 EditorState；懒挂载（仅激活列挂载完整插件）。
-- [ ] 焦点管理：主↔列切换、Tab 切列、失焦不闪；输入法/键盘边界（列内回车/删除/方向键、Esc、IME 跨编辑器）。
-- [ ] 撤销栈：先做列内独立撤销；跨列/整块撤销列为可选，诚实标注成本。
-- [ ] 列宽拖拽、列增删、列间复制移动、跨列光标导航。
-- [ ] 序列化：聚合 N 列 EditorState JSON 进出 `content_json`；避免每次击键全量重扫。
-- [ ] 文本抽取：列内文字并入 `content_text`；Markdown/HTML 导出递归降级。
-- [ ] 块引用/`{{blockId}}`：诚实标注列内块不适用（或额外打标）。
+- [x] 每列 `createEditor`/独立 EditorState；懒挂载视图（`ColumnsBlockNode` 用 `lazy()` 动态导入 `ColumnsBlockView`，打破与 `config.ts` 的循环依赖），列编辑器复用 `config.ts` 的 `EDITOR_NODES`/`editorTheme`。
+- [x] 序列化聚合：`ColumnsBlockNode.__cols: string[]`（每列 EditorState JSON），`decorate` 聚合写回 → `content_json`；`importJSON` 支持 `cols[]`。
+- [x] 文本抽取：`src/lib/columnsText.ts` `collectColumnsText()` 合并各列文本进 `content_text`（搜索/反链/关系图），smoke 断言通过。
+- [x] 列内块插入（`/` 与快捷键）：列内 `/` 插标题/正文/引用/**Callout**/列表（`$replaceBlock`/`$insertBlockNode` 作用到列编辑器）；列内 `Ctrl+Alt+*` 快捷键（`InsertShortcutPlugin`）。关键修复：`EMPTY_COLUMN_JSON` 补 `indent:0`/`direction`/`format`，否则 `ListItemNode.setIndent` 收到非数字 → Lexical #117。
+- [x] 列增删：`ColumnsBlockView` 本地 state + ＋/− 按钮（1–4 列），变更经 `onChange` 持久化。
+- [ ] 焦点管理：主↔列切换、Tab 切列、失焦不闪；IME 跨编辑器。
+- [ ] 撤销栈：列内独立撤销（`HistoryPlugin` 已在列编辑器）；跨列/整块撤销列为可选。
+- [ ] 列宽拖拽、列间复制移动、跨列光标导航。
+- [ ] Markdown/HTML 导出递归降级；块引用/`{{blockId}}` 对列内块不适用（诚实标注）。
+- [ ] 旧文档迁移：ElementNode 分栏 → 新列 EditorState 结构的迁移路径与兼容（目前旧分栏按 ElementNode 读取、新插入走 Route-B）。
 - [ ] 旧文档迁移：ElementNode 分栏 → 新列 EditorState 结构的迁移路径与兼容。
 - [ ] `smoke` 新增列/拾取/串行化断言，且原断言无回归；多分栏场景性能（懒挂载）验证。
 
