@@ -74,6 +74,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const isDark = useResolvedTheme() === "dark";
   const savedViewRef = useRef(false);
   const viewTimerRef = useRef<number | null>(null);
+  const lastViewRef = useRef({ zoom: node.__zoom, scrollX: node.__scrollX, scrollY: node.__scrollY });
   const [zoomPct, setZoomPct] = useState(100);
 
   const hash = node.__hash;
@@ -146,6 +147,12 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const sxF = typeof sx === "number" && isFinite(sx) ? sx : null;
       const syF = typeof sy === "number" && isFinite(sy) ? sy : null;
       if (zF === null && sxF === null && syF === null) return;
+      // Only persist when something actually changed: writing the same zoom/scroll
+      // back onto the node marks it dirty → triggers a page save → Excalidraw
+      // fires onChange again → saves again → the page is stuck at "保存中…".
+      const lv = lastViewRef.current;
+      if (lv.zoom === zF && lv.scrollX === sxF && lv.scrollY === syF) return;
+      lastViewRef.current = { zoom: zF, scrollX: sxF, scrollY: syF };
       const editor = useEditorStore.getState().editor;
       if (!editor) return;
       editor.update(() => {

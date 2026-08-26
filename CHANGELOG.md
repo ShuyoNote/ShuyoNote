@@ -2,6 +2,14 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.152] - 2026-08-24
+
+### 修复
+
+- **绘图块全屏编辑时页面常驻「保存中…」**：内嵌绘图块记录视角（`zoom/scrollX/scrollY`）时，`persistView` 即使视角值未变也把 `setDrawing({zoom,scrollX,scrollY})` 写回节点 → 节点被标记 dirty → 触发页面保存 → Excalidraw `onChange` 再次触发 → `persistView` 再写回 → **无限循环**，导致页面永远停在「保存中…」。现用 `lastViewRef` 记录上次已保存的视角，**仅在视角真正变化时才写回节点**，不变则跳过，从而打断循环；仅在用户拖动/缩放时更新并保存视角。`tsc` 无错、`smoke-web.mjs` 223 全绿；无头浏览器实测插入绘图/全屏编辑后页面稳定为「已保存」，不再卡「保存中…」。
+
+---
+
 ## [1.59.151] - 2026-08-24
 
 ### 修复
