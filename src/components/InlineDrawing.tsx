@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Excalidraw, restore, exportToBlob, exportToSvg, exportToClipboard } from "@excalidraw/excalidraw";
+import { Excalidraw, restore, exportToBlob, exportToSvg, exportToClipboard, CaptureUpdateAction } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { $getNodeByKey } from "lexical";
 import { useEditorStore } from "../store/editor";
@@ -74,6 +74,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const isDark = useResolvedTheme() === "dark";
   const savedViewRef = useRef(false);
   const viewTimerRef = useRef<number | null>(null);
+  const [zoomPct, setZoomPct] = useState(100);
 
   const hash = node.__hash;
 
@@ -93,7 +94,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     const savedView =
       node.__zoom != null || node.__scrollX != null || node.__scrollY != null
         ? {
-            ...(node.__zoom != null ? { zoom: node.__zoom } : {}),
+            ...(node.__zoom != null ? { zoom: { value: node.__zoom } } : {}),
             ...(node.__scrollX != null ? { scrollX: node.__scrollX } : {}),
             ...(node.__scrollY != null ? { scrollY: node.__scrollY } : {}),
           }
@@ -135,7 +136,8 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   // block reopens as the user left it (auto-save after pan/zoom).
   const persistView = useCallback(
     (appState: any) => {
-      const z = appState?.zoom;
+      const zRaw = appState?.zoom;
+      const z = typeof zRaw === "number" ? zRaw : zRaw?.value;
       const sx = appState?.scrollX;
       const sy = appState?.scrollY;
       if (typeof z !== "number" && typeof sx !== "number" && typeof sy !== "number") return;
@@ -172,35 +174,72 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     [scheduleViewSave],
   );
 
-  // Zoom around the current canvas viewport center (keeps the center fixed).
-  const zoomTo = useCallback((targetZoom: number) => {
-    const a = apiRef.current;
-    if (!a) return;
-    const st = a.getAppState();
-    const w = st.width || 0;
-    const h = st.height || 0;
-    const cz = st.zoom || 1;
-    const nz = Math.min(16, Math.max(0.05, targetZoom));
-    const sceneCx = st.scrollX + w / 2 / cz;
-    const sceneCy = st.scrollY + h / 2 / cz;
-    try {
-      a.updateScene({
-        appState: { zoom: nz, scrollX: sceneCx - w / 2 / nz, scrollY: sceneCy - h / 2 / nz },
-      });
-    } catch {
-      /* best-effort */
+  // Center of the drawing content's bounding box, in scene coords (used so zoom
+  // stays anchored on the content rather than jumping to the viewport center).
+  const getContentCenter = useCallback(() => {
+    const scene = liveRef.current;
+    if (!scene || !Array.isArray(scene.elements)) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
+    for (const el of scene.elements) {
+      if (el?.isDeleted) continue;
+      if (typeof el.x !== "number" || typeof el.y !== "number") continue;
+      const ew = typeof el.width === "number" ? el.width : 0;
+      const eh = typeof el.height === "number" ? el.height : 0;
+      minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
+      maxX = Math.max(maxX, el.x + ew); maxY = Math.max(maxY, el.y + eh);
+      has = true;
     }
+    if (!has) return null;
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
   }, []);
 
-  const zoomIn = useCallback(() => {
-    const a = apiRef.current;
-    if (a) zoomTo((a.getAppState().zoom || 1) * 1.25);
-  }, [zoomTo]);
+  // Zoom anchored on the content's center point (so the drawing stays centered as
+  // you zoom), falling back to the viewport center for an empty scene.
+  const zoomTo = useCallback(
+    (targetZoom: number) => {
+      const a = apiRef.current;
+      if (!a) return;
+      const st = a.getAppState();
+      const w = typeof st.width === "number" && st.width > 0 ? st.width : 1;
+      const h = typeof st.height === "number" && st.height > 0 ? st.height : 1;
+      const czRaw = st.zoom;
+      const cz = (typeof czRaw === "number" ? czRaw : czRaw?.value) || 1;
+      const sx0 = typeof st.scrollX === "number" && isFinite(st.scrollX) ? st.scrollX : 0;
+      const sy0 = typeof st.scrollY === "number" && isFinite(st.scrollY) ? st.scrollY : 0;
+      const raw = Number.isFinite(targetZoom) ? targetZoom : 1;
+      const nz = Math.min(16, Math.max(0.05, raw));
+      const center = getContentCenter();
+      const ccx = center ? center.x : sx0 + w / 2 / cz;
+      const ccy = center ? center.y : sy0 + h / 2 / cz;
+      const nsx = Number.isFinite(ccx) ? ccx - w / 2 / nz : sx0;
+      const nsy = Number.isFinite(ccy) ? ccy - h / 2 / nz : sy0;
+      try {
+        a.updateScene({
+          appState: { zoom: { value: nz }, scrollX: nsx, scrollY: nsy },
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+      } catch {
+        /* best-effort */
+      }
+      setZoomPct(Math.round(nz * 100));
+    },
+    [getContentCenter],
+  );
 
-  const zoomOut = useCallback(() => {
+  // The appState.zoom is a `{ value }` object (and can be undefined before the
+  // canvas settles); coerce to a positive number (default 1) so zoom always steps
+  // from a sane base.
+  const baseZoom = useCallback(() => {
     const a = apiRef.current;
-    if (a) zoomTo((a.getAppState().zoom || 1) / 1.25);
-  }, [zoomTo]);
+    if (!a) return 1;
+    const z = a.getAppState().zoom;
+    const v = typeof z === "number" ? z : z?.value;
+    return typeof v === "number" && isFinite(v) && v > 0 ? v : 1;
+  }, []);
+
+  const zoomIn = useCallback(() => zoomTo(baseZoom() * 1.25), [zoomTo, baseZoom]);
+
+  const zoomOut = useCallback(() => zoomTo(baseZoom() / 1.25), [zoomTo, baseZoom]);
 
   const zoomReset = useCallback(() => zoomTo(1), [zoomTo]);
 
@@ -230,8 +269,12 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const setApi = useCallback(
     (a: any) => {
       apiRef.current = a;
-      a?.onScrollChange?.((scrollX: number, scrollY: number, zoom: number) => {
-        scheduleViewSave({ zoom, scrollX, scrollY });
+      a?.onScrollChange?.((scrollX: number, scrollY: number, zoom: { value: number }) => {
+        const zv = typeof zoom === "number" ? zoom : zoom?.value;
+        if (typeof zv === "number") {
+          scheduleViewSave({ zoom: zv, scrollX, scrollY });
+          setZoomPct(Math.round(zv * 100));
+        }
       });
       requestAnimationFrame(fitContent);
     },
@@ -339,7 +382,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
         <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
         <button className="inline-drawing-btn" onClick={zoomIn} title="放大">＋</button>
         <button className="inline-drawing-btn" onClick={zoomOut} title="缩小">－</button>
-        <button className="inline-drawing-btn" onClick={zoomReset} title="重置为 100%">100%</button>
+        <button className="inline-drawing-btn" onClick={zoomReset} title="重置为 100%">{zoomPct}%</button>
         <button className="inline-drawing-btn" onClick={fitNow} title="适配内容">◎</button>
         <button className="inline-drawing-btn" onClick={downloadSvg} title="导出 SVG">⇩</button>
         <button className="inline-drawing-btn" onClick={downloadPng} title="导出 PNG">⭳</button>
