@@ -2544,31 +2544,45 @@ select.prop-value {
   z-index: 25;
   width: 48px;
   height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end; /* button hugs the content column edge */
+  padding-right: 2px;
+  box-sizing: border-box;
 }
 
 .block-insert-plus {
-  width: 48px;
-  height: 32px;
+  position: relative;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  color: var(--text-faint);
+  color: var(--text-dim);
   cursor: pointer;
-  border-radius: var(--radius-xs);
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
   user-select: none;
-  transition: color var(--transition-fast), background var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast),
+    border-color var(--transition-fast), box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .block-insert-plus::before {
   content: "";
   position: absolute;
-  inset: -16px;
+  /* enlarge the invisible hit area evenly around the small circle */
+  inset: -8px;
 }
 
 .block-insert-plus:hover {
-  background: var(--hover);
-  color: var(--text-dim);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(51, 112, 255, 0.35);
+  transform: scale(1.06);
 }
 
 /* Block-insert popover (Feishu-style grouped panel) reuses the insert-block

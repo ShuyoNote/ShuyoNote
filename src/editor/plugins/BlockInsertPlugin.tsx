@@ -261,7 +261,12 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
           onMouseEnter={() => openPanel(handle)}
           onMouseLeave={scheduleClose}
         >
-          <div className="block-insert-plus">＋</div>
+          <div className="block-insert-plus" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
+          </div>
 
           {panelOpen && (
             <div className="block-insert-popover" data-above={panelAbove ? "1" : "0"}>
