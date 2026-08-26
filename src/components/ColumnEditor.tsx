@@ -7,6 +7,7 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
+import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import type { EditorState, LexicalEditor } from "lexical";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
@@ -71,6 +72,7 @@ export function ColumnEditor({
         <ListPlugin />
         <CheckListPlugin />
         <HorizontalRulePlugin />
+        <TablePlugin hasHorizontalScroll />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <InsertShortcutPlugin />
