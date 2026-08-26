@@ -10,10 +10,10 @@ import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import type { EditorState, LexicalEditor } from "lexical";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
-import { EDITOR_NODES, editorTheme } from "../editor/config";
+import { EDITOR_NODES, editorTheme, ALLOWED_NODE_TYPES } from "../editor/config";
 import { SlashMenuPlugin } from "../editor/plugins/SlashMenuPlugin";
+import { InsertShortcutPlugin } from "../editor/plugins/InsertShortcutPlugin";
 import { lexicalStateValid } from "../lib/lexicalValidate";
-import { ALLOWED_NODE_TYPES } from "../editor/config";
 
 // A single column editor (Route B): one nested LexicalComposer sharing the page
 // editor's nodes/theme, hosting its own EditorState JSON. `onChange` is called with
@@ -73,6 +73,7 @@ export function ColumnEditor({
         <HorizontalRulePlugin />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
+        <InsertShortcutPlugin />
         <OnChangePlugin onChange={onChange} />
       </LexicalComposer>
     </div>
