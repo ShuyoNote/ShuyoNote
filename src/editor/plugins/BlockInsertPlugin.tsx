@@ -281,13 +281,26 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
                   grouped.map(({ section, items }) => (
                     <div key={section} className="insert-group">
                       <div className="insert-group-title">{section}</div>
-                      {items.map((o) => (
-                        <button key={o.key} className="insert-item" onClick={() => select(o)}>
-                          <span className="insert-icon">{o.badge}</span>
-                          <span className="insert-name">{o.title}</span>
-                          {o.shortcut && <span className="insert-shortcut">{o.shortcut}</span>}
-                        </button>
-                      ))}
+                      {/* 基础 blocks lay out like Feishu's horizontal icon tiles
+                          (2-col grid); other sections keep vertical rows. */}
+                      {section === "基础" ? (
+                        <div className="insert-basic-grid">
+                          {items.map((o) => (
+                            <button key={o.key} className="insert-basic-item" onClick={() => select(o)} title={o.title}>
+                              <span className="insert-basic-icon">{o.badge}</span>
+                              <span className="insert-basic-name">{o.title}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        items.map((o) => (
+                          <button key={o.key} className="insert-item" onClick={() => select(o)}>
+                            <span className="insert-icon">{o.badge}</span>
+                            <span className="insert-name">{o.title}</span>
+                            {o.shortcut && <span className="insert-shortcut">{o.shortcut}</span>}
+                          </button>
+                        ))
+                      )}
                     </div>
                   ))
                 )}

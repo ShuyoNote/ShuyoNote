@@ -76,6 +76,7 @@
 
 - `.editor-columns`：`display:flex; gap` + 虚线外框 + `[data-count="0"]` 最小高度；`.editor-column`：`flex:1 1 0` + 内边距/描边。
 - `.columns-picker` 及其 `.columns-pick` / `.columns-pick-bar`：浮动面板 + 2/3/4 条形缩略图，`var(--accent)` 高亮。
+- 「+」插入菜单的**基础区**改为飞书式**横向图标网格**（`.insert-basic-grid`，2 列），H1/H2/H3、正文、引用、链接、待办、无序/有序列表、代码块、分隔线以图块平铺；「常用」等其它分组保持竖排行。
 
 ### 5.5 序列化 / 保存
 

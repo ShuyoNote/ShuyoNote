@@ -4520,6 +4520,50 @@ select.prop-value {
   text-align: center;
 }
 
+/* 基础 blocks: Feishu-style horizontal icon-tile grid (2 columns), so H1/H2/H3,
+   list, quote, code etc. read as a compact row of tiles instead of a vertical list. */
+.insert-basic-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  padding: 2px 6px;
+}
+
+.insert-basic-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.insert-basic-item:hover {
+  background: var(--hover);
+}
+
+.insert-basic-icon {
+  width: 22px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.insert-basic-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Block reference ((blockId)) */
 .block-ref {
   color: var(--accent);
