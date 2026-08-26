@@ -6,32 +6,14 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
-import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
-import { TableNode, TableCellNode, TableRowNode } from "@lexical/table";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
-import { HeadingNode, QuoteNode } from "@lexical/rich-text";
-import { ListNode, ListItemNode } from "@lexical/list";
-import { CodeNode, CodeHighlightNode } from "@lexical/code";
-import { LinkNode } from "@lexical/link";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
-import { CalloutNode } from "./nodes/CalloutNode";
-import { ColumnsNode } from "./nodes/ColumnsNode";
-import { ColumnNode } from "./nodes/ColumnNode";
-import { ImageNode } from "./nodes/ImageNode";
-import { ImageRowNode } from "./nodes/ImageRowNode";
-import { VideoNode } from "./nodes/VideoNode";
-import { BlockRefNode } from "./nodes/BlockRefNode";
-import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
-import { WebBookmarkNode } from "./nodes/WebBookmarkNode";
-import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
-import { DrawingNode } from "./nodes/DrawingNode";
-import { MermaidNode } from "./nodes/MermaidNode";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { AiSpaceTriggerPlugin } from "./plugins/AiSpaceTriggerPlugin";
@@ -50,45 +32,7 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
 
-const theme = {
-  heading: {
-    h1: "editor-h1",
-    h2: "editor-h2",
-    h3: "editor-h3",
-  },
-  quote: "editor-quote",
-  callout: "editor-callout",
-  columns: "editor-columns",
-  column: "editor-column",
-  list: {
-    ul: "editor-ul",
-    ol: "editor-ol",
-    listitem: "editor-listitem",
-    checklist: "editor-checklist",
-    listitemChecked: "editor-listitem-checked",
-    listitemUnchecked: "editor-listitem-unchecked",
-    nested: {
-      listitem: "editor-nested-listitem",
-    },
-  },
-  text: {
-    bold: "editor-bold",
-    italic: "editor-italic",
-    underline: "editor-underline",
-    strikethrough: "editor-strikethrough",
-    code: "editor-code",
-  },
-  link: "editor-link",
-  code: "editor-codeblock",
-  hr: "editor-hr",
-  table: "editor-table",
-  tableScrollableWrapper: "editor-table-scrollable-wrapper",
-  tableSelection: "table-selecting",
-  tableCell: "editor-table-cell",
-  tableCellHeader: "editor-table-cell-header",
-  tableCellSelected: "editor-table-cell-selected",
-  tableRow: "editor-table-row",
-};
+import { editorTheme as theme } from "./config";
 
 interface EditorProps {
   contentJson: string;
@@ -99,43 +43,7 @@ interface EditorProps {
 }
 
 import { lexicalStateValid } from "../lib/lexicalValidate";
-
-const EDITOR_NODES = [
-  HeadingNode,
-  QuoteNode,
-  ListNode,
-  ListItemNode,
-  CodeNode,
-  CodeHighlightNode,
-  LinkNode,
-  CalloutNode,
-  ColumnsNode,
-  ColumnNode,
-  HorizontalRuleNode,
-  ImageNode,
-  ImageRowNode,
-  VideoNode,
-  BlockRefNode,
-  BlockEmbedNode,
-  WebBookmarkNode,
-  AttachmentRefNode,
-  DrawingNode,
-  MermaidNode,
-  TableNode,
-  TableCellNode,
-  TableRowNode,
-];
-
-// Every node type this editor can deserialize: Lexical's always-core types plus
-// the ones we register above. A serialized node whose `type` is outside this set
-// (e.g. the literal string "undefined", or a stray/unregistered type) cannot be
-// parsed by Lexical and is dropped by lexicalStateValid so it can't crash the
-// editor or spam the console with "type ... not found".
-const CORE_NODE_TYPES = ["root", "paragraph", "text", "linebreak", "tab"];
-const ALLOWED_NODE_TYPES = new Set<string>([
-  ...CORE_NODE_TYPES,
-  ...EDITOR_NODES.map((n) => (n as { getType?: () => string }).getType?.()).filter((t): t is string => typeof t === "string"),
-]);
+import { EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
 
 // A throwaway editor with the same node registry, used to PRE-PARSE a saved
 // content string. If any node is malformed, Lexical catches the error internally
