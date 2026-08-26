@@ -4796,7 +4796,8 @@ select.prop-value {
   margin: 6px 0;
 }
 
-/* Control bar: floats over the canvas when not editing, shown on hover (Feishu-style). */
+/* Control bar: a persistent strip above the canvas, always visible so zooming /
+   panning the drawing is convenient (no hover-gated flicker). */
 .inline-drawing-bar {
   display: flex;
   align-items: center;
@@ -4805,22 +4806,6 @@ select.prop-value {
   border-bottom: 1px solid var(--border);
   background: var(--surface-light);
   flex-wrap: wrap;
-  position: relative;
-  z-index: 6;
-  transition: opacity 0.15s ease;
-}
-
-.inline-drawing:not(.editing) .inline-drawing-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  border-bottom: 1px solid transparent;
-}
-
-.inline-drawing:not(.editing):not(:hover) .inline-drawing-bar {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .inline-drawing-btn {
