@@ -66,7 +66,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-24-template-var-semantic-search-plan.md](plans/2026-08-24-template-var-semantic-search-plan.md) | **「模板变量 + 语义检索」方案（M20）**：模板变量 `{{date}}/{{title}}/{{selected}}` 自动填充；embedding 语义检索（保留 FTS 兜底）+ 接入 AI 问答（**规划**） |
 | [plans/2026-08-24-static-wiki-export-graph-plan.md](plans/2026-08-24-static-wiki-export-graph-plan.md) | **「静态 wiki 导出 + 关系图探索」方案（M21）**：把当前空间导成可浏览的静态 HTML wiki（双链跳转/反链/标签/索引页）；关系图按标签/属性着色分组、关键词高亮、聚类（**规划**） |
 | [plans/2026-08-24-drawing-solution-design.md](plans/2026-08-24-drawing-solution-design.md) | **「绘图方案」设计**：Excalidraw（手绘/自由画图，MIT）+ mermaid（流程图/思维导图，文本→SVG）+ AI 文生图；大字节走内容寻址附件，节点只存引用，双平台无需新增 Rust 命令（**设计，建议**） |
-| [plans/2026-08-26-columns-plan.md](plans/2026-08-26-columns-plan.md) | **「分栏」功能方案（飞书式 Columns Block）**：N 列并排/每列独立输入 + 选择栏数（2/3/4）面板；对比两条路线（ElementNode 单编辑器 vs DecoratorNode+嵌套编辑器），**轻量版已落地 v1.59.169**（`ColumnsNode`/`ColumnNode`），完整版（每列子编辑器）列为候选；含数据结构、入口、样式、验收与边界 |
+| [plans/2026-08-26-columns-plan.md](plans/2026-08-26-columns-plan.md) | **「分栏」功能方案（飞书式 Columns Block）**：N 列并排/每列独立输入 + 选择栏数（2/3/4）面板；对比两条路线（ElementNode 单编辑器 vs DecoratorNode+嵌套编辑器）。**路线 B（每列独立子编辑器）已落地**：`ColumnsBlockNode`（DecoratorNode，每列一个 EditorState）+ 列内 `/` 插标题/列表/表格/Callout/代码块/分隔线 + 列增删 + 列宽拖拽 + 列内撤销/跨列输入 + `content_text` 并入 + Markdown 导出保留列文本。诚实标注边界：列内块级拖拽/跨列复制、旧 `columns`(ElementNode) → `columnsBlock` 自动迁移**均不做**（风险/成本高、收益低），旧文档保留 `columns`/`column` 注册可读兼容。含数据结构、入口、样式、验收与边界 |
 | [plans/2026-08-24-excalidraw-advanced-plan.md](plans/2026-08-24-excalidraw-advanced-plan.md) | **「Excalidraw 绘图高级功能」方案（M23）**：挖掘 Excalidraw 0.17.1 能力（命令式 API/元素编程化/只读/自定义侧栏/命中检测/Frames/导出），规划接入 ShuyoNote——只读嵌入、AI·mermaid 联动、白板导航、检索集成；协同/代码生成诚实标注需后端或 0.18+（**规划，建议**） |
 
 ## 竞品对比
