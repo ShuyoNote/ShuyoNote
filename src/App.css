@@ -3199,11 +3199,11 @@ select.prop-value {
 .editor-columns {
   display: flex;
   width: 100%;
-  gap: 10px;
-  margin: 0.5em 0;
-  border: 1px dashed var(--border);
+  gap: 8px;
+  margin: 0.4em 0;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 2px 4px;
   background: var(--surface);
 }
 
@@ -3226,7 +3226,7 @@ select.prop-value {
   position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 4px 6px;
   background: var(--surface);
 }
 
