@@ -3195,16 +3195,20 @@ select.prop-value {
   margin-right: 8px;
 }
 
-/* Feishu-style 分栏: a flex row of N columns sitting side by side. */
+/* Feishu-style 分栏: a flex row of N columns sitting flush side by side (no outer
+   padding ring / inter-column gap — matches the reference look of tight adjacent
+   cards). Each column carries its own border; the drag divider overrides the shared
+   boundary. */
 .editor-columns {
   display: flex;
   width: 100%;
-  gap: 8px;
+  gap: 0;
   margin: 0.4em 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 2px 4px;
+  padding: 0;
   background: var(--surface);
+  overflow: hidden;
 }
 
 /* Block host for a Route-B columns node: full-width block; the styled flex
@@ -3224,23 +3228,28 @@ select.prop-value {
   flex: 1 1 0;
   min-width: 0;
   position: relative;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 6px;
+  /* Flush cards inside the container: no own border (container provides the outer
+     ring); only a 1px left divider between adjacent columns. */
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  padding: 6px 8px;
   background: var(--surface);
 }
 
-.editor-column + .editor-column {
-  border-left-width: 1px;
+/* The first column is flush against the container's left edge (no divider). */
+.editor-column:first-child {
+  border-left: 0;
 }
 
-/* Resizable divider between columns (drag to adjust column widths). */
+/* Resizable divider between columns (drag to adjust column widths). It sits on the
+   shared boundary between two flush columns. */
 .editor-column-divider {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -6px;
-  width: 12px;
+  right: -5px;
+  width: 10px;
   cursor: col-resize;
   z-index: 6;
   transition: background var(--transition-fast);
