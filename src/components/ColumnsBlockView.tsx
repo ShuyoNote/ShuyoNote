@@ -53,7 +53,12 @@ export function ColumnsBlockView({
     right: number; // right column weight at drag start
     pair: number; // left + right (kept constant)
     trackW: number;
+    w: number[]; // the working weights buffer, reused across the drag
   } | null>(null);
+  // requestAnimationFrame id for coalescing pointermove DOM writes: high-polling-rate
+  // pointers can fire many moves per frame, so we only reflow the layout once per
+  // frame regardless — a further speed-up over writing style.flex on every event.
+  const rafRef = useRef<number | null>(null);
   // Direct DOM refs so a drag can move the divider WITHOUT a React re-render (the
   // nested column editors are heavy; re-rendering them every pointermove is what
   // made dragging feel sluggish).
@@ -105,25 +110,28 @@ export function ColumnsBlockView({
   const onDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
-    const n = localColsRef.current.length;
-    if (d.idx + 1 >= n) return; // last column has no divider
-    const w = colWidths(localWidthsRef.current, n);
+    if (d.idx + 1 >= d.w.length) return; // last column has no divider
     const deltaFrac = (e.clientX - d.startX) / Math.max(d.trackW, 1);
     // deltaFrac in [-1,1] maps to ±pair weight — a full container-width drag moves
     // the whole pair, so it feels proportional and never overshoots.
     const left = Math.max(MIN_W, Math.min(d.pair - MIN_W, d.left + deltaFrac * d.pair));
     const right = d.pair - left;
-    w[d.idx] = Math.round(left * 100) / 100;
-    w[d.idx + 1] = Math.round(right * 100) / 100;
-    // During the drag, write the flex weights straight to the DOM so the divider
-    // follows the cursor with NO React re-render (re-rendering the nested column
-    // editors every pointermove is what made dragging laggy). State + editor commit
-    // happen once on release.
-    localWidthsRef.current = w;
-    const leftEl = colElRefs.current[d.idx];
-    const rightEl = colElRefs.current[d.idx + 1];
-    if (leftEl) leftEl.style.flex = `${w[d.idx]} 1 0`;
-    if (rightEl) rightEl.style.flex = `${w[d.idx + 1]} 1 0`;
+    // Update the shared buffer (no per-move allocation).
+    d.w[d.idx] = Math.round(left * 100) / 100;
+    d.w[d.idx + 1] = Math.round(right * 100) / 100;
+    localWidthsRef.current = d.w;
+    // Coalesce: mark latest weights and flush to the DOM at most once per frame.
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        const dd = dragRef.current;
+        if (!dd) return;
+        const leftEl = colElRefs.current[dd.idx];
+        const rightEl = colElRefs.current[dd.idx + 1];
+        if (leftEl) leftEl.style.flex = `${dd.w[dd.idx]} 1 0`;
+        if (rightEl) rightEl.style.flex = `${dd.w[dd.idx + 1]} 1 0`;
+      });
+    }
   }, []);
 
   const endDrag = useCallback(() => {
@@ -132,10 +140,19 @@ export function ColumnsBlockView({
     document.body.style.cursor = "";
     document.removeEventListener("pointermove", onDrag);
     document.removeEventListener("pointerup", endDrag);
+    // Flush any pending frame so the last position isn't dropped.
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     if (!d) return;
-    // Sync state once (so the rendered inline flex + localWidths match the drag)
-    // then commit the final widths to the editor node a single time.
-    const final = colWidths(localWidthsRef.current, localColsRef.current.length);
+    // Write the final weights once, sync state (so rendered inline flex + localWidths
+    // match), and commit to the editor node a single time.
+    const leftEl = colElRefs.current[d.idx];
+    const rightEl = colElRefs.current[d.idx + 1];
+    if (leftEl) leftEl.style.flex = `${d.w[d.idx]} 1 0`;
+    if (rightEl) rightEl.style.flex = `${d.w[d.idx + 1]} 1 0`;
+    const final = d.w.slice();
     setLocalWidths(final);
     onWidthsChange?.(final);
   }, [onDrag, onWidthsChange]);
@@ -148,7 +165,7 @@ export function ColumnsBlockView({
     const w = colWidths(localWidthsRef.current, n);
     const left = w[idx];
     const right = w[idx + 1] ?? left;
-    dragRef.current = { idx, startX: e.clientX, left, right, pair: left + right, trackW };
+    dragRef.current = { idx, startX: e.clientX, left, right, pair: left + right, trackW, w };
     // During the drag show a full-window resize cursor so the gesture reads clearly.
     document.body.style.cursor = "col-resize";
     document.addEventListener("pointermove", onDrag);
