@@ -5360,7 +5360,7 @@ select.prop-value {
 /* Drawing block */
 .editor-drawing-container {
   display: block;
-  margin: 6px 0;
+  margin: 6px -4px;
   user-select: none;
 }
 
