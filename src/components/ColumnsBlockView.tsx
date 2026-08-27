@@ -58,6 +58,9 @@ export function ColumnsBlockView({
     pairPx: number; // combined width of the two columns, incl. the gap between them
     pairWeight: number; // combined flex-grow weight of the two columns at drag start
     gap: number; // flex gap between columns (px)
+    colPadH: number; // per-column horizontal padding (px) — flex-basis 0 distributes the
+    // CONTENT box, so border-box px must be reduced by this to map to weights exactly.
+    weightTotal: number; // sum of all column weights at drag start
   } | null>(null);
   // Direct DOM refs; colElRefs is only used to snapshot widths at drag start.
   const columnsRef = useRef<HTMLDivElement | null>(null);
@@ -158,20 +161,22 @@ export function ColumnsBlockView({
       /* ignore */
     }
     if (!d) return;
-    // Convert the final pixel widths (from the drag) back to flex-grow weights and
-    // persist. Use the pair weight snapshotted at drag start (the local state may
-    // have been overwritten by the node round-trip). Only the two dragged columns'
-    // weights change; the others keep their current weights.
+    // Convert the final pixel widths (from the drag) back to flex-grow weights so that
+    // flex re-layout reproduces the EXACT same border-box widths (zero drift). The
+    // columns are `flex: w 1 0` = basis 0, so flex distributes the CONTENT box; the
+    // border-box = (weight/weightTotal)*F + colPadH, where F = total content space =
+    // sum(border-box) - n*colPadH. Solve weight_i = ((borderBox_i - colPadH)/F)*weightTotal.
     const pxs = dragWidthsRef.current ?? colWidths(localWidthsRef.current, localColsRef.current.length);
-    const pairPx = Math.max(1, pxs[d.idx] + pxs[d.idx + 1]);
-    const pairWeight = d.pairWeight > 0 ? d.pairWeight : 2;
-    const leftW = Math.max(MIN_W, (pxs[d.idx] / pairPx) * pairWeight);
-    const rightW = Math.max(MIN_W, pairWeight - leftW);
-    // Build next weights from a clean set (each valid, min 1 if unset).
-    const cur = colWidths(localWidthsRef.current, localColsRef.current.length);
+    const n = pxs.length;
+    const F = Math.max(1, pxs.reduce((a, b) => a + b, 0) - n * d.colPadH);
+    const weightTotal = d.weightTotal > 0 ? d.weightTotal : 1;
+    const contentOf = (px: number) => Math.max(1, px - d.colPadH);
+    const leftW = (contentOf(pxs[d.idx]) / F) * weightTotal;
+    const rightW = (contentOf(pxs[d.idx + 1]) / F) * weightTotal;
+    const cur = colWidths(localWidthsRef.current, n);
     const next = cur.map((x) => (Number.isFinite(x) && x > 0 ? x : 1));
-    next[d.idx] = Math.round(leftW * 100) / 100;
-    next[d.idx + 1] = Math.round(rightW * 100) / 100;
+    next[d.idx] = Math.round(Math.max(MIN_W, leftW) * 100) / 100;
+    next[d.idx + 1] = Math.round(Math.max(MIN_W, rightW) * 100) / 100;
     localWidthsRef.current = next;
     dragWidthsRef.current = null;
     setDragWidths(null);
@@ -191,10 +196,17 @@ export function ColumnsBlockView({
     // Gap between the two columns (flex gap).
     const gap = Math.max(0, rr.left - lr.right);
     const n = localColsRef.current.length;
+    // Per-column horizontal padding (the columns are `flex: w 1 0` = basis 0, so flex
+    // distributes the CONTENT box; border-box px must be reduced by this to map to a
+    // weight that renders the exact same border-box width at release).
+    const cs = rowEl.ownerDocument.defaultView?.getComputedStyle(leftCol);
+    const colPadH =
+      (parseFloat(cs?.paddingLeft ?? "0") || 0) + (parseFloat(cs?.paddingRight ?? "0") || 0);
     // Snapshot every column's current pixel width so non-dragged columns keep their
     // exact width (only the pair rebalances).
     const pxs: number[] = new Array(n);
     for (let i = 0; i < n; i++) pxs[i] = colElRefs.current[i]?.getBoundingClientRect().width ?? 0;
+    const curWeights = colWidths(localWidthsRef.current, n);
     dragWidthsRef.current = pxs;
     setDragWidths(pxs);
     dragRef.current = {
@@ -202,8 +214,10 @@ export function ColumnsBlockView({
       startX: e.clientX,
       startLeftPx: lr.width,
       pairPx: lr.width + gap + rr.width,
-      pairWeight: (localWidthsRef.current[idx] ?? 1) + (localWidthsRef.current[idx + 1] ?? 1),
+      pairWeight: (curWeights[idx] ?? 1) + (curWeights[idx + 1] ?? 1),
       gap: gap || 0,
+      colPadH: colPadH || 0,
+      weightTotal: curWeights.reduce((a, b) => a + b, 0) || 1,
     };
     // Grab pointer capture on the divider so we keep receiving pointermove even if
     // the cursor leaves the thin handle — makes the drag reliable and smooth.
