@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { LexicalNestedComposer } from "@lexical/react/LexicalNestedComposer";
 import { createEditor, type EditorState, type LexicalEditor } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -72,9 +72,6 @@ export const ColumnEditor = memo(function ColumnEditor({
       },
       parentEditor: parentEditor ?? undefined,
     });
-    // createEditor's `editorState` config only accepts an EditorState *object*,
-    // not the serialized JSON string we store per column. Parse + apply it here
-    // (mirrors how LexicalComposer treats a string initial state).
     if (safeJson) {
       try {
         e.setEditorState(e.parseEditorState(safeJson));
@@ -86,8 +83,27 @@ export const ColumnEditor = memo(function ColumnEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columnKey]);
 
+  // Track the last JSON this editor itself emitted. When the incoming `column` prop
+  // differs from that (i.e. the PARENT changed it — a column was inserted/removed/
+  // reordered and this component instance was reused for a different index), re-apply
+  // the prop so we don't show stale content. When the change is our OWN edit the JSON
+  // matches and we leave the editor untouched (no cursor jump).
+  const lastEmitted = useRef<string | null>(null);
+  useEffect(() => {
+    if (column !== null && column !== lastEmitted.current) {
+      try {
+        const parsed = lexicalStateValid(column, ALLOWED_NODE_TYPES);
+        if (parsed) editor.setEditorState(editor.parseEditorState(parsed));
+      } catch (err) {
+        setErr(err instanceof Error ? err.message : String(err));
+      }
+      lastEmitted.current = column;
+    }
+  }, [column, editor]);
+
   const onChange = (_state: EditorState, ed: LexicalEditor) => {
     const json = JSON.stringify(ed.getEditorState().toJSON());
+    lastEmitted.current = json;
     onSerialize?.(columnKey, json);
   };
 
