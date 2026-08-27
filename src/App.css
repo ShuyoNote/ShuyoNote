@@ -2053,7 +2053,11 @@ body.is-ai-open .main {
 }
 
 /* Adaptive full-width content: drop the fixed doc column cap so the content
-   fills the available width (toggled by the toolbar width button). */
+   fills the available width (toggled by the toolbar width button). The title
+   area (and its properties) must follow the same full width & left-align. */
+body.content-full .title-area,
+body.content-full .editor-head,
+body.content-full .properties,
 body.content-full .metadata-card,
 body.content-full .editor-content {
   max-width: none;
