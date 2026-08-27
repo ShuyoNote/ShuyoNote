@@ -47,8 +47,12 @@ function computeFitView(scene: SceneSnapshot | null, canvasW: number, canvasH: n
   const contentW = maxX - minX;
   const contentH = maxY - minY;
   if (contentW <= 0 || contentH <= 0) return null;
-  const pad = 0.9;
-  const zoom = Math.max(0.05, Math.min(16, Math.min(cw / contentW, ch / contentH) * pad));
+  // Leave a comfortable margin (pad < 1 shrinks the fit so nothing touches the
+  // edges) and a small extra inset so element strokes/bounds don't overflow.
+  const pad = 0.8;
+  const inset = 12;
+  const zoom = Math.max(0.05, Math.min(16, Math.min((cw - inset * 2) / contentW, (ch - inset * 2) / contentH) * pad));
+  if (!(zoom > 0)) return null;
   // sceneX = canvasX/zoom - scrollX ; place content center at canvas center (canvasX=w/2)
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
