@@ -5427,9 +5427,8 @@ p:has(> .editor-drawing-container) {
    it never overflows; it floats over the top of the canvas.
    - `top: 0` (not above the box) so it sits inside the block's top edge — the cursor
      moving onto the bar keeps the wrap's `:hover` active (no dead-zone gap).
-   - Colors match the app's other popup toolbars (slash menu / history popover):
-     a neutral `--surface` panel, `--border` outline and `--shadow-md`, with
-     borderless transparent buttons that highlight on hover. No accent tint. */
+   - Style: transparent background with a thin `--border` outline (the original,
+     light look) — no filled panel / shadow, so it doesn't cover the canvas. */
 .inline-drawing-bar {
   display: flex;
   align-items: center;
@@ -5437,8 +5436,7 @@ p:has(> .editor-drawing-container) {
   padding: 5px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
+  background: transparent;
   flex-wrap: wrap;
   position: absolute;
   top: 0;
