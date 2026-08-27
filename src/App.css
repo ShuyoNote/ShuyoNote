@@ -3202,13 +3202,13 @@ select.prop-value {
   margin-right: 8px;
 }
 
-/* Feishu-style 分栏: a flex row of N columns sitting flush side by side (no outer
-   padding ring / inter-column gap — matches the reference look of tight adjacent
-   cards). Borderless: no outer frame or inter-column divider lines. */
+/* Feishu-style 分栏: a flex row of N columns side by side with a small gap between
+   them. Borderless (no outer frame / divider lines); each column is a rounded card
+   with its own background, so the gap reads as separation. */
 .editor-columns {
   display: flex;
   width: 100%;
-  gap: 0;
+  gap: 8px;
   margin: 0.4em 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -3234,10 +3234,10 @@ select.prop-value {
   flex: 1 1 0;
   min-width: 0;
   position: relative;
-  /* Borderless: no outer frame or inter-column divider line (the drag divider is the
-     only visual boundary, shown on hover). */
+  /* Borderless rounded card; the inter-column gap + background reads as separation
+     (the drag divider is the only extra boundary, shown on hover). */
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
   background: var(--surface);
 }
