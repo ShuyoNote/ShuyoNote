@@ -2459,6 +2459,13 @@ select.prop-value {
 
 .editor-error {
   color: var(--danger);
+  /* The RichTextPlugin ErrorBoundary wraps every decorator in this div even when
+     there's no error — so no default padding, or it insets block content (e.g. the
+     columns card) from the page boundary. Only pad when an error is actually shown. */
+  padding: 0;
+}
+
+.editor-error:has(.editor-error-detail) {
   padding: 16px;
 }
 
