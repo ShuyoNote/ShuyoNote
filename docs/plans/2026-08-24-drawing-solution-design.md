@@ -53,19 +53,29 @@
 
 ### 4.2 Lexical 节点
 - 新增 `DrawingNode`、`MermaidNode`（`DecoratorNode`），实现 `exportJSON` / `importJSON` 进出页面 `content_json`；`serialized` 存引用 + 源文本。
+- `DrawingNode` 额外带**图片说明 `caption`**（用户可编辑，见 4.5），随节点序列化进出 `content_json`，并为在只读内嵌块里的视图记忆存 `zoom/scrollX/scrollY` 与 `height`。
 - 新节点注册进 `Editor.tsx` 的节点表、`markdownTransformers`（可选：mermaid 以代码块形式导出）、`htmlToLexical`（可选导入）。
 
 ### 4.3 搜索 / 反链 / 关系图
 - 这些基于 `content_text`：绘图块**抽取 Excalidraw 文字元素**进 `content_text`（让「图里的字」可搜到）；mermaid 把 `src` 文字注入 `content_text`。属于加分项、非必须。
+- `DrawingNode.getTextContent()` 返回**场景文字 + 用户图片说明 `caption`**，二者都进 `content_text`，说明文字同样可搜索/进反链。
 
 ### 4.4 依赖 / 打包
 - `@excalidraw/excalidraw` 与 `mermaid` 均为 MIT、纯前端可离线打包；体积较大，按需动态 import（如进入编辑态 / 渲染 mermaid 时才加载），避免拖大首屏 chunk。
+
+### 4.5 图片说明（caption）——已实现
+为让「图下方配一句说明文字」成为**绘图块自己的字段**（随块移动/保存、可搜索），而非绘图块下方的独立段落：
+
+- **节点**：`DrawingNode` 增加 `__caption: string | null`，经 `exportJSON`/`importJSON` 序列化进出 `content_json`，`setDrawing({caption})` 可写；`getTextContent()` 返回**场景文字 + caption**，二者并入 `content_text`（搜索/反链可见）。
+- **展示**：`InlineDrawing` 在绘图块底部渲染一个**可编辑说明区 `.inline-drawing-caption`**——`contentEditable`、占位符「添加图片说明…」（`:empty::before`）、`Enter` 失焦、输入**防抖写节点**、失焦 flush。**平时 `display:none`**（不占底部空白行），**悬停绘图块或聚焦时水平居中显示**（`text-align:center` + 外边距居中）。
+- **保存**：说明随节点走页面 `content_json`，刷新/重开保留；全屏编辑保存后内嵌块**自动适配整幅图**（清空视图记忆），说明区仍在块底部。
+- **布局**：内嵌画布在「适配内容」后**按内容贴合高度**（内容高 × 适配缩放 + 内边距，钳制 MIN/MAX），小图不再留大片底部空白；并保留底部拖拽手柄手动调高（160–4000px）。
 
 ## 5. 验收 / 里程碑
 
 建议**分三块里程碑**交付（每块独立升版本 / 提交 / 标记路线图）：
 
-- [ ] **M-A 绘图块（Excalidraw）**：`/绘图` 插入、全屏编辑、PNG 预览、JSON+PNG 附件落库、反链/搜索文字抽取；`tsc`/`build` 通过。
+- [x] **M-A 绘图块（Excalidraw）**：`/绘图` 插入、全屏编辑、PNG 预览、JSON+PNG 附件落库、反链/搜索文字抽取；`tsc`/`build` 通过。**已追加**：图片说明 `caption`（可编辑、随块保存、可搜索、默认隐藏/悬停居中）、内嵌块贴合内容高度、全屏保存后自动适配整幅图、保存不再卡「保存中…」。
 - [ ] **M-B mermaid 块**：`/mermaid` 输入 + syntax 选择、离线 SVG 渲染、解析失败容错、源文本编辑；`tsc`/`build` 通过。
 - [ ] **M-C AI 文生图**：`/AI 绘图` 调 provider → 附件落库 → 插入 `ImageNode`；provider 失败降级；`tsc`/`build` 通过。
 - [ ] `scripts/smoke-web.mjs` 新增**纯函数**断言（Excalidraw 文字抽取、mermaid syntax 检测、附件引用校验）且原断言无回归；`tsc`/`vite build`/`cargo check` 通过。
