@@ -117,9 +117,10 @@ export function ColumnsBlockView({
     if (d.idx + 1 >= d.w.length) return; // last column has no divider
     const curX = e.clientX;
     const minPx = 48;
-    // Left column width so the divider sits at curX; clamped to keep a min + keep the
-    // right column non-collapsed.
-    let leftPx = curX - d.contentLeft + d.gap / 2;
+    // The divider is centered in the gap (gap/2 beyond the column's right edge), so
+    // the left column's right edge must sit gap/2 BEFORE the cursor for the divider
+    // center to land under it.
+    let leftPx = curX - d.contentLeft - d.gap / 2;
     const maxLeft = d.contentRight - d.contentLeft - d.gap - minPx;
     leftPx = Math.max(minPx, Math.min(maxLeft, leftPx));
     d.leftPx = leftPx;

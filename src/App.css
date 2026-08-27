@@ -3206,9 +3206,10 @@ select.prop-value {
    them. Borderless (no outer frame / divider lines); each column is a rounded card
    with its own background, so the gap reads as separation. */
 .editor-columns {
+  --col-gap: 8px;
   display: flex;
   width: 100%;
-  gap: 8px;
+  gap: var(--col-gap);
   margin: 0.4em 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -3251,7 +3252,9 @@ select.prop-value {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: -5px;
+  /* Center the 10px hit area (and grip line) in the gap between the two columns:
+     half the gap + half the divider width beyond the column's right edge. */
+  right: calc(var(--col-gap, 8px) / -2 - 5px);
   width: 10px;
   cursor: col-resize;
   z-index: 6;
