@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useMemo, useState } from "react";
+import { LexicalNestedComposer } from "@lexical/react/LexicalNestedComposer";
+import { createEditor, type EditorState, type LexicalEditor } from "lexical";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -9,17 +11,25 @@ import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPl
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
-import type { EditorState, LexicalEditor } from "lexical";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { EDITOR_NODES, editorTheme, ALLOWED_NODE_TYPES } from "../editor/config";
 import { SlashMenuPlugin } from "../editor/plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "../editor/plugins/InsertShortcutPlugin";
 import { lexicalStateValid } from "../lib/lexicalValidate";
 
-// A single column editor (Route B): one nested LexicalComposer sharing the page
+// A single column editor (Route B): one NESTED Lexical editor sharing the page
 // editor's nodes/theme, hosting its own EditorState JSON. `onChange` is called with
 // the column's serialized editor-state JSON (a valid Lexical doc) after each edit so
 // the parent ColumnsNode can persist it.
+//
+// IMPORTANT: this must be a *nested* editor, not a standalone LexicalComposer. The
+// column editors are rendered inside the outer page editor's React tree (via
+// ColumnsBlockNode.decorate()). If we built them with a bare LexicalComposer, the
+// created editor would have `_parentEditor === null`; Lexical (0.49) wouldn't know
+// they're children of the page editor, and on mousedown the OUTER editor would
+// steal focus back from the column — so typing/clicking inside a column would go
+// to the page editor instead ("分栏不能输入"). Setting `parentEditor` (via
+// createEditor) + LexicalNestedComposer keeps Lexical's nested-editor semantics.
 
 const COLUMN_PLACEHOLDER = "输入 / 选择块…";
 
@@ -35,6 +45,8 @@ export function ColumnEditor({
   onSerialize?: (key: string, json: string) => void;
 }) {
   const [err, setErr] = useState<string | null>(null);
+  // The page (outer) editor this column belongs to.
+  const [parentEditor] = useLexicalComposerContext();
 
   // Sanitize + validate a saved column doc; fall back to an empty paragraph so a
   // malformed column never crashes the editor.
@@ -44,25 +56,41 @@ export function ColumnEditor({
     return v;
   })();
 
-  const initialConfig = {
-    namespace: `shuyonote-column-${columnKey}`,
-    nodes: EDITOR_NODES,
-    theme: editorTheme as never,
-    onError: (error: Error) => {
-      setErr(error.message || String(error));
-    },
-    editorState: safeJson as never,
-  };
+  // Create the nested editor once; pass the outer editor as `parentEditor` so
+  // Lexical treats this as a nested child and lets typing/click stay inside it.
+  const editor: LexicalEditor = useMemo(() => {
+    const e = createEditor({
+      namespace: `shuyonote-column-${columnKey}`,
+      nodes: EDITOR_NODES,
+      theme: editorTheme as never,
+      onError: (error: Error) => {
+        setErr(error.message || String(error));
+      },
+      parentEditor: parentEditor ?? undefined,
+    });
+    // createEditor's `editorState` config only accepts an EditorState *object*,
+    // not the serialized JSON string we store per column. Parse + apply it here
+    // (mirrors how LexicalComposer treats a string initial state).
+    if (safeJson) {
+      try {
+        e.setEditorState(e.parseEditorState(safeJson));
+      } catch (err) {
+        setErr(err instanceof Error ? err.message : String(err));
+      }
+    }
+    return e;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnKey]);
 
-  const onChange = (_state: EditorState, editor: LexicalEditor) => {
-    const json = JSON.stringify(editor.getEditorState().toJSON());
+  const onChange = (_state: EditorState, ed: LexicalEditor) => {
+    const json = JSON.stringify(ed.getEditorState().toJSON());
     onSerialize?.(columnKey, json);
   };
 
   return (
     <div className="editor-column-body" data-column-key={columnKey}>
       {err ? <div className="editor-column-error">{err}</div> : null}
-      <LexicalComposer initialConfig={initialConfig}>
+      <LexicalNestedComposer initialEditor={editor}>
         <RichTextPlugin
           contentEditable={<ContentEditable className="editor-column-editable" />}
           placeholder={<div className="editor-column-placeholder">{COLUMN_PLACEHOLDER}</div>}
@@ -77,7 +105,7 @@ export function ColumnEditor({
         <SlashMenuPlugin pageId={pageId} />
         <InsertShortcutPlugin />
         <OnChangePlugin onChange={onChange} />
-      </LexicalComposer>
+      </LexicalNestedComposer>
     </div>
   );
 }
