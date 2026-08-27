@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { LexicalNestedComposer } from "@lexical/react/LexicalNestedComposer";
 import { createEditor, type EditorState, type LexicalEditor } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
@@ -22,6 +22,10 @@ import { lexicalStateValid } from "../lib/lexicalValidate";
 // the column's serialized editor-state JSON (a valid Lexical doc) after each edit so
 // the parent ColumnsNode can persist it.
 //
+// Memoized: the parent ColumnsBlockView re-renders on every column layout change
+// (and used to on every drag frame); a column's props are stable unless its own
+// content changes, so memo avoids re-rendering this heavy nested-editor tree.
+//
 // IMPORTANT: this must be a *nested* editor, not a standalone LexicalComposer. The
 // column editors are rendered inside the outer page editor's React tree (via
 // ColumnsBlockNode.decorate()). If we built them with a bare LexicalComposer, the
@@ -33,7 +37,7 @@ import { lexicalStateValid } from "../lib/lexicalValidate";
 
 const COLUMN_PLACEHOLDER = "输入 / 选择块…";
 
-export function ColumnEditor({
+export const ColumnEditor = memo(function ColumnEditor({
   column,
   columnKey,
   pageId,
@@ -108,4 +112,4 @@ export function ColumnEditor({
       </LexicalNestedComposer>
     </div>
   );
-}
+});

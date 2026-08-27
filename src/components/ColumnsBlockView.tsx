@@ -54,6 +54,11 @@ export function ColumnsBlockView({
     pair: number; // left + right (kept constant)
     trackW: number;
   } | null>(null);
+  // Direct DOM refs so a drag can move the divider WITHOUT a React re-render (the
+  // nested column editors are heavy; re-rendering them every pointermove is what
+  // made dragging feel sluggish).
+  const columnsRef = useRef<HTMLDivElement | null>(null);
+  const colElRefs = useRef<(HTMLDivElement | null)[]>([]);
   const localColsRef = useRef<string[]>(cols);
   const localWidthsRef = useRef<number[]>(widths);
   localColsRef.current = localCols;
@@ -110,12 +115,15 @@ export function ColumnsBlockView({
     const right = d.pair - left;
     w[d.idx] = Math.round(left * 100) / 100;
     w[d.idx + 1] = Math.round(right * 100) / 100;
-    // During the drag, only update the LOCAL flex layout so the divider follows the
-    // cursor instantly. We DEFER the editor write (onWidthsChange) to pointerup —
-    // otherwise every pointermove runs a full editor.update + node re-render, which
-    // makes the drag feel laggy. endDrag commits the final widths once.
+    // During the drag, write the flex weights straight to the DOM so the divider
+    // follows the cursor with NO React re-render (re-rendering the nested column
+    // editors every pointermove is what made dragging laggy). State + editor commit
+    // happen once on release.
     localWidthsRef.current = w;
-    setLocalWidths(w);
+    const leftEl = colElRefs.current[d.idx];
+    const rightEl = colElRefs.current[d.idx + 1];
+    if (leftEl) leftEl.style.flex = `${w[d.idx]} 1 0`;
+    if (rightEl) rightEl.style.flex = `${w[d.idx + 1]} 1 0`;
   }, []);
 
   const endDrag = useCallback(() => {
@@ -124,8 +132,12 @@ export function ColumnsBlockView({
     document.body.style.cursor = "";
     document.removeEventListener("pointermove", onDrag);
     document.removeEventListener("pointerup", endDrag);
-    // Commit the final widths to the node only once the drag is finished.
-    if (d) onWidthsChange?.(colWidths(localWidthsRef.current, localColsRef.current.length));
+    if (!d) return;
+    // Sync state once (so the rendered inline flex + localWidths match the drag)
+    // then commit the final widths to the editor node a single time.
+    const final = colWidths(localWidthsRef.current, localColsRef.current.length);
+    setLocalWidths(final);
+    onWidthsChange?.(final);
   }, [onDrag, onWidthsChange]);
 
   const startDrag = useCallback((idx: number) => (e: React.PointerEvent) => {
@@ -144,11 +156,16 @@ export function ColumnsBlockView({
   }, [onDrag, endDrag]);
 
   return (
-    <div className="editor-columns" data-count={String(localCols.length)}>
+    <div className="editor-columns" data-count={String(localCols.length)} ref={columnsRef}>
       {localCols.map((c, i) => {
         const w = shareWeight(localWidths, i, localCols.length);
         return (
-          <div key={`col-${i}`} className="editor-column" style={{ flex: `${w} 1 0` }}>
+          <div
+            key={`col-${i}`}
+            className="editor-column"
+            style={{ flex: `${w} 1 0` }}
+            ref={(el) => { colElRefs.current[i] = el; }}
+          >
             {i < localCols.length - 1 && (
               <div className="editor-column-divider" onPointerDown={startDrag(i)} title="拖拽调整列宽" />
             )}
