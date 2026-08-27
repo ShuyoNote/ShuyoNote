@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.59.170-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.59.172-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -48,6 +48,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 
 ### 编辑体验
 - **块编辑器**：基于 Lexical，支持标题、引用、Callout、代码块、列表、待办、表格、分隔线等 12 种块类型。
+- **分栏（飞书式）**：N 列并排（2–4 栏），每列独立输入与独立撤销；列内 `/` 快速插入标题/列表/表格/Callout/代码块/分隔线；列右上角 ＋/× 增删列、列间手柄拖拽调整列宽与实时占宽百分比；列内空行悬停「+」插入块；支持深色模式、随主题变色。
 - **斜杠菜单**：输入 `/` 快速插入任意块（含 `/引用块`、`/嵌入块`）。
 - **块拖拽排序**：悬停块左侧出现 `⋮⋮` 手柄，拖拽实时显示插入指示线，松手重排。
 - **块多选**：点击 `⋮⋮` 手柄选中块（Shift 选连续范围），批量操作条「复制 / 删除」，`Delete`/`Esc` 快捷键，选中块高亮。

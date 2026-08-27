@@ -8,8 +8,8 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.170**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json 一致；安装包在 src-tauri/target/release/bundle/）
-- **git**：HEAD `80a8a65`，工作树干净。
+- **版本**：**v1.59.172**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **git**：HEAD `97c5b18`，工作树干净。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -18,6 +18,14 @@
 - 共享配置抽到 `src/editor/config.ts`（`EDITOR_NODES`/`editorTheme`/`ALLOWED_NODE_TYPES`），供主编辑器与列编辑器复用；`ColumnsBlockNode` 用 `lazy()` 动态导入视图（打破与 config.ts 的循环依赖）。
 - 列内 `/` 可插：标题/正文/引用/**Callout**/列表/**表格**（`TablePlugin`）/代码块/分隔线；列内 `Ctrl+Alt` 快捷键。
 - 列内独立撤销（`HistoryPlugin`）、跨列独立输入；列增删（＋/×，1–4 列）、列宽拖拽（flex-grow 权重）。
+- **本会话分栏系列打磨（v1.59.172）**：
+  - 列宽拖拽**跟手/不卡**：按像素直设宽度 + 同步应用 + pointer capture；拖拽中由 React `dragWidths` state 驱动（唯一数据源）、零 React 重渲染；列占比 pct 徽章实时用最大余数法（恒 100%）。
+  - **只改拖拽中相邻两列**；按 content-box 反推权重防止松手后列宽漂移。
+  - 列内「+」插入块：移除「输入 / 选择块…」占位；悬停分栏空行显内联「+」（复用 `BlockInsertPlugin`）；加入 220ms 驻留延迟防闪现；`getTopLevelKey` 按 `clientY` 垂直兜底 + 只解析当前编辑器根元素，支持整列高度且不跨列误捕；统一放在各列内容左缘（首字符位置），不压调宽手柄。
+  - **删除/新增分栏内容不错位**：`ColumnEditor` 仅在父级改动的 `column` 与自身最后发出的 JSON 不同时才重载（避免索引平移出现陈旧内容）。
+  - 分栏卡片背景/描边：光标悬停/聚焦该分栏才显示背景，用与页面背景构成对比的卡片色（`--hover-strong`）让「分栏间空隙以页面背景色」清晰；任何时候不画边框。
+  - 分栏文本颜色与普通块一致：覆盖 `RichTextPlugin` ErrorBoundary 默认的 `.editor-error` 红色 `--danger` 为 `--text`。
+  - 分栏块/绘图块对齐页面边界（去掉 `.editor-error` 多余内边距 / 负 margin 抵消段落 padding）。
 - 关键修复：空列 JSON 补 `indent/format/direction`（否则 `ListItemNode.setIndent` 遇非数字 → Lexical #117）、`.editor-column-body` 解耦避免 `.editor-column` 自嵌套、`createDOM` 返回 `.editor-columns-host` 避免 `.editor-columns` 自嵌套、列用 flex-grow 避免百分比+gap 溢出。
 - 关键文件：
   - `src/editor/nodes/ColumnsBlockNode.tsx`、`ColumnNode.tsx`、`ColumnsNode.tsx`（旧轻量版，仍注册用于读旧文档）
@@ -45,11 +53,11 @@
 - **分栏旧数据不做自动迁移**：`columns`/`column`（ElementNode 轻量版）**保留注册**，旧文档仍可读兼容；新插入走路线 B。自动改写线上 `content_json` 风险高、收益低，**明确不做**。
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
-- 版本号一律 v1.59.170，**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.172**。
 
 ## 4. 环境/工具备注
 
-- **前端 Web 版**：`pnpm dev:web`（Vite web dev，http://localhost:5173，热更新；SQLite 前端 mock）+ `pnpm preview`（dist 产物，http://127.0.0.1:5173）。
+- **前端 Web 版**：`pnpm dev:web`（Vite web dev，默认 http://localhost:5173；若 5173 被占则 Vite 自动顺延到 5174……，热更新；SQLite 前端 mock）+ `pnpm preview`（dist 产物，http://127.0.0.1:5173）。
 - **桌面版**：`pnpm tauri dev`（1420，需 Rust/SQLite host）或跑 `src-tauri/target/release/shuyonote.exe`。
 - **验证**：`npx tsc --noEmit`、`pnpm build`、`node scripts/smoke-web.mjs`（**225 全绿**）；无头 Edge CDP 实测交互（Edge 在 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`，Node 内置 WebSocket，临时脚本放 tmp/）。
 - **git 代理**：全局配置了 `http://127.0.0.1:7897` 但**当前端口不通**；push/pull 需 `git -c http.proxy= -c https.proxy=` 临时直连（或清掉全局代理）。
@@ -59,7 +67,7 @@
 1. **列内拖拽 / 跨列复制移动**——需跨编辑器机制，工作量大（此前评估为"暂不做"，若产品必需立项）。
 2. **旧分栏（ElementNode）→ 路线 B 的状态补齐**（若确有用户需要，可做"显式、备份式"的手动转换入口，而非自动迁移）。
 3. **绘图块更多能力**：如列内 AI 附表、绘图块引用/块级 `{{...}}`、及大图/多图性能。
-4. **重新构建桌面版**使桌面包含绘图类最新改动（当前桌面 release 为稍早基线，未含 caption/自动适配/贴合高度/保存不卡）。
+4. **分栏其它打磨**：分栏块间距/背景配色再调（浅色 `--hover-strong` 与页面背景的对比度是否足够明显）、分栏列宽拖拽到极窄值时的边界表现。
 5. 其它 roadmap（见 docs/roadmap.md）待排期项。
 
 ---
