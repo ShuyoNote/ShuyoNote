@@ -3243,7 +3243,10 @@ select.prop-value {
 }
 
 /* Resizable divider between columns (drag to adjust column widths). It sits on the
-   shared boundary between two flush columns. */
+   shared boundary between two columns. The grip line is HIDDEN by default and only
+   appears when hovering that column (or when actively dragging), so the divider
+   doesn't clutter the block. The full-width hit area stays active so the drag still
+   starts anywhere on the boundary. */
 .editor-column-divider {
   position: absolute;
   top: 0;
@@ -3255,7 +3258,7 @@ select.prop-value {
   transition: background var(--transition-fast);
 }
 
-/* A visible grip line so users can spot + aim at the drag handle. */
+/* A visible grip line users can aim at — hidden until the column is hovered. */
 .editor-column-divider::after {
   content: "";
   position: absolute;
@@ -3266,14 +3269,24 @@ select.prop-value {
   transform: translateX(-50%);
   border-radius: 1px;
   background: var(--border);
-  transition: background var(--transition-fast), width var(--transition-fast);
+  opacity: 0;
+  transition: background var(--transition-fast), width var(--transition-fast), opacity 0.15s ease;
 }
 
+.editor-column:hover .editor-column-divider::after,
+.editor-column:focus-within .editor-column-divider::after,
+.editor-column-divider:hover::after,
+.editor-column-divider:active::after {
+  opacity: 1;
+}
+
+.editor-column:hover .editor-column-divider,
 .editor-column-divider:hover,
 .editor-column-divider:active {
   background: var(--accent-soft, rgba(59, 130, 246, 0.16));
 }
 
+.editor-column:hover .editor-column-divider::after,
 .editor-column-divider:hover::after,
 .editor-column-divider:active::after {
   width: 3px;
