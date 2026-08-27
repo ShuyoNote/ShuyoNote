@@ -123,7 +123,7 @@ export const ColumnEditor = memo(function ColumnEditor({
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <InsertShortcutPlugin />
-        <BlockInsertPlugin pageId={pageId} gutterOffset={4} />
+        <BlockInsertPlugin pageId={pageId} gutterOffset={36} />
         <OnChangePlugin onChange={onChange} />
       </LexicalNestedComposer>
     </div>
