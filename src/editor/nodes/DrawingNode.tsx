@@ -23,8 +23,6 @@ export type SerializedDrawingNode = Spread<
     thumbMime?: string | null;
     /** extracted text of the scene (indexed into content_text). */
     text: string;
-    /** user-editable image caption / description shown below the embed. */
-    caption?: string | null;
     width?: number | null;
     height?: number | null;
     /** remembered read-only viewport (zoom + scroll), so the embed reopens as the user left it. */
@@ -41,7 +39,6 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   __thumbHash: string | null;
   __thumbMime: string | null;
   __text: string;
-  __caption: string | null;
   __width: number | null;
   __height: number | null;
   __zoom: number | null;
@@ -59,7 +56,6 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       node.__thumbHash,
       node.__thumbMime,
       node.__text,
-      node.__caption,
       node.__width,
       node.__height,
       node.__zoom,
@@ -75,7 +71,6 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     thumbHash: string | null = null,
     thumbMime: string | null = null,
     text = "",
-    caption: string | null = null,
     width: number | null = null,
     height: number | null = null,
     zoom: number | null = null,
@@ -89,7 +84,6 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     this.__thumbHash = thumbHash;
     this.__thumbMime = thumbMime;
     this.__text = text;
-    this.__caption = caption;
     this.__width = width;
     this.__height = height;
     this.__zoom = zoom;
@@ -118,7 +112,6 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     if (typeof patch.thumbHash === "string" || patch.thumbHash === null) writable.__thumbHash = patch.thumbHash;
     if (typeof patch.thumbMime === "string" || patch.thumbMime === null) writable.__thumbMime = patch.thumbMime ?? null;
     if (typeof patch.text === "string") writable.__text = patch.text;
-    if (typeof patch.caption === "string" || patch.caption === null) writable.__caption = patch.caption ?? null;
     if (typeof patch.width === "number" || patch.width === null) writable.__width = patch.width;
     if (typeof patch.height === "number" || patch.height === null) writable.__height = patch.height;
     if (typeof patch.zoom === "number" || patch.zoom === null) writable.__zoom = patch.zoom;
@@ -126,10 +119,10 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     if (typeof patch.scrollY === "number" || patch.scrollY === null) writable.__scrollY = patch.scrollY;
   }
 
-  // Surface the drawing's text (scene labels + user caption) so `content_text`
-  // (and thus search/backlinks) sees it.
+  // Surface the drawing's scene text so `content_text` (and thus search/backlinks)
+  // sees it.
   getTextContent(): string {
-    return [this.__text, this.__caption].filter(Boolean).join(" ");
+    return this.__text;
   }
 
   decorate(): JSX.Element {
@@ -152,7 +145,6 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       thumbHash: this.__thumbHash,
       thumbMime: this.__thumbMime ?? undefined,
       text: this.__text,
-      caption: this.__caption ?? undefined,
       width: this.__width,
       height: this.__height,
       zoom: this.__zoom,
@@ -162,13 +154,15 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   }
 
   static importJSON(serializedNode: SerializedDrawingNode): DrawingNode {
+    // `caption` was removed from the drawing feature; it's intentionally ignored on
+    // import so older saved docs that carried a caption still load (the text is
+    // dropped, scene labels remain).
     return $createDrawingNode(
       serializedNode.hash ?? null,
       serializedNode.mime ?? null,
       serializedNode.thumbHash ?? null,
       serializedNode.thumbMime ?? null,
       serializedNode.text ?? "",
-      serializedNode.caption ?? null,
       serializedNode.width ?? null,
       serializedNode.height ?? null,
       serializedNode.zoom ?? null,
@@ -184,14 +178,13 @@ export function $createDrawingNode(
   thumbHash: string | null = null,
   thumbMime: string | null = null,
   text = "",
-  caption: string | null = null,
   width: number | null = null,
   height: number | null = null,
   zoom: number | null = null,
   scrollX: number | null = null,
   scrollY: number | null = null,
 ): DrawingNode {
-  return $applyNodeReplacement(new DrawingNode(hash, mime, thumbHash, thumbMime, text, caption, width, height, zoom, scrollX, scrollY));
+  return $applyNodeReplacement(new DrawingNode(hash, mime, thumbHash, thumbMime, text, width, height, zoom, scrollX, scrollY));
 }
 
 export function $isDrawingNode(node: LexicalNode | null | undefined): node is DrawingNode {
