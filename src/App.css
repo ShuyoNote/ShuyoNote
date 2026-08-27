@@ -3345,6 +3345,31 @@ select.prop-value {
   pointer-events: auto;
 }
 
+/* While a divider is dragged, the share badge occupies the top-right; hide the
+   add/remove actions so they don't overlap the badge. */
+.editor-columns.is-dragging .editor-column-actions {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Current share badge (top-right) shown while a divider is being dragged. The ＋/×
+   actions sit slightly lower so both can coexist during the drag. */
+.editor-column-pct {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 7;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  white-space: nowrap;
+}
+
 /* Route-B nested editor inside a column: the contenteditable owns the column's full
    block stack; reset to a clean block so paragraphs/headings fill the column. */
 .editor-column-body {

@@ -46,6 +46,10 @@ export function ColumnsBlockView({
   // columns don't shift at all. Total is preserved, so nothing overflows.
   const [localCols, setLocalCols] = useState<string[]>(cols);
   const [localWidths, setLocalWidths] = useState<number[]>(widths);
+  // While a divider is being dragged, each column's top-right shows its current
+  // share (percentage). We set this once on drag-start/end (cheap) and update the
+  // badge text via direct DOM during the drag (no re-render per move).
+  const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{
     idx: number;
     startX: number;
@@ -68,6 +72,7 @@ export function ColumnsBlockView({
   // made dragging feel sluggish).
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const colElRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const pctElRefs = useRef<(HTMLDivElement | null)[]>([]);
   const localColsRef = useRef<string[]>(cols);
   const localWidthsRef = useRef<number[]>(widths);
   localColsRef.current = localCols;
@@ -107,6 +112,26 @@ export function ColumnsBlockView({
     apply(next, w);
   }, [apply]);
 
+  // Update the per-column share badges (top-right %) from the live drag widths,
+  // writing directly to their DOM so no React re-render happens per pointermove.
+  const updatePctBadges = useCallback((d: NonNullable<typeof dragRef.current>) => {
+    const n = d.w.length;
+    // Convert the dragged pair's pixels back to weights using the same mapping as
+    // endDrag, so the badge reflects the final persisted share.
+    const pairPx = Math.max(1, d.leftPx + d.rightPx);
+    const pairWeight = d.w[d.idx] + d.w[d.idx + 1];
+    const weights = d.w.slice();
+    if (d.idx + 1 < n) {
+      weights[d.idx] = Math.max(MIN_W, (d.leftPx / pairPx) * pairWeight);
+      weights[d.idx + 1] = Math.max(MIN_W, pairWeight - weights[d.idx]);
+    }
+    const total = weights.reduce((a, b) => a + b, 0) || 1;
+    for (let i = 0; i < n; i++) {
+      const el = pctElRefs.current[i];
+      if (el) el.textContent = `${Math.round((weights[i] / total) * 100)}%`;
+    }
+  }, []);
+
   // Drag a divider to move the boundary between the two columns it separates. We set
   // the LEFT column's width directly in PIXELS so the divider lands exactly under the
   // cursor (真跟手), and the right column flex-fills the rest. We apply synchronously
@@ -136,11 +161,13 @@ export function ColumnsBlockView({
       rightEl.style.flex = "1 1 0";
       rightEl.style.width = "";
     }
-  }, []);
+    updatePctBadges(d);
+  }, [updatePctBadges]);
 
   const endDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     dragRef.current = null;
+    setDragging(false);
     document.body.style.cursor = "";
     document.removeEventListener("pointermove", onDrag);
     document.removeEventListener("pointerup", endDrag);
@@ -209,14 +236,21 @@ export function ColumnsBlockView({
     } catch {
       /* ignore */
     }
+    // Show the per-column share badges for the duration of the drag. The initial
+    // fill is deferred to the next animation frame so the freshly-rendered badge
+    // nodes are mounted before we write their text.
+    setDragging(true);
+    requestAnimationFrame(() => {
+      if (dragRef.current) updatePctBadges(dragRef.current);
+    });
     // During the drag show a full-window resize cursor so the gesture reads clearly.
     document.body.style.cursor = "col-resize";
     document.addEventListener("pointermove", onDrag);
     document.addEventListener("pointerup", endDrag);
-  }, [onDrag, endDrag]);
+  }, [onDrag, endDrag, updatePctBadges]);
 
   return (
-    <div className="editor-columns" data-count={String(localCols.length)} ref={columnsRef}>
+    <div className={`editor-columns${dragging ? " is-dragging" : ""}`} data-count={String(localCols.length)} ref={columnsRef}>
       {localCols.map((c, i) => {
         const w = shareWeight(localWidths, i, localCols.length);
         return (
@@ -226,6 +260,12 @@ export function ColumnsBlockView({
             style={{ flex: `${w} 1 0` }}
             ref={(el) => { colElRefs.current[i] = el; }}
           >
+            {dragging && (
+              <div
+                className="editor-column-pct"
+                ref={(el) => { pctElRefs.current[i] = el; }}
+              ></div>
+            )}
             {i < localCols.length - 1 && (
               <div className="editor-column-divider" onPointerDown={startDrag(i)} title="拖拽调整列宽" />
             )}
