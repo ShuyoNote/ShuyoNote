@@ -5383,7 +5383,7 @@ p:has(> .editor-drawing-container) {
 
 .inline-drawing {
   position: relative;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 0;
   overflow: hidden;
   background: var(--surface);
