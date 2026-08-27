@@ -102,6 +102,8 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const [err, setErr] = useState<string | null>(null);
   const [height, setHeight] = useState<number>(node.__height ?? DEFAULT_HEIGHT);
   const heightRef = useRef<number>(height);
+  const [caption, setCaption] = useState<string>(() => node.__caption ?? "");
+  const captionRef = useRef<string>(caption);
   const isDark = useResolvedTheme() === "dark";
   const savedViewRef = useRef(false);
   const viewTimerRef = useRef<number | null>(null);
@@ -365,6 +367,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   useEffect(() => {
     return () => {
       if (viewTimerRef.current !== null) window.clearTimeout(viewTimerRef.current);
+      if (captionTimerRef.current !== null) window.clearTimeout(captionTimerRef.current);
     };
   }, []);
 
@@ -380,6 +383,37 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     },
     [node],
   );
+
+  // Persist the editable image caption (shown below the embed) onto the drawing
+  // node. A caption is treated as real content: it's stored on the node and merged
+  // into content_text via getTextContent(), so it's searchable and survives reload.
+  const persistCaption = useCallback(
+    (value: string) => {
+      const editor = useEditorStore.getState().editor;
+      if (editor) {
+        editor.update(() => {
+          const n = $getNodeByKey(node.getKey());
+          if (n && $isDrawingNode(n)) n.setDrawing({ caption: value });
+        });
+      }
+    },
+    [node],
+  );
+  const captionTimerRef = useRef<number | null>(null);
+  const onCaptionInput = useCallback(
+    (value: string) => {
+      setCaption(value);
+      captionRef.current = value;
+      // Debounce the node write so typing doesn't spam page saves; blur flushes it.
+      if (captionTimerRef.current !== null) window.clearTimeout(captionTimerRef.current);
+      captionTimerRef.current = window.setTimeout(() => persistCaption(value), 400);
+    },
+    [persistCaption],
+  );
+  const onCaptionBlur = useCallback(() => {
+    if (captionTimerRef.current !== null) window.clearTimeout(captionTimerRef.current);
+    persistCaption(captionRef.current);
+  }, [persistCaption]);
 
   const onResizeDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -471,6 +505,19 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
           />
         </div>
         <div className="inline-drawing-resize" onPointerDown={onResizeDown} title="拖拽调整高度" />
+      </div>
+      <div
+        className="inline-drawing-caption"
+        contentEditable="true"
+        suppressContentEditableWarning
+        role="textbox"
+        aria-label="图片说明"
+        data-placeholder="添加图片说明…"
+        onInput={(e) => onCaptionInput((e.currentTarget as HTMLDivElement).innerText)}
+        onBlur={(e) => { onCaptionBlur(); persistCaption((e.currentTarget as HTMLDivElement).innerText); }}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.currentTarget as HTMLDivElement).blur(); } }}
+      >
+        {caption}
       </div>
     </div>
   );

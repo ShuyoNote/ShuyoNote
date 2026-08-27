@@ -5462,6 +5462,32 @@ select.prop-value {
   font-size: 13px;
 }
 
+/* Editable image caption shown below the drawing embed. */
+.inline-drawing-caption {
+  margin-top: 6px;
+  padding: 4px 2px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  outline: none;
+  min-height: 1.4em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-bottom: 1px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.inline-drawing-caption:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.inline-drawing-caption:focus {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+
 .inline-drawing-err {
   color: var(--danger);
   font-size: 12px;
