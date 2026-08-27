@@ -107,22 +107,16 @@ export function ColumnsBlockView({
     apply(next, w);
   }, [apply]);
 
-  // Update the per-column share badges (top-right %) from the actual rendered pixel
-  // widths (read from the DOM) — always accurate, no React re-render needed.
+  // Update the per-column share badges (top-right %). Reads the live pixel widths from
+  // `dragWidthsRef` (the single source of truth during a drag) so it's always current
+  // and doesn't depend on DOM read timing. No-op when not dragging (no badges).
   const updatePctBadges = useCallback(() => {
-    const n = localColsRef.current.length;
-    const pxW: number[] = [];
-    let total = 0;
-    for (let i = 0; i < n; i++) {
-      const el = colElRefs.current[i];
-      const w = el ? el.getBoundingClientRect().width : 0;
-      pxW.push(w);
-      total += w;
-    }
-    total = total || 1;
-    for (let i = 0; i < n; i++) {
+    const pxs = dragWidthsRef.current;
+    if (!pxs) return;
+    const total = pxs.reduce((a, b) => a + b, 0) || 1;
+    for (let i = 0; i < pxs.length; i++) {
       const el = pctElRefs.current[i];
-      if (el && pxW[i]) el.textContent = `${Math.round((pxW[i] / total) * 100)}%`;
+      if (el && pxs[i]) el.textContent = `${Math.round((pxs[i] / total) * 100)}%`;
     }
   }, []);
 
@@ -147,7 +141,8 @@ export function ColumnsBlockView({
     pxs[d.idx + 1] = d.pairPx - d.gap - leftPx;
     dragWidthsRef.current = pxs;
     setDragWidths(pxs);
-  }, []);
+    updatePctBadges();
+  }, [updatePctBadges]);
 
   const endDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
