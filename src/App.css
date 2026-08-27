@@ -3204,17 +3204,16 @@ select.prop-value {
 
 /* Feishu-style 分栏: a flex row of N columns sitting flush side by side (no outer
    padding ring / inter-column gap — matches the reference look of tight adjacent
-   cards). Each column carries its own border; the drag divider overrides the shared
-   boundary. */
+   cards). Borderless: no outer frame or inter-column divider lines. */
 .editor-columns {
   display: flex;
   width: 100%;
   gap: 0;
   margin: 0.4em 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius-sm);
   padding: 0;
-  background: var(--surface);
+  background: transparent;
   overflow: hidden;
 }
 
@@ -3235,18 +3234,12 @@ select.prop-value {
   flex: 1 1 0;
   min-width: 0;
   position: relative;
-  /* Flush cards inside the container: no own border (container provides the outer
-     ring); only a 1px left divider between adjacent columns. */
+  /* Borderless: no outer frame or inter-column divider line (the drag divider is the
+     only visual boundary, shown on hover). */
   border: 0;
-  border-left: 1px solid var(--border);
   border-radius: 0;
   padding: 6px 8px;
   background: var(--surface);
-}
-
-/* The first column is flush against the container's left edge (no divider). */
-.editor-column:first-child {
-  border-left: 0;
 }
 
 /* Resizable divider between columns (drag to adjust column widths). It sits on the
