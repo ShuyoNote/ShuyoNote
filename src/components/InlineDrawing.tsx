@@ -23,6 +23,39 @@ const MAX_HEIGHT = 4000;
 // re-fetching the blob and flashing "加载绘图…" (which is the visible jitter).
 const sceneCache = new Map<string, SceneSnapshot>();
 // NOTE: there is intentionally no separate viewport cache. A fullscreen
+
+// Compute the Excalidraw view (zoom + scroll) that fits & centers the content's
+// bounding box into a canvas of `canvasW`×`canvasH`. Excalidraw's view-mode camera
+// can't be changed via scrollToContent/updateScene, so we precompute the fit view and
+// put it in `initialData.appState` — Excalidraw applies it on mount.
+function computeFitView(scene: SceneSnapshot | null, canvasW: number, canvasH: number): { zoom: { value: number }; scrollX: number; scrollY: number } | null {
+  const elems = scene?.elements;
+  if (!Array.isArray(elems) || elems.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
+  for (const el of elems) {
+    if (el?.isDeleted) continue;
+    if (typeof el.x !== "number" || typeof el.y !== "number") continue;
+    const ew = typeof el.width === "number" ? el.width : 0;
+    const eh = typeof el.height === "number" ? el.height : 0;
+    minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
+    maxX = Math.max(maxX, el.x + ew); maxY = Math.max(maxY, el.y + eh);
+    has = true;
+  }
+  if (!has) return null;
+  const cw = Math.max(1, canvasW);
+  const ch = Math.max(1, canvasH);
+  const contentW = maxX - minX;
+  const contentH = maxY - minY;
+  if (contentW <= 0 || contentH <= 0) return null;
+  const pad = 0.9;
+  const zoom = Math.max(0.05, Math.min(16, Math.min(cw / contentW, ch / contentH) * pad));
+  // sceneX = canvasX/zoom - scrollX ; place content center at canvas center (canvasX=w/2)
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const scrollX = cw / (2 * zoom) - cx;
+  const scrollY = ch / (2 * zoom) - cy;
+  return { zoom: { value: zoom }, scrollX, scrollY };
+}
 // edit-and-save clears the node's zoom/scroll so the embed re-fits on reload; the
 // only authoritative "skip the fit" signal is a view persisted ON THE NODE itself.
 
@@ -162,6 +195,11 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     const cached = sceneCache.get(hash ?? "");
     if (cached) {
       const scene: SceneSnapshot = { elements: cached.elements, appState: { ...cached.appState, ...savedView }, files: cached.files };
+      if (!hasSavedView && Array.isArray(scene.elements) && scene.elements.length > 0) {
+        const canvas = document.querySelector(".inline-drawing-canvas");
+        const fit = computeFitView(scene, canvas?.clientWidth ?? 608, canvas?.clientHeight ?? 420);
+        if (fit) scene.appState = { ...scene.appState, zoom: fit.zoom, scrollX: fit.scrollX, scrollY: fit.scrollY };
+      }
       liveRef.current = scene;
       setInitialData(scene);
       setReady(true);
@@ -204,6 +242,16 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       }
       sceneCache.set(hash ?? "", base);
       const scene: SceneSnapshot = { elements: base.elements, appState: { ...base.appState, ...savedView }, files: base.files };
+      // If the user hasn't saved a view, precompute a fit view and bake it into
+      // initialData.appState so Excalidraw starts zoomed & centered on mount (its
+      // camera can't be moved afterwards in view mode).
+      if (!hasSavedView && Array.isArray(scene.elements) && scene.elements.length > 0) {
+        const canvas = document.querySelector(".inline-drawing-canvas");
+        const cw = canvas?.clientWidth ?? 608;
+        const ch = canvas?.clientHeight ?? 420;
+        const fit = computeFitView(scene, cw, ch);
+        if (fit) scene.appState = { ...scene.appState, zoom: fit.zoom, scrollX: fit.scrollX, scrollY: fit.scrollY };
+      }
       if (alive) {
         liveRef.current = scene;
         setInitialData(scene);
