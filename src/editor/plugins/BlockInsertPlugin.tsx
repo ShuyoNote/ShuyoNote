@@ -482,7 +482,7 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
                 role="radiogroup"
                 onMouseLeave={() => setColumnsHover(2)}
               >
-                {[1, 2, 3, 4].map((idx) => (
+                {[1, 2, 3, 4, 5].map((idx) => (
                   <span
                     key={idx}
                     className={`insert-columns-cell ${idx <= columnsHover ? "on" : ""}`}

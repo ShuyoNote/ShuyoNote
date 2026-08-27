@@ -8,7 +8,7 @@ import { EMPTY_COLUMN_JSON } from "../editor/nodes/ColumnsBlockNode";
 // per-column widths are adjustable by dragging the divider (flex-grow weights).
 
 const MIN_COLS = 1;
-const MAX_COLS = 4;
+const MAX_COLS = 5;
 // Minimum flex-grow weight for a column so the drag can never make it vanish
 // (or the neighbour). Keep it small relative to the default 1 so up to 4 columns
 // can all shrink meaningfully.
