@@ -3217,16 +3217,17 @@ select.prop-value {
   background: transparent;
 }
 
-/* Floating "新增分栏" add button, centered above the block (shown on hover). A blue
-   circular + whose tooltip reads 新增分栏 — matches the reference screenshot. */
+/* Floating "新增分栏" add button at the TOP of each divider (the gap between columns).
+   Hidden by default; appears when the cursor is over that divider. A blue circular +
+   whose tooltip reads 新增分栏. */
 .editor-columns-add {
   position: absolute;
-  top: 0;
+  top: -16px;
   left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 8;
-  width: 32px;
-  height: 32px;
+  transform: translateX(-50%);
+  z-index: 9;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3241,13 +3242,14 @@ select.prop-value {
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-.editor-columns:hover .editor-columns-add {
+.editor-column-divider:hover .editor-columns-add,
+.editor-column-divider:active .editor-columns-add {
   opacity: 1;
   pointer-events: auto;
 }
 
-.editor-columns:hover .editor-columns-add:hover {
-  transform: translate(-50%, -50%) scale(1.08);
+.editor-column-divider:hover .editor-columns-add:hover {
+  transform: translateX(-50%) scale(1.08);
 }
 
 /* Tooltip above the + button. */
@@ -3276,7 +3278,7 @@ select.prop-value {
 }
 
 .editor-columns-add-icon {
-  font-size: 17px;
+  font-size: 14px;
   line-height: 1;
 }
 
@@ -3323,7 +3325,9 @@ select.prop-value {
   transition: background var(--transition-fast);
 }
 
-/* A visible grip line users can aim at — hidden until the column is hovered. */
+/* A visible grip line users can aim at — hidden until the cursor is over the
+   divider (the gap between columns), not merely over a column, so the grip appears
+   "in the empty space" between columns. */
 .editor-column-divider::after {
   content: "";
   position: absolute;
@@ -3338,20 +3342,16 @@ select.prop-value {
   transition: background var(--transition-fast), width var(--transition-fast), opacity 0.15s ease;
 }
 
-.editor-column:hover .editor-column-divider::after,
-.editor-column:focus-within .editor-column-divider::after,
 .editor-column-divider:hover::after,
 .editor-column-divider:active::after {
   opacity: 1;
 }
 
-.editor-column:hover .editor-column-divider,
 .editor-column-divider:hover,
 .editor-column-divider:active {
   background: var(--accent-soft, rgba(59, 130, 246, 0.16));
 }
 
-.editor-column:hover .editor-column-divider::after,
 .editor-column-divider:hover::after,
 .editor-column-divider:active::after {
   width: 3px;

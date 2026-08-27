@@ -94,7 +94,10 @@ export function ColumnsBlockView({
     }
   }, [apply]);
 
-  const addColumn = useCallback(() => {
+  // Add a new column. The per-divider "+" (at the top of each divider) also uses this
+  // — appending at the end is correct and doesn't shift existing column indices (which
+  // would otherwise leave stale content in the keyed nested editors).
+  const insertColumnAt = useCallback(() => {
     if (localColsRef.current.length >= MAX_COLS) return;
     const next = localColsRef.current.slice();
     next.push(EMPTY_COLUMN_JSON);
@@ -252,16 +255,6 @@ export function ColumnsBlockView({
       data-count={String(localCols.length)}
       ref={columnsRef}
     >
-      {localCols.length < MAX_COLS && (
-        <button
-          className="editor-columns-add"
-          data-tooltip="新增分栏"
-          aria-label="新增分栏"
-          onClick={addColumn}
-        >
-          <span className="editor-columns-add-icon">＋</span>
-        </button>
-      )}
       {localCols.map((c, i) => {
         const w = shareWeight(localWidths, i, localCols.length);
         // Single source of truth: while dragWidths is set, columns are laid out by
@@ -285,11 +278,25 @@ export function ColumnsBlockView({
               ></div>
             )}
             {i < localCols.length - 1 && (
-              <div className="editor-column-divider" onPointerDown={startDrag(i)} title="拖拽调整列宽" />
+              <div className="editor-column-divider" onPointerDown={startDrag(i)} title="拖拽调整列宽">
+                <button
+                  className="editor-columns-add"
+                  data-tooltip="新增分栏"
+                  aria-label="新增分栏"
+                  onPointerDown={(e) => {
+                    // Stop the divider's drag handler from running (its pointerdown
+                    // preventDefault suppresses the click), then insert on release.
+                    e.stopPropagation();
+                  }}
+                  onClick={() => insertColumnAt()}
+                >
+                  <span className="editor-columns-add-icon">＋</span>
+                </button>
+              </div>
             )}
             <div className="editor-column-actions">
               {i === localCols.length - 1 && localCols.length < MAX_COLS && (
-                <button className="editor-column-add" title="在右侧添加一列" onClick={addColumn}>＋</button>
+                <button className="editor-column-add" title="在右侧添加一列" onClick={() => insertColumnAt()}>＋</button>
               )}
               {localCols.length > MIN_COLS && (
                 <button className="editor-column-remove" title="删除此列" onClick={() => removeColumn(i)}>×</button>
