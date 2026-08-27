@@ -3235,10 +3235,18 @@ select.prop-value {
   min-width: 0;
   position: relative;
   /* Borderless rounded card; the inter-column gap + background reads as separation
-     (the drag divider is the only extra boundary, shown on hover). */
+     (the drag divider is the only extra boundary, shown on hover). The card's
+     background is only shown while the cursor is over the column (or it's focused) —
+     otherwise the columns sit transparent on the page so the block blends in. */
   border: 0;
   border-radius: var(--radius-sm);
   padding: 6px 8px;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.editor-column:hover,
+.editor-column:focus-within {
   background: var(--surface);
 }
 
