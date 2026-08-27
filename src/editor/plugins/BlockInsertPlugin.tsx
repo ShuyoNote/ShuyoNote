@@ -17,6 +17,7 @@ import { isEmptyBlock } from "../blockUtils";
 const HANDLE_OFFSET = 48; // same as the ⋮⋮ block drag handle: 48px gutter width
 const CLOSE_DELAY = 260; // linger so the cursor can travel onto the panel
 const HIDE_DELAY_MS = 400;
+const SHOW_DELAY_MS = 220; // dwell on an empty block before the "+" appears (less eager)
 
 // Map each supported block key to a Feishu-style section. Keys not listed are
 // placed in 常用 by default. "多维表格" only appears if any key maps to it.
@@ -129,12 +130,21 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
   const closeTimerRef = useRef<number | null>(null);
   const columnsCloseTimerRef = useRef<number | null>(null);
   const activeKeyRef = useRef<string | null>(null);
+  const showTimerRef = useRef<number | null>(null);
+  const pendingRef = useRef<{ top: number; left: number; key: string } | null>(null);
 
   const clearHide = () => {
     if (hideTimerRef.current !== null) {
       window.clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
+  };
+  const clearShow = () => {
+    if (showTimerRef.current !== null) {
+      window.clearTimeout(showTimerRef.current);
+      showTimerRef.current = null;
+    }
+    pendingRef.current = null;
   };
   const clearClose = () => {
     if (closeTimerRef.current !== null) {
@@ -154,28 +164,35 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
       }
       const key = getTopLevelKey(editor, target);
       if (!key || !isEmptyAtKey(editor, key)) {
+        clearShow();
         if (hideTimerRef.current === null) {
           hideTimerRef.current = window.setTimeout(() => setHandle(null), HIDE_DELAY_MS);
         }
         return;
       }
       clearHide();
+      // Show the "+" only after the cursor dwells on the empty block for a moment
+      // (SHOW_DELAY_MS), so a quick sweep across the block doesn't flash it eagerly.
+      if (showTimerRef.current !== null) return; // already pending
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
-        // Place the "+" at the same gutter position as the ⋮⋮ block drag handle:
-        // `rect.left - HANDLE_OFFSET` (48px, flush against the content column).
-        // `gutterOffset` lets a nested column editor pull it in (the column is only
-        // ~170px wide, so a full 48px gutter would push the "+" outside/off-viewport).
-        // Clamp so it never goes off the viewport.
         const left = Math.max(4, rect.left - gutterOffset);
-        setHandle({ top: rect.top, left, key });
+        pendingRef.current = { top: rect.top, left, key };
+        showTimerRef.current = window.setTimeout(() => {
+          showTimerRef.current = null;
+          if (pendingRef.current) {
+            setHandle(pendingRef.current);
+            pendingRef.current = null;
+          }
+        }, SHOW_DELAY_MS);
       }
     };
     document.addEventListener("mousemove", onMove, true);
     return () => {
       document.removeEventListener("mousemove", onMove, true);
       clearHide();
+      clearShow();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, panelOpen]);
@@ -309,6 +326,7 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
       if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
       if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
       if (columnsCloseTimerRef.current !== null) window.clearTimeout(columnsCloseTimerRef.current);
+      if (showTimerRef.current !== null) window.clearTimeout(showTimerRef.current);
     };
   }, []);
 
