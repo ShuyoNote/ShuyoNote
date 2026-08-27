@@ -322,7 +322,10 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const pad = 16;
       const displayH = size.h * (Number.isFinite(zv) && zv > 0 ? zv : 1) + pad * 2;
       const next = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.round(displayH)));
-      if (Math.abs(next - heightRef.current) > 2) {
+      // Only AUTO-shrink the container to hug content; never let it inflate from a
+      // not-yet-fitted zoom (which would make the embed huge instead of centered).
+      // A user-dragged height stays via node.__height; init height stays otherwise.
+      if (next < heightRef.current - 2) {
         heightRef.current = next;
         setHeight(next);
       }
@@ -380,23 +383,15 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const zoomReset = useCallback(() => zoomTo(1), [zoomTo]);
 
   // Fit the whole drawing content into the embed. Excalidraw's scrollToContent uses
-  // its internal setState to zoom+center — the reliable way to change the view
-  // (updateScene only stashes appState and doesn't reliably move the camera in
-  // read-only mode). We fit Excalidraw's OWN current scene (getSceneElements) so the
-  // elements it actually rendered are what gets zoomed — passing our raw initialData
-  // elements can mismatch IDs/bounds and make scrollToContent fit nothing.
+  // its internal setState to zoom+center — the reliable way to change the view. We
+  // fit the authoritative loaded scene (initialData); fitContent waits for it to be
+  // present so we fit once the drawing is actually renderable.
   const fitNow = useCallback(() => {
     const a = apiRef.current;
-    if (!a) return;
-    let elements: any[] = [];
+    const scene = initialDataRef.current;
+    if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
     try {
-      elements = a.getSceneElements?.() ?? [];
-    } catch {
-      elements = [];
-    }
-    if (!Array.isArray(elements) || elements.length === 0) return;
-    try {
-      a.scrollToContent(elements, { fitToContent: true, animate: false });
+      a.scrollToContent(scene.elements, { fitToContent: true, animate: false });
       // After the fit, hug the container height to the fitted content.
       requestAnimationFrame(fitHeightToContent);
     } catch {
@@ -404,29 +399,25 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     }
   }, [fitHeightToContent]);
 
-  // Fit on load, retrying a few frames: right after a fullscreen edit-and-save the
-  // Excalidraw gets remounted (keyed by hash) and `initialData` is parsed
-  // asynchronously, so a fit immediately after mount can no-op while the scene isn't
-  // rendered yet. Retry a few rAF ticks (then stop) so the fit lands once the drawing
-  // is actually on the canvas. A manual ◎ 适配 button still does one shot.
+  // Fit on load, retrying for a while: right after a fullscreen edit-and-save the
+  // Excalidraw gets remounted (keyed by hash) and its scene elements are parsed
+  // asynchronously, so a fit immediately after mount can no-op. Retry more frames
+  // (the scene can take a beat to settle) so the fit lands once the drawing is on the
+  // canvas. A manual ◎ 适配 button still does one shot.
   const fitContent = useCallback(() => {
     if (savedViewRef.current) return;
     let tries = 0;
     const attempt = () => {
       const a = apiRef.current;
-      let hasContent = false;
-      try {
-        const arr = a?.getSceneElements?.() ?? [];
-        hasContent = Array.isArray(arr) && arr.length > 0;
-      } catch {
-        hasContent = false;
-      }
-      // Fit once Excalidraw reports real content; if not ready yet, retry next frame.
-      if (a && hasContent) {
+      // Judge readiness by initialData (authoritative loaded scene) — it's available
+      // as soon as load() completes and doesn't depend on Excalidraw's async scene.
+      const scene = initialDataRef.current;
+      const hasContent = !!(a && scene && Array.isArray(scene.elements) && scene.elements.length > 0);
+      if (hasContent) {
         fitNow();
         return;
       }
-      if (tries++ < 8) requestAnimationFrame(attempt);
+      if (tries++ < 20) requestAnimationFrame(attempt);
     };
     attempt();
   }, [fitNow]);
