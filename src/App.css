@@ -3242,17 +3242,14 @@ select.prop-value {
   border-radius: var(--radius-sm);
   padding: 6px 8px;
   background: transparent;
-  /* A faint hairline outline is ALWAYS visible so the gap between adjacent columns
-     reads clearly even when the card has no background (cursor not over it) — the
-     card both stays borderless and lets the columns be discerned at a glance. */
-  box-shadow: 0 0 0 1px var(--border-faint, var(--border));
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .editor-column:hover,
 .editor-column:focus-within {
   background: var(--surface);
-  /* On hover/focus the hairline deepens to a solid border ring + slight lift. */
+  /* Only when the cursor is over (or the column is focused) does the card get its
+     hairline outline + slight lift — idle state stays entirely clean/borderless. */
   box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(16, 24, 40, 0.06);
 }
 
