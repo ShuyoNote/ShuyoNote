@@ -56,7 +56,7 @@ export function ColumnsBlockView({
     // Dragging ONLY rebalances the two columns the divider separates. We preserve the
     // pair's combined pixel width (incl. the gap between them) so the other columns
     // don't move; the left column grows and the right shrinks by the same amount.
-    pairLeft: number; // left column's content-left x on the page at drag start
+    startLeftPx: number; // left column's pixel width at drag start
     pairPx: number; // combined width of the two columns, incl. the gap between them
     gap: number; // flex gap between columns (px)
     leftPx: number;
@@ -140,9 +140,10 @@ export function ColumnsBlockView({
     if (d.idx + 1 >= d.w.length) return; // last column has no divider
     const curX = e.clientX;
     const minPx = 48;
-    // Divider center = left column's right edge + gap/2. So the left column width =
-    // cursor - left column's left edge - gap/2.
-    let leftPx = curX - d.pairLeft - d.gap / 2;
+    // Apply the cursor DELTA from the press point to the left column's starting width
+    // (not re-deriving from an absolute edge), so pressing anywhere on the 10px
+    // divider — even off its center — never causes a snap/jump on the first move.
+    let leftPx = d.startLeftPx + (curX - d.startX);
     // Clamp so the left column keeps a min width and the right column keeps a min too
     // (it gets pairPx - gap - leftPx).
     const maxLeft = d.pairPx - d.gap - minPx;
@@ -213,7 +214,7 @@ export function ColumnsBlockView({
     dragRef.current = {
       idx,
       startX: e.clientX,
-      pairLeft: lr.left,
+      startLeftPx: lr.width,
       pairPx: lr.width + gap + rr.width,
       gap: gap || 0,
       leftPx: lr.width,
