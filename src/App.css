@@ -3307,6 +3307,17 @@ select.prop-value {
   display: flex;
   gap: 4px;
   z-index: 5;
+  /* Hide the per-column toolbar until the cursor is over this column (keeps the
+     block clean); mirrors the drawing block's hover-reveal control bar. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.editor-column:hover .editor-column-actions,
+.editor-column:focus-within .editor-column-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Route-B nested editor inside a column: the contenteditable owns the column's full
@@ -3331,6 +3342,15 @@ select.prop-value {
   pointer-events: none;
   top: 0;
   left: 0;
+  /* The hint only appears when the cursor is over the column or the column editor
+     has focus; otherwise it stays hidden so empty columns feel clean. */
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.editor-column:hover .editor-column-placeholder,
+.editor-column:focus-within .editor-column-placeholder {
+  opacity: 1;
 }
 
 .editor-column {
