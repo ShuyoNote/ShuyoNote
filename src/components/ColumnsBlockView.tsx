@@ -110,16 +110,23 @@ export function ColumnsBlockView({
     const right = d.pair - left;
     w[d.idx] = Math.round(left * 100) / 100;
     w[d.idx + 1] = Math.round(right * 100) / 100;
+    // During the drag, only update the LOCAL flex layout so the divider follows the
+    // cursor instantly. We DEFER the editor write (onWidthsChange) to pointerup —
+    // otherwise every pointermove runs a full editor.update + node re-render, which
+    // makes the drag feel laggy. endDrag commits the final widths once.
+    localWidthsRef.current = w;
     setLocalWidths(w);
-    onWidthsChange?.(w);
-  }, [onWidthsChange]);
+  }, []);
 
   const endDrag = useCallback(() => {
+    const d = dragRef.current;
     dragRef.current = null;
     document.body.style.cursor = "";
     document.removeEventListener("pointermove", onDrag);
     document.removeEventListener("pointerup", endDrag);
-  }, [onDrag]);
+    // Commit the final widths to the node only once the drag is finished.
+    if (d) onWidthsChange?.(colWidths(localWidthsRef.current, localColsRef.current.length));
+  }, [onDrag, onWidthsChange]);
 
   const startDrag = useCallback((idx: number) => (e: React.PointerEvent) => {
     e.preventDefault();
