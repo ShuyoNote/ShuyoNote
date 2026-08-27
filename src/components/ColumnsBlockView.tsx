@@ -113,13 +113,25 @@ export function ColumnsBlockView({
   // Update the per-column share badges (top-right %). Reads the live pixel widths from
   // `dragWidthsRef` (the single source of truth during a drag) so it's always current
   // and doesn't depend on DOM read timing. No-op when not dragging (no badges).
+  // Uses the largest-remainder method so the percentages always sum to exactly 100%
+  // (per-column Math.round can overshoot, e.g. 70.5%→71% + 29.5%→30% = 101%).
   const updatePctBadges = useCallback(() => {
     const pxs = dragWidthsRef.current;
     if (!pxs) return;
     const total = pxs.reduce((a, b) => a + b, 0) || 1;
+    const fractions = pxs.map((px) => (px / total) * 100);
+    // Floor each, then give the leftover points to the largest fractional remainders.
+    const floors = fractions.map((f) => Math.floor(f));
+    let leftover = 100 - floors.reduce((a, b) => a + b, 0);
+    const order = fractions
+      .map((f, i) => ({ i, frac: f - Math.floor(f) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let k = 0; k < order.length && leftover > 0; k++, leftover--) {
+      floors[order[k].i] += 1;
+    }
     for (let i = 0; i < pxs.length; i++) {
       const el = pctElRefs.current[i];
-      if (el && pxs[i]) el.textContent = `${Math.round((pxs[i] / total) * 100)}%`;
+      if (el && pxs[i]) el.textContent = `${floors[i]}%`;
     }
   }, []);
 
