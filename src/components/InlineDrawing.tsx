@@ -379,33 +379,42 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
 
   const zoomReset = useCallback(() => zoomTo(1), [zoomTo]);
 
-  // Fit & center the whole drawing content in the embed (used by the 适配 button
-  // and for the initial view when no viewport has been saved yet), then shrink the
-  // container height to hug the content so there's no big empty area underneath.
+  // Fit the whole drawing content into the embed: compute the zoom that makes the
+  // content bounding box fit the canvas, then apply it (zoomTo also centers). Doing
+  // this explicitly via updateScene is deterministic — Excalidraw's scrollToContent
+  // can no-op if called before the scene's elements settle (which is exactly what
+  // happens right after a fullscreen edit-and-save, leaving the embed un-scaled).
   const fitNow = useCallback(() => {
     const a = apiRef.current;
-    const scene = initialDataRef.current;
-    if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
+    const size = getContentSize();
+    if (!a || !size || size.w <= 0 || size.h <= 0) return;
     try {
-      a.scrollToContent(scene.elements, { fitToContent: true, animate: false });
-      // After the fit, resize the embed to the fitted content height.
+      const st = a.getAppState();
+      const cw = typeof st.width === "number" && st.width > 0 ? st.width : 1;
+      const ch = typeof st.height === "number" && st.height > 0 ? st.height : 1;
+      // Leave a small margin so content isn't flush against the embed edges.
+      const pad = 0.9;
+      const fitZ = Math.min(cw / size.w, ch / size.h) * pad;
+      // zoomTo clamps to [0.05, 16] and centers the content bounding box.
+      zoomTo(Number.isFinite(fitZ) ? fitZ : 1);
+      // After the fit, hug the container height to the fitted content.
       requestAnimationFrame(fitHeightToContent);
     } catch {
       /* best-effort */
     }
-  }, [fitHeightToContent]);
+  }, [getContentSize, zoomTo, fitHeightToContent]);
 
   // Fit on load, retrying a few frames: right after a fullscreen edit-and-save the
   // Excalidraw gets remounted (keyed by hash) and `initialData` is parsed
-  // asynchronously, so `scrollToContent` immediately after mount can no-op while the
-  // scene isn't rendered yet. Retry a few rAF ticks (then stop) so the fit lands once
-  // the drawing is actually on the canvas. A manual @适配 button still does one shot.
+  // asynchronously, so a fit immediately after mount can no-op while the scene isn't
+  // rendered yet. Retry a few rAF ticks (then stop) so the fit lands once the drawing
+  // is actually on the canvas. A manual ◎ 适配 button still does one shot.
   const fitContent = useCallback(() => {
     if (savedViewRef.current) return;
     let tries = 0;
     const attempt = () => {
       const a = apiRef.current;
-      const scene = liveRef.current;
+      const scene = initialDataRef.current;
       // Fit once the scene has real content; if not ready yet, retry next frame.
       if (a && scene && Array.isArray(scene.elements) && scene.elements.length > 0) {
         fitNow();
