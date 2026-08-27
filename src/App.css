@@ -5360,8 +5360,16 @@ select.prop-value {
 /* Drawing block */
 .editor-drawing-container {
   display: block;
-  margin: 6px -4px;
+  margin: 0 -4px;
   user-select: none;
+}
+
+/* A drawing block is wrapped by Lexical in a <p>; that <p> carries the paragraph
+   margin (0.6em) which would add extra top/bottom inset beyond the page's own flow.
+   Zero it so the drawing block aligns flush with the content boundary (topDelta /
+   downDelta = 0) — the paragraph above/below still keep their own spacing. */
+p:has(> .editor-drawing-container) {
+  margin: 0;
 }
 
 /* Inline drawing (page-embedded Excalidraw) */
@@ -5370,7 +5378,7 @@ select.prop-value {
    and never blocks 看图 (viewing the drawing). */
 .inline-drawing-wrap {
   position: relative;
-  margin: 6px 0;
+  margin: 0;
 }
 
 .inline-drawing {
