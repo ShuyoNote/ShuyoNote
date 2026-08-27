@@ -34,20 +34,45 @@ const SECTION_ORDER = ["基础", "常用", "多维表格"];
 function getTopLevelKey(
   editor: ReturnType<typeof useLexicalComposerContext>[0],
   dom: Node | null,
+  clientY?: number,
 ): string | null {
   let el = dom instanceof HTMLElement ? dom : dom?.parentElement ?? null;
   if (!el) return null;
   let key: string | null = null;
   editor.read(() => {
     const node = $getNearestNodeFromDOMNode(el);
-    if (!node) return;
-    const table = $findTableNode(node);
-    if (table) {
-      key = table.getKey();
-      return;
+    if (node) {
+      const table = $findTableNode(node);
+      if (table) {
+        key = table.getKey();
+        return;
+      }
+      const top = node.getTopLevelElement();
+      if (top) {
+        key = top.getKey();
+        return;
+      }
     }
-    const top = node.getTopLevelElement();
-    key = top ? top.getKey() : null;
+    // Fallback: the cursor is in an empty zone of the editor (e.g. the empty area
+    // below a thin empty paragraph — a column is ~44px tall but its empty <p> only
+    // ~4px). Resolve the top-level block whose box is nearest vertically, so the "+"
+    // stays put while the cursor is anywhere over that column's empty line instead of
+    // flashing and disappearing. Only do this for DOM that belongs to THIS editor
+    // (a nested column editor must not steal a sibling column's hover).
+    if (typeof clientY !== "number") return;
+    const rootEl = editor.getRootElement();
+    if (!rootEl || !rootEl.contains(el)) return;
+    let best: { key: string; dist: number } | null = null;
+    for (const child of $getRoot().getChildren()) {
+      const elChild = editor.getElementByKey(child.getKey());
+      if (!elChild) continue;
+      const r = elChild.getBoundingClientRect();
+      const dist = clientY >= r.top && clientY <= r.bottom
+        ? 0
+        : Math.min(Math.abs(clientY - r.top), Math.abs(clientY - r.bottom));
+      if (!best || dist < best.dist) best = { key: child.getKey(), dist };
+    }
+    if (best) key = best.key;
   });
   return key;
 }
@@ -162,7 +187,7 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
         clearHide();
         return;
       }
-      const key = getTopLevelKey(editor, target);
+      const key = getTopLevelKey(editor, target, e.clientY);
       if (!key || !isEmptyAtKey(editor, key)) {
         clearShow();
         if (hideTimerRef.current === null) {
