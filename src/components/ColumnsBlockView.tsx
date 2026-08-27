@@ -49,16 +49,20 @@ export function ColumnsBlockView({
   const dragRef = useRef<{
     idx: number;
     startX: number;
-    left: number; // left column weight at drag start
-    right: number; // right column weight at drag start
-    pair: number; // left + right (kept constant)
-    trackW: number;
-    w: number[]; // the working weights buffer, reused across the drag
+    // The divider sits on the boundary between col idx (left) and idx+1 (right). We
+    // drive the divider's PIXEL x so it lands exactly under the cursor: set the left
+    // column's width to (cursor - columnContentLeft) and let the right column fill
+    // the remainder. On release we convert these pixel widths back to flex-grow
+    // weights for persistence.
+    contentLeft: number; // container content box left (where the row's columns start)
+    contentRight: number; // container content box right
+    gap: number; // flex gap between columns (px)
+    // Final pixel widths captured at release, converted to weights in endDrag.
+    leftPx: number;
+    rightPx: number;
+    // Weights across the whole row, reused; [idx]/[idx+1] are updated on release.
+    w: number[];
   } | null>(null);
-  // requestAnimationFrame id for coalescing pointermove DOM writes: high-polling-rate
-  // pointers can fire many moves per frame, so we only reflow the layout once per
-  // frame regardless — a further speed-up over writing style.flex on every event.
-  const rafRef = useRef<number | null>(null);
   // Direct DOM refs so a drag can move the divider WITHOUT a React re-render (the
   // nested column editors are heavy; re-rendering them every pointermove is what
   // made dragging feel sluggish).
@@ -103,55 +107,64 @@ export function ColumnsBlockView({
     apply(next, w);
   }, [apply]);
 
-  // Drag a divider to move the boundary between the two columns it separates. The
-  // cursor delta is mapped 1:1 to how much the left column grows (and the right
-  // shrinks) in weight units, clamped so neither side can collapse. This keeps the
-  // gesture feeling direct instead of the jumpy *4 from before.
+  // Drag a divider to move the boundary between the two columns it separates. We set
+  // the LEFT column's width directly in PIXELS so the divider lands exactly under the
+  // cursor (真跟手), and the right column flex-fills the rest. We apply synchronously
+  // (not deferred to rAF) so there's no extra frame of latency.
   const onDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
     if (d.idx + 1 >= d.w.length) return; // last column has no divider
-    const deltaFrac = (e.clientX - d.startX) / Math.max(d.trackW, 1);
-    // deltaFrac in [-1,1] maps to ±pair weight — a full container-width drag moves
-    // the whole pair, so it feels proportional and never overshoots.
-    const left = Math.max(MIN_W, Math.min(d.pair - MIN_W, d.left + deltaFrac * d.pair));
-    const right = d.pair - left;
-    // Update the shared buffer (no per-move allocation).
-    d.w[d.idx] = Math.round(left * 100) / 100;
-    d.w[d.idx + 1] = Math.round(right * 100) / 100;
-    localWidthsRef.current = d.w;
-    // Coalesce: mark latest weights and flush to the DOM at most once per frame.
-    if (rafRef.current === null) {
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        const dd = dragRef.current;
-        if (!dd) return;
-        const leftEl = colElRefs.current[dd.idx];
-        const rightEl = colElRefs.current[dd.idx + 1];
-        if (leftEl) leftEl.style.flex = `${dd.w[dd.idx]} 1 0`;
-        if (rightEl) rightEl.style.flex = `${dd.w[dd.idx + 1]} 1 0`;
-      });
+    const curX = e.clientX;
+    const minPx = 48;
+    // Left column width so the divider sits at curX; clamped to keep a min + keep the
+    // right column non-collapsed.
+    let leftPx = curX - d.contentLeft + d.gap / 2;
+    const maxLeft = d.contentRight - d.contentLeft - d.gap - minPx;
+    leftPx = Math.max(minPx, Math.min(maxLeft, leftPx));
+    d.leftPx = leftPx;
+    d.rightPx = d.contentRight - d.contentLeft - d.gap - leftPx;
+    // Apply pixel widths directly for a 1:1 divider-to-cursor mapping.
+    const leftEl = colElRefs.current[d.idx];
+    const rightEl = colElRefs.current[d.idx + 1];
+    if (leftEl) {
+      leftEl.style.flex = "none";
+      leftEl.style.width = `${leftPx}px`;
+    }
+    if (rightEl) {
+      rightEl.style.flex = "1 1 0";
+      rightEl.style.width = "";
     }
   }, []);
 
-  const endDrag = useCallback(() => {
+  const endDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     dragRef.current = null;
     document.body.style.cursor = "";
     document.removeEventListener("pointermove", onDrag);
     document.removeEventListener("pointerup", endDrag);
-    // Flush any pending frame so the last position isn't dropped.
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
+    // Release pointer capture if we grabbed it.
+    try {
+      const el = colElRefs.current[d?.idx ?? -1];
+      if (el && el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
     }
     if (!d) return;
-    // Write the final weights once, sync state (so rendered inline flex + localWidths
-    // match), and commit to the editor node a single time.
+    // Clear the ad-hoc pixel style, convert back to flex-grow weights, and persist.
     const leftEl = colElRefs.current[d.idx];
     const rightEl = colElRefs.current[d.idx + 1];
-    if (leftEl) leftEl.style.flex = `${d.w[d.idx]} 1 0`;
-    if (rightEl) rightEl.style.flex = `${d.w[d.idx + 1]} 1 0`;
+    if (leftEl) { leftEl.style.width = ""; leftEl.style.flex = ""; }
+    if (rightEl) { rightEl.style.width = ""; rightEl.style.flex = ""; }
+    // Pixel widths -> weights: map the pair's pixel space onto its weight total, so
+    // the other columns keep their relative share.
+    const pairPx = Math.max(1, d.leftPx + d.rightPx);
+    const pairWeight = d.w[d.idx] + d.w[d.idx + 1];
+    const leftW = Math.max(MIN_W, (d.leftPx / pairPx) * pairWeight);
+    const rightW = Math.max(MIN_W, pairWeight - leftW);
+    d.w[d.idx] = Math.round(leftW * 100) / 100;
+    d.w[d.idx + 1] = Math.round(rightW * 100) / 100;
+    localWidthsRef.current = d.w;
     const final = d.w.slice();
     setLocalWidths(final);
     onWidthsChange?.(final);
@@ -159,13 +172,42 @@ export function ColumnsBlockView({
 
   const startDrag = useCallback((idx: number) => (e: React.PointerEvent) => {
     e.preventDefault();
-    const container = (e.currentTarget as HTMLElement).closest(".editor-columns") as HTMLElement | null;
-    const trackW = container ? container.getBoundingClientRect().width : 640;
+    const rowEl = columnsRef.current;
+    if (!rowEl) return;
+    const rowRect = rowEl.getBoundingClientRect();
+    const c0 = colElRefs.current[0];
+    const leftCol = colElRefs.current[idx];
+    const rightCol = colElRefs.current[idx + 1];
+    const cs = rowEl.ownerDocument.defaultView?.getComputedStyle(rowEl);
+    const padL = parseFloat(cs?.paddingLeft ?? "0") || 0;
+    const padR = parseFloat(cs?.paddingRight ?? "0") || 0;
+    // Container content box (columns start here). The row has its own padding.
+    const contentLeft = rowRect.left + padL;
+    const contentRight = rowRect.right - padR;
+    // Gap between adjacent columns (flex gap).
+    const gap =
+      c0 && leftCol && rightCol
+        ? Math.max(0, rightCol.getBoundingClientRect().left - leftCol.getBoundingClientRect().right)
+        : 0;
     const n = localColsRef.current.length;
     const w = colWidths(localWidthsRef.current, n);
-    const left = w[idx];
-    const right = w[idx + 1] ?? left;
-    dragRef.current = { idx, startX: e.clientX, left, right, pair: left + right, trackW, w };
+    dragRef.current = {
+      idx,
+      startX: e.clientX,
+      contentLeft,
+      contentRight,
+      gap: gap || 0,
+      leftPx: leftCol ? leftCol.getBoundingClientRect().width : 0,
+      rightPx: rightCol ? rightCol.getBoundingClientRect().width : 0,
+      w,
+    };
+    // Grab pointer capture on the divider so we keep receiving pointermove even if
+    // the cursor leaves the thin handle — makes the drag reliable and smooth.
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {
+      /* ignore */
+    }
     // During the drag show a full-window resize cursor so the gesture reads clearly.
     document.body.style.cursor = "col-resize";
     document.addEventListener("pointermove", onDrag);
