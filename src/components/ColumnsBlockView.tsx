@@ -53,15 +53,12 @@ export function ColumnsBlockView({
   const dragRef = useRef<{
     idx: number;
     startX: number;
-    // The divider sits on the boundary between col idx (left) and idx+1 (right). We
-    // drive the divider's PIXEL x so it lands exactly under the cursor: set the left
-    // column's width to (cursor - columnContentLeft) and let the right column fill
-    // the remainder. On release we convert these pixel widths back to flex-grow
-    // weights for persistence.
-    contentLeft: number; // container content box left (where the row's columns start)
-    contentRight: number; // container content box right
+    // Dragging ONLY rebalances the two columns the divider separates. We preserve the
+    // pair's combined pixel width (incl. the gap between them) so the other columns
+    // don't move; the left column grows and the right shrinks by the same amount.
+    pairLeft: number; // left column's content-left x on the page at drag start
+    pairPx: number; // combined width of the two columns, incl. the gap between them
     gap: number; // flex gap between columns (px)
-    // Final pixel widths captured at release, converted to weights in endDrag.
     leftPx: number;
     rightPx: number;
     // Weights across the whole row, reused; [idx]/[idx+1] are updated on release.
@@ -132,25 +129,27 @@ export function ColumnsBlockView({
     }
   }, []);
 
-  // Drag a divider to move the boundary between the two columns it separates. We set
-  // the LEFT column's width directly in PIXELS so the divider lands exactly under the
-  // cursor (真跟手), and the right column flex-fills the rest. We apply synchronously
-  // (not deferred to rAF) so there's no extra frame of latency.
+  // Drag a divider to move the boundary between the two columns it separates. Only
+  // those two columns change: the left column's pixel width is driven by the cursor
+  // (the divider center lands under it), and the right column takes the remainder of
+  // the pair's combined width — so the OTHER columns stay exactly where they were.
+  // Applied synchronously (no rAF) and via direct DOM (no React re-render).
   const onDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
     if (d.idx + 1 >= d.w.length) return; // last column has no divider
     const curX = e.clientX;
     const minPx = 48;
-    // The divider is centered in the gap (gap/2 beyond the column's right edge), so
-    // the left column's right edge must sit gap/2 BEFORE the cursor for the divider
-    // center to land under it.
-    let leftPx = curX - d.contentLeft - d.gap / 2;
-    const maxLeft = d.contentRight - d.contentLeft - d.gap - minPx;
+    // Divider center = left column's right edge + gap/2. So the left column width =
+    // cursor - left column's left edge - gap/2.
+    let leftPx = curX - d.pairLeft - d.gap / 2;
+    // Clamp so the left column keeps a min width and the right column keeps a min too
+    // (it gets pairPx - gap - leftPx).
+    const maxLeft = d.pairPx - d.gap - minPx;
     leftPx = Math.max(minPx, Math.min(maxLeft, leftPx));
     d.leftPx = leftPx;
-    d.rightPx = d.contentRight - d.contentLeft - d.gap - leftPx;
-    // Apply pixel widths directly for a 1:1 divider-to-cursor mapping.
+    d.rightPx = d.pairPx - d.gap - leftPx;
+    // Apply fixed pixel widths to ONLY the two columns; leave the rest untouched.
     const leftEl = colElRefs.current[d.idx];
     const rightEl = colElRefs.current[d.idx + 1];
     if (leftEl) {
@@ -158,8 +157,8 @@ export function ColumnsBlockView({
       leftEl.style.width = `${leftPx}px`;
     }
     if (rightEl) {
-      rightEl.style.flex = "1 1 0";
-      rightEl.style.width = "";
+      rightEl.style.flex = "none";
+      rightEl.style.width = `${d.rightPx}px`;
     }
     updatePctBadges(d);
   }, [updatePctBadges]);
@@ -202,31 +201,23 @@ export function ColumnsBlockView({
     e.preventDefault();
     const rowEl = columnsRef.current;
     if (!rowEl) return;
-    const rowRect = rowEl.getBoundingClientRect();
-    const c0 = colElRefs.current[0];
     const leftCol = colElRefs.current[idx];
     const rightCol = colElRefs.current[idx + 1];
-    const cs = rowEl.ownerDocument.defaultView?.getComputedStyle(rowEl);
-    const padL = parseFloat(cs?.paddingLeft ?? "0") || 0;
-    const padR = parseFloat(cs?.paddingRight ?? "0") || 0;
-    // Container content box (columns start here). The row has its own padding.
-    const contentLeft = rowRect.left + padL;
-    const contentRight = rowRect.right - padR;
-    // Gap between adjacent columns (flex gap).
-    const gap =
-      c0 && leftCol && rightCol
-        ? Math.max(0, rightCol.getBoundingClientRect().left - leftCol.getBoundingClientRect().right)
-        : 0;
+    if (!leftCol || !rightCol) return;
+    const lr = leftCol.getBoundingClientRect();
+    const rr = rightCol.getBoundingClientRect();
+    // Gap between the two columns (flex gap).
+    const gap = Math.max(0, rr.left - lr.right);
     const n = localColsRef.current.length;
     const w = colWidths(localWidthsRef.current, n);
     dragRef.current = {
       idx,
       startX: e.clientX,
-      contentLeft,
-      contentRight,
+      pairLeft: lr.left,
+      pairPx: lr.width + gap + rr.width,
       gap: gap || 0,
-      leftPx: leftCol ? leftCol.getBoundingClientRect().width : 0,
-      rightPx: rightCol ? rightCol.getBoundingClientRect().width : 0,
+      leftPx: lr.width,
+      rightPx: rr.width,
       w,
     };
     // Grab pointer capture on the divider so we keep receiving pointermove even if
