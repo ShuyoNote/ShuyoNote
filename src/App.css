@@ -3242,12 +3242,15 @@ select.prop-value {
   border-radius: var(--radius-sm);
   padding: 6px 8px;
   background: transparent;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .editor-column:hover,
 .editor-column:focus-within {
   background: var(--surface);
+  /* A hairline ring so each card's outline (and the gap between two adjacent cards)
+     stays visible against a same-colour page background when the cards are shown. */
+  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
 /* Resizable divider between columns (drag to adjust column widths). It sits on the
