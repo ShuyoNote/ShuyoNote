@@ -202,26 +202,13 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
       const el = editor.getElementByKey(key);
       if (el) {
         const rect = el.getBoundingClientRect();
-        // For a column 2+, "left of the empty line" is the inter-column gap that also
-        // hosts the col-resize divider handle. If we placed the "+" there it would sit
-        // ON that handle and steal its drag (the "+" is z-index 25, above the handle's
-        // 6). Clamp so the "+" never extends left of this block's own content edge —
-        // the first column (no handle to its left) keeps the wide gutter; later columns
-        // pull the "+" just inside their card.
-        let left = Math.max(4, rect.left - gutterOffset);
+        // Unify the "+" across ALL columns: place it at the content's own left edge
+        // (where the first character / caret sits), not in the page gutter. This keeps
+        // every column's "+" in the same consistent spot and — because that spot is
+        // inside the column, not the inter-column gap — it never overlaps the col-resize
+        // divider handle either (the "+" is z-index 25, above the handle's 6).
         const ownCol = el.closest(".editor-column");
-        if (ownCol) {
-          const colRect = ownCol.getBoundingClientRect();
-          // A col-resize divider sits in the gap to the LEFT of a column 2+. If we
-          // found one whose right edge abuts this column, the "+" must not cross it.
-          const hasLeftDivider = Array.from(
-            el.ownerDocument.querySelectorAll(".editor-column-divider"),
-          ).some((d) => {
-            const dr = d.getBoundingClientRect();
-            return dr.right <= colRect.left + 1 && dr.right >= colRect.left - 20;
-          });
-          if (hasLeftDivider) left = Math.max(left, rect.left);
-        }
+        const left = ownCol ? rect.left : Math.max(4, rect.left - gutterOffset);
         pendingRef.current = { top: rect.top, left, key };
         showTimerRef.current = window.setTimeout(() => {
           showTimerRef.current = null;
