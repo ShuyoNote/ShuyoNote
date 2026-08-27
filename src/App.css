@@ -5422,15 +5422,11 @@ p:has(> .editor-drawing-container) {
   background: var(--surface);
 }
 
-/* Control bar: floats just ABOVE the drawing box (outside the canvas), shown on
-   hover (Feishu-style). Because it sits outside `overflow:hidden`, it must be
-   anchored to the outer wrap and pulled up by its own height so it never
-   overlaps the drawing canvas.
-   - `bottom: 100%` (NOT `calc(100% + 6px)`): a gap between the bar and the box
-     creates a dead-zone where the cursor is over neither, so the wrap's `:hover`
-     drops and the bar goes `pointer-events:none` before a button can be clicked.
-     Sitting flush means moving the cursor straight up from the box onto the bar
-     keeps `:hover` active the whole way.
+/* Control bar: pinned to the TOP INSIDE the drawing box (over the canvas), shown on
+   hover (Feishu-style). Because it lives inside `.inline-drawing` (overflow hidden),
+   it never overflows; it floats over the top of the canvas.
+   - `top: 0` (not above the box) so it sits inside the block's top edge — the cursor
+     moving onto the bar keeps the wrap's `:hover` active (no dead-zone gap).
    - Colors match the app's other popup toolbars (slash menu / history popover):
      a neutral `--surface` panel, `--border` outline and `--shadow-md`, with
      borderless transparent buttons that highlight on hover. No accent tint. */
@@ -5445,8 +5441,9 @@ p:has(> .editor-drawing-container) {
   box-shadow: var(--shadow-md);
   flex-wrap: wrap;
   position: absolute;
-  bottom: 100%;
+  top: 0;
   left: 0;
+  right: 0;
   z-index: 8;
   transition: opacity 0.15s ease;
 }

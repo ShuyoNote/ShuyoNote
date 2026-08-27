@@ -604,18 +604,18 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
 
   return (
     <div className="inline-drawing-wrap" contentEditable={false}>
-      <div className="inline-drawing-bar">
-        <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
-        <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomOut} title="缩小"><ZoomOutIcon /></button>
-        <button className="inline-drawing-btn inline-drawing-pct" onClick={zoomReset} title="重置为 100%">{zoomPct}%</button>
-        <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomIn} title="放大"><ZoomInIcon /></button>
-        <button className="inline-drawing-btn" onClick={fitNow} title="适配内容">◎</button>
-        <button className="inline-drawing-btn" onClick={downloadSvg} title="导出 SVG">⇩</button>
-        <button className="inline-drawing-btn" onClick={downloadPng} title="导出 PNG">⭳</button>
-        <button className="inline-drawing-btn" onClick={copyPng} title="复制">⧉</button>
-        {err ? <span className="inline-drawing-err">{err}</span> : null}
-      </div>
       <div className="inline-drawing">
+        <div className="inline-drawing-bar">
+          <button className="inline-drawing-btn" onClick={fullscreen} title="编辑（全屏）">编辑</button>
+          <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomOut} title="缩小"><ZoomOutIcon /></button>
+          <button className="inline-drawing-btn inline-drawing-pct" onClick={zoomReset} title="重置为 100%">{zoomPct}%</button>
+          <button className="inline-drawing-btn inline-drawing-zoom-btn" onClick={zoomIn} title="放大"><ZoomInIcon /></button>
+          <button className="inline-drawing-btn" onClick={fitNow} title="适配内容">◎</button>
+          <button className="inline-drawing-btn" onClick={downloadSvg} title="导出 SVG">⇩</button>
+          <button className="inline-drawing-btn" onClick={downloadPng} title="导出 PNG">⭳</button>
+          <button className="inline-drawing-btn" onClick={copyPng} title="复制">⧉</button>
+          {err ? <span className="inline-drawing-err">{err}</span> : null}
+        </div>
         <div className="inline-drawing-canvas" style={{ height }}>
           <InlineExcalidraw
             // Excalidraw only reads `initialData` on MOUNT; it won't reload when the
