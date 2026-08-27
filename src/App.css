@@ -3234,23 +3234,23 @@ select.prop-value {
   flex: 1 1 0;
   min-width: 0;
   position: relative;
-  /* Borderless rounded card; the inter-column gap + background reads as separation
-     (the drag divider is the only extra boundary, shown on hover). The card's
-     background is only shown while the cursor is over the column (or it's focused) —
-     otherwise the columns sit transparent on the page so the block blends in. */
+  /* Borderless rounded card; the inter-column gap + background reads as separation.
+     The card's background is only shown while the cursor is over the column (or it's
+     focused) — otherwise the columns sit transparent on the page so the block blends
+     in. No outline is ever drawn (neither idle nor hovered). */
   border: 0;
   border-radius: var(--radius-sm);
   padding: 6px 8px;
   background: transparent;
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  transition: background var(--transition-fast);
 }
 
 .editor-column:hover,
 .editor-column:focus-within {
-  background: var(--surface);
-  /* Only when the cursor is over (or the column is focused) does the card get its
-     hairline outline + slight lift — idle state stays entirely clean/borderless. */
-  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(16, 24, 40, 0.06);
+  /* On hover the card fills with a shade that contrasts the page background (--bg),
+     so the page-coloured GAP between two adjacent cards reads clearly — separation
+     comes from colour contrast, not a border. */
+  background: var(--card-bg);
 }
 
 /* Resizable divider between columns (drag to adjust column widths). It sits on the
