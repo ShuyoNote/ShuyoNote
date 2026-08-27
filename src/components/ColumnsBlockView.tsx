@@ -247,7 +247,21 @@ export function ColumnsBlockView({
   }, [onDrag, endDrag, updatePctBadges]);
 
   return (
-    <div className={`editor-columns${dragWidths !== null ? " is-dragging" : ""}`} data-count={String(localCols.length)} ref={columnsRef}>
+    <div
+      className={`editor-columns${dragWidths !== null ? " is-dragging" : ""}`}
+      data-count={String(localCols.length)}
+      ref={columnsRef}
+    >
+      {localCols.length < MAX_COLS && (
+        <button
+          className="editor-columns-add"
+          data-tooltip="新增分栏"
+          aria-label="新增分栏"
+          onClick={addColumn}
+        >
+          <span className="editor-columns-add-icon">＋</span>
+        </button>
+      )}
       {localCols.map((c, i) => {
         const w = shareWeight(localWidths, i, localCols.length);
         // Single source of truth: while dragWidths is set, columns are laid out by

@@ -3215,7 +3215,69 @@ select.prop-value {
   border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
-  overflow: hidden;
+}
+
+/* Floating "新增分栏" add button, centered above the block (shown on hover). A blue
+   circular + whose tooltip reads 新增分栏 — matches the reference screenshot. */
+.editor-columns-add {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 8;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.editor-columns:hover .editor-columns-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editor-columns:hover .editor-columns-add:hover {
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+/* Tooltip above the + button. */
+.editor-columns-add::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.editor-columns-add:hover::after {
+  opacity: 1;
+}
+
+.editor-columns-add-icon {
+  font-size: 17px;
+  line-height: 1;
 }
 
 /* Block host for a Route-B columns node: full-width block; the styled flex
