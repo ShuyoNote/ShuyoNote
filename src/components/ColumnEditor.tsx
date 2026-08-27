@@ -15,6 +15,7 @@ import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { EDITOR_NODES, editorTheme, ALLOWED_NODE_TYPES } from "../editor/config";
 import { SlashMenuPlugin } from "../editor/plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "../editor/plugins/InsertShortcutPlugin";
+import { BlockInsertPlugin } from "../editor/plugins/BlockInsertPlugin";
 import { lexicalStateValid } from "../lib/lexicalValidate";
 
 // A single column editor (Route B): one NESTED Lexical editor sharing the page
@@ -34,8 +35,6 @@ import { lexicalStateValid } from "../lib/lexicalValidate";
 // steal focus back from the column — so typing/clicking inside a column would go
 // to the page editor instead ("分栏不能输入"). Setting `parentEditor` (via
 // createEditor) + LexicalNestedComposer keeps Lexical's nested-editor semantics.
-
-const COLUMN_PLACEHOLDER = "输入 / 选择块…";
 
 export const ColumnEditor = memo(function ColumnEditor({
   column,
@@ -113,7 +112,7 @@ export const ColumnEditor = memo(function ColumnEditor({
       <LexicalNestedComposer initialEditor={editor}>
         <RichTextPlugin
           contentEditable={<ContentEditable className="editor-column-editable" />}
-          placeholder={<div className="editor-column-placeholder">{COLUMN_PLACEHOLDER}</div>}
+          placeholder={null}
           ErrorBoundary={(props) => <div className="editor-error">{props.children}</div>}
         />
         <HistoryPlugin />
@@ -124,6 +123,7 @@ export const ColumnEditor = memo(function ColumnEditor({
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <InsertShortcutPlugin />
+        <BlockInsertPlugin pageId={pageId} gutterOffset={4} />
         <OnChangePlugin onChange={onChange} />
       </LexicalNestedComposer>
     </div>

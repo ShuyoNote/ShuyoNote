@@ -3382,28 +3382,6 @@ select.prop-value {
   word-break: break-word;
 }
 
-.editor-column-placeholder {
-  position: absolute;
-  color: var(--text-faint);
-  font-size: 14px;
-  pointer-events: none;
-  top: 0;
-  left: 0;
-  /* The hint only appears when the cursor is over the column or the column editor
-     has focus; otherwise it stays hidden so empty columns feel clean. */
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.editor-column:hover .editor-column-placeholder,
-.editor-column:focus-within .editor-column-placeholder {
-  opacity: 1;
-}
-
-.editor-column {
-  position: relative;
-}
-
 .editor-column-error {
   color: var(--danger);
   font-size: 12px;

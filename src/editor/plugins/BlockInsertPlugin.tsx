@@ -111,7 +111,7 @@ function openAiDraft(editor: ReturnType<typeof useLexicalComposerContext>[0], ke
   editor.focus();
 }
 
-export function BlockInsertPlugin({ pageId }: { pageId: string }) {
+export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pageId: string; gutterOffset?: number }) {
   const [editor] = useLexicalComposerContext();
   const options = useMemo(() => makeOptions(pageId), [pageId]);
   const [handle, setHandle] = useState<{ top: number; left: number; key: string } | null>(null);
@@ -165,8 +165,10 @@ export function BlockInsertPlugin({ pageId }: { pageId: string }) {
         const rect = el.getBoundingClientRect();
         // Place the "+" at the same gutter position as the ⋮⋮ block drag handle:
         // `rect.left - HANDLE_OFFSET` (48px, flush against the content column).
+        // `gutterOffset` lets a nested column editor pull it in (the column is only
+        // ~170px wide, so a full 48px gutter would push the "+" outside/off-viewport).
         // Clamp so it never goes off the viewport.
-        const left = Math.max(4, rect.left - HANDLE_OFFSET);
+        const left = Math.max(4, rect.left - gutterOffset);
         setHandle({ top: rect.top, left, key });
       }
     };
