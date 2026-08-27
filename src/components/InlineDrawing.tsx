@@ -95,6 +95,13 @@ function ZoomOutIcon({ size = 15 }: { size?: number }) {
 
 export function InlineDrawing({ node }: { node: DrawingNode }) {
   const apiRef = useRef<any>(null);
+  // The DecoratorNode is replaced (via getWritable()) when a save updates the blob
+  // hash / height, so `node` is a NEW object each time. Callbacks created with
+  // useCallback close over the FIRST `node`; keeping a ref that always points at the
+  // CURRENT node lets fit/view logic read fresh data (hash, height, zoom) after a
+  // fullscreen edit-and-save — otherwise the embed restores the old scene / height.
+  const nodeRef = useRef(node);
+  nodeRef.current = node;
   const liveRef = useRef<SceneSnapshot | null>(null);
   // `initialData` is set once and never mutated; Excalidraw re-initializes loops if it changes.
   const [initialData, setInitialData] = useState<SceneSnapshot | null>(null);
@@ -177,6 +184,18 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
         } catch (e) {
           if (alive) setErr(String(e));
         }
+      } else {
+        // No blob hash (a brand-new empty block): if a scene is already loaded (e.g.
+        // a fullscreen save just replaced the node and the reader re-rendered with a
+        // transient empty hash), keep the existing content instead of blanking it.
+        const existing = liveRef.current;
+        if (existing && Array.isArray(existing.elements) && existing.elements.length > 0) {
+          if (alive) {
+            setInitialData(existing);
+            setReady(true);
+          }
+          return;
+        }
       }
       sceneCache.set(hash ?? "", base);
       const scene: SceneSnapshot = { elements: base.elements, appState: { ...base.appState, ...savedView }, files: base.files };
@@ -212,7 +231,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const lv = lastViewRef.current;
       if (lv.zoom === zF && lv.scrollX === sxF && lv.scrollY === syF) return;
       lastViewRef.current = { zoom: zF, scrollX: sxF, scrollY: syF };
-      viewCache.set(node.__hash ?? "", { zoom: zF, scrollX: sxF, scrollY: syF });
+      viewCache.set(nodeRef.current.__hash ?? "", { zoom: zF, scrollX: sxF, scrollY: syF });
       const editor = useEditorStore.getState().editor;
       if (!editor) return;
       editor.update(() => {
@@ -293,8 +312,10 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     const a = apiRef.current;
     const size = getContentSize();
     if (!a || !size || size.w <= 0 || size.h <= 0) return;
-    // Respect a user-set height: never override what they dragged.
-    if (node.__height != null) return;
+    // Respect a user-set height: never override what they dragged. Read the CURRENT
+    // node (via ref) — after a fullscreen save the node is replaced, and a stale
+    // closure would otherwise see the old height/hash.
+    if (nodeRef.current.__height != null) return;
     try {
       const st = a.getAppState();
       // scrollToContent({fitToContent:true}) already applied the fitted zoom; read
@@ -310,7 +331,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     } catch {
       /* best-effort */
     }
-  }, [getContentSize, node.__height]);
+  }, [getContentSize]);
 
   // Zoom to the target factor and CENTER the content without auto-fitting. Excalidraw's
   // scene→viewport mapping is `sceneX = scrollX + canvasX - canvasX/zoom`, so to place
@@ -514,6 +535,13 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       <div className="inline-drawing">
         <div className="inline-drawing-canvas" style={{ height }}>
           <InlineExcalidraw
+            // Excalidraw only reads `initialData` on MOUNT; it won't reload when the
+            // prop changes. After a fullscreen edit-and-save the blob hash (and thus
+            // the scene) changes — keying by hash forces Excalidraw to remount with
+            // the NEW scene, so the read-only embed actually shows the updated drawing
+            // (then auto-fits on load). Without this, the memoized component is reused
+            // and keeps rendering the previous (now-stale) empty canvas.
+            key={hash}
             initialData={initialData}
             viewMode={true}
             isDark={isDark}
