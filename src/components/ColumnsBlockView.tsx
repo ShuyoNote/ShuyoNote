@@ -46,27 +46,20 @@ export function ColumnsBlockView({
   // columns don't shift at all. Total is preserved, so nothing overflows.
   const [localCols, setLocalCols] = useState<string[]>(cols);
   const [localWidths, setLocalWidths] = useState<number[]>(widths);
-  // While a divider is being dragged, each column's top-right shows its current
-  // share (percentage). We set this once on drag-start/end (cheap) and update the
-  // badge text via direct DOM during the drag (no re-render per move).
-  const [dragging, setDragging] = useState(false);
+  // While a divider is dragged, each column's top-right shows its current share (%).
+  // The whole drag is driven by React state (pixel widths) so the DOM and React never
+  // fight — a single source of truth. `dragWidths` is null when idle.
+  const [dragWidths, setDragWidths] = useState<number[] | null>(null);
+  const dragWidthsRef = useRef<number[] | null>(null);
   const dragRef = useRef<{
     idx: number;
     startX: number;
-    // Dragging ONLY rebalances the two columns the divider separates. We preserve the
-    // pair's combined pixel width (incl. the gap between them) so the other columns
-    // don't move; the left column grows and the right shrinks by the same amount.
     startLeftPx: number; // left column's pixel width at drag start
     pairPx: number; // combined width of the two columns, incl. the gap between them
+    pairWeight: number; // combined flex-grow weight of the two columns at drag start
     gap: number; // flex gap between columns (px)
-    leftPx: number;
-    rightPx: number;
-    // Weights across the whole row, reused; [idx]/[idx+1] are updated on release.
-    w: number[];
   } | null>(null);
-  // Direct DOM refs so a drag can move the divider WITHOUT a React re-render (the
-  // nested column editors are heavy; re-rendering them every pointermove is what
-  // made dragging feel sluggish).
+  // Direct DOM refs; colElRefs is only used to snapshot widths at drag start.
   const columnsRef = useRef<HTMLDivElement | null>(null);
   const colElRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pctElRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -76,7 +69,12 @@ export function ColumnsBlockView({
   localWidthsRef.current = localWidths;
 
   useEffect(() => { setLocalCols(cols); }, [cols]);
-  useEffect(() => { setLocalWidths(widths); }, [widths]);
+  useEffect(() => {
+    // Guard against a malformed widths prop (e.g. nulls from the node) so a bad value
+    // never collapses the columns.
+    const valid = Array.isArray(widths) ? widths.map((x) => (Number.isFinite(x) && x > 0 ? x : 1)) : [];
+    if (valid.length > 0) setLocalWidths(valid);
+  }, [widths]);
 
   const apply = useCallback((next: string[], w?: number[]) => {
     setLocalCols(next);
@@ -109,65 +107,51 @@ export function ColumnsBlockView({
     apply(next, w);
   }, [apply]);
 
-  // Update the per-column share badges (top-right %) from the live drag widths,
-  // writing directly to their DOM so no React re-render happens per pointermove.
-  const updatePctBadges = useCallback((d: NonNullable<typeof dragRef.current>) => {
-    const n = d.w.length;
-    // Convert the dragged pair's pixels back to weights using the same mapping as
-    // endDrag, so the badge reflects the final persisted share.
-    const pairPx = Math.max(1, d.leftPx + d.rightPx);
-    const pairWeight = d.w[d.idx] + d.w[d.idx + 1];
-    const weights = d.w.slice();
-    if (d.idx + 1 < n) {
-      weights[d.idx] = Math.max(MIN_W, (d.leftPx / pairPx) * pairWeight);
-      weights[d.idx + 1] = Math.max(MIN_W, pairWeight - weights[d.idx]);
+  // Update the per-column share badges (top-right %) from the actual rendered pixel
+  // widths (read from the DOM) — always accurate, no React re-render needed.
+  const updatePctBadges = useCallback(() => {
+    const n = localColsRef.current.length;
+    const pxW: number[] = [];
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const el = colElRefs.current[i];
+      const w = el ? el.getBoundingClientRect().width : 0;
+      pxW.push(w);
+      total += w;
     }
-    const total = weights.reduce((a, b) => a + b, 0) || 1;
+    total = total || 1;
     for (let i = 0; i < n; i++) {
       const el = pctElRefs.current[i];
-      if (el) el.textContent = `${Math.round((weights[i] / total) * 100)}%`;
+      if (el && pxW[i]) el.textContent = `${Math.round((pxW[i] / total) * 100)}%`;
     }
   }, []);
 
-  // Drag a divider to move the boundary between the two columns it separates. Only
-  // those two columns change: the left column's pixel width is driven by the cursor
-  // (the divider center lands under it), and the right column takes the remainder of
-  // the pair's combined width — so the OTHER columns stay exactly where they were.
-  // Applied synchronously (no rAF) and via direct DOM (no React re-render).
+  // Drag a divider to move the boundary between the two columns it separates. Only the
+  // two columns it separates change: the left column's pixel width is driven by the
+  // cursor delta (no snap — uses the press point), the right column takes the rest of
+  // the pair's combined width. Everything is applied via React state (`dragWidths`),
+  // so the DOM and React never disagree.
   const onDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
-    if (d.idx + 1 >= d.w.length) return; // last column has no divider
+    if (d.idx + 1 >= localColsRef.current.length) return;
+    const base = dragWidthsRef.current;
+    if (!base) return;
     const curX = e.clientX;
     const minPx = 48;
-    // Apply the cursor DELTA from the press point to the left column's starting width
-    // (not re-deriving from an absolute edge), so pressing anywhere on the 10px
-    // divider — even off its center — never causes a snap/jump on the first move.
     let leftPx = d.startLeftPx + (curX - d.startX);
-    // Clamp so the left column keeps a min width and the right column keeps a min too
-    // (it gets pairPx - gap - leftPx).
     const maxLeft = d.pairPx - d.gap - minPx;
     leftPx = Math.max(minPx, Math.min(maxLeft, leftPx));
-    d.leftPx = leftPx;
-    d.rightPx = d.pairPx - d.gap - leftPx;
-    // Apply fixed pixel widths to ONLY the two columns; leave the rest untouched.
-    const leftEl = colElRefs.current[d.idx];
-    const rightEl = colElRefs.current[d.idx + 1];
-    if (leftEl) {
-      leftEl.style.flex = "none";
-      leftEl.style.width = `${leftPx}px`;
-    }
-    if (rightEl) {
-      rightEl.style.flex = "none";
-      rightEl.style.width = `${d.rightPx}px`;
-    }
-    updatePctBadges(d);
-  }, [updatePctBadges]);
+    const pxs = base.slice();
+    pxs[d.idx] = leftPx;
+    pxs[d.idx + 1] = d.pairPx - d.gap - leftPx;
+    dragWidthsRef.current = pxs;
+    setDragWidths(pxs);
+  }, []);
 
   const endDrag = useCallback((e: PointerEvent) => {
     const d = dragRef.current;
     dragRef.current = null;
-    setDragging(false);
     document.body.style.cursor = "";
     document.removeEventListener("pointermove", onDrag);
     document.removeEventListener("pointerup", endDrag);
@@ -179,23 +163,25 @@ export function ColumnsBlockView({
       /* ignore */
     }
     if (!d) return;
-    // Clear the ad-hoc pixel style, convert back to flex-grow weights, and persist.
-    const leftEl = colElRefs.current[d.idx];
-    const rightEl = colElRefs.current[d.idx + 1];
-    if (leftEl) { leftEl.style.width = ""; leftEl.style.flex = ""; }
-    if (rightEl) { rightEl.style.width = ""; rightEl.style.flex = ""; }
-    // Pixel widths -> weights: map the pair's pixel space onto its weight total, so
-    // the other columns keep their relative share.
-    const pairPx = Math.max(1, d.leftPx + d.rightPx);
-    const pairWeight = d.w[d.idx] + d.w[d.idx + 1];
-    const leftW = Math.max(MIN_W, (d.leftPx / pairPx) * pairWeight);
+    // Convert the final pixel widths (from the drag) back to flex-grow weights and
+    // persist. Use the pair weight snapshotted at drag start (the local state may
+    // have been overwritten by the node round-trip). Only the two dragged columns'
+    // weights change; the others keep their current weights.
+    const pxs = dragWidthsRef.current ?? colWidths(localWidthsRef.current, localColsRef.current.length);
+    const pairPx = Math.max(1, pxs[d.idx] + pxs[d.idx + 1]);
+    const pairWeight = d.pairWeight > 0 ? d.pairWeight : 2;
+    const leftW = Math.max(MIN_W, (pxs[d.idx] / pairPx) * pairWeight);
     const rightW = Math.max(MIN_W, pairWeight - leftW);
-    d.w[d.idx] = Math.round(leftW * 100) / 100;
-    d.w[d.idx + 1] = Math.round(rightW * 100) / 100;
-    localWidthsRef.current = d.w;
-    const final = d.w.slice();
-    setLocalWidths(final);
-    onWidthsChange?.(final);
+    // Build next weights from a clean set (each valid, min 1 if unset).
+    const cur = colWidths(localWidthsRef.current, localColsRef.current.length);
+    const next = cur.map((x) => (Number.isFinite(x) && x > 0 ? x : 1));
+    next[d.idx] = Math.round(leftW * 100) / 100;
+    next[d.idx + 1] = Math.round(rightW * 100) / 100;
+    localWidthsRef.current = next;
+    dragWidthsRef.current = null;
+    setDragWidths(null);
+    setLocalWidths(next);
+    onWidthsChange?.(next);
   }, [onDrag, onWidthsChange]);
 
   const startDrag = useCallback((idx: number) => (e: React.PointerEvent) => {
@@ -210,16 +196,19 @@ export function ColumnsBlockView({
     // Gap between the two columns (flex gap).
     const gap = Math.max(0, rr.left - lr.right);
     const n = localColsRef.current.length;
-    const w = colWidths(localWidthsRef.current, n);
+    // Snapshot every column's current pixel width so non-dragged columns keep their
+    // exact width (only the pair rebalances).
+    const pxs: number[] = new Array(n);
+    for (let i = 0; i < n; i++) pxs[i] = colElRefs.current[i]?.getBoundingClientRect().width ?? 0;
+    dragWidthsRef.current = pxs;
+    setDragWidths(pxs);
     dragRef.current = {
       idx,
       startX: e.clientX,
       startLeftPx: lr.width,
       pairPx: lr.width + gap + rr.width,
+      pairWeight: (localWidthsRef.current[idx] ?? 1) + (localWidthsRef.current[idx + 1] ?? 1),
       gap: gap || 0,
-      leftPx: lr.width,
-      rightPx: rr.width,
-      w,
     };
     // Grab pointer capture on the divider so we keep receiving pointermove even if
     // the cursor leaves the thin handle — makes the drag reliable and smooth.
@@ -228,13 +217,8 @@ export function ColumnsBlockView({
     } catch {
       /* ignore */
     }
-    // Show the per-column share badges for the duration of the drag. The initial
-    // fill is deferred to the next animation frame so the freshly-rendered badge
-    // nodes are mounted before we write their text.
-    setDragging(true);
-    requestAnimationFrame(() => {
-      if (dragRef.current) updatePctBadges(dragRef.current);
-    });
+    // Fill the share badges once the drag widths have been applied (next frame).
+    requestAnimationFrame(() => updatePctBadges());
     // During the drag show a full-window resize cursor so the gesture reads clearly.
     document.body.style.cursor = "col-resize";
     document.addEventListener("pointermove", onDrag);
@@ -242,17 +226,24 @@ export function ColumnsBlockView({
   }, [onDrag, endDrag, updatePctBadges]);
 
   return (
-    <div className={`editor-columns${dragging ? " is-dragging" : ""}`} data-count={String(localCols.length)} ref={columnsRef}>
+    <div className={`editor-columns${dragWidths !== null ? " is-dragging" : ""}`} data-count={String(localCols.length)} ref={columnsRef}>
       {localCols.map((c, i) => {
         const w = shareWeight(localWidths, i, localCols.length);
+        // Single source of truth: while dragWidths is set, columns are laid out by
+        // exact pixel widths; otherwise by flex-grow weights. React owns both, so the
+        // DOM and React never disagree (no jump on re-render).
+        const isDrag = dragWidths !== null;
+        const style = isDrag
+          ? { flex: "none", width: `${dragWidths![i]}px` }
+          : { flex: `${w} 1 0` };
         return (
           <div
             key={`col-${i}`}
             className="editor-column"
-            style={{ flex: `${w} 1 0` }}
+            style={style}
             ref={(el) => { colElRefs.current[i] = el; }}
           >
-            {dragging && (
+            {dragWidths !== null && (
               <div
                 className="editor-column-pct"
                 ref={(el) => { pctElRefs.current[i] = el; }}

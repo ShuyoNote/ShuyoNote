@@ -11,7 +11,7 @@ import {
   type Spread,
 } from "lexical";
 import type { JSX } from "react";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useCallback } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { useNotes } from "../../store/notes";
 
@@ -143,19 +143,29 @@ function ColumnsBlockInner({ cols, widths, nodeKey }: { cols: string[]; widths: 
   const [editor] = useLexicalComposerContext();
   const pageId = useNotes((s) => s.currentId) ?? "";
 
-  const handleChange = (next: string[]) => {
-    editor.update(() => {
-      const n = $getNodeByKey(nodeKey);
-      if (n && $isColumnsBlockNode(n)) n.setCols(next.slice());
-    });
-  };
+  // Stable handlers so ColumnEditor (memoized) doesn't re-render when the parent
+  // ColumnsBlockView re-renders (e.g. during a column-width drag). Otherwise the new
+  // onChange/onWidthsChange refs would invalidate memo and re-render the nested
+  // editors every drag frame — the source of the drag lag.
+  const handleChange = useCallback(
+    (next: string[]) => {
+      editor.update(() => {
+        const n = $getNodeByKey(nodeKey);
+        if (n && $isColumnsBlockNode(n)) n.setCols(next.slice());
+      });
+    },
+    [editor, nodeKey],
+  );
 
-  const handleWidths = (next: number[]) => {
-    editor.update(() => {
-      const n = $getNodeByKey(nodeKey);
-      if (n && $isColumnsBlockNode(n)) n.setWidths(next.slice());
-    });
-  };
+  const handleWidths = useCallback(
+    (next: number[]) => {
+      editor.update(() => {
+        const n = $getNodeByKey(nodeKey);
+        if (n && $isColumnsBlockNode(n)) n.setWidths(next.slice());
+      });
+    },
+    [editor, nodeKey],
+  );
 
   return (
     <Suspense fallback={<div className="editor-columns editor-columns-loading">加载分栏…</div>}>
