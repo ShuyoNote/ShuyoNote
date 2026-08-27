@@ -3242,15 +3242,28 @@ select.prop-value {
   border-radius: var(--radius-sm);
   padding: 6px 8px;
   background: transparent;
+  /* The RichTextPlugin ErrorBoundary wraps column content in a `.editor-error`
+     container whose default color is --danger (red). Force the card's text back to
+     the normal block color so columns read the same as regular content — and the
+     red only ever appears if there really is an error. */
+  color: var(--text);
   transition: background var(--transition-fast);
 }
 
 .editor-column:hover,
 .editor-column:focus-within {
-  /* On hover the card fills with a shade that contrasts the page background (--bg),
-     so the page-coloured GAP between two adjacent cards reads clearly — separation
-     comes from colour contrast, not a border. */
-  background: var(--card-bg);
+  /* On hover the card fills with a shade that visibly contrasts the page background
+     (--bg), so the page-coloured GAP between two adjacent cards reads clearly —
+     separation comes from colour contrast, not a border. */
+  background: var(--hover-strong, var(--card-bg));
+}
+
+/* When the cursor is anywhere over the columns block, highlight ALL of its columns
+   at once — the page-coloured gap sandwiched between two grey cards becomes the
+   clearest possible cue for the column boundaries. */
+.editor-columns:hover .editor-column,
+.editor-columns:focus-within .editor-column {
+  background: var(--hover-strong, var(--card-bg));
 }
 
 /* Resizable divider between columns (drag to adjust column widths). It sits on the
