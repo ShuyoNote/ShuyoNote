@@ -1,0 +1,67 @@
+# ShuyoNote 项目状态摘要（会话接续种子）
+
+> 本文件由「dsh 会话」在 2026-08-27 生成，作为**新会话接续的种子上下文**——新会话开始时先读本文件，即可精确了解项目当前进度、已做取舍与下一步候选，无需依赖模糊回忆。
+> 项目根：`C:\Users\cnzen\zhai\ShuyoNote`
+
+## 1. 项目概况
+
+- **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
+- **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
+- **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
+- **版本**：**v1.59.170**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json 一致；安装包在 src-tauri/target/release/bundle/）
+- **git**：HEAD `80a8a65`，工作树干净。
+
+## 2. 已完成的核心能力（本会话近期落地）
+
+### 分栏（飞书式 Columns Block）—— 路线 B（每列独立子编辑器）已完成
+- 节点：`ColumnsBlockNode`（DecoratorNode，每列存一份独立 EditorState JSON）→ `ColumnsBlockView`/`ColumnEditor` 渲染为 N 个独立嵌套编辑器。
+- 共享配置抽到 `src/editor/config.ts`（`EDITOR_NODES`/`editorTheme`/`ALLOWED_NODE_TYPES`），供主编辑器与列编辑器复用；`ColumnsBlockNode` 用 `lazy()` 动态导入视图（打破与 config.ts 的循环依赖）。
+- 列内 `/` 可插：标题/正文/引用/**Callout**/列表/**表格**（`TablePlugin`）/代码块/分隔线；列内 `Ctrl+Alt` 快捷键。
+- 列内独立撤销（`HistoryPlugin`）、跨列独立输入；列增删（＋/×，1–4 列）、列宽拖拽（flex-grow 权重）。
+- 关键修复：空列 JSON 补 `indent/format/direction`（否则 `ListItemNode.setIndent` 遇非数字 → Lexical #117）、`.editor-column-body` 解耦避免 `.editor-column` 自嵌套、`createDOM` 返回 `.editor-columns-host` 避免 `.editor-columns` 自嵌套、列用 flex-grow 避免百分比+gap 溢出。
+- 关键文件：
+  - `src/editor/nodes/ColumnsBlockNode.tsx`、`ColumnNode.tsx`、`ColumnsNode.tsx`（旧轻量版，仍注册用于读旧文档）
+  - `src/components/ColumnsBlockView.tsx`、`ColumnEditor.tsx`
+  - `src/editor/config.ts`、`src/lib/columnsText.ts`（列文本并入 content_text）
+  - 方案文档：`docs/plans/2026-08-26-columns-plan.md`（含 6.5 演示截图，docs/media/columns-demo/）
+
+### 绘图块（Excalidraw）—— 已完善
+- `/绘图` 插入、全屏 Excalidraw 编辑、JSON(.excalidraw)+PNG 缩略图落内容寻址附件、文字抽取进 content_text。
+- 近期修复/增强：
+  - 缩放后内容居中（`zoomTo` 修正 scene↔viewport 换算）。
+  - 全屏保存不再卡「保存中…」（内容先存、PNG 缩略图后台异步）。
+  - 全屏编辑保存后内嵌块**自动适配整幅图**（清空视图记忆）。
+  - **图片说明 caption**（`DrawingNode.__caption`，可编辑、随块保存、可搜索；默认隐藏/悬停居中）。
+  - 内嵌块**贴合内容高度**（读实际 fit zoom）；**可拖拽调整尺寸且不被自动贴合覆盖**（`node.__height` 已设则不再自动改）。
+- 关键文件：`src/editor/nodes/DrawingNode.tsx`、`src/components/InlineDrawing.tsx`、`src/components/DrawingEditorModal.tsx`、`src/lib/drawingText.ts`。
+  - 方案文档：`docs/plans/2026-08-24-drawing-solution-design.md`（已补 caption 能力 4.5 节）。
+
+### 其他近期
+- Markdown 导出保留分栏列文本（`src/lib/exportMarkdown.ts` 注册 ColumnsBlockNode + 展开列文本）。
+- 移除「+」菜单的"流程图/思维导图"与"AI 绘图"项（SlashMenuPlugin makeOptions）。
+
+## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
+
+- **分栏旧数据不做自动迁移**：`columns`/`column`（ElementNode 轻量版）**保留注册**，旧文档仍可读兼容；新插入走路线 B。自动改写线上 `content_json` 风险高、收益低，**明确不做**。
+- **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
+- **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
+- 版本号一律 v1.59.170，**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。
+
+## 4. 环境/工具备注
+
+- **前端 Web 版**：`pnpm dev:web`（Vite web dev，http://localhost:5173，热更新；SQLite 前端 mock）+ `pnpm preview`（dist 产物，http://127.0.0.1:5173）。
+- **桌面版**：`pnpm tauri dev`（1420，需 Rust/SQLite host）或跑 `src-tauri/target/release/shuyonote.exe`。
+- **验证**：`npx tsc --noEmit`、`pnpm build`、`node scripts/smoke-web.mjs`（**225 全绿**）；无头 Edge CDP 实测交互（Edge 在 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`，Node 内置 WebSocket，临时脚本放 tmp/）。
+- **git 代理**：全局配置了 `http://127.0.0.1:7897` 但**当前端口不通**；push/pull 需 `git -c http.proxy= -c https.proxy=` 临时直连（或清掉全局代理）。
+
+## 5. 下一步候选（未做，按需选一项继续）
+
+1. **列内拖拽 / 跨列复制移动**——需跨编辑器机制，工作量大（此前评估为"暂不做"，若产品必需立项）。
+2. **旧分栏（ElementNode）→ 路线 B 的状态补齐**（若确有用户需要，可做"显式、备份式"的手动转换入口，而非自动迁移）。
+3. **绘图块更多能力**：如列内 AI 附表、绘图块引用/块级 `{{...}}`、及大图/多图性能。
+4. **重新构建桌面版**使桌面包含绘图类最新改动（当前桌面 release 为稍早基线，未含 caption/自动适配/贴合高度/保存不卡）。
+5. 其它 roadmap（见 docs/roadmap.md）待排期项。
+
+---
+
+> 若需回溯更早对话细节，全新会话可调用 dsh 会话检索（`session-query-sqlite`）定位到本会话（`session-719a2997-af6a-4624-8a57-4b04806247d9`，cwd=ShuyoNote）。
