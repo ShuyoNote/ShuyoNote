@@ -5462,19 +5462,33 @@ select.prop-value {
   font-size: 13px;
 }
 
-/* Editable image caption shown below the drawing embed. */
+/* Editable image caption shown below the drawing embed. Hidden by default so it
+   doesn't add a tall empty row under the box; appears horizontally centered on
+   hover of the block (and while focused/editing). */
 .inline-drawing-caption {
-  margin-top: 6px;
-  padding: 4px 2px;
+  display: none;
+  margin: 6px 0 0;
+  padding: 4px 10px;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-dim);
+  text-align: center;
   outline: none;
   min-height: 1.4em;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
   white-space: pre-wrap;
   word-break: break-word;
   border-bottom: 1px solid transparent;
   transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.inline-drawing-wrap:hover .inline-drawing-caption,
+.inline-drawing-wrap.editing .inline-drawing-caption,
+.inline-drawing-caption:focus {
+  display: block;
 }
 
 .inline-drawing-caption:empty::before {

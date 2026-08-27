@@ -266,6 +266,56 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
   }, []);
 
+  // Content bounding box size in scene coords (for sizing the embed to hug content).
+  const getContentSize = useCallback(() => {
+    const scene = liveRef.current;
+    if (!scene || !Array.isArray(scene.elements)) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
+    for (const el of scene.elements) {
+      if (el?.isDeleted) continue;
+      if (typeof el.x !== "number" || typeof el.y !== "number") continue;
+      const ew = typeof el.width === "number" ? el.width : 0;
+      const eh = typeof el.height === "number" ? el.height : 0;
+      minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
+      maxX = Math.max(maxX, el.x + ew); maxY = Math.max(maxY, el.y + eh);
+      has = true;
+    }
+    if (!has) return null;
+    return { w: maxX - minX, h: maxY - minY };
+  }, []);
+
+  // Size the embed canvas height to hug the content (scale to fit width, then derive
+  // the needed height at that zoom), so there's no big empty area under a small
+  // drawing. Falls back to keeping the current height when bounds are unknown.
+  const fitHeightToContent = useCallback(() => {
+    const a = apiRef.current;
+    const size = getContentSize();
+    if (!a || !size || size.w <= 0 || size.h <= 0) return;
+    try {
+      const st = a.getAppState();
+      const canvasW = typeof st.width === "number" && st.width > 0 ? st.width : 1;
+      const pad = 16;
+      const avW = Math.max(canvasW - pad * 2, 1);
+      const fitZoom = avW / size.w;
+      const displayH = size.h * fitZoom + pad * 2;
+      const next = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.round(displayH)));
+      if (Math.abs(next - heightRef.current) > 2) {
+        heightRef.current = next;
+        setHeight(next);
+        // Persist height directly (self-contained, no dependency-order issue).
+        const editor = useEditorStore.getState().editor;
+        if (editor) {
+          editor.update(() => {
+            const n = $getNodeByKey(node.getKey());
+            if (n && $isDrawingNode(n)) n.setDrawing({ height: next });
+          });
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }, [getContentSize, node]);
+
   // Zoom to the target factor and CENTER the content without auto-fitting. Excalidraw's
   // scene→viewport mapping is `sceneX = scrollX + canvasX - canvasX/zoom`, so to place
   // the content center at the viewport center we set `scrollX = ccx - w/2 + w/(2·zoom)`.
@@ -315,17 +365,20 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const zoomReset = useCallback(() => zoomTo(1), [zoomTo]);
 
   // Fit & center the whole drawing content in the embed (used by the 适配 button
-  // and for the initial view when no viewport has been saved yet).
+  // and for the initial view when no viewport has been saved yet), then shrink the
+  // container height to hug the content so there's no big empty area underneath.
   const fitNow = useCallback(() => {
     const a = apiRef.current;
     const scene = liveRef.current;
     if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
     try {
       a.scrollToContent(scene.elements, { fitToContent: true, animate: false });
+      // After the fit, resize the embed to the fitted content height.
+      requestAnimationFrame(fitHeightToContent);
     } catch {
       /* best-effort */
     }
-  }, []);
+  }, [fitHeightToContent]);
 
   // Automatic fit on load only when the user hasn't previously saved their view.
   const fitContent = useCallback(() => {
