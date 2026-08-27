@@ -384,11 +384,16 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
 
   // Fit the whole drawing content into the embed. Excalidraw's scrollToContent uses
   // its internal setState to zoom+center — the reliable way to change the view. We
-  // fit the authoritative loaded scene (initialData); fitContent waits for it to be
-  // present so we fit once the drawing is actually renderable.
+  // must pass the elements Excalidraw ACTUALLY reports via onChange (liveRef), not
+  // our load-time initialData snapshot nor getSceneElements() (which returns [] in
+  // view-only mode). Using the live scene is what lets scrollToContent find the
+  // elements and fit/center the drawing.
   const fitNow = useCallback(() => {
     const a = apiRef.current;
-    const scene = initialDataRef.current;
+    // Prefer the elements Excalidraw reported (onChange); fall back to loaded scene.
+    const scene = (liveRef.current?.elements && liveRef.current.elements.length > 0)
+      ? liveRef.current
+      : initialDataRef.current;
     if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
     try {
       a.scrollToContent(scene.elements, { fitToContent: true, animate: false });
@@ -409,9 +414,10 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     let tries = 0;
     const attempt = () => {
       const a = apiRef.current;
-      // Judge readiness by initialData (authoritative loaded scene) — it's available
-      // as soon as load() completes and doesn't depend on Excalidraw's async scene.
-      const scene = initialDataRef.current;
+      // Wait until Excalidraw has REPORTED the scene via onChange (liveRef) — that's
+      // when scrollToContent can actually find the elements to fit. getSceneElements()
+      // returns [] in view-only mode, so we can't use it as the readiness signal.
+      const scene = liveRef.current;
       const hasContent = !!(a && scene && Array.isArray(scene.elements) && scene.elements.length > 0);
       if (hasContent) {
         fitNow();
