@@ -105,6 +105,13 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   const liveRef = useRef<SceneSnapshot | null>(null);
   // `initialData` is set once and never mutated; Excalidraw re-initializes loops if it changes.
   const [initialData, setInitialData] = useState<SceneSnapshot | null>(null);
+  // `initialData` is the AUTHORITATIVE loaded scene. `liveRef` is also written by the
+  // `onChange` callback, which Excalidraw can fire with a transient/partial scene
+  // (e.g. an empty one) during mount — so fit/size must read the loaded scene, not
+  // whatever `onChange` last reported, or the fit would no-op on a momentary empty
+  // scene and the embed would come back un-fitted after a fullscreen save.
+  const initialDataRef = useRef<SceneSnapshot | null>(null);
+  initialDataRef.current = initialData;
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [height, setHeight] = useState<number>(node.__height ?? DEFAULT_HEIGHT);
@@ -258,7 +265,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
 
   // Center of the drawing content's bounding box, in scene coords.
   const getContentCenter = useCallback(() => {
-    const scene = liveRef.current;
+    const scene = initialDataRef.current;
     if (!scene || !Array.isArray(scene.elements)) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
     for (const el of scene.elements) {
@@ -276,7 +283,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
 
   // Content bounding box size in scene coords (for sizing the embed to hug content).
   const getContentSize = useCallback(() => {
-    const scene = liveRef.current;
+    const scene = initialDataRef.current;
     if (!scene || !Array.isArray(scene.elements)) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
     for (const el of scene.elements) {
@@ -377,7 +384,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   // container height to hug the content so there's no big empty area underneath.
   const fitNow = useCallback(() => {
     const a = apiRef.current;
-    const scene = liveRef.current;
+    const scene = initialDataRef.current;
     if (!a || !scene || !Array.isArray(scene.elements) || scene.elements.length === 0) return;
     try {
       a.scrollToContent(scene.elements, { fitToContent: true, animate: false });
