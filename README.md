@@ -152,7 +152,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 |----|------|
 | 桌面壳 | Tauri 2.x（Rust 后端 + 系统 WebView）；Web 壳 = `web.ts` + sql.js WASM |
 | 编辑器 | Lexical 0.49（`@lexical/react`） |
-| 前端 | React 19 · TypeScript · Vite 8（`pnpm dev:web`：`vite.web.config.ts`） |
+| 前端 | React 18.3.1 · TypeScript · Vite 8（`pnpm dev:web`：`vite.web.config.ts`） |
 | 状态管理 | Zustand |
 | 本地存储 | SQLite（桌面 rusqlite 0.40 bundled / Web sql.js WASM）· FTS5 / trigram 全文检索 |
 | 加密 | Argon2id + XChaCha20-Poly1305（RustCrypto） |
@@ -222,8 +222,8 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 ```
 ShuyoNote/
 ├── src/                      # 前端（React + Lexical）
-│   ├── editor/               # 编辑器、自定义节点（Callout/Image/BlockRef/BlockEmbed）、Markdown 转换
-│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板（17+ 组件）
+│   ├── editor/               # 编辑器、自定义节点（Callout/Image/BlockRef/BlockEmbed/ColumnsBlockNode/分栏）、Markdown 转换
+│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板 + 分栏（ColumnsBlockView/ColumnEditor）（18+ 组件）
 │   ├── store/                # Zustand（notes / theme / sidebar / toast / view / space / blockCache / treeDrag / treeSelection / …）
 │   ├── hooks/                # 自动同步 / 全局快捷键 / Popover
 │   ├── plugins/              # 插件命令注册表（命令面板扩展点）
