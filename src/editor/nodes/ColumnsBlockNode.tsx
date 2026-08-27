@@ -74,6 +74,20 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
     return false;
   }
 
+  // Lexical 0.49 stores node fields in shared state where `__`-prefixed props are
+  // getter-only on the node. Mutations must go through getWritable() (a writable
+  // clone) — like DrawingNode.setDrawing — otherwise assignment throws
+  // "Cannot assign to read only property '__cols'".
+  setCols(cols: string[]): void {
+    const writable = this.getWritable();
+    writable.__cols = cols;
+  }
+
+  setWidths(widths: number[]): void {
+    const writable = this.getWritable();
+    writable.__widths = widths;
+  }
+
   decorate(): JSX.Element {
     return (
       <ColumnsBlockInner
@@ -132,14 +146,14 @@ function ColumnsBlockInner({ cols, widths, nodeKey }: { cols: string[]; widths: 
   const handleChange = (next: string[]) => {
     editor.update(() => {
       const n = $getNodeByKey(nodeKey);
-      if (n && $isColumnsBlockNode(n)) n.__cols = next.slice();
+      if (n && $isColumnsBlockNode(n)) n.setCols(next.slice());
     });
   };
 
   const handleWidths = (next: number[]) => {
     editor.update(() => {
       const n = $getNodeByKey(nodeKey);
-      if (n && $isColumnsBlockNode(n)) n.__widths = next.slice();
+      if (n && $isColumnsBlockNode(n)) n.setWidths(next.slice());
     });
   };
 
