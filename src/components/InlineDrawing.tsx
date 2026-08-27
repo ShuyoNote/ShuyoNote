@@ -397,10 +397,25 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     }
   }, [fitHeightToContent]);
 
-  // Automatic fit on load only when the user hasn't previously saved their view.
+  // Fit on load, retrying a few frames: right after a fullscreen edit-and-save the
+  // Excalidraw gets remounted (keyed by hash) and `initialData` is parsed
+  // asynchronously, so `scrollToContent` immediately after mount can no-op while the
+  // scene isn't rendered yet. Retry a few rAF ticks (then stop) so the fit lands once
+  // the drawing is actually on the canvas. A manual @适配 button still does one shot.
   const fitContent = useCallback(() => {
     if (savedViewRef.current) return;
-    fitNow();
+    let tries = 0;
+    const attempt = () => {
+      const a = apiRef.current;
+      const scene = liveRef.current;
+      // Fit once the scene has real content; if not ready yet, retry next frame.
+      if (a && scene && Array.isArray(scene.elements) && scene.elements.length > 0) {
+        fitNow();
+        return;
+      }
+      if (tries++ < 8) requestAnimationFrame(attempt);
+    };
+    attempt();
   }, [fitNow]);
 
   // Stable ref-backed callback so the memoized Excalidraw doesn't see a new
