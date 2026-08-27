@@ -287,34 +287,32 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
   // Size the embed canvas height to hug the content (scale to fit width, then derive
   // the needed height at that zoom), so there's no big empty area under a small
   // drawing. Falls back to keeping the current height when bounds are unknown.
+  // After a fit, hug the container height to the content so there's no big empty
+  // area under a small drawing. Only applies when the user hasn't set a custom
+  // height (node.__height === null) — once the user drags the resize handle, the
+  // saved height wins and we stop auto-resizing, so dragging isn't fought.
   const fitHeightToContent = useCallback(() => {
     const a = apiRef.current;
     const size = getContentSize();
     if (!a || !size || size.w <= 0 || size.h <= 0) return;
+    // Respect a user-set height: never override what they dragged.
+    if (node.__height != null) return;
     try {
       const st = a.getAppState();
-      const canvasW = typeof st.width === "number" && st.width > 0 ? st.width : 1;
+      // scrollToContent({fitToContent:true}) already applied the fitted zoom; read
+      // it back so we size the container to the ACTUAL displayed content height.
+      const zv = typeof st.zoom === "number" ? st.zoom : st.zoom?.value ?? 1;
       const pad = 16;
-      const avW = Math.max(canvasW - pad * 2, 1);
-      const fitZoom = avW / size.w;
-      const displayH = size.h * fitZoom + pad * 2;
+      const displayH = size.h * (Number.isFinite(zv) && zv > 0 ? zv : 1) + pad * 2;
       const next = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.round(displayH)));
       if (Math.abs(next - heightRef.current) > 2) {
         heightRef.current = next;
         setHeight(next);
-        // Persist height directly (self-contained, no dependency-order issue).
-        const editor = useEditorStore.getState().editor;
-        if (editor) {
-          editor.update(() => {
-            const n = $getNodeByKey(node.getKey());
-            if (n && $isDrawingNode(n)) n.setDrawing({ height: next });
-          });
-        }
       }
     } catch {
       /* best-effort */
     }
-  }, [getContentSize, node]);
+  }, [getContentSize, node.__height]);
 
   // Zoom to the target factor and CENTER the content without auto-fitting. Excalidraw's
   // scene→viewport mapping is `sceneX = scrollX + canvasX - canvasX/zoom`, so to place
