@@ -136,13 +136,19 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
     // it instead of re-fitting to content. Only finite values count (a transient
     // NaN must not be persisted, or the view would lock into broken zoom).
     const fin = (v: number | null | undefined): v is number => typeof v === "number" && isFinite(v);
-    // NOTE: we deliberately do NOT fall back to `viewCache` here. A fullscreen
-    // edit-and-save clears the node's zoom/scroll (sets them null) to signal "re-fit
-    // on reload", and the new blob hash is fresh. If we restored a view from
-    // `viewCache` (keyed by the OLD hash) we'd treat the arriving scene as "already
-    // saved a view" and skip fitting → the embed would come back un-centered. Only a
-    // view persisted ON THE NODE is authoritative for "skip the fit".
-    let hasSavedView = fin(node.__zoom) || fin(node.__scrollX) || fin(node.__scrollY);
+    // A "saved view" only counts if it's NON-DEFAULT. Excalidraw reports a default
+    // zoom=1 / scroll=0 on mount, and persistView can write that back onto the node
+    // before our fit runs — treating it as a user view would mark savedViewRef=true
+    // and skip the auto-fit after a fullscreen edit-and-save (leaving the embed
+    // un-scaled/un-centered). Only a view the user actually changed (non-default)
+    // should suppress the fit.
+    const isDefaultView = (() => {
+      const z = fin(node.__zoom) ? node.__zoom : null;
+      const sx = fin(node.__scrollX) ? node.__scrollX : null;
+      const sy = fin(node.__scrollY) ? node.__scrollY : null;
+      return (z == null || z === 1) && (sx == null || sx === 0) && (sy == null || sy === 0);
+    })();
+    let hasSavedView = !isDefaultView && (fin(node.__zoom) || fin(node.__scrollX) || fin(node.__scrollY));
     savedViewRef.current = hasSavedView;
     let savedView: Record<string, unknown> = hasSavedView
       ? {
