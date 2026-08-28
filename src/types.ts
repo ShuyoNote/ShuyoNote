@@ -18,6 +18,7 @@ export interface PageDetail {
   content_json: string;
   content_text: string;
   cover: string;
+  icon: string;
   kind: string;
   sort_order: number;
   created_at: number;

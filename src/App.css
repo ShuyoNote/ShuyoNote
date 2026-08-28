@@ -2002,6 +2002,12 @@ body.is-ai-open .main {
   background-position: center;
   margin-bottom: 8px;
 }
+/* Page icon: an emoji shown before the title. */
+.page-icon {
+  font-size: 34px;
+  line-height: 1;
+  flex-shrink: 0;
+}
 .page-actions {
   width: 100%;
   padding: 0 var(--doc-pad);

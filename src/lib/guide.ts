@@ -8,6 +8,7 @@ import { useNotes } from "../store/notes";
 
 export const GUIDE_TITLE = "使用指南";
 export const GUIDE_COVER = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+export const GUIDE_ICON = "📖";
 
 function text(t: string) { return { type: "text", text: t, version: 1 } as any; }
 function para(t: string) {
@@ -56,12 +57,23 @@ export async function openGuide(): Promise<void> {
   const existing = notes.pages.find((p) => p.title === GUIDE_TITLE);
   if (existing) {
     await notes.openPage(existing.id);
+    // Fill in default cover/icon for a guide created before this feature (never
+    // override values the user set).
+    const cur = useNotes.getState().current;
+    if (cur) {
+      const hadCover = !!cur.cover;
+      const hadIcon = !!cur.icon;
+      if (!hadCover) await api.setPageCover(cur.id, GUIDE_COVER);
+      if (!hadIcon) await api.setPageIcon(cur.id, GUIDE_ICON);
+      if (!hadCover || !hadIcon) await notes.openPage(cur.id);
+    }
     return;
   }
   const id = await notes.createPage(null, { title: GUIDE_TITLE, content_json: guideJson(), content_text: guideText() });
   if (id) {
     await api.setPageCover(id, GUIDE_COVER);
-    // Re-open so the current page detail carries the cover and renders it immediately.
+    await api.setPageIcon(id, GUIDE_ICON);
+    // Re-open so the current page detail carries the cover/icon and renders them immediately.
     await notes.openPage(id);
   }
 }

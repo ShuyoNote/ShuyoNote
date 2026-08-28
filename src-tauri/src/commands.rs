@@ -11,7 +11,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
 
 pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
-        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, kind, sort_order, created_at, updated_at
+        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, icon, kind, sort_order, created_at, updated_at
          FROM pages WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| {
@@ -23,10 +23,11 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 content_json: row.get(4)?,
                 content_text: row.get(5)?,
                 cover: row.get(6)?,
-                kind: row.get(7)?,
-                sort_order: row.get(8)?,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
+                icon: row.get(7)?,
+                kind: row.get(8)?,
+                sort_order: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
             })
         },
     )
@@ -173,6 +174,25 @@ pub fn set_page_cover(db: State<Db>, args: SetCoverArgs) -> Result<PageDetail, S
     c.execute(
         "UPDATE pages SET cover = ?1 WHERE id = ?2 AND deleted_at IS NULL",
         params![args.cover, args.id],
+    )
+    .map_err(|e| e.to_string())?;
+    fetch_page(&c, &args.id)
+}
+
+#[derive(Deserialize)]
+pub struct SetIconArgs {
+    pub id: String,
+    /// Emoji / glyph shown before the title (empty string clears).
+    pub icon: String,
+}
+
+/// Set a page's icon (emoji) and return the updated page detail.
+#[tauri::command]
+pub fn set_page_icon(db: State<Db>, args: SetIconArgs) -> Result<PageDetail, String> {
+    let c = conn(&db);
+    c.execute(
+        "UPDATE pages SET icon = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![args.icon, args.id],
     )
     .map_err(|e| e.to_string())?;
     fetch_page(&c, &args.id)

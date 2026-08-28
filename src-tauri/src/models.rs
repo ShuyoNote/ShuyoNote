@@ -24,6 +24,8 @@ pub struct PageDetail {
     pub content_text: String,
     #[serde(default)]
     pub cover: String,
+    #[serde(default)]
+    pub icon: String,
     #[serde(default = "default_kind")]
     pub kind: String,
     pub sort_order: f64,

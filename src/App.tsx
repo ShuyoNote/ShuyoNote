@@ -184,8 +184,24 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <div className="title-area">
           {current?.cover ? <div className="page-cover" style={{ background: current.cover }} /> : null}
           <div className="page-actions">
-            <button className="page-action-btn" onClick={() => toast("页面图标即将推出", "info")}>
-              <SmileIcon className="page-action-icon" /> 添加图标
+            <button
+              className="page-action-btn"
+              onClick={() =>
+                inputDialog({
+                  title: "页面图标",
+                  placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
+                  okLabel: "设置",
+                  onSubmit: async (v) => {
+                    const icon = (v ?? "").trim();
+                    if (current) {
+                      await api.setPageIcon(current.id, icon);
+                      await useNotes.getState().openPage(current.id);
+                    }
+                  },
+                })
+              }
+            >
+              <SmileIcon className="page-action-icon" /> {current?.icon ? "更换图标" : "添加图标"}
             </button>
             <button
               className="page-action-btn"
@@ -224,6 +240,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
             </button>
           </div>
           <div className="editor-head">
+            {current?.icon ? <span className="page-icon">{current.icon}</span> : null}
             <input
               className="title-input"
               value={title}
