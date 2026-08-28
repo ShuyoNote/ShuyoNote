@@ -20,6 +20,10 @@ function svgCover(svg: string): string {
 const V = 'xmlns="http://www.w3.org/2000/svg"';
 const B = `viewBox="0 0 600 200" ${V} preserveAspectRatio="xMidYMid slice"`;
 
+// The default raster cover — a real photo bundled in public/covers and served at
+// /covers/... in both web and Tauri desktop. Used for the guide + the "秋山" preset.
+const DEFAULT_COVER = `url("/covers/default-cover.jpg")`;
+
 export const COVER_PRESETS: CoverPreset[] = [
   // ---- themed gradients ----
   { id: "aurora", name: "极光", kind: "gradient", css: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" },
@@ -82,9 +86,9 @@ export const COVER_PRESETS: CoverPreset[] = [
     id: "autumn",
     name: "秋山",
     kind: "image",
-    css: `url("/covers/default-cover.jpg")`,
+    css: DEFAULT_COVER,
   },
 ];
 
-/** The default cover used for the built-in「使用指南」page. */
-export const GUIDE_COVER = COVER_PRESETS[0].css;
+/** The default cover used for the built-in「使用指南」page (the default photo). */
+export const GUIDE_COVER = DEFAULT_COVER;
