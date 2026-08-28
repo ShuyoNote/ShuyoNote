@@ -1993,6 +1993,15 @@ body.is-ai-open .main {
   width: 100%;
   margin: 0 auto;
 }
+/* Page cover: a gradient banner above the actions row (cover = CSS gradient string). */
+.page-cover {
+  height: 160px;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background-size: cover;
+  background-position: center;
+  margin-bottom: 8px;
+}
 .page-actions {
   width: 100%;
   padding: 0 var(--doc-pad);

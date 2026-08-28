@@ -441,6 +441,7 @@ pub fn copy_page_to_workspace(
             title,
             content_json,
             content_text,
+            cover: String::new(),
             kind,
             sort_order,
             created_at,

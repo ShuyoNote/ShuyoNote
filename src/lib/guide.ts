@@ -3,9 +3,11 @@
 // if the user deletes it. Content is generated from `SHORTCUTS` so the shortcut list
 // stays in sync with the single source of truth.
 import { SHORTCUTS, shortcutLabel } from "./shortcuts";
+import { api } from "./api";
 import { useNotes } from "../store/notes";
 
 export const GUIDE_TITLE = "使用指南";
+export const GUIDE_COVER = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
 
 function text(t: string) { return { type: "text", text: t, version: 1 } as any; }
 function para(t: string) {
@@ -56,5 +58,10 @@ export async function openGuide(): Promise<void> {
     await notes.openPage(existing.id);
     return;
   }
-  await notes.createPage(null, { title: GUIDE_TITLE, content_json: guideJson(), content_text: guideText() });
+  const id = await notes.createPage(null, { title: GUIDE_TITLE, content_json: guideJson(), content_text: guideText() });
+  if (id) {
+    await api.setPageCover(id, GUIDE_COVER);
+    // Re-open so the current page detail carries the cover and renders it immediately.
+    await notes.openPage(id);
+  }
 }

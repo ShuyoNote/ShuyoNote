@@ -22,6 +22,8 @@ pub struct PageDetail {
     pub title: String,
     pub content_json: String,
     pub content_text: String,
+    #[serde(default)]
+    pub cover: String,
     #[serde(default = "default_kind")]
     pub kind: String,
     pub sort_order: f64,

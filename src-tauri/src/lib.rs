@@ -67,6 +67,7 @@ pub fn run() {
             commands::create_folder,
             commands::create_database,
             commands::save_page,
+            commands::set_page_cover,
             commands::delete_page,
             commands::move_page,
             search::search,

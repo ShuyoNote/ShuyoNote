@@ -11,7 +11,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
 
 pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
-        "SELECT id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at
+        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, kind, sort_order, created_at, updated_at
          FROM pages WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| {
@@ -22,10 +22,11 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 title: row.get(3)?,
                 content_json: row.get(4)?,
                 content_text: row.get(5)?,
-                kind: row.get(6)?,
-                sort_order: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                cover: row.get(6)?,
+                kind: row.get(7)?,
+                sort_order: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         },
     )
@@ -156,6 +157,25 @@ pub struct SavePageArgs {
     pub title: Option<String>,
     pub content_json: Option<String>,
     pub content_text: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SetCoverArgs {
+    pub id: String,
+    /// CSS gradient string (e.g. "linear-gradient(...)") or an empty string to clear.
+    pub cover: String,
+}
+
+/// Set a page's cover (CSS gradient) and return the updated page detail.
+#[tauri::command]
+pub fn set_page_cover(db: State<Db>, args: SetCoverArgs) -> Result<PageDetail, String> {
+    let c = conn(&db);
+    c.execute(
+        "UPDATE pages SET cover = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![args.cover, args.id],
+    )
+    .map_err(|e| e.to_string())?;
+    fetch_page(&c, &args.id)
 }
 
 #[tauri::command]

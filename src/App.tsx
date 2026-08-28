@@ -24,6 +24,7 @@ import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons"
 import { TagAddButton } from "./components/TagBar";
 import { TemplateCenterView } from "./components/TemplateCenterView";
 import { useTemplateCenterStore } from "./store/templateCenter";
+import { inputDialog } from "./store/input";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
@@ -181,12 +182,29 @@ function NoteEditor({ pageId }: { pageId: string }) {
       </div>
       <div className="note-scroll">
         <div className="title-area">
+          {current?.cover ? <div className="page-cover" style={{ background: current.cover }} /> : null}
           <div className="page-actions">
             <button className="page-action-btn" onClick={() => toast("页面图标即将推出", "info")}>
               <SmileIcon className="page-action-icon" /> 添加图标
             </button>
-            <button className="page-action-btn" onClick={() => toast("题头图即将推出", "info")}>
-              <ImageIcon className="page-action-icon" /> 添加题头图
+            <button
+              className="page-action-btn"
+              onClick={() =>
+                inputDialog({
+                  title: "题头图",
+                  placeholder: "CSS 渐变，如 linear-gradient(135deg, #667eea, #764ba2)；留空清除",
+                  okLabel: "设置",
+                  onSubmit: async (v) => {
+                    const cover = (v ?? "").trim();
+                    if (current) {
+                      await api.setPageCover(current.id, cover);
+                      await useNotes.getState().openPage(current.id);
+                    }
+                  },
+                })
+              }
+            >
+              <ImageIcon className="page-action-icon" /> {current?.cover ? "更换题头图" : "添加题头图"}
             </button>
             <button
               className="page-action-btn"

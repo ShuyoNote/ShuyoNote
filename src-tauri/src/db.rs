@@ -421,6 +421,19 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         )?;
     }
 
+    // Add cover column for pages (idempotent) — a CSS gradient/image ref string.
+    let has_cover: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(pages)")?;
+        let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        cols.any(|c| c.map(|name| name == "cover").unwrap_or(false))
+    };
+    if !has_cover {
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN cover TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+
     // Migrate backlinks from the legacy page-level schema (source_id, target_id)
     // to the block-granular schema (source_page_id, source_block_id, ...).
     let has_old_backlinks: bool = {
