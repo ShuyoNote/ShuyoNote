@@ -77,7 +77,7 @@ export function PdfReader() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pageIndex, scale]);
+  }, [open, pageIndex, scale, pageCount]);
 
   useEffect(
     () => () => {
