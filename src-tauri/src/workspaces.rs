@@ -259,6 +259,9 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
     fn js_callout(s: &str) -> serde_json::Value {
         serde_json::json!({ "type": "callout", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [js_para(s)] })
     }
+    fn js_blank() -> serde_json::Value {
+        serde_json::json!({ "type": "paragraph", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [] })
+    }
     let home_json = serde_json::json!({
         "root": {
             "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
@@ -275,6 +278,7 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
                 js_quote("Ctrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图"),
                 serde_json::json!({ "type": "horizontalrule", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "" }),
                 js_callout("用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。"),
+                js_blank(),
             ]
         }
     }).to_string();
