@@ -14,9 +14,17 @@ export function PdfReader() {
   const [scale, setScale] = useState(1);
   const [meta, setMeta] = useState<{ w: number; h: number; hasTextLayer: boolean } | null>(null);
   const [pageUrl, setPageUrl] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
-  const urlRef = useRef<string | null>(null);
+  // Keep every created page blob URL until the reader closes — revoking a URL
+  // while its <img> is still loading causes ERR_FILE_NOT_FOUND.
+  const urlsRef = useRef<string[]>([]);
+
+  const freeUrls = () => {
+    for (const u of urlsRef.current) URL.revokeObjectURL(u);
+    urlsRef.current = [];
+  };
 
   // Load the document once per (open, bytes).
   useEffect(() => {
@@ -25,8 +33,9 @@ export function PdfReader() {
     (async () => {
       closeRef.current?.();
       closeRef.current = null;
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-      urlRef.current = null;
+      setReady(false);
+      setMeta(null);
+      setPageUrl(null);
       const eng = createPdfjsEngine();
       engRef.current = eng;
       if (!bytes) return;
@@ -36,8 +45,7 @@ export function PdfReader() {
           closeRef.current = doc.close;
           setPageCount(doc.pageCount);
           setPageIndex(Math.min(Math.max(targetPage, 0), Math.max(doc.pageCount - 1, 0)));
-          setMeta(null);
-          setPageUrl(null);
+          setReady(true);
         }
       } catch {
         if (alive) setPageCount(0);
@@ -48,9 +56,9 @@ export function PdfReader() {
     };
   }, [open, bytes]);
 
-  // Render the current page + meta.
+  // Render the current page + meta (re-runs when the doc becomes ready).
   useEffect(() => {
-    if (!open) return;
+    if (!open || !ready) return;
     let alive = true;
     (async () => {
       const eng = engRef.current;
@@ -65,9 +73,8 @@ export function PdfReader() {
       try {
         const blob = await eng.renderPageToBlob(pageIndex, scale);
         if (!alive) return;
-        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
         const url = URL.createObjectURL(blob);
-        urlRef.current = url;
+        urlsRef.current.push(url);
         setPageUrl(url);
       } catch {
         if (alive) setPageUrl(null);
@@ -77,14 +84,14 @@ export function PdfReader() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pageIndex, scale, pageCount]);
+  }, [open, ready, pageIndex, scale]);
 
-  useEffect(
-    () => () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    },
-    [],
-  );
+  // Free page blob URLs when the reader closes or unmounts.
+  useEffect(() => {
+    if (!open) freeUrls();
+  }, [open]);
+
+  useEffect(() => () => freeUrls(), []);
 
   if (!open) return null;
 
