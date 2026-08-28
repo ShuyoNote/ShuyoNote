@@ -109,7 +109,8 @@ export function TableOfContents() {
               <button
                 key={it.key}
                 className={`toc-item ${active === it.key ? "active" : ""}`}
-                style={{ paddingLeft: `${(it.level - 1) * 12 + 4}px` }}
+                data-level={it.level}
+                style={{ paddingLeft: `${(it.level - 1) * 12 + 12}px` }}
                 onClick={() => goto(it.key)}
                 title={it.text}
               >
