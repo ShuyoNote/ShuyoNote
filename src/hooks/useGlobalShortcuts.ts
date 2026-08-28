@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNotes } from "../store/notes";
+import { useEditorStore } from "../store/editor";
 
 // Global keyboard shortcuts. Ignore when the event target is an input/textarea
 // (except for the dedicated search input, which Ctrl+Shift+F focuses).
@@ -9,7 +10,6 @@ export function useGlobalShortcuts(onToggleView: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
 
       const target = e.target as HTMLElement;
       const inEditable =
@@ -19,6 +19,20 @@ export function useGlobalShortcuts(onToggleView: () => void) {
           target.isContentEditable);
 
       const key = e.key.toLowerCase();
+
+      // M25 — keyboard-shortcuts overlay. `Ctrl+/` works everywhere; `?` (Shift+/)
+      // only when not typing (so typing "?" in the editor still works).
+      if (mod && key === "/") {
+        e.preventDefault();
+        useEditorStore.getState().openShortcuts();
+        return;
+      }
+      if (!mod && e.key === "?" && !inEditable) {
+        e.preventDefault();
+        useEditorStore.getState().openShortcuts();
+        return;
+      }
+      if (!mod) return;
 
       // Ctrl+N: new page.
       if (key === "n" && !inEditable) {

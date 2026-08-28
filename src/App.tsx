@@ -8,6 +8,7 @@ import { DatabaseView } from "./components/DatabaseView";
 import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
+import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { InputDialog } from "./components/InputDialog";
@@ -276,6 +277,7 @@ function App() {
           <NoteEditor pageId={standaloneId} />
         </div>
         <CommandPalette />
+        <ShortcutsPanel />
         <Toaster />
         <ConfirmDialog />
         <InputDialog />

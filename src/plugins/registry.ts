@@ -6,6 +6,7 @@ import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
+import { useEditorStore } from "../store/editor";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
@@ -211,6 +212,23 @@ registerPlugin({
       run: () => {
         useRightPanel.getState().openAi(true);
         return "已打开 AI 助手";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "help",
+  name: "帮助",
+  commands: [
+    {
+      id: "help.shortcuts",
+      title: "快捷键",
+      description: "查看全部键盘快捷键（Ctrl+/ 或 ?）",
+      closeOnRun: true,
+      run: () => {
+        useEditorStore.getState().openShortcuts();
+        return "已打开快捷键";
       },
     },
   ],

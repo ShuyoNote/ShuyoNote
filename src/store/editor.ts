@@ -15,6 +15,8 @@ interface EditorState {
   aiBarAnchorKey: string | null;
   /** The drawing block currently being edited (nodeKey + stored scene refs). */
   drawingEdit: { nodeKey: string; hash: string | null; mime: string | null; text: string } | null;
+  /** M25 — whether the keyboard-shortcuts overlay is open. */
+  shortcutsOpen: boolean;
   setEditor: (editor: LexicalEditor | null) => void;
   setFocusBlockId: (id: string | null) => void;
   clearFocusBlockId: () => void;
@@ -23,6 +25,8 @@ interface EditorState {
   setAiBarAnchorKey: (k: string | null) => void;
   openDrawingEdit: (d: { nodeKey: string; hash: string | null; mime: string | null; text: string }) => void;
   closeDrawingEdit: () => void;
+  openShortcuts: () => void;
+  closeShortcuts: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -32,6 +36,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   aiBarPos: null,
   aiBarAnchorKey: null,
   drawingEdit: null,
+  shortcutsOpen: false,
   setEditor: (editor) => set({ editor }),
   setFocusBlockId: (id) => set({ focusBlockId: id }),
   clearFocusBlockId: () => set({ focusBlockId: null }),
@@ -40,4 +45,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   setAiBarAnchorKey: (k) => set({ aiBarAnchorKey: k }),
   openDrawingEdit: (d) => set({ drawingEdit: d }),
   closeDrawingEdit: () => set({ drawingEdit: null }),
+  openShortcuts: () => set({ shortcutsOpen: true }),
+  closeShortcuts: () => set({ shortcutsOpen: false }),
 }));

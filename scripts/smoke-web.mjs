@@ -74,6 +74,7 @@ await esbuild.build({
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
+      'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -947,6 +948,14 @@ assert("workspace name persists across instances", wsAgain !== "");
   const hB = aiMod.embedHash("会议纪要");
   const hC = aiMod.embedHash("项目计划");
   assert("embedHash deterministic + drift-sensitive", hA === hB && hA !== hC && typeof hA === "string" && hA.length > 0, `${hA} ${hC}`);
+  // M25 shortcuts: single source + groups / search / label formatters.
+  assert("shortcutGroups canonical", JSON.stringify(aiMod.shortcutGroups()) === JSON.stringify(["基础", "编辑器", "列表", "导航", "AI"]), JSON.stringify(aiMod.shortcutGroups()));
+  assert("SHORTCUTS non-empty + search('') returns all", aiMod.SHORTCUTS.length > 0 && aiMod.shortcutSearch("").length === aiMod.SHORTCUTS.length);
+  assert("shortcutSearch matches label", aiMod.shortcutSearch("新建页面").some((s) => s.key === "new-page"));
+  assert("shortcutSearch no match is empty", aiMod.shortcutSearch("zzzz不存在xyz").length === 0);
+  assert("shortcutLabel ctrl form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "Shift", "F"] }) === "Ctrl + Shift + F");
+  assert("shortcutLabel mac form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "N"], macKeys: ["⌘", "N"] }, true) === "⌘ + N");
+
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.
   const wiki = aiMod.buildWikiExport(
     [
