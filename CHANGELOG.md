@@ -2,6 +2,30 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.173] - 2026-08-27
+
+### 变更
+
+- **项目许可切换为 AGPL-3.0**：README License 徽章与说明改为 **AGPL-3.0**，新增仓库根 `LICENSE` 文件（GNU Affero General Public License v3.0 全文）。该项目本地优先、附自建 sync-server（可被他人托管为 SaaS），采用 AGPL-3.0 确保网络服务形态下同样开放源码，避免「仅本地分发自用、云端托管却闭源」。
+- **分栏最大列数 4 → 5**：`MAX_COLS = 5`，插入面板选栏数扩展为 1–5 栏。
+
+### 修复
+
+- **绘图块 fit 视图加大边距**：`computeFitView` 用 `pad 0.8` + `inset 12px`，避免缩放居中后内容贴边或局部超出画面（`6b7bf3a` 系列后的微调）。
+- **自适应宽度标题区未左对齐**：`body.content-full` 下 `.title-area` / `.editor-head` / `.properties` 一并去掉 `max-width:none`，与正文全宽左对齐。
+
+### 样式
+
+- **绘图块控制条移入块内部顶端**：控制条从悬浮于盒子上方改到内嵌块顶部内部（`top:0`），悬停显示。
+- **绘图块控制条固定左上角、不横跨全宽**：去掉 `right:0`，宽度随内容，不撑满。
+- **绘图块控制条恢复透明描边**：背景透明、去掉表面色填充与阴影，仅保留 `--border` 描边与圆角（`--radius-lg`）。
+
+### 验证
+
+- `npx tsc --noEmit` / `node scripts/smoke-web.mjs` **225 全绿**；`pnpm build`（仅 chunk-size 提示，无错误）；`cargo check` 通过（同步更新 `Cargo.lock`）。
+
+---
+
 ## [1.59.172] - 2026-08-27
 
 ### 新增

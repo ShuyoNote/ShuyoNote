@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
   <img src="https://img.shields.io/badge/React-18-61dafb" alt="react">
   <img src="https://img.shields.io/badge/Vite-8-646cff" alt="vite">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-orange" alt="license">
 </p>
 
 ---
@@ -329,6 +329,12 @@ ShuyoNote/
 
 ## 📄 License
 
-MIT
+本项目采用 [GNU Affero General Public License v3.0](LICENSE)（**AGPL-3.0**），全文见仓库根 `LICENSE` 文件。
 
-> 注：仓库暂未附带 `LICENSE` 文件，正式发布前建议补充。
+**为什么是 AGPL-3.0 而不是 MIT**：
+
+- ShuyoNote 是**本地优先**应用，但附带一个可自建、可被第三方托管的 `sync-server`（Axum + SQLite）同步服务。若仍用 MIT，他人可以把它打包成托管服务（SaaS）分发，却无需把服务端源码开放。
+- **AGPL-3.0** 在网络交互（网络服务 / 托管运行）时同样触发放大条款——**无论以何种方式分发（本地、网络、托管），只要基于本项目的代码对外提供，都必须以 AGPL-3.0 开放对应源码**。这正好匹配「本地优先 + 可自建同步」的双形态。
+- **LGPL** 面向「库」，不适合作为整体应用（含前端 + Rust 后端 + sync-server 多可执行文件）的许可证；**GPL-3.0** 不具备 AGPL 的网络服务条款，无法覆盖"被托管成 SaaS"这一场景。故选择约束力最强的 **AGPL-3.0**。
+
+> 简述：你可以自由使用、修改、分发 ShuyoNote，或将其作为服务运行；但若向他人提供修改版/网络服务，你必须以相同许可（AGPL-3.0）开放该修改与对应源码。详见 [LICENSE](LICENSE) 全文。
