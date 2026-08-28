@@ -2,6 +2,22 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.175] - 2026-08-27
+
+### 新增
+
+- **桌面端接入向量语义检索（能力对齐）**：此前 M20.2 语义/向量重排只在 Web 生效，`v1.59.175` 起**桌面活动空间检索（Rust `search.rs`）也走向量语义**——
+  - 前端把 embedding 配置随 `search` 参数传入 Rust（`api.search` 附 `readEmbedConfig()`）；
+  - Rust 侧新增 `page_embeddings` 表 + `embed_text`（Ollama `/api/embed`、OpenAI `/v1/embeddings`）+ `cosine_sim`/`embed_hash`/`embedding_text`/`keyword_score` 纯函数 + `search_semantic_async`（宽候选集 + 余弦加分 `VECTOR_BONUS` + 缓存按内容哈希失效）；
+  - 连接 I/O 全部用作用域同步块、仅对自有数据 `await`，保证 Tauri 命令 future `Send`；
+  - **跨空间（`all_spaces`）检索仍为 FTS**（未逐空间向量重排）；嵌入端点不可达/失败时优雅回退关键词排序，搜索永不中断。
+
+### 验证
+
+- `cargo check` 0 错（仅一个既有 `security.rs` 无关警告）；`cargo test --lib` **29 全绿**（新增 `cosine_sim`/`embed_hash`/`embedding_text`/`keyword_score` 4 项检索单测）；`npx tsc --noEmit` 0 错；`node scripts/smoke-web.mjs` 239 全绿；`pnpm build` 通过；`cargo check` 同步 `Cargo.lock`。
+
+---
+
 ## [1.59.174] - 2026-08-27
 
 ### 新增

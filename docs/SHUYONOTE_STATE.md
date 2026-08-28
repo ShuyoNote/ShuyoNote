@@ -8,7 +8,7 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.174**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.175**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
 - **git**：HEAD `d8b2250`（工作树干净；v1.59.174 发布提交，v1.59.173 发布提交为 `21a80d9`，其后追加 PDF 批注方案 + MSRV + 文档体系完善等提交）。
 
@@ -50,14 +50,15 @@
 - 移除「+」菜单的"流程图/思维导图"与"AI 绘图"项（SlashMenuPlugin makeOptions）。
 - **v1.59.173**：分栏最大列数 4→5（`MAX_COLS`）；绘图块控制条移入块内部顶端、左上角、透明描边；`body.content-full` 下标题/属性区左对齐；绘图块 fit 加大边距（`pad=0.8`+`12px inset`）；许可由 MIT 切换为 AGPL-3.0（新增 `LICENSE`）。
 - **v1.59.174**：真实向量 embedding 语义检索（`src/lib/semanticEmbed.ts`：`cosineSim`/`vectorRank`/`embedText`/`readEmbedConfig` + AI 设置「语义检索模型」字段；`search` 在 TF+char-bigram 上可选叠加向量重排）+ `page_embeddings` 页嵌入缓存持久化（内容哈希自动失效、惰性重嵌，反复搜索只发 1 次 query 嵌入）；README 版本徽章对齐。
+- **v1.59.175**：桌面端接入向量语义检索（能力对齐）——`api.search` 附 `readEmbedConfig()` 传 Rust；`search.rs` 增 `page_embeddings` 表 + `embed_text`/`cosine_sim`/`embed_hash`/`keyword_score` + `search_semantic_async`（宽候选集 + 余弦加分 + 哈希缓存），连接 I/O 作用域同步块保证 future `Send`；**跨空间 `all_spaces` 仍 FTS**，嵌入端点不可达回退关键词。
 
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
 - **分栏旧数据不做自动迁移**：`columns`/`column`（ElementNode 轻量版）**保留注册**，旧文档仍可读兼容；新插入走路线 B。自动改写线上 `content_json` 风险高、收益低，**明确不做**。
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
-- **M20.2 向量语义检索仅 Web 生效**：语义排序/向量重排在 `web.ts` + `src/lib/semanticEmbed.ts`；**桌面 Rust `search.rs` 仍是 FTS/相关性，无向量层**——embedding 配置存前端 `localStorage`，Rust 侧读不到。要让桌面同享向量语义需后续单独做（Rust 调 embedding 端点 + `page_embeddings` 表 + 网络请求）。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.174**。
+- **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面活动空间检索**（Rust `search.rs`，v1.59.175：前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；**跨空间（`all_spaces`）检索仍为 FTS**（未逐空间向量重排）；嵌入端点不可达时优雅回退关键词排序。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.175**。
 
 ## 4. 环境/工具备注
 
