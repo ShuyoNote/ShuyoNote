@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNode, $createTextNode, $isElementNode, $isTextNode } from "lexical";
 import { $findTableNode } from "@lexical/table";
-import { $insertList } from "@lexical/list";
+import { $insertList, $isListNode, $isListItemNode } from "@lexical/list";
 import { useEditorStore } from "../../store/editor";
 import { makeOptions, type SlashOption } from "./SlashMenuPlugin";
 import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
@@ -135,7 +135,19 @@ function runAtBlock(
     target.selectEnd();
   });
   if (listType) {
-    editor.update(() => $insertList(listType));
+    editor.update(() => {
+      $insertList(listType);
+      // $insertList converts the selection into a list item, but for an EMPTY block the
+      // caret can be left on the list-item element (which for a check list renders to the
+      // LEFT of its checkbox). Force the caret into the first item's TEXT so it sits in the
+      // text (right of the checkbox / after the bullet marker).
+      const item = $getRoot().getChildren().find((c) => $isListNode(c))?.getFirstChild?.();
+      if (item && $isListItemNode(item)) {
+        if (item.getChildrenSize() === 0) item.append($createTextNode(""));
+        const text = item.getFirstChild();
+        if (text && $isTextNode(text)) text.select(0, 0);
+      }
+    });
   } else {
     option.run(editor);
   }
