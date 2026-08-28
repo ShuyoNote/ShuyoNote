@@ -277,6 +277,14 @@ export class SqliteStore {
         content_text TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS page_embeddings (
+        page_id TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        vector TEXT NOT NULL,
+        hash TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_pages_ws ON pages(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id);
       CREATE INDEX IF NOT EXISTS idx_pages_deleted ON pages(deleted_at);

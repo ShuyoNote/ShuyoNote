@@ -130,3 +130,25 @@ export async function embedText(text: string, cfg: EmbedConfig): Promise<number[
 /** Bounded bonus applied to a TF score for a positive embedding-hit. Kept small
  *  so the token-TF backbone stays dominant (mirrors SEMANTIC_BONUS in web.ts). */
 export const VECTOR_BONUS = 3;
+
+/** Max characters of content embedded for a page (keeps cache/cost bounded). */
+export const EMBED_TEXT_CAP = 500;
+
+/** The exact text sent to the embedding model for a page (title + capped content).
+ *  Must match between cache-hash computation and the embed call, so a changed
+ *  content produces a different hash and the cache invalidates. */
+export function embeddingText(title: string, content: string): string {
+  return `${String(title ?? "")} ${String(content ?? "").slice(0, EMBED_TEXT_CAP)}`;
+}
+
+/** Deterministic FNV-1a (32-bit) hash of a string, used to detect content drift
+ *  so a changed page re-embeds once and then hits the cache. */
+export function embedHash(text: string): string {
+  const s = String(text ?? "");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}

@@ -1,5 +1,5 @@
 import { semanticScore } from "../searchSemantic";
-import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS } from "../semanticEmbed";
+import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
 
@@ -1017,22 +1017,44 @@ function makeInvoke(store: SqliteStore) {
         }))
         .sort((a: any, b: any) => b.score - a.score);
 
-      // M20.2+ — optional real-vector re-rank: if an embedding model is configured,
-      // embed the query + a title/short-content prefix for the top candidates and
-      // add a bounded vector bonus. Any failure (provider down / not reachable)
-      // falls back to the TF + char-bigram order above, so search never breaks.
+      // M20.2+ — optional real-vector re-rank (cache-backed): if an embedding model
+      // is configured, embed the query once, then reuse each page's cached embedding
+      // (keyed by page_id + content hash) so repeated searches make only 1 embed call.
+      // Changed/new pages are lazily re-embedded once and cached. Any failure falls
+      // back to the TF + char-bigram order above, so search never breaks.
       const embedCfg = readEmbedConfig();
       if (embedCfg) {
         try {
           const queryVec = await embedText(query, embedCfg);
           if (queryVec && queryVec.length) {
+            const model = embedCfg.model;
             const K = Math.min(30, scored.length);
             const bonus = new Map<string, number>();
             for (const s of scored.slice(0, K)) {
-              const vec = await embedText(
-                `${String(s.r.title ?? "")} ${String(s.r.content_text ?? "").slice(0, 200)}`,
-                embedCfg,
-              );
+              const text = embeddingText(String(s.r.title ?? ""), String(s.r.content_text ?? ""));
+              const hash = embedHash(text);
+              const cached = store.query<{ model: string; vector: string; hash: string }>(
+                "SELECT model, vector, hash FROM page_embeddings WHERE page_id = ?",
+                [String(s.r.id)],
+              )[0];
+              let vec: number[] | null = null;
+              if (cached && cached.model === model && cached.hash === hash) {
+                try {
+                  const parsed = JSON.parse(cached.vector);
+                  if (Array.isArray(parsed)) vec = parsed.map(Number);
+                } catch {
+                  vec = null;
+                }
+              }
+              if (!vec) {
+                vec = await embedText(text, embedCfg);
+                if (vec && vec.length) {
+                  store.run(
+                    "INSERT OR REPLACE INTO page_embeddings (page_id, model, dim, vector, hash, updated_at) VALUES (?,?,?,?,?,?)",
+                    [String(s.r.id), model, vec.length, JSON.stringify(vec), hash, Date.now()],
+                  );
+                }
+              }
               if (vec && vec.length) bonus.set(String(s.r.id), cosineSim(queryVec, vec));
             }
             if (bonus.size) {

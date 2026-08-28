@@ -73,7 +73,7 @@ await esbuild.build({
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
-      'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig } from "./src/lib/semanticEmbed";\n' +
+      'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -940,6 +940,13 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("parseEmbedding ollama", JSON.stringify(aiMod.parseEmbedding("ollama", { embeddings: [[0.3, 0.4]] })) === "[0.3,0.4]");
   // No provider configured (Node has no localStorage) → readEmbedConfig degrades to null.
   assert("readEmbedConfig degrades to null", aiMod.readEmbedConfig() === null);
+  // Cache-discriminators: embeddingText is bounded + deterministic; embedHash detects drift.
+  const et = aiMod.embeddingText("标题", "x".repeat(600));
+  assert("embeddingText caps content", et.startsWith("标题 ") && et.length === 2 + 1 + aiMod.EMBED_TEXT_CAP, `len=${et.length}`);
+  const hA = aiMod.embedHash("会议纪要");
+  const hB = aiMod.embedHash("会议纪要");
+  const hC = aiMod.embedHash("项目计划");
+  assert("embedHash deterministic + drift-sensitive", hA === hB && hA !== hC && typeof hA === "string" && hA.length > 0, `${hA} ${hC}`);
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.
   const wiki = aiMod.buildWikiExport(
     [
