@@ -2063,6 +2063,15 @@ body.content-full .editor-content {
   max-width: none;
 }
 
+/* In full-width mode the editor placeholder must left-align with the content (it's
+   otherwise `left:50%`-centered to match the fixed doc column), so the placeholder
+   and the caret sit together at the content start instead of drifting to center. */
+body.content-full .editor-placeholder {
+  left: 0;
+  transform: none;
+  width: 100%;
+}
+
 /* Properties panel */
 .properties {
   max-width: var(--doc-width);
