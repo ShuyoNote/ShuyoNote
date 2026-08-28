@@ -2089,8 +2089,14 @@ body.is-ai-open .main {
 .cover-picker-actions {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   margin-top: 12px;
 }
+.cover-picker-actions-right {
+  display: flex;
+  gap: 8px;
+}
+.cover-picker-upload,
 .cover-picker-clear,
 .cover-picker-btn {
   border: 1px solid var(--border);
@@ -2101,7 +2107,17 @@ body.is-ai-open .main {
   cursor: pointer;
   font-size: 13px;
 }
-.cover-picker-btn:hover {
+.cover-picker-upload {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.cover-picker-upload:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.cover-picker-btn:hover,
+.cover-picker-clear:hover {
   background: var(--block-hover);
 }
 .page-actions {
