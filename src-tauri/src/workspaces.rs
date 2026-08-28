@@ -278,13 +278,18 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
             ]
         }
     }).to_string();
+    // A welcoming cover + icon so the new space's start page feels finished.
+    let home_cover = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+    let home_icon = "🌱";
     c.execute(
-        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, NULL, ?3, ?4, ?5, 'page', 0, ?6, ?6, NULL)",
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, cover, icon, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, 'page', 0, ?6, ?7, ?8, ?8, NULL)",
         params![
             home_id, id, "开始",
             home_json,
             "欢迎来到你的新空间\n本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。\n从这里开始\n新建页面：Ctrl+N 或左侧栏 ＋\n插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）\n搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴\n常用快捷键\nCtrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图\n用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。",
+            home_cover,
+            home_icon,
             now,
         ],
     )
