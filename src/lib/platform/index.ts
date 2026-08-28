@@ -20,6 +20,7 @@ export type {
   Executor,
   OpenerDriver,
   WebviewDriver,
+  PdfRenderDriver,
 } from "./types";
 
 function isTauri(): boolean {
@@ -52,5 +53,8 @@ export const platform: Platform = {
   },
   get webview() {
     return current.webview;
+  },
+  get pdfRender() {
+    return current.pdfRender;
   },
 };

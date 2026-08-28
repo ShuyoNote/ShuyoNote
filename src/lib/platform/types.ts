@@ -59,6 +59,14 @@ export interface WebviewDriver {
   ): Promise<() => void>;
 }
 
+/** M24 — PDF page rendering. Desktop uses native MuPDF; Web degrades to pdf.js. */
+export interface PdfRenderDriver {
+  /** Render an attachment's PDF page to PNG bytes (native engine when available). */
+  renderPdfPage(attachmentId: string, pageIndex: number, scale: number): Promise<Uint8Array>;
+  /** Whether a native engine is available on this host. */
+  nativeAvailable(): boolean;
+}
+
 /** The aggregate of every capability the app expects from its host. */
 export interface Platform {
   executor: Executor;
@@ -67,4 +75,5 @@ export interface Platform {
   event: EventDriver;
   asset: AssetDriver;
   webview: WebviewDriver;
+  pdfRender: PdfRenderDriver;
 }

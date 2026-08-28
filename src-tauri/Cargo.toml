@@ -42,6 +42,12 @@ argon2 = "0.5.3"
 rand_core = { version = "0.6", features = ["getrandom"] }
 base64 = "0.23.1"
 tauri-plugin-updater = "2.10.1"
+# M24 desktop-native PDF render: use mupdf-sys (compiles cleanly on MSVC) rather
+# than the high-level `mupdf` crate, whose safe wrapper has an MSVC compile bug
+# (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
+# via src/pdf_native.rs.
+mupdf-sys = "0.8.0"
+png = "0.18.1"
 
 [dev-dependencies]
 # For async integration tests (embed_text network round-trip / search_semantic ranking).

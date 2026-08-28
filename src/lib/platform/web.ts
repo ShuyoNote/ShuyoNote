@@ -2209,6 +2209,13 @@ export function createWebPlatform(): Platform {
     webview: {
       onDragDropEvent: async () => () => {},
     },
+    pdfRender: {
+      renderPdfPage: async () => {
+        // Web has no native engine; the reader falls back to pdf.js.
+        throw new Error("native pdf render not available on web");
+      },
+      nativeAvailable: () => false,
+    },
   };
 }
 

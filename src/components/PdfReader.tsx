@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePdfReader } from "../store/pdfReader";
 import { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
+import { platform } from "../lib/platform";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 
 // Blob → data URL (self-contained; no object-URL revocation, so no ERR_FILE_NOT_FOUND).
@@ -12,6 +13,21 @@ function blobToDataUrl(blob: Blob): Promise<string> {
     fr.onerror = () => reject(new Error("转换页面图像失败"));
     fr.readAsDataURL(blob);
   });
+}
+
+// M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
+// available (works in the Tauri webview too); otherwise fall back to pdf.js.
+async function renderPagePng(
+  eng: ReturnType<typeof createPdfjsEngine>,
+  attachmentId: string | null,
+  pageIndex: number,
+  scale: number,
+): Promise<Blob> {
+  if (attachmentId && platform.pdfRender.nativeAvailable()) {
+    const bytes = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale);
+    return new Blob([bytes as unknown as ArrayBuffer], { type: "image/png" });
+  }
+  return eng.renderPageToBlob(pageIndex, scale);
 }
 
 // M24 — PDF reader modal. Loads the PDF bytes via the pdf.js engine, renders the
@@ -81,7 +97,7 @@ export function PdfReader() {
         if (alive) setTextItems(null);
       }
       try {
-        const blob = await eng.renderPageToBlob(pageIndex, scale);
+        const blob = await renderPagePng(eng, attachmentId, pageIndex, scale);
         if (!alive) return;
         const dataUrl = await blobToDataUrl(blob);
         if (!alive) return;

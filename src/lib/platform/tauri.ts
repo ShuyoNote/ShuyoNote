@@ -44,4 +44,13 @@ export const tauriPlatform: Platform = {
           handler(e as unknown as { payload: { type: string; paths: string[] } }),
       ),
   },
+  pdfRender: {
+    renderPdfPage: async (attachmentId, pageIndex, scale) => {
+      const arr = await tauriInvoke<number[]>("render_pdf_page", {
+        args: { attachment_id: attachmentId, page_index: pageIndex, scale },
+      });
+      return new Uint8Array(arr);
+    },
+    nativeAvailable: () => true,
+  },
 };

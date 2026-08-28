@@ -10,6 +10,7 @@ mod database;
 mod db;
 mod graph;
 mod models;
+mod pdf_native;
 mod plugins;
 mod properties;
 mod search;
@@ -74,6 +75,7 @@ pub fn run() {
             commands::save_pdf_annotations,
             commands::list_pdf_annotations,
             commands::list_all_pdf_annotations,
+            commands::render_pdf_page,
             commands::delete_page,
             commands::move_page,
             search::search,

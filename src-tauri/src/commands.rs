@@ -458,3 +458,39 @@ fn renumber_siblings(c: &Connection, parent_id: Option<&str>) -> Result<(), Stri
     }
     Ok(())
 }
+
+// ---- M24 native PDF render engine (desktop, mupdf) ----
+
+#[derive(Deserialize)]
+pub struct RenderPdfPageArgs {
+    pub attachment_id: String,
+    pub page_index: i64,
+    pub scale: f32,
+}
+
+/// Render an attachment's PDF page to PNG bytes using MuPDF (desktop-native,
+/// faster for large/complex PDFs). Web degrades to pdf.js (see platform driver).
+#[tauri::command]
+pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPageArgs) -> Result<Vec<u8>, String> {
+    let c = conn(&db);
+    let hash: String = c
+        .query_row(
+            "SELECT hash FROM attachments WHERE id = ?1",
+            params![args.attachment_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let bytes = crate::attachments::read_attachment_bytes(app, hash)?;
+    let (rgba, w, h, stride) = unsafe { crate::pdf_native::render_page(&bytes, args.page_index, args.scale) }
+        .map_err(|e| format!("MuPDF render failed: {e}"))?;
+    debug_assert_eq!(stride, w * 4, "expected RGBA8 with stride == width*4");
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
