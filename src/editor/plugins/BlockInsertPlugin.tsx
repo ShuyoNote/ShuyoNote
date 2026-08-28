@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNode, $isElementNode } from "lexical";
+import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNode, $createTextNode, $isElementNode, $isTextNode } from "lexical";
 import { $findTableNode } from "@lexical/table";
 import { $createListNode, $createListItemNode } from "@lexical/list";
 import { useEditorStore } from "../../store/editor";
@@ -108,9 +108,15 @@ function $insertListBlockAt(key: string | null, listType: ListKind) {
   const list = $createListNode(listType);
   const item = $createListItemNode();
   for (const child of [...target.getChildren()]) item.append(child);
+  // A check-list item renders its checkbox to the LEFT of the text; a bare
+  // item.selectStart() would anchor at the item start (left of the checkbox).
+  // Ensure the item has a text node and put the caret there (right of the checkbox).
+  if (item.getChildrenSize() === 0) item.append($createTextNode(""));
   list.append(item);
   target.replace(list);
-  item.selectStart();
+  const first = item.getFirstChild();
+  if (first && $isTextNode(first)) first.selectStart();
+  else item.selectStart();
 }
 
 // Place a collapsed selection inside the target block so the shared insert helpers
