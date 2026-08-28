@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, type TextItemLike } from "../lib/pdfTextLayer";
+import { ocrRecognize } from "../lib/ocr";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
@@ -47,6 +48,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [tool, setTool] = useState<Tool>("select");
   const [selected, setSelected] = useState<string | null>(null);
+  const [ocrText, setOcrText] = useState<string | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const ink = useRef<[number, number][]>([]);
@@ -56,6 +59,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     let alive = true;
     setAnnotations([]);
     setSelected(null);
+    setOcrText(null);
     loadPage(attachmentId, pageIndex).then((a) => {
       if (alive) setAnnotations(a);
     });
@@ -63,6 +67,16 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       alive = false;
     };
   }, [attachmentId, pageIndex]);
+
+  const runOcr = async () => {
+    if (!pageImageUrl || ocrBusy) return;
+    setOcrBusy(true);
+    setOcrText(null);
+    const text = await ocrRecognize(pageImageUrl);
+    setOcrText(text);
+    setOcrBusy(false);
+    if (text) toast("已识别本页文本", "success");
+  };
 
   const persist = useCallback(
     (next: PdfAnnotation[]) => {
@@ -223,6 +237,11 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           </>
         )}
         <span className="pdf-annot-hint">{hasTextLayer ? "有文本层" : "无文本层（矩形/画笔/便签更稳）"}</span>
+        {!hasTextLayer && (
+          <button className="pdf-annot-tool" onClick={runOcr} disabled={ocrBusy}>
+            {ocrBusy ? "识别中…" : "OCR 识别本页"}
+          </button>
+        )}
       </div>
 
       <div className="pdf-annot-stage" style={{ position: "relative" }}>
@@ -272,6 +291,13 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           })}
         </svg>
       </div>
+
+      {ocrText && (
+        <div className="pdf-ocr-result">
+          <div className="pdf-ocr-title">OCR 识别结果</div>
+          <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+        </div>
+      )}
     </div>
   );
 }
