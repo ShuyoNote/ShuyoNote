@@ -3427,11 +3427,23 @@ select.prop-value {
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   margin: 0.5em 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: start;
 }
 
+/* Icon sits in column 1; all content flows through column 2, so they line up
+   side by side (multiple paragraphs keep stacking on the right). */
 .editor-callout::before {
   content: "💡";
-  margin-right: 8px;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+}
+
+.editor-callout > * {
+  grid-column: 2;
 }
 
 /* Feishu-style 分栏: a flex row of N columns side by side with a small gap between
