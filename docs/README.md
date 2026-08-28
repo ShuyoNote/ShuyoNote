@@ -104,6 +104,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-24-excalidraw-advanced-plan.md](plans/2026-08-24-excalidraw-advanced-plan.md) | **「Excalidraw 绘图高级功能」方案（M23）**：挖掘 Excalidraw 0.17.1 能力（命令式 API/元素编程化/只读/自定义侧栏/命中检测/Frames/导出），规划接入 ShuyoNote——只读嵌入、AI·mermaid 联动、白板导航、检索集成；协同/代码生成诚实标注需后端或 0.18+（**规划，建议**） |
 | [plans/2026-08-27-pdf-annotation-plan.md](plans/2026-08-27-pdf-annotation-plan.md) | **「PDF 批注」方案（M24）**：竞品天花板对标（思源=块笔记顶格、MarginNote/LiquidText=思维工作台、Notion=无/Obsidian=靠插件）+ 2026 AI 帮读前沿；差异化定位「批注即块」；按 MVP 切（阶段 1：**双引擎渲染**（桌面 Rust 原生 `pdfium-render`/`mupdf-rs` + Web pdf.js Worker 回退）+ 批注 overlay + 内容寻址存储 + 摘录成块进反链/搜索 + 文本层判定/OCR 兜底；阶段 2：写回 PDF/OCR 精确划词；阶段 3：AI 帮读）。**规划，建议**（排在 M20 之后，非当前优先级） |
 | [plans/2026-08-27-help-system-plan.md](plans/2026-08-27-help-system-plan.md) | **「帮助系统」方案（M25）**：本地优先/键盘驱动的四层帮助（P0 就地提示+快捷键面板；P1 内置「使用指南」页+新手清单；P2 外部静态站可选）；主张帮助页=可编辑笔记（同源/可搜/可导出）；复用命令面板/斜杠/模板/`shortcuts.ts` 单一来源。**§9 已细化**：`shortcuts.ts` 数据结构 + 权威快捷键清单 + `ShortcutsPanel` 交互细则 + 「使用指南」页块级大纲 + 入口/状态 + 实现顺序（P0→P1）。**P0/P1 已落地（v1.59.177）** |
+| [plans/2026-08-27-project-website-navigation-plan.md](plans/2026-08-27-project-website-navigation-plan.md) | **「项目网站导航」方案（M25 P2 细化）**：让用户方便导航到外部项目网站的**利弊权衡 + 决策 + 入口设计**。结论=做成「可发现但克制、绝不阻塞、绝不跟踪」的被动出口；拆分三类外部站点（项目主页/文档站/营销落地页），只承接前两类；落地=「关于」对话框（版本/AGPL-3.0 许可/四干净链接）+「检查更新」+ 帮助页脚注 + **「禁用外部导航」隐私开关**；链接走 `src/lib/links.ts` 单一来源、无 `utm`/埋点；站点自控（仓库 Pages）优先、主页偏透明+文档+下载。**决策/建议，未实装** |
 
 ## 竞品对比
 
