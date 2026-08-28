@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNode, $createTextNode, $isElementNode, $isTextNode } from "lexical";
 import { $findTableNode } from "@lexical/table";
-import { $createListNode, $createListItemNode } from "@lexical/list";
+import { $insertList } from "@lexical/list";
 import { useEditorStore } from "../../store/editor";
 import { makeOptions, type SlashOption } from "./SlashMenuPlugin";
 import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
@@ -88,36 +88,14 @@ function isEmptyAtKey(
 
 type ListKind = "check" | "bullet" | "number";
 
-// List-format keys → Lexical list type. The shared @lexical list command
-// (`INSERT_*_LIST_COMMAND`) leaves the selection dangling when the block is an empty
-// element (the "+" target), so we build the list ourselves and place the caret in the
-// first item — matching how $replaceBlock hands the cursor to the new block.
+// List-format keys → Lexical list type. We insert these via $insertList (the same
+// path the working "/" and shortcut lists use), so the result is byte-identical to a
+// normal list. The catch: $insertList needs a TEXT-anchored selection to leave the
+// caret in the new item; the "+" target is often an EMPTY block whose `selectEnd()`
+// selection is ELEMENT-anchored, and after the block→list conversion that leaves the
+// caret dangling / at the wrong spot (left of a check-list's checkbox). So before
+// converting we give the target a text node and select it.
 const LIST_TYPES: Record<string, ListKind> = { todo: "check", ul: "bullet", ol: "number" };
-
-// Replace the block at `key` with a list of `listType` whose first item holds the
-// block's content, then put the caret into that first item.
-function $insertListBlockAt(key: string | null, listType: ListKind) {
-  const node = key ? $getNodeByKey(key) : null;
-  let target = node && node.isAttached() ? node : null;
-  if (!target) {
-    const last = $getRoot().getLastChild();
-    if (!last) return;
-    target = last;
-  }
-  if (!$isElementNode(target)) return;
-  const list = $createListNode(listType);
-  const item = $createListItemNode();
-  for (const child of [...target.getChildren()]) item.append(child);
-  // A check-list item renders its checkbox to the LEFT of the text; a bare
-  // item.selectStart() would anchor at the item start (left of the checkbox).
-  // Ensure the item has a text node and put the caret there (right of the checkbox).
-  if (item.getChildrenSize() === 0) item.append($createTextNode(""));
-  list.append(item);
-  target.replace(list);
-  const first = item.getFirstChild();
-  if (first && $isTextNode(first)) first.selectStart();
-  else item.selectStart();
-}
 
 // Place a collapsed selection inside the target block so the shared insert helpers
 // ($replaceBlock / $insertBlockNode) act on it, then run the option.
@@ -128,10 +106,6 @@ function runAtBlock(
 ) {
   const listType: ListKind | null = LIST_TYPES[option.key] ?? null;
   editor.update(() => {
-    if (listType) {
-      $insertListBlockAt(key, listType);
-      return;
-    }
     const node = key ? $getNodeByKey(key) : null;
     let target = node;
     if (!target || !target.isAttached()) {
@@ -143,9 +117,28 @@ function runAtBlock(
       }
       target = last;
     }
+    if (listType) {
+      // An empty block has no text node, so selectEnd() gives an element-anchored
+      // selection that $insertList can't re-anchor. Add an empty text node and select
+      // it, giving a text-anchored caret that survives the conversion (a check-list
+      // item's checkbox renders to the LEFT of its text).
+      if ($isElementNode(target)) {
+        if (target.getChildrenSize() === 0) target.append($createTextNode(""));
+        const first = target.getFirstChild();
+        if (first && $isTextNode(first)) first.selectStart();
+        else target.selectEnd();
+      } else {
+        target.selectEnd();
+      }
+      return;
+    }
     target.selectEnd();
   });
-  if (!listType) option.run(editor);
+  if (listType) {
+    editor.update(() => $insertList(listType));
+  } else {
+    option.run(editor);
+  }
   editor.focus();
 }
 
