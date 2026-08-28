@@ -7,7 +7,8 @@ import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { useEditorStore } from "../store/editor";
-import { openGuide } from "../lib/guide";
+import { openGuide, guideText } from "../lib/guide";
+import { buildHelpSite } from "../lib/helpSite";
 import { usePdfReader } from "../store/pdfReader";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
@@ -251,6 +252,26 @@ registerPlugin({
       run: () => {
         useEditorStore.getState().openAbout();
         return "已打开关于";
+      },
+    },
+    {
+      id: "help.export-site",
+      title: "导出帮助站点",
+      description: "把「使用指南」导出为可托管的静态 HTML 帮助站（zip）",
+      closeOnRun: true,
+      run: async () => {
+        const { files } = buildHelpSite(guideText());
+        const { zipSync, strToU8 } = await import("fflate");
+        const zi: Record<string, Uint8Array> = {};
+        for (const f of files) zi[f.name] = strToU8(f.content);
+        const blob = new Blob([zipSync(zi)], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "shuyonote-help-site.zip";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        return `已导出帮助站点（${files.length} 个文件：index.html + 指南页）`;
       },
     },
   ],

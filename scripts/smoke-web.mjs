@@ -80,6 +80,7 @@ await esbuild.build({
       'export { normCoords, denormCoords, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, parsePdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
       'export { compareVersions, updateStatus } from "./src/lib/updates";\n' +
+      'export { buildHelpSite } from "./src/lib/helpSite";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -1004,6 +1005,13 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("updateStatus update-available", aiMod.updateStatus("1.59.178", "1.59.177") === "update-available");
   assert("updateStatus up-to-date", aiMod.updateStatus("1.59.177", "1.59.177") === "up-to-date");
   assert("updateStatus invalid on null", aiMod.updateStatus(null, "1.59.177") === "invalid");
+
+  // M25 P2 — external help site (reuses M21 static-wiki export).
+  const help = aiMod.buildHelpSite("欢迎使用\n本地优先的笔记应用。\n看 [[ShuyoNote 使用指南]] 获取帮助。");
+  assert("buildHelpSite emits index + guide page", Array.isArray(help.files) && help.files.some((f) => f.name === "index.html") && help.files.some((f) => f.name.includes("使用指南")), JSON.stringify(help.files.map((f) => f.name)));
+  assert("buildHelpSite index mentions help title", help.indexHtml.includes("ShuyoNote 帮助") && help.indexHtml.includes("共 1 个页面"), help.indexHtml.slice(0, 120));
+  const helpGuide = help.files.find((f) => f.name.includes("使用指南"));
+  assert("buildHelpSite guide page renders content", helpGuide && helpGuide.content.includes("本地优先"), helpGuide?.name);
   // M24 stage-1 — render engine selection (双引擎接口).
   assert("pickEngine native when available", aiMod.pickEngine({ native: true, pdfjs: true }) === "native");
   assert("pickEngine falls back to pdfjs", aiMod.pickEngine({ native: false, pdfjs: true }) === "pdfjs");
