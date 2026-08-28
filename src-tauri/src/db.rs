@@ -345,6 +345,15 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
             created_at   INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_page_versions_page ON page_versions(page_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS page_embeddings (
+            page_id    TEXT PRIMARY KEY,
+            model      TEXT NOT NULL,
+            dim        INTEGER NOT NULL,
+            vector     TEXT NOT NULL,
+            hash       TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL
+        );
         "#,
     )?;
 

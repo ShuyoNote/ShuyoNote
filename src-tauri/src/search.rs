@@ -2,7 +2,7 @@ use crate::db::Db;
 use crate::models::SearchResult;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 // Sync the FTS index for a page (upsert = delete + insert).
@@ -64,6 +64,22 @@ pub struct SearchArgs {
     pub limit: Option<usize>,
     /// When true, search across all workspaces (results carry their space name).
     pub all_spaces: Option<bool>,
+    /// Optional embedding config (frontend-local read, passed in) — enables the
+    /// vector semantic re-rank on the desktop side, mirroring web.ts. Absent when
+    /// the user hasn't configured an embedding model.
+    #[serde(default)]
+    pub embedding: Option<EmbedCfg>,
+}
+
+/// Embedding provider config forwarded from the frontend (read from localStorage).
+/// Mirrors `src/lib/semanticEmbed.ts`'s EmbedConfig (camelCase JSON keys).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbedCfg {
+    pub provider: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub model: String,
 }
 
 // Split a query into a text part + `prop:名称=值` filters.
@@ -159,6 +175,237 @@ fn search_in_conn(
     Ok(results)
 }
 
+/// Bounded vector bonus (mirrors web.ts VECTOR_BONUS) — a positive embedding hit
+/// adds to the keyword/relevance score without dominating it.
+const VECTOR_BONUS: f32 = 3.0;
+/// Max content chars embedded per page (keeps cache/cost bounded).
+const EMBED_TEXT_CAP: usize = 500;
+
+/// The exact text embedded for a page (title + capped content). Must be the same
+/// in both the hash and the network call, so a changed page invalidates the cache.
+fn embedding_text(title: &str, content: &str) -> String {
+    let cap: String = content.chars().take(EMBED_TEXT_CAP).collect();
+    format!("{} {}", title, cap)
+}
+
+/// FNV-1a (32-bit) hash, used to detect content drift for cache invalidation.
+fn embed_hash(s: &str) -> u32 {
+    let mut h: u32 = 0x811c9dc5;
+    for b in s.as_bytes() {
+        h ^= *b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    h
+}
+
+/// Cosine similarity (dot / (|a|·|b|)). 0 for empty / length-mismatched input.
+fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum();
+    let nb: f32 = b.iter().map(|x| x * x).sum();
+    let n = na.sqrt() * nb.sqrt();
+    if n <= 0.0 {
+        0.0
+    } else {
+        dot / n
+    }
+}
+
+/// Simple keyword relevance (0..1): fraction of query tokens found (case-insensitive)
+/// in the title or content. Mirrors the "keyword" signal in web.ts (not exact TF,
+/// but the same effect) so pages that match literal terms keep a head start.
+fn keyword_score(query: &str, title: &str, content: &str) -> f32 {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return 0.0;
+    }
+    let title_l = title.to_lowercase();
+    let content_l = content.to_lowercase();
+    let tokens: Vec<&str> = q.split_whitespace().filter(|s| !s.is_empty()).collect();
+    if tokens.is_empty() {
+        return if title_l.contains(&q) || content_l.contains(&q) { 1.0 } else { 0.0 };
+    }
+    let hits = tokens.iter().filter(|t| title_l.contains(**t) || content_l.contains(**t)).count();
+    hits as f32 / tokens.len() as f32
+}
+
+/// Embed one text via the provider. Returns Ok(None) on any non-success / unreachable /
+/// unparseable response so the caller degrades to keyword ranking.
+async fn embed_text(cfg: &EmbedCfg, text: &str) -> Result<Option<Vec<f32>>, String> {
+    let base = cfg.base_url.trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(None);
+    }
+    let (url, body) = if cfg.provider == "openai" {
+        (
+            format!("{}/v1/embeddings", base),
+            serde_json::json!({ "model": cfg.model, "input": [text] }),
+        )
+    } else {
+        (
+            format!("{}/api/embed", base),
+            serde_json::json!({ "model": cfg.model, "input": text }),
+        )
+    };
+    let mut req = reqwest::Client::new().post(&url).json(&body);
+    if let Some(k) = cfg.api_key.as_deref() {
+        if !k.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", k));
+        }
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let v: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let arr = if cfg.provider == "openai" {
+        v["data"][0]["embedding"].as_array()
+    } else {
+        v["embeddings"][0].as_array()
+    };
+    let vec: Vec<f32> = arr
+        .map(|a| a.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect())
+        .unwrap_or_default();
+    Ok(if vec.is_empty() { None } else { Some(vec) })
+}
+
+/// Read a cached embedding vector, gated by model + content hash. None on miss/stale.
+fn cached_vector(c: &Connection, page_id: &str, model: &str, hash: u32) -> Option<Vec<f32>> {
+    let row: Option<(String, String, String)> = c
+        .query_row(
+            "SELECT model, vector, hash FROM page_embeddings WHERE page_id = ?1",
+            params![page_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+    let (m, vec_s, h) = row?;
+    if m != model || h != format!("{:x}", hash) {
+        return None;
+    }
+    serde_json::from_str::<Vec<f64>>(&vec_s)
+        .ok()
+        .map(|v| v.iter().map(|x| *x as f32).collect())
+}
+
+/// Upsert a cached embedding vector for a page.
+fn write_vector(c: &Connection, page_id: &str, model: &str, vec: &[f32], hash: u32, now: i64) {
+    let dim = vec.len() as i64;
+    let json = serde_json::to_string(vec).unwrap_or_else(|_| "[]".to_string());
+    let _ = c.execute(
+        "INSERT OR REPLACE INTO page_embeddings (page_id, model, dim, vector, hash, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![page_id, model, dim, json, format!("{:x}", hash), now],
+    );
+}
+
+/// Read all non-deleted pages (id, title, content_text) from a space connection.
+fn read_all_pages(c: &Connection) -> Result<Vec<(String, String, String)>, String> {
+    let mut stmt = c
+        .prepare("SELECT id, title, content_text FROM pages WHERE deleted_at IS NULL")
+        .map_err(|e| e.to_string())?;
+    let x = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(x)
+}
+
+/// Semantic (vector-aware) search over a broad candidate set, mirroring web.ts:
+/// keyword relevance is the backbone, then a bounded vector bonus from a cached /
+/// lazily-computed embedding. Does ALL connection I/O in scoped sync blocks and only
+/// awaits on owned data, so the future is Send (required by Tauri commands). The
+/// embedding cache is keyed by content hash, so repeated queries make just the query
+/// embed call; changed/new pages are lazily re-embedded once and cached.
+async fn search_semantic_async(
+    db: &State<'_, Db>,
+    text: &str,
+    filters: &[(String, String)],
+    limit: usize,
+    emb: &EmbedCfg,
+) -> Result<Vec<SearchResult>, String> {
+    // Phase 1 (sync, brief lock): read pages + pre-resolve cached vectors.
+    let (pages, cached, filter_ids) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let pages = read_all_pages(&c)?;
+        let filter_ids = if filters.is_empty() {
+            None
+        } else {
+            Some(pages_matching_filters(&c, filters)?)
+        };
+        let mut cached: HashMap<String, Vec<f32>> = HashMap::new();
+        for (id, title, content) in &pages {
+            if let Some(v) =
+                cached_vector(&c, id, &emb.model, embed_hash(&embedding_text(title, content)))
+            {
+                cached.insert(id.clone(), v);
+            }
+        }
+        (pages, cached, filter_ids)
+    };
+
+    // Phase 2 (async, NO lock held): embed the query + any dirty pages.
+    let qv = embed_text(emb, text).await?.filter(|v| !v.is_empty());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let mut scored: Vec<(f32, String, String, String)> = Vec::new();
+    let mut to_write: Vec<(String, String, Vec<f32>, u32, i64)> = Vec::new();
+    for (id, title, content_text) in &pages {
+        if let Some(ids) = &filter_ids {
+            if !ids.contains(id) {
+                continue;
+            }
+        }
+        let mut score = keyword_score(text, title, content_text);
+        if let Some(q) = &qv {
+            let et = embedding_text(title, content_text);
+            let h = embed_hash(&et);
+            let mut vec = cached.get(id).cloned();
+            if vec.is_none() {
+                if let Some(v) = embed_text(emb, &et).await? {
+                    to_write.push((id.clone(), emb.model.clone(), v.clone(), h, now));
+                    vec = Some(v);
+                }
+            }
+            if let Some(v) = vec {
+                score += VECTOR_BONUS * cosine_sim(q, &v);
+            }
+        }
+        scored.push((score, id.clone(), title.clone(), build_like_snippet(content_text, text, 120)));
+    }
+
+    // Phase 3 (sync, brief lock): write newly-computed cache rows.
+    if !to_write.is_empty() {
+        let c = db.0.lock().expect("db mutex poisoned");
+        for (pid, model, v, h, t) in to_write {
+            write_vector(&c, &pid, &model, &v, h, t);
+        }
+    }
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(limit);
+    Ok(scored
+        .into_iter()
+        .map(|(_s, id, title, snippet)| SearchResult {
+            id,
+            title,
+            snippet,
+            space: None,
+        })
+        .collect())
+}
+
 #[tauri::command]
 pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchResult>, String> {
     let limit = args.limit.unwrap_or(50).min(200);
@@ -166,6 +413,7 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
     if text.is_empty() && filters.is_empty() {
         return Ok(vec![]);
     }
+    let emb = args.embedding;
 
     // Determine target space(s). all_spaces -> iterate every non-deleted space's
     // own DB and merge (cross-space aggregation). Otherwise search only the
@@ -201,9 +449,14 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
         return Ok(out);
     }
 
-    let c = db.0.lock().expect("db mutex poisoned");
-    let mut results = search_in_conn(&c, &text, &filters, limit)?;
-    results.truncate(limit);
+    let results = if let Some(e) = emb.as_ref() {
+        search_semantic_async(&db, &text, &filters, limit, e).await?
+    } else {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut r = search_in_conn(&c, &text, &filters, limit)?;
+        r.truncate(limit);
+        r
+    };
     Ok(results)
 }
 
@@ -285,4 +538,42 @@ fn search_like(
         .map_err(|e| e.to_string())?;
 
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embed_hash_is_deterministic_and_drift_sensitive() {
+        let a = embed_hash("会议纪要");
+        let b = embed_hash("会议纪要");
+        let c = embed_hash("项目计划");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert!(a != 0);
+    }
+
+    #[test]
+    fn embedding_text_is_bounded_and_prefixes_title() {
+        let t = embedding_text("标题", &"x".repeat(600));
+        assert!(t.starts_with("标题 "));
+        // 标题 2 字 + 1 空格 + cap(500) = 503
+        assert_eq!(t.chars().count(), 2 + 1 + EMBED_TEXT_CAP);
+    }
+
+    #[test]
+    fn cosine_sim_orthogonal_is_zero() {
+        assert!((cosine_sim(&[1.0, 0.0], &[0.0, 1.0])).abs() < 1e-6);
+        assert!((cosine_sim(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0]) - 1.0).abs() < 1e-6);
+        assert_eq!(cosine_sim(&[], &[1.0]), 0.0);
+    }
+
+    #[test]
+    fn keyword_score_matches_literal_tokens() {
+        let s = keyword_score("会议纪要", "项目周报", "本周会议纪要，待办如下");
+        assert!(s > 0.9, "s={}", s);
+        let unrelated = keyword_score("会议纪要", "天气", "今天晴");
+        assert_eq!(unrelated, 0.0);
+    }
 }

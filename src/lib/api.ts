@@ -1,4 +1,5 @@
 import { platform } from "./platform";
+import { readEmbedConfig } from "./semanticEmbed";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
@@ -89,7 +90,7 @@ export const api = {
   movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
     invoke<void>("move_page", { args }),
   search: (query: string, limit = 50, allSpaces = false) =>
-    invoke<SearchResult[]>("search", { args: { query, limit, all_spaces: allSpaces } }),
+    invoke<SearchResult[]>("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
   getSyncConfig: () => invoke<SyncConfig>("get_sync_config"),
   setSyncConfig: (args: { server_url: string; token?: string }) =>
     invoke<void>("set_sync_config", { args }),
