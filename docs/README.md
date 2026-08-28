@@ -42,6 +42,39 @@ CHANGELOG.md             # 版本变更日志
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M24 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
 
+## 演进路线（里程碑总览）
+
+> 详细逐里程碑实现要点与版本号见 [docs/roadmap.md](roadmap.md)。状态：**✅ 已实现**；**🗓 部分/规划**；**未做** = 已评估延后。括号内为对应方案文档。
+
+| 里程碑 | 主题 | 状态 | 方案文档 |
+|--------|------|------|----------|
+| **M1** | Markdown 无损往返 | ✅ | [本地优先方案](plans/2026-08-15-local-first-note-app-plan.md) |
+| **M2** | 端到端加密 | ✅ | [多工作空间方案 §8](plans/2026-08-22-multi-workspace-plan.md) |
+| **M3** | 主题 / 外观自定义 + 插件雏形 | ✅ | [插件方案](plans/2026-08-22-plugin-plan.md) |
+| **M4** | 属性驱动仪表盘聚合 | ✅ | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
+| **M5** | PDF 导出 | ✅ | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
+| **M6** | 移动端适配 | 未做（环境受限） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
+| **M7** | 数据库视图扩展 | ✅ | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
+| **M8** | 新页面引导层 | ✅ | — |
+| **M9** | 模板 | ✅ | [模板方案](plans/2026-08-22-template-plan.md) |
+| **M10** | 多工作空间 | ✅ | [多工作空间方案](plans/2026-08-22-multi-workspace-plan.md) + [工作空间 CRUD](plans/2026-08-22-workspace-crud-plan.md) |
+| **M11** | 插件 | ✅ | [插件方案](plans/2026-08-22-plugin-plan.md)（M11.3 UI 型 / M11.4 市场已评估未做） |
+| **M12** | 文件夹 = 网盘 | ✅ | [文件夹网盘方案](plans/2026-08-22-folder-netdisk-plan.md) |
+| **M13** | 数据库 = 透镜 | ✅ | [数据库透镜方案](plans/2026-08-22-database-lens-plan.md) |
+| **M14** | 空间清理 / 存储管理 | ✅ | [存储清理方案](plans/2026-08-22-storage-cleanup-plan.md) |
+| **M15** | 每空间独立存储（物理隔离） | ✅ | [每空间独立存储方案](plans/2026-08-22-per-workspace-storage-plan.md) |
+| **M16** | 跨平台适配（全平台通吃） | ✅（部分） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md) + [web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md) |
+| **M17** | AI 薄 Agent | ✅ | [薄 Agent 方案](plans/2026-08-24-thin-agent-interface-plan.md) + [实现方案](plans/2026-08-24-thin-agent-interface-implementation-plan.md) |
+| **M18** | 内联 AI 起草 | ✅ | [内联起草方案](plans/2026-08-24-inline-ai-draft-plan.md) |
+| **M19** | Wiki 织网增强 | ✅ | [织网方案](plans/2026-08-24-wiki-weave-plan.md) |
+| **M20** | 模板变量 + 语义检索 | ✅ | [模板变量 + 语义检索方案](plans/2026-08-24-template-var-semantic-search-plan.md) |
+| **M21** | 静态 wiki 导出 + 关系图探索 | ✅ | [静态 wiki 导出方案](plans/2026-08-24-static-wiki-export-graph-plan.md) |
+| **M22** | 绘图（Excalidraw / mermaid / AI 文生图） | ✅ | [绘图方案](plans/2026-08-24-drawing-solution-design.md) |
+| **M23** | Excalidraw 绘图高级功能 | ✅（M23.5 协同/代码生成未做） | [Excalidraw 高级方案](plans/2026-08-24-excalidraw-advanced-plan.md) |
+| **M24** | **PDF 批注** | 🗓 规划/建议 | [PDF 批注方案](plans/2026-08-27-pdf-annotation-plan.md) |
+
+> 另：非里程碑功能——**分栏**（`/分栏`，见 [分栏方案](plans/2026-08-26-columns-plan.md)）、绘图块（归 M22）、内联「+」插入块等。完整现状与里程碑细节见 [roadmap.md](roadmap.md)。
+
 ## 方案与规划（plans）
 
 | 文档 | 内容 |

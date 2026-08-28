@@ -24,6 +24,12 @@
 
 - `npx tsc --noEmit` / `node scripts/smoke-web.mjs` **225 全绿**；`pnpm build`（仅 chunk-size 提示，无错误）；`cargo check` 通过（同步更新 `Cargo.lock`）。
 
+### 构建 / 文档
+
+- **Rust MSRV 声明为 1.94**：`src-tauri/Cargo.toml` 增 `rust-version = "1.94"`（不锁工具链，仅声明最小版本；与 README 徽章 `1.94+` 对齐）。
+- **M24 PDF 批注方案（规划/建议）**：新增 [docs/plans/2026-08-27-pdf-annotation-plan.md](docs/plans/2026-08-27-pdf-annotation-plan.md)（竞品天花板对标、双引擎渲染、文本层/OCR 兜底、MVP 切割），已注册进 `docs/README.md` 索引与 `docs/roadmap.md`（M24）。
+- **文档体系整理**：README 里程碑区间更新至 M1–M24；`docs/SHUYONOTE_STATE.md` 同步版本/许可/MSRV/HEAD 与 M24 下一步候选。
+
 ---
 
 ## [1.59.172] - 2026-08-27
