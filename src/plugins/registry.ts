@@ -7,6 +7,7 @@ import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { useEditorStore } from "../store/editor";
+import { openGuide } from "../lib/guide";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
@@ -229,6 +230,16 @@ registerPlugin({
       run: () => {
         useEditorStore.getState().openShortcuts();
         return "已打开快捷键";
+      },
+    },
+    {
+      id: "help.open-guide",
+      title: "打开使用指南",
+      description: "打开/新建「使用指南」帮助页",
+      closeOnRun: true,
+      run: () => {
+        void openGuide();
+        return "正在打开使用指南";
       },
     },
   ],

@@ -16,6 +16,7 @@ import { toast } from "../../store/toast";
 import { useBlockSelector } from "../../store/blockSelector";
 import { $getInsertTargetBlock } from "../blockUtils";
 import { useAttachmentsStore } from "../../store/attachments";
+import { openGuide } from "../../lib/guide";
 import { inputDialog } from "../../store/input";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
@@ -237,6 +238,10 @@ export function makeOptions(pageId: string): SlashOption[] {
         hr.insertAfter(paragraph);
         paragraph.select();
       }); } },
+    { key: "help", title: "帮助 / 使用指南", badge: "?", group: "基础", pinyin: "bz", run: () => {
+      // Opens the built-in guide page (creates it on first use); navigates away.
+      void openGuide();
+    } },
     { key: "table", title: "表格", badge: "▦", group: "嵌入", pinyin: "bg", run: (editor) => {
       editor.dispatchCommand(INSERT_TABLE_COMMAND, {
         columns: "3",
