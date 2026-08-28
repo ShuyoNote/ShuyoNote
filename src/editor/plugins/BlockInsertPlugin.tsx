@@ -144,12 +144,19 @@ function runAtBlock(
       const item = $getRoot().getChildren().find((c) => $isListNode(c))?.getFirstChild?.();
       if (item && $isListItemNode(item)) {
         // A check-list item normalizes away an EMPTY text node, which would leave the
-        // caret on the <li> (at/left of the checkbox). Anchor it with a non-empty,
-        // invisible (zero-width) text node so the caret sits in the text (right of the
-        // checkbox / after the marker). Zero-width space is stripped by typing at 0.
-        if (item.getChildrenSize() === 0) item.append($createTextNode("\u200b"));
-        const text = item.getFirstChild();
+        // caret on the <li> (at/left of the checkbox). The item usually already carries
+        // an empty text node from the converted block, so make it NON-empty (invisible
+        // zero-width) so it survives and the caret anchors in the text (right of the
+        // checkbox / after the marker).
+        let text = item.getFirstChild();
+        if (text && $isTextNode(text) && text.getTextContent() === "") {
+          text.setTextContent("\u200b");
+        } else if (!text) {
+          item.append($createTextNode("\u200b"));
+          text = item.getFirstChild();
+        }
         if (text && $isTextNode(text)) text.select(0, 0);
+        else item.selectStart();
       }
     });
   } else {
