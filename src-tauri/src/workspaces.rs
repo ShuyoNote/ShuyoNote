@@ -235,11 +235,58 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
     crate::db::reopen_space(&mut c, &id)?;
     // Seed a default home page so a new space isn't blank.
     let home_id = uuid::Uuid::new_v4().to_string();
-    let home_json = r#"{"root":{"children":[{"type":"heading","tag":"h1","version":1,"children":[{"type":"text","text":"你好，这是你的新空间","detail":0,"format":0,"style":"","mode":"normal","version":1}],"direction":"ltr","format":"","indent":0,"style":"","mode":"normal","textFormat":0,"textStyle":""}],"direction":"ltr","format":"","indent":0,"type":"root","version":1}}"#;
+    // Build the welcome page from structured blocks. Small local fns keep every
+    // serde_json literal shallow, so the json! macro recursion limit isn't hit.
+    fn js_text(s: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "text", "text": s, "detail": 0, "format": 0, "mode": "normal", "style": "", "version": 1 })
+    }
+    fn js_para(s: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "paragraph", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [js_text(s)] })
+    }
+    fn js_heading(tag: &str, s: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "heading", "tag": tag, "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [js_text(s)] })
+    }
+    fn js_bullet(items: &[&str]) -> serde_json::Value {
+        let children = items
+            .iter()
+            .map(|s| serde_json::json!({ "type": "listitem", "value": 1, "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [js_text(s)] }))
+            .collect::<Vec<_>>();
+        serde_json::json!({ "type": "list", "tag": "ul", "listType": "bullet", "start": 1, "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": children })
+    }
+    fn js_quote(s: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "quote", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [js_text(s)] })
+    }
+    fn js_callout(s: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "callout", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "", "children": [js_para(s)] })
+    }
+    let home_json = serde_json::json!({
+        "root": {
+            "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
+            "children": [
+                js_heading("h1", "欢迎来到你的新空间"),
+                js_callout("本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。"),
+                js_heading("h2", "从这里开始"),
+                js_bullet(&[
+                    "新建页面：Ctrl+N 或左侧栏 ＋",
+                    "插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）",
+                    "搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴",
+                ]),
+                js_heading("h2", "常用快捷键"),
+                js_quote("Ctrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图"),
+                serde_json::json!({ "type": "horizontalrule", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "" }),
+                js_callout("用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。"),
+            ]
+        }
+    }).to_string();
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
          VALUES (?1, ?2, NULL, ?3, ?4, ?5, 'page', 0, ?6, ?6, NULL)",
-        params![home_id, id, "开始", home_json, "你好，这是你的新空间\n点击上方“＋”开始创建页面。", now],
+        params![
+            home_id, id, "开始",
+            home_json,
+            "欢迎来到你的新空间\n本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。\n从这里开始\n新建页面：Ctrl+N 或左侧栏 ＋\n插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）\n搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴\n常用快捷键\nCtrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图\n用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。",
+            now,
+        ],
     )
     .map_err(|e| e.to_string())?;
 
