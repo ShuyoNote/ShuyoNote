@@ -76,7 +76,9 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       const canvas = document.createElement("canvas");
       canvas.width = Math.ceil(vp.width);
       canvas.height = Math.ceil(vp.height);
-      await p.render({ canvas, viewport: vp }).promise;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("无法创建 2D 上下文");
+      await p.render({ canvasContext: ctx, viewport: vp }).promise;
       return new Promise<Blob>((resolve, reject) =>
         canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("导出页面失败"))), "image/png"),
       );
