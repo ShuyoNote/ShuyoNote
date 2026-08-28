@@ -165,10 +165,13 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     const block = pageToBlock({ text }, attachmentId, pageIndex);
     const notes = useNotes.getState();
     if (notes.current && notes.current.id) {
-      // Insert into the current page (appends a paragraph carrying the pdf:// ref).
+      // Insert into the current page as a block carrying the pdf:// ref (=> 可点击回链).
       try {
-        const { appendBlocksToJson, contentTextOf } = await import("../lib/ai/lexical");
-        const newJson = appendBlocksToJson(notes.current.content_json, block.content_text, () => `blk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        const { contentTextOf } = await import("../lib/ai/lexical");
+        const blockNode = JSON.parse(block.content_json).root.children[0];
+        const doc = JSON.parse(notes.current.content_json || '{"root":{"children":[],"type":"root","version":1}}');
+        doc.root.children.push(blockNode);
+        const newJson = JSON.stringify(doc);
         await api.savePage({ id: notes.current.id, content_json: newJson, content_text: contentTextOf(newJson) });
         await notes.openPage(notes.current.id);
         toast("已摘录到当前页", "success");

@@ -29,7 +29,7 @@ export const usePdfReader = create<PdfReaderState>((set, get) => ({
       const url = platform.asset.convertFileSrc((meta as { path?: string }).path ?? "");
       const resp = await fetch(url);
       const ab = await resp.arrayBuffer();
-      set({ open: true, attachmentId, name, bytes: new Uint8Array(ab), targetPage: Math.max(0, pageIndex) });
+      set({ open: true, attachmentId, name: name || (meta as { name?: string }).name || "PDF", bytes: new Uint8Array(ab), targetPage: Math.max(0, pageIndex) });
     } catch (e) {
       toast("无法读取 PDF，请在文件夹中打开查看", "error");
     }

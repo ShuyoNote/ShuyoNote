@@ -16,6 +16,7 @@ import { ImageNode } from "./nodes/ImageNode";
 import { ImageRowNode } from "./nodes/ImageRowNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { BlockRefNode } from "./nodes/BlockRefNode";
+import { PdfRefNode } from "./nodes/PdfRefNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { WebBookmarkNode } from "./nodes/WebBookmarkNode";
 import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
@@ -42,6 +43,7 @@ export const EDITOR_NODES: Klass<LexicalNode>[] = [
   ImageRowNode,
   VideoNode,
   BlockRefNode,
+  PdfRefNode,
   BlockEmbedNode,
   WebBookmarkNode,
   AttachmentRefNode,

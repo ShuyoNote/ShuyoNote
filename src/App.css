@@ -5104,6 +5104,18 @@ select.prop-value {
 .block-ref:hover {
   background: var(--accent-soft);
 }
+/* M24 — pdf:// reference link (clickable → reopen reader at that page). */
+.pdf-ref {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.pdf-ref:hover {
+  background: var(--accent-soft);
+}
 
 .block-flash {
   animation: block-flash 1.6s ease;

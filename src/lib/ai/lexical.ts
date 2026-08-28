@@ -64,7 +64,7 @@ export function contentTextOf(contentJson: string): string {
   const out: string[] = [];
   const walk = (n: any) => {
     if (!n || typeof n !== "object") return;
-    if (n.type === "text" && typeof n.text === "string") out.push(n.text);
+    if (typeof n.text === "string") out.push(n.text);
     if (Array.isArray(n.children)) n.children.forEach(walk);
   };
   (doc.root.children as any[]).forEach(walk);

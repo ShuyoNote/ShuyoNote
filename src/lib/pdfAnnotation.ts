@@ -113,7 +113,7 @@ export function pageToBlock(
 ): { ref: string; content_json: string; content_text: string } {
   const ref = pdfRef(attachmentId, pageIndex);
   const excerpt = (ann.text ?? "").trim();
-  const text = ["摘录", excerpt, `(${ref})`].filter(Boolean).join(" ");
+  const label = ["摘录", excerpt].filter(Boolean).join(" ");
   const content_json = JSON.stringify({
     root: {
       type: "root",
@@ -129,10 +129,13 @@ export function pageToBlock(
           format: "",
           indent: 0,
           style: "",
-          children: [{ type: "text", text, version: 1 }],
+          children: [
+            { type: "text", text: label ? `${label} ` : "", version: 1 },
+            { type: "pdfref", attachmentId, pageIndex, text: ref, version: 1 },
+          ],
         },
       ],
     },
   });
-  return { ref, content_json, content_text: text };
+  return { ref, content_json, content_text: [label, ref].filter(Boolean).join(" ") };
 }

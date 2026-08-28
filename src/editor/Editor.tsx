@@ -29,6 +29,7 @@ import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
+import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
 
@@ -366,6 +367,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <OnChangePlugin onChange={onChange} />
         <BlockIdPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
         <BlockRefPlugin pageId={pageId} />
+        <PdfRefPlugin />
         <BlockRefSyncPlugin />
         <BlockSelectorPlugin />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
