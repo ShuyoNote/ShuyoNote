@@ -956,10 +956,12 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("shortcutSearch no match is empty", aiMod.shortcutSearch("zzzz不存在xyz").length === 0);
   assert("shortcutLabel ctrl form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "Shift", "F"] }) === "Ctrl + Shift + F");
   assert("shortcutLabel mac form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "N"], macKeys: ["⌘", "N"] }, true) === "⌘ + N");
-  // Cover presets: a curated gallery of named CSS-gradient covers.
+  // Cover presets: a curated gallery of named covers (gradient OR inline-SVG image data-URIs).
   const covers = aiMod.COVER_PRESETS;
-  assert("COVER_PRESETS has >= 8 distinct covers", Array.isArray(covers) && covers.length >= 8, String(covers?.length));
-  assert("COVER_PRESETS all have css + name", covers.every((c) => typeof c.css === "string" && c.css.startsWith("linear-gradient") && c.name), JSON.stringify(covers.map((c) => c.id)));
+  assert("COVER_PRESETS has >= 12 distinct covers", Array.isArray(covers) && covers.length >= 12, String(covers?.length));
+  assert("COVER_PRESETS all have css + kind + name", covers.every((c) => typeof c.css === "string" && (c.css.startsWith("linear-gradient") || c.css.startsWith('url("data:image/svg+xml,')) && c.kind && c.name), JSON.stringify(covers.map((c) => c.id)));
+  assert("COVER_PRESETS includes image-themed covers", covers.some((c) => c.kind === "image" && c.css.startsWith('url("data:image/svg+xml,')), "checked image covers");
+
 
 
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.

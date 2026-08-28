@@ -2006,6 +2006,7 @@ body.is-ai-open .main {
   height: 160px;
   background-size: cover;
   background-position: center;
+  background-repeat: no-repeat;
   border-radius: 0;
   margin-bottom: 8px;
 }
@@ -2061,6 +2062,7 @@ body.is-ai-open .main {
   cursor: pointer;
   background-size: cover;
   background-position: center;
+  background-repeat: no-repeat;
 }
 .cover-swatch:hover {
   border-color: var(--accent);

@@ -32,7 +32,7 @@ export function CoverPicker({ onClose, onPick, current }: { onClose: () => void;
             <button
               key={p.id}
               className={`cover-swatch ${current === p.css ? "active" : ""}`}
-              style={{ background: p.css }}
+              style={{ backgroundImage: p.css }}
               title={p.name}
               onClick={() => onPick(p.css)}
             />
