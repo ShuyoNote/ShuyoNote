@@ -71,6 +71,24 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 > ⚠️ **绝对不要用 shell 重写含中文的 UTF-8 文件**（`Get-Content -Raw` + `WriteAllText` 会产生乱码）。用编辑工具（edit/write）改。
 
+### 5.1 发布管线（自动升级，可选）
+
+让「关于 → 检查更新 → 下载并安装」能拿到新版本，需要一次**签名发布**（详见 [自动升级方案](../plans/2026-08-27-auto-update-plan.md)）：
+
+1. **生成签名密钥**（一次）：`pnpm tauri signer generate -w ~/.tauri/shuyonote.key`（私钥**保密、不进 git**，用密码保护）。
+2. **配公钥**：把生成的**公钥**写进 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`（当前为占位符，需替换）。
+3. **配端点**：`plugins.updater.endpoints` → 你的 `latest.json` 实际地址（如 gitcode releases / CDN / 自建静态站）。
+4. **签名 + 构建 + 生成清单**：
+   ```bash
+   TAURI_SIGNING_PRIVATE_KEY=<...> TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<...> \
+     UPDATE_BASE_URL=https://<your-host>/shuyonote/updates node scripts/release.mjs
+   ```
+   脚本：`pnpm tauri build`（`bundle.createUpdaterArtifacts` 产安装包旁的 `.sig`）→ 扫描产物 → 生成 **`latest.json`**（Tauri 更新清单，按平台 `url` + `signature`）。
+5. **发布**：把安装包 + `latest.json` 上传到更新托管，保证 `UPDATE_BASE_URL` / `endpoints` 可解析。
+6. **版本一致**：发布前按 §5 同步所有版本文件；`scripts/release.mjs` 以 `package.json` 的 `version` 为准。
+
+> ⚠️ 端到端升级需一次**真实签名发布**才能验证（本环境无法白测「真实更新」）。公钥为占位符时，`检查更新` 会优雅回退（见 [`src/lib/updates.ts`](../src/lib/updates.ts) / [`src/lib/updater.ts`](../src/lib/updater.ts)）。
+
 ## 6. CHANGELOG 约定
 
 - 顶部按版本倒序；每版分 `新增` / `修复` / `修改`。
