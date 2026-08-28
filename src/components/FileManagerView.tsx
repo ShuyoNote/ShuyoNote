@@ -5,6 +5,7 @@ import { useFileManagerStore } from "../store/fileManager";
 import { confirmDialog } from "../store/confirm";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
+import { usePdfReader } from "../store/pdfReader";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
@@ -684,6 +685,11 @@ export function FileManagerView() {
             <div className="fm-preview-head">
               <span className="fm-preview-name">{preview.name}</span>
               <span className="fm-preview-size">{formatSize(preview.size)}</span>
+              {preview.mime === "application/pdf" && (
+                <button className="fm-preview-read" onClick={() => usePdfReader.getState().openPdf(preview.id, preview.name)}>
+                  阅读并批注
+                </button>
+              )}
               <button className="fm-preview-close" title="关闭" onClick={() => setPreview(null)}>
                 ×
               </button>

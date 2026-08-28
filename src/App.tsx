@@ -10,6 +10,7 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
+import { PdfReader } from "./components/PdfReader";
 import { CoverPicker } from "./components/CoverPicker";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -351,6 +352,7 @@ function App() {
         <CommandPalette />
         <ShortcutsPanel />
         <AboutDialog />
+        <PdfReader />
         <Toaster />
         <ConfirmDialog />
         <InputDialog />
@@ -405,6 +407,7 @@ function App() {
       <RightRail />
       <ShortcutsPanel />
       <AboutDialog />
+      <PdfReader />
     </div>
   );
 }
