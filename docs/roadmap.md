@@ -180,7 +180,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 - **M20.1 模板变量** ✅（v1.59.115）：模板支持 `{{date}}` / `{{title}}` / `{{selected}}`，建页时按上下文自动填充（`{{selected}}` 暂为当前选中文本，后续接入编辑器选区）。
 - **M20.2 语义检索（embedding）** ✅（v1.59.118）：搜索在词频（TF）之上叠加基于字符二元组 Jaccard 的语义排序，优先展示语义更贴近的页面；纯函数 `charBigrams`/`semanticScore`/`semanticRank`，语义作为有界加分不破坏 TF 主排序（`web.ts` search 接入）。旧版离线 char-bigram 版已落地；**v1.59.174 接入真实向量 embedding provider**（`src/lib/semanticEmbed.ts`：`cosineSim`/`vectorRank`/`embedText`/`readEmbedConfig`）+ **`page_embeddings` 页嵌入缓存持久化**（内容哈希自动失效、惰性重嵌），搜索命中缓存只发 1 次 query 嵌入。
 - **M20.3 语义检索接入 AI** ✅（v1.59.119）：侧边栏 AI 的 `search_pages` 工具描述新增「语义相近」提示，检索结果经 M20.2 语义排序后供模型引用（`search_pages` → `api.search` → 语义重排）。
-> ⚠️ **边界（诚实标注）**：M20.2 语义排序/向量重排此前**只在 Web**；**v1.59.175 起，桌面活动空间检索（Rust `search.rs`）也接入向量语义**——前端把 embedding 配置随 `search` 参数传入 Rust，Rust 侧新增 `page_embeddings` 表 + `embed_text`（调 Ollama/OpenAI 嵌入端点）+ `search_semantic_async`（宽候选集 + 余弦加分 + 缓存按内容哈希失效）。**跨空间（`all_spaces`）检索仍为 FTS**（未逐空间向量重排）；嵌入端点不可达时优雅回退关键词排序，搜索永不中断。
+> ⚠️ **边界（诚实标注）**：M20.2 语义排序/向量重排此前**只在 Web**；**v1.59.175 起桌面活动空间检索（Rust `search.rs`）也接入向量语义**，**v1.59.176 补全到跨空间（`all_spaces`）**（逐空间走 `search_semantic_async`）——前端把 embedding 配置随 `search` 参数传入 Rust，Rust 侧新增 `page_embeddings` 表 + `embed_text`（调 Ollama/OpenAI 嵌入端点）+ `search_semantic_async`（宽候选集 + 余弦加分 + 缓存按内容哈希失效）。嵌入端点不可达时优雅回退关键词排序，搜索永不中断。
 
 ### M21 — 静态 wiki 导出 + 关系图探索（P2，[方案](plans/2026-08-24-static-wiki-export-graph-plan.md)）
 > 「本地优先 + wiki」的终局：把你的空间导成可独立浏览的 wiki 网站。

@@ -437,7 +437,14 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
         let per_limit = (limit + n - 1) / n;
         for (sid, sname) in spaces {
             let conn = crate::db::open_space_conn(&sid)?;
-            let mut hits = search_in_conn(&conn, &text, &filters, per_limit)?;
+            let mut hits = if let Some(e) = emb.as_ref() {
+                // Cross-space vector alignment: each space's connection is wrapped
+                // in a Db so it reuses the same cache-aware semantic ranking.
+                let space_db = Db(std::sync::Mutex::new(conn));
+                search_semantic_async(&space_db, &text, &filters, per_limit, e).await?
+            } else {
+                search_in_conn(&conn, &text, &filters, per_limit)?
+            };
             for h in hits.iter_mut() {
                 if h.space.is_none() {
                     h.space = Some(sname.clone());

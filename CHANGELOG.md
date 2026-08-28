@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.176] - 2026-08-27
+
+### 变更
+
+- **跨空间（`all_spaces`）检索接入向量语义**：桌面 `search` 的 `all_spaces` 分支由「逐空间 FTS」升级为「逐空间走 `search_semantic_async`」——每个空间的连接包成 `Db` 复用同一套缓存感知的向量重排（宽候选集 + 余弦加分 + `page_embeddings` 按内容哈希）。至此**向量语义检索在 Web / 桌面活动空间 / 桌面跨空间均已对齐**；嵌入端点不可达时优雅回退关键词排序。
+
+### 验证
+
+- `cargo check` 0 错；`cargo test --lib`（含 mock 嵌入端点的集成测试：`embed_text` Ollama/OpenAI 往返 + `search_semantic` 无关键词重叠的语义排序）全绿；`npx tsc --noEmit` 0 错；`node scripts/smoke-web.mjs` 239 全绿；`pnpm build` 通过。
+
+---
+
 ## [1.59.175] - 2026-08-27
 
 ### 新增
