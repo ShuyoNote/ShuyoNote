@@ -38,5 +38,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWQxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=",
+      "endpoints": ["https://gitcode.com/shuyo-cn/ShuyoNote/releases/latest/download/latest.json"]
+    }
   }
 }
