@@ -181,8 +181,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <EditorToolbar pageId={pageId} />
       </div>
       <div className="note-scroll">
+        {current?.cover ? <div className="page-cover" style={{ background: current.cover }} /> : null}
         <div className="title-area">
-          {current?.cover ? <div className="page-cover" style={{ background: current.cover }} /> : null}
           <div className="page-actions">
             <button
               className="page-action-btn"

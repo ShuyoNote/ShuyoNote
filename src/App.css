@@ -1993,13 +1993,14 @@ body.is-ai-open .main {
   width: 100%;
   margin: 0 auto;
 }
-/* Page cover: a gradient banner above the actions row (cover = CSS gradient string). */
+/* Page cover: a full-width banner above the title (CSS gradient). Spans the whole
+   note-scroll width (NOT limited to the centered doc column) with no rounded corners. */
 .page-cover {
-  height: 160px;
   width: 100%;
-  border-radius: var(--radius-lg);
+  height: 160px;
   background-size: cover;
   background-position: center;
+  border-radius: 0;
   margin-bottom: 8px;
 }
 /* Page icon: an emoji shown before the title. */
