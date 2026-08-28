@@ -172,6 +172,12 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
                 Some(format!("attach meta failed: {e}")),
             )
         })?;
+    // Startup path must also ensure the active space DB owns its workspace row, or
+    // pages.workspace_id's FK to workspaces(id) fails on the very first page insert
+    // when a space DB carries leftover/mismatched workspace rows.
+    ensure_space_workspace(&conn, &active).map_err(|e| {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e))
+    })?;
     Ok(conn)
 }
 
