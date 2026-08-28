@@ -8,9 +8,9 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.176**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.177**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `dfce9f8`（工作树干净；v1.59.175 发布提交，v1.59.174 发布提交为 `d8b2250`）。
+- **git**：HEAD `b869ebf`（工作树干净；v1.59.176 发布提交，v1.59.175 发布提交为 `dfce9f8`）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -52,6 +52,7 @@
 - **v1.59.174**：真实向量 embedding 语义检索（`src/lib/semanticEmbed.ts`：`cosineSim`/`vectorRank`/`embedText`/`readEmbedConfig` + AI 设置「语义检索模型」字段；`search` 在 TF+char-bigram 上可选叠加向量重排）+ `page_embeddings` 页嵌入缓存持久化（内容哈希自动失效、惰性重嵌，反复搜索只发 1 次 query 嵌入）；README 版本徽章对齐。
 - **v1.59.175**：桌面端接入向量语义检索（能力对齐）——`api.search` 附 `readEmbedConfig()` 传 Rust；`search.rs` 增 `page_embeddings` 表 + `embed_text`/`cosine_sim`/`embed_hash`/`keyword_score` + `search_semantic_async`（宽候选集 + 余弦加分 + 哈希缓存），连接 I/O 作用域同步块保证 future `Send`；**跨空间 `all_spaces` 仍 FTS**，嵌入端点不可达回退关键词。
 - **v1.59.176**：跨空间（`all_spaces`）检索接入向量语义——每个空间连接包成 `Db` 复用 `search_semantic_async`；至此向量语义在 Web / 桌面活动空间 / 桌面跨空间均对齐。附 mock 嵌入端点的运行时验证（`embed_text` 往返 + 无关键词重叠的语义排序单测）。
+- **v1.59.177**：帮助系统（M25 P0/P1：快捷键面板 `Ctrl+/`/`?` + 内置「使用指南」页 `/帮助` + 命令面板入口）；页面题头图（内置封面图库：12 渐变 + 山峦/科技/星空/海浪/城市题材图片 + 上传图片 + 裁剪编辑 + 可拖拽调整高度，铺满整页宽无圆角）；页面图标（emoji，标题前 + 侧边栏节点同步）；bugfix（新建页 FK、绘图块保存为空/居中偏移、分栏待办光标、自适应占位符、宽度按钮 SVG 图标）。
 
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
@@ -59,7 +60,7 @@
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
 - **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.176**。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.177**。
 
 ## 4. 环境/工具备注
 
