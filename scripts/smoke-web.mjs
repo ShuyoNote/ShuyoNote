@@ -73,6 +73,7 @@ await esbuild.build({
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
+      'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig } from "./src/lib/semanticEmbed";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -916,6 +917,29 @@ assert("workspace name persists across instances", wsAgain !== "");
     { id: "c", title: "周报", content_text: "项目进展" },
   ]);
   assert("semanticRank drops unrelated docs", ranks.length === 1 && ranks[0].id === "a", JSON.stringify(ranks));
+  // M20.2+ semanticEmbed: REAL vector-embedding primitives (pure, no network).
+  const near = (a, b, tol = 1e-9) => Math.abs(a - b) < tol;
+  assert("cosineSim orthogonal == 0", near(aiMod.cosineSim([1, 0], [0, 1]), 0));
+  assert("cosineSim same == 1", near(aiMod.cosineSim([1, 2, 3], [1, 2, 3]), 1));
+  assert("cosineSim empty return 0", aiMod.cosineSim([], [1, 2]) === 0);
+  const norm = aiMod.normalizeVector([3, 4]);
+  assert("normalizeVector unit length", norm.length === 2 && near(Math.hypot(norm[0], norm[1]), 1), JSON.stringify(norm));
+  const vRank = aiMod.vectorRank([1, 0], [
+    { id: "x", vector: [1, 0] },
+    { id: "y", vector: [0.9, 0.1] },
+    { id: "z", vector: [0, 1] },
+  ]);
+  assert("vectorRank ranks by cosine, drops unrelated", vRank[0].id === "x" && vRank[1].id === "y" && !vRank.some((r) => r.id === "z"), JSON.stringify(vRank));
+  assert("embedUrl ollama", aiMod.embedUrl("http://localhost:11434/", "ollama") === "http://localhost:11434/api/embed");
+  assert("embedUrl openai", aiMod.embedUrl("https://api.x.com", "openai") === "https://api.x.com/v1/embeddings");
+  const ob = aiMod.embedBody("m", "ollama", "hi");
+  const oe = aiMod.embedBody("m", "openai", "hi");
+  assert("embedBody ollama string input", ob.model === "m" && ob.input === "hi");
+  assert("embedBody openai array input", oe.model === "m" && Array.isArray(oe.input) && oe.input[0] === "hi");
+  assert("parseEmbedding openai", JSON.stringify(aiMod.parseEmbedding("openai", { data: [{ embedding: [0.1, 0.2] }] })) === "[0.1,0.2]");
+  assert("parseEmbedding ollama", JSON.stringify(aiMod.parseEmbedding("ollama", { embeddings: [[0.3, 0.4]] })) === "[0.3,0.4]");
+  // No provider configured (Node has no localStorage) → readEmbedConfig degrades to null.
+  assert("readEmbedConfig degrades to null", aiMod.readEmbedConfig() === null);
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.
   const wiki = aiMod.buildWikiExport(
     [

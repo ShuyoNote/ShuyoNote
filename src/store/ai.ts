@@ -26,6 +26,8 @@ export interface AiConfig {
   baseUrl: string;
   model: string;
   apiKey: string;
+  /** Embedding model (e.g. nomic-embed-text / text-embedding-3-small). Empty = 语义检索走 char-bigram，不启用向量。 */
+  embeddingModel: string;
 }
 
 const HISTORY_LIMIT = 16; // cap on stored turns (8 exchanges) to bound context.
@@ -65,7 +67,7 @@ function loadConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (!raw) {
-      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "" };
+      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "" };
     }
     const c = JSON.parse(raw);
     const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
@@ -75,9 +77,10 @@ function loadConfig(): AiConfig {
       baseUrl: String(c.baseUrl || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL)),
       model: String(c.model || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL)),
       apiKey: String(c.apiKey ?? ""),
+      embeddingModel: String(c.embeddingModel ?? ""),
     };
   } catch {
-    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "" };
+    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "" };
   }
 }
 

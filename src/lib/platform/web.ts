@@ -1,4 +1,5 @@
 import { semanticScore } from "../searchSemantic";
+import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
 
@@ -1009,17 +1010,48 @@ function makeInvoke(store: SqliteStore) {
       // that matches the query many times still ranks above a near-exact
       // short page. semanticBonus is bounded to a small fraction of TF.
       const SEMANTIC_BONUS = 5;
-      const ranked = rankPagesForSearch(query, rows)
+      const scored = rankPagesForSearch(query, rows)
         .map((r: any) => ({
           r,
           score: r.score + SEMANTIC_BONUS * (semanticScore(query, String(r.title ?? "")) + semanticScore(query, String(r.content_text ?? ""))),
         }))
-        .sort((a: any, b: any) => b.score - a.score)
-        .map((x: any) => x.r);
-      return ranked.slice(0, lim).map((r: any) => ({
-        id: r.id,
-        title: r.title,
-        snippet: snippetForQuery(String(r.content_text ?? ""), query),
+        .sort((a: any, b: any) => b.score - a.score);
+
+      // M20.2+ — optional real-vector re-rank: if an embedding model is configured,
+      // embed the query + a title/short-content prefix for the top candidates and
+      // add a bounded vector bonus. Any failure (provider down / not reachable)
+      // falls back to the TF + char-bigram order above, so search never breaks.
+      const embedCfg = readEmbedConfig();
+      if (embedCfg) {
+        try {
+          const queryVec = await embedText(query, embedCfg);
+          if (queryVec && queryVec.length) {
+            const K = Math.min(30, scored.length);
+            const bonus = new Map<string, number>();
+            for (const s of scored.slice(0, K)) {
+              const vec = await embedText(
+                `${String(s.r.title ?? "")} ${String(s.r.content_text ?? "").slice(0, 200)}`,
+                embedCfg,
+              );
+              if (vec && vec.length) bonus.set(String(s.r.id), cosineSim(queryVec, vec));
+            }
+            if (bonus.size) {
+              scored.sort((a: any, b: any) => {
+                const sa = a.score + VECTOR_BONUS * (bonus.get(String(a.r.id)) ?? 0);
+                const sb = b.score + VECTOR_BONUS * (bonus.get(String(b.r.id)) ?? 0);
+                return sb - sa;
+              });
+            }
+          }
+        } catch {
+          // keep the TF + char-bigram order
+        }
+      }
+
+      return scored.slice(0, lim).map((x: any) => ({
+        id: x.r.id,
+        title: x.r.title,
+        snippet: snippetForQuery(String(x.r.content_text ?? ""), query),
         space: getWs()?.name ?? "",
       })) as T;
     }

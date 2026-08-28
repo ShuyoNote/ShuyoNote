@@ -19,6 +19,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [model, setModel] = useState(config.model);
   const [apiKey, setApiKey] = useState(config.apiKey);
+  const [embeddingModel, setEmbeddingModel] = useState(config.embeddingModel);
   const [testing, setTesting] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testMsg, setTestMsg] = useState<string | null>(null);
@@ -48,7 +49,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
 
   const save = () => {
     const c = resolved();
-    update({ enabled, provider, baseUrl: c.baseUrl, model: c.model, apiKey: c.apiKey });
+    update({ enabled, provider, baseUrl: c.baseUrl, model: c.model, apiKey: c.apiKey, embeddingModel: embeddingModel.trim() });
     onClose();
   };
 
@@ -151,6 +152,17 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             ))}
           </datalist>
         )}
+
+        <label className="ai-settings-row">
+          <span className="ai-settings-label">语义检索模型（embedding）</span>
+          <input
+            className="ai-settings-input"
+            value={embeddingModel}
+            onChange={(e) => setEmbeddingModel(e.target.value)}
+            placeholder={isOpenAI ? "text-embedding-3-small" : "nomic-embed-text"}
+            spellCheck={false}
+          />
+        </label>
 
         <div className="ai-settings-test">
           <button className="ai-settings-test-btn" onClick={test} disabled={testing}>
