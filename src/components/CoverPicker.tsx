@@ -4,8 +4,9 @@ import { COVER_PRESETS } from "../lib/covers";
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
+import { CoverCrop } from "./CoverCrop";
 
-// Read a file's bytes (via its asset URL) into a downscaled cover data-URI.
+// Read a file's bytes (via its asset URL) into a source image data-URI for cropping.
 async function fileToCoverDataUrl(src: string): Promise<string | null> {
   const bytes = new Uint8Array(await (await fetch(src)).arrayBuffer());
   const raw = await new Promise<string>((res) => {
@@ -18,7 +19,7 @@ async function fileToCoverDataUrl(src: string): Promise<string | null> {
   return await new Promise<string>((res) => {
     const img = new Image();
     img.onload = () => {
-      const MAX = 1600;
+      const MAX = 2400;
       const scale = Math.min(1, MAX / (img.naturalWidth || 1));
       const w = Math.max(1, Math.round(img.naturalWidth * scale));
       const h = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -27,7 +28,7 @@ async function fileToCoverDataUrl(src: string): Promise<string | null> {
       c.height = h;
       const ctx = c.getContext("2d");
       if (ctx) ctx.drawImage(img, 0, 0, w, h);
-      res(c.toDataURL("image/jpeg", 0.82));
+      res(c.toDataURL("image/jpeg", 0.9)); // good-quality crop source (cropped to 1600 on confirm)
     };
     img.onerror = () => res(raw);
     img.src = raw;
@@ -38,6 +39,7 @@ async function fileToCoverDataUrl(src: string): Promise<string | null> {
 export function CoverPicker({ onClose, onPick, current }: { onClose: () => void; onPick: (css: string) => void; current?: string }) {
   const [custom, setCustom] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,7 +74,7 @@ export function CoverPicker({ onClose, onPick, current }: { onClose: () => void;
         toast("读取图片失败", "error");
         return;
       }
-      onPick(`url("${dataUrl}")`);
+      setCropSrc(dataUrl); // open the crop editor to frame the banner region.
     } catch (e) {
       toast(`上传封面失败：${e}`, "error");
     } finally {
@@ -131,6 +133,16 @@ export function CoverPicker({ onClose, onPick, current }: { onClose: () => void;
             </button>
           </div>
         </div>
+        {cropSrc ? (
+          <CoverCrop
+            src={cropSrc}
+            onConfirm={(d) => {
+              onPick(`url("${d}")`);
+              setCropSrc(null);
+            }}
+            onClose={() => setCropSrc(null)}
+          />
+        ) : null}
       </div>
     </div>,
     document.body,
