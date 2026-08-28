@@ -208,7 +208,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > **渲染引擎（双引擎）**：桌面用 **Rust 原生渲染**（`pdfium-render` / `mupdf-rs`，扛大型复杂 PDF）+ Web 用 **pdf.js（Worker）** 优雅降级；`pdfRender` 暴露一致接口。**文本层判定/OCR 兜底**作为阶段 1 降级（无文本层 → 仅矩形框选 + 画笔 + 便签）。
 > **MVP 切割（阶段 1）**：双引擎分页渲染 + 批注 overlay（高亮/荧光笔/画笔/便签，坐标归一化、不写回源 PDF）+ 内容寻址持久化 + 「摘录成块」进反链/搜索。**阶段 2**：写回 PDF / OCR 精确划词（Tauri 专属、很贵、长尾）。**阶段 3**：AI 帮读（复用 M17/M18 薄 Agent）。
 > **明确不做**：写回源 PDF、多人实时协同、全文编辑。
-> 状态：**规划，建议**（排在 M20/M23 之后，非当前优先级）。**未实装**。
+# > 状态：**阶段 1（Web 路径）已落地（v1.59.178）**：`pdfRender` 双引擎接口/选型 + `pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化（桌面+Web）+ `pdfjs-dist@4` 渲染引擎（`pdfjsEngine`，WebView2 兼容，`copy-pdfjs-assets` 供 CJK）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签/选择/删除/编辑/复制引用 + **摘录成块**含 `pdf://` 可点击回链 + **文本层精确划词** `snapHighlightToText` + **OCR 兜底** `ocr.ts`）+ 全局批注检索（`list_all_pdf_annotations` + 「打开最近批注的 PDF」）。**桌面 native 引擎（pdfium/mupdf）与阶段 2/3（写回 PDF、AI 帮读）待做**；AI 帮读可复用 M17/M18。
 
 ### M25 — 帮助系统（P2，[方案](plans/2026-08-27-help-system-plan.md)，P0/P1 已落地）
 > 本地优先 / 键盘驱动：帮助 = **发现能力 + 一次解决**，不做"客服中心/文档门户"/在线工单。

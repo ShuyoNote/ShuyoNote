@@ -2,6 +2,24 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.178] - 2026-08-27
+
+### 新增
+
+- **PDF 批注（M24，阶段 1 完成）**：纯函数层（`pdfRender` 双引擎接口/选型、`pdfAnnotation` 坐标归一化/Schema 校验/CRUD/摘录成块/文本层降级/`pdfRef`/`parsePdfRef`）；`pdf_annotations` 持久化（桌面+Web）+ `save/list/list_all_pdf_annotations`；`pdfjs-dist@4.8.69` 渲染引擎（WebView2 兼容，`pdfEngine/pdfjsEngine.ts`，`copy-pdfjs-assets` 拷 cmaps/标准字体/wasm → CJK 渲染）；`PdfReader` + `PdfAnnotationCanvas`（高亮/画笔/便签 + 选择/删除/编辑/复制引用 + **摘录成块**含 `pdf://` 可点击回链 + **文本层精确划词** `snapHighlightToText` + **OCR 兜底** `ocr.ts`/tesseract.js）；文件夹 PDF「阅读并批注」入口；命令面板「打开最近批注的 PDF」。
+- **自动升级**：阶段 1（`updates.ts` 版本比较/状态 + About「检查更新」）+ 阶段 2 接线（`tauri-plugin-updater` + `@tauri-apps/plugin-updater` + `plugins.updater` 占位公钥/端点 + `createUpdaterArtifacts` + `updater.ts` 桌面更新器）+ 发布管线（`scripts/release.mjs` 签名构建 + 生成 `latest.json`）。
+- **M25 P2**：About 四外链 + 隐私开关；「导出帮助站点」（`helpSite.ts` 复用 M21 静态 wiki 导出）；使用指南题头图改缺省图 + 内容重构 + 底部空行；Callout 图标并排；目录（TOC）Notion 风格；新手清单「一键上手」。
+- **页面题头图缺省**：新工作区开始页用 `public/covers/default-cover.jpg`（秋山照片）封面 + 图标 + 空行。
+
+### 修复
+
+- 新建工作区开始页封面改用缺省图片；新页 FK（`ensure_space_workspace` 进 `init`）；绘图保存为空/居中偏移；分栏待办光标；自适应占位符。
+- pdf.js 6 → 4（WebView2 缺 `getOrInsertComputed` 兼容）；`Map` polyfill；阅读器「一直加载中」（渲染 effect 时序）；页面 blob URL `ERR_FILE_NOT_FOUND` → 改用 data URL。
+
+### 验证
+
+- `scripts/smoke-web.mjs` 248 → **296 项**全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（32）通过。
+
 ## [1.59.177] - 2026-08-27
 
 ### 新增
