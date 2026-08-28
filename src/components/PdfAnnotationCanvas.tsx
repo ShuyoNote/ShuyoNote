@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../lib/api";
-import { type PdfAnnotation, normCoords } from "../lib/pdfAnnotation";
+import { type PdfAnnotation, normCoords, pageToBlock } from "../lib/pdfAnnotation";
+import { useNotes } from "../store/notes";
+import { toast } from "../store/toast";
 
 // M24 — a single annotated PDF page. Renders the page image (from `pageImageUrl`)
 // under an SVG overlay; annotations are stored normalized (0..1 in page pixel
-// space) and drawn in page-pixel space via the viewBox. Adds highlight/ink/sticky
-// and persists the page's list through `api.savePdfAnnotations`.
+// space) and drawn in page-pixel space via the viewBox. Adds highlight/ink/sticky,
+// lets you select + delete an annotation, and "摘录成块" turns a selection into a
+// new page carrying the `pdf://` back-ref (the "批注即块" differentiator).
 
 interface Props {
   attachmentId: string;
@@ -16,18 +19,31 @@ interface Props {
   hasTextLayer: boolean;
 }
 
+type Tool = "select" | "highlight" | "ink" | "sticky";
 const highlightColor = "rgba(255, 214, 0, 0.35)";
 
 function loadPage(attachmentId: string, pageIndex: number): Promise<PdfAnnotation[]> {
   return api
     .listPdfAnnotations(attachmentId)
-    .then((rows) => rows.find((r) => r.page_index === pageIndex)?.annotations as PdfAnnotation[] ?? [])
+    .then((rows) => (rows.find((r) => r.page_index === pageIndex)?.annotations as PdfAnnotation[]) ?? [])
     .catch(() => []);
+}
+
+function contains(ann: PdfAnnotation, x: number, y: number): boolean {
+  if (ann.box) {
+    const [x0, y0, x1, y1] = ann.box;
+    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+  }
+  if (ann.points) {
+    return ann.points.some(([px, py]) => Math.hypot(px - x, py - y) < 0.03);
+  }
+  return false;
 }
 
 export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
-  const [tool, setTool] = useState<"highlight" | "ink" | "sticky">("highlight");
+  const [tool, setTool] = useState<Tool>("select");
+  const [selected, setSelected] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const ink = useRef<[number, number][]>([]);
@@ -36,6 +52,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   useEffect(() => {
     let alive = true;
     setAnnotations([]);
+    setSelected(null);
     loadPage(attachmentId, pageIndex).then((a) => {
       if (alive) setAnnotations(a);
     });
@@ -63,12 +80,18 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
 
   const onDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     e.preventDefault();
+    if (tool === "select") {
+      const p = toNorm(e);
+      const hit = annotations.find((a) => contains(a, p.x, p.y));
+      setSelected(hit?.id ?? null);
+      return;
+    }
+    setSelected(null);
     if (tool === "sticky") {
       const p = toNorm(e);
-      const id = `s-${Date.now()}`;
       const text = window.prompt("便签内容：");
       if (text == null) return;
-      persist([...annotations, { id, type: "sticky", box: [p.x, p.y, p.x + 0.04, p.y + 0.06], text }]);
+      persist([...annotations, { id: `s-${Date.now()}`, type: "sticky", box: [p.x, p.y, p.x + 0.04, p.y + 0.06], text }]);
       return;
     }
     const p = toNorm(e);
@@ -95,37 +118,67 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
 
   const onUp = () => {
     if (tool === "ink" && ink.current.length >= 2) {
-      const id = `i-${Date.now()}`;
-      persist([...annotations, { id, type: "ink", points: ink.current }]);
+      persist([...annotations, { id: `i-${Date.now()}`, type: "ink", points: ink.current }]);
       ink.current = [];
       redraw();
     } else if (drag.current) {
       const { x0, y0, x1, y1 } = drag.current;
       if (Math.abs(x1 - x0) > 0.005 || Math.abs(y1 - y0) > 0.005) {
         const box = normCoords(x0 * pageW, y0 * pageH, x1 * pageW, y1 * pageH, pageW, pageH);
-        const id = `h-${Date.now()}`;
-        persist([...annotations, { id, type: "highlight", box }]);
+        persist([...annotations, { id: `h-${Date.now()}`, type: "highlight", box }]);
       }
       drag.current = null;
       redraw();
     }
   };
 
+  const onDelete = () => {
+    if (!selected) return;
+    persist(annotations.filter((a) => a.id !== selected));
+    setSelected(null);
+  };
+
+  const onExcerpt = async () => {
+    const ann = annotations.find((a) => a.id === selected);
+    if (!ann) return;
+    let text = (ann as { text?: string }).text ?? "";
+    if (!text.trim()) {
+      const v = window.prompt("摘录内容：");
+      if (v == null) return;
+      text = v;
+    }
+    if (!text.trim()) return;
+    const block = pageToBlock({ text }, attachmentId, pageIndex);
+    await useNotes.getState().createPage(null, { title: "摘录", content_json: block.content_json, content_text: block.content_text });
+    toast("已摘录到新页面", "success");
+    setSelected(null);
+  };
+
   const W = Math.max(pageW, 1);
   const H = Math.max(pageH, 1);
+
+  const tools: { id: Tool; label: string }[] = [
+    { id: "select", label: "选择" },
+    { id: "highlight", label: "高亮" },
+    { id: "ink", label: "画笔" },
+    { id: "sticky", label: "便签" },
+  ];
 
   return (
     <div className="pdf-annot">
       <div className="pdf-annot-tools">
-        {(["highlight", "ink", "sticky"] as const).map((t) => (
-          <button
-            key={t}
-            className={`pdf-annot-tool ${tool === t ? "active" : ""}`}
-            onClick={() => setTool(t)}
-          >
-            {t === "highlight" ? "高亮" : t === "ink" ? "画笔" : "便签"}
+        {tools.map((t) => (
+          <button key={t.id} className={`pdf-annot-tool ${tool === t.id ? "active" : ""}`} onClick={() => setTool(t.id)}>
+            {t.label}
           </button>
         ))}
+        {selected && (
+          <>
+            <span className="pdf-annot-sep" />
+            <button className="pdf-annot-tool" onClick={onExcerpt}>摘录成块</button>
+            <button className="pdf-annot-tool danger" onClick={onDelete}>删除</button>
+          </>
+        )}
         <span className="pdf-annot-hint">{hasTextLayer ? "有文本层" : "无文本层（矩形/画笔/便签更稳）"}</span>
       </div>
 

@@ -10375,6 +10375,18 @@ p:has(> .editor-drawing-container) {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.pdf-annot-tool.danger {
+  color: var(--danger, #e5484d);
+}
+.pdf-annot-tool.danger:hover {
+  background: rgba(229, 72, 77, 0.12);
+}
+.pdf-annot-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+}
 .pdf-annot-hint {
   font-size: 11px;
   color: var(--text-dim);
