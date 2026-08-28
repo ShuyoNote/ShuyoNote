@@ -60,7 +60,7 @@ export function AboutDialog() {
     >
       <div className="about">
         <div className="about-head">
-          <span className="about-logo">📝</span>
+          <img className="about-logo" src="/icons/icon.svg" alt={`${APP_NAME} logo`} />
           <div className="about-title">
             {APP_NAME}
             <span className="about-version">v{APP_VERSION}</span>

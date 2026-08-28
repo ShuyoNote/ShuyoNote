@@ -10044,7 +10044,10 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 8px;
 }
 .about-logo {
-  font-size: 34px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  flex-shrink: 0;
 }
 .about-title {
   font-size: 18px;
