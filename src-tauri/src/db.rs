@@ -460,6 +460,19 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         )?;
     }
 
+    // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pdf_annotations (
+            id TEXT PRIMARY KEY,
+            attachment_id TEXT NOT NULL,
+            page_index INTEGER NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(attachment_id, page_index)
+        );",
+    )?;
+
     // Migrate backlinks from the legacy page-level schema (source_id, target_id)
     // to the block-granular schema (source_page_id, source_block_id, ...).
     let has_old_backlinks: bool = {

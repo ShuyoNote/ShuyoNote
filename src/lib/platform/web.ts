@@ -1318,6 +1318,29 @@ function makeInvoke(store: SqliteStore) {
       return { id, name: row.name, hash: row.hash, mime: row.mime, size: row.size, path: bytes ? blobUrl(bytes, row.mime) : "" } as T;
     }
 
+    // ---- PDF annotations (M24) — per (attachment, page) list, content-addressed key. ----
+    if (cmd === "save_pdf_annotations") {
+      const args = a.args ?? a;
+      const attachmentId = String(args.attachment_id ?? "");
+      const pageIndex = Number(args.page_index ?? 0);
+      const annotations = args.annotations ?? [];
+      const now = Date.now();
+      const payload = JSON.stringify(annotations);
+      const existing = store.query<{ id: string }>("SELECT id FROM pdf_annotations WHERE attachment_id = ? AND page_index = ?", [attachmentId, pageIndex])[0];
+      if (existing?.id) {
+        store.run("UPDATE pdf_annotations SET payload_json = ?, updated_at = ? WHERE id = ?", [payload, now, existing.id]);
+      } else {
+        store.run("INSERT INTO pdf_annotations (id, attachment_id, page_index, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [uid(), attachmentId, pageIndex, payload, now, now]);
+      }
+      return { attachment_id: attachmentId, page_index: pageIndex, annotations } as T;
+    }
+    if (cmd === "list_pdf_annotations") {
+      const args = a.args ?? a;
+      const attachmentId = String(args.attachment_id ?? "");
+      const rows = store.query<{ attachment_id: string; page_index: number; payload_json: string }>("SELECT attachment_id, page_index, payload_json FROM pdf_annotations WHERE attachment_id = ? ORDER BY page_index", [attachmentId]);
+      return rows.map((r) => ({ attachment_id: r.attachment_id, page_index: r.page_index, annotations: JSON.parse((r.payload_json as string) || "[]") })) as T;
+    }
+
     // ---- Bookmark metadata (browser can't fetch OG reliably; return the URL) ----
     if (cmd === "fetch_bookmark_metadata") {
       const url = String(a.url ?? "");

@@ -70,6 +70,8 @@ pub fn run() {
             commands::set_page_cover,
             commands::set_page_icon,
             commands::set_page_cover_height,
+            commands::save_pdf_annotations,
+            commands::list_pdf_annotations,
             commands::delete_page,
             commands::move_page,
             search::search,

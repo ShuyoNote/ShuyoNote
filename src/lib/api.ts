@@ -27,6 +27,7 @@ import type {
   WorkspaceMeta,
   PluginMeta,
   DbViewMeta,
+  PdfAnnotationRecord,
 } from "../types";
 
 export interface SyncConfig {
@@ -90,6 +91,10 @@ export const api = {
   setPageCover: (id: string, cover: string) => invoke<PageDetail>("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke<PageDetail>("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke<PageDetail>("set_page_cover_height", { args: { id, height } }),
+  savePdfAnnotations: (attachmentId: string, pageIndex: number, annotations: unknown[]) =>
+    invoke<PdfAnnotationRecord>("save_pdf_annotations", { args: { attachment_id: attachmentId, page_index: pageIndex, annotations } }),
+  listPdfAnnotations: (attachmentId: string) =>
+    invoke<PdfAnnotationRecord[]>("list_pdf_annotations", { args: { attachment_id: attachmentId } }),
   deletePage: (id: string) => invoke<void>("delete_page", { id }),
   movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
     invoke<void>("move_page", { args }),

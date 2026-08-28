@@ -222,6 +222,15 @@ export class SqliteStore {
         content_text TEXT NOT NULL DEFAULT '',
         db_rule TEXT NOT NULL DEFAULT '{}'
       );
+      CREATE TABLE IF NOT EXISTS pdf_annotations (
+        id TEXT PRIMARY KEY,
+        attachment_id TEXT NOT NULL,
+        page_index INTEGER NOT NULL,
+        payload_json TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(attachment_id, page_index)
+      );
       CREATE TABLE IF NOT EXISTS tags (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL

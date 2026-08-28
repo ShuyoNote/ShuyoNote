@@ -195,6 +195,76 @@ pub struct SetCoverHeightArgs {
     pub height: i64,
 }
 
+// ---- M24 PDF annotations ----
+
+#[derive(Deserialize)]
+pub struct SavePdfAnnotationsArgs {
+    pub attachment_id: String,
+    pub page_index: i64,
+    /// JSON array of annotations (validated client-side; stored as-is).
+    pub annotations: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+pub struct ListPdfAnnotationsArgs {
+    pub attachment_id: String,
+}
+
+/// Save (upsert) the annotation list for an attachment page; return the saved list.
+#[tauri::command]
+pub fn save_pdf_annotations(db: State<Db>, args: SavePdfAnnotationsArgs) -> Result<serde_json::Value, String> {
+    let c = conn(&db);
+    let now = now_ms();
+    let payload = args.annotations.to_string();
+    let existing: Option<String> = c
+        .query_row(
+            "SELECT id FROM pdf_annotations WHERE attachment_id = ?1 AND page_index = ?2",
+            params![args.attachment_id, args.page_index],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if existing.is_some() {
+        c.execute(
+            "UPDATE pdf_annotations SET payload_json = ?1, updated_at = ?2 WHERE attachment_id = ?3 AND page_index = ?4",
+            params![payload, now, args.attachment_id, args.page_index],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        let id = uuid::Uuid::new_v4().to_string();
+        c.execute(
+            "INSERT INTO pdf_annotations (id, attachment_id, page_index, payload_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, args.attachment_id, args.page_index, payload, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(args.annotations)
+}
+
+/// List all annotation pages for an attachment (ordered by page index).
+#[tauri::command]
+pub fn list_pdf_annotations(db: State<Db>, args: ListPdfAnnotationsArgs) -> Result<Vec<serde_json::Value>, String> {
+    let c = conn(&db);
+    let mut stmt = c
+        .prepare(
+            "SELECT attachment_id, page_index, payload_json FROM pdf_annotations WHERE attachment_id = ?1 ORDER BY page_index ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![args.attachment_id], |row| {
+            let payload: String = row.get(2)?;
+            let annotations: serde_json::Value =
+                serde_json::from_str(&payload).unwrap_or(serde_json::Value::Array(vec![]));
+            Ok(serde_json::json!({
+                "attachment_id": row.get::<_, String>(0)?,
+                "page_index": row.get::<_, i64>(1)?,
+                "annotations": annotations,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 /// Set a page's cover height (px) and return the updated page detail.
 #[tauri::command]
 pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<PageDetail, String> {

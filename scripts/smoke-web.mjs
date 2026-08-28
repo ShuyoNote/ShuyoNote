@@ -1000,6 +1000,14 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("wantsWorker pdfjs for pages", aiMod.wantsWorker("pdfjs", 100) === true && aiMod.wantsWorker("native", 100) === false);
   assert("PDF_RENDER_ENGINES canonical", JSON.stringify(aiMod.PDF_RENDER_ENGINES) === '["native","pdfjs"]');
 
+  // M24 — annotation persistence (web SQL roundtrip).
+  const annRow = await invoke("save_pdf_annotations", { args: { attachment_id: "pdf-att-1", page_index: 0, annotations: [{ id: "a1", type: "highlight", box: [0, 0, 1, 1] }] } });
+  assert("save_pdf_annotations returns saved page", annRow && annRow.attachment_id === "pdf-att-1" && annRow.page_index === 0 && Array.isArray(annRow.annotations) && annRow.annotations.length === 1, JSON.stringify(annRow));
+  const annList = await invoke("list_pdf_annotations", { args: { attachment_id: "pdf-att-1" } });
+  assert("list_pdf_annotations roundtrips", Array.isArray(annList) && annList.length === 1 && annList[0].page_index === 0 && Array.isArray(annList[0].annotations) && annList[0].annotations.length === 1, JSON.stringify(annList));
+  const annNone = await invoke("list_pdf_annotations", { args: { attachment_id: "pdf-att-none" } });
+  assert("list_pdf_annotations empty for unknown", Array.isArray(annNone) && annNone.length === 0);
+
 
 
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.

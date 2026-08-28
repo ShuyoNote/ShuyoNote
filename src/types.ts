@@ -94,6 +94,13 @@ export interface WorkspaceMeta {
   updated_at: number;
 }
 
+/** M24 — a saved PDF annotation page (list per attachment+page). */
+export interface PdfAnnotationRecord {
+  attachment_id: string;
+  page_index: number;
+  annotations: unknown[];
+}
+
 export interface StorageStats {
   db_bytes: number;
   attachment_bytes: number;
