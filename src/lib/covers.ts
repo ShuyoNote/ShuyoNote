@@ -76,6 +76,14 @@ export const COVER_PRESETS: CoverPreset[] = [
       `<svg ${B}><defs><linearGradient id="c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#29323c"/><stop offset="1" stop-color="#485563"/></linearGradient></defs><rect width="600" height="200" fill="url(#c)"/><g fill="#1a222b"><rect x="30" y="90" width="50" height="110"/><rect x="100" y="60" width="60" height="140"/><rect x="180" y="100" width="46" height="100"/><rect x="250" y="70" width="64" height="130"/><rect x="340" y="40" width="54" height="160"/><rect x="420" y="90" width="60" height="110"/><rect x="500" y="65" width="50" height="135"/></g><g fill="#ffe28a" opacity="0.9"><rect x="110" y="70" width="6" height="6"/><rect x="130" y="90" width="6" height="6"/><rect x="112" y="120" width="6" height="6"/><rect x="360" y="52" width="6" height="6"/><rect x="380" y="80" width="6" height="6"/><rect x="262" y="82" width="6" height="6"/><rect x="288" y="110" width="6" height="6"/></g></svg>`,
     ),
   },
+  {
+    // Default raster cover — a real photo referenced from public/covers (bundled
+    // into dist and served at /covers/... in both web and Tauri desktop).
+    id: "autumn",
+    name: "秋山",
+    kind: "image",
+    css: `url("/covers/default-cover.jpg")`,
+  },
 ];
 
 /** The default cover used for the built-in「使用指南」page. */

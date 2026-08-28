@@ -960,8 +960,8 @@ assert("workspace name persists across instances", wsAgain !== "");
   // Cover presets: a curated gallery of named covers (gradient OR inline-SVG image data-URIs).
   const covers = aiMod.COVER_PRESETS;
   assert("COVER_PRESETS has >= 12 distinct covers", Array.isArray(covers) && covers.length >= 12, String(covers?.length));
-  assert("COVER_PRESETS all have css + kind + name", covers.every((c) => typeof c.css === "string" && (c.css.startsWith("linear-gradient") || c.css.startsWith('url("data:image/svg+xml,')) && c.kind && c.name), JSON.stringify(covers.map((c) => c.id)));
-  assert("COVER_PRESETS includes image-themed covers", covers.some((c) => c.kind === "image" && c.css.startsWith('url("data:image/svg+xml,')), "checked image covers");
+  assert("COVER_PRESETS all have css + kind + name", covers.every((c) => typeof c.css === "string" && (c.css.startsWith("linear-gradient") || c.css.startsWith('url("data:image/svg+xml,') || c.css.startsWith('url("/covers/')) && c.kind && c.name), JSON.stringify(covers.map((c) => c.id)));
+  assert("COVER_PRESETS includes image-themed covers", covers.some((c) => c.kind === "image" && (c.css.startsWith('url("data:image/svg+xml,') || c.css.startsWith('url("/covers/'))), "checked image covers");
   // M25 P2 — external project-site links (single source) + privacy toggle.
   const links = aiMod.linkItems();
   assert("linkItems has 4 clean links", Array.isArray(links) && links.length === 4, JSON.stringify(links.map((l) => l.id)));

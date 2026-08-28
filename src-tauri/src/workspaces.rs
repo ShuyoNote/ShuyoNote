@@ -283,7 +283,7 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
         }
     }).to_string();
     // A welcoming cover + icon so the new space's start page feels finished.
-    let home_cover = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+    let home_cover = r#"url("/covers/default-cover.jpg")"#;
     let home_icon = "🌱";
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, cover, icon, created_at, updated_at, deleted_at)
