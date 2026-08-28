@@ -1,5 +1,6 @@
 import { platform } from "./platform";
 import { readEmbedConfig } from "./semanticEmbed";
+import { blobStore } from "./platform/blobStore";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
@@ -95,12 +96,25 @@ export const api = {
   setSyncConfig: (args: { server_url: string; token?: string }) =>
     invoke<void>("set_sync_config", { args }),
   syncNow: () => invoke<SyncReport>("sync_now"),
-  saveImage: (args: {
+  saveImage: async (args: {
     page_id: string | null;
     name: string | null;
     mime: string;
     data: number[];
-  }) => invoke<AttachmentMeta>("save_image", { args }),
+  }) => {
+    const meta = await invoke<AttachmentMeta>("save_image", { args });
+    // Desktop `save_image` persists bytes to disk but NOT to the frontend IndexedDB
+    // blobStore, while InlineDrawing / the fullscreen modal read them back by hash
+    // (blobStore.get). Mirror the bytes into blobStore so the drawing/image reload
+    // isn't empty on desktop; on web save_image already does this, so it's idempotent.
+    // Best-effort: a blobStore hiccup must never fail the underlying save.
+    try {
+      await blobStore.put(meta.hash, new Uint8Array(args.data));
+    } catch {
+      /* mirror is best-effort */
+    }
+    return meta;
+  },
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
   getAttachment: (id: string) => invoke<AttachmentMeta>("get_attachment", { id }),
   fetchBookmarkMetadata: (url: string) =>
