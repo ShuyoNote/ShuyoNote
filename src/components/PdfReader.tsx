@@ -4,9 +4,19 @@ import { usePdfReader } from "../store/pdfReader";
 import { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 
+// Blob → data URL (self-contained; no object-URL revocation, so no ERR_FILE_NOT_FOUND).
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(new Error("转换页面图像失败"));
+    fr.readAsDataURL(blob);
+  });
+}
+
 // M24 — PDF reader modal. Loads the PDF bytes via the pdf.js engine, renders the
-// current page to a blob (object URL), and hosts the annotation canvas. Page nav
-// + zoom re-render the page; annotations are persisted per (attachment, page).
+// current page to a data URL, and hosts the annotation canvas. Page nav + zoom
+// re-render the page; annotations are persisted per (attachment, page).
 export function PdfReader() {
   const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
   const [pageCount, setPageCount] = useState(0);
@@ -17,14 +27,6 @@ export function PdfReader() {
   const [ready, setReady] = useState(false);
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
-  // Keep every created page blob URL until the reader closes — revoking a URL
-  // while its <img> is still loading causes ERR_FILE_NOT_FOUND.
-  const urlsRef = useRef<string[]>([]);
-
-  const freeUrls = () => {
-    for (const u of urlsRef.current) URL.revokeObjectURL(u);
-    urlsRef.current = [];
-  };
 
   // Load the document once per (open, bytes).
   useEffect(() => {
@@ -73,9 +75,9 @@ export function PdfReader() {
       try {
         const blob = await eng.renderPageToBlob(pageIndex, scale);
         if (!alive) return;
-        const url = URL.createObjectURL(blob);
-        urlsRef.current.push(url);
-        setPageUrl(url);
+        const dataUrl = await blobToDataUrl(blob);
+        if (!alive) return;
+        setPageUrl(dataUrl);
       } catch {
         if (alive) setPageUrl(null);
       }
@@ -85,13 +87,6 @@ export function PdfReader() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, ready, pageIndex, scale]);
-
-  // Free page blob URLs when the reader closes or unmounts.
-  useEffect(() => {
-    if (!open) freeUrls();
-  }, [open]);
-
-  useEffect(() => () => freeUrls(), []);
 
   if (!open) return null;
 
