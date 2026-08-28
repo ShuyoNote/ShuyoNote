@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
+import { snapHighlightToText, type TextItemLike } from "../lib/pdfTextLayer";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
@@ -18,6 +19,7 @@ interface Props {
   pageH: number;
   pageImageUrl: string | null;
   hasTextLayer: boolean;
+  textItems?: TextItemLike[] | null;
 }
 
 type Tool = "select" | "highlight" | "ink" | "sticky";
@@ -41,7 +43,7 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
   return false;
 }
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [tool, setTool] = useState<Tool>("select");
   const [selected, setSelected] = useState<string | null>(null);
@@ -125,7 +127,12 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     } else if (drag.current) {
       const { x0, y0, x1, y1 } = drag.current;
       if (Math.abs(x1 - x0) > 0.005 || Math.abs(y1 - y0) > 0.005) {
-        const box = normCoords(x0 * pageW, y0 * pageH, x1 * pageW, y1 * pageH, pageW, pageH);
+        // 有文本层时，把高亮吸附到实际文字字框（精确划词）；否则用原始拖框。
+        let box = normCoords(x0 * pageW, y0 * pageH, x1 * pageW, y1 * pageH, pageW, pageH);
+        if (hasTextLayer && textItems && textItems.length) {
+          const snapped = snapHighlightToText([x0 * pageW, y0 * pageH, x1 * pageW, y1 * pageH], textItems, pageW, pageH);
+          if (snapped) box = snapped;
+        }
         persist([...annotations, { id: `h-${Date.now()}`, type: "highlight", box }]);
       }
       drag.current = null;

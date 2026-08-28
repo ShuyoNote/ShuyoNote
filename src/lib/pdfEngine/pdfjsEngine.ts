@@ -74,6 +74,22 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       return { index: pageIndex, width: vp.width, height: vp.height, hasTextLayer };
     },
 
+    async getPageTextItems(pageIndex: number): Promise<{ str: string; transform: number[] | null; width: number; height: number }[]> {
+      const d = expectDoc();
+      const p = await d.getPage(pageIndex + 1);
+      try {
+        const tc = await p.getTextContent();
+        return (tc.items ?? []).map((it: any) => ({
+          str: String(it.str ?? ""),
+          transform: Array.isArray(it.transform) ? Array.from(it.transform as number[]) : null,
+          width: Number(it.width ?? 0),
+          height: Number(it.height ?? 0),
+        }));
+      } catch {
+        return [];
+      }
+    },
+
     async renderPageToBlob(pageIndex: number, scale: number): Promise<Blob> {
       const d = expectDoc();
       const p = await d.getPage(pageIndex + 1);

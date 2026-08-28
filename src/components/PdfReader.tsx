@@ -24,6 +24,7 @@ export function PdfReader() {
   const [scale, setScale] = useState(1);
   const [meta, setMeta] = useState<{ w: number; h: number; hasTextLayer: boolean } | null>(null);
   const [pageUrl, setPageUrl] = useState<string | null>(null);
+  const [textItems, setTextItems] = useState<{ str: string; transform: number[] | null; width: number; height: number }[] | null>(null);
   const [ready, setReady] = useState(false);
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
@@ -38,6 +39,7 @@ export function PdfReader() {
       setReady(false);
       setMeta(null);
       setPageUrl(null);
+      setTextItems(null);
       const eng = createPdfjsEngine();
       engRef.current = eng;
       if (!bytes) return;
@@ -71,6 +73,12 @@ export function PdfReader() {
         setMeta({ w: m.width, h: m.height, hasTextLayer: m.hasTextLayer });
       } catch {
         if (alive) setMeta(null);
+      }
+      try {
+        const items = await eng.getPageTextItems(pageIndex);
+        if (alive) setTextItems(items);
+      } catch {
+        if (alive) setTextItems(null);
       }
       try {
         const blob = await eng.renderPageToBlob(pageIndex, scale);
@@ -116,6 +124,7 @@ export function PdfReader() {
               pageH={meta.h}
               pageImageUrl={pageUrl}
               hasTextLayer={meta.hasTextLayer}
+              textItems={textItems}
             />
           ) : (
             <div className="pdf-reader-loading">加载中…</div>
