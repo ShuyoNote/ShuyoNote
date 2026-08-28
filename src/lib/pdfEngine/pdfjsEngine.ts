@@ -44,7 +44,12 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
   return {
     async loadPdf(data: Uint8Array): Promise<PdfDocumentMeta> {
       ensureWorker();
-      task = pdfjs.getDocument({ data });
+      task = pdfjs.getDocument({
+        data,
+        cMapUrl: "/pdfjs/cmaps/",
+        cMapPacked: true,
+        standardFontDataUrl: "/pdfjs/standard_fonts/",
+      });
       doc = await task.promise;
       let outline: OutlineItem[] = [];
       try {

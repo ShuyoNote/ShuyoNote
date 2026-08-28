@@ -4,9 +4,9 @@
   "version": "1.59.177",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:web": "vite --config vite.web.config.ts",
-    "build": "tsc && vite build",
+    "dev": "node scripts/copy-pdfjs-assets.mjs && vite",
+    "dev:web": "node scripts/copy-pdfjs-assets.mjs && vite --config vite.web.config.ts",
+    "build": "node scripts/copy-pdfjs-assets.mjs && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

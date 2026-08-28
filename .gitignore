@@ -15,6 +15,9 @@ dist-ssr
 # Transient transpile dir used by scripts/smoke-web.mjs
 .smoke-tmp
 
+# Generated pdf.js runtime assets (copied by scripts/copy-pdfjs-assets.mjs)
+public/pdfjs
+
 # Local scratch / CDP test temp + Edge profiles (never committed)
 tmp
 demo-shots
