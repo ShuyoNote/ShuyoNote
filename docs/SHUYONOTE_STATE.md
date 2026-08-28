@@ -10,7 +10,7 @@
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
 - **版本**：**v1.59.174**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `ba14122`（工作树干净；v1.59.173 发布提交为 `21a80d9`，其后追加 PDF 批注方案 + MSRV 等文档/构建提交）。
+- **git**：HEAD `d8b2250`（工作树干净；v1.59.174 发布提交，v1.59.173 发布提交为 `21a80d9`，其后追加 PDF 批注方案 + MSRV + 文档体系完善等提交）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
