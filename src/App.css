@@ -1753,6 +1753,12 @@ body,
   display: block;
 }
 
+/* A page/folder icon set via the page icon picker, rendered as an emoji in the tree. */
+.tree-icon-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .tree-icon-folder {
   background: var(--cat-orange-soft);
   color: var(--cat-orange, #b45309);

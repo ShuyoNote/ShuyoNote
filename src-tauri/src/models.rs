@@ -6,6 +6,8 @@ pub struct PageMeta {
     pub workspace_id: String,
     pub parent_id: Option<String>,
     pub title: String,
+    #[serde(default)]
+    pub icon: String,
     #[serde(default = "default_kind")]
     pub kind: String,
     pub sort_order: f64,

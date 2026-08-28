@@ -304,7 +304,9 @@ function TreeItem({
           </span>
         )}
         <span className={`tree-icon${isFolder ? " tree-icon-folder" : isDatabase ? " tree-icon-database" : ""}`}>
-          {isFolder ? (
+          {node.icon ? (
+            <span className="tree-icon-emoji">{node.icon}</span>
+          ) : isFolder ? (
             <FolderIcon width={16} height={16} />
           ) : isDatabase ? (
             <DatabaseIcon width={16} height={16} />

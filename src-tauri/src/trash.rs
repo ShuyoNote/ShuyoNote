@@ -74,6 +74,7 @@ pub fn list_deleted(db: State<'_, Db>) -> Result<Vec<PageMeta>, String> {
                 workspace_id: row.get(1)?,
                 parent_id: row.get(2)?,
                 title: row.get(3)?,
+                icon: String::new(),
                 kind: row.get(4)?,
                 sort_order: row.get(5)?,
                 created_at: row.get(6)?,

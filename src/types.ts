@@ -3,6 +3,7 @@ export interface PageMeta {
   workspace_id: string;
   parent_id: string | null;
   title: string;
+  icon: string;
   kind: string;
   sort_order: number;
   created_at: number;

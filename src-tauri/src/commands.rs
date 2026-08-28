@@ -41,7 +41,7 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
     let mut stmt = c
         .prepare(
-            "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
+            "SELECT id, workspace_id, parent_id, title, icon, kind, sort_order, created_at, updated_at, deleted_at
              FROM pages WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -53,11 +53,12 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
                 workspace_id: row.get(1)?,
                 parent_id: row.get(2)?,
                 title: row.get(3)?,
-                kind: row.get(4)?,
-                sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                deleted_at: row.get(8)?,
+                icon: row.get(4)?,
+                kind: row.get(5)?,
+                sort_order: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                deleted_at: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?;

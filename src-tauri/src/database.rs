@@ -296,6 +296,7 @@ fn list_page_metas(c: &Connection) -> Result<Vec<PageMeta>, String> {
                 workspace_id: r.get(1)?,
                 parent_id: r.get(2)?,
                 title: r.get(3)?,
+                icon: String::new(),
                 kind: r.get(4)?,
                 sort_order: r.get(5)?,
                 created_at: r.get(6)?,
