@@ -21,49 +21,32 @@ import {
   DirectoryIcon,
 } from "./icons";
 
-// M25 P1 — a small first-experience checklist on the empty-page onboarding.
-// Persisted in localStorage so completed steps stay checked across sessions.
+// M25 P1 — a one-click first-experience checklist on the empty-page onboarding.
+// Each step runs its action (create page/db, start typing, open shortcuts/AI) and
+// marks itself done; completion persists in localStorage.
 const FIRST_STEPS_KEY = "shuyonote-firststeps";
-const FIRST_STEPS = [
-  { id: "new-page", label: "新建页面（Ctrl+N）" },
-  { id: "slash", label: "输入 / 插入块（分栏 / 表格 / 绘图…）" },
-  { id: "db", label: "从下方创建一个数据表格" },
-  { id: "shortcuts", label: "看快捷键（Ctrl+/ 或 ?）" },
-  { id: "ai", label: "试试 AI 助手（在设置里启用后）" },
+type Step = { id: string; label: string; hint: string };
+const FIRST_STEPS: Step[] = [
+  { id: "new-page", label: "新建页面（Ctrl+N）", hint: "创建并打开一个新页面" },
+  { id: "slash", label: "开始输入 / 插入块", hint: "用 / 插入分栏、表格、绘图等" },
+  { id: "db", label: "创建一个数据表格", hint: "新建一个数据库页面" },
+  { id: "shortcuts", label: "看快捷键", hint: "Ctrl+/ 或 ? 打开快捷键面板" },
+  { id: "ai", label: "试试 AI 助手", hint: "先在设置里启用 AI" },
 ];
 
-function FirstSteps() {
-  const [done, setDone] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(FIRST_STEPS_KEY) || "{}");
-    } catch {
-      return {};
-    }
-  });
-
-  const toggle = (id: string) => {
-    setDone((d) => {
-      const next = { ...d, [id]: !d[id] };
-      try {
-        localStorage.setItem(FIRST_STEPS_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  };
-
-  return (
-    <div className="first-steps">
-      <div className="first-steps-title">新手清单</div>
-      {FIRST_STEPS.map((s) => (
-        <label key={s.id} className="first-step">
-          <input type="checkbox" checked={!!done[s.id]} onChange={() => toggle(s.id)} />
-          <span className={done[s.id] ? "done" : ""}>{s.label}</span>
-        </label>
-      ))}
-    </div>
-  );
+function loadSteps(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(FIRST_STEPS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function saveSteps(d: Record<string, boolean>) {
+  try {
+    localStorage.setItem(FIRST_STEPS_KEY, JSON.stringify(d));
+  } catch {
+    // ignore
+  }
 }
 
 // Empty-state guide for a fresh page (Notion-style): a subtitle, an action list,
@@ -72,34 +55,66 @@ export function NewPageGuide() {
   const { createDatabase } = useNotes();
   const [dismissed, setDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [stepsDone, setStepsDone] = useState<Record<string, boolean>>(loadSteps);
   const editor = useEditorStore((s) => s.editor);
   // Show the "用 AI 开始创作" action only when the AI feature is enabled.
   const aiEnabled = useAiStore((s) => s.config.enabled);
 
-  // Press Enter (anywhere while the guide shows) to start editing: dismiss the
-  // guide, ensure a paragraph block exists, and place the caret in it.
+  // Start editing: dismiss the guide, ensure a paragraph block exists, and place
+  // the caret in it. Used by the Enter handler AND the "start typing" checklist step.
+  const startEditing = () => {
+    setDismissed(true);
+    if (!editor) return;
+    editor.update(() => {
+      const root = $getRoot();
+      let block = root.getChildren()[0] as ElementNode | undefined;
+      if (!block) {
+        block = $createParagraphNode();
+        root.append(block);
+      }
+      block.selectStart();
+    });
+    editor.focus();
+  };
+
+  // Press Enter (anywhere while the guide shows) to start editing.
   useEffect(() => {
     if (dismissed) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        setDismissed(true);
-        if (!editor) return;
-        editor.update(() => {
-          const root = $getRoot();
-          let block = root.getChildren()[0] as ElementNode | undefined;
-          if (!block) {
-            block = $createParagraphNode();
-            root.append(block);
-          }
-          block.selectStart();
-        });
-        editor.focus();
+        startEditing();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [dismissed, editor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dismissed]);
+
+  // One-click onboarding: run the step's action, then mark it done (persisted).
+  const runStep = async (s: Step) => {
+    if (stepsDone[s.id]) return;
+    switch (s.id) {
+      case "new-page":
+        await useNotes.getState().createPage(null);
+        break;
+      case "slash":
+        startEditing();
+        break;
+      case "db":
+        await useNotes.getState().createDatabase(null);
+        break;
+      case "shortcuts":
+        useEditorStore.getState().openShortcuts();
+        break;
+      case "ai":
+        useRightPanel.getState().openAi(true);
+        break;
+    }
+    const next = { ...stepsDone, [s.id]: true };
+    setStepsDone(next);
+    saveSteps(next);
+  };
 
   const importMarkdown = () => setImporting(true);
 
@@ -150,7 +165,17 @@ export function NewPageGuide() {
               ))}
             </div>
           </div>
-          <FirstSteps />
+          <div className="first-steps">
+            <div className="first-steps-title">新手清单 · 点一下即上手</div>
+            {FIRST_STEPS.map((s) => (
+              <button key={s.id} className="first-step" onClick={() => runStep(s)} title={s.hint}>
+                <span className={`first-step-check ${stepsDone[s.id] ? "done" : ""}`}>
+                  {stepsDone[s.id] ? "✓" : "→"}
+                </span>
+                <span className={`first-step-label ${stepsDone[s.id] ? "done" : ""}`}>{s.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}

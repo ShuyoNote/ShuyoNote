@@ -10158,13 +10158,35 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  width: 100%;
+  padding: 6px 8px;
   font-size: 13px;
   color: var(--text);
   cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  text-align: left;
 }
-.first-step input[type="checkbox"] {
-  accent-color: var(--accent);
+.first-step:hover {
+  background: var(--block-hover);
+}
+.first-step-check {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: transparent;
+}
+.first-step-check.done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 .first-step .done {
   color: var(--text-dim);
