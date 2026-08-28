@@ -4,6 +4,9 @@ version = "1.59.173"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
+# MSRV（最小支持版本）：与文档声明的 "1.94+" 对齐；不锁工具链，仅声明最低 Rust 版本。
+# 若要更严格复现，可另加 rust-toolchain.toml 钉 channel（默认不钉，跟随 stable）。
+rust-version = "1.94"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

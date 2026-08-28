@@ -165,7 +165,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 ## 🛠️ 开发环境要求
 
 - **Node.js** ≥ 20 + **pnpm**
-- **Rust** stable（1.94+）与 cargo
+- **Rust** stable（1.94+，MSRV 见 `src-tauri/Cargo.toml` 的 `rust-version`）与 cargo
 - Windows / macOS / Linux
 
 ## 🚀 快速开始

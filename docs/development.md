@@ -20,7 +20,7 @@
 ## 2. 环境准备
 
 - Node.js ≥ 20，pnpm（`corepack enable` 或 `npm i -g pnpm`）。
-- Rust toolchain（`rustup`），需 Tauri 系统依赖（Windows 需 WebView2；见 Tauri 官方 pre-reqs）。
+- Rust toolchain（`rustup`），需 Tauri 系统依赖（Windows 需 WebView2；见 Tauri 官方 pre-reqs）。**MSRV 1.94**（声明于 `src-tauri/Cargo.toml` 的 `rust-version`，与 README 徽章 `1.94+` 一致）；不锁工具链，跟随 stable。
 
 ## 3. 运行
 
