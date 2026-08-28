@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.174] - 2026-08-27
+
+### 新增
+
+- **真实向量 embedding 语义检索（M20.2 收尾）**：新增 `src/lib/semanticEmbed.ts`（`normalizeVector`/`cosineSim`/`vectorRank` 纯函数 + `embedText` 网络调用 + `readEmbedConfig` 从 localStorage 读 AI 配置）。在 AI 设置里配置「语义检索模型（embedding）」（Ollama `nomic-embed-text` / OpenAI `text-embedding-3-small`）后，`search` 在 TF + char-bigram 之上**可选叠加向量重排**，按余弦相似度加有界 `VECTOR_BONUS`。
+- **页嵌入缓存持久化**：新增 `page_embeddings` 表（`page_id` + `model` + `dim` + `vector` + `hash` + `updated_at`）。搜索嵌入按 `page_id` + 内容哈希（`embedHash`，`embeddingText` 用 title + 前 500 字）命中缓存——**反复搜索只发 1 次 query 嵌入**；页面内容变更时哈希不一致 → 惰性重嵌一次并回写。provider 不可达/失败则整段回退 char-bigram，搜索永不中断。
+
+### 变更
+
+- **README 版本徽章对齐**：修复了此前 v1.59.173 漏改的徽章 `version-1.59.172` → 现为 `version-1.59.174`。
+
+### 验证
+
+- `npx tsc --noEmit` / `node scripts/smoke-web.mjs` **239 全绿**（新增 embedding 纯函数断言：余弦/归一化/向量排名/URL/请求体/响应解析/`embeddingText` 截断/`embedHash` 漂移敏感/降级为 null）；`pnpm build`（仅 chunk-size 提示，无错误）；`cargo check` 通过（同步更新 `Cargo.lock`）。
+
+---
+
 ## [1.59.173] - 2026-08-27
 
 ### 变更
