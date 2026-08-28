@@ -25,7 +25,7 @@ export const SHORTCUTS: Shortcut[] = [
   { key: "new-page", label: "新建页面", group: "基础", keys: ["Ctrl", "N"], macKeys: ["⌘", "N"], when: "全局" },
   { key: "command-palette", label: "命令面板", group: "基础", keys: ["Ctrl", "K"], macKeys: ["⌘", "K"], when: "全局" },
   { key: "focus-search", label: "聚焦搜索", group: "基础", keys: ["Ctrl", "Shift", "F"], macKeys: ["⌘", "⇧", "F"], when: "全局" },
-  { key: "shortcuts", label: "快捷键面板", group: "基础", keys: ["Ctrl", "/"], macKeys: ["⌘", "/"], when: "全局" },
+  { key: "shortcuts", label: "快捷键面板（Ctrl+/ 或 ?）", group: "基础", keys: ["Ctrl", "/"], macKeys: ["⌘", "/"], when: "全局" },
   { key: "close", label: "关闭查找/命令面板/浮层", group: "基础", keys: ["Esc"], when: "全局" },
   { key: "slash-menu", label: "斜杠菜单", group: "基础", keys: ["/"], when: "编辑器内" },
 
@@ -44,10 +44,9 @@ export const SHORTCUTS: Shortcut[] = [
   // ---- 列表 (Markdown 快捷) ----
   { key: "md-bullet", label: "无序列表（行首 `- `）", group: "列表", keys: ["-", " "], when: "编辑器内" },
   { key: "md-ordered", label: "有序列表（行首 `1. `）", group: "列表", keys: ["1", ".", " "], when: "编辑器内" },
-  { key: "md-todo", label: "待办（行首 `[] `）", group: "列表", keys: ["[", "]", " "], when: "编辑器内" },
-  { key: "md-heading", label: "标题（行首 `# `）", group: "列表", keys: ["#", " "], when: "编辑器内" },
+  { key: "md-todo", label: "待办（行首 `[ ] `）", group: "列表", keys: ["[", " ", "]", " "], when: "编辑器内" },
+  { key: "md-heading", label: "标题（行首 `#`/`##`/`###`）", group: "列表", keys: ["#", " "], when: "编辑器内" },
   { key: "md-quote", label: "引用（行首 `> `）", group: "列表", keys: [">", " "], when: "编辑器内" },
-  { key: "md-code", label: "代码块（``` ）", group: "列表", keys: ["`", "`", "`"], when: "编辑器内" },
 
   // ---- 导航 ----
   { key: "cycle-view", label: "循环 笔记/看板/关系图 视图", group: "导航", keys: ["Ctrl", "E"], macKeys: ["⌘", "E"], when: "编辑器内" },
