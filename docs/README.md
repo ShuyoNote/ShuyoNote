@@ -26,7 +26,7 @@ docs/
 ├── architecture.md      # 系统架构与存储模型
 ├── positioning.md       # 产品定位
 ├── design-philosophy.md # 设计哲学
-├── roadmap.md           # 演进路线图（M1–M17 里程碑）
+├── roadmap.md           # 演进路线图（M1–M24 里程碑）
 ├── compare-*.md         # 竞品对比
 └── plans/               # 各功能技术方案（按日期）
 design/                  # UI/UX 设计交付（设计系统 / UX 流程 / 实现计划）
@@ -40,7 +40,7 @@ CHANGELOG.md             # 版本变更日志
 | [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
-| [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M15 里程碑规划（M1–M5、M7–M15 已达，M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
+| [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M24 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
 
 ## 方案与规划（plans）
 

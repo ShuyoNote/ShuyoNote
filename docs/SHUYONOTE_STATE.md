@@ -10,7 +10,7 @@
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
 - **版本**：**v1.59.173**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `21a80d9`（v1.59.173 发布提交），工作树干净。
+- **git**：HEAD `ba14122`（工作树干净；v1.59.173 发布提交为 `21a80d9`，其后追加 PDF 批注方案 + MSRV 等文档/构建提交）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -61,16 +61,18 @@
 
 - **前端 Web 版**：`pnpm dev:web`（Vite web dev，默认 http://localhost:5173；若 5173 被占则 Vite 自动顺延到 5174……，热更新；SQLite 前端 mock）+ `pnpm preview`（dist 产物，http://127.0.0.1:5173）。
 - **桌面版**：`pnpm tauri dev`（1420，需 Rust/SQLite host）或跑 `src-tauri/target/release/shuyonote.exe`。
+- **Rust**：MSRV **1.94**（`src-tauri/Cargo.toml` 的 `rust-version`，与 README 徽章 `1.94+` 一致），本机 `rustc 1.94.0` stable；**不锁工具链**（无 `rust-toolchain.toml`），跟随 stable。
 - **验证**：`npx tsc --noEmit`、`pnpm build`、`node scripts/smoke-web.mjs`（**225 全绿**）；无头 Edge CDP 实测交互（Edge 在 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`，Node 内置 WebSocket，临时脚本放 tmp/）。
 - **git 代理**：全局配置了 `http://127.0.0.1:7897` 但**当前端口不通**；push/pull 需 `git -c http.proxy= -c https.proxy=` 临时直连（或清掉全局代理）。
 
 ## 5. 下一步候选（未做，按需选一项继续）
 
-1. **列内拖拽 / 跨列复制移动**——需跨编辑器机制，工作量大（此前评估为"暂不做"，若产品必需立项）。
-2. **旧分栏（ElementNode）→ 路线 B 的状态补齐**（若确有用户需要，可做"显式、备份式"的手动转换入口，而非自动迁移）。
-3. **绘图块更多能力**：如列内 AI 附表、绘图块引用/块级 `{{...}}`、及大图/多图性能。
-4. **分栏其它打磨**：分栏块间距/背景配色再调（浅色 `--hover-strong` 与页面背景的对比度是否足够明显）、分栏列宽拖拽到极窄值时的边界表现。
-5. 其它 roadmap（见 docs/roadmap.md）待排期项。
+1. **PDF 批注立项（M24）**——见 `docs/plans/2026-08-27-pdf-annotation-plan.md`：先按阶段 1 MVP 切，做 `pdfRender` 双引擎接口 + `pdfjsEngine` 纯函数 + smoke 断言（不碰 UI 即可验证核心）；暂排 M20 之后。
+2. **列内拖拽 / 跨列复制移动**——需跨编辑器机制，工作量大（此前评估为"暂不做"，若产品必需立项）。
+3. **旧分栏（ElementNode）→ 路线 B 的状态补齐**（若确有用户需要，可做"显式、备份式"的手动转换入口，而非自动迁移）。
+4. **绘图块更多能力**：如列内 AI 附表、绘图块引用/块级 `{{...}}`、及大图/多图性能。
+5. **分栏其它打磨**：分栏块间距/背景配色再调（浅色 `--hover-strong` 与页面背景的对比度是否足够明显）、分栏列宽拖拽到极窄值时的边界表现。
+6. 其它 roadmap（见 docs/roadmap.md）待排期项。
 
 ---
 
