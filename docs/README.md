@@ -107,6 +107,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-27-project-website-navigation-plan.md](plans/2026-08-27-project-website-navigation-plan.md) | **「项目网站导航」方案（M25 P2 细化）**：让用户方便导航到外部项目网站的**利弊权衡 + 决策 + 入口设计**。结论=做成「可发现但克制、绝不阻塞、绝不跟踪」的被动出口；拆分三类外部站点（项目主页/文档站/营销落地页），只承接前两类；落地=「关于」对话框（版本/AGPL-3.0 许可/四干净链接）+「检查更新」+ 帮助页脚注 + **「禁用外部导航」隐私开关**；链接走 `src/lib/links.ts` 单一来源、无 `utm`/埋点；站点自控（仓库 Pages）优先、主页偏透明+文档+下载。**「关于」对话框 + 四链接 + 隐私开关已实装**（外部静态站本身待做） |
 | [plans/2026-08-27-auto-update-plan.md](plans/2026-08-27-auto-update-plan.md) | **「自动升级」方案（规划，建议）**：本地优先/离线/自托管/AGPL 下的升级边界——**半自动**（后台 `check()` + 用户点「下载并安装」），**绝不静默强制重启**，离线优雅降级、Web 端禁用。技术走 Tauri 2 官方 `tauri-plugin-updater`（签名 `tauri signer` + 更新清单 `latest.json` + `createUpdaterArtifacts` `.sig` + 稳定 HTTPS 端点）。**真正的成本在签名 + 更新清单的发布管线**（手工，接入现有提版流程）；分阶段：阶段 1 先做「检查更新」检测入口（不依赖完整签名）、阶段 2 完整应用内下载安装、阶段 3 增量/通道/自托管。**规划，未实装** |
 | [plans/2026-08-27-pdf-annotation-acceptance.md](plans/2026-08-27-pdf-annotation-acceptance.md) | **PDF 批注 · 手动验收清单（M24 阶段 1）**：入口/渲染/批注（高亮·画笔·便签·选择/删除/编辑/复制引用）/文本层降级/持久化/批注即块（摘录成块→当前页/新页 + 回链跳转）/异常边界 + 自动化门禁（`tsc`/`smoke` 283/`build`/`cargo test` 32）。**真机在浏览器/桌面上逐条勾选** |
+| [plans/2026-08-27-update-ocr-acceptance.md](plans/2026-08-27-update-ocr-acceptance.md) | **自动升级 / OCR · 手动验收清单（v1.59.178）**：自动升级（About 检查更新：离线降级/已是最新/有新版本 + 桌面更新器接线 + 发布管线前置）+ OCR 兜底（无文本层扫描件「OCR 识别本页」→ 识别结果面板）+ 精确划词 + 已知边界（签名发布/离线 langPath/OCR 文本未接划词）。**真机逐条勾选** |
 
 ## 竞品对比
 
