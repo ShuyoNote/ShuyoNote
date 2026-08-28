@@ -10026,3 +10026,144 @@ p:has(> .editor-drawing-container) {
   color: var(--danger, #e5484d);
   font-size: 13px;
 }
+/* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ai-toggle). */
+.about {
+  width: min(460px, 92vw);
+  max-height: 84vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+  padding: 20px;
+}
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.about-logo {
+  font-size: 34px;
+}
+.about-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.about-version {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.about-desc {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+  margin: 8px 0 16px;
+}
+.about-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.about-label {
+  font-size: 13px;
+  color: var(--text-dim);
+  min-width: 96px;
+}
+.about-license {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.about-license-note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.about-links-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  margin: 8px 0 6px;
+}
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.about-link {
+  border: 1px solid var(--border);
+  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.about-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.about-toggle-row {
+  margin-top: 4px;
+}
+.about-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: -4px 0 16px;
+  line-height: 1.5;
+}
+.about-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.about-close {
+  border: 1px solid var(--border);
+  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.about-close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* M25 P1 — first-experience checklist on the empty-page guide. */
+.first-steps {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.first-steps-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.first-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.first-step input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+.first-step .done {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}

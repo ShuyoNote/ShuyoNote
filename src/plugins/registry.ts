@@ -242,6 +242,16 @@ registerPlugin({
         return "正在打开使用指南";
       },
     },
+    {
+      id: "help.about",
+      title: "关于",
+      description: "版本、许可与项目网站（开源与反馈）",
+      closeOnRun: true,
+      run: () => {
+        useEditorStore.getState().openAbout();
+        return "已打开关于";
+      },
+    },
   ],
 });
 

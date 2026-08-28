@@ -76,6 +76,7 @@ await esbuild.build({
       'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
       'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
       'export { COVER_PRESETS } from "./src/lib/covers";\n' +
+      'export { APP_NAME, APP_VERSION, APP_LICENSE, linkItems, sanitizeExternalUrl, getAllowExternal, setAllowExternal } from "./src/lib/links";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -961,6 +962,20 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("COVER_PRESETS has >= 12 distinct covers", Array.isArray(covers) && covers.length >= 12, String(covers?.length));
   assert("COVER_PRESETS all have css + kind + name", covers.every((c) => typeof c.css === "string" && (c.css.startsWith("linear-gradient") || c.css.startsWith('url("data:image/svg+xml,')) && c.kind && c.name), JSON.stringify(covers.map((c) => c.id)));
   assert("COVER_PRESETS includes image-themed covers", covers.some((c) => c.kind === "image" && c.css.startsWith('url("data:image/svg+xml,')), "checked image covers");
+  // M25 P2 — external project-site links (single source) + privacy toggle.
+  const links = aiMod.linkItems();
+  assert("linkItems has 4 clean links", Array.isArray(links) && links.length === 4, JSON.stringify(links.map((l) => l.id)));
+  assert("linkItems carry id/label/url + no tracking", links.every((l) => l.id && l.label && /^https:\/\/gitcode\.com\//.test(l.url) && !/[?&](utm_|ref=)/.test(l.url)), JSON.stringify(links));
+  assert("linkItems include 项目主页/文档/发布/问题", ["home", "docs", "releases", "issues"].every((id) => links.some((l) => l.id === id)));
+  assert("APP_VERSION is a semver string", typeof aiMod.APP_VERSION === "string" && /^\d+\.\d+\.\d+/.test(aiMod.APP_VERSION), String(aiMod.APP_VERSION));
+  assert("APP_LICENSE is AGPL-3.0", aiMod.APP_LICENSE === "AGPL-3.0", String(aiMod.APP_LICENSE));
+  assert("sanitizeExternalUrl keeps https", aiMod.sanitizeExternalUrl("https://example.com/x") === "https://example.com/x");
+  assert("sanitizeExternalUrl blocks javascript:", aiMod.sanitizeExternalUrl("javascript:alert(1)") === "");
+  assert("sanitizeExternalUrl blocks file:", aiMod.sanitizeExternalUrl("file:///etc/passwd") === "");
+  assert("getAllowExternal defaults on (no localStorage)", aiMod.getAllowExternal() === true);
+  // Node has no localStorage: set is a no-op, so we only assert it's callable and
+  // the getter stays a boolean. (Persistence is exercised in the real browser.)
+  assert("setAllowExternal callable + getter boolean", (aiMod.setAllowExternal(true), typeof aiMod.getAllowExternal() === "boolean"));
 
 
 

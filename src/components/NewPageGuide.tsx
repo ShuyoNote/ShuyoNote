@@ -21,6 +21,51 @@ import {
   DirectoryIcon,
 } from "./icons";
 
+// M25 P1 — a small first-experience checklist on the empty-page onboarding.
+// Persisted in localStorage so completed steps stay checked across sessions.
+const FIRST_STEPS_KEY = "shuyonote-firststeps";
+const FIRST_STEPS = [
+  { id: "new-page", label: "新建页面（Ctrl+N）" },
+  { id: "slash", label: "输入 / 插入块（分栏 / 表格 / 绘图…）" },
+  { id: "db", label: "从下方创建一个数据表格" },
+  { id: "shortcuts", label: "看快捷键（Ctrl+/ 或 ?）" },
+  { id: "ai", label: "试试 AI 助手（在设置里启用后）" },
+];
+
+function FirstSteps() {
+  const [done, setDone] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(FIRST_STEPS_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  });
+
+  const toggle = (id: string) => {
+    setDone((d) => {
+      const next = { ...d, [id]: !d[id] };
+      try {
+        localStorage.setItem(FIRST_STEPS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div className="first-steps">
+      <div className="first-steps-title">新手清单</div>
+      {FIRST_STEPS.map((s) => (
+        <label key={s.id} className="first-step">
+          <input type="checkbox" checked={!!done[s.id]} onChange={() => toggle(s.id)} />
+          <span className={done[s.id] ? "done" : ""}>{s.label}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 // Empty-state guide for a fresh page (Notion-style): a subtitle, an action list,
 // and a "create as database" view row.
 export function NewPageGuide() {
@@ -105,6 +150,7 @@ export function NewPageGuide() {
               ))}
             </div>
           </div>
+          <FirstSteps />
         </div>
       )}
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}

@@ -17,6 +17,8 @@ interface EditorState {
   drawingEdit: { nodeKey: string; hash: string | null; mime: string | null; text: string } | null;
   /** M25 — whether the keyboard-shortcuts overlay is open. */
   shortcutsOpen: boolean;
+  /** M25 P2 — whether the "关于" dialog is open. */
+  aboutOpen: boolean;
   setEditor: (editor: LexicalEditor | null) => void;
   setFocusBlockId: (id: string | null) => void;
   clearFocusBlockId: () => void;
@@ -27,6 +29,8 @@ interface EditorState {
   closeDrawingEdit: () => void;
   openShortcuts: () => void;
   closeShortcuts: () => void;
+  openAbout: () => void;
+  closeAbout: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -37,6 +41,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   aiBarAnchorKey: null,
   drawingEdit: null,
   shortcutsOpen: false,
+  aboutOpen: false,
   setEditor: (editor) => set({ editor }),
   setFocusBlockId: (id) => set({ focusBlockId: id }),
   clearFocusBlockId: () => set({ focusBlockId: null }),
@@ -47,4 +52,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   closeDrawingEdit: () => set({ drawingEdit: null }),
   openShortcuts: () => set({ shortcutsOpen: true }),
   closeShortcuts: () => set({ shortcutsOpen: false }),
+  openAbout: () => set({ aboutOpen: true }),
+  closeAbout: () => set({ aboutOpen: false }),
 }));

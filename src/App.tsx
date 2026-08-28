@@ -9,6 +9,7 @@ import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
+import { AboutDialog } from "./components/AboutDialog";
 import { CoverPicker } from "./components/CoverPicker";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -349,6 +350,7 @@ function App() {
         </div>
         <CommandPalette />
         <ShortcutsPanel />
+        <AboutDialog />
         <Toaster />
         <ConfirmDialog />
         <InputDialog />
@@ -401,6 +403,8 @@ function App() {
       <PluginManager />
       <AiAssistantPanel />
       <RightRail />
+      <ShortcutsPanel />
+      <AboutDialog />
     </div>
   );
 }
