@@ -81,6 +81,7 @@ await esbuild.build({
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
       'export { compareVersions, updateStatus } from "./src/lib/updates";\n' +
       'export { buildHelpSite } from "./src/lib/helpSite";\n' +
+      'export { textItemBox, snapHighlightToText } from "./src/lib/pdfTextLayer";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -1012,6 +1013,18 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("buildHelpSite index mentions help title", help.indexHtml.includes("ShuyoNote 帮助") && help.indexHtml.includes("共 1 个页面"), help.indexHtml.slice(0, 120));
   const helpGuide = help.files.find((f) => f.name.includes("使用指南"));
   assert("buildHelpSite guide page renders content", helpGuide && helpGuide.content.includes("本地优先"), helpGuide?.name);
+
+  // M24 — 文本层精确划词 (snap highlight to text-item boxes).
+  const items = [
+    { str: "a", transform: [1, 0, 0, 1, 10, 10], width: 20, height: 10 },
+    { str: "b", transform: [1, 0, 0, 1, 40, 10], width: 20, height: 10 },
+    { str: "c", transform: [1, 0, 0, 1, 200, 200], width: 10, height: 10 },
+  ];
+  assert("textItemBox maps transform+width", JSON.stringify(aiMod.textItemBox(items[0])) === "[10,10,30,20]");
+  assert("textItemBox null without transform", aiMod.textItemBox({ str: "x" }) === null);
+  const snapped = aiMod.snapHighlightToText([10, 10, 50, 50], items, 300, 300);
+  assert("snapHighlightToText unions overlapping items", snapped[0] === 10 / 300 && snapped[1] === 10 / 300 && snapped[2] === 60 / 300 && snapped[3] === 20 / 300, JSON.stringify(snapped));
+  assert("snapHighlightToText null when no overlap", aiMod.snapHighlightToText([400, 400, 500, 500], items, 300, 300) === null);
   // M24 stage-1 — render engine selection (双引擎接口).
   assert("pickEngine native when available", aiMod.pickEngine({ native: true, pdfjs: true }) === "native");
   assert("pickEngine falls back to pdfjs", aiMod.pickEngine({ native: false, pdfjs: true }) === "pdfjs");
