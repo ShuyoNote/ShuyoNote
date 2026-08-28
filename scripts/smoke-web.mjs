@@ -75,6 +75,7 @@ await esbuild.build({
       'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
       'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
       'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
+      'export { COVER_PRESETS } from "./src/lib/covers";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -955,6 +956,11 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("shortcutSearch no match is empty", aiMod.shortcutSearch("zzzz不存在xyz").length === 0);
   assert("shortcutLabel ctrl form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "Shift", "F"] }) === "Ctrl + Shift + F");
   assert("shortcutLabel mac form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "N"], macKeys: ["⌘", "N"] }, true) === "⌘ + N");
+  // Cover presets: a curated gallery of named CSS-gradient covers.
+  const covers = aiMod.COVER_PRESETS;
+  assert("COVER_PRESETS has >= 8 distinct covers", Array.isArray(covers) && covers.length >= 8, String(covers?.length));
+  assert("COVER_PRESETS all have css + name", covers.every((c) => typeof c.css === "string" && c.css.startsWith("linear-gradient") && c.name), JSON.stringify(covers.map((c) => c.id)));
+
 
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.
   const wiki = aiMod.buildWikiExport(

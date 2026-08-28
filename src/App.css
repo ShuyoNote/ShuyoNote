@@ -2009,6 +2009,93 @@ body.is-ai-open .main {
   line-height: 1;
   flex-shrink: 0;
 }
+
+/* Cover picker modal (built-in cover gallery). */
+.cover-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cover-picker {
+  width: min(600px, 92vw);
+  max-height: 80vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+  padding: 16px;
+  overflow-y: auto;
+}
+.cover-picker-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cover-picker-title {
+  font-weight: 600;
+}
+.cover-picker-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.cover-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.cover-swatch {
+  height: 64px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background-size: cover;
+  background-position: center;
+}
+.cover-swatch:hover {
+  border-color: var(--accent);
+  transform: scale(1.02);
+  transition: transform 0.08s;
+}
+.cover-swatch.active {
+  border-color: var(--accent);
+}
+.cover-picker-custom {
+  margin-top: 12px;
+}
+.cover-picker-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+  border-radius: 8px;
+  padding: 6px 10px;
+  outline: none;
+  font-size: 13px;
+  color: var(--text);
+  box-sizing: border-box;
+}
+.cover-picker-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+.cover-picker-clear,
+.cover-picker-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cover-picker-btn:hover {
+  background: var(--block-hover);
+}
 .page-actions {
   width: 100%;
   padding: 0 var(--doc-pad);

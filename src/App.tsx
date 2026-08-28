@@ -9,6 +9,7 @@ import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
+import { CoverPicker } from "./components/CoverPicker";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { InputDialog } from "./components/InputDialog";
@@ -56,6 +57,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const { current, updateCurrent, loadPages, error, searchQuery, pages, reloadTick } = useNotes();
   const [title, setTitle] = useState(current?.title ?? "");
   const [saved, setSaved] = useState(true);
+  const [coverOpen, setCoverOpen] = useState(false);
   const debounceRef = useRef<number | null>(null);
 
   // Build breadcrumb trail from the page tree.
@@ -205,20 +207,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
             </button>
             <button
               className="page-action-btn"
-              onClick={() =>
-                inputDialog({
-                  title: "题头图",
-                  placeholder: "CSS 渐变，如 linear-gradient(135deg, #667eea, #764ba2)；留空清除",
-                  okLabel: "设置",
-                  onSubmit: async (v) => {
-                    const cover = (v ?? "").trim();
-                    if (current) {
-                      await api.setPageCover(current.id, cover);
-                      await useNotes.getState().openPage(current.id);
-                    }
-                  },
-                })
-              }
+              onClick={() => setCoverOpen(true)}
             >
               <ImageIcon className="page-action-icon" /> {current?.cover ? "更换题头图" : "添加题头图"}
             </button>
@@ -274,6 +263,19 @@ function NoteEditor({ pageId }: { pageId: string }) {
       {/* Tag picker modal, opened by the page-actions "添加标签" row. */}
       <TagAddButton pageId={pageId} />
       <TableOfContents />
+      {coverOpen && (
+        <CoverPicker
+          current={current?.cover}
+          onClose={() => setCoverOpen(false)}
+          onPick={async (css) => {
+            if (current) {
+              await api.setPageCover(current.id, css);
+              await useNotes.getState().openPage(current.id);
+            }
+            setCoverOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

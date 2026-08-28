@@ -3,11 +3,11 @@
 // if the user deletes it. Content is generated from `SHORTCUTS` so the shortcut list
 // stays in sync with the single source of truth.
 import { SHORTCUTS, shortcutLabel } from "./shortcuts";
+import { GUIDE_COVER } from "./covers";
 import { api } from "./api";
 import { useNotes } from "../store/notes";
 
 export const GUIDE_TITLE = "使用指南";
-export const GUIDE_COVER = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
 export const GUIDE_ICON = "📖";
 
 function text(t: string) { return { type: "text", text: t, version: 1 } as any; }
