@@ -105,4 +105,102 @@
 3. 空库引导 + 新手清单。
 4. （可选）M21 静态 wiki 导出做站外帮助。
 
+---
+
+## 9. 细化设计（可直接照做）
+
+### 9.1 `src/lib/shortcuts.ts` 数据结构（单一来源）
+```ts
+export type ShortcutGroup = "基础" | "编辑器" | "列表" | "导航" | "AI";
+export interface Shortcut {
+  key: string;                 // 稳定 id，如 "new-page"
+  label: string;               // 中文，如 "新建页面"
+  group: ShortcutGroup;
+  keys: string[];              // 展示用组合，如 ["Ctrl", "N"]
+  macKeys?: string[];          // 可选 mac 组合
+  when?: string;               // 可选作用域说明，如 "在编辑器中 / 全局"
+}
+export const SHORTCUTS: Shortcut[] = [...];
+export function shortcutGroups(): ShortcutGroup[];              // 按固定顺序去重
+export function shortcutSearch(q: string): Shortcut[];          // 匹配 label/key/keys，忽略大小写
+export function shortcutLabel(s: Shortcut): string;             // "⌘/Ctrl + N" 格式化
+```
+
+> 纯函数，`smoke-web.mjs` 直接断言（分组完整、去重、搜索命中/空）。
+
+### 9.2 快捷键清单（权威列表，来自现有实现）
+**基础**
+| 键 | 动作 | 来源 |
+|----|------|------|
+| `Ctrl+N` | 新建页面 | 全局 |
+| `Ctrl+K` | 命令面板 | 全局 |
+| `Ctrl+Shift+F` | 聚焦搜索 | 全局 |
+| `Ctrl+E` | 循环 笔记/看板/关系图 视图 | 全局 |
+| `Ctrl+F` | 编辑器内查找 | 编辑器 |
+| `Esc` | 关闭查找/命令面板/浮层 | 全局 |
+| `/` | 斜杠菜单 | 编辑器 |
+| `?` / `Ctrl+/` | 快捷键面板（本次新增） | 全局 |
+
+**编辑器（Ctrl+Alt）** `InsertShortcutPlugin`
+| 键 | 动作 | 键 | 动作 |
+|----|------|----|------|
+| `Ctrl+Alt+1/2/3` | 标题 1/2/3 | `Ctrl+Alt+U` | 无序列表 |
+| `Ctrl+Alt+O` | 有序列表 | `Ctrl+Alt+T` | 待办 |
+| `Ctrl+Alt+Q` | 引用 | `Ctrl+Alt+C` | 代码块 |
+| `Ctrl+Alt+L` | 链接 | `Ctrl+Alt+M` | 分隔线 |
+
+**列表/格式（编辑器内 Markdown 快捷）**：`- ` 无序、`1. ` 有序、`[] ` 待办、`# ` 标题、`> ` 引用、``` ``` ` 代码块（由 `MarkdownShortcutPlugin` 处理，可作提示项）。
+
+**导航/AI**
+| 键 | 动作 | 来源 |
+|----|------|------|
+| `Ctrl+K` | 命令面板 | 全局 |
+| `Ctrl+Shift+P`? |（若后续加） | — |
+|（AI 起草 `空格`/`Ctrl+Alt+…`） | 见 `InlineAiDraftBar` | 待补 |
+
+> 最终以代码为准；本表是 `shortcuts.ts` 的初始内容，后续新增/改统一在这里。
+
+### 9.3 `ShortcutsPanel` 交互细则
+- **呼出**：`?` 或 `Ctrl+/`（全局，非输入框内时）。`useEditorStore` 加 `shortcutsOpen`；`openShortcuts/closeShortcuts`。
+- **布局**：复用 `dialog`/`modal` 覆盖层（同 `CommandPalette`/`AiSettingsDialog` 的 `.modal` 体系）。
+  - 顶部：标题「快捷键」+ 搜索框（聚焦）。
+  - 主体：**左侧分组导航**（基础/编辑器/列表/导航/AI，点击或方向键切换），**右侧当前组快捷键列表**（`keys` 徽章（kbd 样式）+ label）。或简化：**单一列表按分组折叠**。
+  - 空态：搜不到 → 「未找到匹配的快捷键」。
+- **键盘**：`Esc`/再按 `?` 关闭；`↑/↓` 在列表移动焦点；`Enter` 无操作（纯展示）；`/` 聚焦搜索。
+- **触达**：不打断；点背景关闭。
+- **样式**：`App.css` 新增 `.shortcuts-*`（kbd 胶囊、分组标题、hover 高亮、深浅主题）。
+
+### 9.4 内置「使用指南」页内容大纲（块级，`built_in` 模板）
+- `H1` **ShuyoNote 使用指南**
+- `引用` 一句话定位（本地优先 · 类 Notion · 离线可用）。
+- `H2` **快速开始**：新建页面 / 用 `/` 或 `+` 插入块 / 分栏 `/分栏` / 保存（自动）。
+- `H2` **快捷键**（表格：分组 + 键 + 动作，内容同 `shortcuts.ts`，手动同步一段）。
+- `H2` **核心能力**（每个一块 + 一句示例）：
+  - 页面树 / 文件夹 / 标签 / 双向链接 `[[标题]]` / 块引用 `((id))` / 块嵌入 `{{id}}`。
+  - 属性 + 数据库视图（表格/画廊/看板/日历/时间轴/目录）；看板拖拽。
+  - 表格交互；图片/附件/书签；绘图 `/绘图`；mermaid `/流程图`；AI 文生图。
+  - 搜索（FTS + 语义，`Ctrl+K`/`Ctrl+Shift+F`）；反链；关系图。
+  - 数据安全：自动保存 / 版本历史 / 回收站 / 备份 / 端到端加密；同步（自建 sync-server）。
+- `H2` **进阶**：多工作空间；命令面板 `Ctrl+K`；AI 助手（`✦`，可选/本地模型）；模板 `/模板`；主题/暗色；导出 Markdown / HTML / PDF / wiki。
+- `Callout` **提示**：数据全在本机；可用 `导入 Markdown` 迁移；`Esc` 关闭弹层。
+
+> 指南页本身可编辑/删除；`/帮助` 若缺失则用 `built_in` 模板重建。
+
+### 9.5 入口与状态（store）细则
+- `useEditorStore` 增：`shortcutsOpen: boolean`、`openShortcuts/closeShortcuts`、`openGuide: () => Promise<void>`（`openPage(指南页id)`，无则 `create_page` 用模板内容）。
+- 入口注册：
+  - 命令面板：加「快捷键」「打开使用指南」两个命令（复用 `CommandPalette` 的 `useCommandPalette`/`makeOptions`）。
+  - 斜杠 `/`：加 `help` 项（打开指南页）。
+  - 全局键 `?`/`Ctrl+/`。
+  - `NewPageGuide`（空库）：加「快捷键」「打开使用指南」按钮。
+- 指南页 id 持久化：存 `localStorage`（`shuyonote.guide.pageId`）或每次按标题查找；模板 `built_in` 兜底。
+
+### 9.6 实现顺序（P0 → P1）
+1. `src/lib/shortcuts.ts`（SHORTCUTS + 纯函数）+ smoke 断言。
+2. `ShortcutsPanel` + 全局 `?`/`Ctrl+/` + `useEditorStore.shortcutsOpen`。
+3. `useCommandPalette`/`makeOptions` 加「帮助」「快捷键」入口。
+4. 内置「使用指南」`built_in` 模板 + `/帮助` + `openGuide`。
+5. `NewPageGuide` 空库入口 + 新手清单（可勾选）。
+6. （可选）M21 导出指南页为站外帮助。
+
 > 关联：命令面板/插件（M11）、模板（M9）、静态 wiki 导出（M21）、NewPageGuide（M8）。
