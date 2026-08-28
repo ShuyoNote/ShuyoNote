@@ -10028,79 +10028,84 @@ p:has(> .editor-drawing-container) {
 }
 /* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ai-toggle). */
 .about {
-  width: min(460px, 92vw);
+  width: min(440px, 92vw);
   max-height: 84vh;
   overflow-y: auto;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
-  padding: 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  padding: 24px 24px 16px;
 }
-.about-head {
+.about-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
+  text-align: center;
+}
+.about-logo-wrap {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
 }
 .about-logo {
-  width: 64px;
-  height: 64px;
+  width: 60px;
+  height: 60px;
   flex-shrink: 0;
 }
-.about-title {
-  font-size: 20px;
+.about-name {
+  font-size: 22px;
   font-weight: 700;
   color: var(--text);
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 8px;
+  letter-spacing: 0.01em;
 }
-.about-version {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-}
-.about-desc {
-  font-size: 13px;
-  color: var(--text);
-  line-height: 1.6;
-  margin: 8px 0 16px;
-}
-.about-row {
+.about-meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
 }
-.about-label {
-  font-size: 13px;
-  color: var(--text-dim);
-  min-width: 96px;
-}
-.about-license {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.about-license-note {
+.about-pill {
   font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.about-pill-version {
   color: var(--text-dim);
+  background: var(--block-hover, rgba(127, 127, 127, 0.08));
+}
+.about-pill-license {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.about-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.7;
+  text-align: center;
+  margin: 4px auto 16px;
+  max-width: 340px;
+}
+.about-section {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
 }
 .about-links-title {
   font-size: 12px;
   color: var(--text-dim);
-  letter-spacing: 0.04em;
-  margin: 8px 0 6px;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
 }
 .about-links {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
 }
 .about-link {
   border: 1px solid var(--border);
@@ -10110,38 +10115,58 @@ p:has(> .editor-drawing-container) {
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
 }
 .about-link:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
+.about-license-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
 .about-toggle-row {
-  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+.about-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.about-toggle-label {
+  font-size: 13px;
+  color: var(--text);
 }
 .about-hint {
   font-size: 12px;
   color: var(--text-dim);
-  margin: -4px 0 16px;
   line-height: 1.5;
 }
 .about-actions {
   display: flex;
   justify-content: flex-end;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 14px;
+  margin-top: 4px;
 }
 .about-close {
-  border: 1px solid var(--border);
-  background: var(--block-hover, rgba(127, 127, 127, 0.08));
-  color: var(--text);
+  border: none;
+  background: var(--accent);
+  color: #fff;
   border-radius: 8px;
-  padding: 6px 16px;
+  padding: 7px 20px;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 .about-close:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  filter: brightness(0.95);
 }
 /* M25 P1 — first-experience checklist on the empty-page guide. */
 .first-steps {

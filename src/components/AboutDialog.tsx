@@ -59,44 +59,48 @@ export function AboutDialog() {
       }}
     >
       <div className="about">
-        <div className="about-head">
-          <img className="about-logo" src="/icons/mark.svg" alt={`${APP_NAME} logo`} />
-          <div className="about-title">
-            {APP_NAME}
-            <span className="about-version">v{APP_VERSION}</span>
+        <div className="about-hero">
+          <div className="about-logo-wrap">
+            <img className="about-logo" src="/icons/mark.svg" alt={`${APP_NAME} logo`} />
+          </div>
+          <div className="about-name">{APP_NAME}</div>
+          <div className="about-meta">
+            <span className="about-pill about-pill-version">v{APP_VERSION}</span>
+            <span className="about-pill about-pill-license">{APP_LICENSE}</span>
           </div>
         </div>
 
         <p className="about-desc">{APP_DESCRIPTION}</p>
 
-        <div className="about-row">
-          <span className="about-label">许可</span>
-          <span className="about-license">{APP_LICENSE}</span>
-          <span className="about-license-note">（附带的同步服务端在网络托管形态下同样需要开源）</span>
+        <div className="about-section">
+          <div className="about-links-title">开源与反馈</div>
+          <div className="about-links">
+            {linkItems().map((l) => (
+              <button key={l.id} className="about-link" onClick={() => openExternal(l.url)}>
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <p className="about-license-note">AGPL-3.0：附带的同步服务端在网络托管形态下同样需要开源。</p>
         </div>
 
-        <div className="about-links-title">开源与反馈</div>
-        <div className="about-links">
-          {linkItems().map((l) => (
-            <button key={l.id} className="about-link" onClick={() => openExternal(l.url)}>
-              {l.label}
+        <div className="about-section">
+          <div className="about-toggle-row">
+            <div className="about-toggle-text">
+              <div className="about-toggle-label">允许跳转到外部项目网站</div>
+              <div className="about-hint">关闭后外链不跳转，不影响离线使用；外链不带跟踪参数。</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={allowExternal}
+              className={`ai-toggle ${allowExternal ? "on" : ""}`}
+              onClick={() => toggleExternal(!allowExternal)}
+            >
+              <span className="ai-toggle-knob" />
             </button>
-          ))}
+          </div>
         </div>
-
-        <label className="about-row about-toggle-row">
-          <span className="about-label">允许跳转到外部项目网站</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={allowExternal}
-            className={`ai-toggle ${allowExternal ? "on" : ""}`}
-            onClick={() => toggleExternal(!allowExternal)}
-          >
-            <span className="ai-toggle-knob" />
-          </button>
-        </label>
-        <p className="about-hint">关闭后外链不跳转，不影响离线使用。外链不带跟踪参数。</p>
 
         <div className="about-actions">
           <button className="about-close" onClick={close}>
