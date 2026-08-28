@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../lib/api";
-import { type PdfAnnotation, normCoords, pageToBlock } from "../lib/pdfAnnotation";
+import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { useNotes } from "../store/notes";
+import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
 
 // M24 — a single annotated PDF page. Renders the page image (from `pageImageUrl`)
@@ -138,6 +139,19 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setSelected(null);
   };
 
+  const onEditSticky = () => {
+    const ann = annotations.find((a) => a.id === selected);
+    if (!ann || ann.type !== "sticky") return;
+    const v = window.prompt("便签内容：", ann.text ?? "");
+    if (v == null) return;
+    persist(annotations.map((a) => (a.id === ann.id ? { ...a, text: v } : a)));
+  };
+
+  const onCopyRef = async () => {
+    await navigator.clipboard.writeText(pdfRef(attachmentId, pageIndex));
+    toast("已复制 PDF 引用", "success");
+  };
+
   const onExcerpt = async () => {
     const ann = annotations.find((a) => a.id === selected);
     if (!ann) return;
@@ -149,9 +163,25 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     }
     if (!text.trim()) return;
     const block = pageToBlock({ text }, attachmentId, pageIndex);
-    await useNotes.getState().createPage(null, { title: "摘录", content_json: block.content_json, content_text: block.content_text });
-    toast("已摘录到新页面", "success");
+    const notes = useNotes.getState();
+    if (notes.current && notes.current.id) {
+      // Insert into the current page (appends a paragraph carrying the pdf:// ref).
+      try {
+        const { appendBlocksToJson, contentTextOf } = await import("../lib/ai/lexical");
+        const newJson = appendBlocksToJson(notes.current.content_json, block.content_text, () => `blk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        await api.savePage({ id: notes.current.id, content_json: newJson, content_text: contentTextOf(newJson) });
+        await notes.openPage(notes.current.id);
+        toast("已摘录到当前页", "success");
+      } catch {
+        await notes.createPage(null, { title: "摘录", content_json: block.content_json, content_text: block.content_text });
+        toast("已摘录到新页面", "success");
+      }
+    } else {
+      await notes.createPage(null, { title: "摘录", content_json: block.content_json, content_text: block.content_text });
+      toast("已摘录到新页面", "success");
+    }
     setSelected(null);
+    usePdfReader.getState().close();
   };
 
   const W = Math.max(pageW, 1);
@@ -163,6 +193,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     { id: "ink", label: "画笔" },
     { id: "sticky", label: "便签" },
   ];
+  const selectedAnn = selected ? annotations.find((a) => a.id === selected) : null;
 
   return (
     <div className="pdf-annot">
@@ -176,6 +207,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           <>
             <span className="pdf-annot-sep" />
             <button className="pdf-annot-tool" onClick={onExcerpt}>摘录成块</button>
+            {selectedAnn?.type === "sticky" && <button className="pdf-annot-tool" onClick={onEditSticky}>编辑</button>}
+            <button className="pdf-annot-tool" onClick={onCopyRef}>复制引用</button>
             <button className="pdf-annot-tool danger" onClick={onDelete}>删除</button>
           </>
         )}
