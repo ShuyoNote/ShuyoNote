@@ -1,7 +1,7 @@
 # 「PDF 批注」方案（M24，规划 / 建议，未实装）
 
 > 一句话：**值得做，但别排在最前。** 竞品批注的天花板在「标注即思考」的红利层（MarginNote/LiquidText），而块笔记品类的现实顶格是思源；2026 真正的破局点是「**AI 帮你读**」——这恰好可以并进 ShuyoNote 已有的薄 Agent 路线。
-> 状态：**规划**（设计稿 + 对标 + MVP 切割），**未实装**。落地日期建议排在 M20/M23 之后。
+> 状态：**规划**（设计稿 + 对标 + MVP 切割），**未实装**。落地日期建议排在 M20/M23 之后。**阶段 1 纯函数层已落地**：`src/lib/pdfRender.ts`（双引擎接口 + 选型 `pickEngine`）与 `src/lib/pdfAnnotation.ts`（坐标归一化 / schema 校验 / CRUD / 摘录转块 `pageToBlock` / 文本层降级 `annotationMode`）+ smoke 断言（`scripts/smoke-web.mjs`，275 项全绿）。阅读器 / 批注画布 / 引擎驱动仍待做。
 
 ---
 
