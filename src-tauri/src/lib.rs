@@ -33,6 +33,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let conn = db::init(app_data_dir).map_err(|e| {

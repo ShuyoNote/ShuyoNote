@@ -13,6 +13,7 @@ import {
   setAllowExternal,
 } from "../lib/links";
 import { fetchLatestVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
+import { checkDesktopUpdate } from "../lib/updater";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
 // links (project home / docs / releases / issues) plus a privacy toggle for
@@ -25,6 +26,7 @@ export function AboutDialog() {
   const [checked, setChecked] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [download, setDownload] = useState<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
@@ -44,9 +46,20 @@ export function AboutDialog() {
     setChecked(false);
     setUpdateState(null);
     setLatestVersion(null);
-    const latest = await fetchLatestVersion();
-    setLatestVersion(latest);
-    setUpdateState(updateStatus(latest, APP_VERSION));
+    setDownload(null);
+    // Prefer the in-app updater (desktop); fall back to the releases-page fetch.
+    const up = await checkDesktopUpdate();
+    if (up.state === "up-to-date") {
+      setUpdateState("up-to-date");
+    } else if (up.state === "update-available") {
+      setLatestVersion(up.latest);
+      setDownload(up.download);
+      setUpdateState("update-available");
+    } else {
+      const latest = await fetchLatestVersion();
+      setLatestVersion(latest);
+      setUpdateState(updateStatus(latest, APP_VERSION));
+    }
     setChecked(true);
     setChecking(false);
   };
@@ -95,7 +108,14 @@ export function AboutDialog() {
           </button>
           <span className="about-update-state">
             {checked && updateState === "update-available" && latestVersion ? (
-              <>发现新版本 <b>v{latestVersion}</b>，<a onClick={() => openExternal(RELEASES_URL)}>前往发布页</a></>
+              <>
+                发现新版本 <b>v{latestVersion}</b>，
+                {download ? (
+                  <button className="about-update-install" onClick={() => void download()}>下载并安装</button>
+                ) : (
+                  <a onClick={() => openExternal(RELEASES_URL)}>前往发布页</a>
+                )}
+              </>
             ) : checked && updateState === "up-to-date" ? (
               <>v{APP_VERSION} 已是最新</>
             ) : checked ? (

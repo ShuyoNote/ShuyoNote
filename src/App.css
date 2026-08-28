@@ -10191,6 +10191,20 @@ p:has(> .editor-drawing-container) {
   text-decoration: underline;
   cursor: pointer;
 }
+.about-update-install {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 2px;
+}
+.about-update-install:hover {
+  filter: brightness(0.95);
+}
 .about-link:disabled {
   opacity: 0.5;
   cursor: default;
