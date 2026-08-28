@@ -411,6 +411,18 @@ export function PrintIcon(props: IconProps) {
   );
 }
 
+// Content width toggle: a content band with outward arrows, meaning "fit the page
+// width" (居中 ↔ 自适应全宽). Matches the outline stroke style of the other icons.
+export function ContentWidthIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 12h18" />
+      <path d="M7 8l-4 4 4 4" />
+      <path d="M17 8l4 4-4 4" />
+    </Icon>
+  );
+}
+
 export function PageIcon(props: IconProps) {
   return (
     <Icon {...props}>

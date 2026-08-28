@@ -7,7 +7,7 @@ import { useEditorStore } from "../store/editor";
 import { useViewStore } from "../store/view";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon } from "./icons";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import { docHtml, printDoc } from "../lib/print";
@@ -100,7 +100,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         onClick={toggleWidth}
         title={contentWidth === "full" ? "内容宽度：自适应（点击恢复居中）" : "内容宽度：居中（点击自适应全宽）"}
       >
-        ⇔
+        <ContentWidthIcon />
       </button>
       <HistoryPanel pageId={pageId} />
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
