@@ -58,6 +58,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const [title, setTitle] = useState(current?.title ?? "");
   const [saved, setSaved] = useState(true);
   const [coverOpen, setCoverOpen] = useState(false);
+  const [coverH, setCoverH] = useState<number | null>(null);
+  const coverHRef = useRef(300);
+  const coverDrag = useRef<{ sy: number; sh: number } | null>(null);
   const debounceRef = useRef<number | null>(null);
 
   // Build breadcrumb trail from the page tree.
@@ -183,7 +186,38 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <EditorToolbar pageId={pageId} />
       </div>
       <div className="note-scroll">
-        {current?.cover ? <div className="page-cover" style={{ backgroundImage: current.cover }} /> : null}
+        {current?.cover ? (
+          <div
+            className="page-cover"
+            style={{ backgroundImage: current.cover, height: coverH ?? current.cover_height ?? 300 }}
+          >
+            <span
+              className="page-cover-handle"
+              title="拖拽调整高度"
+              onPointerDown={(e) => {
+                const el = e.currentTarget as HTMLElement;
+                coverHRef.current = coverH ?? current?.cover_height ?? 300;
+                coverDrag.current = { sy: e.clientY, sh: coverHRef.current };
+                el.setPointerCapture?.(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                if (coverDrag.current && current) {
+                  const next = Math.max(120, Math.min(720, coverDrag.current.sh + (e.clientY - coverDrag.current.sy)));
+                  coverHRef.current = next;
+                  setCoverH(next);
+                }
+              }}
+              onPointerUp={async () => {
+                if (coverDrag.current && current) {
+                  coverDrag.current = null;
+                  await api.setPageCoverHeight(current.id, coverHRef.current);
+                  await useNotes.getState().openPage(current.id);
+                  setCoverH(null);
+                }
+              }}
+            />
+          </div>
+        ) : null}
         <div className="title-area">
           <div className="page-actions">
             <button

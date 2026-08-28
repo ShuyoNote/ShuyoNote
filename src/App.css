@@ -2002,6 +2002,7 @@ body.is-ai-open .main {
 /* Page cover: a full-width banner above the title (CSS gradient). Spans the whole
    note-scroll width (NOT limited to the centered doc column) with no rounded corners. */
 .page-cover {
+  position: relative;
   width: 100%;
   height: 300px;
   background-size: cover;
@@ -2009,6 +2010,23 @@ body.is-ai-open .main {
   background-repeat: no-repeat;
   border-radius: 0;
   margin-bottom: 8px;
+}
+/* Drag handle (bottom center) to resize the cover height. */
+.page-cover-handle {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.6);
+  cursor: ns-resize;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.page-cover:hover .page-cover-handle {
+  opacity: 1;
 }
 /* Page icon: an emoji shown before the title. */
 .page-icon {

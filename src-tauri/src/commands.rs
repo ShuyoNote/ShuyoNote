@@ -11,7 +11,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
 
 pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
-        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, icon, kind, sort_order, created_at, updated_at
+        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, icon, cover_height, kind, sort_order, created_at, updated_at
          FROM pages WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| {
@@ -24,10 +24,11 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 content_text: row.get(5)?,
                 cover: row.get(6)?,
                 icon: row.get(7)?,
-                kind: row.get(8)?,
-                sort_order: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                cover_height: row.get(8)?,
+                kind: row.get(9)?,
+                sort_order: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
             })
         },
     )
@@ -185,6 +186,25 @@ pub struct SetIconArgs {
     pub id: String,
     /// Emoji / glyph shown before the title (empty string clears).
     pub icon: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetCoverHeightArgs {
+    pub id: String,
+    /// Cover banner height in px (draggable).
+    pub height: i64,
+}
+
+/// Set a page's cover height (px) and return the updated page detail.
+#[tauri::command]
+pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<PageDetail, String> {
+    let c = conn(&db);
+    c.execute(
+        "UPDATE pages SET cover_height = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![args.height.clamp(120, 720), args.id],
+    )
+    .map_err(|e| e.to_string())?;
+    fetch_page(&c, &args.id)
 }
 
 /// Set a page's icon (emoji) and return the updated page detail.

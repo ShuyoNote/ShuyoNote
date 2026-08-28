@@ -69,6 +69,7 @@ pub fn run() {
             commands::save_page,
             commands::set_page_cover,
             commands::set_page_icon,
+            commands::set_page_cover_height,
             commands::delete_page,
             commands::move_page,
             search::search,

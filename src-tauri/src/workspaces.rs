@@ -443,6 +443,7 @@ pub fn copy_page_to_workspace(
             content_text,
             cover: String::new(),
             icon: String::new(),
+            cover_height: 300,
             kind,
             sort_order,
             created_at,

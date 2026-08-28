@@ -28,6 +28,8 @@ pub struct PageDetail {
     pub cover: String,
     #[serde(default)]
     pub icon: String,
+    #[serde(default = "default_cover_height")]
+    pub cover_height: i64,
     #[serde(default = "default_kind")]
     pub kind: String,
     pub sort_order: f64,
@@ -37,6 +39,10 @@ pub struct PageDetail {
 
 fn default_kind() -> String {
     "page".to_string()
+}
+
+fn default_cover_height() -> i64 {
+    300
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
