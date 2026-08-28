@@ -2,19 +2,21 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
-## [Unreleased]
+## [1.59.179] - 2026-08-28
 
 ### 新增
 
-- **桌面 native PDF 渲染引擎（M24，后续增强）**：在桌面端用 **MuPDF（经 `mupdf-sys`）** 本地光栅化复杂/大体积 PDF 页面，替代 pdf.js 的 WASM 路径以提升首屏与翻页速度；Web 端仍回退 pdf.js。PDF 页元数据与文本层仍走 pdf.js（`pdfEngine/pdfjsEngine.ts`），native 仅用于出图。
-  - `render_pdf_page` Tauri 命令：按附件 id 取文件 → MuPDF 打开文档 → 载入指定页 → 以目标缩放渲染为 RGBA → PNG 编码返回字节。
+- **桌面 native PDF 渲染引擎（M24，后续增强）**：桌面端用 **MuPDF（经 `mupdf-sys`）** 本地光栅化复杂/大体积 PDF 页面，替代 pdf.js 的 WASM 路径提升首屏与翻页速度；Web 端仍回退 pdf.js。PDF 页元数据与文本层仍走 pdf.js（`pdfEngine/pdfjsEngine.ts`），native 仅用于出图。
+  - `render_pdf_page` Tauri 命令：按附件 id 取文件 → MuPDF 载入页 → 按缩放渲染 → PNG 编码返回字节。
   - `src/pdf_native.rs`：对 `mupdf-sys` 便捷 C API（`mupdf_new_base_context` / `mupdf_open_document_from_bytes` / `mupdf_page_to_pixmap`）的薄安全封装（RAII 守卫 + `Result` 错误），MuPDF 源码编译、自包含、无二进制下载。
-  - `Platform.pdfRender` 双引擎驱动：桌面 `nativeAvailable`=true，Web 回退 false；`PdfReader` 有 native 优先、否则走 pdf.js。
-  - 依赖取舍：高层的 `mupdf` crate 在 MSVC 上无法编译（bindgen 不输出 `max_align_t`，且 `mupdf::device::native` 引用它），故改用编译通过且已链接的 `mupdf-sys`。
+  - `Platform.pdfRender` 双引擎驱动：桌面 `nativeAvailable`=true，Web 回退 false；`PdfReader` 有 native 优先、否则 pdf.js。
+  - 依赖取舍：高层的 `mupdf` crate 在 MSVC 上无法编译（bindgen 不输出 `max_align_t`），故改用编译通过且已链接的 `mupdf-sys`。
+  - **崩溃修复**：MuPDF base context 包装进程级全局静态 `CRITICAL_SECTION` 锁；此前每次渲染都 new/drop context，反复 `InitializeCriticalSection`/`DeleteCriticalSection` 同一组全局锁是未定义行为，导致 `0xc0000005` 崩溃。改为 **base context 全局只创建一次、进程生命周期复用、永不 drop**（`shared_context()` + `OnceLock`），渲染对象（doc/page/pixmap/buffer）仍按 RAII 按时释放。新增 `render_min_pdf_roundtrip` 单测。
+- **[MuPDF.js vs pdf.js] 落地文档**：`docs/plans/2026-08-28-pdf-render-engine-mupdfjs-vs-pdfjs.md`——决策结论（默认保持现状 / 只换光栅化 / AGPL 前置）+ 接口兼容性核对 + 坐标/文本层/OCR 连带影响 + 许可证（AGPL 一票否决）+ 回退灰度 + 迁移步骤 + 验收清单。
 
 ### 验证
 
-- `scripts/smoke-web.mjs` 296 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（32）通过。
+- `scripts/smoke-web.mjs` 296 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（33，含 `render_min_pdf_roundtrip`）通过；桌面 `tauri dev` 实机 45s 无崩溃。
 
 ## [1.59.178] - 2026-08-27
 

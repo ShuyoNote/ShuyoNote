@@ -8,9 +8,9 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.178**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.179**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `1570b2d`（工作树干净；v1.59.178 发布提交，v1.59.177 发布提交为 `9a3c424`）。
+- **git**：HEAD 见下方（工作树干净；v1.59.179 发布提交，v1.59.178 发布提交为 `1570b2d`）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -54,6 +54,7 @@
 - **v1.59.176**：跨空间（`all_spaces`）检索接入向量语义——每个空间连接包成 `Db` 复用 `search_semantic_async`；至此向量语义在 Web / 桌面活动空间 / 桌面跨空间均对齐。附 mock 嵌入端点的运行时验证（`embed_text` 往返 + 无关键词重叠的语义排序单测）。
 - **v1.59.177**：帮助系统（M25 P0/P1：快捷键面板 `Ctrl+/`/`?` + 内置「使用指南」页 `/帮助` + 命令面板入口）；页面题头图（内置封面图库：12 渐变 + 山峦/科技/星空/海浪/城市题材图片 + 上传图片 + 裁剪编辑 + 可拖拽调整高度，铺满整页宽无圆角）；页面图标（emoji，标题前 + 侧边栏节点同步）；bugfix（新建页 FK、绘图块保存为空/居中偏移、分栏待办光标、自适应占位符、宽度按钮 SVG 图标）。
 - **v1.59.178**：**PDF 批注（M24 阶段 1 完整）**——`pdfRender`/`pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化 + `pdfjs-dist@4` 渲染引擎（`pdfjsEngine`，WebView2 兼容，`copy-pdfjs-assets` 供 CJK）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签 + 摘录成块含可点击 `pdf://` 回链 + 文本层精确划词 + OCR 兜底 tesseract.js）+ 全局批注检索（`list_all_pdf_annotations` + 「打开最近批注的 PDF」）；**自动升级**（阶段 1 `updates.ts` + 阶段 2 接线 `tauri-plugin-updater`/`createUpdaterArtifacts` + 发布管线 `release.mjs`）；**M25 P2**（About 四外链 + 隐私开关 + 帮助站导出 `helpSite.ts`）；页面题头图缺省（start 页秋山封面 + 图标 + 空行）；Callout 图标并排；目录 Notion 风格；新手清单一键上手。
+- **v1.59.179**：**桌面 native PDF 渲染引擎（M24）**——桌面端用 **MuPDF（经 `mupdf-sys`）** 本地光栅化 PDF 页面替代 pdf.js WASM 路径（Web 仍回退 pdf.js；页元数据/文本层仍走 `pdfjsEngine`）。`render_pdf_page` 命令 + `src/pdf_native.rs`（对 `mupdf-sys` 便捷 C API 的薄安全封装，MuPDF 源码编译、自包含）；`Platform.pdfRender` 双引擎驱动（桌面 true / Web false）。**崩溃修复**：base context 包装全局静态 `CRITICAL_SECTION` 锁，此前每次渲染 new/drop 反复初始化/删除全局锁属未定义行为 → `0xc0000005`；改为 **base context 全局只建一次、进程复用、永不 drop**（`shared_context()`+`OnceLock`），渲染对象仍按 RAII 释放。**依赖取舍**：高层 `mupdf` crate 在 MSVC 无法编译（bindgen 不输出 `max_align_t`），故用编译通过的 `mupdf-sys`。新增落地文档 `docs/plans/2026-08-28-pdf-render-engine-mupdfjs-vs-pdfjs.md`（MuPDF.js vs pdf.js 决策/接口/坐标/AGPL/回退/迁移/验收）。
 
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
@@ -61,14 +62,14 @@
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
 - **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.178**。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.179**。
 
 ## 4. 环境/工具备注
 
 - **前端 Web 版**：`pnpm dev:web`（Vite web dev，默认 http://localhost:5173；若 5173 被占则 Vite 自动顺延到 5174……，热更新；SQLite 前端 mock）+ `pnpm preview`（dist 产物，http://127.0.0.1:5173）。
 - **桌面版**：`pnpm tauri dev`（1420，需 Rust/SQLite host）或跑 `src-tauri/target/release/shuyonote.exe`。
 - **Rust**：MSRV **1.94**（`src-tauri/Cargo.toml` 的 `rust-version`，与 README 徽章 `1.94+` 一致），本机 `rustc 1.94.0` stable；**不锁工具链**（无 `rust-toolchain.toml`），跟随 stable。
-- **验证**：`npx tsc --noEmit`、`pnpm build`、`node scripts/smoke-web.mjs`（**225 全绿**）；无头 Edge CDP 实测交互（Edge 在 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`，Node 内置 WebSocket，临时脚本放 tmp/）。
+- **验证**：`npx tsc --noEmit`、`pnpm build`、`node scripts/smoke-web.mjs`（**296 全绿**，2026-08-28 更新）；`cargo test --lib`（**33**，含 `render_min_pdf_roundtrip`）；无头 Edge CDP 实测交互（Edge 在 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`，Node 内置 WebSocket，临时脚本放 tmp/）。
 - **git 代理**：全局配置了 `http://127.0.0.1:7897` 但**当前端口不通**；push/pull 需 `git -c http.proxy= -c https.proxy=` 临时直连（或清掉全局代理）。
 
 ## 5. 下一步候选（未做，按需选一项继续）
