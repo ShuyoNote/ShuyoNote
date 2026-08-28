@@ -56,6 +56,7 @@
 - **分栏旧数据不做自动迁移**：`columns`/`column`（ElementNode 轻量版）**保留注册**，旧文档仍可读兼容；新插入走路线 B。自动改写线上 `content_json` 风险高、收益低，**明确不做**。
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
+- **M20.2 向量语义检索仅 Web 生效**：语义排序/向量重排在 `web.ts` + `src/lib/semanticEmbed.ts`；**桌面 Rust `search.rs` 仍是 FTS/相关性，无向量层**——embedding 配置存前端 `localStorage`，Rust 侧读不到。要让桌面同享向量语义需后续单独做（Rust 调 embedding 端点 + `page_embeddings` 表 + 网络请求）。
 - 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.174**。
 
 ## 4. 环境/工具备注

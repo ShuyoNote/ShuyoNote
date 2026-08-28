@@ -180,6 +180,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 - **M20.1 模板变量** ✅（v1.59.115）：模板支持 `{{date}}` / `{{title}}` / `{{selected}}`，建页时按上下文自动填充（`{{selected}}` 暂为当前选中文本，后续接入编辑器选区）。
 - **M20.2 语义检索（embedding）** ✅（v1.59.118）：搜索在词频（TF）之上叠加基于字符二元组 Jaccard 的语义排序，优先展示语义更贴近的页面；纯函数 `charBigrams`/`semanticScore`/`semanticRank`，语义作为有界加分不破坏 TF 主排序（`web.ts` search 接入）。旧版离线 char-bigram 版已落地；**v1.59.174 接入真实向量 embedding provider**（`src/lib/semanticEmbed.ts`：`cosineSim`/`vectorRank`/`embedText`/`readEmbedConfig`）+ **`page_embeddings` 页嵌入缓存持久化**（内容哈希自动失效、惰性重嵌），搜索命中缓存只发 1 次 query 嵌入。
 - **M20.3 语义检索接入 AI** ✅（v1.59.119）：侧边栏 AI 的 `search_pages` 工具描述新增「语义相近」提示，检索结果经 M20.2 语义排序后供模型引用（`search_pages` → `api.search` → 语义重排）。
+> ⚠️ **边界（诚实标注）**：M20.2 的语义排序/向量重排目前**只在 Web 平台生效**（`web.ts` 的 `search` handler + `src/lib/semanticEmbed.ts`）；**桌面后端检索（Rust `search.rs`）仍是 FTS/相关性排序，未接入向量层**——原因：embedding 配置存放在前端 `localStorage`（`shuyonote.ai.config`），Rust 侧无法直接读取。要让桌面也享向量语义，需后续单独实现（Rust 侧调用 embedding 端点 + `page_embeddings` 表 + 网络请求）。
 
 ### M21 — 静态 wiki 导出 + 关系图探索（P2，[方案](plans/2026-08-24-static-wiki-export-graph-plan.md)）
 > 「本地优先 + wiki」的终局：把你的空间导成可独立浏览的 wiki 网站。
