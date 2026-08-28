@@ -34,19 +34,6 @@ function readOutline(editor: LexicalEditor): TocItem[] {
   return out;
 }
 
-// Tree connector prefix for a heading at index i: a vertical spine column per
-// ancestor level that "continues" below, then a branch (├/└) into the text.
-function guideLabel(items: TocItem[], i: number): string {
-  const level = items[i].level;
-  if (level <= 1) return "";
-  const anc: string[] = [];
-  for (let d = 2; d <= level - 1; d++) {
-    anc.push(items.slice(i + 1).some((x) => x.level <= d) ? "│ " : "  ");
-  }
-  const last = !items.slice(i + 1).some((x) => x.level <= level);
-  return anc.join("") + (last ? "└─ " : "├─ ");
-}
-
 export function TableOfContents() {
   const editor = useEditorStore((s) => s.editor);
   const [items, setItems] = useState<TocItem[]>([]);
@@ -118,16 +105,15 @@ export function TableOfContents() {
           {items.length === 0 ? (
             <div className="toc-empty">暂无标题</div>
           ) : (
-            items.map((it, i) => (
+            items.map((it) => (
               <button
                 key={it.key}
                 className={`toc-item ${active === it.key ? "active" : ""}`}
-                data-level={it.level}
+                style={{ paddingLeft: `${(it.level - 1) * 12 + 12}px` }}
                 onClick={() => goto(it.key)}
                 title={it.text}
               >
-                <span className="toc-guide">{guideLabel(items, i)}</span>
-                <span className="toc-text">{it.text}</span>
+                {it.text}
               </button>
             ))
           )}

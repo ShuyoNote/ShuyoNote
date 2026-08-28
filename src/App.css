@@ -7523,55 +7523,42 @@ p:has(> .editor-drawing-container) {
 .toc-list {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 12px;
+  margin: 12px;
+  padding: 4px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 .toc-item {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
+  display: block;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
   font-family: inherit;
   cursor: pointer;
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.7;
-  padding: 4px 8px 4px 4px;
-  border-radius: var(--radius-sm);
-  transition: color var(--transition-fast), background var(--transition-fast);
-}
-/* Tree connector spine (mono so the box-drawing chars align). */
-.toc-guide {
-  flex-shrink: 0;
-  font-family: var(--font-mono, monospace);
-  color: var(--text-faint);
-  white-space: pre;
-  user-select: none;
-}
-.toc-text {
-  flex: 1;
-  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 5px 10px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 .toc-item:hover {
-  background: var(--block-hover);
-  color: var(--text);
+  background: var(--hover);
 }
-/* Current section: accent text + a left accent bar (subtler than a filled pill). */
+/* Current section: a soft accent tint (Notion-ish, no heavy pill). */
 .toc-item.active {
+  background: var(--block-hover);
   color: var(--accent);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.toc-item.active .toc-text {
   font-weight: 600;
 }
 .toc-empty {
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 13px;
   text-align: center;
   padding: 16px 0;
 }
