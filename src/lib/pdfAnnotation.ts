@@ -98,6 +98,13 @@ export function pdfRef(attachmentId: string, pageIndex: number): string {
   return `pdf://${attachmentId}#${pageIndex}`;
 }
 
+/** Parse a `pdf://attachment#page` ref back into its parts (for reopening). */
+export function parsePdfRef(ref: string): { attachmentId: string; pageIndex: number } | null {
+  const m = /^pdf:\/\/(.+)#(\d+)$/.exec(ref);
+  if (!m) return null;
+  return { attachmentId: m[1], pageIndex: Number(m[2]) };
+}
+
 /** Turn a "摘录" annotation into an insertable block (with a pdf:// back-ref). */
 export function pageToBlock(
   ann: Pick<PdfAnnotation, "text">,

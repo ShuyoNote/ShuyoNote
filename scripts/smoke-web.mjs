@@ -77,7 +77,7 @@ await esbuild.build({
       'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
       'export { COVER_PRESETS } from "./src/lib/covers";\n' +
       'export { APP_NAME, APP_VERSION, APP_LICENSE, linkItems, sanitizeExternalUrl, getAllowExternal, setAllowExternal } from "./src/lib/links";\n' +
-      'export { normCoords, denormCoords, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
+      'export { normCoords, denormCoords, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, parsePdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
@@ -994,6 +994,8 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("pdfRef builds pdf://attachment#page", aiMod.pdfRef("att-1", 2) === "pdf://att-1#2");
   const blk = aiMod.pageToBlock({ text: "重要结论" }, "att-1", 2);
   assert("pageToBlock ref + text + content", blk.ref === "pdf://att-1#2" && blk.content_text.includes("重要结论") && blk.content_text.includes("pdf://att-1#2") && blk.content_json.includes("重要结论"), JSON.stringify(blk));
+  assert("parsePdfRef parses pdf://id#page", JSON.stringify(aiMod.parsePdfRef("pdf://att-1#2")) === '{"attachmentId":"att-1","pageIndex":2}');
+  assert("parsePdfRef null for garbage", aiMod.parsePdfRef("foo") === null);
   // M24 stage-1 — render engine selection (双引擎接口).
   assert("pickEngine native when available", aiMod.pickEngine({ native: true, pdfjs: true }) === "native");
   assert("pickEngine falls back to pdfjs", aiMod.pickEngine({ native: false, pdfjs: true }) === "pdfjs");

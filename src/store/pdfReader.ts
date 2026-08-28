@@ -11,7 +11,8 @@ interface PdfReaderState {
   attachmentId: string | null;
   name: string;
   bytes: Uint8Array | null;
-  openPdf: (attachmentId: string, name: string) => Promise<void>;
+  targetPage: number;
+  openPdf: (attachmentId: string, name: string, pageIndex?: number) => Promise<void>;
   close: () => void;
 }
 
@@ -20,17 +21,18 @@ export const usePdfReader = create<PdfReaderState>((set, get) => ({
   attachmentId: null,
   name: "",
   bytes: null,
-  async openPdf(attachmentId: string, name: string) {
+  targetPage: 0,
+  async openPdf(attachmentId: string, name: string, pageIndex = 0) {
     if (get().open) return;
     try {
       const meta = await api.getAttachment(attachmentId);
       const url = platform.asset.convertFileSrc((meta as { path?: string }).path ?? "");
       const resp = await fetch(url);
       const ab = await resp.arrayBuffer();
-      set({ open: true, attachmentId, name, bytes: new Uint8Array(ab) });
+      set({ open: true, attachmentId, name, bytes: new Uint8Array(ab), targetPage: Math.max(0, pageIndex) });
     } catch (e) {
       toast("无法读取 PDF，请在文件夹中打开查看", "error");
     }
   },
-  close: () => set({ open: false, attachmentId: null, name: "", bytes: null }),
+  close: () => set({ open: false, attachmentId: null, name: "", bytes: null, targetPage: 0 }),
 }));

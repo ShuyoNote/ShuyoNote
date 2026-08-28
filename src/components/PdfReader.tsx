@@ -8,7 +8,7 @@ import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 // current page to a blob (object URL), and hosts the annotation canvas. Page nav
 // + zoom re-render the page; annotations are persisted per (attachment, page).
 export function PdfReader() {
-  const { open, attachmentId, name, bytes, close } = usePdfReader();
+  const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
   const [pageCount, setPageCount] = useState(0);
   const [pageIndex, setPageIndex] = useState(0);
   const [scale, setScale] = useState(1);
@@ -35,7 +35,7 @@ export function PdfReader() {
         if (alive) {
           closeRef.current = doc.close;
           setPageCount(doc.pageCount);
-          setPageIndex(0);
+          setPageIndex(Math.min(Math.max(targetPage, 0), Math.max(doc.pageCount - 1, 0)));
           setMeta(null);
           setPageUrl(null);
         }
