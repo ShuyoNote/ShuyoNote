@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNode } from "lexical";
+import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $createParagraphNode, $isElementNode } from "lexical";
 import { $findTableNode } from "@lexical/table";
+import { $createListNode, $createListItemNode } from "@lexical/list";
 import { useEditorStore } from "../../store/editor";
 import { makeOptions, type SlashOption } from "./SlashMenuPlugin";
 import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
@@ -85,6 +86,33 @@ function isEmptyAtKey(
   return editor.getEditorState().read(() => isEmptyBlock($getNodeByKey(key)));
 }
 
+type ListKind = "check" | "bullet" | "number";
+
+// List-format keys → Lexical list type. The shared @lexical list command
+// (`INSERT_*_LIST_COMMAND`) leaves the selection dangling when the block is an empty
+// element (the "+" target), so we build the list ourselves and place the caret in the
+// first item — matching how $replaceBlock hands the cursor to the new block.
+const LIST_TYPES: Record<string, ListKind> = { todo: "check", ul: "bullet", ol: "number" };
+
+// Replace the block at `key` with a list of `listType` whose first item holds the
+// block's content, then put the caret into that first item.
+function $insertListBlockAt(key: string | null, listType: ListKind) {
+  const node = key ? $getNodeByKey(key) : null;
+  let target = node && node.isAttached() ? node : null;
+  if (!target) {
+    const last = $getRoot().getLastChild();
+    if (!last) return;
+    target = last;
+  }
+  if (!$isElementNode(target)) return;
+  const list = $createListNode(listType);
+  const item = $createListItemNode();
+  for (const child of [...target.getChildren()]) item.append(child);
+  list.append(item);
+  target.replace(list);
+  item.selectStart();
+}
+
 // Place a collapsed selection inside the target block so the shared insert helpers
 // ($replaceBlock / $insertBlockNode) act on it, then run the option.
 function runAtBlock(
@@ -92,7 +120,12 @@ function runAtBlock(
   option: SlashOption,
   key: string | null,
 ) {
+  const listType: ListKind | null = LIST_TYPES[option.key] ?? null;
   editor.update(() => {
+    if (listType) {
+      $insertListBlockAt(key, listType);
+      return;
+    }
     const node = key ? $getNodeByKey(key) : null;
     let target = node;
     if (!target || !target.isAttached()) {
@@ -106,7 +139,7 @@ function runAtBlock(
     }
     target.selectEnd();
   });
-  option.run(editor);
+  if (!listType) option.run(editor);
   editor.focus();
 }
 
