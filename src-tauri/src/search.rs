@@ -327,7 +327,7 @@ fn read_all_pages(c: &Connection) -> Result<Vec<(String, String, String)>, Strin
 /// embedding cache is keyed by content hash, so repeated queries make just the query
 /// embed call; changed/new pages are lazily re-embedded once and cached.
 async fn search_semantic_async(
-    db: &State<'_, Db>,
+    db: &Db,
     text: &str,
     filters: &[(String, String)],
     limit: usize,
@@ -450,7 +450,7 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
     }
 
     let results = if let Some(e) = emb.as_ref() {
-        search_semantic_async(&db, &text, &filters, limit, e).await?
+        search_semantic_async(db.inner(), &text, &filters, limit, e).await?
     } else {
         let c = db.0.lock().expect("db mutex poisoned");
         let mut r = search_in_conn(&c, &text, &filters, limit)?;
@@ -575,5 +575,135 @@ mod tests {
         assert!(s > 0.9, "s={}", s);
         let unrelated = keyword_score("会议纪要", "天气", "今天晴");
         assert_eq!(unrelated, 0.0);
+    }
+
+    // ---- Async integration tests against a mock embedding endpoint (no real model) ----
+
+    use crate::db::Db;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Minimal HTTP/1.1 200 JSON responder. `respond` receives the POST body (JSON
+    /// string) and returns the response body. Returns the bound port + server thread.
+    fn spawn_mock_http<F: Fn(&str) -> String + Send + 'static>(respond: F) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut s = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut header = Vec::new();
+                let mut byte = [0u8; 1];
+                while header.len() < 16 * 1024 {
+                    match s.read(&mut byte) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            header.push(byte[0]);
+                            if header.ends_with(b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let header_str = String::from_utf8_lossy(&header);
+                let content_len: usize = header_str
+                    .lines()
+                    .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse().ok()))
+                    .unwrap_or(0);
+                let mut body = vec![0u8; content_len];
+                if content_len > 0 {
+                    let _ = s.read_exact(&mut body);
+                }
+                let body = String::from_utf8_lossy(&body).to_string();
+                let out = respond(&body);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    out.len(),
+                    out
+                );
+                let _ = s.write_all(resp.as_bytes());
+                let _ = s.flush();
+            }
+        });
+        port
+    }
+
+    fn cfg(port: u16, provider: &str) -> EmbedCfg {
+        EmbedCfg {
+            provider: provider.to_string(),
+            base_url: format!("http://127.0.0.1:{}", port),
+            api_key: if provider == "openai" { Some("sk-test".into()) } else { None },
+            model: "m".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn embed_text_calls_ollama_and_parses() {
+        let port = spawn_mock_http(|_| r#"{"embeddings":[[0.1,0.2,0.3]]}"#.to_string());
+        let vec = embed_text(&cfg(port, "ollama"), "hi").await.unwrap().unwrap();
+        assert!((vec[0] - 0.1).abs() < 1e-6 && (vec[1] - 0.2).abs() < 1e-6 && (vec[2] - 0.3).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn embed_text_calls_openai_and_parses() {
+        let port = spawn_mock_http(|_| r#"{"data":[{"embedding":[0.4,0.5]}]}"#.to_string());
+        let vec = embed_text(&cfg(port, "openai"), "hi").await.unwrap().unwrap();
+        assert!((vec[0] - 0.4).abs() < 1e-6 && (vec[1] - 0.5).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn search_semantic_ranks_semantically_with_mock_embedding() {
+        // Fake embedding: dims [会议/纪要/周会, 项目, 天气]. Query「周会纪要」→ [1,0,0].
+        let port = spawn_mock_http(|body| {
+            let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
+            let input = v["input"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| v["input"][0].as_str().map(String::from))
+                .unwrap_or_default();
+            let mut d = [0.0; 3];
+            if input.contains("会议") || input.contains("纪要") || input.contains("周会") {
+                d[0] = 1.0;
+            }
+            if input.contains("项目") {
+                d[1] = 1.0;
+            }
+            if input.contains("天气") {
+                d[2] = 1.0;
+            }
+            format!("{{\"embeddings\":[{}]}}", d.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","))
+        });
+
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, "ws").unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        for (id, title, text) in [
+            ("a", "会议安排", "本周会议纪要安排"),
+            ("b", "项目计划", "开发排期项目进度"),
+            ("c", "天气", "今天天气不错"),
+        ] {
+            conn.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, sort_order, created_at, updated_at)
+                 VALUES (?1, 'ws', ?2, '{}', ?3, 'page', 0, ?4, ?4)",
+                rusqlite::params![id, title, text, now],
+            )
+            .unwrap();
+        }
+
+        let db = Db(std::sync::Mutex::new(conn));
+        let results = search_semantic_async(&db, "周会纪要", &[], 10, &cfg(port, "ollama"))
+            .await
+            .unwrap();
+        // 「会议安排」shares the [1,0,0] axis with the query (no literal keyword overlap
+        // of 周会纪要), so the vector bonus lifts it above the unrelated pages.
+        assert_eq!(results[0].title, "会议安排", "got: {:#?}", results.iter().map(|r| &r.title).collect::<Vec<_>>());
+        let sem = results.iter().position(|r| r.title == "会议安排").unwrap();
+        for name in ["项目计划", "天气"] {
+            if let Some(i) = results.iter().position(|r| r.title == name) {
+                assert!(i > sem, "{} should rank below the semantic hit", name);
+            }
+        }
     }
 }
