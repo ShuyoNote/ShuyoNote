@@ -26,7 +26,7 @@ docs/
 ├── architecture.md      # 系统架构与存储模型
 ├── positioning.md       # 产品定位
 ├── design-philosophy.md # 设计哲学
-├── roadmap.md           # 演进路线图（M1–M24 里程碑）
+├── roadmap.md           # 演进路线图（M1–M25 里程碑）
 ├── compare-*.md         # 竞品对比
 └── plans/               # 各功能技术方案（按日期）
 design/                  # UI/UX 设计交付（设计系统 / UX 流程 / 实现计划）
@@ -40,7 +40,7 @@ CHANGELOG.md             # 版本变更日志
 | [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
-| [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M24 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
+| [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
 
 ## 演进路线（里程碑总览）
 
@@ -72,6 +72,7 @@ CHANGELOG.md             # 版本变更日志
 | **M22** | 绘图（Excalidraw / mermaid / AI 文生图） | ✅ | [绘图方案](plans/2026-08-24-drawing-solution-design.md) |
 | **M23** | Excalidraw 绘图高级功能 | ✅（M23.5 协同/代码生成未做） | [Excalidraw 高级方案](plans/2026-08-24-excalidraw-advanced-plan.md) |
 | **M24** | **PDF 批注** | 🗓 规划/建议 | [PDF 批注方案](plans/2026-08-27-pdf-annotation-plan.md) |
+| **M25** | **帮助系统** | 🗓 规划/建议 | [帮助系统方案](plans/2026-08-27-help-system-plan.md) |
 
 > 另：非里程碑功能——**分栏**（`/分栏`，见 [分栏方案](plans/2026-08-26-columns-plan.md)）、绘图块（归 M22）、内联「+」插入块等。完整现状与里程碑细节见 [roadmap.md](roadmap.md)。
 
@@ -102,6 +103,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-26-columns-plan.md](plans/2026-08-26-columns-plan.md) | **「分栏」功能方案（飞书式 Columns Block）**：N 列并排/每列独立输入 + 选择栏数（2/3/4）面板；对比两条路线（ElementNode 单编辑器 vs DecoratorNode+嵌套编辑器）。**路线 B（每列独立子编辑器）已落地**：`ColumnsBlockNode`（DecoratorNode，每列一个 EditorState）+ 列内 `/` 插标题/列表/表格/Callout/代码块/分隔线 + 列增删 + 列宽拖拽 + 列内撤销/跨列输入 + `content_text` 并入 + Markdown 导出保留列文本。诚实标注边界：列内块级拖拽/跨列复制、旧 `columns`(ElementNode) → `columnsBlock` 自动迁移**均不做**（风险/成本高、收益低），旧文档保留 `columns`/`column` 注册可读兼容。含数据结构、入口、样式、验收与边界 |
 | [plans/2026-08-24-excalidraw-advanced-plan.md](plans/2026-08-24-excalidraw-advanced-plan.md) | **「Excalidraw 绘图高级功能」方案（M23）**：挖掘 Excalidraw 0.17.1 能力（命令式 API/元素编程化/只读/自定义侧栏/命中检测/Frames/导出），规划接入 ShuyoNote——只读嵌入、AI·mermaid 联动、白板导航、检索集成；协同/代码生成诚实标注需后端或 0.18+（**规划，建议**） |
 | [plans/2026-08-27-pdf-annotation-plan.md](plans/2026-08-27-pdf-annotation-plan.md) | **「PDF 批注」方案（M24）**：竞品天花板对标（思源=块笔记顶格、MarginNote/LiquidText=思维工作台、Notion=无/Obsidian=靠插件）+ 2026 AI 帮读前沿；差异化定位「批注即块」；按 MVP 切（阶段 1：**双引擎渲染**（桌面 Rust 原生 `pdfium-render`/`mupdf-rs` + Web pdf.js Worker 回退）+ 批注 overlay + 内容寻址存储 + 摘录成块进反链/搜索 + 文本层判定/OCR 兜底；阶段 2：写回 PDF/OCR 精确划词；阶段 3：AI 帮读）。**规划，建议**（排在 M20 之后，非当前优先级） |
+| [plans/2026-08-27-help-system-plan.md](plans/2026-08-27-help-system-plan.md) | **「帮助系统」方案（M25）**：本地优先/键盘驱动的四层帮助（P0 就地提示+快捷键面板；P1 内置「使用指南」页+新手清单；P2 外部静态站可选）；主张帮助页=可编辑笔记（同源/可搜/可导出）；复用命令面板/斜杠/模板/`shortcuts.ts` 单一来源，不新起体系。**规划，建议** |
 
 ## 竞品对比
 
