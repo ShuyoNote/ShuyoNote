@@ -42,11 +42,11 @@ ShuyoNote 的目标用户是知识工作者 / 研究者，**PDF 挑注（读论�
 ## 4. 范围与 MVP 切割
 
 ### 阶段 1（MVP，本方案落地范围）
-1. **渲染**：附件 PDF → `pdf.js` 分页渲染成图像，进入阅读器（翻页 / 缩放 / 页码导航）。
-2. **批注**：每页在页面图像上叠加**高亮（半透明）/ 荧光笔 / 画笔 / 便签**，坐标归一化存储，不写回源 PDF。
+1. **渲染**：附件 PDF → **桌面用 Rust 原生（`pdfium-render`/`mupdf-rs`）、Web 用 pdf.js（Worker）** 分页渲染成图像，进入阅读器（翻页 / 缩放 / 页码导航）；`pdfRender` 暴露双引擎一致接口。
+2. **批注**：每页在页面图像上叠加**高亮（半透明）/ 荧光笔 / 画笔 / 便签**，坐标归一化存储，不写回源 PDF；按 `hasTextLayer` 决定**划词高亮**还是**矩形框选 + 画笔**。
 3. **存储**：批注按「附件 id + 页码」内容寻址持久化（沿用附件 / 版本链路）；渲染页字节走内容寻址附件。
 4. **链接**：把某条批注/摘录"转正"成一个块（带 `pdf://attachment#page` 回链），进 `content_text`、模糊反链、FTS、关系图。
-5. **基础增强（可选一并做）**：目录大纲解析（`pdf.js` outline）、整页摘录。
+5. **基础增强（可选一并做）**：目录大纲解析（outline）、整页摘录、OCR 兜底钩子（无文本层时可启用）。
 
 ### 阶段 2（有真实用户需求再上）
 - **写回原 PDF**（标准注释 / ink annotation / FDF 导出）——Tauri 专属，很贵，长尾。
@@ -62,34 +62,46 @@ ShuyoNote 的目标用户是知识工作者 / 研究者，**PDF 挑注（读论�
 
 ## 5. 技术方案
 
-### 5.1 渲染引擎选型
-| 方案 | 跨平台 | 兼容 Web 平台 | 代价 |
-|------|--------|--------------|------|
-| **pdf.js（推荐）** | ✅ Web/WebView/WASM 都可跑 | ✅ 不破坏"同一套前端跑桌面 + 浏览器" | 性能略低、需 text layer |
-| PDFium（`pdfium-render`，桌面原生） | ❌ 仅 Tauri 桌面 | ❌ 需双引擎 | 快，但破坏平台一致承诺 |
+### 5.1 渲染引擎选型（双引擎：桌面原生 + Web pdf.js 回退）
+| 平台 | 引擎 | 理由 | 代价 |
+|------|------|------|------|
+| **桌面（Tauri）** | **Rust 原生渲染**（`pdfium-render` 或 `mupdf-rs`） | 大型/复杂 PDF 性能**最强**；把 PDF 解释/渲染挪到桌面后端，前端只收页位图 | 需一条 Rust 渲染命令；每页位图走内容寻址附件 |
+| **浏览器（Web）** | **pdf.js** | 纯前端、跨平台、WASM/WebView都能跑，保住"双平台一套前端" | 大/复杂 PDF 偏慢，靠 Worker + 虚拟化 + 按视口渲染扛 |
+| 可选加速 | **pdf.js WASM**（或 MuPDF-WASM） | 仅加速 JPEG2000/JBIG2/CCITT 等**特殊解码器**，非整体管线重写 | WASM 资产需正确托管（Vite `?url`/workerSrc/wasmUrl）；**别指望它救大型 PDF** |
 
-**选 pdf.js**：这是保住"双平台一套前端"（M16）的**结构性约束**。仅在 Tauri 桌面，若未来有本地化渲染刚需，再做 driver 层降级（`platform` 抽象已预留）。
+**选型原则**：不把宝全押在 pdf.js。`pdfRender.ts` 只暴露 `loadPdf` / `renderPageToBlob` / `getOutline` / `hasTextLayer` 这一层接口，下面**双引擎可换**：桌面走 Rust 原生（`platform` driver 层提供该能力，Web **优雅降级**到 pdf.js）——这正契合 M16 的"能力存在但可降级"。**大文件体验最好的是桌面原生**，这是 ShuyoNote 带 Rust 后端 + driver 抽象的优势；此前方案里"尽量零新增 Rust 命令"一句**过于保守，予以修正**：桌面可加原生渲染命令，不破坏平台承诺。
 
-### 5.2 批注画布
+pdf.js 性能真相（2026）：
+- 慢的不是 `<canvas>` 光栅化（浏览器 GPU 加速），而是 **PDF 解释**（内容流解析、构建显示列表、字体/着色、图像解码）在 JS 里跑。
+- **WASM 版本**只加速**特定重型解码器**（JPEG2000/JBIG2/CCITT），核心解释器仍是 JS，**不是整体重写**；PDFium/MuPDF-WASM 才是"单进程快"的替代。
+- 真正杠杆（比 WASM 重要）：**Web Worker + `OffscreenCanvas`** 离屏渲染 + **虚拟化懒加载 / LRU** + **按视口比例渲染** + **流式 / Range 请求**。参考 [pdf.js advanced loading / worker 实践](https://www.nutrient.io/blog/pdfjs-advanced-loading-streaming-workers/)。
+
+### 5.2 文本层选择与 OCR 兜底
+- pdf.js 文本层对常规 PDF 够用；但对**扫描件 / 复杂 / 多栏 / 异常编码 / 连字**文档，文本层坐标会退化，划词/高亮会不准。
+- **兜底策略**（阶段 1 即考虑，不是阶段 2）：
+  - `hasTextLayer(page)` 判定：**有文本层** → 允许文本级划词/高亮；**无/不齐** → 仅允许**矩形框选 + 画笔 + 便签**（矩形不依赖文本层，最稳）。
+  - **OCR 兜底（Tesseract WASM）** 预留钩子：仅当"无文本层但确有划词需求"时启用，不拖累正常文档；Web 与桌面均可跑 WASM。
+
+### 5.3 批注画布
 - **推荐**：轻量**专用 overlay 画布** + 页面图像作背景（`<canvas>` 坐标 = 像素页面坐标，缩放只改变 viewport 变换，批注坐标始终锚定到页面像素）。高亮 / 便签语义最自然、锚定最稳。
 - **备选（降成本）**：复用 [Excalidraw 高级方案](../plans/2026-08-24-excalidraw-advanced-plan.md) 的 InlineDrawing（Excalidraw）把页面图像作为画布内元素 + 在其上批注。省一套交互，但 Excalidraw 是无限画布、坐标非"页面锚定"，便签 / 高亮语义要绕，且整页做成一整个 Excalidraw 文档、元素查找开销大。
 - **建议**：阶段 1 用**专用 overlay 画布**（锚定正确、语义干净）；若想极省，可以用 Excalidraw 重绘 `computeFitView`/保存/适配那套（[InlineDrawing](../plans/2026-08-24-drawing-solution-design.md)）当画布宿主。
 
-### 5.3 复用与新增
+### 5.4 复用与新增
 **复用**：
 - 内容寻址附件（桌 [attachments.rs](../architecture.md) / Web [cross-platform 方案](../plans/2026-08-24-cross-platform-plan.md) 的 `blobStore`）：渲染页字节、批注自身字节都走 hash 去重。
 - 文件引用卡片 / 附件打开（M12.3a）：PDF 附件已可用「系统打开」，批注作为此之上的阅读器入口。
-- 平台 driver 抽象（M16）：pdf.js 在 tauri / web 均可加载，无需新增 Rust 命令（与绘图块同款"无新增命令"思路）。
+- 平台 driver 抽象（M16）：driver 层暴露 `renderPdfPage` 能力——**桌面走 Rust 原生**（`pdfium-render`/`mupdf-rs` 渲染页位图）、**Web 优雅降级到 pdf.js**；两个引擎对前端暴露**同一接口**，前端不感知引擎差异。
 - AI（M17/M18 `src/lib/ai/`）：阶段 3 直接接。
 
 **新增（文件级，见 §6）**：`PdfReader`（阅读器壳）+ 批注 overlay + `pdfRender`/`pdfAnnotation` 纯函数 + `PdfNode`（块节点）+ 少量持久化命令。
 
-### 5.4 数据模型（参考，落地时并入 `db.rs` 迁移）
+### 5.5 数据模型（参考，落地时并入 `db.rs` 迁移）
 - `pdf_annotations`（`id`, `attachment_id`, `page_index`, `payload_json`（批注列表：`{type: highlight|ink|sticky|rect, coords, text, color}`）, `created_at`, `updated_at`）
 - 渲染页复用 `attachments` 全局内容寻址（hash = 页图像，去重）。
 - "摘录转正"的批注 → 作为普通块写回页面，块体内嵌 `pdf://attachment#page` 回链；`content_text` 收录。
 
-### 5.5 入口与 UX
+### 5.6 入口与 UX
 - 点开 PDF 附件卡片 → 「阅读并批注」进入 `PdfReader`（而非仅系统打开）。
 - 阅读器：左侧缩略 / 连续滚动；页面上划选 → 浮动工具条（高亮 / 下划线 / 画笔 / 便签 / 摘录成块）。
 - 「摘录成块」弹出可插入到当前页或新页，插入后带 `pdf:` 回链。
@@ -100,24 +112,27 @@ ShuyoNote 的目标用户是知识工作者 / 研究者，**PDF 挑注（读论�
 
 | 文件 | 改动 |
 |------|------|
-| `src/lib/pdfRender.ts`（新） | pdf.js 封装：`loadPdf` / `renderPageToBlob` / `getOutline`；返回 ImageData/Blob |
-| `src/lib/pdfAnnotation.ts`（新） | 纯函数：坐标归一化 `normCoords`、批注 CRUD、schema 校验、`pageToBlock` 摘录转块 |
+| `src/lib/pdfRender.ts`（新） | **双引擎接口**：`loadPdf` / `renderPageToBlob` / `getOutline` / `hasTextLayer`；内部按 driver 选 `native`（Rust）或 `pdfjs`（Worker）引擎 |
+| `src/lib/pdfEngine/pdfjsEngine.ts`（新） | pdf.js 封装：Worker + `OffscreenCanvas`、流式 / Range、虚拟化 / LRU、按视口比例渲染 |
+| `src-tauri/src/pdf_render.rs`（新）+ 命令 | 桌面原生渲染：`render_pdf_page(attachment, page, scale) -> blob`（`pdfium-render` / `mupdf-rs`）；页位图走内容寻址 |
+| `src/lib/pdfAnnotation.ts`（新） | 纯函数：坐标归一化 `normCoords`、批注 CRUD、schema 校验、`pageToBlock` 摘录转块、`hasTextLayer` 降级策略 |
 | `src/components/PdfReader.tsx`（新） | 阅读器壳：渲染分页、翻页 / 缩放、页码导航、指向 `pdf-annotation-canvas` |
-| `src/components/PdfAnnotationCanvas.tsx`（新） | overlay 画布：高亮 / 荧光笔 / 画笔 / 便签；页面图像背景 |
+| `src/components/PdfAnnotationCanvas.tsx`（新） | overlay 画布：高亮 / 荧光笔 / 画笔 / 便签；页面图像背景；按 `hasTextLayer` 切换划词 or 矩形框选 |
 | `src/editor/nodes/PdfNode.tsx`（新） | PDF 块节点（引用附件 + 页码），含"摘录成块"落点 |
 | `src/components/InlinePdf.tsx`（新） | 正文内嵌 PDF 引用卡片 + 进入阅读器 |
-| `src/lib/platform/web.ts` / `tauri.ts` | pdf.js 加载路径；渲染页 blob 存 `blobStore`（内容寻址） |
-| `src-tauri/src/attachments.rs` / `commands.rs` | `save/list/get_pdf_annotation`（或沿用附件链路，尽量零新命令） |
-| `src-tauri/src/db.rs` | `pdf_annotations` 表迁移 |
+| `src/lib/platform/web.ts` / `tauri.ts` | driver 层暴露 `renderPdfPage` 能力（桌面原生 / Web pdf.js 优雅降级）；web 页位图存 `blobStore`（内容寻址） |
+| `src-tauri/src/attachments.rs` / `commands.rs` | `save/list/get_pdf_annotation` + `render_pdf_page`；`pdf_annotations` 表迁移 |
+| `src-tauri/src/db.rs` | `pdf_annotations` 表迁移 + OCR/文本层状态字段 |
 | `src/App.css` / 设计 token | 阅读器 + 批注画布样式、高亮半透明色、深浅主题 |
-| `scripts/smoke-web.mjs` | 增加 `normCoords` / 批注 schema 校验 / 摘录转块纯函数断言 |
+| `scripts/smoke-web.mjs` | 增加 `normCoords` / 批注 schema 校验 / 摘录转块 / `hasTextLayer` 降级纯函数断言 |
 
 ---
 
 ## 7. 验收标准（阶段 1）
 
-- 打开 PDF 附件 → `PdfReader` 分页渲染正确（图片 / 超大文件流式不卡，流程与 M12 文件处理一致）。
+- 打开 PDF 附件 → `PdfReader` 分页渲染正确（图片 / 超大文件流式不卡，流程与 M12 文件处理一致）；**桌面走 Rust 原生渲染、Web 走 pdf.js Worker 降级，两者页面呈现一致**。
 - 每页可高亮 / 下划线 / 画笔 / 便签；缩放后批注仍精确锚定原页面像素。
+- **有文本层 → 允许划词/文本高亮；无/不齐 → 自动降级仅矩形框选 + 画笔 + 便签（OCR 兜底钩子就绪）**。
 - 批注保存后重开仍在（内容寻址持久化，跨空间去重）。
 - 「摘录成块」插入到页面后：进 `content_text`、可被 FTS 检索、可被 `((id))` 块引用、反链可指向该 PDF 附件。
 - `npx tsc --noEmit` / `node scripts/smoke-web.mjs`（在该纯函数断言基础上"只增不减"全绿）/ `pnpm build` / `cargo check`。
@@ -127,9 +142,10 @@ ShuyoNote 的目标用户是知识工作者 / 研究者，**PDF 挑注（读论�
 
 ## 8. 边界与诚实标注
 
-- **写回源 PDF / OCR / 文本层精确划词**→ 阶段 2，很贵且偏 Tauri，**明确不做**（除非出现真实用户需求）。
+- **写回源 PDF / 文本层精确划词（依赖 PDF 解析语义的精细划词）**→ 阶段 2，很贵且偏 Tauri，**明确不做**（除非出现真实用户需求）；**OCR / 文本层判定降级是阶段 1 的兜底**，不是这里讲的"文本层精确划词"。
 - **多人实时协同批注**→ 需 WebSocket 后端，超本环境范围，**不做**。
-- **Web 平台**：pdf.js 可跑，但**超大 PDF 内存**（多页缓存）需按需渲染 + LRU，Web 用 `blobStore` 逐页；桌面同样适用。
+- **Web 平台**：pdf.js 可跑，但**超大 PDF 内存**（多页缓存）需按需渲染 + 虚拟化 + LRU，Web 用 `blobStore` 逐页；桌面用 Rust 原生渲染同样按需、避免一次性全载。
+- **桌面/Web 双引擎**：桌面原生（`pdfium-render`/`mupdf-rs`）+ Web pdf.js，接口一致、呈现一致性需在验收中覆盖；Web 是降级不崩（`platform` driver"能力存在但可降级"红线）。
 - **阶段 1 是"阅读 + 批注 + 链接"，不做"学习引擎"**（脑图 / 卡片 / Anki），那属于阶段 3 的"AI 帮读"之外、更远的差异化。
 
 ---
