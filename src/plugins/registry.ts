@@ -8,6 +8,7 @@ import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { useEditorStore } from "../store/editor";
 import { openGuide } from "../lib/guide";
+import { usePdfReader } from "../store/pdfReader";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
@@ -250,6 +251,26 @@ registerPlugin({
       run: () => {
         useEditorStore.getState().openAbout();
         return "已打开关于";
+      },
+    },
+  ],
+});
+
+registerPlugin({
+  id: "pdf",
+  name: "PDF 批注",
+  commands: [
+    {
+      id: "pdf.open-annotations",
+      title: "打开最近批注的 PDF",
+      description: "打开最近做过批注的 PDF（回到对应页）",
+      closeOnRun: true,
+      run: async () => {
+        const rows = await api.listAllPdfAnnotations();
+        if (!rows || rows.length === 0) return "暂无批注";
+        const r = rows[0];
+        usePdfReader.getState().openPdf(r.attachment_id, "", r.page_index);
+        return "已打开最近批注的 PDF";
       },
     },
   ],

@@ -265,6 +265,31 @@ pub fn list_pdf_annotations(db: State<Db>, args: ListPdfAnnotationsArgs) -> Resu
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// List every annotated page across all attachments, most recently updated first
+/// (the "全局批注检索 / surfacing" data foundation).
+#[tauri::command]
+pub fn list_all_pdf_annotations(db: State<Db>) -> Result<Vec<serde_json::Value>, String> {
+    let c = conn(&db);
+    let mut stmt = c
+        .prepare(
+            "SELECT attachment_id, page_index, payload_json FROM pdf_annotations ORDER BY updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            let payload: String = row.get(2)?;
+            let annotations: serde_json::Value =
+                serde_json::from_str(&payload).unwrap_or(serde_json::Value::Array(vec![]));
+            Ok(serde_json::json!({
+                "attachment_id": row.get::<_, String>(0)?,
+                "page_index": row.get::<_, i64>(1)?,
+                "annotations": annotations,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 /// Set a page's cover height (px) and return the updated page detail.
 #[tauri::command]
 pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<PageDetail, String> {

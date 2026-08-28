@@ -1017,6 +1017,8 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("list_pdf_annotations roundtrips", Array.isArray(annList) && annList.length === 1 && annList[0].page_index === 0 && Array.isArray(annList[0].annotations) && annList[0].annotations.length === 1, JSON.stringify(annList));
   const annNone = await invoke("list_pdf_annotations", { args: { attachment_id: "pdf-att-none" } });
   assert("list_pdf_annotations empty for unknown", Array.isArray(annNone) && annNone.length === 0);
+  const annAll = await invoke("list_all_pdf_annotations");
+  assert("list_all_pdf_annotations surfaces saved", Array.isArray(annAll) && annAll.some((r) => r.attachment_id === "pdf-att-1"), JSON.stringify(annAll));
 
   // M24 — pdf.js engine capability: load a real minimal PDF in Node (legacy build).
   const pdfjsMod = await import("pdfjs-dist/legacy/build/pdf.mjs");

@@ -1340,6 +1340,10 @@ function makeInvoke(store: SqliteStore) {
       const rows = store.query<{ attachment_id: string; page_index: number; payload_json: string }>("SELECT attachment_id, page_index, payload_json FROM pdf_annotations WHERE attachment_id = ? ORDER BY page_index", [attachmentId]);
       return rows.map((r) => ({ attachment_id: r.attachment_id, page_index: r.page_index, annotations: JSON.parse((r.payload_json as string) || "[]") })) as T;
     }
+    if (cmd === "list_all_pdf_annotations") {
+      const rows = store.query<{ attachment_id: string; page_index: number; payload_json: string }>("SELECT attachment_id, page_index, payload_json FROM pdf_annotations ORDER BY updated_at DESC");
+      return rows.map((r) => ({ attachment_id: r.attachment_id, page_index: r.page_index, annotations: JSON.parse((r.payload_json as string) || "[]") })) as T;
+    }
 
     // ---- Bookmark metadata (browser can't fetch OG reliably; return the URL) ----
     if (cmd === "fetch_bookmark_metadata") {
