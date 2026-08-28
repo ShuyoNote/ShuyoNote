@@ -1008,6 +1008,38 @@ assert("workspace name persists across instances", wsAgain !== "");
   const annNone = await invoke("list_pdf_annotations", { args: { attachment_id: "pdf-att-none" } });
   assert("list_pdf_annotations empty for unknown", Array.isArray(annNone) && annNone.length === 0);
 
+  // M24 — pdf.js engine capability: load a real minimal PDF in Node (legacy build).
+  const pdfjsMod = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfBytes = new TextEncoder().encode(`%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 44 >>
+stream
+BT /F1 24 Tf 100 700 Td (Hello PDF) Tj ET
+endstream
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF`);
+  const pdfDoc = await pdfjsMod.getDocument({ data: pdfBytes }).promise;
+  assert("pdfjs loadPdf yields 1 page", pdfDoc.numPages === 1, String(pdfDoc.numPages));
+  const pdfPage = await pdfDoc.getPage(1);
+  const pdfVp = pdfPage.getViewport({ scale: 1 });
+  assert("pdfjs page dims 612x792", pdfVp.width === 612 && pdfVp.height === 792, `${pdfVp.width}x${pdfVp.height}`);
+  const pdfTxt = await pdfPage.getTextContent();
+  assert("pdfjs hasTextLayer (extractable text)", (pdfTxt.items?.length ?? 0) > 0 && pdfTxt.items.some((i) => String(i.str).includes("Hello")), JSON.stringify(pdfTxt.items.map((i) => i.str)));
+
 
 
   // M21.1 buildWikiExport: linkifies [[标题]], emits per-page html + index + backlinks.
