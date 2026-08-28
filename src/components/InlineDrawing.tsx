@@ -28,7 +28,7 @@ const sceneCache = new Map<string, SceneSnapshot>();
 // bounding box into a canvas of `canvasW`×`canvasH`. Excalidraw's view-mode camera
 // can't be changed via scrollToContent/updateScene, so we precompute the fit view and
 // put it in `initialData.appState` — Excalidraw applies it on mount.
-function computeFitView(scene: SceneSnapshot | null, canvasW: number, canvasH: number): { zoom: { value: number }; scrollX: number; scrollY: number } | null {
+function computeFitView(scene: SceneSnapshot | null, canvasW: number, canvasH: number, autoHug = false): { zoom: { value: number }; scrollX: number; scrollY: number } | null {
   const elems = scene?.elements;
   if (!Array.isArray(elems) || elems.length === 0) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, has = false;
@@ -56,8 +56,16 @@ function computeFitView(scene: SceneSnapshot | null, canvasW: number, canvasH: n
   // sceneX = canvasX/zoom - scrollX ; place content center at canvas center (canvasX=w/2)
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
+  // fitHeightToContent auto-shrinks the block to hug the content (pad=16) when the
+  // user hasn't set an explicit height. Centering with the PRE-shrink canvas height
+  // leaves the drawing nudged toward the top/bottom after a fullscreen save, so when
+  // auto-hugging, center within the *content-hugged* height instead. hugPad must stay
+  // in sync with fitHeightToContent (which never inflates, only shrinks).
+  const hugPad = 16;
+  const hugH = contentH * zoom + hugPad * 2;
+  const centerH = autoHug ? Math.min(ch, Math.max(hugH, 1)) : ch;
   const scrollX = cw / (2 * zoom) - cx;
-  const scrollY = ch / (2 * zoom) - cy;
+  const scrollY = centerH / (2 * zoom) - cy;
   return { zoom: { value: zoom }, scrollX, scrollY };
 }
 // edit-and-save clears the node's zoom/scroll so the embed re-fits on reload; the
@@ -201,7 +209,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
       const scene: SceneSnapshot = { elements: cached.elements, appState: { ...cached.appState, ...savedView }, files: cached.files };
       if (!hasSavedView && Array.isArray(scene.elements) && scene.elements.length > 0) {
         const canvas = document.querySelector(".inline-drawing-canvas");
-        const fit = computeFitView(scene, canvas?.clientWidth ?? 608, canvas?.clientHeight ?? 420);
+        const fit = computeFitView(scene, canvas?.clientWidth ?? 608, canvas?.clientHeight ?? 420, nodeRef.current.__height == null);
         if (fit) scene.appState = { ...scene.appState, zoom: fit.zoom, scrollX: fit.scrollX, scrollY: fit.scrollY };
       }
       liveRef.current = scene;
@@ -253,7 +261,7 @@ export function InlineDrawing({ node }: { node: DrawingNode }) {
         const canvas = document.querySelector(".inline-drawing-canvas");
         const cw = canvas?.clientWidth ?? 608;
         const ch = canvas?.clientHeight ?? 420;
-        const fit = computeFitView(scene, cw, ch);
+        const fit = computeFitView(scene, cw, ch, nodeRef.current.__height == null);
         if (fit) scene.appState = { ...scene.appState, zoom: fit.zoom, scrollX: fit.scrollX, scrollY: fit.scrollY };
       }
       if (alive) {
