@@ -37,6 +37,39 @@ pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), Str
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
     c.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
         .map_err(|e| format!("attach meta failed: {e}"))?;
+    ensure_space_workspace(c, space_id)?;
+    Ok(())
+}
+
+/// Ensure the active space DB's `workspaces` table contains its own workspace row.
+/// `pages.workspace_id` has a FK to `workspaces(id)`; if a space DB was created/
+/// migrated under a mismatched id (e.g. after prior workspace CRUD / migration), every
+/// page insert fails with a FOREIGN KEY error. Seeding the row here (from meta) is
+/// idempotent and makes the active space usable regardless of leftover state.
+fn ensure_space_workspace(c: &Connection, space_id: &str) -> Result<(), String> {
+    let exists: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?1)",
+            params![space_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if exists {
+        return Ok(());
+    }
+    let name: String = c
+        .query_row(
+            "SELECT COALESCE(name, '工作空间') FROM meta.workspaces WHERE id = ?1",
+            params![space_id],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|_| "工作空间".to_string());
+    let now = now_ms();
+    c.execute(
+        "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+        params![space_id, name, now, now],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -57,6 +90,7 @@ pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
     conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
         .map_err(|e| format!("attach meta failed: {e}"))?;
+    ensure_space_workspace(&conn, space_id)?;
     Ok(conn)
 }
 
