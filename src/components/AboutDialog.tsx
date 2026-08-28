@@ -12,6 +12,7 @@ import {
   getAllowExternal,
   setAllowExternal,
 } from "../lib/links";
+import { fetchLatestVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
 // links (project home / docs / releases / issues) plus a privacy toggle for
@@ -20,6 +21,10 @@ export function AboutDialog() {
   const open = useEditorStore((s) => s.aboutOpen);
   const close = useEditorStore((s) => s.closeAbout);
   const [allowExternal, setAllow] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
@@ -33,6 +38,18 @@ export function AboutDialog() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
+
+  const checkUpdate = async () => {
+    setChecking(true);
+    setChecked(false);
+    setUpdateState(null);
+    setLatestVersion(null);
+    const latest = await fetchLatestVersion();
+    setLatestVersion(latest);
+    setUpdateState(updateStatus(latest, APP_VERSION));
+    setChecked(true);
+    setChecking(false);
+  };
 
   if (!open) return null;
 
@@ -71,6 +88,23 @@ export function AboutDialog() {
         </div>
 
         <p className="about-desc">{APP_DESCRIPTION}</p>
+
+        <div className="about-section about-update-row">
+          <button className="about-link" onClick={checkUpdate} disabled={checking}>
+            {checking ? "检查中…" : "检查更新"}
+          </button>
+          <span className="about-update-state">
+            {checked && updateState === "update-available" && latestVersion ? (
+              <>发现新版本 <b>v{latestVersion}</b>，<a onClick={() => openExternal(RELEASES_URL)}>前往发布页</a></>
+            ) : checked && updateState === "up-to-date" ? (
+              <>v{APP_VERSION} 已是最新</>
+            ) : checked ? (
+              <>检查失败（离线）</>
+            ) : (
+              ""
+            )}
+          </span>
+        </div>
 
         <div className="about-section">
           <div className="about-links-title">开源与反馈</div>

@@ -79,6 +79,7 @@ await esbuild.build({
       'export { APP_NAME, APP_VERSION, APP_LICENSE, linkItems, sanitizeExternalUrl, getAllowExternal, setAllowExternal } from "./src/lib/links";\n' +
       'export { normCoords, denormCoords, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, parsePdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
+      'export { compareVersions, updateStatus } from "./src/lib/updates";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -996,6 +997,13 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("pageToBlock ref + text + content", blk.ref === "pdf://att-1#2" && blk.content_text.includes("重要结论") && blk.content_text.includes("pdf://att-1#2") && blk.content_json.includes("重要结论"), JSON.stringify(blk));
   assert("parsePdfRef parses pdf://id#page", JSON.stringify(aiMod.parsePdfRef("pdf://att-1#2")) === '{"attachmentId":"att-1","pageIndex":2}');
   assert("parsePdfRef null for garbage", aiMod.parsePdfRef("foo") === null);
+
+  // Auto-update stage 1 — version compare + state.
+  assert("compareVersions newer/older/equal", aiMod.compareVersions("1.59.178", "1.59.177") === 1 && aiMod.compareVersions("1.59.176", "1.59.177") === -1 && aiMod.compareVersions("1.59.177", "1.59.177") === 0);
+  assert("compareVersions major beats patch", aiMod.compareVersions("2.0.0", "1.99.99") === 1);
+  assert("updateStatus update-available", aiMod.updateStatus("1.59.178", "1.59.177") === "update-available");
+  assert("updateStatus up-to-date", aiMod.updateStatus("1.59.177", "1.59.177") === "up-to-date");
+  assert("updateStatus invalid on null", aiMod.updateStatus(null, "1.59.177") === "invalid");
   // M24 stage-1 — render engine selection (双引擎接口).
   assert("pickEngine native when available", aiMod.pickEngine({ native: true, pdfjs: true }) === "native");
   assert("pickEngine falls back to pdfjs", aiMod.pickEngine({ native: false, pdfjs: true }) === "pdfjs");

@@ -10173,6 +10173,28 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   line-height: 1.5;
 }
+.about-update-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.about-update-state {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.about-update-state b {
+  color: var(--accent);
+}
+.about-update-state a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.about-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .about-toggle-row {
   display: flex;
   align-items: center;
