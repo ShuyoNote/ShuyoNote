@@ -33,9 +33,11 @@ if (existsSync(coreSrc)) {
   }
 }
 
-// 3) traineddata（best_int = 整数量化、体积小；LSTM-only 路径）
+// 3) traineddata：用完整 4.0.0 模型。此前用 4.0.0_best_int（整数量化、体积小）在
+//    tesseract.js-core v7 的 worker 里「Failed loading language」——模型加载失败致识别为空。
+//    完整 4.0.0 可正常加载（体型更大，但可靠：中文 ~19MB / 英文 ~10.7MB 的 gz）。
 for (const lang of ["chi_sim", "eng"]) {
-  const s = join(dataSrc, lang, "4.0.0_best_int", `${lang}.traineddata.gz`);
+  const s = join(dataSrc, lang, "4.0.0", `${lang}.traineddata.gz`);
   if (existsSync(s)) copyFileSync(s, join(out, "tessdata", `${lang}.traineddata.gz`));
 }
 

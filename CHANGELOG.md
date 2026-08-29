@@ -41,6 +41,8 @@
 - **修复：OCR 结果面板不可见**：此前只在识别到文字时才渲染「OCR 识别结果」面板，识别为空/失败时完全无反馈（用户看到"没有文本框"）。现结果面板**始终显示**（识别中/成功/未识别到文字/超时/失败各有文案），并在页面下方明确提示失败原因（如离线模型未就绪、本页无文字等）。同时给 OCR worker **创建阶段加超时**（默认 60s），避免模型加载卡住导致永久"识别中"。
 - **修复：OCR 识别不出文字的根因**：tesseract.js 用 `is-url` 判断 `langPath` 是否为 URL——此前传的是相对路径 `/ocr/tessdata`（无 scheme）被判为**非 URL**，浏览器 worker 因而走 `readCache`(IndexedDB) 而非 `fetch`，导致离线语言模型加载失败、`recognize` 返回空/乱码（表现为"识别后无文本框"）。现把 `workerPath/corePath/langPath` 统一转成**绝对 URL**（基于 `location.origin`），离线资源经同源 `fetch`/`importScripts` 正常加载；首次构造输出 `[ocr] local assets` 便于排查。
 
+- **修复：OCR 模型加载失败的真正原因（换用完整 4.0.0 模型）**：经本地校验，`@tesseract.js-data` 的 `4.0.0_best_int`（整数量化、中文仅 ~1.6MB）在 `tesseract.js-core v7` 的 worker 里报 `Failed loading language`——模型加载失败导致识别为空；而**完整 `4.0.0` 模型可正常加载**（Node 实测：语言加载成功、`recognize` 正常执行）。故 `scripts/copy-tesseract-assets.mjs` 改拷 `4.0.0`（中文 ~19MB / 英文 ~10.4MB 的 `.gz`），体积更大但可靠。
+
 - **修复：OCR 识别不出字的后续诊断**：结果面板按状态细化为「识别失败(error)/未识别到文字(empty)/超时(timeout)」三类明确文案，失败时提示查看控制台 `[ocr] local assets` 打印的实际资源路径（应为 http(s) 开头）与刷新页面。
 - **修复：便签控制条操作无效**：顶部工具栏面向当前页的所有操作（摘录/删除/AI 帮读/复制引用/编辑便签/导出）此前点击无效——注册到 `controllersRef` 的控制器在注册 effect 里用**陈旧闭包**捕获了各动作方法（其从 state 闭包读 `selected`/`annotations`），而注册 effect 依赖不含这两者，导致动作读到挂载时的初值（`selected=null` 时删除等直接返回）。现已把 `selected`/`annotations` 加入注册 effect 依赖，选中/批注变化时重新注册出新鲜闭包的控制器，控制条操作恢复生效。
 
