@@ -11257,6 +11257,18 @@ p:has(> .editor-drawing-container) {
   border-radius: 7px;
   font-family: inherit;
 }
+.pdf-outline-ai-input {
+  width: 76px;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  font-family: inherit;
+}
+.pdf-outline-ai-input:focus { outline: none; border-color: var(--accent); }
 .pdf-sidebar-head {
   padding: 12px 14px;
   font-size: 13px;

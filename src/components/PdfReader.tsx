@@ -155,6 +155,7 @@ export function PdfReader() {
   // 「AI 生成目录（本段）」进行态（进度/阶段/取消）。扫描版无目录时才显示入口。
   const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
   const [aiOutlineCount, setAiOutlineCount] = useState<number>(AI_OUTLINE_PAGES); // -1=整本
+  const [aiOutlineCustom, setAiOutlineCustom] = useState(false); // 是否手工输入页数
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
@@ -1042,7 +1043,7 @@ export function PdfReader() {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} onAiCountChange={setAiOutlineCount} />
+                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} aiCustom={aiOutlineCustom} onAiCountChange={setAiOutlineCount} onAiCustomChange={setAiOutlineCustom} />
               )}
               <div className="pdf-reader-stage-wrap">
                 <PdfAnnotTopToolbar
