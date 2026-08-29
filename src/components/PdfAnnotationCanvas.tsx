@@ -102,6 +102,10 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const moveSticky = useRef<{ id: string; box: [number, number, number, number]; originBox: [number, number, number, number]; sx: number; sy: number } | null>(null);
   const [, force] = useState(0);
 
+  // 页面参考像素尺寸（SVG viewBox 坐标空间），顶部声明以便各 effect 复用。
+  const W = Math.max(pageW, 1);
+  const H = Math.max(pageH, 1);
+
   useEffect(() => {
     let alive = true;
     setAnnotations([]);
@@ -119,19 +123,23 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   useEffect(() => {
     if (!focusTarget) return;
     if (focusTarget.pageIndex !== pageIndex) return;
-    const box = focusTarget.ann.box;
-    if (box) {
-      setFlash([box[0], box[1], box[2], box[3]]);
+    // 闪烁框须贴合「实际绘制几何」：便签画的是固定 ~26px 方块（锚点为 box 左上角），
+    // 而非其 0.04×0.06 的逻辑 box；高亮/矩形按 box；墨迹按 points 包围盒。
+    // 统一用 drawBoxPx 计算，避免便签跳转时描边与实际色块错位。
+    const d = drawBoxPx(focusTarget.ann, W, H);
+    if (d) {
+      const [px, py, pw, ph] = d;
+      setFlash([px / W, py / H, (px + pw) / W, (py + ph) / H]);
       const t = window.setTimeout(() => setFlash(null), 1600);
       onFocusConsumed?.();
       return () => window.clearTimeout(t);
     }
-    // 无 box（如 ink）则退化为选中该标注。
+    // 无几何（理论上不会）则退化为选中该标注。
     if (focusTarget.ann.id) {
       setSelected(focusTarget.ann.id);
       onFocusConsumed?.();
     }
-  }, [focusTarget, pageIndex, onFocusConsumed]);
+  }, [focusTarget, pageIndex, onFocusConsumed, W, H]);
 
   const runOcr = async () => {
     if (!pageImageUrl || ocrBusy) return;
@@ -458,9 +466,6 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       toast("已导出批注到新页面", "success");
     }
   };
-
-  const W = Math.max(pageW, 1);
-  const H = Math.max(pageH, 1);
 
   // 方案 B — 把本页句柄暴露给顶部工具栏（作用于当前页）。
   // 用 ref 持有最新方法，注册一个稳定控制器（避免每次渲染都触发父级副作用）。
