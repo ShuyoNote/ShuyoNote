@@ -19,8 +19,13 @@ import { PdfAskBar } from "./PdfAskBar";
 
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
-// Native returns raw RGBA8; we draw it into a <canvas> and emit a PNG Blob so the
+// Native returns raw RGBA8; we draw it into a <canvas> and emit a Blob so the
 // rest of the reader (which renders an <img src>) stays engine-agnostic.
+//
+// 提速：native 路径用 JPEG（quality 0.92）而非 PNG —— PNG 无损编码在主线程很慢
+//（整页 RGBA, 网页文本+图形占比高、性价比低）；JPEG 编码快一个数量级、体积小、
+// `<img>` 解码也更快。页面是白纸背景（PDF 正文/批注 overlay 是 SVG 叠加在 <img> 上），
+// JPEG 无透明度需求，白底即可。
 async function renderPagePng(
   eng: ReturnType<typeof createPdfjsEngine>,
   attachmentId: string | null,
@@ -34,11 +39,22 @@ async function renderPagePng(
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("无法创建 2D 上下文");
-    const img = ctx.createImageData(width, height);
+    // 把 RGBA 叠到白纸上：PDF 常为透明底（alpha），直接 putImageData 会替换像素让透明
+    // 仍透明，JPEG 会把透明当成黑。先把含 alpha 的像素画进临时画布，再 drawImage 到白底画布
+    //（drawImage 做 alpha 混合），透明 → 白。
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+    const tmp = document.createElement("canvas");
+    tmp.width = width;
+    tmp.height = height;
+    const tctx = tmp.getContext("2d");
+    if (!tctx) throw new Error("无法创建 2D 上下文");
+    const img = tctx.createImageData(width, height);
     img.data.set(bytes);
-    ctx.putImageData(img, 0, 0);
+    tctx.putImageData(img, 0, 0);
+    ctx.drawImage(tmp, 0, 0);
     return new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("导出页面失败"))), "image/png"),
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("导出页面失败"))), "image/jpeg", 0.92),
     );
   }
   return eng.renderPageToBlob(pageIndex, scale);
@@ -361,19 +377,26 @@ export function PdfReader() {
 
   // 跳转/滚动时对某页立即光栅化（若当前缩放下未缓存），让页面图像提前就绪，
   // 不等 viewRange 更新后再开始——显著降低跳去远处页时的感知延迟（尤其 native mupdf 每页 >100ms）。
+  // 跳转/滚动时对某页立即光栅化，让页面图像提前就绪。采用「低清优先」：
+  // 先用 0.4× 的低分辨率快速出一张 JPEG 占位（光栅化 + JPEG 都很快），
+  // 让跳转后瞬间看到页面内容；随后 viewRange 正式加载会以当前 scale 的高清替换（JPEG 同源，几乎无感）。
+  const PREVIEW_SCALE = 0.4;
   const launchPageImage = useCallback(
     async (pageIndex: number) => {
       const eng = engRef.current;
       if (!eng || !ready) return;
-      const key = `${pageIndex}@${scale}`;
-      if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
-      inflightRef.current.add(key);
+      // 已有高清/预览就不重复拉低清。
+      const fullKey = `${pageIndex}@${scale}`;
+      if (pageCacheRef.current.has(fullKey)) return;
+      const prevKey = `${pageIndex}@preview`;
+      if (pageCacheRef.current.has(prevKey) || inflightRef.current.has(prevKey)) return;
+      const lowScale = Math.max(scale * PREVIEW_SCALE, 0.4);
+      inflightRef.current.add(prevKey);
       try {
-        const blob = await renderPagePng(eng, attachmentId, pageIndex, scale);
+        const blob = await renderPagePng(eng, attachmentId, pageIndex, lowScale);
         const url = URL.createObjectURL(blob);
         const cache = pageCacheRef.current;
         if (cache.size >= 12) {
-          // 淘汰最旧、跳过仍挂载的页。
           for (const k of [...cache.keys()]) {
             const idx = Number(k.split("@")[0]);
             if (mountedPagesRef.current.has(idx)) continue;
@@ -383,12 +406,19 @@ export function PdfReader() {
             if (cache.size < 12) break;
           }
         }
-        cache.set(key, url);
-        setPageData((d) => ({ ...d, [pageIndex]: { ...(d[pageIndex] ?? { meta: null, textItems: null, hasTextLayer: false }), url } }));
+        cache.set(prevKey, url);
+        // 仅当还没有高清图时才用低清占位，避免覆盖已就绪的高清。
+        setPageData((d) => {
+          const cur = d[pageIndex];
+          if (!cur?.url) {
+            return { ...d, [pageIndex]: { ...(cur ?? { meta: null, textItems: null, hasTextLayer: false }), url } };
+          }
+          return d;
+        });
       } catch {
         // 忽略：图像加载失败不影响跳转。
       } finally {
-        inflightRef.current.delete(key);
+        inflightRef.current.delete(prevKey);
       }
     },
     [ready, scale, attachmentId],
