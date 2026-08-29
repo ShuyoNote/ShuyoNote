@@ -10945,9 +10945,7 @@ p:has(> .editor-drawing-container) {
    每页是一个自包含的 PdfAnnotationCanvas，批注随页块走。 */
 .pdf-continuous {
   display: block;
-  /* 放大超过视口宽时，让整段内容宽撑开以便横向滚动；未放大时保持满宽。 */
-  min-width: 100%;
-  width: max-content;
+  width: 100%;
 }
 .pdf-continuous-page {
   margin: 0 auto;

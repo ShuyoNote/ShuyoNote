@@ -597,7 +597,7 @@ export function PdfReader() {
         <div
           className="pdf-continuous-page"
           key={i}
-          style={{ position: "absolute", top: layout.tops[i], left: 0, width: contentWidth, minHeight: layout.heights[i] }}
+          style={{ position: "absolute", top: layout.tops[i], left: "50%", transform: "translateX(-50%)", width: contentWidth, minHeight: layout.heights[i] }}
         >
           <PdfContinuousPage
             pageIndex={i}
