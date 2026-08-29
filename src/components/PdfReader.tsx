@@ -630,10 +630,10 @@ export function PdfReader() {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
-        // ↑/↓ 像滚轮一样平滑滚动（细腻步进，约 30% 视口高）；←/→ 平滑到上一/下一页顶（非瞬跳）。
+        // ↑/↓ 完全复刻滚轮：固定小步长（~100px/格，与视口大小无关），平滑逐格累积；←/→ 平滑到上一/下一页顶。
         if (e.key === "ArrowDown") {
           const st = stageRef.current;
-          if (st) st.scrollBy({ top: Math.max(100, st.clientHeight * 0.3), behavior: "smooth" });
+          if (st) st.scrollBy({ top: 100, behavior: "smooth" });
         } else {
           smoothScrollTo(pageAtViewport() + 1);
         }
@@ -641,7 +641,7 @@ export function PdfReader() {
         e.preventDefault();
         if (e.key === "ArrowUp") {
           const st = stageRef.current;
-          if (st) st.scrollBy({ top: -Math.max(100, st.clientHeight * 0.3), behavior: "smooth" });
+          if (st) st.scrollBy({ top: -100, behavior: "smooth" });
         } else {
           smoothScrollTo(pageAtViewport() - 1);
         }
