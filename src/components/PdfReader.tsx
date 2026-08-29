@@ -359,16 +359,55 @@ export function PdfReader() {
     });
   }, [updateViewport]);
 
-  // 滚到某页：把该页顶部对齐到滚动容器顶部。
+  // 跳转/滚动时对某页立即光栅化（若当前缩放下未缓存），让页面图像提前就绪，
+  // 不等 viewRange 更新后再开始——显著降低跳去远处页时的感知延迟（尤其 native mupdf 每页 >100ms）。
+  const launchPageImage = useCallback(
+    async (pageIndex: number) => {
+      const eng = engRef.current;
+      if (!eng || !ready) return;
+      const key = `${pageIndex}@${scale}`;
+      if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
+      inflightRef.current.add(key);
+      try {
+        const blob = await renderPagePng(eng, attachmentId, pageIndex, scale);
+        const url = URL.createObjectURL(blob);
+        const cache = pageCacheRef.current;
+        if (cache.size >= 12) {
+          // 淘汰最旧、跳过仍挂载的页。
+          for (const k of [...cache.keys()]) {
+            const idx = Number(k.split("@")[0]);
+            if (mountedPagesRef.current.has(idx)) continue;
+            const old = cache.get(k);
+            if (old) URL.revokeObjectURL(old);
+            cache.delete(k);
+            if (cache.size < 12) break;
+          }
+        }
+        cache.set(key, url);
+        setPageData((d) => ({ ...d, [pageIndex]: { ...(d[pageIndex] ?? { meta: null, textItems: null, hasTextLayer: false }), url } }));
+      } catch {
+        // 忽略：图像加载失败不影响跳转。
+      } finally {
+        inflightRef.current.delete(key);
+      }
+    },
+    [ready, scale, attachmentId],
+  );
+
+  // 滚动到某页：把该页顶部对齐到滚动容器顶部。
   const focusPage = useCallback(
     (pageIndex: number) => {
       const st = stageRef.current;
       if (!st) return;
       const clamped = Math.min(Math.max(pageIndex, 0), Math.max(pageCount - 1, 0));
+      // 预取目标页及相邻页的图像，与滚动并行。
+      void launchPageImage(clamped);
+      if (clamped - 1 >= 0) void launchPageImage(clamped - 1);
+      if (clamped + 1 < pageCount) void launchPageImage(clamped + 1);
       st.scrollTop = Math.max(0, layout.tops[clamped] ?? 0);
       updateViewport();
     },
-    [layout, updateViewport, pageCount],
+    [layout, updateViewport, pageCount, launchPageImage],
   );
 
   const gotoPage = useCallback(
