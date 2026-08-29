@@ -1612,6 +1612,16 @@ trailer
   // 空文档安全。
   const empty = layoutMod.computeViewport(0, 800, layoutMod.buildLayout([], 600), 1);
   assert("computeViewport empty doc safe", empty.start === -1 && empty.end === -1, JSON.stringify(empty));
+
+  // 缩放语义：页面显示宽随 scale 真实放大（之前卡在内容宽不动，导致"调不动+抖动"）。
+  const refW = 612;
+  assert("zoomContentWidth scale=1 → refW", layoutMod.zoomContentWidth(refW, 1) === refW, `w=${layoutMod.zoomContentWidth(refW, 1)}`);
+  assert("zoomContentWidth scales up", layoutMod.zoomContentWidth(refW, 2) === refW * 2, `w=${layoutMod.zoomContentWidth(refW, 2)}`);
+  assert("zoomContentWidth floors at 40", layoutMod.zoomContentWidth(refW, 0.01) === 40, `w=${layoutMod.zoomContentWidth(refW, 0.01)}`);
+  // 适配页宽：avail ≈ 800 ⇒ scale ≈ 800/612（夹在 [0.5,3]），再乘回 refW ≈ avail。
+  const fit = layoutMod.fitScaleForWidth(refW, 800);
+  assert("fitScaleForWidth fits viewport", Math.abs(layoutMod.zoomContentWidth(refW, fit) - 800) < 2, `fit=${fit} w=${layoutMod.zoomContentWidth(refW, fit)}`);
+  assert("fitScaleForWidth clamps to max", layoutMod.fitScaleForWidth(refW, 99999) === layoutMod.MAX_SCALE, `scale=${layoutMod.fitScaleForWidth(refW, 99999)}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

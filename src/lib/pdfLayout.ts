@@ -6,6 +6,21 @@ export const CHROME = 96;
 /** 页间间距 px。 */
 export const GAP = 18;
 
+/** 最小/最大缩放倍率（用户可放大到 3x）。 */
+export const MIN_SCALE = 0.5;
+export const MAX_SCALE = 3;
+
+/** 由「可用视口内容宽 + 基准页宽」算出适配页宽的缩放倍率。 */
+export function fitScaleForWidth(refW: number, avail: number): number {
+  if (!refW || refW <= 0 || avail <= 0) return 1;
+  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(avail / refW).toFixed(2)));
+}
+
+/** 页块显示宽（px）：随缩放真实放大。缩放 1 = 基准页原始像素宽。 */
+export function zoomContentWidth(refW: number, scale: number): number {
+  return Math.max(refW * scale, 40);
+}
+
 /** 页面图像显示高（px）：元数据缺失时按典型 A4 比例（√2）估算。 */
 export function pageImageHeight(
   meta: { w: number; h: number } | undefined,

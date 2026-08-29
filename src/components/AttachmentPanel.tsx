@@ -3,6 +3,7 @@ import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { useAttachmentsStore } from "../store/attachments";
+import { usePdfReader } from "../store/pdfReader";
 import type { AttachmentMeta } from "../types";
 
 interface ImportProgressEvent {
@@ -102,10 +103,15 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
     }
   };
 
-  const openFile = async (path: string) => {
-    if (!path) return;
+  const openFile = async (a: AttachmentMeta) => {
+    // PDF 附件：不是用默认程序打开，而是直接进内置阅读器做批注/阅读。
+    if (a.mime === "application/pdf") {
+      void usePdfReader.getState().openPdf(a.id, a.name);
+      return;
+    }
+    if (!a.path) return;
     try {
-      await platform.opener.openPath(path);
+      await platform.opener.openPath(a.path);
     } catch (e) {
       toast(`打开失败：${e}`, "error");
     }
@@ -161,13 +167,13 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
             <div key={a.id} className="attachment-item">
               <span className="attachment-icon">{iconFor(a.mime)}</span>
               <div className="attachment-meta">
-                <span className="attachment-name" title={a.name}>
+                <span className="attachment-name" title={a.name} onClick={() => openFile(a)}>
                   {a.name}
                 </span>
                 <span className="attachment-size">{formatSize(a.size)}</span>
               </div>
               <div className="attachment-actions">
-                <button title="打开" onClick={() => openFile(a.path)}>
+                <button title={a.mime === "application/pdf" ? "在阅读器中打开批注" : "打开"} onClick={() => openFile(a)}>
                   ↗
                 </button>
                 <button title="在文件夹中显示" onClick={() => revealFile(a.path)}>

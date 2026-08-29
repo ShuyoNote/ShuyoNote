@@ -4587,6 +4587,11 @@ select.prop-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+.attachment-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .attachment-size {
@@ -10439,6 +10444,62 @@ p:has(> .editor-drawing-container) {
   min-width: 72px;
   text-align: center;
 }
+/* 缩放下拉：触发器显示当前 %，点击弹出预设菜单。 */
+.pdf-zoom-wrap {
+  position: relative;
+}
+.pdf-zoom-btn {
+  width: auto;
+  padding: 0 6px;
+  gap: 4px;
+}
+.pdf-zoom-btn .pdf-reader-pct {
+  min-width: auto;
+  font-size: 12px;
+  color: var(--text);
+}
+.pdf-zoom-caret {
+  color: var(--text-dim);
+}
+.pdf-zoom-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 128px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+}
+.pdf-zoom-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pdf-zoom-item:hover {
+  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+}
+.pdf-zoom-item.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.pdf-zoom-sep {
+  height: 1px;
+  margin: 3px 2px;
+  background: var(--border);
+}
 .pdf-reader-btn {
   display: inline-flex;
   align-items: center;
@@ -10828,6 +10889,9 @@ p:has(> .editor-drawing-container) {
    每页是一个自包含的 PdfAnnotationCanvas，批注随页块走。 */
 .pdf-continuous {
   display: block;
+  /* 放大超过视口宽时，让整段内容宽撑开以便横向滚动；未放大时保持满宽。 */
+  min-width: 100%;
+  width: max-content;
 }
 .pdf-continuous-page {
   margin: 0 auto;
@@ -10841,6 +10905,11 @@ p:has(> .editor-drawing-container) {
 .pdf-continuous-page .pdf-annot-toolbar {
   flex-wrap: nowrap;
   overflow-x: auto;
+}
+/* 连续模式：页图像铺满页块宽（随缩放真实放大），而不是被 max-width:100% 卡在内容宽。 */
+.pdf-continuous-page .pdf-annot-img {
+  width: 100%;
+  max-width: none;
 }
 .pdf-continuous-spacer {
   /* 占位：视口外未挂载的页在滚动轴上占位，保持整段可滚。 */

@@ -9,11 +9,14 @@ import type { PdfAnnotation } from "../lib/pdfAnnotation";
 import type { OutlineItem } from "../lib/pdfRender";
 import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
-import { buildLayout, computeViewport } from "../lib/pdfLayout";
+import { buildLayout, computeViewport, fitScaleForWidth, zoomContentWidth, MAX_SCALE, MIN_SCALE } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
 import { PdfAskBar } from "./PdfAskBar";
+
+// 缩放预设（%）：下拉菜单可快速选择；「适配页宽」单独作为一项。
+const ZOOM_PRESETS = [50, 75, 100, 125, 150, 175, 200, 250, 300];
 
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
@@ -100,6 +103,7 @@ export function PdfReader() {
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
   const [focusTarget, setFocusTarget] = useState<{ pageIndex: number; ann: PdfAnnotation } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
   const [viewRange, setViewRange] = useState<{ start: number; end: number }>({ start: -1, end: -1 });
@@ -113,11 +117,22 @@ export function PdfReader() {
   const mountedPagesRef = useRef<Set<number>>(new Set());
   const inflightRef = useRef<Set<string>>(new Set());
   const scrollRafRef = useRef<number | null>(null);
+  const zoomWrapRef = useRef<HTMLDivElement | null>(null);
+  const resyncedRef = useRef(false);
+  const autoFitRef = useRef(false);
 
   const toggleMax = () => setMaximized((m) => !m);
 
-  // 内容宽（舞台内容区宽度 - 内边距）。用 ResizeObserver 监听，随最大化/侧栏变化。
-  const contentWidth = Math.max(stageWidth - 24, 200);
+  // 参考基准页宽（用首页 meta，作为所有页共享的显示宽度基准）。取不到时回退 612。
+  const refW = useMemo(() => {
+    const w0 = pageData[0]?.meta?.w;
+    if (w0 && w0 > 0) return w0;
+    for (const d of Object.values(pageData)) if (d.meta?.w) return d.meta.w;
+    return 612;
+  }, [pageData]);
+
+  // 内容宽（页块显示宽，px）= 基准页宽 × 缩放。真正随 scale 变化 ⇒ 放大即真实放大。
+  const contentWidth = zoomContentWidth(refW, scale);
 
   // 全部页的前缀和布局（占位高 = chrome 带 + 页面图像高）。用 memo 避免滚动时 O(n) 回算。
   const metas = useMemo(
@@ -126,14 +141,12 @@ export function PdfReader() {
   );
   const layout = useMemo(() => buildLayout(metas, contentWidth), [metas, contentWidth]);
 
-  // 适配页宽：把缩放设成让页面图像在内容宽上报 1:1（= 内容宽 / 首页宽）。
+  // 适配页宽：让基准页在内容宽上报 1:1（= 视口内容宽 / 基准页宽）。
   const fitWidth = () => {
-    const meta0 = pageData[0]?.meta;
-    if (!meta0 || stageWidth <= 0) return;
-    const avail = stageWidth - 24;
-    if (avail > 0 && meta0.w > 0) {
-      const s = Math.max(0.5, Math.min(3, +(avail / meta0.w).toFixed(2)));
-      setScale(s);
+    if (!refW || stageWidth <= 0) return;
+    const avail = Math.max(stageWidth - 24, 40);
+    if (avail > 0 && refW > 0) {
+      setScale(fitScaleForWidth(refW, avail));
     }
   };
 
@@ -148,9 +161,9 @@ export function PdfReader() {
     return () => ro.disconnect();
   }, [ready]);
 
-  // 首次进入 / 舞台宽就绪且首页 meta 到位后：自动适配页宽（填充内容宽）。
+  // 首次进入 / 舞台宽就绪且基准页宽到位后：自动适配页宽（填充内容宽）。
   // 连续模式默认按 fitWidth 铺满，避免缩放保持 1 时页面只有原始像素大。
-  const autoFitRef = useRef(false);
+  // 等 pageData[0].meta 拿到（真实基准页宽）才首度适配，避免用 612 回退值没对正。
   useEffect(() => {
     if (!ready || stageWidth <= 0) return;
     if (!pageData[0]?.meta) return;
@@ -158,7 +171,7 @@ export function PdfReader() {
     autoFitRef.current = true;
     fitWidth();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, stageWidth, pageData]);
+  }, [ready, stageWidth, pageData, refW]);
 
   // 目录/书签跳页。
   const onOutlineJump = (pageIndex: number) => {
@@ -215,6 +228,7 @@ export function PdfReader() {
       setOutline([]);
       setCurrentPage(0);
       setViewRange({ start: -1, end: -1 });
+      setZoomOpen(false);
       setStageWidth(0);
       mountedPagesRef.current.clear();
       resyncedRef.current = false;
@@ -330,7 +344,6 @@ export function PdfReader() {
 
   // 真实页高就绪后，滚动轴上的页位置会重算一次；此时把当前页重新对齐一次（仅一次），
   // 避免首屏按占位比例定位、meta 到达后页面微移。用 ref 标记避免与用户滚动打架。
-  const resyncedRef = useRef(false);
   useEffect(() => {
     if (!ready || stageWidth <= 0 || pageCount <= 0) return;
     if (resyncedRef.current) return;
@@ -340,89 +353,103 @@ export function PdfReader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, stageWidth, pageData]);
 
-  // 加载挂载范围内每页的数据（meta + 图像 + 文本层），只对缺失页发起请求。
+  // 加载挂载范围内每页的数据（meta + 图像 + 文本层）。
+  // - meta / 文本层：只在缺失时拉取（一次性）。
+  // - 图像：以 `${i}@${scale}` 为缓存键，缩放变化后对每个可见页重新光栅化，
+  //   否则页面图像停在旧分辨率、放大只会变糊。只对「当前缩放下的缓存 miss」发请求。
   useEffect(() => {
     if (!ready || viewRange.start < 0) return;
     const eng = engRef.current;
     if (!eng) return;
     let alive = true;
-    const pending: number[] = [];
-    for (let i = viewRange.start; i <= viewRange.end; i++) {
-      if (!pageData[i]?.meta) {
-        pending.push(i);
-        if (!pageData[i]) {
-          setPageData((d) => ({ ...d, [i]: { url: null, textItems: null, hasTextLayer: false, meta: null } }));
-        }
+    const pages: number[] = [];
+    for (let i = viewRange.start; i <= viewRange.end; i++) pages.push(i);
+
+    // 每个可见页：确保有占位数据 + meta（缺失则拉一次）。
+    const needMeta = pages.filter((i) => !pageData[i]?.meta);
+    for (const i of needMeta) {
+      if (!pageData[i]) {
+        setPageData((d) => ({ ...d, [i]: { url: null, textItems: null, hasTextLayer: false, meta: null } }));
       }
     }
-    if (!pending.length) return;
 
     (async () => {
-      for (const i of pending) {
+      // 1) 并行拉取缺失 meta（尺寸，秒回）。
+      if (needMeta.length) {
+        const metas = await Promise.all(
+          needMeta.map((i) =>
+            eng.getPageMeta(i).then((m) => ({ i, w: m.width, h: m.height })).catch(() => ({ i, w: 600, h: 848 })),
+          ),
+        );
         if (!alive) return;
-        try {
-          const m = await eng.getPageMeta(i);
-          if (!alive) return;
-          setPageData((d) => ({
-            ...d,
-            [i]: { ...(d[i] ?? { url: null, textItems: null, hasTextLayer: false }), meta: { w: m.width, h: m.height } },
-          }));
-        } catch {
-          if (!alive) return;
-          setPageData((d) => ({
-            ...d,
-            [i]: { ...(d[i] ?? { url: null, textItems: null, hasTextLayer: false }), meta: { w: 600, h: 848 } },
-          }));
-        }
-
-        const key = `${i}@${scale}`;
-        const cache = pageCacheRef.current;
-        let url = cache.get(key) ?? null;
-        if (!url && !inflightRef.current.has(key)) {
-          inflightRef.current.add(key);
-          try {
-            const blob = await renderPagePng(eng, attachmentId, i, scale);
-            if (!alive) return;
-            url = URL.createObjectURL(blob);
-            if (cache.size >= 12) {
-              const keys = [...cache.keys()];
-              for (const k of keys) {
-                const idx = Number(k.split("@")[0]);
-                if (mountedPagesRef.current.has(idx)) continue;
-                const old = cache.get(k);
-                if (old) URL.revokeObjectURL(old);
-                cache.delete(k);
-                if (cache.size < 12) break;
-              }
-            }
-            cache.set(key, url);
-          } catch {
-            if (alive) url = null;
-          } finally {
-            inflightRef.current.delete(key);
+        setPageData((d) => {
+          const next = { ...d };
+          for (const { i, w, h } of metas) {
+            next[i] = { ...(next[i] ?? { url: null, textItems: null, hasTextLayer: false }), meta: { w, h } };
           }
-        }
-        if (!alive) return;
-        setPageData((d) => ({
-          ...d,
-          [i]: { ...(d[i] ?? { meta: null, textItems: null, hasTextLayer: false }), url },
-        }));
+          return next;
+        });
+      }
 
-        try {
-          const items = await eng.getPageTextItems(i);
-          if (!alive) return;
-          setPageData((d) => ({
-            ...d,
-            [i]: {
-              ...(d[i] ?? { meta: null, url: null }),
-              textItems: items,
-              hasTextLayer: items.length > 0,
-            },
-          }));
-        } catch {
-          if (!alive) return;
-          setPageData((d) => ({ ...d, [i]: { ...(d[i] ?? { meta: null, url: null }), textItems: null } }));
-        }
+      // 2) 并行拉取每个可见页在当前缩放下的图像（缓存 miss 才拉）。
+      const needImg = pages.filter((i) => !pageCacheRef.current.has(`${i}@${scale}`));
+      if (needImg.length) {
+        await Promise.all(
+          needImg.map(async (i) => {
+            const key = `${i}@${scale}`;
+            if (inflightRef.current.has(key)) return;
+            inflightRef.current.add(key);
+            let url: string | null = null;
+            try {
+              const blob = await renderPagePng(eng, attachmentId, i, scale);
+              if (!alive) return;
+              url = URL.createObjectURL(blob);
+              const cache = pageCacheRef.current;
+              if (cache.size >= 12) {
+                const keys = [...cache.keys()];
+                for (const k of keys) {
+                  const idx = Number(k.split("@")[0]);
+                  if (mountedPagesRef.current.has(idx)) continue;
+                  const old = cache.get(k);
+                  if (old) URL.revokeObjectURL(old);
+                  cache.delete(k);
+                  if (cache.size < 12) break;
+                }
+              }
+              cache.set(key, url);
+            } catch {
+              if (alive) url = null;
+            } finally {
+              inflightRef.current.delete(key);
+            }
+            if (alive) {
+              setPageData((d) => ({
+                ...d,
+                [i]: { ...(d[i] ?? { meta: null, textItems: null, hasTextLayer: false }), url },
+              }));
+            }
+          }),
+        );
+      }
+
+      // 3) 并行拉取缺失文本层（划词用）。hasTextLayer 由 items 长度推断。
+      const needText = pages.filter((i) => pageData[i]?.textItems === undefined || pageData[i]?.textItems === null);
+      if (needText.length) {
+        await Promise.all(
+          needText.map(async (i) => {
+            try {
+              const items = await eng.getPageTextItems(i);
+              if (!alive) return;
+              setPageData((d) => ({
+                ...d,
+                [i]: { ...(d[i] ?? { meta: null, url: null }), textItems: items, hasTextLayer: items.length > 0 },
+              }));
+            } catch {
+              if (!alive) return;
+              setPageData((d) => ({ ...d, [i]: { ...(d[i] ?? { meta: null, url: null }), textItems: null } }));
+            }
+          }),
+        );
       }
     })();
 
@@ -441,7 +468,15 @@ export function PdfReader() {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { close(); return; }
+      if (e.key === "Escape") {
+        // 优先关闭缩放下拉；没有下拉时再关闭整篇阅读器。
+        setZoomOpen((z) => {
+          if (z) return false;
+          close();
+          return z;
+        });
+        return;
+      }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
@@ -452,10 +487,10 @@ export function PdfReader() {
         gotoPage(currentPage - 1);
       } else if (e.key === "+" || e.key === "=") {
         e.preventDefault();
-        setScale((s) => Math.min(3, +(s + 0.2).toFixed(2)));
+        setScale((s) => Math.min(MAX_SCALE, +(s + 0.1).toFixed(2)));
       } else if (e.key === "-" || e.key === "_") {
         e.preventDefault();
-        setScale((s) => Math.max(0.5, +(s - 0.2).toFixed(2)));
+        setScale((s) => Math.max(MIN_SCALE, +(s - 0.1).toFixed(2)));
       } else if (e.key.toLowerCase() === "f") {
         e.preventDefault();
         fitWidth();
@@ -465,6 +500,18 @@ export function PdfReader() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pageCount, close, currentPage]);
+
+  // 缩放下拉：点击下拉框外部时关闭。
+  useEffect(() => {
+    if (!zoomOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = zoomWrapRef.current;
+      if (!el) return;
+      if (!el.contains(e.target as Node)) setZoomOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [zoomOpen]);
 
   if (!open) return null;
 
@@ -515,9 +562,37 @@ export function PdfReader() {
               </button>
             </div>
             <div className="pdf-reader-zoom">
-              <button className="pdf-reader-btn" onClick={() => setScale((s) => Math.max(0.5, +(s - 0.2).toFixed(2)))} title="缩小">−</button>
-              <span className="pdf-reader-pct">{Math.round(scale * 100)}%</span>
-              <button className="pdf-reader-btn" onClick={() => setScale((s) => Math.min(3, +(s + 0.2).toFixed(2)))} title="放大">＋</button>
+              <div className="pdf-zoom-wrap" ref={zoomWrapRef}>
+                <button
+                  className="pdf-reader-btn pdf-zoom-btn"
+                  onClick={() => setZoomOpen((o) => !o)}
+                  title="缩放"
+                  aria-haspopup="listbox"
+                  aria-expanded={zoomOpen}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg>
+                  <span className="pdf-reader-pct">{Math.round(scale * 100)}%</span>
+                  <svg className="pdf-zoom-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                {zoomOpen && (
+                  <div className="pdf-zoom-menu" role="listbox">
+                    <button className="pdf-zoom-item" role="option" onClick={() => { fitWidth(); setZoomOpen(false); }} title="让页面宽度刚好填满阅读器">
+                      <span>适配页宽</span>
+                    </button>
+                    <div className="pdf-zoom-sep" />
+                    {ZOOM_PRESETS.map((p) => (
+                      <button
+                        key={p}
+                        className={`pdf-zoom-item${Math.round(scale * 100) === p ? " active" : ""}`}
+                        role="option"
+                        onClick={() => { setScale(p / 100); setZoomOpen(false); }}
+                      >
+                        <span>{p}%</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <button className="pdf-reader-btn" onClick={fitWidth} title="适配页宽">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18M8 8l-4 4 4 4M16 8l4 4-4 4"/></svg>

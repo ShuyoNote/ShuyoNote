@@ -12,6 +12,7 @@ import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
+import { usePdfReader } from "../store/pdfReader";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import * as reorder from "../lib/treeReorder";
@@ -247,9 +248,14 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           className="tree-row tree-file-row"
           style={{ paddingLeft: depth * 16 + 8 }}
           title={f.name}
-          onClick={() =>
-            platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"))
-          }
+          onClick={() => {
+            // PDF 文件节点：直接进内置阅读器做批注/阅读，而不是用默认程序打开。
+            if (f.mime === "application/pdf") {
+              void usePdfReader.getState().openPdf(f.id, f.name);
+              return;
+            }
+            platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
+          }}
         >
           <span className="tree-toggle" style={{ visibility: "hidden" }} />
           <span className="tree-icon">{treeFileIcon(f.mime)}</span>
