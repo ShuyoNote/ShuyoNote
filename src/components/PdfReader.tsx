@@ -613,7 +613,7 @@ export function PdfReader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scale]);
 
-  // 键盘导航：←/→/↑/↓ 跳上一页/下一页，+/- 缩放，Esc 关闭，F 适配页宽。
+  // 键盘导航：←/→/↑/↓ 滚动，PageUp/PageDown 上下翻页，+/- 缩放，Esc 关闭，F 适配页宽。
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -628,6 +628,16 @@ export function PdfReader() {
       }
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      // PageUp/PageDown：上下翻页（平滑滚动到上一页/下一页顶），阻止浏览器默认整屏滚动。
+      if (e.key === "PageDown") {
+        e.preventDefault();
+        smoothScrollTo(pageAtViewport() + 1);
+        return;
+      } else if (e.key === "PageUp") {
+        e.preventDefault();
+        smoothScrollTo(pageAtViewport() - 1);
+        return;
+      }
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
         // ↑/↓ 完全复刻滚轮：固定小步长（~100px/格，与视口大小无关），平滑逐格累积；←/→ 平滑到上一/下一页顶。
