@@ -10444,7 +10444,7 @@ p:has(> .editor-drawing-container) {
   min-width: 72px;
   text-align: center;
 }
-/* 缩放下拉：触发器显示当前 %，点击弹出预设菜单。 */
+/* 缩放下拉：触发器显示当前模式/百分比，点击弹出参考阅读器式菜单（fit 模式 + 百分比阶梯 + 底部设置）。 */
 .pdf-zoom-wrap {
   position: relative;
 }
@@ -10466,8 +10466,8 @@ p:has(> .editor-drawing-container) {
   top: calc(100% + 4px);
   right: 0;
   z-index: 40;
-  min-width: 128px;
-  max-height: 280px;
+  min-width: 150px;
+  max-height: 420px;
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -10487,6 +10487,7 @@ p:has(> .editor-drawing-container) {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
+  gap: 4px;
 }
 .pdf-zoom-item:hover {
   background: var(--hover-strong, rgba(0, 0, 0, 0.05));
@@ -10495,10 +10496,42 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
   background: var(--accent-soft);
 }
+.pdf-zoom-item-check {
+  display: inline-flex;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+.pdf-zoom-item-label {
+  flex: 1;
+}
+.pdf-zoom-item.active .pdf-zoom-item-check {
+  color: var(--accent);
+}
 .pdf-zoom-sep {
   height: 1px;
   margin: 3px 2px;
   background: var(--border);
+}
+.pdf-zoom-footer {
+  color: var(--text-dim);
+}
+.pdf-zoom-custom {
+  display: block;
+  width: calc(100% - 12px);
+  margin: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.pdf-zoom-custom:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .pdf-reader-btn {
   display: inline-flex;

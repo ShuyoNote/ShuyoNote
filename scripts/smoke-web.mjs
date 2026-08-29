@@ -1622,6 +1622,29 @@ trailer
   const fit = layoutMod.fitScaleForWidth(refW, 800);
   assert("fitScaleForWidth fits viewport", Math.abs(layoutMod.zoomContentWidth(refW, fit) - 800) < 2, `fit=${fit} w=${layoutMod.zoomContentWidth(refW, fit)}`);
   assert("fitScaleForWidth clamps to max", layoutMod.fitScaleForWidth(refW, 99999) === layoutMod.MAX_SCALE, `scale=${layoutMod.fitScaleForWidth(refW, 99999)}`);
+
+  // 模式化缩放（参考阅读器下拉）：fit-width / fit-page / actual / pct 的解析。
+  const refH = 792;
+  const sFW = layoutMod.resolveZoomScale({ mode: "fit-width" }, refW, refH, 800, 1000);
+  assert("resolve fit-width ≈ avail/refW", Math.abs(sFW - 800 / refW) < 0.01, `s=${sFW}`);
+  const sFP = layoutMod.resolveZoomScale({ mode: "fit-page" }, refW, refH, 800, 1000);
+  assert("resolve fit-page = min(width,height)", Math.abs(sFP - 1000 / refH) < 0.01, `s=${sFP}`);
+  const sAct = layoutMod.resolveZoomScale({ mode: "actual" }, refW, refH, 800, 1000);
+  assert("resolve actual = 1", sAct === 1, `s=${sAct}`);
+  const sPct = layoutMod.resolveZoomScale({ mode: "pct", pct: 150 }, refW, refH, 800, 1000);
+  assert("resolve pct = pct/100", Math.abs(sPct - 1.5) < 0.001, `s=${sPct}`);
+  assert("resolve clamps to max", layoutMod.resolveZoomScale({ mode: "pct", pct: 99999 }, refW, refH, 800, 1000) === layoutMod.MAX_SCALE, `s=${layoutMod.resolveZoomScale({ mode: "pct", pct: 99999 }, refW, refH, 800, 1000)}`);
+  // 阶梯从大到小、含 100% 且覆盖常见档位。
+  assert("ZOOM_LADDER top is 6400", layoutMod.ZOOM_LADDER[0] === 6400 && layoutMod.ZOOM_LADDER.includes(100), `top=${layoutMod.ZOOM_LADDER[0]}`);
+  // ± 步进：从 100% 放大到上一档（125%），缩小到下一档（50%）。
+  const up = layoutMod.stepZoom(1, 1);
+  const down = layoutMod.stepZoom(1, -1);
+  assert("stepZoom + from 100% → 125%", up.mode === "pct" && up.pct === 125, JSON.stringify(up));
+  assert("stepZoom - from 100% → 50%", down.mode === "pct" && down.pct === 50, JSON.stringify(down));
+  // 标签：具名模式显示中文名，百分比显示数字。
+  assert("zoomLabel actual", layoutMod.zoomLabel({ mode: "actual" }) === "实际大小");
+  assert("zoomLabel fit-width", layoutMod.zoomLabel({ mode: "fit-width" }) === "适合宽度");
+  assert("zoomLabel pct", layoutMod.zoomLabel({ mode: "pct", pct: 125 }) === "125%");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

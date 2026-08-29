@@ -9,14 +9,11 @@ import type { PdfAnnotation } from "../lib/pdfAnnotation";
 import type { OutlineItem } from "../lib/pdfRender";
 import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
-import { buildLayout, computeViewport, fitScaleForWidth, zoomContentWidth, MAX_SCALE, MIN_SCALE } from "../lib/pdfLayout";
+import { buildLayout, computeViewport, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
 import { PdfAskBar } from "./PdfAskBar";
-
-// 缩放预设（%）：下拉菜单可快速选择；「适配页宽」单独作为一项。
-const ZOOM_PRESETS = [50, 75, 100, 125, 150, 175, 200, 250, 300];
 
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
@@ -95,7 +92,7 @@ function PdfContinuousPage({
 export function PdfReader() {
   const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
   const [pageCount, setPageCount] = useState(0);
-  const [scale, setScale] = useState(1);
+  const [zoom, setZoom] = useState<ZoomMode>({ mode: "fit-width" });
   const [maximized, setMaximized] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(true);
@@ -109,6 +106,7 @@ export function PdfReader() {
   const [viewRange, setViewRange] = useState<{ start: number; end: number }>({ start: -1, end: -1 });
   const [pageData, setPageData] = useState<Record<number, PageBlockData>>({});
   const [stageWidth, setStageWidth] = useState(0);
+  const [stageHeight, setStageHeight] = useState(0);
 
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
@@ -118,18 +116,26 @@ export function PdfReader() {
   const inflightRef = useRef<Set<string>>(new Set());
   const scrollRafRef = useRef<number | null>(null);
   const zoomWrapRef = useRef<HTMLDivElement | null>(null);
+  const zoomCustomRef = useRef<HTMLInputElement | null>(null);
   const resyncedRef = useRef(false);
   const autoFitRef = useRef(false);
 
   const toggleMax = () => setMaximized((m) => !m);
 
-  // 参考基准页宽（用首页 meta，作为所有页共享的显示宽度基准）。取不到时回退 612。
-  const refW = useMemo(() => {
-    const w0 = pageData[0]?.meta?.w;
-    if (w0 && w0 > 0) return w0;
-    for (const d of Object.values(pageData)) if (d.meta?.w) return d.meta.w;
-    return 612;
+  // 参考基准页宽/高（用首页 meta，作为所有页共享的显示尺寸基准）。取不到时回退 A4 (612×792)。
+  const { refW, refH } = useMemo(() => {
+    const m0 = pageData[0]?.meta;
+    if (m0?.w && m0?.h) return { refW: m0.w, refH: m0.h };
+    for (const d of Object.values(pageData)) if (d.meta?.w && d.meta?.h) return { refW: d.meta.w, refH: d.meta.h };
+    return { refW: 612, refH: 792 };
   }, [pageData]);
+
+  // 视口可用宽/高（舞台内容区减去内边距）。
+  const availW = Math.max(stageWidth - 24, 40);
+  const availH = Math.max(stageHeight - 40, 60);
+
+  // 实际缩放倍率：由缩放模式 + 当前视口解出。适配模式随视口变化自动重算（连续滚动）。
+  const scale = useMemo(() => resolveZoomScale(zoom, refW, refH, availW, availH), [zoom, refW, refH, availW, availH]);
 
   // 内容宽（页块显示宽，px）= 基准页宽 × 缩放。真正随 scale 变化 ⇒ 放大即真实放大。
   const contentWidth = zoomContentWidth(refW, scale);
@@ -141,35 +147,67 @@ export function PdfReader() {
   );
   const layout = useMemo(() => buildLayout(metas, contentWidth), [metas, contentWidth]);
 
-  // 适配页宽：让基准页在内容宽上报 1:1（= 视口内容宽 / 基准页宽）。
-  const fitWidth = () => {
-    if (!refW || stageWidth <= 0) return;
-    const avail = Math.max(stageWidth - 24, 40);
-    if (avail > 0 && refW > 0) {
-      setScale(fitScaleForWidth(refW, avail));
+  // 适配页宽：切换缩放模式到「适合宽度」（随视口自动重算）。
+  const fitWidth = () => setZoom({ mode: "fit-width" });
+  // 适配整页：同时放下整页宽和高。
+  const fitPage = () => setZoom({ mode: "fit-page" });
+  // 适配内容：忽略四周留白，比 fit-page 略放大。
+  const fitContent = () => setZoom({ mode: "fit-content" });
+  // 实际大小：1:1 原始像素。
+  const actualSize = () => setZoom({ mode: "actual" });
+
+  // 设置默认缩放比例：把当前缩放存到本地，下次打开 PDF 默认用它（未设置时回到适合宽度）。
+  const setDefaultZoom = () => {
+    const pct = zoomPct(scale);
+    // 具名模式直接存模式名；百分比存数值。
+    const saved = zoom.mode === "pct"
+      ? { kind: "pct" as const, value: pct }
+      : { kind: zoom.mode as "actual" | "fit-page" | "fit-width" | "fit-content", value: 0 };
+    try {
+      localStorage.setItem("pdf.defaultZoom", JSON.stringify(saved));
+      toast("已设为默认缩放比例", "success");
+    } catch {
+      /* 本地存储不可用则忽略 */
     }
+    setZoomOpen(false);
   };
 
-  // 舞台宽监听（最大化 / 侧栏开关改变布局）。
+  // 舞台宽/高监听（最大化 / 侧栏开关 / 窗口缩放改变布局）。
   useEffect(() => {
     if (!ready) return;
     const st = stageRef.current;
     if (!st) return;
-    const ro = new ResizeObserver(() => setStageWidth(st.clientWidth));
+    const ro = new ResizeObserver(() => {
+      setStageWidth(st.clientWidth);
+      setStageHeight(st.clientHeight);
+    });
     ro.observe(st);
     setStageWidth(st.clientWidth);
+    setStageHeight(st.clientHeight);
     return () => ro.disconnect();
   }, [ready]);
 
-  // 首次进入 / 舞台宽就绪且基准页宽到位后：自动适配页宽（填充内容宽）。
-  // 连续模式默认按 fitWidth 铺满，避免缩放保持 1 时页面只有原始像素大。
-  // 等 pageData[0].meta 拿到（真实基准页宽）才首度适配，避免用 612 回退值没对正。
+  // 首次进入 / 舞台宽就绪且基准页宽到位后：应用默认缩放（未保存过则适合宽度）。
+  // 等 pageData[0].meta 拿到（真实基准页宽）才首度应用，避免用 612 回退值没对正。
   useEffect(() => {
     if (!ready || stageWidth <= 0) return;
     if (!pageData[0]?.meta) return;
     if (autoFitRef.current) return;
     autoFitRef.current = true;
-    fitWidth();
+    let mode: ZoomMode = { mode: "fit-width" };
+    try {
+      const raw = localStorage.getItem("pdf.defaultZoom");
+      if (raw) {
+        const saved = JSON.parse(raw) as { kind: string; value: number };
+        if (saved.kind === "pct" && saved.value > 0) mode = { mode: "pct", pct: saved.value };
+        else if (["actual", "fit-page", "fit-width", "fit-content"].includes(saved.kind)) {
+          mode = { mode: saved.kind as ZoomMode["mode"] } as ZoomMode;
+        }
+      }
+    } catch {
+      /* 忽略 */
+    }
+    setZoom(mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, stageWidth, pageData, refW]);
 
@@ -229,7 +267,9 @@ export function PdfReader() {
       setCurrentPage(0);
       setViewRange({ start: -1, end: -1 });
       setZoomOpen(false);
+      setZoom({ mode: "fit-width" });
       setStageWidth(0);
+      setStageHeight(0);
       mountedPagesRef.current.clear();
       resyncedRef.current = false;
       autoFitRef.current = false;
@@ -487,10 +527,10 @@ export function PdfReader() {
         gotoPage(currentPage - 1);
       } else if (e.key === "+" || e.key === "=") {
         e.preventDefault();
-        setScale((s) => Math.min(MAX_SCALE, +(s + 0.1).toFixed(2)));
+        setZoom(stepZoom(scale, 1));
       } else if (e.key === "-" || e.key === "_") {
         e.preventDefault();
-        setScale((s) => Math.max(MIN_SCALE, +(s - 0.1).toFixed(2)));
+        setZoom(stepZoom(scale, -1));
       } else if (e.key.toLowerCase() === "f") {
         e.preventDefault();
         fitWidth();
@@ -499,7 +539,7 @@ export function PdfReader() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pageCount, close, currentPage]);
+  }, [open, pageCount, close, currentPage, zoom, scale]);
 
   // 缩放下拉：点击下拉框外部时关闭。
   useEffect(() => {
@@ -562,6 +602,9 @@ export function PdfReader() {
               </button>
             </div>
             <div className="pdf-reader-zoom">
+              <button className="pdf-reader-btn" onClick={() => setZoom(stepZoom(scale, -1))} title="缩小" aria-label="缩小">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg>
+              </button>
               <div className="pdf-zoom-wrap" ref={zoomWrapRef}>
                 <button
                   className="pdf-reader-btn pdf-zoom-btn"
@@ -570,33 +613,91 @@ export function PdfReader() {
                   aria-haspopup="listbox"
                   aria-expanded={zoomOpen}
                 >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg>
-                  <span className="pdf-reader-pct">{Math.round(scale * 100)}%</span>
+                  <span className="pdf-reader-pct">{zoomLabel(zoom)}</span>
                   <svg className="pdf-zoom-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
                 </button>
                 {zoomOpen && (
                   <div className="pdf-zoom-menu" role="listbox">
-                    <button className="pdf-zoom-item" role="option" onClick={() => { fitWidth(); setZoomOpen(false); }} title="让页面宽度刚好填满阅读器">
-                      <span>适配页宽</span>
+                    <button
+                      className={`pdf-zoom-item${zoom.mode === "actual" ? " active" : ""}`}
+                      role="option"
+                      onClick={() => { actualSize(); setZoomOpen(false); }}
+                    >
+                      <span>实际大小</span>
+                    </button>
+                    <button
+                      className={`pdf-zoom-item${zoom.mode === "fit-page" ? " active" : ""}`}
+                      role="option"
+                      onClick={() => { fitPage(); setZoomOpen(false); }}
+                    >
+                      <span>适合页面</span>
+                    </button>
+                    <button
+                      className={`pdf-zoom-item${zoom.mode === "fit-width" ? " active" : ""}`}
+                      role="option"
+                      onClick={() => { fitWidth(); setZoomOpen(false); }}
+                    >
+                      <span>适合宽度</span>
+                    </button>
+                    <button
+                      className={`pdf-zoom-item${zoom.mode === "fit-content" ? " active" : ""}`}
+                      role="option"
+                      onClick={() => { fitContent(); setZoomOpen(false); }}
+                    >
+                      <span>适合内容</span>
+                    </button>
+                    <button
+                      className="pdf-zoom-item"
+                      role="option"
+                      onClick={() => { zoomCustomRef.current?.focus(); }}
+                    >
+                      <span>自定义缩放</span>
                     </button>
                     <div className="pdf-zoom-sep" />
-                    {ZOOM_PRESETS.map((p) => (
-                      <button
-                        key={p}
-                        className={`pdf-zoom-item${Math.round(scale * 100) === p ? " active" : ""}`}
-                        role="option"
-                        onClick={() => { setScale(p / 100); setZoomOpen(false); }}
-                      >
-                        <span>{p}%</span>
-                      </button>
-                    ))}
+                    {ZOOM_LADDER.map((p) => {
+                      const isCur = zoom.mode === "pct" && Math.abs(zoomPct(scale) - p) < 0.5;
+                      return (
+                        <button
+                          key={p}
+                          className={`pdf-zoom-item${isCur ? " active" : ""}`}
+                          role="option"
+                          onClick={() => { setZoom({ mode: "pct", pct: p }); setZoomOpen(false); }}
+                        >
+                          <span className="pdf-zoom-item-check">{isCur ? "✓" : ""}</span>
+                          <span className="pdf-zoom-item-label">{Number.isInteger(p) ? p : +p.toFixed(2)}%</span>
+                        </button>
+                      );
+                    })}
+                    <div className="pdf-zoom-sep" />
+                    <button className="pdf-zoom-item pdf-zoom-footer" role="option" onClick={setDefaultZoom}>
+                      <span>设置默认缩放比例</span>
+                    </button>
+                    <input
+                      ref={zoomCustomRef}
+                      className="pdf-zoom-custom"
+                      type="number"
+                      min={1}
+                      step="any"
+                      placeholder="自定义 %"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const v = parseFloat(e.currentTarget.value);
+                          if (!Number.isNaN(v) && v > 0) { setZoom({ mode: "pct", pct: v }); setZoomOpen(false); }
+                        }
+                        e.stopPropagation();
+                      }}
+                      onBlur={(e) => {
+                        const v = parseFloat(e.currentTarget.value);
+                        if (!Number.isNaN(v) && v > 0) { setZoom({ mode: "pct", pct: v }); setZoomOpen(false); }
+                      }}
+                    />
                   </div>
                 )}
               </div>
+              <button className="pdf-reader-btn" onClick={() => setZoom(stepZoom(scale, 1))} title="放大" aria-label="放大">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
             </div>
-            <button className="pdf-reader-btn" onClick={fitWidth} title="适配页宽">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h18M8 8l-4 4 4 4M16 8l4 4-4 4"/></svg>
-            </button>
             <button className="pdf-reader-btn" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
               {maximized ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
