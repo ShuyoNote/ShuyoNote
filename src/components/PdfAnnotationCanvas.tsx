@@ -86,7 +86,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const drag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const ink = useRef<[number, number][]>([]);
   // C8 便签拖动：记录被拖动的便签 id + 起点（归一化），用于把便签色块拖到新位置。
-  const moveSticky = useRef<{ id: string; box: [number, number, number, number]; sx: number; sy: number } | null>(null);
+  const moveSticky = useRef<{ id: string; box: [number, number, number, number]; originBox: [number, number, number, number]; sx: number; sy: number } | null>(null);
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -173,7 +173,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       const hit = annotations.find((a) => contains(a, p.x, p.y));
       // C8 — 若命中的是已选中的便签，则进入「拖动便签」模式；否则仅选中。
       if (hit && selected && hit.id === selected && hit.type === "sticky" && hit.box) {
-        moveSticky.current = { id: hit.id, box: hit.box, sx: p.x, sy: p.y };
+        // 记录拖动起点的框（originBox，固定）与起点坐标；后续用 originBox + (p - 起点) 计算，
+        // 保证跟手且不累积放大（此前把位移加到每帧变化的 box 上导致"飞了"）。
+        moveSticky.current = { id: hit.id, box: hit.box, originBox: hit.box, sx: p.x, sy: p.y };
         svgRef.current?.setPointerCapture?.(e.pointerId);
         return;
       }
@@ -200,11 +202,14 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     if (moveSticky.current) {
       const p = toNorm(e);
       const m = moveSticky.current;
+      // 基准 = 拖动起点的框（originBox 固定），位移 = 当前指针 - 起点指针。
+      // 这样跟手、不累积放大。
       const dx = p.x - m.sx;
       const dy = p.y - m.sy;
-      const w = m.box[2] - m.box[0];
-      const h = m.box[3] - m.box[1];
-      moveSticky.current = { ...m, box: [m.box[0] + dx, m.box[1] + dy, m.box[0] + dx + w, m.box[1] + dy + h] };
+      const [ox0, oy0, ox1, oy1] = m.originBox;
+      const w = ox1 - ox0;
+      const h = oy1 - oy0;
+      moveSticky.current = { ...m, box: [ox0 + dx, oy0 + dy, ox0 + dx + w, oy0 + dy + h] };
       redraw();
       return;
     }
@@ -548,21 +553,35 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             // 拖动中的便签用 moveSticky.current.box（跟随指针），否则用标注自身包围盒。
             const b = draggingSticky ? moveSticky.current!.box : boundsOf(selectedAnn);
             if (!b) return null;
-            const pad = Math.min(W, H) * 0.006;
+            const pad = Math.min(W, H) * 0.004;
             const [x0, y0, x1, y1] = b;
             return (
-              <rect
-                x={x0 * W - pad}
-                y={y0 * H - pad}
-                width={(x1 - x0) * W + pad * 2}
-                height={(y1 - y0) * H + pad * 2}
-                fill="none"
-                stroke={draggingSticky ? "rgba(51,112,255,1)" : "rgba(51,112,255,0.92)"}
-                strokeWidth={draggingSticky ? 3.5 : 2.5}
-                strokeLinejoin="round"
-                strokeDasharray={draggingSticky ? "none" : "7 3"}
-                style={{ pointerEvents: "none" }}
-              />
+              <>
+                {/* 外圈：粗半透明蓝，作柔和光晕，让选中包裹整个标注 */}
+                <rect
+                  x={x0 * W - pad}
+                  y={y0 * H - pad}
+                  width={(x1 - x0) * W + pad * 2}
+                  height={(y1 - y0) * H + pad * 2}
+                  rx={Math.min(W, H) * 0.004}
+                  fill="rgba(51,112,255,0.14)"
+                  stroke="none"
+                  style={{ pointerEvents: "none" }}
+                />
+                {/* 内圈：细实线圆角边框，清晰但不粗笨 */}
+                <rect
+                  x={x0 * W - pad * 0.6}
+                  y={y0 * H - pad * 0.6}
+                  width={(x1 - x0) * W + pad * 1.2}
+                  height={(y1 - y0) * H + pad * 1.2}
+                  rx={Math.min(W, H) * 0.004}
+                  fill="none"
+                  stroke={draggingSticky ? "rgba(51,112,255,0.95)" : "rgba(51,112,255,0.8)"}
+                  strokeWidth={draggingSticky ? 2 : 1.6}
+                  strokeLinejoin="round"
+                  style={{ pointerEvents: "none" }}
+                />
+              </>
             );
           })()}
           {/* 拖拽中的实时预览（不跟随 state，边拖边显示高亮框 / 墨迹） */}
