@@ -39,19 +39,25 @@ function startPanelResize(
     min: number; max: number; def: number; key: string; dir: 1 | -1;
     el: () => HTMLElement | null;
     commit: (n: number) => void;
+    /** 拖动开始（用于暂停舞台 resize 的 React 更新）。 */
+    onDragStart?: () => void;
+    /** 拖动/双击结束（用于恢复并应用一次舞台尺寸）。 */
+    onDragEnd?: () => void;
   },
 ) {
+  cfg.onDragStart?.();
   if (e.detail === 2) {
     cfg.commit(cfg.def);
     const el = cfg.el();
     if (el) el.style.width = `${cfg.def}px`;
     try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
+    cfg.onDragEnd?.();
     return;
   }
   e.preventDefault();
   const el = cfg.el();
   const handle = e.currentTarget;
-  if (!el || !handle) return;
+  if (!el || !handle) { cfg.onDragEnd?.(); return; }
   const startX = e.clientX;
   const startW = parseFloat(el.style.width) || cfg.def;
   let cur = startW;
@@ -62,6 +68,7 @@ function startPanelResize(
     handle.removeEventListener("pointercancel", cancel);
     cfg.commit(cur);
     try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
+    cfg.onDragEnd?.();
   };
   const move = (ev: PointerEvent) => {
     cur = Math.max(cfg.min, Math.min(cfg.max, startW + cfg.dir * (ev.clientX - startX)));
@@ -215,11 +222,21 @@ export function PdfReader() {
     return Number.isFinite(v) && v >= 160 && v <= 520 ? v : 240;
   });
   const outlineColRef = useRef<HTMLDivElement | null>(null);
+  // 面板拖拽期间暂停舞台 resize 的 React 更新（避免每帧整屏重渲染/缩放重算）。
+  const isResizingRef = useRef(false);
+  const applyStageSize = () => {
+    const st = stageRef.current;
+    if (!st) return;
+    setStageWidth(st.clientWidth);
+    setStageHeight(st.clientHeight);
+  };
   const onOutlineResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelResize(e, {
       min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY, dir: 1,
       el: () => outlineColRef.current,
       commit: (n) => setOutlineWidth(n),
+      onDragStart: () => { isResizingRef.current = true; },
+      onDragEnd: () => { isResizingRef.current = false; applyStageSize(); },
     });
 
   // 右侧批注侧栏宽度（同理：向左加宽 dir=-1，持久化）。
@@ -233,6 +250,8 @@ export function PdfReader() {
       min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY, dir: -1,
       el: () => sidebarColRef.current,
       commit: (n) => setSidebarWidth(n),
+      onDragStart: () => { isResizingRef.current = true; },
+      onDragEnd: () => { isResizingRef.current = false; applyStageSize(); },
     });
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
@@ -349,6 +368,8 @@ export function PdfReader() {
       setStageHeight((prev) => (prev === st.clientHeight ? prev : st.clientHeight));
     };
     const ro = new ResizeObserver(() => {
+      // 面板拖拽期间：暂停舞台尺寸的 React 更新（避免整屏重渲染/缩放重算），松手时由 onDragEnd 应用一次。
+      if (isResizingRef.current) return;
       if (!raf) raf = window.requestAnimationFrame(apply);
     });
     ro.observe(st);
