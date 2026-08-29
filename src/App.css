@@ -10817,6 +10817,12 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   margin-bottom: 6px;
 }
+.pdf-ocr-tip {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding: 2px 0;
+}
 .pdf-ocr-text {
   width: 100%;
   min-height: 90px;

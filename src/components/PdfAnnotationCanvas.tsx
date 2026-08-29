@@ -88,6 +88,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
+  // OCR 结果状态（用于显示"未识别到文字/失败"等，而非只有成功文本才出面板）。
+  const [ocrStatus, setOcrStatus] = useState<"idle" | "empty" | "timeout" | "error">("idle");
   const [ocrBusy, setOcrBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState<string | null>(null);
@@ -155,17 +157,22 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     ocrBusyRef.current = true;
     setOcrBusy(true);
     setOcrText(null);
+    setOcrStatus("idle");
     const res = await ocrRecognize(img);
     ocrBusyRef.current = false;
     setOcrBusy(false);
     if (res.text) {
       setOcrText(res.text);
+      setOcrStatus("idle");
       toast("已识别本页文本", "success");
     } else if (res.error === "timeout") {
-      toast("OCR 识别超时：tesseract 需联网下载识别模型，若网络受限可稍后重试", "error");
+      setOcrStatus("timeout");
+      toast("OCR 识别超时，请稍后重试", "error");
     } else if (res.error === "error") {
-      toast("OCR 识别失败：无法加载 tesseract 识别模型/语言数据", "error");
+      setOcrStatus("error");
+      toast("OCR 识别失败：无法加载识别模型/语言数据", "error");
     } else {
+      setOcrStatus("empty");
       toast("未识别到文字", "error");
     }
   };
@@ -775,10 +782,20 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         )}
       </div>
 
-      {ocrText && (
+      {(ocrBusy || ocrText !== null || ocrStatus !== "idle") && (
         <div className="pdf-ocr-result">
           <div className="pdf-ocr-title">OCR 识别结果</div>
-          <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+          {ocrBusy ? (
+            <div className="pdf-ocr-tip">识别中…</div>
+          ) : ocrText ? (
+            <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+          ) : ocrStatus === "timeout" ? (
+            <div className="pdf-ocr-tip">识别超时：模型加载或识别时间过长，请稍后重试。</div>
+          ) : ocrStatus === "error" ? (
+            <div className="pdf-ocr-tip">识别失败：无法加载离线识别模型/语言数据，请检查 public/ocr 是否就绪。</div>
+          ) : (
+            <div className="pdf-ocr-tip">本页未识别到文字（可能为空页/图表页，或扫描清晰度不足）。</div>
+          )}
         </div>
       )}
 

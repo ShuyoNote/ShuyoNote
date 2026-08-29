@@ -64,9 +64,22 @@ function recognizeWithTimeout(
 /** 创建一个可复用的 OCR worker（批量识别复用同一 worker，避免每页重载模型/核心）。 */
 export async function createOcrWorker(
   langs = "chi_sim+eng",
+  createTimeoutMs = 60000,
 ): Promise<OcrWorkerHandle> {
   const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker(langs, 1, buildWorkerOptions());
+  // worker 创建（含 core + 模型首次加载）可能较慢/卡住，加超时避免永久"识别中"。
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let worker: any;
+  try {
+    worker = await Promise.race([
+      createWorker(langs, 1, buildWorkerOptions()),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("OCR 模型加载超时")), createTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   return {
     recognize(image: string, timeoutMs: number = DEFAULT_TIMEOUT) {
       return recognizeWithTimeout(worker, image, timeoutMs);
