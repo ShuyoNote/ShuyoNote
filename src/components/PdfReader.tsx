@@ -30,28 +30,36 @@ const OUTLINE_WIDTH_KEY = "shuyonote.pdf.outlineWidth";
 /** 批注侧栏宽度持久化键。 */
 const SIDEBAR_WIDTH_KEY = "shuyonote.pdf.sidebarWidth";
 
-/** 面板（目录/侧栏）拖拽调宽 + 双击归位默认宽度的共用逻辑。 */
+/** 面板（目录/侧栏）拖拽调宽 + 双击归位。拖动时直接改容器 DOM 宽度（避免每帧 React 重渲染卡顿），
+ *  dir=1 用于左侧目录（向右加宽），dir=-1 用于右侧侧栏（向左加宽）。松手/双击才 commit + 持久化。 */
 function startPanelResize(
   e: ReactPointerEvent<HTMLDivElement>,
-  cfg: { min: number; max: number; def: number; key: string; get: () => number; set: (n: number) => void },
+  cfg: {
+    min: number; max: number; def: number; key: string; dir: 1 | -1;
+    el: () => HTMLElement | null;
+    commit: (n: number) => void;
+  },
 ) {
   if (e.detail === 2) {
-    // 双击：归位默认宽度。
-    cfg.set(cfg.def);
+    cfg.commit(cfg.def);
+    cfg.el() && (cfg.el()!.style.width = `${cfg.def}px`);
     try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
     return;
   }
   e.preventDefault();
+  const el = cfg.el();
+  if (!el) return;
   const startX = e.clientX;
-  const startW = cfg.get();
+  const startW = parseFloat(el.style.width) || cfg.def;
   let cur = startW;
   const move = (ev: PointerEvent) => {
-    cur = Math.max(cfg.min, Math.min(cfg.max, startW + (ev.clientX - startX)));
-    cfg.set(cur);
+    cur = Math.max(cfg.min, Math.min(cfg.max, startW + cfg.dir * (ev.clientX - startX)));
+    el.style.width = `${cur}px`;
   };
   const up = () => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
+    cfg.commit(cur);
     try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
   };
   window.addEventListener("pointermove", move);
@@ -197,27 +205,25 @@ export function PdfReader() {
     const v = Number(localStorage.getItem(OUTLINE_WIDTH_KEY));
     return Number.isFinite(v) && v >= 160 && v <= 520 ? v : 240;
   });
-  const outlineWidthRef = useRef(outlineWidth);
-  outlineWidthRef.current = outlineWidth;
+  const outlineColRef = useRef<HTMLDivElement | null>(null);
   const onOutlineResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelResize(e, {
-      min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY,
-      get: () => outlineWidthRef.current,
-      set: (n) => { outlineWidthRef.current = n; setOutlineWidth(n); },
+      min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY, dir: 1,
+      el: () => outlineColRef.current,
+      commit: (n) => setOutlineWidth(n),
     });
 
-  // 右侧批注侧栏宽度（同样可拖拽调宽、双击归位、持久化）。
+  // 右侧批注侧栏宽度（同理：向左加宽 dir=-1，持久化）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const v = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return Number.isFinite(v) && v >= 220 && v <= 560 ? v : 260;
   });
-  const sidebarWidthRef = useRef(sidebarWidth);
-  sidebarWidthRef.current = sidebarWidth;
+  const sidebarColRef = useRef<HTMLDivElement | null>(null);
   const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelResize(e, {
-      min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY,
-      get: () => sidebarWidthRef.current,
-      set: (n) => { sidebarWidthRef.current = n; setSidebarWidth(n); },
+      min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY, dir: -1,
+      el: () => sidebarColRef.current,
+      commit: (n) => setSidebarWidth(n),
     });
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
@@ -1109,7 +1115,7 @@ export function PdfReader() {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <div className="pdf-outline-col" style={{ width: outlineWidth, flexShrink: 0 }}>
+                <div className="pdf-outline-col" ref={outlineColRef} style={{ width: outlineWidth, flexShrink: 0 }}>
                   <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} aiCustom={aiOutlineCustom} onAiCountChange={setAiOutlineCount} onAiCustomChange={setAiOutlineCustom} />
                   <div className="pdf-outline-resizer" onPointerDown={onOutlineResizeStart} title="拖拽调整目录宽度" />
                 </div>
@@ -1132,7 +1138,7 @@ export function PdfReader() {
                 </div>
               </div>
               {sidebarOpen && (
-                <div className="pdf-sidebar-col" style={{ width: sidebarWidth, flexShrink: 0 }}>
+                <div className="pdf-sidebar-col" ref={sidebarColRef} style={{ width: sidebarWidth, flexShrink: 0 }}>
                   <PdfSidebar
                     records={annRecords}
                     currentPage={currentPage}
