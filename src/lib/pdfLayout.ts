@@ -6,8 +6,8 @@ export const CHROME = 96;
 /** 页间间距 px。 */
 export const GAP = 18;
 
-/** 最小/最大缩放倍率。最小 = 8.33%（参考阅读器缩放下拉的底值）；最大限制在 4x，避免页面光栅化过大/无穷宽。 */
-export const MIN_SCALE = 0.0833;
+/** 最小/最大缩放倍率。最小 50%（够看全局）、最大 4×（400%，页面已明显放大，避免光栅化过大/无穷宽）。 */
+export const MIN_SCALE = 0.5;
 export const MAX_SCALE = 4;
 
 /** 缩放模式：具名适配模式，或一个固定百分比（pct）。 */
@@ -59,8 +59,8 @@ export function resolveZoomScale(
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(s).toFixed(3)));
 }
 
-/** 参考阅读器缩放下拉的百分比阶梯（从大到小）。 */
-export const ZOOM_LADDER = [6400, 3200, 1600, 800, 400, 200, 150, 125, 100, 50, 25, 12.5, 8.33];
+/** 缩放下拉的百分比阶梯（从大到小）。只保留实用档位：50%–400%，全都在 MIN/MAX 范围内、真实生效。 */
+export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50];
 
 /** 把缩放模式映射成展示标签（下拉触发器/当前项）。 */
 export function zoomLabel(zoom: ZoomMode): string {
