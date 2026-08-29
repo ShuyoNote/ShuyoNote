@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePdfReader } from "../store/pdfReader";
+import { useAiStore } from "../store/ai";
 import { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
@@ -9,6 +10,8 @@ import type { PdfAnnotation } from "../lib/pdfAnnotation";
 import type { OutlineItem } from "../lib/pdfRender";
 import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
+import { generateOutlineFromOcr } from "../lib/aiOutline";
+import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
@@ -16,6 +19,9 @@ import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
 import { PdfAskBar } from "./PdfAskBar";
+
+/** 「AI 生成目录（本段）」默认向后生成的页数。 */
+const AI_OUTLINE_PAGES = 60;
 
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
@@ -130,6 +136,10 @@ export function PdfReader() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
+  // 「AI 生成目录（本段）」进行态（进度/取消）。扫描版无目录时才显示入口。
+  const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; done: number; total: number }>({ status: "idle", done: 0, total: 0 });
+  const aiOutlineAbortRef = useRef<AbortController | null>(null);
+  const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
   const [focusTarget, setFocusTarget] = useState<{ pageIndex: number; ann: PdfAnnotation } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
@@ -269,6 +279,60 @@ export function PdfReader() {
     gotoPage(pageIndex);
   };
 
+  // 扫描版无目录：从当前页往后 AI_OUTLINE_PAGES 页逐页 OCR，让 AI 提取章节并生成可跳转目录。
+  const generateAiOutline = useCallback(async () => {
+    if (aiOutline.status === "running") return;
+    const eng = engRef.current;
+    if (!eng || !attachmentId || !pageCount) return;
+    const config = useAiStore.getState().config;
+    if (!config.enabled) {
+      toast("请先在设置里配置 AI 模型（本地/云端均可）", "error");
+      return;
+    }
+    const start = Math.min(Math.max(currentPage, 0), Math.max(pageCount - 1, 0));
+    const total = Math.min(start + AI_OUTLINE_PAGES, pageCount) - start;
+    if (total <= 0) return;
+    const ac = new AbortController();
+    aiOutlineAbortRef.current = ac;
+    setAiOutline({ status: "running", done: 0, total });
+    try {
+      const items = await generateOutlineFromOcr({
+        attachmentId,
+        pageCount,
+        start,
+        count: AI_OUTLINE_PAGES,
+        config: config as unknown as ProviderConfig,
+        renderPage: (a, i, s) => renderPagePng(eng, a, i, s),
+        ocrCache: outlineOcrCacheRef.current,
+        onProgress: (p) => setAiOutline({ status: "running", done: p.done, total: p.total }),
+        signal: ac.signal,
+      });
+      if (ac.signal.aborted) return;
+      if (items.length) {
+        setOutline(items);
+        toast(`已生成目录（${items.length} 个项目）`, "success");
+        // 跳到第一个目录项，便于用户核对。
+        gotoPage(items[0].pageIndex);
+      } else {
+        toast("未识别到章节标题，可换个起点或增加页数重试", "error");
+      }
+      setAiOutline({ status: "done", done: total, total });
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") {
+        toast("已取消目录生成", "success");
+      } else {
+        toast("AI 生成目录失败，请检查网络/模型配置", "error");
+      }
+      setAiOutline({ status: "error", done: 0, total: 0 });
+    } finally {
+      if (aiOutlineAbortRef.current === ac) aiOutlineAbortRef.current = null;
+    }
+  }, [aiOutline.status, attachmentId, pageCount, currentPage]);
+
+  const cancelAiOutline = useCallback(() => {
+    aiOutlineAbortRef.current?.abort();
+  }, []);
+
   // Load all annotation records for this attachment once (for the sidebar).
   useEffect(() => {
     if (!open || !attachmentId) return;
@@ -325,6 +389,10 @@ export function PdfReader() {
       setSidebarOpen(true);
       setOutlineOpen(true);
       setOutline([]);
+      aiOutlineAbortRef.current?.abort();
+      aiOutlineAbortRef.current = null;
+      outlineOcrCacheRef.current.clear();
+      setAiOutline({ status: "idle", done: 0, total: 0 });
       setCurrentPage(0);
       setViewRange({ start: -1, end: -1 });
       setZoomOpen(false);
@@ -892,7 +960,7 @@ export function PdfReader() {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} />
+                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} />
               )}
               <div className="pdf-reader-stage-wrap">
                 <PdfAnnotTopToolbar

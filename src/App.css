@@ -11063,6 +11063,30 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   line-height: 1.5;
 }
+/* 扫描版无目录：「AI 生成目录（本段）」入口 + 进度 + 取消。 */
+.pdf-outline-ai {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+.pdf-outline-ai-btn {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pdf-outline-ai-btn:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pdf-outline-ai-progress {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
 .pdf-sidebar-head {
   padding: 12px 14px;
   font-size: 13px;

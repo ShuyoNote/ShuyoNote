@@ -128,6 +128,18 @@ await esbuild.build({
 });
 const layoutMod = await import(pathToFileURL(layoutOutfile).href + "?v=" + Date.now());
 
+// AI 目录生成的纯函数（提示组装 / JSON 解析 / 换算 OutlineItem，无重依赖）。
+const outlineOutfile = join(tmpDir, "pdfOutlineGen.mjs");
+await esbuild.build({
+  entryPoints: [join(root, "src/lib/pdfOutlineGen.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node20",
+  outfile: outlineOutfile,
+});
+const outlineGenMod = await import(pathToFileURL(outlineOutfile).href + "?v=" + Date.now());
+
 // --- Set up the sqlite store's wasm URL + bytes (fs-backed) + fs persist (Node) ---
 const { setDefaultAdapter, setWasmUrl, setWasmBytesProvider, SqliteStore } = mod;
 const sqljsRoot = join(root, "node_modules/.pnpm/sql.js@1.14.2/node_modules/sql.js");
@@ -1655,6 +1667,19 @@ trailer
   const sr = layoutMod.stickyEditRegion([0.2, 0.3, 0.24, 0.36], 800, 1000);
   assert("stickyEditRegion covers pin", sr[0] < 0.2 && sr[1] < 0.3 && sr[2] > 0.2 && sr[3] > 0.3, `sr=${JSON.stringify(sr)}`);
   assert("stickyEditRegion extends right for bubble", sr[2] > sr[0] + 0.2, `sr=${JSON.stringify(sr)}`);
+  // AI 目录生成纯函数：提示组装 / JSON 解析（含围栏与说明文字容错）/ 换算 OutlineItem。
+  const op = outlineGenMod.buildOutlinePrompt(["第一章 起源 xxx", "当页无标题正文"], 10);
+  assert("outline prompt [第 10 页]", op.includes("[第 10 页]"), op.slice(-40));
+  assert("outline prompt [第 11 页]", op.includes("[第 11 页]"), op.slice(-40));
+  assert("outline prompt asks JSON array", op.includes('[{"title"'), op.slice(-40));
+  const oj1 = outlineGenMod.parseOutlineJson('```json\n[{"title":"第一章","page":12},{"title":"第二章","page":30}]\n```');
+  assert("outline parse fenced json", oj1.length === 2 && oj1[0].title === "第一章" && oj1[0].page === 12, JSON.stringify(oj1));
+  const oj2 = outlineGenMod.parseOutlineJson('好的，目录如下：\n[{"title":"甲","page":3}]');
+  assert("outline parse with framing", oj2.length === 1 && oj2[0].page === 3, JSON.stringify(oj2));
+  const oj3 = outlineGenMod.parseOutlineJson('"title":"乙","page":7 其它文字');
+  assert("outline parse degenerate (line fallback)", oj3.length === 1 && oj3[0].title === "乙" && oj3[0].page === 7, JSON.stringify(oj3));
+  const oi = outlineGenMod.toOutlineItems([{ title: "x", page: 12 }, { title: "y", page: 99 }], 10, 5);
+  assert("toOutlineItems filters range to pageIndex", oi.length === 1 && oi[0].pageIndex === 11, JSON.stringify(oi));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
