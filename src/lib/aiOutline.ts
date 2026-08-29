@@ -129,6 +129,7 @@ export async function generateOutlineFromVision(o: GenerateOutlineOpts): Promise
   const cache = o.ocrCache ?? new Map<number, string>();
 
   const all: OutlineEntry[] = [];
+  const seenTitle = new Set<string>();
   let recognizedPages = 0;
   let totalChars = 0;
   for (let i = o.start; i < end; i++) {
@@ -144,6 +145,9 @@ export async function generateOutlineFromVision(o: GenerateOutlineOpts): Promise
     }
     const pageEntries = parseOutlineJson(json);
     for (const e of pageEntries) {
+      const key = e.title.trim();
+      if (!key || seenTitle.has(key)) continue; // 同标题跨页重复 → 只保留第一次（最小页）
+      seenTitle.add(key);
       all.push({ title: e.title, page: e.page });
       totalChars += e.title.length;
     }

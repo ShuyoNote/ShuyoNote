@@ -1716,6 +1716,14 @@ trailer
   ]);
   const okr = rb.length === 2 && rb[0].title === "第一章" && rb[0].children.length === 1 && rb[0].children[0].title === "1.1 缘起" && rb[1].title === "第二章";
   assert("rebuildOutlineTree nests flat list", okr, JSON.stringify(rb));
+  // 去重：同一标题跨页重复只保留一次（最小页）。
+  const dd = outlineGenMod.toOutlineItems([
+    { title: "第一章", page: 3 },
+    { title: "第一章", page: 4 },
+    { title: "1.1", page: 5 },
+    { title: "第二章", page: 10 },
+  ], 0, 60);
+  assert("toOutlineItems dedupes repeated titles", dd.length === 2 && dd[0].title === "第一章" && dd[0].pageIndex === 2 && dd[0].children.length === 1 && dd[1].title === "第二章", JSON.stringify(dd));
   // 已是树的保持原样（不重排）。
   const rbt = outlineGenMod.rebuildOutlineTree([{ title: "A", pageIndex: 0, children: [{ title: "B", pageIndex: 1, children: [] }] }]);
   assert("rebuildOutlineTree keeps nested tree", rbt.length === 1 && rbt[0].children.length === 1, JSON.stringify(rbt));

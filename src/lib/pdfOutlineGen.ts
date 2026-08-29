@@ -81,25 +81,29 @@ export function inferOutlineLevel(title: string): number {
   return 1;
 }
 
-/** 把解析结果约束到本段页码范围、排序，并按 level 构造成带 children 的目录树。 */
+/** 把解析结果约束到本段页码范围、排序、按标题去重（保留最小页），并按 level 构造成带 children 的目录树。 */
 export function toOutlineItems(entries: OutlineEntry[], start0: number, count: number): OutlineItem[] {
   const start1 = start0 + 1;
   const end1 = start0 + count;
   const sorted = entries
     .filter((e) => e.page >= start1 && e.page <= end1)
     .sort((a, b) => a.page - b.page);
-  const roots: OutlineItem[] = [];
+  const root: OutlineItem[] = [];
   const stack: { item: OutlineItem; level: number }[] = [];
+  const seenTitles = new Set<string>();
   for (const e of sorted) {
+    const key = e.title.trim();
+    if (!key || seenTitles.has(key)) continue; // 同一标题只保留首次出现（最小页），避免重复
+    seenTitles.add(key);
     const node: OutlineItem = { title: e.title, pageIndex: e.page - 1, children: [] };
     // 用「模型给的 level」与「标题命名推断」取较大值，避免模型给平铺(1)时丢了层级。
     const level = Math.max(e.level ?? 1, inferOutlineLevel(e.title));
     while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
     if (stack.length) stack[stack.length - 1].item.children.push(node);
-    else roots.push(node);
+    else root.push(node);
     stack.push({ item: node, level });
   }
-  return roots;
+  return root;
 }
 
 /** 对已保存的目录列表重建层级树：若全部是平铺项（无 children），按标题命名推断层级重新树化，
