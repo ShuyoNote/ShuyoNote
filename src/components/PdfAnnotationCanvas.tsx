@@ -536,8 +536,10 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     ctlRef.current = ctl;
     registerController(pageIndex, ctl);
     return () => registerController(pageIndex, null);
+    // 依赖含 selected/annotations：否则注册的控制器里动作方法（删除/摘录/AI/复制/编辑/导出）
+    // 是陈旧闭包——读到的 selected/annotations 停在挂载时的初值，导致顶部工具栏按钮点了无效。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageIndex, registerController, hasTextLayer, aiBusy]);
+  }, [pageIndex, registerController, hasTextLayer, aiBusy, selected, annotations]);
 
   // 本页批注/选中/可撤销状态变化 → 通知顶部工具栏刷新。
   useEffect(() => {
