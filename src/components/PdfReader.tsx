@@ -20,7 +20,7 @@ import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
 import { PdfAskBar } from "./PdfAskBar";
 
-/** 「AI 生成目录（本段）」默认向后生成的页数。 */
+/** 「AI 生成目录」默认向后生成的页数（可在目录面板范围下拉里改：30/60/120 页或整本）。 */
 const AI_OUTLINE_PAGES = 60;
 
 /** 护眼模式开关的本地持久化键。 */
@@ -154,6 +154,7 @@ export function PdfReader() {
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   // 「AI 生成目录（本段）」进行态（进度/阶段/取消）。扫描版无目录时才显示入口。
   const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
+  const [aiOutlineCount, setAiOutlineCount] = useState<number>(AI_OUTLINE_PAGES); // -1=整本
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
@@ -320,7 +321,8 @@ export function PdfReader() {
       return;
     }
     const start = Math.min(Math.max(currentPage, 0), Math.max(pageCount - 1, 0));
-    const total = Math.min(start + AI_OUTLINE_PAGES, pageCount) - start;
+    const count = aiOutlineCount === -1 ? Math.max(pageCount - start, 1) : aiOutlineCount;
+    const total = Math.min(start + count, pageCount) - start;
     if (total <= 0) return;
     const ac = new AbortController();
     aiOutlineAbortRef.current = ac;
@@ -330,7 +332,7 @@ export function PdfReader() {
         attachmentId,
         pageCount,
         start,
-        count: AI_OUTLINE_PAGES,
+        count,
         config: config as unknown as ProviderConfig,
         renderPage: (a, i, s) => renderPagePng(eng, a, i, s),
         ocrCache: outlineOcrCacheRef.current,
@@ -1040,7 +1042,7 @@ export function PdfReader() {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} />
+                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} onAiCountChange={setAiOutlineCount} />
               )}
               <div className="pdf-reader-stage-wrap">
                 <PdfAnnotTopToolbar

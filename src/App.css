@@ -11235,6 +11235,28 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   line-height: 1.5;
 }
+/* 目录生成范围选择行。 */
+.pdf-outline-ai-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pdf-outline-ai-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.pdf-outline-ai-select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  font-family: inherit;
+}
 .pdf-sidebar-head {
   padding: 12px 14px;
   font-size: 13px;
