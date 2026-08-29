@@ -155,11 +155,19 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     ocrBusyRef.current = true;
     setOcrBusy(true);
     setOcrText(null);
-    const text = await ocrRecognize(img);
+    const res = await ocrRecognize(img);
     ocrBusyRef.current = false;
-    setOcrText(text);
     setOcrBusy(false);
-    if (text) toast("已识别本页文本", "success");
+    if (res.text) {
+      setOcrText(res.text);
+      toast("已识别本页文本", "success");
+    } else if (res.error === "timeout") {
+      toast("OCR 识别超时：tesseract 需联网下载识别模型，若网络受限可稍后重试", "error");
+    } else if (res.error === "error") {
+      toast("OCR 识别失败：无法加载 tesseract 识别模型/语言数据", "error");
+    } else {
+      toast("未识别到文字", "error");
+    }
   };
 
   const undoStackRef = useRef<PdfAnnotation[][]>([]);

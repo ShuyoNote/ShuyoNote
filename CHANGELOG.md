@@ -33,6 +33,7 @@
 - **便签美化 + 显示内容**：此前便签只画一个 26px 黄块（内容只在悬停 title 里）。现改为**便签钉 + 内容气泡**——便签钉做成圆角小方块带右上折角（更精致），并在钉旁渲染一个**显示便签文本的 HTML 气泡**（自动换行、点缀边框、阴影、限高截断），默认即显示内容。气泡 `pointer-events:none`，不干扰拖动/选中/描边，定位与便签钉一致、拖动中跟随。
 - **便签可编辑**：此前编辑便签文本需先选中再点顶部工具栏「编辑」，不直观。现支持**双击便签（或内容气泡区域）直接打开内联编辑**——按住仍为拖动、双击即编辑（命中区为纯函数 `stickyEditRegion`，覆盖便签钉 + 内容气泡并随舞台尺寸折算，入库单测）；顶部工具栏「编辑」按钮仍可用。
 - **修复：OCR 识别没反应**：顶部「OCR 识别本页」按钮调用的 `runOcr` 注册进控制器时是不随渲染重建的闭包，它从 state 闭包读 `pageImageUrl`——而页面图像是异步加载的，注册那一刻 `pageImageUrl` 仍是 `null`，于是 `if (!pageImageUrl) return` 直接退出、点击毫无反应。现改为经 `pageImageUrlRef`/`ocrBusyRef`（每次渲染更新）读取最新图像与忙碌态，识别恢复正常；并让按钮在识别中显示「识别中…」并禁用（`PdfPageState.ocrBusy`）。
+- **修复：OCR 识别卡在「识别中」再无动作**：tesseract.js 默认从 jsdelivr CDN 拉取 core wasm 与语言 traineddata，受限网络下会一直挂起，且失败被静默吞掉（返回 null、不提示）——读起来像"没动作"。现 `ocrRecognize` 加**超时兜底**（默认 60s，超时终止 worker 并区分 `timeout`/`error`/`none`），`runOcr` 据此弹出明确提示（识别超时/失败/未识别到文字），不再是无限"识别中"；并支持经 `VITE_TESSERACT_CORE_PATH`/`VITE_TESSERACT_LANG_PATH` 指定可达镜像或本地资源（CDN 受限时的逃生通道）。
 - **修复：便签控制条操作无效**：顶部工具栏面向当前页的所有操作（摘录/删除/AI 帮读/复制引用/编辑便签/导出）此前点击无效——注册到 `controllersRef` 的控制器在注册 effect 里用**陈旧闭包**捕获了各动作方法（其从 state 闭包读 `selected`/`annotations`），而注册 effect 依赖不含这两者，导致动作读到挂载时的初值（`selected=null` 时删除等直接返回）。现已把 `selected`/`annotations` 加入注册 effect 依赖，选中/批注变化时重新注册出新鲜闭包的控制器，控制条操作恢复生效。
 
 ### 验证
