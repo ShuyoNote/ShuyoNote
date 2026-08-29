@@ -60,14 +60,23 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
   return false;
 }
 
-// 标注的归一化包围盒 [x0,y0,x1,y1]。便签/高亮/矩形用 box；墨迹用 points 的 min/max；
-// 否则返回 null（无法选中描边）。
-function boundsOf(ann: PdfAnnotation): [number, number, number, number] | null {
-  if (ann.box) return [ann.box[0], ann.box[1], ann.box[2], ann.box[3]];
+// 标注「实际绘制区域」的像素坐标 [px, py, pw, ph]。选中描边须与绘制的图形一致：
+// 便签实际画的是固定 ~26px 方块（取自 box 左上角），不是 box 的 0.04×0.06 长条；
+// 高亮/矩形按 box 的 x0..x1；墨迹按 points 包围盒。
+function drawBoxPx(ann: PdfAnnotation, W: number, H: number): [number, number, number, number] | null {
+  if (ann.type === "sticky" && ann.box) {
+    const w = Math.min(26, W * 0.06);
+    const h = Math.min(26, H * 0.06);
+    return [ann.box[0] * W, ann.box[1] * H, w, h];
+  }
+  if ((ann.type === "highlight" || ann.type === "rect") && ann.box) {
+    const [x0, y0, x1, y1] = ann.box;
+    return [x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H];
+  }
   if (ann.points && ann.points.length) {
     const xs = ann.points.map((p) => p[0]);
     const ys = ann.points.map((p) => p[1]);
-    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    return [(Math.min(...xs)) * W, (Math.min(...ys)) * H, (Math.max(...xs) - Math.min(...xs)) * W, (Math.max(...ys) - Math.min(...ys)) * H];
   }
   return null;
 }
@@ -546,35 +555,41 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             }
             return null;
           })}
-          {/* 选中标注的高亮描边框：让"选中"状态可视。任何类型都用包围盒 + 少量 padding，
-              蓝色加粗；拖动中的便签描边更粗更醒目，并跟随拖动位置。 */}
+          {/* 选中标注的高亮描边框：让"选中"状态可视，并与实际绘制的图形精确对齐。 */}
           {selectedAnn && (() => {
             const draggingSticky = moveSticky.current?.id === selected;
-            // 拖动中的便签用 moveSticky.current.box（跟随指针），否则用标注自身包围盒。
-            const b = draggingSticky ? moveSticky.current!.box : boundsOf(selectedAnn);
-            if (!b) return null;
-            const pad = Math.min(W, H) * 0.004;
-            const [x0, y0, x1, y1] = b;
+            // 拖动中的便签用 moveSticky 起点 + 固定尺寸；否则按实际绘制区域。
+            let px: number, py: number, pw: number, ph: number;
+            if (draggingSticky) {
+              const bb = moveSticky.current!.box;
+              px = bb[0] * W; py = bb[1] * H;
+              pw = Math.min(26, W * 0.06); ph = Math.min(26, H * 0.06);
+            } else {
+              const d = drawBoxPx(selectedAnn, W, H);
+              if (!d) return null;
+              [px, py, pw, ph] = d;
+            }
+            const pad = Math.max(2, Math.min(W, H) * 0.004);
             return (
               <>
-                {/* 外圈：粗半透明蓝，作柔和光晕，让选中包裹整个标注 */}
+                {/* 外圈：柔和半透明蓝光晕，包裹实际绘制区域 */}
                 <rect
-                  x={x0 * W - pad}
-                  y={y0 * H - pad}
-                  width={(x1 - x0) * W + pad * 2}
-                  height={(y1 - y0) * H + pad * 2}
-                  rx={Math.min(W, H) * 0.004}
+                  x={px - pad}
+                  y={py - pad}
+                  width={pw + pad * 2}
+                  height={ph + pad * 2}
+                  rx={6}
                   fill="rgba(51,112,255,0.14)"
                   stroke="none"
                   style={{ pointerEvents: "none" }}
                 />
-                {/* 内圈：细实线圆角边框，清晰但不粗笨 */}
+                {/* 内圈：细实线圆角边框 */}
                 <rect
-                  x={x0 * W - pad * 0.6}
-                  y={y0 * H - pad * 0.6}
-                  width={(x1 - x0) * W + pad * 1.2}
-                  height={(y1 - y0) * H + pad * 1.2}
-                  rx={Math.min(W, H) * 0.004}
+                  x={px - pad * 0.6}
+                  y={py - pad * 0.6}
+                  width={pw + pad * 1.2}
+                  height={ph + pad * 1.2}
+                  rx={5}
                   fill="none"
                   stroke={draggingSticky ? "rgba(51,112,255,0.95)" : "rgba(51,112,255,0.8)"}
                   strokeWidth={draggingSticky ? 2 : 1.6}
