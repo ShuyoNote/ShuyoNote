@@ -186,11 +186,12 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     if (tool === "select") {
       const p = toNorm(e);
       const hit = annotations.find((a) => contains(a, p.x, p.y));
-      // C8 — 若命中的是已选中的便签，则进入「拖动便签」模式；否则仅选中。
-      if (hit && selected && hit.id === selected && hit.type === "sticky" && hit.box) {
+      // C8 — select 工具下按住便签即直接拖动（同时选中），无需先点选一次再拖。
+      if (hit && hit.type === "sticky" && hit.box) {
         // 记录拖动起点的框（originBox，固定）与起点坐标；后续用 originBox + (p - 起点) 计算，
         // 保证跟手且不累积放大（此前把位移加到每帧变化的 box 上导致"飞了"）。
         moveSticky.current = { id: hit.id, box: hit.box, originBox: hit.box, sx: p.x, sy: p.y };
+        setSelected(hit.id);
         setDraggingSticky(true);
         // 光标即时切换为「正在抓取」（imperative，立即生效；React state 异步会滞后）。
         e.currentTarget.style.cursor = "grabbing";
