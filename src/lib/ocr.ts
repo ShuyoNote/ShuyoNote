@@ -1,9 +1,7 @@
 // M24 — OCR 兜底 (scanned PDFs without a text layer). Runs tesseract.js on a
-// page image and returns recognized text. tesseract.js 默认从 jsdelivr CDN 下载
-// core wasm 与语言 traineddata——受限网络下会长时间挂起，UI 一直"识别中"。这里：
-//  - 加超时兜底：超时即终止 worker 并返回明确错误，不再无限等待；
-//  - 允许经 VITE_TESSERACT_CORE_PATH / VITE_TESSERACT_LANG_PATH 指定可达的镜像或本地资源；
-//  - 失败/超时返回结构化错误，由调用方给出用户可读的提示。
+// page image and returns recognized text. 已彻底离线：worker 脚本、core wasm、
+// 中文/英文 traineddata 均由脚本拷贝进 public/ocr (见 scripts/copy-tesseract-assets.mjs)，
+// 运行时不再依赖 jsdelivr CDN。仍保留超时兜底与结构化错误反馈。
 // 保持在 smoke 包外（动态 import；OCR 需真实机器 + 语言数据）。
 
 export interface OcrResult {
@@ -26,12 +24,24 @@ export async function ocrRecognize(
   let worker: any = null;
   try {
     const { createWorker } = await import("tesseract.js");
-    // 可选：受限网络指向可达镜像/本地资源；不设则用 tesseract 默认（jsdelivr CDN）。
-    const corePath = (import.meta.env.VITE_TESSERACT_CORE_PATH as string | undefined) || undefined;
-    const langPath = (import.meta.env.VITE_TESSERACT_LANG_PATH as string | undefined) || undefined;
-    const opts: Record<string, string> = {};
-    if (corePath) opts.corePath = corePath;
-    if (langPath) opts.langPath = langPath;
+
+    // 本地打包资源路径（相对应用根，dev 与 Tauri 构建均视为同源可 fetch/importScripts）。
+    // 可用 VITE_TESSERACT_CORE_PATH / VITE_TESSERACT_LANG_PATH 覆盖为镜像/自定义资源。
+    const base = import.meta.env.BASE_URL || "/";
+    const corePath = import.meta.env.VITE_TESSERACT_CORE_PATH as string | undefined;
+    const langPath = import.meta.env.VITE_TESSERACT_LANG_PATH as string | undefined;
+
+    const opts: Record<string, unknown> = {
+      workerPath: `${base}ocr/worker.min.js`,
+      corePath: corePath || `${base}ocr/core`,
+      langPath: langPath || `${base}ocr/tessdata`,
+      // tesseract 默认 workerBlobURL=true（blob importScripts）；改为直接 new Worker(workerPath)，
+      // 更贴近同源本地 worker，减少 blob 限制风险。
+      workerBlobURL: false,
+      // 每次从本地路径读取模型（不读 IndexedDB 旧缓存），gzip 模型为 .traineddata.gz。
+      cacheMethod: "none",
+      gzip: true,
+    };
 
     // start 以 resolve 形式返回错误（不 reject），避免超时/后台拒绝成为未捕获异常。
     const start: Promise<OcrResult> = (async (): Promise<OcrResult> => {

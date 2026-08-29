@@ -18,6 +18,9 @@ dist-ssr
 # Generated pdf.js runtime assets (copied by scripts/copy-pdfjs-assets.mjs)
 public/pdfjs
 
+# Generated tesseract offline OCR assets (copied by scripts/copy-tesseract-assets.mjs)
+public/ocr
+
 # Local scratch / CDP test temp + Edge profiles (never committed)
 tmp
 demo-shots
