@@ -11141,6 +11141,26 @@ p:has(> .editor-drawing-container) {
   flex-direction: column;
   overflow: hidden;
 }
+/* 侧栏可拖拽调宽容器 + 手柄 */
+.pdf-sidebar-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.pdf-sidebar-col .pdf-sidebar { width: 100%; border-left: none; }
+.pdf-sidebar-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+}
+.pdf-sidebar-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* 左侧目录（书签）侧栏 */
 .pdf-outline {
   width: 240px;

@@ -26,6 +26,36 @@ const AI_OUTLINE_PAGES = 60;
 
 /** 目录栏宽度持久化键。 */
 const OUTLINE_WIDTH_KEY = "shuyonote.pdf.outlineWidth";
+/** 批注侧栏宽度持久化键。 */
+const SIDEBAR_WIDTH_KEY = "shuyonote.pdf.sidebarWidth";
+
+/** 面板（目录/侧栏）拖拽调宽 + 双击归位默认宽度的共用逻辑。 */
+function startPanelResize(
+  e: ReactPointerEvent<HTMLDivElement>,
+  cfg: { min: number; max: number; def: number; key: string; get: () => number; set: (n: number) => void },
+) {
+  if (e.detail === 2) {
+    // 双击：归位默认宽度。
+    cfg.set(cfg.def);
+    try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
+    return;
+  }
+  e.preventDefault();
+  const startX = e.clientX;
+  const startW = cfg.get();
+  let cur = startW;
+  const move = (ev: PointerEvent) => {
+    cur = Math.max(cfg.min, Math.min(cfg.max, startW + (ev.clientX - startX)));
+    cfg.set(cur);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
 
 /** 护眼模式开关的本地持久化键。 */
 const EYE_CARE_KEY = "shuyonote.pdf.eyecare";
@@ -161,30 +191,33 @@ export function PdfReader() {
   const [aiOutlineCount, setAiOutlineCount] = useState<number>(AI_OUTLINE_PAGES); // -1=整本
   const [aiOutlineCustom, setAiOutlineCustom] = useState(false); // 是否手工输入页数
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
-  // 目录栏宽度（可拖拽，持久化）。
+  // 目录栏宽度（可拖拽调宽，双击归位，持久化）。
   const [outlineWidth, setOutlineWidth] = useState<number>(() => {
     const v = Number(localStorage.getItem(OUTLINE_WIDTH_KEY));
     return Number.isFinite(v) && v >= 160 && v <= 520 ? v : 240;
   });
   const outlineWidthRef = useRef(outlineWidth);
   outlineWidthRef.current = outlineWidth;
-  const onOutlineResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = outlineWidth;
-    const move = (ev: PointerEvent) => {
-      const w = Math.max(160, Math.min(520, startW + (ev.clientX - startX)));
-      outlineWidthRef.current = w;
-      setOutlineWidth(w);
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      try { localStorage.setItem(OUTLINE_WIDTH_KEY, String(outlineWidthRef.current)); } catch { /* 忽略 */ }
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  const onOutlineResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+    startPanelResize(e, {
+      min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY,
+      get: () => outlineWidthRef.current,
+      set: (n) => { outlineWidthRef.current = n; setOutlineWidth(n); },
+    });
+
+  // 右侧批注侧栏宽度（同样可拖拽调宽、双击归位、持久化）。
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return Number.isFinite(v) && v >= 220 && v <= 560 ? v : 260;
+  });
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+    startPanelResize(e, {
+      min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY,
+      get: () => sidebarWidthRef.current,
+      set: (n) => { sidebarWidthRef.current = n; setSidebarWidth(n); },
+    });
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
   const [eyeMode, setEyeMode] = useState<EyeMode>(() => {
@@ -1098,12 +1131,15 @@ export function PdfReader() {
                 </div>
               </div>
               {sidebarOpen && (
-                <PdfSidebar
-                  records={annRecords}
-                  currentPage={currentPage}
-                  onJump={onSidebarJump}
-                  onDelete={onSidebarDelete}
-                />
+                <div className="pdf-sidebar-col" style={{ width: sidebarWidth, flexShrink: 0 }}>
+                  <PdfSidebar
+                    records={annRecords}
+                    currentPage={currentPage}
+                    onJump={onSidebarJump}
+                    onDelete={onSidebarDelete}
+                  />
+                  <div className="pdf-sidebar-resizer" onPointerDown={onSidebarResizeStart} title="拖拽调整批注侧栏宽度" />
+                </div>
               )}
             </div>
           ) : (
