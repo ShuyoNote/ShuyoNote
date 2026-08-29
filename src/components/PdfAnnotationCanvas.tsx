@@ -256,8 +256,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       persist(annotations.map((a) => (a.id === m.id ? { ...a, box: moved } : a)));
       moveSticky.current = null;
       setDraggingSticky(false);
-      // 恢复光标（清掉 imperative grabbing，回到 CSS crosshair）。
-      svgRef.current && (svgRef.current.style.cursor = "");
+      // 恢复光标（清掉 imperative grabbing，回到当前工具对应光标：选择=箭头，绘制=crosshair）。
+      svgRef.current && (svgRef.current.style.cursor = tool === "select" ? "default" : "crosshair");
       redraw();
       return;
     }
@@ -528,6 +528,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         <svg
           ref={svgRef}
           className="pdf-annot-svg"
+          style={{ cursor: tool === "select" ? "default" : "crosshair" }}
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
           onPointerDown={onDown}

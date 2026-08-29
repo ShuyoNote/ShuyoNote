@@ -26,6 +26,7 @@
 ### 修复（PDF 批注：标注后右侧批注侧栏及时刷新）
 
 - **标注后右侧栏及时更新**：此前右侧「批注」侧栏的 `annRecords` 只在打开 PDF 时加载一次，新增/撤销标注后侧栏不刷新。现 `PdfAnnotationCanvas` 在 `persist`/`undo` 后触发 `onChanged`，`PdfReader` 通过 `refreshAnnRecords` 回调重新拉取 `listPdfAnnotations` 并更新 `annRecords`——新增/撤销标注后右侧栏立即同步。
+- **「选择」工具光标修正**：`select`（选择）工具是「点击选中已有标注」，并非绘制，此前画布一律用 `crosshair`(＋) 光标误导用户。现按工具区分——`select` 用默认箭头（`default`，悬停便签仍显示抓手），仅绘制类（高亮/画笔/便签）用 `crosshair`。
 
 ### 验证
 
