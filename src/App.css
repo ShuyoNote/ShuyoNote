@@ -10610,10 +10610,14 @@ p:has(> .editor-drawing-container) {
 .pdf-annot-stage {
   position: relative;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  background: #fff;
 }
 .pdf-annot-img {
   display: block;
   max-width: 100%;
+  /* 页面图像是透明底 RGBA（MuPDF alpha=true）；暗色主题下必须给白纸背景，
+     否则深色文字浮在透明上看不清。 */
+  background: #fff;
 }
 .pdf-annot-svg {
   position: absolute;
