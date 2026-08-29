@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { usePdfReader } from "../store/pdfReader";
 import { useAiStore } from "../store/ai";
@@ -23,6 +23,9 @@ import { PdfAskBar } from "./PdfAskBar";
 
 /** 「AI 生成目录」默认向后生成的页数（可在目录面板范围下拉里改：30/60/120 页或整本）。 */
 const AI_OUTLINE_PAGES = 60;
+
+/** 目录栏宽度持久化键。 */
+const OUTLINE_WIDTH_KEY = "shuyonote.pdf.outlineWidth";
 
 /** 护眼模式开关的本地持久化键。 */
 const EYE_CARE_KEY = "shuyonote.pdf.eyecare";
@@ -158,6 +161,30 @@ export function PdfReader() {
   const [aiOutlineCount, setAiOutlineCount] = useState<number>(AI_OUTLINE_PAGES); // -1=整本
   const [aiOutlineCustom, setAiOutlineCustom] = useState(false); // 是否手工输入页数
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
+  // 目录栏宽度（可拖拽，持久化）。
+  const [outlineWidth, setOutlineWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem(OUTLINE_WIDTH_KEY));
+    return Number.isFinite(v) && v >= 160 && v <= 520 ? v : 240;
+  });
+  const outlineWidthRef = useRef(outlineWidth);
+  outlineWidthRef.current = outlineWidth;
+  const onOutlineResizeStart = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = outlineWidth;
+    const move = (ev: PointerEvent) => {
+      const w = Math.max(160, Math.min(520, startW + (ev.clientX - startX)));
+      outlineWidthRef.current = w;
+      setOutlineWidth(w);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      try { localStorage.setItem(OUTLINE_WIDTH_KEY, String(outlineWidthRef.current)); } catch { /* 忽略 */ }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
   const [eyeMode, setEyeMode] = useState<EyeMode>(() => {
@@ -1048,7 +1075,10 @@ export function PdfReader() {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} aiCustom={aiOutlineCustom} onAiCountChange={setAiOutlineCount} onAiCustomChange={setAiOutlineCustom} />
+                <div className="pdf-outline-col" style={{ width: outlineWidth, flexShrink: 0 }}>
+                  <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} aiCustom={aiOutlineCustom} onAiCountChange={setAiOutlineCount} onAiCustomChange={setAiOutlineCustom} />
+                  <div className="pdf-outline-resizer" onPointerDown={onOutlineResizeStart} title="拖拽调整目录宽度" />
+                </div>
               )}
               <div className="pdf-reader-stage-wrap">
                 <PdfAnnotTopToolbar
