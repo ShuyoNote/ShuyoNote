@@ -1651,6 +1651,10 @@ trailer
   assert("annCenterY box center", layoutMod.annCenterY({ box: [0.1, 0.2, 0.5, 0.8] }) === 0.5, `=` + layoutMod.annCenterY({ box: [0.1, 0.2, 0.5, 0.8] }));
   assert("annCenterY points bbox center", layoutMod.annCenterY({ points: [[0.2, 0.3], [0.4, 0.9]] }) === 0.6, `=` + layoutMod.annCenterY({ points: [[0.2, 0.3], [0.4, 0.9]] }));
   assert("annCenterY fallback 0.5", layoutMod.annCenterY({}) === 0.5, `=` + layoutMod.annCenterY({}));
+  // 便签双击命中区：覆盖便签钉 + 内容气泡（右侧展开），随舞台尺寸折算.
+  const sr = layoutMod.stickyEditRegion([0.2, 0.3, 0.24, 0.36], 800, 1000);
+  assert("stickyEditRegion covers pin", sr[0] < 0.2 && sr[1] < 0.3 && sr[2] > 0.2 && sr[3] > 0.3, `sr=${JSON.stringify(sr)}`);
+  assert("stickyEditRegion extends right for bubble", sr[2] > sr[0] + 0.2, `sr=${JSON.stringify(sr)}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

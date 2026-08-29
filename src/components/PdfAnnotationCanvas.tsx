@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { stickyEditRegion } from "../lib/pdfLayout";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
@@ -298,11 +299,39 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setSelected(null);
   };
 
+  // 打开便签内联编辑气泡（共用：工具栏「编辑」按钮 + 双击便签）。
+  const openStickyEditor = (ann: PdfAnnotation) => {
+    if (!ann.box) return;
+    setEditBox([ann.box[0], ann.box[1]]);
+    setEditText(ann.text ?? "");
+    setSelected(ann.id);
+  };
+
   const onEditSticky = () => {
     const ann = annotations.find((a) => a.id === selected);
     if (!ann || ann.type !== "sticky" || !ann.box) return;
-    setEditBox([ann.box[0], ann.box[1]]);
-    setEditText(ann.text ?? "");
+    openStickyEditor(ann);
+  };
+
+  // 双击便签（或其内容气泡区域）直接编辑文本：按住仍拖动，双击即编辑。
+  const onStageDblClick = (e: { clientX: number; clientY: number; preventDefault: () => void }) => {
+    const p = toNorm(e);
+    const rect = svgRef.current?.getBoundingClientRect();
+    const sw = rect?.width ?? W;
+    const sh = rect?.height ?? H;
+    const hit = annotations.find(
+      (a) =>
+        a.type === "sticky" &&
+        a.box &&
+        (() => {
+          const r = stickyEditRegion(a.box!, sw, sh);
+          return p.x >= r[0] && p.x <= r[2] && p.y >= r[1] && p.y <= r[3];
+        })(),
+    );
+    if (hit) {
+      openStickyEditor(hit);
+      e.preventDefault();
+    }
   };
 
   // 内联便签气泡：确定 → 保存；无内容且是新便签 → 丢弃；编辑则更新。
@@ -541,6 +570,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           onPointerMove={onMove}
           onPointerUp={onUp}
           onPointerLeave={onUp}
+          onDoubleClick={onStageDblClick}
         >
           {annotations.map((a) => {
             if (a.type === "ink" && a.points) {

@@ -135,6 +135,27 @@ export function annCenterY(ann: AnnGeometry): number {
   return 0.5;
 }
 
+/** 便签「双击命中区」的归一化矩形 [x0,y0,x1,y1]。覆盖便签钉 + 其内容气泡（固定 ~220×132px、偏移量），
+ *  stageW/stageH 为舞台（页图像）的渲染像素尺寸，用于把气泡的 CSS 像素尺寸折算成归一化。 */
+export function stickyEditRegion(
+  box: [number, number, number, number],
+  stageW: number,
+  stageH: number,
+): [number, number, number, number] {
+  const w = Math.max(stageW, 1);
+  const h = Math.max(stageH, 1);
+  const bx = box[0];
+  const by = box[1];
+  // 气泡相对便签钉左上角的偏移：右移 14px、上移 6px；气泡宽高上限 ~220×132px。再各加 5px 容差。
+  const pad = 5 / w;
+  return [
+    Math.max(0, bx - pad),
+    Math.max(0, by - 10 / h),
+    bx + (14 + 220) / w + pad,
+    by + (132 - 6) / h + pad,
+  ];
+}
+
 export interface PdfLayout {
   /** 每页顶部在滚动轴上的 y（前缀和）。*/
   tops: number[];
