@@ -294,6 +294,19 @@ registerPlugin({
         return "已打开最近批注的 PDF";
       },
     },
+    {
+      id: "pdf.open-files",
+      title: "打开 PDF 文件",
+      description: "打开最近添加/导入的一个 PDF 附件",
+      closeOnRun: true,
+      run: async () => {
+        const files = await api.listAllPdfAttachments().catch(() => []);
+        if (!files || files.length === 0) return "暂无 PDF 附件";
+        const f = files[0];
+        usePdfReader.getState().openPdf(f.id, f.name || "");
+        return `已打开「${f.name || "PDF"}」`;
+      },
+    },
   ],
 });
 

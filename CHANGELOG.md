@@ -2,6 +2,24 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.180] - 2026-08-29
+
+### 新增（PDF 阅读/批注界面重构，思源式）
+
+- **入口全面易达**：文件管理器 PDF 行新增直达「标注」按钮（跳过多余预览层）；页面正文里的 PDF 附件点击直达阅读器（含「标注」徽章提示）；预览弹窗「阅读并批注」改为强调色大按钮＋图标；命令面板新增「打开 PDF」（`list_all_pdf_attachments` 列全部 PDF 附件）。
+- **思源式阅读器**：默认**近全屏**（铺满页面区域）+ 可最大化到全屏；**左侧目录（书签）树**（`PdfOutline`，点击跳页、当前项高亮）；**右侧批注侧栏**（`PdfSidebar`，列出全部页批注、点击跳页定位）；**键盘导航**（←/→/↑/↓ 翻页、+/− 缩放、F 适配页宽、Esc 关闭，输入框外生效）；**适配页宽**按钮。
+- **批注工具栏图标化**：选择/高亮/画笔/便签 转为图标＋文字、激活态明确；选区操作（摘录成块/复制引用/删除）常驻可见；无文本层状态条＋OCR 按钮更友好；便签/摘录改用**内联气泡输入**（替换 `window.prompt`）。
+
+### 修复
+
+- **目录点击不能跳转**：pdf.js `getOutline()` 的 `dest[0]` 是 `Ref` 对象而非数字，旧的 `toOutline` 恒判失败导致 pageIndex 落 0；改为用 `doc.getDestination`/`doc.getPageIndex` 异步解析真实页码。
+- **跳转/翻页卡顿**（实测定位）：native 端每次把整页 PNG 编码（大页 >1s，占 85% 耗时）→ 改为**直接返回 RGBA8 原始字节 + 宽高**（`tauri::ipc::InvokeResponseBody::Raw` 二进制通道，避免 6.8MB 转 JSON number 数组）；前端用 `<canvas>` 绘制；渲染 effect 并行化（图像/元数据/文本层互不阻塞）+ `getPageMeta` 去除慢的文本检测 + 页面渲染缓存（object URL）。
+- 移除 `png` crate 依赖（不再需要 PNG 编码）。
+
+### 验证
+
+- `scripts/smoke-web.mjs` 296 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（33）通过；桌面 `tauri dev` 实机翻页（适配页宽）从 ~1.3s 降至 ~0.12s（native 光栅化边际）。
+
 ## [1.59.179] - 2026-08-28
 
 ### 新增

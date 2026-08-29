@@ -90,6 +90,7 @@ pub fn run() {
             attachments::write_attachment_bytes,
             attachments::import_attachment_files,
             attachments::list_page_attachments,
+            attachments::list_all_pdf_attachments,
             attachments::remove_attachment,
             attachments::remove_attachments,
             attachments::move_attachment,

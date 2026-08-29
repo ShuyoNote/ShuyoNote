@@ -438,6 +438,46 @@ pub fn list_page_attachments(
     Ok(out)
 }
 
+/// M24 — list every PDF attachment across all pages (for the command palette's
+/// 「打开 PDF」entry). Sorted by most-recently-created first.
+#[tauri::command]
+pub fn list_all_pdf_attachments(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<Vec<AttachmentMeta>, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir = app_data_dir.join("attachments");
+
+    let c = db.0.lock().expect("db mutex poisoned");
+    let mut stmt = c
+        .prepare(
+            "SELECT id, name, hash, mime, size FROM attachments
+             WHERE mime = 'application/pdf' ORDER BY created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        let (id, name, hash, mime, size) = r.map_err(|e| e.to_string())?;
+        let path = find_path_by_hash(&attachments_dir, &hash)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        out.push(AttachmentMeta { id, name, hash, mime, size, path });
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

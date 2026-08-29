@@ -96,6 +96,7 @@ export const api = {
   listPdfAnnotations: (attachmentId: string) =>
     invoke<PdfAnnotationRecord[]>("list_pdf_annotations", { args: { attachment_id: attachmentId } }),
   listAllPdfAnnotations: () => invoke<PdfAnnotationRecord[]>("list_all_pdf_annotations"),
+  listAllPdfAttachments: () => invoke<AttachmentMeta[]>("list_all_pdf_attachments"),
   deletePage: (id: string) => invoke<void>("delete_page", { id }),
   movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
     invoke<void>("move_page", { args }),

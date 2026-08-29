@@ -10,6 +10,7 @@ import {
   type Spread,
 } from "lexical";
 import { platform } from "../../lib/platform";
+import { usePdfReader } from "../../store/pdfReader";
 import type { JSX } from "react";
 
 export type SerializedAttachmentRefNode = Spread<
@@ -128,7 +129,13 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
+    const isPdf = this.__mime === "application/pdf";
     const open = () => {
+      // M24 PDF 批注：正文里的 PDF 附件点击直达阅读器（而非用系统打开）。
+      if (isPdf) {
+        void usePdfReader.getState().openPdf(this.__attachmentId, this.__name);
+        return;
+      }
       if (this.__path) {
         void platform.opener.openPath(this.__path);
       }
@@ -136,7 +143,7 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
     return (
       <span
         className="editor-attachment-ref"
-        title={`${this.__name} · ${formatSize(this.__size)}`}
+        title={`${this.__name} · ${formatSize(this.__size)}${isPdf ? "（点击阅读并标注）" : ""}`}
         onClick={open}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -154,6 +161,7 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
           <span className="editor-file-name">{this.__name || "未命名文件"}</span>
           <span className="editor-file-meta">{formatSize(this.__size)}</span>
         </span>
+        {isPdf && <span className="editor-file-annotate-badge">标注</span>}
         <span className="editor-file-open" aria-hidden>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

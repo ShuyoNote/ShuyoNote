@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, type TextItemLike } from "../lib/pdfTextLayer";
@@ -21,6 +21,8 @@ interface Props {
   pageImageUrl: string | null;
   hasTextLayer: boolean;
   textItems?: TextItemLike[] | null;
+  focusTarget?: { pageIndex: number; ann: PdfAnnotation } | null;
+  onFocusConsumed?: () => void;
 }
 
 type Tool = "select" | "highlight" | "ink" | "sticky";
@@ -44,12 +46,15 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
   return false;
 }
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [tool, setTool] = useState<Tool>("select");
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [editBox, setEditBox] = useState<[number, number] | null>(null); // 内联便签气泡位置（归一化）
+  const [editText, setEditText] = useState("");
+  const [flash, setFlash] = useState<[number, number, number, number] | null>(null); // 侧栏跳转的临时高亮框
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const ink = useRef<[number, number][]>([]);
@@ -67,6 +72,24 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       alive = false;
     };
   }, [attachmentId, pageIndex]);
+
+  // 侧栏跳转：目标在本文档当前页则闪烁定位到该标注（临时描边），随后消费 target。
+  useEffect(() => {
+    if (!focusTarget) return;
+    if (focusTarget.pageIndex !== pageIndex) return;
+    const box = focusTarget.ann.box;
+    if (box) {
+      setFlash([box[0], box[1], box[2], box[3]]);
+      const t = window.setTimeout(() => setFlash(null), 1600);
+      onFocusConsumed?.();
+      return () => window.clearTimeout(t);
+    }
+    // 无 box（如 ink）则退化为选中该标注。
+    if (focusTarget.ann.id) {
+      setSelected(focusTarget.ann.id);
+      onFocusConsumed?.();
+    }
+  }, [focusTarget, pageIndex, onFocusConsumed]);
 
   const runOcr = async () => {
     if (!pageImageUrl || ocrBusy) return;
@@ -106,9 +129,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setSelected(null);
     if (tool === "sticky") {
       const p = toNorm(e);
-      const text = window.prompt("便签内容：");
-      if (text == null) return;
-      persist([...annotations, { id: `s-${Date.now()}`, type: "sticky", box: [p.x, p.y, p.x + 0.04, p.y + 0.06], text }]);
+      setEditBox([p.x, p.y]);
+      setEditText("");
       return;
     }
     const p = toNorm(e);
@@ -162,10 +184,28 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
 
   const onEditSticky = () => {
     const ann = annotations.find((a) => a.id === selected);
-    if (!ann || ann.type !== "sticky") return;
-    const v = window.prompt("便签内容：", ann.text ?? "");
-    if (v == null) return;
-    persist(annotations.map((a) => (a.id === ann.id ? { ...a, text: v } : a)));
+    if (!ann || ann.type !== "sticky" || !ann.box) return;
+    setEditBox([ann.box[0], ann.box[1]]);
+    setEditText(ann.text ?? "");
+  };
+
+  // 内联便签气泡：确定 → 保存；无内容且是新便签 → 丢弃；编辑则更新。
+  const commitSticky = () => {
+    if (!editBox) return;
+    const text = editText.trim();
+    const box: [number, number, number, number] = [editBox[0], editBox[1], editBox[0] + 0.04, editBox[1] + 0.06];
+    if (selected) {
+      if (!text) {
+        persist(annotations.filter((a) => a.id !== selected));
+      } else {
+        persist(annotations.map((a) => (a.id === selected ? { ...a, text } : a)));
+      }
+    } else if (text) {
+      persist([...annotations, { id: `s-${Date.now()}`, type: "sticky", box, text }]);
+    }
+    setEditBox(null);
+    setEditText("");
+    setSelected(null);
   };
 
   const onCopyRef = async () => {
@@ -211,34 +251,90 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const W = Math.max(pageW, 1);
   const H = Math.max(pageH, 1);
 
-  const tools: { id: Tool; label: string }[] = [
-    { id: "select", label: "选择" },
-    { id: "highlight", label: "高亮" },
-    { id: "ink", label: "画笔" },
-    { id: "sticky", label: "便签" },
+  // 工具栏：图标 + 文案，强化可发现性与激活态。
+  const tools: { id: Tool; label: string; hint: string; icon: ReactNode }[] = [
+    {
+      id: "select",
+      label: "选择",
+      hint: "点击选中已有标注",
+      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 4l7.5 16 2-6.5L20 11.5z" /></svg>,
+    },
+    {
+      id: "highlight",
+      label: "高亮",
+      hint: "拖选文字/区域高亮（有文本层会精确划词）",
+      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 11l4 4L19 9a2 2 0 0 0-3-3l-6 6H9z" /><path d="M9 11l-3-3M16 20H8" /></svg>,
+    },
+    {
+      id: "ink",
+      label: "画笔",
+      hint: "自由手绘标注",
+      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 19l7-7a2 2 0 0 0-3-3l-7 7v3h3z" /><path d="M18 3l1 1" /></svg>,
+    },
+    {
+      id: "sticky",
+      label: "便签",
+      hint: "在页面任意处添加便签",
+      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 5h16v10l-5 5H4z" /><path d="M15 20v-5h5" /></svg>,
+    },
   ];
   const selectedAnn = selected ? annotations.find((a) => a.id === selected) : null;
 
   return (
     <div className="pdf-annot">
-      <div className="pdf-annot-tools">
-        {tools.map((t) => (
-          <button key={t.id} className={`pdf-annot-tool ${tool === t.id ? "active" : ""}`} onClick={() => setTool(t.id)}>
-            {t.label}
-          </button>
-        ))}
-        {selected && (
-          <>
-            <span className="pdf-annot-sep" />
-            <button className="pdf-annot-tool" onClick={onExcerpt}>摘录成块</button>
-            {selectedAnn?.type === "sticky" && <button className="pdf-annot-tool" onClick={onEditSticky}>编辑</button>}
-            <button className="pdf-annot-tool" onClick={onCopyRef}>复制引用</button>
-            <button className="pdf-annot-tool danger" onClick={onDelete}>删除</button>
-          </>
-        )}
-        <span className="pdf-annot-hint">{hasTextLayer ? "有文本层" : "无文本层（矩形/画笔/便签更稳）"}</span>
+      <div className="pdf-annot-toolbar">
+        <div className="pdf-annot-tools" role="toolbar" aria-label="批注工具">
+          {tools.map((t) => (
+            <button
+              key={t.id}
+              className={`pdf-annot-tool ${tool === t.id ? "active" : ""}`}
+              onClick={() => setTool(t.id)}
+              title={t.hint}
+              aria-pressed={tool === t.id}
+            >
+              <span className="pdf-annot-tool-icon">{t.icon}</span>
+              <span className="pdf-annot-tool-label">{t.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="pdf-annot-actions">
+          {selected && selectedAnn ? (
+            <>
+              <button className="pdf-annot-tool accent" onClick={onExcerpt} title="把选中内容摘录为笔记块（含 pdf:// 回链）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></svg>
+                <span>摘录成块</span>
+              </button>
+              {selectedAnn.type === "sticky" && (
+                <button className="pdf-annot-tool" onClick={onEditSticky} title="编辑便签内容">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+                  <span>编辑</span>
+                </button>
+              )}
+              <button className="pdf-annot-tool" onClick={onCopyRef} title="复制 PDF 引用（可粘贴到别处回链）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+                <span>复制引用</span>
+              </button>
+              <button className="pdf-annot-tool danger" onClick={onDelete} title="删除选中标注">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+                <span>删除</span>
+              </button>
+            </>
+          ) : (
+            <span className="pdf-annot-tip">先在页面选中一条标注，即可摘录、复制引用或删除</span>
+          )}
+        </div>
+      </div>
+
+      {/* 页面能力提示条：文本层状态 + OCR（无文本层时） */}
+      <div className="pdf-annot-status">
+        <span className={`pdf-annot-layer ${hasTextLayer ? "ok" : "warn"}`}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            {hasTextLayer ? <path d="M20 6L9 17l-5-5" /> : <path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />}
+          </svg>
+          {hasTextLayer ? "有文本层，可精确划词" : "无文本层，建议用矩形/画笔/便签"}
+        </span>
         {!hasTextLayer && (
-          <button className="pdf-annot-tool" onClick={runOcr} disabled={ocrBusy}>
+          <button className="pdf-annot-ocr" onClick={runOcr} disabled={ocrBusy}>
             {ocrBusy ? "识别中…" : "OCR 识别本页"}
           </button>
         )}
@@ -289,7 +385,62 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             }
             return null;
           })}
+          {/* 侧栏跳转定位时的临时闪烁框 */}
+          {flash && (
+            <rect
+              x={flash[0] * W}
+              y={flash[1] * H}
+              width={(flash[2] - flash[0]) * W}
+              height={(flash[3] - flash[1]) * H}
+              fill="none"
+              stroke="rgba(51,112,255,0.95)"
+              strokeWidth={3}
+              strokeDasharray="6 4"
+              style={{ pointerEvents: "none", animation: "pdf-flash 1.4s ease-out forwards" }}
+            />
+          )}
         </svg>
+
+        {/* 内联便签气泡：替换 window.prompt，粘贴在页面内即时编辑 */}
+        {editBox && (
+          <div
+            className="pdf-sticky-editor"
+            style={{ left: `${editBox[0] * 100}%`, top: `${editBox[1] * 100}%` }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <textarea
+              className="pdf-sticky-input"
+              autoFocus
+              placeholder="输入便签内容…"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  commitSticky();
+                } else if (e.key === "Escape") {
+                  setEditBox(null);
+                  setEditText("");
+                  setSelected(null);
+                }
+              }}
+              rows={3}
+            />
+            <div className="pdf-sticky-actions">
+              <button className="pdf-sticky-btn ok" onClick={commitSticky}>保存</button>
+              <button
+                className="pdf-sticky-btn"
+                onClick={() => {
+                  setEditBox(null);
+                  setEditText("");
+                  setSelected(null);
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {ocrText && (

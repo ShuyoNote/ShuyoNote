@@ -539,6 +539,23 @@ export function FileManagerView() {
                 <td className="fm-ops-col">
                   {row.kind === "file" && (
                     <span className="fm-file-actions">
+                      {/* M24 PDF 批注：直达阅读器，跳过预览层。openPdf 内自带 attachmentId+name。 */}
+                      {row.file?.mime === "application/pdf" && (
+                        <button
+                          className="fm-file-annotate"
+                          title="阅读并标注"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
+                          }}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                            <path d="M14 3v6h6" />
+                            <path d="M9 14l3-3 2.5 2.5-3 3z" />
+                          </svg>
+                        </button>
+                      )}
                       {row.versions && row.versions.length > 0 && (
                         <button
                           title={`${row.versions.length + 1} 个历史版本`}
@@ -687,7 +704,13 @@ export function FileManagerView() {
               <span className="fm-preview-size">{formatSize(preview.size)}</span>
               {preview.mime === "application/pdf" && (
                 <button className="fm-preview-read" onClick={() => usePdfReader.getState().openPdf(preview.id, preview.name)}>
-                  阅读并批注
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                    <path d="M14 3v6h6" />
+                    <path d="M9 14l3-3 2.5 2.5-3 3z" />
+                    <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
+                  </svg>
+                  <span>阅读并批注</span>
                 </button>
               )}
               <button className="fm-preview-close" title="关闭" onClick={() => setPreview(null)}>

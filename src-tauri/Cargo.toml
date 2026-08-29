@@ -1,6 +1,6 @@
 [package]
 name = "shuyonote"
-version = "1.59.179"
+version = "1.59.180"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
@@ -47,7 +47,6 @@ tauri-plugin-updater = "2.10.1"
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
 # via src/pdf_native.rs.
 mupdf-sys = "0.8.0"
-png = "0.18.1"
 
 [dev-dependencies]
 # For async integration tests (embed_text network round-trip / search_semantic ranking).

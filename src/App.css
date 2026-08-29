@@ -3939,6 +3939,19 @@ select.prop-value {
   flex-shrink: 0;
 }
 
+/* PDF 附件「标注」徽章：提示可点击打开阅读器 */
+.editor-file-annotate-badge {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 5px;
+  padding: 1px 6px;
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
 /* Tables */
 .editor-table-scrollable-wrapper {
   overflow-x: auto;
@@ -8306,18 +8319,40 @@ p:has(> .editor-drawing-container) {
   line-height: 1;
 }
 .fm-preview-read {
-  border: 1px solid var(--border);
-  background: var(--block-hover);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 3px 10px;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
   margin-left: 4px;
+  transition: background 0.12s, box-shadow 0.12s;
 }
 .fm-preview-read:hover {
-  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(51, 112, 255, 0.3);
+}
+/* 文件列表行里的 PDF「标注」直达按钮 */
+.fm-file-annotate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.fm-file-annotate:hover {
+  background: var(--accent-soft);
 }
 .fm-preview-close:hover {
   color: var(--text);
@@ -10311,8 +10346,10 @@ p:has(> .editor-drawing-container) {
   justify-content: center;
 }
 .pdf-reader {
-  width: min(90vw, 1000px);
-  height: min(88vh, 800px);
+  /* M24 — 思源式近全屏阅读器：默认铺满页面区域（留少量边距），不再居中限宽小弹窗。
+     若要真正的全屏，点最大化按钮 (.maximized 覆盖为 100% 无边距)。 */
+  width: calc(100vw - 40px);
+  height: calc(100vh - 40px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -10320,6 +10357,13 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+/* M24 — 最大化：撑满整个页面区域（无圆角、无边距），保留头部 */
+.pdf-reader.maximized {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: none;
 }
 .pdf-reader-head {
   display: flex;
@@ -10338,6 +10382,11 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   font-size: 14px;
 }
+.pdf-reader-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 .pdf-reader-nav,
 .pdf-reader-zoom {
   display: flex;
@@ -10352,13 +10401,19 @@ p:has(> .editor-drawing-container) {
   text-align: center;
 }
 .pdf-reader-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--border);
   background: var(--block-hover);
   color: var(--text);
   border-radius: 6px;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   cursor: pointer;
+}
+.pdf-reader-btn svg {
+  display: block;
 }
 .pdf-reader-btn:disabled {
   opacity: 0.4;
@@ -10384,11 +10439,10 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-reader-body {
   flex: 1;
-  overflow: auto;
-  padding: 16px;
+  min-height: 0;
   display: flex;
-  justify-content: center;
-  background: #26272b;
+  flex-direction: column;
+  overflow: hidden;
 }
 .pdf-reader-loading {
   color: #d6d6d6;
@@ -10401,27 +10455,54 @@ p:has(> .editor-drawing-container) {
   gap: 8px;
   align-items: center;
 }
-.pdf-annot-tools {
+/* 顶层工具栏：工具在左，选区操作在右，整条随阅读器宽度 */
+.pdf-annot-toolbar {
+  width: 100%;
+  max-width: 860px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pdf-annot-tools,
+.pdf-annot-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 9px;
   padding: 4px 6px;
 }
 .pdf-annot-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
   font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 5px 9px;
+  border-radius: 7px;
   cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.pdf-annot-tool:hover {
+  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+  color: var(--text);
 }
 .pdf-annot-tool.active {
   background: var(--accent-soft);
   color: var(--accent);
+  border-color: rgba(51, 112, 255, 0.25);
+}
+.pdf-annot-tool.accent {
+  color: var(--accent);
+}
+.pdf-annot-tool.accent:hover {
+  background: var(--accent-soft);
 }
 .pdf-annot-tool.danger {
   color: var(--danger, #e5484d);
@@ -10429,17 +10510,49 @@ p:has(> .editor-drawing-container) {
 .pdf-annot-tool.danger:hover {
   background: rgba(229, 72, 77, 0.12);
 }
-.pdf-annot-sep {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-  margin: 0 4px;
+.pdf-annot-tool-icon {
+  display: inline-flex;
+  align-items: center;
 }
-.pdf-annot-hint {
-  font-size: 11px;
+/* 选中后操作栏里的辅助文案 */
+.pdf-annot-tip {
+  font-size: 12px;
   color: var(--text-dim);
-  margin-left: 4px;
+  padding: 4px 8px;
 }
+/* 页面能力提示条（文本层 + OCR） */
+.pdf-annot-status {
+  width: 100%;
+  max-width: 860px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+.pdf-annot-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.pdf-annot-layer.ok { color: var(--accent); }
+.pdf-annot-layer.warn { color: #b8860b; }
+.pdf-annot-ocr {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.pdf-annot-ocr:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
 .pdf-annot-stage {
   position: relative;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
@@ -10465,6 +10578,52 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   background: var(--surface);
 }
+/* 内联便签气泡（替换 window.prompt） */
+.pdf-sticky-editor {
+  position: absolute;
+  z-index: 20;
+  min-width: 180px;
+  max-width: 240px;
+  transform: translateY(-2px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+.pdf-sticky-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 5px 6px;
+  color: var(--text);
+  background: var(--surface);
+}
+.pdf-sticky-input:focus { outline: none; border-color: var(--accent); }
+.pdf-sticky-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+.pdf-sticky-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pdf-sticky-btn.ok {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pdf-sticky-btn:hover { opacity: 0.85; }
 .pdf-ocr-result {
   margin-top: 10px;
   width: 100%;
@@ -10493,3 +10652,196 @@ p:has(> .editor-drawing-container) {
   padding: 8px 10px;
   outline: none;
 }
+
+/* M24 — 思源式阅读器：画布 + 右侧批注侧栏 */
+.pdf-reader-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+.pdf-reader-stage {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+  background: var(--bg);
+}
+/* 右侧批注侧栏 */
+.pdf-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 左侧目录（书签）侧栏 */
+.pdf-outline {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pdf-outline-head {
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.pdf-outline-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 6px 16px;
+}
+.pdf-outline-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+.pdf-outline-item:hover {
+  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+}
+.pdf-outline-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pdf-outline-caret {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.pdf-outline-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdf-outline-empty {
+  padding: 24px 14px;
+  text-align: center;
+}
+.pdf-outline-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.pdf-outline-empty-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.pdf-sidebar-head {
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.pdf-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 8px 16px;
+}
+.pdf-sidebar-page + .pdf-sidebar-page {
+  margin-top: 10px;
+}
+.pdf-sidebar-page-no {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 2px 6px 4px;
+  font-weight: 600;
+}
+.pdf-sidebar-page-no.active {
+  color: var(--accent);
+}
+.pdf-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+}
+.pdf-sidebar-item:hover {
+  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+}
+.pdf-sidebar-item-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+.pdf-sidebar-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pdf-sidebar-item-type {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.pdf-sidebar-item-text {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdf-sidebar-item-page {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.pdf-sidebar-empty {
+  padding: 24px 14px;
+  text-align: center;
+}
+.pdf-sidebar-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.pdf-sidebar-empty-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* 侧栏跳转定位的闪烁动画 */
+@keyframes pdf-flash {
+  0% { opacity: 1; }
+  70% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+

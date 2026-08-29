@@ -20,15 +20,47 @@ function ensureWorker(): void {
   }
 }
 
-function toOutline(nodes: unknown[] | null | undefined): OutlineItem[] {
+/** Resolve an outline destination (array / named-string) to a 0-based page index.
+ *  pdf.js `dest[0]` is often a `Ref` object (not a bare number), so we must pass
+ *  it to `doc.getPageIndex(ref)` to get the real page number. */
+async function destPageIndex(doc: PDFDocumentProxy, dest: unknown): Promise<number> {
+  if (!dest) return 0;
+  // Named destination (string) → resolve to an array first.
+  let d = dest;
+  if (typeof dest === "string") {
+    try {
+      const resolved = await doc.getDestination(dest);
+      if (Array.isArray(resolved)) d = resolved;
+    } catch {
+      return 0;
+    }
+  }
+  if (!Array.isArray(d) || d.length === 0) return 0;
+  const first = d[0];
+  if (typeof first === "number") return first;
+  // `first` is a Ref ({num, gen}) — convert to page index.
+  if (first && typeof first === "object" && "num" in first) {
+    try {
+      const idx = await doc.getPageIndex(first as any);
+      return typeof idx === "number" ? idx : 0;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+async function toOutline(doc: PDFDocumentProxy, nodes: unknown[] | null | undefined): Promise<OutlineItem[]> {
   if (!Array.isArray(nodes)) return [];
-  return nodes
-    .filter((n): n is { title?: string; dest?: unknown; items?: unknown[] } => !!n)
-    .map((n) => ({
-      title: typeof n.title === "string" ? n.title : "",
-      pageIndex: Array.isArray(n.dest) && typeof n.dest[0] === "number" ? n.dest[0] : 0,
-      children: toOutline(n.items),
-    }));
+  const out: OutlineItem[] = [];
+  for (const n of nodes) {
+    if (!n) continue;
+    const item = n as { title?: string; dest?: unknown; items?: unknown[] };
+    const pageIndex = await destPageIndex(doc, item.dest);
+    const children = await toOutline(doc, item.items);
+    out.push({ title: typeof item.title === "string" ? item.title : "", pageIndex, children });
+  }
+  return out;
 }
 
 /** Create a PDF.js-backed render engine (browser). */
@@ -53,7 +85,7 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       doc = await task.promise;
       let outline: OutlineItem[] = [];
       try {
-        outline = doc.getOutline ? toOutline(await doc.getOutline()) : [];
+        outline = doc.getOutline ? await toOutline(doc, await doc.getOutline()) : [];
       } catch {
         outline = [];
       }
@@ -64,14 +96,9 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       const d = expectDoc();
       const p = await d.getPage(pageIndex + 1);
       const vp = p.getViewport({ scale: 1 });
-      let hasTextLayer = false;
-      try {
-        const tc = await p.getTextContent();
-        hasTextLayer = (tc.items?.length ?? 0) > 0;
-      } catch {
-        hasTextLayer = false;
-      }
-      return { index: pageIndex, width: vp.width, height: vp.height, hasTextLayer };
+      // 不在此做 getTextContent()（慢）：hasTextLayer 由 getPageTextItems 推导，
+      // 让页面图像/宽高秒出，不阻塞首屏。
+      return { index: pageIndex, width: vp.width, height: vp.height, hasTextLayer: false };
     },
 
     async getPageTextItems(pageIndex: number): Promise<{ str: string; transform: number[] | null; width: number; height: number }[]> {

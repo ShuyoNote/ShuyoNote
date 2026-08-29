@@ -59,10 +59,17 @@ export interface WebviewDriver {
   ): Promise<() => void>;
 }
 
+/** M24 — a rendered PDF page: raw RGBA8 samples + dimensions. */
+export interface PdfRenderedPage {
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+}
+
 /** M24 — PDF page rendering. Desktop uses native MuPDF; Web degrades to pdf.js. */
 export interface PdfRenderDriver {
-  /** Render an attachment's PDF page to PNG bytes (native engine when available). */
-  renderPdfPage(attachmentId: string, pageIndex: number, scale: number): Promise<Uint8Array>;
+  /** Render an attachment's PDF page to RGBA samples (native engine when available). */
+  renderPdfPage(attachmentId: string, pageIndex: number, scale: number): Promise<PdfRenderedPage>;
   /** Whether a native engine is available on this host. */
   nativeAvailable(): boolean;
 }

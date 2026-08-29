@@ -468,10 +468,16 @@ pub struct RenderPdfPageArgs {
     pub scale: f32,
 }
 
-/// Render an attachment's PDF page to PNG bytes using MuPDF (desktop-native,
+/// Render an attachment's PDF page to bytes using MuPDF (desktop-native,
 /// faster for large/complex PDFs). Web degrades to pdf.js (see platform driver).
+///
+/// Returns a binary IPC response (not JSON): 8-byte header [u32 width LE,
+/// u32 height LE] followed by raw RGBA8 samples. Frontend reads the
+/// `ArrayBuffer` directly, avoiding the huge JS-number-array deserialization
+/// that a JSON `Vec<u8>` payload causes (6.8MB → 6.8M numbers — the lag
+/// culprit on fit-width page flips).
 #[tauri::command]
-pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPageArgs) -> Result<Vec<u8>, String> {
+pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPageArgs) -> Result<tauri::ipc::InvokeResponseBody, String> {
     let c = conn(&db);
     let hash: String = c
         .query_row(
@@ -481,16 +487,12 @@ pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPage
         )
         .map_err(|e| e.to_string())?;
     let bytes = crate::attachments::read_attachment_bytes(app, hash)?;
-    let (rgba, w, h, stride) = unsafe { crate::pdf_native::render_page(&bytes, args.page_index, args.scale) }
+    let (rgba, w, h, _stride) = unsafe { crate::pdf_native::render_page(&bytes, args.page_index, args.scale) }
         .map_err(|e| format!("MuPDF render failed: {e}"))?;
-    debug_assert_eq!(stride, w * 4, "expected RGBA8 with stride == width*4");
-    let mut out = Vec::new();
-    {
-        let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut writer = enc.write_header().map_err(|e| e.to_string())?;
-        writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
-    }
-    Ok(out)
+    // Header (8 bytes, little-endian) + RGBA.
+    let mut out = Vec::with_capacity(8 + rgba.len());
+    out.extend_from_slice(&(w as u32).to_le_bytes());
+    out.extend_from_slice(&(h as u32).to_le_bytes());
+    out.extend_from_slice(&rgba);
+    Ok(tauri::ipc::InvokeResponseBody::Raw(out))
 }
