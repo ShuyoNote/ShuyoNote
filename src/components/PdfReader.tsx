@@ -4,6 +4,7 @@ import { usePdfReader } from "../store/pdfReader";
 import { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
+import { toast } from "../store/toast";
 import type { PdfAnnotation } from "../lib/pdfAnnotation";
 import type { OutlineItem } from "../lib/pdfRender";
 import type { PdfAnnotationRecord } from "../types";
@@ -100,6 +101,20 @@ export function PdfReader() {
   const onSidebarJump = (pageIndex: number, ann: PdfAnnotation) => {
     if (pageIndex >= 0 && pageIndex < (pageCount || 1)) setPageIndex(pageIndex);
     setFocusTarget({ pageIndex, ann });
+  };
+
+  // B6 — 从侧栏删除一条批注（更新 records + 持久化该页）。
+  const onSidebarDelete = (pageIndex: number, annId: string) => {
+    const rec = annRecords.find((r) => r.page_index === pageIndex);
+    if (!rec) return;
+    const next = (rec.annotations as PdfAnnotation[]).filter((a) => a.id !== annId);
+    if (next.length === rec.annotations.length) return;
+    const updated = annRecords.map((r) =>
+      r.page_index === pageIndex ? { ...r, annotations: next } : r,
+    );
+    setAnnRecords(updated);
+    void api.savePdfAnnotations(attachmentId ?? "", pageIndex, next).catch(() => {});
+    toast("已删除批注", "success");
   };
 
   // Load the document once per (open, bytes).
@@ -314,6 +329,7 @@ export function PdfReader() {
                   records={annRecords}
                   currentPage={pageIndex}
                   onJump={onSidebarJump}
+                  onDelete={onSidebarDelete}
                 />
               )}
             </div>

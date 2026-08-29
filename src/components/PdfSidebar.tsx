@@ -8,6 +8,8 @@ interface Props {
   records: PdfAnnotationRecord[];
   currentPage: number;
   onJump: (pageIndex: number, ann: PdfAnnotation) => void;
+  /** B6 — 从侧栏删除一条批注（按 页码+id），调用方负责更新 records 并持久化。 */
+  onDelete: (pageIndex: number, annId: string) => void;
 }
 
 function typeIcon(type: string): string {
@@ -32,7 +34,7 @@ function typeLabel(type: string): string {
   }
 }
 
-export function PdfSidebar({ records, currentPage, onJump }: Props) {
+export function PdfSidebar({ records, currentPage, onJump, onDelete }: Props) {
   // Flatten: [{pageIndex, ann}...] in insertion order, grouped by page for display.
   const items: { pageIndex: number; ann: PdfAnnotation }[] = [];
   for (const rec of records) {
@@ -75,19 +77,30 @@ export function PdfSidebar({ records, currentPage, onJump }: Props) {
                     ? "（区域标注）"
                     : "");
               return (
-                <button
-                  key={`${pageIdx}-${ann.id}-${i}`}
-                  className="pdf-sidebar-item"
-                  onClick={() => onJump(pageIdx, ann)}
-                  title={`${typeLabel(ann.type)} · 第 ${pageIdx + 1} 页`}
-                >
-                  <span className="pdf-sidebar-item-icon">{typeIcon(ann.type)}</span>
-                  <span className="pdf-sidebar-item-body">
-                    <span className="pdf-sidebar-item-type">{typeLabel(ann.type)}</span>
-                    <span className="pdf-sidebar-item-text">{desc}</span>
-                  </span>
-                  <span className="pdf-sidebar-item-page">{pageIdx + 1}</span>
-                </button>
+                <div key={`${pageIdx}-${ann.id}-${i}`} className="pdf-sidebar-item-row">
+                  <button
+                    className="pdf-sidebar-item"
+                    onClick={() => onJump(pageIdx, ann)}
+                    title={`${typeLabel(ann.type)} · 第 ${pageIdx + 1} 页`}
+                  >
+                    <span className="pdf-sidebar-item-icon">{typeIcon(ann.type)}</span>
+                    <span className="pdf-sidebar-item-body">
+                      <span className="pdf-sidebar-item-type">{typeLabel(ann.type)}</span>
+                      <span className="pdf-sidebar-item-text">{desc}</span>
+                    </span>
+                    <span className="pdf-sidebar-item-page">{pageIdx + 1}</span>
+                  </button>
+                  <button
+                    className="pdf-sidebar-del"
+                    title="删除这条批注"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(pageIdx, ann.id);
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+                  </button>
+                </div>
               );
             })}
           </div>

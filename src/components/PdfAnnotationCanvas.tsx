@@ -63,6 +63,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const ink = useRef<[number, number][]>([]);
+  // C8 便签拖动：记录被拖动的便签 id + 起点（归一化），用于把便签色块拖到新位置。
+  const moveSticky = useRef<{ id: string; box: [number, number, number, number]; sx: number; sy: number } | null>(null);
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -106,13 +108,32 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     if (text) toast("已识别本页文本", "success");
   };
 
+  const undoStackRef = useRef<PdfAnnotation[][]>([]);
   const persist = useCallback(
     (next: PdfAnnotation[]) => {
-      setAnnotations(next);
+      setAnnotations((prev) => {
+        // A2 撤销：每次变更前把旧快照压栈（仅当确有变化，避免把空压栈）。
+        if (JSON.stringify(prev) !== JSON.stringify(next)) {
+          undoStackRef.current.push(prev);
+          if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+        }
+        return next;
+      });
       void api.savePdfAnnotations(attachmentId, pageIndex, next).catch(() => {});
     },
     [attachmentId, pageIndex],
   );
+
+  // A2 撤销：本页批注的历史快照栈（局部、在内存，不改持久化语义）。
+  const canUndo = undoStackRef.current.length > 0;
+  const undo = () => {
+    const prev = undoStackRef.current.pop();
+    if (!prev) return;
+    setAnnotations(prev);
+    setSelected(null);
+    void api.savePdfAnnotations(attachmentId, pageIndex, prev).catch(() => {});
+    toast("已撤销", "success");
+  };
 
   const toNorm = (e: { clientX: number; clientY: number }) => {
     const el = svgRef.current;
@@ -128,6 +149,12 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     if (tool === "select") {
       const p = toNorm(e);
       const hit = annotations.find((a) => contains(a, p.x, p.y));
+      // C8 — 若命中的是已选中的便签，则进入「拖动便签」模式；否则仅选中。
+      if (hit && selected && hit.id === selected && hit.type === "sticky" && hit.box) {
+        moveSticky.current = { id: hit.id, box: hit.box, sx: p.x, sy: p.y };
+        svgRef.current?.setPointerCapture?.(e.pointerId);
+        return;
+      }
       setSelected(hit?.id ?? null);
       return;
     }
@@ -148,6 +175,17 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   };
 
   const onMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (moveSticky.current) {
+      const p = toNorm(e);
+      const m = moveSticky.current;
+      const dx = p.x - m.sx;
+      const dy = p.y - m.sy;
+      const w = m.box[2] - m.box[0];
+      const h = m.box[3] - m.box[1];
+      moveSticky.current = { ...m, box: [m.box[0] + dx, m.box[1] + dy, m.box[0] + dx + w, m.box[1] + dy + h] };
+      redraw();
+      return;
+    }
     if (tool === "ink" && ink.current.length) {
       const p = toNorm(e);
       ink.current.push([p.x, p.y]);
@@ -161,10 +199,25 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   };
 
   const onUp = () => {
+    // C8 — 便签拖动结束时持久化新位置（钳制到 [0,1]）。
+    if (moveSticky.current) {
+      const m = moveSticky.current;
+      const clamp = (v: number) => Math.max(0, Math.min(1, v));
+      const nx0 = clamp(m.box[0]);
+      const ny0 = clamp(m.box[1]);
+      const nx1 = clamp(m.box[2]);
+      const ny1 = clamp(m.box[3]);
+      const moved = [nx0, ny0, nx1, ny1] as [number, number, number, number];
+      persist(annotations.map((a) => (a.id === m.id ? { ...a, box: moved } : a)));
+      moveSticky.current = null;
+      redraw();
+      return;
+    }
     if (tool === "ink" && ink.current.length >= 2) {
       persist([...annotations, { id: `i-${Date.now()}`, type: "ink", points: ink.current }]);
       ink.current = [];
       redraw();
+      setTool("select"); // A1 — 画完自动回选择
     } else if (drag.current) {
       const { x0, y0, x1, y1 } = drag.current;
       if (Math.abs(x1 - x0) > 0.005 || Math.abs(y1 - y0) > 0.005) {
@@ -175,6 +228,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           if (snapped) box = snapped;
         }
         persist([...annotations, { id: `h-${Date.now()}`, type: "highlight", box }]);
+        setTool("select"); // A1 — 画完自动回选择
       }
       drag.current = null;
       redraw();
@@ -211,6 +265,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setEditBox(null);
     setEditText("");
     setSelected(null);
+    setTool("select"); // A1 — 便签保存/取消后回选择
   };
 
   const onCopyRef = async () => {
@@ -366,6 +421,18 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               <span className="pdf-annot-tool-label">{t.label}</span>
             </button>
           ))}
+          {/* A2 撤销：撤销本页最后一次批注变更 */}
+          <button
+            className={`pdf-annot-tool ${canUndo ? "" : "disabled"}`}
+            onClick={undo}
+            disabled={!canUndo}
+            title="撤销上次批注"
+          >
+            <span className="pdf-annot-tool-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 13" /></svg>
+            </span>
+            <span className="pdf-annot-tool-label">撤销</span>
+          </button>
         </div>
         <div className="pdf-annot-actions">
           {selected && selectedAnn ? (
@@ -496,6 +563,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
                   setEditBox(null);
                   setEditText("");
                   setSelected(null);
+                  setTool("select");
                 }
               }}
               rows={3}
@@ -508,6 +576,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
                   setEditBox(null);
                   setEditText("");
                   setSelected(null);
+                  setTool("select");
                 }}
               >
                 取消

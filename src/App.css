@@ -10549,6 +10549,11 @@ p:has(> .editor-drawing-container) {
 .pdf-annot-tool.danger:hover {
   background: rgba(229, 72, 77, 0.12);
 }
+/* A2 — 撤销按钮不可用态 */
+.pdf-annot-tool.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .pdf-annot-tool-icon {
   display: inline-flex;
   align-items: center;
@@ -10910,6 +10915,37 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-sidebar-page-no.active {
   color: var(--accent);
+}
+/* B6 — 侧栏批注行：跳转按钮 + 删除按钮并列 */
+.pdf-sidebar-item-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.pdf-sidebar-item-row:hover .pdf-sidebar-item {
+  background: var(--hover-strong, rgba(0, 0, 0, 0.05));
+}
+.pdf-sidebar-del {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.pdf-sidebar-item-row:hover .pdf-sidebar-del {
+  opacity: 1;
+}
+.pdf-sidebar-del:hover {
+  color: var(--danger, #e5484d);
+  background: rgba(229, 72, 77, 0.1);
 }
 .pdf-sidebar-item {
   display: flex;

@@ -8,9 +8,9 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.184**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.185**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `8c58bf1`（工作树干净；v1.59.184 发布提交，v1.59.183 发布提交为 `f260685`）。
+- **git**：HEAD 见下方（工作树干净；v1.59.185 发布提交，v1.59.184 发布提交为 `8c58bf1`）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -61,6 +61,7 @@
 - **v1.59.182**：**对整篇 PDF 提问（M24 阶段 3 延伸，方案 B 相关页检索）**——阅读器顶部「对这篇 PDF 提问」按钮→底部提问栏：提问时段提取整篇文本（`getPageText`，仅字符串）＋ **char-bigram Jaccard 相关页检索**（`rankRelevantPages`，离线/无向量端点）只挑最相关 ≤5 页喂模型，流式回答＋「依据 N、M 页」，可一键存成带 `pdf://` 回链的笔记块。纯函数 `rankRelevantPages`（`searchSemantic.ts`）+ 引擎可选 `getPageText` + 新组件 `PdfAskBar.tsx`；落地文档 `docs/plans/2026-08-29-pdf-ask-document.md`。**修复**：桌面端 AI 流式 `ai_complete_stream` 缺 `runId`（Tauri 顶层参数 camelCase，`api.ts` 误传 `run_id`）——AI 帮读/对 PDF 提问在桌面端即可流式返回；清理 `fitWidth` 临时调试日志。smoke 298→**300**。
 - **v1.59.183**：**M9 / M20 打磨**——M9 模板 `{{selected}}` 接入编辑器真实选区（用模板建页时把编辑器当前选中文本填入 `{{selected}}`，此前恒为空）；M20 语义检索搜索结果相关度提示（`SearchResult` 新增 `score` 字段，Web + Rust 都传递，搜索面板显示「相关 NN%」徽章）。
 - **v1.59.184**：**M10.4b 收尾打磨：跨空间复制选父级**——「复制到其他工作空间」从"只能复制到目标空间根"升级为"可指定目标文件夹"：选目标空间后进入其**文件夹树**（含「根目录」+ 各文件夹按层级缩进），点一个即复制到其下。新增 Rust 命令 `list_workspace_pages(workspace_id)`（独立打开目标空间库，不切换活动空间）；前端 `CopyPageAction` 选空间后构建父子树并传 `newParentId`。
+- **v1.59.185**：**标注体验优化 ×4**——A1 画完自动回「选择」（高亮/画笔/便签画完即切回选择）；A2 **撤销**按钮（↺，内存快照栈，撤销最近一次批注变更）；C8 **便签可拖动**（选中便签后拖动画块移动位置，钳制页面内）；B6 **侧栏删除批注**（悬停显示删除图标，点它删除并持久化）。
 
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
@@ -68,7 +69,7 @@
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
 - **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.184**。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.185**。
 
 ## 4. 环境/工具备注
 
