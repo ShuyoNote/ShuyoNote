@@ -32,7 +32,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 
 ## 📑 目录
 
-- **特性** —— 编辑体验 / AI 助手 / 知识组织 / 数据安全 / 多设备同步 / 体验优化
+- **特性** —— 编辑体验 / **PDF 阅读** / AI 助手 / 知识组织 / 数据安全 / 多设备同步 / 体验优化
 - **架构** —— 前端 / Rust 后端 / SQLite / 同步服务端分层；以及可插拔平台 driver（桌面 Tauri / Web 浏览器）
 - **技术栈** —— 各层技术一览
 - **开发环境要求** —— Node / Rust / 平台
@@ -168,6 +168,9 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 | 备份 / 导出 | rusqlite 在线 backup API + zip（Web 用 fflate + 流式 `Zip`） |
 | 插件 | boa_engine（受限 JS 运行时）+ 白名单 API |
 | 附件 | 内容寻址（SHA-256 去重）；Web 侧存 IndexedDB `blobStore` |
+| PDF 渲染/批注 | pdf.js（Web）+ MuPDF（桌面 native，`mupdf-sys`）+ 坐标归一化 `pdfAnnotation` 纯函数 | `src/lib/pdf*.ts`、`src-tauri/pdf_native.rs` |
+| OCR / AI 识别 | 离线 tesseract.js（`ocr.ts`，本地双语完整模型）+ 视觉大模型（`ai/ocrVision.ts`） | `src/lib/ocr.ts`、`src/lib/ai/ocrVision.ts` |
+| 朗读 / 目录 | Web Speech 朗读（`speech.ts`）+ AI 生成目录（`aiOutline.ts` + `pdfOutlineGen.ts`） | `src/lib/speech.ts`、`src/lib/aiOutline.ts` |
 
 ## 🛠️ 开发环境要求
 
@@ -195,10 +198,13 @@ pnpm dev:web
 ## 📦 构建发布
 
 ```bash
-pnpm tauri build
+pnpm build      # 前端构建（tsc + vite build，产物到 dist/）
+pnpm tauri build   # 打包桌面安装包
 ```
 
 产物位于 `src-tauri/target/release/`。
+
+> `dev`/`build` 前会自动运行 `scripts/copy-pdfjs-assets.mjs` 与 `scripts/copy-tesseract-assets.mjs`（PDF CJK 资源 + tesseract 离线 OCR 双语完整模型分别拷到 `public/pdfjs`、`public/ocr`，均为生成物、不入库）；`pnpm install` 后即可离线使用 OCR。
 
 ## 🔄 多设备同步
 
@@ -231,13 +237,15 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 ShuyoNote/
 ├── src/                      # 前端（React + Lexical）
 │   ├── editor/               # 编辑器、自定义节点（Callout/Image/BlockRef/BlockEmbed/ColumnsBlockNode/分栏）、Markdown 转换
-│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板 + 分栏（ColumnsBlockView/ColumnEditor）（18+ 组件）
+│   ├── components/           # 侧边栏、页面树、搜索、看板、关系图、各面板 + 分栏（ColumnsBlockView/ColumnEditor） + PDF 阅读器/批注（PdfReader/PdfAnnotationCanvas/PdfOutline/PdfSidebar/PdfAnnotTopToolbar/PdfAskBar）（18+ 组件）
 │   ├── store/                # Zustand（notes / theme / sidebar / toast / view / space / blockCache / treeDrag / treeSelection / …）
 │   ├── hooks/                # 自动同步 / 全局快捷键 / Popover
 │   ├── plugins/              # 插件命令注册表（命令面板扩展点）
 │   ├── lib/                  # Tauri IPC 封装 / 标签分类表 / Markdown 导出 / PDF 打印 / treeReorder(拖拽重排纯函数)
 │   │   ├── platform/         # 平台 driver 抽象：types(接口) / tauri.ts / web.ts / sqliteStore.ts / blobStore.ts / spaceStore.ts
-│   │   └── ai/               # 薄 Agent 核心：llm(传输) / host(受限循环) / transport / apply / tools / inlineDraft / lexical(文本辅助)
+│   │   ├── ai/               # 薄 Agent 核心：llm(传输) / host(受限循环) / transport / apply / tools / inlineDraft / lexical(文本辅助) / ocrVision(视觉识别)
+│   │   ├── pdf*.ts           # PDF 坐标归一化 / 布局(pdfLayout) / 批注 / 目录纯函数(pdfOutlineGen) / OCR(ocr) / AI 目录(aiOutline) / 朗读(speech)
+│   │   └── speech.ts         # 系统朗读（Web Speech）
 │   ├── App.tsx               # 根组件
 │   ├── App.css               # 设计系统 token 与全局样式
 │   └── types.ts              # 共享类型
@@ -245,6 +253,7 @@ ShuyoNote/
 │   └── src/
 │       ├── db.rs             # SQLite 连接/迁移；meta.db + spaces/<id>.db 每空间库
 │       ├── commands.rs       # 页面 CRUD
+│       ├── pdf_native.rs     # PDF native 渲染（MuPDF 经 mupdf-sys）
 │       ├── search.rs         # FTS5 检索（含全空间跨库合并）
 │       ├── sync.rs           # outbox / LWW / push-pull / 附件同步
 │       ├── attachments.rs    # 图片 / 附件（内容寻址）
@@ -280,12 +289,12 @@ ShuyoNote/
 | [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 架构 / 方案 / 对比 / 设计交付 / 变更记录 |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
-| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M15 + M16 跨平台/Web + **M17 薄 Agent AI 已达成**；**M18 内联起草 / M19 织网 / M20 模板变量+语义检索 / M21 wiki 导出** 规划中；M6 移动端 / M11.3 / M11.4 已评估未做） |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M23 已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强** 已达成；M6 移动端 / M11.3 / M11.4 已评估未做） |
 | [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
-| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草（含嵌入式 vs 侧边栏职责划分）** |
+| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草 / PDF 批注 / PDF 连续滚动 / PDF 阅读器 + OCR/AI 增强（含护眼·离线 OCR·视觉识别·AI 目录·朗读）** |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
@@ -329,7 +338,9 @@ ShuyoNote/
 - [x] 每工作空间独立存储（物理隔离：`meta.db` + `spaces/<ws_id>/` 每空间库；全空间搜索跨库合并 / 跨空间复制 / 单空间导出导入）
 - [x] **Web 全平台**（M16：`src/lib/platform/` driver 抽象 → 浏览器可跑 → sql.js 真实 SQLite → 属性/数据库/版本/块引用/备份/PWA；web 能力补齐与体验优化 + 数据安全，见 [M16 里程碑](docs/roadmap.md)）
 - [x] **AI 增强（薄 Agent）**（M17：语义工具 + 受限宿主 + 草稿确认 + 隐私开关，默认关，见 [方案](docs/plans/2026-08-24-thin-agent-interface-plan.md)）
-- [ ] **内联 AI 起草**（M18：空行空格唤起随光标浮层 + 上下文自适应下拉 + 流式创作 + 完成/关闭，见 [方案](docs/plans/2026-08-24-inline-ai-draft-plan.md)）
+- [x] **内联 AI 起草**（M18：空行空格唤起随光标浮层 + 上下文自适应下拉 + 流式创作 + 完成/关闭，见 [方案](docs/plans/2026-08-24-inline-ai-draft-plan.md)；M19 织网 / M20 模板变量+语义检索 / M21 wiki 导出 / M22 绘图 / M23 Excalidraw 高级均已达标）
+- [x] **PDF 阅读/批注**（M24 阶段1/3：内置阅读器 + 连续滚动 + 高亮/画笔/便签 + 摘录成块（`pdf://` 回链）+ AI 帮读 + 对整篇 PDF 提问；见 [方案](docs/plans/2026-08-27-pdf-annotation-plan.md)）
+- [x] **PDF 阅读体验 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / **AI 一键生成目录（视觉优先、带层级、可范围）** / 系统朗读 / 识别结果弹层；见 [落地文档](docs/plans/2026-08-30-pdf-reader-ai-plan.md)）
 - [ ] 移动端适配（环境受限：缺 iOS/Android 工具链，已评估）
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
