@@ -11149,7 +11149,7 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
   flex-shrink: 0;
 }
-.pdf-sidebar-col .pdf-sidebar { width: 100%; border-left: none; }
+.pdf-sidebar-col .pdf-sidebar { width: 100%; border-left: none; flex: 1; min-height: 0; }
 .pdf-sidebar-resizer {
   position: absolute;
   left: -3px;
@@ -11179,7 +11179,7 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
   flex-shrink: 0;
 }
-.pdf-outline-col .pdf-outline { width: 100%; border-right: none; }
+.pdf-outline-col .pdf-outline { width: 100%; border-right: none; flex: 1; min-height: 0; }
 .pdf-outline-resizer {
   position: absolute;
   right: 0;
@@ -11201,6 +11201,7 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-shrink: 0;
 }
 .pdf-outline-regen {
   border: 1px solid var(--accent);
