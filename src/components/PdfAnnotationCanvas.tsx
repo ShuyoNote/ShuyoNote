@@ -103,6 +103,12 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const moveSticky = useRef<{ id: string; box: [number, number, number, number]; originBox: [number, number, number, number]; sx: number; sy: number } | null>(null);
   const [, force] = useState(0);
 
+  // OCR/图像用 ref 持有最新值：注册进控制器的 runOcr 是不随渲染重建的闭包，
+  // 若从 state 闭包读 pageImageUrl 会停留在挂载时的 null → 识别点了没反应。
+  const pageImageUrlRef = useRef<string | null>(pageImageUrl);
+  pageImageUrlRef.current = pageImageUrl;
+  const ocrBusyRef = useRef(false);
+
   // 页面参考像素尺寸（SVG viewBox 坐标空间），顶部声明以便各 effect 复用。
   const W = Math.max(pageW, 1);
   const H = Math.max(pageH, 1);
@@ -143,10 +149,14 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   }, [focusTarget, pageIndex, onFocusConsumed, W, H]);
 
   const runOcr = async () => {
-    if (!pageImageUrl || ocrBusy) return;
+    // 用 ref 读最新图像/忙碌态（注册进控制器的 runOcr 是不随渲染重建的闭包，state 闭包会陈旧）。
+    const img = pageImageUrlRef.current;
+    if (!img || ocrBusyRef.current) return;
+    ocrBusyRef.current = true;
     setOcrBusy(true);
     setOcrText(null);
-    const text = await ocrRecognize(pageImageUrl);
+    const text = await ocrRecognize(img);
+    ocrBusyRef.current = false;
     setOcrText(text);
     setOcrBusy(false);
     if (text) toast("已识别本页文本", "success");
@@ -500,8 +510,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   // 用 ref 持有最新方法，注册一个稳定控制器（避免每次渲染都触发父级副作用）。
   const selectedAnn = selected ? annotations.find((a) => a.id === selected) : null;
   const ctlRef = useRef<PdfPageController | null>(null);
-  const latest = useRef({ annotations, selected, selectedAnn, canUndo, tool });
-  latest.current = { annotations, selected, selectedAnn, canUndo, tool };
+  const latest = useRef({ annotations, selected, selectedAnn, canUndo, tool, ocrBusy });
+  latest.current = { annotations, selected, selectedAnn, canUndo, tool, ocrBusy };
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
 
@@ -517,6 +527,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           canUndo: cur.canUndo,
           hasTextLayer,
           aiBusy,
+          ocrBusy: cur.ocrBusy,
         };
       },
       setTool: (t: AnnotTool) => onToolChange(t),
@@ -541,11 +552,11 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageIndex, registerController, hasTextLayer, aiBusy, selected, annotations]);
 
-  // 本页批注/选中/可撤销状态变化 → 通知顶部工具栏刷新。
+  // 本页批注/选中/可撤销/OCR busy 状态变化 → 通知顶部工具栏刷新。
   useEffect(() => {
     onStateChange?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations, selected, canUndo, onStateChange]);
+  }, [annotations, selected, canUndo, ocrBusy, onStateChange]);
 
   return (
     <div className="pdf-annot">

@@ -17,6 +17,8 @@ export interface PdfPageState {
   canUndo: boolean;
   /** 是否有文本层（状态条 + OCR 按钮可见性）。 */
   hasTextLayer: boolean;
+  /** OCR 识别进行中（按钮加载态）。 */
+  ocrBusy: boolean;
   /** AI 帮读进行中。 */
   aiBusy: boolean;
 }

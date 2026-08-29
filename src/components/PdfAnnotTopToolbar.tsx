@@ -106,8 +106,8 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
           {st.hasTextLayer ? "有文本层，可精确划词" : "无文本层，建议用矩形/画笔/便签"}
         </span>
         {!st.hasTextLayer && (
-          <button className="pdf-annot-ocr" onClick={() => ctl?.runOcr()} disabled={false}>
-            OCR 识别本页
+          <button className="pdf-annot-ocr" onClick={() => ctl?.runOcr()} disabled={st.ocrBusy}>
+            {st.ocrBusy ? "识别中…" : "OCR 识别本页"}
           </button>
         )}
       </div>
@@ -116,5 +116,5 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
 }
 
 function nullSt(): PdfPageState {
-  return { selected: null, selectedType: null, annotationsCount: 0, canUndo: false, hasTextLayer: false, aiBusy: false };
+  return { selected: null, selectedType: null, annotationsCount: 0, canUndo: false, hasTextLayer: false, ocrBusy: false, aiBusy: false };
 }
