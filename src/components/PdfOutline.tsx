@@ -14,6 +14,8 @@ interface Props {
   onAiCancel?: () => void;
   /** 目录生成进行中。 */
   aiBusy?: boolean;
+  /** 生成阶段（ocr=逐页识别；ai=让 AI 提取目录）。 */
+  aiStage?: "ocr" | "ai";
   /** 生成进度（done/total 页）。 */
   aiProgress?: { done: number; total: number } | null;
 }
@@ -43,7 +45,7 @@ function TreeNode({ node, depth, currentPage, onJump }: { node: OutlineItem; dep
   );
 }
 
-export function PdfOutline({ outline, currentPage, onJump, onAiGenerate, onAiCancel, aiBusy, aiProgress }: Props) {
+export function PdfOutline({ outline, currentPage, onJump, onAiGenerate, onAiCancel, aiBusy, aiStage, aiProgress }: Props) {
   if (!outline || outline.length === 0) {
     return (
       <div className="pdf-outline-empty">
@@ -54,7 +56,9 @@ export function PdfOutline({ outline, currentPage, onJump, onAiGenerate, onAiCan
             {aiBusy ? (
               <>
                 <div className="pdf-outline-ai-progress">
-                  正在识别并生成目录（{aiProgress?.done ?? 0}/{aiProgress?.total ?? 0} 页）…
+                  {aiStage === "ai"
+                    ? "正在让 AI 提取目录…"
+                    : `正在识别并生成目录（${aiProgress?.done ?? 0}/${aiProgress?.total ?? 0} 页）…`}
                 </div>
                 <button className="pdf-outline-ai-btn" onClick={onAiCancel}>取消</button>
               </>

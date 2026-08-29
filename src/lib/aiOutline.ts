@@ -25,18 +25,31 @@ export interface GenerateOutlineOpts {
   /** 逐页 OCR 结果内存缓存（同一段重复生成可秒过）。 */
   ocrCache?: Map<number, string>;
   onProgress?: (p: { done: number; total: number; page: number }) => void;
+  /** 阶段回调：ocr=逐页识别中；ai=让 AI 提取目录中。 */
+  onStage?: (s: "ocr" | "ai") => void;
   signal?: AbortSignal;
 }
 
-export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<OutlineItem[]> {
+export interface OutlineGenResult {
+  items: OutlineItem[];
+  /** 识别出非空文字的页数。 */
+  recognizedPages: number;
+  /** 所有页 OCR 文字总字符数（用于判断 OCR 是否有效）。 */
+  totalChars: number;
+}
+
+export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<OutlineGenResult> {
   const end = Math.min(o.start + o.count, o.pageCount);
-  if (end <= o.start) return [];
+  const empty: OutlineGenResult = { items: [], recognizedPages: 0, totalChars: 0 };
+  if (end <= o.start) return empty;
   const total = end - o.start;
   const cache = o.ocrCache ?? new Map<number, string>();
 
   // 复用同一 worker：一次加载核心 + 中文/英文模型，逐页识别，最后统一销毁。
   const ocr = await createOcrWorker(OCR_LANGS);
   const texts: string[] = [];
+  let recognizedPages = 0;
+  let totalChars = 0;
   try {
     for (let i = o.start; i < end; i++) {
       if (o.signal?.aborted) throw new DOMException("已取消", "AbortError");
@@ -53,12 +66,15 @@ export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<Ou
         cache.set(i, t);
       }
       texts[i - o.start] = t;
+      if (t.trim()) recognizedPages++;
+      totalChars += t.length;
       o.onProgress?.({ done: i - o.start + 1, total, page: i });
     }
   } finally {
     await ocr.terminate();
   }
 
+  o.onStage?.("ai");
   const reply = await runInlineDraft(
     o.config,
     buildOutlinePrompt(texts, o.start + 1),
@@ -66,6 +82,11 @@ export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<Ou
     { currentPageId: null, allPages: [] },
     {},
   );
-  const entries = parseOutlineJson(reply?.reply ?? "");
-  return toOutlineItems(entries, o.start, total);
+  const raw = reply?.reply ?? "";
+  const entries = parseOutlineJson(raw);
+  if (!entries.length && raw.trim()) {
+    // 便于排查：LLM 有返回但解析为空时，把原始回复记到控制台。
+    console.warn("[ai-outline] LLM replied but no entries parsed:", raw.slice(0, 400));
+  }
+  return { items: toOutlineItems(entries, o.start, total), recognizedPages, totalChars };
 }

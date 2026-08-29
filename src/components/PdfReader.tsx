@@ -136,8 +136,8 @@ export function PdfReader() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
-  // 「AI 生成目录（本段）」进行态（进度/取消）。扫描版无目录时才显示入口。
-  const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; done: number; total: number }>({ status: "idle", done: 0, total: 0 });
+  // 「AI 生成目录（本段）」进行态（进度/阶段/取消）。扫描版无目录时才显示入口。
+  const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
@@ -294,9 +294,9 @@ export function PdfReader() {
     if (total <= 0) return;
     const ac = new AbortController();
     aiOutlineAbortRef.current = ac;
-    setAiOutline({ status: "running", done: 0, total });
+    setAiOutline({ status: "running", stage: "ocr", done: 0, total });
     try {
-      const items = await generateOutlineFromOcr({
+      const { items, recognizedPages, totalChars } = await generateOutlineFromOcr({
         attachmentId,
         pageCount,
         start,
@@ -304,26 +304,32 @@ export function PdfReader() {
         config: config as unknown as ProviderConfig,
         renderPage: (a, i, s) => renderPagePng(eng, a, i, s),
         ocrCache: outlineOcrCacheRef.current,
-        onProgress: (p) => setAiOutline({ status: "running", done: p.done, total: p.total }),
+        onProgress: (p) => setAiOutline({ status: "running", stage: "ocr", done: p.done, total: p.total }),
+        onStage: (s) => setAiOutline((prev) => ({ ...prev, status: "running", stage: s })),
         signal: ac.signal,
       });
       if (ac.signal.aborted) return;
-      if (items.length) {
-        setOutline(items);
-        toast(`已生成目录（${items.length} 个项目）`, "success");
-        // 跳到第一个目录项，便于用户核对。
-        gotoPage(items[0].pageIndex);
-      } else {
-        toast("未识别到章节标题，可换个起点或增加页数重试", "error");
+      if (recognizedPages === 0 || totalChars < 20) {
+        toast("未识别到有效文字：请确认离线 OCR 模型已就绪，或该页确为图片型扫描页", "error");
+        setAiOutline({ status: "error", stage: "ocr", done: 0, total: 0 });
+        return;
       }
-      setAiOutline({ status: "done", done: total, total });
+      if (items.length === 0) {
+        toast(`已识别 ${recognizedPages} 页文字，但 AI 未提取到目录，可重试或换更靠前的起点`, "error");
+        setAiOutline({ status: "error", stage: "ocr", done: 0, total: 0 });
+        return;
+      }
+      setOutline(items);
+      toast(`已生成目录（${items.length} 个项目）`, "success");
+      gotoPage(items[0].pageIndex);
+      setAiOutline({ status: "done", stage: "ocr", done: total, total });
     } catch (e) {
       if ((e as Error)?.name === "AbortError") {
         toast("已取消目录生成", "success");
       } else {
-        toast("AI 生成目录失败，请检查网络/模型配置", "error");
+        toast("AI 生成目录失败，请检查 AI 模型配置/网络", "error");
       }
-      setAiOutline({ status: "error", done: 0, total: 0 });
+      setAiOutline({ status: "error", stage: "ocr", done: 0, total: 0 });
     } finally {
       if (aiOutlineAbortRef.current === ac) aiOutlineAbortRef.current = null;
     }
@@ -392,7 +398,7 @@ export function PdfReader() {
       aiOutlineAbortRef.current?.abort();
       aiOutlineAbortRef.current = null;
       outlineOcrCacheRef.current.clear();
-      setAiOutline({ status: "idle", done: 0, total: 0 });
+      setAiOutline({ status: "idle", stage: "ocr", done: 0, total: 0 });
       setCurrentPage(0);
       setViewRange({ start: -1, end: -1 });
       setZoomOpen(false);
@@ -960,7 +966,7 @@ export function PdfReader() {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} />
+                <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} />
               )}
               <div className="pdf-reader-stage-wrap">
                 <PdfAnnotTopToolbar
