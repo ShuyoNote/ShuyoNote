@@ -410,7 +410,7 @@ export function PdfReader() {
     [ready, scale, attachmentId],
   );
 
-  // 滚动到某页：把该页顶部对齐到滚动容器顶部。
+  // 滚动到某页：瞬时把该页顶部对齐到滚动容器顶部（目录/侧栏跳到远页——快速到达）。
   const focusPage = useCallback(
     (pageIndex: number) => {
       const st = stageRef.current;
@@ -425,6 +425,27 @@ export function PdfReader() {
     },
     [layout, updateViewport, pageCount, launchPageImage],
   );
+
+  // 平滑滚动到某页（页面导航箭头/键盘翻页——像滚轮一样丝滑，非瞬跳）。
+  const smoothScrollTo = useCallback(
+    (pageIndex: number) => {
+      const st = stageRef.current;
+      if (!st) return;
+      const clamped = Math.min(Math.max(pageIndex, 0), Math.max(pageCount - 1, 0));
+      void launchPageImage(clamped);
+      if (clamped - 1 >= 0) void launchPageImage(clamped - 1);
+      if (clamped + 1 < pageCount) void launchPageImage(clamped + 1);
+      st.scrollTo({ top: Math.max(0, layout.tops[clamped] ?? 0), behavior: "smooth" });
+    },
+    [layout, pageCount, launchPageImage],
+  );
+
+  // 当前滚动位置对应的页（视口中心页）。翻页导航/键盘据此算目标页，避免用滞后的 currentPage。
+  const pageAtViewport = useCallback(() => {
+    const st = stageRef.current;
+    if (!st) return 0;
+    return computeViewport(st.scrollTop, st.clientHeight, layout).current;
+  }, [layout]);
 
   const gotoPage = useCallback(
     (pageIndex: number) => {
@@ -609,10 +630,21 @@ export function PdfReader() {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
-        gotoPage(currentPage + 1);
+        // ↑/↓ 像滚轮一样平滑滚动一屏；←/→ 平滑到上一/下一页顶（非瞬跳）。
+        if (e.key === "ArrowDown") {
+          const st = stageRef.current;
+          if (st) st.scrollBy({ top: Math.max(60, st.clientHeight * 0.9), behavior: "smooth" });
+        } else {
+          smoothScrollTo(pageAtViewport() + 1);
+        }
       } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault();
-        gotoPage(currentPage - 1);
+        if (e.key === "ArrowUp") {
+          const st = stageRef.current;
+          if (st) st.scrollBy({ top: -Math.max(60, st.clientHeight * 0.9), behavior: "smooth" });
+        } else {
+          smoothScrollTo(pageAtViewport() - 1);
+        }
       } else if (e.key === "+" || e.key === "=") {
         e.preventDefault();
         setZoom(stepZoom(scale, 1));
@@ -627,7 +659,7 @@ export function PdfReader() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pageCount, close, currentPage, zoom, scale]);
+  }, [open, pageCount, close, currentPage, zoom, scale, smoothScrollTo, pageAtViewport]);
 
   // 缩放下拉：点击下拉框外部时关闭。
   useEffect(() => {
@@ -685,11 +717,11 @@ export function PdfReader() {
           <span className="pdf-reader-name" title={name || "PDF"}>{name || "PDF"}</span>
           <div className="pdf-reader-controls">
             <div className="pdf-reader-nav">
-              <button className="pdf-reader-btn" onClick={() => gotoPage(currentPage - 1)} disabled={currentPage <= 0} title="上一页">
+              <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() - 1)} disabled={pageAtViewport() <= 0} title="上一页">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
               <span className="pdf-reader-page">第 {Math.min(currentPage + 1, pageCount || 1)} / {pageCount || 1} 页</span>
-              <button className="pdf-reader-btn" onClick={() => gotoPage(currentPage + 1)} disabled={currentPage >= pageCount - 1} title="下一页">
+              <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() + 1)} disabled={pageAtViewport() >= pageCount - 1} title="下一页">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
               </button>
             </div>
