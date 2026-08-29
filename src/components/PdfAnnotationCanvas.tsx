@@ -790,11 +790,11 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           ) : ocrText ? (
             <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
           ) : ocrStatus === "timeout" ? (
-            <div className="pdf-ocr-tip">识别超时：模型加载或识别时间过长，请稍后重试。</div>
+            <div className="pdf-ocr-tip">识别超时（timeout）：模型加载或识别时间过长，请稍后重试。</div>
           ) : ocrStatus === "error" ? (
-            <div className="pdf-ocr-tip">识别失败：无法加载离线识别模型/语言数据，请检查 public/ocr 是否就绪。</div>
+            <div className="pdf-ocr-tip">识别失败（error）：无法加载离线识别模型/语言数据。请确认已刷新页面、查看控制台「[ocr] local assets」路径是否为 http(s) 开头，且 public/ocr 已生成。</div>
           ) : (
-            <div className="pdf-ocr-tip">本页未识别到文字（可能为空页/图表页，或扫描清晰度不足）。</div>
+            <div className="pdf-ocr-tip">本页未识别到文字（empty）：可能为空页/图表页，或扫描清晰度不足。模型已加载。</div>
           )}
         </div>
       )}

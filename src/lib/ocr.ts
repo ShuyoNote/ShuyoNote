@@ -21,6 +21,9 @@ export interface OcrWorkerHandle {
 
 const DEFAULT_TIMEOUT = 60000;
 
+// 首次构造 worker 选项时把实际用到的离线资源路径打印一次，便于排查。
+let loggedPaths = false;
+
 function buildWorkerOptions(): Record<string, unknown> {
   // 本地打包资源路径（dev 与 Tauri 构建均为同源可 fetch/importScripts）。
   // 关键：tesseract.js 用 is-url 判断 langPath 是否为 URL——相对路径（如 /ocr/tessdata）
@@ -31,7 +34,7 @@ function buildWorkerOptions(): Record<string, unknown> {
   const abs = (p: string) => new URL(p, window.location.origin).href;
   const corePath = import.meta.env.VITE_TESSERACT_CORE_PATH as string | undefined;
   const langPath = import.meta.env.VITE_TESSERACT_LANG_PATH as string | undefined;
-  return {
+  const opts: Record<string, unknown> = {
     workerPath: abs(`${base}ocr/worker.min.js`),
     corePath: corePath ? (corePath.includes("://") ? corePath : abs(corePath)) : abs(`${base}ocr/core`),
     langPath: langPath ? (langPath.includes("://") ? langPath : abs(langPath)) : abs(`${base}ocr/tessdata`),
@@ -41,6 +44,11 @@ function buildWorkerOptions(): Record<string, unknown> {
     cacheMethod: "none",
     gzip: true,
   };
+  if (!loggedPaths) {
+    loggedPaths = true;
+    console.info("[ocr] local assets:", { workerPath: opts.workerPath, corePath: opts.corePath, langPath: opts.langPath });
+  }
+  return opts;
 }
 
 function recognizeWithTimeout(
