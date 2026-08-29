@@ -2,6 +2,19 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.181] - 2026-08-29
+
+### 新增
+
+- **AI 帮读（M24 阶段 3）**：划选 PDF 中的一段文字 → AI 总结要点 → 生成**带 `pdf://` 回链的笔记块**（可点击回跳）。复用现有 AI 薄 Agent 管线（`runInlineDraft`/`useAiStore`），不新增后端命令。
+  - 批注工具栏「选中一条标注后」新增 **「AI 帮读」** 按钮（✨）＋流式生成预览面；便签正文优先作为 AI 输入，高亮/区域标注则用新增的 `textInBox` 从 pdf.js 文本层抽取与该标注框相交的文字（这才是 AI 真正读的 PDF 原文）。
+  - 结果插入当前页（摘录块的 pdfref 引用语义，可点击回链）或无当前页则新建「AI 帮读 · 第 N 页」页；生成中/失败均有 toast＋预览。
+- 纯函数 **`textInBox`**（`pdfTextLayer.ts`）：从文本层抽取选中区域文字，冒烟可断言（smoke 296→**298**）。
+
+### 验证
+
+- `scripts/smoke-web.mjs` 298 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（33）通过；桌面 `tauri dev` 实测。
+
 ## [1.59.180] - 2026-08-29
 
 ### 新增（PDF 阅读/批注界面重构，思源式）

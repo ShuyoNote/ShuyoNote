@@ -81,7 +81,7 @@ await esbuild.build({
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
       'export { compareVersions, updateStatus } from "./src/lib/updates";\n' +
       'export { buildHelpSite } from "./src/lib/helpSite";\n' +
-      'export { textItemBox, snapHighlightToText } from "./src/lib/pdfTextLayer";\n' +
+      'export { textItemBox, snapHighlightToText, textInBox } from "./src/lib/pdfTextLayer";\n' +
       'export { buildWikiExport, wikiSlug, renderWikiBody } from "./src/lib/wikiExport";\n' +
       'export { detectMermaidSyntax, mermaidRenderable, mermaidSyntaxOptions } from "./src/lib/mermaid";\n' +
       'export { excalidrawSceneText, excalidrawSceneHasContent } from "./src/lib/drawingText";\n' +
@@ -1025,6 +1025,9 @@ assert("workspace name persists across instances", wsAgain !== "");
   const snapped = aiMod.snapHighlightToText([10, 10, 50, 50], items, 300, 300);
   assert("snapHighlightToText unions overlapping items", snapped[0] === 10 / 300 && snapped[1] === 10 / 300 && snapped[2] === 60 / 300 && snapped[3] === 20 / 300, JSON.stringify(snapped));
   assert("snapHighlightToText null when no overlap", aiMod.snapHighlightToText([400, 400, 500, 500], items, 300, 300) === null);
+  // M24 stage-3 — AI 帮读：抽取选中文字 (textInBox).
+  assert("textInBox joins overlapping items", aiMod.textInBox([10, 10, 60, 30], items) === "a b");
+  assert("textInBox empty when no overlap", aiMod.textInBox([400, 400, 500, 500], items) === "");
   // M24 stage-1 — render engine selection (双引擎接口).
   assert("pickEngine native when available", aiMod.pickEngine({ native: true, pdfjs: true }) === "native");
   assert("pickEngine falls back to pdfjs", aiMod.pickEngine({ native: false, pdfjs: true }) === "pdfjs");

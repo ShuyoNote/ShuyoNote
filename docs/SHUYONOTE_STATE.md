@@ -8,9 +8,9 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.180**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.181**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `ef4a4c5`（工作树干净；v1.59.180 发布提交，v1.59.179 发布提交为 `2ef952a`）。
+- **git**：HEAD 见下方（工作树干净；v1.59.181 发布提交，v1.59.180 发布提交为 `ef4a4c5`）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -57,6 +57,7 @@
 - **v1.59.179**：**桌面 native PDF 渲染引擎（M24）**——桌面端用 **MuPDF（经 `mupdf-sys`）** 本地光栅化 PDF 页面替代 pdf.js WASM 路径（Web 仍回退 pdf.js；页元数据/文本层仍走 `pdfjsEngine`）。`render_pdf_page` 命令 + `src/pdf_native.rs`（对 `mupdf-sys` 便捷 C API 的薄安全封装，MuPDF 源码编译、自包含）；`Platform.pdfRender` 双引擎驱动（桌面 true / Web false）。**崩溃修复**：base context 包装全局静态 `CRITICAL_SECTION` 锁，此前每次渲染 new/drop 反复初始化/删除全局锁属未定义行为 → `0xc0000005`；改为 **base context 全局只建一次、进程复用、永不 drop**（`shared_context()`+`OnceLock`），渲染对象仍按 RAII 释放。**依赖取舍**：高层 `mupdf` crate 在 MSVC 无法编译（bindgen 不输出 `max_align_t`），故用编译通过的 `mupdf-sys`。新增落地文档 `docs/plans/2026-08-28-pdf-render-engine-mupdfjs-vs-pdfjs.md`（MuPDF.js vs pdf.js 决策/接口/坐标/AGPL/回退/迁移/验收）。
 
 - **v1.59.180**：**PDF 阅读/批注界面重构（思源式）**——入口全面易达（文件管理器 PDF 行直达「标注」/正文 PDF 附件点击直达＋「标注」徽章/预览弹窗醒目按钮/命令面板「打开 PDF」）；思源式阅读器（默认近全屏＋可最大化/左侧目录树 `PdfOutline`/右侧批注侧栏 `PdfSidebar`/键盘导航/适配页宽）；批注工具栏图标化＋选区操作常驻＋无文本层状态条＋便签/摘录改内联气泡。**修复**：目录点击不能跳转（pdf.js `dest[0]` 是 `Ref` 而非数字，改用 `getDestination`/`getPageIndex` 解析）；**跳转/翻页卡顿**（native 整页 PNG 编码大页 >1s 占 85% → 改返回 RGBA8 原始字节＋`tauri::ipc::InvokeResponseBody::Raw` 二进制通道＋前端 `<canvas>` 绘制＋渲染并行化＋页面缓存 objectURL），移除了 `png` crate 依赖。实测翻页 ~1.3s → ~0.12s。
+- **v1.59.181**：**AI 帮读（M24 阶段 3）**——划选 PDF 中的一段文字 → AI 总结要点 → 生成**带 `pdf://` 回链的笔记块**（可点击回跳）。复用 AI 薄 Agent 管线（`runInlineDraft`/`useAiStore`），不新增后端命令。批注工具栏「选中一条标注后」新增 **「AI 帮读」** 按钮（✨）＋流式生成预览面；便签正文优先作为 AI 输入，高亮/区域标注则用新增的 `textInBox` 从 pdf.js 文本层抽取与该标注框相交的文字。结果插入当前页（摘录块的 pdfref 引用语义）或无当前页则新建「AI 帮读 · 第 N 页」页。纯函数 `textInBox`（`pdfTextLayer.ts`），smoke 296→**298**。
 
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
@@ -64,7 +65,7 @@
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
 - **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.180**。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.181**。
 
 ## 4. 环境/工具备注
 

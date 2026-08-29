@@ -22,6 +22,23 @@ export function textItemBox(item: TextItemLike): [number, number, number, number
   return [x, y, x + w, y + h];
 }
 
+/**
+ * Collect the concatenated text of the pdf.js items whose boxes intersect a
+ * selection box (page coords). Used by 「AI 帮读」 to hand the model the actual
+ * selected words, complementing `snapHighlightToText` (which only returns the
+ * snapped box). Pure + dependency-light so the smoke harness can assert it.
+ */
+export function textInBox(dragBox: [number, number, number, number], items: TextItemLike[]): string {
+  const parts: string[] = [];
+  for (const item of items) {
+    const box = textItemBox(item);
+    if (!box || !intersects(box, dragBox)) continue;
+    const s = typeof item.str === "string" ? item.str : "";
+    if (s) parts.push(s);
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
 function intersects(a: [number, number, number, number], b: [number, number, number, number]): boolean {
   return !(a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1]);
 }

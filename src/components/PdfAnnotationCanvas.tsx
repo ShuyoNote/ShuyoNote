@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
-import { snapHighlightToText, type TextItemLike } from "../lib/pdfTextLayer";
+import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
 import { ocrRecognize } from "../lib/ocr";
+import { runInlineDraft } from "../lib/ai/inlineDraft";
+import type { ProviderConfig } from "../lib/ai/llm";
+import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
@@ -52,6 +55,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiPreview, setAiPreview] = useState<string | null>(null);
   const [editBox, setEditBox] = useState<[number, number] | null>(null); // 内联便签气泡位置（归一化）
   const [editText, setEditText] = useState("");
   const [flash, setFlash] = useState<[number, number, number, number] | null>(null); // 侧栏跳转的临时高亮框
@@ -248,6 +253,71 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     usePdfReader.getState().close();
   };
 
+  const onAiRead = async () => {
+    const ann = annotations.find((a) => a.id === selected);
+    if (!ann) return;
+    // 从选中标注提取待理解文本：便签正文优先；否则用文本层 items 里与该标注框相交的文字。
+    let source = (ann as { text?: string }).text?.trim() ?? "";
+    if (!source && ann.box && textItems?.length) {
+      source = textInBox([ann.box[0] * pageW, ann.box[1] * pageH, ann.box[2] * pageW, ann.box[3] * pageH], textItems);
+    }
+    if (!source.trim()) {
+      toast("未选中可理解的文字（可先高亮文字或添加便签）", "error");
+      return;
+    }
+    setAiBusy(true);
+    setAiPreview(null);
+    try {
+      const config = useAiStore.getState().config as unknown as ProviderConfig;
+      const notes = useNotes.getState();
+      const allPages = useNotes.getState().pages ?? [];
+      const ctx = {
+        currentPageId: notes.currentId,
+        allPages: allPages.map((p: any) => ({ id: p.id, title: p.title, parent_id: p.parent_id ?? null })),
+      };
+      const res = await runInlineDraft(
+        config,
+        `请总结下面这段 PDF 摘录的要点，用简洁的中文分点说明；不要复述原文，不要任何开场/结尾语。\n\n【摘录】\n${source.slice(0, 4000)}`,
+        allPages.map((p: any) => ({ id: p.id, title: p.title })),
+        ctx,
+        { onDelta: (t) => { setAiPreview((prev) => (prev ?? "") + t); } },
+      );
+      const summary = (res.reply ?? "").trim();
+      if (summary) {
+        // 生成带 pdf:// 回链的块：先建摘要块，再附一个 pdfref（复用摘录块的附件引用语义）。
+        const ref = pdfRef(attachmentId, pageIndex);
+        const label = `AI 帮读 · 第 ${pageIndex + 1} 页`;
+        const block = pageToBlock({ text: summary }, attachmentId, pageIndex);
+        // 改写成「摘要文本 + pdfref 回链」的段落：直接复用摘录块（已含 pdfref）。
+        if (notes.current && notes.current.id) {
+          try {
+            const { contentTextOf } = await import("../lib/ai/lexical");
+            const blockNode = JSON.parse(block.content_json).root.children[0];
+            const doc = JSON.parse(notes.current.content_json || '{"root":{"children":[],"type":"root","version":1}}');
+            doc.root.children.push(blockNode);
+            const newJson = JSON.stringify(doc);
+            await api.savePage({ id: notes.current.id, content_json: newJson, content_text: contentTextOf(newJson) });
+            await notes.openPage(notes.current.id);
+            toast("AI 帮读已写入当前页", "success");
+          } catch {
+            await notes.createPage(null, { title: label, content_json: block.content_json, content_text: [summary, ref].filter(Boolean).join(" ") });
+            toast("AI 帮读已生成到新页面", "success");
+          }
+        } else {
+          await notes.createPage(null, { title: label, content_json: block.content_json, content_text: [summary, ref].filter(Boolean).join(" ") });
+          toast("AI 帮读已生成到新页面", "success");
+        }
+        setSelected(null);
+        usePdfReader.getState().close();
+      } else {
+        toast(res.error ?? "AI 未返回内容", "error");
+      }
+    } catch (e) {
+      toast(`AI 帮读失败：${(e as Error)?.message ?? e}`, "error");
+    }
+    setAiBusy(false);
+  };
+
   const W = Math.max(pageW, 1);
   const H = Math.max(pageH, 1);
 
@@ -303,6 +373,10 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               <button className="pdf-annot-tool accent" onClick={onExcerpt} title="把选中内容摘录为笔记块（含 pdf:// 回链）">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></svg>
                 <span>摘录成块</span>
+              </button>
+              <button className="pdf-annot-tool accent" onClick={onAiRead} disabled={aiBusy} title="AI 总结这段 PDF 文字，生成笔记块（含 pdf:// 回链）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4z" /><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z" /></svg>
+                <span>{aiBusy ? "AI 中…" : "AI 帮读"}</span>
               </button>
               {selectedAnn.type === "sticky" && (
                 <button className="pdf-annot-tool" onClick={onEditSticky} title="编辑便签内容">
@@ -447,6 +521,13 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         <div className="pdf-ocr-result">
           <div className="pdf-ocr-title">OCR 识别结果</div>
           <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+        </div>
+      )}
+
+      {(aiBusy || aiPreview) && (
+        <div className="pdf-ai-result">
+          <div className="pdf-ai-title">AI 帮读（{aiBusy ? "生成中…" : "预览"}）</div>
+          <div className="pdf-ai-body">{aiPreview || "正在阅读选中段落…"}</div>
         </div>
       )}
     </div>
