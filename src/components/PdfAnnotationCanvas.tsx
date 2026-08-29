@@ -4,7 +4,7 @@ import { stickyEditRegion } from "../lib/pdfLayout";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
-import { ocrRecognize } from "../lib/ocr";
+import { ocrRecognize, OCR_PAGE_SCALE } from "../lib/ocr";
 import { runInlineDraft } from "../lib/ai/inlineDraft";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { useAiStore } from "../store/ai";
@@ -42,6 +42,8 @@ interface Props {
   onStateChange?: () => void;
   /** 批注被持久化保存后触发（新增/删除/编辑/移动/撤销），父级据此刷新右侧批注侧栏。 */
   onChanged?: () => void;
+  /** 以指定缩放渲染本页为 Blob（OCR 用高分辨率重渲染，而非当前低清显示图）。 */
+  renderPage?: (pageIndex: number, scale: number) => Promise<Blob>;
 }
 
 const highlightColor = "rgba(255, 214, 0, 0.35)";
@@ -85,7 +87,7 @@ function drawBoxPx(ann: PdfAnnotation, W: number, H: number): [number, number, n
   return null;
 }
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange, onChanged }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange, onChanged, renderPage }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
@@ -152,19 +154,33 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   }, [focusTarget, pageIndex, onFocusConsumed, W, H]);
 
   const runOcr = async () => {
-    // 用 ref 读最新图像/忙碌态（注册进控制器的 runOcr 是不随渲染重建的闭包，state 闭包会陈旧）。
-    const img = pageImageUrlRef.current;
-    if (!img) {
+    if (ocrBusyRef.current) return;
+    const fallback = pageImageUrlRef.current;
+    if (!fallback && !renderPage) {
       setOcrStatus("error");
       toast("页面图像未就绪，请等页面加载后再识别", "error");
       return;
     }
-    if (ocrBusyRef.current) return;
     ocrBusyRef.current = true;
     setOcrBusy(true);
     setOcrText(null);
     setOcrStatus("idle");
-    const res = await ocrRecognize(img);
+    // 单页 OCR 用固定高分辨率重渲染（而非当前缩放下可能很低的显示图），显著提升识别精度。
+    let source = fallback;
+    let tmpUrl: string | null = null;
+    if (renderPage) {
+      try {
+        const blob = await renderPage(pageIndex, OCR_PAGE_SCALE);
+        if (blob && blob.size > 0) {
+          tmpUrl = URL.createObjectURL(blob);
+          source = tmpUrl;
+        }
+      } catch {
+        /* 重渲染失败则退回当前显示图 */
+      }
+    }
+    const res = await ocrRecognize(source ?? "");
+    if (tmpUrl) URL.revokeObjectURL(tmpUrl);
     ocrBusyRef.current = false;
     setOcrBusy(false);
     if (res.text) {

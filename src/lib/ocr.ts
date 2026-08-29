@@ -21,6 +21,9 @@ export interface OcrWorkerHandle {
 
 const DEFAULT_TIMEOUT = 60000;
 
+/** 单页 OCR 用的页面重渲染缩放：明显高于显示缩放，显著提升识别精度（约 2.5× ⇒ ~150-200 DPI）。 */
+export const OCR_PAGE_SCALE = 2.5;
+
 // 首次构造 worker 选项时把实际用到的离线资源路径打印一次，便于排查。
 let loggedPaths = false;
 

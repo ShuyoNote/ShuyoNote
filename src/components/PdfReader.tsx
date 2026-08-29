@@ -101,6 +101,7 @@ function PdfContinuousPage({
   registerController,
   onStateChange,
   onChanged,
+  renderPage,
 }: {
   pageIndex: number;
   attachmentId: string;
@@ -113,6 +114,7 @@ function PdfContinuousPage({
   registerController: (pageIndex: number, ctl: PdfPageController | null) => void;
   onStateChange: () => void;
   onChanged: () => void;
+  renderPage: (pageIndex: number, scale: number) => Promise<Blob>;
 }) {
   const { url, textItems, hasTextLayer, meta } = data;
   if (!meta) {
@@ -134,6 +136,7 @@ function PdfContinuousPage({
       registerController={registerController}
       onStateChange={onStateChange}
       onChanged={onChanged}
+      renderPage={renderPage}
     />
   );
 }
@@ -292,6 +295,13 @@ export function PdfReader() {
     setZoom(mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, stageWidth, pageData, refW]);
+
+  // 单页 OCR：以给定缩放重渲染本页为 Blob（OCR 用高分辨率，不受当前低清显示图影响）。
+  const renderPageForOcr = useCallback((pageIndex: number, scale: number) => {
+    const eng = engRef.current;
+    if (!eng || !attachmentId) return Promise.reject(new Error("engine not ready"));
+    return renderPagePng(eng, attachmentId, pageIndex, scale);
+  }, [attachmentId]);
 
   // 目录/书签跳页。
   const onOutlineJump = (pageIndex: number) => {
@@ -849,6 +859,7 @@ export function PdfReader() {
             registerController={registerController}
             onStateChange={onAnnotStateChange}
             onChanged={refreshAnnRecords}
+            renderPage={renderPageForOcr}
           />
         </div>,
       );
