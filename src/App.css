@@ -10914,12 +10914,31 @@ p:has(> .editor-drawing-container) {
   flex-direction: row;
   overflow: hidden;
 }
+.pdf-reader-stage-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+}
 .pdf-reader-stage {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 16px 12px 24px;
   background: var(--surface);
+}
+/* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。 */
+.pdf-reader-stage-wrap > .pdf-annot-toolbar {
+  position: static;
+  flex-shrink: 0;
+  max-width: none;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  background: var(--bg);
 }
 /* 方案 B — 虚拟化连续滚动：单页切换改为多页纵向堆叠。
    只挂载视口 ± 缓冲 的页块（避免整篇 PDF 全部渲染的内存开销）；
@@ -10933,15 +10952,6 @@ p:has(> .editor-drawing-container) {
 .pdf-continuous-page {
   margin: 0 auto;
   position: relative;
-}
-.pdf-continuous-page .pdf-annot-toolbar,
-.pdf-continuous-page .pdf-annot-status {
-  /* 连续模式每页各自有工具栏：不再吸顶（避免多页 sticky 互相叠盖），随页滚动。 */
-  position: static;
-}
-.pdf-continuous-page .pdf-annot-toolbar {
-  flex-wrap: nowrap;
-  overflow-x: auto;
 }
 /* 连续模式：页图像铺满页块宽（随缩放真实放大），而不是被 max-width:100% 卡在内容宽。 */
 .pdf-continuous-page .pdf-annot-img {

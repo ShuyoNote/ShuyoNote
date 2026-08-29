@@ -11,6 +11,8 @@ import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
 import { buildLayout, computeViewport, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
+import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
+import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
 import { PdfAskBar } from "./PdfAskBar";
@@ -59,6 +61,10 @@ function PdfContinuousPage({
   width,
   focusTarget,
   onFocusConsumed,
+  tool,
+  onToolChange,
+  registerController,
+  onStateChange,
 }: {
   pageIndex: number;
   attachmentId: string;
@@ -66,6 +72,10 @@ function PdfContinuousPage({
   width: number;
   focusTarget: { pageIndex: number; ann: PdfAnnotation } | null;
   onFocusConsumed: () => void;
+  tool: AnnotTool;
+  onToolChange: (t: AnnotTool) => void;
+  registerController: (pageIndex: number, ctl: PdfPageController | null) => void;
+  onStateChange: () => void;
 }) {
   const { url, textItems, hasTextLayer, meta } = data;
   if (!meta) {
@@ -82,6 +92,10 @@ function PdfContinuousPage({
       textItems={textItems}
       focusTarget={focusTarget}
       onFocusConsumed={onFocusConsumed}
+      tool={tool}
+      onToolChange={onToolChange}
+      registerController={registerController}
+      onStateChange={onStateChange}
     />
   );
 }
@@ -107,6 +121,10 @@ export function PdfReader() {
   const [pageData, setPageData] = useState<Record<number, PageBlockData>>({});
   const [stageWidth, setStageWidth] = useState(0);
   const [stageHeight, setStageHeight] = useState(0);
+  const [tool, setTool] = useState<AnnotTool>("select");
+  // 顶部批注工具栏：作用于当前活动页。版本号在页状态变化时递增，触发工具栏重读状态。
+  const [annotToolVersion, setAnnotToolVersion] = useState(0);
+  const controllersRef = useRef<Map<number, PdfPageController>>(new Map());
 
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
@@ -171,6 +189,21 @@ export function PdfReader() {
     }
     setZoomOpen(false);
   };
+
+  // 顶部批注工具栏的页句柄注册/注销。注册时若页 index 是当前页，版本 +1 让工具栏刷新。
+  const registerController = useCallback((pageIndex: number, ctl: PdfPageController | null) => {
+    if (ctl) controllersRef.current.set(pageIndex, ctl);
+    else controllersRef.current.delete(pageIndex);
+    if (pageIndex === currentPage) setAnnotToolVersion((v) => v + 1);
+  }, [currentPage]);
+
+  // 页内批注状态变化（新增/选中/撤销…）→ 版本 +1 刷新顶部工具栏。
+  const onAnnotStateChange = useCallback(() => {
+    setAnnotToolVersion((v) => v + 1);
+  }, []);
+
+  // 当前活动页控制器（顶部工具栏只作用于此页）。
+  const curCtl = controllersRef.current.get(currentPage) ?? null;
 
   // 舞台宽/高监听（最大化 / 侧栏开关 / 窗口缩放改变布局）。
   useEffect(() => {
@@ -573,6 +606,10 @@ export function PdfReader() {
             data={d ?? { url: null, textItems: null, hasTextLayer: false, meta: null }}
             focusTarget={focusTarget}
             onFocusConsumed={() => setFocusTarget(null)}
+            tool={tool}
+            onToolChange={setTool}
+            registerController={registerController}
+            onStateChange={onAnnotStateChange}
           />
         </div>,
       );
@@ -724,13 +761,21 @@ export function PdfReader() {
               {outlineOpen && (
                 <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} />
               )}
-              <div className="pdf-reader-stage" ref={stageRef} onScroll={onStageScroll}>
-                <div className="pdf-continuous" style={{ height: layout.total, position: "relative" }}>
-                  {pageBlocks.length ? (
-                    pageBlocks
-                  ) : (
-                    <div className="pdf-reader-loading">加载中…</div>
-                  )}
+              <div className="pdf-reader-stage-wrap">
+                <PdfAnnotTopToolbar
+                  ctl={curCtl}
+                  version={annotToolVersion}
+                  tool={tool}
+                  onToolChange={setTool}
+                />
+                <div className="pdf-reader-stage" ref={stageRef} onScroll={onStageScroll}>
+                  <div className="pdf-continuous" style={{ height: layout.total, position: "relative" }}>
+                    {pageBlocks.length ? (
+                      pageBlocks
+                    ) : (
+                      <div className="pdf-reader-loading">加载中…</div>
+                    )}
+                  </div>
                 </div>
               </div>
               {sidebarOpen && (

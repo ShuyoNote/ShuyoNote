@@ -1,7 +1,7 @@
 {
   "name": "shuyonote",
   "private": true,
-  "version": "1.59.189",
+  "version": "1.59.190",
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && vite",

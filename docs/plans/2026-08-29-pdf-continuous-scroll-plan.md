@@ -116,3 +116,15 @@
 - **缩放模式化**：状态改为 `ZoomMode`（具名适配模式 | 固定百分比），由 `resolveZoomScale(模式, refW, refH, availW, availH)` 解析实际倍率——适配模式随视口变化自动重算；百分比精确对应。`stepZoom` 沿阶梯步进，`zoomLabel` 给出展示文案。
 - **封顶**：MAX_SCALE=4（400%），避免页面光栅化过大/无穷宽。
 - 纯函数均入 `pdfLayout.ts`；smoke 新增 `resolveZoomScale`/`stepZoom`/`zoomLabel`/`ZOOM_LADDER` 断言（309→**325**）。无头 Edge 实测下拉渲染 + 150% 缩放真实放大。
+
+---
+
+## 8. 增量：批注工具栏改为顶部单份固定（v1.59.190）
+
+连续滚动后每个页块都自带一套批注工具栏（工具 + 撤销/导出 + 状态条），满屏重复。改为**只在阅读器内容区顶部固定一份**，作用于当前活动页。
+
+- **工具选择跨页共享**：`选择/高亮/画笔/便签` 提升为 `PdfReader` 全局状态（`tool`/`setTool`），各页共用同一工具，切页后沿用。
+- **页句柄注册**：新增 `src/components/pdfAnnotController.ts`（`AnnotTool` / `PdfPageController` / `PdfPageState` / `TOOLS`）。每个 `PdfAnnotationCanvas` 挂载时通过 `registerController(pageIndex, ctl)` 注册自身句柄，卸载注销；句柄暴露 `getState`（选中/批注数/可撤销/文本层/AI 忙）+ `undo`/`exportAnnotations`/`deleteSelected`/`excerpt`/`aiRead`/`copyRef`/`editSticky`/`runOcr`/`setTool`/`notify`。
+- **顶部单工具栏**：`src/components/PdfAnnotTopToolbar.tsx` 渲染唯一一份（工具 + 撤销/导出 + 选中区操作 + 状态条），置于 `.pdf-reader-stage-wrap` 顶部（不随滚动）；页内状态变化通过 `onStateChange` → `annotToolVersion` 递增 → 重读当前页 `getState()`。
+- stage 包一层 `.pdf-reader-stage-wrap`（column：工具栏 + 滚动舞台），移除页块内原有的 `.pdf-annot-toolbar`/`.pdf-annot-status`。
+- 无头 Edge 实测：顶栏仅 1 份、滚动到第 4 页仍固定顶部、工具切换跨页生效、状态条显示当前页文本层状态。

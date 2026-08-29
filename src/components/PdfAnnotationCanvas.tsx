@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
@@ -9,12 +9,17 @@ import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
+import type { AnnotTool, PdfPageController, PdfPageState } from "./pdfAnnotController";
 
 // M24 — a single annotated PDF page. Renders the page image (from `pageImageUrl`)
 // under an SVG overlay; annotations are stored normalized (0..1 in page pixel
 // space) and drawn in page-pixel space via the viewBox. Adds highlight/ink/sticky,
 // lets you select + delete an annotation, and "摘录成块" turns a selection into a
 // new page carrying the `pdf://` back-ref (the "批注即块" differentiator).
+//
+// 方案 B — 工具栏已提升到阅读器顶部（唯一一份）。本组件只负责页面本身：
+// 工具选择（tool）是受控的（由父级共享），批注/选中/撤销/AI/OCR/便签等仍留在页内，
+// 并通过 registerController 把句柄暴露给顶部工具栏调用。
 
 interface Props {
   attachmentId: string;
@@ -26,9 +31,15 @@ interface Props {
   textItems?: TextItemLike[] | null;
   focusTarget?: { pageIndex: number; ann: PdfAnnotation } | null;
   onFocusConsumed?: () => void;
+  /** 受控工具选择（由顶部工具栏共享）。 */
+  tool: AnnotTool;
+  onToolChange: (t: AnnotTool) => void;
+  /** 挂载时注册本页句柄，卸载时传 null 注销。 */
+  registerController?: (pageIndex: number, ctl: PdfPageController | null) => void;
+  /** 本页批注状态变化（新增/删除/选中/撤销等）时触发，顶部工具栏据此刷新。 */
+  onStateChange?: () => void;
 }
 
-type Tool = "select" | "highlight" | "ink" | "sticky";
 const highlightColor = "rgba(255, 214, 0, 0.35)";
 
 function loadPage(attachmentId: string, pageIndex: number): Promise<PdfAnnotation[]> {
@@ -49,9 +60,8 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
   return false;
 }
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
-  const [tool, setTool] = useState<Tool>("select");
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
@@ -217,7 +227,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       persist([...annotations, { id: `i-${Date.now()}`, type: "ink", points: ink.current }]);
       ink.current = [];
       redraw();
-      setTool("select"); // A1 — 画完自动回选择
+      onToolChange("select"); // A1 — 画完自动回选择
     } else if (drag.current) {
       const { x0, y0, x1, y1 } = drag.current;
       if (Math.abs(x1 - x0) > 0.005 || Math.abs(y1 - y0) > 0.005) {
@@ -228,7 +238,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           if (snapped) box = snapped;
         }
         persist([...annotations, { id: `h-${Date.now()}`, type: "highlight", box }]);
-        setTool("select"); // A1 — 画完自动回选择
+        onToolChange("select"); // A1 — 画完自动回选择
       }
       drag.current = null;
       redraw();
@@ -265,7 +275,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setEditBox(null);
     setEditText("");
     setSelected(null);
-    setTool("select"); // A1 — 便签保存/取消后回选择
+    onToolChange("select"); // A1 — 便签保存/取消后回选择
   };
 
   const onCopyRef = async () => {
@@ -413,123 +423,57 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const W = Math.max(pageW, 1);
   const H = Math.max(pageH, 1);
 
-  // 工具栏：图标 + 文案，强化可发现性与激活态。
-  const tools: { id: Tool; label: string; hint: string; icon: ReactNode }[] = [
-    {
-      id: "select",
-      label: "选择",
-      hint: "点击选中已有标注",
-      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 4l7.5 16 2-6.5L20 11.5z" /></svg>,
-    },
-    {
-      id: "highlight",
-      label: "高亮",
-      hint: "拖选文字/区域高亮（有文本层会精确划词）",
-      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 11l4 4L19 9a2 2 0 0 0-3-3l-6 6H9z" /><path d="M9 11l-3-3M16 20H8" /></svg>,
-    },
-    {
-      id: "ink",
-      label: "画笔",
-      hint: "自由手绘标注",
-      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 19l7-7a2 2 0 0 0-3-3l-7 7v3h3z" /><path d="M18 3l1 1" /></svg>,
-    },
-    {
-      id: "sticky",
-      label: "便签",
-      hint: "在页面任意处添加便签",
-      icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 5h16v10l-5 5H4z" /><path d="M15 20v-5h5" /></svg>,
-    },
-  ];
+  // 方案 B — 把本页句柄暴露给顶部工具栏（作用于当前页）。
+  // 用 ref 持有最新方法，注册一个稳定控制器（避免每次渲染都触发父级副作用）。
   const selectedAnn = selected ? annotations.find((a) => a.id === selected) : null;
+  const ctlRef = useRef<PdfPageController | null>(null);
+  const latest = useRef({ annotations, selected, selectedAnn, canUndo, tool });
+  latest.current = { annotations, selected, selectedAnn, canUndo, tool };
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+
+  useEffect(() => {
+    if (!registerController) return;
+    const ctl: PdfPageController = {
+      getState: (): PdfPageState => {
+        const cur = latest.current;
+        return {
+          selected: cur.selected,
+          selectedType: cur.selectedAnn?.type ?? null,
+          annotationsCount: cur.annotations.length,
+          canUndo: cur.canUndo,
+          hasTextLayer,
+          aiBusy,
+        };
+      },
+      setTool: (t: AnnotTool) => onToolChange(t),
+      undo,
+      exportAnnotations: onExportAnnotations,
+      deleteSelected: onDelete,
+      excerpt: onExcerpt,
+      aiRead: onAiRead,
+      copyRef: onCopyRef,
+      editSticky: onEditSticky,
+      runOcr,
+      notify: () => {
+        // 状态变化：提示顶部工具栏重读 getState()。
+        onStateChangeRef.current?.();
+      },
+    };
+    ctlRef.current = ctl;
+    registerController(pageIndex, ctl);
+    return () => registerController(pageIndex, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageIndex, registerController, hasTextLayer, aiBusy]);
+
+  // 本页批注/选中/可撤销状态变化 → 通知顶部工具栏刷新。
+  useEffect(() => {
+    onStateChange?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotations, selected, canUndo, onStateChange]);
 
   return (
     <div className="pdf-annot">
-      <div className="pdf-annot-toolbar">
-        <div className="pdf-annot-tools" role="toolbar" aria-label="批注工具">
-          {tools.map((t) => (
-            <button
-              key={t.id}
-              className={`pdf-annot-tool ${tool === t.id ? "active" : ""}`}
-              onClick={() => setTool(t.id)}
-              title={t.hint}
-              aria-pressed={tool === t.id}
-            >
-              <span className="pdf-annot-tool-icon">{t.icon}</span>
-              <span className="pdf-annot-tool-label">{t.label}</span>
-            </button>
-          ))}
-          {/* A2 撤销：撤销本页最后一次批注变更 */}
-          <button
-            className={`pdf-annot-tool ${canUndo ? "" : "disabled"}`}
-            onClick={undo}
-            disabled={!canUndo}
-            title="撤销上次批注"
-          >
-            <span className="pdf-annot-tool-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 13" /></svg>
-            </span>
-            <span className="pdf-annot-tool-label">撤销</span>
-          </button>
-          {/* 6 — 导出本页批注文本为笔记块 */}
-          <button
-            className={`pdf-annot-tool ${annotations.length ? "" : "disabled"}`}
-            onClick={onExportAnnotations}
-            disabled={!annotations.length}
-            title="把本页全部批注导出为笔记块（含 pdf:// 回链）"
-          >
-            <span className="pdf-annot-tool-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
-            </span>
-            <span className="pdf-annot-tool-label">导出批注</span>
-          </button>
-        </div>
-        <div className="pdf-annot-actions">
-          {selected && selectedAnn ? (
-            <>
-              <button className="pdf-annot-tool accent" onClick={onExcerpt} title="把选中内容摘录为笔记块（含 pdf:// 回链）">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></svg>
-                <span>摘录成块</span>
-              </button>
-              <button className="pdf-annot-tool accent" onClick={onAiRead} disabled={aiBusy} title="AI 总结这段 PDF 文字，生成笔记块（含 pdf:// 回链）">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4z" /><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z" /></svg>
-                <span>{aiBusy ? "AI 中…" : "AI 帮读"}</span>
-              </button>
-              {selectedAnn.type === "sticky" && (
-                <button className="pdf-annot-tool" onClick={onEditSticky} title="编辑便签内容">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
-                  <span>编辑</span>
-                </button>
-              )}
-              <button className="pdf-annot-tool" onClick={onCopyRef} title="复制 PDF 引用（可粘贴到别处回链）">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
-                <span>复制引用</span>
-              </button>
-              <button className="pdf-annot-tool danger" onClick={onDelete} title="删除选中标注">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-                <span>删除</span>
-              </button>
-            </>
-          ) : (
-            <span className="pdf-annot-tip">先在页面选中一条标注，即可摘录、复制引用或删除</span>
-          )}
-        </div>
-      </div>
-
-      {/* 页面能力提示条：文本层状态 + OCR（无文本层时） */}
-      <div className="pdf-annot-status">
-        <span className={`pdf-annot-layer ${hasTextLayer ? "ok" : "warn"}`}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            {hasTextLayer ? <path d="M20 6L9 17l-5-5" /> : <path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />}
-          </svg>
-          {hasTextLayer ? "有文本层，可精确划词" : "无文本层，建议用矩形/画笔/便签"}
-        </span>
-        {!hasTextLayer && (
-          <button className="pdf-annot-ocr" onClick={runOcr} disabled={ocrBusy}>
-            {ocrBusy ? "识别中…" : "OCR 识别本页"}
-          </button>
-        )}
-      </div>
-
       <div
         className="pdf-annot-stage"
         style={{ position: "relative" }}
@@ -642,7 +586,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
                   setEditBox(null);
                   setEditText("");
                   setSelected(null);
-                  setTool("select");
+                  onToolChange("select");
                 }
               }}
               rows={3}
@@ -655,7 +599,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
                   setEditBox(null);
                   setEditText("");
                   setSelected(null);
-                  setTool("select");
+                  onToolChange("select");
                 }}
               >
                 取消
