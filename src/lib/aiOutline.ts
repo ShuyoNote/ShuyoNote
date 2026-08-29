@@ -9,7 +9,7 @@ import { runInlineDraft } from "./ai/inlineDraft";
 import { ocrWithVision, blobToDataUrl } from "./ai/ocrVision";
 import { createOcrWorker } from "./ocr";
 import { OCR_PAGE_SCALE } from "./ocr";
-import { buildOutlinePrompt, parseOutlineJson, toOutlineItems } from "./pdfOutlineGen";
+import { buildOutlinePrompt, buildIntegratePrompt, parseOutlineJson, toOutlineItems, type OutlineEntry } from "./pdfOutlineGen";
 import type { OutlineItem } from "./pdfRender";
 
 /** OCR 用页图缩放：略高于 1× 提升清晰度，又不至于过大拖慢识别。 */
@@ -106,7 +106,20 @@ export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<Ou
   return { items: toOutlineItems(entries, o.start, total), recognizedPages, totalChars };
 }
 
-/** 视觉大模型版目录生成（默认，侧重视觉）：逐页把页面图发给多模态模型，由模型直接识别标题+页码。 */
+/** 用一个文本 LLM 把「逐页视觉抓到的疑似目录条目」整合成有层级的目录（去噪/定层级/排序/纠错）。 */
+export async function integrateOutlineEntries(config: ProviderConfig, entries: OutlineEntry[]): Promise<OutlineEntry[]> {
+  if (!entries.length) return [];
+  try {
+    const reply = await runInlineDraft(config, buildIntegratePrompt(entries), [], { currentPageId: null, allPages: [] }, {});
+    const out = parseOutlineJson(reply?.reply ?? "");
+    return out.length ? out : entries;
+  } catch {
+    // 整合失败则退回候选（平铺）。
+    return entries;
+  }
+}
+
+/** 视觉大模型版目录生成（默认，侧重视觉）：逐页页面图→识别标题候选→文本 LLM 整合为层级目录。 */
 export async function generateOutlineFromVision(o: GenerateOutlineOpts): Promise<OutlineGenResult> {
   const end = Math.min(o.start + o.count, o.pageCount);
   const empty: OutlineGenResult = { items: [], recognizedPages: 0, totalChars: 0 };
@@ -114,7 +127,7 @@ export async function generateOutlineFromVision(o: GenerateOutlineOpts): Promise
   const total = end - o.start;
   const cache = o.ocrCache ?? new Map<number, string>();
 
-  const all: { title: string; page: number }[] = [];
+  const all: OutlineEntry[] = [];
   let recognizedPages = 0;
   let totalChars = 0;
   for (let i = o.start; i < end; i++) {
@@ -136,6 +149,9 @@ export async function generateOutlineFromVision(o: GenerateOutlineOpts): Promise
     if (pageEntries.length) recognizedPages++;
     o.onProgress?.({ done: i - o.start + 1, total, page: i });
   }
-
-  return { items: toOutlineItems(all, o.start, total), recognizedPages, totalChars };
+  if (o.signal?.aborted) throw new DOMException("已取消", "AbortError");
+  o.onStage?.("ai");
+  // 关键：把逐页候选交给文本 LLM 整合成带层级的目录（更细致：去噪、定理层级、排序、纠错）。
+  const structured = await integrateOutlineEntries(o.config, all);
+  return { items: toOutlineItems(structured.length ? structured : all, o.start, total), recognizedPages, totalChars };
 }

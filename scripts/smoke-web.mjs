@@ -1680,6 +1680,22 @@ trailer
   assert("outline parse degenerate (line fallback)", oj3.length === 1 && oj3[0].title === "乙" && oj3[0].page === 7, JSON.stringify(oj3));
   const oi = outlineGenMod.toOutlineItems([{ title: "x", page: 12 }, { title: "y", page: 99 }], 10, 5);
   assert("toOutlineItems filters range to pageIndex", oi.length === 1 && oi[0].pageIndex === 11, JSON.stringify(oi));
+  // 层级：level1 章为根，level2/3 作为 children 嵌套。
+  const ot = outlineGenMod.toOutlineItems([
+    { title: "第一章", page: 1, level: 1 },
+    { title: "1.1", page: 2, level: 2 },
+    { title: "1.2.1", page: 3, level: 3 },
+    { title: "第二章", page: 10, level: 1 },
+    { title: "2.1", page: 11, level: 2 },
+  ], 0, 60);
+  const ok = ot.length === 2
+    && ot[0].title === "第一章" && ot[0].children.length === 1
+    && ot[0].children[0].title === "1.1" && ot[0].children[0].children.length === 1
+    && ot[0].children[0].children[0].title === "1.2.1"
+    && ot[1].title === "第二章" && ot[1].children.length === 1
+    && ot[1].children[0].title === "2.1";
+  assert("toOutlineItems builds level tree", ok, JSON.stringify(ot));
+  assert("integrate prompt mentions level 1", outlineGenMod.buildIntegratePrompt([{ title: "x", page: 3 }]).includes("level 1"), "");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

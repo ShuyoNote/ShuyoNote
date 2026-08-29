@@ -1,9 +1,17 @@
 // 扫描版电子书「AI 生成目录」的纯函数部分：组装 LLM 提示、解析返回的章节 JSON、
-// 换算为 OutlineItem（可单测）。真正的 OCR + LLM 编排见 ./aiOutline.ts。
+// 换算为带层级的 OutlineItem（可单测）。真正的 OCR + LLM 编排见 ./aiOutline.ts。
 import type { OutlineItem } from "./pdfRender";
 
 /** 每页取前多少字符喂给 LLM（控制 token；章节标题通常出现在页首）。 */
 export const OUTLINE_EXCERPT_CHARS = 140;
+
+/** 一条目录候选。level：1=章/一级标题，2=节，3=小节（默认 1）。 */
+export interface OutlineEntry {
+  title: string;
+  /** 物理页（1 起）。 */
+  page: number;
+  level?: number;
+}
 
 /** 组装提示：把每页 OCR 片段拼成带 [第 N 页] 前缀的文本，要求 LLM 输出章节 JSON。 */
 export function buildOutlinePrompt(pageTexts: string[], startPage1: number): string {
@@ -26,8 +34,8 @@ export function buildOutlinePrompt(pageTexts: string[], startPage1: number): str
   ].join("\n");
 }
 
-/** 从 LLM 回复中解析 [{"title","page"}]（容错：剥 markdown 围栏/说明，取第一个数组）。 */
-export function parseOutlineJson(reply: string): { title: string; page: number }[] {
+/** 从 LLM 回复中解析 [{"title","page","level"?}]（容错：剥 markdown 围栏/说明，取第一个数组）。 */
+export function parseOutlineJson(reply: string): OutlineEntry[] {
   if (!reply) return [];
   const raw = reply.match(/\[[\s\S]*\]/)?.[0] ?? reply.trim();
   let arr: unknown;
@@ -35,30 +43,51 @@ export function parseOutlineJson(reply: string): { title: string; page: number }
     arr = JSON.parse(raw);
   } catch {
     // 退化为逐行抓 "title" 及其后最近数字。
-    const out: { title: string; page: number }[] = [];
+    const out: OutlineEntry[] = [];
     for (const m of reply.matchAll(/"title"\s*:\s*"([^"]+)"[\s\S]{0,80}?(\d+)/g)) {
       const title = m[1].trim();
       const page = Number(m[2]);
-      if (title && Number.isFinite(page)) out.push({ title, page });
+      if (title && Number.isFinite(page)) out.push({ title, page, level: 1 });
     }
     return out;
   }
   if (!Array.isArray(arr)) return [];
-  return (arr as Array<{ title?: unknown; page?: unknown }>)
-    .map((e) => ({ title: String(e?.title ?? "").trim(), page: Number(e?.page) }))
+  return (arr as Array<{ title?: unknown; page?: unknown; level?: unknown }>)
+    .map((e) => ({ title: String(e?.title ?? "").trim(), page: Number(e?.page), level: Number(e?.level ?? 1) || 1 }))
     .filter((e) => e.title && Number.isFinite(e.page));
 }
 
-/** 把解析结果约束到本段页码范围并排序，输出 OutlineItem[]。page 为 1 起始物理页。 */
-export function toOutlineItems(
-  entries: { title: string; page: number }[],
-  start0: number,
-  count: number,
-): OutlineItem[] {
+/** 把「逐页识别到的疑似目录条目」交给文本 LLM 整合的提示：去噪、定层级、排序。 */
+export function buildIntegratePrompt(entries: OutlineEntry[]): string {
+  const list = entries.map((e) => `第 ${e.page} 页：${e.title}`).join("\n");
+  return [
+    "你是图书目录整理助手。下面是从一本扫描书各页识别到的「疑似目录条目」列表（含页码），",
+    "其中混有章节标题与部分正文句子。请从中挑出**真正的目录项**，并判断层级：",
+    "一级大标题（“第X章”“第一章”“附录”等）= level 1；二级小节（“X.X”“第X节”）= level 2；三级 = level 3。",
+    "按阅读顺序输出；**页码（1 起）必须与上方条目一致，不要改动或新增**；可合并同一章的跨页、去重类似项、校正明显错字。",
+    '只输出一个 JSON 数组：[{"title":"标题","page":页码,"level":1|2|3}]，不要任何其他文字。',
+    "",
+    "疑似条目：",
+    list,
+  ].join("\n");
+}
+
+/** 把解析结果约束到本段页码范围、排序，并按 level 构造成带 children 的目录树。 */
+export function toOutlineItems(entries: OutlineEntry[], start0: number, count: number): OutlineItem[] {
   const start1 = start0 + 1;
   const end1 = start0 + count;
-  return entries
+  const sorted = entries
     .filter((e) => e.page >= start1 && e.page <= end1)
-    .sort((a, b) => a.page - b.page)
-    .map((e) => ({ title: e.title, pageIndex: e.page - 1, children: [] }));
+    .sort((a, b) => a.page - b.page);
+  const roots: OutlineItem[] = [];
+  const stack: { item: OutlineItem; level: number }[] = [];
+  for (const e of sorted) {
+    const node: OutlineItem = { title: e.title, pageIndex: e.page - 1, children: [] };
+    const level = Math.max(1, e.level ?? 1);
+    while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+    if (stack.length) stack[stack.length - 1].item.children.push(node);
+    else roots.push(node);
+    stack.push({ item: node, level });
+  }
+  return roots;
 }
