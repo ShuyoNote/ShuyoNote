@@ -38,6 +38,8 @@ export interface PdfPageController {
   runOcr(): void;
   /** AI 视觉模型识别本页文字（多模态大模型）。 */
   visionOcr(): void;
+  /** 系统朗读：有文本层读全文，否则提示先识别。 */
+  speakPage(): void;
   /** 本页状态变化时通知顶部工具栏刷新（由页内组件触发）。 */
   notify(): void;
 }

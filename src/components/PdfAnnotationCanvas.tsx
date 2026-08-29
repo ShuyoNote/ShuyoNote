@@ -9,6 +9,7 @@ import { useAiStore } from "../store/ai";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { ocrWithVision, blobToDataUrl } from "../lib/ai/ocrVision";
 import { runInlineDraft } from "../lib/ai/inlineDraft";
+import { speak, stopSpeech, isSpeechSupported, isSpeaking } from "../lib/speech";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
@@ -257,6 +258,41 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     persist([...annotations, { id: `s-${Date.now()}`, type: "sticky", box, text: ocrText }]);
     setSelected(null);
     toast("已将识别文本写入便签", "success");
+  };
+
+  // 朗读识别结果（弹层）／朗读本页全文（有文本层）。
+  const toggleSpeak = () => {
+    if (isSpeaking()) {
+      stopSpeech();
+      return;
+    }
+    if (!isSpeechSupported()) {
+      toast("当前环境不支持系统朗读", "error");
+      return;
+    }
+    const text = (ocrText ?? "").trim();
+    if (text && speak(text)) return;
+    toast("当前系统可能没有中文语音", "error");
+  };
+
+  const speakPage = () => {
+    if (isSpeaking()) {
+      stopSpeech();
+      toast("已停止朗读", "success");
+      return;
+    }
+    if (!isSpeechSupported()) {
+      toast("当前环境不支持系统朗读", "error");
+      return;
+    }
+    if (hasTextLayer && textItems && textItems.length) {
+      const text = textItems.map((t) => t.str ?? "").join(" ").trim();
+      if (text && speak(text)) return;
+    } else {
+      toast("本页无文本层，请先用「OCR 识别本页」或「AI 识别」得到文字", "error");
+      return;
+    }
+    toast("当前系统可能没有中文语音", "error");
   };
 
   const undoStackRef = useRef<PdfAnnotation[][]>([]);
@@ -637,6 +673,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       editSticky: onEditSticky,
       runOcr,
       visionOcr: runVisionOcr,
+      speakPage,
       notify: () => {
         // 状态变化：提示顶部工具栏重读 getState()。
         onStateChangeRef.current?.();
@@ -888,6 +925,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           </div>
           {ocrText && !ocrBusy && (
             <div className="pdf-ocr-pop-actions">
+              <button className="pdf-ocr-action" onClick={toggleSpeak}>{isSpeaking() ? "停止朗读" : "朗读"}</button>
               <button className="pdf-ocr-action" onClick={copyOcrText}>复制全部</button>
               <button className="pdf-ocr-action ok" onClick={addOcrSticky}>写入便签</button>
             </div>
