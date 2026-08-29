@@ -565,9 +565,16 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               // 拖动中的便签用 moveSticky.current.box 实时定位（跟随指针），否则用 state 的 box。
               const dragBox = moveSticky.current?.id === a.id ? moveSticky.current.box : null;
               const box = dragBox ?? a.box;
+              const sw = Math.min(26, W * 0.06);
+              const sh = Math.min(26, H * 0.06);
+              const sx = box[0] * W;
+              const sy = box[1] * H;
+              const fold = Math.min(7, sw * 0.3);
               return (
                 <g key={a.id} style={{ cursor: draggingSticky ? "grabbing" : tool === "select" ? "grab" : undefined }}>
-                  <rect x={box[0] * W} y={box[1] * H} width={Math.min(26, W * 0.06)} height={Math.min(26, H * 0.06)} fill="#ffe28a" stroke="#d9b400" />
+                  {/* 便签钉：圆角小方块 + 右上角折角，作为落点/拖动手柄（命中/描边沿用该几何）。 */}
+                  <rect x={sx} y={sy} width={sw} height={sh} rx={3} fill="#ffd873" stroke="#e3b94a" strokeWidth={1} />
+                  <path d={`M ${sx + sw - fold} ${sy} L ${sx + sw} ${sy + fold} L ${sx + sw - fold} ${sy + fold} Z`} fill="#ecc253" />
                   <title>{a.text}</title>
                 </g>
               );
@@ -656,6 +663,22 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             />
           )}
         </svg>
+
+        {/* 便签内容气泡：显示便签文本（自动换行、样式美观）。pointer-events:none 不拦截拖动/选中。
+            定位与 SVG 便签钉一致（box 归一化 → 百分比），拖动中跟随 moveSticky.current.box。 */}
+        {annotations.filter((a) => a.type === "sticky" && a.box && (a.text ?? "").trim()).map((a) => {
+          const dragBox = moveSticky.current?.id === a.id ? moveSticky.current.box : null;
+          const box = dragBox ?? a.box!;
+          return (
+            <div
+              key={`bubble-${a.id}`}
+              className="pdf-sticky-bubble"
+              style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%` }}
+            >
+              <div className="pdf-sticky-bubble-text">{a.text}</div>
+            </div>
+          );
+        })}
 
         {/* 内联便签气泡：替换 window.prompt，粘贴在页面内即时编辑 */}
         {editBox && (

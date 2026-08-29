@@ -10780,6 +10780,29 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
 }
 .pdf-sticky-btn:hover { opacity: 0.85; }
+/* 已保存便签的内容气泡：贴在便签钉旁显示文本，自动换行、留阴影，不拦截指针。 */
+.pdf-sticky-bubble {
+  position: absolute;
+  z-index: 8;
+  transform: translate(14px, -6px);
+  max-width: 220px;
+  background: #fffbe8;
+  border: 1px solid #ecd27a;
+  border-left: 3px solid #f3c73f;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  padding: 6px 9px;
+  pointer-events: none;
+}
+.pdf-sticky-bubble-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #57491c;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 132px;
+  overflow: hidden;
+}
 .pdf-ocr-result {
   margin-top: 10px;
   width: 100%;
