@@ -101,3 +101,14 @@ export function toOutlineItems(entries: OutlineEntry[], start0: number, count: n
   }
   return roots;
 }
+
+/** 对已保存的目录列表重建层级树：若全部是平铺项（无 children），按标题命名推断层级重新树化，
+ *  保证旧版本保存的平铺目录也能显示缩进；已是树则原样返回。
+ */
+export function rebuildOutlineTree(items: OutlineItem[]): OutlineItem[] {
+  const flat = items.filter((i) => !i.children?.length);
+  const hasNested = items.some((i) => i.children?.length);
+  if (!flat.length || hasNested) return items;
+  const entries: OutlineEntry[] = flat.map((i) => ({ title: i.title, page: i.pageIndex + 1 }));
+  return toOutlineItems(entries, 0, Number.MAX_SAFE_INTEGER);
+}

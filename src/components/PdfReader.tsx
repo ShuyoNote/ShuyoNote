@@ -12,6 +12,7 @@ import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
 import { generateOutlineFromVision } from "../lib/aiOutline";
 import { loadAiOutline, saveAiOutline } from "../lib/pdfOutlineStore";
+import { rebuildOutlineTree } from "../lib/pdfOutlineGen";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
@@ -518,7 +519,7 @@ export function PdfReader() {
           // 用 pdf.js 内置目录；扫描版为空时，恢复本机已生成的 AI 目录（重开不丢失）。
           const builtin = doc.outline ?? [];
           const saved = builtin.length === 0 && attachmentId ? loadAiOutline(attachmentId) : null;
-          setOutline(saved && saved.length ? saved : builtin);
+          setOutline(saved && saved.length ? rebuildOutlineTree(saved) : builtin);
           const target = Math.min(Math.max(targetPage, 0), Math.max(doc.pageCount - 1, 0));
           setCurrentPage(target);
           setReady(true);

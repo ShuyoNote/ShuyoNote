@@ -1708,6 +1708,17 @@ trailer
   ], 0, 60);
   const okf = of.length === 2 && of[0].title === "第一章" && of[0].children.length === 1 && of[0].children[0].title === "1.1 缘起" && of[1].title === "第二章";
   assert("toOutlineItems infers level for flat entries", okf, JSON.stringify(of));
+  // 重建树：平铺的已存目录（无 children）→ 按标题推断重树化（旧数据兜底）。
+  const rb = outlineGenMod.rebuildOutlineTree([
+    { title: "第一章", pageIndex: 0, children: [] },
+    { title: "1.1 缘起", pageIndex: 1, children: [] },
+    { title: "第二章", pageIndex: 11, children: [] },
+  ]);
+  const okr = rb.length === 2 && rb[0].title === "第一章" && rb[0].children.length === 1 && rb[0].children[0].title === "1.1 缘起" && rb[1].title === "第二章";
+  assert("rebuildOutlineTree nests flat list", okr, JSON.stringify(rb));
+  // 已是树的保持原样（不重排）。
+  const rbt = outlineGenMod.rebuildOutlineTree([{ title: "A", pageIndex: 0, children: [{ title: "B", pageIndex: 1, children: [] }] }]);
+  assert("rebuildOutlineTree keeps nested tree", rbt.length === 1 && rbt[0].children.length === 1, JSON.stringify(rbt));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
