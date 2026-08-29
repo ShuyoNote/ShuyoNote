@@ -81,6 +81,7 @@ function PdfContinuousPage({
   onToolChange,
   registerController,
   onStateChange,
+  onChanged,
 }: {
   pageIndex: number;
   attachmentId: string;
@@ -92,6 +93,7 @@ function PdfContinuousPage({
   onToolChange: (t: AnnotTool) => void;
   registerController: (pageIndex: number, ctl: PdfPageController | null) => void;
   onStateChange: () => void;
+  onChanged: () => void;
 }) {
   const { url, textItems, hasTextLayer, meta } = data;
   if (!meta) {
@@ -112,6 +114,7 @@ function PdfContinuousPage({
       onToolChange={onToolChange}
       registerController={registerController}
       onStateChange={onStateChange}
+      onChanged={onChanged}
     />
   );
 }
@@ -275,6 +278,15 @@ export function PdfReader() {
       .then((recs) => { if (alive) setAnnRecords(recs ?? []); })
       .catch(() => { if (alive) setAnnRecords([]); });
     return () => { alive = false; };
+  }, [open, attachmentId]);
+
+  // 页内批注被持久化保存后触发：重新拉取批注记录，让右侧批注侧栏及时更新。
+  const refreshAnnRecords = useCallback(() => {
+    if (!open || !attachmentId) return;
+    void api
+      .listPdfAnnotations(attachmentId)
+      .then((recs) => { setAnnRecords(recs ?? []); })
+      .catch(() => {});
   }, [open, attachmentId]);
 
   // Sidebar click: jump to page + ask the canvas to focus that annotation.
@@ -707,6 +719,7 @@ export function PdfReader() {
             onToolChange={setTool}
             registerController={registerController}
             onStateChange={onAnnotStateChange}
+            onChanged={refreshAnnRecords}
           />
         </div>,
       );

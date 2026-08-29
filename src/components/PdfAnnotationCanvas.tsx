@@ -38,6 +38,8 @@ interface Props {
   registerController?: (pageIndex: number, ctl: PdfPageController | null) => void;
   /** 本页批注状态变化（新增/删除/选中/撤销等）时触发，顶部工具栏据此刷新。 */
   onStateChange?: () => void;
+  /** 批注被持久化保存后触发（新增/删除/编辑/移动/撤销），父级据此刷新右侧批注侧栏。 */
+  onChanged?: () => void;
 }
 
 const highlightColor = "rgba(255, 214, 0, 0.35)";
@@ -81,7 +83,7 @@ function drawBoxPx(ann: PdfAnnotation, W: number, H: number): [number, number, n
   return null;
 }
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange, onChanged }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
@@ -153,8 +155,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         return next;
       });
       void api.savePdfAnnotations(attachmentId, pageIndex, next).catch(() => {});
+      onChanged?.();
     },
-    [attachmentId, pageIndex],
+    [attachmentId, pageIndex, onChanged],
   );
 
   // A2 撤销：本页批注的历史快照栈（局部、在内存，不改持久化语义）。
@@ -165,6 +168,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setAnnotations(prev);
     setSelected(null);
     void api.savePdfAnnotations(attachmentId, pageIndex, prev).catch(() => {});
+    onChanged?.();
     toast("已撤销", "success");
   };
 
