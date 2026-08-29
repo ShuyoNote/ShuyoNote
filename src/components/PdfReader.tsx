@@ -9,7 +9,7 @@ import type { PdfAnnotation } from "../lib/pdfAnnotation";
 import type { OutlineItem } from "../lib/pdfRender";
 import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
-import { buildLayout, computeViewport, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
+import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
 import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
@@ -289,11 +289,11 @@ export function PdfReader() {
       .catch(() => {});
   }, [open, attachmentId]);
 
-  // Sidebar click: jump to page + ask the canvas to focus that annotation.
+  // Sidebar click: jump so the target annotation is precisely visible + ask the canvas to focus it.
   const onSidebarJump = (pageIndex: number, ann: PdfAnnotation) => {
     if (pageIndex < 0 || pageIndex >= (pageCount || 1)) return;
-    gotoPage(pageIndex);
     setFocusTarget({ pageIndex, ann });
+    focusAnnotation(pageIndex, ann);
   };
 
   // B6 — 从侧栏删除一条批注（更新 records + 持久化该页）。
@@ -450,6 +450,29 @@ export function PdfReader() {
       st.scrollTo({ top: Math.max(0, layout.tops[clamped] ?? 0), behavior: "smooth" });
     },
     [layout, pageCount, launchPageImage],
+  );
+
+  // 精准定位到某条批注：把该标注的垂直中心（页内归一化 y）滚到视口中央，而非只滚到页顶。
+  // 连续布局下标注的绝对 Y = 页块顶部 + 页内归一化 y × 页面图像高。瞬时到达（不平滑）保证精准。
+  const focusAnnotation = useCallback(
+    (pageIndex: number, ann: PdfAnnotation) => {
+      const st = stageRef.current;
+      if (!st) return;
+      const clamped = Math.min(Math.max(pageIndex, 0), Math.max(pageCount - 1, 0));
+      // 预取目标页及相邻页的图像，与滚动并行。
+      void launchPageImage(clamped);
+      if (clamped - 1 >= 0) void launchPageImage(clamped - 1);
+      if (clamped + 1 < pageCount) void launchPageImage(clamped + 1);
+      // 用基准页宽高（各页通常同尺寸，来自首个已加载页）算图像高：即使目标页 meta 尚未加载，
+      // 用 1.414 回退会因宽高比不同而偏位；基准值已就绪即可精准。
+      const imgH = pageImageHeight({ w: refW, h: refH }, contentWidth);
+      const absY = (layout.tops[clamped] ?? 0) + annCenterY(ann) * imgH;
+      const maxTop = Math.max(0, layout.total - st.clientHeight);
+      st.scrollTop = Math.max(0, Math.min(absY - st.clientHeight / 2, maxTop));
+      setCurrentPage(clamped);
+      updateViewport();
+    },
+    [layout, contentWidth, refW, refH, pageCount, launchPageImage, updateViewport],
   );
 
   // 当前滚动位置对应的页（视口中心页）。翻页导航/键盘据此算目标页，避免用滞后的 currentPage。

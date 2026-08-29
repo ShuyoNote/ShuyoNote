@@ -1647,6 +1647,10 @@ trailer
   assert("zoomLabel actual", layoutMod.zoomLabel({ mode: "actual" }) === "实际大小");
   assert("zoomLabel fit-width", layoutMod.zoomLabel({ mode: "fit-width" }) === "适合宽度");
   assert("zoomLabel pct", layoutMod.zoomLabel({ mode: "pct", pct: 125 }) === "125%");
+  // 批注垂直中心：用于侧栏点击后把标注滚到视口中央。
+  assert("annCenterY box center", layoutMod.annCenterY({ box: [0.1, 0.2, 0.5, 0.8] }) === 0.5, `=` + layoutMod.annCenterY({ box: [0.1, 0.2, 0.5, 0.8] }));
+  assert("annCenterY points bbox center", layoutMod.annCenterY({ points: [[0.2, 0.3], [0.4, 0.9]] }) === 0.6, `=` + layoutMod.annCenterY({ points: [[0.2, 0.3], [0.4, 0.9]] }));
+  assert("annCenterY fallback 0.5", layoutMod.annCenterY({}) === 0.5, `=` + layoutMod.annCenterY({}));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

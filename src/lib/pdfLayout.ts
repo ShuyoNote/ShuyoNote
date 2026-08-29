@@ -117,6 +117,24 @@ export function slotHeight(
   return CHROME + pageImageHeight(meta, contentW);
 }
 
+/** 批注的几何（归一化坐标）。仅取计算「垂直中心」所需字段，做纯函数、可单测。 */
+export interface AnnGeometry {
+  box?: [number, number, number, number] | null;
+  points?: [number, number][] | null;
+}
+
+/** 一条批注在页面内「垂直中心」的归一化 y（[0,1]）。用于侧栏点击后把标注精确滚到视口中央：
+ *  墨迹取 points 包围盒中心；便签/高亮/矩形取 box 中心；无几何信息时回退页面中心。 */
+export function annCenterY(ann: AnnGeometry): number {
+  if (!ann) return 0.5;
+  if (ann.points && ann.points.length) {
+    const ys = ann.points.map((p) => p[1]);
+    return (Math.min(...ys) + Math.max(...ys)) / 2;
+  }
+  if (ann.box) return (ann.box[1] + ann.box[3]) / 2;
+  return 0.5;
+}
+
 export interface PdfLayout {
   /** 每页顶部在滚动轴上的 y（前缀和）。*/
   tops: number[];
