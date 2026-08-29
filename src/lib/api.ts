@@ -254,5 +254,5 @@ export const api = {
     tools?: unknown[];
     temperature?: number;
     max_tokens?: number;
-  }, runId: string) => invoke<void>("ai_complete_stream", { args, run_id: runId }),
+  }, runId: string) => invoke<void>("ai_complete_stream", { args, runId }),
 };

@@ -48,5 +48,9 @@ export interface PdfRenderEngineApi {
   loadPdf: (data: Uint8Array) => Promise<PdfDocumentMeta>;
   getPageMeta: (pageIndex: number) => Promise<PdfPageMeta>;
   getPageTextItems: (pageIndex: number) => Promise<{ str: string; transform: number[] | null; width: number; height: number }[]>;
+  /** Extra: extract a page's plain text (strings only, no coords) — used by
+   *  「对整篇 PDF 提问」 to rank relevant pages cheaply. Optional: not all engines
+   *  provide it; callers guard with `?.` and fall back to getPageTextItems. */
+  getPageText?: (pageIndex: number) => Promise<string>;
   renderPageToBlob: (pageIndex: number, scale: number) => Promise<Blob>;
 }

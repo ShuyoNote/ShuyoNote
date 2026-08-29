@@ -72,7 +72,7 @@ await esbuild.build({
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
       'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
-      'export { charBigrams, semanticScore, semanticRank } from "./src/lib/searchSemantic";\n' +
+      'export { charBigrams, semanticScore, semanticRank, rankRelevantPages } from "./src/lib/searchSemantic";\n' +
       'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
       'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
       'export { COVER_PRESETS } from "./src/lib/covers";\n' +
@@ -925,6 +925,14 @@ assert("workspace name persists across instances", wsAgain !== "");
     { id: "c", title: "周报", content_text: "项目进展" },
   ]);
   assert("semanticRank drops unrelated docs", ranks.length === 1 && ranks[0].id === "a", JSON.stringify(ranks));
+  // M24 stage-3 延伸「对整篇 PDF 提问」: rankRelevantPages picks the relevant pages.
+  const rel = aiMod.rankRelevantPages("会议纪要说会议安排", [
+    { pageIndex: 0, text: "今天是晴，天气不错" },
+    { pageIndex: 1, text: "本周会议纪要安排在下周三上午" },
+    { pageIndex: 2, text: "项目周报进展汇报" },
+  ]);
+  assert("rankRelevantPages picks the relevant page", rel.length === 1 && rel[0].pageIndex === 1, JSON.stringify(rel));
+  assert("rankRelevantPages caps to topN", aiMod.rankRelevantPages("a a a", [{ pageIndex: 0, text: "a a a" }, { pageIndex: 1, text: "a a a" }, { pageIndex: 2, text: "a a a" }], 2).length === 2);
   // M20.2+ semanticEmbed: REAL vector-embedding primitives (pure, no network).
   const near = (a, b, tol = 1e-9) => Math.abs(a - b) < tol;
   assert("cosineSim orthogonal == 0", near(aiMod.cosineSim([1, 0], [0, 1]), 0));

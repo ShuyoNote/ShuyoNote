@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.182] - 2026-08-29
+
+### 新增
+
+- **对整篇 PDF 提问（M24 阶段 3 延伸，方案 B 相关页检索）**：阅读器顶部新增「对这篇 PDF 提问」按钮（波形图标），底部提问栏——提问时段提取整篇文本（`getPageText`，仅字符串），用 **char-bigram Jaccard 相关页检索**（`rankRelevantPages`，离线/无向量端点依赖）只挑最相关 ≤5 页喂给模型，流式回答＋标注「依据 N、M 页」，可一键存成带 `pdf://` 回链的笔记块。省 token、更准；长文档有提取缓存、复用不重复提取。
+  - 纯函数 `rankRelevantPages`（`searchSemantic.ts`）+ 引擎可选 `getPageText`；新组件 `PdfAskBar.tsx`。
+  - 落地文档：`docs/plans/2026-08-29-pdf-ask-document.md`（决策/数据流/改动/边界/验收）。
+
+### 修复
+
+- **桌面端 AI 流式不可用（`ai_complete_stream missing required key runId`）**：Tauri 命令顶层参数为 camelCase（`run_id`→`runId`），`api.ts` 此前误传 `run_id`，导致桌面后端流式命令收不到 `runId`。改为传 `runId`，AI 帮读/对 PDF 提问在桌面端即可正常流式返回（此 bug 此前未暴露，本次首次真正触发后端流式）。
+- 清理 `fitWidth` 里的临时调试 `console.log`。
+
+### 验证
+
+- `scripts/smoke-web.mjs` 300 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（33）通过。
+
 ## [1.59.181] - 2026-08-29
 
 ### 新增

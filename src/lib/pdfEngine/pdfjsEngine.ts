@@ -117,6 +117,21 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       }
     },
 
+    async getPageText(pageIndex: number): Promise<string> {
+      const d = expectDoc();
+      const p = await d.getPage(pageIndex + 1);
+      try {
+        const tc = await p.getTextContent();
+        return (tc.items ?? [])
+          .map((it: any) => String(it.str ?? ""))
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+      } catch {
+        return "";
+      }
+    },
+
     async renderPageToBlob(pageIndex: number, scale: number): Promise<Blob> {
       const d = expectDoc();
       const p = await d.getPage(pageIndex + 1);

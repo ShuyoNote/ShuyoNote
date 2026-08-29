@@ -10677,6 +10677,79 @@ p:has(> .editor-drawing-container) {
   overflow-y: auto;
 }
 
+/* M24 阶段 3 延伸 ——「对整篇 PDF 提问」栏 */
+.pdf-reader-askbar {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+.pdf-askbar-input-row {
+  display: flex;
+  gap: 8px;
+}
+.pdf-askbar-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  padding: 8px 10px;
+}
+.pdf-askbar-input:focus { outline: none; border-color: var(--accent); }
+.pdf-askbar-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pdf-askbar-btn:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.pdf-askbar-btn:disabled { opacity: 0.6; cursor: default; }
+.pdf-askbar-answer {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.pdf-askbar-answer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pdf-askbar-src {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.pdf-askbar-save {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pdf-askbar-save:hover { border-color: var(--accent); color: var(--accent); }
+.pdf-askbar-error {
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+  margin-top: 4px;
+}
+.pdf-askbar-answer-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  margin-top: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 /* M24 — 思源式阅读器：画布 + 右侧批注侧栏 */
 .pdf-reader-layout {
   flex: 1;

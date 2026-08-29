@@ -10,6 +10,7 @@ import type { PdfAnnotationRecord } from "../types";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
+import { PdfAskBar } from "./PdfAskBar";
 
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
@@ -58,6 +59,7 @@ export function PdfReader() {
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
   const [focusTarget, setFocusTarget] = useState<{ pageIndex: number; ann: PdfAnnotation } | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -74,8 +76,6 @@ export function PdfReader() {
     const avail = stage.clientWidth - 40; // 减去舞台内边距
     if (avail > 0 && meta.w > 0) {
       const s = Math.max(0.5, Math.min(3, +(avail / meta.w).toFixed(2)));
-      // eslint-disable-next-line no-console
-      console.log(`[fitWidth] avail=${avail} meta.w=${meta.w} scale=${s} 显示宽=${(meta.w * s).toFixed(0)} RENDER_scale=${s}`);
       setScale(s);
     }
   };
@@ -280,6 +280,9 @@ export function PdfReader() {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
               )}
             </button>
+            <button className="pdf-reader-btn" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+            </button>
           </div>
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
         </div>
@@ -318,6 +321,16 @@ export function PdfReader() {
             <div className="pdf-reader-loading">加载中…</div>
           )}
         </div>
+        {askOpen && (
+          <div className="pdf-reader-askbar">
+            <PdfAskBar
+              attachmentId={attachmentId ?? ""}
+              pageCount={pageCount || 1}
+              getEngine={() => engRef.current}
+              onDone={close}
+            />
+          </div>
+        )}
       </div>
     </div>,
     document.body,

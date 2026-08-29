@@ -39,3 +39,26 @@ export function semanticRank<T extends { id: string; title: string; content_text
     .sort((a, b) => b.score - a.score)
     .map((r) => r.doc);
 }
+
+/** A page candidate for `rankRelevantPages` — the page's extracted plain text. */
+export interface PdfPageText {
+  pageIndex: number;
+  text: string;
+}
+
+/**
+ * M24 阶段 3 延伸「对整篇 PDF 提问」：把问题与各页文本用 char-bigram Jaccard
+ * 比对，挑出最相关的 `topN` 页（按 score 降序），只把这些页喂给模型，省 token
+ * 且更准。离线可用（无向量端点依赖），返回空数组时表示没有相关页。纯函数，
+ * smoke 可断言。
+ */
+export function rankRelevantPages(question: string, pages: PdfPageText[], topN = 5): PdfPageText[] {
+  const q = String(question ?? "").trim();
+  if (!q) return [];
+  return pages
+    .map((p) => ({ page: p, score: semanticScore(q, p.text) }))
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN)
+    .map((r) => r.page);
+}
