@@ -10954,6 +10954,30 @@ p:has(> .editor-drawing-container) {
   padding: 16px 12px 24px;
   background: var(--surface);
 }
+/* 护眼模式：阅读区暖色纸底 + 页图温和降蓝/柔光（独立于明暗主题；按钮在头部「眼睛」）。 */
+.pdf-reader.eye-care .pdf-reader-stage,
+.pdf-reader.eye-care .pdf-reader-stage-wrap {
+  background: #f4ecda; /* 护眼米黄 */
+}
+[data-theme="dark"] .pdf-reader.eye-care .pdf-reader-stage,
+[data-theme="dark"] .pdf-reader.eye-care .pdf-reader-stage-wrap {
+  background: #2b251a; /* 暗色下的昏暗暖褐 */
+}
+.pdf-reader.eye-care .pdf-annot-img {
+  /* 减蓝 + 微暖 + 略柔：白纸变米黄、降低冷色刺激（只作用于页面图像，不影响批注 SVG）。 */
+  filter: sepia(0.16) saturate(0.9) brightness(0.99) contrast(0.98);
+}
+.pdf-reader.eye-care .pdf-annot-stage {
+  background: #fbf4e1; /* 页面图未铺满时，舞台白底也变暖 */
+}
+.pdf-reader.eye-care .pdf-annot-placeholder {
+  background: #f4ecda;
+  color: #7d6f4e;
+}
+.pdf-reader.eye-care .pdf-reader-btn.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
 /* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。 */
 .pdf-reader-stage-wrap > .pdf-annot-toolbar {
   position: static;

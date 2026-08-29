@@ -23,6 +23,9 @@ import { PdfAskBar } from "./PdfAskBar";
 /** 「AI 生成目录（本段）」默认向后生成的页数。 */
 const AI_OUTLINE_PAGES = 60;
 
+/** 护眼模式开关的本地持久化键。 */
+const EYE_CARE_KEY = "shuyonote.pdf.eyecare";
+
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
 // Native returns raw RGBA8; we draw it into a <canvas> and emit a Blob so the
@@ -140,6 +143,8 @@ export function PdfReader() {
   const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
+  // 护眼模式：暖色纸底 + 页面温和减蓝/柔光滤镜（本地持久化）。
+  const [eyeCare, setEyeCare] = useState<boolean>(() => localStorage.getItem(EYE_CARE_KEY) === "1");
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
   const [focusTarget, setFocusTarget] = useState<{ pageIndex: number; ann: PdfAnnotation } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
@@ -825,7 +830,7 @@ export function PdfReader() {
 
   return createPortal(
     <div className="pdf-reader-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className={`pdf-reader${maximized ? " maximized" : ""}`}>
+      <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeCare ? " eye-care" : ""}`}>
         <div className="pdf-reader-head">
           <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen} style={{ marginRight: 6 }}>
             {outlineOpen ? (
@@ -958,6 +963,14 @@ export function PdfReader() {
             </button>
             <button className="pdf-reader-btn" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+            </button>
+            <button
+              className={`pdf-reader-btn${eyeCare ? " active" : ""}`}
+              onClick={() => setEyeCare((s) => { const n = !s; try { localStorage.setItem(EYE_CARE_KEY, n ? "1" : "0"); } catch {} return n; })}
+              title={eyeCare ? "关闭护眼（恢复原配色）" : "护眼模式：暖色纸底 + 降蓝/柔光"}
+              aria-pressed={eyeCare}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7z"/><circle cx="12" cy="12" r="2.6"/></svg>
             </button>
           </div>
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
