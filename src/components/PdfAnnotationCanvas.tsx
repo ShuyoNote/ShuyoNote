@@ -91,6 +91,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const [editBox, setEditBox] = useState<[number, number] | null>(null); // 内联便签气泡位置（归一化）
   const [editText, setEditText] = useState("");
   const [flash, setFlash] = useState<[number, number, number, number] | null>(null); // 侧栏跳转的临时高亮框
+  // 正在拖动便签：用于切换光标为「正在抓取」(grabbing)，并让选中描边/便签跟随。
+  const [draggingSticky, setDraggingSticky] = useState(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const ink = useRef<[number, number][]>([]);
@@ -185,6 +187,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         // 记录拖动起点的框（originBox，固定）与起点坐标；后续用 originBox + (p - 起点) 计算，
         // 保证跟手且不累积放大（此前把位移加到每帧变化的 box 上导致"飞了"）。
         moveSticky.current = { id: hit.id, box: hit.box, originBox: hit.box, sx: p.x, sy: p.y };
+        setDraggingSticky(true);
+        // 光标即时切换为「正在抓取」（imperative，立即生效；React state 异步会滞后）。
+        e.currentTarget.style.cursor = "grabbing";
         svgRef.current?.setPointerCapture?.(e.pointerId);
         return;
       }
@@ -246,6 +251,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       const moved = [nx0, ny0, nx1, ny1] as [number, number, number, number];
       persist(annotations.map((a) => (a.id === m.id ? { ...a, box: moved } : a)));
       moveSticky.current = null;
+      setDraggingSticky(false);
+      // 恢复光标（清掉 imperative grabbing，回到 CSS crosshair）。
+      svgRef.current && (svgRef.current.style.cursor = "");
       redraw();
       return;
     }
@@ -547,7 +555,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               const dragBox = moveSticky.current?.id === a.id ? moveSticky.current.box : null;
               const box = dragBox ?? a.box;
               return (
-                <g key={a.id}>
+                <g key={a.id} style={{ cursor: draggingSticky ? "grabbing" : tool === "select" ? "grab" : undefined }}>
                   <rect x={box[0] * W} y={box[1] * H} width={Math.min(26, W * 0.06)} height={Math.min(26, H * 0.06)} fill="#ffe28a" stroke="#d9b400" />
                   <title>{a.text}</title>
                 </g>
