@@ -23,8 +23,10 @@ use mupdf_sys::{
     mupdf_drop_error, mupdf_error_t, mupdf_load_page, mupdf_new_base_context,
     mupdf_open_document_from_bytes, mupdf_page_to_pixmap,
 };
+use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
 use std::ptr;
+use std::sync::{Mutex, OnceLock};
 
 /// Owns the base `fz_context`. The MuPDF base context wraps *global* static
 /// CRITICAL_SECTION mutexes; creating and destroying it per render (via
@@ -49,19 +51,69 @@ fn shared_context() -> &'static mut fz_context {
     unsafe { &mut *ptr }
 }
 
-/// Owns a doc + page + pixmap + source buffer, freeing them on drop. The
-/// buffer must outlive the document (its stream reads from it on demand), so
-/// it is dropped last — after the document, page and pixmap are released.
-struct PageCanvas {
+/// A cached, open MuPDF document plus its source buffer. The buffer must
+/// outlive the document (its stream reads from it on demand), so they share
+/// one lifetime and are dropped together.
+struct CachedDocument {
     ctx: *mut fz_context,
     doc: *mut fz_document,
-    page: *mut fz_page,
-    pix: *mut fz_pixmap,
     buffer: *mut fz_buffer,
 }
+// SAFETY: MuPDF objects are only ever touched while holding `doc_cache()`'s
+// Mutex, so handing the raw pointers across threads via the cache is safe.
+unsafe impl Send for CachedDocument {}
+unsafe impl Sync for CachedDocument {}
+impl CachedDocument {
+    unsafe fn open(ctx: *mut fz_context, data: &[u8]) -> Result<Self, String> {
+        let buf = fz_new_buffer_from_copied_data(ctx, data.as_ptr(), data.len());
+        if buf.is_null() {
+            return Err("MuPDF: failed to allocate buffer".to_string());
+        }
+        let magic = b"x.pdf\0";
+        let mut err: *mut mupdf_error_t = ptr::null_mut();
+        let doc = mupdf_open_document_from_bytes(ctx, buf, magic.as_ptr() as *const c_char, &mut err);
+        if doc.is_null() {
+            fz_drop_buffer(ctx, buf);
+            return Err(take_error(err));
+        }
+        Ok(Self { ctx, doc, buffer: buf })
+    }
+}
+impl Drop for CachedDocument {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.doc.is_null() {
+                fz_drop_document(self.ctx, self.doc);
+            }
+            // Drop the source buffer last: it must outlive the document.
+            if !self.buffer.is_null() {
+                fz_drop_buffer(self.ctx, self.buffer);
+            }
+        }
+        // The base context is process-global; do NOT drop it.
+    }
+}
+
+/// Documents cached by attachment content hash so consecutive `render_pdf_page`
+/// calls for the same PDF don't re-open and re-parse the document every time
+/// (the dominant cost for large/complex PDFs). MuPDF's `fz_context` is not
+/// thread-safe, so we serialize all access behind this lock.
+fn doc_cache() -> &'static Mutex<HashMap<String, CachedDocument>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedDocument>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Owns a page + pixmap for a single render, freeing them on drop. The doc and
+/// its source buffer are owned by the process-wide doc cache (`CachedDocument`),
+/// which outlives any single render.
+struct PageCanvas {
+    ctx: *mut fz_context,
+    page: *mut fz_page,
+    pix: *mut fz_pixmap,
+}
 impl PageCanvas {
-    fn new(ctx: *mut fz_context, doc: *mut fz_document, page: *mut fz_page, buffer: *mut fz_buffer) -> Self {
-        Self { ctx, doc, page, pix: ptr::null_mut(), buffer }
+    fn new(ctx: *mut fz_context, page: *mut fz_page) -> Self {
+        Self { ctx, page, pix: ptr::null_mut() }
     }
 }
 impl Drop for PageCanvas {
@@ -72,13 +124,6 @@ impl Drop for PageCanvas {
             }
             if !self.page.is_null() {
                 fz_drop_page(self.ctx, self.page);
-            }
-            if !self.doc.is_null() {
-                fz_drop_document(self.ctx, self.doc);
-            }
-            // Drop the source buffer last: it must outlive the document.
-            if !self.buffer.is_null() {
-                fz_drop_buffer(self.ctx, self.buffer);
             }
         }
     }
@@ -103,44 +148,49 @@ fn take_error(err: *mut mupdf_error_t) -> String {
 
 /// Rasterize one PDF page to raw RGBA8 samples using MuPDF.
 ///
+/// `cache_key` identifies the PDF content (e.g. its attachment hash) so the
+/// opened document is reused across calls instead of re-parsing every time.
 /// `data` is the raw PDF bytes; `page_index` is zero-based; `scale` = 100% at
 /// 1.0. Returns `(rgba, width, height, stride)`, or an error message. Callers
 /// encode the RGBA bytes (e.g. via the `png` crate).
 pub unsafe fn render_page(
+    cache_key: &str,
     data: &[u8],
     page_index: i64,
     scale: f32,
 ) -> Result<(Vec<u8>, usize, usize, usize), String> {
     let ctx = shared_context() as *mut fz_context;
 
-    // Copy the PDF bytes into a MuPDF-managed buffer. The document's stream
-    // reads from this buffer on demand for the lifetime of the document, so we
-    // must NOT drop it until the document (and its pages/pixmaps) are gone.
-    // Holding it in `canvas.buffer` ties its lifetime to the render scope — it
-    // is released right after the document is dropped (see PageCanvas::drop).
-    let buf = fz_new_buffer_from_copied_data(ctx, data.as_ptr(), data.len());
-    if buf.is_null() {
-        return Err("MuPDF: failed to allocate buffer".to_string());
-    }
+    // Grab (or open once) the cached document under the lock. We hold the lock
+    // for the whole render because MuPDF's fz_context isn't thread-safe.
+    let mut cache = doc_cache()
+        .lock()
+        .map_err(|_| "MuPDF: doc cache poisoned".to_string())?;
 
-    let magic = b"x.pdf\0";
-    let mut err: *mut mupdf_error_t = ptr::null_mut();
-    let doc = mupdf_open_document_from_bytes(ctx, buf, magic.as_ptr() as *const c_char, &mut err);
-    if doc.is_null() {
-        fz_drop_buffer(ctx, buf);
-        return Err(take_error(err));
+    if !cache.contains_key(cache_key) {
+        let doc = CachedDocument::open(ctx, data)?;
+        cache.insert(cache_key.to_string(), doc);
+        // Bound the cache: drop least-recently-used-ish (first inserted) if it
+        // grows too large, so a session with many PDFs doesn't leak documents.
+        if cache.len() > 8 {
+            if let Some(k) = cache.keys().next().cloned() {
+                cache.remove(&k);
+            }
+        }
     }
+    let cached = cache
+        .get(cache_key)
+        .ok_or_else(|| "MuPDF: cached doc vanished".to_string())?;
+    let doc = cached.doc;
 
     let no = page_index.max(0) as i32;
     let mut page_err: *mut mupdf_error_t = ptr::null_mut();
     let page = mupdf_load_page(ctx, doc, no, &mut page_err);
     if page.is_null() {
-        fz_drop_document(ctx, doc);
-        fz_drop_buffer(ctx, buf);
         return Err(take_error(page_err));
     }
+    let mut canvas = PageCanvas::new(ctx, page);
 
-    let mut canvas = PageCanvas::new(ctx, doc, page, buf);
     let s = scale.max(0.1);
     let ctm = fz_scale(s, s);
     let rgb: *mut fz_colorspace = fz_device_rgb(ctx);
@@ -179,7 +229,7 @@ mod tests {
     #[test]
     fn render_min_pdf_roundtrip() {
         unsafe {
-            let result = render_page(MIN_PDF, 0, 1.0);
+            let result = render_page("test-min", MIN_PDF, 0, 1.0);
             match result {
                 Ok((_, w, h, _)) => assert!((w, h) == (200, 200), "unexpected size ({w}x{h})"),
                 Err(e) => panic!("render_page failed: {e}"),

@@ -516,8 +516,8 @@ pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPage
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let bytes = crate::attachments::read_attachment_bytes(app, hash)?;
-    let (rgba, w, h, _stride) = unsafe { crate::pdf_native::render_page(&bytes, args.page_index, args.scale) }
+    let bytes = crate::attachments::read_attachment_bytes(app, hash.clone())?;
+    let (rgba, w, h, _stride) = unsafe { crate::pdf_native::render_page(&hash, &bytes, args.page_index, args.scale) }
         .map_err(|e| format!("MuPDF render failed: {e}"))?;
     // Header (8 bytes, little-endian) + RGBA.
     let mut out = Vec::with_capacity(8 + rgba.len());

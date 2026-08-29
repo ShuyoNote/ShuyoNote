@@ -376,24 +376,17 @@ export function PdfReader() {
   }, [updateViewport]);
 
   // 跳转/滚动时对某页立即光栅化（若当前缩放下未缓存），让页面图像提前就绪，
-  // 不等 viewRange 更新后再开始——显著降低跳去远处页时的感知延迟（尤其 native mupdf 每页 >100ms）。
-  // 跳转/滚动时对某页立即光栅化，让页面图像提前就绪。采用「低清优先」：
-  // 先用 0.4× 的低分辨率快速出一张 JPEG 占位（光栅化 + JPEG 都很快），
-  // 让跳转后瞬间看到页面内容；随后 viewRange 正式加载会以当前 scale 的高清替换（JPEG 同源，几乎无感）。
-  const PREVIEW_SCALE = 0.4;
+  // 不等 viewRange 更新后再开始——降低跳去远处页的感知延迟。
+  // 直接按当前 scale 渲染一次成型（不再用低清预览：那会导致"从小变大"的视觉跳变）。
   const launchPageImage = useCallback(
     async (pageIndex: number) => {
       const eng = engRef.current;
       if (!eng || !ready) return;
-      // 已有高清/预览就不重复拉低清。
-      const fullKey = `${pageIndex}@${scale}`;
-      if (pageCacheRef.current.has(fullKey)) return;
-      const prevKey = `${pageIndex}@preview`;
-      if (pageCacheRef.current.has(prevKey) || inflightRef.current.has(prevKey)) return;
-      const lowScale = Math.max(scale * PREVIEW_SCALE, 0.4);
-      inflightRef.current.add(prevKey);
+      const key = `${pageIndex}@${scale}`;
+      if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
+      inflightRef.current.add(key);
       try {
-        const blob = await renderPagePng(eng, attachmentId, pageIndex, lowScale);
+        const blob = await renderPagePng(eng, attachmentId, pageIndex, scale);
         const url = URL.createObjectURL(blob);
         const cache = pageCacheRef.current;
         if (cache.size >= 12) {
@@ -406,19 +399,12 @@ export function PdfReader() {
             if (cache.size < 12) break;
           }
         }
-        cache.set(prevKey, url);
-        // 仅当还没有高清图时才用低清占位，避免覆盖已就绪的高清。
-        setPageData((d) => {
-          const cur = d[pageIndex];
-          if (!cur?.url) {
-            return { ...d, [pageIndex]: { ...(cur ?? { meta: null, textItems: null, hasTextLayer: false }), url } };
-          }
-          return d;
-        });
+        cache.set(key, url);
+        setPageData((d) => ({ ...d, [pageIndex]: { ...(d[pageIndex] ?? { meta: null, textItems: null, hasTextLayer: false }), url } }));
       } catch {
         // 忽略：图像加载失败不影响跳转。
       } finally {
-        inflightRef.current.delete(prevKey);
+        inflightRef.current.delete(key);
       }
     },
     [ready, scale, attachmentId],
