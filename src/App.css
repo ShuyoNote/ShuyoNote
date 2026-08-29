@@ -10705,6 +10705,12 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
 }
 .pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
+/* AI 视觉识别按钮：用强调色区分。 */
+.pdf-annot-ocr-ai {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  margin-left: 6px;
+}
 .pdf-annot-stage {
   position: relative;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);

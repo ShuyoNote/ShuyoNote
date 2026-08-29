@@ -106,9 +106,14 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
           {st.hasTextLayer ? "有文本层，可精确划词" : "无文本层，建议用矩形/画笔/便签"}
         </span>
         {!st.hasTextLayer && (
-          <button className="pdf-annot-ocr" onClick={() => ctl?.runOcr()} disabled={st.ocrBusy}>
-            {st.ocrBusy ? "识别中…" : "OCR 识别本页"}
-          </button>
+          <>
+            <button className="pdf-annot-ocr" onClick={() => ctl?.runOcr()} disabled={st.ocrBusy}>
+              {st.ocrBusy ? "识别中…" : "OCR 识别本页"}
+            </button>
+            <button className="pdf-annot-ocr pdf-annot-ocr-ai" onClick={() => ctl?.visionOcr()} disabled={st.ocrBusy} title="用 AI 视觉大模型识别本页文字（对中文/复杂排版通常更准，需配置支持图像的模型）">
+              AI 识别
+            </button>
+          </>
         )}
       </div>
     </div>

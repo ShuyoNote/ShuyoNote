@@ -5,9 +5,10 @@ import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
 import { ocrRecognize, OCR_PAGE_SCALE } from "../lib/ocr";
-import { runInlineDraft } from "../lib/ai/inlineDraft";
-import type { ProviderConfig } from "../lib/ai/llm";
 import { useAiStore } from "../store/ai";
+import type { ProviderConfig } from "../lib/ai/llm";
+import { ocrWithVision, blobToDataUrl } from "../lib/ai/ocrVision";
+import { runInlineDraft } from "../lib/ai/inlineDraft";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
 import { toast } from "../store/toast";
@@ -196,6 +197,45 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     } else {
       setOcrStatus("empty");
       toast("未识别到文字", "error");
+    }
+  };
+
+  const runVisionOcr = async () => {
+    if (ocrBusyRef.current) return;
+    const config = useAiStore.getState().config;
+    if (!config.enabled) {
+      toast("请先在设置里配置 AI 模型（需支持图像/视觉）", "error");
+      return;
+    }
+    if (!renderPage) {
+      toast("页面渲染不可用，无法识别", "error");
+      return;
+    }
+    ocrBusyRef.current = true;
+    setOcrBusy(true);
+    setOcrText(null);
+    setOcrStatus("idle");
+    try {
+      const blob = await renderPage(pageIndex, OCR_PAGE_SCALE);
+      const dataUrl = await blobToDataUrl(blob);
+      const res = await ocrWithVision(config as unknown as ProviderConfig, dataUrl);
+      if (res.text) {
+        setOcrText(res.text);
+        setOcrStatus("idle");
+        toast("AI 视觉识别完成", "success");
+      } else if (res.error === "timeout") {
+        setOcrStatus("timeout");
+        toast("AI 视觉识别超时，请稍后重试", "error");
+      } else {
+        setOcrStatus("error");
+        toast("AI 视觉识别失败：请确认已配置支持图像的模型（如 gpt-4o / qwen-vl / llava）", "error");
+      }
+    } catch {
+      setOcrStatus("error");
+      toast("AI 视觉识别失败", "error");
+    } finally {
+      ocrBusyRef.current = false;
+      setOcrBusy(false);
     }
   };
 
@@ -576,6 +616,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       copyRef: onCopyRef,
       editSticky: onEditSticky,
       runOcr,
+      visionOcr: runVisionOcr,
       notify: () => {
         // 状态变化：提示顶部工具栏重读 getState()。
         onStateChangeRef.current?.();

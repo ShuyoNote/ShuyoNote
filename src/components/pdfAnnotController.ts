@@ -36,6 +36,8 @@ export interface PdfPageController {
   copyRef(): void;
   editSticky(): void;
   runOcr(): void;
+  /** AI 视觉模型识别本页文字（多模态大模型）。 */
+  visionOcr(): void;
   /** 本页状态变化时通知顶部工具栏刷新（由页内组件触发）。 */
   notify(): void;
 }
