@@ -11,6 +11,7 @@ import type { OutlineItem } from "../lib/pdfRender";
 import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
 import { generateOutlineFromVision } from "../lib/aiOutline";
+import { loadAiOutline, saveAiOutline } from "../lib/pdfOutlineStore";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
@@ -353,6 +354,7 @@ export function PdfReader() {
         return;
       }
       setOutline(items);
+      if (attachmentId) saveAiOutline(attachmentId, items);
       toast(`已生成目录（${items.length} 个项目）`, "success");
       gotoPage(items[0].pageIndex);
       setAiOutline({ status: "done", stage: "ocr", done: total, total });
@@ -453,7 +455,10 @@ export function PdfReader() {
         if (alive) {
           closeRef.current = doc.close;
           setPageCount(doc.pageCount);
-          setOutline(doc.outline ?? []);
+          // 用 pdf.js 内置目录；扫描版为空时，恢复本机已生成的 AI 目录（重开不丢失）。
+          const builtin = doc.outline ?? [];
+          const saved = builtin.length === 0 && attachmentId ? loadAiOutline(attachmentId) : null;
+          setOutline(saved && saved.length ? saved : builtin);
           const target = Math.min(Math.max(targetPage, 0), Math.max(doc.pageCount - 1, 0));
           setCurrentPage(target);
           setReady(true);
