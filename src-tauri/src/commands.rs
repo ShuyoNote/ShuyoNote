@@ -516,7 +516,13 @@ pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPage
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let bytes = crate::attachments::read_attachment_bytes(app, hash.clone())?;
+    // 若该 PDF 的 mupdf 文档已在缓存中（doc cache 持有 PDF bytes 副本），则无需
+    // 再从磁盘遍历目录 + 读整个文件——跳过，避免反复跳转/滚动时的大 I/O。
+    let bytes = if crate::pdf_native::has_document(&hash) {
+        Vec::new()
+    } else {
+        crate::attachments::read_attachment_bytes(app, hash.clone())?
+    };
     let (rgba, w, h, _stride) = unsafe { crate::pdf_native::render_page(&hash, &bytes, args.page_index, args.scale) }
         .map_err(|e| format!("MuPDF render failed: {e}"))?;
     // Header (8 bytes, little-endian) + RGBA.

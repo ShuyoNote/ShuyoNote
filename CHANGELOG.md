@@ -16,6 +16,7 @@
 - **目录/侧栏跳转提速**：跳转到远处页时，目标页（及相邻页）图像原先要等视口 range 更新后才开始光栅化（桌面 native mupdf 每页可能 >100ms，感知延迟明显）。现改为跳转时立即对目标页发起图像预取（`launchPageImage`，走缓存/去重守卫），与滚动并行，目标页图像即可提前就绪。
 - **native 渲染改用 JPEG + 跳转低清优先**：native 路径页面图像由 PNG 无损编码改为 JPEG(0.92)——PNG 编码在主线程对整页 RGBA 很慢、JPEG 快一个数量级且体积小、`<img>` 解码快；同时补白底合成（PDF 透明底→白，避免 JPEG 黑底）。并让跳转预取用 0.4× 低分辨率先出图占位，跳转后瞬间看到页面内容，再由正式加载补高清。
 - **跳转不再"从小变大" + Rust 文档缓存**：低清预览会产生"先小后大"的视觉跳变，已移除——跳转预取直接按当前缩放一次成型。并把提速重心放到 Rust 侧：`render_pdf_page` 用 attachment hash 缓存已打开的 mupdf 文档（`Mutex<HashMap<String, CachedDocument>>`，buffer 与 doc 同生命周期），同一 PDF 连续渲染不再重复开/解析文档（大 PDF 的主要开销），每页光栅化更快；MuPDF 非线程安全，用全局锁串行化访问。
+- **跳转不再重复读文件**：`read_attachment_bytes` 每次调用都遍历 attachments 目录 + 读整个 PDF 进内存；即使 mupdf 文档已缓存（缓存持有 PDF bytes 副本），反复跳转/滚动仍反复读同一文件。现加 `pdf_native::has_document(hash)` 查询，文档已缓存时跳过磁盘读文件——这是大 PDF 反复渲染的又一主要 I/O 开销。
 
 ### 验证
 

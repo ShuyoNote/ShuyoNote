@@ -103,6 +103,13 @@ fn doc_cache() -> &'static Mutex<HashMap<String, CachedDocument>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Whether a document for `cache_key` is already open in the cache. Lets the
+/// command layer skip re-reading the PDF bytes from disk on every page render
+/// (repeated scans + full-file reads are the dominant cost for large PDFs).
+pub fn has_document(cache_key: &str) -> bool {
+    doc_cache().lock().map(|c| c.contains_key(cache_key)).unwrap_or(false)
+}
+
 /// Owns a page + pixmap for a single render, freeing them on drop. The doc and
 /// its source buffer are owned by the process-wide doc cache (`CachedDocument`),
 /// which outlives any single render.
