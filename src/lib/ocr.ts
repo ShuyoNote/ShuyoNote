@@ -22,15 +22,19 @@ export interface OcrWorkerHandle {
 const DEFAULT_TIMEOUT = 60000;
 
 function buildWorkerOptions(): Record<string, unknown> {
-  // 本地打包资源路径（dev 与 Tauri 构建均视为同源可 fetch/importScripts）。
-  // 可用 VITE_TESSERACT_CORE_PATH / VITE_TESSERACT_LANG_PATH 覆盖为镜像/自定义资源。
+  // 本地打包资源路径（dev 与 Tauri 构建均为同源可 fetch/importScripts）。
+  // 关键：tesseract.js 用 is-url 判断 langPath 是否为 URL——相对路径（如 /ocr/tessdata）
+  // 会被判定为「非 URL」，浏览器 worker 就走 readCache(IndexedDB) 而非 fetch，
+  // 导致语言模型加载失败、识别返回空。故必须统一转成绝对 URL（基于 location.origin）。
+  // 仍可用 VITE_TESSERACT_CORE_PATH / VITE_TESSERACT_LANG_PATH 覆盖为镜像/自定义资源。
   const base = import.meta.env.BASE_URL || "/";
+  const abs = (p: string) => new URL(p, window.location.origin).href;
   const corePath = import.meta.env.VITE_TESSERACT_CORE_PATH as string | undefined;
   const langPath = import.meta.env.VITE_TESSERACT_LANG_PATH as string | undefined;
   return {
-    workerPath: `${base}ocr/worker.min.js`,
-    corePath: corePath || `${base}ocr/core`,
-    langPath: langPath || `${base}ocr/tessdata`,
+    workerPath: abs(`${base}ocr/worker.min.js`),
+    corePath: corePath ? (corePath.includes("://") ? corePath : abs(corePath)) : abs(`${base}ocr/core`),
+    langPath: langPath ? (langPath.includes("://") ? langPath : abs(langPath)) : abs(`${base}ocr/tessdata`),
     // tesseract 默认 workerBlobURL=true（blob importScripts）；改为直接 new Worker(workerPath)。
     workerBlobURL: false,
     // 每次从本地路径读取模型（不读 IndexedDB 旧缓存），gzip 模型为 .traineddata.gz。
