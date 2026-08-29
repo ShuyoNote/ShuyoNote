@@ -10,7 +10,7 @@ import type { PdfAnnotation } from "../lib/pdfAnnotation";
 import type { OutlineItem } from "../lib/pdfRender";
 import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
-import { generateOutlineFromOcr } from "../lib/aiOutline";
+import { generateOutlineFromVision } from "../lib/aiOutline";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
@@ -326,7 +326,7 @@ export function PdfReader() {
     aiOutlineAbortRef.current = ac;
     setAiOutline({ status: "running", stage: "ocr", done: 0, total });
     try {
-      const { items, recognizedPages, totalChars } = await generateOutlineFromOcr({
+      const { items, recognizedPages, totalChars } = await generateOutlineFromVision({
         attachmentId,
         pageCount,
         start,
@@ -339,14 +339,14 @@ export function PdfReader() {
         signal: ac.signal,
       });
       if (ac.signal.aborted) return;
-      if (recognizedPages === 0 || totalChars < 20) {
-        toast("未识别到有效文字：请确认离线 OCR 模型已就绪，或该页确为图片型扫描页", "error");
-        setAiOutline({ status: "error", stage: "ocr", done: 0, total: 0 });
+      if (recognizedPages === 0 || totalChars < 5) {
+        toast("AI 目录生成未识别到章节标题：请确认已配置支持图像的视觉模型（如 gpt-4o / qwen-vl / llava），或换更靠前的起点", "error");
+        setAiOutline({ status: "error", stage: "ai", done: 0, total: 0 });
         return;
       }
       if (items.length === 0) {
-        toast(`已识别 ${recognizedPages} 页文字，但 AI 未提取到目录，可重试或换更靠前的起点`, "error");
-        setAiOutline({ status: "error", stage: "ocr", done: 0, total: 0 });
+        toast(`已识别到部分页面但未提取到目录，可重试或换更靠前的起点`, "error");
+        setAiOutline({ status: "error", stage: "ai", done: 0, total: 0 });
         return;
       }
       setOutline(items);

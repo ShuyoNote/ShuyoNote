@@ -39,10 +39,12 @@ async function postJson(
   }
 }
 
-/** 让视觉模型识别图片中的文字。imageDataUrl 为 `data:image/...;base64,...`。 */
+/** 让视觉模型识别图片中的文字。imageDataUrl 为 `data:image/...;base64,...`；
+ *  prompt 可自定义（默认转录全文）。 */
 export async function ocrWithVision(
   config: ProviderConfig,
   imageDataUrl: string,
+  prompt: string = PROMPT,
   timeoutMs = 90000,
 ): Promise<VisionOcrResult> {
   if (!imageDataUrl) return { text: null, error: "error" };
@@ -53,7 +55,7 @@ export async function ocrWithVision(
       const url = `${baseUrlOf(config.baseUrl)}/api/chat`;
       const resp = await postJson(
         url,
-        { model: config.model, messages: [{ role: "user", content: PROMPT, images: [b64] }], stream: false },
+        { model: config.model, messages: [{ role: "user", content: prompt, images: [b64] }], stream: false },
         { "Content-Type": "application/json" },
         timeoutMs,
       );
@@ -72,7 +74,7 @@ export async function ocrWithVision(
             {
               role: "user",
               content: [
-                { type: "text", text: PROMPT },
+                { type: "text", text: prompt },
                 { type: "image_url", image_url: { url: imageDataUrl } },
               ],
             },
