@@ -8,7 +8,7 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.190**（最近一次正式发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）。本会话在其上叠加了大量**未升版本**的 PDF 阅读器 + OCR/AI 增强（见 §2 末「PDF 阅读器 + OCR/AI 增强」与 `docs/plans/2026-08-29-pdf-reader-ai-plan.md`）。
+- **版本**：**v1.59.190**（最近一次正式发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）。本会话在其上叠加了大量**未升版本**的 PDF 阅读器 + OCR/AI 增强（见 §2 末「PDF 阅读器 + OCR/AI 增强」与 `docs/plans/2026-08-30-pdf-reader-ai-plan.md`）。
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
 - **git**：HEAD 在当前 main 最新（含本会话 PDF/AI 增强提交；v1.59.190 发布提交为历史，其后为未升版本的 fix/feat 轮）。
 
