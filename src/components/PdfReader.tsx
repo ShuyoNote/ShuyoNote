@@ -153,8 +153,11 @@ export function PdfReader() {
   const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
-  // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。
-  const [eyeMode, setEyeMode] = useState<EyeMode>(() => (localStorage.getItem(EYE_CARE_KEY) as EyeMode) || "off");
+  // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
+  const [eyeMode, setEyeMode] = useState<EyeMode>(() => {
+    const v = localStorage.getItem(EYE_CARE_KEY) as EyeMode | null;
+    return v && EYE_MODES.some((m) => m.id === v) ? v : "soft";
+  });
   const [eyeOpen, setEyeOpen] = useState(false);
   const eyeWrapRef = useRef<HTMLDivElement | null>(null);
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
