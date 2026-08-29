@@ -1696,6 +1696,18 @@ trailer
     && ot[1].children[0].title === "2.1";
   assert("toOutlineItems builds level tree", ok, JSON.stringify(ot));
   assert("integrate prompt mentions level 1", outlineGenMod.buildIntegratePrompt([{ title: "x", page: 3 }]).includes("level 1"), "");
+  // 标题命名推断层级（兜底）：章=1，x.y=2，x.y.z=3。
+  assert("inferOutlineLevel chapter=1", outlineGenMod.inferOutlineLevel("第一章 起源") === 1, "");
+  assert("inferOutlineLevel x.y=2", outlineGenMod.inferOutlineLevel("1.1 世界观") === 2, "");
+  assert("inferOutlineLevel x.y.z=3", outlineGenMod.inferOutlineLevel("1.2.3 反派") === 3, "");
+  // 平铺（无 level）也能按标题推断出层级缩进。
+  const of = outlineGenMod.toOutlineItems([
+    { title: "第一章", page: 1 },
+    { title: "1.1 缘起", page: 2 },
+    { title: "第二章", page: 10 },
+  ], 0, 60);
+  const okf = of.length === 2 && of[0].title === "第一章" && of[0].children.length === 1 && of[0].children[0].title === "1.1 缘起" && of[1].title === "第二章";
+  assert("toOutlineItems infers level for flat entries", okf, JSON.stringify(of));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

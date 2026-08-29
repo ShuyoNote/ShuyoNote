@@ -72,6 +72,15 @@ export function buildIntegratePrompt(entries: OutlineEntry[]): string {
   ].join("\n");
 }
 
+/** 纯函数：按标题命名规则推断层级（1=章/大标题，2=节，3=小节）。用于整合模型未给 level 时兜底。 */
+export function inferOutlineLevel(title: string): number {
+  const t = (title || "").trim();
+  if (/^\s*\d+\s*\.\s*\d+\s*\.\s*\d+/.test(t)) return 3;
+  if (/^\s*\d+\s*\.\s*\d+/.test(t) || /第\s*[一二三四五六七八九十百零\d]+\s*节/.test(t)) return 2;
+  if (/(第\s*[一二三四五六七八九十百零\d]+\s*[章篇部]|chapter\s*\d+|第?\d+\s*章|序章|导言|绪论|前言|引言|后记|结语|附录|索引|参考文献)/i.test(t)) return 1;
+  return 1;
+}
+
 /** 把解析结果约束到本段页码范围、排序，并按 level 构造成带 children 的目录树。 */
 export function toOutlineItems(entries: OutlineEntry[], start0: number, count: number): OutlineItem[] {
   const start1 = start0 + 1;
@@ -83,7 +92,8 @@ export function toOutlineItems(entries: OutlineEntry[], start0: number, count: n
   const stack: { item: OutlineItem; level: number }[] = [];
   for (const e of sorted) {
     const node: OutlineItem = { title: e.title, pageIndex: e.page - 1, children: [] };
-    const level = Math.max(1, e.level ?? 1);
+    // 用「模型给的 level」与「标题命名推断」取较大值，避免模型给平铺(1)时丢了层级。
+    const level = Math.max(e.level ?? 1, inferOutlineLevel(e.title));
     while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
     if (stack.length) stack[stack.length - 1].item.children.push(node);
     else roots.push(node);
