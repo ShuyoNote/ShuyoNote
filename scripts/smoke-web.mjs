@@ -116,6 +116,18 @@ await esbuild.build({
 });
 const aiMod = await import(pathToFileURL(aiOutfile).href + "?v=" + Date.now());
 
+// 方案B连续滚动布局（纯函数，无依赖）。
+const layoutOutfile = join(tmpDir, "pdfLayout.mjs");
+await esbuild.build({
+  entryPoints: [join(root, "src/lib/pdfLayout.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node20",
+  outfile: layoutOutfile,
+});
+const layoutMod = await import(pathToFileURL(layoutOutfile).href + "?v=" + Date.now());
+
 // --- Set up the sqlite store's wasm URL + bytes (fs-backed) + fs persist (Node) ---
 const { setDefaultAdapter, setWasmUrl, setWasmBytesProvider, SqliteStore } = mod;
 const sqljsRoot = join(root, "node_modules/.pnpm/sql.js@1.14.2/node_modules/sql.js");
@@ -1566,6 +1578,40 @@ trailer
   await invoke("delete_page", { id: made.id });
   const pagesAfter = await invoke("list_pages", {});
   assert("delete_page removes AI-created page from list", Array.isArray(pagesAfter) && !pagesAfter.some((p) => p.id === made.id), JSON.stringify(pagesAfter.map((p) => p.id).slice(0, 6)));
+}
+
+// 22. 方案 B — 虚拟化连续滚动布局（纯函数）：占位高、前缀和、视口挂载范围。
+{
+  const cw = 600;
+  const metas = [
+    { w: 600, h: 800 }, // 高比 800/600=1.333
+    { w: 600, h: 800 },
+    { w: 300, h: 600 }, // 更窄页，高比 2.0
+    null, // 未知 → 估算 A4 比例
+  ];
+  const L = layoutMod.buildLayout(metas, cw);
+  const H = layoutMod.CHROME;
+  assert("buildLayout heights follow aspect", Math.abs(L.heights[0] - (H + (800 / 600) * 600)) < 0.01, `h0=${L.heights[0]}`);
+  assert("buildLayout unknown uses estimate", Math.abs(L.heights[3] - (H + 1.414 * 600)) < 0.01, `h3=${L.heights[3]}`);
+  assert("buildLayout tops are prefix sums", Math.abs(L.tops[2] - (L.heights[0] + L.heights[1] + 2 * layoutMod.GAP)) < 0.01, `t2=${L.tops[2]}`);
+  assert("buildLayout total end-to-end", Math.abs(L.total - (L.tops[3] + L.heights[3])) < 0.01, `total=${L.total}`);
+
+  // computeViewport：滚到页0顶 → 挂载页0(含buffer)，current=0。
+  const vr0 = layoutMod.computeViewport(0, 800, L, 1);
+  assert("computeViewport at top starts at 0", vr0.start === 0 && vr0.current === 0, JSON.stringify(vr0));
+  assert("computeViewport buffer extends range", vr0.end >= 1, `end=${vr0.end}`);
+
+  // 滚到页1顶部（L.tops[1]）居中 → current 应为 1。
+  const vr1 = layoutMod.computeViewport(L.tops[1] + 40, 800, L, 1);
+  assert("computeViewport centers current on page 1", vr1.current === 1, JSON.stringify(vr1));
+
+  // 滚到底：current 应是最后一页，挂载范围也到末页。
+  const vrEnd = layoutMod.computeViewport(L.total - 800, 800, L, 1);
+  assert("computeViewport at bottom current=last", vrEnd.current === metas.length - 1 && vrEnd.end === metas.length - 1, JSON.stringify(vrEnd));
+
+  // 空文档安全。
+  const empty = layoutMod.computeViewport(0, 800, layoutMod.buildLayout([], 600), 1);
+  assert("computeViewport empty doc safe", empty.start === -1 && empty.end === -1, JSON.stringify(empty));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

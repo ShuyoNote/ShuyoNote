@@ -10820,11 +10820,31 @@ p:has(> .editor-drawing-container) {
   flex: 1;
   min-width: 0;
   overflow: auto;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 12px;
+  padding: 16px 12px 24px;
   background: var(--surface);
+}
+/* 方案 B — 虚拟化连续滚动：单页切换改为多页纵向堆叠。
+   只挂载视口 ± 缓冲 的页块（避免整篇 PDF 全部渲染的内存开销）；
+   每页是一个自包含的 PdfAnnotationCanvas，批注随页块走。 */
+.pdf-continuous {
+  display: block;
+}
+.pdf-continuous-page {
+  margin: 0 auto;
+  position: relative;
+}
+.pdf-continuous-page .pdf-annot-toolbar,
+.pdf-continuous-page .pdf-annot-status {
+  /* 连续模式每页各自有工具栏：不再吸顶（避免多页 sticky 互相叠盖），随页滚动。 */
+  position: static;
+}
+.pdf-continuous-page .pdf-annot-toolbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.pdf-continuous-spacer {
+  /* 占位：视口外未挂载的页在滚动轴上占位，保持整段可滚。 */
+  width: 1px;
 }
 /* 右侧批注侧栏 */
 .pdf-sidebar {
