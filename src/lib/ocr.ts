@@ -21,8 +21,11 @@ export interface OcrWorkerHandle {
 
 const DEFAULT_TIMEOUT = 60000;
 
-/** 单页 OCR 用的页面重渲染缩放：明显高于显示缩放，显著提升识别精度（约 2.5× ⇒ ~150-200 DPI）。 */
-export const OCR_PAGE_SCALE = 2.5;
+/** 单页 OCR 用的页面重渲染缩放：明显高于显示缩放，显著提升识别精度（约 3.5× ⇒ ~250 DPI）。 */
+export const OCR_PAGE_SCALE = 3.5;
+
+/** 识别参数：对书籍单栏正文使用 PSegMode 6（视为单一文本块），通常优于自动分割。 */
+const OCR_RECOGNIZE_OPTIONS: Record<string, string> = { tessedit_pageseg_mode: "6" };
 
 // 首次构造 worker 选项时把实际用到的离线资源路径打印一次，便于排查。
 let loggedPaths = false;
@@ -55,12 +58,13 @@ function buildWorkerOptions(): Record<string, unknown> {
 }
 
 function recognizeWithTimeout(
-  worker: { recognize: (image: string) => Promise<{ data?: { text?: string } }> },
+  worker: { recognize: (image: string, opts?: Record<string, string>) => Promise<{ data?: { text?: string } }> },
   image: string,
   timeoutMs: number,
+  opts?: Record<string, string>,
 ): Promise<OcrResult> {
   const run: Promise<OcrResult> = (async (): Promise<OcrResult> => {
-    const { data } = await worker.recognize(image);
+    const { data } = await worker.recognize(image, opts);
     return { text: String(data?.text ?? "").trim() || null, error: "none" };
   })().catch(() => ({ text: null, error: "error" as const }));
 
@@ -97,7 +101,7 @@ export async function createOcrWorker(
   }
   return {
     recognize(image: string, timeoutMs: number = DEFAULT_TIMEOUT) {
-      return recognizeWithTimeout(worker, image, timeoutMs);
+      return recognizeWithTimeout(worker, image, timeoutMs, OCR_RECOGNIZE_OPTIONS);
     },
     async terminate() {
       try {
