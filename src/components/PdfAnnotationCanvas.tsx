@@ -60,6 +60,18 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
   return false;
 }
 
+// 标注的归一化包围盒 [x0,y0,x1,y1]。便签/高亮/矩形用 box；墨迹用 points 的 min/max；
+// 否则返回 null（无法选中描边）。
+function boundsOf(ann: PdfAnnotation): [number, number, number, number] | null {
+  if (ann.box) return [ann.box[0], ann.box[1], ann.box[2], ann.box[3]];
+  if (ann.points && ann.points.length) {
+    const xs = ann.points.map((p) => p[0]);
+    const ys = ann.points.map((p) => p[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  return null;
+}
+
 export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -517,15 +529,42 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               );
             }
             if (a.type === "sticky" && a.box) {
+              // 拖动中的便签用 moveSticky.current.box 实时定位（跟随指针），否则用 state 的 box。
+              const dragBox = moveSticky.current?.id === a.id ? moveSticky.current.box : null;
+              const box = dragBox ?? a.box;
               return (
                 <g key={a.id}>
-                  <rect x={a.box[0] * W} y={a.box[1] * H} width={Math.min(26, W * 0.06)} height={Math.min(26, H * 0.06)} fill="#ffe28a" stroke="#d9b400" />
+                  <rect x={box[0] * W} y={box[1] * H} width={Math.min(26, W * 0.06)} height={Math.min(26, H * 0.06)} fill="#ffe28a" stroke="#d9b400" />
                   <title>{a.text}</title>
                 </g>
               );
             }
             return null;
           })}
+          {/* 选中标注的高亮描边框：让"选中"状态可视。任何类型都用包围盒 + 少量 padding，
+              蓝色加粗；拖动中的便签描边更粗更醒目，并跟随拖动位置。 */}
+          {selectedAnn && (() => {
+            const draggingSticky = moveSticky.current?.id === selected;
+            // 拖动中的便签用 moveSticky.current.box（跟随指针），否则用标注自身包围盒。
+            const b = draggingSticky ? moveSticky.current!.box : boundsOf(selectedAnn);
+            if (!b) return null;
+            const pad = Math.min(W, H) * 0.006;
+            const [x0, y0, x1, y1] = b;
+            return (
+              <rect
+                x={x0 * W - pad}
+                y={y0 * H - pad}
+                width={(x1 - x0) * W + pad * 2}
+                height={(y1 - y0) * H + pad * 2}
+                fill="none"
+                stroke={draggingSticky ? "rgba(51,112,255,1)" : "rgba(51,112,255,0.92)"}
+                strokeWidth={draggingSticky ? 3.5 : 2.5}
+                strokeLinejoin="round"
+                strokeDasharray={draggingSticky ? "none" : "7 3"}
+                style={{ pointerEvents: "none" }}
+              />
+            );
+          })()}
           {/* 拖拽中的实时预览（不跟随 state，边拖边显示高亮框 / 墨迹） */}
           {drag.current && tool !== "ink" && (
             (() => {
