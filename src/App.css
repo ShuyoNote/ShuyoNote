@@ -1887,6 +1887,32 @@ body,
   background: var(--hover);
 }
 
+/* M10.4b 打磨 — 复制到目标空间后选择父文件夹 */
+.copy-page-parent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  width: 100%;
+}
+.copy-page-parent:hover {
+  background: var(--hover);
+}
+.copy-page-parent-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
 .copy-page-empty {
   font-size: 12px;
   color: var(--text-faint);

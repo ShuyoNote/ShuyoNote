@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.184] - 2026-08-29
+
+### 新增（M10.4b 收尾打磨）
+
+- **跨空间复制选父级**：把「复制到其他工作空间」从"只能复制到目标空间根"升级为"可指定目标文件夹"。选目标空间后进入该空间的**文件夹树**（含「根目录」+ 各文件夹按层级缩进），点某个文件夹即复制到其下。
+  - 新增 Rust 命令 `list_workspace_pages(workspace_id)`（独立打开目标空间库返回其页面，不切换活动空间）；前端 `CopyPageAction` 选空间后构建父子树并传 `newParentId`（`copy_page_to_workspace` 已支持并校验父级在目标空间）。
+
+### 验证
+
+- `scripts/smoke-web.mjs` 300 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（33）通过。
+
 ## [1.59.183] - 2026-08-29
 
 ### 新增（M9 / M20 打磨）

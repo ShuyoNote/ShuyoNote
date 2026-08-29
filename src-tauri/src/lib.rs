@@ -55,6 +55,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_pages,
+            commands::list_workspace_pages,
             workspaces::list_workspaces,
             workspaces::create_workspace,
             workspaces::get_active_workspace_id,

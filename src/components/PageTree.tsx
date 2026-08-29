@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
@@ -68,13 +68,16 @@ export function computeReorder(
   return reorder.computeReorder(pages, dragId, targetId, zone);
 }
 
-// Copy a page (and its descendants) into another workspace, choosing the target
-// from a small dropdown. Block graphs stay workspace-scoped, so references to
-// blocks outside the copied subtree are documented to not resolve in the target.
+// Copy a page (and its descendants) into another workspace. After choosing a
+// target workspace, show that workspace's folder tree so the user can pick a
+// parent folder (or "根") to place the copy under. Block graphs stay
+// workspace-scoped, so cross-block refs outside the subtree don't resolve.
 function CopyPageAction({ pageId }: { pageId: string }) {
   const [open, setOpen] = useState(false);
   const [spaces, setSpaces] = useState<WorkspaceMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [pickedWs, setPickedWs] = useState<string | null>(null);
+  const [wsPages, setWsPages] = useState<PageMeta[]>([]);
   const ref = useRef<HTMLSpanElement>(null);
 
   // Read spaces lazily (only when the menu opens) so a space change doesn't
@@ -99,15 +102,62 @@ function CopyPageAction({ pageId }: { pageId: string }) {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  const copyTo = async (wsId: string) => {
+  // When a workspace is picked, load its pages to build the parent-folder tree.
+  useEffect(() => {
+    if (!pickedWs) {
+      setWsPages([]);
+      return;
+    }
+    let alive = true;
+    api
+      .listWorkspacePages(pickedWs)
+      .then((pages) => { if (alive) setWsPages(pages); })
+      .catch(() => { if (alive) setWsPages([]); });
+    return () => { alive = false; };
+  }, [pickedWs]);
+
+  const copyTo = async (wsId: string, parentId: string | null) => {
     setOpen(false);
+    setPickedWs(null);
     try {
-      await api.copyPageToWorkspace(pageId, wsId, null);
+      await api.copyPageToWorkspace(pageId, wsId, parentId);
       toast("已复制到目标工作空间", "success");
     } catch (e) {
       toast(`复制失败：${e}`, "error");
     }
   };
+
+  // Build a folder tree from the target workspace's pages (top-level nodes only
+  // gets nested under their parents; we render a flat indented list for picking).
+  const tree = useMemo(() => {
+    const byParent = new Map<string | null, PageMeta[]>();
+    for (const p of wsPages) {
+      const key = p.parent_id ?? null;
+      const arr = byParent.get(key) ?? [];
+      arr.push(p);
+      byParent.set(key, arr);
+    }
+    return byParent;
+  }, [wsPages]);
+
+  const renderNode = (node: PageMeta, depth: number): ReactNode => {
+    const kids = tree.get(node.id) ?? [];
+    return (
+      <Fragment key={node.id}>
+        <button
+          className="copy-page-parent"
+          style={{ paddingLeft: `${10 + depth * 14}px` }}
+          onClick={(e) => { e.stopPropagation(); void copyTo(pickedWs!, node.id); }}
+        >
+          <FolderIcon width={13} height={13} />
+          <span className="copy-page-parent-title">{node.title || "未命名"}</span>
+        </button>
+        {kids.map((k) => renderNode(k, depth + 1))}
+      </Fragment>
+    );
+  };
+
+  const showTree = pickedWs && wsPages.length > 0;
 
   return (
     <span ref={ref} className="copy-page-wrap">
@@ -116,22 +166,40 @@ function CopyPageAction({ pageId }: { pageId: string }) {
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
+          setPickedWs(null);
         }}
       >
         ⇄
       </button>
       {open && (
         <div className="copy-page-menu">
-          <div className="copy-page-title">复制到…</div>
-          {spaces
-            .filter((s) => s.id !== activeId)
-            .map((s) => (
-              <button key={s.id} className="copy-page-item" onClick={() => copyTo(s.id)}>
-                {s.name}
+          {!pickedWs && (
+            <>
+              <div className="copy-page-title">复制到…</div>
+              {spaces
+                .filter((s) => s.id !== activeId)
+                .map((s) => (
+                  <button key={s.id} className="copy-page-item" onClick={() => setPickedWs(s.id)}>
+                    {s.name}
+                  </button>
+                ))}
+              {spaces.filter((s) => s.id !== activeId).length === 0 && (
+                <div className="copy-page-empty">没有其他工作空间</div>
+              )}
+            </>
+          )}
+          {pickedWs && (
+            <>
+              <div className="copy-page-title">复制到「{spaces.find((s) => s.id === pickedWs)?.name ?? ""}」下的…</div>
+              <button className="copy-page-parent" onClick={() => void copyTo(pickedWs, null)}>
+                <PageIcon width={13} height={13} />
+                <span className="copy-page-parent-title">根目录</span>
               </button>
-            ))}
-          {spaces.filter((s) => s.id !== activeId).length === 0 && (
-            <div className="copy-page-empty">没有其他工作空间</div>
+              {tree.get(null)?.map((n) => renderNode(n, 0))}
+              {showTree
+                ? null
+                : wsPages.length === 0 && <div className="copy-page-empty">（目标空间暂无页面，仅根目录）</div>}
+            </>
           )}
         </div>
       )}

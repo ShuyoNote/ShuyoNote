@@ -67,6 +67,36 @@ pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// M10.4b 打磨 — 列出指定工作空间的页面（供「跨空间复制选父级」的目标空间文件夹树）。
+/// 用独立连接打开目标空间库（不切换活动空间），返回其非删除页面。
+#[tauri::command]
+pub fn list_workspace_pages(workspace_id: String) -> Result<Vec<PageMeta>, String> {
+    let conn = crate::db::open_space_conn(&workspace_id)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, workspace_id, parent_id, title, icon, kind, sort_order, created_at, updated_at, deleted_at
+             FROM pages WHERE deleted_at IS NULL ORDER BY sort_order ASC, created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(PageMeta {
+                id: row.get(0)?,
+                workspace_id: row.get(1)?,
+                parent_id: row.get(2)?,
+                title: row.get(3)?,
+                icon: row.get(4)?,
+                kind: row.get(5)?,
+                sort_order: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                deleted_at: row.get(9)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_page(db: State<Db>, id: String) -> Result<PageDetail, String> {
     let c = conn(&db);
