@@ -54,7 +54,7 @@ export function PdfReader() {
   const [pageUrl, setPageUrl] = useState<string | null>(null);
   const [textItems, setTextItems] = useState<{ str: string; transform: number[] | null; width: number; height: number }[] | null>(null);
   const [ready, setReady] = useState(false);
-  const [maximized, setMaximized] = useState(false);
+  const [maximized, setMaximized] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
@@ -64,6 +64,8 @@ export function PdfReader() {
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  // 滚动到顶/底自动翻页：限定时间内只触发一次，避免快速滚动连续翻页。
+  const scrollFlipRef = useRef<{ at: number; dir: "prev" | "next" | null }>({ at: 0, dir: null });
   // 页面渲染缓存：key = `${pageIndex}@${scale}` → object URL。翻回已渲染页/缩放立即可用，
   // 减少重复光栅化 + base64 克隆（慢的主因之一）。跳页时对旧 URL 做引用清理。
   const pageCacheRef = useRef<Map<string, string>>(new Map());
@@ -128,7 +130,7 @@ export function PdfReader() {
       setMeta(null);
       setPageUrl(null);
       setTextItems(null);
-      setMaximized(false);
+      setMaximized(true);
       setFocusTarget(null);
       setSidebarOpen(true);
       setOutlineOpen(true);
@@ -219,6 +221,14 @@ export function PdfReader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, ready, pageIndex, scale, attachmentId]);
 
+  // 翻页后：复位滚动到顶部，并清空滚动翻页方向锁（允许新页再触发）。
+  useEffect(() => {
+    if (!open) return;
+    scrollFlipRef.current = { at: 0, dir: null };
+    const st = stageRef.current;
+    if (st) st.scrollTop = 0;
+  }, [open, pageIndex]);
+
   // 键盘导航：←/→/↑/↓ 翻页，+/- 缩放，Esc 关闭，F 适配页宽（在输入框外）。
   useEffect(() => {
     if (!open) return;
@@ -248,6 +258,30 @@ export function PdfReader() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pageCount, close, meta]);
+
+  // 滚动到顶/底自动翻页（A）：接近顶部 → 上一页；接近底部 → 下一页。
+  // 用时间窗口 + 方向去抖，避免一次滚动触发多次翻页。
+  const onStageScroll = () => {
+    const st = stageRef.current;
+    if (!st) return;
+    const THRESHOLD = 24; // px 距边缘
+    const now = Date.now();
+    const flip = (dir: "prev" | "next") => {
+      if (now - scrollFlipRef.current.at < 350) return;
+      if (scrollFlipRef.current.dir === dir) return;
+      scrollFlipRef.current = { at: now, dir };
+      if (dir === "next") {
+        setPageIndex((p) => Math.min(Math.max(pageCount - 1, 0), p + 1));
+      } else {
+        setPageIndex((p) => Math.max(0, p - 1));
+      }
+    };
+    if (st.scrollTop <= THRESHOLD) {
+      flip("prev");
+    } else if (st.scrollTop + st.clientHeight >= st.scrollHeight - THRESHOLD) {
+      flip("next");
+    }
+  };
 
   if (!open) return null;
 
@@ -311,7 +345,7 @@ export function PdfReader() {
                   onJump={onOutlineJump}
                 />
               )}
-              <div className="pdf-reader-stage" ref={stageRef}>
+              <div className="pdf-reader-stage" ref={stageRef} onScroll={onStageScroll}>
                 <PdfAnnotationCanvas
                   attachmentId={attachmentId ?? ""}
                   pageIndex={pageIndex}

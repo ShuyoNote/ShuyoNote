@@ -1,8 +1,10 @@
+import { useMemo, useState } from "react";
 import { type PdfAnnotation } from "../lib/pdfAnnotation";
 import type { PdfAnnotationRecord } from "../types";
 
 // M24 — 思源式右侧「批注」侧栏。列出该 PDF 全部页的批注（分组按页），
 // 每条显示类型图标 + 内容/坐标 + 页码；点击跳转到对应页并定位到该批注。
+// 5 — 支持按类型筛选 + 每页显示条数。
 
 interface Props {
   records: PdfAnnotationRecord[];
@@ -34,24 +36,53 @@ function typeLabel(type: string): string {
   }
 }
 
+// 可筛选的类型集合（全部 + 常见类型）。
+const FILTERS: { id: string; label: string; match: (a: PdfAnnotation) => boolean }[] = [
+  { id: "all", label: "全部", match: () => true },
+  { id: "highlight", label: "高亮", match: (a) => a.type === "highlight" },
+  { id: "sticky", label: "便签", match: (a) => a.type === "sticky" },
+  { id: "ink", label: "画笔", match: (a) => a.type === "ink" },
+];
+
 export function PdfSidebar({ records, currentPage, onJump, onDelete }: Props) {
-  // Flatten: [{pageIndex, ann}...] in insertion order, grouped by page for display.
-  const items: { pageIndex: number; ann: PdfAnnotation }[] = [];
-  for (const rec of records) {
-    const anns = (rec.annotations ?? []) as PdfAnnotation[];
-    for (const ann of anns) items.push({ pageIndex: rec.page_index, ann });
-  }
+  const [filter, setFilter] = useState("all");
+  const active = FILTERS.find((f) => f.id === filter) ?? FILTERS[0];
+
+  // Flatten + filter annotations.
+  const items = useMemo(() => {
+    const out: { pageIndex: number; ann: PdfAnnotation }[] = [];
+    for (const rec of records) {
+      const anns = (rec.annotations ?? []) as PdfAnnotation[];
+      for (const ann of anns) {
+        if (active.match(ann)) out.push({ pageIndex: rec.page_index, ann });
+      }
+    }
+    return out;
+  }, [records, active]);
 
   if (items.length === 0) {
     return (
-      <div className="pdf-sidebar-empty">
-        <div className="pdf-sidebar-empty-title">暂无批注</div>
-        <div className="pdf-sidebar-empty-sub">用上方工具在页面上高亮 / 画画 / 加便签，标注会列在这里。</div>
+      <div className="pdf-sidebar">
+        <div className="pdf-sidebar-filter">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              className={`pdf-sidebar-filter-btn ${filter === f.id ? "active" : ""}`}
+              onClick={() => setFilter(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="pdf-sidebar-empty">
+          <div className="pdf-sidebar-empty-title">暂无批注</div>
+          <div className="pdf-sidebar-empty-sub">用上方工具在页面上高亮 / 画画 / 加便签，标注会列在这里。</div>
+        </div>
       </div>
     );
   }
 
-  // Group by page in ascending order.
+  // Group filtered items by page in ascending order.
   const byPage = new Map<number, { pageIndex: number; ann: PdfAnnotation }[]>();
   for (const it of items) {
     const arr = byPage.get(it.pageIndex) ?? [];
@@ -62,11 +93,24 @@ export function PdfSidebar({ records, currentPage, onJump, onDelete }: Props) {
 
   return (
     <div className="pdf-sidebar">
+      <div className="pdf-sidebar-filter">
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            className={`pdf-sidebar-filter-btn ${filter === f.id ? "active" : ""}`}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       <div className="pdf-sidebar-head">批注 {items.length}</div>
       <div className="pdf-sidebar-list">
         {pages.map(([pageIdx, arr]) => (
           <div key={pageIdx} className="pdf-sidebar-page">
-            <div className={`pdf-sidebar-page-no${pageIdx === currentPage ? " active" : ""}`}>第 {pageIdx + 1} 页</div>
+            <div className={`pdf-sidebar-page-no${pageIdx === currentPage ? " active" : ""}`}>
+              第 {pageIdx + 1} 页 · {arr.length} 条
+            </div>
             {arr.map(({ ann }, i) => {
               const text = ann.text?.trim();
               const desc =

@@ -10494,7 +10494,8 @@ p:has(> .editor-drawing-container) {
   gap: 8px;
   align-items: center;
 }
-/* 顶层工具栏：工具在左，选区操作在右，整条随阅读器宽度 */
+/* 顶层工具栏：工具在左，选区操作在右，整条随阅读器宽度。
+   批注工具栏「不滚动」：滚动查看放大页面时吸顶固定（sticky）。 */
 .pdf-annot-toolbar {
   width: 100%;
   max-width: 860px;
@@ -10503,6 +10504,11 @@ p:has(> .editor-drawing-container) {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 22;
+  background: var(--bg);
+  padding: 4px 6px 6px;
 }
 .pdf-annot-tools,
 .pdf-annot-actions {
@@ -10564,7 +10570,7 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   padding: 4px 8px;
 }
-/* 页面能力提示条（文本层 + OCR） */
+/* 页面能力提示条（文本层 + OCR）——滚动页面时吸顶固定，保持批注控制可见。 */
 .pdf-annot-status {
   width: 100%;
   max-width: 860px;
@@ -10573,6 +10579,10 @@ p:has(> .editor-drawing-container) {
   justify-content: space-between;
   gap: 8px;
   padding: 0 4px;
+  position: sticky;
+  top: 50px;
+  z-index: 20;
+  background: var(--bg);
 }
 .pdf-annot-layer {
   display: inline-flex;
@@ -10809,8 +10819,8 @@ p:has(> .editor-drawing-container) {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 20px;
-  background: var(--bg);
+  padding: 12px;
+  background: var(--surface);
 }
 /* 右侧批注侧栏 */
 .pdf-sidebar {
@@ -10898,6 +10908,31 @@ p:has(> .editor-drawing-container) {
   font-weight: 600;
   color: var(--text);
   border-bottom: 1px solid var(--border);
+}
+/* 5 — 侧栏类型筛选 */
+.pdf-sidebar-filter {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 4px;
+  flex-wrap: wrap;
+}
+.pdf-sidebar-filter-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pdf-sidebar-filter-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pdf-sidebar-filter-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(51, 112, 255, 0.25);
 }
 .pdf-sidebar-list {
   flex: 1;

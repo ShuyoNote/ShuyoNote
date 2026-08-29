@@ -373,6 +373,43 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setAiBusy(false);
   };
 
+  // 6 — 把本页全部批注导出为一块笔记（含 pdf:// 回链）。正文 = 每条批注文本
+  //（便签正文 / 文本层相交文字 / 墨迹点数），无文本则跳过。
+  const onExportAnnotations = async () => {
+    if (!annotations.length) return;
+    const lines: string[] = [];
+    for (const a of annotations) {
+      let text = (a as { text?: string }).text?.trim() ?? "";
+      if (!text && a.box && textItems?.length) {
+        text = textInBox([a.box[0] * pageW, a.box[1] * pageH, a.box[2] * pageW, a.box[3] * pageH], textItems);
+      }
+      const label = a.type === "sticky" ? "便签" : a.type === "highlight" ? "高亮" : a.type === "ink" ? "画笔" : a.type === "rect" ? "区域" : "批注";
+      const item = text ? `【${label}】${text}` : `【${label}】（${pageIndex + 1} 页）`;
+      if (item) lines.push(item);
+    }
+    const body = lines.join("\n");
+    const block = pageToBlock({ text: body }, attachmentId, pageIndex);
+    const notes = useNotes.getState();
+    try {
+      if (notes.current && notes.current.id) {
+        const { contentTextOf } = await import("../lib/ai/lexical");
+        const blockNode = JSON.parse(block.content_json).root.children[0];
+        const doc = JSON.parse(notes.current.content_json || '{"root":{"children":[],"type":"root","version":1}}');
+        doc.root.children.push(blockNode);
+        const newJson = JSON.stringify(doc);
+        await api.savePage({ id: notes.current.id, content_json: newJson, content_text: contentTextOf(newJson) });
+        await notes.openPage(notes.current.id);
+        toast(`已导出本页 ${annotations.length} 条批注到当前页`, "success");
+      } else {
+        await notes.createPage(null, { title: `PDF 批注 · 第 ${pageIndex + 1} 页`, content_json: block.content_json, content_text: block.content_text });
+        toast(`已导出本页 ${annotations.length} 条批注到新页面`, "success");
+      }
+    } catch {
+      await notes.createPage(null, { title: `PDF 批注 · 第 ${pageIndex + 1} 页`, content_json: block.content_json, content_text: block.content_text });
+      toast("已导出批注到新页面", "success");
+    }
+  };
+
   const W = Math.max(pageW, 1);
   const H = Math.max(pageH, 1);
 
@@ -433,6 +470,18 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             </span>
             <span className="pdf-annot-tool-label">撤销</span>
           </button>
+          {/* 6 — 导出本页批注文本为笔记块 */}
+          <button
+            className={`pdf-annot-tool ${annotations.length ? "" : "disabled"}`}
+            onClick={onExportAnnotations}
+            disabled={!annotations.length}
+            title="把本页全部批注导出为笔记块（含 pdf:// 回链）"
+          >
+            <span className="pdf-annot-tool-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 21h14" /></svg>
+            </span>
+            <span className="pdf-annot-tool-label">导出批注</span>
+          </button>
         </div>
         <div className="pdf-annot-actions">
           {selected && selectedAnn ? (
@@ -481,7 +530,14 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         )}
       </div>
 
-      <div className="pdf-annot-stage" style={{ position: "relative" }}>
+      <div
+        className="pdf-annot-stage"
+        style={{ position: "relative" }}
+        onPointerDown={(e) => {
+          // 2 — 点页面外的空白处取消选中（SVG 内点击由下方 onDown 处理，不走到这）。
+          if (e.target === e.currentTarget) setSelected(null);
+        }}
+      >
         {pageImageUrl ? (
           <img className="pdf-annot-img" src={pageImageUrl} alt={`第 ${pageIndex + 1} 页`} draggable={false} />
         ) : (
@@ -526,6 +582,29 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             }
             return null;
           })}
+          {/* 拖拽中的实时预览（不跟随 state，边拖边显示高亮框 / 墨迹） */}
+          {drag.current && tool !== "ink" && (
+            (() => {
+              const d = drag.current;
+              const x0 = Math.min(d.x0, d.x1) * W;
+              const y0 = Math.min(d.y0, d.y1) * H;
+              const w = Math.abs(d.x1 - d.x0) * W;
+              const h = Math.abs(d.y1 - d.y0) * H;
+              return (
+                <rect x={x0} y={y0} width={w} height={h} fill={highlightColor} stroke="rgba(51,112,255,0.6)" strokeWidth={1.5} style={{ pointerEvents: "none" }} />
+              );
+            })()
+          )}
+          {tool === "ink" && ink.current.length >= 2 && (
+            <polyline
+              points={ink.current.map(([x, y]) => `${x * W},${y * H}`).join(" ")}
+              fill="none"
+              stroke="rgba(51,112,255,0.85)"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              style={{ pointerEvents: "none" }}
+            />
+          )}
           {/* 侧栏跳转定位时的临时闪烁框 */}
           {flash && (
             <rect
