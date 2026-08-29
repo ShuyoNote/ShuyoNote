@@ -21,8 +21,8 @@ export interface OcrWorkerHandle {
 
 const DEFAULT_TIMEOUT = 60000;
 
-/** 单页 OCR 用的页面重渲染缩放：明显高于显示缩放，显著提升识别精度（约 3.5× ⇒ ~250 DPI）。 */
-export const OCR_PAGE_SCALE = 3.5;
+/** 单页 OCR 用的页面重渲染缩放：宁可稍小避免超大位图导致 tesseract 抛错，又能保证基本清晰度（约 2.5× ⇒ ~180 DPI）。 */
+export const OCR_PAGE_SCALE = 2.5;
 
 /** 识别参数：对书籍单栏正文使用 PSegMode 6（视为单一文本块），通常优于自动分割。 */
 const OCR_RECOGNIZE_OPTIONS: Record<string, string> = { tessedit_pageseg_mode: "6" };

@@ -10705,11 +10705,16 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
 }
 .pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
+/* 两个识别按钮靠在一起（右侧一组）。 */
+.pdf-annot-ocr-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 /* AI 视觉识别按钮：用强调色区分。 */
 .pdf-annot-ocr-ai {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  margin-left: 6px;
 }
 .pdf-annot-stage {
   position: relative;
