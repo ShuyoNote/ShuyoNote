@@ -46,7 +46,7 @@
 | **P1** | **Wiki 织网增强**（未链接提及 + 双链别名 + 精确块链） | Obsidian 双链 / wiki | 把「双链」做深，让笔记真正织成网 | ✅ M19（v1.59.116） |
 | **P1** | **模板变量 + 语义检索（RAG）** | Notion 模板 / 思源 AI | 复用模板中心；搜索从「关键词」升级为「语义」 | ✅ M20（v1.59.119） |
 | **P2** | **静态 wiki 导出 + 关系图探索** | 独立 wiki 站点 / FlowUs 图谱 | 「本地优先 + wiki」的终局表达；图谱从能看变能探索 | ✅ M21（v1.59.121） |
-| **P3** | **PDF 批注** | 思源 / MarginNote / LiquidText | 知识工作者高频硬需求；「批注即块」能进反链/搜索/关系图；但工程量高、非当前主轴，且 2026 破局点在「AI 帮读」 | 规划（**M24**，[方案](plans/2026-08-27-pdf-annotation-plan.md)，建议排在 M20 后） |
+| **P3** | **PDF 批注** | 思源 / MarginNote / LiquidText | 知识工作者高频硬需求；「批注即块」能进反链/搜索/关系图；2026 破局点在「AI 帮读」 | ✅ **M24**（v1.59.178 起，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)） |
 | **P2** | **帮助系统** | Notion / 思源 | 本地优先/键盘驱动的四层帮助（就地提示+快捷键面板+内置指南页）；帮助页=可编辑笔记，复用命令面板/模板/`shortcuts.ts` | ✅ M25（v1.59.177，[方案](plans/2026-08-27-help-system-plan.md)，P0/P1 落地） |
 
 ## 3. 里程碑规划
@@ -202,13 +202,13 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 - **M23.4 数据/检索集成** ✅（v1.59.132）：`.excalidraw` JSON 内容寻址 + 版本快照（沿用原链路）；绘图文字经可测纯函数 `excalidrawSceneText`/`excalidrawSceneHasContent` 进 `content_text`（可搜/反链）；元素级命中归 M23.3。
 - **M23.5 协同 / 代码生成** 🗓（超范围，诚实标注）：真正多人实时协同需 WebSocket 后端（0.17.1 无 `onCollaboration` 钩子）；图→代码（DiagramToCode/TTDDialog）在 0.18+ 才有。暂缓，先用「分享 .excalidraw / 导入 / 只读嵌入」替代。
 
-### M24 — PDF 批注（P3，[方案](plans/2026-08-27-pdf-annotation-plan.md)，规划/建议，未实装）
+### M24 — PDF 批注（P3，[方案](plans/2026-08-27-pdf-annotation-plan.md)，✅ 已落地）
 > 知识工作者高频硬需求。竞品天花板：**思源 = 块笔记顶格**（划词/高亮/页边评论 + 摘录成块 + 关联块 + 目录大纲/OCR/卡片）；**MarginNote / LiquidText = 批注即思维工作台**（脑图/卡片/Anki、摘录关联）；**Notion ≈ 无、Obsidian 靠插件**。2026 破局点在「AI 帮读」（AI 摘要高亮 / 生成大纲 / 对 PDF 提问）。
 > **差异化**：把批注做成「**批注即块**」——摘录可转正成块，进 `content_text`（可搜/反链/关系图）、可块引用、可打标签。
 > **渲染引擎（双引擎）**：桌面用 **Rust 原生渲染**（`pdfium-render` / `mupdf-rs`，扛大型复杂 PDF）+ Web 用 **pdf.js（Worker）** 优雅降级；`pdfRender` 暴露一致接口。**文本层判定/OCR 兜底**作为阶段 1 降级（无文本层 → 仅矩形框选 + 画笔 + 便签）。
 > **MVP 切割（阶段 1）**：双引擎分页渲染 + 批注 overlay（高亮/荧光笔/画笔/便签，坐标归一化、不写回源 PDF）+ 内容寻址持久化 + 「摘录成块」进反链/搜索。**阶段 2**：写回 PDF / OCR 精确划词（Tauri 专属、很贵、长尾）。**阶段 3**：AI 帮读（复用 M17/M18 薄 Agent）。
 > **明确不做**：写回源 PDF、多人实时协同、全文编辑。
-# > 状态：**阶段 1（Web 路径 v1.59.178 + 桌面 native v1.59.179）已落地**：`pdfRender` 双引擎接口/选型 + `pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化（桌面+Web）+ `pdfjs-dist@4` 渲染引擎（`pdfjsEngine`，WebView2 兼容，`copy-pdfjs-assets` 供 CJK）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签/选择/删除/编辑/复制引用 + **摘录成块**含 `pdf://` 可点击回链 + **文本层精确划词** `snapHighlightToText` + **OCR 兜底** `ocr.ts`）+ 全局批注检索（`list_all_pdf_annotations` + 「打开最近批注的 PDF」）。**桌面 native 引擎（mupdf-sys，v1.59.179）已落地**：`render_pdf_page` 命令 + `src/pdf_native.rs`（MuPDF 本地光栅化，`Platform.pdfRender` 桌面 native / Web pdf.js）；阶段 2/3（写回 PDF、AI 帮读）待做；AI 帮读可复用 M17/M18。详见 `docs/plans/2026-08-28-pdf-render-engine-mupdfjs-vs-pdfjs.md`。
+> 状态：**已落地（v1.59.178 起）**——**阶段 1**：`pdfRender` 双引擎接口 + `pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化 + `pdfjs-dist@4` 引擎（`pdfjsEngine`）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签/选择/删除/编辑/复制引用 + **摘录成块**含 `pdf://` 回链 + **文本层精确划词** + **OCR 兜底**）+ 全局批注检索。**桌面 native 引擎（mupdf-sys，v1.59.179）**：`render_pdf_page` + `src/pdf_native.rs`。**阶段 3**：AI 帮读（v1.59.181）+ 对整篇 PDF 提问（v1.59.182）。阅读器重构（v1.59.180 思源式近全屏 + v1.59.187 连续滚动 v1.59.190 顶部单份批注栏）；**阶段 2（写回 PDF）待做**。**阅读器 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / AI 一键目录（视觉优先、带层级、可范围、本地持久化）/ 系统朗读 / 识别弹层）已落地，见 [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md) 与 [连续滚动](plans/2026-08-29-pdf-continuous-scroll-plan.md)。
 
 ### M25 — 帮助系统（P2，[方案](plans/2026-08-27-help-system-plan.md)，P0/P1 已落地）
 > 本地优先 / 键盘驱动：帮助 = **发现能力 + 一次解决**，不做"客服中心/文档门户"/在线工单。
@@ -235,5 +235,5 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 | 双链织网 | 仅普通双链 / 块引用 | **M19 未链接提及 + 双链别名 + 精确块链**（✅） |
 | 语义检索 | 仅 FTS 关键词搜索 | **M20 语义检索（char-bigram 版）+ 接入 AI 问答**（✅） |
 | wiki 导出 | 无「把你的知识库变成可浏览网站」能力 | **M21 静态 wiki 导出 + 关系图探索**（✅） |
-| PDF 阅读/批注 | 仅 PDF 导出，无阅读/批注 | **M24 PDF 批注**（[方案](plans/2026-08-27-pdf-annotation-plan.md)，规划：pdf.js 分页 + 批注 + 摘录成块 + AI 帮读） |
+| PDF 阅读/批注 | 仅 PDF 导出，无阅读/批注 | **M24 PDF 批注 + 阅读器 + OCR/AI 增强**（✅，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)：批注/摘录成块/AI 帮读 + 连续滚动/护眼/离线 OCR/AI 识别/目录/朗读） |
 | 帮助/上手 | 靠占位符/tooltip/命令面板，无体系化帮助 | **M25 帮助系统**（[方案](plans/2026-08-27-help-system-plan.md)，规划：就地提示 + 快捷键面板 + 内置「使用指南」页） |
