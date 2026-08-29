@@ -10448,15 +10448,11 @@ p:has(> .editor-drawing-container) {
 .pdf-zoom-wrap {
   position: relative;
 }
-.pdf-zoom-btn {
-  width: auto;
-  padding: 0 6px;
-  gap: 4px;
-}
 .pdf-zoom-btn .pdf-reader-pct {
   min-width: auto;
   font-size: 12px;
   color: var(--text);
+  white-space: nowrap;
 }
 .pdf-zoom-caret {
   color: var(--text-dim);
@@ -10551,6 +10547,14 @@ p:has(> .editor-drawing-container) {
 .pdf-reader-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+/* 缩放触发器：覆盖 .pdf-reader-btn 的固定 28px 宽，改为按内容自适应（显示"适合页面"等中文不竖排）。 */
+.pdf-reader-btn.pdf-zoom-btn {
+  width: auto;
+  min-width: 0;
+  padding: 0 6px;
+  gap: 4px;
+  white-space: nowrap;
 }
 .pdf-reader-btn:hover:not(:disabled) {
   border-color: var(--accent);
@@ -11177,4 +11181,5 @@ p:has(> .editor-drawing-container) {
   70% { opacity: 0.6; }
   100% { opacity: 0; }
 }
+
 
