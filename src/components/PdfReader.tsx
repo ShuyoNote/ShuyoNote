@@ -30,8 +30,9 @@ const OUTLINE_WIDTH_KEY = "shuyonote.pdf.outlineWidth";
 /** 批注侧栏宽度持久化键。 */
 const SIDEBAR_WIDTH_KEY = "shuyonote.pdf.sidebarWidth";
 
-/** 面板（目录/侧栏）拖拽调宽 + 双击归位。拖动时直接改容器 DOM 宽度（避免每帧 React 重渲染卡顿），
- *  dir=1 用于左侧目录（向右加宽），dir=-1 用于右侧侧栏（向左加宽）。松手/双击才 commit + 持久化。 */
+/** 面板（目录/侧栏）拖拽调宽 + 双击归位。用**指针捕获**把 move/up 绑定到拖拽手柄自身，
+ *  结束（up/cancel）必定清理，绝不往 window 累积监听器（否则相继拖动会越来越卡顿）。
+ *  拖动直接改容器 DOM 宽度（不每帧 React 重渲染）。dir=1 左侧（向右加宽）/ dir=-1 右侧（向左加宽）。 */
 function startPanelResize(
   e: ReactPointerEvent<HTMLDivElement>,
   cfg: {
@@ -42,28 +43,36 @@ function startPanelResize(
 ) {
   if (e.detail === 2) {
     cfg.commit(cfg.def);
-    cfg.el() && (cfg.el()!.style.width = `${cfg.def}px`);
+    const el = cfg.el();
+    if (el) el.style.width = `${cfg.def}px`;
     try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
     return;
   }
   e.preventDefault();
   const el = cfg.el();
-  if (!el) return;
+  const handle = e.currentTarget;
+  if (!el || !handle) return;
   const startX = e.clientX;
   const startW = parseFloat(el.style.width) || cfg.def;
   let cur = startW;
+  const stop = () => {
+    try { handle.releasePointerCapture?.(e.pointerId); } catch { /* 忽略 */ }
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", up);
+    handle.removeEventListener("pointercancel", cancel);
+    cfg.commit(cur);
+    try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
+  };
   const move = (ev: PointerEvent) => {
     cur = Math.max(cfg.min, Math.min(cfg.max, startW + cfg.dir * (ev.clientX - startX)));
     el.style.width = `${cur}px`;
   };
-  const up = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    cfg.commit(cur);
-    try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
+  const up = () => stop();
+  const cancel = () => stop();
+  try { handle.setPointerCapture?.(e.pointerId); } catch { /* 忽略 */ }
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", up);
+  handle.addEventListener("pointercancel", cancel);
 }
 
 /** 护眼模式开关的本地持久化键。 */
@@ -332,14 +341,19 @@ export function PdfReader() {
     if (!ready) return;
     const st = stageRef.current;
     if (!st) return;
+    let raf = 0;
+    const apply = () => {
+      raf = 0;
+      // 只在值真正变化时才 setState，避免拖动面板时每帧重渲染。
+      setStageWidth((prev) => (prev === st.clientWidth ? prev : st.clientWidth));
+      setStageHeight((prev) => (prev === st.clientHeight ? prev : st.clientHeight));
+    };
     const ro = new ResizeObserver(() => {
-      setStageWidth(st.clientWidth);
-      setStageHeight(st.clientHeight);
+      if (!raf) raf = window.requestAnimationFrame(apply);
     });
     ro.observe(st);
-    setStageWidth(st.clientWidth);
-    setStageHeight(st.clientHeight);
-    return () => ro.disconnect();
+    apply();
+    return () => { ro.disconnect(); if (raf) window.cancelAnimationFrame(raf); };
   }, [ready]);
 
   // 首次进入 / 舞台宽就绪且基准页宽到位后：应用默认缩放（未保存过则适合宽度）。
