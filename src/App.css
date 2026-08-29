@@ -11177,7 +11177,23 @@ p:has(> .editor-drawing-container) {
   font-weight: 600;
   color: var(--text);
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
+.pdf-outline-regen {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 7px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pdf-outline-regen:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pdf-outline-regen:disabled { opacity: 0.6; cursor: default; }
 .pdf-outline-list {
   flex: 1;
   overflow-y: auto;

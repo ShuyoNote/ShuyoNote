@@ -118,7 +118,14 @@ export function PdfOutline({ outline, currentPage, onJump, onAiGenerate, onAiCan
   }
   return (
     <div className="pdf-outline">
-      <div className="pdf-outline-head">目录</div>
+      <div className="pdf-outline-head">
+        <span>目录</span>
+        {onAiGenerate && (
+          <button className="pdf-outline-regen" onClick={onAiGenerate} disabled={aiBusy} title="用 AI 重新生成目录（重新识别当前范围）">
+            {aiBusy ? "生成中…" : "AI 重新生成"}
+          </button>
+        )}
+      </div>
       <div className="pdf-outline-list">
         {outline.map((node, i) => (
           <TreeNode key={`${node.title}-${node.pageIndex}-${i}`} node={node} depth={0} currentPage={currentPage} onJump={onJump} />
