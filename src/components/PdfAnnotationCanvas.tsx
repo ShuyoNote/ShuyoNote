@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { stickyEditRegion } from "../lib/pdfLayout";
 import { api } from "../lib/api";
 import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
@@ -153,7 +154,12 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const runOcr = async () => {
     // 用 ref 读最新图像/忙碌态（注册进控制器的 runOcr 是不随渲染重建的闭包，state 闭包会陈旧）。
     const img = pageImageUrlRef.current;
-    if (!img || ocrBusyRef.current) return;
+    if (!img) {
+      setOcrStatus("error");
+      toast("页面图像未就绪，请等页面加载后再识别", "error");
+      return;
+    }
+    if (ocrBusyRef.current) return;
     ocrBusyRef.current = true;
     setOcrBusy(true);
     setOcrText(null);
@@ -782,21 +788,29 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         )}
       </div>
 
-      {(ocrBusy || ocrText !== null || ocrStatus !== "idle") && (
-        <div className="pdf-ocr-result">
-          <div className="pdf-ocr-title">OCR 识别结果</div>
-          {ocrBusy ? (
-            <div className="pdf-ocr-tip">识别中…</div>
-          ) : ocrText ? (
-            <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
-          ) : ocrStatus === "timeout" ? (
-            <div className="pdf-ocr-tip">识别超时（timeout）：模型加载或识别时间过长，请稍后重试。</div>
-          ) : ocrStatus === "error" ? (
-            <div className="pdf-ocr-tip">识别失败（error）：无法加载离线识别模型/语言数据。请确认已刷新页面、查看控制台「[ocr] local assets」路径是否为 http(s) 开头，且 public/ocr 已生成。</div>
-          ) : (
-            <div className="pdf-ocr-tip">本页未识别到文字（empty）：可能为空页/图表页，或扫描清晰度不足。模型已加载。</div>
-          )}
-        </div>
+      {(ocrBusy || ocrText !== null || ocrStatus !== "idle") && createPortal(
+        <div className="pdf-ocr-popover" role="dialog" aria-label="OCR 识别结果">
+          <div className="pdf-ocr-pop-head">
+            <span>OCR 识别结果</span>
+            {!ocrBusy && (
+              <button className="pdf-ocr-pop-close" onClick={() => { setOcrText(null); setOcrStatus("idle"); }} title="关闭">×</button>
+            )}
+          </div>
+          <div className="pdf-ocr-pop-body">
+            {ocrBusy ? (
+              <div className="pdf-ocr-tip">识别中…（首次加载离线模型可能稍慢）</div>
+            ) : ocrText ? (
+              <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
+            ) : ocrStatus === "timeout" ? (
+              <div className="pdf-ocr-tip">识别超时（timeout）：模型加载或识别时间过长，请稍后重试。</div>
+            ) : ocrStatus === "error" ? (
+              <div className="pdf-ocr-tip">识别失败（error）：无法加载离线识别模型/语言数据。请刷新页面、确认控制台「[ocr] local assets」路径为 http(s) 开头且 public/ocr 已生成；可看到上方结果即表示识别已执行。</div>
+            ) : (
+              <div className="pdf-ocr-tip">本页未识别到文字（empty）：可能为空页/图表页，或扫描清晰度不足。模型已加载，请换一页正文再试。</div>
+            )}
+          </div>
+        </div>,
+        document.body,
       )}
 
       {(aiBusy || aiPreview) && (

@@ -10823,6 +10823,46 @@ p:has(> .editor-drawing-container) {
   line-height: 1.5;
   padding: 2px 0;
 }
+/* OCR 结果居中弹层：必定可见（不再埋在页块底部）。 */
+.pdf-ocr-popover {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 340;
+  width: min(560px, 90vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+}
+.pdf-ocr-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.pdf-ocr-pop-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.pdf-ocr-pop-close:hover { color: var(--text); }
+.pdf-ocr-pop-body {
+  padding: 12px 14px;
+  overflow: auto;
+}
 .pdf-ocr-text {
   width: 100%;
   min-height: 90px;
