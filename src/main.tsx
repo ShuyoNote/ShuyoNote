@@ -26,14 +26,21 @@ window.addEventListener("unhandledrejection", (e) => {
 
 // Register the offline Service Worker in production builds only. In dev it would
 // fight the Vite dev server's module/HMR caching, so we gate it on PROD. We also
-// skip it on localhost (the `pnpm preview` / dev host): there the SW caches an
-// app shell + hashed assets that go stale across rebuilds, showing an old
-// version and "Failed to load resource" errors after each build. A real
-// production domain keeps the offline PWA; localhost stays cache-fresh.
+// skip it on localhost (the `pnpm preview` / dev host) AND inside the Tauri
+// desktop app: there the SW caches an app shell + hashed assets that go stale
+// across rebuilds/updates, showing an old version and "Failed to load resource"
+// errors after each update. A real production WEB domain keeps the offline PWA;
+// localhost & desktop stay cache-fresh.
+//
+// NOTE: the desktop WebView2 origin is `tauri.localhost` (NOT `localhost`), so a
+// naive `hostname === "localhost"` check would miss it and register a SW on
+// desktop — the very cause of "must hard-refresh after update". We therefore
+// also treat any Tauri environment (`__TAURI_INTERNALS__`) as a no-SW host.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   const host = window.location.hostname;
-  const isLocalhost = host === "localhost" || host === "127.0.0.1";
-  if (isLocalhost) {
+  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  const isLocalhost = host === "localhost" || host === "127.0.0.1" || host === "tauri.localhost";
+  if (isLocalhost || isTauri) {
     // A previous build may have registered a SW here; it still controls this
     // page and serves a stale cached shell + old hashed assets. Unregister it,
     // clear the caches, and reload once so the user lands on the fresh bundle.
@@ -61,6 +68,24 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
     });
   }
 }
+
+// Fade out and remove the static splash screen once the app has mounted, so the
+// initial white/blank window is replaced by a branded animation. The splash is a
+// sibling of #root in index.html and renders before the JS bundle loads; here we
+// only hide it after React has committed the first paint.
+function hideSplash() {
+  const el = document.getElementById("app-splash");
+  if (!el || el.classList.contains("is-hide")) return;
+  // Wait one frame so the freshly-rendered app is visible before we fade out.
+  requestAnimationFrame(() => el.classList.add("is-hide"));
+  // Remove the node after the CSS transition finishes.
+  window.setTimeout(() => el.remove(), 500);
+}
+window.addEventListener("load", () => {
+  // Give React a beat to render, then hide; the timeout is a safety net in case
+  // the app takes longer on a slow machine.
+  window.setTimeout(hideSplash, 120);
+});
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

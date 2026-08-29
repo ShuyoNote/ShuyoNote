@@ -26,8 +26,32 @@ mod workspace_io;
 mod workspaces;
 
 use db::Db;
+use std::borrow::Cow;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::http::header::CACHE_CONTROL;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// Apply cache headers to the Tauri-served web resources so that a version
+/// upgrade does not leave the WebView serving a stale `index.html` from cache.
+///
+/// - The app shell (`index.html`, manifest, root) gets `no-cache`, so the next
+///   launch re-validates and pulls the freshly embedded shell after an update.
+/// - Content-hashed assets under `/assets/` stay immutable+long-lived (they are
+///   content-addressed, so a stale hash can never point at wrong content).
+fn with_cache_headers(
+    request: tauri::http::Request<Vec<u8>>,
+    response: &mut tauri::http::Response<Cow<'static, [u8]>>,
+) {
+    let path = request.uri().path().to_string();
+    let value = if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    if let Ok(header_value) = value.parse() {
+        response.headers_mut().insert(CACHE_CONTROL, header_value);
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,12 +69,16 @@ pub fn run() {
             // Seed a bundled demo plugin so the plugin system has something to load.
             let _ = plugins::ensure_demo_plugin(&app.handle());
 
-            // Title bar shows both product names + the live build version, so it
-            // never drifts from the packaged version on a new release.
+            // The main window is built in code so we can attach the resource
+            // cache-header hook (config-created windows can't). Its label is
+            // "main" to match the `default` capability and the rest of the app.
             let version = app.package_info().version.to_string();
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.set_title(&format!("ShuyoNote 数友笔记 · v{version}"));
-            }
+            let url = WebviewUrl::App("index.html".into());
+            WebviewWindowBuilder::new(app, "main", url)
+                .title(format!("ShuyoNote 数友笔记 · v{version}"))
+                .inner_size(1200.0, 800.0)
+                .on_web_resource_request(with_cache_headers)
+                .build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
