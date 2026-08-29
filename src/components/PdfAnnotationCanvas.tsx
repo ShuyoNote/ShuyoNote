@@ -239,6 +239,26 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     }
   };
 
+  const copyOcrText = async () => {
+    if (!ocrText) return;
+    try {
+      await navigator.clipboard.writeText(ocrText);
+      toast("已复制识别文本", "success");
+    } catch {
+      toast("复制失败", "error");
+    }
+  };
+
+  const addOcrSticky = () => {
+    if (!ocrText) return;
+    const cx = 0.5;
+    const cy = 0.4;
+    const box: [number, number, number, number] = [cx, cy, cx + 0.04, cy + 0.06];
+    persist([...annotations, { id: `s-${Date.now()}`, type: "sticky", box, text: ocrText }]);
+    setSelected(null);
+    toast("已将识别文本写入便签", "success");
+  };
+
   const undoStackRef = useRef<PdfAnnotation[][]>([]);
   const persist = useCallback(
     (next: PdfAnnotation[]) => {
@@ -866,6 +886,12 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               <div className="pdf-ocr-tip">本页未识别到文字（empty）：可能为空页/图表页，或扫描清晰度不足。模型已加载，请换一页正文再试。</div>
             )}
           </div>
+          {ocrText && !ocrBusy && (
+            <div className="pdf-ocr-pop-actions">
+              <button className="pdf-ocr-action" onClick={copyOcrText}>复制全部</button>
+              <button className="pdf-ocr-action ok" onClick={addOcrSticky}>写入便签</button>
+            </div>
+          )}
         </div>,
         document.body,
       )}
