@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.59.183] - 2026-08-29
+
+### 新增（M9 / M20 打磨）
+
+- **M9 模板 · `{{selected}}` 接入编辑器真实选区**：用模板建页时 `{{selected}}` 变量填入编辑器当前选中的文本（此前恒为空；复用 `useEditorStore.editor` → `$getSelection()`）。选了什么文字，模板里 `{{selected}}` 就带上它。
+- **M20 语义检索 · 搜索结果相关度提示**：`SearchResult` 新增 `score` 字段（Web + Rust 都传递），搜索面板每个结果标题旁显示「相关 NN%」语义相关度徽章（`formatScore`），让"为什么排在前面"可见。
+
+### 验证
+
+- `scripts/smoke-web.mjs` 300 项全绿；`tsc` / `vite build` / `cargo check` / `cargo test --lib`（33）通过。
+
 ## [1.59.182] - 2026-08-29
 
 ### 新增

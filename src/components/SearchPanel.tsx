@@ -3,6 +3,12 @@ import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import type { SearchResult } from "../types";
 
+// Map a raw semantic/rank score to a friendly percentage-ish label (0..1 style).
+function formatScore(score: number): string {
+  const pct = Math.max(0, Math.min(1, score));
+  return `相关 ${Math.round(pct * 100)}%`;
+}
+
 // Render a snippet containing [[...]] highlight markers.
 function Highlighted({ text }: { text: string }) {
   const parts = text.split(/\[\[|\]\]/);
@@ -111,6 +117,9 @@ export function SearchPanel() {
               <div className="search-item-title">
                 {r.title || "未命名"}
                 {allSpaces && r.space && <span className="search-item-space">{r.space}</span>}
+                {typeof r.score === "number" && r.score > 0 && (
+                  <span className="search-item-score" title="语义相关度">{formatScore(r.score)}</span>
+                )}
               </div>
               {r.snippet && (
                 <div className="search-item-snippet">

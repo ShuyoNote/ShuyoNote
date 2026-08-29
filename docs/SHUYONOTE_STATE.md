@@ -8,9 +8,9 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.182**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.183**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `9fe2084`（工作树干净；v1.59.182 发布提交，v1.59.181 发布提交为 `d31323e`）。
+- **git**：HEAD 见下方（工作树干净；v1.59.183 发布提交，v1.59.182 发布提交为 `9fe2084`）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -59,6 +59,7 @@
 - **v1.59.180**：**PDF 阅读/批注界面重构（思源式）**——入口全面易达（文件管理器 PDF 行直达「标注」/正文 PDF 附件点击直达＋「标注」徽章/预览弹窗醒目按钮/命令面板「打开 PDF」）；思源式阅读器（默认近全屏＋可最大化/左侧目录树 `PdfOutline`/右侧批注侧栏 `PdfSidebar`/键盘导航/适配页宽）；批注工具栏图标化＋选区操作常驻＋无文本层状态条＋便签/摘录改内联气泡。**修复**：目录点击不能跳转（pdf.js `dest[0]` 是 `Ref` 而非数字，改用 `getDestination`/`getPageIndex` 解析）；**跳转/翻页卡顿**（native 整页 PNG 编码大页 >1s 占 85% → 改返回 RGBA8 原始字节＋`tauri::ipc::InvokeResponseBody::Raw` 二进制通道＋前端 `<canvas>` 绘制＋渲染并行化＋页面缓存 objectURL），移除了 `png` crate 依赖。实测翻页 ~1.3s → ~0.12s。
 - **v1.59.181**：**AI 帮读（M24 阶段 3）**——划选 PDF 中的一段文字 → AI 总结要点 → 生成**带 `pdf://` 回链的笔记块**（可点击回跳）。复用 AI 薄 Agent 管线（`runInlineDraft`/`useAiStore`），不新增后端命令。批注工具栏「选中一条标注后」新增 **「AI 帮读」** 按钮（✨）＋流式生成预览面；便签正文优先作为 AI 输入，高亮/区域标注则用新增的 `textInBox` 从 pdf.js 文本层抽取与该标注框相交的文字。结果插入当前页（摘录块的 pdfref 引用语义）或无当前页则新建「AI 帮读 · 第 N 页」页。纯函数 `textInBox`（`pdfTextLayer.ts`），smoke 296→**298**。
 - **v1.59.182**：**对整篇 PDF 提问（M24 阶段 3 延伸，方案 B 相关页检索）**——阅读器顶部「对这篇 PDF 提问」按钮→底部提问栏：提问时段提取整篇文本（`getPageText`，仅字符串）＋ **char-bigram Jaccard 相关页检索**（`rankRelevantPages`，离线/无向量端点）只挑最相关 ≤5 页喂模型，流式回答＋「依据 N、M 页」，可一键存成带 `pdf://` 回链的笔记块。纯函数 `rankRelevantPages`（`searchSemantic.ts`）+ 引擎可选 `getPageText` + 新组件 `PdfAskBar.tsx`；落地文档 `docs/plans/2026-08-29-pdf-ask-document.md`。**修复**：桌面端 AI 流式 `ai_complete_stream` 缺 `runId`（Tauri 顶层参数 camelCase，`api.ts` 误传 `run_id`）——AI 帮读/对 PDF 提问在桌面端即可流式返回；清理 `fitWidth` 临时调试日志。smoke 298→**300**。
+- **v1.59.183**：**M9 / M20 打磨**——M9 模板 `{{selected}}` 接入编辑器真实选区（用模板建页时把编辑器当前选中文本填入 `{{selected}}`，此前恒为空）；M20 语义检索搜索结果相关度提示（`SearchResult` 新增 `score` 字段，Web + Rust 都传递，搜索面板显示「相关 NN%」徽章）。
 
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
@@ -66,7 +67,7 @@
 - **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
 - **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.182**。
+- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.183**。
 
 ## 4. 环境/工具备注
 

@@ -147,6 +147,7 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
                 title,
                 snippet: truncate(&text, 120),
                 space: Some(space),
+                score: 0.0,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -397,11 +398,12 @@ async fn search_semantic_async(
     scored.truncate(limit);
     Ok(scored
         .into_iter()
-        .map(|(_s, id, title, snippet)| SearchResult {
+        .map(|(s, id, title, snippet)| SearchResult {
             id,
             title,
             snippet,
             space: None,
+            score: s,
         })
         .collect())
 }
@@ -504,6 +506,7 @@ fn search_fts(
             title,
             snippet,
             space: Some(space),
+            score: 0.0,
         })
     };
 
@@ -540,6 +543,7 @@ fn search_like(
                 title,
                 snippet,
                 space: Some(space),
+                score: 0.0,
             })
         })
         .map_err(|e| e.to_string())?;

@@ -99,6 +99,9 @@ pub struct SearchResult {
     /// Workspace name, populated when searching across all workspaces.
     #[serde(default)]
     pub space: Option<String>,
+    /// M20 打磨 — 语义相关度（越大越相关，0 = 未提供/无语义分）。
+    #[serde(default)]
+    pub score: f32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

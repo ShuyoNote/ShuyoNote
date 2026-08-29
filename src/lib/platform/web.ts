@@ -1079,6 +1079,7 @@ function makeInvoke(store: SqliteStore) {
         title: x.r.title,
         snippet: snippetForQuery(String(x.r.content_text ?? ""), query),
         space: getWs()?.name ?? "",
+        score: typeof x.score === "number" ? +x.score.toFixed(4) : x.score,
       })) as T;
     }
     if (cmd === "search_blocks") {

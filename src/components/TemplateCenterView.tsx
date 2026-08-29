@@ -1,12 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
+import { $getSelection, $isRangeSelection } from "lexical";
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { useEditorStore } from "../store/editor";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { TEMPLATES, TEMPLATE_CATEGORIES, substituteTemplateVars } from "../templates";
 import { SearchIcon } from "./icons";
+
+// M20.1 打磨：读编辑器当前选中文本，供 `{{selected}}` 模板变量在创建页面时填充。
+// 编辑器可能在别的 view（模板中心浮层打开时编辑器仍挂着），故可安全读空。
+function readEditorSelectionText(): string {
+  const editor = useEditorStore.getState().editor;
+  if (!editor) return "";
+  let text = "";
+  try {
+    editor.getEditorState().read(() => {
+      const sel = $getSelection();
+      if ($isRangeSelection(sel)) text = sel.getTextContent();
+    });
+  } catch {
+    text = "";
+  }
+  return text.trim();
+}
 
 type GalleryItem = {
   id: string;
@@ -120,8 +139,10 @@ export function TemplateCenterView() {
       return;
     }
     // Page template → expand template vars (`{{date}}`/`{{title}}`/`{{selected}}`)
-    // with the create-time context before seeding.
-    const vars = { date: today(), title: t.name, selected: "" };
+    // with the create-time context before seeding. `{{selected}}` reads the
+    // editor's current selection (real selected text), if any.
+    const selected = readEditorSelectionText();
+    const vars = { date: today(), title: t.name, selected };
     const json = substituteTemplateVars(t.content_json, vars);
     const text = substituteTemplateVars(t.content_text, vars);
     await createPage(null, { content_json: json, content_text: text, title: t.name });
