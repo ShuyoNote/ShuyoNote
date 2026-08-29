@@ -8,9 +8,9 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
 - **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
 - **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.190**（最新发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）
+- **版本**：**v1.59.190**（最近一次正式发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）。本会话在其上叠加了大量**未升版本**的 PDF 阅读器 + OCR/AI 增强（见 §2 末「PDF 阅读器 + OCR/AI 增强」与 `docs/plans/2026-08-29-pdf-reader-ai-plan.md`）。
 - **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD `975bd91`（工作树干净；v1.59.190 发布提交，v1.59.189 发布提交为 `9815fb6`）。
+- **git**：HEAD 在当前 main 最新（含本会话 PDF/AI 增强提交；v1.59.190 发布提交为历史，其后为未升版本的 fix/feat 轮）。
 
 ## 2. 已完成的核心能力（本会话近期落地）
 
@@ -68,6 +68,16 @@
 - **v1.59.187**：**PDF 连续滚动（方案 B，虚拟化）**——PDF 阅读器从「单页翻页」升级为「整篇纵向连续滚动」：所有页块纵向堆叠，一次可自由滚过整篇；只挂载视口 ± 1 页缓冲的页块（其余页占位不渲染，内存可控），滚到远处即时出现（图像缓存命中）。**批注随页块**：每页批注/工具条/撤销/选中都在该页块内，翻到即见、坐标对齐。导航升级：侧栏/目录跳页改为滚到目标页顶；←/→/↑/↓ 逐页滚动（取代「滚动边缘自动翻页」）；F 适配页宽；打开时自动适配一次。布局数学抽成纯函数 `src/lib/pdfLayout.ts`（前缀和 `tops`/`total` + 视口挂载范围），首屏预取全部页尺寸使滚动轴高度稳定。**修复暗色主题下 PDF 不可读**（页面图像是透明底 RGBA，给图像/舞台加白纸背景）。落地文档 `docs/plans/2026-08-29-pdf-continuous-scroll-plan.md`；smoke 300→**309**（+9 布局断言）。
 - **v1.59.186**：**PDF 阅读/批注体验打磨 ×6**——点页面外空白取消选中；批注侧栏类型筛选（全部/高亮/便签/画笔）+ 每页「第 N 页 · x 条」；「导出批注」把本页全部批注导出为带 `pdf://` 回链的笔记块；**默认最大化**（打开即铺满）；高亮/画笔**拖拽实时预览**（跟手，不再等松开）；批注工具栏+状态条 **sticky 吸顶**（滚动不滚走）；页面留白优化（减小 padding + 表面色背景）；**上下滚动自动翻页**（滚到顶/底自动切上一页/下一页，去抖）。
 
+### PDF 阅读器 + OCR/AI 增强（本会话，叠加于 v1.59.190；未升版本）
+- **阅读体验**：`select` 工具光标改为默认箭头（仅绘制类用 `crosshair`）；便签钉美化（圆角小方块+折角）+ 默认显示内容气泡（`pointer-events:none`，拖动跟随）；**按住便签即拖**（无需先选中）；**双击便签即编辑**（`stickyEditRegion` 纯函数）；修复控制条操作无效（注册控制器用陈旧闭包——`selected`/`annotations` 停在挂载值，把二者加入注册 effect 依赖）。
+- **侧栏/定位/跳转**：新增/撤销标注后右栏及时刷新（`onChanged`→`refreshAnnRecords`）；侧栏批注精确滚到视口中央（`focusAnnotation` + `annCenterY`，非页顶）；跳转闪烁框用 `drawBoxPx` 贴合实际绘制几何（便签 26px 方块）。
+- **护眼模式（多档位）**：头部「眼睛」下拉（关闭/柔光/暖黄/夜间/淡绿），暖色纸底 + 页图降蓝/柔光滤镜（CSS 变量 + 共享规则），默认「柔光」。
+- **OCR 彻底离线**：`scripts/copy-tesseract-assets.mjs` 本地打包 tesseract worker/core/**完整 4.0.0 双语模型**到 `public/ocr`；修复 `is-url` 相对路径误判走 readCache（改绝对 URL）；`ocr.ts` 重构 `createOcrWorker`（复用单 worker）+ 超时 + 结构化结果。
+- **AI 视觉识别**（`src/lib/ai/ocrVision.ts`）：「AI 识别」按钮把页图 **3.5× 高分辨率 → `data:image`** 直发视觉大模型（Ollama/OpenAI 兼容）。
+- **AI 一键生成目录（视觉大模型优先）**：`generateOutlineFromVision` 逐页发图 → `visionPagePrompt(pageNo)` → 章节标题+页码 JSON → 合并成目录；旧 tesseract 路径保留。
+- **系统朗读**（`src/lib/speech.ts`，Web Speech）：「朗读本页」（有文本层读全文）+ 识别结果弹层「朗读/停止」。
+- **识别结果弹层**：`createPortal` 到 body 的居中可缩放弹层（`resize:both`），分类显示 + 「朗读/复制全部/写入便签」，单页 OCR 用 2.5× 重渲染。
+
 ## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
 
 - **分栏旧数据不做自动迁移**：`columns`/`column`（ElementNode 轻量版）**保留注册**，旧文档仍可读兼容；新插入走路线 B。自动改写线上 `content_json` 风险高、收益低，**明确不做**。
@@ -75,6 +85,7 @@
 - **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
 - **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
 - 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.190**。
+- **PDF OCR/AI 边界**：OCR 精度上限由原扫描清晰度决定；AI 视觉识别/视觉目录需配置**支持图像**的模型（DeepSeek 纯文本会失败）；系统朗读为系统音色（中文语音包缺失则无声）；目录生成逐页视觉调用较慢（60 页约 1–2 分钟，可取消）。
 
 ## 4. 环境/工具备注
 

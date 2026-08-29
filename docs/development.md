@@ -14,6 +14,9 @@
 | 后端（桌面） | Rust · Tauri 2 · SQLite | `src-tauri/` |
 | Web 存储 | sql.js WASM SQLite + IndexedDB + blob 内容寻址 | `src/lib/platform/web.ts` |
 | AI 薄 Agent | 语义工具 + 受限宿主 + 审核落库 | `src/lib/ai/` |
+| PDF 阅读/批注 | Lexical 无关的阅读器 + 批注 overlay + 内容寻址存储 | `src/components/Pdf*`、`src/lib/pdf*.ts` |
+| OCR / AI 识别 | 离线 tesseract（`ocr.ts` + `createOcrWorker`）+ 视觉大模型（`ai/ocrVision.ts`） | `src/lib/ocr.ts`、`src/lib/ai/ocrVision.ts` |
+| 目录 / 朗读 | 视觉生成目录（`aiOutline.ts`）+ Web Speech 朗读（`speech.ts`） | `src/lib/aiOutline.ts`、`src/lib/speech.ts` |
 
 关键分层：`src/lib/platform/` 定义 `Executor` / driver 接口，`tauri.ts` 桌面宿主、`web.ts` 浏览器宿主（含 sql.js + IndexedDB），`index.ts` 按 `__TAURI_INTERNALS__` 自动切换。**同一套前端可跑桌面与浏览器。**
 
@@ -35,6 +38,8 @@
 ## 4. 测试与验证（权威循环）
 
 > **`scripts/smoke-web.mjs` 是 web 平台行为的事实标准**：它用 esbuild 打包 `web.ts` + IndexedDB shim + fs 适配器，在 Node 里跑真实 SQLite，对 CRUD / 属性 / 数据库 / 版本 / 块引用 / 备份 / 多空间 / 搜索 / AI / Lexical 净化等做断言。**每次改动都应让它在"全绿"基础上只增不减。**
+
+> **PDF 离线资源**：`dev`/`dev:web`/`build` 前会自动运行 `scripts/copy-pdfjs-assets.mjs`（pdfjs CJK 资源→`public/pdfjs`）与 `scripts/copy-tesseract-assets.mjs`（tesseract worker/core/双语完整模型→`public/ocr`）；两者均 gitignore（生成物），需 `pnpm install` 后由脚本生成，OCR 才可离线工作。
 
 按顺序跑，全部通过才算稳：
 
