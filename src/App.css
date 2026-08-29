@@ -10960,30 +10960,62 @@ p:has(> .editor-drawing-container) {
   padding: 16px 12px 24px;
   background: var(--surface);
 }
-/* 护眼模式：阅读区暖色纸底 + 页图温和降蓝/柔光（独立于明暗主题；按钮在头部「眼睛」）。 */
-.pdf-reader.eye-care .pdf-reader-stage,
-.pdf-reader.eye-care .pdf-reader-stage-wrap {
-  background: #f4ecda; /* 护眼米黄 */
+/* 护眼模式（多档位）：阅读区暖色纸底 + 页图降蓝/柔光滤镜，独立于明暗主题。
+   各档位只定义 CSS 变量，下方共享规则统一应用；档位名作为根类 .eye-soft/.eye-warm/...。 */
+.pdf-reader.eye-soft { --eye-bg:#f6f0e0; --eye-bg-dark:#2a251c; --eye-stage:#fbf6ea; --eye-fg:#7c6f50; --eye-filter: sepia(0.18) saturate(0.94) brightness(1) contrast(0.98); }
+.pdf-reader.eye-warm { --eye-bg:#f0e3c4; --eye-bg-dark:#332c1f; --eye-stage:#f8efd8; --eye-fg:#7d6a3f; --eye-filter: sepia(0.32) saturate(0.9) brightness(0.99) contrast(0.97); }
+.pdf-reader.eye-night { --eye-bg:#26221c; --eye-bg-dark:#211d18; --eye-stage:#2e2a23; --eye-fg:#9a8d72; --eye-filter: sepia(0.42) saturate(0.82) brightness(0.9) contrast(0.95); }
+.pdf-reader.eye-green { --eye-bg:#e9efe2; --eye-bg-dark:#24291f; --eye-stage:#eef3e9; --eye-fg:#5f6b4d; --eye-filter: sepia(0.16) hue-rotate(14deg) saturate(0.9) brightness(1); }
+
+.pdf-reader[class*="eye-"] .pdf-reader-stage,
+.pdf-reader[class*="eye-"] .pdf-reader-stage-wrap {
+  background: var(--eye-bg);
 }
-[data-theme="dark"] .pdf-reader.eye-care .pdf-reader-stage,
-[data-theme="dark"] .pdf-reader.eye-care .pdf-reader-stage-wrap {
-  background: #2b251a; /* 暗色下的昏暗暖褐 */
+[data-theme="dark"] .pdf-reader[class*="eye-"] .pdf-reader-stage,
+[data-theme="dark"] .pdf-reader[class*="eye-"] .pdf-reader-stage-wrap {
+  background: var(--eye-bg-dark);
 }
-.pdf-reader.eye-care .pdf-annot-img {
-  /* 减蓝 + 微暖 + 略柔：白纸变米黄、降低冷色刺激（只作用于页面图像，不影响批注 SVG）。 */
-  filter: sepia(0.16) saturate(0.9) brightness(0.99) contrast(0.98);
+.pdf-reader[class*="eye-"] .pdf-annot-img {
+  /* 只作用于页面图像，不影响高亮/便签等批注 SVG。 */
+  filter: var(--eye-filter);
 }
-.pdf-reader.eye-care .pdf-annot-stage {
-  background: #fbf4e1; /* 页面图未铺满时，舞台白底也变暖 */
-}
-.pdf-reader.eye-care .pdf-annot-placeholder {
-  background: #f4ecda;
-  color: #7d6f4e;
-}
-.pdf-reader.eye-care .pdf-reader-btn.active {
+.pdf-reader[class*="eye-"] .pdf-annot-stage { background: var(--eye-stage); }
+.pdf-reader[class*="eye-"] .pdf-annot-placeholder { background: var(--eye-bg); color: var(--eye-fg); }
+.pdf-reader[class*="eye-"] .pdf-reader-btn.active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
+/* 护眼档位下拉（与缩放下拉同款交互）。 */
+.pdf-eye-wrap { position: relative; }
+.pdf-eye-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 148px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+}
+.pdf-eye-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.pdf-eye-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.pdf-eye-item.active { color: var(--accent); font-weight: 600; }
+.pdf-eye-item-check { width: 12px; flex-shrink: 0; }
 /* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。 */
 .pdf-reader-stage-wrap > .pdf-annot-toolbar {
   position: static;

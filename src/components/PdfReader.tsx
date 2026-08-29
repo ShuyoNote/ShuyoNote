@@ -26,6 +26,16 @@ const AI_OUTLINE_PAGES = 60;
 /** 护眼模式开关的本地持久化键。 */
 const EYE_CARE_KEY = "shuyonote.pdf.eyecare";
 
+/** 护眼档位：off=关闭；soft=柔光；warm=暖黄(更明显)；night=夜间；green=淡绿(防蓝光)。 */
+type EyeMode = "off" | "soft" | "warm" | "night" | "green";
+const EYE_MODES: { id: EyeMode; label: string }[] = [
+  { id: "off", label: "关闭护眼" },
+  { id: "soft", label: "柔光" },
+  { id: "warm", label: "暖黄" },
+  { id: "night", label: "夜间" },
+  { id: "green", label: "淡绿" },
+];
+
 // M24 — desktop native PDF render engine. Prefer the Rust/mupdf rasterizer when
 // available (works in the Tauri webview too); otherwise fall back to pdf.js.
 // Native returns raw RGBA8; we draw it into a <canvas> and emit a Blob so the
@@ -143,8 +153,10 @@ export function PdfReader() {
   const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
-  // 护眼模式：暖色纸底 + 页面温和减蓝/柔光滤镜（本地持久化）。
-  const [eyeCare, setEyeCare] = useState<boolean>(() => localStorage.getItem(EYE_CARE_KEY) === "1");
+  // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。
+  const [eyeMode, setEyeMode] = useState<EyeMode>(() => (localStorage.getItem(EYE_CARE_KEY) as EyeMode) || "off");
+  const [eyeOpen, setEyeOpen] = useState(false);
+  const eyeWrapRef = useRef<HTMLDivElement | null>(null);
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
   const [focusTarget, setFocusTarget] = useState<{ pageIndex: number; ann: PdfAnnotation } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
@@ -797,6 +809,18 @@ export function PdfReader() {
     return () => window.removeEventListener("mousedown", onDown);
   }, [zoomOpen]);
 
+  // 护眼档位下拉：点击外部时关闭。
+  useEffect(() => {
+    if (!eyeOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = eyeWrapRef.current;
+      if (!el) return;
+      if (!el.contains(e.target as Node)) setEyeOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [eyeOpen]);
+
   if (!open) return null;
 
   // 构建挂载页块（绝对定位在累计偏移，宽 = 内容宽）。
@@ -830,7 +854,7 @@ export function PdfReader() {
 
   return createPortal(
     <div className="pdf-reader-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeCare ? " eye-care" : ""}`}>
+      <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeMode !== "off" ? ` eye-${eyeMode}` : ""}`}>
         <div className="pdf-reader-head">
           <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen} style={{ marginRight: 6 }}>
             {outlineOpen ? (
@@ -964,14 +988,37 @@ export function PdfReader() {
             <button className="pdf-reader-btn" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
             </button>
-            <button
-              className={`pdf-reader-btn${eyeCare ? " active" : ""}`}
-              onClick={() => setEyeCare((s) => { const n = !s; try { localStorage.setItem(EYE_CARE_KEY, n ? "1" : "0"); } catch {} return n; })}
-              title={eyeCare ? "关闭护眼（恢复原配色）" : "护眼模式：暖色纸底 + 降蓝/柔光"}
-              aria-pressed={eyeCare}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7z"/><circle cx="12" cy="12" r="2.6"/></svg>
-            </button>
+            <div className="pdf-eye-wrap" ref={eyeWrapRef}>
+              <button
+                className={`pdf-reader-btn${eyeMode !== "off" ? " active" : ""}`}
+                onClick={() => setEyeOpen((o) => !o)}
+                title={`护眼模式：${EYE_MODES.find((m) => m.id === eyeMode)?.label ?? "关闭"}`}
+                aria-haspopup="listbox"
+                aria-expanded={eyeOpen}
+                aria-pressed={eyeMode !== "off"}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7z"/><circle cx="12" cy="12" r="2.6"/></svg>
+              </button>
+              {eyeOpen && (
+                <div className="pdf-eye-menu" role="listbox">
+                  {EYE_MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      className={`pdf-eye-item${eyeMode === m.id ? " active" : ""}`}
+                      role="option"
+                      onClick={() => {
+                        setEyeMode(m.id);
+                        try { localStorage.setItem(EYE_CARE_KEY, m.id); } catch {}
+                        setEyeOpen(false);
+                      }}
+                    >
+                      <span className="pdf-eye-item-check">{eyeMode === m.id ? "✓" : ""}</span>
+                      <span className="pdf-eye-item-label">{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
         </div>
