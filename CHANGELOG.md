@@ -2,6 +2,12 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.64.5] - 2026-08-30
+
+### 修复
+
+- **启动卡死（`Prism is not defined`）**：Lexical 0.49 的代码高亮（`@lexical/code-core`）在 bundle 中裸引用全局 `Prism`，而构建后该全局未就位 → 主 bundle 执行即抛错、React 不挂载、splash 卡死。现显式引入 `prismjs` 并在入口设置全局 `Prism`，满足引用。
+
 ## [1.64.4] - 2026-08-30
 
 ### 修复
