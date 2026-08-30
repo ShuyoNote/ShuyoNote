@@ -11,6 +11,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
 import { PdfReader } from "./components/PdfReader";
+import { FormulaEditorDialog } from "./components/FormulaEditorDialog";
 import { CoverPicker } from "./components/CoverPicker";
 import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -353,6 +354,7 @@ function App() {
         <ShortcutsPanel />
         <AboutDialog />
         <PdfReader />
+        <FormulaEditorDialog />
         <Toaster />
         <ConfirmDialog />
         <InputDialog />
@@ -408,6 +410,7 @@ function App() {
       <ShortcutsPanel />
       <AboutDialog />
       <PdfReader />
+      <FormulaEditorDialog />
     </div>
   );
 }

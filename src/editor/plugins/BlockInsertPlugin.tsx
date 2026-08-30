@@ -28,7 +28,7 @@ const SECTION_OF: Record<string, string> = {
   // 常用
   image: "常用", drawing: "常用", mermaid: "常用", aidraw: "常用", video: "常用",
   attachment: "常用", fileref: "常用", webbookmark: "常用", callout: "常用", table: "常用",
-  blockref: "常用", blockembed: "常用",
+  blockref: "常用", blockembed: "常用", formula: "常用",
 };
 const SECTION_ORDER = ["基础", "常用", "多维表格"];
 

@@ -40,6 +40,7 @@ import { BlockRefNode, $createBlockRefNode, $isBlockRefNode } from "./nodes/Bloc
 import { CalloutNode, $createCalloutNode, $isCalloutNode } from "./nodes/CalloutNode";
 import { ImageNode, $createImageNode, $isImageNode } from "./nodes/ImageNode";
 import { VideoNode, $createVideoNode, $isVideoNode } from "./nodes/VideoNode";
+import { FormulaNode, $createFormulaNode, $isFormulaNode } from "./nodes/FormulaNode";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
@@ -228,6 +229,18 @@ export const TABLE: MultilineElementTransformer = {
   type: "multiline-element",
 };
 
+// `$$latex$$` block math formula (one line => FormulaNode)
+export const FORMULA: ElementTransformer = {
+  dependencies: [FormulaNode],
+  export: (node: LexicalNode) => ($isFormulaNode(node) ? `$$${node.__latex}$$` : null),
+  regExp: /^\$\$([\s\S]+?)\$\$\s?$/,
+  replace: (parentNode: ElementNode, _children: LexicalNode[], match: string[]) => {
+    const latex = (match[1] || "").trim();
+    parentNode.replace($createFormulaNode(latex));
+  },
+  type: "element",
+};
+
 // Full transformer list (defaults + ShuyoNote custom nodes).
 export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   HEADING,
@@ -242,6 +255,7 @@ export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   ...MULTILINE_ELEMENT_TRANSFORMERS,
   CALLOUT,
   TABLE,
+  FORMULA,
   ...TEXT_FORMAT_TRANSFORMERS,
   ...TEXT_MATCH_TRANSFORMERS,
   BLOCK_REF,

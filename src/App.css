@@ -6312,6 +6312,306 @@ p:has(> .editor-drawing-container) {
 }
 
 /* Mermaid block */
+/* M26 公式块 —— block-level KaTeX formula */
+.editor-formula-container {
+  display: block;
+  margin: 2px 0;
+  user-select: none;
+}
+.editor-formula-wrap {
+  display: block;
+}
+.editor-formula {
+  display: block;
+  width: 100%;
+  min-width: 120px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: center;
+  color: var(--text);
+  line-height: 1.2;
+}
+.editor-formula:hover {
+  background: var(--accent-soft);
+}
+.editor-formula-katex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: visible;
+  max-width: 100%;
+  line-height: 1;
+}
+/* KaTeX display mode adds its own 1em top/bottom margin + .katex baseline
+   padding — forcibly drop them inside the block formula (and use !important so
+   the lazily-injected katex.min.css never wins) so there's no empty space
+   under the formula. */
+.editor-formula-katex .katex-display {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.editor-formula-katex .katex-display > .katex {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.editor-formula-katex .katex-display > .katex > .katex-html {
+  margin: 0 !important;
+  /* KaTeX uses 1px/2px vertical baseline padding that can leave a gap; zero it. */
+  padding: 0 !important;
+}
+.editor-formula-katex .katex .base {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.editor-formula-loading {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 12px;
+  text-align: center;
+}
+.editor-formula-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.editor-formula-input {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: monospace;
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+}
+.editor-formula-input:focus {
+  border-color: var(--accent);
+}
+.editor-formula-actions {
+  display: flex;
+  gap: 8px;
+}
+.editor-formula-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.editor-formula-actions button:hover {
+  background: var(--hover);
+}
+.editor-inline-formula {
+  display: inline-block;
+  padding: 0 2px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.editor-inline-formula:hover {
+  background: var(--accent-soft);
+}
+.editor-inline-formula-katex {
+  display: inline-block;
+}
+
+/* M26 公式编辑器弹窗（Notion 风格） */
+.formula-editor-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.formula-editor {
+  width: 620px;
+  max-width: 92vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.formula-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: linear-gradient(0deg, color-mix(in srgb, var(--accent) 5%, transparent), color-mix(in srgb, var(--accent) 11%, transparent));
+  border-bottom: 1px solid var(--border);
+}
+.formula-editor-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.formula-editor-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 6px;
+}
+.formula-editor-close:hover { color: var(--text); }
+
+.formula-toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.formula-cat-wrap { position: relative; }
+.formula-toolbar-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 5px 9px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.formula-toolbar-tab.active { color: var(--text); background: var(--hover); }
+.formula-toolbar-tab:hover { background: var(--hover); }
+.formula-caret { font-size: 9px; opacity: 0.6; }
+.formula-toolbar-right { margin-left: auto; }
+
+.formula-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  margin-top: 4px;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  gap: 4px;
+}
+.formula-dropdown-item {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  padding: 5px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  min-width: 38px;
+  text-align: center;
+}
+.formula-dropdown-item:hover { background: var(--hover); }
+
+.formula-toolbar-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.formula-toolbar-help:hover { color: var(--accent); text-decoration: underline; }
+
+.formula-preview {
+  padding: 10px 16px;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-align: center;
+}
+/* Match the block-formula look (no KaTeX display margin, no box). */
+.formula-preview-katex { display: inline-block; font-size: 1.15em; }
+.formula-preview-katex .katex-display { margin: 0; }
+.formula-preview-empty {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.formula-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: vertical;
+  padding: 14px 16px;
+  font-size: 14px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text);
+  background: var(--bg);
+  min-height: 88px;
+}
+.formula-input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+
+.formula-editor-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+.formula-foot-left { display: flex; gap: 6px; }
+.formula-icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.formula-icon-btn:hover { background: var(--hover); color: var(--text); }
+.formula-foot-right { display: flex; align-items: center; gap: 10px; }
+.formula-foot-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.formula-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.formula-btn:hover { background: var(--hover); }
+.formula-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  transition: background 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
+}
+.formula-btn-primary:hover {
+  background: var(--accent-strong, var(--accent));
+  border-color: var(--accent-strong, var(--accent));
+  box-shadow: 0 2px 8px -1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.formula-btn-primary:disabled { opacity: 0.5; cursor: default; }
+
 .editor-mermaid-container {
   display: block;
   margin: 6px 0;

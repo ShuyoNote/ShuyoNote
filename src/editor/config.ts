@@ -23,6 +23,8 @@ import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
 import { DrawingNode } from "./nodes/DrawingNode";
 import { MermaidNode } from "./nodes/MermaidNode";
 import { PageLinkNode } from "./nodes/PageLinkNode";
+import { FormulaNode } from "./nodes/FormulaNode";
+import { InlineFormulaNode } from "./nodes/InlineFormulaNode";
 
 // All node types this editor can deserialize. A serialized node whose `type` is
 // outside this set (e.g. a stray/unregistered type) is dropped by lexicalStateValid
@@ -51,6 +53,8 @@ export const EDITOR_NODES: Klass<LexicalNode>[] = [
   DrawingNode,
   MermaidNode,
   PageLinkNode,
+  FormulaNode,
+  InlineFormulaNode,
   TableNode,
   TableCellNode,
   TableRowNode,

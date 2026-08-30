@@ -48,6 +48,7 @@
 | **P2** | **静态 wiki 导出 + 关系图探索** | 独立 wiki 站点 / FlowUs 图谱 | 「本地优先 + wiki」的终局表达；图谱从能看变能探索 | ✅ M21（v1.59.121） |
 | **P3** | **PDF 批注** | 思源 / MarginNote / LiquidText | 知识工作者高频硬需求；「批注即块」能进反链/搜索/关系图；2026 破局点在「AI 帮读」 | ✅ **M24**（v1.59.178 起，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)） |
 | **P2** | **帮助系统** | Notion / 思源 | 本地优先/键盘驱动的四层帮助（就地提示+快捷键面板+内置指南页）；帮助页=可编辑笔记，复用命令面板/模板/`shortcuts.ts` | ✅ M25（v1.59.177，[方案](plans/2026-08-27-help-system-plan.md)，P0/P1 落地） |
+| **P2** | **公式（数学）** | Notion / FlowUs / wolai | 正文行内 `$…$` + 块级 `$$…$$` 数学公式，KaTeX 渲染（懒加载）；理工科笔记/论文/教程常见需求 | ✅ M26（[方案](plans/2026-08-30-formula-plan.md)，块级 + 行内落地） |
 
 ## 3. 里程碑规划
 
@@ -217,6 +218,13 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > **明确不做**：在线客服/工单、应用内长篇文档、打断式引导弹窗。
 > 状态：**P0/P1 已落地（v1.59.177）**——快捷键面板 + 内置「使用指南」页 + 命令面板/斜杠入口；**P1 新手清单（空页引导「一键上手」：点一下即新建页/建库/开快捷键/试 AI）+ P2「关于」对话框（版本/许可/四外链 + 禁用外部导航开关）+ P2 帮助站导出（「导出帮助站点」复用 M21 静态 wiki 导出生成可托管静态站）已落地**，见[项目网站导航方案](plans/2026-08-27-project-website-navigation-plan.md)；**外部托管本身待做（用户自托管生成站点）**。
 
+### M26 — 公式（P2，[方案](plans/2026-08-30-formula-plan.md)，块级 + 行内落地）
+
+> 正文**数学公式**：块级 `$$…$$`（`DecoratorNode` `FormulaNode`，对齐 Mermaid；`/公式` 插入 + markdown `FORMULA` transformer + 就地编辑）+ 行内 `$…$`（`TextNode` 子类 `InlineFormulaNode` + `registerNodeTransform`，保留字面 `$…$` 进 `content_text`）。渲染 **KaTeX@0.16.47**（懒加载，独立 chunk 253KB，不进首屏主包，与 mermaid/excalidraw 一致）。
+> 设计：新增 `katex` 到 dependencies（此前是传递依赖）；块级进 `content_text`（可搜）；行内防误判（`$5`/`$100` 不转）；非法 LaTeX `throwOnError:false` 回退源文本不崩。
+> 关联：块级范式同[绘图方案](plans/2026-08-24-drawing-solution-design.md)/[Mermaid 块]；行内范式同[双链 PageLink](plans/2026-08-30-pdf-reader-ai-plan.md)/`PageLinkNode`。
+> **M26 扩展 — 公式识别**：给公式编辑器弹窗加**「图片识别」**（上传/拖入/粘贴含公式图片 → LaTeX）与**「手写识别」**（canvas 手写板 → LaTeX）。复用 `ocrVision.ts` 的 `ocrWithVision`（视觉大模型，Ollama/OpenAI 兼容，不新增后端）；识别结果自动回填 textarea、可改后提交（保留人工确认）；不接付费识别服务、不做云端限流、依赖用户已配置视觉模型。见[公式识别方案](plans/2026-08-30-formula-recognition-plan.md)（**方案**）。
+
 ## 4. 竞品差距跟踪
 
 | 维度 | 当前差距 | 计划 |
@@ -237,3 +245,4 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 | wiki 导出 | 无「把你的知识库变成可浏览网站」能力 | **M21 静态 wiki 导出 + 关系图探索**（✅） |
 | PDF 阅读/批注 | 仅 PDF 导出，无阅读/批注 | **M24 PDF 批注 + 阅读器 + OCR/AI 增强**（✅，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)：批注/摘录成块/AI 帮读 + 连续滚动/护眼/离线 OCR/AI 识别/目录/朗读） |
 | 帮助/上手 | 靠占位符/tooltip/命令面板，无体系化帮助 | **M25 帮助系统**（[方案](plans/2026-08-27-help-system-plan.md)，规划：就地提示 + 快捷键面板 + 内置「使用指南」页） |
+| 数学公式 | 无正文公式渲染 | **M26 公式**（[方案](plans/2026-08-30-formula-plan.md)：块级 `$$…$$` + 行内 `$…$`，KaTeX 懒加载；已落地） |

@@ -56,6 +56,9 @@ importers:
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
+      katex:
+        specifier: 0.18.4
+        version: 0.18.4
       lexical:
         specifier: ^0.49.0
         version: 0.49.0(typescript@7.0.2)
@@ -1705,6 +1708,10 @@ packages:
 
   katex@0.16.47:
     resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
+    hasBin: true
+
+  katex@0.18.4:
+    resolution: {integrity: sha512-IMPntbRLOU+eu88XDiFKqQ8Akhr9Tv7jDMXqPhjG9SI1JMA4DIgXk4x9k4skJz2NZJXBRbC+2pYBLj9olqcZow==}
     hasBin: true
 
   khroma@2.1.0:
@@ -3792,6 +3799,10 @@ snapshots:
   js-tokens@3.0.0: {}
 
   katex@0.16.47:
+    dependencies:
+      commander: 8.3.0
+
+  katex@0.18.4:
     dependencies:
       commander: 8.3.0
 

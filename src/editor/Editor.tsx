@@ -19,6 +19,7 @@ import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { AiSpaceTriggerPlugin } from "./plugins/AiSpaceTriggerPlugin";
 import { PageLinkSuggestPlugin } from "./plugins/PageLinkSuggestPlugin";
 import { PageLinkPlugin } from "./plugins/PageLinkPlugin";
+import { InlineFormulaPlugin } from "./plugins/InlineFormulaPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { BookmarkPastePlugin } from "./plugins/BookmarkPastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
@@ -375,6 +376,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <SlashMenuPlugin pageId={pageId} />
         <PageLinkSuggestPlugin />
         <PageLinkPlugin />
+        <InlineFormulaPlugin />
         <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
