@@ -223,7 +223,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > 正文**数学公式**：块级 `$$…$$`（`DecoratorNode` `FormulaNode`，对齐 Mermaid；`/公式` 插入 + markdown `FORMULA` transformer + 就地编辑）+ 行内 `$…$`（`TextNode` 子类 `InlineFormulaNode` + `registerNodeTransform`，保留字面 `$…$` 进 `content_text`）。渲染 **KaTeX@0.16.47**（懒加载，独立 chunk 253KB，不进首屏主包，与 mermaid/excalidraw 一致）。
 > 设计：新增 `katex` 到 dependencies（此前是传递依赖）；块级进 `content_text`（可搜）；行内防误判（`$5`/`$100` 不转）；非法 LaTeX `throwOnError:false` 回退源文本不崩。
 > 关联：块级范式同[绘图方案](plans/2026-08-24-drawing-solution-design.md)/[Mermaid 块]；行内范式同[双链 PageLink](plans/2026-08-30-pdf-reader-ai-plan.md)/`PageLinkNode`。
-> **M26 扩展 — 公式识别**：给公式编辑器弹窗加**「图片识别」**（上传/拖入/粘贴含公式图片 → LaTeX）与**「手写识别」**（canvas 手写板 → LaTeX）。复用 `ocrVision.ts` 的 `ocrWithVision`（视觉大模型，Ollama/OpenAI 兼容，不新增后端）；识别结果自动回填 textarea、可改后提交（保留人工确认）；不接付费识别服务、不做云端限流、依赖用户已配置视觉模型。见[公式识别方案](plans/2026-08-30-formula-recognition-plan.md)（**方案**）。
+> **M26 扩展 — 公式识别**：给公式编辑器弹窗加**「图片识别」**（上传/拖入/粘贴含公式图片 → LaTeX）与**「手写识别」**（canvas 手写板 → LaTeX）。复用 `ocrVision.ts` 的 `ocrWithVision`（视觉大模型，Ollama/OpenAI 兼容，不新增后端）；识别结果自动回填 textarea、可改后提交（保留人工确认）；不接付费识别服务、不做云端限流、依赖用户已配置视觉模型。见[公式识别方案](plans/2026-08-30-formula-recognition-plan.md)（**已实现**：`formulaVision.ts` + `FormulaHandwritePad` 手写板 + `FormulaEditorDialog` 🖼/✎ 入口）。
 
 ## 4. 竞品差距跟踪
 

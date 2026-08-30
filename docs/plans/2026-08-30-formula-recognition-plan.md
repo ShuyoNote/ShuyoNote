@@ -1,6 +1,6 @@
 # 「公式图片 / 手写识别」方案（M26 扩展）— 图片 → LaTeX、手写 → LaTeX
 
-> 状态：**方案**（日期 2026-08-30）。关联：[公式方案](2026-08-30-formula-plan.md)（块级/行内公式渲染 + Notion 风格公式编辑器…）、[PDF 阅读器 AI 增强](2026-08-30-pdf-reader-ai-plan.md)、[公式编辑器弹窗（Notion 风格）](2026-08-30-formula-plan.md#公式编辑器弹窗notion-风格)。
+> 状态：**已实现**（日期 2026-08-30）。关联：[公式方案](2026-08-30-formula-plan.md)（块级/行内公式渲染 + Notion 风格公式编辑器…）、[PDF 阅读器 AI 增强](2026-08-30-pdf-reader-ai-plan.md)、[公式编辑器弹窗（Notion 风格）](2026-08-30-formula-plan.md#公式编辑器弹窗notion-风格)。
 > 目标：给公式编辑器弹窗补两个入口——**「图片识别」**（上传一张含公式的图片 → 自动转 LaTeX）与**「手写识别」**（手写板上写公式 → 自动转 LaTeX）。对标 Notion / FlowUs / wolai。
 
 ## 现状（方案前）
@@ -54,6 +54,14 @@
 - **不实现云端限流**（wolai 是服务端计费限流；我们走用户自配的视觉端点，无此语义）。
 - 手写识别的**输入是 PNG 画布**，与图片识别共用 `ocrWithVision`；二者只是输入源不同。
 
+## 已实现落地（M26 扩展，已提交）
+
+- `src/lib/ai/formulaVision.ts`（新增）：`FORMULA_PROMPT`（让视觉模型输出 LaTeX，产出后剥围栏/解释）+ `recognizeFormulaImage(config, dataUrl)`（薄封装 `ocrWithVision`）+ `fileToDataUrl(file)`。
+- `src/components/FormulaHandwritePad.tsx`（新增）：canvas 手写板（笔/橡皮/清空 + 取消/提交识别），白底、`toDataURL("image/png")` 提交；**画布逻辑尺寸按显示尺寸×DPR**（`useLayoutEffect` + `setTransform`），坐标与显示 1:1 → 笔画跟手；pointer capture 用 `e.currentTarget`。
+- `src/components/FormulaEditorDialog.tsx`：🖼（`<input type=file accept="image/*">` 选图识别）+ 粘贴/拖入公式图片自动识别；✎（打开手写板 → 提交识别）；识别中/失败状态提示（未配置视觉模型时提示去 AI 设置）；识别结果**回填 textarea**（保留人工确认后点「确定」才落库）。
+- 识别走 `useAiStore.getState().config`（需 `enabled`）。
+- 主弹窗紧贴公式块下方弹出；内部分类符号下拉面板向上弹出（`.formula-dropdown` `bottom:100%` + `.formula-editor` `overflow:visible`）。
+
 ## 验证
 
 - `npx tsc --noEmit` 0 错。
@@ -66,8 +74,8 @@
 
 ## 文件清单
 
-- `src/lib/ai/ocrVision.ts`（或新增 `formulaVision.ts`）：加 `FORMULA_PROMPT` + `recognizeFormulaImage(config, dataUrl)`（薄封装 `ocrWithVision`）。
-- `src/store/formulaEditor.ts`：不变（或加 `pendingImage` 等识别状态）。
-- `src/components/FormulaEditorDialog.tsx`：加 🖼 / ✎ 两个按钮 + 图片选择/拖放 + 识别逻辑。
-- `src/components/FormulaHandwritePad.tsx`（新增）：手写画布。
-- `src/App.css`：手写板 + 识别按钮样式。
+- `src/lib/ai/formulaVision.ts`（新增，已落地）。
+- `src/store/formulaEditor.ts`：不加识别状态（识别状态在 `FormulaEditorDialog` 本地）。
+- `src/components/FormulaEditorDialog.tsx`：🖼 / ✎ 按钮 + 图片选择/拖放/粘贴 + 识别逻辑（已落地）。
+- `src/components/FormulaHandwritePad.tsx`（新增，已落地）。
+- `src/App.css`：手写板 + 识别状态样式（已落地）。
