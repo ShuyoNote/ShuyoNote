@@ -10,6 +10,7 @@ mod sync;
 mod audit;
 
 use axum::{
+    middleware,
     routing::{get, post},
     Router,
 };
@@ -60,6 +61,13 @@ async fn main() {
         attachments_dir: Arc::new(attachments_dir.clone()),
     };
 
+    // `/auth/logout` is protected by the bearer-token middleware; keep it in its
+    // own router so the auth layer only wraps this one route (push/pull/attachments
+    // stay unauthenticated until S5/S6 wire up per-space access control).
+    let auth_routes = Router::new()
+        .route("/auth/logout", post(auth::logout))
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth::auth_user));
+
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/push", post(sync::push))
@@ -67,6 +75,9 @@ async fn main() {
         .route("/attachments", get(attachments::list_attachments))
         .route("/attachments/{hash}", post(attachments::upload_attachment))
         .route("/attachments/{hash}", get(attachments::download_attachment))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .merge(auth_routes)
         .with_state(state)
         .layer(CorsLayer::permissive());
 
