@@ -115,6 +115,8 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-27-auto-update-plan.md](plans/2026-08-27-auto-update-plan.md) | **「自动升级」方案（规划，建议）**：本地优先/离线/自托管/AGPL 下的升级边界——**半自动**（后台 `check()` + 用户点「下载并安装」），**绝不静默强制重启**，离线优雅降级、Web 端禁用。技术走 Tauri 2 官方 `tauri-plugin-updater`（签名 `tauri signer` + 更新清单 `latest.json` + `createUpdaterArtifacts` `.sig` + 稳定 HTTPS 端点）。**真正的成本在签名 + 更新清单的发布管线**（手工，接入现有提版流程）；分阶段：阶段 1 先做「检查更新」检测入口（不依赖完整签名）、阶段 2 完整应用内下载安装、阶段 3 增量/通道/自托管。**规划，未实装** |
 | [plans/2026-08-27-pdf-annotation-acceptance.md](plans/2026-08-27-pdf-annotation-acceptance.md) | **PDF 批注 · 手动验收清单（M24 阶段 1）**：入口/渲染/批注（高亮·画笔·便签·选择/删除/编辑/复制引用）/文本层降级/持久化/批注即块（摘录成块→当前页/新页 + 回链跳转）/异常边界 + 自动化门禁（`tsc`/`smoke` 283/`build`/`cargo test` 32）。**真机在浏览器/桌面上逐条勾选** |
 | [plans/2026-08-27-update-ocr-acceptance.md](plans/2026-08-27-update-ocr-acceptance.md) | **自动升级 / OCR · 手动验收清单（v1.59.178）**：自动升级（About 检查更新：离线降级/已是最新/有新版本 + 桌面更新器接线 + 发布管线前置）+ OCR 兜底（无文本层扫描件「OCR 识别本页」→ 识别结果面板）+ 精确划词 + 已知边界（签名发布/离线 langPath/OCR 文本未接划词）。**真机逐条勾选** |
+| [plans/2026-08-30-md-in-app-open-plan.md](plans/2026-08-30-md-in-app-open-plan.md) | **「文件夹内 MD 文档直接应用内打开」利弊分析**：现状（`.md` 走 text/ 分支提示外部打开）+ 利（闭环/一致/可进知识体系/成本低）+ 弊（看 vs 转的角色歧义/文件页面界限/编辑语义/md 多样性/大文件）+ 建议（**应用内只读渲染 + 明显「转为笔记」按钮**，不默认自动转页面）+ 待拍板 + 结论（**已按建议实现**，见[md 预览实现](plans/2026-08-30-md-preview-plan.md)） |
+| [plans/2026-08-30-md-preview-plan.md](plans/2026-08-30-md-preview-plan.md) | **「MD 应用内预览」实现记录（已实现，叠加于 v1.63.0）**：点侧边栏/文件夹内 `.md` 文件名 → 应用内只读预览（铺满主内容区、不遮侧边栏）+「转为笔记」；`mermaid` 代码块渲染为图、随明/暗主题自适应、切换主题即时刷新；弹窗层级提升、打开页面自动关闭预览。含共享 store / App 级弹窗（body portal）/ offscreen md→JSON / mdToHtml mermaid 块 / mermaid 主题响应式 / 请求端接入 / 关键坑（flex 子项、属性转义、源码保留、z-index）与验收 |
 
 ## 竞品对比
 
