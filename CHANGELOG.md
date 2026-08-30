@@ -2,6 +2,12 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.64.6] - 2026-08-30
+
+### 修复
+
+- **彻底修复 `Prism is not defined`**：根因是 prismjs 被 Vite 打包进 ESM chunk，其 UMD 顶层裸引用 `Prism` 在模块求值时全局未就位。现改为 **prismjs 浏览器全局加载**（index.html 普通 `<script>` 设 `window.Prism`）+ Vite 将 `prismjs` 标为 external，`@lexical/code` 的 `import "prismjs"` 解析到全局——不再有未定义的裸引用。
+
 ## [1.64.5] - 2026-08-30
 
 ### 修复
