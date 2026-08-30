@@ -12,6 +12,7 @@ import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
+import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
@@ -23,7 +24,7 @@ import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon } from "./icons";
+import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -595,6 +596,7 @@ export function PageTree({
   const spaceChooser = usePopover<HTMLButtonElement>();
   const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
   const aiEnabled = useAiStore((s) => s.config.enabled);
+  const updateAvailable = useEditorStore((s) => s.updateAvailable);
 
   // Drag-ghost state (title + cursor position while dragging a tree node).
   const dragLabel = useTreeDrag((s) => s.label);
@@ -1214,6 +1216,16 @@ export function PageTree({
             onClick={() => useTemplateCenterStore.getState().setOpen(true)}
           >
             <TemplateIcon className="sidebar-bottom-icon" /> 模板中心
+          </button>
+          <button
+            className="sidebar-bottom-btn"
+            onClick={() => useEditorStore.getState().openAbout()}
+            title="关于"
+          >
+            <span className="sidebar-bottom-btn-inner">
+              <InfoIcon className="sidebar-bottom-icon" /> 关于
+              {updateAvailable && <span className="update-dot" title="有新版本可用" />}
+            </span>
           </button>
         </div>
       )}

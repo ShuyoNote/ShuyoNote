@@ -2,6 +2,7 @@
 // recognition (→ LaTeX). Pen + eraser. Pure canvas, no dependency.
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { PenIcon, EraserIcon, TrashIcon } from "./icons";
 
 export function FormulaHandwritePad({ onCommit, onCancel }: {
   onCommit: (dataUrl: string) => void;
@@ -12,24 +13,44 @@ export function FormulaHandwritePad({ onCommit, onCancel }: {
   const drawingRef = useRef(false);
   const lastRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Keep the canvas logical size matched to its displayed size × DPR so pointer
+  // coordinates line up exactly. A ResizeObserver makes the drawing area follow
+  // a user-driven dialog resize (preserving prior strokes via a temp canvas).
   useLayoutEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
-    // Match the canvas's logical size to its displayed size × DPR so pointer
-    // coordinates line up exactly (fixes "not following the hand"). The CSS sets
-    // width:100%;height:320px; here we size the backing buffer to that × DPR.
     const dpr = window.devicePixelRatio || 1;
-    const rect = c.getBoundingClientRect();
-    const w = Math.max(1, Math.round(rect.width));
-    const h = Math.max(1, Math.round(rect.height));
-    c.width = Math.round(w * dpr);
-    c.height = Math.round(h * dpr);
-    const ctx = c.getContext("2d");
-    if (ctx) {
+
+    const size = () => {
+      const rect = c.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      const bw = Math.round(w * dpr);
+      const bh = Math.round(h * dpr);
+      // Preserve what's already drawn across a resize (scale into temp).
+      let prev: HTMLCanvasElement | null = null;
+      if (c.width && c.height) {
+        prev = document.createElement("canvas");
+        prev.width = c.width;
+        prev.height = c.height;
+        prev.getContext("2d")!.drawImage(c, 0, 0);
+      }
+      c.width = bw;
+      c.height = bh;
+      const ctx = c.getContext("2d")!;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, w, h);
-    }
+      if (prev) {
+        // Re-canvas is now cleared; redraw the (scaled) previous snapshot.
+        ctx.drawImage(prev, 0, 0, prev.width, prev.height, 0, 0, w, h);
+      }
+    };
+
+    size();
+    const ro = new ResizeObserver(size);
+    ro.observe(c);
+    return () => ro.disconnect();
   }, []);
 
   const pos = (e: React.PointerEvent) => {
@@ -83,14 +104,14 @@ export function FormulaHandwritePad({ onCommit, onCancel }: {
         />
         <div className="handwrite-foot">
           <div className="handwrite-left">
-            <button className={`handwrite-tool ${eraser ? "" : "active"}`} onClick={() => setEraser(false)} title="笔">
-              ✒️
+            <button className={`handwrite-tool ${eraser ? "" : "active"}`} onClick={() => setEraser(false)} title="笔" aria-label="笔">
+              <PenIcon width={17} height={17} />
             </button>
-            <button className={`handwrite-tool ${eraser ? "active" : ""}`} onClick={() => setEraser(true)} title="橡皮">
-              🧽
+            <button className={`handwrite-tool ${eraser ? "active" : ""}`} onClick={() => setEraser(true)} title="橡皮" aria-label="橡皮">
+              <EraserIcon width={17} height={17} />
             </button>
-            <button className="handwrite-tool" onClick={() => { const c = canvasRef.current!; const ctx = c.getContext("2d")!; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.restore(); }} title="清空">
-              🗑
+            <button className="handwrite-tool" onClick={() => { const c = canvasRef.current!; const ctx = c.getContext("2d")!; const dpr = window.devicePixelRatio || 1; ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width / dpr, c.height / dpr); ctx.restore(); }} title="清空" aria-label="清空">
+              <TrashIcon width={17} height={17} />
             </button>
           </div>
           <div className="handwrite-right">

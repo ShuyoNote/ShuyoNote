@@ -13,7 +13,7 @@ import {
   getAllowExternal,
   setAllowExternal,
 } from "../lib/links";
-import { fetchLatestVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
+import { fetchLatestVersion, fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
 import { checkDesktopUpdate } from "../lib/updater";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
@@ -29,6 +29,8 @@ export function AboutDialog() {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [download, setDownload] = useState<(() => Promise<void>) | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
+  const [declined, setDeclined] = useState(false);
 
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
@@ -50,6 +52,20 @@ export function AboutDialog() {
     setLatestVersion(null);
     setDownload(null);
     setCheckError(null);
+    setReleaseNotes(null);
+    setDeclined(false);
+    // Dev-only debug hook matches the red-dot path: force "update available" so
+    // the button-driven check also previews the new version + release notes.
+    const dbg = debugUpdateVersion();
+    if (dbg) {
+      setLatestVersion(dbg);
+      setUpdateState("update-available");
+      const mf = await fetchUpdateManifest();
+      setReleaseNotes(mf?.notes ?? null);
+      setChecked(true);
+      setChecking(false);
+      return;
+    }
     // Prefer the in-app updater (desktop); fall back to the releases-page fetch.
     const up = await checkDesktopUpdate();
     if (up.state === "up-to-date") {
@@ -58,6 +74,9 @@ export function AboutDialog() {
       setLatestVersion(up.latest);
       setDownload(up.download);
       setUpdateState("update-available");
+      // Pull the release notes (best-effort) so the user can read what's new.
+      const mf = await fetchUpdateManifest();
+      if (mf?.notes) setReleaseNotes(mf.notes);
     } else {
       const latest = await fetchLatestVersion();
       console.error("[updater] desktop updater unavailable; fallback fetchLatestVersion ->", latest);
@@ -99,8 +118,10 @@ export function AboutDialog() {
           <div className="about-logo-wrap">
             <img className="about-logo" src="/icons/mark.svg" alt={`${APP_NAME} logo`} />
           </div>
-          <div className="about-name">{APP_NAME_ZH}</div>
-          <div className="about-sub">{APP_NAME}</div>
+          <div className="about-name">
+            <span className="about-name-en">{APP_NAME}</span>
+            {APP_NAME_ZH}
+          </div>
           <div className="about-meta">
             <span className="about-pill about-pill-version">v{APP_VERSION}</span>
             <span className="about-pill about-pill-license">{APP_LICENSE}</span>
@@ -116,11 +137,27 @@ export function AboutDialog() {
           <span className="about-update-state">
             {checked && updateState === "update-available" && latestVersion ? (
               <>
-                发现新版本 <b>v{latestVersion}</b>，
-                {download ? (
-                  <button className="about-update-install" onClick={() => void download()}>下载并安装</button>
-                ) : (
-                  <a onClick={() => openExternal(RELEASES_URL)}>前往发布页</a>
+                <span className="about-update-head">
+                  <span className="about-update-avail">
+                    发现新版本 <b>v{latestVersion}</b>，当前 v{APP_VERSION}
+                  </span>
+                  {download ? (
+                    <>
+                      <button className="about-update-install" onClick={() => void download()}>下载并安装</button>
+                      <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
+                    </>
+                  ) : (
+                    <button className="about-update-later" onClick={() => openExternal(RELEASES_URL)}>前往发布页</button>
+                  )}
+                </span>
+                {!declined && download && releaseNotes && (
+                  <div className="about-release-notes">
+                    <div className="about-release-notes-title">本次更新</div>
+                    <pre className="about-release-notes-body">{releaseNotes}</pre>
+                  </div>
+                )}
+                {declined && (
+                  <span className="about-update-declined">已暂缓升级——可稍后再来「检查更新」。</span>
                 )}
               </>
             ) : checked && updateState === "up-to-date" ? (

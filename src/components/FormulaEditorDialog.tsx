@@ -97,6 +97,7 @@ export function FormulaEditorDialog() {
   const { open, initial, original, anchor, livePreview, onCommit, close } = useFormulaEditorStore();
   const [latex, setLatex] = useState("");
   const [openCat, setOpenCat] = useState<number | null>(null);
+  const [catAnchor, setCatAnchor] = useState<{ left: number; top: number } | null>(null);
   const [recognizing, setRecognizing] = useState(false);
   const [recognizeError, setRecognizeError] = useState<string | null>(null);
   const [handwriteOpen, setHandwriteOpen] = useState(false);
@@ -170,7 +171,22 @@ export function FormulaEditorDialog() {
   const pick = (text: string) => {
     insert(text);
     setOpenCat(null);
+    setCatAnchor(null);
   };
+
+  // Clicking anywhere outside the dropdown closes it (it's now a body portal).
+  useEffect(() => {
+    if (openCat === null) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && el.closest(".formula-dropdown")) return;
+      if (el && el.closest(".formula-toolbar-tab")) return;
+      setOpenCat(null);
+      setCatAnchor(null);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [openCat]);
 
   // Build a ProviderConfig from the AI store (validated enabled).
   const providerConfig = (): ProviderConfig | null => {
@@ -265,20 +281,20 @@ export function FormulaEditorDialog() {
             <div key={cat.label} className="formula-cat-wrap">
               <button
                 className={`formula-toolbar-tab ${i === openCat ? "active" : ""}`}
-                onClick={() => setOpenCat((v) => (v === i ? null : i))}
+                onClick={(e) => {
+                  if (openCat === i) {
+                    setOpenCat(null);
+                    setCatAnchor(null);
+                  } else {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setCatAnchor({ left: r.left, top: r.top });
+                    setOpenCat(i);
+                  }
+                }}
                 title={cat.label}
               >
                 {cat.tabSym} <span className="formula-caret">▾</span>
               </button>
-              {i === openCat && (
-                <div className="formula-dropdown" onClick={(e) => e.stopPropagation()}>
-                  {cat.items.map((it) => (
-                    <button key={it.latex + it.sym} className="formula-dropdown-item" onClick={() => pick(it.latex)} title={it.latex}>
-                      {it.sym}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           ))}
           <div className="formula-toolbar-right">
@@ -338,6 +354,22 @@ export function FormulaEditorDialog() {
     </div>,
     document.body,
   )}
+      {openCat !== null && catAnchor && CATEGORIES[openCat] && (
+        createPortal(
+          <div
+            className="formula-dropdown"
+            style={{ left: catAnchor.left, top: catAnchor.top }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {CATEGORIES[openCat].items.map((it) => (
+              <button key={it.latex + it.sym} className="formula-dropdown-item" onClick={() => pick(it.latex)} title={it.latex}>
+                {it.sym}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )
+      )}
       {handwriteOpen && (
         <FormulaHandwritePad
           onCommit={(dataUrl) => {

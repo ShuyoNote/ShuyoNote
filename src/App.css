@@ -1302,6 +1302,21 @@ body,
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
+  position: relative;
+}
+.sidebar-bottom-btn-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.update-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger, #e5484d);
+  box-shadow: 0 0 0 2px var(--bg);
+  flex-shrink: 0;
 }
 .sidebar-bottom-btn:hover {
   color: var(--text);
@@ -6446,11 +6461,14 @@ p:has(> .editor-drawing-container) {
 .formula-editor {
   width: 620px;
   max-width: 92vw;
+  min-width: 460px;
+  min-height: 260px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  overflow: visible;
+  overflow: hidden;
+  resize: both;
   display: flex;
   flex-direction: column;
 }
@@ -6503,12 +6521,13 @@ p:has(> .editor-drawing-container) {
 .formula-toolbar-right { margin-left: auto; }
 
 .formula-dropdown {
-  position: absolute;
-  top: auto;
-  bottom: 100%;
+  position: fixed;
   left: 0;
-  z-index: 30;
+  bottom: auto;
+  top: 0;
+  transform: translateY(-100%);
   margin-bottom: 4px;
+  z-index: 220;
   max-width: 420px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -6562,13 +6581,14 @@ p:has(> .editor-drawing-container) {
   width: 100%;
   border: none;
   outline: none;
-  resize: vertical;
+  resize: none;
+  flex: 1;
+  min-height: 88px;
   padding: 14px 16px;
   font-size: 14px;
   font-family: var(--font-mono, monospace);
   color: var(--text);
   background: var(--bg);
-  min-height: 88px;
 }
 .formula-input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
 
@@ -6647,11 +6667,18 @@ p:has(> .editor-drawing-container) {
 .handwrite {
   width: 620px;
   max-width: 92vw;
+  height: 520px;
+  max-height: 88vh;
+  min-width: 460px;
+  min-height: 340px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+  resize: both;
+  display: flex;
+  flex-direction: column;
 }
 .handwrite-head {
   display: flex;
@@ -6665,7 +6692,8 @@ p:has(> .editor-drawing-container) {
 .handwrite-canvas {
   display: block;
   width: 100%;
-  height: 320px;
+  flex: 1;
+  min-height: 0;
   background: #fff;
   touch-action: none;
   cursor: crosshair;
@@ -10592,17 +10620,19 @@ p:has(> .editor-drawing-container) {
   flex-shrink: 0;
 }
 .about-name {
-  font-size: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: 0.01em;
 }
-.about-sub {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-  letter-spacing: 0.04em;
-  margin-top: -6px;
+.about-name-en {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
 }
 .about-meta {
   display: flex;
@@ -10687,16 +10717,73 @@ p:has(> .editor-drawing-container) {
 .about-update-install {
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   border-radius: 6px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   margin-left: 2px;
 }
 .about-update-install:hover {
-  filter: brightness(0.95);
+  filter: brightness(1.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.about-update-later {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.about-update-later:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.about-update-later:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.about-update-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.about-update-avail {
+  color: var(--text-dim);
+}
+.about-update-declined {
+  color: var(--text-dim);
+}
+.about-release-notes {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  width: 100%;
+}
+.about-release-notes-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.about-release-notes-body {
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  user-select: text;
 }
 .about-link:disabled {
   opacity: 0.5;

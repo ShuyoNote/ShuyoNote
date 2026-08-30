@@ -41,6 +41,34 @@ export function SettingsIcon(props: IconProps) {
   );
 }
 
+export function InfoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </Icon>
+  );
+}
+
+export function PenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </Icon>
+  );
+}
+
+export function EraserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+      <path d="M22 21H7" />
+      <path d="m5 11 9 9" />
+    </Icon>
+  );
+}
+
 export function SendIcon(props: IconProps) {
   return (
     <Icon {...props}>
