@@ -94,12 +94,40 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 // Safety net: always hide after a short timeout, even if load events never fire.
 window.setTimeout(hideSplash, 1500);
-// If the module graph fails to load/execute, don't leave a frozen splash.
-window.addEventListener("error", () => {
-  window.setTimeout(hideSplash, 30);
+
+// On a resource / module / runtime failure, surface the real error ON the splash
+// so the user can screenshot the diagnostic without DevTools. This distinguishes
+// "a hashed asset 404'd (stale shell)" from "the bundle threw at startup".
+function showStartupError(label: string, detail: unknown) {
+  const el = document.getElementById("app-splash");
+  if (!el) return;
+  el.classList.add("is-hide");
+  requestAnimationFrame(() => {
+    // Rebuild a small diagnostic panel in place of the splash.
+    el.classList.remove("is-hide");
+    el.innerHTML =
+      '<div style="max-width:560px;margin:24px;padding:20px 22px;border-radius:12px;background:#1c2340;border:1px solid rgba(255,255,255,.18);text-align:left;font-family:Segoe UI,system-ui,sans-serif;color:#fff">' +
+      `<div style="font-weight:700;margin-bottom:10px;color:#ffb3b3">启动失败：${escapeHtml(label)}</div>` +
+      `<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:rgba(255,255,255,.85)">${escapeHtml(String(detail ?? ""))}</div>` +
+      '<div style="margin-top:14px;font-size:12px;color:rgba(255,255,255,.6)">请截图此信息反馈；或重装/清缓存后重试。</div>' +
+      "</div>";
+  });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Resource load failures (404 of a hashed asset) fire `error` on window with
+// the failing resource in `e.target`.
+window.addEventListener("error", (e) => {
+  const t = e.target as HTMLElement | HTMLScriptElement | HTMLLinkElement;
+  const src = (t as HTMLScriptElement)?.src || (t as HTMLLinkElement)?.href;
+  const msg = src ? `资源加载失败（可能为缓存/旧版本残留）：${src}` : (e.error?.message ?? e.message ?? String(e.error ?? ""));
+  window.setTimeout(() => showStartupError("资源加载失败", msg), 30);
 });
-window.addEventListener("unhandledrejection", () => {
-  window.setTimeout(hideSplash, 30);
+window.addEventListener("unhandledrejection", (e) => {
+  window.setTimeout(() => showStartupError("运行时错误", e.reason), 30);
 });
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
