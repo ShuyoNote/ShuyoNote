@@ -119,7 +119,8 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-30-md-in-app-open-plan.md](plans/2026-08-30-md-in-app-open-plan.md) | **「文件夹内 MD 文档直接应用内打开」利弊分析**：现状（`.md` 走 text/ 分支提示外部打开）+ 利（闭环/一致/可进知识体系/成本低）+ 弊（看 vs 转的角色歧义/文件页面界限/编辑语义/md 多样性/大文件）+ 建议（**应用内只读渲染 + 明显「转为笔记」按钮**，不默认自动转页面）+ 待拍板 + 结论（**已按建议实现**，见[md 预览实现](plans/2026-08-30-md-preview-plan.md)） |
 | [plans/2026-08-30-md-preview-plan.md](plans/2026-08-30-md-preview-plan.md) | **「MD 应用内预览」实现记录（已实现，叠加于 v1.63.0）**：点侧边栏/文件夹内 `.md` 文件名 → 应用内只读预览（铺满主内容区、不遮侧边栏）+「转为笔记」；`mermaid` 代码块渲染为图、随明/暗主题自适应、切换主题即时刷新；弹窗层级提升、打开页面自动关闭预览。含共享 store / App 级弹窗（body portal）/ offscreen md→JSON / mdToHtml mermaid 块 / mermaid 主题响应式 / 请求端接入 / 关键坑（flex 子项、属性转义、源码保留、z-index）与验收 |
 | [plans/2026-08-30-team-edition-plan.md](plans/2026-08-30-team-edition-plan.md) | **「团队版（自建协作，不接外部通讯 App）」方案**：账号/租户、权限模型、块级协同编辑三根柱子 + 自建通知/讨论/采集；sync-server 演进为团队服务端；子里程碑 M27.1–M27.9（**规划**） |
-| [plans/2026-08-30-team-edition-account-tenant-plan.md](plans/2026-08-30-team-edition-account-tenant-plan.md) | **「团队版 M27.1 账号/租户」落地方案**：users/tenants/memberships/invitations/sessions/groups 六表 + 认证端点（注册/登录/TOTP/会话）+ 客户端登录态；复用 Argon2id `derive_key`/`get_meta_state`/`reqwest`（**规划**） |
+| [plans/2026-08-30-team-edition-account-tenant-plan.md](plans/2026-08-30-team-edition-account-tenant-plan.md) | **「团队版 M27.1 账号/租户 · 客户端侧」落地方案**：登录态（`meta.db` auth_state）+ 登录/注册/团队/成员 UI + 命令封装；复用 `get_meta_state`/`reqwest`；服务端契约见服务端设计（**规划**） |
+| [plans/2026-08-30-team-edition-server-design.md](plans/2026-08-30-team-edition-server-design.md) | **「团队版 · 服务端设计：账号/租户 + 认证」**：六表 + 认证端点 + 会话/TOTP/防爆破；**落地于 sync-server 仓库（商业授权）**，随实现迁入其 docs（**规划**） |
 
 ## 竞品对比
 
