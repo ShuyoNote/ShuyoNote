@@ -25,7 +25,7 @@ import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
 import { ThemeSettings } from "./ThemeSettings";
-import { ChevronDownIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon } from "./icons";
+import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -593,6 +593,42 @@ export function PageTree({
     toggle: toggleNewMenu,
     close: closeNewMenu,
   } = usePopover<HTMLButtonElement>();
+  // Sidebar resizable width (persisted), applied as --sidebar-w so overlays follow.
+  const SIDEBAR_W_KEY = "shuyonote.sidebarWidth";
+  const loadSidebarWidth = () => {
+    try {
+      const n = Number(localStorage.getItem(SIDEBAR_W_KEY));
+      return Number.isFinite(n) && n >= 200 ? n : 264;
+    } catch {
+      return 264;
+    }
+  };
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+    document.documentElement.style.setProperty("--sidebar-w", `${sidebarWidth}px`);
+  }, [sidebarWidth]);
+  const onSidebarResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidthRef.current;
+    const clamp = (w: number) => Math.min(460, Math.max(200, w));
+    const onMove = (ev: PointerEvent) => setSidebarWidth(clamp(startW + (ev.clientX - startX)));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-sidebar-resizing");
+      try {
+        localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidthRef.current));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.classList.add("is-sidebar-resizing");
+  };
   const [workspaceName, setWorkspaceName] = useState("默认空间");
   const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
@@ -902,6 +938,9 @@ export function PageTree({
 
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
+      {!collapsed && (
+        <div className="sidebar-resizer" onPointerDown={onSidebarResizeStart} title="拖拽调整侧边栏宽度" />
+      )}
       <div className="sidebar-header">
         {!collapsed && (
           <button
@@ -1062,9 +1101,8 @@ export function PageTree({
             <ThemeSettings />
           </div>
           <div className="new-menu">
-            <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu}>
-              <span className="btn-new-label">新建</span>
-              <ChevronDownIcon width={14} height={14} className="btn-new-caret" />
+            <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title="新建" aria-label="新建">
+              <PlusIcon width={16} height={16} strokeWidth={2.4} />
             </button>
             {newMenuOpen && (
               <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
@@ -1159,6 +1197,13 @@ export function PageTree({
       {!collapsed && (
         <div className="sidebar-bottom">
           <TrashPanel />
+          <button
+            className="sidebar-bottom-btn"
+            onClick={() => useTemplateCenterStore.getState().setOpen(true)}
+            title="模板中心"
+          >
+            <TemplateIcon className="sidebar-bottom-icon" />
+          </button>
           {aiEnabled && (
             <button
               className="sidebar-bottom-btn"
@@ -1169,13 +1214,7 @@ export function PageTree({
             </button>
           )}
           <button
-            className="sidebar-bottom-btn"
-            onClick={() => useTemplateCenterStore.getState().setOpen(true)}
-          >
-            <TemplateIcon className="sidebar-bottom-icon" /> 模板中心
-          </button>
-          <button
-            className="sidebar-bottom-btn"
+            className="sidebar-bottom-btn sidebar-bottom-about"
             onClick={() => useEditorStore.getState().openAbout()}
             title="关于"
           >
