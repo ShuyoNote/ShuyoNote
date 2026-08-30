@@ -1,4 +1,6 @@
 import "./lib/polyfills";
+import Prism from "prismjs";
+(globalThis as any).Prism = (globalThis as any).Prism ?? Prism;
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
