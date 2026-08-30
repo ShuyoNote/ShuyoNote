@@ -351,13 +351,8 @@ ShuyoNote/
 
 ## 📄 License
 
-本项目采用 [GNU Affero General Public License v3.0](LICENSE)（**AGPL-3.0**），全文见仓库根 `LICENSE` 文件。
+本仓库（ShuyoNote 客户端）以 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）开源，全文见仓库根 `LICENSE`。
 
-**为什么是 AGPL-3.0 而不是 MIT**：
+AGPL-3.0 的要点：无论分发副本，还是通过**网络**向第三方提供服务，均须以相同许可向接收方提供对应源码——与「本地优先、数据自持、可自建同步」的项目定位一致。
 
-- ShuyoNote 是**本地优先**应用，客户端本体采用 AGPL-3.0。
-- **AGPL-3.0** 在网络交互（网络服务 / 托管运行）时同样触发放大条款——**无论以何种方式分发（本地、网络、托管），只要基于客户端代码对外提供，都必须以 AGPL-3.0 开放对应源码**。这正好匹配「本地优先 + 可自建同步」的开源承诺。
-- 自建同步服务端 **sync-server** 已迁移为**独立商业授权仓库**（[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)），不再随本仓库按 AGPL 分发；客户端仍为 AGPL-3.0。
-- **LGPL** 面向「库」，不适合作为整体应用（含前端 + Rust 后端多可执行文件）的许可证；**GPL-3.0** 不具备 AGPL 的网络服务条款，故选择约束力最强的 **AGPL-3.0**。
-
-> 简述：你可以自由使用、修改、分发 ShuyoNote，或将其作为服务运行；但若向他人提供修改版/网络服务，你必须以相同许可（AGPL-3.0）开放该修改与对应源码。详见 [LICENSE](LICENSE) 全文。
+同步服务端 **sync-server** 为**独立商业组件**，按其商业许可分发（见 [shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)），不适用本许可。
