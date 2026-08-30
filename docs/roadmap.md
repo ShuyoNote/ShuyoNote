@@ -49,6 +49,7 @@
 | **P3** | **PDF 批注** | 思源 / MarginNote / LiquidText | 知识工作者高频硬需求；「批注即块」能进反链/搜索/关系图；2026 破局点在「AI 帮读」 | ✅ **M24**（v1.59.178 起，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)） |
 | **P2** | **帮助系统** | Notion / 思源 | 本地优先/键盘驱动的四层帮助（就地提示+快捷键面板+内置指南页）；帮助页=可编辑笔记，复用命令面板/模板/`shortcuts.ts` | ✅ M25（v1.59.177，[方案](plans/2026-08-27-help-system-plan.md)，P0/P1 落地） |
 | **P2** | **公式（数学）** | Notion / FlowUs / wolai | 正文行内 `$…$` + 块级 `$$…$$` 数学公式，KaTeX 渲染（懒加载）；理工科笔记/论文/教程常见需求 | ✅ M26（[方案](plans/2026-08-30-formula-plan.md)，块级 + 行内落地） |
+| **P0** | **团队版（自建协作）** | Notion 团队版 / 语雀 / 飞书知识库 | 多用户 + 权限 + 块级协同；不接外部通讯 App，全自建 | 规划（M27，[方案](plans/2026-08-30-team-edition-plan.md)） |
 
 ## 3. 里程碑规划
 
@@ -226,6 +227,9 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 > 关联：块级范式同[绘图方案](plans/2026-08-24-drawing-solution-design.md)/[Mermaid 块]；行内范式同[双链 PageLink](plans/2026-08-30-pdf-reader-ai-plan.md)/`PageLinkNode`。
 > **M26 扩展 — 公式识别**：给公式编辑器弹窗加**「图片识别」**（上传/拖入/粘贴含公式图片 → LaTeX）与**「手写识别」**（canvas 手写板 → LaTeX）。复用 `ocrVision.ts` 的 `ocrWithVision`（视觉大模型，Ollama/OpenAI 兼容，不新增后端）；识别结果自动回填 textarea、可改后提交（保留人工确认）；不接付费识别服务、不做云端限流、依赖用户已配置视觉模型。见[公式识别方案](plans/2026-08-30-formula-recognition-plan.md)（**已实现**：`formulaVision.ts` + `FormulaHandwritePad` 手写板 + `FormulaEditorDialog` 🖼/✎ 入口）。
 
+### M27 — 团队版（自建协作，不接外部通讯 App，[方案](plans/2026-08-30-team-edition-plan.md)）
+> 把 ShuyoNote 从「单用户 · 多设备 · 本地优先」演进为「**可自建团队知识库**」——**不接微信/企业微信/钉钉**，账号、通知、讨论、采集、协作全自建；sync-server 演进为团队服务端。三根柱子：**账号/租户（多用户）、权限模型、块级协同编辑**。子里程碑 M27.1 账号+租户 → M27.2 权限 → M27.3 块级同步 → M27.4 实时 → M27.5 评论/@/通知 → M27.6 审计 → M27.7 采集 → M27.8 部署计费 → M27.9 移动端。**未实装（规划）**；E2E 取舍（§5.3）与协同终态（块级 LWW vs CRDT）为待拍板决策点。
+
 ## 4. 竞品差距跟踪
 
 | 维度 | 当前差距 | 计划 |
@@ -247,3 +251,4 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**评估*
 | PDF 阅读/批注 | 仅 PDF 导出，无阅读/批注 | **M24 PDF 批注 + 阅读器 + OCR/AI 增强**（✅，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)：批注/摘录成块/AI 帮读 + 连续滚动/护眼/离线 OCR/AI 识别/目录/朗读） |
 | 帮助/上手 | 靠占位符/tooltip/命令面板，无体系化帮助 | **M25 帮助系统**（[方案](plans/2026-08-27-help-system-plan.md)，规划：就地提示 + 快捷键面板 + 内置「使用指南」页） |
 | 数学公式 | 无正文公式渲染 | **M26 公式**（[方案](plans/2026-08-30-formula-plan.md)：块级 `$$…$$` + 行内 `$…$`，KaTeX 懒加载；已落地） |
+| 团队协作 / 多用户 | 单用户、无账号、无权限、无实时协同 | **M27 团队版**（账号/租户 + 权限 + 块级协同，全自建，[方案](plans/2026-08-30-team-edition-plan.md)，规划） |

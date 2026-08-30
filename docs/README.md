@@ -74,6 +74,7 @@ CHANGELOG.md             # 版本变更日志
 | **M24** | **PDF 批注** | ✅（阶段1/3 + 阅读器 + OCR/AI 增强已落地；阶段2 写回待做） | [PDF 批注方案](plans/2026-08-27-pdf-annotation-plan.md) + [PDF 阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md) |
 | **M25** | **帮助系统** | ✅（P0/P1） | [帮助系统方案](plans/2026-08-27-help-system-plan.md) |
 | **M26** | **公式（数学）** | ✅（块级+行内） | [公式方案](plans/2026-08-30-formula-plan.md) |
+| **M27** | **团队版（自建协作）** | 规划 | [团队版方案](plans/2026-08-30-team-edition-plan.md) |
 
 > 另：非里程碑功能——**分栏**（`/分栏`，见 [分栏方案](plans/2026-08-26-columns-plan.md)）、绘图块（归 M22）、内联「+」插入块等。完整现状与里程碑细节见 [roadmap.md](roadmap.md)。
 
@@ -117,6 +118,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-27-update-ocr-acceptance.md](plans/2026-08-27-update-ocr-acceptance.md) | **自动升级 / OCR · 手动验收清单（v1.59.178）**：自动升级（About 检查更新：离线降级/已是最新/有新版本 + 桌面更新器接线 + 发布管线前置）+ OCR 兜底（无文本层扫描件「OCR 识别本页」→ 识别结果面板）+ 精确划词 + 已知边界（签名发布/离线 langPath/OCR 文本未接划词）。**真机逐条勾选** |
 | [plans/2026-08-30-md-in-app-open-plan.md](plans/2026-08-30-md-in-app-open-plan.md) | **「文件夹内 MD 文档直接应用内打开」利弊分析**：现状（`.md` 走 text/ 分支提示外部打开）+ 利（闭环/一致/可进知识体系/成本低）+ 弊（看 vs 转的角色歧义/文件页面界限/编辑语义/md 多样性/大文件）+ 建议（**应用内只读渲染 + 明显「转为笔记」按钮**，不默认自动转页面）+ 待拍板 + 结论（**已按建议实现**，见[md 预览实现](plans/2026-08-30-md-preview-plan.md)） |
 | [plans/2026-08-30-md-preview-plan.md](plans/2026-08-30-md-preview-plan.md) | **「MD 应用内预览」实现记录（已实现，叠加于 v1.63.0）**：点侧边栏/文件夹内 `.md` 文件名 → 应用内只读预览（铺满主内容区、不遮侧边栏）+「转为笔记」；`mermaid` 代码块渲染为图、随明/暗主题自适应、切换主题即时刷新；弹窗层级提升、打开页面自动关闭预览。含共享 store / App 级弹窗（body portal）/ offscreen md→JSON / mdToHtml mermaid 块 / mermaid 主题响应式 / 请求端接入 / 关键坑（flex 子项、属性转义、源码保留、z-index）与验收 |
+| [plans/2026-08-30-team-edition-plan.md](plans/2026-08-30-team-edition-plan.md) | **「团队版（自建协作，不接外部通讯 App）」方案**：账号/租户、权限模型、块级协同编辑三根柱子 + 自建通知/讨论/采集；sync-server 演进为团队服务端；子里程碑 M27.1–M27.9（**规划**） |
 
 ## 竞品对比
 
