@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4D8DFF"/>
+      <stop offset="1" stop-color="#2952CC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 应用图标底：连续圆角方形（squircle） -->
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"/>
+
+  <!-- 翻开的笔记：两页 -->
+  <rect x="248" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+  <rect x="526" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+
+  <!-- 左页正文行 -->
+  <rect x="290" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+  <rect x="290" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+  <rect x="290" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+
+  <!-- 右页正文行 -->
+  <rect x="568" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+  <rect x="568" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+  <rect x="568" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+
+  <!-- 灵感火花（四角星） -->
+  <path d="M 770 238
+           Q 775.4 262.6, 800 268
+           Q 775.4 273.4, 770 298
+           Q 764.6 273.4, 740 268
+           Q 764.6 262.6, 770 238 Z"
+        fill="#FFFFFF"/>
+</svg>
