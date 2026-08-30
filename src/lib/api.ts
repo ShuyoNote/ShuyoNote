@@ -211,7 +211,8 @@ export const api = {
   restoreVersion: (versionId: string) => invoke<PageDetail>("restore_version", { versionId }),
   exportBackup: (destPath: string) =>
     invoke<{ path: string; size: number }>("export_backup", { destPath }),
-  importBackup: (srcPath: string) => invoke<void>("import_backup", { srcPath }),
+  importBackup: (srcPath: string) =>
+    invoke<{ imported: number; renamed: number }>("import_backup", { srcPath }),
   exportWorkspace: (destPath: string) =>
     invoke<{ path: string; size: number; pages: number; attachments: number }>("export_workspace", { destPath }),
   exportWiki: (destPath: string) =>

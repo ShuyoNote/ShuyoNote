@@ -84,14 +84,19 @@ export function BackupButton() {
         multiple: false,
       });
       if (!path) return;
-      if (!(await confirmDialog({ title: "导入备份", message: "导入将覆盖当前全部数据（页面、标签、附件），且不可撤销。确定继续？", danger: true }))) return;
+      if (!(await confirmDialog({ title: "导入备份", message: "导入会把备份中的空间合并进来（作为新空间，不覆盖现有空间），附件按内容去重。确定继续？" }))) return;
       setBusying("正在导入备份…");
-      await api.importBackup(path as string);
+      const res = await api.importBackup(path as string);
       await loadPages();
-      // Reload workspaces so the sidebar space name/list react to the restored DB
-      // (import_backup may have changed the active workspace identity).
+      // Reload workspaces so the sidebar space name/list react to the imported
+      // spaces (import_backup registers them in meta; it never overwrites).
       useSpaceStore.getState().load();
-      toast("备份导入完成", "success");
+      toast(
+        res.renamed > 0
+          ? `备份导入完成：新增 ${res.imported} 个空间（其中 ${res.renamed} 个与现有冲突，已作为新空间导入）`
+          : `备份导入完成：新增 ${res.imported} 个空间`,
+        "success",
+      );
     } catch (e) {
       toast(`导入失败：${e}`, "error");
     } finally {
@@ -131,7 +136,7 @@ export function BackupButton() {
             }}
           >
             <UploadIcon width={14} height={14} />
-            从备份恢复（覆盖全库）
+            导入备份（合并，不覆盖现有空间）
           </button>
         </div>
       )}

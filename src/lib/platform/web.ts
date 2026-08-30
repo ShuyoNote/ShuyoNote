@@ -94,13 +94,6 @@ export const insertAttachmentRow = (
   store.run(`INSERT INTO attachments (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
 };
 
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-
 // Re-export the sqlite store hooks so a test harness (or another shell) can wire
 // the wasm URL + bytes and an fs/memory persist adapter without importing
 // sqliteStore directly.
@@ -1701,7 +1694,9 @@ function makeInvoke(store: SqliteStore) {
       return { path: name, size: zip.length } as T;
     }
     if (cmd === "import_backup") {
-      // Read the zip (browser picker registered it by name, or Node map).
+      // Merge import: each space in the backup (spaces/<id>.db, or a legacy single
+      // shuyonote.db) is imported as a NEW space (never overwrites existing ones),
+      // and attachments are merged by content-addressed hash (same hash === bytes).
       const src = String(a.srcPath ?? "");
       const reg = fileRegistry.get(baseName(src));
       if (!reg) throw new Error("备份文件不存在");
@@ -1713,43 +1708,56 @@ function makeInvoke(store: SqliteStore) {
       try {
         files = unzipSync(reg.bytes);
       } catch {
-        // Not a zip — fall back to the old JSON container if present.
-        const text = new TextDecoder().decode(reg.bytes);
-        const container = JSON.parse(text);
-        if (container.format === "shuyonote-web-backup" && typeof container.db === "string") {
-          files = { "shuyonote.db": base64ToBytes(container.db) };
-          for (const [hash, b64] of Object.entries(container.attachments ?? {})) {
-            files[`attachments/${hash}`] = base64ToBytes(String(b64));
-          }
-        } else {
-          throw new Error("不是有效的 ShuyoNote 备份");
-        }
+        throw new Error("不是有效的备份包");
       }
-      const dbBytes = files["shuyonote.db"];
-      if (!dbBytes) throw new Error("备份缺少数据库文件");
+      const snapKeys = Object.keys(files).filter(
+        (k) => (k.startsWith("spaces/") && k.endsWith(".db")) || k === "shuyonote.db",
+      );
+      if (snapKeys.length === 0) throw new Error("备份缺少数据库文件");
 
-      emit(1, 3, "恢复数据库…");
-      await store.restore(dbBytes);
-      // Reconcile the multi-space catalog + active id with the restored DB so the
-      // sidebar space name / list reflect the backup, not the pre-restore catalog.
-      await reconcileAfterRestore(store);
+      const existingIds = new Set((await spaceStore.listMetas()).map((m) => m.id));
+      let imported = 0;
+      let renamed = 0;
 
-      // Import attachment bytes one at a time, yielding + reporting progress so a
-      // backup with many/large files shows a real advancing bar instead of freezing.
-      const attEntries = Object.entries(files).filter(([k]) => k.startsWith("attachments/") && !k.endsWith("/"));
-      const total = attEntries.length;
-      let done = 0;
-      let bytesDone = 0;
-      for (const [k, bytes] of attEntries) {
-        const hash = k.slice("attachments/".length);
-        await blobStore.put(hash, bytes);
-        done++;
-        bytesDone += bytes.length;
-        emit(2 + (total === 0 ? 1 : Math.round((done / total) * 1)), total, `恢复附件 ${done}/${total}…`);
-        if (done % 8 === 0) await new Promise((r) => setTimeout(r, 0));
+      for (let i = 0; i < snapKeys.length; i++) {
+        const k = snapKeys[i];
+        const dbBytes = files[k];
+        const fromId = k.startsWith("spaces/") ? k.slice("spaces/".length, -3) : null;
+        const now = Date.now();
+        // Persist the CURRENT active space before we clobber the live store with
+        // the imported snapshot (so its recent edits aren't lost on switch-back).
+        const activeId = getActiveWsId();
+        if (activeId) await spaceStore.putSnapshot(activeId, store.snapshot());
+
+        await store.restore(dbBytes);
+        // Read the space's own name/theme/icon before re-keying to a fresh id.
+        const meta0 = store.query<{ name: string; theme: string; icon: string }>(
+          "SELECT name, COALESCE(theme,'') AS theme, COALESCE(icon,'') AS icon FROM workspaces ORDER BY created_at ASC LIMIT 1",
+        )[0];
+        const newId = uid();
+        const name = meta0?.name || String(a.name ?? "导入空间");
+        const theme = meta0?.theme ?? null;
+        const icon = meta0?.icon ?? "";
+        if (fromId && existingIds.has(fromId)) renamed++;
+        store.run("DELETE FROM workspaces");
+        store.run(
+          "INSERT INTO workspaces (id, name, theme, icon, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+          [newId, name, theme, icon, now, now],
+        );
+        await spaceStore.putSnapshot(newId, store.snapshot());
+        await spaceStore.putMeta({ id: newId, name, theme, icon, sort_order: now, created_at: now, updated_at: now });
+        imported++;
+        emit(i + 1, snapKeys.length, `导入空间 ${i + 1}/${snapKeys.length}…`);
       }
-      emit(3, 3, "恢复完成");
-      return undefined as T;
+
+      // Merge attachment bytes (content-addressed: same hash === same bytes).
+      const attEntries = Object.entries(files).filter(([kk]) => kk.startsWith("attachments/") && !kk.endsWith("/"));
+      for (let i = 0; i < attEntries.length; i++) {
+        const [kk, bytes] = attEntries[i];
+        await blobStore.put(kk.slice("attachments/".length), bytes);
+        if (i % 8 === 0) await new Promise((r) => setTimeout(r, 0));
+      }
+      return { imported, renamed } as T;
     }
     if (cmd === "export_workspace") {
       // Export the current (single) workspace as a self-contained zip matching the
@@ -2009,42 +2017,7 @@ function workspaceColumns(store: SqliteStore): string[] {
 // (import_backup overwrites the whole DB). The restored DB carries its own
 // workspace row(s); re-sync catalog + active id + its snapshot so the sidebar name
 // and workspace list reflect the restored data, not the pre-restore catalog.
-async function reconcileAfterRestore(store: SqliteStore): Promise<void> {
-  type WsRow = { id: string; name: string; theme: string | null; icon: string; created_at?: number; updated_at?: number };
-  const cols = workspaceColumns(store);
-  // SELECT only the columns that actually exist (web-native table has no
-  // created_at/updated_at; a desktop-restored table may).
-  const selectCols = ["id", "name", "theme", "icon"]
-    .concat(cols.includes("created_at") ? ["created_at"] : [])
-    .concat(cols.includes("updated_at") ? ["updated_at"] : []);
-  const rows = store.query<WsRow>(`SELECT ${selectCols.join(", ")} FROM workspaces`) as any[];
-  const now = Date.now();
-  if (rows.length === 0) {
-    // Restored DB has no workspace row — seed the default one.
-    const id = "active";
-    const ids = ["id", "name", "theme", "icon"];
-    const vals: (string | number | null)[] = [id, "我的工作空间", null, ""];
-    if (cols.includes("created_at")) { ids.push("created_at"); vals.push(now); }
-    if (cols.includes("updated_at")) { ids.push("updated_at"); vals.push(now); }
-    store.run(`INSERT INTO workspaces (${ids.join(", ")}) VALUES (${ids.map(() => "?").join(", ")})`, vals);
-    rows.push({ id, name: "我的工作空间", theme: null, icon: "", created_at: now, updated_at: now });
-  }
 
-  // Rebuild the catalog from the (restored) workspace rows.
-  for (const r of rows) {
-    await spaceStore.putMeta({
-      id: r.id, name: r.name ?? "我的工作空间", theme: r.theme, icon: r.icon ?? "",
-      sort_order: r.created_at ?? now, created_at: r.created_at ?? now, updated_at: r.updated_at ?? now,
-    });
-  }
-  // The active workspace becomes the first restored row (backup has one active space).
-  const activeId = rows[0].id;
-  await spaceStore.setActiveId(activeId);
-  useSpaceCatalog.getState().setActiveId(activeId);
-  // Persist the restored DB as the active space's snapshot so a later switch-back
-  // and a reload both reflect the restored data.
-  await spaceStore.putSnapshot(activeId, store.snapshot());
-}
 
 function getSharedStore(): Promise<SqliteStore> {
   if (!sharedInit) {
