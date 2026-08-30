@@ -14,6 +14,7 @@ import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
+import { useFilePreview } from "../store/filePreview";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import * as reorder from "../lib/treeReorder";
@@ -253,6 +254,11 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
             // PDF 文件节点：直接进内置阅读器做批注/阅读，而不是用默认程序打开。
             if (f.mime === "application/pdf") {
               void usePdfReader.getState().openPdf(f.id, f.name);
+              return;
+            }
+            // MD 文件节点：直接在应用内打开只读预览（铺满）。
+            if (f.mime === "text/markdown") {
+              useFilePreview.getState().open(f);
               return;
             }
             platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
 import { detectMermaidSyntax, mermaidSyntaxOptions } from "../../lib/mermaid";
+import { useResolvedTheme } from "../../store/theme";
 
 export type SerializedMermaidNode = Spread<
   {
@@ -24,6 +25,8 @@ export type SerializedMermaidNode = Spread<
 >;
 
 let mermaidReady = false;
+// Shared across MermaidView instances: the theme mermaid was last initialised with.
+const mermaidThemeRef = { current: "" };
 
 export class MermaidNode extends DecoratorNode<JSX.Element> {
   __src: string;
@@ -130,8 +133,10 @@ function MermaidView({
   const [editSrc, setEditSrc] = useState(src);
   const [editSyntax, setEditSyntax] = useState(syntax || detectMermaidSyntax(src));
   const renderSeq = useRef(0);
+  const resolved = useResolvedTheme(); // re-render mermaid when the theme changes
+  const mermaidTheme: "dark" | "default" = resolved === "dark" ? "dark" : "default";
 
-  // Render mermaid lazily (code-split) whenever src/syntax change.
+  // Render mermaid lazily (code-split) whenever src/syntax theme change.
   useEffect(() => {
     const seq = ++renderSeq.current;
     if (!src.trim() || !editing) {
@@ -143,9 +148,10 @@ function MermaidView({
       try {
         const mod = await import("mermaid");
         const mermaid = mod.default;
-        if (!mermaidReady) {
-          mermaid.initialize({ startOnLoad: false, theme: "default" });
+        if (!mermaidReady || mermaidThemeRef.current !== mermaidTheme) {
+          mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
           mermaidReady = true;
+          mermaidThemeRef.current = mermaidTheme;
         }
         const id = `sn-${Math.random().toString(36).slice(2, 10)}`;
         const { svg: out } = await mermaid.render(id, src);
@@ -159,7 +165,7 @@ function MermaidView({
       }
     }
     render();
-  }, [src, editing]);
+  }, [src, editing, mermaidTheme]);
 
   const startEdit = useCallback(() => {
     setEditSrc(src);

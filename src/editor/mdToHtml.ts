@@ -134,8 +134,18 @@ export function mdToHtml(text: string): string {
         j++;
       }
       const code = body.join("\n");
-      const langAttr = lang ? ` class="language-${lang}"` : "";
-      out.push(`<pre><code${langAttr}>${escapeHtml(code)}</code></pre>`);
+      // Mermaid diagrams are rendered as a dedicated async-rendered block, not a
+      // raw <pre>. We keep the source in a hidden .fm-md-mermaid-src <pre> and
+      // render the SVG into a sibling .fm-md-mermaid-svg, so a theme switch can
+      // re-read the source and re-render (the source is never replaced).
+      if (/^mermaid$/i.test(lang)) {
+        out.push(
+          `<div class="fm-md-mermaid"><pre class="fm-md-mermaid-src">${escapeHtml(code)}</pre><div class="fm-md-mermaid-svg"></div></div>`,
+        );
+      } else {
+        const langAttr = lang ? ` class="language-${lang}"` : "";
+        out.push(`<pre><code${langAttr}>${escapeHtml(code)}</code></pre>`);
+      }
       i = j + 1;
       continue;
     }

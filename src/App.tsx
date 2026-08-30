@@ -10,6 +10,7 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
+import { FilePreviewDialog } from "./components/FilePreviewDialog";
 import { PdfReader } from "./components/PdfReader";
 import { FormulaEditorDialog } from "./components/FormulaEditorDialog";
 import { CoverPicker } from "./components/CoverPicker";
@@ -355,6 +356,7 @@ function App() {
         <CommandPalette />
         <ShortcutsPanel />
         <AboutDialog />
+        <FilePreviewDialog />
         <PdfReader />
         <FormulaEditorDialog />
         <Toaster />
@@ -411,6 +413,7 @@ function App() {
       <RightRail />
       <ShortcutsPanel />
       <AboutDialog />
+      <FilePreviewDialog />
       <PdfReader />
       <FormulaEditorDialog />
     </div>

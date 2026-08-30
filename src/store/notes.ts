@@ -4,6 +4,7 @@ import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
 import { useTemplateCenterStore } from "./templateCenter";
 import { useFileManagerStore } from "./fileManager";
+import { useFilePreview } from "./filePreview";
 
 interface NoteState {
   pages: PageMeta[];
@@ -57,6 +58,8 @@ export const useNotes = create<NoteState>((set, get) => ({
 
   openPage: async (id) => {
     try {
+      // Opening a page closes any open file (md) preview.
+      useFilePreview.getState().close();
       const current = await api.getPage(id);
       set({ currentId: id, current, error: null });
       // Opening a page/database switches back to the editor view and closes any

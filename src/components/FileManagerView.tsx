@@ -6,6 +6,7 @@ import { confirmDialog } from "../store/confirm";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { usePdfReader } from "../store/pdfReader";
+import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
@@ -69,7 +70,6 @@ export function FileManagerView() {
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
-  const [preview, setPreview] = useState<AttachmentMeta | null>(null);
   const [dragging, setDragging] = useState(false);
   const [moving, setMoving] = useState<AttachmentMeta | null>(null);
   const [versionTarget, setVersionTarget] = useState<AttachmentMeta | null>(null);
@@ -523,6 +523,9 @@ export function FileManagerView() {
                         // M24 PDF 批注：点击文件名直达内置阅读器（而非系统外部应用）。
                         if (row.file!.mime === "application/pdf") {
                           void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
+                        } else if (row.file!.mime === "text/markdown") {
+                          // MD 文件名：直接在应用内打开只读预览（铺满）。
+                          useFilePreview.getState().open(row.file!);
                         } else {
                           openFile(row.file!.path);
                         }
@@ -582,17 +585,6 @@ export function FileManagerView() {
                       >
                         ↔
                       </button>
-                      {row.file!.mime !== "application/pdf" && (
-                        <button
-                          title="预览"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPreview(row.file!);
-                          }}
-                        >
-                          👁
-                        </button>
-                      )}
                       <button
                         title="下载"
                         onClick={(e) => {
@@ -701,50 +693,6 @@ export function FileManagerView() {
           <button className="fm-move-item fm-move-cancel" onClick={() => setMoving(null)}>
             取消
           </button>
-        </div>
-      )}
-
-      {preview && (
-        <div className="fm-preview-overlay" onClick={() => setPreview(null)}>
-          <div className="fm-preview" onClick={(e) => e.stopPropagation()}>
-            <div className="fm-preview-head">
-              <span className="fm-preview-name">{preview.name}</span>
-              <span className="fm-preview-size">{formatSize(preview.size)}</span>
-              {preview.mime === "application/pdf" && (
-                <button className="fm-preview-read" onClick={() => usePdfReader.getState().openPdf(preview.id, preview.name)}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                    <path d="M14 3v6h6" />
-                    <path d="M9 14l3-3 2.5 2.5-3 3z" />
-                    <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
-                  </svg>
-                  <span>阅读并批注</span>
-                </button>
-              )}
-              <button className="fm-preview-close" title="关闭" onClick={() => setPreview(null)}>
-                ×
-              </button>
-            </div>
-            <div className="fm-preview-body">
-              {preview.mime.startsWith("image/") && preview.path ? (
-                <img src={platform.asset.convertFileSrc(preview.path)} alt={preview.name} />
-              ) : preview.mime.startsWith("video/") && preview.path ? (
-                <video src={platform.asset.convertFileSrc(preview.path)} controls />
-              ) : preview.mime.startsWith("audio/") && preview.path ? (
-                <audio src={platform.asset.convertFileSrc(preview.path)} controls />
-              ) : preview.mime === "application/pdf" && preview.path ? (
-                <iframe src={platform.asset.convertFileSrc(preview.path)} title={preview.name} />
-              ) : preview.mime.startsWith("image/") || preview.mime.startsWith("video/") || preview.mime.startsWith("audio/") ? (
-                <div className="fm-preview-unsupported">预览地址不可用，请在文件夹中打开查看。</div>
-              ) : preview.mime.startsWith("text/") ? (
-                <div className="fm-preview-unsupported">文本文件：请在文件夹中打开查看。</div>
-              ) : (
-                <div className="fm-preview-unsupported">
-                  该文件类型暂不支持内嵌预览，可在文件夹中打开或用系统打开。
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </div>
