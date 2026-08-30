@@ -191,6 +191,7 @@ export function GraphView() {
   const simRef = useRef<SimNode[]>([]);
   const edgesRef = useRef<GraphEdge[]>([]);
   const viewRef = useRef({ x: 0, y: 0, k: 1 });
+  const userMovedRef = useRef(false);
   const dragRef = useRef<{ id: string; scx: number; scy: number; nx: number; ny: number } | null>(null);
   const panRef = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(null);
   const movedRef = useRef(false);
@@ -201,12 +202,23 @@ export function GraphView() {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-    update();
-    const ro = new ResizeObserver(update);
+    const fit = () => {
+      const rect = el.getBoundingClientRect();
+      const w = rect.width, h = rect.height;
+      if (w <= 0 || h <= 0) return;
+      if (userMovedRef.current) return;
+      const k = 1.2;
+      const x = w / 2 - (w / 2) * k;
+      const y = h / 2 - (h / 2) * k;
+      viewRef.current = { x, y, k };
+      setSize({ w, h });
+      setFrame((f) => f + 1);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [graph]);
 
   // Load graph data.
   useEffect(() => {
@@ -222,6 +234,7 @@ export function GraphView() {
     if (!svg) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      userMovedRef.current = true;
       const rect = svg.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -417,6 +430,7 @@ export function GraphView() {
 
   const beginNodeDrag = (id: string, e: React.PointerEvent) => {
     e.stopPropagation();
+    userMovedRef.current = true;
     const node = simRef.current.find((n) => n.id === id);
     if (!node) return;
     dragRef.current = { id, scx: e.clientX, scy: e.clientY, nx: node.x, ny: node.y };
@@ -425,6 +439,7 @@ export function GraphView() {
   };
 
   const onSvgPointerDown = (e: React.PointerEvent) => {
+    userMovedRef.current = true;
     panRef.current = { sx: e.clientX, sy: e.clientY, vx: viewRef.current.x, vy: viewRef.current.y };
     movedRef.current = false;
     svgRef.current?.setPointerCapture(e.pointerId);
@@ -459,6 +474,7 @@ export function GraphView() {
   };
 
   const zoomBy = (factor: number) => {
+    userMovedRef.current = true;
     const v = viewRef.current;
     const k2 = Math.min(3, Math.max(0.2, v.k * factor));
     const cx = size.w / 2;
@@ -471,9 +487,22 @@ export function GraphView() {
     setFrame((f) => f + 1);
   };
 
-  const resetView = () => {
-    viewRef.current = { x: 0, y: 0, k: 1 };
+  // Fit the graph into the container, zoomed one step: content centre is aligned
+  // to the container centre so the graph appears centred (not stuck top-left),
+  // and scaled up a notch (k=1.2) for a comfortable initial view.
+  const fitToView = (k = 1.2) => {
+    const { w, h } = size;
+    // Content (world) centre is at (w/2, h/2); after translate(x,y) scale(k) that
+    // world point lands at (w/2*k + x, h/2*k + y). Set x/y so it sits at (w/2,h/2).
+    const x = w / 2 - (w / 2) * k;
+    const y = h / 2 - (h / 2) * k;
+    viewRef.current = { x, y, k };
     setFrame((f) => f + 1);
+  };
+
+  const resetView = () => {
+    userMovedRef.current = false;
+    fitToView(1.2);
   };
 
   const openNode = (n: SimNode) => {
@@ -500,8 +529,8 @@ export function GraphView() {
     <div className="graph-view" ref={containerRef}>
       <svg
         ref={svgRef}
-        width={size.w}
-        height={size.h}
+        width="100%"
+        height="100%"
         className="graph-svg"
         onPointerDown={onSvgPointerDown}
         onPointerMove={onPointerMove}

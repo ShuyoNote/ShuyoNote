@@ -10,7 +10,10 @@ import {
   type Spread,
 } from "lexical";
 import type { JSX } from "react";
-import { InlineDrawing } from "../../components/InlineDrawing";
+import { Suspense, lazy } from "react";
+// Lazy-load Excalidraw so it's not in the first-paint bundle. Only a page that
+// actually contains a drawing block pays the (large) cost of loading the scene.
+const InlineDrawing = lazy(() => import("../../components/InlineDrawing"));
 
 export type SerializedDrawingNode = Spread<
   {
@@ -126,7 +129,11 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   }
 
   decorate(): JSX.Element {
-    return <InlineDrawing node={this} />;
+    return (
+      <Suspense fallback={<div className="editor-drawing-placeholder">加载绘图…</div>}>
+        <InlineDrawing node={this} />
+      </Suspense>
+    );
   }
 
   exportDOM(_editor: LexicalEditor): DOMExportOutput {
