@@ -15,6 +15,9 @@ export interface GuidePage {
   title: string;
   icon: string;
   blocks: Block[];
+  /** Optional parent-page title (defaults to the main index) for nesting the
+   *  topical page under another topical page in the tree, e.g. 数学公式 under 编辑器. */
+  parent?: string;
 }
 
 type Block = Record<string, any>;
@@ -104,12 +107,14 @@ function editor(): Block[] {
     bullet([
       "标题 / 段落 / 列表 / 待办 / 引用 / 代码块 / 分隔线。",
       "表格、分栏（/分栏）、绘图（/绘图：Excalidraw + mermaid + AI 文生图）、图片、网址书签。",
+      "高级块各有专题：数学公式 / 绘图 / 分栏。",
     ]),
     h("数学公式", "h2"),
     bullet([
       "块级 `/公式`（或 `$$…$$`）渲染为 KaTeX 数学公式；行内 `$…$` 也有内联渲染。",
       "公式编辑器有希腊字母 / 运算符 / 关系式 / 式子 / 箭头 / 化学 六类符号面板；点击公式块即可再次编辑。",
       "左下有 🖼 / ✎：**识别图片中的公式**（上传/拖入/粘贴含公式图片 → 自动转 LaTeX）与**识别手写公式**（手写板书写 → 自动转 LaTeX）——需在 AI 设置配置支持图像的模型。",
+      `完整用法与符号示例 → ${link("数学公式")}。`,
     ]),
     h("行内格式", "h2"),
     bullet([
@@ -127,6 +132,88 @@ function editor(): Block[] {
     rule(),
     h("下一步", "h2"),
     para(`编辑器内双链已可点击跳转 → ${link("核心概念")}；按 / 插入块，Ctrl+K 找所有能力。`),
+  ];
+}
+
+function equation(): Block[] {
+  return [
+    h("数学公式", "h1"),
+    callout("块级 / 行内公式，用 LaTeX 书写并渲染为 KaTeX；配 Notion 风格符号面板，还能把图片 / 手写公式自动转成 LaTeX。"),
+    h("插入方式", "h2"),
+    bullet([
+      "块级：输入 `/公式`，或直接写 `$$…$$`（`$$` 中的内容渲染为独立的公式块）。",
+      "行内：正文里写 `$…$`（如 `$x^2$`），内嵌在一行文字中；用 `$` 包裹即可。",
+    ]),
+    h("公式编辑器", "h2"),
+    bullet([
+      "点击公式块即可再次编辑：Notion 风格的符号面板分 六类（希腊字母 / 运算符 / 关系式 / 式子 / 箭头 / 化学）。",
+      "左侧实时预览，`Ctrl+Enter` 提交；主弹窗紧贴公式块下方弹出，符号面板向上展开。",
+    ]),
+    h("识别图片 / 手写公式", "h2"),
+    bullet([
+      "`🖼`（编辑器左下）：上传 / 拖入 / 粘贴含公式图片 → 自动转成 LaTeX。",
+      "`✎`（编辑器左下）：打开手写板，用笔画出公式 → 自动转成 LaTeX。",
+      "识别会**回填到输入框**、可修改后再提交（保留人工确认）；需在 AI 设置中配置支持图像的模型。",
+    ]),
+    h("示例", "h2"),
+    bullet([
+      "希腊字母：`\\alpha \\beta \\gamma` → α β γ；`\\Delta` → Δ。",
+      "式子：`\\frac{a}{b}`、`x^{2}`、`\\sqrt{x}`、`\\sum_{i=1}^{n}`。",
+      "化学：`\\mathrm{H_2O}`、`\\mathrm{CO_2}`。",
+    ]),
+    rule(),
+    h("下一步", "h2"),
+    para(`公式是编辑器的一种块 → ${link("编辑器")}；想了解整体理念 → ${link("核心概念")}。`),
+  ];
+}
+
+function drawing(): Block[] {
+  return [
+    h("绘图", "h1"),
+    callout("手绘白板 + 思维导图/流程图 + AI 文生图，都在「绘图」块里。"),
+    h("插入画布", "h2"),
+    bullet([
+      "输入 `/绘图` 插入一个绘图块，点击进入编辑器；支持缩放 / 平移 / 全屏。",
+      "手绘：Excalidraw 画布（画笔、形状、文字、箭头、连线），适合草图、白板、结构示意。",
+      "文档自动存入页面，图片可导出；离线可用，无需联网。",
+    ]),
+    h("Mermaid 图表", "h2"),
+    bullet([
+      "界面切换到「Mermaid」，书写源码即时渲染：flowchart / sequence / class / state / ER / mindmap / timeline / kanban / gantt / pie 等。",
+      "选择器提供常见语法；图形可直接再编辑源码。",
+    ]),
+    h("AI 文生图", "h2"),
+    bullet([
+      "「AI 绘图」输入描述生成图片（文生图 / 图生图），插入到画布或页面。",
+      "需在 AI 设置中配置并启用支持文生图的模型（OpenAI 兼容端点）；未配置时隐藏。",
+    ]),
+    rule(),
+    h("下一步", "h2"),
+    para(`绘图是编辑器的一种块 → ${link("编辑器")}；数据表格 → ${link("数据库与属性")}。`),
+  ];
+}
+
+function columns(): Block[] {
+  return [
+    h("分栏", "h1"),
+    callout("并排多列布局：把内容放进 2/3/4 列，自由拖拽调宽，适合对比、卡片、双栏排版。"),
+    h("插入分栏", "h2"),
+    bullet([
+      "输入 `/分栏`，在子菜单选 2 / 3 / 4 栏，立即生成并排的栏，每栏都是独立编辑区。",
+      "在栏内输入 / 继续插入任意块（段落、表格、绘图、公式…）。",
+    ]),
+    h("调整栏宽", "h2"),
+    bullet([
+      "拖动两栏之间的分隔线即可调整宽度（比例自适应，总宽不变、不溢出）。",
+      "栏宽默认均分；可随时拖到需要的比例。",
+    ]),
+    h("适用场景", "h2"),
+    bullet([
+      "并排对比资料、双语对照、要点十卡片式排版、图片与文字并排。",
+    ]),
+    rule(),
+    h("下一步", "h2"),
+    para(`分栏组合块 → ${link("编辑器")}；更复杂的图表 → ${link("绘图")}。`),
   ];
 }
 
@@ -314,6 +401,9 @@ function indexBlocks(): Block[] {
       link("快速开始"),
       link("核心概念"),
       link("编辑器"),
+      link("数学公式"),
+      link("绘图"),
+      link("分栏"),
       link("数据库与属性"),
       link("文件夹 = 网盘"),
       link("PDF 阅读与批注"),
@@ -334,6 +424,9 @@ export const GUIDE_PAGES: GuidePage[] = [
   { title: "快速开始", icon: "🚀", blocks: quickStart() },
   { title: "核心概念", icon: "🧭", blocks: coreConcepts() },
   { title: "编辑器", icon: "✍️", blocks: editor() },
+  { title: "数学公式", icon: "∑", blocks: equation(), parent: "编辑器" },
+  { title: "绘图", icon: "✏️", blocks: drawing(), parent: "编辑器" },
+  { title: "分栏", icon: "▥", blocks: columns(), parent: "编辑器" },
   { title: "数据库与属性", icon: "🗂️", blocks: databaseProps() },
   { title: "文件夹 = 网盘", icon: "📁", blocks: netdisk() },
   { title: "PDF 阅读与批注", icon: "📄", blocks: pdfReader() },
@@ -389,25 +482,48 @@ export async function openGuide(): Promise<void> {
   const ids: { title: string; id: string }[] = [];
   if (indexId) ids.push({ title: GUIDE_TITLE, id: indexId });
 
-  // 2) Ensure every topical page exists and sits under the index.
+  // title → id, so a topical page can nest under another (parent: "…") whose id
+  // may only be created later in this same run. We write each id as it lands.
+  const idByTitle = new Map<string, string>(existingByTitle);
+  if (indexId) idByTitle.set(GUIDE_TITLE, indexId);
+
+  // 2) Ensure every topical page exists and sits under its designated parent
+  //    (page.parent, or the main index when unset).
   for (const page of GUIDE_PAGES.slice(1)) {
     let id: string | null | undefined = existingByTitle.get(page.title);
+    const parentTitle = page.parent ?? GUIDE_TITLE;
+    const parentId = idByTitle.get(parentTitle) ?? indexId ?? null;
     if (!id) {
-      id = await notes.createPage(indexId ?? null, {
+      id = await notes.createPage(parentId, {
         title: page.title,
         content_json: pageJson(page.blocks),
         content_text: pageText(page.blocks),
       });
+    } else {
+      // Page already exists: re-save canonical content so the backend rebuilds
+      // block/backlink indexes (the relationship graph depends on them). Same
+      // content — idempotent content-wise — but fills in any missing backlinks
+      // that were never built when this page was first created programmatically.
+      try {
+        await api.savePage({
+          id,
+          content_json: pageJson(page.blocks),
+          content_text: pageText(page.blocks),
+        });
+      } catch {
+        // non-fatal: keep existing content
+      }
     }
     if (id) {
       ids.push({ title: page.title, id });
-      // If the page already exists but isn't a child of the index, move it under.
+      idByTitle.set(page.title, id);
+      // If the page already exists but isn't a child of its parent, move it under.
       const meta = notes.pages.find((p) => p.id === id);
-      if (meta && meta.parent_id !== (indexId ?? null) && indexId) {
-        // Determine a sort order after any existing children.
-        const order = notes.pages.filter((p) => p.parent_id === indexId).length;
+      if (meta && meta.parent_id !== parentId && parentId) {
+        // Determine a sort order after any existing children of the parent.
+        const order = notes.pages.filter((p) => p.parent_id === parentId).length;
         try {
-          await notes.movePage(id, indexId, order);
+          await notes.movePage(id, parentId, order);
         } catch {
           // non-fatal: page still exists, just not nested
         }
