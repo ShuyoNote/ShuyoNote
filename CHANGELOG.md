@@ -2,6 +2,12 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.64.3] - 2026-08-30
+
+### 修复
+
+- **启动诊断内联化（不依赖主 bundle）**：主 JS bundle 加载失败/未挂载时，`index.html` 内联脚本会在 splash 上显示**具体失败资源**或"主 bundle 未执行"诊断——即使主 bundle 404 也能截图定位根因。
+
 ## [1.64.2] - 2026-08-30
 
 ### 修复
