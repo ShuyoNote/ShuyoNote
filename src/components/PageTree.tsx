@@ -594,8 +594,6 @@ export function PageTree({
     close: closeNewMenu,
   } = usePopover<HTMLButtonElement>();
   const [workspaceName, setWorkspaceName] = useState("默认空间");
-  const [editingName, setEditingName] = useState(false);
-  const [nameValue, setNameValue] = useState("");
   const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
   const [colorFor, setColorFor] = useState<string | null>(null);
@@ -649,7 +647,6 @@ export function PageTree({
       if (name) setWorkspaceName(name);
     }
     spaceChooser.close();
-    setEditingName(false);
   };
 
   const createSpace = async () => {
@@ -661,7 +658,6 @@ export function PageTree({
       if (name) setWorkspaceName(name);
     }
     spaceChooser.close();
-    setEditingName(false);
   };
 
   const exportSpace = async () => {
@@ -765,7 +761,6 @@ export function PageTree({
       toast(`已删除工作空间「${name}」`, "success");
     }
     spaceChooser.close();
-    setEditingName(false);
   };
 
   const tree = useMemo(() => buildTree(pages), [pages]);
@@ -876,20 +871,6 @@ export function PageTree({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages, movePage]);
 
-  const commitName = async () => {
-    const v = nameValue.trim();
-    setEditingName(false);
-    if (v && v !== workspaceName && activeSpaceId) {
-      try {
-        await api.renameWorkspace(activeSpaceId, v);
-        setWorkspaceName(v);
-        useSpaceStore.getState().load();
-      } catch (e) {
-        toast(`重命名失败：${e}`, "error");
-      }
-    }
-  };
-
   const startRenameSpace = (s: { id: string; name: string }) => {
     setRenamingSpace(s.id);
     setRenameSpaceValue(s.name);
@@ -923,7 +904,12 @@ export function PageTree({
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       <div className="sidebar-header">
         {!collapsed && (
-          <span className="sidebar-title">
+          <button
+            ref={spaceChooser.triggerRef}
+            className="sidebar-title"
+            onClick={spaceChooser.toggle}
+            title="切换工作空间"
+          >
             <span
               className="logo-mark"
               style={
@@ -934,48 +920,16 @@ export function PageTree({
             >
               {workspaceName.charAt(0) || "S"}
             </span>
-            {editingName ? (
-              <input
-                className="tree-rename-input workspace-rename-input"
-                autoFocus
-                value={nameValue}
-                onChange={(e) => setNameValue(e.target.value)}
-                onBlur={commitName}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commitName();
-                  } else if (e.key === "Escape") {
-                    setEditingName(false);
-                  }
-                }}
-              />
-            ) : (
-              <span
-                className="sidebar-title-text"
-                title="双击重命名空间 · 单点右侧切换"
-                onDoubleClick={() => {
-                  setNameValue(workspaceName);
-                  setEditingName(true);
-                }}
-              >
-                {workspaceName}
-              </span>
-            )}
-            <button
-              ref={spaceChooser.triggerRef}
-              className="sidebar-title-switch"
-              onClick={spaceChooser.toggle}
-              title="切换工作空间"
-            >
-              ▾
-            </button>
-            {spaceChooser.open && (
-              <div
-                ref={spaceChooser.contentRef}
-                className="space-switcher"
-                style={{ top: spaceChooser.pos.top, left: spaceChooser.pos.left }}
-              >
+            <span className="sidebar-title-text">{workspaceName}</span>
+            <span className="sidebar-title-caret">▾</span>
+          </button>
+        )}
+        {spaceChooser.open && (
+          <div
+            ref={spaceChooser.contentRef}
+            className="space-switcher"
+            style={{ top: spaceChooser.pos.top, left: spaceChooser.pos.left }}
+          >
                 <div className="space-switcher-title">切换工作空间</div>
                 {spaces.length === 0 ? (
                   <div className="space-switcher-empty">暂无工作空间</div>
@@ -1098,11 +1052,10 @@ export function PageTree({
                 </div>
               </div>
             )}
-          </span>
-        )}
         </div>
         <div className="sidebar-header-actions">
           <div className="sidebar-actions-group">
+            <SearchPanel />
             <SyncPanel />
             <BackupButton />
             <StoragePanel />
@@ -1162,9 +1115,6 @@ export function PageTree({
         </div>
       {!collapsed && (
         <>
-          <div className="sidebar-search">
-            <SearchPanel />
-          </div>
           <div className="view-switch">
             <button
               className={`view-switch-btn ${view === "notes" ? "view-switch-active" : ""}`}
