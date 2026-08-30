@@ -19,6 +19,10 @@ interface EditorState {
   shortcutsOpen: boolean;
   /** M25 P2 — whether the "关于" dialog is open. */
   aboutOpen: boolean;
+  /** Whether a newer version is available (globally checked on app start). */
+  updateAvailable: boolean;
+  /** Latest available version string (when updateAvailable). */
+  latestVersion: string | null;
   setEditor: (editor: LexicalEditor | null) => void;
   setFocusBlockId: (id: string | null) => void;
   clearFocusBlockId: () => void;
@@ -31,6 +35,7 @@ interface EditorState {
   closeShortcuts: () => void;
   openAbout: () => void;
   closeAbout: () => void;
+  setUpdateAvailable: (v: boolean, latest?: string | null) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -42,6 +47,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   drawingEdit: null,
   shortcutsOpen: false,
   aboutOpen: false,
+  updateAvailable: false,
+  latestVersion: null,
   setEditor: (editor) => set({ editor }),
   setFocusBlockId: (id) => set({ focusBlockId: id }),
   clearFocusBlockId: () => set({ focusBlockId: null }),
@@ -54,4 +61,5 @@ export const useEditorStore = create<EditorState>((set) => ({
   closeShortcuts: () => set({ shortcutsOpen: false }),
   openAbout: () => set({ aboutOpen: true }),
   closeAbout: () => set({ aboutOpen: false }),
+  setUpdateAvailable: (v, latest) => set({ updateAvailable: v, latestVersion: latest ?? null }),
 }));

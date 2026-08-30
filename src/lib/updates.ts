@@ -29,6 +29,20 @@ export function updateStatus(latest: string | null, current: string): UpdateStat
 
 export const RELEASES_URL = "https://gitcode.com/shuyo-cn/ShuyoNote/releases";
 
+/** The stable "latest" release channel that always carries the newest metadata. */
+export const LATEST_MANIFEST_URL = "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json";
+
+/**
+ * Dev-only debug hook: appending `?updateDebug=<version>` to the URL forces an
+ * "update available" state so the red dot and release-notes panel can be
+ * previewed without publishing a real newer release. Returns null in prod (no
+ * query param) and when `window` is unavailable (Node/smoke).
+ */
+export function debugUpdateVersion(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("updateDebug");
+}
+
 /** Best-effort fetch of the latest published version; null on failure (offline/parse). */
 export async function fetchLatestVersion(url: string = RELEASES_URL): Promise<string | null> {
   try {
@@ -39,6 +53,32 @@ export async function fetchLatestVersion(url: string = RELEASES_URL): Promise<st
     if (!found || found.length === 0) return null;
     found.sort(compareVersions);
     return found[found.length - 1];
+  } catch {
+    return null;
+  }
+}
+
+export interface UpdateManifest {
+  version: string | null;
+  notes: string | null;
+  pub_date: string | null;
+}
+
+/**
+ * Best-effort fetch of the updater manifest (the stable latest.json) so the UI
+ * can show release notes. `url` defaults to the stable release channel; returns
+ * null on any network/parse failure (offline or not yet reachable).
+ */
+export async function fetchUpdateManifest(url: string = LATEST_MANIFEST_URL): Promise<UpdateManifest | null> {
+  try {
+    const resp = await fetch(url, { method: "GET" });
+    if (!resp.ok) return null;
+    const j = await resp.json();
+    return {
+      version: typeof j?.version === "string" ? j.version : null,
+      notes: typeof j?.notes === "string" ? j.notes : null,
+      pub_date: typeof j?.pub_date === "string" ? j.pub_date : null,
+    };
   } catch {
     return null;
   }
