@@ -2,6 +2,8 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+> **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
+
 ## [1.64.8] - 2026-08-30
 
 ### 新增
@@ -18,13 +20,13 @@
 
 ### 修复
 
-- **彻底修复 `Prism is not defined`**：根因是 prismjs 被 Vite 打包进 ESM chunk，其 UMD 顶层裸引用 `Prism` 在模块求值时全局未就位。现改为 **prismjs 浏览器全局加载**（index.html 普通 `<script>` 设 `window.Prism`）+ Vite 将 `prismjs` 标为 external，`@lexical/code` 的 `import "prismjs"` 解析到全局——不再有未定义的裸引用。
+- **过渡版本（已被 1.64.7 取代）**：将 `prismjs` 标为 external，使 `import "prismjs"` 残留为浏览器无法解析的裸说明符（`Failed to resolve module specifier`），启动问题未解决。
 
 ## [1.64.5] - 2026-08-30
 
 ### 修复
 
-- **启动卡死（`Prism is not defined`）**：Lexical 0.49 的代码高亮（`@lexical/code-core`）在 bundle 中裸引用全局 `Prism`，而构建后该全局未就位 → 主 bundle 执行即抛错、React 不挂载、splash 卡死。现显式引入 `prismjs` 并在入口设置全局 `Prism`，满足引用。
+- **过渡版本（已被 1.64.7 取代）**：显式引入 `prismjs` 并设全局 `Prism`，但 prism 的 UMD 顶层裸引用仍在全局就位前求值，`Prism is not defined` 未根治。
 
 ## [1.64.4] - 2026-08-30
 
@@ -49,7 +51,7 @@
 
 ### 修复
 
-- **升级后卡启动页（splash）**：`index.html` 内联 Service Worker 自愈脚本——在**任何 JS bundle 加载前**检测并清除遗留 SW/缓存，若检测到曾受控则强制刷新到新 bundle。修复旧版本残留在桌面注册过 SW 时，升级后引用已删除的旧 hashed 资产导致前端不挂载、splash 卡死。
+- **升级后卡启动页（splash）**：`index.html` 内联 Service Worker 自愈脚本——在**任何 JS bundle 加载前**检测并清除遗留 SW/缓存，若检测到曾受控则强制刷新到新 bundle。修复旧版本残留在桌面注册过 SW 时，升级后引用已删除的旧 hashed 资产导致前端不挂载、splash 卡死。（该修复未根治——根因实为 Prism 加载时序，最终在 1.64.7 解决。）
 - **AI 额度门控（Pro 占位）**：为 AI 能力（视觉识别/文生图/AI 目录/PDF 提问/内联起草）加免费额度记录，用尽时提示"升级 Pro 可继续使用"。核心笔记与语义检索不阻断；真实支付/许可为后续（当前前端占位）。
 
 ### 其他
