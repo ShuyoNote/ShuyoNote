@@ -2,6 +2,12 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.64.7] - 2026-08-30
+
+### 修复
+
+- **Prism 启动修复（最终版）**：v1.64.6 将 `prismjs` 标为 external 会把 `import "prismjs"` 留在 bundle 里成为裸说明符，浏览器无法解析（`Failed to resolve module specifier`）。现改为 **index.html 普通 `<script>` 加载 prism 全局（设 `window.Prism`，先于 module）+ prism 正常打包**——bundle 内组件对 `Prism` 的裸引用在运行时解析到该全局，不再报 undefined 或 module 解析失败。
+
 ## [1.64.6] - 2026-08-30
 
 ### 修复
