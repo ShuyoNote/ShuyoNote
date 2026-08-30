@@ -2,6 +2,17 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.64.1] - 2026-08-30
+
+### 修复
+
+- **升级后卡启动页（splash）**：`index.html` 内联 Service Worker 自愈脚本——在**任何 JS bundle 加载前**检测并清除遗留 SW/缓存，若检测到曾受控则强制刷新到新 bundle。修复旧版本残留在桌面注册过 SW 时，升级后引用已删除的旧 hashed 资产导致前端不挂载、splash 卡死。
+- **AI 额度门控（Pro 占位）**：为 AI 能力（视觉识别/文生图/AI 目录/PDF 提问/内联起草）加免费额度记录，用尽时提示"升级 Pro 可继续使用"。核心笔记与语义检索不阻断；真实支付/许可为后续（当前前端占位）。
+
+### 其他
+
+- sync-server 拆分 `main.rs` 为模块（`db`/`sync`/`attachments` + `auth`/`space`/`audit` 占位），为多用户化铺路，行为不变。
+
 ## [1.64.0] - 2026-08-30
 
 ### 新增
