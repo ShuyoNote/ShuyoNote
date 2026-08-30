@@ -211,8 +211,11 @@ pnpm tauri build   # 打包桌面安装包
 
 ### 1. 启动同步服务端
 
+sync-server 已在**独立仓库**（商业授权）：[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)。
+
 ```bash
-cd sync-server
+git clone https://gitcode.com/shuyo-cn/shuyonote-sync-server.git
+cd shuyonote-sync-server
 cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 ```
 
@@ -275,7 +278,7 @@ ShuyoNote/
 │       ├── database.rs       # 数据库视图 / 查询型 / 公式
 │       ├── properties.rs     # 属性系统
 │       └── windows.rs        # 多窗口
-├── sync-server/              # 同步服务端（独立 Rust 二进制，Axum + SQLite）
+│   sync-server → 独立仓库    # 同步服务端（商业授权：shuyo-cn/shuyonote-sync-server）
 ├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划）
 ├── docs/                     # 产品 / 方案 / 对比文档（见 docs/README.md 索引；架构见 docs/architecture.md）
 └── CHANGELOG.md              # 版本变更日志
@@ -352,8 +355,9 @@ ShuyoNote/
 
 **为什么是 AGPL-3.0 而不是 MIT**：
 
-- ShuyoNote 是**本地优先**应用，但附带一个可自建、可被第三方托管的 `sync-server`（Axum + SQLite）同步服务。若仍用 MIT，他人可以把它打包成托管服务（SaaS）分发，却无需把服务端源码开放。
-- **AGPL-3.0** 在网络交互（网络服务 / 托管运行）时同样触发放大条款——**无论以何种方式分发（本地、网络、托管），只要基于本项目的代码对外提供，都必须以 AGPL-3.0 开放对应源码**。这正好匹配「本地优先 + 可自建同步」的双形态。
-- **LGPL** 面向「库」，不适合作为整体应用（含前端 + Rust 后端 + sync-server 多可执行文件）的许可证；**GPL-3.0** 不具备 AGPL 的网络服务条款，无法覆盖"被托管成 SaaS"这一场景。故选择约束力最强的 **AGPL-3.0**。
+- ShuyoNote 是**本地优先**应用，客户端本体采用 AGPL-3.0。
+- **AGPL-3.0** 在网络交互（网络服务 / 托管运行）时同样触发放大条款——**无论以何种方式分发（本地、网络、托管），只要基于客户端代码对外提供，都必须以 AGPL-3.0 开放对应源码**。这正好匹配「本地优先 + 可自建同步」的开源承诺。
+- 自建同步服务端 **sync-server** 已迁移为**独立商业授权仓库**（[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)），不再随本仓库按 AGPL 分发；客户端仍为 AGPL-3.0。
+- **LGPL** 面向「库」，不适合作为整体应用（含前端 + Rust 后端多可执行文件）的许可证；**GPL-3.0** 不具备 AGPL 的网络服务条款，故选择约束力最强的 **AGPL-3.0**。
 
 > 简述：你可以自由使用、修改、分发 ShuyoNote，或将其作为服务运行；但若向他人提供修改版/网络服务，你必须以相同许可（AGPL-3.0）开放该修改与对应源码。详见 [LICENSE](LICENSE) 全文。

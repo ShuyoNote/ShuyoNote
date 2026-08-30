@@ -27,7 +27,6 @@ demo-shots
 
 # Rust build artifacts
 src-tauri/target
-sync-server/target
 
 # Editor directories and files
 .vscode/*
