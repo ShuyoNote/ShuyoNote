@@ -1,7 +1,7 @@
-{
+﻿{
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ShuyoNote",
-  "version": "1.64.3",
+  "version": "1.64.4",
   "identifier": "cn.shuyo.shuyonote",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -25,8 +25,8 @@
     "active": true,
     "targets": ["nsis"],
     "createUpdaterArtifacts": true,
-    "shortDescription": "数友笔记 ShuyoNote —— 本地优先的 Notion 式笔记应用，内置 PDF 阅读器与离线 OCR。",
-    "longDescription": "数友笔记 ShuyoNote 是一款本地优先的 Notion 式笔记应用。内置高性能 PDF 阅读器、完全离线的 OCR 文字识别、AI 视觉识别、AI 一键目录、系统朗读与护眼多模式，数据保存在本地。安装包已签名，支持自动更新。",
+    "shortDescription": "鏁板弸绗旇 ShuyoNote 鈥斺€?鏈湴浼樺厛鐨?Notion 寮忕瑪璁板簲鐢紝鍐呯疆 PDF 闃呰鍣ㄤ笌绂荤嚎 OCR銆?,
+    "longDescription": "鏁板弸绗旇 ShuyoNote 鏄竴娆炬湰鍦颁紭鍏堢殑 Notion 寮忕瑪璁板簲鐢ㄣ€傚唴缃珮鎬ц兘 PDF 闃呰鍣ㄣ€佸畬鍏ㄧ绾跨殑 OCR 鏂囧瓧璇嗗埆銆丄I 瑙嗚璇嗗埆銆丄I 涓€閿洰褰曘€佺郴缁熸湕璇讳笌鎶ょ溂澶氭ā寮忥紝鏁版嵁淇濆瓨鍦ㄦ湰鍦般€傚畨瑁呭寘宸茬鍚嶏紝鏀寔鑷姩鏇存柊銆?,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

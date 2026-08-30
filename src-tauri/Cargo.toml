@@ -1,12 +1,10 @@
-[package]
+﻿[package]
 name = "shuyonote"
-version = "1.64.3"
+version = "1.64.4"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
-# MSRV（最小支持版本）：与文档声明的 "1.94+" 对齐；不锁工具链，仅声明最低 Rust 版本。
-# 若要更严格复现，可另加 rust-toolchain.toml 钉 channel（默认不钉，跟随 stable）。
-rust-version = "1.94"
+# MSRV锛堟渶灏忔敮鎸佺増鏈級锛氫笌鏂囨。澹版槑鐨?"1.94+" 瀵归綈锛涗笉閿佸伐鍏烽摼锛屼粎澹版槑鏈€浣?Rust 鐗堟湰銆?# 鑻ヨ鏇翠弗鏍煎鐜帮紝鍙彟鍔?rust-toolchain.toml 閽?channel锛堥粯璁や笉閽夛紝璺熼殢 stable锛夈€?rust-version = "1.94"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
