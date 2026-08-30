@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 // so `pnpm dev:web` works without the Rust/SQLite host. Uses its own port so it
 // can run alongside the Tauri dev server (which uses 1420).
 export default defineConfig({
+  base: "./",
   plugins: [react()],
   server: {
     port: 5173,
