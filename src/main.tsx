@@ -73,6 +73,11 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 // initial white/blank window is replaced by a branded animation. The splash is a
 // sibling of #root in index.html and renders before the JS bundle loads; here we
 // only hide it after React has committed the first paint.
+//
+// Robustness: rely on `DOMContentLoaded` (fires as soon as the doc is parsed,
+// without waiting for every sub-resource) plus a hard timeout, so the splash can
+// never stay forever even if the browser `window.load` is blocked by a pending
+// resource or a stale cache. On a fatal module error we also force-hide it.
 function hideSplash() {
   const el = document.getElementById("app-splash");
   if (!el || el.classList.contains("is-hide")) return;
@@ -81,10 +86,20 @@ function hideSplash() {
   // Remove the node after the CSS transition finishes.
   window.setTimeout(() => el.remove(), 500);
 }
-window.addEventListener("load", () => {
-  // Give React a beat to render, then hide; the timeout is a safety net in case
-  // the app takes longer on a slow machine.
-  window.setTimeout(hideSplash, 120);
+
+// DOMContentLoaded is more dependable than window.load for showing the app (it
+// doesn't wait for all assets, so it can't be blocked by a hung resource).
+document.addEventListener("DOMContentLoaded", () => {
+  window.setTimeout(hideSplash, 60);
+});
+// Safety net: always hide after a short timeout, even if load events never fire.
+window.setTimeout(hideSplash, 1500);
+// If the module graph fails to load/execute, don't leave a frozen splash.
+window.addEventListener("error", () => {
+  window.setTimeout(hideSplash, 30);
+});
+window.addEventListener("unhandledrejection", () => {
+  window.setTimeout(hideSplash, 30);
 });
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
