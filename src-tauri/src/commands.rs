@@ -178,6 +178,10 @@ fn create_node(
     .map_err(|e| e.to_string())?;
 
     search::sync_fts(&c, &id, &title, &text)?;
+    // Rebuild block/backlink graph on create too, so any `[[双链]]` / block refs in
+    // the initial content (e.g. the programmatically-created 使用指南 pages) show
+    // up in the relationship graph. Mirrors save_page.
+    blocks::rebuild_block_graph(&c, &id, &json, &text)?;
 
     let page = fetch_page(&c, &id)?;
     sync::record_page_upsert(&c, &page)?;
