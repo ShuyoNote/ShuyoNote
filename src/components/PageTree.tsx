@@ -1213,8 +1213,9 @@ export function PageTree({
             <button
               className="sidebar-bottom-btn"
               onClick={() => useRightPanel.getState().openAi(true)}
+              title="AI 助手"
             >
-              <SparkleIcon className="sidebar-bottom-icon sidebar-bottom-ai" /> AI 助手
+              <SparkleIcon className="sidebar-bottom-icon sidebar-bottom-ai" /> AI
             </button>
           )}
           <button

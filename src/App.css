@@ -1287,25 +1287,32 @@ body,
 .sidebar-bottom {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 8px;
+  gap: 3px;
+  padding: 8px 5px;
   border-top: 1px solid var(--border);
   background: var(--bg);
 }
 .sidebar-bottom-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: 1;
+  justify-content: center;
+  gap: 4px;
+  /* Content-sized (not stretched to an equal share) so the label never wraps in
+     a narrow sidebar; allow shrink + ellipsis as a fallback instead of wrapping. */
+  flex: 0 1 auto;
+  min-width: 0;
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 13px;
-  padding: 6px 8px;
+  font-size: 12px;
+  padding: 6px 4px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
   position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sidebar-bottom-btn-inner {
   display: inline-flex;
