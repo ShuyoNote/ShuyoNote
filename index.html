@@ -12,6 +12,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="ShuyoNote" />
     <title>ShuyoNote 数友笔记</title>
+    <!-- Prism global (plain synchronous scripts, before any module) so that
+         @lexical/code's bare `Prism` references resolve to window.Prism instead
+         of an ESM-bundled copy that is never set as global. -->
+    <script src="/prism/prism-core.js"></script>
+    <script src="/prism/prism-markup.js"></script>
+    <script src="/prism/prism-clike.js"></script>
+    <script src="/prism/prism-javascript.js"></script>
+    <script src="/prism/prism-markup-templating.js"></script>
+    <script src="/prism/prism-css.js"></script>
+    <script src="/prism/prism-bash.js"></script>
+    <script src="/prism/prism-python.js"></script>
+    <script src="/prism/prism-typescript.js"></script>
     <script>
       // Self-heal legacy Service Worker / caches BEFORE any bundle loads. A stale
       // SW from an older build can serve an old index.html that references hashed

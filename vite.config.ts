@@ -8,6 +8,16 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  // prismjs is loaded as a plain global <script> in index.html (see that file);
+  // mark it external so @lexical/code's `import "prismjs"` resolves to the
+  // browser global `window.Prism` instead of being bundled into an ESM chunk
+  // where its bare `Prism` references would be undefined at module eval.
+  build: {
+    rollupOptions: {
+      external: ["prismjs", /prismjs\/components\/.*/],
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
