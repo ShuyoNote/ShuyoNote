@@ -6317,9 +6317,18 @@ p:has(> .editor-drawing-container) {
   display: block;
   margin: 2px 0;
   user-select: none;
+  -webkit-user-select: none;
+}
+/* Block any text selection/caret inside an inline formula block (this is a
+   decorative node; it shouldn't accept focus or typing). */
+.editor-formula-container * {
+  user-select: none;
+  -webkit-user-select: none;
 }
 .editor-formula-wrap {
   display: block;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .editor-formula {
   display: block;

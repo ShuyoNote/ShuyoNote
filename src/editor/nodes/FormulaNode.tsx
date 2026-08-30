@@ -31,19 +31,28 @@ function FormulaView({ latex, node }: { latex: string; node: FormulaNode }) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const child = document.createElement("span");
-    child.className = "editor-formula-katex";
-    const old = host.querySelector(".editor-formula-katex");
-    if (old) old.remove();
-    host.appendChild(child);
+    // Lexical wraps every decorator in a RichTextPlugin ErrorBoundary div
+    // (.editor-error, which inherits the editor's contenteditable). Force it (and
+    // everything up to our container) non-editable so clicks can't focus/type into
+    // the formula block. Re-apply on each render in case Lexical re-mounts it.
+    const ceTarget = host.closest(".editor-error, .editor-formula-container");
+    if (ceTarget) ceTarget.setAttribute("contenteditable", "false");
+    // Block mouse-down default (caret placement) on the whole Lexical-wrapped
+    // container so a click inside the formula area never drops the caret there.
+    const container = ceTarget ?? host;
+    const onMd = (e: Event) => e.preventDefault();
+    container.addEventListener("mousedown", onMd);
+    // Use the React-rendered katex span as the KaTeX target (don't create a second).
+    const child = host.querySelector<HTMLElement>(".editor-formula-katex");
     import("katex/dist/katex.min.css")
       .then(() => import("katex"))
       .then((mod) => {
-        mod.default.render(latex, child, { displayMode: true, throwOnError: false, output: "html" });
+        if (child) mod.default.render(latex, child, { displayMode: true, throwOnError: false, output: "html" });
       })
       .catch(() => {
-        child.textContent = latex;
+        if (child) child.textContent = latex;
       });
+    return () => container.removeEventListener("mousedown", onMd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latex]);
 
@@ -69,11 +78,12 @@ function FormulaView({ latex, node }: { latex: string; node: FormulaNode }) {
   }, [node]);
 
   return (
-    <span className="editor-formula-wrap" contentEditable={false}>
+    <span className="editor-formula-wrap" contentEditable={false} onMouseDown={(e) => e.preventDefault()}>
       <button
         ref={hostRef}
         className="editor-formula"
         contentEditable={false}
+        onMouseDown={(e) => e.preventDefault()}
         title={`${latex} · 点击编辑`}
         onClick={(e) => {
           e.stopPropagation();
@@ -113,7 +123,6 @@ export class FormulaNode extends DecoratorNode<JSX.Element> {
     span.setAttribute("data-lexical-decorator", "true");
     return span;
   }
-
   updateDOM(): boolean {
     return false;
   }
