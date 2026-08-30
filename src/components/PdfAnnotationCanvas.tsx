@@ -9,6 +9,7 @@ import { useAiStore } from "../store/ai";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { ocrWithVision, blobToDataUrl } from "../lib/ai/ocrVision";
 import { runInlineDraft } from "../lib/ai/inlineDraft";
+import { tryConsume } from "../lib/ai/gate";
 import { speak, stopSpeech, isSpeechSupported, isSpeaking } from "../lib/speech";
 import { useNotes } from "../store/notes";
 import { usePdfReader } from "../store/pdfReader";
@@ -210,6 +211,11 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     }
     if (!renderPage) {
       toast("页面渲染不可用，无法识别", "error");
+      return;
+    }
+    const gate = tryConsume("vision");
+    if (!gate.ok) {
+      toast(gate.message, "error");
       return;
     }
     ocrBusyRef.current = true;

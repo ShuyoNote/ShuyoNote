@@ -12,6 +12,7 @@ import { inputDialog } from "../store/input";
 import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
 import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../lib/ai/imageGen";
+import { tryConsume } from "../lib/ai/gate";
 import { excalidrawSceneText } from "../lib/drawingText";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
@@ -301,6 +302,11 @@ export default function DrawingEditorModal() {
       onSubmit: async (prompt) => {
         const p = (prompt ?? "").trim();
         if (!p) return;
+        const ig = tryConsume("imagegen");
+        if (!ig.ok) {
+          toast(ig.message, "error");
+          return;
+        }
         try {
           const res = await fetch(buildImageGenUrl(config.baseUrl), {
             method: "POST",

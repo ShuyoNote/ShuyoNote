@@ -12,6 +12,7 @@ import type { TextItemLike } from "../lib/pdfTextLayer";
 import type { PdfAnnotationRecord } from "../types";
 import { generateOutlineFromVision } from "../lib/aiOutline";
 import { loadAiOutline, saveAiOutline } from "../lib/pdfOutlineStore";
+import { tryConsume } from "../lib/ai/gate";
 import { rebuildOutlineTree } from "../lib/pdfOutlineGen";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
@@ -428,6 +429,11 @@ export function PdfReader() {
     const count = aiOutlineCount === -1 ? Math.max(pageCount - start, 1) : aiOutlineCount;
     const total = Math.min(start + count, pageCount) - start;
     if (total <= 0) return;
+    const outlineGate = tryConsume("outline");
+    if (!outlineGate.ok) {
+      toast(outlineGate.message, "error");
+      return;
+    }
     const ac = new AbortController();
     aiOutlineAbortRef.current = ac;
     setAiOutline({ status: "running", stage: "ocr", done: 0, total });

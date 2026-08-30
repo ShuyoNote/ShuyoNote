@@ -7,6 +7,7 @@ import { useFormulaEditorStore } from "../store/formulaEditor";
 import { useAiStore } from "../store/ai";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { recognizeFormulaImage, fileToDataUrl } from "../lib/ai/formulaVision";
+import { tryConsume } from "../lib/ai/gate";
 import { FormulaHandwritePad } from "./FormulaHandwritePad";
 
 type Sym = { sym: string; latex: string };
@@ -200,6 +201,11 @@ export function FormulaEditorDialog() {
     const cfg = providerConfig();
     if (!cfg) {
       setRecognizeError("请先在 AI 设置中配置并启用支持图像的模型。");
+      return;
+    }
+    const gate = tryConsume("vision");
+    if (!gate.ok) {
+      setRecognizeError(gate.message);
       return;
     }
     setRecognizing(true);

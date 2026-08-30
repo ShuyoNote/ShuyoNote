@@ -12,6 +12,42 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="ShuyoNote" />
     <title>ShuyoNote 数友笔记</title>
+    <script>
+      // Self-heal legacy Service Worker / caches BEFORE any bundle loads. A stale
+      // SW from an older build can serve an old index.html that references hashed
+      // assets no longer present after an update → JS 404 → the app never mounts
+      // and the splash screen stays forever. This inline script runs during HTML
+      // parse (before the app JS bundle), so even a page served by a stale SW will
+      // unregister it, clear caches, and force one reload onto the fresh bundle.
+      (function () {
+        try {
+          var hadSw = false;
+          var isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+          var host = window.location.hostname;
+          var isLocal = host === "localhost" || host === "127.0.0.1" || host === "tauri.localhost";
+          // Only self-heal in local/desktop hosts (where we deliberately never keep
+          // a SW). A real production web domain keeps its offline PWA.
+          if (("serviceWorker" in navigator) && isLocal) {
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              hadSw = regs.length > 0 || !!navigator.serviceWorker.controller;
+              return Promise.all(regs.map(function (r) { return r.unregister().catch(function () { return false; }); }));
+            }).then(function () {
+              if (window.caches && window.caches.keys) {
+                return window.caches.keys().then(function (keys) {
+                  return Promise.all(keys.map(function (k) { return window.caches.delete(k).catch(function () { return false; }); }));
+                });
+              }
+            }).then(function () {
+              if (hadSw && window.location.search.indexOf("swreload") === -1) {
+                var u = new URL(window.location.href);
+                u.searchParams.set("swreload", "1");
+                window.location.replace(u.toString());
+              }
+            }).catch(function () {});
+          }
+        } catch (e) { /* never block the app */ }
+      })();
+    </script>
     <style>
       /* Splash is intentionally self-contained (no external CSS) so it paints
          the instant the HTML document is parsed — before the app JS bundle

@@ -13,6 +13,8 @@ import { createBackendStreamingTransport } from "../lib/ai/transport";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
 import { useRightPanel } from "./rightPanel";
+import { useEntitlements } from "./entitlements";
+import { capLabel, type Aicap } from "../lib/ai/entitlements";
 
 const CFG_KEY = "shuyonote.ai.config";
 const HISTORY_KEY = "shuyonote.ai.history";
@@ -141,6 +143,13 @@ export const useAiStore = create<AiState>((set, get) => ({
     if (!config.enabled) {
       set({ error: "AI 功能未启用，请先在设置中开启并配置模型。" });
       useRightPanel.getState().openAi(true);
+      return;
+    }
+    // Pro gating: free tier records each run and hard-blocks once the monthly
+    // allowance is exhausted. Real payment/license is a later step.
+    if (!useEntitlements.getState().consume("draft" as Aicap)) {
+      const label = capLabel("draft");
+      set({ error: `免费额度已用完（${label}）。升级 Pro 可继续使用。` });
       return;
     }
     const notes = useNotes.getState();

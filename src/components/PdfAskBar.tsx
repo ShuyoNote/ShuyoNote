@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { rankRelevantPages, type PdfPageText } from "../lib/searchSemantic";
 import { runInlineDraft } from "../lib/ai/inlineDraft";
+import { tryConsume } from "../lib/ai/gate";
 import type { ProviderConfig } from "../lib/ai/llm";
 import type { PdfRenderEngineApi } from "../lib/pdfRender";
 import { useAiStore } from "../store/ai";
@@ -46,6 +47,11 @@ export function PdfAskBar({ attachmentId, pageCount, getEngine, onDone }: Props)
   const ask = async () => {
     const q = question.trim();
     if (!q || running) return;
+    const g = tryConsume("pdf");
+    if (!g.ok) {
+      toast(g.message, "error");
+      return;
+    }
     setRunning(true);
     setAnswer("");
     setError(null);
