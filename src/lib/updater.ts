@@ -8,7 +8,7 @@ import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 export type DesktopUpdateResult =
   | { state: "up-to-date"; latest?: undefined; download?: undefined }
   | { state: "update-available"; latest: string; download: () => Promise<void> }
-  | { state: "unavailable" };
+  | { state: "unavailable"; error?: string };
 
 /** Check for an update via the in-app updater (desktop only). */
 export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {
@@ -23,7 +23,10 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {
         await update.downloadAndInstall();
       },
     };
-  } catch {
-    return { state: "unavailable" };
+  } catch (e) {
+    // Surface the real error for diagnosis instead of silently degrading.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[updater] checkUpdater failed:", e);
+    return { state: "unavailable", error: msg };
   }
 }

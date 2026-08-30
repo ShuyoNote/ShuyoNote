@@ -4091,6 +4091,17 @@ select.prop-value {
 }
 
 /* M19.3 [[ link suggestions */
+.editor-page-link {
+  color: var(--accent, #3370ff);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.editor-page-link:hover {
+  background: var(--accent-soft, rgba(51, 112, 255, 0.12));
+}
 .page-link-suggest {
   max-height: 200px;
   overflow-y: auto;

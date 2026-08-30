@@ -519,8 +519,14 @@ export function FileManagerView() {
                     className="fm-name-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (row.kind === "file") openFile(row.file!.path);
-                      else if (row.kind === "folder") setFolderId(row.pageId!);
+                      if (row.kind === "file") {
+                        // M24 PDF 批注：点击文件名直达内置阅读器（而非系统外部应用）。
+                        if (row.file!.mime === "application/pdf") {
+                          void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
+                        } else {
+                          openFile(row.file!.path);
+                        }
+                      } else if (row.kind === "folder") setFolderId(row.pageId!);
                       else openPage(row.pageId!);
                     }}
                   >
@@ -576,15 +582,17 @@ export function FileManagerView() {
                       >
                         ↔
                       </button>
-                      <button
-                        title="预览"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPreview(row.file!);
-                        }}
-                      >
-                        👁
-                      </button>
+                      {row.file!.mime !== "application/pdf" && (
+                        <button
+                          title="预览"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreview(row.file!);
+                          }}
+                        >
+                          👁
+                        </button>
+                      )}
                       <button
                         title="下载"
                         onClick={(e) => {

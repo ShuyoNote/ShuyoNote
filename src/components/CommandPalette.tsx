@@ -112,6 +112,16 @@ export function CommandPalette() {
   );
   useEffect(() => setSel(0), [query]);
 
+  // Keep the highlighted item in view as the user arrows up/down, so a long list
+  // scrolls instead of the highlight disappearing off-screen.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const active = list.querySelector(".palette-item-active");
+    active?.scrollIntoView({ block: "nearest" });
+  }, [sel, flat.length]);
+
   if (!open) return null;
 
   const run = async (item: Item) => {
@@ -188,7 +198,7 @@ export function CommandPalette() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <div className="palette-list">
+        <div className="palette-list" ref={listRef}>
           {pageItems.length > 0 && <div className="palette-group">页面</div>}
           {pageItems.map((it, i) => renderItem(it, i))}
           {cmdItems.length > 0 && <div className="palette-group">命令</div>}

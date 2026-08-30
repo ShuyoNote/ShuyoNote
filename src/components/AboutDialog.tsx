@@ -27,6 +27,7 @@ export function AboutDialog() {
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [download, setDownload] = useState<(() => Promise<void>) | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
@@ -47,6 +48,7 @@ export function AboutDialog() {
     setUpdateState(null);
     setLatestVersion(null);
     setDownload(null);
+    setCheckError(null);
     // Prefer the in-app updater (desktop); fall back to the releases-page fetch.
     const up = await checkDesktopUpdate();
     if (up.state === "up-to-date") {
@@ -57,8 +59,11 @@ export function AboutDialog() {
       setUpdateState("update-available");
     } else {
       const latest = await fetchLatestVersion();
+      console.error("[updater] desktop updater unavailable; fallback fetchLatestVersion ->", latest);
       setLatestVersion(latest);
       setUpdateState(updateStatus(latest, APP_VERSION));
+      // Surface the real updater error (if any) so we can tell what happened.
+      setCheckError(up.error ? `主更新通道错误：${up.error}` : "主更新通道不可用（已走页面降级）");
     }
     setChecked(true);
     setChecking(false);
@@ -119,7 +124,10 @@ export function AboutDialog() {
             ) : checked && updateState === "up-to-date" ? (
               <>v{APP_VERSION} 已是最新</>
             ) : checked ? (
-              <>检查失败（离线）</>
+              <>
+                检查失败（离线）{checkError ? ` · ${checkError}` : ""}
+                {latestVersion ? ` · 降级读到 v${latestVersion}` : ""}
+              </>
             ) : (
               ""
             )}

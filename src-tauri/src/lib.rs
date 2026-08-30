@@ -29,7 +29,8 @@ use db::Db;
 use std::borrow::Cow;
 use std::sync::Mutex;
 use tauri::http::header::CACHE_CONTROL;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::webview::PageLoadEvent;
+use tauri::{utils::config::Color, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Apply cache headers to the Tauri-served web resources so that a version
 /// upgrade does not leave the WebView serving a stale `index.html` from cache.
@@ -77,6 +78,17 @@ pub fn run() {
             WebviewWindowBuilder::new(app, "main", url)
                 .title(format!("ShuyoNote 数友笔记 · v{version}"))
                 .inner_size(1200.0, 800.0)
+                // Start hidden + brand-dark background: WebView2 cold-start shows a
+                // white window before the HTML/SW/splash paints. We tint the
+                // window to the splash's dark background and only reveal it once
+                // the page has finished loading, so there's no white flash.
+                .background_color(Color(11, 21, 51, 255))
+                .visible(false)
+                .on_page_load(|window, payload| {
+                    if payload.event() == PageLoadEvent::Finished {
+                        let _ = window.show();
+                    }
+                })
                 .on_web_resource_request(with_cache_headers)
                 .build()?;
             Ok(())

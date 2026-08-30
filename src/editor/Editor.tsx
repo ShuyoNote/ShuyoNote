@@ -18,6 +18,7 @@ import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShort
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
 import { AiSpaceTriggerPlugin } from "./plugins/AiSpaceTriggerPlugin";
 import { PageLinkSuggestPlugin } from "./plugins/PageLinkSuggestPlugin";
+import { PageLinkPlugin } from "./plugins/PageLinkPlugin";
 import { ImagePastePlugin } from "./plugins/ImagePastePlugin";
 import { BookmarkPastePlugin } from "./plugins/BookmarkPastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
@@ -373,6 +374,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <PageLinkSuggestPlugin />
+        <PageLinkPlugin />
         <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
