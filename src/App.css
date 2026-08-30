@@ -10597,6 +10597,13 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   letter-spacing: 0.01em;
 }
+.about-sub {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  margin-top: -6px;
+}
 .about-meta {
   display: flex;
   align-items: center;

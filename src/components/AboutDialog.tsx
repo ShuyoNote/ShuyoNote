@@ -4,6 +4,7 @@ import { useEditorStore } from "../store/editor";
 import { platform } from "../lib/platform";
 import {
   APP_NAME,
+  APP_NAME_ZH,
   APP_VERSION,
   APP_LICENSE,
   APP_DESCRIPTION,
@@ -98,7 +99,8 @@ export function AboutDialog() {
           <div className="about-logo-wrap">
             <img className="about-logo" src="/icons/mark.svg" alt={`${APP_NAME} logo`} />
           </div>
-          <div className="about-name">{APP_NAME}</div>
+          <div className="about-name">{APP_NAME_ZH}</div>
+          <div className="about-sub">{APP_NAME}</div>
           <div className="about-meta">
             <span className="about-pill about-pill-version">v{APP_VERSION}</span>
             <span className="about-pill about-pill-license">{APP_LICENSE}</span>

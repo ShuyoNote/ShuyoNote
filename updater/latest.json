@@ -1,0 +1,11 @@
+{
+    "version":  "1.62.0",
+    "notes":  "ShuyoNote v1.62.0 — 数学公式(块/行内编辑器+KaTeX) + 公式图片/手写识别 + 图谱自适应居中",
+    "pub_date":  "2026-08-30T15:00:00Z",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0R0bm1NRG1PQXhjRzg0TnNjTG9EY2JaSnI1SkVDbVNNNTBxNWhsNFE5RlhpUldSbGFnL1Y1b1p0eG43N0ZNUEMyK1dUNEJJVTQzaVpOUThxVms5TzM0L3RPL005UlF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MDcyODg0CWZpbGU6U2h1eW9Ob3RlXzEuNjIuMF94NjQtc2V0dXAuZXhlCmhwT3dzQVh5aEIrSTFQa0J4d0JHNkZKeTUrZ2k2M2prMW4zUXdLcDZwUXhXMmJXdzJSSWQ5Y3N5SHhhSGF4V1VHVjJNd3JUdG9Fd2lJdGNuaS9mSkJ3PT0K",
+                                             "url":  "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1.62.0/ShuyoNote_1.62.0_x64-setup.exe"
+                                         }
+                  }
+}

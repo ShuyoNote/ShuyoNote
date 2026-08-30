@@ -46,7 +46,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM4RTM5MzBFNkQ5MEUwNgpSV1FHRHRubU1EbU9BOUg3b0ZKZWVtMDlVdVZWUTdQQnBVS2k3blpsUldaMGxsSEJnaUZwM1VWQgo=",
-      "endpoints": ["https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1.62.0/latest.json"]
+      "endpoints": ["https://raw.gitcode.com/shuyo-cn/ShuyoNote/raw/main/updater/latest.json"]
     }
   }
 }
