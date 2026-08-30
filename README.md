@@ -355,4 +355,6 @@ ShuyoNote/
 
 AGPL-3.0 的要点：无论分发副本，还是通过**网络**向第三方提供服务，均须以相同许可向接收方提供对应源码——与「本地优先、数据自持、可自建同步」的项目定位一致。
 
+在此许可下，你享有自由使用、修改与分发的权利；对外提供修改版或网络服务时，须遵守上述开源义务。
+
 同步服务端 **sync-server** 为**独立商业组件**，按其商业许可分发（见 [shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)），不适用本许可。
