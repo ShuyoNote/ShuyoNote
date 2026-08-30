@@ -2,6 +2,12 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.64.8] - 2026-08-30
+
+### 新增
+
+- **下载/安装进度反馈**：「关于 → 检查更新 → 下载并安装」从原来黑盒式的 `downloadAndInstall()` 改为**分段可见**——`下载中 X%`（按字节实时进度条，未知总量时转不确定态动画）→ `正在安装` → `更新完成，即将重启`。下载/安装失败会显示错误并恢复按钮，不再静默吞掉未处理的 Promise 拒绝。涉及 `updater.ts`（拆 `download()`+`install()`、新增 `UpdateProgress`）+ `AboutDialog.tsx`（进度态/阶段文案/错误态）+ `App.css`（进度条样式）。
+
 ## [1.64.7] - 2026-08-30
 
 ### 修复

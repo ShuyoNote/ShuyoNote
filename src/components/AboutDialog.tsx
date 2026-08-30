@@ -14,7 +14,7 @@ import {
   setAllowExternal,
 } from "../lib/links";
 import { fetchLatestVersion, fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
-import { checkDesktopUpdate } from "../lib/updater";
+import { checkDesktopUpdate, type UpdateProgress } from "../lib/updater";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
 // links (project home / docs / releases / issues) plus a privacy toggle for
@@ -27,10 +27,13 @@ export function AboutDialog() {
   const [checked, setChecked] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
-  const [download, setDownload] = useState<(() => Promise<void>) | null>(null);
+  const [download, setDownload] = useState<((onProgress?: (p: UpdateProgress) => void) => Promise<void>) | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
   const [declined, setDeclined] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
@@ -54,6 +57,9 @@ export function AboutDialog() {
     setCheckError(null);
     setReleaseNotes(null);
     setDeclined(false);
+    setUpdating(false);
+    setProgress(null);
+    setUpdateError(null);
     // Dev-only debug hook matches the red-dot path: force "update available" so
     // the button-driven check also previews the new version + release notes.
     const dbg = debugUpdateVersion();
@@ -87,6 +93,29 @@ export function AboutDialog() {
     }
     setChecked(true);
     setChecking(false);
+  };
+
+  const startUpdate = async () => {
+    if (!download || updating) return;
+    setUpdating(true);
+    setUpdateError(null);
+    setProgress({ phase: "downloading", percent: 0 });
+    try {
+      await download((p) => setProgress(p));
+      // On success the installer relaunches the app; keep the final phase visible.
+    } catch (e) {
+      setUpdateError(e instanceof Error ? e.message : String(e));
+      setUpdating(false);
+      setProgress(null);
+    }
+  };
+
+  const phaseLabel = (p: UpdateProgress): string => {
+    if (p.phase === "downloading") {
+      return p.percent == null ? "正在下载更新…" : `正在下载更新… ${p.percent}%`;
+    }
+    if (p.phase === "installing") return "正在安装更新…";
+    return "更新完成，即将重启…";
   };
 
   if (!open) return null;
@@ -141,14 +170,25 @@ export function AboutDialog() {
                   <span className="about-update-avail">
                     发现新版本 <b>v{latestVersion}</b>，当前 v{APP_VERSION}
                   </span>
-                  {download ? (
+                  {updating && progress ? (
+                    <div className="about-update-progress">
+                      <div className="about-update-progress-text">{phaseLabel(progress)}</div>
+                      <div className="about-update-progress-track">
+                        <div
+                          className={`about-update-progress-fill${progress.percent == null ? " indeterminate" : ""}`}
+                          style={progress.percent != null ? { width: `${progress.percent}%` } : undefined}
+                        />
+                      </div>
+                    </div>
+                  ) : download ? (
                     <>
-                      <button className="about-update-install" onClick={() => void download()}>下载并安装</button>
+                      <button className="about-update-install" onClick={() => void startUpdate()}>下载并安装</button>
                       <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
                     </>
                   ) : (
                     <button className="about-update-later" onClick={() => openExternal(RELEASES_URL)}>前往发布页</button>
                   )}
+                  {updateError && <span className="about-update-error">更新失败：{updateError}</span>}
                 </span>
                 {!declined && download && releaseNotes && (
                   <div className="about-release-notes">

@@ -5,9 +5,24 @@
 // harness (kept separate from updates.ts for that reason).
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 
+/** Phases of the in-app update flow, surfaced to the UI for feedback. */
+export type UpdatePhase = "downloading" | "installing" | "restarting";
+
+/** Progress snapshot pushed to the caller during a download/install. */
+export interface UpdateProgress {
+  phase: UpdatePhase;
+  /** 0–100 while downloading (null when the total size is unknown or during
+   * installing/restarting, where the UI falls back to an indeterminate bar). */
+  percent: number | null;
+}
+
 export type DesktopUpdateResult =
   | { state: "up-to-date"; latest?: undefined; download?: undefined }
-  | { state: "update-available"; latest: string; download: () => Promise<void> }
+  | {
+      state: "update-available";
+      latest: string;
+      download: (onProgress?: (p: UpdateProgress) => void) => Promise<void>;
+    }
   | { state: "unavailable"; error?: string };
 
 /** Check for an update via the in-app updater (desktop only). */
@@ -19,8 +34,28 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {
     return {
       state: "update-available",
       latest: update.version,
-      download: async () => {
-        await update.downloadAndInstall();
+      download: async (onProgress) => {
+        const emit = (phase: UpdatePhase, percent: number | null) => onProgress?.({ phase, percent });
+        // Download with real byte progress so the UI can show a determinate bar.
+        emit("downloading", 0);
+        let total = 0;
+        let bytes = 0;
+        await update.download((e) => {
+          if (e.event === "Started") {
+            total = e.data.contentLength ?? 0;
+            bytes = 0;
+            emit("downloading", 0);
+          } else if (e.event === "Progress") {
+            bytes += e.data.chunkLength;
+            emit("downloading", total > 0 ? Math.min(100, Math.round((bytes / total) * 100)) : null);
+          } else {
+            emit("downloading", 100);
+          }
+        });
+        // Install runs the platform installer (may relaunch the app itself).
+        emit("installing", null);
+        await update.install();
+        emit("restarting", null);
       },
     };
   } catch (e) {
