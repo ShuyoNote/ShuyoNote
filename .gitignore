@@ -39,3 +39,6 @@ sync-server/target
 *.njsproj
 *.sln
 *.sw?
+
+# Private / internal planning docs (pricing, licensing, commercial strategy)
+/docs-private/
