@@ -155,13 +155,12 @@ function welcomeContent(): string {
   });
 }
 
-// Seed a fresh (empty) database with a welcome page + onboarding page + tag.
+// Seed a fresh (empty) database with a welcome page + onboarding page.
 function seedIfEmpty(store: SqliteStore, wsId: string): void {
   const count = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM pages")[0]?.n ?? 0;
   if (count > 0) return;
   const welcomeId = uid();
   const demoId = uid();
-  const tagId = uid();
   const now = Date.now();
   store.run(
     `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, content_json, content_text)
@@ -173,8 +172,6 @@ function seedIfEmpty(store: SqliteStore, wsId: string): void {
      VALUES (?, ?, NULL, ?, 'page', 1, ?, ?, NULL, '', ?)`,
     [demoId, wsId, "快速上手", now, now, "点击左侧新建页面，输入内容会自动保存到浏览器本地。"],
   );
-  store.run("INSERT INTO tags (id, name) VALUES (?, ?)", [tagId, "入门"]);
-  store.run("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [demoId, tagId]);
 }
 
 function str(v: unknown): string {
