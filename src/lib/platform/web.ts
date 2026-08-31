@@ -137,7 +137,7 @@ function welcomeContent(): string {
       format: "",
       indent: 0,
       children: [
-        { type: "paragraph", version: 1, direction: "ltr", format: "", indent: 0, style: "font-size:60px;line-height:1.1;text-align:center;margin:8px 0 4px;", children: [t("🚀")] },
+        { type: "paragraph", version: 1, direction: "ltr", format: "", indent: 0, style: "font-size:60px;line-height:1.1;text-align:center;margin:8px 0 4px;", children: [t("🌟")] },
         h("h1", "欢迎来到你的新空间"),
         callout("本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。"),
         h("h2", "从这里开始"),
@@ -167,7 +167,7 @@ function seedIfEmpty(store: SqliteStore, wsId: string): void {
   store.run(
     `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, content_json, content_text)
      VALUES (?, ?, NULL, ?, 'page', 0, ?, ?, NULL, ?, ?, ?, ?)`,
-    [welcomeId, wsId, "欢迎页", now, now, "🚀", DEFAULT_COVER, welcomeContent(), "欢迎来到你的新空间\n本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。\n从这里开始\n新建页面：Ctrl+N 或左侧栏 ＋\n插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）\n搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴\n常用快捷键\nCtrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图\n用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。"],
+    [welcomeId, wsId, "欢迎页", now, now, "🌟", DEFAULT_COVER, welcomeContent(), "欢迎来到你的新空间\n本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。\n从这里开始\n新建页面：Ctrl+N 或左侧栏 ＋\n插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）\n搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴\n常用快捷键\nCtrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图\n用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。"],
   );
   store.run(
     `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)

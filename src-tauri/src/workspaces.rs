@@ -266,7 +266,7 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
         "root": {
             "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
             "children": [
-                serde_json::json!({ "type": "paragraph", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "font-size:60px;line-height:1.1;text-align:center;margin:8px 0 4px;", "children": [js_text("🚀")] }),
+                serde_json::json!({ "type": "paragraph", "version": 1, "direction": "ltr", "format": "", "indent": 0, "style": "font-size:60px;line-height:1.1;text-align:center;margin:8px 0 4px;", "children": [js_text("🌟")] }),
                 js_heading("h1", "欢迎来到你的新空间"),
                 js_callout("本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。"),
                 js_heading("h2", "从这里开始"),
@@ -285,7 +285,7 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
     }).to_string();
     // A welcoming cover + icon so the new space's start page feels finished.
     let home_cover = r#"url("/covers/default-cover.jpg")"#;
-    let home_icon = "🚀";
+    let home_icon = "🌟";
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, cover, icon, created_at, updated_at, deleted_at)
          VALUES (?1, ?2, NULL, ?3, ?4, ?5, 'page', 0, ?6, ?7, ?8, ?8, NULL)",
