@@ -21,6 +21,7 @@ import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
+import { AccountCenter } from "./AccountCenter";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
@@ -1165,6 +1166,7 @@ export function PageTree({
           <div className="sidebar-actions-group">
             <SearchPanel />
             <SyncPanel />
+            <AccountCenter />
             <BackupButton />
             <StoragePanel />
             <ThemeSettings />

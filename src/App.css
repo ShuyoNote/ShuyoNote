@@ -815,6 +815,73 @@ body,
   white-space: pre-wrap;
 }
 
+.sync-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+.acct-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--bg-sidebar, transparent);
+}
+.acct-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.acct-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.acct-group-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-group-sync {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.acct-group-sync:hover:not(:disabled) {
+  background: var(--hover);
+}
+.acct-group-sync:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.acct-ws {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.acct-ws-name {
+  color: var(--text);
+}
+.acct-ws-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .sync-actions {
   display: flex;
   gap: 6px;
