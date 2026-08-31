@@ -5,6 +5,7 @@
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from "pdfjs-dist";
 import type { PdfRenderEngineApi, PdfDocumentMeta, PdfPageMeta, OutlineItem } from "../pdfRender";
+import { APP_VERSION } from "../links";
 
 let workerReady = false;
 
@@ -12,11 +13,12 @@ function ensureWorker(): void {
   if (workerReady) return;
   workerReady = true;
   if (typeof document !== "undefined") {
-    // Vite rewrites this to a bundled asset URL.
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-      "pdfjs-dist/build/pdf.worker.min.mjs",
-      import.meta.url,
-    ).href;
+    // Vite rewrites this to a bundled asset URL. Append the app version as a
+    // cache-buster: the file name is content-hashed + served `immutable`, so a
+    // worker that had a stale MIME/response cached would otherwise be reused
+    // forever. Bumping the version changes the URL → browsers re-fetch it.
+    const worker = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
+    pdfjs.GlobalWorkerOptions.workerSrc = `${worker}?v=${encodeURIComponent(APP_VERSION)}`;
   }
 }
 
