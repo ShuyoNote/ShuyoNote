@@ -627,8 +627,27 @@ function makeInvoke(store: SqliteStore) {
       );
       return rows as T;
     }
+    if (cmd === "list_workspace_pages") {
+      // api sends { workspaceId } flat. List pages of a given workspace. The live
+      // DB holds the active workspace; other workspaces live as snapshots (and
+      // return [] here as a graceful fallback instead of `{}`).
+      const args = a.args ?? a;
+      const wsId = String(args.workspaceId ?? args.workspace_id ?? getActiveWsId());
+      const rows = store.query(
+        `SELECT id, workspace_id, parent_id, title, icon, kind, sort_order, created_at, updated_at, deleted_at
+         FROM pages WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY sort_order, created_at`,
+        [wsId],
+      );
+      return rows as T;
+    }
+    if (cmd === "list_all_pdf_attachments") {
+      const rows = store.query(
+        "SELECT id, name, hash, mime, size, path FROM attachments WHERE mime = 'application/pdf' OR LOWER(name) LIKE '%.pdf' ORDER BY name",
+      );
+      return rows as T;
+    }
     if (cmd === "get_page") {
-      const rows = store.query("SELECT * FROM pages WHERE id = ?", [a.id]);
+      const rows = store.query("SELECT * FROM pages WHERE id = ? AND deleted_at IS NULL", [a.id]);
       return (rows[0] ?? null) as T;
     }
     if (cmd === "set_page_icon") {
@@ -643,7 +662,11 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "set_page_cover_height") {
       const args = a.args ?? a;
-      store.run("UPDATE pages SET cover_height = ? WHERE id = ?", [Math.max(0, Number(args.height ?? 300)) || 300, args.id]);
+      // Desktop clamps to [120, 720] (commands.rs:333); mirror that so values that
+      // would be rejected on desktop don't silently persist on Web.
+      const raw = Number(args.height ?? 300);
+      const h = Math.max(120, Math.min(720, Number.isFinite(raw) ? raw : 300));
+      store.run("UPDATE pages SET cover_height = ? WHERE id = ?", [h, args.id]);
       return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
     }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
@@ -657,10 +680,17 @@ function makeInvoke(store: SqliteStore) {
       // get a descriptive name, plain pages get 新页面).
       const fallback = kind === "folder" ? "新建文件夹" : kind === "database" ? "新建数据库" : "新页面";
       const title = typeof args.title === "string" && args.title.trim() ? args.title : fallback;
+      // Append after the current last sibling (desktop computes MAX(sort_order)+1 per parent).
+      const parentId = args.parent_id ?? null;
+      const maxOrder = store.query<{ m: number }>("SELECT COALESCE(MAX(sort_order), -1) AS m FROM pages WHERE parent_id = ? AND deleted_at IS NULL", [parentId])[0]?.m ?? -1;
+      const sortOrder = typeof args.sort_order === "number" ? args.sort_order : maxOrder + 1;
+      // Desktop defaults content_json to "{}" (a valid empty Lexical doc); keep any
+      // real payload (e.g. from a template) but never store an empty/blank string.
+      const contentJson = typeof args.content_json === "string" && args.content_json ? args.content_json : "{}";
       store.run(
         `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?)`,
-        [id, wsId, args.parent_id ?? null, title, kind, now, now, args.content_json ?? "", args.content_text ?? ""],
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        [id, wsId, parentId, title, kind, sortOrder, now, now, contentJson, args.content_text ?? ""],
       );
       return store.query("SELECT * FROM pages WHERE id = ?", [id])[0] as T;
     }
@@ -962,46 +992,91 @@ function makeInvoke(store: SqliteStore) {
       ) as T;
     }
     if (cmd === "create_tag") {
-      const tag = { id: uid(), name: String(a.name ?? "新标签") };
+      // api sends { name } flat. Desktop get-or-creates: return existing tag if present.
+      const args = a.args ?? a;
+      const name = str(args.name ?? "新标签");
+      const existing = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE name = ?", [name])[0];
+      if (existing) return existing as T;
+      const tag = { id: uid(), name };
       store.run("INSERT INTO tags (id, name) VALUES (?, ?)", [tag.id, tag.name]);
       return tag as T;
     }
     if (cmd === "rename_tag") {
-      store.run("UPDATE tags SET name = ? WHERE id = ?", [str(a.name), a.id]);
-      const row = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE id = ?", [a.id])[0];
+      // api sends { tagId, name } flat. Desktop merges on collision: if another tag
+      // already has `name`, move its pages into it and delete the renamed tag.
+      const args = a.args ?? a;
+      const id = String(args.tagId ?? args.id ?? "");
+      const name = str(args.name ?? "");
+      const clash = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE name = ? AND id <> ?", [name, id])[0];
+      if (clash) {
+        // Avoid a (page_id, tag_id) primary-key clash: drop any clash links on
+        // pages that also carry the renamed tag, then reassign id → clash.
+        store.run("DELETE FROM page_tags WHERE tag_id = ? AND page_id IN (SELECT page_id FROM page_tags WHERE tag_id = ?)", [clash.id, id]);
+        store.run("UPDATE page_tags SET tag_id = ? WHERE tag_id = ?", [clash.id, id]);
+        store.run("DELETE FROM tags WHERE id = ?", [id]);
+        return clash as T;
+      }
+      store.run("UPDATE tags SET name = ? WHERE id = ?", [name, id]);
+      const row = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE id = ?", [id])[0];
       return (row ?? null) as T;
     }
     if (cmd === "delete_tag") {
-      store.run("DELETE FROM page_tags WHERE tag_id = ?", [a.id]);
-      store.run("DELETE FROM tags WHERE id = ?", [a.id]);
+      const args = a.args ?? a;
+      const id = String(args.tagId ?? args.id ?? "");
+      store.run("DELETE FROM page_tags WHERE tag_id = ?", [id]);
+      store.run("DELETE FROM tags WHERE id = ?", [id]);
       return undefined as T;
     }
     if (cmd === "add_tag") {
-      if (typeof a.page_id === "string" && typeof a.tag_id === "string") {
-        const exists = store.query("SELECT 1 AS ok FROM page_tags WHERE page_id = ? AND tag_id = ?", [a.page_id, a.tag_id])[0];
-        if (!exists) {
-          store.run("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [a.page_id, a.tag_id]);
+      // Two caller shapes: api.ts sends { pageId, name } (get-or-create the tag by
+      // name, then link it — matches desktop); the smoke suite sends
+      // { page_id, tag_id } (link an existing tag by id). Support both.
+      const args = a.args ?? a;
+      const pageId = String(args.pageId ?? args.page_id ?? "");
+      if (!pageId) return undefined as T;
+      let tagId = String(args.tagId ?? args.tag_id ?? "");
+      let tag: { id: string; name: string } | null = null;
+      if (tagId) {
+        tag = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE id = ?", [tagId])[0] ?? null;
+        if (!tag) return undefined as T;
+      } else {
+        const name = str(args.name ?? "");
+        if (!name) return undefined as T;
+        tag = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE name = ?", [name])[0] ?? null;
+        if (!tag) {
+          tag = { id: uid(), name };
+          store.run("INSERT INTO tags (id, name) VALUES (?, ?)", [tag.id, tag.name]);
         }
+        tagId = tag.id;
       }
-      return undefined as T;
+      const exists = store.query("SELECT 1 AS ok FROM page_tags WHERE page_id = ? AND tag_id = ?", [pageId, tagId])[0];
+      if (!exists) store.run("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [pageId, tagId]);
+      return tag as T;
     }
     if (cmd === "remove_tag") {
-      store.run("DELETE FROM page_tags WHERE page_id = ? AND tag_id = ?", [a.page_id, a.tag_id]);
+      const args = a.args ?? a;
+      const pageId = String(args.pageId ?? args.page_id ?? "");
+      const tagId = String(args.tagId ?? args.tag_id ?? "");
+      store.run("DELETE FROM page_tags WHERE page_id = ? AND tag_id = ?", [pageId, tagId]);
       return undefined as T;
     }
     if (cmd === "page_tags") {
+      const args = a.args ?? a;
+      const pageId = String(args.pageId ?? args.page_id ?? "");
       return store.query(
         `SELECT t.id, t.name FROM tags t
          JOIN page_tags pt ON pt.tag_id = t.id WHERE pt.page_id = ? ORDER BY t.name`,
-        [a.page_id],
+        [pageId],
       ) as T;
     }
     if (cmd === "pages_by_tag") {
+      const args = a.args ?? a;
+      const tagId = String(args.tagId ?? args.tag_id ?? "");
       return store.query(
         `SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
          FROM pages p JOIN page_tags pt ON pt.page_id = p.id
          WHERE pt.tag_id = ? AND p.deleted_at IS NULL`,
-        [a.tag_id],
+        [tagId],
       ) as T;
     }
 
@@ -1093,7 +1168,7 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "search_blocks") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
-      const query = String(req.query ?? "").toLowerCase();
+      const query = String(req.query ?? a.query ?? "").toLowerCase();
       if (!query) return [] as T;
       const rows = store.query("SELECT id, title, content_json, content_text FROM pages WHERE deleted_at IS NULL AND (LOWER(content_text) LIKE ? OR LOWER(title) LIKE ?)", [`%${query}%`, `%${query}%`]);
       const out = [];
@@ -1701,7 +1776,27 @@ function makeInvoke(store: SqliteStore) {
       } as T;
     }
     if (cmd === "clear_trash") {
+      // Desktop cascades all child rows + frees orphaned attachment bytes
+      // (storage.rs:146-239); mirror the cascade so soft-deleted pages don't leak
+      // tags/props/versions/columns/blob bytes on Web.
+      const trashIds = "SELECT id FROM pages WHERE deleted_at IS NOT NULL";
+      store.run(`DELETE FROM page_tags WHERE page_id IN (${trashIds})`);
+      store.run(`DELETE FROM page_props WHERE page_id IN (${trashIds})`);
+      store.run(`DELETE FROM page_versions WHERE page_id IN (${trashIds})`);
+      store.run(`DELETE FROM page_embeddings WHERE page_id IN (${trashIds})`);
+      store.run(`DELETE FROM database_columns WHERE db_page_id IN (${trashIds})`);
+      store.run(`DELETE FROM db_views WHERE db_page_id IN (${trashIds})`);
+      store.run(`DELETE FROM attachments WHERE page_id IN (${trashIds})`);
       store.run("DELETE FROM pages WHERE deleted_at IS NOT NULL");
+      // Free blob bytes no longer referenced by any remaining attachment row.
+      try {
+        const referenced = new Set((store.query<{ hash: string }>("SELECT DISTINCT hash FROM attachments") as any[]).map((r) => String(r.hash)));
+        for (const e of await blobStore.entries()) {
+          if (!referenced.has(e.hash)) await blobStore.delete(e.hash).catch(() => {});
+        }
+      } catch {
+        /* best-effort */
+      }
       return 0 as T;
     }
     if (cmd === "cleanup_orphan_attachments") {
@@ -1809,9 +1904,11 @@ function makeInvoke(store: SqliteStore) {
         if (activeId) await spaceStore.putSnapshot(activeId, store.snapshot());
 
         await store.restore(dbBytes);
-        // Read the space's own name/theme/icon before re-keying to a fresh id.
+        // Read the space's own name/theme/icon before re-keying to a fresh id. The
+        // restored DB may be desktop-format (workspaces has created_at) or web-format
+        // (no created_at), so don't ORDER BY created_at — just grab the one row.
         const meta0 = store.query<{ name: string; theme: string; icon: string }>(
-          "SELECT name, COALESCE(theme,'') AS theme, COALESCE(icon,'') AS icon FROM workspaces ORDER BY created_at ASC LIMIT 1",
+          "SELECT name, COALESCE(theme,'') AS theme, COALESCE(icon,'') AS icon FROM workspaces LIMIT 1",
         )[0];
         const newId = uid();
         const name = meta0?.name || String(a.name ?? "导入空间");
@@ -1819,10 +1916,14 @@ function makeInvoke(store: SqliteStore) {
         const icon = meta0?.icon ?? "";
         if (fromId && existingIds.has(fromId)) renamed++;
         store.run("DELETE FROM workspaces");
-        store.run(
-          "INSERT INTO workspaces (id, name, theme, icon, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-          [newId, name, theme, icon, now, now],
-        );
+        const wCols = workspaceColumns();
+        const wHasCreated = wCols.includes("created_at");
+        const wHasUpdated = wCols.includes("updated_at");
+        const wIds = ["id", "name", "theme", "icon"];
+        const wVals: (string | number | null)[] = [newId, name, theme, icon];
+        if (wHasCreated) { wIds.push("created_at"); wVals.push(now); }
+        if (wHasUpdated) { wIds.push("updated_at"); wVals.push(now); }
+        store.run(`INSERT INTO workspaces (${wIds.join(", ")}) VALUES (${wIds.map(() => "?").join(", ")})`, wVals);
         await spaceStore.putSnapshot(newId, store.snapshot());
         await spaceStore.putMeta({ id: newId, name, theme, icon, sort_order: now, created_at: now, updated_at: now });
         imported++;
