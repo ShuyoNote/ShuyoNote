@@ -10,6 +10,7 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { FilePreviewDialog } from "./components/FilePreviewDialog";
 import { PdfReader } from "./components/PdfReader";
 import { FormulaEditorDialog } from "./components/FormulaEditorDialog";
@@ -377,6 +378,7 @@ function App() {
   if (standaloneId) {
     return (
       <div className="app">
+        <UpdateBanner />
         <div className="main">
           <NoteEditor pageId={standaloneId} />
         </div>
@@ -397,6 +399,7 @@ function App() {
 
   return (
     <div className="app">
+      <UpdateBanner />
       <PageTree view={view} onViewChange={setView} />
       {templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
