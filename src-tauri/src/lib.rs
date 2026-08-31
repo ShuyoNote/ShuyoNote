@@ -66,6 +66,9 @@ pub fn run() {
                 eprintln!("failed to init db: {e}");
                 std::io::Error::other(e.to_string())
             })?;
+            // E1: if workspace encryption is enabled, default to the locked state on
+            // launch so the passphrase must be re-entered before any encrypted sync.
+            security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
             // Seed a bundled demo plugin so the plugin system has something to load.
             let _ = plugins::ensure_demo_plugin(&app.handle());

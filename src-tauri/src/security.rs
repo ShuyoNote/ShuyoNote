@@ -4,10 +4,16 @@ use crate::sync;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::State;
 
 /// App-session "locked" flag: gating pushes/pulls until the passphrase is re-entered.
 static LOCKED: AtomicBool = AtomicBool::new(false);
+
+/// Session-held derived key (NOT persisted at rest). Populated on enable/unlock,
+/// cleared on lock/disable. This is the E1 "密钥不落盘" core: the passphrase-derived
+/// key only lives in this process's memory, never written to `sync_state`.
+static SESSION_KEY: Mutex<Option<[u8; 32]>> = Mutex::new(None);
 
 /// Constant encrypted as the verify sentinel so `unlock_encryption` can validate the passphrase
 /// without persisting the key at rest.
@@ -22,14 +28,13 @@ fn encryption_enabled(c: &Connection) -> bool {
     sync::get_state(c, crypto::ENC_ENABLED).as_deref() == Some("1")
 }
 
-/// Read the derived key (if encryption is enabled and session currently unlocked) from sync_state.
+/// Read the session-held derived key (if encryption is enabled and session currently unlocked).
+/// No longer reads any persisted key — this is the E1 "密钥不落盘" guarantee.
 pub fn key_if_enabled(c: &Connection) -> Option<[u8; 32]> {
     if !encryption_enabled(c) || LOCKED.load(Ordering::SeqCst) {
         return None;
     }
-    let s = sync::get_state(c, crypto::ENC_KEY)?;
-    let b = crypto::b64_decode(&s).ok()?;
-    b.as_slice().try_into().ok()
+    *SESSION_KEY.lock().ok()?
 }
 
 /// Encrypt a plaintext payload for the wire if encryption is enabled.
@@ -58,9 +63,12 @@ pub fn set_encryption(db: State<Db>, passphrase: String) -> Result<(), String> {
     let key = crypto::derive_key(&passphrase, &salt)?;
     let verify = crypto::encrypt_str(VERIFY_MSG, &key)?;
     sync::set_state(&c, crypto::ENC_SALT, &crypto::b64_encode(&salt))?;
-    sync::set_state(&c, crypto::ENC_KEY, &crypto::b64_encode(&key))?;
+    // NOTE: `ENC_KEY` is intentionally NOT persisted here — the derived key is only
+    // held in this session (SESSION_KEY). At-rest protection comes from the DB-level
+    // encryption added later (E1 step 2).
     sync::set_state(&c, crypto::ENC_VERIFY, &verify)?;
     sync::set_state(&c, crypto::ENC_ENABLED, "1")?;
+    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(key);
     LOCKED.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -95,6 +103,7 @@ pub fn lock_encryption(db: State<Db>) -> Result<(), String> {
     if !encryption_enabled(&c) {
         return Err("未开启端到端加密".to_string());
     }
+    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = None;
     LOCKED.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -113,6 +122,7 @@ pub fn unlock_encryption(db: State<Db>, passphrase: String) -> Result<(), String
     if msg != VERIFY_MSG {
         return Err("口令不正确".to_string());
     }
+    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(key);
     LOCKED.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -121,8 +131,18 @@ pub fn unlock_encryption(db: State<Db>, passphrase: String) -> Result<(), String
 pub fn disable_encryption(db: State<Db>) -> Result<(), String> {
     let c = conn(&db);
     sync::set_state(&c, crypto::ENC_ENABLED, "0")?;
+    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = None;
     LOCKED.store(false, Ordering::SeqCst);
     Ok(())
+}
+
+/// On app start, if encryption is enabled, default to the locked state so the derived
+/// key must be re-entered before any encrypted sync happens (restart does not leave the
+/// session unlocked with a persisted key).
+pub fn startup_lock(c: &Connection) {
+    if encryption_enabled(c) {
+        LOCKED.store(true, Ordering::SeqCst);
+    }
 }
 
 // ---- round-trip test ----
@@ -141,20 +161,22 @@ mod tests {
     #[test]
     fn payload_roundtrip_when_enabled() {
         let mut c = mem_conn();
-        // ensure the session is not locked (cross-test safety for the global flag)
+        // ensure the session is not locked (cross-test safety for the global flags)
         LOCKED.store(false, Ordering::SeqCst);
-        // simulate set_encryption
+        // simulate set_encryption (key only in the session, not persisted)
         let salt = crypto::random_salt();
         let key = crypto::derive_key("supersecret", &salt).unwrap();
         sync::set_state(&c, crypto::ENC_SALT, &crypto::b64_encode(&salt)).unwrap();
-        sync::set_state(&c, crypto::ENC_KEY, &crypto::b64_encode(&key)).unwrap();
         sync::set_state(&c, crypto::ENC_ENABLED, "1").unwrap();
+        *SESSION_KEY.lock().unwrap() = Some(key);
 
         let plain = r#"{"id":"p1","content_json":"hello","content_text":"hi"}"#;
         let enc = encrypt_payload(&c, plain).unwrap();
         assert_ne!(enc, plain);
         let dec = decrypt_payload(&c, &enc).unwrap();
         assert_eq!(dec, plain);
+        // key is only in session, never persisted
+        assert!(sync::get_state(&c, crypto::ENC_KEY).is_none());
     }
 
     #[test]
@@ -180,12 +202,12 @@ mod tests {
     #[test]
     fn lock_gates_key_and_sync() {
         let mut c = mem_conn();
-        // enable encryption (+ key persisted) and unlock by default
+        // enable encryption (key in session) and unlock by default
         let salt = crypto::random_salt();
         let key = crypto::derive_key("supersecret", &salt).unwrap();
         sync::set_state(&c, crypto::ENC_SALT, &crypto::b64_encode(&salt)).unwrap();
-        sync::set_state(&c, crypto::ENC_KEY, &crypto::b64_encode(&key)).unwrap();
         sync::set_state(&c, crypto::ENC_ENABLED, "1").unwrap();
+        *SESSION_KEY.lock().unwrap() = Some(key);
         LOCKED.store(false, Ordering::SeqCst);
         assert!(key_if_enabled(&c).is_some());
         assert!(sync_gate(&c).is_ok());
@@ -195,7 +217,7 @@ mod tests {
         assert!(key_if_enabled(&c).is_none());
         assert!(sync_gate(&c).is_err());
 
-        // unlock -> key available, sync allowed again
+        // unlock -> key available, sync allowed again (session key restored)
         LOCKED.store(false, Ordering::SeqCst);
         assert!(key_if_enabled(&c).is_some());
         assert!(sync_gate(&c).is_ok());
