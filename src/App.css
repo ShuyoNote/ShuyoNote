@@ -8800,6 +8800,72 @@ p:has(> .editor-drawing-container) {
   cursor: not-allowed;
 }
 
+/* E1 encryption lock screen (shown when the workspace DBs are encrypted + session locked) */
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #0b1533;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.lock-card {
+  width: 380px;
+  max-width: 92vw;
+  background: #1c2340;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 28px 26px;
+  text-align: center;
+  color: #fff;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+.lock-logo {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+.lock-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.lock-desc {
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 18px;
+}
+.lock-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.lock-button {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  border-radius: 8px;
+  background: #3370ff;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lock-button:hover {
+  background: #2b5fe0;
+}
+.lock-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.lock-error {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #ffb3b3;
+}
+
 /* Markdown import dialog */
 .markdown-import-overlay {
   position: fixed;

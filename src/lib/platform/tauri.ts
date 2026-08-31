@@ -31,7 +31,10 @@ export const tauriPlatform: Platform = {
     listen: (event, handler) => tauriListen(event, handler),
   },
   asset: {
-    convertFileSrc: (path) => tauriConvertFileSrc(path),
+    // E1: all attachment file paths are served through the custom `attachment` scheme,
+    // which decrypts at-rest-encrypted attachment bytes in memory (passthrough when off).
+    // Tauri resolves the platform-correct URL (Windows: http://attachment.localhost/...).
+    convertFileSrc: (path) => tauriConvertFileSrc(path, "attachment"),
   },
   webview: {
     onDragDropEvent: (handler) =>

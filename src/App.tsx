@@ -25,6 +25,7 @@ import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
+import { LockScreen } from "./components/LockScreen";
 import { useTemplateCenterStore } from "./store/templateCenter";
 import { inputDialog } from "./store/input";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -341,18 +342,37 @@ function App() {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useTemplateCenterStore((s) => s.open);
+  // E1: encryption gate — while enabled+locked the space DBs aren't readable, so we
+  // hold off loading and show a lock screen until the user enters the passphrase.
+  const [enc, setEnc] = useState<{ enabled: boolean; locked: boolean } | null>(null);
   useAutoSync();
   useUpdateChecker();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
   );
 
+  useEffect(() => {
+    api
+      .encryptionStatus()
+      .then(setEnc)
+      .catch(() => setEnc({ enabled: false, locked: false }));
+  }, []);
+
   // Standalone window mode: ?page=<id> renders a single-page editor only.
   const standaloneId = new URLSearchParams(window.location.search).get("page");
 
+  // E1: while locked the space DBs aren't readable, so show a lock screen instead of
+  // loading any content. Unlock re-keys the DBs and the effect below reloads pages.
+  const locked = enc ? enc.enabled && enc.locked : false;
+  if (locked) {
+    return <LockScreen onUnlocked={() => setEnc({ enabled: true, locked: false })} />;
+  }
+
   useEffect(() => {
+    if (!enc) return;
+    if (enc.enabled && enc.locked) return; // wait for unlock
     loadPages();
-  }, []);
+  }, [enc]);
 
   // Auto-open the first page/database (never a folder) when none is selected —
   // but only while sitting in the notes view, so navigating to a folder (files

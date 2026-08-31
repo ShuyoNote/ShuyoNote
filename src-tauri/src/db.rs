@@ -1,3 +1,4 @@
+use crate::security;
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -23,19 +24,35 @@ pub(crate) fn space_db_path(app_data_dir: &Path, space_id: &str) -> PathBuf {
     spaces_dir(app_data_dir).join(format!("{space_id}.db"))
 }
 
+/// The app data dir set by [`init`] (for paths used outside the create/spawn path).
+pub(crate) fn app_data_dir_ref() -> Option<&'static Path> {
+    APP_DATA_DIR.get().map(|p| p.as_path())
+}
+
 /// Reopen the main (active space) connection to point at `space_id`'s DB file,
-/// re-attaching meta.db. Used when creating/switching/deleting a workspace.
+/// re-attaching meta.db, using the app-data-dir recorded by [`init`]. Used when
+/// creating/switching/deleting a workspace.
 pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), String> {
     let dir = APP_DATA_DIR
         .get()
         .ok_or_else(|| "app data dir not initialised".to_string())?;
-    let _ = std::mem::replace(c, Connection::open(space_db_path(dir, space_id)).map_err(|e| e.to_string())?);
+    reopen_space_at(c, space_id, dir)
+}
+
+/// [`reopen_space`] with an explicit app-data-dir, so the E1 enable/unlock/disable cores
+/// and their tests do not depend on the global [`APP_DATA_DIR`].
+pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) -> Result<(), String> {
+    let path = space_db_path(dir, space_id);
+    let _ = std::mem::replace(c, Connection::open(&path).map_err(|e| e.to_string())?);
+    // E1: if the space DB is SQLCipher-encrypted at rest, key the connection before
+    // any pragma/query runs.
+    security::key_space_conn(c, &path)?;
     c.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     c.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
     c.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
     migrate(c, space_id).map_err(|e| e.to_string())?;
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
-    c.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
+    c.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
         .map_err(|e| format!("attach meta failed: {e}"))?;
     ensure_space_workspace(c, space_id)?;
     Ok(())
@@ -81,14 +98,22 @@ pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
     let dir = APP_DATA_DIR
         .get()
         .ok_or_else(|| "app data dir not initialised".to_string())?;
-    let conn = Connection::open(space_db_path(dir, space_id)).map_err(|e| e.to_string())?;
+    open_space_conn_at(space_id, dir)
+}
+
+/// [`open_space_conn`] with an explicit app-data-dir (testable without the global).
+pub(crate) fn open_space_conn_at(space_id: &str, dir: &Path) -> Result<Connection, String> {
+    let path = space_db_path(dir, space_id);
+    let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    // E1: key the connection if this space's DB is encrypted at rest.
+    security::key_space_conn(&conn, &path)?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
     conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
     conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
     // Only migrate if the file is empty/brand new; an existing DB migrates idempotently.
     migrate(&conn, space_id).map_err(|e| e.to_string())?;
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
-    conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
+    conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
         .map_err(|e| format!("attach meta failed: {e}"))?;
     ensure_space_workspace(&conn, space_id)?;
     Ok(conn)
@@ -145,9 +170,9 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     }
 
     // Open the active space's DB as the MAIN connection, then ATTACH meta.db as `meta`.
-    let active: String = {
+    let (active, enc_on) = {
         let meta_conn = Connection::open(meta_path(&app_data_dir))?;
-        meta_conn
+        let active: String = meta_conn
             .query_row(
                 "SELECT value FROM sync_state WHERE key = ?1",
                 params![ACTIVE_KEY],
@@ -156,15 +181,46 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
             .map_err(|_| rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(1),
                 Some("no active workspace".to_string()),
-            ))?
+            ))?;
+        let enc_on = security::encryption_enabled_base(&meta_conn);
+        (active, enc_on)
     };
-    let conn = Connection::open(space_db_path(&app_data_dir, &active))?;
+
+    // E1 startup gate: if encryption is on and the session is locked (the default
+    // after a restart — no key is persisted), the active space DB may be
+    // SQLCipher-encrypted and is NOT readable yet. We must NOT open the space file
+    // (even a bare open + ATTACH touches the encrypted main header and fails with
+    // "file is not a database"). So the restored main connection is an EMPTY in-memory
+    // base with meta.db attached as `meta` — the app shell (workspace list, encryption
+    // status, unlock screen) works from plaintext meta.db, and the space DB is keyed and
+    // re-opened via reopen_space when the passphrase is entered.
+    if enc_on && !security::session_has_key() {
+        let conn = Connection::open_in_memory()?;
+        let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
+        conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
+            .map_err(|e| {
+                eprintln!("failed to attach meta db (locked startup): {e}");
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(1),
+                    Some(format!("attach meta failed: {e}")),
+                )
+            })?;
+        return Ok(conn);
+    }
+
+    let space_path = space_db_path(&app_data_dir, &active);
+    let conn = Connection::open(&space_path)?;
+    // If the active space DB is encrypted (only possible when already unlocked), key
+    // it before any pragma/query runs. For the common disabled case this is a no-op.
+    security::key_space_conn(&conn, &space_path).map_err(|e| {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e))
+    })?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     migrate(&conn, &active)?;
     let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
-    conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta"), [])
+    conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
         .map_err(|e| {
             eprintln!("failed to attach meta db: {e}");
             rusqlite::Error::SqliteFailure(
@@ -193,7 +249,8 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             sort_order  REAL NOT NULL DEFAULT 0,
             created_at  INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL,
-            deleted_at  INTEGER
+            deleted_at  INTEGER,
+            encrypted   INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -236,6 +293,15 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         "#,
     )?;
+    // E1 per-space at-rest encryption marker (idempotent for existing meta.db).
+    let has_enc: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'encrypted'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_enc == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0", [])?;
+    }
     Ok(())
 }
 
@@ -607,6 +673,23 @@ mod tests {
             std::fs::create_dir_all(&d).unwrap();
             d
         })
+    }
+
+    // E1: meta.workspaces carries the per-space at-rest encryption marker column.
+    #[test]
+    fn meta_workspaces_have_encrypted_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        meta_migrate(&conn).unwrap();
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'encrypted'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has, 1);
+        // Also idempotent on re-run.
+        meta_migrate(&conn).unwrap();
     }
 
     #[test]

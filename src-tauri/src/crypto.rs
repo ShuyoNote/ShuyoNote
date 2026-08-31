@@ -50,6 +50,12 @@ pub fn random_salt() -> [u8; SALT_LEN] {
     s
 }
 
+/// Lowercase hex of a 32-byte SQLCipher raw key, for
+/// `PRAGMA key = "x'<hex>'";` when opening an encrypted space DB.
+pub fn key_hex(key: &[u8; 32]) -> String {
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Encrypt with XChaCha20-Poly1305; returns `nonce(24) || ciphertext`.
 pub fn encrypt(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     let key = Key::try_from(key.as_slice()).map_err(|_| "密钥长度无效".to_string())?;

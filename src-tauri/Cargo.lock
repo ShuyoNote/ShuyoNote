@@ -4456,6 +4456,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "mupdf-sys",
+ "percent-encoding",
  "rand_core 0.6.4",
  "regex",
  "reqwest",

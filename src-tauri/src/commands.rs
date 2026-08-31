@@ -525,7 +525,7 @@ pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPage
     let bytes = if crate::pdf_native::has_document(&hash) {
         Vec::new()
     } else {
-        crate::attachments::read_attachment_bytes(app, hash.clone())?
+        crate::attachments::read_attachment_bytes(app, db.clone(), hash.clone())?
     };
     let (rgba, w, h, _stride) = unsafe { crate::pdf_native::render_page(&hash, &bytes, args.page_index, args.scale) }
         .map_err(|e| format!("MuPDF render failed: {e}"))?;

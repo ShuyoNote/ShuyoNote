@@ -60,6 +60,58 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // E1 attachment at-rest decryption-on-serve: `convertFileSrc(path, "attachment")`
+        // produces a platform-correct `attachment://`/`http://attachment.localhost` URL;
+        // this handler percent-decodes the target path, validates it is under the app's
+        // attachments dir, reads the (possibly session-key encrypted) bytes and returns
+        // them decrypted — so the WebView renders plaintext WITHOUT writing it to disk.
+        .register_uri_scheme_protocol("attachment", |ctx, request| {
+            use percent_encoding::percent_decode;
+            use std::path::Path;
+            use tauri::http::header::{CONTENT_TYPE, ACCESS_CONTROL_ALLOW_ORIGIN};
+            let raw_path = request.uri().path().as_bytes();
+            let decoded = percent_decode(if raw_path.len() > 1 { &raw_path[1..] } else { raw_path })
+                .decode_utf8_lossy()
+                .into_owned();
+            let app = ctx.app_handle();
+            let data_dir = app.path().app_data_dir().ok();
+            let attachments_dir = data_dir.map(|d| d.join("attachments"));
+            let ok = attachments_dir
+                .as_ref()
+                .map(|ad| Path::new(&decoded).starts_with(ad))
+                .unwrap_or(false);
+            if !ok {
+                return tauri::http::Response::builder()
+                    .status(403)
+                    .body(Cow::Owned(Vec::new()))
+                    .unwrap();
+            }
+            let raw = std::fs::read(&decoded).unwrap_or_default();
+            let key = {
+                let db = app.state::<Db>();
+                let c = db.0.lock().expect("db mutex poisoned");
+                security::key_if_enabled(&c)
+            };
+            let out = security::decrypt_attachment_bytes(key.as_ref(), &raw).unwrap_or(raw.clone());
+            let ext = Path::new(&decoded)
+                .extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_else(|| "bin".to_string());
+            let mime = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "svg" => "image/svg+xml",
+                "pdf" => "application/pdf",
+                _ => "application/octet-stream",
+            };
+            tauri::http::Response::builder()
+                .header(CONTENT_TYPE, mime)
+                .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                .body(Cow::Owned(out))
+                .unwrap()
+        })
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let conn = db::init(app_data_dir).map_err(|e| {

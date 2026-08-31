@@ -84,7 +84,7 @@ fn mime_from_path(path: &Path) -> (String, String) {
     (mime.to_string(), if canonical.is_empty() { "bin".to_string() } else { canonical.to_string() })
 }
 
-fn find_path_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
+pub(crate) fn find_path_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -174,9 +174,12 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
     let filename = format!("{hash}.{ext}");
     let path = attachments_dir.join(&filename);
 
-    // Dedup: write only if not already present.
+    // Dedup: write only if not already present, encrypting at rest with the session key
+    // when encryption is on+unlocked (the hash is over the PLAINTEXT, so dedup still works).
     if !path.exists() {
-        std::fs::write(&path, &args.data).map_err(|e| e.to_string())?;
+        let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+        let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &args.data)?;
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     }
 
     let c = db.0.lock().expect("db mutex poisoned");
@@ -243,11 +246,18 @@ pub fn attachment_path(app: tauri::AppHandle, hash: String) -> Result<String, St
     Err("附件不存在".to_string())
 }
 
-/// Copy an attachment (by hash) to a user-chosen destination path (download).
+/// Copy an attachment (by hash) to a user-chosen destination path (download). When app
+/// encryption is on, the bytes are decrypted from disk first so the user gets the
+/// plaintext file (when off, passthrough — the on-disk bytes are already plaintext).
 #[tauri::command]
-pub fn copy_attachment(app: tauri::AppHandle, hash: String, dest_path: String) -> Result<(), String> {
-    let src = attachment_path(app, hash)?;
-    std::fs::copy(&src, &dest_path).map_err(|e| format!("复制失败: {e}"))?;
+pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, dest_path: String) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    let p = find_path_by_hash(&attachments_dir, &hash).ok_or("附件不存在")?;
+    let raw = std::fs::read(&p).map_err(|e| e.to_string())?;
+    let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+    let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)?;
+    std::fs::write(&dest_path, &plain).map_err(|e| format!("复制失败: {e}"))?;
     Ok(())
 }
 
@@ -272,19 +282,13 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
 }
 
 #[tauri::command]
-pub fn read_attachment_bytes(app: tauri::AppHandle, hash: String) -> Result<Vec<u8>, String> {
+pub fn read_attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -> Result<Vec<u8>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
-    let entries = std::fs::read_dir(&attachments_dir).map_err(|e| e.to_string())?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if let Some(stem) = name.split('.').next() {
-            if stem == hash {
-                return std::fs::read(entry.path()).map_err(|e| e.to_string());
-            }
-        }
-    }
-    Err("附件不存在".to_string())
+    let p = find_path_by_hash(&attachments_dir, &hash).ok_or("附件不存在")?;
+    let raw = std::fs::read(&p).map_err(|e| e.to_string())?;
+    let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+    crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)
 }
 
 #[tauri::command]
@@ -303,7 +307,9 @@ pub fn write_attachment_bytes(
     let ext = ext_from_mime(&mime);
     let path = attachments_dir.join(format!("{hash}.{ext}"));
     if !path.exists() {
-        std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+        let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+        let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &data)?;
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     }
 
     let c = db.0.lock().expect("db mutex poisoned");
@@ -370,12 +376,21 @@ pub fn import_attachment_files(
         };
 
         let final_path = attachments_dir.join(format!("{hash}.{ext}"));
+        let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         if final_path.exists() {
-            // Content-addressed dedup: identical file already stored.
+            // Content-addressed dedup: identical file already stored (may have been
+            // written before encryption; leave as-is, the read path decrypts/passthroughs).
             let _ = std::fs::remove_file(&tmp);
         } else if let Err(e) = std::fs::rename(&tmp, &final_path) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
+        } else if key.is_some() {
+            // Encrypt at rest (the streamed tmp was plaintext; hash is over plaintext).
+            if let Ok(plain) = std::fs::read(&final_path) {
+                if let Ok(bytes) = crate::security::encrypt_attachment_bytes(key.as_ref(), &plain) {
+                    let _ = std::fs::write(&final_path, &bytes);
+                }
+            }
         }
 
         let c = db.0.lock().expect("db mutex poisoned");

@@ -31,16 +31,6 @@ pub fn get_state(c: &Connection, key: &str) -> Option<String> {
     .flatten()
 }
 
-pub fn set_state(c: &Connection, key: &str, value: &str) -> Result<(), String> {
-    c.execute(
-        "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![key, value],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 // App-level key-value state lives in meta.db (shared across every workspace).
 // Only these go to meta: device_id + server_url + token. Per-workspace state
 // (E2EE keys, sync cursor) stays in the space DB's own `sync_state`.
