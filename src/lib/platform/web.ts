@@ -2,6 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
+import { DEFAULT_COVER } from "../covers";
 
 // Browser (non-Tauri) implementation of the Platform drivers.
 //
@@ -163,9 +164,9 @@ function seedIfEmpty(store: SqliteStore, wsId: string): void {
   const tagId = uid();
   const now = Date.now();
   store.run(
-    `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
-     VALUES (?, ?, NULL, ?, 'page', 0, ?, ?, NULL, ?, ?)`,
-    [welcomeId, wsId, "欢迎页", now, now, welcomeContent(), "欢迎来到你的新空间\n本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。\n从这里开始\n新建页面：Ctrl+N 或左侧栏 ＋\n插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）\n搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴\n常用快捷键\nCtrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图\n用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。"],
+    `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, cover, content_json, content_text)
+     VALUES (?, ?, NULL, ?, 'page', 0, ?, ?, NULL, ?, ?, ?)`,
+    [welcomeId, wsId, "欢迎页", now, now, DEFAULT_COVER, welcomeContent(), "欢迎来到你的新空间\n本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。\n从这里开始\n新建页面：Ctrl+N 或左侧栏 ＋\n插入内容：输入 / 打开块菜单（标题·表格·分栏·绘图…）\n搭建数据库：创建为数据表格，属性页做看板 / 日历 / 时间轴\n常用快捷键\nCtrl+K 命令面板 · Ctrl+/ 快捷键面板 · Ctrl+Shift+F 搜索 · Ctrl+E 切换笔记/看板/关系图\n用 / 插入块或从模板中心创建；命令面板 Ctrl+K 找到所有能力；/帮助 打开完整使用指南。"],
   );
   store.run(
     `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
@@ -621,7 +622,7 @@ function makeInvoke(store: SqliteStore) {
     // ---- Core note CRUD (real SQL) ----
     if (cmd === "list_pages") {
       const rows = store.query(
-        `SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at
+        `SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height
          FROM pages WHERE deleted_at IS NULL ORDER BY sort_order, created_at`,
       );
       return rows as T;
@@ -629,6 +630,18 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "get_page") {
       const rows = store.query("SELECT * FROM pages WHERE id = ?", [a.id]);
       return (rows[0] ?? null) as T;
+    }
+    if (cmd === "set_page_icon") {
+      store.run("UPDATE pages SET icon = ? WHERE id = ?", [a.icon ?? "", a.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] ?? null) as T;
+    }
+    if (cmd === "set_page_cover") {
+      store.run("UPDATE pages SET cover = ? WHERE id = ?", [a.cover ?? "", a.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] ?? null) as T;
+    }
+    if (cmd === "set_page_cover_height") {
+      store.run("UPDATE pages SET cover_height = ? WHERE id = ?", [Math.max(0, Number(a.height ?? 300)) || 300, a.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] ?? null) as T;
     }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
@@ -1152,8 +1165,66 @@ function makeInvoke(store: SqliteStore) {
 
     // ---- Graph (nodes from non-deleted pages) ----
     if (cmd === "get_graph") {
-      const rows = store.query("SELECT id, title FROM pages WHERE deleted_at IS NULL");
-      return { pages: rows.map((r: any) => ({ id: r.id, title: r.title, tags: [], props: [] })), edges: [], blocks: [], block_edges: [] } as T;
+      const pages = store.query("SELECT id, title, content_text, content_json FROM pages WHERE deleted_at IS NULL") as any[];
+      const tagRows = store.query("SELECT pt.page_id, t.name FROM page_tags pt JOIN tags t ON t.id = pt.tag_id") as any[];
+      const tagsByPage = new Map<string, string[]>();
+      for (const tr of tagRows) {
+        if (!tagsByPage.has(tr.page_id)) tagsByPage.set(tr.page_id, []);
+        tagsByPage.get(tr.page_id)!.push(tr.name);
+      }
+      const propRows = store.query("SELECT pp.page_id, ad.name, pp.value FROM page_props pp JOIN attr_defs ad ON ad.id = pp.attr_id WHERE ad.type = 'select'") as any[];
+      const propsByPage = new Map<string, { name: string; value: string }[]>();
+      for (const pr of propRows) {
+        if (!propsByPage.has(pr.page_id)) propsByPage.set(pr.page_id, []);
+        propsByPage.get(pr.page_id)!.push({ name: pr.name, value: pr.value });
+      }
+      const nodeById = new Map<string, any>();
+      const gPages = pages.map((p: any) => {
+        const meta: any = { id: p.id, title: p.title, tags: tagsByPage.get(p.id) ?? [], props: propsByPage.get(p.id) ?? [] };
+        nodeById.set(p.id, meta);
+        return meta;
+      });
+      const edges: any[] = [];
+      const edgeSet = new Set<string>();
+      for (const p of pages) {
+        for (const other of pages) {
+          if (p.id === other.id) continue;
+          if (backlinkRefMatches(p.content_text, other.title)) {
+            const key = p.id + ">" + other.id + ">page";
+            if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: p.id, target: other.id, kind: "page" }); }
+          }
+        }
+        const refVals = store.query("SELECT pp.value FROM page_props pp JOIN attr_defs ad ON ad.id = pp.attr_id WHERE pp.page_id = ? AND ad.type = 'ref'", [p.id]) as any[];
+        for (const rv of refVals) {
+          const m = String(rv.value ?? "").match(/^p:(.+)$/);
+          if (m && nodeById.has(m[1])) {
+            const key = p.id + ">" + m[1] + ">ref";
+            if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: p.id, target: m[1], kind: "ref" }); }
+          }
+        }
+      }
+      const blocks: any[] = [];
+      const blockEdges: any[] = [];
+      const blockIdToPage = new Map<string, string>();
+      for (const p of pages) {
+        const v = parseJson(p.content_json);
+        const children = Array.isArray(v?.root?.children) ? v.root.children : [];
+        for (const child of children) {
+          const bid = topBlockId(child);
+          if (!bid) continue;
+          blockIdToPage.set(bid, p.id);
+          blocks.push({ id: bid, label: snippetForBlock(p.content_json, bid) || "(", page_id: p.id });
+          blockEdges.push({ source: bid, target: p.id, kind: "belongs" });
+        }
+      }
+      for (const p of pages) {
+        const refs: { source: string; target: string; kind: string }[] = [];
+        for (const child of rootChildren(parseJson(p.content_json))) collectBlockRefs(child, topBlockId(child) ?? "", refs);
+        for (const r of refs) {
+          if (r.source && r.target && blockIdToPage.has(r.target)) blockEdges.push({ source: r.source, target: r.target, kind: r.kind });
+        }
+      }
+      return { pages: gPages, edges, blocks, block_edges: blockEdges } as T;
     }
 
     // ---- Attachments (bytes in IndexedDB blob store; SQLite holds metadata only,

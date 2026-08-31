@@ -220,7 +220,10 @@ export class SqliteStore {
         deleted_at INTEGER,
         content_json TEXT NOT NULL DEFAULT '',
         content_text TEXT NOT NULL DEFAULT '',
-        db_rule TEXT NOT NULL DEFAULT '{}'
+        db_rule TEXT NOT NULL DEFAULT '{}',
+        icon TEXT NOT NULL DEFAULT '',
+        cover TEXT NOT NULL DEFAULT '',
+        cover_height INTEGER NOT NULL DEFAULT 300
       );
       CREATE TABLE IF NOT EXISTS pdf_annotations (
         id TEXT PRIMARY KEY,
@@ -314,6 +317,22 @@ export class SqliteStore {
     // Safe migration for pre-existing DBs whose `pages` table predates db_rule.
     try {
       this.db.run("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'");
+    } catch {
+      /* already exists */
+    }
+    // Safe migration for pre-existing DBs whose `pages` table predates icon/cover/cover_height.
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    } catch {
+      /* already exists */
+    }
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN cover TEXT NOT NULL DEFAULT ''");
+    } catch {
+      /* already exists */
+    }
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN cover_height INTEGER NOT NULL DEFAULT 300");
     } catch {
       /* already exists */
     }

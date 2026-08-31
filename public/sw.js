@@ -13,7 +13,7 @@
 // the static shell + assets; a failed asset fetch resolves to Response.error()
 // (never rejects the FetchEvent) instead of a misleading "Offline" response.
 const CACHE = "shuyonote-shell-v3";
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon.svg"];
+const SHELL = ["./", "./manifest.webmanifest", "./icons/icon.svg"];
 
 // Remove cached /assets/* entries that the current build's HTML no longer
 // references, so an old build's hashed files can't linger and 404 later.

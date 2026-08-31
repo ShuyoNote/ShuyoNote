@@ -24,7 +24,7 @@ const B = `viewBox="0 0 600 200" ${V} preserveAspectRatio="xMidYMid slice"`;
 // /covers/... in both web and Tauri desktop. Used for the guide + the "秋山" preset.
 // 用相对路径：Web 版若部署到子路径（如 /app/），绝对路径 /covers/… 会 404 导致题头图空白；
 // 相对路径按当前页面目录解析，桌面（base /）与子路径部署都正确（ShuyoNote 无 URL 路由）。
-const DEFAULT_COVER = `url("covers/default-cover.jpg")`;
+export const DEFAULT_COVER = `url("covers/default-cover.jpg")`;
 
 export const COVER_PRESETS: CoverPreset[] = [
   // ---- themed gradients ----
