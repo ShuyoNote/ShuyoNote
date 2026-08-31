@@ -13,14 +13,15 @@
 // 密钥一次性生成（保密）：pnpm tauri signer generate -w ~/.tauri/shuyonote.key
 // 公钥写入 src-tauri/tauri.conf.json → plugins.updater.pubkey。
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, basename } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
 const DRY = process.argv.includes("--dry-run");
+const NO_BUILD = process.argv.includes("--no-build");
 
 // ---- 前置：签名私钥 + 公钥 ----
 const key = process.env.TAURI_SIGNING_PRIVATE_KEY;
@@ -52,7 +53,7 @@ async function apiFetch(method, url, body) {
 
 // ---- 构建 + 签名 ----
 console.log(`[release] 构建 v${version}（签名）…`);
-if (!DRY) execSync(`pnpm tauri build`, { stdio: "inherit", env: process.env });
+if (!DRY && !NO_BUILD) execSync(`pnpm tauri build`, { stdio: "inherit", env: process.env });
 
 // ---- 收集安装包 + .sig ----
 const bundleDir = join(root, "src-tauri", "target", "release", "bundle");
@@ -62,7 +63,9 @@ for (const plat of ["nsis", "msi", "dmg", "appimage", "deb", "rpm"]) {
   if (!existsSync(dir)) continue;
   for (const f of readdirSync(dir)) {
     const full = join(dir, f);
-    if (/\.(exe|msi|dmg|appimage|deb|rpm)$/i.test(f)) {
+    // 只收集与当前版本号匹配的安装包，避免把 bundle 目录里历史遗留的
+    // 其它版本 installer 一起当作本次产物发布（曾导致 latest.json 被挤占/污染）。
+    if (/\.(exe|msi|dmg|appimage|deb|rpm)$/i.test(f) && f.includes(version)) {
       const sigFile = full + ".sig";
       const sig = existsSync(sigFile) ? readFileSync(sigFile, "utf8").trim() : "";
       if (!sig) console.warn(`[release] ⚠️ 缺签名文件：${f}.sig`);
