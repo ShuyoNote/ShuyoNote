@@ -379,8 +379,10 @@ function App() {
     return (
       <div className="app">
         <UpdateBanner />
-        <div className="main">
-          <NoteEditor pageId={standaloneId} />
+        <div className="app-body">
+          <div className="main">
+            <NoteEditor pageId={standaloneId} />
+          </div>
         </div>
         <CommandPalette />
         <ShortcutsPanel />
@@ -400,7 +402,8 @@ function App() {
   return (
     <div className="app">
       <UpdateBanner />
-      <PageTree view={view} onViewChange={setView} />
+      <div className="app-body">
+        <PageTree view={view} onViewChange={setView} />
       {templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
       ) : view === "graph" ? (
@@ -426,6 +429,7 @@ function App() {
           </div>
         </div>
       )}
+      </div>
       <CommandPalette />
       <Toaster />
       <ConfirmDialog />

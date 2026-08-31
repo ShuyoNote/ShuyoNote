@@ -193,8 +193,15 @@ body,
 
 .app {
   display: flex;
+  flex-direction: column;
   height: 100%;
   overflow: hidden;
+}
+/* 顶部横幅之下的主体区：sidebar + main 横向排列 */
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 /* ---------- Sidebar ---------- */
@@ -1351,13 +1358,12 @@ body,
   box-shadow: 0 0 0 2px var(--bg);
   flex-shrink: 0;
 }
-/* 发现新版顶部横幅 */
+/* 发现新版顶部横幅：在布局流内（sticky 顶部），出现时把下方内容整体下推，不覆盖顶栏 */
 .update-banner {
-  position: fixed;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
   z-index: 1000;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
