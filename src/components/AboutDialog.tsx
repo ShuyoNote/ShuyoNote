@@ -145,7 +145,20 @@ export function AboutDialog() {
       <div className="about">
         <div className="about-hero">
           <div className="about-logo-wrap">
-            <img className="about-logo" src="/icons/mark.svg" alt={`${APP_NAME} logo`} />
+            {/* 内联正式 App logo（mark），避免 /icons/mark.svg 绝对路径在桌面端取不到而丢图 */}
+            <svg className="about-logo" viewBox="0 0 1024 1024" aria-label={`${APP_NAME} logo`} role="img">
+              <defs><linearGradient id="aboutMarkBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#4D8DFF"/><stop offset="1" stopColor="#2952CC"/></linearGradient></defs>
+              <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#aboutMarkBg)"/>
+              <rect x="248" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+              <rect x="526" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+              <rect x="290" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+              <rect x="290" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+              <rect x="290" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+              <rect x="568" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+              <rect x="568" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+              <rect x="568" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+              <path d="M 770 238 Q 775.4 262.6, 800 268 Q 775.4 273.4, 770 298 Q 764.6 273.4, 740 268 Q 764.6 262.6, 770 238 Z" fill="#FFFFFF"/>
+            </svg>
           </div>
           <div className="about-name">
             <span className="about-name-en">{APP_NAME}</span>
