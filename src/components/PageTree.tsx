@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
-import { api } from "../lib/api";
+import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
@@ -35,6 +35,22 @@ interface TreeNode extends PageMeta {
 const SPACE_ACCENTS = [
   "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
 ];
+
+// Short host label + subtle color for a workspace's sync identity tag.
+function syncTagLabel(serverUrl: string): string {
+  try {
+    const u = new URL(serverUrl);
+    return u.host.replace(/^www\./, "");
+  } catch {
+    return serverUrl.replace(/^https?:\/\//, "").split("/")[0] || "同步";
+  }
+}
+function syncTagColor(serverUrl: string): string {
+  let h = 0;
+  for (let i = 0; i < serverUrl.length; i++) h = (h * 31 + serverUrl.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return `hsl(${hue} 65% 45%)`;
+}
 
 // A pointer-drag ending fires a click on mouseup; this one-shot flag lets the row
 // onClick drop that trailing click so a dropped node isn't also opened.
@@ -637,6 +653,22 @@ export function PageTree({
   const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
   const aiEnabled = useAiStore((s) => s.config.enabled);
   const updateAvailable = useEditorStore((s) => s.updateAvailable);
+  const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
+  const isDesktop = useMemo(() => (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window), []);
+
+  // Load sync identities when the space switcher opens so the per-space tags
+  // stay fresh (SyncPanel edits update sync_profiles).
+  useEffect(() => {
+    if (!spaceChooser.open) return;
+    api
+      .listSyncProfiles()
+      .then((list) => {
+        const byWs: Record<string, SyncProfile> = {};
+        for (const p of list) byWs[p.ws_id] = p;
+        setSyncProfiles(byWs);
+      })
+      .catch(() => {});
+  }, [spaceChooser.open]);
 
   // Drag-ghost state (title + cursor position while dragging a tree node).
   const dragLabel = useTreeDrag((s) => s.label);
@@ -1006,6 +1038,17 @@ export function PageTree({
                         ) : (
                           <span className="space-item-name">{s.name}</span>
                         )}
+                        {!renamingSpace &&
+                          isDesktop &&
+                          syncProfiles[s.id] && (
+                            <span
+                              className="space-item-sync-tag"
+                              style={{ color: syncTagColor(syncProfiles[s.id].server_url) }}
+                              title={`同步：${syncProfiles[s.id].server_url}`}
+                            >
+                              {syncTagLabel(syncProfiles[s.id].server_url)}
+                            </span>
+                          )}
                         {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
                         {renamingSpace !== s.id && (
                           <button
