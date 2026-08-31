@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { createPortal } from "react-dom";
 import { usePdfReader } from "../store/pdfReader";
 import { useAiStore } from "../store/ai";
-import { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
+import type { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
+// NOTE: pdf.js is large (~1MB) and only needed when a PDF is actually opened,
+// so the runtime engine is imported lazily below (see the load effect), keeping
+// it out of the initial bundle. `createPdfjsEngine` is imported as a *type only*
+// so the `ReturnType<typeof createPdfjsEngine>` annotations stay valid without
+// pulling the pdf.js runtime into the synchronous chunk.
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
@@ -555,6 +560,7 @@ export function PdfReader() {
       for (const u of cache.values()) URL.revokeObjectURL(u);
       cache.clear();
       inflightRef.current.clear();
+      const { createPdfjsEngine } = await import("../lib/pdfEngine/pdfjsEngine");
       const eng = createPdfjsEngine();
       engRef.current = eng;
       if (!bytes) return;
