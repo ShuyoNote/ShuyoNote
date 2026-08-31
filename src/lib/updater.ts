@@ -40,21 +40,29 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {
         emit("downloading", 0);
         let total = 0;
         let bytes = 0;
-        await update.download((e) => {
+        const onEvent = (e: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
           if (e.event === "Started") {
-            total = e.data.contentLength ?? 0;
+            total = e.data?.contentLength ?? 0;
             bytes = 0;
             emit("downloading", 0);
           } else if (e.event === "Progress") {
-            bytes += e.data.chunkLength;
+            bytes += e.data?.chunkLength ?? 0;
             emit("downloading", total > 0 ? Math.min(100, Math.round((bytes / total) * 100)) : null);
           } else {
             emit("downloading", 100);
           }
-        });
-        // Install runs the platform installer (may relaunch the app itself).
-        emit("installing", null);
-        await update.install();
+        };
+        // Prefer the single-step `downloadAndInstall` (official recommended form):
+        // separate download-then-install can leave the updater resource in an
+        // invalid state on some WebView2 builds (reported as "f is not a
+        // function"). Fall back to the split flow only if the combined one is
+        // somehow absent.
+        if (typeof (update as any).downloadAndInstall === "function") {
+          await update.downloadAndInstall(onEvent as any);
+        } else {
+          await update.download(onEvent as any);
+          await update.install();
+        }
         emit("restarting", null);
       },
     };

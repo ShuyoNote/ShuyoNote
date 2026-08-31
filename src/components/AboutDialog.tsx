@@ -125,7 +125,10 @@ export function AboutDialog() {
       await download((p) => setProgress(p));
       // On success the installer relaunches the app; keep the final phase visible.
     } catch (e) {
-      setUpdateError(e instanceof Error ? e.message : String(e));
+      // Show the full stack when available so a minified "f is not a function"
+      // can be traced; otherwise fall back to the message.
+      setUpdateError(e instanceof Error ? (e.stack || e.message) : String(e));
+      console.error("[update] 更新失败:", e);
       setUpdating(false);
       setProgress(null);
     }
