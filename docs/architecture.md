@@ -122,7 +122,7 @@ Rust 后端是桌面 driver 的业务核心，SQL 收口在 Rust 侧，前端零
 
 ---
 
-## 6. 同步服务端（`sync-server/`，独立二进制）
+## 6. 同步服务端（`shuyonote-sync-server/`，独立二进制）
 
 自建轻量同步服务（Axum + SQLite），与桌面/Web 端通过 HTTP 交互：
 

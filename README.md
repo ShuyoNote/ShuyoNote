@@ -27,7 +27,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 
 - **本地优先**：数据即文件，存储在本机，离线可用。
 - **内容寻址去重**：附件按 SHA-256 哈希存储，跨文件夹 / 空间去重，省空间。
-- **可自建同步**：无云锁定，可选自建 sync-server（outbox + LWW + 附件增量）。
+- **可自建同步**：无云锁定，可选自建 shuyonote-sync-server（outbox + LWW + 附件增量）。
 - **可扩展**：磁盘加载命令插件（受限白名单 API）、主题 / 外观自定义。
 
 ## 📑 目录
@@ -38,7 +38,7 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 - **开发环境要求** —— Node / Rust / 平台
 - **快速开始** —— 安装与启动（桌面 + Web）
 - **构建发布** —— 产物
-- **多设备同步** —— sync-server + 配置
+- **多设备同步** —— shuyonote-sync-server + 配置
 - **项目结构** —— 目录说明
 - **文档体系** —— 文档索引
 - **路线图** —— 里程碑
@@ -158,7 +158,7 @@ flowchart TB
         SQ --> IDB
     end
 
-    subgraph SYNC["同步服务端 · sync-server（独立二进制）"]
+    subgraph SYNC["同步服务端 · shuyonote-sync-server（独立二进制）"]
         SRV["Axum + SQLite<br/>outbox 变更日志 · LWW 合并 · 附件增量"]
     end
 
@@ -240,7 +240,7 @@ pnpm tauri build   # 打包桌面安装包
 
 ### 1. 启动同步服务端
 
-sync-server 已在**独立仓库**（商业授权）：[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)。
+shuyonote-sync-server 已在**独立仓库**（商业授权）：[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)。
 
 ```bash
 git clone https://gitcode.com/shuyo-cn/shuyonote-sync-server.git
@@ -264,9 +264,9 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 
 **同步机制**：本地每次写操作在 `changes` 表记录 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。若开启端到端加密，push 前加密、pull 后解密（服务端仅存密文），锁定会话时同步被拒绝。
 
-### 3. 免费替代：导出 / 导入（无需 sync-server）
+### 3. 免费替代：导出 / 导入（无需 shuyonote-sync-server）
 
-不想运行 sync-server？可用内置的**导出 / 导入**在设备间手动搬运与备份数据（手动快照，非实时同步）：
+不想运行 shuyonote-sync-server？可用内置的**导出 / 导入**在设备间手动搬运与备份数据（手动快照，非实时同步）：
 
 - **备份 / 恢复**（设置 → 备份 / 恢复）：「导出完整备份」生成一份备份包，可在本机或另一台设备「从备份恢复」（覆盖当前数据）。
 - **空间导出 / 导入**（侧边栏空间菜单 →「导出当前空间」/「导入空间包」）：把单个空间（含其引用的附件）导出为自包含包，在另一台设备**新建一个空间**导入，不覆盖现有空间。
@@ -317,7 +317,7 @@ ShuyoNote/
 │       ├── database.rs       # 数据库视图 / 查询型 / 公式
 │       ├── properties.rs     # 属性系统
 │       └── windows.rs        # 多窗口
-│   sync-server → 独立仓库    # 同步服务端（商业授权：shuyo-cn/shuyonote-sync-server）
+│   shuyonote-sync-server → 独立仓库    # 同步服务端（商业授权：shuyo-cn/shuyonote-sync-server）
 ├── design/                   # UI/UX 设计体系（设计系统 / UX 流程 / 原型 / 实现计划）
 ├── docs/                     # 产品 / 方案 / 对比文档（见 docs/README.md 索引；架构见 docs/architecture.md）
 └── CHANGELOG.md              # 版本变更日志
@@ -396,4 +396,4 @@ AGPL-3.0 的要点：无论分发副本，还是通过**网络**向第三方提�
 
 在此许可下，你享有自由使用、修改与分发的权利；对外提供修改版或网络服务时，须遵守上述开源义务。
 
-同步服务端 **sync-server** 为**独立商业组件**，按其商业许可分发（见 [shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)），不适用本许可。
+同步服务端 **shuyonote-sync-server** 为**独立商业组件**，按其商业许可分发（见 [shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)），不适用本许可。

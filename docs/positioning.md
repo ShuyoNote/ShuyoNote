@@ -60,7 +60,7 @@ ShuyoNote 处于两条竞品轴线的交汇处：
 ## 6. 自研差异化
 
 - **Tauri + SQLite + FTS5 中文检索**：轻量、离线、无 Go 后端 / 无 Docker 依赖。
-- **自建 sync-server**：outbox 变更日志 + LWW + 附件内容寻址，无第三方云依赖。
+- **自建 shuyonote-sync-server**：outbox 变更日志 + LWW + 附件内容寻址，无第三方云依赖。
 - **开源（AGPL-3.0）+ 免费**：数据完全自持。
 
 ## 7. 价值主张（一句话对用户）
