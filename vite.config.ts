@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  // Serve under a subpath (web build is hosted at /app/ on shuyo.cn; likewise
+  // Tauri serves the frontendDist at its origin root). Relative base lets the
+  // app's /assets/, manifest and icons resolve against the actual document
+  // location instead of the host root, so deploying under /app/ keeps working.
+  base: "./",
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
