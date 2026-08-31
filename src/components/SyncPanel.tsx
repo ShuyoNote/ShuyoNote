@@ -5,12 +5,25 @@ import { useSpaceStore } from "../store/space";
 import { useNotes } from "../store/notes";
 import { SyncIcon } from "./icons";
 
+interface ServerSpace {
+  id: string;
+  name: string;
+  role: string;
+  owner_id: string;
+}
+
 interface EditRow {
   ws_id: string;
   name: string;
   server_url: string;
   token: string;
   space_id: string;
+  // Login-to-get-token (U3): email/password are transient (never persisted); the
+  // resulting token fills `token`. `remoteSpaces` caches the spaces the account
+  // joined (from GET /spaces) so the 空间 ID 可以下拉绑定.
+  loginEmail: string;
+  loginPassword: string;
+  remoteSpaces: ServerSpace[];
 }
 
 // Per-workspace sync targets (S8): each local workspace binds to its own remote
@@ -23,6 +36,7 @@ export function SyncPanel() {
   const [rows, setRows] = useState<EditRow[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   const refresh = async () => {
     try {
@@ -39,6 +53,9 @@ export function SyncPanel() {
             server_url: p?.server_url ?? "",
             token: p?.token ?? "",
             space_id: p?.space_id ?? "",
+            loginEmail: "",
+            loginPassword: "",
+            remoteSpaces: [],
           };
         }),
       );
@@ -95,6 +112,38 @@ export function SyncPanel() {
   const update = (ws_id: string, field: keyof EditRow, value: string) =>
     setRows((rs) => rs.map((r) => (r.ws_id === ws_id ? { ...r, [field]: value } : r)));
 
+  const login = async (r: EditRow) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    if (!base) { setStatus("请先填服务器地址"); return; }
+    if (!r.loginEmail.trim() || !r.loginPassword) { setStatus("请输入邮箱和密码"); return; }
+    setLoggingIn(true);
+    setStatus("");
+    try {
+      const lres = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: r.loginEmail.trim(), password: r.loginPassword }),
+      });
+      if (!lres.ok) {
+        const t = await lres.text().catch(() => "");
+        throw new Error(`登录失败 ${lres.status}：${t}`);
+      }
+      const ldata = await lres.json().catch(() => ({}));
+      const token = ldata?.token;
+      if (!token) throw new Error("服务器未返回 token");
+      // 空间列表拉取失败不阻断登录：token 先填入，列表尽力而为。
+      const list = await fetchSpaces(base, token).catch(() => [] as ServerSpace[]);
+      setRows((rs) =>
+        rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token, loginPassword: "", remoteSpaces: list } : x)),
+      );
+      setStatus(`登录成功「${r.name}」，绑定 ${list.length} 个空间`);
+    } catch (e) {
+      setStatus(`登录失败：${e}`);
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
@@ -111,13 +160,34 @@ export function SyncPanel() {
                   <label>服务器</label>
                   <input value={r.server_url} placeholder="http://localhost:8787" onChange={(e) => update(r.ws_id, "server_url", e.target.value)} />
                 </div>
+                <div className="sync-row sync-login-row">
+                  <label>账号（登录拿 token）</label>
+                  <div className="sync-login-fields">
+                    <input value={r.loginEmail} placeholder="邮箱" onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)} />
+                    <input type="password" value={r.loginPassword} placeholder="密码" onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)} />
+                  </div>
+                  <button className="sync-login-btn" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
+                    {loggingIn ? "登录中…" : "登录"}
+                  </button>
+                </div>
                 <div className="sync-row">
-                  <label>令牌</label>
+                  <label>令牌（{r.token ? "✓ 已获取" : "尚未获取"}）</label>
                   <input type="password" value={r.token} placeholder="团队 token" onChange={(e) => update(r.ws_id, "token", e.target.value)} />
                 </div>
                 <div className="sync-row">
                   <label>空间 ID</label>
-                  <input value={r.space_id} placeholder="团队空间 id（留空=旧单用户）" onChange={(e) => update(r.ws_id, "space_id", e.target.value)} />
+                  {r.remoteSpaces.length > 0 ? (
+                    <select value={r.space_id} onChange={(e) => update(r.ws_id, "space_id", e.target.value)}>
+                      <option value="">选择我加入的空间…</option>
+                      {r.remoteSpaces.map((sp) => (
+                        <option key={sp.id} value={sp.id}>
+                          {sp.name}（{sp.role}）
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input value={r.space_id} placeholder="团队空间 id（留空=旧单用户）" onChange={(e) => update(r.ws_id, "space_id", e.target.value)} />
+                  )}
                 </div>
                 <div className="sync-profile-actions">
                   <button onClick={() => save(r)}>保存</button>
@@ -136,4 +206,14 @@ export function SyncPanel() {
       )}
     </div>
   );
+}
+
+async function fetchSpaces(base: string, token: string): Promise<ServerSpace[]> {
+  const res = await fetch(`${base}/spaces`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`拉取空间失败 ${res.status}：${t}`);
+  }
+  const data = await res.json().catch(() => ({}));
+  return Array.isArray(data?.spaces) ? data.spaces : [];
 }

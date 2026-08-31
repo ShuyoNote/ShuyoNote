@@ -757,6 +757,50 @@ body,
   border-color: var(--accent);
 }
 
+.sync-row select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
+}
+.sync-row select:focus {
+  border-color: var(--accent);
+}
+
+.sync-login-row label {
+  margin-bottom: 4px;
+}
+.sync-login-fields {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sync-login-fields input {
+  flex: 1;
+}
+.sync-login-btn {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sync-login-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.sync-login-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .sync-meta {
   font-size: 12px;
   color: var(--text-dim);
