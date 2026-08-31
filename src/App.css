@@ -651,13 +651,42 @@ body,
 
 .sync-popover {
   position: fixed;
-  width: 260px;
+  width: 320px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-md);
   padding: 12px;
   z-index: 40;
+}
+.sync-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.sync-profiles {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.sync-profile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--bg-sidebar, transparent);
+}
+.sync-profile-name {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.sync-profile-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .sync-row {

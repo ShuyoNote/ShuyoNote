@@ -39,6 +39,29 @@ export interface SyncConfig {
   last_pulled_seq: number;
 }
 
+/**
+ * Per-workspace sync target (S8): each local workspace (ws_id) binds to its own
+ * remote (server_url + token + space_id), so one person can sync different spaces
+ * to different servers/accounts (multi-server × multi-space).
+ */
+export interface SyncProfile {
+  ws_id: string;
+  server_url: string;
+  token: string;
+  space_id: string;
+  last_pushed_seq: number;
+  last_pulled_seq: number;
+}
+
+export interface WorkspaceSyncResult {
+  ws_id: string;
+  pushed: number;
+  pulled: number;
+  last_pushed_seq: number;
+  last_pulled_seq: number;
+  error: string | null;
+}
+
 export interface SyncReport {
   pushed: number;
   pulled: number;
@@ -107,7 +130,12 @@ export const api = {
   getSyncConfig: () => invoke<SyncConfig>("get_sync_config"),
   setSyncConfig: (args: { server_url: string; token?: string; space_id?: string }) =>
     invoke<void>("set_sync_config", { args }),
-  syncNow: () => invoke<SyncReport>("sync_now"),
+  syncNow: () => invoke<WorkspaceSyncResult[]>("sync_now"),
+  // S8: per-workspace sync profiles (one local workspace → one remote target).
+  listSyncProfiles: () => invoke<SyncProfile[]>("list_sync_profiles"),
+  setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string }) =>
+    invoke<void>("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id }),
+  syncWorkspace: (wsId: string) => invoke<WorkspaceSyncResult>("sync_workspace", { wsId }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

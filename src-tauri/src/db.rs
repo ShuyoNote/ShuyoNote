@@ -199,6 +199,18 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+        -- Per-workspace sync targets (S8 multi-server/space): each local workspace
+        -- (ws_id) binds to its own remote (server_url + token + space_id), so one
+        -- person can sync different spaces to different servers/accounts.
+        CREATE TABLE IF NOT EXISTS sync_profiles (
+            ws_id           TEXT PRIMARY KEY,
+            server_url      TEXT NOT NULL DEFAULT '',
+            token           TEXT NOT NULL DEFAULT '',
+            space_id        TEXT NOT NULL DEFAULT '',
+            device_id       TEXT NOT NULL DEFAULT '',
+            last_pushed_seq INTEGER NOT NULL DEFAULT 0,
+            last_pulled_seq INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS templates (
             id            TEXT PRIMARY KEY,
             name          TEXT NOT NULL,

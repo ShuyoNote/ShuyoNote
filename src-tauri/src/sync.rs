@@ -236,6 +236,106 @@ pub struct SyncConfig {
     pub last_pulled_seq: i64,
 }
 
+// ---- S8: per-workspace sync profiles (multi-server / multi-space) ----
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SyncProfile {
+    pub ws_id: String,
+    pub server_url: String,
+    pub token: String,
+    pub space_id: String,
+    pub last_pushed_seq: i64,
+    pub last_pulled_seq: i64,
+}
+
+const PROFILE_COLS: &str =
+    "ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq";
+
+fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncProfile> {
+    Ok(SyncProfile {
+        ws_id: r.get(0)?,
+        server_url: r.get(1)?,
+        token: r.get(2)?,
+        space_id: r.get(3)?,
+        last_pushed_seq: r.get::<_, i64>(4)?,
+        last_pulled_seq: r.get::<_, i64>(5)?,
+    })
+}
+
+fn get_profile(c: &Connection, ws_id: &str) -> Result<SyncProfile, String> {
+    let profile = c
+        .query_row(
+            &format!("SELECT {PROFILE_COLS} FROM sync_profiles WHERE ws_id = ?1"),
+            params![ws_id],
+            row_to_profile,
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(SyncProfile {
+            ws_id: ws_id.to_string(),
+            server_url: String::new(),
+            token: String::new(),
+            space_id: String::new(),
+            last_pushed_seq: 0,
+            last_pulled_seq: 0,
+        });
+    Ok(profile)
+}
+
+fn list_profiles(c: &Connection) -> Result<Vec<SyncProfile>, String> {
+    let mut stmt = c
+        .prepare(&format!("SELECT {PROFILE_COLS} FROM sync_profiles ORDER BY ws_id"))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], row_to_profile)
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+fn set_profile(c: &Connection, ws_id: &str, server_url: &str, token: &str, space_id: &str) -> Result<(), String> {
+    let url = server_url.trim().trim_end_matches('/').to_string();
+    c.execute(
+        "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq)
+         VALUES (?1, ?2, ?3, ?4, 0, 0)
+         ON CONFLICT(ws_id) DO UPDATE SET
+           server_url = excluded.server_url,
+           token = excluded.token,
+           space_id = excluded.space_id",
+        params![ws_id, url, token, space_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Update a single numeric field on a workspace's sync profile (best-effort).
+fn set_profile_field(c: &Connection, ws_id: &str, field: &str, value: i64) -> Result<(), String> {
+    // `field` is one of the trusted constants ("last_pushed_seq"/"last_pulled_seq").
+    c.execute(
+        &format!("UPDATE sync_profiles SET {field} = ?1 WHERE ws_id = ?2"),
+        params![value, ws_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_sync_profiles(db: State<'_, Db>) -> Result<Vec<SyncProfile>, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    list_profiles(&c)
+}
+
+#[tauri::command]
+pub fn set_sync_profile(
+    db: State<'_, Db>,
+    ws_id: String,
+    server_url: String,
+    token: Option<String>,
+    space_id: Option<String>,
+) -> Result<(), String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    set_profile(&c, &ws_id, &server_url, token.as_deref().unwrap_or(""), space_id.as_deref().unwrap_or(""))
+}
+
 fn state_i64(c: &Connection, key: &str) -> i64 {
     get_state(c, key).and_then(|v| v.parse().ok()).unwrap_or(0)
 }
@@ -266,15 +366,13 @@ pub fn set_sync_config(db: State<'_, Db>, args: SyncConfigArgs) -> Result<(), St
 
 async fn do_push(
     db: &State<'_, Db>,
-    server_url: &str,
-    token: &str,
-    space_id: &str,
+    profile: &SyncProfile,
 ) -> Result<(usize, i64), String> {
     let (device_id, last_pushed, changes): (String, i64, Vec<OutgoingChange>) = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
         let device_id = device_id(&c)?;
-        let last_pushed = state_i64(&c, KEY_LAST_PUSHED);
+        let last_pushed = profile.last_pushed_seq;
         let mut stmt = c
             .prepare(
                 "SELECT device_seq, entity, entity_id, op, payload, updated_at
@@ -318,10 +416,10 @@ async fn do_push(
 
     let client = reqwest::Client::new();
     let mut req = client
-        .post(format!("{server_url}/push"))
-        .json(&PushRequest { device_id, space_id: space_id.to_string(), changes });
-    if !token.is_empty() {
-        req = req.bearer_auth(token);
+        .post(format!("{}/push", profile.server_url))
+        .json(&PushRequest { device_id, space_id: profile.space_id.clone(), changes });
+    if !profile.token.is_empty() {
+        req = req.bearer_auth(&profile.token);
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -345,7 +443,7 @@ async fn do_push(
                 |row| row.get(0),
             )
             .map_err(|e| e.to_string())?;
-        set_state(&c, KEY_LAST_PUSHED, &max_seq.to_string())?;
+        set_profile_field(&c, &profile.ws_id, "last_pushed_seq", max_seq)?;
         (max_seq, count as usize)
     };
 
@@ -354,24 +452,22 @@ async fn do_push(
 
 async fn do_pull(
     db: &State<'_, Db>,
-    server_url: &str,
-    token: &str,
-    space_id: &str,
+    profile: &SyncProfile,
 ) -> Result<(usize, i64), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
-        state_i64(&c, KEY_LAST_PULLED)
+        profile.last_pulled_seq
     };
 
     let client = reqwest::Client::new();
-    let mut url = format!("{server_url}/pull?since={last_pulled}&limit=500");
-    if !space_id.is_empty() {
-        url.push_str(&format!("&space_id={space_id}"));
+    let mut url = format!("{}/pull?since={last_pulled}&limit=500", profile.server_url);
+    if !profile.space_id.is_empty() {
+        url.push_str(&format!("&space_id={}", profile.space_id));
     }
     let mut req = client.get(&url);
-    if !token.is_empty() {
-        req = req.bearer_auth(token);
+    if !profile.token.is_empty() {
+        req = req.bearer_auth(&profile.token);
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -406,36 +502,92 @@ async fn do_pull(
                 _ => {}
             }
         }
-        set_state(&c, KEY_LAST_PULLED, &max_pulled.to_string())?;
+        set_profile_field(&c, &profile.ws_id, "last_pulled_seq", max_pulled)?;
     }
 
     Ok((count, max_pulled))
 }
 
+#[derive(Serialize)]
+pub struct WorkspaceSyncResult {
+    pub ws_id: String,
+    pub pushed: usize,
+    pub pulled: usize,
+    pub last_pushed_seq: i64,
+    pub last_pulled_seq: i64,
+    pub error: Option<String>,
+}
+
+async fn sync_workspace_only(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
+    profile: &SyncProfile,
+) -> Result<SyncReport, String> {
+    let (pushed, last_pushed_seq) = do_push(db, profile).await?;
+    let (pulled, last_pulled_seq) = do_pull(db, profile).await?;
+    sync_attachments(app, db, profile).await?;
+    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq })
+}
+
 #[tauri::command]
-pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<SyncReport, String> {
-    let (server_url, token, space_id) = {
+pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<WorkspaceSyncResult>, String> {
+    let profiles = {
         let c = db.0.lock().expect("db mutex poisoned");
-        (
-            get_meta_state(&c, KEY_SERVER_URL).unwrap_or_default(),
-            get_meta_state(&c, KEY_TOKEN).unwrap_or_default(),
-            get_meta_state(&c, KEY_SPACE_ID).unwrap_or_default(),
-        )
+        list_profiles(&c)?
     };
-    if server_url.is_empty() {
-        return Err("未配置同步服务器".to_string());
+    let mut results = Vec::new();
+    for profile in profiles {
+        // Skip empty/unbound profiles (no remote target configured).
+        if profile.server_url.is_empty() || profile.space_id.is_empty() {
+            continue;
+        }
+        let r = sync_workspace_only(&app, &db, &profile).await;
+        results.push(match r {
+            Ok(rep) => WorkspaceSyncResult {
+                ws_id: profile.ws_id.clone(),
+                pushed: rep.pushed,
+                pulled: rep.pulled,
+                last_pushed_seq: rep.last_pushed_seq,
+                last_pulled_seq: rep.last_pulled_seq,
+                error: None,
+            },
+            Err(e) => WorkspaceSyncResult {
+                ws_id: profile.ws_id.clone(),
+                pushed: 0,
+                pulled: 0,
+                last_pushed_seq: 0,
+                last_pulled_seq: 0,
+                error: Some(e),
+            },
+        });
     }
+    Ok(results)
+}
 
-    let (pushed, last_pushed_seq) = do_push(&db, &server_url, &token, &space_id).await?;
-    let (pulled, last_pulled_seq) = do_pull(&db, &server_url, &token, &space_id).await?;
-    sync_attachments(&app, &db, &server_url, &token, &space_id).await?;
-
-    Ok(SyncReport {
-        pushed,
-        pulled,
-        last_pushed_seq,
-        last_pulled_seq,
-    })
+#[tauri::command]
+pub async fn sync_workspace(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    ws_id: String,
+) -> Result<WorkspaceSyncResult, String> {
+    let profile = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        get_profile(&c, &ws_id)?
+    };
+    if profile.server_url.is_empty() || profile.space_id.is_empty() {
+        return Err("该空间未配置同步目标".to_string());
+    }
+    match sync_workspace_only(&app, &db, &profile).await {
+        Ok(rep) => Ok(WorkspaceSyncResult {
+            ws_id,
+            pushed: rep.pushed,
+            pulled: rep.pulled,
+            last_pushed_seq: rep.last_pushed_seq,
+            last_pulled_seq: rep.last_pulled_seq,
+            error: None,
+        }),
+        Err(e) => Err(e),
+    }
 }
 
 #[derive(Deserialize)]
@@ -452,9 +604,7 @@ struct RemoteAttachmentList {
 async fn sync_attachments(
     app: &tauri::AppHandle,
     db: &State<'_, Db>,
-    server_url: &str,
-    token: &str,
-    space_id: &str,
+    profile: &SyncProfile,
 ) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
@@ -462,16 +612,16 @@ async fn sync_attachments(
 
     let client = reqwest::Client::new();
     // Space-scoped attachments when bound to a team space; legacy global path otherwise.
-    let att_base = if space_id.is_empty() {
-        format!("{server_url}")
+    let att_base = if profile.space_id.is_empty() {
+        profile.server_url.clone()
     } else {
-        format!("{server_url}/spaces/{space_id}")
+        format!("{}/spaces/{}", profile.server_url, profile.space_id)
     };
 
     // 1. List remote hashes.
     let mut req = client.get(format!("{att_base}/attachments"));
-    if !token.is_empty() {
-        req = req.bearer_auth(token);
+    if !profile.token.is_empty() {
+        req = req.bearer_auth(&profile.token);
     }
     let remote: RemoteAttachmentList = req
         .send()
@@ -519,8 +669,8 @@ async fn sync_attachments(
         let mut req = client
             .post(format!("{att_base}/attachments/{hash}?mime={mime}"))
             .body(reqwest::Body::wrap_stream(stream));
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
+        if !profile.token.is_empty() {
+            req = req.bearer_auth(&profile.token);
         }
         req.send()
             .await
@@ -550,8 +700,8 @@ async fn sync_attachments(
             continue;
         }
         let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
+        if !profile.token.is_empty() {
+            req = req.bearer_auth(&profile.token);
         }
         let resp = req.send().await.map_err(|e| e.to_string())?;
         if !resp.status().is_success() {

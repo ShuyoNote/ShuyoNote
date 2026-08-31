@@ -1740,7 +1740,10 @@ function makeInvoke(store: SqliteStore) {
     // ---- Sync ----
     if (cmd === "get_sync_config") return { server_url: "", token: "", space_id: "", device_id: "", last_pushed_seq: 0, last_pulled_seq: 0 } as T;
     if (cmd === "set_sync_config") return undefined as T;
-    if (cmd === "sync_now") return { pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0 } as T;
+    if (cmd === "sync_now") return [] as T;
+    if (cmd === "list_sync_profiles") return [] as T;
+    if (cmd === "set_sync_profile") return undefined as T;
+    if (cmd === "sync_workspace") return { ws_id: "", pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: "Web 不支持真正的多服务器同步" } as T;
 
     // ---- Encryption ----
     if (cmd === "encryption_status") return { enabled: false, locked: false } as T;
