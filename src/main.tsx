@@ -63,7 +63,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
   } else {
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("/sw.js")
+        .register("./sw.js")
         .catch((e) => console.error("[ShuyoNote] SW register failed", e));
     });
   }

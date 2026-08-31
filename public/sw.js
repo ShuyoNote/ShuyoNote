@@ -1,6 +1,10 @@
 // ShuyoNote Service Worker — offline PWA (production domains only; skipped on
 // localhost in main.tsx to avoid stale hashed assets across rebuilds).
 //
+// The web app is mounted at a sub-path (e.g. /app/), so every URL below is built
+// RELATIVE to the service worker's own location (self.location) — never an
+// absolute "/" — so the same script works at the domain root or any sub-path.
+//
 // Strategy:
 //   - install: pre-cache the app shell (root HTML + manifest + icon).
 //   - activate: drop caches from other versions, then prune cached assets no
@@ -12,18 +16,28 @@
 // The app is local-first (note data in IndexedDB), so the HTTP cache only holds
 // the static shell + assets; a failed asset fetch resolves to Response.error()
 // (never rejects the FetchEvent) instead of a misleading "Offline" response.
-const CACHE = "shuyonote-shell-v3";
+const CACHE = "shuyonote-shell-v4";
 const SHELL = ["./", "./manifest.webmanifest", "./icons/icon.svg"];
 
-// Remove cached /assets/* entries that the current build's HTML no longer
-// references, so an old build's hashed files can't linger and 404 later.
+// A URL string given to Cache.addAll / cache.put is resolved against the worker's
+// own script location, so "./" always means "here wherever the app is mounted".
+const appRoot = "./";
+
+// Remove cached assets that the current build's HTML no longer references, so an
+// old build's hashed files can't linger and 404 later. The built HTML references
+// assets as "./assets/index-<hash>.js", so match those (relative) refs.
 async function pruneStaleAssets() {
   try {
-    const res = await fetch("/", { cache: "no-cache" });
+    const res = await fetch("./", { cache: "no-cache" });
     if (!res.ok) return;
     const html = await res.text();
     const keep = new Set();
-    for (const m of html.matchAll(/\/assets\/[^"'\s)]+/g)) keep.add(m[0]);
+    for (const m of html.matchAll(/(?:\.\/)?assets\/[^"'\s)]+/g)) {
+      const href = new URL(m[0].replace(/^\.\//, ""), self.location).href;
+      keep.add(href);
+      keep.add(new URL(href).pathname);
+    }
+    const assetsDir = new URL("./assets/", self.location).pathname;
     const cache = await caches.open(CACHE);
     const keys = await cache.keys();
     await Promise.all(
@@ -31,7 +45,11 @@ async function pruneStaleAssets() {
         .filter((req) => {
           const url = new URL(req.url);
           if (url.origin !== self.location.origin) return false;
-          return url.pathname.startsWith("/assets/") && !keep.has(url.pathname) && !keep.has(url.href);
+          return (
+            url.pathname.startsWith(assetsDir) &&
+            !keep.has(url.href) &&
+            !keep.has(url.pathname)
+          );
         })
         .map((req) => cache.delete(req)),
     );
@@ -73,12 +91,21 @@ self.addEventListener("fetch", (event) => {
       fetch(req)
         .then((res) => {
           if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put("/", copy)).catch(() => {});
+            const forReq = res.clone();
+            const forRoot = res.clone();
+            caches.open(CACHE).then((cache) => {
+              cache.put(req, forReq).catch(() => {});
+              cache.put(appRoot, forRoot).catch(() => {});
+            }).catch(() => {});
           }
           return res;
         })
-        .catch(() => caches.match("/").then((r) => r || new Response("", { status: 503 }))),
+        .catch(() =>
+          caches
+            .match(req)
+            .then((r) => r || caches.match(appRoot))
+            .then((r) => r || new Response("", { status: 503 })),
+        ),
     );
     return;
   }
