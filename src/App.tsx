@@ -279,7 +279,13 @@ function NoteEditor({ pageId }: { pageId: string }) {
             </button>
           </div>
           <div className="editor-head">
-            {current?.icon ? <span className="page-icon">{current.icon}</span> : null}
+            {current?.icon ? (
+              /^(data:image|https?:|\.svg)/i.test(current.icon) ? (
+                <img className="page-icon-img" src={current.icon} alt="" draggable={false} />
+              ) : (
+                <span className="page-icon">{current.icon}</span>
+              )
+            ) : null}
             <input
               className="title-input"
               value={title}

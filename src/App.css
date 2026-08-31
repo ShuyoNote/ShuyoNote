@@ -2359,6 +2359,12 @@ body.is-ai-open .main {
   line-height: 1;
   flex-shrink: 0;
 }
+.page-icon-img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
 
 /* Cover picker modal (built-in cover gallery). */
 .cover-overlay {
