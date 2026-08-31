@@ -137,7 +137,6 @@ function welcomeContent(): string {
       format: "",
       indent: 0,
       children: [
-        { type: "paragraph", version: 1, direction: "ltr", format: "", indent: 0, style: "font-size:60px;line-height:1.1;text-align:center;margin:8px 0 4px;", children: [t("🌟")] },
         h("h1", "欢迎来到你的新空间"),
         callout("本地优先 · 离线可用。你的笔记都保存在本机，改动即存，无需手动保存。"),
         h("h2", "从这里开始"),
