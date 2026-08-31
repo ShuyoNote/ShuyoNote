@@ -78,9 +78,14 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       ensureWorker();
       task = pdfjs.getDocument({
         data,
-        cMapUrl: "/pdfjs/cmaps/",
+        // Relative (not "/pdfjs/..."): the web app is served under a sub-path
+        // (e.g. /app/), so an absolute URL would resolve to the domain root and
+        // 404, and pdf.js would parse the returned HTML as a cmap → "Cannot
+        // convert object to primitive value". Relative paths resolve under the
+        // app root (document.baseURI), matching the other bundled assets.
+        cMapUrl: "pdfjs/cmaps/",
         cMapPacked: true,
-        standardFontDataUrl: "/pdfjs/standard_fonts/",
+        standardFontDataUrl: "pdfjs/standard_fonts/",
       });
       doc = await task.promise;
       let outline: OutlineItem[] = [];
