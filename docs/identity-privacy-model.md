@@ -2,6 +2,7 @@
 
 > 本文整理「一人多服务器 × 多空间」与「个人无服务器也要私密」这两条线背后的**身份 / 鉴权 / 加密**设计决策。关联：
 > [设计哲学](design-philosophy.md)（本地优先、数据可搬）/ [定位](positioning.md) / [路线图](roadmap.md)（加密里程碑）。
+> **落地节奏见 [身份与隐私 子路线图](identity-privacy-roadmap.md)**。
 > 服务端相关：`shuyonote-sync-server`（账号/角色鉴权、密钥签发）见其 `docs/architecture.md` 与 `docs/team-edition-*.md`。
 
 ## 0. 一句话模型
