@@ -36,7 +36,9 @@ import { useAutoSync } from "./hooks/useAutoSync";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
+import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
+import { useSpaceStore } from "./store/space";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
 import { useFileManagerStore } from "./store/fileManager";
@@ -346,6 +348,23 @@ function App() {
       if (first) useNotes.getState().openPage(first.id);
     }
   }, [pages, currentId]);
+
+  // 默认工作空间预置「使用指南」：首次进入时静默创建整套 Wiki（不自动打开），
+  // 侧边栏即可见。用 localStorage 标记每个空间只预置一次；已存在则不重复（幂等）。
+  useEffect(() => {
+    if (!pages.length) return;
+    const spaceId = useSpaceStore.getState().activeId;
+    if (!spaceId) return;
+    const key = "shuyo:guideSeeded:" + spaceId;
+    try { if (localStorage.getItem(key) === "1") return; } catch { /* ignore */ }
+    if (pages.some((p) => p.title === GUIDE_TITLE)) {
+      try { localStorage.setItem(key, "1"); } catch {}
+      return;
+    }
+    // 乐观标记，避免 pages 更新后重复触发；openGuide 幂等。
+    try { localStorage.setItem(key, "1"); } catch {}
+    openGuide({ open: false }).catch(() => {});
+  }, [pages]);
 
   if (standaloneId) {
     return (

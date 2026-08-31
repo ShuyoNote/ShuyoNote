@@ -464,7 +464,7 @@ export function guideText(): string {
 /** Open the guide wiki (index + all topical pages), creating any that are missing
  *  and making every topical page a child of the index in the page tree.
  *  Idempotent: existing pages are kept; nothing is overwritten. */
-export async function openGuide(): Promise<void> {
+export async function openGuide(opts: { open?: boolean } = {}): Promise<void> {
   const notes = useNotes.getState();
   const existingByTitle = new Map<string, string>();
   for (const p of notes.pages) existingByTitle.set(p.title || "", p.id);
@@ -540,5 +540,5 @@ export async function openGuide(): Promise<void> {
   }
 
   const indexFinal = ids.find((x) => x.title === GUIDE_TITLE);
-  if (indexFinal) await notes.openPage(indexFinal.id);
+  if (opts.open !== false && indexFinal) await notes.openPage(indexFinal.id);
 }
