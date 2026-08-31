@@ -403,7 +403,11 @@ function TreeItem({
         )}
         <span className={`tree-icon${isFolder ? " tree-icon-folder" : isDatabase ? " tree-icon-database" : ""}`}>
           {node.icon ? (
-            <span className="tree-icon-emoji">{node.icon}</span>
+            /^(data:image|https?:|\.svg)/i.test(node.icon) ? (
+              <img className="tree-icon-img" src={node.icon} alt="" draggable={false} />
+            ) : (
+              <span className="tree-icon-emoji">{node.icon}</span>
+            )
           ) : isFolder ? (
             <FolderIcon width={16} height={16} />
           ) : isDatabase ? (

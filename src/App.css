@@ -2050,6 +2050,12 @@ body,
   font-size: 14px;
   line-height: 1;
 }
+.tree-icon-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  vertical-align: middle;
+}
 
 .tree-icon-folder {
   background: var(--cat-orange-soft);
