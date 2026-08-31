@@ -118,42 +118,85 @@
         color: #fff;
         font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
         background:
-          radial-gradient(120% 120% at 20% 10%, rgba(103, 150, 255, 0.35), transparent 55%),
-          radial-gradient(120% 120% at 85% 90%, rgba(41, 82, 204, 0.55), transparent 60%),
-          linear-gradient(135deg, #0b1533 0%, #16224d 48%, #1b2f6e 100%);
+          radial-gradient(80% 60% at 18% 8%, rgba(94, 139, 255, 0.28), transparent 60%),
+          radial-gradient(70% 55% at 85% 92%, rgba(41, 82, 204, 0.55), transparent 60%),
+          linear-gradient(135deg, #0a1026 0%, #101c3f 52%, #152a5e 100%);
+        overflow: hidden;
         transition: opacity 0.45s ease, visibility 0.45s ease;
       }
+      /* 动态网格 + 环绕光带，增强科技感 */
+      #app-splash::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(120, 150, 220, 0.07) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(120, 150, 220, 0.07) 1px, transparent 1px);
+        background-size: 54px 54px;
+        -webkit-mask-image: radial-gradient(75% 75% at 50% 44%, #000 25%, transparent 100%);
+        mask-image: radial-gradient(75% 75% at 50% 44%, #000 25%, transparent 100%);
+      }
+      #app-splash::after {
+        content: "";
+        position: absolute;
+        inset: -60%;
+        background: conic-gradient(from 0deg, transparent 0deg, rgba(94, 139, 255, 0.14) 70deg, transparent 150deg, rgba(41, 82, 204, 0.12) 250deg, transparent 330deg);
+        animation: splashOrbit 14s linear infinite;
+      }
+      @keyframes splashOrbit { to { transform: rotate(360deg); } }
       #app-splash.is-hide {
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
       }
       .splash-logo {
-        width: 112px;
-        height: 112px;
-        filter: drop-shadow(0 12px 40px rgba(51, 112, 255, 0.45));
-        animation: splashBreath 2.4s ease-in-out infinite;
+        width: 116px;
+        height: 116px;
+        position: relative;
+        z-index: 1;
+        filter: drop-shadow(0 14px 46px rgba(51, 112, 255, 0.55));
+        animation: splashBreath 2.6s ease-in-out infinite;
+      }
+      .splash-logo::before {
+        content: "";
+        position: absolute;
+        inset: -16px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(94, 139, 255, 0.5), transparent 72%);
+        animation: splashGlow 3s ease-in-out infinite;
       }
       @keyframes splashBreath {
         0%, 100% { transform: scale(1); }
-        50%      { transform: scale(1.07); }
+        50%      { transform: scale(1.06); }
       }
-      .splash-logo svg { display: block; width: 100%; height: 100%; }
+      @keyframes splashGlow {
+        0%, 100% { opacity: 0.5; transform: scale(0.96); }
+        50%      { opacity: 0.9; transform: scale(1.06); }
+      }
+      .splash-logo svg { display: block; width: 100%; height: 100%; position: relative; z-index: 1; }
       .splash-title {
+        position: relative;
+        z-index: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
         letter-spacing: 1px;
       }
       .splash-brand {
-        font-size: 30px;
-        font-weight: 700;
-        background: linear-gradient(90deg, #fff, #bcd0ff);
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        background: linear-gradient(90deg, #ffffff 0%, #bcd0ff 30%, #ffffff 55%, #bcd0ff 80%, #ffffff 100%);
+        background-size: 220% 100%;
         -webkit-background-clip: text;
         background-clip: text;
         -webkit-text-fill-color: transparent;
-        animation: splashFadeUp 0.9s ease both;
+        animation: splashShine 3.2s linear infinite, splashFadeUp 0.9s ease both;
+      }
+      @keyframes splashShine {
+        0%   { background-position: 120% 0; }
+        100% { background-position: -120% 0; }
       }
       .splash-sub {
         font-size: 14px;
@@ -161,23 +204,27 @@
         animation: splashFadeUp 0.9s 0.15s ease both;
       }
       .splash-bar {
-        width: 200px;
-        height: 4px;
+        width: 220px;
+        height: 5px;
+        position: relative;
+        z-index: 1;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.13);
         overflow: hidden;
+        box-shadow: 0 0 16px rgba(94, 139, 255, 0.4);
       }
       .splash-bar::after {
         content: "";
         display: block;
-        width: 40%;
+        width: 42%;
         height: 100%;
         border-radius: 999px;
-        background: linear-gradient(90deg, #5a8bff, #9db8ff);
-        animation: splashSlide 1.2s ease-in-out infinite;
+        background: linear-gradient(90deg, #4f8cff, #7fb0ff, #4f8cff);
+        background-size: 200% 100%;
+        animation: splashSlide 1.3s ease-in-out infinite;
       }
       @keyframes splashSlide {
-        0%   { transform: translateX(-110%); }
+        0%   { transform: translateX(-120%); }
         100% { transform: translateX(420%); }
       }
       @keyframes splashFadeUp {
@@ -185,7 +232,9 @@
         to   { opacity: 1; transform: translateY(0); }
       }
       @media (prefers-reduced-motion: reduce) {
+        #app-splash::after { animation: none; }
         #app-splash .splash-logo,
+        #app-splash .splash-logo::before,
         #app-splash .splash-bar::after { animation: none; }
         #app-splash .splash-brand,
         #app-splash .splash-sub { animation: none; }
@@ -196,19 +245,23 @@
   <body>
     <div id="app-splash" role="status" aria-label="正在启动 ShuyoNote">
       <div class="splash-logo">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ShuyoNote">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ShuyoNote">
           <defs>
             <linearGradient id="splashG" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#5a8bff"/>
-              <stop offset="1" stop-color="#2952cc"/>
+              <stop offset="0" stop-color="#4D8DFF"/>
+              <stop offset="1" stop-color="#2952CC"/>
             </linearGradient>
           </defs>
-          <rect x="16" y="16" width="480" height="480" rx="100" fill="url(#splashG)"/>
-          <rect x="128" y="112" width="256" height="288" rx="38" fill="#ffffff"/>
-          <rect x="176" y="182" width="128" height="22" rx="11" fill="#c9d6ff"/>
-          <rect x="176" y="234" width="152" height="22" rx="11" fill="#c9d6ff"/>
-          <rect x="176" y="286" width="152" height="22" rx="11" fill="#c9d6ff"/>
-          <rect x="176" y="338" width="88" height="22" rx="11" fill="#c9d6ff"/>
+          <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#splashG)"/>
+          <rect x="248" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+          <rect x="526" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+          <rect x="290" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+          <rect x="290" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+          <rect x="290" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+          <rect x="568" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+          <rect x="568" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+          <rect x="568" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+          <path d="M 770 238 Q 775.4 262.6, 800 268 Q 775.4 273.4, 770 298 Q 764.6 273.4, 740 268 Q 764.6 262.6, 770 238 Z" fill="#FFFFFF"/>
         </svg>
       </div>
       <div class="splash-title">
