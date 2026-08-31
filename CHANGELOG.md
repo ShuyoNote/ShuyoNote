@@ -4,6 +4,14 @@
 
 > **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
 
+## [1.64.10] - 2026-08-31
+
+### 修复（Web 版 PDF 阅读链路）
+
+- **`process` shim 无 `toString/valueOf`**：`main.tsx` 的 `process` 曾用 `Object.create(null)`（无原型），导致 pdf.js 的 `process + ''` 强制转换抛 `Cannot convert object to primitive value`；改为普通对象字面量。
+- **pdf 引擎资源路径相对化**：`cMapUrl/standardFontDataUrl` 由绝对 `"/pdfjs/..."` 改为相对 `"pdfjs/..."`，修复 `/app/` 子路径下 cmap/字体 404。
+- **pdf worker MIME / 缓存**：nginx 对 `.mjs` 补 `application/javascript` MIME；worker URL 追加 `?v=版本` cache-buster，避免命中旧 `immutable` 缓存。
+
 ## [1.64.9] - 2026-08-31
 
 ### 修复 / 增强
