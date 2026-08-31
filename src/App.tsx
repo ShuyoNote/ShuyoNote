@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
@@ -18,16 +18,12 @@ import { Toaster } from "./components/Toaster";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
-import { BoardView } from "./components/BoardView";
-import { GraphView } from "./components/GraphView";
-import { FileManagerView } from "./components/FileManagerView";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
-import { TemplateCenterView } from "./components/TemplateCenterView";
 import { useTemplateCenterStore } from "./store/templateCenter";
 import { inputDialog } from "./store/input";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -45,6 +41,18 @@ import { useFileManagerStore } from "./store/fileManager";
 import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import "./App.css";
+
+// Secondary views are code-split so the initial bundle stays lean; they load only
+// when the user switches to graph / board / files / template-center (the default
+// editor page stays synchronous). Heavy libs (cytoscape, mermaid…) are also lazy.
+const GraphView = lazy(() => import("./components/GraphView").then((m) => ({ default: m.GraphView })));
+const BoardView = lazy(() => import("./components/BoardView").then((m) => ({ default: m.BoardView })));
+const FileManagerView = lazy(() => import("./components/FileManagerView").then((m) => ({ default: m.FileManagerView })));
+const TemplateCenterView = lazy(() => import("./components/TemplateCenterView").then((m) => ({ default: m.TemplateCenterView })));
+
+function ViewLoader() {
+  return <div className="view-loading" role="status">加载中…</div>;
+}
 
 // A page "has content" if its serialized root has at least one top-level block.
 // Used to show the new-page guide only for genuinely empty pages (a page with
@@ -391,21 +399,13 @@ function App() {
     <div className="app">
       <PageTree view={view} onViewChange={setView} />
       {templateOpen ? (
-        <div className="main">
-          <TemplateCenterView />
-        </div>
+        <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
       ) : view === "graph" ? (
-        <div className="main">
-          <GraphView />
-        </div>
+        <div className="main"><Suspense fallback={<ViewLoader />}><GraphView /></Suspense></div>
       ) : view === "board" ? (
-        <div className="main">
-          <BoardView />
-        </div>
+        <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
       ) : view === "files" ? (
-        <div className="main">
-          <FileManagerView />
-        </div>
+        <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
       ) : currentId ? (
         <NoteEditor pageId={currentId} />
       ) : (
