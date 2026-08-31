@@ -1593,12 +1593,17 @@ function makeInvoke(store: SqliteStore) {
         const pageIds = store.query("SELECT page_id FROM page_tags WHERE tag_id = ?", [t.id]).map((r) => String((r as any).page_id));
         const pages = pageIds.length
           ? store.query(
-              "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at FROM pages WHERE deleted_at IS NULL AND id IN (" + pageIds.map(() => "?").join(",") + ")",
+              "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages WHERE deleted_at IS NULL AND id IN (" + pageIds.map(() => "?").join(",") + ")",
               pageIds,
             )
           : [];
         return { tag: { id: t.id, name: t.name }, pages };
       });
+      // 未打标签的页面（对齐桌面 tags::board_data 的 Untagged 列，避免看板丢页）。
+      const untagged = store.query(
+        "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages p WHERE p.deleted_at IS NULL AND p.kind = 'page' AND NOT EXISTS (SELECT 1 FROM page_tags pt WHERE pt.page_id = p.id) ORDER BY p.updated_at DESC",
+      );
+      (columns as any[]).push({ tag: null, pages: untagged });
       return columns as T;
     }
     if (cmd === "board_by_attr") {
@@ -1606,7 +1611,7 @@ function makeInvoke(store: SqliteStore) {
       const def = attrDefById(store, attrId);
       if (!def) throw new Error("属性不存在");
       const options = def.options;
-      const pages = store.query("SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at FROM pages WHERE kind = 'page' AND deleted_at IS NULL");
+      const pages = store.query("SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages WHERE kind = 'page' AND deleted_at IS NULL");
       const values = store.query("SELECT page_id, value FROM page_props WHERE attr_id = ?", [attrId]);
       const valMap: Record<string, string> = {};
       for (const v of values as any[]) valMap[v.page_id] = String(v.value ?? "");
