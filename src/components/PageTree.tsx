@@ -684,6 +684,21 @@ export function PageTree({
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const activeSpace = spaces.find((s) => s.id === activeSpaceId);
   const activeTheme = activeSpace?.theme ?? "";
+  const activeSyncProfile = activeSpaceId ? syncProfiles[activeSpaceId] : undefined;
+
+  // Also load identities when the active space changes so the header pill
+  // ("当前同步目标") reflects the current space's sync target.
+  useEffect(() => {
+    if (!isDesktop) return;
+    api
+      .listSyncProfiles()
+      .then((list) => {
+        const byWs: Record<string, SyncProfile> = {};
+        for (const p of list) byWs[p.ws_id] = p;
+        setSyncProfiles(byWs);
+      })
+      .catch(() => {});
+  }, [activeSpaceId, isDesktop]);
 
   useEffect(() => {
     api
@@ -994,6 +1009,17 @@ export function PageTree({
             <span className="sidebar-title-text">{workspaceName}</span>
             <span className="sidebar-title-caret">▾</span>
           </button>
+        )}
+        {!collapsed && isDesktop && activeSyncProfile && (
+          <div className="sidebar-sync-pill" title={`同步目标：${activeSyncProfile.server_url}`}>
+            <span
+              className="sidebar-sync-dot"
+              style={{ background: syncTagColor(activeSyncProfile.server_url) }}
+            />
+            <span className="sidebar-sync-pill-text">
+              正在以 {syncTagLabel(activeSyncProfile.server_url)} 同步
+            </span>
+          </div>
         )}
         {spaceChooser.open && (
           <div
