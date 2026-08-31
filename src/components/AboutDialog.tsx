@@ -111,6 +111,11 @@ export function AboutDialog() {
     setChecking(false);
   };
 
+  // 打开「关于」时自动执行一次检查更新（每次打开都重新检查，看到的是最新状态）。
+  useEffect(() => {
+    if (open) void checkUpdate();
+  }, [open]);
+
   const startUpdate = async () => {
     if (!download || updating) return;
     setUpdating(true);
