@@ -632,16 +632,19 @@ function makeInvoke(store: SqliteStore) {
       return (rows[0] ?? null) as T;
     }
     if (cmd === "set_page_icon") {
-      store.run("UPDATE pages SET icon = ? WHERE id = ?", [a.icon ?? "", a.id]);
-      return (store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] ?? null) as T;
+      const args = a.args ?? a;
+      store.run("UPDATE pages SET icon = ? WHERE id = ?", [args.icon ?? "", args.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
     }
     if (cmd === "set_page_cover") {
-      store.run("UPDATE pages SET cover = ? WHERE id = ?", [a.cover ?? "", a.id]);
-      return (store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] ?? null) as T;
+      const args = a.args ?? a;
+      store.run("UPDATE pages SET cover = ? WHERE id = ?", [args.cover ?? "", args.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
     }
     if (cmd === "set_page_cover_height") {
-      store.run("UPDATE pages SET cover_height = ? WHERE id = ?", [Math.max(0, Number(a.height ?? 300)) || 300, a.id]);
-      return (store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0] ?? null) as T;
+      const args = a.args ?? a;
+      store.run("UPDATE pages SET cover_height = ? WHERE id = ?", [Math.max(0, Number(args.height ?? 300)) || 300, args.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
     }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
