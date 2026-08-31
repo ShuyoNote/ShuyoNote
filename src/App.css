@@ -8119,7 +8119,8 @@ p:has(> .editor-drawing-container) {
 .new-page-guide-desc {
   font-size: 14px;
   color: var(--text-dim);
-  margin-bottom: 24px;
+  margin-bottom: 26px;
+  letter-spacing: 0.02em;
 }
 
 /* Action list */
@@ -8127,67 +8128,82 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 10px;
 }
 .npg-act {
   display: flex;
   align-items: center;
-  gap: 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
+  gap: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 280px;
   font-size: 14px;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
+  font-weight: 500;
+  padding: 12px 16px;
+  border-radius: 12px;
   cursor: pointer;
   font-family: inherit;
+  text-align: left;
+  transition: border-color .18s, box-shadow .18s, transform .18s, background .18s;
 }
 .npg-act:hover {
-  color: var(--text);
-  background: var(--hover);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 8px 24px rgba(47, 107, 255, 0.14);
+  transform: translateY(-2px);
 }
 .npg-act-icon {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
+  color: var(--accent);
 }
 
 /* "Create as database" view row */
 .new-page-guide-db {
-  margin-top: 90px;
+  margin-top: 44px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 14px;
+  gap: 16px;
 }
 .npg-db-title {
   font-size: 12px;
   color: var(--text-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .npg-db-row {
   display: flex;
-  gap: 26px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .npg-db-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  border: none;
-  background: transparent;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--text-dim);
-  padding: 6px 4px;
-  border-radius: var(--radius-sm);
+  padding: 14px 12px 10px;
+  border-radius: 12px;
   cursor: pointer;
   font-family: inherit;
+  min-width: 66px;
+  transition: color .18s, border-color .18s, background .18s, transform .18s, box-shadow .18s;
 }
 .npg-db-item:hover {
   color: var(--text);
-  background: var(--hover);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 22px rgba(47, 107, 255, 0.14);
 }
 .npg-db-icon {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
 }
 .npg-db-name {
   font-size: 12px;
@@ -10981,44 +10997,50 @@ p:has(> .editor-drawing-container) {
 }
 /* M25 P1 — first-experience checklist on the empty-page guide. */
 .first-steps {
-  margin-top: 16px;
+  margin-top: 26px;
   border-top: 1px solid var(--border);
-  padding-top: 10px;
+  padding-top: 14px;
+  width: 100%;
 }
 .first-steps-title {
   font-size: 12px;
   color: var(--text-dim);
-  letter-spacing: 0.04em;
-  margin-bottom: 8px;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
 }
 .first-step {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 10px;
   font-size: 13px;
   color: var(--text);
   cursor: pointer;
   background: none;
   border: none;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   text-align: left;
+  transition: background .15s;
 }
 .first-step:hover {
   background: var(--block-hover);
 }
 .first-step-check {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   font-size: 11px;
   color: transparent;
+  transition: background .18s, border-color .18s, color .18s;
+}
+.first-step:hover .first-step-check {
+  border-color: var(--accent);
 }
 .first-step-check.done {
   background: var(--accent);
