@@ -8308,13 +8308,10 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
   font-family: inherit;
   text-align: left;
-  transition: border-color .18s, box-shadow .18s, transform .18s, background .18s;
+  transition: background .18s, border-color .18s;
 }
 .npg-act:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 8px 24px rgba(47, 107, 255, 0.14);
-  transform: translateY(-2px);
+  background: var(--hover);
 }
 .npg-act-icon {
   width: 18px;

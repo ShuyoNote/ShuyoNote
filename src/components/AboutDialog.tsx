@@ -28,7 +28,7 @@ export function AboutDialog() {
   const [checked, setChecked] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
-  const [download, setDownload] = useState<((onProgress?: (p: UpdateProgress) => void) => Promise<void>) | null>(null);
+  const [download, setDownload] = useState<{ run: (onProgress?: (p: UpdateProgress) => void) => Promise<void> } | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
   const [declined, setDeclined] = useState(false);
@@ -94,7 +94,7 @@ export function AboutDialog() {
       setUpdateState("up-to-date");
     } else if (up.state === "update-available") {
       setLatestVersion(up.latest);
-      setDownload(up.download);
+      setDownload({ run: up.download });
       setUpdateState("update-available");
       // Pull the release notes (best-effort) so the user can read what's new.
       const mf = await fetchUpdateManifest();
@@ -122,7 +122,7 @@ export function AboutDialog() {
     setUpdateError(null);
     setProgress({ phase: "downloading", percent: 0 });
     try {
-      await download((p) => setProgress(p));
+      await download.run((p) => setProgress(p));
       // On success the installer relaunches the app; keep the final phase visible.
     } catch (e) {
       // Show the full stack when available so a minified "f is not a function"
