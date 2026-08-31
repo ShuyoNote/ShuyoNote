@@ -15,6 +15,7 @@ import {
 } from "../lib/links";
 import { fetchLatestVersion, fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
 import { checkDesktopUpdate, type UpdateProgress } from "../lib/updater";
+import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
 // links (project home / docs / releases / issues) plus a privacy toggle for
@@ -72,6 +73,21 @@ export function AboutDialog() {
       setChecking(false);
       return;
     }
+    // Web 版：对比服务器「部署版本」，有新版即提示「刷新页面」加载新静态文件。
+    if (isWeb) {
+      const r = await detectFromDeployed();
+      if (r.latest) {
+        setLatestVersion(r.latest);
+        setUpdateState(updateStatus(r.latest, APP_VERSION));
+        setCheckError(null);
+      } else {
+        setUpdateState("invalid");
+        setCheckError("服务器未返回 version.json（离线或未部署）");
+      }
+      setChecked(true);
+      setChecking(false);
+      return;
+    }
     // Prefer the in-app updater (desktop); fall back to the releases-page fetch.
     const up = await checkDesktopUpdate();
     if (up.state === "up-to-date") {
@@ -117,6 +133,9 @@ export function AboutDialog() {
     if (p.phase === "installing") return "正在安装更新…";
     return "更新完成，即将重启…";
   };
+
+  // Web 版与桌面版更新形态不同：桌面=下载安装包，Web=刷新加载服务器新静态文件。
+  const isWeb = !isDesktop();
 
   if (!open) return null;
 
@@ -183,7 +202,14 @@ export function AboutDialog() {
                   <span className="about-update-avail">
                     发现新版本 <b>v{latestVersion}</b>，当前 v{APP_VERSION}
                   </span>
-                  {updating && progress ? (
+                  {isWeb ? (
+                    <>
+                      <button className="about-update-install" onClick={() => window.location.reload()}>
+                        刷新页面
+                      </button>
+                      <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
+                    </>
+                  ) : updating && progress ? (
                     <div className="about-update-progress">
                       <div className="about-update-progress-text">{phaseLabel(progress)}</div>
                       <div className="about-update-progress-track">
@@ -203,14 +229,14 @@ export function AboutDialog() {
                   )}
                   {updateError && <span className="about-update-error">更新失败：{updateError}</span>}
                 </span>
-                {!declined && download && releaseNotes && (
+                {!isWeb && !declined && download && releaseNotes && (
                   <div className="about-release-notes">
                     <div className="about-release-notes-title">本次更新</div>
                     <pre className="about-release-notes-body">{releaseNotes}</pre>
                   </div>
                 )}
                 {declined && (
-                  <span className="about-update-declined">已暂缓升级——可稍后再来「检查更新」。</span>
+                  <span className="about-update-declined">已暂缓处理——可稍后再来「检查更新」。</span>
                 )}
               </>
             ) : checked && updateState === "up-to-date" ? (
