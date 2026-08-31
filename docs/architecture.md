@@ -9,24 +9,37 @@
 
 ShuyoNote 采用 **「平台无关核心 + 可插拔平台壳」** 的架构：同一套前端代码，通过 `src/lib/platform/` 的 driver 抽象，在 **桌面（Tauri + Rust）** 与 **浏览器（Web + sql.js WASM）** 两个平台上运行，业务逻辑与 UI 不感知平台差异。
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        前端 (React 19)                         │
-│  Lexical 编辑器 · Zustand stores · 各视图/面板组件              │
-│  (src/editor · src/components · src/store · src/lib)           │
-└───────────────┬────────────────────────────┬─────────────────┘
-                │                            │
-       桌面 platform.executor.invoke     浏览器 platform.executor.invoke
-                │                            │
-┌───────────────▼───────────────┐   ┌────────▼──────────────────┐
-│  tauri.ts (driver A)          │   │  web.ts (driver B)         │
-│  → Rust 后端 invoke           │   │  → sqliteStore(sql.js)     │
-│  (src-tauri)                  │   │    + blobStore(IndexedDB)  │
-│                               │   │    + spaceStore(IndexedDB) │
-└───────────────┬───────────────┘   └────────┬──────────────────┘
-                │                            │
-        SQLite (rusqlite, WAL+FTS5)    SQLite (sql.js WASM → IndexedDB)
-        + 附件目录 (SHA-256)           + 附件字节 (IndexedDB blobStore)
+```mermaid
+flowchart TB
+    subgraph FE["前端 · React（同一套代码）"]
+        UI["Lexical 编辑器 · Zustand stores · 各视图 / 面板组件<br/>src/editor · src/components · src/store · src/lib"]
+        API["api.ts —— 只调 platform.executor.invoke"]
+        UI --> API
+    end
+
+    subgraph DRV["平台 driver 抽象 · src/lib/platform/"]
+        T["tauri.ts · driver A（桌面）<br/>→ Rust 后端 invoke"]
+        W["web.ts · driver B（浏览器）<br/>→ sqliteStore(sql.js) + blobStore + spaceStore"]
+    end
+
+    API --> T
+    API --> W
+
+    subgraph D["桌面运行时 · Tauri"]
+        R["Rust 后端 src-tauri<br/>commands · sync · search · attachments<br/>backlinks · blocks · graph · tags · trash<br/>versions · backup · workspace_io · security · plugins"]
+        SQL["SQLite（rusqlite · WAL + FTS5）<br/>meta.db + spaces/ws_id.db"]
+        ATT["附件目录 · SHA-256 内容寻址"]
+        T --> R
+        R --> SQL
+        R --> ATT
+    end
+
+    subgraph WB["浏览器运行时 · Web"]
+        SQ["sql.js WASM · 真实 SQLite"]
+        IDB["IndexedDB · shuyonote<br/>SQLite 快照 + blobStore 附件<br/>+ spaceStore 多空间"]
+        W --> SQ
+        SQ --> IDB
+    end
 ```
 
 **核心原则**：`api.ts` 只调用 `platform.executor.invoke`；UI 从不直接接触 SQL / 平台 API。换平台 = 换 driver，不换业务。

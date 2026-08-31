@@ -126,27 +126,56 @@ ShuyoNote 是一款 **本地优先（local-first）** 的知识管理应用。�
 
 > 详细架构见 [docs/architecture.md](docs/architecture.md)。
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                       前端 (React)                          │
-│  Lexical(编辑器) · Zustand(notes/theme/…) · 各视图组件       │
-└──────────────────────────┬─────────────────────────────────┘
-                           │ Tauri IPC / 平台 driver
-┌──────────────────────────┴─────────────────────────────────┐
-│                  Rust 后端 (src-tauri)                      │
-│  commands · search · sync · attachments · backlinks · blocks│
-│  graph · tags · trash · versions · backup · workspace_io    │
-│  storage · security · plugins · workspaces · templates       │
-│  crypto · database · properties                             │
-└──────────────┬───────────────────────────┬─────────────────┘
-               │                           │
-   SQLite (WAL + FTS5)            附件目录 (SHA-256)
-   meta.db(应用级) + spaces/<id>.db(每空间)
-               │
-┌──────────────┴───────────────────────────┐
-│       同步服务端 (sync-server, 独立二进制)  │
-│     Axum + SQLite（变更日志 / 附件元数据）   │
-└──────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph FE["前端 · React 18（同一套代码）"]
+        UI["Lexical 编辑器 · Zustand stores · 各视图 / 面板组件"]
+        API["api.ts —— 只调 platform.executor.invoke"]
+        UI --> API
+    end
+
+    subgraph DRV["平台 driver 抽象 · src/lib/platform/"]
+        T["tauri.ts · driver A（桌面）"]
+        W["web.ts · driver B（浏览器）"]
+    end
+
+    API --> T
+    API --> W
+
+    subgraph D["桌面运行时 · Tauri"]
+        R["Rust 后端 src-tauri<br/>commands · sync · search · attachments<br/>backlinks · blocks · graph · tags · trash<br/>versions · backup · workspace_io · security · plugins"]
+        SQL["SQLite（rusqlite · WAL + FTS5）<br/>meta.db + spaces/ws_id.db"]
+        ATT["附件目录 · SHA-256 内容寻址"]
+        T --> R
+        R --> SQL
+        R --> ATT
+    end
+
+    subgraph WB["浏览器运行时 · Web"]
+        SQ["sql.js WASM · 真实 SQLite"]
+        IDB["IndexedDB · shuyonote<br/>SQLite 快照 + blobStore 附件<br/>+ spaceStore 多空间"]
+        W --> SQ
+        SQ --> IDB
+    end
+
+    subgraph SYNC["同步服务端 · sync-server（独立二进制）"]
+        SRV["Axum + SQLite<br/>outbox 变更日志 · LWW 合并 · 附件增量"]
+    end
+
+    D -.->|"desktop"| SYNC
+    WB -.->|"web（可选）"| SYNC
+
+    classDef fe fill:#4d8dff,color:#fff,stroke:#2952cc,stroke-width:2px
+    classDef driver fill:#eef3ff,stroke:#8aa3d8,color:#27406e
+    classDef rust fill:#e9edf3,stroke:#8a94a6,color:#20242b
+    classDef store fill:#f3ede4,stroke:#c9a566,color:#6b5320
+    classDef browser fill:#e6f2ec,stroke:#3f9d63,color:#1f4d34
+    class UI,API fe
+    class T,W driver
+    class R rust
+    class SQL,ATT store
+    class SQ,IDB browser
+    class SRV store
 ```
 
 **平台 driver 抽象（M16）**：`src/lib/platform/` 定义 `Executor` / `DialogDriver` / `OpenerDriver` / `EventDriver` / `AssetDriver` / `WebviewDriver` 接口；`tauri.ts` 为桌面唯一宿主（调用 `@tauri-apps/*`），`web.ts` 为浏览器实现（`sql.js` WASM SQLite + IndexedDB + blobStore 内容寻址附件），`index.ts` 按环境（是否 `__TAURI_INTERNALS__`）自动切换。**同一套前端可跑桌面与浏览器**（`pnpm dev:web`）。
