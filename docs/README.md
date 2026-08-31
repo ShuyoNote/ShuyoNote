@@ -10,6 +10,7 @@
 | 产品是什么、定位与目标用户 | [产品定位](positioning.md) |
 | 功能怎么用、有哪些能力 | [README](../README.md) 功能清单 |
 | **系统怎么搭起来的、分层与存储模型** | [系统架构](architecture.md) |
+| **身份 / 鉴权 / 加密模型（密钥 vs 账户、多空间、本地私密）** | [身份与隐私模型](identity-privacy-model.md) |
 | 下一步做什么 | [路线图](roadmap.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
@@ -24,6 +25,7 @@ docs/
 ├── README.md            # 本文档：统一入口 / 导航 / 索引
 ├── development.md       # 开发指南：运行、测试、验证、提版规则
 ├── architecture.md      # 系统架构与存储模型
+├── identity-privacy-model.md # 身份/鉴权/加密模型（密钥 vs 账户、多空间、本地私密）
 ├── positioning.md       # 产品定位
 ├── design-philosophy.md # 设计哲学
 ├── roadmap.md           # 演进路线图（M1–M25 里程碑）
