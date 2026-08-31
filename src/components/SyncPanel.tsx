@@ -10,6 +10,7 @@ export function SyncPanel() {
   const [config, setConfig] = useState<SyncConfig | null>(null);
   const [serverUrl, setServerUrl] = useState("");
   const [token, setToken] = useState("");
+  const [spaceId, setSpaceId] = useState("");
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
 
@@ -21,6 +22,7 @@ export function SyncPanel() {
           setConfig(c);
           setServerUrl(c.server_url);
           setToken(c.token);
+          setSpaceId(c.space_id);
         })
         .catch((e) => setStatus(String(e)));
     }
@@ -28,7 +30,7 @@ export function SyncPanel() {
 
   const save = async () => {
     try {
-      await api.setSyncConfig({ server_url: serverUrl, token: token || undefined });
+      await api.setSyncConfig({ server_url: serverUrl, token: token || undefined, space_id: spaceId || undefined });
       setStatus("已保存");
     } catch (e) {
       setStatus(String(e));
@@ -71,6 +73,14 @@ export function SyncPanel() {
               value={token}
               placeholder="同步服务 token"
               onChange={(e) => setToken(e.target.value)}
+            />
+          </div>
+          <div className="sync-row">
+            <label>空间 ID（可选）</label>
+            <input
+              value={spaceId}
+              placeholder="团队空间 id（留空=旧单用户）"
+              onChange={(e) => setSpaceId(e.target.value)}
             />
           </div>
           {config && (

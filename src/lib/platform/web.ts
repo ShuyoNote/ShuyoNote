@@ -1738,7 +1738,7 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "run_plugin_command") return { message: "", insert: null } as T;
 
     // ---- Sync ----
-    if (cmd === "get_sync_config") return { server_url: "", token: "", device_id: "", last_pushed_seq: 0, last_pulled_seq: 0 } as T;
+    if (cmd === "get_sync_config") return { server_url: "", token: "", space_id: "", device_id: "", last_pushed_seq: 0, last_pulled_seq: 0 } as T;
     if (cmd === "set_sync_config") return undefined as T;
     if (cmd === "sync_now") return { pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0 } as T;
 

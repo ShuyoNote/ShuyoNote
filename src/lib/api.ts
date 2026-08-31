@@ -33,6 +33,7 @@ import type {
 export interface SyncConfig {
   server_url: string;
   token: string;
+  space_id: string;
   device_id: string;
   last_pushed_seq: number;
   last_pulled_seq: number;
@@ -104,7 +105,7 @@ export const api = {
   search: (query: string, limit = 50, allSpaces = false) =>
     invoke<SearchResult[]>("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
   getSyncConfig: () => invoke<SyncConfig>("get_sync_config"),
-  setSyncConfig: (args: { server_url: string; token?: string }) =>
+  setSyncConfig: (args: { server_url: string; token?: string; space_id?: string }) =>
     invoke<void>("set_sync_config", { args }),
   syncNow: () => invoke<SyncReport>("sync_now"),
   saveImage: async (args: {

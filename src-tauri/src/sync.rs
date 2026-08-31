@@ -14,6 +14,7 @@ use tokio_util::io::ReaderStream;
 const KEY_DEVICE_ID: &str = "device_id";
 const KEY_SERVER_URL: &str = "server_url";
 const KEY_TOKEN: &str = "token";
+const KEY_SPACE_ID: &str = "space_id";
 const KEY_LAST_PUSHED: &str = "last_pushed_seq";
 const KEY_LAST_PULLED: &str = "last_pulled_seq";
 
@@ -190,6 +191,7 @@ struct OutgoingChange {
 #[derive(Serialize)]
 struct PushRequest {
     device_id: String,
+    space_id: String,
     changes: Vec<OutgoingChange>,
 }
 
@@ -221,12 +223,14 @@ pub struct SyncReport {
 pub struct SyncConfigArgs {
     pub server_url: String,
     pub token: Option<String>,
+    pub space_id: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct SyncConfig {
     pub server_url: String,
     pub token: String,
+    pub space_id: String,
     pub device_id: String,
     pub last_pushed_seq: i64,
     pub last_pulled_seq: i64,
@@ -243,6 +247,7 @@ pub fn get_sync_config(db: State<'_, Db>) -> Result<SyncConfig, String> {
     Ok(SyncConfig {
         server_url: get_meta_state(&c, KEY_SERVER_URL).unwrap_or_default(),
         token: get_meta_state(&c, KEY_TOKEN).unwrap_or_default(),
+        space_id: get_meta_state(&c, KEY_SPACE_ID).unwrap_or_default(),
         device_id,
         last_pushed_seq: state_i64(&c, KEY_LAST_PUSHED),
         last_pulled_seq: state_i64(&c, KEY_LAST_PULLED),
@@ -255,6 +260,7 @@ pub fn set_sync_config(db: State<'_, Db>, args: SyncConfigArgs) -> Result<(), St
     let url = args.server_url.trim().trim_end_matches('/').to_string();
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, args.token.as_deref().unwrap_or(""))?;
+    set_meta_state(&c, KEY_SPACE_ID, args.space_id.as_deref().unwrap_or(""))?;
     Ok(())
 }
 
@@ -262,6 +268,7 @@ async fn do_push(
     db: &State<'_, Db>,
     server_url: &str,
     token: &str,
+    space_id: &str,
 ) -> Result<(usize, i64), String> {
     let (device_id, last_pushed, changes): (String, i64, Vec<OutgoingChange>) = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -312,7 +319,7 @@ async fn do_push(
     let client = reqwest::Client::new();
     let mut req = client
         .post(format!("{server_url}/push"))
-        .json(&PushRequest { device_id, changes });
+        .json(&PushRequest { device_id, space_id: space_id.to_string(), changes });
     if !token.is_empty() {
         req = req.bearer_auth(token);
     }
@@ -349,6 +356,7 @@ async fn do_pull(
     db: &State<'_, Db>,
     server_url: &str,
     token: &str,
+    space_id: &str,
 ) -> Result<(usize, i64), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -357,8 +365,11 @@ async fn do_pull(
     };
 
     let client = reqwest::Client::new();
-    let mut req = client
-        .get(format!("{server_url}/pull?since={last_pulled}&limit=500"));
+    let mut url = format!("{server_url}/pull?since={last_pulled}&limit=500");
+    if !space_id.is_empty() {
+        url.push_str(&format!("&space_id={space_id}"));
+    }
+    let mut req = client.get(&url);
     if !token.is_empty() {
         req = req.bearer_auth(token);
     }
@@ -403,20 +414,21 @@ async fn do_pull(
 
 #[tauri::command]
 pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<SyncReport, String> {
-    let (server_url, token) = {
+    let (server_url, token, space_id) = {
         let c = db.0.lock().expect("db mutex poisoned");
         (
             get_meta_state(&c, KEY_SERVER_URL).unwrap_or_default(),
             get_meta_state(&c, KEY_TOKEN).unwrap_or_default(),
+            get_meta_state(&c, KEY_SPACE_ID).unwrap_or_default(),
         )
     };
     if server_url.is_empty() {
         return Err("未配置同步服务器".to_string());
     }
 
-    let (pushed, last_pushed_seq) = do_push(&db, &server_url, &token).await?;
-    let (pulled, last_pulled_seq) = do_pull(&db, &server_url, &token).await?;
-    sync_attachments(&app, &db, &server_url, &token).await?;
+    let (pushed, last_pushed_seq) = do_push(&db, &server_url, &token, &space_id).await?;
+    let (pulled, last_pulled_seq) = do_pull(&db, &server_url, &token, &space_id).await?;
+    sync_attachments(&app, &db, &server_url, &token, &space_id).await?;
 
     Ok(SyncReport {
         pushed,
@@ -442,15 +454,22 @@ async fn sync_attachments(
     db: &State<'_, Db>,
     server_url: &str,
     token: &str,
+    space_id: &str,
 ) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
     let client = reqwest::Client::new();
+    // Space-scoped attachments when bound to a team space; legacy global path otherwise.
+    let att_base = if space_id.is_empty() {
+        format!("{server_url}")
+    } else {
+        format!("{server_url}/spaces/{space_id}")
+    };
 
     // 1. List remote hashes.
-    let mut req = client.get(format!("{server_url}/attachments"));
+    let mut req = client.get(format!("{att_base}/attachments"));
     if !token.is_empty() {
         req = req.bearer_auth(token);
     }
@@ -498,7 +517,7 @@ async fn sync_attachments(
         let file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
         let stream = ReaderStream::new(file);
         let mut req = client
-            .post(format!("{server_url}/attachments/{hash}?mime={mime}"))
+            .post(format!("{att_base}/attachments/{hash}?mime={mime}"))
             .body(reqwest::Body::wrap_stream(stream));
         if !token.is_empty() {
             req = req.bearer_auth(token);
@@ -530,7 +549,7 @@ async fn sync_attachments(
         if local_set.contains(&item.hash) {
             continue;
         }
-        let mut req = client.get(format!("{server_url}/attachments/{}", item.hash));
+        let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
         if !token.is_empty() {
             req = req.bearer_auth(token);
         }
