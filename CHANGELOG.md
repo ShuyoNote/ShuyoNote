@@ -4,6 +4,16 @@
 
 > **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
 
+## [1.64.9] - 2026-08-31
+
+### 修复 / 增强
+
+- **Web 正确性修复**：`web.ts` 平台驱动与桌面后端系统性对齐——修正标签（增/改/删/查/`pages_by_tag`）与 `search_blocks` 的参数形状（api 传扁平 camelCase，此前读 snake_case 导致静默 no-op）；`add_tag` 支持按名 get-or-create 与按 id 关联；`create_tag` 去重、`rename_tag` 命名冲突合并；`get_page` 过滤已删除页；`set_page_cover_height` 钳制 120–720；`create_*` 默认 `"{}"` 内容 + 同级尾插；`clear_trash` 级联删子表并释放孤立附件；补齐 `list_workspace_pages` / `list_all_pdf_attachments`；`import_backup` 兼容桌面/Web 两种 schema。
+- **Web 启动性能**：pdf.js 引擎改为按需动态导入，入口 bundle **719KB → 418KB**（gzip 220→127KB），仅在打开 PDF 时加载。
+- **Web PWA**：manifest/Service Worker 改用相对路径以在 `/app/` 子路径工作；新增 192/512 及 maskable 图标；SW 缓存匹配全部相对化，可离线。
+- **Web 更新检查**：Web 版检测改为对比服务器部署版本 `version.json`，发现新版提示「刷新页面」。
+- **侧边栏**：底部工具条在窄栏下不再换行（内容自适应 + nowrap + 短标签）。
+
 ## [1.64.8] - 2026-08-30
 
 ### 新增
