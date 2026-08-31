@@ -7,7 +7,11 @@ import { version } from "../package.json";
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
 // module top-level; define `process` in the browser so it doesn't throw
 // "process is not defined", and keep NODE_ENV as "production" (never "development").
-(globalThis as any).process = (globalThis as any).process ?? Object.assign(Object.create(null), { env: { NODE_ENV: "production" } });
+// NOTE: use a NORMAL object (not `Object.create(null)`): a prototype-less object has
+// no toString/valueOf, so pdf.js's `process + ''` coercion throws "Cannot convert
+// object to primitive value". A plain object literal keeps Object.prototype, so
+// `process + ''` → "[object Object]" and the Node-detection short-circuits fine.
+(globalThis as any).process = (globalThis as any).process ?? { env: { NODE_ENV: "production" } };
 
 // Browser tab / window title carries the live build version (mirrors the desktop
 // window title set in src-tauri/src/lib.rs).
