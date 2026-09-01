@@ -1,35 +1,17 @@
 import { platform } from "./platform";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
+import type { CommandMap } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
-const invoke = <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
-  platform.executor.invoke<T>(cmd, args);
-import type {
-  AttachmentMeta,
-  AttrDef,
-  BlockBacklink,
-  BlockInfo,
-  BoardColumn,
-  BoardGroup,
-  DatabaseQuery,
-  GraphData,
-  PageBlock,
-  PageDetail,
-  PageMeta,
-  PageProp,
-  PageVersion,
-  SearchBlock,
-  SearchResult,
-  StorageStats,
-  Tag,
-  TemplateMeta,
-  WorkspaceMeta,
-  PluginMeta,
-  DbViewMeta,
-  PdfAnnotationRecord,
-} from "../types";
-
+// The command name, args shape and result are validated at compile time against
+// `CommandMap`: a misspelled command, wrong args shape or wrong result type fails
+// `tsc` on both the Tauri and Web shells (they implement the same executors).
+const invoke = <K extends keyof CommandMap>(
+  cmd: K,
+  args?: CommandMap[K]["args"],
+): Promise<CommandMap[K]["result"]> =>
+  platform.executor.invoke(cmd, args as Record<string, unknown>);
 export interface SyncConfig {
   server_url: string;
   token: string;
@@ -70,79 +52,79 @@ export interface SyncReport {
 }
 
 export const api = {
-  listPages: () => invoke<PageMeta[]>("list_pages"),
-  listWorkspacePages: (workspaceId: string) => invoke<PageMeta[]>("list_workspace_pages", { workspaceId }),
-  getWorkspaceName: () => invoke<string>("get_workspace_name"),
+  listPages: () => invoke("list_pages"),
+  listWorkspacePages: (workspaceId: string) => invoke("list_workspace_pages", { workspaceId }),
+  getWorkspaceName: () => invoke("get_workspace_name"),
   renameWorkspace: (id: string, name: string) =>
-    invoke<void>("rename_workspace", { id, name }),
+    invoke("rename_workspace", { id, name }),
   setWorkspaceSettings: (id: string, theme?: string | null, icon?: string | null, sortOrder?: number | null) =>
-    invoke<void>("set_workspace_settings", { id, theme, icon, sortOrder }),
-  listWorkspaces: () => invoke<WorkspaceMeta[]>("list_workspaces"),
-  createWorkspace: (name?: string | null) => invoke<WorkspaceMeta>("create_workspace", { name }),
-  getActiveWorkspaceId: () => invoke<string>("get_active_workspace_id"),
-  setActiveWorkspaceId: (id: string) => invoke<void>("set_active_workspace_id", { id }),
-  deleteWorkspace: (id: string) => invoke<void>("delete_workspace", { id }),
+    invoke("set_workspace_settings", { id, theme, icon, sortOrder }),
+  listWorkspaces: () => invoke("list_workspaces"),
+  createWorkspace: (name?: string | null) => invoke("create_workspace", { name }),
+  getActiveWorkspaceId: () => invoke("get_active_workspace_id"),
+  setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
+  deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),
   copyPageToWorkspace: (pageId: string, targetWorkspaceId: string, newParentId?: string | null) =>
-    invoke<string>("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
-  listPlugins: () => invoke<PluginMeta[]>("list_plugins"),
-  setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
+    invoke("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
+  listPlugins: () => invoke("list_plugins"),
+  setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
   runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null) =>
-    invoke<{ message: string; insert?: string | null }>("run_plugin_command", { pluginId, commandId, currentId }),
-  uninstallPlugin: (id: string) => invoke<void>("uninstall_plugin", { id }),
-  installPlugin: (sourcePath: string) => invoke<PluginMeta>("install_plugin", { sourcePath }),
-  openPluginDir: () => invoke<string>("open_plugin_dir"),
-  setEncryption: (passphrase: string) => invoke<void>("set_encryption", { passphrase }),
-  encryptionStatus: () => invoke<{ enabled: boolean; locked: boolean }>("encryption_status"),
-  lockEncryption: () => invoke<void>("lock_encryption"),
-  unlockEncryption: (passphrase: string) => invoke<void>("unlock_encryption", { passphrase }),
-  disableEncryption: () => invoke<void>("disable_encryption"),
-  getPage: (id: string) => invoke<PageDetail>("get_page", { id }),
-  listTemplates: (spaceId?: string | null) => invoke<TemplateMeta[]>("list_templates", { spaceId }),
+    invoke("run_plugin_command", { pluginId, commandId, currentId }),
+  uninstallPlugin: (id: string) => invoke("uninstall_plugin", { id }),
+  installPlugin: (sourcePath: string) => invoke("install_plugin", { sourcePath }),
+  openPluginDir: () => invoke("open_plugin_dir"),
+  setEncryption: (passphrase: string) => invoke("set_encryption", { passphrase }),
+  encryptionStatus: () => invoke("encryption_status"),
+  lockEncryption: () => invoke("lock_encryption"),
+  unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
+  disableEncryption: () => invoke("disable_encryption"),
+  getPage: (id: string) => invoke("get_page", { id }),
+  listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; space_id?: string | null }) =>
-    invoke<TemplateMeta>("save_as_template", { args }),
-  deleteTemplate: (id: string) => invoke<void>("delete_template", { id }),
+    invoke("save_as_template", { args }),
+  deleteTemplate: (id: string) => invoke("delete_template", { id }),
   createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string }) =>
-    invoke<PageDetail>("create_page", { args }),
+    invoke("create_page", { args }),
   createFolder: (args: { parent_id: string | null; title?: string }) =>
-    invoke<PageDetail>("create_folder", { args }),
+    invoke("create_folder", { args }),
   createDatabase: (args: { parent_id: string | null; title?: string }) =>
-    invoke<PageDetail>("create_database", { args }),
+    invoke("create_database", { args }),
   savePage: (args: {
     id: string;
     title?: string;
     content_json?: string;
     content_text?: string;
-  }) => invoke<PageDetail>("save_page", { args }),
-  setPageCover: (id: string, cover: string) => invoke<PageDetail>("set_page_cover", { args: { id, cover } }),
-  setPageIcon: (id: string, icon: string) => invoke<PageDetail>("set_page_icon", { args: { id, icon } }),
-  setPageCoverHeight: (id: string, height: number) => invoke<PageDetail>("set_page_cover_height", { args: { id, height } }),
+  }) => invoke("save_page", { args }),
+  setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
+  setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
+  setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
   savePdfAnnotations: (attachmentId: string, pageIndex: number, annotations: unknown[]) =>
-    invoke<PdfAnnotationRecord>("save_pdf_annotations", { args: { attachment_id: attachmentId, page_index: pageIndex, annotations } }),
+    invoke("save_pdf_annotations", { args: { attachment_id: attachmentId, page_index: pageIndex, annotations } }),
   listPdfAnnotations: (attachmentId: string) =>
-    invoke<PdfAnnotationRecord[]>("list_pdf_annotations", { args: { attachment_id: attachmentId } }),
-  listAllPdfAnnotations: () => invoke<PdfAnnotationRecord[]>("list_all_pdf_annotations"),
-  listAllPdfAttachments: () => invoke<AttachmentMeta[]>("list_all_pdf_attachments"),
-  deletePage: (id: string) => invoke<void>("delete_page", { id }),
+    invoke("list_pdf_annotations", { args: { attachment_id: attachmentId } }),
+  listAllPdfAnnotations: () => invoke("list_all_pdf_annotations"),
+  listAllPdfAttachments: () => invoke("list_all_pdf_attachments"),
+  deletePage: (id: string) => invoke("delete_page", { id }),
   movePage: (args: { id: string; new_parent_id: string | null; sort_order: number }) =>
-    invoke<void>("move_page", { args }),
+    invoke("move_page", { args }),
   search: (query: string, limit = 50, allSpaces = false) =>
-    invoke<SearchResult[]>("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
-  getSyncConfig: () => invoke<SyncConfig>("get_sync_config"),
+    invoke("search", { args: { query, limit, all_spaces: allSpaces, embedding: readEmbedConfig() } }),
+  getSyncConfig: () => invoke("get_sync_config"),
   setSyncConfig: (args: { server_url: string; token?: string; space_id?: string }) =>
-    invoke<void>("set_sync_config", { args }),
-  syncNow: () => invoke<WorkspaceSyncResult[]>("sync_now"),
+    invoke("set_sync_config", { args }),
+  syncNow: () => invoke("sync_now"),
   // S8: per-workspace sync profiles (one local workspace → one remote target).
-  listSyncProfiles: () => invoke<SyncProfile[]>("list_sync_profiles"),
+  listSyncProfiles: () => invoke("list_sync_profiles"),
   setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string }) =>
-    invoke<void>("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id }),
-  syncWorkspace: (wsId: string) => invoke<WorkspaceSyncResult>("sync_workspace", { wsId }),
+    invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id }),
+  syncWorkspace: (wsId: string) => invoke("sync_workspace", { wsId }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;
     mime: string;
     data: number[];
   }) => {
-    const meta = await invoke<AttachmentMeta>("save_image", { args });
+    const meta = await invoke("save_image", { args });
     // Desktop `save_image` persists bytes to disk but NOT to the frontend IndexedDB
     // blobStore, while InlineDrawing / the fullscreen modal read them back by hash
     // (blobStore.get). Mirror the bytes into blobStore so the drawing/image reload
@@ -155,114 +137,101 @@ export const api = {
     }
     return meta;
   },
-  attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
-  getAttachment: (id: string) => invoke<AttachmentMeta>("get_attachment", { id }),
+  attachmentPath: (hash: string) => invoke("attachment_path", { hash }),
+  getAttachment: (id: string) => invoke("get_attachment", { id }),
   // Read an attachment's PLAINTEXT bytes by hash (decrypts at-rest-encrypted
   // bytes, unlike read_text_file which reads the raw on-disk path).
-  readAttachmentBytes: (hash: string) => invoke<number[]>("read_attachment_bytes", { hash }),
+  readAttachmentBytes: (hash: string) => invoke("read_attachment_bytes", { hash }),
   fetchBookmarkMetadata: (url: string) =>
-    invoke<{
-      url: string;
-      title: string;
-      description: string;
-      site_name: string;
-      image_hash: string;
-      image_mime: string;
-    }>("fetch_bookmark_metadata", { url }),
+    invoke("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
-    invoke<void>("copy_attachment", { hash, destPath }),
+    invoke("copy_attachment", { hash, destPath }),
   importAttachmentFiles: (pageId: string | null, paths: string[]) =>
-    invoke<AttachmentMeta[]>("import_attachment_files", { pageId, paths }),
+    invoke("import_attachment_files", { pageId, paths }),
   listPageAttachments: (pageId: string) =>
-    invoke<AttachmentMeta[]>("list_page_attachments", { pageId }),
-  removeAttachment: (id: string) => invoke<void>("remove_attachment", { id }),
-  removeAttachments: (ids: string[]) => invoke<number>("remove_attachments", { ids }),
-  storageStats: () => invoke<StorageStats>("storage_stats"),
-  clearTrash: () => invoke<number>("clear_trash"),
-  cleanupOrphanAttachments: () => invoke<number>("cleanup_orphan_attachments"),
-  cleanupOldVersions: (maxKeep?: number) => invoke<number>("cleanup_old_versions", { maxKeep }),
-  cleanupTempFiles: () => invoke<number>("cleanup_temp_files"),
-  purgeDeletedWorkspaces: () => invoke<{ freed: number; workspaces: number }>("purge_deleted_workspaces"),
+    invoke("list_page_attachments", { pageId }),
+  removeAttachment: (id: string) => invoke("remove_attachment", { id }),
+  removeAttachments: (ids: string[]) => invoke("remove_attachments", { ids }),
+  storageStats: () => invoke("storage_stats"),
+  clearTrash: () => invoke("clear_trash"),
+  cleanupOrphanAttachments: () => invoke("cleanup_orphan_attachments"),
+  cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),
+  cleanupTempFiles: () => invoke("cleanup_temp_files"),
+  purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),
   moveAttachment: (id: string, newPageId: string) =>
-    invoke<void>("move_attachment", { id, newPageId }),
+    invoke("move_attachment", { id, newPageId }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>
-    invoke<AttachmentMeta>("restore_attachment", { targetPageId, sourceId }),
-  getBacklinks: (id: string) => invoke<PageMeta[]>("get_backlinks", { id }),
+    invoke("restore_attachment", { targetPageId, sourceId }),
+  getBacklinks: (id: string) => invoke("get_backlinks", { id }),
   resolveBlock: (blockId: string) =>
-    invoke<BlockInfo>("resolve_block", { blockId }),
+    invoke("resolve_block", { blockId }),
   getPageBlocks: (pageId: string) =>
-    invoke<PageBlock[]>("get_page_blocks", { pageId }),
+    invoke("get_page_blocks", { pageId }),
   searchBlocks: (query: string) =>
-    invoke<SearchBlock[]>("search_blocks", { query }),
+    invoke("search_blocks", { query }),
   listBlockBacklinks: (pageId: string) =>
-    invoke<BlockBacklink[]>("list_block_backlinks", { pageId }),
-  getGraph: () => invoke<GraphData>("get_graph"),
-  listAttrDefs: () => invoke<AttrDef[]>("list_attr_defs"),
+    invoke("list_block_backlinks", { pageId }),
+  getGraph: () => invoke("get_graph"),
+  listAttrDefs: () => invoke("list_attr_defs"),
   createAttr: (args: { name: string; attr_type: string; options?: string[] }) =>
-    invoke<AttrDef>("create_attr", { args }),
+    invoke("create_attr", { args }),
   updateAttr: (args: { id: string; options: string[] }) =>
-    invoke<AttrDef>("update_attr", { args }),
-  deleteAttr: (id: string) => invoke<void>("delete_attr", { id }),
+    invoke("update_attr", { args }),
+  deleteAttr: (id: string) => invoke("delete_attr", { id }),
   setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
-    invoke<void>("set_page_prop", { args }),
+    invoke("set_page_prop", { args }),
   removePageProp: (pageId: string, attrId: string) =>
-    invoke<void>("remove_page_prop", { pageId, attrId }),
+    invoke("remove_page_prop", { pageId, attrId }),
   getPageProps: (pageId: string) =>
-    invoke<PageProp[]>("get_page_props", { pageId }),
+    invoke("get_page_props", { pageId }),
   getDbColumns: (dbPageId: string) =>
-    invoke<AttrDef[]>("get_db_columns", { dbPageId }),
+    invoke("get_db_columns", { dbPageId }),
   addDbColumn: (dbPageId: string, attrId: string) =>
-    invoke<AttrDef[]>("add_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
+    invoke("add_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
   removeDbColumn: (dbPageId: string, attrId: string) =>
-    invoke<AttrDef[]>("remove_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
+    invoke("remove_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
   queryDatabase: (dbPageId: string) =>
-    invoke<DatabaseQuery>("query_database", { dbPageId }),
-  listTags: () => invoke<Tag[]>("list_tags"),
-  createTag: (name: string) => invoke<Tag>("create_tag", { name }),
-  renameTag: (tagId: string, name: string) => invoke<Tag>("rename_tag", { tagId, name }),
-  deleteTag: (tagId: string) => invoke<void>("delete_tag", { tagId }),
-  pageTags: (pageId: string) => invoke<Tag[]>("page_tags", { pageId }),
-  addTag: (pageId: string, name: string) => invoke<Tag>("add_tag", { pageId, name }),
-  removeTag: (pageId: string, tagId: string) => invoke<void>("remove_tag", { pageId, tagId }),
-  pagesByTag: (tagId: string) => invoke<PageMeta[]>("pages_by_tag", { tagId }),
-  boardData: () => invoke<BoardColumn[]>("board_data"),
+    invoke("query_database", { dbPageId }),
+  listTags: () => invoke("list_tags"),
+  createTag: (name: string) => invoke("create_tag", { name }),
+  renameTag: (tagId: string, name: string) => invoke("rename_tag", { tagId, name }),
+  deleteTag: (tagId: string) => invoke("delete_tag", { tagId }),
+  pageTags: (pageId: string) => invoke("page_tags", { pageId }),
+  addTag: (pageId: string, name: string) => invoke("add_tag", { pageId, name }),
+  removeTag: (pageId: string, tagId: string) => invoke("remove_tag", { pageId, tagId }),
+  pagesByTag: (tagId: string) => invoke("pages_by_tag", { tagId }),
+  boardData: () => invoke("board_data"),
   boardByAttr: (attrId: string) =>
-    invoke<BoardGroup[]>("board_by_attr", { attrId }),
-  moveCard: (pageId: string, tagId: string) => invoke<void>("move_card", { pageId, tagId }),
-  listDbViews: (dbPageId: string) => invoke<DbViewMeta[]>("list_db_views", { dbPageId }),
+    invoke("board_by_attr", { attrId }),
+  moveCard: (pageId: string, tagId: string) => invoke("move_card", { pageId, tagId }),
+  listDbViews: (dbPageId: string) => invoke("list_db_views", { dbPageId }),
   saveDbView: (args: { db_page_id: string; name: string; view_type: string; config: string }) =>
-    invoke<DbViewMeta>("save_db_view", { args }),
-  deleteDbView: (id: string) => invoke<void>("delete_db_view", { id }),
-  setDbRule: (dbPageId: string, rule: string) => invoke<void>("set_db_rule", { dbPageId, rule }),
-  getDbRule: (dbPageId: string) => invoke<string>("get_db_rule", { dbPageId }),
-  resolveRefs: (values: string[]) => invoke<Record<string, string>>("resolve_refs", { values }),
-  listDeleted: () => invoke<PageMeta[]>("list_deleted"),
-  restorePage: (id: string) => invoke<void>("restore_page", { id }),
-  purgePage: (id: string) => invoke<void>("purge_page", { id }),
-  listVersions: (pageId: string) => invoke<PageVersion[]>("list_versions", { pageId }),
-  restoreVersion: (versionId: string) => invoke<PageDetail>("restore_version", { versionId }),
+    invoke("save_db_view", { args }),
+  deleteDbView: (id: string) => invoke("delete_db_view", { id }),
+  setDbRule: (dbPageId: string, rule: string) => invoke("set_db_rule", { dbPageId, rule }),
+  getDbRule: (dbPageId: string) => invoke("get_db_rule", { dbPageId }),
+  resolveRefs: (values: string[]) => invoke("resolve_refs", { values }),
+  listDeleted: () => invoke("list_deleted"),
+  restorePage: (id: string) => invoke("restore_page", { id }),
+  purgePage: (id: string) => invoke("purge_page", { id }),
+  listVersions: (pageId: string) => invoke("list_versions", { pageId }),
+  restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
   exportBackup: (destPath: string) =>
-    invoke<{ path: string; size: number }>("export_backup", { destPath }),
+    invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>
-    invoke<{ imported: number; renamed: number }>("import_backup", { srcPath }),
+    invoke("import_backup", { srcPath }),
   exportWorkspace: (destPath: string) =>
-    invoke<{ path: string; size: number; pages: number; attachments: number }>("export_workspace", { destPath }),
+    invoke("export_workspace", { destPath }),
   exportWiki: (destPath: string) =>
-    invoke<{ path: string; size: number; pages: number; files: number }>("export_wiki", { destPath }),
+    invoke("export_wiki", { destPath }),
   importWorkspace: (srcPath: string, name?: string | null) =>
-    invoke<WorkspaceMeta>("import_workspace", { srcPath, name }),
+    invoke("import_workspace", { srcPath, name }),
   writeTextFile: (path: string, content: string) =>
-    invoke<void>("write_text_file", { path, content }),
-  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
-  openPageWindow: (pageId: string) => invoke<void>("open_page_window", { pageId }),
+    invoke("write_text_file", { path, content }),
+  readTextFile: (path: string) => invoke("read_text_file", { path }),
+  openPageWindow: (pageId: string) => invoke("open_page_window", { pageId }),
   requestPersistentStorage: () =>
-    invoke<{
-      persisted: boolean;
-      persistedBefore: boolean;
-      quota: number;
-      usage: number;
-      supported: boolean;
-    }>("request_persistent_storage"),
+    invoke("request_persistent_storage"),
   // ---- AI proxy (desktop Rust forwards the LLM request, bypassing CORS) ----
   aiComplete: (args: {
     provider: string;
@@ -273,12 +242,12 @@ export const api = {
     temperature?: number;
     max_tokens?: number;
   }) =>
-    invoke<{ content: string; native_tool_calls?: Array<{ name: string; arguments: string }> }>(
+    invoke(
       "ai_complete",
       { args },
     ),
   aiProbe: (args: { provider: string; base_url: string; model: string; api_key?: string }) =>
-    invoke<{ ok: boolean; message: string; models?: string[] }>("ai_probe", { args }),
+    invoke("ai_probe", { args }),
   aiCompleteStream: (args: {
     provider: string;
     base_url: string;
@@ -288,5 +257,5 @@ export const api = {
     tools?: unknown[];
     temperature?: number;
     max_tokens?: number;
-  }, runId: string) => invoke<void>("ai_complete_stream", { args, runId }),
+  }, runId: string) => invoke("ai_complete_stream", { args, runId }),
 };

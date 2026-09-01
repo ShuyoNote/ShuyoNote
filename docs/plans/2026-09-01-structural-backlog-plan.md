@@ -8,7 +8,7 @@
 | 立项 | 状态 | 已落地 |
 |---|---|---|
 | ① markdown round-trip 单测 | ✅ **达成** | `mdToHtml`（12）+ `mdPreview`（5，经 `$convertFromMarkdownString`/`$importHtml`）+ happy-dom 测试环境（`vitest.config.ts` + `src/test/setup.ts`） |
-| ② web.ts 命令契约层 | 🔶 **前两步达成** | 未知命令改为抛错（`web.ts` 兜底）+ 补齐 10 个缺失命令 + `scripts/check-web-commands.mjs` 覆盖率检查（接入 `pnpm check:web-commands`）；完整 CommandMap 类型化迁移待排期 |
+| ② web.ts 命令契约层 | ✅ **达成** | `CommandMap` 契约类型（`src/lib/platform/commands.ts`，118 命令 args+result）＋ `api.ts` 的 `invoke` 改为 CommandMap 泛型（命令名/args/result 编译期报错）＋ `check-web-commands` 增强（Rust 命令 ⊆ CommandMap 键）并纳入 `pnpm build`；未知命令抛错＋覆盖率检查保留。运行时行为零变化（tsc/vitest/smoke-web 全绿）。 |
 | ③ 服务端单 Mutex 并发瓶颈 | 🔶 **第一步达成** | `push` 批量 INSERT 改单事务（`sync.rs`）；读写分离/连接池待排期 |
 
 > 另：本轮顺带完成「Web 版平台能力边界显式降级提示」（SyncPanel/ThemeSettings/PluginManager 三入口）与服务端「register 口令强度 ≥8 字符」，不在原三项立项内。

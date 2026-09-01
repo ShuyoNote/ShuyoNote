@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && vite",
     "dev:web": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && vite --config vite.web.config.ts",
-    "build": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/check-versions.mjs && tsc && vite build",
+    "build": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/check-versions.mjs && tsc && node scripts/check-web-commands.mjs && vite build",
     "check:versions": "node scripts/check-versions.mjs",
     "check:web-commands": "node scripts/check-web-commands.mjs",
     "test": "vitest run",
