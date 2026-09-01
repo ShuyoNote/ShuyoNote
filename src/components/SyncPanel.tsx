@@ -44,8 +44,13 @@ interface EditRow {
 // different servers/accounts (multi-server × multi-space).
 export function SyncPanel() {
   const { loadPages } = useNotes();
-  const { open, pos, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>();
+  // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
+  const { open, pos, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>({
+    width: 452,
+    minSpace: 420,
+  });
   const spaces = useSpaceStore((s) => s.spaces);
+  const authed = useAuth((s) => s.authed);
   const [rows, setRows] = useState<EditRow[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -266,118 +271,247 @@ export function SyncPanel() {
     return role === "admin" || role === "owner";
   };
 
+  // 状态条只有一行文案，按语义上色：失败=红、提示性前置条件=黄、其余=绿。
+  const statusKind = (s: string): "ok" | "err" | "warn" =>
+    /失败|错误|不支持|不存在|无效/.test(s) ? "err" : /^请/.test(s) ? "warn" : "ok";
+
+  const roleClass = (role: string) =>
+    ["owner", "admin", "editor", "viewer"].includes(role) ? `role-${role}` : "role-viewer";
+
+  const initial = (s: string) => (s.trim()[0] ?? "?").toUpperCase();
+
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
         <SyncIcon />
       </button>
       {open && (
-        <div ref={contentRef} className="sync-popover" style={{ top: pos.top, left: pos.left }}>
-          <div className="sync-title">每空间同步目标</div>
+        <div
+          ref={contentRef}
+          className="sync-popover is-sync"
+          style={{ top: pos.top, left: pos.left }}
+          role="dialog"
+          aria-label="同步设置"
+        >
+          <header className="sync-head">
+            <div className="sync-head-text">
+              <div className="sync-title">同步</div>
+              <div className="sync-subtitle">每个空间各自绑定服务器与团队空间</div>
+            </div>
+            <span className={`sync-chip${authed ? " is-on" : ""}`}>{authed ? "已登录" : "未登录"}</span>
+          </header>
+
           {!isDesktopPlatform() && (
-            <div className="sync-web-note">Web 版不支持多设备同步，请在桌面版配置。</div>
+            <div className="sync-web-note">
+              <b>Web 版不支持多设备同步</b>
+              <span>笔记存在本浏览器里；要多设备同步请用桌面版。</span>
+            </div>
           )}
+
           <div className="sync-profiles">
-            {rows.map((r) => (
-              <div key={r.ws_id} className="sync-profile">
-                <div className="sync-profile-name">{r.name}</div>
-                <div className="sync-row">
-                  <label>服务器</label>
-                  <input value={r.server_url} placeholder="http://localhost:8787" onChange={(e) => update(r.ws_id, "server_url", e.target.value)} />
-                </div>
-                <div className="sync-row sync-login-row">
-                  <label>账号（登录拿 token）</label>
-                  <div className="sync-login-fields">
-                    <input value={r.loginEmail} placeholder="邮箱" onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)} />
-                    <input type="password" value={r.loginPassword} placeholder="密码" onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)} />
+            {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
+            {rows.map((r) => {
+              const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
+              const state = r.server_url && r.space_id ? "bound" : r.server_url ? "partial" : "none";
+              return (
+                <section key={r.ws_id} className="sync-card">
+                  <div className="sync-card-head">
+                    <span className="sync-card-avatar" aria-hidden>{initial(r.name)}</span>
+                    <span className="sync-card-name" title={r.name}>{r.name}</span>
+                    <span className={`sync-state is-${state}`}>
+                      {state === "bound" ? "已绑定" : state === "partial" ? "待选空间" : "未配置"}
+                    </span>
                   </div>
-                  <div className="sync-auth-btns">
-                    <button className="sync-login-btn" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
-                      {loggingIn ? "处理中…" : "登录"}
-                    </button>
-                    <button className="sync-login-btn" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
-                      注册
-                    </button>
+
+                  <div className="sync-field">
+                    <label htmlFor={`sync-srv-${r.ws_id}`}>服务器</label>
+                    <input
+                      id={`sync-srv-${r.ws_id}`}
+                      className="sync-input"
+                      value={r.server_url}
+                      placeholder="http://localhost:8787"
+                      onChange={(e) => update(r.ws_id, "server_url", e.target.value)}
+                    />
                   </div>
-                  <div className="sync-auth-hint">首次使用点「注册」（密码 ≥8 位），注册成功即自动登录。</div>
-                </div>
-                <div className="sync-row">
-                  <label>令牌（{r.token ? "✓ 已获取" : "尚未获取"}）</label>
-                  <div className="sync-token-row">
-                    <input type="password" value={r.token} placeholder="团队 token" onChange={(e) => update(r.ws_id, "token", e.target.value)} />
-                    {r.token && <button className="sync-logout-btn" onClick={() => void logout(r)}>登出</button>}
-                  </div>
-                </div>
-                <div className="sync-row">
-                  <label>空间 ID</label>
-                  {r.remoteSpaces.length > 0 ? (
-                    <select value={r.space_id} onChange={(e) => update(r.ws_id, "space_id", e.target.value)}>
-                      <option value="">选择我加入的空间…</option>
-                      {r.remoteSpaces.map((sp) => (
-                        <option key={sp.id} value={sp.id}>
-                          {sp.name}（{sp.role}）
-                        </option>
-                      ))}
-                    </select>
+
+                  {/* 已拿到令牌就不再堆登录表单——只留一枚「已登录」胶囊 + 登出。 */}
+                  {r.token ? (
+                    <div className="sync-account">
+                      <span className="sync-account-dot" aria-hidden />
+                      <div className="sync-account-text">
+                        <b>已登录</b>
+                        <span title={r.server_url}>{r.server_url || "—"}</span>
+                      </div>
+                      <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
+                    </div>
                   ) : (
-                    <input value={r.space_id} placeholder="团队空间 id（留空=旧单用户）" onChange={(e) => update(r.ws_id, "space_id", e.target.value)} />
+                    <div className="sync-field">
+                      <label htmlFor={`sync-mail-${r.ws_id}`}>账号</label>
+                      <div className="sync-auth-grid">
+                        <input
+                          id={`sync-mail-${r.ws_id}`}
+                          className="sync-input"
+                          value={r.loginEmail}
+                          placeholder="邮箱"
+                          autoComplete="username"
+                          onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)}
+                        />
+                        <input
+                          className="sync-input"
+                          type="password"
+                          value={r.loginPassword}
+                          placeholder="密码"
+                          autoComplete="current-password"
+                          onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)}
+                        />
+                      </div>
+                      <div className="sync-auth-btns">
+                        <button className="sync-btn" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
+                          {loggingIn ? "处理中…" : "登录"}
+                        </button>
+                        <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
+                          注册
+                        </button>
+                      </div>
+                      <p className="sync-hint">首次使用点「注册」，密码 ≥8 位，注册成功即自动登录。</p>
+                    </div>
                   )}
-                </div>
-                {r.space_id && r.token && (
-                  <div className="sync-row sync-members-row">
-                    <button className="sync-members-toggle" onClick={() => toggleMembers(r)}>
-                      {r.memberOpen ? "收起成员" : "成员管理"}
-                    </button>
-                    {r.memberOpen && (
-                      <div className="sync-members">
-                        <div className="sync-members-list">
+
+                  <div className="sync-field">
+                    <label htmlFor={`sync-space-${r.ws_id}`}>团队空间</label>
+                    {r.remoteSpaces.length > 0 ? (
+                      <div className="sync-space-row">
+                        <select
+                          id={`sync-space-${r.ws_id}`}
+                          className="sync-input"
+                          value={r.space_id}
+                          onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
+                        >
+                          <option value="">选择我加入的空间…</option>
+                          {r.remoteSpaces.map((sp) => (
+                            <option key={sp.id} value={sp.id}>{sp.name}</option>
+                          ))}
+                        </select>
+                        {myRole && <span className={`sync-role ${roleClass(myRole)}`}>{myRole}</span>}
+                      </div>
+                    ) : (
+                      <input
+                        id={`sync-space-${r.ws_id}`}
+                        className="sync-input"
+                        value={r.space_id}
+                        placeholder="团队空间 id（留空 = 旧单用户模式）"
+                        onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
+                      />
+                    )}
+                  </div>
+
+                  {r.space_id && r.token && (
+                    <div className="sync-field">
+                      <button
+                        className="sync-members-toggle"
+                        aria-expanded={r.memberOpen}
+                        onClick={() => toggleMembers(r)}
+                      >
+                        <span>成员管理</span>
+                        {r.members.length > 0 && <span className="sync-members-count">{r.members.length}</span>}
+                        <span className={`sync-caret${r.memberOpen ? " is-open" : ""}`} aria-hidden>▾</span>
+                      </button>
+                      {r.memberOpen && (
+                        <div className="sync-members">
                           {r.members.length === 0 ? (
-                            <span className="sync-members-empty">（无成员）</span>
+                            <div className="sync-members-empty">还没有成员</div>
                           ) : (
                             r.members.map((m) => {
-                              const currentRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
-                              const canManage = currentRole === "admin" || currentRole === "owner";
+                              const canManage = canManageSpace(r);
                               const isOwnerRow = m.role === "owner";
                               return (
                                 <div key={m.user_id} className="sync-member">
-                                  <span className="sync-member-email">{m.email}</span>
-                                  <select className="sync-member-role" value={m.role} disabled={!canManage || isOwnerRow} onChange={(e) => void setMemberRole(r, m.email, e.target.value)}>
+                                  <span className="sync-member-avatar" aria-hidden>{initial(m.email)}</span>
+                                  <span className="sync-member-email" title={m.email}>{m.email}</span>
+                                  <select
+                                    className={`sync-member-role ${roleClass(m.role)}`}
+                                    value={m.role}
+                                    aria-label={`${m.email} 的角色`}
+                                    disabled={!canManage || isOwnerRow}
+                                    onChange={(e) => void setMemberRole(r, m.email, e.target.value)}
+                                  >
                                     <option value="viewer">viewer</option>
                                     <option value="editor">editor</option>
                                     <option value="admin">admin</option>
                                   </select>
-                                  <button className="sync-member-remove" title="移除" disabled={!canManage || isOwnerRow} onClick={() => void removeMember(r, m.user_id)}>✕</button>
+                                  <button
+                                    className="sync-member-remove"
+                                    title={isOwnerRow ? "空间所有者不可移除" : "移除成员"}
+                                    aria-label={`移除 ${m.email}`}
+                                    disabled={!canManage || isOwnerRow}
+                                    onClick={() => void removeMember(r, m.user_id)}
+                                  >
+                                    ✕
+                                  </button>
                                 </div>
                               );
                             })
                           )}
+                          <div className="sync-invite">
+                            <input
+                              className="sync-input"
+                              value={r.inviteEmail}
+                              placeholder="被邀请者邮箱"
+                              disabled={!canManageSpace(r)}
+                              onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)}
+                            />
+                            <select
+                              className="sync-input sync-invite-role"
+                              value={r.inviteRole}
+                              aria-label="邀请角色"
+                              disabled={!canManageSpace(r)}
+                              onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)}
+                            >
+                              <option value="viewer">viewer</option>
+                              <option value="editor">editor</option>
+                              <option value="admin">admin</option>
+                            </select>
+                            <button className="sync-btn" disabled={!canManageSpace(r)} onClick={() => void inviteMember(r)}>
+                              邀请
+                            </button>
+                          </div>
+                          {!canManageSpace(r) && (
+                            <p className="sync-hint">只有 admin / owner 能邀请成员或改角色。</p>
+                          )}
                         </div>
-                        <div className="sync-members-invite">
-                          <input value={r.inviteEmail} placeholder="被邀请者邮箱" onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)} disabled={!canManageSpace(r)} />
-                          <select value={r.inviteRole} onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)} disabled={!canManageSpace(r)}>
-                            <option value="viewer">viewer</option>
-                            <option value="editor">editor</option>
-                            <option value="admin">admin</option>
-                          </select>
-                          <button disabled={!canManageSpace(r)} onClick={() => void inviteMember(r)}>邀请</button>
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  )}
+
+                  {/* 手动令牌是老配置法的后路，默认收起，避免面板一眼全是输入框。 */}
+                  <details className="sync-advanced">
+                    <summary>高级：手动填令牌{r.token ? "（已获取）" : ""}</summary>
+                    <input
+                      className="sync-input"
+                      type="password"
+                      value={r.token}
+                      placeholder="团队 token"
+                      onChange={(e) => update(r.ws_id, "token", e.target.value)}
+                    />
+                  </details>
+
+                  <div className="sync-card-actions">
+                    <button className="sync-btn" onClick={() => save(r)}>保存</button>
+                    <button className="sync-btn primary" disabled={syncing || !r.server_url} onClick={() => syncOne(r)}>
+                      {syncing ? "同步中…" : "同步"}
+                    </button>
                   </div>
-                )}
-                <div className="sync-profile-actions">
-                  <button onClick={() => save(r)}>保存</button>
-                  <button disabled={syncing || !r.server_url} onClick={() => syncOne(r)}>
-                    {syncing ? "同步中…" : "同步"}
-                  </button>
-                </div>
-              </div>
-            ))}
+                </section>
+              );
+            })}
           </div>
-          {status && <div className="sync-status">{status}</div>}
-          <div className="sync-actions">
-            <button onClick={syncAll} disabled={syncing}>同步全部</button>
-          </div>
+
+          <footer className="sync-foot">
+            {status && <div className={`sync-status is-${statusKind(status)}`}>{status}</div>}
+            <button className="sync-btn primary block" onClick={syncAll} disabled={syncing}>
+              {syncing ? "同步中…" : "同步全部"}
+            </button>
+          </footer>
         </div>
       )}
     </div>

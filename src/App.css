@@ -695,151 +695,500 @@ body,
 .sync-popover {
   position: fixed;
   width: 320px;
-  background: var(--bg);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-md);
-  padding: 12px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
   z-index: 40;
 }
 .sync-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
   margin-bottom: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 同步面板（.is-sync）：头/滚动区/底栏三段式。之前所有字段一次性铺开，
+ * 320px 宽里挤了 5 组输入，视觉上又窄又碎；现在按「服务器 → 账号 → 空间 →
+ * 成员」分组，登录后收起表单，手动令牌折进「高级」，只留必要的一屏。
+ * ------------------------------------------------------------------------- */
+.sync-popover.is-sync {
+  width: min(452px, calc(100vw - 24px));
+  max-height: min(76vh, 680px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sync-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sync-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.sync-head .sync-title {
+  font-size: 14px;
+  margin: 0 0 2px;
+  letter-spacing: 0.01em;
+}
+.sync-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.sync-chip {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+}
+.sync-chip.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .sync-web-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
   font-size: 12px;
-  color: var(--text-faint, #8a94a6);
-  background: var(--bg-sidebar, transparent);
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  margin-bottom: 10px;
-}
-.sync-profiles {
-  max-height: 300px;
-  overflow-y: auto;
-  margin-bottom: 8px;
-}
-.sync-profile {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  margin-bottom: 8px;
-  background: var(--bg-sidebar, transparent);
-}
-.sync-profile-name {
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 6px;
   color: var(--text);
 }
-.sync-profile-actions {
+.sync-web-note span {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.sync-profiles {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sync-empty-state {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+.sync-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.sync-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-xs);
+}
+.sync-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sync-card-avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.sync-card-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-state {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+}
+.sync-state.is-bound {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+.sync-state.is-partial {
+  background: var(--cat-yellow-soft);
+  color: var(--cat-yellow);
+}
+
+.sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sync-field > label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+.sync-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* 输入与下拉共用同一个盒子，行高、圆角、聚焦环都对齐。 */
+.sync-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.sync-input::placeholder {
+  color: var(--text-faint);
+}
+.sync-input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.sync-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.sync-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+select.sync-input {
+  cursor: pointer;
+}
+
+/* 按钮系统：次要=描边、主要=实心 accent、ghost=无底色。 */
+.sync-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.sync-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+.sync-btn:active:not(:disabled) {
+  background: var(--hover-strong);
+}
+.sync-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sync-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.sync-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.sync-btn.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.sync-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 5px 10px;
+}
+.sync-btn.ghost:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.sync-btn.block {
+  width: 100%;
+}
+
+.sync-auth-grid,
+.sync-auth-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.sync-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--cat-green-soft);
+}
+.sync-account-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.sync-account-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+}
+.sync-account-text b {
+  font-size: 12px;
+  color: var(--text);
+}
+.sync-account-text span {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-space-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sync-space-row .sync-input {
+  flex: 1;
+  min-width: 0;
+}
+.sync-role {
+  flex: none;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+}
+.role-owner { background: var(--cat-purple-soft); color: var(--cat-purple); }
+.role-admin { background: var(--cat-blue-soft); color: var(--cat-blue); }
+.role-editor { background: var(--cat-green-soft); color: var(--cat-green); }
+.role-viewer { background: var(--cat-gray-soft); color: var(--cat-gray); }
+
+.sync-advanced {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+.sync-advanced > summary {
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.sync-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.sync-advanced > summary::before {
+  content: "▸ ";
+}
+.sync-advanced[open] > summary::before {
+  content: "▾ ";
+}
+.sync-advanced > summary:hover {
+  color: var(--text);
+}
+.sync-advanced .sync-input {
+  margin-top: 8px;
+}
+.sync-card-actions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
 }
 
-.sync-row {
-  margin-bottom: 10px;
+.sync-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.sync-foot .sync-status {
+  margin: 0;
 }
 
-.sync-row label {
-  display: block;
+/* M27 成员管理：折叠开关 + 成员行（首字母头像 / 邮箱 / 角色 / 移除）+ 邀请行。 */
+.sync-members-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.sync-members-toggle:hover {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+.sync-members-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sync-members-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: 11px;
+  display: grid;
+  place-items: center;
+}
+.sync-caret {
+  margin-left: auto;
+  color: var(--text-faint);
+  transition: transform var(--transition-fast);
+}
+.sync-caret.is-open {
+  transform: rotate(180deg);
+}
+.sync-members {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: var(--bg);
+}
+.sync-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sync-member-avatar {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.sync-member-email {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-member-role {
+  flex: none;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.sync-member-role:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.sync-member-remove {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.sync-member-remove:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.sync-member-remove:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.sync-members-empty {
   font-size: 12px;
   color: var(--text-dim);
-  margin-bottom: 4px;
+  padding: 4px 0;
 }
-
-/* M27 成员管理 */
-.sync-members-row { display: flex; flex-direction: column; gap: 8px; }
-.sync-members-toggle { align-self: flex-start; font-size: 12px; padding: 3px 8px; cursor: pointer; border: 1px solid var(--border); background: var(--block-hover); color: var(--text); border-radius: 5px; }
-.sync-members { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--bg); }
-.sync-members-list { display: flex; flex-direction: column; gap: 6px; }
-.sync-member { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.sync-member-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sync-member-role, .sync-members-invite select { font-size: 12px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--block-hover); color: var(--text); }
-.sync-member-remove { cursor: pointer; border: none; background: none; color: var(--danger, #d33); font-size: 12px; padding: 0 2px; }
-.sync-members-invite { display: flex; gap: 6px; }
-.sync-members-invite input { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--block-hover); color: var(--text); }
-.sync-members-empty { color: var(--text-dim); font-size: 12px; }
-.sync-token-row { display: flex; gap: 6px; }
-.sync-token-row input { flex: 1; }
-.sync-logout-btn { font-size: 12px; padding: 3px 8px; cursor: pointer; border: 1px solid var(--border); background: var(--block-hover); color: var(--text); border-radius: 5px; }
+.sync-invite {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+}
+.sync-invite-role {
+  width: auto;
+}
 .acct-current { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin: 6px 0 10px; }
 .acct-current-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-current-empty { color: var(--text-dim); }
 .acct-logout { font-size: 12px; padding: 3px 8px; cursor: pointer; border: 1px solid var(--border); background: var(--block-hover); color: var(--text); border-radius: 5px; }
-
-.sync-row input {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 13px;
-  outline: none;
-  font-family: inherit;
-}
-
-.sync-row input:focus {
-  border-color: var(--accent);
-}
-
-.sync-row select {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 13px;
-  outline: none;
-  font-family: inherit;
-  background: var(--bg);
-  color: var(--text);
-}
-.sync-row select:focus {
-  border-color: var(--accent);
-}
-
-.sync-login-row label {
-  margin-bottom: 4px;
-}
-.sync-login-fields {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.sync-login-fields input {
-  flex: 1;
-}
-.sync-login-btn {
-  width: 100%;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.sync-login-btn:hover:not(:disabled) {
-  background: var(--hover);
-}
-.sync-login-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-/* 登录 / 注册并排：两个等宽按钮，注册是首次使用的入口。 */
-.sync-auth-btns {
-  display: flex;
-  gap: 8px;
-}
-.sync-auth-hint {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-dim);
-  line-height: 1.4;
-}
 
 .sync-meta {
   font-size: 12px;
@@ -848,11 +1197,29 @@ body,
   line-height: 1.5;
 }
 
+/* 状态条：默认中性；同步面板按语义加 is-ok / is-warn / is-err 上色。 */
 .sync-status {
   font-size: 12px;
-  color: var(--text);
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--chip-bg);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
   margin-bottom: 10px;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+.sync-status.is-ok {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+.sync-status.is-warn {
+  background: var(--cat-yellow-soft);
+  color: var(--cat-yellow);
+}
+.sync-status.is-err {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .sync-empty {
