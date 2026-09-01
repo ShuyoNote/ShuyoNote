@@ -44,16 +44,19 @@
 按顺序跑，全部通过才算稳：
 
 ```powershell
-# 1. 冒烟测试（权威，断言数随功能增长）
+# 1. 前端单元测试（Vitest，纯函数：treeReorder / pdfAnnotation / …）
+pnpm test                             # 期望 "N passed"
+
+# 2. 冒烟测试（web 平台行为事实标准，断言数随功能增长）
 node scripts/smoke-web.mjs            # 期望 "N passed, 0 failed"
 
-# 2. 类型检查
+# 3. 类型检查
 npx tsc --noEmit
 
-# 3. 前端构建
-pnpm build                            # tsc + vite build
+# 4. 前端构建
+pnpm build                            # check-versions + tsc + vite build
 
-# 4. Rust 检查（会重生成 src-tauri/Cargo.lock，版本号改动后必跑）
+# 5. Rust 检查（会重生成 src-tauri/Cargo.lock，版本号改动后必跑）
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
