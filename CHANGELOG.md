@@ -4,6 +4,31 @@
 
 > **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
 
+## [1.65.0] - 2026-09-01
+
+### 新增
+
+- **本地静置加密 E1（SQLCipher）**：口令 → Argon2id → 会话内存密钥（不落盘）→ SQLCipher 加密空间库 + 附件；启动默认锁定 / 解锁门控；明文 ↔ 密文双向迁移；锁定态不读；备份 / 导入 / 空间导入兼容加密空间；附件预览按 hash 解密。默认关。
+- **服务端 H1 单机加固**：定时备份（WAL 安全快照 + 附件目录，保留 7 份）+ `/health/db` 深度探活（`PRAGMA quick_check`）+ 恢复 / 演练脚本（`restore-backup.sh` / `verify-backup.sh`）。
+- **前端 Vitest 单测地基**：88 断言覆盖 10 个纯函数模块（treeReorder / pdfAnnotation / pdfLayout / lexicalValidate / columnsText / drawingText / llm / semanticEmbed / mdToHtml / mdPreview），含 markdown → Lexical 完整往返。
+- **Web 版平台能力边界显式降级提示**：同步 / 加密 / 插件三入口显示「Web 版不支持，请用桌面版」。
+
+### 修复（安全加固）
+
+- **服务端**：附件下载路径穿越（补 hash 校验）、legacy `/attachments` 无鉴权（挂 auth）、移除 permissive CORS、登录失败限速（防暴力破解 + 时序侧信道）、过期会话清理、push device_id 绑定用户（防伪造设备）、空间 owner 不可变（admin 不能降级 / 移除 owner）、register 口令强度 ≥8、S6 迁移后 2 个红灯测试。
+- **客户端**：attachment:// 协议路径穿越（canonicalize）、E1 加密 × 附件同步断裂（上传前解密 / 下载后加密）、Markdown 预览 XSS（sanitizer）、CSP 收紧（script-src 去掉 unsafe-inline，启动脚本外置）、zip-slip（safe_join）、write_attachment_bytes hash 校验、space_id 校验、E1 迁移 sqlcipher_export 显式检查 + 失败清理 tmp。
+
+### 修复（正确性 / 性能）
+
+- AI 流式错误路径（后端错误用 error 字段而非 delta + 前端 catch 防永久运行中）+ outbound 请求 120s 超时。
+- push 批量 INSERT 改单事务（一次 fsync、更短持锁、失败原子回滚）。
+
+### 工程
+
+- 版本号一致性检查脚本（`check-versions.mjs`，接入 build）。
+- web 命令契约：未知命令改为明确报错 + 补齐 10 个缺失命令 + `check-web-commands.mjs` 覆盖率检查。
+- 前端测试环境引入 happy-dom；`pnpm test` 纳入验证循环。
+
 ## [1.64.16] - 2026-08-31
 
 ### 新增
