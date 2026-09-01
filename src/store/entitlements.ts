@@ -2,10 +2,11 @@ import { create } from "zustand";
 import type { Aicap } from "../lib/ai/entitlements";
 import { isCapAllowed } from "../lib/ai/entitlements";
 
-// Local-first entitlement stub (S9 of the monetization plan). No real payment /
-// license validation yet — a placeholder so the UI can gate AI capabilities and
-// surface an "升级 Pro" prompt. Free users get a small monthly allowance; Pro
-// users are unlimited until a real licensing server exists.
+// 本地授权占位（monetization 计划 S9）。**当前不作为门槛**：用量只做统计，
+// `consume` 恒返回 true——AI 推理由用户自带的模型端点承担成本（本地 Ollama
+// 或自己的 OpenAI 兼容密钥），我们既不代付算力，就不限制用户用自己的钥匙；
+// 且 plan 仅存 localStorage、无任何校验，拿它当收费门槛也不成立。
+// 将来若提供托管推理，把 `entitlements.ts` 的 ENFORCE_QUOTA 打开即可恢复。
 const PLAN_KEY = "shuyonote.entitlement.plan";
 const USAGE_KEY = "shuyonote.entitlement.usage";
 

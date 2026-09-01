@@ -1,6 +1,9 @@
 // Thin helper to gate an AI capability at its call site. Consumes from the
-// entitlements store and returns whether the call may proceed, plus a human
-// label for the "升级 Pro" message. Keeps call sites one line.
+// entitlements store and returns whether the call may proceed.
+//
+// 当前**不拦截**：用量只做统计，`ok` 恒为 true（见 `entitlements.ts` 的
+// ENFORCE_QUOTA 与其中的原因说明）。保留这层薄封装，是为了将来真的提供托管
+// 推理时，只改一处即可恢复门槛，而不必回头改六个调用点。
 import { useEntitlements } from "../../store/entitlements";
 import { capLabel, type Aicap } from "./entitlements";
 
@@ -18,7 +21,9 @@ export function tryConsume(cap: Aicap): GateResult {
   return {
     ok,
     label,
-    message: ok ? "" : `免费额度已用完（${label}）。升级 Pro 可继续使用。`,
+    // 不再提示「升级 Pro」——那是一个不存在的购买入口；真要收费也得先由我方
+    // 承担推理成本。这里保留 message 字段供将来使用。
+    message: ok ? "" : `${label}暂时不可用，请稍后再试。`,
   };
 }
 

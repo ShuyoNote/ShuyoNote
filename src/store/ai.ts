@@ -145,11 +145,11 @@ export const useAiStore = create<AiState>((set, get) => ({
       useRightPanel.getState().openAi(true);
       return;
     }
-    // Pro gating: free tier records each run and hard-blocks once the monthly
-    // allowance is exhausted. Real payment/license is a later step.
+    // 用量统计（不拦截）：AI 推理由用户自带的模型端点承担成本，我们不限制
+    // 用户使用自己的密钥。将来若提供托管推理，再由 ENFORCE_QUOTA 打开门槛。
     if (!useEntitlements.getState().consume("draft" as Aicap)) {
       const label = capLabel("draft");
-      set({ error: `免费额度已用完（${label}）。升级 Pro 可继续使用。` });
+      set({ error: `${label}暂时不可用，请稍后再试。` });
       return;
     }
     const notes = useNotes.getState();
