@@ -274,7 +274,17 @@ export function FilePreviewDialog() {
               <video src={platform.asset.convertFileSrc(target.path)} controls preload="metadata" />
             </div>
           ) : target.mime.startsWith("audio/") && target.path ? (
-            <audio src={platform.asset.convertFileSrc(target.path)} controls />
+            <div className="fm-audio-view">
+              <div className="fm-audio-icon" aria-hidden>
+                <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18V5l12-2v13" />
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="18" cy="16" r="3" />
+                </svg>
+              </div>
+              <div className="fm-audio-name" title={target.name}>{target.name}</div>
+              <audio src={platform.asset.convertFileSrc(target.path)} controls />
+            </div>
           ) : target.mime === "application/pdf" && target.path ? (
             <iframe src={platform.asset.convertFileSrc(target.path)} title={target.name} />
           ) : target.mime === "text/markdown" ? (

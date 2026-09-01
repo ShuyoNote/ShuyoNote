@@ -522,9 +522,14 @@ export function FileManagerView() {
                         // M24 PDF 批注：点击文件名直达内置阅读器（而非系统外部应用）。
                         if (row.file!.mime === "application/pdf") {
                           void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
-                        } else if (row.file!.mime === "text/markdown" || row.file!.mime.startsWith("image/") || row.file!.mime.startsWith("video/")) {
-                          // MD / 图片 / 视频：直接在应用内打开预览（铺满），与 PDF 一致，
-                          // 不跳系统外部应用。
+                        } else if (
+                          row.file!.mime === "text/markdown" ||
+                          row.file!.mime.startsWith("image/") ||
+                          row.file!.mime.startsWith("video/") ||
+                          row.file!.mime.startsWith("audio/")
+                        ) {
+                          // MD / 图片 / 视频 / 音频：直接在应用内打开预览（铺满），
+                          // 与 PDF 一致，不跳系统外部应用。
                           useFilePreview.getState().open(row.file!);
                         } else {
                           openFile(row.file!.path);
