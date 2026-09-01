@@ -150,17 +150,25 @@ pub fn set_titlebar_theme(
     Ok(())
 }
 
-/// 在屏幕坐标 (x, y) 弹出系统窗口菜单。
+/// 在屏幕坐标弹出系统窗口菜单。
 ///
 /// 自绘标题栏丢掉了「右键标题栏」与 `Alt+Space` 两个入口——它们能唤出还原/
 /// 移动/大小/最小化/最大化/关闭。这里调真正的系统菜单补回来，而不是自绘仿制：
 /// 仿制品做不到「移动/大小」进入系统拖拽模式，也不跟随系统语言与高对比度主题。
+///
+/// x/y 传**物理屏幕坐标**。前端 `screenX/screenY` 是 DPI 缩放后的逻辑像素，
+/// 在 1.25×/1.5× 屏上直接传进 TrackPopupMenu 会错开几十像素。所以默认不传：
+/// Rust 侧用 `cursor_position()` 取**原生物理坐标**，与 TrackPopupMenu 天然
+/// 同坐标系，免去前端换算与往返精度损失。
 #[tauri::command]
-pub fn show_window_menu(window: tauri::Window, x: f64, y: f64) -> Result<(), String> {
+pub fn show_window_menu(window: tauri::Window, x: Option<f64>, y: Option<f64>) -> Result<(), String> {
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as *mut std::ffi::c_void;
-        imp::show_system_menu(hwnd, x as i32, y as i32);
+        let pos = window.cursor_position().map_err(|e| e.to_string())?;
+        let px = x.map(|v| v as i32).unwrap_or(pos.x as i32);
+        let py = y.map(|v| v as i32).unwrap_or(pos.y as i32);
+        imp::show_system_menu(hwnd, px, py);
     }
     #[cfg(not(windows))]
     {

@@ -107,8 +107,10 @@ export function TitleBar() {
       data-tauri-drag-region
       onContextMenu={(e) => {
         // 右键标题栏唤出系统窗口菜单——无边框窗口丢掉的入口之一。
+        // 不传 screenX/Y：前端是 DPI 缩放的逻辑像素，会错位；Rust 侧用
+        // cursor_position() 取物理坐标，与 system menu 同坐标系。
         e.preventDefault();
-        void api.showWindowMenu(e.screenX, e.screenY);
+        void api.showWindowMenu();
       }}
     >
       <div className="titlebar-brand" data-tauri-drag-region>
