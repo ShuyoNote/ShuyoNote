@@ -469,7 +469,16 @@ function PluginGlyph({ icon }: { icon: string }) {
     ai: <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" />,
     help: <><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2 1.3-2 2.5M12 17h.01" /></>,
     view: <><circle cx="12" cy="12" r="3" /><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" /></>,
-    pdf: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></>,
+    pdf: (
+      <>
+        <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+        <path d="M14 3v6h6" />
+        {/* 「PDF」角标：让它一眼可辨是 PDF 而不是普通文档。chip 底是红色
+            （--cat-red），文字用固定白色保证可读。 */}
+        <rect x="8" y="13" width="8" height="5" rx="1" fill="currentColor" stroke="none" />
+        <text x="12" y="16.6" textAnchor="middle" fontSize="3.4" fontStyle="italic" fontWeight="700" fill="#fff" stroke="none">PDF</text>
+      </>
+    ),
     sync: <><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></>,
     report: <><path d="M3 3v18h18" /><rect x="7" y="12" width="3" height="6" /><rect x="12" y="8" width="3" height="10" /></>,
   };

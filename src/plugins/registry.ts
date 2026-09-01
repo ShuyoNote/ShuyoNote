@@ -57,7 +57,7 @@ export const PLUGIN_META: Record<string, Partial<PluginMeta>> = {
   ai: { icon: "ai", color: "var(--cat-red)", desc: "AI 助手入口" },
   help: { icon: "help", color: "var(--cat-yellow)", desc: "快捷键 / 使用指南 / 关于" },
   view: { icon: "view", color: "var(--cat-green)", desc: "图谱 / 看板 / 列表等视图" },
-  pdf: { icon: "pdf", color: "var(--cat-gray)", desc: "PDF 批注与文件管理" },
+  pdf: { icon: "pdf", color: "var(--cat-red)", desc: "PDF 批注与文件管理" },
   sync: { icon: "sync", color: "var(--cat-blue)", desc: "多设备同步相关命令" },
   report: { icon: "report", color: "var(--cat-orange)", desc: "审计 / 报告类命令" },
 };
