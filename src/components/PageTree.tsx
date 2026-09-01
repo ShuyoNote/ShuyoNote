@@ -654,7 +654,8 @@ export function PageTree({
   const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
   const [colorFor, setColorFor] = useState<string | null>(null);
-  const spaceChooser = usePopover<HTMLButtonElement>();
+  // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
+  const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
   const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
   const aiEnabled = useAiStore((s) => s.config.enabled);
   const updateAvailable = useEditorStore((s) => s.updateAvailable);
@@ -1031,16 +1032,37 @@ export function PageTree({
             ref={spaceChooser.contentRef}
             className="space-switcher"
             style={{ top: spaceChooser.pos.top, left: spaceChooser.pos.left }}
+            role="dialog"
+            aria-label="工作空间"
           >
-                <div className="space-switcher-title">切换工作空间</div>
-                {spaces.length === 0 ? (
-                  <div className="space-switcher-empty">暂无工作空间</div>
-                ) : (
-                  spaces.map((s) => (
+            <header className="space-switcher-head">
+              <div className="space-switcher-head-text">
+                <div className="space-switcher-title">工作空间</div>
+                <div className="space-switcher-sub">每个空间独立存储，可单独导出与加密</div>
+              </div>
+              <span className="space-switcher-count">{spaces.length}</span>
+            </header>
+
+            <div className="space-switcher-list">
+              {spaces.length === 0 ? (
+                <div className="space-switcher-empty">暂无工作空间</div>
+              ) : (
+                spaces.map((s) => {
+                  const active = s.id === activeSpaceId;
+                  const prof = syncProfiles[s.id];
+                  return (
                     <Fragment key={s.id}>
                       <div
-                        className={`space-item ${s.id === activeSpaceId ? "space-item-active" : ""}`}
+                        className={`space-item${active ? " is-active" : ""}`}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => switchSpace(s.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            void switchSpace(s.id);
+                          }
+                        }}
                       >
                         <span
                           className="space-item-mark"
@@ -1048,123 +1070,136 @@ export function PageTree({
                         >
                           {s.name.charAt(0)}
                         </span>
-                        {renamingSpace === s.id ? (
-                          <input
-                            className="space-item-rename-input"
-                            autoFocus
-                            value={renameSpaceValue}
-                            onChange={(e) => setRenameSpaceValue(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.stopPropagation();
-                                commitRenameSpace();
-                              } else if (e.key === "Escape") {
-                                e.stopPropagation();
-                                setRenamingSpace(null);
-                              }
-                            }}
-                            onBlur={commitRenameSpace}
-                          />
-                        ) : (
-                          <span className="space-item-name">{s.name}</span>
-                        )}
-                        {!renamingSpace &&
-                          isDesktop &&
-                          syncProfiles[s.id] && (
-                            <span
-                              className="space-item-sync-tag"
-                              style={{ color: syncTagColor(syncProfiles[s.id].server_url) }}
-                              title={`同步：${syncProfiles[s.id].server_url}`}
-                            >
-                              {syncTagLabel(syncProfiles[s.id].server_url)}
-                            </span>
+                        <div className="space-item-body">
+                          {renamingSpace === s.id ? (
+                            <input
+                              className="space-item-rename-input"
+                              autoFocus
+                              value={renameSpaceValue}
+                              onChange={(e) => setRenameSpaceValue(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.stopPropagation();
+                                  commitRenameSpace();
+                                } else if (e.key === "Escape") {
+                                  e.stopPropagation();
+                                  setRenamingSpace(null);
+                                }
+                              }}
+                              onBlur={commitRenameSpace}
+                            />
+                          ) : (
+                            <span className="space-item-name" title={s.name}>{s.name}</span>
                           )}
-                        {s.id === activeSpaceId && <span className="space-item-check">✓</span>}
-                        {renamingSpace !== s.id && (
+                          {/* 第二行放「当前 / 同步目标」，让每个空间的状态一眼可见， */}
+                          {/* 而不是把同步标签硬塞进名字后面挤成一行。 */}
+                          <div className="space-item-meta">
+                            {active && <span className="space-item-current">当前</span>}
+                            {isDesktop && prof ? (
+                              <span
+                                className="space-item-sync-tag"
+                                style={{ color: syncTagColor(prof.server_url) }}
+                                title={`同步：${prof.server_url}`}
+                              >
+                                {syncTagLabel(prof.server_url)}
+                              </span>
+                            ) : (
+                              <span className="space-item-local">仅本机</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-item-ops" onClick={(e) => e.stopPropagation()}>
+                          {renamingSpace !== s.id && (
+                            <button
+                              className="space-item-op"
+                              title="重命名工作空间"
+                              aria-label={`重命名 ${s.name}`}
+                              onClick={() => startRenameSpace(s)}
+                            >
+                              ✎
+                            </button>
+                          )}
                           <button
-                            className="space-item-op"
-                            title="重命名工作空间"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              startRenameSpace(s);
-                            }}
-                          >
-                            ✎
-                          </button>
-                        )}
-                        <button
-                          className={`space-item-op space-color-btn ${colorFor === s.id ? "on" : ""}`}
-                          title="设置空间颜色"
-                          style={s.theme ? { background: s.theme } : undefined}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setColorFor((c) => (c === s.id ? null : s.id));
-                          }}
-                        />
-                        {spaces.length > 1 && s.id !== activeSpaceId && (
-                          <button
-                            className="space-item-del"
-                            title="删除工作空间"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeSpace(s.id);
-                            }}
-                          >
-                            ×
-                          </button>
-                        )}
+                            className={`space-item-op space-color-btn${colorFor === s.id ? " on" : ""}`}
+                            title="设置空间颜色"
+                            aria-label={`设置 ${s.name} 的颜色`}
+                            style={s.theme ? { background: s.theme } : undefined}
+                            onClick={() => setColorFor((c) => (c === s.id ? null : s.id))}
+                          />
+                          {spaces.length > 1 && !active && (
+                            <button
+                              className="space-item-op space-item-del"
+                              title="删除工作空间"
+                              aria-label={`删除 ${s.name}`}
+                              onClick={() => removeSpace(s.id)}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
                       </div>
                       {colorFor === s.id && (
                         <div className="space-color-palette">
-                          {SPACE_ACCENTS.map((c) => (
-                            <button
-                              key={c}
-                              className={`space-color-swatch ${s.theme === c ? "on" : ""}`}
-                              style={{ background: c }}
-                              title={c}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSpaceColor(s.id, c);
-                              }}
-                            />
-                          ))}
+                          <span className="space-color-label">空间颜色</span>
+                          <div className="space-color-swatches">
+                            {SPACE_ACCENTS.map((c) => (
+                              <button
+                                key={c}
+                                className={`space-color-swatch${s.theme === c ? " on" : ""}`}
+                                style={{ background: c }}
+                                title={c}
+                                aria-label={`使用颜色 ${c}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSpaceColor(s.id, c);
+                                }}
+                              />
+                            ))}
+                          </div>
                         </div>
                       )}
                     </Fragment>
-                  ))
-                )}
-                <button className="space-item space-item-new" onClick={createSpace}>
-                  <span className="space-item-mark">＋</span>
-                  <span className="space-item-name">新建工作空间</span>
-                </button>
-                <div className="space-switcher-io">
-                  <div className="space-switcher-io-title">单空间迁移</div>
-                  <button onClick={exportSpace}>
-                    <span className="space-item-mark">⇪</span>
-                    <span className="space-item-name">导出当前空间</span>
+                  );
+                })
+              )}
+            </div>
+
+            <footer className="space-switcher-foot">
+              <button className="space-action is-primary" onClick={createSpace}>
+                <span className="space-action-icon">＋</span>
+                <span>新建工作空间</span>
+              </button>
+              <div className="space-switcher-io">
+                <div className="space-switcher-io-title">单空间迁移</div>
+                <div className="space-io-grid">
+                  <button className="space-action" onClick={exportSpace}>
+                    <span className="space-action-icon">↑</span>
+                    <span>导出当前空间</span>
                   </button>
-                  <button onClick={importSpace}>
-                    <span className="space-item-mark">⇣</span>
-                    <span className="space-item-name">导入空间包（新建空间）</span>
+                  <button className="space-action" onClick={importSpace}>
+                    <span className="space-action-icon">↓</span>
+                    <span>导入空间包</span>
                   </button>
-                  {exporting && (
-                    <div className="space-export-progress">
-                      <div className="space-export-progress-label">
-                        <span>{exporting.message}</span>
-                        <span>{Math.round((exporting.done / Math.max(1, exporting.total)) * 100)}%</span>
-                      </div>
-                      <div className="space-export-progress-track">
-                        <div
-                          className="space-export-progress-fill"
-                          style={{ width: `${Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
+                {exporting && (
+                  <div className="space-export-progress">
+                    <div className="space-export-progress-label">
+                      <span>{exporting.message}</span>
+                      <span>{Math.round((exporting.done / Math.max(1, exporting.total)) * 100)}%</span>
+                    </div>
+                    <div className="space-export-progress-track">
+                      <div
+                        className="space-export-progress-fill"
+                        style={{ width: `${Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            </footer>
+          </div>
+        )}
         </div>
         <div className="sidebar-header-actions">
           <div className="sidebar-actions-group">
