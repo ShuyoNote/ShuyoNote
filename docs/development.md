@@ -133,7 +133,37 @@ rsync -av dist-web/ yourhost:webroot/shuyo/app/
 - 每条写明**现象 + 根因 + 改动**，并附验证结果（如 `scripts/smoke-web.mjs` 从 N→M 全绿，`tsc`/`vite build`/`cargo check` 通过）。
 - 里程碑/功能落地会标注 ✅ 并指向具体文档。
 
-## 7. 文档体系约定
+## 7. 文案与国际化约定
+
+**当前不做 i18n**（决策与重估信号见 `docs/SHUYONOTE_STATE.md` §6「边界 / 红线」）。但新代码要遵守下面三条**止血规矩**——它们零成本、不引入任何框架、不动存量代码，作用是**让将来真要做的时候不必考古**：
+
+**① Rust 侧新增的用户可见错误，消息带错误码前缀**
+
+```rust
+// ✅ 新代码
+return Err("E_WS_NOT_FOUND:工作空间不存在".to_string());
+// ❌ 别再新增这种（存量 160 处不动，但不要让它继续增长）
+return Err("工作空间不存在".to_string());
+```
+
+前端按 `码:文案` 切分，优先用码查表、查不到就回退显示原文——**没有译文时行为与现在完全一致**。这条止的是最贵的血：错误消息在 Rust 侧成文，国际化时属于接口契约变更，比翻译贵一个数量级。
+
+**② 用户可见文案不要拼接**
+
+```ts
+// ❌ 假设了中文语序，换语言必须重写
+toast("已删除 " + n + " 项");
+// ✅ 完整模板串，将来整条替换即可
+toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
+```
+
+**③ 文案集中在模块顶部常量，不要散在 JSX 深处**
+
+组件内多处复用的提示、菜单项、空态文案，声明成顶部的 `const`。将来抽取是机械操作，而不是在 JSX 里逐行挖。
+
+> 同理，**命令 / 斜杠菜单的标题**目前按中文匹配（`title.includes(q)`）。新增命令时如果有通用英文名，顺手在 `description` 里带上，将来做别名表时有据可依。
+
+## 8. 文档体系约定
 
 | 类型 | 归属 |
 |---|---|
@@ -147,9 +177,10 @@ rsync -av dist-web/ yourhost:webroot/shuyo/app/
 - `docs/` 聚焦"是什么 / 为什么 / 怎么做"；版本演进以 `CHANGELOG.md` 为准。
 - 文档统一入口：`docs/README.md`（导航表 + 方案索引）。新增文档记得登记进去。
 
-## 8. 常见坑
+## 9. 常见坑
 
-- **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏。
+- **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
+- **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **git autocrlf**：Windows 提交时出现 `LF will be replaced by CRLF` 是**正常的**，忽略。
 - **提交信息**：`git commit -m "..."` 里避免内嵌 `"` 或 `·`，否则会被拆断导致 pathspec 报错。
 - **浏览器缓存**：web 端改源码后必须 **Ctrl+Shift+R**，否则还在跑旧模块（以 `[ShuyoNote] bootstrap vX.Y.Z` 确认版本）。
