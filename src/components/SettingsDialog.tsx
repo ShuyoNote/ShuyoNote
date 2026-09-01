@@ -5,6 +5,7 @@ import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision } from "../plugins/registry";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { api } from "../lib/api";
+import type { SyncProfile } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
@@ -50,7 +51,21 @@ function SpacesPane() {
   const activeId = useSpaceStore((s) => s.activeId);
   const [colorFor, setColorFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 每个空间的同步目标：让「这个空间到底同不同步、同步到哪」在管理页就能看到，
+  // 不用再切回同步面板逐个点开。
+  const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
   const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+
+  useEffect(() => {
+    api
+      .listSyncProfiles()
+      .then((list) => {
+        const byWs: Record<string, SyncProfile> = {};
+        for (const p of list) byWs[p.ws_id] = p;
+        setSyncProfiles(byWs);
+      })
+      .catch(() => {});
+  }, [spaces.length]);
 
   const setColor = async (id: string, color: string) => {
     setColorFor(null);
@@ -76,13 +91,14 @@ function SpacesPane() {
   return (
     <>
       <section className="set-section">
-        <div className="set-section-title">全部空间</div>
-        <div className="set-list">
+        <div className="set-section-title">全部空间（{spaces.length}）</div>
+        <div className="set-space-list">
           {spaces.map((s) => {
             const active = s.id === activeId;
+            const prof = syncProfiles[s.id];
             return (
-              <div key={s.id}>
-                <div className="set-row">
+              <div key={s.id} className={`set-space-card${active ? " is-active" : ""}`}>
+                <div className="set-space-row">
                   <span
                     className="set-space-mark"
                     style={s.theme ? { background: s.theme, color: "#fff" } : undefined}
@@ -94,10 +110,17 @@ function SpacesPane() {
                       {s.name}
                       {active && <span className="set-tag">当前</span>}
                     </div>
-                    <div className="set-row-sub">{s.id}</div>
+                    <div className="set-space-meta">
+                      {prof?.server_url ? (
+                        <span className="set-space-sync">↔ {hostLabel(prof.server_url)}</span>
+                      ) : (
+                        <span className="set-space-local">仅本机</span>
+                      )}
+                      <span className="set-space-id" title={s.id}>{s.id.slice(0, 8)}</span>
+                    </div>
                   </div>
                   <button
-                    className="set-btn"
+                    className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
                     onClick={() => setColorFor((c) => (c === s.id ? null : s.id))}
                   >
                     配色
@@ -105,51 +128,56 @@ function SpacesPane() {
                   <button
                     className="set-btn is-danger-ghost"
                     disabled={busy || spaces.length <= 1 || active}
-                    title={active ? "当前空间不可删除，请先切换" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
+                    title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
                     onClick={() => doRemove(s.id, s.name)}
                   >
                     删除
                   </button>
                 </div>
                 {colorFor === s.id && (
-                  <div className="set-swatch-row set-space-colors">
-                    {SPACE_ACCENTS.map((c) => (
-                      <button
-                        key={c}
-                        className={`set-swatch${s.theme === c ? " is-on" : ""}`}
-                        style={{ background: c }}
-                        aria-label={`使用颜色 ${c}`}
-                        onClick={() => setColor(s.id, c)}
-                      />
-                    ))}
+                  <div className="set-space-colors">
+                    <span className="set-space-colors-label">空间颜色</span>
+                    <div className="set-swatch-row">
+                      {SPACE_ACCENTS.map((c) => (
+                        <button
+                          key={c}
+                          className={`set-swatch${s.theme === c ? " is-on" : ""}`}
+                          style={{ background: c }}
+                          aria-label={`使用颜色 ${c}`}
+                          onClick={() => setColor(s.id, c)}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
             );
           })}
         </div>
-        <p className="set-hint">切换空间在侧栏顶部；这里只做低频管理。删除为软删除，数据目录中仍可恢复。</p>
+        <p className="set-hint">
+          切换空间在侧栏顶部——这里只做低频管理。删除为软删除，数据仍在磁盘上，可在「存储 / 空间管理」里彻底清理。
+        </p>
       </section>
 
       <section className="set-section">
         <div className="set-section-title">单空间迁移</div>
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name">导出当前空间</div>
-            <div className="set-row-sub">「{activeName}」及其引用到的附件，打包为 zip</div>
+        <div className="set-migrate">
+          <div className="set-migrate-card">
+            <div className="set-migrate-icon">↑</div>
+            <div className="set-migrate-name">导出当前空间</div>
+            <div className="set-migrate-sub">「{activeName}」及其引用到的附件，打包成一个 zip</div>
+            <button className="set-btn" onClick={() => void exportCurrentSpace(activeName)}>
+              导出…
+            </button>
           </div>
-          <button className="set-btn" onClick={() => void exportCurrentSpace(activeName)}>
-            导出
-          </button>
-        </div>
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name">导入空间包</div>
-            <div className="set-row-sub">始终新建一个空间，不会覆盖现有空间</div>
+          <div className="set-migrate-card">
+            <div className="set-migrate-icon">↓</div>
+            <div className="set-migrate-name">导入空间包</div>
+            <div className="set-migrate-sub">始终新建一个空间，绝不覆盖现有空间</div>
+            <button className="set-btn" onClick={() => void importSpacePackage()}>
+              导入…
+            </button>
           </div>
-          <button className="set-btn" onClick={() => void importSpacePackage()}>
-            导入
-          </button>
         </div>
       </section>
     </>

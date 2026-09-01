@@ -1,6 +1,6 @@
 # 免费客户出口 · 网站/帮助站导出与发布指南
 
-> 一句话：ShuyoNote 是**本地优先 · 离网可用**的笔记工具，**免费/开源社区**的对外出口要做成「**可发现但克制、绝不阻塞、绝不跟踪**」的被动出口。本文说明这一侧的**内容从哪来、怎么导出、怎么发布**，与付费客户那侧的 [客户支持手册](customer-facing-playbook.md) 对应，但口径完全不同。
+> 一句话：ShuyoNote 是**本地优先 · 离网可用**的笔记工具，**免费/开源社区**的对外出口要做成「**可发现但克制、绝不阻塞、绝不跟踪**」的被动出口。本文说明这一侧的**内容从哪来、怎么导出、怎么发布**；付费客户那侧的对接口径属于商业材料，随私有仓库 `shuyonote-sync-server` 维护，不在本公开仓库。
 > 状态：**指南（落地）**。关联：[项目网站导航方案](plans/2026-08-27-project-website-navigation-plan.md)（外链入口/关于对话框）、[帮助系统方案](plans/2026-08-27-help-system-plan.md)（四层帮助）、[静态 wiki 导出（M21）](plans/2026-08-24-static-wiki-export-graph-plan.md)、[定位](positioning.md)。
 
 ---
@@ -87,4 +87,4 @@
 - [帮助系统方案](plans/2026-08-27-help-system-plan.md) —— 四层帮助、为何「不做在线客服/工单」。
 - [静态 wiki 导出（M21）](plans/2026-08-24-static-wiki-export-graph-plan.md) —— 帮助站的导出基础。
 - [自动升级方案](plans/2026-08-27-auto-update-plan.md) —— 「检查更新」与发布管线。
-- [运营手册总纲](operations-handbook.md) —— 免费/付费两套口径的总索引。
+- 运营手册总纲（免费/付费两套口径的总索引）—— 商业材料，见私有仓库 `shuyonote-sync-server` 的 `docs/`。
