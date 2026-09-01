@@ -165,6 +165,8 @@ export const api = {
     invoke("set_titlebar_theme", { dark, caption: caption ?? null, text: text ?? null }),
   /** 弹出系统窗口菜单（自绘标题栏右键用）；位置由 Rust 取物理光标坐标。 */
   showWindowMenu: () => invoke("show_window_menu"),
+  /** 开关 Mica 材质（Win11 22H2+，旧系统静默降级；与标题栏染色互斥）。 */
+  setMicaEffect: (on: boolean) => invoke("set_mica_effect", { on }),
   getAttachment: (id: string) => invoke("get_attachment", { id }),
   // Read an attachment's PLAINTEXT bytes by hash (decrypts at-rest-encrypted
   // bytes, unlike read_text_file which reads the raw on-disk path).

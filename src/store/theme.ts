@@ -74,6 +74,15 @@ function syncTitleBar(dark: boolean) {
     });
 }
 
+/** 用当前解析后的主题重刷标题栏染色。
+ * 供 Mica 开关等「改完窗口属性后要重染色」的场景复用——当前主题值由本模块
+ * 持有，外部不必重复读取。 */
+export function syncTitlebarColors() {
+  const theme = (localStorage.getItem(STORAGE_KEY) as Theme) || "system";
+  const resolved = theme === "system" ? (systemPrefersDark() ? "dark" : "light") : theme;
+  syncTitleBar(resolved === "dark");
+}
+
 interface ThemeState {
   theme: Theme;
   accent: AccentId;

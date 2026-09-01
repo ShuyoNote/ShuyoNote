@@ -141,6 +141,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
     void applyDecorations(useWindowChrome.getState().custom);
   }, []);
 
+  // 启动时应用 Mica 材质设置（默认关）；并重刷一次染色，保证与材料状态一致。
+  useEffect(() => {
+    void (async () => {
+      const { api } = await import("./lib/api");
+      await api.setMicaEffect(useWindowChrome.getState().material);
+      const { syncTitlebarColors } = await import("./store/theme");
+      syncTitlebarColors();
+    })().catch(() => {});
+  }, []);
+
   const pendingSaveRef = useRef<{
     pageId: string;
     patch: { title?: string; content_json?: string; content_text?: string };

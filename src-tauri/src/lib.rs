@@ -303,6 +303,7 @@ pub fn run() {
             windows::open_page_window,
             titlebar::set_titlebar_theme,
             titlebar::show_window_menu,
+            titlebar::set_mica_effect,
             plugins::list_plugins,
             plugins::set_plugin_enabled,
             plugins::run_plugin_command,

@@ -233,6 +233,8 @@ export interface CommandMap {
   set_titlebar_theme: { args: { dark: boolean; caption: string | null; text: string | null }; result: void };
   /** 弹出系统窗口菜单（自绘标题栏右键用；坐标由 Rust 取物理光标位置）。 */
   show_window_menu: { args: undefined; result: void };
+  /** Mica 材质开关（Win11 22H2+；与标题栏染色互斥）。 */
+  set_mica_effect: { args: { on: boolean }; result: void };
   request_persistent_storage: { args: undefined; result: { persisted: boolean; persistedBefore: boolean; quota: number; usage: number; supported: boolean } };
 
   // ---- AI proxy ----

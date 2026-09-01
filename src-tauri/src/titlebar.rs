@@ -11,6 +11,15 @@
 //                                        让它与应用侧栏同色而不是系统默认深灰。
 // 旧系统上后者调用失败会被忽略（优雅降级为 immersive dark）。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 当前是否开启 Mica 材质。
+///
+/// Mica 与染色互斥：Mica 要标题栏半透明透壁纸，染色是画实心色，同时设会打架。
+/// 所以 set_titlebar_theme 读这个标记决定是否染色。标记放全局而不是每次从
+/// 前端传入，是为了避免「切主题时把 Mica 状态覆盖掉」这类次序问题。
+static MICA_ON: AtomicBool = AtomicBool::new(false);
+
 #[cfg(windows)]
 mod imp {
     use std::ffi::c_void;
@@ -23,6 +32,30 @@ mod imp {
     const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
     const DWMWA_CAPTION_COLOR: u32 = 35;
     const DWMWA_TEXT_COLOR: u32 = 36;
+    const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMWA_MICA_EFFECT: u32 = 1029;
+    const MICA: u32 = 2;
+    const NONE: u32 = 1;
+
+    // SetWindowPos 的尺寸不动 + 重绘标志，用于强制 DWM 重算 backdrop。
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowPos(
+            hwnd: HWND,
+            after: HWND,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> BOOL;
+    }
 
     // TrackPopupMenu 标志：返回选中项而不是直接派发，便于我们自己 PostMessage。
     const TPM_RETURNCMD: u32 = 0x0100;
@@ -77,6 +110,30 @@ mod imp {
         }
         if let Some(t) = text {
             set_attr(hwnd, DWMWA_TEXT_COLOR, &t);
+        }
+    }
+
+    /// 开关 Mica 材质。
+    ///
+    /// **与染色互斥**：Mica 是要窗口顶栏半透明透出壁纸，染色是画一个实心色，
+    /// 同时设置会打架。因此开 Mica 时不动 caption/text 颜色（让其恢复透明），
+    /// 关 Mica 时把染色加回来。
+    pub fn set_mica(hwnd: HWND, on: bool) {
+        // Win11 22H2+：DWMWA_SYSTEMBACKDROP_TYPE 是权威路径；旧属性作兜底。
+        let backdrop: u32 = if on { MICA } else { NONE };
+        set_attr(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop);
+        set_attr(hwnd, DWMWA_MICA_EFFECT, &(if on { 1u32 } else { 0u32 }));
+        // 强制 DWM 立刻重算 backdrop（仅切属性有些构建不生效）。
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
     }
 
@@ -139,13 +196,34 @@ pub fn set_titlebar_theme(
     #[cfg(windows)]
     {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as *mut std::ffi::c_void;
-        let cap = caption.as_deref().and_then(colorref);
-        let txt = text.as_deref().and_then(colorref);
-        imp::apply(hwnd, dark, cap, txt);
+        if !MICA_ON.load(Ordering::Relaxed) {
+            let cap = caption.as_deref().and_then(colorref);
+            let txt = text.as_deref().and_then(colorref);
+            imp::apply(hwnd, dark, cap, txt);
+        } else {
+            // Mica 开启时只能设 dark 标志（材料自身会变暗），不能画实心色。
+            imp::apply(hwnd, dark, None, None);
+        }
     }
     #[cfg(not(windows))]
     {
         let _ = (&window, dark, caption, text);
+    }
+    Ok(())
+}
+
+/// 开关「材质」（Mica）。默认关；与染色互斥，见 `imp::set_mica` 说明。
+#[tauri::command]
+pub fn set_mica_effect(window: tauri::Window, on: bool) -> Result<(), String> {
+    MICA_ON.store(on, Ordering::Relaxed);
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as *mut std::ffi::c_void;
+        imp::set_mica(hwnd, on);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (&window, on);
     }
     Ok(())
 }

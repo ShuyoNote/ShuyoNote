@@ -379,6 +379,8 @@ function AppearancePane() {
   const { theme, accent, setTheme, setAccent } = useTheme();
   const customTitleBar = useWindowChrome((s) => s.custom);
   const setCustomTitleBar = useWindowChrome((s) => s.setCustom);
+  const material = useWindowChrome((s) => s.material);
+  const setMaterial = useWindowChrome((s) => s.setMaterial);
   return (
     <>
       <section className="set-section">
@@ -432,7 +434,24 @@ function AppearancePane() {
               {customTitleBar ? "已开启" : "已关闭"}
             </button>
           </div>
-          <p className="set-hint">切换即时生效，无需重启。</p>
+          <div className="set-row">
+            <div className="set-row-text">
+              <div className="set-row-name">材质（Mica）</div>
+              <div className="set-row-sub">
+                顶栏透出桌面壁纸，Win11 22H2+ 生效，旧系统自动忽略。壁纸较花时
+                可能影响观感，需要时可关——与标题栏染色互斥。
+              </div>
+            </div>
+            <button
+              className={`set-toggle${material ? " is-on" : ""}`}
+              role="switch"
+              aria-checked={material}
+              onClick={() => setMaterial(!material)}
+            >
+              {material ? "已开启" : "已关闭"}
+            </button>
+          </div>
+          <p className="set-hint">两项切换均即时生效，无需重启。</p>
         </section>
       )}
     </>
