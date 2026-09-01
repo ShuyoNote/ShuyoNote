@@ -9850,6 +9850,91 @@ p:has(> .editor-drawing-container) {
   margin-top: 2px;
 }
 
+/* ---------------------------------------------------------------------------
+ * 插件面板：卡片网格。之前一行一个「名字 + 开关」太素；改成图标 + 状态灯 +
+ * 命令数的卡片，视觉上更有层次，但强弱对比仍靠开关与底色，绝不彩色堆砌。
+ * ------------------------------------------------------------------------- */
+.plugin-count {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.plugin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  transition: border-color var(--transition-fast);
+}
+.plugin-card:hover {
+  border-color: var(--border-strong);
+}
+/* 禁用态：整体压灰 + 图标去饱和，一眼看出「不参与命令面板」。 */
+.plugin-card.is-off {
+  opacity: 0.6;
+}
+.plugin-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plugin-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  flex: none;
+}
+.plugin-card.is-off .plugin-icon {
+  filter: saturate(0.5);
+}
+.plugin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.plugin-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.plugin-status.is-on .plugin-status-dot {
+  background: var(--success);
+}
+.plugin-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.plugin-sub {
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.plugin-card .set-toggle {
+  align-self: flex-start;
+}
+@media (max-width: 720px) {
+  .plugin-grid { grid-template-columns: 1fr; }
+}
+
 .set-toggle {
   flex: none;
   border: 1px solid var(--border);

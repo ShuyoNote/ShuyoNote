@@ -40,6 +40,27 @@ export interface Plugin {
   commands: PluginCommand[];
 }
 
+// 内置插件的展示图标与强调色。id → { icon, color }。
+// 放在 registry 而非组件里，是为了将来插件管理器/命令面板也能复用同一套视觉。
+export interface PluginMeta {
+  icon: "stats" | "export" | "database" | "template" | "plugin" | "ai" | "help" | "view" | "pdf" | "sync" | "report";
+  color: string;
+}
+
+export const PLUGIN_META: Record<string, Partial<PluginMeta>> = {
+  stats: { icon: "stats", color: "var(--cat-blue)" },
+  export: { icon: "export", color: "var(--cat-green)" },
+  database: { icon: "database", color: "var(--cat-purple)" },
+  template: { icon: "template", color: "var(--cat-orange)" },
+  plugin: { icon: "plugin", color: "var(--cat-cyan)" },
+  ai: { icon: "ai", color: "var(--cat-red)" },
+  help: { icon: "help", color: "var(--cat-yellow)" },
+  view: { icon: "view", color: "var(--cat-green)" },
+  pdf: { icon: "pdf", color: "var(--cat-gray)" },
+  sync: { icon: "sync", color: "var(--cat-blue)" },
+  report: { icon: "report", color: "var(--cat-orange)" },
+};
+
 const registry: Plugin[] = [];
 
 // Plugin enable/disable state (persisted in-memory; default enabled).

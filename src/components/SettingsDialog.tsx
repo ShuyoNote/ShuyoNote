@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
-import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision } from "../plugins/registry";
+import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision, PLUGIN_META } from "../plugins/registry";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
@@ -458,29 +458,69 @@ function AppearancePane() {
   );
 }
 
+// 插件卡片图标：按 PLUGIN_META 的 icon 键绘制。内联 SVG，不引其它图标组件。
+function PluginGlyph({ icon }: { icon: string }) {
+  const paths: Record<string, React.ReactNode> = {
+    stats: <><path d="M4 20h16" /><path d="M7 20v-6M12 20V9M17 20V13" /></>,
+    export: <><path d="M12 15V3" /><path d="M8 7l4-4 4 4" /><path d="M4 17v3h16v-3" /></>,
+    database: <><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" /></>,
+    template: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" /></>,
+    plugin: <><rect x="3" y="3" width="8" height="8" rx="2" /><rect x="13" y="13" width="8" height="8" rx="2" /><path d="M7 11v6M11 7h6" /></>,
+    ai: <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" />,
+    help: <><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2 1.3-2 2.5M12 17h.01" /></>,
+    view: <><circle cx="12" cy="12" r="3" /><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" /></>,
+    pdf: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></>,
+    sync: <><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></>,
+    report: <><path d="M3 3v18h18" /><rect x="7" y="12" width="3" height="6" /><rect x="12" y="8" width="3" height="10" /></>,
+  };
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      {paths[icon] ?? paths.view}
+    </svg>
+  );
+}
+
 function PluginsPane() {
   usePluginRevision();
   const plugins = getPlugins();
+  const enabled = plugins.filter((p) => isPluginEnabled(p.id)).length;
   return (
     <section className="set-section">
-      <div className="set-section-title">已安装插件</div>
-      <div className="set-list">
-        {plugins.map((p) => (
-          <div key={p.id} className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">{p.name}</div>
-              <div className="set-row-sub">{p.commands?.length ?? 0} 个命令</div>
+      <div className="set-section-title">
+        已安装插件
+        <span className="plugin-count">{enabled}/{plugins.length} 已启用</span>
+      </div>
+      <div className="plugin-grid">
+        {plugins.map((p) => {
+          const meta = PLUGIN_META[p.id] ?? {};
+          const on = isPluginEnabled(p.id);
+          return (
+            <div key={p.id} className={`plugin-card${on ? "" : " is-off"}`}>
+              <div className="plugin-card-head">
+                <span
+                  className="plugin-icon"
+                  style={meta.color ? { background: `color-mix(in srgb, ${meta.color} 16%, transparent)`, color: meta.color } : undefined}
+                >
+                  <PluginGlyph icon={meta.icon ?? "view"} />
+                </span>
+                <span className={`plugin-status${on ? " is-on" : ""}`}>
+                  <span className="plugin-status-dot" />
+                  {on ? "已启用" : "已禁用"}
+                </span>
+              </div>
+              <div className="plugin-name">{p.name}</div>
+              <div className="plugin-sub">{p.commands?.length ?? 0} 个命令 · 出现在命令面板</div>
+              <button
+                className={`set-toggle${on ? " is-on" : ""}`}
+                role="switch"
+                aria-checked={on}
+                onClick={() => togglePlugin(p.id)}
+              >
+                {on ? "已启用" : "已禁用"}
+              </button>
             </div>
-            <button
-              className={`set-toggle${isPluginEnabled(p.id) ? " is-on" : ""}`}
-              role="switch"
-              aria-checked={isPluginEnabled(p.id)}
-              onClick={() => togglePlugin(p.id)}
-            >
-              {isPluginEnabled(p.id) ? "已启用" : "已禁用"}
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <p className="set-hint">插件命令出现在命令面板（Ctrl+K）中；禁用后其命令一并隐藏。</p>
     </section>
