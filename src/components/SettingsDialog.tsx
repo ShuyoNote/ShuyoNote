@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
-import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision, PLUGIN_META } from "../plugins/registry";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
+import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
 import type { SyncProfile } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
@@ -490,51 +490,57 @@ function PluginGlyph({ icon }: { icon: string }) {
 }
 
 function PluginsPane() {
-  usePluginRevision();
-  const plugins = getPlugins();
-  const enabled = plugins.filter((p) => isPluginEnabled(p.id)).length;
+  const managerPlugins = usePlugins((s) => s.plugins);
+  const setManagerOpen = usePlugins((s) => s.setManagerOpen);
+  const toggle = usePlugins((s) => s.toggle);
+  const load = usePlugins((s) => s.load);
+  const enabled = managerPlugins.filter((p) => p.enabled).length;
+  useEffect(() => {
+    void load();
+  }, [load]);
   return (
     <section className="set-section">
       <div className="set-section-title">
-        已安装插件
-        <span className="plugin-count">{enabled}/{plugins.length} 已启用</span>
+        插件管理
+        <span className="plugin-count">{enabled}/{managerPlugins.length} 已启用</span>
       </div>
-      <div className="plugin-grid">
-        {plugins.map((p) => {
-          const meta = PLUGIN_META[p.id] ?? {};
-          const on = isPluginEnabled(p.id);
-          return (
-            <div key={p.id} className={`plugin-card${on ? "" : " is-off"}`}>
+      {managerPlugins.length === 0 ? (
+        <div className="plugin-empty">
+          <p>未发现磁盘插件。</p>
+          <p className="set-hint">从本地文件夹安装，或把插件放入插件目录。</p>
+          <button className="set-btn" onClick={() => setManagerOpen(true)}>打开插件管理</button>
+        </div>
+      ) : (
+        <div className="plugin-grid">
+          {managerPlugins.map((p) => (
+            <div key={p.id} className={`plugin-card${p.enabled ? "" : " is-off"}`}>
               <div className="plugin-card-head">
-                <span
-                  className="plugin-icon"
-                  style={meta.color ? { background: `color-mix(in srgb, ${meta.color} 16%, transparent)`, color: meta.color } : undefined}
-                >
-                  <PluginGlyph icon={meta.icon ?? "view"} />
-                </span>
-                <span className={`plugin-status${on ? " is-on" : ""}`}>
+                <span className="plugin-icon"><PluginGlyph icon="plugin" /></span>
+                <span className={`plugin-status${p.enabled ? " is-on" : ""}`}>
                   <span className="plugin-status-dot" />
-                  {on ? "已启用" : "已禁用"}
+                  {p.enabled ? "已启用" : "已禁用"}
                 </span>
               </div>
               <div className="plugin-name">{p.name}</div>
               <div className="plugin-sub">
-                {meta.desc && <span className="plugin-desc">{meta.desc}</span>}
-                <span className="plugin-meta">{p.commands?.length ?? 0} 个命令 · 出现在命令面板</span>
+                <span className="plugin-desc">{p.description || "—"}</span>
+                <span className="plugin-meta">{p.commands.length} 个命令 · v{p.version}</span>
               </div>
               <button
-                className={`set-toggle${on ? " is-on" : ""}`}
+                className={`set-toggle${p.enabled ? " is-on" : ""}`}
                 role="switch"
-                aria-checked={on}
-                onClick={() => togglePlugin(p.id)}
+                aria-checked={p.enabled}
+                onClick={() => void toggle(p.id)}
               >
-                {on ? "已启用" : "已禁用"}
+                {p.enabled ? "已启用" : "已禁用"}
               </button>
             </div>
-          );
-        })}
-      </div>
-      <p className="set-hint">插件命令出现在命令面板（Ctrl+K）中；禁用后其命令一并隐藏。</p>
+          ))}
+        </div>
+      )}
+      <p className="set-hint">
+        磁盘插件通过受限 JS 运行时（boa）执行；其命令出现在命令面板（Ctrl+K）。
+      </p>
     </section>
   );
 }
