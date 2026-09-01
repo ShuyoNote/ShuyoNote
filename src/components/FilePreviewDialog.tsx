@@ -270,7 +270,9 @@ export function FilePreviewDialog() {
           {target.mime.startsWith("image/") && target.path ? (
             <ImagePreview src={platform.asset.convertFileSrc(target.path)} name={target.name} onOpenOriginal={() => void platform.opener.openPath(target.path)} />
           ) : target.mime.startsWith("video/") && target.path ? (
-            <video src={platform.asset.convertFileSrc(target.path)} controls />
+            <div className="fm-video-view">
+              <video src={platform.asset.convertFileSrc(target.path)} controls preload="metadata" />
+            </div>
           ) : target.mime.startsWith("audio/") && target.path ? (
             <audio src={platform.asset.convertFileSrc(target.path)} controls />
           ) : target.mime === "application/pdf" && target.path ? (

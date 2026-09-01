@@ -10905,6 +10905,24 @@ p:has(> .editor-drawing-container) {
   height: 70vh;
   border: none;
 }
+/* 视频预览：居中、限宽限高，适应窗口。 */
+.fm-video-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+.fm-video-view video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  background: #000;
+}
 .fm-preview-unsupported {
   color: var(--text-faint);
   font-size: 13px;
