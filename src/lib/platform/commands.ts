@@ -233,5 +233,5 @@ export interface CommandMap {
   // the backend contract; declared so CommandMap covers every Rust command) ----
   write_attachment_bytes: { args: { hash: string; data: number[]; mime: string; name: string }; result: AttachmentMeta };
   list_attachment_hashes: { args: undefined; result: string[] };
-  render_pdf_page: { args: { attachment_id: string; page_index: number; scale: number }; result: unknown };
+  render_pdf_page: { args: { args: { attachment_id: string; page_index: number; scale: number } }; result: unknown };
 }
