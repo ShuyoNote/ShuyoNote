@@ -24,6 +24,19 @@ pub(crate) fn space_db_path(app_data_dir: &Path, space_id: &str) -> PathBuf {
     spaces_dir(app_data_dir).join(format!("{space_id}.db"))
 }
 
+/// Workspace ids are joined into `spaces/<id>.db`. `reopen_space` takes the id
+/// from meta (trusted), but `open_space_conn` takes it from an IPC parameter, so
+/// validate it on both open paths to prevent `../` from opening an arbitrary
+/// SQLite file outside the spaces dir.
+fn is_safe_space_id(id: &str) -> bool {
+    !id.is_empty()
+        && !id.contains('/')
+        && !id.contains('\\')
+        && id != "."
+        && id != ".."
+        && !id.contains('\0')
+}
+
 /// The app data dir set by [`init`] (for paths used outside the create/spawn path).
 pub(crate) fn app_data_dir_ref() -> Option<&'static Path> {
     APP_DATA_DIR.get().map(|p| p.as_path())
@@ -42,6 +55,9 @@ pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), Str
 /// [`reopen_space`] with an explicit app-data-dir, so the E1 enable/unlock/disable cores
 /// and their tests do not depend on the global [`APP_DATA_DIR`].
 pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) -> Result<(), String> {
+    if !is_safe_space_id(space_id) {
+        return Err("非法空间 id".to_string());
+    }
     let path = space_db_path(dir, space_id);
     let _ = std::mem::replace(c, Connection::open(&path).map_err(|e| e.to_string())?);
     // E1: if the space DB is SQLCipher-encrypted at rest, key the connection before
@@ -103,6 +119,9 @@ pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
 
 /// [`open_space_conn`] with an explicit app-data-dir (testable without the global).
 pub(crate) fn open_space_conn_at(space_id: &str, dir: &Path) -> Result<Connection, String> {
+    if !is_safe_space_id(space_id) {
+        return Err("非法空间 id".to_string());
+    }
     let path = space_db_path(dir, space_id);
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
     // E1: key the connection if this space's DB is encrypted at rest.
