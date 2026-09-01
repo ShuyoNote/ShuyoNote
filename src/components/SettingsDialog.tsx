@@ -16,6 +16,16 @@ import { useNotes } from "../store/notes";
 import { useAuth } from "../store/auth";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
+import {
+  PaletteIcon,
+  FolderIcon,
+  PersonIcon,
+  DatabaseIcon,
+  TemplateIcon,
+  LockIcon,
+  SparkleIcon,
+  InfoIcon,
+} from "./icons";
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: "system", label: "跟随系统" },
@@ -23,16 +33,29 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "dark", label: "暗色" },
 ];
 
-const TABS: { id: SettingsTab; label: string; hint: string }[] = [
-  { id: "appearance", label: "外观", hint: "主题与强调色" },
-  { id: "spaces", label: "空间", hint: "配色 / 删除 / 迁移" },
-  { id: "account", label: "账户", hint: "登录身份与同步目标" },
-  { id: "data", label: "数据", hint: "备份 / 存储与清理" },
-  { id: "plugins", label: "插件", hint: "启用/禁用扩展" },
-  { id: "security", label: "安全", hint: "端到端加密与锁定" },
-  { id: "ai", label: "AI", hint: "服务商与模型" },
-  { id: "about", label: "关于与更新", hint: "版本与许可" },
+const TABS: { id: SettingsTab; label: string; hint: string; icon: JSX.Element }[] = [
+  { id: "appearance", label: "外观", hint: "主题与强调色", icon: <PaletteIcon width={16} height={16} /> },
+  { id: "spaces", label: "空间", hint: "配色 / 删除 / 迁移", icon: <FolderIcon width={16} height={16} /> },
+  { id: "account", label: "账户", hint: "登录身份与同步目标", icon: <PersonIcon width={16} height={16} /> },
+  { id: "data", label: "数据", hint: "备份 / 存储与清理", icon: <DatabaseIcon width={16} height={16} /> },
+  { id: "plugins", label: "插件", hint: "启用/禁用扩展", icon: <TemplateIcon width={16} height={16} /> },
+  { id: "security", label: "安全", hint: "端到端加密与锁定", icon: <LockIcon width={16} height={16} /> },
+  { id: "ai", label: "AI", hint: "服务商与模型", icon: <SparkleIcon width={16} height={16} /> },
+  { id: "about", label: "关于与更新", hint: "版本与许可", icon: <InfoIcon width={16} height={16} /> },
 ];
+
+// 每页一句话说明，放在内容区页头——比只有一个标题更有分量，也省去用户猜
+// 「这一页到底管什么」。
+const TAB_DESC: Record<SettingsTab, string> = {
+  appearance: "主题、强调色等外观偏好，改动即时生效。",
+  spaces: "空间的低频管理：配色、删除、单空间导入导出。切换空间在侧栏顶部。",
+  account: "团队账号与各服务器上的同步身份；同步操作本身在侧栏「同步」里。",
+  data: "全库备份与存储清理——都是低频且不可逆的操作。",
+  plugins: "插件的启用与禁用；其命令会出现在命令面板（Ctrl+K）。",
+  security: "本机静置加密与会话锁定。口令即密钥，丢失无法找回。",
+  ai: "AI 服务商、模型与密钥；配置后可在助手、PDF 帮读、公式识别中使用。",
+  about: "版本、许可与更新检查。",
+};
 
 // 「数据」页：全库备份/恢复与存储清理——低频、全局、不可逆，按判据归设置。
 // 两个组件都用 `label` 变体渲染成带文字的按钮，实现与侧栏时期完全共用。
@@ -663,17 +686,24 @@ export function SettingsDialog() {
               aria-current={tab === t.id}
               onClick={() => setTab(t.id)}
             >
-              <span className="set-rail-label">{t.label}</span>
-              <span className="set-rail-hint">{t.hint}</span>
+              <span className="set-rail-icon">{t.icon}</span>
+              <span className="set-rail-text">
+                <span className="set-rail-label">{t.label}</span>
+                <span className="set-rail-hint">{t.hint}</span>
+              </span>
             </button>
           ))}
         </nav>
         <div className="set-body">
           <header className="set-body-head">
-            <div className="set-body-title">{TABS.find((t) => t.id === tab)?.label}</div>
+            <div className="set-body-head-text">
+              <div className="set-body-title">{TABS.find((t) => t.id === tab)?.label}</div>
+              <div className="set-body-desc">{TAB_DESC[tab]}</div>
+            </div>
             <button className="set-close" onClick={close} aria-label="关闭设置">×</button>
           </header>
           <div className="set-body-scroll">
+            <div className="set-body-inner">
             {tab === "appearance" && <AppearancePane />}
             {tab === "spaces" && <SpacesPane />}
             {tab === "account" && <AccountPane />}
@@ -687,6 +717,7 @@ export function SettingsDialog() {
               </section>
             )}
             {tab === "about" && <AboutPane />}
+            </div>
           </div>
         </div>
       </div>

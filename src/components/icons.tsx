@@ -417,6 +417,16 @@ export function DeleteColumnIcon(props: IconProps) {
   );
 }
 
+/** 挂锁：设置中心「安全」页（端到端加密）。 */
+export function LockIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </Icon>
+  );
+}
+
 export function PaletteIcon(props: IconProps) {
   return (
     <Icon {...props}>

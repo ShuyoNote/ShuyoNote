@@ -406,6 +406,8 @@ body,
   gap: 2px;
 }
 
+/* 空间标题行：整行可点、更大的色块与名称——它是侧栏的「门牌」，
+   之前 22px 色块 + 14px 文字在 264px 宽里显得局促。 */
 .sidebar-header {
   padding: 14px 12px 8px;
   display: flex;
@@ -416,30 +418,36 @@ body,
 .sidebar-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 14px;
+  gap: 10px;
+  flex: 1;
+  font-weight: 600;
+  font-size: 14.5px;
   letter-spacing: 0.01em;
   border: none;
   background: transparent;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-family: inherit;
   color: var(--text);
   min-width: 0;
+  transition: background var(--transition-fast);
 }
 .sidebar-title:hover {
   background: var(--hover);
 }
+.sidebar-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 .logo-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
   background: linear-gradient(135deg, var(--accent-soft), var(--cat-purple-soft));
   color: var(--accent);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1;
   display: flex;
@@ -1444,24 +1452,33 @@ select.sync-input {
   font-size: 14px;
 }
 
+/* 「新建」是侧栏里最高频的动作，给它实心 accent 的分量，与旁边的
+   同步图标拉开主次；其余入口都已移到左侧竖条。 */
 .btn-new {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--radius-md);
   padding: 0;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  box-shadow: var(--shadow-xs);
+  transition: background var(--transition-fast), transform var(--transition-fast);
 }
 
 .btn-new:hover {
-  background: var(--hover);
-  color: var(--text);
+  background: var(--accent-strong);
+}
+.btn-new:active {
+  transform: translateY(1px);
+}
+.btn-new:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .new-menu {
@@ -2022,7 +2039,34 @@ select.sync-input {
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
+  padding-top: 2px;
   padding-bottom: 16px;
+}
+
+/* 细滚动条：侧栏是常驻区域，默认滚动条太抢眼；hover 时才加深。 */
+.sidebar-tree::-webkit-scrollbar,
+.set-body-scroll::-webkit-scrollbar,
+.set-rail::-webkit-scrollbar {
+  width: 8px;
+}
+.sidebar-tree::-webkit-scrollbar-thumb,
+.set-body-scroll::-webkit-scrollbar-thumb,
+.set-rail::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.sidebar-tree:hover::-webkit-scrollbar-thumb,
+.set-body-scroll:hover::-webkit-scrollbar-thumb,
+.set-rail:hover::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+.sidebar-tree::-webkit-scrollbar-track,
+.set-body-scroll::-webkit-scrollbar-track,
+.set-rail::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Pinned bottom actions (回收站 / 模板中心), Wolai-style. */
@@ -9419,8 +9463,8 @@ p:has(> .editor-drawing-container) {
 
 .set-dialog {
   display: flex;
-  width: min(860px, 100%);
-  height: min(600px, calc(100vh - 64px));
+  width: min(900px, 100%);
+  height: min(620px, calc(100vh - 64px));
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -9430,7 +9474,7 @@ p:has(> .editor-drawing-container) {
 
 .set-rail {
   flex: none;
-  width: 208px;
+  width: 224px;
   padding: 16px 10px;
   border-right: 1px solid var(--border);
   background: var(--bg-sidebar);
@@ -9449,8 +9493,8 @@ p:has(> .editor-drawing-container) {
 
 .set-rail-item {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   text-align: left;
   border: none;
   background: transparent;
@@ -9459,6 +9503,27 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
   font-family: inherit;
   transition: background var(--transition-fast);
+}
+.set-rail-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.set-rail-item.is-on .set-rail-icon {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.set-rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .set-rail-item:hover {
@@ -9498,17 +9563,30 @@ p:has(> .editor-drawing-container) {
 
 .set-body-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px 12px;
+  padding: 16px 20px 14px;
   border-bottom: 1px solid var(--border);
 }
 
+.set-body-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .set-body-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
+  margin-bottom: 3px;
+}
+
+/* 每页一句说明：让「这一页管什么」不用猜，也把面板撑得更从容。 */
+.set-body-desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
 }
 
 .set-close {
@@ -9534,7 +9612,13 @@ p:has(> .editor-drawing-container) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 20px 24px;
+  padding: 20px 20px 28px;
+}
+
+/* 内容限宽：设置项是「标签 + 控件」的窄栏结构，铺满 600px 以上会让眼睛
+   在标签与右侧按钮之间跑很远。 */
+.set-body-inner {
+  max-width: 640px;
 }
 
 .set-section + .set-section {
