@@ -4,9 +4,9 @@ import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { TrashPanel } from "./TrashPanel";
+import { SearchPanel } from "./SearchPanel";
 import {
   PageIcon,
-  SearchIcon,
   FolderIcon,
   BoardIcon,
   GraphIcon,
@@ -27,7 +27,6 @@ import {
 // 点击已选中的活动 = 收起/展开侧栏（VS Code 行为）。
 const ITEMS: { id: Activity; label: string; icon: JSX.Element }[] = [
   { id: "notes", label: "笔记", icon: <PageIcon width={18} height={18} /> },
-  { id: "search", label: "搜索", icon: <SearchIcon width={18} height={18} /> },
   { id: "files", label: "文件", icon: <FolderIcon width={18} height={18} /> },
   { id: "board", label: "看板", icon: <BoardIcon width={18} height={18} /> },
   { id: "graph", label: "关系图", icon: <GraphIcon width={18} height={18} /> },
@@ -44,9 +43,8 @@ export function ActivityBar() {
   const updateAvailable = useEditorStore((s) => s.updateAvailable);
 
   // 视图也能被命令面板/快捷键改（view.graph 等），竖条要跟着高亮，
-  // 否则会出现「主区在看板、竖条还亮着笔记」的错位。搜索是侧栏面板，不参与。
+  // 否则会出现「主区在看板、竖条还亮着笔记」的错位。
   useEffect(() => {
-    if (activity === "search") return;
     if (view !== activity) setActivity(view as Activity);
   }, [view, activity, setActivity]);
 
@@ -57,13 +55,15 @@ export function ActivityBar() {
     }
     setActivity(id);
     setSidebarOpen(true);
-    // 「搜索」只是换侧栏面板，主区保持原样（正在编辑的页面不该被搜索顶掉）。
-    if (id !== "search") setView(id === "notes" ? "notes" : id);
+    setView(id);
   };
 
   return (
     <nav className="activity-bar" aria-label="主导航">
       <div className="activity-group">
+        {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
+            所以不是一个「活动」，不参与选中态。 */}
+        <SearchPanel />
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (

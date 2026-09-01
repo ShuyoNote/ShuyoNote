@@ -1,10 +1,9 @@
 import { create } from "zustand";
 
-/** 左侧竖条（activity bar）当前选中的活动。 */
-export type Activity = "notes" | "search" | "files" | "board" | "graph";
-
-/** 只有这些活动会改变**侧栏内容**；其余切换的是主区视图。 */
-export type SidebarPanel = "tree" | "search";
+/** 左侧竖条（activity bar）当前选中的活动——每一项都对应一个主区视图。
+ *  搜索**不是**活动：它是弹层式的一次性动作（用完即走、不占侧栏、不把页面树
+ *  顶掉，在看板/关系图视图下同样可用），触发器只是借住在竖条里。 */
+export type Activity = "notes" | "files" | "board" | "graph";
 
 interface ActivityState {
   activity: Activity;
@@ -20,12 +19,12 @@ const KEY_SIDEBAR = "shuyonote:sidebarOpen";
 
 function initialActivity(): Activity {
   const v = localStorage.getItem(KEY_ACTIVITY);
-  return v === "notes" || v === "search" || v === "files" || v === "board" || v === "graph" ? v : "notes";
+  return v === "notes" || v === "files" || v === "board" || v === "graph" ? v : "notes";
 }
 
 // 竖条状态独立于 `useViewStore`：view 描述**主区**显示什么，activity 描述
-// **左侧导航**选中什么。两者大部分时候同步（点「看板」= 切主区），但
-// 「搜索」只换侧栏面板、不动主区——这正是 activity bar 与视图切换的区别。
+// **左侧导航**选中什么；两者保持同步（命令面板切视图时竖条也会跟着高亮），
+// 拆成两个 store 是因为竖条还要管 sidebarOpen 这类纯 UI 状态。
 export const useActivity = create<ActivityState>((set, get) => ({
   activity: initialActivity(),
   sidebarOpen: localStorage.getItem(KEY_SIDEBAR) !== "0",
@@ -55,8 +54,3 @@ export const useActivity = create<ActivityState>((set, get) => ({
     set({ sidebarOpen: v });
   },
 }));
-
-/** 该活动对应的侧栏面板（notes/files/board/graph 都用页面树）。 */
-export function panelOf(a: Activity): SidebarPanel {
-  return a === "search" ? "search" : "tree";
-}

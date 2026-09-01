@@ -291,33 +291,10 @@ body,
   background: var(--hover);
 }
 
-/* 侧栏内嵌搜索面板（activity = search）。 */
-.search-side {
-  flex: 1;
-  min-height: 0;
+/* 侧栏内嵌搜索面板的样式已随 SearchSidebar 一起移除：搜索回归弹层
+   （见 SearchPanel），触发器借住在竖条里，用完即走、不占侧栏。 */
+.activity-bar .search-panel {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.search-side-head {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.search-side .search-input {
-  font-size: 13px;
-  padding: 8px 30px 8px 32px;
-}
-.search-side .search-scope {
-  align-self: stretch;
-}
-.search-side .search-scope-btn {
-  flex: 1;
-}
-.search-side-results {
-  padding: 0 6px 10px;
 }
 
 /* ---------- Sidebar ---------- */

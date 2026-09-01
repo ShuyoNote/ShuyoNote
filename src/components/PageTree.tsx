@@ -15,8 +15,7 @@ import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
-import { useActivity, panelOf } from "../store/activity";
-import { SearchSidebar } from "./SearchSidebar";
+import { useActivity } from "../store/activity";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { SyncPanel } from "./SyncPanel";
@@ -595,10 +594,8 @@ export function PageTree(_props: {
 }) {
   const { pages, createPage, createFolder, createDatabase, loading, movePage } = useNotes();
   const collapsed = false;
-  // 左侧竖条决定侧栏显示什么（页面树 / 搜索），以及侧栏是否展开。
-  const activity = useActivity((s) => s.activity);
+  // 侧栏是否展开由左侧竖条控制（搜索是弹层，不改变侧栏内容）。
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
-  const panel = panelOf(activity);
   const {
     open: newMenuOpen,
     pos: newMenuPos,
@@ -1086,26 +1083,22 @@ export function PageTree(_props: {
             )}
           </div>
         </div>
-      {panel === "search" ? (
-        <SearchSidebar />
-      ) : (
-        <div className="sidebar-tree" ref={treeContainerRef}>
-          {loading && pages.length === 0 ? (
-            <div className="sidebar-skeleton">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <div key={i} className="skeleton-row" style={{ width: `${100 - i * 12}%` }} />
-              ))}
-            </div>
-          ) : tree.length === 0 ? (
-            <div className="sidebar-empty">
-              {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
-            </div>
-          ) : (
-            tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)
-          )}
-          <BatchToolbar pages={pages} />
-        </div>
-      )}
+      <div className="sidebar-tree" ref={treeContainerRef}>
+        {loading && pages.length === 0 ? (
+          <div className="sidebar-skeleton">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="skeleton-row" style={{ width: `${100 - i * 12}%` }} />
+            ))}
+          </div>
+        ) : tree.length === 0 ? (
+          <div className="sidebar-empty">
+            {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
+          </div>
+        ) : (
+          tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)
+        )}
+        <BatchToolbar pages={pages} />
+      </div>
       {/* 侧栏底部栏已整条移除：回收站归左侧竖条（看内容=导航），
           备份与存储清理归设置中心「数据」页（低频 + 不可逆）。
           页面树因此占满整个侧栏高度。 */}
