@@ -436,6 +436,7 @@ function App() {
   if (standaloneId) {
     return (
       <div className="app">
+        <TitleBar />
         <UpdateBanner />
         <div className="app-body">
           <div className="main">

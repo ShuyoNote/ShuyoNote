@@ -22,6 +22,25 @@ export function TitleBar() {
 
   const desktop = isDesktopPlatform();
 
+  const spaceName = spaces.find((s) => s.id === activeSpaceId)?.name ?? "";
+  const pageTitle = pages.find((p) => p.id === currentId)?.title?.trim();
+  const label = [pageTitle || null, spaceName || null].filter(Boolean).join(" · ") || "ShuyoNote";
+
+  // 同步到窗口标题：即使关掉自绘标题栏（用系统栏），也应显示「页面 · 空间」，
+  // 而不是永远的产品名+版本号——开着几个独立页面窗口时那样根本分不清谁是谁。
+  // 放在提前返回之前，两种模式下都会执行。
+  useEffect(() => {
+    if (!desktop) return;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().setTitle(label);
+      } catch {
+        /* 标题设置失败不影响使用 */
+      }
+    })();
+  }, [desktop, label]);
+
   useEffect(() => {
     if (!desktop || !custom) return;
     let unlisten: (() => void) | undefined;
@@ -45,10 +64,6 @@ export function TitleBar() {
     else if (action === "toggleMaximize") await w.toggleMaximize();
     else await w.close();
   };
-
-  const spaceName = spaces.find((s) => s.id === activeSpaceId)?.name ?? "";
-  const pageTitle = pages.find((p) => p.id === currentId)?.title?.trim();
-  const label = [pageTitle || null, spaceName || null].filter(Boolean).join(" · ") || "ShuyoNote";
 
   return (
     <div className="titlebar" data-tauri-drag-region>
