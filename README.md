@@ -332,12 +332,12 @@ ShuyoNote/
 | [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 架构 / 方案 / 对比 / 设计交付 / 变更记录 |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
-| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M23 已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强** 已达成；M6 移动端 / M11.3 / M11.4 已评估未做） |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M26 大部分已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强 / M25 帮助系统 / M26 公式** 已达成；M27 团队版规划中；M6 移动端 / M11.3 / M11.4 已评估未做） |
 | [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
-| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草 / PDF 批注 / PDF 连续滚动 / PDF 阅读器 + OCR/AI 增强（含护眼·离线 OCR·视觉识别·AI 目录·朗读）** |
+| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草 / PDF 批注 / PDF 连续滚动 / PDF 阅读器 + OCR/AI 增强（含护眼·离线 OCR·视觉识别·AI 目录·朗读）/ 公式（M26）/ 帮助系统（M25）** |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 

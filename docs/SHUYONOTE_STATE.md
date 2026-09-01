@@ -1,109 +1,90 @@
-# ShuyoNote 项目状态摘要（会话接续种子）
+# ShuyoNote 项目现状摘要（会话延续种子）
 
-> 本文件由「dsh 会话」在 2026-08-27 生成，作为**新会话接续的种子上下文**——新会话开始时先读本文件，即可精确了解项目当前进度、已做取舍与下一步候选，无需依赖模糊回忆。
-> 项目根：`C:\Users\cnzen\zhai\ShuyoNote`
+> 本文件为项目当前状态摘要（2026-09-01 更新，版本 v1.65.3），供新会话快速了解现状、已做取舍与下一步候选，无需依赖模糊回忆。
+> 项目根：`C:\Users\cnzen\zhai\ShuyoNote`。
 
 ## 1. 项目概况
 
-- **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理应用
-- **技术栈**：Tauri 2（桌面）+ React 18.3.1 + **Lexical 0.49**（编辑器）+ SQLite（本地优先）
-- **平台**：桌面（Tauri）+ 浏览器 Web（平台无关 core + 可插拔 driver，见 docs/plans/2026-08-24-cross-platform-plan.md）
-- **版本**：**v1.59.190**（最近一次正式发布；package.json / src-tauri/Cargo.toml / tauri.conf.json / Cargo.lock 一致；安装包在 src-tauri/target/release/bundle/）。本会话在其上叠加了大量**未升版本**的 PDF 阅读器 + OCR/AI 增强（见 §2 末「PDF 阅读器 + OCR/AI 增强」与 `docs/plans/2026-08-30-pdf-reader-ai-plan.md`）。
-- **许可**：**AGPL-3.0**（GNU Affero GPL v3，仓库根 `LICENSE`；v1.59.173 由 MIT 切换而来，因附带的 shuyonote-sync-server 需在网络托管形态下同样开源）。
-- **git**：HEAD 在当前 main 最新（含本会话 PDF/AI 增强提交；v1.59.190 发布提交为历史，其后为未升版本的 fix/feat 轮）。
+- **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
+- **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.49（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
+- **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver，见 [跨平台方案](plans/2026-08-24-cross-platform-plan.md)）。
+- **版本**：**v1.65.3**（最近发布；`package.json` / `src-tauri/Cargo.toml` / `tauri.conf.json` / `Cargo.lock` 一致；安装包在 `src-tauri/target/release/bundle/`）。当前 main HEAD 与推送一致。
+- **许可证**：**AGPL-3.0**（附带的服务端 `shuyonote-sync-server` 在随 AGPL 网络托管形态下同需开源；服务端仓库为商业 `LICENSE-COMMERCIAL`）。
+- **配套服务端**：`C:\Users\cnzen\zhai\shuyonote-sync-server`（自建同步服，v1.1.0，商业；见其 `docs/SYNC_SERVER_STATE.md`）。
 
-## 2. 已完成的核心能力（本会话近期落地）
+## 2. 已实现核心功能（里程碑 M1–M27）
 
-### 分栏（飞书式 Columns Block）—— 路线 B（每列独立子编辑器）已完成
-- 节点：`ColumnsBlockNode`（DecoratorNode，每列存一份独立 EditorState JSON）→ `ColumnsBlockView`/`ColumnEditor` 渲染为 N 个独立嵌套编辑器。
-- 共享配置抽到 `src/editor/config.ts`（`EDITOR_NODES`/`editorTheme`/`ALLOWED_NODE_TYPES`），供主编辑器与列编辑器复用；`ColumnsBlockNode` 用 `lazy()` 动态导入视图（打破与 config.ts 的循环依赖）。
-- 列内 `/` 可插：标题/正文/引用/**Callout**/列表/**表格**（`TablePlugin`）/代码块/分隔线；列内 `Ctrl+Alt` 快捷键。
-- 列内独立撤销（`HistoryPlugin`）、跨列独立输入；列增删（＋/×，1–4 列）、列宽拖拽（flex-grow 权重）。
-- **本会话分栏系列打磨（v1.59.172）**：
-  - 列宽拖拽**跟手/不卡**：按像素直设宽度 + 同步应用 + pointer capture；拖拽中由 React `dragWidths` state 驱动（唯一数据源）、零 React 重渲染；列占比 pct 徽章实时用最大余数法（恒 100%）。
-  - **只改拖拽中相邻两列**；按 content-box 反推权重防止松手后列宽漂移。
-  - 列内「+」插入块：移除「输入 / 选择块…」占位；悬停分栏空行显内联「+」（复用 `BlockInsertPlugin`）；加入 220ms 驻留延迟防闪现；`getTopLevelKey` 按 `clientY` 垂直兜底 + 只解析当前编辑器根元素，支持整列高度且不跨列误捕；统一放在各列内容左缘（首字符位置），不压调宽手柄。
-  - **删除/新增分栏内容不错位**：`ColumnEditor` 仅在父级改动的 `column` 与自身最后发出的 JSON 不同时才重载（避免索引平移出现陈旧内容）。
-  - 分栏卡片背景/描边：光标悬停/聚焦该分栏才显示背景，用与页面背景构成对比的卡片色（`--hover-strong`）让「分栏间空隙以页面背景色」清晰；任何时候不画边框。
-  - 分栏文本颜色与普通块一致：覆盖 `RichTextPlugin` ErrorBoundary 默认的 `.editor-error` 红色 `--danger` 为 `--text`。
-  - 分栏块/绘图块对齐页面边界（去掉 `.editor-error` 多余内边距 / 负 margin 抵消段落 padding）。
-- 关键修复：空列 JSON 补 `indent/format/direction`（否则 `ListItemNode.setIndent` 遇非数字 → Lexical #117）、`.editor-column-body` 解耦避免 `.editor-column` 自嵌套、`createDOM` 返回 `.editor-columns-host` 避免 `.editor-columns` 自嵌套、列用 flex-grow 避免百分比+gap 溢出。
-- 关键文件：
-  - `src/editor/nodes/ColumnsBlockNode.tsx`、`ColumnNode.tsx`、`ColumnsNode.tsx`（旧轻量版，仍注册用于读旧文档）
-  - `src/components/ColumnsBlockView.tsx`、`ColumnEditor.tsx`
-  - `src/editor/config.ts`、`src/lib/columnsText.ts`（列文本并入 content_text）
-  - 方案文档：`docs/plans/2026-08-26-columns-plan.md`（含 6.5 演示截图，docs/media/columns-demo/）
+| 里程碑 | 主题 | 状态 |
+|---|---|---|
+| M1 | Markdown 无损往返 | ✅ |
+| M2 | 端到端加密（E2E，空间级） | ✅ |
+| M3 | 主题 / 外观 + 插件雏形 | ✅ |
+| M4 | 属性驱动仪表盘聚合 | ✅ |
+| M5 | PDF 导出 | ✅ |
+| M6 | 移动端适配 | 未做（环境受限，升级为 M16 全平台通吃） |
+| M7 | 数据库视图扩展 | ✅ |
+| M8 | 新页面引导 | ✅ |
+| M9 | 模板 | ✅ |
+| M10 | 多工作空间 | ✅ |
+| M11 | 插件 | ✅（M11.3 UI 型 / M11.4 市场已评估延后） |
+| M12 | 文件夹 = 网盘 | ✅ |
+| M13 | 数据库 = 透镜 | ✅ |
+| M14 | 空间清理 / 存储管理 | ✅ |
+| M15 | 每空间独立存储（物理隔离） | ✅ |
+| M16 | 跨平台适配（全平台通吃） | ✅（部分） |
+| M17 | AI 薄 Agent | ✅ |
+| M18 | 内联 AI 起草 | ✅ |
+| M19 | Wiki 织网增强 | ✅ |
+| M20 | 模板变量 + 语义检索 | ✅ |
+| M21 | 静态 wiki 导出 + 关系图 | ✅ |
+| M22 | 绘图（Excalidraw / mermaid / AI 文生图） | ✅ |
+| M23 | Excalidraw 高级功能 | ✅（M23.5 协同 / 代码生成未做） |
+| M24 | **PDF 批注** | ✅（阶段 1/3 + 阅读器 + OCR/AI 增强；阶段 2 写回待做） |
+| M25 | 帮助系统 | ✅ |
+| M26 | 公式（数学） | ✅ |
+| M27 | 团队版（自建协作） | 规划（服务端已实现 S5；客户端登录/空间绑定 UI 待做） |
 
-### 绘图块（Excalidraw）—— 已完善
-- `/绘图` 插入、全屏 Excalidraw 编辑、JSON(.excalidraw)+PNG 缩略图落内容寻址附件、文字抽取进 content_text。
-- 近期修复/增强：
-  - 缩放后内容居中（`zoomTo` 修正 scene↔viewport 换算）。
-  - 全屏保存不再卡「保存中…」（内容先存、PNG 缩略图后台异步）。
-  - 全屏编辑保存后内嵌块**自动适配整幅图**（清空视图记忆）。
-  - **图片说明 caption**（`DrawingNode.__caption`，可编辑、随块保存、可搜索；默认隐藏/悬停居中）。
-  - 内嵌块**贴合内容高度**（读实际 fit zoom）；**可拖拽调整尺寸且不被自动贴合覆盖**（`node.__height` 已设则不再自动改）。
-- 关键文件：`src/editor/nodes/DrawingNode.tsx`、`src/components/InlineDrawing.tsx`、`src/components/DrawingEditorModal.tsx`、`src/lib/drawingText.ts`。
-  - 方案文档：`docs/plans/2026-08-24-drawing-solution-design.md`（已补 caption 能力 4.5 节）。
+## 3. 安全加固（P0/P1/P2，2026-09-01）
 
-### 其他近期
-- Markdown 导出保留分栏列文本（`src/lib/exportMarkdown.ts` 注册 ColumnsBlockNode + 展开列文本）。
-- 移除「+」菜单的"流程图/思维导图"与"AI 绘图"项（SlashMenuPlugin makeOptions）。
-- **v1.59.173**：分栏最大列数 4→5（`MAX_COLS`）；绘图块控制条移入块内部顶端、左上角、透明描边；`body.content-full` 下标题/属性区左对齐；绘图块 fit 加大边距（`pad=0.8`+`12px inset`）；许可由 MIT 切换为 AGPL-3.0（新增 `LICENSE`）。
-- **v1.59.174**：真实向量 embedding 语义检索（`src/lib/semanticEmbed.ts`：`cosineSim`/`vectorRank`/`embedText`/`readEmbedConfig` + AI 设置「语义检索模型」字段；`search` 在 TF+char-bigram 上可选叠加向量重排）+ `page_embeddings` 页嵌入缓存持久化（内容哈希自动失效、惰性重嵌，反复搜索只发 1 次 query 嵌入）；README 版本徽章对齐。
-- **v1.59.175**：桌面端接入向量语义检索（能力对齐）——`api.search` 附 `readEmbedConfig()` 传 Rust；`search.rs` 增 `page_embeddings` 表 + `embed_text`/`cosine_sim`/`embed_hash`/`keyword_score` + `search_semantic_async`（宽候选集 + 余弦加分 + 哈希缓存），连接 I/O 作用域同步块保证 future `Send`；**跨空间 `all_spaces` 仍 FTS**，嵌入端点不可达回退关键词。
-- **v1.59.176**：跨空间（`all_spaces`）检索接入向量语义——每个空间连接包成 `Db` 复用 `search_semantic_async`；至此向量语义在 Web / 桌面活动空间 / 桌面跨空间均对齐。附 mock 嵌入端点的运行时验证（`embed_text` 往返 + 无关键词重叠的语义排序单测）。
-- **v1.59.177**：帮助系统（M25 P0/P1：快捷键面板 `Ctrl+/`/`?` + 内置「使用指南」页 `/帮助` + 命令面板入口）；页面题头图（内置封面图库：12 渐变 + 山峦/科技/星空/海浪/城市题材图片 + 上传图片 + 裁剪编辑 + 可拖拽调整高度，铺满整页宽无圆角）；页面图标（emoji，标题前 + 侧边栏节点同步）；bugfix（新建页 FK、绘图块保存为空/居中偏移、分栏待办光标、自适应占位符、宽度按钮 SVG 图标）。
-- **v1.59.178**：**PDF 批注（M24 阶段 1 完整）**——`pdfRender`/`pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化 + `pdfjs-dist@4` 渲染引擎（`pdfjsEngine`，WebView2 兼容，`copy-pdfjs-assets` 供 CJK）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签 + 摘录成块含可点击 `pdf://` 回链 + 文本层精确划词 + OCR 兜底 tesseract.js）+ 全局批注检索（`list_all_pdf_annotations` + 「打开最近批注的 PDF」）；**自动升级**（阶段 1 `updates.ts` + 阶段 2 接线 `tauri-plugin-updater`/`createUpdaterArtifacts` + 发布管线 `release.mjs`）；**M25 P2**（About 四外链 + 隐私开关 + 帮助站导出 `helpSite.ts`）；页面题头图缺省（start 页秋山封面 + 图标 + 空行）；Callout 图标并排；目录 Notion 风格；新手清单一键上手。
-- **v1.59.179**：**桌面 native PDF 渲染引擎（M24）**——桌面端用 **MuPDF（经 `mupdf-sys`）** 本地光栅化 PDF 页面替代 pdf.js WASM 路径（Web 仍回退 pdf.js；页元数据/文本层仍走 `pdfjsEngine`）。`render_pdf_page` 命令 + `src/pdf_native.rs`（对 `mupdf-sys` 便捷 C API 的薄安全封装，MuPDF 源码编译、自包含）；`Platform.pdfRender` 双引擎驱动（桌面 true / Web false）。**崩溃修复**：base context 包装全局静态 `CRITICAL_SECTION` 锁，此前每次渲染 new/drop 反复初始化/删除全局锁属未定义行为 → `0xc0000005`；改为 **base context 全局只建一次、进程复用、永不 drop**（`shared_context()`+`OnceLock`），渲染对象仍按 RAII 释放。**依赖取舍**：高层 `mupdf` crate 在 MSVC 无法编译（bindgen 不输出 `max_align_t`），故用编译通过的 `mupdf-sys`。新增落地文档 `docs/plans/2026-08-28-pdf-render-engine-mupdfjs-vs-pdfjs.md`（MuPDF.js vs pdf.js 决策/接口/坐标/AGPL/回退/迁移/验收）。
+- **E1 本地静置加密**（默认关）：口令 → Argon2id → 会话内存密钥（不落盘）→ SQLCipher 加密空间库 ＋ 附件（XChaCha20-Poly1305）；启动锁定门控；明文 ↔ 密文双向迁移；锁定态不读；备份 / 导入兼容加密空间。
+- **客户端**：CSP 收紧（`script-src` 去 `'unsafe-inline'`，启动脚本外置；为 pdf.js 保留 `'unsafe-eval'`/`'wasm-unsafe-eval'`，**不加** `'unsafe-inline'`）；`attachment://` 协议路径穿越 + `Access-Control-Allow-Origin` 回显；Markdown 预览 XSS sanitizer；zip-slip（safe_join）；`write_attachment_bytes` hash 校验；E1 × 同步兼容（上传前解密 / 下载后加密）。
+- **服务端**（见 shuyonote-sync-server）：附件下载路径穿越补 hash 校验、legacy `/attachments` 挂鉴权、移除 permissive CORS、登录失败限速、会话清理、push device_id 绑定用户、space owner 不可变、口令强度 ≥8。
 
-- **v1.59.180**：**PDF 阅读/批注界面重构（思源式）**——入口全面易达（文件管理器 PDF 行直达「标注」/正文 PDF 附件点击直达＋「标注」徽章/预览弹窗醒目按钮/命令面板「打开 PDF」）；思源式阅读器（默认近全屏＋可最大化/左侧目录树 `PdfOutline`/右侧批注侧栏 `PdfSidebar`/键盘导航/适配页宽）；批注工具栏图标化＋选区操作常驻＋无文本层状态条＋便签/摘录改内联气泡。**修复**：目录点击不能跳转（pdf.js `dest[0]` 是 `Ref` 而非数字，改用 `getDestination`/`getPageIndex` 解析）；**跳转/翻页卡顿**（native 整页 PNG 编码大页 >1s 占 85% → 改返回 RGBA8 原始字节＋`tauri::ipc::InvokeResponseBody::Raw` 二进制通道＋前端 `<canvas>` 绘制＋渲染并行化＋页面缓存 objectURL），移除了 `png` crate 依赖。实测翻页 ~1.3s → ~0.12s。
-- **v1.59.181**：**AI 帮读（M24 阶段 3）**——划选 PDF 中的一段文字 → AI 总结要点 → 生成**带 `pdf://` 回链的笔记块**（可点击回跳）。复用 AI 薄 Agent 管线（`runInlineDraft`/`useAiStore`），不新增后端命令。批注工具栏「选中一条标注后」新增 **「AI 帮读」** 按钮（✨）＋流式生成预览面；便签正文优先作为 AI 输入，高亮/区域标注则用新增的 `textInBox` 从 pdf.js 文本层抽取与该标注框相交的文字。结果插入当前页（摘录块的 pdfref 引用语义）或无当前页则新建「AI 帮读 · 第 N 页」页。纯函数 `textInBox`（`pdfTextLayer.ts`），smoke 296→**298**。
-- **v1.59.182**：**对整篇 PDF 提问（M24 阶段 3 延伸，方案 B 相关页检索）**——阅读器顶部「对这篇 PDF 提问」按钮→底部提问栏：提问时段提取整篇文本（`getPageText`，仅字符串）＋ **char-bigram Jaccard 相关页检索**（`rankRelevantPages`，离线/无向量端点）只挑最相关 ≤5 页喂模型，流式回答＋「依据 N、M 页」，可一键存成带 `pdf://` 回链的笔记块。纯函数 `rankRelevantPages`（`searchSemantic.ts`）+ 引擎可选 `getPageText` + 新组件 `PdfAskBar.tsx`；落地文档 `docs/plans/2026-08-29-pdf-ask-document.md`。**修复**：桌面端 AI 流式 `ai_complete_stream` 缺 `runId`（Tauri 顶层参数 camelCase，`api.ts` 误传 `run_id`）——AI 帮读/对 PDF 提问在桌面端即可流式返回；清理 `fitWidth` 临时调试日志。smoke 298→**300**。
-- **v1.59.183**：**M9 / M20 打磨**——M9 模板 `{{selected}}` 接入编辑器真实选区（用模板建页时把编辑器当前选中文本填入 `{{selected}}`，此前恒为空）；M20 语义检索搜索结果相关度提示（`SearchResult` 新增 `score` 字段，Web + Rust 都传递，搜索面板显示「相关 NN%」徽章）。
-- **v1.59.184**：**M10.4b 收尾打磨：跨空间复制选父级**——「复制到其他工作空间」从"只能复制到目标空间根"升级为"可指定目标文件夹"：选目标空间后进入其**文件夹树**（含「根目录」+ 各文件夹按层级缩进），点一个即复制到其下。新增 Rust 命令 `list_workspace_pages(workspace_id)`（独立打开目标空间库，不切换活动空间）；前端 `CopyPageAction` 选空间后构建父子树并传 `newParentId`。
-- **v1.59.185**：**标注体验优化 ×4**——A1 画完自动回「选择」（高亮/画笔/便签画完即切回选择）；A2 **撤销**按钮（↺，内存快照栈，撤销最近一次批注变更）；C8 **便签可拖动**（选中便签后拖动画块移动位置，钳制页面内）；B6 **侧栏删除批注**（悬停显示删除图标，点它删除并持久化）。
-- **v1.59.190**：**PDF 批注工具栏改为顶部单份固定**——连续滚动时每个页块自带一套工具栏（满屏重复），现改为固定在阅读器内容区顶部唯一一份，作用于当前活动页；工具选择（选择/高亮/画笔/便签）提升为全局、跨页共享；新增 `pdfAnnotController.ts`（页句柄 `PdfPageController` + 状态快照），每页 canvas 通过 `registerController` 注册句柄供顶部工具栏调用撤销/导出/删除/摘录/AI/复制/便签编辑/OCR；页内状态变化经 `onStateChange`→`annotToolVersion` 刷新顶部工具栏。新组件 `PdfAnnotTopToolbar.tsx`；stage 外包 `.pdf-reader-stage-wrap`（工具栏 + 滚动舞台）。无头 Edge 实测：顶栏仅 1 份、滚动到第 4 页仍固定、工具切换跨页生效。
-- **v1.59.189**：**缩放下拉重构为桌面阅读器式**——触发器变 `− [当前值 ▾] ＋`（左右步进按钮）；下拉含顶部适配模式（实际大小/适合页面/适合宽度/适合内容/自定义缩放）+ 百分比阶梯 6400%→8.33%（当前值打勾）+ 底部「设置默认缩放比例」（存本地，下次打开默认用）。缩放状态改为 `ZoomMode`（具名适配模式|固定百分比），`resolveZoomScale` 随视口自动重算适配模式倍率；MAX_SCALE=4 封顶防光栅化过大。纯函数 `zoomLabel`/`stepZoom`/`ZOOM_LADDER`；无头 Edge 实测下拉渲染 + 150% 缩放真实放大；smoke 309→**325**（+16 缩放语义）。
-- **v1.59.188**：**PDF 缩放修复 + 缩放下拉 + 点击直达阅读器**——修复缩放「迟钝+抖动」：连续模式页块宽改为随 `scale` 真实放大（`contentWidth = 基准页宽 × 缩放`），缩放后对每个可见页按新缩放重新光栅化（`${i}@${scale}` 缓存、命中跳过），图像铺满页块宽；`meta`/文本层缺失时一次性拉取。把 `−`/`＋` 换成缩放下拉（显示当前 %，预设 50…300% + 适配页宽；`+`/`-`/`F`/`Esc` 快捷键）。文件管理器附件 + 文件树里点 PDF 节点直达内置阅读器（不再用默认程序打开）。缩放语义抽成 `fitScaleForWidth`/`zoomContentWidth`/`MIN_SCALE`/`MAX_SCALE`；smoke 309→**314**（+5 缩放断言）。
-- **v1.59.187**：**PDF 连续滚动（方案 B，虚拟化）**——PDF 阅读器从「单页翻页」升级为「整篇纵向连续滚动」：所有页块纵向堆叠，一次可自由滚过整篇；只挂载视口 ± 1 页缓冲的页块（其余页占位不渲染，内存可控），滚到远处即时出现（图像缓存命中）。**批注随页块**：每页批注/工具条/撤销/选中都在该页块内，翻到即见、坐标对齐。导航升级：侧栏/目录跳页改为滚到目标页顶；←/→/↑/↓ 逐页滚动（取代「滚动边缘自动翻页」）；F 适配页宽；打开时自动适配一次。布局数学抽成纯函数 `src/lib/pdfLayout.ts`（前缀和 `tops`/`total` + 视口挂载范围），首屏预取全部页尺寸使滚动轴高度稳定。**修复暗色主题下 PDF 不可读**（页面图像是透明底 RGBA，给图像/舞台加白纸背景）。落地文档 `docs/plans/2026-08-29-pdf-continuous-scroll-plan.md`；smoke 300→**309**（+9 布局断言）。
-- **v1.59.186**：**PDF 阅读/批注体验打磨 ×6**——点页面外空白取消选中；批注侧栏类型筛选（全部/高亮/便签/画笔）+ 每页「第 N 页 · x 条」；「导出批注」把本页全部批注导出为带 `pdf://` 回链的笔记块；**默认最大化**（打开即铺满）；高亮/画笔**拖拽实时预览**（跟手，不再等松开）；批注工具栏+状态条 **sticky 吸顶**（滚动不滚走）；页面留白优化（减小 padding + 表面色背景）；**上下滚动自动翻页**（滚到顶/底自动切上一页/下一页，去抖）。
+## 4. 结构性改进（2026-09-01，三项均达成）
 
-### PDF 阅读器 + OCR/AI 增强（本会话，叠加于 v1.59.190；未升版本）
-- **阅读体验**：`select` 工具光标改为默认箭头（仅绘制类用 `crosshair`）；便签钉美化（圆角小方块+折角）+ 默认显示内容气泡（`pointer-events:none`，拖动跟随）；**按住便签即拖**（无需先选中）；**双击便签即编辑**（`stickyEditRegion` 纯函数）；修复控制条操作无效（注册控制器用陈旧闭包——`selected`/`annotations` 停在挂载值，把二者加入注册 effect 依赖）。
-- **侧栏/定位/跳转**：新增/撤销标注后右栏及时刷新（`onChanged`→`refreshAnnRecords`）；侧栏批注精确滚到视口中央（`focusAnnotation` + `annCenterY`，非页顶）；跳转闪烁框用 `drawBoxPx` 贴合实际绘制几何（便签 26px 方块）。
-- **护眼模式（多档位）**：头部「眼睛」下拉（关闭/柔光/暖黄/夜间/淡绿），暖色纸底 + 页图降蓝/柔光滤镜（CSS 变量 + 共享规则），默认「柔光」。
-- **OCR 彻底离线**：`scripts/copy-tesseract-assets.mjs` 本地打包 tesseract worker/core/**完整 4.0.0 双语模型**到 `public/ocr`；修复 `is-url` 相对路径误判走 readCache（改绝对 URL）；`ocr.ts` 重构 `createOcrWorker`（复用单 worker）+ 超时 + 结构化结果。
-- **AI 视觉识别**（`src/lib/ai/ocrVision.ts`）：「AI 识别」按钮把页图 **3.5× 高分辨率 → `data:image`** 直发视觉大模型（Ollama/OpenAI 兼容）。
-- **AI 一键生成目录（视觉大模型优先）**：`generateOutlineFromVision` 逐页发图 → `visionPagePrompt(pageNo)` → 章节标题+页码 JSON → 合并成目录；旧 tesseract 路径保留。
-- **系统朗读**（`src/lib/speech.ts`，Web Speech）：「朗读本页」（有文本层读全文）+ 识别结果弹层「朗读/停止」。
-- **识别结果弹层**：`createPortal` 到 body 的居中可缩放弹层（`resize:both`），分类显示 + 「朗读/复制全部/写入便签」，单页 OCR 用 2.5× 重渲染。
+1. **markdown round-trip 单测**：`mdToHtml` + `mdPreview` + happy-dom 测试环境，vitest **88 断言**。
+2. **web.ts 命令契约层**：`src/lib/platform/commands.ts` 定义 `CommandMap`（118 命令 args+result）；`api.ts` 的 `invoke` 改为 `CommandMap` 泛型（命令名/args/result 编译期报错）；`check-web-commands.mjs` 断言 Rust 命令 ⊆ CommandMap 键并纳入 `pnpm build`。运行时行为零变化。
+3. **服务端单 Mutex 并发瓶颈**：`push` 批量单事务；**读写分离**（写连接 + 只读连接池，读不阻塞写、多读并行）。并发基准 8 读×2000 + 写并行 16000 读全完成，单读连接 250ms → 4 连接池 124ms。
 
-## 3. 关键设计取舍 / 边界（诚实标注，重开会话请勿轻易推翻）
+详见 [结构项立项](plans/2026-09-01-structural-backlog-plan.md)。
 
-- **分栏旧数据不做自动迁移**：`columns`/`column`（ElementNode 轻量版）**保留注册**，旧文档仍可读兼容；新插入走路线 B。自动改写线上 `content_json` 风险高、收益低，**明确不做**。
-- **列内块级拖拽 / 跨列复制移动不做**：`BlockDragPlugin` 基于顶层块 `getTopLevelElement()` 设计，列内拖块需全新跨编辑器机制（成本高风险大）；现状「分栏整体可拖/重排」满足主要诉求。
-- **列内 AI 草稿、`{{blockId}}` 块引用对列内块不适用**（诚实标注）。
-- **M20.2 向量语义检索的平台边界**：语义/向量重排已接入 **Web**（`web.ts` + `semanticEmbed.ts`）与**桌面搜索**（Rust `search.rs`：v1.59.175 活动空间、v1.59.176 跨空间 `all_spaces` 逐空间向量重排；前端把 embedding 配置随 `search` 参数传入 Rust + `page_embeddings` 表 + `search_semantic_async` 余弦加分）；嵌入端点不可达时优雅回退关键词排序。
-- 版本号约定：**验证性/修复轮不升版本、不重打桌面**；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.59.190**。
-- **PDF OCR/AI 边界**：OCR 精度上限由原扫描清晰度决定；AI 视觉识别/视觉目录需配置**支持图像**的模型（DeepSeek 纯文本会失败）；系统朗读为系统音色（中文语音包缺失则无声）；目录生成逐页视觉调用较慢（60 页约 1–2 分钟，可取消）。
+## 5. 关键架构
 
-## 4. 环境/工具备注
+- **平台 driver**：`src/lib/platform/`（`types.ts` 接口 + `tauri.ts` 桌面 + `web.ts` 浏览器 + `index.ts` 选择）；`api.ts` 经 `platform.executor.invoke` 调命令，命令契约见 `src/lib/platform/commands.ts`（`CommandMap`）。
+- **PDF**：桌面 native MuPDF（`mupdf-sys`）+ Web pdf.js 双引擎；`platform.pdfRender` driver；pdf.js 集中于 `pdfjsEngine.ts` 唯一入口。**注意**：`render_pdf_page` 已改为 async command（MuPDF 栅格化用 `spawn_blocking` 放后台，避免主线程"未响应"）。
+- **存储**：每工作空间独立库（`meta.db` + `spaces/<ws_id>/`）；附件内容寻址 hash 存储 + 可加密。
+- **编辑器**：Lexical 0.49 + 自定义节点（`ColumnsBlockNode` / `DrawingNode` / `FormulaNode` 等），节点类型收敛于 `src/editor/config.ts`。
+- **提版**：`scripts/release.mjs`（gitcode 自动更新）+ `tauri-plugin-updater`（签名 + `latest.json`，半自动，非静默强更）。
 
-- **前端 Web 版**：`pnpm dev:web`（Vite web dev，默认 http://localhost:5173；若 5173 被占则 Vite 自动顺延到 5174……，热更新；SQLite 前端 mock）+ `pnpm preview`（dist 产物，http://127.0.0.1:5173）。
-- **桌面版**：`pnpm tauri dev`（1420，需 Rust/SQLite host）或跑 `src-tauri/target/release/shuyonote.exe`。
-- **Rust**：MSRV **1.94**（`src-tauri/Cargo.toml` 的 `rust-version`，与 README 徽章 `1.94+` 一致），本机 `rustc 1.94.0` stable；**不锁工具链**（无 `rust-toolchain.toml`），跟随 stable。
-- **验证**：`npx tsc --noEmit`、`pnpm build`、`node scripts/smoke-web.mjs`（**296 全绿**，2026-08-28 更新）；`cargo test --lib`（**33**，含 `render_min_pdf_roundtrip`）；无头 Edge CDP 实测交互（Edge 在 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`，Node 内置 WebSocket，临时脚本放 tmp/）。
-- **git 代理**：全局配置了 `http://127.0.0.1:7897` 但**当前端口不通**；push/pull 需 `git -c http.proxy= -c https.proxy=` 临时直连（或清掉全局代理）。
+## 6. 边界 / 红线（重要取舍，重开会话勿轻易推翻）
 
-## 5. 下一步候选（未做，按需选一项继续）
+- **版本号约定**：验证性 / 修复轮不改版本号、不重打桌面；只有版本号 bump + 发布才重打 MSI/exe（`pnpm tauri build`）。当前 **v1.65.3**。
+- **CSP**：保留 `style-src 'unsafe-inline'`（splash 内联样式）；`script-src` 允许 `'unsafe-eval'`/`'wasm-unsafe-eval'`（pdf.js 必需），但**不加** `'unsafe-inline'`。
+- **分栏**：旧 `columns`（ElementNode）不做自动迁移（保留注册可读兼容）；列内块级拖拽 / 跨列复制不做（成本高风险大、收益低）。
+- **PDF**：OCR 精度上限由原扫描清晰度决定；AI 视觉识别 / 目录生成需配置**支持图像**的模型（纯文本模型会失败）；系统朗读为系统音色（中文音色包缺失则无声）。
+- **AGPL**：不把"托管云同步 SaaS"作为服务端收费点（会触发 AGPL 网络托管条款）；收费点 = AI / 私有部架交付 / 内容模板。服务端 `team` 空间放弃零知识（个人空间保留 E2E）。
 
-1. **PDF 批注立项（M24）**——见 `docs/plans/2026-08-27-pdf-annotation-plan.md`：先按阶段 1 MVP 切，做 `pdfRender` 双引擎接口 + `pdfjsEngine` 纯函数 + smoke 断言（不碰 UI 即可验证核心）；暂排 M20 之后。
-2. **列内拖拽 / 跨列复制移动**——需跨编辑器机制，工作量大（此前评估为"暂不做"，若产品必需立项）。
-3. **旧分栏（ElementNode）→ 路线 B 的状态补齐**（若确有用户需要，可做"显式、备份式"的手动转换入口，而非自动迁移）。
-4. **绘图块更多能力**：如列内 AI 附表、绘图块引用/块级 `{{...}}`、及大图/多图性能。
-5. **分栏其它打磨**：分栏块间距/背景配色再调（浅色 `--hover-strong` 与页面背景的对比度是否足够明显）、分栏列宽拖拽到极窄值时的边界表现。
-6. 其它 roadmap（见 docs/roadmap.md）待排期项。
+## 7. 验证循环
 
----
+- `npx tsc --noEmit`、`pnpm build`（含 `check-versions` + `check-web-commands` + `tsc` + `vite`）、`node scripts/smoke-web.mjs`（**347 断言**）、`vitest`（**88**）、`cargo test --lib`（**42**，含 PDF 渲染 / 迁移）。
+- **pnpm**：用 11.24.0 全路径 `C:\Users\cnzen\AppData\Local\Author Software\nvm\installs\v22.15.0\pnpm.cmd`（v10 有 store 冲突）。
+- **发布**：先 `git tag vX && git push origin vX && git push origin main`，再 `node scripts/release.mjs`（构建 + 签名 + 上传 gitcode + 更新 `latest.json`）——release.mjs 已前置校验 tag 存在。
+- **坑**：pwsh 会把 `git`/`cargo` 的 stderr 包装成 `[exit code: 1]`（假阳性），看 `main -> main` / `Finished` / `test result: ok`；CRLF 警告正常（autocrlf）；Windows 沙箱读命令用 `pwsh -Command`。
+- **代理**：git 需 `-c http.proxy= -c https.proxy=`（或清全局代理）临时直连。
 
-> 若需回溯更早对话细节，全新会话可调用 dsh 会话检索（`session-query-sqlite`）定位到本会话（`session-719a2997-af6a-4624-8a57-4b04806247d9`，cwd=ShuyoNote）。
+## 8. 下一步候选（按需选一项继续）
+
+1. **PDF 批注阶段 2**：写回 PDF / OCR 精确划词（见 [PDF 批注方案](plans/2026-08-27-pdf-annotation-plan.md)）。
+2. **M27 团队版客户端接入**：登录 + 空间绑定 + 成员 / 权限 UI（见 [账号/空间绑定](plans/2026-08-30-team-edition-account-space-plan.md)）；服务端 `/auth/*` `/spaces/*` 已就绪。
+3. **Web 补齐清单（M16.6–M16.8）**：附件移动 / 批量删除、存储统计精确化、全文搜索（见 [Web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md)）。
+4. **M11.3 UI 型插件 / M11.4 市场、M23.5 协同**：已评估延后，如产品必需再立项。

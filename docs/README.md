@@ -124,7 +124,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-30-md-preview-plan.md](plans/2026-08-30-md-preview-plan.md) | **「MD 应用内预览」实现记录（已实现，叠加于 v1.63.0）**：点侧边栏/文件夹内 `.md` 文件名 → 应用内只读预览（铺满主内容区、不遮侧边栏）+「转为笔记」；`mermaid` 代码块渲染为图、随明/暗主题自适应、切换主题即时刷新；弹窗层级提升、打开页面自动关闭预览。含共享 store / App 级弹窗（body portal）/ offscreen md→JSON / mdToHtml mermaid 块 / mermaid 主题响应式 / 请求端接入 / 关键坑（flex 子项、属性转义、源码保留、z-index）与验收 |
 | [plans/2026-08-30-team-edition-plan.md](plans/2026-08-30-team-edition-plan.md) | **「团队版（自建协作，不接外部通讯 App）」方案**：账号/认证、权限两根柱子 + 协同后置（P2）；团队空间放弃零知识（个人空间保留 E2E）；服务端见 shuyonote-sync-server 仓库（已实现 S5）；客户端聚焦登录/空间绑定/成员 UI（**规划**） |
 | [plans/2026-08-30-team-edition-account-space-plan.md](plans/2026-08-30-team-edition-account-space-plan.md) | **「团队版 M27.1 账号/空间绑定 · 客户端侧」落地方案**：登录态 + 登录/注册 UI + 空间绑定 + 成员/权限 UI；命令对齐 shuyonote-sync-server `/auth/*` `/spaces/*`；服务端设计见 shuyonote-sync-server 仓库（**规划**） |
-| [plans/2026-09-01-structural-backlog-plan.md](plans/2026-09-01-structural-backlog-plan.md) | **「安全加固后的结构性改进」立项**（2026-09-01）：三项独立迭代——① markdown round-trip 单测（Lexical 无头测试）；② web.ts 命令契约层（消灭双份后端漂移）；③ 服务端单 Mutex 并发瓶颈。每项含背景/目标/方案/验收/风险 |
+| [plans/2026-09-01-structural-backlog-plan.md](plans/2026-09-01-structural-backlog-plan.md) | **「安全加固后的结构性改进」立项**（2026-09-01，**三项均达成**）：① markdown round-trip 单测（Lexical 无头测试，88 断言全绿）；② web.ts 命令契约层（`CommandMap` 类型 + api.ts invoke 编译期校验 + check-web-commands 纳入 build）；③ 服务端单 Mutex 并发瓶颈（push 单事务 + 读写分离 + 只读连接池，见 shuyonote-sync-server）。 |
 
 ## 竞品对比
 
