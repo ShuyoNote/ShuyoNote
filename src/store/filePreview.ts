@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { AttachmentMeta } from "../types";
 import { api } from "../lib/api";
 import { mdToHtml } from "../editor/mdToHtml";
+import { sanitizePreviewHtml } from "../lib/sanitizeHtml";
 import { markdownToPageContent } from "../lib/mdPreview";
 import { toast } from "./toast";
 
@@ -31,7 +32,10 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
       (async () => {
         try {
           const content = await api.readTextFile(a.path);
-          set({ mdHtml: mdToHtml(content), mdLoading: false });
+          // Sanitize before `dangerouslySetInnerHTML`: the preview renders raw
+          // HTML blocks verbatim (unlike the safe Lexical import path), so a
+          // malicious .md could otherwise run <script>/event-handler payloads.
+          set({ mdHtml: sanitizePreviewHtml(mdToHtml(content)), mdLoading: false });
         } catch (e) {
           set({ mdLoading: false });
           toast(`读取 Markdown 失败：${e}`, "error");
