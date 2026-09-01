@@ -77,7 +77,7 @@ await esbuild.build({
       'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
       'export { COVER_PRESETS } from "./src/lib/covers";\n' +
       'export { APP_NAME, APP_VERSION, APP_LICENSE, linkItems, sanitizeExternalUrl, getAllowExternal, setAllowExternal } from "./src/lib/links";\n' +
-      'export { normCoords, denormCoords, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, parsePdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
+      'export { normCoords, denormCoords, annPxBox, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, parsePdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
       'export { compareVersions, updateStatus } from "./src/lib/updates";\n' +
       'export { buildHelpSite } from "./src/lib/helpSite";\n' +
@@ -1027,6 +1027,9 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("validateAnnotation rejects bad type", aiMod.validateAnnotation({ id: "a", type: "nope", box: [0, 0, 1, 1] }) === false);
   assert("validateAnnotation requires box for rect", aiMod.validateAnnotation({ id: "a", type: "rect" }) === false);
   assert("validateAnnotation requires points for ink", aiMod.validateAnnotation({ id: "a", type: "ink" }) === false);
+  assert("annPxBox highlight box to px", JSON.stringify(aiMod.annPxBox({ type: "highlight", box: [0.25, 0.25, 0.5, 0.5] }, 1000, 500)) === "[250,125,250,125]");
+  assert("annPxBox sticky is fixed square", JSON.stringify(aiMod.annPxBox({ type: "sticky", box: [0.5, 0.5, 0.6, 0.6] }, 1000, 500)) === "[500,250,26,26]");
+  assert("annPxBox ink uses bbox", JSON.stringify(aiMod.annPxBox({ type: "ink", points: [[0.25, 0.25], [0.5, 0.5]] }, 1000, 500)) === "[250,125,250,125]");
   assert("addAnnotation appends + replaces by id", (() => { let d = { pageIndex: 0, annotations: [] }; d = aiMod.addAnnotation(d, { id: "a", type: "sticky", text: "x" }); d = aiMod.addAnnotation(d, { id: "b", type: "rect", box: [0, 0, 1, 1] }); d = aiMod.addAnnotation(d, { id: "a", type: "sticky", text: "x2" }); return d.annotations.length === 2 && d.annotations[0].text === "x2"; })());
   assert("removeAnnotation drops by id", (() => { let d = { pageIndex: 0, annotations: [{ id: "a", type: "sticky", box: [0, 0, 1, 1] }] }; d = aiMod.removeAnnotation(d, "a"); return d.annotations.length === 0; })());
   assert("annotationMode text when hasTextLayer", aiMod.annotationMode(true) === "text");

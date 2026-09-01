@@ -49,6 +49,36 @@ export function denormCoords(box: [number, number, number, number], pageW: numbe
   return [a * pageW, b * pageH, c * pageW, d * pageH];
 }
 
+/**
+ * Pixel-space [x, y, w, h] box for an annotation on a W×H page, used to paint it
+ * onto a canvas (e.g. the in-app SVG overlay's drawBoxPx or the "export PDF with
+ * annotations" rasterizer). Mirrors drawBoxPx so the export visually matches the
+ * on-screen annotation (sticky paints a fixed-size square; highlight/rect use the
+ * box; ink uses the polyline bounding box).
+ */
+export function annPxBox(ann: PdfAnnotation, W: number, H: number): [number, number, number, number] | null {
+  if (ann.type === "sticky" && ann.box) {
+    const w = Math.min(26, W * 0.06);
+    const h = Math.min(26, H * 0.06);
+    return [ann.box[0] * W, ann.box[1] * H, w, h];
+  }
+  if ((ann.type === "highlight" || ann.type === "rect") && ann.box) {
+    const [x0, y0, x1, y1] = ann.box;
+    return [x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H];
+  }
+  if (ann.points && ann.points.length) {
+    const xs = ann.points.map((p) => p[0]);
+    const ys = ann.points.map((p) => p[1]);
+    return [
+      Math.min(...xs) * W,
+      Math.min(...ys) * H,
+      (Math.max(...xs) - Math.min(...xs)) * W,
+      (Math.max(...ys) - Math.min(...ys)) * H,
+    ];
+  }
+  return null;
+}
+
 /** Schema-validate a single annotation (type-specific requirements). */
 export function validateAnnotation(ann: PdfAnnotation): boolean {
   if (!ann || typeof ann.id !== "string" || ann.id.length === 0) return false;

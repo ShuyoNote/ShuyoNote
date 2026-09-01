@@ -23,6 +23,7 @@ import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
+import { exportPdfWithAnnotations } from "../lib/pdfAnnotExport";
 import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
@@ -142,6 +143,16 @@ async function renderPagePng(
     );
   }
   return eng.renderPageToBlob(pageIndex, scale);
+}
+
+/** 触发浏览器下载一个 Blob（用于「导出带批注的 PDF 副本」）。 */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // 单页块数据（懒加载，视口内才拉取）。
@@ -526,6 +537,29 @@ export function PdfReader() {
     setAnnRecords(updated);
     void api.savePdfAnnotations(attachmentId ?? "", pageIndex, next).catch(() => {});
     toast("已删除批注", "success");
+  };
+
+  // 导出「带批注的 PDF 副本」：逐页把原页面 + 该页批注合成一张位图，再用 pdf-lib
+  // 组装成新 PDF 下载（不动源文件）。高亮 / 画笔 / 便签 / 矩形 / 下划线以视觉还原，
+  // 文本层退化为图像。
+  const handleExportAnnotatedPdf = async () => {
+    if (!attachmentId || !engRef.current || !pageCount) return;
+    const eng = engRef.current;
+    try {
+      const blob = await exportPdfWithAnnotations({
+        pageCount,
+        renderPage: async (i) => ({ blob: await renderPagePng(eng, attachmentId, i, 2), width: 0, height: 0 }),
+        getAnnotations: async (i) => {
+          const recs = await api.listPdfAnnotations(attachmentId);
+          return (recs.find((r) => r.page_index === i)?.annotations ?? []) as PdfAnnotation[];
+        },
+      });
+      const base = (name || "PDF").replace(/\.pdf$/i, "");
+      downloadBlob(blob, `${base}-批注副本.pdf`);
+      toast("已导出带批注的 PDF 副本", "success");
+    } catch {
+      toast("导出带批注副本失败", "error");
+    }
   };
 
   // Load the document once per (open, bytes).
@@ -1156,6 +1190,14 @@ export function PdfReader() {
               )}
             </div>
           </div>
+          <button
+            className="pdf-reader-btn"
+            onClick={() => void handleExportAnnotatedPdf()}
+            disabled={!ready || pageCount <= 0}
+            title="导出为带批注的 PDF 副本（不动源文件）"
+          >
+            导出带批注副本
+          </button>
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
         </div>
         <div className="pdf-reader-body">
