@@ -23,7 +23,6 @@ import type { ProviderConfig } from "../lib/ai/llm";
 import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
-import { exportPdfWithAnnotations } from "../lib/pdfAnnotExport";
 import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
 import { PdfSidebar } from "./PdfSidebar";
 import { PdfOutline } from "./PdfOutline";
@@ -288,6 +287,9 @@ export function PdfReader() {
   const [pageData, setPageData] = useState<Record<number, PageBlockData>>({});
   const [stageWidth, setStageWidth] = useState(0);
   const [stageHeight, setStageHeight] = useState(0);
+  // 「导出带批注副本」进度 / 取消（60 页扫描版导出耗时，需可取消 + 防假死）。
+  const exportAbortRef = useRef<AbortController | null>(null);
+  const [exportState, setExportState] = useState<{ status: "idle" | "running"; done: number; total: number }>({ status: "idle", done: 0, total: 0 });
   const [tool, setTool] = useState<AnnotTool>("select");
   // 顶部批注工具栏：作用于当前活动页。版本号在页状态变化时递增，触发工具栏重读状态。
   const [annotToolVersion, setAnnotToolVersion] = useState(0);
@@ -539,26 +541,42 @@ export function PdfReader() {
     toast("已删除批注", "success");
   };
 
-  // 导出「带批注的 PDF 副本」：逐页把原页面 + 该页批注合成一张位图，再用 pdf-lib
-  // 组装成新 PDF 下载（不动源文件）。高亮 / 画笔 / 便签 / 矩形 / 下划线以视觉还原，
-  // 文本层退化为图像。
+  // 导出「带批注的 PDF 副本」：pdf-lib 懒加载（不进主 chunk）；每页用引擎的 PDF-point
+  // 尺寸作为页框（保证打印/显示尺寸与源 PDF 一致）；批注一次预取（避免 N+1 IPC）；
+  // 逐页渲染 + 让出主线程 + 可取消。不动源文件。
   const handleExportAnnotatedPdf = async () => {
     if (!attachmentId || !engRef.current || !pageCount) return;
+    if (exportState.status === "running") return;
     const eng = engRef.current;
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
+    setExportState({ status: "running", done: 0, total: pageCount });
+    const base = (name || "PDF").replace(/\.pdf$/i, "");
     try {
+      const { exportPdfWithAnnotations } = await import("../lib/pdfAnnotExport");
+      // 一次性取回全部页批注，建立 pageIndex -> annotations 的映射。
+      const recs = await api.listPdfAnnotations(attachmentId);
+      const byPage = new Map<number, PdfAnnotation[]>();
+      for (const r of recs) byPage.set(r.page_index, (r.annotations as PdfAnnotation[]) ?? []);
       const blob = await exportPdfWithAnnotations({
         pageCount,
-        renderPage: async (i) => ({ blob: await renderPagePng(eng, attachmentId, i, 2), width: 0, height: 0 }),
-        getAnnotations: async (i) => {
-          const recs = await api.listPdfAnnotations(attachmentId);
-          return (recs.find((r) => r.page_index === i)?.annotations ?? []) as PdfAnnotation[];
+        getPageBox: async (i) => {
+          const m = await eng.getPageMeta(i);
+          return { w: m.width, h: m.height };
         },
+        renderPage: (i, scale) => renderPagePng(eng, attachmentId, i, scale),
+        getAnnotations: (i) => byPage.get(i) ?? [],
+        signal: controller.signal,
+        onProgress: (done, total) => setExportState({ status: "running", done, total }),
       });
-      const base = (name || "PDF").replace(/\.pdf$/i, "");
       downloadBlob(blob, `${base}-批注副本.pdf`);
       toast("已导出带批注的 PDF 副本", "success");
-    } catch {
-      toast("导出带批注副本失败", "error");
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") toast("已取消导出", "info");
+      else toast("导出带批注副本失败", "error");
+    } finally {
+      exportAbortRef.current = null;
+      setExportState({ status: "idle", done: 0, total: 0 });
     }
   };
 
@@ -1191,13 +1209,18 @@ export function PdfReader() {
             </div>
           </div>
           <button
-            className="pdf-reader-btn"
+            className="pdf-reader-btn pdf-export-btn"
             onClick={() => void handleExportAnnotatedPdf()}
-            disabled={!ready || pageCount <= 0}
+            disabled={!ready || pageCount <= 0 || exportState.status === "running"}
             title="导出为带批注的 PDF 副本（不动源文件）"
           >
-            导出带批注副本
+            {exportState.status === "running" ? `导出中 ${exportState.done}/${exportState.total}` : "导出带批注副本"}
           </button>
+          {exportState.status === "running" && (
+            <button className="pdf-reader-btn pdf-export-btn" onClick={() => exportAbortRef.current?.abort()} title="取消导出">
+              取消
+            </button>
+          )}
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
         </div>
         <div className="pdf-reader-body">

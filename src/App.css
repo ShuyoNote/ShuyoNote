@@ -11527,6 +11527,14 @@ p:has(> .editor-drawing-container) {
   height: 28px;
   cursor: pointer;
 }
+
+/* 「导出带批注副本」：覆盖固定 28px 宽，按中文标签内容自适应。 */
+.pdf-reader-btn.pdf-export-btn {
+  width: auto;
+  padding: 0 8px;
+  white-space: nowrap;
+  font-size: 12px;
+}
 .pdf-reader-btn svg {
   display: block;
 }
