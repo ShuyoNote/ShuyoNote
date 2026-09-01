@@ -246,6 +246,31 @@ body,
   display: flex;
   align-self: stretch;
 }
+/* 同步状态芯片：颜色点 + host，与侧栏空间行、同步面板共用同一套颜色编码。 */
+.titlebar-sync {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  margin-right: 8px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.titlebar-sync-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.titlebar-sync-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .titlebar-btn {
   width: 46px;
   display: grid;

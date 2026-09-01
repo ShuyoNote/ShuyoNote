@@ -16,6 +16,8 @@ import { useFilePreview } from "../store/filePreview";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import { useActivity } from "../store/activity";
+import { useWindowChrome } from "../store/windowChrome";
+import { syncTagLabel, syncTagColor } from "../lib/syncTag";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { SyncPanel } from "./SyncPanel";
@@ -26,21 +28,8 @@ interface TreeNode extends PageMeta {
 }
 
 // Mirrors the backend ACCENTS palette (workspaces.rs).
-// Short host label + subtle color for a workspace's sync identity tag.
-function syncTagLabel(serverUrl: string): string {
-  try {
-    const u = new URL(serverUrl);
-    return u.host.replace(/^www\./, "");
-  } catch {
-    return serverUrl.replace(/^https?:\/\//, "").split("/")[0] || "同步";
-  }
-}
-function syncTagColor(serverUrl: string): string {
-  let h = 0;
-  for (let i = 0; i < serverUrl.length; i++) h = (h * 31 + serverUrl.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `hsl(${hue} 65% 45%)`;
-}
+// 同步标签的 label/color 抽到 lib/syncTag.ts——标题栏与同步面板要用同一份，
+// 同一个服务器地址在各处必须是同一个颜色。
 
 // A pointer-drag ending fires a click on mouseup; this one-shot flag lets the row
 // onClick drop that trailing click so a dropped node isn't also opened.
@@ -596,6 +585,8 @@ export function PageTree(_props: {
   const collapsed = false;
   // 侧栏是否展开由左侧竖条控制（搜索是弹层，不改变侧栏内容）。
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
+  // 自绘标题栏开着时，同步状态显示在顶栏，侧栏不再重复一份。
+  const customTitleBar = useWindowChrome((s) => s.custom);
   const {
     open: newMenuOpen,
     pos: newMenuPos,
@@ -892,7 +883,10 @@ export function PageTree(_props: {
             <span className="sidebar-title-caret">▾</span>
           </button>
         )}
-        {!collapsed && isDesktop && activeSyncProfile && (
+        {/* 同步状态：自绘标题栏开着时由 <TitleBar /> 承担（顶栏本就要有内容，
+            也省下侧栏一行）；关掉自绘标题栏用系统栏时，这里补回来，否则这条
+            信息会整个消失。 */}
+        {!collapsed && isDesktop && !customTitleBar && activeSyncProfile && (
           <div className="sidebar-sync-pill" title={`同步目标：${activeSyncProfile.server_url}`}>
             <span
               className="sidebar-sync-dot"

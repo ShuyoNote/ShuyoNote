@@ -3,6 +3,8 @@ import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useWindowChrome } from "../store/windowChrome";
 import { isDesktopPlatform } from "../lib/platform";
+import { api, type SyncProfile } from "../lib/api";
+import { syncTagLabel, syncTagColor } from "../lib/syncTag";
 
 // 自绘标题栏（B 方案）。仅桌面端渲染，Web 端没有窗口概念。
 //
@@ -19,8 +21,27 @@ export function TitleBar() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const [maximized, setMaximized] = useState(false);
+  const [syncProfile, setSyncProfile] = useState<SyncProfile | null>(null);
 
   const desktop = isDesktopPlatform();
+
+  // 当前空间的同步目标（换空间时重新取）。失败静默：顶栏没有同步芯片而已。
+  useEffect(() => {
+    if (!desktop || !custom || !activeSpaceId) {
+      setSyncProfile(null);
+      return;
+    }
+    let alive = true;
+    api
+      .listSyncProfiles()
+      .then((list) => {
+        if (alive) setSyncProfile(list.find((p) => p.ws_id === activeSpaceId) ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [desktop, custom, activeSpaceId]);
 
   const spaceName = spaces.find((s) => s.id === activeSpaceId)?.name ?? "";
   const pageTitle = pages.find((p) => p.id === currentId)?.title?.trim();
@@ -77,6 +98,21 @@ export function TitleBar() {
       <div className="titlebar-title" data-tauri-drag-region title={label}>
         {label}
       </div>
+      {/* 同步状态搬到顶栏：自绘标题栏腾出来的这条空间总得有用处，顺带让侧栏
+          少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。 */}
+      {syncProfile?.server_url && (
+        <div
+          className="titlebar-sync"
+          data-tauri-drag-region
+          title={`同步目标：${syncProfile.server_url}`}
+        >
+          <span
+            className="titlebar-sync-dot"
+            style={{ background: syncTagColor(syncProfile.server_url) }}
+          />
+          <span className="titlebar-sync-text">{syncTagLabel(syncProfile.server_url)}</span>
+        </div>
+      )}
       {/* 按钮区不带 drag-region：否则点击会被当作拖动窗口 */}
       <div className="titlebar-actions">
         <button className="titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void run("minimize")}>
