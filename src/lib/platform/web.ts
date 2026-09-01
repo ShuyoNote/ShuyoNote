@@ -1346,6 +1346,15 @@ function makeInvoke(store: SqliteStore) {
       const bytes = await blobStore.get(row.hash);
       return { id: row.id, name: row.name, hash: row.hash, mime: row.mime, size: row.size, path: bytes ? blobUrl(bytes, row.mime) : "" } as T;
     }
+    if (cmd === "read_attachment_bytes") {
+      // Desktop returns the decrypted Vec<u8> (JSON number[]); Web stores plaintext
+      // bytes in blobStore (no E1 encryption), so just read them back. filePreview
+      // uses this to read .md attachment content.
+      const hash = String(a.hash ?? "");
+      const bytes = await blobStore.get(hash);
+      if (!bytes) throw new Error("附件不存在");
+      return Array.from(bytes) as T;
+    }
     if (cmd === "list_page_attachments") {
       // File-manager lists attachments owned by a folder/page (by page_id). When
       // no folder is open, list all (root). Attachments with a deleted owner are
@@ -1457,6 +1466,26 @@ function makeInvoke(store: SqliteStore) {
       const bytes = await blobStore.get(row.hash);
       return { id, name: row.name, hash: row.hash, mime: row.mime, size: row.size, path: bytes ? blobUrl(bytes, row.mime) : "" } as T;
     }
+    // Low-level attachment byte ops are not exposed via api.ts; the Web platform
+    // reads/writes bytes through blobStore in save_image/get_attachment/
+    // read_attachment_bytes. Implement them for completeness so a future caller
+    // doesn't hit the unknown-command throw.
+    if (cmd === "write_attachment_bytes") {
+      const hash = String(a.hash ?? "");
+      const data = (a.data as number[]) ?? [];
+      const bytes = new Uint8Array(data);
+      const mime = String(a.mime || "application/octet-stream");
+      const name = String(a.name || "file");
+      await blobStore.put(hash, bytes);
+      const att = { id: uid(), name, hash, mime, size: data.length, path: blobUrl(bytes, mime) };
+      insertAttachmentRow(store, { id: att.id, page_id: null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
+      return att as T;
+    }
+    if (cmd === "list_attachment_hashes") {
+      const hashes: string[] = [];
+      for (const e of await blobStore.entries()) hashes.push(e.hash);
+      return hashes as T;
+    }
 
     // ---- PDF annotations (M24) — per (attachment, page) list, content-addressed key. ----
     if (cmd === "save_pdf_annotations") {
@@ -1523,6 +1552,11 @@ function makeInvoke(store: SqliteStore) {
         : await testOllamaConnection(baseUrl, model);
       return { ok: res.ok, message: res.message, models: res.models ?? [] } as T;
     }
+    // Desktop-only AI streaming (Web streams via pure fetch in llm.ts) and
+    // desktop-native PDF render (Web uses pdf.js): safe no-ops so a stray call
+    // doesn't hit the unknown-command throw.
+    if (cmd === "ai_complete_stream") return undefined as T;
+    if (cmd === "render_pdf_page") return undefined as T;
 
     // ---- Properties / attributes / database ----
     if (cmd === "list_attr_defs") {
@@ -1728,11 +1762,20 @@ function makeInvoke(store: SqliteStore) {
         },
       ] as T;
     }
+    // Template save/delete are no-ops on Web (the list is a built-in demo, not
+    // real SQLite-backed templates).
+    if (cmd === "save_as_template") return undefined as T;
+    if (cmd === "delete_template") return undefined as T;
 
     // ---- Plugins ----
     if (cmd === "list_plugins") return [] as T;
     if (cmd === "open_plugin_dir") return "" as T;
     if (cmd === "run_plugin_command") return { message: "", insert: null } as T;
+    // Plugin management is a no-op on Web (no disk plugin runtime): return safe
+    // defaults instead of throwing so the UI degrades gracefully.
+    if (cmd === "install_plugin") return undefined as T;
+    if (cmd === "set_plugin_enabled") return undefined as T;
+    if (cmd === "uninstall_plugin") return undefined as T;
 
     // ---- Sync ----
     if (cmd === "get_sync_config") return { server_url: "", token: "", space_id: "", device_id: "", last_pushed_seq: 0, last_pulled_seq: 0 } as T;
