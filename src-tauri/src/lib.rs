@@ -172,6 +172,19 @@ pub fn run() {
                 // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
                 // 与边缘 resize，万一某台机器手感不对得有退路。
                 .decorations(false)
+                // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
+                // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
+                // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
+                // 时前端临时开（见 titlebar::set_drag_drop_enabled）。
+                .drag_and_drop(false)
+                // 关键注释：Windows 上 dragDropEnabled 默认 true，此时
+                // data-tauri-drag-region 不生效（标题栏拖不动）。这里显式关掉，
+                // 文件视图挂载时前端临时打开（api.setDragDropEnabled(true)）。
+                // 关键：Windows 上必须 dragDropEnabled=false，data-tauri-drag-region
+                // 才生效（否则标题栏/PDF 头部都拖不动窗口——默认值 true 时 WebView
+                // 把鼠标当文件拖入处理）。代价是 OS 文件拖入上传失效，因此文件视图
+                // 挂载时会临时 setDragDropEnabled(true)，离开时再关（见 api.ts
+                // setDragDropEnabled）。
                 // Start hidden + brand-dark background: WebView2 cold-start shows a
                 // white window before the HTML/SW/splash paints. We tint the
                 // window to the splash's dark background and only reveal it once

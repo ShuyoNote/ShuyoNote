@@ -1055,7 +1055,9 @@ export function PdfReader() {
   return createPortal(
     <div className="pdf-reader-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeMode !== "off" ? ` eye-${eyeMode}` : ""}`}>
-        <div className="pdf-reader-head">
+        {/* 标题区整体可拖窗口（配合 dragDropEnabled=false）。按钮/控件不挂在
+            drag-region 上，否则点击会被当成拖窗口——与主窗口 TitleBar 一致。 */}
+        <div className="pdf-reader-head" data-tauri-drag-region>
           <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen} style={{ marginRight: 6 }}>
             {outlineOpen ? (
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -1063,7 +1065,7 @@ export function PdfReader() {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
             )}
           </button>
-          <span className="pdf-reader-name" title={name || "PDF"}>{name || "PDF"}</span>
+          <span className="pdf-reader-name" data-tauri-drag-region title={name || "PDF"}>{name || "PDF"}</span>
           <div className="pdf-reader-controls">
             <div className="pdf-reader-nav">
               <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() - 1)} disabled={pageAtViewport() <= 0} title="上一页">
