@@ -207,16 +207,25 @@ const MAX_PAGE_PX = 12_000_000;
 export async function exportPdfWithAnnotations(opts: ExportPdfOptions): Promise<Blob> {
   const doc = await PDFDocument.create();
   doc.setTitle("ShuyoNote — annotated copy");
+  // Pipeline: rasterize page i+1 while page i is being JPEG-embedded, so the
+  // render cost overlaps the embed cost (~2 pages of memory, faster wall-clock).
+  const prepage = (i: number): Promise<{ pw: number; ph: number; blob: Blob }> =>
+    (async () => {
+      const box = await opts.getPageBox(i);
+      const pw = Math.max(1, box.w || 1);
+      const ph = Math.max(1, box.h || 1);
+      const scale = Math.min(EXPORT_SCALE, Math.sqrt(MAX_PAGE_PX / (pw * ph)));
+      const pageBlob = await opts.renderPage(i, scale);
+      const { blob } = await composePageWithAnnotations(pageBlob, opts.getAnnotations(i));
+      return { pw, ph, blob };
+    })();
+
+  let pending = opts.pageCount > 0 ? prepage(0) : null;
   for (let i = 0; i < opts.pageCount; i++) {
     if (opts.signal?.aborted) throw new DOMException("aborted", "AbortError");
-    const box = await opts.getPageBox(i);
-    const pw = Math.max(1, box.w || 1);
-    const ph = Math.max(1, box.h || 1);
-    const scale = Math.min(EXPORT_SCALE, Math.sqrt(MAX_PAGE_PX / (pw * ph)));
-    const pageBlob = await opts.renderPage(i, scale);
-    const { blob } = await composePageWithAnnotations(pageBlob, opts.getAnnotations(i));
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    const img = await doc.embedJpg(bytes);
+    const { pw, ph, blob } = await pending!;
+    pending = i + 1 < opts.pageCount ? prepage(i + 1) : null;
+    const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()));
     const page = doc.addPage([pw, ph]);
     page.drawImage(img, { x: 0, y: 0, width: pw, height: ph });
     opts.onProgress?.(i + 1, opts.pageCount);
