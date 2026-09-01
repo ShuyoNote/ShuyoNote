@@ -238,6 +238,8 @@ pnpm tauri build   # 打包桌面安装包
 
 ## 🔄 多设备同步
 
+> ⚠️ **仅桌面版**。Web 版（浏览器）不支持多设备同步与团队版，跨设备交换请用备份 / 导出 zip。原因与「若要开启」的路线见 [Web 同步能力边界](docs/web-sync-boundary.md)。
+
 ### 1. 启动同步服务端
 
 shuyonote-sync-server 已在**独立仓库**（商业授权）：[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)。

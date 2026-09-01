@@ -12,6 +12,7 @@
 | **系统怎么搭起来的、分层与存储模型** | [系统架构](architecture.md) |
 | **身份 / 鉴权 / 加密模型（密钥 vs 账户、多空间、本地私密）** | [身份与隐私模型](identity-privacy-model.md) |
 | **身份 / 隐私落地节奏** | [身份与隐私子路线图](identity-privacy-roadmap.md) |
+| **Web 版为什么不能多设备同步** | [Web 同步能力边界](web-sync-boundary.md) |
 | 下一步做什么 | [路线图](roadmap.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
@@ -26,6 +27,7 @@ docs/
 ├── README.md            # 本文档：统一入口 / 导航 / 索引
 ├── development.md       # 开发指南：运行、测试、验证、提版规则
 ├── architecture.md      # 系统架构与存储模型
+├── web-sync-boundary.md # Web 版同步能力边界（为什么不支持多设备同步 + 若要做的路线）
 ├── identity-privacy-model.md # 身份/鉴权/加密模型（密钥 vs 账户、多空间、本地私密）
 ├── identity-privacy-roadmap.md # 身份/隐私落地子路线图
 ├── positioning.md       # 产品定位
@@ -42,6 +44,7 @@ CHANGELOG.md             # 版本变更日志
 | 文档 | 内容 |
 |---|---|
 | [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
+| [web-sync-boundary.md](web-sync-boundary.md) | **Web 同步能力边界**：Web 版为何不支持多设备同步的四层原因（服务端不挂 CORS / 同步引擎在 Rust / 存储模型不匹配 / 凭证信任边界）、用户可见表现与代码出处、桌面 vs Web 能力对照、若要开启的前置条件与 W1–W4 分阶段路线 |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |

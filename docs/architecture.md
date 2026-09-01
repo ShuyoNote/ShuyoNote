@@ -131,6 +131,8 @@ Rust 后端是桌面 driver 的业务核心，SQL 收口在 Rust 侧，前端零
 - **附件**：内容寻址增量；可选端到端加密（push 前加密、pull 后解密，服务端仅存密文）。
 - **定时**：客户端启动即同步，之后每 5 分钟周期同步；锁定会话时拒绝同步。
 
+> **仅桌面**：服务端不挂 CORS 层（浏览器发不出跨源请求），且推拉/附件引擎全在 `src-tauri/src/sync.rs`。Web driver 的同步命令是显式降级桩——原因与开启路线见 [Web 同步能力边界](web-sync-boundary.md)。
+
 ---
 
 ## 7. 数据一致性与安全边界
@@ -170,6 +172,7 @@ Rust 后端是桌面 driver 的业务核心，SQL 收口在 Rust 侧，前端零
 | 附件内容寻址文件系统，而非 BLOB | 大文件不撑爆库、去重、备份友好 | 需维护文件名 / 路径映射 |
 | 同步 outbox + 页级 LWW，而非 CRDT | 单用户多设备足够、行为可预测 | 同页并发编辑会覆盖（按需升级） |
 | Web 用 sql.js + IndexedDB + 快照隔离（而非 OPFS/wa-sqlite） | 可落地、可验证；多空间快照实现等价隔离 | 需整库快照（量级内可接受） |
+| Web 端不实现多设备同步（同步只在桌面） | 引擎在 Rust、浏览器存储模型不匹配、长期凭证放浏览器不安全 | Web 跨设备只能靠备份/导出 zip（详见 [web-sync-boundary.md](web-sync-boundary.md)） |
 
 ---
 
@@ -183,6 +186,9 @@ Rust 后端是桌面 driver 的业务核心，SQL 收口在 Rust 侧，前端零
 
 **Q：Web 版哪些命令是空实现？**
 平台边界类：加密 / 同步 / 插件（浏览器无对应原生能力），web 侧返回安全默认值（降级不崩）；其余核心 CRUD / 属性 / 数据库 / 版本 / 块引用 / 备份 / 搜索均真实 SQL。
+
+**Q：Web 版为什么不能多设备同步？**
+四层原因叠加：同步服务端刻意不挂 CORS 层（安全基线）、同步引擎（`do_push`/`do_pull`/`sync_attachments`）整套在 Rust 里、浏览器存储模型（sql.js 整库快照 + IndexedDB blob）与「增量 change_log + 内容寻址附件」协议不匹配、长期团队凭证放浏览器不安全。Web 端跨设备交换走**备份/导出 zip**。完整推理、代码出处与「若要开启」的分阶段路线见 [Web 同步能力边界](web-sync-boundary.md)。
 
 **Q：如何新增一个平台（如鸿蒙 ArkWeb / 安卓）？**
 实现 `src/lib/platform/` 接口的新 driver（复用 web.ts 或按平台补 JSBridge），`index.ts` 环境探测切换即可——业务与 UI 不动。

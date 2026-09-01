@@ -81,7 +81,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ### 5.1 发布管线（自动升级，可选）
 
-让「关于 → 检查更新 → 下载并安装」能拿到新版本，需要一次**签名发布**（详见 [自动升级方案](../plans/2026-08-27-auto-update-plan.md)）：
+让「关于 → 检查更新 → 下载并安装」能拿到新版本，需要一次**签名发布**（详见 [自动升级方案](plans/2026-08-27-auto-update-plan.md)）：
 
 1. **生成签名密钥**（一次）：`pnpm tauri signer generate -w ~/.tauri/shuyonote.key`（私钥**保密、不进 git**，用密码保护）。
 2. **配公钥**：把生成的**公钥**写进 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`（当前为占位符，需替换）。
@@ -117,6 +117,8 @@ rsync -av dist-web/ yourhost:webroot/shuyo/app/
 部署注意（`base:"./"` 已就绪，产物可放任意子路径）：
 - 服务器需把 `.mjs` 以 `application/javascript` 提供（否则 pdf worker 加载失败）。
 - 子路径 `/app/` 需把 `index.html` 作为 SPA fallback；`sw.js`/`manifest.webmanifest` 已用相对路径，无需改。
+- **`version.json` 必须一起部署**：Web 的「检查更新」读同源 `version.json`（`scripts/write-version-json.mjs` 在 `dev:web` 与 `build:web` 时写入 `public/` 与 `dist-web/`）。服务器要给它 `Cache-Control: no-store`——部署前访问过的 **404 会被浏览器启发式缓存**，之后即使文件已就位也会一直报「未部署」。同理 `index.html` / `sw.js` 用 `no-cache`，`assets/`（内容 hash）才可 `immutable` 长缓存。
+- **同步 / 团队版在 Web 上不可用**：`web.ts` 里是显式降级桩，不是配置项——原因与开启路线见 [Web 同步能力边界](web-sync-boundary.md)。
 - `dist-web/` 在 `.gitignore`，**不进仓库**（rsync/scp 直传；若改走 git pages 需另建承载仓库并把产物强制发布）。
 - 当前仓库**未配置固定 Web 线上入口**（gitcode pages 未建；代码注释目标为 `shuyo.cn/app/`）；`build:web` 仅产出可部署的 `dist-web/`，实际线上托管需提供主机/路径。
 

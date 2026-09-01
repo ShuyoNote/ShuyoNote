@@ -9,6 +9,8 @@
 > ✅ **现状（2026-09-01 落地）**：客户端核心已实现——`team_*` 命令（register/login/logout/list·create space/list·invite·set-role·remove member）+ `team_get_session` 经 Rust 代理（绕过 WebView2 CORS，服务端无 CORS 层）；`auth` store（`src/store/auth.ts`）镜像 meta.db 会话；SyncPanel 登录/注册/空间绑定/成员管理/登出 UI；`useAutoSync` 闸门判 profile；Web `version.json` 自动生成。
 > ⚠️ **本方案两处已过时**：①「token 存 `sync_state`」——现为 per-space `sync_profiles.token` + 全局会话（`auth_sessions` 建议后续）；②「无 token 回退无认证模式」——服务端 push/pull/附件已全 401，客户端保持「未绑定即不发请求」规避；实际单用户模式需与服务端另行约定。
 
+> 🖥 **仅桌面**：`team_*` 命令在 Web driver 上一律抛「Web 版不支持团队版，请用桌面版」。原因（服务端不挂 CORS / 引擎在 Rust / 浏览器存储与凭证边界）见 [Web 同步能力边界](../web-sync-boundary.md)。
+
 ---
 
 ## 1. 现状盘点（客户端可复用原语）
