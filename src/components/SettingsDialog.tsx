@@ -426,12 +426,12 @@ function AppearancePane() {
               </div>
             </div>
             <button
-              className={`set-toggle${customTitleBar ? " is-on" : ""}`}
+              className={`ui-toggle ${customTitleBar ? "on" : ""}`}
               role="switch"
               aria-checked={customTitleBar}
               onClick={() => setCustomTitleBar(!customTitleBar)}
             >
-              {customTitleBar ? "已开启" : "已关闭"}
+              <span className="ui-toggle-knob" />
             </button>
           </div>
           <div className="set-row">
@@ -443,12 +443,12 @@ function AppearancePane() {
               </div>
             </div>
             <button
-              className={`set-toggle${material ? " is-on" : ""}`}
+              className={`ui-toggle ${material ? "on" : ""}`}
               role="switch"
               aria-checked={material}
               onClick={() => setMaterial(!material)}
             >
-              {material ? "已开启" : "已关闭"}
+              <span className="ui-toggle-knob" />
             </button>
           </div>
           <p className="set-hint">两项切换均即时生效，无需重启。</p>
@@ -519,13 +519,13 @@ function PluginsPane() {
                 {/* 右上角 = 状态兼控制：一个开关，既显示启用/禁用，点击即切换。
                     不再单独保留状态点或底部大开关——一处表达就够了。 */}
                 <button
-                  className={`plugin-switch${p.enabled ? " is-on" : ""}`}
+                  className={`ui-toggle${p.enabled ? " on" : ""}`}
                   role="switch"
                   aria-checked={p.enabled}
                   title={p.enabled ? "点击禁用" : "点击启用"}
                   onClick={() => void toggle(p.id)}
                 >
-                  <span className="plugin-switch-knob" />
+                  <span className="ui-toggle-knob" />
                 </button>
               </div>
               <div className="plugin-name">{p.name}</div>

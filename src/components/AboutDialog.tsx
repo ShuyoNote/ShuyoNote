@@ -282,10 +282,10 @@ export function AboutDialog() {
               type="button"
               role="switch"
               aria-checked={allowExternal}
-              className={`ai-toggle ${allowExternal ? "on" : ""}`}
+              className={`ui-toggle ${allowExternal ? "on" : ""}`}
               onClick={() => toggleExternal(!allowExternal)}
             >
-              <span className="ai-toggle-knob" />
+              <span className="ui-toggle-knob" />
             </button>
           </div>
         </div>

@@ -9901,40 +9901,6 @@ p:has(> .editor-drawing-container) {
 .plugin-card.is-off .plugin-icon {
   filter: saturate(0.5);
 }
-/* 右上角 = 状态兼控制：小开关，点击切换启用/禁用。 */
-.plugin-switch {
-  width: 34px;
-  height: 20px;
-  flex: none;
-  position: relative;
-  border: none;
-  background: var(--hover-strong);
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-  padding: 0;
-}
-.plugin-switch.is-on {
-  background: var(--success);
-}
-.plugin-switch-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: var(--shadow-xs);
-  transition: transform var(--transition-fast);
-}
-.plugin-switch.is-on .plugin-switch-knob {
-  transform: translateX(14px);
-}
-.plugin-switch:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 .plugin-name {
   font-size: 14px;
   font-weight: 600;
@@ -9957,9 +9923,6 @@ p:has(> .editor-drawing-container) {
   font-size: 11px;
   color: var(--text-faint);
 }
-.plugin-card .set-toggle {
-  align-self: flex-start;
-}
 /* 无磁盘插件时的空态。 */
 .plugin-empty {
   padding: 18px;
@@ -9981,27 +9944,40 @@ p:has(> .editor-drawing-container) {
   .plugin-grid { grid-template-columns: 1fr; }
 }
 
-.set-toggle {
+/* 通用拨动开关：设置中心的启用项 / AI 设置 / 外链开关 / 插件卡统一用这一套，
+   避免三种开关（文字胶囊 / 大小拨动）并存。on=accent，off=灰，knob 平移。 */
+.ui-toggle {
+  position: relative;
   flex: none;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-full);
-  padding: 5px 12px;
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.set-toggle:hover {
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  border: none;
   background: var(--hover-strong);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast);
 }
-
-.set-toggle.is-on {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-  font-weight: 500;
+.ui-toggle.on {
+  background: var(--accent);
+}
+.ui-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ui-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--transition-fast);
+}
+.ui-toggle.on .ui-toggle-knob {
+  transform: translateX(16px);
 }
 
 /* 加密状态卡：三态（未开启 / 已锁定 / 已解锁）用底色 + 圆点区分。 */
@@ -12369,35 +12345,6 @@ p:has(> .editor-drawing-container) {
 .ai-settings-select:focus {
   border-color: var(--accent);
 }
-.ai-toggle {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  border-radius: 11px;
-  border: 1px solid var(--border);
-  background: var(--hover-strong);
-  cursor: pointer;
-  transition: background 0.15s ease;
-  padding: 0;
-  flex-shrink: 0;
-}
-.ai-toggle.on {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.ai-toggle-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.15s ease;
-}
-.ai-toggle.on .ai-toggle-knob {
-  transform: translateX(18px);
-}
 .ai-settings-actions {
   display: flex;
   justify-content: flex-end;
@@ -12751,7 +12698,7 @@ p:has(> .editor-drawing-container) {
   color: var(--danger, #e5484d);
   font-size: 13px;
 }
-/* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ai-toggle). */
+/* M25 P2 — "关于" dialog (reuses the shortcuts-overlay backdrop + ui-toggle). */
 .about {
   width: min(440px, 92vw);
   max-height: 84vh;

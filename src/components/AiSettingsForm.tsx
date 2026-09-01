@@ -97,10 +97,10 @@ export function AiSettingsForm({
           type="button"
           role="switch"
           aria-checked={enabled}
-          className={`ai-toggle ${enabled ? "on" : ""}`}
+          className={`ui-toggle ${enabled ? "on" : ""}`}
           onClick={() => setEnabled((v) => !v)}
         >
-          <span className="ai-toggle-knob" />
+          <span className="ui-toggle-knob" />
         </button>
       </label>
 
