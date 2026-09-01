@@ -299,9 +299,23 @@ fn get_profile(c: &Connection, ws_id: &str) -> Result<SyncProfile, String> {
     Ok(profile)
 }
 
+/// List the sync profiles of **live** workspaces only.
+///
+/// Workspaces are soft-deleted (`meta.workspaces.deleted_at`), and their profile
+/// row is deliberately kept (so a recovered workspace keeps its binding), but a
+/// deleted workspace must not show up in the sync panel as a bare UUID row, and
+/// must not be pushed/pulled by `sync_now`. So the join is the single filter for
+/// both call sites.
 fn list_profiles(c: &Connection) -> Result<Vec<SyncProfile>, String> {
     let mut stmt = c
-        .prepare(&format!("SELECT {PROFILE_COLS} FROM sync_profiles ORDER BY ws_id"))
+        .prepare(&format!(
+            "SELECT {PROFILE_COLS} FROM sync_profiles p
+             WHERE EXISTS (
+                 SELECT 1 FROM meta.workspaces w
+                 WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+             )
+             ORDER BY p.ws_id"
+        ))
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], row_to_profile)
@@ -1087,5 +1101,65 @@ fn ext_from_mime(mime: &str) -> &'static str {
         "image/svg+xml" => "svg",
         "application/pdf" => "pdf",
         _ => "bin",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 复刻生产布局：main 为空间库，meta 作为 ATTACH 库承载 workspaces/sync_profiles。
+    fn conn_with_meta() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch(
+            "CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, deleted_at INTEGER);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY,
+                 server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '',
+                 space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0,
+                 last_pulled_seq INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn list_profiles_skips_deleted_and_orphan_workspaces() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('live', NULL), ('gone', 1730000000000);
+             INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES
+                 ('live', 'http://a'), ('gone', 'http://b'), ('orphan', 'http://c');",
+        )
+        .unwrap();
+
+        let got = list_profiles(&c).unwrap();
+
+        // 软删除的空间（gone）与没有 workspaces 行的孤儿档案（orphan）都不出现，
+        // 面板不会再显示裸 UUID 行，sync_now 也不会去同步已删除的空间。
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].ws_id, "live");
+        assert_eq!(got[0].server_url, "http://a");
+    }
+
+    #[test]
+    fn list_profiles_keeps_row_after_workspace_restore() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', 1730000000000);
+             INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES ('ws', 'http://a');",
+        )
+        .unwrap();
+        assert!(list_profiles(&c).unwrap().is_empty());
+
+        // 档案行只是被「隐藏」而非删除：空间恢复后绑定原样回来。
+        c.execute_batch("UPDATE meta.workspaces SET deleted_at = NULL WHERE id = 'ws'").unwrap();
+        let got = list_profiles(&c).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].server_url, "http://a");
     }
 }

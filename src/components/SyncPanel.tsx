@@ -55,7 +55,12 @@ export function SyncPanel() {
     try {
       const profiles = await api.listSyncProfiles();
       const name = new Map(spaces.map((s) => [s.id, s.name]));
-      const allIds = new Set<string>([...spaces.map((s) => s.id), ...profiles.map((p) => p.ws_id)]);
+      // 已删除的工作空间不该在这里露出（否则只剩一行裸 UUID）。后端已按
+      // meta.workspaces 过滤，这里再挡一层：空间列表已加载时，只认识得出名字的
+      // 空间；列表尚未加载（首帧）时退回并集，避免面板空白。
+      const known = spaces.length > 0;
+      const profileIds = profiles.map((p) => p.ws_id).filter((id) => !known || name.has(id));
+      const allIds = new Set<string>([...spaces.map((s) => s.id), ...profileIds]);
       const byWs = new Map<string, SyncProfile>(profiles.map((p) => [p.ws_id, p]));
       setRows(
         Array.from(allIds).map((id) => {
