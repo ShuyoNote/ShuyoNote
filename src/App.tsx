@@ -42,6 +42,7 @@ import { useViewStore } from "./store/view";
 import { useFileManagerStore } from "./store/fileManager";
 import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
+import { platform } from "./lib/platform";
 import "./App.css";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
@@ -108,6 +109,20 @@ function NoteEditor({ pageId }: { pageId: string }) {
     setTitle(current?.title ?? "");
     setSaved(true);
   }, [pageId]);
+
+  // Web: surface persistence failures so the user knows recent changes may not
+  // be on disk (in-memory state is kept; we only make the failure visible).
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void platform.event
+      .listen<{ error: string }>("persist-error", () => {
+        toast("保存失败，更改可能未落盘", "error");
+      })
+      .then((u) => {
+        unlisten = u;
+      });
+    return () => unlisten?.();
+  }, []);
 
   const pendingSaveRef = useRef<{
     pageId: string;
