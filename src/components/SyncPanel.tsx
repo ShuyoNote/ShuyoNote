@@ -3,6 +3,7 @@ import { usePopover } from "../hooks/usePopover";
 import { api, type SyncProfile } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { useSpaceStore } from "../store/space";
+import { useAuth } from "../store/auth";
 import { useNotes } from "../store/notes";
 import { SyncIcon } from "./icons";
 
@@ -143,6 +144,7 @@ export function SyncPanel() {
       setRows((rs) =>
         rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token, loginPassword: "", remoteSpaces: list } : x)),
       );
+      useAuth.getState().setSession(base, token);
       setStatus(`登录成功「${r.name}」，绑定 ${list.length} 个空间`);
     } catch (e) {
       setStatus(`登录失败：${e}`);
@@ -215,6 +217,7 @@ export function SyncPanel() {
       setRows((rs) =>
         rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token: "", space_id: "", remoteSpaces: [], members: [], memberOpen: false } : x)),
       );
+      useAuth.getState().clear();
       setStatus("已登出");
     } catch (e) {
       setStatus(`登出失败：${e}`);

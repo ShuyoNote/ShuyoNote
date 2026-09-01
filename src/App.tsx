@@ -43,6 +43,7 @@ import { useFileManagerStore } from "./store/fileManager";
 import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
+import { useAuth } from "./store/auth";
 import "./App.css";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
@@ -122,6 +123,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
         unlisten = u;
       });
     return () => unlisten?.();
+  }, []);
+
+  // Restore the team-edition login state on startup (from meta.db session).
+  useEffect(() => {
+    void useAuth.getState().init();
   }, []);
 
   const pendingSaveRef = useRef<{
