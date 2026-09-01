@@ -136,8 +136,15 @@ pub async fn export_backup(
             if name.ends_with(".db") {
                 let id = name.trim_end_matches(".db").to_string();
                 let out = tmp_root.join("spaces").join(&name);
-                let conn = rusqlite::Connection::open(crate::db::space_db_path(&app_data_dir, &id))
-                    .map_err(|e| e.to_string())?;
+                let path = crate::db::space_db_path(&app_data_dir, &id);
+                let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
+                // E1: key the connection if this space's DB is SQLCipher-encrypted.
+                // An encrypted space can't be read without the session key, so skip
+                // it (with a log) rather than writing a corrupt/empty snapshot.
+                if let Err(e) = crate::security::key_space_conn(&conn, &path) {
+                    eprintln!("备份跳过加密空间 {id}: {e}");
+                    continue;
+                }
                 backup_db(&conn, &out)?;
                 space_snapshots.push((id, out));
             }
@@ -417,6 +424,11 @@ pub async fn import_backup(
     for (snap, orig_id) in &space_snaps {
         let (name, theme, icon) = {
             let c = rusqlite::Connection::open(snap).map_err(|e| e.to_string())?;
+            // E1: key the snapshot if it's an encrypted space DB — restoring an
+            // encrypted space requires an unlocked session with the matching key.
+            if let Err(e) = crate::security::key_space_conn(&c, snap) {
+                return Err(format!("恢复加密空间 {orig_id} 需要先解锁: {e}"));
+            }
             read_workspace_meta(&c)?
         };
         let target_id = if space_exists(&spaces_dir, &meta_file, orig_id)? {
@@ -429,6 +441,9 @@ pub async fn import_backup(
         std::fs::copy(snap, &target).map_err(|e| e.to_string())?;
         {
             let c = rusqlite::Connection::open(&target).map_err(|e| e.to_string())?;
+            if let Err(e) = crate::security::key_space_conn(&c, &target) {
+                return Err(format!("恢复加密空间失败: {e}"));
+            }
             rekey_workspace(&c, &target_id, &name, &theme, &icon)?;
         }
         register_space(&meta_file, &target_id, &name, &theme, &icon)?;

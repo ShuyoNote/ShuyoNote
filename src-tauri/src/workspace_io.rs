@@ -267,6 +267,20 @@ pub async fn import_workspace(
     std::fs::create_dir_all(spaces_dir).map_err(|e| e.to_string())?;
     std::fs::copy(&db_snapshot, &target_db).map_err(|e| e.to_string())?;
 
+    // E1: when at-rest encryption is on and the session is unlocked, encrypt the
+    // imported plaintext DB so it matches every other space. Record the state so
+    // the meta row below is marked consistently.
+    let encrypted = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        match crate::security::key_if_enabled(&c) {
+            Some(k) => {
+                crate::security::convert_space_db(&target_db, true, Some(&k))?;
+                true
+            }
+            None => false,
+        }
+    };
+
     // Copy referenced attachment bytes into the global store (content-addressed,
     // skip bytes already present).
     let att_src = att_src_dir.map(|d| tmp_dir.join(d));
@@ -298,9 +312,9 @@ pub async fn import_workspace(
     {
         let c = db.0.lock().expect("db mutex poisoned");
         c.execute(
-            "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![new_id, import_name, theme, icon, sort_order, now, now],
+            "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![new_id, import_name, theme, icon, sort_order, now, now, if encrypted { 1 } else { 0 }],
         )
         .map_err(|e| e.to_string())?;
     }
