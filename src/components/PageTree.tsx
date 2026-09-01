@@ -20,9 +20,6 @@ import { SearchSidebar } from "./SearchSidebar";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { SyncPanel } from "./SyncPanel";
-import { TrashPanel } from "./TrashPanel";
-import { BackupButton } from "./BackupButton";
-import { StoragePanel } from "./StoragePanel";
 import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
@@ -1109,14 +1106,9 @@ export function PageTree(_props: {
           <BatchToolbar pages={pages} />
         </div>
       )}
-      {/* 侧栏底部只留与「当前空间的数据」相关的低频入口：回收站 / 备份 / 存储。
-          全局导航与全局工具（模板 / 设置 / 关于 / 视图切换）已收编进左侧竖条
-          <ActivityBar />，AI 归右侧 RightRail——同一件事只有一个入口。 */}
-      <div className="sidebar-bottom">
-        <TrashPanel />
-        <BackupButton />
-        <StoragePanel />
-      </div>
+      {/* 侧栏底部栏已整条移除：回收站归左侧竖条（看内容=导航），
+          备份与存储清理归设置中心「数据」页（低频 + 不可逆）。
+          页面树因此占满整个侧栏高度。 */}
 
       {/* 空间导出/导入进度条已随迁移逻辑一起移出侧栏，由 App 级
           <SpaceTransferProgress /> 订阅 useSpaceTransfer 统一渲染 —— 这样

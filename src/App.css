@@ -269,6 +269,27 @@ body,
   background: var(--danger);
   box-shadow: 0 0 0 2px var(--bg-sidebar);
 }
+/* 回收站沿用自己的 .btn-trash 触发器，在竖条里按 activity-btn 的尺寸对齐。 */
+.activity-bar .trash-panel {
+  display: flex;
+}
+.activity-bar .btn-trash {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 15px;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.activity-bar .btn-trash:hover {
+  color: var(--text);
+  background: var(--hover);
+}
 
 /* 侧栏内嵌搜索面板（activity = search）。 */
 .search-side {

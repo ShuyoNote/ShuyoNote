@@ -4,6 +4,8 @@ import { useEditorStore, type SettingsTab } from "../store/editor";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision } from "../plugins/registry";
 import { AiSettingsForm } from "./AiSettingsForm";
+import { BackupButton } from "./BackupButton";
+import { StoragePanel } from "./StoragePanel";
 import { api } from "../lib/api";
 import type { SyncProfile } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
@@ -25,11 +27,49 @@ const TABS: { id: SettingsTab; label: string; hint: string }[] = [
   { id: "appearance", label: "外观", hint: "主题与强调色" },
   { id: "spaces", label: "空间", hint: "配色 / 删除 / 迁移" },
   { id: "account", label: "账户", hint: "登录身份与同步目标" },
+  { id: "data", label: "数据", hint: "备份 / 存储与清理" },
   { id: "plugins", label: "插件", hint: "启用/禁用扩展" },
   { id: "security", label: "安全", hint: "端到端加密与锁定" },
   { id: "ai", label: "AI", hint: "服务商与模型" },
   { id: "about", label: "关于与更新", hint: "版本与许可" },
 ];
+
+// 「数据」页：全库备份/恢复与存储清理——低频、全局、不可逆，按判据归设置。
+// 两个组件都用 `label` 变体渲染成带文字的按钮，实现与侧栏时期完全共用。
+function DataPane() {
+  return (
+    <>
+      <section className="set-section">
+        <div className="set-section-title">完整备份</div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">备份 / 恢复（全库）</div>
+            <div className="set-row-sub">
+              导出所有空间与附件为一个包；导入为**合并**，不会覆盖现有空间。
+            </div>
+          </div>
+          <BackupButton label="备份 / 恢复…" />
+        </div>
+        <p className="set-hint">
+          单个空间的导出/导入在「空间」页；这里是整机全库级别的备份。
+        </p>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">存储与清理</div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">存储 / 空间管理</div>
+            <div className="set-row-sub">
+              查看数据库 / 附件 / 回收站 / 版本历史的占用构成，并回收可释放空间
+            </div>
+          </div>
+          <StoragePanel label="打开…" />
+        </div>
+      </section>
+    </>
+  );
+}
 
 // 空间配色候选（与侧栏空间弹层同一组色值）。
 const SPACE_ACCENTS = [
@@ -637,6 +677,7 @@ export function SettingsDialog() {
             {tab === "appearance" && <AppearancePane />}
             {tab === "spaces" && <SpacesPane />}
             {tab === "account" && <AccountPane />}
+            {tab === "data" && <DataPane />}
             {tab === "plugins" && <PluginsPane />}
             {tab === "security" && <SecurityPane />}
             {tab === "ai" && (

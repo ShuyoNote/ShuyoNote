@@ -36,7 +36,8 @@ interface Segment {
 }
 
 // Storage / space management: show where disk is used and run safe cleanups.
-export function StoragePanel() {
+// `label` 同 BackupButton：空=侧栏小图标；有值=设置中心「数据」页的文字按钮。
+export function StoragePanel({ label }: { label?: string } = {}) {
   const [open, setOpen] = useState(false);
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [busy, setBusy] = useState(false);
@@ -128,8 +129,13 @@ export function StoragePanel() {
 
   return (
     <>
-      <button className="btn-backup" title="存储 / 空间管理" aria-label="存储 / 空间管理" onClick={() => setOpen((v) => !v)}>
-        <DatabaseIcon width={15} height={15} />
+      <button
+        className={label ? "set-btn" : "btn-backup"}
+        title="存储 / 空间管理"
+        aria-label="存储 / 空间管理"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label ?? <DatabaseIcon width={15} height={15} />}
       </button>
       {open &&
         createPortal(

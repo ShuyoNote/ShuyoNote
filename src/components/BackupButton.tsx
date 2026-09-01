@@ -16,7 +16,9 @@ type BackupProgress = {
   message: string;
 };
 
-export function BackupButton() {
+// `label` 为空时渲染成侧栏那种小图标按钮；给了 label 就渲染成带文字的按钮，
+// 供设置中心「数据」页使用——同一份备份/恢复逻辑，两种外壳，不复制实现。
+export function BackupButton({ label }: { label?: string } = {}) {
   const { loadPages } = useNotes();
   const { open: openMenu, pos, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
   const [busy, setBusy] = useState(false);
@@ -111,12 +113,12 @@ export function BackupButton() {
     <div className="backup-menu">
       <button
         ref={triggerRef}
-        className="btn-backup"
+        className={label ? "set-btn" : "btn-backup"}
         onClick={toggle}
         title="备份 / 恢复"
         disabled={busy}
       >
-        <DownloadIcon />
+        {label ?? <DownloadIcon />}
       </button>
       {openMenu && (
         <div ref={contentRef} className="backup-dropdown" style={{ top: pos.top, left: pos.left }}>

@@ -3,6 +3,7 @@ import { useActivity, type Activity } from "../store/activity";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useTemplateCenterStore } from "../store/templateCenter";
+import { TrashPanel } from "./TrashPanel";
 import {
   PageIcon,
   SearchIcon,
@@ -81,6 +82,9 @@ export function ActivityBar() {
       </div>
 
       <div className="activity-group activity-group-end">
+        {/* 回收站是「看已删除的内容」——本质是导航，不是设置，所以归竖条；
+            备份与存储清理是低频且不可逆的全局操作，已归设置中心「数据」页。 */}
+        <TrashPanel />
         <button
           className="activity-btn"
           title="模板中心"

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { LexicalEditor } from "lexical";
 
 /** 设置中心的标签页 id（单一来源，SettingsDialog 与命令面板共用）。 */
-export type SettingsTab = "appearance" | "spaces" | "account" | "plugins" | "security" | "ai" | "about";
+export type SettingsTab = "appearance" | "spaces" | "account" | "data" | "plugins" | "security" | "ai" | "about";
 
 // Holds the active LexicalEditor instance so components outside the editor
 // tree (e.g. the top toolbar) can run editor commands, plus a pending
