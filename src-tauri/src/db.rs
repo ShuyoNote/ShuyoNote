@@ -287,6 +287,14 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             last_pushed_seq INTEGER NOT NULL DEFAULT 0,
             last_pulled_seq INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            server_url    TEXT PRIMARY KEY,
+            email         TEXT NOT NULL DEFAULT '',
+            user_id       TEXT NOT NULL DEFAULT '',
+            token         TEXT NOT NULL DEFAULT '',
+            created_at    INTEGER NOT NULL DEFAULT 0,
+            expires_at    INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS templates (
             id            TEXT PRIMARY KEY,
             name          TEXT NOT NULL,

@@ -55,6 +55,33 @@ pub fn set_meta_state(c: &Connection, key: &str, value: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Store/refresh a per-server team session in `meta.auth_sessions`. Used by login/
+/// register; token TTL is 30 days (server expires_at drives the real expiry).
+fn set_auth_session(c: &Connection, server_url: &str, email: &str, token: &str) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    c.execute(
+        "INSERT INTO auth_sessions (server_url, email, user_id, token, created_at, expires_at)
+         VALUES (?1, ?2, '', ?3, ?4, ?4 + 2592000000)
+         ON CONFLICT(server_url) DO UPDATE SET email=excluded.email, token=excluded.token, created_at=excluded.created_at, expires_at=excluded.expires_at",
+        params![server_url, email, token, now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Best-effort read of a per-server session token (`meta.auth_sessions`).
+fn get_auth_token(c: &Connection, server_url: &str) -> Option<String> {
+    c.query_row(
+        "SELECT token FROM auth_sessions WHERE server_url = ?1",
+        params![server_url],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
 pub fn device_id(c: &Connection) -> Result<String, String> {
     get_meta_state(c, KEY_DEVICE_ID).ok_or_else(|| "设备 ID 未初始化".to_string())
 }
@@ -391,6 +418,7 @@ pub async fn team_register(
     let c = db.0.lock().expect("db mutex poisoned");
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, &token)?;
+    set_auth_session(&c, &url, &email, &token)?;
     Ok(TeamAuthResult { token })
 }
 
@@ -421,6 +449,7 @@ pub async fn team_login(
     let c = db.0.lock().expect("db mutex poisoned");
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, &token)?;
+    set_auth_session(&c, &url, &email, &token)?;
     Ok(TeamAuthResult { token })
 }
 
@@ -443,6 +472,7 @@ pub async fn team_logout(db: State<'_, Db>, server_url: String) -> Result<(), St
     {
         let c = db.0.lock().expect("db mutex poisoned");
         set_meta_state(&c, KEY_TOKEN, "")?;
+        let _ = c.execute("DELETE FROM auth_sessions WHERE server_url = ?1", params![url]);
     }
     Ok(())
 }
@@ -662,8 +692,9 @@ async fn do_push(
     let mut req = client
         .post(format!("{}/push", profile.server_url))
         .json(&PushRequest { device_id, space_id: profile.space_id.clone(), changes });
-    if !profile.token.is_empty() {
-        req = req.bearer_auth(&profile.token);
+    let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
+    if !token.is_empty() {
+        req = req.bearer_auth(&token);
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -714,8 +745,9 @@ async fn do_pull(
         url.push_str(&format!("&space_id={}", profile.space_id));
     }
     let mut req = client.get(&url);
-    if !profile.token.is_empty() {
-        req = req.bearer_auth(&profile.token);
+    let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
+    if !token.is_empty() {
+        req = req.bearer_auth(&token);
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -872,8 +904,9 @@ async fn sync_attachments(
 
     // 1. List remote hashes.
     let mut req = client.get(format!("{att_base}/attachments"));
-    if !profile.token.is_empty() {
-        req = req.bearer_auth(&profile.token);
+    let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
+    if !token.is_empty() {
+        req = req.bearer_auth(&token);
     }
     let remote: RemoteAttachmentList = req
         .send()
