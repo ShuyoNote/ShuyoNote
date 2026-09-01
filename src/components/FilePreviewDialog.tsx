@@ -3,7 +3,7 @@
 // video / audio / pdf render their asset. A markdown file also gets a "转为笔记"
 // action. Shared so any view can open it. Rendered inside `.app` (not body) so it
 // inherits the sidebar-width CSS var and never overlaps the sidebar.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { platform } from "../lib/platform";
 import { useFilePreview } from "../store/filePreview";
@@ -19,7 +19,7 @@ interface MdOutlineItem {
   level: number;
   idx: number;
 }
-function collectOutline(root: HTMLElement): MdOutlineItem[] {
+function collectOutline(root: Element): MdOutlineItem[] {
   const out: MdOutlineItem[] = [];
   const heads = root.querySelectorAll("h1,h2,h3,h4,h5,h6");
   heads.forEach((el) => {
@@ -32,7 +32,6 @@ function collectOutline(root: HTMLElement): MdOutlineItem[] {
 
 export function FilePreviewDialog() {
   const { target, mdHtml, mdLoading, mdImporting, close, importAsPage } = useFilePreview();
-  const mdRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme(); // re-render mermaid when theme changes
   const [outline, setOutline] = useState<MdOutlineItem[]>([]);
@@ -52,35 +51,34 @@ export function FilePreviewDialog() {
   // Hydrate ```mermaid fenced blocks whenever their HTML (or the theme) changes.
   useEffect(() => {
     if (isMd && mdHtml && !mdLoading) {
-      void hydrateMermaidBlocks(mdRef.current, theme === "dark" ? "dark" : "default");
+      const root = (bodyRef.current?.querySelector(".fm-md-preview") as HTMLElement | null) ?? null;
+      void hydrateMermaidBlocks(root, theme === "dark" ? "dark" : "default");
     }
   }, [mdHtml, mdLoading, isMd, theme]);
 
-  // 每次 HTML 变化后收集提纲。用 useLayoutEffect 确保 dangerouslySetInnerHTML
-  // 已写入 DOM；再补一帧让 mermaid 等异步结构稳定。收集后滚动回顶部，避免
-  // 「看不到头」。
-  useLayoutEffect(() => {
+  // 收集提纲：mdHtml 到位后从 bodyRef 容器里查标题。放到 useEffect（commit 后、
+  // DOM 已写入），再补一帧让 mermaid 等异步结构稳定，避免「目录空」。
+  useEffect(() => {
     if (!isMd || !mdHtml || mdLoading) return;
     const collect = () => {
-      if (mdRef.current) {
-        setOutline(collectOutline(mdRef.current));
+      const root = bodyRef.current?.querySelector(".fm-md-preview");
+      if (root) {
+        setOutline(collectOutline(root));
         setActiveOut(null);
       }
     };
     collect();
-    // 部分渲染（如 mermaid）在下一帧才完成，补一次以确保标题齐全。
     const raf = requestAnimationFrame(collect);
     return () => cancelAnimationFrame(raf);
   }, [isMd, mdHtml, mdLoading]);
 
-  // 内容区滚动回到顶部（开新文件或重新渲染时）。
-  useLayoutEffect(() => {
-    if (!isMd) return;
-    if (bodyRef.current) bodyRef.current.scrollTop = 0;
-  }, [isMd, target?.id]);
+  // 内容区滚动回顶部，避免「看不到头」。
+  useEffect(() => {
+    if (isMd && bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, [isMd, target?.id, mdHtml]);
 
   const scrollToOutline = (item: MdOutlineItem) => {
-    const root = mdRef.current;
+    const root = bodyRef.current?.querySelector(".fm-md-preview");
     if (!root) return;
     const heads = root.querySelectorAll("h1,h2,h3,h4,h5,h6");
     const el = heads[item.idx];
@@ -149,7 +147,7 @@ export function FilePreviewDialog() {
             ) : mdHtml ? (
               <div className="fm-md-wrap">
                 <div className="fm-md-body" ref={bodyRef}>
-                  <div className="fm-md-preview" ref={mdRef} dangerouslySetInnerHTML={{ __html: mdHtml }} />
+                  <div className="fm-md-preview" dangerouslySetInnerHTML={{ __html: mdHtml }} />
                 </div>
                 {outlineOpen && outline.length > 0 && (
                   <div className="fm-md-outline">
