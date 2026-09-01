@@ -4,6 +4,7 @@ import {
   annotationMode,
   denormCoords,
   normCoords,
+  pageToBlock,
   parsePdfRef,
   pdfRef,
   removeAnnotation,
@@ -95,5 +96,25 @@ describe("annotationMode", () => {
   it("text layer enables text mode; otherwise rect", () => {
     expect(annotationMode(true)).toBe("text");
     expect(annotationMode(false)).toBe("rect");
+  });
+});
+
+describe("pageToBlock", () => {
+  it("builds an excerpt block with a pdf:// back-ref", () => {
+    const b = pageToBlock({ text: "某段摘录" }, "att-1", 3);
+    expect(b.ref).toBe("pdf://att-1#3");
+    // content_text carries both the label and the ref for search
+    expect(b.content_text).toContain("摘录");
+    expect(b.content_text).toContain("pdf://att-1#3");
+    // content_json embeds a pdfref node with the attachmentId/pageIndex
+    const root = JSON.parse(b.content_json).root;
+    const pdfref = root.children[0].children.find((c: { type: string }) => c.type === "pdfref");
+    expect(pdfref).toMatchObject({ attachmentId: "att-1", pageIndex: 3, text: "pdf://att-1#3" });
+  });
+
+  it("still emits the label without excerpt text when blank", () => {
+    const b = pageToBlock({ text: "  " }, "att-2", 0);
+    // label is always "摘录"; blank excerpt just drops the trailing text
+    expect(b.content_text).toBe("摘录 pdf://att-2#0");
   });
 });
