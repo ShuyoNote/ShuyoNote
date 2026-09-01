@@ -20,8 +20,31 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
+const TAG = "v" + version;
 const DRY = process.argv.includes("--dry-run");
 const NO_BUILD = process.argv.includes("--no-build");
+
+// ---- 前置：git tag vX.Y.Z 必须已存在并推到远程 ----
+// gitcode 的 release 创建 API 用 tag_name 定位 tag；tag 不存在会「静默失败」
+// （release 未建、latest.json 不更新，客户端就查不到更新——曾实际踩坑）。
+// 这里在发布前尽早拦住，而不是等发布后才发现查不到更新。
+try {
+  execSync(`git rev-parse --verify --quiet refs/tags/${TAG}`, { stdio: "ignore" });
+} catch {
+  console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} 再发布。`);
+  process.exit(1);
+}
+try {
+  const remote = execSync(`git ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
+  if (!remote) {
+    console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} 再发布。`);
+    process.exit(1);
+  }
+} catch {
+  console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} 再发布。`);
+  process.exit(1);
+}
+
 
 // ---- 前置：签名私钥 + 公钥 ----
 const key = process.env.TAURI_SIGNING_PRIVATE_KEY;
@@ -102,7 +125,6 @@ if (DRY) {
   console.log(`  平台：${Object.keys(platforms).join(", ")}`);
   process.exit(0);
 }
-const TAG = "v" + version;
 async function uploadFile(releaseTag, name, path) {
   const up = await apiFetch("GET", `${API}/releases/${releaseTag}/upload_url?file_name=${encodeURIComponent(name)}`);
   const r = await fetch(up.url, { method: "PUT", headers: up.headers ?? {}, body: readFileSync(path) });
