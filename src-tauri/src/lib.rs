@@ -19,6 +19,7 @@ mod storage;
 mod sync;
 mod tags;
 mod templates;
+mod titlebar;
 mod trash;
 mod versions;
 mod windows;
@@ -294,6 +295,7 @@ pub fn run() {
             storage::cleanup_temp_files,
             storage::purge_deleted_workspaces,
             windows::open_page_window,
+            titlebar::set_titlebar_theme,
             plugins::list_plugins,
             plugins::set_plugin_enabled,
             plugins::run_plugin_command,

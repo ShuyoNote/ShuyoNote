@@ -229,6 +229,8 @@ export interface CommandMap {
   write_binary_file: { args: { path: string; data: number[] }; result: void };
   read_text_file: { args: { path: string }; result: string };
   open_page_window: { args: { pageId: string }; result: void };
+  /** 系统标题栏染色（仅 Windows 生效；caption/text 为 #RRGGBB 或 null）。 */
+  set_titlebar_theme: { args: { dark: boolean; caption: string | null; text: string | null }; result: void };
   request_persistent_storage: { args: undefined; result: { persisted: boolean; persistedBefore: boolean; quota: number; usage: number; supported: boolean } };
 
   // ---- AI proxy ----

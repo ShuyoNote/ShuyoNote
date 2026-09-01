@@ -52,6 +52,26 @@ function applyTheme(theme: Theme) {
   root.setAttribute("data-theme", resolved);
   const accent = (localStorage.getItem(ACCENT_KEY) as AccentId) || "blue";
   applyAccent(accent, resolved);
+  syncTitleBar(resolved === "dark");
+}
+
+// 桌面版：让 Windows 的系统标题栏跟随应用主题——否则暗色主题下顶着一条白条。
+// 取 CSS 变量 --bg-sidebar / --text 作为标题栏底色与文字色，这样标题栏与侧栏
+// 是同一个颜色，视觉上连成一体（Win11 22H2+ 生效，旧版自动降级为「深色标题栏」）。
+// Web 版没有标题栏概念，`platform` 的 web driver 里是空实现。
+function syncTitleBar(dark: boolean) {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+  const css = getComputedStyle(document.documentElement);
+  const pick = (name: string) => css.getPropertyValue(name).trim();
+  // 只有 #RRGGBB 能转成 Win32 COLORREF；其它写法交给系统默认。
+  const hex = (v: string) => (/^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
+  void import("../lib/api")
+    .then(({ api }) =>
+      api.setTitlebarTheme(dark, hex(pick("--bg-sidebar")), hex(pick("--text"))),
+    )
+    .catch(() => {
+      /* 染色失败不影响使用（旧系统 / 非 Windows） */
+    });
 }
 
 interface ThemeState {
