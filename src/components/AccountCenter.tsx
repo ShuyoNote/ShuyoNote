@@ -3,6 +3,7 @@ import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useNotes } from "../store/notes";
+import { useAuth } from "../store/auth";
 import { PersonIcon } from "./icons";
 
 // U4 — 账户中心(看板,非「当前账号」全局态):按服务器分组列出所有同步身份
@@ -38,6 +39,20 @@ export function AccountCenter() {
   const [groups, setGroups] = useState<AcctGroup[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const { authed, serverUrl, clear } = useAuth();
+
+  const logoutCurrent = async () => {
+    if (!serverUrl) return;
+    setStatus("");
+    try {
+      await api.teamLogout(serverUrl);
+      clear();
+      setStatus("已登出当前账号");
+      await refresh();
+    } catch (e) {
+      setStatus(`登出失败：${e}`);
+    }
+  };
 
   const refresh = async () => {
     try {
@@ -109,6 +124,14 @@ export function AccountCenter() {
       {open && (
         <div ref={contentRef} className="sync-popover" style={{ top: pos.top, left: pos.left }}>
           <div className="sync-title">账户中心</div>
+          {authed ? (
+            <div className="acct-current">
+              <span className="acct-current-label">当前团队账号：{hostOf(serverUrl)}</span>
+              <button className="acct-logout" onClick={() => void logoutCurrent()}>登出</button>
+            </div>
+          ) : (
+            <div className="acct-current acct-current-empty">未登录团队账号</div>
+          )}
           {groups.length === 0 ? (
             <div className="sync-empty">
               尚无同步身份。在各空间的「同步」里配置服务器与登录后,会**按服务器**在此分组显示。
