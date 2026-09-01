@@ -10750,23 +10750,27 @@ p:has(> .editor-drawing-container) {
   color: #fff;
   box-shadow: 0 2px 8px rgba(51, 112, 255, 0.3);
 }
-/* 「目录」切换：独立于主按钮的幽灵样式，on 时加底色，可反复开关。 */
-.fm-outline-toggle {
+/* 「目录」「适配宽」切换：独立于主按钮的幽灵样式，on 时加底色，可反复开关。 */
+.fm-outline-toggle,
+.fm-width-toggle {
   border-color: var(--border);
   background: transparent;
   color: var(--text-dim);
 }
-.fm-outline-toggle:hover {
+.fm-outline-toggle:hover,
+.fm-width-toggle:hover {
   background: var(--hover);
   color: var(--text);
   box-shadow: none;
 }
-.fm-outline-toggle.is-on {
+.fm-outline-toggle.is-on,
+.fm-width-toggle.is-on {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent);
 }
-.fm-outline-toggle.is-on:hover {
+.fm-outline-toggle.is-on:hover,
+.fm-width-toggle.is-on:hover {
   background: color-mix(in srgb, var(--accent-soft) 85%, var(--hover));
   color: var(--accent);
   box-shadow: none;
@@ -10821,7 +10825,8 @@ p:has(> .editor-drawing-container) {
 }
 /* ------------------------- 文件预览 · Markdown 阅读版式 -------------------------
    布局与主编辑器页面一致：内容列宽 = --doc-width、居中、内部全部左对齐。
-   右侧可开一个大纲侧栏（列出 h1–h6，点击滚动定位），长文档可快速跳转。 */
+   右侧可开一个大纲侧栏（列出 h1–h6，点击滚动定位），长文档可快速跳转。
+   支持「适配窗口宽度」：默认 --doc-width 文档宽，切到 is-full 时随窗口撑满。 */
 .fm-md-preview {
   /* 内容列（--doc-width）在可用区内水平居中，左右留白均衡，与主编辑器页面一致。
      用 block + margin:auto 居中，避免受 flex justify 影响。 */
@@ -10836,6 +10841,11 @@ p:has(> .editor-drawing-container) {
   line-height: 1.7;
   padding: 32px var(--doc-pad) 80px;
   user-select: text;
+}
+/* 「适配窗口宽度」：不再限 --doc-width，随内容区宽度自适应（仍留舒适左右
+   内边距，避免贴边）。 */
+.fm-md-preview.is-full {
+  max-width: none;
 }
 .fm-md-preview > *:first-child { margin-top: 0; }
 
@@ -10869,10 +10879,31 @@ p:has(> .editor-drawing-container) {
 .fm-md-outline {
   flex: none;
   width: 220px;
+  min-width: 160px;
+  max-width: 480px;
   border-left: 1px solid var(--border);
-  overflow: auto;
+  overflow: hidden;
   padding: 16px 10px;
   background: var(--bg);
+  position: relative;
+}
+.fm-md-outline-inner {
+  overflow: auto;
+  height: 100%;
+}
+/* 拖拽手柄：目录栏左缘一条可抓区域，拖动改宽。 */
+.fm-md-outline-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.fm-md-outline-resizer:hover,
+.fm-md-outline-resizer.is-dragging {
+  background: var(--accent-soft);
 }
 .fm-md-outline-title {
   font-size: 12px;

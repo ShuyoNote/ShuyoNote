@@ -37,6 +37,13 @@ export function FilePreviewDialog() {
   const [outline, setOutline] = useState<MdOutlineItem[]>([]);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [activeOut, setActiveOut] = useState<number | null>(null);
+  // 目录栏宽度（可拖拽调节）。
+  const [outlineW, setOutlineW] = useState(220);
+  const outlineWRef = useRef(outlineW);
+  outlineWRef.current = outlineW;
+  // 内容是否适配窗口宽度（相对 --doc-width 文档宽）。
+  const [contentFull, setContentFull] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
   const folderId = useFileManagerStore.getState().folderId;
@@ -86,6 +93,25 @@ export function FilePreviewDialog() {
     setActiveOut(item.idx);
   };
 
+  // 拖拽目录栏手柄改宽：记录起点 x 与初始宽，pointermove 里按差值更新。
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = outlineWRef.current;
+    setDragging(true);
+    const onMove = (ev: PointerEvent) => {
+      // 手柄在左缘，向左拖 = 变宽。
+      setOutlineW(Math.max(160, Math.min(480, startW + (startX - ev.clientX))));
+    };
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;
 
@@ -103,6 +129,19 @@ export function FilePreviewDialog() {
                 <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
               </svg>
               <span>阅读并批注</span>
+            </button>
+          )}
+          {isMd && (
+            <button
+              className={`fm-preview-read fm-width-toggle${contentFull ? " is-on" : ""}`}
+              onClick={() => setContentFull((s) => !s)}
+              title={contentFull ? "恢复文档宽度" : "适配窗口宽度"}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 5h16M4 12h16M4 19h16" />
+                <rect x="7" y="9" width="10" height="6" rx="1" />
+              </svg>
+              <span>{contentFull ? "文档宽" : "适配宽"}</span>
             </button>
           )}
           {isMd && (
@@ -147,22 +186,31 @@ export function FilePreviewDialog() {
             ) : mdHtml ? (
               <div className="fm-md-wrap">
                 <div className="fm-md-body" ref={bodyRef}>
-                  <div className="fm-md-preview" dangerouslySetInnerHTML={{ __html: mdHtml }} />
+                  <div
+                    className={`fm-md-preview${contentFull ? " is-full" : ""}`}
+                    dangerouslySetInnerHTML={{ __html: mdHtml }}
+                  />
                 </div>
                 {outlineOpen && outline.length > 0 && (
-                  <div className="fm-md-outline">
-                    <div className="fm-md-outline-title">目录</div>
-                    {outline.map((it) => (
-                      <button
-                        key={it.idx}
-                        className={`fm-md-outline-item ${activeOut === it.idx ? "active" : ""}`}
-                        style={{ paddingLeft: `${(it.level - 1) * 12 + 6}px` }}
-                        onClick={() => scrollToOutline(it)}
-                        title={it.text}
-                      >
-                        {it.text}
-                      </button>
-                    ))}
+                  <div className="fm-md-outline" style={{ width: outlineW }}>
+                    <div
+                      className={`fm-md-outline-resizer${dragging ? " is-dragging" : ""}`}
+                      onPointerDown={startResize}
+                    />
+                    <div className="fm-md-outline-inner">
+                      <div className="fm-md-outline-title">目录</div>
+                      {outline.map((it) => (
+                        <button
+                          key={it.idx}
+                          className={`fm-md-outline-item ${activeOut === it.idx ? "active" : ""}`}
+                          style={{ paddingLeft: `${(it.level - 1) * 12 + 6}px` }}
+                          onClick={() => scrollToOutline(it)}
+                          title={it.text}
+                        >
+                          {it.text}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
