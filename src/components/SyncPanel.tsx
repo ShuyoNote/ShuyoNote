@@ -139,15 +139,33 @@ export function SyncPanel() {
   const update = (ws_id: string, field: keyof EditRow, value: string) =>
     setRows((rs) => rs.map((r) => (r.ws_id === ws_id ? { ...r, [field]: value } : r)));
 
-  // 登录与注册共用的收尾：token 落到该行 + auth store，并尽力拉一次空间列表
-  // （列表失败不回滚会话——token 已有效，用户仍可手填空间 id）。
+  // 登录与注册共用的收尾：token 落到该行 + auth store + **落盘**，并尽力拉一次
+  // 空间列表（列表失败不回滚会话——token 已有效，用户仍可手填空间 id）。
+  //
+  // 自动保存是必须的：此前登录只把 token 放进面板的临时 state，用户不点「保存」
+  // 就关掉面板等于白登一次——而「刚登录完还要再点保存」本身就不该存在。
   const applySession = async (r: EditRow, base: string, token: string, what: string) => {
     const list = await api.teamListSpaces(base, token).catch(() => [] as ServerSpace[]);
     setRows((rs) =>
-      rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token, loginPassword: "", remoteSpaces: list } : x)),
+      rs.map((x) => (x.ws_id === r.ws_id ? { ...x, server_url: base, token, loginPassword: "", remoteSpaces: list } : x)),
     );
     useAuth.getState().setSession(base, token);
-    setStatus(`${what}成功「${r.name}」，绑定 ${list.length} 个空间`);
+    let saved = true;
+    try {
+      await api.setSyncProfile(r.ws_id, {
+        server_url: base,
+        token,
+        space_id: r.space_id || undefined,
+      });
+    } catch (e) {
+      saved = false;
+      console.error("auto-save sync profile failed", e);
+    }
+    setStatus(
+      saved
+        ? `${what}成功「${r.name}」，已保存${list.length ? `，可选空间 ${list.length} 个` : ""}`
+        : `${what}成功，但保存失败——请手动点「保存」`,
+    );
   };
 
   const login = async (r: EditRow) => {
@@ -259,9 +277,33 @@ export function SyncPanel() {
         rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token: "", space_id: "", remoteSpaces: [], members: [], memberOpen: false } : x)),
       );
       useAuth.getState().clear();
+      // 同样要落盘：否则重开面板时 refresh() 会把旧 token 从库里读回来，
+      // 看起来像「登出了又自己登回去」。
+      await api.setSyncProfile(r.ws_id, { server_url: base }).catch((e) => {
+        console.error("clear sync profile failed", e);
+      });
       setStatus("已登出");
     } catch (e) {
       setStatus(`登出失败：${e}`);
+    }
+  };
+
+  // 选中空间即落盘：与登录同理——「选完还要再点保存」是多余的一步，
+  // 忘了点就等于没绑。手填服务器地址/令牌仍走「保存」按钮。
+  const pickSpace = async (r: EditRow, spaceId: string) => {
+    update(r.ws_id, "space_id", spaceId);
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    if (!base) return;
+    try {
+      await api.setSyncProfile(r.ws_id, {
+        server_url: base,
+        token: r.token || undefined,
+        space_id: spaceId || undefined,
+      });
+      const name = r.remoteSpaces.find((x) => x.id === spaceId)?.name;
+      setStatus(spaceId ? `已绑定空间「${name ?? spaceId}」` : "已解除空间绑定");
+    } catch (e) {
+      setStatus(`保存失败：${e}`);
     }
   };
 
@@ -385,7 +427,7 @@ export function SyncPanel() {
                           id={`sync-space-${r.ws_id}`}
                           className="sync-input"
                           value={r.space_id}
-                          onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
+                          onChange={(e) => void pickSpace(r, e.target.value)}
                         >
                           <option value="">选择我加入的空间…</option>
                           {r.remoteSpaces.map((sp) => (
@@ -496,7 +538,11 @@ export function SyncPanel() {
                   </details>
 
                   <div className="sync-card-actions">
-                    <button className="sync-btn" onClick={() => save(r)}>保存</button>
+                    {/* 登录/注册与选空间都会自动落盘，这里的「保存」只用于手填
+                        服务器地址或手动粘贴令牌的情况。 */}
+                    <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
+                      保存
+                    </button>
                     <button className="sync-btn primary" disabled={syncing || !r.server_url} onClick={() => syncOne(r)}>
                       {syncing ? "同步中…" : "同步"}
                     </button>
