@@ -170,7 +170,8 @@ export const api = {
     invoke("copy_attachment", { hash, destPath }),
   importAttachmentFiles: (pageId: string | null, paths: string[]) =>
     invoke("import_attachment_files", { pageId, paths }),
-  listPageAttachments: (pageId: string) =>
+  /** pageId 传 null 列出空间根下的「未整理」文件（page_id IS NULL）。 */
+  listPageAttachments: (pageId: string | null) =>
     invoke("list_page_attachments", { pageId }),
   removeAttachment: (id: string) => invoke("remove_attachment", { id }),
   removeAttachments: (ids: string[]) => invoke("remove_attachments", { ids }),

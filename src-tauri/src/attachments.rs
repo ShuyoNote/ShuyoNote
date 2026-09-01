@@ -431,29 +431,35 @@ pub fn import_attachment_files(
 pub fn list_page_attachments(
     app: tauri::AppHandle,
     db: State<'_, Db>,
-    page_id: String,
+    page_id: Option<String>,
 ) -> Result<Vec<AttachmentMeta>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
 
     let c = db.0.lock().expect("db mutex poisoned");
-    let mut stmt = c
-        .prepare(
-            "SELECT id, name, hash, mime, size FROM attachments
-             WHERE page_id = ?1 ORDER BY created_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![page_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
+    // `page_id = NULL` 永远不成立，所以「空间根下的未整理文件」必须走 IS NULL 分支。
+    let sql = if page_id.is_some() {
+        "SELECT id, name, hash, mime, size FROM attachments
+         WHERE page_id = ?1 ORDER BY created_at DESC"
+    } else {
+        "SELECT id, name, hash, mime, size FROM attachments
+         WHERE page_id IS NULL ORDER BY created_at DESC"
+    };
+    let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
+    let map_row = |row: &rusqlite::Row<'_>| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, i64>(4)?,
+        ))
+    };
+    let rows = match &page_id {
+        Some(pid) => stmt.query_map(params![pid], map_row),
+        None => stmt.query_map([], map_row),
+    }
+    .map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
     for r in rows {

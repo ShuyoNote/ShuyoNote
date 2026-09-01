@@ -148,7 +148,8 @@ export interface CommandMap {
   };
   copy_attachment: { args: { hash: string; destPath: string }; result: void };
   import_attachment_files: { args: { pageId: string | null; paths: string[] }; result: AttachmentMeta[] };
-  list_page_attachments: { args: { pageId: string }; result: AttachmentMeta[] };
+  // pageId 为 null = 空间根下的「未整理」文件（page_id IS NULL）。
+  list_page_attachments: { args: { pageId: string | null }; result: AttachmentMeta[] };
   remove_attachment: { args: { id: string }; result: void };
   remove_attachments: { args: { ids: string[] }; result: number };
   move_attachment: { args: { id: string; newPageId: string }; result: void };

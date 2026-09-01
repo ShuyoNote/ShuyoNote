@@ -76,13 +76,11 @@ export function FileManagerView() {
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
 
+  // folderId 为 null = 空间根：列出「未整理」文件（page_id IS NULL），
+  // 而不是像以前那样直接清空——根下也允许上传，文件得有地方显示。
   const loadFiles = () => {
-    if (!folderId) {
-      setFiles([]);
-      return;
-    }
     api
-      .listPageAttachments(folderId)
+      .listPageAttachments(folderId ?? null)
       .then(setFiles)
       .catch(() => {});
   };
@@ -106,7 +104,6 @@ export function FileManagerView() {
   }, []);
 
   const uploadFiles = async () => {
-    if (!folderId) return;
     let selectedPath: string | string[] | null;
     try {
       selectedPath = await platform.dialog.open({ multiple: true, title: "选择文件" });
@@ -120,12 +117,14 @@ export function FileManagerView() {
   };
 
   const importPaths = async (paths: string[]) => {
-    if (!folderId || paths.length === 0) return;
+    if (paths.length === 0) return;
     setImporting(true);
     importingRef.current = true;
     setProgress({ name: paths[0] ?? "", percent: 0 });
     try {
-      const metas = await api.importAttachmentFiles(folderId, paths);
+      // folderId 为 null 时传 null：文件落到空间根的「未整理」区，
+      // 而不是被静默丢弃（此前根目录拖拽是直接 return）。
+      const metas = await api.importAttachmentFiles(folderId ?? null, paths);
       setFiles((prev) => [...metas, ...prev]);
       useFileManagerStore.getState().bumpRevision();
       toast(`已上传 ${metas.length} 个文件`, "success");
@@ -428,8 +427,8 @@ export function FileManagerView() {
           <button
             className="fm-btn"
             onClick={uploadFiles}
-            disabled={importing || !folderId}
-            title={folderId ? "批量上传文件" : "进入文件夹后可上传"}
+            disabled={importing}
+            title={folderId ? "批量上传文件" : "上传到空间根目录（未整理）"}
           >
             {importing ? "上传中…" : "＋ 上传文件"}
           </button>
@@ -537,6 +536,11 @@ export function FileManagerView() {
                       {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
                     </span>
                     <span className="fm-name">{row.name}</span>
+                    {/* 根目录下的文件没有归属文件夹——明确标成「未整理」，
+                        既解释了它为什么在这儿，也提示可以用 ↔ 移进文件夹。 */}
+                    {row.kind === "file" && folderId === null && (
+                      <span className="fm-inbox-tag">未整理</span>
+                    )}
                   </button>
                 </td>
                 <td className="fm-kind-col">
@@ -620,7 +624,9 @@ export function FileManagerView() {
             {visibleRows.length === 0 && (
               <tr>
                 <td className="fm-empty" colSpan={7}>
-                  {folderId === null ? "没有内容，点击右上角新建" : "此文件夹为空，可上传文件"}
+                  {folderId === null
+                    ? "还没有内容——新建页面/文件夹，或直接把文件拖进来（会放在根目录的「未整理」里）"
+                    : "此文件夹为空，可上传文件"}
                 </td>
               </tr>
             )}

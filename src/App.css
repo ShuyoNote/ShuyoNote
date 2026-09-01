@@ -11089,6 +11089,17 @@ p:has(> .editor-drawing-container) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 根目录下的无归属文件标记：弱化的中性 chip，提示「该归位了」但不报警。 */
+.fm-inbox-tag {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.6;
+}
 /* Reveal file actions on row hover. */
 .fm-ops-col .fm-file-actions {
   opacity: 0;

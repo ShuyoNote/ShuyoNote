@@ -1356,13 +1356,13 @@ function makeInvoke(store: SqliteStore) {
       return Array.from(bytes) as T;
     }
     if (cmd === "list_page_attachments") {
-      // File-manager lists attachments owned by a folder/page (by page_id). When
-      // no folder is open, list all (root). Attachments with a deleted owner are
-      // hidden via their page_id being absent from live pages.
+      // File-manager lists attachments owned by a folder/page (by page_id).
+      // pageId 为空 = 列**空间根下的未整理文件**（page_id IS NULL），与桌面端
+      // 语义一致；注意不能写成 `page_id = NULL`（永不成立）。
       const pageId = String(a.pageId ?? a.page_id ?? "");
       const rows = pageId
         ? store.query("SELECT * FROM attachments WHERE page_id = ?", [pageId])
-        : store.query("SELECT * FROM attachments");
+        : store.query("SELECT * FROM attachments WHERE page_id IS NULL OR page_id = ''");
       // Resolve a display path from the byte store (which survives reload) so the
       // file-manager previews/images render even after a refresh. Use a lazy blob
       // URL rather than an inlined base64 data-URL (memory-friendly for large media).

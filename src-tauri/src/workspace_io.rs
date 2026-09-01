@@ -118,12 +118,15 @@ pub async fn export_workspace(
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(|_| "工作空间不存在".to_string())?;
-        // Distinct hashes used by this space's pages (incl. trash, so nothing is lost).
+        // Distinct hashes used by this space's pages (incl. trash, so nothing is lost)
+        // PLUS「未整理」的无归属附件（`page_id IS NULL`，空间根下直接上传的文件）。
+        // 用 LEFT JOIN 而不是 INNER JOIN：内连接会把根文件整个漏掉，导致
+        // 「导出空间 → 导入到别处」静默丢文件（表里有行、zip 里没字节）。
         let hashes: Vec<String> = c
             .prepare(
                 "SELECT DISTINCT a.hash FROM attachments a
-                 JOIN pages p ON p.id = a.page_id
-                 WHERE p.workspace_id = ?1",
+                 LEFT JOIN pages p ON p.id = a.page_id
+                 WHERE a.page_id IS NULL OR p.workspace_id = ?1",
             )
             .map_err(|e| e.to_string())?
             .query_map(params![active], |r| r.get::<_, String>(0))
@@ -514,7 +517,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&out);
     }
 
-    // The export query must collect ONLY the hashes referenced by the space's pages.
+    // 导出必须收齐两类 hash：① 本空间页面引用的；② 空间根下的无归属附件
+    // （`page_id IS NULL`，「未整理」文件）。同时**不能**串到别的空间。
     #[test]
     fn export_hash_query_scopes_to_space() {
         let conn = Connection::open_in_memory().unwrap();
@@ -543,18 +547,25 @@ mod tests {
             [],
         )
         .unwrap();
+        // 根下上传的「未整理」文件：没有 page_id。
+        conn.execute(
+            "INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) VALUES ('a3',NULL,'z.pdf','h3','application/pdf',1,1)",
+            [],
+        )
+        .unwrap();
 
-        let hashes: Vec<String> = conn
+        let mut hashes: Vec<String> = conn
             .prepare(
                 "SELECT DISTINCT a.hash FROM attachments a
-                 JOIN pages p ON p.id = a.page_id
-                 WHERE p.workspace_id = ?1",
+                 LEFT JOIN pages p ON p.id = a.page_id
+                 WHERE a.page_id IS NULL OR p.workspace_id = ?1",
             )
             .unwrap()
             .query_map(params!["ws-a"], |r| r.get::<_, String>(0))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(hashes, vec!["h1".to_string()]);
+        hashes.sort();
+        assert_eq!(hashes, vec!["h1".to_string(), "h3".to_string()]);
     }
 }

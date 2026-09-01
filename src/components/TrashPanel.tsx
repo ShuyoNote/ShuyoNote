@@ -42,8 +42,9 @@ export function TrashPanel() {
 
   return (
     <div className="trash-panel">
+      {/* 图标尺寸与竖条其它项对齐（18px）：默认 16px 在 activity-bar 里明显偏小。 */}
       <button ref={triggerRef} className="btn-trash" onClick={toggle} title="回收站">
-        <TrashIcon />
+        <TrashIcon width={18} height={18} />
       </button>
       {open && (
         <div ref={contentRef} className="trash-popover" style={{ top: pos.top, left: pos.left, bottom: pos.bottom }}>
