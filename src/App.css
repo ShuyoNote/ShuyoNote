@@ -9151,12 +9151,14 @@ p:has(> .editor-drawing-container) {
   align-items: flex-start;
   gap: 10px;
 }
+/* 新页面引导的动作项：无底色、无描边——这是一张空白页面上的「起手式」，
+   四个填充色块会把注意力从「开始写」上抢走。hover 才给一层淡底。 */
 .npg-act {
   display: flex;
   align-items: center;
   gap: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border: none;
+  background: transparent;
   color: var(--text);
   min-width: 280px;
   font-size: 14px;
@@ -9166,10 +9168,14 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
   font-family: inherit;
   text-align: left;
-  transition: background .18s, border-color .18s;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 .npg-act:hover {
   background: var(--hover);
+}
+.npg-act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .npg-act-icon {
   width: 18px;
