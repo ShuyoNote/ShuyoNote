@@ -136,6 +136,7 @@ export const api = {
     invoke("team_set_member_role", { server_url, token, space_id, email, role }),
   teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
     invoke("team_remove_member", { server_url, token, space_id, user_id }),
+  teamGetSession: () => invoke("team_get_session"),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

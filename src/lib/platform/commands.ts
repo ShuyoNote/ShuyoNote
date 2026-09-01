@@ -172,6 +172,7 @@ export interface CommandMap {
   team_invite_member: { args: { server_url: string; token: string; space_id: string; email: string; role: string }; result: void };
   team_set_member_role: { args: { server_url: string; token: string; space_id: string; email: string; role: string }; result: void };
   team_remove_member: { args: { server_url: string; token: string; space_id: string; user_id: string }; result: void };
+  team_get_session: { args: undefined; result: { server_url: string; token: string } };
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };

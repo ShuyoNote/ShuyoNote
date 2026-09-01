@@ -222,6 +222,7 @@ pub fn run() {
             sync::team_invite_member,
             sync::team_set_member_role,
             sync::team_remove_member,
+            sync::team_get_session,
             attachments::save_image,
             attachments::attachment_path,
             attachments::copy_attachment,

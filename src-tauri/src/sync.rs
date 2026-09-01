@@ -591,6 +591,23 @@ pub async fn team_remove_member(server_url: String, token: String, space_id: Str
     Ok(())
 }
 
+/// M27 当前会话（后端存于 meta.sync_state 的 KEY_SERVER_URL/KEY_TOKEN）。
+/// 前端启动时读取以恢复登录态（有 token 即视为已登录）。
+#[derive(serde::Serialize)]
+pub struct TeamSession {
+    pub server_url: String,
+    pub token: String,
+}
+
+#[tauri::command]
+pub fn team_get_session(db: State<'_, Db>) -> Result<TeamSession, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    Ok(TeamSession {
+        server_url: get_meta_state(&c, KEY_SERVER_URL).unwrap_or_default(),
+        token: get_meta_state(&c, KEY_TOKEN).unwrap_or_default(),
+    })
+}
+
 async fn do_push(
     db: &State<'_, Db>,
     profile: &SyncProfile,
