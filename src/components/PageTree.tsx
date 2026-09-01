@@ -1033,8 +1033,12 @@ export function PageTree(_props: {
             <SyncPanel />
           </div>
           <div className="new-menu">
+            {/* 「新建」是侧栏最高频动作，做成带文字的整行按钮：比一个蓝色实心
+                方块克制，也比纯图标好认（点开是页面/文件夹/数据库三选一）。 */}
             <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title="新建" aria-label="新建">
-              <PlusIcon width={16} height={16} strokeWidth={2.4} />
+              <PlusIcon width={15} height={15} strokeWidth={2.2} />
+              <span className="btn-new-label">新建</span>
+            </button>
             </button>
             {newMenuOpen && (
               <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
