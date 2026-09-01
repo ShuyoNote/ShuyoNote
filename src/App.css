@@ -593,13 +593,6 @@ body,
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.space-item-del {
-  font-size: 16px;
-}
-.space-item-del:hover {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
 .space-item-rename-input {
   width: 100%;
   box-sizing: border-box;
@@ -614,54 +607,8 @@ body,
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* 配色调色板：从「行下面一排小点」升级为带标题的浅色抽屉。 */
-.space-color-palette {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 2px 0 4px 40px;
-  padding: 8px 10px;
-  border-radius: var(--radius-md);
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-}
-.space-color-label {
-  font-size: 11px;
-  color: var(--text-dim);
-  flex: none;
-}
-.space-color-swatches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.space-color-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: var(--hover-strong);
-}
-.space-color-btn.on {
-  box-shadow: 0 0 0 2px var(--accent-soft) inset;
-}
-.space-color-swatch {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  cursor: pointer;
-  flex: none;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
-}
-.space-color-swatch:hover {
-  transform: scale(1.15);
-}
-.space-color-swatch.on {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
-}
-
-/* 底部：新建（主）+ 单空间迁移（次），与列表用分隔线切开。 */
+/* 底部：新建（主）+ 管理入口（次），与列表用分隔线切开。
+   配色 / 删除 / 导入导出已移到设置中心「空间」页（低频 + 破坏性）。 */
 .space-switcher-foot {
   border-top: 1px solid var(--border);
   padding: 10px 12px 12px;
@@ -717,28 +664,7 @@ body,
   color: inherit;
   width: auto;
 }
-.space-switcher-io {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border);
-}
-.space-switcher-io-title {
-  padding: 0 2px 6px;
-  font-size: 11px;
-  color: var(--text-faint);
-  letter-spacing: 0.04em;
-}
-.space-io-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-.space-io-grid .space-action {
-  font-size: 12px;
-  padding: 8px;
-}
-
-/* Space-export progress bar (shown in the space switcher while exporting). */
+/* Space-export progress bar (rendered app-level by <SpaceTransferProgress />). */
 .space-export-progress {
   display: flex;
   flex-direction: column;
@@ -1333,10 +1259,6 @@ select.sync-input {
 .sync-invite-role {
   width: auto;
 }
-.acct-current { display: flex; align-items: center; gap: 8px; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin: 6px 0 10px; }
-.acct-current-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acct-current-empty { color: var(--text-dim); }
-.acct-logout { font-size: 12px; padding: 3px 8px; cursor: pointer; border: 1px solid var(--border); background: var(--block-hover); color: var(--text); border-radius: 5px; }
 
 .sync-meta {
   font-size: 12px;
@@ -1376,67 +1298,6 @@ select.sync-input {
   line-height: 1.6;
   margin-bottom: 10px;
 }
-.acct-group {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  margin-bottom: 8px;
-  background: var(--bg-sidebar, transparent);
-}
-.acct-group-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.acct-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-.acct-group-name {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.acct-group-sync {
-  flex: none;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.acct-group-sync:hover:not(:disabled) {
-  background: var(--hover);
-}
-.acct-group-sync:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.acct-ws {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: 12px;
-}
-.acct-ws-name {
-  color: var(--text);
-}
-.acct-ws-meta {
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
 .sync-actions {
   display: flex;
   gap: 6px;
@@ -9887,8 +9748,85 @@ p:has(> .editor-drawing-container) {
   gap: 8px;
 }
 
-/* 设置中心里的 AI 表单沿用 ai-settings-* 既有样式，只做容器宽度约束。 */
-.set-ai .ai-settings-row {
+/* 「空间」页与「账户」页专属元素。 */
+.set-space-mark {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--hover-strong);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.set-tag {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  vertical-align: middle;
+}
+
+.set-space-colors {
+  padding: 4px 12px 12px 54px;
+}
+
+.set-btn.is-danger-ghost {
+  color: var(--danger);
+  border-color: var(--border);
+}
+
+.set-btn.is-danger-ghost:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.set-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--card-bg);
+}
+
+.set-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.set-group-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.set-status-line {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.set-dot-on {
+  background: var(--success);
+}
+
+/* 设置中心里的 AI 表单沿用 ai-settings-* 既有样式，只做容器宽度约束。 */.set-ai .ai-settings-row {
   max-width: 520px;
 }
 

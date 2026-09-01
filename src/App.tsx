@@ -11,6 +11,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { SpaceTransferProgress } from "./components/SpaceTransferProgress";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { FilePreviewDialog } from "./components/FilePreviewDialog";
 import { PdfReader } from "./components/PdfReader";
@@ -436,6 +437,7 @@ function App() {
         <ShortcutsPanel />
         <AboutDialog />
         <SettingsDialog />
+        <SpaceTransferProgress />
         <FilePreviewDialog />
         <PdfReader />
         <FormulaEditorDialog />
@@ -489,6 +491,7 @@ function App() {
       <ShortcutsPanel />
       <AboutDialog />
       <SettingsDialog />
+      <SpaceTransferProgress />
       <FilePreviewDialog />
       <PdfReader />
       <FormulaEditorDialog />

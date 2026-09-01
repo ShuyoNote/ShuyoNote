@@ -21,21 +21,16 @@ import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
-import { AccountCenter } from "./AccountCenter";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
-import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon, SettingsIcon } from "./icons";
+import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon, SettingsIcon, PersonIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
 }
 
 // Mirrors the backend ACCENTS palette (workspaces.rs).
-const SPACE_ACCENTS = [
-  "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
-];
-
 // Short host label + subtle color for a workspace's sync identity tag.
 function syncTagLabel(serverUrl: string): string {
   try {
@@ -652,10 +647,8 @@ export function PageTree({
   const [workspaceName, setWorkspaceName] = useState("默认空间");
   const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
-  const [colorFor, setColorFor] = useState<string | null>(null);
   // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
-  const [exporting, setExporting] = useState<{ done: number; total: number; message: string } | null>(null);
   const aiEnabled = useAiStore((s) => s.config.enabled);
   const updateAvailable = useEditorStore((s) => s.updateAvailable);
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
@@ -747,111 +740,6 @@ export function PageTree({
     }
     spaceChooser.close();
   };
-
-  const exportSpace = async () => {
-    try {
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      const safe = (workspaceName || "space")
-        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
-        .replace(/\s+/g, "-")
-        .trim()
-        .slice(0, 40);
-      const path = await platform.dialog.save({
-        title: "导出当前工作空间",
-        defaultPath: `space-${safe}-${stamp}.zip`,
-        filters: [{ name: "ZIP", extensions: ["zip"] }],
-      });
-      if (!path) return;
-      // Stream wiring `workspace-progress` events → the progress bar. Desktop emits
-      // the real event; web dispatches it via CustomEvent (same listener works both).
-      setExporting({ done: 0, total: 1, message: "准备导出…" });
-      const unlisten = await platform.event.listen<{ done: number; total: number; message: string }>(
-        "workspace-progress",
-        (e) => {
-          const p = e.payload;
-          if (p && typeof p.done === "number") setExporting({ done: p.done, total: p.total || 1, message: p.message || "导出中…" });
-        },
-      );
-      let result: { size: number; attachments: number };
-      try {
-        result = await api.exportWorkspace(path);
-      } finally {
-        setExporting(null);
-        unlisten();
-      }
-      toast(
-        `空间导出完成：大小 ${(result.size / 1024).toFixed(1)} KB${result.attachments ? ` · 附件 ${result.attachments} 个` : ""}`,
-        "success",
-      );
-    } catch (e) {
-      setExporting(null);
-      toast(`空间导出失败：${e}`, "error");
-    }
-    spaceChooser.close();
-  };
-
-  const importSpace = async () => {
-    try {
-      const path = await platform.dialog.open({
-        title: "导入工作空间",
-        filters: [{ name: "ZIP", extensions: ["zip"] }],
-        multiple: false,
-      });
-      if (!path) return;
-      if (
-        !(await confirmDialog({
-          title: "导入工作空间",
-          message: "导入将新建一个工作空间（不会覆盖现有空间）。确定继续？",
-        }))
-      ) {
-        return;
-      }
-      setExporting({ done: 0, total: 1, message: "准备导入…" });
-      const unlisten = await platform.event.listen<{ done: number; total: number; message: string }>(
-        "workspace-progress",
-        (e) => {
-          const p = e.payload;
-          if (p && typeof p.done === "number") setExporting({ done: p.done, total: p.total || 1, message: p.message || "导入中…" });
-        },
-      );
-      let meta: { name: string };
-      try {
-        meta = await api.importWorkspace(path as string);
-      } finally {
-        setExporting(null);
-        unlisten();
-      }
-      toast(`已导入工作空间「${meta.name}」`, "success");
-      await useSpaceStore.getState().load();
-    } catch (e) {
-      toast(`空间导入失败：${e}`, "error");
-    }
-    spaceChooser.close();
-  };
-
-  const removeSpace = async (id: string) => {
-    const name = spaces.find((s) => s.id === id)?.name ?? "该工作空间";
-    if (
-      !(await confirmDialog({
-        title: "删除工作空间",
-        message: `删除「${name}」及其所有内容？建议先导出/备份（软删除，可在数据目录恢复）。`,
-        danger: true,
-      }))
-    ) {
-      return;
-    }
-    const ok = await useSpaceStore.getState().remove(id);
-    if (ok) {
-      await useNotes.getState().loadPages();
-      const newActive = useSpaceStore.getState().activeId;
-      const newName = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
-      setWorkspaceName(newName ?? "默认空间");
-      toast(`已删除工作空间「${name}」`, "success");
-    }
-    spaceChooser.close();
-  };
-
-  const tree = useMemo(() => buildTree(pages), [pages]);
 
   // ---- Pointer-based drag (works in Tauri's WebView where HTML5 drag-drop is
   // suppressed by dragDropEnabled). A row mousedown arms a potential drag; after a
@@ -982,12 +870,7 @@ export function PageTree({
     }
   };
 
-  const setSpaceColor = async (id: string, color: string) => {
-    setColorFor(null);
-    const ok = await useSpaceStore.getState().setSettings(id, color);
-    if (!ok) toast("设置颜色失败", "error");
-  };
-
+  const tree = useMemo(() => buildTree(pages), [pages]);
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       {!collapsed && (
@@ -1119,45 +1002,8 @@ export function PageTree({
                               ✎
                             </button>
                           )}
-                          <button
-                            className={`space-item-op space-color-btn${colorFor === s.id ? " on" : ""}`}
-                            title="设置空间颜色"
-                            aria-label={`设置 ${s.name} 的颜色`}
-                            style={s.theme ? { background: s.theme } : undefined}
-                            onClick={() => setColorFor((c) => (c === s.id ? null : s.id))}
-                          />
-                          {spaces.length > 1 && !active && (
-                            <button
-                              className="space-item-op space-item-del"
-                              title="删除工作空间"
-                              aria-label={`删除 ${s.name}`}
-                              onClick={() => removeSpace(s.id)}
-                            >
-                              ×
-                            </button>
-                          )}
                         </div>
                       </div>
-                      {colorFor === s.id && (
-                        <div className="space-color-palette">
-                          <span className="space-color-label">空间颜色</span>
-                          <div className="space-color-swatches">
-                            {SPACE_ACCENTS.map((c) => (
-                              <button
-                                key={c}
-                                className={`space-color-swatch${s.theme === c ? " on" : ""}`}
-                                style={{ background: c }}
-                                title={c}
-                                aria-label={`使用颜色 ${c}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSpaceColor(s.id, c);
-                                }}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </Fragment>
                   );
                 })
@@ -1169,33 +1015,18 @@ export function PageTree({
                 <span className="space-action-icon">＋</span>
                 <span>新建工作空间</span>
               </button>
-              <div className="space-switcher-io">
-                <div className="space-switcher-io-title">单空间迁移</div>
-                <div className="space-io-grid">
-                  <button className="space-action" onClick={exportSpace}>
-                    <span className="space-action-icon">↑</span>
-                    <span>导出当前空间</span>
-                  </button>
-                  <button className="space-action" onClick={importSpace}>
-                    <span className="space-action-icon">↓</span>
-                    <span>导入空间包</span>
-                  </button>
-                </div>
-                {exporting && (
-                  <div className="space-export-progress">
-                    <div className="space-export-progress-label">
-                      <span>{exporting.message}</span>
-                      <span>{Math.round((exporting.done / Math.max(1, exporting.total)) * 100)}%</span>
-                    </div>
-                    <div className="space-export-progress-track">
-                      <div
-                        className="space-export-progress-fill"
-                        style={{ width: `${Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* 配色 / 删除 / 导出导入这些低频且有破坏性的操作已移到设置中心，
+                  这里只留高频的「切换 + 重命名 + 新建」。 */}
+              <button
+                className="space-action"
+                onClick={() => {
+                  spaceChooser.close();
+                  useEditorStore.getState().openSettings("spaces");
+                }}
+              >
+                <span className="space-action-icon">⚙</span>
+                <span>管理空间（配色 / 删除 / 导入导出）</span>
+              </button>
             </footer>
           </div>
         )}
@@ -1204,7 +1035,16 @@ export function PageTree({
           <div className="sidebar-actions-group">
             <SearchPanel />
             <SyncPanel />
-            <AccountCenter />
+            {/* 账户中心已并入设置中心「账户」页；这里保留一版过渡入口，
+                避免老用户按肌肉记忆点过来发现图标消失了。 */}
+            <button
+              className="btn-sync"
+              title="账户（已移至设置）"
+              aria-label="账户"
+              onClick={() => useEditorStore.getState().openSettings("account")}
+            >
+              <PersonIcon />
+            </button>
             <BackupButton />
             <StoragePanel />
             <button
@@ -1342,25 +1182,9 @@ export function PageTree({
         </div>
       )}
 
-      {/* Space export/import progress: a fixed overlay so it's always visible while a
-          space is being exported/imported — independent of the space-switcher popover
-          (which may close or be off-screen during the async work). */}
-      {exporting && (
-        <div className="space-export-overlay">
-          <div className="space-export-progress">
-            <div className="space-export-progress-label">
-              <span>{exporting.message}</span>
-              <span>{Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%</span>
-            </div>
-            <div className="space-export-progress-track">
-              <div
-                className="space-export-progress-fill"
-                style={{ width: `${Math.min(100, Math.round((exporting.done / Math.max(1, exporting.total)) * 100))}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 空间导出/导入进度条已随迁移逻辑一起移出侧栏，由 App 级
+          <SpaceTransferProgress /> 订阅 useSpaceTransfer 统一渲染 —— 这样
+          任何面板关掉后进度仍然可见。 */}
 
       {/* Drag ghost: follows the cursor to show what's being moved. */}
       {dragLabel && (

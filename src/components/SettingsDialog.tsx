@@ -7,6 +7,11 @@ import { AiSettingsForm } from "./AiSettingsForm";
 import { api } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
+import { confirmDialog } from "../store/confirm";
+import { useSpaceStore } from "../store/space";
+import { useNotes } from "../store/notes";
+import { useAuth } from "../store/auth";
+import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -17,11 +22,266 @@ const THEMES: { id: Theme; label: string }[] = [
 
 const TABS: { id: SettingsTab; label: string; hint: string }[] = [
   { id: "appearance", label: "外观", hint: "主题与强调色" },
+  { id: "spaces", label: "空间", hint: "配色 / 删除 / 迁移" },
+  { id: "account", label: "账户", hint: "登录身份与同步目标" },
   { id: "plugins", label: "插件", hint: "启用/禁用扩展" },
   { id: "security", label: "安全", hint: "端到端加密与锁定" },
   { id: "ai", label: "AI", hint: "服务商与模型" },
   { id: "about", label: "关于与更新", hint: "版本与许可" },
 ];
+
+// 空间配色候选（与侧栏空间弹层同一组色值）。
+const SPACE_ACCENTS = [
+  "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",
+];
+
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url.replace(/^https?:\/\//, "").split("/")[0] || url || "(未设置服务器)";
+  }
+}
+
+// 「空间」页：低频且有破坏性的空间管理（配色 / 删除 / 导出 / 导入）。
+// 高频的「切换空间」仍留在侧栏——它是工作流入口，不是设置。
+function SpacesPane() {
+  const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
+  const [colorFor, setColorFor] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const activeName = spaces.find((s) => s.id === activeId)?.name ?? "当前空间";
+
+  const setColor = async (id: string, color: string) => {
+    setColorFor(null);
+    const ok = await useSpaceStore.getState().setSettings(id, color);
+    if (!ok) toast("设置颜色失败", "error");
+  };
+
+  const doRemove = async (id: string, name: string) => {
+    const ok = await confirmDialog({
+      title: "删除工作空间",
+      message: `删除「${name}」及其所有内容？建议先导出/备份（软删除，可在数据目录恢复）。`,
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await removeSpace(id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <section className="set-section">
+        <div className="set-section-title">全部空间</div>
+        <div className="set-list">
+          {spaces.map((s) => {
+            const active = s.id === activeId;
+            return (
+              <div key={s.id}>
+                <div className="set-row">
+                  <span
+                    className="set-space-mark"
+                    style={s.theme ? { background: s.theme, color: "#fff" } : undefined}
+                  >
+                    {s.name.charAt(0)}
+                  </span>
+                  <div className="set-row-text">
+                    <div className="set-row-name">
+                      {s.name}
+                      {active && <span className="set-tag">当前</span>}
+                    </div>
+                    <div className="set-row-sub">{s.id}</div>
+                  </div>
+                  <button
+                    className="set-btn"
+                    onClick={() => setColorFor((c) => (c === s.id ? null : s.id))}
+                  >
+                    配色
+                  </button>
+                  <button
+                    className="set-btn is-danger-ghost"
+                    disabled={busy || spaces.length <= 1 || active}
+                    title={active ? "当前空间不可删除，请先切换" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
+                    onClick={() => doRemove(s.id, s.name)}
+                  >
+                    删除
+                  </button>
+                </div>
+                {colorFor === s.id && (
+                  <div className="set-swatch-row set-space-colors">
+                    {SPACE_ACCENTS.map((c) => (
+                      <button
+                        key={c}
+                        className={`set-swatch${s.theme === c ? " is-on" : ""}`}
+                        style={{ background: c }}
+                        aria-label={`使用颜色 ${c}`}
+                        onClick={() => setColor(s.id, c)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="set-hint">切换空间在侧栏顶部；这里只做低频管理。删除为软删除，数据目录中仍可恢复。</p>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">单空间迁移</div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">导出当前空间</div>
+            <div className="set-row-sub">「{activeName}」及其引用到的附件，打包为 zip</div>
+          </div>
+          <button className="set-btn" onClick={() => void exportCurrentSpace(activeName)}>
+            导出
+          </button>
+        </div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">导入空间包</div>
+            <div className="set-row-sub">始终新建一个空间，不会覆盖现有空间</div>
+          </div>
+          <button className="set-btn" onClick={() => void importSpacePackage()}>
+            导入
+          </button>
+        </div>
+      </section>
+    </>
+  );
+}
+
+// 「账户」页：登录身份（低频、全局）。同步操作仍在同步面板——那是高频、
+// 需要状态常驻可见的动作。这里只做「我是谁、连了哪些服务器」。
+function AccountPane() {
+  const spaces = useSpaceStore((s) => s.spaces);
+  const { authed, serverUrl, clear } = useAuth();
+  const [groups, setGroups] = useState<{ server_url: string; wss: { ws_id: string; name: string; spaceId: string; token: string }[] }[]>([]);
+  const [status, setStatus] = useState("");
+  const [syncing, setSyncing] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const profiles = await api.listSyncProfiles();
+      const name = new Map(spaces.map((s) => [s.id, s.name]));
+      const byServer = new Map<string, { ws_id: string; name: string; spaceId: string; token: string }[]>();
+      for (const p of profiles) {
+        const key = p.server_url || "(未设置服务器)";
+        if (!byServer.has(key)) byServer.set(key, []);
+        byServer.get(key)!.push({
+          ws_id: p.ws_id,
+          name: name.get(p.ws_id) ?? p.ws_id,
+          spaceId: p.space_id,
+          token: p.token,
+        });
+      }
+      setGroups(Array.from(byServer.entries()).map(([server_url, wss]) => ({ server_url, wss })));
+    } catch (e) {
+      setStatus(String(e));
+    }
+  }, [spaces]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const logout = async () => {
+    if (!serverUrl) return;
+    setStatus("");
+    try {
+      await api.teamLogout(serverUrl);
+      clear();
+      setStatus("已登出当前账号");
+      await refresh();
+    } catch (e) {
+      setStatus(`登出失败：${e}`);
+    }
+  };
+
+  const syncGroup = async (g: { server_url: string; wss: { ws_id: string }[] }) => {
+    setSyncing(true);
+    setStatus("");
+    try {
+      let ok = 0;
+      let fail = 0;
+      for (const w of g.wss) {
+        const r = await api.syncWorkspace(w.ws_id);
+        if (r.error) fail++;
+        else ok++;
+      }
+      setStatus(`「${hostLabel(g.server_url)}」同步：成功 ${ok}，失败 ${fail}`);
+      await useNotes.getState().loadPages();
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <>
+      <section className="set-section">
+        <div className="set-section-title">当前团队账号</div>
+        {authed ? (
+          <div className="set-row">
+            <span className="set-status-dot set-dot-on" />
+            <div className="set-row-text">
+              <div className="set-row-name">{hostLabel(serverUrl)}</div>
+              <div className="set-row-sub">已登录 · 会话保存在本机 meta 库</div>
+            </div>
+            <button className="set-btn" onClick={() => void logout()}>登出</button>
+          </div>
+        ) : (
+          <div className="set-row">
+            <span className="set-status-dot" />
+            <div className="set-row-text">
+              <div className="set-row-name">未登录团队账号</div>
+              <div className="set-row-sub">在侧栏「同步」里登录或注册后，这里会显示当前身份</div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">同步身份（按服务器分组）</div>
+        {groups.length === 0 ? (
+          <p className="set-hint">
+            尚无同步身份。在侧栏「同步」里为某个空间配置服务器并登录后，会按服务器在此分组显示。
+          </p>
+        ) : (
+          <div className="set-list">
+            {groups.map((g) => (
+              <div key={g.server_url} className="set-group">
+                <div className="set-group-head">
+                  <span className="set-row-name">{hostLabel(g.server_url)}</span>
+                  <button className="set-btn" disabled={syncing} onClick={() => void syncGroup(g)}>
+                    {syncing ? "同步中…" : "同步该组"}
+                  </button>
+                </div>
+                {g.wss.map((w) => (
+                  <div key={w.ws_id} className="set-group-item">
+                    <span>{w.name}</span>
+                    <span className="set-row-sub">
+                      {w.spaceId ? `空间 ${w.spaceId}` : "单用户"}
+                      {w.token ? " · ✓已认证" : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        {status && <div className="set-status-line">{status}</div>}
+      </section>
+    </>
+  );
+}
+
 
 function AppearancePane() {
   const { theme, accent, setTheme, setAccent } = useTheme();
@@ -347,6 +607,8 @@ export function SettingsDialog() {
           </header>
           <div className="set-body-scroll">
             {tab === "appearance" && <AppearancePane />}
+            {tab === "spaces" && <SpacesPane />}
+            {tab === "account" && <AccountPane />}
             {tab === "plugins" && <PluginsPane />}
             {tab === "security" && <SecurityPane />}
             {tab === "ai" && (

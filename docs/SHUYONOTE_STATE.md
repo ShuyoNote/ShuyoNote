@@ -65,7 +65,8 @@
 - **存储**：每工作空间独立库（`meta.db` + `spaces/<ws_id>/`）；附件内容寻址 hash 存储 + 可加密。
 - **编辑器**：Lexical 0.49 + 自定义节点（`ColumnsBlockNode` / `DrawingNode` / `FormulaNode` 等），节点类型收敛于 `src/editor/config.ts`。
 - **提版**：`scripts/release.mjs`（gitcode 自动更新）+ `tauri-plugin-updater`（签名 + `latest.json`，半自动，非静默强更）。
-- **设置中心**：`SettingsDialog.tsx`（外观 / 插件 / 安全 / AI / 关于五页，`useEditorStore.settingsOpen+settingsTab` 驱动，侧栏齿轮 + 命令面板 `settings.*` 入口）。原「主题设置」弹层已删除；**端到端加密从主题面板迁到「安全」页**，关闭加密改为红色危险区 + 二次确认。AI 表单抽成 `AiSettingsForm`，与 AI 面板的独立对话框共用一份实现。
+- **设置中心**：`SettingsDialog.tsx`（外观 / **空间** / **账户** / 插件 / 安全 / AI / 关于七页，`useEditorStore.settingsOpen+settingsTab` 驱动，侧栏齿轮 + 命令面板 `settings.*` 入口）。原「主题设置」弹层已删除；**端到端加密从主题面板迁到「安全」页**，关闭加密改为红色危险区 + 二次确认。AI 表单抽成 `AiSettingsForm`，与 AI 面板的独立对话框共用一份实现。
+- **侧栏 vs 设置的划分**（IA 判据，勿轻易推翻）：**高频 / 与当前上下文绑定 / 需要状态常驻可见** → 侧栏（切换空间、同步、搜索）；**低频 / 全局 / 不可逆** → 设置（空间配色·删除·导入导出、登录身份、加密）。据此 `AccountCenter` 已下线（并入设置「账户」页，侧栏图标保留为过渡入口指向该页），侧栏空间弹层只留「切换 / 重命名 / 新建 + 管理入口」；空间导入导出逻辑在 `lib/spaceTransfer.ts`，进度经 `store/spaceTransfer.ts` 由 App 级 `SpaceTransferProgress` 渲染（关掉面板也能看到进度）。
 
 ## 6. 边界 / 红线（重要取舍，重开会话勿轻易推翻）
 
