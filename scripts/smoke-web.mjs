@@ -514,9 +514,14 @@ assert("list_page_attachments filters by page_id", Array.isArray(inFolder) && in
 const persist = await invoke("request_persistent_storage", {});
 assert("request_persistent_storage is a safe object", persist && typeof persist === "object" && typeof persist.persisted === "boolean" && typeof persist.supported === "boolean");
 
-// 9. Unknown commands return an object, never throw.
-const unknown = await invoke("totally_unknown_cmd", {});
-assert("unknown command returns object (no throw)", typeof unknown === "object" && unknown !== null);
+// 9. Unknown commands now throw (fail loudly, don't mask frontend bugs).
+let unknownThrew = false;
+try {
+  await invoke("totally_unknown_cmd", {});
+} catch {
+  unknownThrew = true;
+}
+assert("unknown command throws (fail loudly)", unknownThrew);
 
 // 10. Safe shapes.
 const cols = await invoke("query_database", {});

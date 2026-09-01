@@ -2105,8 +2105,11 @@ function makeInvoke(store: SqliteStore) {
       return (await requestPersistentStorage()) as T;
     }
 
-    // ---- Unknown: return an empty object so the UI never crashes ----
-    return {} as T;
+    // ---- Unknown: fail loudly ----
+    // A command that reaches here is not implemented on the Web platform. Throw
+    // instead of silently returning {} so a renamed / typo'd / not-yet-implemented
+    // command surfaces immediately (the old {} masked exactly this class of bug).
+    throw new Error(`Web 平台未实现命令: ${cmd}`);
   };
 }
 
