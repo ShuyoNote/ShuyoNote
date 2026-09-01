@@ -4,6 +4,12 @@
 
 > **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
 
+## [1.65.2] - 2026-09-01
+
+### 修复
+
+- **PDF / 附件预览卡死**：CSP 收紧时 `script-src` 只允许 `'self'`，但 pdf.js 的 worker 依赖 `new Function` / WebAssembly 做动态解码（`pdf.worker.*.mjs`），被 CSP 拦截后 worker 挂起，`loadPdf` 永不返回，PDF 预览界面假死。现为 `script-src` / `worker-src` 追加 `'unsafe-eval' 'wasm-unsafe-eval'`（pdf.js 必要需求；保留无 `'unsafe-inline'`，仍防注入的内联脚本）。
+
 ## [1.65.1] - 2026-09-01
 
 ### 修复
