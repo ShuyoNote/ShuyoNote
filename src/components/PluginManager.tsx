@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { platform } from "../lib/platform";
+import { platform, isDesktopPlatform } from "../lib/platform";
 import { usePlugins } from "../store/plugins";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
@@ -32,6 +32,9 @@ export function PluginManager() {
             </button>
           </div>
         </div>
+        {!isDesktopPlatform() && (
+          <div className="sync-web-note">Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。</div>
+        )}
         {plugins.length === 0 ? (
           <div className="pm-empty">未发现插件 · 可从文件夹安装，或把插件放入插件目录</div>
         ) : (
