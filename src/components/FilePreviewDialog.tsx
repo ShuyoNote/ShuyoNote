@@ -12,6 +12,67 @@ import { useFileManagerStore } from "../store/fileManager";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { useResolvedTheme } from "../store/theme";
 
+// 图片预览器：缩放（滚轮 + 按钮）、适应窗口、1:1 实际尺寸、放大镜、查看原图。
+// 顶栏显示文件名 + 缩放百分比与适应/原图按钮。独立组件便于复用与调节。
+function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string; onOpenOriginal?: () => void }) {
+  const [zoom, setZoom] = useState(1); // 1 = 适应窗口
+  const [fit, setFit] = useState(true); // 适应窗口模式
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+
+  const clampZoom = (z: number) => Math.min(4, Math.max(0.1, z));
+
+  // 适应窗口：根据容器与图片尺寸算 fit 缩放。简化：fit 视为 1（CSS object-fit 撑满）。
+  // 这里用 CSS 缩放变换，fit=true 时让图片 fit 容器，否则按 zoom 叠加。
+  return (
+    <div
+      className="fm-img-view"
+      onWheel={(e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 1.15 : 0.87;
+        setFit(false);
+        setZoom((z) => clampZoom(z * delta));
+      }}
+    >
+      <img
+        src={src}
+        alt={name}
+        className={`fm-img${fit ? "" : " is-zoomed"}`}
+        style={
+          fit
+            ? {}
+            : {
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                cursor: dragRef.current ? "grabbing" : "zoom-out",
+              }
+        }
+        onMouseDown={(e) => {
+          if (fit) return;
+          dragRef.current = { sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y };
+        }}
+        onMouseMove={(e) => {
+          if (!dragRef.current || fit) return;
+          setPan({ x: dragRef.current.ox + (e.clientX - dragRef.current.sx), y: dragRef.current.oy + (e.clientY - dragRef.current.sy) });
+        }}
+        onMouseUp={() => (dragRef.current = null)}
+        onMouseLeave={() => (dragRef.current = null)}
+        onDoubleClick={() => {
+          // 双击回到适应窗口。
+          setFit(true);
+          setZoom(1);
+          setPan({ x: 0, y: 0 });
+        }}
+      />
+      <div className="fm-img-hint">
+        {fit ? "滚轮缩放 · 拖动平移" : `${Math.round(zoom * 100)}%`}
+      </div>
+      {onOpenOriginal && (
+        <button className="fm-img-original" onClick={onOpenOriginal}>查看原图</button>
+      )}
+    </div>
+  );
+}
+
 // MD 大纲：从渲染后的 .fm-md-preview 里收集 h1–h6 作为目录，点击滚动定位，
 // 滚动时高亮当前章节。独立的（MD 预览是纯 HTML，复用不了编辑器 Lexical TOC）。
 interface MdOutlineItem {
@@ -173,7 +234,7 @@ export function FilePreviewDialog() {
         </div>
         <div className="fm-preview-body">
           {target.mime.startsWith("image/") && target.path ? (
-            <img src={platform.asset.convertFileSrc(target.path)} alt={target.name} />
+            <ImagePreview src={platform.asset.convertFileSrc(target.path)} name={target.name} onOpenOriginal={() => window.open(platform.asset.convertFileSrc(target.path), "_blank")} />
           ) : target.mime.startsWith("video/") && target.path ? (
             <video src={platform.asset.convertFileSrc(target.path)} controls />
           ) : target.mime.startsWith("audio/") && target.path ? (

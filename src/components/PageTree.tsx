@@ -251,8 +251,8 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               void usePdfReader.getState().openPdf(f.id, f.name);
               return;
             }
-            // MD 文件节点：直接在应用内打开只读预览（铺满）。
-            if (f.mime === "text/markdown") {
+            // MD / 图片文件节点：直接在应用内打开只读预览（铺满），不跳系统外部应用。
+            if (f.mime === "text/markdown" || f.mime.startsWith("image/")) {
               useFilePreview.getState().open(f);
               return;
             }
