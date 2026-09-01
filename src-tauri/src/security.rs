@@ -165,7 +165,11 @@ fn rebuild_space_db(
         let dst_sql = dst_path.display().to_string().replace('\'', "''");
         src.execute_batch(&format!("ATTACH DATABASE '{dst_sql}' AS target KEY \"\";"))
             .map_err(|e| format!("ATTACH 目标库失败: {e}"))?;
-        let _r: Result<_, _> = src.query_row("SELECT sqlcipher_export('target')", [], |r| r.get::<_, i64>(0));
+        // Must NOT swallow a SQL error here: a failed export would leave an empty or
+        // partial target that the caller could mistake for a successful decrypt.
+        // (sqlcipher_export returns NULL on success — we only care that it didn't error.)
+        src.execute_batch("SELECT sqlcipher_export('target');")
+            .map_err(|e| format!("sqlcipher_export 失败: {e}"))?;
         src.execute_batch("DETACH DATABASE target;").map_err(|e| format!("DETACH 目标库失败: {e}"))?;
         src.close().map_err(|(_c, e)| format!("关闭源连接失败: {e}"))?;
         return Ok(());
@@ -248,7 +252,14 @@ pub fn convert_space_db(path: &Path, to_encrypted: bool, key: Option<&[u8; 32]>)
     let tmp = dir.join(format!("{stem}_conv_migrate.db"));
     // Rebuild the source's schema + data into a fresh DB at `tmp` (applying the target
     // key, or leaving plaintext), via the controlled per-table copy.
-    rebuild_space_db(path, &tmp, to_encrypted, key, &stem)?;
+    if let Err(e) = rebuild_space_db(path, &tmp, to_encrypted, key, &stem) {
+        // Clean up the temp file(s) so a failed rebuild never leaves a plaintext
+        // or partial copy behind (the original source is untouched on this path).
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(tmp.with_extension("db-wal"));
+        let _ = std::fs::remove_file(tmp.with_extension("db-shm"));
+        return Err(e);
+    }
 
     // SAFETY: verify the exported temp is actually readable in its target state BEFORE
     // replacing the source. If it isn't, clean up and error, leaving the original file
