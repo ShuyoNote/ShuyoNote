@@ -667,7 +667,11 @@ async fn do_push(
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("同步服务返回错误: {}", resp.status()));
+        return Err(if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            "同步失败：会话已失效，请重新登录".to_string()
+        } else {
+            format!("同步服务返回错误: {}", resp.status())
+        });
     }
 
     // On success advance last_pushed_seq to the max local seq pushed.
@@ -715,7 +719,11 @@ async fn do_pull(
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("同步服务返回错误: {}", resp.status()));
+        return Err(if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            "同步失败：会话已失效，请重新登录".to_string()
+        } else {
+            format!("同步服务返回错误: {}", resp.status())
+        });
     }
     let body: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
 
