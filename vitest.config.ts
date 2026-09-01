@@ -5,7 +5,8 @@ import { defineConfig } from "vitest/config";
 // run in a Node environment (no DOM/React).
 export default defineConfig({
   test: {
-    environment: "node",
+    environment: "happy-dom",
     include: ["src/**/*.test.ts"],
+    setupFiles: ["src/test/setup.ts"],
   },
 });
