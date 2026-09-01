@@ -79,6 +79,15 @@ fn describe_net(e: &reqwest::Error, url: &str) -> String {
     }
 }
 
+/// A reqwest client with a generous timeout so a hung LLM endpoint can't leave a
+/// request (and the UI) waiting forever. LLM inference can be slow, hence 120s.
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 fn tool_calls_from(value: &serde_json::Value) -> Vec<AiNativeToolCall> {
     let mut out = Vec::new();
     for tc in value.as_array().cloned().unwrap_or_default() {
@@ -109,7 +118,7 @@ async fn ai_ollama_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, St
             "num_predict": args.max_tokens.unwrap_or(512),
         }
     });
-    let resp = reqwest::Client::new().post(&url).json(&body).send().await.map_err(|e| describe_net(&e, &url))?;
+    let resp = http_client()?.post(&url).json(&body).send().await.map_err(|e| describe_net(&e, &url))?;
     if !resp.status().is_success() {
         return Err(format!("Ollama 请求失败 ({})，请确认本地模型服务已启动、地址正确。", resp.status()));
     }
@@ -124,7 +133,7 @@ async fn ai_ollama_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, St
 
 async fn ai_openai_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, String> {
     let url = append_v1(&args.base_url, "/chat/completions");
-    let mut req = reqwest::Client::new()
+    let mut req = http_client()?
         .post(&url)
         .json(&json!({
             "model": args.model,
@@ -186,7 +195,7 @@ fn probe_message(models: Vec<String>, model: &str, is_ollama: bool) -> AiProbeRe
 
 async fn ai_openai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
     let url = append_v1(&args.base_url, "/models");
-    let mut req = reqwest::Client::new().get(&url);
+    let mut req = http_client()?.get(&url);
     if let Some(key) = args.api_key.filter(|k| !k.is_empty()) {
         req = req.bearer_auth(key);
     }
@@ -211,7 +220,7 @@ async fn ai_openai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
 
 async fn ai_ollama_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
     let url = format!("{}/api/tags", base_of(&args.base_url));
-    let resp = reqwest::Client::new().get(&url).send().await.map_err(|e| describe_net(&e, &url))?;
+    let resp = http_client()?.get(&url).send().await.map_err(|e| describe_net(&e, &url))?;
     if !resp.status().is_success() {
         return Err(format!("Ollama 服务响应异常 ({})。", resp.status()));
     }
@@ -248,7 +257,7 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Re
         format!("{}/api/chat", base_of(&args.base_url))
     };
     let tools = args.tools.clone();
-    let mut req = reqwest::Client::new().post(&url);
+    let mut req = http_client()?.post(&url);
     if is_openai {
         let mut body = json!({
             "model": args.model,
