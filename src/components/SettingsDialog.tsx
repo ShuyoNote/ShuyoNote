@@ -12,6 +12,7 @@ import { isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { useSpaceStore } from "../store/space";
+import { useWindowChrome } from "../store/windowChrome";
 import { useNotes } from "../store/notes";
 import { useAuth } from "../store/auth";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
@@ -376,6 +377,8 @@ function AccountPane() {
 
 function AppearancePane() {
   const { theme, accent, setTheme, setAccent } = useTheme();
+  const customTitleBar = useWindowChrome((s) => s.custom);
+  const setCustomTitleBar = useWindowChrome((s) => s.setCustom);
   return (
     <>
       <section className="set-section">
@@ -408,6 +411,30 @@ function AppearancePane() {
         </div>
         <p className="set-hint">强调色作用于按钮、选中态与链接，随明暗主题自动取对应色值。</p>
       </section>
+
+      {isDesktopPlatform() && (
+        <section className="set-section">
+          <div className="set-section-title">窗口</div>
+          <div className="set-row">
+            <div className="set-row-text">
+              <div className="set-row-name">自定义标题栏</div>
+              <div className="set-row-sub">
+                顶栏显示「当前页面 · 空间」并与应用同色。关掉则用系统标题栏——
+                若贴边分屏（Aero Snap）或边缘缩放手感不对，退回系统栏即可。
+              </div>
+            </div>
+            <button
+              className={`set-toggle${customTitleBar ? " is-on" : ""}`}
+              role="switch"
+              aria-checked={customTitleBar}
+              onClick={() => setCustomTitleBar(!customTitleBar)}
+            >
+              {customTitleBar ? "已开启" : "已关闭"}
+            </button>
+          </div>
+          <p className="set-hint">切换即时生效，无需重启。</p>
+        </section>
+      )}
     </>
   );
 }

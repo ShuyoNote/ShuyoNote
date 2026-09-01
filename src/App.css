@@ -204,6 +204,78 @@ body,
   min-height: 0;
 }
 
+/* ---------------------------------------------------------------------------
+ * 自绘标题栏（桌面端，窗口无边框时渲染）。
+ * 高度 32px 与 Windows 系统标题栏一致，按钮 46x32 也沿用系统尺寸——用户的
+ * 肌肉记忆（右上角三个键、关闭悬停变红）不该被重新发明。
+ * ------------------------------------------------------------------------- */
+.titlebar {
+  flex: 0 0 auto;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 10px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--accent);
+}
+.titlebar-logo {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.titlebar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.titlebar-actions {
+  flex: none;
+  display: flex;
+  align-self: stretch;
+}
+.titlebar-btn {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.titlebar-btn svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1;
+}
+.titlebar-btn:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.titlebar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+/* 关闭键沿用系统的「悬停变红」，这是跨应用的通用约定。 */
+.titlebar-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
 /* ---------- Activity bar（最左侧竖条）----------
  * VS Code 式：竖条常驻，承载全局导航（笔记/搜索/文件/看板/关系图）与全局工具
  * （模板/设置/关于）。点当前活动图标可收起侧栏——收起后竖条仍在，入口不会消失

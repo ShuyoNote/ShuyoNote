@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
 import { ActivityBar } from "./components/ActivityBar";
+import { TitleBar } from "./components/TitleBar";
+import { useWindowChrome, applyDecorations } from "./store/windowChrome";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
 import { AttachmentPanel } from "./components/AttachmentPanel";
@@ -131,6 +133,12 @@ function NoteEditor({ pageId }: { pageId: string }) {
   // Restore the team-edition login state on startup (from meta.db session).
   useEffect(() => {
     void useAuth.getState().init();
+  }, []);
+
+  // 窗口是以无边框创建的（自绘标题栏）。若用户关掉了这个设置，启动时把系统
+  // 标题栏恢复回来——设置存在 localStorage，Rust 侧读不到，只能前端补一刀。
+  useEffect(() => {
+    void applyDecorations(useWindowChrome.getState().custom);
   }, []);
 
   const pendingSaveRef = useRef<{
@@ -453,6 +461,7 @@ function App() {
 
   return (
     <div className="app">
+      <TitleBar />
       <UpdateBanner />
       <div className="app-body">
         <ActivityBar />

@@ -166,6 +166,12 @@ pub fn run() {
             WebviewWindowBuilder::new(app, "main", url)
                 .title(format!("ShuyoNote 数友笔记 · v{version}"))
                 .inner_size(1200.0, 800.0)
+                // 自绘标题栏（前端 <TitleBar />）。做成无边框而不是保留系统栏，
+                // 是为了让顶栏能显示「当前页面 · 空间」并与应用配色连成一体。
+                // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
+                // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
+                // 与边缘 resize，万一某台机器手感不对得有退路。
+                .decorations(false)
                 // Start hidden + brand-dark background: WebView2 cold-start shows a
                 // white window before the HTML/SW/splash paints. We tint the
                 // window to the splash's dark background and only reveal it once
