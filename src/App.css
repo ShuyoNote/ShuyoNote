@@ -752,6 +752,19 @@ body,
   margin-bottom: 4px;
 }
 
+/* M27 成员管理 */
+.sync-members-row { display: flex; flex-direction: column; gap: 8px; }
+.sync-members-toggle { align-self: flex-start; font-size: 12px; padding: 3px 8px; cursor: pointer; border: 1px solid var(--border); background: var(--block-hover); color: var(--text); border-radius: 5px; }
+.sync-members { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--bg); }
+.sync-members-list { display: flex; flex-direction: column; gap: 6px; }
+.sync-member { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.sync-member-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-member-role, .sync-members-invite select { font-size: 12px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--block-hover); color: var(--text); }
+.sync-member-remove { cursor: pointer; border: none; background: none; color: var(--danger, #d33); font-size: 12px; padding: 0 2px; }
+.sync-members-invite { display: flex; gap: 6px; }
+.sync-members-invite input { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--block-hover); color: var(--text); }
+.sync-members-empty { color: var(--text-dim); font-size: 12px; }
+
 .sync-row input {
   width: 100%;
   border: 1px solid var(--border);

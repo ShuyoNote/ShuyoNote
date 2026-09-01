@@ -13,6 +13,12 @@ interface ServerSpace {
   owner_id: string;
 }
 
+interface ServerMember {
+  user_id: string;
+  email: string;
+  role: string;
+}
+
 interface EditRow {
   ws_id: string;
   name: string;
@@ -25,6 +31,11 @@ interface EditRow {
   loginEmail: string;
   loginPassword: string;
   remoteSpaces: ServerSpace[];
+  // M27 成员管理（选中空间且已登录后可用）：members 列表 + 邀请表单。
+  members: ServerMember[];
+  memberOpen: boolean;
+  inviteEmail: string;
+  inviteRole: string;
 }
 
 // Per-workspace sync targets (S8): each local workspace binds to its own remote
@@ -57,6 +68,10 @@ export function SyncPanel() {
             loginEmail: "",
             loginPassword: "",
             remoteSpaces: [],
+            members: [],
+            memberOpen: false,
+            inviteEmail: "",
+            inviteRole: "editor",
           };
         }),
       );
@@ -145,6 +160,62 @@ export function SyncPanel() {
     }
   };
 
+  // ---- M27 成员管理 handlers ----
+  const toggleMembers = (r: EditRow) => {
+    setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, memberOpen: !x.memberOpen } : x)));
+    if (!r.memberOpen && r.space_id && r.token) void loadMembers(r);
+  };
+
+  const loadMembers = async (r: EditRow) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    if (!base || !r.space_id || !r.token) { setStatus("请先登录并绑定空间"); return; }
+    setStatus("");
+    try {
+      const members = await fetchMembers(base, r.token, r.space_id);
+      setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, members } : x)));
+    } catch (e) {
+      setStatus(`成员拉取失败：${e}`);
+    }
+  };
+
+  const inviteMember = async (r: EditRow) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    if (!base || !r.space_id || !r.token) { setStatus("请先登录并绑定空间"); return; }
+    if (!r.inviteEmail.trim()) { setStatus("请输入被邀请者邮箱"); return; }
+    setStatus("");
+    const email = r.inviteEmail.trim();
+    const role = r.inviteRole;
+    try {
+      await memberRequest(base, r.token, r.space_id, "POST", "", { user_email: email, role });
+      await loadMembers({ ...r, inviteEmail: "" });
+      setStatus(`已邀请 ${email}`);
+    } catch (e) {
+      setStatus(`邀请失败：${e}`);
+    }
+  };
+
+  const removeMember = async (r: EditRow, userId: string) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    try {
+      await memberRequest(base, r.token, r.space_id, "DELETE", `/${userId}`);
+      await loadMembers(r);
+      setStatus("已移除成员");
+    } catch (e) {
+      setStatus(`移除失败：${e}`);
+    }
+  };
+
+  const setMemberRole = async (r: EditRow, email: string, role: string) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    try {
+      await memberRequest(base, r.token, r.space_id, "POST", "", { user_email: email, role });
+      await loadMembers(r);
+      setStatus("已更新角色");
+    } catch (e) {
+      setStatus(`更新角色失败：${e}`);
+    }
+  };
+
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
@@ -193,6 +264,43 @@ export function SyncPanel() {
                     <input value={r.space_id} placeholder="团队空间 id（留空=旧单用户）" onChange={(e) => update(r.ws_id, "space_id", e.target.value)} />
                   )}
                 </div>
+                {r.space_id && r.token && (
+                  <div className="sync-row sync-members-row">
+                    <button className="sync-members-toggle" onClick={() => toggleMembers(r)}>
+                      {r.memberOpen ? "收起成员" : "成员管理"}
+                    </button>
+                    {r.memberOpen && (
+                      <div className="sync-members">
+                        <div className="sync-members-list">
+                          {r.members.length === 0 ? (
+                            <span className="sync-members-empty">（无成员）</span>
+                          ) : (
+                            r.members.map((m) => (
+                              <div key={m.user_id} className="sync-member">
+                                <span className="sync-member-email">{m.email}</span>
+                                <select className="sync-member-role" value={m.role} onChange={(e) => void setMemberRole(r, m.email, e.target.value)}>
+                                  <option value="viewer">viewer</option>
+                                  <option value="editor">editor</option>
+                                  <option value="admin">admin</option>
+                                </select>
+                                <button className="sync-member-remove" title="移除" onClick={() => void removeMember(r, m.user_id)}>✕</button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <div className="sync-members-invite">
+                          <input value={r.inviteEmail} placeholder="被邀请者邮箱" onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)} />
+                          <select value={r.inviteRole} onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)}>
+                            <option value="viewer">viewer</option>
+                            <option value="editor">editor</option>
+                            <option value="admin">admin</option>
+                          </select>
+                          <button onClick={() => void inviteMember(r)}>邀请</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="sync-profile-actions">
                   <button onClick={() => save(r)}>保存</button>
                   <button disabled={syncing || !r.server_url} onClick={() => syncOne(r)}>
@@ -220,4 +328,28 @@ async function fetchSpaces(base: string, token: string): Promise<ServerSpace[]> 
   }
   const data = await res.json().catch(() => ({}));
   return Array.isArray(data?.spaces) ? data.spaces : [];
+}
+
+// ---- M27 成员管理（前端直连 sync-server /spaces/{id}/members）----
+
+async function fetchMembers(base: string, token: string, spaceId: string): Promise<ServerMember[]> {
+  const res = await fetch(`${base}/spaces/${spaceId}/members`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`拉取成员失败 ${res.status}：${t}`);
+  }
+  const data = await res.json().catch(() => ({}));
+  return Array.isArray(data?.members) ? data.members : [];
+}
+
+async function memberRequest(base: string, token: string, spaceId: string, method: "POST" | "DELETE", path: string, body?: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${base}/spaces/${spaceId}/members${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`成员操作失败 ${res.status}：${t}`);
+  }
 }
