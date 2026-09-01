@@ -157,6 +157,9 @@ export const api = {
   },
   attachmentPath: (hash: string) => invoke<string>("attachment_path", { hash }),
   getAttachment: (id: string) => invoke<AttachmentMeta>("get_attachment", { id }),
+  // Read an attachment's PLAINTEXT bytes by hash (decrypts at-rest-encrypted
+  // bytes, unlike read_text_file which reads the raw on-disk path).
+  readAttachmentBytes: (hash: string) => invoke<number[]>("read_attachment_bytes", { hash }),
   fetchBookmarkMetadata: (url: string) =>
     invoke<{
       url: string;

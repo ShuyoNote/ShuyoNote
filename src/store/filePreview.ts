@@ -31,7 +31,11 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
       set({ mdLoading: true });
       (async () => {
         try {
-          const content = await api.readTextFile(a.path);
+          // Read by hash → the Rust command decrypts at-rest-encrypted bytes.
+          // (read_text_file on the raw disk path would return ciphertext garbling
+          // the preview when E1 encryption is on.)
+          const bytes = await api.readAttachmentBytes(a.hash);
+          const content = new TextDecoder("utf-8").decode(new Uint8Array(bytes));
           // Sanitize before `dangerouslySetInnerHTML`: the preview renders raw
           // HTML blocks verbatim (unlike the safe Lexical import path), so a
           // malicious .md could otherwise run <script>/event-handler payloads.
@@ -51,7 +55,8 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
     if (!target || mdImporting) return;
     set({ mdImporting: true });
     try {
-      const content = await api.readTextFile(target.path);
+      const bytes = await api.readAttachmentBytes(target.hash);
+      const content = new TextDecoder("utf-8").decode(new Uint8Array(bytes));
       const payload = markdownToPageContent(content);
       if (!payload) {
         toast("Markdown 内容为空或无法解析", "info");
