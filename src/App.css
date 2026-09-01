@@ -10819,11 +10819,6 @@ p:has(> .editor-drawing-container) {
 /* ------------------------- 文件预览 · Markdown 阅读版式 -------------------------
    布局与主编辑器页面一致：内容列宽 = --doc-width、居中、内部全部左对齐。
    右侧可开一个大纲侧栏（列出 h1–h6，点击滚动定位），长文档可快速跳转。 */
-.fm-md-body {
-  flex: 1;
-  min-width: 0;
-  overflow: auto;
-}
 .fm-md-preview {
   /* 内容列（--doc-width）在可用区内水平居中，左右留白均衡，与主编辑器页面一致。
      用 block + margin:auto 居中，避免受 flex justify 影响。 */
@@ -10861,12 +10856,11 @@ p:has(> .editor-drawing-container) {
      顶部；这里是内容列 + 大纲两栏，占满高度而非垂直居中。 */
   align-items: stretch;
 }
+/* 内容列（.fm-md-preview 用 --doc-width + margin:0 auto 居中），
+   .fm-md-body 只负责滚动。 */
 .fm-md-body {
   flex: 1;
   min-width: 0;
-  display: flex;
-  /* 内容列水平居中：.fm-md-preview 是 --doc-width 的列，横向居中。 */
-  justify-content: center;
   overflow: auto;
 }
 .fm-md-outline {

@@ -3,7 +3,7 @@
 // video / audio / pdf render their asset. A markdown file also gets a "转为笔记"
 // action. Shared so any view can open it. Rendered inside `.app` (not body) so it
 // inherits the sidebar-width CSS var and never overlaps the sidebar.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { platform } from "../lib/platform";
 import { useFilePreview } from "../store/filePreview";
@@ -21,17 +21,12 @@ interface MdOutlineItem {
 }
 function collectOutline(root: HTMLElement): MdOutlineItem[] {
   const out: MdOutlineItem[] = [];
-  const walk = (el: Element) => {
-    for (const c of Array.from(el.children)) {
-      const tag = c.tagName.toLowerCase();
-      if (/^h[1-6]$/.test(tag)) {
-        const text = (c.textContent || "").trim();
-        if (text) out.push({ text, level: Number(tag[1]), idx: out.length });
-      }
-      if (c.children.length) walk(c);
-    }
-  };
-  walk(root);
+  const heads = root.querySelectorAll("h1,h2,h3,h4,h5,h6");
+  heads.forEach((el) => {
+    const tag = el.tagName.toLowerCase();
+    const text = (el.textContent || "").trim();
+    if (text) out.push({ text, level: Number(tag[1]), idx: out.length });
+  });
   return out;
 }
 
@@ -61,13 +56,28 @@ export function FilePreviewDialog() {
     }
   }, [mdHtml, mdLoading, isMd, theme]);
 
-  // 每次 HTML 变化后重新收集提纲。
-  useEffect(() => {
-    if (isMd && mdHtml && !mdLoading && mdRef.current) {
-      setOutline(collectOutline(mdRef.current));
-      setActiveOut(null);
-    }
+  // 每次 HTML 变化后收集提纲。用 useLayoutEffect 确保 dangerouslySetInnerHTML
+  // 已写入 DOM；再补一帧让 mermaid 等异步结构稳定。收集后滚动回顶部，避免
+  // 「看不到头」。
+  useLayoutEffect(() => {
+    if (!isMd || !mdHtml || mdLoading) return;
+    const collect = () => {
+      if (mdRef.current) {
+        setOutline(collectOutline(mdRef.current));
+        setActiveOut(null);
+      }
+    };
+    collect();
+    // 部分渲染（如 mermaid）在下一帧才完成，补一次以确保标题齐全。
+    const raf = requestAnimationFrame(collect);
+    return () => cancelAnimationFrame(raf);
   }, [isMd, mdHtml, mdLoading]);
+
+  // 内容区滚动回到顶部（开新文件或重新渲染时）。
+  useLayoutEffect(() => {
+    if (!isMd) return;
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, [isMd, target?.id]);
 
   const scrollToOutline = (item: MdOutlineItem) => {
     const root = mdRef.current;
