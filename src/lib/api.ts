@@ -124,6 +124,18 @@ export const api = {
   teamLogin: (server_url: string, email: string, password: string) =>
     invoke("team_login", { server_url, email, password }),
   teamLogout: (server_url: string) => invoke("team_logout", { server_url }),
+  teamListSpaces: (server_url: string, token: string) =>
+    invoke("team_list_spaces", { server_url, token }),
+  teamCreateSpace: (server_url: string, token: string, name: string) =>
+    invoke("team_create_space", { server_url, token, name }),
+  teamListMembers: (server_url: string, token: string, space_id: string) =>
+    invoke("team_list_members", { server_url, token, space_id }),
+  teamInviteMember: (server_url: string, token: string, space_id: string, email: string, role: string) =>
+    invoke("team_invite_member", { server_url, token, space_id, email, role }),
+  teamSetMemberRole: (server_url: string, token: string, space_id: string, email: string, role: string) =>
+    invoke("team_set_member_role", { server_url, token, space_id, email, role }),
+  teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
+    invoke("team_remove_member", { server_url, token, space_id, user_id }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

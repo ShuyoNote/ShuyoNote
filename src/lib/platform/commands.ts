@@ -166,6 +166,12 @@ export interface CommandMap {
   team_register: { args: { server_url: string; email: string; password: string; display?: string | null }; result: { token: string } };
   team_login: { args: { server_url: string; email: string; password: string }; result: { token: string } };
   team_logout: { args: { server_url: string }; result: void };
+  team_list_spaces: { args: { server_url: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
+  team_create_space: { args: { server_url: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
+  team_list_members: { args: { server_url: string; token: string; space_id: string }; result: { user_id: string; email: string; role: string }[] };
+  team_invite_member: { args: { server_url: string; token: string; space_id: string; email: string; role: string }; result: void };
+  team_set_member_role: { args: { server_url: string; token: string; space_id: string; email: string; role: string }; result: void };
+  team_remove_member: { args: { server_url: string; token: string; space_id: string; user_id: string }; result: void };
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };

@@ -447,6 +447,150 @@ pub async fn team_logout(db: State<'_, Db>, server_url: String) -> Result<(), St
     Ok(())
 }
 
+// ---- M27 团队空间 / 成员（客户端，Rust 代理绕过 WebView2 CORS）----
+// 这些命令由前端传 server_url + token（登录态由 auth store 管理），用 reqwest
+// 直连 sync-server，避免浏览器 fetch 触发 preflight 被无 CORS 层的服务端拦截。
+
+#[derive(serde::Serialize)]
+pub struct TeamSpace {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub owner_id: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct TeamMember {
+    pub user_id: String,
+    pub email: String,
+    pub role: String,
+}
+
+#[tauri::command]
+pub async fn team_list_spaces(server_url: String, token: String) -> Result<Vec<TeamSpace>, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/spaces"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("拉取空间失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v["spaces"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|s| TeamSpace {
+                    id: s["id"].as_str().unwrap_or("").to_string(),
+                    name: s["name"].as_str().unwrap_or("").to_string(),
+                    role: s["role"].as_str().unwrap_or("").to_string(),
+                    owner_id: s["owner_id"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_create_space(server_url: String, token: String, name: String) -> Result<TeamSpace, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/spaces"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "name": name }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("创建空间失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(TeamSpace {
+        id: v["id"].as_str().unwrap_or("").to_string(),
+        name: v["name"].as_str().unwrap_or("").to_string(),
+        role: v["role"].as_str().unwrap_or("").to_string(),
+        owner_id: v["owner_id"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn team_list_members(server_url: String, token: String, space_id: String) -> Result<Vec<TeamMember>, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/spaces/{space_id}/members"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("拉取成员失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v["members"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|m| TeamMember {
+                    user_id: m["user_id"].as_str().unwrap_or("").to_string(),
+                    email: m["email"].as_str().unwrap_or("").to_string(),
+                    role: m["role"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_invite_member(server_url: String, token: String, space_id: String, email: String, role: String) -> Result<(), String> {
+    team_member_post(&server_url, &token, &space_id, &email, &role).await
+}
+
+#[tauri::command]
+pub async fn team_set_member_role(server_url: String, token: String, space_id: String, email: String, role: String) -> Result<(), String> {
+    team_member_post(&server_url, &token, &space_id, &email, &role).await
+}
+
+async fn team_member_post(server_url: &str, token: &str, space_id: &str, email: &str, role: &str) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/spaces/{space_id}/members"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "user_email": email, "role": role }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("成员操作失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn team_remove_member(server_url: String, token: String, space_id: String, user_id: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(format!("{url}/spaces/{space_id}/members/{user_id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("移除成员失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
 async fn do_push(
     db: &State<'_, Db>,
     profile: &SyncProfile,
