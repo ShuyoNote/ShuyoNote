@@ -163,6 +163,8 @@ export const api = {
   /** 让 Windows 系统标题栏跟随应用主题（非 Windows / Web 为空实现）。 */
   setTitlebarTheme: (dark: boolean, caption?: string, text?: string) =>
     invoke("set_titlebar_theme", { dark, caption: caption ?? null, text: text ?? null }),
+  /** 在屏幕坐标弹出系统窗口菜单（自绘标题栏右键用）。 */
+  showWindowMenu: (x: number, y: number) => invoke("show_window_menu", { x, y }),
   getAttachment: (id: string) => invoke("get_attachment", { id }),
   // Read an attachment's PLAINTEXT bytes by hash (decrypts at-rest-encrypted
   // bytes, unlike read_text_file which reads the raw on-disk path).

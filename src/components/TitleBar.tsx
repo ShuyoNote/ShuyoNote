@@ -21,6 +21,7 @@ export function TitleBar() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const [maximized, setMaximized] = useState(false);
+  const [focused, setFocused] = useState(true);
   const [syncProfile, setSyncProfile] = useState<SyncProfile | null>(null);
 
   const desktop = isDesktopPlatform();
@@ -76,6 +77,20 @@ export function TitleBar() {
     return () => unlisten?.();
   }, [desktop, custom]);
 
+  // 失焦变淡：系统标题栏本来就有这个行为，自绘的若不做，多窗口时分不清
+  // 哪个是当前窗口。
+  useEffect(() => {
+    if (!desktop || !custom) return;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const w = getCurrentWindow();
+      setFocused(await w.isFocused());
+      unlisten = await w.onFocusChanged(({ payload }) => setFocused(payload));
+    })();
+    return () => unlisten?.();
+  }, [desktop, custom]);
+
   if (!desktop || !custom) return null;
 
   const run = async (action: "minimize" | "toggleMaximize" | "close") => {
@@ -87,7 +102,15 @@ export function TitleBar() {
   };
 
   return (
-    <div className="titlebar" data-tauri-drag-region>
+    <div
+      className={`titlebar${focused ? "" : " is-blurred"}`}
+      data-tauri-drag-region
+      onContextMenu={(e) => {
+        // 右键标题栏唤出系统窗口菜单——无边框窗口丢掉的入口之一。
+        e.preventDefault();
+        void api.showWindowMenu(e.screenX, e.screenY);
+      }}
+    >
       <div className="titlebar-brand" data-tauri-drag-region>
         <svg className="titlebar-logo" viewBox="0 0 1024 1024" aria-hidden>
           <rect x="0" y="0" width="1024" height="1024" rx="230" fill="currentColor" opacity="0.16" />

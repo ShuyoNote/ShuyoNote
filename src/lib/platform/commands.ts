@@ -231,6 +231,8 @@ export interface CommandMap {
   open_page_window: { args: { pageId: string }; result: void };
   /** 系统标题栏染色（仅 Windows 生效；caption/text 为 #RRGGBB 或 null）。 */
   set_titlebar_theme: { args: { dark: boolean; caption: string | null; text: string | null }; result: void };
+  /** 弹出系统窗口菜单（屏幕坐标；仅 Windows 生效）。 */
+  show_window_menu: { args: { x: number; y: number }; result: void };
   request_persistent_storage: { args: undefined; result: { persisted: boolean; persistedBefore: boolean; quota: number; usage: number; supported: boolean } };
 
   // ---- AI proxy ----

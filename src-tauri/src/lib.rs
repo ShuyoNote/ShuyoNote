@@ -302,6 +302,7 @@ pub fn run() {
             storage::purge_deleted_workspaces,
             windows::open_page_window,
             titlebar::set_titlebar_theme,
+            titlebar::show_window_menu,
             plugins::list_plugins,
             plugins::set_plugin_enabled,
             plugins::run_plugin_command,

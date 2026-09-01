@@ -2162,6 +2162,7 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "open_page_window") return undefined as T;
     // 浏览器没有系统标题栏，空实现即可（桌面端走 Rust 的 DWM 染色）。
     if (cmd === "set_titlebar_theme") return undefined as T;
+    if (cmd === "show_window_menu") return undefined as T;
 
     // ---- Persistent storage ----
     // Ask the browser to mark this origin as persistent so it won't auto-evict

@@ -221,6 +221,11 @@ body,
   user-select: none;
   -webkit-user-select: none;
 }
+/* 失焦变淡：系统标题栏本来就有，自绘的不做会分不清哪个是当前窗口。 */
+.titlebar.is-blurred {
+  opacity: 0.6;
+  transition: opacity var(--transition);
+}
 .titlebar-brand {
   display: flex;
   align-items: center;
