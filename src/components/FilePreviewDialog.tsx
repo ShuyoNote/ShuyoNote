@@ -20,12 +20,18 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
   const [zoom, setZoom] = useState(1); // 1 = 适应窗口基准
   const [tx, setTx] = useState(0); // 平移到屏幕像素
   const [ty, setTy] = useState(0);
+  const [rot, setRot] = useState(0); // 旋转角度（仅 0/90/180/270）
   const [fit, setFit] = useState(true); // 适应窗口模式
   const dragRef = useRef<{ sx: number; sy: number; tx: number; ty: number } | null>(null);
 
   const applyZoom = (z: number) => {
     setFit(false);
     setZoom(z);
+  };
+  const rotate = (deg: number) => {
+    // 旋转不改文件，仅预览视角。围绕中心累计，保持居中。
+    setRot((r) => (r + deg) % 360);
+    setFit(false);
   };
 
   return (
@@ -46,9 +52,9 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
             ? {}
             : {
                 // 以图片中心为缩放原点：放大围绕中心，不移位。translate 在
-                // scale 之前用屏幕像素，拖拽量=鼠标增量，跟手。
+                // scale 之前用屏幕像素，拖拽量=鼠标增量，跟手。rotate 累加角度。
                 transformOrigin: "center center",
-                transform: `translate(${tx}px, ${ty}px) scale(${zoom})`,
+                transform: `translate(${tx}px, ${ty}px) scale(${zoom}) rotate(${rot}deg)`,
                 cursor: dragRef.current ? "grabbing" : "zoom-out",
               }
         }
@@ -74,10 +80,25 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
           setZoom(1);
           setTx(0);
           setTy(0);
+          setRot(0);
         }}
       />
       <div className="fm-img-hint">
         {fit ? "滚轮缩放 · 拖动平移" : `${Math.round(zoom * 100)}%`}
+      </div>
+      <div className="fm-img-actions">
+        <button className="fm-img-btn" onClick={() => rotate(-90)} title="逆时针旋转 90°" aria-label="逆时针旋转">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 12a9 9 0 1 0 3-7.7" />
+            <path d="M6 4v4h4" />
+          </svg>
+        </button>
+        <button className="fm-img-btn" onClick={() => rotate(90)} title="顺时针旋转 90°" aria-label="顺时针旋转">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M21 12a9 9 0 1 1-3-7.7" />
+            <path d="M18 4v4h-4" />
+          </svg>
+        </button>
       </div>
       {onOpenOriginal && (
         <button className="fm-img-original" onClick={onOpenOriginal}>查看原图</button>
