@@ -221,6 +221,54 @@ registerPlugin({
 });
 
 registerPlugin({
+  id: "settings",
+  name: "设置",
+  commands: [
+    {
+      id: "settings.open",
+      title: "打开设置",
+      description: "外观 / 插件 / 安全（加密）/ AI / 关于",
+      closeOnRun: true,
+      run: () => {
+        useEditorStore.getState().openSettings();
+        return "已打开设置";
+      },
+    },
+    {
+      id: "settings.security",
+      title: "加密与安全设置",
+      description: "开启/关闭端到端加密、锁定与解锁",
+      closeOnRun: true,
+      run: () => {
+        useEditorStore.getState().openSettings("security");
+        return "已打开安全设置";
+      },
+    },
+    {
+      // 锁定是高频动作（等同锁屏），值得一个不用翻面板的入口。
+      id: "settings.lock",
+      title: "锁定笔记（加密）",
+      description: "立即锁定会话；下次打开或同步前需输入口令",
+      closeOnRun: true,
+      run: async () => {
+        try {
+          const st = await api.encryptionStatus();
+          if (!st.enabled) {
+            useEditorStore.getState().openSettings("security");
+            return "尚未开启加密，已打开安全设置";
+          }
+          if (st.locked) return "已经处于锁定状态";
+          await api.lockEncryption();
+          return "已锁定（下次同步前需解锁）";
+        } catch (e) {
+          return `锁定失败：${e}`;
+        }
+      },
+    },
+  ],
+});
+
+registerPlugin({
   id: "help",
   name: "帮助",
   commands: [

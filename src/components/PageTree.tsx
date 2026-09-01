@@ -25,8 +25,7 @@ import { AccountCenter } from "./AccountCenter";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
-import { ThemeSettings } from "./ThemeSettings";
-import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon } from "./icons";
+import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon, SettingsIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -1208,7 +1207,14 @@ export function PageTree({
             <AccountCenter />
             <BackupButton />
             <StoragePanel />
-            <ThemeSettings />
+            <button
+              className="btn-theme"
+              title="设置"
+              aria-label="设置"
+              onClick={() => useEditorStore.getState().openSettings()}
+            >
+              <SettingsIcon />
+            </button>
           </div>
           <div className="new-menu">
             <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title="新建" aria-label="新建">

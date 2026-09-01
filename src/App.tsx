@@ -10,6 +10,7 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { FilePreviewDialog } from "./components/FilePreviewDialog";
 import { PdfReader } from "./components/PdfReader";
@@ -434,6 +435,7 @@ function App() {
         <CommandPalette />
         <ShortcutsPanel />
         <AboutDialog />
+        <SettingsDialog />
         <FilePreviewDialog />
         <PdfReader />
         <FormulaEditorDialog />
@@ -486,6 +488,7 @@ function App() {
       <RightRail />
       <ShortcutsPanel />
       <AboutDialog />
+      <SettingsDialog />
       <FilePreviewDialog />
       <PdfReader />
       <FormulaEditorDialog />

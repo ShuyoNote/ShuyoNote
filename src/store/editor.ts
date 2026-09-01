@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import type { LexicalEditor } from "lexical";
 
+/** 设置中心的标签页 id（单一来源，SettingsDialog 与命令面板共用）。 */
+export type SettingsTab = "appearance" | "plugins" | "security" | "ai" | "about";
+
 // Holds the active LexicalEditor instance so components outside the editor
 // tree (e.g. the top toolbar) can run editor commands, plus a pending
 // block-id to scroll to after a page switch (block-reference jumps).
@@ -19,6 +22,9 @@ interface EditorState {
   shortcutsOpen: boolean;
   /** M25 P2 — whether the "关于" dialog is open. */
   aboutOpen: boolean;
+  /** 设置中心：是否打开 + 当前标签页（外观/插件/安全/AI/关于）。 */
+  settingsOpen: boolean;
+  settingsTab: SettingsTab;
   /** Whether a newer version is available (globally checked on app start). */
   updateAvailable: boolean;
   /** Latest available version string (when updateAvailable). */
@@ -35,6 +41,9 @@ interface EditorState {
   closeShortcuts: () => void;
   openAbout: () => void;
   closeAbout: () => void;
+  openSettings: (tab?: SettingsTab) => void;
+  closeSettings: () => void;
+  setSettingsTab: (tab: SettingsTab) => void;
   setUpdateAvailable: (v: boolean, latest?: string | null) => void;
 }
 
@@ -47,6 +56,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   drawingEdit: null,
   shortcutsOpen: false,
   aboutOpen: false,
+  settingsOpen: false,
+  settingsTab: "appearance",
   updateAvailable: false,
   latestVersion: null,
   setEditor: (editor) => set({ editor }),
@@ -61,5 +72,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   closeShortcuts: () => set({ shortcutsOpen: false }),
   openAbout: () => set({ aboutOpen: true }),
   closeAbout: () => set({ aboutOpen: false }),
+  openSettings: (tab) => set((s) => ({ settingsOpen: true, settingsTab: tab ?? s.settingsTab })),
+  closeSettings: () => set({ settingsOpen: false }),
+  setSettingsTab: (tab) => set({ settingsTab: tab }),
   setUpdateAvailable: (v, latest) => set({ updateAvailable: v, latestVersion: latest ?? null }),
 }));

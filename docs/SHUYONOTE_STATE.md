@@ -65,6 +65,7 @@
 - **存储**：每工作空间独立库（`meta.db` + `spaces/<ws_id>/`）；附件内容寻址 hash 存储 + 可加密。
 - **编辑器**：Lexical 0.49 + 自定义节点（`ColumnsBlockNode` / `DrawingNode` / `FormulaNode` 等），节点类型收敛于 `src/editor/config.ts`。
 - **提版**：`scripts/release.mjs`（gitcode 自动更新）+ `tauri-plugin-updater`（签名 + `latest.json`，半自动，非静默强更）。
+- **设置中心**：`SettingsDialog.tsx`（外观 / 插件 / 安全 / AI / 关于五页，`useEditorStore.settingsOpen+settingsTab` 驱动，侧栏齿轮 + 命令面板 `settings.*` 入口）。原「主题设置」弹层已删除；**端到端加密从主题面板迁到「安全」页**，关闭加密改为红色危险区 + 二次确认。AI 表单抽成 `AiSettingsForm`，与 AI 面板的独立对话框共用一份实现。
 
 ## 6. 边界 / 红线（重要取舍，重开会话勿轻易推翻）
 
