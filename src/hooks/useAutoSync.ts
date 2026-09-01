@@ -15,8 +15,12 @@ export function useAutoSync() {
     const syncOnce = async () => {
       if (syncing.current) return;
       try {
-        const config = await api.getSyncConfig();
-        if (!config.server_url) return;
+        // Gate on per-workspace sync profiles (S8) rather than the legacy global
+        // config: a user who set up a profile (server + space) but never set the
+        // old get_sync_config should still auto-sync.
+        const profiles = await api.listSyncProfiles();
+        const anyReady = profiles.some((p) => p.server_url && p.space_id);
+        if (!anyReady) return;
         syncing.current = true;
         try {
           await api.syncNow();
