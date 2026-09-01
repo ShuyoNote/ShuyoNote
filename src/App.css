@@ -10838,15 +10838,30 @@ p:has(> .editor-drawing-container) {
 }
 .fm-md-preview h1 {
   font-size: 1.75em;
-  border-bottom: 1px solid var(--border);
   padding-bottom: 0.35em;
-  /* 首标题与顶部留白拉开 */
   margin-top: 0.2em;
+  position: relative;
+}
+/* h1 底部用 accent 渐变强调线，比单条灰线更有质感、更像「文档标题」。 */
+.fm-md-preview h1::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 80%);
 }
 .fm-md-preview h2 {
   font-size: 1.45em;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.28em;
+}
+/* h2 左侧一个小 accent 竖条，区分度更高又不喧宾夺主。 */
+.fm-md-preview h2 {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.4em;
 }
 .fm-md-preview h3 { font-size: 1.2em; }
 .fm-md-preview h4 { font-size: 1.05em; }
@@ -10864,28 +10879,38 @@ p:has(> .editor-drawing-container) {
 }
 .fm-md-preview code {
   font-family: var(--font-mono, monospace);
-  font-size: 0.88em;
-  background: var(--hover);
-  padding: 0.18em 0.45em;
+  font-size: 0.86em;
+  background: var(--code-bg, var(--hover));
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+  padding: 0.16em 0.42em;
   border-radius: 5px;
 }
 .fm-md-preview pre {
   background: var(--codeblock-bg, var(--hover));
   padding: 16px 18px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
   overflow: auto;
-  line-height: 1.55;
+  line-height: 1.6;
 }
-.fm-md-preview pre code { background: transparent; padding: 0; border-radius: 0; }
+.fm-md-preview pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: 0.9em;
+}
 .fm-md-preview blockquote {
   margin: 1em 0;
-  padding: 0.4em 0 0.4em 1.1em;
+  padding: 0.6em 1em;
   border-left: 3px solid var(--accent);
   color: var(--text-dim);
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
-  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 0 8px 8px 0;
 }
+/* 引用块内文字字号略收，保持「注」的层级感。 */
+.fm-md-preview blockquote > * { font-size: 0.95em; }
 .fm-md-preview ul,
 .fm-md-preview ol {
   padding-left: 1.6em;
@@ -10920,9 +10945,10 @@ p:has(> .editor-drawing-container) {
 }
 .fm-md-preview img {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: 10px;
   display: block;
-  margin: 1em auto;
+  margin: 1.2em auto;
+  box-shadow: var(--shadow-md);
 }
 .fm-md-mermaid {
   margin: 0.8em 0;
