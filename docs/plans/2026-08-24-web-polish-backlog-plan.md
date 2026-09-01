@@ -86,16 +86,16 @@
 
 ## 3. 里程碑建议（对齐 M16 后续）
 
-- **M16.6 web 能力补齐（P0）**：§2.1 附件移动/批量删除 + §2.2 存储统计精确化 + §2.3 全文搜索。这三项是"web 用户可直接感知"的硬缺口，**优先做**。
+- **M16.6 web 能力补齐（P0）**：§2.1 附件移动/批量删除 + §2.2 存储统计精确化 + §2.3 全文搜索。**✅ 已实现**（web.ts 完整实现 + `scripts/smoke-web.mjs` 断言覆盖：move/remove_attachments、storage_stats `db_bytes>0`、search/search_blocks 打分排序；2026-09-01 核实 plan 描述已过时）。
 - **M16.7 web 体验优化（P1）**：§2.4 拖拽补完 + §2.6 大媒体内存 + §2.7 测试补强。
 - **M16.8 web 数据安全（P1）**：§2.5 写库失败回滚/提示。
 - **平台边界项（不纳入本轮）**：加密 / 同步 / 插件在浏览器是能力边界，保留桌面实现，web 维持"降级但不崩"。
 
 ## 4. 测试与验收标准
 
-- [ ] 文件管理器：移动附件 / 批量删除 / 从回收站恢复附件，`list_page_attachments` + 侧边栏 `TreeFiles` 同步正确。
-- [ ] 存储面板显示真实 `db_bytes`/`attachment_bytes`/`trash_bytes`/`version_bytes`。
-- [ ] `search` 返回按相关度排序的结果，中文/英文都能命中。
+- [x] 文件管理器：移动附件 / 批量删除 / 从回收站恢复附件，`list_page_attachments` + 侧边栏 `TreeFiles` 同步正确。
+- [x] 存储面板显示真实 `db_bytes`/`attachment_bytes`/`trash_bytes`/`version_bytes`。
+- [x] `search` 返回按相关度排序的结果，中文/英文都能命中。
 - [ ] 侧边栏拖拽：跨层级、大树滚动、自动展开均顺手。
 - [ ] 模拟持久化失败时不崩溃、有明确错误提示。
 - [ ] 大视频上传/预览不卡死、不 OOM。
