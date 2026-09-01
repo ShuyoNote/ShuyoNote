@@ -67,8 +67,8 @@ pub fn run() {
         // them decrypted — so the WebView renders plaintext WITHOUT writing it to disk.
         .register_uri_scheme_protocol("attachment", |ctx, request| {
             use percent_encoding::percent_decode;
-            use std::path::Path;
-            use tauri::http::header::{CONTENT_TYPE, ACCESS_CONTROL_ALLOW_ORIGIN};
+            use std::path::{Component, Path};
+            use tauri::http::header::CONTENT_TYPE;
             let raw_path = request.uri().path().as_bytes();
             let decoded = percent_decode(if raw_path.len() > 1 { &raw_path[1..] } else { raw_path })
                 .decode_utf8_lossy()
@@ -76,10 +76,22 @@ pub fn run() {
             let app = ctx.app_handle();
             let data_dir = app.path().app_data_dir().ok();
             let attachments_dir = data_dir.map(|d| d.join("attachments"));
+            // Validate the target is inside the attachments dir. A lexical
+            // `starts_with` is NOT a boundary (it doesn't normalize `..`), so:
+            // 1) reject any `..` path component outright, and
+            // 2) canonicalize both sides and compare the resolved paths.
             let ok = attachments_dir
                 .as_ref()
-                .map(|ad| Path::new(&decoded).starts_with(ad))
-                .unwrap_or(false);
+                .and_then(|ad| ad.canonicalize().ok())
+                .and_then(|canon_ad| {
+                    let p = Path::new(&decoded);
+                    if p.components().any(|c| matches!(c, Component::ParentDir)) {
+                        return None;
+                    }
+                    let canon = p.canonicalize().ok()?;
+                    canon.starts_with(&canon_ad).then_some(())
+                })
+                .is_some();
             if !ok {
                 return tauri::http::Response::builder()
                     .status(403)
@@ -108,7 +120,6 @@ pub fn run() {
             };
             tauri::http::Response::builder()
                 .header(CONTENT_TYPE, mime)
-                .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .body(Cow::Owned(out))
                 .unwrap()
         })

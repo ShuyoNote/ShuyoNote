@@ -16,6 +16,13 @@ fn hex_of(bytes: &[u8]) -> String {
     s
 }
 
+/// Content-addressed attachment hashes are SHA-256 (32 bytes → 64 lowercase hex).
+/// Validating an IPC-supplied hash before joining it into a filesystem path
+/// prevents a caller from writing outside the attachments dir via `../../evil`.
+fn is_valid_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
     pub index: usize,
@@ -303,6 +310,12 @@ pub fn write_attachment_bytes(
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+
+    // `hash` is IPC-supplied and joined into a path below; validate it before
+    // touching the filesystem.
+    if !is_valid_hash(&hash) {
+        return Err("附件哈希无效".to_string());
+    }
 
     let ext = ext_from_mime(&mime);
     let path = attachments_dir.join(format!("{hash}.{ext}"));

@@ -340,6 +340,28 @@ fn find_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
     None
 }
 
+/// Join a zip entry name onto a base dir, refusing any entry that could escape
+/// the base dir via `..`, an absolute path, a root, or a Windows drive prefix.
+/// Zip entry names are attacker-controlled and must never be trusted verbatim —
+/// a hostile zip can name an entry `attachments/../../evil` to write outside the
+/// extraction dir (zip-slip).
+fn safe_join(base: &Path, name: &str) -> Option<PathBuf> {
+    let p = Path::new(name);
+    if p.is_absolute()
+        || p.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+    Some(base.join(p))
+}
+
 struct Extracted {
     db_snapshot: PathBuf,
     att_src_dir: Option<String>,
@@ -368,7 +390,10 @@ fn scan_workspace_zip(src: &Path, tmp_dir: &Path) -> Result<Extracted, String> {
         if !is_db && !is_meta && !is_att {
             continue;
         }
-        let out_path = tmp_dir.join(&name);
+        let out_path = match safe_join(tmp_dir, &name) {
+            Some(p) => p,
+            None => return Err(format!("空间包包含非法路径条目: {name}")),
+        };
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }

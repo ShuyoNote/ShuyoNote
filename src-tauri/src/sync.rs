@@ -635,7 +635,15 @@ async fn sync_attachments(
         }
     }
 
-    // 3. Upload local attachments missing on server (streaming).
+    // 3. Upload local attachments missing on server. When at-rest encryption is on
+    // (session unlocked), the on-disk bytes are ciphertext (nonce||ct) while the
+    // server verifies SHA-256 against the claimed (plaintext) hash — so we must
+    // decrypt before upload. When encryption is off, stream the plaintext file
+    // directly to keep large-file memory usage low.
+    let session_key = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        security::key_if_enabled(&c)
+    };
     for hash in local_set.difference(&remote_set) {
         let path = match find_file_by_stem(&attachments_dir, hash) {
             Some(p) => p,
@@ -654,11 +662,20 @@ async fn sync_attachments(
             .flatten()
             .unwrap_or_else(|| "application/octet-stream".to_string())
         };
-        let file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
-        let stream = ReaderStream::new(file);
+        let body = match &session_key {
+            Some(k) => {
+                let raw = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
+                let plain = security::decrypt_attachment_bytes(Some(k), &raw)?;
+                reqwest::Body::from(plain)
+            }
+            None => {
+                let file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
+                reqwest::Body::wrap_stream(ReaderStream::new(file))
+            }
+        };
         let mut req = client
             .post(format!("{att_base}/attachments/{hash}?mime={mime}"))
-            .body(reqwest::Body::wrap_stream(stream));
+            .body(body);
         if !profile.token.is_empty() {
             req = req.bearer_auth(&profile.token);
         }
@@ -686,6 +703,12 @@ async fn sync_attachments(
     };
 
     for item in &remote.items {
+        // The hash comes from the server (untrusted): reject anything that is not a
+        // canonical SHA-256 hex before joining it into a filesystem path, to prevent
+        // a malicious server from writing outside the attachments dir.
+        if !is_valid_attachment_hash(&item.hash) {
+            continue;
+        }
         if local_set.contains(&item.hash) {
             continue;
         }
@@ -712,6 +735,16 @@ async fn sync_attachments(
             file.flush().await.map_err(|e| e.to_string())?;
             drop(file);
             std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+            // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
+            // encrypted (nonce||ct) like every other attachment, so the read path
+            // (decrypt/passthrough) and the at-rest guarantee stay consistent.
+            if let Some(k) = &session_key {
+                if let Ok(plain) = std::fs::read(&path) {
+                    if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
+                        let _ = std::fs::write(&path, &bytes);
+                    }
+                }
+            }
         }
         // Insert/ignore into attachments table.
         {
@@ -729,6 +762,13 @@ async fn sync_attachments(
     // Reuse local mimes for hash resolution (kept for future use).
     let _ = local_mimes;
     Ok(())
+}
+
+/// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
+/// before joining them into a local filesystem path — prevents path traversal if
+/// a malicious/compromised sync server returns e.g. `../../meta.db` as a hash.
+fn is_valid_attachment_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {

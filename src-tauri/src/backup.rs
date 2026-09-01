@@ -207,6 +207,37 @@ pub async fn export_backup(
 }
 
 // Restore the database from a backup snapshot into the live connection.
+/// Join a zip entry name onto a base dir, refusing entries that could escape via
+/// `..`, absolute paths, roots, or Windows drive prefixes (zip-slip protection).
+fn safe_join(base: &Path, name: &str) -> Option<PathBuf> {
+    let p = Path::new(name);
+    if p.is_absolute()
+        || p.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return None;
+    }
+    Some(base.join(p))
+}
+
+/// A workspace id parsed from a zip entry name must be a single safe path
+/// component (no separators, no `..`), since it is later joined into
+/// `spaces/<id>.db`.
+fn safe_space_id(id: &str) -> bool {
+    !id.is_empty()
+        && !id.contains('/')
+        && !id.contains('\\')
+        && id != "."
+        && id != ".."
+        && !id.contains('\0')
+}
+
 /// Extract a backup zip into a temp dir, streaming each entry (bounded memory)
 /// and emitting progress. Accepts the full-library layout (`meta.db` +
 /// `spaces/<id>.db` + `attachments/*`) and the legacy single-space layout
@@ -237,7 +268,13 @@ fn extract_full_backup(
         if !(is_meta || is_space || is_legacy || is_att) {
             continue;
         }
-        let out_path = tmp_dir.join(&name);
+        let out_path = match safe_join(tmp_dir, &name) {
+            Some(p) => p,
+            None => {
+                eprintln!("backup zip rejected path entry: {name}");
+                continue;
+            }
+        };
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -258,6 +295,10 @@ fn extract_full_backup(
             meta_snap = Some(out_path);
         } else if is_space {
             let id = name.trim_start_matches("spaces/").trim_end_matches(".db").to_string();
+            if !safe_space_id(&id) {
+                eprintln!("backup zip rejected space id: {id}");
+                continue;
+            }
             space_snaps.push((out_path, id));
         } else if is_legacy {
             space_snaps.push((out_path, "__legacy__".to_string()));
