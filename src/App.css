@@ -764,6 +764,9 @@ body,
 .sync-members-invite { display: flex; gap: 6px; }
 .sync-members-invite input { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--block-hover); color: var(--text); }
 .sync-members-empty { color: var(--text-dim); font-size: 12px; }
+.sync-token-row { display: flex; gap: 6px; }
+.sync-token-row input { flex: 1; }
+.sync-logout-btn { font-size: 12px; padding: 3px 8px; cursor: pointer; border: 1px solid var(--border); background: var(--block-hover); color: var(--text); border-radius: 5px; }
 
 .sync-row input {
   width: 100%;

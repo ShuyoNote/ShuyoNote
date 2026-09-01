@@ -207,6 +207,20 @@ export function SyncPanel() {
     }
   };
 
+  const logout = async (r: EditRow) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    setStatus("");
+    try {
+      await api.teamLogout(base);
+      setRows((rs) =>
+        rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token: "", space_id: "", remoteSpaces: [], members: [], memberOpen: false } : x)),
+      );
+      setStatus("已登出");
+    } catch (e) {
+      setStatus(`登出失败：${e}`);
+    }
+  };
+
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
@@ -238,7 +252,10 @@ export function SyncPanel() {
                 </div>
                 <div className="sync-row">
                   <label>令牌（{r.token ? "✓ 已获取" : "尚未获取"}）</label>
-                  <input type="password" value={r.token} placeholder="团队 token" onChange={(e) => update(r.ws_id, "token", e.target.value)} />
+                  <div className="sync-token-row">
+                    <input type="password" value={r.token} placeholder="团队 token" onChange={(e) => update(r.ws_id, "token", e.target.value)} />
+                    {r.token && <button className="sync-logout-btn" onClick={() => void logout(r)}>登出</button>}
+                  </div>
                 </div>
                 <div className="sync-row">
                   <label>空间 ID</label>
