@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-web
 *.local
 
 # Transient transpile dir used by scripts/smoke-web.mjs

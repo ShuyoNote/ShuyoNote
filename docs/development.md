@@ -102,6 +102,24 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 > ⚠️ 端到端升级需一次**真实签名发布**才能验证（本环境无法白测「真实更新」）。公钥为占位符时，`检查更新` 会优雅回退（见 [`src/lib/updates.ts`](../src/lib/updates.ts) / [`src/lib/updater.ts`](../src/lib/updater.ts)）。
 
+### 5.2 Web 版构建与部署（browser）
+
+Web 版与桌面基于**同一份前端**（平台 driver 在运行时按 `__TAURI_INTERNALS__` 切换：Tauri → `tauri.ts`；浏览器 → `web.ts` + sql.js/mock）。构建与部署：
+
+```bash
+# 1. 构建 Web 产物（独立目录 dist-web，与桌面 dist/ 隔离）
+pnpm build:web            # 等价于：vite build --config vite.web.config.ts --outDir dist-web
+
+# 2. 部署到自托管静态站（子路径 /app/；用 rsync/scp，主机/路径在仓库外）
+rsync -av dist-web/ yourhost:webroot/shuyo/app/
+```
+
+部署注意（`base:"./"` 已就绪，产物可放任意子路径）：
+- 服务器需把 `.mjs` 以 `application/javascript` 提供（否则 pdf worker 加载失败）。
+- 子路径 `/app/` 需把 `index.html` 作为 SPA fallback；`sw.js`/`manifest.webmanifest` 已用相对路径，无需改。
+- `dist-web/` 在 `.gitignore`，**不进仓库**（rsync/scp 直传；若改走 git pages 需另建承载仓库并把产物强制发布）。
+- 当前仓库**未配置固定 Web 线上入口**（gitcode pages 未建；代码注释目标为 `shuyo.cn/app/`）；`build:web` 仅产出可部署的 `dist-web/`，实际线上托管需提供主机/路径。
+
 ## 6. CHANGELOG 约定
 
 - 顶部按版本倒序；每版分 `新增` / `修复` / `修改`。
