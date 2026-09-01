@@ -9901,21 +9901,39 @@ p:has(> .editor-drawing-container) {
 .plugin-card.is-off .plugin-icon {
   filter: saturate(0.5);
 }
-.plugin-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--text-faint);
+/* 右上角 = 状态兼控制：小开关，点击切换启用/禁用。 */
+.plugin-switch {
+  width: 34px;
+  height: 20px;
+  flex: none;
+  position: relative;
+  border: none;
+  background: var(--hover-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  padding: 0;
 }
-.plugin-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-faint);
-}
-.plugin-status.is-on .plugin-status-dot {
+.plugin-switch.is-on {
   background: var(--success);
+}
+.plugin-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--transition-fast);
+}
+.plugin-switch.is-on .plugin-switch-knob {
+  transform: translateX(14px);
+}
+.plugin-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .plugin-name {
   font-size: 14px;

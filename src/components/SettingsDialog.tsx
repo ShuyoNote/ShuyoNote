@@ -516,23 +516,23 @@ function PluginsPane() {
             <div key={p.id} className={`plugin-card${p.enabled ? "" : " is-off"}`}>
               <div className="plugin-card-head">
                 <span className="plugin-icon"><PluginGlyph icon="plugin" /></span>
-                <span className={`plugin-status${p.enabled ? " is-on" : ""}`} title={p.enabled ? "已启用" : "已禁用"}>
-                  <span className="plugin-status-dot" />
-                </span>
+                {/* 右上角 = 状态兼控制：一个开关，既显示启用/禁用，点击即切换。
+                    不再单独保留状态点或底部大开关——一处表达就够了。 */}
+                <button
+                  className={`plugin-switch${p.enabled ? " is-on" : ""}`}
+                  role="switch"
+                  aria-checked={p.enabled}
+                  title={p.enabled ? "点击禁用" : "点击启用"}
+                  onClick={() => void toggle(p.id)}
+                >
+                  <span className="plugin-switch-knob" />
+                </button>
               </div>
               <div className="plugin-name">{p.name}</div>
               <div className="plugin-sub">
                 <span className="plugin-desc">{p.description || "—"}</span>
                 <span className="plugin-meta">{p.commands.length} 个命令 · v{p.version}</span>
               </div>
-              <button
-                className={`set-toggle${p.enabled ? " is-on" : ""}`}
-                role="switch"
-                aria-checked={p.enabled}
-                onClick={() => void toggle(p.id)}
-              >
-                {p.enabled ? "已启用" : "已禁用"}
-              </button>
             </div>
           ))}
         </div>
