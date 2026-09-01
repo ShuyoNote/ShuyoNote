@@ -162,6 +162,11 @@ export interface CommandMap {
   set_sync_profile: { args: { wsId: string; serverUrl: string; token?: string; spaceId?: string }; result: void };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
 
+  // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
+  team_register: { args: { server_url: string; email: string; password: string; display?: string | null }; result: { token: string } };
+  team_login: { args: { server_url: string; email: string; password: string }; result: { token: string } };
+  team_logout: { args: { server_url: string }; result: void };
+
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };
   create_attr: { args: { args: { name: string; attr_type: string; options?: string[] } }; result: AttrDef };

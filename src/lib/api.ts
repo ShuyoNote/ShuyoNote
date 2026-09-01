@@ -118,6 +118,12 @@ export const api = {
   setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string }) =>
     invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id }),
   syncWorkspace: (wsId: string) => invoke("sync_workspace", { wsId }),
+  // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
+  teamRegister: (server_url: string, email: string, password: string, display?: string | null) =>
+    invoke("team_register", { server_url, email, password, display }),
+  teamLogin: (server_url: string, email: string, password: string) =>
+    invoke("team_login", { server_url, email, password }),
+  teamLogout: (server_url: string) => invoke("team_logout", { server_url }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

@@ -354,6 +354,99 @@ pub fn set_sync_config(db: State<'_, Db>, args: SyncConfigArgs) -> Result<(), St
     Ok(())
 }
 
+// ---- M27 团队版认证（客户端）----
+// 对齐 sync-server `/auth/register` `/auth/login` `/auth/logout`。成功后把会话
+// token 写入 meta.sync_state（复用 KEY_TOKEN），前端 auth store 据此维持登录态。
+
+#[derive(serde::Serialize)]
+pub struct TeamAuthResult {
+    pub token: String,
+}
+
+#[tauri::command]
+pub async fn team_register(
+    db: State<'_, Db>,
+    server_url: String,
+    email: String,
+    password: String,
+    display: Option<String>,
+) -> Result<TeamAuthResult, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/auth/register"))
+        .json(&serde_json::json!({ "email": email, "password": password, "display": display }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("注册失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let token = v.get("token").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    if token.is_empty() {
+        return Err("服务端未返回 token".to_string());
+    }
+    let c = db.0.lock().expect("db mutex poisoned");
+    set_meta_state(&c, KEY_SERVER_URL, &url)?;
+    set_meta_state(&c, KEY_TOKEN, &token)?;
+    Ok(TeamAuthResult { token })
+}
+
+#[tauri::command]
+pub async fn team_login(
+    db: State<'_, Db>,
+    server_url: String,
+    email: String,
+    password: String,
+) -> Result<TeamAuthResult, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/auth/login"))
+        .json(&serde_json::json!({ "email": email, "password": password }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("登录失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let token = v.get("token").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    if token.is_empty() {
+        return Err("服务端未返回 token".to_string());
+    }
+    let c = db.0.lock().expect("db mutex poisoned");
+    set_meta_state(&c, KEY_SERVER_URL, &url)?;
+    set_meta_state(&c, KEY_TOKEN, &token)?;
+    Ok(TeamAuthResult { token })
+}
+
+#[tauri::command]
+pub async fn team_logout(db: State<'_, Db>, server_url: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    // 先读 token（锁在块内释放，避免跨 await 持锁）。
+    let token = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        get_meta_state(&c, KEY_TOKEN).unwrap_or_default()
+    };
+    if !token.is_empty() {
+        let client = reqwest::Client::new();
+        let _ = client
+            .post(format!("{url}/auth/logout"))
+            .bearer_auth(&token)
+            .send()
+            .await;
+    }
+    {
+        let c = db.0.lock().expect("db mutex poisoned");
+        set_meta_state(&c, KEY_TOKEN, "")?;
+    }
+    Ok(())
+}
+
 async fn do_push(
     db: &State<'_, Db>,
     profile: &SyncProfile,

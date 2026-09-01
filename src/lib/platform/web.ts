@@ -1781,6 +1781,10 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "get_sync_config") return { server_url: "", token: "", space_id: "", device_id: "", last_pushed_seq: 0, last_pulled_seq: 0 } as T;
     if (cmd === "set_sync_config") return undefined as T;
     if (cmd === "sync_now") return [] as T;
+    // M27 team edition auth: Web 版团队同步为平台能力边界，明确降级（入口在 SyncPanel 会隐藏）。
+    if (cmd === "team_register") throw new Error("Web 版不支持团队版，请用桌面版");
+    if (cmd === "team_login") throw new Error("Web 版不支持团队版，请用桌面版");
+    if (cmd === "team_logout") return undefined as T;
     if (cmd === "list_sync_profiles") return [] as T;
     if (cmd === "set_sync_profile") return undefined as T;
     if (cmd === "sync_workspace") return { ws_id: "", pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: "Web 不支持真正的多服务器同步" } as T;
