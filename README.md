@@ -239,25 +239,12 @@ pnpm tauri build   # 打包桌面安装包
 ## 🔄 多设备同步
 
 > ⚠️ **仅桌面版**。Web 版（浏览器）不支持多设备同步与团队版，跨设备交换请用备份 / 导出 zip。原因与「若要开启」的路线见 [Web 同步能力边界](docs/web-sync-boundary.md)。
+>
+> 客户端（本仓库）是 **AGPL-3.0 开源**。多设备/团队实时同步需要 **shuyonote-sync-server**——它是**独立的商业授权组件**（私有仓库，不随本客户端开源）。部署与使用文档见其仓库 [`docs/deploy.md`](https://gitcode.com/shuyo-cn/shuyonote-sync-server/blob/main/docs/deploy.md)（该仓库仅对授权者可见）。
 
-### 1. 启动同步服务端
+### 1. 在应用中配置（客户端侧）
 
-shuyonote-sync-server 已在**独立仓库**（商业授权）：[shuyo-cn/shuyonote-sync-server](https://gitcode.com/shuyo-cn/shuyonote-sync-server)。
-
-```bash
-git clone https://gitcode.com/shuyo-cn/shuyonote-sync-server.git
-cd shuyonote-sync-server
-cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
-```
-
-参数：
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--port` | 监听端口 | `8787` |
-| `--db` | SQLite 数据库路径 | 系统临时目录 |
-
-### 2. 在应用中配置
+本仓库负责的是**客户端接入**：装好 shuyonote-sync-server 后，到侧边栏「同步」里配置即可。
 
 1. 侧边栏点击「同步」。
 2. 填写服务地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址）。
@@ -266,7 +253,7 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 
 **同步机制**：本地每次写操作在 `changes` 表记录 outbox 变更；同步时先 push 本地增量，再 pull 服务端增量，按页面级 `updated_at` 做 last-write-wins 合并。删除走墓碑，附件按内容寻址去重传输。若开启端到端加密，push 前加密、pull 后解密（服务端仅存密文），锁定会话时同步被拒绝。
 
-### 3. 免费替代：导出 / 导入（无需 shuyonote-sync-server）
+### 2. 免费替代：导出 / 导入（无需 shuyonote-sync-server）
 
 不想运行 shuyonote-sync-server？可用内置的**导出 / 导入**在设备间手动搬运与备份数据（手动快照，非实时同步）：
 
@@ -275,6 +262,8 @@ cargo run -- --port 8787 --db <数据目录>/shuyonote-sync.db
 - **桌面 / Web 互通**：桌面导出的包可在浏览器端导入，反之亦然，支持离线搬家。
 
 > 注意：导出 / 导入是**手动、全量**快照，多设备各自改动同一空间时不会自动合并。请以一台为主定期导出，或在迁移时自行保留最新版本。
+
+> 🔐 **版本号约 1.67.1 起，本仓库 README 只讲客户端**；同步服务端的启动/部署文档只放在私有仓库，公开处只给链接，避免读者误以为它属于 AGPL 开源代码。
 
 ## 📁 项目结构
 
