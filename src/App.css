@@ -697,7 +697,7 @@ body,
   left: 12px;
   right: 12px;
   bottom: 14px;
-  z-index: 1000;
+  z-index: 1300;
   display: flex;
   justify-content: center;
   pointer-events: none;
@@ -6465,7 +6465,7 @@ select.prop-value {
   left: 50%;
   bottom: 28px;
   transform: translateX(-50%);
-  z-index: 200;
+  z-index: 1500;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -9153,10 +9153,18 @@ p:has(> .editor-drawing-container) {
 .tc-empty { color: var(--text-faint); font-size: 13px; padding: 40px 0; text-align: center; }
 
 /* In-app confirm dialog (centered in the app window), theme-consistent card. */
+/* 层级约定（改动前先读）：
+ *   1000  普通弹层 / 抽屉（space-switcher、backup 下拉、drawing-modal…）
+ *   1100  拖拽幽灵
+ *   1200  全屏模态面板（设置中心、存储面板、快捷键、关于、AI 设置）
+ *   1300  空间导入导出进度（模态开着也要能看到）
+ *   1400  确认 / 输入对话框——**由模态内部发起，必须盖住模态**
+ *   1500  toast 反馈——盖住一切
+ * 这里曾出问题：存储面板 1200 而确认框 1000，「清空回收站」的确认框被面板挡住。 */
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 1400;
   background: rgba(15, 23, 42, 0.34);
   display: flex;
   align-items: center;
@@ -11835,7 +11843,7 @@ p:has(> .editor-drawing-container) {
 .ai-settings-overlay {
   position: fixed;
   inset: 0;
-  z-index: 95;
+  z-index: 1200;
   background: rgba(15, 23, 42, 0.34);
   display: flex;
   align-items: flex-start;
@@ -12189,7 +12197,7 @@ p:has(> .editor-drawing-container) {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 200;
+  z-index: 1200;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -24,7 +24,7 @@ import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
-import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon, SettingsIcon, PersonIcon } from "./icons";
+import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon, SettingsIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -1035,26 +1035,8 @@ export function PageTree({
           <div className="sidebar-actions-group">
             <SearchPanel />
             <SyncPanel />
-            {/* 账户中心已并入设置中心「账户」页；这里保留一版过渡入口，
-                避免老用户按肌肉记忆点过来发现图标消失了。 */}
-            <button
-              className="btn-sync"
-              title="账户（已移至设置）"
-              aria-label="账户"
-              onClick={() => useEditorStore.getState().openSettings("account")}
-            >
-              <PersonIcon />
-            </button>
             <BackupButton />
             <StoragePanel />
-            <button
-              className="btn-theme"
-              title="设置"
-              aria-label="设置"
-              onClick={() => useEditorStore.getState().openSettings()}
-            >
-              <SettingsIcon />
-            </button>
           </div>
           <div className="new-menu">
             <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title="新建" aria-label="新建">
@@ -1159,6 +1141,16 @@ export function PageTree({
             title="模板中心"
           >
             <TemplateIcon className="sidebar-bottom-icon" />
+          </button>
+          {/* 设置是低频全局项，按惯例落在侧栏底部（VS Code / Notion / Obsidian
+              皆如此），把顶部图标区留给高频动作（搜索 / 同步 / 新建）。 */}
+          <button
+            className="sidebar-bottom-btn"
+            onClick={() => useEditorStore.getState().openSettings()}
+            title="设置"
+            aria-label="设置"
+          >
+            <SettingsIcon className="sidebar-bottom-icon" />
           </button>
           {aiEnabled && (
             <button
