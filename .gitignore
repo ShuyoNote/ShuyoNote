@@ -28,6 +28,16 @@ public/version.json
 # Local scratch / CDP test temp + Edge profiles (never committed)
 tmp
 demo-shots
+
+# 商业 / 运营材料绝不进本公开仓库（AGPL 客户端），它们属于私有的
+# shuyonote-sync-server 仓库。显式挡一层，防止 `git add -A` 再次误收
+# （2026-09-01 已发生过一次：6 份付费客户/值班/工单文档被误推到公开仓库）。
+docs/operations-*.md
+docs/customer-facing-playbook.*
+docs/duty-roster*
+docs/zammad-*.md
+scripts/export-customer-playbook.mjs
+
 # Rust build artifacts
 src-tauri/target
 
