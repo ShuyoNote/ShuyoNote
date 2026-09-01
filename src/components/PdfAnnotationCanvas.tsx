@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { createPortal } from "react-dom";
 import { stickyEditRegion } from "../lib/pdfLayout";
 import { api } from "../lib/api";
-import { type PdfAnnotation, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
+import { type PdfAnnotation, annPxBox, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
 import { ocrRecognize, OCR_PAGE_SCALE } from "../lib/ocr";
 import { useAiStore } from "../store/ai";
@@ -71,24 +71,8 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
 
 // 标注「实际绘制区域」的像素坐标 [px, py, pw, ph]。选中描边须与绘制的图形一致：
 // 便签实际画的是固定 ~26px 方块（取自 box 左上角），不是 box 的 0.04×0.06 长条；
-// 高亮/矩形按 box 的 x0..x1；墨迹按 points 包围盒。
-function drawBoxPx(ann: PdfAnnotation, W: number, H: number): [number, number, number, number] | null {
-  if (ann.type === "sticky" && ann.box) {
-    const w = Math.min(26, W * 0.06);
-    const h = Math.min(26, H * 0.06);
-    return [ann.box[0] * W, ann.box[1] * H, w, h];
-  }
-  if ((ann.type === "highlight" || ann.type === "rect") && ann.box) {
-    const [x0, y0, x1, y1] = ann.box;
-    return [x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H];
-  }
-  if (ann.points && ann.points.length) {
-    const xs = ann.points.map((p) => p[0]);
-    const ys = ann.points.map((p) => p[1]);
-    return [(Math.min(...xs)) * W, (Math.min(...ys)) * H, (Math.max(...xs) - Math.min(...xs)) * W, (Math.max(...ys) - Math.min(...ys)) * H];
-  }
-  return null;
-}
+// 高亮/矩形按 box 的 x0..x1；墨迹按 points 包围盒。统一走 pdfAnnotation 的 annPxBox，
+// 让屏幕 SVG 与「导出带批注副本」的 canvas 渲染共用同一套几何。以下注释保留示意。
 
 export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange, onChanged, renderPage }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
@@ -140,8 +124,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     if (focusTarget.pageIndex !== pageIndex) return;
     // 闪烁框须贴合「实际绘制几何」：便签画的是固定 ~26px 方块（锚点为 box 左上角），
     // 而非其 0.04×0.06 的逻辑 box；高亮/矩形按 box；墨迹按 points 包围盒。
-    // 统一用 drawBoxPx 计算，避免便签跳转时描边与实际色块错位。
-    const d = drawBoxPx(focusTarget.ann, W, H);
+    // 统一用 annPxBox 计算，避免便签跳转时描边与实际色块错位。
+    const d = annPxBox(focusTarget.ann, W, H);
     if (d) {
       const [px, py, pw, ph] = d;
       setFlash([px / W, py / H, (px + pw) / W, (py + ph) / H]);
@@ -775,7 +759,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
               px = bb[0] * W; py = bb[1] * H;
               pw = Math.min(26, W * 0.06); ph = Math.min(26, H * 0.06);
             } else {
-              const d = drawBoxPx(selectedAnn, W, H);
+              const d = annPxBox(selectedAnn, W, H);
               if (!d) return null;
               [px, py, pw, ph] = d;
             }
