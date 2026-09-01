@@ -224,6 +224,12 @@ export function SyncPanel() {
     }
   };
 
+  // 当前用户在该绑定空间的角色是否可管理成员（admin/owner）。viewer/editor 只读。
+  const canManageSpace = (r: EditRow): boolean => {
+    const role = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
+    return role === "admin" || role === "owner";
+  };
+
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
@@ -286,27 +292,32 @@ export function SyncPanel() {
                           {r.members.length === 0 ? (
                             <span className="sync-members-empty">（无成员）</span>
                           ) : (
-                            r.members.map((m) => (
-                              <div key={m.user_id} className="sync-member">
-                                <span className="sync-member-email">{m.email}</span>
-                                <select className="sync-member-role" value={m.role} onChange={(e) => void setMemberRole(r, m.email, e.target.value)}>
-                                  <option value="viewer">viewer</option>
-                                  <option value="editor">editor</option>
-                                  <option value="admin">admin</option>
-                                </select>
-                                <button className="sync-member-remove" title="移除" onClick={() => void removeMember(r, m.user_id)}>✕</button>
-                              </div>
-                            ))
+                            r.members.map((m) => {
+                              const currentRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
+                              const canManage = currentRole === "admin" || currentRole === "owner";
+                              const isOwnerRow = m.role === "owner";
+                              return (
+                                <div key={m.user_id} className="sync-member">
+                                  <span className="sync-member-email">{m.email}</span>
+                                  <select className="sync-member-role" value={m.role} disabled={!canManage || isOwnerRow} onChange={(e) => void setMemberRole(r, m.email, e.target.value)}>
+                                    <option value="viewer">viewer</option>
+                                    <option value="editor">editor</option>
+                                    <option value="admin">admin</option>
+                                  </select>
+                                  <button className="sync-member-remove" title="移除" disabled={!canManage || isOwnerRow} onClick={() => void removeMember(r, m.user_id)}>✕</button>
+                                </div>
+                              );
+                            })
                           )}
                         </div>
                         <div className="sync-members-invite">
-                          <input value={r.inviteEmail} placeholder="被邀请者邮箱" onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)} />
-                          <select value={r.inviteRole} onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)}>
+                          <input value={r.inviteEmail} placeholder="被邀请者邮箱" onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)} disabled={!canManageSpace(r)} />
+                          <select value={r.inviteRole} onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)} disabled={!canManageSpace(r)}>
                             <option value="viewer">viewer</option>
                             <option value="editor">editor</option>
                             <option value="admin">admin</option>
                           </select>
-                          <button onClick={() => void inviteMember(r)}>邀请</button>
+                          <button disabled={!canManageSpace(r)} onClick={() => void inviteMember(r)}>邀请</button>
                         </div>
                       </div>
                     )}
