@@ -57,13 +57,13 @@
 - **做法**：web 版引入轻量 FST 或分词索引。方案：在 `sqliteStore` 维护 `search_index`（词频倒排）或复用 `FTS5`/`SIMPLE` 虚拟表；`search` 按相关度排序 + 高亮片段。**优先实现打分排序（TF）+ 时间衰减**，够用即不引外部依赖。
 - **验收**：搜索命中精度提升；中英文分词可用；现有 `search`/`search_blocks` 用例仍绿。
 
-### 2.4 🥈 P1 — 侧边栏拖拽体验补完
+### 2.4 🥈 P1 — 侧边栏拖拽体验补完（✅ 已实现核心）
 - **问题**：指针拖动已可用，但缺少自动展开/滚动，落点区 width 固定。
 - **做法**（纯前端，增量）：
   - **拖到文件夹 hover 一定时长自动展开**（需要把某个 `TreeItem` 的 `expanded` 提升为可外部驱动的状态，或经 `useTreeDrag` 发指令）。
   - **拖到树顶/底部自动滚动**（`dragRef` 监听 `mousemove` 越界，`scrollBy`）。
   - **插入线实时预览**（把当前 `zone` 对应的目标行插入线再强化）。
-- **验收**：拖动跨层级 / 大树滚动 / 精确落点都顺手。
+- **已实现**（2026-09-01 核实）：`PageTree.tsx` 已按 `clientY` 相对目标 `ratio` 计算 `before/after/inside` 落点（`tree-drop-${zone}` 类）；拖到容器上/下边 `scrollBy(∓8)` 自动滚动；hover `before/inside` 短暂计时后 `requestExpand` 自动展开（`expandId` 一次性消费）。「插入线」为 `tree-drop-*` 落点样式，可再视觉强化。
 
 ### 2.5 🥈 P1 — 写库失败回滚 & 提示（✅ 已实现）
 - **问题**：`persist()` 失败静默。
