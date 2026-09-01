@@ -40,25 +40,26 @@ export interface Plugin {
   commands: PluginCommand[];
 }
 
-// 内置插件的展示图标与强调色。id → { icon, color }。
+// 内置插件的展示图标、强调色与一句话用途。id → { icon, color, desc }。
 // 放在 registry 而非组件里，是为了将来插件管理器/命令面板也能复用同一套视觉。
 export interface PluginMeta {
   icon: "stats" | "export" | "database" | "template" | "plugin" | "ai" | "help" | "view" | "pdf" | "sync" | "report";
   color: string;
+  desc?: string;
 }
 
 export const PLUGIN_META: Record<string, Partial<PluginMeta>> = {
-  stats: { icon: "stats", color: "var(--cat-blue)" },
-  export: { icon: "export", color: "var(--cat-green)" },
-  database: { icon: "database", color: "var(--cat-purple)" },
-  template: { icon: "template", color: "var(--cat-orange)" },
-  plugin: { icon: "plugin", color: "var(--cat-cyan)" },
-  ai: { icon: "ai", color: "var(--cat-red)" },
-  help: { icon: "help", color: "var(--cat-yellow)" },
-  view: { icon: "view", color: "var(--cat-green)" },
-  pdf: { icon: "pdf", color: "var(--cat-gray)" },
-  sync: { icon: "sync", color: "var(--cat-blue)" },
-  report: { icon: "report", color: "var(--cat-orange)" },
+  stats: { icon: "stats", color: "var(--cat-blue)", desc: "字数 / 页面总数统计" },
+  export: { icon: "export", color: "var(--cat-green)", desc: "导出 JSON / Markdown / 静态 wiki" },
+  database: { icon: "database", color: "var(--cat-purple)", desc: "数据库视图的创建与操作" },
+  template: { icon: "template", color: "var(--cat-orange)", desc: "把当前页存为模板" },
+  plugin: { icon: "plugin", color: "var(--cat-cyan)", desc: "插件管理与安装" },
+  ai: { icon: "ai", color: "var(--cat-red)", desc: "AI 助手入口" },
+  help: { icon: "help", color: "var(--cat-yellow)", desc: "快捷键 / 使用指南 / 关于" },
+  view: { icon: "view", color: "var(--cat-green)", desc: "图谱 / 看板 / 列表等视图" },
+  pdf: { icon: "pdf", color: "var(--cat-gray)", desc: "PDF 批注与文件管理" },
+  sync: { icon: "sync", color: "var(--cat-blue)", desc: "多设备同步相关命令" },
+  report: { icon: "report", color: "var(--cat-orange)", desc: "审计 / 报告类命令" },
 };
 
 const registry: Plugin[] = [];

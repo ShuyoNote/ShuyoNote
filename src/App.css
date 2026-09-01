@@ -9927,6 +9927,17 @@ p:has(> .editor-drawing-container) {
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plugin-desc {
+  font-size: 12px;
+  color: var(--text);
+}
+.plugin-meta {
+  font-size: 11px;
+  color: var(--text-faint);
 }
 .plugin-card .set-toggle {
   align-self: flex-start;

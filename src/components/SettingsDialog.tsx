@@ -509,7 +509,10 @@ function PluginsPane() {
                 </span>
               </div>
               <div className="plugin-name">{p.name}</div>
-              <div className="plugin-sub">{p.commands?.length ?? 0} 个命令 · 出现在命令面板</div>
+              <div className="plugin-sub">
+                {meta.desc && <span className="plugin-desc">{meta.desc}</span>}
+                <span className="plugin-meta">{p.commands?.length ?? 0} 个命令 · 出现在命令面板</span>
+              </div>
               <button
                 className={`set-toggle${on ? " is-on" : ""}`}
                 role="switch"
