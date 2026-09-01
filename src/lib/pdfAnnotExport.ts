@@ -170,7 +170,7 @@ export async function composePageWithAnnotations(
     ctx.drawImage(img, 0, 0, w, h);
     for (const a of annotations) drawAnnotation(ctx, a, w, h);
     const blob = await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas.toBlob failed"))), "image/jpeg", 0.85),
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas.toBlob failed"))), "image/jpeg", 0.95),
     );
     // Release the backing store so large scanned pages don't accumulate.
     canvas.width = 0;
@@ -194,8 +194,8 @@ export interface ExportPdfOptions {
   signal?: AbortSignal;
 }
 
-const EXPORT_SCALE = 2;
-const MAX_PAGE_PX = 4_000_000;
+const EXPORT_SCALE = 3;
+const MAX_PAGE_PX = 12_000_000;
 
 /**
  * Export a "copy with annotations". The PDF page box is the engine's PDF-point
