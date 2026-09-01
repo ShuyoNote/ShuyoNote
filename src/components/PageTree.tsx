@@ -261,6 +261,8 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               useFilePreview.getState().open(f);
               return;
             }
+            // 其它类型（office/zip/csv 等）无内置预览，用系统默认应用打开——明确提示。
+            toast("正在用系统默认应用打开…", "info");
             platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
           }}
         >

@@ -532,6 +532,9 @@ export function FileManagerView() {
                           // 与 PDF 一致，不跳系统外部应用。
                           useFilePreview.getState().open(row.file!);
                         } else {
+                          // 其它类型（office/zip/csv 等）没有内置预览器，用系统默认
+                          // 应用打开——明确提示，避免用户以为没反应。
+                          toast("正在用系统默认应用打开…", "info");
                           openFile(row.file!.path);
                         }
                       } else if (row.kind === "folder") setFolderId(row.pageId!);
