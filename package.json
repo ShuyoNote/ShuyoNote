@@ -10,6 +10,7 @@
     "build:web": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/write-version-json.mjs && vite build --config vite.web.config.ts --outDir dist-web && node scripts/write-version-json.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "check:web-commands": "node scripts/check-web-commands.mjs",
+    "check:doc-links": "node scripts/check-doc-links.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",

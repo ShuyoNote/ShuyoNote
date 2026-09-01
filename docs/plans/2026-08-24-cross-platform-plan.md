@@ -1,7 +1,7 @@
 # 跨平台适配（全平台通吃）实现方案
 
 > 目标：把 ShuyoNote 从「**Tauri 桌面绑定**」演进为「**平台无关核心 + 多个可插拔平台壳**」——同一套 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，**不再依赖 `window.__TAURI__`**。
-> 关联方案：[本地优先方案](plans/2026-08-15-local-first-note-app-plan.md)（数据层）与 [每空间独立存储](plans/2026-08-22-per-workspace-storage-plan.md)（存储布局）；由 [路线图 M6（移动端适配）](roadmap.md) 升级而来——**从「移动端」扩展为「全端通吃」**。**这是一次高成本、改架构的演进，采用「分层 + driver 可插拔 + 渐进迁移」策略（见 §5），绝不一步到位重写存储层。**
+> 关联方案：[本地优先方案](2026-08-15-local-first-note-app-plan.md)（数据层）与 [每空间独立存储](2026-08-22-per-workspace-storage-plan.md)（存储布局）；由 [路线图 M6（移动端适配）](../roadmap.md) 升级而来——**从「移动端」扩展为「全端通吃」**。**这是一次高成本、改架构的演进，采用「分层 + driver 可插拔 + 渐进迁移」策略（见 §5），绝不一步到位重写存储层。**
 
 > ⚠️ **本方案定位说明**：这是**架构演进提议**，尚未进入实现。文中「推荐路径」「里程碑 M16.x」为规划，`docs/README.md` / `roadmap.md` 按「规划（待里程碑落地）」登记，**未标记 ✅**。现有 app 继续保持 Tauri 桌面形态正常运行。
 
@@ -96,7 +96,7 @@ ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 19 + Lexical + TS（
 
 ## 7. 里程碑（M16）落地状态
 
-> 本方案 M16.0 / M16.0b / M16.1a / M16.1b 已经落地（见 [roadmap M16](roadmap.md)），其余为建议顺序。
+> 本方案 M16.0 / M16.0b / M16.1a / M16.1b 已经落地（见 [roadmap M16](../roadmap.md)），其余为建议顺序。
 
 - **M16.0 `api.ts` 抽 driver 接口** ✅ v1.46.0：`Executor`/`DialogDriver`/`OpenerDriver`/`EventDriver`/`AssetDriver`/`WebviewDriver` 接口 + `tauri.ts` 唯一宿主 + `index.ts` 自动切换。纯收益、不返工。
 - **M16.0b 浏览器 Web 平台可跑** ✅ v1.47.0：`web.ts`（`createWebPlatform`）+ `pnpm dev:web`（5173）。
@@ -138,4 +138,4 @@ ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 19 + Lexical + TS（
 
 「全平台通吃」值得做，但**不是重写，而是分层换壳**：把 `api.ts` 抽成可插拔 driver，核心语义在 `pkg/core` 沉淀，先用 Tauri 驱动跑通现有数据，WASM/浏览器驱动逐条补齐。这让你**既拿到跨浏览器 + 安卓 + iOS + 鸿蒙的终局，又不用停摆现在的 app**。**M16.0（driver 抽象）+ M16.0b（浏览器可跑）已完成**——现在 `pnpm dev:web` 就能在纯浏览器跑起来（localStorage mock 后端）。若你只是要鸿蒙（尤其桌面），路径 B（Tauri→OpenHarmony）可比本方案更省。
 
-配套取舍见[设计哲学](design-philosophy.md)（本地优先 + 数据可移植）。
+配套取舍见[设计哲学](../design-philosophy.md)（本地优先 + 数据可移植）。

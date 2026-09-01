@@ -1,7 +1,7 @@
 # ShuyoNote 团队版（自建协作，不接外部通讯 App）实现方案
 
 > 目标：把 ShuyoNote 从「**单用户 · 多设备 · 本地优先**」演进为「**可自建的团队知识库**」——**不接入微信 / 企业微信 / 钉钉**，账号、通知、讨论、采集全部自建。核心是**两根柱子：多用户（账号/认证）与权限模型**；**实时协同编辑后置（P2）**。服务端设计以 **shuyonote-sync-server 仓库（私有，商业授权）** 为准，已实现到 S5。
-> 关联：[多工作空间](plans/2026-08-22-multi-workspace-plan.md)（空间隔离）、[每空间独立存储](plans/2026-08-22-per-workspace-storage-plan.md)（M15）、[跨平台](plans/2026-08-24-cross-platform-plan.md)（客户端形态）。服务端团队版设计见 sync-server 仓库 `docs/team-edition-*.md`。
+> 关联：[多工作空间](2026-08-22-multi-workspace-plan.md)（空间隔离）、[每空间独立存储](2026-08-22-per-workspace-storage-plan.md)（M15）、[跨平台](2026-08-24-cross-platform-plan.md)（客户端形态）。服务端团队版设计见 sync-server 仓库 `docs/team-edition-*.md`。
 
 > ⚠️ **定位说明**：这是**架构演进提议**。服务端（sync-server）已实现 S1–S5（认证 / 空间 / 成员 / 同步隔离）；本仓库聚焦**客户端侧**。现有个人版「无账号、本地优先」用法完全保留，团队能力是「可选开启」的增量。
 

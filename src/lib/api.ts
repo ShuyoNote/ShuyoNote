@@ -119,23 +119,26 @@ export const api = {
     invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id }),
   syncWorkspace: (wsId: string) => invoke("sync_workspace", { wsId }),
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
+  // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
+  // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
+  // 所以 CommandMap 里也按 camelCase 声明，并由 check-web-commands 兜底校验。
   teamRegister: (server_url: string, email: string, password: string, display?: string | null) =>
-    invoke("team_register", { server_url, email, password, display }),
+    invoke("team_register", { serverUrl: server_url, email, password, display }),
   teamLogin: (server_url: string, email: string, password: string) =>
-    invoke("team_login", { server_url, email, password }),
-  teamLogout: (server_url: string) => invoke("team_logout", { server_url }),
+    invoke("team_login", { serverUrl: server_url, email, password }),
+  teamLogout: (server_url: string) => invoke("team_logout", { serverUrl: server_url }),
   teamListSpaces: (server_url: string, token: string) =>
-    invoke("team_list_spaces", { server_url, token }),
+    invoke("team_list_spaces", { serverUrl: server_url, token }),
   teamCreateSpace: (server_url: string, token: string, name: string) =>
-    invoke("team_create_space", { server_url, token, name }),
+    invoke("team_create_space", { serverUrl: server_url, token, name }),
   teamListMembers: (server_url: string, token: string, space_id: string) =>
-    invoke("team_list_members", { server_url, token, space_id }),
+    invoke("team_list_members", { serverUrl: server_url, token, spaceId: space_id }),
   teamInviteMember: (server_url: string, token: string, space_id: string, email: string, role: string) =>
-    invoke("team_invite_member", { server_url, token, space_id, email, role }),
+    invoke("team_invite_member", { serverUrl: server_url, token, spaceId: space_id, email, role }),
   teamSetMemberRole: (server_url: string, token: string, space_id: string, email: string, role: string) =>
-    invoke("team_set_member_role", { server_url, token, space_id, email, role }),
+    invoke("team_set_member_role", { serverUrl: server_url, token, spaceId: space_id, email, role }),
   teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
-    invoke("team_remove_member", { server_url, token, space_id, user_id }),
+    invoke("team_remove_member", { serverUrl: server_url, token, spaceId: space_id, userId: user_id }),
   teamGetSession: () => invoke("team_get_session"),
   saveImage: async (args: {
     page_id: string | null;

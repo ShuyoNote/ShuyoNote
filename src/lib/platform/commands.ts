@@ -163,15 +163,17 @@ export interface CommandMap {
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
 
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
-  team_register: { args: { server_url: string; email: string; password: string; display?: string | null }; result: { token: string } };
-  team_login: { args: { server_url: string; email: string; password: string }; result: { token: string } };
-  team_logout: { args: { server_url: string }; result: void };
-  team_list_spaces: { args: { server_url: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
-  team_create_space: { args: { server_url: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
-  team_list_members: { args: { server_url: string; token: string; space_id: string }; result: { user_id: string; email: string; role: string }[] };
-  team_invite_member: { args: { server_url: string; token: string; space_id: string; email: string; role: string }; result: void };
-  team_set_member_role: { args: { server_url: string; token: string; space_id: string; email: string; role: string }; result: void };
-  team_remove_member: { args: { server_url: string; token: string; space_id: string; user_id: string }; result: void };
+  // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。
+  // （result 里的字段来自 serde 序列化的 Rust 结构体，仍是 snake_case。）
+  team_register: { args: { serverUrl: string; email: string; password: string; display?: string | null }; result: { token: string } };
+  team_login: { args: { serverUrl: string; email: string; password: string }; result: { token: string } };
+  team_logout: { args: { serverUrl: string }; result: void };
+  team_list_spaces: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
+  team_create_space: { args: { serverUrl: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
+  team_list_members: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email: string; role: string }[] };
+  team_invite_member: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
+  team_set_member_role: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
+  team_remove_member: { args: { serverUrl: string; token: string; spaceId: string; userId: string }; result: void };
   team_get_session: { args: undefined; result: { server_url: string; token: string } };
 
   // ---- Properties / Database ----

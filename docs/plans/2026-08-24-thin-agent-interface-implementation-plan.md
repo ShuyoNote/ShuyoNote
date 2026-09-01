@@ -1,7 +1,7 @@
 # 「薄 Agent 接口」AI 能力 — 实现方案
 
-> 目标：把 [薄 Agent 接口方案](plans/2026-08-24-thin-agent-interface-plan.md) **落到可执行的代码**——给 ShuyoNote 加**可选、本地优先、安全、写操作经审核**的 AI 能力。实现不做全量 Agent 运行时，而是**复用现有前端插件宿主**（`src/plugins/registry.ts`）+ 暴露**语义化工具**（多为现有命令），配一个**受限于白名单工具**的轻量 LLM 循环。
-> 前置：已完成 [薄 Agent 接口方案](plans/2026-08-24-thin-agent-interface-plan.md)（路线/取舍）。本方案专注"怎么在现有代码树上实现"。
+> 目标：把 [薄 Agent 接口方案](2026-08-24-thin-agent-interface-plan.md) **落到可执行的代码**——给 ShuyoNote 加**可选、本地优先、安全、写操作经审核**的 AI 能力。实现不做全量 Agent 运行时，而是**复用现有前端插件宿主**（`src/plugins/registry.ts`）+ 暴露**语义化工具**（多为现有命令），配一个**受限于白名单工具**的轻量 LLM 循环。
+> 前置：已完成 [薄 Agent 接口方案](2026-08-24-thin-agent-interface-plan.md)（路线/取舍）。本方案专注"怎么在现有代码树上实现"。
 
 ---
 
@@ -75,7 +75,7 @@
 
 ## 3.5 交互界面
 
-> 遵循现有 UI 范式：`CommandPalette`（Ctrl+K）、侧边浮层面板（`SyncPanel`/`StoragePanel`/`PluginManager`）、`NewPageGuide` 向导、`ConfirmDialog`/`InputDialog`/`toast`、`SparkleIcon`。见 [薄 Agent 界面方案](plans/2026-08-24-thin-agent-interface-plan.md) §7（对应交互模块映射）。
+> 遵循现有 UI 范式：`CommandPalette`（Ctrl+K）、侧边浮层面板（`SyncPanel`/`StoragePanel`/`PluginManager`）、`NewPageGuide` 向导、`ConfirmDialog`/`InputDialog`/`toast`、`SparkleIcon`。见 [薄 Agent 界面方案](2026-08-24-thin-agent-interface-plan.md) §7（对应交互模块映射）。
 
 ### 入口（3 处，按 `ai.enabled` 显隐）
 | 入口 | 位置 | 触发 |
@@ -187,7 +187,7 @@ pub fn append_block(db: State<Db>, page_id: String, text: String) -> Result<(), 
 - [ ] Rust `append_block` 保持与 `save_page` 一致（版本历史/块索引）。
 - [ ] 现有 `scripts/smoke-web.mjs` 无回归；新增工具层/审核逻辑的断言。
 
-## 7. 里程碑（对齐 [M17](roadmap.md)）
+## 7. 里程碑（对齐 [M17](../roadmap.md)）
 
 - **M17.0** 语义工具层：`src/lib/ai/{types,tools}` + `append_block`（后端）。
 - **M17.1** LLM 适配器 + 宿主循环：`llm.ts` + `host.ts`（白名单 + 步数限制）。

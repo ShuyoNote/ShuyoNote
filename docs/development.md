@@ -54,11 +54,16 @@ node scripts/smoke-web.mjs            # 期望 "N passed, 0 failed"
 npx tsc --noEmit
 
 # 4. 前端构建
-pnpm build                            # check-versions + tsc + vite build
+pnpm build                            # check-versions + tsc + check-web-commands + vite build
 
 # 5. Rust 检查（会重生成 src-tauri/Cargo.lock，版本号改动后必跑）
 cargo check --manifest-path src-tauri/Cargo.toml
+
+# 6. 文档相对链接（改动文档 / 挪动文件后跑）
+pnpm check:doc-links                  # 期望 "N 条相对链接全部可达"
 ```
+
+> **命令契约守卫**（`scripts/check-web-commands.mjs`，已并入 `pnpm build`）校验三件事：Rust 命令 ⊆ `web.ts`、Rust 命令 ⊆ `CommandMap`、**`CommandMap` 顶层参数键必须是 camelCase**。第三条是运行时坑的静态兜底——**Tauri 2 只接受 camelCase 参数键**并在运行时映射到 Rust 的 snake_case 形参，传 `server_url` 会报 `missing required key serverUrl`；而 TS 查不出来（契约和调用点会「一起错」）。`args: { args: {...} }` 这种「整个结构体当一个参数」的写法除外，内层字段仍是 serde 的 snake_case。
 
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
