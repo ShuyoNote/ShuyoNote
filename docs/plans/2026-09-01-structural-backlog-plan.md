@@ -3,6 +3,16 @@
 > 背景：2026-09-01 完成 ShuyoNote 客户端 + shuyonote-sync-server 服务端两端的 P0/P1/P2 安全加固、E1 加密兼容、H1 高可用、前端单测地基（71 断言）后，剩余三项**结构性改进**独立立项。每项均为「重构/基建」而非「安全补丁」，收益在长期可维护性与规模化，故各自独立迭代、分步落地，不与功能迭代混排。
 > 关联：[development.md](../development.md)（验证循环）、[architecture.md](../architecture.md)（平台 driver）、服务端 `docs/roadmap.md`（H1–H4）。
 
+## 进度状态（2026-09-01 更新）
+
+| 立项 | 状态 | 已落地 |
+|---|---|---|
+| ① markdown round-trip 单测 | ✅ **达成** | `mdToHtml`（12）+ `mdPreview`（5，经 `$convertFromMarkdownString`/`$importHtml`）+ happy-dom 测试环境（`vitest.config.ts` + `src/test/setup.ts`） |
+| ② web.ts 命令契约层 | 🔶 **前两步达成** | 未知命令改为抛错（`web.ts` 兜底）+ 补齐 10 个缺失命令 + `scripts/check-web-commands.mjs` 覆盖率检查（接入 `pnpm check:web-commands`）；完整 CommandMap 类型化迁移待排期 |
+| ③ 服务端单 Mutex 并发瓶颈 | 🔶 **第一步达成** | `push` 批量 INSERT 改单事务（`sync.rs`）；读写分离/连接池待排期 |
+
+> 另：本轮顺带完成「Web 版平台能力边界显式降级提示」（SyncPanel/ThemeSettings/PluginManager 三入口）与服务端「register 口令强度 ≥8 字符」，不在原三项立项内。
+
 ## 立项 1：markdown round-trip 单测（客户端）
 
 ### 背景 / 问题
