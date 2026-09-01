@@ -3,7 +3,7 @@
 // video / audio / pdf render their asset. A markdown file also gets a "转为笔记"
 // action. Shared so any view can open it. Rendered inside `.app` (not body) so it
 // inherits the sidebar-width CSS var and never overlaps the sidebar.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { platform } from "../lib/platform";
 import { useFilePreview } from "../store/filePreview";
@@ -12,27 +12,74 @@ import { useFileManagerStore } from "../store/fileManager";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { useResolvedTheme } from "../store/theme";
 
+// MD 大纲：从渲染后的 .fm-md-preview 里收集 h1–h6 作为目录，点击滚动定位，
+// 滚动时高亮当前章节。独立的（MD 预览是纯 HTML，复用不了编辑器 Lexical TOC）。
+interface MdOutlineItem {
+  text: string;
+  level: number;
+  idx: number;
+}
+function collectOutline(root: HTMLElement): MdOutlineItem[] {
+  const out: MdOutlineItem[] = [];
+  const walk = (el: Element) => {
+    for (const c of Array.from(el.children)) {
+      const tag = c.tagName.toLowerCase();
+      if (/^h[1-6]$/.test(tag)) {
+        const text = (c.textContent || "").trim();
+        if (text) out.push({ text, level: Number(tag[1]), idx: out.length });
+      }
+      if (c.children.length) walk(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+
 export function FilePreviewDialog() {
   const { target, mdHtml, mdLoading, mdImporting, close, importAsPage } = useFilePreview();
   const mdRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme(); // re-render mermaid when theme changes
+  const [outline, setOutline] = useState<MdOutlineItem[]>([]);
+  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [activeOut, setActiveOut] = useState<number | null>(null);
 
-  // Hydrate ```mermaid fenced blocks whenever their HTML (or the theme) changes.
-  useEffect(() => {
-    if (target?.mime === "text/markdown" && mdHtml && !mdLoading) {
-      void hydrateMermaidBlocks(mdRef.current, theme === "dark" ? "dark" : "default");
-    }
-  }, [mdHtml, mdLoading, target, theme]);
-
-  if (!target) return null;
+  const isMd = target?.mime === "text/markdown";
   const folderId = useFileManagerStore.getState().folderId;
 
   const openPdf = () => {
-    if (target.mime === "application/pdf") {
+    if (target && target.mime === "application/pdf") {
       usePdfReader.getState().openPdf(target.id, target.name);
       close();
     }
   };
+
+  // Hydrate ```mermaid fenced blocks whenever their HTML (or the theme) changes.
+  useEffect(() => {
+    if (isMd && mdHtml && !mdLoading) {
+      void hydrateMermaidBlocks(mdRef.current, theme === "dark" ? "dark" : "default");
+    }
+  }, [mdHtml, mdLoading, isMd, theme]);
+
+  // 每次 HTML 变化后重新收集提纲。
+  useEffect(() => {
+    if (isMd && mdHtml && !mdLoading && mdRef.current) {
+      setOutline(collectOutline(mdRef.current));
+      setActiveOut(null);
+    }
+  }, [isMd, mdHtml, mdLoading]);
+
+  const scrollToOutline = (item: MdOutlineItem) => {
+    const root = mdRef.current;
+    if (!root) return;
+    const heads = root.querySelectorAll("h1,h2,h3,h4,h5,h6");
+    const el = heads[item.idx];
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveOut(item.idx);
+  };
+
+  // Hooks 之上已全部执行；target 为空则不渲染弹层。
+  if (!target) return null;
 
   return createPortal(
     <div className="fm-preview-overlay" onClick={close}>
@@ -48,6 +95,18 @@ export function FilePreviewDialog() {
                 <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
               </svg>
               <span>阅读并批注</span>
+            </button>
+          )}
+          {isMd && (
+            <button
+              className={`fm-preview-read fm-outline-toggle${outlineOpen ? " is-on" : ""}`}
+              onClick={() => setOutlineOpen((s) => !s)}
+              title="切换目录"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+              </svg>
+              <span>目录</span>
             </button>
           )}
           {target.mime === "text/markdown" && (
@@ -78,7 +137,27 @@ export function FilePreviewDialog() {
             mdLoading ? (
               <div className="fm-preview-unsupported">加载 Markdown…</div>
             ) : mdHtml ? (
-              <div className="fm-md-preview" ref={mdRef} dangerouslySetInnerHTML={{ __html: mdHtml }} />
+              <div className="fm-md-wrap">
+                <div className="fm-md-body" ref={bodyRef}>
+                  <div className="fm-md-preview" ref={mdRef} dangerouslySetInnerHTML={{ __html: mdHtml }} />
+                </div>
+                {outlineOpen && outline.length > 0 && (
+                  <div className="fm-md-outline">
+                    <div className="fm-md-outline-title">目录</div>
+                    {outline.map((it) => (
+                      <button
+                        key={it.idx}
+                        className={`fm-md-outline-item ${activeOut === it.idx ? "active" : ""}`}
+                        style={{ paddingLeft: `${(it.level - 1) * 12 + 6}px` }}
+                        onClick={() => scrollToOutline(it)}
+                        title={it.text}
+                      >
+                        {it.text}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="fm-preview-unsupported">无法渲染该 Markdown 文件。</div>
             )
