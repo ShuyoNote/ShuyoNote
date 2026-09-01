@@ -240,7 +240,7 @@ pub async fn ai_probe(args: AiProbeArgs) -> Result<AiProbeResult, String> {
 // stream, and emits each content delta to a per-run event (`ai-stream:{run_id}`)
 // with payload {delta} / {done}. The frontend subscribes via `platform.event.listen`.
 
-async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Vec<serde_json::Value> {
+async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Result<Vec<serde_json::Value>, String> {
     let is_openai = args.provider == "openai";
     let url = if is_openai {
         append_v1(&args.base_url, "/chat/completions")
@@ -284,14 +284,13 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Ve
     let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
-            // Surface a reachable error as a single delta so the UI shows why.
-            emit(describe_net(&e, &url));
-            return Vec::new();
+            // Return the reachable error (NOT as a delta) so the frontend can
+            // show an error state instead of mistaking it for model output.
+            return Err(describe_net(&e, &url));
         }
     };
     if !resp.status().is_success() {
-        emit(format!("【请求失败 {}】", resp.status()));
-        return Vec::new();
+        return Err(format!("【请求失败 {}】", resp.status()));
     }
 
     let mut stream = resp.bytes_stream();
@@ -341,7 +340,7 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Ve
         }
     }
 
-    if use_frags {
+    Ok(if use_frags {
         let mut keys: Vec<usize> = tc_frags.keys().copied().collect();
         keys.sort_unstable();
         keys.into_iter()
@@ -369,7 +368,7 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Ve
                 Some(json!({ "name": name, "arguments": args }))
             })
             .collect()
-    }
+    })
 }
 
 fn ollama_stream_chunk(line: &str) -> Option<(String, Option<Vec<serde_json::Value>>)> {
@@ -418,8 +417,15 @@ pub async fn ai_complete_stream(
         let emit = move |t: String| {
             let _ = app_delta.emit(&evt_delta, json!({ "delta": t }));
         };
-        let tcs = stream_model(args, emit).await;
-        let _ = app.emit(&evt, json!({ "done": true, "toolCalls": tcs }));
+        let result = stream_model(args, emit).await;
+        match result {
+            Ok(tcs) => {
+                let _ = app.emit(&evt, json!({ "done": true, "toolCalls": tcs }));
+            }
+            Err(msg) => {
+                let _ = app.emit(&evt, json!({ "done": true, "error": msg }));
+            }
+        }
     });
     Ok(())
 }

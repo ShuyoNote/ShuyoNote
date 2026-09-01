@@ -56,14 +56,16 @@ export function createBackendStreamingTransport(config: ProviderConfig): LlmTran
       const runId = `run-${++streamSeq}-${Date.now()}`;
       const evtName = `ai-stream:${runId}`;
       let content = "";
+      let error: string | undefined;
       let toolCalls: Array<{ name: string; arguments: string }> | undefined;
       let doneResolve: () => void = () => {};
       const done = new Promise<void>((resolve) => {
         doneResolve = resolve;
       });
-      const unlisten = await platform.event.listen<{ delta?: string; done?: boolean; toolCalls?: Array<{ name: string; arguments: string }> }>(evtName, (e) => {
+      const unlisten = await platform.event.listen<{ delta?: string; done?: boolean; error?: string; toolCalls?: Array<{ name: string; arguments: string }> }>(evtName, (e) => {
         const p = e.payload;
         if (p?.done) {
+          if (typeof p.error === "string" && p.error) error = p.error;
           if (Array.isArray(p.toolCalls) && p.toolCalls.length) toolCalls = p.toolCalls;
           doneResolve();
         } else if (typeof p?.delta === "string" && p.delta) {
@@ -82,11 +84,17 @@ export function createBackendStreamingTransport(config: ProviderConfig): LlmTran
           temperature: opts.temperature,
           max_tokens: opts.maxTokens,
         };
-        void api.aiCompleteStream(args, runId);
+        // If the invoke itself rejects (serialization failure, backend panic),
+        // surface it as an error instead of leaving the UI "运行中" forever.
+        api.aiCompleteStream(args, runId).catch((e) => {
+          error = String(e);
+          doneResolve();
+        });
         await done;
       } finally {
         unlisten();
       }
+      if (error) throw new Error(error);
       return {
         content,
         nativeToolCalls: toolCalls
