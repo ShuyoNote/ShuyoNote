@@ -14,24 +14,27 @@ import { useResolvedTheme } from "../store/theme";
 
 // 图片预览器：缩放（滚轮 + 按钮）、适应窗口、1:1 实际尺寸、放大镜、查看原图。
 // 顶栏显示文件名 + 缩放百分比与适应/原图按钮。独立组件便于复用与调节。
+const clampZoom = (z: number) => Math.min(4, Math.max(0.1, z));
+
 function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string; onOpenOriginal?: () => void }) {
-  const [zoom, setZoom] = useState(1); // 1 = 适应窗口
+  const [zoom, setZoom] = useState(1); // 1 = 适应窗口基准
+  const [tx, setTx] = useState(0); // 平移到屏幕像素
+  const [ty, setTy] = useState(0);
   const [fit, setFit] = useState(true); // 适应窗口模式
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; tx: number; ty: number } | null>(null);
 
-  const clampZoom = (z: number) => Math.min(4, Math.max(0.1, z));
+  const applyZoom = (z: number) => {
+    setFit(false);
+    setZoom(z);
+  };
 
-  // 适应窗口：根据容器与图片尺寸算 fit 缩放。简化：fit 视为 1（CSS object-fit 撑满）。
-  // 这里用 CSS 缩放变换，fit=true 时让图片 fit 容器，否则按 zoom 叠加。
   return (
     <div
       className="fm-img-view"
       onWheel={(e) => {
         e.preventDefault();
-        const delta = e.deltaY < 0 ? 1.15 : 0.87;
-        setFit(false);
-        setZoom((z) => clampZoom(z * delta));
+        const next = clampZoom(zoom * (e.deltaY < 0 ? 1.15 : 0.87));
+        applyZoom(next);
       }}
     >
       <img
@@ -42,25 +45,35 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
           fit
             ? {}
             : {
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                // 以图片中心为缩放原点：放大围绕中心，不移位。translate 在
+                // scale 之前用屏幕像素，拖拽量=鼠标增量，跟手。
+                transformOrigin: "center center",
+                transform: `translate(${tx}px, ${ty}px) scale(${zoom})`,
                 cursor: dragRef.current ? "grabbing" : "zoom-out",
               }
         }
-        onMouseDown={(e) => {
+        onPointerDown={(e) => {
           if (fit) return;
-          dragRef.current = { sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y };
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          dragRef.current = { sx: e.clientX, sy: e.clientY, tx, ty };
         }}
-        onMouseMove={(e) => {
-          if (!dragRef.current || fit) return;
-          setPan({ x: dragRef.current.ox + (e.clientX - dragRef.current.sx), y: dragRef.current.oy + (e.clientY - dragRef.current.sy) });
+        onPointerMove={(e) => {
+          const d = dragRef.current;
+          if (!d || fit) return;
+          setTx(d.tx + (e.clientX - d.sx));
+          setTy(d.ty + (e.clientY - d.sy));
         }}
-        onMouseUp={() => (dragRef.current = null)}
-        onMouseLeave={() => (dragRef.current = null)}
+        onPointerUp={(e) => {
+          if (dragRef.current) e.currentTarget.releasePointerCapture(e.pointerId);
+          dragRef.current = null;
+        }}
+        onPointerCancel={() => (dragRef.current = null)}
         onDoubleClick={() => {
-          // 双击回到适应窗口。
           setFit(true);
           setZoom(1);
-          setPan({ x: 0, y: 0 });
+          setTx(0);
+          setTy(0);
         }}
       />
       <div className="fm-img-hint">
