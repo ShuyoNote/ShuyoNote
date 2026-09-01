@@ -204,6 +204,101 @@ body,
   min-height: 0;
 }
 
+/* ---------- Activity bar（最左侧竖条）----------
+ * VS Code 式：竖条常驻，承载全局导航（笔记/搜索/文件/看板/关系图）与全局工具
+ * （模板/设置/关于）。点当前活动图标可收起侧栏——收起后竖条仍在，入口不会消失
+ * （这正是把入口从侧栏搬出来的目的）。 */
+.activity-bar {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px 0;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+}
+.activity-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.activity-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.activity-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.activity-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.activity-btn.is-on {
+  color: var(--accent);
+}
+/* 选中项左侧一道竖条（VS Code 同款语义），比只换颜色更容易一眼定位。 */
+.activity-btn.is-on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+.activity-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+
+/* 侧栏内嵌搜索面板（activity = search）。 */
+.search-side {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.search-side-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.search-side .search-input {
+  font-size: 13px;
+  padding: 8px 30px 8px 32px;
+}
+.search-side .search-scope {
+  align-self: stretch;
+}
+.search-side .search-scope-btn {
+  flex: 1;
+}
+.search-side-results {
+  padding: 0 6px 10px;
+}
+
 /* ---------- Sidebar ---------- */
 .sidebar {
   width: var(--sidebar-w, 264px);
@@ -274,6 +369,29 @@ body,
 
 .sidebar-collapsed .sidebar-header {
   justify-content: center;
+}
+
+/* 折叠态（56px）：顶部动作与底部栏都改纵向排列、只留图标。
+   底部栏此前在折叠时整块不渲染，回收站/模板/设置/关于全点不到——现在保留。 */
+.sidebar-collapsed .sidebar-header-actions {
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px 8px;
+}
+.sidebar-collapsed .sidebar-actions-group {
+  flex-direction: column;
+  gap: 4px;
+}
+.sidebar-collapsed .sidebar-bottom {
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 4px;
+}
+.sidebar-collapsed .sidebar-bottom-about {
+  margin-left: 0;
+}
+.sidebar-collapsed .sidebar-bottom-label {
+  display: none;
 }
 
 .sidebar-header-actions {
@@ -2005,6 +2123,9 @@ select.sync-input {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+}
+.sidebar-bottom-label {
+  white-space: nowrap;
 }
 
 .search-panel {

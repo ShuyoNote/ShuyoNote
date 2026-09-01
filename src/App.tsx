@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
+import { ActivityBar } from "./components/ActivityBar";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
 import { AttachmentPanel } from "./components/AttachmentPanel";
@@ -454,6 +455,7 @@ function App() {
     <div className="app">
       <UpdateBanner />
       <div className="app-body">
+        <ActivityBar />
         <PageTree view={view} onViewChange={setView} />
       {templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>

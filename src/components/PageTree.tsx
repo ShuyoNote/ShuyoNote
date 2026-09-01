@@ -10,21 +10,20 @@ import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
 import { useTemplateCenterStore } from "../store/templateCenter";
-import { useAiStore } from "../store/ai";
-import { useRightPanel } from "../store/rightPanel";
 import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
+import { useActivity, panelOf } from "../store/activity";
+import { SearchSidebar } from "./SearchSidebar";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
-import { SearchPanel } from "./SearchPanel";
 import { SyncPanel } from "./SyncPanel";
 import { TrashPanel } from "./TrashPanel";
 import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
-import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon, TemplateIcon, BoardIcon, GraphIcon, SparkleIcon, InfoIcon, SettingsIcon } from "./icons";
+import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -591,15 +590,18 @@ function BatchToolbar({ pages }: { pages: PageMeta[] }) {
   );
 }
 
-export function PageTree({
-  view,
-  onViewChange,
-}: {
-  view: AppView;
-  onViewChange: (v: AppView) => void;
+// 视图切换已收编进左侧竖条 <ActivityBar />，这里不再需要 view / onViewChange，
+// 但 App 仍按老签名传参，故保留可选 props 以免调用点大改。
+export function PageTree(_props: {
+  view?: AppView;
+  onViewChange?: (v: AppView) => void;
 }) {
   const { pages, createPage, createFolder, createDatabase, loading, movePage } = useNotes();
   const collapsed = false;
+  // 左侧竖条决定侧栏显示什么（页面树 / 搜索），以及侧栏是否展开。
+  const activity = useActivity((s) => s.activity);
+  const sidebarOpen = useActivity((s) => s.sidebarOpen);
+  const panel = panelOf(activity);
   const {
     open: newMenuOpen,
     pos: newMenuPos,
@@ -649,8 +651,6 @@ export function PageTree({
   const [renameSpaceValue, setRenameSpaceValue] = useState("");
   // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
-  const aiEnabled = useAiStore((s) => s.config.enabled);
-  const updateAvailable = useEditorStore((s) => s.updateAvailable);
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
   const isDesktop = useMemo(() => (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window), []);
 
@@ -872,7 +872,7 @@ export function PageTree({
 
   const tree = useMemo(() => buildTree(pages), [pages]);
   return (
-    <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
+    <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`} hidden={!sidebarOpen}>
       {!collapsed && (
         <div className="sidebar-resizer" onPointerDown={onSidebarResizeStart} title="拖拽调整侧边栏宽度" />
       )}
@@ -1033,10 +1033,10 @@ export function PageTree({
         </div>
         <div className="sidebar-header-actions">
           <div className="sidebar-actions-group">
-            <SearchPanel />
+            {/* 搜索已收编进左侧竖条（activity=search，侧栏变搜索面板），
+                这里不再放第二个搜索入口；快速跳转仍可用 Ctrl+K 命令面板。
+                同步留在这里：它与「当前空间」强相关，且需要状态胶囊常驻可见。 */}
             <SyncPanel />
-            <BackupButton />
-            <StoragePanel />
           </div>
           <div className="new-menu">
             <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title="新建" aria-label="新建">
@@ -1089,90 +1089,34 @@ export function PageTree({
             )}
           </div>
         </div>
-      {!collapsed && (
-        <>
-          <div className="view-switch">
-            <button
-              className={`view-switch-btn ${view === "notes" ? "view-switch-active" : ""}`}
-              onClick={() => onViewChange("notes")}
-            >
-              <PageIcon width={15} height={15} />
-              <span>笔记</span>
-            </button>
-            <button
-              className={`view-switch-btn ${view === "board" ? "view-switch-active" : ""}`}
-              onClick={() => onViewChange("board")}
-            >
-              <BoardIcon width={15} height={15} />
-              <span>看板</span>
-            </button>
-            <button
-              className={`view-switch-btn ${view === "graph" ? "view-switch-active" : ""}`}
-              onClick={() => onViewChange("graph")}
-            >
-              <GraphIcon width={15} height={15} />
-              <span>关系图</span>
-            </button>
-          </div>
-        </>
-      )}
-      <div className="sidebar-tree" ref={treeContainerRef}>
-        {loading && pages.length === 0 ? (
-          <div className="sidebar-skeleton">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <div key={i} className="skeleton-row" style={{ width: `${100 - i * 12}%` }} />
-            ))}
-          </div>
-        ) : tree.length === 0 ? (
-          <div className="sidebar-empty">
-            {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
-          </div>
-        ) : (
-          tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)
-        )}
-        <BatchToolbar pages={pages} />
-      </div>
-      {!collapsed && (
-        <div className="sidebar-bottom">
-          <TrashPanel />
-          <button
-            className="sidebar-bottom-btn"
-            onClick={() => useTemplateCenterStore.getState().setOpen(true)}
-            title="模板中心"
-          >
-            <TemplateIcon className="sidebar-bottom-icon" />
-          </button>
-          {/* 设置是低频全局项，按惯例落在侧栏底部（VS Code / Notion / Obsidian
-              皆如此），把顶部图标区留给高频动作（搜索 / 同步 / 新建）。 */}
-          <button
-            className="sidebar-bottom-btn"
-            onClick={() => useEditorStore.getState().openSettings()}
-            title="设置"
-            aria-label="设置"
-          >
-            <SettingsIcon className="sidebar-bottom-icon" />
-          </button>
-          {aiEnabled && (
-            <button
-              className="sidebar-bottom-btn"
-              onClick={() => useRightPanel.getState().openAi(true)}
-              title="AI 助手"
-            >
-              <SparkleIcon className="sidebar-bottom-icon sidebar-bottom-ai" /> AI
-            </button>
+      {panel === "search" ? (
+        <SearchSidebar />
+      ) : (
+        <div className="sidebar-tree" ref={treeContainerRef}>
+          {loading && pages.length === 0 ? (
+            <div className="sidebar-skeleton">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="skeleton-row" style={{ width: `${100 - i * 12}%` }} />
+              ))}
+            </div>
+          ) : tree.length === 0 ? (
+            <div className="sidebar-empty">
+              {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
+            </div>
+          ) : (
+            tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)
           )}
-          <button
-            className="sidebar-bottom-btn sidebar-bottom-about"
-            onClick={() => useEditorStore.getState().openAbout()}
-            title="关于"
-          >
-            <span className="sidebar-bottom-btn-inner">
-              <InfoIcon className="sidebar-bottom-icon" /> 关于
-              {updateAvailable && <span className="update-dot" title="有新版本可用" />}
-            </span>
-          </button>
+          <BatchToolbar pages={pages} />
         </div>
       )}
+      {/* 侧栏底部只留与「当前空间的数据」相关的低频入口：回收站 / 备份 / 存储。
+          全局导航与全局工具（模板 / 设置 / 关于 / 视图切换）已收编进左侧竖条
+          <ActivityBar />，AI 归右侧 RightRail——同一件事只有一个入口。 */}
+      <div className="sidebar-bottom">
+        <TrashPanel />
+        <BackupButton />
+        <StoragePanel />
+      </div>
 
       {/* 空间导出/导入进度条已随迁移逻辑一起移出侧栏，由 App 级
           <SpaceTransferProgress /> 订阅 useSpaceTransfer 统一渲染 —— 这样
