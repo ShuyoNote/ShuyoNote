@@ -135,20 +135,11 @@ export function SyncPanel() {
     setLoggingIn(true);
     setStatus("");
     try {
-      const lres = await fetch(`${base}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: r.loginEmail.trim(), password: r.loginPassword }),
-      });
-      if (!lres.ok) {
-        const t = await lres.text().catch(() => "");
-        throw new Error(`登录失败 ${lres.status}：${t}`);
-      }
-      const ldata = await lres.json().catch(() => ({}));
-      const token = ldata?.token;
+      // 走 Rust 代理命令（绕 WebView2 CORS）：服务端无 CORS 层，前端 fetch 会被拦。
+      const { token } = await api.teamLogin(base, r.loginEmail.trim(), r.loginPassword);
       if (!token) throw new Error("服务器未返回 token");
       // 空间列表拉取失败不阻断登录：token 先填入，列表尽力而为。
-      const list = await fetchSpaces(base, token).catch(() => [] as ServerSpace[]);
+      const list = await api.teamListSpaces(base, token).catch(() => [] as ServerSpace[]);
       setRows((rs) =>
         rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token, loginPassword: "", remoteSpaces: list } : x)),
       );
@@ -171,7 +162,7 @@ export function SyncPanel() {
     if (!base || !r.space_id || !r.token) { setStatus("请先登录并绑定空间"); return; }
     setStatus("");
     try {
-      const members = await fetchMembers(base, r.token, r.space_id);
+      const members = await api.teamListMembers(base, r.token, r.space_id);
       setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, members } : x)));
     } catch (e) {
       setStatus(`成员拉取失败：${e}`);
@@ -186,7 +177,7 @@ export function SyncPanel() {
     const email = r.inviteEmail.trim();
     const role = r.inviteRole;
     try {
-      await memberRequest(base, r.token, r.space_id, "POST", "", { user_email: email, role });
+      await api.teamInviteMember(base, r.token, r.space_id, email, role);
       await loadMembers({ ...r, inviteEmail: "" });
       setStatus(`已邀请 ${email}`);
     } catch (e) {
@@ -197,7 +188,7 @@ export function SyncPanel() {
   const removeMember = async (r: EditRow, userId: string) => {
     const base = r.server_url.trim().replace(/\/+$/, "");
     try {
-      await memberRequest(base, r.token, r.space_id, "DELETE", `/${userId}`);
+      await api.teamRemoveMember(base, r.token, r.space_id, userId);
       await loadMembers(r);
       setStatus("已移除成员");
     } catch (e) {
@@ -208,7 +199,7 @@ export function SyncPanel() {
   const setMemberRole = async (r: EditRow, email: string, role: string) => {
     const base = r.server_url.trim().replace(/\/+$/, "");
     try {
-      await memberRequest(base, r.token, r.space_id, "POST", "", { user_email: email, role });
+      await api.teamSetMemberRole(base, r.token, r.space_id, email, role);
       await loadMembers(r);
       setStatus("已更新角色");
     } catch (e) {
@@ -320,36 +311,4 @@ export function SyncPanel() {
   );
 }
 
-async function fetchSpaces(base: string, token: string): Promise<ServerSpace[]> {
-  const res = await fetch(`${base}/spaces`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`拉取空间失败 ${res.status}：${t}`);
-  }
-  const data = await res.json().catch(() => ({}));
-  return Array.isArray(data?.spaces) ? data.spaces : [];
-}
 
-// ---- M27 成员管理（前端直连 sync-server /spaces/{id}/members）----
-
-async function fetchMembers(base: string, token: string, spaceId: string): Promise<ServerMember[]> {
-  const res = await fetch(`${base}/spaces/${spaceId}/members`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`拉取成员失败 ${res.status}：${t}`);
-  }
-  const data = await res.json().catch(() => ({}));
-  return Array.isArray(data?.members) ? data.members : [];
-}
-
-async function memberRequest(base: string, token: string, spaceId: string, method: "POST" | "DELETE", path: string, body?: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${base}/spaces/${spaceId}/members${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`成员操作失败 ${res.status}：${t}`);
-  }
-}
