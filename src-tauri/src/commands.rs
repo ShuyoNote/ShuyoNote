@@ -510,25 +510,40 @@ pub struct RenderPdfPageArgs {
 /// `ArrayBuffer` directly, avoiding the huge JS-number-array deserialization
 /// that a JSON `Vec<u8>` payload causes (6.8MB → 6.8M numbers — the lag
 /// culprit on fit-width page flips).
+///
+/// IMPORTANT (fix): this was a *synchronous* command. MuPDF rasterization is
+/// CPU-intensive (a scanned/complex page can take seconds), and a sync command
+/// runs on the main thread, blocking the WebView2 message loop — the window
+/// shows "(未响应)" and the page never paints. It is now `async`, and the
+/// rasterization runs on the blocking thread pool (`spawn_blocking`), so the
+/// UI thread stays responsive while the page renders in the background.
 #[tauri::command]
-pub fn render_pdf_page(app: tauri::AppHandle, db: State<Db>, args: RenderPdfPageArgs) -> Result<tauri::ipc::InvokeResponseBody, String> {
-    let c = conn(&db);
-    let hash: String = c
-        .query_row(
+pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: RenderPdfPageArgs) -> Result<tauri::ipc::InvokeResponseBody, String> {
+    let hash: String = {
+        let c = conn(&db);
+        c.query_row(
             "SELECT hash FROM attachments WHERE id = ?1",
             params![args.attachment_id],
             |row| row.get(0),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+    };
     // 若该 PDF 的 mupdf 文档已在缓存中（doc cache 持有 PDF bytes 副本），则无需
     // 再从磁盘遍历目录 + 读整个文件——跳过，避免反复跳转/滚动时的大 I/O。
     let bytes = if crate::pdf_native::has_document(&hash) {
         Vec::new()
     } else {
-        crate::attachments::read_attachment_bytes(app, db.clone(), hash.clone())?
+        crate::attachments::read_attachment_bytes(app, db, hash.clone())?
     };
-    let (rgba, w, h, _stride) = unsafe { crate::pdf_native::render_page(&hash, &bytes, args.page_index, args.scale) }
-        .map_err(|e| format!("MuPDF render failed: {e}"))?;
+    let page_index = args.page_index;
+    let scale = args.scale;
+    // 在阻塞线程池上执行 mupdf 栅格化，避免阻塞主（UI）线程。
+    let (rgba, w, h, _stride) = tauri::async_runtime::spawn_blocking(move || {
+        unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }
+    })
+    .await
+    .map_err(|e| format!("render task failed: {e}"))?
+    .map_err(|e| format!("MuPDF render failed: {e}"))?;
     // Header (8 bytes, little-endian) + RGBA.
     let mut out = Vec::with_capacity(8 + rgba.len());
     out.extend_from_slice(&(w as u32).to_le_bytes());
