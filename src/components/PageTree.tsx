@@ -1039,7 +1039,6 @@ export function PageTree(_props: {
               <PlusIcon width={15} height={15} strokeWidth={2.2} />
               <span className="btn-new-label">新建</span>
             </button>
-            </button>
             {newMenuOpen && (
               <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
                 <div className="new-menu-title">新建</div>
