@@ -28,7 +28,6 @@ public/version.json
 # Local scratch / CDP test temp + Edge profiles (never committed)
 tmp
 demo-shots
-
 # Rust build artifacts
 src-tauri/target
 

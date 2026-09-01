@@ -14,9 +14,7 @@
 | **身份 / 隐私落地节奏** | [身份与隐私子路线图](identity-privacy-roadmap.md) |
 | **Web 版为什么不能多设备同步** | [Web 同步能力边界](web-sync-boundary.md) |
 | 下一步做什么 | [路线图](roadmap.md) |
-| 运营期怎么跟付费客户沟通 | [付费客户沟通渠道](operations-paid-customers.md) |
-| 运营材料总入口 | [运营手册总纲](operations-handbook.md) |
-| 给国内 B 端客户看的支持手册 | [客户支持与对接手册·对外版](customer-facing-playbook.md) |
+| 免费客户出口怎么做 | [免费客户出口·网站/帮助站指南](free-site-export-guide.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
@@ -35,12 +33,7 @@ docs/
 ├── identity-privacy-roadmap.md # 身份/隐私落地子路线图
 ├── positioning.md       # 产品定位
 ├── design-philosophy.md # 设计哲学
-├── operations-paid-customers.md # 运营期·付费客户沟通渠道（内部）
-├── customer-facing-playbook.md  # 商业授权·客户支持手册（对外版）
-├── operations-handbook.md       # 运营手册总纲（索引页）
-├── duty-roster-template.md      # 值班/交接排班表模板（配套售后群 SOP）
-├── duty-roster.csv              # 值班/工单表 CSV 版（Excel 可直接打开排班/记日志）
-├── zammad-field-mapping.md      # 工单系统字段映射（Zammad，配套 §6.3）
+├── free-site-export-guide.md     # 免费客户出口·网站/帮助站指南（公开向；付费客户沟通材料见私有 shuyonote-sync-server 仓库）
 ├── roadmap.md           # 演进路线图（M1–M25 里程碑）
 ├── compare-*.md         # 竞品对比
 └── plans/               # 各功能技术方案（按日期）
@@ -55,10 +48,7 @@ CHANGELOG.md             # 版本变更日志
 | [architecture.md](architecture.md) | **系统架构**：前端 / 平台 driver（桌面 Tauri + 浏览器 Web）/ Rust 后端 / SQLite & 存储布局 / 同步服务端分层；数据模型、一致性边界与 ADR |
 | [web-sync-boundary.md](web-sync-boundary.md) | **Web 同步能力边界**：Web 版为何不支持多设备同步的四层原因（服务端不挂 CORS / 同步引擎在 Rust / 存储模型不匹配 / 凭证信任边界）、用户可见表现与代码出处、桌面 vs Web 能力对照、若要开启的前置条件与 W1–W4 分阶段路线 |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
-| [operations-paid-customers.md](operations-paid-customers.md) | **运营期·付费客户沟通渠道**：付费客户 = sync-server 商业授权 + 团队版（私有化部署）；三层职责分离——企业微信（主动触达）+ 邮箱（正式留痕）+ 自托管工单（SLA）；含分客户群策略、企业微信四坑与对策、license 签发/续费、SLA 分级、security 披露流程、邮件模板（询价/交付/续费/安全公告）、企业微信对接流程 + 售后群 SOP（欢迎语/应用消息文案/值班升级规则）、国内 B 端对接图（一页）、**免费 vs 付费客户对照总表**、红线与起步优先级 |
-| [customer-facing-playbook.md](customer-facing-playbook.md) | **商业授权·客户支持与对接手册（对外版）**：面向国内 B 端客户的**对外话术/预期管理**——支持的渠道（sales/support/security + 企业微信 + 工单）、SLA 分级（P0–P3）、从询价到续费的对按流程、安全披露、隐私与数据、**免费 vs 付费授权差异（简版）**、联系方式；**适合直接给客户看**（不含内部红线与起步优先级） |
-| [duty-roster-template.md](duty-roster-template.md) | **值班/交接排班表模板**：配套售后群 SOP（§13.3）的可填写模板——每周值班表、值班职责清单、分级响应对照、升级/上报联系人、交接记录、值班日志 |
-| [operations-handbook.md](operations-handbook.md) | **《ShuyoNote 运营手册》总纲（索引页）**：把运营期材料按「免费客户出口（被动）」与「付费客户沟通（主动）」两条线收口——两类客户两套口径、免费侧材料（项目网站导航/帮助系统/定位）、付费侧材料（内部主文档/对外版/值班表/CSV/Zammad映射）、运营主线流向图、文档分工（对内对外）与贯穿红线 |
+| [free-site-export-guide.md](free-site-export-guide.md) | **免费客户出口 · 网站/帮助站导出与发布指南**：免费/开源社区的**被动出口**——三层出口（就地提示/内置指南/外部静态站）、导出三种方式（M21 静态 wiki 导出建帮助站 / 仓库 Pages 建主页 / 应用内「关于」对话框）、干净链接策略（无 utm/埋点）、发布路径、与付费侧对照、发布核对清单与红线。**付费客户沟通/商务运营材料见私有 shuyonote-sync-server 仓库** |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
 
