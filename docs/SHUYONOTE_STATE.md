@@ -50,6 +50,21 @@
 - **客户端**：CSP 收紧（`script-src` 去 `'unsafe-inline'`，启动脚本外置；为 pdf.js 保留 `'unsafe-eval'`/`'wasm-unsafe-eval'`，**不加** `'unsafe-inline'`）；`attachment://` 协议路径穿越 + `Access-Control-Allow-Origin` 回显；Markdown 预览 XSS sanitizer；zip-slip（safe_join）；`write_attachment_bytes` hash 校验；E1 × 同步兼容（上传前解密 / 下载后加密）。
 - **服务端**（见 shuyonote-sync-server）：附件下载路径穿越补 hash 校验、legacy `/attachments` 挂鉴权、移除 permissive CORS、登录失败限速、会话清理、push device_id 绑定用户、space owner 不可变、口令强度 ≥8。
 
+### 3.1 文件预览体系（2026-09，M25 后新增）
+
+**入口统一**：文件管理器与侧栏点击文件名，对五类文件在应用内打开预览（与 PDF 一致，不再默认跳系统）；office/zip/csv 等无内置预览的类型点击时 toast 提示「正在用系统默认应用打开…」再调系统。集中在 `useFilePreview`（`store/filePreview.ts`）+ `FilePreviewDialog.tsx`。
+
+| 类型 | 预览实现 | 关键点 |
+|------|---------|--------|
+| markdown | `.fm-md-preview` 阅读版式 | 列宽 `--doc-width`/`--doc-pad`、内容列居中、内部左对齐；**目录侧栏**（`.fm-md-outline`）从渲染后标题收集 h1–h6、点击滚动定位、可拖拽调宽（160–480px）；**适配宽/文档宽**切换（`is-full`）；`mermaid` 经 `hydrateMermaidBlocks` 渲染。标题只用字号/字重区分，无前饰条。 |
+| image | `.fm-img-view` 看图器 | 滚轮缩放（0.1–4x）、指针捕获拖拽平移、旋转（90° 逆/顺时针）、双击复位、`transform-origin:center` 中心缩放、纯色衬底、查看原图（`platform.opener.openPath` 系统看图器）。 |
+| video | `.fm-video-view` | `<video controls>` 居中、限宽限高、圆角阴影、`preload=metadata`。 |
+| audio | `.fm-audio-view` | 居中卡片：图标 + 文件名 + `<audio controls>`（限宽 420px）。 |
+| pdf | 独立阅读器 | `usePdfReader`（M24）。 |
+
+**内容列/标题栏布局变量**：`--doc-width`（780px 阅读列宽，来自主编辑器）+ `--titlebar-h`（自绘标题栏 32px/系统 0）+ `--activity-w`（左竖条 48px）；固定层（预览/TOC 抽屉）用它们避开顶级 chrome。MD 预览已含 XSS sanitizer（`sanitizePreviewHtml`），import 走安全路径。
+
+
 ## 4. 结构性改进（2026-09-01，三项均达成）
 
 1. **markdown round-trip 单测**：`mdToHtml` + `mdPreview` + happy-dom 测试环境，vitest **88 断言**。
