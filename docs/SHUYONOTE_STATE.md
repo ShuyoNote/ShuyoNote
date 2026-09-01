@@ -65,7 +65,7 @@
 - **存储**：每工作空间独立库（`meta.db` + `spaces/<ws_id>/`）；附件内容寻址 hash 存储 + 可加密。
 - **编辑器**：Lexical 0.49 + 自定义节点（`ColumnsBlockNode` / `DrawingNode` / `FormulaNode` 等），节点类型收敛于 `src/editor/config.ts`。
 - **提版**：`scripts/release.mjs`（gitcode 自动更新）+ `tauri-plugin-updater`（签名 + `latest.json`，半自动，非静默强更）。
-- **运营内容**：渠道长文草稿在 `docs/content/`（如 [W5 本地优先存储布局](content/w5-local-first-storage.md)）；商业/运营材料一律在私有 shuyonote-sync-server 仓库，本公开仓库只放技术向内容与工程文档。
+- **运营内容**：渠道技术长文草稿在 `docs/content/`（如 [W5 本地优先存储布局](content/w5-local-first-storage.md)）；**推荐/营销软文**（V2EX / 少数派版）不随公开仓库——归私有 shuyonote-sync-server 仓库的 `docs/content/`。本公开仓库只放技术向内容与工程文档。
 - **设置中心**：`SettingsDialog.tsx`（外观 / **空间** / **账户** / 插件 / 安全 / AI / 关于七页，`useEditorStore.settingsOpen+settingsTab` 驱动，侧栏齿轮 + 命令面板 `settings.*` 入口）。原「主题设置」弹层已删除；**端到端加密从主题面板迁到「安全」页**，关闭加密改为红色危险区 + 二次确认。AI 表单抽成 `AiSettingsForm`，与 AI 面板的独立对话框共用一份实现。
 - **侧栏 vs 设置的划分**（IA 判据，勿轻易推翻）：**高频 / 与当前上下文绑定 / 需要状态常驻可见** → 侧栏；**低频 / 全局 / 不可逆** → 设置（空间配色·删除·导入导出、登录身份、加密）。据此 `AccountCenter` 已下线（并入设置「账户」页），侧栏空间弹层只留「切换 / 重命名 / 新建 + 管理入口」；空间导入导出逻辑在 `lib/spaceTransfer.ts`，进度经 `store/spaceTransfer.ts` 由 App 级 `SpaceTransferProgress` 渲染（关掉面板也能看到进度）。
 - **左侧竖条（activity bar）**：`ActivityBar.tsx` + `store/activity.ts`。四段职责：**竖条**=全局导航（笔记/文件/看板/关系图）+ 全局工具（搜索弹层 / 回收站 / 模板 / 设置 / 关于）；**侧栏**=页面树（占满高度）；**侧栏头部**=与当前空间相关的（空间切换/同步/新建）；**右侧 RightRail**=与当前文档相关的（AI/目录）。点当前活动图标收起/展开侧栏（`sidebarOpen` 持久化）；`view` 与 `activity` 同步，命令面板切视图时竖条跟着高亮。**搜索是弹层不是活动**（`SearchPanel`，触发器借住竖条）——它是「找到某页跳过去」的一次性动作：不占侧栏、不把页面树顶掉，在看板/关系图视图下同样可用；曾短暂做成侧栏面板（`SearchSidebar`），因每次搜索要多两次切换而回退。备份/存储清理归设置「数据」页。注意：`PageTree` 里的 `collapsed` 一直硬编码 `false`（旧折叠是死代码），真正的折叠由竖条负责。
