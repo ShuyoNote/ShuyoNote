@@ -68,7 +68,7 @@ pub fn run() {
         .register_uri_scheme_protocol("attachment", |ctx, request| {
             use percent_encoding::percent_decode;
             use std::path::{Component, Path};
-            use tauri::http::header::CONTENT_TYPE;
+            use tauri::http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE};
             let raw_path = request.uri().path().as_bytes();
             let decoded = percent_decode(if raw_path.len() > 1 { &raw_path[1..] } else { raw_path })
                 .decode_utf8_lossy()
@@ -118,8 +118,29 @@ pub fn run() {
                 "pdf" => "application/pdf",
                 _ => "application/octet-stream",
             };
+            // The app shell (http://tauri.localhost in prod / localhost:1420 in dev)
+            // fetches these URLs cross-origin. Without ACAO the browser blocks the
+            // response and the PDF/image fails to load. Echo the caller's origin if
+            // it is one of our app origins (attachment URLs are content-addressed and
+            // unguessable, so we do NOT use `*`).
+            let origin = request
+                .headers()
+                .get("origin")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let allow_origin = match origin.as_deref() {
+                Some(o)
+                    if o.starts_with("http://tauri.localhost")
+                        || o.starts_with("http://127.0.0.1")
+                        || o.starts_with("http://localhost") =>
+                {
+                    o
+                }
+                _ => "http://tauri.localhost",
+            };
             tauri::http::Response::builder()
                 .header(CONTENT_TYPE, mime)
+                .header(ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin)
                 .body(Cow::Owned(out))
                 .unwrap()
         })
