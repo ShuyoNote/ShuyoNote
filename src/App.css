@@ -18,6 +18,11 @@
   /* Left sidebar width (shared by body-portaled overlays that must not cover it). */
   --sidebar-w: 264px;
 
+  /* 左竖条宽 + 标题栏高：供 fixed 弹层（预览/TOC/PdfReader 等）避开这些 chrome。
+     --titlebar-h 由前端在自绘标题栏开启时设为 32px，系统标题栏时 0。 */
+  --activity-w: 48px;
+  --titlebar-h: 0px;
+
   /* Semantic */
   --danger: #f54a45;
   --danger-soft: #fdecec;
@@ -9131,7 +9136,7 @@ p:has(> .editor-drawing-container) {
 /* Outline rail: slides in from the right edge, full height, GitHub-style. */
 .toc-panel {
   position: fixed;
-  top: 0;
+  top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
   width: 300px;
@@ -10673,10 +10678,12 @@ p:has(> .editor-drawing-container) {
 }
 .fm-preview-overlay {
   position: fixed;
-  top: 0;
+  /* 避开自绘标题栏与左竖条：标题栏 32px、竖条 48px、侧栏 --sidebar-w。
+     --titlebar-h 由前端在自绘标题栏开启时设为 32px，否则 0。 */
+  top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
-  left: var(--sidebar-w, 264px);
+  left: calc(var(--activity-w, 0px) + var(--sidebar-w, 264px));
   z-index: 50;
   background: var(--bg);
   display: flex;

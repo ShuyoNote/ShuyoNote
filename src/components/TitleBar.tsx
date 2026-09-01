@@ -46,6 +46,17 @@ export function TitleBar() {
 
   const spaceName = spaces.find((s) => s.id === activeSpaceId)?.name ?? "";
   const pageTitle = pages.find((p) => p.id === currentId)?.title?.trim();
+
+  // 预览层 / 弹层用 --titlebar-h 定位，好避开自绘标题栏。开启时设 32px，
+  // 关闭（系统标题栏）时设 0，让弹层自动适应两种模式。
+  useEffect(() => {
+    const h = desktop && custom ? "32px" : "0px";
+    document.documentElement.style.setProperty("--titlebar-h", h);
+    return () => {
+      // 卸载时恢复，避免残留旧值
+      document.documentElement.style.setProperty("--titlebar-h", "0px");
+    };
+  }, [desktop, custom]);
   const label = [pageTitle || null, spaceName || null].filter(Boolean).join(" · ") || "ShuyoNote";
 
   // 同步到窗口标题：即使关掉自绘标题栏（用系统栏），也应显示「页面 · 空间」，
