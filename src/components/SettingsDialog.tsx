@@ -516,9 +516,8 @@ function PluginsPane() {
             <div key={p.id} className={`plugin-card${p.enabled ? "" : " is-off"}`}>
               <div className="plugin-card-head">
                 <span className="plugin-icon"><PluginGlyph icon="plugin" /></span>
-                <span className={`plugin-status${p.enabled ? " is-on" : ""}`}>
+                <span className={`plugin-status${p.enabled ? " is-on" : ""}`} title={p.enabled ? "已启用" : "已禁用"}>
                   <span className="plugin-status-dot" />
-                  {p.enabled ? "已启用" : "已禁用"}
                 </span>
               </div>
               <div className="plugin-name">{p.name}</div>
