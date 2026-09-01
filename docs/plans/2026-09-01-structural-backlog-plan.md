@@ -9,7 +9,7 @@
 |---|---|---|
 | ① markdown round-trip 单测 | ✅ **达成** | `mdToHtml`（12）+ `mdPreview`（5，经 `$convertFromMarkdownString`/`$importHtml`）+ happy-dom 测试环境（`vitest.config.ts` + `src/test/setup.ts`） |
 | ② web.ts 命令契约层 | ✅ **达成** | `CommandMap` 契约类型（`src/lib/platform/commands.ts`，118 命令 args+result）＋ `api.ts` 的 `invoke` 改为 CommandMap 泛型（命令名/args/result 编译期报错）＋ `check-web-commands` 增强（Rust 命令 ⊆ CommandMap 键）并纳入 `pnpm build`；未知命令抛错＋覆盖率检查保留。运行时行为零变化（tsc/vitest/smoke-web 全绿）。 |
-| ③ 服务端单 Mutex 并发瓶颈 | 🔶 **第一步+读写分离达成** | `push` 批量 INSERT 单事务（`sync.rs`）＋ **读写分离**（`AppState` 双连接 `write_db`/`read_db`；`pull`/`list_*`/`resolve_user`/`health` 迁只读连接，读不阻塞写；写连接保留单 Mutex）。实测：并发基准（8 读×2000 + 写并行）16000 读全完成、250ms。剩余：连接池/持锁点复核待排期 |
+| ③ 服务端单 Mutex 并发瓶颈 | ✅ **达成** | `push` 批量 INSERT 单事务（`sync.rs`）＋ **读写分离**（`AppState` 写连接 `write_db` + 只读连接池 `ReadPool`；`pull`/`list_*`/`resolve_user`/`health` 迁只读连接，读不阻塞写、多读并行；写连接保留单 Mutex）。实测并发基准（8 读×2000 + 写并行）：单只读连接 250ms → 4 连接池 124ms（≈2×），16000 读全完成。`cargo test` 10 passed |
 
 > 另：本轮顺带完成「Web 版平台能力边界显式降级提示」（SyncPanel/ThemeSettings/PluginManager 三入口）与服务端「register 口令强度 ≥8 字符」，不在原三项立项内。
 
