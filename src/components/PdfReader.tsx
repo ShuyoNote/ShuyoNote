@@ -569,7 +569,19 @@ export function PdfReader() {
         signal: controller.signal,
         onProgress: (done, total) => setExportState({ status: "running", done, total }),
       });
-      downloadBlob(blob, `${base}-批注副本.pdf`);
+      if (platform.pdfRender.nativeAvailable()) {
+        // 桌面：弹「另存为」并写二进制；取消则中止（不落盘）。
+        const dest = await platform.dialog.save({ defaultPath: `${base}-批注副本.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+        if (!dest) {
+          toast("已取消导出", "info");
+          return;
+        }
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        await api.writeBinaryFile(dest, Array.from(bytes));
+      } else {
+        // Web：浏览器下载。
+        downloadBlob(blob, `${base}-批注副本.pdf`);
+      }
       toast("已导出带批注的 PDF 副本", "success");
     } catch (e) {
       if ((e as Error)?.name === "AbortError") toast("已取消导出", "info");

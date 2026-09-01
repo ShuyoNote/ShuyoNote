@@ -2127,6 +2127,16 @@ function makeInvoke(store: SqliteStore) {
       fileRegistry.set(baseName(path), { bytes: new TextEncoder().encode(content), mime: "text/plain;charset=utf-8", name: baseName(path) });
       return undefined as T;
     }
+    if (cmd === "write_binary_file") {
+      // Write raw bytes to a browser-side "file": trigger a download named after
+      // the target. (Desktop saves via dialog.save + write_binary_file; web falls
+      // back to download so the CommandMap stays consistent across shells.)
+      const path = String(a.path ?? "output");
+      const data = new Uint8Array((a.data ?? []) as number[]);
+      if (typeof document !== "undefined") downloadBytes(baseName(path), data, "application/octet-stream");
+      fileRegistry.set(baseName(path), { bytes: data, mime: "application/octet-stream", name: baseName(path) });
+      return undefined as T;
+    }
     if (cmd === "read_text_file") {
       const reg = fileRegistry.get(baseName(String(a.path ?? "")));
       if (reg) return new TextDecoder().decode(reg.bytes) as T;

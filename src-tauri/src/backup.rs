@@ -500,6 +500,16 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Write raw bytes to a path. Used by the desktop "save as" of the exported PDF
+/// annotated copy (dialog.save → write_binary_file). Web degrades to download.
+#[tauri::command]
+pub fn write_binary_file(path: String, data: Vec<u8>) -> Result<(), String> {
+    if let Some(parent) = Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, data).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())

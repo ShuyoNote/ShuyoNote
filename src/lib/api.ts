@@ -228,6 +228,7 @@ export const api = {
     invoke("import_workspace", { srcPath, name }),
   writeTextFile: (path: string, content: string) =>
     invoke("write_text_file", { path, content }),
+  writeBinaryFile: (path: string, data: number[]) => invoke("write_binary_file", { path, data }),
   readTextFile: (path: string) => invoke("read_text_file", { path }),
   openPageWindow: (pageId: string) => invoke("open_page_window", { pageId }),
   requestPersistentStorage: () =>

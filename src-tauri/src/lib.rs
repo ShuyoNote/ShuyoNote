@@ -273,6 +273,7 @@ pub fn run() {
             backup::export_backup,
             backup::import_backup,
             backup::write_text_file,
+            backup::write_binary_file,
             backup::read_text_file,
             workspace_io::export_workspace,
             workspace_io::import_workspace,
