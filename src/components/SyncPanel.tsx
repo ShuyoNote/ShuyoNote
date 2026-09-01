@@ -129,6 +129,17 @@ export function SyncPanel() {
   const update = (ws_id: string, field: keyof EditRow, value: string) =>
     setRows((rs) => rs.map((r) => (r.ws_id === ws_id ? { ...r, [field]: value } : r)));
 
+  // 登录与注册共用的收尾：token 落到该行 + auth store，并尽力拉一次空间列表
+  // （列表失败不回滚会话——token 已有效，用户仍可手填空间 id）。
+  const applySession = async (r: EditRow, base: string, token: string, what: string) => {
+    const list = await api.teamListSpaces(base, token).catch(() => [] as ServerSpace[]);
+    setRows((rs) =>
+      rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token, loginPassword: "", remoteSpaces: list } : x)),
+    );
+    useAuth.getState().setSession(base, token);
+    setStatus(`${what}成功「${r.name}」，绑定 ${list.length} 个空间`);
+  };
+
   const login = async (r: EditRow) => {
     const base = r.server_url.trim().replace(/\/+$/, "");
     if (!base) { setStatus("请先填服务器地址"); return; }
@@ -139,15 +150,35 @@ export function SyncPanel() {
       // 走 Rust 代理命令（绕 WebView2 CORS）：服务端无 CORS 层，前端 fetch 会被拦。
       const { token } = await api.teamLogin(base, r.loginEmail.trim(), r.loginPassword);
       if (!token) throw new Error("服务器未返回 token");
-      // 空间列表拉取失败不阻断登录：token 先填入，列表尽力而为。
-      const list = await api.teamListSpaces(base, token).catch(() => [] as ServerSpace[]);
-      setRows((rs) =>
-        rs.map((x) => (x.ws_id === r.ws_id ? { ...x, token, loginPassword: "", remoteSpaces: list } : x)),
-      );
-      useAuth.getState().setSession(base, token);
-      setStatus(`登录成功「${r.name}」，绑定 ${list.length} 个空间`);
+      await applySession(r, base, token, "登录");
     } catch (e) {
-      setStatus(`登录失败：${e}`);
+      const msg = String(e);
+      setStatus(
+        msg.includes("401") ? "登录失败：邮箱或密码不对（没有账号请先「注册」）" : `登录失败：${msg}`,
+      );
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  // 注册：在该服务器开新账号。服务端 /auth/register 成功后直接下发会话 token，
+  // 所以注册即登录，不需要再点一次登录。密码规则与服务端一致（≥8 位）。
+  const register = async (r: EditRow) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    if (!base) { setStatus("请先填服务器地址"); return; }
+    if (!r.loginEmail.trim() || !r.loginPassword) { setStatus("请输入邮箱和密码"); return; }
+    if (r.loginPassword.length < 8) { setStatus("注册失败：密码至少 8 位"); return; }
+    setLoggingIn(true);
+    setStatus("");
+    try {
+      const { token } = await api.teamRegister(base, r.loginEmail.trim(), r.loginPassword, null);
+      if (!token) throw new Error("服务器未返回 token");
+      await applySession(r, base, token, "注册");
+    } catch (e) {
+      const msg = String(e);
+      setStatus(
+        msg.includes("409") ? "注册失败：该邮箱已注册，请直接「登录」" : `注册失败：${msg}`,
+      );
     } finally {
       setLoggingIn(false);
     }
@@ -255,9 +286,15 @@ export function SyncPanel() {
                     <input value={r.loginEmail} placeholder="邮箱" onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)} />
                     <input type="password" value={r.loginPassword} placeholder="密码" onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)} />
                   </div>
-                  <button className="sync-login-btn" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
-                    {loggingIn ? "登录中…" : "登录"}
-                  </button>
+                  <div className="sync-auth-btns">
+                    <button className="sync-login-btn" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
+                      {loggingIn ? "处理中…" : "登录"}
+                    </button>
+                    <button className="sync-login-btn" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
+                      注册
+                    </button>
+                  </div>
+                  <div className="sync-auth-hint">首次使用点「注册」（密码 ≥8 位），注册成功即自动登录。</div>
                 </div>
                 <div className="sync-row">
                   <label>令牌（{r.token ? "✓ 已获取" : "尚未获取"}）</label>

@@ -33,18 +33,36 @@ async function detectFromGitcode(): Promise<{ available: boolean; latest: string
  * 与桌面版不同——桌面更新=下载安装包；Web 更新=服务器新静态文件，
  * 所以对比源是服务器上实际部署的版本（而非 gitcode 发布渠道），
  * 有新版即提示「刷新页面」加载。
+ *
+ * 取版本必须绕开缓存：`cache: "no-store"` 保证不吃浏览器 HTTP 缓存
+ * （旧的 404 也会被启发式缓存，导致部署后仍报「未部署」），URL 相对
+ * `document.baseURI` 解析，子路径挂载（/app/）与深层路由都能取对。
+ * 失败时回传 `error`（HTTP 状态 / 异常原因），UI 直接显示真实原因。
  */
-export async function detectFromDeployed(): Promise<{ available: boolean; latest: string | null }> {
+export async function detectFromDeployed(): Promise<{
+  available: boolean;
+  latest: string | null;
+  error?: string;
+}> {
+  const href =
+    typeof document !== "undefined" && document.baseURI
+      ? new URL("version.json", document.baseURI).href
+      : "version.json";
   try {
-    const resp = await fetch("version.json", { method: "GET" });
-    if (!resp.ok) return { available: false, latest: null };
-    const j = await resp.json();
-    const latest: string | null = j?.version ?? null;
-    if (!latest) return { available: false, latest: null };
+    const resp = await fetch(href, { method: "GET", cache: "no-store" });
+    if (!resp.ok) return { available: false, latest: null, error: `HTTP ${resp.status}` };
+    let j: unknown;
+    try {
+      j = await resp.json();
+    } catch {
+      return { available: false, latest: null, error: "响应不是 JSON（可能被 SPA 回退成 index.html）" };
+    }
+    const latest: string | null = (j as { version?: string } | null)?.version ?? null;
+    if (!latest) return { available: false, latest: null, error: "JSON 缺少 version 字段" };
     const lv = normVer(latest), cur = normVer(APP_VERSION);
     return { available: compareVersions(lv, cur) > 0, latest: lv };
-  } catch {
-    return { available: false, latest: null };
+  } catch (e) {
+    return { available: false, latest: null, error: `请求失败：${String((e as Error)?.message ?? e)}` };
   }
 }
 

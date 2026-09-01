@@ -22,6 +22,9 @@ public/pdfjs
 # Generated tesseract offline OCR assets (copied by scripts/copy-tesseract-assets.mjs)
 public/ocr
 
+# Generated web deploy version marker (scripts/write-version-json.mjs)
+public/version.json
+
 # Local scratch / CDP test temp + Edge profiles (never committed)
 tmp
 demo-shots

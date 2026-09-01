@@ -829,6 +829,17 @@ body,
   opacity: 0.5;
   cursor: default;
 }
+/* 登录 / 注册并排：两个等宽按钮，注册是首次使用的入口。 */
+.sync-auth-btns {
+  display: flex;
+  gap: 8px;
+}
+.sync-auth-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
 
 .sync-meta {
   font-size: 12px;

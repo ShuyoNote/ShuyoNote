@@ -82,7 +82,7 @@ export function AboutDialog() {
         setCheckError(null);
       } else {
         setUpdateState("invalid");
-        setCheckError("服务器未返回 version.json（离线或未部署）");
+        setCheckError(`未取到 version.json：${r.error ?? "离线或未部署"}`);
       }
       setChecked(true);
       setChecking(false);
