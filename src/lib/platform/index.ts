@@ -27,6 +27,13 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/** True when running inside the Tauri desktop shell (vs the plain-browser Web
+ *  platform). UI uses this to show explicit "Web 版不支持" degradation hints for
+ *  desktop-only features (sync / at-rest encryption / plugins). */
+export function isDesktopPlatform(): boolean {
+  return isTauri();
+}
+
 let current: Platform = isTauri() ? tauriPlatform : createWebPlatform();
 
 /** Replace the active platform implementation (e.g. on Web/native shells). */

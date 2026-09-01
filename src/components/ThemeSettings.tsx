@@ -4,6 +4,7 @@ import { PaletteIcon } from "./icons";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { getPlugins, isPluginEnabled, togglePlugin, usePluginRevision } from "../plugins/registry";
 import { api } from "../lib/api";
+import { isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -47,6 +48,9 @@ function EncryptionSection() {
   return (
     <div className="enc-settings">
       <div className="theme-settings-title">端到端加密</div>
+      {!isDesktopPlatform() && (
+        <div className="sync-web-note">Web 版不支持本地静置加密，请使用桌面版。</div>
+      )}
       <div className="enc-status-row">
         <span className="enc-status-dot" style={{ background: enabled ? (locked ? "#e6a23c" : "#67c23a") : "#c0c4cc" }} />
         <span className="enc-status-text">

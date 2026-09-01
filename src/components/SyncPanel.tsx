@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { api, type SyncProfile } from "../lib/api";
+import { isDesktopPlatform } from "../lib/platform";
 import { useSpaceStore } from "../store/space";
 import { useNotes } from "../store/notes";
 import { SyncIcon } from "./icons";
@@ -152,6 +153,9 @@ export function SyncPanel() {
       {open && (
         <div ref={contentRef} className="sync-popover" style={{ top: pos.top, left: pos.left }}>
           <div className="sync-title">每空间同步目标</div>
+          {!isDesktopPlatform() && (
+            <div className="sync-web-note">Web 版不支持多设备同步，请在桌面版配置。</div>
+          )}
           <div className="sync-profiles">
             {rows.map((r) => (
               <div key={r.ws_id} className="sync-profile">

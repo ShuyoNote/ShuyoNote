@@ -708,6 +708,15 @@ body,
   color: var(--text);
   margin-bottom: 10px;
 }
+.sync-web-note {
+  font-size: 12px;
+  color: var(--text-faint, #8a94a6);
+  background: var(--bg-sidebar, transparent);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+}
 .sync-profiles {
   max-height: 300px;
   overflow-y: auto;
