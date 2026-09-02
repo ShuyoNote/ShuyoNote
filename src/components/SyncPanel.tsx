@@ -51,6 +51,7 @@ export function SyncPanel() {
   });
   const spaces = useSpaceStore((s) => s.spaces);
   const authed = useAuth((s) => s.authed);
+  const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -396,7 +397,7 @@ export function SyncPanel() {
                     <div className="sync-account">
                       <span className="sync-account-dot" aria-hidden />
                       <div className="sync-account-text">
-                        <b>已登录</b>
+                        <b>{authEmail || "已登录"}</b>
                         <span title={r.server_url}>{r.server_url || "—"}</span>
                       </div>
                       <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
