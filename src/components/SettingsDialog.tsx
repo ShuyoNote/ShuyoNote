@@ -259,7 +259,7 @@ function AccountPane() {
   // P0 org management state (research group leader). Members are per-org so
   // several groups can coexist without their member lists bleeding into each other.
   const [orgs, setOrgs] = useState<{ id: string; name: string; role: string; owner_id: string }[]>([]);
-  const [orgMembers, setOrgMembers] = useState<Record<string, { user_id: string; email: string; role: string; disabled: boolean }[]>>({});
+  const [orgMembers, setOrgMembers] = useState<Record<string, { members: { user_id: string; email: string; role: string; disabled: boolean }[]; pending: { email: string; status: string }[] }>>({});
   const [inviteEmail, setInviteEmail] = useState<Record<string, string>>({});
   const [orgStatus, setOrgStatus] = useState("");
 
@@ -377,6 +377,28 @@ function AccountPane() {
     }
   };
 
+  const approveInvite = async (orgId: string, email: string) => {
+    if (!base || !token) return;
+    try {
+      await api.teamApproveOrgInvite(base, token, orgId, email);
+      await loadMemberList(orgId);
+      setOrgStatus(`已批准 ${email}`);
+    } catch (e) {
+      setOrgStatus(`批准失败：${e}`);
+    }
+  };
+
+  const rejectInvite = async (orgId: string, email: string) => {
+    if (!base || !token) return;
+    try {
+      await api.teamRejectOrgInvite(base, token, orgId, email);
+      await loadMemberList(orgId);
+      setOrgStatus(`已拒绝 ${email}`);
+    } catch (e) {
+      setOrgStatus(`拒绝失败：${e}`);
+    }
+  };
+
   const toggleActive = async (orgId: string, m: { user_id: string; disabled: boolean }) => {
     if (!base || !token) return;
     try {
@@ -473,7 +495,9 @@ function AccountPane() {
             ) : (
               <div className="set-list">
                 {orgs.map((o) => {
-                  const members = orgMembers[o.id] ?? [];
+                  const data = orgMembers[o.id];
+                  const members = data?.members ?? [];
+                  const pending = data?.pending ?? [];
                   const email = inviteEmail[o.id] ?? "";
                   return (
                     <div key={o.id} className="set-group">
@@ -483,6 +507,21 @@ function AccountPane() {
                           {o.role === "admin" ? "组长" : "成员"} · {members.length} 人
                         </span>
                       </div>
+                      {pending.length > 0 && (
+                        <div className="org-members org-pending">
+                          <div className="org-pending-title">待加入</div>
+                          {pending.map((p) => (
+                            <div key={p.email} className="set-group-item">
+                              <span className="org-email">{p.email}</span>
+                              <span className="set-row-sub">待批准</span>
+                              <span className="org-actions">
+                                <button className="set-btn" onClick={() => void approveInvite(o.id, p.email)}>批准</button>
+                                <button className="set-btn" onClick={() => void rejectInvite(o.id, p.email)}>拒绝</button>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {members.length > 0 ? (
                         <div className="org-members">
                           {members.map((m) => (

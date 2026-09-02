@@ -153,6 +153,10 @@ export const api = {
     invoke("team_set_org_member_active", { serverUrl: server_url, token, orgId: org_id, userId: user_id, active }),
   teamRemoveOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
     invoke("team_remove_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
+  teamApproveOrgInvite: (server_url: string, token: string, org_id: string, email: string) =>
+    invoke("team_approve_org_invite", { serverUrl: server_url, token, orgId: org_id, email }),
+  teamRejectOrgInvite: (server_url: string, token: string, org_id: string, email: string) =>
+    invoke("team_reject_org_invite", { serverUrl: server_url, token, orgId: org_id, email }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

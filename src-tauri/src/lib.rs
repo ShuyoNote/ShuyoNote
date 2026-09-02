@@ -249,6 +249,8 @@ pub fn run() {
             sync::team_invite_org_member,
             sync::team_set_org_member_active,
             sync::team_remove_org_member,
+            sync::team_approve_org_invite,
+            sync::team_reject_org_invite,
             attachments::save_image,
             attachments::attachment_path,
             attachments::copy_attachment,

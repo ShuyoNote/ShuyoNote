@@ -656,6 +656,18 @@ pub struct TeamOrgMember {
     pub disabled: bool,
 }
 
+#[derive(serde::Serialize)]
+pub struct TeamOrgInvite {
+    pub email: String,
+    pub status: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct TeamOrgMemberList {
+    pub members: Vec<TeamOrgMember>,
+    pub pending: Vec<TeamOrgInvite>,
+}
+
 #[tauri::command]
 pub async fn team_list_orgs(server_url: String, token: String) -> Result<Vec<TeamOrg>, String> {
     let url = server_url.trim_end_matches('/').to_string();
@@ -711,7 +723,7 @@ pub async fn team_create_org(server_url: String, token: String, name: String) ->
 }
 
 #[tauri::command]
-pub async fn team_list_org_members(server_url: String, token: String, org_id: String) -> Result<Vec<TeamOrgMember>, String> {
+pub async fn team_list_org_members(server_url: String, token: String, org_id: String) -> Result<TeamOrgMemberList, String> {
     let url = server_url.trim_end_matches('/').to_string();
     let client = reqwest::Client::new();
     let resp = client
@@ -725,7 +737,7 @@ pub async fn team_list_org_members(server_url: String, token: String, org_id: St
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(v["members"]
+    let members = v["members"]
         .as_array()
         .map(|a| {
             a.iter()
@@ -737,7 +749,53 @@ pub async fn team_list_org_members(server_url: String, token: String, org_id: St
                 })
                 .collect()
         })
-        .unwrap_or_default())
+        .unwrap_or_default();
+    let pending = v["pending"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|s| TeamOrgInvite {
+                    email: s["email"].as_str().unwrap_or("").to_string(),
+                    status: s["status"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(TeamOrgMemberList { members, pending })
+}
+
+#[tauri::command]
+pub async fn team_approve_org_invite(server_url: String, token: String, org_id: String, email: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs/{org_id}/invites/approve"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "email": email }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("批准成员失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn team_reject_org_invite(server_url: String, token: String, org_id: String, email: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs/{org_id}/invites/reject"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "email": email }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("拒绝成员失败 {}", resp.status()));
+    }
+    Ok(())
 }
 
 #[tauri::command]

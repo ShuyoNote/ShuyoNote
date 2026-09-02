@@ -179,10 +179,12 @@ export interface CommandMap {
   // ---- P0 org management (research group) ----
   team_list_orgs: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
   team_create_org: { args: { serverUrl: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
-  team_list_org_members: { args: { serverUrl: string; token: string; orgId: string }; result: { user_id: string; email: string; role: string; disabled: boolean }[] };
+  team_list_org_members: { args: { serverUrl: string; token: string; orgId: string }; result: { members: { user_id: string; email: string; role: string; disabled: boolean }[]; pending: { email: string; status: string }[] } };
   team_invite_org_member: { args: { serverUrl: string; token: string; orgId: string; email: string; role: string }; result: void };
   team_set_org_member_active: { args: { serverUrl: string; token: string; orgId: string; userId: string; active: boolean }; result: void };
   team_remove_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
+  team_approve_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
+  team_reject_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };
