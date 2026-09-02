@@ -1279,6 +1279,28 @@ select.sync-input {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+/* 登录/注册 tab：选中高亮下划线，另 tab 弱化。 */
+.sync-auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sync-tab {
+  flex: 1;
+  padding: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.sync-tab.on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
 .sync-account {
   display: flex;
   align-items: center;

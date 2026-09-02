@@ -166,7 +166,7 @@ export interface CommandMap {
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。
   // （result 里的字段来自 serde 序列化的 Rust 结构体，仍是 snake_case。）
-  team_register: { args: { serverUrl: string; email: string; password: string; display?: string | null }; result: { token: string } };
+  team_register: { args: { serverUrl: string; email: string; password: string; display?: string | null; registerCode?: string | null }; result: { token: string } };
   team_login: { args: { serverUrl: string; email: string; password: string }; result: { token: string } };
   team_logout: { args: { serverUrl: string }; result: void };
   team_list_spaces: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };

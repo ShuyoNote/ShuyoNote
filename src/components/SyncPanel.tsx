@@ -39,6 +39,10 @@ interface EditRow {
   // joined (from GET /spaces) so the 空间 ID 可以下拉绑定.
   loginEmail: string;
   loginPassword: string;
+  // 注册邀请码（仅注册 tab 用，注册时传给服务端 /auth/register）。
+  loginRegisterCode: string;
+  // 登录/注册 tab（login | register）。
+  authMode: "login" | "register";
   remoteSpaces: ServerSpace[];
   // M27 成员管理（选中空间且已登录后可用）：members 列表 + 邀请表单。
   members: ServerMember[];
@@ -116,6 +120,8 @@ export function SyncPanel() {
             // 有 server_url 时预填上次登录邮箱；否则空。
             loginEmail: p?.server_url ? (serverEmail.get(p.server_url) ?? "") : "",
             loginPassword: "",
+            loginRegisterCode: "",
+            authMode: "login",
             remoteSpaces: p?.server_url ? (remoteByServer.get(p.server_url) ?? []) : [],
             members: [],
             memberOpen: false,
@@ -259,7 +265,7 @@ export function SyncPanel() {
     setLoggingIn(true);
     setStatus("");
     try {
-      const { token } = await api.teamRegister(base, r.loginEmail.trim(), r.loginPassword, null);
+      const { token } = await api.teamRegister(base, r.loginEmail.trim(), r.loginPassword, null, r.loginRegisterCode.trim() || null);
       if (!token) throw new Error("服务器未返回 token");
       await applySession(r, base, token, "注册");
     } catch (e) {
@@ -456,6 +462,17 @@ export function SyncPanel() {
                   ) : (
                     <div className="sync-field">
                       <label htmlFor={`sync-mail-${r.ws_id}`}>账号</label>
+                      {/* 登录/注册 tab：登录只需邮箱+密码；注册需额外 注册邀请码。 */}
+                      <div className="sync-auth-tabs">
+                        <button
+                          className={`sync-tab${r.authMode === "login" ? " on" : ""}`}
+                          onClick={() => update(r.ws_id, "authMode", "login")}
+                        >登录</button>
+                        <button
+                          className={`sync-tab${r.authMode === "register" ? " on" : ""}`}
+                          onClick={() => update(r.ws_id, "authMode", "register")}
+                        >注册</button>
+                      </div>
                       <div className="sync-auth-grid">
                         <input
                           id={`sync-mail-${r.ws_id}`}
@@ -474,15 +491,33 @@ export function SyncPanel() {
                           onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)}
                         />
                       </div>
+                      {r.authMode === "register" && (
+                        <div className="sync-field" style={{ marginTop: 8 }}>
+                          <label htmlFor={`sync-regcode-${r.ws_id}`}>注册邀请码</label>
+                          <input
+                            id={`sync-regcode-${r.ws_id}`}
+                            className="sync-input"
+                            value={r.loginRegisterCode}
+                            placeholder="组长发的注册邀请码"
+                            onChange={(e) => update(r.ws_id, "loginRegisterCode", e.target.value)}
+                          />
+                          <p className="sync-hint">
+                            {r.server_url ? "服务器需凭邀请码注册。没有？向组长索取（若服务器开放注册可留空）。" : "需先填服务器地址。"}
+                          </p>
+                        </div>
+                      )}
                       <div className="sync-auth-btns">
-                        <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
-                          {loggingIn ? "处理中…" : "登录"}
-                        </button>
-                        <button className="sync-btn" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
-                          注册
-                        </button>
+                        {r.authMode === "login" ? (
+                          <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
+                            {loggingIn ? "处理中…" : "登录"}
+                          </button>
+                        ) : (
+                          <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
+                            {loggingIn ? "处理中…" : "注册"}
+                          </button>
+                        )}
                       </div>
-                      <p className="sync-hint">首次使用点「注册」，密码 ≥8 位，注册成功即自动登录。</p>
+                      <p className="sync-hint">密码 ≥8 位，注册成功即自动登录。</p>
                     </div>
                   )}
 

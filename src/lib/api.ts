@@ -122,8 +122,8 @@ export const api = {
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
   // 所以 CommandMap 里也按 camelCase 声明，并由 check-web-commands 兜底校验。
-  teamRegister: (server_url: string, email: string, password: string, display?: string | null) =>
-    invoke("team_register", { serverUrl: server_url, email, password, display }),
+  teamRegister: (server_url: string, email: string, password: string, display?: string | null, register_code?: string | null) =>
+    invoke("team_register", { serverUrl: server_url, email, password, display, registerCode: register_code }),
   teamLogin: (server_url: string, email: string, password: string) =>
     invoke("team_login", { serverUrl: server_url, email, password }),
   teamLogout: (server_url: string) => invoke("team_logout", { serverUrl: server_url }),

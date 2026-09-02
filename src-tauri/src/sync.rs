@@ -450,12 +450,13 @@ pub async fn team_register(
     email: String,
     password: String,
     display: Option<String>,
+    register_code: Option<String>,
 ) -> Result<TeamAuthResult, String> {
     let url = server_url.trim_end_matches('/').to_string();
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{url}/auth/register"))
-        .json(&serde_json::json!({ "email": email, "password": password, "display": display }))
+        .json(&serde_json::json!({ "email": email, "password": password, "display": display, "register_code": register_code }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
