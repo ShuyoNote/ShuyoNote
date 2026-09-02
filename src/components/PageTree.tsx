@@ -434,6 +434,16 @@ function TreeItem({
         )}
         <span className="tree-actions">
           <button
+            title="重命名"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditValue(node.title || "");
+              setEditing(true);
+            }}
+          >
+            ✎
+          </button>
+          <button
             title="在新窗口打开"
             onClick={(e) => {
               e.stopPropagation();
