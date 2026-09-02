@@ -387,9 +387,13 @@ function AccountPane() {
   }, [base, token, refresh, loadOrgs]);
 
   // Fetch each org's members whenever orgs change (after create / load).
+  // 只对「组长」(role=admin) 的组织拉成员——普通成员（member）拉取会被服务端 403
+  // （list_org_members 要求 admin），且 member 不该看到成员管理。
   useEffect(() => {
     if (!base || !token) return;
-    for (const o of orgs) void loadMemberList(o.id);
+    for (const o of orgs) {
+      if (o.role === "admin") void loadMemberList(o.id);
+    }
   }, [orgs, base, token, loadMemberList]);
 
   const inviteMember = async (orgId: string) => {
