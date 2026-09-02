@@ -1252,9 +1252,10 @@ async fn sync_workspace_only(
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
     let (pulled, last_pulled_seq, pulled_items) = do_pull(db, profile).await?;
-    sync_attachments(app, db, profile).await?;
+    let att_items = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
     items.extend(pulled_items);
+    items.extend(att_items);
     Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items })
 }
 
@@ -1388,10 +1389,11 @@ async fn sync_attachments(
     app: &tauri::AppHandle,
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(), String> {
+) -> Result<Vec<SyncItem>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    let mut att_items: Vec<SyncItem> = Vec::new();
 
     let client = reqwest::Client::new();
     // Space-scoped attachments when bound to a team space; legacy global path otherwise.
@@ -1478,6 +1480,7 @@ async fn sync_attachments(
             .map_err(|e| e.to_string())?
             .error_for_status()
             .map_err(|e| e.to_string())?;
+        att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: hash.clone(), op: "upsert".to_string(), dir: "push".to_string(), title: String::new() });
     }
 
     // 4. Download remote attachments missing locally.
@@ -1551,11 +1554,12 @@ async fn sync_attachments(
             )
             .map_err(|e| e.to_string())?;
         }
+        att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
     }
 
     // Reuse local mimes for hash resolution (kept for future use).
     let _ = local_mimes;
-    Ok(())
+    Ok(att_items)
 }
 
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
