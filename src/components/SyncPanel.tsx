@@ -140,6 +140,17 @@ export function SyncPanel() {
     }
   };
 
+  // 清空同步历史（本地 meta.only）。
+  const clearHistory = async () => {
+    try {
+      await api.clearSyncHistory();
+      setHistory([]);
+      setStatus("同步历史已清空");
+    } catch (e) {
+      setStatus(`清空失败：${e}`);
+    }
+  };
+
   useEffect(() => {
     if (open) void refresh();
     // 打开面板 / 切换活动空间 / 空间列表变化时，都刷新到当前活动空间。
@@ -606,11 +617,14 @@ export function SyncPanel() {
             {status && <div className={`sync-status is-${statusKind(status)}`}>{status}</div>}
             {history.length > 0 && (
               <div className="sync-history">
-                <button className="sync-members-toggle" onClick={() => setHistoryOpen((v) => !v)}>
-                  <span>同步历史</span>
-                  <span className="sync-members-count">{history.length}</span>
-                  <span className={`sync-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
-                </button>
+                <div className="sync-history-head">
+                  <button className="sync-members-toggle" onClick={() => setHistoryOpen((v) => !v)}>
+                    <span>同步历史</span>
+                    <span className="sync-members-count">{history.length}</span>
+                    <span className={`sync-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
+                  </button>
+                  <button className="sync-history-clear" onClick={() => void clearHistory()} title="清空同步历史">清空</button>
+                </div>
                 {historyOpen && (
                   <div className="sync-history-list">
                     {history.slice(0, 8).map((h, i) => {

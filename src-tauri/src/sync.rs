@@ -1042,6 +1042,14 @@ pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// Clear all sync-history entries (local meta).
+#[tauri::command]
+pub fn clear_sync_history(db: State<'_, Db>) -> Result<(), String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    c.execute("DELETE FROM sync_history", []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 pub struct SyncHistoryEntry {
     pub ws_id: String,

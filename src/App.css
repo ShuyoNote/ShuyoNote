@@ -1665,6 +1665,23 @@ select.sync-input {
 .sync-op { color: var(--text-dim); }
 .sync-id { color: var(--text-faint); font-size: 11px; }
 .sync-history-more { color: var(--text-faint); font-size: 11px; }
+/* 同步历史头：标题 + 清空按钮一行。 */
+.sync-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sync-history-clear {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sync-history-clear:hover { color: var(--danger); border-color: var(--danger); }
 .sync-history-status { font-weight: 700; }
 .sync-history-at { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
 .sync-history-detail { color: var(--text); }
