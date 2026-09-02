@@ -9665,8 +9665,15 @@ p:has(> .editor-drawing-container) {
 
 .set-dialog {
   display: flex;
+  /* 允许拖拽调整大小：resize:both + 合理上下限。overflow:auto 让 resize 手柄
+     可用（右下角）。初始尺寸 min(900,100%) x min(620, 100vh-64)。 */
   width: min(900px, 100%);
   height: min(620px, calc(100vh - 64px));
+  min-width: 640px;
+  min-height: 420px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  resize: both;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
