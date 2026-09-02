@@ -456,7 +456,7 @@ export function SyncPanel() {
                         id={`sync-space-${r.ws_id}`}
                         className="sync-input"
                         value={r.space_id}
-                        placeholder="团队空间 id（留空 = 旧单用户模式）"
+                        placeholder="团队空间 id（多设备同步需绑定一个团队空间；留空无法同步）"
                         onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
                       />
                     )}

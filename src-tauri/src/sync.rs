@@ -1184,11 +1184,14 @@ pub async fn sync_workspace(
         let c = db.0.lock().expect("db mutex poisoned");
         get_profile(&c, &ws_id)?
     };
-    // 只要配置了服务器即可同步——单用户模式（space_id 留空）也允许走 legacy
-    // 全局同步路径（sync_workspace_only 已按 space_id 是否为空分别处理）。
-    // 之前的 `|| space_id.is_empty()` 把单用户模式误判为「未配置同步目标」。
+    // 服务端 S5+ 的 push/pull 强制 require_space——多设备同步必须绑定一个团队空间。
+    // space_id 留空（单用户）无法走 require_space，服务端会 403。这里提前挡下，
+    // 给出明确的「需绑定团队空间」提示，而不是让请求打到服务端才 403。
     if profile.server_url.is_empty() {
-        return Err("该空间未配置同步目标".to_string());
+        return Err("请先配置同步服务器".to_string());
+    }
+    if profile.space_id.is_empty() {
+        return Err("需绑定团队空间才能同步（多设备同步不支持留空）".to_string());
     }
     match sync_workspace_only(&app, &db, &profile).await {
         Ok(rep) => Ok(WorkspaceSyncResult {
