@@ -256,6 +256,23 @@ pub struct SyncItem {
     pub entity_id: String,
     pub op: String,       // "upsert" | "delete"
     pub dir: String,      // "push" | "pull"
+    pub title: String,    // human-readable name (page title, etc.), best-effort
+}
+
+/// Best-effort human-readable name for a change payload (page title, etc.).
+fn item_title(entity: &str, payload: Option<&String>) -> String {
+    if entity == "page" && payload.is_some() {
+        if let Some(v) = serde_json::from_str::<serde_json::Value>(payload.unwrap()).ok() {
+            if let Some(t) = v.get("title").and_then(|t| t.as_str()) {
+                return t.to_string();
+            }
+            // Some page payloads nest the page object.
+            if let Some(t) = v.get("page").and_then(|p| p.get("title")).and_then(|t| t.as_str()) {
+                return t.to_string();
+            }
+        }
+    }
+    String::new()
 }
 
 #[derive(Deserialize)]
@@ -1090,7 +1107,10 @@ async fn do_push(
     // 收集本次 push 的实体明细（供「同步明细」显示）。
     let items: Vec<SyncItem> = changes
         .iter()
-        .map(|ch| SyncItem { entity: ch.entity.clone(), entity_id: ch.entity_id.clone(), op: ch.op.clone(), dir: "push".to_string() })
+        .map(|ch| {
+            let title = item_title(&ch.entity, ch.payload.as_ref());
+            SyncItem { entity: ch.entity.clone(), entity_id: ch.entity_id.clone(), op: ch.op.clone(), dir: "push".to_string(), title }
+        })
         .collect();
 
     let client = reqwest::Client::new();
@@ -1173,7 +1193,8 @@ async fn do_pull(
             if change.seq > max_pulled {
                 max_pulled = change.seq;
             }
-            items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string() });
+            let title = item_title(&change.entity, change.payload.as_ref());
+            items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string(), title });
             match (change.entity.as_str(), change.op.as_str()) {
                 ("page", "upsert") => {
                     if let Some(payload) = &change.payload {
