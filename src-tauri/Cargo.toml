@@ -1,6 +1,6 @@
 [package]
 name = "shuyonote"
-version = "1.70.2"
+version = "1.71.0"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
@@ -40,7 +40,7 @@ argon2 = "0.5.3"
 rand_core = { version = "0.6", features = ["getrandom"] }
 base64 = "0.23.1"
 percent-encoding = "2"
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-updater = "=2.10.1"
 # M24 desktop-native PDF render: use mupdf-sys (compiles cleanly on MSVC) rather
 # than the high-level `mupdf` crate, whose safe wrapper has an MSVC compile bug
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
