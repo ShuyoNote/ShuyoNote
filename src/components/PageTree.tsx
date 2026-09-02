@@ -1,11 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
-import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
+import type { AttachmentMeta, PageMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
@@ -70,141 +70,6 @@ export function computeReorder(
 // target workspace, show that workspace's folder tree so the user can pick a
 // parent folder (or "根") to place the copy under. Block graphs stay
 // workspace-scoped, so cross-block refs outside the subtree don't resolve.
-function CopyPageAction({ pageId }: { pageId: string }) {
-  const [open, setOpen] = useState(false);
-  const [spaces, setSpaces] = useState<WorkspaceMeta[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [pickedWs, setPickedWs] = useState<string | null>(null);
-  const [wsPages, setWsPages] = useState<PageMeta[]>([]);
-  const ref = useRef<HTMLSpanElement>(null);
-
-  // Read spaces lazily (only when the menu opens) so a space change doesn't
-  // re-render every page row's CopyPageAction — this was causing UI to freeze
-  // on delete/switch for large trees.
-  useEffect(() => {
-    if (!open) return;
-    useSpaceStore.getState().load();
-    api.listWorkspaces().then(setSpaces).catch(() => {});
-    api
-      .getActiveWorkspaceId()
-      .then(setActiveId)
-      .catch(() => {});
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  // When a workspace is picked, load its pages to build the parent-folder tree.
-  useEffect(() => {
-    if (!pickedWs) {
-      setWsPages([]);
-      return;
-    }
-    let alive = true;
-    api
-      .listWorkspacePages(pickedWs)
-      .then((pages) => { if (alive) setWsPages(pages); })
-      .catch(() => { if (alive) setWsPages([]); });
-    return () => { alive = false; };
-  }, [pickedWs]);
-
-  const copyTo = async (wsId: string, parentId: string | null) => {
-    setOpen(false);
-    setPickedWs(null);
-    try {
-      await api.copyPageToWorkspace(pageId, wsId, parentId);
-      toast("已复制到目标工作空间", "success");
-    } catch (e) {
-      toast(`复制失败：${e}`, "error");
-    }
-  };
-
-  // Build a folder tree from the target workspace's pages (top-level nodes only
-  // gets nested under their parents; we render a flat indented list for picking).
-  const tree = useMemo(() => {
-    const byParent = new Map<string | null, PageMeta[]>();
-    for (const p of wsPages) {
-      const key = p.parent_id ?? null;
-      const arr = byParent.get(key) ?? [];
-      arr.push(p);
-      byParent.set(key, arr);
-    }
-    return byParent;
-  }, [wsPages]);
-
-  const renderNode = (node: PageMeta, depth: number): ReactNode => {
-    const kids = tree.get(node.id) ?? [];
-    return (
-      <Fragment key={node.id}>
-        <button
-          className="copy-page-parent"
-          style={{ paddingLeft: `${10 + depth * 14}px` }}
-          onClick={(e) => { e.stopPropagation(); void copyTo(pickedWs!, node.id); }}
-        >
-          <FolderIcon width={13} height={13} />
-          <span className="copy-page-parent-title">{node.title || "未命名"}</span>
-        </button>
-        {kids.map((k) => renderNode(k, depth + 1))}
-      </Fragment>
-    );
-  };
-
-  const showTree = pickedWs && wsPages.length > 0;
-
-  return (
-    <span ref={ref} className="copy-page-wrap">
-      <button
-        title="复制到其他工作空间"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-          setPickedWs(null);
-        }}
-      >
-        ⇄
-      </button>
-      {open && (
-        <div className="copy-page-menu">
-          {!pickedWs && (
-            <>
-              <div className="copy-page-title">复制到…</div>
-              {spaces
-                .filter((s) => s.id !== activeId)
-                .map((s) => (
-                  <button key={s.id} className="copy-page-item" onClick={() => setPickedWs(s.id)}>
-                    {s.name}
-                  </button>
-                ))}
-              {spaces.filter((s) => s.id !== activeId).length === 0 && (
-                <div className="copy-page-empty">没有其他工作空间</div>
-              )}
-            </>
-          )}
-          {pickedWs && (
-            <>
-              <div className="copy-page-title">复制到「{spaces.find((s) => s.id === pickedWs)?.name ?? ""}」下的…</div>
-              <button className="copy-page-parent" onClick={() => void copyTo(pickedWs, null)}>
-                <PageIcon width={13} height={13} />
-                <span className="copy-page-parent-title">根目录</span>
-              </button>
-              {tree.get(null)?.map((n) => renderNode(n, 0))}
-              {showTree
-                ? null
-                : wsPages.length === 0 && <div className="copy-page-empty">（目标空间暂无页面，仅根目录）</div>}
-            </>
-          )}
-        </div>
-      )}
-    </span>
-  );
-}
-
 function treeFileIcon(mime: string): string {
   if (mime.startsWith("image/")) return "🖼";
   if (mime.startsWith("video/")) return "🎬";
@@ -294,6 +159,7 @@ function TreeItem({
   const [expanded, setExpanded] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.title);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const isFolder = node.kind === "folder";
   const isDatabase = node.kind === "database";
@@ -432,59 +298,72 @@ function TreeItem({
             {node.title || (isFolder ? "新建文件夹" : "未命名")}
           </span>
         )}
-        <span className="tree-actions">
+        <span className={`tree-actions${menuOpen ? " is-open" : ""}`}>
+          {/* 折叠成「…」菜单：hover 显示一个 …，点开弹出动作菜单。 */}
           <button
-            title="重命名"
+            className="tree-more"
+            title="更多操作"
+            aria-expanded={menuOpen}
             onClick={(e) => {
               e.stopPropagation();
-              setEditValue(node.title || "");
-              setEditing(true);
+              setMenuOpen((v) => !v);
             }}
           >
-            ✎
+            ⋯
           </button>
-          <button
-            title="在新窗口打开"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isFolder) api.openPageWindow(node.id);
-            }}
-          >
-            ⧉
-          </button>
-          <CopyPageAction pageId={node.id} />
-          <button
-            title="新建子页面"
-            onClick={(e) => {
-              e.stopPropagation();
-              createPage(node.id);
-            }}
-          >
-            +
-          </button>
-          {isFolder && (
-            <button
-              title="新建子文件夹"
-              onClick={(e) => {
-                e.stopPropagation();
-                createFolder(node.id);
-              }}
-            >
-              📁
-            </button>
+          {menuOpen && (
+            <span className="tree-node-menu" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  setEditValue(node.title || "");
+                  setEditing(true);
+                }}
+              >
+                ✎ 重命名
+              </button>
+              {!isFolder && (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    api.openPageWindow(node.id);
+                  }}
+                >
+                  ⧉ 新窗口打开
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  createPage(node.id);
+                }}
+              >
+                + 新建子页面
+              </button>
+              {isFolder && (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    createFolder(node.id);
+                  }}
+                >
+                  📁 新建子文件夹
+                </button>
+              )}
+              <button
+                className="tree-menu-danger"
+                onClick={async () => {
+                  setMenuOpen(false);
+                  if (await confirmDialog({ title: "删除页面", message: `删除「${node.title || "未命名"}」及其所有子节点？`, danger: true })) {
+                    await deletePage(node.id);
+                    toast("已移到回收站", "success");
+                  }
+                }}
+              >
+                × 删除
+              </button>
+            </span>
           )}
-          <button
-            title="删除"
-            onClick={async (e) => {
-              e.stopPropagation();
-              if (await confirmDialog({ title: "删除页面", message: `删除「${node.title || "未命名"}」及其所有子节点？`, danger: true })) {
-                await deletePage(node.id);
-                toast("已移到回收站", "success");
-              }
-            }}
-          >
-            ×
-          </button>
         </span>
       </div>
       {expanded &&
