@@ -305,7 +305,8 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             pushed      INTEGER NOT NULL DEFAULT 0,
             pulled      INTEGER NOT NULL DEFAULT 0,
             ok          INTEGER NOT NULL DEFAULT 1,
-            message     TEXT NOT NULL DEFAULT ''
+            message     TEXT NOT NULL DEFAULT '',
+            items       TEXT NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_sync_history_at ON sync_history(at DESC);
         CREATE TABLE IF NOT EXISTS templates (
@@ -341,6 +342,15 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     if has_enc == 0 {
         conn.execute("ALTER TABLE workspaces ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    // sync_history.items was added later; backfill on pre-existing meta dbs.
+    let has_items: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('sync_history') WHERE name = 'items'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_items == 0 {
+        conn.execute("ALTER TABLE sync_history ADD COLUMN items TEXT NOT NULL DEFAULT ''", [])?;
     }
     Ok(())
 }

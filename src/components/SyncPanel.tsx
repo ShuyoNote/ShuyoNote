@@ -7,6 +7,14 @@ import { useAuth } from "../store/auth";
 import { useNotes } from "../store/notes";
 import { CloudSyncIcon } from "./icons";
 
+const ENTITY_LABELS: Record<string, string> = {
+  page: "页面",
+  database: "数据库",
+  attachment: "附件",
+  block: "块",
+};
+const entityLabel = (e: string) => ENTITY_LABELS[e] || e || "项";
+
 interface ServerSpace {
   id: string;
   name: string;
@@ -57,8 +65,9 @@ export function SyncPanel() {
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
-  const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string }[]>([]);
+  const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
 
   const refresh = async () => {
     try {
@@ -116,7 +125,7 @@ export function SyncPanel() {
         }),
       );
       // 同步历史（最新 15 条）
-      const h = await api.listSyncHistory(15).catch(() => [] as { ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string }[]);
+      const h = await api.listSyncHistory(15).catch(() => [] as { ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string }[] }[]);
       if (h.length) setHistory(h);
     } catch (e) {
       setStatus(String(e));
@@ -597,6 +606,7 @@ export function SyncPanel() {
                   <div className="sync-history-list">
                     {history.slice(0, 8).map((h, i) => {
                       const d = new Date(h.at).toLocaleString("zh-CN");
+                      const open = detailOpenIdx === i;
                       return (
                         <div key={i} className="sync-history-item">
                           <span className="sync-history-status">{h.ok ? "✓" : "✗"}</span>
@@ -604,7 +614,28 @@ export function SyncPanel() {
                           <span className="sync-history-detail">
                             上传 {h.pushed} / 拉取 {h.pulled}
                           </span>
+                          {h.items.length > 0 && (
+                            <button
+                              className="sync-history-detail-toggle"
+                              onClick={() => setDetailOpenIdx(open ? null : i)}
+                            >
+                              {h.items.length} 项明细 ▾
+                            </button>
+                          )}
                           {h.message && <span className="sync-history-msg">{h.message}</span>}
+                          {open && (
+                            <div className="sync-history-items">
+                              {h.items.slice(0, 30).map((it, j) => (
+                                <div key={j} className="sync-history-item-row">
+                                  <span className={`sync-dir-${it.dir}`}>{it.dir === "push" ? "↑" : "↓"}</span>
+                                  <span className="sync-entity">{entityLabel(it.entity)}</span>
+                                  <span className="sync-op">{it.op === "delete" ? "删除" : "变更"}</span>
+                                  <span className="sync-id" title={it.entity_id}>{it.entity_id.slice(0, 10)}…</span>
+                                </div>
+                              ))}
+                              {h.items.length > 30 && <div className="sync-history-more">…等 {h.items.length - 30} 项</div>}
+                            </div>
+                          )}
                         </div>
                       );
                     })}

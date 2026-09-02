@@ -1635,7 +1635,36 @@ select.sync-input {
   gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
+  flex-wrap: wrap;
 }
+.sync-history-detail-toggle {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.sync-history-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0 4px 16px;
+  width: 100%;
+}
+.sync-history-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.sync-dir-push { color: var(--success); }
+.sync-dir-pull { color: var(--accent); }
+.sync-op { color: var(--text-dim); }
+.sync-id { color: var(--text-faint); font-size: 11px; }
+.sync-history-more { color: var(--text-faint); font-size: 11px; }
 .sync-history-status { font-weight: 700; }
 .sync-history-at { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
 .sync-history-detail { color: var(--text); }

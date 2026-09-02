@@ -245,6 +245,17 @@ pub struct SyncReport {
     pub pulled: usize,
     pub last_pushed_seq: i64,
     pub last_pulled_seq: i64,
+    /// Per-entity detail for "同步明细" (see SyncItem).
+    pub items: Vec<SyncItem>,
+}
+
+/// One entity touched by a sync run — shown in the "同步明细" list.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncItem {
+    pub entity: String,   // "page" | "attachment" | ...
+    pub entity_id: String,
+    pub op: String,       // "upsert" | "delete"
+    pub dir: String,      // "push" | "pull"
 }
 
 #[derive(Deserialize)]
@@ -989,10 +1000,16 @@ pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<
     let limit = limit.unwrap_or(20);
     let c = db.0.lock().expect("db mutex poisoned");
     let mut stmt = c
-        .prepare("SELECT ws_id, ws_name, at, pushed, pulled, ok, message FROM sync_history ORDER BY at DESC LIMIT ?1")
+        .prepare("SELECT ws_id, ws_name, at, pushed, pulled, ok, message, items FROM sync_history ORDER BY at DESC LIMIT ?1")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(rusqlite::params![limit as i64], |r| {
+            let items_json: String = r.get(7)?;
+            let items: Vec<SyncItem> = if items_json.is_empty() {
+                Vec::new()
+            } else {
+                serde_json::from_str(&items_json).unwrap_or_default()
+            };
             Ok(SyncHistoryEntry {
                 ws_id: r.get(0)?,
                 ws_name: r.get(1)?,
@@ -1001,6 +1018,7 @@ pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<
                 pulled: r.get(4)?,
                 ok: r.get(5)?,
                 message: r.get(6)?,
+                items,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1016,13 +1034,14 @@ pub struct SyncHistoryEntry {
     pub pulled: i64,
     pub ok: bool,
     pub message: String,
+    pub items: Vec<SyncItem>,
 }
 
 
 async fn do_push(
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(usize, i64), String> {
+) -> Result<(usize, i64, Vec<SyncItem>), String> {
     let (device_id, last_pushed, changes): (String, i64, Vec<OutgoingChange>) = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
@@ -1066,8 +1085,13 @@ async fn do_push(
     };
 
     if changes.is_empty() {
-        return Ok((0, last_pushed));
+        return Ok((0, last_pushed, Vec::new()));
     }
+    // 收集本次 push 的实体明细（供「同步明细」显示）。
+    let items: Vec<SyncItem> = changes
+        .iter()
+        .map(|ch| SyncItem { entity: ch.entity.clone(), entity_id: ch.entity_id.clone(), op: ch.op.clone(), dir: "push".to_string() })
+        .collect();
 
     let client = reqwest::Client::new();
     let mut req = client
@@ -1107,13 +1131,13 @@ async fn do_push(
         (max_seq, count as usize)
     };
 
-    Ok((count, max_seq))
+    Ok((count, max_seq, items))
 }
 
 async fn do_pull(
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(usize, i64), String> {
+) -> Result<(usize, i64, Vec<SyncItem>), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
@@ -1141,13 +1165,15 @@ async fn do_pull(
     let body: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
 
     let mut max_pulled = last_pulled;
-    let mut count = 0;
+    let mut count: usize = 0;
+    let mut items: Vec<SyncItem> = Vec::new();
     {
         let c = db.0.lock().expect("db mutex poisoned");
         for change in body.changes {
             if change.seq > max_pulled {
                 max_pulled = change.seq;
             }
+            items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string() });
             match (change.entity.as_str(), change.op.as_str()) {
                 ("page", "upsert") => {
                     if let Some(payload) = &change.payload {
@@ -1170,7 +1196,7 @@ async fn do_pull(
         set_profile_field(&c, &profile.ws_id, "last_pulled_seq", max_pulled)?;
     }
 
-    Ok((count, max_pulled))
+    Ok((count, max_pulled, items))
 }
 
 #[derive(Serialize)]
@@ -1188,10 +1214,12 @@ async fn sync_workspace_only(
     db: &State<'_, Db>,
     profile: &SyncProfile,
 ) -> Result<SyncReport, String> {
-    let (pushed, last_pushed_seq) = do_push(db, profile).await?;
-    let (pulled, last_pulled_seq) = do_pull(db, profile).await?;
+    let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
+    let (pulled, last_pulled_seq, pulled_items) = do_pull(db, profile).await?;
     sync_attachments(app, db, profile).await?;
-    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq })
+    let mut items = pushed_items;
+    items.extend(pulled_items);
+    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items })
 }
 
 #[tauri::command]
@@ -1258,6 +1286,7 @@ pub async fn sync_workspace(
                 rep.pulled,
                 true,
                 "",
+                &rep.items,
             );
             Ok(WorkspaceSyncResult {
                 ws_id,
@@ -1269,7 +1298,7 @@ pub async fn sync_workspace(
             })
         }
         Err(e) => {
-            write_sync_history(&db, &ws_id, &profile, 0, 0, false, &e);
+            write_sync_history(&db, &ws_id, &profile, 0, 0, false, &e, &[]);
             Err(e)
         }
     }
@@ -1284,17 +1313,19 @@ fn write_sync_history(
     pulled: usize,
     ok: bool,
     message: &str,
+    items: &[SyncItem],
 ) {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
+    let items_json = serde_json::json!(items).to_string();
     let r = || -> rusqlite::Result<()> {
         let c = db.0.lock().expect("db mutex poisoned");
         c.execute(
-            "INSERT INTO sync_history (ws_id, ws_name, at, pushed, pulled, ok, message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![ws_id, "", at, pushed as i64, pulled as i64, ok as i64, message],
+            "INSERT INTO sync_history (ws_id, ws_name, at, pushed, pulled, ok, message, items)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![ws_id, "", at, pushed as i64, pulled as i64, ok as i64, message, items_json],
         )?;
         // 只保留最近 100 条，避免无限增长。
         let _ = c.execute(
