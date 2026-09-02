@@ -581,13 +581,13 @@ pub async fn team_list_spaces(server_url: String, token: String) -> Result<Vec<T
 }
 
 #[tauri::command]
-pub async fn team_create_space(server_url: String, token: String, name: String) -> Result<TeamSpace, String> {
+pub async fn team_create_space(server_url: String, token: String, name: String, org_id: Option<String>) -> Result<TeamSpace, String> {
     let url = server_url.trim_end_matches('/').to_string();
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{url}/spaces"))
         .bearer_auth(&token)
-        .json(&serde_json::json!({ "name": name }))
+        .json(&serde_json::json!({ "name": name, "org_id": org_id }))
         .send()
         .await
         .map_err(|e| e.to_string())?;

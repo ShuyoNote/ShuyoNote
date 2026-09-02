@@ -170,7 +170,7 @@ export interface CommandMap {
   team_login: { args: { serverUrl: string; email: string; password: string }; result: { token: string } };
   team_logout: { args: { serverUrl: string }; result: void };
   team_list_spaces: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
-  team_create_space: { args: { serverUrl: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };
+  team_create_space: { args: { serverUrl: string; token: string; name: string; orgId?: string | null }; result: { id: string; name: string; role: string; owner_id: string } };
   team_list_members: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email: string; role: string }[] };
   team_invite_member: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };
   team_set_member_role: { args: { serverUrl: string; token: string; spaceId: string; email: string; role: string }; result: void };

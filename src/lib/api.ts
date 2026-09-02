@@ -129,8 +129,8 @@ export const api = {
   teamLogout: (server_url: string) => invoke("team_logout", { serverUrl: server_url }),
   teamListSpaces: (server_url: string, token: string) =>
     invoke("team_list_spaces", { serverUrl: server_url, token }),
-  teamCreateSpace: (server_url: string, token: string, name: string) =>
-    invoke("team_create_space", { serverUrl: server_url, token, name }),
+  teamCreateSpace: (server_url: string, token: string, name: string, org_id?: string | null) =>
+    invoke("team_create_space", { serverUrl: server_url, token, name, orgId: org_id }),
   teamListMembers: (server_url: string, token: string, space_id: string) =>
     invoke("team_list_members", { serverUrl: server_url, token, spaceId: space_id }),
   teamInviteMember: (server_url: string, token: string, space_id: string, email: string, role: string) =>

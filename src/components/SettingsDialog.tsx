@@ -511,6 +511,26 @@ function AccountPane() {
     }
   };
 
+  // 组长在组织下创建共享空间：调 create_space 带 org_id，组员自动可访问。
+  const createOrgSpace = async (orgId: string, orgName: string) => {
+    if (!base || !token) return;
+    inputDialog({
+      title: `在「${orgName}」创建共享空间`,
+      placeholder: "空间名称",
+      defaultValue: "",
+      onSubmit: async (name) => {
+        const n = name.trim();
+        if (!n) return;
+        try {
+          const sp = await api.teamCreateSpace(base, token, n, orgId);
+          setOrgStatus(`已在「${orgName}」创建共享空间「${sp.name}」`);
+        } catch (e) {
+          setOrgStatus(`创建共享空间失败：${e}`);
+        }
+      },
+    });
+  };
+
   return (
     <>
       <section className="set-section">
@@ -619,6 +639,9 @@ function AccountPane() {
                         <span className="set-row-sub">
                           {o.role === "admin" ? "组长" : "成员"} · {members.length} 人
                         </span>
+                        {o.role === "admin" && (
+                          <button className="set-btn" onClick={() => void createOrgSpace(o.id, o.name)}>创建共享空间</button>
+                        )}
                       </div>
                       {o.role === "admin" && (
                         <div className="org-invite-code">
