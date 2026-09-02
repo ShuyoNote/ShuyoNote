@@ -983,6 +983,9 @@ body,
 }
 
 .btn-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-dim);

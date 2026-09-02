@@ -325,7 +325,8 @@ export function SyncPanel() {
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
-        <SyncIcon />
+        <SyncIcon width={14} height={14} />
+        <span>同步</span>
       </button>
       {open && (
         <div
