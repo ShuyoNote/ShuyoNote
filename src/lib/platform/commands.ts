@@ -185,6 +185,8 @@ export interface CommandMap {
   team_remove_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
   team_approve_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
   team_reject_org_invite: { args: { serverUrl: string; token: string; orgId: string; email: string }; result: void };
+  team_deactivate_account: { args: { serverUrl: string; token: string }; result: void };
+  team_deactivate_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };

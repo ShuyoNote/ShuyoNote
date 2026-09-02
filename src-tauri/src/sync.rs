@@ -798,6 +798,41 @@ pub async fn team_reject_org_invite(server_url: String, token: String, org_id: S
     Ok(())
 }
 
+/// Self-deactivation (graduation handover). Revokes the session, disables the
+/// account, and hands the caller's owned spaces to the org leader.
+#[tauri::command]
+pub async fn team_deactivate_account(server_url: String, token: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(format!("{url}/auth/account"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("注销账号失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Leader deactivates a group member (graduation handover).
+#[tauri::command]
+pub async fn team_deactivate_org_member(server_url: String, token: String, org_id: String, user_id: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs/{org_id}/members/{user_id}/deactivate"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("注销成员失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn team_invite_org_member(server_url: String, token: String, org_id: String, email: String, role: String) -> Result<(), String> {
     let url = server_url.trim_end_matches('/').to_string();

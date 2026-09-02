@@ -297,6 +297,26 @@ function AccountPane() {
     }
   };
 
+  // 注销自己（毕业交接）：账号作废 + 数据交组长。不可逆，需二次确认。
+  const deactivateSelf = async () => {
+    if (!serverUrl || !token) { setStatus("请先登录团队账号"); return; }
+    const ok = await confirmDialog({
+      title: "注销账号",
+      message: `注销后无法再登录，但你的数据会转交给所属组织的组长。确定注销「${hostLabel(serverUrl)}」上的这个账号？`,
+      danger: true,
+    });
+    if (!ok) return;
+    setStatus("");
+    try {
+      await api.teamDeactivateAccount(serverUrl, token);
+      clear();
+      setStatus("账号已注销。数据已转交组长。");
+      await refresh();
+    } catch (e) {
+      setStatus(`注销失败：${e}`);
+    }
+  };
+
   const syncGroup = async (g: { server_url: string; wss: { ws_id: string }[] }) => {
     setSyncing(true);
     setStatus("");
@@ -421,6 +441,24 @@ function AccountPane() {
     }
   };
 
+  // 组长注销组员（毕业交接）：账号作废 + 数据交组长。不可逆，二次确认。
+  const deactivateMember = async (orgId: string, userId: string, email: string) => {
+    if (!base || !token) return;
+    const ok = await confirmDialog({
+      title: "注销成员",
+      message: `注销「${email}」后其无法再登录，但数据会转交给组长。确定注销该成员？`,
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.teamDeactivateOrgMember(base, token, orgId, userId);
+      await loadMemberList(orgId);
+      setOrgStatus(`已注销 ${email}（数据已转交组长）`);
+    } catch (e) {
+      setOrgStatus(`注销失败：${e}`);
+    }
+  };
+
   return (
     <>
       <section className="set-section">
@@ -432,6 +470,7 @@ function AccountPane() {
               <div className="set-row-name">{hostLabel(serverUrl)}</div>
               <div className="set-row-sub">已登录 · 会话保存在本机 meta 库</div>
             </div>
+            <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>
             <button className="set-btn" onClick={() => void logout()}>登出</button>
           </div>
         ) : (
@@ -533,6 +572,9 @@ function AccountPane() {
                               <span className="org-actions">
                                 <button className="set-btn" onClick={() => void toggleActive(o.id, m)}>
                                   {m.disabled ? "启用" : "停用"}
+                                </button>
+                                <button className="set-btn is-danger" onClick={() => void deactivateMember(o.id, m.user_id, m.email)}>
+                                  注销
                                 </button>
                                 <button className="set-btn" onClick={() => void removeMember(o.id, m.user_id)}>移除</button>
                               </span>
