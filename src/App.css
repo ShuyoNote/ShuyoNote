@@ -1559,7 +1559,11 @@ select.sync-input {
   display: flex;
   gap: 8px;
   align-items: center;
+  /* 与上方「我的组织」行（.set-row 有 0 12px padding）左右对齐。 */
+  padding: 0 12px;
   margin-top: 8px;
+  /* 与下方组织卡留出间隙。 */
+  margin-bottom: 14px;
 }
 .org-join .sync-input {
   flex: 1;
