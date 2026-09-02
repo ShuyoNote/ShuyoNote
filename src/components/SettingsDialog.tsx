@@ -11,6 +11,7 @@ import type { SyncProfile } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
+import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 import { useWindowChrome } from "../store/windowChrome";
 import { useNotes } from "../store/notes";
@@ -359,15 +360,23 @@ function AccountPane() {
 
   const createOrg = async () => {
     if (!base || !token) { setOrgStatus("请先登录团队账号"); return; }
-    const name = prompt("组织名称");
-    if (!name?.trim()) return;
-    try {
-      await api.teamCreateOrg(base, token, name.trim());
-      await loadOrgs(base, token);
-      setOrgStatus("组织已创建");
-    } catch (e) {
-      setOrgStatus(`创建失败：${e}`);
-    }
+    // 用应用内 inputDialog（替代丑的原生 prompt）。
+    inputDialog({
+      title: "新建组织",
+      placeholder: "组织名称",
+      defaultValue: "",
+      onSubmit: async (name) => {
+        const n = name.trim();
+        if (!n) return;
+        try {
+          await api.teamCreateOrg(base, token, n);
+          await loadOrgs(base, token);
+          setOrgStatus("组织已创建");
+        } catch (e) {
+          setOrgStatus(`创建失败：${e}`);
+        }
+      },
+    });
   };
 
   const loadMemberList = useCallback(async (orgId: string) => {
