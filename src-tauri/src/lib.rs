@@ -61,6 +61,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // 单实例：禁止多开。ShuyoNote 是本地优先单库（meta.db 一个 device_id /
+        // token / auth_sessions），多实例会互相覆盖 token、device 绑定冲突（同机多实例
+        // 各自登录 = 之前 zhaizy/cnzen001 那类 403）。第二个实例启动时唤起第一个。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 唤起已有实例到前台（macOS 加 activate；Windows/Linux 默认显示）。
+            #[cfg(target_os = "macos")]
+            let _ = app.show();
+            #[cfg(target_os = "windows")]
+            let _ = app.get_webview_window("main").map(|w| w.set_focus());
+            #[cfg(target_os = "linux")]
+            let _ = app.get_webview_window("main").map(|w| w.set_focus());
+        }))
         // E1 attachment at-rest decryption-on-serve: `convertFileSrc(path, "attachment")`
         // produces a platform-correct `attachment://`/`http://attachment.localhost` URL;
         // this handler percent-decodes the target path, validates it is under the app's
