@@ -336,7 +336,7 @@ export default function DrawingEditorModal() {
         try {
           const mod = await import("mermaid");
           const mermaid = mod.default;
-          mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false } });
+          mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", flowchart: { htmlLabels: true, curve: "basis" } });
           const id = `sn-${Math.random().toString(36).slice(2, 10)}`;
           const { svg } = await mermaid.render(id, src);
           const blob = new Blob([svg], { type: "image/svg+xml" });

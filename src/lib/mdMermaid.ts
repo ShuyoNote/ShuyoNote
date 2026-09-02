@@ -35,7 +35,9 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
             // subgraph + <br/> 标签 + 跨 subgraph 引用易布局错乱；htmlLabels + loose
             // 让 <br/> 正确换行且不因 strict 转义破坏，改善嵌套图渲染。
             securityLevel: "loose",
-            flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false },
+            // useMaxWidth 保持默认 true：让 SVG 缩到容器宽，避免大 subgraph 图
+            // 用自然宽导致溢出/裁剪重叠（发布版布局乱的常见原因）。
+            flowchart: { htmlLabels: true, curve: "basis" },
           });
           mermaidReady = true;
           mermaidTheme = theme;

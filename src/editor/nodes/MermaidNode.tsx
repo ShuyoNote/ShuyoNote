@@ -153,7 +153,7 @@ function MermaidView({
             startOnLoad: false,
             theme: mermaidTheme,
             securityLevel: "loose",
-            flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false },
+            flowchart: { htmlLabels: true, curve: "basis" },
           });
           mermaidReady = true;
           mermaidThemeRef.current = mermaidTheme;
