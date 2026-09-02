@@ -24,7 +24,20 @@ export const useAuth = create<AuthState>((set) => ({
   init: async () => {
     try {
       const s = await api.teamGetSession();
-      set({ serverUrl: s.server_url, token: s.token, authed: !!s.token });
+      if (!s.token || !s.server_url) {
+        set({ serverUrl: "", token: "", authed: false });
+        return;
+      }
+      // 校验 token 是否仍被服务端认可：用 token 调 /spaces。若 401，说明本地
+      // 存的 token 已失效（服务端清理/过期/换账号），不能误显示「已登录」——
+      // 否则组织管理等会 401。失效则清空，引导重新登录。
+      try {
+        await api.teamListSpaces(s.server_url, s.token);
+        set({ serverUrl: s.server_url, token: s.token, authed: true });
+      } catch {
+        // 401 / 网络错：token 不可用，清空。
+        set({ serverUrl: "", token: "", authed: false });
+      }
     } catch {
       set({ serverUrl: "", token: "", authed: false });
     }
