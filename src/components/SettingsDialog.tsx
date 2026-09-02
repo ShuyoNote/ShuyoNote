@@ -289,6 +289,12 @@ function AccountPane() {
     setStatus("");
     try {
       await api.teamLogout(serverUrl);
+      // 全局登出：清空所有绑定空间的 sync_token/space_id（保留 server_url 供再登录），
+      // 否则标题栏胶囊仍显示旧 token 的同步目标，不会随登出消失。
+      const profiles = await api.listSyncProfiles();
+      for (const p of profiles) {
+        await api.setSyncProfile(p.ws_id, { server_url: p.server_url }).catch(() => {});
+      }
       clear();
       setStatus("已登出当前账号");
       await refresh();
