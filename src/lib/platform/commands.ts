@@ -177,6 +177,7 @@ export interface CommandMap {
   team_remove_member: { args: { serverUrl: string; token: string; spaceId: string; userId: string }; result: void };
   team_get_session: { args: undefined; result: { server_url: string; token: string } };
   team_get_me: { args: { serverUrl: string; token: string }; result: { email: string } };
+  team_get_server_email: { args: { serverUrl: string }; result: string | null };
   // ---- P0 org management (research group) ----
   team_list_orgs: { args: { serverUrl: string; token: string }; result: { id: string; name: string; role: string; owner_id: string }[] };
   team_create_org: { args: { serverUrl: string; token: string; name: string }; result: { id: string; name: string; role: string; owner_id: string } };

@@ -82,6 +82,17 @@ fn get_auth_token(c: &Connection, server_url: &str) -> Option<String> {
     .ok()
 }
 
+/// Best-effort read of the email last logged in for a server (`meta.auth_sessions`).
+/// Used to prefill the login form so a previously-synced server's account is remembered.
+fn get_auth_email(c: &Connection, server_url: &str) -> Option<String> {
+    c.query_row(
+        "SELECT email FROM auth_sessions WHERE server_url = ?1",
+        params![server_url],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
 pub fn device_id(c: &Connection) -> Result<String, String> {
     get_meta_state(c, KEY_DEVICE_ID).ok_or_else(|| "设备 ID 未初始化".to_string())
 }
@@ -962,6 +973,14 @@ pub async fn team_get_me(server_url: String, token: String) -> Result<TeamMe, St
     Ok(TeamMe {
         email: v["email"].as_str().unwrap_or("").to_string(),
     })
+}
+
+/// Return the email last logged in for a server (local `meta.auth_sessions`), so a
+/// previously-synced server's account can be prefilled in the login form.
+#[tauri::command]
+pub fn team_get_server_email(db: State<'_, Db>, server_url: String) -> Result<Option<String>, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    Ok(get_auth_email(&c, &server_url))
 }
 
 async fn do_push(

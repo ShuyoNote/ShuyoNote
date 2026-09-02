@@ -76,6 +76,15 @@ export function SyncPanel() {
         ids = Array.from(new Set([...spaces.map((s) => s.id), ...profileIds]));
       }
       const byWs = new Map<string, SyncProfile>(profiles.map((p) => [p.ws_id, p]));
+      // 同步/保存过（有 server_url）的空间，默认填入上次登录的邮箱。
+      const serverEmail = new Map<string, string>();
+      for (const id of ids) {
+        const sv = byWs.get(id)?.server_url;
+        if (sv && !serverEmail.has(sv)) {
+          const em = await api.teamGetServerEmail(sv).catch(() => "");
+          if (em) serverEmail.set(sv, em);
+        }
+      }
       setRows(
         ids.map((id) => {
           const p = byWs.get(id);
@@ -85,7 +94,8 @@ export function SyncPanel() {
             server_url: p?.server_url ?? "",
             token: p?.token ?? "",
             space_id: p?.space_id ?? "",
-            loginEmail: "",
+            // 有 server_url 时预填上次登录邮箱；否则空。
+            loginEmail: p?.server_url ? (serverEmail.get(p.server_url) ?? "") : "",
             loginPassword: "",
             remoteSpaces: [],
             members: [],

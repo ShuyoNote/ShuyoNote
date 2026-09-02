@@ -142,6 +142,8 @@ export const api = {
   teamGetSession: () => invoke("team_get_session"),
   teamGetMe: (server_url: string, token: string) =>
     invoke("team_get_me", { serverUrl: server_url, token }),
+  teamGetServerEmail: (server_url: string) =>
+    invoke("team_get_server_email", { serverUrl: server_url }),
   // P0 org management (research group) — desktop only (Web driver throws).
   teamListOrgs: (server_url: string, token: string) =>
     invoke("team_list_orgs", { serverUrl: server_url, token }),

@@ -1793,6 +1793,7 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "team_remove_member") throw new Error("Web 版不支持团队空间，请用桌面版");
     if (cmd === "team_get_session") return { server_url: "", token: "" } as T;
     if (cmd === "team_get_me") throw new Error("Web 版不支持团队账号，请用桌面版");
+    if (cmd === "team_get_server_email") return null as T;
     if (cmd === "team_list_orgs") throw new Error("Web 版不支持组织管理，请用桌面版");
     if (cmd === "team_create_org") throw new Error("Web 版不支持组织管理，请用桌面版");
     if (cmd === "team_list_org_members") throw new Error("Web 版不支持组织管理，请用桌面版");

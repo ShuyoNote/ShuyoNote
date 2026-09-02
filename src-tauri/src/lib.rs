@@ -244,6 +244,7 @@ pub fn run() {
             sync::team_remove_member,
             sync::team_get_session,
             sync::team_get_me,
+            sync::team_get_server_email,
             sync::team_list_orgs,
             sync::team_create_org,
             sync::team_list_org_members,
