@@ -149,7 +149,12 @@ function MermaidView({
         const mod = await import("mermaid");
         const mermaid = mod.default;
         if (!mermaidReady || mermaidThemeRef.current !== mermaidTheme) {
-          mermaid.initialize({ startOnLoad: false, theme: mermaidTheme });
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: mermaidTheme,
+            securityLevel: "loose",
+            flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false },
+          });
           mermaidReady = true;
           mermaidThemeRef.current = mermaidTheme;
         }

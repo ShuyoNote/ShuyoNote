@@ -29,7 +29,14 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
       if (!mod) {
         mod = await import("mermaid");
         if (!mermaidReady || mermaidTheme !== theme) {
-          mod.default.initialize({ startOnLoad: false, theme });
+          mod.default.initialize({
+            startOnLoad: false,
+            theme,
+            // subgraph + <br/> 标签 + 跨 subgraph 引用易布局错乱；htmlLabels + loose
+            // 让 <br/> 正确换行且不因 strict 转义破坏，改善嵌套图渲染。
+            securityLevel: "loose",
+            flowchart: { htmlLabels: true, curve: "basis", useMaxWidth: false },
+          });
           mermaidReady = true;
           mermaidTheme = theme;
         }
