@@ -1020,7 +1020,8 @@ body,
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 14px;
-  z-index: 40;
+  /* 高于文件预览层(.fm-preview-overlay z-index:50)——否则预览视图会盖住同步弹窗。 */
+  z-index: 60;
 }
 .sync-title {
   font-size: 13px;
@@ -1823,7 +1824,7 @@ select.sync-input {
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
-  z-index: 40;
+  z-index: 60;
   min-width: 250px;
   padding: 6px;
 }
