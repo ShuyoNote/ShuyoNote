@@ -354,7 +354,8 @@ export function SyncPanel() {
       await api.setSyncProfile(r.ws_id, { server_url: base }).catch((e) => {
         console.error("clear sync profile failed", e);
       });
-      setStatus("已登出");
+      // 登出成功不显示「已登出」——回到登录表单本身已说明状态，提示是多余噪音。
+      setStatus("");
     } catch (e) {
       setStatus(`登出失败：${e}`);
     }
