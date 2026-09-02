@@ -386,14 +386,11 @@ function AccountPane() {
     if (base && token) void loadOrgs(base, token);
   }, [base, token, refresh, loadOrgs]);
 
-  // Fetch each org's members whenever orgs change (after create / load).
-  // 只对「组长」(role=admin) 的组织拉成员——普通成员（member）拉取会被服务端 403
-  // （list_org_members 要求 admin），且 member 不该看到成员管理。
+  // Fetch each org's members whenever orgs change. 任一成员可读成员列表（只读），
+  // 所以每个组织都拉；但管理操作（邀请/移除/改角色）需 admin（UI 用 o.role 限定）。
   useEffect(() => {
     if (!base || !token) return;
-    for (const o of orgs) {
-      if (o.role === "admin") void loadMemberList(o.id);
-    }
+    for (const o of orgs) void loadMemberList(o.id);
   }, [orgs, base, token, loadMemberList]);
 
   const inviteMember = async (orgId: string) => {
@@ -630,13 +627,17 @@ function AccountPane() {
                                 {m.role === "admin" ? "组长" : "成员"}{m.disabled ? " · 已停用" : ""}
                               </span>
                               <span className="org-actions">
-                                <button className="set-btn" onClick={() => void toggleActive(o.id, m)}>
-                                  {m.disabled ? "启用" : "停用"}
-                                </button>
-                                <button className="set-btn is-danger" onClick={() => void deactivateMember(o.id, m.user_id, m.email)}>
-                                  注销
-                                </button>
-                                <button className="set-btn" onClick={() => void removeMember(o.id, m.user_id)}>移除</button>
+                                {o.role === "admin" && (
+                                  <>
+                                    <button className="set-btn" onClick={() => void toggleActive(o.id, m)}>
+                                      {m.disabled ? "启用" : "停用"}
+                                    </button>
+                                    <button className="set-btn is-danger" onClick={() => void deactivateMember(o.id, m.user_id, m.email)}>
+                                      注销
+                                    </button>
+                                    <button className="set-btn" onClick={() => void removeMember(o.id, m.user_id)}>移除</button>
+                                  </>
+                                )}
                               </span>
                             </div>
                           ))}
@@ -644,15 +645,17 @@ function AccountPane() {
                       ) : (
                         <p className="set-hint">还没有成员。</p>
                       )}
-                      <div className="org-invite">
-                        <input
-                          className="sync-input"
-                          placeholder="成员邮箱"
-                          value={email}
-                          onChange={(e) => setInviteEmail((prev) => ({ ...prev, [o.id]: e.target.value }))}
-                        />
-                        <button className="sync-btn" onClick={() => void inviteMember(o.id)}>邀请</button>
-                      </div>
+                      {o.role === "admin" && (
+                        <div className="org-invite">
+                          <input
+                            className="sync-input"
+                            placeholder="成员邮箱"
+                            value={email}
+                            onChange={(e) => setInviteEmail((prev) => ({ ...prev, [o.id]: e.target.value }))}
+                          />
+                          <button className="sync-btn" onClick={() => void inviteMember(o.id)}>邀请</button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
