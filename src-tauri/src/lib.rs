@@ -253,6 +253,8 @@ pub fn run() {
             sync::team_reject_org_invite,
             sync::team_deactivate_account,
             sync::team_deactivate_org_member,
+            sync::team_generate_org_invite_code,
+            sync::team_join_org_by_code,
             attachments::save_image,
             attachments::attachment_path,
             attachments::copy_attachment,

@@ -1554,6 +1554,28 @@ select.sync-input {
   color: var(--accent);
   margin-bottom: 4px;
 }
+/* 凭邀请码加入组织：输入框 + 按钮一行。 */
+.org-join {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.org-join .sync-input {
+  flex: 1;
+  min-width: 0;
+}
+.org-join .sync-btn {
+  white-space: nowrap;
+  flex: none;
+}
+/* 组织头部邀请码：码 + 生成/重置按钮。 */
+.org-invite-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
 
 .sync-meta {
   font-size: 12px;

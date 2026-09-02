@@ -262,6 +262,9 @@ function AccountPane() {
   const [orgMembers, setOrgMembers] = useState<Record<string, { members: { user_id: string; email: string; role: string; disabled: boolean }[]; pending: { email: string; status: string }[] }>>({});
   const [inviteEmail, setInviteEmail] = useState<Record<string, string>>({});
   const [orgStatus, setOrgStatus] = useState("");
+  // 邀请码（每组织一个被生成的码）与「凭码加入」输入。
+  const [inviteCodes, setInviteCodes] = useState<Record<string, string>>({});
+  const [joinCode, setJoinCode] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -465,6 +468,33 @@ function AccountPane() {
     }
   };
 
+  // 组长生成/重置邀请码（每个组织一个，显示出来让组长复制转发）。
+  const generateInviteCode = async (orgId: string, orgName: string) => {
+    if (!base || !token) return;
+    try {
+      const code = await api.teamGenerateOrgInviteCode(base, token, orgId);
+      setInviteCodes((prev) => ({ ...prev, [orgId]: code }));
+      setOrgStatus(`已生成「${orgName}」邀请码：${code}`);
+    } catch (e) {
+      setOrgStatus(`生成邀请码失败：${e}`);
+    }
+  };
+
+  // 用户凭邀请码加入组织（码即授权，直接入组）。
+  const joinByCode = async () => {
+    if (!base || !token) { setOrgStatus("请先登录团队账号"); return; }
+    const code = joinCode.trim();
+    if (!code) { setOrgStatus("请输入邀请码"); return; }
+    try {
+      await api.teamJoinOrgByCode(base, token, code);
+      setJoinCode("");
+      setOrgStatus("已加入组织");
+      await loadOrgs(base, token);
+    } catch (e) {
+      setOrgStatus(`加入失败：${e}`);
+    }
+  };
+
   return (
     <>
       <section className="set-section">
@@ -535,6 +565,16 @@ function AccountPane() {
               </div>
               <button className="set-btn" onClick={() => void createOrg()}>新建组织</button>
             </div>
+            {/* 凭邀请码加入组织：新用户拿到组长发的码，输入即入组（码即授权）。 */}
+            <div className="org-join">
+              <input
+                className="sync-input"
+                placeholder="有邀请码？输入并加入组织"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value)}
+              />
+              <button className="sync-btn" onClick={() => void joinByCode()}>加入</button>
+            </div>
             {orgs.length === 0 ? (
               <p className="set-hint">还没有组织。建一个课题组组织后，可在下方邀请成员。</p>
             ) : (
@@ -552,6 +592,14 @@ function AccountPane() {
                           {o.role === "admin" ? "组长" : "成员"} · {members.length} 人
                         </span>
                       </div>
+                      {o.role === "admin" && (
+                        <div className="org-invite-code">
+                          <span className="set-row-sub">邀请码：{inviteCodes[o.id] || "未生成"}</span>
+                          <button className="set-btn" onClick={() => void generateInviteCode(o.id, o.name)}>
+                            {inviteCodes[o.id] ? "重新生成" : "生成邀请码"}
+                          </button>
+                        </div>
+                      )}
                       {pending.length > 0 && (
                         <div className="org-members org-pending">
                           <div className="org-pending-title">待加入</div>

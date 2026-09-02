@@ -833,6 +833,43 @@ pub async fn team_deactivate_org_member(server_url: String, token: String, org_i
     Ok(())
 }
 
+/// Leader generates / resets an org invite code; returns the code to hand out.
+#[tauri::command]
+pub async fn team_generate_org_invite_code(server_url: String, token: String, org_id: String) -> Result<String, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs/{org_id}/invite-code"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("生成邀请码失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v["invite_code"].as_str().unwrap_or("").to_string())
+}
+
+/// A user joins an org by invite code (the code is the authorization).
+#[tauri::command]
+pub async fn team_join_org_by_code(server_url: String, token: String, code: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs/join"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "code": code }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("加入组织失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn team_invite_org_member(server_url: String, token: String, org_id: String, email: String, role: String) -> Result<(), String> {
     let url = server_url.trim_end_matches('/').to_string();

@@ -161,6 +161,10 @@ export const api = {
     invoke("team_deactivate_account", { serverUrl: server_url, token }),
   teamDeactivateOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
     invoke("team_deactivate_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
+  teamGenerateOrgInviteCode: (server_url: string, token: string, org_id: string) =>
+    invoke("team_generate_org_invite_code", { serverUrl: server_url, token, orgId: org_id }),
+  teamJoinOrgByCode: (server_url: string, token: string, code: string) =>
+    invoke("team_join_org_by_code", { serverUrl: server_url, token, code }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;
