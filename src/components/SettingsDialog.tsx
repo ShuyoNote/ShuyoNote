@@ -579,7 +579,17 @@ function AccountPane() {
               <button className="sync-btn" onClick={() => void joinByCode()}>加入</button>
             </div>
             {orgs.length === 0 ? (
-              <p className="set-hint">还没有组织。创建一个组织后，可在下方邀请成员。</p>
+              <div className="org-empty-help">
+                <p className="set-hint"><b>你还没加入任何组织。</b>加入方式（任选其一）：</p>
+                <ul className="org-empty-list">
+                  <li><b>有邀请码</b>：在上方输入组长发的<b>组织邀请码</b>，点「加入」即入组。</li>
+                  <li><b>被组长邀请</b>：等组长在成员管理里邀请你，<b>批准后</b>你就成为成员。</li>
+                  <li><b>被加为空间成员</b>：组长把你加进某个空间成员，就能<b>绑定空间同步</b>（多设备）。
+                    <div className="org-empty-note">提示：加入组织 ≠ 能同步空间——还需组长把你加为<b>空间成员</b>。</div>
+                  </li>
+                </ul>
+                <p className="set-hint">如果你是要<b>新建组织当组长</b>，点右上「新建组织」。</p>
+              </div>
             ) : (
               <div className="set-list">
                 {orgs.map((o) => {

@@ -1581,6 +1581,29 @@ select.sync-input {
   gap: 8px;
   margin: 4px 0 8px;
 }
+/* 注册后「未入组」引导：清晰列出加入方式 + 提示组织≠空间。 */
+.org-empty-help {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.org-empty-help .set-hint {
+  margin: 0 0 6px;
+}
+.org-empty-list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.org-empty-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
 
 .sync-meta {
   font-size: 12px;
