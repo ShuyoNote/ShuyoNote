@@ -1673,15 +1673,21 @@ select.sync-input {
   gap: 8px;
 }
 .sync-history-clear {
-  border: 1px solid var(--border);
+  border: none;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text-faint);
   border-radius: var(--radius-sm);
-  padding: 3px 10px;
+  padding: 4px 8px;
   font-size: 11px;
   cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
-.sync-history-clear:hover { color: var(--danger); border-color: var(--danger); }
+.sync-history-clear:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  opacity: 1;
+}
 .sync-history-status { font-weight: 700; }
 .sync-history-at { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
 .sync-history-detail { color: var(--text); }
