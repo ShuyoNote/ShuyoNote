@@ -359,7 +359,7 @@ function AccountPane() {
 
   const createOrg = async () => {
     if (!base || !token) { setOrgStatus("请先登录团队账号"); return; }
-    const name = prompt("组织名称（课题组）");
+    const name = prompt("组织名称");
     if (!name?.trim()) return;
     try {
       await api.teamCreateOrg(base, token, name.trim());
@@ -553,7 +553,7 @@ function AccountPane() {
       </section>
 
       <section className="set-section">
-        <div className="set-section-title">组织管理（课题组）</div>
+        <div className="set-section-title">组织管理</div>
         {!isDesktopPlatform() ? (
           <p className="set-hint">Web 版不支持组织管理，请用桌面版。</p>
         ) : authed ? (
@@ -576,7 +576,7 @@ function AccountPane() {
               <button className="sync-btn" onClick={() => void joinByCode()}>加入</button>
             </div>
             {orgs.length === 0 ? (
-              <p className="set-hint">还没有组织。建一个课题组组织后，可在下方邀请成员。</p>
+              <p className="set-hint">还没有组织。创建一个组织后，可在下方邀请成员。</p>
             ) : (
               <div className="set-list">
                 {orgs.map((o) => {
