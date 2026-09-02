@@ -472,7 +472,7 @@ export function SyncPanel() {
                     )}
                   </div>
 
-                  {r.space_id && r.token && (
+                  {r.space_id && r.token && canManageSpace(r) && (
                     <div className="sync-field">
                       <button
                         className="sync-members-toggle"
