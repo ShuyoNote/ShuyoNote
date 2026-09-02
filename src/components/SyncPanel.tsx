@@ -78,11 +78,19 @@ export function SyncPanel() {
       const byWs = new Map<string, SyncProfile>(profiles.map((p) => [p.ws_id, p]));
       // 同步/保存过（有 server_url）的空间，默认填入上次登录的邮箱。
       const serverEmail = new Map<string, string>();
+      // 已绑定空间的可选项（remoteSpaces）：有 token 时拉取，保证 space_id 能
+      // 匹配到名称显示下拉（否则刷新后变回手填裸 id）。
+      const remoteByServer = new Map<string, ServerSpace[]>();
       for (const id of ids) {
-        const sv = byWs.get(id)?.server_url;
-        if (sv && !serverEmail.has(sv)) {
+        const p = byWs.get(id);
+        const sv = p?.server_url;
+        if (sv && !serverEmail.has(sv) && !remoteByServer.has(sv)) {
           const em = await api.teamGetServerEmail(sv).catch(() => "");
           if (em) serverEmail.set(sv, em);
+          if (p?.token) {
+            const list = await api.teamListSpaces(sv, p.token).catch(() => [] as ServerSpace[]);
+            remoteByServer.set(sv, list);
+          }
         }
       }
       setRows(
@@ -97,7 +105,7 @@ export function SyncPanel() {
             // 有 server_url 时预填上次登录邮箱；否则空。
             loginEmail: p?.server_url ? (serverEmail.get(p.server_url) ?? "") : "",
             loginPassword: "",
-            remoteSpaces: [],
+            remoteSpaces: p?.server_url ? (remoteByServer.get(p.server_url) ?? []) : [],
             members: [],
             memberOpen: false,
             inviteEmail: "",
@@ -135,22 +143,6 @@ export function SyncPanel() {
       await loadPages();
     } catch (e) {
       setStatus(`「${r.name}」同步失败：${e}`);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const syncAll = async () => {
-    setSyncing(true);
-    setStatus("");
-    try {
-      const results = await api.syncNow();
-      const ok = results.filter((r) => !r.error).length;
-      const fail = results.filter((r) => r.error).length;
-      setStatus(`同步全部：完成 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}`);
-      await loadPages();
-    } catch (e) {
-      setStatus(`同步失败：${e}`);
     } finally {
       setSyncing(false);
     }
@@ -589,9 +581,6 @@ export function SyncPanel() {
 
           <footer className="sync-foot">
             {status && <div className={`sync-status is-${statusKind(status)}`}>{status}</div>}
-            <button className="sync-btn primary block" onClick={syncAll} disabled={syncing}>
-              {syncing ? "同步中…" : "同步全部"}
-            </button>
           </footer>
         </div>
       )}
