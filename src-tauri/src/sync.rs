@@ -1173,9 +1173,16 @@ async fn do_pull(
     };
 
     let client = reqwest::Client::new();
+    let my_device = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        device_id(&c).ok()
+    };
     let mut url = format!("{}/pull?since={last_pulled}&limit=500", profile.server_url);
     if !profile.space_id.is_empty() {
         url.push_str(&format!("&space_id={}", profile.space_id));
+    }
+    if let Some(d) = &my_device {
+        url.push_str(&format!("&exclude_device={d}"));
     }
     let mut req = client.get(&url);
     let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
