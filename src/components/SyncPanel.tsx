@@ -5,7 +5,7 @@ import { isDesktopPlatform } from "../lib/platform";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useNotes } from "../store/notes";
-import { SyncIcon } from "./icons";
+import { CloudSyncIcon } from "./icons";
 
 interface ServerSpace {
   id: string;
@@ -325,7 +325,7 @@ export function SyncPanel() {
   return (
     <div className="sync-panel">
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
-        <SyncIcon width={14} height={14} />
+        <CloudSyncIcon width={14} height={14} />
         <span>同步</span>
       </button>
       {open && (

@@ -98,6 +98,17 @@ export function SyncIcon(props: IconProps) {
   );
 }
 
+// 云端同步：云 + 上下两组循环箭头，比纯循环更直观表达"多设备/云端同步"。
+export function CloudSyncIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M17 18H7a4 4 0 1 1 .5-7.97 5.5 5.5 0 0 1 10.5 1.5A3.5 3.5 0 0 1 17 18z" />
+      <path d="M12 11v5M9.5 13.5 12 11l2.5 2.5" />
+      <path d="M12 16v2" />
+    </Icon>
+  );
+}
+
 export function DownloadIcon(props: IconProps) {
   return (
     <Icon {...props}>
