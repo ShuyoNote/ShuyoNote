@@ -302,7 +302,13 @@ export function SyncPanel() {
       await loadMembers({ ...r, inviteEmail: "" });
       setStatus(`已邀请 ${email}`);
     } catch (e) {
-      setStatus(`邀请失败：${e}`);
+      const msg = String(e);
+      // 服务端空间邀请要求用户已注册；未注册返回 404。给友好提示。
+      setStatus(
+        /404|Not Found|not found/i.test(msg)
+          ? `「${email}」尚未注册：请让对方先注册账号，或由组长发送邀请码邀请`
+          : `邀请失败：${msg}`,
+      );
     }
   };
 
