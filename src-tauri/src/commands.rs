@@ -415,7 +415,17 @@ pub fn delete_page(db: State<Db>, id: String) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
         search::remove_fts(&c, pid)?;
-        sync::record_change(&c, "page", pid, "delete", None, now)?;
+        // Delete change: embed the node's title so sync-history 明细 can show a
+        // name (deleted entities have no living row). Best-effort; empty payload OK.
+        let title: String = c
+            .query_row("SELECT title FROM pages WHERE id = ?1", params![pid], |r| r.get(0))
+            .unwrap_or_default();
+        let payload = if title.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!({ "title": title }).to_string())
+        };
+        sync::record_change(&c, "page", pid, "delete", payload.as_deref(), now)?;
     }
 
     backlinks::remove_backlinks(&c, &all)?;
