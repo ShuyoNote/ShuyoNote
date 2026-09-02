@@ -433,10 +433,10 @@ export function SyncPanel() {
                         />
                       </div>
                       <div className="sync-auth-btns">
-                        <button className="sync-btn" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
+                        <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
                           {loggingIn ? "处理中…" : "登录"}
                         </button>
-                        <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
+                        <button className="sync-btn" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
                           注册
                         </button>
                       </div>
