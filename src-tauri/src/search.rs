@@ -251,7 +251,14 @@ async fn embed_text(cfg: &EmbedCfg, text: &str) -> Result<Option<Vec<f32>>, Stri
             serde_json::json!({ "model": cfg.model, "input": text }),
         )
     };
-    let mut req = reqwest::Client::new().post(&url).json(&body);
+    // 用带超时的 client：Client::new() 无默认 timeout，embed 服务不可达/慢时
+    // req.send().await 会无限挂起 → 桌面搜索卡「搜索中...」。设 8s 超时，
+    // 超时/失败返回 Ok(None) 走 FTS 兜底（不卡死，回退普通搜索）。
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = client.post(&url).json(&body);
     if let Some(k) = cfg.api_key.as_deref() {
         if !k.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", k));
