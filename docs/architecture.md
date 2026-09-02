@@ -173,6 +173,7 @@ Rust 后端是桌面 driver 的业务核心，SQL 收口在 Rust 侧，前端零
 | 同步 outbox + 页级 LWW，而非 CRDT | 单用户多设备足够、行为可预测 | 同页并发编辑会覆盖（按需升级） |
 | Web 用 sql.js + IndexedDB + 快照隔离（而非 OPFS/wa-sqlite） | 可落地、可验证；多空间快照实现等价隔离 | 需整库快照（量级内可接受） |
 | Web 端不实现多设备同步（同步只在桌面） | 引擎在 Rust、浏览器存储模型不匹配、长期凭证放浏览器不安全 | Web 跨设备只能靠备份/导出 zip（详见 [web-sync-boundary.md](web-sync-boundary.md)） |
+| **单实例（`tauri-plugin-single-instance`），第二个实例唤起第一个** | 客户端是「本地优先单库」：meta.db 一个 `device_id` / 全局 `token` / `auth_sessions`，多实例会互相覆盖 token、device 绑定冲突（同机不同账号各起实例 = 403） | 一台电脑一个实例；同机多账号同规格要改 per-account device_id，暂不做 |
 
 ---
 
