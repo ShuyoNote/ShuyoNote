@@ -65,13 +65,16 @@ pub fn run() {
         // token / auth_sessions），多实例会互相覆盖 token、device 绑定冲突（同机多实例
         // 各自登录 = 之前 zhaizy/cnzen001 那类 403）。第二个实例启动时唤起第一个。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 唤起已有实例到前台（macOS 加 activate；Windows/Linux 默认显示）。
-            #[cfg(target_os = "macos")]
-            let _ = app.show();
-            #[cfg(target_os = "windows")]
-            let _ = app.get_webview_window("main").map(|w| w.set_focus());
-            #[cfg(target_os = "linux")]
-            let _ = app.get_webview_window("main").map(|w| w.set_focus());
+            // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
+            // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
+            fn raise(w: tauri::WebviewWindow) {
+                let _ = w.unminimize(); // 最小化 → 还原
+                let _ = w.show();       // 确保显示（可能在托盘/隐藏）
+                let _ = w.set_focus();  // 抢焦点到前台
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                raise(w);
+            }
         }))
         // E1 attachment at-rest decryption-on-serve: `convertFileSrc(path, "attachment")`
         // produces a platform-correct `attachment://`/`http://attachment.localhost` URL;
