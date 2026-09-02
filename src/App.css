@@ -1495,7 +1495,6 @@ select.sync-input {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 8px;
 }
 .org-email {
   font-size: 12px;
@@ -1506,6 +1505,27 @@ select.sync-input {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* 停用/移除按钮挨在一起，避免被拉得很开。 */
+.org-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+/* 组织邀请行：输入框撑满 + 按钮不换行（避免"邀请"两字竖排）。 */
+.org-invite {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.org-invite .sync-input {
+  flex: 1;
+  min-width: 0;
+}
+.org-invite .sync-btn {
+  white-space: nowrap;
+  flex: none;
 }
 
 .sync-meta {
