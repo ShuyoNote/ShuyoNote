@@ -4,6 +4,7 @@ import { api, type SyncProfile } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
+import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { CloudSyncIcon } from "./icons";
 
@@ -459,6 +460,8 @@ export function SyncPanel() {
                         <b>{authEmail || "已登录"}</b>
                         <span title={r.server_url}>{r.server_url || "—"}</span>
                       </div>
+                      {/* 管理账号/组织：跳转到设置中心「账户」页（登录身份、组织管理、注销）。 */}
+                      <button className="sync-btn ghost" onClick={() => useEditorStore.getState().openSettings("account")}>管理</button>
                       <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
                     </div>
                   ) : (

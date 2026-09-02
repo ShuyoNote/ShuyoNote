@@ -559,7 +559,13 @@ function AccountPane() {
       </section>
 
       <section className="set-section">
-        <div className="set-section-title">同步身份（按服务器分组）</div>
+        <div className="set-section-title">
+          <span>同步身份（按服务器分组）</span>
+          {/* 去同步：关闭设置中心返回主界面（侧栏「同步」面板常驻）。 */}
+          <button className="set-btn" style={{ marginLeft: "auto" }} onClick={() => useEditorStore.getState().closeSettings()}>
+            去同步
+          </button>
+        </div>
         {groups.length === 0 ? (
           <p className="set-hint">
             尚无同步身份。在侧栏「同步」里为某个空间配置服务器并登录后，会按服务器在此分组显示。
