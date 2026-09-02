@@ -140,7 +140,7 @@ export function TitleBar() {
       </div>
       {/* 同步状态搬到顶栏：自绘标题栏腾出来的这条空间总得有用处，顺带让侧栏
           少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。 */}
-      {syncProfile?.server_url && (
+      {syncProfile?.server_url && syncProfile?.token && (
         <div
           className="titlebar-sync"
           data-tauri-drag-region
