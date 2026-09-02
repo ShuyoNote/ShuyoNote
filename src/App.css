@@ -1101,6 +1101,13 @@ body,
   flex-direction: column;
   gap: 12px;
 }
+/* Web 版不支持多设备同步：下面整个面板禁灰、不可交互。 */
+.sync-profiles.is-disabled {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
 .sync-empty-state {
   padding: 24px 12px;
   text-align: center;

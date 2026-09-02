@@ -423,7 +423,8 @@ export function SyncPanel() {
             </div>
           )}
 
-          <div className="sync-profiles">
+          {/* Web 版不支持多设备同步：下面整个面板禁灰、不可交互，避免用户填了也用不了。 */}
+          <div className={`sync-profiles${!isDesktopPlatform() ? " is-disabled" : ""}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
             {rows.map((r) => {
               const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
