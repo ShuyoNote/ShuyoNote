@@ -9829,10 +9829,22 @@ p:has(> .editor-drawing-container) {
 
 .set-section-title {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-dim);
   letter-spacing: 0.02em;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 区块标题前的小强调条，让账户页各区块更有层。 */
+.set-section-title::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: none;
 }
 
 .set-hint {
@@ -10407,8 +10419,8 @@ p:has(> .editor-drawing-container) {
 .set-group {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 10px 12px;
-  margin-bottom: 8px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
   background: var(--card-bg);
 }
 
@@ -10417,7 +10429,15 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+/* 服务器组头：服务器名突出。 */
+.set-group-head .set-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .set-group-item {
@@ -10425,9 +10445,34 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 3px 0;
-  font-size: 12px;
+  padding: 5px 0;
+  font-size: 12.5px;
   color: var(--text);
+}
+.set-group-item .set-row-sub {
+  font-size: 11px;
+}
+/* 空间名 + 类型标签水平排列。 */
+.set-group-item-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 账户页状态标签（已认证 / 单用户 / 空间）用小胶囊。 */
+.set-chip-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.set-chip-inline.on {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
 }
 
 .set-status-line {
@@ -10437,6 +10482,25 @@ p:has(> .editor-drawing-container) {
   background: var(--chip-bg);
   font-size: 12px;
   color: var(--text-dim);
+}
+/* 当前团队账号：登录信息卡。 */
+.acct-login-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.acct-login-card .set-status-dot {
+  margin-right: 2px;
+}
+.acct-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
 }
 
 .set-dot-on {

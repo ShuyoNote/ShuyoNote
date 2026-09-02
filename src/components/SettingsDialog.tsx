@@ -500,17 +500,19 @@ function AccountPane() {
       <section className="set-section">
         <div className="set-section-title">当前团队账号</div>
         {authed ? (
-          <div className="set-row">
+          <div className="acct-login-card">
             <span className="set-status-dot set-dot-on" />
             <div className="set-row-text">
               <div className="set-row-name">{hostLabel(serverUrl)}</div>
               <div className="set-row-sub">已登录 · 会话保存在本机 meta 库</div>
             </div>
-            <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>
-            <button className="set-btn" onClick={() => void logout()}>登出</button>
+            <span className="acct-actions">
+              <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>
+              <button className="set-btn" onClick={() => void logout()}>登出</button>
+            </span>
           </div>
         ) : (
-          <div className="set-row">
+          <div className="acct-login-card">
             <span className="set-status-dot" />
             <div className="set-row-text">
               <div className="set-row-name">未登录团队账号</div>
@@ -538,11 +540,11 @@ function AccountPane() {
                 </div>
                 {g.wss.map((w) => (
                   <div key={w.ws_id} className="set-group-item">
-                    <span>{w.name}</span>
-                    <span className="set-row-sub">
-                      {w.spaceId ? `空间 ${w.spaceId}` : "单用户"}
-                      {w.token ? " · ✓已认证" : ""}
+                    <span className="set-group-item-name">
+                      {w.name}
+                      <span className="set-chip-inline">{w.spaceId ? "空间" : "单用户"}</span>
                     </span>
+                    <span className="set-chip-inline on">{w.token ? "已认证" : "未认证"}</span>
                   </div>
                 ))}
               </div>
