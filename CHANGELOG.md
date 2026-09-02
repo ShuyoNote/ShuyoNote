@@ -4,6 +4,14 @@
 
 > **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
 
+## [1.73.1] - 2026-09-03
+
+> **Mermaid 渲染修复**。补丁版。
+
+### 修复
+
+- **Mermaid 复杂图（嵌套 subgraph + `<br/>` + 跨 subgraph 引用）渲染布局错乱**：在 ShuyoNote 预览 `.md`/编辑器 mermaid 块时，architecture.md 这类图会堆叠错位。三处 `mermaid.initialize` 补健壮配置（`securityLevel: loose`、`flowchart.htmlLabels`、`curve: basis` + `useMaxWidth: false`），覆盖 md 预览 / 编辑器节点 / 导出。
+
 ## [1.73.0] - 2026-09-03
 
 > **组织共享空间 + 双向导航**。含新特性，语义化次版本。服务端 `create_space` 支持 `org_id`（详见 sync-server）。
