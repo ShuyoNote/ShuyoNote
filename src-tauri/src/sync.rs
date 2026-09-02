@@ -983,6 +983,42 @@ pub fn team_get_server_email(db: State<'_, Db>, server_url: String) -> Result<Op
     Ok(get_auth_email(&c, &server_url))
 }
 
+/// List recent sync-history entries (newest first).
+#[tauri::command]
+pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<SyncHistoryEntry>, String> {
+    let limit = limit.unwrap_or(20);
+    let c = db.0.lock().expect("db mutex poisoned");
+    let mut stmt = c
+        .prepare("SELECT ws_id, ws_name, at, pushed, pulled, ok, message FROM sync_history ORDER BY at DESC LIMIT ?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![limit as i64], |r| {
+            Ok(SyncHistoryEntry {
+                ws_id: r.get(0)?,
+                ws_name: r.get(1)?,
+                at: r.get(2)?,
+                pushed: r.get(3)?,
+                pulled: r.get(4)?,
+                ok: r.get(5)?,
+                message: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct SyncHistoryEntry {
+    pub ws_id: String,
+    pub ws_name: String,
+    pub at: i64,
+    pub pushed: i64,
+    pub pulled: i64,
+    pub ok: bool,
+    pub message: String,
+}
+
+
 async fn do_push(
     db: &State<'_, Db>,
     profile: &SyncProfile,
@@ -1213,16 +1249,61 @@ pub async fn sync_workspace(
         return Err("需绑定团队空间才能同步（多设备同步不支持留空）".to_string());
     }
     match sync_workspace_only(&app, &db, &profile).await {
-        Ok(rep) => Ok(WorkspaceSyncResult {
-            ws_id,
-            pushed: rep.pushed,
-            pulled: rep.pulled,
-            last_pushed_seq: rep.last_pushed_seq,
-            last_pulled_seq: rep.last_pulled_seq,
-            error: None,
-        }),
-        Err(e) => Err(e),
+        Ok(rep) => {
+            write_sync_history(
+                &db,
+                &ws_id,
+                &profile,
+                rep.pushed,
+                rep.pulled,
+                true,
+                "",
+            );
+            Ok(WorkspaceSyncResult {
+                ws_id,
+                pushed: rep.pushed,
+                pulled: rep.pulled,
+                last_pushed_seq: rep.last_pushed_seq,
+                last_pulled_seq: rep.last_pulled_seq,
+                error: None,
+            })
+        }
+        Err(e) => {
+            write_sync_history(&db, &ws_id, &profile, 0, 0, false, &e);
+            Err(e)
+        }
     }
+}
+
+/// Record one sync run in `meta.sync_history` (best-effort; never blocks sync).
+fn write_sync_history(
+    db: &State<'_, Db>,
+    ws_id: &str,
+    profile: &SyncProfile,
+    pushed: usize,
+    pulled: usize,
+    ok: bool,
+    message: &str,
+) {
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let r = || -> rusqlite::Result<()> {
+        let c = db.0.lock().expect("db mutex poisoned");
+        c.execute(
+            "INSERT INTO sync_history (ws_id, ws_name, at, pushed, pulled, ok, message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![ws_id, "", at, pushed as i64, pulled as i64, ok as i64, message],
+        )?;
+        // 只保留最近 100 条，避免无限增长。
+        let _ = c.execute(
+            "DELETE FROM sync_history WHERE id NOT IN (SELECT id FROM sync_history ORDER BY at DESC LIMIT 100)",
+            [],
+        );
+        Ok(())
+    };
+    let _ = r();
 }
 
 #[derive(Deserialize)]

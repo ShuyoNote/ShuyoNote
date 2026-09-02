@@ -57,6 +57,8 @@ export function SyncPanel() {
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
+  const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string }[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const refresh = async () => {
     try {
@@ -113,6 +115,9 @@ export function SyncPanel() {
           };
         }),
       );
+      // 同步历史（最新 15 条）
+      const h = await api.listSyncHistory(15).catch(() => [] as { ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string }[]);
+      if (h.length) setHistory(h);
     } catch (e) {
       setStatus(String(e));
     }
@@ -581,6 +586,32 @@ export function SyncPanel() {
 
           <footer className="sync-foot">
             {status && <div className={`sync-status is-${statusKind(status)}`}>{status}</div>}
+            {history.length > 0 && (
+              <div className="sync-history">
+                <button className="sync-members-toggle" onClick={() => setHistoryOpen((v) => !v)}>
+                  <span>同步历史</span>
+                  <span className="sync-members-count">{history.length}</span>
+                  <span className={`sync-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
+                </button>
+                {historyOpen && (
+                  <div className="sync-history-list">
+                    {history.slice(0, 8).map((h, i) => {
+                      const d = new Date(h.at).toLocaleString("zh-CN");
+                      return (
+                        <div key={i} className="sync-history-item">
+                          <span className="sync-history-status">{h.ok ? "✓" : "✗"}</span>
+                          <span className="sync-history-at">{d}</span>
+                          <span className="sync-history-detail">
+                            上传 {h.pushed} / 拉取 {h.pulled}
+                          </span>
+                          {h.message && <span className="sync-history-msg">{h.message}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </footer>
         </div>
       )}

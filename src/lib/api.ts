@@ -144,6 +144,7 @@ export const api = {
     invoke("team_get_me", { serverUrl: server_url, token }),
   teamGetServerEmail: (server_url: string) =>
     invoke("team_get_server_email", { serverUrl: server_url }),
+  listSyncHistory: (limit?: number) => invoke("list_sync_history", { limit }),
   // P0 org management (research group) — desktop only (Web driver throws).
   teamListOrgs: (server_url: string, token: string) =>
     invoke("team_list_orgs", { serverUrl: server_url, token }),

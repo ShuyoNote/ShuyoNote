@@ -1613,6 +1613,33 @@ select.sync-input {
   background: var(--danger-soft);
   color: var(--danger);
 }
+/* 同步历史展开区。 */
+.sync-history {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.sync-history .sync-members-toggle {
+  width: 100%;
+}
+.sync-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.sync-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.sync-history-status { font-weight: 700; }
+.sync-history-at { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
+.sync-history-detail { color: var(--text); }
+.sync-history-msg { color: var(--danger); font-size: 11px; }
 
 .sync-empty {
   font-size: 12px;

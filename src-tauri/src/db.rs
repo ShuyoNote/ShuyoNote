@@ -295,6 +295,19 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at    INTEGER NOT NULL DEFAULT 0,
             expires_at    INTEGER NOT NULL DEFAULT 0
         );
+        -- Sync history: record each workspace sync's result (at / ws / pushed / pulled /
+        -- ok / error) so the UI can show "同步历史".
+        CREATE TABLE IF NOT EXISTS sync_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ws_id       TEXT NOT NULL DEFAULT '',
+            ws_name     TEXT NOT NULL DEFAULT '',
+            at          INTEGER NOT NULL DEFAULT 0,
+            pushed      INTEGER NOT NULL DEFAULT 0,
+            pulled      INTEGER NOT NULL DEFAULT 0,
+            ok          INTEGER NOT NULL DEFAULT 1,
+            message     TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_history_at ON sync_history(at DESC);
         CREATE TABLE IF NOT EXISTS templates (
             id            TEXT PRIMARY KEY,
             name          TEXT NOT NULL,
