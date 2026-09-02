@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useWindowChrome } from "../store/windowChrome";
+import { useAuth } from "../store/auth";
 import { isDesktopPlatform } from "../lib/platform";
 import { api, type SyncProfile } from "../lib/api";
 import { syncTagLabel, syncTagColor } from "../lib/syncTag";
@@ -23,10 +24,13 @@ export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
   const [syncProfile, setSyncProfile] = useState<SyncProfile | null>(null);
+  // 登录/登出（auth store 的 authed 变化）也会影响同步目标，订阅它以便登录后
+  // 标题栏同步胶囊即时出现，无需刷新页面。
+  const authed = useAuth((s) => s.authed);
 
   const desktop = isDesktopPlatform();
 
-  // 当前空间的同步目标（换空间时重新取）。失败静默：顶栏没有同步芯片而已。
+  // 当前空间的同步目标（换空间 / 登录状态变化时重新拉取）。失败静默：顶栏没有同步芯片而已。
   useEffect(() => {
     if (!desktop || !custom || !activeSpaceId) {
       setSyncProfile(null);
@@ -42,7 +46,7 @@ export function TitleBar() {
     return () => {
       alive = false;
     };
-  }, [desktop, custom, activeSpaceId]);
+  }, [desktop, custom, activeSpaceId, authed]);
 
   const spaceName = spaces.find((s) => s.id === activeSpaceId)?.name ?? "";
   const pageTitle = pages.find((p) => p.id === currentId)?.title?.trim();
