@@ -50,6 +50,7 @@ export function SyncPanel() {
     minSpace: 420,
   });
   const spaces = useSpaceStore((s) => s.spaces);
+  const activeId = useSpaceStore((s) => s.activeId);
   const authed = useAuth((s) => s.authed);
   const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
@@ -64,12 +65,19 @@ export function SyncPanel() {
       // 已删除的工作空间不该在这里露出（否则只剩一行裸 UUID）。后端已按
       // meta.workspaces 过滤，这里再挡一层：空间列表已加载时，只认识得出名字的
       // 空间；列表尚未加载（首帧）时退回并集，避免面板空白。
-      const known = spaces.length > 0;
-      const profileIds = profiles.map((p) => p.ws_id).filter((id) => !known || name.has(id));
-      const allIds = new Set<string>([...spaces.map((s) => s.id), ...profileIds]);
+      // 只显示当前活动空间：打开同步面板聚焦当前正在用的空间，而不是列出所有。
+      // 当 activeId 存在时只取它；无活动空间（首帧）退回并集避免空白。
+      let ids: string[];
+      if (activeId) {
+        ids = [activeId];
+      } else {
+        const known = spaces.length > 0;
+        const profileIds = profiles.map((p) => p.ws_id).filter((id) => !known || name.has(id));
+        ids = Array.from(new Set([...spaces.map((s) => s.id), ...profileIds]));
+      }
       const byWs = new Map<string, SyncProfile>(profiles.map((p) => [p.ws_id, p]));
       setRows(
-        Array.from(allIds).map((id) => {
+        ids.map((id) => {
           const p = byWs.get(id);
           return {
             ws_id: id,
@@ -94,8 +102,9 @@ export function SyncPanel() {
 
   useEffect(() => {
     if (open) void refresh();
+    // 打开面板 / 切换活动空间 / 空间列表变化时，都刷新到当前活动空间。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, activeId, spaces]);
 
   const save = async (r: EditRow) => {
     try {
