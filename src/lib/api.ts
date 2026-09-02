@@ -140,6 +140,19 @@ export const api = {
   teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
     invoke("team_remove_member", { serverUrl: server_url, token, spaceId: space_id, userId: user_id }),
   teamGetSession: () => invoke("team_get_session"),
+  // P0 org management (research group) — desktop only (Web driver throws).
+  teamListOrgs: (server_url: string, token: string) =>
+    invoke("team_list_orgs", { serverUrl: server_url, token }),
+  teamCreateOrg: (server_url: string, token: string, name: string) =>
+    invoke("team_create_org", { serverUrl: server_url, token, name }),
+  teamListOrgMembers: (server_url: string, token: string, org_id: string) =>
+    invoke("team_list_org_members", { serverUrl: server_url, token, orgId: org_id }),
+  teamInviteOrgMember: (server_url: string, token: string, org_id: string, email: string, role: string) =>
+    invoke("team_invite_org_member", { serverUrl: server_url, token, orgId: org_id, email, role }),
+  teamSetOrgMemberActive: (server_url: string, token: string, org_id: string, user_id: string, active: boolean) =>
+    invoke("team_set_org_member_active", { serverUrl: server_url, token, orgId: org_id, userId: user_id, active }),
+  teamRemoveOrgMember: (server_url: string, token: string, org_id: string, user_id: string) =>
+    invoke("team_remove_org_member", { serverUrl: server_url, token, orgId: org_id, userId: user_id }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;

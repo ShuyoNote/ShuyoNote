@@ -635,6 +635,161 @@ pub async fn team_remove_member(server_url: String, token: String, space_id: Str
     Ok(())
 }
 
+// ---- P0 org management (research group) ----
+// A group leader (admin) manages member accounts and sees group-owned spaces.
+// These call the sync-server /org/* endpoints (desktop only; the Web driver
+// throws "仅桌面").
+
+#[derive(serde::Serialize)]
+pub struct TeamOrg {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub owner_id: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct TeamOrgMember {
+    pub user_id: String,
+    pub email: String,
+    pub role: String,
+    pub disabled: bool,
+}
+
+#[tauri::command]
+pub async fn team_list_orgs(server_url: String, token: String) -> Result<Vec<TeamOrg>, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/orgs"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("拉取组织失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v["orgs"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|s| TeamOrg {
+                    id: s["id"].as_str().unwrap_or("").to_string(),
+                    name: s["name"].as_str().unwrap_or("").to_string(),
+                    role: s["role"].as_str().unwrap_or("").to_string(),
+                    owner_id: s["owner_id"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_create_org(server_url: String, token: String, name: String) -> Result<TeamOrg, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "name": name }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("创建组织失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(TeamOrg {
+        id: v["id"].as_str().unwrap_or("").to_string(),
+        name: v["name"].as_str().unwrap_or("").to_string(),
+        role: v["role"].as_str().unwrap_or("").to_string(),
+        owner_id: v["owner_id"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn team_list_org_members(server_url: String, token: String, org_id: String) -> Result<Vec<TeamOrgMember>, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/orgs/{org_id}/members"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("拉取成员失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(v["members"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|s| TeamOrgMember {
+                    user_id: s["user_id"].as_str().unwrap_or("").to_string(),
+                    email: s["email"].as_str().unwrap_or("").to_string(),
+                    role: s["role"].as_str().unwrap_or("").to_string(),
+                    disabled: s["disabled"].as_bool().unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_invite_org_member(server_url: String, token: String, org_id: String, email: String, role: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{url}/orgs/{org_id}/members"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "email": email, "role": role }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("邀请成员失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn team_set_org_member_active(server_url: String, token: String, org_id: String, user_id: String, active: bool) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .patch(format!("{url}/orgs/{org_id}/members/{user_id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "active": active }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("切换成员状态失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn team_remove_org_member(server_url: String, token: String, org_id: String, user_id: String) -> Result<(), String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(format!("{url}/orgs/{org_id}/members/{user_id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("移除成员失败 {}", resp.status()));
+    }
+    Ok(())
+}
+
 /// M27 当前会话（后端存于 meta.sync_state 的 KEY_SERVER_URL/KEY_TOKEN）。
 /// 前端启动时读取以恢复登录态（有 token 即视为已登录）。
 #[derive(serde::Serialize)]

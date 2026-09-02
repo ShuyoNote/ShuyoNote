@@ -1490,6 +1490,23 @@ select.sync-input {
 .sync-invite-role {
   width: auto;
 }
+/* 组织管理（课题组）：成员列表 + 状态 + 操作。 */
+.org-members {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.org-email {
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+.org-members .set-group-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 .sync-meta {
   font-size: 12px;

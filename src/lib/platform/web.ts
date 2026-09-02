@@ -1792,6 +1792,12 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "team_set_member_role") throw new Error("Web 版不支持团队空间，请用桌面版");
     if (cmd === "team_remove_member") throw new Error("Web 版不支持团队空间，请用桌面版");
     if (cmd === "team_get_session") return { server_url: "", token: "" } as T;
+    if (cmd === "team_list_orgs") throw new Error("Web 版不支持组织管理，请用桌面版");
+    if (cmd === "team_create_org") throw new Error("Web 版不支持组织管理，请用桌面版");
+    if (cmd === "team_list_org_members") throw new Error("Web 版不支持组织管理，请用桌面版");
+    if (cmd === "team_invite_org_member") throw new Error("Web 版不支持组织管理，请用桌面版");
+    if (cmd === "team_set_org_member_active") throw new Error("Web 版不支持组织管理，请用桌面版");
+    if (cmd === "team_remove_org_member") throw new Error("Web 版不支持组织管理，请用桌面版");
     if (cmd === "list_sync_profiles") return [] as T;
     if (cmd === "set_sync_profile") return undefined as T;
     if (cmd === "sync_workspace") return { ws_id: "", pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: "Web 不支持真正的多服务器同步" } as T;

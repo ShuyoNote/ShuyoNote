@@ -252,10 +252,16 @@ function SpacesPane() {
 // 需要状态常驻可见的动作。这里只做「我是谁、连了哪些服务器」。
 function AccountPane() {
   const spaces = useSpaceStore((s) => s.spaces);
-  const { authed, serverUrl, clear } = useAuth();
+  const { authed, serverUrl, token, clear } = useAuth();
   const [groups, setGroups] = useState<{ server_url: string; wss: { ws_id: string; name: string; spaceId: string; token: string }[] }[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
+  // P0 org management state (research group leader).
+  const [orgs, setOrgs] = useState<{ id: string; name: string; role: string; owner_id: string }[]>([]);
+  const [orgMembers, setOrgMembers] = useState<{ user_id: string; email: string; role: string; disabled: boolean }[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [orgStatus, setOrgStatus] = useState("");
+  const [pendingOrg, setPendingOrg] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -277,10 +283,6 @@ function AccountPane() {
       setStatus(String(e));
     }
   }, [spaces]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const logout = async () => {
     if (!serverUrl) return;
@@ -312,6 +314,80 @@ function AccountPane() {
       setStatus(String(e));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  // ---- P0 org management handlers ----
+  const base = serverUrl;
+
+  const loadOrgs = useCallback(async (sv: string, tk: string) => {
+    try {
+      setOrgs(await api.teamListOrgs(sv, tk));
+    } catch (e) {
+      setOrgStatus(`组织拉取失败：${e}`);
+    }
+  }, []);
+
+  const createOrg = async () => {
+    if (!base || !token) { setOrgStatus("请先登录团队账号"); return; }
+    const name = prompt("组织名称（课题组）");
+    if (!name?.trim()) return;
+    try {
+      await api.teamCreateOrg(base, token, name.trim());
+      await loadOrgs(base, token);
+      setOrgStatus("组织已创建");
+    } catch (e) {
+      setOrgStatus(`创建失败：${e}`);
+    }
+  };
+
+  const loadMemberList = useCallback(async (orgId: string) => {
+    if (!base || !token) return;
+    try {
+      setOrgMembers(await api.teamListOrgMembers(base, token, orgId));
+    } catch (e) {
+      setOrgStatus(`成员拉取失败：${e}`);
+    }
+  }, [base, token]);
+
+  // P0: load the leader's orgs after mount / when auth changes.
+  useEffect(() => {
+    void refresh();
+    if (base && token) void loadOrgs(base, token);
+  }, [base, token, refresh, loadOrgs]);
+
+  const inviteMember = async (orgId: string) => {
+    if (!base || !token) return;
+    if (!inviteEmail.trim()) { setOrgStatus("请输入被邀请者邮箱"); return; }
+    try {
+      await api.teamInviteOrgMember(base, token, orgId, inviteEmail.trim(), "member");
+      setInviteEmail("");
+      await loadMemberList(orgId);
+      setOrgStatus("已邀请（未注册者已自动开通账号）");
+    } catch (e) {
+      setOrgStatus(`邀请失败：${e}`);
+    }
+  };
+
+  const toggleActive = async (orgId: string, m: { user_id: string; disabled: boolean }) => {
+    if (!base || !token) return;
+    try {
+      await api.teamSetOrgMemberActive(base, token, orgId, m.user_id, m.disabled);
+      await loadMemberList(orgId);
+      setOrgStatus(m.disabled ? "已启用" : "已停用");
+    } catch (e) {
+      setOrgStatus(`状态切换失败：${e}`);
+    }
+  };
+
+  const removeMember = async (orgId: string, userId: string) => {
+    if (!base || !token) return;
+    try {
+      await api.teamRemoveOrgMember(base, token, orgId, userId);
+      await loadMemberList(orgId);
+      setOrgStatus("已移除成员（数据保留）");
+    } catch (e) {
+      setOrgStatus(`移除失败：${e}`);
     }
   };
 
@@ -369,6 +445,71 @@ function AccountPane() {
           </div>
         )}
         {status && <div className="set-status-line">{status}</div>}
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">组织管理（课题组）</div>
+        {!isDesktopPlatform() ? (
+          <p className="set-hint">Web 版不支持组织管理，请用桌面版。</p>
+        ) : authed ? (
+          <>
+            <div className="set-row">
+              <div className="set-row-text">
+                <div className="set-row-name">我的组织</div>
+                <div className="set-row-sub">组长可集中管理组内账号与角色</div>
+              </div>
+              <button className="set-btn" onClick={() => void createOrg()}>新建组织</button>
+            </div>
+            {orgs.length === 0 ? (
+              <p className="set-hint">还没有组织。建一个课题组组织后，可在下方邀请成员。</p>
+            ) : (
+              <div className="set-list">
+                {orgs.map((o) => (
+                  <div key={o.id} className="set-group">
+                    <div className="set-group-head">
+                      <span className="set-row-name">{o.name}</span>
+                      <span className="set-row-sub">{o.role === "admin" ? "组长" : "成员"}</span>
+                    </div>
+                    <button
+                      className="set-btn"
+                      onClick={() => { setPendingOrg(o.id); void loadMemberList(o.id); }}
+                    >
+                      查看成员
+                    </button>
+                    {orgMembers.length > 0 && pendingOrg === o.id && (
+                      <div className="org-members">
+                        {orgMembers.map((m) => (
+                          <div key={m.user_id} className="set-group-item">
+                            <span className="org-email">{m.email}</span>
+                            <span className="set-row-sub">
+                              {m.role === "admin" ? "组长" : "成员"}{m.disabled ? " · 已停用" : ""}
+                            </span>
+                            <button className="set-btn" onClick={() => void toggleActive(o.id, m)}>
+                              {m.disabled ? "启用" : "停用"}
+                            </button>
+                            <button className="set-btn" onClick={() => void removeMember(o.id, m.user_id)}>移除</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="set-group-item sync-invite">
+                      <input
+                        className="sync-input"
+                        placeholder="成员邮箱"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                      />
+                      <button className="sync-btn" onClick={() => void inviteMember(o.id)}>邀请</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {orgStatus && <div className="set-status-line">{orgStatus}</div>}
+          </>
+        ) : (
+          <p className="set-hint">未登录团队账号，无法管理组织。在侧栏「同步」里登录。</p>
+        )}
       </section>
     </>
   );
