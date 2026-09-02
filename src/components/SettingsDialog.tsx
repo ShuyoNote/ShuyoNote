@@ -484,7 +484,13 @@ function AccountPane() {
     try {
       const code = await api.teamGenerateOrgInviteCode(base, token, orgId);
       setInviteCodes((prev) => ({ ...prev, [orgId]: code }));
-      setOrgStatus(`已生成「${orgName}」邀请码：${code}`);
+      // 生成后自动复制到剪贴板，组长直接可用（不用手动选中复制）。
+      try {
+        await navigator.clipboard.writeText(code);
+        setOrgStatus(`已生成「${orgName}」邀请码：${code}（已复制）`);
+      } catch {
+        setOrgStatus(`已生成「${orgName}」邀请码：${code}`);
+      }
     } catch (e) {
       setOrgStatus(`生成邀请码失败：${e}`);
     }
