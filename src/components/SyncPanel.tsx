@@ -124,7 +124,15 @@ export function SyncPanel() {
           };
         }),
       );
-      // 同步历史（最新 15 条）
+      await loadHistory();
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  // 同步历史（最新 15 条）。
+  const loadHistory = async () => {
+    try {
       const h = await api.listSyncHistory(15).catch(() => [] as { ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string }[] }[]);
       if (h.length) setHistory(h);
     } catch (e) {
@@ -155,6 +163,7 @@ export function SyncPanel() {
       const res = await api.syncWorkspace(r.ws_id);
       setStatus(`「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`);
       await loadPages();
+      await loadHistory();
     } catch (e) {
       setStatus(`「${r.name}」同步失败：${e}`);
     } finally {
