@@ -8,11 +8,12 @@ import { api } from "../lib/api";
 interface AuthState {
   serverUrl: string;
   token: string;
+  email: string;
   authed: boolean;
   /** Restore the session from meta.db (team_get_session) on app start. */
   init: () => Promise<void>;
   /** Record a successful login (teamLogin already persisted the token). */
-  setSession: (serverUrl: string, token: string) => void;
+  setSession: (serverUrl: string, token: string, email?: string) => void;
   /** Clear after logout (teamLogout already revoked + cleared the session). */
   clear: () => void;
 }
@@ -20,12 +21,13 @@ interface AuthState {
 export const useAuth = create<AuthState>((set) => ({
   serverUrl: "",
   token: "",
+  email: "",
   authed: false,
   init: async () => {
     try {
       const s = await api.teamGetSession();
       if (!s.token || !s.server_url) {
-        set({ serverUrl: "", token: "", authed: false });
+        set({ serverUrl: "", token: "", email: "", authed: false });
         return;
       }
       // 校验 token 是否仍被服务端认可：用 token 调 /spaces。若 401，说明本地
@@ -33,15 +35,21 @@ export const useAuth = create<AuthState>((set) => ({
       // 否则组织管理等会 401。失效则清空，引导重新登录。
       try {
         await api.teamListSpaces(s.server_url, s.token);
-        set({ serverUrl: s.server_url, token: s.token, authed: true });
+        let email = "";
+        try {
+          const me = await api.teamGetMe(s.server_url, s.token);
+          email = me.email;
+        } catch {
+          /* 拿不到 email 不阻塞（降级为空字符串） */
+        }
+        set({ serverUrl: s.server_url, token: s.token, email, authed: true });
       } catch {
-        // 401 / 网络错：token 不可用，清空。
-        set({ serverUrl: "", token: "", authed: false });
+        set({ serverUrl: "", token: "", email: "", authed: false });
       }
     } catch {
-      set({ serverUrl: "", token: "", authed: false });
+      set({ serverUrl: "", token: "", email: "", authed: false });
     }
   },
-  setSession: (serverUrl, token) => set({ serverUrl, token, authed: !!token }),
-  clear: () => set({ serverUrl: "", token: "", authed: false }),
+  setSession: (serverUrl, token, email) => set({ serverUrl, token, email: email ?? "", authed: !!token }),
+  clear: () => set({ serverUrl: "", token: "", email: "", authed: false }),
 }));

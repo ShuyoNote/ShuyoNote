@@ -144,12 +144,22 @@ export function SyncPanel() {
   //
   // 自动保存是必须的：此前登录只把 token 放进面板的临时 state，用户不点「保存」
   // 就关掉面板等于白登一次——而「刚登录完还要再点保存」本身就不该存在。
+  // 同服务器其它空间的绑定指向旧账号 token：登录（换账号）后统一覆盖为当前 token，
+  // 避免残留旧账号会话导致 401/数据错乱。保留各自 server_url。
+  const cleanOtherServerTokens = async (base: string, token: string) => {
+    const profiles = await api.listSyncProfiles();
+    const target = profiles.filter((p) => p.server_url === base);
+    for (const p of target) {
+      await api.setSyncProfile(p.ws_id, { server_url: base, token, space_id: p.space_id }).catch(() => {});
+    }
+  };
+
   const applySession = async (r: EditRow, base: string, token: string, what: string) => {
     const list = await api.teamListSpaces(base, token).catch(() => [] as ServerSpace[]);
     setRows((rs) =>
       rs.map((x) => (x.ws_id === r.ws_id ? { ...x, server_url: base, token, loginPassword: "", remoteSpaces: list } : x)),
     );
-    useAuth.getState().setSession(base, token);
+    useAuth.getState().setSession(base, token, r.loginEmail?.trim());
     let saved = true;
     try {
       await api.setSyncProfile(r.ws_id, {
@@ -161,6 +171,10 @@ export function SyncPanel() {
       saved = false;
       console.error("auto-save sync profile failed", e);
     }
+    // 同服务器其它空间的绑定指向旧账号 token：登录（换账号）后统一覆盖为当前 token，
+    // 避免残留旧账号的会话导致 401/数据错乱（这也是之前 401 的同类根源）。
+    // 保留各自 server_url，仅更新 token/space。
+    await cleanOtherServerTokens(base, token).catch((e) => console.error("clean other sync tokens failed", e));
     setStatus(
       saved
         ? `${what}成功「${r.name}」，已保存${list.length ? `，可选空间 ${list.length} 个` : ""}`

@@ -252,7 +252,7 @@ function SpacesPane() {
 // 需要状态常驻可见的动作。这里只做「我是谁、连了哪些服务器」。
 function AccountPane() {
   const spaces = useSpaceStore((s) => s.spaces);
-  const { authed, serverUrl, token, clear } = useAuth();
+  const { authed, serverUrl, token, email, clear } = useAuth();
   const [groups, setGroups] = useState<{ server_url: string; wss: { ws_id: string; name: string; spaceId: string; token: string }[] }[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -503,8 +503,8 @@ function AccountPane() {
           <div className="acct-login-card">
             <span className="set-status-dot set-dot-on" />
             <div className="set-row-text">
-              <div className="set-row-name">{hostLabel(serverUrl)}</div>
-              <div className="set-row-sub">已登录 · 会话保存在本机 meta 库</div>
+              <div className="set-row-name">{email || hostLabel(serverUrl)}</div>
+              <div className="set-row-sub">{email ? `${hostLabel(serverUrl)} · 已登录` : `已登录 · ${hostLabel(serverUrl)}`}</div>
             </div>
             <span className="acct-actions">
               <button className="set-btn is-danger" onClick={() => void deactivateSelf()}>注销账号</button>

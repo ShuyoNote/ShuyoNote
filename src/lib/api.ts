@@ -140,6 +140,8 @@ export const api = {
   teamRemoveMember: (server_url: string, token: string, space_id: string, user_id: string) =>
     invoke("team_remove_member", { serverUrl: server_url, token, spaceId: space_id, userId: user_id }),
   teamGetSession: () => invoke("team_get_session"),
+  teamGetMe: (server_url: string, token: string) =>
+    invoke("team_get_me", { serverUrl: server_url, token }),
   // P0 org management (research group) — desktop only (Web driver throws).
   teamListOrgs: (server_url: string, token: string) =>
     invoke("team_list_orgs", { serverUrl: server_url, token }),

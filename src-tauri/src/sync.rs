@@ -937,6 +937,33 @@ pub fn team_get_session(db: State<'_, Db>) -> Result<TeamSession, String> {
     })
 }
 
+/// Return the current user's identity (email) for the given server, so the UI can
+/// show which account is logged in.
+#[derive(serde::Serialize)]
+pub struct TeamMe {
+    pub email: String,
+}
+
+#[tauri::command]
+pub async fn team_get_me(server_url: String, token: String) -> Result<TeamMe, String> {
+    let url = server_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{url}/auth/me"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("获取账号失败 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(TeamMe {
+        email: v["email"].as_str().unwrap_or("").to_string(),
+    })
+}
+
 async fn do_push(
     db: &State<'_, Db>,
     profile: &SyncProfile,
