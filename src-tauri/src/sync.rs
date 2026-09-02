@@ -1184,7 +1184,10 @@ pub async fn sync_workspace(
         let c = db.0.lock().expect("db mutex poisoned");
         get_profile(&c, &ws_id)?
     };
-    if profile.server_url.is_empty() || profile.space_id.is_empty() {
+    // 只要配置了服务器即可同步——单用户模式（space_id 留空）也允许走 legacy
+    // 全局同步路径（sync_workspace_only 已按 space_id 是否为空分别处理）。
+    // 之前的 `|| space_id.is_empty()` 把单用户模式误判为「未配置同步目标」。
+    if profile.server_url.is_empty() {
         return Err("该空间未配置同步目标".to_string());
     }
     match sync_workspace_only(&app, &db, &profile).await {
