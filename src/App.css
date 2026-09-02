@@ -1828,7 +1828,8 @@ select.sync-input {
 }
 
 /* Ghost icon buttons in the sidebar header (FlowUs/Wolai style) */
-.btn-sync,
+/* 注：不含 .btn-sync——那是 SyncPanel 的「同步」紧凑按钮（带边框+文字），
+   不应被这套 28px 方形幽灵按钮覆盖。 */
 .btn-trash,
 .btn-backup,
 .btn-import,
@@ -1851,7 +1852,6 @@ select.sync-input {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.btn-sync:hover,
 .btn-trash:hover,
 .btn-backup:hover,
 .btn-import:hover,
