@@ -4089,6 +4089,7 @@ body.is-ai-open .main {
   margin: 16px auto 6px;
   padding: 16px var(--doc-pad) 12px;
   background: var(--card-bg);
+  background-clip: padding-box;
   border: none;
   border-radius: var(--radius-sm);
 }
