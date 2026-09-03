@@ -9587,7 +9587,7 @@ p:has(> .editor-drawing-container) {
   flex: none;
   width: 330px;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   padding: 5px 10px;
   border: none;
   background: transparent;
@@ -9622,7 +9622,7 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-resize-hint {
   margin-left: 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
   color: var(--text-faint);
 }
@@ -9640,7 +9640,7 @@ p:has(> .editor-drawing-container) {
 .db-gantt-owner {
   flex: 2;
   min-width: 0;
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -9673,7 +9673,7 @@ p:has(> .editor-drawing-container) {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   overflow: hidden;
@@ -9687,7 +9687,7 @@ p:has(> .editor-drawing-container) {
   flex: none;
   width: 92px;
   min-width: 92px;
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-faint);
   white-space: nowrap;
   border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
@@ -9701,7 +9701,7 @@ p:has(> .editor-drawing-container) {
   color-scheme: dark;
   border-radius: 4px;
   padding: 1px 2px;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-family: inherit;
   box-sizing: border-box;
 }
@@ -9721,7 +9721,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
 }
 .db-gantt-axis-cell {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-faint);
   padding: 5px 0;
   text-align: center;
