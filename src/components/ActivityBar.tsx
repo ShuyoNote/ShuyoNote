@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useActivity, type Activity } from "../store/activity";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
+import { useFilePreview } from "../store/filePreview";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
@@ -53,6 +54,8 @@ export function ActivityBar() {
       toggleSidebar();
       return;
     }
+    // 切换视图（看板/关系图等）时关闭文件预览，避免残留遮住新视图。
+    useFilePreview.getState().close();
     setActivity(id);
     setSidebarOpen(true);
     setView(id);
