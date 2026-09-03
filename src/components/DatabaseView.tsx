@@ -611,10 +611,13 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     };
     for (const it of items) consider(it);
     const totalDays = Math.max(1, Math.round((max.getTime() - min.getTime()) / 86400000) + 1);
+    // 自适应日期刻度：跨度 ≤ 12 天显示每天日期；更大则隔 7 天(每周首)——避免
+    // 小跨度只露首格(9/1)、大跨度挤成一团。
+    const step = totalDays <= 12 ? 1 : 7;
     const cols: string[] = [];
     for (let i = 0; i < totalDays; i++) {
       const d = new Date(min.getTime() + i * 86400000);
-      cols.push(i % 7 === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : "");
+      cols.push(i % step === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : "");
     }
     const statusCol = query?.columns.find((c) => c.attr_type === "select") ?? null;
     const today = new Date();
