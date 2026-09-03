@@ -113,9 +113,9 @@ export function CodeBlockToolbar() {
       try {
         const root = editor.getRootElement();
         if (!root) return;
-        // 代码块在编辑器里就是 <pre>（不依赖 class/节点遍历）。
-        root.querySelectorAll("pre").forEach((pre) => {
-          if (pre instanceof HTMLElement) ensureOne(pre);
+        // 代码块实际是 <code class="editor-codeblock">（非 <pre>）。
+        root.querySelectorAll(".editor-codeblock").forEach((el) => {
+          if (el instanceof HTMLElement) ensureOne(el);
         });
       } catch {
         /* ignore */
