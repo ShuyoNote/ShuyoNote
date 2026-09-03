@@ -4,6 +4,7 @@ import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
 import {
   AI_PRESETS,
+  MODEL_OPTIONS,
   OLLAMA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_URL,
   OPENAI_COMPAT_DEFAULT_BASE,
@@ -189,8 +190,14 @@ export function AiSettingsForm({
               onChange={(e) => setModel(e.target.value)}
               placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL}
               spellCheck={false}
+              list="ai-model-list"
             />
           </label>
+          <datalist id="ai-model-list">
+            {(MODEL_OPTIONS[currentPresetId] ?? []).map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
 
           <div className="ai-settings-test">
             <button className="ai-settings-test-btn" onClick={test} disabled={testing}>

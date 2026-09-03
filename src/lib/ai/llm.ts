@@ -75,6 +75,18 @@ export const AI_PRESETS: AiPreset[] = [
   { id: "openai", name: "OpenAI", provider: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
 ];
 
+/** 每个预设服务商的常用模型（模型下拉框的候选项）。完整列出，不被占位名过滤。 */
+export const MODEL_OPTIONS: Record<string, string[]> = {
+  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  ollama: ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "nomic-embed-text", "dmeta-embedding-zh"],
+  zhipu: ["glm-4-flash", "glm-4-plus", "embedding-3"],
+  qwen: ["qwen-plus", "qwen-turbo", "qwen-max", "text-embedding-v3"],
+  kimi: ["moonshot-v1-8k", "moonshot-v1-32k"],
+  siliconflow: ["Qwen/Qwen2.5-7B-Instruct", "deepseek-ai/DeepSeek-V2.5", "Qwen/Qwen2.5-72B-Instruct"],
+  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"],
+  custom: ["deepseek-chat", "qwen2.5:7b", "nomic-embed-text"],
+};
+
 // Default max output tokens. Reasoning models (DeepSeek V3.1/R1-style) consume a
 // large share of this budget on `reasoning_content` before emitting `content`; a
 // too-small cap (e.g. 512) gets exhausted during thinking and the answer is
