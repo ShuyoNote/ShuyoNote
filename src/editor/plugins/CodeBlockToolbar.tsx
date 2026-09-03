@@ -73,8 +73,8 @@ export function CodeBlockToolbar() {
         if (!key) return;
         editor.update(() => {
           const p = pre.getAttribute("data-code-key");
-          const n = p ? $getNodeByKey(p) : null;
-          if (n && typeof n.setLanguage === "function") (n as any).setLanguage(sel.value);
+          const nn = p ? ($getNodeByKey(p) as any) : null;
+          if (nn && typeof nn.setLanguage === "function") nn.setLanguage(sel.value);
         });
       });
 
