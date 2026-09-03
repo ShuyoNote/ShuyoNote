@@ -163,6 +163,12 @@ export const TEMPLATES: TemplateItem[] = [
     { name: "优先级", type: "select", options: ["高", "中", "低"] },
     { name: "截止日期", type: "date" },
   ]),
+  dbtmpl("gantt", "甘特图", "工作", "📊", "linear-gradient(135deg, #0e1e2b 0%, #1e4f5e 50%, #24d3c4 100%)", [
+    { name: "开始日期", type: "date" },
+    { name: "结束日期", type: "date" },
+    { name: "负责人", type: "select", options: ["张三", "李四", "王五"] },
+    { name: "状态", type: "select", options: ["未开始", "进行中", "已完成"] },
+  ]),
   dbtmpl("movie-db", "观影清单", "个人", "🎬", "linear-gradient(135deg, #e3dcff 0%, #b3a5ff 100%)", [
     { name: "片名", type: "text" },
     { name: "评分", type: "number" },
