@@ -597,7 +597,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     // Pad to whole days; total span in days.
     const totalDays = Math.max(1, Math.round((max.getTime() - min.getTime()) / 86400000) + 1);
     const cols: string[] = [];
-    for (let i = 0; i <= totalDays; i++) {
+    for (let i = 0; i < totalDays; i++) {
       const d = new Date(min.getTime() + i * 86400000);
       // 刻度文字只在每周首日显示(其余空)——避免 9/17/9/18…挤在一起。
       cols.push(i % 7 === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : "");
