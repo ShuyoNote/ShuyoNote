@@ -2263,7 +2263,12 @@ select.sync-input {
 
 .board-card:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-sm);}
+/* 拖拽中的看板卡片（透明 + 边框高亮）。 */
+.board-card-dragging {
+  opacity: 0.5;
+  border-color: var(--accent) !important;
+  cursor: grabbing;
 }
 
 .board-card-title {

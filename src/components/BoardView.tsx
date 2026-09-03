@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
@@ -16,6 +16,46 @@ export function BoardView() {
   const [groupField, setGroupField] = useState("tag");
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  // Pointer-based drag override for Tauri WebView (HTML5 drag/drop is suppressed
+  // by dragDropEnabled). Mirrors the PageTree pointer-drag approach.
+  const [dragPage, setDragPage] = useState<string | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!dragPage) return;
+    let moved = false;
+    const onMove = (e: PointerEvent) => {
+      if (!dragStartRef.current) return;
+      if (!moved && Math.hypot(e.clientX - dragStartRef.current.x, e.clientY - dragStartRef.current.y) < 5) return;
+      moved = true;
+      e.preventDefault();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      setDragOver(col?.dataset.col ?? null);
+    };
+    const onUp = (e: PointerEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      const target = col?.dataset.col ?? null;
+      setDragOver(null);
+      setDragPage(null);
+      dragStartRef.current = null;
+      if (target && moved) void onDrop(dragPage, target);
+    };
+    const onCancel = () => {
+      setDragOver(null);
+      setDragPage(null);
+      dragStartRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [dragPage]);
 
   useEffect(() => {
     api
@@ -90,17 +130,8 @@ export function BoardView() {
         {groups.map((col) => (
           <div
             key={col.id}
+            data-col={col.id}
             className={`board-column ${dragOver === col.id ? "board-column-over" : ""}`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(col.id);
-            }}
-            onDragLeave={() => setDragOver((v) => (v === col.id ? null : v))}
-            onDrop={(e) => {
-              e.preventDefault();
-              const pageId = e.dataTransfer.getData("text/plain");
-              if (pageId) onDrop(pageId, col.id);
-            }}
           >
             <div className="board-column-header">
               <span className="board-col-dot" style={{ background: tagColor(col.name).solid }} />
@@ -111,9 +142,13 @@ export function BoardView() {
               {col.pages.map((p) => (
                 <div
                   key={p.id}
-                  className="board-card"
-                  draggable
-                  onDragStart={(e) => e.dataTransfer.setData("text/plain", p.id)}
+                  className={`board-card${dragPage === p.id ? " board-card-dragging" : ""}`}
+                  onPointerDown={(e) => {
+                    // 左键按下即开始拖拽候选（pointer-based，兼容 Tauri WebView）。
+                    if (e.button !== 0) return;
+                    dragStartRef.current = { x: e.clientX, y: e.clientY };
+                    setDragPage(p.id);
+                  }}
                   onClick={() => openPage(p.id)}
                 >
                   <span className="board-card-title">{p.title || "未命名"}</span>
