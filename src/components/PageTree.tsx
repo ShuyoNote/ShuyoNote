@@ -366,6 +366,22 @@ function TreeItem({
                 ⇄ 复制到其他空间
               </button>
               <button
+                onClick={async () => {
+                  setMenuOpen(false);
+                  const aid = useSpaceStore.getState().activeId;
+                  if (!aid) return;
+                  try {
+                    await api.copyPageToWorkspace(node.id, aid, node.parent_id ?? null);
+                    toast(`已复制「${node.title || "未命名"}」为副本`, "success");
+                    useNotes.getState().loadPages();
+                  } catch (e) {
+                    toast(`复制失败：${e}`, "error");
+                  }
+                }}
+              >
+                ⧉ 复制为副本
+              </button>
+              <button
                 onClick={() => {
                   setMenuOpen(false);
                   createPage(node.id);
