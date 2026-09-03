@@ -197,6 +197,7 @@ export function GraphView() {
   const dragRef = useRef<{ id: string; scx: number; scy: number; nx: number; ny: number } | null>(null);
   const panRef = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(null);
   const movedRef = useRef(false);
+  const lastClickRef = useRef<{ id: string; t: number }>({ id: "", t: 0 });
   const pinnedIdsRef = useRef<Set<string>>(new Set());
   pinnedIdsRef.current = pinnedIds;
 
@@ -603,9 +604,17 @@ export function GraphView() {
                 onPointerDown={(e) => beginNodeDrag(n.id, e)}
                 onMouseEnter={() => setHoveredId(n.id)}
                 onMouseLeave={() => setHoveredId((h) => (h === n.id ? null : h))}
-                onDoubleClick={(e) => {
+                onClick={(e) => {
                   e.stopPropagation();
-                  openNode(n);
+                  // 手动双击检测：同一节点 300ms 内两次点击 → 打开页面。
+                  if (movedRef.current) return;
+                  const now = Date.now();
+                  if (lastClickRef.current.id === n.id && now - lastClickRef.current.t < 300) {
+                    lastClickRef.current = { id: "", t: 0 };
+                    openNode(n);
+                  } else {
+                    lastClickRef.current = { id: n.id, t: now };
+                  }
                 }}
               >
                 <circle
