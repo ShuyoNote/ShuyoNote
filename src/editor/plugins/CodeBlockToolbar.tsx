@@ -61,7 +61,6 @@ export function CodeBlockToolbar() {
       const sel = document.createElement("select");
       sel.className = "editor-code-lang";
       sel.title = "切换语言";
-      const lang = key ? readLang(key) : "javascript";
       LANGS.forEach((l) => {
         const o = document.createElement("option");
         o.value = l;
