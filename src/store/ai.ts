@@ -28,6 +28,8 @@ export interface AiConfig {
   baseUrl: string;
   model: string;
   apiKey: string;
+  /** 语义检索独立开关：AI 助手与语义检索是两套独立功能，互不依赖。 */
+  enableEmbedding: boolean;
   /** Embedding model (e.g. nomic-embed-text / text-embedding-3-small). Empty = 语义检索走 char-bigram，不启用向量。 */
   embeddingModel: string;
   /** 独立的 embedding 服务地址协议/provider。为空则复用在对话配置上。
@@ -74,7 +76,7 @@ function loadConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (!raw) {
-      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
+      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", enableEmbedding: false, embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
     }
     const c = JSON.parse(raw);
     const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
@@ -84,13 +86,14 @@ function loadConfig(): AiConfig {
       baseUrl: String(c.baseUrl || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL)),
       model: String(c.model || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL)),
       apiKey: String(c.apiKey ?? ""),
+      enableEmbedding: !!c.enableEmbedding,
       embeddingModel: String(c.embeddingModel ?? ""),
       embedProvider: c.embedProvider === "openai" ? "openai" : c.embedProvider === "ollama" ? "ollama" : undefined,
       embedBaseUrl: String(c.embedBaseUrl ?? ""),
       embedApiKey: String(c.embedApiKey ?? ""),
     };
   } catch {
-    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
+    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", enableEmbedding: false, embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
   }
 }
 

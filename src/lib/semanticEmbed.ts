@@ -26,7 +26,8 @@ export function readEmbedConfig(): EmbedConfig | null {
     const c = JSON.parse(raw);
     const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
     const model = String(c.embeddingModel ?? "");
-    if (!c.enabled || !model) return null;
+    // 语义检索独立开关：AI 助手(enabled) 与语义检索(enableEmbedding) 是两个独立功能。
+    if (!c.enableEmbedding || !model) return null;
     // 独立的 embedding 服务（支持 DeepSeek 对话 + Ollama 嵌入）：embedProvider /
     // embedBaseUrl 非空则用它；否则复用在对话配置上（兼容旧行为）。
     const ep = c.embedProvider;

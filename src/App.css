@@ -13047,26 +13047,15 @@ p:has(> .editor-drawing-container) {
   padding: 8px 10px;
   margin-bottom: 12px;
 }
-/* 语义检索「作用」说明卡。 */
-.ai-settings-why {
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-  border-left: 3px solid var(--accent);
+/* 小程序说明：AI 助手 / 语义检索 各一行简短描述（普通文本，非 Callout）。 */
+.ai-settings-brief {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--chip-bg);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: 8px 10px;
   margin-bottom: 12px;
-}
-.ai-settings-why-tag {
-  display: inline-block;
-  margin-right: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
 }
 .ai-settings-row {
   display: flex;
