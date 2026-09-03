@@ -92,7 +92,7 @@ function quickStart(): Block[] {
 function coreConcepts(): Block[] {
   return [
     h("核心概念", "h1"),
-    callout("本地优先 · 类 Notion：你的笔记保存在本机（SQLite + 附件目录），离线可用，改动即存，无需手动保存。"),
+    callout("本地优先 · 类 Notion：笔记保存在本机（SQLite + 附件目录），离线可用、改动即存；块编辑器 + 数据库（多视图）+ 双链，数据留在本地，可自建端到端加密同步。"),
     h("页面 = 一切", "h2"),
     bullet([
       "页面是最小组织单元，可嵌套层级；页面树在左侧侧边栏。",
@@ -917,7 +917,7 @@ function coverTheme(): Block[] {
 function indexBlocks(): Block[] {
   return [
     h("ShuyoNote 使用指南", "h1"),
-    callout("本地优先 · 类 Notion 的笔记应用。这份指南本身就是一套可编辑的 Wiki：下面各篇互相用 [[双链]] 连接，可删可改；删了也能通过 /帮助 重建。"),
+    callout(`本地优先 · 类 Notion 的块笔记应用：块编辑器 + 数据库（表格 / 看板 / 画廊 / 列表 / 日历 / 时间轴 / 项目管理）+ 双链、块引用、块嵌入，数据留在本机、离线可用，可自建端到端加密同步。这份指南本身就是一套可编辑的 Wiki：下面各篇互相用 [[双链]] 连接，可删可改；删了也能通过 /帮助 重建。`),
     h("开始使用", "h2"),
     bullet([
       `新建页面：Ctrl+N 或左侧栏 ＋；插入内容：输入 / 打开块菜单。`,
