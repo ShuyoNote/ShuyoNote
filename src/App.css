@@ -9633,6 +9633,25 @@ p:has(> .editor-drawing-container) {
   color: var(--text-faint);
   white-space: nowrap;
 }
+/* 可编辑日期：淡色，hover/聚焦显示边框，原生 date 选择器跟随暗色。 */
+.db-gantt-date-input {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  color-scheme: dark;
+  border-radius: 4px;
+  padding: 1px 2px;
+  font-size: 10.5px;
+  font-family: inherit;
+}
+.db-gantt-date-input:hover {
+  border-color: var(--border);
+}
+.db-gantt-date-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
+}
 .db-gantt-axis {
   flex: 1;
   display: flex;

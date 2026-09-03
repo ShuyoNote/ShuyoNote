@@ -626,7 +626,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     const statusCol = query?.columns.find((c) => c.attr_type === "select") ?? null;
     const today = new Date();
     const todayIdx = Math.round((today.getTime() - min.getTime()) / 86400000);
-    return { items, min, max, totalDays, cols, statusCol, todayIdx, hasActual };
+    return { items, min, max, totalDays, cols, statusCol, todayIdx, hasActual, planStartCol, planEndCol, actStartCol, actEndCol };
   }, [rows, query]);
 
   if (!query) {
@@ -1099,15 +1099,27 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               </div>
             </div>
             {gantt.items.map((it) => {
-              const fmtD = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
-              const lane = (label: string, start: Date, end: Date, color: string, laneClass: string, key: string) => (
+              const fmtIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+              const lane = (label: string, start: Date, end: Date, color: string, laneClass: string, key: string, sCol: string | null, eCol: string | null) => (
                 <div key={key} className={`db-gantt-row${laneClass ? " " + laneClass : ""}`}>
                   <div className="db-gantt-meta">
-                    <button className="db-gantt-name" onClick={() => openPage(it.row.page_id)}>
-                      {label}
-                    </button>
-                    <span className="db-gantt-date">{fmtD(start)}</span>
-                    <span className="db-gantt-date">~{fmtD(end)}</span>
+                    <span className="db-gantt-name" onClick={() => openPage(it.row.page_id)}>{label}</span>
+                    {sCol && (
+                      <input
+                        type="date"
+                        className="db-gantt-date db-gantt-date-input"
+                        value={fmtIso(start)}
+                        onChange={(e) => setCell(it.row.page_id, sCol, e.target.value)}
+                      />
+                    )}
+                    {eCol && (
+                      <input
+                        type="date"
+                        className="db-gantt-date db-gantt-date-input"
+                        value={fmtIso(end)}
+                        onChange={(e) => setCell(it.row.page_id, eCol, e.target.value)}
+                      />
+                    )}
                   </div>
                   <div className="db-gantt-track">
                     {Array.from({ length: gantt.totalDays }).map((_, di) => {
@@ -1126,9 +1138,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   </div>
                 </div>
               );
-              const lanes = [lane(it.title, it.plan.start, it.plan.end, "#f59e0b", "db-gantt-lane-plan", `lk-${it.row.page_id}`)];
+              const lanes = [lane(it.title, it.plan.start, it.plan.end, "#f59e0b", "db-gantt-lane-plan", `lk-${it.row.page_id}`, gantt.planStartCol?.id ?? null, gantt.planEndCol?.id ?? null)];
               if (gantt.hasActual && it.actual) {
-                lanes.push(lane("", it.actual.start, it.actual.end, "#fbbf24", "db-gantt-lane-actual", `la-${it.row.page_id}`));
+                lanes.push(lane("", it.actual.start, it.actual.end, "#fbbf24", "db-gantt-lane-actual", `la-${it.row.page_id}`, gantt.actStartCol?.id ?? null, gantt.actEndCol?.id ?? null));
               }
               return <Fragment key={it.row.page_id}>{lanes}</Fragment>;
             })}
