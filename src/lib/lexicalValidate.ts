@@ -71,19 +71,18 @@ function sanitizeChildren(children: unknown, allowedTypes?: ReadonlySet<string>)
  * when provided, any node with a type outside it is dropped.
  */
 export function lexicalStateValid(contentJson: string, allowedTypes?: ReadonlySet<string>): string | null {
+  const EMPTY = '{"root":{"type":"root","version":1,"direction":"ltr","format":"","indent":0,"children":[]}}';
   try {
     const parsed = JSON.parse(contentJson);
     const root = parsed && (parsed as Record<string, unknown>).root;
-    if (!root || typeof root !== "object") return null;
+    // 无 root 或无内容(如 "{}")：视为合法空页，而非"不可用"返回 null。
+    if (!root || typeof root !== "object") return EMPTY;
     const rootRec = root as Record<string, unknown>;
-    // A doc whose ROOT node is missing `type:"root"` (e.g. some AI-generated
-    // content) makes Lexical throw `type "undefined" + not found`. Normalize it so
-    // existing pages with this shape recover instead of opening blank.
     rootRec.type = "root";
     if (typeof rootRec.version !== "number") rootRec.version = 1;
     const children = sanitizeChildren(rootRec.children, allowedTypes);
     rootRec.children = children;
-    if (children.length === 0) return null;
+    if (children.length === 0) return EMPTY;
     return JSON.stringify(parsed);
   } catch {
     return null;
