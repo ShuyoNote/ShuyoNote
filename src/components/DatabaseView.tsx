@@ -1179,27 +1179,6 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               }
               return <Fragment key={it.row.page_id}>{lanes}</Fragment>;
             })}
-            {/* 汇总行：每日期列有多少任务（天数占用）。 */}
-            <div className="db-gantt-row db-gantt-summary">
-              <div className="db-gantt-rowlabel">合计</div>
-              <div className="db-gantt-track">
-                {Array.from({ length: gantt.totalDays }).map((_, di) => {
-                  const cnt = gantt.items.filter((it) => {
-                    const spans = [it.plan, it.actual].filter(Boolean) as { start: Date; end: Date }[];
-                    return spans.some((sp) => {
-                      const s = (sp.start.getTime() - gantt.min.getTime()) / 86400000;
-                      const e = (sp.end.getTime() - sp.start.getTime()) / 86400000 + 1;
-                      return di >= s && di < s + e;
-                    });
-                  }).length;
-                  return (
-                    <span key={di} className={`db-gantt-cell db-gantt-count${cnt ? " has" : ""}`} style={{}}>
-                      {cnt || ""}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
           </div>
         ) : (
           <div className="db-empty">需先添加 date 类型列</div>
