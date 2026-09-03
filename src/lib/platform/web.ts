@@ -1255,7 +1255,7 @@ function makeInvoke(store: SqliteStore) {
 
     // ---- Graph (nodes from non-deleted pages) ----
     if (cmd === "get_graph") {
-      const pages = store.query("SELECT id, title, content_text, content_json FROM pages WHERE deleted_at IS NULL") as any[];
+      const pages = store.query("SELECT id, title, content_text FROM pages WHERE deleted_at IS NULL") as any[];
       const tagRows = store.query("SELECT pt.page_id, t.name FROM page_tags pt JOIN tags t ON t.id = pt.tag_id") as any[];
       const tagsByPage = new Map<string, string[]>();
       for (const tr of tagRows) {
@@ -1312,6 +1312,7 @@ function makeInvoke(store: SqliteStore) {
       const blockEdges: any[] = [];
       const blockIdToPage = new Map<string, string>();
       for (const p of pages) {
+        if (!p.content_json) continue; // 查询已不拉 content_json：block 层图暂为空。
         const v = parseJson(p.content_json);
         const children = Array.isArray(v?.root?.children) ? v.root.children : [];
         for (const child of children) {
@@ -1323,6 +1324,7 @@ function makeInvoke(store: SqliteStore) {
         }
       }
       for (const p of pages) {
+        if (!p.content_json) continue; // 查询已不拉 content_json：block 引用边暂为空。
         const refs: { source: string; target: string; kind: string }[] = [];
         for (const child of rootChildren(parseJson(p.content_json))) collectBlockRefs(child, topBlockId(child) ?? "", refs);
         for (const r of refs) {
