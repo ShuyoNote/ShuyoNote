@@ -9638,11 +9638,11 @@ p:has(> .editor-drawing-container) {
   border-right: 1px solid var(--border);
 }
 .db-gantt-owner {
-  flex: none;
+  flex: 2;
+  min-width: 0;
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
-  max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
@@ -9668,7 +9668,7 @@ p:has(> .editor-drawing-container) {
   background: var(--bg);
 }
 .db-gantt-name {
-  flex: 1;
+  flex: 5;
   min-width: 0;
   border: none;
   background: transparent;
@@ -9685,6 +9685,8 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-date {
   flex: none;
+  width: 62px;
+  min-width: 62px;
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
@@ -9701,6 +9703,8 @@ p:has(> .editor-drawing-container) {
   padding: 1px 2px;
   font-size: 10.5px;
   font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
 }
 .db-gantt-date-input:hover {
   border-color: var(--border);
