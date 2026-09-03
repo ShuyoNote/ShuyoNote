@@ -44,7 +44,7 @@ export function SearchPanel() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [allSpaces, setAllSpaces] = useState(false);
+  const [allSpaces, setAllSpaces] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
   const debounceRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
