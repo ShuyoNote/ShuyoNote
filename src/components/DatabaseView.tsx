@@ -1332,6 +1332,18 @@ function RefCell({
 // 甘特图日期编辑：text 直接输入 + 📅 按钮弹原生日期选择器。
 function DateField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const pickerRef = useRef<HTMLInputElement>(null);
+  const validDate = (v: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+    const d = new Date(v + "T00:00:00");
+    return !isNaN(d.getTime()) &&
+      d.getFullYear() === +v.slice(0, 4) &&
+      d.getMonth() + 1 === +v.slice(5, 7) &&
+      d.getDate() === +v.slice(8, 10);
+  };
+  const handleChange = (v: string) => {
+    // 仅完整合法 YYYY-MM-DD 或清空才存；无效部分输入忽略（避免脏数据）。
+    if (!v.trim() || validDate(v)) onChange(v);
+  };
   return (
     <span className="db-gantt-date">
       <input
@@ -1339,7 +1351,7 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
         className="db-gantt-date-input"
         placeholder="YYYY-MM-DD"
         defaultValue={/^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : ""}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => handleChange(e.target.value)}
       />
       <button
         type="button"
