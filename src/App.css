@@ -5869,15 +5869,50 @@ select.prop-value {
   background: var(--hover);
 }
 /* 标签自定义颜色选择器（原生色板）。 */
-.tag-color-input {
-  width: 18px;
-  height: 18px;
-  padding: 0;
+/* 标签自定义颜色：色板按钮 + 预设色板。 */
+.tag-color-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
-  border-radius: 50%;
   cursor: pointer;
-  flex: none;
+  padding: 2px;
+  border-radius: 999px;
+}
+.tag-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  display: inline-block;
+}
+.tag-color-palette {
+  position: fixed;
+  z-index: 80;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(4, 20px);
+  gap: 6px;
+}
+.tag-color-pick {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.tag-color-clear {
+  background: var(--hover) !important;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
 }
 .tag-picker-empty {
   padding: 16px 8px;

@@ -57,6 +57,9 @@ export function TagRow({ pageId }: { pageId: string }) {
   );
 }
 
+// 预设常用标签色（点在色板里选即可）。
+const TAG_PALETTE = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#64748b"];
+
 // "＋ 添加标签" button with the picker/manager popup (opened from the actions row).
 export function TagAddButton({ pageId }: { pageId: string }) {
   const { tags: pageTags, bump } = usePageTags(pageId);
@@ -65,6 +68,8 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
+  const [colorOpen, setColorOpen] = useState<string | null>(null);
+  const [colorAnchor, setColorAnchor] = useState<{ x: number; y: number } | null>(null);
   const revision = useTagManagerStore((s) => s.revision);
   const tagAnchor = usePropertyUiStore((s) => s.tagAnchor);
   const [open, setOpen] = useState(false);
@@ -250,17 +255,35 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                   <>
                     <span className="tag-picker-count">{t.page_count ?? 0} 页</span>
                     <span className="tag-picker-ops">
-                      <input
-                        className="tag-color-input"
-                        type="color"
+                      <button
+                        className="tag-color-btn"
                         title="设色"
-                        value={t.color ?? "#4b5563"}
-                        onChange={(e) => setTagColor(t, e.target.value)}
-                      />
-                      {t.color && (
-                        <button title="清除颜色" onClick={() => setTagColor(t, null)}>
-                          ↺
-                        </button>
+                        onClick={(e) => {
+                          setColorOpen((v) => (v === t.id ? null : t.id));
+                          setColorAnchor({ x: e.clientX, y: e.clientY });
+                        }}
+                      >
+                        <span className="tag-color-dot" style={{ background: t.color ?? tagColor(t.name).solid }} />
+                      </button>
+                      {colorOpen === t.id && (
+                        <span
+                          className="tag-color-palette"
+                          style={{ top: colorAnchor?.y ?? 0, left: (colorAnchor?.x ?? 0) - 40 }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {TAG_PALETTE.map((c) => (
+                            <button
+                              key={c}
+                              className="tag-color-pick"
+                              style={{ background: c }}
+                              title={c}
+                              onClick={() => setTagColor(t, c)}
+                            />
+                          ))}
+                          <button className="tag-color-pick tag-color-clear" title="清除颜色" onClick={() => setTagColor(t, null)}>
+                            ↺
+                          </button>
+                        </span>
                       )}
                       {editing !== t.id && (
                         <button title="重命名" onClick={() => startEdit(t)}>
