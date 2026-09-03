@@ -2159,6 +2159,8 @@ select.sync-input {
   gap: 12px;
   padding: 16px;
   height: 100%;
+  /* 看板以拖拽/点选为主，取消文本选择，避免拖动时选中内容。 */
+  user-select: none;
 }
 
 .board-toolbar {
