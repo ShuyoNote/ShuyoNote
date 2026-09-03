@@ -118,6 +118,10 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [query, setQuery] = useState<DatabaseQuery | null>(null);
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
   const [filter, setFilter] = useState("");
+  // 标题多选筛选：选中的标题集合(OR)。
+  const [titleFilter, setTitleFilter] = useState<string[]>([]);
+  const [titleFilterOpen, setTitleFilterOpen] = useState(false);
+  const titleFilterRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [addingCol, setAddingCol] = useState(false);
   const addColPanelRef = useRef<HTMLDivElement>(null);
@@ -312,7 +316,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   // Close the add-column / options / board-group / sort / views / rule panels when
   // clicking outside them (a single consistent "click background to close" behavior).
   useEffect(() => {
-    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey && !viewsPop && !ruleOpen) return;
+    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey && !viewsPop && !ruleOpen && !titleFilterOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (addColPanelRef.current?.contains(t)) return;
@@ -321,12 +325,14 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       if (sortMenuPanelRef.current?.contains(t)) return;
       if (viewsWrapRef.current?.contains(t)) return;
       if (ruleWrapRef.current?.contains(t)) return;
+      if (titleFilterRef.current?.contains(t)) return;
       setAddingCol(false);
       setEditingOptionsCol(null);
       setBoardGroupOpen(false);
       setSortMenuKey(null);
       setViewsPop(false);
       setRuleOpen(false);
+      setTitleFilterOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
@@ -433,6 +439,10 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     if (filter.trim()) {
       const f = filter.trim().toLowerCase();
       rs = rs.filter((r) => r.title.toLowerCase().includes(f));
+    }
+    // 标题多选：选中任一标题即保留(OR)。
+    if (titleFilter.length > 0) {
+      rs = rs.filter((r) => titleFilter.includes(r.title));
     }
     if (sort) {
       const { key, dir } = sort;
@@ -811,6 +821,41 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <div className="db-title-filter" ref={titleFilterRef}>
+          <button
+            className="db-views-btn"
+            onClick={() => setTitleFilterOpen((v) => !v)}
+            title="按标题多选筛选"
+          >
+            标题{titleFilter.length > 0 ? ` (${titleFilter.length})` : ""} ▾
+          </button>
+          {titleFilterOpen && (
+            <div className="db-views-pop db-title-filter-pop">
+              <div className="db-views-title">按标题多选（命中任一即显示）</div>
+              <div className="db-title-filter-list">
+                {(() => {
+                  const opts = Array.from(new Set((query?.rows ?? []).map((r) => r.title).filter(Boolean)));
+                  if (opts.length === 0) return <div className="db-views-empty">暂无行</div>;
+                  return opts.map((opt) => (
+                    <label key={opt} className="db-title-filter-item">
+                      <input
+                        type="checkbox"
+                        checked={titleFilter.includes(opt)}
+                        onChange={() => {
+                          setTitleFilter((prev) => (prev.includes(opt) ? prev.filter((x) => x !== opt) : [...prev, opt]));
+                        }}
+                      />
+                      <span>{opt}</span>
+                    </label>
+                  ));
+                })()}
+              </div>
+              {titleFilter.length > 0 && (
+                <button className="db-title-filter-clear" onClick={() => setTitleFilter([])}>清除选择</button>
+              )}
+            </div>
+          )}
+        </div>
         <div className="db-view-switch">
           <button
             className={viewType === "table" ? "db-view-active" : ""}
