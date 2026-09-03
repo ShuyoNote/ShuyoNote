@@ -167,7 +167,7 @@ export function SearchPanel() {
                 ref={inputRef}
                 className="search-input"
                 value={query}
-                placeholder="搜索笔记标题与正文…"
+                placeholder="搜索笔记（空格分隔，多词都选）…"
                 aria-label="搜索笔记"
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={onKeyDown}
@@ -222,7 +222,7 @@ export function SearchPanel() {
                 ))}
               </div>
               <div className="search-tips-foot">
-                支持 <code>prop:属性=值</code> 按属性过滤；<kbd>↑</kbd><kbd>↓</kbd> 选择、<kbd>Enter</kbd> 打开、<kbd>Esc</kbd> 关闭
+                支持 <code>prop:属性=值</code> 按属性过滤；<b>空格分隔多词</b>（都出现）。<kbd>↑</kbd><kbd>↓</kbd> 选择、<kbd>Enter</kbd> 打开、<kbd>Esc</kbd> 关闭；全空间点结果自动跳转到该空间。
               </div>
             </div>
           )}
@@ -245,7 +245,7 @@ export function SearchPanel() {
                   <div className="search-empty">
                     <div className="search-empty-title">没有找到「{query.trim()}」</div>
                     <div className="search-empty-sub">
-                      换个关键词，或切到「全空间」再试一次。
+                      换个关键词，或减少词数再试。
                     </div>
                   </div>
                 )}
