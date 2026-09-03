@@ -9315,9 +9315,6 @@ p:has(> .editor-drawing-container) {
 
 /* Anchor the group-field panel right below its trigger button. */
 .db-board-group .db-add-col-panel {
-  top: calc(100% + 4px);
-  right: 0;
-  left: auto;
   width: 190px;
 }
 

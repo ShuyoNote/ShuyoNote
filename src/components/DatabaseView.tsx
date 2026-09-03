@@ -121,6 +121,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const addColPanelRef = useRef<HTMLDivElement>(null);
   const optionsPanelRef = useRef<HTMLDivElement>(null);
   const [boardGroupOpen, setBoardGroupOpen] = useState(false);
+  const [boardGroupAnchor, setBoardGroupAnchor] = useState<{ x: number; y: number } | null>(null);
   const boardGroupPanelRef = useRef<HTMLDivElement>(null);
   const [sortMenuKey, setSortMenuKey] = useState<string | null>(null);
   const sortMenuPanelRef = useRef<HTMLDivElement>(null);
@@ -1049,13 +1050,17 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               <button
                 className="db-board-select"
                 onMouseDown={(e) => e.stopPropagation()}
-                onClick={toggleBoardGroup}
+                onClick={(e) => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  setBoardGroupAnchor({ x: r.left, y: r.bottom });
+                  toggleBoardGroup();
+                }}
               >
                 {boardAttr?.name ?? "请选择"}
                 <span className="db-select-caret">▾</span>
               </button>
               {boardGroupOpen && (
-                <div className="db-add-col-panel db-pop-panel">
+                <div className="db-add-col-panel db-pop-panel" style={{ position: "fixed", top: boardGroupAnchor?.y ?? 0, left: boardGroupAnchor?.x ?? 0 }}>
                   <div className="db-add-col-title">
                     分组字段
                     <button
