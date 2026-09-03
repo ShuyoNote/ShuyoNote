@@ -28,7 +28,7 @@ import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
-import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
+import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, TemplateIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useTemplateCenterStore } from "./store/templateCenter";
@@ -41,6 +41,7 @@ import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
+import { useTemplates } from "./store/templates";
 import { useSpaceStore } from "./store/space";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
@@ -355,6 +356,28 @@ function NoteEditor({ pageId }: { pageId: string }) {
               }}
             >
               <TagIcon className="page-action-icon" /> 添加标签
+            </button>
+            <button
+              className="page-action-btn"
+              onClick={async () => {
+                if (!current) return;
+                try {
+                  const page = await api.getPage(current.id);
+                  if (!page || (page.kind !== "page" && page.kind !== "database")) {
+                    toast("当前不是可保存为模板的页面", "error");
+                    return;
+                  }
+                  const ok = await useTemplates
+                    .getState()
+                    .saveAs({ name: page.title || "未命名", content_json: page.content_json, content_text: page.content_text });
+                  if (ok) toast(`已保存为模板「${page.title || "未命名"}」`, "success");
+                  else toast("保存失败", "error");
+                } catch (e) {
+                  toast(`保存失败：${e}`, "error");
+                }
+              }}
+            >
+              <TemplateIcon className="page-action-icon" /> 保存为模板
             </button>
           </div>
           <div className="editor-head">
