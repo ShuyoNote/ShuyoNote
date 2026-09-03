@@ -13,6 +13,13 @@ export default defineConfig({
     strictPort: false,
     open: true,
   },
-  // NOTE: mermaid 已静态 import（并入主 bundle）；不设 manualChunks 拆分——避免
-  // 独立 chunk 在正式版相对路径加载失败 → 布局引擎缺失 → subgraph 叠成一整块。
+  // mermaid 已静态 import；inlineDynamicImports:true 强制把 mermaid/parser 等
+  // 动态 chunk 全部内联进主 bundle(零独立 chunk)——彻底规避正式版 chunk 加载失败。
+  build: {
+    rollupOptions: {
+      output: {
+        inlineDynamicImports: true,
+      },
+    },
+  },
 });
