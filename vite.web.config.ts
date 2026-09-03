@@ -13,22 +13,6 @@ export default defineConfig({
     strictPort: false,
     open: true,
   },
-  // 同 vite.config.ts：mermaid 不拆分（web 正式版也完整加载布局引擎，
-  // 否则拆成 core/parser 部分缺失导致架构图 subgraph 布局乱）。
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (
-            id.includes("/node_modules/mermaid/") ||
-            id.includes("/node_modules/dagre") ||
-            id.includes("/node_modules/dagre-d3") ||
-            id.includes("/node_modules/@braintree/")
-          ) {
-            return "mermaid";
-          }
-        },
-      },
-    },
-  },
+  // NOTE: mermaid 已静态 import（并入主 bundle）；不设 manualChunks 拆分——避免
+  // 独立 chunk 在正式版相对路径加载失败 → 布局引擎缺失 → subgraph 叠成一整块。
 });

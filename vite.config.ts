@@ -14,26 +14,9 @@ export default defineConfig(async () => ({
   // location instead of the host root, so deploying under /app/ keeps working.
   base: "./",
 
-  // Mermaid 不拆分：动态 import("mermaid") 默认被打成 mermaid.core/parser 等多个
-  // chunk，发布版(Tauri build)部分 chunk 加载不完整会让 diagram/布局引擎缺失 →
-  // 图能出但 subgraph 布局乱（开发版完整正常）。改 manualChunks 把 mermaid 及其
-  // 布局依赖(layout/dagre 等)归为单一 mermaid chunk，发布版完整加载、布局一致。
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (
-            id.includes("/node_modules/mermaid/") ||
-            id.includes("/node_modules/dagre") ||
-            id.includes("/node_modules/dagre-d3") ||
-            id.includes("/node_modules/@braintree/")
-          ) {
-            return "mermaid";
-          }
-        },
-      },
-    },
-  },
+  // NOTE: mermaid 已改为静态 import（并入主 bundle）；不设 manualChunks 拆分，
+  // 避免任何独立 chunk 在 Tauri/Web 正式版下因相对路径加载失败 → 布局引擎缺失
+  // 导致 subgraph 叠成一整块（开发版好、正式版坏）。
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

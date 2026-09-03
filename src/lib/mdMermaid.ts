@@ -3,6 +3,10 @@
 // `.fm-md-mermaid-src <pre>`, read via textContent (no HTML-entity round-trip).
 // Mirror the app's MermaidNode lazy-import approach. Pass the target `theme`
 // ("dark" | "default"); when it changes, already-hydrated blocks re-render.
+// NOTE: mermaid is imported statically (into the main bundle) not via a dynamic
+// chunk — Tauri/Web 正式版下动态 chunk 的相对路径可能解析失败，布局依赖(dagre)未
+// 加载 → subgraph 全叠成一整块(开发版好、正式版坏)。静态引入根治该问题。
+import mermaid from "mermaid";
 let mermaidReady = false;
 let mermaidTheme = "";
 
@@ -16,7 +20,6 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
   if (!root) return;
   const placeholders = Array.from(root.querySelectorAll<HTMLElement>(".fm-md-mermaid"));
   if (placeholders.length === 0) return;
-  let mod: typeof import("mermaid") | null = null;
   for (const el of placeholders) {
     const doneTheme = el.getAttribute("data-done");
     const src = el.querySelector<HTMLElement>(".fm-md-mermaid-src")?.textContent?.trim() || "";
@@ -26,25 +29,21 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
     // Skip work when already rendered with the current theme.
     if (doneTheme === theme && el.getAttribute("data-ok")) continue;
     try {
-      if (!mod) {
-        mod = await import("mermaid");
-        if (!mermaidReady || mermaidTheme !== theme) {
-          mod.default.initialize({
-            startOnLoad: false,
-            theme,
-            // subgraph + <br/> 标签 + 跨 subgraph 引用易布局错乱；htmlLabels + loose
-            // 让 <br/> 正确换行且不因 strict 转义破坏，改善嵌套图渲染。
-            securityLevel: "loose",
-            // htmlLabels:false → 用 SVG text label，由 mermaid 自算布局，不依赖宿主
-            // CSS/字体（发布版打包后宿主样式不同会让 htmlLabels 换行错乱，开发版正常）。
-            flowchart: { htmlLabels: false, curve: "basis" },
-          });
-          mermaidReady = true;
-          mermaidTheme = theme;
-        }
+      if (!mermaidReady || mermaidTheme !== theme) {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme,
+          // subgraph + <br/> 标签 + 跨 subgraph 引用易布局错乱；htmlLabels + loose
+          // 让 <br/> 正确换行且不因 strict 转义破坏，改善嵌套图渲染。
+          securityLevel: "loose",
+          // htmlLabels:false → SVG text label，布局不依赖宿主 CSS/字体（发布版/开发版一致）。
+          flowchart: { htmlLabels: false, curve: "basis" },
+        });
+        mermaidReady = true;
+        mermaidTheme = theme;
       }
       const id = `mdm-${Math.random().toString(36).slice(2, 10)}`;
-      const { svg } = await mod.default.render(id, src);
+      const { svg } = await mermaid.render(id, src);
       svgHost.innerHTML = svg;
       el.setAttribute("data-done", theme);
       el.setAttribute("data-ok", "1");
