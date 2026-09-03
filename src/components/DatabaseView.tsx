@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
+import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { printDoc } from "../lib/print";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
@@ -780,6 +781,25 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     printDoc(body, { title });
   };
 
+  // 保存数据库为模板：连同列定义(database_json)一起存入「我的模板」。
+  const saveAsTemplate = async () => {
+    try {
+      const columns = (query?.columns ?? []).map((c) => ({ name: c.name, type: c.attr_type, options: c.options ?? [] }));
+      const database_json = JSON.stringify({ columns });
+      const ok = await useTemplates.getState().saveAs({
+        name: title || "数据库",
+        content_json: "",
+        content_text: "",
+        kind: "database",
+        database_json,
+      });
+      if (ok) toast(`已保存为模板「${title || "数据库"}」`, "success");
+      else toast("保存失败", "error");
+    } catch (e) {
+      toast(`保存失败：${e}`, "error");
+    }
+  };
+
   return (
     <div className="database-view">
       <div className="database-head">
@@ -927,6 +947,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           )}
         </div>
         </div>
+        <button className="db-views-btn" onClick={saveAsTemplate} title="把当前数据库保存为模板（含列定义）">
+          保存为模板
+        </button>
         <span className="database-count">{rows.length} 条</span>
       </div>
 
