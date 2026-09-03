@@ -12973,6 +12973,8 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
   padding: 18px;
+  /* 黄金比例（宽:高 ≈ 1.618）：横向矩形，更大气。 */
+  aspect-ratio: 1.618 / 1;
   max-height: calc(100vh - 20vh);
   overflow-y: auto;
 }
