@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNodeByKey } from "lexical";
+import { $isCodeNode } from "@lexical/code";
 import { toast } from "../../store/toast";
 
 const LANGS = [
@@ -8,137 +9,119 @@ const LANGS = [
   "go", "rust", "json", "html", "css", "sql", "bash", "markdown", "yaml", "xml",
 ];
 
-// Per-code-block toolbar (语言选择 + 复制) + 行号 gutter, injected into the
-// real Lexical DOM via editor.getElementByKey. Runs on editor update (DOM ready)
-// with a small debounce; idempotent and never triggers an editor.update.
+interface Item {
+  key: string;
+  el: HTMLElement;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  lines: number;
+  lang: string;
+}
+
+// Code-block overlay: line numbers + language/copy toolbar rendered OUTSIDE the
+// Lexical-owned <code> DOM (which Lexical rewrites on update, clearing anything
+// injected inside). Positions from getBoundingClientRect and re-syncs on update /
+// scroll / resize, so it survives and never breaks the editor.
 export function CodeBlockToolbar() {
   const [editor] = useLexicalComposerContext();
+  const [items, setItems] = useState<Item[]>([]);
+
+  const recompute = () => {
+    const root = editor.getRootElement();
+    if (!root) return;
+    const out: Item[] = [];
+    root.querySelectorAll(".editor-codeblock").forEach((el, i) => {
+      if (!(el instanceof HTMLElement)) return;
+      const rect = el.getBoundingClientRect();
+      const text = el.textContent ?? "";
+      const lines = (text.match(/\n/g)?.length ?? 0) + 1;
+      const lang = el.getAttribute("data-language") || "javascript";
+      out.push({ key: `${i}`, el, left: rect.left, top: rect.top, width: rect.width, height: rect.height, lines, lang });
+    });
+    setItems(out);
+  };
 
   useEffect(() => {
-    const lineCount = (pre: HTMLElement): number => {
-      const clone = pre.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll?.(".editor-code-lines, .editor-code-toolbar").forEach((x) => x.remove());
-      return ((clone.textContent ?? "").match(/\n/g)?.length ?? 0) + 1;
-    };
-
-    const ensureOne = (pre: HTMLElement) => {
-      // 不依赖 .editor-codeblock class：直接内联定位，保证绝对定位相对 pre。
-      pre.style.position = "relative";
-      pre.style.paddingLeft = pre.style.paddingLeft || "56px";
-      pre.style.lineHeight = pre.style.lineHeight || "1.5";
-
-      let lines = pre.querySelector<HTMLElement>(".editor-code-lines");
-      const n = lineCount(pre);
-      if (!lines) {
-        lines = document.createElement("div");
-        lines.className = "editor-code-lines";
-        pre.appendChild(lines);
-      }
-      lines.style.position = "absolute";
-      lines.style.left = "0";
-      lines.style.top = "12px";
-      lines.style.width = "40px";
-      lines.style.textAlign = "right";
-      lines.style.paddingRight = "10px";
-      lines.style.borderRight = "1px solid var(--border)";
-      lines.style.userSelect = "none";
-      lines.style.whiteSpace = "pre";
-      const next = Array.from({ length: n }, (_, i) => i + 1).join("\n");
-      if (lines.textContent !== next) lines.textContent = next;
-
-      if (pre.querySelector(".editor-code-toolbar")) return;
-      const key = pre.getAttribute("data-code-key");
-      const lang = key ? readLang(key) : (pre.getAttribute("data-language") || "javascript");
-      const toolbar = document.createElement("div");
-      toolbar.className = "editor-code-toolbar";
-      toolbar.style.position = "absolute";
-      toolbar.style.top = "5px";
-      toolbar.style.right = "8px";
-      toolbar.style.display = "flex";
-      toolbar.style.alignItems = "center";
-      toolbar.style.gap = "6px";
-
-      const sel = document.createElement("select");
-      sel.className = "editor-code-lang";
-      sel.title = "切换语言";
-      LANGS.forEach((l) => {
-        const o = document.createElement("option");
-        o.value = l;
-        o.textContent = l;
-        if (l === lang) o.selected = true;
-        sel.appendChild(o);
-      });
-      sel.addEventListener("change", () => {
-        const p = pre.getAttribute("data-code-key");
-        if (!p) return;
-        editor.update(() => {
-          const nn = ($getNodeByKey(p) as any) ?? null;
-          if (nn && typeof nn.setLanguage === "function") nn.setLanguage(sel.value);
-        });
-      });
-
-      const copy = document.createElement("button");
-      copy.className = "editor-code-copy";
-      copy.textContent = "复制";
-      copy.title = "复制代码";
-      copy.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const txt = pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
-        navigator.clipboard
-          .writeText(txt)
-          .then(() => toast("已复制代码", "success"))
-          .catch(() => toast("复制失败", "error"));
-      });
-
-      toolbar.appendChild(sel);
-      toolbar.appendChild(copy);
-      pre.appendChild(toolbar);
-    };
-
-    const readLang = (key: string): string => {
-      let lang = "javascript";
-      try {
-        editor.getEditorState().read(() => {
-          const n = ($getNodeByKey(key) as any) ?? null;
-          if (n && typeof n.getLanguage === "function") lang = n.getLanguage() ?? "javascript";
-        });
-      } catch {
-        /* ignore */
-      }
-      return lang;
-    };
-
-    const applyAll = () => {
-      try {
-        const root = editor.getRootElement();
-        if (!root) return;
-        // 代码块实际是 <code class="editor-codeblock">（非 <pre>）。
-        root.querySelectorAll(".editor-codeblock").forEach((el) => {
-          if (el instanceof HTMLElement) ensureOne(el);
-        });
-      } catch {
-        /* ignore */
-      }
-    };
-
-    let timer: number | null = null;
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        timer = null;
-        applyAll();
-      }, 60);
-    };
-
-    const unreg = editor.registerUpdateListener(schedule);
-    // 初次挂载也跑一次（等一帧确保 DOM 就绪）。
-    applyAll();
+    recompute();
+    const unreg = editor.registerUpdateListener(() => recompute());
+    const onScroll = () => recompute();
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
     return () => {
       unreg();
-      if (timer) clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
     };
   }, [editor]);
 
-  return null;
+  if (items.length === 0) return null;
+
+  return createPortal(
+    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 40 }}>
+      {items.map((it) => {
+        const lineH = it.lines > 0 ? it.height / it.lines : 24;
+        return (
+          <div
+            key={it.key}
+            style={{ position: "absolute", left: it.left, top: it.top, width: it.width, height: it.height, pointerEvents: "none" }}
+          >
+            {/* 行号 */}
+            <div
+              style={{
+                position: "absolute", left: 8, top: 12, width: 28, textAlign: "right",
+                color: "var(--text-faint)", fontSize: "0.85em", lineHeight: `${lineH}px`,
+                userSelect: "none", whiteSpace: "pre",
+              }}
+            >
+              {Array.from({ length: it.lines }, (_, i) => i + 1).join("\n")}
+            </div>
+            {/* 工具条 */}
+            <div style={{ position: "absolute", right: 8, top: 4, pointerEvents: "auto", display: "flex", gap: 6 }}>
+              <select
+                className="editor-code-lang"
+                value={it.lang}
+                style={{ background: "var(--block)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 4, padding: "2px 4px", outline: "none" }}
+                title="切换语言"
+                onChange={(e) => {
+                  editor.update(() => {
+                    const map = (editor.getEditorState() as any)?._nodeMap as Map<string, any> | undefined;
+                    if (!map) return;
+                    for (const n of map.values()) {
+                      if (n && n.getType && n.getType() === "code") {
+                        const dom = editor.getElementByKey(n.getKey());
+                        if (dom === it.el && typeof n.setLanguage === "function") {
+                          n.setLanguage(e.target.value);
+                          break;
+                        }
+                      }
+                    }
+                  });
+                }}
+              >
+                {LANGS.map((l) => (
+                  <option key={l} value={l}>{l}</option>
+                ))}
+              </select>
+              <button
+                className="editor-code-copy"
+                style={{ background: "var(--block)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 11, borderRadius: 4, padding: "2px 6px", cursor: "pointer" }}
+                onClick={() => {
+                  const txt = it.el.querySelector("code")?.textContent ?? it.el.textContent ?? "";
+                  navigator.clipboard
+                    .writeText(txt)
+                    .then(() => toast("已复制代码", "success"))
+                    .catch(() => toast("复制失败", "error"));
+                }}
+              >
+                复制
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>,
+    document.body,
+  );
 }
