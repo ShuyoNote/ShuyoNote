@@ -277,10 +277,20 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                               className="tag-color-pick"
                               style={{ background: c }}
                               title={c}
-                              onClick={() => setTagColor(t, c)}
+                              onClick={() => {
+                                setTagColor(t, c);
+                                setColorOpen(null);
+                              }}
                             />
                           ))}
-                          <button className="tag-color-pick tag-color-clear" title="清除颜色" onClick={() => setTagColor(t, null)}>
+                          <button
+                            className="tag-color-pick tag-color-clear"
+                            title="清除颜色"
+                            onClick={() => {
+                              setTagColor(t, null);
+                              setColorOpen(null);
+                            }}
+                          >
                             ↺
                           </button>
                         </span>
