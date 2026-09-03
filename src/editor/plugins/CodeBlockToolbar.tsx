@@ -9,8 +9,10 @@ const LANGS = [
   "go", "rust", "json", "html", "css", "sql", "bash", "markdown", "yaml", "xml",
 ];
 
-// Injects a per-code-block toolbar (语言选择 + 复制) into each `.editor-code`,
-// reusing Lexical's owned DOM without disturbing the code/token subtree.
+// Per-code-block toolbar (语言选择 + 复制) + 行号 gutter. Injected into the
+// Lexical-owned `<pre class="editor-codeblock">`; on any code update the pre's
+// children are rewritten by Lexical, so we re-assert on each update via the
+// mutation listener + a MutationObserver.
 export function CodeBlockToolbar() {
   const [editor] = useLexicalComposerContext();
 
@@ -23,59 +25,65 @@ export function CodeBlockToolbar() {
       });
     };
 
-    const ensure = () => {
-      document.querySelectorAll<HTMLElement>(".editor-codeblock").forEach((pre) => {
-        // 行号 gutter（1..N），与代码同高对齐；缺失即重建。
-        if (!pre.querySelector(".editor-code-lines")) {
-          const code = pre.querySelector("code");
-          const n = (code?.textContent ?? "").split("\n").length;
-          const lines = document.createElement("div");
-          lines.className = "editor-code-lines";
-          lines.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
-          pre.appendChild(lines);
-        }
-        // Lexical 更新代码块会重写 <pre> 子元素，因此缺失时持续补回工具条。
-        if (pre.querySelector(".editor-code-toolbar")) return;
-        const key = pre.getAttribute("data-code-key");
-        const toolbar = document.createElement("div");
-        toolbar.className = "editor-code-toolbar";
+    const ensureOne = (pre: HTMLElement) => {
+      // 行号 gutter（1..N）。
+      if (!pre.querySelector(".editor-code-lines")) {
+        const code = pre.querySelector("code");
+        const n = (code?.textContent ?? pre.textContent ?? "").split("\n").length;
+        const lines = document.createElement("div");
+        lines.className = "editor-code-lines";
+        lines.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+        pre.appendChild(lines);
+      }
+      // 工具条。
+      if (pre.querySelector(".editor-code-toolbar")) return;
+      const key = pre.getAttribute("data-code-key");
+      const toolbar = document.createElement("div");
+      toolbar.className = "editor-code-toolbar";
 
-        const sel = document.createElement("select");
-        sel.className = "editor-code-lang";
-        sel.title = "切换语言";
-        const lang = readLang(key);
-        LANGS.forEach((l) => {
-          const o = document.createElement("option");
-          o.value = l;
-          o.textContent = l;
-          if (l === lang) o.selected = true;
-          sel.appendChild(o);
+      const sel = document.createElement("select");
+      sel.className = "editor-code-lang";
+      sel.title = "切换语言";
+      const lang = readLang(key);
+      LANGS.forEach((l) => {
+        const o = document.createElement("option");
+        o.value = l;
+        o.textContent = l;
+        if (l === lang) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", () => {
+        if (!key) return;
+        editor.update(() => {
+          const n = $getNodeByKey(key) as any;
+          if (n && typeof n.setLanguage === "function") n.setLanguage(sel.value);
         });
-        sel.addEventListener("change", () => {
-          if (!key) return;
-          editor.update(() => {
-            const n = $getNodeByKey(key) as any;
-            if (n && typeof n.setLanguage === "function") n.setLanguage(sel.value);
-          });
-        });
+      });
 
-        const copy = document.createElement("button");
-        copy.className = "editor-code-copy";
-        copy.textContent = "复制";
-        copy.title = "复制代码";
-        copy.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const txt = pre.querySelector("code")?.textContent ?? "";
-          navigator.clipboard
-            .writeText(txt)
-            .then(() => toast("已复制代码", "success"))
-            .catch(() => toast("复制失败", "error"));
-        });
+      const copy = document.createElement("button");
+      copy.className = "editor-code-copy";
+      copy.textContent = "复制";
+      copy.title = "复制代码";
+      copy.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const txt = pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
+        navigator.clipboard
+          .writeText(txt)
+          .then(() => toast("已复制代码", "success"))
+          .catch(() => toast("复制失败", "error"));
+      });
 
-        toolbar.appendChild(sel);
-        toolbar.appendChild(copy);
-        pre.appendChild(toolbar);
+      toolbar.appendChild(sel);
+      toolbar.appendChild(copy);
+      pre.appendChild(toolbar);
+    };
+
+    const ensureAll = () => {
+      const root = editor.getRootElement();
+      const list = (root?.querySelectorAll(".editor-codeblock") ?? document.querySelectorAll(".editor-codeblock"));
+      list.forEach((el) => {
+        if (el instanceof HTMLElement) ensureOne(el);
       });
     };
 
@@ -86,13 +94,17 @@ export function CodeBlockToolbar() {
           if (el) el.setAttribute("data-code-key", nodeKey);
         }
       }
-      ensure();
+      ensureAll();
     });
-    ensure();
-    const id = window.setInterval(ensure, 500);
+    ensureAll();
+    const id = window.setInterval(ensureAll, 500);
+    const root = editor.getRootElement();
+    const mo = root ? new MutationObserver(() => ensureAll()) : null;
+    if (mo && root) mo.observe(root, { childList: true, subtree: true });
     return () => {
       unregister();
       clearInterval(id);
+      mo?.disconnect();
     };
   }, [editor]);
 

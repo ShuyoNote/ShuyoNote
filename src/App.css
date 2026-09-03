@@ -6818,17 +6818,14 @@ select.prop-value {
   white-space: pre;
   border-right: 1px solid var(--border);
 }
-/* 代码块工具条（语言 + 复制），hover 显示。 */
+/* 代码块工具条（语言 + 复制），常显于右上角。 */
 .editor-code-toolbar {
   position: absolute;
   top: 5px;
   right: 8px;
-  display: none;
+  display: flex;
   align-items: center;
   gap: 6px;
-}
-.editor-codeblock:hover .editor-code-toolbar {
-  display: flex;
 }
 .editor-code-lang {
   background: var(--block);
