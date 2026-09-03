@@ -246,7 +246,14 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                     }}
                   />
                 ) : (
-                  <button className="tag-picker-name" onClick={() => (manage ? startEdit(t) : toggle(t))}>
+                  <button
+                    className="tag-picker-name"
+                    onClick={() => {
+                      // 管理面板：点名字不直接进编辑（编辑用 ✎ 按钮），避免误触改同名。
+                      if (manage) return;
+                      toggle(t);
+                    }}
+                  >
                     <span className="tag-picker-check">{pageTagIds.has(t.id) ? "✓" : ""}</span>
                     <span className="tag-picker-label">{t.name}</span>
                   </button>
@@ -293,6 +300,17 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                           >
                             ↺
                           </button>
+                          <label className="tag-color-custom" title="自定义颜色">
+                            <input
+                              type="color"
+                              value={t.color ?? "#4b5563"}
+                              onChange={(e) => {
+                                setTagColor(t, e.target.value);
+                                setColorOpen(null);
+                              }}
+                            />
+                            +
+                          </label>
                         </span>
                       )}
                       {editing !== t.id && (

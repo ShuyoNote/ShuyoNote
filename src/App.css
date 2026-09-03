@@ -5810,6 +5810,8 @@ select.prop-value {
   background: var(--bg);
   font-family: inherit;
   margin-bottom: 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .tag-picker-input:focus {
   outline: none;
@@ -5927,6 +5929,26 @@ select.prop-value {
   font-size: 12px;
   line-height: 20px;
   text-align: center;
+}
+/* 自定义颜色：隐藏原生 input，显示 "＋" 触发系统调色板。 */
+.tag-color-custom {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+}
+.tag-color-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 .tag-picker-empty {
   padding: 16px 8px;
