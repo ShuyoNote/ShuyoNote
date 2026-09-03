@@ -6828,23 +6828,6 @@ select.prop-value {
   resize: none;
   overflow: auto;
 }
-/* 行号列（与代码同字体/行高，靠左）。 */
-.codeblock-lines {
-  position: absolute;
-  left: 0;
-  top: 12px;
-  width: 46px;
-  text-align: right;
-  padding-right: 10px;
-  color: var(--text-faint);
-  font-family: "SF Mono", Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre;
-  user-select: none;
-  pointer-events: none;
-  border-right: 1px solid var(--border);
-}
 .codeblock-tools {
   position: absolute;
   top: 6px;
