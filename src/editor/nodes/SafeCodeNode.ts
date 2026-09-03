@@ -24,7 +24,7 @@ export class SafeCodeNode extends CodeNode {
 
   insertNewAfter(_selection: RangeSelection, restoreSelection?: boolean): ParagraphNode {
     const block = $createParagraphNode();
-    this.getParent()?.insertAfter(block);
+    this.insertAfter(block);
     if (restoreSelection) block.selectStart();
     return block;
   }
