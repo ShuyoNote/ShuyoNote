@@ -8,8 +8,6 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
-import "./prismSetup";
-import { registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
@@ -289,11 +287,6 @@ function BlockIdPlugin({
       tagBlockDoms(editor, map, editorState);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor]);
-
-  // Enable Prism-based syntax highlighting for code blocks.
-  useEffect(() => {
-    return registerCodeHighlighting(editor);
   }, [editor]);
 
   // Scroll to + highlight the focused block. Retries briefly so cross-page jumps
