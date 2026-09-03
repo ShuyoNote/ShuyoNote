@@ -9682,8 +9682,8 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-date {
   flex: none;
-  width: 116px;
-  min-width: 116px;
+  width: 92px;
+  min-width: 92px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -9693,17 +9693,21 @@ p:has(> .editor-drawing-container) {
   border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   padding-left: 6px;
 }
-/* 📅 选择日期按钮。 */
+/* 📅 SVG 日历选择按钮：currentColor 随主题。 */
 .db-gantt-date-pick {
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 12px;
-  opacity: 0.6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 2px;
+  color: var(--text-faint);
+  opacity: 0.7;
 }
 .db-gantt-date-pick:hover {
   opacity: 1;
+  color: var(--accent);
 }
 .db-gantt-date-picker {
   position: absolute;
