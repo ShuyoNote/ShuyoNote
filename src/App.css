@@ -3587,7 +3587,7 @@ body.is-ai-open .main {
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
-  padding: 20px var(--doc-pad) 2px;
+  padding: 4px var(--doc-pad) 2px;
   max-width: var(--doc-width);
   width: 100%;
   margin: 0 auto;
