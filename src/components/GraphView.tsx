@@ -373,11 +373,12 @@ export function GraphView() {
     const loop = () => {
       if (!running) return;
       tick(simRef.current, edgesRef.current, size, dragRef.current?.id ?? null, dimension, pinnedIdsRef.current);
-      settled = maxSpeed(simRef.current) < 0.1 ? settled + 1 : 0;
+      // 更严格收敛判定：避免初始环状速度就被判“已稳定”而几乎不动(显得卡住)。
+      settled = maxSpeed(simRef.current) < 0.03 ? settled + 1 : 0;
       iterations += 1;
       // 节流：每 2 帧才触发一次 React 渲染(~30fps)，减轻大量节点/边的渲染负担。
       if (frameTick++ % 2 === 0) setFrame((f) => f + 1);
-      if (settled < 30 && iterations < 350 && simRef.current.length > 1) {
+      if (settled < 30 && iterations < 500 && simRef.current.length > 1) {
         raf = requestAnimationFrame(loop);
       }
     };
