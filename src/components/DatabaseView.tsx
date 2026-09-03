@@ -1104,7 +1104,18 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                 <div key={key} className={`db-gantt-row${laneClass ? " " + laneClass : ""}`}>
                   <div className="db-gantt-meta">
                     <span className="db-gantt-name" onClick={() => openPage(it.row.page_id)}>{label}</span>
-                    <span className="db-gantt-owner">{gantt.statusCol ? it.row.values[gantt.statusCol.id] || "—" : ""}</span>
+                    {gantt.statusCol && (
+                      <select
+                        className="db-gantt-owner db-gantt-owner-select"
+                        value={it.row.values[gantt.statusCol.id] ?? ""}
+                        onChange={(e) => setCell(it.row.page_id, gantt.statusCol!.id, e.target.value)}
+                      >
+                        <option value="">—</option>
+                        {gantt.statusCol.options.map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    )}
                     {sCol && (
                       <input
                         type="date"

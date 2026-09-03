@@ -9582,7 +9582,7 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-rowlabel {
   flex: none;
-  width: 260px;
+  width: 330px;
   text-align: left;
   font-size: 12px;
   padding: 5px 10px;
@@ -9604,7 +9604,7 @@ p:has(> .editor-drawing-container) {
 /* 甘特图行左侧：任务名 + 开始/结束 两个数据项。 */
 .db-gantt-meta {
   flex: none;
-  width: 260px;
+  width: 330px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -9616,9 +9616,28 @@ p:has(> .editor-drawing-container) {
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
-  max-width: 48px;
+  max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 负责人可编辑下拉。 */
+.db-gantt-owner-select {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  color-scheme: dark;
+  border-radius: 4px;
+  padding: 1px 2px;
+  font-size: 10.5px;
+  font-family: inherit;
+}
+.db-gantt-owner-select:hover {
+  border-color: var(--border);
+}
+.db-gantt-owner-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg);
 }
 .db-gantt-name {
   flex: 1;
