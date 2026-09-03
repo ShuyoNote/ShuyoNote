@@ -25,16 +25,32 @@ export function CodeBlockToolbar() {
       });
     };
 
+    const computeLineCount = (pre: HTMLElement): number => {
+      const key = pre.getAttribute("data-code-key");
+      if (key) {
+        const txt = editor.getEditorState().read(() => {
+          const n = $getNodeByKey(key) as any;
+          return typeof n?.getTextContent === "function" ? (n.getTextContent() ?? "") : "";
+        }) as string;
+        return (txt.match(/\n/g)?.length ?? 0) + 1;
+      }
+      // 兜底：排除 gutter/工具条自身，避免计数被污染。
+      const clone = pre.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll?.(".editor-code-lines, .editor-code-toolbar").forEach((el) => el.remove());
+      return ((clone.textContent ?? "").match(/\n/g)?.length ?? 0) + 1;
+    };
+
     const ensureOne = (pre: HTMLElement) => {
-      // 行号 gutter（1..N）。
-      if (!pre.querySelector(".editor-code-lines")) {
-        const txt = pre.innerText ?? pre.textContent ?? "";
-        const n = (txt.match(/\n/g)?.length ?? 0) + 1;
-        const lines = document.createElement("div");
+      // 行号 gutter（1..N，每次重算并更新）。
+      let lines = pre.querySelector<HTMLElement>(".editor-code-lines");
+      const n = computeLineCount(pre);
+      if (!lines) {
+        lines = document.createElement("div");
         lines.className = "editor-code-lines";
-        lines.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
         pre.appendChild(lines);
       }
+      const next = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+      if (lines.textContent !== next) lines.textContent = next;
       // 工具条。
       if (pre.querySelector(".editor-code-toolbar")) return;
       const key = pre.getAttribute("data-code-key");
