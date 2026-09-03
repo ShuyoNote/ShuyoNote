@@ -247,8 +247,7 @@ export class SqliteStore {
       INSERT OR IGNORE INTO tags (id, name, color) VALUES
         ('tag-todo', '未完成', '#ef4444'),
         ('tag-doing', '进行中', '#f59e0b'),
-        ('tag-done', '已完成', '#22c55e'),
-        ('tag-archive', '归档', '#64748b');
+        ('tag-done', '已完成', '#22c55e');
       CREATE TABLE IF NOT EXISTS attachments (
         id TEXT PRIMARY KEY,
         page_id TEXT,

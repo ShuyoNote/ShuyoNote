@@ -683,12 +683,11 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute("ALTER TABLE tags ADD COLUMN color TEXT", [])?;
     }
 
-    // 系统预设状态标签（业界习惯：未完成/进行中/已完成/归档）。固定 id + OR IGNORE 幂等。
+    // 系统预设状态标签（业界习惯：未完成/进行中/已完成）。固定 id + OR IGNORE 幂等。
     for (id, name, color) in [
         ("tag-todo", "未完成", "#ef4444"),
         ("tag-doing", "进行中", "#f59e0b"),
         ("tag-done", "已完成", "#22c55e"),
-        ("tag-archive", "归档", "#64748b"),
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO tags (id, name, color) VALUES (?1, ?2, ?3)",
