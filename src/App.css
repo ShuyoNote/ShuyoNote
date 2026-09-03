@@ -8686,13 +8686,15 @@ p:has(> .editor-drawing-container) {
   min-height: 0;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface);
+  box-shadow: var(--shadow-md);
   position: relative;
 }
 
 .database-table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: 100%;
   font-size: 13px;
 }
@@ -8709,6 +8711,13 @@ p:has(> .editor-drawing-container) {
   top: 0;
   background: var(--bg);
   z-index: 1;
+}
+
+.database-table tbody tr {
+  transition: background var(--transition-fast);
+}
+.database-table tbody tr:hover {
+  background: var(--hover-soft);
 }
 
 .db-th {
@@ -9561,12 +9570,18 @@ p:has(> .editor-drawing-container) {
   align-items: stretch;
   min-width: 100%;
 }
+.db-gantt-row {
+  transition: background var(--transition-fast);
+}
+.db-gantt-row:hover {
+  background: var(--hover-soft);
+}
 .db-gantt-rowlabel {
   flex: none;
   width: 160px;
   text-align: left;
   font-size: 12px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   border: none;
   background: transparent;
   color: var(--text);
@@ -9575,19 +9590,24 @@ p:has(> .editor-drawing-container) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.db-gantt-rowlabel:hover {
+  color: var(--accent);
+}
 .db-gantt-head .db-gantt-rowlabel {
   font-weight: 700;
+  color: var(--text);
 }
 .db-gantt-axis {
   flex: 1;
   display: flex;
   border-left: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 .db-gantt-axis-cell {
   font-size: 10px;
   color: var(--text-faint);
-  padding: 4px 0;
+  padding: 5px 0;
   text-align: center;
   border-left: 1px solid var(--border);
 }
@@ -9595,22 +9615,37 @@ p:has(> .editor-drawing-container) {
   flex: 1;
   position: relative;
   border-left: 1px solid var(--border);
-  min-height: 30px;
+  min-height: 32px;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(100% / 30 - 1px),
+    color-mix(in srgb, var(--border) 55%, transparent) calc(100% / 30 - 1px),
+    color-mix(in srgb, var(--border) 55%, transparent) calc(100% / 30)
+  );
 }
 .db-gantt-bar {
   position: absolute;
   top: 5px;
-  height: 20px;
-  border-radius: 4px;
-  background: var(--accent);
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #000));
   color: #fff;
   font-size: 11px;
-  line-height: 20px;
-  padding: 0 6px;
+  font-weight: 600;
+  line-height: 22px;
+  padding: 0 8px;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
   white-space: nowrap;
   text-overflow: ellipsis;
   cursor: pointer;
+  min-width: 10px;
+  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.db-gantt-bar:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
 }
 
 .db-timeline-item {
