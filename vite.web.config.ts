@@ -23,7 +23,18 @@ export default defineConfig({
           if (id.includes("katex")) return "katex";
           if (id.includes("excalidraw")) return "excalidraw";
           if (id.includes("mermaid")) return "mermaid";
-          if (id.includes("pdfjs-dist") || id.includes("pdfjs-dist") || id.includes("/pdf.")) return "pdf";
+          if (id.includes("pdfjs-dist") || id.includes("/pdf.")) return "pdf";
+          // react 单独成 chunk：与其它 third-party 分离，便于并行下载 + 长期缓存。
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/react-jsx-runtime") ||
+            id.includes("/scheduler/") ||
+            id.includes("/react-router") ||
+            id.includes("/zustand/")
+          ) {
+            return "react";
+          }
           if (id.includes("node_modules")) return "vendor";
         },
       },
