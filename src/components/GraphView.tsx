@@ -28,6 +28,8 @@ const EDGE_COLORS: Record<string, string> = {
 
 const IN_COLOR = "#3370ff";
 const OUT_COLOR = "#f59e0b";
+// 超过该节点数的图跳过 O(n^2) 力导向动画，改用静态环状布局（性能守卫）。
+const MAX_FORCE = 400;
 
 function maxSpeed(ns: SimNode[]): number {
   let m = 0;
@@ -358,6 +360,11 @@ export function GraphView() {
   // Force-directed simulation loop.
   useEffect(() => {
     if (nodes.length === 0) return;
+    // 大规模图：静态环状布局（simRef 已是环状初始），不跑 O(n^2) 力导向动画。
+    if (nodes.length > MAX_FORCE) {
+      setFrame((f) => f + 1);
+      return;
+    }
     let raf = 0;
     let running = true;
     let settled = 0;
@@ -365,10 +372,10 @@ export function GraphView() {
     const loop = () => {
       if (!running) return;
       tick(simRef.current, edgesRef.current, size, dragRef.current?.id ?? null, dimension, pinnedIdsRef.current);
-      settled = maxSpeed(simRef.current) < 0.05 ? settled + 1 : 0;
+      settled = maxSpeed(simRef.current) < 0.1 ? settled + 1 : 0;
       iterations += 1;
       setFrame((f) => f + 1);
-      if (settled < 30 && iterations < 2500 && simRef.current.length > 1) {
+      if (settled < 30 && iterations < 900 && simRef.current.length > 1) {
         raf = requestAnimationFrame(loop);
       }
     };
@@ -382,7 +389,9 @@ export function GraphView() {
   const displayNodes = simRef.current;
   const nodeMap = useMemo(
     () => new Map(displayNodes.map((n) => [n.id, n])),
-    [frame, nodes],
+    // 节点集合变化时才重建；拖动/缩放/力导向只改对象的 x/y，不重建映射。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes],
   );
 
   // Focus = hovered node, or the current page in local-graph mode.
@@ -527,6 +536,11 @@ export function GraphView() {
 
   return (
     <div className="graph-view" ref={containerRef}>
+      {nodes.length > MAX_FORCE && (
+        <div className="graph-hint">
+          图较大（{nodes.length} 个节点），已用环状布局以保流畅；可用上方筛选 / 局部模式缩小范围后获得力导向布局。
+        </div>
+      )}
       <svg
         ref={svgRef}
         width="100%"
