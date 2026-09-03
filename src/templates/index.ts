@@ -93,7 +93,7 @@ function dbtmpl(
 }
 
 export const TEMPLATES: TemplateItem[] = [
-  tmpl("library", "我的个人图书馆", "个人", "📚", "linear-gradient(135deg, #f6d5b3 0%, #e8a87c 100%)", [
+  tmpl("library", "我的个人图书馆", "个人", "📚", `url("covers/mist.jpg")`, [
     heading("h1", "我的个人图书馆"),
     quote("一本书改变一个人；一个图书馆，改变一个人的人生轨迹。"),
     rule(),
@@ -109,7 +109,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "本季度目标"),
     bullet(["读完 3 本", "精读 1 本并输出笔记", "做一次主题阅读（AI / 历史）"]),
   ]),
-  tmpl("daily", "每日小记", "个人", "📝", "linear-gradient(135deg, #c4e0f9 0%, #8ec5ff 100%)", [
+  tmpl("daily", "每日小记", "个人", "📝", `url("covers/coast.jpg")`, [
     heading("h1", "今日小记"),
     para("📅 {{date}}"),
     rule(),
@@ -123,7 +123,7 @@ export const TEMPLATES: TemplateItem[] = [
     rule(),
     quote("一句话总结今天。"),
   ]),
-  tmpl("subscription", "会员订购管理", "工作", "🗂", "linear-gradient(135deg, #ffd3a5 0%, #fd9850 100%)", [
+  tmpl("subscription", "会员订购管理", "工作", "🗂", `url("covers/peak.jpg")`, [
     heading("h1", "会员订购"),
     para("集中记录各平台订阅，避免「忘了取消」的隐秘扣费。"),
     rule(),
@@ -133,7 +133,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "提醒规则"),
     bullet(["到期前 7 天提醒", "不常用的到期即取消", "每年一次订阅总览（算总账）"]),
   ]),
-  tmpl("movie", "我的观影记录", "个人", "🎬", "linear-gradient(135deg, #d6d9ff 0%, #a3a8ff 100%)", [
+  tmpl("movie", "我的观影记录", "个人", "🎬", `url("covers/fjord.jpg")`, [
     heading("h1", "观影记录"),
     para("想看的、看过的，和为什么值得看。"),
     rule(),
@@ -145,7 +145,7 @@ export const TEMPLATES: TemplateItem[] = [
     rule(),
     quote("好电影值得二次观看。为喜欢的写一篇长评。"),
   ]),
-  tmpl("mood", "情绪日记", "个人", "🌙", "linear-gradient(135deg, #c8e6c9 0%, #a5d6a7 100%)", [
+  tmpl("mood", "情绪日记", "个人", "🌙", `url("covers/mist.jpg")`, [
     heading("h1", "情绪日志"),
     para("记录，是为了不被情绪牵着走。"),
     rule(),
@@ -159,7 +159,7 @@ export const TEMPLATES: TemplateItem[] = [
     rule(),
     quote("情绪是信使，不是命令。"),
   ]),
-  tmpl("fitness", "运动与习惯计划", "健康", "💪", "linear-gradient(135deg, #ffe0b2 0%, #ffb74d 100%)", [
+  tmpl("fitness", "运动与习惯计划", "健康", "💪", `url("covers/coast.jpg")`, [
     heading("h1", "运动与习惯"),
     para("可持续的进步，来自每一天的小坚持。"),
     rule(),
@@ -172,7 +172,7 @@ export const TEMPLATES: TemplateItem[] = [
     rule(),
     quote("不追求完美，只追求「持续」。"),
   ]),
-  tmpl("resume", "我的一份简历", "教育", "🎓", "linear-gradient(135deg, #f8bbd0 0%, #f48fb1 100%)", [
+  tmpl("resume", "我的一份简历", "教育", "🎓", `url("covers/peak.jpg")`, [
     heading("h1", "个人简历"),
     para("姓名 / 邮箱 / 电话 / 城市 / 求职意向"),
     rule(),
@@ -185,7 +185,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "技能"),
     bullet(["工具/语言/框架：", "软技能："]),
   ]),
-  tmpl("calendar", "周历安排", "工作", "📅", "linear-gradient(135deg, #fff9c4 0%, #fff176 100%)", [
+  tmpl("calendar", "周历安排", "工作", "📅", `url("covers/peak.jpg")`, [
     heading("h1", "本周安排"),
     para("把最重要的事先放进日历。"),
     rule(),
@@ -195,7 +195,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "本周重点（MOST）"),
     bullet(["最重要的一件事：", "要完成的关键产出：", "要避开的时间陷阱："]),
   ]),
-  tmpl("about", "关于我自己", "个人", "🙋", "linear-gradient(135deg, #b3e5fc 0%, #4fc3f7 100%)", [
+  tmpl("about", "关于我自己", "个人", "🙋", `url("covers/tree.jpg")`, [
     heading("h1", "关于我"),
     rule(),
     heading("h2", "我在做什么"),
@@ -206,7 +206,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "我如何协作"),
     bullet(["联系方式：", "我的沟通偏好：", "「我能帮你 / 需要你帮我」："])
   ]),
-  tmpl("booknote", "深度读书笔记", "教育", "📖", "linear-gradient(135deg, #0f2027 0%, #2c5364 100%)", [
+  tmpl("booknote", "深度读书笔记", "教育", "📖", `url("covers/mist.jpg")`, [
     heading("h1", "《书名》读书笔记"),
     quote("一句话总结这本书（它解决了什么问题 / 改变了什么认知）。"),
     rule(),
@@ -220,7 +220,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "一句话荐读"),
     para("值不值得读：…… 给谁读：……"),
   ]),
-  tmpl("meeting", "会议纪要", "工作", "🧵", "linear-gradient(135deg, #0e1e2b 0%, #1e4f5e 100%)", [
+  tmpl("meeting", "会议纪要", "工作", "🧵", `url("covers/peak.jpg")`, [
     heading("h1", "会议纪要 · {{date}}"),
     para("主题：{{title}} · 主持：{{owner}}"),
     rule(),
@@ -234,7 +234,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "待讨论（顺延）"),
     bullet(["……"]),
   ]),
-  tmpl("project-review", "项目复盘", "工作", "🔍", "linear-gradient(135deg, #29323c 0%, #485563 100%)", [
+  tmpl("project-review", "项目复盘", "工作", "🔍", `url("covers/fjord.jpg")`, [
     heading("h1", "项目复盘 · {{title}}"),
     quote("回顾，是为了把经验变成下一次的改进。"),
     rule(),
@@ -248,7 +248,7 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "下次行动"),
     bullet(["立即做：", "未来项目借鉴："]),
   ]),
-  tmpl("travel", "旅行计划", "个人", "🧳", "linear-gradient(135deg, #00b4db 0%, #0083b0 100%)", [
+  tmpl("travel", "旅行计划", "个人", "🧳", `url("covers/coast.jpg")`, [
     heading("h1", "「{{title}}」旅行计划"),
     para("时间：{{date}} · 天数：____ 天"),
     rule(),
@@ -259,7 +259,7 @@ export const TEMPLATES: TemplateItem[] = [
     rule(),
     quote("宁可细致，不赶场。留一点意外给惊喜。"),
   ]),
-  tmpl("budget", "家庭记账", "个人", "💰", "linear-gradient(135deg, #134e5e 0%, #71b280 100%)", [
+  tmpl("budget", "家庭记账", "个人", "💰", `url("covers/tree.jpg")`, [
     heading("h1", "家庭月度记账 · {{date}}"),
     para("收入：￥____ · 预算：￥____"),
     rule(),
@@ -271,14 +271,14 @@ export const TEMPLATES: TemplateItem[] = [
     heading("h2", "本月复盘"),
     para("结余：____ · 超支项：____ · 下月重点：____"),
   ]),
-  dbtmpl("content-db", "内容管理库", "工作", "🗃", "linear-gradient(135deg, #d1f0e8 0%, #8ee0c4 100%)", [
+  dbtmpl("content-db", "内容管理库", "工作", "🗃", `url("covers/coast.jpg")`, [
     { name: "标题", type: "text" },
     { name: "状态", type: "select", options: ["未开始", "进行中", "已完成", "阻塞"] },
     { name: "优先级", type: "select", options: ["P0 紧急", "P1 重要", "P2 常规", "P3 可缓"] },
     { name: "负责人", type: "select", options: ["张三", "李四", "王五"] },
     { name: "截止日期", type: "date" },
   ]),
-  dbtmpl("gantt", "项目计划·甘特图", "工作", "📊", "linear-gradient(135deg, #0e1e2b 0%, #1e4f5e 50%, #24d3c4 100%)", [
+  dbtmpl("gantt", "项目计划·甘特图", "工作", "📊", `url("covers/peak.jpg")`, [
     { name: "开始日期", type: "date" },
     { name: "结束日期", type: "date" },
     { name: "类别", type: "select", options: ["设计", "开发", "测试", "上线", "运营"] },
@@ -286,7 +286,7 @@ export const TEMPLATES: TemplateItem[] = [
     { name: "负责人", type: "select", options: ["张三", "李四", "王五"] },
     { name: "是否完成", type: "checkbox" },
   ]),
-  dbtmpl("movie-db", "观影清单", "个人", "🎬", "linear-gradient(135deg, #e3dcff 0%, #b3a5ff 100%)", [
+  dbtmpl("movie-db", "观影清单", "个人", "🎬", `url("covers/fjord.jpg")`, [
     { name: "片名", type: "text" },
     { name: "导演", type: "text" },
     { name: "评分", type: "number" },
