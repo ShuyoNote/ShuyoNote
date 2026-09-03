@@ -6785,6 +6785,91 @@ select.prop-value {
   text-decoration: underline;
 }
 
+.editor-codeblock-node {
+  margin: 0.5em 0;
+  position: relative;
+}
+/* 自定义代码块视图：高亮层 + 透明 textarea 重叠。 */
+.codeblock-view {
+  position: relative;
+  background: var(--codeblock-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.codeblock-highlight,
+.codeblock-input {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  word-break: normal;
+  tab-size: 2;
+  margin: 0;
+}
+.codeblock-highlight {
+  pointer-events: none;
+  color: var(--text);
+  padding: 12px 12px 12px 52px;
+  min-height: 26px;
+}
+.codeblock-input {
+  position: absolute;
+  inset: 0;
+  padding: 12px 12px 12px 52px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+}
+.codeblock-tools {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+  z-index: 2;
+}
+.codeblock-tools select,
+.codeblock-tools button {
+  background: var(--block);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: inherit;
+  outline: none;
+}
+.codeblock-tools button {
+  cursor: pointer;
+}
+.codeblock-tools button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.editor-codeblock-node .token.comment,
+.editor-codeblock-node .token.prolog,
+.editor-codeblock-node .token.doctype,
+.editor-codeblock-node .token.cdata { color: #6a737d; }
+.editor-codeblock-node .token.keyword { color: #d2a8ff; }
+.editor-codeblock-node .token.string,
+.editor-codeblock-node .token.char,
+.editor-codeblock-node .token.attr-value { color: #9ecbff; }
+.editor-codeblock-node .token.function,
+.editor-codeblock-node .token.class-name { color: #ffab70; }
+.editor-codeblock-node .token.number,
+.editor-codeblock-node .token.boolean,
+.editor-codeblock-node .token.constant { color: #f97583; }
+.editor-codeblock-node .token.operator { color: #79c0ff; }
+.editor-codeblock-node .token.variable { color: #ffa657; }
 .editor-codeblock {
   display: block;
   white-space: pre;

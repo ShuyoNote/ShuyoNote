@@ -16,7 +16,7 @@ import {
   INSERT_ORDERED_LIST_COMMAND,
   INSERT_UNORDERED_LIST_COMMAND,
 } from "@lexical/list";
-import { $createSafeCodeNode } from "../nodes/SafeCodeNode";
+import { $createCodeBlockNode } from "../nodes/CodeBlockNode";
 import { $createLinkNode } from "@lexical/link";
 import { $createHorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { $getInsertTargetBlock } from "../blockUtils";
@@ -92,9 +92,9 @@ export function InsertShortcutPlugin() {
             const selection = $getSelection();
             if (!$isRangeSelection(selection)) return;
             const topLevel = $getInsertTargetBlock(selection.anchor.getNode());
-            const code = $createSafeCodeNode();
+            const code = $createCodeBlockNode();
             if (topLevel && $isElementNode(topLevel)) {
-              for (const child of topLevel.getChildren()) code.append(child);
+              code.setText(topLevel.getTextContent());
               topLevel.replace(code);
               code.selectStart();
             }

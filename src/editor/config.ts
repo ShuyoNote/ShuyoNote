@@ -3,8 +3,7 @@
 // editors reuse this so they use the SAME node types and visual theme.
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
-import { CodeHighlightNode } from "@lexical/code";
-import { SafeCodeNode } from "./nodes/SafeCodeNode";
+import { CodeBlockNode } from "./nodes/CodeBlockNode";
 import { LinkNode } from "@lexical/link";
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { TableNode, TableCellNode, TableRowNode } from "@lexical/table";
@@ -35,8 +34,7 @@ export const EDITOR_NODES: Klass<LexicalNode>[] = [
   QuoteNode,
   ListNode,
   ListItemNode,
-  SafeCodeNode,
-  CodeHighlightNode,
+  CodeBlockNode,
   LinkNode,
   CalloutNode,
   ColumnsNode,
