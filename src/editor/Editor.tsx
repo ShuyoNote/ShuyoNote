@@ -141,6 +141,17 @@ function scanBadNode(contentJson: string | null | undefined, allowed: Set<string
 }
 
 /** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
+function isEmptyRootDoc(json: string): boolean {
+  try {
+    const parsed = JSON.parse(json);
+    const root = parsed?.root;
+    return !!root && Array.isArray(root.children) && root.children.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** @returns a parsed EditorState if the content parses cleanly, else null (empty). */
 function parseEditorState(contentJson: string): EditorState | null {
   if (contentJson) {
     // lexicalStateValid now SANITIZES: it drops malformed children (e.g. nodes
@@ -164,6 +175,10 @@ function parseEditorState(contentJson: string): EditorState | null {
     lastProbeError = null;
     const state = probeEditor.parseEditorState(contentJson ?? "");
     if (!state || state.isEmpty()) {
+      // 合法空 root（children 为空）就是正常的空白页——返回空编辑状态即可，不视为失败。
+      if (state && isEmptyRootDoc(contentJson)) {
+        return state;
+      }
       const wholeDocErr = lastProbeError;
       // Some node survived sanitization in a non-`children` spot (e.g. `$slots`);
       // rescue the good top-level blocks rather than showing a blank page.
