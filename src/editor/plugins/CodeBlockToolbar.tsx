@@ -92,18 +92,11 @@ export function CodeBlockToolbar() {
 
     const applyAll = () => {
       try {
-        editor.getEditorState().read(() => {
-          const nodes = (($getRoot() as any).getAllNodes?.() ?? []) as any[];
-          for (const n of nodes) {
-            if (n.getType() === CodeNode.getType()) {
-              const key = n.getKey();
-              const el = editor.getElementByKey(key);
-              if (el instanceof HTMLElement) {
-                el.setAttribute("data-code-key", key);
-                ensureOne(el);
-              }
-            }
-          }
+        const root = editor.getRootElement();
+        if (!root) return;
+        // 代码块在编辑器里就是 <pre>（不依赖 class/节点遍历）。
+        root.querySelectorAll("pre").forEach((pre) => {
+          if (pre instanceof HTMLElement) ensureOne(pre);
         });
       } catch {
         /* ignore */
