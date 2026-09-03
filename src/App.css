@@ -5827,6 +5827,14 @@ select.prop-value {
   outline: none;
   border-color: var(--accent);
 }
+/* 标签搜索框：覆盖 .tag-input 的 90px，占满面板宽。 */
+.tag-input.tag-picker-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: var(--bg);
+}
 .tag-picker-list {
   display: flex;
   flex-direction: column;
