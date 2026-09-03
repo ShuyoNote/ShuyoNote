@@ -57,10 +57,19 @@ export function CodeBlockToolbar() {
     const onScroll = () => recompute();
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll);
+    // 折叠/展开属性区、切换工具栏等纯 DOM 布局变化不会触发 editor.update/scroll：
+    // 用 ResizeObserver 监听内容区尺寸变化来重算行号位置。
+    const ro = new ResizeObserver(() => recompute());
+    const root = editor.getRootElement();
+    const hosts = [root, root?.parentElement, root?.parentElement?.parentElement].filter(
+      (x): x is HTMLElement => !!x,
+    );
+    hosts.forEach((h) => ro.observe(h));
     return () => {
       unreg();
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
+      ro.disconnect();
     };
   }, [editor]);
 
