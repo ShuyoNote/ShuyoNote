@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
@@ -571,41 +571,55 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const gantt = useMemo(() => {
     const dateCols = query?.columns.filter((c) => c.attr_type === "date") ?? [];
     if (dateCols.length === 0 || !query) return null;
-    const startCol = dateCols[0];
-    const endCol = dateCols[1] ?? null;
+    // 支持「计划/实际」两组：4 个 date 列 → 计划=前2、实际=后2；仅 2 个则只有计划。
+    const planStartCol = dateCols[0];
+    const planEndCol = dateCols[1] ?? null;
+    const actStartCol = dateCols.length >= 4 ? dateCols[2] : null;
+    const actEndCol = dateCols.length >= 4 ? dateCols[3] ?? dateCols[2] : null;
+    const hasActual = !!actStartCol;
+    const parseD = (s: string | undefined): Date | null => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s ?? "");
+      return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+    };
     const items = rows
       .map((r) => {
-        const sm = /^(\d{4})-(\d{2})-(\d{2})/.exec((r.values[startCol.id] ?? "") as string);
-        if (!sm) return null;
-        const start = new Date(+sm[1], +sm[2] - 1, +sm[3]);
-        let end = new Date(start);
-        if (endCol) {
-          const em = /^(\d{4})-(\d{2})-(\d{2})/.exec((r.values[endCol.id] ?? "") as string);
-          if (em) end = new Date(+em[1], +em[2] - 1, +em[3]);
+        const planS = parseD(r.values[planStartCol.id] as string);
+        if (!planS) return null;
+        const planE = parseD(planEndCol ? (r.values[planEndCol.id] as string) : undefined);
+        const plan = { start: planS, end: planE && planE >= planS ? planE : planS };
+        let actual: { start: Date; end: Date } | null = null;
+        if (hasActual) {
+          const actS = parseD(r.values[actStartCol.id] as string);
+          if (actS) {
+            const actE = parseD(actEndCol ? (r.values[actEndCol.id] as string) : undefined);
+            actual = { start: actS, end: actE && actE >= actS ? actE : actS };
+          }
         }
-        if (end < start) end = new Date(start);
-        return { row: r, start, end, title: r.title || "未命名" };
+        return { row: r, title: r.title || "未命名", plan, actual };
       })
-      .filter(Boolean) as { row: DatabaseRow; start: Date; end: Date; title: string }[];
+      .filter(Boolean) as { row: DatabaseRow; title: string; plan: { start: Date; end: Date }; actual: { start: Date; end: Date } | null }[];
     if (items.length === 0) return null;
-    let min = items[0].start;
-    let max = items[0].end;
-    for (const it of items) {
-      if (it.start < min) min = it.start;
-      if (it.end > max) max = it.end;
-    }
-    // Pad to whole days; total span in days.
+    let min = items[0].plan.start;
+    let max = items[0].plan.end;
+    const consider = (it: { plan: { start: Date; end: Date }; actual: { start: Date; end: Date } | null }) => {
+      if (it.plan.start < min) min = it.plan.start;
+      if (it.plan.end > max) max = it.plan.end;
+      if (it.actual) {
+        if (it.actual.start < min) min = it.actual.start;
+        if (it.actual.end > max) max = it.actual.end;
+      }
+    };
+    for (const it of items) consider(it);
     const totalDays = Math.max(1, Math.round((max.getTime() - min.getTime()) / 86400000) + 1);
     const cols: string[] = [];
     for (let i = 0; i < totalDays; i++) {
       const d = new Date(min.getTime() + i * 86400000);
-      // 刻度文字只在每周首日显示(其余空)——避免 9/17/9/18…挤在一起。
       cols.push(i % 7 === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : "");
     }
     const statusCol = query?.columns.find((c) => c.attr_type === "select") ?? null;
     const today = new Date();
     const todayIdx = Math.round((today.getTime() - min.getTime()) / 86400000);
-    return { startCol, endCol, items, min, max, totalDays, cols, statusCol, todayIdx };
+    return { items, min, max, totalDays, cols, statusCol, todayIdx, hasActual };
   }, [rows, query]);
 
   if (!query) {
@@ -1078,33 +1092,36 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               </div>
             </div>
             {gantt.items.map((it) => {
-              const left = (it.start.getTime() - gantt.min.getTime()) / 86400000;
-              const w = (it.end.getTime() - it.start.getTime()) / 86400000 + 1;
-              const status = gantt.statusCol ? it.row.values[gantt.statusCol.id] ?? "" : "";
-              const color = status ? tagColor(status).solid : "var(--accent)";
-              return (
-                <div key={it.row.page_id} className="db-gantt-row">
+              const lane = (label: string, start: Date, end: Date, color: string, laneClass: string, key: string) => (
+                <div key={key} className={`db-gantt-row${laneClass ? " " + laneClass : ""}`}>
                   <button className="db-gantt-rowlabel" onClick={() => openPage(it.row.page_id)}>
-                    {it.title}
+                    {label}
                   </button>
                   <div className="db-gantt-track">
                     {gantt.todayIdx >= 0 && gantt.todayIdx <= gantt.totalDays && (
                       <span className="db-gantt-today" style={{ left: `${(gantt.todayIdx / gantt.totalDays) * 100}%` }} />
                     )}
                     {Array.from({ length: gantt.totalDays }).map((_, di) => {
-                      const on = di >= left && di < left + w;
+                      const l = (start.getTime() - gantt.min.getTime()) / 86400000;
+                      const w = (end.getTime() - start.getTime()) / 86400000 + 1;
+                      const on = di >= l && di < l + w;
                       return (
                         <span
                           key={di}
                           className={`db-gantt-cell${on ? " on" : ""}`}
                           style={{ width: `${100 / gantt.totalDays}%`, ...(on ? { background: color } : {}) }}
-                          title={`${it.title}（${it.start.toISOString().slice(0, 10)} ~ ${it.end.toISOString().slice(0, 10)}${status ? " · " + status : ""}）`}
+                          title={`${it.title}（${start.toISOString().slice(0, 10)} ~ ${end.toISOString().slice(0, 10)}）`}
                         />
                       );
                     })}
                   </div>
                 </div>
               );
+              const lanes = [lane(it.title, it.plan.start, it.plan.end, "#f59e0b", "db-gantt-lane-plan", `lk-${it.row.page_id}`)];
+              if (gantt.hasActual && it.actual) {
+                lanes.push(lane("", it.actual.start, it.actual.end, "#fbbf24", "db-gantt-lane-actual", `la-${it.row.page_id}`));
+              }
+              return <Fragment key={it.row.page_id}>{lanes}</Fragment>;
             })}
             {/* 汇总行：每日期列有多少任务（天数占用）。 */}
             <div className="db-gantt-row db-gantt-summary">
@@ -1112,9 +1129,12 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               <div className="db-gantt-track">
                 {Array.from({ length: gantt.totalDays }).map((_, di) => {
                   const cnt = gantt.items.filter((it) => {
-                    const s = (it.start.getTime() - gantt.min.getTime()) / 86400000;
-                    const e = (it.end.getTime() - it.start.getTime()) / 86400000 + 1;
-                    return di >= s && di < s + e;
+                    const spans = [it.plan, it.actual].filter(Boolean) as { start: Date; end: Date }[];
+                    return spans.some((sp) => {
+                      const s = (sp.start.getTime() - gantt.min.getTime()) / 86400000;
+                      const e = (sp.end.getTime() - sp.start.getTime()) / 86400000 + 1;
+                      return di >= s && di < s + e;
+                    });
                   }).length;
                   return (
                     <span key={di} className={`db-gantt-cell db-gantt-count${cnt ? " has" : ""}`} style={{ width: `${100 / gantt.totalDays}%` }}>
