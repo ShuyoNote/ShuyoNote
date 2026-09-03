@@ -230,6 +230,7 @@ function databaseProps(): Block[] {
     bullet([
       "数据库 = 页面集合 + 视图：表格 / 画廊 / 看板 / 列表 / 日历 / 时间轴 / 目录。",
       "视图可保存；查询型视图按条件过滤；ref 关联跨库 pull 汇总。",
+      `目录视图按父子层级树状展示，点击跳转 → ${link("数据库目录")}。`,
     ]),
     h("看板", "h2"),
     bullet([
@@ -238,6 +239,26 @@ function databaseProps(): Block[] {
     rule(),
     h("下一步", "h2"),
     para(`想用数据库做任务/素材库 → ${link("数据库与属性")} 已覆盖；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function databaseDirectory(): Block[] {
+  return [
+    h("数据库目录", "h1"),
+    callout("把数据库里的页面按「父子层级」组成树状目录，点击标题直接跳到对应页面。"),
+    h("作用", "h2"),
+    bullet([
+      "基于页面的父子关系(父页面)把当前命中的行搭成一棵树，层级缩进显示。",
+      "点击标题打开对应页面——适合有章节/子页面结构的内容(如体系文档、知识库)。",
+    ]),
+    h("怎么用", "h2"),
+    bullet([
+      "数据库顶部切换「目录」视图。",
+      "页面有父子关系时自动形成缩进目录；全是平级时以一级列表平铺。",
+      "配合标题筛选(空格=与、逗号=或)可缩小目录范围。",
+    ]),
+    rule(),
+    para(`目录是数据库的一种视图 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
   ];
 }
 
@@ -509,6 +530,7 @@ export const GUIDE_PAGES: GuidePage[] = [
   { title: "绘图", icon: "✏️", blocks: drawing(), parent: "编辑器" },
   { title: "分栏", icon: "▥", blocks: columns(), parent: "编辑器" },
   { title: "数据库与属性", icon: "🗂️", blocks: databaseProps() },
+  { title: "数据库目录", icon: "🌲", blocks: databaseDirectory(), parent: "数据库与属性" },
   { title: "甘特图", icon: "📊", blocks: gantt() },
   { title: "看板与标签", icon: "📋", blocks: board() },
   { title: "搜索与语义检索", icon: "🔍", blocks: search() },
