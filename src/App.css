@@ -9746,7 +9746,9 @@ p:has(> .editor-drawing-container) {
   flex: none;
   min-width: 0;
   box-sizing: border-box;
-  border-left: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  /* 网格线：每格左+上边线，形成清晰网格（参考图 Excel 网格感）。 */
+  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   width: 24px;
 }
 .db-gantt-cell.on {
