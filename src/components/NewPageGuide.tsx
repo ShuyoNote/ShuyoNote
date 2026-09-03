@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { $createParagraphNode, $getRoot, type ElementNode } from "lexical";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
-import { toast } from "../store/toast";
 import { useTemplateCenterStore } from "../store/templateCenter";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
