@@ -131,6 +131,11 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   >("table");
   const [boardGroupAttr, setBoardGroupAttr] = useState<string | null>(null);
   const [boardDragOver, setBoardDragOver] = useState<string | null>(null);
+  // 数据库看板卡片拖拽（pointer-based，避免 HTML5 drag 被 Tauri 抑制）。
+  const [boardDrag, setBoardDrag] = useState<string | null>(null);
+  const [boardDragPos, setBoardDragPos] = useState<{ x: number; y: number } | null>(null);
+  const boardDragRef = useRef<{ sx: number; sy: number; moved: boolean } | null>(null);
+  const boardDragTitleRef = useRef("");
   // 甘特图左侧(标题/负责人/日期)列宽，可拖拽调整。
   const [ganttMetaW, setGanttMetaW] = useState(430);
   const ganttResizeRef = useRef<{ sx: number; sw: number } | null>(null);
@@ -515,6 +520,40 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       toast(`移动失败：${e}`, "error");
     }
   };
+  // keep latest moveBoardCard for the drag effect (stable deps).
+  const moveCardRef = useRef(moveBoardCard);
+  moveCardRef.current = moveBoardCard;
+  // 数据库看板卡片拖拽：pointer-based（HTML5 drag 被 Tauri 抑制）。落点列移动 + 浮动卡。
+  useEffect(() => {
+    if (!boardDrag) return;
+    const onMove = (e: PointerEvent) => {
+      if (!boardDragRef.current) return;
+      if (!boardDragRef.current.moved && Math.hypot(e.clientX - boardDragRef.current.sx, e.clientY - boardDragRef.current.sy) < 5) return;
+      boardDragRef.current.moved = true;
+      e.preventDefault();
+      setBoardDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.(".db-board-col") as HTMLElement | null;
+      setBoardDragOver(col?.dataset.col ?? null);
+    };
+    const onUp = (e: PointerEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.(".db-board-col") as HTMLElement | null;
+      const target = col?.dataset.col ?? null;
+      const moved = boardDragRef.current?.moved;
+      setBoardDrag(null);
+      setBoardDragPos(null);
+      setBoardDragOver(null);
+      boardDragRef.current = null;
+      if (target && moved) void moveCardRef.current(boardDrag, target);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [boardDrag]);
 
   const dateCol = query?.columns.find((c) => c.attr_type === "date") ?? null;
 
@@ -993,20 +1032,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           </div>
           <div className="db-board-columns">
             {boardGroups.map((g) => (
-              <div
-                key={g.id}
-                className={`db-board-col ${boardDragOver === g.id ? "db-board-col-over" : ""}`}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setBoardDragOver(g.id);
-                }}
-                onDragLeave={() => setBoardDragOver((v) => (v === g.id ? null : v))}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const pageId = e.dataTransfer.getData("text/plain");
-                  if (pageId) moveBoardCard(pageId, g.id);
-                }}
-              >
+              <div key={g.id} className={`db-board-col ${boardDragOver === g.id ? "db-board-col-over" : ""}`} data-col={g.id}>
                 <div className="db-board-col-header">
                   <span className="db-board-dot" style={{ background: tagColor(g.name).solid }} />
                   <span className="db-board-col-name">{g.name}</span>
@@ -1017,9 +1043,16 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                     <div
                       key={r.page_id}
                       className="db-board-card"
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData("text/plain", r.page_id)}
-                      onClick={() => openPage(r.page_id)}
+                      onPointerDown={(e) => {
+                        if (e.button !== 0) return;
+                        boardDragRef.current = { sx: e.clientX, sy: e.clientY, moved: false };
+                        boardDragTitleRef.current = r.title || "未命名";
+                        setBoardDrag(r.page_id);
+                      }}
+                      onClick={() => {
+                        if (boardDragRef.current?.moved) return;
+                        openPage(r.page_id);
+                      }}
                     >
                       {r.title || "未命名"}
                     </div>
@@ -1028,6 +1061,11 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               </div>
             ))}
           </div>
+          {boardDrag && boardDragPos && (
+            <div className="db-board-card db-board-card-ghost" style={{ left: boardDragPos.x, top: boardDragPos.y }}>
+              {boardDragTitleRef.current || "…"}
+            </div>
+          )}
         </div>
       ) : viewType === "list" ? (
         <div className="db-list">

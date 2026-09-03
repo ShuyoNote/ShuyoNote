@@ -9420,6 +9420,19 @@ p:has(> .editor-drawing-container) {
 .db-board-card:hover {
   border-color: var(--accent);
 }
+/* 拖拽中的浮动卡：跟随指针。 */
+.db-board-card-ghost {
+  position: fixed;
+  z-index: 96;
+  opacity: 0.92;
+  box-shadow: var(--shadow-lg);
+  cursor: grabbing;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
 
 /* List view */
 .db-list {
