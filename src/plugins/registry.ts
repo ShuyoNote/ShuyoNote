@@ -200,6 +200,8 @@ registerPlugin({
             name: page.title || "未命名",
             content_json: page.content_json,
             content_text: page.content_text,
+            cover: page.cover,
+            icon: page.icon,
           });
         return ok ? `已保存为模板「${page.title || "未命名"}」` : "保存失败";
       },

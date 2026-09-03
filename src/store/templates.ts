@@ -12,6 +12,8 @@ interface TemplatesState {
     name: string;
     content_json: string;
     content_text: string;
+    cover?: string;
+    icon?: string;
     category?: string;
     space_id?: string | null;
   }) => Promise<boolean>;
@@ -27,7 +29,12 @@ export const useTemplates = create<TemplatesState>((set) => ({
       .catch((e) => toast(`加载模板失败：${e}`, "error")),
   saveAs: async (args) => {
     try {
-      const t = await api.saveAsTemplate({ ...args, category: args.category ?? "我的模板" });
+      const t = await api.saveAsTemplate({
+        ...args,
+        category: args.category ?? "我的模板",
+        // 模板封面(题头图)：保存到模板，创建时应用到页面。
+        cover: args.cover ?? "",
+      });
       set((s) => ({ userTemplates: [...s.userTemplates, t] }));
       return true;
     } catch (e) {

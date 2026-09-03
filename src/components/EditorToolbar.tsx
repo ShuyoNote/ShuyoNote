@@ -88,7 +88,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       }
       const ok = await useTemplates
         .getState()
-        .saveAs({ name: page.title || "未命名", content_json: page.content_json, content_text: page.content_text });
+        .saveAs({ name: page.title || "未命名", content_json: page.content_json, content_text: page.content_text, cover: page.cover, icon: page.icon });
       if (ok) toast(`已保存为模板「${page.title || "未命名"}」`, "success");
       else toast("保存失败", "error");
     } catch (e) {
