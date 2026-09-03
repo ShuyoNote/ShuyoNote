@@ -610,6 +610,21 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       }
     };
     for (const it of items) consider(it);
+    // 日期范围自适应数据 + 对齐周边界：min 回溯到周一、max 延到周日，轴规整。
+    const alignStart = (d: Date) => {
+      const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const dow = (x.getDay() + 6) % 7; // 周一为 0
+      x.setDate(x.getDate() - dow);
+      return x;
+    };
+    const alignEnd = (d: Date) => {
+      const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const dow = (x.getDay() + 6) % 7;
+      x.setDate(x.getDate() + (6 - dow));
+      return x;
+    };
+    min = alignStart(min);
+    max = alignEnd(max);
     const totalDays = Math.max(1, Math.round((max.getTime() - min.getTime()) / 86400000) + 1);
     // 自适应日期刻度：跨度 ≤ 12 天显示每天日期；更大则隔 7 天(每周首)——避免
     // 小跨度只露首格(9/1)、大跨度挤成一团。
