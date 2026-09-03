@@ -1109,7 +1109,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                         <span
                           key={di}
                           className={`db-gantt-cell${on ? " on" : ""}`}
-                          style={{ width: `${100 / gantt.totalDays}%`, ...(on ? { background: color } : {}) }}
+                          style={{ ...(on ? { background: color } : {}) }}
                           title={`${it.title}（${start.toISOString().slice(0, 10)} ~ ${end.toISOString().slice(0, 10)}）`}
                         />
                       );
@@ -1137,7 +1137,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                     });
                   }).length;
                   return (
-                    <span key={di} className={`db-gantt-cell db-gantt-count${cnt ? " has" : ""}`} style={{ width: `${100 / gantt.totalDays}%` }}>
+                    <span key={di} className={`db-gantt-cell db-gantt-count${cnt ? " has" : ""}`} style={{}}>
                       {cnt || ""}
                     </span>
                   );

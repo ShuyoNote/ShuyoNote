@@ -9614,6 +9614,10 @@ p:has(> .editor-drawing-container) {
   padding: 5px 0;
   text-align: center;
   border-left: 1px solid var(--border);
+  overflow: visible;
+  white-space: nowrap;
+  flex: none;
+  width: 24px;
 }
 .db-gantt-track {
   flex: 1;
@@ -9623,12 +9627,28 @@ p:has(> .editor-drawing-container) {
   display: flex;
   align-items: stretch;
 }
+/* 甘特图横向滚动（每格固定宽，日期清晰）。 */
+.db-gantt {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.db-gantt-head,
+.db-gantt-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 100%;
+  width: max-content;
+}
 /* 甘特图网格填色：每日期一格，任务占用的格染色(像参考图日历网格)。 */
 .db-gantt-cell {
   flex: none;
   min-width: 0;
-  border-left: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
   box-sizing: border-box;
+  border-left: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  width: 24px;
 }
 .db-gantt-cell.on {
   border-radius: 2px;
