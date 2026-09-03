@@ -119,6 +119,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
+  // 列表视图：展开属性(按 page_id)的行集合。
+  const [listExpanded, setListExpanded] = useState<Set<string>>(new Set());
   const [addingCol, setAddingCol] = useState(false);
   const addColPanelRef = useRef<HTMLDivElement>(null);
   const optionsPanelRef = useRef<HTMLDivElement>(null);
@@ -1199,21 +1201,42 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         </div>
       ) : viewType === "list" ? (
         <div className="db-list">
-          {rows.map((r) => (
-            <div key={r.page_id} className="db-list-item" onClick={() => openPage(r.page_id)}>
-              <span className="db-list-title">{r.title || "未命名"}</span>
-              <span className="db-list-props">
-                {query.columns.slice(0, 3).map((c) => {
-                  const v = r.values[c.id];
-                  return v ? (
-                    <span key={c.id} className="db-list-prop">
-                      {c.name}: {v}
+          {rows.map((r) => {
+            const expanded = listExpanded.has(r.page_id);
+            const vals = query.columns
+              .map((c) => ({ c, v: r.values[c.id] }))
+              .filter((x) => x.v != null && x.v !== "");
+            const shown = expanded ? vals : vals.slice(0, 3);
+            return (
+              <div key={r.page_id} className="db-list-item">
+                <button
+                  className="db-list-expand"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setListExpanded((prev) => {
+                      const n = new Set(prev);
+                      if (n.has(r.page_id)) n.delete(r.page_id);
+                      else n.add(r.page_id);
+                      return n;
+                    });
+                  }}
+                  title={expanded ? "收起属性" : "展开属性"}
+                >
+                  {expanded ? "▾" : "▸"}
+                </button>
+                <button className="db-list-title" onClick={() => openPage(r.page_id)}>
+                  {r.title || "未命名"}
+                </button>
+                <span className="db-list-props">
+                  {shown.map((x) => (
+                    <span key={x.c.id} className="db-list-prop">
+                      {x.c.name}: {x.v}
                     </span>
-                  ) : null;
-                })}
-              </span>
-            </div>
-          ))}
+                  ))}
+                </span>
+              </div>
+            );
+          })}
           {rows.length === 0 && <div className="db-empty">无匹配页面</div>}
         </div>
       ) : viewType === "calendar" ? (

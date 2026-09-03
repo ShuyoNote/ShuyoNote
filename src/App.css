@@ -9771,6 +9771,33 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.db-list-title:hover {
+  color: var(--accent, #4f7cff);
+}
+.db-list-expand {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.db-list-expand:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .db-list-props {
