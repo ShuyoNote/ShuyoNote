@@ -30,6 +30,7 @@ export function BoardView() {
   const colDragMovedRef = useRef(false);
   const [colDragOver, setColDragOver] = useState<string | null>(null);
   const [colDragSide, setColDragSide] = useState<"before" | "after">("before");
+  const colDragSideRef = useRef<"before" | "after">("before");
   const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
   const colDragTitleRef = useRef("");
 
@@ -68,7 +69,9 @@ export function BoardView() {
         const dragX = dragColEl?.getBoundingClientRect().left ?? 0;
         const targetX = col.getBoundingClientRect().left;
         setColDragOver(col.dataset.col ?? null);
-        setColDragSide(targetX >= dragX ? "after" : "before");
+        const side = targetX >= dragX ? "after" : "before";
+        colDragSideRef.current = side;
+        setColDragSide(side);
       } else {
         setColDragOver(null);
       }
@@ -77,13 +80,15 @@ export function BoardView() {
       const col = findColAt(e.clientX, e.clientY);
       const target = col?.dataset.col ?? null;
       const moved = colDragMovedRef.current;
+      const side = colDragSideRef.current;
       setColDrag(null);
       setColDragOver(null);
       setColDragSide("before");
+      colDragSideRef.current = "before";
       setColDragPos(null);
       colDragStartRef.current = null;
       colDragMovedRef.current = false;
-      if (target && target !== "__none" && moved && target !== colDrag) void onReorderCol(colDrag, target, colDragSide === "after");
+      if (target && target !== "__none" && moved && target !== colDrag) void onReorderCol(colDrag, target, side === "after");
     };
     const onCancel = () => {
       setColDrag(null);
