@@ -10696,8 +10696,8 @@ p:has(> .editor-drawing-container) {
   background: var(--success);
 }
 
-/* 设置中心里的 AI 表单沿用 ai-settings-* 既有样式，只做容器宽度约束。 */.set-ai .ai-settings-row {
-  max-width: 520px;
+/* 设置中心里的 AI 表单沿用 ai-settings-* 既有样式，放宽宽度利用横向空间。 */.set-ai .ai-settings-row {
+  max-width: 680px;
 }
 
 .set-ai .ai-settings-desc {
@@ -13037,20 +13037,24 @@ p:has(> .editor-drawing-container) {
 }
 /* 语义检索「作用」说明卡。 */
 .ai-settings-why {
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.6;
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   margin-bottom: 12px;
 }
-.ai-settings-why-note {
-  display: block;
-  margin-top: 4px;
+.ai-settings-why-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
   font-size: 11px;
-  color: var(--text-dim);
+  font-weight: 600;
 }
 .ai-settings-row {
   display: flex;
