@@ -13,12 +13,19 @@ export default defineConfig({
     strictPort: false,
     open: true,
   },
-  // mermaid 已静态 import；inlineDynamicImports:true 强制把 mermaid/parser 等
-  // 动态 chunk 全部内联进主 bundle(零独立 chunk)——彻底规避正式版 chunk 加载失败。
+  // 恢复代码分割（去掉 inlineDynamicImports）：此前把全部动态 import 内联进主 bundle
+  // 导致首屏单 10MB。用 base:"./" 保证 chunk 相对路径在 /app/ 子路径下正确加载，
+  // manualChunks 把大库拆成独立 vendor chunk（并行下载 + 缓存）。
   build: {
     rollupOptions: {
       output: {
-        inlineDynamicImports: true,
+        manualChunks(id) {
+          if (id.includes("katex")) return "katex";
+          if (id.includes("excalidraw")) return "excalidraw";
+          if (id.includes("mermaid")) return "mermaid";
+          if (id.includes("pdfjs-dist") || id.includes("pdfjs-dist") || id.includes("/pdf.")) return "pdf";
+          if (id.includes("node_modules")) return "vendor";
+        },
       },
     },
   },
