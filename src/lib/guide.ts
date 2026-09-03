@@ -385,6 +385,83 @@ function shortcutsPage(): Block[] {
   return blocks;
 }
 
+// ---- 新增主题页：甘特图 / 看板与标签 / 搜索与语义检索 / 封面与主题 ----
+function gantt(): Block[] {
+  return [
+    h("甘特图", "h1"),
+    callout("用日期列把数据库一键变成专业甘特图——计划 / 实际两组、可编辑日期、列宽可拖。"),
+    h("从数据库生成", "h2"),
+    bullet([
+      `建一个含 date 列的数据库（可用「项目计划·甘特图」模板）。`,
+      `在数据库视图切换「甘特图」：开始/结束日期出时间条；若建 4 个 date 列（计划+实际）则显示两组对比。`,
+    ]),
+    h("编辑", "h2"),
+    bullet([
+      `开始/结束日期可直接键入或点 📅 选择，改后格子实时刷新。`,
+      `「任务」表头右缘拖拽调列宽；最小宽度防止日期溢出。`,
+      `网格填色 + 汇总，一眼看进度。`,
+    ]),
+    rule(),
+    para(`想用数据库管理任务 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function board(): Block[] {
+  return [
+    h("看板与标签", "h1"),
+    callout("数据库看板 / 标签看板，卡片跨列拖、列拖换序——像真正的项目工具。"),
+    h("数据库看板", "h2"),
+    bullet([
+      `任一 select 列分组，切「看板」视图。`,
+      `卡片拖到另一列=改分组值；列(header)拖拽换序；「未设置」列固定最左。`,
+    ]),
+    h("标签体系", "h2"),
+    bullet([
+      `页面可加标签（属性区 / 标签管理器），未完成/进行中/已完成 默认三色。`,
+      `左侧「看板」按标签分列，卡片拖拽跨列切换标签；标签颜色可自定义。`,
+    ]),
+    rule(),
+    para(`数据库 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function search(): Block[] {
+  return [
+    h("搜索与语义检索", "h1"),
+    callout("不只匹配关键词——嵌入向量语义检索，找到「想表达的意思」。"),
+    h("全文搜索", "h2"),
+    bullet([
+      `Ctrl+Shift+F 或顶部搜索框：多关键词 AND，全空间默认，跨空间可跳转，prop: 前缀按属性搜。`,
+    ]),
+    h("语义检索", "h2"),
+    bullet([
+      `在 AI 设置里配置模型端点后，语义检索按语义相似度排序，全空间 / 跨空间找相关内容。`,
+      `与 AI 助手联动：提问 → 检索相关笔记上下文。`,
+    ]),
+    rule(),
+    para(`AI 配置 → ${link("AI 助手")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function coverTheme(): Block[] {
+  return [
+    h("封面与主题外观", "h1"),
+    callout("让每篇笔记有自己的气质——封面题头图 + 亮/暗主题、自绘标题栏、目录。"),
+    h("封面题头图", "h2"),
+    bullet([
+      `页面顶部 →「添加题头图」：渐变 / 免版权风景照片（峡湾/雪峰/海岸/绿雾/瀑布/树木…）。`,
+      `在封面上上下拖动可定位背景位置；拖右下手柄调高度。`,
+    ]),
+    h("主题外观", "h2"),
+    bullet([
+      `设置 → 外观：亮 / 暗主题（跟随系统或手动）；自绘标题栏（可切回系统栏）。`,
+      `右侧目录( TOC )按标题生成，侧栏可折叠。`,
+    ]),
+    rule(),
+    para(`回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
 // ---- index (main guide) -----------------------------------------------------
 function indexBlocks(): Block[] {
   return [
@@ -405,6 +482,10 @@ function indexBlocks(): Block[] {
       link("绘图"),
       link("分栏"),
       link("数据库与属性"),
+      link("甘特图"),
+      link("看板与标签"),
+      link("搜索与语义检索"),
+      link("封面与主题外观"),
       link("文件夹 = 网盘"),
       link("PDF 阅读与批注"),
       link("AI 助手"),
@@ -428,6 +509,10 @@ export const GUIDE_PAGES: GuidePage[] = [
   { title: "绘图", icon: "✏️", blocks: drawing(), parent: "编辑器" },
   { title: "分栏", icon: "▥", blocks: columns(), parent: "编辑器" },
   { title: "数据库与属性", icon: "🗂️", blocks: databaseProps() },
+  { title: "甘特图", icon: "📊", blocks: gantt() },
+  { title: "看板与标签", icon: "📋", blocks: board() },
+  { title: "搜索与语义检索", icon: "🔍", blocks: search() },
+  { title: "封面与主题外观", icon: "🎨", blocks: coverTheme() },
   { title: "文件夹 = 网盘", icon: "📁", blocks: netdisk() },
   { title: "PDF 阅读与批注", icon: "📄", blocks: pdfReader() },
   { title: "AI 助手", icon: "✨", blocks: ai() },
