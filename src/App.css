@@ -1022,8 +1022,8 @@ body,
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 14px;
-  /* 高于文件预览层(.fm-preview-overlay z-index:50)——否则预览视图会盖住同步弹窗。 */
-  z-index: 60;
+  /* 同步弹窗是用户主动调出的浮层——高于文件预览(600)/内容，避免被预览遮挡。 */
+  z-index: 1500;
 }
 .sync-title {
   font-size: 13px;
@@ -2608,7 +2608,9 @@ select.sync-input {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 0;
-  z-index: 40;
+  /* 搜索面板是用户主动调出的最高阶浮层——高于文件预览(600)/内容 modal，
+     避免被预览或其他浮层遮挡。 */
+  z-index: 1500;
 }
 
 .search-head {
@@ -6343,7 +6345,8 @@ select.prop-value {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.25);
-  z-index: 100;
+  /* 命令面板(Ctrl+K)是最高阶浮层——高于文件预览(600)/内容 modal，避免被遮挡。 */
+  z-index: 1500;
   display: flex;
   justify-content: center;
   padding-top: 12vh;
@@ -11527,7 +11530,9 @@ p:has(> .editor-drawing-container) {
   right: 0;
   bottom: 0;
   left: calc(var(--activity-w, 0px) + var(--sidebar-w, 264px));
-  z-index: 50;
+  /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
+     命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
+  z-index: 600;
   background: var(--bg);
   display: flex;
   align-items: stretch;
