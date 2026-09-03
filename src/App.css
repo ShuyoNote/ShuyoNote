@@ -12986,6 +12986,44 @@ p:has(> .editor-drawing-container) {
   line-height: 1.5;
   margin: 0 0 14px;
 }
+/* AI 设置分区卡：对话模型 / 语义检索 分组清晰。 */
+.ai-settings-group {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  margin-bottom: 14px;
+}
+.ai-settings-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-settings-group-icon {
+  font-size: 15px;
+  flex: none;
+}
+.ai-settings-group-note {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-faint);
+  margin-left: auto;
+}
+.ai-settings-card-note {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--chip-bg);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
 .ai-settings-row {
   display: flex;
   align-items: center;
