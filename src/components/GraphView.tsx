@@ -601,12 +601,11 @@ export function GraphView() {
                   isMatch ? "graph-node-match" : ""
                 } ${isDimByKw ? "graph-node-dim" : ""}`}
                 onPointerDown={(e) => beginNodeDrag(n.id, e)}
-                onClick={() => openNode(n)}
                 onMouseEnter={() => setHoveredId(n.id)}
                 onMouseLeave={() => setHoveredId((h) => (h === n.id ? null : h))}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  togglePin(n.id);
+                  openNode(n);
                 }}
               >
                 <circle
