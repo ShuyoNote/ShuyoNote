@@ -3600,6 +3600,7 @@ body.is-ai-open .main {
   position: relative;
   z-index: 2;
   padding-left: var(--doc-pad);
+  pointer-events: none; /* 整行不拦截指针，避免遮住封面高度拖拽手柄 */
 }
 .page-icon-btn {
   display: inline-flex;
@@ -3610,6 +3611,7 @@ body.is-ai-open .main {
   padding: 2px;
   border-radius: 8px;
   cursor: pointer;
+  pointer-events: auto; /* 仅图标按钮本身可点击 */
   transition: background var(--transition-fast);
 }
 .page-icon-btn:hover {
