@@ -12988,9 +12988,11 @@ p:has(> .editor-drawing-container) {
 }
 /* AI 设置两个配置块并排（对话模型 / 语义检索）。窄屏回退单列。 */
 .ai-settings-cols {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 14px;
+  /* 高度对齐：两卡片拉伸等高。 */
+  align-items: stretch;
 }
 /* AI 设置分区卡：对话模型 / 语义检索 分组清晰。 */
 .ai-settings-group {
@@ -12998,7 +13000,9 @@ p:has(> .editor-drawing-container) {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card-bg);
-  margin-bottom: 14px;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
 }
 .ai-settings-group-title {
   display: flex;
@@ -13105,7 +13109,8 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 0;
+  margin-top: auto;
 }
 .ai-settings-test-btn {
   align-self: flex-start;
