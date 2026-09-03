@@ -25,7 +25,7 @@ export function CodeBlockToolbar() {
 
     const ensure = () => {
       document.querySelectorAll<HTMLElement>(".editor-codeblock").forEach((pre) => {
-        // 行号 gutter（1..N），与代码同高对齐。
+        // 行号 gutter（1..N），与代码同高对齐；缺失即重建。
         if (!pre.querySelector(".editor-code-lines")) {
           const code = pre.querySelector("code");
           const n = (code?.textContent ?? "").split("\n").length;
@@ -34,7 +34,8 @@ export function CodeBlockToolbar() {
           lines.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
           pre.appendChild(lines);
         }
-        if ((pre as any)._snToolbar) return;
+        // Lexical 更新代码块会重写 <pre> 子元素，因此缺失时持续补回工具条。
+        if (pre.querySelector(".editor-code-toolbar")) return;
         const key = pre.getAttribute("data-code-key");
         const toolbar = document.createElement("div");
         toolbar.className = "editor-code-toolbar";
@@ -75,7 +76,6 @@ export function CodeBlockToolbar() {
         toolbar.appendChild(sel);
         toolbar.appendChild(copy);
         pre.appendChild(toolbar);
-        (pre as any)._snToolbar = true;
       });
     };
 
