@@ -9,10 +9,7 @@ import { platform } from "../lib/platform";
 import { blobStore } from "../lib/platform/blobStore";
 import { toast } from "../store/toast";
 import { inputDialog } from "../store/input";
-import { useAiStore } from "../store/ai";
 import { useNotes } from "../store/notes";
-import { buildImageGenUrl, buildImageGenBody, parseImageGenResponse, b64ToBytes, bytesToDataUrl } from "../lib/ai/imageGen";
-import { tryConsume } from "../lib/ai/gate";
 import { excalidrawSceneText } from "../lib/drawingText";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
@@ -289,42 +286,6 @@ export default function DrawingEditorModal() {
     }
   }, [injectImage]);
 
-  const aiDraw = useCallback(async () => {
-    const { config } = useAiStore.getState();
-    if (!config.enabled || config.provider !== "openai") {
-      toast("AI 绘图需在设置里启用并配置 OpenAI 兼容文生图端点", "error");
-      return;
-    }
-    inputDialog({
-      title: "AI 绘图",
-      placeholder: "描述你想生成的画面…",
-      okLabel: "生成",
-      onSubmit: async (prompt) => {
-        const p = (prompt ?? "").trim();
-        if (!p) return;
-        const ig = tryConsume("imagegen");
-        if (!ig.ok) {
-          toast(ig.message, "error");
-          return;
-        }
-        try {
-          const res = await fetch(buildImageGenUrl(config.baseUrl), {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}) },
-            body: buildImageGenBody(config, p),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const parsed = parseImageGenResponse(await res.text());
-          if (!parsed) throw new Error("响应中没有图片数据");
-          const dataUrl = "b64" in parsed ? bytesToDataUrl(b64ToBytes(parsed.b64), parsed.mime) : parsed.url;
-          await injectImage(dataUrl, "image/png");
-        } catch (e) {
-          toast(`AI 绘图失败：${e}`, "error");
-        }
-      },
-    });
-  }, [injectImage]);
-
   const mermaidDraw = useCallback(async () => {
     inputDialog({
       title: "流程图 / 思维导图",
@@ -442,7 +403,6 @@ export default function DrawingEditorModal() {
         <div className="drawing-modal-actions">
           <div className="drawing-modal-group">
             <button className="drawing-modal-tool" onClick={insertImage} title="插入图片">🖼</button>
-            <button className="drawing-modal-tool" onClick={aiDraw} title="AI 插图">🤖</button>
             <button className="drawing-modal-tool" onClick={() => setMenuOpen((v) => !v)} title="绘图 / 主题 / Mermaid">＋</button>
             <button className="drawing-modal-tool" onClick={linkSelected} title="链接选中的图形到页面">🔗</button>
           </div>

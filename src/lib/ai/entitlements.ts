@@ -4,7 +4,6 @@
 
 export type Aicap =
   | "vision" // 视觉识别（公式/页面 OCR）
-  | "imagegen" // 文生图
   | "outline" // AI 一键目录
   | "pdf" // PDF 帮读 / 提问
   | "draft" // 内联 AI 起草
@@ -22,7 +21,6 @@ export type Aicap =
  */
 export const FREE_ALLOWANCE: Record<Aicap, number> = {
   vision: 5,
-  imagegen: 3,
   outline: 3,
   pdf: 5,
   draft: 10,
@@ -48,7 +46,6 @@ export function isCapAllowed(cap: Aicap, count: number): boolean {
 export function capLabel(cap: Aicap): string {
   const map: Record<Aicap, string> = {
     vision: "AI 视觉识别",
-    imagegen: "AI 文生图",
     outline: "AI 一键目录",
     pdf: "PDF AI 帮读",
     draft: "内联 AI 起草",

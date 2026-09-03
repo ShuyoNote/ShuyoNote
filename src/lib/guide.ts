@@ -121,7 +121,7 @@ function editor(): Block[] {
     h("块", "h2"),
     bullet([
       "标题 / 段落 / 列表 / 待办 / 引用 / 代码块 / 分隔线。",
-      "表格、分栏（/分栏）、绘图（/绘图：Excalidraw + mermaid + AI 文生图）、图片、网址书签。",
+      "表格、分栏（/分栏）、绘图（/绘图：Excalidraw + mermaid）、图片、网址书签。",
       "高级块各有专题：数学公式 / 绘图 / 分栏。",
     ]),
     h("数学公式", "h2"),
@@ -185,7 +185,7 @@ function equation(): Block[] {
 function drawing(): Block[] {
   return [
     h("绘图", "h1"),
-    callout("手绘白板 + 思维导图/流程图 + AI 文生图，都在「绘图」块里。"),
+    callout("手绘白板 + 思维导图/流程图，都在「绘图」块里。"),
     h("插入画布", "h2"),
     bullet([
       "输入 `/绘图` 插入一个绘图块，点击进入编辑器；支持缩放 / 平移 / 全屏。",
@@ -196,11 +196,6 @@ function drawing(): Block[] {
     bullet([
       "界面切换到「Mermaid」，书写源码即时渲染：flowchart / sequence / class / state / ER / mindmap / timeline / kanban / gantt / pie 等。",
       "选择器提供常见语法；图形可直接再编辑源码。",
-    ]),
-    h("AI 文生图", "h2"),
-    bullet([
-      "「AI 绘图」输入描述生成图片（文生图 / 图生图），插入到画布或页面。",
-      "需在 AI 设置中配置并启用支持文生图的模型（OpenAI 兼容端点）；未配置时隐藏。",
     ]),
     rule(),
     h("下一步", "h2"),
