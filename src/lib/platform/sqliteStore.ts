@@ -246,10 +246,6 @@ export class SqliteStore {
         tag_id TEXT NOT NULL,
         PRIMARY KEY (page_id, tag_id)
       );
-      INSERT OR IGNORE INTO tags (id, name, color, sort_order) VALUES
-        ('tag-todo', '未完成', '#ef4444', 0),
-        ('tag-doing', '进行中', '#f59e0b', 1),
-        ('tag-done', '已完成', '#22c55e', 2);
       CREATE TABLE IF NOT EXISTS attachments (
         id TEXT PRIMARY KEY,
         page_id TEXT,
@@ -359,6 +355,14 @@ export class SqliteStore {
       this.db.run("ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0");
     } catch {
       /* already exists */
+    }
+    // 种子标签：必须在补列之后写入（旧库无 color 时，先 ALTER 再 INSERT）。
+    try {
+      this.db.run(
+        "INSERT OR IGNORE INTO tags (id, name, color, sort_order) VALUES ('tag-todo', '未完成', '#ef4444', 0), ('tag-doing', '进行中', '#f59e0b', 1), ('tag-done', '已完成', '#22c55e', 2)",
+      );
+    } catch {
+      /* already seeded */
     }
   }
 
