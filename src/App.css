@@ -3959,6 +3959,8 @@ body.content-full .editor-placeholder {
   padding: 4px 8px;
   font-size: 13px;
   min-width: 0;
+  /* 让原生 date/select/checkbox 控件跟随暗色主题。 */
+  color-scheme: dark;
 }
 
 .prop-value:focus {
@@ -8821,6 +8823,8 @@ p:has(> .editor-drawing-container) {
   padding: 4px 6px;
   font-size: 13px;
   box-sizing: border-box;
+  /* 让原生 date/select/checkbox 控件跟随暗色主题（否则白底突兀）。 */
+  color-scheme: dark;
 }
 
 .db-input:hover {
