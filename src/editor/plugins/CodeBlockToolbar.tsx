@@ -93,7 +93,7 @@ export function CodeBlockToolbar() {
     const applyAll = () => {
       try {
         editor.getEditorState().read(() => {
-          const nodes = $getRoot().getAllNodes();
+          const nodes = (($getRoot() as any).getAllNodes?.() ?? []) as any[];
           for (const n of nodes) {
             if (n.getType() === CodeNode.getType()) {
               const key = n.getKey();
