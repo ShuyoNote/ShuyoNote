@@ -9375,6 +9375,14 @@ p:has(> .editor-drawing-container) {
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+}
+.db-board-col-header:active {
+  cursor: grabbing;
+}
+.db-board-col-header-dragging {
+  opacity: 0.5;
 }
 
 .db-board-dot {

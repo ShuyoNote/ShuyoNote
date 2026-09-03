@@ -136,6 +136,10 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [boardDragPos, setBoardDragPos] = useState<{ x: number; y: number } | null>(null);
   const boardDragRef = useRef<{ sx: number; sy: number; moved: boolean } | null>(null);
   const boardDragTitleRef = useRef("");
+  // 数据库看板列(分组)拖拽换序：保存分组顺序(可重排)。
+  const [boardGroupOrder, setBoardGroupOrder] = useState<string[]>([]);
+  const [colDrag, setColDrag] = useState<string | null>(null);
+  const colDragRef = useRef<{ sx: number; sy: number; moved: boolean } | null>(null);
   // 甘特图左侧(标题/负责人/日期)列宽，可拖拽调整。
   const [ganttMetaW, setGanttMetaW] = useState(430);
   const ganttResizeRef = useRef<{ sx: number; sw: number } | null>(null);
@@ -238,11 +242,12 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     setFilter(cfg.filter ?? "");
     setSort(cfg.sort ?? null);
     setBoardGroupAttr(cfg.board_group_attr ?? null);
+    setBoardGroupOrder(Array.isArray(cfg.board_group_order) ? cfg.board_group_order : []);
     setViewsPop(false);
   };
   const saveCurrentView = async () => {
     const name = viewName.trim() || `视图 ${views.length + 1}`;
-    const config = JSON.stringify({ filter, sort, board_group_attr: boardGroupAttr });
+    const config = JSON.stringify({ filter, sort, board_group_attr: boardGroupAttr, board_group_order: boardGroupOrder });
     try {
       await api.saveDbView({ db_page_id: pageId, name, view_type: viewType, config });
       setViewName("");
@@ -506,8 +511,17 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       if (g) g.rows.push(r);
       else unset.rows.push(r);
     }
-    return [...groups, unset];
-  }, [boardAttr, rows]);
+    // 按用户拖拽排序（boardGroupOrder，如无则 options 顺序）。
+    let ordered = groups;
+    if (boardGroupOrder.length > 0) {
+      const byOrder = boardGroupOrder
+        .map((id) => groups.find((g) => g.id === id))
+        .filter(Boolean) as (typeof groups)[number][];
+      const rest = groups.filter((g) => !boardGroupOrder.includes(g.id));
+      ordered = [...byOrder, ...rest];
+    }
+    return [...ordered, unset];
+  }, [boardAttr, rows, boardGroupOrder]);
 
   const moveBoardCard = async (pageId: string, colId: string) => {
     if (!boardAttr) return;
@@ -554,6 +568,45 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       window.removeEventListener("pointerup", onUp);
     };
   }, [boardDrag]);
+  // 数据库看板列(分组)拖拽换序：pointer-based，列头按住 → 找落点列 → 重排 boardGroupOrder。
+  useEffect(() => {
+    if (!colDrag) return;
+    const onMove = (e: PointerEvent) => {
+      if (!colDragRef.current) return;
+      if (!colDragRef.current.moved && Math.hypot(e.clientX - colDragRef.current.sx, e.clientY - colDragRef.current.sy) < 5) return;
+      colDragRef.current.moved = true;
+      setBoardDragOver(null);
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.(".db-board-col") as HTMLElement | null;
+      setBoardDragOver(col?.dataset.col ?? null);
+    };
+    const onUp = (e: PointerEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.(".db-board-col") as HTMLElement | null;
+      const target = col?.dataset.col ?? null;
+      const moved = colDragRef.current?.moved;
+      setColDrag(null);
+      setBoardDragOver(null);
+      colDragRef.current = null;
+      if (target && moved && target !== colDrag) {
+        setBoardGroupOrder((prev) => {
+          const base = prev.length ? prev : (boardGroups.filter((g) => g.id !== "__none").map((g) => g.id));
+          const without = base.filter((id) => id !== colDrag);
+          const idx = without.indexOf(target);
+          if (idx < 0) return without;
+          const next = [...without];
+          next.splice(idx, 0, colDrag);
+          return next;
+        });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [colDrag, boardGroups]);
 
   const dateCol = query?.columns.find((c) => c.attr_type === "date") ?? null;
 
@@ -1033,7 +1086,15 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           <div className="db-board-columns">
             {boardGroups.map((g) => (
               <div key={g.id} className={`db-board-col ${boardDragOver === g.id ? "db-board-col-over" : ""}`} data-col={g.id}>
-                <div className="db-board-col-header">
+                <div
+                  className={`db-board-col-header${colDrag === g.id ? " db-board-col-header-dragging" : ""}`}
+                  title={g.id === "__none" ? "" : "拖动调整列顺序"}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0 || g.id === "__none") return;
+                    colDragRef.current = { sx: e.clientX, sy: e.clientY, moved: false };
+                    setColDrag(g.id);
+                  }}
+                >
                   <span className="db-board-dot" style={{ background: tagColor(g.name).solid }} />
                   <span className="db-board-col-name">{g.name}</span>
                   <span className="db-board-col-count">{g.rows.length}</span>
