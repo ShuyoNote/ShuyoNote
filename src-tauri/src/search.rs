@@ -150,6 +150,7 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
                 title,
                 snippet: truncate(&text, 120),
                 space: Some(space),
+                workspace_id: None,
                 score: 0.0,
             })
         })
@@ -413,6 +414,7 @@ async fn search_semantic_async(
             title,
             snippet,
             space: None,
+            workspace_id: None,
             score: s,
         })
         .collect())
@@ -460,6 +462,9 @@ pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchRes
             for h in hits.iter_mut() {
                 if h.space.is_none() {
                     h.space = Some(sname.clone());
+                }
+                if h.workspace_id.is_none() {
+                    h.workspace_id = Some(sid.clone());
                 }
             }
             out.append(&mut hits);
@@ -516,6 +521,7 @@ fn search_fts(
             title,
             snippet,
             space: Some(space),
+            workspace_id: None,
             score: 0.0,
         })
     };
@@ -553,6 +559,7 @@ fn search_like(
                 title,
                 snippet,
                 space: Some(space),
+                workspace_id: None,
                 score: 0.0,
             })
         })

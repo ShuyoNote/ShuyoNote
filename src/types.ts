@@ -32,6 +32,8 @@ export interface SearchResult {
   title: string;
   snippet: string;
   space?: string;
+  /** Workspace id the result belongs to — 全空间结果点击时切换到该空间。 */
+  workspace_id?: string;
   /** M20 打磨 — 语义相关度（越大越相关，0 = 未提供/无语义分）。用于 UI 显示匹配度提示。 */
   score?: number;
 }

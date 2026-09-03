@@ -1160,6 +1160,7 @@ function makeInvoke(store: SqliteStore) {
         title: x.r.title,
         snippet: snippetForQuery(String(x.r.content_text ?? ""), query),
         space: getWs()?.name ?? "",
+        workspace_id: wsId,
         score: typeof x.score === "number" ? +x.score.toFixed(4) : x.score,
       })) as T;
     }

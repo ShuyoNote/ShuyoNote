@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { useSpaceStore } from "../store/space";
 import type { SearchResult } from "../types";
 import { SearchIcon } from "./icons";
 
@@ -85,8 +86,16 @@ export function SearchPanel() {
     };
   }, [query, allSpaces]);
 
-  const select = (id: string) => {
+  // 全空间搜索结果点击：若结果属于其他空间，先切换到该空间再打开。
+  const select = async (id: string, workspaceId?: string) => {
     const q = query.trim();
+    if (workspaceId) {
+      const { activeId, switchTo } = useSpaceStore.getState();
+      if (workspaceId !== activeId) {
+        const ok = await switchTo(workspaceId);
+        if (ok) await useNotes.getState().loadPages();
+      }
+    }
     openPage(id);
     setSearchQuery(q);
     setQuery("");
@@ -111,7 +120,7 @@ export function SearchPanel() {
     } else if (e.key === "Enter") {
       e.preventDefault();
       const hit = results[activeIdx];
-      if (hit) select(hit.id);
+      if (hit) select(hit.id, hit.workspace_id);
     }
   };
 
@@ -249,7 +258,7 @@ export function SearchPanel() {
                       onMouseEnter={() => setActiveIdx(i)}
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        select(r.id);
+                        select(r.id, r.workspace_id);
                       }}
                     >
                       <div className="search-item-title">
