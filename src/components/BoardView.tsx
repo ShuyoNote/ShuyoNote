@@ -36,6 +36,20 @@ export function BoardView() {
   // 列拖拽：列头按下候选，全局 move 找落点列，up 落列则 reorder_tag。
   useEffect(() => {
     if (!colDrag) return;
+    // 横向找落点列：先看鼠标是否在某列内，否则取 X 最近的列——避免 elementFromPoint
+    // 在列间空白/右缘返回非列元素导致「松手不生效」（尤其从左往右拖到最右列）。
+    const findColAt = (x: number, y: number): HTMLElement | null => {
+      const cols = Array.from(document.querySelectorAll<HTMLElement>("[data-col]"));
+      let best: HTMLElement | null = null;
+      let bestD = Infinity;
+      for (const c of cols) {
+        const r = c.getBoundingClientRect();
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return c;
+        const d = Math.min(Math.abs(x - r.left), Math.abs(x - r.right), Math.abs(x - r.left - r.width / 2));
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      return best;
+    };
     const onMove = (e: PointerEvent) => {
       if (!colDragStartRef.current) return;
       if (!colDragMovedRef.current && Math.hypot(e.clientX - colDragStartRef.current.x, e.clientY - colDragStartRef.current.y) < 5) return;
@@ -46,8 +60,7 @@ export function BoardView() {
       }
       e.preventDefault();
       setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      const col = findColAt(e.clientX, e.clientY);
       if (col) {
         const rect = col.getBoundingClientRect();
         setColDragOver(col.dataset.col ?? null);
@@ -57,8 +70,7 @@ export function BoardView() {
       }
     };
     const onUp = (e: PointerEvent) => {
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      const col = findColAt(e.clientX, e.clientY);
       const target = col?.dataset.col ?? null;
       const moved = colDragMovedRef.current;
       setColDrag(null);
