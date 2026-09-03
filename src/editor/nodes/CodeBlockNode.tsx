@@ -2,23 +2,74 @@ import { DecoratorNode, type EditorConfig, type LexicalEditor, type NodeKey, typ
 import { useEffect, useRef, useState } from "react";
 import { $getNodeByKey } from "lexical";
 import { toast } from "../../store/toast";
-import Prism from "prismjs";
-import "prismjs/components/prism-markup";
-import "prismjs/components/prism-clike";
-import "prismjs/components/prism-javascript";
-import "prismjs/components/prism-typescript";
-import "prismjs/components/prism-python";
-import "prismjs/components/prism-java";
-import "prismjs/components/prism-c";
-import "prismjs/components/prism-cpp";
-import "prismjs/components/prism-csharp";
-import "prismjs/components/prism-go";
-import "prismjs/components/prism-rust";
-import "prismjs/components/prism-json";
-import "prismjs/components/prism-bash";
-import "prismjs/components/prism-css";
-import "prismjs/components/prism-sql";
-import "prismjs/components/prism-markup-templating";
+
+const KEYWORDS = new Set([
+  "if","else","for","while","do","switch","case","break","continue","return","void","int","char",
+  "float","double","long","short","bool","true","false","null","const","let","var","function",
+  "class","struct","enum","import","export","from","new","delete","this","static","public","private",
+  "protected","try","catch","throw","finally","extends","implements","interface","type","namespace",
+  "using","def","print","printf","scanf","main","async","await","in","of","not","and","or",
+]);
+const STR = /^('(?:\\.|[^'])*'|"(?:\\.|[^"])*")/;
+
+function highlightHtml(text: string, _lang: string): string {
+  const esc = escapeHtml(text);
+  // 逐字符扫描，为 注释/字符串/数字/关键字/函数 包裹 token span。
+  let out = "";
+  const s = esc;
+  let i = 0;
+  while (i < s.length) {
+    const rest = s.slice(i);
+    // 行注释
+    if (rest.startsWith("//")) {
+      const end = rest.indexOf("\n");
+      const c = end === -1 ? rest : rest.slice(0, end);
+      out += `<span class="tok-comment">${c}</span>`;
+      i += c.length;
+      continue;
+    }
+    // 注释 /* ... */
+    if (rest.startsWith("/*")) {
+      const end = rest.indexOf("*/");
+      const c = end === -1 ? rest : rest.slice(0, end + 2);
+      out += `<span class="tok-comment">${c}</span>`;
+      i += c.length;
+      continue;
+    }
+    // 字符串
+    const m = rest.match(STR);
+    if (m) {
+      out += `<span class="tok-string">${m[0]}</span>`;
+      i += m[0].length;
+      continue;
+    }
+    // 数字
+    const num = /^\d+(\.\d+)?/.exec(rest);
+    if (num) {
+      out += `<span class="tok-number">${num[0]}</span>`;
+      i += num[0].length;
+      continue;
+    }
+    // 单词（可能关键字或函数）
+    const word = /^[A-Za-z_]\w*/.exec(rest);
+    if (word) {
+      const w = word[0];
+      const nextChar = s[i + w.length];
+      if (KEYWORDS.has(w)) {
+        out += `<span class="tok-keyword">${w}</span>`;
+      } else if (nextChar === "(") {
+        out += `<span class="tok-func">${w}</span>`;
+      } else {
+        out += `<span class="tok-plain">${w}</span>`;
+      }
+      i += w.length;
+      continue;
+    }
+    out += s[i];
+    i += 1;
+  }
+  return out;
+}
 
 export type SerializedCodeBlock = Spread<{ text: string; lang: string }, SerializedLexicalNode>;
 
