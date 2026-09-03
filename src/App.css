@@ -6798,6 +6798,10 @@ select.prop-value {
   margin: 0.5em 0;
   position: relative;
   line-height: 1.5;
+  color-scheme: light;
+}
+[data-theme="dark"] .editor-codeblock {
+  color-scheme: dark;
 }
 /* 行号列。 */
 .editor-code-lines {
