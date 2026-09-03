@@ -32,7 +32,8 @@ import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons"
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useTemplateCenterStore } from "./store/templateCenter";
-import { inputDialog } from "./store/input";
+import { EmojiPicker } from "./components/EmojiPicker";
+import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
@@ -319,17 +320,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
               <button
                 className="page-icon-btn"
                 onClick={() =>
-                  inputDialog({
-                    title: "页面图标",
-                    placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
-                    okLabel: "设置",
-                    onSubmit: async (v) => {
-                      const icon = (v ?? "").trim();
-                      if (current) {
-                        await api.setPageIcon(current.id, icon);
-                        await useNotes.getState().openPage(current.id);
-                      }
-                    },
+                  useIconPicker.getState().openIconPicker(async (icon) => {
+                    if (current) {
+                      await api.setPageIcon(current.id, icon);
+                      await useNotes.getState().openPage(current.id);
+                    }
                   })
                 }
                 title="更换图标"
@@ -346,17 +341,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
             <button
               className="page-action-btn"
               onClick={() =>
-                inputDialog({
-                  title: "页面图标",
-                  placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
-                  okLabel: "设置",
-                  onSubmit: async (v) => {
-                    const icon = (v ?? "").trim();
-                    if (current) {
-                      await api.setPageIcon(current.id, icon);
-                      await useNotes.getState().openPage(current.id);
-                    }
-                  },
+                useIconPicker.getState().openIconPicker(async (icon) => {
+                  if (current) {
+                    await api.setPageIcon(current.id, icon);
+                    await useNotes.getState().openPage(current.id);
+                  }
                 })
               }
             >
@@ -421,6 +410,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
       {/* Tag picker modal, opened by the page-actions "添加标签" row. */}
       <TagAddButton pageId={pageId} />
       <TableOfContents />
+      <EmojiPicker />
       {coverOpen && (
         <CoverPicker
           current={current?.cover}
