@@ -1104,6 +1104,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                 <div key={key} className={`db-gantt-row${laneClass ? " " + laneClass : ""}`}>
                   <div className="db-gantt-meta">
                     <span className="db-gantt-name" onClick={() => openPage(it.row.page_id)}>{label}</span>
+                    <span className="db-gantt-owner">{gantt.statusCol ? it.row.values[gantt.statusCol.id] || "—" : ""}</span>
                     {sCol && (
                       <input
                         type="date"

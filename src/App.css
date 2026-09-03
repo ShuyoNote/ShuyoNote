@@ -9582,7 +9582,7 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-rowlabel {
   flex: none;
-  width: 200px;
+  width: 260px;
   text-align: left;
   font-size: 12px;
   padding: 5px 10px;
@@ -9604,12 +9604,21 @@ p:has(> .editor-drawing-container) {
 /* 甘特图行左侧：任务名 + 开始/结束 两个数据项。 */
 .db-gantt-meta {
   flex: none;
-  width: 200px;
+  width: 260px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 8px;
   min-width: 0;
+}
+.db-gantt-owner {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  max-width: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .db-gantt-name {
   flex: 1;
