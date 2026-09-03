@@ -3823,15 +3823,11 @@ body.is-ai-open .main {
   padding: 0 var(--doc-pad);
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 36px;
+  gap: 12px;
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 36px;
   margin-top: 8px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--transition-fast);
-}
-.title-area:hover .page-actions,
-.title-area:focus-within .page-actions {
   opacity: 1;
   pointer-events: auto;
 }
