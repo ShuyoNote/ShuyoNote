@@ -25,6 +25,15 @@ export function CodeBlockToolbar() {
 
     const ensure = () => {
       document.querySelectorAll<HTMLElement>(".editor-codeblock").forEach((pre) => {
+        // 行号 gutter（1..N），与代码同高对齐。
+        if (!pre.querySelector(".editor-code-lines")) {
+          const code = pre.querySelector("code");
+          const n = (code?.textContent ?? "").split("\n").length;
+          const lines = document.createElement("div");
+          lines.className = "editor-code-lines";
+          lines.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+          pre.appendChild(lines);
+        }
         if ((pre as any)._snToolbar) return;
         const key = pre.getAttribute("data-code-key");
         const toolbar = document.createElement("div");

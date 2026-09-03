@@ -8,6 +8,7 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
+import "./prismSetup";
 import { registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
