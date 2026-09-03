@@ -2,6 +2,23 @@ import { DecoratorNode, type EditorConfig, type LexicalEditor, type NodeKey, typ
 import { useEffect, useRef, useState } from "react";
 import { $getNodeByKey } from "lexical";
 import { toast } from "../../store/toast";
+import Prism from "prismjs";
+import "prismjs/components/prism-markup";
+import "prismjs/components/prism-clike";
+import "prismjs/components/prism-javascript";
+import "prismjs/components/prism-typescript";
+import "prismjs/components/prism-python";
+import "prismjs/components/prism-java";
+import "prismjs/components/prism-c";
+import "prismjs/components/prism-cpp";
+import "prismjs/components/prism-csharp";
+import "prismjs/components/prism-go";
+import "prismjs/components/prism-rust";
+import "prismjs/components/prism-json";
+import "prismjs/components/prism-bash";
+import "prismjs/components/prism-css";
+import "prismjs/components/prism-sql";
+import "prismjs/components/prism-markup-templating";
 
 export type SerializedCodeBlock = Spread<{ text: string; lang: string }, SerializedLexicalNode>;
 
@@ -73,8 +90,6 @@ export function $createCodeBlockNode(text = "", lang = "javascript", key?: NodeK
 }
 
 function highlightHtml(text: string, lang: string): string {
-  const Prism = (window as any).Prism;
-  if (!Prism) return escapeHtml(text);
   const grammar = Prism.languages?.[lang] || Prism.languages?.javascript || Prism.languages?.markup;
   if (!grammar) return escapeHtml(text);
   try {
@@ -131,6 +146,9 @@ function CodeBlockView({ nodeKey, editor }: { nodeKey: string; editor: LexicalEd
 
   return (
     <div className="codeblock-view">
+      <div className="codeblock-lines" aria-hidden>
+        {Array.from({ length: lines }, (_, i) => i + 1).join("\n")}
+      </div>
       <pre ref={preRef} className="codeblock-highlight" aria-hidden dangerouslySetInnerHTML={{ __html: highlightHtml(state.text, state.lang) }} />
       <textarea
         ref={taRef}
