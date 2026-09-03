@@ -83,7 +83,6 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const [saved, setSaved] = useState(true);
   const [coverOpen, setCoverOpen] = useState(false);
   const [coverH, setCoverH] = useState<number | null>(null);
-  const [actionsOpen, setActionsOpen] = useState(false);
   const coverHRef = useRef(300);
   const coverDrag = useRef<{ sy: number; sh: number } | null>(null);
   // 题头图上下拖动定位（背景位置 y，0-100%）。
@@ -316,27 +315,47 @@ function NoteEditor({ pageId }: { pageId: string }) {
         ) : null}
         <div className="title-area">
           <div className="page-actions">
-            <div className="page-actions-more">
-              <button className="page-action-btn" onClick={() => setActionsOpen((v) => !v)} title="更多页面操作">
-                ⋯
-              </button>
-              {actionsOpen && (
-                <div className="page-actions-menu">
-                  <button className="page-menu-item" onClick={() => { setActionsOpen(false); inputDialog({ title: "页面图标", placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除", okLabel: "设置", onSubmit: async (v) => { const icon = (v ?? "").trim(); if (current) { await api.setPageIcon(current.id, icon); await useNotes.getState().openPage(current.id); } } }); }}>
-                    <SmileIcon className="page-action-icon" /> {current?.icon ? "更换图标" : "添加图标"}
-                  </button>
-                  <button className="page-menu-item" onClick={() => { setActionsOpen(false); setCoverOpen(true); }}>
-                    <ImageIcon className="page-action-icon" /> {current?.cover ? "更换题头图" : "添加题头图"}
-                  </button>
-                  <button className="page-menu-item" onClick={() => { setActionsOpen(false); usePropertyUiStore.getState().requestAddProp(); }}>
-                    <PropertyIcon className="page-action-icon" /> 添加属性
-                  </button>
-                  <button className="page-menu-item" onClick={() => { setActionsOpen(false); usePropertyUiStore.getState().requestAddTag(); }}>
-                    <TagIcon className="page-action-icon" /> 添加标签
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              className="page-action-btn"
+              onClick={() =>
+                inputDialog({
+                  title: "页面图标",
+                  placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
+                  okLabel: "设置",
+                  onSubmit: async (v) => {
+                    const icon = (v ?? "").trim();
+                    if (current) {
+                      await api.setPageIcon(current.id, icon);
+                      await useNotes.getState().openPage(current.id);
+                    }
+                  },
+                })
+              }
+            >
+              <SmileIcon className="page-action-icon" /> {current?.icon ? "更换图标" : "添加图标"}
+            </button>
+            <button
+              className="page-action-btn"
+              onClick={() => setCoverOpen(true)}
+            >
+              <ImageIcon className="page-action-icon" /> {current?.cover ? "更换题头图" : "添加题头图"}
+            </button>
+            <button
+              className="page-action-btn"
+              onClick={() => usePropertyUiStore.getState().requestAddProp()}
+            >
+              <PropertyIcon className="page-action-icon" /> 添加属性
+            </button>
+            <button
+              className="page-action-btn"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                usePropertyUiStore.getState().setTagAnchor({ top: r.bottom, left: r.left, width: r.width });
+                usePropertyUiStore.getState().requestAddTag();
+              }}
+            >
+              <TagIcon className="page-action-icon" /> 添加标签
+            </button>
           </div>
           <div className="editor-head">
             {current?.icon ? (

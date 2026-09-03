@@ -4202,6 +4202,40 @@ select.prop-value {
   flex-shrink: 0;
   margin-left: auto;
 }
+/* 工具栏「⋯」折叠菜单。 */
+.editor-toolbar-more {
+  position: relative;
+}
+.editor-more-menu {
+  position: fixed;
+  z-index: 1500;
+  top: 34px;
+  right: 8px;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+.toolbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.toolbar-menu-item:hover {
+  background: var(--hover);
+}
 
 .toolbar-btn {
   width: 28px;

@@ -25,6 +25,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const [importing, setImporting] = useState(false);
   const contentWidth = useViewStore((s) => s.contentWidth);
   const setContentWidth = useViewStore((s) => s.setContentWidth);
+  const [exportOpen, setExportOpen] = useState(false);
 
   // Apply the adaptive-width body class so content fills the available width.
   useEffect(() => {
@@ -104,15 +105,6 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       <button className="toolbar-btn" onClick={importMarkdown} title="从 Markdown 导入">
         <UploadIcon />
       </button>
-      <button className="toolbar-btn" onClick={exportMarkdown} title="导出为 Markdown">
-        <DownloadIcon />
-      </button>
-      <button className="toolbar-btn" onClick={exportHtml} title="导出为 HTML">
-        <FileCodeIcon />
-      </button>
-      <button className="toolbar-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
-        <PrintIcon />
-      </button>
       <button className="toolbar-btn" onClick={saveAsTemplate} title="把当前页保存为模板（我的模板）">
         <TemplateIcon />
       </button>
@@ -123,6 +115,28 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       >
         <ContentWidthIcon />
       </button>
+      <div className="editor-toolbar-more">
+        <button
+          className="toolbar-btn"
+          onClick={() => setExportOpen((v) => !v)}
+          title="更多（导出等）"
+        >
+          ⋯
+        </button>
+        {exportOpen && (
+          <div className="editor-more-menu">
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportMarkdown(); }} title="导出为 Markdown">
+              <DownloadIcon /> 导出 Markdown
+            </button>
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title="导出为 HTML">
+              <FileCodeIcon /> 导出 HTML
+            </button>
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title="导出为 PDF">
+              <PrintIcon /> 导出 PDF
+            </button>
+          </div>
+        )}
+      </div>
       <HistoryPanel pageId={pageId} />
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
     </div>
