@@ -152,7 +152,7 @@ export function AiSettingsForm({
             >
               {AI_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.domestic ? "🇨🇳 " : ""}{p.name}{p.needsKey ? "" : "（本地）"}
+                  {p.name}{p.needsKey ? "" : "（本地）"}
                 </option>
               ))}
               <option value="custom">自定义</option>
