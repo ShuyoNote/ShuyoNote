@@ -127,16 +127,14 @@ export function BoardView() {
     const onUp = (e: PointerEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.("[data-col]") as HTMLElement | null;
-      const card = el?.closest?.("[data-page]") as HTMLElement | null;
       const target = col?.dataset.col ?? null;
-      const before = card?.dataset.page ?? null; // 落点卡片（拖到它前面）
       const moved = dragMovedRef.current;
       setDragOver(null);
       setDragPage(null);
       setDragPos(null);
       dragStartRef.current = null;
       dragMovedRef.current = false;
-      if (target && moved) void onDrop(dragPage, target, before);
+      if (target && moved) void onDrop(dragPage, target);
     };
     const onCancel = () => {
       setDragOver(null);
@@ -187,12 +185,13 @@ export function BoardView() {
   };
   useEffect(load, [groupField]);
 
-  const onDrop = async (pageId: string, colId: string, beforePageId?: string | null) => {
+  const onDrop = async (pageId: string, colId: string) => {
     try {
       if (groupField === "tag") {
         if (colId === "__none") return; // tag mode keeps "未分类" as read-only
-        // 同列/跨列换序：指定落点卡片 → reorder_card；否则 move_card（列尾）。
-        await api.reorderCard(pageId, colId, beforePageId || null);
+        // 先移动到目标列（改 tag）；同列(colId 相同)时 moveCard 不改 sort_order，
+        // 避免破坏页面树顺序——卡片移动只影响标签归属，不动页面树层级/顺序。
+        await api.moveCard(pageId, colId);
       } else {
         const attrId = groupField.slice("attr:".length);
         if (colId === "__none") {
