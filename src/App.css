@@ -12967,12 +12967,14 @@ p:has(> .editor-drawing-container) {
   padding-top: 10vh;
 }
 .ai-settings {
-  width: min(420px, calc(100vw - 48px));
+  width: min(840px, calc(100vw - 48px));
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
   padding: 18px;
+  max-height: calc(100vh - 20vh);
+  overflow-y: auto;
 }
 .ai-settings-title {
   font-size: 15px;
