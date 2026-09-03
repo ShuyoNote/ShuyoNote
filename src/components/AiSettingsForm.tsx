@@ -46,6 +46,8 @@ export function AiSettingsForm({
   const [embedTesting, setEmbedTesting] = useState(false);
   const [embedTestOk, setEmbedTestOk] = useState<boolean | null>(null);
   const [embedTestMsg, setEmbedTestMsg] = useState<string | null>(null);
+  // 测试连接探测到的服务商模型列表 → 模型下拉从这取。
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
   const isOpenAI = provider === "openai";
@@ -86,6 +88,11 @@ export function AiSettingsForm({
       const r = await probeApi(resolved());
       setTestOk(r.ok);
       setTestMsg(r.message);
+      // 探测结果作为模型下拉内容，并自动选中第一项。
+      if (r.models?.length) {
+        setDiscoveredModels(r.models);
+        if (!model.trim()) setModel(r.models[0]);
+      }
     } catch (e) {
       setTestOk(false);
       setTestMsg(String((e as Error)?.message ?? e));
@@ -194,7 +201,7 @@ export function AiSettingsForm({
             />
           </label>
           <datalist id="ai-model-list">
-            {(MODEL_OPTIONS[currentPresetId] ?? []).map((m) => (
+            {(discoveredModels.length ? discoveredModels : MODEL_OPTIONS[currentPresetId] ?? []).map((m) => (
               <option key={m} value={m} />
             ))}
           </datalist>
