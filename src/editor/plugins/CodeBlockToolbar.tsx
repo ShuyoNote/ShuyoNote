@@ -22,6 +22,11 @@ export function CodeBlockToolbar() {
     };
 
     const ensureOne = (pre: HTMLElement) => {
+      // 不依赖 .editor-codeblock class：直接内联定位，保证绝对定位相对 pre。
+      pre.style.position = "relative";
+      pre.style.paddingLeft = pre.style.paddingLeft || "56px";
+      pre.style.lineHeight = pre.style.lineHeight || "1.5";
+
       let lines = pre.querySelector<HTMLElement>(".editor-code-lines");
       const n = lineCount(pre);
       if (!lines) {
@@ -29,6 +34,15 @@ export function CodeBlockToolbar() {
         lines.className = "editor-code-lines";
         pre.appendChild(lines);
       }
+      lines.style.position = "absolute";
+      lines.style.left = "0";
+      lines.style.top = "12px";
+      lines.style.width = "40px";
+      lines.style.textAlign = "right";
+      lines.style.paddingRight = "10px";
+      lines.style.borderRight = "1px solid var(--border)";
+      lines.style.userSelect = "none";
+      lines.style.whiteSpace = "pre";
       const next = Array.from({ length: n }, (_, i) => i + 1).join("\n");
       if (lines.textContent !== next) lines.textContent = next;
 
@@ -36,6 +50,12 @@ export function CodeBlockToolbar() {
       const key = pre.getAttribute("data-code-key");
       const toolbar = document.createElement("div");
       toolbar.className = "editor-code-toolbar";
+      toolbar.style.position = "absolute";
+      toolbar.style.top = "5px";
+      toolbar.style.right = "8px";
+      toolbar.style.display = "flex";
+      toolbar.style.alignItems = "center";
+      toolbar.style.gap = "6px";
 
       const sel = document.createElement("select");
       sel.className = "editor-code-lang";
