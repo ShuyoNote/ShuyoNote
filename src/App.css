@@ -6874,12 +6874,21 @@ select.prop-value {
   color: var(--text);
   background: var(--hover);
 }
-.editor-codeblock-node .tok-keyword { color: #d2a8ff; }
-.editor-codeblock-node .tok-string { color: #9ecbff; }
-.editor-codeblock-node .tok-func { color: #ffab70; }
-.editor-codeblock-node .tok-number { color: #f97583; }
-.editor-codeblock-node .tok-comment { color: #6a737d; font-style: italic; }
-.editor-codeblock-node .tok-plain { color: var(--text); }
+.editor-codeblock-node .token.comment,
+.editor-codeblock-node .token.prolog,
+.editor-codeblock-node .token.doctype,
+.editor-codeblock-node .token.cdata { color: #6a737d; }
+.editor-codeblock-node .token.keyword { color: #d2a8ff; }
+.editor-codeblock-node .token.string,
+.editor-codeblock-node .token.char,
+.editor-codeblock-node .token.attr-value { color: #9ecbff; }
+.editor-codeblock-node .token.function,
+.editor-codeblock-node .token.class-name { color: #ffab70; }
+.editor-codeblock-node .token.number,
+.editor-codeblock-node .token.boolean,
+.editor-codeblock-node .token.constant { color: #f97583; }
+.editor-codeblock-node .token.operator { color: #79c0ff; }
+.editor-codeblock-node .token.variable { color: #ffa657; }
 .editor-codeblock {
   display: block;
   white-space: pre;
