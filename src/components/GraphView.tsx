@@ -29,7 +29,7 @@ const EDGE_COLORS: Record<string, string> = {
 const IN_COLOR = "#3370ff";
 const OUT_COLOR = "#f59e0b";
 // 超过该节点数的图跳过 O(n^2) 力导向动画，改用静态环状布局（性能守卫）。
-const MAX_FORCE = 400;
+const MAX_FORCE = 250;
 
 function maxSpeed(ns: SimNode[]): number {
   let m = 0;
@@ -369,13 +369,15 @@ export function GraphView() {
     let running = true;
     let settled = 0;
     let iterations = 0;
+    let frameTick = 0;
     const loop = () => {
       if (!running) return;
       tick(simRef.current, edgesRef.current, size, dragRef.current?.id ?? null, dimension, pinnedIdsRef.current);
       settled = maxSpeed(simRef.current) < 0.1 ? settled + 1 : 0;
       iterations += 1;
-      setFrame((f) => f + 1);
-      if (settled < 30 && iterations < 900 && simRef.current.length > 1) {
+      // 节流：每 2 帧才触发一次 React 渲染(~30fps)，减轻大量节点/边的渲染负担。
+      if (frameTick++ % 2 === 0) setFrame((f) => f + 1);
+      if (settled < 30 && iterations < 350 && simRef.current.length > 1) {
         raf = requestAnimationFrame(loop);
       }
     };
