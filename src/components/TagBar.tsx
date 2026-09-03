@@ -90,6 +90,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
 
   // "添加标签" from the page-actions row: open the picker (fresh).
   const addTagSeq = usePropertyUiStore((s) => s.addTagSeq);
+  const ackAddTag = usePropertyUiStore((s) => s.ackAddTag);
   useEffect(() => {
     if (addTagSeq > 0) {
       setManage(false);
@@ -97,6 +98,8 @@ export function TagAddButton({ pageId }: { pageId: string }) {
       setEditing(null);
       load();
       setOpen(true);
+      // 消费一次即置 0，否则 seq 永 >0 导致以后每次进入页面都自动弹标签面板。
+      ackAddTag();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addTagSeq]);

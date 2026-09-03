@@ -13,6 +13,9 @@ interface PropertyUiState {
   tagAnchor: { top: number; left: number; width: number } | null;
   requestAddProp: () => void;
   requestAddTag: () => void;
+  // 消费 addTagSeq（标记已处理，置 0——避免一次加标签后 seq 永 >0，导致以后
+  // 每次页面打开都自动弹标签面板）。
+  ackAddTag: () => void;
   setTagAnchor: (a: { top: number; left: number; width: number }) => void;
 }
 
@@ -23,5 +26,6 @@ export const usePropertyUiStore = create<PropertyUiState>((set) => ({
   tagAnchor: null,
   requestAddProp: () => set((s) => ({ addPropSeq: s.addPropSeq + 1 })),
   requestAddTag: () => set((s) => ({ addTagSeq: s.addTagSeq + 1, tagVisible: true })),
+  ackAddTag: () => set({ addTagSeq: 0 }),
   setTagAnchor: (a) => set({ tagAnchor: a }),
 }));
