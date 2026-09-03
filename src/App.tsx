@@ -28,7 +28,7 @@ import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
-import { ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
+import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useTemplateCenterStore } from "./store/templateCenter";
@@ -316,56 +316,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
         <div className="title-area">
           <div className="page-icon-row">
             {current?.icon ? (
-              <div className="page-icon-figure">
-                <button
-                  className="page-icon-btn"
-                  onClick={() =>
-                    inputDialog({
-                      title: "页面图标",
-                      placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
-                      okLabel: "设置",
-                      onSubmit: async (v) => {
-                        const icon = (v ?? "").trim();
-                        if (current) {
-                          await api.setPageIcon(current.id, icon);
-                          await useNotes.getState().openPage(current.id);
-                        }
-                      },
-                    })
-                  }
-                  title="更换图标"
-                >
-                  {/^(data:image|https?:|\.svg)/i.test(current.icon) ? (
-                    <img className="page-icon-img" src={current.icon} alt="" draggable={false} />
-                  ) : (
-                    <span className="page-icon">{current.icon}</span>
-                  )}
-                </button>
-                {current.icon && (
-                  <button
-                    className="page-icon-edit"
-                    onClick={() =>
-                      inputDialog({
-                        title: "页面图标",
-                        placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
-                        okLabel: "设置",
-                        onSubmit: async (v) => {
-                          const icon = (v ?? "").trim();
-                          if (current) {
-                            await api.setPageIcon(current.id, icon);
-                            await useNotes.getState().openPage(current.id);
-                          }
-                        },
-                      })
-                    }
-                  >
-                    更换图标
-                  </button>
-                )}
-              </div>
-            ) : (
               <button
-                className="page-icon-edit"
+                className="page-icon-btn"
                 onClick={() =>
                   inputDialog({
                     title: "页面图标",
@@ -380,12 +332,36 @@ function NoteEditor({ pageId }: { pageId: string }) {
                     },
                   })
                 }
+                title="更换图标"
               >
-                添加图标
+                {/^(data:image|https?:|\.svg)/i.test(current.icon) ? (
+                  <img className="page-icon-img" src={current.icon} alt="" draggable={false} />
+                ) : (
+                  <span className="page-icon">{current.icon}</span>
+                )}
               </button>
-            )}
+            ) : null}
           </div>
           <div className="page-actions">
+            <button
+              className="page-action-btn"
+              onClick={() =>
+                inputDialog({
+                  title: "页面图标",
+                  placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
+                  okLabel: "设置",
+                  onSubmit: async (v) => {
+                    const icon = (v ?? "").trim();
+                    if (current) {
+                      await api.setPageIcon(current.id, icon);
+                      await useNotes.getState().openPage(current.id);
+                    }
+                  },
+                })
+              }
+            >
+              <SmileIcon className="page-action-icon" /> {current?.icon ? "更换图标" : "添加图标"}
+            </button>
             <button
               className="page-action-btn"
               onClick={() => setCoverOpen(true)}
