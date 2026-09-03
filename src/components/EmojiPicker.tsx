@@ -42,10 +42,11 @@ export function EmojiPicker() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if ((e.target as HTMLElement).closest(".emoji-picker, .emoji-picker-overlay")) return;
+      // 面板内点击不关；点击遮罩/背景关闭。
+      if ((e.target as HTMLElement).closest(".emoji-picker")) return;
       close();
     };
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open, close]);
 
@@ -74,7 +75,7 @@ export function EmojiPicker() {
   const currentGroupList = q && matches.length === 0 ? [] : q ? matches : active.list;
 
   return (
-    <div className="emoji-picker-overlay" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="emoji-picker-overlay">
       <div className="emoji-picker">
         <div className="ep-side">
           <button className={`ep-side-btn ${recent.length ? "" : "empty"}`} title="最近使用" onClick={() => setTab("__recent")}>
