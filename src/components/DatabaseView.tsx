@@ -1116,9 +1116,6 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                     {label}
                   </button>
                   <div className="db-gantt-track">
-                    {gantt.todayIdx >= 0 && gantt.todayIdx <= gantt.totalDays && (
-                      <span className="db-gantt-today" style={{ left: `${(gantt.todayIdx / gantt.totalDays) * 100}%` }} />
-                    )}
                     {Array.from({ length: gantt.totalDays }).map((_, di) => {
                       const l = (start.getTime() - gantt.min.getTime()) / 86400000;
                       const w = (end.getTime() - start.getTime()) / 86400000 + 1;

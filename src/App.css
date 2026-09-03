@@ -9665,17 +9665,6 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   font-weight: 600;
 }
-/* 今日线：红色竖线标记当前日期。 */
-.db-gantt-today {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 0;
-  border-left: 2px solid var(--danger);
-  opacity: 0.8;
-  pointer-events: none;
-  z-index: 1;
-}
 .db-gantt-bar {
   position: absolute;
   top: 5px;
