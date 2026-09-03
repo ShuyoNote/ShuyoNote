@@ -83,6 +83,25 @@ export const COVER_PRESETS: CoverPreset[] = [
     ),
   },
   {
+    // 免版权风景题头图（picsum.photos），本地打包。
+    id: "fjord",
+    name: "峡湾",
+    kind: "image",
+    css: `url("covers/fjord.jpg")`,
+  },
+  {
+    id: "peak",
+    name: "雪峰",
+    kind: "image",
+    css: `url("covers/peak.jpg")`,
+  },
+  {
+    id: "coast",
+    name: "海岸",
+    kind: "image",
+    css: `url("covers/coast.jpg")`,
+  },
+  {
     // Default raster cover — a real photo referenced from public/covers (bundled
     // into dist and served at /covers/... in both web and Tauri desktop).
     id: "autumn",
