@@ -51,7 +51,7 @@ export const OLLAMA_DEFAULT_MODEL = "qwen2.5:7b";
 export const OLLAMA_DEFAULT_NUM_CTX = 8192;
 
 export const OPENAI_COMPAT_DEFAULT_BASE = "https://api.deepseek.com";
-export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-chat";
+export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-v4-flash-vision-exp";
 
 /** 预设服务商（缺省配置）。国产优先，尤其 DeepSeek。选预设自动填 地址/模型/协议/是否需 Key。 */
 export interface AiPreset {

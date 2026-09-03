@@ -76,7 +76,7 @@ function loadConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (!raw) {
-      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", enableEmbedding: false, embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
+      return { enabled: false, provider: "openai", baseUrl: OPENAI_COMPAT_DEFAULT_BASE, model: OPENAI_COMPAT_DEFAULT_MODEL, apiKey: "", enableEmbedding: false, embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
     }
     const c = JSON.parse(raw);
     const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
@@ -93,7 +93,7 @@ function loadConfig(): AiConfig {
       embedApiKey: String(c.embedApiKey ?? ""),
     };
   } catch {
-    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", enableEmbedding: false, embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
+    return { enabled: false, provider: "openai", baseUrl: OPENAI_COMPAT_DEFAULT_BASE, model: OPENAI_COMPAT_DEFAULT_MODEL, apiKey: "", enableEmbedding: false, embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
   }
 }
 
