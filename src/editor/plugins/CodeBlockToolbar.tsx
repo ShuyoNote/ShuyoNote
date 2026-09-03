@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { CodeNode } from "@lexical/code";
-import { $getRoot, $getNodeByKey } from "lexical";
+import { $getNodeByKey } from "lexical";
 import { toast } from "../../store/toast";
 
 const LANGS = [
