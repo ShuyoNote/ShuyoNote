@@ -37,7 +37,8 @@ export function CodeBlockToolbar() {
       if (!(el instanceof HTMLElement)) return;
       const rect = el.getBoundingClientRect();
       const text = el.innerText ?? el.textContent ?? "";
-      const lines = (text.match(/\n/g)?.length ?? 0) + 1;
+      // 空内容(仅换行/空白)算 1 行；否则按换行数。
+      const lines = text.trim() === "" ? 1 : (text.match(/\n/g)?.length ?? 0) + 1;
       const lang = el.getAttribute("data-language") || "javascript";
       const cs = el.ownerDocument.defaultView?.getComputedStyle(el);
       const lineHeight = parseFloat(cs?.lineHeight ?? "0") || 0;
