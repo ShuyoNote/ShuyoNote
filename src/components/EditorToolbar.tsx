@@ -5,9 +5,10 @@ import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { useViewStore } from "../store/view";
+import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon } from "./icons";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import { docHtml, printDoc } from "../lib/print";
@@ -78,6 +79,23 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
 
   const importMarkdown = () => setImporting(true);
 
+  const saveAsTemplate = async () => {
+    try {
+      const page = await api.getPage(pageId);
+      if (!page || (page.kind !== "page" && page.kind !== "database")) {
+        toast("当前不是可保存为模板的页面", "error");
+        return;
+      }
+      const ok = await useTemplates
+        .getState()
+        .saveAs({ name: page.title || "未命名", content_json: page.content_json, content_text: page.content_text });
+      if (ok) toast(`已保存为模板「${page.title || "未命名"}」`, "success");
+      else toast("保存失败", "error");
+    } catch (e) {
+      toast(`保存失败：${e}`, "error");
+    }
+  };
+
   return (
     <div className="editor-toolbar">
       <button className="toolbar-btn" onClick={triggerFind} title="查找 (Ctrl+F)">
@@ -94,6 +112,9 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       </button>
       <button className="toolbar-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
         <PrintIcon />
+      </button>
+      <button className="toolbar-btn" onClick={saveAsTemplate} title="把当前页保存为模板（我的模板）">
+        <TemplateIcon />
       </button>
       <button
         className={`toolbar-btn ${contentWidth === "full" ? "active" : ""}`}
