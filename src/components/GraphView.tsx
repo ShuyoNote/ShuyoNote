@@ -551,7 +551,7 @@ export function GraphView() {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
-        <g transform={`translate(${viewRef.current.x}, ${viewRef.current.y}) scale(${viewRef.current.k})`}>
+        <g data-frame={frame} transform={`translate(${viewRef.current.x}, ${viewRef.current.y}) scale(${viewRef.current.k})`}>
           {edgesRef.current.map((e, i) => {
             const a = nodeMap.get(e.source);
             const b = nodeMap.get(e.target);
