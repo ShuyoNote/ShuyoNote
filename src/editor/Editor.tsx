@@ -12,7 +12,7 @@ import "./prismSetup";
 import { CodeExtension, CodeIndentExtension, registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
+import { $getRoot, $createParagraphNode, createEditor, type EditorState, type LexicalEditor } from "lexical";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
@@ -305,6 +305,48 @@ function BlockIdPlugin({
       tagBlockDoms(editor, map, editorState);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
+
+  // 点击「最后一行下方空白」：若最后一行非空则追加空段落并聚焦，可立即输入。
+  useEffect(() => {
+    const root = editor.getRootElement();
+    const host = root?.parentElement ?? root;
+    if (!host) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest("input, textarea, button, select, a, [contenteditable='false']")) return;
+      let lastKey = "";
+      let isEmpty = false;
+      try {
+        editor.getEditorState().read(() => {
+          const last = $getRoot().getLastChild();
+          if (!last) return;
+          lastKey = last.getKey();
+          isEmpty = (last as any).isEmpty?.() ?? false;
+        });
+      } catch {
+        return;
+      }
+      if (!lastKey) return;
+      const el = editor.getElementByKey(lastKey);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (e.clientY < r.bottom - 4) return; // 不在最后一行下方
+      editor.update(() => {
+        const last = $getRoot().getLastChild();
+        if (!last) return;
+        if ((last as any).isEmpty?.()) {
+          (last as any).selectStart?.();
+        } else {
+          const p = $createParagraphNode();
+          $getRoot().append(p);
+          p.selectStart();
+        }
+      });
+      setTimeout(() => root?.focus(), 0);
+    };
+    host.addEventListener("mousedown", onDown);
+    return () => host.removeEventListener("mousedown", onDown);
   }, [editor]);
 
   // Enable Prism-based syntax highlighting for code blocks (only tokenizes on
