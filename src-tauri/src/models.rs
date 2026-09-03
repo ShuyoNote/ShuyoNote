@@ -79,6 +79,8 @@ pub struct TemplateMeta {
     pub content_json: String,
     pub content_text: String,
     #[serde(default)]
+    pub database_json: String,
+    #[serde(default)]
     pub built_in: i64,
     pub space_id: Option<String>,
     pub sort_order: f64,

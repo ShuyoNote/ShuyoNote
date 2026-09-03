@@ -97,9 +97,19 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         toast("当前不是可保存为模板的页面", "error");
         return;
       }
+      // 数据库模板：补上列定义(database_json)与 kind，创建时才能还原列。
+      let kind = "page";
+      let database_json = "{}";
+      if (page.kind === "database") {
+        kind = "database";
+        try {
+          const q = await api.queryDatabase(pageId);
+          database_json = JSON.stringify({ columns: (q?.columns ?? []).map((c) => ({ name: c.name, type: c.attr_type, options: c.options ?? [] })) });
+        } catch { /* keep {} */ }
+      }
       const ok = await useTemplates
         .getState()
-        .saveAs({ name: page.title || "未命名", content_json: page.content_json, content_text: page.content_text, cover: page.cover, icon: page.icon });
+        .saveAs({ name: page.title || "未命名", content_json: page.content_json, content_text: page.content_text, cover: page.cover, icon: page.icon, kind, database_json });
       if (ok) toast(`已保存为模板「${page.title || "未命名"}」`, "success");
       else toast("保存失败", "error");
     } catch (e) {

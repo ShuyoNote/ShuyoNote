@@ -130,6 +130,7 @@ export interface TemplateMeta {
   summary: string;
   content_json: string;
   content_text: string;
+  database_json: string;
   built_in: number;
   space_id: string | null;
   sort_order: number;

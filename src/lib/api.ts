@@ -80,7 +80,7 @@ export const api = {
   disableEncryption: () => invoke("disable_encryption"),
   getPage: (id: string) => invoke("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
-  saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; space_id?: string | null }) =>
+  saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; kind?: string; database_json?: string; space_id?: string | null }) =>
     invoke("save_as_template", { args }),
   deleteTemplate: (id: string) => invoke("delete_template", { id }),
   createPage: (args: { parent_id: string | null; title?: string; content_json?: string; content_text?: string }) =>

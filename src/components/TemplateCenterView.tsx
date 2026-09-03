@@ -93,7 +93,8 @@ export function TemplateCenterView() {
     const user = userTemplates.map((t): GalleryItem => ({
       id: t.id, name: t.name, category: t.category, icon: t.icon, cover: t.cover,
       content_json: t.content_json, content_text: t.content_text,
-      kind: "page", database_json: "", user: true,
+      kind: (t.kind === "database" ? "database" : "page") as GalleryItem["kind"],
+      database_json: t.database_json ?? "", user: true,
     }));
     return [...built, ...user];
   }, [userTemplates]);

@@ -19,15 +19,16 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<TemplateMeta> {
         summary: row.get(6)?,
         content_json: row.get(7)?,
         content_text: row.get(8)?,
-        built_in: row.get(9)?,
-        space_id: row.get(10)?,
-        sort_order: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        database_json: row.get(9)?,
+        built_in: row.get(10)?,
+        space_id: row.get(11)?,
+        sort_order: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 
-const COLS: &str = "id,name,category,kind,icon,cover,summary,content_json,content_text,built_in,space_id,sort_order,created_at,updated_at";
+const COLS: &str = "id,name,category,kind,icon,cover,summary,content_json,content_text,database_json,built_in,space_id,sort_order,created_at,updated_at";
 
 /// List user templates ("我的模板"), optionally scoped to a space.
 /// Built-in templates live on the frontend (M9.1); this returns only `built_in=0`.
@@ -57,6 +58,8 @@ pub struct SaveAsTemplateArgs {
     pub summary: Option<String>,
     pub content_json: String,
     pub content_text: Option<String>,
+    pub kind: Option<String>,
+    pub database_json: Option<String>,
     pub space_id: Option<String>,
 }
 
@@ -75,7 +78,7 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
 
     c.execute(
         "INSERT INTO meta.templates (id, name, category, kind, icon, cover, summary, content_json, content_text, props_json, database_json, tags, built_in, space_id, sort_order, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'page', ?4, ?5, ?6, ?7, ?8, '{}', '{}', '[]', 0, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?13, ?4, ?5, ?6, ?7, ?8, '{}', ?14, '[]', 0, ?9, ?10, ?11, ?12)",
         params![
             id,
             args.name,
@@ -85,6 +88,8 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
             args.summary.unwrap_or_default(),
             args.content_json,
             args.content_text.unwrap_or_default(),
+            args.kind.as_deref().unwrap_or("page"),
+            args.database_json.as_deref().unwrap_or("{}"),
             args.space_id,
             next_sort,
             now,

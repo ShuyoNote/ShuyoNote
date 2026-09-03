@@ -202,6 +202,14 @@ registerPlugin({
             content_text: page.content_text,
             cover: page.cover,
             icon: page.icon,
+            kind: page.kind === "database" ? "database" : "page",
+            // 数据库模板：列定义(database_json)。此处若无可先存 {}；EditorToolbar 会补全。
+            database_json: page.kind === "database" ? await (async () => {
+              try {
+                const q = await api.queryDatabase(page.id);
+                return JSON.stringify({ columns: (q?.columns ?? []).map((c) => ({ name: c.name, type: c.attr_type, options: c.options ?? [] })) });
+              } catch { return "{}"; }
+            })() : "{}",
           });
         return ok ? `已保存为模板「${page.title || "未命名"}」` : "保存失败";
       },

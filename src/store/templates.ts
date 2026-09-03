@@ -14,6 +14,8 @@ interface TemplatesState {
     content_text: string;
     cover?: string;
     icon?: string;
+    kind?: string;
+    database_json?: string;
     category?: string;
     space_id?: string | null;
   }) => Promise<boolean>;
@@ -34,6 +36,8 @@ export const useTemplates = create<TemplatesState>((set) => ({
         category: args.category ?? "我的模板",
         // 模板封面(题头图)：保存到模板，创建时应用到页面。
         cover: args.cover ?? "",
+        kind: args.kind ?? "page",
+        database_json: args.database_json ?? "{}",
       });
       set((s) => ({ userTemplates: [...s.userTemplates, t] }));
       return true;
