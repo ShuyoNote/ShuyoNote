@@ -1093,6 +1093,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                       className={`db-add-col-item ${boardGroupAttr === c.id ? "db-item-active" : ""}`}
                       onClick={() => {
                         setBoardGroupAttr(c.id);
+                        setBoardGroupOrder([]); // 切换字段后分组顺序重置(按新字段 options)，列可重新拖
                         setBoardGroupOpen(false);
                       }}
                     >
