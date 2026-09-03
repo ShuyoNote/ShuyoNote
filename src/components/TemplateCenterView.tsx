@@ -149,8 +149,9 @@ export function TemplateCenterView() {
     const json = substituteTemplateVars(t.content_json, vars);
     const text = substituteTemplateVars(t.content_text, vars);
     const pid = await createPage(null, { content_json: json, content_text: text, title: t.name });
-    // 把模板封面(题头图)应用到创建后的页面——从模板来即带气质。
+    // 把模板封面(题头图) + 页面图标应用到创建后的页面。
     if (pid && t.cover) await api.setPageCover(pid, t.cover);
+    if (pid && t.icon) await api.setPageIcon(pid, t.icon);
     setOpen(false);
   };
 
