@@ -66,7 +66,7 @@ function tick(
         dy = 0;
       }
       const d = Math.sqrt(d2);
-      const f = 5000 / d2;
+      const f = 9000 / d2;
       const fx = (dx / d) * f;
       const fy = (dy / d) * f;
       if (isFree(a.id)) {
@@ -87,7 +87,7 @@ function tick(
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
-    const ideal = e.kind === "belongs" ? 60 : 120;
+    const ideal = e.kind === "belongs" ? 80 : 150;
     const f = 0.04 * (d - ideal);
     const fx = (dx / d) * f;
     const fy = (dy / d) * f;
