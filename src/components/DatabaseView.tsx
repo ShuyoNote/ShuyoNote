@@ -1141,17 +1141,19 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                     )}
                     {sCol && (
                       <input
-                        type="date"
+                        type="text"
                         className="db-gantt-date db-gantt-date-input"
-                        value={fmtIso(start)}
+                        placeholder="YYYY-MM-DD"
+                        defaultValue={fmtIso(start)}
                         onChange={(e) => setCell(it.row.page_id, sCol, e.target.value)}
                       />
                     )}
                     {eCol && (
                       <input
-                        type="date"
+                        type="text"
                         className="db-gantt-date db-gantt-date-input"
-                        value={fmtIso(end)}
+                        placeholder="YYYY-MM-DD"
+                        defaultValue={fmtIso(end)}
                         onChange={(e) => setCell(it.row.page_id, eCol, e.target.value)}
                       />
                     )}
