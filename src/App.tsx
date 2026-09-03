@@ -85,6 +85,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const [coverH, setCoverH] = useState<number | null>(null);
   const coverHRef = useRef(300);
   const coverDrag = useRef<{ sy: number; sh: number } | null>(null);
+  // 题头图上下拖动定位（背景位置 y，0-100%）。
+  const [coverPos, setCoverPos] = useState<number | null>(null);
+  const coverPosRef = useRef(50);
+  const coverPosDrag = useRef<{ sy: number; sp: number; moved: boolean } | null>(null);
   const debounceRef = useRef<number | null>(null);
 
   // Build breadcrumb trail from the page tree.
@@ -248,7 +252,39 @@ function NoteEditor({ pageId }: { pageId: string }) {
         {current?.cover ? (
           <div
             className="page-cover"
-            style={{ backgroundImage: current.cover, height: coverH ?? current.cover_height ?? 300 }}
+            style={{
+              backgroundImage: current.cover,
+              backgroundPosition: `center ${coverPos ?? current.cover_pos ?? 50}%`,
+              height: coverH ?? current.cover_height ?? 300,
+            }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              if ((e.target as HTMLElement).closest(".page-cover-handle")) return;
+              coverPosRef.current = coverPos ?? current?.cover_pos ?? 50;
+              coverPosDrag.current = { sy: e.clientY, sp: coverPosRef.current, moved: false };
+              (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              if (coverPosDrag.current && current) {
+                const dy = e.clientY - coverPosDrag.current.sy;
+                if (!coverPosDrag.current.moved && Math.abs(dy) < 4) return;
+                coverPosDrag.current.moved = true;
+                const next = Math.max(0, Math.min(100, coverPosDrag.current.sp + (dy / (coverH ?? current.cover_height ?? 300)) * 100));
+                coverPosRef.current = next;
+                setCoverPos(next);
+              }
+            }}
+            onPointerUp={async () => {
+              if (coverPosDrag.current && current) {
+                const moved = coverPosDrag.current.moved;
+                coverPosDrag.current = null;
+                if (moved) {
+                  await api.setPageCoverPos(current.id, coverPosRef.current);
+                  await useNotes.getState().openPage(current.id);
+                  setCoverPos(null);
+                }
+              }
+            }}
           >
             <span
               className="page-cover-handle"

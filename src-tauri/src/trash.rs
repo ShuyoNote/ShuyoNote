@@ -25,6 +25,7 @@ fn fetch_page_any(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 cover: String::new(),
                 icon: String::new(),
                 cover_height: 300,
+                cover_pos: 50.0,
                 kind: row.get(6)?,
                 sort_order: row.get(7)?,
                 created_at: row.get(8)?,

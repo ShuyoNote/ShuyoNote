@@ -21,6 +21,7 @@ export interface PageDetail {
   cover: string;
   icon: string;
   cover_height: number;
+  cover_pos?: number;
   kind: string;
   sort_order: number;
   created_at: number;

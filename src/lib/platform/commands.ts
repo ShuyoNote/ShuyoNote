@@ -87,6 +87,7 @@ export interface CommandMap {
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };
   set_page_cover_height: { args: { args: { id: string; height: number } }; result: PageDetail };
+  set_page_cover_pos: { args: { args: { id: string; pos: number } }; result: PageDetail };
 
   // ---- Workspaces ----
   list_workspaces: { args: undefined; result: WorkspaceMeta[] };

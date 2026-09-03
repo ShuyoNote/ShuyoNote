@@ -98,6 +98,7 @@ export const api = {
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
+  setPageCoverPos: (id: string, pos: number) => invoke("set_page_cover_pos", { args: { id, pos } }),
   savePdfAnnotations: (attachmentId: string, pageIndex: number, annotations: unknown[]) =>
     invoke("save_pdf_annotations", { args: { attachment_id: attachmentId, page_index: pageIndex, annotations } }),
   listPdfAnnotations: (attachmentId: string) =>

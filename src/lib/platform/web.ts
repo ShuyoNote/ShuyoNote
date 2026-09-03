@@ -666,6 +666,13 @@ function makeInvoke(store: SqliteStore) {
       store.run("UPDATE pages SET cover_height = ? WHERE id = ?", [h, args.id]);
       return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
     }
+    if (cmd === "set_page_cover_pos") {
+      const args = a.args ?? a;
+      const raw = Number(args.pos ?? 50);
+      const p = Math.max(0, Math.min(100, Number.isFinite(raw) ? raw : 50));
+      store.run("UPDATE pages SET cover_pos = ? WHERE id = ?", [p, args.id]);
+      return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
+    }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
       const args = a.args ?? a;

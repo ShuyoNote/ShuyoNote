@@ -223,7 +223,8 @@ export class SqliteStore {
         db_rule TEXT NOT NULL DEFAULT '{}',
         icon TEXT NOT NULL DEFAULT '',
         cover TEXT NOT NULL DEFAULT '',
-        cover_height INTEGER NOT NULL DEFAULT 300
+        cover_height INTEGER NOT NULL DEFAULT 300,
+        cover_pos REAL NOT NULL DEFAULT 50
       );
       CREATE TABLE IF NOT EXISTS pdf_annotations (
         id TEXT PRIMARY KEY,
@@ -339,6 +340,11 @@ export class SqliteStore {
     }
     try {
       this.db.run("ALTER TABLE pages ADD COLUMN cover_height INTEGER NOT NULL DEFAULT 300");
+    } catch {
+      /* already exists */
+    }
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN cover_pos REAL NOT NULL DEFAULT 50");
     } catch {
       /* already exists */
     }

@@ -11,7 +11,7 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, rusqlite::Connec
 
 pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
     c.query_row(
-        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, icon, cover_height, kind, sort_order, created_at, updated_at
+        "SELECT id, workspace_id, parent_id, title, content_json, content_text, cover, icon, cover_height, cover_pos, kind, sort_order, created_at, updated_at
          FROM pages WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| {
@@ -25,10 +25,11 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
                 cover: row.get(6)?,
                 icon: row.get(7)?,
                 cover_height: row.get(8)?,
-                kind: row.get(9)?,
-                sort_order: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+                cover_pos: row.get(9)?,
+                kind: row.get(10)?,
+                sort_order: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
             })
         },
     )
@@ -229,6 +230,13 @@ pub struct SetCoverHeightArgs {
     pub height: i64,
 }
 
+#[derive(Deserialize)]
+pub struct SetCoverPosArgs {
+    pub id: String,
+    /// Cover background vertical position (0-100%).
+    pub pos: f64,
+}
+
 // ---- M24 PDF annotations ----
 
 #[derive(Deserialize)]
@@ -331,6 +339,18 @@ pub fn set_page_cover_height(db: State<Db>, args: SetCoverHeightArgs) -> Result<
     c.execute(
         "UPDATE pages SET cover_height = ?1 WHERE id = ?2 AND deleted_at IS NULL",
         params![args.height.clamp(120, 720), args.id],
+    )
+    .map_err(|e| e.to_string())?;
+    fetch_page(&c, &args.id)
+}
+
+/// Set a page's cover background vertical position (0-100%) and return updated detail.
+#[tauri::command]
+pub fn set_page_cover_pos(db: State<Db>, args: SetCoverPosArgs) -> Result<PageDetail, String> {
+    let c = conn(&db);
+    c.execute(
+        "UPDATE pages SET cover_pos = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![args.pos.clamp(0.0, 100.0), args.id],
     )
     .map_err(|e| e.to_string())?;
     fetch_page(&c, &args.id)

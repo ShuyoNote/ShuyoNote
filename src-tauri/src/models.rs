@@ -30,6 +30,9 @@ pub struct PageDetail {
     pub icon: String,
     #[serde(default = "default_cover_height")]
     pub cover_height: i64,
+    /// Cover background vertical position (0-100%). 上下拖动定位题头图。
+    #[serde(default = "default_cover_pos")]
+    pub cover_pos: f64,
     #[serde(default = "default_kind")]
     pub kind: String,
     pub sort_order: f64,
@@ -43,6 +46,10 @@ fn default_kind() -> String {
 
 fn default_cover_height() -> i64 {
     300
+}
+
+fn default_cover_pos() -> f64 {
+    50.0
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -587,6 +587,17 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
             [],
         )?;
     }
+    let has_cpos: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(pages)")?;
+        let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        cols.any(|c| c.map(|name| name == "cover_pos").unwrap_or(false))
+    };
+    if !has_cpos {
+        conn.execute(
+            "ALTER TABLE pages ADD COLUMN cover_pos REAL NOT NULL DEFAULT 50",
+            [],
+        )?;
+    }
 
     // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
     conn.execute_batch(

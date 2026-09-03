@@ -500,6 +500,7 @@ pub fn copy_page_to_workspace(
             cover: String::new(),
             icon: String::new(),
             cover_height: 300,
+            cover_pos: 50.0,
             kind,
             sort_order,
             created_at,
