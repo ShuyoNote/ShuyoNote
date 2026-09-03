@@ -73,7 +73,7 @@ function MockPreview({ cover, content }: { cover: string; content?: string }) {
 // "我的模板" (persisted in DB). Clicking a card creates a page with content.
 export function TemplateCenterView() {
   const setOpen = useTemplateCenterStore((s) => s.setOpen);
-  const { createPage, createDatabase } = useNotes();
+  const { createPage, createDatabase, bumpReload } = useNotes();
   const userTemplates = useTemplates((s) => s.userTemplates);
   const loadTemplates = useTemplates((s) => s.load);
   const removeTemplate = useTemplates((s) => s.remove);
@@ -138,6 +138,8 @@ export function TemplateCenterView() {
           }
         }
       }
+      // 加列后刷新 DatabaseView，避免其已在加列完成前加载(读到空列)。
+      bumpReload();
       setOpen(false);
       return;
     }

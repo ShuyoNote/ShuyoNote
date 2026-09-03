@@ -113,6 +113,7 @@ function computeRollup(
 
 export function DatabaseView({ pageId, title }: { pageId: string; title: string }) {
   const { openPage, pages } = useNotes();
+  const reloadTick = useNotes((s) => s.reloadTick);
   const [query, setQuery] = useState<DatabaseQuery | null>(null);
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
   const [filter, setFilter] = useState("");
@@ -305,7 +306,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     api.queryDatabase(pageId).then(setQuery).catch((e) => toast(String(e), "error"));
     api.listAttrDefs().then(setAttrs).catch(() => {});
   };
-  useEffect(load, [pageId]);
+  useEffect(load, [pageId, reloadTick]);
 
   // Close the add-column / options / board-group / sort / views / rule panels when
   // clicking outside them (a single consistent "click background to close" behavior).
