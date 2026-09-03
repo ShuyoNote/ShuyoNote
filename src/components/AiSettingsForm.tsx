@@ -91,15 +91,16 @@ export function AiSettingsForm({
   return (
     <>
       <p className="ai-settings-desc">
-        Ollama 为本地模型（无需密钥）；OpenAI 兼容支持 DeepSeek 等云服务（需 API Key）。若「没生效」，先点「测试连接」确认服务和模型可达。
+        本地选 Ollama，云端选 OpenAI 兼容（DeepSeek 等）。没生效先点「测试连接」。
       </p>
 
+      {/* 两个配置块并排：对话模型 / 语义检索 */}
+      <div className="ai-settings-cols">
       {/* ===== 分区一：AI 对话模型 ===== */}
       <div className="ai-settings-group">
         <div className="ai-settings-group-title">
           <span className="ai-settings-group-icon">💬</span>
-          <span>AI 对话模型</span>
-          <span className="ai-settings-group-note">用于 AI 助手 / 公式 / 摘要等</span>
+          <span>AI 对话</span>
         </div>
 
         <label className="ai-settings-row ai-settings-enable">
@@ -173,18 +174,16 @@ export function AiSettingsForm({
         )}
       </div>
 
-      {/* ===== 分区二：语义检索（embedding）——独立于对话模型 ===== */}
+      {/* ===== 分区二：语义检索 ===== */}
       <div className="ai-settings-group">
         <div className="ai-settings-group-title">
           <span className="ai-settings-group-icon">🔎</span>
-          <span>语义检索（embedding）</span>
-          <span className="ai-settings-group-note">搜索时按「意思」匹配相关笔记，不只认字</span>
+          <span>语义检索</span>
         </div>
 
         <div className="ai-settings-why">
           <span className="ai-settings-why-tag">作用</span>
-          配一个嵌入模型，搜索会<b>按意思</b>找出内容相关的结果——搜「会议」也能带出「讨论安排」。
-          不配也能搜（纯关键词）；配了检索更准。需独立的 embedding 服务（DeepSeek 无此接口，用本地 Ollama 等）。
+          按语义找相关笔记——搜「会议」也能带出「讨论安排」。不配也能搜（关键词），配了更准。
         </div>
 
         <label className="ai-settings-row">
@@ -198,10 +197,8 @@ export function AiSettingsForm({
           />
         </label>
 
-        <div className="ai-settings-card-note">默认复用上面的对话服务；也可以为检索单独指定一个服务（例如 DeepSeek 对话 + 本地 Ollama 嵌入）。</div>
-
         <label className="ai-settings-row">
-          <span className="ai-settings-label">检索服务</span>
+          <span className="ai-settings-label">服务</span>
           <select
             className="ai-settings-select"
             value={embedProvider}
@@ -221,6 +218,7 @@ export function AiSettingsForm({
             spellCheck={false}
           />
         </label>
+      </div>
       </div>
 
       <div className="ai-settings-test">
