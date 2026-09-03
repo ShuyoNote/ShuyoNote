@@ -51,6 +51,16 @@ const quote = (s: string): Block => ({
   type: "quote", version: 1, children: [text(s)], direction: "ltr", format: "", indent: 0, style: "",
 });
 const rule = (): Block => ({ type: "horizontalrule", version: 1, direction: "ltr", format: "", indent: 0, style: "" });
+// 分栏块（Feishu 式）：`count` 栏并列，每栏各含自己的块。
+function columns(blocks: Block[][]): Block {
+  const col = (children: Block[]): Block => ({
+    type: "column", version: 1, direction: "ltr", format: "", indent: 0, style: "", children,
+  });
+  return {
+    type: "columns", count: blocks.length, version: 1, direction: "ltr", format: "", indent: 0, style: "",
+    children: blocks.map(col),
+  };
+}
 
 function rootJson(blocks: Block[]): string {
   return JSON.stringify({
@@ -173,17 +183,51 @@ export const TEMPLATES: TemplateItem[] = [
     quote("不追求完美，只追求「持续」。"),
   ]),
   tmpl("resume", "我的一份简历", "教育", "🎓", `url("covers/peak.jpg")`, [
-    heading("h1", "个人简历"),
-    para("姓名 / 邮箱 / 电话 / 城市 / 求职意向"),
+    heading("h1", "方菲"),
+    para("求职意向：网络开发"),
     rule(),
-    heading("h2", "一句话亮点"),
-    para("用一句话说清「我是谁、我解决什么问题、我为公司带来什么」。"),
-    heading("h2", "教育背景"),
-    para("学校 · 专业 · 起止"),
-    heading("h2", "项目与经历（STAR 法）"),
-    bullet(["项目 A：背景 → 任务 → 行动 → 结果（量化）", "项目 B：同上"]),
-    heading("h2", "技能"),
-    bullet(["工具/语言/框架：", "软技能："]),
+    columns([
+      [
+        heading("h2", "联系方式"),
+        bullet(["📞 18888888888", "✉ youremail@gmail.com", "🌐 yourwebsite.com", "📍 上海"]),
+        rule(),
+        heading("h2", "技能"),
+        bullet(["Adobe Photoshop", "Adobe Illustrator", "Excel 等办公软件"]),
+        rule(),
+        heading("h2", "证书"),
+        bullet(["计算机二级证书", "英语专业八级证书"]),
+        rule(),
+        heading("h2", "社交账号"),
+        bullet(["GitHub @你的GitHub账号", "微博 @你的微博账号", "抖音 @你的抖音账号", "知乎 @你的知乎账号"]),
+      ],
+      [
+        para("你好，我是一名来自上海的网络开发人员，已经在这个行业工作几年。我一直对网络开发着迷，喜欢建立网站和应用程序，解决现实世界中的问题。在业余时间，我喜欢了解最新的网络开发技术和趋势，参加当地的技术聚会，并与其他开发人员合作。"),
+        heading("h2", "工作经历"),
+        heading("h3", "2013 - 2015　网络开发工程师 | 网钉科技"),
+        bullet([
+          "参与公司官网的架构设计和开发，使用 React、Node.js 等技术栈",
+          "负责公司内部管理系统的开发和维护，使用 Java、Spring Boot 等技术",
+          "协助产品经理制定后台服务接口，确保接口设计合理、安全",
+          "使用容器化部署技术，提高系统稳定性和扩展性",
+        ]),
+        heading("h3", "2012 - 2013　网络开发工程师 | 具象网络"),
+        bullet([
+          "参与新闻 APP 的开发，使用 Android、Kotlin 等技术",
+          "完成 APP 图片加载优化，提高加载速度 40%",
+          "利用异步编程实现页面无感知加载",
+          "按产品需求添加新的功能模块，修复软件 BUG",
+        ]),
+        heading("h2", "教育经历"),
+        heading("h3", "2011 - 2015　计算机专业 | 湖州大学"),
+        para("主修课程：计算机原理、数据结构与算法、操作系统、统计学等"),
+        heading("h2", "自我评价"),
+        bullet([
+          "沟通协调：具备优秀的书面及口头表达能力，能合理分配资源",
+          "活动策划：擅长策划团建、马拉松、会议等大型活动",
+          "办公软件：熟悉 WORD、EXCEL、PPT 等办公软件的运用",
+        ]),
+      ],
+    ]),
   ]),
   tmpl("calendar", "周历安排", "工作", "📅", `url("covers/peak.jpg")`, [
     heading("h1", "本周安排"),
