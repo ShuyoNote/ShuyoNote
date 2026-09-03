@@ -63,9 +63,12 @@ export function BoardView() {
       setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
       const col = findColAt(e.clientX, e.clientY);
       if (col && col.dataset.col !== "__none") {
-        const rect = col.getBoundingClientRect();
+        // 按拖动方向判定插入侧：目标列在源列右侧→插后(after)，左侧→插前(before)。
+        const dragColEl = document.querySelector(`[data-col="${colDrag}"]`);
+        const dragX = dragColEl?.getBoundingClientRect().left ?? 0;
+        const targetX = col.getBoundingClientRect().left;
         setColDragOver(col.dataset.col ?? null);
-        setColDragSide(e.clientX < rect.left + rect.width / 2 ? "before" : "after");
+        setColDragSide(targetX >= dragX ? "after" : "before");
       } else {
         setColDragOver(null);
       }
