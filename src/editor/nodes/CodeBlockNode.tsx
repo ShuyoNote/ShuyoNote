@@ -89,6 +89,16 @@ export function $createCodeBlockNode(text = "", lang = "javascript", key?: NodeK
   return new CodeBlockNode(text, lang, key);
 }
 
+function highlightHtml(text: string, lang: string): string {
+  const grammar = Prism.languages?.[lang] || Prism.languages?.javascript || Prism.languages?.markup;
+  if (!grammar) return escapeHtml(text);
+  try {
+    return Prism.highlight(text, grammar, lang);
+  } catch {
+    return escapeHtml(text);
+  }
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
