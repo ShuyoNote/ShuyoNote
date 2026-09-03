@@ -27,10 +27,16 @@ export function readEmbedConfig(): EmbedConfig | null {
     const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
     const model = String(c.embeddingModel ?? "");
     if (!c.enabled || !model) return null;
+    // 独立的 embedding 服务（支持 DeepSeek 对话 + Ollama 嵌入）：embedProvider /
+    // embedBaseUrl 非空则用它；否则复用在对话配置上（兼容旧行为）。
+    const ep = c.embedProvider;
+    const eb = String(c.embedBaseUrl ?? "");
+    const embedProvider: "ollama" | "openai" = ep === "openai" ? "openai" : ep === "ollama" ? "ollama" : provider;
+    const baseUrl = eb || String(c.baseUrl ?? "");
     return {
-      provider,
-      baseUrl: String(c.baseUrl ?? ""),
-      apiKey: String(c.apiKey ?? ""),
+      provider: embedProvider,
+      baseUrl,
+      apiKey: String(c.embedApiKey ?? c.apiKey ?? ""),
       model,
     };
   } catch {

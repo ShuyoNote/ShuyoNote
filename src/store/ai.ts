@@ -30,6 +30,11 @@ export interface AiConfig {
   apiKey: string;
   /** Embedding model (e.g. nomic-embed-text / text-embedding-3-small). Empty = 语义检索走 char-bigram，不启用向量。 */
   embeddingModel: string;
+  /** 独立的 embedding 服务地址协议/provider。为空则复用在对话配置上。
+   *  支持「DeepSeek 对话 + Ollama 嵌入」：embedProvider/embedBaseUrl 指向嵌入服务。 */
+  embedProvider?: "ollama" | "openai";
+  embedBaseUrl?: string;
+  embedApiKey?: string;
 }
 
 const HISTORY_LIMIT = 16; // cap on stored turns (8 exchanges) to bound context.
@@ -69,7 +74,7 @@ function loadConfig(): AiConfig {
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (!raw) {
-      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "" };
+      return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
     }
     const c = JSON.parse(raw);
     const provider: "ollama" | "openai" = c.provider === "openai" ? "openai" : "ollama";
@@ -80,9 +85,12 @@ function loadConfig(): AiConfig {
       model: String(c.model || (provider === "openai" ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL)),
       apiKey: String(c.apiKey ?? ""),
       embeddingModel: String(c.embeddingModel ?? ""),
+      embedProvider: c.embedProvider === "openai" ? "openai" : c.embedProvider === "ollama" ? "ollama" : undefined,
+      embedBaseUrl: String(c.embedBaseUrl ?? ""),
+      embedApiKey: String(c.embedApiKey ?? ""),
     };
   } catch {
-    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "" };
+    return { enabled: false, provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, apiKey: "", embeddingModel: "", embedProvider: undefined, embedBaseUrl: "", embedApiKey: "" };
   }
 }
 
