@@ -35,7 +35,7 @@ try {
   process.exit(1);
 }
 try {
-  const remote = execSync(`git ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
+  const remote = execSync(`git -c http.proxy= -c https.proxy= ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
   if (!remote) {
     console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} 再发布。`);
     process.exit(1);
