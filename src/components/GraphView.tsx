@@ -458,6 +458,24 @@ export function GraphView() {
     svgRef.current?.setPointerCapture(e.pointerId);
   };
 
+  // click 事件因 setPointerCapture 派发到 svg，故在 svg 上委托；命中节点做双击检测。
+  const onSvgClick = (e: React.MouseEvent) => {
+    const g = (e.target as Element).closest?.(".graph-node");
+    if (!g) return;
+    const id = g.getAttribute("data-node-id");
+    if (!id) return;
+    const n = simRef.current.find((x) => x.id === id);
+    if (!n) return;
+    if (movedRef.current) return;
+    const now = Date.now();
+    if (lastClickRef.current.id === id && now - lastClickRef.current.t < 300) {
+      lastClickRef.current = { id: "", t: 0 };
+      openNode(n);
+    } else {
+      lastClickRef.current = { id, t: now };
+    }
+  };
+
   const onPointerMove = (e: React.PointerEvent) => {
     if (dragRef.current) {
       const d = dragRef.current;
@@ -554,6 +572,7 @@ export function GraphView() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onClick={onSvgClick}
       >
         <g data-frame={frame} transform={`translate(${viewRef.current.x}, ${viewRef.current.y}) scale(${viewRef.current.k})`}>
           {edgesRef.current.map((e, i) => {
@@ -604,18 +623,7 @@ export function GraphView() {
                 onPointerDown={(e) => beginNodeDrag(n.id, e)}
                 onMouseEnter={() => setHoveredId(n.id)}
                 onMouseLeave={() => setHoveredId((h) => (h === n.id ? null : h))}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // 手动双击检测：同一节点 300ms 内两次点击 → 打开页面。
-                  if (movedRef.current) return;
-                  const now = Date.now();
-                  if (lastClickRef.current.id === n.id && now - lastClickRef.current.t < 300) {
-                    lastClickRef.current = { id: "", t: 0 };
-                    openNode(n);
-                  } else {
-                    lastClickRef.current = { id: n.id, t: now };
-                  }
-                }}
+                data-node-id={n.id}
               >
                 <circle
                   r={nodeRadius(n)}
