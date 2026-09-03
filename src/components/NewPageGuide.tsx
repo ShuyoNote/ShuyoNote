@@ -11,7 +11,6 @@ import {
   SparkleIcon,
   TemplateIcon,
   UploadIcon,
-  PersonIcon,
   TableIcon,
   BoardIcon,
   GalleryIcon,
@@ -144,9 +143,6 @@ export function NewPageGuide() {
             </button>
             <button className="npg-act" onClick={importMarkdown}>
               <UploadIcon className="npg-act-icon" /> 从导入文件创建...
-            </button>
-            <button className="npg-act" onClick={() => toast("个人模板即将推出", "info")}>
-              <PersonIcon className="npg-act-icon" /> 设置个人模板
             </button>
           </div>
           <div className="new-page-guide-db">
