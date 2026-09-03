@@ -171,6 +171,18 @@ function TreeItem({
     api.listWorkspaces().then(setCopySpaces).catch(() => {});
     api.getActiveWorkspaceId().then(setCopyActive).catch(() => {});
   }, [copyOpen]);
+  // 「…」工具弹窗/复制面板打开时，点击弹窗、按钮以外的区域即关闭（不能背景关闭）。
+  useEffect(() => {
+    if (!menuOpen && !copyOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest(".tree-node-menu, .tree-copy-panel, .tree-more")) return;
+      setMenuOpen(false);
+      setCopyOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen, copyOpen]);
 
   const isFolder = node.kind === "folder";
   const isDatabase = node.kind === "database";
