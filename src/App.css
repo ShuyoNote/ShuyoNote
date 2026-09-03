@@ -8897,7 +8897,7 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   padding: 6px 10px;
   font-size: 13px;
-  width: 320px;
+  width: 260px;
   outline: none;
 }
 
