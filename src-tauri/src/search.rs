@@ -165,8 +165,13 @@ fn search_in_conn(
     filters: &[(String, String)],
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
+    // 多词（含空格）用 LIKE AND——trigram 对 2 字中文词（会议/安排）索引不可靠，
+    // FTS phrase 匹配不到；子串 LIKE 可靠。单词仍走 FTS(≥3字)/LIKE(<3字)。
+    let multi: Vec<&str> = text.split_whitespace().filter(|w| !w.is_empty()).collect();
     let mut results = if text.is_empty() {
         list_pages_brief(c, 200)?
+    } else if multi.len() > 1 {
+        search_like_multi(c, &multi, limit)?
     } else if text.chars().count() < 3 {
         search_like(c, text, limit)?
     } else {
@@ -539,6 +544,52 @@ fn search_fts(
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+// 多关键词：空格分词，每个词 (title LIKE %词% OR content_text LIKE %词%) 之间 AND——
+// 都出现（子串匹配，不受 trigram 对短中文词不可靠影响）。
+fn search_like_multi(c: &Connection, words: &[&str], limit: usize) -> Result<Vec<SearchResult>, String> {
+    if words.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+    for w in words {
+        let pat = format!("%{}%", escape_like(w));
+        clauses.push("(p.title LIKE ? ESCAPE '\\' OR p.content_text LIKE ? ESCAPE '\\')".to_string());
+        params.push(pat.clone());
+        params.push(pat);
+    }
+    let mut sql = String::from(
+        "SELECT p.id, p.title, p.content_text, w.name FROM pages p
+         JOIN meta.workspaces w ON w.id = p.workspace_id
+         WHERE p.deleted_at IS NULL AND ",
+    );
+    sql.push_str(&clauses.join(" AND "));
+    sql.push_str(" ORDER BY p.updated_at DESC LIMIT ?");
+    let mut stmt = c.prepare(&sql).map_err(|e| e.to_string())?;
+    let q = words.join(" ");
+    let limit_i64: i64 = limit as i64;
+    let mut binds: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    binds.push(&limit_i64 as &dyn rusqlite::ToSql);
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(binds), |r| {
+            let id: String = r.get(0)?;
+            let title: String = r.get(1)?;
+            let text: String = r.get(2)?;
+            let space: String = r.get(3)?;
+            let snippet = build_like_snippet(&text, &q, 120);
+            Ok(SearchResult {
+                id,
+                title,
+                snippet,
+                space: Some(space),
+                workspace_id: None,
+                score: 0.0,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 fn search_like(
     c: &Connection,
     query: &str,
@@ -551,7 +602,6 @@ fn search_like(
            AND (p.title LIKE ?1 ESCAPE '\\' OR p.content_text LIKE ?1 ESCAPE '\\')
          ORDER BY p.updated_at DESC LIMIT ?2";
     let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
-
     let q = query.to_string();
     let rows = stmt
         .query_map(params![pattern, limit as i64], move |r| {
@@ -570,7 +620,6 @@ fn search_like(
             })
         })
         .map_err(|e| e.to_string())?;
-
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
