@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { toast } from "../../store/toast";
@@ -28,6 +28,8 @@ interface Item {
 export function CodeBlockToolbar() {
   const [editor] = useLexicalComposerContext();
   const [items, setItems] = useState<Item[]>([]);
+  const itemsRef = useRef<Item[]>([]);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
 
   const recompute = () => {
     const root = editor.getRootElement();
@@ -45,6 +47,7 @@ export function CodeBlockToolbar() {
       const padTop = parseFloat(cs?.paddingTop ?? "0") || 12;
       out.push({ key: `${i}`, el, left: rect.left, top: rect.top, width: rect.width, height: rect.height, lines, lang, lineHeight, padTop });
     });
+    itemsRef.current = out;
     setItems(out);
   };
 
@@ -59,6 +62,23 @@ export function CodeBlockToolbar() {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
     };
+  }, [editor]);
+
+  // hover 代码块时显示右上角工具条，离开隐藏。
+  useEffect(() => {
+    const root = editor.getRootElement();
+    if (!root) return;
+    const onOver = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement).closest?.(".editor-codeblock") as HTMLElement | null;
+      if (el) {
+        const it = itemsRef.current.find((i) => i.el === el);
+        setHoverKey(it ? it.key : null);
+      } else {
+        setHoverKey(null);
+      }
+    };
+    root.addEventListener("mouseover", onOver);
+    return () => root.removeEventListener("mouseover", onOver);
   }, [editor]);
 
   if (items.length === 0) return null;
@@ -83,7 +103,14 @@ export function CodeBlockToolbar() {
               {Array.from({ length: it.lines }, (_, i) => i + 1).join("\n")}
             </div>
             {/* 工具条 */}
-            <div style={{ position: "absolute", right: 8, top: 4, pointerEvents: "auto", display: "flex", gap: 6 }}>
+            <div
+              style={{
+                position: "absolute", right: 8, top: 4, display: "flex", gap: 6,
+                opacity: it.key === hoverKey ? 1 : 0,
+                pointerEvents: it.key === hoverKey ? "auto" : "none",
+                transition: "opacity 0.12s ease",
+              }}
+            >
               <select
                 className="editor-code-lang"
                 value={it.lang}
