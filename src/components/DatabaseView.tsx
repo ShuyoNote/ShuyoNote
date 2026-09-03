@@ -1242,7 +1242,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   }}
                   onPointerMove={(e) => {
                     if (!ganttResizeRef.current) return;
-                    const w = Math.max(160, Math.min(720, ganttResizeRef.current.sw + (e.clientX - ganttResizeRef.current.sx)));
+                    const w = Math.max(430, Math.min(720, ganttResizeRef.current.sw + (e.clientX - ganttResizeRef.current.sx)));
                     setGanttMetaW(w);
                   }}
                   onPointerUp={() => {
