@@ -3584,12 +3584,39 @@ body.is-ai-open .main {
 
 .editor-head {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 20px var(--doc-pad) 2px;
   max-width: var(--doc-width);
   width: 100%;
   margin: 0 auto;
+}
+/* 页面图标行（标题上方）：大号、可点击更换。 */
+.page-icon-row {
+  display: flex;
+  justify-content: flex-start;
+  min-height: 44px;
+}
+.page-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 2px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.page-icon-btn:hover {
+  background: var(--hover);
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
 }
 
 /* Page-actions row (Notion-style: add icon / cover / property / tag). It only
@@ -3630,15 +3657,16 @@ body.is-ai-open .main {
 }
 /* Page icon: an emoji shown before the title. */
 .page-icon {
-  font-size: 34px;
+  font-size: 52px;
   line-height: 1;
   flex-shrink: 0;
 }
 .page-icon-img {
-  width: 34px;
-  height: 34px;
+  width: 52px;
+  height: 52px;
   object-fit: contain;
   flex-shrink: 0;
+  border-radius: 8px;
 }
 
 /* Cover picker modal (built-in cover gallery). */

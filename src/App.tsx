@@ -358,23 +358,46 @@ function NoteEditor({ pageId }: { pageId: string }) {
             </button>
           </div>
           <div className="editor-head">
-            {current?.icon ? (
-              /^(data:image|https?:|\.svg)/i.test(current.icon) ? (
-                <img className="page-icon-img" src={current.icon} alt="" draggable={false} />
-              ) : (
-                <span className="page-icon">{current.icon}</span>
-              )
-            ) : null}
-            <input
-              className="title-input"
-              value={title}
-              placeholder="新页面"
-              onChange={(e) => onTitleChange(e.target.value)}
-            />
-            <span className={`save-indicator ${saved ? "saved" : ""}`}>
-              {saved ? "已保存" : "保存中…"}
-            </span>
-            {error && <span className="error-badge">{error}</span>}
+            <div className="page-icon-row">
+              {current?.icon ? (
+                <button
+                  className="page-icon-btn"
+                  onClick={() =>
+                    inputDialog({
+                      title: "页面图标",
+                      placeholder: "输入一个 emoji，如 📖 🧭 💡 🚀；留空清除",
+                      okLabel: "设置",
+                      onSubmit: async (v) => {
+                        const icon = (v ?? "").trim();
+                        if (current) {
+                          await api.setPageIcon(current.id, icon);
+                          await useNotes.getState().openPage(current.id);
+                        }
+                      },
+                    })
+                  }
+                  title="更换图标"
+                >
+                  {/^(data:image|https?:|\.svg)/i.test(current.icon) ? (
+                    <img className="page-icon-img" src={current.icon} alt="" draggable={false} />
+                  ) : (
+                    <span className="page-icon">{current.icon}</span>
+                  )}
+                </button>
+              ) : null}
+            </div>
+            <div className="title-row">
+              <input
+                className="title-input"
+                value={title}
+                placeholder="新页面"
+                onChange={(e) => onTitleChange(e.target.value)}
+              />
+              <span className={`save-indicator ${saved ? "saved" : ""}`}>
+                {saved ? "已保存" : "保存中…"}
+              </span>
+              {error && <span className="error-badge">{error}</span>}
+            </div>
           </div>
         </div>
         <InlineAiDraftBar />
