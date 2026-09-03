@@ -70,6 +70,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
   const [editVal, setEditVal] = useState("");
   const [colorOpen, setColorOpen] = useState<string | null>(null);
   const [colorAnchor, setColorAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [hexVal, setHexVal] = useState("");
   const revision = useTagManagerStore((s) => s.revision);
   const tagAnchor = usePropertyUiStore((s) => s.tagAnchor);
   const [open, setOpen] = useState(false);
@@ -268,6 +269,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                         onClick={(e) => {
                           setColorOpen((v) => (v === t.id ? null : t.id));
                           setColorAnchor({ x: e.clientX, y: e.clientY });
+                          setHexVal(t.color ?? "");
                         }}
                       >
                         <span className="tag-color-dot" style={{ background: t.color ?? tagColor(t.name).solid }} />
@@ -311,6 +313,33 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                             />
                             +
                           </label>
+                          <div className="tag-color-hex-row">
+                            <input
+                              className="tag-color-hex"
+                              value={hexVal}
+                              placeholder="#c2410c"
+                              onChange={(e) => setHexVal(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  if (hexVal.trim()) {
+                                    setTagColor(t, hexVal.trim());
+                                    setColorOpen(null);
+                                  }
+                                }
+                              }}
+                            />
+                            <button
+                              className="tag-color-apply"
+                              onClick={() => {
+                                if (hexVal.trim()) {
+                                  setTagColor(t, hexVal.trim());
+                                  setColorOpen(null);
+                                }
+                              }}
+                            >
+                              应用
+                            </button>
+                          </div>
                         </span>
                       )}
                       {editing !== t.id && (

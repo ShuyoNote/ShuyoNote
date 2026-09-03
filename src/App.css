@@ -5950,6 +5950,33 @@ select.prop-value {
   opacity: 0;
   cursor: pointer;
 }
+/* 自定义 hex 输入 + 应用（跨网格两列）。 */
+.tag-color-hex-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.tag-color-hex {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+  min-width: 0;
+}
+.tag-color-apply {
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
 .tag-picker-empty {
   padding: 16px 8px;
   text-align: center;
