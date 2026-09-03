@@ -88,12 +88,12 @@ pub fn save_as_template(db: State<Db>, args: SaveAsTemplateArgs) -> Result<Templ
             args.summary.unwrap_or_default(),
             args.content_json,
             args.content_text.unwrap_or_default(),
-            args.kind.as_deref().unwrap_or("page"),
-            args.database_json.as_deref().unwrap_or("{}"),
             args.space_id,
             next_sort,
             now,
             now,
+            args.kind.as_deref().unwrap_or("page"),
+            args.database_json.as_deref().unwrap_or("{}"),
         ],
     )
     .map_err(|e| e.to_string())?;
