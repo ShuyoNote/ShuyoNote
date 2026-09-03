@@ -19,21 +19,7 @@ export interface CoverPreset {
 export const DEFAULT_COVER = `url("covers/default-cover.jpg")`;
 
 export const COVER_PRESETS: CoverPreset[] = [
-  // ---- themed gradients（科技感 / 空灵 / 素雅）----
-  { id: "aurora", name: "量子", kind: "gradient", css: "linear-gradient(135deg, #0f2027 0%, #1b2f5e 50%, #38bdf8 100%)" },
-  { id: "ocean", name: "星海", kind: "gradient", css: "linear-gradient(135deg, #0b1026 0%, #1b2f5e 50%, #6ea8fe 100%)" },
-  { id: "forest", name: "极光", kind: "gradient", css: "linear-gradient(135deg, #0e1e2b 0%, #1e4f5e 50%, #24d3c4 100%)" },
-  { id: "sunset", name: "亚麻", kind: "gradient", css: "linear-gradient(135deg, #e2dccd 0%, #f4f1e9 100%)" },
-  { id: "candy", name: "云霭", kind: "gradient", css: "linear-gradient(135deg, #dce7f0 0%, #eef4f9 100%)" },
-  { id: "lavender", name: "月华", kind: "gradient", css: "linear-gradient(135deg, #e5ebf2 0%, #aebfd0 100%)" },
-  { id: "mint", name: "鼠尾草", kind: "gradient", css: "linear-gradient(135deg, #cbd8cd 0%, #eef3ef 100%)" },
-  { id: "night", name: "夜幕", kind: "gradient", css: "linear-gradient(135deg, #0a0f1e 0%, #23395b 50%, #4f9cf9 100%)" },
-  { id: "solar", name: "晨雾", kind: "gradient", css: "linear-gradient(135deg, #e8eef4 0%, #c9d6e2 100%)" },
-  { id: "coral", name: "雾霭", kind: "gradient", css: "linear-gradient(135deg, #dfe9f2 0%, #cfe0ee 100%)" },
-  { id: "slate", name: "水墨", kind: "gradient", css: "linear-gradient(135deg, #c9ccd6 0%, #edf0f4 100%)" },
-  { id: "rose", name: "青瓷", kind: "gradient", css: "linear-gradient(135deg, #bad6d8 0%, #e8f2f1 100%)" },
-
-  // ---- 免版权风景题头图（picsum.photos），本地打包 ----
+  // ---- 免版权风景/花木/古画感 题头图（picsum.photos），本地打包 ----
   {
     id: "fjord",
     name: "峡湾",
@@ -51,6 +37,12 @@ export const COVER_PRESETS: CoverPreset[] = [
     name: "海岸",
     kind: "image",
     css: `url("covers/coast.jpg")`,
+  },
+  {
+    id: "tree",
+    name: "树木",
+    kind: "image",
+    css: `url("covers/tree.jpg")`,
   },
   {
     id: "mist",
