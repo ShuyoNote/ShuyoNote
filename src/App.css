@@ -4517,6 +4517,20 @@ select.prop-value {
   margin: 0 auto;
   padding: 0 var(--doc-pad);
 }
+/* 正文文本始终可拖选(选中/复制)，不被块拖拽或容器继承的 user-select:none 限制。 */
+.editor-content,
+.editor-content p,
+.editor-content h1,
+.editor-content h2,
+.editor-content h3,
+.editor-content blockquote,
+.editor-content li,
+.editor-content a,
+.editor-content strong,
+.editor-content em {
+  user-select: text;
+  -webkit-user-select: text;
+}
 
 /* Block hover affordance (Notion-style): highlight the block under the cursor. */
 .editor-content > * {
