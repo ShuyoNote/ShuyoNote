@@ -9582,7 +9582,7 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-rowlabel {
   flex: none;
-  width: 160px;
+  width: 200px;
   text-align: left;
   font-size: 12px;
   padding: 5px 10px;
