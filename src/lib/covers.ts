@@ -27,19 +27,19 @@ const B = `viewBox="0 0 600 200" ${V} preserveAspectRatio="xMidYMid slice"`;
 export const DEFAULT_COVER = `url("covers/default-cover.jpg")`;
 
 export const COVER_PRESETS: CoverPreset[] = [
-  // ---- themed gradients ----
-  { id: "aurora", name: "极光", kind: "gradient", css: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" },
-  { id: "ocean", name: "深海", kind: "gradient", css: "linear-gradient(135deg, #2b5876 0%, #4e4376 100%)" },
-  { id: "forest", name: "森林", kind: "gradient", css: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)" },
-  { id: "sunset", name: "落日", kind: "gradient", css: "linear-gradient(135deg, #fa709a 0%, #fee140 100%)" },
-  { id: "candy", name: "糖果", kind: "gradient", css: "linear-gradient(135deg, #ee9ca7 0%, #ffdde1 100%)" },
-  { id: "lavender", name: "薰衣草", kind: "gradient", css: "linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)" },
-  { id: "mint", name: "薄荷", kind: "gradient", css: "linear-gradient(135deg, #96e6a1 0%, #d4fc79 100%)" },
-  { id: "night", name: "夜幕", kind: "gradient", css: "linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)" },
-  { id: "solar", name: "晨光", kind: "gradient", css: "linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)" },
-  { id: "coral", name: "珊瑚", kind: "gradient", css: "linear-gradient(135deg, #ff9a9e 0%, #fad0c4 100%)" },
-  { id: "slate", name: "雾蓝", kind: "gradient", css: "linear-gradient(135deg, #6a85b6 0%, #bac8e0 100%)" },
-  { id: "rose", name: "玫瑰", kind: "gradient", css: "linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%)" },
+  // ---- themed gradients（科技感 / 空灵 / 素雅）----
+  { id: "aurora", name: "量子", kind: "gradient", css: "linear-gradient(135deg, #0f2027 0%, #1b2f5e 50%, #38bdf8 100%)" },
+  { id: "ocean", name: "星海", kind: "gradient", css: "linear-gradient(135deg, #0b1026 0%, #1b2f5e 50%, #6ea8fe 100%)" },
+  { id: "forest", name: "极光", kind: "gradient", css: "linear-gradient(135deg, #0e1e2b 0%, #1e4f5e 50%, #24d3c4 100%)" },
+  { id: "sunset", name: "亚麻", kind: "gradient", css: "linear-gradient(135deg, #e2dccd 0%, #f4f1e9 100%)" },
+  { id: "candy", name: "云霭", kind: "gradient", css: "linear-gradient(135deg, #dce7f0 0%, #eef4f9 100%)" },
+  { id: "lavender", name: "月华", kind: "gradient", css: "linear-gradient(135deg, #e5ebf2 0%, #aebfd0 100%)" },
+  { id: "mint", name: "鼠尾草", kind: "gradient", css: "linear-gradient(135deg, #cbd8cd 0%, #eef3ef 100%)" },
+  { id: "night", name: "夜幕", kind: "gradient", css: "linear-gradient(135deg, #0a0f1e 0%, #23395b 50%, #4f9cf9 100%)" },
+  { id: "solar", name: "晨雾", kind: "gradient", css: "linear-gradient(135deg, #e8eef4 0%, #c9d6e2 100%)" },
+  { id: "coral", name: "雾霭", kind: "gradient", css: "linear-gradient(135deg, #dfe9f2 0%, #cfe0ee 100%)" },
+  { id: "slate", name: "水墨", kind: "gradient", css: "linear-gradient(135deg, #c9ccd6 0%, #edf0f4 100%)" },
+  { id: "rose", name: "青瓷", kind: "gradient", css: "linear-gradient(135deg, #bad6d8 0%, #e8f2f1 100%)" },
 
   // ---- themed images (inline SVG scenes) ----
   {
