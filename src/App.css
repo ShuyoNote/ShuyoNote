@@ -6822,6 +6822,7 @@ select.prop-value {
   box-sizing: border-box;
   background: transparent;
   color: transparent;
+  -webkit-text-fill-color: transparent;
   caret-color: var(--text);
   border: none;
   outline: none;
@@ -6844,6 +6845,7 @@ select.prop-value {
   user-select: none;
   pointer-events: none;
   border-right: 1px solid var(--border);
+  z-index: 5;
 }
 .codeblock-tools {
   position: absolute;
@@ -6852,7 +6854,7 @@ select.prop-value {
   display: flex;
   gap: 6px;
   pointer-events: auto;
-  z-index: 2;
+  z-index: 6;
 }
 .codeblock-tools select,
 .codeblock-tools button {
