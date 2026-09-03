@@ -1110,11 +1110,16 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               </div>
             </div>
             {gantt.items.map((it) => {
+              const fmtD = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
               const lane = (label: string, start: Date, end: Date, color: string, laneClass: string, key: string) => (
                 <div key={key} className={`db-gantt-row${laneClass ? " " + laneClass : ""}`}>
-                  <button className="db-gantt-rowlabel" onClick={() => openPage(it.row.page_id)}>
-                    {label}
-                  </button>
+                  <div className="db-gantt-meta">
+                    <button className="db-gantt-name" onClick={() => openPage(it.row.page_id)}>
+                      {label}
+                    </button>
+                    <span className="db-gantt-date">{fmtD(start)}</span>
+                    <span className="db-gantt-date">~{fmtD(end)}</span>
+                  </div>
                   <div className="db-gantt-track">
                     {Array.from({ length: gantt.totalDays }).map((_, di) => {
                       const l = (start.getTime() - gantt.min.getTime()) / 86400000;

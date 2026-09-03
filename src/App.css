@@ -9601,6 +9601,38 @@ p:has(> .editor-drawing-container) {
   font-weight: 700;
   color: var(--text);
 }
+/* 甘特图行左侧：任务名 + 开始/结束 两个数据项。 */
+.db-gantt-meta {
+  flex: none;
+  width: 200px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  min-width: 0;
+}
+.db-gantt-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-gantt-name:hover {
+  color: var(--accent);
+}
+.db-gantt-date {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
 .db-gantt-axis {
   flex: 1;
   display: flex;
