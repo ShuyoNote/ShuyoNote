@@ -518,7 +518,7 @@ export function GraphView() {
   };
 
   const openNode = (n: SimNode) => {
-    if (movedRef.current) return;
+    // 仅双击触发；去掉 movedRef 阻断(否则图上平移过一次后双击也被吞)。
     if (n.kind === "block") {
       useEditorStore.getState().setFocusBlockId(n.id);
       if (n.pageId && n.pageId !== currentId) openPage(n.pageId);
