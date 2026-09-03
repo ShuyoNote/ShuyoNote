@@ -27,9 +27,12 @@ fn build_like_snippet(text: &str, query: &str, max_len: usize) -> String {
     let lower = text.to_lowercase();
     let q = query.to_lowercase();
     if let Some(pos) = lower.find(&q) {
-        // Build snippet around the first match, on char boundaries.
-        let start = pos.saturating_sub(20);
-        let end = (pos + q.len() + 40).min(text.len());
+        // Build snippet around the first match, on char boundaries. pos/q are byte
+        // indices; text may be multi-byte UTF-8 (Chinese), so align start/end to
+        // char boundaries BEFORE slicing, else `&text[start..end]` panics
+        // ("byte index is not a char boundary") — the search crash on中文内容.
+        let start = text.floor_char_boundary(pos.saturating_sub(20));
+        let end = text.floor_char_boundary((pos + q.len() + 40).min(text.len()));
         let mut out = String::new();
         if start > 0 {
             out.push('…');
