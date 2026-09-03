@@ -35,6 +35,8 @@ export function AiSettingsForm({
   // 独立 embedding 服务（支持 DeepSeek 对话 + Ollama 嵌入）：空 = 复用对话配置。
   const [embedBaseUrl, setEmbedBaseUrl] = useState(config.embedBaseUrl ?? "");
   const [embedProvider, setEmbedProvider] = useState<"ollama" | "openai">(config.embedProvider ?? config.provider);
+  // 语义检索区默认折叠（可选增强，不用时别占高位）；有值则默认展开。
+  const [embedOpen, setEmbedOpen] = useState(!!config.embeddingModel);
   const [testing, setTesting] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testMsg, setTestMsg] = useState<string | null>(null);
@@ -173,48 +175,56 @@ export function AiSettingsForm({
         )}
       </div>
 
-      {/* ===== 分区二：语义检索（embedding）——独立于对话模型 ===== */}
+      {/* ===== 分区二：语义检索（embedding）——独立于对话模型，可折叠 ===== */}
       <div className="ai-settings-group">
-        <div className="ai-settings-group-title">
+        <button
+          type="button"
+          className="ai-settings-group-title ai-settings-collapse"
+          onClick={() => setEmbedOpen((v) => !v)}
+        >
           <span className="ai-settings-group-icon">🔎</span>
           <span>语义检索（embedding）</span>
-          <span className="ai-settings-group-note">用于搜索相关度增强，可与对话用不同服务</span>
-        </div>
+          <span className="ai-settings-group-note">{embedOpen ? "点击收起" : embeddingModel ? `${embeddingModel} · 点击展开` : "未启用 · 点击展开"}</span>
+        </button>
 
-        <label className="ai-settings-row">
-          <span className="ai-settings-label">嵌入模型</span>
-          <input
-            className="ai-settings-input"
-            value={embeddingModel}
-            onChange={(e) => setEmbeddingModel(e.target.value)}
-            placeholder={isOpenAI ? "text-embedding-3-small" : "nomic-embed-text"}
-            spellCheck={false}
-          />
-        </label>
+        {embedOpen && (
+          <>
+            <label className="ai-settings-row">
+              <span className="ai-settings-label">嵌入模型</span>
+              <input
+                className="ai-settings-input"
+                value={embeddingModel}
+                onChange={(e) => setEmbeddingModel(e.target.value)}
+                placeholder={isOpenAI ? "text-embedding-3-small" : "nomic-embed-text"}
+                spellCheck={false}
+              />
+            </label>
 
-        <div className="ai-settings-card-note">默认复用上面的对话服务；也可用独立的 embedding 服务（如 DeepSeek 对话 + 本地 Ollama 嵌入）。</div>
+            <div className="ai-settings-card-note">默认复用上面的对话服务；也可用独立的 embedding 服务（如 DeepSeek 对话 + 本地 Ollama 嵌入）。</div>
 
-        <label className="ai-settings-row">
-          <span className="ai-settings-label">检索服务商</span>
-          <select
-            className="ai-settings-select"
-            value={embedProvider}
-            onChange={(e) => setEmbedProvider(e.target.value as "ollama" | "openai")}
-          >
-            <option value="ollama">Ollama（本地）</option>
-            <option value="openai">OpenAI 兼容</option>
-          </select>
-        </label>
-        <label className="ai-settings-row">
-          <span className="ai-settings-label">嵌入地址（可选）</span>
-          <input
-            className="ai-settings-input"
-            value={embedBaseUrl}
-            onChange={(e) => setEmbedBaseUrl(e.target.value)}
-            placeholder={embedProvider === "openai" ? "http://localhost:8000/v1（留空用对话地址）" : "http://localhost:11434（留空用对话地址）"}
-            spellCheck={false}
-          />
-        </label>
+            <label className="ai-settings-row">
+              <span className="ai-settings-label">检索服务商</span>
+              <select
+                className="ai-settings-select"
+                value={embedProvider}
+                onChange={(e) => setEmbedProvider(e.target.value as "ollama" | "openai")}
+              >
+                <option value="ollama">Ollama（本地）</option>
+                <option value="openai">OpenAI 兼容</option>
+              </select>
+            </label>
+            <label className="ai-settings-row">
+              <span className="ai-settings-label">嵌入地址（可选）</span>
+              <input
+                className="ai-settings-input"
+                value={embedBaseUrl}
+                onChange={(e) => setEmbedBaseUrl(e.target.value)}
+                placeholder={embedProvider === "openai" ? "http://localhost:8000/v1（留空用对话地址）" : "http://localhost:11434（留空用对话地址）"}
+                spellCheck={false}
+              />
+            </label>
+          </>
+        )}
       </div>
 
       <div className="ai-settings-test">

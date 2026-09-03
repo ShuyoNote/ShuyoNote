@@ -13015,6 +13015,17 @@ p:has(> .editor-drawing-container) {
   color: var(--text-faint);
   margin-left: auto;
 }
+/* 可折叠的分区标题头（语义检索）：点击展开/收起。 */
+.ai-settings-collapse {
+  width: 100%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ai-settings-collapse:hover {
+  color: var(--text);
+}
 .ai-settings-card-note {
   font-size: 11.5px;
   line-height: 1.5;
