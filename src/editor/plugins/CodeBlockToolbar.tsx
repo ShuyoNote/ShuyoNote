@@ -28,8 +28,8 @@ export function CodeBlockToolbar() {
     const ensureOne = (pre: HTMLElement) => {
       // 行号 gutter（1..N）。
       if (!pre.querySelector(".editor-code-lines")) {
-        const code = pre.querySelector("code");
-        const n = (code?.textContent ?? pre.textContent ?? "").split("\n").length;
+        const txt = pre.innerText ?? pre.textContent ?? "";
+        const n = (txt.match(/\n/g)?.length ?? 0) + 1;
         const lines = document.createElement("div");
         lines.className = "editor-code-lines";
         lines.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
