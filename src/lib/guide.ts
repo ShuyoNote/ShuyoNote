@@ -24,11 +24,26 @@ type Block = Record<string, any>;
 
 // ---- block builders ---------------------------------------------------------
 function text(t: string) { return { type: "text", text: t, version: 1 } as any; }
+// Parse inline `**bold**` into text nodes (bold = format 1) so the guide renders
+// real bold instead of literal asterisks.
+function rich(t: string): unknown[] {
+  const out: unknown[] = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t))) {
+    if (m.index > last) out.push(text(t.slice(last, m.index)));
+    out.push({ type: "text", text: m[1], version: 1, format: 1, detail: 0, mode: "normal", style: "" });
+    last = m.index + m[0].length;
+  }
+  if (last < t.length) out.push(text(t.slice(last)));
+  return out.length ? out : [text(t)];
+}
 function para(t: string): Block {
-  return { type: "paragraph", version: 1, children: [text(t)], direction: "ltr", format: "", indent: 0, style: "", mode: "normal", textFormat: 0, textStyle: "" } as any;
+  return { type: "paragraph", version: 1, children: rich(t) as any, direction: "ltr", format: "", indent: 0, style: "", mode: "normal", textFormat: 0, textStyle: "" } as any;
 }
 function h(t: string, tag: "h1" | "h2" | "h3"): Block {
-  return { type: "heading", tag, version: 1, children: [text(t)], direction: "ltr", format: "", indent: 0, style: "", mode: "normal", textFormat: 0, textStyle: "" } as any;
+  return { type: "heading", tag, version: 1, children: rich(t) as any, direction: "ltr", format: "", indent: 0, style: "", mode: "normal", textFormat: 0, textStyle: "" } as any;
 }
 function callout(t: string): Block {
   return { type: "callout", version: 1, children: [para(t)], direction: "ltr", format: "", indent: 0, style: "" } as any;
@@ -36,7 +51,7 @@ function callout(t: string): Block {
 function bullet(items: string[]): Block {
   return {
     type: "list", tag: "ul", listType: "bullet", start: 1, version: 1, direction: "ltr", format: "", indent: 0, style: "",
-    children: items.map((it) => ({ type: "listitem", version: 1, value: 1, direction: "ltr", format: "", indent: 0, style: "", children: [text(it)] })),
+    children: items.map((it) => ({ type: "listitem", version: 1, value: 1, direction: "ltr", format: "", indent: 0, style: "", children: rich(it) })),
   } as any;
 }
 function rule(): Block {
