@@ -77,15 +77,23 @@ export function CodeBlockToolbar() {
       pre.appendChild(toolbar);
     };
 
+    // 用编辑器直接取每个 CodeNode 的真实 DOM 注入（不依赖 class 选择器）。
+    const applyNode = (key: string) => {
+      const el = editor.getElementByKey(key);
+      if (!(el instanceof HTMLElement)) return;
+      el.setAttribute("data-code-key", key);
+      ensureOne(el);
+    };
+
     const sync = () => {
       try {
         const root = editor.getRootElement();
-        const list = root?.querySelectorAll(".editor-codeblock") ?? document.querySelectorAll(".editor-codeblock");
-        list.forEach((el) => {
+        // 兜底：仍按 class 扫一遍（兼容首次渲染）。
+        root?.querySelectorAll(".editor-codeblock").forEach((el) => {
           if (el instanceof HTMLElement) ensureOne(el);
         });
       } catch {
-        /* ignore transient DOM issues */
+        /* ignore */
       }
     };
 
@@ -104,12 +112,8 @@ export function CodeBlockToolbar() {
 
     const unregMut = editor.registerMutationListener(CodeNode, (mutations) => {
       for (const [key2, m] of mutations) {
-        if (m === "created" || m === "updated") {
-          const el = editor.getElementByKey(key2);
-          if (el) el.setAttribute("data-code-key", key2);
-        }
+        if (m === "created" || m === "updated") applyNode(key2);
       }
-      sync();
     });
     sync();
     return () => {
