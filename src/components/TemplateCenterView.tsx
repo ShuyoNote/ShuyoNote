@@ -123,7 +123,7 @@ export function TemplateCenterView() {
       } catch {
         config = null;
       }
-      const dbId = await createDatabase(null);
+      const dbId = await createDatabase(null, t.name);
       if (dbId && config && Array.isArray(config.columns)) {
         for (const col of config.columns) {
           try {
