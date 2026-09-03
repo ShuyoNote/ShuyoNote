@@ -164,10 +164,8 @@ export const TEMPLATES: TemplateItem[] = [
     { name: "截止日期", type: "date" },
   ]),
   dbtmpl("gantt", "项目计划·甘特图", "工作", "📊", "linear-gradient(135deg, #0e1e2b 0%, #1e4f5e 50%, #24d3c4 100%)", [
-    { name: "计划开始", type: "date" },
-    { name: "计划结束", type: "date" },
-    { name: "实际开始", type: "date" },
-    { name: "实际结束", type: "date" },
+    { name: "开始日期", type: "date" },
+    { name: "结束日期", type: "date" },
     { name: "类别", type: "select", options: ["类别1", "类别2", "类别3", "类别4", "类别5"] },
     { name: "是否完成", type: "checkbox" },
     { name: "负责人", type: "select", options: ["张三", "李四", "王五"] },
