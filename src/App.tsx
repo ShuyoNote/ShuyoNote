@@ -269,7 +269,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
                 const dy = e.clientY - coverPosDrag.current.sy;
                 if (!coverPosDrag.current.moved && Math.abs(dy) < 4) return;
                 coverPosDrag.current.moved = true;
-                const next = Math.max(0, Math.min(100, coverPosDrag.current.sp + (dy / (coverH ?? current.cover_height ?? 300)) * 100));
+                const next = Math.max(0, Math.min(100, coverPosDrag.current.sp - (dy / (coverH ?? current.cover_height ?? 300)) * 100));
                 coverPosRef.current = next;
                 setCoverPos(next);
               }
