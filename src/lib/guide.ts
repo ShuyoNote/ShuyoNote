@@ -228,9 +228,9 @@ function databaseProps(): Block[] {
     ]),
     h("数据库视图", "h2"),
     bullet([
-      "数据库 = 页面集合 + 视图：表格 / 画廊 / 看板 / 列表 / 日历 / 时间轴 / 目录。",
+      "数据库 = 页面集合 + 视图：表格 / 画廊 / 看板 / 列表 / 日历 / 时间轴 / 目录 / 甘特图。",
       "视图可保存；查询型视图按条件过滤；ref 关联跨库 pull 汇总。",
-      `目录视图按父子层级树状展示，点击跳转 → ${link("数据库目录")}。`,
+      `各视图：${link("表格视图")} · ${link("画廊视图")} · ${link("看板与标签")} · ${link("列表视图")} · ${link("日历视图")} · ${link("时间轴视图")} · ${link("数据库目录")} · ${link("甘特图")}。`,
     ]),
     h("看板", "h2"),
     bullet([
@@ -259,6 +259,78 @@ function databaseDirectory(): Block[] {
     ]),
     rule(),
     para(`目录是数据库的一种视图 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+// 数据库各视图子页（表格/画廊/列表/日历/时间轴）。
+function dbTable(): Block[] {
+  return [
+    h("表格视图", "h1"),
+    callout("最基础的数据库视图：一行一个页面，一列一个属性，像电子表格。"),
+    h("用途", "h2"),
+    bullet([
+      "直接在表格里读写属性值：文本、数字、日期、勾选、多选、关系、公式等。",
+      "点单元格编辑，点「＋ 列」加属性列；列头排序/筛选。",
+      "配合标题筛选(空格=与、逗号=或)快速定位。",
+    ]),
+    rule(),
+    para(`数据库 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function dbGallery(): Block[] {
+  return [
+    h("画廊视图", "h1"),
+    callout("把每个页面当成一张卡片，适合看图找内容（封面/图片/素材）。"),
+    h("用途", "h2"),
+    bullet([
+      "卡片网格展示，点击卡片打开页面；有题头图/封面时更像画廊。",
+      "适合图片素材库、作品集、浏览型内容。",
+    ]),
+    rule(),
+    para(`数据库 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function dbList(): Block[] {
+  return [
+    h("列表视图", "h1"),
+    callout("紧凑的列表：每行一个页面，左侧标题，右侧可展开属性。"),
+    h("用途", "h2"),
+    bullet([
+      "信息密度高，适合快速浏览/勾选一大批页面。",
+      "点击行标题打开页面，可批量处理。",
+    ]),
+    rule(),
+    para(`数据库 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function dbCalendar(): Block[] {
+  return [
+    h("日历视图", "h1"),
+    callout("按日期把页面排进月历，直观看到某天的安排/内容。"),
+    h("用途", "h2"),
+    bullet([
+      "需要数据库含 date 日期列，将其映射为日历上的格子。",
+      "适合日程、排期、按月回顾。",
+    ]),
+    rule(),
+    para(`数据库 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
+function dbTimeline(): Block[] {
+  return [
+    h("时间轴视图", "h1"),
+    callout("按时间横轴线性排列条目，看清先后顺序与跨度。"),
+    h("用途", "h2"),
+    bullet([
+      "按日期字段将页面排成一条时间线，适合项目里程碑、大事记、回顾。",
+      "区别于日历(格子)的按月视角，时间轴是连续线性。",
+    ]),
+    rule(),
+    para(`数据库 → ${link("数据库与属性")}；回到 ${link("使用指南")} 看索引。`),
   ];
 }
 
@@ -531,8 +603,13 @@ export const GUIDE_PAGES: GuidePage[] = [
   { title: "分栏", icon: "▥", blocks: columns(), parent: "编辑器" },
   { title: "数据库与属性", icon: "🗂️", blocks: databaseProps() },
   { title: "数据库目录", icon: "🌲", blocks: databaseDirectory(), parent: "数据库与属性" },
-  { title: "甘特图", icon: "📊", blocks: gantt() },
-  { title: "看板与标签", icon: "📋", blocks: board() },
+  { title: "表格视图", icon: "📋", blocks: dbTable(), parent: "数据库与属性" },
+  { title: "画廊视图", icon: "🖼️", blocks: dbGallery(), parent: "数据库与属性" },
+  { title: "列表视图", icon: "📄", blocks: dbList(), parent: "数据库与属性" },
+  { title: "日历视图", icon: "📅", blocks: dbCalendar(), parent: "数据库与属性" },
+  { title: "时间轴视图", icon: "📈", blocks: dbTimeline(), parent: "数据库与属性" },
+  { title: "甘特图", icon: "📊", blocks: gantt(), parent: "数据库与属性" },
+  { title: "看板与标签", icon: "📋", blocks: board(), parent: "数据库与属性" },
   { title: "搜索与语义检索", icon: "🔍", blocks: search() },
   { title: "封面与主题外观", icon: "🎨", blocks: coverTheme() },
   { title: "文件夹 = 网盘", icon: "📁", blocks: netdisk() },
