@@ -42,6 +42,8 @@ export interface Tag {
   id: string;
   name: string;
   page_count?: number;
+  /** Custom tag color (hex). 未设置则用 tagColor(name) 自动配色。 */
+  color?: string | null;
 }
 
 export interface AttachmentMeta {

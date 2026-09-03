@@ -5863,6 +5863,17 @@ select.prop-value {
   color: var(--text);
   background: var(--hover);
 }
+/* 标签自定义颜色选择器（原生色板）。 */
+.tag-color-input {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  flex: none;
+}
 .tag-picker-empty {
   padding: 16px 8px;
   text-align: center;

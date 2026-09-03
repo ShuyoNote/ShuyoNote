@@ -983,9 +983,9 @@ function makeInvoke(store: SqliteStore) {
     // ---- Tags (real SQL) ----
     if (cmd === "list_tags") {
       return store.query(
-        `SELECT t.id, t.name, COUNT(pt.page_id) AS page_count
+        `SELECT t.id, t.name, t.color, COUNT(pt.page_id) AS page_count
          FROM tags t LEFT JOIN page_tags pt ON pt.tag_id = t.id
-         GROUP BY t.id, t.name ORDER BY t.name`,
+         GROUP BY t.id, t.name, t.color ORDER BY t.name`,
       ) as T;
     }
     if (cmd === "create_tag") {
@@ -1016,6 +1016,13 @@ function makeInvoke(store: SqliteStore) {
       store.run("UPDATE tags SET name = ? WHERE id = ?", [name, id]);
       const row = store.query<{ id: string; name: string }>("SELECT id, name FROM tags WHERE id = ?", [id])[0];
       return (row ?? null) as T;
+    }
+    if (cmd === "set_tag_color") {
+      const args = a.args ?? a;
+      const id = String(args.tagId ?? args.id ?? "");
+      const color = args.color == null ? null : String(args.color);
+      store.run("UPDATE tags SET color = ? WHERE id = ?", [color, id]);
+      return null as T;
     }
     if (cmd === "delete_tag") {
       const args = a.args ?? a;

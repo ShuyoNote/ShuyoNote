@@ -236,7 +236,8 @@ export class SqliteStore {
       );
       CREATE TABLE IF NOT EXISTS tags (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        color TEXT
       );
       CREATE TABLE IF NOT EXISTS page_tags (
         page_id TEXT NOT NULL,

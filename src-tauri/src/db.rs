@@ -673,6 +673,16 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'", [])?;
     }
 
+    // Tag custom color (hex like "#c2410c"). NULL = use deterministic auto color.
+    let tags_has_color: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'color'",
+        [],
+        |row| row.get(0),
+    )?;
+    if tags_has_color == 0 {
+        conn.execute("ALTER TABLE tags ADD COLUMN color TEXT", [])?;
+    }
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_page_id, target_block_id)",
         [],

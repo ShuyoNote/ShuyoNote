@@ -217,6 +217,7 @@ export interface CommandMap {
   list_tags: { args: undefined; result: Tag[] };
   create_tag: { args: { name: string }; result: Tag };
   rename_tag: { args: { tagId: string; name: string }; result: Tag };
+  set_tag_color: { args: { tagId: string; color?: string | null }; result: void };
   delete_tag: { args: { tagId: string }; result: void };
   page_tags: { args: { pageId: string }; result: Tag[] };
   add_tag: { args: { pageId: string; name: string }; result: Tag };

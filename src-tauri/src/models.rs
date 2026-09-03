@@ -124,6 +124,9 @@ pub struct Tag {
     pub name: String,
     #[serde(default)]
     pub page_count: i64,
+    /// Custom tag color (hex). None = deterministic auto color.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

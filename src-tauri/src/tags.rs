@@ -12,11 +12,11 @@ pub fn list_tags(db: State<'_, Db>) -> Result<Vec<Tag>, String> {
     let c = conn(&db);
     let mut stmt = c
         .prepare(
-            "SELECT t.id, t.name, COUNT(pt.page_id) AS page_count
+            "SELECT t.id, t.name, t.color, COUNT(pt.page_id) AS page_count
              FROM tags t
              LEFT JOIN page_tags pt ON t.id = pt.tag_id
              LEFT JOIN pages p ON p.id = pt.page_id AND p.deleted_at IS NULL
-             GROUP BY t.id, t.name
+             GROUP BY t.id, t.name, t.color
              ORDER BY t.name ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -25,7 +25,8 @@ pub fn list_tags(db: State<'_, Db>) -> Result<Vec<Tag>, String> {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                page_count: row.get(2)?,
+                color: row.get(2)?,
+                page_count: row.get(3)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -54,7 +55,7 @@ pub fn create_tag(db: State<'_, Db>, name: String) -> Result<Tag, String> {
             id
         }
     };
-    Ok(Tag { id, name, page_count: 0 })
+    Ok(Tag { id, name, color: None, page_count: 0 })
 }
 
 #[tauri::command]
@@ -97,7 +98,7 @@ pub fn rename_tag(db: State<'_, Db>, tag_id: String, name: String) -> Result<Tag
                 |r| r.get(0),
             )
             .map_err(|e| e.to_string())?;
-        return Ok(Tag { id: other_id, name, page_count: count });
+        return Ok(Tag { id: other_id, name, color: None, page_count: count });
     }
 
     c.execute("UPDATE tags SET name = ?1 WHERE id = ?2", params![name, tag_id])
@@ -109,7 +110,17 @@ pub fn rename_tag(db: State<'_, Db>, tag_id: String, name: String) -> Result<Tag
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
-    Ok(Tag { id: tag_id, name, page_count: count })
+    Ok(Tag { id: tag_id, name, color: None, page_count: count })
+}
+
+/// Set a tag's custom color (hex like "#c2410c"). Pass empty/null to clear → auto.
+#[tauri::command]
+pub fn set_tag_color(db: State<'_, Db>, tag_id: String, color: Option<String>) -> Result<(), String> {
+    let c = conn(&db);
+    let trimmed = color.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    c.execute("UPDATE tags SET color = ?1 WHERE id = ?2", params![trimmed, tag_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -127,7 +138,7 @@ pub fn page_tags(db: State<'_, Db>, page_id: String) -> Result<Vec<Tag>, String>
     let c = conn(&db);
     let mut stmt = c
         .prepare(
-            "SELECT t.id, t.name FROM tags t JOIN page_tags pt ON t.id = pt.tag_id
+            "SELECT t.id, t.name, t.color FROM tags t JOIN page_tags pt ON t.id = pt.tag_id
              WHERE pt.page_id = ?1 ORDER BY t.name ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -136,6 +147,7 @@ pub fn page_tags(db: State<'_, Db>, page_id: String) -> Result<Vec<Tag>, String>
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
+                color: row.get(2)?,
                 page_count: 0,
             })
         })
@@ -178,6 +190,7 @@ pub fn add_tag(db: State<'_, Db>, page_id: String, name: String) -> Result<Tag, 
     Ok(Tag {
         id: tag_id,
         name,
+        color: None,
         page_count: 0,
     })
 }
@@ -233,13 +246,14 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
 
     let tags = {
         let mut stmt = c
-            .prepare("SELECT id, name FROM tags ORDER BY name ASC")
+            .prepare("SELECT id, name, color FROM tags ORDER BY name ASC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(Tag {
                     id: row.get(0)?,
                     name: row.get(1)?,
+                    color: row.get(2)?,
                     page_count: 0,
                 })
             })

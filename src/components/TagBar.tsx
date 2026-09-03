@@ -44,8 +44,8 @@ export function TagRow({ pageId }: { pageId: string }) {
       </span>
       <div className="prop-value prop-tag-value">
         {tags.map((t) => (
-          <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name).soft }}>
-            <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
+          <span key={t.id} className="tag-chip" style={{ background: tagColor(t.name, t.color).soft }}>
+            <span className="tag-dot" style={{ background: tagColor(t.name, t.color).solid }} />
             {t.name}
             <button className="tag-remove" onClick={() => removeTag(t)} title="移除标签">
               ×
@@ -150,6 +150,16 @@ export function TagAddButton({ pageId }: { pageId: string }) {
       }
     }
   };
+  // 设置标签自定义颜色（原生颜色选择器）；null = 清空，回退自动配色。
+  const setTagColor = async (t: Tag, color: string | null) => {
+    try {
+      await api.setTagColor(t.id, color);
+      bump();
+      if (color) toast(`已给「${t.name}」设置颜色`, "success");
+    } catch (e) {
+      toast(`设置颜色失败：${e}`, "error");
+    }
+  };
 
   const doClose = () => {
     setOpen(false);
@@ -213,7 +223,7 @@ export function TagAddButton({ pageId }: { pageId: string }) {
           <div className="tag-picker-list">
             {filtered.map((t) => (
               <div key={t.id} className="tag-picker-row">
-                <span className="tag-dot" style={{ background: tagColor(t.name).solid }} />
+                <span className="tag-dot" style={{ background: tagColor(t.name, t.color).solid }} />
                 {editing === t.id ? (
                   <input
                     className="tag-manager-edit"
@@ -240,6 +250,18 @@ export function TagAddButton({ pageId }: { pageId: string }) {
                   <>
                     <span className="tag-picker-count">{t.page_count ?? 0} 页</span>
                     <span className="tag-picker-ops">
+                      <input
+                        className="tag-color-input"
+                        type="color"
+                        title="设色"
+                        value={t.color ?? "#4b5563"}
+                        onChange={(e) => setTagColor(t, e.target.value)}
+                      />
+                      {t.color && (
+                        <button title="清除颜色" onClick={() => setTagColor(t, null)}>
+                          ↺
+                        </button>
+                      )}
                       {editing !== t.id && (
                         <button title="重命名" onClick={() => startEdit(t)}>
                           ✎

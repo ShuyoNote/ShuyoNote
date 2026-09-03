@@ -18,7 +18,16 @@ export interface TagColor {
   soft: string; // e.g. "var(--cat-blue-soft)"
 }
 
-export function tagColor(name: string): TagColor {
+export function tagColor(name: string, custom?: string | null): TagColor {
+  // Custom hex color (e.g. "#c2410c") → solid = the color, soft = 20% alpha.
+  if (custom) {
+    let c = String(custom).trim();
+    if (!c.startsWith("#")) c = `#${c}`;
+    if (/^#[0-9a-fA-F]{6}$/.test(c) || /^#[0-9a-fA-F]{3}$/.test(c)) {
+      const soft = c.length === 4 ? `${c}` : `${c}33`;
+      return { solid: c, soft };
+    }
+  }
   let h = 0;
   for (let i = 0; i < name.length; i++) {
     h = (h * 31 + name.charCodeAt(i)) >>> 0;

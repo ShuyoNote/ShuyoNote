@@ -256,6 +256,7 @@ export const api = {
   listTags: () => invoke("list_tags"),
   createTag: (name: string) => invoke("create_tag", { name }),
   renameTag: (tagId: string, name: string) => invoke("rename_tag", { tagId, name }),
+  setTagColor: (tagId: string, color?: string | null) => invoke("set_tag_color", { tagId, color: color ?? null }),
   deleteTag: (tagId: string) => invoke("delete_tag", { tagId }),
   pageTags: (pageId: string) => invoke("page_tags", { pageId }),
   addTag: (pageId: string, name: string) => invoke("add_tag", { pageId, name }),

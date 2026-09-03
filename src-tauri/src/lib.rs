@@ -316,6 +316,7 @@ pub fn run() {
             tags::list_tags,
             tags::create_tag,
             tags::rename_tag,
+            tags::set_tag_color,
             tags::delete_tag,
             tags::page_tags,
             tags::add_tag,
