@@ -53,6 +53,28 @@ export const OLLAMA_DEFAULT_NUM_CTX = 8192;
 export const OPENAI_COMPAT_DEFAULT_BASE = "https://api.deepseek.com";
 export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-chat";
 
+/** 预设服务商（缺省配置）。国产优先，尤其 DeepSeek。选预设自动填 地址/模型/协议/是否需 Key。 */
+export interface AiPreset {
+  id: string;
+  name: string;
+  provider: AiProvider;
+  baseUrl: string;
+  model: string;
+  /** 是否需要 API Key（Ollama 本地无需；云端需）。 */
+  needsKey: boolean;
+  /** 是否国产（用于排序/标记）。 */
+  domestic?: boolean;
+}
+export const AI_PRESETS: AiPreset[] = [
+  { id: "deepseek", name: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-chat", needsKey: true, domestic: true },
+  { id: "ollama", name: "Ollama（本地）", provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, needsKey: false, domestic: true },
+  { id: "zhipu", name: "智谱 GLM", provider: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", needsKey: true, domestic: true },
+  { id: "qwen", name: "阿里 通义 Qwen", provider: "openai", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true, domestic: true },
+  { id: "kimi", name: "月之暗面 Kimi", provider: "openai", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", needsKey: true, domestic: true },
+  { id: "siliconflow", name: "硅基流动", provider: "openai", baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct", needsKey: true, domestic: true },
+  { id: "openai", name: "OpenAI", provider: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
+];
+
 // Default max output tokens. Reasoning models (DeepSeek V3.1/R1-style) consume a
 // large share of this budget on `reasoning_content` before emitting `content`; a
 // too-small cap (e.g. 512) gets exhausted during thinking and the answer is

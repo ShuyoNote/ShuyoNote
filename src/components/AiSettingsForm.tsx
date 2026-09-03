@@ -3,6 +3,7 @@ import { useAiStore } from "../store/ai";
 import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
 import {
+  AI_PRESETS,
   OLLAMA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_URL,
   OPENAI_COMPAT_DEFAULT_BASE,
@@ -49,18 +50,18 @@ export function AiSettingsForm({
 
   const isOpenAI = provider === "openai";
 
-  // When switching provider, swap the default base/model rather than leaving the
-  // other provider's placeholder in place.
-  const switchProvider = (next: AiProvider) => {
-    setProvider(next);
-    if (next === "openai") {
-      if (baseUrl === OLLAMA_DEFAULT_URL) setBaseUrl(OPENAI_COMPAT_DEFAULT_BASE);
-      if (model === OLLAMA_DEFAULT_MODEL) setModel(OPENAI_COMPAT_DEFAULT_MODEL);
-    } else {
-      if (baseUrl === OPENAI_COMPAT_DEFAULT_BASE) setBaseUrl(OLLAMA_DEFAULT_URL);
-      if (model === OPENAI_COMPAT_DEFAULT_MODEL) setModel(OLLAMA_DEFAULT_MODEL);
-    }
+  // 选预设服务商 → 自动填 服务商/地址/模型（可再手动改）。国产优先，尤其 DeepSeek。
+  const applyPreset = (id: string) => {
+    const p = AI_PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    setProvider(p.provider);
+    setBaseUrl(p.baseUrl);
+    setModel(p.model);
   };
+
+  // 当前地址/模型匹配某个预设时显示预设名，否则「自定义」。
+  const currentPresetId =
+    AI_PRESETS.find((p) => (baseUrl.trim() || p.baseUrl).replace(/\/$/, "") === p.baseUrl.replace(/\/$/, "") && model.trim() === p.model)?.id ?? "custom";
 
   const resolved = (): ProviderConfig => ({
     provider,
@@ -148,11 +149,15 @@ export function AiSettingsForm({
             <span className="ai-settings-label">服务商</span>
             <select
               className="ai-settings-select"
-              value={provider}
-              onChange={(e) => switchProvider(e.target.value as AiProvider)}
+              value={currentPresetId}
+              onChange={(e) => applyPreset(e.target.value)}
             >
-              <option value="ollama">Ollama（本地）</option>
-              <option value="openai">OpenAI 兼容（DeepSeek 等）</option>
+              {AI_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.domestic ? "🇨🇳 " : ""}{p.name}{p.needsKey ? "" : "（本地）"}
+                </option>
+              ))}
+              <option value="custom">自定义</option>
             </select>
           </label>
 

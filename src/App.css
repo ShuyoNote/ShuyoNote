@@ -12988,15 +12988,9 @@ p:has(> .editor-drawing-container) {
 }
 /* AI 设置两个配置块并排（对话模型 / 语义检索）。窄屏回退单列。 */
 .ai-settings-cols {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
-  align-items: start;
-}
-@media (max-width: 800px) {
-  .ai-settings-cols {
-    grid-template-columns: 1fr;
-  }
 }
 /* AI 设置分区卡：对话模型 / 语义检索 分组清晰。 */
 .ai-settings-group {
