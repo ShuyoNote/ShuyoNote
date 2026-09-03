@@ -1276,21 +1276,36 @@ function makeInvoke(store: SqliteStore) {
       });
       const edges: any[] = [];
       const edgeSet = new Set<string>();
+      // 反向：title -> page ids；每页只扫描自己的 [[双链]]，避免 O(n^2) 背链对比。
+      const titleMap = new Map<string, string[]>();
       for (const p of pages) {
-        for (const other of pages) {
-          if (p.id === other.id) continue;
-          if (backlinkRefMatches(p.content_text, other.title)) {
-            const key = p.id + ">" + other.id + ">page";
-            if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: p.id, target: other.id, kind: "page" }); }
+        const t = String(p.title ?? "");
+        if (!titleMap.has(t)) titleMap.set(t, []);
+        titleMap.get(t)!.push(p.id);
+      }
+      const linkRe = /\[\[([^\]|#]+)(?:\|[^\]]*)?(?:#[^\]]*)?\]\]/g;
+      for (const p of pages) {
+        const text = String(p.content_text ?? "");
+        let mm: RegExpExecArray | null;
+        linkRe.lastIndex = 0;
+        while ((mm = linkRe.exec(text)) !== null) {
+          const t = mm[1].trim();
+          const ids = t ? titleMap.get(t) : undefined;
+          if (!ids) continue;
+          for (const oid of ids) {
+            if (oid === p.id) continue;
+            const key = p.id + ">" + oid + ">page";
+            if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: p.id, target: oid, kind: "page" }); }
           }
         }
-        const refVals = store.query("SELECT pp.value FROM page_props pp JOIN attr_defs ad ON ad.id = pp.attr_id WHERE pp.page_id = ? AND ad.type = 'ref'", [p.id]) as any[];
-        for (const rv of refVals) {
-          const m = String(rv.value ?? "").match(/^p:(.+)$/);
-          if (m && nodeById.has(m[1])) {
-            const key = p.id + ">" + m[1] + ">ref";
-            if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: p.id, target: m[1], kind: "ref" }); }
-          }
+      }
+      // ref 属性边：一次查询所有 ref 属性(替代 per-page 循环查询)。
+      const refRows = store.query("SELECT pp.page_id, pp.value FROM page_props pp JOIN attr_defs ad ON ad.id = pp.attr_id WHERE ad.type = 'ref'") as any[];
+      for (const rr of refRows) {
+        const m = String(rr.value ?? "").match(/^p:(.+)$/);
+        if (m && nodeById.has(m[1])) {
+          const key = rr.page_id + ">" + m[1] + ">ref";
+          if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: rr.page_id, target: m[1], kind: "ref" }); }
         }
       }
       const blocks: any[] = [];
