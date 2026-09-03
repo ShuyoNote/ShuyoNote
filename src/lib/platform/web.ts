@@ -1750,6 +1750,23 @@ function makeInvoke(store: SqliteStore) {
       if (tagId) store.run("INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?, ?)", [pageId, tagId]);
       return undefined as T;
     }
+    if (cmd === "reorder_card") {
+      const pageId = String(a.pageId ?? a.page_id ?? "");
+      const tagId = String(a.tagId ?? a.tag_id ?? "");
+      const beforePageId = a.beforePageId ?? a.before_page_id ?? null;
+      store.run("DELETE FROM page_tags WHERE page_id = ?", [pageId]);
+      if (tagId) store.run("INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?, ?)", [pageId, tagId]);
+      // Rebuild sequential sort_order for the column, inserting before beforePageId.
+      const ordered = (store.query<{ id: string }>(
+        "SELECT pt.page_id AS id FROM page_tags pt JOIN pages p ON p.id = pt.page_id WHERE pt.tag_id = ? AND pt.page_id <> ? AND p.deleted_at IS NULL ORDER BY p.sort_order ASC, p.updated_at ASC",
+        [tagId, pageId],
+      ) || []).map((r: any) => String(r.id));
+      let idx = beforePageId ? ordered.indexOf(String(beforePageId)) : -1;
+      if (idx >= 0) ordered.splice(idx, 0, pageId);
+      else ordered.push(pageId);
+      ordered.forEach((id: string, i: number) => store.run("UPDATE pages SET sort_order = ? WHERE id = ?", [i, id]));
+      return undefined as T;
+    }
 
     // ---- Templates (built-in demos) ----
     if (cmd === "list_templates") {

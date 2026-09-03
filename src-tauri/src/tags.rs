@@ -218,7 +218,7 @@ fn pages_by_tag_impl(c: &rusqlite::Connection, tag_id: &str) -> Result<Vec<PageM
             "SELECT p.id, p.workspace_id, p.parent_id, p.title, p.kind, p.sort_order, p.created_at, p.updated_at, p.deleted_at
              FROM pages p JOIN page_tags pt ON p.id = pt.page_id
              WHERE pt.tag_id = ?1 AND p.deleted_at IS NULL
-             ORDER BY p.updated_at DESC",
+             ORDER BY p.sort_order ASC, p.updated_at DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -318,5 +318,61 @@ pub fn move_card(db: State<'_, Db>, page_id: String, tag_id: String) -> Result<(
         params![page_id, tag_id],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 看板同列/跨列拖拽换序：把 page 移到 tag_id 列，并插到 before_page_id 前
+/// （before 为空则放列尾），然后重排该列 cards 的 sort_order（0,1,2…）。
+#[tauri::command]
+pub fn reorder_card(
+    db: State<'_, Db>,
+    page_id: String,
+    tag_id: String,
+    before_page_id: Option<String>,
+) -> Result<(), String> {
+    let c = conn(&db);
+    // Assign the page to the target column (tag).
+    c.execute("DELETE FROM page_tags WHERE page_id = ?1", params![page_id])
+        .map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?1, ?2)",
+        params![page_id, tag_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Collect the column's current ordering (excluding the moved page).
+    let mut ordered: Vec<String> = {
+        let mut stmt = c
+            .prepare(
+                "SELECT pt.page_id FROM page_tags pt
+                 JOIN pages p ON p.id = pt.page_id
+                 WHERE pt.tag_id = ?1 AND pt.page_id <> ?2 AND p.deleted_at IS NULL
+                 ORDER BY p.sort_order ASC, p.updated_at ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![tag_id, page_id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+
+    // Insert the moved page at the position of before_page_id (or append at end).
+    if let Some(before) = before_page_id.as_deref() {
+        if let Some(pos) = ordered.iter().position(|id| id == before) {
+            ordered.insert(pos, page_id.clone());
+        } else {
+            ordered.push(page_id.clone());
+        }
+    } else {
+        ordered.push(page_id.clone());
+    }
+
+    // Rewrite sequential sort_order for the column.
+    let mut stmt = c
+        .prepare("UPDATE pages SET sort_order = ?1 WHERE id = ?2")
+        .map_err(|e| e.to_string())?;
+    for (i, pid) in ordered.iter().enumerate() {
+        stmt.execute(params![i as f64, pid]).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

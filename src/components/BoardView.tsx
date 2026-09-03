@@ -44,14 +44,16 @@ export function BoardView() {
     const onUp = (e: PointerEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      const card = el?.closest?.("[data-page]") as HTMLElement | null;
       const target = col?.dataset.col ?? null;
+      const before = card?.dataset.page ?? null; // 落点卡片（拖到它前面）
       const moved = dragMovedRef.current;
       setDragOver(null);
       setDragPage(null);
       setDragPos(null);
       dragStartRef.current = null;
       dragMovedRef.current = false;
-      if (target && moved) void onDrop(dragPage, target);
+      if (target && moved) void onDrop(dragPage, target, before);
     };
     const onCancel = () => {
       setDragOver(null);
@@ -101,11 +103,12 @@ export function BoardView() {
   };
   useEffect(load, [groupField]);
 
-  const onDrop = async (pageId: string, colId: string) => {
+  const onDrop = async (pageId: string, colId: string, beforePageId?: string | null) => {
     try {
       if (groupField === "tag") {
         if (colId === "__none") return; // tag mode keeps "未分类" as read-only
-        await api.moveCard(pageId, colId);
+        // 同列/跨列换序：指定落点卡片 → reorder_card；否则 move_card（列尾）。
+        await api.reorderCard(pageId, colId, beforePageId || null);
       } else {
         const attrId = groupField.slice("attr:".length);
         if (colId === "__none") {
@@ -156,6 +159,7 @@ export function BoardView() {
                 <div
                   key={p.id}
                   id={`board-card-${p.id}`}
+                  data-page={p.id}
                   className={`board-card${dragPage === p.id ? " board-card-dragging" : ""}`}
                   onPointerDown={(e) => {
                     if (e.button !== 0) return;

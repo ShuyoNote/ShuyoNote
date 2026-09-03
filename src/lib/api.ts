@@ -266,6 +266,7 @@ export const api = {
   boardByAttr: (attrId: string) =>
     invoke("board_by_attr", { attrId }),
   moveCard: (pageId: string, tagId: string) => invoke("move_card", { pageId, tagId }),
+  reorderCard: (pageId: string, tagId: string, beforePageId?: string | null) => invoke("reorder_card", { pageId, tagId, beforePageId: beforePageId ?? null }),
   listDbViews: (dbPageId: string) => invoke("list_db_views", { dbPageId }),
   saveDbView: (args: { db_page_id: string; name: string; view_type: string; config: string }) =>
     invoke("save_db_view", { args }),

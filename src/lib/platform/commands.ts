@@ -228,6 +228,7 @@ export interface CommandMap {
   board_data: { args: undefined; result: BoardColumn[] };
   board_by_attr: { args: { attrId: string }; result: BoardGroup[] };
   move_card: { args: { pageId: string; tagId: string }; result: void };
+  reorder_card: { args: { pageId: string; tagId: string; beforePageId?: string | null }; result: void };
 
   // ---- Storage / Versions / Backup / File ----
   storage_stats: { args: undefined; result: StorageStats };
