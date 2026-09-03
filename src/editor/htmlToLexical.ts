@@ -9,7 +9,7 @@ import { $createHeadingNode, $createQuoteNode } from "@lexical/rich-text";
 import { $createHorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { $createListNode, $createListItemNode } from "@lexical/list";
 import { $createLinkNode } from "@lexical/link";
-import { $createCodeBlockNode } from "./nodes/CodeBlockNode";
+import { $createSafeCodeNode } from "./nodes/SafeCodeNode";
 import { $createTableCellNode, $createTableNode, $createTableRowNode } from "@lexical/table";
 import { $createImageNode } from "./nodes/ImageNode";
 import { $createImageRowNode, type ImageRowItem } from "./nodes/ImageRowNode";
@@ -269,8 +269,8 @@ function renderBlock(el: Element, target: ElementNode) {
       return;
     }
     case "pre": {
-      const code = $createCodeBlockNode();
-      code.setText(el.textContent ?? "");
+      const code = $createSafeCodeNode();
+      code.append($createTextNode(el.textContent ?? ""));
       target.append(code);
       return;
     }
