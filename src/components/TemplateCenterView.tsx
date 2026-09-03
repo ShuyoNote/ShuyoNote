@@ -126,13 +126,20 @@ export function TemplateCenterView() {
       }
       const dbId = await createDatabase(null, t.name);
       if (dbId && config && Array.isArray(config.columns)) {
+        // attr_defs.name 唯一：同名属性已存在(上次建库)时复用，否则新建。
+        const existing = await api.listAttrDefs().catch(() => []);
+        const byName = new Map(existing.map((a) => [a.name, a]));
         for (const col of config.columns) {
           try {
-            const attr = await api.createAttr({
-              name: col.name,
-              attr_type: col.type,
-              options: col.options ?? [],
-            });
+            let attr = byName.get(col.name);
+            if (!attr) {
+              attr = await api.createAttr({
+                name: col.name,
+                attr_type: col.type,
+                options: col.options ?? [],
+              });
+              byName.set(col.name, attr);
+            }
             await api.addDbColumn(dbId, attr.id);
           } catch {
             /* skip a failed column */
