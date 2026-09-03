@@ -212,6 +212,9 @@ pub fn run() {
                     }
                 })
                 .on_web_resource_request(with_cache_headers)
+                // 开启调试控制台：正式版也能 Ctrl+Shift+I / F12 打开 WebView2
+                // devtools，看 console 报错（排查 mermaid 等问题）。
+                .devtools(true)
                 .build()?;
             Ok(())
         })
