@@ -21,6 +21,16 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
       api.listVersions(pageId).then(setVersions).catch((e) => console.error(e));
     }
   }, [open, pageId]);
+  // 点击历史菜单以外区域关闭。
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest(".history-panel, .history-popover")) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
 
   const restore = async (versionId: string) => {
     if (!(await confirmDialog({ title: "恢复版本", message: "恢复到该版本？当前内容将被覆盖。" }))) return;

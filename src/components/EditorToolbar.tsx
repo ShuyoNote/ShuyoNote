@@ -32,6 +32,16 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
     document.body.classList.toggle("content-full", contentWidth === "full");
     return () => document.body.classList.remove("content-full");
   }, [contentWidth]);
+  // 点击「⋯」菜单以外区域关闭。
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest(".editor-toolbar-more, .editor-more-menu")) return;
+      setExportOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [exportOpen]);
 
   const toggleWidth = () =>
     setContentWidth(contentWidth === "full" ? "centered" : "full");
@@ -115,6 +125,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       >
         <ContentWidthIcon />
       </button>
+      <HistoryPanel pageId={pageId} />
       <div className="editor-toolbar-more">
         <button
           className="toolbar-btn"
@@ -137,7 +148,6 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
           </div>
         )}
       </div>
-      <HistoryPanel pageId={pageId} />
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
     </div>
   );
