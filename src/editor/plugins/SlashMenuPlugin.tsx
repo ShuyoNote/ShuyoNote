@@ -3,7 +3,8 @@ import { platform } from "../../lib/platform";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createHeadingNode, $createQuoteNode } from "@lexical/rich-text";
 import { $createLinkNode } from "@lexical/link";
-import { $createCodeHighlightNode, $createCodeNode } from "@lexical/code";
+import { $createCodeHighlightNode } from "@lexical/code";
+import { $createSafeCodeNode } from "../nodes/SafeCodeNode";
 import {
   INSERT_CHECK_LIST_COMMAND,
   INSERT_ORDERED_LIST_COMMAND,
@@ -230,7 +231,7 @@ export function makeOptions(pageId: string): SlashOption[] {
         const anchor = selection.anchor.getNode();
         const topLevel = $getInsertTargetBlock(anchor);
         if (!topLevel) return;
-        const codeNode = $createCodeNode("javascript");
+        const codeNode = $createSafeCodeNode("javascript");
         codeNode.append($createCodeHighlightNode(topLevel.getTextContent()));
         topLevel.replace(codeNode);
         codeNode.selectStart();
