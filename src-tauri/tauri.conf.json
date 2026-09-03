@@ -13,6 +13,10 @@
     "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost attachment: http://attachment.localhost; media-src 'self' data: blob: asset: http://asset.localhost attachment: http://attachment.localhost; connect-src 'self' http: https:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'self' asset: http://asset.localhost attachment: http://attachment.localhost; worker-src 'self' blob: 'unsafe-eval' 'wasm-unsafe-eval';",
+      // 禁 Tauri 自动改 CSP：否则 Tauri 给 style-src 注入 nonce，导致 'unsafe-inline'
+      // 失效（nonce 存在时浏览器忽略 unsafe-inline）→ React/DOM style 属性(mermaid SVG/
+      // 组件定位)被拦，架构图/组件样式不应用。保留 style-src 'unsafe-inline' 生效。
+      "dangerousDisableAssetCspModification": true,
       "assetProtocol": {
         "enable": true,
         "scope": [
