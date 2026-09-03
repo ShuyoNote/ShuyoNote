@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $isCodeNode } from "@lexical/code";
 import { toast } from "../../store/toast";
 
 const LANGS = [
