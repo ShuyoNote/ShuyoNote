@@ -321,7 +321,7 @@ function TreeItem({
             {node.title || (isFolder ? "新建文件夹" : "未命名")}
           </span>
         )}
-        <span className={`tree-actions${menuOpen ? " is-open" : ""}`}>
+        <span className={`tree-actions${menuOpen || copyOpen ? " is-open" : ""}`}>
           {/* 折叠成「…」菜单：hover 显示一个 …，点开弹出动作菜单。 */}
           <button
             className="tree-more"
