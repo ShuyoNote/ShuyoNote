@@ -2294,6 +2294,40 @@ select.sync-input {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 拖拽中的浮动列标题：跟随指针，明确"拖的是哪列"。 */
+.board-col-ghost {
+  position: fixed;
+  z-index: 91;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.board-col-ghost-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+/* 落点列的插入指示（左侧竖线）。 */
+.board-column-over::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+}
 
 .board-card-title {
   overflow: hidden;

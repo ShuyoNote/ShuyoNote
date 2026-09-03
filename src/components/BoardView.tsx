@@ -29,6 +29,8 @@ export function BoardView() {
   const colDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const colDragMovedRef = useRef(false);
   const [colDragOver, setColDragOver] = useState<string | null>(null);
+  const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
+  const colDragTitleRef = useRef("");
 
   // 列拖拽：列头按下候选，全局 move 找落点列，up 落列则 reorder_tag。
   useEffect(() => {
@@ -36,8 +38,13 @@ export function BoardView() {
     const onMove = (e: PointerEvent) => {
       if (!colDragStartRef.current) return;
       if (!colDragMovedRef.current && Math.hypot(e.clientX - colDragStartRef.current.x, e.clientY - colDragStartRef.current.y) < 5) return;
-      colDragMovedRef.current = true;
+      if (!colDragMovedRef.current) {
+        colDragMovedRef.current = true;
+        const el0 = document.querySelector(`[data-col="${colDrag}"] .board-column-title`);
+        colDragTitleRef.current = el0?.textContent?.trim() ?? "列";
+      }
       e.preventDefault();
+      setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.("[data-col]") as HTMLElement | null;
       setColDragOver(col?.dataset.col ?? null);
@@ -49,6 +56,7 @@ export function BoardView() {
       const moved = colDragMovedRef.current;
       setColDrag(null);
       setColDragOver(null);
+      setColDragPos(null);
       colDragStartRef.current = null;
       colDragMovedRef.current = false;
       if (target && moved && target !== colDrag) void onReorderCol(colDrag, target);
@@ -56,6 +64,7 @@ export function BoardView() {
     const onCancel = () => {
       setColDrag(null);
       setColDragOver(null);
+      setColDragPos(null);
       colDragStartRef.current = null;
       colDragMovedRef.current = false;
     };
@@ -249,6 +258,13 @@ export function BoardView() {
       {dragPage && dragPos && (
         <div className="board-card board-card-ghost" style={{ left: dragPos.x + 8, top: dragPos.y + 8, pointerEvents: "none" }}>
           {dragCardTitleRef.current || "…"}
+        </div>
+      )}
+      {/* 拖拽中的浮动列标题：跟随指针，明确"拖的是哪列"。 */}
+      {colDrag && colDragPos && (
+        <div className="board-col-ghost" style={{ left: colDragPos.x, top: colDragPos.y, pointerEvents: "none" }}>
+          <span className="board-col-ghost-dot" />
+          {colDragTitleRef.current || "列"}
         </div>
       )}
     </div>
