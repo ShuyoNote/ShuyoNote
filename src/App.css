@@ -13038,6 +13038,13 @@ p:has(> .editor-drawing-container) {
   margin-left: auto;
   flex: none;
 }
+/* 启用开关关闭 → 该块其余字段整体禁灰；开关(在标题行)仍可点重新启用。 */
+.ai-settings-group.is-off > :not(.ai-settings-group-title) {
+  opacity: 0.45;
+  filter: grayscale(0.55);
+  pointer-events: none;
+  user-select: none;
+}
 .ai-settings-group-icon {
   font-size: 15px;
   flex: none;

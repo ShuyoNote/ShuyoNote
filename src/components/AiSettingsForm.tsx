@@ -122,7 +122,7 @@ export function AiSettingsForm({
     <>
       <div className="ai-settings-cols">
         {/* ===== AI 助手（对话） ===== */}
-        <div className="ai-settings-group">
+        <div className={`ai-settings-group${enabled ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">
             <span className="ai-settings-group-icon">💬</span>
             <span>AI 助手</span>
@@ -205,7 +205,7 @@ export function AiSettingsForm({
         </div>
 
         {/* ===== 语义检索 ===== */}
-        <div className="ai-settings-group">
+        <div className={`ai-settings-group${enableEmbedding ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">
             <span className="ai-settings-group-icon">🔎</span>
             <span>语义检索</span>
