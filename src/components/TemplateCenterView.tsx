@@ -42,25 +42,27 @@ type GalleryItem = {
 
 // Deterministic mock "thumbnail" per template: a cover-gradient background with a
 // mini white content card (page-screenshot look), until real thumbnails exist.
-function MockPreview({ id, cover }: { id: string; cover: string }) {
-  let seed = 0;
-  for (const ch of id) seed = (seed * 31 + ch.charCodeAt(0)) % 997;
-  const lines = 3 + (seed % 2); // 3–4 lines
-  const widths = ["72%", "52%", "64%", "45%"];
-  const start = seed % widths.length;
+// 模板卡片中央内容快照：渲染模板真实正文(标题 + 前几行)，截断；无内容则伪线。
+function MockPreview({ cover, content }: { cover: string; content?: string }) {
+  const lines = (content ?? "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 6);
+  const isHead = (i: number) => lines[i] && lines[i].length > 0 && !/[。：，;]$/.test(lines[i]) && lines[i].length < 18;
   return (
     <div className="tc-preview" style={{ background: cover }}>
-      <div className="tc-pv-card">
-        <div className="tc-pv-title" />
-        <div className="tc-pv-line" style={{ width: widths[start % widths.length] }} />
-        <div className="tc-pv-line" style={{ width: widths[(start + 1) % widths.length] }} />
-        {Array.from({ length: lines }).map((_, i) => (
-          <div
-            key={i}
-            className="tc-pv-line"
-            style={{ width: widths[(start + 2 + i) % widths.length] }}
-          />
-        ))}
+      <div className="tc-pv-card tc-pv-content">
+        {lines.length === 0 ? (
+          <>
+            <div className="tc-pv-title" />
+            <div className="tc-pv-line" style={{ width: "70%" }} />
+            <div className="tc-pv-line" style={{ width: "52%" }} />
+            <div className="tc-pv-line" style={{ width: "62%" }} />
+          </>
+        ) : (
+          lines.slice(0, 5).map((l, i) => (
+            <div key={i} className={`tc-pv-text${isHead(i) ? " tc-pv-head" : ""}`} title={l}>
+              {l}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -249,7 +251,7 @@ export function TemplateCenterView() {
                   </button>
                 </div>
               )}
-              <MockPreview id={t.id} cover={t.cover} />
+              <MockPreview cover={t.cover} content={t.content_text} />
               <div className="tc-card-body">
                 <span className="tc-card-name">{t.name}</span>
                 <span className="tc-card-tag">
