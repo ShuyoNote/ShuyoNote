@@ -5,7 +5,7 @@ import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
-import type { AttachmentMeta, PageMeta } from "../types";
+import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
@@ -160,6 +160,17 @@ function TreeItem({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(node.title);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  // 复制到其他工作空间：复制项点击后列出其他空间，点空间复制到其根目录。
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copySpaces, setCopySpaces] = useState<WorkspaceMeta[]>([]);
+  const [copyActive, setCopyActive] = useState<string | null>(null);
+  // 打开复制面板时加载目标空间列表 + 当前激活空间（排除自身）。
+  useEffect(() => {
+    if (!copyOpen) return;
+    api.listWorkspaces().then(setCopySpaces).catch(() => {});
+    api.getActiveWorkspaceId().then(setCopyActive).catch(() => {});
+  }, [copyOpen]);
 
   const isFolder = node.kind === "folder";
   const isDatabase = node.kind === "database";
@@ -306,13 +317,15 @@ function TreeItem({
             aria-expanded={menuOpen}
             onClick={(e) => {
               e.stopPropagation();
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenuAnchor({ x: r.right, y: r.bottom });
               setMenuOpen((v) => !v);
             }}
           >
             ⋯
           </button>
           {menuOpen && (
-            <span className="tree-node-menu" onClick={(e) => e.stopPropagation()}>
+            <span className="tree-node-menu" style={{ top: menuAnchor?.y ?? 0, left: (menuAnchor?.x ?? 0) - 150 }} onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
                   setMenuOpen(false);
@@ -332,6 +345,14 @@ function TreeItem({
                   ⧉ 新窗口打开
                 </button>
               )}
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  setCopyOpen(true);
+                }}
+              >
+                ⇄ 复制到其他空间
+              </button>
               <button
                 onClick={() => {
                   setMenuOpen(false);
@@ -363,6 +384,32 @@ function TreeItem({
                 × 删除
               </button>
             </span>
+          )}
+          {copyOpen && (
+            <div className="tree-copy-panel" style={{ top: menuAnchor?.y ?? 0, left: (menuAnchor?.x ?? 0) - 160 }}>
+              <div className="tree-copy-title">复制「{node.title || "未命名"}」到…</div>
+              {copySpaces.filter((s) => s.id !== copyActive).map((s) => (
+                <button
+                  key={s.id}
+                  className="tree-copy-item"
+                  onClick={async () => {
+                    try {
+                      await api.copyPageToWorkspace(node.id, s.id, null);
+                      toast(`已复制到「${s.name}」`, "success");
+                    } catch (e) {
+                      toast(`复制失败：${e}`, "error");
+                    } finally {
+                      setCopyOpen(false);
+                    }
+                  }}
+                >
+                  {s.name}
+                </button>
+              ))}
+              {copySpaces.filter((s) => s.id !== copyActive).length === 0 && (
+                <div className="tree-copy-empty">没有其他工作空间</div>
+              )}
+            </div>
           )}
         </span>
       </div>
