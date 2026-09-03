@@ -1724,7 +1724,7 @@ function makeInvoke(store: SqliteStore) {
       const untagged = store.query(
         "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages p WHERE p.deleted_at IS NULL AND p.kind = 'page' AND NOT EXISTS (SELECT 1 FROM page_tags pt WHERE pt.page_id = p.id) ORDER BY p.updated_at DESC",
       );
-      (columns as any[]).push({ tag: null, pages: untagged });
+      (columns as any[]).unshift({ tag: null, pages: untagged });
       return columns as T;
     }
     if (cmd === "board_by_attr") {

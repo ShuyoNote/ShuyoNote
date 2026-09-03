@@ -299,7 +299,8 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
     };
-    columns.push(BoardColumn {
+    // 「未分类」放在最左（固定，不随标签列排序）。
+    columns.insert(0, BoardColumn {
         tag: None,
         pages: untagged,
     });
