@@ -431,12 +431,18 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     if (!query) return [];
     let rs = query.rows;
     if (filter.trim()) {
-      // 空格分隔多关键字，每个关键字都需命中标题(AND)。
-      const keys = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
-      rs = rs.filter((r) => {
-        const t = r.title.toLowerCase();
-        return keys.every((k) => t.includes(k));
-      });
+      // 空格=与(AND)、逗号=或(OR)：逗号分成 OR 组，组内空格为 AND。
+      const key = filter.trim().toLowerCase();
+      const orGroups = key
+        .split(/[，,]/)
+        .map((g) => g.split(/\s+/).filter(Boolean))
+        .filter((g) => g.length);
+      if (orGroups.length) {
+        rs = rs.filter((r) => {
+          const t = r.title.toLowerCase();
+          return orGroups.some((g) => g.every((k) => t.includes(k)));
+        });
+      }
     }
     if (sort) {
       const { key, dir } = sort;
@@ -810,8 +816,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         <h1 className="database-title">{title || "数据库"}</h1>
         <input
           className="database-filter"
-          placeholder="按标题筛选…（空格分隔多关键字）"
-          title="空格分隔多关键字，每个关键字都需命中标题"
+          placeholder="按标题筛选…（空格=与，逗号=或）"
+          title="空格=与(都含)，逗号=或(任一含)；如：项目 计划 为与，项目,计划 为或"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
