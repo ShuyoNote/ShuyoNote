@@ -17,6 +17,8 @@ interface Item {
   height: number;
   lines: number;
   lang: string;
+  lineHeight: number; /* px, from computed style */
+  padTop: number;
 }
 
 // Code-block overlay: line numbers + language/copy toolbar rendered OUTSIDE the
@@ -37,7 +39,10 @@ export function CodeBlockToolbar() {
       const text = el.innerText ?? el.textContent ?? "";
       const lines = (text.match(/\n/g)?.length ?? 0) + 1;
       const lang = el.getAttribute("data-language") || "javascript";
-      out.push({ key: `${i}`, el, left: rect.left, top: rect.top, width: rect.width, height: rect.height, lines, lang });
+      const cs = el.ownerDocument.defaultView?.getComputedStyle(el);
+      const lineHeight = parseFloat(cs?.lineHeight ?? "0") || 0;
+      const padTop = parseFloat(cs?.paddingTop ?? "0") || 12;
+      out.push({ key: `${i}`, el, left: rect.left, top: rect.top, width: rect.width, height: rect.height, lines, lang, lineHeight, padTop });
     });
     setItems(out);
   };
@@ -60,7 +65,7 @@ export function CodeBlockToolbar() {
   return createPortal(
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 40 }}>
       {items.map((it) => {
-        const lineH = it.lines > 0 ? it.height / it.lines : 24;
+        const lh = it.lineHeight || (it.lines > 0 ? it.height / it.lines : 24);
         return (
           <div
             key={it.key}
@@ -69,8 +74,8 @@ export function CodeBlockToolbar() {
             {/* 行号 */}
             <div
               style={{
-                position: "absolute", left: 8, top: 12, width: 28, textAlign: "right",
-                color: "var(--text-faint)", fontSize: "0.85em", lineHeight: `${lineH}px`,
+                position: "absolute", left: 8, top: it.padTop, width: 28, textAlign: "right",
+                color: "var(--text-faint)", fontSize: "0.85em", lineHeight: `${lh}px`,
                 userSelect: "none", whiteSpace: "pre",
               }}
             >
