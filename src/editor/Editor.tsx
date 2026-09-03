@@ -316,13 +316,11 @@ function BlockIdPlugin({
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, button, select, a, [contenteditable='false']")) return;
       let lastKey = "";
-      let isEmpty = false;
       try {
         editor.getEditorState().read(() => {
           const last = $getRoot().getLastChild();
           if (!last) return;
           lastKey = last.getKey();
-          isEmpty = (last as any).isEmpty?.() ?? false;
         });
       } catch {
         return;
