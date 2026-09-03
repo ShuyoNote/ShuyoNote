@@ -126,12 +126,6 @@ export function AiSettingsForm({
           <div className="ai-settings-group-title">
             <span className="ai-settings-group-icon">💬</span>
             <span>AI 助手</span>
-          </div>
-
-          <p className="ai-settings-brief">聊天问答、写文案、做摘要。需配置对话模型。</p>
-
-          <label className="ai-settings-row ai-settings-enable">
-            <span className="ai-settings-label">启用</span>
             <button
               type="button"
               role="switch"
@@ -141,7 +135,9 @@ export function AiSettingsForm({
             >
               <span className="ui-toggle-knob" />
             </button>
-          </label>
+          </div>
+
+          <p className="ai-settings-brief">聊天问答、写文案、做摘要。需配置对话模型。</p>
 
           <label className="ai-settings-row">
             <span className="ai-settings-label">服务商</span>
@@ -213,12 +209,6 @@ export function AiSettingsForm({
           <div className="ai-settings-group-title">
             <span className="ai-settings-group-icon">🔎</span>
             <span>语义检索</span>
-          </div>
-
-          <p className="ai-settings-brief">搜索时按「意思」找相关笔记，不只认字。需配置嵌入模型。</p>
-
-          <label className="ai-settings-row ai-settings-enable">
-            <span className="ai-settings-label">启用</span>
             <button
               type="button"
               role="switch"
@@ -228,7 +218,9 @@ export function AiSettingsForm({
             >
               <span className="ui-toggle-knob" />
             </button>
-          </label>
+          </div>
+
+          <p className="ai-settings-brief">搜索时按「意思」找相关笔记，不只认字。需配置嵌入模型。</p>
 
           <label className="ai-settings-row">
             <span className="ai-settings-label">嵌入模型</span>

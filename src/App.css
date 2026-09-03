@@ -12977,6 +12977,10 @@ p:has(> .editor-drawing-container) {
   aspect-ratio: 1.618 / 1;
   max-height: calc(100vh - 20vh);
   overflow-y: auto;
+  /* 让 cols 占上部、动作栏(取消/保存)底部对齐。 */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .ai-settings-title {
   font-size: 15px;
@@ -12998,6 +13002,9 @@ p:has(> .editor-drawing-container) {
   gap: 14px;
   /* 高度对齐：两卡片拉伸等高。 */
   align-items: stretch;
+  /* 占上部，把动作栏(取消/保存)推到底部对齐。 */
+  flex: 1;
+  min-height: 0;
 }
 /* 窄窗口/对话框时两列退单列，避免被挤/漏空。 */
 @media (max-width: 760px) {
@@ -13025,6 +13032,11 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+}
+/* 启用开关移到标题行右侧（右上角）。 */
+.ai-settings-group-title > .ui-toggle {
+  margin-left: auto;
+  flex: none;
 }
 .ai-settings-group-icon {
   font-size: 15px;
@@ -13113,15 +13125,18 @@ p:has(> .editor-drawing-container) {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: auto;
+  padding-top: 6px;
 }
 
 .ai-settings-test {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 0;
-  margin-top: auto;
+  margin-top: 12px;
+  /* 测试连接下部留白，为测试信息(结果)预留空间，不贴卡片底。 */
+  margin-bottom: 4px;
+  min-height: 44px;
 }
 .ai-settings-test-btn {
   align-self: flex-start;
