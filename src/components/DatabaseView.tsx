@@ -1096,6 +1096,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
             <div className="db-gantt-head">
               <div className="db-gantt-rowlabel" style={{ width: ganttMetaW }}>
                 任务
+                <span className="db-gantt-resize-hint">拖动调宽</span>
                 <span
                   className="db-gantt-resize"
                   title="拖动调整标题列宽"

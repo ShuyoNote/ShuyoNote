@@ -9615,6 +9615,12 @@ p:has(> .editor-drawing-container) {
 .db-gantt-resize:hover {
   background: var(--accent-soft);
 }
+.db-gantt-resize-hint {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
 /* 甘特图行左侧：任务名 + 开始/结束 两个数据项。 */
 .db-gantt-meta {
   flex: none;
