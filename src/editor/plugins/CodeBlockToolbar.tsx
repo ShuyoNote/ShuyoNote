@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { CodeNode } from "@lexical/code";
-import { $getNodeByKey } from "lexical";
+import { $getRoot, $getNodeByKey } from "lexical";
 import { toast } from "../../store/toast";
 
 const LANGS = [
@@ -9,9 +9,9 @@ const LANGS = [
   "go", "rust", "json", "html", "css", "sql", "bash", "markdown", "yaml", "xml",
 ];
 
-// Per-code-block toolbar (语言选择 + 复制) + 行号 gutter. Reconciles on editor
-// updates only (no polling / MutationObserver), idempotent and cheap; line count
-// is derived from a DOM clone so we never re-enter editor.read() while updating.
+// Per-code-block toolbar (语言选择 + 复制) + 行号 gutter, injected into the
+// real Lexical DOM via editor.getElementByKey. Runs on editor update (DOM ready)
+// with a small debounce; idempotent and never triggers an editor.update.
 export function CodeBlockToolbar() {
   const [editor] = useLexicalComposerContext();
 
@@ -34,13 +34,13 @@ export function CodeBlockToolbar() {
       if (lines.textContent !== next) lines.textContent = next;
 
       if (pre.querySelector(".editor-code-toolbar")) return;
+      const key = pre.getAttribute("data-code-key");
       const toolbar = document.createElement("div");
       toolbar.className = "editor-code-toolbar";
 
       const sel = document.createElement("select");
       sel.className = "editor-code-lang";
       sel.title = "切换语言";
-      const key = pre.getAttribute("data-code-key");
       const lang = key ? readLang(key) : "javascript";
       LANGS.forEach((l) => {
         const o = document.createElement("option");
@@ -77,31 +77,11 @@ export function CodeBlockToolbar() {
       pre.appendChild(toolbar);
     };
 
-    // 用编辑器直接取每个 CodeNode 的真实 DOM 注入（不依赖 class 选择器）。
-    const applyNode = (key: string) => {
-      const el = editor.getElementByKey(key);
-      if (!(el instanceof HTMLElement)) return;
-      el.setAttribute("data-code-key", key);
-      ensureOne(el);
-    };
-
-    const sync = () => {
-      try {
-        const root = editor.getRootElement();
-        // 兜底：仍按 class 扫一遍（兼容首次渲染）。
-        root?.querySelectorAll(".editor-codeblock").forEach((el) => {
-          if (el instanceof HTMLElement) ensureOne(el);
-        });
-      } catch {
-        /* ignore */
-      }
-    };
-
     const readLang = (key: string): string => {
       let lang = "javascript";
       try {
         editor.getEditorState().read(() => {
-          const n = $getNodeByKey(key) as any;
+          const n = ($getNodeByKey(key) as any) ?? null;
           if (n && typeof n.getLanguage === "function") lang = n.getLanguage() ?? "javascript";
         });
       } catch {
@@ -110,14 +90,41 @@ export function CodeBlockToolbar() {
       return lang;
     };
 
-    const unregMut = editor.registerMutationListener(CodeNode, (mutations) => {
-      for (const [key2, m] of mutations) {
-        if (m === "created" || m === "updated") applyNode(key2);
+    const applyAll = () => {
+      try {
+        editor.getEditorState().read(() => {
+          const nodes = $getRoot().getAllNodes();
+          for (const n of nodes) {
+            if (n.getType() === CodeNode.getType()) {
+              const key = n.getKey();
+              const el = editor.getElementByKey(key);
+              if (el instanceof HTMLElement) {
+                el.setAttribute("data-code-key", key);
+                ensureOne(el);
+              }
+            }
+          }
+        });
+      } catch {
+        /* ignore */
       }
-    });
-    sync();
+    };
+
+    let timer: number | null = null;
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        applyAll();
+      }, 60);
+    };
+
+    const unreg = editor.registerUpdateListener(schedule);
+    // 初次挂载也跑一次（等一帧确保 DOM 就绪）。
+    applyAll();
     return () => {
-      unregMut();
+      unreg();
+      if (timer) clearTimeout(timer);
     };
   }, [editor]);
 
