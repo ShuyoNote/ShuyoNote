@@ -34,7 +34,7 @@ export function CodeBlockToolbar() {
     root.querySelectorAll(".editor-codeblock").forEach((el, i) => {
       if (!(el instanceof HTMLElement)) return;
       const rect = el.getBoundingClientRect();
-      const text = el.textContent ?? "";
+      const text = el.innerText ?? el.textContent ?? "";
       const lines = (text.match(/\n/g)?.length ?? 0) + 1;
       const lang = el.getAttribute("data-language") || "javascript";
       out.push({ key: `${i}`, el, left: rect.left, top: rect.top, width: rect.width, height: rect.height, lines, lang });
