@@ -161,6 +161,17 @@ function TreeItem({
   const [editValue, setEditValue] = useState(node.title);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLSpanElement>(null);
+  const [menuTop, setMenuTop] = useState(0);
+  // 菜单位置自适应：若向下超出视口则向上弹出，避免被屏幕底部/任务栏遮挡。
+  useEffect(() => {
+    if (!menuOpen || !menuAnchor?.y) return;
+    const el = menuRef.current;
+    if (!el) return;
+    const h = el.offsetHeight || 220;
+    const y = menuAnchor.y;
+    setMenuTop(y + h > window.innerHeight - 8 ? Math.max(8, y - h) : y);
+  }, [menuOpen, menuAnchor]);
   // 复制到其他工作空间：复制项点击后列出其他空间，点空间复制到其根目录。
   const [copyOpen, setCopyOpen] = useState(false);
   const [copySpaces, setCopySpaces] = useState<WorkspaceMeta[]>([]);
@@ -337,7 +348,7 @@ function TreeItem({
             ⋯
           </button>
           {menuOpen && (
-            <span className="tree-node-menu" style={{ top: menuAnchor?.y ?? 0, left: (menuAnchor?.x ?? 0) - 150 }} onClick={(e) => e.stopPropagation()}>
+            <span className="tree-node-menu" ref={menuRef} style={{ top: menuTop, left: (menuAnchor?.x ?? 0) - 150 }} onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
                   setMenuOpen(false);
