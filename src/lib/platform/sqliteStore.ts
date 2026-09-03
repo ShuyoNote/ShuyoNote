@@ -348,6 +348,18 @@ export class SqliteStore {
     } catch {
       /* already exists */
     }
+    // 旧库的 `tags` 表可能缺 color / sort_order（标签颜色/排序）——补齐列，否则
+    // list_tags / 建库时报 "no such column: t.color"。
+    try {
+      this.db.run("ALTER TABLE tags ADD COLUMN color TEXT");
+    } catch {
+      /* already exists */
+    }
+    try {
+      this.db.run("ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0");
+    } catch {
+      /* already exists */
+    }
   }
 
   /** Run a mutation; persist the DB snapshot after. */
