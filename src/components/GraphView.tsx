@@ -198,6 +198,7 @@ export function GraphView() {
   const panRef = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(null);
   const movedRef = useRef(false);
   const lastClickRef = useRef<{ id: string; t: number }>({ id: "", t: 0 });
+  const pointerDownRef = useRef<{ id: string; t: number } | null>(null);
   const pinnedIdsRef = useRef<Set<string>>(new Set());
   pinnedIdsRef.current = pinnedIds;
 
@@ -446,6 +447,7 @@ export function GraphView() {
     userMovedRef.current = true;
     const node = simRef.current.find((n) => n.id === id);
     if (!node) return;
+    pointerDownRef.current = { id, t: Date.now() };
     dragRef.current = { id, scx: e.clientX, scy: e.clientY, nx: node.x, ny: node.y };
     movedRef.current = false;
     svgRef.current?.setPointerCapture(e.pointerId);
@@ -500,6 +502,20 @@ export function GraphView() {
   };
 
   const onPointerUp = () => {
+    // 双击检测（pointer 事件可靠，不受 setPointerCapture 影响）：节点未拖动时两次
+    // 快速按下/抬起同一节点 → 打开页面。
+    if (pointerDownRef.current && !movedRef.current) {
+      const { id, t } = pointerDownRef.current;
+      const now = Date.now();
+      if (lastClickRef.current.id === id && now - t < 300) {
+        lastClickRef.current = { id: "", t: 0 };
+        const n = simRef.current.find((x) => x.id === id);
+        if (n) openNode(n);
+      } else {
+        lastClickRef.current = { id, t: now };
+      }
+    }
+    pointerDownRef.current = null;
     dragRef.current = null;
     panRef.current = null;
   };
