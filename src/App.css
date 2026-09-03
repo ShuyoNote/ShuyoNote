@@ -9567,6 +9567,9 @@ p:has(> .editor-drawing-container) {
   overflow: auto;
   display: flex;
   flex-direction: column;
+  /* 外围框线。 */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 .db-gantt-head,
 .db-gantt-row {
@@ -9601,6 +9604,8 @@ p:has(> .editor-drawing-container) {
   font-weight: 700;
   color: var(--text);
   position: relative;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 /* 标题列宽拖拽手柄：右缘竖条，hover 高亮。 */
 .db-gantt-resize {
@@ -9630,6 +9635,7 @@ p:has(> .editor-drawing-container) {
   gap: 6px;
   padding: 0 8px;
   min-width: 0;
+  border-right: 1px solid var(--border);
 }
 .db-gantt-owner {
   flex: none;
@@ -9639,6 +9645,8 @@ p:has(> .editor-drawing-container) {
   max-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
+  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding-left: 6px;
 }
 /* 负责人可编辑下拉。 */
 .db-gantt-owner-select {
@@ -9680,6 +9688,8 @@ p:has(> .editor-drawing-container) {
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
+  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding-left: 6px;
 }
 /* 可编辑日期：淡色，hover/聚焦显示边框，原生 date 选择器跟随暗色。 */
 .db-gantt-date-input {
@@ -9733,6 +9743,9 @@ p:has(> .editor-drawing-container) {
   overflow: auto;
   display: flex;
   flex-direction: column;
+  /* 外围框线。 */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 .db-gantt-head,
 .db-gantt-row {
