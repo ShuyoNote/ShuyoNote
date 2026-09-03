@@ -66,7 +66,7 @@ export interface AiPreset {
   domestic?: boolean;
 }
 export const AI_PRESETS: AiPreset[] = [
-  { id: "deepseek", name: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-chat", needsKey: true, domestic: true },
+  { id: "deepseek", name: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash-vision-exp", needsKey: true, domestic: true },
   { id: "ollama", name: "Ollama（本地）", provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, needsKey: false, domestic: true },
   { id: "zhipu", name: "智谱 GLM", provider: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", needsKey: true, domestic: true },
   { id: "qwen", name: "阿里 通义 Qwen", provider: "openai", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true, domestic: true },
@@ -77,7 +77,7 @@ export const AI_PRESETS: AiPreset[] = [
 
 /** 每个预设服务商的常用模型（模型下拉框的候选项）。完整列出，不被占位名过滤。 */
 export const MODEL_OPTIONS: Record<string, string[]> = {
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  deepseek: ["deepseek-v4-flash-vision-exp", "deepseek-chat", "deepseek-reasoner"],
   ollama: ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "nomic-embed-text", "dmeta-embedding-zh"],
   zhipu: ["glm-4-flash", "glm-4-plus", "embedding-3"],
   qwen: ["qwen-plus", "qwen-turbo", "qwen-max", "text-embedding-v3"],
