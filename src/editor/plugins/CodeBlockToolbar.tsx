@@ -9,41 +9,41 @@ const LANGS = [
   "go", "rust", "json", "html", "css", "sql", "bash", "markdown", "yaml", "xml",
 ];
 
-// Per-code-block toolbar (语言选择 + 复制) + 行号 gutter. Injected into the
-// Lexical-owned `<pre class="editor-codeblock">`; on any code update the pre's
-// children are rewritten by Lexical, so we re-assert on each update via the
-// mutation listener + a MutationObserver.
+// Per-code-block toolbar (语言选择 + 复制) + 行号 gutter. Reconciles on editor
+// updates only (no polling / MutationObserver), idempotent and cheap; line count
+// is derived from a DOM clone so we never re-enter editor.read() while updating.
 export function CodeBlockToolbar() {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    const readLang = (key: string | null): string => {
-      if (!key) return "javascript";
-      return editor.getEditorState().read(() => {
-        const n = $getNodeByKey(key) as any;
-        return n && typeof n.getLanguage === "function" ? (n.getLanguage() ?? "javascript") : "javascript";
-      });
+    let busy = false;
+    const sync = () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const root = editor.getRootElement();
+        const list = (root?.querySelectorAll(".editor-codeblock") ?? document.querySelectorAll(".editor-codeblock"));
+        list.forEach((el) => {
+          if (el instanceof HTMLElement) ensureOne(el);
+        });
+      } catch {
+        /* ignore transient DOM issues */
+      } finally {
+        busy = false;
+      }
     };
 
-    const computeLineCount = (pre: HTMLElement): number => {
-      const key = pre.getAttribute("data-code-key");
-      if (key) {
-        const txt = editor.getEditorState().read(() => {
-          const n = $getNodeByKey(key) as any;
-          return typeof n?.getTextContent === "function" ? (n.getTextContent() ?? "") : "";
-        }) as string;
-        return (txt.match(/\n/g)?.length ?? 0) + 1;
-      }
-      // 兜底：排除 gutter/工具条自身，避免计数被污染。
+    const lineCount = (pre: HTMLElement): number => {
+      // 克隆并剔除 gutter/工具条，避免计数被自身文本污染。
       const clone = pre.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll?.(".editor-code-lines, .editor-code-toolbar").forEach((el) => el.remove());
+      clone.querySelectorAll?.(".editor-code-lines, .editor-code-toolbar").forEach((x) => x.remove());
       return ((clone.textContent ?? "").match(/\n/g)?.length ?? 0) + 1;
     };
 
     const ensureOne = (pre: HTMLElement) => {
-      // 行号 gutter（1..N，每次重算并更新）。
+      // 行号 gutter。
       let lines = pre.querySelector<HTMLElement>(".editor-code-lines");
-      const n = computeLineCount(pre);
+      const n = lineCount(pre);
       if (!lines) {
         lines = document.createElement("div");
         lines.className = "editor-code-lines";
@@ -51,16 +51,17 @@ export function CodeBlockToolbar() {
       }
       const next = Array.from({ length: n }, (_, i) => i + 1).join("\n");
       if (lines.textContent !== next) lines.textContent = next;
-      // 工具条。
+
+      // 工具条只在缺失时注入一次。
       if (pre.querySelector(".editor-code-toolbar")) return;
-      const key = pre.getAttribute("data-code-key");
       const toolbar = document.createElement("div");
       toolbar.className = "editor-code-toolbar";
 
       const sel = document.createElement("select");
       sel.className = "editor-code-lang";
       sel.title = "切换语言";
-      const lang = readLang(key);
+      const key = pre.getAttribute("data-code-key");
+      const lang = key ? readLang(key) : "javascript";
       LANGS.forEach((l) => {
         const o = document.createElement("option");
         o.value = l;
@@ -71,8 +72,9 @@ export function CodeBlockToolbar() {
       sel.addEventListener("change", () => {
         if (!key) return;
         editor.update(() => {
-          const n = $getNodeByKey(key) as any;
-          if (n && typeof n.setLanguage === "function") n.setLanguage(sel.value);
+          const p = pre.getAttribute("data-code-key");
+          const n = p ? $getNodeByKey(p) : null;
+          if (n && typeof n.setLanguage === "function") (n as any).setLanguage(sel.value);
         });
       });
 
@@ -95,32 +97,30 @@ export function CodeBlockToolbar() {
       pre.appendChild(toolbar);
     };
 
-    const ensureAll = () => {
-      const root = editor.getRootElement();
-      const list = (root?.querySelectorAll(".editor-codeblock") ?? document.querySelectorAll(".editor-codeblock"));
-      list.forEach((el) => {
-        if (el instanceof HTMLElement) ensureOne(el);
+    const readLang = (key: string): string => {
+      let lang = "javascript";
+      editor.getEditorState().read(() => {
+        const n = $getNodeByKey(key);
+        if (n && typeof (n as any).getLanguage === "function") lang = (n as any).getLanguage() ?? "javascript";
       });
+      return lang;
     };
 
-    const unregister = editor.registerMutationListener(CodeNode, (mutations) => {
-      for (const [nodeKey, mutation] of mutations) {
-        if (mutation === "created" || mutation === "updated") {
-          const el = editor.getElementByKey(nodeKey);
-          if (el) el.setAttribute("data-code-key", nodeKey);
+    const unregister = editor.registerUpdateListener(() => sync());
+    // 初次挂载 + 节点增删。
+    const unregMut = editor.registerMutationListener(CodeNode, (mutations) => {
+      for (const [key2, m] of mutations) {
+        if (m === "created" || m === "updated") {
+          const el = editor.getElementByKey(key2);
+          if (el) el.setAttribute("data-code-key", key2);
         }
       }
-      ensureAll();
+      sync();
     });
-    ensureAll();
-    const id = window.setInterval(ensureAll, 500);
-    const root = editor.getRootElement();
-    const mo = root ? new MutationObserver(() => ensureAll()) : null;
-    if (mo && root) mo.observe(root, { childList: true, subtree: true });
+    sync();
     return () => {
       unregister();
-      clearInterval(id);
-      mo?.disconnect();
+      unregMut();
     };
   }, [editor]);
 
