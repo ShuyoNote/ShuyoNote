@@ -127,7 +127,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const viewsWrapRef = useRef<HTMLDivElement>(null);
   const ruleWrapRef = useRef<HTMLDivElement>(null);
   const [viewType, setViewType] = useState<
-    "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory"
+    "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory" | "gantt"
   >("table");
   const [boardGroupAttr, setBoardGroupAttr] = useState<string | null>(null);
   const [boardDragOver, setBoardDragOver] = useState<string | null>(null);
@@ -567,6 +567,43 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     );
   }, [rows, dateCol]);
 
+  // 甘特图：用 date 列——第一个=起始、第二个=结束（无第二个则单点）。计算日期范围 + 每行条。
+  const gantt = useMemo(() => {
+    const dateCols = query?.columns.filter((c) => c.attr_type === "date") ?? [];
+    if (dateCols.length === 0 || !query) return null;
+    const startCol = dateCols[0];
+    const endCol = dateCols[1] ?? null;
+    const items = rows
+      .map((r) => {
+        const sm = /^(\d{4})-(\d{2})-(\d{2})/.exec((r.values[startCol.id] ?? "") as string);
+        if (!sm) return null;
+        const start = new Date(+sm[1], +sm[2] - 1, +sm[3]);
+        let end = new Date(start);
+        if (endCol) {
+          const em = /^(\d{4})-(\d{2})-(\d{2})/.exec((r.values[endCol.id] ?? "") as string);
+          if (em) end = new Date(+em[1], +em[2] - 1, +em[3]);
+        }
+        if (end < start) end = new Date(start);
+        return { row: r, start, end, title: r.title || "未命名" };
+      })
+      .filter(Boolean) as { row: DatabaseRow; start: Date; end: Date; title: string }[];
+    if (items.length === 0) return null;
+    let min = items[0].start;
+    let max = items[0].end;
+    for (const it of items) {
+      if (it.start < min) min = it.start;
+      if (it.end > max) max = it.end;
+    }
+    // Pad to whole days; total span in days.
+    const totalDays = Math.max(1, Math.round((max.getTime() - min.getTime()) / 86400000) + 1);
+    const cols: string[] = [];
+    for (let i = 0; i <= totalDays; i++) {
+      const d = new Date(min.getTime() + i * 86400000);
+      cols.push(`${d.getMonth() + 1}/${d.getDate()}`);
+    }
+    return { startCol, endCol, items, min, max, totalDays, cols };
+  }, [rows, query]);
+
   if (!query) {
     return <div className="database-view database-empty">加载中…</div>;
   }
@@ -659,6 +696,14 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           >
             <DirectoryIcon width={15} height={15} />
             <span>目录</span>
+          </button>
+          <button
+            className={viewType === "gantt" ? "db-view-active" : ""}
+            onClick={() => setViewType("gantt")}
+            title="甘特图"
+          >
+            <TimelineIcon width={15} height={15} />
+            <span>甘特图</span>
           </button>
         </div>
         <div className="db-actions">
@@ -1017,6 +1062,41 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           ))}
           {!dateCol && <div className="db-empty">需先添加 date 类型列</div>}
         </div>
+      ) : viewType === "gantt" ? (
+        gantt ? (
+          <div className="db-gantt">
+            <div className="db-gantt-head">
+              <div className="db-gantt-rowlabel">任务</div>
+              <div className="db-gantt-axis">
+                {gantt.cols.map((c, i) => (
+                  <div key={i} className="db-gantt-axis-cell">{c}</div>
+                ))}
+              </div>
+            </div>
+            {gantt.items.map((it) => {
+              const left = (it.start.getTime() - gantt.min.getTime()) / 86400000;
+              const w = (it.end.getTime() - it.start.getTime()) / 86400000 + 1;
+              return (
+                <div key={it.row.page_id} className="db-gantt-row">
+                  <button className="db-gantt-rowlabel" onClick={() => openPage(it.row.page_id)}>
+                    {it.title}
+                  </button>
+                  <div className="db-gantt-track">
+                    <div
+                      className="db-gantt-bar"
+                      style={{ left: `${(left / gantt.totalDays) * 100}%`, width: `${(w / gantt.totalDays) * 100}%` }}
+                      title={`${it.title}（${it.start.toISOString().slice(0, 10)} ~ ${it.end.toISOString().slice(0, 10)}）`}
+                    >
+                      {it.title}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="db-empty">需先添加 date 类型列</div>
+        )
       ) : viewType === "directory" ? (
         <div className="db-directory">
           {directoryTree.map((n) => (

@@ -9511,6 +9511,71 @@ p:has(> .editor-drawing-container) {
   flex-direction: column;
   gap: 6px;
 }
+/* 甘特图视图：任务条 + 时间轴。 */
+.db-gantt {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.db-gantt-head,
+.db-gantt-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 100%;
+}
+.db-gantt-rowlabel {
+  flex: none;
+  width: 160px;
+  text-align: left;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-gantt-head .db-gantt-rowlabel {
+  font-weight: 700;
+}
+.db-gantt-axis {
+  flex: 1;
+  display: flex;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.db-gantt-axis-cell {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 4px 0;
+  text-align: center;
+  border-left: 1px solid var(--border);
+}
+.db-gantt-track {
+  flex: 1;
+  position: relative;
+  border-left: 1px solid var(--border);
+  min-height: 30px;
+}
+.db-gantt-bar {
+  position: absolute;
+  top: 5px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
 
 .db-timeline-item {
   display: flex;
