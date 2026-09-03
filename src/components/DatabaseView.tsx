@@ -132,7 +132,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [boardGroupAttr, setBoardGroupAttr] = useState<string | null>(null);
   const [boardDragOver, setBoardDragOver] = useState<string | null>(null);
   // 甘特图左侧(标题/负责人/日期)列宽，可拖拽调整。
-  const [ganttMetaW, setGanttMetaW] = useState(330);
+  const [ganttMetaW, setGanttMetaW] = useState(430);
   const ganttResizeRef = useRef<{ sx: number; sw: number } | null>(null);
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date();

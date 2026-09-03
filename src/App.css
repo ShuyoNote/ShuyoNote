@@ -9685,8 +9685,8 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-date {
   flex: none;
-  width: 62px;
-  min-width: 62px;
+  width: 92px;
+  min-width: 92px;
   font-size: 10.5px;
   color: var(--text-faint);
   white-space: nowrap;
