@@ -671,7 +671,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         <h1 className="database-title">{title || "数据库"}</h1>
         <input
           className="database-filter"
-          placeholder="筛选页面…"
+          placeholder="按标题筛选…"
+          title="按页面标题关键词筛选（输入即过滤，清空显示全部）"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
