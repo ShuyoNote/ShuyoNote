@@ -4136,7 +4136,7 @@ body.content-full .editor-placeholder {
   width: 100%;
   border: none;
   background: transparent;
-  padding: 4px 0 4px 6px;
+  padding: 10px 0 8px 12px;
   margin-bottom: 2px;
   cursor: pointer;
   color: var(--text-dim);
