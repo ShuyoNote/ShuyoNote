@@ -9359,11 +9359,29 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: column;
   max-height: 100%;
+  position: relative;
 }
 
 .db-board-col-over {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* 列拖拽插入位置竖线：插前(左缘)/插后(右缘)。 */
+.db-board-col-over::before,
+.db-board-col-after::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.db-board-col-over::before {
+  left: 0;
+}
+.db-board-col-after::after {
+  right: 0;
 }
 
 .db-board-col-header {

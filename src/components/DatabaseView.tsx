@@ -144,6 +144,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [colDragName, setColDragName] = useState("");
   const [colDragColor, setColDragColor] = useState("");
   const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [colDragSide, setColDragSide] = useState<"before" | "after">("before");
+  const colDragSideRef = useRef<"before" | "after">("before");
   // 甘特图左侧(标题/负责人/日期)列宽，可拖拽调整。
   const [ganttMetaW, setGanttMetaW] = useState(430);
   const ganttResizeRef = useRef<{ sx: number; sw: number } | null>(null);
@@ -583,16 +585,30 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.(".db-board-col") as HTMLElement | null;
-      setBoardDragOver(col?.dataset.col ?? null);
+      if (col) {
+        // 按拖动方向判定插入侧：目标列在源列右侧→插后(after)，左侧→插前(before)。
+        const dragEl = document.querySelector(".db-board-col-header-dragging");
+        const dragX = dragEl?.getBoundingClientRect().left ?? 0;
+        const targetX = col.getBoundingClientRect().left;
+        const side = targetX >= dragX ? "after" : "before";
+        colDragSideRef.current = side;
+        setColDragSide(side);
+        setBoardDragOver(col.dataset.col ?? null);
+      } else {
+        setBoardDragOver(null);
+      }
     };
     const onUp = (e: PointerEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.(".db-board-col") as HTMLElement | null;
       const target = col?.dataset.col ?? null;
       const moved = colDragRef.current?.moved;
+      const side = colDragSideRef.current;
       setColDrag(null);
       setBoardDragOver(null);
       setColDragPos(null);
+      setColDragSide("before");
+      colDragSideRef.current = "before";
       colDragRef.current = null;
       if (target && moved && target !== colDrag) {
         setBoardGroupOrder((prev) => {
@@ -601,7 +617,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           const idx = without.indexOf(target);
           if (idx < 0) return without;
           const next = [...without];
-          next.splice(idx, 0, colDrag);
+          next.splice(side === "after" ? idx + 1 : idx, 0, colDrag);
           return next;
         });
       }
@@ -1095,7 +1111,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           </div>
           <div className="db-board-columns">
             {boardGroups.map((g) => (
-              <div key={g.id} className={`db-board-col ${boardDragOver === g.id ? "db-board-col-over" : ""}`} data-col={g.id}>
+              <div key={g.id} className={`db-board-col ${boardDragOver === g.id ? "db-board-col-over" : ""} ${boardDragOver === g.id && colDragSide === "after" ? "db-board-col-after" : ""}`} data-col={g.id}>
                 <div
                   className={`db-board-col-header${colDrag === g.id ? " db-board-col-header-dragging" : ""}`}
                   title={g.id === "__none" ? "" : "拖动调整列顺序"}
