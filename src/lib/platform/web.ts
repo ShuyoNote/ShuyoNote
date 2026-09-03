@@ -1777,9 +1777,10 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "reorder_tag") {
       const tagId = String(a.tagId ?? a.tag_id ?? "");
       const beforeTagId = a.beforeTagId ?? a.before_tag_id ?? null;
+      const after = !!a.after;
       const ordered = (store.query<{ id: string }>("SELECT id FROM tags WHERE id <> ? ORDER BY sort_order ASC, name", [tagId]) || []).map((r: any) => String(r.id));
       let idx = beforeTagId ? ordered.indexOf(String(beforeTagId)) : -1;
-      if (idx >= 0) ordered.splice(idx, 0, tagId);
+      if (idx >= 0) ordered.splice(after ? idx + 1 : idx, 0, tagId);
       else ordered.push(tagId);
       ordered.forEach((id: string, i: number) => store.run("UPDATE tags SET sort_order = ? WHERE id = ?", [i, id]));
       return undefined as T;

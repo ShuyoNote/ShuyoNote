@@ -378,12 +378,14 @@ pub fn reorder_card(
     Ok(())
 }
 
-/// 看板列(组)拖拽换序：把 tag_id 移到 before_tag_id 前（空则列尾），重排 tags.sort_order。
+/// 看板列(组)拖拽换序：把 tag_id 移到 before_tag_id 前（after=false）或后（after=true）；
+/// before 为空则列尾，重排 tags.sort_order。
 #[tauri::command]
 pub fn reorder_tag(
     db: State<'_, Db>,
     tag_id: String,
     before_tag_id: Option<String>,
+    after: bool,
 ) -> Result<(), String> {
     let c = conn(&db);
     let mut ordered: Vec<String> = {
@@ -397,7 +399,9 @@ pub fn reorder_tag(
     };
     if let Some(before) = before_tag_id.as_deref() {
         if let Some(pos) = ordered.iter().position(|id| id == before) {
-            ordered.insert(pos, tag_id.clone());
+            // before=false 插到目标前；after=true 插到目标后（下一位置）。
+            let insert_at = if after { pos + 1 } else { pos };
+            ordered.insert(insert_at.min(ordered.len()), tag_id.clone());
         } else {
             ordered.push(tag_id.clone());
         }

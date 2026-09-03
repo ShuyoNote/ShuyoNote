@@ -43,6 +43,7 @@ export function BoardView() {
       let best: HTMLElement | null = null;
       let bestD = Infinity;
       for (const c of cols) {
+        if (c.dataset.col === colDrag) continue; // 排除被拖列自身
         const r = c.getBoundingClientRect();
         if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return c;
         const d = Math.min(Math.abs(x - r.left), Math.abs(x - r.right), Math.abs(x - r.left - r.width / 2));
@@ -79,7 +80,7 @@ export function BoardView() {
       setColDragPos(null);
       colDragStartRef.current = null;
       colDragMovedRef.current = false;
-      if (target && target !== "__none" && moved && target !== colDrag) void onReorderCol(colDrag, target);
+      if (target && target !== "__none" && moved && target !== colDrag) void onReorderCol(colDrag, target, colDragSide === "after");
     };
     const onCancel = () => {
       setColDrag(null);
@@ -200,9 +201,9 @@ export function BoardView() {
     }
   };
 
-  const onReorderCol = async (tagId: string, beforeTagId: string) => {
+  const onReorderCol = async (tagId: string, beforeTagId: string, after: boolean) => {
     try {
-      await api.reorderTag(tagId, beforeTagId);
+      await api.reorderTag(tagId, beforeTagId, after);
       load();
     } catch (e) {
       console.error(e);
