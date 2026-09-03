@@ -1081,35 +1081,49 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               const left = (it.start.getTime() - gantt.min.getTime()) / 86400000;
               const w = (it.end.getTime() - it.start.getTime()) / 86400000 + 1;
               const status = gantt.statusCol ? it.row.values[gantt.statusCol.id] ?? "" : "";
+              const color = status ? tagColor(status).solid : "var(--accent)";
               return (
                 <div key={it.row.page_id} className="db-gantt-row">
                   <button className="db-gantt-rowlabel" onClick={() => openPage(it.row.page_id)}>
                     {it.title}
                   </button>
                   <div className="db-gantt-track">
-                    {/* 今日线：在条层之下、网格之上的竖线。 */}
                     {gantt.todayIdx >= 0 && gantt.todayIdx <= gantt.totalDays && (
-                      <span
-                        className="db-gantt-today"
-                        style={{ left: `${(gantt.todayIdx / gantt.totalDays) * 100}%` }}
-                      />
+                      <span className="db-gantt-today" style={{ left: `${(gantt.todayIdx / gantt.totalDays) * 100}%` }} />
                     )}
-                    <div
-                      className={`db-gantt-bar${status ? " has-status" : ""}`}
-                      data-status={status}
-                      style={{
-                        left: `${(left / gantt.totalDays) * 100}%`,
-                        width: `${(w / gantt.totalDays) * 100}%`,
-                        ...(status ? { background: tagColor(status).solid } : {}),
-                      }}
-                      title={`${it.title}（${it.start.toISOString().slice(0, 10)} ~ ${it.end.toISOString().slice(0, 10)}${status ? " · " + status : ""}）`}
-                    >
-                      {it.title}
-                    </div>
+                    {Array.from({ length: gantt.totalDays }).map((_, di) => {
+                      const on = di >= left && di < left + w;
+                      return (
+                        <span
+                          key={di}
+                          className={`db-gantt-cell${on ? " on" : ""}`}
+                          style={{ width: `${100 / gantt.totalDays}%`, ...(on ? { background: color } : {}) }}
+                          title={`${it.title}（${it.start.toISOString().slice(0, 10)} ~ ${it.end.toISOString().slice(0, 10)}${status ? " · " + status : ""}）`}
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               );
             })}
+            {/* 汇总行：每日期列有多少任务（天数占用）。 */}
+            <div className="db-gantt-row db-gantt-summary">
+              <div className="db-gantt-rowlabel">合计</div>
+              <div className="db-gantt-track">
+                {Array.from({ length: gantt.totalDays }).map((_, di) => {
+                  const cnt = gantt.items.filter((it) => {
+                    const s = (it.start.getTime() - gantt.min.getTime()) / 86400000;
+                    const e = (it.end.getTime() - it.start.getTime()) / 86400000 + 1;
+                    return di >= s && di < s + e;
+                  }).length;
+                  return (
+                    <span key={di} className={`db-gantt-cell db-gantt-count${cnt ? " has" : ""}`} style={{ width: `${100 / gantt.totalDays}%` }}>
+                      {cnt || ""}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         ) : (
           <div className="db-empty">需先添加 date 类型列</div>
