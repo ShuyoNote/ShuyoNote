@@ -2207,11 +2207,29 @@ select.sync-input {
   display: flex;
   flex-direction: column;
   max-height: 100%;
+  position: relative;
 }
 
 .board-column-over {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* 列拖拽插入位置指示竖线：插前(左缘)/插后(右缘)。 */
+.board-column-over::before,
+.board-column-over-after::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.board-column-over::before {
+  left: -5px;
+}
+.board-column-over-after::after {
+  right: -5px;
 }
 
 .board-column-header {

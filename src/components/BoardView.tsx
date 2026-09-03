@@ -29,6 +29,7 @@ export function BoardView() {
   const colDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const colDragMovedRef = useRef(false);
   const [colDragOver, setColDragOver] = useState<string | null>(null);
+  const [colDragSide, setColDragSide] = useState<"before" | "after">("before");
   const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
   const colDragTitleRef = useRef("");
 
@@ -47,7 +48,13 @@ export function BoardView() {
       setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.("[data-col]") as HTMLElement | null;
-      setColDragOver(col?.dataset.col ?? null);
+      if (col) {
+        const rect = col.getBoundingClientRect();
+        setColDragOver(col.dataset.col ?? null);
+        setColDragSide(e.clientX < rect.left + rect.width / 2 ? "before" : "after");
+      } else {
+        setColDragOver(null);
+      }
     };
     const onUp = (e: PointerEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY);
@@ -56,6 +63,7 @@ export function BoardView() {
       const moved = colDragMovedRef.current;
       setColDrag(null);
       setColDragOver(null);
+      setColDragSide("before");
       setColDragPos(null);
       colDragStartRef.current = null;
       colDragMovedRef.current = false;
@@ -211,7 +219,7 @@ export function BoardView() {
           <div
             key={col.id}
             data-col={col.id}
-            className={`board-column ${(dragOver === col.id || colDragOver === col.id) ? "board-column-over" : ""} ${colDrag === col.id ? "board-column-dragging" : ""}`}
+            className={`board-column ${dragOver === col.id || colDragOver === col.id ? "board-column-over" : ""} ${colDrag === col.id ? "board-column-dragging" : ""} ${colDragOver === col.id && colDragSide === "after" ? "board-column-over-after" : ""}`}
           >
             <div
               className="board-column-header"
