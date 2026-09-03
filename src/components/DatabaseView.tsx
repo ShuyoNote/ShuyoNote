@@ -599,9 +599,13 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     const cols: string[] = [];
     for (let i = 0; i <= totalDays; i++) {
       const d = new Date(min.getTime() + i * 86400000);
-      cols.push(`${d.getMonth() + 1}/${d.getDate()}`);
+      // 刻度文字只在每周首日显示(其余空)——避免 9/17/9/18…挤在一起。
+      cols.push(i % 7 === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : "");
     }
-    return { startCol, endCol, items, min, max, totalDays, cols };
+    const statusCol = query?.columns.find((c) => c.attr_type === "select") ?? null;
+    const today = new Date();
+    const todayIdx = Math.round((today.getTime() - min.getTime()) / 86400000);
+    return { startCol, endCol, items, min, max, totalDays, cols, statusCol, todayIdx };
   }, [rows, query]);
 
   if (!query) {
@@ -1076,16 +1080,29 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
             {gantt.items.map((it) => {
               const left = (it.start.getTime() - gantt.min.getTime()) / 86400000;
               const w = (it.end.getTime() - it.start.getTime()) / 86400000 + 1;
+              const status = gantt.statusCol ? it.row.values[gantt.statusCol.id] ?? "" : "";
               return (
                 <div key={it.row.page_id} className="db-gantt-row">
                   <button className="db-gantt-rowlabel" onClick={() => openPage(it.row.page_id)}>
                     {it.title}
                   </button>
                   <div className="db-gantt-track">
+                    {/* 今日线：在条层之下、网格之上的竖线。 */}
+                    {gantt.todayIdx >= 0 && gantt.todayIdx <= gantt.totalDays && (
+                      <span
+                        className="db-gantt-today"
+                        style={{ left: `${(gantt.todayIdx / gantt.totalDays) * 100}%` }}
+                      />
+                    )}
                     <div
-                      className="db-gantt-bar"
-                      style={{ left: `${(left / gantt.totalDays) * 100}%`, width: `${(w / gantt.totalDays) * 100}%` }}
-                      title={`${it.title}（${it.start.toISOString().slice(0, 10)} ~ ${it.end.toISOString().slice(0, 10)}）`}
+                      className={`db-gantt-bar${status ? " has-status" : ""}`}
+                      data-status={status}
+                      style={{
+                        left: `${(left / gantt.totalDays) * 100}%`,
+                        width: `${(w / gantt.totalDays) * 100}%`,
+                        ...(status ? { background: tagColor(status).solid } : {}),
+                      }}
+                      title={`${it.title}（${it.start.toISOString().slice(0, 10)} ~ ${it.end.toISOString().slice(0, 10)}${status ? " · " + status : ""}）`}
                     >
                       {it.title}
                     </div>
