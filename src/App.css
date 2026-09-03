@@ -4014,7 +4014,7 @@ body.is-ai-open .main {
   flex-wrap: wrap;
   height: auto;
   min-height: 36px;
-  margin-top: 8px;
+  margin-top: 18px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition-fast);
