@@ -6796,7 +6796,76 @@ select.prop-value {
   font-size: 0.9em;
   overflow-x: auto;
   margin: 0.5em 0;
+  position: relative;
 }
+/* 代码块工具条（语言 + 复制），hover 显示。 */
+.editor-code-toolbar {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+.editor-codeblock:hover .editor-code-toolbar {
+  display: flex;
+}
+.editor-code-lang {
+  background: var(--block);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
+  font-family: inherit;
+}
+.editor-code-copy {
+  background: var(--block);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.editor-code-copy:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+/* Prism 语法高亮 token 配色（暗色）。 */
+.editor-codeblock .token.comment,
+.editor-codeblock .token.prolog,
+.editor-codeblock .token.doctype,
+.editor-codeblock .token.cdata { color: #6a737d; }
+.editor-codeblock .token.punctuation { color: #c9d1d9; }
+.editor-codeblock .token.property,
+.editor-codeblock .token.tag,
+.editor-codeblock .token.boolean,
+.editor-codeblock .token.number,
+.editor-codeblock .token.constant,
+.editor-codeblock .token.symbol { color: #f97583; }
+.editor-codeblock .token.selector,
+.editor-codeblock .token.attr-name,
+.editor-codeblock .token.string,
+.editor-codeblock .token.char,
+.editor-codeblock .token.builtin,
+.editor-codeblock .token.inserted { color: #9ecbff; }
+.editor-codeblock .token.operator,
+.editor-codeblock .token.entity,
+.editor-codeblock .token.url,
+.editor-codeblock .language-css .token.string,
+.editor-codeblock .style .token.string { color: #79c0ff; }
+.editor-codeblock .token.atrule,
+.editor-codeblock .token.attr-value,
+.editor-codeblock .token.keyword { color: #d2a8ff; }
+.editor-codeblock .token.function,
+.editor-codeblock .token.class-name { color: #ffab70; }
+.editor-codeblock .token.regex,
+.editor-codeblock .token.important,
+.editor-codeblock .token.variable { color: #ffa657; }
+.editor-codeblock .token.deleted { color: #ffa198; }
 
 /* Slash menu */
 .slash-menu {

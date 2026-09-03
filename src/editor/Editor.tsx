@@ -8,6 +8,7 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
+import { registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
@@ -34,6 +35,7 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
+import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
 import { collectColumnsText } from "../lib/columnsText";
@@ -288,6 +290,11 @@ function BlockIdPlugin({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
 
+  // Enable Prism-based syntax highlighting for code blocks.
+  useEffect(() => {
+    return registerCodeHighlighting(editor);
+  }, [editor]);
+
   // Scroll to + highlight the focused block. Retries briefly so cross-page jumps
   // land after the new editor mounts (the old editor unmounts and cancels here).
   useEffect(() => {
@@ -372,6 +379,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <PdfRefPlugin />
         <BlockRefSyncPlugin />
         <BlockSelectorPlugin />
+        <CodeBlockToolbar />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />
         <SlashMenuPlugin pageId={pageId} />
         <PageLinkSuggestPlugin />
