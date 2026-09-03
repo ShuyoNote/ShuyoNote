@@ -9384,6 +9384,29 @@ p:has(> .editor-drawing-container) {
 .db-board-col-header-dragging {
   opacity: 0.5;
 }
+/* 列拖拽浮动标题条：跟随指针，明确"拖的是哪列"。 */
+.db-board-col-ghost {
+  position: fixed;
+  z-index: 96;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.db-board-col-ghost .db-board-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+}
 
 .db-board-dot {
   width: 9px;

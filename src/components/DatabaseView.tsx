@@ -140,6 +140,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [boardGroupOrder, setBoardGroupOrder] = useState<string[]>([]);
   const [colDrag, setColDrag] = useState<string | null>(null);
   const colDragRef = useRef<{ sx: number; sy: number; moved: boolean } | null>(null);
+  const [colDragName, setColDragName] = useState("");
+  const [colDragColor, setColDragColor] = useState("");
+  const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
   // 甘特图左侧(标题/负责人/日期)列宽，可拖拽调整。
   const [ganttMetaW, setGanttMetaW] = useState(430);
   const ganttResizeRef = useRef<{ sx: number; sw: number } | null>(null);
@@ -576,6 +579,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       if (!colDragRef.current.moved && Math.hypot(e.clientX - colDragRef.current.sx, e.clientY - colDragRef.current.sy) < 5) return;
       colDragRef.current.moved = true;
       setBoardDragOver(null);
+      setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.(".db-board-col") as HTMLElement | null;
       setBoardDragOver(col?.dataset.col ?? null);
@@ -587,6 +591,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       const moved = colDragRef.current?.moved;
       setColDrag(null);
       setBoardDragOver(null);
+      setColDragPos(null);
       colDragRef.current = null;
       if (target && moved && target !== colDrag) {
         setBoardGroupOrder((prev) => {
@@ -1092,6 +1097,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                   onPointerDown={(e) => {
                     if (e.button !== 0 || g.id === "__none") return;
                     colDragRef.current = { sx: e.clientX, sy: e.clientY, moved: false };
+                    setColDragName(g.name);
+                    setColDragColor(tagColor(g.name).solid);
                     setColDrag(g.id);
                   }}
                 >
@@ -1125,6 +1132,12 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           {boardDrag && boardDragPos && (
             <div className="db-board-card db-board-card-ghost" style={{ left: boardDragPos.x, top: boardDragPos.y }}>
               {boardDragTitleRef.current || "…"}
+            </div>
+          )}
+          {colDrag && colDragPos && (
+            <div className="db-board-col-ghost" style={{ left: colDragPos.x, top: colDragPos.y }}>
+              <span className="db-board-dot" style={{ background: colDragColor }} />
+              {colDragName || "列"}
             </div>
           )}
         </div>
