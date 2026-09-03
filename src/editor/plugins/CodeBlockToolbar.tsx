@@ -48,6 +48,7 @@ export function CodeBlockToolbar() {
 
       if (pre.querySelector(".editor-code-toolbar")) return;
       const key = pre.getAttribute("data-code-key");
+      const lang = key ? readLang(key) : (pre.getAttribute("data-language") || "javascript");
       const toolbar = document.createElement("div");
       toolbar.className = "editor-code-toolbar";
       toolbar.style.position = "absolute";
