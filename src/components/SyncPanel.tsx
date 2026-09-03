@@ -64,7 +64,6 @@ export function SyncPanel() {
   });
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
-  const authed = useAuth((s) => s.authed);
   const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
   const [status, setStatus] = useState("");
@@ -415,7 +414,11 @@ export function SyncPanel() {
               <div className="sync-title">同步</div>
               <div className="sync-subtitle">每个空间各自绑定服务器与团队空间</div>
             </div>
-            <span className={`sync-chip${authed ? " is-on" : ""}`}>{authed ? "已登录" : "未登录"}</span>
+            {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
+                避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
+            <span className={`sync-chip${rows.some((r) => r.ws_id === activeId && r.token) ? " is-on" : ""}`}>
+              {rows.some((r) => r.ws_id === activeId && r.token) ? "已登录" : "未登录"}
+            </span>
           </header>
 
           {!isDesktopPlatform() && (
