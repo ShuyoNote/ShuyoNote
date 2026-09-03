@@ -131,6 +131,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   >("table");
   const [boardGroupAttr, setBoardGroupAttr] = useState<string | null>(null);
   const [boardDragOver, setBoardDragOver] = useState<string | null>(null);
+  // 甘特图左侧(标题/负责人/日期)列宽，可拖拽调整。
+  const [ganttMetaW, setGanttMetaW] = useState(330);
+  const ganttResizeRef = useRef<{ sx: number; sw: number } | null>(null);
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date();
     return { y: d.getFullYear(), m: d.getMonth() };
@@ -1091,7 +1094,26 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
         gantt ? (
           <div className="db-gantt">
             <div className="db-gantt-head">
-              <div className="db-gantt-rowlabel">任务</div>
+              <div className="db-gantt-rowlabel" style={{ width: ganttMetaW }}>
+                任务
+                <span
+                  className="db-gantt-resize"
+                  title="拖动调整标题列宽"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    ganttResizeRef.current = { sx: e.clientX, sw: ganttMetaW };
+                    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                  }}
+                  onPointerMove={(e) => {
+                    if (!ganttResizeRef.current) return;
+                    const w = Math.max(160, Math.min(720, ganttResizeRef.current.sw + (e.clientX - ganttResizeRef.current.sx)));
+                    setGanttMetaW(w);
+                  }}
+                  onPointerUp={() => {
+                    ganttResizeRef.current = null;
+                  }}
+                />
+              </div>
               <div className="db-gantt-axis">
                 {gantt.cols.map((c, i) => (
                   <div key={i} className="db-gantt-axis-cell">{c}</div>
@@ -1102,7 +1124,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
               const fmtIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
               const lane = (label: string, start: Date, end: Date, color: string, laneClass: string, key: string, sCol: string | null, eCol: string | null) => (
                 <div key={key} className={`db-gantt-row${laneClass ? " " + laneClass : ""}`}>
-                  <div className="db-gantt-meta">
+                  <div className="db-gantt-meta" style={{ width: ganttMetaW }}>
                     <span className="db-gantt-name" onClick={() => openPage(it.row.page_id)}>{label}</span>
                     {gantt.statusCol && (
                       <select

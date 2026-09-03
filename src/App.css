@@ -9600,6 +9600,20 @@ p:has(> .editor-drawing-container) {
 .db-gantt-head .db-gantt-rowlabel {
   font-weight: 700;
   color: var(--text);
+  position: relative;
+}
+/* 标题列宽拖拽手柄：右缘竖条，hover 高亮。 */
+.db-gantt-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 6px;
+  cursor: col-resize;
+  border-left: 1px solid var(--border);
+}
+.db-gantt-resize:hover {
+  background: var(--accent-soft);
 }
 /* 甘特图行左侧：任务名 + 开始/结束 两个数据项。 */
 .db-gantt-meta {
