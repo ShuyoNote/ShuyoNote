@@ -189,6 +189,12 @@ export function AiSettingsForm({
 
         {embedOpen && (
           <>
+            <div className="ai-settings-why">
+              <b>作用：</b>让搜索更聪明——不只是按关键词，而是<b>按意思</b>找出语义相关的内容。
+              配了嵌入模型后，搜索会叠加「语义相关」结果（如搜「会议」也能带出「讨论安排」）。
+              <span className="ai-settings-why-note">可选：不配也能用（关键词检索）；配了检索更准。需独立 embedding 服务（DeepSeek 无此接口）。</span>
+            </div>
+
             <label className="ai-settings-row">
               <span className="ai-settings-label">嵌入模型</span>
               <input

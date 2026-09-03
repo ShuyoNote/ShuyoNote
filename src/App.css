@@ -13035,6 +13035,23 @@ p:has(> .editor-drawing-container) {
   padding: 8px 10px;
   margin-bottom: 12px;
 }
+/* 语义检索「作用」说明卡。 */
+.ai-settings-why {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.ai-settings-why-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .ai-settings-row {
   display: flex;
   align-items: center;
