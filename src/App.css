@@ -9682,16 +9682,42 @@ p:has(> .editor-drawing-container) {
 }
 .db-gantt-date {
   flex: none;
-  width: 92px;
-  min-width: 92px;
+  width: 116px;
+  min-width: 116px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   font-size: 11.5px;
   color: var(--text-faint);
   white-space: nowrap;
   border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
   padding-left: 6px;
 }
+/* 📅 选择日期按钮。 */
+.db-gantt-date-pick {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+.db-gantt-date-pick:hover {
+  opacity: 1;
+}
+.db-gantt-date-picker {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+}
 /* 可编辑日期：淡色，hover/聚焦显示边框，原生 date 选择器跟随暗色。 */
 .db-gantt-date-input {
+  flex: 1;
+  min-width: 0;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-faint);

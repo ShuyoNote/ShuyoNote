@@ -1140,22 +1140,10 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                       </select>
                     )}
                     {sCol && (
-                      <input
-                        type="text"
-                        className="db-gantt-date db-gantt-date-input"
-                        placeholder="YYYY-MM-DD"
-                        defaultValue={fmtIso(start)}
-                        onChange={(e) => setCell(it.row.page_id, sCol, e.target.value)}
-                      />
+                      <DateField value={fmtIso(start)} onChange={(v) => setCell(it.row.page_id, sCol, v)} />
                     )}
                     {eCol && (
-                      <input
-                        type="text"
-                        className="db-gantt-date db-gantt-date-input"
-                        placeholder="YYYY-MM-DD"
-                        defaultValue={fmtIso(end)}
-                        onChange={(e) => setCell(it.row.page_id, eCol, e.target.value)}
-                      />
+                      <DateField value={fmtIso(end)} onChange={(v) => setCell(it.row.page_id, eCol, v)} />
                     )}
                   </div>
                   <div className="db-gantt-track">
@@ -1337,6 +1325,38 @@ function RefCell({
     <button className="db-ref" title="打开引用页面" onClick={() => onOpen(value)}>
       {titles[value] ?? value}
     </button>
+  );
+}
+
+// 甘特图日期编辑：text 直接输入 + 📅 按钮弹原生日期选择器。
+function DateField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const pickerRef = useRef<HTMLInputElement>(null);
+  return (
+    <span className="db-gantt-date">
+      <input
+        type="text"
+        className="db-gantt-date-input"
+        placeholder="YYYY-MM-DD"
+        defaultValue={/^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <button
+        type="button"
+        className="db-gantt-date-pick"
+        title="选择日期"
+        onClick={() => pickerRef.current?.showPicker?.()}
+      >
+        📅
+      </button>
+      <input
+        ref={pickerRef}
+        type="date"
+        tabIndex={-1}
+        className="db-gantt-date-picker"
+        value={/^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </span>
   );
 }
 
