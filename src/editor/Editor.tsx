@@ -8,6 +8,7 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { CheckListPlugin } from "@lexical/react/LexicalCheckListPlugin";
 import { HorizontalRulePlugin } from "@lexical/react/LexicalHorizontalRulePlugin";
 import { TablePlugin } from "@lexical/react/LexicalTablePlugin";
+import { CodeExtension } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, createEditor, type EditorState, type LexicalEditor } from "lexical";
@@ -336,6 +337,8 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
       namespace: "shuyonote-editor",
       theme,
       nodes: EDITOR_NODES,
+      // CodeNode 0.50+ needs CodeExtension, else insertNewAfter (按 Enter) crashes.
+      extensions: [CodeExtension],
       onError: (error: Error) => {
         console.error(error);
         toast(`编辑器错误：${error.message || String(error)}`, "error");
