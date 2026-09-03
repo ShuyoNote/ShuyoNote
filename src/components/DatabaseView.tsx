@@ -1283,6 +1283,17 @@ function DbCellEditor({
       </select>
     );
   }
+  if (attr.attr_type === "date") {
+    // 日期选择器（不用手动输 YYYY-MM-DD）。
+    return (
+      <input
+        type="date"
+        className="db-input"
+        value={/^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : ""}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
   return (
     <input
       className="db-input"
