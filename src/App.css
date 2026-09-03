@@ -4515,7 +4515,7 @@ select.prop-value {
   line-height: 1.7;
   max-width: var(--doc-width);
   margin: 0 auto;
-  padding: 0 var(--doc-pad);
+  padding: 0 var(--doc-pad) 120px;
 }
 /* 正文文本始终可拖选(选中/复制)，不被块拖拽或容器继承的 user-select:none 限制。 */
 .editor-content,
