@@ -325,6 +325,7 @@ pub fn run() {
             tags::board_data,
             tags::move_card,
             tags::reorder_card,
+            tags::reorder_tag,
             templates::list_templates,
             templates::save_as_template,
             templates::delete_template,

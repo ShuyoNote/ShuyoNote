@@ -1702,7 +1702,7 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "get_db_rule") return dbRuleOf(store, String(a.dbPageId ?? a.db_page_id ?? "")) as T;
     if (cmd === "resolve_refs") return resolveRefLabels(store, (a.values ?? []).map(String)) as T;
     if (cmd === "board_data") {
-      const tags = store.query("SELECT id, name FROM tags ORDER BY name");
+      const tags = store.query("SELECT id, name, color FROM tags ORDER BY sort_order ASC, name");
       const columns = tags.map((t: any) => {
         const pageIds = store.query("SELECT page_id FROM page_tags WHERE tag_id = ?", [t.id]).map((r) => String((r as any).page_id));
         const pages = pageIds.length
@@ -1711,7 +1711,7 @@ function makeInvoke(store: SqliteStore) {
               pageIds,
             )
           : [];
-        return { tag: { id: t.id, name: t.name }, pages };
+        return { tag: { id: t.id, name: t.name, color: t.color }, pages };
       });
       // 未打标签的页面（对齐桌面 tags::board_data 的 Untagged 列，避免看板丢页）。
       const untagged = store.query(
@@ -1765,6 +1765,16 @@ function makeInvoke(store: SqliteStore) {
       if (idx >= 0) ordered.splice(idx, 0, pageId);
       else ordered.push(pageId);
       ordered.forEach((id: string, i: number) => store.run("UPDATE pages SET sort_order = ? WHERE id = ?", [i, id]));
+      return undefined as T;
+    }
+    if (cmd === "reorder_tag") {
+      const tagId = String(a.tagId ?? a.tag_id ?? "");
+      const beforeTagId = a.beforeTagId ?? a.before_tag_id ?? null;
+      const ordered = (store.query<{ id: string }>("SELECT id FROM tags WHERE id <> ? ORDER BY sort_order ASC, name", [tagId]) || []).map((r: any) => String(r.id));
+      let idx = beforeTagId ? ordered.indexOf(String(beforeTagId)) : -1;
+      if (idx >= 0) ordered.splice(idx, 0, tagId);
+      else ordered.push(tagId);
+      ordered.forEach((id: string, i: number) => store.run("UPDATE tags SET sort_order = ? WHERE id = ?", [i, id]));
       return undefined as T;
     }
 

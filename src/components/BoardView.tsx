@@ -8,6 +8,7 @@ interface Group {
   id: string;
   name: string;
   pages: PageMeta[];
+  color?: string | null;
 }
 
 export function BoardView() {
@@ -23,6 +24,50 @@ export function BoardView() {
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragMovedRef = useRef(false);
   const dragCardTitleRef = useRef("");
+  // 列(组)拖拽换序：列头拖动调整整列顺序。
+  const [colDrag, setColDrag] = useState<string | null>(null);
+  const colDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const colDragMovedRef = useRef(false);
+  const [colDragOver, setColDragOver] = useState<string | null>(null);
+
+  // 列拖拽：列头按下候选，全局 move 找落点列，up 落列则 reorder_tag。
+  useEffect(() => {
+    if (!colDrag) return;
+    const onMove = (e: PointerEvent) => {
+      if (!colDragStartRef.current) return;
+      if (!colDragMovedRef.current && Math.hypot(e.clientX - colDragStartRef.current.x, e.clientY - colDragStartRef.current.y) < 5) return;
+      colDragMovedRef.current = true;
+      e.preventDefault();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      setColDragOver(col?.dataset.col ?? null);
+    };
+    const onUp = (e: PointerEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const col = el?.closest?.("[data-col]") as HTMLElement | null;
+      const target = col?.dataset.col ?? null;
+      const moved = colDragMovedRef.current;
+      setColDrag(null);
+      setColDragOver(null);
+      colDragStartRef.current = null;
+      colDragMovedRef.current = false;
+      if (target && moved && target !== colDrag) void onReorderCol(colDrag, target);
+    };
+    const onCancel = () => {
+      setColDrag(null);
+      setColDragOver(null);
+      colDragStartRef.current = null;
+      colDragMovedRef.current = false;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [colDrag]);
 
   useEffect(() => {
     if (!dragPage) return;
@@ -89,6 +134,7 @@ export function BoardView() {
               id: c.tag?.id ?? "__none",
               name: c.tag?.name ?? "未分类",
               pages: c.pages,
+              color: c.tag?.color ?? null,
             })),
           ),
         )
@@ -125,6 +171,15 @@ export function BoardView() {
     }
   };
 
+  const onReorderCol = async (tagId: string, beforeTagId: string) => {
+    try {
+      await api.reorderTag(tagId, beforeTagId);
+      load();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   return (
     <div className="board">
       <div className="board-toolbar">
@@ -147,10 +202,19 @@ export function BoardView() {
           <div
             key={col.id}
             data-col={col.id}
-            className={`board-column ${dragOver === col.id ? "board-column-over" : ""}`}
+            className={`board-column ${(dragOver === col.id || colDragOver === col.id) ? "board-column-over" : ""} ${colDrag === col.id ? "board-column-dragging" : ""}`}
           >
-            <div className="board-column-header">
-              <span className="board-col-dot" style={{ background: tagColor(col.name).solid }} />
+            <div
+              className="board-column-header"
+              title="拖动列头调整列顺序"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                colDragStartRef.current = { x: e.clientX, y: e.clientY };
+                colDragMovedRef.current = false;
+                setColDrag(col.id);
+              }}
+            >
+              <span className="board-col-dot" style={{ background: col.color ?? tagColor(col.name).solid }} />
               <span className="board-column-title">{col.name}</span>
               <span className="board-column-count">{col.pages.length}</span>
             </div>

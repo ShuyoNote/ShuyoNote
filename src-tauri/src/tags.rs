@@ -246,7 +246,7 @@ pub fn board_data(db: State<'_, Db>) -> Result<Vec<BoardColumn>, String> {
 
     let tags = {
         let mut stmt = c
-            .prepare("SELECT id, name, color FROM tags ORDER BY name ASC")
+            .prepare("SELECT id, name, color FROM tags ORDER BY sort_order ASC, name ASC")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| {
@@ -373,6 +373,41 @@ pub fn reorder_card(
         .map_err(|e| e.to_string())?;
     for (i, pid) in ordered.iter().enumerate() {
         stmt.execute(params![i as f64, pid]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 看板列(组)拖拽换序：把 tag_id 移到 before_tag_id 前（空则列尾），重排 tags.sort_order。
+#[tauri::command]
+pub fn reorder_tag(
+    db: State<'_, Db>,
+    tag_id: String,
+    before_tag_id: Option<String>,
+) -> Result<(), String> {
+    let c = conn(&db);
+    let mut ordered: Vec<String> = {
+        let mut stmt = c
+            .prepare("SELECT id FROM tags WHERE id <> ?1 ORDER BY sort_order ASC, name ASC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![tag_id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    if let Some(before) = before_tag_id.as_deref() {
+        if let Some(pos) = ordered.iter().position(|id| id == before) {
+            ordered.insert(pos, tag_id.clone());
+        } else {
+            ordered.push(tag_id.clone());
+        }
+    } else {
+        ordered.push(tag_id.clone());
+    }
+    let mut stmt = c
+        .prepare("UPDATE tags SET sort_order = ?1 WHERE id = ?2")
+        .map_err(|e| e.to_string())?;
+    for (i, tid) in ordered.iter().enumerate() {
+        stmt.execute(params![i as f64, tid]).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

@@ -683,15 +683,25 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute("ALTER TABLE tags ADD COLUMN color TEXT", [])?;
     }
 
+    // Tag column order (board 列偏移). Add the column idempotently.
+    let tags_has_sort: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'sort_order'",
+        [],
+        |row| row.get(0),
+    )?;
+    if tags_has_sort == 0 {
+        conn.execute("ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+
     // 系统预设状态标签（业界习惯：未完成/进行中/已完成）。固定 id + OR IGNORE 幂等。
-    for (id, name, color) in [
-        ("tag-todo", "未完成", "#ef4444"),
-        ("tag-doing", "进行中", "#f59e0b"),
-        ("tag-done", "已完成", "#22c55e"),
+    for (id, name, color, order) in [
+        ("tag-todo", "未完成", "#ef4444", 0_f64),
+        ("tag-doing", "进行中", "#f59e0b", 1_f64),
+        ("tag-done", "已完成", "#22c55e", 2_f64),
     ] {
         conn.execute(
-            "INSERT OR IGNORE INTO tags (id, name, color) VALUES (?1, ?2, ?3)",
-            rusqlite::params![id, name, color],
+            "INSERT OR IGNORE INTO tags (id, name, color, sort_order) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, name, color, order],
         )?;
     }
 

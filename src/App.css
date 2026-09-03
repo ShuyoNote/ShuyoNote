@@ -2220,6 +2220,16 @@ select.sync-input {
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
+  cursor: grab;
+}
+.board-column-header:active {
+  cursor: grabbing;
+}
+/* 列(组)拖拽中的整列。 */
+.board-column-dragging {
+  opacity: 0.5;
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
 }
 
 .board-col-dot {
