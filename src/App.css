@@ -4180,6 +4180,7 @@ body.content-full .editor-placeholder {
 
 .prop-value {
   flex: 1;
+  max-width: 75%;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
