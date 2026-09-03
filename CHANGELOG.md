@@ -4,6 +4,16 @@
 
 > **版本收敛说明（2026-08-30）**：`1.64.1`–`1.64.7` 是同一天围绕「升级后卡启动页 / `Prism is not defined`」的连续排查与修补，最终在 `1.64.7` 以「index.html 普通 `<script>` 全局加载 Prism + 正常打包」根治；`1.64.5` / `1.64.6` 是其中的过渡尝试（存在已知启动问题），已被 `1.64.7` 取代。自 `1.64.8` 起版本稳定。
 
+## [1.79.1] - 2026-09-04
+
+> **桌面版架构图/样式修复——CSP 内联样式拦截**。补丁版。
+
+### 修复
+
+- **桌面版架构图 subgraph 叠成黑块、组件样式不应用**（Web 好、桌面坏）：
+  console 报 `Refused to apply inline style ... style-src ... 'nonce-...'`——Tauri 自动给 `style-src` 注入 nonce，浏览器规则使其忽略 `'unsafe-inline'` → React/DOM 的 style 属性（mermaid SVG/组件定位）全被拦。
+  加 `dangerousDisableAssetCspModification: true` **禁 Tauri 自动改 CSP**——保留 `style-src 'unsafe-inline'`，内联样式正常应用，桌面版架构图/UI 修复。
+
 ## [1.79.0] - 2026-09-04
 
 > **数据库看板拖拽完善 + 桌面架构图根治 + 调试控制台**。含新特性，语义化次版本。
