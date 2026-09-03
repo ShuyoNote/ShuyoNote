@@ -10327,8 +10327,11 @@ p:has(> .editor-drawing-container) {
   background: var(--hover);
 }
 /* Thumbnail at the top of the card (cover bg + mini white page card). */
-.tc-preview { height: 130px; position: relative; display: flex; align-items: center; justify-content: center; }
-.tc-pv-card { background: #fff; border-radius: 5px; padding: 10px 12px; width: 82%; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16); display: flex; flex-direction: column; gap: 6px; }
+.tc-preview { height: 150px; display: flex; flex-direction: column; overflow: hidden; }
+/* 题头图(封面照片)顶部。 */
+.tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center; }
+.tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
 .tc-pv-line { height: 6px; border-radius: 2px; background: #eef0f4; }
 /* 模板内容快照：迷你文本行。 */

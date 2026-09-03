@@ -47,7 +47,8 @@ function MockPreview({ cover, content }: { cover: string; content?: string }) {
   const lines = (content ?? "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 6);
   const isHead = (i: number) => lines[i] && lines[i].length > 0 && !/[。：，;]$/.test(lines[i]) && lines[i].length < 18;
   return (
-    <div className="tc-preview" style={{ background: cover }}>
+    <div className="tc-preview">
+      <div className="tc-preview-cover" style={{ background: cover }} />
       <div className="tc-pv-card tc-pv-content">
         {lines.length === 0 ? (
           <>
