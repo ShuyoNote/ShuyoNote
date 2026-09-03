@@ -2270,6 +2270,18 @@ select.sync-input {
   border-color: var(--accent) !important;
   cursor: grabbing;
 }
+/* 拖拽浮动卡片：fixed 跟随指针。 */
+.board-card-ghost {
+  position: fixed;
+  z-index: 90;
+  width: 180px;
+  opacity: 0.9;
+  box-shadow: var(--shadow-lg);
+  cursor: grabbing;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .board-card-title {
   overflow: hidden;

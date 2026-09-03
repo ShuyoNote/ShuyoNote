@@ -19,16 +19,24 @@ export function BoardView() {
   // Pointer-based drag override for Tauri WebView (HTML5 drag/drop is suppressed
   // by dragDropEnabled). Mirrors the PageTree pointer-drag approach.
   const [dragPage, setDragPage] = useState<string | null>(null);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const dragMovedRef = useRef(false);
+  const dragCardTitleRef = useRef("");
 
   useEffect(() => {
     if (!dragPage) return;
-    let moved = false;
     const onMove = (e: PointerEvent) => {
       if (!dragStartRef.current) return;
-      if (!moved && Math.hypot(e.clientX - dragStartRef.current.x, e.clientY - dragStartRef.current.y) < 5) return;
-      moved = true;
+      if (!dragMovedRef.current && Math.hypot(e.clientX - dragStartRef.current.x, e.clientY - dragStartRef.current.y) < 5) return;
+      if (!dragMovedRef.current) {
+        dragMovedRef.current = true;
+        const card = document.getElementById(`board-card-${dragPage}`);
+        dragCardTitleRef.current = card?.textContent?.trim() ?? "";
+      }
       e.preventDefault();
+      // 浮动卡片跟随鼠标（微偏移避免遮住指针）。
+      setDragPos({ x: e.clientX, y: e.clientY });
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.("[data-col]") as HTMLElement | null;
       setDragOver(col?.dataset.col ?? null);
@@ -37,15 +45,20 @@ export function BoardView() {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const col = el?.closest?.("[data-col]") as HTMLElement | null;
       const target = col?.dataset.col ?? null;
+      const moved = dragMovedRef.current;
       setDragOver(null);
       setDragPage(null);
+      setDragPos(null);
       dragStartRef.current = null;
+      dragMovedRef.current = false;
       if (target && moved) void onDrop(dragPage, target);
     };
     const onCancel = () => {
       setDragOver(null);
       setDragPage(null);
+      setDragPos(null);
       dragStartRef.current = null;
+      dragMovedRef.current = false;
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -142,14 +155,19 @@ export function BoardView() {
               {col.pages.map((p) => (
                 <div
                   key={p.id}
+                  id={`board-card-${p.id}`}
                   className={`board-card${dragPage === p.id ? " board-card-dragging" : ""}`}
                   onPointerDown={(e) => {
-                    // 左键按下即开始拖拽候选（pointer-based，兼容 Tauri WebView）。
                     if (e.button !== 0) return;
                     dragStartRef.current = { x: e.clientX, y: e.clientY };
+                    dragMovedRef.current = false;
                     setDragPage(p.id);
                   }}
-                  onClick={() => openPage(p.id)}
+                  onClick={() => {
+                    // 拖拽后的释放不当作"打开"(is via dragMovedRef)；纯点击才打开。
+                    if (dragMovedRef.current) return;
+                    openPage(p.id);
+                  }}
                 >
                   <span className="board-card-title">{p.title || "未命名"}</span>
                 </div>
@@ -159,6 +177,12 @@ export function BoardView() {
           </div>
         ))}
       </div>
+      {/* 拖拽中的浮动卡片：跟随指针，给用户明确"拖动的是谁"。 */}
+      {dragPage && dragPos && (
+        <div className="board-card board-card-ghost" style={{ left: dragPos.x + 8, top: dragPos.y + 8, pointerEvents: "none" }}>
+          {dragCardTitleRef.current || "…"}
+        </div>
+      )}
     </div>
   );
 }
