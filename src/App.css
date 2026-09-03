@@ -3828,6 +3828,12 @@ body.is-ai-open .main {
   height: auto;
   min-height: 36px;
   margin-top: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+.title-area:hover .page-actions,
+.title-area:focus-within .page-actions {
   opacity: 1;
   pointer-events: auto;
 }
