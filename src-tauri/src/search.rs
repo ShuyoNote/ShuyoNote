@@ -489,8 +489,14 @@ fn search_fts(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    // Wrap as a phrase for substring matching; strip embedded double quotes.
-    let phrase = format!("\"{}\"", query.replace('"', ""));
+    // 空格分词：多关键词【都出现】（AND），每词包 phrase 避免 FTS 特殊字符误解析。
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(|t| t.replace('"', "").trim().to_string())
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("\"{}\"", t))
+        .collect();
+    let phrase = if terms.is_empty() { "\"\"".to_string() } else { terms.join(" AND ") };
     let sql = "SELECT f.page_id, f.title, w.name,
                 snippet(f, 2, '[[', ']]', '…', 24) AS body_snip,
                 snippet(f, 1, '[[', ']]', '…', 12) AS title_snip
