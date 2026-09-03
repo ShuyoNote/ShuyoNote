@@ -61,7 +61,7 @@ export function BoardView() {
       e.preventDefault();
       setColDragPos({ x: e.clientX + 10, y: e.clientY + 10 });
       const col = findColAt(e.clientX, e.clientY);
-      if (col) {
+      if (col && col.dataset.col !== "__none") {
         const rect = col.getBoundingClientRect();
         setColDragOver(col.dataset.col ?? null);
         setColDragSide(e.clientX < rect.left + rect.width / 2 ? "before" : "after");
@@ -79,7 +79,7 @@ export function BoardView() {
       setColDragPos(null);
       colDragStartRef.current = null;
       colDragMovedRef.current = false;
-      if (target && moved && target !== colDrag) void onReorderCol(colDrag, target);
+      if (target && target !== "__none" && moved && target !== colDrag) void onReorderCol(colDrag, target);
     };
     const onCancel = () => {
       setColDrag(null);
@@ -235,9 +235,10 @@ export function BoardView() {
           >
             <div
               className="board-column-header"
-              title="拖动列头调整列顺序"
+              title={col.id === "__none" ? "未分类固定最左，不可拖动" : "拖动列头调整列顺序"}
               onPointerDown={(e) => {
                 if (e.button !== 0) return;
+                if (col.id === "__none") return; // 未分类列不可拖
                 colDragStartRef.current = { x: e.clientX, y: e.clientY };
                 colDragMovedRef.current = false;
                 setColDrag(col.id);
