@@ -8862,7 +8862,8 @@ p:has(> .editor-drawing-container) {
   box-shadow: var(--shadow-lg);
   padding: 8px;
   width: 220px;
-  z-index: 20;
+  /* 分组字段/添加列弹窗：主内容浮层——高于侧边栏/内容，避免被侧边栏遮挡。 */
+  z-index: 300;
 }
 
 .db-add-col-title {
