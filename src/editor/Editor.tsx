@@ -175,9 +175,10 @@ function parseEditorState(contentJson: string): EditorState | null {
     lastProbeError = null;
     const state = probeEditor.parseEditorState(contentJson ?? "");
     if (!state || state.isEmpty()) {
-      // 合法空 root（children 为空）就是正常的空白页——返回空编辑状态即可，不视为失败。
-      if (state && isEmptyRootDoc(contentJson)) {
-        return state;
+      // 合法空 root（children 为空）就是正常的空白页——返回 null，让 LexicalComposer
+      // 用默认空根(非空)初始化，而不是空 EditorState(会报 "editor state is empty")。
+      if (isEmptyRootDoc(contentJson)) {
+        return null;
       }
       const wholeDocErr = lastProbeError;
       // Some node survived sanitization in a non-`children` spot (e.g. `$slots`);
