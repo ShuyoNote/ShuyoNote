@@ -1085,18 +1085,19 @@ function SecurityPane() {
 }
 
 function AboutPane() {
+  const { t } = useTranslation();
   const openAbout = useEditorStore((s) => s.openAbout);
   const closeSettings = useEditorStore((s) => s.closeSettings);
   const updateAvailable = useEditorStore((s) => s.updateAvailable);
   const latestVersion = useEditorStore((s) => s.latestVersion);
   return (
     <section className="set-section">
-      <div className="set-section-title">版本</div>
+      <div className="set-section-title">{t("about.version")}</div>
       <div className="set-row">
         <div className="set-row-text">
           <div className="set-row-name">ShuyoNote v{APP_VERSION}</div>
           <div className="set-row-sub">
-            {updateAvailable && latestVersion ? `发现新版本 v${latestVersion}` : "许可证 " + APP_LICENSE}
+            {updateAvailable && latestVersion ? t("about.newVersion", { v: latestVersion }) : t("about.license") + " " + APP_LICENSE}
           </div>
         </div>
         <button
@@ -1106,11 +1107,11 @@ function AboutPane() {
             openAbout();
           }}
         >
-          {updateAvailable ? "查看更新" : "关于与更新"}
+          {updateAvailable ? t("about.checkUpdate") : t("about.aboutUpdate")}
         </button>
       </div>
       <p className="set-hint">
-        「关于」里可检查更新、查看开源与反馈链接，并控制是否允许跳转到外部网站（隐私开关）。
+        {t("about.intro")}
       </p>
     </section>
   );

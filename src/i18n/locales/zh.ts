@@ -69,6 +69,14 @@ export default {
     exportHtml: "导出为 HTML",
     exportPdf: "导出为 PDF",
   },
+  about: {
+    version: "版本",
+    license: "许可证",
+    newVersion: "发现新版本 v{{v}}",
+    checkUpdate: "查看更新",
+    aboutUpdate: "关于与更新",
+    intro: "「关于」里可检查更新、查看开源与反馈链接，并控制是否允许跳转到外部网站（隐私开关）。",
+  },
   files: {
     title: "文件管理",
     newFolder: "新建文件夹",

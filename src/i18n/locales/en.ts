@@ -69,6 +69,14 @@ export default {
     exportHtml: "Export as HTML",
     exportPdf: "Export as PDF",
   },
+  about: {
+    version: "Version",
+    license: "License",
+    newVersion: "New version v{{v}} found",
+    checkUpdate: "View update",
+    aboutUpdate: "About & updates",
+    intro: "Check for updates, view open-source & feedback links, and control whether external sites may be opened (privacy switch).",
+  },
   files: {
     title: "Files",
     newFolder: "New folder",
