@@ -116,6 +116,8 @@ export function FileManagerView() {
     const raw = pageContent[id] || "";
     return raw.split("\n").map((l) => l.trim()).filter((l) => l && l !== name).join("\n");
   };
+  // 页面 cover 图加载失败（Web 端 asset url 常失败）→ 回退图标占位，避免显示 alt/broken 图标。
+  const [brokenCovers, setBrokenCovers] = useState<Set<string>>(() => new Set());
   // 网格缩略图大小（列数随之自适应）。
   const [gridSize, setGridSize] = useState<number>(() => Number(localStorage.getItem("shuyonote:fmGridSize")) || 160);
   const setGrid = (n: number) => {
@@ -701,8 +703,14 @@ export function FileManagerView() {
                     </div>
                   ) : isTextFile && textPreview[row.file!.id] ? (
                     <MiniPreview content={textPreview[row.file!.id]} />
-                  ) : pageCover ? (
-                    <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
+                  ) : pageCover && !brokenCovers.has(row.key) ? (
+                    <img
+                      className="fm-grid-thumb"
+                      src={pageCover}
+                      alt={row.name}
+                      loading="lazy"
+                      onError={() => setBrokenCovers((prev) => new Set(prev).add(row.key))}
+                    />
                   ) : row.pageId && pageContent[row.pageId] && pageBody(row.pageId, row.name) ? (
                     <MiniPreview content={pageBody(row.pageId, row.name) as string} />
                   ) : (
