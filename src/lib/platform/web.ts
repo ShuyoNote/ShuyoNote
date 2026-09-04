@@ -2238,7 +2238,7 @@ function makeInvoke(store: SqliteStore) {
       const email = String(args.email ?? "");
       const password = String(args.password ?? "");
       const display = args.display ? String(args.display) : email;
-      const register_code = args.register_code ? String(args.register_code) : undefined;
+      const register_code = args.registerCode ? String(args.registerCode) : args.register_code ? String(args.register_code) : undefined;
       const data = await syncFetch(server_url, "/auth/register", null, { email, password, display, register_code });
       const token = data?.token ?? "";
       const user_id = data?.user?.id ?? "";
