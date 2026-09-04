@@ -267,6 +267,8 @@ export function SyncPanel() {
     if (!base) { setStatus("请先填服务器地址"); return; }
     if (!r.loginEmail.trim() || !r.loginPassword) { setStatus("请输入邮箱和密码"); return; }
     if (r.loginPassword.length < 8) { setStatus("注册失败：密码至少 8 位"); return; }
+    // 邀请码必填：客户端直接拦下，不打扰服务端（也避免控制台 400）。
+    if (!r.loginRegisterCode.trim()) { setStatus("注册失败：请输入「注册邀请码」（向管理员索取，如 SHUYOABC）"); return; }
     setLoggingIn(true);
     setStatus("");
     try {
