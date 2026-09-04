@@ -61,6 +61,29 @@ function KindIcon({ kind }: { kind: string }) {
   return <PageIcon />;
 }
 
+// 迷你内容预览（页面卡）：标题 + 正文开头几行，像模板卡。
+function MiniPreview({ title, content }: { title: string; content: string }) {
+  const lines = (content ?? "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  return (
+    <div className="fm-grid-mini">
+      <div className="fm-grid-mini-title">{title}</div>
+      {lines.length ? (
+        lines.map((l, i) => (
+          <div
+            key={i}
+            className="fm-grid-mini-line"
+            style={{ width: `${Math.min(96, 58 + (l.length % 5) * 8)}%` }}
+          >
+            {l}
+          </div>
+        ))
+      ) : (
+        <div className="fm-grid-mini-line" style={{ width: "62%" }} />
+      )}
+    </div>
+  );
+}
+
 // FlowUs-style file manager: browse the page/folder hierarchy as a table with
 // type + modified/created columns, and create pages/folders inside a folder.
 export function FileManagerView() {
@@ -82,6 +105,8 @@ export function FileManagerView() {
     try { localStorage.setItem("shuyonote:fmView", v); } catch { /* ignore */ }
     setViewMode(v);
   };
+  // 网格视图内容预览：pageId -> content_text（按需拉取，避免全列表带正文）。
+  const [pageContent, setPageContent] = useState<Record<string, string>>({});
 
   // folderId 为 null = 空间根：列出「未整理」文件（page_id IS NULL），
   // 而不是像以前那样直接清空——根下也允许上传，文件得有地方显示。
@@ -306,6 +331,26 @@ export function FileManagerView() {
     }
     return out;
   }, [sorted, fileGroups]);
+
+  // 网格视图：按需拉取可见页面的 content_text 用于内容预览（仅网格 + 未缓存时）。
+  useEffect(() => {
+    if (viewMode !== "grid") return;
+    const ids = rows
+      .filter((r) => r.kind !== "file" && r.pageId && !pageContent[r.pageId])
+      .map((r) => r.pageId!);
+    if (!ids.length) return;
+    let cancelled = false;
+    Promise.all(ids.map((id) => api.getPage(id).catch(() => null))).then((res) => {
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      ids.forEach((id, i) => {
+        const d = res[i] as (Record<string, unknown> & { content_text?: string }) | null;
+        if (d) map[id] = (d.content_text ?? "") as string;
+      });
+      setPageContent((prev) => ({ ...prev, ...map }));
+    });
+    return () => { cancelled = true; };
+  }, [viewMode, rows, pageContent]);
 
   const selectedFileIds = useMemo(
     () => rows.filter((r) => r.kind === "file" && selected.has(r.key)).map((r) => r.file!.id),
@@ -577,6 +622,8 @@ export function FileManagerView() {
                     />
                   ) : pageCover ? (
                     <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
+                  ) : row.pageId && pageContent[row.pageId] ? (
+                    <MiniPreview title={row.name} content={pageContent[row.pageId]} />
                   ) : (
                     <span className="fm-grid-page">
                       <span className="fm-grid-page-icon">
