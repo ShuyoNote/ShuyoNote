@@ -6,6 +6,8 @@ import type { AttrDef, PageProp } from "../types";
 import { TagRow } from "./TagBar";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi"] as const;
+// 临时停用：页面属性区的手工拖拽移动（拖拖换序）。改为 true 即可恢复。
+const DRAG_MOVE_ENABLED = false;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
@@ -165,21 +167,29 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
               <div
                 key={p.attr_id}
                 className={`prop-row${dragIdx === i ? " is-dragging" : ""}${overIdx === i ? " drop-before" : ""}${overIdx === i + 1 ? " drop-after" : ""}`}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setOverIdx(e.clientY < rect.top + rect.height / 2 ? i : i + 1);
-                }}
-                onDragLeave={() => setOverIdx(null)}
-                onDrop={() => onDropTo(overIdx ?? i)}
+                {...(DRAG_MOVE_ENABLED
+                  ? {
+                      onDragOver: (e: React.DragEvent) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setOverIdx(e.clientY < rect.top + rect.height / 2 ? i : i + 1);
+                      },
+                      onDragLeave: () => setOverIdx(null),
+                      onDrop: () => onDropTo(overIdx ?? i),
+                    }
+                  : {})}
               >
                 <button
                   className="prop-grip"
-                  title="拖动调整属性顺序"
-                  draggable
-                  onDragStart={(e) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; }}
-                  onDragEnd={() => setDragIdx(null)}
+                  title={DRAG_MOVE_ENABLED ? "拖动调整属性顺序" : "属性顺序（拖拽已停用）"}
+                  draggable={DRAG_MOVE_ENABLED}
+                  {...(DRAG_MOVE_ENABLED
+                    ? {
+                        onDragStart: (e: React.DragEvent) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; },
+                        onDragEnd: () => setDragIdx(null),
+                      }
+                    : {})}
                 >⠿</button>
                 <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>
                   {p.name}
