@@ -210,7 +210,22 @@ export function BoardView() {
 
   const onReorderCol = async (tagId: string, beforeTagId: string, after: boolean) => {
     try {
-      await api.reorderTag(tagId, beforeTagId, after);
+      if (groupField === "tag") {
+        await api.reorderTag(tagId, beforeTagId, after);
+      } else {
+        // 属性分组：重排该属性的 options(而非 tags 表)。
+        const attrId = groupField.slice("attr:".length);
+        const options = groups.map((g) => g.id).filter((id) => id !== "__none");
+        const idx = beforeTagId ? options.indexOf(beforeTagId) : -1;
+        if (idx >= 0) {
+          options.splice(after ? idx + 1 : idx, 0, tagId);
+        } else {
+          const li = options.indexOf(tagId);
+          if (li >= 0) options.splice(li, 1);
+          options.push(tagId);
+        }
+        await api.updateAttr({ id: attrId, options });
+      }
       load();
     } catch (e) {
       console.error(e);
