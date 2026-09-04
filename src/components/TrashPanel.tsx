@@ -116,15 +116,6 @@ export function TrashPanel() {
               ))
             )}
           </div>
-
-          {items.length > 0 && (
-            <div className="trash-foot">
-              <button className="trash-foot-clear" onClick={clearAll}>
-                清空回收站
-              </button>
-              <span className="trash-foot-hint">永久删除，不可恢复</span>
-            </div>
-          )}
         </div>
       )}
     </div>

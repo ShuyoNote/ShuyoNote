@@ -2125,23 +2125,6 @@ select.sync-input {
 .trash-act.del { padding: 2px 6px; }
 .trash-act.del:hover { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
 
-.trash-foot {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
-}
-.trash-foot-clear {
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: #e5484d;
-  border-radius: var(--radius-sm);
-  padding: 4px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.trash-foot-clear:hover { background: rgba(229,72,77,.08); border-color: rgba(229,72,77,.4); }
-.trash-foot-hint { font-size: 11px; color: var(--text-faint); }
-
 /* 触发图标上的数量角标 */
 .trash-panel .btn-trash { position: relative; }
 .trash-badge {
