@@ -275,6 +275,7 @@ export function FileManagerView() {
       updated: string;
       created: string;
       pageId?: string;
+      cover?: string;
       file?: AttachmentMeta;
       versions?: AttachmentMeta[];
     };
@@ -288,6 +289,7 @@ export function FileManagerView() {
         updated: fmtDate(p.updated_at),
         created: fmtDate(p.created_at),
         pageId: p.id,
+        cover: (p as unknown as { cover?: string }).cover ?? "",
       });
     }
     for (const g of fileGroups) {
@@ -537,8 +539,28 @@ export function FileManagerView() {
             {gridRows.map((row) => {
               const isImage = row.kind === "file" && row.file?.mime.startsWith("image/") && row.file.path;
               const isVideo = row.kind === "file" && row.file?.mime.startsWith("video/") && row.file.path;
+              // 页面/数据库有 cover（题头图）时显示缩略图，否则小图标占位。
+              const pageCover =
+                row.kind !== "file" &&
+                row.cover &&
+                typeof row.cover === "string" &&
+                !row.cover.startsWith("#") &&
+                row.cover.length > 6 &&
+                row.cover;
               return (
-                <div key={row.key} className="fm-grid-card" onClick={() => openRow(row)}>
+                <div
+                  key={row.key}
+                  className={`fm-grid-card${selected.has(row.key) ? " is-selected" : ""}`}
+                  onClick={() => openRow(row)}
+                >
+                  <input
+                    type="checkbox"
+                    className="fm-grid-check"
+                    checked={selected.has(row.key)}
+                    onChange={() => toggleSelect(row.key)}
+                    onClick={(e) => e.stopPropagation()}
+                    title="选择"
+                  />
                   {isImage ? (
                     <img
                       className="fm-grid-thumb"
@@ -553,6 +575,8 @@ export function FileManagerView() {
                       muted
                       preload="metadata"
                     />
+                  ) : pageCover ? (
+                    <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
                   ) : (
                     <span className="fm-grid-icon">
                       {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}

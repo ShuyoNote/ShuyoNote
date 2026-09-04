@@ -16036,5 +16036,24 @@ p:has(> .editor-drawing-container) {
   border-radius: 6px;
   backdrop-filter: blur(2px);
 }
+.fm-grid-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .1s ease;
+  z-index: 2;
+  accent-color: var(--accent, #4f7cff);
+}
+.fm-grid-card:hover .fm-grid-check,
+.fm-grid-card.is-selected .fm-grid-check { opacity: 1; }
+.fm-grid-card.is-selected {
+  border-color: var(--accent, #4f7cff);
+  box-shadow: 0 0 0 2px rgba(79,124,255,.28), 0 8px 20px rgba(0,0,0,.14);
+}
 
 
