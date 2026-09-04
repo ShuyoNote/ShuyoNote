@@ -2306,18 +2306,19 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "list_sync_profiles") return listProfiles(store) as T;
     if (cmd === "set_sync_profile") {
       const args = a.args ?? a;
-      const wsId = String(args.ws_id ?? wsIdNow());
+      // API 层传 camelCase（wsId/serverUrl/spaceId），兼容旧 snake 键。
+      const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
       putProfile(store, {
         ...p,
-        server_url: String(args.server_url ?? p.server_url),
-        token: String(args.token ?? p.token),
-        space_id: String(args.space_id ?? p.space_id),
+        server_url: String(args.serverUrl ?? args.server_url ?? p.server_url),
+        token: String(args.token ?? p.token ?? ""),
+        space_id: String(args.spaceId ?? args.space_id ?? p.space_id),
       });
       return undefined as T;
     }
     if (cmd === "sync_workspace") {
-      const wsId = String(a.ws_id ?? wsIdNow());
+      const wsId = String(a.wsId ?? a.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
       if (!p.server_url) throw new Error("请先配置同步服务器");
       if (!p.space_id) throw new Error("需绑定团队空间才能同步（多设备同步不支持留空）");
