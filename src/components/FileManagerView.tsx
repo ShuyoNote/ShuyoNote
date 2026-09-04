@@ -63,6 +63,7 @@ function KindIcon({ kind }: { kind: string }) {
 }
 
 // 迷你内容预览（页面卡）：标题 + 正文开头几行，像模板卡。
+// 迷你内容预览（页面卡）：显示正文开头几行（无标题栏）。
 function MiniPreview({ content }: { content: string }) {
   const lines = (content ?? "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 4);
   return (
@@ -110,6 +111,11 @@ export function FileManagerView() {
   const [pageContent, setPageContent] = useState<Record<string, string>>({});
   // 网格视图文本/文档预览：fileId -> 文本内容（按需读取）。
   const [textPreview, setTextPreview] = useState<Record<string, string>>({});
+  // 去掉与页面名相同的标题行与空行，返回正文（避免 content_text 首行=标题时重复）。
+  const pageBody = (id: string, name: string): string => {
+    const raw = pageContent[id] || "";
+    return raw.split("\n").map((l) => l.trim()).filter((l) => l && l !== name).join("\n");
+  };
   // 网格缩略图大小（列数随之自适应）。
   const [gridSize, setGridSize] = useState<number>(() => Number(localStorage.getItem("shuyonote:fmGridSize")) || 160);
   const setGrid = (n: number) => {
@@ -697,8 +703,8 @@ export function FileManagerView() {
                     <MiniPreview content={textPreview[row.file!.id]} />
                   ) : pageCover ? (
                     <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
-                  ) : row.pageId && pageContent[row.pageId] ? (
-                    <MiniPreview content={pageContent[row.pageId]} />
+                  ) : row.pageId && pageContent[row.pageId] && pageBody(row.pageId, row.name) ? (
+                    <MiniPreview content={pageBody(row.pageId, row.name) as string} />
                   ) : (
                     <span className="fm-grid-page">
                       <span className="fm-grid-page-icon">
