@@ -45,6 +45,10 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>(
       const target = e.target as Node;
       if (triggerRef.current?.contains(target)) return;
       if (contentRef.current?.contains(target)) return;
+      // 点击落在打开的模态层（输入弹窗 / 确认框等）时不关闭 popover——
+      // 模态层优先级更高，否则「创建空间」这种从 popover 里打开输入框的操作
+      // 会因点击确认按钮而被误关（确认在 capture 阶段、目标不在 popover 内）。
+      if (target instanceof Element && target.closest(".confirm-overlay, .ai-settings-overlay, [data-modal-overlay]")) return;
       setOpen(false);
     };
     document.addEventListener("mousedown", onDown, true);
