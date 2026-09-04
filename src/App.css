@@ -16018,6 +16018,33 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.fm-grid-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 116px;
+  padding: 10px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+.fm-grid-page-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: var(--text-faint);
+}
+.fm-grid-page-title {
+  max-width: 95%;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fm-grid-card {
   position: relative;
   display: flex;

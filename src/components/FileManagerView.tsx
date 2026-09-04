@@ -578,12 +578,12 @@ export function FileManagerView() {
                   ) : pageCover ? (
                     <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
                   ) : (
-                    <div className="fm-grid-tile">
-                      <span className="fm-grid-tile-icon">
+                    <span className="fm-grid-page">
+                      <span className="fm-grid-page-icon">
                         {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
                       </span>
-                      <span className="fm-grid-tile-name">{row.name}</span>
-                    </div>
+                      <span className="fm-grid-page-title">{row.name}</span>
+                    </span>
                   )}
                   {(isImage || isVideo || pageCover) && (
                     <div className="fm-grid-name">{row.name}</div>
