@@ -180,17 +180,15 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
                     }
                   : {})}
               >
-                <button
-                  className="prop-grip"
-                  title={DRAG_MOVE_ENABLED ? "拖动调整属性顺序" : "属性顺序（拖拽已停用）"}
-                  draggable={DRAG_MOVE_ENABLED}
-                  {...(DRAG_MOVE_ENABLED
-                    ? {
-                        onDragStart: (e: React.DragEvent) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; },
-                        onDragEnd: () => setDragIdx(null),
-                      }
-                    : {})}
-                >⠿</button>
+                {DRAG_MOVE_ENABLED && (
+                  <button
+                    className="prop-grip"
+                    title="拖动调整属性顺序"
+                    draggable
+                    onDragStart={(e: React.DragEvent) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; }}
+                    onDragEnd={() => setDragIdx(null)}
+                  >⠿</button>
+                )}
                 <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>
                   {p.name}
                 </span>
