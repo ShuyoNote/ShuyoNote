@@ -312,6 +312,7 @@ fn list_page_metas(c: &Connection) -> Result<Vec<PageMeta>, String> {
 #[tauri::command]
 pub fn board_by_attr(db: State<'_, Db>, attr_id: String) -> Result<Vec<BoardGroup>, String> {
     let c = conn(&db);
+    let active = crate::workspaces::active_workspace_id(&c)?;
     let options_json: String = c
         .query_row(
             "SELECT options FROM attr_defs WHERE id = ?1",
@@ -323,7 +324,10 @@ pub fn board_by_attr(db: State<'_, Db>, attr_id: String) -> Result<Vec<BoardGrou
         .ok_or_else(|| "属性不存在".to_string())?;
     let options = parse_options(&options_json);
 
-    let pages = list_page_metas(&c)?;
+    let pages: Vec<PageMeta> = list_page_metas(&c)?
+        .into_iter()
+        .filter(|p| p.workspace_id == active)
+        .collect();
 
     let mut stmt = c
         .prepare("SELECT page_id, value FROM page_props WHERE attr_id = ?1")

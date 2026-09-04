@@ -59,13 +59,14 @@ fn edge_kind_priority(kind: &str) -> u8 {
 #[tauri::command]
 pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
     let c = db.0.lock().expect("db mutex poisoned");
+    let active = crate::workspaces::active_workspace_id(&c)?;
 
     // --- Page nodes ---
     let mut stmt = c
-        .prepare("SELECT id, title FROM pages WHERE deleted_at IS NULL ORDER BY updated_at DESC")
+        .prepare("SELECT id, title FROM pages WHERE workspace_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
     let mut pages: Vec<GraphPage> = stmt
-        .query_map([], |r| {
+        .query_map(params![active], |r| {
             Ok(GraphPage {
                 id: r.get(0)?,
                 title: r.get(1)?,
@@ -85,11 +86,11 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
              FROM page_tags pt
              JOIN tags t ON t.id = pt.tag_id
              JOIN pages p ON p.id = pt.page_id
-             WHERE p.deleted_at IS NULL",
+             WHERE p.workspace_id = ?1 AND p.deleted_at IS NULL",
         )
         .map_err(|e| e.to_string())?;
     let tag_rows: Vec<(String, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map(params![active], |r| Ok((r.get(0)?, r.get(1)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;

@@ -1752,7 +1752,8 @@ function makeInvoke(store: SqliteStore) {
       const def = attrDefById(store, attrId);
       if (!def) throw new Error("属性不存在");
       const options = def.options;
-      const pages = store.query("SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages WHERE kind = 'page' AND deleted_at IS NULL");
+      const ws = getActiveWsId();
+      const pages = store.query("SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages WHERE workspace_id = ? AND kind = 'page' AND deleted_at IS NULL", [ws]);
       const values = store.query("SELECT page_id, value FROM page_props WHERE attr_id = ?", [attrId]);
       const valMap: Record<string, string> = {};
       for (const v of values as any[]) valMap[v.page_id] = String(v.value ?? "");
