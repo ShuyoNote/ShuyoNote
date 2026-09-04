@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { api, type SyncProfile } from "../lib/api";
@@ -167,6 +168,7 @@ function TreeItem({
   depth: number;
   onRowPointerDown: (id: string, e: React.MouseEvent) => void;
 }) {
+  const { t } = useTranslation();
   const { currentId, openPage, createPage, createFolder, deletePage, renamePage } = useNotes();
   const selectedIds = useTreeSelection((s) => s.ids);
   const toggleSelect = useTreeSelection((s) => s.toggle);
@@ -406,7 +408,7 @@ function TreeItem({
                   createPage(node.id);
                 }}
               >
-                <span className="menu-icon"><MenuIcon d={ICON.plus} /></span><span className="menu-text">新建子页面</span>
+                <span className="menu-icon"><MenuIcon d={ICON.plus} /></span><span className="menu-text">{t("trees.newSubPage")}</span>
               </button>
               {isFolder && (
                 <button
@@ -415,7 +417,7 @@ function TreeItem({
                     createFolder(node.id);
                   }}
                 >
-                  <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">新建子文件夹</span>
+                  <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">{t("trees.newSubFolder")}</span>
                 </button>
               )}
               <button
@@ -571,6 +573,7 @@ export function PageTree(_props: {
   view?: AppView;
   onViewChange?: (v: AppView) => void;
 }) {
+  const { t } = useTranslation();
   const { pages, createPage, createFolder, createDatabase, loading, movePage } = useNotes();
   const collapsed = false;
   // 侧栏是否展开由左侧竖条控制（搜索是弹层，不改变侧栏内容）。
@@ -991,7 +994,7 @@ export function PageTree(_props: {
             <footer className="space-switcher-foot">
               <button className="space-action is-primary" onClick={createSpace}>
                 <span className="space-action-icon">＋</span>
-                <span>新建工作空间</span>
+                <span>{t("trees.newWorkspace")}</span>
               </button>
               {/* 配色 / 删除 / 导出导入这些低频且有破坏性的操作已移到设置中心，
                   这里只留高频的「切换 + 重命名 + 新建」。 */}
@@ -1019,9 +1022,9 @@ export function PageTree(_props: {
           <div className="new-menu">
             {/* 「新建」是侧栏最高频动作，做成带文字的整行按钮：比一个蓝色实心
                 方块克制，也比纯图标好认（点开是页面/文件夹/数据库三选一）。 */}
-            <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title="新建" aria-label="新建">
+            <button ref={newMenuRef} className="btn-new" onClick={toggleNewMenu} title={t("common.new")} aria-label={t("common.new")}>
               <PlusIcon width={15} height={15} strokeWidth={2.2} />
-              <span className="btn-new-label">新建</span>
+              <span className="btn-new-label">{t("common.new")}</span>
             </button>
             {newMenuOpen && (
               <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
@@ -1036,7 +1039,7 @@ export function PageTree(_props: {
                   <span className="new-menu-icon"><PageIcon /></span>
                   <span className="new-menu-body">
                     <span className="new-menu-name">页面</span>
-                    <span className="new-menu-desc">空白文书</span>
+                    <span className="new-menu-desc">{t("trees.blankPage")}</span>
                   </span>
                   <kbd className="new-menu-kbd">Ctrl+N</kbd>
                 </button>
@@ -1079,7 +1082,7 @@ export function PageTree(_props: {
           </div>
         ) : tree.length === 0 ? (
           <div className="sidebar-empty">
-            {collapsed ? "·" : "暂无页面，点击「新建页面」开始"}
+            {collapsed ? "·" : t("trees.empty")}
           </div>
         ) : (
           tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)

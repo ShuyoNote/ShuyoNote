@@ -53,6 +53,13 @@ export default {
     settings: "Settings",
     sync: "Sync",
   },
+  trees: {
+    newWorkspace: "New workspace",
+    newSubPage: "New sub-page",
+    newSubFolder: "New sub-folder",
+    blankPage: "Blank page",
+    empty: "No pages yet — click \"New page\" to start",
+  },
   files: {
     title: "Files",
     newFolder: "New folder",

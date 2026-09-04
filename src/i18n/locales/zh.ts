@@ -53,6 +53,13 @@ export default {
     settings: "设置",
     sync: "同步",
   },
+  trees: {
+    newWorkspace: "新建工作空间",
+    newSubPage: "新建子页面",
+    newSubFolder: "新建子文件夹",
+    blankPage: "空白文书",
+    empty: "暂无页面，点击「新建页面」开始",
+  },
   files: {
     title: "文件管理",
     newFolder: "新建文件夹",
