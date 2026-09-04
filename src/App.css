@@ -4205,6 +4205,7 @@ body.content-full .editor-placeholder {
   gap: 8px;
   min-height: 30px;
 }
+.prop-row .prop-order-btns { margin-left: auto; }
 .prop-row.is-dragging { opacity: 0.5; }
 .prop-row { position: relative; }
 .prop-row.drop-before::before,
@@ -4300,21 +4301,6 @@ body.content-full .editor-placeholder {
 
 select.prop-value {
   cursor: pointer;
-}
-
-.prop-remove {
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: 15px;
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-}
-
-.prop-remove:hover {
-  color: var(--text);
-  background: var(--hover);
 }
 
 .property-add-btn {
