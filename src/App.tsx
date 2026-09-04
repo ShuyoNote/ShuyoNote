@@ -215,6 +215,31 @@ function NoteEditor({ pageId }: { pageId: string }) {
     };
   }, []);
 
+  // 自动同步：按 SyncPanel 里设置的间隔（localStorage "shuyonote:autoSync"），
+  // 对每个已绑定服务器的空间定时 push+pull（面板关闭也生效）。
+  const autoSyncMs = Number(localStorage.getItem("shuyonote:autoSync")) || 0;
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const tick = () => {
+      api
+        .listSyncProfiles()
+        .then((profiles) => {
+          const bound = (profiles || []).filter((p: any) => p.server_url && p.space_id);
+          if (!bound.length) return;
+          return Promise.all(bound.map((p: any) => api.syncWorkspace(p.ws_id).catch(() => null))).then(
+            () => loadPages(),
+          );
+        })
+        .catch(() => {});
+    };
+    const ms = autoSyncMs;
+    if (ms > 0) {
+      timer = setInterval(tick, ms);
+    }
+    return () => { if (timer) clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, loadPages, autoSyncMs]);
+
   // A database page renders a table view instead of the block editor.
   if (current?.kind === "database") {
     return (

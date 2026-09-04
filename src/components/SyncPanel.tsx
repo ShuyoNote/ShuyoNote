@@ -65,6 +65,12 @@ export function SyncPanel() {
   const activeId = useSpaceStore((s) => s.activeId);
   const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
+  // 自动同步间隔（毫秒；0=关闭），存 localStorage 供 App 级定时器使用。
+  const [autoMs, setAutoMs] = useState<number>(() => Number(localStorage.getItem("shuyonote:autoSync")) || 0);
+  const setAuto = (ms: number) => {
+    try { localStorage.setItem("shuyonote:autoSync", String(ms)); } catch { /* ignore */ }
+    setAutoMs(ms);
+  };
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
@@ -654,6 +660,20 @@ export function SyncPanel() {
           </div>
 
           <footer className="sync-foot">
+            <div className="sync-auto">
+              <span className="sync-auto-label">自动同步</span>
+              <select
+                className="sync-input"
+                value={String(autoMs)}
+                onChange={(e) => setAuto(Number(e.target.value))}
+              >
+                <option value="0">关闭</option>
+                <option value="10000">每 10 秒</option>
+                <option value="30000">每 30 秒</option>
+                <option value="60000">每 1 分钟</option>
+                <option value="300000">每 5 分钟</option>
+              </select>
+            </div>
             {status && <div className={`sync-status is-${statusKind(status)}`}>{status}</div>}
             {history.length > 0 && (
               <div className="sync-history">

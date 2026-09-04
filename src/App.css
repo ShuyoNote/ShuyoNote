@@ -1397,6 +1397,9 @@ select.sync-input {
   margin-top: 4px;
 }
 
+.sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.sync-auto-label { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
+.sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: 12px; }
 .sync-foot {
   display: flex;
   flex-direction: column;
