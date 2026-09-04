@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useAiStore } from "../store/ai";
 import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
-import { AiSparkIcon, SemanticSearchIcon } from "./icons";
 import {
   AI_PRESETS,
   MODEL_OPTIONS,
@@ -133,7 +132,6 @@ export function AiSettingsForm({
         {/* ===== AI 助手（对话） ===== */}
         <div className={`ai-settings-group${enabled ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">
-            <span className="ai-settings-group-icon"><AiSparkIcon width={18} height={18} /></span>
             <span>AI 助手</span>
             <button
               type="button"
@@ -222,7 +220,6 @@ export function AiSettingsForm({
         {/* ===== 语义检索 ===== */}
         <div className={`ai-settings-group${enableEmbedding ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">
-            <span className="ai-settings-group-icon"><SemanticSearchIcon width={18} height={18} /></span>
             <span>语义检索</span>
             <button
               type="button"
