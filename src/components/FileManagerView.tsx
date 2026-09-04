@@ -75,6 +75,13 @@ export function FileManagerView() {
   const [versionTarget, setVersionTarget] = useState<AttachmentMeta | null>(null);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
+  const [viewMode, setViewMode] = useState<"list" | "grid">(
+    () => (localStorage.getItem("shuyonote:fmView") as "list" | "grid") || "list",
+  );
+  const setView = (v: "list" | "grid") => {
+    try { localStorage.setItem("shuyonote:fmView", v); } catch { /* ignore */ }
+    setViewMode(v);
+  };
 
   // folderId 为 null = 空间根：列出「未整理」文件（page_id IS NULL），
   // 而不是像以前那样直接清空——根下也允许上传，文件得有地方显示。
@@ -363,6 +370,30 @@ export function FileManagerView() {
   // createPage navigates to the editor with the new page already open.
   const newPage = () => createPage(folderId);
 
+  // 打开一行（列表 / 网格共用）：图片/视频/音频/PDF 应用内预览，文件用系统应用，
+  // 文件夹/页面进入。
+  const openRow = (row: (typeof rows)[number]) => {
+    if (row.kind === "file") {
+      if (row.file!.mime === "application/pdf") {
+        void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
+      } else if (
+        row.file!.mime === "text/markdown" ||
+        row.file!.mime.startsWith("image/") ||
+        row.file!.mime.startsWith("video/") ||
+        row.file!.mime.startsWith("audio/")
+      ) {
+        useFilePreview.getState().open(row.file!);
+      } else {
+        toast("正在用系统默认应用打开…", "info");
+        openFile(row.file!.path);
+      }
+    } else if (row.kind === "folder") {
+      setFolderId(row.pageId!);
+    } else {
+      openPage(row.pageId!);
+    }
+  };
+
   const fileTotalBytes = useMemo(
     () => files.reduce((s, f) => s + (f.size || 0), 0),
     [files],
@@ -432,6 +463,18 @@ export function FileManagerView() {
           >
             {importing ? "上传中…" : "＋ 上传文件"}
           </button>
+          <div className="fm-view-toggle" role="group" aria-label="视图切换">
+            <button
+              className={`fm-view-btn${viewMode === "list" ? " is-on" : ""}`}
+              title="列表"
+              onClick={() => setView("list")}
+            >☰</button>
+            <button
+              className={`fm-view-btn${viewMode === "grid" ? " is-on" : ""}`}
+              title="网格（缩略图）"
+              onClick={() => setView("grid")}
+            >▦</button>
+          </div>
         </div>
       </div>
 
@@ -479,6 +522,44 @@ export function FileManagerView() {
       )}
 
       <div className="file-manager-table-wrap">
+        {viewMode === "grid" && (
+          <div className="fm-grid">
+            {visibleRows.length === 0 && <div className="fm-empty">没有文件</div>}
+            {visibleRows.map((row) => {
+              const isImage = row.kind === "file" && row.file?.mime.startsWith("image/") && row.file.path;
+              const isVideo = row.kind === "file" && row.file?.mime.startsWith("video/") && row.file.path;
+              return (
+                <div key={row.key} className="fm-grid-card" onClick={() => openRow(row)}>
+                  {isImage ? (
+                    <img
+                      className="fm-grid-thumb"
+                      src={platform.asset.convertFileSrc(row.file!.path)}
+                      alt={row.name}
+                      loading="lazy"
+                    />
+                  ) : isVideo ? (
+                    <video
+                      className="fm-grid-thumb"
+                      src={platform.asset.convertFileSrc(row.file!.path)}
+                      muted
+                      preload="metadata"
+                    />
+                  ) : (
+                    <span className="fm-grid-icon">
+                      {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
+                    </span>
+                  )}
+                  <div className="fm-grid-name">{row.name}</div>
+                  {row.kind === "file" && folderId === null && (
+                    <div className="fm-grid-tag">未整理</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {viewMode === "list" && (
         <table className="file-manager-table">
           <thead>
             <tr>
@@ -518,27 +599,7 @@ export function FileManagerView() {
                     className="fm-name-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (row.kind === "file") {
-                        // M24 PDF 批注：点击文件名直达内置阅读器（而非系统外部应用）。
-                        if (row.file!.mime === "application/pdf") {
-                          void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
-                        } else if (
-                          row.file!.mime === "text/markdown" ||
-                          row.file!.mime.startsWith("image/") ||
-                          row.file!.mime.startsWith("video/") ||
-                          row.file!.mime.startsWith("audio/")
-                        ) {
-                          // MD / 图片 / 视频 / 音频：直接在应用内打开预览（铺满），
-                          // 与 PDF 一致，不跳系统外部应用。
-                          useFilePreview.getState().open(row.file!);
-                        } else {
-                          // 其它类型（office/zip/csv 等）没有内置预览器，用系统默认
-                          // 应用打开——明确提示，避免用户以为没反应。
-                          toast("正在用系统默认应用打开…", "info");
-                          openFile(row.file!.path);
-                        }
-                      } else if (row.kind === "folder") setFolderId(row.pageId!);
-                      else openPage(row.pageId!);
+                      openRow(row);
                     }}
                   >
                     <span className="fm-kind-icon">
@@ -641,6 +702,7 @@ export function FileManagerView() {
             )}
           </tbody>
         </table>
+        )}
       </div>
 
       {versionTarget && (
