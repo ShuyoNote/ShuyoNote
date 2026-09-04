@@ -1,5 +1,16 @@
 :root {
   color-scheme: light;
+  /* 统一的 z-index 分层规范：解决弹层互相遮挡的问题。
+     层序（低→高）：基础内容 < 浮层内容覆盖(文件预览) < 浮层 flyout(回收站/备份/模板/同步) < 模态框 < 右键菜单 < 命令面板/搜索 < toast。
+     新增弹层一律引用这些变量，不要写魔法数字。 */
+  --z-content: 1;
+  --z-bar: 30;
+  --z-content-overlay: 600;
+  --z-popover: 700;
+  --z-modal: 1000;
+  --z-context: 1100;
+  --z-palette: 1500;
+  --z-toast: 1600;
   /* Brand & neutrals */
   --accent: #3370ff;
   --accent-strong: #2952cc;
@@ -2010,7 +2021,7 @@ select.sync-input {
 
 .backup-dropdown {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-popover);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -2097,7 +2108,7 @@ select.sync-input {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  z-index: 40;
+  z-index: var(--z-popover);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -12244,7 +12255,7 @@ p:has(> .editor-drawing-container) {
   left: calc(var(--activity-w, 0px) + var(--sidebar-w, 264px));
   /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
      命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
-  z-index: 600;
+  z-index: var(--z-content-overlay);
   background: var(--bg);
   display: flex;
   align-items: stretch;
