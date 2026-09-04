@@ -2241,6 +2241,8 @@ select.sync-input {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .board-column-header:active {
   cursor: grabbing;
