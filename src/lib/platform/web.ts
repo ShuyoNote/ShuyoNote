@@ -737,15 +737,17 @@ function applyChange(store: SqliteStore, change: SyncChange): void {
   }
 }
 
-async function syncFetch(server: string, path: string, token: string | null, body?: unknown): Promise<any> {
+async function syncFetch(server: string, path: string, token: string | null, body?: unknown, method?: string): Promise<any> {
   const url = `${server.replace(/\/+$/, "")}${path}`;
+  const hasBody = body !== undefined && body !== null;
+  const m = method ?? (hasBody ? "POST" : "GET");
   const headers: Record<string, string> = {};
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (hasBody) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const resp = await fetch(url, {
-    method: body !== undefined ? "POST" : "GET",
+    method: m,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: hasBody ? JSON.stringify(body) : undefined,
   });
   if (resp.status === 401) throw new Error("同步失败：会话已失效，请重新登录");
   const text = await resp.text();
@@ -2210,6 +2212,85 @@ function makeInvoke(store: SqliteStore) {
       } catch (e) {
         return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) } as T;
       }
+    }
+    // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----
+    // Helper to grab the session token for a server, else "".
+    const teamToken = (serverUrl: string): string => getAuthSession(store, serverUrl).token;
+    const serverArg = (): string => String(a.server_url ?? a.serverUrl ?? a.server??"").trim().replace(/\/+$/, "");
+    if (cmd === "team_invite_member") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { user_email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
+    }
+    if (cmd === "team_set_member_role") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { user_email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
+    }
+    if (cmd === "team_list_members") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()))) as T;
+    }
+    if (cmd === "team_remove_member") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
+    }
+    if (cmd === "team_list_orgs") {
+      return (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()))) as T;
+    }
+    if (cmd === "team_invite_org_member") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
+    }
+    if (cmd === "team_set_org_member_active") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { active: !!args.active }, "PATCH")) as T;
+    }
+    if (cmd === "team_remove_org_member") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
+    }
+    if (cmd === "team_list_org_members") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()))) as T;
+    }
+    if (cmd === "team_reject_org_invite") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/invites/reject`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? "") })) as T;
+    }
+    if (cmd === "team_approve_org_invite") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/invites/approve`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? "") })) as T;
+    }
+    if (cmd === "team_generate_org_invite_code") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/invite-code`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), {})) as T;
+    }
+    if (cmd === "team_join_org_by_code") {
+      const args = a.args ?? a;
+      return (await syncFetch(serverArg(), "/orgs/join", teamToken(serverArg()), { code: String(args.code ?? "") })) as T;
+    }
+    if (cmd === "team_create_org") {
+      const args = a.args ?? a;
+      return (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()), { name: String(args.name ?? "") })) as T;
+    }
+    if (cmd === "team_deactivate_account") {
+      // DELETE /auth/account (logout the account). Emit body via POST-style DELETE w/o body.
+      return (await syncFetch(serverArg(), "/auth/account", teamToken(serverArg()), null, "DELETE")) as T;
+    }
+    if (cmd === "team_deactivate_org_member") {
+      const args = a.args ?? a;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}/deactivate`;
+      return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "POST")) as T;
     }
 
     // ---- Encryption ----
