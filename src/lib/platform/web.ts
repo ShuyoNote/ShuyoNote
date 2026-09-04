@@ -861,8 +861,26 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
     if (remoteSet.has(hash)) continue;
     const bytes = await blobStore.get(hash);
     if (!bytes) continue;
+    // 旧数据可能是 FNV(16位) 哈希，而服务端按 SHA-256(64位) 校验 → 400。
+    // 这里统一按字节的真实 SHA-256 上传，并把附件元数据/未推送变更/字节 key 一起迁到真哈希。
+    const realHash = await contentHash(bytes);
+    if (realHash && realHash !== hash) {
+      try {
+        await blobStore.put(realHash, bytes);
+        await blobStore.delete(hash).catch(() => {});
+        store.run("UPDATE attachments SET hash = ?1 WHERE hash = ?2", [realHash, hash]);
+        const chs = store.query<{ id: number; payload: string }>("SELECT id, payload FROM changes WHERE entity='attachment' AND payload LIKE ?1", [`%${hash}%`]);
+        for (const ch of chs) {
+          let p: any;
+          try { p = JSON.parse(ch.payload); } catch { continue; }
+          if (p && p.hash === hash) { p.hash = realHash; store.run("UPDATE changes SET payload=?1 WHERE id=?2", [JSON.stringify(p), ch.id]); }
+        }
+      } catch { /* best-effort re-key */
+        continue;
+      }
+    }
     try {
-      await attachmentByteUpload(`${base}/attachments/${hash}`, token, mime, bytes);
+      await attachmentByteUpload(`${base}/attachments/${realHash || hash}`, token, mime, bytes);
       uploaded++;
     } catch {
       /* best-effort: a failed upload must not break the sync run */
