@@ -4939,7 +4939,7 @@ select.prop-value {
 .plugin-manager-overlay {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 1300;
   background: rgba(15, 23, 42, 0.34);
   display: flex;
   align-items: flex-start;
