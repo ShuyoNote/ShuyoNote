@@ -734,6 +734,25 @@ function applyChange(store: SqliteStore, change: SyncChange): void {
     if (p.page_id && p.tag_id) {
       store.run("INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?,?)", [p.page_id, p.tag_id]);
     }
+    return;
+  }
+  if (entity === "attachment") {
+    if (op === "delete") {
+      store.run("DELETE FROM attachments WHERE id = ?", [eid]);
+      return;
+    }
+    const p = parseJson(change.payload || "{}") as Record<string, any>;
+    if (p.id) {
+      insertAttachmentRow(store, {
+        id: String(p.id),
+        page_id: p.page_id ? String(p.page_id) : null,
+        name: String(p.name ?? ""),
+        hash: String(p.hash ?? ""),
+        mime: String(p.mime ?? ""),
+        size: Number(p.size ?? 0),
+      });
+    }
+    return;
   }
 }
 
@@ -785,6 +804,76 @@ async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulle
   }
   putProfile(store, { ...profile, last_pulled_seq: maxSeq });
   return { pulled: changes.length, lastSeq: maxSeq };
+}
+
+// ---- Attachment byte sync (mirrors src-tauri/src/sync.rs::sync_attachments) ----
+// Attachment *bytes* are content-addressed (SHA-256) and transfer via the server's
+// `/spaces/{space}/attachments/{hash}` upload/download endpoints — separate from the
+// row-metadata changes (which ride the normal push/pull). This keeps the changes
+// payload small while still letting embedded images/files render on every device.
+// Uploads are idempotent (server dedups by hash); the whole step is best-effort so a
+// slow/failed byte transfer never breaks the metadata push/pull.
+async function attachmentByteUpload(url: string, token: string, mime: string, bytes: Uint8Array): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const resp = await fetch(`${url}?mime=${encodeURIComponent(mime)}`, { method: "POST", headers, body: bytes as unknown as BodyInit });
+  if (!resp.ok) throw new Error(`上传附件失败（HTTP ${resp.status}）`);
+}
+async function attachmentByteDownload(url: string, token: string): Promise<Uint8Array | null> {
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const resp = await fetch(url, { headers });
+  if (!resp.ok) return null;
+  return new Uint8Array(await resp.arrayBuffer());
+}
+
+async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promise<{ uploaded: number; downloaded: number }> {
+  const server = profile.server_url.replace(/\/+$/, "");
+  const token = getAuthSession(store, server).token || profile.token;
+  const scoped = profile.space_id ? `/spaces/${encodeURIComponent(profile.space_id)}` : "";
+  const base = `${server}${scoped}`;
+  // 1. List remote hashes (space-scoped when bound to a team space).
+  let remoteData: any;
+  try {
+    remoteData = await syncFetch(server, `${scoped}/attachments`, token || null);
+  } catch {
+    return { uploaded: 0, downloaded: 0 };
+  }
+  const remoteSet = new Set<string>((remoteData?.items ?? []).map((i: any) => String(i?.hash)));
+  // 2. Local hashes from this workspace's attachments table (content-addressed bytes).
+  const localRows = store.query<{ hash: string; mime: string }>("SELECT DISTINCT hash, mime FROM attachments");
+  const localMap = new Map<string, string>();
+  for (const r of localRows) {
+    if (r.hash) localMap.set(String(r.hash), String(r.mime || "application/octet-stream"));
+  }
+  // 3. Upload local attachments missing on the server.
+  let uploaded = 0;
+  for (const [hash, mime] of localMap) {
+    if (remoteSet.has(hash)) continue;
+    const bytes = await blobStore.get(hash);
+    if (!bytes) continue;
+    try {
+      await attachmentByteUpload(`${base}/attachments/${hash}`, token, mime, bytes);
+      uploaded++;
+    } catch {
+      /* best-effort: a failed upload must not break the sync run */
+    }
+  }
+  // 4. Download remote attachments missing locally (so images/files render here).
+  let downloaded = 0;
+  for (const hash of remoteSet) {
+    if (localMap.has(hash)) continue;
+    try {
+      const bytes = await attachmentByteDownload(`${base}/attachments/${hash}`, token);
+      if (bytes && bytes.length > 0) {
+        await blobStore.put(hash, bytes);
+        downloaded++;
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+  return { uploaded, downloaded };
 }
 
 function makeInvoke(store: SqliteStore) {
@@ -1670,6 +1759,7 @@ function makeInvoke(store: SqliteStore) {
         // with the same hash already existed, so a re-upload never attached the
         // folder (page_id stayed NULL) and the file never showed in the sidebar.
         insertAttachmentRow(store, { id: att.id, page_id: pageId ?? null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
+        if (att.hash) recordChange(store, "attachment", att.id, "upsert", { id: att.id, page_id: pageId ?? null, name: att.name, hash: att.hash, mime: att.mime, size: att.size }, Date.now());
         fileRegistry.delete(baseName(p));
         metas.push(att);
       }
@@ -1690,6 +1780,7 @@ function makeInvoke(store: SqliteStore) {
       const row = store.query<{ hash: string }>("SELECT hash FROM attachments WHERE id = ?", [id])[0];
       if (row) {
         store.run("DELETE FROM attachments WHERE id = ?", [id]);
+        recordChange(store, "attachment", id, "delete", null, Date.now());
         const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
         if (refs === 0) {
           await blobStore.delete(row.hash).catch(() => {});
@@ -1704,6 +1795,7 @@ function makeInvoke(store: SqliteStore) {
         const row = store.query<{ hash: string }>("SELECT hash FROM attachments WHERE id = ?", [id])[0];
         if (!row) continue;
         store.run("DELETE FROM attachments WHERE id = ?", [id]);
+        recordChange(store, "attachment", id, "delete", null, Date.now());
         removed++;
         const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
         if (refs === 0) {
@@ -1719,7 +1811,9 @@ function makeInvoke(store: SqliteStore) {
       if (!exists) throw new Error("目标文件夹不存在");
       const n = store.query("SELECT id FROM attachments WHERE id = ?", [id]).length;
       if (n === 0) throw new Error("附件不存在");
+      const row = store.query<{ name: string; hash: string; mime: string; size: number }>("SELECT name, hash, mime, size FROM attachments WHERE id = ?", [id])[0];
       store.run("UPDATE attachments SET page_id = ? WHERE id = ?", [newPageId, id]);
+      if (row) recordChange(store, "attachment", id, "upsert", { id, page_id: newPageId || null, name: row.name, hash: row.hash, mime: row.mime, size: row.size }, Date.now());
       return undefined as T;
     }
     if (cmd === "restore_attachment") {
@@ -1735,6 +1829,7 @@ function makeInvoke(store: SqliteStore) {
       insertAttachmentRow(store, {
         id, page_id: targetPageId || null, name: row.name, hash: row.hash, mime: row.mime, size: row.size,
       });
+      if (row.hash) recordChange(store, "attachment", id, "upsert", { id, page_id: targetPageId || null, name: row.name, hash: row.hash, mime: row.mime, size: row.size }, Date.now());
       const bytes = await blobStore.get(row.hash);
       return { id, name: row.name, hash: row.hash, mime: row.mime, size: row.size, path: bytes ? blobUrl(bytes, row.mime) : "" } as T;
     }
@@ -1751,6 +1846,7 @@ function makeInvoke(store: SqliteStore) {
       await blobStore.put(hash, bytes);
       const att = { id: uid(), name, hash, mime, size: data.length, path: blobUrl(bytes, mime) };
       insertAttachmentRow(store, { id: att.id, page_id: null, name: att.name, hash: att.hash, mime: att.mime, size: att.size });
+      if (att.hash) recordChange(store, "attachment", att.id, "upsert", { id: att.id, page_id: null, name: att.name, hash: att.hash, mime: att.mime, size: att.size }, Date.now());
       return att as T;
     }
     if (cmd === "list_attachment_hashes") {
@@ -2126,6 +2222,7 @@ function makeInvoke(store: SqliteStore) {
         try {
           const pushed = await doPush(store, profile);
           const pulled = await doPull(store, profile);
+          await syncAttachments(store, profile);
           const latest = getProfile(store, profile.ws_id);
           out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null });
         } catch (e) {
@@ -2227,6 +2324,7 @@ function makeInvoke(store: SqliteStore) {
       try {
         const pushed = await doPush(store, p);
         const pulled = await doPull(store, p);
+        await syncAttachments(store, p);
         const latest = getProfile(store, wsId);
         return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null } as T;
       } catch (e) {
