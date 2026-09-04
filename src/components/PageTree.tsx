@@ -859,9 +859,9 @@ export function PageTree(_props: {
                   : undefined
               }
             >
-              {workspaceName.charAt(0) || "S"}
+              {activeSpace?.name?.charAt(0) || "S"}
             </span>
-            <span className="sidebar-title-text">{workspaceName}</span>
+            <span className="sidebar-title-text">{activeSpace?.name ?? workspaceName}</span>
             <span className="sidebar-title-caret">▾</span>
           </button>
         )}
