@@ -770,10 +770,17 @@ async function syncFetch(server: string, path: string, token: string | null, bod
     headers,
     body: hasBody ? JSON.stringify(body) : undefined,
   });
-  if (resp.status === 401) throw new Error("同步失败：会话已失效，请重新登录");
   const text = await resp.text();
   if (!resp.ok) {
-    throw new Error(text || `HTTP ${resp.status}`);
+    // 把 HTTP 状态码写进错误信息并挂到 err.status：上层（登录/注册/同步）据此区分
+    // 401=会话失效/凭证错、400=参数/邀请码错、409=账号已存在 等，好给友好提示。
+    const statusMsg =
+      resp.status === 401
+        ? "同步失败：会话已失效，请重新登录 (HTTP 401)"
+        : `同步失败：HTTP ${resp.status}${text ? `：${text}` : ""}`;
+    const err = new Error(statusMsg);
+    (err as any).status = resp.status;
+    throw err;
   }
   return text ? JSON.parse(text) : null;
 }

@@ -250,10 +250,11 @@ export function SyncPanel() {
       const { token } = await api.teamLogin(base, r.loginEmail.trim(), r.loginPassword);
       if (!token) throw new Error("服务器未返回 token");
       await applySession(r, base, token, "登录");
-    } catch (e) {
-      const msg = String(e);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const noAuth = e?.status === 401 || /401/.test(msg);
       setStatus(
-        msg.includes("401") ? "登录失败：邮箱或密码不对（没有账号请先「注册」）" : `登录失败：${msg}`,
+        noAuth ? "登录失败：邮箱或密码不对（没有账号请先「注册」）" : `登录失败：${msg}`,
       );
     } finally {
       setLoggingIn(false);
@@ -275,11 +276,12 @@ export function SyncPanel() {
       const { token } = await api.teamRegister(base, r.loginEmail.trim(), r.loginPassword, null, r.loginRegisterCode.trim() || null);
       if (!token) throw new Error("服务器未返回 token");
       await applySession(r, base, token, "注册");
-    } catch (e) {
-      const msg = String(e);
-      let hint = msg.includes("409") ? "该邮箱已注册，请直接「登录」"
-        : msg.includes("400") ? "请输入「注册邀请码」（向管理员索取，如 SHUYOABC）且密码 ≥ 8 位"
-        : msg.includes("401") ? "登录失败：邮箱或密码不对"
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const st = e?.status;
+      let hint = st === 409 || /409/.test(msg) ? "该邮箱已注册，请直接「登录」"
+        : st === 400 || /400/.test(msg) ? "请输入「注册邀请码」（向管理员索取，如 SHUYOABC）且密码 ≥ 8 位"
+        : st === 401 || /401/.test(msg) ? "登录失败：邮箱或密码不对（没有账号请先「注册」）"
         : `注册失败：${msg}`;
       setStatus(hint);
     } finally {
