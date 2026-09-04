@@ -791,7 +791,7 @@ async function doPush(store: SqliteStore, profile: SyncProfile): Promise<{ pushe
   await syncFetch(profile.server_url, "/push", profile.token || null, {
     device_id: syncDeviceId(),
     space_id: profile.space_id,
-    changes: changes.map((c) => ({ device_seq: c.device_seq, entity: c.entity, entity_id: c.entity_id, op: c.op, payload: c.payload, updated_at: c.updated_at })),
+    changes: changes.map((c) => ({ device_seq: c.id, entity: c.entity, entity_id: c.entity_id, op: c.op, payload: c.payload, updated_at: c.updated_at })),
   });
   const maxSeq = maxOutboxSeq(store, profile.last_pushed_seq);
   putProfile(store, { ...profile, last_pushed_seq: maxSeq });
