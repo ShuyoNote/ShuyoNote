@@ -703,18 +703,15 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     if tags_has_sort == 0 {
         conn.execute("ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
     }
-
-    // 系统预设状态标签（业界习惯：未完成/进行中/已完成）。固定 id + OR IGNORE 幂等。
-    for (id, name, color, order) in [
-        ("tag-todo", "未完成", "#ef4444", 0_f64),
-        ("tag-doing", "进行中", "#f59e0b", 1_f64),
-        ("tag-done", "已完成", "#22c55e", 2_f64),
-    ] {
-        conn.execute(
-            "INSERT OR IGNORE INTO tags (id, name, color, sort_order) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![id, name, color, order],
-        )?;
-    }
+    // 去掉系统预置的三个状态标签（未完成/进行中/已完成）——含旧库已插入的。
+    conn.execute(
+        "DELETE FROM page_tags WHERE tag_id IN ('tag-todo','tag-doing','tag-done')",
+        [],
+    )?;
+    conn.execute(
+        "DELETE FROM tags WHERE id IN ('tag-todo','tag-doing','tag-done')",
+        [],
+    )?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_page_id, target_block_id)",

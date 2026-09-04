@@ -356,13 +356,16 @@ export class SqliteStore {
     } catch {
       /* already exists */
     }
-    // 种子标签：必须在补列之后写入（旧库无 color 时，先 ALTER 再 INSERT）。
+    // 去掉系统预置的三个状态标签（未完成/进行中/已完成）——含旧库已插入的。
     try {
-      this.db.run(
-        "INSERT OR IGNORE INTO tags (id, name, color, sort_order) VALUES ('tag-todo', '未完成', '#ef4444', 0), ('tag-doing', '进行中', '#f59e0b', 1), ('tag-done', '已完成', '#22c55e', 2)",
-      );
+      this.db.run("DELETE FROM page_tags WHERE tag_id IN ('tag-todo','tag-doing','tag-done')");
     } catch {
-      /* already seeded */
+      /* ignore */
+    }
+    try {
+      this.db.run("DELETE FROM tags WHERE id IN ('tag-todo','tag-doing','tag-done')");
+    } catch {
+      /* ignore */
     }
   }
 
