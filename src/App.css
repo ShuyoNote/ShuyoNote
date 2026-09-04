@@ -2049,69 +2049,112 @@ select.sync-input {
 
 .trash-popover {
   position: fixed;
-  width: 280px;
+  width: 300px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   z-index: 40;
-  padding: 6px;
-  max-height: 360px;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: pop 0.14s ease;
 }
 
-.trash-empty {
-  padding: 12px;
-  color: var(--text-dim);
-  font-size: 13px;
-  text-align: center;
+.trash-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
 }
+.trash-head-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.trash-count { font-size: 12px; color: var(--text-dim); flex: 1; }
+.trash-clear {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+.trash-clear:hover:not(:disabled) { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
+.trash-clear:disabled { opacity: .4; cursor: default; }
+
+.trash-list { overflow-y: auto; max-height: 300px; padding: 4px; }
+
+.trash-empty {
+  padding: 28px 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.trash-empty-icon { font-size: 28px; opacity: .5; }
+.trash-empty-text { font-size: 13px; color: var(--text-dim); }
+.trash-empty-sub { font-size: 12px; color: var(--text-faint); }
 
 .trash-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 5px;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
-
-.trash-item:hover {
-  background: var(--hover);
-}
-
-.trash-icon {
-  flex-shrink: 0;
-}
-
-.trash-title {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.trash-actions {
-  display: none;
-  gap: 4px;
-}
-
-.trash-item:hover .trash-actions {
-  display: inline-flex;
-}
-
-.trash-actions button {
+.trash-item:hover { background: var(--hover); }
+.trash-icon { flex-shrink: 0; opacity: .8; }
+.trash-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-actions { display: inline-flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity var(--transition-fast); }
+.trash-item:hover .trash-actions { opacity: 1; }
+.trash-act {
+  display: inline-flex; align-items: center; gap: 3px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  padding: 2px 7px;
   font-size: 11px;
   cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
+.trash-act.restore:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.trash-act.del { padding: 2px 6px; }
+.trash-act.del:hover { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
 
-.trash-actions button:hover {
-  background: var(--hover);
+.trash-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+.trash-foot-clear {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: #e5484d;
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.trash-foot-clear:hover { background: rgba(229,72,77,.08); border-color: rgba(229,72,77,.4); }
+.trash-foot-hint { font-size: 11px; color: var(--text-faint); }
+
+/* 触发图标上的数量角标 */
+.trash-panel .btn-trash { position: relative; }
+.trash-badge {
+  position: absolute;
+  top: -5px; right: -5px;
+  min-width: 15px; height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px; line-height: 15px;
+  text-align: center;
+  pointer-events: none;
 }
 
 /* View switch */
