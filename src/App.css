@@ -2263,6 +2263,8 @@ select.sync-input {
   font-size: 13px;
   font-weight: 600;
   flex: 1;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .board-column-count {
@@ -2291,6 +2293,8 @@ select.sync-input {
   font-size: 13px;
   box-shadow: var(--shadow-xs);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .board-card:hover {
