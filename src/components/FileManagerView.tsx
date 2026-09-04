@@ -107,6 +107,14 @@ export function FileManagerView() {
   };
   // 网格视图内容预览：pageId -> content_text（按需拉取，避免全列表带正文）。
   const [pageContent, setPageContent] = useState<Record<string, string>>({});
+  // 网格缩略图大小（列数随之自适应）。
+  const [gridSize, setGridSize] = useState<number>(() => Number(localStorage.getItem("shuyonote:fmGridSize")) || 160);
+  const setGrid = (n: number) => {
+    try { localStorage.setItem("shuyonote:fmGridSize", String(n)); } catch { /* ignore */ }
+    setGridSize(n);
+  };
+  // 右键菜单。
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta } | null }>({ x: 0, y: 0, row: null });
 
   // folderId 为 null = 空间根：列出「未整理」文件（page_id IS NULL），
   // 而不是像以前那样直接清空——根下也允许上传，文件得有地方显示。
@@ -352,6 +360,14 @@ export function FileManagerView() {
     return () => { cancelled = true; };
   }, [viewMode, rows, pageContent]);
 
+  // 点击任意处关闭右键菜单。
+  useEffect(() => {
+    if (!ctxMenu.row) return;
+    const onMouseDown = () => closeCtx();
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [ctxMenu.row]);
+
   const selectedFileIds = useMemo(
     () => rows.filter((r) => r.kind === "file" && selected.has(r.key)).map((r) => r.file!.id),
     [rows, selected],
@@ -419,7 +435,7 @@ export function FileManagerView() {
 
   // 打开一行（列表 / 网格共用）：图片/视频/音频/PDF 应用内预览，文件用系统应用，
   // 文件夹/页面进入。
-  const openRow = (row: (typeof rows)[number]) => {
+  const openRow = (row: { kind: string; pageId?: string; file?: AttachmentMeta }) => {
     if (row.kind === "file") {
       if (row.file!.mime === "application/pdf") {
         void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
@@ -487,6 +503,8 @@ export function FileManagerView() {
     }
   };
 
+  const closeCtx = () => setCtxMenu({ x: 0, y: 0, row: null });
+
   return (
     <div className="file-manager">
       <div className="file-manager-head">
@@ -531,6 +549,18 @@ export function FileManagerView() {
               onClick={() => setView("grid")}
             >▦</button>
           </div>
+          {viewMode === "grid" && (
+            <label className="fm-size-slider" title="缩略图大小">
+              <input
+                type="range"
+                min={120}
+                max={280}
+                step={8}
+                value={gridSize}
+                onChange={(e) => setGrid(Number(e.target.value))}
+              />
+            </label>
+          )}
         </div>
       </div>
 
@@ -579,7 +609,7 @@ export function FileManagerView() {
 
       <div className="file-manager-table-wrap">
         {viewMode === "grid" && (
-          <div className="fm-grid">
+          <div className="fm-grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${gridSize}px, 1fr))` }}>
             {gridRows.length === 0 && <div className="fm-empty">没有文件</div>}
             {gridRows.map((row) => {
               const isImage = row.kind === "file" && row.file?.mime.startsWith("image/") && row.file.path;
@@ -596,7 +626,14 @@ export function FileManagerView() {
                 <div
                   key={row.key}
                   className={`fm-grid-card${selected.has(row.key) ? " is-selected" : ""}`}
-                  onClick={() => openRow(row)}
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(row.key);
+                    else openRow(row);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setCtxMenu({ x: e.clientX, y: e.clientY, row });
+                  }}
                 >
                   <input
                     type="checkbox"
@@ -789,6 +826,27 @@ export function FileManagerView() {
         </table>
         )}
       </div>
+
+      {ctxMenu.row && (() => {
+        const row = ctxMenu.row;
+        return (
+          <div className="fm-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={(e) => e.stopPropagation()}>
+            <div className="fm-ctx-title">{row.name}</div>
+            {row.kind === "file" && row.file ? (
+              <>
+                <button className="fm-ctx-item" onClick={() => { downloadFile(row.file!); closeCtx(); }}>下载</button>
+                <button className="fm-ctx-item" onClick={() => { revealFile(row.file!.path); closeCtx(); }}>在文件夹中显示</button>
+                <button className="fm-ctx-item is-danger" onClick={() => { void removeFile(row.file!.id); closeCtx(); }}>删除</button>
+              </>
+            ) : (
+              <>
+                <button className="fm-ctx-item" onClick={() => { openRow(row); closeCtx(); }}>打开</button>
+                <button className="fm-ctx-item is-danger" onClick={() => { void deletePage(row.pageId!); closeCtx(); }}>删除</button>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {versionTarget && (
         <div className="fm-version-overlay" onClick={() => setVersionTarget(null)}>
