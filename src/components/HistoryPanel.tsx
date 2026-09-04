@@ -22,7 +22,7 @@ function formatWhen(ms: number): string {
 }
 
 export function HistoryPanel({ pageId }: { pageId: string }) {
-  const { openPage, updateCurrent } = useNotes();
+  const { openPage, updateCurrent, bumpReload } = useNotes();
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<PageVersion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,6 +56,9 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
     try {
       const page = await api.restoreVersion(versionId);
       updateCurrent(page);
+      // 编辑器以 `reloadTick` 作为 key 才会重挂载并重新读取 content_json；恢复当前页时
+      // pageId 不变，必须 bump reload 才能让编辑器刷新成恢复后的内容。
+      bumpReload();
       setOpen(false);
       load();
       openPage(page.id);
