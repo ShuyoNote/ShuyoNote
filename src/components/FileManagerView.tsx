@@ -578,11 +578,16 @@ export function FileManagerView() {
                   ) : pageCover ? (
                     <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
                   ) : (
-                    <span className="fm-grid-icon">
-                      {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
-                    </span>
+                    <div className="fm-grid-tile">
+                      <span className="fm-grid-tile-icon">
+                        {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
+                      </span>
+                      <span className="fm-grid-tile-name">{row.name}</span>
+                    </div>
                   )}
-                  <div className="fm-grid-name">{row.name}</div>
+                  {(isImage || isVideo || pageCover) && (
+                    <div className="fm-grid-name">{row.name}</div>
+                  )}
                   {row.kind === "file" && folderId === null && (
                     <div className="fm-grid-tag">未整理</div>
                   )}

@@ -15986,6 +15986,37 @@ p:has(> .editor-drawing-container) {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
   padding: 12px;
+  align-items: start;
+}
+.fm-grid-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+.fm-grid-tile-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  font-size: 18px;
+  color: var(--text-faint);
+  background: var(--surface);
+  border-radius: 8px;
+}
+.fm-grid-tile-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fm-grid-card {
   position: relative;
