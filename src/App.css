@@ -3344,32 +3344,48 @@ select.sync-input {
   z-index: 95;
   display: flex;
   flex-direction: column;
-  min-width: 150px;
-  padding: 4px;
+  min-width: 196px;
+  padding: 7px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
+  transform-origin: top left;
+  animation: tree-menu-pop 0.13s ease;
+}
+@keyframes tree-menu-pop {
+  from { opacity: 0; transform: translateY(-5px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
 }
 .tree-node-menu button {
   display: flex;
-  gap: 6px;
+  gap: 10px;
   align-items: center;
   text-align: left;
   background: transparent;
   border: none;
-  color: var(--text);
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 10px;
+  border-radius: 8px;
   cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;
 }
 .tree-node-menu button:hover {
   background: var(--hover);
+  color: var(--text);
+  transform: translateX(2px);
+}
+.tree-node-menu button.tree-menu-danger {
+  margin-top: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
 }
 .tree-node-menu .tree-menu-danger:hover {
   background: var(--danger-soft);
   color: var(--danger);
+  transform: translateX(2px);
 }
 /* 复制到其他空间：fixed 选择面板（不被树裁剪/遮挡）。 */
 .tree-copy-panel {
