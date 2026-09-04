@@ -355,11 +355,14 @@ pub fn board_by_attr(db: State<'_, Db>, attr_id: String) -> Result<Vec<BoardGrou
         }
     }
 
-    groups.push(BoardGroup {
-        id: "__none".to_string(),
-        name: "未设置".to_string(),
-        pages: unset,
-    });
+    groups.insert(
+        0,
+        BoardGroup {
+            id: "__none".to_string(),
+            name: "未设置".to_string(),
+            pages: unset,
+        },
+    );
     Ok(groups)
 }
 

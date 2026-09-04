@@ -1764,7 +1764,7 @@ function makeInvoke(store: SqliteStore) {
           unset.push(pg);
         }
       }
-      groups.push({ id: "__none", name: "未设置", pages: unset });
+      groups.unshift({ id: "__none", name: "未设置", pages: unset });
       return groups as T;
     }
     if (cmd === "move_card") {
