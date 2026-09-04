@@ -478,6 +478,8 @@ export function FileManagerView() {
         row.file!.mime.startsWith("video/") ||
         row.file!.mime.startsWith("audio/")
       ) {
+        // 打开文件预览时关掉可能仍开着的 PDF 阅读器，避免两个查看器叠一起。
+        usePdfReader.getState().close();
         useFilePreview.getState().open(row.file!);
       } else {
         toast("正在用系统默认应用打开…", "info");

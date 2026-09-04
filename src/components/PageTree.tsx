@@ -142,6 +142,8 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               f.mime.startsWith("video/") ||
               f.mime.startsWith("audio/")
             ) {
+              // 打开文件预览时关掉可能仍开着的 PDF 阅读器，避免两个查看器叠一起。
+              usePdfReader.getState().close();
               useFilePreview.getState().open(f);
               return;
             }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import { platform } from "../lib/platform";
 import { toast } from "../store/toast";
+import { useFilePreview } from "../store/filePreview";
 
 // M24 — PDF reader modal state. `openPdf(attachmentId, name)` fetches the PDF
 // bytes (via the platform asset URL — works on web blob URLs and desktop) and
@@ -23,6 +24,9 @@ export const usePdfReader = create<PdfReaderState>((set, get) => ({
   bytes: null,
   targetPage: 0,
   async openPdf(attachmentId: string, name: string, pageIndex = 0) {
+    // Opening a PDF replaces any MD/image/video preview that is still open, so the
+    // two "viewers" never stack on top of each other.
+    useFilePreview.getState().close();
     if (get().open) return;
     try {
       const meta = await api.getAttachment(attachmentId);
