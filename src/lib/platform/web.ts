@@ -637,8 +637,10 @@ function putProfile(store: SqliteStore, p: SyncProfile): void {
   );
 }
 function listProfiles(store: SqliteStore): SyncProfile[] {
+  // 只排除「完全没配」的；**只填了 server_url 还没选空间**的部分配置也要返回，
+  // 否则同步面板保存后重开就丢了地址（保存+选空间是两步）。
   return store
-    .query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' AND space_id <> '' ORDER BY ws_id")
+    .query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id")
     .map((r) => ({ ...EMPTY_PROFILE, ...r, ws_id: r.ws_id }));
 }
 
@@ -2219,6 +2221,7 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "sync_now") {
       const out: any[] = [];
       for (const profile of listProfiles(store)) {
+        if (!profile.space_id) continue; // 未绑定空间的不同步（与桌面一致）
         try {
           const pushed = await doPush(store, profile);
           const pulled = await doPull(store, profile);
