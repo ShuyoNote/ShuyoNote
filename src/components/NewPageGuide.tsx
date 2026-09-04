@@ -9,7 +9,7 @@ import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import {
   SparkleIcon,
   TemplateIcon,
-  UploadIcon,
+  DownloadIcon,
   TableIcon,
   BoardIcon,
   GalleryIcon,
@@ -141,7 +141,7 @@ export function NewPageGuide() {
               <TemplateIcon className="npg-act-icon" /> 从模板中心创建...
             </button>
             <button className="npg-act" onClick={importMarkdown}>
-              <UploadIcon className="npg-act-icon" /> 从导入文件创建...
+              <DownloadIcon className="npg-act-icon" /> 从导入文件创建...
             </button>
           </div>
           <div className="new-page-guide-db">

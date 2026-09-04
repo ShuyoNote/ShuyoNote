@@ -2328,7 +2328,7 @@ function makeInvoke(store: SqliteStore) {
       const wsId = String(a.wsId ?? a.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
       if (!p.server_url) throw new Error("请先配置同步服务器");
-      if (!p.space_id) throw new Error("需绑定团队空间才能同步（多设备同步不支持留空）");
+      if (!p.space_id) throw new Error("需绑定组织空间才能同步（多设备同步不支持留空）");
       try {
         const pushed = await doPush(store, p);
         const pulled = await doPull(store, p);

@@ -11799,7 +11799,7 @@ p:has(> .editor-drawing-container) {
   font-size: 12px;
   color: var(--text-dim);
 }
-/* 当前团队账号：登录信息卡。 */
+/* 当前组织账号：登录信息卡。 */
 .acct-login-card {
   display: flex;
   align-items: center;

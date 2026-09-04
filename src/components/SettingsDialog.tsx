@@ -299,7 +299,7 @@ function AccountPane() {
 
   // 注销自己（毕业交接）：账号作废 + 数据交组长。不可逆，需二次确认。
   const deactivateSelf = async () => {
-    if (!serverUrl || !token) { setStatus("请先登录团队账号"); return; }
+    if (!serverUrl || !token) { setStatus("请先登录组织账号"); return; }
     const ok = await confirmDialog({
       title: "注销账号",
       message: `注销后无法再登录，但你的数据会转交给所属组织的组长。确定注销「${hostLabel(serverUrl)}」上的这个账号？`,
@@ -349,7 +349,7 @@ function AccountPane() {
   }, []);
 
   const createOrg = async () => {
-    if (!base || !token) { setOrgStatus("请先登录团队账号"); return; }
+    if (!base || !token) { setOrgStatus("请先登录组织账号"); return; }
     // 用应用内 inputDialog（替代丑的原生 prompt）。
     inputDialog({
       title: "新建组织",
@@ -488,7 +488,7 @@ function AccountPane() {
 
   // 用户凭邀请码加入组织（码即授权，直接入组）。
   const joinByCode = async () => {
-    if (!base || !token) { setOrgStatus("请先登录团队账号"); return; }
+    if (!base || !token) { setOrgStatus("请先登录组织账号"); return; }
     const code = joinCode.trim();
     if (!code) { setOrgStatus("请输入邀请码"); return; }
     try {
@@ -524,7 +524,7 @@ function AccountPane() {
   return (
     <>
       <section className="set-section">
-        <div className="set-section-title">当前团队账号</div>
+        <div className="set-section-title">当前组织账号</div>
         {authed ? (
           <div className="acct-login-card">
             <span className="set-status-dot set-dot-on" />
@@ -541,7 +541,7 @@ function AccountPane() {
           <div className="acct-login-card">
             <span className="set-status-dot" />
             <div className="set-row-text">
-              <div className="set-row-name">未登录团队账号</div>
+              <div className="set-row-name">未登录组织账号</div>
               <div className="set-row-sub">在侧栏「同步」里登录或注册后，这里会显示当前身份</div>
             </div>
           </div>
@@ -708,7 +708,7 @@ function AccountPane() {
             {orgStatus && <div className="set-status-line">{orgStatus}</div>}
           </>
         ) : (
-          <p className="set-hint">未登录团队账号，无法管理组织。在侧栏「同步」里登录。</p>
+          <p className="set-hint">未登录组织账号，无法管理组织。在侧栏「同步」里登录。</p>
         )}
       </section>
     </>

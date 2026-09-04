@@ -125,7 +125,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         <SearchIcon />
       </button>
       <button className="toolbar-btn" onClick={importMarkdown} title={t("editor.importMarkdown")}>
-        <UploadIcon />
+        <DownloadIcon />
       </button>
       <button className="toolbar-btn" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
         <TemplateIcon />
@@ -149,7 +149,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         {exportOpen && (
           <div className="editor-more-menu">
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportMarkdown(); }} title={t("editor.exportMarkdown")}>
-              <DownloadIcon /> {t("editor.exportMarkdown")}
+              <UploadIcon /> {t("editor.exportMarkdown")}
             </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title={t("editor.exportHtml")}>
               <FileCodeIcon /> {t("editor.exportHtml")}

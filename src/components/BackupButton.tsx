@@ -128,7 +128,7 @@ export function BackupButton({ label }: { label?: string } = {}) {
               doExport();
             }}
           >
-            <DownloadIcon width={14} height={14} />
+            <UploadIcon width={14} height={14} />
             导出完整备份（全库）
           </button>
           <button
@@ -137,7 +137,7 @@ export function BackupButton({ label }: { label?: string } = {}) {
               doImport();
             }}
           >
-            <UploadIcon width={14} height={14} />
+            <DownloadIcon width={14} height={14} />
             导入备份（合并，不覆盖现有空间）
           </button>
         </div>

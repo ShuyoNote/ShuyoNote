@@ -421,7 +421,7 @@ export function SyncPanel() {
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>
-              <div className="sync-subtitle">每个空间各自绑定服务器与团队空间</div>
+              <div className="sync-subtitle">每个空间各自绑定服务器与组织空间</div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
@@ -531,7 +531,7 @@ export function SyncPanel() {
                   )}
 
                   <div className="sync-field">
-                    <label htmlFor={`sync-space-${r.ws_id}`}>团队空间</label>
+                    <label htmlFor={`sync-space-${r.ws_id}`}>组织空间</label>
                     {r.remoteSpaces.length > 0 ? (
                       <div className="sync-space-row">
                         <select
@@ -552,7 +552,7 @@ export function SyncPanel() {
                         id={`sync-space-${r.ws_id}`}
                         className="sync-input"
                         value={r.space_id}
-                        placeholder="团队空间 id（多设备同步需绑定一个团队空间；留空无法同步）"
+                        placeholder="组织空间 id（多设备同步需绑定一个组织空间；留空无法同步）"
                         onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
                       />
                     )}
@@ -643,7 +643,7 @@ export function SyncPanel() {
                       className="sync-input"
                       type="password"
                       value={r.token}
-                      placeholder="团队 token"
+                      placeholder="组织 token"
                       onChange={(e) => update(r.ws_id, "token", e.target.value)}
                     />
                   </details>
