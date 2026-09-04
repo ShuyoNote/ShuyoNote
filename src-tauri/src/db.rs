@@ -473,6 +473,7 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
             name       TEXT NOT NULL UNIQUE,
             type       TEXT NOT NULL DEFAULT 'text',
             options    TEXT NOT NULL DEFAULT '[]',
+            sort_order REAL NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         );
@@ -702,6 +703,15 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     )?;
     if tags_has_sort == 0 {
         conn.execute("ALTER TABLE tags ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+    // Attribute (属性) order — add attr_defs.sort_order idempotently (旧库补列).
+    let attrs_has_sort: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('attr_defs') WHERE name = 'sort_order'",
+        [],
+        |row| row.get(0),
+    )?;
+    if attrs_has_sort == 0 {
+        conn.execute("ALTER TABLE attr_defs ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
     }
     // 去掉系统预置的三个状态标签（未完成/进行中/已完成）——含旧库已插入的。
     conn.execute(

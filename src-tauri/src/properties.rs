@@ -73,7 +73,7 @@ fn sync_page_tags(c: &Connection, page_id: &str, value: &str) -> Result<(), Stri
 pub fn list_attr_defs(db: State<'_, Db>) -> Result<Vec<AttrDef>, String> {
     let c = conn(&db);
     let mut stmt = c
-        .prepare("SELECT id, name, type, options FROM attr_defs ORDER BY name")
+        .prepare("SELECT id, name, type, options FROM attr_defs ORDER BY sort_order ASC, name")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -123,11 +123,18 @@ pub fn create_attr(db: State<'_, Db>, args: CreateAttrArgs) -> Result<AttrDef, S
     let now = now_ms();
     let options_json =
         serde_json::to_string(&args.options).unwrap_or_else(|_| "[]".to_string());
+    let next_sort: f64 = c
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM attr_defs",
+            [],
+            |r| r.get::<_, f64>(0),
+        )
+        .map_err(|e| e.to_string())?;
 
     c.execute(
-        "INSERT INTO attr_defs (id, name, type, options, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, name, args.attr_type, options_json, now, now],
+        "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, name, args.attr_type, options_json, next_sort, now, now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -137,6 +144,20 @@ pub fn create_attr(db: State<'_, Db>, args: CreateAttrArgs) -> Result<AttrDef, S
         attr_type: args.attr_type,
         options: args.options,
     })
+}
+
+// 重排属性顺序：按传入 id 数组顺序重写 attr_defs.sort_order = 0..n。
+#[tauri::command]
+pub fn reorder_attrs(db: State<'_, Db>, ids: Vec<String>) -> Result<(), String> {
+    let c = conn(&db);
+    for (i, attr_id) in ids.iter().enumerate() {
+        c.execute(
+            "UPDATE attr_defs SET sort_order = ?1 WHERE id = ?2",
+            params![i as f64, attr_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

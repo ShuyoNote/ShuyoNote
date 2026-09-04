@@ -370,6 +370,24 @@ pub fn board_by_attr(db: State<'_, Db>, attr_id: String) -> Result<Vec<BoardGrou
     Ok(groups)
 }
 
+// 重排数据库表格列顺序：按传入 attr_id 数组顺序重写该库 database_columns.sort_order = 0..n。
+#[tauri::command]
+pub fn reorder_db_columns(
+    db: State<'_, Db>,
+    db_page_id: String,
+    ordered_attr_ids: Vec<String>,
+) -> Result<(), String> {
+    let c = conn(&db);
+    for (i, attr_id) in ordered_attr_ids.iter().enumerate() {
+        c.execute(
+            "UPDATE database_columns SET sort_order = ?1 WHERE db_page_id = ?2 AND attr_id = ?3",
+            params![i as f64, db_page_id, attr_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn row_to_view(row: &rusqlite::Row) -> rusqlite::Result<DbViewMeta> {
     Ok(DbViewMeta {
         id: row.get(0)?,
