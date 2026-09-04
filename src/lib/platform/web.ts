@@ -903,6 +903,36 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
   return { uploaded, downloaded };
 }
 
+// 一次性迁移：把旧 16 位 FNV 的附件哈希统一转成 SHA-256(64 位)，并强制重推
+// （删除该附件的旧待推送变更、按真实 SHA-256 重新记录一条），让服务端与其他
+// 设备拿到正确哈希，旧附件也能端到端同步。幂等：迁移后 `length(hash) != 64`
+// 的行不再存在，下次运行即空转。
+async function migrateAttachmentHashesToSha256(store: SqliteStore): Promise<void> {
+  try {
+    const rows = store.query<{ id: string; page_id: string | null; name: string; hash: string; mime: string; size: number }>(
+      "SELECT id, page_id, name, hash, mime, size FROM attachments WHERE hash != '' AND length(hash) != 64",
+    );
+    for (const row of rows) {
+      const oldHash = String(row.hash ?? "");
+      if (!oldHash) continue;
+      const bytes = await blobStore.get(oldHash);
+      if (!bytes) continue;
+      const realHash = await contentHash(bytes);
+      if (!realHash || realHash === oldHash) continue;
+      try {
+        // 字节重新以真哈希为 key
+        await blobStore.put(realHash, bytes);
+        await blobStore.delete(oldHash).catch(() => {});
+        // 附件表：旧 hash → 真哈希
+        store.run("UPDATE attachments SET hash = ?1 WHERE hash = ?2", [realHash, oldHash]);
+        // 删除旧待推送变更，重新记录一条（新 device_seq + SHA-256），强制重推
+        store.run("DELETE FROM changes WHERE entity = 'attachment' AND entity_id = ?1 AND payload LIKE ?2", [row.id, `%${oldHash}%`]);
+        recordChange(store, "attachment", row.id, "upsert", { id: row.id, page_id: row.page_id, name: row.name, hash: realHash, mime: row.mime, size: row.size }, Date.now());
+      } catch { /* best-effort，单条失败不阻塞整批 */ }
+    }
+  } catch { /* 迁移失败不阻塞启动 */ }
+}
+
 function makeInvoke(store: SqliteStore) {
   // The live store represents the ACTIVE workspace only (snapshot isolation — see
   // bootSpaces in getSharedStore). Workspace list/active/id come from the catalog.
@@ -2926,6 +2956,8 @@ async function bootSpaces(store: SqliteStore): Promise<void> {
   }
   // Sync the synchronous catalog so makeInvoke's getActiveWsId() reads instantly.
   useSpaceCatalog.getState().setActiveId(activeId);
+  // 一次性迁移：把旧 FNV 附件哈希统一转成 SHA-256 并强制重推。
+  await migrateAttachmentHashesToSha256(store);
 }
 
 function workspaceColumns(store: SqliteStore): string[] {
