@@ -43,6 +43,8 @@ import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
 import { useSpaceStore } from "./store/space";
+import { useEditorStore } from "./store/editor";
+import { $createParagraphNode, $getRoot } from "lexical";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
 import { useFileManagerStore } from "./store/fileManager";
@@ -193,6 +195,19 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const onTitleChange = (value: string) => {
     setTitle(value);
     persist({ title: value });
+  };
+
+  // 标题回车 → 进入正文编辑：把光标落到正文里（无正文时自动补一个段落）。
+  const onTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const ed = useEditorStore.getState().editor;
+    if (!ed) return;
+    ed.update(() => {
+      const root = $getRoot();
+      if (!root.getFirstChild()) root.append($createParagraphNode());
+    });
+    ed.focus(undefined, { defaultSelection: "rootEnd" });
   };
 
   const onEditorSave = (json: string, text: string) => {
@@ -406,6 +421,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
                 value={title}
                 placeholder="新页面"
                 onChange={(e) => onTitleChange(e.target.value)}
+                onKeyDown={onTitleKeyDown}
               />
               <span className={`save-indicator ${saved ? "saved" : ""}`}>
                 {saved ? "已保存" : "保存中…"}
