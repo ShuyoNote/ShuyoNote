@@ -1194,6 +1194,17 @@ body,
   line-height: 1.5;
   color: var(--text-faint);
 }
+/* 已登录但无组织空间时的引导行：提示 + 「创建空间」按钮并排。 */
+.sync-space-guide {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sync-space-guide .sync-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 
 /* 输入与下拉共用同一个盒子，行高、圆角、聚焦环都对齐。 */
 .sync-input {

@@ -5,6 +5,7 @@ import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
+import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -178,7 +179,10 @@ export function SyncPanel() {
   };
 
   const syncOne = async (r: EditRow) => {
-    if (!r.server_url) { setStatus("请先填服务器地址"); return; }
+    // 点「同步」先做前置校验，规范数据才发后端，避免无效请求 / 误导性报错。
+    if (!r.server_url.trim()) { setStatus("请先填服务器地址"); return; }
+    if (!r.token) { setStatus("请先登录（没有账号请先「注册」）"); return; }
+    if (!r.space_id) { setStatus(`请先绑定组织空间${r.remoteSpaces.length ? "（在上方下拉选择一个）" : "（还没有空间就点「创建空间」，或让管理员邀请你加入）"}`); return; }
     setSyncing(true);
     setStatus("");
     try {
@@ -391,6 +395,31 @@ export function SyncPanel() {
     }
   };
 
+  // 创建组织空间：当前登录账号在服务器上新建一个空间，创建后自动绑定。
+  // 新注册账号往往没有任何空间，必须直接给入口，否则「登录了却不知道选什么/填什么」。
+  const createSpace = async (r: EditRow) => {
+    const base = r.server_url.trim().replace(/\/+$/, "");
+    if (!base || !r.token) { setStatus("请先登录再创建组织空间"); return; }
+    inputDialog({
+      title: "创建组织空间",
+      placeholder: "空间名称",
+      defaultValue: "",
+      onSubmit: async (name) => {
+        const n = name.trim();
+        if (!n) return;
+        try {
+          const sp = await api.teamCreateSpace(base, r.token, n);
+          const ids = Array.isArray(r.remoteSpaces) ? r.remoteSpaces : [];
+          setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, remoteSpaces: [...ids, sp], space_id: sp.id } : x)));
+          await api.setSyncProfile(r.ws_id, { server_url: base, token: r.token, space_id: sp.id }).catch(() => {});
+          setStatus(`已创建组织空间「${sp.name}」并绑定`);
+        } catch (e) {
+          setStatus(`创建组织空间失败：${e}`);
+        }
+      },
+    });
+  };
+
   // 当前用户在该绑定空间的角色是否可管理成员（admin/owner）。viewer/editor 只读。
   const canManageSpace = (r: EditRow): boolean => {
     const role = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
@@ -554,9 +583,20 @@ export function SyncPanel() {
                         id={`sync-space-${r.ws_id}`}
                         className="sync-input"
                         value={r.space_id}
-                        placeholder="组织空间 id（多设备同步需绑定一个组织空间；留空无法同步）"
+                        placeholder="组织空间 id（多设备同步需绑定一个组织空间）"
                         onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
                       />
+                    )}
+                    {/* 已登录但还没有可绑定的组织空间 → 引导 + 创建入口，避免卡住 */}
+                    {r.token && r.remoteSpaces.length === 0 && (
+                      <div className="sync-space-guide">
+                        <p className="sync-hint">还没有组织空间。点「创建空间」新建一个，或让管理员邀请你加入。</p>
+                        <button className="sync-btn primary" onClick={() => createSpace(r)}>创建空间</button>
+                      </div>
+                    )}
+                    {/* 已登录、有空间可选但还没选 → 轻引导 */}
+                    {r.token && !r.space_id && r.remoteSpaces.length > 0 && (
+                      <p className="sync-hint">请在上面下拉选择一个组织空间，才能同步。</p>
                     )}
                   </div>
 
@@ -656,7 +696,7 @@ export function SyncPanel() {
                     <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
                       保存
                     </button>
-                    <button className="sync-btn primary" disabled={syncing || !r.server_url} onClick={() => syncOne(r)}>
+                    <button className="sync-btn primary" disabled={syncing} onClick={() => syncOne(r)}>
                       {syncing ? "同步中…" : "同步"}
                     </button>
                   </div>
