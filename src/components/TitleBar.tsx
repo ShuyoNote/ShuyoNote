@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useWindowChrome } from "../store/windowChrome";
@@ -16,6 +17,7 @@ import { syncTagLabel, syncTagColor } from "../lib/syncTag";
 // - 按钮顺序与图形沿用 Windows 习惯（最小化 / 最大化 / 关闭，关闭 hover 变红），
 //   这样用户不用重新学。
 export function TitleBar() {
+  const { t } = useTranslation();
   const custom = useWindowChrome((s) => s.custom);
   const currentId = useNotes((s) => s.currentId);
   const pages = useNotes((s) => s.pages);
@@ -155,13 +157,13 @@ export function TitleBar() {
       )}
       {/* 按钮区不带 drag-region：否则点击会被当作拖动窗口 */}
       <div className="titlebar-actions">
-        <button className="titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void run("minimize")}>
+        <button className="titlebar-btn" title={t("common.minimize")} aria-label={t("common.minimize")} onClick={() => void run("minimize")}>
           <svg viewBox="0 0 12 12" aria-hidden><rect x="2" y="5.5" width="8" height="1" fill="currentColor" /></svg>
         </button>
         <button
           className="titlebar-btn"
-          title={maximized ? "向下还原" : "最大化"}
-          aria-label={maximized ? "向下还原" : "最大化"}
+          title={maximized ? t("common.restore") : t("common.maximize")}
+          aria-label={maximized ? t("common.restore") : t("common.maximize")}
           onClick={() => void run("toggleMaximize")}
         >
           {maximized ? (
@@ -177,8 +179,8 @@ export function TitleBar() {
         </button>
         <button
           className="titlebar-btn titlebar-close"
-          title="关闭"
-          aria-label="关闭"
+          title={t("common.close")}
+          aria-label={t("common.close")}
           onClick={() => void run("close")}
         >
           <svg viewBox="0 0 12 12" aria-hidden>
