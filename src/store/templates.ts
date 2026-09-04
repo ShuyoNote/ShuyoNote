@@ -27,7 +27,7 @@ export const useTemplates = create<TemplatesState>((set) => ({
   load: () =>
     api
       .listTemplates()
-      .then((list) => set({ userTemplates: list }))
+      .then((list) => set({ userTemplates: (list || []).filter((t) => !t.built_in) }))
       .catch((e) => toast(`加载模板失败：${e}`, "error")),
   saveAs: async (args) => {
     try {
