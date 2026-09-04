@@ -27,9 +27,9 @@ const today = new Date().toISOString().slice(0, 10);
 const seg =
   `## [${version}] - ${today}\n\n` +
   `> ${title}\n\n` +
-  "### Added\n" +
+  "### 新增\n" +
   "- \n\n" +
-  "### Changed\n" +
+  "### 变更\n" +
   "- \n\n" +
   "\n";
 
