@@ -44,11 +44,12 @@ export function TrashPanel() {
     api.listDeleted().then(setItems).catch(() => { /* 静默 */ });
   };
 
-  // 挂载即拉一次（触发图标数量角标）；打开再刷一次。
+  // 页列表变化（删除/恢复/新建都会 loadPages）→ 重查回收站，让蓝点角标实时刷新。
+  const notesPages = useNotes((s) => s.pages);
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [notesPages]);
   useEffect(() => {
     if (open) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
