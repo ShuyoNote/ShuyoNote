@@ -2303,7 +2303,9 @@ function makeInvoke(store: SqliteStore) {
       const args = a.args ?? a;
       const server_url = String(args.server_url ?? args.serverUrl ?? "");
       const s = getAuthSession(store, server_url);
-      const res = (await syncFetch(server_url, "/spaces", s.token)) as any;
+      // 优先用客户端传入的 token（refresh 常传 profile.token），auth_sessions 为空时也不致 no-token。
+      const tok = String(args.token ?? "") || s.token;
+      const res = (await syncFetch(server_url, "/spaces", tok)) as any;
       // 服务端返回 { spaces: [...] }，转为数组；也容忍裸数组。
       return (Array.isArray(res) ? res : (res?.spaces ?? [])) as T;
     }
@@ -2350,7 +2352,8 @@ function makeInvoke(store: SqliteStore) {
     }
     // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----
     // Helper to grab the session token for a server, else "".
-    const teamToken = (serverUrl: string): string => getAuthSession(store, serverUrl).token;
+    const teamToken = (serverUrl: string): string =>
+      String((a.args ?? a)?.token ?? "") || getAuthSession(store, serverUrl).token;
     const serverArg = (): string => {
       const ag = (a.args ?? a);
       return String(ag.server_url ?? ag.serverUrl ?? "").trim().replace(/\/+$/, "");
