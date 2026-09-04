@@ -186,12 +186,16 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
                 </span>
                 <ValueEditor prop={p} onChange={(v) => persist(p.attr_id, v)} />
                 <span className="prop-order-btns">
-                  <button className="prop-order" onClick={() => moveProp(p.attr_id, -1)} title="上移">↑</button>
-                  <button className="prop-order" onClick={() => moveProp(p.attr_id, 1)} title="下移">↓</button>
+                  <button className="prop-order" onClick={() => moveProp(p.attr_id, -1)} title="上移">
+                    <svg className="prop-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6-6 6 6" /></svg>
+                  </button>
+                  <button className="prop-order" onClick={() => moveProp(p.attr_id, 1)} title="下移">
+                    <svg className="prop-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                  </button>
+                  <button className="prop-remove" onClick={() => remove(p.attr_id)} title="移除属性">
+                    <svg className="prop-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
                 </span>
-                <button className="prop-remove" onClick={() => remove(p.attr_id)} title="移除属性">
-                  ×
-                </button>
               </div>
             ))}
           {adding ? (

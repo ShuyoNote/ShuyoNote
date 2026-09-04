@@ -4230,16 +4230,26 @@ body.content-full .editor-placeholder {
   padding: 0 2px;
 }
 .prop-order-btns { display: inline-flex; flex-direction: row; flex-shrink: 0; gap: 2px; align-items: center; }
-.prop-order {
+.prop-order,
+.prop-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   background: transparent;
   border: none;
+  border-radius: 5px;
   color: var(--text-faint);
-  font-size: 9px;
-  line-height: 1;
   cursor: pointer;
   padding: 0;
+  transition: background .1s ease, color .1s ease;
 }
-.prop-order:hover { color: var(--text); }
+.prop-order .prop-ico,
+.prop-remove .prop-ico { display: block; }
+.prop-order:hover,
+.prop-remove:hover { color: var(--text); background: var(--hover); }
+.prop-remove:hover { color: var(--danger); background: var(--danger-soft); }
 .db-th { user-select: none; position: relative; }
 .db-th-dragging { opacity: 0.5; }
 .db-th.db-th-drop-left::before,
