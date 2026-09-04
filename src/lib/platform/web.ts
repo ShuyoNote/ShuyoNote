@@ -1255,7 +1255,8 @@ function makeInvoke(store: SqliteStore) {
 
     // ---- Graph (nodes from non-deleted pages) ----
     if (cmd === "get_graph") {
-      const pages = store.query("SELECT id, title, content_text FROM pages WHERE deleted_at IS NULL") as any[];
+      const ws = getActiveWsId();
+      const pages = store.query("SELECT id, title, content_text FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws]) as any[];
       const tagRows = store.query("SELECT pt.page_id, t.name FROM page_tags pt JOIN tags t ON t.id = pt.tag_id") as any[];
       const tagsByPage = new Map<string, string[]>();
       for (const tr of tagRows) {
@@ -1726,20 +1727,22 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "get_db_rule") return dbRuleOf(store, String(a.dbPageId ?? a.db_page_id ?? "")) as T;
     if (cmd === "resolve_refs") return resolveRefLabels(store, (a.values ?? []).map(String)) as T;
     if (cmd === "board_data") {
+      const ws = getActiveWsId();
       const tags = store.query("SELECT id, name, color FROM tags ORDER BY sort_order ASC, name");
       const columns = tags.map((t: any) => {
         const pageIds = store.query("SELECT page_id FROM page_tags WHERE tag_id = ?", [t.id]).map((r) => String((r as any).page_id));
         const pages = pageIds.length
           ? store.query(
-              "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages WHERE deleted_at IS NULL AND id IN (" + pageIds.map(() => "?").join(",") + ")",
-              pageIds,
+              "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages WHERE workspace_id = ? AND deleted_at IS NULL AND id IN (" + pageIds.map(() => "?").join(",") + ")",
+              [ws, ...pageIds],
             )
           : [];
         return { tag: { id: t.id, name: t.name, color: t.color }, pages };
       });
       // 未打标签的页面（对齐桌面 tags::board_data 的 Untagged 列，避免看板丢页）。
       const untagged = store.query(
-        "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages p WHERE p.deleted_at IS NULL AND p.kind = 'page' AND NOT EXISTS (SELECT 1 FROM page_tags pt WHERE pt.page_id = p.id) ORDER BY p.updated_at DESC",
+        "SELECT id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height FROM pages p WHERE p.workspace_id = ? AND p.deleted_at IS NULL AND p.kind = 'page' AND NOT EXISTS (SELECT 1 FROM page_tags pt WHERE pt.page_id = p.id) ORDER BY p.updated_at DESC",
+        [ws],
       );
       (columns as any[]).unshift({ tag: null, pages: untagged });
       return columns as T;

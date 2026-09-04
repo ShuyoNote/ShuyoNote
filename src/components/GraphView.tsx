@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
+import { useSpaceStore } from "../store/space";
 import type { GraphBlock, GraphData, GraphEdge, GraphProp } from "../types";
 
 interface SimNode {
@@ -174,6 +175,7 @@ function nodeClusterKey(n: SimNode, dimension: string): string | null {
 
 export function GraphView() {
   const { currentId, openPage } = useNotes();
+  const spaceId = useSpaceStore((s) => s.activeId);
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showBlocks, setShowBlocks] = useState(false);
@@ -230,7 +232,7 @@ export function GraphView() {
       .getGraph()
       .then(setGraph)
       .catch((e) => setError(String(e)));
-  }, []);
+  }, [spaceId]);
 
   // Wheel zoom (native listener so we can preventDefault on passive:false).
   useEffect(() => {

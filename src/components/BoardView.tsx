@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
+import { useSpaceStore } from "../store/space";
 import type { AttrDef, PageMeta } from "../types";
 
 interface Group {
@@ -13,6 +14,7 @@ interface Group {
 
 export function BoardView() {
   const { openPage, loadPages } = useNotes();
+  const spaceId = useSpaceStore((s) => s.activeId);
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupField, setGroupField] = useState("tag");
   const [attrs, setAttrs] = useState<AttrDef[]>([]);
@@ -183,7 +185,7 @@ export function BoardView() {
         .catch((e) => console.error(e));
     }
   };
-  useEffect(load, [groupField]);
+  useEffect(load, [groupField, spaceId]);
 
   const onDrop = async (pageId: string, colId: string) => {
     try {
