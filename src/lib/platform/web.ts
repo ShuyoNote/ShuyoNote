@@ -1321,17 +1321,17 @@ function makeInvoke(store: SqliteStore) {
       const doCopy = (t: SqliteStore) => {
         const now = Date.now();
         for (const oldId of order) {
-          const row = store.query<{ parent_id: string | null; title: string; content_json: string; content_text: string; kind: string; sort_order: number; created_at: number }>(
-            "SELECT parent_id, title, content_json, content_text, kind, sort_order, created_at FROM pages WHERE id = ? AND deleted_at IS NULL",
+          const row = store.query<{ parent_id: string | null; title: string; content_json: string; content_text: string; kind: string; sort_order: number; created_at: number; icon: string; cover: string; cover_height: number; cover_pos: number }>(
+            "SELECT parent_id, title, content_json, content_text, kind, sort_order, created_at, icon, cover, cover_height, cover_pos FROM pages WHERE id = ? AND deleted_at IS NULL",
             [oldId],
           )[0] as any;
           if (!row) continue;
           const nid = idMap.get(oldId)!;
           const newParent = oldId === pageId ? newParentId : (row.parent_id ? idMap.get(row.parent_id) ?? null : null);
           t.run(
-            `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-            [nid, targetWsId, newParent, row.title ?? "", row.kind ?? "page", row.sort_order ?? 0, row.created_at ?? now, now, row.content_json ?? "", row.content_text ?? ""],
+            `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, icon, cover, cover_height, cover_pos)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+            [nid, targetWsId, newParent, row.title ?? "", row.kind ?? "page", row.sort_order ?? 0, row.created_at ?? now, now, row.content_json ?? "", row.content_text ?? "", row.icon ?? "", row.cover ?? "", row.cover_height ?? 300, row.cover_pos ?? 50],
           );
           // copy props/tags/attachments rows for this page
           for (const p of store.query<{ attr_id: string; value: string }>("SELECT attr_id, value FROM page_props WHERE page_id = ?", [oldId]) as any[]) {

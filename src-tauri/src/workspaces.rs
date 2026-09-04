@@ -423,7 +423,7 @@ pub fn copy_page_to_workspace(
     let now = now_ms();
     for old_id in &order {
         // Fetch source row from the SOURCE connection.
-        let (parent, title, content_json, content_text, kind, sort_order, created_at): (
+        let (parent, title, content_json, content_text, kind, sort_order, created_at, icon, cover, cover_height, cover_pos): (
             Option<String>,
             String,
             String,
@@ -431,9 +431,13 @@ pub fn copy_page_to_workspace(
             String,
             f64,
             i64,
+            String,
+            String,
+            i64,
+            f64,
         ) = src
             .query_row(
-                "SELECT parent_id, title, content_json, content_text, kind, sort_order, created_at
+                "SELECT parent_id, title, content_json, content_text, kind, sort_order, created_at, icon, cover, cover_height, cover_pos
                  FROM pages WHERE id = ?1 AND deleted_at IS NULL",
                 params![old_id],
                 |r| {
@@ -445,6 +449,10 @@ pub fn copy_page_to_workspace(
                         r.get(4)?,
                         r.get(5)?,
                         r.get(6)?,
+                        r.get(7)?,
+                        r.get(8)?,
+                        r.get(9)?,
+                        r.get(10)?,
                     ))
                 },
             )
@@ -459,9 +467,9 @@ pub fn copy_page_to_workspace(
         };
 
         tgt.execute(
-            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
-            params![new_id, target_workspace_id, new_parent, title, content_json, content_text, kind, sort_order, created_at, now],
+            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, icon, cover, cover_height, cover_pos)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12, ?13, ?14)",
+            params![new_id, target_workspace_id, new_parent, title, content_json, content_text, kind, sort_order, created_at, now, icon, cover, cover_height, cover_pos],
         )
         .map_err(|e| e.to_string())?;
 
