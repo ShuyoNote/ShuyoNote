@@ -22,10 +22,16 @@
 
 | 字段 | 含义 |
 |---|---|
-| `entity` | `page` / `attr` / `prop` / `page_tag`（改了哪类） |
+| `entity` | `page` / `attr` / `prop` / `page_tag` / `attachment`（改了哪类） |
 | `op` | `upsert`（写入/覆盖）或 `delete` |
 | `payload` | 该实体的**完整内容**（服务端与另一设备据此还原） |
 | `device_seq` / `seq` | 每台设备独立递增序号，用于"知道我推到哪了" |
+
+> **附件（文件）同步 = 行元数据（changes）+ 字节（附件接口）两部分：**
+> - `attachment` 实体只带文件**元数据**（`id / page_id / name / hash / mime / size`），随 push/pull 走 `changes` 表，让文件在另一设备的「文件管理器 / 目录树」里出现。
+> - 文件**字节**按内容哈希（SHA-256）走 `sync-server` 的
+>   `PUT /spaces/{space_id}/attachments/{hash}`（上传）与 `GET /spaces/{space_id}/attachments/{hash}`（下载）。
+>   `sync_attachments` 在每次 push+pull 后做一次"远端/本地哈希差集"：本地有而远端没有的就上传，远端有而本地没有的就下载到本地字节库。上传按内容寻址幂等（同哈希不重复写）。
 
 ## 三、推送（push：本地 → 服务器）
 

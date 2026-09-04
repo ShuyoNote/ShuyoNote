@@ -1227,6 +1227,35 @@ async fn do_pull(
                     apply_delete(&c, &change.entity_id, change.updated_at)?;
                     count += 1;
                 }
+                ("attachment", "upsert") => {
+                    if let Some(payload) = &change.payload {
+                        if let Ok(plain) = security::decrypt_payload(&c, payload) {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&plain) {
+                                let id = v["id"].as_str().unwrap_or("").to_string();
+                                if !id.is_empty() {
+                                    let page_id: Option<String> = v["page_id"].as_str().map(|s| s.to_string());
+                                    let name = v["name"].as_str().unwrap_or("").to_string();
+                                    let hash = v["hash"].as_str().unwrap_or("").to_string();
+                                    let mime = v["mime"].as_str().unwrap_or("").to_string();
+                                    let size = v["size"].as_i64().unwrap_or(0);
+                                    c.execute(
+                                        "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                         ON CONFLICT(id) DO UPDATE SET page_id=excluded.page_id, name=excluded.name, hash=excluded.hash, mime=excluded.mime, size=excluded.size",
+                                        params![id, page_id, name, hash, mime, size, crate::db::now_ms()],
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                    count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                ("attachment", "delete") => {
+                    c.execute("DELETE FROM attachments WHERE id = ?1", params![change.entity_id])
+                        .map_err(|e| e.to_string())?;
+                    count += 1;
+                }
                 _ => {}
             }
         }

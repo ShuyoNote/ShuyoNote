@@ -1,5 +1,6 @@
 use crate::db::{now_ms, Db};
 use crate::models::AttachmentMeta;
+use crate::sync::record_change;
 use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
 use serde::Deserialize;
@@ -225,6 +226,10 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
         params![id, args.page_id, name, hash, args.mime, size, now_ms()],
     )
     .map_err(|e| e.to_string())?;
+    // Sync the attachment row metadata (bytes transfer separately via sync_attachments).
+    let now = now_ms();
+    let payload = serde_json::json!({ "id": &id, "page_id": &args.page_id, "name": &name, "hash": &hash, "mime": &args.mime, "size": size }).to_string();
+    record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
 
     Ok(AttachmentMeta {
         id,
@@ -414,6 +419,10 @@ pub fn import_attachment_files(
             params![id, page_id, name, hash, mime, size, now_ms()],
         )
         .map_err(|e| e.to_string())?;
+        // Sync the attachment row metadata (bytes transfer separately via sync_attachments).
+        let now = now_ms();
+        let payload = serde_json::json!({ "id": &id, "page_id": &page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
+        record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
 
         results.push(AttachmentMeta {
             id,
@@ -541,6 +550,7 @@ fn remove_attachment_inner(
 
     c.execute("DELETE FROM attachments WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
+    record_change(&c, "attachment", id, "delete", None, now_ms())?;
 
     // Remove the on-disk file only when no other row references its hash.
     let count: i64 = c
@@ -595,6 +605,20 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
     if n == 0 {
         return Err("附件不存在".to_string());
     }
+    // Sync the new folder ownership so the other device sees the move.
+    let meta = c
+        .query_row(
+            "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if let Some((name, hash, mime, size)) = meta {
+        let now = now_ms();
+        let payload = serde_json::json!({ "id": &id, "page_id": &new_page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
+        record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
+    }
     Ok(())
 }
 
@@ -625,6 +649,10 @@ pub fn restore_attachment(
         params![id, target_page_id, name, hash, mime, size, now_ms()],
     )
     .map_err(|e| e.to_string())?;
+    // Sync the restored attachment as a new row (bytes are shared by content hash).
+    let now = now_ms();
+    let payload = serde_json::json!({ "id": &id, "page_id": &target_page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
+    record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
     let path = find_path_by_hash(&attachments_dir, &hash)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
