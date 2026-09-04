@@ -2351,27 +2351,34 @@ function makeInvoke(store: SqliteStore) {
     // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----
     // Helper to grab the session token for a server, else "".
     const teamToken = (serverUrl: string): string => getAuthSession(store, serverUrl).token;
-    const serverArg = (): string => String(a.server_url ?? a.serverUrl ?? a.server??"").trim().replace(/\/+$/, "");
+    const serverArg = (): string => {
+      const ag = (a.args ?? a);
+      return String(ag.server_url ?? ag.serverUrl ?? "").trim().replace(/\/+$/, "");
+    };
+    // 兼容 camelCase（Tauri 2 命令契约）与旧 snake 键：优先读 camel，回退 snake。
+    // 此前几处 team_* 只读 snake，导致 spaceId/orgId/userId 为空，成员/组织命令 404。
+    const pv = (args: any, camel: string, snake: string): string =>
+      String(args?.[camel] ?? args?.[snake] ?? "");
     if (cmd === "team_invite_member") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), { user_email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
     }
     if (cmd === "team_set_member_role") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), { user_email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
     }
     if (cmd === "team_list_members") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members`;
       const res = (await syncFetch(serverUrl, "", teamToken(serverArg()))) as any;
       // 服务端返回 { members: [...] }，转为数组；也容忍裸数组。
       return (Array.isArray(res) ? res : (res?.members ?? [])) as T;
     }
     if (cmd === "team_remove_member") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}`;
+      const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(pv(args, "spaceId", "space_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
     }
     if (cmd === "team_list_orgs") {
@@ -2381,37 +2388,37 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "team_invite_org_member") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? ""), role: String(args.role ?? "member") })) as T;
     }
     if (cmd === "team_set_org_member_active") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), { active: !!args.active }, "PATCH")) as T;
     }
     if (cmd === "team_remove_org_member") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
     }
     if (cmd === "team_list_org_members") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()))) as T;
     }
     if (cmd === "team_reject_org_invite") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/invites/reject`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/invites/reject`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? "") })) as T;
     }
     if (cmd === "team_approve_org_invite") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/invites/approve`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/invites/approve`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), { email: String(args.email ?? "") })) as T;
     }
     if (cmd === "team_generate_org_invite_code") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/invite-code`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/invite-code`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), {})) as T;
     }
     if (cmd === "team_join_org_by_code") {
@@ -2428,7 +2435,7 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "team_deactivate_org_member") {
       const args = a.args ?? a;
-      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(args.org_id ?? ""))}/members/${encodeURIComponent(String(args.user_id ?? ""))}/deactivate`;
+      const serverUrl = `${serverArg()}/orgs/${encodeURIComponent(String(pv(args, "orgId", "org_id")))}/members/${encodeURIComponent(String(pv(args, "userId", "user_id")))}/deactivate`;
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "POST")) as T;
     }
 
