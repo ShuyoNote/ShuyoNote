@@ -4213,10 +4213,8 @@ body.content-full .editor-placeholder {
   position: absolute;
   left: 0;
   right: 0;
-  height: 2px;
-  border-radius: 2px;
+  height: 1px;
   background: var(--accent, #4f7cff);
-  box-shadow: 0 0 5px rgba(79,124,255,.4);
   pointer-events: none;
 }
 .prop-row.drop-before::before { top: -1px; }
@@ -4258,9 +4256,8 @@ body.content-full .editor-placeholder {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: 1px;
   background: var(--accent, #4f7cff);
-  box-shadow: 0 0 5px rgba(79,124,255,.4);
   pointer-events: none;
 }
 .db-th.db-th-drop-left::before { left: -1px; }
