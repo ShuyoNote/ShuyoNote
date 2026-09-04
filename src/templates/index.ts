@@ -20,12 +20,13 @@ export const TEMPLATE_CATEGORIES = ["全部", "个人", "工作", "教育", "健
 // with the create-time context (today, page title, currently selected text).
 export function substituteTemplateVars(
   str: string,
-  ctx: { date?: string; title?: string; selected?: string },
+  ctx: { date?: string; title?: string; selected?: string; owner?: string },
 ): string {
   return String(str ?? "")
     .replace(/\{\{date\}\}/g, ctx.date ?? "")
     .replace(/\{\{title\}\}/g, ctx.title ?? "")
-    .replace(/\{\{selected\}\}/g, ctx.selected ?? "");
+    .replace(/\{\{selected\}\}/g, ctx.selected ?? "")
+    .replace(/\{\{owner\}\}/g, ctx.owner ?? "");
 }
 
 // ---- Lexical block builders (standard nodes only — avoid custom nodes so

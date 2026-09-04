@@ -44,7 +44,14 @@ type GalleryItem = {
 // mini white content card (page-screenshot look), until real thumbnails exist.
 // 模板卡片中央内容快照：渲染模板真实正文(标题 + 前几行)，截断；无内容则伪线。
 function MockPreview({ cover, content }: { cover: string; content?: string }) {
-  const lines = (content ?? "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 6);
+  // 预览时把模板占位符换为模拟值，卡片更好看（创建时才会替换成真实值）。
+  const mockContent = substituteTemplateVars(content ?? "", {
+    date: new Date().toISOString().slice(0, 10),
+    title: "示例标题",
+    owner: "我",
+    selected: "选中的内容",
+  });
+  const lines = mockContent.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 6);
   const isHead = (i: number) => lines[i] && lines[i].length > 0 && !/[。：，;]$/.test(lines[i]) && lines[i].length < 18;
   return (
     <div className="tc-preview">
@@ -155,7 +162,7 @@ export function TemplateCenterView() {
     // with the create-time context before seeding. `{{selected}}` reads the
     // editor's current selection (real selected text), if any.
     const selected = readEditorSelectionText();
-    const vars = { date: today(), title: t.name, selected };
+    const vars = { date: today(), title: t.name, selected, owner: "我" };
     const json = substituteTemplateVars(t.content_json, vars);
     const text = substituteTemplateVars(t.content_text, vars);
     const pid = await createPage(null, { content_json: json, content_text: text, title: t.name });
