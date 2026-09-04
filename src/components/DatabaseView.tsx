@@ -550,7 +550,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       const rest = groups.filter((g) => !boardGroupOrder.includes(g.id));
       ordered = [...byOrder, ...rest];
     }
-    return [unset, ...ordered];
+    return [...ordered, unset];
   }, [boardAttr, rows, boardGroupOrder]);
 
   const moveBoardCard = async (pageId: string, colId: string) => {
