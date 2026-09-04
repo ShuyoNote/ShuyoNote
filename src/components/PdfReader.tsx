@@ -648,12 +648,16 @@ export function PdfReader() {
     return () => {
       alive = false;
       // On close (open → null) the reader stays mounted but renders null, so the
-      // page-image cache + pageData would otherwise survive and their blob URLs be
-      // re-requested on the next open (before the fresh-render effect) → stale
-      // `blob:` URLs → net::ERR_FILE_NOT_FOUND. Revoke + clear them on teardown.
+      // page-image cache + pageData would otherwise survive. Worse, in-flight page
+      // renders (viewport effect / launchPageImage) can complete AFTER close and
+      // re-populate pageData with a URL that is then revoked on the next open →
+      // stale `blob:` URLs → net::ERR_FILE_NOT_FOUND. Clear state AND drop `ready`
+      // so the reopened reader never renders a pre-close page image before the
+      // fresh-load effect has produced a valid one.
       const cache = pageCacheRef.current;
       for (const u of cache.values()) URL.revokeObjectURL(u);
       cache.clear();
+      setReady(false);
       setPageData({});
     };
   }, [open, bytes]);
@@ -698,6 +702,13 @@ export function PdfReader() {
       try {
         const blob = await renderPagePng(eng, attachmentId, pageIndex, scale);
         const url = URL.createObjectURL(blob);
+        // If the reader was closed while this page was rendering, don't leak a
+        // page-image URL into state (it would be revoked on the next open and
+        // re-requested → ERR_FILE_NOT_FOUND).
+        if (!usePdfReader.getState().open) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         const cache = pageCacheRef.current;
         if (cache.size >= 12) {
           for (const k of [...cache.keys()]) {
@@ -840,7 +851,7 @@ export function PdfReader() {
   // - 图像：以 `${i}@${scale}` 为缓存键，缩放变化后对每个可见页重新光栅化，
   //   否则页面图像停在旧分辨率、放大只会变糊。只对「当前缩放下的缓存 miss」发请求。
   useEffect(() => {
-    if (!ready || viewRange.start < 0) return;
+    if (!open || !ready || viewRange.start < 0) return;
     const eng = engRef.current;
     if (!eng) return;
     let alive = true;
@@ -937,7 +948,7 @@ export function PdfReader() {
 
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, viewRange, scale, attachmentId]);
+  }, [ready, viewRange, scale, attachmentId, open]);
 
   // 缩放变化后：页高随之变化，重新校准滚动位置。
   useEffect(() => {
