@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
@@ -728,12 +729,35 @@ function AccountPane() {
 
 function AppearancePane() {
   const { theme, accent, setTheme, setAccent } = useTheme();
+  const { i18n } = useTranslation();
   const customTitleBar = useWindowChrome((s) => s.custom);
   const setCustomTitleBar = useWindowChrome((s) => s.setCustom);
   const material = useWindowChrome((s) => s.material);
   const setMaterial = useWindowChrome((s) => s.setMaterial);
+  const setLang = (lng: string) => {
+    try { localStorage.setItem("shuyonote:lang", lng === "system" ? "" : lng); } catch { /* ignore */ }
+    void i18n.changeLanguage(lng === "system" ? (navigator.language?.toLowerCase().startsWith("en") ? "en" : "zh-CN") : lng);
+  };
   return (
     <>
+      <section className="set-section">
+        <div className="set-section-title">语言 / Language</div>
+        <div className="set-chip-row">
+          <button
+            className={`set-chip${i18n.language?.startsWith("zh") ? " is-on" : ""}`}
+            onClick={() => setLang("zh-CN")}
+          >
+            中文
+          </button>
+          <button
+            className={`set-chip${i18n.language?.toLowerCase().startsWith("en") ? " is-on" : ""}`}
+            onClick={() => setLang("en")}
+          >
+            English
+          </button>
+        </div>
+        <p className="set-hint">未翻译的界面暂以中文显示。</p>
+      </section>
       <section className="set-section">
         <div className="set-section-title">基础主题</div>
         <div className="set-chip-row">

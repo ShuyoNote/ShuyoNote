@@ -1,4 +1,5 @@
 import "./lib/polyfills";
+import "./i18n"; // 初始化 i18next（zh/en）
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

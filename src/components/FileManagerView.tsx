@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useFileManagerStore } from "../store/fileManager";
@@ -87,6 +88,7 @@ function MiniPreview({ title, content }: { title: string; content: string }) {
 // FlowUs-style file manager: browse the page/folder hierarchy as a table with
 // type + modified/created columns, and create pages/folders inside a folder.
 export function FileManagerView() {
+  const { t } = useTranslation();
   const { pages, openPage, createPage, createFolder, deletePage } = useNotes();
   const { folderId, setFolderId } = useFileManagerStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -512,7 +514,7 @@ export function FileManagerView() {
           <span className="file-manager-bigicon">
             <FolderIcon width={26} height={26} />
           </span>
-          <h1 className="file-manager-title">文件管理</h1>
+          <h1 className="file-manager-title">{t("files.title")}</h1>
         </div>
         <div className="file-manager-actions">
           <button
@@ -521,13 +523,13 @@ export function FileManagerView() {
             disabled={selectedCount === 0}
             title="删除选中的页面/文件夹/文件"
           >
-            {selectedCount > 0 ? `删除所选 (${selectedCount})` : "删除所选"}
+            {selectedCount > 0 ? `${t("files.removeSelected")} (${selectedCount})` : t("files.removeSelected")}
           </button>
           <button className="fm-btn" onClick={newFolder}>
-            ＋ 新建文件夹
+            ＋ {t("files.newFolder")}
           </button>
           <button className="fm-btn" onClick={newPage}>
-            ＋ 新建页面
+            ＋ {t("files.newPage")}
           </button>
           <button
             className="fm-btn"
@@ -535,22 +537,22 @@ export function FileManagerView() {
             disabled={importing}
             title={folderId ? "批量上传文件" : "上传到空间根目录（未整理）"}
           >
-            {importing ? "上传中…" : "＋ 上传文件"}
+            {importing ? t("files.uploading") : `＋ ${t("files.upload")}`}
           </button>
           <div className="fm-view-toggle" role="group" aria-label="视图切换">
             <button
               className={`fm-view-btn${viewMode === "list" ? " is-on" : ""}`}
-              title="列表"
+              title={t("files.list")}
               onClick={() => setView("list")}
             >☰</button>
             <button
               className={`fm-view-btn${viewMode === "grid" ? " is-on" : ""}`}
-              title="网格（缩略图）"
+              title={t("files.grid")}
               onClick={() => setView("grid")}
             >▦</button>
           </div>
           {viewMode === "grid" && (
-            <label className="fm-size-slider" title="缩略图大小">
+            <label className="fm-size-slider" title={t("files.sort")}>
               <input
                 type="range"
                 min={120}
