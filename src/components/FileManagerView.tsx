@@ -108,6 +108,8 @@ export function FileManagerView() {
   };
   // 网格视图内容预览：pageId -> content_text（按需拉取，避免全列表带正文）。
   const [pageContent, setPageContent] = useState<Record<string, string>>({});
+  // 网格视图文本/文档预览：fileId -> 文本内容（按需读取）。
+  const [textPreview, setTextPreview] = useState<Record<string, string>>({});
   // 网格缩略图大小（列数随之自适应）。
   const [gridSize, setGridSize] = useState<number>(() => Number(localStorage.getItem("shuyonote:fmGridSize")) || 160);
   const setGrid = (n: number) => {
@@ -359,6 +361,24 @@ export function FileManagerView() {
         if (d) map[id] = (d.content_text ?? "") as string;
       });
       setPageContent((prev) => ({ ...prev, ...map }));
+    });
+    return () => { cancelled = true; };
+  }, [viewMode, rows]);
+
+  // 网格视图：按需读取文本/文档类文件的内容用于摘要预览（仅网格 + 未读过的）。
+  useEffect(() => {
+    if (viewMode !== "grid") return;
+    const isText = (mime: string) => mime.startsWith("text/") || mime === "application/json" || mime === "application/xml";
+    const todo = rows
+      .filter((r) => r.kind === "file" && r.file && r.file.path && isText(r.file.mime || "") && !textPreview[r.file.id])
+      .map((r) => r.file!);
+    if (!todo.length) return;
+    let cancelled = false;
+    Promise.all(todo.map((f) => api.readTextFile(f.path).catch(() => ""))).then((res) => {
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      todo.forEach((f, i) => { map[f.id] = res[i] ?? ""; });
+      setTextPreview((prev) => ({ ...prev, ...map }));
     });
     return () => { cancelled = true; };
   }, [viewMode, rows]);
@@ -617,6 +637,10 @@ export function FileManagerView() {
             {gridRows.map((row) => {
               const isImage = row.kind === "file" && row.file?.mime.startsWith("image/") && row.file.path;
               const isVideo = row.kind === "file" && row.file?.mime.startsWith("video/") && row.file.path;
+              const isAudio = row.kind === "file" && row.file?.mime.startsWith("audio/") && row.file.path;
+              const isTextFile = row.kind === "file" && row.file?.mime && (
+                row.file.mime.startsWith("text/") || row.file.mime === "application/json" || row.file.mime === "application/xml"
+              );
               // 页面/数据库有 cover（题头图）时显示缩略图，否则小图标占位。
               const pageCover =
                 row.kind !== "file" &&
@@ -660,6 +684,17 @@ export function FileManagerView() {
                       muted
                       preload="metadata"
                     />
+                  ) : isAudio ? (
+                    <div className="fm-grid-audio">
+                      <audio
+                        controls
+                        preload="none"
+                        src={platform.asset.convertFileSrc(row.file!.path)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  ) : isTextFile && textPreview[row.file!.id] ? (
+                    <MiniPreview content={textPreview[row.file!.id]} />
                   ) : pageCover ? (
                     <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
                   ) : row.pageId && pageContent[row.pageId] ? (

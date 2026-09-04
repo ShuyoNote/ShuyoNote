@@ -16118,6 +16118,15 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.fm-grid-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 116px;
+  padding: 12px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+.fm-grid-audio audio { width: 100%; height: 34px; }
 .fm-grid-card {
   position: relative;
   display: flex;
