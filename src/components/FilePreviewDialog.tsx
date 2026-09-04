@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { platform } from "../lib/platform";
+import { api } from "../lib/api";
 import { useFilePreview } from "../store/filePreview";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
@@ -207,6 +208,26 @@ export function FilePreviewDialog() {
     window.addEventListener("pointerup", onUp);
   };
 
+  // 解析媒体资产 URL：优先本地 path；path 缺失时按内容哈希读取字节（web/同步文件），
+  // 避免「path 为空 → 误显示该文件类型暂不支持内嵌预览」。
+  const [asset, setAsset] = useState<{ url: string; missing: boolean }>({ url: "", missing: false });
+  useEffect(() => {
+    if (!target) { setAsset({ url: "", missing: false }); return; }
+    if (target.path) { setAsset({ url: platform.asset.convertFileSrc(target.path), missing: false }); return; }
+    if (target.hash) {
+      let objUrl = "";
+      setAsset({ url: "", missing: false });
+      api.readAttachmentBytes(target.hash)
+        .then((bytes) => {
+          objUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: target.mime || "application/octet-stream" }));
+          setAsset({ url: objUrl, missing: false });
+        })
+        .catch(() => setAsset({ url: "", missing: true }));
+      return () => { if (objUrl) URL.revokeObjectURL(objUrl); };
+    }
+    setAsset({ url: "", missing: true });
+  }, [target?.id, target?.hash, target?.mime]);
+
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;
 
@@ -267,26 +288,42 @@ export function FilePreviewDialog() {
           </button>
         </div>
         <div className="fm-preview-body">
-          {target.mime.startsWith("image/") && target.path ? (
-            <ImagePreview src={platform.asset.convertFileSrc(target.path)} name={target.name} onOpenOriginal={() => void platform.opener.openPath(target.path)} />
-          ) : target.mime.startsWith("video/") && target.path ? (
-            <div className="fm-video-view">
-              <video src={platform.asset.convertFileSrc(target.path)} controls preload="metadata" />
-            </div>
-          ) : target.mime.startsWith("audio/") && target.path ? (
-            <div className="fm-audio-view">
-              <div className="fm-audio-icon" aria-hidden>
-                <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 18V5l12-2v13" />
-                  <circle cx="6" cy="18" r="3" />
-                  <circle cx="18" cy="16" r="3" />
-                </svg>
+          {target.mime.startsWith("image/") ? (
+            asset.url ? (
+              <ImagePreview src={asset.url} name={target.name} onOpenOriginal={() => void platform.opener.openPath(target.path)} />
+            ) : (
+              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+            )
+          ) : target.mime.startsWith("video/") ? (
+            asset.url ? (
+              <div className="fm-video-view">
+                <video src={asset.url} controls preload="metadata" />
               </div>
-              <div className="fm-audio-name" title={target.name}>{target.name}</div>
-              <audio src={platform.asset.convertFileSrc(target.path)} controls />
-            </div>
-          ) : target.mime === "application/pdf" && target.path ? (
-            <iframe src={platform.asset.convertFileSrc(target.path)} title={target.name} />
+            ) : (
+              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+            )
+          ) : target.mime.startsWith("audio/") ? (
+            asset.url ? (
+              <div className="fm-audio-view">
+                <div className="fm-audio-icon" aria-hidden>
+                  <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                </div>
+                <div className="fm-audio-name" title={target.name}>{target.name}</div>
+                <audio src={asset.url} controls />
+              </div>
+            ) : (
+              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+            )
+          ) : target.mime === "application/pdf" ? (
+            asset.url ? (
+              <iframe src={asset.url} title={target.name} />
+            ) : (
+              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+            )
           ) : target.mime === "text/markdown" ? (
             mdLoading ? (
               <div className="fm-preview-unsupported">加载 Markdown…</div>
