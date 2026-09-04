@@ -309,6 +309,33 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
       CREATE INDEX IF NOT EXISTS idx_page_versions ON page_versions(page_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
+      -- Sync engine tables (S8: per-workspace profiles / auth sessions / change log).
+      CREATE TABLE IF NOT EXISTS changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        device_seq INTEGER NOT NULL,
+        entity TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        op TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS sync_profiles (
+        ws_id TEXT PRIMARY KEY,
+        server_url TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL DEFAULT '',
+        space_id TEXT NOT NULL DEFAULT '',
+        last_pushed_seq INTEGER NOT NULL DEFAULT 0,
+        last_pulled_seq INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        server_url TEXT PRIMARY KEY,
+        email TEXT NOT NULL DEFAULT '',
+        user_id TEXT NOT NULL DEFAULT '',
+        token TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
     `);
     // Safe migration for pre-existing DBs whose `attachments` table predates
     // the page_id column (owns → which folder/page a file belongs to).

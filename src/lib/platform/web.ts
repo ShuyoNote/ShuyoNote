@@ -566,6 +566,225 @@ async function streamZip(
   return out;
 }
 
+// ============================================================================
+// Sync engine (Web platform). Mirrors `src-tauri/src/sync.rs` semantics so a
+// workspace bound to a sync-server space pushes/pulls changes with the desktop.
+// Core primitives are synchronous (sql.js); only the HTTP round-trip is async.
+// ============================================================================
+
+const SYNC_DEVICE_KEY = "shuyo.device_id";
+
+function syncDeviceId(): string {
+  let id = localStorage.getItem(SYNC_DEVICE_KEY);
+  if (!id) {
+    id = uid();
+    localStorage.setItem(SYNC_DEVICE_KEY, id);
+  }
+  return id;
+}
+
+interface SyncAuthSession {
+  server_url: string;
+  email: string;
+  user_id: string;
+  token: string;
+  created_at: number;
+  expires_at: number;
+}
+interface SyncProfile {
+  ws_id: string;
+  server_url: string;
+  token: string;
+  space_id: string;
+  last_pushed_seq: number;
+  last_pulled_seq: number;
+}
+interface SyncChange {
+  id: number;
+  device_id: string;
+  device_seq: number;
+  entity: string;
+  entity_id: string;
+  op: string;
+  payload: string;
+  updated_at: number;
+}
+
+function getAuthSession(store: SqliteStore, serverUrl: string): SyncAuthSession {
+  const r = store.query<SyncAuthSession>("SELECT * FROM auth_sessions WHERE server_url = ?", [serverUrl])[0];
+  if (r) return r;
+  return { server_url: serverUrl, email: "", user_id: "", token: "", created_at: 0, expires_at: 0 };
+}
+function putAuthSession(store: SqliteStore, s: SyncAuthSession): void {
+  store.run(
+    "INSERT INTO auth_sessions (server_url, email, user_id, token, created_at, expires_at) VALUES (?,?,?,?,?,?) ON CONFLICT(server_url) DO UPDATE SET email=excluded.email, user_id=excluded.user_id, token=excluded.token, created_at=excluded.created_at, expires_at=excluded.expires_at",
+    [s.server_url, s.email, s.user_id, s.token, s.created_at, s.expires_at],
+  );
+}
+function clearAuthSession(store: SqliteStore, serverUrl: string): void {
+  store.run("DELETE FROM auth_sessions WHERE server_url = ?", [serverUrl]);
+}
+
+const EMPTY_PROFILE: SyncProfile = { ws_id: "", server_url: "", token: "", space_id: "", last_pushed_seq: 0, last_pulled_seq: 0 };
+function getProfile(store: SqliteStore, wsId: string): SyncProfile {
+  const r = store.query<SyncProfile>("SELECT * FROM sync_profiles WHERE ws_id = ?", [wsId])[0];
+  return r ?? { ...EMPTY_PROFILE, ws_id: wsId };
+}
+function putProfile(store: SqliteStore, p: SyncProfile): void {
+  store.run(
+    "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq) VALUES (?,?,?,?,?,?) ON CONFLICT(ws_id) DO UPDATE SET server_url=excluded.server_url, token=excluded.token, space_id=excluded.space_id, last_pushed_seq=excluded.last_pushed_seq, last_pulled_seq=excluded.last_pulled_seq",
+    [p.ws_id, p.server_url, p.token, p.space_id, p.last_pushed_seq, p.last_pulled_seq],
+  );
+}
+function listProfiles(store: SqliteStore): SyncProfile[] {
+  return store
+    .query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' AND space_id <> '' ORDER BY ws_id")
+    .map((r) => ({ ...EMPTY_PROFILE, ...r, ws_id: r.ws_id }));
+}
+
+function recordChange(
+  store: SqliteStore,
+  entity: string,
+  entityId: string,
+  op: "upsert" | "delete",
+  payload: unknown,
+  updatedAt: number,
+): void {
+  const payloadStr = payload == null ? "" : typeof payload === "string" ? payload : JSON.stringify(payload);
+  const did = syncDeviceId();
+  store.run(
+    "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?)",
+    [did, entity, entityId, op, payloadStr, updatedAt],
+  );
+  const row = store.query<{ id: number }>("SELECT last_insert_rowid() AS id")[0];
+  if (row) {
+    // device_seq mirrors local auto-increment seq (unique per device).
+    store.run("UPDATE changes SET device_seq = ?1 WHERE id = ?1", [row.id]);
+  }
+}
+
+// Read outbox changes after `lastSeq`.
+function readOutbox(store: SqliteStore, lastSeq: number, limit = 500): SyncChange[] {
+  return store.query<SyncChange>(
+    "SELECT id, device_id, device_seq, entity, entity_id, op, payload, updated_at FROM changes WHERE id > ? ORDER BY id ASC LIMIT ?",
+    [lastSeq, limit],
+  );
+}
+function maxOutboxSeq(store: SqliteStore, lastSeq: number): number {
+  return store.query<{ m: number }>("SELECT COALESCE(MAX(id), 0) AS m FROM changes WHERE id > ?", [lastSeq])[0]?.m ?? 0;
+}
+
+// Apply the payload of a pulled change to local tables (LWW, mirror sync.rs).
+function applyChange(store: SqliteStore, change: SyncChange): void {
+  const op = change.op;
+  const entity = change.entity;
+  const eid = change.entity_id;
+  if (entity === "page") {
+    if (op === "delete") {
+      store.run("DELETE FROM pages WHERE id = ?", [eid]);
+      store.run("DELETE FROM page_tags WHERE page_id = ?", [eid]);
+      store.run("DELETE FROM page_props WHERE page_id = ?", [eid]);
+      return;
+    }
+    const p = parseJson(change.payload || "{}") as Record<string, any>;
+    if (p.id) {
+      store.run(
+        `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET title=excluded.title, kind=excluded.kind, parent_id=excluded.parent_id, sort_order=excluded.sort_order, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, content_json=excluded.content_json, content_text=excluded.content_text, db_rule=excluded.db_rule, icon=excluded.icon, cover=excluded.cover, cover_height=excluded.cover_height, cover_pos=excluded.cover_pos, workspace_id=excluded.workspace_id`,
+        [p.id, p.workspace_id ?? "active", p.parent_id ?? null, p.title ?? "", p.kind ?? "page", p.sort_order ?? 0, p.created_at ?? Date.now(), p.updated_at ?? Date.now(), p.deleted_at ?? null, p.content_json ?? "{}", p.content_text ?? "", p.db_rule ?? "{}", p.icon ?? "", p.cover ?? "", p.cover_height ?? 300, p.cover_pos ?? 50],
+      );
+    }
+    return;
+  }
+  if (entity === "attr") {
+    if (op === "delete") {
+      store.run("DELETE FROM attr_defs WHERE id = ?", [eid]);
+      return;
+    }
+    const p = parseJson(change.payload || "{}") as Record<string, any>;
+    if (p.id) {
+      store.run(
+        "INSERT INTO attr_defs (id, name, type, options, created_at, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, options=excluded.options",
+        [p.id, p.name ?? "", p.type ?? "text", JSON.stringify(p.options ?? []), p.created_at ?? Date.now(), p.updated_at ?? Date.now()],
+      );
+    }
+    return;
+  }
+  if (entity === "prop") {
+    if (op === "delete") {
+      store.run("DELETE FROM page_props WHERE page_id = ? AND attr_id = ?", [change.entity_id.split(":")[0], change.entity_id.split(":")[1]]);
+      return;
+    }
+    const p = parseJson(change.payload || "{}") as Record<string, any>;
+    if (p.page_id && p.attr_id) {
+      store.run(
+        "INSERT INTO page_props (page_id, attr_id, value) VALUES (?,?,?) ON CONFLICT(page_id, attr_id) DO UPDATE SET value=excluded.value",
+        [p.page_id, p.attr_id, String(p.value ?? "")],
+      );
+    }
+    return;
+  }
+  if (entity === "page_tag") {
+    if (op === "delete") {
+      store.run("DELETE FROM page_tags WHERE page_id = ? AND tag_id = ?", [change.entity_id.split(":")[0], change.entity_id.split(":")[1]]);
+      return;
+    }
+    const p = parseJson(change.payload || "{}") as Record<string, any>;
+    if (p.page_id && p.tag_id) {
+      store.run("INSERT OR IGNORE INTO page_tags (page_id, tag_id) VALUES (?,?)", [p.page_id, p.tag_id]);
+    }
+  }
+}
+
+async function syncFetch(server: string, path: string, token: string | null, body?: unknown): Promise<any> {
+  const url = `${server.replace(/\/+$/, "")}${path}`;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const resp = await fetch(url, {
+    method: body !== undefined ? "POST" : "GET",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (resp.status === 401) throw new Error("同步失败：会话已失效，请重新登录");
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(text || `HTTP ${resp.status}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
+async function doPush(store: SqliteStore, profile: SyncProfile): Promise<{ pushed: number; lastSeq: number }> {
+  const changes = readOutbox(store, profile.last_pushed_seq);
+  if (changes.length === 0) return { pushed: 0, lastSeq: profile.last_pushed_seq };
+  await syncFetch(profile.server_url, "/push", profile.token || null, {
+    device_id: syncDeviceId(),
+    space_id: profile.space_id,
+    changes: changes.map((c) => ({ device_seq: c.device_seq, entity: c.entity, entity_id: c.entity_id, op: c.op, payload: c.payload, updated_at: c.updated_at })),
+  });
+  const maxSeq = maxOutboxSeq(store, profile.last_pushed_seq);
+  putProfile(store, { ...profile, last_pushed_seq: maxSeq });
+  return { pushed: changes.length, lastSeq: maxSeq };
+}
+
+async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulled: number; lastSeq: number }> {
+  const url = `/pull?since=${profile.last_pulled_seq}&limit=500&space_id=${encodeURIComponent(profile.space_id)}&exclude_device=${encodeURIComponent(syncDeviceId())}`;
+  const data = await syncFetch(profile.server_url, url, profile.token || null);
+  const changes: SyncChange[] = Array.isArray(data?.changes) ? data.changes : [];
+  let maxSeq = profile.last_pulled_seq;
+  for (const c of changes) {
+    try {
+      applyChange(store, c);
+    } catch {
+      /* skip bad change */
+    }
+    if (typeof (c as any).seq === "number" && (c as any).seq > maxSeq) maxSeq = (c as any).seq;
+  }
+  putProfile(store, { ...profile, last_pulled_seq: maxSeq });
+  return { pulled: changes.length, lastSeq: maxSeq };
+}
+
 function makeInvoke(store: SqliteStore) {
   // The live store represents the ACTIVE workspace only (snapshot isolation — see
   // bootSpaces in getSharedStore). Workspace list/active/id come from the catalog.
@@ -696,7 +915,9 @@ function makeInvoke(store: SqliteStore) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
         [id, wsId, parentId, title, kind, sortOrder, now, now, contentJson, args.content_text ?? ""],
       );
-      return store.query("SELECT * FROM pages WHERE id = ?", [id])[0] as T;
+      const createdRow = store.query("SELECT * FROM pages WHERE id = ?", [id])[0];
+      recordChange(store, "page", id, "upsert", createdRow ?? { id, workspace_id: wsId, parent_id: parentId, title, kind, sort_order: sortOrder, created_at: now, updated_at: now, content_json: contentJson, content_text: args.content_text ?? "" }, now);
+      return createdRow as T;
     }
     if (cmd === "save_page") {
       const args = a.args ?? a;
@@ -718,7 +939,9 @@ function makeInvoke(store: SqliteStore) {
            WHERE id = ?`,
           [newTitle, json, text, Date.now(), id],
         );
-        return store.query("SELECT * FROM pages WHERE id = ?", [id])[0] as T;
+        const updatedRow = store.query("SELECT * FROM pages WHERE id = ?", [id])[0];
+        recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: newTitle, content_json: json, content_text: text, updated_at: Date.now() }, Date.now());
+        return updatedRow as T;
       }
       return null as T;
     }
@@ -741,6 +964,8 @@ function makeInvoke(store: SqliteStore) {
       }
       for (const pid of all) {
         store.run("UPDATE pages SET deleted_at = ?, updated_at = ? WHERE id = ?", [now, now, pid]);
+        const deletedRow = store.query("SELECT * FROM pages WHERE id = ?", [pid])[0];
+        recordChange(store, "page", pid, "upsert", deletedRow ?? { id: pid, deleted_at: now, updated_at: now }, now);
       }
       return undefined as T;
     }
@@ -759,6 +984,7 @@ function makeInvoke(store: SqliteStore) {
         }
       }
       for (const pid of all) {
+        recordChange(store, "page", pid, "delete", null, Date.now());
         store.run("DELETE FROM pages WHERE id = ?", [pid]);
         store.run("DELETE FROM page_tags WHERE page_id = ?", [pid]);
         store.run("DELETE FROM page_props WHERE page_id = ?", [pid]);
@@ -768,6 +994,8 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "restore_page") {
       store.run("UPDATE pages SET deleted_at = NULL WHERE id = ?", [a.id]);
+      const r = store.query("SELECT * FROM pages WHERE id = ?", [a.id])[0];
+      if (r) recordChange(store, "page", String(a.id), "upsert", r, Date.now());
       return undefined as T;
     }
     if (cmd === "move_page") {
@@ -1061,7 +1289,10 @@ function makeInvoke(store: SqliteStore) {
         tagId = tag.id;
       }
       const exists = store.query("SELECT 1 AS ok FROM page_tags WHERE page_id = ? AND tag_id = ?", [pageId, tagId])[0];
-      if (!exists) store.run("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [pageId, tagId]);
+      if (!exists) {
+        store.run("INSERT INTO page_tags (page_id, tag_id) VALUES (?, ?)", [pageId, tagId]);
+        recordChange(store, "page_tag", `${pageId}:${tagId}`, "upsert", { page_id: pageId, tag_id: tagId }, Date.now());
+      }
       return tag as T;
     }
     if (cmd === "remove_tag") {
@@ -1069,6 +1300,7 @@ function makeInvoke(store: SqliteStore) {
       const pageId = String(args.pageId ?? args.page_id ?? "");
       const tagId = String(args.tagId ?? args.tag_id ?? "");
       store.run("DELETE FROM page_tags WHERE page_id = ? AND tag_id = ?", [pageId, tagId]);
+      recordChange(store, "page_tag", `${pageId}:${tagId}`, "delete", null, Date.now());
       return undefined as T;
     }
     if (cmd === "page_tags") {
@@ -1609,6 +1841,7 @@ function makeInvoke(store: SqliteStore) {
       store.run("INSERT INTO attr_defs (id, name, type, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
         id, name, attrType, JSON.stringify(options), now, now,
       ]);
+      recordChange(store, "attr", id, "upsert", { id, name, type: attrType, options, created_at: now, updated_at: now }, now);
       return { id, name, attr_type: attrType, options } as T;
     }
     if (cmd === "update_attr") {
@@ -1617,9 +1850,11 @@ function makeInvoke(store: SqliteStore) {
       store.run("UPDATE attr_defs SET options = ?, updated_at = ? WHERE id = ?", [JSON.stringify(options), Date.now(), args.id]);
       const row = store.query("SELECT id, name, type, options FROM attr_defs WHERE id = ?", [args.id])[0];
       if (!row) throw new Error("属性不存在");
+      recordChange(store, "attr", String(args.id), "upsert", { id: args.id, name: row.name, type: row.type, options, updated_at: Date.now() }, Date.now());
       return toAttrDef(row) as T;
     }
     if (cmd === "delete_attr") {
+      recordChange(store, "attr", String(a.id), "delete", null, Date.now());
       store.run("DELETE FROM page_props WHERE attr_id = ?", [a.id]);
       store.run("DELETE FROM database_columns WHERE attr_id = ?", [a.id]);
       store.run("DELETE FROM attr_defs WHERE id = ?", [a.id]);
@@ -1631,10 +1866,12 @@ function makeInvoke(store: SqliteStore) {
         "INSERT INTO page_props (page_id, attr_id, value) VALUES (?, ?, ?) ON CONFLICT(page_id, attr_id) DO UPDATE SET value = excluded.value",
         [args.page_id, args.attr_id, String(args.value ?? "")],
       );
+      recordChange(store, "prop", `${String(args.page_id)}:${String(args.attr_id)}`, "upsert", { page_id: args.page_id, attr_id: args.attr_id, value: String(args.value ?? "") }, Date.now());
       return undefined as T;
     }
     if (cmd === "remove_page_prop") {
       store.run("DELETE FROM page_props WHERE page_id = ? AND attr_id = ?", [a.pageId ?? a.page_id, a.attrId ?? a.attr_id]);
+      recordChange(store, "prop", `${String(a.pageId ?? a.page_id)}:${String(a.attrId ?? a.attr_id)}`, "delete", null, Date.now());
       return undefined as T;
     }
     if (cmd === "get_page_props") {
@@ -1842,39 +2079,138 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "uninstall_plugin") return undefined as T;
 
     // ---- Sync ----
-    if (cmd === "get_sync_config") return { server_url: "", token: "", space_id: "", device_id: "", last_pushed_seq: 0, last_pulled_seq: 0 } as T;
-    if (cmd === "set_sync_config") return undefined as T;
-    if (cmd === "sync_now") return [] as T;
-    // M27 team edition auth: Web 版团队同步为平台能力边界，明确降级（入口在 SyncPanel 会隐藏）。
-    if (cmd === "team_register") throw new Error("Web 版不支持团队版，请用桌面版");
-    if (cmd === "team_login") throw new Error("Web 版不支持团队版，请用桌面版");
-    if (cmd === "team_logout") return undefined as T;
-    if (cmd === "team_list_spaces") throw new Error("Web 版不支持团队空间，请用桌面版");
-    if (cmd === "team_create_space") throw new Error("Web 版不支持团队空间，请用桌面版");
-    if (cmd === "team_list_members") throw new Error("Web 版不支持团队空间，请用桌面版");
-    if (cmd === "team_invite_member") throw new Error("Web 版不支持团队空间，请用桌面版");
-    if (cmd === "team_set_member_role") throw new Error("Web 版不支持团队空间，请用桌面版");
-    if (cmd === "team_remove_member") throw new Error("Web 版不支持团队空间，请用桌面版");
-    if (cmd === "team_get_session") return { server_url: "", token: "" } as T;
-    if (cmd === "team_get_me") throw new Error("Web 版不支持团队账号，请用桌面版");
-    if (cmd === "team_get_server_email") return null as T;
+    const wsIdNow = (): string => getWs()?.id ?? getActiveWsId();
+    if (cmd === "get_sync_config") {
+      const p = getProfile(store, wsIdNow());
+      return {
+        server_url: p.server_url,
+        token: p.token,
+        space_id: p.space_id,
+        device_id: syncDeviceId(),
+        last_pushed_seq: p.last_pushed_seq,
+        last_pulled_seq: p.last_pulled_seq,
+      } as T;
+    }
+    if (cmd === "set_sync_config") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      const p = getProfile(store, wsIdNow());
+      putProfile(store, { ...p, server_url });
+      return undefined as T;
+    }
+    if (cmd === "sync_now") {
+      const out: any[] = [];
+      for (const profile of listProfiles(store)) {
+        try {
+          const pushed = await doPush(store, profile);
+          const pulled = await doPull(store, profile);
+          const latest = getProfile(store, profile.ws_id);
+          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null });
+        } catch (e) {
+          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) });
+        }
+      }
+      return out as T;
+    }
+    // ---- auth (team edition login/register/logout; register needs the invite code) ----
+    if (cmd === "team_register") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "").trim().replace(/\/+$/, "");
+      const email = String(args.email ?? "");
+      const password = String(args.password ?? "");
+      const display = args.display ? String(args.display) : email;
+      const register_code = args.register_code ? String(args.register_code) : undefined;
+      const data = await syncFetch(server_url, "/auth/register", null, { email, password, display, register_code });
+      const token = data?.token ?? "";
+      const user_id = data?.user?.id ?? "";
+      const now = Date.now();
+      // expires_at 30 days (server drives the real expiry).
+      putAuthSession(store, { server_url, email, user_id, token, created_at: now, expires_at: now + 30 * 24 * 3600 * 1000 });
+      return data as T;
+    }
+    if (cmd === "team_login") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "").trim().replace(/\/+$/, "");
+      const email = String(args.email ?? "");
+      const password = String(args.password ?? "");
+      const data = await syncFetch(server_url, "/auth/login", null, { email, password });
+      const token = data?.token ?? "";
+      const user_id = data?.user?.id ?? "";
+      const now = Date.now();
+      putAuthSession(store, { server_url, email, user_id, token, created_at: now, expires_at: now + 30 * 24 * 3600 * 1000 });
+      return data as T;
+    }
+    if (cmd === "team_logout") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      const session = getAuthSession(store, server_url);
+      try {
+        if (session.token) await syncFetch(server_url, "/auth/logout", session.token, {});
+      } catch {
+        /* ignore */
+      }
+      clearAuthSession(store, server_url);
+      return undefined as T;
+    }
+    if (cmd === "team_get_session") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      const s = getAuthSession(store, server_url);
+      return { server_url: s.server_url, token: s.token, email: s.email, user_id: s.user_id } as T;
+    }
+    if (cmd === "team_get_me") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      const s = getAuthSession(store, server_url);
+      if (!s.token) throw new Error("未登录");
+      return (await syncFetch(server_url, "/auth/me", s.token)) as T;
+    }
+    if (cmd === "team_get_server_email") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      return (getAuthSession(store, server_url).email || null) as T;
+    }
+    if (cmd === "team_list_spaces") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      const s = getAuthSession(store, server_url);
+      return (await syncFetch(server_url, "/spaces", s.token)) as T;
+    }
+    if (cmd === "team_create_space") {
+      const args = a.args ?? a;
+      const server_url = String(args.server_url ?? args.serverUrl ?? "");
+      const s = getAuthSession(store, server_url);
+      return (await syncFetch(server_url, "/spaces", s.token, { name: String(args.name ?? ""), org_id: args.org_id ?? null })) as T;
+    }
     if (cmd === "list_sync_history") return [] as T;
     if (cmd === "clear_sync_history") return undefined as T;
-    if (cmd === "team_list_orgs") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_create_org") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_list_org_members") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_invite_org_member") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_set_org_member_active") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_remove_org_member") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_approve_org_invite") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_reject_org_invite") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_deactivate_account") throw new Error("Web 版不支持账号注销，请用桌面版");
-    if (cmd === "team_deactivate_org_member") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_generate_org_invite_code") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "team_join_org_by_code") throw new Error("Web 版不支持组织管理，请用桌面版");
-    if (cmd === "list_sync_profiles") return [] as T;
-    if (cmd === "set_sync_profile") return undefined as T;
-    if (cmd === "sync_workspace") return { ws_id: "", pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: "Web 不支持真正的多服务器同步" } as T;
+    if (cmd === "list_sync_profiles") return listProfiles(store) as T;
+    if (cmd === "set_sync_profile") {
+      const args = a.args ?? a;
+      const wsId = String(args.ws_id ?? wsIdNow());
+      const p = getProfile(store, wsId);
+      putProfile(store, {
+        ...p,
+        server_url: String(args.server_url ?? p.server_url),
+        token: String(args.token ?? p.token),
+        space_id: String(args.space_id ?? p.space_id),
+      });
+      return undefined as T;
+    }
+    if (cmd === "sync_workspace") {
+      const wsId = String(a.ws_id ?? wsIdNow());
+      const p = getProfile(store, wsId);
+      if (!p.server_url) throw new Error("请先配置同步服务器");
+      if (!p.space_id) throw new Error("需绑定团队空间才能同步（多设备同步不支持留空）");
+      try {
+        const pushed = await doPush(store, p);
+        const pulled = await doPull(store, p);
+        const latest = getProfile(store, wsId);
+        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null } as T;
+      } catch (e) {
+        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) } as T;
+      }
+    }
 
     // ---- Encryption ----
     if (cmd === "encryption_status") return { enabled: false, locked: false } as T;
