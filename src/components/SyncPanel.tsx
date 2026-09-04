@@ -275,9 +275,11 @@ export function SyncPanel() {
       await applySession(r, base, token, "注册");
     } catch (e) {
       const msg = String(e);
-      setStatus(
-        msg.includes("409") ? "注册失败：该邮箱已注册，请直接「登录」" : `注册失败：${msg}`,
-      );
+      let hint = msg.includes("409") ? "该邮箱已注册，请直接「登录」"
+        : msg.includes("400") ? "请输入「注册邀请码」（向管理员索取，如 SHUYOABC）且密码 ≥ 8 位"
+        : msg.includes("401") ? "登录失败：邮箱或密码不对"
+        : `注册失败：${msg}`;
+      setStatus(hint);
     } finally {
       setLoggingIn(false);
     }
@@ -498,16 +500,16 @@ export function SyncPanel() {
                       </div>
                       {r.authMode === "register" && (
                         <div className="sync-field" style={{ marginTop: 8 }}>
-                          <label htmlFor={`sync-regcode-${r.ws_id}`}>注册邀请码</label>
+                          <label htmlFor={`sync-regcode-${r.ws_id}`}>注册邀请码（必填）</label>
                           <input
                             id={`sync-regcode-${r.ws_id}`}
                             className="sync-input"
                             value={r.loginRegisterCode}
-                            placeholder="组长发的注册邀请码"
+                            placeholder="比如：SHUYOABC"
                             onChange={(e) => update(r.ws_id, "loginRegisterCode", e.target.value)}
                           />
                           <p className="sync-hint">
-                            {r.server_url ? "服务器需凭邀请码注册。没有？向组长索取（若服务器开放注册可留空）。" : "需先填服务器地址。"}
+                            {r.server_url ? "注册必须有邀请码。把服务端管理员给你的邀请码填到这里（填错或留空会注册失败）。" : "需先填服务器地址。"}
                           </p>
                         </div>
                       )}
