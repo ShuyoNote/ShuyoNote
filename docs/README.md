@@ -132,6 +132,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-30-team-edition-plan.md](plans/2026-08-30-team-edition-plan.md) | **「团队版（自建协作，不接外部通讯 App）」方案**：账号/认证、权限两根柱子 + 协同后置（P2）；组织空间放弃零知识（个人空间保留 E2E）；服务端见 shuyonote-sync-server 仓库（已实现 S5）；客户端聚焦登录/空间绑定/成员 UI（**规划**） |
 | [plans/2026-08-30-team-edition-account-space-plan.md](plans/2026-08-30-team-edition-account-space-plan.md) | **「团队版 M27.1 账号/空间绑定 · 客户端侧」落地方案**：登录态 + 登录/注册 UI + 空间绑定 + 成员/权限 UI；命令对齐 shuyonote-sync-server `/auth/*` `/spaces/*`；服务端设计见 shuyonote-sync-server 仓库（**规划**） |
 | [plans/2026-09-01-structural-backlog-plan.md](plans/2026-09-01-structural-backlog-plan.md) | **「安全加固后的结构性改进」立项**（2026-09-01，**三项均达成**）：① markdown round-trip 单测（Lexical 无头测试，88 断言全绿）；② web.ts 命令契约层（`CommandMap` 类型 + api.ts invoke 编译期校验 + check-web-commands 纳入 build）；③ 服务端单 Mutex 并发瓶颈（push 单事务 + 读写分离 + 只读连接池，见 shuyonote-sync-server）。 |
+| [plans/2026-09-04-near-realtime-plan.md](plans/2026-09-04-near-realtime-plan.md) | **「团队版近实时协作」落地实现方案（规划）**：在页级 LWW + 轮询之上加**协作感知层**——P0 同页冲突提示 + 在线/谁在编辑（presence 心跳）、P1 评论/@/通知中心、P1.5 可选 SSE/WebSocket 推送；含数据模型（`presence`/`comments`/`notifications`）、新接口清单、客户端组件、里程碑与验收；**明确不做块级 CRDT**、个人空间保留 E2E（依据 [实时协同利弊分析](../realtime-collab-analysis.md)） |
 
 ## 竞品对比
 
