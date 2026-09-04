@@ -63,6 +63,39 @@ function link(title: string): string {
   return `[[${title}]]`;
 }
 
+function tagVsProperty(): Block[] {
+  return [
+    h("标签与属性", "h1"),
+    callout("标签和属性都是给内容归类的方式，但**层级不同**：标签全局轻量、一页多标签；属性是数据库的字段（列）、类型化。"),
+    h("标签（Tag）：轻量 · 全局 · 多对多", "h2"),
+    bullet([
+      "多对多：一页可贴**多个**标签。",
+      "全局：全工作区共享的标签集合，不依附某个数据库。",
+      "即贴即用：不用先定义字段，随手打标。",
+      "作用：快速归类、全局搜索筛选、**看板按标签分组**、关系图聚类。",
+    ]),
+    h("属性（Property）：结构化的字段 / 列", "h2"),
+    bullet([
+      "依附数据库，是那条库的**列定义**。",
+      "类型化：文本 / 数字 / 日期 / 复选框 / 单选(select) / 多选(multi) / 标签 / 关联(ref) / 公式(formula) / 回滚(rollup)。",
+      "作用：结构化数据——数字可计算、日期可排序、select 的 options 可分组、ref 关联页面、formula 算公式。",
+      "支撑数据库视图：表格 / 画廊 / 列表 / 日历 / 时间轴 / 甘特图。",
+    ]),
+    h("两者对比", "h2"),
+    bullet([
+      "层级：标签＝全局轻量；属性＝数据库字段（列）。",
+      "关系：标签一页多标签（多对多）；属性一页一个值 / 字段。",
+      "用法：标签随手打、归类、筛；属性排序 / 分组 / 公式 / 多视图。",
+      "典型：标签 `#计划` `#想法`；属性 状态、日期、优先级、金额、负责人。",
+      `分组：看板按**标签**分组 vs 按 **select 属性**分组（详见 ${link("看板与标签")}）。`,
+    ]),
+    h("怎么选", "h2"),
+    para("想快速贴“类别 / 状态”、随手归类 → 用**标签**；要结构化的字段（日期、数字、关联、公式、多视图）→ 用**属性**。"),
+    rule(),
+    para(`回到 ${link("数据库与属性")}；更多视图见 ${link("看板与标签")}；回到 ${link("使用指南")} 看索引。`),
+  ];
+}
+
 // ---- topical page content ---------------------------------------------------
 function quickStart(): Block[] {
   return [
@@ -972,6 +1005,7 @@ export const GUIDE_PAGES: GuidePage[] = [
   { title: "时间轴视图", icon: "📈", blocks: dbTimeline(), parent: "数据库与属性" },
   { title: "甘特图", icon: "📊", blocks: gantt(), parent: "数据库与属性" },
   { title: "看板与标签", icon: "📋", blocks: board(), parent: "数据库与属性" },
+  { title: "标签与属性", icon: "🏷️", blocks: tagVsProperty(), parent: "数据库与属性" },
   { title: "ref 关联", icon: "🔗", blocks: dbRef(), parent: "数据库与属性" },
   { title: "公式列", icon: "🧮", blocks: dbFormula(), parent: "数据库与属性" },
   { title: "搜索与语义检索", icon: "🔍", blocks: search() },
