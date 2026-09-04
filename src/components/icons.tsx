@@ -551,39 +551,41 @@ export function SparkleIcon(props: IconProps) {
   );
 }
 
-// AI 助手：芯片 + 神经网络节点，紫→青经典渐变（酷炫）。
+// AI 助手：芯片 + 神经网络中心，紫→青渐变（与语义检索同款配色，成对出现）。
 export function AiSparkIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <defs>
-        <linearGradient id="aiSparkGrad" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id="aiAssistGrad" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#8b5cf6" />
           <stop offset="1" stopColor="#22d3ee" />
         </linearGradient>
       </defs>
-      <rect x="7" y="7" width="10" height="10" rx="2.5" stroke="url(#aiSparkGrad)" />
-      <circle cx="12" cy="12" r="2" stroke="url(#aiSparkGrad)" />
-      <path d="M9 3.5v3.5M15 3.5v3.5M9 17v3.5M15 17v3.5M3.5 9H7M3.5 15H7M17 9h3.5M17 15h3.5" stroke="url(#aiSparkGrad)" />
+      <rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.8" stroke="url(#aiAssistGrad)" />
+      <circle cx="12" cy="12" r="2.1" stroke="url(#aiAssistGrad)" />
+      <path
+        d="M9 3.5v2.9M15 3.5v2.9M9 17.6v2.9M15 17.6v2.9M3.5 9h2.9M3.5 15h2.9M17.6 9h2.9M17.6 15h2.9"
+        stroke="url(#aiAssistGrad)"
+      />
     </Icon>
   );
 }
 
-// 语义检索：放大镜 + 关联节点（按意思找相关），青→蓝渐变。
+// 语义检索：放大镜 + 关联节点（按意思找相关），与 AI 助手同款紫→青渐变。
 export function SemanticSearchIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <defs>
-        <linearGradient id="semSearchGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#22d3ee" />
-          <stop offset="1" stopColor="#3b82f6" />
+        <linearGradient id="aiSemGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#8b5cf6" />
+          <stop offset="1" stopColor="#22d3ee" />
         </linearGradient>
       </defs>
-      <circle cx="10" cy="10" r="6" stroke="url(#semSearchGrad)" />
-      <path d="M14.5 14.5L19 19" stroke="url(#semSearchGrad)" />
-      <path d="M10 10l4-3M10 10l-4-2M10 10v4" stroke="url(#semSearchGrad)" strokeWidth="1.3" />
-      <circle cx="14" cy="6" r="1.4" stroke="url(#semSearchGrad)" />
-      <circle cx="6" cy="7" r="1.4" stroke="url(#semSearchGrad)" />
-      <circle cx="10" cy="15" r="1.4" stroke="url(#semSearchGrad)" />
+      <circle cx="10.4" cy="10.4" r="5.9" stroke="url(#aiSemGrad)" />
+      <path d="M14.6 14.6L19 19" stroke="url(#aiSemGrad)" />
+      <circle cx="10.4" cy="10.4" r="1.9" stroke="url(#aiSemGrad)" />
+      <circle cx="6.6" cy="7" r="1.1" stroke="url(#aiSemGrad)" />
+      <circle cx="14.2" cy="13.8" r="1.1" stroke="url(#aiSemGrad)" />
     </Icon>
   );
 }
