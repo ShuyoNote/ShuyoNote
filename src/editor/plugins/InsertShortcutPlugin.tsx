@@ -49,7 +49,7 @@ export function InsertShortcutPlugin() {
       KEY_DOWN_COMMAND,
       (e: KeyboardEvent) => {
         if (!(e.ctrlKey || e.metaKey) || !e.altKey || e.shiftKey) return false;
-        const key = e.key.toLowerCase();
+        const key = (e.key || "").toLowerCase();
 
         if (key === "1") {
           e.preventDefault();

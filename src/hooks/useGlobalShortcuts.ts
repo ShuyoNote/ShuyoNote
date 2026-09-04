@@ -18,7 +18,7 @@ export function useGlobalShortcuts(onToggleView: () => void) {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
 
-      const key = e.key.toLowerCase();
+      const key = (e.key || "").toLowerCase();
 
       // M25 — keyboard-shortcuts overlay. `Ctrl+/` works everywhere; `?` (Shift+/)
       // only when not typing (so typing "?" in the editor still works).

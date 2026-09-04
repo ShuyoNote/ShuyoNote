@@ -986,7 +986,7 @@ export function PdfReader() {
       } else if (e.key === "-" || e.key === "_") {
         e.preventDefault();
         setZoom(stepZoom(scale, -1));
-      } else if (e.key.toLowerCase() === "f") {
+      } else if ((e.key || "").toLowerCase() === "f") {
         e.preventDefault();
         fitWidth();
       }
