@@ -849,6 +849,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     <div className="database-view">
       <div className="database-head">
         <h1 className="database-title">{title || "数据库"}</h1>
+        <span className="database-count">{rows.length} 条</span>
         <input
           className="database-filter"
           placeholder="按标题筛选…（空格=与，逗号=或）"
@@ -916,21 +917,6 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           </button>
         </div>
         <div className="db-actions">
-          <div className="db-more-wrap" ref={moreRef}>
-            <button className="db-views-btn" onClick={() => setMoreOpen((v) => !v)} title="更多操作">
-              <span className="db-more-glyph">•••</span>
-            </button>
-            {moreOpen && (
-              <div className="db-views-pop db-more-pop">
-                <button className="db-more-item" onClick={() => { setMoreOpen(false); exportPdf(); }}>
-                  <span>⤓</span> 导出为 PDF
-                </button>
-                <button className="db-more-item" onClick={() => { setMoreOpen(false); saveAsTemplate(); }}>
-                  <span>✦</span> 保存为模板
-                </button>
-              </div>
-            )}
-          </div>
           <div className="db-views-wrap" ref={viewsWrapRef}>
             <button className="db-views-btn" onClick={() => setViewsPop((v) => !v)}>
               视图{views.length > 0 ? ` (${views.length})` : ""} ▾
@@ -1003,8 +989,22 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
             </div>
           )}
         </div>
+        <div className="db-more-wrap" ref={moreRef}>
+          <button className="db-views-btn" onClick={() => setMoreOpen((v) => !v)} title="更多操作">
+            <span className="db-more-glyph">•••</span>
+          </button>
+          {moreOpen && (
+            <div className="db-views-pop db-more-pop">
+              <button className="db-more-item" onClick={() => { setMoreOpen(false); exportPdf(); }}>
+                <span>⤓</span> 导出为 PDF
+              </button>
+              <button className="db-more-item" onClick={() => { setMoreOpen(false); saveAsTemplate(); }}>
+                <span>✦</span> 保存为模板
+              </button>
+            </div>
+          )}
         </div>
-        <span className="database-count">{rows.length} 条</span>
+        </div>
       </div>
 
       {summary.length > 0 && (
