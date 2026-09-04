@@ -1619,7 +1619,7 @@ function makeInvoke(store: SqliteStore) {
       // uses this to read .md attachment content.
       const hash = String(a.hash ?? "");
       const bytes = await blobStore.get(hash);
-      if (!bytes) throw new Error("附件不存在");
+      if (!bytes) throw new Error("文件内容缺失（可能未同步到本机，或已被删除）");
       return Array.from(bytes) as T;
     }
     if (cmd === "list_page_attachments") {

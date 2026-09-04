@@ -42,7 +42,7 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
           set({ mdHtml: sanitizePreviewHtml(mdToHtml(content)), mdLoading: false });
         } catch (e) {
           set({ mdLoading: false });
-          toast(`读取 Markdown 失败：${e}`, "error");
+          toast(`无法打开「${a.name}」：文件内容缺失（可能未同步到本机，或已被删除）`, "error");
         }
       })();
     }
@@ -77,7 +77,7 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
         toast("创建页面失败", "error");
       }
     } catch (e) {
-      toast(`转为笔记失败：${e}`, "error");
+      toast(`无法转为笔记：文件内容缺失（可能未同步到本机，或已被删除）`, "error");
     } finally {
       set({ mdImporting: false });
     }
