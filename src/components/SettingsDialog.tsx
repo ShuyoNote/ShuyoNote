@@ -36,30 +36,19 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "dark", label: "暗色" },
 ];
 
-const TABS: { id: SettingsTab; label: string; hint: string; icon: JSX.Element }[] = [
-  { id: "appearance", label: "外观", hint: "主题与强调色", icon: <PaletteIcon width={16} height={16} /> },
-  { id: "spaces", label: "空间", hint: "配色 / 删除 / 迁移", icon: <FolderIcon width={16} height={16} /> },
-  { id: "account", label: "账户", hint: "登录身份与同步目标", icon: <PersonIcon width={16} height={16} /> },
-  { id: "data", label: "数据", hint: "备份 / 存储与清理", icon: <DatabaseIcon width={16} height={16} /> },
-  { id: "plugins", label: "插件", hint: "启用/禁用扩展", icon: <TemplateIcon width={16} height={16} /> },
-  { id: "security", label: "安全", hint: "端到端加密与锁定", icon: <LockIcon width={16} height={16} /> },
-  { id: "ai", label: "AI", hint: "服务商与模型", icon: <SparkleIcon width={16} height={16} /> },
-  { id: "about", label: "关于与更新", hint: "版本与许可", icon: <InfoIcon width={16} height={16} /> },
+const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Element }[] = [
+  { id: "appearance", labelKey: "settings.appearance", hintKey: "settings.appearanceHint", icon: <PaletteIcon width={16} height={16} /> },
+  { id: "spaces", labelKey: "settings.spaces", hintKey: "settings.spacesHint", icon: <FolderIcon width={16} height={16} /> },
+  { id: "account", labelKey: "settings.account", hintKey: "settings.accountHint", icon: <PersonIcon width={16} height={16} /> },
+  { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} /> },
+  { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} /> },
+  { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} /> },
+  { id: "ai", labelKey: "settings.ai", hintKey: "settings.aiHint", icon: <SparkleIcon width={16} height={16} /> },
+  { id: "about", labelKey: "settings.about", hintKey: "settings.aboutHint", icon: <InfoIcon width={16} height={16} /> },
 ];
 
 // 每页一句话说明，放在内容区页头——比只有一个标题更有分量，也省去用户猜
 // 「这一页到底管什么」。
-const TAB_DESC: Record<SettingsTab, string> = {
-  appearance: "主题、强调色等外观偏好，改动即时生效。",
-  spaces: "空间的低频管理：配色、删除、单空间导入导出。切换空间在侧栏顶部。",
-  account: "团队账号与各服务器上的同步身份；同步操作本身在侧栏「同步」里。",
-  data: "全库备份与存储清理——都是低频且不可逆的操作。",
-  plugins: "插件的启用与禁用；其命令会出现在命令面板（Ctrl+K）。",
-  security: "本机静置加密与会话锁定。口令即密钥，丢失无法找回。",
-  ai: "AI 服务商、模型与密钥；配置后可在助手、PDF 帮读、公式识别中使用。",
-  about: "版本、许可与更新检查。",
-};
-
 // 「数据」页：全库备份/恢复与存储清理——低频、全局、不可逆，按判据归设置。
 // 两个组件都用 `label` 变体渲染成带文字的按钮，实现与侧栏时期完全共用。
 function DataPane() {
@@ -1131,6 +1120,7 @@ function AboutPane() {
 // 外观 / 插件 / 端到端加密，以及 AI 配置统一收口，避免「危险开关藏在
 // 调色板里」这种语义错位。
 export function SettingsDialog() {
+  const { t } = useTranslation();
   const open = useEditorStore((s) => s.settingsOpen);
   const tab = useEditorStore((s) => s.settingsTab);
   const setTab = useEditorStore((s) => s.setSettingsTab);
@@ -1157,17 +1147,17 @@ export function SettingsDialog() {
       <div className="set-dialog" role="dialog" aria-label="设置" aria-modal="true">
         <nav className="set-rail" aria-label="设置分类">
           <div className="set-rail-title">设置</div>
-          {TABS.map((t) => (
+          {TABS.map((it) => (
             <button
-              key={t.id}
-              className={`set-rail-item${tab === t.id ? " is-on" : ""}`}
-              aria-current={tab === t.id}
-              onClick={() => setTab(t.id)}
+              key={it.id}
+              className={`set-rail-item${tab === it.id ? " is-on" : ""}`}
+              aria-current={tab === it.id}
+              onClick={() => setTab(it.id)}
             >
-              <span className="set-rail-icon">{t.icon}</span>
+              <span className="set-rail-icon">{it.icon}</span>
               <span className="set-rail-text">
-                <span className="set-rail-label">{t.label}</span>
-                <span className="set-rail-hint">{t.hint}</span>
+                <span className="set-rail-label">{t(it.labelKey)}</span>
+                <span className="set-rail-hint">{t(it.hintKey)}</span>
               </span>
             </button>
           ))}
@@ -1175,8 +1165,8 @@ export function SettingsDialog() {
         <div className="set-body">
           <header className="set-body-head">
             <div className="set-body-head-text">
-              <div className="set-body-title">{TABS.find((t) => t.id === tab)?.label}</div>
-              <div className="set-body-desc">{TAB_DESC[tab]}</div>
+              <div className="set-body-title">{TABS.find((x) => x.id === tab) ? t(TABS.find((x) => x.id === tab)!.labelKey) : ""}</div>
+              <div className="set-body-desc">{TABS.find((x) => x.id === tab) ? t(TABS.find((x) => x.id === tab)!.hintKey) : ""}</div>
             </div>
             <button className="set-close" onClick={close} aria-label="关闭设置">×</button>
           </header>

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useActivity, type Activity } from "../store/activity";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
@@ -26,14 +27,15 @@ import {
 //
 // 「搜索」只换侧栏面板、不动主区；notes/files/board/graph 会切主区视图。
 // 点击已选中的活动 = 收起/展开侧栏（VS Code 行为）。
-const ITEMS: { id: Activity; label: string; icon: JSX.Element }[] = [
-  { id: "notes", label: "笔记", icon: <PageIcon width={18} height={18} /> },
-  { id: "files", label: "文件", icon: <FolderIcon width={18} height={18} /> },
-  { id: "board", label: "看板", icon: <BoardIcon width={18} height={18} /> },
-  { id: "graph", label: "关系图", icon: <GraphIcon width={18} height={18} /> },
+const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
+  { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
+  { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
+  { id: "board", labelKey: "nav.board", icon: <BoardIcon width={18} height={18} /> },
+  { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {
+  const { t } = useTranslation();
   const activity = useActivity((s) => s.activity);
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
   const setActivity = useActivity((s) => s.setActivity);
@@ -73,8 +75,8 @@ export function ActivityBar() {
             <button
               key={it.id}
               className={`activity-btn${on ? " is-on" : ""}`}
-              title={on ? `${it.label}（点击${sidebarOpen ? "收起" : "展开"}侧栏）` : it.label}
-              aria-label={it.label}
+              title={on ? `${t(it.labelKey)}（点击${sidebarOpen ? t("common.collapse") : t("common.expand")}侧栏）` : t(it.labelKey)}
+              aria-label={t(it.labelKey)}
               aria-current={on}
               onClick={() => pick(it.id)}
             >
