@@ -376,16 +376,6 @@ function TreeItem({
               >
                 <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
               </button>
-              {!isFolder && (
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    api.openPageWindow(node.id);
-                  }}
-                >
-                  <span className="menu-icon"><MenuIcon d={ICON.window} /></span><span className="menu-text">新窗口打开</span>
-                </button>
-              )}
               <button
                 onClick={() => {
                   setMenuOpen(false);
