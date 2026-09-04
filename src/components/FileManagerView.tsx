@@ -63,11 +63,10 @@ function KindIcon({ kind }: { kind: string }) {
 }
 
 // 迷你内容预览（页面卡）：标题 + 正文开头几行，像模板卡。
-function MiniPreview({ title, content }: { title: string; content: string }) {
+function MiniPreview({ content }: { content: string }) {
   const lines = (content ?? "").split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 4);
   return (
     <div className="fm-grid-mini">
-      <div className="fm-grid-mini-title">{title}</div>
       {lines.length ? (
         lines.map((l, i) => (
           <div
@@ -662,18 +661,15 @@ export function FileManagerView() {
                   ) : pageCover ? (
                     <img className="fm-grid-thumb" src={pageCover} alt={row.name} loading="lazy" />
                   ) : row.pageId && pageContent[row.pageId] ? (
-                    <MiniPreview title={row.name} content={pageContent[row.pageId]} />
+                    <MiniPreview content={pageContent[row.pageId]} />
                   ) : (
                     <span className="fm-grid-page">
                       <span className="fm-grid-page-icon">
                         {row.kind === "file" ? fileIcon(row.file!.mime) : <KindIcon kind={row.kind} />}
                       </span>
-                      <span className="fm-grid-page-title">{row.name}</span>
                     </span>
                   )}
-                  {(isImage || isVideo || pageCover) && (
-                    <div className="fm-grid-name">{row.name}</div>
-                  )}
+                  <div className="fm-grid-name">{row.name}</div>
                   {row.kind === "file" && folderId === null && (
                     <div className="fm-grid-tag">未整理</div>
                   )}
