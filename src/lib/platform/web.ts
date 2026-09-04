@@ -1595,7 +1595,9 @@ function makeInvoke(store: SqliteStore) {
       // fall back to the blob store (which holds the actual bytes) if absent.
       const rows = store.query("SELECT * FROM attachments WHERE hash = ?", [a.hash]);
       const pathVal = rows[0] ? (rows[0] as any).path : "";
-      if (pathVal) return pathVal as T;
+      // A stored `blob:` URL is session-scoped and goes stale after a reload; ignore
+      // it and re-resolve a fresh display URL (or data URL) from the byte store.
+      if (pathVal && !String(pathVal).startsWith("blob:")) return pathVal as T;
       const bytes = await blobStore.get(String(a.hash));
       if (bytes) {
         const mime = String((rows[0] as any)?.mime ?? "image/png");
@@ -1635,7 +1637,10 @@ function makeInvoke(store: SqliteStore) {
       // URL rather than an inlined base64 data-URL (memory-friendly for large media).
       const resolved = await Promise.all(
         rows.map(async (r: any) => {
-          if (r.path) return r;
+          // A stored `blob:` URL is session-scoped and stale after reload; always
+          // re-resolve a FRESH object URL from the byte store so the file-manager
+          // grid/photo-wall never requests an invalid blob.
+          if (r.path && !String(r.path).startsWith("blob:")) return r;
           const bytes = await blobStore.get(String(r.hash));
           if (!bytes) return r;
           return { ...r, path: blobUrl(bytes, r.mime) };
