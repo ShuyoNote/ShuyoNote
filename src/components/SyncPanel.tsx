@@ -187,7 +187,11 @@ export function SyncPanel() {
     setStatus("");
     try {
       const res = await api.syncWorkspace(r.ws_id);
-      setStatus(`「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`);
+      if (res.error) {
+        setStatus(`「${r.name}」同步失败：${res.error}`);
+      } else {
+        setStatus(`「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`);
+      }
       await loadPages();
       await loadHistory();
     } catch (e) {
