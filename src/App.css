@@ -3379,9 +3379,11 @@ select.sync-input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
-  line-height: 1;
   color: var(--text-faint);
+}
+.tree-node-menu .menu-icon .menu-svg {
+  display: block;
+  color: inherit;
 }
 .tree-node-menu .menu-text {
   flex: 1;

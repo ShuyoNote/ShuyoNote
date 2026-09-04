@@ -20,6 +20,24 @@ import { useWindowChrome } from "../store/windowChrome";
 import { syncTagLabel, syncTagColor } from "../lib/syncTag";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
+
+// 统一风格的 SVG 菜单图标：16px、stroke currentColor、统一描边/圆角。
+function MenuIcon({ d }: { d: string }) {
+  return (
+    <svg className="menu-svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+const ICON = {
+  edit: "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
+  window: "M5 3h9a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 9h4v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-1",
+  swap: "M4 7h13m0 0l-3-3m3 3l-3 3M20 17H7m0 0l3-3m-3 3l3 3",
+  copy: "M8 4h9a2 2 0 0 1 2 2v9M8 4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2M8 4h9",
+  plus: "M12 5v14M5 12h14",
+  folder: "M3 5h6l2 3h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
+  trash: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0l-.8 14a1 1 0 0 1-1 .9H7.8a1 1 0 0 1-1-.9L6 6M10 11v6M14 11v6",
+} as const;
 import { SyncPanel } from "./SyncPanel";
 import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
@@ -356,7 +374,7 @@ function TreeItem({
                   setEditing(true);
                 }}
               >
-                <span className="menu-icon">✎</span><span className="menu-text">重命名</span>
+                <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
               </button>
               {!isFolder && (
                 <button
@@ -365,7 +383,7 @@ function TreeItem({
                     api.openPageWindow(node.id);
                   }}
                 >
-                  <span className="menu-icon">⧉</span><span className="menu-text">新窗口打开</span>
+                  <span className="menu-icon"><MenuIcon d={ICON.window} /></span><span className="menu-text">新窗口打开</span>
                 </button>
               )}
               <button
@@ -374,7 +392,7 @@ function TreeItem({
                   setCopyOpen(true);
                 }}
               >
-                <span className="menu-icon">⇄</span><span className="menu-text">复制到其他空间</span>
+                <span className="menu-icon"><MenuIcon d={ICON.swap} /></span><span className="menu-text">复制到其他空间</span>
               </button>
               <button
                 onClick={async () => {
@@ -390,7 +408,7 @@ function TreeItem({
                   }
                 }}
               >
-                <span className="menu-icon">⧉</span><span className="menu-text">复制为副本</span>
+                <span className="menu-icon"><MenuIcon d={ICON.copy} /></span><span className="menu-text">复制为副本</span>
               </button>
               <button
                 onClick={() => {
@@ -398,7 +416,7 @@ function TreeItem({
                   createPage(node.id);
                 }}
               >
-                <span className="menu-icon">＋</span><span className="menu-text">新建子页面</span>
+                <span className="menu-icon"><MenuIcon d={ICON.plus} /></span><span className="menu-text">新建子页面</span>
               </button>
               {isFolder && (
                 <button
@@ -407,7 +425,7 @@ function TreeItem({
                     createFolder(node.id);
                   }}
                 >
-                  <span className="menu-icon">📁</span><span className="menu-text">新建子文件夹</span>
+                  <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">新建子文件夹</span>
                 </button>
               )}
               <button
@@ -420,7 +438,7 @@ function TreeItem({
                   }
                 }}
               >
-                <span className="menu-icon">×</span><span className="menu-text">删除</span>
+                <span className="menu-icon"><MenuIcon d={ICON.trash} /></span><span className="menu-text">删除</span>
               </button>
             </span>
           )}
