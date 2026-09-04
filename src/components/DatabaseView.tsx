@@ -514,7 +514,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   }, [attrs, query]);
 
   const selectColumns = useMemo(
-    () => (query ? query.columns.filter((c) => c.attr_type === "select") : []),
+    () => (query ? query.columns.filter((c) => ["select", "multi", "tag"].includes(c.attr_type)) : []),
     [query],
   );
   const boardAttr = selectColumns.find((c) => c.id === boardGroupAttr) ?? selectColumns[0] ?? null;
@@ -523,7 +523,17 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     if (!boardAttr) {
       return [{ id: "__none", name: "未设置", rows }];
     }
-    const groups = boardAttr.options.map((o) => ({ id: o, name: o, rows: [] as DatabaseRow[] }));
+    // 分组值来源：select/multi 用 attr.options；tag 等无 options 的用页面实际值集合。
+    let groupOptions: string[] = Array.isArray(boardAttr.options) ? boardAttr.options : [];
+    if (groupOptions.length === 0) {
+      const s = new Set<string>();
+      for (const r of rows) {
+        const v = r.values[boardAttr.id];
+        if (v != null && v !== "") s.add(String(v));
+      }
+      groupOptions = [...s];
+    }
+    const groups = groupOptions.map((o) => ({ id: o, name: o, rows: [] as DatabaseRow[] }));
     const unset = { id: "__none", name: "未设置", rows: [] as DatabaseRow[] };
     for (const r of rows) {
       const v = r.values[boardAttr.id] ?? "";
