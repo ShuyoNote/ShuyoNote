@@ -1,7 +1,7 @@
 {
   "name": "shuyonote",
   "private": true,
-  "version": "1.82.5",
+  "version": "1.82.6",
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && vite",
