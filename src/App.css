@@ -11892,7 +11892,7 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: column;
   padding: 24px 32px 0;
-  max-width: 1080px;
+  max-width: none;
   width: 100%;
   margin: 0 auto;
   overflow: hidden;
