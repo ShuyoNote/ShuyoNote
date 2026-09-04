@@ -10701,7 +10701,7 @@ p:has(> .editor-drawing-container) {
 /* Thumbnail at the top of the card (cover bg + mini white page card). */
 .tc-preview { height: 150px; display: flex; flex-direction: column; overflow: hidden; }
 /* 题头图(封面照片)顶部。 */
-.tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center; }
+.tc-preview-cover { height: 74px; flex: none; background-size: cover; background-position: center 25%; }
 .tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-card { background: #fff; flex: 1; padding: 10px 12px; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .tc-pv-title { height: 10px; width: 55%; border-radius: 2px; background: #e3e6eb; }
