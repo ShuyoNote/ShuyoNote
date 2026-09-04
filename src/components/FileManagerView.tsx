@@ -342,10 +342,12 @@ export function FileManagerView() {
   }, [sorted, fileGroups]);
 
   // 网格视图：按需拉取可见页面的 content_text 用于内容预览（仅网格 + 未缓存时）。
+  // 网格视图：按需取可见页面的 content_text（仅网格；取一次不随 pageContent 重跑，
+  // 避免失败页面反复重试导致卡死）。
   useEffect(() => {
     if (viewMode !== "grid") return;
     const ids = rows
-      .filter((r) => r.kind !== "file" && r.pageId && !pageContent[r.pageId])
+      .filter((r) => r.kind !== "file" && r.pageId)
       .map((r) => r.pageId!);
     if (!ids.length) return;
     let cancelled = false;
@@ -359,7 +361,7 @@ export function FileManagerView() {
       setPageContent((prev) => ({ ...prev, ...map }));
     });
     return () => { cancelled = true; };
-  }, [viewMode, rows, pageContent]);
+  }, [viewMode, rows]);
 
   // 点击任意处关闭右键菜单。
   useEffect(() => {
