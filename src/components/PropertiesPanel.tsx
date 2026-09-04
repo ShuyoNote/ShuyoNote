@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { usePropertyUiStore } from "../store/propertyUi";
@@ -51,6 +51,37 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   // or non-tag property rows); otherwise the title connects straight to content.
   const nonTagProps = props.filter((p) => p.attr_type !== "tag");
   const hasProps = nonTagProps.length > 0 || pageTags.length > 0; // card shown iff metadata present
+
+  // 属性区按 attr_defs.sort_order 顺序显示（listAttrDefs 已按该顺序返回）。
+  const orderedProps = useMemo(() => {
+    const order = new Map(attrs.map((a, i) => [a.id, i]));
+    return [...nonTagProps].sort(
+      (x, y) => (order.get(x.attr_id) ?? 9999) - (order.get(y.attr_id) ?? 9999),
+    );
+  }, [nonTagProps, attrs]);
+
+  const setOrder = (next: AttrDef[]) => {
+    setAttrs(next);
+    void api.reorderAttrs(next.map((a) => a.id)).catch((e) => toast(`保存属性顺序失败：${e}`, "error"));
+  };
+  const moveProp = (attrId: string, dir: -1 | 1) => {
+    const idx = attrs.findIndex((a) => a.id === attrId);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= attrs.length) return;
+    const next = [...attrs];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setOrder(next);
+  };
+  // HTML5 拖拽换序：从 fromIdx 拖到 toIdx。
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const onDropTo = (toIdx: number) => {
+    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); return; }
+    const next = [...attrs];
+    const [moved] = next.splice(dragIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setOrder(next);
+    setDragIdx(null);
+  };
 
   // Serialize writes per attribute so a later value is never overwritten by an
   // earlier, out-of-order set_page_prop call. Each edit is saved immediately.
@@ -127,12 +158,28 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
       {open && (
         <div className="properties-body">
           <TagRow pageId={pageId} />
-          {nonTagProps.map((p) => (
-              <div key={p.attr_id} className="prop-row">
+          {orderedProps.map((p, i) => (
+              <div
+                key={p.attr_id}
+                className={`prop-row${dragIdx === i ? " is-dragging" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); }}
+                onDrop={() => onDropTo(i)}
+              >
+                <button
+                  className="prop-grip"
+                  title="拖动调整属性顺序"
+                  draggable
+                  onDragStart={(e) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; }}
+                  onDragEnd={() => setDragIdx(null)}
+                >⠿</button>
                 <span className="prop-name" title={TYPE_LABELS[p.attr_type] ?? p.attr_type}>
                   {p.name}
                 </span>
                 <ValueEditor prop={p} onChange={(v) => persist(p.attr_id, v)} />
+                <span className="prop-order-btns">
+                  <button className="prop-order" onClick={() => moveProp(p.attr_id, -1)} title="上移">↑</button>
+                  <button className="prop-order" onClick={() => moveProp(p.attr_id, 1)} title="下移">↓</button>
+                </span>
                 <button className="prop-remove" onClick={() => remove(p.attr_id)} title="移除属性">
                   ×
                 </button>

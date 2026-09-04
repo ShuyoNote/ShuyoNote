@@ -240,6 +240,7 @@ export const api = {
   updateAttr: (args: { id: string; options: string[] }) =>
     invoke("update_attr", { args }),
   deleteAttr: (id: string) => invoke("delete_attr", { id }),
+  reorderAttrs: (ids: string[]) => invoke("reorder_attrs", { ids }),
   setPageProp: (args: { page_id: string; attr_id: string; value: string }) =>
     invoke("set_page_prop", { args }),
   removePageProp: (pageId: string, attrId: string) =>
@@ -252,6 +253,8 @@ export const api = {
     invoke("add_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
   removeDbColumn: (dbPageId: string, attrId: string) =>
     invoke("remove_db_column", { args: { db_page_id: dbPageId, attr_id: attrId } }),
+  reorderDbColumns: (dbPageId: string, orderedAttrIds: string[]) =>
+    invoke("reorder_db_columns", { args: { db_page_id: dbPageId, ordered_attr_ids: orderedAttrIds } }),
   queryDatabase: (dbPageId: string) =>
     invoke("query_database", { dbPageId }),
   listTags: () => invoke("list_tags"),

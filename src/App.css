@@ -4205,6 +4205,29 @@ body.content-full .editor-placeholder {
   gap: 8px;
   min-height: 30px;
 }
+.prop-row.is-dragging { opacity: 0.5; }
+.prop-grip {
+  cursor: grab;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  padding: 0 2px;
+}
+.prop-order-btns { display: inline-flex; flex-direction: column; flex-shrink: 0; gap: 1px; }
+.prop-order {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.prop-order:hover { color: var(--text); }
+.db-th { user-select: none; }
+.db-th-dragging { opacity: 0.5; }
+
 
 .prop-name {
   flex-shrink: 0;

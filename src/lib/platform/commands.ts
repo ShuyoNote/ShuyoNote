@@ -200,12 +200,14 @@ export interface CommandMap {
   create_attr: { args: { args: { name: string; attr_type: string; options?: string[] } }; result: AttrDef };
   update_attr: { args: { args: { id: string; options: string[] } }; result: AttrDef };
   delete_attr: { args: { id: string }; result: void };
+  reorder_attrs: { args: { ids: string[] }; result: void };
   set_page_prop: { args: { args: { page_id: string; attr_id: string; value: string } }; result: void };
   remove_page_prop: { args: { pageId: string; attrId: string }; result: void };
   get_page_props: { args: { pageId: string }; result: PageProp[] };
   get_db_columns: { args: { dbPageId: string }; result: AttrDef[] };
   add_db_column: { args: { args: { db_page_id: string; attr_id: string } }; result: AttrDef[] };
   remove_db_column: { args: { args: { db_page_id: string; attr_id: string } }; result: AttrDef[] };
+  reorder_db_columns: { args: { args: { db_page_id: string; ordered_attr_ids: string[] } }; result: AttrDef[] };
   query_database: { args: { dbPageId: string }; result: DatabaseQuery };
   list_db_views: { args: { dbPageId: string }; result: DbViewMeta[] };
   save_db_view: { args: { args: { db_page_id: string; name: string; view_type: string; config: string } }; result: DbViewMeta };

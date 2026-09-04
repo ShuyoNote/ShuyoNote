@@ -146,6 +146,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [colDrag, setColDrag] = useState<string | null>(null);
   const colDragRef = useRef<{ sx: number; sy: number; moved: boolean } | null>(null);
   const [colDragName, setColDragName] = useState("");
+  // 表格列头拖拽换序（HTML5 draggable）。
+  const [dbColDragIdx, setDbColDragIdx] = useState<number | null>(null);
   const [colDragColor, setColDragColor] = useState("");
   const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
   const [colDragSide, setColDragSide] = useState<"before" | "after">("before");
@@ -390,6 +392,19 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     } catch (e) {
       toast(`添加列失败：${e}`, "error");
     }
+  };
+
+  // 表格列头拖拽换序：从 dbColDragIdx 拖到 toIdx。
+  const reorderColumns = (toIdx: number) => {
+    setQuery((q) => {
+      if (!q || dbColDragIdx === null || dbColDragIdx === toIdx) return q;
+      const cols = [...q.columns];
+      const [moved] = cols.splice(dbColDragIdx, 1);
+      cols.splice(toIdx, 0, moved);
+      void api.reorderDbColumns(pageId, cols.map((c) => c.id)).catch((e) => toast(`保存列顺序失败：${e}`, "error"));
+      return { ...q, columns: cols };
+    });
+    setDbColDragIdx(null);
   };
 
   const removeColumn = async (attrId: string) => {
@@ -1013,11 +1028,16 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                 >
                   页面{sort?.key === "__title" ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
                 </th>
-                {query.columns.map((c) => (
+                {query.columns.map((c, i) => (
                   <th
                     key={c.id}
-                    className={`db-th ${sort?.key === c.id ? "db-th-sorted" : ""}`}
+                    className={`db-th ${sort?.key === c.id ? "db-th-sorted" : ""} ${dbColDragIdx === i ? " db-th-dragging" : ""}`}
                     title={TYPE_LABELS[c.attr_type] ?? c.attr_type}
+                    draggable
+                    onDragStart={(e) => { setDbColDragIdx(i); e.dataTransfer.effectAllowed = "move"; }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); reorderColumns(i); }}
+                    onDragEnd={() => setDbColDragIdx(null)}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => toggleSortMenu(c.id)}
                   >

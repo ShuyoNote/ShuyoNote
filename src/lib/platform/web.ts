@@ -1827,7 +1827,7 @@ function makeInvoke(store: SqliteStore) {
 
     // ---- Properties / attributes / database ----
     if (cmd === "list_attr_defs") {
-      const rows = store.query("SELECT id, name, type, options FROM attr_defs ORDER BY name");
+      const rows = store.query("SELECT id, name, type, options FROM attr_defs ORDER BY sort_order ASC, name");
       return rows.map(toAttrDef) as T;
     }
     if (cmd === "create_attr") {
@@ -1840,8 +1840,9 @@ function makeInvoke(store: SqliteStore) {
       const options = Array.isArray(args.options) ? args.options.map(String) : [];
       const id = uid();
       const now = Date.now();
-      store.run("INSERT INTO attr_defs (id, name, type, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
-        id, name, attrType, JSON.stringify(options), now, now,
+      const nextOrder = Number(store.query<{ n: number }>("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM attr_defs")[0]?.n ?? 0);
+      store.run("INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+        id, name, attrType, JSON.stringify(options), nextOrder, now, now,
       ]);
       recordChange(store, "attr", id, "upsert", { id, name, type: attrType, options, created_at: now, updated_at: now }, now);
       return { id, name, attr_type: attrType, options } as T;
@@ -1860,6 +1861,11 @@ function makeInvoke(store: SqliteStore) {
       store.run("DELETE FROM page_props WHERE attr_id = ?", [a.id]);
       store.run("DELETE FROM database_columns WHERE attr_id = ?", [a.id]);
       store.run("DELETE FROM attr_defs WHERE id = ?", [a.id]);
+      return undefined as T;
+    }
+    if (cmd === "reorder_attrs") {
+      const ids = Array.isArray(a.ids) ? a.ids.map(String) : [];
+      ids.forEach((id, i) => store.run("UPDATE attr_defs SET sort_order = ? WHERE id = ?", [i, id]));
       return undefined as T;
     }
     if (cmd === "set_page_prop") {
@@ -1905,6 +1911,15 @@ function makeInvoke(store: SqliteStore) {
       const args = a.args ?? {};
       store.run("DELETE FROM database_columns WHERE db_page_id = ? AND attr_id = ?", [args.db_page_id, args.attr_id]);
       return dbColumns(store, String(args.db_page_id ?? "")) as T;
+    }
+    if (cmd === "reorder_db_columns") {
+      const args = a.args ?? {};
+      const dbPageId = String(args.db_page_id ?? "");
+      const ordered = Array.isArray(args.ordered_attr_ids) ? args.ordered_attr_ids.map(String) : [];
+      ordered.forEach((attrId: string, i: number) => {
+        store.run("UPDATE database_columns SET sort_order = ? WHERE db_page_id = ? AND attr_id = ?", [i, dbPageId, attrId]);
+      });
+      return dbColumns(store, dbPageId) as T;
     }
     if (cmd === "query_database") {
       const dbPageId = String(a.dbPageId ?? a.db_page_id ?? "");
