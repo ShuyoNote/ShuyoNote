@@ -243,6 +243,7 @@ export interface CommandMap {
   purge_deleted_workspaces: { args: undefined; result: { freed: number; workspaces: number } };
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
+  clear_page_versions: { args: { pageId: string }; result: number };
   export_backup: { args: { destPath: string }; result: { path: string; size: number } };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };

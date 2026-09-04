@@ -284,6 +284,7 @@ export const api = {
   purgePage: (id: string) => invoke("purge_page", { id }),
   listVersions: (pageId: string) => invoke("list_versions", { pageId }),
   restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
+  clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
   exportBackup: (destPath: string) =>
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>

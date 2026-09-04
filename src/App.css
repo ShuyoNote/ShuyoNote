@@ -2415,6 +2415,56 @@ select.sync-input {
   text-align: center;
 }
 
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.history-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.history-total {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.history-clear {
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.history-clear:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border);
+}
+.history-clear:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.history-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.history-newest {
+  font-size: 10px;
+  line-height: 1.3;
+  color: #3370ff;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
 .history-item {
   display: flex;
   align-items: center;

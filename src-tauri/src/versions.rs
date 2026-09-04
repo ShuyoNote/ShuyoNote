@@ -84,6 +84,16 @@ pub fn list_versions(db: State<'_, Db>, page_id: String) -> Result<Vec<PageVersi
 }
 
 #[tauri::command]
+pub fn clear_page_versions(db: State<'_, Db>, page_id: String) -> Result<usize, String> {
+    // 手动清空：删除该页的全部历史快照（保留当前内容；当前页不属于 page_versions）。
+    let c = conn(&db);
+    let n = c
+        .execute("DELETE FROM page_versions WHERE page_id = ?1", params![page_id])
+        .map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+#[tauri::command]
 pub fn restore_version(db: State<'_, Db>, version_id: String) -> Result<PageDetail, String> {
     let c = conn(&db);
 

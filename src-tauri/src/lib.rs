@@ -340,6 +340,7 @@ pub fn run() {
             trash::purge_page,
             versions::list_versions,
             versions::restore_version,
+            versions::clear_page_versions,
             backup::export_backup,
             backup::import_backup,
             backup::write_text_file,

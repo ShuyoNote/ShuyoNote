@@ -2516,6 +2516,14 @@ function makeInvoke(store: SqliteStore) {
       ]);
       return store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0] as T;
     }
+    if (cmd === "clear_page_versions") {
+      // 手动清空：删除该页的全部历史快照（保留当前内容）。
+      const pid = String(a.pageId ?? a.page_id ?? "");
+      const before = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", [pid])[0]?.n ?? 0;
+      store.run("DELETE FROM page_versions WHERE page_id = ?", [pid]);
+      const after = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", [pid])[0]?.n ?? 0;
+      return (before - after) as T;
+    }
 
     // ---- Backup / export / import (standard zip, matches the desktop format) ----
     // Desktop export_backup produces a zip with `shuyonote.db` (SQLite snapshot) +
