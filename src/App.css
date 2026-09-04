@@ -4209,17 +4209,16 @@ body.content-full .editor-placeholder {
 .prop-row.is-dragging { opacity: 0.5; }
 .prop-row { position: relative; }
 .prop-row.drop-before::before,
-.prop-row.drop-after::after {
+.prop-row.drop-after::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
+  top: -1px;
   height: 1px;
   background: var(--accent, #4f7cff);
   pointer-events: none;
 }
-.prop-row.drop-before::before { top: -1px; }
-.prop-row.drop-after::after { bottom: -1px; }
 .prop-grip {
   cursor: grab;
   color: var(--text-faint);
@@ -4252,17 +4251,18 @@ body.content-full .editor-placeholder {
 .db-th { user-select: none; position: relative; }
 .db-th-dragging { opacity: 0.5; }
 .db-th.db-th-drop-left::before,
-.db-th.db-th-drop-right::after {
+.db-th.db-th-drop-right::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
+  left: -1px;
   width: 1px;
   background: var(--accent, #4f7cff);
   pointer-events: none;
 }
-.db-th.db-th-drop-left::before { left: -1px; }
-.db-th.db-th-drop-right::after { right: -1px; }
+.db-th.db-th-drop-left::after,
+.db-th.db-th-drop-right::after { display: none; }
 
 
 .prop-name {
