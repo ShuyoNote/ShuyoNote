@@ -5,6 +5,7 @@ import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
+import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 
@@ -74,6 +75,8 @@ export function SyncPanel() {
   };
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
+  // 实时同步状态（正在推送/拉取/附件进度），由同步引擎在 web.ts 上报。
+  const syncStatus = useSyncStatus();
   const [loggingIn, setLoggingIn] = useState(false);
   const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -185,6 +188,7 @@ export function SyncPanel() {
     if (!r.space_id) { setStatus(`请先绑定组织空间${r.remoteSpaces.length ? "（在上方下拉选择一个）" : "（还没有空间就点「创建空间」，或让管理员邀请你加入）"}`); return; }
     setSyncing(true);
     setStatus("");
+    useSyncStatus.getState().begin("正在同步…");
     try {
       const res = await api.syncWorkspace(r.ws_id);
       if (res.error) {
@@ -444,6 +448,7 @@ export function SyncPanel() {
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
         <CloudSyncIcon width={14} height={14} />
         <span>同步</span>
+        {syncStatus.syncing && <span className="sync-pulse" aria-hidden />}
       </button>
       {open && (
         <div
@@ -724,7 +729,19 @@ export function SyncPanel() {
                 <option value="300000">每 5 分钟</option>
               </select>
             </div>
-            {status && <div className={`sync-status is-${statusKind(status)}`}>{status}</div>}
+            {syncStatus.syncing ? (
+              <div className={`sync-status is-progress${syncStatus.phase === "error" ? " is-err" : ""}`}>
+                <span className="sync-spin" aria-hidden />
+                <span className="sync-status-text">{syncStatus.message || "正在同步…"}</span>
+                {syncStatus.attTotal > 0 && (
+                  <span className="sync-progress" title={syncStatus.attName || ""}>
+                    {syncStatus.attCurrent}/{syncStatus.attTotal} 个附件
+                  </span>
+                )}
+              </div>
+            ) : status ? (
+              <div className={`sync-status is-${statusKind(status)}`}>{status}</div>
+            ) : null}
             {history.length > 0 && (
               <div className="sync-history">
                 <div className="sync-history-head">

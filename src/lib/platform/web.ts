@@ -2410,13 +2410,19 @@ function makeInvoke(store: SqliteStore) {
       const p = getProfile(store, wsId);
       if (!p.server_url) throw new Error("请先配置同步服务器");
       if (!p.space_id) throw new Error("需绑定组织空间才能同步（多设备同步不支持留空）");
+      useSyncStatus.getState().begin("正在同步…");
       try {
+        useSyncStatus.getState().setProgress({ phase: "pushing", message: "正在推送变更…" });
         const pushed = await doPush(store, p);
+        useSyncStatus.getState().setProgress({ phase: "pulling", message: "正在拉取变更…" });
         const pulled = await doPull(store, p);
+        useSyncStatus.getState().setProgress({ phase: "attachments", message: "正在同步附件…" });
         await syncAttachments(store, p);
         const latest = getProfile(store, wsId);
+        useSyncStatus.getState().end();
         return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null } as T;
       } catch (e) {
+        useSyncStatus.getState().end(String(e));
         return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) } as T;
       }
     }
