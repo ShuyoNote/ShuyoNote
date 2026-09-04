@@ -14,6 +14,8 @@ import {
   CalendarIcon,
   TimelineIcon,
   DirectoryIcon,
+  DownloadIcon,
+  TemplateIcon,
 } from "./icons";
 
 const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula", "rollup"] as const;
@@ -996,10 +998,12 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           {moreOpen && (
             <div className="db-views-pop db-more-pop">
               <button className="db-more-item" onClick={() => { setMoreOpen(false); exportPdf(); }}>
-                <span>⤓</span> 导出为 PDF
+                <span className="db-more-ic"><DownloadIcon width={14} height={14} /></span>
+                <span className="db-more-label">导出为 PDF</span>
               </button>
               <button className="db-more-item" onClick={() => { setMoreOpen(false); saveAsTemplate(); }}>
-                <span>✦</span> 保存为模板
+                <span className="db-more-ic"><TemplateIcon width={14} height={14} /></span>
+                <span className="db-more-label">保存为模板</span>
               </button>
             </div>
           )}

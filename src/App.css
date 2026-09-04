@@ -9652,7 +9652,7 @@ p:has(> .editor-drawing-container) {
 .db-more-wrap { position: relative; }
 .db-more-glyph { letter-spacing: 1px; }
 .db-more-item {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 8px;
   width: 100%;
   border: none; background: transparent;
   color: var(--text-dim);
@@ -9662,7 +9662,11 @@ p:has(> .editor-drawing-container) {
   text-align: left;
 }
 .db-more-item:hover { background: var(--hover); color: var(--text); }
-.db-more-item span { color: var(--text-dim); }
+.db-more-ic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; flex-shrink: 0; color: var(--text-dim);
+}
+.db-more-label { flex: 1; white-space: nowrap; }
 .db-views-title {
   font-size: 11px;
   color: var(--text-faint);
