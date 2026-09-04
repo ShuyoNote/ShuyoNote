@@ -9640,7 +9640,7 @@ p:has(> .editor-drawing-container) {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 40;
+  z-index: var(--z-popover);
   min-width: 220px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -9648,6 +9648,21 @@ p:has(> .editor-drawing-container) {
   box-shadow: var(--shadow-md);
   padding: 5px;
 }
+/* 「更多」溢出菜单：折叠顶部不常用按钮。 */
+.db-more-wrap { position: relative; }
+.db-more-glyph { letter-spacing: 1px; }
+.db-more-item {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+  border: none; background: transparent;
+  color: var(--text-dim);
+  font-size: 13px; padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer; font-family: inherit;
+  text-align: left;
+}
+.db-more-item:hover { background: var(--hover); color: var(--text); }
+.db-more-item span { color: var(--text-dim); }
 .db-views-title {
   font-size: 11px;
   color: var(--text-faint);

@@ -131,6 +131,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const sortMenuPanelRef = useRef<HTMLDivElement>(null);
   const viewsWrapRef = useRef<HTMLDivElement>(null);
   const ruleWrapRef = useRef<HTMLDivElement>(null);
+  // 「更多」溢出菜单：折叠顶部不常用按钮（视图/规则/导出PDF/保存模板）。
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
   const [viewType, setViewType] = useState<
     "table" | "gallery" | "board" | "list" | "calendar" | "timeline" | "directory" | "gantt"
   >("table");
@@ -318,7 +321,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   // Close the add-column / options / board-group / sort / views / rule panels when
   // clicking outside them (a single consistent "click background to close" behavior).
   useEffect(() => {
-    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey && !viewsPop && !ruleOpen) return;
+    if (!addingCol && !editingOptionsCol && !boardGroupOpen && !sortMenuKey && !viewsPop && !ruleOpen && !moreOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (addColPanelRef.current?.contains(t)) return;
@@ -327,16 +330,18 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       if (sortMenuPanelRef.current?.contains(t)) return;
       if (viewsWrapRef.current?.contains(t)) return;
       if (ruleWrapRef.current?.contains(t)) return;
+      if (moreRef.current?.contains(t)) return;
       setAddingCol(false);
       setEditingOptionsCol(null);
       setBoardGroupOpen(false);
       setSortMenuKey(null);
       setViewsPop(false);
       setRuleOpen(false);
+      setMoreOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [addingCol, editingOptionsCol, boardGroupOpen, sortMenuKey, viewsPop, ruleOpen]);
+  }, [addingCol, editingOptionsCol, boardGroupOpen, sortMenuKey, viewsPop, ruleOpen, moreOpen]);
 
   // Only one floating panel is open at a time; opening one clears the rest.
   const closeDbPanels = () => {
@@ -911,9 +916,21 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           </button>
         </div>
         <div className="db-actions">
-          <button className="db-views-btn" onClick={exportPdf} title="导出为 PDF（打印 → 另存为 PDF）">
-            <span>⤓</span> PDF
-          </button>
+          <div className="db-more-wrap" ref={moreRef}>
+            <button className="db-views-btn" onClick={() => setMoreOpen((v) => !v)} title="更多操作">
+              <span className="db-more-glyph">•••</span>
+            </button>
+            {moreOpen && (
+              <div className="db-views-pop db-more-pop">
+                <button className="db-more-item" onClick={() => { setMoreOpen(false); exportPdf(); }}>
+                  <span>⤓</span> 导出为 PDF
+                </button>
+                <button className="db-more-item" onClick={() => { setMoreOpen(false); saveAsTemplate(); }}>
+                  <span>✦</span> 保存为模板
+                </button>
+              </div>
+            )}
+          </div>
           <div className="db-views-wrap" ref={viewsWrapRef}>
             <button className="db-views-btn" onClick={() => setViewsPop((v) => !v)}>
               视图{views.length > 0 ? ` (${views.length})` : ""} ▾
@@ -987,9 +1004,6 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
           )}
         </div>
         </div>
-        <button className="db-views-btn" onClick={saveAsTemplate} title="把当前数据库保存为模板（含列定义）">
-          保存为模板
-        </button>
         <span className="database-count">{rows.length} 条</span>
       </div>
 
