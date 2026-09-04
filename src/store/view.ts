@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useTemplateCenterStore } from "./templateCenter";
 
 export type AppView = "notes" | "board" | "graph" | "files";
 export type ContentWidth = "centered" | "full";
@@ -17,7 +18,11 @@ const WIDTH_KEY = "shuyonote:contentWidth";
 // store so the command palette and keyboard shortcuts can switch views.
 export const useViewStore = create<ViewState>((set) => ({
   view: "notes",
-  setView: (view) => set({ view }),
+  setView: (view) => {
+    // 切换视图（笔记/看板/关系图/文件）时自动关闭模板中心，避免覆盖层残留。
+    useTemplateCenterStore.getState().setOpen(false);
+    set({ view });
+  },
   contentWidth: (localStorage.getItem(WIDTH_KEY) as ContentWidth) || "centered",
   setContentWidth: (width) => {
     try {
