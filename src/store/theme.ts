@@ -6,6 +6,27 @@ export type AccentId = "blue" | "green" | "purple" | "orange" | "red" | "teal";
 
 const STORAGE_KEY = "shuyonote-theme";
 const ACCENT_KEY = "shuyonote-accent";
+// 官网主题键：与官网「亮/暗」开关共用，实现官网 ↔ Web 版主题联动。
+const SITE_THEME_KEY = "shuyo-theme";
+
+/** 把官网主题值（light/dark/auto）映射成应用主题（light/dark/system）；未设置返回 null。 */
+function siteThemeToApp(): Theme | null {
+  const v = localStorage.getItem(SITE_THEME_KEY);
+  if (v === "dark") return "dark";
+  if (v === "light") return "light";
+  if (v === "auto") return "system";
+  return null;
+}
+
+/** 把应用主题写成官网值（system 对应官网的 auto）。 */
+function appThemeToSite(t: Theme): string {
+  return t === "system" ? "auto" : t;
+}
+
+/** 解析当前生效主题：官网优先，其次应用内设置，最后跟随系统。 */
+function effectiveTheme(): Theme {
+  return siteThemeToApp() ?? ((localStorage.getItem(STORAGE_KEY) as Theme) || "system");
+}
 
 export interface AccentDef {
   id: AccentId;
@@ -78,7 +99,7 @@ function syncTitleBar(dark: boolean) {
  * 供 Mica 开关等「改完窗口属性后要重染色」的场景复用——当前主题值由本模块
  * 持有，外部不必重复读取。 */
 export function syncTitlebarColors() {
-  const theme = (localStorage.getItem(STORAGE_KEY) as Theme) || "system";
+  const theme = effectiveTheme();
   const resolved = theme === "system" ? (systemPrefersDark() ? "dark" : "light") : theme;
   syncTitleBar(resolved === "dark");
 }
@@ -91,23 +112,25 @@ interface ThemeState {
 }
 
 export const useTheme = create<ThemeState>((set) => ({
-  theme: (localStorage.getItem(STORAGE_KEY) as Theme) || "system",
+  theme: effectiveTheme(),
   accent: (localStorage.getItem(ACCENT_KEY) as AccentId) || "blue",
   setTheme: (t) => {
+    // 同时写应用键与官网键，让官网 / Web 版主题保持一致。
     localStorage.setItem(STORAGE_KEY, t);
+    try { localStorage.setItem(SITE_THEME_KEY, appThemeToSite(t)); } catch { /* 忽略 */ }
     applyTheme(t);
     set({ theme: t });
   },
   setAccent: (id) => {
     localStorage.setItem(ACCENT_KEY, id);
-    const resolved = (localStorage.getItem(STORAGE_KEY) as Theme) || "system";
+    const resolved = effectiveTheme();
     applyAccent(id, resolved === "system" ? (systemPrefersDark() ? "dark" : "light") : resolved);
     set({ accent: id });
   },
 }));
 
 // Apply on startup.
-applyTheme((localStorage.getItem(STORAGE_KEY) as Theme) || "system");
+applyTheme(effectiveTheme());
 
 // Reactively resolve the app's effective theme ("light" | "dark"), respecting
 // the "system" preference. Used by embedded surfaces (e.g. the page-inline
@@ -131,6 +154,6 @@ export function useResolvedTheme(): "light" | "dark" {
 
 // React to system theme changes when in "system" mode.
 window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", () => {
-  const current = (localStorage.getItem(STORAGE_KEY) as Theme) || "system";
+  const current = effectiveTheme();
   if (current === "system") applyTheme("system");
 });
