@@ -148,6 +148,8 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   const [colDragName, setColDragName] = useState("");
   // 表格列头拖拽换序（HTML5 draggable）。
   const [dbColDragIdx, setDbColDragIdx] = useState<number | null>(null);
+  // 表头拖拽时鼠标所在插入位置（列间指示线；null=不显示）。
+  const [dbColOverIdx, setDbColOverIdx] = useState<number | null>(null);
   const [colDragColor, setColDragColor] = useState("");
   const [colDragPos, setColDragPos] = useState<{ x: number; y: number } | null>(null);
   const [colDragSide, setColDragSide] = useState<"before" | "after">("before");
@@ -405,6 +407,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       return { ...q, columns: cols };
     });
     setDbColDragIdx(null);
+    setDbColOverIdx(null);
   };
 
   const removeColumn = async (attrId: string) => {
@@ -1031,12 +1034,18 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                 {query.columns.map((c, i) => (
                   <th
                     key={c.id}
-                    className={`db-th ${sort?.key === c.id ? "db-th-sorted" : ""} ${dbColDragIdx === i ? " db-th-dragging" : ""}`}
+                    className={`db-th ${sort?.key === c.id ? "db-th-sorted" : ""} ${dbColDragIdx === i ? " db-th-dragging" : ""}${dbColOverIdx === i ? " db-th-drop-left" : ""}${dbColOverIdx === i + 1 ? " db-th-drop-right" : ""}`}
                     title={TYPE_LABELS[c.attr_type] ?? c.attr_type}
                     draggable
                     onDragStart={(e) => { setDbColDragIdx(i); e.dataTransfer.effectAllowed = "move"; }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => { e.preventDefault(); reorderColumns(i); }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setDbColOverIdx(e.clientX < rect.left + rect.width / 2 ? i : i + 1);
+                    }}
+                    onDragLeave={() => setDbColOverIdx(null)}
+                    onDrop={(e) => { e.preventDefault(); reorderColumns(dbColOverIdx ?? i); }}
                     onDragEnd={() => setDbColDragIdx(null)}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => toggleSortMenu(c.id)}

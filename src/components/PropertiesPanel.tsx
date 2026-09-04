@@ -74,13 +74,16 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   };
   // HTML5 拖拽换序：从 fromIdx 拖到 toIdx。
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  // 拖拽时鼠标所在的插入位置（用于显示位置指示线；null=不显示）。
+  const [overIdx, setOverIdx] = useState<number | null>(null);
   const onDropTo = (toIdx: number) => {
-    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); return; }
+    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setOverIdx(null); return; }
     const next = [...attrs];
     const [moved] = next.splice(dragIdx, 1);
     next.splice(toIdx, 0, moved);
     setOrder(next);
     setDragIdx(null);
+    setOverIdx(null);
   };
 
   // Serialize writes per attribute so a later value is never overwritten by an
@@ -161,9 +164,15 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
           {orderedProps.map((p, i) => (
               <div
                 key={p.attr_id}
-                className={`prop-row${dragIdx === i ? " is-dragging" : ""}`}
-                onDragOver={(e) => { e.preventDefault(); }}
-                onDrop={() => onDropTo(i)}
+                className={`prop-row${dragIdx === i ? " is-dragging" : ""}${overIdx === i ? " drop-before" : ""}${overIdx === i + 1 ? " drop-after" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setOverIdx(e.clientY < rect.top + rect.height / 2 ? i : i + 1);
+                }}
+                onDragLeave={() => setOverIdx(null)}
+                onDrop={() => onDropTo(overIdx ?? i)}
               >
                 <button
                   className="prop-grip"

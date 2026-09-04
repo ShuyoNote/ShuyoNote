@@ -4206,6 +4206,21 @@ body.content-full .editor-placeholder {
   min-height: 30px;
 }
 .prop-row.is-dragging { opacity: 0.5; }
+.prop-row { position: relative; }
+.prop-row.drop-before::before,
+.prop-row.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent, #4f7cff);
+  box-shadow: 0 0 5px rgba(79,124,255,.4);
+  pointer-events: none;
+}
+.prop-row.drop-before::before { top: -1px; }
+.prop-row.drop-after::after { bottom: -1px; }
 .prop-grip {
   cursor: grab;
   color: var(--text-faint);
@@ -4225,8 +4240,21 @@ body.content-full .editor-placeholder {
   padding: 0;
 }
 .prop-order:hover { color: var(--text); }
-.db-th { user-select: none; }
+.db-th { user-select: none; position: relative; }
 .db-th-dragging { opacity: 0.5; }
+.db-th.db-th-drop-left::before,
+.db-th.db-th-drop-right::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent, #4f7cff);
+  box-shadow: 0 0 5px rgba(79,124,255,.4);
+  pointer-events: none;
+}
+.db-th.db-th-drop-left::before { left: -1px; }
+.db-th.db-th-drop-right::after { right: -1px; }
 
 
 .prop-name {
