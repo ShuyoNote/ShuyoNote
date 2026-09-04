@@ -2070,18 +2070,21 @@ select.sync-input {
 }
 .trash-head-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .trash-count { font-size: 12px; color: var(--text-dim); flex: 1; }
-.trash-clear {
+.trash-head-actions { display: inline-flex; gap: 6px; }
+.trash-act-head {
+  display: inline-flex; align-items: center; gap: 4px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-dim);
   border-radius: var(--radius-sm);
-  padding: 3px 10px;
+  padding: 3px 9px;
   font-size: 12px;
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
-.trash-clear:hover:not(:disabled) { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
-.trash-clear:disabled { opacity: .4; cursor: default; }
+.trash-act-head.restore:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.trash-act-head.clear:hover:not(:disabled) { color: #e5484d; border-color: rgba(229,72,77,.4); background: rgba(229,72,77,.08); }
+.trash-act-head:disabled { opacity: .4; cursor: default; }
 
 .trash-list { overflow-y: auto; max-height: 300px; padding: 4px; }
 
@@ -2107,7 +2110,16 @@ select.sync-input {
 }
 .trash-item:hover { background: var(--hover); }
 .trash-icon { flex-shrink: 0; opacity: .8; }
-.trash-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-item-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.trash-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-when { font-size: 11px; color: var(--text-faint); }
+.trash-group-label {
+  padding: 8px 8px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  letter-spacing: .04em;
+}
 .trash-actions { display: inline-flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity var(--transition-fast); }
 .trash-item:hover .trash-actions { opacity: 1; }
 .trash-act {
