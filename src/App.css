@@ -4229,7 +4229,7 @@ body.content-full .editor-placeholder {
   font-size: 13px;
   padding: 0 2px;
 }
-.prop-order-btns { display: inline-flex; flex-direction: column; flex-shrink: 0; gap: 1px; }
+.prop-order-btns { display: inline-flex; flex-direction: row; flex-shrink: 0; gap: 2px; align-items: center; }
 .prop-order {
   background: transparent;
   border: none;
