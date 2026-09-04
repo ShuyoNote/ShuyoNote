@@ -394,6 +394,15 @@ export function FileManagerView() {
     }
   };
 
+  // 网格视图按「照片/视频优先」排序（照片墙），页面/文件夹/其它文件靠后。
+  const isMediaRow = (r: (typeof rows)[number]) =>
+    r.kind === "file" && !!r.file && (r.file.mime.startsWith("image/") || r.file.mime.startsWith("video/"));
+  const gridRows = useMemo(() => {
+    const media = rows.filter(isMediaRow);
+    const rest = rows.filter((r) => !isMediaRow(r));
+    return [...media, ...rest];
+  }, [rows]);
+
   const fileTotalBytes = useMemo(
     () => files.reduce((s, f) => s + (f.size || 0), 0),
     [files],
@@ -524,8 +533,8 @@ export function FileManagerView() {
       <div className="file-manager-table-wrap">
         {viewMode === "grid" && (
           <div className="fm-grid">
-            {visibleRows.length === 0 && <div className="fm-empty">没有文件</div>}
-            {visibleRows.map((row) => {
+            {gridRows.length === 0 && <div className="fm-empty">没有文件</div>}
+            {gridRows.map((row) => {
               const isImage = row.kind === "file" && row.file?.mime.startsWith("image/") && row.file.path;
               const isVideo = row.kind === "file" && row.file?.mime.startsWith("video/") && row.file.path;
               return (
