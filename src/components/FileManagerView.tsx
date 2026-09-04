@@ -440,9 +440,11 @@ export function FileManagerView() {
     }
     try {
       // Delete pages/folders first (children then parents), then files.
+      // 用后端 api.deletePage 逐个软删（含后代），最后统一 reload，避免逐个 loadPages 中断。
       for (const pageId of selectedPageIds) {
-        await deletePage(pageId);
+        await api.deletePage(pageId).catch(() => {});
       }
+      if (pageCount > 0) await useNotes.getState().loadPages();
       if (fileCount > 0) {
         const n = await api.removeAttachments(selectedFileIds);
         setFiles((prev) => prev.filter((f) => !selectedFileIds.includes(f.id)));
@@ -450,7 +452,7 @@ export function FileManagerView() {
         if (n !== fileCount) {
           toast(`文件删除完成：${n} 个`, "info");
         }
-      } else {
+      } else if (pageCount > 0) {
         toast(`已删除 ${pageCount} 个页面/文件夹`, "success");
       }
       setSelected(new Set());
