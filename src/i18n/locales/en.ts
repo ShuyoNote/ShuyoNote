@@ -60,6 +60,15 @@ export default {
     blankPage: "Blank page",
     empty: "No pages yet — click \"New page\" to start",
   },
+  editor: {
+    find: "Find (Ctrl+F)",
+    importMarkdown: "Import from Markdown",
+    saveAsTemplate: "Save page as a template (Mine)",
+    more: "More (export…)",
+    exportMarkdown: "Export as Markdown",
+    exportHtml: "Export as HTML",
+    exportPdf: "Export as PDF",
+  },
   files: {
     title: "Files",
     newFolder: "New folder",

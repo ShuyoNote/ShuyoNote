@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
 import { platform } from "../lib/platform";
@@ -21,6 +22,7 @@ function triggerFind() {
 }
 
 export function EditorToolbar({ pageId }: { pageId: string }) {
+  const { t } = useTranslation();
   const editor = useEditorStore((s) => s.editor);
   const [importing, setImporting] = useState(false);
   const contentWidth = useViewStore((s) => s.contentWidth);
@@ -119,13 +121,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
 
   return (
     <div className="editor-toolbar">
-      <button className="toolbar-btn" onClick={triggerFind} title="查找 (Ctrl+F)">
+      <button className="toolbar-btn" onClick={triggerFind} title={t("editor.find")}>
         <SearchIcon />
       </button>
-      <button className="toolbar-btn" onClick={importMarkdown} title="从 Markdown 导入">
+      <button className="toolbar-btn" onClick={importMarkdown} title={t("editor.importMarkdown")}>
         <UploadIcon />
       </button>
-      <button className="toolbar-btn" onClick={saveAsTemplate} title="把当前页保存为模板（我的模板）">
+      <button className="toolbar-btn" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
         <TemplateIcon />
       </button>
       <button
@@ -140,20 +142,20 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         <button
           className="toolbar-btn"
           onClick={() => setExportOpen((v) => !v)}
-          title="更多（导出等）"
+          title={t("editor.more")}
         >
           ⋯
         </button>
         {exportOpen && (
           <div className="editor-more-menu">
-            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportMarkdown(); }} title="导出为 Markdown">
-              <DownloadIcon /> 导出 Markdown
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportMarkdown(); }} title={t("editor.exportMarkdown")}>
+              <DownloadIcon /> {t("editor.exportMarkdown")}
             </button>
-            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title="导出为 HTML">
-              <FileCodeIcon /> 导出 HTML
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title={t("editor.exportHtml")}>
+              <FileCodeIcon /> {t("editor.exportHtml")}
             </button>
-            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title="导出为 PDF">
-              <PrintIcon /> 导出 PDF
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title={t("editor.exportPdf")}>
+              <PrintIcon /> {t("editor.exportPdf")}
             </button>
           </div>
         )}

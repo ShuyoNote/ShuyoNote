@@ -60,6 +60,15 @@ export default {
     blankPage: "空白文书",
     empty: "暂无页面，点击「新建页面」开始",
   },
+  editor: {
+    find: "查找 (Ctrl+F)",
+    importMarkdown: "从 Markdown 导入",
+    saveAsTemplate: "把当前页保存为模板（我的模板）",
+    more: "更多（导出等）",
+    exportMarkdown: "导出为 Markdown",
+    exportHtml: "导出为 HTML",
+    exportPdf: "导出为 PDF",
+  },
   files: {
     title: "文件管理",
     newFolder: "新建文件夹",
