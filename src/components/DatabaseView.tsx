@@ -851,7 +851,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
     <div className="database-view">
       <div className="database-head">
         <h1 className="database-title">{title || "数据库"}</h1>
-        <span className="database-count">{rows.length} 条</span>
+        <span className="database-count">共 {rows.length} 条</span>
         <input
           className="database-filter"
           placeholder="按标题筛选…（空格=与，逗号=或）"
