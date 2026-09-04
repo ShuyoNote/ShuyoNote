@@ -647,6 +647,14 @@ export function PdfReader() {
     })();
     return () => {
       alive = false;
+      // On close (open → null) the reader stays mounted but renders null, so the
+      // page-image cache + pageData would otherwise survive and their blob URLs be
+      // re-requested on the next open (before the fresh-render effect) → stale
+      // `blob:` URLs → net::ERR_FILE_NOT_FOUND. Revoke + clear them on teardown.
+      const cache = pageCacheRef.current;
+      for (const u of cache.values()) URL.revokeObjectURL(u);
+      cache.clear();
+      setPageData({});
     };
   }, [open, bytes]);
 
