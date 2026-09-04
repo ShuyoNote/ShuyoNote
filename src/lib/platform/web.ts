@@ -22,6 +22,7 @@ import type { Platform } from "./types";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { blobStore, contentHash } from "./blobStore";
 import { spaceStore, useSpaceCatalog } from "./spaceStore";
+import { useSyncStatus } from "../../store/syncStatus";
 import { unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { createOllamaTransport, createOpenAICompatTransport, testOllamaConnection, testOpenAICompatConnection } from "../ai/llm";
@@ -825,7 +826,12 @@ async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulle
 async function attachmentByteUpload(url: string, token: string, mime: string, bytes: Uint8Array): Promise<void> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const resp = await fetch(`${url}?mime=${encodeURIComponent(mime)}`, { method: "POST", headers, body: bytes as unknown as BodyInit });
+  // 流式上传：把字节包成可读流作为 body，分块推给网络层，避免一次性缓冲整块。
+  const resp = await fetch(`${url}?mime=${encodeURIComponent(mime)}`, {
+    method: "POST",
+    headers,
+    body: bytes ? new Blob([bytes as unknown as BlobPart], { type: mime }).stream() : undefined,
+  });
   if (!resp.ok) throw new Error(`上传附件失败（HTTP ${resp.status}）`);
 }
 async function attachmentByteDownload(url: string, token: string): Promise<Uint8Array | null> {
@@ -855,10 +861,18 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
   for (const r of localRows) {
     if (r.hash) localMap.set(String(r.hash), String(r.mime || "application/octet-stream"));
   }
-  // 3. Upload local attachments missing on the server.
+  // 3. Upload local attachments missing on the server (report progress).
+  const upItems = Array.from(localMap).filter(([h]) => !remoteSet.has(h));
   let uploaded = 0;
-  for (const [hash, mime] of localMap) {
-    if (remoteSet.has(hash)) continue;
+  for (let ui = 0; ui < upItems.length; ui++) {
+    const [hash, mime] = upItems[ui];
+    useSyncStatus.getState().setProgress({
+      phase: "attachments",
+      message: `正在上传附件（${ui + 1}/${upItems.length}）`,
+      attCurrent: ui + 1,
+      attTotal: upItems.length,
+      attName: mime,
+    });
     const bytes = await blobStore.get(hash);
     if (!bytes) continue;
     // 旧数据可能是 FNV(16位) 哈希，而服务端按 SHA-256(64位) 校验 → 400。
@@ -887,9 +901,17 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
     }
   }
   // 4. Download remote attachments missing locally (so images/files render here).
+  const downItems = Array.from(remoteSet).filter((h) => !localMap.has(h));
   let downloaded = 0;
-  for (const hash of remoteSet) {
-    if (localMap.has(hash)) continue;
+  for (let di = 0; di < downItems.length; di++) {
+    const hash = downItems[di];
+    useSyncStatus.getState().setProgress({
+      phase: "attachments",
+      message: `正在下载附件（${di + 1}/${downItems.length}）`,
+      attCurrent: di + 1,
+      attTotal: downItems.length,
+      attName: hash.slice(0, 8),
+    });
     try {
       const bytes = await attachmentByteDownload(`${base}/attachments/${hash}`, token);
       if (bytes && bytes.length > 0) {
