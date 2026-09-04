@@ -16,6 +16,11 @@ export default {
     followSystem: "跟随系统",
     collapse: "收起",
     expand: "展开",
+    palettePlaceholder: "输入命令或搜索页面…",
+    palettePages: "页面",
+    paletteCommands: "命令",
+    palettePlugins: "插件",
+    paletteNoResults: "无结果",
   },
   settings: {
     appearance: "外观",

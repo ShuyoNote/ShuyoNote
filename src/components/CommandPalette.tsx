@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection } from "lexical";
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
@@ -35,6 +36,7 @@ function insertText(text: string) {
 }
 
 export function CommandPalette() {
+  const { t } = useTranslation();
   const { pages, currentId, openPage } = useNotes();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -193,18 +195,18 @@ export function CommandPalette() {
         <input
           ref={inputRef}
           className="palette-input"
-          placeholder="输入命令或搜索页面…"
+          placeholder={t("common.palettePlaceholder")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <div className="palette-list" ref={listRef}>
-          {pageItems.length > 0 && <div className="palette-group">页面</div>}
+          {pageItems.length > 0 && <div className="palette-group">{t("common.palettePages")}</div>}
           {pageItems.map((it, i) => renderItem(it, i))}
-          {cmdItems.length > 0 && <div className="palette-group">命令</div>}
+          {cmdItems.length > 0 && <div className="palette-group">{t("common.paletteCommands")}</div>}
           {cmdItems.map((it, i) => renderItem(it, pageItems.length + i))}
           {pluginItems.length > 0 && (
-            <div className="palette-group">插件</div>
+            <div className="palette-group">{t("common.palettePlugins")}</div>
           )}
           {pluginItems.map((it, i) => renderItem(it, pageItems.length + cmdItems.length + i))}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}

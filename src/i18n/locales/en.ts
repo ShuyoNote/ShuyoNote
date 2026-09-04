@@ -16,6 +16,11 @@ export default {
     followSystem: "Follow system",
     collapse: "Collapse",
     expand: "Expand",
+    palettePlaceholder: "Type a command or search pages…",
+    palettePages: "Pages",
+    paletteCommands: "Commands",
+    palettePlugins: "Plugins",
+    paletteNoResults: "No results",
   },
   settings: {
     appearance: "Appearance",
