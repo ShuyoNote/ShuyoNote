@@ -170,7 +170,7 @@ export function SyncPanel() {
 
   const save = async (r: EditRow) => {
     try {
-      await api.setSyncProfile(r.ws_id, { server_url: r.server_url, token: r.token || undefined, space_id: r.space_id || undefined });
+      await api.setSyncProfile(r.ws_id, { server_url: r.server_url, token: r.token || undefined, space_id: r.space_id || undefined, email: r.loginEmail.trim() || undefined });
       setStatus(`已保存「${r.name}」`);
     } catch (e) {
       setStatus(String(e));

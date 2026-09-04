@@ -161,7 +161,7 @@ export interface CommandMap {
   set_sync_config: { args: { args: { server_url: string; token?: string; space_id?: string } }; result: void };
   sync_now: { args: undefined; result: WorkspaceSyncResult[] };
   list_sync_profiles: { args: undefined; result: SyncProfile[] };
-  set_sync_profile: { args: { wsId: string; serverUrl: string; token?: string; spaceId?: string }; result: void };
+  set_sync_profile: { args: { wsId: string; serverUrl: string; token?: string; spaceId?: string; email?: string }; result: void };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
 
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----

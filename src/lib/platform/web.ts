@@ -2312,12 +2312,16 @@ function makeInvoke(store: SqliteStore) {
       // API 层传 camelCase（wsId/serverUrl/spaceId），兼容旧 snake 键。
       const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
-      putProfile(store, {
-        ...p,
-        server_url: String(args.serverUrl ?? args.server_url ?? p.server_url),
-        token: String(args.token ?? p.token ?? ""),
-        space_id: String(args.spaceId ?? args.space_id ?? p.space_id),
-      });
+      const serverUrl = String(args.serverUrl ?? args.server_url ?? p.server_url);
+      const token = String(args.token ?? p.token ?? "");
+      const spaceId = String(args.spaceId ?? args.space_id ?? p.space_id);
+      putProfile(store, { ...p, server_url: serverUrl, token, space_id: spaceId });
+      // 记住本次填的登录邮箱（供重开面板预填），只更新 email，保留已有 token/user_id。
+      const email = String(args.email ?? "");
+      if (email && serverUrl) {
+        const s = getAuthSession(store, serverUrl);
+        putAuthSession(store, { ...s, server_url: serverUrl, email });
+      }
       return undefined as T;
     }
     if (cmd === "sync_workspace") {

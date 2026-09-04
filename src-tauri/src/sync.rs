@@ -401,9 +401,23 @@ pub fn set_sync_profile(
     server_url: String,
     token: Option<String>,
     space_id: Option<String>,
+    email: Option<String>,
 ) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    set_profile(&c, &ws_id, &server_url, token.as_deref().unwrap_or(""), space_id.as_deref().unwrap_or(""))
+    set_profile(&c, &ws_id, &server_url, token.as_deref().unwrap_or(""), space_id.as_deref().unwrap_or(""))?;
+    // 记住本次填的登录邮箱（供重开面板预填），只更新 email，保留已有 token/user_id。
+    if let Some(e) = email.filter(|e| !e.trim().is_empty()) {
+        let url = server_url.trim().trim_end_matches('/').to_string();
+        let now = crate::db::now_ms();
+        c.execute(
+            "INSERT INTO auth_sessions (server_url, email, user_id, token, created_at, expires_at)
+             VALUES (?1, ?2, '', '', ?3, 0)
+             ON CONFLICT(server_url) DO UPDATE SET email = excluded.email",
+            rusqlite::params![url, e, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn state_i64(c: &Connection, key: &str) -> i64 {

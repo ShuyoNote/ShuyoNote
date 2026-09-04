@@ -116,8 +116,8 @@ export const api = {
   syncNow: () => invoke("sync_now"),
   // S8: per-workspace sync profiles (one local workspace → one remote target).
   listSyncProfiles: () => invoke("list_sync_profiles"),
-  setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string }) =>
-    invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id }),
+  setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string; email?: string }) =>
+    invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id, email: args.email }),
   syncWorkspace: (wsId: string) => invoke("sync_workspace", { wsId }),
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
