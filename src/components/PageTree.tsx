@@ -356,7 +356,7 @@ function TreeItem({
                   setEditing(true);
                 }}
               >
-                ✎ 重命名
+                <span className="menu-icon">✎</span><span className="menu-text">重命名</span>
               </button>
               {!isFolder && (
                 <button
@@ -365,7 +365,7 @@ function TreeItem({
                     api.openPageWindow(node.id);
                   }}
                 >
-                  ⧉ 新窗口打开
+                  <span className="menu-icon">⧉</span><span className="menu-text">新窗口打开</span>
                 </button>
               )}
               <button
@@ -374,7 +374,7 @@ function TreeItem({
                   setCopyOpen(true);
                 }}
               >
-                ⇄ 复制到其他空间
+                <span className="menu-icon">⇄</span><span className="menu-text">复制到其他空间</span>
               </button>
               <button
                 onClick={async () => {
@@ -390,7 +390,7 @@ function TreeItem({
                   }
                 }}
               >
-                ⧉ 复制为副本
+                <span className="menu-icon">⧉</span><span className="menu-text">复制为副本</span>
               </button>
               <button
                 onClick={() => {
@@ -398,7 +398,7 @@ function TreeItem({
                   createPage(node.id);
                 }}
               >
-                + 新建子页面
+                <span className="menu-icon">＋</span><span className="menu-text">新建子页面</span>
               </button>
               {isFolder && (
                 <button
@@ -407,7 +407,7 @@ function TreeItem({
                     createFolder(node.id);
                   }}
                 >
-                  📁 新建子文件夹
+                  <span className="menu-icon">📁</span><span className="menu-text">新建子文件夹</span>
                 </button>
               )}
               <button
@@ -420,7 +420,7 @@ function TreeItem({
                   }
                 }}
               >
-                × 删除
+                <span className="menu-icon">×</span><span className="menu-text">删除</span>
               </button>
             </span>
           )}

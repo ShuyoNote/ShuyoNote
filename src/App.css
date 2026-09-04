@@ -3371,6 +3371,18 @@ select.sync-input {
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;
+  white-space: nowrap;
+}
+.tree-node-menu .menu-icon {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+.tree-node-menu .menu-text {
+  flex: 1;
+  min-width: 0;
 }
 .tree-node-menu button:hover {
   background: var(--hover);
