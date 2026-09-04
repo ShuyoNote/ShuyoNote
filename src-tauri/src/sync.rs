@@ -1219,6 +1219,13 @@ async fn do_pull(
     let mut items: Vec<SyncItem> = Vec::new();
     {
         let c = db.0.lock().expect("db mutex poisoned");
+        // 跨设备 pull 的变更可能引用了「尚未先到达」的父页 / 关联页，触发本地外键约束
+        // （attachments.page_id / pages.parent_id 等）。批量应用期间临时关闭外键，
+        // 应用完恢复原状态，避免整批 pull 被单个外键错误打断。
+        let orig_fk: i64 = c
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap_or(0);
+        let _ = c.execute_batch("PRAGMA foreign_keys = OFF;");
         for change in body.changes {
             if change.seq > max_pulled {
                 max_pulled = change.seq;
@@ -1274,6 +1281,7 @@ async fn do_pull(
             }
         }
         set_profile_field(&c, &profile.ws_id, "last_pulled_seq", max_pulled)?;
+        let _ = c.execute_batch(&format!("PRAGMA foreign_keys = {orig_fk};"));
     }
 
     Ok((count, max_pulled, items))
