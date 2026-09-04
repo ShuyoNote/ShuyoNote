@@ -89,7 +89,7 @@ function MiniPreview({ content }: { content: string }) {
 // type + modified/created columns, and create pages/folders inside a folder.
 export function FileManagerView() {
   const { t } = useTranslation();
-  const { pages, openPage, createPage, createFolder, deletePage } = useNotes();
+  const { pages, openPage, createPage, createFolder } = useNotes();
   const { folderId, setFolderId } = useFileManagerStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
@@ -887,12 +887,10 @@ export function FileManagerView() {
               <>
                 <button className="fm-ctx-item" onClick={() => { downloadFile(row.file!); closeCtx(); }}>下载</button>
                 <button className="fm-ctx-item" onClick={() => { revealFile(row.file!.path); closeCtx(); }}>在文件夹中显示</button>
-                <button className="fm-ctx-item is-danger" onClick={() => { void removeFile(row.file!.id); closeCtx(); }}>删除</button>
               </>
             ) : (
               <>
                 <button className="fm-ctx-item" onClick={() => { openRow(row); closeCtx(); }}>打开</button>
-                <button className="fm-ctx-item is-danger" onClick={() => { void deletePage(row.pageId!); closeCtx(); }}>删除</button>
               </>
             )}
           </div>
