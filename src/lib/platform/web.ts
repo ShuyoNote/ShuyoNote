@@ -2296,7 +2296,9 @@ function makeInvoke(store: SqliteStore) {
       const args = a.args ?? a;
       const server_url = String(args.server_url ?? args.serverUrl ?? "");
       const s = getAuthSession(store, server_url);
-      return (await syncFetch(server_url, "/spaces", s.token)) as T;
+      const res = (await syncFetch(server_url, "/spaces", s.token)) as any;
+      // 服务端返回 { spaces: [...] }，转为数组；也容忍裸数组。
+      return (Array.isArray(res) ? res : (res?.spaces ?? [])) as T;
     }
     if (cmd === "team_create_space") {
       const args = a.args ?? a;
@@ -2356,7 +2358,9 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "team_list_members") {
       const args = a.args ?? a;
       const serverUrl = `${serverArg()}/spaces/${encodeURIComponent(String(args.space_id ?? ""))}/members`;
-      return (await syncFetch(serverUrl, "", teamToken(serverArg()))) as T;
+      const res = (await syncFetch(serverUrl, "", teamToken(serverArg()))) as any;
+      // 服务端返回 { members: [...] }，转为数组；也容忍裸数组。
+      return (Array.isArray(res) ? res : (res?.members ?? [])) as T;
     }
     if (cmd === "team_remove_member") {
       const args = a.args ?? a;
@@ -2364,7 +2368,9 @@ function makeInvoke(store: SqliteStore) {
       return (await syncFetch(serverUrl, "", teamToken(serverArg()), null, "DELETE")) as T;
     }
     if (cmd === "team_list_orgs") {
-      return (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()))) as T;
+      const res = (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()))) as any;
+      // 服务端返回 { orgs: [...] }，转为数组；也容忍裸数组。
+      return (Array.isArray(res) ? res : (res?.orgs ?? [])) as T;
     }
     if (cmd === "team_invite_org_member") {
       const args = a.args ?? a;
