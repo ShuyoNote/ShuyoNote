@@ -1724,6 +1724,26 @@ select.sync-input {
   color: var(--text-dim);
   white-space: nowrap;
 }
+/* 进度条容器/填充 */
+.sync-progress-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.sync-progress-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.sync-progressbar {
+  height: 4px; border-radius: 2px;
+  background: var(--border);
+  overflow: hidden; margin-top: 6px;
+}
+.sync-progressbar-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
 /* 触发图标上同步中的脉冲点。 */
 .sync-pulse {
   width: 7px;
@@ -1754,11 +1774,37 @@ select.sync-input {
 }
 .sync-history-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
-  flex-wrap: wrap;
+}
+.sync-history-status {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 18px;
+}
+.sync-history-status.is-ok { color: var(--success); }
+.sync-history-status.is-err { color: var(--danger); }
+.sync-history-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.sync-history-title {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.sync-history-at { font-size: 12px; color: var(--text-dim); }
+.sync-history-stats { display: inline-flex; gap: 5px; }
+.sync-stat {
+  font-size: 11px; padding: 1px 6px; border-radius: 6px;
+  background: var(--chip-bg); color: var(--text-dim);
+}
+.sync-history-msg {
+  font-size: 11px; color: var(--danger);
+  word-break: break-word;
 }
 .sync-history-detail-toggle {
   border: none;
@@ -1786,6 +1832,7 @@ select.sync-input {
 .sync-dir-push { color: var(--success); }
 .sync-dir-pull { color: var(--accent); }
 .sync-op { color: var(--text-dim); }
+.sync-op.is-del { color: var(--danger); }
 .sync-id { color: var(--text-faint); font-size: 11px; }
 .sync-history-more { color: var(--text-faint); font-size: 11px; }
 /* 同步历史头：标题 + 清空按钮一行。 */

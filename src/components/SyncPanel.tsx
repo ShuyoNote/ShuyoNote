@@ -16,6 +16,20 @@ const ENTITY_LABELS: Record<string, string> = {
   block: "块",
 };
 const entityLabel = (e: string) => ENTITY_LABELS[e] || e || "项";
+// 相对时间：最近用「刚刚/几秒前/几分钟前」，超过 1 天显示日期。
+const relTime = (ts: number) => {
+  const diff = Date.now() - ts;
+  const s = Math.floor(diff / 1000);
+  if (s < 5) return "刚刚";
+  if (s < 60) return `${s} 秒前`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 interface ServerSpace {
   id: string;
@@ -731,12 +745,22 @@ export function SyncPanel() {
             </div>
             {syncStatus.syncing ? (
               <div className={`sync-status is-progress${syncStatus.phase === "error" ? " is-err" : ""}`}>
-                <span className="sync-spin" aria-hidden />
-                <span className="sync-status-text">{syncStatus.message || "正在同步…"}</span>
-                {syncStatus.attTotal > 0 && (
-                  <span className="sync-progress" title={syncStatus.attName || ""}>
-                    {syncStatus.attCurrent}/{syncStatus.attTotal} 个附件
-                  </span>
+                <div className="sync-progress-row">
+                  <span className="sync-spin" aria-hidden />
+                  <span className="sync-status-text">{syncStatus.message || "正在同步…"}</span>
+                  {syncStatus.attTotal > 0 && (
+                    <span className="sync-progress-count" title={syncStatus.attName || ""}>
+                      {syncStatus.attCurrent}/{syncStatus.attTotal}
+                    </span>
+                  )}
+                </div>
+                {syncStatus.phase === "attachments" && syncStatus.attTotal > 0 && (
+                  <div className="sync-progressbar">
+                    <div
+                      className="sync-progressbar-fill"
+                      style={{ width: `${(syncStatus.attCurrent / syncStatus.attTotal) * 100}%` }}
+                    />
+                  </div>
                 )}
               </div>
             ) : status ? (
@@ -759,33 +783,38 @@ export function SyncPanel() {
                       const open = detailOpenIdx === i;
                       return (
                         <div key={i} className="sync-history-item">
-                          <span className="sync-history-status">{h.ok ? "✓" : "✗"}</span>
-                          <span className="sync-history-at">{d}</span>
-                          <span className="sync-history-detail">
-                            上传 {h.pushed} / 拉取 {h.pulled}
-                          </span>
-                          {h.items.length > 0 && (
-                            <button
-                              className="sync-history-detail-toggle"
-                              onClick={() => setDetailOpenIdx(open ? null : i)}
-                            >
-                              {h.items.length} 项明细 ▾
-                            </button>
-                          )}
-                          {h.message && <span className="sync-history-msg">{h.message}</span>}
-                          {open && (
-                            <div className="sync-history-items">
-                              {h.items.slice(0, 30).map((it, j) => (
-                                <div key={j} className="sync-history-item-row">
-                                  <span className={`sync-dir-${it.dir}`}>{it.dir === "push" ? "↑" : "↓"}</span>
-                                  <span className="sync-entity">{entityLabel(it.entity)}</span>
-                                  <span className="sync-op">{it.op === "delete" ? "删除" : "变更"}</span>
-                                  <span className="sync-id" title={it.entity_id}>{it.title || it.entity_id.slice(0, 10)}</span>
-                                </div>
-                              ))}
-                              {h.items.length > 30 && <div className="sync-history-more">…等 {h.items.length - 30} 项</div>}
+                          <span className={`sync-history-status${h.ok ? " is-ok" : " is-err"}`}>{h.ok ? "✓" : "✗"}</span>
+                          <div className="sync-history-main">
+                            <div className="sync-history-title">
+                              <span className="sync-history-at" title={d}>{relTime(h.at)}</span>
+                              <span className="sync-history-stats">
+                                <span className="sync-stat">↑ {h.pushed}</span>
+                                <span className="sync-stat">↓ {h.pulled}</span>
+                              </span>
+                              {h.items.length > 0 && (
+                                <button
+                                  className="sync-history-detail-toggle"
+                                  onClick={() => setDetailOpenIdx(open ? null : i)}
+                                >
+                                  {h.items.length} 项明细 ▾
+                                </button>
+                              )}
+                            </div>
+                            {h.message && <div className="sync-history-msg">{h.message}</div>}
+                            {open && (
+                              <div className="sync-history-items">
+                                {h.items.slice(0, 30).map((it, j) => (
+                                  <div key={j} className="sync-history-item-row">
+                                    <span className={`sync-dir-${it.dir}`}>{it.dir === "push" ? "↑" : "↓"}</span>
+                                    <span className="sync-entity">{entityLabel(it.entity)}</span>
+                                    <span className={`sync-op${it.op === "delete" ? " is-del" : ""}`}>{it.op === "delete" ? "删除" : "变更"}</span>
+                                    <span className="sync-id" title={it.entity_id}>{it.title || it.entity_id.slice(0, 10)}</span>
+                                  </div>
+                                ))}
+                                {h.items.length > 30 && <div className="sync-history-more">…等 {h.items.length - 30} 项</div>}
                             </div>
                           )}
+                          </div>
                         </div>
                       );
                     })}
