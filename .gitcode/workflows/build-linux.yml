@@ -1,0 +1,61 @@
+name: build-linux
+
+# GitCode 流水线（默认 EulerOS/Linux runner）。打 tag v* 时自动构建 Linux 包（.deb + .AppImage）。
+# ⚠️ GitCode 流水线只有 Linux runner，无法构建 Windows/macOS——三平台自动发请用 GitHub Actions（见 .github/workflows/release.yml）。
+# 说明：runner 的软件源包管理器需按实际调整（openEuler 用 dnf；若为 Ubuntu 系则用 apt）。
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: euleros-2.10.1
+    steps:
+      - uses: checkout-action@0.0.1
+
+      - name: Install Node
+        uses: setup-node@0.0.1
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        run: |
+          npm config set registry https://registry.npmmirror.com
+          npm install -g pnpm@latest
+
+      - name: Install rust (rustup)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install Tauri Linux system deps
+        run: |
+          # openEuler（dnf）；若为 Ubuntu 系改用 apt-get。
+          dnf install -y gcc gcc-c++ make file wget curl \
+            webkit2gtk4.1-devel gtk3-devel librsvg2-devel \
+            openssl-devel clang libclang-devel xdg-utils || \
+          sudo apt-get update && sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
+
+      - name: Cargo mirror (rsproxy, CN network)
+        run: |
+          mkdir -p ~/.cargo
+          printf '[source.crates-io]\nreplace-with = "rsproxy-sparse"\n[source.rsproxy-sparse]\nregistry = "sparse+https://rsproxy.cn/index/"\n' > ~/.cargo/config.toml
+
+      - name: Install frontend deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Linux bundles
+        run: pnpm tauri build --bundles deb,appimage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: upload-artifact@0.0.1
+        with:
+          name: shuyonote-linux
+          path: src-tauri/target/release/bundle/
