@@ -42,6 +42,26 @@ jobs:
         with:
           version: "10"
 
+      - name: Import Apple Developer ID cert + keychain (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          CERT="$HOME/AppleDevID.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT"
+          KEYCHAIN="$HOME/build.keychain-db"
+          KEYCHAIN_PASS="ci-$(date +%s)"
+          echo "$KEYCHAIN_PASS" > "$HOME/KC_PASS"
+          security create-keychain -p "$KEYCHAIN_PASS" build.keychain
+          security import "$CERT" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-keychain-settings -lut 21600 build.keychain
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
+          echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD" >> "$GITHUB_ENV"
+          # 让 Xcode 找到该 keychain（避免 "User interaction is not allowed"）
+          /usr/bin/xcodebuild -runFirstLaunch >/dev/null 2>&1 || true
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
       - name: Linux system deps
         if: matrix.platform == 'ubuntu-24.04'
         run: |
