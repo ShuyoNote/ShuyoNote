@@ -2,7 +2,8 @@ name: build-linux
 
 # GitCode 流水线（默认 EulerOS/Linux runner）。打 tag v* 时自动构建 Linux 包（.deb + .AppImage）。
 # ⚠️ GitCode 流水线只有 Linux runner，无法构建 Windows/macOS——三平台自动发请用 GitHub Actions（见 .github/workflows/release.yml）。
-# 说明：runner 的软件源包管理器需按实际调整（openEuler 用 dnf；若为 Ubuntu 系则用 apt）。
+# 启用：在 gitcode 仓库「Pipeline」页创建/启用（或 push 后自动识别 .gitcode/workflows/*.yml）。打 tag 触发。
+# 需要仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD（Linux 更新器签名，未配会打包失败）。
 
 on:
   push:
@@ -18,9 +19,9 @@ jobs:
       - name: Install Node
         uses: setup-node@0.0.1
         with:
-          node-version: "22"
+          node-version: "20"
 
-      - name: Install pnpm
+      - name: Install pnpm + npm mirror
         run: |
           npm config set registry https://registry.npmmirror.com
           npm install -g pnpm@latest
@@ -32,24 +33,24 @@ jobs:
 
       - name: Install Tauri Linux system deps
         run: |
-          # openEuler（dnf）；若为 Ubuntu 系改用 apt-get。
-          dnf install -y gcc gcc-c++ make file wget curl \
+          # openEuler 用 dnf；若为 Ubuntu 系改用 apt-get。二者都可，兜底。
+          sudo dnf install -y gcc gcc-c++ make file wget curl \
             webkit2gtk4.1-devel gtk3-devel librsvg2-devel \
-            openssl-devel clang libclang-devel xdg-utils || \
+            openssl-devel clang libclang-devel xdg-utils 2>/dev/null || \
           sudo apt-get update && sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
 
-      - name: Cargo mirror (rsproxy, CN network)
+      - name: Cargo mirror (rsproxy)
         run: |
           mkdir -p ~/.cargo
           printf '[source.crates-io]\nreplace-with = "rsproxy-sparse"\n[source.rsproxy-sparse]\nregistry = "sparse+https://rsproxy.cn/index/"\n' > ~/.cargo/config.toml
 
       - name: Install frontend deps
-        run: pnpm install --no-frozen-lockfile
+        run: cd repo_workspace && pnpm install --no-frozen-lockfile
 
       - name: Build Linux bundles
-        run: pnpm tauri build --bundles deb,appimage
+        run: cd repo_workspace && pnpm tauri build --bundles deb,appimage
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -58,4 +59,4 @@ jobs:
         uses: upload-artifact@0.0.1
         with:
           name: shuyonote-linux
-          path: src-tauri/target/release/bundle/
+          path: repo_workspace/src-tauri/target/release/bundle/
