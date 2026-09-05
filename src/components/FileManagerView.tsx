@@ -10,7 +10,7 @@ import { toast } from "../store/toast";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
-import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon } from "./icons";
+import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon } from "./icons";
 
 // 右键菜单用的内联 SVG（打开 / 改名）。
 const OpenIcon = ({ size = 14 }: { size?: number }) => (
@@ -554,6 +554,29 @@ export function FileManagerView() {
 
   const closeCtx = () => setCtxMenu({ x: 0, y: 0, row: null });
 
+  // 右键「删除」：文件硬删（附件），页面/文件夹软删（进回收站）。
+  const deleteRow = async (row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta }) => {
+    const label = row.name || "未命名";
+    const isFile = row.kind === "file" && !!row.file;
+    const msg = isFile
+      ? `删除文件「${label}」？若不被引用，其磁盘存储也会被清除。`
+      : `删除「${label}」？页面/文件夹将移入回收站（可恢复）。`;
+    if (!(await confirmDialog({ title: "删除", message: msg, danger: true }))) return;
+    try {
+      if (isFile) {
+        await api.removeAttachment(row.file!.id);
+      } else if (row.pageId) {
+        await api.deletePage(row.pageId);
+      }
+      await useNotes.getState().loadPages();
+      useFileManagerStore.getState().bumpRevision();
+      loadFiles();
+      toast("已删除", "success");
+    } catch (e) {
+      toast(`删除失败：${e}`, "error");
+    }
+  };
+
   // 右键「改名」：文件改附件名，页面/文件夹改标题。
   const renameRow = (row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta }) => {
     const current = row.name || "未命名";
@@ -926,8 +949,8 @@ export function FileManagerView() {
       {ctxMenu.row && (() => {
         const row = ctxMenu.row;
         const isFile = row.kind === "file" && !!row.file;
-        const ctxItem = (icon: ReactNode, label: string, action: () => void) => (
-          <button className="fm-ctx-item" onClick={action}>
+        const ctxItem = (icon: ReactNode, label: string, action: () => void, danger = false) => (
+          <button className={`fm-ctx-item${danger ? " is-danger" : ""}`} onClick={action}>
             <span className="fm-ctx-ic">{icon}</span>
             <span className="fm-ctx-label">{label}</span>
           </button>
@@ -946,6 +969,7 @@ export function FileManagerView() {
                 ctxItem(<OpenIcon size={14} />, "打开", () => { openRow(row); closeCtx(); })
               )}
               {ctxItem(<EditIcon size={14} />, "改名", () => { renameRow(row); closeCtx(); })}
+              {ctxItem(<TrashIcon width={14} height={14} />, "删除", () => { void deleteRow(row); closeCtx(); }, true)}
             </div>
           </div>
         );
