@@ -7,7 +7,7 @@
 
 | 层 | 技术 | 位置 |
 |---|---|---|
-| 前端 | React 19 · TypeScript · Vite 8 | `src/` |
+| 前端 | React 18 · TypeScript · Vite 8 | `src/` |
 | 编辑器 | Lexical 0.50（块编辑器） | `src/editor/` |
 | 状态 | zustand | `src/store/` |
 | 平台层 | 可插拔 driver（桌面 Tauri / 浏览器 Web） | `src/lib/platform/` |

@@ -9,7 +9,7 @@
 
 ## 1. 背景与动机
 
-ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 19 + Lexical + TS（Vite），后端 Rust + SQLite（rusqlite），所有能力经 Tauri `invoke` 桥接。这带来两个深层约束：
+ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 18 + Lexical + TS（Vite），后端 Rust + SQLite（rusqlite），所有能力经 Tauri `invoke` 桥接。这带来两个深层约束：
 
 | 约束 | 现状 | 后果 |
 |---|---|---|
