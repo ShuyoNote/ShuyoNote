@@ -3569,7 +3569,7 @@ select.sync-input {
 }
 .tree-node-menu {
   position: fixed;
-  z-index: 95;
+  z-index: var(--z-context);
   display: flex;
   flex-direction: column;
   min-width: 196px;
