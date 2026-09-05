@@ -195,7 +195,7 @@ pub fn run() {
             // builder 无此方法，故按平台条件编译。
             #[cfg(target_os = "windows")]
             let main_builder = main_builder.drag_and_drop(false);
-            let window = main_builder
+            let _window = main_builder
                 // 关键注释：Windows 上 dragDropEnabled 默认 true，此时
                 // data-tauri-drag-region 不生效（标题栏拖不动）。这里显式关掉，
                 // 文件视图挂载时前端临时打开（api.setDragDropEnabled(true)）。

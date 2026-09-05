@@ -1397,7 +1397,7 @@ pub async fn sync_workspace(
 fn write_sync_history(
     db: &State<'_, Db>,
     ws_id: &str,
-    profile: &SyncProfile,
+    _profile: &SyncProfile,
     pushed: usize,
     pulled: usize,
     ok: bool,

@@ -12,9 +12,11 @@ const NONCE_LEN: usize = 24;
 /// `sync_state` keys for the opt-in per-workspace encryption.
 pub const ENC_ENABLED: &str = "encryption_enabled";
 pub const ENC_SALT: &str = "encryption_salt";
-pub const ENC_KEY: &str = "encryption_key";
 /// Sentinel ciphertext used to verify the passphrase on unlock (no key persisted at rest).
 pub const ENC_VERIFY: &str = "encryption_verify";
+// `ENC_KEY` 只在测试里用来断言「密钥未落盘」（security.rs 单测）；非测试构建未被引用，属预期。
+#[allow(dead_code)]
+pub const ENC_KEY: &str = "encryption_key";
 
 pub fn b64_encode(data: &[u8]) -> String {
     B64.encode(data)
