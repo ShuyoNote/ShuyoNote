@@ -1,0 +1,52 @@
+name: Deploy Web (GitHub Pages)
+
+# 把 Web 版（纯静态 dist-web）部署到 GitHub Pages（https://shuyonote.github.io/ShuyoNote/）。
+# 触发：推 main（含 Web 端改动）或手动。Web 版用 base:"./" 相对路径，可挂在任意子路径。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个 Pages 部署；新 push 取消旧的。
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+      - name: Install frontend deps
+        run: pnpm install --no-frozen-lockfile
+      - name: Build Web
+        run: pnpm build:web
+      - name: Add .nojekyll (serve static as-is)
+        run: touch dist-web/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
