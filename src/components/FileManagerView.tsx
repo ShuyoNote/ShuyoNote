@@ -930,7 +930,7 @@ export function FileManagerView() {
           </button>
         );
         return (
-          <div className="fm-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <div className="fm-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
             <div className="fm-ctx-title" title={row.name}>{row.name || "未命名"}</div>
             <div className="fm-ctx-list">
               {isFile ? (
