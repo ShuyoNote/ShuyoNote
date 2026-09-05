@@ -1477,6 +1477,9 @@ async fn sync_attachments(
     if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
+            // 排除 .part 临时文件（下载中断残留）：其内容哈希与目标不符，
+            // 作为“本地待上传附件”上传会被服务端 SHA-256 校验拒绝（400）。
+            if name.ends_with(".part") { continue; }
             if let Some(stem) = name.split('.').next() {
                 local_set.insert(stem.to_string());
             }
@@ -1625,6 +1628,7 @@ fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".part") { continue; }
             if name.split('.').next() == Some(stem) {
                 return Some(entry.path());
             }
