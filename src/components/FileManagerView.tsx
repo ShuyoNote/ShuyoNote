@@ -569,8 +569,11 @@ export function FileManagerView() {
             await api.renameAttachment(row.file.id, n);
           } else if (row.pageId) {
             await api.savePage({ id: row.pageId, title: n });
-            await useNotes.getState().loadPages();
           }
+          // 强制刷新：页面树（侧边栏）订阅 useNotes.pages 与 fileManager.revision，
+          // 两者都刷新才能让侧边栏 / 文件管理网格及时显示新名字。
+          await useNotes.getState().loadPages();
+          useFileManagerStore.getState().bumpRevision();
           loadFiles();
           toast("已改名", "success");
         } catch (e) {
