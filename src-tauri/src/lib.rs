@@ -178,7 +178,7 @@ pub fn run() {
             // "main" to match the `default` capability and the rest of the app.
             let version = app.package_info().version.to_string();
             let url = WebviewUrl::App("index.html".into());
-            WebviewWindowBuilder::new(app, "main", url)
+            let main_builder = WebviewWindowBuilder::new(app, "main", url)
                 .title(format!("ShuyoNote 数友笔记 · v{version}"))
                 .inner_size(1200.0, 800.0)
                 // 自绘标题栏（前端 <TitleBar />）。做成无边框而不是保留系统栏，
@@ -186,12 +186,16 @@ pub fn run() {
                 // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
                 // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
                 // 与边缘 resize，万一某台机器手感不对得有退路。
-                .decorations(false)
-                // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
-                // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
-                // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
-                // 时前端临时开（见 titlebar::set_drag_drop_enabled）。
-                .drag_and_drop(false)
+                .decorations(false);
+            // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
+            // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
+            // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
+            // 时前端临时开（见 titlebar::set_drag_drop_enabled）。
+            // 注意：drag_and_drop 是 Windows/WebView2 专用 API，Linux/mac 的
+            // builder 无此方法，故按平台条件编译。
+            #[cfg(target_os = "windows")]
+            let main_builder = main_builder.drag_and_drop(false);
+            let window = main_builder
                 // 关键注释：Windows 上 dragDropEnabled 默认 true，此时
                 // data-tauri-drag-region 不生效（标题栏拖不动）。这里显式关掉，
                 // 文件视图挂载时前端临时打开（api.setDragDropEnabled(true)）。
