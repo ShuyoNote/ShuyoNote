@@ -23,6 +23,15 @@
 
 ---
 
+## 🕹️ 在线试用
+
+无需安装，直接在浏览器里体验：
+
+- **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
+- **国内 / 自托管主站**：[http://121.199.8.24/app/](http://121.199.8.24/app/)
+
+> Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。多设备 / 团队同步需在桌面版配置自建 `shuyonote-sync-server` 后使用。
+
 ## 🌟 为什么选 ShuyoNote
 
 - **数据是你自己的**：全部保存在本机 SQLite，离线可用、无需注册、无云端依赖；支持 Markdown 导出、整库备份，随时带走。
