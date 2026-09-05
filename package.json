@@ -12,6 +12,7 @@
     "check:web-commands": "node scripts/check-web-commands.mjs",
     "check:doc-links": "node scripts/check-doc-links.mjs",
     "test": "vitest run",
+    "test:sync": "node scripts/sync-regression.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri",
