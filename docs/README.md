@@ -135,6 +135,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-30-team-edition-account-space-plan.md](plans/2026-08-30-team-edition-account-space-plan.md) | **「团队版 M27.1 账号/空间绑定 · 客户端侧」落地方案**：登录态 + 登录/注册 UI + 空间绑定 + 成员/权限 UI；命令对齐 shuyonote-sync-server `/auth/*` `/spaces/*`；服务端设计见 shuyonote-sync-server 仓库（**规划**） |
 | [plans/2026-09-01-structural-backlog-plan.md](plans/2026-09-01-structural-backlog-plan.md) | **「安全加固后的结构性改进」立项**（2026-09-01，**三项均达成**）：① markdown round-trip 单测（Lexical 无头测试，88 断言全绿）；② web.ts 命令契约层（`CommandMap` 类型 + api.ts invoke 编译期校验 + check-web-commands 纳入 build）；③ 服务端单 Mutex 并发瓶颈（push 单事务 + 读写分离 + 只读连接池，见 shuyonote-sync-server）。 |
 | [plans/2026-09-04-near-realtime-plan.md](plans/2026-09-04-near-realtime-plan.md) | **「团队版近实时协作」落地实现方案（规划）**：在页级 LWW + 轮询之上加**协作感知层**——P0 同页冲突提示 + 在线/谁在编辑（presence 心跳）、P1 评论/@/通知中心、P1.5 可选 SSE/WebSocket 推送；含数据模型（`presence`/`comments`/`notifications`）、新接口清单、客户端组件、里程碑与验收；**明确不做块级 CRDT**、个人空间保留 E2E（依据 [实时协同利弊分析](../realtime-collab-analysis.md)） |
+| [plans/2026-09-05-desktop-product-polish-plan.md](plans/2026-09-05-desktop-product-polish-plan.md) | **「桌面端产品打磨计划」（规划）**：依据 [产品评价](../product-review.md)，**桌面是主线**。四根柱子——① 同步地基（一致性整改 + 跨设备回归脚本 + 自托管 SYNC 文档）、② 数据安全（一键备份/恢复 + 回收站兜底 + 整空间导出）、③ 桌面体验打磨（z-index 统一 + 空/加载/错误态 + 编辑器/数据库打磨）、④ 交付/产品化（自动升级 + 关于/许可证 + 发布节奏收紧）；含优先级 P0–P3、验收与交付物；**最小可交付三件事 = 同步一致性 + 备份/恢复 + 自动升级** |
 
 ## 竞品对比
 
