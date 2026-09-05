@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { useNotes } from "../store/notes";
@@ -658,6 +658,7 @@ export function FileManagerView() {
                 max={280}
                 step={8}
                 value={gridSize}
+                style={{ "--fill": `${((gridSize - 120) / 160) * 100}%` } as unknown as CSSProperties}
                 onChange={(e) => setGrid(Number(e.target.value))}
               />
             </label>

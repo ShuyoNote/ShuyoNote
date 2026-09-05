@@ -16363,9 +16363,54 @@ p:has(> .editor-drawing-container) {
   margin-left: 4px;
 }
 .fm-size-slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
   width: 84px;
-  accent-color: var(--accent, #4f7cff);
+  height: 16px;
+  margin: 0 2px;
+  background: transparent;
   cursor: pointer;
+}
+.fm-size-slider input[type="range"]:focus-visible { outline: none; }
+/* 轨道：细圆角，左侧按值用 accent 填充、右侧浅灰 */
+.fm-size-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--accent, #4f7cff) 0%,
+    var(--accent, #4f7cff) var(--fill, 50%),
+    var(--border-strong, #d8dce4) var(--fill, 50%),
+    var(--border-strong, #d8dce4) 100%
+  );
+}
+/* 圆点：accent 实心 + 白描边 + 柔影，悬停/拖动/聚焦微交互 */
+.fm-size-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--accent, #4f7cff);
+  border: 2px solid var(--surface, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.fm-size-slider input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.06); }
+.fm-size-slider input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.14);
+  box-shadow: 0 0 0 4px var(--accent-soft, rgba(79, 124, 255, 0.2)), 0 1px 5px rgba(0, 0, 0, 0.25);
+}
+.fm-size-slider input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22), 0 0 0 2px var(--surface, #fff), 0 0 0 4px var(--accent, #4f7cff);
+}
+/* Firefox 兜底 */
+.fm-size-slider input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--border-strong, #d8dce4); }
+.fm-size-slider input[type="range"]::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent, #4f7cff); }
+.fm-size-slider input[type="range"]::-moz-range-thumb {
+  width: 13px; height: 13px; border: 2px solid var(--surface, #fff); border-radius: 50%;
+  background: var(--accent, #4f7cff); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
 }
 .fm-ctx {
   position: fixed;
