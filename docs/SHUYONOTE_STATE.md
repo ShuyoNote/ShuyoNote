@@ -1,6 +1,6 @@
 # ShuyoNote 项目现状摘要（会话延续种子）
 
-> 本文件为项目当前状态摘要（2026-09-01 更新，版本 v1.65.3），供新会话快速了解现状、已做取舍与下一步候选，无需依赖模糊回忆。
+> 本文件为项目当前状态摘要（2026-09-05 更新，版本 v1.82.18），供新会话快速了解现状、已做取舍与下一步候选，无需依赖模糊回忆。
 > 项目根：`C:\Users\cnzen\zhai\ShuyoNote`。
 
 ## 1. 项目概况
@@ -8,7 +8,7 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
 - **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.49（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
 - **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver，见 [跨平台方案](plans/2026-08-24-cross-platform-plan.md)）。
-- **版本**：**v1.65.3**（最近发布；`package.json` / `src-tauri/Cargo.toml` / `tauri.conf.json` / `Cargo.lock` 一致；安装包在 `src-tauri/target/release/bundle/`）。当前 main HEAD 与推送一致。
+- **版本**：**v1.82.18**（最近发布；`package.json` 与 `src-tauri/Cargo.toml` / `tauri.conf.json` 一致；安装包在 `src-tauri/target/release/bundle/`）。当前 main HEAD 与推送一致；本地 `src-tauri/Cargo.toml` 仅因 CRLF 行尾显示 modified，**无实际内容改动**（`git diff` 为空）。
 - **许可证**：**AGPL-3.0**（附带的服务端 `shuyonote-sync-server` 在随 AGPL 网络托管形态下同需开源；服务端仓库为商业 `LICENSE-COMMERCIAL`）。
 - **配套服务端**：`C:\Users\cnzen\zhai\shuyonote-sync-server`（自建同步服，v1.1.0，商业；见其 `docs/SYNC_SERVER_STATE.md`）。
 
@@ -42,7 +42,13 @@
 | M24 | **PDF 批注** | ✅（阶段 1/3 + 阅读器 + OCR/AI 增强 + **导出带批注 PDF 副本**；写回源 PDF / OCR 精确划词仍延后） |
 | M25 | 帮助系统 | ✅ |
 | M26 | 公式（数学） | ✅ |
-| M27 | 团队版（自建协作） | 规划（服务端已实现 S5；客户端登录/空间绑定 UI 待做） |
+| M27 | 团队版（自建协作） | 🔶 部分（服务端 **S1–S8** 已落地；客户端 **per-workspace `sync_profiles`** + 账户 UI（U1–U4）已落地；**实时协同后置**） |
+
+### 最近一轮（v1.82.x，2026-09 桌面打磨阶段）
+- **桌面 / UI 打磨**：z-index 层级规范（`--z-*`）、图片预览工具栏、文件管理器右键菜单（改名 / 删除 / SVG）、同步状态 / 历史 UI、附件流式、回收站体验等。
+- **同步一致性整改**：`device_seq` 唯一单调、`.part` 临时文件排除、FK 顺序修复、附件真 SHA-256 + 流式、`scripts/sync-regression.mjs`（`test:sync`）、`docs/SYNC.md` 自托管 + 常见错误排查。
+- **多平台 / 交付**：新增 GitHub Actions 三平台 + GitCode Linux CI 工作流；守卫 Windows 专属拖拽以兼容 Linux/mac 编译；**macOS 构建 / 签名 / 公证 / 自动更新指南**（`cb39a53`，为 Mac Studio 打包发布准备）。
+- 路线图方向：**桌面是主线** → 桌面端打磨四根柱子（① 同步地基 → ② 数据安全 → ③ 桌面体验 → ④ 交付 / 产品化），见 [桌面端产品打磨计划](plans/2026-09-05-desktop-product-polish-plan.md)。
 
 ## 3. 安全加固（P0/P1/P2，2026-09-01）
 
@@ -106,7 +112,8 @@
 
 ## 8. 下一步候选（按需选一项继续）
 
-1. **PDF 批注阶段 2**：写回源 PDF / OCR 精确划词（仍延后；为低成本替代，已实现「**导出带批注副本**」——逐页把原页面 + 批注合成位图再用 pdf-lib 组装成新 PDF 下载，不动源文件，见 `src/lib/pdfAnnotExport.ts`）。
-2. **M27 团队版客户端接入**：登录 + 空间绑定 + 成员 / 权限 UI（见 [账号/空间绑定](plans/2026-08-30-team-edition-account-space-plan.md)）；服务端 `/auth/*` `/spaces/*` 已就绪。
-3. **Web 补齐清单（M16.6–M16.8）**：附件移动 / 批量删除、存储统计精确化、全文搜索（见 [Web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md)）。
-4. **M11.3 UI 型插件 / M11.4 市场、M23.5 协同**：已评估延后，如产品必需再立项。
+1. **桌面交付（当前优先级）**：多平台安装包补全（现只有 Windows `nsis`，补 macOS `/dmg` 与 Linux）+ 真签名 / 公证 + 自动升级 UI + 发布节奏收紧（见 [桌面端产品打磨计划](plans/2026-09-05-desktop-product-polish-plan.md)）。
+2. **M27 团队版剩余**：实时协同（后置）；本地多用户档案；可用性加固（备份 + `/health/db` 深探）。
+3. **PDF 批注阶段 2**：写回源 PDF / OCR 精确划词（延后；低成本替代「导出带批注副本」已实现，见 `src/lib/pdfAnnotExport.ts`）。
+4. **M16 其余平台壳**：安卓 / iOS / 鸿蒙 ArkWeb（浏览器 PWA 已作为首个 Web 壳）。
+5. **M11.3 UI 型插件 / M11.4 市场、M23.5 协同、移动端（M6）**：已评估延后，如产品必需再立项。

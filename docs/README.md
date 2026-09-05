@@ -56,6 +56,7 @@ CHANGELOG.md             # 版本变更日志
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
 | [product-review.md](product-review.md) | **产品全面评价**：本地优先定位、强项（功能密度/架构/加密/产品化观）、短板（同步健壮性/自托管精度/Web 内存/AI 迭代节奏）、技术选型判断、按优先级的总体建议与一句话结论 |
+| [SHUYONOTE_STATE.md](SHUYONOTE_STATE.md) | **项目状态摘要（会话延续种子，版本 v1.82.18）**：当前版本、里程碑 M1–M27 状态、安全加固与结构性改进、关键架构、边界 / 红线、验证循环与下一步候选——新会话从这里快速接手，无需依赖模糊回忆 |
 | [harmony-web-ceiling.md](harmony-web-ceiling.md) | **基于 Web 版开发鸿蒙桌面应用的能力边界（天花板）分析**：ArkWeb 壳不改变浏览器内核；能力矩阵（DB/文件系统/原生引擎/加密/系统集成/同步/插件）；路线 A（纯套壳≈PWA）vs 路线 B（加 ArkTS 原生桥）；对 ShuyoNote 的建议与取舍 |
 
 ## 演进路线（里程碑总览）
@@ -165,6 +166,15 @@ CHANGELOG.md             # 版本变更日志
 | 文档 | 内容 |
 |---|---|
 | [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
+
+## 内容 / 文章（docs/content）
+
+> 面向外部分发的技术长文 / 介绍文章（「能打」的公开内容）。
+
+| 文档 | 内容 |
+|---|---|
+| [content/shuyonote-intro.md](content/shuyonote-intro.md) | **Open-source 发布 / 介绍长文**：一句话定位（本地优先的 Notion 替代，把生产力留在自己手里）、为什么本地优先、差异化（块编辑 + 数据库 8 视图含甘特/看板/日历 + 关系图 + PDF 批注/离线 OCR/AI + AI 助手 + 语义检索 + 公式/绘图）、技术选型、快速开始、适合谁 vs 竞品、开源与商用、求 Star。 |
+| [content/w5-local-first-storage.md](content/w5-local-first-storage.md) | **技术长文：本地优先的存储布局**（W5）：数据放哪、为什么每空间独立库 + 全局内容寻址附件、离线/备份/加密如何落盘。 |
 
 ## 变更记录（changelog）
 

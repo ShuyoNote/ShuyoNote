@@ -8,11 +8,50 @@ export function BacklinksPanel({ pageId }: { pageId: string }) {
   const { openPage } = useNotes();
   const [pageLinks, setPageLinks] = useState<PageMeta[]>([]);
   const [blockLinks, setBlockLinks] = useState<BlockBacklink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    api.getBacklinks(pageId).then(setPageLinks).catch((e) => console.error(e));
-    api.listBlockBacklinks(pageId).then(setBlockLinks).catch((e) => console.error(e));
-  }, [pageId]);
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    Promise.all([api.getBacklinks(pageId), api.listBlockBacklinks(pageId)])
+      .then(([pl, bl]) => {
+        if (cancelled) return;
+        setPageLinks(pl);
+        setBlockLinks(bl);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error("backlinks load failed", e);
+        setError(true);
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [pageId, tick]);
+
+  if (error) {
+    return (
+      <div className="backlinks">
+        <div className="backlinks-title">反向链接</div>
+        <div className="backlinks-error">
+          加载失败
+          <button className="backlinks-retry" onClick={() => setTick((t) => t + 1)}>重试</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && pageLinks.length === 0 && blockLinks.length === 0) {
+    return (
+      <div className="backlinks">
+        <div className="backlinks-title">反向链接</div>
+        <div className="backlinks-loading">加载中…</div>
+      </div>
+    );
+  }
 
   if (pageLinks.length === 0 && blockLinks.length === 0) return null;
 

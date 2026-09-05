@@ -263,6 +263,23 @@ function NoteEditor({ pageId }: { pageId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, loadPages, autoSyncMs]);
 
+  // 自动备份提醒（设置 → 数据 可配）：距上次成功备份超过设定天数，启动时提醒一次。
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("shuyonote:backupReminder");
+      if (!raw) return;
+      const cfg = JSON.parse(raw) as { enabled?: boolean; days?: number };
+      if (!cfg.enabled) return;
+      const days = Math.max(1, Number(cfg.days) || 30);
+      const last = Number(localStorage.getItem("shuyonote:lastBackupAt")) || 0;
+      if (last <= 0) return;
+      const daysPast = (Date.now() - last) / 86400000;
+      if (daysPast >= days) {
+        toast(`距离上次备份已 ${Math.floor(daysPast)} 天。建议到「设置 → 数据 → 备份 / 恢复」做一次整库备份。`, "info");
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   // A database page renders a table view instead of the block editor.
   if (current?.kind === "database") {
     return (

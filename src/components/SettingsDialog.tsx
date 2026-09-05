@@ -52,6 +52,19 @@ const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Elem
 // 「数据」页：全库备份/恢复与存储清理——低频、全局、不可逆，按判据归设置。
 // 两个组件都用 `label` 变体渲染成带文字的按钮，实现与侧栏时期完全共用。
 function DataPane() {
+  const [reminder, setReminder] = useState<{ enabled: boolean; days: number }>(() => {
+    try {
+      const raw = localStorage.getItem("shuyonote:backupReminder");
+      if (raw) return { enabled: true, days: 30, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return { enabled: false, days: 30 };
+  });
+  const updateReminder = (next: { enabled: boolean; days: number }) => {
+    setReminder(next);
+    try {
+      localStorage.setItem("shuyonote:backupReminder", JSON.stringify(next));
+    } catch { /* ignore */ }
+  };
   return (
     <>
       <section className="set-section">
@@ -68,6 +81,27 @@ function DataPane() {
         <p className="set-hint">
           单个空间的导出/导入在「空间」页；这里是整机全库级别的备份。
         </p>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">自动备份提醒</div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">定期提醒我备份</div>
+            <div className="set-row-sub">
+              距上次成功备份超过设定天数后，启动应用时提醒一次。数据只在本机，定期整库备份更安心。
+            </div>
+          </div>
+          <input type="checkbox" checked={reminder.enabled} onChange={(e) => updateReminder({ ...reminder, enabled: e.target.checked })} />
+        </div>
+        {reminder.enabled && (
+          <div className="set-row">
+            <div className="set-row-text">
+              <div className="set-row-name">提醒间隔（天）</div>
+            </div>
+            <input type="number" min={1} value={reminder.days} onChange={(e) => updateReminder({ ...reminder, days: Math.max(1, Number(e.target.value) || 30) })} />
+          </div>
+        )}
       </section>
 
       <section className="set-section">

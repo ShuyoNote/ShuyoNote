@@ -162,11 +162,17 @@ export function BoardView() {
       .catch(() => {});
   }, []);
 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [tick, setTick] = useState(0);
+
   const load = () => {
+    setLoading(true);
+    setError(false);
     if (groupField === "tag") {
       api
         .boardData()
-        .then((cols) =>
+        .then((cols) => {
           setGroups(
             cols.map((c) => ({
               id: c.tag?.id ?? "__none",
@@ -174,18 +180,30 @@ export function BoardView() {
               pages: c.pages,
               color: c.tag?.color ?? null,
             })),
-          ),
-        )
-        .catch((e) => console.error(e));
+          );
+          setLoading(false);
+        })
+        .catch((e) => {
+          console.error(e);
+          setError(true);
+          setLoading(false);
+        });
     } else {
       const attrId = groupField.slice("attr:".length);
       api
         .boardByAttr(attrId)
-        .then(setGroups)
-        .catch((e) => console.error(e));
+        .then((g) => {
+          setGroups(g);
+          setLoading(false);
+        })
+        .catch((e) => {
+          console.error(e);
+          setError(true);
+          setLoading(false);
+        });
     }
   };
-  useEffect(load, [groupField, spaceId]);
+  useEffect(load, [groupField, spaceId, tick]);
 
   const onDrop = async (pageId: string, colId: string) => {
     try {
@@ -233,6 +251,18 @@ export function BoardView() {
       console.error(e);
     }
   };
+
+  if (error) {
+    return (
+      <div className="board board-error">
+        加载看板失败
+        <button className="board-retry" onClick={() => setTick((t) => t + 1)}>重试</button>
+      </div>
+    );
+  }
+  if (loading) {
+    return <div className="board board-loading">加载中…</div>;
+  }
 
   return (
     <div className="board">

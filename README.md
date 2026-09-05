@@ -16,8 +16,51 @@
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
   <img src="https://img.shields.io/badge/React-18-61dafb" alt="react">
   <img src="https://img.shields.io/badge/Vite-8-646cff" alt="vite">
+  <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-2ea44f" alt="platform">
+  <img src="https://img.shields.io/badge/数据-本地%20SQLite%20%E5%8D%B3%E5%8F%AF%E7%94%A8-2ea44f" alt="data">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-orange" alt="license">
 </p>
+
+---
+
+## 🌟 为什么选 ShuyoNote
+
+- **数据是你自己的**：全部保存在本机 SQLite，离线可用、无需注册、无云端依赖；支持 Markdown 导出、整库备份，随时带走。
+- **不只是笔记，是知识工作台**：块编辑器 + 属性数据库（8 视图：表格 / 画廊 / 看板 / **日历** / 时间轴 / 目录 / **原生甘特图**）+ 块级引用 / 关系图 + 内置 **PDF 批注 · 离线 OCR · AI 视觉识别 · AI 目录**。
+- **AI 可选、本地优先**：可接本地 Ollama / OpenAI 兼容端点，**默认关闭**；语义检索 + 流式内联起草 + 侧边栏问答。
+- **可自托管、可扩展**：AGPL-3.0 开源；多设备 / 团队同步用自建 `shuyonote-sync-server`；插件、主题、模板可扩展。
+- **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；数据免云端、可私有部署。
+
+## 📸 截图 / 演示
+
+<p align="center">
+  <img src="docs/media/screenshot-graph.png" alt="块级关系图" width="640" />
+</p>
+
+| 新页面 · 数据库 · AI 助手 | PDF 阅读 · 批注 · OCR · AI |
+| --- | --- |
+| <img src="docs/media/screenshot-ai.png" width="300" /> | <img src="docs/media/screenshot-pdf.png" width="300" /> |
+
+| 全局搜索 · 语义检索 · 上手引导 |
+| --- |
+| <img src="docs/media/screenshot-search.png" width="480" /> |
+
+> 数据库（表格 / 看板 / 画廊 / 日历 / 时间轴 / 目录 / 甘特图）、块级引用 / 关系图、PDF 批注 · 离线 OCR · AI 视觉识别、AI 助手 / 内联起草、全局搜索 · 语义检索、公式、绘图——详见下方特性。
+
+## 🚀 快速开始
+
+```bash
+git clone https://gitcode.com/shuyo-cn/ShuyoNote.git
+cd ShuyoNote
+pnpm install        # 安装依赖
+pnpm tauri dev      # 启动桌面应用（浏览器版用 pnpm dev:web）
+```
+
+> 首次启动后数据在应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`），WAL 模式，全在本机。
+
+## ❤️ 支持
+
+> 如果 ShuyoNote 对你有用，欢迎 **点个 Star ⭐**，或 [参与开发](CONTRIBUTING.md)（AGPL-3.0）。自托管 / 团队同步见下方「多设备同步」。
 
 ---
 

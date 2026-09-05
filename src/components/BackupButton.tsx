@@ -70,6 +70,7 @@ export function BackupButton({ label }: { label?: string } = {}) {
       if (!path) return;
       setBusying("正在导出备份…");
       const result = await api.exportBackup(path);
+      try { localStorage.setItem("shuyonote:lastBackupAt", String(Date.now())); } catch { /* ignore */ }
       toast(`备份完成：大小 ${(result.size / 1024).toFixed(1)} KB`, "success");
     } catch (e) {
       toast(`导出失败：${e}`, "error");

@@ -27,17 +27,27 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   const [newType, setNewType] = useState<string>("text");
   const [newOptions, setNewOptions] = useState("");
 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [tick, setTick] = useState(0);
+
   const load = () => {
-    api
-      .getPageProps(pageId)
-      .then((ps) => {
+    setLoading(true);
+    setError(false);
+    Promise.all([api.getPageProps(pageId), api.listAttrDefs(), api.pageTags(pageId)])
+      .then(([ps, as, tags]) => {
         setProps(ps);
+        setAttrs(as);
+        setPageTags(tags);
+        setLoading(false);
       })
-      .catch((e) => console.error(e));
-    api.listAttrDefs().then(setAttrs).catch((e) => console.error(e));
-    api.pageTags(pageId).then(setPageTags).catch((e) => console.error(e));
+      .catch((e) => {
+        console.error(e);
+        setError(true);
+        setLoading(false);
+      });
   };
-  useEffect(load, [pageId]);
+  useEffect(load, [pageId, tick]);
 
   // "添加属性" from the page-actions row: open the panel and focus the add input.
   const addPropSeq = usePropertyUiStore((s) => s.addPropSeq);
@@ -146,6 +156,28 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
       toast(`添加属性失败：${e}`, "error");
     }
   };
+
+  if (error) {
+    return (
+      <div className="metadata-card">
+        <div className="properties">
+          <div className="properties-load-error">
+            加载失败
+            <button className="properties-retry" onClick={() => setTick((t) => t + 1)}>重试</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="metadata-card">
+        <div className="properties">
+          <div className="properties-loading">加载中…</div>
+        </div>
+      </div>
+    );
+  }
 
   // Hide the whole properties panel when the page has no properties/tags (the
   // page-actions row is the entry to add). Show while adding a property/tag.

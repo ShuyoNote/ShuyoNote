@@ -6194,6 +6194,85 @@ select.prop-value {
   margin-bottom: 8px;
 }
 
+.backlinks-loading {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.backlinks-error {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.backlinks-retry {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.backlinks-retry:hover {
+  background: var(--hover);
+}
+
+.board-loading {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 32px 0;
+  text-align: center;
+}
+.board-error {
+  color: var(--text-dim);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 0;
+}
+.board-retry {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.board-retry:hover {
+  background: var(--hover);
+}
+.properties-loading {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 8px 2px;
+}
+.properties-load-error {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 2px;
+}
+.properties-retry {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.properties-retry:hover {
+  background: var(--hover);
+}
+
 .unlinked-mentions {
   margin: 18px auto;
   padding: 0 var(--doc-pad);
