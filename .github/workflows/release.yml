@@ -121,17 +121,17 @@ jobs:
           API="https://api.github.com/repos/${{ github.repository }}"
           TAG="${{ github.ref_name }}"
           AUTH="Authorization: Bearer ${GH_TOKEN}"
-          # 已存在则取 release id，否则创建
-          RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -1)
+          # 已存在则取 release id，否则创建（jq 兼容 API 返回的漂亮打印/紧凑 JSON）
+          RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | jq -r '.id // empty')
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
               -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"三平台安装包（Windows 安装版 / macOS .dmg / Linux .deb + .AppImage）。安装后可在应用内「检查更新」升级。\"}" \
               "$API/releases")
-            RID=$(echo "$RESP" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -1)
+            RID=$(echo "$RESP" | jq -r '.id // empty')
             [ -z "$RID" ] && { echo "release create failed: $RESP"; exit 1; }
           fi
           # 取 upload_url（去掉模板后缀 {name,label}）
-          UP=$(curl -s -H "$AUTH" "$API/releases/$RID" | sed -n 's/.*"upload_url":"\([^"]*\)".*/\1/p' | head -1)
+          UP=$(curl -s -H "$AUTH" "$API/releases/$RID" | jq -r '.upload_url // empty')
           UP="${UP%%\{*}"
           # 只上传安装包，不传 .so/.tar.gz 等中间产物
           found=0
