@@ -94,13 +94,19 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Create GitHub/GitCode release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ShuyoNote ${{ github.ref_name }}
-          body: 三平台安装包（Windows 安装版 / macOS .dmg / Linux .deb+.AppImage）。安装后可在应用内「检查更新」升级。
-          files: artifacts/**/*
-          fail_on_unmatched_files: false
+      - name: Create GitHub release (installers only)
+        # 用 gh release create（比 softprops/action-gh-release 健壮，且只挂安装包）。
+        # 只把 .exe/.dmg/.deb/.AppImage 挂到 Release，不带上 bundle 里的 .so/.tar.gz 等中间产物。
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd artifacts
+          FILES=$(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \))
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" $FILES
+          else
+            gh release create "${{ github.ref_name }}" \
+              --title "ShuyoNote ${{ github.ref_name }}" \
+              --notes "三平台安装包（Windows 安装版 / macOS .dmg / Linux .deb + .AppImage）。安装后可在应用内「检查更新」升级。" \
+              $FILES
+          fi
