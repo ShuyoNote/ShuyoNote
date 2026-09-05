@@ -769,10 +769,10 @@ export function SyncPanel() {
             {history.length > 0 && (
               <div className="sync-history">
                 <div className="sync-history-head">
-                  <button className="sync-members-toggle" onClick={() => setHistoryOpen((v) => !v)}>
-                    <span>同步历史</span>
-                    <span className="sync-members-count">{history.length}</span>
-                    <span className={`sync-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
+                  <button className="sync-history-toggle" aria-expanded={historyOpen} onClick={() => setHistoryOpen((v) => !v)}>
+                    <span className="sync-history-toggle-title">同步历史</span>
+                    <span className="sync-history-count">{history.length}</span>
+                    <span className={`sync-history-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
                   </button>
                   <button className="sync-history-clear" onClick={() => void clearHistory()} title="清空同步历史">清空</button>
                 </div>
