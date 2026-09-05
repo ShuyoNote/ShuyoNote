@@ -89,21 +89,21 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
       </div>
       <div className="fm-img-actions">
         <button className="fm-img-btn" onClick={() => rotate(-90)} title="逆时针旋转 90°" aria-label="逆时针旋转">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M3 12a9 9 0 1 0 3-7.7" />
-            <path d="M6 4v4h4" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 12a9 9 0 1 0 3.3-7" />
+            <path d="M5.5 4v4.5H10" />
           </svg>
         </button>
         <button className="fm-img-btn" onClick={() => rotate(90)} title="顺时针旋转 90°" aria-label="顺时针旋转">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M21 12a9 9 0 1 1-3-7.7" />
-            <path d="M18 4v4h-4" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M21 12a9 9 0 1 1-3.3-7" />
+            <path d="M18.5 4v4.5H14" />
           </svg>
         </button>
+        {onOpenOriginal && (
+          <button className="fm-img-original" onClick={onOpenOriginal}>查看原图</button>
+        )}
       </div>
-      {onOpenOriginal && (
-        <button className="fm-img-original" onClick={onOpenOriginal}>查看原图</button>
-      )}
     </div>
   );
 }
