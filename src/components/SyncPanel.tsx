@@ -8,6 +8,7 @@ import { useNotes } from "../store/notes";
 import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
+import { isDesktopPlatform } from "../lib/platform";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
@@ -485,7 +486,10 @@ export function SyncPanel() {
             </span>
           </header>
 
-          <div className="sync-profiles">
+          {!isDesktopPlatform() && (
+            <div className="sync-web-note">Web 版不支持多设备同步，请使用桌面版。</div>
+          )}
+          <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
             {rows.map((r) => {
               const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
