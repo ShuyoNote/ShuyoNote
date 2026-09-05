@@ -29,8 +29,8 @@ git push origin main && git push origin vX.Y.Z
 
 ## ⑤ 签名构建（桌面）
 ```bash
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw C:\Users\cnzen\.tauri\shuyonote.key).Trim()
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw C:\Users\cnzen\.tauri\shuyonote.key.pw).Trim()
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$HOME\.tauri\shuyonote.key").Trim()
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyonote.key.pw").Trim()
 pnpm tauri build      # 产出 setup.exe + .sig
 ```
 

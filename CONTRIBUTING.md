@@ -34,7 +34,7 @@
 - **前端**：TypeScript（严格）、React 函数组件 + hooks、Zustand store；组件按功能分目录；样式用 design token（`App.css` 里的 CSS 变量），不硬编码颜色。
 - **Rust**：`cargo fmt` + `cargo clippy` 无警告；错误用 `Result<_, String>`（与现有命令齐平）；读路径不阻塞（`spawn_blocking`）。
 - **命令契约**：新增后端命令须同步 `src/lib/platform/commands.ts` 的 `CommandMap`（`check-web-commands` 会校验 Rust 命令 ⊆ CommandMap）。
-- **命名/文案**：与现有 UI 一致（中文文案）；i18n 暂不做（见 [docs/SHUYONOTE_STATE.md](docs/SHUYONOTE_STATE.md) 的边界说明）。
+- **命名/文案**：与现有 UI 一致（中文文案）；i18n 暂不做（边界说明见内部项目状态笔记）。
 
 ## 怎么提 PR
 
@@ -53,4 +53,4 @@ ShuyoNote 客户端以 **AGPL-3.0** 开源。参与即代表你同意以该许�
 - **行为准则**：友善、就事论事；对新人耐心。
 - **有问题**：在 Issue 或 Discussions 里讨论；先读 [docs/development.md](docs/development.md) 的「常见坑」，很多答案在里面。
 
-> 详细约定见 [docs/development.md](docs/development.md)；当前状态见 [docs/SHUYONOTE_STATE.md](docs/SHUYONOTE_STATE.md)。
+> 详细约定见 [docs/development.md](docs/development.md)；当前状态见内部项目状态笔记。

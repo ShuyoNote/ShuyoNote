@@ -49,14 +49,13 @@ CHANGELOG.md             # 版本变更日志
 | [web-sync-boundary.md](web-sync-boundary.md) | **Web 同步能力边界**：Web 版为何不支持多设备同步的四层原因（服务端不挂 CORS / 同步引擎在 Rust / 存储模型不匹配 / 凭证信任边界）、用户可见表现与代码出处、桌面 vs Web 能力对照、若要开启的前置条件与 W1–W4 分阶段路线 |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [realtime-collab-analysis.md](realtime-collab-analysis.md) | **实时协同（多人同页协作编辑）利弊分析**：区分「近实时」vs「块级 CRDT」两档成本；好处（对齐竞品 / 不丢内容 / 实时感知）与代价（富块难合并 / 服务端 WebSocket / 离线×实时并存 / E2E 冲突 / 非购买点核心）；分阶段建议（近期近实时、长期最小 CRDT、个人空间保留 E2E）与决策记录 |
-| [SYNC.md](SYNC.md) | **同步机制详解 + 自托管部署与常见错误排查**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证；自托管部署（`--port/--db/--max-body-mb` 等配置、注册邀请码）、`/health` 自检、常见错误码（400/401/403/404/413/5xx）、Web 同源代理、同步不动排查清单、`test:sync` 回归自检 |
+| [SYNC.md](SYNC.md) | **同步机制详解**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证 + 客户端侧排错（错误码）。服务端自托管部署 / 配置 / 排错见私有仓库 `docs/deploy.md` |
 | [multi-platform-ci.md](multi-platform-ci.md) | **多平台自动构建发布（CI）**：`v*` tag 自动打 Win/mac/Linux 安装包。GitCode 流水线只有 Linux runner；GitHub Actions 有全平台。给出 `.github/workflows/release.yml`（三平台 + secrets）与 `.gitcode/workflows/build-linux.yml`（Linux），及方案 A/B/C 取舍 |
 | [macos-updater.md](macos-updater.md) | **macOS 构建 · 签名 · 公证 · 自动更新**：mac 机器一次性准备（Xcode/rust/node）、Apple Developer ID 证书 + notarization 凭据、`tauri.conf.json` updater/endpoints/pubkey 配置、mac 上打签名+公证 dmg、`release.mjs` 发布与 mac `latest.json`、CI secrets、边界（未签名无法自动更新）、Mac 到手当天清单 |
 | [free-site-export-guide.md](free-site-export-guide.md) | **免费客户出口 · 网站/帮助站导出与发布指南**：免费/开源社区的**被动出口**——三层出口（就地提示/内置指南/外部静态站）、导出三种方式（M21 静态 wiki 导出建帮助站 / 仓库 Pages 建主页 / 应用内「关于」对话框）、干净链接策略（无 utm/埋点）、发布路径、与付费侧对照、发布核对清单与红线。**付费客户沟通/商务运营材料见私有 shuyonote-sync-server 仓库** |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
 | [product-review.md](product-review.md) | **产品全面评价**：本地优先定位、强项（功能密度/架构/加密/产品化观）、短板（同步健壮性/自托管精度/Web 内存/AI 迭代节奏）、技术选型判断、按优先级的总体建议与一句话结论 |
-| [SHUYONOTE_STATE.md](SHUYONOTE_STATE.md) | **项目状态摘要（会话延续种子，版本 v1.82.18）**：当前版本、里程碑 M1–M27 状态、安全加固与结构性改进、关键架构、边界 / 红线、验证循环与下一步候选——新会话从这里快速接手，无需依赖模糊回忆 |
 | [harmony-web-ceiling.md](harmony-web-ceiling.md) | **基于 Web 版开发鸿蒙桌面应用的能力边界（天花板）分析**：ArkWeb 壳不改变浏览器内核；能力矩阵（DB/文件系统/原生引擎/加密/系统集成/同步/插件）；路线 A（纯套壳≈PWA）vs 路线 B（加 ArkTS 原生桥）；对 ShuyoNote 的建议与取舍 |
 
 ## 演进路线（里程碑总览）

@@ -91,73 +91,17 @@ GET {server}/pull?since={last_pulled_seq}&limit=500&space_id=..&exclude_device={
 
 ---
 
-# 自托管部署与常见错误排查
+# 自托管（sync-server）
 
-> 面向自建 `shuyonote-sync-server` 的运维手册（部署/配置/日常维护/排错）。
+多设备 / 团队同步依赖**独立的商业授权组件** `shuyonote-sync-server`（私有仓库，不随本客户端 AGPL-3.0 开源部分提供）。其**部署、配置、注册邀请码、`/health` 自检与日常排错**见该仓库的 [`docs/deploy.md`](https://gitcode.com/shuyo-cn/shuyonote-sync-server/blob/main/docs/deploy.md)（仅对授权者可见）。
 
-## 九、部署
+## 客户端侧排错
 
-```bash
-cd shuyonote-sync-server && cargo build --release
-cp target/release/shuyonote-sync-server /usr/local/bin/
-shuyonote-sync-server --port 8787 --db /var/lib/shuyonote-sync/sync.db \
-  --backup-dir /var/lib/shuyonote-sync/backups --backup-interval-hours 0
-```
-> systemd：`/etc/systemd/system/shuyonote-sync.service`（`User` 用非 root，如 `shuyosync`）。
+| 现象 | 处理 |
+|---|---|
+| **401** | 会话失效 / 未登录 → 重新登录 |
+| **403** | `device_id` 被其它用户占用 → 换设备标识，或联系服务端管理员 |
+| **404** | 空间不存在或附件未上传 → 确认 `space_id`；附件先上传再下载 |
+| 同步不动 | 先确认客户端为最新版本（旧版 `.part` 误上传 / `/attachment` 单数 URL 等已修 bug）；再与服务端管理员核对服务健康 |
 
-### 配置项
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `--port` | `8787` | 监听端口（`0.0.0.0`，局域网/公网可达） |
-| `--db` | `/tmp/shuyonote-sync-server.db` | 数据库路径 |
-| `--backup-dir` | `<db>/backups` | 备份目录 |
-| `--backup-interval-hours` | `24` | 备份间隔（`0`=关闭） |
-| `--max-body-mb` | `2097152`（2TB） | **请求体上限**（`0`=不限）；本地优先=按机器配置，默认足够大 |
-
-### 注册邀请码
-```sql
-INSERT OR REPLACE INTO server_config (key, value) VALUES ('register_code','SHUYOTEST');
-```
-设置后注册必须带该邀请码；留空=开放注册（任何非空码都能注册）。
-
-## 十、健康自检
-```bash
-curl http://127.0.0.1:8787/health   # → { "status":"ok", "db":true, "attachments":true, ... }
-```
-`status:"degraded"` / `db:false` → 数据库损坏/路径问题；`attachments:false` → 附件目录不可写。
-
-## 十一、常见错误码排查
-
-| 错误 | 含义 | 排查 |
-|---|---|---|
-| **400** 附件上传 | 上传字节 SHA-256 ≠ `{hash}` | 本地附件是否加密/损坏/`.part` 残留；确认上传明文且哈希匹配；旧 FNV(16) 数据需迁移为 SHA-256 |
-| **401** 同步失败 | 会话失效/未登录 | 客户端**重新登录**；确认 `Authorization: Bearer <token>` |
-| **403** push | device_id 被其它用户抢占 | 换 device_id，或服务端清理 `devices` 表 |
-| **404** 空间/附件 | 空间不存在或附件未上传 | 确认 `space_id`；附件先上传再下载 |
-| **413** Request Too Large | 单次请求体超上限 | 调大 `--max-body-mb` + nginx `client_max_body_size` |
-| **5xx** | 服务端内部错误 | 看服务端日志（`journalctl -u shuyonote-sync`） |
-
-## 十二、浏览器（Web 端）同步：同源代理
-
-服务端**无 CORS**，浏览器只能**同源** fetch。把「Web 静态 + `/sync`」挂到同一源（nginx）：
-```nginx
-location /app/  { try_files $uri $uri/ /app/index.html; }        # Web 应用
-location /sync/ { proxy_pass http://127.0.0.1:8787/; client_max_body_size 2048g; }
-```
-客户端「服务器地址」填 `http://<host>/sync`（同源）。桌面端（reqwest，无 CORS 限制）可直接连。
-
-## 十三、「同步不动」排查清单
-
-1. **确认版本**：桌面用最新（旧版有 `.part` 误上传 / `/attachment` 单数 URL 等已修 bug）；Web 端强刷。
-2. **服务端 /health**：`status:ok` 且 `db/attachments` 均 true。
-3. **看报错码**：400（哈希）/401（重登录）/403（device）/413（调大体积）/404（space/附件）。
-4. **大附件**：流式，几百 MB 应能同步；特别大看内存/带宽、`--max-body-mb` 是否足够。
-5. **Web 端**：确认同源（非跨源）；`IndexedDB` 清空需重下。
-6. **增量**：确认 `last_*_seq` 在推进（不反复全量）；失败会重试，属正常。
-7. **日志**：`journalctl -u shuyonote-sync -f` 服务端错误；客户端控制台 `[ShuyoNote]` 日志。
-
-## 十四、回归自检
-```bash
-pnpm test:sync -- --server http://127.0.0.1:8787 --code SHUYOTEST
-```
-覆盖：两设备互改收敛、幂等（同 seq 不重复）、增量（`since` 只给新增）、附件 SHA-256（正确 200 / 错误 400 / 下载一致）。发布前/升级后跑一遍确认同步一致性。
+> 客户端侧实现：桌面 `src-tauri/src/sync.rs`、Web `src/lib/platform/web.ts`。服务端接口约定见上文「同步机制」。

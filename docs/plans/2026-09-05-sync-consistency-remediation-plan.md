@@ -34,7 +34,7 @@
 ### 1.3 服务端 `shuyonote-sync-server`
 - `/push`：`INSERT OR IGNORE`，`UNIQUE(space_id, device_id, device_seq)` 兜底去重；返回 `last_server_seq`，客户端据此推进指针。
 - `/pull`：`since` 只返回**严格大于**的变更；`exclude_device` 防自回传；`limit` 分页。
-- 附件：`/attachments/{hash}` 校验 SHA-256；`--max-body-mb`（2T 默认）避免 413；`client_max_body_size` 对齐。
+- 附件：`/attachments/{hash}` 校验 SHA-256；服务端体积上限与 nginx 对齐（见私有部署手册）避免 413。
 
 ---
 
@@ -87,7 +87,7 @@ node scripts/sync-regression.mjs --server http://127.0.0.1:8787
 - [ ] 附件哈希全局为 SHA-256(64)；`.part` 不参与上传、中断能重下。
 - [ ] 服务端 `/push` 幂等（同 seq 不重复）；`/pull` 严格 `since`。
 - [ ] `scripts/sync-regression.mjs` 全绿：两设备互改收敛、无 400/413、哈希一致、幂等、增量。
-- [ ] `docs/SYNC.md` 覆盖：体积上限、`--max-body-mb`、常见 400/401/413、`/health` 自检、同源代理、同步不动排查。
+- [ ] `docs/SYNC.md`：同步机制 + 客户端侧排错（常见 400/401/413、同步不动排查）；服务端部署 / 配置 / 自检见私有仓库。
 
 ---
 
