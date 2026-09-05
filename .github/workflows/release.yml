@@ -132,7 +132,7 @@ jobs:
           fi
           # 取 upload_url（去掉模板后缀 {name,label}）
           UP=$(curl -s -H "$AUTH" "$API/releases/$RID" | sed -n 's/.*"upload_url":"\([^"]*\)".*/\1/p' | head -1)
-          UP="${UP%\{*}/assets"
+          UP="${UP%%\{*}"
           # 只上传安装包，不传 .so/.tar.gz 等中间产物
           found=0
           while IFS= read -r f; do
