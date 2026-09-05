@@ -95,18 +95,33 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Create GitHub release (installers only)
-        # 用 gh release create（比 softprops/action-gh-release 健壮，且只挂安装包）。
-        # 只把 .exe/.dmg/.deb/.AppImage 挂到 Release，不带上 bundle 里的 .so/.tar.gz 等中间产物。
+        # 用 curl + GitHub API 创建 Release 并只挂三平台安装包（不依赖 gh CLI）。
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
           cd artifacts
-          FILES=$(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \))
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            gh release upload "${{ github.ref_name }}" $FILES
-          else
-            gh release create "${{ github.ref_name }}" \
-              --title "ShuyoNote ${{ github.ref_name }}" \
-              --notes "三平台安装包（Windows 安装版 / macOS .dmg / Linux .deb + .AppImage）。安装后可在应用内「检查更新」升级。" \
-              $FILES
+          API="https://api.github.com/repos/ShuyoNote/ShuyoNote"
+          TAG="${{ github.ref_name }}"
+          AUTH="Authorization: Bearer ${GH_TOKEN}"
+          # 已存在则取 release id，否则创建
+          RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -1)
+          if [ -z "$RID" ]; then
+            RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"三平台安装包（Windows 安装版 / macOS .dmg / Linux .deb + .AppImage）。安装后可在应用内「检查更新」升级。\"}" \
+              "$API/releases")
+            RID=$(echo "$RESP" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -1)
+            [ -z "$RID" ] && { echo "release create failed: $RESP"; exit 1; }
           fi
+          # 取 upload_url（去掉模板后缀 {name,label}）
+          UP=$(curl -s -H "$AUTH" "$API/releases/$RID" | sed -n 's/.*"upload_url":"\([^"]*\)".*/\1/p' | head -1)
+          UP="${UP%\{*}/assets"
+          # 只上传安装包，不传 .so/.tar.gz 等中间产物
+          found=0
+          while IFS= read -r f; do
+            curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" --data-binary "@$f" "$UP?name=$(basename "$f")" >/dev/null
+            echo "uploaded: $(basename "$f")"
+            found=$((found+1))
+          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \))
+          echo "release $TAG -> $found installer(s) attached"
+          [ "$found" -gt 0 ] || { echo "no installers found"; exit 1; }
