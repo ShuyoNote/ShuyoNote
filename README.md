@@ -33,17 +33,17 @@
 
 ## 📸 截图 / 演示
 
-<p align="center">
-  <img src="docs/media/screenshot-graph.png" alt="块级关系图" width="640" />
-</p>
+<p align="center"><b>新页面 · 数据库 · AI 助手</b></p>
+<p align="center"><img src="docs/media/screenshot-ai.png" alt="新页面 · 数据库 · AI 助手" width="640" /></p>
 
-| 新页面 · 数据库 · AI 助手 | PDF 阅读 · 批注 · OCR · AI |
-| --- | --- |
-| <img src="docs/media/screenshot-ai.png" width="300" /> | <img src="docs/media/screenshot-pdf.png" width="300" /> |
+<p align="center"><b>全文检索 · 语义检索 · 上手引导</b></p>
+<p align="center"><img src="docs/media/screenshot-search.png" alt="全文检索 · 语义检索 · 上手引导" width="640" /></p>
 
-| 全局搜索 · 语义检索 · 上手引导 |
-| --- |
-| <img src="docs/media/screenshot-search.png" width="480" /> |
+<p align="center"><b>块级关系图</b></p>
+<p align="center"><img src="docs/media/screenshot-graph.png" alt="块级关系图" width="640" /></p>
+
+<p align="center"><b>PDF 阅读 · 批注 · 离线 OCR · AI</b></p>
+<p align="center"><img src="docs/media/screenshot-pdf.png" alt="PDF 阅读 · 批注 · 离线 OCR · AI" width="640" /></p>
 
 > 数据库（表格 / 看板 / 画廊 / 日历 / 时间轴 / 目录 / 甘特图）、块级引用 / 关系图、PDF 批注 · 离线 OCR · AI 视觉识别、AI 助手 / 内联起草、全局搜索 · 语义检索、公式、绘图——详见下方特性。
 
