@@ -1,15 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useFileManagerStore } from "../store/fileManager";
 import { confirmDialog } from "../store/confirm";
+import { inputDialog } from "../store/input";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
-import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
+import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon } from "./icons";
+
+// 右键菜单用的内联 SVG（打开 / 改名）。
+const OpenIcon = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M5 12h14M12 5l7 7-7 7" />
+  </svg>
+);
+const EditIcon = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
+);
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -540,6 +554,32 @@ export function FileManagerView() {
 
   const closeCtx = () => setCtxMenu({ x: 0, y: 0, row: null });
 
+  // 右键「改名」：文件改附件名，页面/文件夹改标题。
+  const renameRow = (row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta }) => {
+    const current = row.name || "未命名";
+    inputDialog({
+      title: "改名",
+      placeholder: "名称",
+      defaultValue: current,
+      onSubmit: async (name) => {
+        const n = name.trim();
+        if (!n || n === current) return;
+        try {
+          if (row.kind === "file" && row.file) {
+            await api.renameAttachment(row.file.id, n);
+          } else if (row.pageId) {
+            await api.savePage({ id: row.pageId, title: n });
+            await useNotes.getState().loadPages();
+          }
+          loadFiles();
+          toast("已改名", "success");
+        } catch (e) {
+          toast(`改名失败：${e}`, "error");
+        }
+      },
+    });
+  };
+
   return (
     <div className="file-manager">
       <div className="file-manager-head">
@@ -882,19 +922,28 @@ export function FileManagerView() {
 
       {ctxMenu.row && (() => {
         const row = ctxMenu.row;
+        const isFile = row.kind === "file" && !!row.file;
+        const ctxItem = (icon: ReactNode, label: string, action: () => void) => (
+          <button className="fm-ctx-item" onClick={action}>
+            <span className="fm-ctx-ic">{icon}</span>
+            <span className="fm-ctx-label">{label}</span>
+          </button>
+        );
         return (
           <div className="fm-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={(e) => e.stopPropagation()}>
-            <div className="fm-ctx-title">{row.name}</div>
-            {row.kind === "file" && row.file ? (
-              <>
-                <button className="fm-ctx-item" onClick={() => { downloadFile(row.file!); closeCtx(); }}>下载</button>
-                <button className="fm-ctx-item" onClick={() => { revealFile(row.file!.path); closeCtx(); }}>在文件夹中显示</button>
-              </>
-            ) : (
-              <>
-                <button className="fm-ctx-item" onClick={() => { openRow(row); closeCtx(); }}>打开</button>
-              </>
-            )}
+            <div className="fm-ctx-title" title={row.name}>{row.name || "未命名"}</div>
+            <div className="fm-ctx-list">
+              {isFile ? (
+                <>
+                  {ctxItem(<OpenIcon size={14} />, "打开", () => { openRow(row); closeCtx(); })}
+                  {ctxItem(<DownloadIcon width={14} height={14} />, "下载", () => { downloadFile(row.file!); closeCtx(); })}
+                  {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path); closeCtx(); })}
+                </>
+              ) : (
+                ctxItem(<OpenIcon size={14} />, "打开", () => { openRow(row); closeCtx(); })
+              )}
+              {ctxItem(<EditIcon size={14} />, "改名", () => { renameRow(row); closeCtx(); })}
+            </div>
           </div>
         );
       })()}

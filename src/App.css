@@ -16287,8 +16287,8 @@ p:has(> .editor-drawing-container) {
 }
 .fm-ctx {
   position: fixed;
-  z-index: 1300;
-  min-width: 150px;
+  z-index: var(--z-context);
+  min-width: 170px;
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -16306,8 +16306,15 @@ p:has(> .editor-drawing-container) {
   text-overflow: ellipsis;
   max-width: 220px;
 }
+.fm-ctx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .fm-ctx-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -16321,6 +16328,13 @@ p:has(> .editor-drawing-container) {
 .fm-ctx-item:hover { background: var(--hover); }
 .fm-ctx-item.is-danger { color: var(--danger); }
 .fm-ctx-item.is-danger:hover { background: var(--danger-soft); }
+.fm-ctx-ic {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+}
+.fm-ctx-label { flex: 1; white-space: nowrap; }
 
 .fm-grid {
   display: grid;

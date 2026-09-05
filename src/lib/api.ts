@@ -222,6 +222,7 @@ export const api = {
   purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),
   moveAttachment: (id: string, newPageId: string) =>
     invoke("move_attachment", { id, newPageId }),
+  renameAttachment: (id: string, name: string) => invoke("rename_attachment", { id, name }),
   restoreAttachment: (targetPageId: string, sourceId: string) =>
     invoke("restore_attachment", { targetPageId, sourceId }),
   getBacklinks: (id: string) => invoke("get_backlinks", { id }),

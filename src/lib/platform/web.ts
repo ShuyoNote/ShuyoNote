@@ -1895,6 +1895,17 @@ function makeInvoke(store: SqliteStore) {
       if (row) recordChange(store, "attachment", id, "upsert", { id, page_id: newPageId || null, name: row.name, hash: row.hash, mime: row.mime, size: row.size }, Date.now());
       return undefined as T;
     }
+    if (cmd === "rename_attachment") {
+      const id = String(a.id ?? "");
+      const name = String(a.name ?? "").trim();
+      if (!id) throw new Error("缺少参数");
+      if (!name) throw new Error("名称不能为空");
+      const row = store.query<{ page_id: string | null; hash: string; mime: string; size: number }>("SELECT page_id, hash, mime, size FROM attachments WHERE id = ?", [id])[0];
+      if (!row) throw new Error("附件不存在");
+      store.run("UPDATE attachments SET name = ? WHERE id = ?", [name, id]);
+      recordChange(store, "attachment", id, "upsert", { id, page_id: row.page_id || null, name, hash: row.hash, mime: row.mime, size: row.size }, Date.now());
+      return undefined as T;
+    }
     if (cmd === "restore_attachment") {
       // Clone a historical attachment as a NEW row in the target page (shared bytes).
       const targetPageId = String(a.targetPageId ?? a.target_page_id ?? "");

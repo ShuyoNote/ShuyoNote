@@ -622,6 +622,37 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
     Ok(())
 }
 
+/// Rename an attachment's display name (bytes/hash unchanged).
+#[tauri::command]
+pub fn rename_attachment(db: State<'_, Db>, id: String, name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("名称不能为空".to_string());
+    }
+    let c = db.0.lock().expect("db mutex poisoned");
+    let n = c
+        .execute("UPDATE attachments SET name = ?1 WHERE id = ?2", params![name, id])
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("附件不存在".to_string());
+    }
+    // 同步新名称到其它设备（字节/hash 不变）。
+    let meta = c
+        .query_row(
+            "SELECT page_id, hash, mime, size FROM attachments WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if let Some((page_id, hash, mime, size)) = meta {
+        let now = now_ms();
+        let payload = serde_json::json!({ "id": &id, "page_id": page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
+        record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
+    }
+    Ok(())
+}
+
 /// Restore a historical version: clone the given attachment (by content hash) as
 /// a NEW current attachment in `target_page_id`, so the chosen version becomes
 /// the newest same-named file. Content-addressed bytes are shared (no rewrite).
