@@ -50,10 +50,8 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
 
-      - name: Install frontend deps (via npmmirror for CN network)
+      - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
-        env:
-          npm_config_registry: https://registry.npmmirror.com
 
       - name: Setup OpenSSL for SQLCipher (Windows)
         # rusqlite 用 bundled-sqlcipher，需链接 OpenSSL；Windows runner 无 OpenSSL，
@@ -101,7 +99,7 @@ jobs:
         run: |
           set -e
           cd artifacts
-          API="https://api.github.com/repos/ShuyoNote/ShuyoNote"
+          API="https://api.github.com/repos/${{ github.repository }}"
           TAG="${{ github.ref_name }}"
           AUTH="Authorization: Bearer ${GH_TOKEN}"
           # 已存在则取 release id，否则创建
