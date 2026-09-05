@@ -823,23 +823,32 @@ async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulle
 // payload small while still letting embedded images/files render on every device.
 // Uploads are idempotent (server dedups by hash); the whole step is best-effort so a
 // slow/failed byte transfer never breaks the metadata push/pull.
-async function attachmentByteUpload(url: string, token: string, mime: string, bytes: Uint8Array): Promise<void> {
+async function attachmentByteUpload(url: string, token: string, mime: string, body: Blob): Promise<void> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  // 流式上传：把字节包成可读流作为 body，分块推给网络层，避免一次性缓冲整块。
+  // 流式上传：用 Blob 的可读流做 body，分块推送，避免一次性缓冲整块进内存。
   const resp = await fetch(`${url}?mime=${encodeURIComponent(mime)}`, {
     method: "POST",
     headers,
-    body: bytes ? new Blob([bytes as unknown as BlobPart], { type: mime }).stream() : undefined,
+    body: body.stream(),
   });
   if (!resp.ok) throw new Error(`上传附件失败（HTTP ${resp.status}）`);
 }
-async function attachmentByteDownload(url: string, token: string): Promise<Uint8Array | null> {
+async function attachmentByteDownload(url: string, token: string): Promise<Blob | null> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const resp = await fetch(url, { headers });
   if (!resp.ok) return null;
-  return new Uint8Array(await resp.arrayBuffer());
+  if (!resp.body) return null;
+  // 流式下载：分块收集成 Blob（浏览器底层管理内存，大文件不整块进 Uint8Array）。
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  return new Blob(chunks as BlobPart[], { type: "application/octet-stream" });
 }
 
 async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promise<{ uploaded: number; downloaded: number }> {
@@ -873,14 +882,17 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
       attTotal: upItems.length,
       attName: mime,
     });
-    const bytes = await blobStore.get(hash);
-    if (!bytes) continue;
+    const blob = await blobStore.getBlob(hash);
+    if (!blob) continue;
     // 旧数据可能是 FNV(16位) 哈希，而服务端按 SHA-256(64位) 校验 → 400。
-    // 这里统一按字节的真实 SHA-256 上传，并把附件元数据/未推送变更/字节 key 一起迁到真哈希。
-    const realHash = await contentHash(bytes);
+    // 只有当 hash 不是 64 位 SHA-256 时才重算真 SHA-256 并迁移；已正确的不整块读内存。
+    let realHash = hash;
+    if (hash.length !== 64) {
+      realHash = await contentHash(new Uint8Array(await blob.arrayBuffer()));
+    }
     if (realHash && realHash !== hash) {
       try {
-        await blobStore.put(realHash, bytes);
+        await blobStore.put(realHash, blob);
         await blobStore.delete(hash).catch(() => {});
         store.run("UPDATE attachments SET hash = ?1 WHERE hash = ?2", [realHash, hash]);
         const chs = store.query<{ id: number; payload: string }>("SELECT id, payload FROM changes WHERE entity='attachment' AND payload LIKE ?1", [`%${hash}%`]);
@@ -894,7 +906,7 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
       }
     }
     try {
-      await attachmentByteUpload(`${base}/attachments/${realHash || hash}`, token, mime, bytes);
+      await attachmentByteUpload(`${base}/attachments/${realHash || hash}`, token, mime, blob);
       uploaded++;
     } catch {
       /* best-effort: a failed upload must not break the sync run */
@@ -913,9 +925,9 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
       attName: hash.slice(0, 8),
     });
     try {
-      const bytes = await attachmentByteDownload(`${base}/attachments/${hash}`, token);
-      if (bytes && bytes.length > 0) {
-        await blobStore.put(hash, bytes);
+      const blob = await attachmentByteDownload(`${base}/attachments/${hash}`, token);
+      if (blob && blob.size > 0) {
+        await blobStore.put(hash, blob);
         downloaded++;
       }
     } catch {

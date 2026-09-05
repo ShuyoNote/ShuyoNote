@@ -121,11 +121,12 @@ export async function contentHash(bytes: Uint8Array): Promise<string> {
 }
 
 export const blobStore = {
-  async put(hash: string, bytes: Uint8Array): Promise<void> {
+  async put(hash: string, data: Uint8Array | Blob): Promise<void> {
     const db = await openDb();
+    const storeData = data instanceof Blob ? data : new Uint8Array(data);
     return new Promise((resolve, reject) => {
       const tx = db.transaction(BLOB_OS, "readwrite");
-      tx.objectStore(BLOB_OS).put(new Uint8Array(bytes), hash);
+      tx.objectStore(BLOB_OS).put(storeData, hash);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -136,8 +137,27 @@ export const blobStore = {
       const tx = db.transaction(BLOB_OS, "readonly");
       const req = tx.objectStore(BLOB_OS).get(hash);
       req.onsuccess = () => {
-        const v = req.result as Uint8Array | undefined;
-        resolve(v ? new Uint8Array(v) : null);
+        const v = req.result as Uint8Array | Blob | undefined;
+        if (!v) { resolve(null); return; }
+        if (v instanceof Blob) {
+          v.arrayBuffer().then((ab) => resolve(new Uint8Array(ab))).catch(reject);
+        } else {
+          resolve(new Uint8Array(v as Uint8Array));
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+  },
+  /** Return the stored blob as a Blob (zero-copy when stored as Blob) for streaming upload. */
+  async getBlob(hash: string): Promise<Blob | null> {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BLOB_OS, "readonly");
+      const req = tx.objectStore(BLOB_OS).get(hash);
+      req.onsuccess = () => {
+        const v = req.result as Uint8Array | Blob | undefined;
+        if (!v) { resolve(null); return; }
+        resolve(v instanceof Blob ? v : new Blob([new Uint8Array(v as Uint8Array)]));
       };
       req.onerror = () => reject(req.error);
     });
@@ -179,10 +199,16 @@ export const blobStore = {
         for (const k of keys) {
           const getReq = store.get(k);
           getReq.onsuccess = () => {
-            const v = getReq.result as Uint8Array | undefined;
-            if (v) out.push({ hash: k, bytes: new Uint8Array(v) });
-            done++;
-            if (done === keys.length) resolve(out);
+            const v = getReq.result as Uint8Array | Blob | undefined;
+            if (v) {
+              if (v instanceof Blob) {
+                v.arrayBuffer().then((ab) => { out.push({ hash: k, bytes: new Uint8Array(ab) }); done++; if (done === keys.length) resolve(out); }).catch(() => { done++; if (done === keys.length) resolve(out); });
+              } else {
+                out.push({ hash: k, bytes: new Uint8Array(v as Uint8Array) });
+                done++;
+                if (done === keys.length) resolve(out);
+              }
+            } else { done++; if (done === keys.length) resolve(out); }
           };
           getReq.onerror = () => {
             done++;
