@@ -30,6 +30,7 @@ const relTime = (ts: number) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
+const fmtDuration = (ms: number) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
 
 interface ServerSpace {
   id: string;
@@ -764,7 +765,12 @@ export function SyncPanel() {
                 )}
               </div>
             ) : status ? (
-              <div className={`sync-status is-${statusKind(status)}`}>{status}</div>
+              <div className={`sync-status is-${statusKind(status)}`}>
+                {status}
+                {syncStatus.durationMs > 0 && (
+                  <span className="sync-duration">耗时 {fmtDuration(syncStatus.durationMs)}</span>
+                )}
+              </div>
             ) : null}
             {history.length > 0 && (
               <div className="sync-history">

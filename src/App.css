@@ -1693,6 +1693,12 @@ select.sync-input {
   background: var(--danger-soft);
   color: var(--danger);
 }
+.sync-duration {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 /* 实时同步中：进行中状态条（转圈 + 文案 + 附件进度）。 */
 .sync-status.is-progress {
   background: var(--accent-soft);
