@@ -12522,10 +12522,10 @@ p:has(> .editor-drawing-container) {
   user-select: none;
   pointer-events: none;
 }
-/* 旋转按钮组 + 查看原图：合并成一组底部右侧工具栏，统一高度/圆角。 */
+/* 旋转按钮组 + 查看原图：合并成一组右上角工具栏，统一高度/圆角。 */
 .fm-img-actions {
   position: absolute;
-  bottom: 14px;
+  top: 14px;
   right: 14px;
   display: flex;
   align-items: center;
