@@ -51,6 +51,7 @@ CHANGELOG.md             # 版本变更日志
 | [realtime-collab-analysis.md](realtime-collab-analysis.md) | **实时协同（多人同页协作编辑）利弊分析**：区分「近实时」vs「块级 CRDT」两档成本；好处（对齐竞品 / 不丢内容 / 实时感知）与代价（富块难合并 / 服务端 WebSocket / 离线×实时并存 / E2E 冲突 / 非购买点核心）；分阶段建议（近期近实时、长期最小 CRDT、个人空间保留 E2E）与决策记录 |
 | [SYNC.md](SYNC.md) | **同步机制详解 + 自托管部署与常见错误排查**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证；自托管部署（`--port/--db/--max-body-mb` 等配置、注册邀请码）、`/health` 自检、常见错误码（400/401/403/404/413/5xx）、Web 同源代理、同步不动排查清单、`test:sync` 回归自检 |
 | [multi-platform-ci.md](multi-platform-ci.md) | **多平台自动构建发布（CI）**：`v*` tag 自动打 Win/mac/Linux 安装包。GitCode 流水线只有 Linux runner；GitHub Actions 有全平台。给出 `.github/workflows/release.yml`（三平台 + secrets）与 `.gitcode/workflows/build-linux.yml`（Linux），及方案 A/B/C 取舍 |
+| [macos-updater.md](macos-updater.md) | **macOS 构建 · 签名 · 公证 · 自动更新**：mac 机器一次性准备（Xcode/rust/node）、Apple Developer ID 证书 + notarization 凭据、`tauri.conf.json` updater/endpoints/pubkey 配置、mac 上打签名+公证 dmg、`release.mjs` 发布与 mac `latest.json`、CI secrets、边界（未签名无法自动更新）、Mac 到手当天清单 |
 | [free-site-export-guide.md](free-site-export-guide.md) | **免费客户出口 · 网站/帮助站导出与发布指南**：免费/开源社区的**被动出口**——三层出口（就地提示/内置指南/外部静态站）、导出三种方式（M21 静态 wiki 导出建帮助站 / 仓库 Pages 建主页 / 应用内「关于」对话框）、干净链接策略（无 utm/埋点）、发布路径、与付费侧对照、发布核对清单与红线。**付费客户沟通/商务运营材料见私有 shuyonote-sync-server 仓库** |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.3/M11.4 已评估未做）、竞品差距跟踪 |
