@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.82.18-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
-  <img src="https://img.shields.io/badge/Lexical-0.49-3370ff" alt="lexical">
+  <img src="https://img.shields.io/badge/Lexical-0.50-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
   <img src="https://img.shields.io/badge/React-18-61dafb" alt="react">
   <img src="https://img.shields.io/badge/Vite-8-646cff" alt="vite">
@@ -236,7 +236,7 @@ flowchart TB
 | 层 | 技术 |
 |----|------|
 | 桌面壳 | Tauri 2.x（Rust 后端 + 系统 WebView）；Web 壳 = `web.ts` + sql.js WASM |
-| 编辑器 | Lexical 0.49（`@lexical/react`） |
+| 编辑器 | Lexical 0.50（`@lexical/react`） |
 | 前端 | React 18.3.1 · TypeScript · Vite 8（`pnpm dev:web`：`vite.web.config.ts`） |
 | 状态管理 | Zustand |
 | 本地存储 | SQLite（桌面 rusqlite 0.40 bundled / Web sql.js WASM）· FTS5 / trigram 全文检索 |

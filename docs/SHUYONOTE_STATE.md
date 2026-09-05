@@ -6,7 +6,7 @@
 ## 1. 项目概况
 
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
-- **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.49（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
+- **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.50（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
 - **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver，见 [跨平台方案](plans/2026-08-24-cross-platform-plan.md)）。
 - **版本**：**v1.82.18**（最近发布；`package.json` 与 `src-tauri/Cargo.toml` / `tauri.conf.json` 一致；安装包在 `src-tauri/target/release/bundle/`）。当前 main HEAD 与推送一致；本地 `src-tauri/Cargo.toml` 仅因 CRLF 行尾显示 modified，**无实际内容改动**（`git diff` 为空）。
 - **许可证**：**AGPL-3.0**（附带的服务端 `shuyonote-sync-server` 在随 AGPL 网络托管形态下同需开源；服务端仓库为商业 `LICENSE-COMMERCIAL`）。
@@ -84,7 +84,7 @@
 - **平台 driver**：`src/lib/platform/`（`types.ts` 接口 + `tauri.ts` 桌面 + `web.ts` 浏览器 + `index.ts` 选择）；`api.ts` 经 `platform.executor.invoke` 调命令，命令契约见 `src/lib/platform/commands.ts`（`CommandMap`）。
 - **PDF**：桌面 native MuPDF（`mupdf-sys`）+ Web pdf.js 双引擎；`platform.pdfRender` driver；pdf.js 集中于 `pdfjsEngine.ts` 唯一入口。**注意**：`render_pdf_page` 已改为 async command（MuPDF 栅格化用 `spawn_blocking` 放后台，避免主线程"未响应"）。
 - **存储**：每工作空间独立库（`meta.db` + `spaces/<ws_id>/`）；附件内容寻址 hash 存储 + 可加密。
-- **编辑器**：Lexical 0.49 + 自定义节点（`ColumnsBlockNode` / `DrawingNode` / `FormulaNode` 等），节点类型收敛于 `src/editor/config.ts`。
+- **编辑器**：Lexical 0.50 + 自定义节点（`ColumnsBlockNode` / `DrawingNode` / `FormulaNode` 等），节点类型收敛于 `src/editor/config.ts`。
 - **提版**：`scripts/release.mjs`（gitcode 自动更新）+ `tauri-plugin-updater`（签名 + `latest.json`，半自动，非静默强更）。
 - **运营内容**：渠道技术长文草稿在 `docs/content/`（如 [W5 本地优先存储布局](content/w5-local-first-storage.md)）；**推荐/营销软文**（V2EX / 少数派版）不随公开仓库——归私有 shuyonote-sync-server 仓库的 `docs/content/`。本公开仓库只放技术向内容与工程文档。
 - **设置中心**：`SettingsDialog.tsx`（外观 / **空间** / **账户** / 插件 / 安全 / AI / 关于七页，`useEditorStore.settingsOpen+settingsTab` 驱动，侧栏齿轮 + 命令面板 `settings.*` 入口）。原「主题设置」弹层已删除；**端到端加密从主题面板迁到「安全」页**，关闭加密改为红色危险区 + 二次确认。AI 表单抽成 `AiSettingsForm`，与 AI 面板的独立对话框共用一份实现。

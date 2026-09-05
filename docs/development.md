@@ -8,7 +8,7 @@
 | 层 | 技术 | 位置 |
 |---|---|---|
 | 前端 | React 19 · TypeScript · Vite 8 | `src/` |
-| 编辑器 | Lexical 0.49（块编辑器） | `src/editor/` |
+| 编辑器 | Lexical 0.50（块编辑器） | `src/editor/` |
 | 状态 | zustand | `src/store/` |
 | 平台层 | 可插拔 driver（桌面 Tauri / 浏览器 Web） | `src/lib/platform/` |
 | 后端（桌面） | Rust · Tauri 2 · SQLite | `src-tauri/` |
