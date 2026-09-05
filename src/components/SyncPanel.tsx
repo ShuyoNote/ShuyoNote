@@ -487,7 +487,7 @@ export function SyncPanel() {
           </header>
 
           {!isDesktopPlatform() && (
-            <div className="sync-web-note">Web 版不支持多设备同步，请使用桌面版。</div>
+            <div className="sync-web-note">建议使用桌面版以获得稳定多设备同步；Web 版同步受浏览器环境限制。</div>
           )}
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
