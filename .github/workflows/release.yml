@@ -23,8 +23,7 @@ jobs:
             bundles: deb,appimage
           - platform: windows-latest
             bundles: nsis
-          - platform: macos-latest
-            bundles: dmg,app
+          # macOS 暂缓：待 Apple 签名/公证 secrets 到位后再加回（dmg,app）。
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
