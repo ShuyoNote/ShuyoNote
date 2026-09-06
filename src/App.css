@@ -17216,5 +17216,6 @@ p:has(> .editor-drawing-container) {
 .email-body-link { color: var(--accent, #4f7cff); text-decoration: none; word-break: break-all; }
 .email-body-link:hover { text-decoration: underline; }
 .email-paste { display: flex; flex-direction: column; gap: 8px; }
+.email-body-preview-white-space { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.8; }
 
 
