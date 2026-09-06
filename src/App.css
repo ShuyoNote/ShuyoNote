@@ -17211,7 +17211,7 @@ p:has(> .editor-drawing-container) {
 
 /* 正文渲染：分段 / 引用块 / 链接 */
 .email-body { display: flex; flex-direction: column; gap: 14px; }
-.email-body p { margin: 0; white-space: pre-wrap; }
+.email-body-para { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .email-body-quote { margin: 0; padding: 4px 0 4px 14px; border-left: 3px solid var(--border-strong); color: var(--text-dim); font-size: 14px; line-height: 1.7; }
 .email-body-link { color: var(--accent, #4f7cff); text-decoration: none; word-break: break-all; }
 .email-body-link:hover { text-decoration: underline; }

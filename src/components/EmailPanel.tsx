@@ -97,35 +97,20 @@ function folderDisplay(name: string): string {
   return FOLDER_ZH[key] ?? name;
 }
 
-// 把正文纯文本渲染成可读视图：段落、引用块、可点链接。内容为纯文本，用 React 转义。
+// 把正文纯文本渲染成可读视图：简单按空行分段（每段一个 <p>，保留段内换行）+ 链接。
 function EmailBody({ text }: { text: string }) {
-  const lines = text.split(/\r?\n/);
-  const blocks: { type: "para" | "quote"; lines: string[] }[] = [];
-  let cur: { type: "para" | "quote"; lines: string[] } | null = null;
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+$/, "");
-    if (!line.trim()) {
-      cur = null;
-      continue;
-    }
-    const isQuote = line.startsWith(">") || line.startsWith("|") || line.startsWith("　");
-    const type: "para" | "quote" = isQuote ? "quote" : "para";
-    if (!cur || cur.type !== type) {
-      if (cur) blocks.push(cur);
-      cur = { type, lines: [] };
-    }
-    cur.lines.push(isQuote ? line.replace(/^[>|　\s]+/, "") : line);
-  }
-  if (cur) blocks.push(cur);
+  const blocks = text
+    .split(/\n{2,}/) // 以连续空行分段
+    .map((s) => s.replace(/\r/g, "").trim())
+    .filter(Boolean);
 
   const urlRe = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
-  const renderLine = (l: string, key: number) => {
+  const renderText = (s: string, key: number) => {
     const parts: ReactNode[] = [];
     let last = 0;
-    for (const m of l.matchAll(urlRe)) {
+    for (const m of s.matchAll(urlRe)) {
       const idx = m.index ?? 0;
-      if (idx > last) parts.push(l.slice(last, idx));
+      if (idx > last) parts.push(s.slice(last, idx));
       const url = m[0];
       const href = url.startsWith("http") ? url : `https://${url}`;
       parts.push(
@@ -135,23 +120,15 @@ function EmailBody({ text }: { text: string }) {
       );
       last = idx + url.length;
     }
-    if (last < l.length) parts.push(l.slice(last));
+    if (last < s.length) parts.push(s.slice(last));
     return parts;
   };
 
   return (
     <div className="email-body">
-      {blocks.map((b, i) =>
-        b.type === "quote" ? (
-          <blockquote key={i} className="email-body-quote">
-            {b.lines.map((l, j) => (
-              <p key={j}>{renderLine(l, j)}</p>
-            ))}
-          </blockquote>
-        ) : (
-          <p key={i}>{b.lines.map((l, j) => renderLine(l, j))}</p>
-        ),
-      )}
+      {blocks.map((b, i) => (
+        <p key={i} className="email-body-para">{renderText(b, i)}</p>
+      ))}
     </div>
   );
 }
