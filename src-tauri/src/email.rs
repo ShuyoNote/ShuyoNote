@@ -180,7 +180,9 @@ fn save_raw_note(db: State<Db>, raw: String) -> Result<crate::models::PageDetail
         .find(|h| h.get_key().eq_ignore_ascii_case("Date"))
         .map(|h| h.get_value())
         .unwrap_or_default();
-    let body = parsed.get_body().unwrap_or_default();
+    // 注意：multipart 邮件用 get_body() 会返回包装或其空内容，须用 email_text() 递归
+    // 到 text/plain|text/html 子部分取可读正文（与阅读区一致）。
+    let body = email_text(&parsed);
 
     let title = if subject.trim().is_empty() {
         "邮件".to_string()
@@ -825,6 +827,17 @@ mod tests {
         assert!(t.contains("联系我们"), "link text lost: {:?}", t);
     }
 
+    #[test]
+    fn strip_html_keeps_alibaba_with_preheader_and_nav() {
+        // 还原真实报文的关键结构：display:none 预读 + 顶部导航 <a> 列表 + 正文多段 + 版权。
+        let html = "<html><head><style type=\"text/css\">a{color:#1366ec;text-decoration:none}</style></head><body><span style=\"display:none\">此邮件由阿里云发送，请勿直接回复</span><div max-width=\"1200px\"><div class=\"nav\"><a href=\"x\">产品</a><a href=\"x\">解决方案</a><a href=\"x\">了解阿里云</a></div><div class=\"email-body\"><p>尊敬的濮阳数友信息科技服务有限责任公司：</p><p>您的备案信息已经提交至通信管理局审核！</p><p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p></div><div class=\"footer\">Copyright © 阿里云 2009-2026 All Rights Reserved</div></div></body></html>";
+        let t = strip_html(html);
+        assert!(t.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "main content lost: {:?}", t);
+        assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "main content lost: {:?}", t);
+        assert!(t.contains("如您对此有更多疑问"), "main content lost: {:?}", t);
+        assert!(t.contains("Copyright"), "footer lost: {:?}", t);
+    }
+
     // 手动把 UTF-8 字节编码成 quoted-printable（每非 ASCII 字符 =XX，每 76 列软换行加 =）。
     fn qp_encode(s: &str) -> String {
         let mut out = String::new();
@@ -849,18 +862,20 @@ mod tests {
     }
 
     #[test]
-    fn email_text_qp_html_multipart_keeps_body() {
-        // 复现真实邮件：multipart/mixed → text/html quoted-printable（中文 QP 编码）。
-        let html = "<html><head><style>a{color:#1366ec}</style></head><body><p>尊敬的濮阳数友信息科技服务有限责任公司：</p><p>您的备案信息已经提交至通信管理局审核！</p><div>Copyright © 阿里云 2009-2026 All Rights Reserved</div></body></html>";
+    fn email_text_real_alibaba_raw() {
+        // 复现真实阿里云报文形态：multipart/mixed → text/html quoted-printable，
+        // 中文以 QP(=E5..) 编码（真实报文如此；字面中文在 QP 下会被 mailparse 丢弃）。
+        let html = "<html lang=\"zh-cn\">\r\n<head><style type=\"text/css\">a {color:#1366ec}</style></head>\r\n<body>\r\n<span style=\"display:none\">此邮件由阿里云发送，请勿直接回复</span>\r\n<div style=\"max-width:1200px\">\r\n<div class=\"nav\"><a href=\"x\">产品</a><a href=\"x\">解决方案</a><a href=\"x\">了解阿里云</a></div>\r\n<div class=\"email-body\">\r\n<p>尊敬的濮阳数友信息科技服务有限责任公司：</p>\r\n<p>您的备案信息已经提交至通信管理局审核！</p>\r\n<p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p>\r\n<p class=\"f\">Copyright © 阿里云 2009-2026 All Rights Reserved</p>\r\n</div>\r\n</div>\r\n</body>\r\n</html>\r\n";
         let qp = qp_encode(html);
         let raw = format!(
-            "From: a@b.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n{}\r\n--B--\r\n",
+            "From: =?UTF-8?B?6Zi/6YeM5LqR?= <system@notice.aliyun.com>\r\nTo: zhaizy@qq.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/html;charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n{}\r\n--B--\r\n",
             qp
         );
         let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
-        let t = email_text(&parsed);
-        assert!(t.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "qp body lost: {:?}", t);
-        assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "qp body lost: {:?}", t);
-        assert!(t.contains("Copyright"), "qp footer lost: {:?}", t);
+        let body = parsed.subparts[0].get_body().unwrap_or_default();
+        let stripped = strip_html(&body);
+        assert!(stripped.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "body lost: {:?}", stripped);
+        assert!(stripped.contains("您的备案信息已经提交至通信管理局审核"), "body lost: {:?}", stripped);
+        assert!(stripped.contains("Copyright"), "footer lost: {:?}", stripped);
     }
 }
