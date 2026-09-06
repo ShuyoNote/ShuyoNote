@@ -311,7 +311,11 @@ export function EmailPanel() {
     setLoadingBody(true);
     setErr("");
     try {
-      const bodyText = await api.emailGetBody(acc, m.uid, m.folder);
+      // 超时保护：避免正文拉取卡住导致无限“加载正文…”。
+      const bodyText = await Promise.race([
+        api.emailGetBody(acc, m.uid, m.folder),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("加载正文超时（检查网络 / IMAP 连接）")), 20000)),
+      ]);
       setBody(bodyText);
     } catch (e) {
       setErr(String(e));
@@ -959,7 +963,7 @@ export function EmailPanel() {
                           </span>
                         </div>
                         <div className="email-read-body">
-                          {loadingBody ? "加载正文…" : body || "（正文为空）"}
+                          {loadingBody ? "加载正文…" : body || (err ? "" : "（正文为空）")}
                         </div>
                       </>
                     ) : (
