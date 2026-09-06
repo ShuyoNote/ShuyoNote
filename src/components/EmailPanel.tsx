@@ -7,6 +7,7 @@ import { platform } from "../lib/platform";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
+import { toast } from "../store/toast";
 import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon, BookmarkIcon } from "./icons";
 
 type Section = { label: string; items: EmailMeta[] };
@@ -490,7 +491,8 @@ export function EmailPanel() {
         const { content_json, content_text } = emailHtmlToLexical(`<p>${plainHtml}</p>`);
         await useNotes.getState().createPage(null, { title: active.subject || "(无主题)", content_json, content_text });
       }
-      setErr("已存为笔记 ✓");
+      setErr("");
+      toast("已存为笔记", "success");
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -612,7 +614,8 @@ export function EmailPanel() {
         setActive(null);
         setBody("");
       }
-      setErr(`已删除 ${moved} 封 ✓`);
+      setErr("");
+      toast(`已删除 ${moved} 封`, "success");
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -647,7 +650,8 @@ export function EmailPanel() {
     try {
       await api.emailSend(account, compose.to.trim(), compose.subject || "(无主题)", compose.body);
       setCompose(null);
-      setErr("邮件已发送 ✓");
+      setErr("");
+      toast("邮件已发送", "success");
     } catch (e) {
       setErr(String(e));
     } finally {
