@@ -7,7 +7,7 @@ import { SendIcon } from "./icons";
 type EmailMeta = Awaited<ReturnType<typeof api.emailFetchInbox>>[number];
 type EmailAccount = { host: string; port: number; username: string; password: string; use_tls: boolean };
 
-// 聚合收件箱（邮件即笔记）— 桌面专属整页。
+// 聚合收件箱（邮件即笔记）— 桌面专属整页（两栏：左列表 + 右阅读）。
 // 账号配置在 设置 → 邮箱；这里只读已保存账号、拉取/阅读/转笔记。
 export function EmailPanel() {
   const open = useEmailPanel((s) => s.open);
@@ -18,9 +18,12 @@ export function EmailPanel() {
 
   const [account, setAccount] = useState<EmailAccount | null>(null);
   const [list, setList] = useState<EmailMeta[]>([]);
+  const [selected, setSelected] = useState<EmailMeta | null>(null);
+  const [body, setBody] = useState("");
   const [raw, setRaw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingBody, setLoadingBody] = useState(false);
 
   // 打开时：读已保存账号 → 拉取收件箱。
   useEffect(() => {
@@ -34,42 +37,33 @@ export function EmailPanel() {
           setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
           return null;
         }
-        setAccount({ host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls });
-        return api.emailFetchInbox({ host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls }).then((r) => {
+        const acc = { host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls };
+        setAccount(acc);
+        return api.emailFetchInbox(acc).then((r) => {
           setList(r);
-          if (r.length === 0) setErr("未拉到邮件（检查账号 / 认证）");
+          if (r.length > 0) void selectEmail(r[0], acc);
+          else setErr("未拉到邮件（检查账号 / 认证）");
         });
       })
       .catch((e) => setErr(String(e)))
       .finally(() => setBusy(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
-        e.preventDefault();
-        useEmailPanel.getState().openPanel();
-      } else if (e.key === "Escape" && useEmailPanel.getState().open) {
-        useEmailPanel.getState().closePanel();
-      }
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, []);
-
-  // 点击邮箱页外部（侧边栏节点 / 工具栏 关系图·看板·文件夹·页面 / 标题栏）→ 自动关闭。
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node | null;
-      if (!t) return;
-      if (pageRef.current?.contains(t)) return; // 页内不动
-      if (btnRef.current?.contains(t)) return;  // 邮箱按钮：toggle 处理
-      useEmailPanel.getState().closePanel();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
+  const selectEmail = async (m: EmailMeta, acc: EmailAccount = account!) => {
+    setSelected(m);
+    setLoadingBody(true);
+    setErr("");
+    try {
+      const bodyText = await api.emailGetBody(acc, m.uid);
+      setBody(bodyText);
+    } catch (e) {
+      setErr(String(e));
+      setBody("");
+    } finally {
+      setLoadingBody(false);
+    }
+  };
 
   const refresh = async () => {
     if (!account) return;
@@ -115,9 +109,35 @@ export function EmailPanel() {
     }
   };
 
+  // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
+        e.preventDefault();
+        useEmailPanel.getState().openPanel();
+      } else if (e.key === "Escape" && useEmailPanel.getState().open) {
+        useEmailPanel.getState().closePanel();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  // 点击邮箱页外部（侧边栏节点 / 工具栏 / 标题栏）→ 自动关闭。
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (pageRef.current?.contains(t)) return;
+      if (btnRef.current?.contains(t)) return;
+      useEmailPanel.getState().closePanel();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
   return (
     <>
-      {/* 侧栏入口：图标 + 文字，与「同步」一致；tooltip 提示快捷键。 */}
       <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
         <SendIcon width={14} height={14} />
         <span>邮箱</span>
@@ -140,26 +160,60 @@ export function EmailPanel() {
             </header>
 
             <div className="email-page-body">
-              {!account && <div className="email-page-empty">请先在 <b>设置 → 邮箱</b> 配置 IMAP 账号。</div>}
+              {!account && (
+                <div className="email-page-empty">请先在 <b>设置 → 邮箱</b> 配置 IMAP 账号。</div>
+              )}
 
-              {list.length > 0 && (
-                <div className="email-list">
-                  <div className="email-list-head">
-                    <span className="email-list-title">收件箱（最近 {list.length} 封）</span>
+              {account && (
+                <div className="email-split">
+                  <div className="email-pane-list">
+                    <div className="email-list-head">收件箱 · {list.length} 封</div>
+                    {list.length === 0 && <div className="email-page-empty">暂无邮件，点「拉取收件箱」。</div>}
+                    {list.map((m, i) => (
+                      <button
+                        key={i}
+                        className={`email-item${selected?.uid === m.uid ? " is-selected" : ""}`}
+                        onClick={() => void selectEmail(m)}
+                      >
+                        <span className="email-item-badge" aria-hidden>✉</span>
+                        <span className="email-item-main">
+                          <span className="email-item-title" title={m.subject}>{m.subject || "(无主题)"}</span>
+                          <span className="email-item-meta">
+                            <span className="email-item-from" title={m.from}>{m.from}</span>
+                            <span className="email-item-date">{m.date}</span>
+                          </span>
+                        </span>
+                        <span
+                          className="save-note-btn"
+                          role="button"
+                          tabIndex={0}
+                          title="存为笔记"
+                          onClick={(e) => { e.stopPropagation(); void saveUid(m.uid); }}
+                          onKeyDown={(e) => e.key === "Enter" && (e.stopPropagation(), void saveUid(m.uid))}
+                        >存为笔记</span>
+                      </button>
+                    ))}
                   </div>
-                  {list.map((m, i) => (
-                    <div key={i} className="email-item">
-                      <span className="email-item-badge" aria-hidden>✉</span>
-                      <div className="email-item-main">
-                        <div className="email-item-title" title={m.subject}>{m.subject || "(无主题)"}</div>
-                        <div className="email-item-meta">
-                          <span className="email-item-from" title={m.from}>{m.from}</span>
-                          <span className="email-item-date" title={m.date}>{m.date}</span>
+
+                  <div className="email-pane-read">
+                    {selected ? (
+                      <>
+                        <div className="email-read-subject">{selected.subject || "(无主题)"}</div>
+                        <div className="email-read-meta">
+                          <span>发件人：{selected.from}</span>
+                          <span>{selected.date}</span>
                         </div>
-                      </div>
-                      <button className="sync-btn" disabled={busy} onClick={() => void saveUid(m.uid)}>存为笔记</button>
-                    </div>
-                  ))}
+                        <div className="email-read-actions">
+                          <button className="sync-btn" disabled={busy} onClick={() => void saveUid(selected.uid)}>存为笔记</button>
+                        </div>
+                        <div className="email-read-body">
+                          {loadingBody ? "加载正文…" : body || "（正文为空）"}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="email-page-empty">在左侧选择一封邮件阅读。</div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -167,7 +221,7 @@ export function EmailPanel() {
                 <label className="sync-hint">粘贴原始邮件（RFC822）→ 存为笔记</label>
                 <textarea
                   className="sync-input"
-                  rows={3}
+                  rows={2}
                   placeholder={"From: a@x.com\nSubject: 你好\n\n正文…"}
                   value={raw}
                   onChange={(e) => setRaw(e.target.value)}

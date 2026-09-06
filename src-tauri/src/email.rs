@@ -315,6 +315,14 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
     Ok(out)
 }
 
+/// 按 UID 取邮件正文文本（供右侧阅读窗格显示）。
+#[tauri::command]
+pub async fn email_get_body(account: EmailAccountArgs, uid: u32) -> Result<String, String> {
+    let raw = fetch_uid_raw(&account, uid).await?;
+    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(parsed.get_body().unwrap_or_default())
+}
+
 /// 本地配置文件路径（`app_data_dir/email-account.json`）。
 fn account_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()

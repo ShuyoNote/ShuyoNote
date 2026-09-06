@@ -1074,7 +1074,7 @@ function makeInvoke(store: SqliteStore) {
       store.run("UPDATE pages SET cover_pos = ? WHERE id = ?", [p, args.id]);
       return (store.query("SELECT * FROM pages WHERE id = ?", [args.id])[0] ?? null) as T;
     }
-    if (cmd === "email_save_as_note" || cmd === "email_fetch_inbox" || cmd === "email_save_uid" || cmd === "email_save_account" || cmd === "email_get_account") {
+    if (cmd === "email_save_as_note" || cmd === "email_fetch_inbox" || cmd === "email_save_uid" || cmd === "email_get_body" || cmd === "email_save_account" || cmd === "email_get_account") {
       // 聚合邮箱仅桌面版（Web 无法连接 IMAP）。
       throw new Error("聚合邮箱仅桌面版支持（请使用桌面版）");
     }

@@ -83,6 +83,7 @@ export interface CommandMap {
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { host: string; port: number; username: string; password: string; use_tls: boolean } }; result: EmailMeta[] };
   email_save_uid: { args: { args: { account: { host: string; port: number; username: string; password: string; use_tls: boolean }; uid: number } }; result: PageDetail };
+  email_get_body: { args: { args: { account: { host: string; port: number; username: string; password: string; use_tls: boolean }; uid: number } }; result: string };
   email_save_account: { args: { account: { host: string; port: number; username: string; password: string; use_tls: boolean } }; result: void };
   email_get_account: { args: undefined; result: { host: string; port: number; username: string; password: string; use_tls: boolean } | null };
 
