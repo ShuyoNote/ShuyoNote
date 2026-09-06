@@ -48,6 +48,12 @@ function fmtListTime(m: EmailMeta): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// 文件夹显示名：IMAP 里的「INBOX」是固定英文，其它文件夹用原始名。
+function folderDisplay(name: string): string {
+  if (name === "INBOX") return "收件箱";
+  return name;
+}
+
 // 分组：今天 / 上周（近7天，不含今昨） / 更早。
 function groupEmails(list: EmailMeta[]): Section[] {
   const secs: Section[] = [];
@@ -439,7 +445,7 @@ export function EmailPanel() {
               <div className="email-page-actions">
                 <div className="email-folder-wrap" ref={folderPickerRef}>
                   <button className="sync-btn ghost" onClick={() => setFolderPickerOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={folderPickerOpen}>
-                    {folders.length === 1 ? folders[0] : `已选 ${folders.length} 文件夹`}
+                    {folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="m6 9 6 6 6-6" />
                     </svg>
@@ -458,7 +464,7 @@ export function EmailPanel() {
                               <path d="M20 6 9 17l-5-5" />
                             </svg>
                           </span>
-                          <span className="email-folder-name">{name}</span>
+                          <span className="email-folder-name">{folderDisplay(name)}</span>
                         </label>
                       ))}
                     </div>
