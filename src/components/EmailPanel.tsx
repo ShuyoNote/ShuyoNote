@@ -138,7 +138,6 @@ export function EmailPanel() {
   const [subjectW, setSubjectW] = useState(160);
   const resizeRef = useRef<{ startX: number; startW: number; col: "from" | "subject" } | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
-  const [starred, setStarred] = useState<Set<number>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -346,13 +345,51 @@ export function EmailPanel() {
     });
   };
 
-  const toggleStarred = (uid: number) => {
-    setStarred((prev) => {
-      const n = new Set(prev);
-      if (n.has(uid)) n.delete(uid);
-      else n.add(uid);
-      return n;
-    });
+  const toggleStarred = async (m: EmailMeta) => {
+    if (!account) return;
+    const next = !m.flagged;
+    // 乐观更新列表里的星标状态。
+    setList((prev) => prev.map((x) => (x.uid === m.uid ? { ...x, flagged: next } : x)));
+    try {
+      await api.emailSetFlag(account, m.uid, m.folder, next);
+    } catch (e) {
+      setErr(String(e));
+      // 失败回滚。
+      setList((prev) => prev.map((x) => (x.uid === m.uid ? { ...x, flagged: m.flagged } : x)));
+    }
+  };
+
+  const markRead = async (m: EmailMeta, read: boolean) => {
+    if (!account) return;
+    const updated = list.map((x) => (x.uid === m.uid ? { ...x, seen: read } : x));
+    setList(updated);
+    setUnread(updated.filter((x) => !x.seen).length);
+    try {
+      await api.emailMarkRead(account, m.uid, m.folder, read);
+    } catch (e) {
+      setErr(String(e));
+      const rolled = list.map((x) => (x.uid === m.uid ? { ...x, seen: m.seen } : x));
+      setList(rolled);
+      setUnread(rolled.filter((x) => !x.seen).length);
+    }
+  };
+
+  const deleteEmail = async (m: EmailMeta) => {
+    if (!account) return;
+    setErr("");
+    setBusy(true);
+    try {
+      await api.emailMoveToTrash(account, m.uid, m.folder);
+      setList((prev) => prev.filter((x) => x.uid !== m.uid));
+      if (active?.uid === m.uid) {
+        setActive(null);
+        setBody("");
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // 月份选择：跳到该月最新一封邮件（列表顶部）。
@@ -745,12 +782,12 @@ export function EmailPanel() {
                             <span className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</span>
                             <span className="email-item-date">{fmtListTime(m)}</span>
                             <span
-                              className={`email-item-star${starred.has(m.uid) ? " is-starred" : ""}`}
+                              className={`email-item-star${m.flagged ? " is-starred" : ""}`}
                               role="button"
                               tabIndex={-1}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                toggleStarred(m.uid);
+                                void toggleStarred(m);
                               }}
                             >
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -776,13 +813,27 @@ export function EmailPanel() {
                       >
                         <BookmarkIcon width={14} height={14} /> 存为笔记
                       </button>
-                      <button className="sync-btn ghost" disabled title="回复">
+                      <button className="sync-btn ghost" disabled title="回复（后续支持 SMTP）">
                         <SendIcon width={14} height={14} /> 回复
                       </button>
-                      <button className="sync-btn ghost" disabled title="转发">
+                      <button className="sync-btn ghost" disabled title="转发（后续支持 SMTP）">
                         <SendIcon width={14} height={14} /> 转发
                       </button>
-                      <button className="sync-btn ghost" disabled title="删除">
+                      <button
+                        className={`sync-btn ghost${active?.seen ? "" : " is-active"}`}
+                        disabled={busy || !active}
+                        onClick={() => active && void markRead(active, !active.seen)}
+                      >
+                        {active?.seen ? "标为未读" : "标为已读"}
+                      </button>
+                      <button
+                        className="sync-btn ghost"
+                        disabled={busy || !active}
+                        onClick={() => {
+                          if (!active) return;
+                          if (window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active);
+                        }}
+                      >
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
                       <span className="email-read-toolbar-spacer" />

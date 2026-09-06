@@ -25,8 +25,38 @@ pub struct EmailMeta {
     pub snippet: String,
     /// 是否已读（IMAP `\Seen` 标志）。
     pub seen: bool,
+    /// 是否星标（IMAP `\Flagged` 标志）。
+    pub flagged: bool,
     /// 所属文件夹（收件箱/广告邮件/垃圾邮件…），用于多文件夹浏览与正文拉取。
     pub folder: String,
+}
+
+/// 建立到 INBOX/目标文件夹的 IMAP 会话（TCP + TLS + 登录 + SELECT）。
+/// 供各命令复用，避免重复连接代码。
+async fn open_session(
+    account: &EmailAccountArgs,
+    folder: &str,
+) -> Result<async_imap::Session<tokio_native_tls::TlsStream<tokio::net::TcpStream>>, String> {
+    use tokio::net::TcpStream;
+
+    let tcp = TcpStream::connect((account.host.as_str(), account.port))
+        .await
+        .map_err(|e| format!("TCP 连接失败: {}", e))?;
+    let tls = tokio_native_tls::TlsConnector::from(
+        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
+    );
+    let tls_stream = tls
+        .connect(&account.host, tcp)
+        .await
+        .map_err(|e| format!("TLS 失败: {}", e))?;
+
+    let client = async_imap::Client::new(tls_stream);
+    let mut session = client
+        .login(&account.username, &account.password)
+        .await
+        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+    session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+    Ok(session)
 }
 
 /// IMAP 账号参数（spike：应用密码 / 企业 IMAP；OAuth 后续）。
@@ -152,25 +182,8 @@ pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result
 
 async fn fetch_uid_raw(account: &EmailAccountArgs, folder: &str, uid: u32) -> Result<String, String> {
     use futures_util::StreamExt;
-    use tokio::net::TcpStream;
 
-    let tcp = TcpStream::connect((account.host.as_str(), account.port))
-        .await
-        .map_err(|e| format!("TCP 连接失败: {}", e))?;
-    let tls = tokio_native_tls::TlsConnector::from(
-        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
-    );
-    let tls_stream = tls
-        .connect(&account.host, tcp)
-        .await
-        .map_err(|e| format!("TLS 失败: {}", e))?;
-
-    let client = async_imap::Client::new(tls_stream);
-    let mut session = client
-        .login(&account.username, &account.password)
-        .await
-        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
-    session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+    let mut session = open_session(account, folder).await?;
     let mut stream = session
         .uid_fetch(format!("{}", uid), "(BODY.PEEK[])")
         .await
@@ -275,7 +288,6 @@ pub struct EmailFetchArgs {
 #[tauri::command]
 pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, String> {
     use futures_util::StreamExt;
-    use tokio::net::TcpStream;
 
     let folders = if args.folders.is_empty() {
         vec!["INBOX".to_string()]
@@ -283,22 +295,7 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
         args.folders.clone()
     };
 
-    let tcp = TcpStream::connect((args.account.host.as_str(), args.account.port))
-        .await
-        .map_err(|e| format!("TCP 连接失败: {}", e))?;
-    let tls = tokio_native_tls::TlsConnector::from(
-        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
-    );
-    let tls_stream = tls
-        .connect(&args.account.host, tcp)
-        .await
-        .map_err(|e| format!("TLS 失败: {}", e))?;
-
-    let client = async_imap::Client::new(tls_stream);
-    let mut session = client
-        .login(&args.account.username, &args.account.password)
-        .await
-        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+    let mut session = open_session(&args.account, "INBOX").await?;
 
     let mut out = Vec::new();
     for folder in &folders {
@@ -339,6 +336,7 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
                     .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
                     .unwrap_or_default();
                 let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
+                let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
                 out.push(EmailMeta {
                     uid: m.uid.unwrap_or(0),
                     subject,
@@ -346,6 +344,7 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
                     date,
                     snippet: String::new(),
                     seen,
+                    flagged,
                     folder: folder.clone(),
                 });
             }
@@ -395,6 +394,69 @@ pub async fn email_list_folders(args: EmailAccountArgs) -> Result<Vec<String>, S
     Ok(out)
 }
 
+/// 收件箱内操作入参：账号 + 文件夹 + 邮件 UID。
+#[derive(Deserialize)]
+pub struct EmailOpArgs {
+    pub account: EmailAccountArgs,
+    pub uid: u32,
+    #[serde(default = "default_folder")]
+    pub folder: String,
+}
+
+/// 设置邮件星标（`\Flagged`）。`flag=true` 打星，否则取消。
+#[tauri::command]
+pub async fn email_set_flag(args: EmailOpArgs, flag: bool) -> Result<(), String> {
+    use futures_util::StreamExt;
+    let mut session = open_session(&args.account, &args.folder).await?;
+    let q = if flag { "+FLAGS.SILENT (\\Flagged)" } else { "-FLAGS.SILENT (\\Flagged)" };
+    let mut stream = session
+        .uid_store(format!("{}", args.uid), q)
+        .await
+        .map_err(|e| format!("设置星标失败: {}", e))?;
+    while stream.next().await.is_some() {}
+    Ok(())
+}
+
+/// 标记邮件已读/未读（`\Seen`）。
+#[tauri::command]
+pub async fn email_mark_read(args: EmailOpArgs, read: bool) -> Result<(), String> {
+    use futures_util::StreamExt;
+    let mut session = open_session(&args.account, &args.folder).await?;
+    let q = if read { "+FLAGS.SILENT (\\Seen)" } else { "-FLAGS.SILENT (\\Seen)" };
+    let mut stream = session
+        .uid_store(format!("{}", args.uid), q)
+        .await
+        .map_err(|e| format!("标记已读失败: {}", e))?;
+    while stream.next().await.is_some() {}
+    Ok(())
+}
+
+/// 删除邮件：`UID MOVE` 到「已删除」文件夹（可回收）。依次尝试常见文件夹名，
+/// 都失败时回退到标记 `\Deleted` + EXPUNGE（至少从列表移除）。
+#[tauri::command]
+pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
+    let mut session = open_session(&args.account, &args.folder).await?;
+    let uid = format!("{}", args.uid);
+    let candidates = ["Trash", "Deleted Messages", "Deleted Items", "垃圾箱", "已删除"];
+
+    for trash in candidates {
+        if session.uid_mv(&uid, trash).await.is_ok() {
+            return Ok(());
+        }
+    }
+
+    // 回退：标记删除并 EXPUNGE。
+    session
+        .uid_store(&uid, "+FLAGS.SILENT (\\Deleted)")
+        .await
+        .map_err(|e| format!("删除失败: {}", e))?;
+    session
+        .expunge()
+        .await
+        .map_err(|e| format!("删除失败: {}", e))?;
+    Ok(())
+}
+
 /// 拉取 INBOX 未读数量（轻量 `STATUS INBOX (UNSEEN)`），供定时收取/未读角标用。
 #[tauri::command]
 pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {
@@ -402,24 +464,7 @@ pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {
 }
 
 async fn fetch_unseen(account: &EmailAccountArgs) -> Result<u32, String> {
-    use tokio::net::TcpStream;
-
-    let tcp = TcpStream::connect((account.host.as_str(), account.port))
-        .await
-        .map_err(|e| format!("TCP 连接失败: {}", e))?;
-    let tls = tokio_native_tls::TlsConnector::from(
-        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
-    );
-    let tls_stream = tls
-        .connect(&account.host, tcp)
-        .await
-        .map_err(|e| format!("TLS 失败: {}", e))?;
-
-    let client = async_imap::Client::new(tls_stream);
-    let mut session = client
-        .login(&account.username, &account.password)
-        .await
-        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+    let mut session = open_session(account, "INBOX").await?;
     let mbox = session
         .status("INBOX", "(UNSEEN)")
         .await

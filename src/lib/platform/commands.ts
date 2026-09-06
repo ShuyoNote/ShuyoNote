@@ -77,6 +77,7 @@ export interface EmailMeta {
   date: string;
   snippet: string;
   seen: boolean;
+  flagged: boolean;
   folder: string;
 }
 
@@ -90,6 +91,12 @@ export interface EmailAccount {
   interval_minutes: number;
 }
 
+export interface EmailOpArgs {
+  account: EmailAccount;
+  uid: number;
+  folder: string;
+}
+
 export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
@@ -100,6 +107,9 @@ export interface CommandMap {
   email_get_account: { args: undefined; result: EmailAccount | null };
   email_unseen_count: { args: { args: EmailAccount }; result: number };
   email_list_folders: { args: { args: EmailAccount }; result: string[] };
+  email_set_flag: { args: { args: EmailOpArgs; flag: boolean }; result: void };
+  email_mark_read: { args: { args: EmailOpArgs; read: boolean }; result: void };
+  email_move_to_trash: { args: { args: EmailOpArgs }; result: void };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

@@ -40,6 +40,7 @@ export interface EmailMeta {
   date: string;
   snippet: string;
   seen: boolean;
+  flagged: boolean;
   folder: string;
 }
 
@@ -126,6 +127,12 @@ export const api = {
     invoke("email_unseen_count", { args: account }),
   emailListFolders: (account: EmailAccount) =>
     invoke("email_list_folders", { args: account }),
+  emailSetFlag: (account: EmailAccount, uid: number, folder: string, flag: boolean) =>
+    invoke("email_set_flag", { args: { account, uid, folder }, flag }),
+  emailMarkRead: (account: EmailAccount, uid: number, folder: string, read: boolean) =>
+    invoke("email_mark_read", { args: { account, uid, folder }, read }),
+  emailMoveToTrash: (account: EmailAccount, uid: number, folder: string) =>
+    invoke("email_move_to_trash", { args: { account, uid, folder } }),
   savePage: (args: {
     id: string;
     title?: string;
