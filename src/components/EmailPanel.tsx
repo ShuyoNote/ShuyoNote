@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
 import { platform } from "../lib/platform";
@@ -95,6 +95,68 @@ const FOLDER_ZH: Record<string, string> = {
 function folderDisplay(name: string): string {
   const key = name.trim().toLowerCase();
   return FOLDER_ZH[key] ?? name;
+}
+
+// 把正文纯文本渲染成可读视图：分段、引用块、可点链接。内容为纯文本，用 React 转义。
+function EmailBody({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  const blocks: { type: "para" | "quote"; lines: string[] }[] = [];
+  let cur: { type: "para" | "quote"; lines: string[] } | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, "");
+    const isQuote = line.startsWith(">") || line.startsWith("|") || line.startsWith("　");
+    const isSep = /^[─\-=]{6,}/.test(line);
+    if (isSep) continue;
+    if (!line.trim()) {
+      cur = null;
+      continue;
+    }
+    const type: "para" | "quote" = isQuote ? "quote" : "para";
+    if (!cur || cur.type !== type) {
+      if (cur) blocks.push(cur);
+      cur = { type, lines: [] };
+    }
+    cur.lines.push(isQuote ? line.replace(/^[>|　\s]+/, "") : line);
+  }
+  if (cur) blocks.push(cur);
+
+  const urlRe = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+
+  const renderLine = (l: string, key: number) => {
+    const parts: ReactNode[] = [];
+    let last = 0;
+    for (const m of l.matchAll(urlRe)) {
+      const idx = m.index ?? 0;
+      if (idx > last) parts.push(l.slice(last, idx));
+      const url = m[0];
+      const href = url.startsWith("http") ? url : `https://${url}`;
+      parts.push(
+        <a key={`u${key}-${idx}`} href={href} target="_blank" rel="noreferrer" className="email-body-link">
+          {url}
+        </a>,
+      );
+      last = idx + url.length;
+    }
+    if (last < l.length) parts.push(l.slice(last));
+    return parts;
+  };
+
+  return (
+    <div className="email-body">
+      {blocks.map((b, i) =>
+        b.type === "quote" ? (
+          <blockquote key={i} className="email-body-quote">
+            {b.lines.map((l, j) => (
+              <p key={j}>{renderLine(l, j)}</p>
+            ))}
+          </blockquote>
+        ) : (
+          <p key={i}>{b.lines.map((l, j) => renderLine(l, j))}</p>
+        ),
+      )}
+    </div>
+  );
 }
 
 // 分组：今天 / 上周（近7天，不含今昨） / 更早。
@@ -963,7 +1025,7 @@ export function EmailPanel() {
                           </span>
                         </div>
                         <div className="email-read-body">
-                          {loadingBody ? "加载正文…" : body || (err ? "" : "（正文为空）")}
+                          {loadingBody ? "加载正文…" : body ? <EmailBody text={body} /> : err ? "" : "（正文为空）"}
                         </div>
                       </>
                     ) : (
