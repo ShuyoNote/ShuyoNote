@@ -113,11 +113,63 @@ pub fn email_save_as_note(db: State<Db>, args: EmailSaveArgs) -> Result<crate::m
     commands::create_node(db, None, Some(title), "page", Some(json), Some(text))
 }
 
-/// 拉取收件箱头部（spike：占位）。
-/// 依赖 `imap` 3.x，但当前 USTC 镜像索引缺该版本；待依赖可解析 + 真实账号后填充。
+/// 拉取收件箱头部（读最近 20 条 Envelope）。
+/// 走 `imap` ClientBuilder（内置 TLS）。镜像缺稳定 imap 3.x，暂用 3.0.0-alpha.15。
+#[allow(unused_variables)]
 #[tauri::command]
-pub fn email_fetch_inbox(_db: State<Db>, _args: EmailAccountArgs) -> Result<Vec<EmailMeta>, String> {
-    Err("IMAP 拉取待接入：当前镜像源缺 imap 3.x 依赖，需真实邮箱账号 + 依赖可解析后启用".to_string())
+pub fn email_fetch_inbox(_db: State<Db>, args: EmailAccountArgs) -> Result<Vec<EmailMeta>, String> {
+    let client = imap::ClientBuilder::new(&args.host, args.port)
+        .connect()
+        .map_err(|e| format!("连接失败: {}", e))?;
+    let mut session = client
+        .login(&args.username, &args.password)
+        .map_err(|(e, _client)| format!("登录失败: {}", e))?;
+    session.select("INBOX").map_err(|e| format!("选择 INBOX 失败: {}", e))?;
+    let fetched = session
+        .fetch("1:*", "(ENVELOPE UID)")
+        .map_err(|e| format!("拉取失败: {}", e))?;
+
+    let mut out = Vec::new();
+    for m in fetched.iter().rev().take(20) {
+        if let Some(env) = m.envelope() {
+            let subject = env
+                .subject
+                .as_ref()
+                .map(|s| String::from_utf8_lossy(s.as_ref()).to_string())
+                .unwrap_or_default();
+            let from = env
+                .from
+                .as_ref()
+                .and_then(|v| v.first())
+                .map(|a| {
+                    let mb = a
+                        .mailbox
+                        .as_ref()
+                        .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                        .unwrap_or_default();
+                    let host = a
+                        .host
+                        .as_ref()
+                        .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                        .unwrap_or_default();
+                    format!("{}@{}", mb, host)
+                })
+                .unwrap_or_default();
+            let date = env
+                .date
+                .as_ref()
+                .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
+                .unwrap_or_default();
+            out.push(EmailMeta {
+                uid: m.uid.unwrap_or(0),
+                subject,
+                from,
+                date,
+                snippet: String::new(),
+            });
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
