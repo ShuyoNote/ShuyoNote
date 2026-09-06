@@ -19,6 +19,7 @@ import { useNotes } from "../store/notes";
 import { useAuth } from "../store/auth";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
+import { useEmailPanel } from "../store/emailPanel";
 import {
   PaletteIcon,
   FolderIcon,
@@ -28,6 +29,7 @@ import {
   LockIcon,
   SparkleIcon,
   InfoIcon,
+  SendIcon,
 } from "./icons";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -40,6 +42,7 @@ const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Elem
   { id: "appearance", labelKey: "settings.appearance", hintKey: "settings.appearanceHint", icon: <PaletteIcon width={16} height={16} /> },
   { id: "spaces", labelKey: "settings.spaces", hintKey: "settings.spacesHint", icon: <FolderIcon width={16} height={16} /> },
   { id: "account", labelKey: "settings.account", hintKey: "settings.accountHint", icon: <PersonIcon width={16} height={16} /> },
+  { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <SendIcon width={16} height={16} /> },
   { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} /> },
   { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} /> },
   { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} /> },
@@ -268,6 +271,94 @@ function SpacesPane() {
             </button>
           </div>
         </div>
+      </section>
+    </>
+  );
+}
+
+// 「邮箱」页：聚合收件箱的 IMAP 账号配置。低频、全局，归设置；收件箱阅读/转换
+// 在「打开收件箱」的整页里做（此处只做"我是谁、连哪个邮箱"）。
+function EmailPane() {
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("993");
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [useTls, setUseTls] = useState(true);
+  const [err, setErr] = useState("");
+  const desktop = isDesktopPlatform();
+
+  useEffect(() => {
+    api
+      .emailGetAccount()
+      .then((a) => {
+        if (a) {
+          setHost(a.host);
+          setPort(String(a.port));
+          setUser(a.username);
+          setPass(a.password);
+          setUseTls(a.use_tls);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!host) return;
+    setErr("");
+    try {
+      await api.emailSaveAccount({ host, port: Number(port) || 993, username: user, password: pass, use_tls: useTls });
+      setErr("配置已保存 ✓");
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  return (
+    <>
+      <section className="set-section">
+        <div className="set-section-title">聚合收件箱</div>
+        {!desktop ? (
+          <p className="set-hint">邮箱功能为桌面专属（Web 无法连接 IMAP），请使用桌面版。</p>
+        ) : (
+          <>
+            <div className="set-row">
+              <div className="set-row-text">
+                <div className="set-row-name">IMAP 账号（应用密码 / 企业 IMAP）</div>
+                <div className="set-row-sub">
+                  用于拉取收件箱；Gmail 需开两步验证后用「应用专用密码」，网易/腾讯用授权码。
+                </div>
+              </div>
+            </div>
+            <div className="set-field">
+              <label htmlFor="email-host">服务器</label>
+              <input id="email-host" className="set-input" placeholder="imap.qq.com" value={host} onChange={(e) => setHost(e.target.value)} />
+            </div>
+            <div className="set-field">
+              <label htmlFor="email-port">端口</label>
+              <input id="email-port" className="set-input" placeholder="993" value={port} onChange={(e) => setPort(e.target.value)} />
+            </div>
+            <div className="set-field">
+              <label htmlFor="email-user">账号</label>
+              <input id="email-user" className="set-input" placeholder="you@example.com" value={user} onChange={(e) => setUser(e.target.value)} />
+            </div>
+            <div className="set-field">
+              <label htmlFor="email-pass">密码 / 应用密码</label>
+              <input id="email-pass" className="set-input" type="password" placeholder="应用密码 / 授权码" value={pass} onChange={(e) => setPass(e.target.value)} />
+            </div>
+            <div className="set-row">
+              <div className="set-row-text">
+                <div className="set-row-name">使用 TLS/SSL</div>
+              </div>
+              <input type="checkbox" checked={useTls} onChange={(e) => setUseTls(e.target.checked)} />
+            </div>
+            <div className="set-actions">
+              <button className="set-btn is-primary" disabled={!host} onClick={() => void save()}>保存配置</button>
+              <button className="set-btn" onClick={() => { useEmailPanel.getState().openPanel(); useEditorStore.getState().closeSettings(); }}>打开收件箱</button>
+            </div>
+            {err && <div className="set-status-line">{err}</div>}
+            <p className="set-hint">密码目前本地明文存；生产将改用端到端加密 / 系统凭据库（见内部文档）。</p>
+          </>
+        )}
       </section>
     </>
   );
@@ -1210,6 +1301,7 @@ export function SettingsDialog() {
             {tab === "appearance" && <AppearancePane />}
             {tab === "spaces" && <SpacesPane />}
             {tab === "account" && <AccountPane />}
+            {tab === "email" && <EmailPane />}
             {tab === "data" && <DataPane />}
             {tab === "plugins" && <PluginsPane />}
             {tab === "security" && <SecurityPane />}

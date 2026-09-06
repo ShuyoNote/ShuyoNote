@@ -33,6 +33,8 @@ export default {
     spacesHint: "配色 / 删除 / 迁移",
     account: "账户",
     accountHint: "登录身份与同步目标",
+    email: "邮箱",
+    emailHint: "聚合收件箱 · IMAP 账号配置",
     data: "数据",
     dataHint: "备份 / 存储与清理",
     plugins: "插件",

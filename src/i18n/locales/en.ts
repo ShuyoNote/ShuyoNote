@@ -33,6 +33,8 @@ export default {
     spacesHint: "Colors / delete / migrate",
     account: "Account",
     accountHint: "Identity & sync targets",
+    email: "Email",
+    emailHint: "Unified inbox · IMAP account",
     data: "Data",
     dataHint: "Backup / storage & cleanup",
     plugins: "Plugins",
