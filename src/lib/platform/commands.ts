@@ -77,6 +77,7 @@ export interface EmailMeta {
   date: string;
   snippet: string;
   seen: boolean;
+  folder: string;
 }
 
 export interface EmailAccount {
@@ -92,12 +93,13 @@ export interface EmailAccount {
 export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
-  email_fetch_inbox: { args: { args: EmailAccount }; result: EmailMeta[] };
-  email_save_uid: { args: { args: { account: EmailAccount; uid: number } }; result: PageDetail };
-  email_get_body: { args: { args: { account: EmailAccount; uid: number } }; result: string };
+  email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[] } }; result: EmailMeta[] };
+  email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
+  email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
   email_save_account: { args: { account: EmailAccount }; result: void };
   email_get_account: { args: undefined; result: EmailAccount | null };
   email_unseen_count: { args: { args: EmailAccount }; result: number };
+  email_list_folders: { args: { args: EmailAccount }; result: string[] };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

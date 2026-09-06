@@ -25,6 +25,8 @@ pub struct EmailMeta {
     pub snippet: String,
     /// 是否已读（IMAP `\Seen` 标志）。
     pub seen: bool,
+    /// 所属文件夹（收件箱/广告邮件/垃圾邮件…），用于多文件夹浏览与正文拉取。
+    pub folder: String,
 }
 
 /// IMAP 账号参数（spike：应用密码 / 企业 IMAP；OAuth 后续）。
@@ -128,21 +130,27 @@ fn save_raw_note(db: State<Db>, raw: String) -> Result<crate::models::PageDetail
     commands::create_node(db, None, Some(title), "page", Some(json), Some(text))
 }
 
-/// “按 UID 存为笔记”入参：账号 + 邮件 UID。
+/// “按 UID 存为笔记”入参：账号 + 文件夹 + 邮件 UID。
 #[derive(Deserialize)]
 pub struct EmailSaveUidArgs {
     pub account: EmailAccountArgs,
     pub uid: u32,
+    #[serde(default = "default_folder")]
+    pub folder: String,
+}
+
+fn default_folder() -> String {
+    "INBOX".to_string()
 }
 
 /// 按 UID 拉取完整邮件（`BODY.PEEK[]`，不置已读）→ 存为笔记。
 #[tauri::command]
 pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result<crate::models::PageDetail, String> {
-    let raw = fetch_uid_raw(&args.account, args.uid).await?;
+    let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
     save_raw_note(db, raw)
 }
 
-async fn fetch_uid_raw(account: &EmailAccountArgs, uid: u32) -> Result<String, String> {
+async fn fetch_uid_raw(account: &EmailAccountArgs, folder: &str, uid: u32) -> Result<String, String> {
     use futures_util::StreamExt;
     use tokio::net::TcpStream;
 
@@ -162,7 +170,7 @@ async fn fetch_uid_raw(account: &EmailAccountArgs, uid: u32) -> Result<String, S
         .login(&account.username, &account.password)
         .await
         .map_err(|(e, _c)| format!("登录失败: {}", e))?;
-    session.select("INBOX").await.map_err(|e| format!("选择 INBOX 失败: {}", e))?;
+    session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
     let mut stream = session
         .uid_fetch(format!("{}", uid), "(BODY.PEEK[])")
         .await
@@ -254,9 +262,101 @@ fn decode_mime_word(token: &str) -> Option<String> {
     Some(decoded.into_owned())
 }
 
-/// 拉取收件箱头部（读最近 20 条 Envelope）。走 `async-imap`（tokio + native-tls）。
+/// 拉取邮件头部。入参：账号 + 要拉取的文件夹列表（多选；空则默认为 INBOX）。
+/// 走 `async-imap`（tokio + native-tls），对每个文件夹 `SELECT` 后 `FETCH (ENVELOPE UID FLAGS)`，
+/// 合并到一个列表，每封标注其所属 `folder`。
+#[derive(Deserialize)]
+pub struct EmailFetchArgs {
+    pub account: EmailAccountArgs,
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
 #[tauri::command]
-pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>, String> {
+pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, String> {
+    use futures_util::StreamExt;
+    use tokio::net::TcpStream;
+
+    let folders = if args.folders.is_empty() {
+        vec!["INBOX".to_string()]
+    } else {
+        args.folders.clone()
+    };
+
+    let tcp = TcpStream::connect((args.account.host.as_str(), args.account.port))
+        .await
+        .map_err(|e| format!("TCP 连接失败: {}", e))?;
+    let tls = tokio_native_tls::TlsConnector::from(
+        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
+    );
+    let tls_stream = tls
+        .connect(&args.account.host, tcp)
+        .await
+        .map_err(|e| format!("TLS 失败: {}", e))?;
+
+    let client = async_imap::Client::new(tls_stream);
+    let mut session = client
+        .login(&args.account.username, &args.account.password)
+        .await
+        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+
+    let mut out = Vec::new();
+    for folder in &folders {
+        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        let mut stream = session
+            .fetch("1:*", "(ENVELOPE UID FLAGS)")
+            .await
+            .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+
+        while let Some(Ok(m)) = stream.next().await {
+            if let Some(env) = m.envelope() {
+                let subject = env
+                    .subject
+                    .as_ref()
+                    .map(|s| decode_mime_words(&String::from_utf8_lossy(s.as_ref())))
+                    .unwrap_or_default();
+                let from = env
+                    .from
+                    .as_ref()
+                    .and_then(|v| v.first())
+                    .map(|a| {
+                        let mb = a
+                            .mailbox
+                            .as_ref()
+                            .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                            .unwrap_or_default();
+                        let host = a
+                            .host
+                            .as_ref()
+                            .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                            .unwrap_or_default();
+                        format!("{}@{}", mb, host)
+                    })
+                    .unwrap_or_default();
+                let date = env
+                    .date
+                    .as_ref()
+                    .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
+                    .unwrap_or_default();
+                let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
+                out.push(EmailMeta {
+                    uid: m.uid.unwrap_or(0),
+                    subject,
+                    from,
+                    date,
+                    snippet: String::new(),
+                    seen,
+                    folder: folder.clone(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 列出账号下所有可选文件夹（`LIST "" "*"`），供多选下拉用；跳过不可 SELECT 的（\Noselect）。
+#[tauri::command]
+pub async fn email_list_folders(args: EmailAccountArgs) -> Result<Vec<String>, String> {
     use futures_util::StreamExt;
     use tokio::net::TcpStream;
 
@@ -276,54 +376,22 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
         .login(&args.username, &args.password)
         .await
         .map_err(|(e, _c)| format!("登录失败: {}", e))?;
-    session.select("INBOX").await.map_err(|e| format!("选择 INBOX 失败: {}", e))?;
     let mut stream = session
-        .fetch("1:*", "(ENVELOPE UID FLAGS)")
+        .list(None, Some("*"))
         .await
-        .map_err(|e| format!("拉取失败: {}", e))?;
+        .map_err(|e| format!("LIST 失败: {}", e))?;
 
     let mut out = Vec::new();
-    while let Some(Ok(m)) = stream.next().await {
-        if let Some(env) = m.envelope() {
-            let subject = env
-                .subject
-                .as_ref()
-                .map(|s| decode_mime_words(&String::from_utf8_lossy(s.as_ref())))
-                .unwrap_or_default();
-            let from = env
-                .from
-                .as_ref()
-                .and_then(|v| v.first())
-                .map(|a| {
-                    let mb = a
-                        .mailbox
-                        .as_ref()
-                        .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
-                        .unwrap_or_default();
-                    let host = a
-                        .host
-                        .as_ref()
-                        .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
-                        .unwrap_or_default();
-                    format!("{}@{}", mb, host)
-                })
-                .unwrap_or_default();
-            let date = env
-                .date
-                .as_ref()
-                .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
-                .unwrap_or_default();
-            let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
-            out.push(EmailMeta {
-                uid: m.uid.unwrap_or(0),
-                subject,
-                from,
-                date,
-                snippet: String::new(),
-                seen,
-            });
+    while let Some(Ok(name)) = stream.next().await {
+        let no_select = name
+            .attributes()
+            .iter()
+            .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect));
+        if !no_select {
+            out.push(name.name().to_string());
         }
     }
+    out.sort();
     Ok(out)
 }
 
@@ -415,7 +483,7 @@ pub fn start_email_poller(app: AppHandle) {
 /// 按 UID 取邮件正文（纯文本，供右侧阅读窗格显示）。
 #[tauri::command]
 pub async fn email_get_body(args: EmailSaveUidArgs) -> Result<String, String> {
-    let raw = fetch_uid_raw(&args.account, args.uid).await?;
+    let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
     let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
     Ok(email_text(&parsed))
 }

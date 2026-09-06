@@ -16730,6 +16730,56 @@ p:has(> .editor-drawing-container) {
 .email-page-title-text { font-size: 15px; font-weight: 700; color: var(--text); }
 .email-page-sub { font-size: 12px; color: var(--text-faint); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .email-page-actions { display: flex; gap: 8px; align-items: center; }
+
+/* 文件夹多选下拉（邮箱页顶栏） */
+.email-folder-wrap { position: relative; }
+.email-folder-menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 1200;
+  min-width: 180px;
+  max-width: 240px;
+  max-height: 300px;
+  overflow: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 10px 28px rgba(0,0,0,.2));
+  padding: 6px;
+}
+.email-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.email-folder-item:hover { background: var(--hover); }
+.email-folder-item input { display: none; }
+.email-folder-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  box-sizing: border-box;
+}
+.email-folder-item.is-on .email-folder-check {
+  background: var(--accent, #4f7cff);
+  border-color: var(--accent, #4f7cff);
+  color: var(--on-accent);
+}
+.email-folder-item.is-on .email-folder-name { color: var(--accent, #4f7cff); }
+.email-folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .email-page-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .email-page-empty { padding: 24px; color: var(--text-dim); }
 

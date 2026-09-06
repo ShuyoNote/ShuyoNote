@@ -40,6 +40,7 @@ export interface EmailMeta {
   date: string;
   snippet: string;
   seen: boolean;
+  folder: string;
 }
 
 /**
@@ -112,16 +113,19 @@ export const api = {
     invoke("create_database", { args }),
   // 聚合邮箱（桌面专属）
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
-  emailFetchInbox: (account: EmailAccount) => invoke("email_fetch_inbox", { args: account }),
-  emailSaveUid: (account: EmailAccount, uid: number) =>
-    invoke("email_save_uid", { args: { account, uid } }),
-  emailGetBody: (account: EmailAccount, uid: number) =>
-    invoke("email_get_body", { args: { account, uid } }),
+  emailFetchInbox: (account: EmailAccount, folders: string[]) =>
+    invoke("email_fetch_inbox", { args: { account, folders } }),
+  emailSaveUid: (account: EmailAccount, uid: number, folder: string) =>
+    invoke("email_save_uid", { args: { account, uid, folder } }),
+  emailGetBody: (account: EmailAccount, uid: number, folder: string) =>
+    invoke("email_get_body", { args: { account, uid, folder } }),
   emailSaveAccount: (account: EmailAccount) =>
     invoke("email_save_account", { account }),
   emailGetAccount: () => invoke("email_get_account", undefined),
   emailUnseenCount: (account: EmailAccount) =>
     invoke("email_unseen_count", { args: account }),
+  emailListFolders: (account: EmailAccount) =>
+    invoke("email_list_folders", { args: account }),
   savePage: (args: {
     id: string;
     title?: string;

@@ -113,6 +113,10 @@ export function EmailPanel() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
   const pickerRef = useRef<HTMLDivElement>(null);
+  const [folders, setFolders] = useState<string[]>(["INBOX"]);
+  const [allFolders, setAllFolders] = useState<string[]>([]);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const folderPickerRef = useRef<HTMLDivElement>(null);
 
   // 每封邮件 → 其所在 (年,月)，并给每个月记录最新一封（列表顶部的第一封）。
   const monthIndex = useMemo(() => {
@@ -149,6 +153,19 @@ export function EmailPanel() {
       .catch(() => {});
   }, []);
 
+  // 账号可用后列出所有文件夹，并保证默认选「收件箱」。
+  useEffect(() => {
+    if (!account) return;
+    api
+      .emailListFolders(account)
+      .then((fs) => {
+        const list = fs.length ? fs : ["INBOX"];
+        setAllFolders(list);
+        setFolders((prev) => (prev.some((f) => list.includes(f)) ? prev : ["INBOX"]));
+      })
+      .catch(() => setAllFolders(["INBOX"]));
+  }, [account]);
+
   // 打开时：用已保存账号拉取收件箱；顺带根据 `seen` 刷新未读角标。
   useEffect(() => {
     if (!open) return;
@@ -172,11 +189,11 @@ export function EmailPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const fetchInbox = async (acc: EmailAccount = account!) => {
+  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders) => {
     setBusy(true);
     setErr("");
     try {
-      const r = await api.emailFetchInbox(acc);
+      const r = await api.emailFetchInbox(acc, fs);
       const newestFirst = [...r].reverse();
       setList(newestFirst);
       setUnread(newestFirst.filter((m) => !m.seen).length);
@@ -199,7 +216,7 @@ export function EmailPanel() {
     setLoadingBody(true);
     setErr("");
     try {
-      const bodyText = await api.emailGetBody(acc, m.uid);
+      const bodyText = await api.emailGetBody(acc, m.uid, m.folder);
       setBody(bodyText);
     } catch (e) {
       setErr(String(e));
@@ -211,15 +228,15 @@ export function EmailPanel() {
 
   const refresh = async () => {
     if (!account) return;
-    await fetchInbox(account);
+    await fetchInbox(account, folders);
   };
 
   const saveUid = async (uid: number) => {
-    if (!account) return;
+    if (!account || !active) return;
     setErr("");
     setBusy(true);
     try {
-      await api.emailSaveUid(account, uid);
+      await api.emailSaveUid(account, uid, active.folder);
       setErr("已存为笔记 ✓");
     } catch (e) {
       setErr(String(e));
@@ -303,6 +320,34 @@ export function EmailPanel() {
     setPickerOpen((v) => !v);
   };
 
+  // 文件夹多选：切换某文件夹后重新拉取（至少保留一个）。
+  const toggleFolder = (name: string) => {
+    setFolders((prev) => {
+      let next: string[];
+      if (prev.includes(name)) {
+        next = prev.filter((f) => f !== name);
+      } else {
+        next = [...prev, name];
+      }
+      if (next.length === 0) next = ["INBOX"];
+      void fetchInbox(account!, next);
+      return next;
+    });
+  };
+
+  // 点击文件夹选择器外部关闭。
+  useEffect(() => {
+    if (!folderPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (folderPickerRef.current?.contains(t)) return;
+      setFolderPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [folderPickerOpen]);
+
   // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -376,6 +421,33 @@ export function EmailPanel() {
                 <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>
               </div>
               <div className="email-page-actions">
+                <div className="email-folder-wrap" ref={folderPickerRef}>
+                  <button className="sync-btn ghost" onClick={() => setFolderPickerOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={folderPickerOpen}>
+                    {folders.length === 1 ? folders[0] : `已选 ${folders.length} 文件夹`}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                  {folderPickerOpen && (
+                    <div className="email-folder-menu" role="listbox" aria-label="选择文件夹">
+                      {allFolders.map((name) => (
+                        <label key={name} className={`email-folder-item${folders.includes(name) ? " is-on" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={folders.includes(name)}
+                            onChange={() => toggleFolder(name)}
+                          />
+                          <span className="email-folder-check">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20 6 9 17l-5-5" />
+                            </svg>
+                          </span>
+                          <span className="email-folder-name">{name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button className="sync-btn ghost" disabled={busy || !account} onClick={() => void refresh()}>
                   <RefreshIcon width={14} height={14} /> 拉取
                 </button>
