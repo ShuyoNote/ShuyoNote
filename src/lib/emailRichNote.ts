@@ -34,6 +34,24 @@ function extractPlainText(json: unknown): string {
 }
 
 // 清理 Lexical EditorState JSON：去掉空 paragraph / 空 text 等无内容节点，
+// 判断一个节点（含其子树）是否有「可见内容」：存在任何非空白 text。
+// 纯 linebreak / 纯空白 text 不算内容——用于去掉版式撑出的空白块。
+function hasVisibleText(node: unknown): boolean {
+  if (!node || typeof node !== "object") return false;
+  const rec = node as Record<string, unknown>;
+  if (typeof rec.text === "string" && rec.text.replace(/\s+/g, "").length > 0) return true;
+  if (Array.isArray(rec.children)) {
+    for (const c of rec.children) if (hasVisibleText(c)) return true;
+  }
+  if (rec.$slots && typeof rec.$slots === "object") {
+    for (const k of Object.keys(rec.$slots as Record<string, unknown>)) {
+      if (hasVisibleText((rec.$slots as Record<string, unknown>)[k])) return true;
+    }
+  }
+  return false;
+}
+
+// 清理 Lexical EditorState JSON：去掉空段落 / 空 text / 仅换行与空白等无内容节点，
 // 避免邮件 HTML 里 `padding` 等版式转成一大片空白块。
 function cleanEditorState(node: unknown): unknown {
   if (!node || typeof node !== "object") return node;
@@ -43,15 +61,9 @@ function cleanEditorState(node: unknown): unknown {
     const cleaned: unknown[] = [];
     for (const c of rec.children) {
       const cc = cleanEditorState(c);
-      const ccObj = cc as Record<string, unknown> | null;
-      // 空段落（无子节点且无文本）、空 text / 纯空白 text → 丢弃
-      if (ccObj && typeof ccObj === "object") {
-        const hasText = typeof ccObj.text === "string" && ccObj.text.replace(/\s+/g, "").length > 0;
-        const isBlockWithChildren = Array.isArray(ccObj.children) && ccObj.children.length > 0;
-        const hasSlots = ccObj.$slots && typeof ccObj.$slots === "object" && Object.keys(ccObj.$slots as object).length > 0;
-        if (hasText || isBlockWithChildren || hasSlots) {
-          cleaned.push(cc);
-        }
+      // 只有包含可见文字的子节点才保留；纯换行/空白的段落块丢弃。
+      if (hasVisibleText(cc)) {
+        cleaned.push(cc);
       }
     }
     rec.children = cleaned;
