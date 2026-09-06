@@ -361,21 +361,6 @@ export function EmailPanel() {
     }
   };
 
-  const debugBody = async () => {
-    if (!account || !active) return;
-    setErr("");
-    try {
-      // 同时用 email_get_body（阅读区路径）拉一次，直接设到 body。
-      const bodyText = await api.emailGetBody(account, active.uid, active.folder);
-      setBody(bodyText);
-      const info = await api.emailDebugBody(account, active.uid, active.folder);
-      // 红条显示 email_get_body 返回的内容（前端实际拿到的 body），与 email_text 对比。
-      setErr(`[get_body len=${bodyText.length}]\n${bodyText.slice(0, 300)}\n\n---[debug info]---\n${info}`);
-    } catch (e) {
-      setErr(String(e));
-    }
-  };
-
   const refresh = async () => {    if (!account) return;
     await fetchInbox(account, folders);
   };
@@ -992,7 +977,6 @@ export function EmailPanel() {
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
                       <span className="email-read-toolbar-spacer" />
-                      <button className="sync-btn ghost" disabled={!active} onClick={() => void debugBody()}>调试正文</button>
                       <button className="sync-btn ghost" disabled title="更多操作">更多操作</button>
                     </div>
                     {active ? (

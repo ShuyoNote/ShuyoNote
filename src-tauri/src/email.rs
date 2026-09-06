@@ -213,24 +213,6 @@ pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result
     save_raw_note(db, raw)
 }
 
-/// 调试：返回某封邮件的报文诊断信息（原始长度、Content-Type、子部分数、正文提取结果），
-/// 用于定位「正文不显示」问题。
-#[tauri::command]
-pub async fn email_debug_body(args: EmailSaveUidArgs) -> Result<String, String> {
-    let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
-    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
-    let mut info = format!("raw_len={}\r\n", raw.len());
-    info += &format!("top_ctype={:?}\r\n", parsed.ctype.mimetype);
-    info += &format!("subparts={}\r\n", parsed.subparts.len());
-    for (i, sub) in parsed.subparts.iter().enumerate() {
-        let body = sub.get_body().unwrap_or_default();
-        info += &format!("  part[{}] ctype={:?} body_len={} first60={:?}\r\n", i, sub.ctype.mimetype, body.len(), body.chars().take(60).collect::<String>());
-    }
-    let text = email_text(&parsed);
-    info += &format!("email_text_len={} head={:?}\r\n", text.len(), text.chars().take(80).collect::<String>());
-    Ok(info)
-}
-
 async fn fetch_uid_raw(account: &EmailAccountArgs, folder: &str, uid: u32) -> Result<String, String> {
     use futures_util::StreamExt;
 
