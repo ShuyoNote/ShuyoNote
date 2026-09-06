@@ -392,8 +392,8 @@ export function EmailPanel() {
     setErr("");
     try {
       const info = await api.emailDebugBody(account, active.uid, active.folder);
-      setBody(info);
-      setErr("已显示诊断信息");
+      // 诊断信息放进错误条（可复制），避免被 EmailBody 过滤掉。
+      setErr(info);
     } catch (e) {
       setErr(String(e));
     }

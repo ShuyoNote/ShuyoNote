@@ -1693,6 +1693,14 @@ select.sync-input {
   background: var(--danger-soft);
   color: var(--danger);
 }
+
+/* 邮箱调试：错误条承载多行诊断，限高可滚动、便于全选复制 */
+.email-page-body .sync-status.is-err {
+  max-height: 260px;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
 .sync-duration {
   margin-left: auto;
   font-size: 11px;
