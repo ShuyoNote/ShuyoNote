@@ -20,7 +20,6 @@ export function EmailPanel() {
   const [list, setList] = useState<EmailMeta[]>([]);
   const [selected, setSelected] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
-  const [raw, setRaw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
@@ -86,21 +85,6 @@ export function EmailPanel() {
     setBusy(true);
     try {
       await api.emailSaveUid(account, uid);
-      setErr("已存为笔记 ✓");
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveRaw = async () => {
-    if (!raw.trim()) return;
-    setErr("");
-    setBusy(true);
-    try {
-      await api.emailSaveAsNote(raw);
-      setRaw("");
       setErr("已存为笔记 ✓");
     } catch (e) {
       setErr(String(e));
@@ -183,28 +167,22 @@ export function EmailPanel() {
                             <span className="email-item-date">{m.date}</span>
                           </span>
                         </span>
-                        <span
-                          className="save-note-btn"
-                          role="button"
-                          tabIndex={0}
-                          title="存为笔记"
-                          onClick={(e) => { e.stopPropagation(); void saveUid(m.uid); }}
-                          onKeyDown={(e) => e.key === "Enter" && (e.stopPropagation(), void saveUid(m.uid))}
-                        >存为笔记</span>
                       </button>
                     ))}
                   </div>
 
                   <div className="email-pane-read">
+                    <div className="email-read-toolbar">
+                      <button className="sync-btn primary" disabled={busy || !selected} onClick={() => selected && void saveUid(selected.uid)}>
+                        存为笔记
+                      </button>
+                    </div>
                     {selected ? (
                       <>
                         <div className="email-read-subject">{selected.subject || "(无主题)"}</div>
                         <div className="email-read-meta">
                           <span>发件人：{selected.from}</span>
                           <span>{selected.date}</span>
-                        </div>
-                        <div className="email-read-actions">
-                          <button className="sync-btn" disabled={busy} onClick={() => void saveUid(selected.uid)}>存为笔记</button>
                         </div>
                         <div className="email-read-body">
                           {loadingBody ? "加载正文…" : body || "（正文为空）"}
@@ -216,20 +194,6 @@ export function EmailPanel() {
                   </div>
                 </div>
               )}
-
-              <div className="email-paste">
-                <label className="sync-hint">粘贴原始邮件（RFC822）→ 存为笔记</label>
-                <textarea
-                  className="sync-input"
-                  rows={2}
-                  placeholder={"From: a@x.com\nSubject: 你好\n\n正文…"}
-                  value={raw}
-                  onChange={(e) => setRaw(e.target.value)}
-                />
-                <button className="sync-btn" disabled={busy || !raw.trim()} onClick={() => void saveRaw()}>
-                  存为笔记
-                </button>
-              </div>
 
               {err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
             </div>

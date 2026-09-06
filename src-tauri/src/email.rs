@@ -315,12 +315,44 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
     Ok(out)
 }
 
-/// 按 UID 取邮件正文文本（供右侧阅读窗格显示）。
+/// 按 UID 取邮件正文（纯文本，供右侧阅读窗格显示）。
 #[tauri::command]
 pub async fn email_get_body(args: EmailSaveUidArgs) -> Result<String, String> {
     let raw = fetch_uid_raw(&args.account, args.uid).await?;
     let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(parsed.get_body().unwrap_or_default())
+    Ok(email_text(&parsed))
+}
+
+/// 递归取邮件正文：优先 text/plain；仅 HTML 时剥标签。
+fn email_text(p: &mailparse::ParsedMail) -> String {
+    if p.ctype.mimetype == "text/plain" {
+        return strip_html(&p.get_body().unwrap_or_default());
+    }
+    for sub in &p.subparts {
+        let t = email_text(sub);
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    strip_html(&p.get_body().unwrap_or_default())
+}
+
+/// 把 HTML/混合正文转成可读纯文本（去 script/style、块级标签换行、剥标签、解实体、收空格）。
+fn strip_html(s: &str) -> String {
+    let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</\1>").unwrap();
+    let re_br = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
+    let re_block = regex::Regex::new(r"(?i)</(p|div|tr|li|h[1-6]|table|td|blockquote|ul|ol)\s*>").unwrap();
+    let re_tag = regex::Regex::new(r"(?s)<[^>]+>").unwrap();
+    let re_space = regex::Regex::new(r"[ \t]+").unwrap();
+    let re_nl = regex::Regex::new(r"\n\s*\n+").unwrap();
+    let s = re_script.replace_all(s, " ").into_owned();
+    let s = re_br.replace_all(&s, "\n").into_owned();
+    let s = re_block.replace_all(&s, "\n").into_owned();
+    let s = re_tag.replace_all(&s, "").into_owned();
+    let s = re_space.replace_all(&s, " ").into_owned();
+    let s = re_nl.replace_all(&s, "\n").into_owned();
+    let s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'");
+    s.trim().to_string()
 }
 
 /// 本地配置文件路径（`app_data_dir/email-account.json`）。
