@@ -16755,20 +16755,31 @@ p:has(> .editor-drawing-container) {
 .email-item-star:hover { color: var(--text-dim); }
 .email-item-star.is-starred { color: #f5a623; }
 
-/* 竖分隔线：可拖动调整列表 / 阅读区宽度 */
+/* 竖分隔线：细线造型（QQ 邮箱风），拖拽热区稍宽 */
 .email-divider {
   flex: none;
-  width: 10px;
+  width: 7px;
   cursor: col-resize;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  background: var(--surface);
+  position: relative;
+  background: transparent;
 }
-.email-divider:hover { background: var(--hover); border-color: var(--border-strong); }
-.email-divider-grip { font-size: 11px; line-height: 1; color: var(--text-faint); letter-spacing: 2px; user-select: none; }
+.email-divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  background: var(--border);
+}
+.email-divider:hover::before,
+.email-divider:active::before { background: var(--accent, #4f7cff); }
+.email-divider:hover { background: var(--hover); }
+.email-divider-grip { display: none; }
 
 /* 右：阅读窗格 */
 .email-pane-read {
