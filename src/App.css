@@ -16894,6 +16894,15 @@ p:has(> .editor-drawing-container) {
 .email-list-head-delete:hover { background: var(--danger-soft, rgba(229,72,77,.12)); }
 .email-list-head-delete:disabled { opacity: .5; cursor: default; }
 
+/* 列表底部「加载更多」指示 */
+.email-list-more {
+  text-align: center;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
 /* 列表头其余批量操作按钮（已读/未读/存为笔记） */
 .email-list-head-op {
   display: inline-flex;

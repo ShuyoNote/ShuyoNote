@@ -17,7 +17,7 @@ use crate::db::Db;
 use crate::smtp::{self, SmtpSecurity};
 
 /// 邮件元信息（阅读流用）。
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct EmailMeta {
     pub uid: u32,
     pub subject: String,
@@ -316,6 +316,11 @@ pub struct EmailFetchArgs {
     pub account: EmailAccountArgs,
     #[serde(default)]
     pub folders: Vec<String>,
+    /// 分页：返回按「最新在前」排序后的第 offset..offset+limit 条。默认取全量（limit=0 视为全部）。
+    #[serde(default)]
+    pub limit: u32,
+    #[serde(default)]
+    pub offset: u32,
 }
 
 #[tauri::command]
@@ -382,6 +387,13 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
                 });
             }
         }
+    }
+    // 分页：按 UID 降序（最新在前），取 offset..offset+limit。
+    out.sort_by(|a, b| b.uid.cmp(&a.uid));
+    if args.limit > 0 {
+        let start = (args.offset as usize).min(out.len());
+        let end = (start + args.limit as usize).min(out.len());
+        out = out[start..end].to_vec();
     }
     Ok(out)
 }

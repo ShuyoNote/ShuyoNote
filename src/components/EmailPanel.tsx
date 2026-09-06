@@ -323,6 +323,10 @@ export function EmailPanel() {
   const [subjectFilter, setSubjectFilter] = useState("");
   // 关键词搜索：发件人/主题 子串匹配（与上面的过滤器叠加）。
   const [searchQuery, setSearchQuery] = useState("");
+  // 懒加载分页：每页条数 + 是否还有更多。
+  const PAGE_SIZE = 60;
+  const [listPage, setListPage] = useState<number>(1);
+  const [hasMore, setHasMore] = useState(false);
 
   // 当前列表里的去重发件人（供下拉选项）。
   const senders = useMemo(() => [...new Set(list.map((m) => m.from))].sort((a, b) => a.localeCompare(b, "zh")), [list]);
@@ -434,25 +438,56 @@ export function EmailPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders) => {
+  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders, page = 1) => {
     setBusy(true);
     setErr("");
     try {
-      const r = await api.emailFetchInbox(acc, fs);
-      const newestFirst = [...r].reverse();
-      setList(newestFirst);
-      setUnread(newestFirst.filter((m) => !m.seen).length);
-      if (newestFirst.length === 0) {
+      const r = await api.emailFetchInbox(acc, fs, page * PAGE_SIZE, 0);
+      setList(r);
+      setUnread(r.filter((m) => !m.seen).length);
+      setListPage(page);
+      setHasMore(r.length >= page * PAGE_SIZE);
+      if (r.length === 0) {
         setErr("未拉到邮件（检查账号 / 认证）");
-      } else if (newestFirst.some((m) => m.uid === active?.uid)) {
+      } else if (r.some((m) => m.uid === active?.uid)) {
         // 保持当前阅读的邮件选中，不打扰。
       } else {
-        void selectEmail(newestFirst[0], acc);
+        void selectEmail(r[0], acc);
       }
     } catch (e) {
       setErr(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 滚动到底时加载下一页，追加到列表。
+  const fetchMore = async () => {
+    if (!account || busy || !hasMore) return;
+    const nextPage = listPage + 1;
+    setBusy(true);
+    try {
+      const r = await api.emailFetchInbox(account, folders, nextPage * PAGE_SIZE, 0);
+      setList((prev) => {
+        const seen = new Set(prev.map((m) => m.uid));
+        const extra = r.filter((m) => !seen.has(m.uid));
+        return [...prev, ...extra];
+      });
+      setListPage(nextPage);
+      setHasMore(r.length >= nextPage * PAGE_SIZE);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 列表滚动接近底部时加载下一页。
+  const onListScroll = () => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+      void fetchMore();
     }
   };
 
@@ -949,7 +984,7 @@ export function EmailPanel() {
 
               {account && (
                 <div className="email-split" ref={splitRef}>
-                  <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef}>
+                  <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef} onScroll={onListScroll}>
                     <div className="email-list-head">
                       <span className="email-list-head-title">邮件{provider ? ` · ${provider}` : ""}</span>
                       {checked.size > 0 && (
@@ -1151,6 +1186,11 @@ export function EmailPanel() {
                         ))}
                       </div>
                     ))}
+                    {hasMore && (
+                      <div className="email-list-more">
+                        {busy ? "加载中…" : "下拉加载更多"}
+                      </div>
+                    )}
                   </div>
 
                   <div className="email-divider" role="separator" aria-orientation="vertical" onMouseDown={onDividerDown}>
