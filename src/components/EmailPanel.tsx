@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
@@ -13,6 +13,8 @@ export function EmailPanel() {
   const open = useEmailPanel((s) => s.open);
   const toggle = useEmailPanel((s) => s.toggle);
   const closePanel = useEmailPanel((s) => s.closePanel);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const [account, setAccount] = useState<EmailAccount | null>(null);
   const [list, setList] = useState<EmailMeta[]>([]);
@@ -41,6 +43,33 @@ export function EmailPanel() {
       .catch((e) => setErr(String(e)))
       .finally(() => setBusy(false));
   }, [open]);
+
+  // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
+        e.preventDefault();
+        useEmailPanel.getState().openPanel();
+      } else if (e.key === "Escape" && useEmailPanel.getState().open) {
+        useEmailPanel.getState().closePanel();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+
+  // 点击邮箱页外部（侧边栏节点 / 工具栏 关系图·看板·文件夹·页面 / 标题栏）→ 自动关闭。
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (pageRef.current?.contains(t)) return; // 页内不动
+      if (btnRef.current?.contains(t)) return;  // 邮箱按钮：toggle 处理
+      useEmailPanel.getState().closePanel();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
 
   const refresh = async () => {
     if (!account) return;
@@ -89,14 +118,14 @@ export function EmailPanel() {
   return (
     <>
       {/* 侧栏入口：图标 + 文字，与「同步」一致；tooltip 提示快捷键。 */}
-      <button className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
+      <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
         <SendIcon width={14} height={14} />
         <span>邮箱</span>
       </button>
 
       {open &&
         createPortal(
-          <div className="email-page" role="dialog" aria-label="邮箱">
+          <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
             <header className="email-page-head">
               <div className="email-page-title">
                 <div>邮箱</div>
