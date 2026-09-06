@@ -665,21 +665,31 @@ fn email_text(p: &mailparse::ParsedMail) -> String {
     strip_html(&p.get_body().unwrap_or_default())
 }
 
-/// 把 HTML/混合正文转成可读纯文本（去 script/style、块级标签换行、剥标签、解实体、收空格）。
+/// 把 HTML/混合正文转成可读纯文本。
+///
+/// 关键：块级标签（p/div/h1-6/li/tr/table/blockquote/ul/ol）在**开始与结束**都插入换行，
+/// 这样 `strip_html` 能保住段落结构（否则开启标签被剥掉后多段文字会连成一坨）。
+/// 段落之间保留一个空行，供前端按段渲染。
 fn strip_html(s: &str) -> String {
     // 注意：regex crate 不支持反向引用 `\1`，故用「对应闭合标签」展开替代。
     let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</(script|style)>").unwrap();
     let re_br = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
-    let re_block = regex::Regex::new(r"(?i)</(p|div|tr|li|h[1-6]|table|td|blockquote|ul|ol)\s*>").unwrap();
+    // 块级开始/结束标签 → 换成两个换行（形成段落分隔）。
+    let re_block = regex::Regex::new(
+        r"(?is)</?(p|div|h[1-6]|li|tr|td|th|table|blockquote|ul|ol|dl|dt|dd|section|article|header|footer|nav|pre)\b[^>]*>"
+    ).unwrap();
     let re_tag = regex::Regex::new(r"(?s)<[^>]+>").unwrap();
     let re_space = regex::Regex::new(r"[ \t]+").unwrap();
-    let re_nl = regex::Regex::new(r"\n\s*\n+").unwrap();
+    let re_nl = regex::Regex::new(r"[ \t]*\n[ \t]*").unwrap();
+    let re_blank = regex::Regex::new(r"\n\s*\n\s*\n+").unwrap();
     let s = re_script.replace_all(s, " ").into_owned();
     let s = re_br.replace_all(&s, "\n").into_owned();
-    let s = re_block.replace_all(&s, "\n").into_owned();
+    let s = re_block.replace_all(&s, "\n\n").into_owned();
     let s = re_tag.replace_all(&s, "").into_owned();
     let s = re_space.replace_all(&s, " ").into_owned();
+    // 每个换行留一个空行分隔段落，多个空行压成一个。
     let s = re_nl.replace_all(&s, "\n").into_owned();
+    let s = re_blank.replace_all(&s, "\n\n").into_owned();
     let s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'");
     s.trim().to_string()
 }
@@ -739,13 +749,18 @@ mod tests {
     }
 
     #[test]
-    fn email_text_extracts_html_body() {
-        let raw = "From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><h1>Hello</h1><p>World <br> again</p></body></html>";
+    fn email_text_extracts_html_body_with_paragraphs() {
+        // 多段 HTML：验证段落被空行隔开，而不是连成一坨。
+        let raw = "From: a@b.com\r\nSubject: test\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><h1>Header</h1><p>First paragraph.</p><p>Second para.</p><div>Div text</div><p>Third line <br> break.</p></body></html>";
         let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
         let t = email_text(&parsed);
-        assert!(t.contains("Hello"), "got: {:?}", t);
-        assert!(t.contains("World"));
+        assert!(t.contains("Header"));
+        assert!(t.contains("First paragraph."));
+        assert!(t.contains("Second para."));
+        assert!(t.contains("Div text"));
         assert!(!t.contains("<p>"), "html tag leaked: {:?}", t);
+        // 段落之间应有空行（\n\n）分隔。
+        assert!(t.contains("First paragraph.\n\nSecond para."), "paragraphs not separated: {:?}", t);
     }
 
     #[test]
