@@ -33,6 +33,38 @@ function extractPlainText(json: unknown): string {
   return out.join("\n");
 }
 
+// 清理 Lexical EditorState JSON：去掉空 paragraph / 空 text 等无内容节点，
+// 避免邮件 HTML 里 `padding` 等版式转成一大片空白块。
+function cleanEditorState(node: unknown): unknown {
+  if (!node || typeof node !== "object") return node;
+  const rec = node as Record<string, unknown>;
+  // 递归清理 children / $slots
+  if (Array.isArray(rec.children)) {
+    const cleaned: unknown[] = [];
+    for (const c of rec.children) {
+      const cc = cleanEditorState(c);
+      const ccObj = cc as Record<string, unknown> | null;
+      // 空段落（无子节点且无文本）、空 text（无 text）→ 丢弃
+      if (ccObj && typeof ccObj === "object") {
+        const hasText = typeof ccObj.text === "string" && ccObj.text.length > 0;
+        const isBlockWithChildren = Array.isArray(ccObj.children) && ccObj.children.length > 0;
+        const hasSlots = ccObj.$slots && typeof ccObj.$slots === "object" && Object.keys(ccObj.$slots as object).length > 0;
+        if (hasText || isBlockWithChildren || hasSlots) {
+          cleaned.push(cc);
+        }
+      }
+    }
+    rec.children = cleaned;
+  }
+  if (rec.$slots && typeof rec.$slots === "object") {
+    const slots = rec.$slots as Record<string, unknown>;
+    for (const k of Object.keys(slots)) {
+      slots[k] = cleanEditorState(slots[k]);
+    }
+  }
+  return rec;
+}
+
 /**
  * 把邮件 HTML 转成 Lexical 富文本 JSON 字符串 + 纯文本。
  * @returns { content_json, content_text }（JSON 为字符串，纯文本用于搜索/FTS）
@@ -51,7 +83,7 @@ export function emailHtmlToLexical(html: string): { content_json: string; conten
       },
       { discrete: true },
     );
-    const json = editor.getEditorState().toJSON();
+    const json = cleanEditorState(editor.getEditorState().toJSON());
     const content_json = JSON.stringify(json);
     const content_text = extractPlainText(json);
     return { content_json, content_text };
