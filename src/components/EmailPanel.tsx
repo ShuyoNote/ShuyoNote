@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
-import { InboxIcon, SendIcon, RefreshIcon, TrashIcon } from "./icons";
+import { useEditorStore } from "../store/editor";
+import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon } from "./icons";
 
 type EmailMeta = Awaited<ReturnType<typeof api.emailFetchInbox>>[number];
 type EmailAccount = { host: string; port: number; username: string; password: string; use_tls: boolean };
@@ -241,15 +242,21 @@ export function EmailPanel() {
           <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
             <header className="email-page-head">
               <div className="email-page-title">
-                <div>邮箱</div>
-                <div className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</div>
+                <span className="email-page-title-text">邮箱</span>
+                <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>
               </div>
               <div className="email-page-actions">
-                <button className="sync-btn primary" disabled={busy || !active} onClick={() => active && void saveUid(active.uid)}>
-                  <SendIcon width={14} height={14} /> 存为笔记
-                </button>
                 <button className="sync-btn ghost" disabled={busy || !account} onClick={() => void refresh()}>
                   <RefreshIcon width={14} height={14} /> 拉取
+                </button>
+                <button
+                  className="sync-btn ghost"
+                  onClick={() => {
+                    closePanel();
+                    useEditorStore.getState().openSettings("email");
+                  }}
+                >
+                  <SettingsIcon width={14} height={14} /> 设置
                 </button>
                 <button className="sync-btn ghost" onClick={closePanel} aria-label="关闭">✕</button>
               </div>
@@ -326,6 +333,13 @@ export function EmailPanel() {
 
                   <div className="email-pane-read">
                     <div className="email-read-toolbar">
+                      <button
+                        className="sync-btn primary"
+                        disabled={busy || !active}
+                        onClick={() => active && void saveUid(active.uid)}
+                      >
+                        <SendIcon width={14} height={14} /> 存为笔记
+                      </button>
                       <button className="sync-btn ghost" disabled title="回复">
                         <SendIcon width={14} height={14} /> 回复
                       </button>
@@ -355,13 +369,6 @@ export function EmailPanel() {
                               <span>邮件类型：收件箱</span>
                             </span>
                           </span>
-                          <button
-                            className="sync-btn primary"
-                            disabled={busy}
-                            onClick={() => active && void saveUid(active.uid)}
-                          >
-                            存为笔记
-                          </button>
                         </div>
                         <div className="email-read-body">
                           {loadingBody ? "加载正文…" : body || "（正文为空）"}
