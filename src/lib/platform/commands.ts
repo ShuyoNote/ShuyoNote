@@ -82,6 +82,7 @@ export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { host: string; port: number; username: string; password: string; use_tls: boolean } }; result: EmailMeta[] };
+  email_save_uid: { args: { args: { account: { host: string; port: number; username: string; password: string; use_tls: boolean }; uid: number } }; result: PageDetail };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

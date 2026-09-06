@@ -81,7 +81,12 @@ pub fn email_to_page_parts(_title: &str, body: &str, from: &str, date: &str) -> 
 /// 把一条原始邮件存为笔记（capture-first 核心）。
 #[tauri::command]
 pub fn email_save_as_note(db: State<Db>, args: EmailSaveArgs) -> Result<crate::models::PageDetail, String> {
-    let parsed = mailparse::parse_mail(args.raw.as_bytes()).map_err(|e| format!("邮件解析失败: {}", e))?;
+    save_raw_note(db, args.raw)
+}
+
+/// 解析 RFC822 → 建页。供「粘贴存为笔记」与「按 UID 存为笔记」共用。
+fn save_raw_note(db: State<Db>, raw: String) -> Result<crate::models::PageDetail, String> {
+    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| format!("邮件解析失败: {}", e))?;
     let subject = parsed
         .headers
         .iter()
@@ -109,6 +114,60 @@ pub fn email_save_as_note(db: State<Db>, args: EmailSaveArgs) -> Result<crate::m
     };
     let (json, text) = email_to_page_parts(&title, &body, &from, &date);
     commands::create_node(db, None, Some(title), "page", Some(json), Some(text))
+}
+
+/// “按 UID 存为笔记”入参：账号 + 邮件 UID。
+#[derive(Deserialize)]
+pub struct EmailSaveUidArgs {
+    pub account: EmailAccountArgs,
+    pub uid: u32,
+}
+
+/// 按 UID 拉取完整邮件（`BODY.PEEK[]`，不置已读）→ 存为笔记。
+#[tauri::command]
+pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result<crate::models::PageDetail, String> {
+    let raw = fetch_uid_raw(&args.account, args.uid).await?;
+    save_raw_note(db, raw)
+}
+
+async fn fetch_uid_raw(account: &EmailAccountArgs, uid: u32) -> Result<String, String> {
+    use futures_util::StreamExt;
+    use tokio::net::TcpStream;
+
+    let tcp = TcpStream::connect((account.host.as_str(), account.port))
+        .await
+        .map_err(|e| format!("TCP 连接失败: {}", e))?;
+    let tls = tokio_native_tls::TlsConnector::from(
+        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
+    );
+    let tls_stream = tls
+        .connect(&account.host, tcp)
+        .await
+        .map_err(|e| format!("TLS 失败: {}", e))?;
+
+    let client = async_imap::Client::new(tls_stream);
+    let mut session = client
+        .login(&account.username, &account.password)
+        .await
+        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+    session.select("INBOX").await.map_err(|e| format!("选择 INBOX 失败: {}", e))?;
+    let mut stream = session
+        .uid_fetch(format!("{}", uid), "(BODY.PEEK[])")
+        .await
+        .map_err(|e| format!("拉取失败: {}", e))?;
+
+    let mut body = Vec::new();
+    while let Some(item) = stream.next().await {
+        if let Ok(m) = item {
+            if let Some(b) = m.body() {
+                body.extend_from_slice(b);
+            }
+        }
+    }
+    if body.is_empty() {
+        return Err(format!("未取到邮件正文（UID {}）", uid));
+    }
+    Ok(String::from_utf8_lossy(&body).to_string())
 }
 
 /// 拉取收件箱头部（读最近 20 条 Envelope）。走 `async-imap`（tokio + native-tls）。

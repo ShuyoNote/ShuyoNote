@@ -93,6 +93,8 @@ export const api = {
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
   emailFetchInbox: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }) =>
     invoke("email_fetch_inbox", { args: account }),
+  emailSaveUid: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }, uid: number) =>
+    invoke("email_save_uid", { args: { account, uid } }),
   savePage: (args: {
     id: string;
     title?: string;

@@ -240,6 +240,7 @@ pub fn run() {
             commands::create_folder,
             email::email_save_as_note,
             email::email_fetch_inbox,
+            email::email_save_uid,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

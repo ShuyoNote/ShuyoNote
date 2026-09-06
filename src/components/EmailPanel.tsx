@@ -57,6 +57,22 @@ export function EmailPanel() {
     }
   };
 
+  const saveUid = async (uid: number) => {
+    setErr("");
+    setBusy(true);
+    try {
+      await api.emailSaveUid(
+        { host, port: Number(port) || 993, username: user, password: pass, use_tls: useTls },
+        uid,
+      );
+      setErr("已存为笔记 ✓");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="邮箱 · 聚合收件箱">
@@ -106,6 +122,7 @@ export function EmailPanel() {
                       </div>
                       <div className="sync-history-msg">{m.from}</div>
                     </div>
+                    <button className="sync-btn" disabled={busy} onClick={() => void saveUid(m.uid)}>存为笔记</button>
                   </div>
                 ))}
               </div>
