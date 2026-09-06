@@ -491,9 +491,9 @@ export function EmailPanel() {
       if (!d) return;
       const dx = ev.clientX - d.startX;
       if (d.col === "from") {
-        setFromW(Math.max(70, Math.min(320, d.startW + dx)));
+        setFromW(Math.max(56, Math.min(320, d.startW + dx)));
       } else {
-        setSubjectW(Math.max(120, Math.min(600, d.startW + dx)));
+        setSubjectW(Math.max(90, Math.min(600, d.startW + dx)));
       }
     };
     const onUp = () => {
