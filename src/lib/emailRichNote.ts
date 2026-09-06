@@ -91,6 +91,11 @@ function flattenTables(html: string): string {
   // td/th 之间加换行，保留单元格内容。
   out = out.replace(/<t[dh][^>]*>/gi, "\n");
   out = out.replace(/<\/t[dh]\s*>/gi, "\n");
+  // 去掉单元格里的高度撑高占位符（&nbsp; 只在 cell 里）——把仅含 nbsp/空白的 cell 行清掉。
+  out = out.replace(/=E3=80=80|&nbsp;|&#160;|\u00a0/g, "\n");
+  // 去掉「纯高度占位」的 cell 空行（如 `<td height=5>` 无内容 → 已删标签，只余空行）
+  // 及由 nbsp 撑出的行，避免大空白。
+  out = out.replace(/\n\s*\n\s*\n+/g, "\n\n");
   // 连续换行压成一个空行（段落分隔）。
   out = out.replace(/\n{3,}/g, "\n\n");
   return out;
