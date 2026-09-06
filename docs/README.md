@@ -140,6 +140,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-04-near-realtime-plan.md](plans/2026-09-04-near-realtime-plan.md) | **「团队版近实时协作」落地实现方案（规划）**：在页级 LWW + 轮询之上加**协作感知层**——P0 同页冲突提示 + 在线/谁在编辑（presence 心跳）、P1 评论/@/通知中心、P1.5 可选 SSE/WebSocket 推送；含数据模型（`presence`/`comments`/`notifications`）、新接口清单、客户端组件、里程碑与验收；**明确不做块级 CRDT**、个人空间保留 E2E（依据 [实时协同利弊分析](../realtime-collab-analysis.md)） |
 | [plans/2026-09-05-desktop-product-polish-plan.md](plans/2026-09-05-desktop-product-polish-plan.md) | **「桌面端产品打磨计划」（规划）**：依据 [产品评价](../product-review.md)，**桌面是主线**。四根柱子——① 同步地基（一致性整改 + 跨设备回归脚本 + 自托管 SYNC 文档）、② 数据安全（一键备份/恢复 + 回收站兜底 + 整空间导出）、③ 桌面体验打磨（z-index 统一 + 空/加载/错误态 + 编辑器/数据库打磨）、④ 交付/产品化（自动升级 + 关于/许可证 + 发布节奏收紧）；含优先级 P0–P3、验收与交付物；**最小可交付三件事 = 同步一致性 + 备份/恢复 + 自动升级** |
 | [plans/2026-09-05-sync-consistency-remediation-plan.md](plans/2026-09-05-sync-consistency-remediation-plan.md) | **「同步一致性整改 + 跨设备回归脚本」可执行方案（P0 地基）**：现状盘点（device_seq 全 0 / FNV vs SHA-256 / `.part` / 增量指针 / 幂等）；按文件/接口的具体整改（桌面 sync.rs、web web.ts、服务端 sync.rs）；`scripts/sync-regression.mjs` 两设备互改收敛 + 无 400/413 + 哈希一致 + 幂等 + 增量的回归断言；新增/改动文件清单、验收清单、最小交付物（整改 + 回归脚本 + docs/SYNC.md） |
+| [plans/2026-09-06-email-aggregate-plan.md](plans/2026-09-06-email-aggregate-plan.md) | **「聚合邮箱（邮件即笔记）」落地文档（规划，建议）**：多账号 IMAP 聚合收件箱 + 一键转笔记/任务（capture-first）；范围界定（做/不做）、技术可行性、P0–P2 里程碑、验收清单、风险与决策点（OAuth 门槛/凭据安全/性能/范围失控）、文件级改动清单。**商业化/OAuth 凭据/服务端设想等敏感部分见私有 shuyonote-sync-server 仓库 `docs/email-aggregate-monetization.md`** |
 
 ## 竞品对比
 
