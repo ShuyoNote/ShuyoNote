@@ -82,8 +82,11 @@ export function SendIcon(props: IconProps) {
 export function InboxIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M22 12h-6l-2 3h-4l-2-3H2" />
-      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+      {/* 收紧留白：收件箱图形在 24×24 里偏满，轻微缩小并居中，视觉占比接近云/循环类图标。 */}
+      <g transform="translate(2.4 2.6) scale(0.8)">
+        <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+        <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+      </g>
     </Icon>
   );
 }
