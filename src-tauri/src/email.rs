@@ -8,6 +8,7 @@
 //! 备注：OAuth 见私有仓库 `docs/email-aggregate-monetization.md`。
 
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use tauri::State;
 use uuid::Uuid;
 
@@ -25,9 +26,9 @@ pub struct EmailMeta {
 }
 
 /// IMAP 账号参数（spike：应用密码 / 企业 IMAP；OAuth 后续）。
-/// `email_fetch_inbox` 为占位（镜像缺 imap 3.x），字段暂未读取。
-#[allow(dead_code)]
-#[derive(Deserialize)]
+/// IMAP 账号参数（应用密码 / 企业 IMAP；OAuth 后续）。
+/// 支持序列化，便于持久化到本地配置。
+#[derive(Serialize, Deserialize)]
 pub struct EmailAccountArgs {
     pub host: String,
     pub port: u16,
@@ -239,6 +240,38 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
         }
     }
     Ok(out)
+}
+
+/// 本地配置文件路径（`app_data_dir/email-account.json`）。
+fn account_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("email-account.json"))
+        .map_err(|e| e.to_string())
+}
+
+/// 保存 IMAP 账号配置到本地（便于打开面板自动回填）。
+/// 注意：生产中密码应加密（E1 / 系统凭据库），见私有仓库 `docs/email-aggregate-monetization.md`。
+#[tauri::command]
+pub fn email_save_account(app: tauri::AppHandle, account: EmailAccountArgs) -> Result<(), String> {
+    let path = account_path(&app)?;
+    if let Some(p) = path.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&account).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 读取已保存的 IMAP 账号配置（未配置返回 None）。
+#[tauri::command]
+pub fn email_get_account(app: tauri::AppHandle) -> Result<Option<EmailAccountArgs>, String> {
+    let path = account_path(&app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(serde_json::from_str(&content).ok())
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { api } from "../lib/api";
 import { SendIcon } from "./icons";
@@ -22,17 +22,40 @@ export function EmailPanel() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // 打开时回填已保存的 IMAP 账号配置。
+  useEffect(() => {
+    api
+      .emailGetAccount()
+      .then((a) => {
+        if (a) {
+          setHost(a.host);
+          setPort(String(a.port));
+          setUser(a.username);
+          setPass(a.password);
+          setUseTls(a.use_tls);
+        }
+      })
+      .catch(() => { /* 尚未配置 / 桌面版才有，忽略 */ });
+  }, []);
+
+  const account = () => ({ host, port: Number(port) || 993, username: user, password: pass, use_tls: useTls });
+
+  const saveConfig = async () => {
+    if (!host) return;
+    setErr("");
+    try {
+      await api.emailSaveAccount(account());
+      setErr("配置已保存 ✓");
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
   const fetchInbox = async () => {
     setErr("");
     setBusy(true);
     try {
-      const r = await api.emailFetchInbox({
-        host,
-        port: Number(port) || 993,
-        username: user,
-        password: pass,
-        use_tls: useTls,
-      });
+      const r = await api.emailFetchInbox(account());
       setList(r);
       if (r.length === 0) setErr("未拉到邮件（检查账号 / 认证）");
     } catch (e) {
@@ -61,10 +84,7 @@ export function EmailPanel() {
     setErr("");
     setBusy(true);
     try {
-      await api.emailSaveUid(
-        { host, port: Number(port) || 993, username: user, password: pass, use_tls: useTls },
-        uid,
-      );
+      await api.emailSaveUid(account(), uid);
       setErr("已存为笔记 ✓");
     } catch (e) {
       setErr(String(e));
@@ -107,6 +127,9 @@ export function EmailPanel() {
               <input className="sync-input" type="password" placeholder="密码 / 应用密码" value={pass} onChange={(e) => setPass(e.target.value)} />
               <button className="sync-btn primary" disabled={busy || !host || !user} onClick={() => void fetchInbox()}>
                 拉取收件箱
+              </button>
+              <button className="sync-btn" disabled={!host} onClick={() => void saveConfig()}>
+                保存配置
               </button>
             </div>
 

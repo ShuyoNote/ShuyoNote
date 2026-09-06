@@ -241,6 +241,8 @@ pub fn run() {
             email::email_save_as_note,
             email::email_fetch_inbox,
             email::email_save_uid,
+            email::email_save_account,
+            email::email_get_account,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

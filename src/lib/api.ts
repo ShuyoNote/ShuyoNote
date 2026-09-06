@@ -95,6 +95,9 @@ export const api = {
     invoke("email_fetch_inbox", { args: account }),
   emailSaveUid: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }, uid: number) =>
     invoke("email_save_uid", { args: { account, uid } }),
+  emailSaveAccount: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }) =>
+    invoke("email_save_account", { account }),
+  emailGetAccount: () => invoke("email_get_account", undefined),
   savePage: (args: {
     id: string;
     title?: string;
