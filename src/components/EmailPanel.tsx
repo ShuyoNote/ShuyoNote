@@ -663,7 +663,7 @@ export function EmailPanel() {
                       </div>
                       <input
                         className="email-filter-input"
-                        placeholder="按标题…（空格=与，逗号=或）"
+                        placeholder="按邮件标题过滤…（空格=与，逗号=或）"
                         title="空格=与(都含)，逗号=或(任一含)"
                         value={subjectFilter}
                         onChange={(e) => setSubjectFilter(e.target.value)}
