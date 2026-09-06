@@ -16779,7 +16779,6 @@ p:has(> .editor-drawing-container) {
 }
 .email-read-toolbar { display: flex; align-items: center; gap: 4px; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .email-read-toolbar-spacer { flex: 1; }
-.email-read-toolbar .sync-btn.primary { margin-right: 10px; }
 .email-read-subject { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
 .email-read-meta { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .email-read-meta-avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }

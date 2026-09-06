@@ -335,7 +335,7 @@ export function EmailPanel() {
                   <div className="email-pane-read">
                     <div className="email-read-toolbar">
                       <button
-                        className="sync-btn primary"
+                        className="sync-btn ghost"
                         disabled={busy || !active}
                         onClick={() => active && void saveUid(active.uid)}
                       >
