@@ -630,6 +630,62 @@ export function EmailPanel() {
     }
   };
 
+  // 批量标记已读/未读（勾选选中），按文件夹分组调用一次后端。
+  const markSelectedRead = async (read: boolean) => {
+    if (!account || checked.size === 0) return;
+    const target = list.filter((m) => checked.has(m.uid));
+    if (target.length === 0) return;
+    setErr("");
+    setBusy(true);
+    try {
+      const byFolder = new Map<string, number[]>();
+      for (const m of target) {
+        const arr = byFolder.get(m.folder) ?? [];
+        arr.push(m.uid);
+        byFolder.set(m.folder, arr);
+      }
+      let done = 0;
+      for (const [folder, uids] of byFolder) {
+        done += await api.emailMarkManyRead(account, uids, folder, read);
+      }
+      const updated = list.map((x) => checked.has(x.uid) ? { ...x, seen: read } : x);
+      setList(updated);
+      setUnread(updated.filter((x) => !x.seen).length);
+      setChecked(new Set());
+      toast(`${read ? "已读" : "未读"} ${done} 封`, "success");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 批量存为笔记：对勾选的每封拉 HTML → 转 Lexical → 建页（侧边栏自动刷新）。
+  const saveSelectedAsNotes = async () => {
+    if (!account || checked.size === 0) return;
+    const target = list.filter((m) => checked.has(m.uid));
+    if (target.length === 0) return;
+    setErr("");
+    setBusy(true);
+    try {
+      let saved = 0;
+      for (const m of target) {
+        const html = await api.emailGetHtml(account, m.uid, m.folder).catch(() => "");
+        let content: { content_json: string; content_text: string };
+        if (html.trim()) content = emailHtmlToLexical(html);
+        else content = emailHtmlToLexical(`<p>${escapeHtml(body)}</p>`);
+        await useNotes.getState().createPage(null, { title: m.subject || "(无主题)", content_json: content.content_json, content_text: content.content_text });
+        saved++;
+      }
+      setChecked(new Set());
+      toast(`已存为笔记 ${saved} 封`, "success");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 打开回复/转发撰写弹窗：预填收件人与主题，正文带上引用。
   const openCompose = (mode: "reply" | "forward") => {
     if (!active) return;
@@ -897,9 +953,20 @@ export function EmailPanel() {
                     <div className="email-list-head">
                       <span className="email-list-head-title">邮件{provider ? ` · ${provider}` : ""}</span>
                       {checked.size > 0 && (
-                        <button className="email-list-head-delete" disabled={busy} onClick={() => void deleteSelected()}>
-                          <TrashIcon width={12} height={12} /> 删除选中（{checked.size}）
-                        </button>
+                        <>
+                          <button className="email-list-head-delete" disabled={busy} onClick={() => void deleteSelected()}>
+                            <TrashIcon width={12} height={12} /> 删除选中（{checked.size}）
+                          </button>
+                          <button className="email-list-head-op" disabled={busy} onClick={() => void markSelectedRead(true)}>
+                            标为已读
+                          </button>
+                          <button className="email-list-head-op" disabled={busy} onClick={() => void markSelectedRead(false)}>
+                            标为未读
+                          </button>
+                          <button className="email-list-head-op" disabled={busy} onClick={() => void saveSelectedAsNotes()}>
+                            存为笔记
+                          </button>
+                        </>
                       )}
                       <button
                         className="email-list-head-count"

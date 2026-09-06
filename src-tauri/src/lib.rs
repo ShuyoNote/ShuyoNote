@@ -256,6 +256,7 @@ pub fn run() {
             email::email_mark_read,
             email::email_move_to_trash,
             email::email_move_many_to_trash,
+            email::email_mark_many_read,
             email::email_send,
             commands::create_database,
             commands::save_page,

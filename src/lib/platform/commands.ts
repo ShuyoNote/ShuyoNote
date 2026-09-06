@@ -117,6 +117,7 @@ export interface CommandMap {
   email_mark_read: { args: { args: EmailOpArgs; read: boolean }; result: void };
   email_move_to_trash: { args: { args: EmailOpArgs }; result: void };
   email_move_many_to_trash: { args: { args: { account: EmailAccount; uids: number[]; folder: string } }; result: number };
+  email_mark_many_read: { args: { args: { account: EmailAccount; uids: number[]; folder: string }; read: boolean }; result: number };
   email_send: { args: { args: { account: EmailAccount; to: string; subject: string; body: string } }; result: void };
 
   // ---- Pages ----

@@ -136,6 +136,8 @@ export const api = {
     invoke("email_set_flag", { args: { account, uid, folder }, flag }),
   emailMarkRead: (account: EmailAccount, uid: number, folder: string, read: boolean) =>
     invoke("email_mark_read", { args: { account, uid, folder }, read }),
+  emailMarkManyRead: (account: EmailAccount, uids: number[], folder: string, read: boolean) =>
+    invoke("email_mark_many_read", { args: { account, uids, folder }, read }),
   emailMoveToTrash: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_move_to_trash", { args: { account, uid, folder } }),
   emailMoveManyToTrash: (account: EmailAccount, uids: number[], folder: string) =>

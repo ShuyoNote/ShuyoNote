@@ -536,6 +536,26 @@ pub async fn email_move_many_to_trash(args: EmailBatchOpArgs) -> Result<u32, Str
     Ok(moved)
 }
 
+/// 批量标记已读/未读：一次连接对多个 UID 设置 `\Seen`。返回成功标记数。
+#[tauri::command]
+pub async fn email_mark_many_read(args: EmailBatchOpArgs, read: bool) -> Result<u32, String> {
+    use futures_util::StreamExt;
+
+    let mut session = open_session(&args.account, &args.folder).await?;
+    let q = if read { "+FLAGS.SILENT (\\Seen)" } else { "-FLAGS.SILENT (\\Seen)" };
+    let mut done = 0u32;
+    for uid in &args.uids {
+        let stream = session
+            .uid_store(format!("{}", uid), q)
+            .await
+            .map_err(|e| format!("标记失败: {}", e))?;
+        futures_util::pin_mut!(stream);
+        while stream.next().await.is_some() {}
+        done += 1;
+    }
+    Ok(done)
+}
+
 /// 发送邮件（回复/转发）：入参为账号 + 收件人 + 主题 + 正文，后端用 SMTP 发出。
 #[derive(Deserialize)]
 pub struct EmailSendArgs {
