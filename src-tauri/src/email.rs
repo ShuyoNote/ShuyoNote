@@ -468,6 +468,7 @@ pub async fn email_mark_read(args: EmailOpArgs, read: bool) -> Result<(), String
 /// 都失败时回退到标记 `\Deleted` + EXPUNGE（至少从列表移除）。
 #[tauri::command]
 pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
+    use futures_util::StreamExt;
     let mut session = open_session(&args.account, &args.folder).await?;
     let uid = format!("{}", args.uid);
     let candidates = ["Trash", "Deleted Messages", "Deleted Items", "垃圾箱", "已删除"];
@@ -478,15 +479,18 @@ pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
         }
     }
 
-    // 回退：标记删除并 EXPUNGE。
-    session
-        .uid_store(&uid, "+FLAGS.SILENT (\\Deleted)")
-        .await
-        .map_err(|e| format!("删除失败: {}", e))?;
-    session
-        .expunge()
-        .await
-        .map_err(|e| format!("删除失败: {}", e))?;
+    // 回退：标记删除并 EXPUNGE（消费流，完成服务器端处理）。
+    {
+        let store = session
+            .uid_store(&uid, "+FLAGS.SILENT (\\Deleted)")
+            .await
+            .map_err(|e| format!("删除失败: {}", e))?;
+        futures_util::pin_mut!(store);
+        while store.next().await.is_some() {}
+    }
+    let expunge = session.expunge().await.map_err(|e| format!("删除失败: {}", e))?;
+    futures_util::pin_mut!(expunge);
+    while expunge.next().await.is_some() {}
     Ok(())
 }
 
@@ -593,11 +597,10 @@ async fn fetch_unseen(account: &EmailAccountArgs) -> Result<u32, String> {
 }
 
 /// 定时收取的全局状态：`Mutex<()>` 作为互斥门闩，防止一次轮询与手动拉取重叠
-/// （连两次 IMAP 会抢同一个账号的会话）。`last_ms` 记上次成功时间，用于错误退避。
+/// （连两次 IMAP 会抢同一个账号的会话）。
 #[derive(Default)]
 pub struct EmailPollState {
     pub busy: tokio::sync::Mutex<()>,
-    pub last_ms: std::sync::Mutex<u64>,
 }
 
 const POLL_EVENT: &str = "email-unread";

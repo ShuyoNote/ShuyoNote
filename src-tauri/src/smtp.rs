@@ -7,7 +7,7 @@
 //! 安全：生产应改用系统凭据库 + 最小权限；见私有仓库 docs/email-aggregate-monetization.md。
 
 use std::io;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// SMTP 传输加密方式。
