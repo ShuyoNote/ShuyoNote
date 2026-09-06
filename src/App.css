@@ -17004,7 +17004,7 @@ p:has(> .editor-drawing-container) {
 .email-col-check, .email-col-star { justify-self: start; }
 .email-col-from { text-align: left; position: relative; }
 .email-col-subject { text-align: left; position: relative; }
-.email-col-date { text-align: right; }
+.email-col-date { text-align: right; white-space: nowrap; }
 
 /* 列宽拖拽手柄：绝对定位到列边界（右缘），细线居中 */
 .email-col-resizer {
@@ -17071,7 +17071,7 @@ p:has(> .editor-drawing-container) {
   text-overflow: ellipsis;
   min-width: 0;
 }
-.email-item-date { color: var(--text-faint); font-size: 11px; text-align: right; }
+.email-item-date { color: var(--text-faint); font-size: 11px; text-align: right; white-space: nowrap; }
 .email-check {
   width: 18px;
   height: 18px;
