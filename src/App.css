@@ -16759,15 +16759,15 @@ p:has(> .editor-drawing-container) {
   gap: 4px;
   font-size: 12px;
   color: var(--text-dim);
-  background: var(--hover);
-  border: 1px solid transparent;
+  background: transparent;
+  border: none;
   border-radius: 6px;
   padding: 3px 8px;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
-.email-list-head-count:hover { background: var(--hover-strong); border-color: var(--border-strong); color: var(--text); }
+.email-list-head-count:hover { color: var(--text); background: transparent; }
 
 /* 月份选择下拉：仿 QQ 邮箱「共 N 封 → 选年月 → 滚到该月」，右对齐到日期列上方。 */
 .email-month-picker {
