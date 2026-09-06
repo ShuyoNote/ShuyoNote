@@ -87,9 +87,10 @@ export function EmailPanel() {
 
   return (
     <>
-      {/* 侧栏低调入口：图标 + 工具提示（含快捷键），不占文字位。 */}
+      {/* 侧栏入口：图标 + 文字，与「同步」一致；tooltip 提示快捷键。 */}
       <button className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
         <SendIcon width={14} height={14} />
+        <span>邮箱</span>
       </button>
 
       {open && (
