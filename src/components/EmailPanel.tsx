@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
-import { InboxIcon, TrashIcon, SendIcon, RefreshIcon } from "./icons";
+import { InboxIcon, SendIcon, RefreshIcon, TrashIcon } from "./icons";
 
 type EmailMeta = Awaited<ReturnType<typeof api.emailFetchInbox>>[number];
 type EmailAccount = { host: string; port: number; username: string; password: string; use_tls: boolean };
@@ -39,6 +39,7 @@ function fmtListTime(m: EmailMeta): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// 分组：今天 / 上周（近7天，不含今昨） / 更早。
 function groupEmails(list: EmailMeta[]): Section[] {
   const secs: Section[] = [];
   const map = new Map<string, Section>();
@@ -46,16 +47,15 @@ function groupEmails(list: EmailMeta[]): Section[] {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
+  const weekAgo = new Date(today);
+  weekAgo.setDate(today.getDate() - 7);
   for (const m of list) {
     const d = parseDate(m.date);
     let label: string;
-    if (!d) label = "更早";
-    else {
-      const k = dayKey(d);
-      if (k === dayKey(today)) label = "今天";
-      else if (k === dayKey(yesterday)) label = "昨天";
-      else label = `${d.getMonth() + 1}月${d.getDate()}日`;
-    }
+    if (!d || d < weekAgo) label = "更早";
+    else if (d >= today) label = "今天";
+    else if (d >= yesterday) label = "昨天";
+    else label = "上周";
     let sec = map.get(label);
     if (!sec) {
       sec = { label, items: [] };
@@ -80,12 +80,14 @@ export function EmailPanel() {
 
   const [account, setAccount] = useState<EmailAccount | null>(null);
   const [list, setList] = useState<EmailMeta[]>([]);
-  const [selected, setSelected] = useState<EmailMeta | null>(null);
+  const [active, setActive] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
-  const [listW, setListW] = useState(320);
+  const [listW, setListW] = useState(360);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [starred, setStarred] = useState<Set<number>>(new Set());
 
   // 打开时：读已保存账号 → 拉取收件箱。
   useEffect(() => {
@@ -113,7 +115,7 @@ export function EmailPanel() {
   }, [open]);
 
   const selectEmail = async (m: EmailMeta, acc: EmailAccount = account!) => {
-    setSelected(m);
+    setActive(m);
     setLoadingBody(true);
     setErr("");
     try {
@@ -156,6 +158,24 @@ export function EmailPanel() {
     }
   };
 
+  const toggleChecked = (uid: number) => {
+    setChecked((prev) => {
+      const n = new Set(prev);
+      if (n.has(uid)) n.delete(uid);
+      else n.add(uid);
+      return n;
+    });
+  };
+
+  const toggleStarred = (uid: number) => {
+    setStarred((prev) => {
+      const n = new Set(prev);
+      if (n.has(uid)) n.delete(uid);
+      else n.add(uid);
+      return n;
+    });
+  };
+
   // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -191,7 +211,7 @@ export function EmailPanel() {
       const d = dragRef.current;
       if (!d || !splitRef.current) return;
       const maxW = splitRef.current.getBoundingClientRect().width - 320;
-      const w = Math.max(240, Math.min(d.startW + (ev.clientX - d.startX), Math.max(240, maxW)));
+      const w = Math.max(280, Math.min(d.startW + (ev.clientX - d.startX), Math.max(280, maxW)));
       setListW(w);
     };
     const onUp = () => {
@@ -208,7 +228,6 @@ export function EmailPanel() {
   };
 
   const sections = groupEmails(list);
-  const avatarLetter = (f: string) => (f.trim().charAt(0) || "?").toUpperCase();
 
   return (
     <>
@@ -226,7 +245,7 @@ export function EmailPanel() {
                 <div className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</div>
               </div>
               <div className="email-page-actions">
-                <button className="sync-btn primary" disabled={busy || !selected} onClick={() => selected && void saveUid(selected.uid)}>
+                <button className="sync-btn primary" disabled={busy || !active} onClick={() => active && void saveUid(active.uid)}>
                   <SendIcon width={14} height={14} /> 存为笔记
                 </button>
                 <button className="sync-btn ghost" disabled={busy || !account} onClick={() => void refresh()}>
@@ -244,28 +263,58 @@ export function EmailPanel() {
               {account && (
                 <div className="email-split" ref={splitRef}>
                   <div className="email-pane-list" style={{ width: listW }}>
-                    <div className="email-list-head">收件箱 · {list.length} 封</div>
+                    <div className="email-list-head">
+                      <span className="email-list-head-title">邮件</span>
+                      <span className="email-list-head-count">共 {list.length} 封</span>
+                    </div>
+                    <div className="email-col-head">
+                      <span className="email-col-check" aria-hidden />
+                      <span className="email-col-from">发件人</span>
+                      <span className="email-col-subject">主题</span>
+                      <span className="email-col-date">日期</span>
+                      <span className="email-col-star" aria-hidden />
+                    </div>
                     {list.length === 0 && <div className="email-page-empty">暂无邮件，点「拉取收件箱」。</div>}
                     {sections.map((s) => (
                       <div key={s.label} className="email-section">
-                        <div className="email-section-label">{s.label}</div>
-                        {s.items.map((m, i) => (
-                          <button
-                            key={`${s.label}-${i}`}
-                            className={`email-item${selected?.uid === m.uid ? " is-selected" : ""}`}
+                        <div className="email-section-label">{s.label}（{s.items.length}封）</div>
+                        {s.items.map((m) => (
+                          <div
+                            key={m.uid}
+                            className={`email-item${active?.uid === m.uid ? " is-selected" : ""}`}
                             onClick={() => void selectEmail(m)}
                           >
-                            <span className="email-item-avatar" style={{ background: avatarColor(m.from) }} aria-hidden>
-                              {avatarLetter(m.from)}
+                            <span
+                              className={`email-check${checked.has(m.uid) ? " is-checked" : ""}`}
+                              role="checkbox"
+                              aria-checked={checked.has(m.uid)}
+                              tabIndex={-1}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleChecked(m.uid);
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
                             </span>
-                            <span className="email-item-main">
-                              <span className="email-item-title" title={m.subject}>{m.subject || "(无主题)"}</span>
-                              <span className="email-item-meta">
-                                <span className="email-item-from" title={m.from}>{m.from}</span>
-                                <span className="email-item-date">{fmtListTime(m)}</span>
-                              </span>
+                            <span className="email-item-from" title={m.from}>{m.from}</span>
+                            <span className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</span>
+                            <span className="email-item-date">{fmtListTime(m)}</span>
+                            <span
+                              className={`email-item-star${starred.has(m.uid) ? " is-starred" : ""}`}
+                              role="button"
+                              tabIndex={-1}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleStarred(m.uid);
+                              }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
+                              </svg>
                             </span>
-                          </button>
+                          </div>
                         ))}
                       </div>
                     ))}
@@ -286,25 +335,30 @@ export function EmailPanel() {
                       <button className="sync-btn ghost" disabled title="删除">
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
+                      <span className="email-read-toolbar-spacer" />
+                      <button className="sync-btn ghost" disabled title="更多操作">更多操作</button>
                     </div>
-                    {selected ? (
+                    {active ? (
                       <>
-                        <div className="email-read-subject">{selected.subject || "(无主题)"}</div>
+                        <div className="email-read-subject">{active.subject || "(无主题)"}</div>
                         <div className="email-read-meta">
-                          <span className="email-read-meta-avatar" style={{ background: avatarColor(selected.from) }} aria-hidden>
-                            {avatarLetter(selected.from)}
+                          <span className="email-read-meta-avatar" aria-hidden>
+                            <span className="email-read-meta-avatar-inner" style={{ background: avatarColor(active.from) }}>
+                              {(active.from.trim().charAt(0) || "?").toUpperCase()}
+                            </span>
                           </span>
                           <span className="email-read-meta-main">
-                            <span className="email-read-meta-from">{selected.from}</span>
+                            <span className="email-read-meta-from">{active.from}</span>
                             <span className="email-read-meta-sub">
                               <span>收件人：{account.username}</span>
-                              <span>{selected.date}</span>
+                              <span>{active.date}</span>
+                              <span>邮件类型：收件箱</span>
                             </span>
                           </span>
                           <button
                             className="sync-btn primary"
                             disabled={busy}
-                            onClick={() => selected && void saveUid(selected.uid)}
+                            onClick={() => active && void saveUid(active.uid)}
                           >
                             存为笔记
                           </button>
