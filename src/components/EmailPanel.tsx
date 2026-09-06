@@ -388,8 +388,10 @@ export function EmailPanel() {
     if (!account || !active) return;
     setErr("");
     try {
+      // 同时用 email_get_body（阅读区路径）拉一次，直接设到 body，验证阅读区能否显示完整。
+      const bodyText = await api.emailGetBody(account, active.uid, active.folder);
+      setBody(bodyText);
       const info = await api.emailDebugBody(account, active.uid, active.folder);
-      // 诊断信息放进错误条（可复制），避免被 EmailBody 过滤掉。
       setErr(info);
     } catch (e) {
       setErr(String(e));
