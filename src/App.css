@@ -17002,18 +17002,17 @@ p:has(> .editor-drawing-container) {
   border-bottom: 1px solid var(--border);
 }
 .email-col-check, .email-col-star { justify-self: start; }
-.email-col-from { text-align: left; }
-.email-col-subject { text-align: left; }
+.email-col-from { text-align: left; position: relative; }
+.email-col-subject { text-align: left; position: relative; }
 .email-col-date { text-align: right; }
 
-/* 列宽拖拽手柄（发件人/主题 列头右缘） */
+/* 列宽拖拽手柄：绝对定位到列边界（右缘），细线居中 */
 .email-col-resizer {
-  display: inline-block;
-  position: relative;
-  width: 10px;
-  height: 16px;
-  margin-left: 4px;
-  vertical-align: middle;
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  right: -4px;
+  width: 9px;
   cursor: col-resize;
   -webkit-user-select: none;
   user-select: none;
