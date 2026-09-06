@@ -117,6 +117,7 @@ export interface CommandMap {
   email_move_to_trash: { args: { args: EmailOpArgs }; result: void };
   email_move_many_to_trash: { args: { args: { account: EmailAccount; uids: number[]; folder: string } }; result: number };
   email_send: { args: { args: { account: EmailAccount; to: string; subject: string; body: string } }; result: void };
+  email_debug_body: { args: { args: EmailOpArgs }; result: string };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

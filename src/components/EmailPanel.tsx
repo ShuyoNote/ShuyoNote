@@ -387,8 +387,19 @@ export function EmailPanel() {
     }
   };
 
-  const refresh = async () => {
-    if (!account) return;
+  const debugBody = async () => {
+    if (!account || !active) return;
+    setErr("");
+    try {
+      const info = await api.emailDebugBody(account, active.uid, active.folder);
+      setBody(info);
+      setErr("已显示诊断信息");
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const refresh = async () => {    if (!account) return;
     await fetchInbox(account, folders);
   };
 
@@ -1004,6 +1015,7 @@ export function EmailPanel() {
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
                       <span className="email-read-toolbar-spacer" />
+                      <button className="sync-btn ghost" disabled={!active} onClick={() => void debugBody()}>调试正文</button>
                       <button className="sync-btn ghost" disabled title="更多操作">更多操作</button>
                     </div>
                     {active ? (
