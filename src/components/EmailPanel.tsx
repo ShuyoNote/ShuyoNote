@@ -6,6 +6,7 @@ import { emailHtmlToLexical } from "../lib/emailRichNote";
 import { platform } from "../lib/platform";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
+import { useNotes } from "../store/notes";
 import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon, BookmarkIcon } from "./icons";
 
 type Section = { label: string; items: EmailMeta[] };
@@ -473,16 +474,17 @@ export function EmailPanel() {
     setErr("");
     setBusy(true);
     try {
-      // 富文本存笔记：拉取邮件 HTML（纯文本兜底），前端转 Lexical JSON，再建富文本页面。
+      // 富文本存笔记：拉取邮件 HTML（纯文本兜底），前端转 Lexical JSON，再用
+      // useNotes.createPage 建页——它会 loadPages()，让侧边栏页面树自动刷新。
       let html = await api.emailGetHtml(account, uid, active.folder).catch(() => "");
       if (html.trim()) {
         const { content_json, content_text } = emailHtmlToLexical(html);
-        await api.emailSaveNote(active.subject || "(无主题)", content_json, content_text);
+        await useNotes.getState().createPage(null, { title: active.subject || "(无主题)", content_json, content_text });
       } else {
         // 无 HTML（纯文本邮件），仍转成简单 Lexical 段落保存富文本格式。
         const plainHtml = escapeHtml(body);
         const { content_json, content_text } = emailHtmlToLexical(`<p>${plainHtml}</p>`);
-        await api.emailSaveNote(active.subject || "(无主题)", content_json, content_text);
+        await useNotes.getState().createPage(null, { title: active.subject || "(无主题)", content_json, content_text });
       }
       setErr("已存为笔记 ✓");
     } catch (e) {

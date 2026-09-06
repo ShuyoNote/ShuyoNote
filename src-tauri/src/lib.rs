@@ -244,7 +244,6 @@ pub fn run() {
             commands::create_page,
             commands::create_folder,
             email::email_save_as_note,
-            email::email_save_note,
             email::email_fetch_inbox,
             email::email_save_uid,
             email::email_get_body,
