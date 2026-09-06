@@ -16768,11 +16768,11 @@ p:has(> .editor-drawing-container) {
 }
 .email-list-head-count:hover { background: var(--hover-strong); border-color: var(--border-strong); color: var(--text); }
 
-/* 月份选择下拉：仿 QQ 邮箱「共 N 封 → 选年月 → 滚到该月」 */
+/* 月份选择下拉：仿 QQ 邮箱「共 N 封 → 选年月 → 滚到该月」。右对齐到日期列上方。 */
 .email-month-picker {
   position: absolute;
   top: 42px;
-  right: 14px;
+  right: 46px;
   z-index: 1200;
   width: 280px;
   background: var(--card-bg);
