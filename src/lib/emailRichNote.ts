@@ -44,9 +44,9 @@ function cleanEditorState(node: unknown): unknown {
     for (const c of rec.children) {
       const cc = cleanEditorState(c);
       const ccObj = cc as Record<string, unknown> | null;
-      // 空段落（无子节点且无文本）、空 text（无 text）→ 丢弃
+      // 空段落（无子节点且无文本）、空 text / 纯空白 text → 丢弃
       if (ccObj && typeof ccObj === "object") {
-        const hasText = typeof ccObj.text === "string" && ccObj.text.length > 0;
+        const hasText = typeof ccObj.text === "string" && ccObj.text.replace(/\s+/g, "").length > 0;
         const isBlockWithChildren = Array.isArray(ccObj.children) && ccObj.children.length > 0;
         const hasSlots = ccObj.$slots && typeof ccObj.$slots === "object" && Object.keys(ccObj.$slots as object).length > 0;
         if (hasText || isBlockWithChildren || hasSlots) {
@@ -69,6 +69,10 @@ function cleanEditorState(node: unknown): unknown {
 // 使表格文本作为普通段落流式显示（避免营销邮件的版式表格变成大空白表格/窄列竖排）。
 function flattenTables(html: string): string {
   let out = html;
+  // 移除 hr（营销邮件常用作分隔线，转成 Lexical 是一大段间距）。
+  out = out.replace(/<hr\b[^>]*>/gi, "");
+  // 连续 <br> 压成一个（多余的换行会撑出大空白）。
+  out = out.replace(/(<br\s*/?>\s*){3,}/gi, "\n");
   // 移除 table 级标签本身，但保留其内部内容。
   out = out.replace(/<\/?(table|tbody|thead|tfoot|tr)[^>]*>/gi, "\n");
   // td/th 之间加换行，保留单元格内容。
