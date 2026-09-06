@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
+import { platform } from "../lib/platform";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
 import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon, BookmarkIcon } from "./icons";
@@ -189,22 +190,28 @@ export function EmailPanel() {
     }
   };
 
-  // 定时收取：开启后按 interval_minutes 轮询未读数，更新侧边栏角标。
+  // 定时收取：Rust 后台按 interval_minutes 轮询未读数，通过 `email-unread` 事件或
+  // 即时拉取更新侧边栏角标。轮询次数控制放在后端（WebView 最小化会节流 JS timer），
+  // 前端只负责接收事件 + 打开面板时同步一次角标。
   useEffect(() => {
-    if (!account || !account.auto_fetch) return;
-    const minutes = Math.max(1, account.interval_minutes || 15);
-    const tick = async () => {
-      try {
-        const n = await api.emailUnseenCount(account);
-        setUnread(n);
-      } catch {
-        // 拉取失败（网络/认证）静默，等下一轮；不打扰用户。
-      }
-    };
-    void tick();
-    const id = window.setInterval(() => void tick(), minutes * 60_000);
-    return () => window.clearInterval(id);
-  }, [account, setUnread]);
+    let unlisten: (() => void) | undefined;
+    platform.event
+      .listen<number>("email-unread", (e) => setUnread(e.payload))
+      .then((off) => {
+        unlisten = off;
+      })
+      .catch(() => {});
+    return () => unlisten?.();
+  }, [setUnread]);
+
+  // 打开面板时同步一次当前未读数（不等下一次轮询）。
+  useEffect(() => {
+    if (!account?.auto_fetch || !open) return;
+    api
+      .emailUnseenCount(account)
+      .then((n) => setUnread(n))
+      .catch(() => {});
+  }, [account, open, setUnread]);
 
   const toggleChecked = (uid: number) => {
     setChecked((prev) => {

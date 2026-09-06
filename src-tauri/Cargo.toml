@@ -25,7 +25,7 @@ rusqlite = { version = "0.40", features = ["bundled-sqlcipher", "backup"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }
-tokio = { version = "1", features = ["fs", "io-util", "net"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 sha2 = "0.11"

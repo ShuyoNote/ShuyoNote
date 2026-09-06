@@ -171,6 +171,10 @@ pub fn run() {
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
+            // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
+            // 会节流 JS timer，所以放在 Rust 侧做）。
+            app.manage(email::EmailPollState::default());
+            email::start_email_poller(app.handle().clone());
             // Seed a bundled demo plugin so the plugin system has something to load.
             let _ = plugins::ensure_demo_plugin(&app.handle());
 

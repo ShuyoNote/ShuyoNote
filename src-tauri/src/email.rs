@@ -9,8 +9,7 @@
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
-use tauri::State;
+use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::commands;
@@ -331,22 +330,26 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
 /// 拉取 INBOX 未读数量（轻量 `STATUS INBOX (UNSEEN)`），供定时收取/未读角标用。
 #[tauri::command]
 pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {
+    fetch_unseen(&args).await
+}
+
+async fn fetch_unseen(account: &EmailAccountArgs) -> Result<u32, String> {
     use tokio::net::TcpStream;
 
-    let tcp = TcpStream::connect((args.host.as_str(), args.port))
+    let tcp = TcpStream::connect((account.host.as_str(), account.port))
         .await
         .map_err(|e| format!("TCP 连接失败: {}", e))?;
     let tls = tokio_native_tls::TlsConnector::from(
         native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
     );
     let tls_stream = tls
-        .connect(&args.host, tcp)
+        .connect(&account.host, tcp)
         .await
         .map_err(|e| format!("TLS 失败: {}", e))?;
 
     let client = async_imap::Client::new(tls_stream);
     let mut session = client
-        .login(&args.username, &args.password)
+        .login(&account.username, &account.password)
         .await
         .map_err(|(e, _c)| format!("登录失败: {}", e))?;
     let mbox = session
@@ -354,6 +357,59 @@ pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {
         .await
         .map_err(|e| format!("STATUS 失败: {}", e))?;
     Ok(mbox.unseen.unwrap_or(0))
+}
+
+/// 定时收取的全局状态：`Mutex<()>` 作为互斥门闩，防止一次轮询与手动拉取重叠
+/// （连两次 IMAP 会抢同一个账号的会话）。`last_ms` 记上次成功时间，用于错误退避。
+#[derive(Default)]
+pub struct EmailPollState {
+    pub busy: tokio::sync::Mutex<()>,
+    pub last_ms: std::sync::Mutex<u64>,
+}
+
+const POLL_EVENT: &str = "email-unread";
+
+/// 启动后台定时收取任务（在 `setup` 里调用一次）。
+///
+/// 折中策略：默认 15 分钟、最小 5 分钟轮询 `STATUS (UNSEEN)`（轻量，不重复拉全量），
+/// 通过 `email-unread` 事件把未读数推给前端；失败时指数退避（最快 30s，封顶 10 分钟）。
+/// 轮询只在 `auto_fetch` 开启时进行，且用一个 `Mutex` 门闩避免与手动拉取重叠。
+pub fn start_email_poller(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<EmailPollState>();
+        let mut failures: u32 = 0;
+        loop {
+            // 每次唤醒都重新读配置，这样账号/间隔/开关在运行中也能实时生效。
+            let account = email_get_account(app.clone()).ok().flatten();
+            match account {
+                Some(a) if a.auto_fetch => {
+                    let minutes = (a.interval_minutes.max(5)) as u64;
+                    // 门闩：加锁失败说明上次轮询或手动拉取仍在进行，跳过本轮。
+                    if let Ok(_guard) = state.busy.try_lock() {
+                        match fetch_unseen(&a).await {
+                            Ok(n) => {
+                                failures = 0;
+                                let _ = app.emit(POLL_EVENT, n);
+                                tokio::time::sleep(std::time::Duration::from_secs(minutes * 60)).await;
+                            }
+                            Err(_) => {
+                                failures += 1;
+                                // 退避：30s 起，指数翻倍，封顶 10 分钟。
+                                let backoff = 30u64.saturating_mul(2u64.saturating_pow(failures.min(6))).min(600);
+                                tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+                            }
+                        }
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    }
+                }
+                _ => {
+                    // 未配置 / 未开启自动收取：每 30s 醒来看一眼配置变化，几乎零开销。
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                }
+            }
+        }
+    });
 }
 
 /// 按 UID 取邮件正文（纯文本，供右侧阅读窗格显示）。
