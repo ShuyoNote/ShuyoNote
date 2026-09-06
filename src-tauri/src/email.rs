@@ -667,7 +667,8 @@ fn email_text(p: &mailparse::ParsedMail) -> String {
 
 /// 把 HTML/混合正文转成可读纯文本（去 script/style、块级标签换行、剥标签、解实体、收空格）。
 fn strip_html(s: &str) -> String {
-    let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</\1>").unwrap();
+    // 注意：regex crate 不支持反向引用 `\1`，故用「对应闭合标签」展开替代。
+    let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</(script|style)>").unwrap();
     let re_br = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
     let re_block = regex::Regex::new(r"(?i)</(p|div|tr|li|h[1-6]|table|td|blockquote|ul|ol)\s*>").unwrap();
     let re_tag = regex::Regex::new(r"(?s)<[^>]+>").unwrap();
@@ -735,5 +736,22 @@ mod tests {
         // "你好" 的 utf-8 base64 编码词
         let encoded = "=?utf-8?B?5L2g5aW9?=";
         assert_eq!(decode_mime_words(encoded), "你好");
+    }
+
+    #[test]
+    fn email_text_extracts_html_body() {
+        let raw = "From: a@b.com\r\nTo: c@d.com\r\nSubject: test\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><h1>Hello</h1><p>World <br> again</p></body></html>";
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let t = email_text(&parsed);
+        assert!(t.contains("Hello"), "got: {:?}", t);
+        assert!(t.contains("World"));
+        assert!(!t.contains("<p>"), "html tag leaked: {:?}", t);
+    }
+
+    #[test]
+    fn email_text_extracts_plain_text() {
+        let raw = "From: a@b.com\r\nSubject: hi\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nhello body";
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        assert_eq!(email_text(&parsed), "hello body");
     }
 }
