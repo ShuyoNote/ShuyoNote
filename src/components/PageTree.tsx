@@ -40,6 +40,7 @@ const ICON = {
   trash: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0l-.8 14a1 1 0 0 1-1 .9H7.8a1 1 0 0 1-1-.9L6 6M10 11v6M14 11v6",
 } as const;
 import { SyncPanel } from "./SyncPanel";
+import { EmailPanel } from "./EmailPanel";
 import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 
 interface TreeNode extends PageMeta {
@@ -1020,6 +1021,7 @@ export function PageTree(_props: {
                 这里不再放第二个搜索入口；快速跳转仍可用 Ctrl+K 命令面板。
                 同步留在这里：它与「当前空间」强相关，且需要状态胶囊常驻可见。 */}
             <SyncPanel />
+            <EmailPanel />
           </div>
           <div className="new-menu">
             {/* 「新建」是侧栏最高频动作，做成带文字的整行按钮：比一个蓝色实心
