@@ -565,10 +565,19 @@ export function EmailPanel() {
     setBusy(true);
     try {
       await api.emailMoveToTrash(account, m.uid, m.folder);
-      setList((prev) => prev.filter((x) => x.uid !== m.uid));
-      if (active?.uid === m.uid) {
-        setActive(null);
-        setBody("");
+      // 计算删除后要显示的下一条：当前选中项的下一条（最新在前 → 往后一条是较旧的）。
+      const idx = list.findIndex((x) => x.uid === m.uid);
+      const next = idx >= 0 ? list[idx + 1] : undefined;
+      const remaining = list.filter((x) => x.uid !== m.uid);
+      setList(remaining);
+      if (next) {
+        void selectEmail(next, account);
+      } else {
+        // 没有下一条：若删的是当前项则清空正文。
+        if (active?.uid === m.uid) {
+          setActive(null);
+          setBody("");
+        }
       }
     } catch (e) {
       setErr(String(e));
