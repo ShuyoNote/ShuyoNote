@@ -48,10 +48,29 @@ function fmtListTime(m: EmailMeta): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-// 文件夹显示名：IMAP 里的「INBOX」是固定英文，其它文件夹用原始名。
+// 文件夹显示名：把常见的英文 IMAP 文件夹名映射成中文，其余保留原始名。
+// IMAP 标准特殊用途文件夹名（INBOX 及各 Inbox/Sent/Drafts/Trash/Junk 等大小写变体）。
+const FOLDER_ZH: Record<string, string> = {
+  inbox: "收件箱",
+  "deleted messages": "已删除",
+  "deleted items": "已删除",
+  trash: "已删除",
+  drafts: "草稿",
+  draft: "草稿",
+  junk: "垃圾邮件",
+  spam: "垃圾邮件",
+  "junk email": "垃圾邮件",
+  "sent messages": "已发送",
+  "sent items": "已发送",
+  sent: "已发送",
+  "spam folder": "垃圾邮件",
+  "archive": "归档",
+  "starred": "已加星标",
+  "important": "重要",
+};
 function folderDisplay(name: string): string {
-  if (name === "INBOX") return "收件箱";
-  return name;
+  const key = name.trim().toLowerCase();
+  return FOLDER_ZH[key] ?? name;
 }
 
 // 分组：今天 / 上周（近7天，不含今昨） / 更早。
