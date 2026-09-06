@@ -457,6 +457,48 @@ pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// 批量删除邮件：一次连接对多个 UID `UID MOVE` 到「已删除」。返回成功删除的 UID 数。
+#[derive(Deserialize)]
+pub struct EmailBatchOpArgs {
+    pub account: EmailAccountArgs,
+    pub uids: Vec<u32>,
+    #[serde(default = "default_folder")]
+    pub folder: String,
+}
+
+#[tauri::command]
+pub async fn email_move_many_to_trash(args: EmailBatchOpArgs) -> Result<u32, String> {
+    let mut session = open_session(&args.account, &args.folder).await?;
+    let candidates = ["Trash", "Deleted Messages", "Deleted Items", "垃圾箱", "已删除"];
+
+    let mut moved = 0u32;
+    for uid in &args.uids {
+        let uid_str = format!("{}", uid);
+        let mut ok = false;
+        for trash in candidates {
+            if session.uid_mv(&uid_str, trash).await.is_ok() {
+                ok = true;
+                break;
+            }
+        }
+        if !ok {
+            // 回退：标记删除并 EXPUNGE。
+            if session
+                .uid_store(&uid_str, "+FLAGS.SILENT (\\Deleted)")
+                .await
+                .is_ok()
+            {
+                let _ = session.expunge().await;
+                ok = true;
+            }
+        }
+        if ok {
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
 /// 拉取 INBOX 未读数量（轻量 `STATUS INBOX (UNSEEN)`），供定时收取/未读角标用。
 #[tauri::command]
 pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {

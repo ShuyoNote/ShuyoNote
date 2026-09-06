@@ -392,6 +392,40 @@ export function EmailPanel() {
     }
   };
 
+  // 批量删除选中的邮件（勾选框选中），按文件夹分组分别调用后端。
+  const deleteSelected = async () => {
+    if (!account || checked.size === 0) return;
+    const target = list.filter((m) => checked.has(m.uid));
+    if (target.length === 0) return;
+    if (!window.confirm(`确定把选中的 ${target.length} 封邮件移到已删除？`)) return;
+    setErr("");
+    setBusy(true);
+    try {
+      // 按文件夹分组，每组一次连接。
+      const byFolder = new Map<string, number[]>();
+      for (const m of target) {
+        const arr = byFolder.get(m.folder) ?? [];
+        arr.push(m.uid);
+        byFolder.set(m.folder, arr);
+      }
+      let moved = 0;
+      for (const [folder, uids] of byFolder) {
+        moved += await api.emailMoveManyToTrash(account, uids, folder);
+      }
+      setList((prev) => prev.filter((x) => !checked.has(x.uid)));
+      setChecked(new Set());
+      if (active && checked.has(active.uid)) {
+        setActive(null);
+        setBody("");
+      }
+      setErr(`已删除 ${moved} 封 ✓`);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 月份选择：跳到该月最新一封邮件（列表顶部）。
   const scrollToMonth = (year: number, month0: number) => {
     const uid = monthIndex.firstUid.get(`${year}-${month0}`);
@@ -622,6 +656,11 @@ export function EmailPanel() {
                   <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef}>
                     <div className="email-list-head">
                       <span className="email-list-head-title">邮件{provider ? ` · ${provider}` : ""}</span>
+                      {checked.size > 0 && (
+                        <button className="email-list-head-delete" disabled={busy} onClick={() => void deleteSelected()}>
+                          <TrashIcon width={12} height={12} /> 删除选中（{checked.size}）
+                        </button>
+                      )}
                       <button
                         className="email-list-head-count"
                         onClick={openPicker}

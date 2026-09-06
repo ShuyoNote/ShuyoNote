@@ -16819,6 +16819,26 @@ p:has(> .editor-drawing-container) {
 }
 .email-list-head-count:hover { color: var(--text); background: transparent; }
 
+/* 列表头：批量删除按钮（选中勾选框时出现） */
+.email-list-head-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+.email-list-head-delete:hover { background: var(--danger-soft, rgba(229,72,77,.12)); }
+.email-list-head-delete:disabled { opacity: .5; cursor: default; }
+
 /* 邮件过滤条：发件人下拉（可搜索多选）+ 标题关键字（空格=与、逗号=或，同数据库视图） */
 .email-filter-bar {
   display: flex;

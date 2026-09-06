@@ -133,6 +133,8 @@ export const api = {
     invoke("email_mark_read", { args: { account, uid, folder }, read }),
   emailMoveToTrash: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_move_to_trash", { args: { account, uid, folder } }),
+  emailMoveManyToTrash: (account: EmailAccount, uids: number[], folder: string) =>
+    invoke("email_move_many_to_trash", { args: { account, uids, folder } }),
   savePage: (args: {
     id: string;
     title?: string;

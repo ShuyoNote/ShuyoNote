@@ -110,6 +110,7 @@ export interface CommandMap {
   email_set_flag: { args: { args: EmailOpArgs; flag: boolean }; result: void };
   email_mark_read: { args: { args: EmailOpArgs; read: boolean }; result: void };
   email_move_to_trash: { args: { args: EmailOpArgs }; result: void };
+  email_move_many_to_trash: { args: { args: { account: EmailAccount; uids: number[]; folder: string } }; result: number };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };
