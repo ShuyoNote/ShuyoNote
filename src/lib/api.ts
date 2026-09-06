@@ -89,6 +89,10 @@ export const api = {
     invoke("create_folder", { args }),
   createDatabase: (args: { parent_id: string | null; title?: string }) =>
     invoke("create_database", { args }),
+  // 聚合邮箱（桌面专属）
+  emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
+  emailFetchInbox: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }) =>
+    invoke("email_fetch_inbox", { args: account }),
   savePage: (args: {
     id: string;
     title?: string;
