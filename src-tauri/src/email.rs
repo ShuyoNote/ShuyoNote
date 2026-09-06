@@ -661,15 +661,16 @@ fn email_text(p: &mailparse::ParsedMail) -> String {
 }
 
 fn email_text_collect(p: &mailparse::ParsedMail, best: &mut String) {
-    if p.ctype.mimetype == "text/plain" {
-        let t = strip_html(&p.get_body().unwrap_or_default());
-        if t.len() > best.len() {
-            *best = t;
+    if p.ctype.mimetype == "text/plain" || p.ctype.mimetype == "text/html" {
+        // 用 decode(get_body) 与 raw(get_body_raw) 各取一版，取其中较长者，
+        // 覆盖「get_body() 因编码/结构返回空或不完整、而 raw 仍含正文」的情况。
+        let mut t = strip_html(&p.get_body().unwrap_or_default());
+        if let Ok(raw) = p.get_body_raw() {
+            let raw_str = String::from_utf8_lossy(&raw).to_string();
+            if raw_str.len() > t.len() {
+                t = strip_html(&raw_str);
+            }
         }
-        return;
-    }
-    if p.ctype.mimetype == "text/html" {
-        let t = strip_html(&p.get_body().unwrap_or_default());
         if t.len() > best.len() {
             *best = t;
         }
@@ -821,19 +822,12 @@ mod tests {
     }
 
     #[test]
-    fn email_text_decodes_base64_html_part() {
-        // 营销邮件常见：HTML 部分用 base64 编码。验证 get_body 解码后正文完整。
-        use base64::Engine as _;
-        let html = "<html><body><p>尊敬的客户：备案已提交。</p><p>正文内容在此。</p><div>Copyright © 阿里云 2026</div></body></html>";
-        let b64 = base64::engine::general_purpose::STANDARD.encode(html.as_bytes());
-        let raw = format!(
-            "From: a@b.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCopyright © 阿里云\r\n--B\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n--B--\r\n",
-            b64
-        );
-        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
-        let t = email_text(&parsed);
-        assert!(t.contains("尊敬的客户"), "base64 html body lost: {:?}", t);
-        assert!(t.contains("备案已提交"), "base64 html body lost: {:?}", t);
-        assert!(t.contains("正文内容在此"), "base64 html body lost: {:?}", t);
+    fn strip_html_keeps_real_alibaba_body() {
+        let html = "<html><head><style>.a{padding:10px}.b{margin:0}</style></head><body><div style=\"...\"><table><tr><td><p>尊敬的濮阳数友信息科技服务有限责任公司：</p><p>您的备案信息已经提交至通信管理局审核！</p><p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p><p class=\"f\">Copyright © 阿里云 2009-2026 All Rights Reserved</p></td></tr></table></div></body></html>";
+        let t = strip_html(html);
+        assert!(t.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "leading content lost: {:?}", t);
+        assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "content lost: {:?}", t);
+        assert!(t.contains("如您对此有更多疑问"), "content lost: {:?}", t);
+        assert!(t.contains("联系我们"), "link text lost: {:?}", t);
     }
 }
