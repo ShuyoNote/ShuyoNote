@@ -321,36 +321,53 @@ function EmailPane() {
           <p className="set-hint">邮箱功能为桌面专属（Web 无法连接 IMAP），请使用桌面版。</p>
         ) : (
           <>
-            <div className="set-row">
-              <div className="set-row-text">
-                <div className="set-row-name">IMAP 账号（应用密码 / 企业 IMAP）</div>
-                <div className="set-row-sub">
-                  用于拉取收件箱；Gmail 需开两步验证后用「应用专用密码」，网易/腾讯用授权码。
+            {/* 顶卡：说明 + 状态 */}
+            <div className="email-set-card">
+              <div className="email-set-icon" aria-hidden>
+                <InboxIcon width={22} height={22} />
+              </div>
+              <div className="email-set-card-text">
+                <div className="email-set-card-title">IMAP 账号（应用密码 / 企业 IMAP）</div>
+                <div className="email-set-card-sub">
+                  用于拉取收件箱。Gmail 需先开两步验证然后用「应用专用密码」；网易 / 腾讯用授权码。
                 </div>
               </div>
             </div>
-            <div className="set-field">
-              <label htmlFor="email-host">服务器</label>
-              <input id="email-host" className="set-input" placeholder="imap.qq.com" value={host} onChange={(e) => setHost(e.target.value)} />
-            </div>
-            <div className="set-field">
-              <label htmlFor="email-port">端口</label>
-              <input id="email-port" className="set-input" placeholder="993" value={port} onChange={(e) => setPort(e.target.value)} />
-            </div>
-            <div className="set-field">
-              <label htmlFor="email-user">账号</label>
-              <input id="email-user" className="set-input" placeholder="you@example.com" value={user} onChange={(e) => setUser(e.target.value)} />
-            </div>
-            <div className="set-field">
-              <label htmlFor="email-pass">密码 / 应用密码</label>
-              <input id="email-pass" className="set-input" type="password" placeholder="应用密码 / 授权码" value={pass} onChange={(e) => setPass(e.target.value)} />
-            </div>
-            <div className="set-row">
-              <div className="set-row-text">
-                <div className="set-row-name">使用 TLS/SSL</div>
+
+            <div className="email-set-grid">
+              <div className="set-field email-set-host">
+                <label htmlFor="email-host">服务器</label>
+                <input id="email-host" className="set-input" placeholder="imap.qq.com" value={host} onChange={(e) => setHost(e.target.value)} />
               </div>
-              <input type="checkbox" checked={useTls} onChange={(e) => setUseTls(e.target.checked)} />
+              <div className="set-field email-set-port">
+                <label htmlFor="email-port">端口</label>
+                <input id="email-port" className="set-input" placeholder="993" value={port} onChange={(e) => setPort(e.target.value)} />
+              </div>
+              <div className="set-field email-set-wide">
+                <label htmlFor="email-user">账号</label>
+                <input id="email-user" className="set-input" placeholder="you@example.com" value={user} onChange={(e) => setUser(e.target.value)} />
+              </div>
+              <div className="set-field email-set-wide">
+                <label htmlFor="email-pass">密码 / 应用密码</label>
+                <input id="email-pass" className="set-input" type="password" placeholder="应用密码 / 授权码" value={pass} onChange={(e) => setPass(e.target.value)} />
+              </div>
             </div>
+
+            <div className="email-set-row email-set-tls">
+              <span className="email-set-row-text">
+                <span className="email-set-row-name">使用 TLS/SSL</span>
+                <span className="email-set-row-sub">993 端口默认开启；关掉后可连 143 明文。</span>
+              </span>
+              <button
+                className={`ui-toggle ${useTls ? "on" : ""}`}
+                role="switch"
+                aria-checked={useTls}
+                onClick={() => setUseTls(!useTls)}
+              >
+                <span className="ui-toggle-knob" />
+              </button>
+            </div>
+
             <div className="set-actions">
               <button className="set-btn is-primary" disabled={!host} onClick={() => void save()}>保存配置</button>
               <button className="set-btn" onClick={() => { useEmailPanel.getState().openPanel(); useEditorStore.getState().closeSettings(); }}>打开收件箱</button>
