@@ -1,13 +1,11 @@
-//! 聚合邮箱（邮件即笔记）— P0 spike。
+//! 聚合邮箱（邮件即笔记）— P0。
 //!
 //! 最小验证链路：**邮件(RFC822) → 解析 → ShuyoNote 页面**。
 //! - `email_save_as_note`：用 `mailparse` 解析一条原始邮件，生成页面（复用 `commands::create_node`，
 //!   建页 + 内容 + FTS + blocks/backlinks + 同步 change 一条龙）。
-//! - `email_fetch_inbox`：IMAP 拉取收件箱头部（Envelope）。当前镜像源缺 `imap` 3.x，
-//!   暂为占位（返回明确错误），待接入真实账号 + 依赖后启用。
+//! - `email_fetch_inbox`：`async-imap`（tokio + native-tls）拉取收件箱头部（Envelope）。
 //!
-//! 备注：spike 阶段走阻塞式 IMAP（后续可挪 `spawn_blocking`）；OAuth 见私有仓库
-//! `docs/email-aggregate-monetization.md`。
+//! 备注：OAuth 见私有仓库 `docs/email-aggregate-monetization.md`。
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -113,24 +111,36 @@ pub fn email_save_as_note(db: State<Db>, args: EmailSaveArgs) -> Result<crate::m
     commands::create_node(db, None, Some(title), "page", Some(json), Some(text))
 }
 
-/// 拉取收件箱头部（读最近 20 条 Envelope）。
-/// 走 `imap` ClientBuilder（内置 TLS）。镜像缺稳定 imap 3.x，暂用 3.0.0-alpha.15。
-#[allow(unused_variables)]
+/// 拉取收件箱头部（读最近 20 条 Envelope）。走 `async-imap`（tokio + native-tls）。
 #[tauri::command]
-pub fn email_fetch_inbox(_db: State<Db>, args: EmailAccountArgs) -> Result<Vec<EmailMeta>, String> {
-    let client = imap::ClientBuilder::new(&args.host, args.port)
-        .connect()
-        .map_err(|e| format!("连接失败: {}", e))?;
+pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>, String> {
+    use futures_util::StreamExt;
+    use tokio::net::TcpStream;
+
+    let tcp = TcpStream::connect((args.host.as_str(), args.port))
+        .await
+        .map_err(|e| format!("TCP 连接失败: {}", e))?;
+    let tls = tokio_native_tls::TlsConnector::from(
+        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
+    );
+    let tls_stream = tls
+        .connect(&args.host, tcp)
+        .await
+        .map_err(|e| format!("TLS 失败: {}", e))?;
+
+    let client = async_imap::Client::new(tls_stream);
     let mut session = client
         .login(&args.username, &args.password)
-        .map_err(|(e, _client)| format!("登录失败: {}", e))?;
-    session.select("INBOX").map_err(|e| format!("选择 INBOX 失败: {}", e))?;
-    let fetched = session
+        .await
+        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+    session.select("INBOX").await.map_err(|e| format!("选择 INBOX 失败: {}", e))?;
+    let mut stream = session
         .fetch("1:*", "(ENVELOPE UID)")
+        .await
         .map_err(|e| format!("拉取失败: {}", e))?;
 
     let mut out = Vec::new();
-    for m in fetched.iter().rev().take(20) {
+    while let Some(Ok(m)) = stream.next().await {
         if let Some(env) = m.envelope() {
             let subject = env
                 .subject
