@@ -16632,9 +16632,9 @@ p:has(> .editor-drawing-container) {
   box-shadow: 0 0 0 2px rgba(79,124,255,.28), 0 8px 20px rgba(0,0,0,.14);
 }
 
-/* ===== 聚合收件箱整页（像 md 预览器那样的页面） ===== */
+/* ===== 聚合收件箱整页（占主内容区，不遮侧栏/标题栏） ===== */
 .email-page {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 1100;
   background: var(--bg);

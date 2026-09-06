@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
 import { SendIcon } from "./icons";
@@ -93,63 +94,65 @@ export function EmailPanel() {
         <span>邮箱</span>
       </button>
 
-      {open && (
-        <div className="email-page" role="dialog" aria-label="邮箱">
-          <header className="email-page-head">
-            <div className="email-page-title">
-              <div>邮箱</div>
-              <div className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</div>
-            </div>
-            <div className="email-page-actions">
-              <button className="sync-btn primary" disabled={busy || !account} onClick={() => void refresh()}>
-                拉取收件箱
-              </button>
-              <button className="sync-btn ghost" onClick={closePanel} aria-label="关闭">✕</button>
-            </div>
-          </header>
-
-          <div className="email-page-body">
-            {!account && <div className="email-page-empty">请先在 <b>设置 → 邮箱</b> 配置 IMAP 账号。</div>}
-
-            {list.length > 0 && (
-              <div className="email-list">
-                <div className="email-list-head">
-                  <span className="email-list-title">收件箱（最近 {list.length} 封）</span>
-                </div>
-                {list.map((m, i) => (
-                  <div key={i} className="email-item">
-                    <span className="email-item-badge" aria-hidden>✉</span>
-                    <div className="email-item-main">
-                      <div className="email-item-title" title={m.subject}>{m.subject || "(无主题)"}</div>
-                      <div className="email-item-meta">
-                        <span className="email-item-from" title={m.from}>{m.from}</span>
-                        <span className="email-item-date" title={m.date}>{m.date}</span>
-                      </div>
-                    </div>
-                    <button className="sync-btn" disabled={busy} onClick={() => void saveUid(m.uid)}>存为笔记</button>
-                  </div>
-                ))}
+      {open &&
+        createPortal(
+          <div className="email-page" role="dialog" aria-label="邮箱">
+            <header className="email-page-head">
+              <div className="email-page-title">
+                <div>邮箱</div>
+                <div className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</div>
               </div>
-            )}
+              <div className="email-page-actions">
+                <button className="sync-btn primary" disabled={busy || !account} onClick={() => void refresh()}>
+                  拉取收件箱
+                </button>
+                <button className="sync-btn ghost" onClick={closePanel} aria-label="关闭">✕</button>
+              </div>
+            </header>
 
-            <div className="email-paste">
-              <label className="sync-hint">粘贴原始邮件（RFC822）→ 存为笔记</label>
-              <textarea
-                className="sync-input"
-                rows={3}
-                placeholder={"From: a@x.com\nSubject: 你好\n\n正文…"}
-                value={raw}
-                onChange={(e) => setRaw(e.target.value)}
-              />
-              <button className="sync-btn" disabled={busy || !raw.trim()} onClick={() => void saveRaw()}>
-                存为笔记
-              </button>
+            <div className="email-page-body">
+              {!account && <div className="email-page-empty">请先在 <b>设置 → 邮箱</b> 配置 IMAP 账号。</div>}
+
+              {list.length > 0 && (
+                <div className="email-list">
+                  <div className="email-list-head">
+                    <span className="email-list-title">收件箱（最近 {list.length} 封）</span>
+                  </div>
+                  {list.map((m, i) => (
+                    <div key={i} className="email-item">
+                      <span className="email-item-badge" aria-hidden>✉</span>
+                      <div className="email-item-main">
+                        <div className="email-item-title" title={m.subject}>{m.subject || "(无主题)"}</div>
+                        <div className="email-item-meta">
+                          <span className="email-item-from" title={m.from}>{m.from}</span>
+                          <span className="email-item-date" title={m.date}>{m.date}</span>
+                        </div>
+                      </div>
+                      <button className="sync-btn" disabled={busy} onClick={() => void saveUid(m.uid)}>存为笔记</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="email-paste">
+                <label className="sync-hint">粘贴原始邮件（RFC822）→ 存为笔记</label>
+                <textarea
+                  className="sync-input"
+                  rows={3}
+                  placeholder={"From: a@x.com\nSubject: 你好\n\n正文…"}
+                  value={raw}
+                  onChange={(e) => setRaw(e.target.value)}
+                />
+                <button className="sync-btn" disabled={busy || !raw.trim()} onClick={() => void saveRaw()}>
+                  存为笔记
+                </button>
+              </div>
+
+              {err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
             </div>
-
-            {err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
-          </div>
-        </div>
-      )}
+          </div>,
+          document.querySelector(".main") ?? document.body,
+        )}
     </>
   );
 }
