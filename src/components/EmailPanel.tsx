@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import DOMPurify from "dompurify";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
+import { emailHtmlToLexical } from "../lib/emailRichNote";
 import { platform } from "../lib/platform";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
@@ -30,6 +31,15 @@ function providerLabel(username: string): string {
 function stripEmail(v: string): string {
   const m = v.match(/<([^>]+)>/);
   return m ? m[1].trim() : v.trim();
+}
+
+// HTML 转义（用于把纯文本正文包进 <p> 后交给 Lexical 导入，避免被当成 HTML）。
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // 把后端返回的账号对象补全成完整 EmailAccount（含 SMTP 字段）。
@@ -463,7 +473,17 @@ export function EmailPanel() {
     setErr("");
     setBusy(true);
     try {
-      await api.emailSaveUid(account, uid, active.folder);
+      // 富文本存笔记：拉取邮件 HTML（纯文本兜底），前端转 Lexical JSON，再建富文本页面。
+      let html = await api.emailGetHtml(account, uid, active.folder).catch(() => "");
+      if (html.trim()) {
+        const { content_json, content_text } = emailHtmlToLexical(html);
+        await api.emailSaveNote(active.subject || "(无主题)", content_json, content_text);
+      } else {
+        // 无 HTML（纯文本邮件），仍转成简单 Lexical 段落保存富文本格式。
+        const plainHtml = escapeHtml(body);
+        const { content_json, content_text } = emailHtmlToLexical(`<p>${plainHtml}</p>`);
+        await api.emailSaveNote(active.subject || "(无主题)", content_json, content_text);
+      }
       setErr("已存为笔记 ✓");
     } catch (e) {
       setErr(String(e));

@@ -119,6 +119,8 @@ export const api = {
     invoke("create_database", { args }),
   // 聚合邮箱（桌面专属）
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
+  emailSaveNote: (title: string, contentJson: string, contentText: string) =>
+    invoke("email_save_note", { args: { title, content_json: contentJson, content_text: contentText } }),
   emailFetchInbox: (account: EmailAccount, folders: string[]) =>
     invoke("email_fetch_inbox", { args: { account, folders } }),
   emailSaveUid: (account: EmailAccount, uid: number, folder: string) =>

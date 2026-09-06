@@ -206,6 +206,27 @@ fn default_folder() -> String {
     "INBOX".to_string()
 }
 
+/// 「存为笔记（富文本）」入参：标题 + 前端已转换的 Lexical JSON + 纯文本。
+#[derive(Deserialize)]
+pub struct EmailSaveNoteArgs {
+    pub title: String,
+    pub content_json: String,
+    pub content_text: String,
+}
+
+/// 把前端转换好的富文本存为笔记（复用 create_node 建页）。
+/// 与 save_raw_note 不同：content_json 由前端从邮件 HTML 经 $importHtml 转成 Lexical JSON，
+/// 因此能保留段落/加粗/链接/标题/列表/表格等排版（图片以占位/链接形式）。
+#[tauri::command]
+pub fn email_save_note(db: State<Db>, args: EmailSaveNoteArgs) -> Result<crate::models::PageDetail, String> {
+    let title = if args.title.trim().is_empty() {
+        "邮件".to_string()
+    } else {
+        args.title.trim().to_string()
+    };
+    commands::create_node(db, None, Some(title), "page", Some(args.content_json), Some(args.content_text))
+}
+
 /// 按 UID 拉取完整邮件（`BODY.PEEK[]`，不置已读）→ 存为笔记。
 #[tauri::command]
 pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result<crate::models::PageDetail, String> {
