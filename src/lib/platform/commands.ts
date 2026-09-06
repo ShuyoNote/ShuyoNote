@@ -70,7 +70,19 @@ export interface WorkspaceSyncResult {
   error: string | null;
 }
 
+export interface EmailMeta {
+  uid: number;
+  subject: string;
+  from: string;
+  date: string;
+  snippet: string;
+}
+
 export interface CommandMap {
+  // ---- Email（聚合邮箱，桌面专属） ----
+  email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
+  email_fetch_inbox: { args: { args: { host: string; port: number; username: string; password: string; use_tls: boolean } }; result: EmailMeta[] };
+
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };
   list_workspace_pages: { args: { workspaceId: string }; result: PageMeta[] };

@@ -8,6 +8,7 @@ mod commands;
 mod crypto;
 mod database;
 mod db;
+mod email;
 mod graph;
 mod models;
 mod pdf_native;
@@ -237,6 +238,8 @@ pub fn run() {
             commands::get_page,
             commands::create_page,
             commands::create_folder,
+            email::email_save_as_note,
+            email::email_fetch_inbox,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

@@ -138,7 +138,7 @@ pub fn create_database(db: State<Db>, args: CreatePageArgs) -> Result<PageDetail
     create_node(db, args.parent_id, args.title, "database", None, None)
 }
 
-fn create_node(
+pub(crate) fn create_node(
     db: State<Db>,
     parent_id: Option<String>,
     title: Option<String>,

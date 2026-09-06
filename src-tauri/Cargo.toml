@@ -47,6 +47,9 @@ tauri-plugin-single-instance = "2"
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
 # via src/pdf_native.rs.
 mupdf-sys = "0.8.0"
+# 聚合邮箱 spike：邮件解析（mailparse）。IMAP 拉取依赖 `imap`，但当前 USTC 镜像
+# 索引缺 3.x，暂以占位命令 `email_fetch_inbox` 待接入（见 email.rs）。
+mailparse = "0.15"
 
 [dev-dependencies]
 # For async integration tests (embed_text network round-trip / search_semantic ranking).
