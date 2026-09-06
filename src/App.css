@@ -16632,4 +16632,44 @@ p:has(> .editor-drawing-container) {
   box-shadow: 0 0 0 2px rgba(79,124,255,.28), 0 8px 20px rgba(0,0,0,.14);
 }
 
+/* ===== 聚合邮箱面板（居中模态） ===== */
+.email-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 20, 30, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+.email-modal {
+  width: 100%;
+  max-width: 440px;
+  max-height: min(82vh, 720px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+}
+.email-modal .sync-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.email-modal-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.email-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
 
