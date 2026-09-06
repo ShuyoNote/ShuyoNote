@@ -1099,7 +1099,6 @@ export function EmailPanel() {
                       <button className="sync-btn ghost" disabled={!active} onClick={() => setUseRich((v) => !v)}>
                         {useRich ? "纯文本" : "富文本"}
                       </button>
-                      <button className="sync-btn ghost" disabled title="更多操作">更多操作</button>
                     </div>
                     {active ? (
                       <>
