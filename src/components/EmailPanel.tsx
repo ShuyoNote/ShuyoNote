@@ -388,11 +388,12 @@ export function EmailPanel() {
     if (!account || !active) return;
     setErr("");
     try {
-      // 同时用 email_get_body（阅读区路径）拉一次，直接设到 body，验证阅读区能否显示完整。
+      // 同时用 email_get_body（阅读区路径）拉一次，直接设到 body。
       const bodyText = await api.emailGetBody(account, active.uid, active.folder);
       setBody(bodyText);
       const info = await api.emailDebugBody(account, active.uid, active.folder);
-      setErr(info);
+      // 红条显示 email_get_body 返回的内容（前端实际拿到的 body），与 email_text 对比。
+      setErr(`[get_body len=${bodyText.length}]\n${bodyText.slice(0, 300)}\n\n---[debug info]---\n${info}`);
     } catch (e) {
       setErr(String(e));
     }
