@@ -86,9 +86,19 @@ export function EmailPanel() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
-  const [listW, setListW] = useState(360);
+  const [listW, setListW] = useState<number>(() => Math.round(window.innerWidth * 0.3));
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [starred, setStarred] = useState<Set<number>>(new Set());
+
+  // 打开时默认左右均分：把列表宽度设为分栏容器的一半。
+  useEffect(() => {
+    if (!open) return;
+    const el = splitRef.current;
+    if (el) {
+      const w = Math.round(el.getBoundingClientRect().width / 2);
+      if (w > 240) setListW(w);
+    }
+  }, [open]);
 
   // 挂载时读一次已保存账号（供角标/定时收取用；不依赖面板是否打开）。
   useEffect(() => {
