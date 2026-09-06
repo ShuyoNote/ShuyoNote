@@ -651,18 +651,33 @@ pub async fn email_get_body(args: EmailSaveUidArgs) -> Result<String, String> {
     Ok(email_text(&parsed))
 }
 
-/// 递归取邮件正文：优先 text/plain；仅 HTML 时剥标签。
+/// 递归取邮件正文：收集所有候选（text/plain 与 text/html），返回**最长**的一个。
+/// 这样 multipart/alternative 里即便 text/plain 只有简短版权、text/html 才是完整正文，
+/// 也会取到内容更全的那份；纯 HTML 时剥标签。
 fn email_text(p: &mailparse::ParsedMail) -> String {
+    let mut best = String::new();
+    email_text_collect(p, &mut best);
+    best
+}
+
+fn email_text_collect(p: &mailparse::ParsedMail, best: &mut String) {
     if p.ctype.mimetype == "text/plain" {
-        return strip_html(&p.get_body().unwrap_or_default());
+        let t = strip_html(&p.get_body().unwrap_or_default());
+        if t.len() > best.len() {
+            *best = t;
+        }
+        return;
+    }
+    if p.ctype.mimetype == "text/html" {
+        let t = strip_html(&p.get_body().unwrap_or_default());
+        if t.len() > best.len() {
+            *best = t;
+        }
+        return;
     }
     for sub in &p.subparts {
-        let t = email_text(sub);
-        if !t.is_empty() {
-            return t;
-        }
+        email_text_collect(sub, best);
     }
-    strip_html(&p.get_body().unwrap_or_default())
 }
 
 /// 把 HTML/混合正文转成可读纯文本。
@@ -768,5 +783,28 @@ mod tests {
         let raw = "From: a@b.com\r\nSubject: hi\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nhello body";
         let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
         assert_eq!(email_text(&parsed), "hello body");
+    }
+
+    #[test]
+    fn email_text_marketing_html_preserves_body() {
+        // 模拟营销邮件的嵌套结构（div/table/链接/分隔线 + 底部版权），验证正文不丢失、只留版权。
+        let raw = "From: a@b.com\r\nSubject: t\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><table><tr><td><div style=\"p\">尊敬的客户：您好</div><div>您的备案已提交至管理局审核！</div><div>请点击<a href=\"https://x.com\">查看详情</a>。</div><div>———</div><div>Copyright © 阿里云 2026 All Rights Reserved</div></td></tr></table></body></html>";
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let t = email_text(&parsed);
+        assert!(t.contains("尊敬的客户"), "body lost: {:?}", t);
+        assert!(t.contains("备案已提交"), "body lost: {:?}", t);
+        assert!(t.contains("Copyright"), "footer lost: {:?}", t);
+        // 正文应该远不止底部版权一行。
+        assert!(t.len() > "Copyright © 阿里云 2026 All Rights Reserved".len(), "only footer returned: {:?}", t);
+    }
+
+    #[test]
+    fn email_text_multipart_alternative_picks_rich_part() {
+        // multipart/alternative：text/plain 只含版权，text/html 含正文 —— 应优先显示完整正文。
+        let raw = "From: a@b.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCopyright © 阿里云\r\n--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>尊敬的客户，备案已提交。</p>\r\n--B--\r\n";
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let t = email_text(&parsed);
+        assert!(t.contains("尊敬的客户"), "rich part not preferred: {:?}", t);
+        assert!(t.contains("备案已提交"), "rich part body lost: {:?}", t);
     }
 }
