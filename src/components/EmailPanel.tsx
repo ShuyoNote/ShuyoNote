@@ -133,9 +133,9 @@ export function EmailPanel() {
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
   const [listW, setListW] = useState<number>(() => Math.round(window.innerWidth * 0.3));
-  // 列表列宽：发件人/主题 可通过列表头拖拽调节。
-  const [fromW, setFromW] = useState(132);
-  const [subjectW, setSubjectW] = useState(220);
+  // 列表列宽：发件人/主题 可通过列表头拖拽调节；主题列弹性适应左栏宽度。
+  const [fromW, setFromW] = useState(110);
+  const [subjectW, setSubjectW] = useState(160);
   const resizeRef = useRef<{ startX: number; startW: number; col: "from" | "subject" } | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [starred, setStarred] = useState<Set<number>>(new Set());
@@ -511,7 +511,7 @@ export function EmailPanel() {
 
   const sections = groupEmails(filteredList);
   const provider = account ? providerLabel(account.username) : "";
-  const colTemplate = `26px ${fromW}px ${subjectW}px minmax(72px, 1fr) 24px`;
+  const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
 
   return (
     <>
