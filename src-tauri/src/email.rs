@@ -702,6 +702,11 @@ fn strip_html(s: &str) -> String {
     // 保留单换行，多个空行压成一个。
     let s = re_nl.replace_all(&s, "\n").into_owned();
     let s = re_blank.replace_all(&s, "\n\n").into_owned();
+    // 去掉 QP 软换行残渣：`=\n`/`=\r\n`（紧跟换行的 `=`，是软续行，不会误伤正文）。
+    let re_qp_soft = regex::Regex::new(r"=\r?\n").unwrap();
+    let s = re_qp_soft.replace_all(&s, "\n").into_owned();
+    let re_qp_lone = regex::Regex::new(r"(?m)^[ \t]*=[ \t]*$").unwrap();
+    let s = re_qp_lone.replace_all(&s, "").into_owned();
     let s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'");
     s.trim().to_string()
 }
@@ -864,8 +869,8 @@ mod tests {
     #[test]
     fn email_text_real_alibaba_raw() {
         // 复现真实阿里云报文形态：multipart/mixed → text/html quoted-printable，
-        // 中文以 QP(=E5..) 编码（真实报文如此；字面中文在 QP 下会被 mailparse 丢弃）。
-        let html = "<html lang=\"zh-cn\">\r\n<head><style type=\"text/css\">a {color:#1366ec}</style></head>\r\n<body>\r\n<span style=\"display:none\">此邮件由阿里云发送，请勿直接回复</span>\r\n<div style=\"max-width:1200px\">\r\n<div class=\"nav\"><a href=\"x\">产品</a><a href=\"x\">解决方案</a><a href=\"x\">了解阿里云</a></div>\r\n<div class=\"email-body\">\r\n<p>尊敬的濮阳数友信息科技服务有限责任公司：</p>\r\n<p>您的备案信息已经提交至通信管理局审核！</p>\r\n<p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p>\r\n<p class=\"f\">Copyright © 阿里云 2009-2026 All Rights Reserved</p>\r\n</div>\r\n</div>\r\n</body>\r\n</html>\r\n";
+        // 中文以 QP(=E5..) 编码，且每 76 列用 `=` 软换行 + \r\n（与真实报文一致）。
+        let html = "<html lang=\"zh-cn\">\r\n<head><style type=\"text/css\">a {color:#1366ec}</style></head>\r\n<body>\r\n<span style=\"display:none\">此邮件由阿里云发送，请勿直接回复</span>\r\n<div class=\"email-body\">\r\n<p>尊敬的濮阳数友信息科技服务有限责任公司：</p>\r\n<p>您的备案信息已经提交至通信管理局审核！</p>\r\n<p>如您对此有更多疑问，请点击<a href=\"x\">联系我们</a>登录阿里云账号。</p>\r\n<p class=\"f\">Copyright © 阿里云 2009-2026 All Rights Reserved</p>\r\n</div>\r\n</body>\r\n</html>\r\n";
         let qp = qp_encode(html);
         let raw = format!(
             "From: =?UTF-8?B?6Zi/6YeM5LqR?= <system@notice.aliyun.com>\r\nTo: zhaizy@qq.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/html;charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n{}\r\n--B--\r\n",
@@ -873,7 +878,11 @@ mod tests {
         );
         let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
         let body = parsed.subparts[0].get_body().unwrap_or_default();
+        // 定位：如果 get_body 只回版权（脱字符），说明 QP 解码后非 ASCII 被丢；
+        // 打印以便诊断。
+        eprintln!("EMAIL_TEXT body len={} zh?={}", body.len(), body.contains("尊敬的"));
         let stripped = strip_html(&body);
+        eprintln!("EMAIL_TEXT stripped >>>{:?}<<<", stripped);
         assert!(stripped.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "body lost: {:?}", stripped);
         assert!(stripped.contains("您的备案信息已经提交至通信管理局审核"), "body lost: {:?}", stripped);
         assert!(stripped.contains("Copyright"), "footer lost: {:?}", stripped);
