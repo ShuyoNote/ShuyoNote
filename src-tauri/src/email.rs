@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::commands;
 use crate::db::Db;
+use crate::smtp::{self, SmtpSecurity};
 
 /// 邮件元信息（阅读流用）。
 #[derive(Serialize)]
@@ -74,10 +75,40 @@ pub struct EmailAccountArgs {
     /// 定时收取间隔（分钟）。默认 15。
     #[serde(default = "default_email_interval")]
     pub interval_minutes: u16,
+    /// SMTP 发信主机（回复/转发）。缺省时复用 IMAP host。
+    #[serde(default)]
+    pub smtp_host: String,
+    /// SMTP 端口（465 隐式 TLS / 587 STARTTLS）。
+    #[serde(default)]
+    pub smtp_port: u16,
+    /// SMTP 传输方式：ssl(465) / starttls(587) / none。默认 ssl。
+    #[serde(default)]
+    pub smtp_security: String,
+    /// SMTP 认证用户；缺省复用 IMAP username。
+    #[serde(default)]
+    pub smtp_user: String,
+    /// SMTP 认证密码；缺省复用 IMAP password。
+    #[serde(default)]
+    pub smtp_pass: String,
 }
 
 fn default_email_interval() -> u16 {
     15
+}
+
+impl EmailAccountArgs {
+    fn smtp(&self) -> (String, u16, SmtpSecurity, String, String) {
+        let host = if self.smtp_host.trim().is_empty() { self.host.clone() } else { self.smtp_host.clone() };
+        let port = if self.smtp_port == 0 {
+            if self.smtp_security == "starttls" { 587 } else { 465 }
+        } else {
+            self.smtp_port
+        };
+        let sec = SmtpSecurity::parse(&self.smtp_security);
+        let user = if self.smtp_user.is_empty() { self.username.clone() } else { self.smtp_user.clone() };
+        let pass = if self.smtp_pass.is_empty() { self.password.clone() } else { self.smtp_pass.clone() };
+        (host, port, sec, user, pass)
+    }
 }
 
 /// “存为笔记”入参：一次携带一条原始 RFC822 邮件文本。
@@ -497,6 +528,51 @@ pub async fn email_move_many_to_trash(args: EmailBatchOpArgs) -> Result<u32, Str
         }
     }
     Ok(moved)
+}
+
+/// 发送邮件（回复/转发）：入参为账号 + 收件人 + 主题 + 正文，后端用 SMTP 发出。
+#[derive(Deserialize)]
+pub struct EmailSendArgs {
+    pub account: EmailAccountArgs,
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+}
+
+/// 构造纯文本 MIME 消息（含头 + 空行 + 正文），并规范化换行。
+fn build_mime(from: &str, to: &str, subject: &str, body: &str) -> String {
+    let msg_id = format!("<{}-{}@shuyonote.local>", Uuid::new_v4().simple(), chrono::Utc::now().timestamp_millis());
+    let date = chrono::Utc::now().to_rfc2822();
+    // 头部字段值若有非 ASCII，简单 base64 编码（RFC2047），保证中文主题/收件人不乱码。
+    let subj_enc = encode_header(subject);
+    let to_enc = encode_header(to);
+    format!(
+        "From: {from}\r\nTo: {to}\r\nSubject: {subj}\r\nDate: {date}\r\nMessage-ID: {msg_id}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n{body}",
+        from = from,
+        to = to_enc,
+        subj = subj_enc,
+    )
+}
+
+/// RFC2047：含非 ASCII 时按 UTF-8 base64 编码为 `=?utf-8?B?..?=`。
+fn encode_header(v: &str) -> String {
+    if v.is_ascii() {
+        return v.to_string();
+    }
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(v.as_bytes());
+    format!("=?utf-8?B?{}?=", b64)
+}
+
+#[tauri::command]
+pub async fn email_send(args: EmailSendArgs) -> Result<(), String> {
+    let (host, port, sec, user, pass) = args.account.smtp();
+    if args.to.trim().is_empty() {
+        return Err("收件人不能为空".to_string());
+    }
+    let from = args.account.username.clone();
+    let msg = build_mime(&from, &args.to, &args.subject, &args.body);
+    smtp::send(&host, port, &user, &pass, sec, &from, &args.to, &msg).await
 }
 
 /// 拉取 INBOX 未读数量（轻量 `STATUS INBOX (UNSEEN)`），供定时收取/未读角标用。

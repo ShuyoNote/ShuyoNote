@@ -9,6 +9,7 @@ mod crypto;
 mod database;
 mod db;
 mod email;
+mod smtp;
 mod graph;
 mod models;
 mod pdf_native;
@@ -254,6 +255,7 @@ pub fn run() {
             email::email_mark_read,
             email::email_move_to_trash,
             email::email_move_many_to_trash,
+            email::email_send,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

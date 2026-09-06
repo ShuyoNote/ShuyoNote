@@ -12089,6 +12089,7 @@ p:has(> .editor-drawing-container) {
 .email-set-card-text { flex: 1; min-width: 0; }
 .email-set-card-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .email-set-card-sub { font-size: 12px; color: var(--text-faint); margin-top: 3px; line-height: 1.5; }
+.email-set-smtp-card { margin-top: 12px; }
 
 .email-set-grid {
   display: grid;
@@ -12100,6 +12101,10 @@ p:has(> .editor-drawing-container) {
 .email-set-grid .email-set-host { grid-column: 1; }
 .email-set-grid .email-set-port { grid-column: 2; }
 .email-set-grid .email-set-wide { grid-column: 1 / -1; }
+.email-set-grid-smtp {
+  grid-template-columns: 1fr 88px 110px;
+}
+.email-set-grid-smtp .email-set-port { grid-column: auto; }
 
 .email-set-row {
   display: flex;
@@ -12140,6 +12145,48 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: center;
 }
+
+/* 邮箱撰写弹窗（回复/转发） */
+.email-compose-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 1300;
+  background: rgba(0,0,0,.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.email-compose {
+  width: 520px;
+  max-width: calc(100% - 40px);
+  max-height: 80%;
+  overflow: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md, 0 16px 48px rgba(0,0,0,.28));
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.email-compose-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.email-compose-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.email-compose-field { display: flex; flex-direction: column; gap: 5px; }
+.email-compose-field > label { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+.email-compose-body { flex: 1; min-height: 0; }
+.email-compose-body textarea { min-height: 200px; resize: vertical; line-height: 1.6; font-family: inherit; }
+.email-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.email-compose-hint { flex: 1; font-size: 11px; color: var(--text-faint); line-height: 1.5; }
 
 .set-status-line {
   margin-top: 10px;

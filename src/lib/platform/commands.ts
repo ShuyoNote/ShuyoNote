@@ -89,6 +89,11 @@ export interface EmailAccount {
   use_tls: boolean;
   auto_fetch: boolean;
   interval_minutes: number;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: string;
+  smtp_user: string;
+  smtp_pass: string;
 }
 
 export interface EmailOpArgs {
@@ -111,6 +116,7 @@ export interface CommandMap {
   email_mark_read: { args: { args: EmailOpArgs; read: boolean }; result: void };
   email_move_to_trash: { args: { args: EmailOpArgs }; result: void };
   email_move_many_to_trash: { args: { args: { account: EmailAccount; uids: number[]; folder: string } }; result: number };
+  email_send: { args: { args: { account: EmailAccount; to: string; subject: string; body: string } }; result: void };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

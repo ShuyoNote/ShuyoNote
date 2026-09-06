@@ -286,6 +286,12 @@ function EmailPane() {
   const [useTls, setUseTls] = useState(true);
   const [autoFetch, setAutoFetch] = useState(false);
   const [intervalMin, setIntervalMin] = useState(15);
+  // SMTP 发信（回复/转发）：默认留空即复用 IMAP 账号 + 465 隐式 TLS。
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("465");
+  const [smtpSecurity, setSmtpSecurity] = useState("ssl");
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
   const [err, setErr] = useState("");
   const desktop = isDesktopPlatform();
 
@@ -301,6 +307,11 @@ function EmailPane() {
           setUseTls(a.use_tls);
           setAutoFetch(a.auto_fetch);
           setIntervalMin(a.interval_minutes || 15);
+          setSmtpHost(a.smtp_host);
+          setSmtpPort(String(a.smtp_port || 465));
+          setSmtpSecurity(a.smtp_security || "ssl");
+          setSmtpUser(a.smtp_user);
+          setSmtpPass(a.smtp_pass);
         }
       })
       .catch(() => {});
@@ -318,6 +329,11 @@ function EmailPane() {
         use_tls: useTls,
         auto_fetch: autoFetch,
         interval_minutes: intervalMin,
+        smtp_host: smtpHost.trim(),
+        smtp_port: Number(smtpPort) || 465,
+        smtp_security: smtpSecurity,
+        smtp_user: smtpUser.trim(),
+        smtp_pass: smtpPass,
       });
       setErr("配置已保存 ✓");
     } catch (e) {
@@ -378,6 +394,41 @@ function EmailPane() {
               >
                 <span className="ui-toggle-knob" />
               </button>
+            </div>
+
+            <div className="email-set-card email-set-smtp-card">
+              <div className="email-set-card-text">
+                <div className="email-set-card-title">SMTP 发信（回复 / 转发）</div>
+                <div className="email-set-card-sub">
+                  从应用内直接发信需 SMTP。留空则复用 IMAP 账号（QQ/163 等常需单独的 SMTP 授权码）。
+                </div>
+              </div>
+            </div>
+            <div className="email-set-grid email-set-grid-smtp">
+              <div className="set-field email-set-host">
+                <label htmlFor="email-smtp-host">SMTP 服务器</label>
+                <input id="email-smtp-host" className="set-input" placeholder="smtp.qq.com（留空=复用IMAP）" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
+              </div>
+              <div className="set-field email-set-port">
+                <label htmlFor="email-smtp-port">端口</label>
+                <input id="email-smtp-port" className="set-input" placeholder="465" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} />
+              </div>
+              <div className="set-field email-set-port">
+                <label htmlFor="email-smtp-sec">加密</label>
+                <select id="email-smtp-sec" className="set-input" value={smtpSecurity} onChange={(e) => setSmtpSecurity(e.target.value)}>
+                  <option value="ssl">SSL（465）</option>
+                  <option value="starttls">STARTTLS（587）</option>
+                  <option value="none">明文（不推荐）</option>
+                </select>
+              </div>
+              <div className="set-field email-set-wide">
+                <label htmlFor="email-smtp-user">SMTP 账号（留空=复用 IMAP）</label>
+                <input id="email-smtp-user" className="set-input" placeholder="smtp 专用账号" value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} />
+              </div>
+              <div className="set-field email-set-wide">
+                <label htmlFor="email-smtp-pass">SMTP 授权码（留空=复用 IMAP）</label>
+                <input id="email-smtp-pass" className="set-input" type="password" placeholder="SMTP 授权码 / 应用密码" value={smtpPass} onChange={(e) => setSmtpPass(e.target.value)} />
+              </div>
             </div>
 
             <div className="email-set-row email-set-tls">

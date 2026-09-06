@@ -30,6 +30,11 @@ export interface EmailAccount {
   use_tls: boolean;
   auto_fetch: boolean;
   interval_minutes: number;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: string;
+  smtp_user: string;
+  smtp_pass: string;
 }
 
 /** 收件箱一条邮件的元信息（与后端 email::EmailMeta 对应）。 */
@@ -135,6 +140,8 @@ export const api = {
     invoke("email_move_to_trash", { args: { account, uid, folder } }),
   emailMoveManyToTrash: (account: EmailAccount, uids: number[], folder: string) =>
     invoke("email_move_many_to_trash", { args: { account, uids, folder } }),
+  emailSend: (account: EmailAccount, to: string, subject: string, body: string) =>
+    invoke("email_send", { args: { account, to, subject, body } }),
   savePage: (args: {
     id: string;
     title?: string;

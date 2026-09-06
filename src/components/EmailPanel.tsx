@@ -25,6 +25,30 @@ function providerLabel(username: string): string {
   return domain.split(".")[0] || domain;
 }
 
+// 从 "姓名 <a@b.com>" 形式提取裸邮箱地址。
+function stripEmail(v: string): string {
+  const m = v.match(/<([^>]+)>/);
+  return m ? m[1].trim() : v.trim();
+}
+
+// 把后端返回的账号对象补全成完整 EmailAccount（含 SMTP 字段）。
+function toAccount(a: EmailAccount): EmailAccount {
+  return {
+    host: a.host,
+    port: a.port,
+    username: a.username,
+    password: a.password,
+    use_tls: a.use_tls,
+    auto_fetch: a.auto_fetch,
+    interval_minutes: a.interval_minutes,
+    smtp_host: a.smtp_host,
+    smtp_port: a.smtp_port,
+    smtp_security: a.smtp_security,
+    smtp_user: a.smtp_user,
+    smtp_pass: a.smtp_pass,
+  };
+}
+
 function parseDate(s: string): Date | null {
   if (!s) return null;
   const d = new Date(s);
@@ -141,6 +165,9 @@ export function EmailPanel() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
   const pickerRef = useRef<HTMLDivElement>(null);
+  // 发信（回复/转发）撰写弹窗。
+  const [compose, setCompose] = useState<{ mode: "reply" | "forward"; to: string; subject: string; body: string } | null>(null);
+  const [sending, setSending] = useState(false);
   const [folders, setFolders] = useState<string[]>(["INBOX"]);
   const [allFolders, setAllFolders] = useState<string[]>([]);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -216,7 +243,7 @@ export function EmailPanel() {
     api
       .emailGetAccount()
       .then((a) => {
-        if (a) setAccount({ host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls, auto_fetch: a.auto_fetch, interval_minutes: a.interval_minutes });
+        if (a) setAccount(toAccount(a));
       })
       .catch(() => {});
   }, []);
@@ -246,7 +273,7 @@ export function EmailPanel() {
             setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
             return;
           }
-          const acc = { host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls, auto_fetch: a.auto_fetch, interval_minutes: a.interval_minutes };
+          const acc = toAccount(a);
           setAccount(acc);
           void fetchInbox(acc);
         })
@@ -423,6 +450,41 @@ export function EmailPanel() {
       setErr(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 打开回复/转发撰写弹窗：预填收件人与主题，正文带上引用。
+  const openCompose = (mode: "reply" | "forward") => {
+    if (!active) return;
+    const fwd = mode === "forward";
+    const subject = fwd
+      ? (active.subject.startsWith("Fwd:") || active.subject.startsWith("Fw:") ? active.subject : `Fwd: ${active.subject}`)
+      : (active.subject.startsWith("Re:") ? active.subject : `Re: ${active.subject}`);
+    const quoted = `${active.subject}\n${active.from}\n${active.date}\n\n${"─".repeat(40)}\n\n${body}`;
+    setCompose({
+      mode,
+      to: fwd ? "" : stripEmail(active.from),
+      subject,
+      body: fwd ? `\n\n${quoted}` : `\n\n${quoted}`,
+    });
+  };
+
+  const sendCompose = async () => {
+    if (!account || !compose) return;
+    if (!compose.to.trim()) {
+      setErr("收件人不能为空");
+      return;
+    }
+    setSending(true);
+    setErr("");
+    try {
+      await api.emailSend(account, compose.to.trim(), compose.subject || "(无主题)", compose.body);
+      setCompose(null);
+      setErr("邮件已发送 ✓");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -852,10 +914,10 @@ export function EmailPanel() {
                       >
                         <BookmarkIcon width={14} height={14} /> 存为笔记
                       </button>
-                      <button className="sync-btn ghost" disabled title="回复（后续支持 SMTP）">
+                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>
                         <SendIcon width={14} height={14} /> 回复
                       </button>
-                      <button className="sync-btn ghost" disabled title="转发（后续支持 SMTP）">
+                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("forward")}>
                         <SendIcon width={14} height={14} /> 转发
                       </button>
                       <button
@@ -908,6 +970,37 @@ export function EmailPanel() {
               )}
 
               {err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
+
+              {compose && (
+                <div className="email-compose-backdrop" onMouseDown={() => !sending && setCompose(null)}>
+                  <div className="email-compose" onMouseDown={(e) => e.stopPropagation()}>
+                    <div className="email-compose-head">
+                      <span className="email-compose-title">{compose.mode === "forward" ? "转发邮件" : "回复邮件"}</span>
+                      <button className="sync-btn ghost" disabled={sending} onClick={() => setCompose(null)} aria-label="关闭">✕</button>
+                    </div>
+                    <div className="email-compose-field">
+                      <label htmlFor="email-to">收件人</label>
+                      <input id="email-to" className="set-input" placeholder="对方邮箱地址" value={compose.to} onChange={(e) => setCompose({ ...compose, to: e.target.value })} />
+                    </div>
+                    <div className="email-compose-field">
+                      <label htmlFor="email-subject">主题</label>
+                      <input id="email-subject" className="set-input" value={compose.subject} onChange={(e) => setCompose({ ...compose, subject: e.target.value })} />
+                    </div>
+                    <div className="email-compose-field email-compose-body">
+                      <label htmlFor="email-body">正文</label>
+                      <textarea id="email-body" className="set-input" value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
+                    </div>
+                    <div className="email-compose-actions">
+                      <span className="email-compose-hint">
+                        {compose.mode === "forward" ? "转发需手动填写收件人；引用原文已附上。" : "回复默认给原发件人。请先在 设置→邮箱 填好 SMTP 发信信息。"}
+                      </span>
+                      <button className="sync-btn primary" disabled={sending || !compose.to.trim()} onClick={() => void sendCompose()}>
+                        {sending ? "发送中…" : "发送"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>,
           document.querySelector(".main") ?? document.body,
