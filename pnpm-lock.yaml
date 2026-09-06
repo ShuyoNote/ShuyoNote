@@ -56,6 +56,9 @@ importers:
       '@tauri-apps/plugin-updater':
         specifier: ^2.10.1
         version: 2.10.1
+      dompurify:
+        specifier: 3.4.14
+        version: 3.4.14
       fflate:
         specifier: ^0.8.3
         version: 0.8.3

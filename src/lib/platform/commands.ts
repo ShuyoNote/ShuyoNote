@@ -108,6 +108,7 @@ export interface CommandMap {
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[] } }; result: EmailMeta[] };
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
+  email_get_html: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
   email_save_account: { args: { account: EmailAccount }; result: void };
   email_get_account: { args: undefined; result: EmailAccount | null };
   email_unseen_count: { args: { args: EmailAccount }; result: number };

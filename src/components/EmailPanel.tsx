@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import DOMPurify from "dompurify";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
 import { platform } from "../lib/platform";
@@ -97,6 +98,30 @@ function folderDisplay(name: string): string {
   return FOLDER_ZH[key] ?? name;
 }
 
+// 用 DOMPurify 白名单消毒邮件 HTML（去 script/iframe/事件属性/javascript: 协议等），
+// 并默认屏蔽远程图片（把 <img src> 移走、留下占位，点击「显示图片」才恢复）。
+function sanitizeEmailHtml(html: string, showImages: boolean): string {
+  const config = {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["iframe", "script", "object", "embed", "form", "input", "style", "link", "meta", "base", "svg", "math"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "formaction", "xlink:href", "srcset"],
+    ALLOW_DATA_ATTR: false,
+  };
+  let clean = DOMPurify.sanitize(html, config);
+  if (!showImages) {
+    // 屏蔽远程图片：给 <img> 移除 src，仅留 alt 占位。
+    const imgRe = /<img\b[^>]*>/gi;
+    clean = clean.replace(imgRe, (tag) => {
+      // 保留 alt 文字，去掉 src/onerror 等。
+      const alt = /alt=["']([^"']*)["']/.exec(tag)?.[1] ?? "";
+      return `<span class="email-img-placeholder" title="点击显示图片">[图片${alt ? "：" + alt : ""}]</span>`;
+    });
+    // 移除背景图/样式里的 url()（追踪/泄露风险）。
+    clean = clean.replace(/url\s*\(\s*["']?[^"')]+["']?\s*\)/gi, "");
+  }
+  return clean;
+}
+
 // 把正文纯文本渲染成可读视图：段落 + 引用块 + 行内加粗(**text**) + 可点链接。
 function EmailBody({ text }: { text: string }) {
   // 按连续空行分段；每段再按行归为段落或引用。
@@ -175,6 +200,17 @@ function EmailBody({ text }: { text: string }) {
   );
 }
 
+// 富文本正文：经 DOMPurify 消毒后渲染，链接新开、图片按 showImages 屏蔽占位。
+function EmailRichBody({ html, showImages }: { html: string; showImages: boolean }) {
+  const clean = useMemo(() => sanitizeEmailHtml(html, showImages), [html, showImages]);
+  return (
+    <div
+      className="email-rich-body"
+      dangerouslySetInnerHTML={{ __html: clean }}
+    />
+  );
+}
+
 // 分组：今天 / 上周（近7天，不含今昨） / 更早。
 function groupEmails(list: EmailMeta[]): Section[] {
   const secs: Section[] = [];
@@ -231,6 +267,9 @@ export function EmailPanel() {
   const [list, setList] = useState<EmailMeta[]>([]);
   const [active, setActive] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
+  const [html, setHtml] = useState("");
+  const [useRich, setUseRich] = useState(true);
+  const [showImages, setShowImages] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
@@ -388,16 +427,19 @@ export function EmailPanel() {
     setActive(m);
     setLoadingBody(true);
     setErr("");
+    setShowImages(false);
     try {
       // 超时保护：避免正文拉取卡住导致无限“加载正文…”。
-      const bodyText = await Promise.race([
+      const [bodyText, htmlText] = await Promise.all([
         api.emailGetBody(acc, m.uid, m.folder),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("加载正文超时（检查网络 / IMAP 连接）")), 20000)),
+        api.emailGetHtml(acc, m.uid, m.folder).catch(() => ""),
       ]);
       setBody(bodyText);
+      setHtml(htmlText);
     } catch (e) {
       setErr(String(e));
       setBody("");
+      setHtml("");
     } finally {
       setLoadingBody(false);
     }
@@ -1019,6 +1061,14 @@ export function EmailPanel() {
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
                       <span className="email-read-toolbar-spacer" />
+                      {useRich && html && (
+                        <button className="sync-btn ghost" disabled={!active} onClick={() => setShowImages((v) => !v)}>
+                          {showImages ? "屏蔽图片" : "显示图片"}
+                        </button>
+                      )}
+                      <button className="sync-btn ghost" disabled={!active} onClick={() => setUseRich((v) => !v)}>
+                        {useRich ? "纯文本" : "富文本"}
+                      </button>
                       <button className="sync-btn ghost" disabled title="更多操作">更多操作</button>
                     </div>
                     {active ? (
@@ -1040,7 +1090,15 @@ export function EmailPanel() {
                           </span>
                         </div>
                         <div className="email-read-body">
-                          {loadingBody ? "加载正文…" : body ? <EmailBody text={body} /> : err ? "" : "（正文为空）"}
+                          {loadingBody
+                            ? "加载正文…"
+                            : useRich && html
+                              ? <EmailRichBody html={html} showImages={showImages} />
+                              : body
+                                ? <EmailBody text={body} />
+                                : err
+                                  ? ""
+                                  : "（正文为空）"}
                         </div>
                       </>
                     ) : (

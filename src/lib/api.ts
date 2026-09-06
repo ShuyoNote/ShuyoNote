@@ -142,6 +142,8 @@ export const api = {
     invoke("email_move_many_to_trash", { args: { account, uids, folder } }),
   emailSend: (account: EmailAccount, to: string, subject: string, body: string) =>
     invoke("email_send", { args: { account, to, subject, body } }),
+  emailGetHtml: (account: EmailAccount, uid: number, folder: string) =>
+    invoke("email_get_html", { args: { account, uid, folder } }),
   savePage: (args: {
     id: string;
     title?: string;

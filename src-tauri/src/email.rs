@@ -653,6 +653,20 @@ pub async fn email_get_body(args: EmailSaveUidArgs) -> Result<String, String> {
     Ok(email_text(&parsed))
 }
 
+/// 按 UID 取邮件正文的 HTML（未消毒，供前端 DOMPurify 富文本渲染）。
+/// 选中无 text/html 子部分时回退为纯文本（此时前端按文本显示）。
+#[tauri::command]
+pub async fn email_get_html(args: EmailSaveUidArgs) -> Result<String, String> {
+    let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
+    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
+    let mut html = String::new();
+    if email_html_collect(&parsed, &mut html) {
+        Ok(html)
+    } else {
+        Ok(email_text(&parsed))
+    }
+}
+
 /// 递归取邮件正文：收集所有候选（text/plain 与 text/html），返回**最长**的一个。
 /// 这样 multipart/alternative 里即便 text/plain 只有简短版权、text/html 才是完整正文，
 /// 也会取到内容更全的那份；纯 HTML 时剥标签。
@@ -675,6 +689,35 @@ fn email_text_collect(p: &mailparse::ParsedMail, best: &mut String) {
     for sub in &p.subparts {
         email_text_collect(sub, best);
     }
+}
+
+/// 从邮件里提取「可富文本渲染」的 HTML 部分（未消毒，交由前端 DOMPurify）。
+/// 只剔除 script/style 与 display:none 预读，其余保留。返回整封邮件里第一个含富文本
+/// 的 text/html 子部分；没有则回退纯文本。
+fn email_html_collect(p: &mailparse::ParsedMail, best: &mut String) -> bool {
+    if p.ctype.mimetype == "text/html" {
+        let body = p.get_body().unwrap_or_default();
+        // 剔除 script/style 与 display:none 预读，其余 HTML 原样保留给前端消毒。
+        let cleaned = sanitize_pre_html(&body);
+        *best = cleaned;
+        return true;
+    }
+    for sub in &p.subparts {
+        if email_html_collect(sub, best) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 从原始 HTML 里仅剔除 script/style 与 display:none 预读文本（不做标签白名单——
+/// 那是前端 DOMPurify 的职责）。
+fn sanitize_pre_html(s: &str) -> String {
+    let re_script = regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?<\/(script|style)\s*>").unwrap();
+    let re_hidden = regex::Regex::new(r"(?is)<(span|div|p|td|tr)\b[^>]*style[^>]*display\s*:\s*none[^>]*>.*?<\/(?:span|div|p|td|tr)\s*>").unwrap();
+    let s = re_hidden.replace_all(s, "").into_owned();
+    let s = re_script.replace_all(&s, "").into_owned();
+    s.trim().to_string()
 }
 
 /// 把 HTML/混合正文转成可读纯文本。

@@ -247,6 +247,7 @@ pub fn run() {
             email::email_fetch_inbox,
             email::email_save_uid,
             email::email_get_body,
+            email::email_get_html,
             email::email_save_account,
             email::email_get_account,
             email::email_unseen_count,
