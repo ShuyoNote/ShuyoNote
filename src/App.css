@@ -16920,6 +16920,25 @@ p:has(> .editor-drawing-container) {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .email-filter-input::placeholder { color: var(--text-faint); }
+.email-search-input {
+  flex: 0 0 150px;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.email-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.email-search-input::placeholder { color: var(--text-faint); }
 
 /* 发件人下拉（可搜索、多选） */
 .email-sender-wrap { position: relative; flex: none; }

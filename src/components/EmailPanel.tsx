@@ -321,6 +321,8 @@ export function EmailPanel() {
   const [senderPickerOpen, setSenderPickerOpen] = useState(false);
   const senderPickerRef = useRef<HTMLDivElement>(null);
   const [subjectFilter, setSubjectFilter] = useState("");
+  // 关键词搜索：发件人/主题 子串匹配（与上面的过滤器叠加）。
+  const [searchQuery, setSearchQuery] = useState("");
 
   // 当前列表里的去重发件人（供下拉选项）。
   const senders = useMemo(() => [...new Set(list.map((m) => m.from))].sort((a, b) => a.localeCompare(b, "zh")), [list]);
@@ -342,8 +344,13 @@ export function EmailPanel() {
       const t = m.subject.toLowerCase();
       return subjectGroups.some((g) => g.every((k) => t.includes(k)));
     };
-    return list.filter((m) => senderMatch(m) && subjectMatch(m));
-  }, [list, senderSet, subjectGroups]);
+    const q = searchQuery.trim().toLowerCase();
+    const searchMatch = (m: EmailMeta) => {
+      if (!q) return true;
+      return m.from.toLowerCase().includes(q) || m.subject.toLowerCase().includes(q);
+    };
+    return list.filter((m) => senderMatch(m) && subjectMatch(m) && searchMatch(m));
+  }, [list, senderSet, subjectGroups, searchQuery]);
 
   const toggleSender = (from: string) => {
     setSenderSet((prev) => {
@@ -1010,6 +1017,13 @@ export function EmailPanel() {
                         value={subjectFilter}
                         onChange={(e) => setSubjectFilter(e.target.value)}
                         aria-label="按标题过滤"
+                      />
+                      <input
+                        className="email-search-input"
+                        placeholder="搜索发件人/主题…"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        aria-label="搜索"
                       />
                     </div>
                     <div className="email-col-head" style={{ gridTemplateColumns: colTemplate }}>
