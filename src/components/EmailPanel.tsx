@@ -97,15 +97,49 @@ function folderDisplay(name: string): string {
   return FOLDER_ZH[key] ?? name;
 }
 
-// 把正文纯文本渲染成可读视图：简单按空行分段（每段一个 <p>，保留段内换行）+ 链接。
+// 把正文纯文本渲染成可读视图：段落 + 引用块 + 行内加粗(**text**) + 可点链接。
 function EmailBody({ text }: { text: string }) {
-  const blocks = text
-    .split(/\n{2,}/) // 以连续空行分段
+  // 按连续空行分段；每段再按行归为段落或引用。
+  const rawParas = text
+    .split(/\n{2,}/)
     .map((s) => s.replace(/\r/g, "").trim())
     .filter(Boolean);
 
+  interface Block { type: "para" | "quote"; lines: string[] }
+  const blocks: Block[] = [];
+  let cur: Block | null = null;
+  for (const para of rawParas) {
+    const lines = para.split("\n");
+    const isQuote = lines.some((l) => /^[>|　]/.test(l.trimStart()));
+    const type: "para" | "quote" = isQuote ? "quote" : "para";
+    if (!cur || cur.type !== type) {
+      if (cur) blocks.push(cur);
+      cur = { type, lines: [] };
+    }
+    for (const l of lines) {
+      const line = l.trim();
+      if (line) cur.lines.push(line.replace(/^[>|　]+\s*/, ""));
+    }
+  }
+  if (cur) blocks.push(cur);
+
   const urlRe = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
-  const renderText = (s: string, key: number) => {
+  const boldRe = /\*\*(.+?)\*\*/g;
+  // 行内渲染：先识别 **粗体**，再在其中识别链接。
+  const renderInline = (s: string, key: string): ReactNode[] => {
+    const out: ReactNode[] = [];
+    let last = 0;
+    for (const bm of s.matchAll(boldRe)) {
+      const idx = bm.index ?? 0;
+      if (idx > last) out.push(renderLinks(s.slice(last, idx), `${key}-b${idx}`));
+      out.push(<strong key={`${key}-bold${idx}`}>{renderLinks(bm[1], `${key}-bw${idx}`)}</strong>);
+      last = idx + bm[0].length;
+    }
+    if (last < s.length) out.push(renderLinks(s.slice(last), `${key}-t${last}`));
+    return out;
+  };
+
+  const renderLinks = (s: string, key: string): ReactNode[] => {
     const parts: ReactNode[] = [];
     let last = 0;
     for (const m of s.matchAll(urlRe)) {
@@ -114,7 +148,7 @@ function EmailBody({ text }: { text: string }) {
       const url = m[0];
       const href = url.startsWith("http") ? url : `https://${url}`;
       parts.push(
-        <a key={`u${key}-${idx}`} href={href} target="_blank" rel="noreferrer" className="email-body-link">
+        <a key={`${key}u${idx}`} href={href} target="_blank" rel="noreferrer" className="email-body-link">
           {url}
         </a>,
       );
@@ -126,9 +160,17 @@ function EmailBody({ text }: { text: string }) {
 
   return (
     <div className="email-body">
-      {blocks.map((b, i) => (
-        <p key={i} className="email-body-para">{renderText(b, i)}</p>
-      ))}
+      {blocks.map((b, i) =>
+        b.type === "quote" ? (
+          <blockquote key={i} className="email-body-quote">
+            {b.lines.map((l, j) => (
+              <p key={j}>{renderInline(l, `${i}-${j}`)}</p>
+            ))}
+          </blockquote>
+        ) : (
+          <p key={i} className="email-body-para">{renderInline(b.lines.join("\n"), String(i))}</p>
+        ),
+      )}
     </div>
   );
 }
