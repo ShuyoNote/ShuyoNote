@@ -3,56 +3,17 @@
 //   - $importHtml 把邮件 HTML 转成真正的 Lexical 节点（段落/加粗/链接/标题/列表/表格等）；
 //   - 图片节点保留 src（链接），不下载到本地；
 //   - 最终 editor.getEditorState().toJSON() 得到可存进 ShuyoNote 页面的 content_json。
+//
+// 关键：创建 headless editor 时必须用与页面编辑器**完全相同**的 EDITOR_NODES 集合，
+// 这样产出的 JSON 节点类型才落在 ALLOWED_NODE_TYPES 内，页面打开时才不会被
+// lexicalStateValid 丢弃（否则会出现「存了但打开空白」）。
 
 import { createEditor, $getRoot } from "lexical";
-import { HeadingNode, QuoteNode } from "@lexical/rich-text";
-import { ListNode, ListItemNode } from "@lexical/list";
-import { CodeNode, CodeHighlightNode } from "@lexical/code";
-import { LinkNode } from "@lexical/link";
-import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
-import { TableNode, TableCellNode, TableRowNode } from "@lexical/table";
-import { CalloutNode } from "../editor/nodes/CalloutNode";
-import { ColumnsBlockNode } from "../editor/nodes/ColumnsBlockNode";
-import { ImageNode } from "../editor/nodes/ImageNode";
-import { ImageRowNode } from "../editor/nodes/ImageRowNode";
-import { VideoNode } from "../editor/nodes/VideoNode";
-import { BlockRefNode } from "../editor/nodes/BlockRefNode";
-import { BlockEmbedNode } from "../editor/nodes/BlockEmbedNode";
-import { AttachmentRefNode } from "../editor/nodes/AttachmentRefNode";
-import { DrawingNode } from "../editor/nodes/DrawingNode";
-import { MermaidNode } from "../editor/nodes/MermaidNode";
+import { EDITOR_NODES } from "../editor/config";
 import { $importHtml } from "../editor/htmlToLexical";
 
-const NODES = [
-  HeadingNode,
-  QuoteNode,
-  ListNode,
-  ListItemNode,
-  CodeNode,
-  CodeHighlightNode,
-  LinkNode,
-  CalloutNode,
-  HorizontalRuleNode,
-  ColumnsBlockNode,
-  ImageNode,
-  ImageRowNode,
-  VideoNode,
-  BlockRefNode,
-  BlockEmbedNode,
-  AttachmentRefNode,
-  DrawingNode,
-  MermaidNode,
-  TableNode,
-  TableCellNode,
-  TableRowNode,
-];
-
 function makeEditor() {
-  return createEditor({ nodes: NODES, namespace: "shuyonote-email-import" });
-}
-
-function collectText(text: string, out: string[]) {
-  if (text) out.push(text);
+  return createEditor({ nodes: EDITOR_NODES, namespace: "shuyonote-email-import" });
 }
 
 /** 从 Lexical EditorState JSON 递归抽取纯文本。 */
@@ -61,7 +22,7 @@ function extractPlainText(json: unknown): string {
   const walk = (node: unknown) => {
     if (!node || typeof node !== "object") return;
     const rec = node as Record<string, unknown>;
-    if (typeof rec.text === "string") collectText(rec.text, out);
+    if (typeof rec.text === "string") out.push(rec.text);
     if (rec.root && typeof rec.root === "object") walk(rec.root);
     if (Array.isArray(rec.children)) for (const c of rec.children) walk(c);
     if (rec.$slots && typeof rec.$slots === "object")
@@ -82,11 +43,14 @@ export function emailHtmlToLexical(html: string): { content_json: string; conten
   }
   const editor = makeEditor();
   try {
-    editor.update(() => {
-      const root = $getRoot();
-      root.clear();
-      $importHtml(html, root);
-    });
+    editor.update(
+      () => {
+        const root = $getRoot();
+        root.clear();
+        $importHtml(html, root);
+      },
+      { discrete: true },
+    );
     const json = editor.getEditorState().toJSON();
     const content_json = JSON.stringify(json);
     const content_text = extractPlainText(json);

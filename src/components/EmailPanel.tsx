@@ -483,7 +483,6 @@ export function EmailPanel() {
       let html = await api.emailGetHtml(account, uid, active.folder).catch(() => "");
       if (html.trim()) {
         const { content_json, content_text } = emailHtmlToLexical(html);
-        setErr(`[转HTML,len=${html.length}] json=${content_json.length},text=${content_text.length}`);
         await useNotes.getState().createPage(null, { title: active.subject || "(无主题)", content_json, content_text });
       } else {
         // 无 HTML（纯文本邮件），仍转成简单 Lexical 段落保存富文本格式。
