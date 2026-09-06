@@ -16,6 +16,15 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
+// 从账号（邮箱地址）提取服务商短标注：取 @ 后的域名首段，如 zhaizy@qq.com → "qq"。
+function providerLabel(username: string): string {
+  const at = username.lastIndexOf("@");
+  if (at < 0) return "";
+  const domain = username.slice(at + 1).trim().toLowerCase();
+  if (!domain) return "";
+  return domain.split(".")[0] || domain;
+}
+
 function parseDate(s: string): Date | null {
   if (!s) return null;
   const d = new Date(s);
@@ -283,12 +292,14 @@ export function EmailPanel() {
   };
 
   const sections = groupEmails(list);
+  const provider = account ? providerLabel(account.username) : "";
 
   return (
     <>
       <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
         <InboxIcon width={14} height={14} />
         <span>邮箱</span>
+        {provider && <span className="email-provider">· {provider}</span>}
         {unread > 0 && (
           <span className="email-unread-badge" aria-label={`${unread} 封未读`}>{unread > 99 ? "99+" : unread}</span>
         )}

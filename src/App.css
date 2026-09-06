@@ -12141,6 +12141,18 @@ p:has(> .editor-drawing-container) {
   justify-content: center;
 }
 
+/* 侧边栏邮箱按钮：服务商次级标注（`邮箱 · qq`） */
+.email-provider {
+  flex: none;
+  max-width: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+
 .set-status-line {
   margin-top: 10px;
   padding: 8px 10px;
