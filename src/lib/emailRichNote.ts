@@ -72,7 +72,8 @@ function flattenTables(html: string): string {
   // 移除 hr（营销邮件常用作分隔线，转成 Lexical 是一大段间距）。
   out = out.replace(/<hr\b[^>]*>/gi, "");
   // 连续 <br> 压成一个（多余的换行会撑出大空白）。
-  out = out.replace(/(<br\s*/?>\s*){3,}/gi, "\n");
+  const brRun = /(?:\s*<br\s*\/?>\s*){3,}/gi;
+  out = out.replace(brRun, "\n");
   // 移除 table 级标签本身，但保留其内部内容。
   out = out.replace(/<\/?(table|tbody|thead|tfoot|tr)[^>]*>/gi, "\n");
   // td/th 之间加换行，保留单元格内容。
