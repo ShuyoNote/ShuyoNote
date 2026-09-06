@@ -58,8 +58,9 @@ impl SmtpStream {
     }
 }
 
-/// 逐行读取 SMTP 响应。`expect_code` 用 `(list, err)` 判断；简单起见返回完整行。
+/// 读取完整 SMTP 响应（处理多行回复：`250-...` 是续行，直到 `250 ...` 结束）。
 async fn read_response(stream: &mut SmtpStream) -> String {
+    let mut full = String::new();
     let mut line = String::new();
     let mut byte = [0u8; 1];
     loop {
@@ -68,16 +69,25 @@ async fn read_response(stream: &mut SmtpStream) -> String {
             Ok(_) => {
                 line.push(byte[0] as char);
                 if line.ends_with("\n") {
-                    break;
+                    let trimmed = line.trim_end().to_string();
+                    full.push_str(&trimmed);
+                    full.push('\n');
+                    // 服务器回复的最后一行：`250 ...`（状态码后是空格），
+                    // 而续行是 `250-...`。检查是否有续行。
+                    let is_cont = trimmed.as_bytes().get(3) == Some(&b'-');
+                    line.clear();
+                    if !is_cont {
+                        break;
+                    }
                 }
-                if line.len() > 4096 {
+                if line.len() > 8192 {
                     break;
                 }
             }
             Err(_) => break,
         }
     }
-    line.trim_end().to_string()
+    full.trim_end().to_string()
 }
 
 async fn write_cmd(stream: &mut SmtpStream, cmd: &str) -> io::Result<()> {
