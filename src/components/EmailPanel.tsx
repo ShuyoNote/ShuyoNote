@@ -623,6 +623,19 @@ export function EmailPanel() {
                               autoFocus
                             />
                             <div className="email-sender-list">
+                              <label className={`email-sender-item${senderSet.size === 0 ? " is-on" : ""}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={senderSet.size === 0}
+                                  onChange={clearSenders}
+                                />
+                                <span className="email-sender-check">
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M20 6 9 17l-5-5" />
+                                  </svg>
+                                </span>
+                                <span className="email-sender-name">全部</span>
+                              </label>
                               {senders
                                 .filter((f) => f.toLowerCase().includes(senderSearch.trim().toLowerCase()))
                                 .map((f) => (
