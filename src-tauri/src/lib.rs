@@ -244,6 +244,7 @@ pub fn run() {
             email::email_get_body,
             email::email_save_account,
             email::email_get_account,
+            email::email_unseen_count,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

@@ -284,6 +284,8 @@ function EmailPane() {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [useTls, setUseTls] = useState(true);
+  const [autoFetch, setAutoFetch] = useState(false);
+  const [intervalMin, setIntervalMin] = useState(15);
   const [err, setErr] = useState("");
   const desktop = isDesktopPlatform();
 
@@ -297,6 +299,8 @@ function EmailPane() {
           setUser(a.username);
           setPass(a.password);
           setUseTls(a.use_tls);
+          setAutoFetch(a.auto_fetch);
+          setIntervalMin(a.interval_minutes || 15);
         }
       })
       .catch(() => {});
@@ -306,7 +310,15 @@ function EmailPane() {
     if (!host) return;
     setErr("");
     try {
-      await api.emailSaveAccount({ host, port: Number(port) || 993, username: user, password: pass, use_tls: useTls });
+      await api.emailSaveAccount({
+        host,
+        port: Number(port) || 993,
+        username: user,
+        password: pass,
+        use_tls: useTls,
+        auto_fetch: autoFetch,
+        interval_minutes: intervalMin,
+      });
       setErr("配置已保存 ✓");
     } catch (e) {
       setErr(String(e));
@@ -367,6 +379,40 @@ function EmailPane() {
                 <span className="ui-toggle-knob" />
               </button>
             </div>
+
+            <div className="email-set-row email-set-tls">
+              <span className="email-set-row-text">
+                <span className="email-set-row-name">定时收取</span>
+                <span className="email-set-row-sub">后台按间隔自动拉取未读，侧栏邮箱图标显示未读角标。</span>
+              </span>
+              <button
+                className={`ui-toggle ${autoFetch ? "on" : ""}`}
+                role="switch"
+                aria-checked={autoFetch}
+                onClick={() => setAutoFetch(!autoFetch)}
+              >
+                <span className="ui-toggle-knob" />
+              </button>
+            </div>
+
+            {autoFetch && (
+              <div className="email-set-row email-set-tls">
+                <span className="email-set-row-text">
+                  <span className="email-set-row-name">收取间隔</span>
+                  <span className="email-set-row-sub">太密会频繁连服务器，建议 15 分钟以上。</span>
+                </span>
+                <select
+                  className="set-input email-set-select"
+                  value={intervalMin}
+                  onChange={(e) => setIntervalMin(Number(e.target.value))}
+                >
+                  <option value={5}>5 分钟</option>
+                  <option value={15}>15 分钟</option>
+                  <option value={30}>30 分钟</option>
+                  <option value={60}>60 分钟</option>
+                </select>
+              </div>
+            )}
 
             <div className="set-actions">
               <button className="set-btn is-primary" disabled={!host} onClick={() => void save()}>保存配置</button>

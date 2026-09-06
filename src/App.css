@@ -12115,6 +12115,31 @@ p:has(> .editor-drawing-container) {
 .email-set-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .email-set-row-name { font-size: 13px; color: var(--text); }
 .email-set-row-sub { font-size: 11px; color: var(--text-faint); }
+.email-set-select {
+  flex: none;
+  width: 96px;
+  margin-left: auto;
+  cursor: pointer;
+  padding: 6px 8px;
+}
+
+/* 侧边栏邮箱图标未读角标 */
+.email-unread-badge {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent, #4f7cff);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .set-status-line {
   margin-top: 10px;

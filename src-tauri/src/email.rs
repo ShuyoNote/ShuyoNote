@@ -24,10 +24,11 @@ pub struct EmailMeta {
     pub from: String,
     pub date: String,
     pub snippet: String,
+    /// 是否已读（IMAP `\Seen` 标志）。
+    pub seen: bool,
 }
 
 /// IMAP 账号参数（spike：应用密码 / 企业 IMAP；OAuth 后续）。
-/// IMAP 账号参数（应用密码 / 企业 IMAP；OAuth 后续）。
 /// 支持序列化，便于持久化到本地配置。
 #[derive(Serialize, Deserialize)]
 pub struct EmailAccountArgs {
@@ -36,6 +37,16 @@ pub struct EmailAccountArgs {
     pub username: String,
     pub password: String,
     pub use_tls: bool,
+    /// 是否开启定时自动收取（后台轮询）。
+    #[serde(default)]
+    pub auto_fetch: bool,
+    /// 定时收取间隔（分钟）。默认 15。
+    #[serde(default = "default_email_interval")]
+    pub interval_minutes: u16,
+}
+
+fn default_email_interval() -> u16 {
+    15
 }
 
 /// “存为笔记”入参：一次携带一条原始 RFC822 邮件文本。
@@ -268,7 +279,7 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
         .map_err(|(e, _c)| format!("登录失败: {}", e))?;
     session.select("INBOX").await.map_err(|e| format!("选择 INBOX 失败: {}", e))?;
     let mut stream = session
-        .fetch("1:*", "(ENVELOPE UID)")
+        .fetch("1:*", "(ENVELOPE UID FLAGS)")
         .await
         .map_err(|e| format!("拉取失败: {}", e))?;
 
@@ -303,16 +314,46 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
                 .as_ref()
                 .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
                 .unwrap_or_default();
+            let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
             out.push(EmailMeta {
                 uid: m.uid.unwrap_or(0),
                 subject,
                 from,
                 date,
                 snippet: String::new(),
+                seen,
             });
         }
     }
     Ok(out)
+}
+
+/// 拉取 INBOX 未读数量（轻量 `STATUS INBOX (UNSEEN)`），供定时收取/未读角标用。
+#[tauri::command]
+pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {
+    use tokio::net::TcpStream;
+
+    let tcp = TcpStream::connect((args.host.as_str(), args.port))
+        .await
+        .map_err(|e| format!("TCP 连接失败: {}", e))?;
+    let tls = tokio_native_tls::TlsConnector::from(
+        native_tls::TlsConnector::new().map_err(|e| e.to_string())?,
+    );
+    let tls_stream = tls
+        .connect(&args.host, tcp)
+        .await
+        .map_err(|e| format!("TLS 失败: {}", e))?;
+
+    let client = async_imap::Client::new(tls_stream);
+    let mut session = client
+        .login(&args.username, &args.password)
+        .await
+        .map_err(|(e, _c)| format!("登录失败: {}", e))?;
+    let mbox = session
+        .status("INBOX", "(UNSEEN)")
+        .await
+        .map_err(|e| format!("STATUS 失败: {}", e))?;
+    Ok(mbox.unseen.unwrap_or(0))
 }
 
 /// 按 UID 取邮件正文（纯文本，供右侧阅读窗格显示）。

@@ -21,6 +21,27 @@ export interface SyncConfig {
   last_pulled_seq: number;
 }
 
+/** 聚合邮箱的 IMAP 账号配置（与后端 email::EmailAccountArgs 对应）。 */
+export interface EmailAccount {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  use_tls: boolean;
+  auto_fetch: boolean;
+  interval_minutes: number;
+}
+
+/** 收件箱一条邮件的元信息（与后端 email::EmailMeta 对应）。 */
+export interface EmailMeta {
+  uid: number;
+  subject: string;
+  from: string;
+  date: string;
+  snippet: string;
+  seen: boolean;
+}
+
 /**
  * Per-workspace sync target (S8): each local workspace (ws_id) binds to its own
  * remote (server_url + token + space_id), so one person can sync different spaces
@@ -91,15 +112,16 @@ export const api = {
     invoke("create_database", { args }),
   // 聚合邮箱（桌面专属）
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
-  emailFetchInbox: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }) =>
-    invoke("email_fetch_inbox", { args: account }),
-  emailSaveUid: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }, uid: number) =>
+  emailFetchInbox: (account: EmailAccount) => invoke("email_fetch_inbox", { args: account }),
+  emailSaveUid: (account: EmailAccount, uid: number) =>
     invoke("email_save_uid", { args: { account, uid } }),
-  emailGetBody: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }, uid: number) =>
+  emailGetBody: (account: EmailAccount, uid: number) =>
     invoke("email_get_body", { args: { account, uid } }),
-  emailSaveAccount: (account: { host: string; port: number; username: string; password: string; use_tls: boolean }) =>
+  emailSaveAccount: (account: EmailAccount) =>
     invoke("email_save_account", { account }),
   emailGetAccount: () => invoke("email_get_account", undefined),
+  emailUnseenCount: (account: EmailAccount) =>
+    invoke("email_unseen_count", { args: account }),
   savePage: (args: {
     id: string;
     title?: string;

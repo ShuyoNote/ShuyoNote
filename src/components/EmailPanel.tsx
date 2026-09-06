@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../lib/api";
+import { api, type EmailAccount, type EmailMeta } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
 import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon, BookmarkIcon } from "./icons";
 
-type EmailMeta = Awaited<ReturnType<typeof api.emailFetchInbox>>[number];
-type EmailAccount = { host: string; port: number; username: string; password: string; use_tls: boolean };
 type Section = { label: string; items: EmailMeta[] };
 
 const AVATAR_COLORS = ["#4f7cff", "#7b61ff", "#2f9e67", "#e0a13a", "#d05b8b", "#1591b0", "#c2493b", "#8a6fde"];
@@ -72,6 +70,8 @@ function groupEmails(list: EmailMeta[]): Section[] {
 // 账号配置在 设置 → 邮箱；这里只读已保存账号、拉取/阅读/转笔记。
 export function EmailPanel() {
   const open = useEmailPanel((s) => s.open);
+  const unread = useEmailPanel((s) => s.unread);
+  const setUnread = useEmailPanel((s) => s.setUnread);
   const toggle = useEmailPanel((s) => s.toggle);
   const closePanel = useEmailPanel((s) => s.closePanel);
   const pageRef = useRef<HTMLDivElement>(null);
@@ -90,31 +90,60 @@ export function EmailPanel() {
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [starred, setStarred] = useState<Set<number>>(new Set());
 
-  // 打开时：读已保存账号 → 拉取收件箱。
+  // 挂载时读一次已保存账号（供角标/定时收取用；不依赖面板是否打开）。
   useEffect(() => {
-    if (!open) return;
-    setErr("");
-    setBusy(true);
     api
       .emailGetAccount()
       .then((a) => {
-        if (!a) {
-          setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
-          return null;
-        }
-        const acc = { host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls };
-        setAccount(acc);
-        return api.emailFetchInbox(acc).then((r) => {
-          const newestFirst = [...r].reverse();
-          setList(newestFirst);
-          if (newestFirst.length > 0) void selectEmail(newestFirst[0], acc);
-          else setErr("未拉到邮件（检查账号 / 认证）");
-        });
+        if (a) setAccount({ host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls, auto_fetch: a.auto_fetch, interval_minutes: a.interval_minutes });
       })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setBusy(false));
+      .catch(() => {});
+  }, []);
+
+  // 打开时：用已保存账号拉取收件箱；顺带根据 `seen` 刷新未读角标。
+  useEffect(() => {
+    if (!open) return;
+    setErr("");
+    if (!account) {
+      api
+        .emailGetAccount()
+        .then((a) => {
+          if (!a) {
+            setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
+            return;
+          }
+          const acc = { host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls, auto_fetch: a.auto_fetch, interval_minutes: a.interval_minutes };
+          setAccount(acc);
+          void fetchInbox(acc);
+        })
+        .catch((e) => setErr(String(e)));
+      return;
+    }
+    void fetchInbox(account);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  const fetchInbox = async (acc: EmailAccount = account!) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.emailFetchInbox(acc);
+      const newestFirst = [...r].reverse();
+      setList(newestFirst);
+      setUnread(newestFirst.filter((m) => !m.seen).length);
+      if (newestFirst.length === 0) {
+        setErr("未拉到邮件（检查账号 / 认证）");
+      } else if (newestFirst.some((m) => m.uid === active?.uid)) {
+        // 保持当前阅读的邮件选中，不打扰。
+      } else {
+        void selectEmail(newestFirst[0], acc);
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const selectEmail = async (m: EmailMeta, acc: EmailAccount = account!) => {
     setActive(m);
@@ -133,17 +162,7 @@ export function EmailPanel() {
 
   const refresh = async () => {
     if (!account) return;
-    setErr("");
-    setBusy(true);
-    try {
-      const r = await api.emailFetchInbox(account);
-      setList([...r].reverse());
-      if (r.length === 0) setErr("未拉到邮件");
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
+    await fetchInbox(account);
   };
 
   const saveUid = async (uid: number) => {
@@ -159,6 +178,23 @@ export function EmailPanel() {
       setBusy(false);
     }
   };
+
+  // 定时收取：开启后按 interval_minutes 轮询未读数，更新侧边栏角标。
+  useEffect(() => {
+    if (!account || !account.auto_fetch) return;
+    const minutes = Math.max(1, account.interval_minutes || 15);
+    const tick = async () => {
+      try {
+        const n = await api.emailUnseenCount(account);
+        setUnread(n);
+      } catch {
+        // 拉取失败（网络/认证）静默，等下一轮；不打扰用户。
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), minutes * 60_000);
+    return () => window.clearInterval(id);
+  }, [account, setUnread]);
 
   const toggleChecked = (uid: number) => {
     setChecked((prev) => {
@@ -236,6 +272,9 @@ export function EmailPanel() {
       <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
         <InboxIcon width={14} height={14} />
         <span>邮箱</span>
+        {unread > 0 && (
+          <span className="email-unread-badge" aria-label={`${unread} 封未读`}>{unread > 99 ? "99+" : unread}</span>
+        )}
       </button>
 
       {open &&
