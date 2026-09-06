@@ -648,7 +648,7 @@ pub fn start_email_poller(app: AppHandle) {
         let mut failures: u32 = 0;
         loop {
             // 每次唤醒都重新读配置，这样账号/间隔/开关在运行中也能实时生效。
-            let account = email_get_account(app.clone()).ok().flatten();
+            let account = email_get_account(app.state::<Db>(), app.clone()).ok().flatten();
             match account {
                 Some(a) if a.auto_fetch => {
                     let minutes = (a.interval_minutes.max(5)) as u64;
@@ -802,27 +802,47 @@ fn account_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 /// 保存 IMAP 账号配置到本地（便于打开面板自动回填）。
-/// 注意：生产中密码应加密（E1 / 系统凭据库），见私有仓库 `docs/email-aggregate-monetization.md`。
+/// 安全：当工作区端到端加密开启且会话未锁定时，用会话密钥对 password/smtp_pass 加密后落盘；
+/// 否则（未加密或已锁定）保持明文，向后兼容。
 #[tauri::command]
-pub fn email_save_account(app: tauri::AppHandle, account: EmailAccountArgs) -> Result<(), String> {
+pub fn email_save_account(db: State<Db>, app: tauri::AppHandle, account: EmailAccountArgs) -> Result<(), String> {
     let path = account_path(&app)?;
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
-    let json = serde_json::to_string_pretty(&account).map_err(|e| e.to_string())?;
+    let mut acct = account;
+    if let Some(key) = crate::security::key_if_enabled(&db.0.lock().expect("db mutex poisoned")) {
+        acct.password = crate::crypto::encrypt_str(&acct.password, &key).unwrap_or_else(|_| acct.password.clone());
+        if !acct.smtp_pass.is_empty() {
+            acct.smtp_pass = crate::crypto::encrypt_str(&acct.smtp_pass, &key).unwrap_or_else(|_| acct.smtp_pass.clone());
+        }
+    }
+    let json = serde_json::to_string_pretty(&acct).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 读取已保存的 IMAP 账号配置（未配置返回 None）。
+/// 读取已保存的 IMAP 账号配置（未配置返回 None）。密码若已加密则用会话密钥解密。
 #[tauri::command]
-pub fn email_get_account(app: tauri::AppHandle) -> Result<Option<EmailAccountArgs>, String> {
+pub fn email_get_account(db: State<Db>, app: tauri::AppHandle) -> Result<Option<EmailAccountArgs>, String> {
     let path = account_path(&app)?;
     if !path.exists() {
         return Ok(None);
     }
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    Ok(serde_json::from_str(&content).ok())
+    let mut acct: Option<EmailAccountArgs> = serde_json::from_str(&content).ok();
+    if let (Some(a), Some(key)) = (acct.as_mut(), crate::security::key_if_enabled(&db.0.lock().expect("db mutex poisoned"))) {
+        // 若密码看起来被加密（能解出合法字符串），解密；否则保持原样。
+        if let Ok(p) = crate::crypto::decrypt_str(&a.password, &key) {
+            a.password = p;
+        }
+        if !a.smtp_pass.is_empty() {
+            if let Ok(p) = crate::crypto::decrypt_str(&a.smtp_pass, &key) {
+                a.smtp_pass = p;
+            }
+        }
+    }
+    Ok(acct)
 }
 
 #[cfg(test)]
