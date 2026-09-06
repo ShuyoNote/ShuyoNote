@@ -684,7 +684,10 @@ fn email_text_collect(p: &mailparse::ParsedMail, best: &mut String) {
 /// 段落由 <br>、块级闭合标签或连续空行自然形成，前端再按空行分段。
 fn strip_html(s: &str) -> String {
     // 注意：regex crate 不支持反向引用 `\1`，故用「对应闭合标签」展开替代。
-    let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</(script|style)>").unwrap();
+    let re_script = regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?<\/(script|style)\s*>").unwrap();
+    // 移除 display:none 的预读/隐藏文本（营销邮件常把"此邮件由X发送，请勿直接回复"放在这里）。
+    // regex 不支持反向引用，按标签名分别匹配常见的隐藏容器（span/div/p）。
+    let re_hidden = regex::Regex::new(r"(?is)<(span|div|p|td|tr)\b[^>]*style[^>]*display\s*:\s*none[^>]*>.*?<\/(?:span|div|p|td|tr)\s*>").unwrap();
     let re_br = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
     // 仅对「块级闭合标签」插入换行（形成段落），不处理开标签，避免把正文拆碎或误删。
     let re_block = regex::Regex::new(
@@ -694,7 +697,8 @@ fn strip_html(s: &str) -> String {
     let re_space = regex::Regex::new(r"[ \t]+").unwrap();
     let re_nl = regex::Regex::new(r"[ \t]*\n[ \t]*").unwrap();
     let re_blank = regex::Regex::new(r"\n\s*\n\s*\n+").unwrap();
-    let s = re_script.replace_all(s, " ").into_owned();
+    let s = re_hidden.replace_all(s, "").into_owned();
+    let s = re_script.replace_all(&s, " ").into_owned();
     let s = re_br.replace_all(&s, "\n").into_owned();
     let s = re_block.replace_all(&s, "\n\n").into_owned();
     let s = re_tag.replace_all(&s, "").into_owned();
