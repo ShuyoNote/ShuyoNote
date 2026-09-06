@@ -16819,6 +16819,52 @@ p:has(> .editor-drawing-container) {
 }
 .email-list-head-count:hover { color: var(--text); background: transparent; }
 
+/* 邮件过滤条：发件人 / 标题关键字 + 与/或 */
+.email-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 8px;
+}
+.email-filter-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.email-filter-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.email-filter-input::placeholder { color: var(--text-faint); }
+.email-filter-mode { display: flex; gap: 3px; flex: none; }
+.email-filter-mode-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.email-filter-mode-btn:hover { background: var(--hover); }
+.email-filter-mode-btn.is-on {
+  background: var(--accent-soft);
+  color: var(--accent, #4f7cff);
+  border-color: var(--accent, #4f7cff);
+  font-weight: 500;
+}
+
 /* 月份选择下拉：仿 QQ 邮箱「共 N 封 → 选年月 → 滚到该月」，右对齐到日期列上方。 */
 .email-month-picker {
   position: absolute;

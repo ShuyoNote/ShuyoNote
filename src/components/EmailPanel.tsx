@@ -117,6 +117,22 @@ export function EmailPanel() {
   const [allFolders, setAllFolders] = useState<string[]>([]);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const folderPickerRef = useRef<HTMLDivElement>(null);
+  // 过滤：发件人 / 标题关键字 + AND/OR。纯前端内存过滤。
+  const [filterFrom, setFilterFrom] = useState("");
+  const [filterSubject, setFilterSubject] = useState("");
+  const [filterMode, setFilterMode] = useState<"and" | "or">("and");
+
+  // 按发件人/标题关键字过滤（忽略大小写，包含子串）。
+  const filteredList = useMemo(() => {
+    const f = filterFrom.trim().toLowerCase();
+    const s = filterSubject.trim().toLowerCase();
+    if (!f && !s) return list;
+    return list.filter((m) => {
+      const mf = !f || m.from.toLowerCase().includes(f);
+      const ms = !s || m.subject.toLowerCase().includes(s);
+      return filterMode === "and" ? mf && ms : mf || ms;
+    });
+  }, [list, filterFrom, filterSubject, filterMode]);
 
   // 每封邮件 → 其所在 (年,月)，并给每个月记录最新一封（列表顶部的第一封）。
   const monthIndex = useMemo(() => {
@@ -399,7 +415,7 @@ export function EmailPanel() {
     window.addEventListener("mouseup", onUp);
   };
 
-  const sections = groupEmails(list);
+  const sections = groupEmails(filteredList);
   const provider = account ? providerLabel(account.username) : "";
 
   return (
@@ -480,7 +496,7 @@ export function EmailPanel() {
                         aria-haspopup="dialog"
                         aria-expanded={pickerOpen}
                       >
-                        共 {list.length} 封
+                        共 {filteredList.length} 封
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="m6 9 6 6 6-6" />
                         </svg>
@@ -520,6 +536,32 @@ export function EmailPanel() {
                         </div>
                       )}
                     </div>
+                    <div className="email-filter-bar">
+                      <input
+                        className="email-filter-input"
+                        placeholder="按发件人过滤"
+                        value={filterFrom}
+                        onChange={(e) => setFilterFrom(e.target.value)}
+                        aria-label="按发件人过滤"
+                      />
+                      <input
+                        className="email-filter-input"
+                        placeholder="按标题过滤"
+                        value={filterSubject}
+                        onChange={(e) => setFilterSubject(e.target.value)}
+                        aria-label="按标题过滤"
+                      />
+                      <div className="email-filter-mode" role="group" aria-label="关键字逻辑">
+                        <button
+                          className={`email-filter-mode-btn${filterMode === "and" ? " is-on" : ""}`}
+                          onClick={() => setFilterMode("and")}
+                        >与</button>
+                        <button
+                          className={`email-filter-mode-btn${filterMode === "or" ? " is-on" : ""}`}
+                          onClick={() => setFilterMode("or")}
+                        >或</button>
+                      </div>
+                    </div>
                     <div className="email-col-head">
                       <span className="email-col-check" aria-hidden />
                       <span className="email-col-from">发件人</span>
@@ -527,7 +569,9 @@ export function EmailPanel() {
                       <span className="email-col-date">日期</span>
                       <span className="email-col-star" aria-hidden />
                     </div>
-                    {list.length === 0 && <div className="email-page-empty">暂无邮件，点「拉取收件箱」。</div>}
+                    {filteredList.length === 0 && <div className="email-page-empty">
+                      {list.length === 0 ? "暂无邮件，点「拉取收件箱」。" : "没有匹配的邮件（调整关键字试试）。"}
+                    </div>}
                     {sections.map((s) => (
                       <div key={s.label} className="email-section">
                         <div className="email-section-label">{s.label}（{s.items.length}封）</div>
