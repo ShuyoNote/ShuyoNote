@@ -708,14 +708,7 @@ export function EmailPanel() {
                               </svg>
                             </span>
                             <span className="email-item-from" title={m.from}>{m.from}</span>
-                            <span
-                              className="email-item-subject"
-                              title={m.subject}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                setSubjectFilter(m.subject);
-                              }}
-                            >{m.subject || "(无主题)"}</span>
+                            <span className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</span>
                             <span className="email-item-date">{fmtListTime(m)}</span>
                             <span
                               className={`email-item-star${starred.has(m.uid) ? " is-starred" : ""}`}
