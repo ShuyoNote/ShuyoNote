@@ -682,16 +682,16 @@ fn email_text_collect(p: &mailparse::ParsedMail, best: &mut String) {
 
 /// 把 HTML/混合正文转成可读纯文本。
 ///
-/// 关键：块级标签（p/div/h1-6/li/tr/table/blockquote/ul/ol）在**开始与结束**都插入换行，
-/// 这样 `strip_html` 能保住段落结构（否则开启标签被剥掉后多段文字会连成一坨）。
-/// 段落之间保留一个空行，供前端按段渲染。
+/// 保守处理：只移除 script/style 与标签本身、把 <br>/块级闭合标签换成换行，
+/// 不额外切割开标签——避免误伤正文内容（营销邮件常把每行嵌进 <div>/<span>）。
+/// 段落由 <br>、块级闭合标签或连续空行自然形成，前端再按空行分段。
 fn strip_html(s: &str) -> String {
     // 注意：regex crate 不支持反向引用 `\1`，故用「对应闭合标签」展开替代。
     let re_script = regex::Regex::new(r"(?is)<(script|style)[^>]*>.*?</(script|style)>").unwrap();
     let re_br = regex::Regex::new(r"(?i)<br\s*/?>").unwrap();
-    // 块级开始/结束标签 → 换成两个换行（形成段落分隔）。
+    // 仅对「块级闭合标签」插入换行（形成段落），不处理开标签，避免把正文拆碎或误删。
     let re_block = regex::Regex::new(
-        r"(?is)</?(p|div|h[1-6]|li|tr|td|th|table|blockquote|ul|ol|dl|dt|dd|section|article|header|footer|nav|pre)\b[^>]*>"
+        r"(?i)</(p|div|h[1-6]|li|tr|td|th|table|blockquote|ul|ol|dl|dt|dd|section|article|header|footer|nav|pre)\s*>"
     ).unwrap();
     let re_tag = regex::Regex::new(r"(?s)<[^>]+>").unwrap();
     let re_space = regex::Regex::new(r"[ \t]+").unwrap();
@@ -702,7 +702,7 @@ fn strip_html(s: &str) -> String {
     let s = re_block.replace_all(&s, "\n\n").into_owned();
     let s = re_tag.replace_all(&s, "").into_owned();
     let s = re_space.replace_all(&s, " ").into_owned();
-    // 每个换行留一个空行分隔段落，多个空行压成一个。
+    // 保留单换行，多个空行压成一个。
     let s = re_nl.replace_all(&s, "\n").into_owned();
     let s = re_blank.replace_all(&s, "\n\n").into_owned();
     let s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'");
@@ -806,5 +806,34 @@ mod tests {
         let t = email_text(&parsed);
         assert!(t.contains("尊敬的客户"), "rich part not preferred: {:?}", t);
         assert!(t.contains("备案已提交"), "rich part body lost: {:?}", t);
+    }
+
+    #[test]
+    fn strip_html_keeps_text_amid_style_and_attrs() {
+        // 模拟带 <style> 头部 + 大量属性/标签的营销 HTML，正文应完整保留。
+        let html = "<html><head><style>body{margin:0}a{color:#333}</style></head><body><table role=\"presentation\" width=\"100%\"><tr><td><a href=\"https://x.com\"><img src=\"x.png\" alt=\"logo\"></a></td></tr><tr><td><h1>备案通知</h1><p>尊敬的客户：您的备案已提交至交通管理局审核。</p><p>请点击<a href=\"d\">此处链接</a>查看。</p></td></tr></table></body></html>";
+        let t = strip_html(html);
+        assert!(t.contains("备案通知"), "h1 lost: {:?}", t);
+        assert!(t.contains("尊敬的客户"), "body lost: {:?}", t);
+        assert!(t.contains("备案已提交至交通管理局"), "body lost: {:?}", t);
+        assert!(t.contains("查看"), "link text lost: {:?}", t);
+        assert!(!t.contains("<"), "tag leaked: {:?}", t);
+    }
+
+    #[test]
+    fn email_text_decodes_base64_html_part() {
+        // 营销邮件常见：HTML 部分用 base64 编码。验证 get_body 解码后正文完整。
+        use base64::Engine as _;
+        let html = "<html><body><p>尊敬的客户：备案已提交。</p><p>正文内容在此。</p><div>Copyright © 阿里云 2026</div></body></html>";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(html.as_bytes());
+        let raw = format!(
+            "From: a@b.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nCopyright © 阿里云\r\n--B\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n--B--\r\n",
+            b64
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let t = email_text(&parsed);
+        assert!(t.contains("尊敬的客户"), "base64 html body lost: {:?}", t);
+        assert!(t.contains("备案已提交"), "base64 html body lost: {:?}", t);
+        assert!(t.contains("正文内容在此"), "base64 html body lost: {:?}", t);
     }
 }
