@@ -662,15 +662,9 @@ fn email_text(p: &mailparse::ParsedMail) -> String {
 
 fn email_text_collect(p: &mailparse::ParsedMail, best: &mut String) {
     if p.ctype.mimetype == "text/plain" || p.ctype.mimetype == "text/html" {
-        // 用 decode(get_body) 与 raw(get_body_raw) 各取一版，取其中较长者，
-        // 覆盖「get_body() 因编码/结构返回空或不完整、而 raw 仍含正文」的情况。
-        let mut t = strip_html(&p.get_body().unwrap_or_default());
-        if let Ok(raw) = p.get_body_raw() {
-            let raw_str = String::from_utf8_lossy(&raw).to_string();
-            if raw_str.len() > t.len() {
-                t = strip_html(&raw_str);
-            }
-        }
+        // 用 get_body()（已解码 Content-Transfer-Encoding）；不要用 get_body_raw()——
+        // 它会返回 QP/Base64 编码的原始字节，转成 string 是 `=E5..` 乱码且更长，会盖过正确解码的正文。
+        let t = strip_html(&p.get_body().unwrap_or_default());
         if t.len() > best.len() {
             *best = t;
         }
@@ -829,5 +823,44 @@ mod tests {
         assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "content lost: {:?}", t);
         assert!(t.contains("如您对此有更多疑问"), "content lost: {:?}", t);
         assert!(t.contains("联系我们"), "link text lost: {:?}", t);
+    }
+
+    // 手动把 UTF-8 字节编码成 quoted-printable（每非 ASCII 字符 =XX，每 76 列软换行加 =）。
+    fn qp_encode(s: &str) -> String {
+        let mut out = String::new();
+        let mut col = 0;
+        for b in s.as_bytes() {
+            let cap = if *b == b'\n' {
+                '='.to_string()
+            } else if *b < 0x20 || *b > 0x7e || *b == b'=' {
+                format!("={:02X}", b)
+            } else {
+                (*b as char).to_string()
+            };
+            if col + cap.len() > 76 {
+                out.push_str("=\r\n");
+                col = 0;
+            }
+            out.push_str(&cap);
+            col += cap.len();
+        }
+        // 模拟真实邮件软换行结尾（部分行以 = 结束再接下一行）。
+        out
+    }
+
+    #[test]
+    fn email_text_qp_html_multipart_keeps_body() {
+        // 复现真实邮件：multipart/mixed → text/html quoted-printable（中文 QP 编码）。
+        let html = "<html><head><style>a{color:#1366ec}</style></head><body><p>尊敬的濮阳数友信息科技服务有限责任公司：</p><p>您的备案信息已经提交至通信管理局审核！</p><div>Copyright © 阿里云 2009-2026 All Rights Reserved</div></body></html>";
+        let qp = qp_encode(html);
+        let raw = format!(
+            "From: a@b.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"B\"\r\n\r\n--B\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n{}\r\n--B--\r\n",
+            qp
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let t = email_text(&parsed);
+        assert!(t.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "qp body lost: {:?}", t);
+        assert!(t.contains("您的备案信息已经提交至通信管理局审核"), "qp body lost: {:?}", t);
+        assert!(t.contains("Copyright"), "qp footer lost: {:?}", t);
     }
 }
