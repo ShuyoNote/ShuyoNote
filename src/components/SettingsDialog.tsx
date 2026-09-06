@@ -29,7 +29,7 @@ import {
   LockIcon,
   SparkleIcon,
   InfoIcon,
-  SendIcon,
+  InboxIcon,
 } from "./icons";
 
 const THEMES: { id: Theme; label: string }[] = [
@@ -42,7 +42,7 @@ const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Elem
   { id: "appearance", labelKey: "settings.appearance", hintKey: "settings.appearanceHint", icon: <PaletteIcon width={16} height={16} /> },
   { id: "spaces", labelKey: "settings.spaces", hintKey: "settings.spacesHint", icon: <FolderIcon width={16} height={16} /> },
   { id: "account", labelKey: "settings.account", hintKey: "settings.accountHint", icon: <PersonIcon width={16} height={16} /> },
-  { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <SendIcon width={16} height={16} /> },
+  { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <InboxIcon width={16} height={16} /> },
   { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} /> },
   { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} /> },
   { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} /> },

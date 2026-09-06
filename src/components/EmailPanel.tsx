@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
-import { SendIcon } from "./icons";
+import { InboxIcon } from "./icons";
 
 type EmailMeta = Awaited<ReturnType<typeof api.emailFetchInbox>>[number];
 type EmailAccount = { host: string; port: number; username: string; password: string; use_tls: boolean };
@@ -123,7 +123,7 @@ export function EmailPanel() {
   return (
     <>
       <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
-        <SendIcon width={14} height={14} />
+        <InboxIcon width={14} height={14} />
         <span>邮箱</span>
       </button>
 
