@@ -16991,9 +16991,9 @@ p:has(> .editor-drawing-container) {
 .email-col-head,
 .email-item {
   display: grid;
-  grid-template-columns: 26px minmax(90px, 132px) 1fr 58px 24px;
   align-items: center;
   column-gap: 8px;
+  /* grid-template-columns 由 JSX 内联给定（发件人/主题列宽可拖拽） */
 }
 .email-col-head {
   padding: 6px 14px;
@@ -17005,6 +17005,30 @@ p:has(> .editor-drawing-container) {
 .email-col-from { text-align: left; }
 .email-col-subject { text-align: left; }
 .email-col-date { text-align: right; }
+
+/* 列宽拖拽手柄（发件人/主题 列头右缘） */
+.email-col-resizer {
+  display: inline-block;
+  position: relative;
+  width: 10px;
+  height: 16px;
+  margin-left: 4px;
+  vertical-align: middle;
+  cursor: col-resize;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.email-col-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  background: var(--border-strong);
+}
+.email-col-resizer:hover::after { background: var(--accent, #4f7cff); }
 .email-section { margin-bottom: 4px; }
 .email-section-label {
   font-size: 11px;

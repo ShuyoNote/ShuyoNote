@@ -133,6 +133,10 @@ export function EmailPanel() {
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
   const [listW, setListW] = useState<number>(() => Math.round(window.innerWidth * 0.3));
+  // 列表列宽：发件人/主题 可通过列表头拖拽调节。
+  const [fromW, setFromW] = useState(132);
+  const [subjectW, setSubjectW] = useState(220);
+  const resizeRef = useRef<{ startX: number; startW: number; col: "from" | "subject" } | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [starred, setStarred] = useState<Set<number>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -477,8 +481,37 @@ export function EmailPanel() {
     window.addEventListener("mouseup", onUp);
   };
 
+  // 列宽拖拽：发件人 / 主题 列头分隔处可拖动调节宽度。
+  const onColResizeDown = (col: "from" | "subject") => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { startX: e.clientX, startW: col === "from" ? fromW : subjectW, col };
+    const onMove = (ev: MouseEvent) => {
+      const d = resizeRef.current;
+      if (!d) return;
+      const dx = ev.clientX - d.startX;
+      if (d.col === "from") {
+        setFromW(Math.max(70, Math.min(320, d.startW + dx)));
+      } else {
+        setSubjectW(Math.max(120, Math.min(600, d.startW + dx)));
+      }
+    };
+    const onUp = () => {
+      resizeRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const sections = groupEmails(filteredList);
   const provider = account ? providerLabel(account.username) : "";
+  const colTemplate = `26px ${fromW}px ${subjectW}px 58px 24px`;
 
   return (
     <>
@@ -670,10 +703,10 @@ export function EmailPanel() {
                         aria-label="按标题过滤"
                       />
                     </div>
-                    <div className="email-col-head">
+                    <div className="email-col-head" style={{ gridTemplateColumns: colTemplate }}>
                       <span className="email-col-check" aria-hidden />
-                      <span className="email-col-from">发件人</span>
-                      <span className="email-col-subject">主题</span>
+                      <span className="email-col-from">发件人<span className="email-col-resizer" onMouseDown={onColResizeDown("from")} /></span>
+                      <span className="email-col-subject">主题<span className="email-col-resizer" onMouseDown={onColResizeDown("subject")} /></span>
                       <span className="email-col-date">日期</span>
                       <span className="email-col-star" aria-hidden />
                     </div>
@@ -691,6 +724,7 @@ export function EmailPanel() {
                               else rowRefs.current.delete(m.uid);
                             }}
                             className={`email-item${active?.uid === m.uid ? " is-selected" : ""}`}
+                            style={{ gridTemplateColumns: colTemplate }}
                             onClick={() => void selectEmail(m)}
                           >
                             <span
