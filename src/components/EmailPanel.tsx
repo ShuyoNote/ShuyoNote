@@ -105,9 +105,18 @@ function sanitizeEmailHtml(html: string, showImages: boolean): string {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["iframe", "script", "object", "embed", "form", "input", "style", "link", "meta", "base", "svg", "math"],
     FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "formaction", "xlink:href", "srcset"],
+    ADD_ATTR: ["target", "rel"],
     ALLOW_DATA_ATTR: false,
   };
+  // 消毒后强制链接新开 + noreferrer（防 opener 泄露 / 追踪）。
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A") {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noreferrer noopener");
+    }
+  });
   let clean = DOMPurify.sanitize(html, config);
+  DOMPurify.removeHook("afterSanitizeAttributes");
   if (!showImages) {
     // 屏蔽远程图片：给 <img> 移除 src，仅留 alt 占位。
     const imgRe = /<img\b[^>]*>/gi;
