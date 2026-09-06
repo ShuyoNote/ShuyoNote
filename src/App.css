@@ -12141,18 +12141,6 @@ p:has(> .editor-drawing-container) {
   justify-content: center;
 }
 
-/* 侧边栏邮箱按钮：服务商次级标注（`邮箱 · qq`） */
-.email-provider {
-  flex: none;
-  max-width: 48px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-
 .set-status-line {
   margin-top: 10px;
   padding: 8px 10px;
@@ -16784,7 +16772,7 @@ p:has(> .editor-drawing-container) {
 .email-month-picker {
   position: absolute;
   top: 42px;
-  left: 14px;
+  right: 14px;
   z-index: 1200;
   width: 280px;
   background: var(--card-bg);

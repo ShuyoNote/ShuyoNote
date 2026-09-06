@@ -362,7 +362,6 @@ export function EmailPanel() {
       <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
         <InboxIcon width={14} height={14} />
         <span>邮箱</span>
-        {provider && <span className="email-provider">· {provider}</span>}
         {unread > 0 && (
           <span className="email-unread-badge" aria-label={`${unread} 封未读`}>{unread > 99 ? "99+" : unread}</span>
         )}
@@ -402,7 +401,7 @@ export function EmailPanel() {
                 <div className="email-split" ref={splitRef}>
                   <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef}>
                     <div className="email-list-head">
-                      <span className="email-list-head-title">邮件</span>
+                      <span className="email-list-head-title">邮件{provider ? ` · ${provider}` : ""}</span>
                       <button
                         className="email-list-head-count"
                         onClick={openPicker}
