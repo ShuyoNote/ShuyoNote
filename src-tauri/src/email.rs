@@ -7,6 +7,7 @@
 //!
 //! 备注：OAuth 见私有仓库 `docs/email-aggregate-monetization.md`。
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri::State;
@@ -171,6 +172,78 @@ async fn fetch_uid_raw(account: &EmailAccountArgs, uid: u32) -> Result<String, S
     Ok(String::from_utf8_lossy(&body).to_string())
 }
 
+/// 解码 MIME RFC 2047 编码词（`=?...?B|Q?...?=`），支持 utf-8 / gbk 等字符集。
+/// 中文主题在 IMAP Envelope 里常以编码词形式返回，不解码会显示成 `=?utf-8?B?...?=`。
+fn decode_mime_words(s: &str) -> String {
+    let mut out = String::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if s[i..].starts_with("=?") {
+            if let Some(end_rel) = s[i..].find("?=") {
+                let token = &s[i..i + end_rel + 2];
+                if let Some(dec) = decode_mime_word(token) {
+                    out.push_str(&dec);
+                    i += end_rel + 2;
+                    // 相邻编码词之间可能有一个空格，跳过
+                    while i < bytes.len() && bytes[i] == b' ' {
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+        }
+        // 非编码部分：ASCII 直接收进；非 ASCII 用 lossy 处理
+        let ch_len = utf8_len(bytes[i]);
+        let chunk = &s[i..i + ch_len.min(s.len() - i)];
+        out.push_str(&String::from_utf8_lossy(chunk.as_bytes()));
+        i += ch_len.min(s.len() - i);
+    }
+    out
+}
+
+fn utf8_len(b: u8) -> usize {
+    if b < 0x80 { 1 } else if b >> 5 == 0b110 { 2 } else if b >> 4 == 0b1110 { 3 } else if b >> 3 == 0b11110 { 4 } else { 1 }
+}
+
+fn decode_mime_word(token: &str) -> Option<String> {
+    let inner = token.strip_prefix("=?")?.strip_suffix("?=")?;
+    let mut parts = inner.splitn(3, '?');
+    let charset = parts.next()?;
+    let enc = parts.next()?;
+    let data = parts.next()?;
+    let bytes = match enc.to_ascii_uppercase().as_str() {
+        "B" => base64::engine::general_purpose::STANDARD.decode(data).ok()?,
+        "Q" => {
+            let mut v = Vec::new();
+            let mb = data.as_bytes();
+            let mut k = 0;
+            while k < mb.len() {
+                if mb[k] == b'_' {
+                    v.push(b' ');
+                    k += 1;
+                } else if mb[k] == b'=' && k + 2 < mb.len() {
+                    if let Ok(n) = u8::from_str_radix(&data[k + 1..k + 3], 16) {
+                        v.push(n);
+                        k += 3;
+                    } else {
+                        v.push(b'=');
+                        k += 1;
+                    }
+                } else {
+                    v.push(mb[k]);
+                    k += 1;
+                }
+            }
+            v
+        }
+        _ => return None,
+    };
+    let enc = encoding_rs::Encoding::for_label(charset.as_bytes())?;
+    let (decoded, _, _) = enc.decode(&bytes);
+    Some(decoded.into_owned())
+}
+
 /// 拉取收件箱头部（读最近 20 条 Envelope）。走 `async-imap`（tokio + native-tls）。
 #[tauri::command]
 pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>, String> {
@@ -205,7 +278,7 @@ pub async fn email_fetch_inbox(args: EmailAccountArgs) -> Result<Vec<EmailMeta>,
             let subject = env
                 .subject
                 .as_ref()
-                .map(|s| String::from_utf8_lossy(s.as_ref()).to_string())
+                .map(|s| decode_mime_words(&String::from_utf8_lossy(s.as_ref())))
                 .unwrap_or_default();
             let from = env
                 .from
@@ -287,5 +360,12 @@ mod tests {
         assert!(text.contains("日期: 2026-09-06"));
         assert!(text.contains("第一行"));
         assert!(text.contains("第二行"));
+    }
+
+    #[test]
+    fn decode_mime_words_decodes_rfc2047_base64() {
+        // "你好" 的 utf-8 base64 编码词
+        let encoded = "=?utf-8?B?5L2g5aW9?=";
+        assert_eq!(decode_mime_words(encoded), "你好");
     }
 }
