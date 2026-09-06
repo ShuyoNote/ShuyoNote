@@ -105,8 +105,9 @@ export function EmailPanel() {
         const acc = { host: a.host, port: a.port, username: a.username, password: a.password, use_tls: a.use_tls };
         setAccount(acc);
         return api.emailFetchInbox(acc).then((r) => {
-          setList(r);
-          if (r.length > 0) void selectEmail(r[0], acc);
+          const newestFirst = [...r].reverse();
+          setList(newestFirst);
+          if (newestFirst.length > 0) void selectEmail(newestFirst[0], acc);
           else setErr("未拉到邮件（检查账号 / 认证）");
         });
       })
@@ -136,7 +137,7 @@ export function EmailPanel() {
     setBusy(true);
     try {
       const r = await api.emailFetchInbox(account);
-      setList(r);
+      setList([...r].reverse());
       if (r.length === 0) setErr("未拉到邮件");
     } catch (e) {
       setErr(String(e));
