@@ -93,6 +93,7 @@ export function emailHtmlToLexical(html: string): { content_json: string; conten
     return { content_json, content_text };
   } catch (e) {
     // 转换失败时给最小根节点，避免整页失败。
+    console.error("[emailHtmlToLexical] 转换失败:", e);
     return { content_json: "{}", content_text: "" };
   }
 }
