@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
-import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon } from "./icons";
+import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon, BookmarkIcon } from "./icons";
 
 type EmailMeta = Awaited<ReturnType<typeof api.emailFetchInbox>>[number];
 type EmailAccount = { host: string; port: number; username: string; password: string; use_tls: boolean };
@@ -339,7 +339,7 @@ export function EmailPanel() {
                         disabled={busy || !active}
                         onClick={() => active && void saveUid(active.uid)}
                       >
-                        <SendIcon width={14} height={14} /> 存为笔记
+                        <BookmarkIcon width={14} height={14} /> 存为笔记
                       </button>
                       <button className="sync-btn ghost" disabled title="回复">
                         <SendIcon width={14} height={14} /> 回复

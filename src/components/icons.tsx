@@ -90,6 +90,15 @@ export function RefreshIcon(props: IconProps) {
   );
 }
 
+// 书签（保存/收藏语义）
+export function BookmarkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </Icon>
+  );
+}
+
 export function InboxIcon(props: IconProps) {
   return (
     <Icon {...props}>
