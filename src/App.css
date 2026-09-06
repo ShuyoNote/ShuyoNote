@@ -16819,7 +16819,7 @@ p:has(> .editor-drawing-container) {
 }
 .email-list-head-count:hover { color: var(--text); background: transparent; }
 
-/* 邮件过滤条：发件人 / 标题关键字 + 与/或 */
+/* 邮件过滤条：发件人下拉（可搜索多选）+ 标题关键字（空格=与、逗号=或，同数据库视图） */
 .email-filter-bar {
   display: flex;
   align-items: center;
@@ -16845,25 +16845,98 @@ p:has(> .editor-drawing-container) {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .email-filter-input::placeholder { color: var(--text-faint); }
-.email-filter-mode { display: flex; gap: 3px; flex: none; }
-.email-filter-mode-btn {
+
+/* 发件人下拉（可搜索、多选） */
+.email-sender-wrap { position: relative; flex: none; }
+.email-sender-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-dim);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 5px 8px;
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-.email-filter-mode-btn:hover { background: var(--hover); }
-.email-filter-mode-btn.is-on {
-  background: var(--accent-soft);
-  color: var(--accent, #4f7cff);
-  border-color: var(--accent, #4f7cff);
-  font-weight: 500;
+.email-sender-trigger:hover { background: var(--hover); border-color: var(--border-strong); }
+.email-sender-label { max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.email-sender-label.is-on { color: var(--accent, #4f7cff); font-weight: 500; }
+.email-sender-menu {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  z-index: 1200;
+  width: 260px;
+  max-height: 300px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 10px 28px rgba(0,0,0,.2));
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+.email-sender-search {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 5px 8px;
+  outline: none;
+}
+.email-sender-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.email-sender-list { overflow: auto; max-height: 200px; display: flex; flex-direction: column; gap: 2px; }
+.email-sender-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.email-sender-item:hover { background: var(--hover); }
+.email-sender-item input { display: none; }
+.email-sender-check {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  box-sizing: border-box;
+}
+.email-sender-item.is-on .email-sender-check {
+  background: var(--accent, #4f7cff);
+  border-color: var(--accent, #4f7cff);
+  color: var(--on-accent);
+}
+.email-sender-item.is-on .email-sender-name { color: var(--accent, #4f7cff); }
+.email-sender-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.email-sender-empty { padding: 8px; color: var(--text-faint); font-size: 12px; }
+.email-sender-clear {
+  border: none;
+  background: transparent;
+  color: var(--accent, #4f7cff);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.email-sender-clear:hover { background: var(--hover); border-radius: 6px; }
 
 /* 月份选择下拉：仿 QQ 邮箱「共 N 封 → 选年月 → 滚到该月」，右对齐到日期列上方。 */
 .email-month-picker {

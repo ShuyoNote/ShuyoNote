@@ -123,22 +123,46 @@ export function EmailPanel() {
   const [allFolders, setAllFolders] = useState<string[]>([]);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const folderPickerRef = useRef<HTMLDivElement>(null);
-  // 过滤：发件人 / 标题关键字 + AND/OR。纯前端内存过滤。
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterSubject, setFilterSubject] = useState("");
-  const [filterMode, setFilterMode] = useState<"and" | "or">("and");
+  // 过滤：发件人多选下拉 + 标题关键字（数据库视图同款：空格=与、逗号=或）。纯前端内存过滤。
+  const [senderSet, setSenderSet] = useState<Set<string>>(new Set());
+  const [senderSearch, setSenderSearch] = useState("");
+  const [senderPickerOpen, setSenderPickerOpen] = useState(false);
+  const senderPickerRef = useRef<HTMLDivElement>(null);
+  const [subjectFilter, setSubjectFilter] = useState("");
 
-  // 按发件人/标题关键字过滤（忽略大小写，包含子串）。
+  // 当前列表里的去重发件人（供下拉选项）。
+  const senders = useMemo(() => [...new Set(list.map((m) => m.from))].sort((a, b) => a.localeCompare(b, "zh")), [list]);
+
+  // 标题过滤：逗号=或(OR)组，组内空格=与(AND)，与数据库视图一致。
+  const subjectGroups = useMemo(() => {
+    const key = subjectFilter.trim().toLowerCase();
+    if (!key) return [];
+    return key
+      .split(/[，,]/)
+      .map((g) => g.split(/\s+/).filter(Boolean))
+      .filter((g) => g.length);
+  }, [subjectFilter]);
+
   const filteredList = useMemo(() => {
-    const f = filterFrom.trim().toLowerCase();
-    const s = filterSubject.trim().toLowerCase();
-    if (!f && !s) return list;
-    return list.filter((m) => {
-      const mf = !f || m.from.toLowerCase().includes(f);
-      const ms = !s || m.subject.toLowerCase().includes(s);
-      return filterMode === "and" ? mf && ms : mf || ms;
+    const senderMatch = (m: EmailMeta) => senderSet.size === 0 || senderSet.has(m.from);
+    const subjectMatch = (m: EmailMeta) => {
+      if (subjectGroups.length === 0) return true;
+      const t = m.subject.toLowerCase();
+      return subjectGroups.some((g) => g.every((k) => t.includes(k)));
+    };
+    return list.filter((m) => senderMatch(m) && subjectMatch(m));
+  }, [list, senderSet, subjectGroups]);
+
+  const toggleSender = (from: string) => {
+    setSenderSet((prev) => {
+      const n = new Set(prev);
+      if (n.has(from)) n.delete(from);
+      else n.add(from);
+      return n;
     });
-  }, [list, filterFrom, filterSubject, filterMode]);
+  };
+
+  const clearSenders = () => setSenderSet(new Set());
 
   // 每封邮件 → 其所在 (年,月)，并给每个月记录最新一封（列表顶部的第一封）。
   const monthIndex = useMemo(() => {
@@ -370,6 +394,19 @@ export function EmailPanel() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [folderPickerOpen]);
 
+  // 点击发件人下拉外部关闭。
+  useEffect(() => {
+    if (!senderPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (senderPickerRef.current?.contains(t)) return;
+      setSenderPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [senderPickerOpen]);
+
   // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -543,30 +580,63 @@ export function EmailPanel() {
                       )}
                     </div>
                     <div className="email-filter-bar">
+                      <div className="email-sender-wrap" ref={senderPickerRef}>
+                        <button
+                          className="email-sender-trigger"
+                          onClick={() => setSenderPickerOpen((v) => !v)}
+                          aria-haspopup="listbox"
+                          aria-expanded={senderPickerOpen}
+                        >
+                          <span className={`email-sender-label${senderSet.size ? " is-on" : ""}`}>
+                            {senderSet.size === 0 ? "发件人" : `发件人 · ${senderSet.size}`}
+                          </span>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        </button>
+                        {senderPickerOpen && (
+                          <div className="email-sender-menu" role="listbox" aria-label="选择发件人">
+                            <input
+                              className="email-sender-search"
+                              placeholder="搜索发件人…"
+                              value={senderSearch}
+                              onChange={(e) => setSenderSearch(e.target.value)}
+                              autoFocus
+                            />
+                            <div className="email-sender-list">
+                              {senders
+                                .filter((f) => f.toLowerCase().includes(senderSearch.trim().toLowerCase()))
+                                .map((f) => (
+                                  <label key={f} className={`email-sender-item${senderSet.has(f) ? " is-on" : ""}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={senderSet.has(f)}
+                                      onChange={() => toggleSender(f)}
+                                    />
+                                    <span className="email-sender-check">
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M20 6 9 17l-5-5" />
+                                      </svg>
+                                    </span>
+                                    <span className="email-sender-name">{f}</span>
+                                  </label>
+                                ))}
+                              {senders.length === 0 && <div className="email-sender-empty">暂无发件人</div>}
+                            </div>
+                            {senderSet.size > 0 && (
+                              <button className="email-sender-clear" onClick={clearSenders}>清空选择</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <input
                         className="email-filter-input"
-                        placeholder="按发件人过滤"
-                        value={filterFrom}
-                        onChange={(e) => setFilterFrom(e.target.value)}
-                        aria-label="按发件人过滤"
-                      />
-                      <input
-                        className="email-filter-input"
-                        placeholder="按标题过滤"
-                        value={filterSubject}
-                        onChange={(e) => setFilterSubject(e.target.value)}
+                        placeholder="按标题…（空格=与，逗号=或）"
+                        title="空格=与(都含)，逗号=或(任一含)"
+                        value={subjectFilter}
+                        onChange={(e) => setSubjectFilter(e.target.value)}
                         aria-label="按标题过滤"
                       />
-                      <div className="email-filter-mode" role="group" aria-label="关键字逻辑">
-                        <button
-                          className={`email-filter-mode-btn${filterMode === "and" ? " is-on" : ""}`}
-                          onClick={() => setFilterMode("and")}
-                        >与</button>
-                        <button
-                          className={`email-filter-mode-btn${filterMode === "or" ? " is-on" : ""}`}
-                          onClick={() => setFilterMode("or")}
-                        >或</button>
-                      </div>
                     </div>
                     <div className="email-col-head">
                       <span className="email-col-check" aria-hidden />
