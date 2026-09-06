@@ -511,7 +511,7 @@ export function EmailPanel() {
 
   const sections = groupEmails(filteredList);
   const provider = account ? providerLabel(account.username) : "";
-  const colTemplate = `26px ${fromW}px ${subjectW}px minmax(72px, max-content) 24px`;
+  const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
 
   return (
     <>
