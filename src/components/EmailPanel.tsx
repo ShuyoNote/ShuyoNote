@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
 import { platform } from "../lib/platform";
@@ -76,6 +76,15 @@ function groupEmails(list: EmailMeta[]): Section[] {
   return secs;
 }
 
+const MONTH_NAMES = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+
+// 一封邮件的 (年, 月) 键：`YYYY-M`（0-based 月）。无法解析返回 null。
+function monthKeyOf(m: EmailMeta): string | null {
+  const d = parseDate(m.date);
+  if (!d) return null;
+  return `${d.getFullYear()}-${d.getMonth()}`;
+}
+
 // 聚合收件箱（邮件即笔记）— 桌面专属整页（左列表 + 右阅读），竖分隔线可拖动调整宽度。
 // 账号配置在 设置 → 邮箱；这里只读已保存账号、拉取/阅读/转笔记。
 export function EmailPanel() {
@@ -88,6 +97,8 @@ export function EmailPanel() {
   const btnRef = useRef<HTMLButtonElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   const [account, setAccount] = useState<EmailAccount | null>(null);
   const [list, setList] = useState<EmailMeta[]>([]);
@@ -99,6 +110,24 @@ export function EmailPanel() {
   const [listW, setListW] = useState<number>(() => Math.round(window.innerWidth * 0.3));
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [starred, setStarred] = useState<Set<number>>(new Set());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  // 每封邮件 → 其所在 (年,月)，并给每个月记录最新一封（列表顶部的第一封）。
+  const monthIndex = useMemo(() => {
+    const firstUid = new Map<string, number>();
+    const years = new Set<number>();
+    for (const m of list) {
+      const k = monthKeyOf(m);
+      if (!k) continue;
+      const y = Number(k.split("-")[0]);
+      years.add(y);
+      if (!firstUid.has(k)) firstUid.set(k, m.uid);
+    }
+    const ys = [...years].sort((a, b) => b - a); // 倒序，最新年份在前
+    return { firstUid, years: ys };
+  }, [list]);
 
   // 打开时默认左右均分：把列表宽度设为分栏容器的一半。
   useEffect(() => {
@@ -240,6 +269,40 @@ export function EmailPanel() {
     });
   };
 
+  // 月份选择：跳到该月最新一封邮件（列表顶部）。
+  const scrollToMonth = (year: number, month0: number) => {
+    const uid = monthIndex.firstUid.get(`${year}-${month0}`);
+    if (uid == null) return;
+    const el = rowRefs.current.get(uid);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      setActive(list.find((m) => m.uid === uid) ?? null);
+    }
+    setPickerOpen(false);
+  };
+
+  // 点击月份选择器外部关闭。
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (pickerRef.current?.contains(t)) return;
+      setPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pickerOpen]);
+
+  // 选中「共 N 封」打开月份选择器时，年份默认定位到含邮件的最近年份。
+  const openPicker = () => {
+    if (!pickerOpen) {
+      const newest = monthIndex.years[0];
+      if (newest != null) setPickerYear(newest);
+    }
+    setPickerOpen((v) => !v);
+  };
+
   // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -337,10 +400,54 @@ export function EmailPanel() {
 
               {account && (
                 <div className="email-split" ref={splitRef}>
-                  <div className="email-pane-list" style={{ width: listW }}>
+                  <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef}>
                     <div className="email-list-head">
                       <span className="email-list-head-title">邮件</span>
-                      <span className="email-list-head-count">共 {list.length} 封</span>
+                      <button
+                        className="email-list-head-count"
+                        onClick={openPicker}
+                        aria-haspopup="dialog"
+                        aria-expanded={pickerOpen}
+                      >
+                        共 {list.length} 封
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                      {pickerOpen && (
+                        <div className="email-month-picker" ref={pickerRef} role="dialog" aria-label="选择月份">
+                          <div className="email-month-picker-head">
+                            <span className="email-month-picker-year">{pickerYear}年</span>
+                            <div className="email-month-picker-nav">
+                              <button aria-label="上一年" onClick={() => setPickerYear((y) => y - 1)}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="m18 15-6-6-6 6" />
+                                </svg>
+                              </button>
+                              <button aria-label="下一年" onClick={() => setPickerYear((y) => y + 1)}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="m6 9 6 6 6-6" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="email-month-picker-grid">
+                            {MONTH_NAMES.map((name, m) => {
+                              const has = monthIndex.firstUid.has(`${pickerYear}-${m}`);
+                              return (
+                                <button
+                                  key={name}
+                                  className={`email-month-cell${has ? " is-avail" : ""}`}
+                                  disabled={!has}
+                                  onClick={() => scrollToMonth(pickerYear, m)}
+                                >
+                                  {name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="email-col-head">
                       <span className="email-col-check" aria-hidden />
@@ -356,6 +463,10 @@ export function EmailPanel() {
                         {s.items.map((m) => (
                           <div
                             key={m.uid}
+                            ref={(el) => {
+                              if (el) rowRefs.current.set(m.uid, el);
+                              else rowRefs.current.delete(m.uid);
+                            }}
                             className={`email-item${active?.uid === m.uid ? " is-selected" : ""}`}
                             onClick={() => void selectEmail(m)}
                           >

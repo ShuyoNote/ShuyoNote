@@ -16758,12 +16758,78 @@ p:has(> .editor-drawing-container) {
 }
 .email-list-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   padding: 12px 14px 8px;
+  position: relative;
 }
 .email-list-head-title { font-size: 15px; font-weight: 700; color: var(--text); }
-.email-list-head-count { font-size: 12px; color: var(--text-faint); }
+.email-list-head-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--hover);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.email-list-head-count:hover { background: var(--hover-strong); border-color: var(--border-strong); color: var(--text); }
+
+/* 月份选择下拉：仿 QQ 邮箱「共 N 封 → 选年月 → 滚到该月」 */
+.email-month-picker {
+  position: absolute;
+  top: 42px;
+  left: 14px;
+  z-index: 1200;
+  width: 280px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md, 0 12px 32px rgba(0,0,0,.2));
+  padding: 16px 20px;
+}
+.email-month-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.email-month-picker-year { font-size: 16px; font-weight: 700; color: var(--text); }
+.email-month-picker-nav { display: flex; gap: 6px; }
+.email-month-picker-nav button {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: inline-flex;
+}
+.email-month-picker-nav button:hover { background: var(--hover); color: var(--text); }
+.email-month-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 8px;
+  text-align: center;
+}
+.email-month-cell {
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text-faint);
+  padding: 6px 0;
+  border-radius: 6px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.email-month-cell.is-avail { color: var(--text); }
+.email-month-cell.is-avail:hover { background: var(--hover); color: var(--accent, #4f7cff); }
+.email-month-cell:disabled { cursor: default; color: var(--text-faint); opacity: .55; }
 .email-col-head,
 .email-item {
   display: grid;
