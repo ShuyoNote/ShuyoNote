@@ -65,6 +65,20 @@ function cleanEditorState(node: unknown): unknown {
   return rec;
 }
 
+// 把邮件 HTML 里的 `<table>` 版式拆平：去掉 table/tr/td 结构，但保留单元格内文本与内联元素，
+// 使表格文本作为普通段落流式显示（避免营销邮件的版式表格变成大空白表格/窄列竖排）。
+function flattenTables(html: string): string {
+  let out = html;
+  // 移除 table 级标签本身，但保留其内部内容。
+  out = out.replace(/<\/?(table|tbody|thead|tfoot|tr)[^>]*>/gi, "\n");
+  // td/th 之间加换行，保留单元格内容。
+  out = out.replace(/<t[dh][^>]*>/gi, "\n");
+  out = out.replace(/<\/t[dh]\s*>/gi, "\n");
+  // 连续换行压成一个空行（段落分隔）。
+  out = out.replace(/\n{3,}/g, "\n\n");
+  return out;
+}
+
 /**
  * 把邮件 HTML 转成 Lexical 富文本 JSON 字符串 + 纯文本。
  * @returns { content_json, content_text }（JSON 为字符串，纯文本用于搜索/FTS）
@@ -79,7 +93,7 @@ export function emailHtmlToLexical(html: string): { content_json: string; conten
       () => {
         const root = $getRoot();
         root.clear();
-        $importHtml(html, root);
+        $importHtml(flattenTables(html), root);
       },
       { discrete: true },
     );
