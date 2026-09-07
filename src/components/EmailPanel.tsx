@@ -372,6 +372,12 @@ export function EmailPanel() {
   const readPaneRef = useRef<HTMLDivElement>(null);
   const [toolbarW, setToolbarW] = useState(9999);
   const [moreOpen, setMoreOpen] = useState(false);
+  // 逐级收纳阈值：按按钮组实际宽度测量，而不是固定常量，避免控制条缩窄时横向溢出。
+  const measureCoreRef = useRef<HTMLDivElement>(null);
+  const measureActionRef = useRef<HTMLDivElement>(null);
+  const measureRightRef = useRef<HTMLDivElement>(null);
+  const measureMoreRef = useRef<HTMLDivElement>(null);
+  const [need, setNeed] = useState({ full: 9999, coreAction: 9999 });
   // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
   const pageHeadRef = useRef<HTMLDivElement>(null);
   const [headW, setHeadW] = useState(9999);
@@ -426,9 +432,10 @@ export function EmailPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
-  // 检测阅读区宽度：放不下时把按钮收进「更多」（以 right pane 宽度为基准，避免自身 scrollWidth 误判）。
+  // 检测阅读区宽度：放不下时把按钮收进「更多」。用工具栏自身可用宽（clientWidth）
+  // 而非 readPane.clientWidth（后者含左右 padding，会高估可用宽度约 48px 导致轻微溢出）。
   useEffect(() => {
-    const el = readPaneRef.current;
+    const el = readToolbarRef.current;
     if (!el) return;
     let raf = 0;
     const measure = () => setToolbarW(el.clientWidth);
@@ -563,7 +570,12 @@ export function EmailPanel() {
   const fetchMonth = async (year: number, month0: number) => {
     if (!account) return;
     const from = `${year}-${String(month0 + 1).padStart(2, "0")}-01`;
-    const to = `${year}-${String(month0 + 1).padStart(2, "0")}-31`;
+    // IMAP SEARCH `BEFORE` 是严格小于，且不接受「当月最后一天」作为日期（30 天月传 31 无效）。
+    // 用「下月 1 日」才能覆盖当月全部（含月末当天）；12 月跨年到次年 1 月。
+    const nextM = month0 + 1; // 当月 (1-12)
+    const toYear = nextM === 12 ? year + 1 : year;
+    const toMonth = nextM === 12 ? 1 : nextM + 1;
+    const to = `${toYear}-${String(toMonth).padStart(2, "0")}-01`;
     setBusy(true);
     setErr("");
     try {
@@ -660,8 +672,10 @@ export function EmailPanel() {
     }
   };
 
-  const refresh = async () => {    if (!account) return;
+  const refresh = async () => {
+    if (!account) return;
     await fetchInbox(account, folders);
+    void loadMonths(account, folders);
   };
 
   const saveUid = async (uid: number) => {
@@ -1051,18 +1065,13 @@ export function EmailPanel() {
   };
 
   // 文件夹多选：切换某文件夹后重新拉取（至少保留一个）。
+  // 切换所选文件夹：按新文件夹重拉列表与月份（「根据当前选择的文件夹拉取」）。
   const toggleFolder = (name: string) => {
-    setFolders((prev) => {
-      let next: string[];
-      if (prev.includes(name)) {
-        next = prev.filter((f) => f !== name);
-      } else {
-        next = [...prev, name];
-      }
-      if (next.length === 0) next = ["INBOX"];
-      void fetchInbox(account!, next);
-      return next;
-    });
+    const next = folders.includes(name) ? folders.filter((f) => f !== name) : [...folders, name];
+    const final = next.length ? next : ["INBOX"];
+    setFolders(final);
+    void fetchInbox(account!, final);
+    void loadMonths(account!, final);
   };
 
   // 点击文件夹选择器外部关闭。
@@ -1178,6 +1187,29 @@ export function EmailPanel() {
   // 可信发件人：当前邮件发件人域名在 trusted_domains 内 → 自动放行远程图片。
   const isTrusted = !!active && !!account && account.trusted_domains.includes(emailDomainOf(active.from));
   const effectiveShowImages = showImages || isTrusted;
+
+  // 测量工具栏各按钮组的实际宽度，用于逐级收纳（P+Q+R / P+Q+「更多」 / P+「更多」）。
+  // 依赖按钮文本随 active/useRich/html/isTrusted/showImages 变化。
+  useEffect(() => {
+    const GAP = 4;
+    const measure = () => {
+      const cw = measureCoreRef.current?.getBoundingClientRect().width ?? 0;
+      const aw = measureActionRef.current?.getBoundingClientRect().width ?? 0;
+      const rw = measureRightRef.current?.getBoundingClientRect().width ?? 0;
+      const mw = measureMoreRef.current?.getBoundingClientRect().width ?? 0;
+      setNeed({
+        full: Math.ceil(cw + aw + rw + GAP * 2),
+        coreAction: Math.ceil(cw + aw + mw + GAP * 2),
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (measureCoreRef.current) ro.observe(measureCoreRef.current);
+    if (measureActionRef.current) ro.observe(measureActionRef.current);
+    if (measureRightRef.current) ro.observe(measureRightRef.current);
+    if (measureMoreRef.current) ro.observe(measureMoreRef.current);
+    return () => ro.disconnect();
+  }, [active, useRich, html, isTrusted, showImages]);
   // 信任当前发件人域名：加入持久化配置并立即生效。
   const trustSender = async () => {
     if (!account || !active) return;
@@ -1198,10 +1230,10 @@ export function EmailPanel() {
   // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
   const narrow = listW < 380;
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
-  // 阅读区工具栏放不下（按右栏宽度）时，把右侧次要按钮收进「更多」下拉。
-  const toolbarNarrow = toolbarW < 720;
-  // 更窄时再把 删除/已读/转发/回复 也收进「更多」，只留「存为笔记」。
-  const toolbarVeryNarrow = toolbarW < 520;
+  // 阅读区工具栏逐级收纳（阈值按按钮组实测宽度，而非固定常量）：
+  //   宽 → P+Q+R 全显；中 → R 收进「更多」（P+Q+更多）；窄 → Q 也收进「更多」（P+更多）。
+  const toolbarNarrow = toolbarW < need.full;          // 放不下 P+Q+R → R 收紧进「更多」（出现「更多」按钮）
+  const toolbarVeryNarrow = toolbarW < need.coreAction; // 放不下 P+Q+「更多」 → Q 也收紧进「更多」
   // 顶部标题栏：宽时说明+工具按钮都显示；稍窄只隐藏说明；很窄再把工具按钮收进「更多」。
   const headSubNarrow = headW < 720;
   const headToolNarrow = headW < 560;
@@ -1597,6 +1629,30 @@ export function EmailPanel() {
                           </button>
                         </>
                       )}
+                    </div>
+
+                    {/* 隐藏测量基准：反映当前按钮文本的真实宽度，供逐级收纳阈值使用（不参与布局/交互）。 */}
+                    <div className="email-read-measure" aria-hidden="true">
+                      <div ref={measureCoreRef} className="email-read-measure-row">
+                        <span className="sync-btn ghost"><BookmarkIcon width={14} height={14} /> 保存到…</span>
+                        <span className="sync-btn ghost"><BookmarkIcon width={14} height={14} /> 存为笔记</span>
+                        <span className="sync-btn ghost">存为任务</span>
+                        <span className="sync-btn ghost">存附件</span>
+                      </div>
+                      <div ref={measureActionRef} className="email-read-measure-row">
+                        <span className="sync-btn ghost"><SendIcon width={14} height={14} /> 回复</span>
+                        <span className="sync-btn ghost"><SendIcon width={14} height={14} /> 转发</span>
+                        <span className="sync-btn ghost">{active?.seen ? "标为未读" : "标为已读"}</span>
+                        <span className="sync-btn ghost"><TrashIcon width={14} height={14} /> 删除</span>
+                      </div>
+                      <div ref={measureRightRef} className="email-read-measure-row">
+                        {useRich && html && <span className="sync-btn ghost">{showImages ? "屏蔽图片" : "显示图片"}</span>}
+                        <span className="sync-btn ghost">{isTrusted ? "已信任" : "信任此发件人"}</span>
+                        <span className="sync-btn ghost">{useRich ? "纯文本" : "富文本"}</span>
+                      </div>
+                      <div ref={measureMoreRef} className="email-read-measure-row">
+                        <span className="sync-btn ghost">更多</span>
+                      </div>
                     </div>
                     {active ? (
                       <>

@@ -17288,6 +17288,11 @@ p:has(> .editor-drawing-container) {
 .email-read-toolbar .sync-btn { flex: none; white-space: nowrap; }
 .email-read-toolbar-spacer { flex: 1; }
 
+/* 隐藏测量基准：只用于读取按钮组真实宽度（逐级收纳阈值），不参与布局/交互。 */
+.email-read-measure { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; z-index: -1; }
+.email-read-measure-row { display: flex; gap: 4px; width: max-content; }
+.email-read-measure-row .sync-btn { flex: none; white-space: nowrap; }
+
 /* 「保存到…」目标位置下拉（存为笔记的父级选择） */
 .email-save-parent-wrap { position: relative; flex: none; }
 .email-save-parent-menu {
