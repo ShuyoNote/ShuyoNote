@@ -352,6 +352,10 @@ export function EmailPanel() {
   const [toolbarW, setToolbarW] = useState(9999);
   const [toolbarOverflow, setToolbarOverflow] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
+  const pageHeadRef = useRef<HTMLDivElement>(null);
+  const [headW, setHeadW] = useState(9999);
+  const [headMoreOpen, setHeadMoreOpen] = useState(false);
 
   // 当前列表里的去重发件人（供下拉选项）。
   const filteredList = useMemo(() => {
@@ -422,6 +426,29 @@ export function EmailPanel() {
     measure();
     return () => ro.disconnect();
   }, []);
+
+  // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
+  useEffect(() => {
+    const el = pageHeadRef.current;
+    if (!el) return;
+    const measure = () => setHeadW(el.clientWidth);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, []);
+
+  // 点击标题栏「更多」下拉外部关闭。
+  useEffect(() => {
+    if (!headMoreOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (t && pageHeadRef.current?.contains(t)) return;
+      setHeadMoreOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [headMoreOpen]);
 
   // 点击「更多」下拉外部关闭。
   useEffect(() => {
@@ -970,6 +997,8 @@ export function EmailPanel() {
   const toolbarNarrow = toolbarOverflow || toolbarW < 720;
   // 更窄时再把 删除/已读/转发/回复 也收进「更多」，只留「存为笔记」。
   const toolbarVeryNarrow = toolbarW < 520;
+  // 顶部标题栏较窄：隐藏说明文字，并把工具按钮收进「更多」。
+  const headNarrow = headW < 640;
 
   return (
     <>
@@ -984,51 +1013,74 @@ export function EmailPanel() {
       {open &&
         createPortal(
           <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
-            <header className="email-page-head">
+            <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>
-                <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>
+                {!headNarrow && <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>}
               </div>
               <div className="email-page-actions">
-                <div className="email-folder-wrap" ref={folderPickerRef}>
-                  <button className="sync-btn ghost" onClick={() => setFolderPickerOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={folderPickerOpen}>
-                    {folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="m6 9 6 6 6-6" />
-                    </svg>
-                  </button>
-                  {folderPickerOpen && (
-                    <div className="email-folder-menu" role="listbox" aria-label="选择文件夹">
-                      {allFolders.map((name) => (
-                        <label key={name} className={`email-folder-item${folders.includes(name) ? " is-on" : ""}`}>
-                          <input
-                            type="checkbox"
-                            checked={folders.includes(name)}
-                            onChange={() => toggleFolder(name)}
-                          />
-                          <span className="email-folder-check">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M20 6 9 17l-5-5" />
-                            </svg>
-                          </span>
-                          <span className="email-folder-name">{folderDisplay(name)}</span>
-                        </label>
-                      ))}
+                {headNarrow ? (
+                  <div className="email-head-more-wrap">
+                    <button className="sync-btn ghost" onClick={() => setHeadMoreOpen((v) => !v)} aria-haspopup="menu" aria-expanded={headMoreOpen}>
+                      更多
+                    </button>
+                    {headMoreOpen && (
+                      <div className="email-read-more-menu" role="menu">
+                        <button className="sync-btn ghost email-read-more-item" role="menuitem" onClick={() => { setFolderPickerOpen((v) => !v); setHeadMoreOpen(false); }}>
+                          {folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}
+                        </button>
+                        <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={busy || !account} onClick={() => { void refresh(); setHeadMoreOpen(false); }}>
+                          <RefreshIcon width={14} height={14} /> 拉取
+                        </button>
+                        <button className="sync-btn ghost email-read-more-item" role="menuitem" onClick={() => { closePanel(); useEditorStore.getState().openSettings("email"); setHeadMoreOpen(false); }}>
+                          <SettingsIcon width={14} height={14} /> 设置
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="email-folder-wrap" ref={folderPickerRef}>
+                      <button className="sync-btn ghost" onClick={() => setFolderPickerOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={folderPickerOpen}>
+                        {folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                      {folderPickerOpen && (
+                        <div className="email-folder-menu" role="listbox" aria-label="选择文件夹">
+                          {allFolders.map((name) => (
+                            <label key={name} className={`email-folder-item${folders.includes(name) ? " is-on" : ""}`}>
+                              <input
+                                type="checkbox"
+                                checked={folders.includes(name)}
+                                onChange={() => toggleFolder(name)}
+                              />
+                              <span className="email-folder-check">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M20 6 9 17l-5-5" />
+                                </svg>
+                              </span>
+                              <span className="email-folder-name">{folderDisplay(name)}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <button className="sync-btn ghost" disabled={busy || !account} onClick={() => void refresh()}>
-                  <RefreshIcon width={14} height={14} /> 拉取
-                </button>
-                <button
-                  className="sync-btn ghost"
-                  onClick={() => {
-                    closePanel();
-                    useEditorStore.getState().openSettings("email");
-                  }}
-                >
-                  <SettingsIcon width={14} height={14} /> 设置
-                </button>
+                    <button className="sync-btn ghost" disabled={busy || !account} onClick={() => void refresh()}>
+                      <RefreshIcon width={14} height={14} /> 拉取
+                    </button>
+                    <button
+                      className="sync-btn ghost"
+                      onClick={() => {
+                        closePanel();
+                        useEditorStore.getState().openSettings("email");
+                      }}
+                    >
+                      <SettingsIcon width={14} height={14} /> 设置
+                    </button>
+                  </>
+                )}
                 <button className="sync-btn ghost" onClick={closePanel} aria-label="关闭">✕</button>
               </div>
             </header>
