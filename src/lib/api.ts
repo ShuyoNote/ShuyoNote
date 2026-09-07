@@ -135,6 +135,8 @@ export const api = {
     invoke("email_get_body", { args: { account, uid, folder } }),
   emailGetMessage: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_get_message", { args: { account, uid, folder } }),
+  emailGetAttachments: (account: EmailAccount, uid: number, folder: string) =>
+    invoke("email_get_attachments", { args: { account, uid, folder } }),
   emailSaveAccount: (account: EmailAccount) =>
     invoke("email_save_account", { account }),
   emailGetAccount: () => invoke("email_get_account", undefined),

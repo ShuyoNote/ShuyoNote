@@ -714,6 +714,7 @@ export function EmailPanel() {
   };
 
   // 邮件 → 任务：建页 + 写「截止日期」属性（默认明天）+ 一个待办块。
+  // 邮件 → 任务：建页 + 写「截止日期」属性（默认明天）+ 一个待办块。
   const saveAsTask = async () => {
     if (!account || !active) return;
     setErr("");
@@ -746,6 +747,27 @@ export function EmailPanel() {
       }
       setErr("");
       toast("已存为任务（截止：明天）", "success");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 识别并保存邮件的附件到内容寻址附件库（同名/同内容自动去重）。
+  const saveAttachments = async () => {
+    if (!account || !active) return;
+    setErr("");
+    setBusy(true);
+    try {
+      const atts = await api.emailGetAttachments(account, active.uid, active.folder);
+      if (atts.length === 0) {
+        toast("这封邮件没有附件", "info");
+      } else {
+        toast(`已保存 ${atts.length} 个附件`, "success");
+        // 打开附件所在页面/库的入口提示（附件已入库，可插入笔记/文件库引用）。
+        setErr(`附件已入库：${atts.map((a) => a.name).join("、")}`);
+      }
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -1452,6 +1474,9 @@ export function EmailPanel() {
                       </button>
                       <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAsTask()}>
                         存为任务
+                      </button>
+                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAttachments()}>
+                        存附件
                       </button>
                       {!toolbarVeryNarrow && (
                         <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>

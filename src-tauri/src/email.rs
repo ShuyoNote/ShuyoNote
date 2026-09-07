@@ -840,6 +840,77 @@ pub async fn email_get_message(args: EmailSaveUidArgs) -> Result<EmailMessagePar
     Ok(EmailMessageParts { text, html })
 }
 
+/// 提取邮件附件并写入内容寻址附件库，返回附件元信息（供插入笔记/列表展示）。
+/// 递归解析 MIME 子部分，把 `Content-Disposition: attachment`（或带 filename 的）
+/// 子部分的字节用 sha256 内容寻址存储，同名/同内容自动去重。
+#[tauri::command]
+pub async fn email_get_attachments(
+    app: tauri::AppHandle,
+    db: State<'_, crate::db::Db>,
+    args: EmailSaveUidArgs,
+) -> Result<Vec<crate::models::AttachmentMeta>, String> {
+    use sha2::{Digest, Sha256};
+
+    let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
+    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
+
+    fn walk<'a>(
+        p: &'a mailparse::ParsedMail<'a>,
+        out: &mut Vec<(&'a str, String, Vec<u8>)>,
+    ) {
+        // 从 Content-Disposition header 判断是否附件，并取 filename。
+        let mut filename: Option<String> = None;
+        let mut is_attachment = false;
+        for h in &p.headers {
+            if h.get_key().eq_ignore_ascii_case("Content-Disposition") {
+                let cd = mailparse::parse_content_disposition(&h.get_value());
+                filename = cd.params.get("filename").cloned().or_else(|| cd.params.get("name").cloned());
+                is_attachment = cd.params.get("filename").map(|s| !s.is_empty()).unwrap_or(false)
+                    || cd.params.get("name").map(|s| !s.is_empty()).unwrap_or(false)
+                    || matches!(cd.disposition, mailparse::DispositionType::Attachment);
+                break;
+            }
+        }
+        // ctype 里也可能带 filename/name 参数。
+        if filename.is_none() {
+            filename = p.ctype.params.get("filename").cloned().or_else(|| p.ctype.params.get("name").cloned());
+        }
+        if is_attachment || filename.as_ref().map(|s| !s.is_empty()).unwrap_or(false) {
+            let name = filename.unwrap_or_else(|| "attachment".to_string());
+            if let Ok(bytes) = p.get_body_raw() {
+                out.push((&p.ctype.mimetype, name, bytes));
+            }
+        }
+        for sub in &p.subparts {
+            walk(sub, out);
+        }
+    }
+
+    let mut found: Vec<(&str, String, Vec<u8>)> = Vec::new();
+    walk(&parsed, &mut found);
+
+    let mut result = Vec::new();
+    for (mime, name, data) in found {
+        if data.is_empty() {
+            continue;
+        }
+        let hash = {
+            let mut h = Sha256::new();
+            h.update(&data);
+            hex_of(&h.finalize())
+        };
+        let meta = crate::attachments::write_attachment_bytes(app.clone(), db.clone(), hash, mime.to_string(), name, data)
+            .map_err(|e| format!("附件写入失败: {}", e))?;
+        result.push(meta);
+    }
+    Ok(result)
+}
+
+/// 小写 hex（sha2 0.11 的 Output 不再实现 LowerHex）。
+fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// 递归取邮件正文：收集所有候选（text/plain 与 text/html），返回**最长**的一个。
 /// 这样 multipart/alternative 里即便 text/plain 只有简短版权、text/html 才是完整正文，
 /// 也会取到内容更全的那份；纯 HTML 时剥标签。

@@ -249,6 +249,7 @@ pub fn run() {
             email::email_get_body,
             email::email_get_html,
             email::email_get_message,
+            email::email_get_attachments,
             email::email_save_account,
             email::email_get_account,
             email::email_unseen_count,
