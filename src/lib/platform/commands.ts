@@ -108,7 +108,8 @@ export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
-  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
+  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
+  email_fetch_all_months: { args: { args: { folders: string[] } }; result: string[] };
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
   email_get_html: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };

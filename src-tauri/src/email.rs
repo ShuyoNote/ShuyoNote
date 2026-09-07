@@ -492,12 +492,13 @@ pub struct EmailMonthsArgs {
     pub folders: Vec<String>,
 }
 
-#[tauri::command]
-pub async fn email_list_months(args: EmailMonthsArgs) -> Result<Vec<String>, String> {
+/// 枚举单个账号（多文件夹）所有含邮件的月份（含未加载历史），供月份选择器启用对应月份。
+/// 只拉 ENVELOPE（不含正文），按每封 Date 提取 `YYYY-M` 去重，结果升序。
+async fn list_account_months(account: &EmailAccountArgs, folders: &[String]) -> Result<Vec<String>, String> {
     use futures_util::StreamExt;
 
-    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders };
-    let mut session = open_session(&args.account, "INBOX").await?;
+    let folders = if folders.is_empty() { vec!["INBOX".to_string()] } else { folders.to_vec() };
+    let mut session = open_session(account, "INBOX").await?;
     let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for folder in &folders {
@@ -518,6 +519,11 @@ pub async fn email_list_months(args: EmailMonthsArgs) -> Result<Vec<String>, Str
         }
     }
     Ok(months.into_iter().collect())
+}
+
+#[tauri::command]
+pub async fn email_list_months(args: EmailMonthsArgs) -> Result<Vec<String>, String> {
+    list_account_months(&args.account, &args.folders).await
 }
 
 /// 从 Date 字符串提取 `YYYY-M`（0-based 月）键；无法解析返回 None。
@@ -1192,19 +1198,48 @@ fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMe
     })
 }
 
-/// 拉取一个账号（多文件夹）的邮件元信息 + 未读数。
-async fn fetch_account_emails(account: &EmailAccountArgs, folders: &[String]) -> Result<(Vec<EmailMeta>, u32), String> {
+/// 拉取一个账号（多文件夹）的邮件元信息 + 未读数。传 date_from/date_to 时按日期区间过滤。
+async fn fetch_account_emails(
+    account: &EmailAccountArgs,
+    folders: &[String],
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+) -> Result<(Vec<EmailMeta>, u32), String> {
     use futures_util::StreamExt;
     let mut session = open_session(account, "INBOX").await?;
     let mut out = Vec::new();
     let mut unread = 0u32;
     for folder in folders {
         session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
-        let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
-        while let Some(Ok(m)) = stream.next().await {
-            if let Some(meta) = meta_from_fetch(&m, folder) {
-                if !meta.seen { unread += 1; }
-                out.push(meta);
+        if let (Some(df), Some(dt)) = (date_from, date_to) {
+            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
+            let from_s = imap_date(df);
+            let to_s = imap_date(dt);
+            let query = format!("SINCE {} BEFORE {}", from_s, to_s);
+            let ids = session
+                .uid_search(&query)
+                .await
+                .map_err(|e| format!("按日期搜索 {} 失败: {}", folder, e))?;
+            if !ids.is_empty() {
+                let set = ids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+                let mut stream = session
+                    .uid_fetch(set, "(ENVELOPE UID FLAGS)")
+                    .await
+                    .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+                while let Some(Ok(m)) = stream.next().await {
+                    if let Some(meta) = meta_from_fetch(&m, folder) {
+                        if !meta.seen { unread += 1; }
+                        out.push(meta);
+                    }
+                }
+            }
+        } else {
+            let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+            while let Some(Ok(m)) = stream.next().await {
+                if let Some(meta) = meta_from_fetch(&m, folder) {
+                    if !meta.seen { unread += 1; }
+                    out.push(meta);
+                }
             }
         }
     }
@@ -1219,6 +1254,11 @@ pub struct EmailFetchAllArgs {
     pub limit: u32,
     #[serde(default)]
     pub offset: u32,
+    /// 可选日期区间（YYYY-MM-DD），按 IMAP SEARCH 过滤到某个月。
+    #[serde(default)]
+    pub date_from: Option<String>,
+    #[serde(default)]
+    pub date_to: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1229,6 +1269,7 @@ pub struct EmailAggregate {
 }
 
 /// 聚合所有账号的收件流（B）：合并所有账号、按时间降序、分页；单账号失败跳过。
+/// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
 #[tauri::command]
 pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
     let accounts = read_accounts(&db, &app)?;
@@ -1239,7 +1280,7 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
     for acc in &accounts {
         let key = account_key(acc);
         account_keys.push(key.clone());
-        match fetch_account_emails(acc, &folders).await {
+        match fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await {
             Ok((metas, u)) => {
                 unread_total += u;
                 for mut m in metas {
@@ -1259,6 +1300,27 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
         emails = emails[start..end].to_vec();
     }
     Ok(EmailAggregate { emails, unread: unread_total, accounts: account_keys })
+}
+
+#[derive(Deserialize)]
+pub struct EmailFetchAllMonthsArgs {
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+/// 聚合所有账号的「含邮件月份」并集（供聚合视图月份选择器用）；单账号失败跳过。
+#[tauri::command]
+pub async fn email_fetch_all_months(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllMonthsArgs) -> Result<Vec<String>, String> {
+    let accounts = read_accounts(&db, &app)?;
+    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders };
+    let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for acc in &accounts {
+        match list_account_months(acc, &folders).await {
+            Ok(ms) => months.extend(ms),
+            Err(_) => { /* 单账号失败跳过，不影响其它账号 */ }
+        }
+    }
+    Ok(months.into_iter().collect())
 }
 
 #[cfg(test)]

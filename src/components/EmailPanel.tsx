@@ -477,16 +477,17 @@ export function EmailPanel() {
 
   // 有账号后列出文件夹，并保证默认选「收件箱」；顺带拉取所有月份。
   useEffect(() => {
-    if (!repAccount) return;
-    api
-      .emailListFolders(repAccount)
-      .then((fs) => {
-        const list = fs.length ? fs : ["INBOX"];
-        setAllFolders(list);
-        setFolders((prev) => (prev.some((f) => list.includes(f)) ? prev : ["INBOX"]));
-      })
-      .catch(() => setAllFolders(["INBOX"]));
-    void loadMonths(repAccount);
+    if (repAccount) {
+      api
+        .emailListFolders(repAccount)
+        .then((fs) => {
+          const list = fs.length ? fs : ["INBOX"];
+          setAllFolders(list);
+          setFolders((prev) => (prev.some((f) => list.includes(f)) ? prev : ["INBOX"]));
+        })
+        .catch(() => setAllFolders(["INBOX"]));
+    }
+    void loadMonths();
     void loadSaveCandidates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repAccount, accounts]);
@@ -637,9 +638,8 @@ export function EmailPanel() {
     }
   };
 
-  // 按月份从后端拉取该月区间邮件（直接替换列表），用于月份选择器「直达某月」。
+  // 按月份从后端拉取该月区间邮件（直接替换列表），用于月份选择器「直达某月」；聚合视图走聚合命令。
   const fetchMonth = async (year: number, month0: number) => {
-    if (!repAccount) return;
     const from = `${year}-${String(month0 + 1).padStart(2, "0")}-01`;
     // IMAP SEARCH `BEFORE` 是严格小于，且不接受「当月最后一天」作为日期（30 天月传 31 无效）。
     // 用「下月 1 日」才能覆盖当月全部（含月末当天）；12 月跨年到次年 1 月。
@@ -650,14 +650,26 @@ export function EmailPanel() {
     setBusy(true);
     setErr("");
     try {
-      const r = await api.emailFetchInbox(repAccount, folders, 0, 0, from, to);
-      setList(r);
-      setUnread(r.filter((m) => !m.seen).length);
-      setHasMore(false);
-      if (r.length === 0) {
-        setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
-      } else {
-        void selectEmail(r[0], repAccount);
+      if (isAggregate) {
+        const agg = await api.emailFetchAll(folders, 0, 0, from, to);
+        setList(agg.emails);
+        setUnread(agg.unread);
+        setHasMore(false);
+        if (agg.emails.length === 0) {
+          setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
+        } else {
+          void selectEmail(agg.emails[0]);
+        }
+      } else if (repAccount) {
+        const r = await api.emailFetchInbox(repAccount, folders, 0, 0, from, to);
+        setList(r);
+        setUnread(r.filter((m) => !m.seen).length);
+        setHasMore(false);
+        if (r.length === 0) {
+          setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
+        } else {
+          void selectEmail(r[0], repAccount);
+        }
       }
     } catch (e) {
       setErr(String(e));
@@ -666,11 +678,16 @@ export function EmailPanel() {
     }
   };
 
-  // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用。
-  const loadMonths = async (acc: EmailAccount, fs: string[] = folders) => {
+  // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用；聚合视图走聚合命令、单账号走该账号。
+  const loadMonths = async (fs: string[] = folders) => {
     try {
-      const months = await api.emailListMonths(acc, fs);
-      setAllMonths(new Set(months));
+      if (isAggregate) {
+        const months = await api.emailFetchAllMonths(fs);
+        setAllMonths(new Set(months));
+      } else if (repAccount) {
+        const months = await api.emailListMonths(repAccount, fs);
+        setAllMonths(new Set(months));
+      }
     } catch {
       // 列出月份失败不致命，月份网格回退到仅当前已加载列表。
     }
@@ -810,7 +827,7 @@ export function EmailPanel() {
 
   const refresh = async () => {
     await fetchInbox(scopeAccount, folders);
-    if (repAccount) void loadMonths(repAccount, folders);
+    void loadMonths(folders);
   };
 
   // AI 总结邮件要点/行动项（A1）：复用已配置的 AI provider（store/ai.ts）。
@@ -1280,7 +1297,7 @@ export function EmailPanel() {
     const final = next.length ? next : ["INBOX"];
     setFolders(final);
     void fetchInbox(scopeAccount, final);
-    if (repAccount) void loadMonths(repAccount, final);
+    void loadMonths(final);
   };
 
   // 点击文件夹选择器外部关闭。
@@ -1653,9 +1670,8 @@ export function EmailPanel() {
                               return (
                                 <button
                                   key={name}
-                                  className={`email-month-cell${has && !isAggregate ? " is-avail" : ""}`}
-                                  disabled={!has || isAggregate}
-                                  title={isAggregate ? "聚合视图下请先切到单账号再按月份直达" : ""}
+                                  className={`email-month-cell${has ? " is-avail" : ""}`}
+                                  disabled={!has}
                                   onClick={() => scrollToMonth(pickerYear, m)}
                                 >
                                   {name}
