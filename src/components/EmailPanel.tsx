@@ -838,6 +838,8 @@ export function EmailPanel() {
       if (pageId) {
         // 邮件字段 → 页面属性（发件人/收件人/主题/日期），可在数据库视图筛选。
         await writeEmailProps(pageId, active);
+        // A2 标签映射：把发件人作为标签挂到笔记（addTag 按 name 幂等），便于按发件人筛选。
+        await api.addTag(pageId, senderNameOf(active.from)).catch(() => {});
       }
       setErr("");
       toast("已存为笔记", "success");
