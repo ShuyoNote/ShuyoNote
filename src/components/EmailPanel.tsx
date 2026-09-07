@@ -759,6 +759,29 @@ export function EmailPanel() {
       } else {
         content = emailHtmlToLexical(`<p>${escapeHtml(body)}</p>`);
       }
+      // 邮件附件 → 以内容寻址引用节点追加到正文（B2：附件进笔记）。
+      try {
+        const attaches = await api.emailGetAttachments(account, uid, active.folder).catch(() => []);
+        if (attaches.length) {
+          const lex = JSON.parse(content.content_json) as { root?: { children?: unknown[] } };
+          const children = lex?.root?.children;
+          if (Array.isArray(children)) {
+            for (const a of attaches) {
+              children.push({
+                type: "attachment-ref",
+                version: 1,
+                attachmentId: a.id,
+                name: a.name,
+                size: a.size,
+                mime: a.mime,
+                hash: a.hash,
+                path: a.path,
+              });
+            }
+            content.content_json = JSON.stringify(lex);
+          }
+        }
+      } catch { /* 附件插入失败不阻塞存为笔记 */ }
       const title = active.subject || "(无主题)";
       // 去重：同标题已有笔记时提示「继续新建」还是「打开已有（合并）」。取消 = 不存。
       try {
