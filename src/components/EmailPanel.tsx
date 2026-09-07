@@ -378,6 +378,11 @@ export function EmailPanel() {
   const measureRightRef = useRef<HTMLDivElement>(null);
   const measureMoreRef = useRef<HTMLDivElement>(null);
   const [need, setNeed] = useState({ full: 9999, coreAction: 9999 });
+  // 顶部标题栏的逐级收纳阈值同样按实测宽度（而非固定 720/560）。
+  const measureHeadTitleRef = useRef<HTMLSpanElement>(null);
+  const measureHeadSubRef = useRef<HTMLSpanElement>(null);
+  const measureHeadActionsRef = useRef<HTMLDivElement>(null);
+  const [headNeed, setHeadNeed] = useState({ sub: 9999, tool: 9999 });
   // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
   const pageHeadRef = useRef<HTMLDivElement>(null);
   const [headW, setHeadW] = useState(9999);
@@ -1210,6 +1215,26 @@ export function EmailPanel() {
     if (measureMoreRef.current) ro.observe(measureMoreRef.current);
     return () => ro.disconnect();
   }, [active, useRich, html, isTrusted, showImages]);
+
+  // 测量顶部标题栏三组实际宽度：副标题是否隐藏（headSub）、工具是否收起（headTool），
+  // 替代固定阈值 720/560。文案随 folders / 账号变化；30 = .email-page-head 左右 padding(16*2)。
+  useEffect(() => {
+    const GAP = 12; // .email-page-head gap
+    const measure = () => {
+      const tw = measureHeadTitleRef.current?.offsetWidth ?? 0;
+      const sw = measureHeadSubRef.current?.offsetWidth ?? 0;
+      const aw = measureHeadActionsRef.current?.offsetWidth ?? 0;
+      setHeadNeed({
+        sub: Math.ceil(tw + sw + aw + GAP * 2),
+        tool: Math.ceil(tw + aw + GAP),
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (measureHeadActionsRef.current) ro.observe(measureHeadActionsRef.current);
+    if (measureHeadTitleRef.current) ro.observe(measureHeadTitleRef.current);
+    return () => ro.disconnect();
+  }, [folders, account]);
   // 信任当前发件人域名：加入持久化配置并立即生效。
   const trustSender = async () => {
     if (!account || !active) return;
@@ -1228,15 +1253,17 @@ export function EmailPanel() {
   };
   const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
   // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
-  const narrow = listW < 380;
+  // 阈值按三列的实际最小需求（拖动列宽后仍准确），而非固定 380。
+  const colMin = 26 + fromW + subjectW + 72 + 24 + 16;
+  const narrow = listW < colMin;
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
   // 阅读区工具栏逐级收纳（阈值按按钮组实测宽度，而非固定常量）：
   //   宽 → P+Q+R 全显；中 → R 收进「更多」（P+Q+更多）；窄 → Q 也收进「更多」（P+更多）。
   const toolbarNarrow = toolbarW < need.full;          // 放不下 P+Q+R → R 收紧进「更多」（出现「更多」按钮）
   const toolbarVeryNarrow = toolbarW < need.coreAction; // 放不下 P+Q+「更多」 → Q 也收紧进「更多」
-  // 顶部标题栏：宽时说明+工具按钮都显示；稍窄只隐藏说明；很窄再把工具按钮收进「更多」。
-  const headSubNarrow = headW < 720;
-  const headToolNarrow = headW < 560;
+  // 顶部标题栏逐级收纳（阈值按实测内容宽度，而非固定 720/560）：32 = .email-page-head 左右 padding。
+  const headSubNarrow = headW < headNeed.sub + 32;
+  const headToolNarrow = headW < headNeed.tool + 32;
 
   return (
     <>
@@ -1340,6 +1367,17 @@ export function EmailPanel() {
                 <button className="sync-btn ghost" onClick={closePanel} aria-label="关闭">✕</button>
               </div>
             </header>
+
+            {/* 头部隐藏测量基准：量出标题/副标题/工具组实际宽度，供 headSub/headTool 收纳阈值使用（不占布局）。 */}
+            <div className="email-read-measure" aria-hidden="true">
+              <span ref={measureHeadTitleRef} className="email-page-title-text">邮箱</span>
+              <span ref={measureHeadSubRef} className="email-page-sub" style={{ maxWidth: "none" }}>聚合收件箱 · 邮件即笔记（桌面版）</span>
+              <div ref={measureHeadActionsRef} className="email-page-actions">
+                <span className="sync-btn ghost">{folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}</span>
+                <span className="sync-btn ghost"><RefreshIcon width={14} height={14} /> 拉取</span>
+                <span className="sync-btn ghost"><SettingsIcon width={14} height={14} /> 设置</span>
+              </div>
+            </div>
 
             <div className="email-page-body">
               {!account && (
