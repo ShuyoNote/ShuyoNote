@@ -28,7 +28,7 @@
   --hover: #f2f3f5;
   --hover-strong: #e8eaed;
   /* Left sidebar width (shared by body-portaled overlays that must not cover it). */
-  --sidebar-w: 264px;
+  --sidebar-w: 240px;
 
   /* 左竖条宽 + 标题栏高：供 fixed 弹层（预览/TOC/PdfReader 等）避开这些 chrome。
      --titlebar-h 由前端在自绘标题栏开启时设为 32px，系统标题栏时 0。 */
@@ -419,8 +419,8 @@ body,
 
 /* ---------- Sidebar ---------- */
 .sidebar {
-  width: var(--sidebar-w, 264px);
-  min-width: var(--sidebar-w, 264px);
+  width: var(--sidebar-w, 240px);
+  min-width: var(--sidebar-w, 240px);
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   display: flex;
@@ -12623,7 +12623,7 @@ p:has(> .editor-drawing-container) {
   top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
-  left: calc(var(--activity-w, 0px) + var(--sidebar-w, 264px));
+  left: calc(var(--activity-w, 0px) + var(--sidebar-w, 240px));
   /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
      命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
   z-index: var(--z-content-overlay);

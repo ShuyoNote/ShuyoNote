@@ -606,9 +606,9 @@ export function PageTree(_props: {
   const loadSidebarWidth = () => {
     try {
       const n = Number(localStorage.getItem(SIDEBAR_W_KEY));
-      return Number.isFinite(n) && n >= 200 ? n : 264;
+      return Number.isFinite(n) && n >= 240 ? n : 240;
     } catch {
-      return 264;
+      return 240;
     }
   };
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
@@ -621,7 +621,7 @@ export function PageTree(_props: {
     e.preventDefault();
     const startX = e.clientX;
     const startW = sidebarWidthRef.current;
-    const clamp = (w: number) => Math.min(460, Math.max(200, w));
+    const clamp = (w: number) => Math.min(460, Math.max(240, w));
     const onMove = (ev: PointerEvent) => setSidebarWidth(clamp(startW + (ev.clientX - startX)));
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
