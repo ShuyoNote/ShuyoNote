@@ -20,6 +20,16 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
+// 头像淡背景：把主题色混入大量白，得到浅色底（配深色字）。
+function avatarBg(name: string): string {
+  const c = avatarColor(name);
+  const hex = c.replace("#", "");
+  const n = parseInt(hex, 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const mix = (ch: number) => Math.round(ch + (255 - ch) * 0.82);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
 // 从账号（邮箱地址）提取服务商短标注：取 @ 后的域名首段，如 zhaizy@qq.com → "qq"。
 function providerLabel(username: string): string {
   const at = username.lastIndexOf("@");
@@ -1368,7 +1378,7 @@ export function EmailPanel() {
                         <div className="email-read-subject">{active.subject || "(无主题)"}</div>
                         <div className="email-read-meta">
                           <span className="email-read-meta-avatar" aria-hidden>
-                            <span className="email-read-meta-avatar-inner" style={{ background: avatarColor(active.from) }}>
+                            <span className="email-read-meta-avatar-inner" style={{ background: avatarBg(active.from), color: avatarColor(active.from) }}>
                               {senderInitial(active.from)}
                             </span>
                           </span>
