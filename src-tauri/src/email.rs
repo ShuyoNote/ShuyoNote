@@ -30,6 +30,9 @@ pub struct EmailMeta {
     pub flagged: bool,
     /// 所属文件夹（收件箱/广告邮件/垃圾邮件…），用于多文件夹浏览与正文拉取。
     pub folder: String,
+    /// 来源账号标识（`host|username`）。单账号命令为空；聚合命令据此标注来源、定位账号。
+    #[serde(default)]
+    pub account: String,
 }
 
 /// 建立到 INBOX/目标文件夹的 IMAP 会话（TCP + TLS + 登录 + SELECT）。
@@ -428,6 +431,7 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
             seen,
             flagged,
             folder: folder.to_string(),
+            account: String::new(),
         })
     };
 
@@ -1132,6 +1136,129 @@ pub fn email_remove_account(db: State<Db>, app: tauri::AppHandle, account: Email
     list.retain(|a| account_key(a) != k);
     save_accounts(&path, key.as_ref(), &list)?;
     Ok(list.len() != before)
+}
+
+// ---- 多账号聚合（B）----
+
+/// 读取并解密所有已保存账号（供聚合命令用）。
+fn read_accounts(db: &State<'_, Db>, app: &tauri::AppHandle) -> Result<Vec<EmailAccountArgs>, String> {
+    let path = account_path(app)?;
+    if !path.exists() { return Ok(Vec::new()); }
+    let key = session_key(db);
+    let list = load_accounts(&path)?;
+    Ok(decrypt_accounts(key.as_ref(), list))
+}
+
+/// 把 Date 字符串解析成可排序的时间戳（毫秒）；失败返回 0。
+fn date_ts(s: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc2822(s.trim())
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0)
+}
+
+/// 从一条 FETCH 构造 EmailMeta（复用 email_fetch_inbox 的 build_meta 逻辑）。
+fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMeta> {
+    let env = m.envelope()?;
+    let subject = env
+        .subject
+        .as_ref()
+        .map(|s| decode_mime_words(&String::from_utf8_lossy(s.as_ref())))
+        .unwrap_or_default();
+    let from = env
+        .from
+        .as_ref()
+        .and_then(|v| v.first())
+        .map(|a| {
+            let mb = a.mailbox.as_ref().map(|x| String::from_utf8_lossy(x.as_ref()).to_string()).unwrap_or_default();
+            let host = a.host.as_ref().map(|x| String::from_utf8_lossy(x.as_ref()).to_string()).unwrap_or_default();
+            let addr = format!("{}@{}", mb, host);
+            let name = a.name.as_ref().map(|n| decode_mime_words(&String::from_utf8_lossy(n.as_ref())).trim().to_string()).unwrap_or_default();
+            if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) { format!("{} <{}>", name, addr) } else { addr }
+        })
+        .unwrap_or_default();
+    let date = env.date.as_ref().map(|d| String::from_utf8_lossy(d.as_ref()).to_string()).unwrap_or_default();
+    let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
+    let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+    Some(EmailMeta {
+        uid: m.uid.unwrap_or(0),
+        subject,
+        from,
+        date,
+        snippet: String::new(),
+        seen,
+        flagged,
+        folder: folder.to_string(),
+        account: String::new(),
+    })
+}
+
+/// 拉取一个账号（多文件夹）的邮件元信息 + 未读数。
+async fn fetch_account_emails(account: &EmailAccountArgs, folders: &[String]) -> Result<(Vec<EmailMeta>, u32), String> {
+    use futures_util::StreamExt;
+    let mut session = open_session(account, "INBOX").await?;
+    let mut out = Vec::new();
+    let mut unread = 0u32;
+    for folder in folders {
+        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+        while let Some(Ok(m)) = stream.next().await {
+            if let Some(meta) = meta_from_fetch(&m, folder) {
+                if !meta.seen { unread += 1; }
+                out.push(meta);
+            }
+        }
+    }
+    Ok((out, unread))
+}
+
+#[derive(Deserialize)]
+pub struct EmailFetchAllArgs {
+    #[serde(default)]
+    pub folders: Vec<String>,
+    #[serde(default)]
+    pub limit: u32,
+    #[serde(default)]
+    pub offset: u32,
+}
+
+#[derive(Serialize)]
+pub struct EmailAggregate {
+    pub emails: Vec<EmailMeta>,
+    pub unread: u32,
+    pub accounts: Vec<String>,
+}
+
+/// 聚合所有账号的收件流（B）：合并所有账号、按时间降序、分页；单账号失败跳过。
+#[tauri::command]
+pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
+    let accounts = read_accounts(&db, &app)?;
+    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
+    let mut rows: Vec<(i64, EmailMeta)> = Vec::new();
+    let mut unread_total = 0u32;
+    let mut account_keys = Vec::new();
+    for acc in &accounts {
+        let key = account_key(acc);
+        account_keys.push(key.clone());
+        match fetch_account_emails(acc, &folders).await {
+            Ok((metas, u)) => {
+                unread_total += u;
+                for mut m in metas {
+                    let ts = date_ts(&m.date);
+                    m.account = key.clone();
+                    rows.push((ts, m));
+                }
+            }
+            Err(_) => { /* 单账号失败跳过，不影响其它账号 */ }
+        }
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut emails: Vec<EmailMeta> = rows.into_iter().map(|(_, m)| m).collect();
+    if args.limit > 0 {
+        let start = (args.offset as usize).min(emails.len());
+        let end = (start + args.limit as usize).min(emails.len());
+        emails = emails[start..end].to_vec();
+    }
+    Ok(EmailAggregate { emails, unread: unread_total, accounts: account_keys })
 }
 
 #[cfg(test)]
