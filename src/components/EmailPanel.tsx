@@ -933,7 +933,7 @@ export function EmailPanel() {
   const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
   // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
   const narrow = listW < 380;
-  const colTemplateNarrow = "32px 1fr 24px"; // 勾选 | 内容区(两行) | 星标
+  const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
 
   return (
     <>
@@ -1089,7 +1089,7 @@ export function EmailPanel() {
                           <span className="email-col-date">日期</span>
                         </>
                       )}
-                      <span className="email-col-star" aria-hidden />
+                      {!narrow && <span className="email-col-star" aria-hidden />}
                     </div>
                     {filteredList.length === 0 && <div className="email-page-empty">
                       {list.length === 0 ? "暂无邮件，点「拉取收件箱」。" : "没有匹配的邮件（调整关键字试试）。"}
@@ -1137,19 +1137,21 @@ export function EmailPanel() {
                                 <span className="email-item-date">{fmtListTime(m)}</span>
                               </>
                             )}
-                            <span
-                              className={`email-item-star${m.flagged ? " is-starred" : ""}`}
-                              role="button"
-                              tabIndex={-1}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void toggleStarred(m);
-                              }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
-                              </svg>
-                            </span>
+                            {!narrow && (
+                              <span
+                                className={`email-item-star${m.flagged ? " is-starred" : ""}`}
+                                role="button"
+                                tabIndex={-1}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void toggleStarred(m);
+                                }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
+                                </svg>
+                              </span>
+                            )}
                           </div>
                         ))}
                       </div>
