@@ -1008,8 +1008,9 @@ export function EmailPanel() {
   const toolbarNarrow = toolbarOverflow || toolbarW < 720;
   // 更窄时再把 删除/已读/转发/回复 也收进「更多」，只留「存为笔记」。
   const toolbarVeryNarrow = toolbarW < 520;
-  // 顶部标题栏较窄：隐藏说明文字，并把工具按钮收进「更多」。
-  const headNarrow = headW < 640;
+  // 顶部标题栏：宽时说明+工具按钮都显示；稍窄只隐藏说明；很窄再把工具按钮收进「更多」。
+  const headSubNarrow = headW < 720;
+  const headToolNarrow = headW < 560;
 
   return (
     <>
@@ -1027,10 +1028,10 @@ export function EmailPanel() {
             <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>
-                {!headNarrow && <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>}
+                {!headSubNarrow && <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>}
               </div>
               <div className="email-page-actions">
-                {headNarrow ? (
+                {headToolNarrow ? (
                   <div className="email-head-more-wrap">
                     <button className="sync-btn ghost" onClick={() => setHeadMoreOpen((v) => !v)} aria-haspopup="menu" aria-expanded={headMoreOpen}>
                       更多
