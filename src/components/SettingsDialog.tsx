@@ -292,6 +292,8 @@ function EmailPane() {
   const [smtpSecurity, setSmtpSecurity] = useState("ssl");
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPass, setSmtpPass] = useState("");
+  const [trustedDomains, setTrustedDomains] = useState<string[]>([]);
+  const [trustInput, setTrustInput] = useState("");
   const [err, setErr] = useState("");
   const desktop = isDesktopPlatform();
 
@@ -312,6 +314,7 @@ function EmailPane() {
           setSmtpSecurity(a.smtp_security || "ssl");
           setSmtpUser(a.smtp_user);
           setSmtpPass(a.smtp_pass);
+          setTrustedDomains(a.trusted_domains ?? []);
         }
       })
       .catch(() => {});
@@ -334,6 +337,7 @@ function EmailPane() {
         smtp_security: smtpSecurity,
         smtp_user: smtpUser.trim(),
         smtp_pass: smtpPass,
+        trusted_domains: trustedDomains,
       });
       setErr("配置已保存 ✓");
     } catch (e) {
@@ -464,6 +468,57 @@ function EmailPane() {
                 </select>
               </div>
             )}
+
+            <div className="email-set-card email-set-trust-card">
+              <div className="email-set-card-text">
+                <div className="email-set-card-title">可信发件人域名</div>
+                <div className="email-set-card-sub">
+                  这些域名的远程图片自动加载（不用点「显示图片」）。打开过的邮件发件人域名会自动加入。
+                </div>
+              </div>
+            </div>
+            <div className="email-set-trust">
+              <div className="email-set-trust-list">
+                {trustedDomains.length === 0 && <span className="email-set-trust-empty">暂无（打开邮件时自动加入域名）</span>}
+                {trustedDomains.map((d) => (
+                  <span key={d} className="email-set-trust-chip">
+                    {d}
+                    <button
+                      className="email-set-trust-remove"
+                      title="移除可信"
+                      onClick={() => setTrustedDomains((prev) => prev.filter((x) => x !== d))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="email-set-trust-add">
+                <input
+                  className="set-input"
+                  placeholder="输入域名，如 qq.com"
+                  value={trustInput}
+                  onChange={(e) => setTrustInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const d = trustInput.trim().toLowerCase().replace(/^@/, "");
+                      if (d) setTrustedDomains((prev) => [...new Set([...prev, d])]);
+                      setTrustInput("");
+                    }
+                  }}
+                />
+                <button
+                  className="set-btn"
+                  onClick={() => {
+                    const d = trustInput.trim().toLowerCase().replace(/^@/, "");
+                    if (d) setTrustedDomains((prev) => [...new Set([...prev, d])]);
+                    setTrustInput("");
+                  }}
+                >
+                  添加
+                </button>
+              </div>
+            </div>
 
             <div className="set-actions">
               <button className="set-btn is-primary" disabled={!host} onClick={() => void save()}>保存配置</button>

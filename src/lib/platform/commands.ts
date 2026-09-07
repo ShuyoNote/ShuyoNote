@@ -94,6 +94,7 @@ export interface EmailAccount {
   smtp_security: string;
   smtp_user: string;
   smtp_pass: string;
+  trusted_domains: string[];
 }
 
 export interface EmailOpArgs {

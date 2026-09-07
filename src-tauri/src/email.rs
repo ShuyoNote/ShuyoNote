@@ -90,6 +90,9 @@ pub struct EmailAccountArgs {
     /// SMTP 认证密码；缺省复用 IMAP password。
     #[serde(default)]
     pub smtp_pass: String,
+    /// 可信发件人域名列表：命中域的远程图片自动加载（默认空，serde默认）。
+    #[serde(default)]
+    pub trusted_domains: Vec<String>,
 }
 
 fn default_email_interval() -> u16 {

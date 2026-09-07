@@ -44,6 +44,15 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+// 从邮箱地址（含 "Name <a@b.c>" 形式）提取域名，如 "a@qq.com" → "qq.com"、"a@netbird.io" → "netbird.io"。
+function emailDomainOf(v: string): string {
+  const m = v.match(/<([^>]+)>/);
+  const addr = (m ? m[1] : v).trim();
+  const at = addr.lastIndexOf("@");
+  if (at < 0) return addr.toLowerCase();
+  return addr.slice(at + 1).trim().toLowerCase();
+}
+
 // 把后端返回的账号对象补全成完整 EmailAccount（含 SMTP 字段）。
 function toAccount(a: EmailAccount): EmailAccount {
   return {
@@ -59,6 +68,7 @@ function toAccount(a: EmailAccount): EmailAccount {
     smtp_security: a.smtp_security,
     smtp_user: a.smtp_user,
     smtp_pass: a.smtp_pass,
+    trusted_domains: a.trusted_domains ?? [],
   };
 }
 
@@ -513,6 +523,24 @@ export function EmailPanel() {
     } finally {
       setLoadingBody(false);
     }
+    // 自动可信：打开一封邮件即把其发件人域名加入可信（下次自动放行图片）。
+    void autoTrust(m, acc);
+  };
+
+  // 把发件人域名加入可信集合（内存 + 持久化）。已有则忽略。
+  const autoTrust = async (m: EmailMeta, acc: EmailAccount) => {
+    const dom = emailDomainOf(m.from);
+    if (!dom) return;
+    const cur = acc.trusted_domains ?? [];
+    if (cur.includes(dom)) return;
+    const next = [...new Set([...cur, dom])];
+    const updated = { ...acc, trusted_domains: next };
+    setAccount(updated);
+    try {
+      await api.emailSaveAccount(updated);
+    } catch {
+      // 保存失败不阻塞，图片放行逻辑仍基于内存中的 updated。
+    }
   };
 
   const refresh = async () => {    if (!account) return;
@@ -916,6 +944,25 @@ export function EmailPanel() {
 
   const sections = groupEmails(filteredList);
   const provider = account ? providerLabel(account.username) : "";
+  // 可信发件人：当前邮件发件人域名在 trusted_domains 内 → 自动放行远程图片。
+  const isTrusted = !!active && !!account && account.trusted_domains.includes(emailDomainOf(active.from));
+  const effectiveShowImages = showImages || isTrusted;
+  // 信任当前发件人域名：加入持久化配置并立即生效。
+  const trustSender = async () => {
+    if (!account || !active) return;
+    const dom = emailDomainOf(active.from);
+    if (!dom) return;
+    const next = [...new Set([...(account.trusted_domains ?? []), dom])];
+    const updated = { ...account, trusted_domains: next };
+    setAccount(updated);
+    setShowImages(true);
+    try {
+      await api.emailSaveAccount(updated);
+      toast(`已信任 ${dom}`, "success");
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
   const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
 
   return (
@@ -1238,6 +1285,9 @@ export function EmailPanel() {
                           {showImages ? "屏蔽图片" : "显示图片"}
                         </button>
                       )}
+                      <button className="sync-btn ghost" disabled={!active || isTrusted} onClick={() => void trustSender()}>
+                        {isTrusted ? "已信任" : "信任此发件人"}
+                      </button>
                       <button className="sync-btn ghost" disabled={!active} onClick={() => setUseRich((v) => !v)}>
                         {useRich ? "纯文本" : "富文本"}
                       </button>
@@ -1264,7 +1314,7 @@ export function EmailPanel() {
                           {loadingBody
                             ? "加载正文…"
                             : useRich && html
-                              ? <EmailRichBody html={html} showImages={showImages} />
+                              ? <EmailRichBody html={html} showImages={effectiveShowImages} />
                               : body
                                 ? <EmailBody text={body} />
                                 : err

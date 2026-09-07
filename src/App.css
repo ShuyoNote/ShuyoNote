@@ -12136,6 +12136,40 @@ p:has(> .editor-drawing-container) {
   padding: 6px 8px;
 }
 
+/* 可信发件人域名管理 */
+.email-set-trust-card { margin-top: 12px; }
+.email-set-trust { max-width: 460px; margin: 6px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.email-set-trust-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.email-set-trust-empty { font-size: 12px; color: var(--text-faint); }
+.email-set-trust-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.email-set-trust-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.email-set-trust-remove:hover { background: var(--accent-soft); color: var(--accent); }
+.email-set-trust-add { display: flex; gap: 8px; }
+.email-set-trust-add .set-input { flex: 1; }
+
 /* 侧边栏邮箱图标未读角标 */
 .email-unread-badge {
   flex: none;
