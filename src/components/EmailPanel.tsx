@@ -413,19 +413,26 @@ export function EmailPanel() {
       .catch(() => setAllFolders(["INBOX"]));
   }, [account]);
 
-  // 检测阅读区工具栏宽度/是否溢出：较窄或放不下时把按钮收进「更多」。
+  // 检测阅读区工具栏宽度/是否溢出：放不下时把按钮收进「更多」。
   useEffect(() => {
     const el = readToolbarRef.current;
     if (!el) return;
+    let raf = 0;
     const measure = () => {
       setToolbarW(el.clientWidth);
       // 内容超出可视宽度（按钮 nowrap 导致溢出）→ 需要收纳。
       setToolbarOverflow(el.scrollWidth > el.clientWidth + 1);
     };
-    const ro = new ResizeObserver(measure);
+    const schedule = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
     measure();
-    return () => ro.disconnect();
+    // 布局稳定后再量一次，排除首帧未完成布局的误判。
+    raf = requestAnimationFrame(measure);
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
   }, []);
 
   // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
