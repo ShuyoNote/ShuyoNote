@@ -19,7 +19,12 @@
 5. **分页**：`emailFetchAll` 的 limit/offset + `hasMore`。
 6. **回归重点**：阅读、存为笔记（含 B2 附件节点）、A2 发件人标签、回复/转发——聚合流下必须用对账号。
 
+## 第 4 步已完成（2026-09-07）
+- **实现**：`EmailPanel.tsx` 全量改造——数据源按 `scope` 分「全部账号=`emailFetchAll` / 单账号=`emailFetchInbox`」；账号 tab 改为「全部账号 + 每账号」筛选；`accountFor(meta)` 按 `meta.account`（`host|username`）从加载的 `accounts` 定位所属账号，并把 `selectEmail`/`emailGetMessage`/`emailGetAttachments`/`emailGetHtml`/`markRead`/`deleteEmail`/`toggleStarred`/`markSelectedRead`/`deleteSelected`/`saveUid`/`saveAsTask`/`saveAttachments`/`saveSelectedAsNotes`/`sendCompose`/`autoTrust`/`trustSender` 等调用点的账号全部改为 `accountFor(active)`（单账号命令无 `meta.account` 时回退到当前筛选账号/首个账号）。
+- **配套**：为规避聚合流下不同账号 `uid` 相碰撞，引入 `emailKey`（`account|folder|uid`）作为列表 key / 勾选 key / 行高亮标识；批量操作（删除/标已读/存笔记）按「账号 + 文件夹」分组分别调后端。未读角标在聚合视图用后端汇总 `unread`，单操作按增量调整。
+- **验证**：`tsc`、`check-web-commands`、`pnpm build`、`cargo check` 均通过；`pnpm tauri dev` 运行中，HMR 已把改动推进真机窗。
+- **已知保留**：聚合视图的「月份直达」暂禁用（后端无聚合月份命令，避免误导）；文件夹/月份列表以首个账号为准（后端聚合按相同文件夹名遍历各账号）。
+
 ## 交接要点
-- 建议**新开会话 / 干净上下文**专注做第 4 步（上千行组件大改），逐项 `tsc` + 真机验证。
-- 后端 `email_fetch_all` 已就绪，先接 `api.emailFetchAll`，再改 tab 与账号定位。
-- 若第 4 步时间有限，可先只做「全部账号聚合列表 + `accountFor` 定位」，账号 tab 筛选随后补。
+- 第 4 步已于 2026-09-07 完成（见上「已完成」小节）。后续给未来会话：聚合视图已接 `api.emailFetchAll` + `accountFor` 账号定位 + 「全部/单账号」tab 筛选；真机回归重点仍是阅读 / 存为笔记（含 B2 附件节点）/ A2 发件人标签 / 回复转发，确认聚合流下各操作都用对账号。
+- 后端 `email_fetch_all` 已就绪；若要补齐聚合视图的「按月直达」，需后端新增聚合月份命令（当前月份选择器在聚合视图禁用）。
