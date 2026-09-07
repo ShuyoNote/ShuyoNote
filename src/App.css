@@ -564,7 +564,7 @@ body,
 .logo-mark {
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-md);
+  border-radius: 50%;
   background: linear-gradient(135deg, var(--accent-soft), var(--cat-purple-soft));
   color: var(--accent);
   font-size: 14px;

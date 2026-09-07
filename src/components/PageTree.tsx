@@ -30,6 +30,16 @@ function MenuIcon({ d }: { d: string }) {
     </svg>
   );
 }
+
+// 把主题色混入大量白，得到浅色底（配深色字），用于圆形工作空间图标。
+function lightenColor(hex: string, amount = 0.82): string {
+  const h = hex.replace("#", "");
+  const n = parseInt(h, 16);
+  if (Number.isNaN(n)) return hex;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const mix = (ch: number) => Math.round(ch + (255 - ch) * amount);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
 const ICON = {
   edit: "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
   window: "M5 3h9a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 9h4v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-1",
@@ -869,7 +879,7 @@ export function PageTree(_props: {
               className="logo-mark"
               style={
                 activeTheme
-                  ? { background: activeTheme, color: "#fff" }
+                  ? { background: lightenColor(activeTheme), color: activeTheme }
                   : undefined
               }
             >
