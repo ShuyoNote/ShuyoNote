@@ -359,8 +359,7 @@ export function EmailPanel() {
   // 关键词搜索：发件人/主题 子串匹配（统一搜索入口）。
   const [searchQuery, setSearchQuery] = useState("");
   // 懒加载分页：每页条数 + 是否还有更多。
-  const PAGE_SIZE = 60;
-  const [listPage, setListPage] = useState<number>(1);
+  const PAGE_SIZE = 200;
   const [hasMore, setHasMore] = useState(false);
 
   // 富文本远程图：默认不加载，用户点「显示图片」才加载（data-src→src）。
@@ -515,15 +514,15 @@ export function EmailPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders, page = 1) => {
+  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders, offset = 0) => {
     setBusy(true);
     setErr("");
     try {
-      const r = await api.emailFetchInbox(acc, fs, page * PAGE_SIZE, 0);
+      const r = await api.emailFetchInbox(acc, fs, PAGE_SIZE, offset);
       setList(r);
       setUnread(r.filter((m) => !m.seen).length);
-      setListPage(page);
-      setHasMore(r.length >= page * PAGE_SIZE);
+      // 拉满一页说明后面可能还有更多。
+      setHasMore(r.length >= PAGE_SIZE);
       if (r.length === 0) {
         setErr("未拉到邮件（检查账号 / 认证）");
       } else if (r.some((m) => m.uid === active?.uid)) {
@@ -538,20 +537,14 @@ export function EmailPanel() {
     }
   };
 
-  // 滚动到底时加载下一页，追加到列表。
+  // 滚动到底时按 offset 真正加载下一页，追加到列表末尾。
   const fetchMore = async () => {
     if (!account || busy || !hasMore) return;
-    const nextPage = listPage + 1;
     setBusy(true);
     try {
-      const r = await api.emailFetchInbox(account, folders, nextPage * PAGE_SIZE, 0);
-      setList((prev) => {
-        const seen = new Set(prev.map((m) => m.uid));
-        const extra = r.filter((m) => !seen.has(m.uid));
-        return [...prev, ...extra];
-      });
-      setListPage(nextPage);
-      setHasMore(r.length >= nextPage * PAGE_SIZE);
+      const r = await api.emailFetchInbox(account, folders, PAGE_SIZE, list.length);
+      if (r.length > 0) setList((prev) => [...prev, ...r]);
+      setHasMore(r.length >= PAGE_SIZE);
     } catch (e) {
       setErr(String(e));
     } finally {
