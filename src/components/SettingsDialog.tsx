@@ -14,7 +14,6 @@ import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
-import { useWindowChrome } from "../store/windowChrome";
 import { useNotes } from "../store/notes";
 import { useAuth } from "../store/auth";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
@@ -1030,10 +1029,6 @@ function AccountPane() {
 function AppearancePane() {
   const { theme, accent, setTheme, setAccent } = useTheme();
   const { i18n } = useTranslation();
-  const customTitleBar = useWindowChrome((s) => s.custom);
-  const setCustomTitleBar = useWindowChrome((s) => s.setCustom);
-  const material = useWindowChrome((s) => s.material);
-  const setMaterial = useWindowChrome((s) => s.setMaterial);
   const setLang = (lng: string) => {
     try { localStorage.setItem("shuyonote:lang", lng === "system" ? "" : lng); } catch { /* ignore */ }
     void i18n.changeLanguage(lng === "system" ? (navigator.language?.toLowerCase().startsWith("en") ? "en" : "zh-CN") : lng);
@@ -1088,47 +1083,6 @@ function AppearancePane() {
         </div>
         <p className="set-hint">强调色作用于按钮、选中态与链接，随明暗主题自动取对应色值。</p>
       </section>
-
-      {isDesktopPlatform() && (
-        <section className="set-section">
-          <div className="set-section-title">窗口</div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">自定义标题栏</div>
-              <div className="set-row-sub">
-                顶栏显示「当前页面 · 空间」并与应用同色。关掉则用系统标题栏——
-                若贴边分屏（Aero Snap）或边缘缩放手感不对，退回系统栏即可。
-              </div>
-            </div>
-            <button
-              className={`ui-toggle ${customTitleBar ? "on" : ""}`}
-              role="switch"
-              aria-checked={customTitleBar}
-              onClick={() => setCustomTitleBar(!customTitleBar)}
-            >
-              <span className="ui-toggle-knob" />
-            </button>
-          </div>
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">材质（Mica）</div>
-              <div className="set-row-sub">
-                顶栏透出桌面壁纸，Win11 22H2+ 生效，旧系统自动忽略。壁纸较花时
-                可能影响观感，需要时可关——与标题栏染色互斥。
-              </div>
-            </div>
-            <button
-              className={`ui-toggle ${material ? "on" : ""}`}
-              role="switch"
-              aria-checked={material}
-              onClick={() => setMaterial(!material)}
-            >
-              <span className="ui-toggle-knob" />
-            </button>
-          </div>
-          <p className="set-hint">两项切换均即时生效，无需重启。</p>
-        </section>
-      )}
     </>
   );
 }
