@@ -322,9 +322,9 @@ export function EmailPanel() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingBody, setLoadingBody] = useState(false);
-  const [listW, setListW] = useState<number>(() => Math.round(window.innerWidth * 0.3));
+  const [listW, setListW] = useState<number>(() => Math.round(window.innerWidth / 3));
   // 列表列宽：发件人/主题 可通过列表头拖拽调节；主题列弹性适应左栏宽度。
-  const [fromW, setFromW] = useState(110);
+  const [fromW, setFromW] = useState(90);
   const [subjectW, setSubjectW] = useState(160);
   const resizeRef = useRef<{ startX: number; startW: number; col: "from" | "subject" } | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
