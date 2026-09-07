@@ -1359,7 +1359,7 @@ export function EmailPanel() {
                               if (el) rowRefs.current.set(m.uid, el);
                               else rowRefs.current.delete(m.uid);
                             }}
-                            className={`email-item${active?.uid === m.uid ? " is-selected" : ""}${narrow ? " is-narrow" : ""}`}
+                            className={`email-item${active?.uid === m.uid ? " is-selected" : ""}${narrow ? " is-narrow" : ""}${!m.seen ? " is-unread" : ""}`}
                             style={{ gridTemplateColumns: narrow ? colTemplateNarrow : colTemplate }}
                             onClick={() => void selectEmail(m)}
                           >

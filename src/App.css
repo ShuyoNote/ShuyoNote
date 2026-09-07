@@ -17157,6 +17157,18 @@ p:has(> .editor-drawing-container) {
 }
 .email-item-date { color: var(--text-faint); font-size: 11px; text-align: right; white-space: nowrap; }
 
+/* 已读/未读视觉区分：未读主题加粗、颜色更深；已读整体柔和 */
+.email-item.is-unread .email-item-from,
+.email-item.is-unread .email-item-subject {
+  font-weight: 700;
+  color: var(--text);
+}
+.email-item:not(.is-unread):not(.is-selected) .email-item-from,
+.email-item:not(.is-unread):not(.is-selected) .email-item-subject {
+  color: var(--text-dim);
+}
+.email-item.is-unread .email-item-from { color: var(--text); }
+
 /* 左侧栏较窄时的两行布局：首行 发件人+时间，二行 主题；邮件间加淡分割线 */
 .email-item.is-narrow { padding: 8px 12px; }
 .email-item-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
