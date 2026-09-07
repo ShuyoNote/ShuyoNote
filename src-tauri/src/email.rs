@@ -375,7 +375,18 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
                             .as_ref()
                             .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
                             .unwrap_or_default();
-                        format!("{}@{}", mb, host)
+                        let addr = format!("{}@{}", mb, host);
+                        // 显示名称（RFC2047 可能编码），如 "NetBird <no-reply@netbird.io>"。
+                        let name = a
+                            .name
+                            .as_ref()
+                            .map(|n| decode_mime_words(&String::from_utf8_lossy(n.as_ref())).trim().to_string())
+                            .unwrap_or_default();
+                        if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) {
+                            format!("{} <{}>", name, addr)
+                        } else {
+                            addr
+                        }
                     })
                     .unwrap_or_default();
                 let date = env

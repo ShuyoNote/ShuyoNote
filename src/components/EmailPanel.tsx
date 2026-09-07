@@ -35,6 +35,13 @@ function stripEmail(v: string): string {
   return m ? m[1].trim() : v.trim();
 }
 
+// 头像首字母：优先取显示名称（< 之前的部分），否则取邮箱地址首字符。
+function senderInitial(v: string): string {
+  const name = v.split("<")[0].trim();
+  const src = name || v;
+  return (src.trim().charAt(0) || "?").toUpperCase();
+}
+
 // HTML 转义（用于把纯文本正文包进 <p> 后交给 Lexical 导入，避免被当成 HTML）。
 function escapeHtml(s: string): string {
   return s
@@ -1301,7 +1308,7 @@ export function EmailPanel() {
                         <div className="email-read-meta">
                           <span className="email-read-meta-avatar" aria-hidden>
                             <span className="email-read-meta-avatar-inner" style={{ background: avatarColor(active.from) }}>
-                              {(active.from.trim().charAt(0) || "?").toUpperCase()}
+                              {senderInitial(active.from)}
                             </span>
                           </span>
                           <span className="email-read-meta-main">
