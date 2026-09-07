@@ -103,6 +103,17 @@ function toAccount(a: EmailAccount): EmailAccount {
   };
 }
 
+// 账号唯一键（与后端 account_key 一致：host|username，均小写）。聚合流里用 meta.account 据此定位所属账号。
+function accountKey(a: EmailAccount): string {
+  return `${a.host.toLowerCase()}|${a.username.toLowerCase()}`;
+}
+
+// 一封邮件的稳定标识：账号标注(host|username) + 文件夹 + uid。
+// 聚合流下不同账号的 uid 可能相同，单用 uid 会误匹配，故用复合键。
+function emailKey(m: EmailMeta): string {
+  return `${m.account ?? ""}|${m.folder}|${m.uid}`;
+}
+
 function parseDate(s: string): Date | null {
   if (!s) return null;
   const d = new Date(s);
@@ -323,11 +334,12 @@ export function EmailPanel() {
   const splitRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const dragTouched = useRef(false);
-  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const listScrollRef = useRef<HTMLDivElement>(null);
 
-  const [account, setAccount] = useState<EmailAccount | null>(null);
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  // 当前「账号筛选」范围：null = 全部账号（聚合视图）；否则为该单账号的 key（host|username，小写）。
+  const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [list, setList] = useState<EmailMeta[]>([]);
   const [active, setActive] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
@@ -343,7 +355,7 @@ export function EmailPanel() {
   const [fromW, setFromW] = useState(90);
   const [subjectW, setSubjectW] = useState(160);
   const resizeRef = useRef<{ startX: number; startW: number; col: "from" | "subject" } | null>(null);
-  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
   // 收件箱里所有含邮件的月份（含未加载历史），供月份选择器启用对应月份。
@@ -367,6 +379,38 @@ export function EmailPanel() {
   // 懒加载分页：每页条数 + 是否还有更多。
   const PAGE_SIZE = 200;
   const [hasMore, setHasMore] = useState(false);
+
+  // 当前筛选范围对应的单账号（scopeKey 命中 accounts 里的一个）；null = 全部账号聚合。
+  const scopeAccount = useMemo(
+    () => (scopeKey ? accounts.find((a) => accountKey(a) === scopeKey) ?? null : null),
+    [scopeKey, accounts],
+  );
+  const isAggregate = scopeKey === null;
+  // 代表账号：单账号筛选用该账号；聚合视图的文件夹/月份选择仍以首个账号为准（后端聚合按相同文件夹名遍历各账号）。
+  const repAccount = scopeAccount ?? accounts[0] ?? null;
+
+  // 按一封邮件的 meta.account（host|username）定位其所属 EmailAccount（聚合流）。
+  // 单账号命令返回的 meta.account 为空 → 回退到当前筛选账号；都未命中再回退到首个账号。
+  const accountFor = (m: EmailMeta | null | undefined): EmailAccount | null => {
+    if (!m) return null;
+    const k = m.account;
+    if (k) {
+      const hit = accounts.find((a) => accountKey(a) === k);
+      if (hit) return hit;
+    }
+    return scopeAccount ?? accounts[0] ?? null;
+  };
+
+  // 把某个账号的改动同步回 accounts 列表（如信任发件人后更新 trusted_domains）。
+  const patchAccount = (updated: EmailAccount) => {
+    const k = accountKey(updated);
+    setAccounts((prev) => prev.map((a) => (accountKey(a) === k ? updated : a)));
+  };
+
+  // 按增量调整角标（避免用「当前一页」的未读数覆盖聚合/全量的真实值）。
+  const adjustUnread = (delta: number) => {
+    setUnread(Math.max(0, useEmailPanel.getState().unread + delta));
+  };
 
   // 富文本远程图：默认不加载，用户点「显示图片」才加载（data-src→src）。
   const [showImages, setShowImages] = useState(false);
@@ -416,29 +460,23 @@ export function EmailPanel() {
         setAccounts(list.map((a) => toAccount(a)));
       })
       .catch(() => {});
-    api
-      .emailGetAccount()
-      .then((a) => {
-        if (a) setAccount(toAccount(a));
-      })
-      .catch(() => {});
   }, []);
 
-  // 账号可用后列出所有文件夹，并保证默认选「收件箱」；顺带拉取所有月份。
+  // 有账号后列出文件夹，并保证默认选「收件箱」；顺带拉取所有月份。
   useEffect(() => {
-    if (!account) return;
+    if (!repAccount) return;
     api
-      .emailListFolders(account)
+      .emailListFolders(repAccount)
       .then((fs) => {
         const list = fs.length ? fs : ["INBOX"];
         setAllFolders(list);
         setFolders((prev) => (prev.some((f) => list.includes(f)) ? prev : ["INBOX"]));
       })
       .catch(() => setAllFolders(["INBOX"]));
-    void loadMonths(account);
+    void loadMonths(repAccount);
     void loadSaveCandidates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account]);
+  }, [repAccount, accounts]);
 
   // 检测阅读区宽度：放不下时把按钮收进「更多」。用工具栏自身可用宽（clientWidth）
   // 而非 readPane.clientWidth（后者含左右 padding，会高估可用宽度约 48px 导致轻微溢出）。
@@ -503,54 +541,60 @@ export function EmailPanel() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [moreOpen]);
 
-  // 打开时：用已保存账号拉取收件箱；顺带根据 `seen` 刷新未读角标。
+  // 打开时：按当前筛选范围拉取收件箱（聚合 / 单账号）。
   useEffect(() => {
     if (!open) return;
     setErr("");
-    if (!account) {
-      api
-        .emailGetAccount()
-        .then((a) => {
-          if (!a) {
-            setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
-            return;
-          }
-          const acc = toAccount(a);
-          setAccount(acc);
-          void fetchInbox(acc);
-        })
-        .catch((e) => setErr(String(e)));
+    if (accounts.length === 0) {
+      setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
       return;
     }
-    void fetchInbox(account);
+    void fetchInbox(scopeAccount);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 切换活动账号：更新 setAccount 并拉取该账号收件箱。
-  const switchAccount = async (acc: EmailAccount) => {
-    setAccount(acc);
+  // 切换账号筛选：key = null 表示「全部账号」（聚合）；否则为该单账号 key。
+  const switchScope = async (key: string | null) => {
+    setScopeKey(key);
     setList([]);
     setActive(null);
     setBody("");
     setHtml("");
     setChecked(new Set());
+    const acc = key ? accounts.find((a) => accountKey(a) === key) ?? null : null;
     await fetchInbox(acc);
   };
 
-  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders, offset = 0) => {    setBusy(true);
+  // 拉取列表（聚合 = emailFetchAll(limit/offset)；单账号 = emailFetchInbox）。
+  const fetchInbox = async (acc: EmailAccount | null, fs: string[] = folders, offset = 0) => {
+    setBusy(true);
     setErr("");
     try {
-      const r = await api.emailFetchInbox(acc, fs, PAGE_SIZE, offset);
-      setList(r);
-      setUnread(r.filter((m) => !m.seen).length);
-      // 拉满一页说明后面可能还有更多。
-      setHasMore(r.length >= PAGE_SIZE);
-      if (r.length === 0) {
-        setErr("未拉到邮件（检查账号 / 认证）");
-      } else if (r.some((m) => m.uid === active?.uid)) {
-        // 保持当前阅读的邮件选中，不打扰。
+      if (acc) {
+        const r = await api.emailFetchInbox(acc, fs, PAGE_SIZE, offset);
+        setList(r);
+        setUnread(r.filter((m) => !m.seen).length);
+        // 拉满一页说明后面可能还有更多。
+        setHasMore(r.length >= PAGE_SIZE);
+        if (r.length === 0) {
+          setErr("未拉到邮件（检查账号 / 认证）");
+        } else if (r.some((m) => (active ? emailKey(m) === emailKey(active) : false))) {
+          // 保持当前阅读的邮件选中，不打扰。
+        } else {
+          void selectEmail(r[0], acc);
+        }
       } else {
-        void selectEmail(r[0], acc);
+        const agg = await api.emailFetchAll(fs, PAGE_SIZE, offset);
+        setList(agg.emails);
+        // 聚合角标用后端汇总的 unread（跨所有账号），而非当前页列表统计。
+        setUnread(agg.unread);
+        setHasMore(agg.emails.length >= PAGE_SIZE);
+        if (agg.emails.length === 0) {
+          setErr("未拉到邮件（检查账号 / 认证）");
+        } else if (agg.emails.some((m) => (active ? emailKey(m) === emailKey(active) : false))) {
+        } else {
+          void selectEmail(agg.emails[0]);
+        }
       }
     } catch (e) {
       setErr(String(e));
@@ -561,12 +605,18 @@ export function EmailPanel() {
 
   // 滚动到底时按 offset 真正加载下一页，追加到列表末尾。
   const fetchMore = async () => {
-    if (!account || busy || !hasMore) return;
+    if (busy || !hasMore) return;
     setBusy(true);
     try {
-      const r = await api.emailFetchInbox(account, folders, PAGE_SIZE, list.length);
-      if (r.length > 0) setList((prev) => [...prev, ...r]);
-      setHasMore(r.length >= PAGE_SIZE);
+      if (scopeAccount) {
+        const r = await api.emailFetchInbox(scopeAccount, folders, PAGE_SIZE, list.length);
+        if (r.length > 0) setList((prev) => [...prev, ...r]);
+        setHasMore(r.length >= PAGE_SIZE);
+      } else {
+        const agg = await api.emailFetchAll(folders, PAGE_SIZE, list.length);
+        if (agg.emails.length > 0) setList((prev) => [...prev, ...agg.emails]);
+        setHasMore(agg.emails.length >= PAGE_SIZE);
+      }
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -576,7 +626,7 @@ export function EmailPanel() {
 
   // 按月份从后端拉取该月区间邮件（直接替换列表），用于月份选择器「直达某月」。
   const fetchMonth = async (year: number, month0: number) => {
-    if (!account) return;
+    if (!repAccount) return;
     const from = `${year}-${String(month0 + 1).padStart(2, "0")}-01`;
     // IMAP SEARCH `BEFORE` 是严格小于，且不接受「当月最后一天」作为日期（30 天月传 31 无效）。
     // 用「下月 1 日」才能覆盖当月全部（含月末当天）；12 月跨年到次年 1 月。
@@ -587,14 +637,14 @@ export function EmailPanel() {
     setBusy(true);
     setErr("");
     try {
-      const r = await api.emailFetchInbox(account, folders, 0, 0, from, to);
+      const r = await api.emailFetchInbox(repAccount, folders, 0, 0, from, to);
       setList(r);
       setUnread(r.filter((m) => !m.seen).length);
       setHasMore(false);
       if (r.length === 0) {
         setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
       } else {
-        void selectEmail(r[0], account);
+        void selectEmail(r[0], repAccount);
       }
     } catch (e) {
       setErr(String(e));
@@ -604,7 +654,7 @@ export function EmailPanel() {
   };
 
   // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用。
-  const loadMonths = async (acc: EmailAccount = account!, fs: string[] = folders) => {
+  const loadMonths = async (acc: EmailAccount, fs: string[] = folders) => {
     try {
       const months = await api.emailListMonths(acc, fs);
       setAllMonths(new Set(months));
@@ -691,12 +741,18 @@ export function EmailPanel() {
     }
   };
 
-  const selectEmail = async (m: EmailMeta, acc: EmailAccount = account!) => {
+  const selectEmail = async (m: EmailMeta, acc?: EmailAccount | null) => {
+    const a = acc ?? accountFor(m);
+    if (!a) {
+      setActive(m);
+      setErr("找不到这封邮件的账号");
+      return;
+    }
     setActive(m);
     setLoadingBody(true);
     setErr("");
     setShowImages(false);
-    const key = bodyCacheKey(acc, m.folder, m.uid);
+    const key = bodyCacheKey(a, m.folder, m.uid);
     const hit = bodyCache.get(key);
     if (hit) {
       setBody(hit.text);
@@ -705,7 +761,7 @@ export function EmailPanel() {
     } else {
       try {
         // 一次拉取同时拿纯文本 + HTML（此前并发两次，浪费一半连接/拉取/解析）。
-        const parts = await api.emailGetMessage(acc, m.uid, m.folder);
+        const parts = await api.emailGetMessage(a, m.uid, m.folder);
         setBody(parts.text);
         setHtml(parts.html);
         bodyCache.set(key, { text: parts.text, html: parts.html });
@@ -718,8 +774,8 @@ export function EmailPanel() {
       }
     }
     // 自动可信（可在设置关闭）：打开一封邮件即把其发件人域名加入可信（下次自动放行图片）。
-    if (acc.auto_trust_senders ?? true) {
-      void autoTrust(m, acc);
+    if (a.auto_trust_senders ?? true) {
+      void autoTrust(m, a);
     }
   };
 
@@ -731,7 +787,7 @@ export function EmailPanel() {
     if (cur.includes(dom)) return;
     const next = [...new Set([...cur, dom])];
     const updated = { ...acc, trusted_domains: next };
-    setAccount(updated);
+    patchAccount(updated);
     try {
       await api.emailSaveAccount(updated);
     } catch {
@@ -740,14 +796,13 @@ export function EmailPanel() {
   };
 
   const refresh = async () => {
-    if (!account) return;
-    await fetchInbox(account, folders);
-    void loadMonths(account, folders);
+    await fetchInbox(scopeAccount, folders);
+    if (repAccount) void loadMonths(repAccount, folders);
   };
 
   // AI 总结邮件要点/行动项（A1）：复用已配置的 AI provider（store/ai.ts）。
   const summarizeEmail = async () => {
-    if (!account || !active) return;
+    if (!active) return;
     const cfg = useAiStore.getState().config;
     if (!cfg?.enabled) {
       toast("请先在 设置 → AI 里配置模型", "info");
@@ -777,7 +832,8 @@ export function EmailPanel() {
   };
 
   const saveUid = async (uid: number) => {
-    if (!account || !active) return;
+    const acc = accountFor(active);
+    if (!acc || !active) return;
     setErr("");
     setBusy(true);
     try {
@@ -785,7 +841,7 @@ export function EmailPanel() {
       const target = saveParentId === "root" ? null : saveParentId;
       let pageId: string | null = null;
       let content: { content_json: string; content_text: string };
-      const parts = await api.emailGetMessage(account, uid, active.folder).catch(() => null);
+      const parts = await api.emailGetMessage(acc, uid, active.folder).catch(() => null);
       if (parts && parts.html.trim()) {
         content = emailHtmlToLexical(parts.html);
       } else if (parts) {
@@ -795,7 +851,7 @@ export function EmailPanel() {
       }
       // 邮件附件 → 以内容寻址引用节点追加到正文（B2：附件进笔记）。
       try {
-        const attaches = await api.emailGetAttachments(account, uid, active.folder).catch(() => []);
+        const attaches = await api.emailGetAttachments(acc, uid, active.folder).catch(() => []);
         if (attaches.length) {
           const lex = JSON.parse(content.content_json) as { root?: { children?: unknown[] } };
           const children = lex?.root?.children;
@@ -870,12 +926,13 @@ export function EmailPanel() {
   // 邮件 → 任务：建页 + 写「截止日期」属性（默认明天）+ 一个待办块。
   // 邮件 → 任务：建页 + 写「截止日期」属性（默认明天）+ 一个待办块。
   const saveAsTask = async () => {
-    if (!account || !active) return;
+    const acc = accountFor(active);
+    if (!acc || !active) return;
     setErr("");
     setBusy(true);
     try {
       const target = saveParentId === "root" ? null : saveParentId;
-      const parts = await api.emailGetMessage(account, active.uid, active.folder).catch(() => null);
+      const parts = await api.emailGetMessage(acc, active.uid, active.folder).catch(() => null);
       const text = parts ? parts.text : body;
       const title = active.subject || "(无主题)";
       // 待办块正文：拆成一行为一项，或用整个邮件正文。
@@ -910,11 +967,12 @@ export function EmailPanel() {
 
   // 识别并保存邮件的附件到内容寻址附件库（同名/同内容自动去重）。
   const saveAttachments = async () => {
-    if (!account || !active) return;
+    const acc = accountFor(active);
+    if (!acc || !active) return;
     setErr("");
     setBusy(true);
     try {
-      const atts = await api.emailGetAttachments(account, active.uid, active.folder);
+      const atts = await api.emailGetAttachments(acc, active.uid, active.folder);
       if (atts.length === 0) {
         toast("这封邮件没有附件", "info");
       } else {
@@ -943,70 +1001,75 @@ export function EmailPanel() {
     return () => unlisten?.();
   }, [setUnread]);
 
-  // 打开面板时同步一次当前未读数（不等下一次轮询）。
+  // 打开面板时同步一次当前未读数（不等下一次轮询）。仅单账号筛选可用（聚合无单账号计数）。
   useEffect(() => {
-    if (!account?.auto_fetch || !open) return;
+    if (!open || !scopeAccount?.auto_fetch) return;
     api
-      .emailUnseenCount(account)
+      .emailUnseenCount(scopeAccount)
       .then((n) => setUnread(n))
       .catch(() => {});
-  }, [account, open, setUnread]);
+  }, [scopeAccount, open, setUnread]);
 
-  const toggleChecked = (uid: number) => {
+  const toggleChecked = (key: string) => {
     setChecked((prev) => {
       const n = new Set(prev);
-      if (n.has(uid)) n.delete(uid);
-      else n.add(uid);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
       return n;
     });
   };
 
   const toggleStarred = async (m: EmailMeta) => {
-    if (!account) return;
+    const acc = accountFor(m);
+    if (!acc) return;
     const next = !m.flagged;
     // 乐观更新列表里的星标状态。
-    setList((prev) => prev.map((x) => (x.uid === m.uid ? { ...x, flagged: next } : x)));
+    setList((prev) => prev.map((x) => (emailKey(x) === emailKey(m) ? { ...x, flagged: next } : x)));
     try {
-      await api.emailSetFlag(account, m.uid, m.folder, next);
+      await api.emailSetFlag(acc, m.uid, m.folder, next);
     } catch (e) {
       setErr(String(e));
       // 失败回滚。
-      setList((prev) => prev.map((x) => (x.uid === m.uid ? { ...x, flagged: m.flagged } : x)));
+      setList((prev) => prev.map((x) => (emailKey(x) === emailKey(m) ? { ...x, flagged: m.flagged } : x)));
     }
   };
 
   const markRead = async (m: EmailMeta, read: boolean) => {
-    if (!account) return;
-    const updated = list.map((x) => (x.uid === m.uid ? { ...x, seen: read } : x));
+    const acc = accountFor(m);
+    if (!acc) return;
+    const delta = m.seen === read ? 0 : (read ? -1 : 1);
+    const updated = list.map((x) => (emailKey(x) === emailKey(m) ? { ...x, seen: read } : x));
     setList(updated);
-    setUnread(updated.filter((x) => !x.seen).length);
+    adjustUnread(delta);
     try {
-      await api.emailMarkRead(account, m.uid, m.folder, read);
+      await api.emailMarkRead(acc, m.uid, m.folder, read);
     } catch (e) {
       setErr(String(e));
-      const rolled = list.map((x) => (x.uid === m.uid ? { ...x, seen: m.seen } : x));
+      const rolled = list.map((x) => (emailKey(x) === emailKey(m) ? { ...x, seen: m.seen } : x));
       setList(rolled);
-      setUnread(rolled.filter((x) => !x.seen).length);
+      adjustUnread(-delta);
     }
   };
 
   const deleteEmail = async (m: EmailMeta) => {
-    if (!account) return;
+    const acc = accountFor(m);
+    if (!acc) return;
     setErr("");
     setBusy(true);
     try {
-      await api.emailMoveToTrash(account, m.uid, m.folder);
-      bodyCache.delete(bodyCacheKey(account, m.folder, m.uid));
+      await api.emailMoveToTrash(acc, m.uid, m.folder);
+      bodyCache.delete(bodyCacheKey(acc, m.folder, m.uid));
       // 计算删除后要显示的下一条：当前选中项的下一条（最新在前 → 往后一条是较旧的）。
-      const idx = list.findIndex((x) => x.uid === m.uid);
+      const idx = list.findIndex((x) => emailKey(x) === emailKey(m));
       const next = idx >= 0 ? list[idx + 1] : undefined;
-      const remaining = list.filter((x) => x.uid !== m.uid);
+      const remaining = list.filter((x) => emailKey(x) !== emailKey(m));
       setList(remaining);
+      adjustUnread(m.seen ? 0 : -1);
       if (next) {
-        void selectEmail(next, account);
+        void selectEmail(next);
       } else {
         // 没有下一条：若删的是当前项则清空正文。
-        if (active?.uid === m.uid) {
+        if (active && emailKey(active) === emailKey(m)) {
           setActive(null);
           setBody("");
         }
@@ -1018,30 +1081,34 @@ export function EmailPanel() {
     }
   };
 
-  // 批量删除选中的邮件（勾选框选中），按文件夹分组分别调用后端。
+  // 批量删除选中的邮件（勾选框选中），按「账号 + 文件夹」分组分别调用后端。
   const deleteSelected = async () => {
-    if (!account || checked.size === 0) return;
-    const target = list.filter((m) => checked.has(m.uid));
+    if (checked.size === 0) return;
+    const target = list.filter((m) => checked.has(emailKey(m)));
     if (target.length === 0) return;
     if (!window.confirm(`确定把选中的 ${target.length} 封邮件移到已删除？`)) return;
     setErr("");
     setBusy(true);
     try {
-      // 按文件夹分组，每组一次连接。
-      const byFolder = new Map<string, number[]>();
+      // 按「账号 + 文件夹」分组（聚合流下不同账号可能同名文件夹或相同 uid），每组一次连接。
+      const byGroup = new Map<string, { acc: EmailAccount; folder: string; uids: number[] }>();
       for (const m of target) {
-        const arr = byFolder.get(m.folder) ?? [];
-        arr.push(m.uid);
-        byFolder.set(m.folder, arr);
+        const a = accountFor(m);
+        if (!a) continue;
+        const gk = `${accountKey(a)}|${m.folder}`;
+        let g = byGroup.get(gk);
+        if (!g) { g = { acc: a, folder: m.folder, uids: [] }; byGroup.set(gk, g); }
+        g.uids.push(m.uid);
       }
       let moved = 0;
-      for (const [folder, uids] of byFolder) {
-        moved += await api.emailMoveManyToTrash(account, uids, folder);
+      for (const g of byGroup.values()) {
+        moved += await api.emailMoveManyToTrash(g.acc, g.uids, g.folder);
       }
-      for (const m of target) bodyCache.delete(bodyCacheKey(account, m.folder, m.uid));
-      setList((prev) => prev.filter((x) => !checked.has(x.uid)));
+      for (const m of target) { const a = accountFor(m); if (a) bodyCache.delete(bodyCacheKey(a, m.folder, m.uid)); }
+      adjustUnread(-target.filter((x) => !x.seen).length);
+      setList((prev) => prev.filter((x) => !checked.has(emailKey(x))));
       setChecked(new Set());
-      if (active && checked.has(active.uid)) {
+      if (active && checked.has(emailKey(active))) {
         setActive(null);
         setBody("");
       }
@@ -1054,27 +1121,30 @@ export function EmailPanel() {
     }
   };
 
-  // 批量标记已读/未读（勾选选中），按文件夹分组调用一次后端。
+  // 批量标记已读/未读（勾选选中），按「账号 + 文件夹」分组调用一次后端。
   const markSelectedRead = async (read: boolean) => {
-    if (!account || checked.size === 0) return;
-    const target = list.filter((m) => checked.has(m.uid));
+    if (checked.size === 0) return;
+    const target = list.filter((m) => checked.has(emailKey(m)));
     if (target.length === 0) return;
     setErr("");
     setBusy(true);
     try {
-      const byFolder = new Map<string, number[]>();
+      const byGroup = new Map<string, { acc: EmailAccount; folder: string; uids: number[] }>();
       for (const m of target) {
-        const arr = byFolder.get(m.folder) ?? [];
-        arr.push(m.uid);
-        byFolder.set(m.folder, arr);
+        const a = accountFor(m);
+        if (!a) continue;
+        const gk = `${accountKey(a)}|${m.folder}`;
+        let g = byGroup.get(gk);
+        if (!g) { g = { acc: a, folder: m.folder, uids: [] }; byGroup.set(gk, g); }
+        g.uids.push(m.uid);
       }
       let done = 0;
-      for (const [folder, uids] of byFolder) {
-        done += await api.emailMarkManyRead(account, uids, folder, read);
+      for (const g of byGroup.values()) {
+        done += await api.emailMarkManyRead(g.acc, g.uids, g.folder, read);
       }
-      const updated = list.map((x) => checked.has(x.uid) ? { ...x, seen: read } : x);
+      const updated = list.map((x) => checked.has(emailKey(x)) ? { ...x, seen: read } : x);
+      adjustUnread(target.reduce((acc, x) => acc + (x.seen === read ? 0 : (read ? -1 : 1)), 0));
       setList(updated);
-      setUnread(updated.filter((x) => !x.seen).length);
       setChecked(new Set());
       toast(`${read ? "已读" : "未读"} ${done} 封`, "success");
     } catch (e) {
@@ -1086,15 +1156,17 @@ export function EmailPanel() {
 
   // 批量存为笔记：对勾选的每封拉 HTML → 转 Lexical → 建页（侧边栏自动刷新）。
   const saveSelectedAsNotes = async () => {
-    if (!account || checked.size === 0) return;
-    const target = list.filter((m) => checked.has(m.uid));
+    if (checked.size === 0) return;
+    const target = list.filter((m) => checked.has(emailKey(m)));
     if (target.length === 0) return;
     setErr("");
     setBusy(true);
     try {
       let saved = 0;
       for (const m of target) {
-        const html = await api.emailGetHtml(account, m.uid, m.folder).catch(() => "");
+        const a = accountFor(m);
+        if (!a) continue;
+        const html = await api.emailGetHtml(a, m.uid, m.folder).catch(() => "");
         let content: { content_json: string; content_text: string };
         if (html.trim()) content = emailHtmlToLexical(html);
         else content = emailHtmlToLexical(`<p>${escapeHtml(body)}</p>`);
@@ -1129,7 +1201,8 @@ export function EmailPanel() {
   };
 
   const sendCompose = async () => {
-    if (!account || !compose) return;
+    const acc = accountFor(active);
+    if (!acc || !compose) return;
     if (!compose.to.trim()) {
       setErr("收件人不能为空");
       return;
@@ -1137,7 +1210,7 @@ export function EmailPanel() {
     setSending(true);
     setErr("");
     try {
-      await api.emailSend(account, compose.to.trim(), compose.subject || "(无主题)", compose.body);
+      await api.emailSend(acc, compose.to.trim(), compose.subject || "(无主题)", compose.body);
       setCompose(null);
       setErr("");
       toast("邮件已发送", "success");
@@ -1193,8 +1266,8 @@ export function EmailPanel() {
     const next = folders.includes(name) ? folders.filter((f) => f !== name) : [...folders, name];
     const final = next.length ? next : ["INBOX"];
     setFolders(final);
-    void fetchInbox(account!, final);
-    void loadMonths(account!, final);
+    void fetchInbox(scopeAccount, final);
+    if (repAccount) void loadMonths(repAccount, final);
   };
 
   // 点击文件夹选择器外部关闭。
@@ -1306,9 +1379,10 @@ export function EmailPanel() {
   };
 
   const sections = groupEmails(filteredList);
-  const provider = account ? providerLabel(account.username) : "";
+  const provider = scopeAccount ? providerLabel(scopeAccount.username) : "全部账号";
+  const activeAcc = accountFor(active);
   // 可信发件人：当前邮件发件人域名在 trusted_domains 内 → 自动放行远程图片。
-  const isTrusted = !!active && !!account && account.trusted_domains.includes(emailDomainOf(active.from));
+  const isTrusted = !!active && !!activeAcc && activeAcc.trusted_domains.includes(emailDomainOf(active.from));
   const effectiveShowImages = showImages || isTrusted;
 
   // 测量工具栏各按钮组的实际宽度，用于逐级收纳（P+Q+R / P+Q+「更多」 / P+「更多」）。
@@ -1352,15 +1426,16 @@ export function EmailPanel() {
     if (measureHeadActionsRef.current) ro.observe(measureHeadActionsRef.current);
     if (measureHeadTitleRef.current) ro.observe(measureHeadTitleRef.current);
     return () => ro.disconnect();
-  }, [folders, account]);
+  }, [folders, scopeAccount]);
   // 信任当前发件人域名：加入持久化配置并立即生效。
   const trustSender = async () => {
-    if (!account || !active) return;
+    const acc = accountFor(active);
+    if (!acc || !active) return;
     const dom = emailDomainOf(active.from);
     if (!dom) return;
-    const next = [...new Set([...(account.trusted_domains ?? []), dom])];
-    const updated = { ...account, trusted_domains: next };
-    setAccount(updated);
+    const next = [...new Set([...(acc.trusted_domains ?? []), dom])];
+    const updated = { ...acc, trusted_domains: next };
+    patchAccount(updated);
     setShowImages(true);
     try {
       await api.emailSaveAccount(updated);
@@ -1396,16 +1471,24 @@ export function EmailPanel() {
       {open &&
         createPortal(
           <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
-            {accounts.length > 1 && (
+            {accounts.length > 0 && (
               <div className="email-account-tabs">
+                <button
+                  className={`email-account-tab${scopeKey === null ? " is-active" : ""}`}
+                  onClick={() => void switchScope(null)}
+                  title="全部账号（聚合收件流）"
+                >
+                  全部账号
+                </button>
                 {accounts.map((a) => {
-                  const active = account?.username === a.username && account?.host === a.host;
+                  const key = accountKey(a);
+                  const isOn = scopeKey === key;
                   const label = a.username.split("@")[0] || a.username;
                   return (
                     <button
                       key={`${a.host}|${a.username}`}
-                      className={`email-account-tab${active ? " is-active" : ""}`}
-                      onClick={() => void switchAccount(a)}
+                      className={`email-account-tab${isOn ? " is-active" : ""}`}
+                      onClick={() => void switchScope(key)}
                       title={`${a.username} · ${a.host}`}
                     >
                       {label}
@@ -1430,7 +1513,7 @@ export function EmailPanel() {
                         <button className="sync-btn ghost email-read-more-item" role="menuitem" onClick={() => { setFolderPickerOpen((v) => !v); setHeadMoreOpen(false); }}>
                           {folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}
                         </button>
-                        <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={busy || !account} onClick={() => { void refresh(); setHeadMoreOpen(false); }}>
+                        <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={busy || accounts.length === 0} onClick={() => { void refresh(); setHeadMoreOpen(false); }}>
                           <RefreshIcon width={14} height={14} /> 拉取
                         </button>
                         <button className="sync-btn ghost email-read-more-item" role="menuitem" onClick={() => { closePanel(); useEditorStore.getState().openSettings("email"); setHeadMoreOpen(false); }}>
@@ -1468,7 +1551,7 @@ export function EmailPanel() {
                         </div>
                       )}
                     </div>
-                    <button className="sync-btn ghost" disabled={busy || !account} onClick={() => void refresh()}>
+                    <button className="sync-btn ghost" disabled={busy || accounts.length === 0} onClick={() => void refresh()}>
                       <RefreshIcon width={14} height={14} /> 拉取
                     </button>
                     <button
@@ -1498,11 +1581,11 @@ export function EmailPanel() {
             </div>
 
             <div className="email-page-body">
-              {!account && (
+              {accounts.length === 0 && (
                 <div className="email-page-empty">请先在 <b>设置 → 邮箱</b> 配置 IMAP 账号。</div>
               )}
 
-              {account && (
+              {accounts.length > 0 && (
                 <div className="email-split" ref={splitRef}>
                   <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef} onScroll={onListScroll}>
                     <div className="email-list-head">
@@ -1557,8 +1640,9 @@ export function EmailPanel() {
                               return (
                                 <button
                                   key={name}
-                                  className={`email-month-cell${has ? " is-avail" : ""}`}
-                                  disabled={!has}
+                                  className={`email-month-cell${has && !isAggregate ? " is-avail" : ""}`}
+                                  disabled={!has || isAggregate}
+                                  title={isAggregate ? "聚合视图下请先切到单账号再按月份直达" : ""}
                                   onClick={() => scrollToMonth(pickerYear, m)}
                                 >
                                   {name}
@@ -1599,23 +1683,23 @@ export function EmailPanel() {
                         <div className="email-section-label">{s.label}（{s.items.length}封）</div>
                         {s.items.map((m) => (
                           <div
-                            key={m.uid}
+                            key={emailKey(m)}
                             ref={(el) => {
-                              if (el) rowRefs.current.set(m.uid, el);
-                              else rowRefs.current.delete(m.uid);
+                              if (el) rowRefs.current.set(emailKey(m), el);
+                              else rowRefs.current.delete(emailKey(m));
                             }}
-                            className={`email-item${active?.uid === m.uid ? " is-selected" : ""}${narrow ? " is-narrow" : ""}${!m.seen ? " is-unread" : ""}`}
+                            className={`email-item${active && emailKey(active) === emailKey(m) ? " is-selected" : ""}${narrow ? " is-narrow" : ""}${!m.seen ? " is-unread" : ""}`}
                             style={{ gridTemplateColumns: narrow ? colTemplateNarrow : colTemplate }}
                             onClick={() => void selectEmail(m)}
                           >
                             <span
-                              className={`email-check${checked.has(m.uid) ? " is-checked" : ""}`}
+                              className={`email-check${checked.has(emailKey(m)) ? " is-checked" : ""}`}
                               role="checkbox"
-                              aria-checked={checked.has(m.uid)}
+                              aria-checked={checked.has(emailKey(m))}
                               tabIndex={-1}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                toggleChecked(m.uid);
+                                toggleChecked(emailKey(m));
                               }}
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -1817,7 +1901,7 @@ export function EmailPanel() {
                           <span className="email-read-meta-main">
                             <span className="email-read-meta-from">{active.from}</span>
                             <span className="email-read-meta-sub">
-                              <span>收件人：{account.username}</span>
+                              <span>收件人：{activeAcc?.username ?? ""}</span>
                               <span>{active.date}</span>
                               <span>邮件类型：收件箱</span>
                             </span>
