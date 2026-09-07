@@ -17181,12 +17181,44 @@ p:has(> .editor-drawing-container) {
 }
 .email-item.is-selected .email-item-from { color: var(--accent, #4f7cff); }
 .email-item-subject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+}
+.email-item-subject-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  max-width: 120px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 7px 2px 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  vertical-align: middle;
+}
+.email-account-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
 }
 .email-item-date { color: var(--text-faint); font-size: 11px; text-align: right; white-space: nowrap; }
 

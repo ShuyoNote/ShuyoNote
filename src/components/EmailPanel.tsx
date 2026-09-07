@@ -412,6 +412,19 @@ export function EmailPanel() {
     setUnread(Math.max(0, useEmailPanel.getState().unread + delta));
   };
 
+  // 列表行内的来源账号小标（仅聚合视图显示）：彩色圆点 + 账号短名，便于区分多账号。
+  const renderAccountChip = (m: EmailMeta) => {
+    const a = accountFor(m);
+    if (!a) return null;
+    const label = a.username.split("@")[0] || a.username;
+    return (
+      <span className="email-account-chip" title={a.username}>
+        <span className="email-account-chip-dot" style={{ background: avatarColor(a.username) }} />
+        {label}
+      </span>
+    );
+  };
+
   // 富文本远程图：默认不加载，用户点「显示图片」才加载（data-src→src）。
   const [showImages, setShowImages] = useState(false);
   // 阅读区工具栏宽度检测：较窄时把次要按钮收进「更多」。
@@ -1712,12 +1725,12 @@ export function EmailPanel() {
                                   <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
                                   <span className="email-item-date">{fmtListTime(m)}</span>
                                 </div>
-                                <div className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</div>
+                                <div className="email-item-subject" title={m.subject}>{isAggregate && renderAccountChip(m)}<span className="email-item-subject-text">{m.subject || "(无主题)"}</span></div>
                               </div>
                             ) : (
                               <>
                                 <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
-                                <span className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</span>
+                                <span className="email-item-subject" title={m.subject}>{isAggregate && renderAccountChip(m)}<span className="email-item-subject-text">{m.subject || "(无主题)"}</span></span>
                                 <span className="email-item-date">{fmtListTime(m)}</span>
                               </>
                             )}
