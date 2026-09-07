@@ -1417,6 +1417,34 @@ export function EmailPanel() {
                                   ? ""
                                   : "（正文为空）"}
                         </div>
+                        {compose && (
+                          <div className="email-compose-inline">
+                            <div className="email-compose-head">
+                              <span className="email-compose-title">{compose.mode === "forward" ? "转发邮件" : "回复邮件"}</span>
+                              <button className="sync-btn ghost" disabled={sending} onClick={() => setCompose(null)} aria-label="关闭">✕</button>
+                            </div>
+                            <div className="email-compose-field">
+                              <label htmlFor="email-to">收件人</label>
+                              <input id="email-to" className="set-input" placeholder="对方邮箱地址" value={compose.to} onChange={(e) => setCompose({ ...compose, to: e.target.value })} />
+                            </div>
+                            <div className="email-compose-field">
+                              <label htmlFor="email-subject">主题</label>
+                              <input id="email-subject" className="set-input" value={compose.subject} onChange={(e) => setCompose({ ...compose, subject: e.target.value })} />
+                            </div>
+                            <div className="email-compose-field email-compose-body">
+                              <label htmlFor="email-body">正文</label>
+                              <textarea id="email-body" className="set-input" value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
+                            </div>
+                            <div className="email-compose-actions">
+                              <span className="email-compose-hint">
+                                {compose.mode === "forward" ? "转发需手动填写收件人；引用原文已附上。" : "回复默认给原发件人。请先在 设置→邮箱 填好 SMTP 发信信息。"}
+                              </span>
+                              <button className="sync-btn primary" disabled={sending || !compose.to.trim()} onClick={() => void sendCompose()}>
+                                {sending ? "发送中…" : "发送"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div className="email-page-empty">在左侧选择一封邮件阅读。</div>
@@ -1426,37 +1454,6 @@ export function EmailPanel() {
               )}
 
               {err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
-
-              {compose && (
-                <div className="email-compose-backdrop" onMouseDown={() => !sending && setCompose(null)}>
-                  <div className="email-compose" onMouseDown={(e) => e.stopPropagation()}>
-                    <div className="email-compose-head">
-                      <span className="email-compose-title">{compose.mode === "forward" ? "转发邮件" : "回复邮件"}</span>
-                      <button className="sync-btn ghost" disabled={sending} onClick={() => setCompose(null)} aria-label="关闭">✕</button>
-                    </div>
-                    <div className="email-compose-field">
-                      <label htmlFor="email-to">收件人</label>
-                      <input id="email-to" className="set-input" placeholder="对方邮箱地址" value={compose.to} onChange={(e) => setCompose({ ...compose, to: e.target.value })} />
-                    </div>
-                    <div className="email-compose-field">
-                      <label htmlFor="email-subject">主题</label>
-                      <input id="email-subject" className="set-input" value={compose.subject} onChange={(e) => setCompose({ ...compose, subject: e.target.value })} />
-                    </div>
-                    <div className="email-compose-field email-compose-body">
-                      <label htmlFor="email-body">正文</label>
-                      <textarea id="email-body" className="set-input" value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
-                    </div>
-                    <div className="email-compose-actions">
-                      <span className="email-compose-hint">
-                        {compose.mode === "forward" ? "转发需手动填写收件人；引用原文已附上。" : "回复默认给原发件人。请先在 设置→邮箱 填好 SMTP 发信信息。"}
-                      </span>
-                      <button className="sync-btn primary" disabled={sending || !compose.to.trim()} onClick={() => void sendCompose()}>
-                        {sending ? "发送中…" : "发送"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>,
           document.querySelector(".main") ?? document.body,

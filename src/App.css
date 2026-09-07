@@ -12198,6 +12198,32 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: center;
 }
+/* 内联回复/转发：显示在正文阅读区下方（阅读流内），不再弹窗。 */
+.email-compose-inline {
+  margin-top: 18px;
+  padding: 14px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.email-compose-inline .email-compose-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.email-compose-inline .email-compose-field { display: flex; flex-direction: column; gap: 5px; }
+.email-compose-inline .email-compose-field > label { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+.email-compose-inline .email-compose-body textarea { min-height: 160px; resize: vertical; line-height: 1.6; font-family: inherit; }
+.email-compose-inline .email-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.email-compose-inline .email-compose-hint { flex: 1; font-size: 11px; color: var(--text-faint); line-height: 1.5; }
 .email-compose {
   width: 520px;
   max-width: calc(100% - 40px);
