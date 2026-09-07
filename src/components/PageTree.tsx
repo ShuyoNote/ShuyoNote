@@ -899,7 +899,7 @@ export function PageTree(_props: {
               style={{ background: syncTagColor(activeSyncProfile.server_url) }}
             />
             <span className="sidebar-sync-pill-text">
-              正在以 {syncTagLabel(activeSyncProfile.server_url)} 同步
+              {syncTagLabel(activeSyncProfile.server_url)}
             </span>
           </div>
         )}
