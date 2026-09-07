@@ -23,8 +23,9 @@
 - **实现**：`EmailPanel.tsx` 全量改造——数据源按 `scope` 分「全部账号=`emailFetchAll` / 单账号=`emailFetchInbox`」；账号 tab 改为「全部账号 + 每账号」筛选；`accountFor(meta)` 按 `meta.account`（`host|username`）从加载的 `accounts` 定位所属账号，并把 `selectEmail`/`emailGetMessage`/`emailGetAttachments`/`emailGetHtml`/`markRead`/`deleteEmail`/`toggleStarred`/`markSelectedRead`/`deleteSelected`/`saveUid`/`saveAsTask`/`saveAttachments`/`saveSelectedAsNotes`/`sendCompose`/`autoTrust`/`trustSender` 等调用点的账号全部改为 `accountFor(active)`（单账号命令无 `meta.account` 时回退到当前筛选账号/首个账号）。
 - **配套**：为规避聚合流下不同账号 `uid` 相碰撞，引入 `emailKey`（`account|folder|uid`）作为列表 key / 勾选 key / 行高亮标识；批量操作（删除/标已读/存笔记）按「账号 + 文件夹」分组分别调后端。未读角标在聚合视图用后端汇总 `unread`，单操作按增量调整。
 - **验证**：`tsc`、`check-web-commands`、`pnpm build`、`cargo check` 均通过；`pnpm tauri dev` 运行中，HMR 已把改动推进真机窗。
-- **已知保留**：聚合视图的「月份直达」暂禁用（后端无聚合月份命令，避免误导）；文件夹/月份列表以首个账号为准（后端聚合按相同文件夹名遍历各账号）。
+- **聚合视图「按月直达」已补**（新增后端 `email_fetch_all_months` + `email_fetch_all` 支持 `date_from/date_to`，前端 `emailFetchAllMonths`/`emailFetchAll` 日期区间，聚合月份选择器已启用）。
+- **已知保留**：聚合视图的文件夹/月份列表以首个账号为准（后端聚合按相同文件夹名遍历各账号，且 `email_fetch_all_months` 并集各账号月份、单账号失败跳过）。
 
 ## 交接要点
-- 第 4 步已于 2026-09-07 完成（见上「已完成」小节）。后续给未来会话：聚合视图已接 `api.emailFetchAll` + `accountFor` 账号定位 + 「全部/单账号」tab 筛选；真机回归重点仍是阅读 / 存为笔记（含 B2 附件节点）/ A2 发件人标签 / 回复转发，确认聚合流下各操作都用对账号。
-- 后端 `email_fetch_all` 已就绪；若要补齐聚合视图的「按月直达」，需后端新增聚合月份命令（当前月份选择器在聚合视图禁用）。
+- 第 4 步已于 2026-09-07 完成（见上「已完成」小节），并补上聚合视图「按月直达」（后端 `email_fetch_all_months` + `email_fetch_all` 日期区间）。后续给未来会话：聚合视图已接 `api.emailFetchAll` + `accountFor` 账号定位 + 「全部/单账号」tab 筛选 + 聚合月份直达；真机回归重点仍是阅读 / 存为笔记（含 B2 附件节点）/ A2 发件人标签 / 回复转发，确认聚合流下各操作都用对账号。
+- 后端 `email_fetch_all` 已就绪，支持 `date_from/date_to` 日期区间（聚合按月直达用），单账号仍用 `email_fetch_inbox` 的日期区间。
