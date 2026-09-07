@@ -479,6 +479,51 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
     Ok(out)
 }
 
+/// 枚举收件箱里**所有含邮件的月份**（含未加载的历史），供月份选择器启用对应月份。
+/// 只拉 ENVELOPE（不含正文），按每封 Date 提取 `YYYY-M` 去重，结果升序。
+#[derive(Deserialize)]
+pub struct EmailMonthsArgs {
+    pub account: EmailAccountArgs,
+    #[serde(default)]
+    pub folders: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn email_list_months(args: EmailMonthsArgs) -> Result<Vec<String>, String> {
+    use futures_util::StreamExt;
+
+    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders };
+    let mut session = open_session(&args.account, "INBOX").await?;
+    let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for folder in &folders {
+        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        let mut stream = session
+            .fetch("1:*", "(ENVELOPE UID FLAGS)")
+            .await
+            .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+        while let Some(Ok(m)) = stream.next().await {
+            if let Some(env) = m.envelope() {
+                if let Some(d) = env.date.as_ref() {
+                    let s = String::from_utf8_lossy(d.as_ref());
+                    if let Some(k) = month_key_from_date(&s) {
+                        months.insert(k);
+                    }
+                }
+            }
+        }
+    }
+    Ok(months.into_iter().collect())
+}
+
+/// 从 Date 字符串提取 `YYYY-M`（0-based 月）键；无法解析返回 None。
+fn month_key_from_date(s: &str) -> Option<String> {
+    // Date 形如 "Mon, 31 Aug 2026 11:40:54 +0800 (CST)" 或已标准化的 RFC2822。
+    use chrono::{DateTime, Datelike};
+    let t = DateTime::parse_from_rfc2822(s.trim()).ok()?;
+    Some(format!("{}-{}", t.year(), t.month0()))
+}
+
 /// 列出账号下所有可选文件夹（`LIST "" "*"`），供多选下拉用；跳过不可 SELECT 的（\Noselect）。
 #[tauri::command]
 pub async fn email_list_folders(args: EmailAccountArgs) -> Result<Vec<String>, String> {

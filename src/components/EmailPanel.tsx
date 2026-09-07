@@ -308,11 +308,6 @@ function groupEmails(list: EmailMeta[]): Section[] {
 const MONTH_NAMES = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 
 // 一封邮件的 (年, 月) 键：`YYYY-M`（0-based 月）。无法解析返回 null。
-function monthKeyOf(m: EmailMeta): string | null {
-  const d = parseDate(m.date);
-  if (!d) return null;
-  return `${d.getFullYear()}-${d.getMonth()}`;
-}
 
 // 聚合收件箱（邮件即笔记）— 桌面专属整页（左列表 + 右阅读），竖分隔线可拖动调整宽度。
 // 账号配置在 设置 → 邮箱；这里只读已保存账号、拉取/阅读/转笔记。
@@ -347,6 +342,8 @@ export function EmailPanel() {
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
+  // 收件箱里所有含邮件的月份（含未加载历史），供月份选择器启用对应月份。
+  const [allMonths, setAllMonths] = useState<Set<string>>(new Set());
   const pickerRef = useRef<HTMLDivElement>(null);
   // 发信（回复/转发）撰写弹窗。
   const [compose, setCompose] = useState<{ mode: "reply" | "forward"; to: string; subject: string; body: string; quote: string; includeQuote: boolean } | null>(null);
@@ -381,21 +378,6 @@ export function EmailPanel() {
     return list.filter((m) => m.from.toLowerCase().includes(q) || m.subject.toLowerCase().includes(q));
   }, [list, searchQuery]);
 
-  // 每封邮件 → 其所在 (年,月)，并给每个月记录最新一封（列表顶部的第一封）。
-  const monthIndex = useMemo(() => {
-    const firstUid = new Map<string, number>();
-    const years = new Set<number>();
-    for (const m of list) {
-      const k = monthKeyOf(m);
-      if (!k) continue;
-      const y = Number(k.split("-")[0]);
-      years.add(y);
-      if (!firstUid.has(k)) firstUid.set(k, m.uid);
-    }
-    const ys = [...years].sort((a, b) => b - a); // 倒序，最新年份在前
-    return { firstUid, years: ys };
-  }, [list]);
-
   // 打开时默认左右均分：把列表宽度设为分栏容器的一半。
   useEffect(() => {
     if (!open) return;
@@ -416,7 +398,7 @@ export function EmailPanel() {
       .catch(() => {});
   }, []);
 
-  // 账号可用后列出所有文件夹，并保证默认选「收件箱」。
+  // 账号可用后列出所有文件夹，并保证默认选「收件箱」；顺带拉取所有月份。
   useEffect(() => {
     if (!account) return;
     api
@@ -427,6 +409,8 @@ export function EmailPanel() {
         setFolders((prev) => (prev.some((f) => list.includes(f)) ? prev : ["INBOX"]));
       })
       .catch(() => setAllFolders(["INBOX"]));
+    void loadMonths(account);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
   // 检测阅读区宽度：放不下时把按钮收进「更多」（以 right pane 宽度为基准，避免自身 scrollWidth 误判）。
@@ -573,6 +557,16 @@ export function EmailPanel() {
       setErr(String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用。
+  const loadMonths = async (acc: EmailAccount = account!, fs: string[] = folders) => {
+    try {
+      const months = await api.emailListMonths(acc, fs);
+      setAllMonths(new Set(months));
+    } catch {
+      // 列出月份失败不致命，月份网格回退到仅当前已加载列表。
     }
   };
 
@@ -914,7 +908,8 @@ export function EmailPanel() {
   // 选中「共 N 封」打开月份选择器时，年份默认定位到含邮件的最近年份。
   const openPicker = () => {
     if (!pickerOpen) {
-      const newest = monthIndex.years[0];
+      const years = [...allMonths].map((k) => Number(k.split("-")[0])).filter((y) => !Number.isNaN(y));
+      const newest = years.sort((a, b) => b - a)[0];
       if (newest != null) setPickerYear(newest);
     }
     setPickerOpen((v) => !v);
@@ -1204,7 +1199,7 @@ export function EmailPanel() {
                           </div>
                           <div className="email-month-picker-grid">
                             {MONTH_NAMES.map((name, m) => {
-                              const has = monthIndex.firstUid.has(`${pickerYear}-${m}`);
+                              const has = allMonths.has(`${pickerYear}-${m}`);
                               return (
                                 <button
                                   key={name}

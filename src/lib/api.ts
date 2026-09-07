@@ -142,6 +142,8 @@ export const api = {
     invoke("email_unseen_count", { args: account }),
   emailListFolders: (account: EmailAccount) =>
     invoke("email_list_folders", { args: account }),
+  emailListMonths: (account: EmailAccount, folders: string[]) =>
+    invoke("email_list_months", { args: { account, folders } }),
   emailSetFlag: (account: EmailAccount, uid: number, folder: string, flag: boolean) =>
     invoke("email_set_flag", { args: { account, uid, folder }, flag }),
   emailMarkRead: (account: EmailAccount, uid: number, folder: string, read: boolean) =>

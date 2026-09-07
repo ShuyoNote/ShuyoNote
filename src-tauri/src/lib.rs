@@ -253,6 +253,7 @@ pub fn run() {
             email::email_get_account,
             email::email_unseen_count,
             email::email_list_folders,
+            email::email_list_months,
             email::email_set_flag,
             email::email_mark_read,
             email::email_move_to_trash,
