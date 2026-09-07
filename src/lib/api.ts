@@ -55,6 +55,15 @@ export interface EmailMeta {
   seen: boolean;
   flagged: boolean;
   folder: string;
+  /** 来源账号标识（host|username），聚合命令填充。 */
+  account?: string;
+}
+
+/** 多账号聚合收件流（对应后端 email::EmailAggregate）。 */
+export interface EmailAggregate {
+  emails: EmailMeta[];
+  unread: number;
+  accounts: string[];
 }
 
 /**
@@ -129,6 +138,8 @@ export const api = {
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
   emailFetchInbox: (account: EmailAccount, folders: string[], limit = 0, offset = 0, dateFrom?: string, dateTo?: string) =>
     invoke("email_fetch_inbox", { args: { account, folders, limit, offset, date_from: dateFrom, date_to: dateTo } }),
+  emailFetchAll: (folders: string[], limit = 0, offset = 0) =>
+    invoke("email_fetch_all", { args: { folders, limit, offset } }),
   emailSaveUid: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_save_uid", { args: { account, uid, folder } }),
   emailGetBody: (account: EmailAccount, uid: number, folder: string) =>
