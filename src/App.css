@@ -17328,6 +17328,8 @@ p:has(> .editor-drawing-container) {
 .email-save-parent-item input { display: none; }
 .email-save-parent-item.is-on { color: var(--accent, #4f7cff); font-weight: 500; }
 .email-save-parent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 目录树的展开/折叠三角 */
+.email-save-parent-toggle { flex: none; width: 14px; text-align: center; color: var(--text-faint); font-size: 10px; cursor: pointer; user-select: none; }
 
 /* 工具栏「更多」下拉（窄时收起次要按钮） */
 .email-read-more-wrap { position: relative; flex: none; }

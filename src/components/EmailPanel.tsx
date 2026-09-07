@@ -358,7 +358,7 @@ export function EmailPanel() {
   const [saveParentId, setSaveParentId] = useState<"root" | string>("root");
   const [saveParentOpen, setSaveParentOpen] = useState(false);
   const saveParentRef = useRef<HTMLDivElement>(null);
-  const [saveCandidates, setSaveCandidates] = useState<{ id: string; title: string; kind: string }[]>([]);
+  const [saveCandidates, setSaveCandidates] = useState<{ id: string; title: string; kind: string; parent_id: string | null }[]>([]);
   // 关键词搜索：发件人/主题 子串匹配（统一搜索入口）。
   const [searchQuery, setSearchQuery] = useState("");
   // 懒加载分页：每页条数 + 是否还有更多。
@@ -614,10 +614,69 @@ export function EmailPanel() {
   const loadSaveCandidates = async () => {
     try {
       const pages = await api.listPages();
-      setSaveCandidates(pages.map((p) => ({ id: p.id, title: p.title, kind: p.kind })));
+      setSaveCandidates(pages.map((p) => ({ id: p.id, title: p.title, kind: p.kind, parent_id: p.parent_id })));
     } catch {
       setSaveCandidates([]);
     }
+  };
+
+  // 目录树：按 parent_id 建 children 映射，父级选择器据此渲染层级树（B1）。
+  const parentTree = useMemo(() => {
+    type P = { id: string; title: string; kind: string; parent_id: string | null };
+    const children = new Map<string, P[]>();
+    for (const p of saveCandidates) {
+      const key = p.parent_id ?? "root";
+      const arr = children.get(key) ?? [];
+      arr.push(p);
+      children.set(key, arr);
+    }
+    for (const arr of children.values()) arr.sort((a, b) => a.title.localeCompare(b.title));
+    return children;
+  }, [saveCandidates]);
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set(["root"]));
+  const toggleExpanded = (id: string) =>
+    setExpandedParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // 递归渲染保存位置树：文件夹可展开/折叠，页面/文件夹均可选。
+  const renderSaveTree = (pid: string, depth: number) => {
+    const items = parentTree.get(pid) ?? [];
+    if (!items.length) return null;
+    const open = expandedParents.has(pid);
+    const out: React.ReactNode[] = [];
+    for (const p of items) {
+      const hasKids = (parentTree.get(p.id) ?? []).length > 0;
+      out.push(
+        <label
+          key={p.id}
+          className={`email-save-parent-item${saveParentId === p.id ? " is-on" : ""}`}
+          style={{ paddingLeft: 10 + depth * 14 }}
+          role="option"
+        >
+          {p.kind === "folder" ? (
+            <span
+              className="email-save-parent-toggle"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleExpanded(p.id); }}
+            >
+              {hasKids ? (open ? "▾" : "▸") : "·"}
+            </span>
+          ) : (
+            <span className="email-save-parent-toggle" style={{ visibility: "hidden" }}>·</span>
+          )}
+          <input
+            type="checkbox"
+            checked={saveParentId === p.id}
+            onChange={() => { setSaveParentId(p.id); setSaveParentOpen(false); }}
+          />
+          <span className="email-save-parent-name">{p.kind === "folder" ? "🗀 " : "📄 "}{p.title || "(无标题)"}</span>
+        </label>,
+      );
+      if (p.kind === "folder" && open) out.push(...(renderSaveTree(p.id, depth + 1) ?? []));
+    }
+    return out;
   };
 
   // 列表滚动接近底部时加载下一页。
@@ -1561,12 +1620,7 @@ export function EmailPanel() {
                               <input type="checkbox" checked={saveParentId === "root"} onChange={() => { setSaveParentId("root"); setSaveParentOpen(false); }} />
                               <span className="email-save-parent-name">根目录</span>
                             </label>
-                            {saveCandidates.map((p) => (
-                              <label key={p.id} className={`email-save-parent-item${saveParentId === p.id ? " is-on" : ""}`}>
-                                <input type="checkbox" checked={saveParentId === p.id} onChange={() => { setSaveParentId(p.id); setSaveParentOpen(false); }} />
-                                <span className="email-save-parent-name">{p.kind === "folder" ? "🗀 " : "📄 "}{p.title || "(无标题)"}</span>
-                              </label>
-                            ))}
+                            {renderSaveTree("root", 0)}
                           </div>
                         )}
                       </div>
