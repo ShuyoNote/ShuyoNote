@@ -347,6 +347,10 @@ export function EmailPanel() {
 
   // 富文本远程图：默认不加载，用户点「显示图片」才加载（data-src→src）。
   const [showImages, setShowImages] = useState(false);
+  // 阅读区工具栏宽度检测：较窄时把次要按钮收进「更多」。
+  const readToolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarW, setToolbarW] = useState(9999);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // 当前列表里的去重发件人（供下拉选项）。
   const filteredList = useMemo(() => {
@@ -402,6 +406,28 @@ export function EmailPanel() {
       })
       .catch(() => setAllFolders(["INBOX"]));
   }, [account]);
+
+  // 检测阅读区工具栏宽度：较窄时把次要按钮收进「更多」。
+  useEffect(() => {
+    const el = readToolbarRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setToolbarW(el.clientWidth));
+    ro.observe(el);
+    setToolbarW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  // 点击「更多」下拉外部关闭。
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (t && readToolbarRef.current?.contains(t)) return;
+      setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [moreOpen]);
 
   // 打开时：用已保存账号拉取收件箱；顺带根据 `seen` 刷新未读角标。
   useEffect(() => {
@@ -934,6 +960,8 @@ export function EmailPanel() {
   // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
   const narrow = listW < 380;
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
+  // 阅读区工具栏较窄时，把右侧次要按钮收进「更多」下拉。
+  const toolbarNarrow = toolbarW < 660;
 
   return (
     <>
@@ -1168,7 +1196,7 @@ export function EmailPanel() {
                   </div>
 
                   <div className="email-pane-read">
-                    <div className="email-read-toolbar">
+                    <div className="email-read-toolbar" ref={readToolbarRef}>
                       <button
                         className="sync-btn ghost"
                         disabled={busy || !active}
@@ -1200,17 +1228,42 @@ export function EmailPanel() {
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
                       <span className="email-read-toolbar-spacer" />
-                      {useRich && html && (
-                        <button className="sync-btn ghost" disabled={!active} onClick={() => setShowImages((v) => !v)}>
-                          {showImages ? "屏蔽图片" : "显示图片"}
-                        </button>
+                      {toolbarNarrow ? (
+                        <div className="email-read-more-wrap">
+                          <button className="sync-btn ghost" disabled={!active} onClick={() => setMoreOpen((v) => !v)} aria-haspopup="menu" aria-expanded={moreOpen}>
+                            更多
+                          </button>
+                          {moreOpen && (
+                            <div className="email-read-more-menu" role="menu">
+                              {useRich && html && (
+                                <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { setShowImages((v) => !v); setMoreOpen(false); }}>
+                                  {showImages ? "屏蔽图片" : "显示图片"}
+                                </button>
+                              )}
+                              <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active || isTrusted} onClick={() => { void trustSender(); setMoreOpen(false); }}>
+                                {isTrusted ? "已信任" : "信任此发件人"}
+                              </button>
+                              <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { setUseRich((v) => !v); setMoreOpen(false); }}>
+                                {useRich ? "纯文本" : "富文本"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          {useRich && html && (
+                            <button className="sync-btn ghost" disabled={!active} onClick={() => setShowImages((v) => !v)}>
+                              {showImages ? "屏蔽图片" : "显示图片"}
+                            </button>
+                          )}
+                          <button className="sync-btn ghost" disabled={!active || isTrusted} onClick={() => void trustSender()}>
+                            {isTrusted ? "已信任" : "信任此发件人"}
+                          </button>
+                          <button className="sync-btn ghost" disabled={!active} onClick={() => setUseRich((v) => !v)}>
+                            {useRich ? "纯文本" : "富文本"}
+                          </button>
+                        </>
                       )}
-                      <button className="sync-btn ghost" disabled={!active || isTrusted} onClick={() => void trustSender()}>
-                        {isTrusted ? "已信任" : "信任此发件人"}
-                      </button>
-                      <button className="sync-btn ghost" disabled={!active} onClick={() => setUseRich((v) => !v)}>
-                        {useRich ? "纯文本" : "富文本"}
-                      </button>
                     </div>
                     {active ? (
                       <>
