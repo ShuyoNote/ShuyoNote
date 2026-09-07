@@ -220,7 +220,6 @@ body,
   display: flex;
   flex: 1;
   min-height: 0;
-  border-top: 1px solid var(--border);
 }
 
 /* ---------------------------------------------------------------------------
