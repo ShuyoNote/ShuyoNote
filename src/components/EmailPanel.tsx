@@ -350,6 +350,7 @@ export function EmailPanel() {
   const pickerRef = useRef<HTMLDivElement>(null);
   // 发信（回复/转发）撰写弹窗。
   const [compose, setCompose] = useState<{ mode: "reply" | "forward"; to: string; subject: string; body: string } | null>(null);
+  const composeBodyRef = useRef<HTMLTextAreaElement>(null);
   const [sending, setSending] = useState(false);
   const [folders, setFolders] = useState<string[]>(["INBOX"]);
   const [allFolders, setAllFolders] = useState<string[]>([]);
@@ -861,6 +862,16 @@ export function EmailPanel() {
       setSending(false);
     }
   };
+
+  // 展开回复/转发后自动聚焦正文，并把光标移到末尾（引用之后）。
+  useEffect(() => {
+    if (!compose) return;
+    const el = composeBodyRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  }, [compose]);
 
   // 月份选择：跳到该月最新一封邮件（列表顶部）。
   const scrollToMonth = (year: number, month0: number) => {
@@ -1433,7 +1444,7 @@ export function EmailPanel() {
                             </div>
                             <div className="email-compose-field email-compose-body">
                               <label htmlFor="email-body">正文</label>
-                              <textarea id="email-body" className="set-input" value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
+                              <textarea ref={composeBodyRef} id="email-body" className="set-input" value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
                             </div>
                             <div className="email-compose-actions">
                               <span className="email-compose-hint">
