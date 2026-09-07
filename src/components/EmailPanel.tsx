@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import DOMPurify from "dompurify";
 import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
+import { useAiStore } from "../store/ai";
 import { emailHtmlToLexical } from "../lib/emailRichNote";
 import { platform } from "../lib/platform";
 import { useEmailPanel } from "../store/emailPanel";
@@ -331,6 +332,8 @@ export function EmailPanel() {
   const [active, setActive] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
   const [html, setHtml] = useState("");
+  const [aiSummary, setAiSummary] = useState("");
+  const [aiSummaryBusy, setAiSummaryBusy] = useState(false);
   const [useRich, setUseRich] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -740,6 +743,37 @@ export function EmailPanel() {
     if (!account) return;
     await fetchInbox(account, folders);
     void loadMonths(account, folders);
+  };
+
+  // AI 总结邮件要点/行动项（A1）：复用已配置的 AI provider（store/ai.ts）。
+  const summarizeEmail = async () => {
+    if (!account || !active) return;
+    const cfg = useAiStore.getState().config;
+    if (!cfg?.enabled) {
+      toast("请先在 设置 → AI 里配置模型", "info");
+      return;
+    }
+    setAiSummaryBusy(true);
+    setErr("");
+    try {
+      const text = (body || "").trim();
+      if (!text) { setErr("正文为空，无法总结"); return; }
+      const resp = await api.aiComplete({
+        provider: cfg.provider,
+        base_url: cfg.baseUrl,
+        model: cfg.model,
+        api_key: cfg.apiKey || undefined,
+        messages: [
+          { role: "system", content: "你是邮件摘要助手，用中文输出【要点】与【行动项】两个小节。" },
+          { role: "user", content: `请总结这封邮件：\n发件人: ${active.from}\n主题: ${active.subject}\n正文:\n${text.slice(0, 4000)}` },
+        ],
+      });
+      setAiSummary((resp as { content?: string })?.content?.trim() || "（无输出）");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setAiSummaryBusy(false);
+    }
   };
 
   const saveUid = async (uid: number) => {
@@ -1786,6 +1820,23 @@ export function EmailPanel() {
                               <span>邮件类型：收件箱</span>
                             </span>
                           </span>
+                        </div>
+                        <div className="email-ai-summary">
+                          {aiSummary ? (
+                            <div className="email-ai-summary-block">
+                              <div className="email-ai-summary-head">
+                                <span>AI 总结</span>
+                                <button className="sync-btn ghost" disabled={aiSummaryBusy} onClick={() => void summarizeEmail()}>
+                                  {aiSummaryBusy ? "总结中…" : "重新总结"}
+                                </button>
+                              </div>
+                              <div className="email-ai-summary-text">{aiSummary}</div>
+                            </div>
+                          ) : (
+                            <button className="sync-btn ghost" disabled={aiSummaryBusy || !active} onClick={() => void summarizeEmail()}>
+                              {aiSummaryBusy ? "总结中…" : "AI 总结"}
+                            </button>
+                          )}
                         </div>
                         <div className="email-read-body">
                           {loadingBody

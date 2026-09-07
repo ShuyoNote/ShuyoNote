@@ -17358,6 +17358,11 @@ p:has(> .editor-drawing-container) {
 .email-read-meta-from { font-size: 15px; font-weight: 600; color: var(--text); }
 .email-read-meta-sub { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-faint); }
 .email-read-body { font-size: 15px; line-height: 1.8; color: var(--text); word-break: break-word; }
+/* 邮件 AI 总结块 */
+.email-ai-summary { margin: 4px 0 18px; }
+.email-ai-summary-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card-bg, var(--bg)); }
+.email-ai-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+.email-ai-summary-text { font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
 
 /* 正文渲染：分段 / 引用块 / 链接 */
 .email-body { display: flex; flex-direction: column; gap: 14px; }
