@@ -39,6 +39,12 @@ export interface EmailAccount {
   auto_trust_senders: boolean;
 }
 
+/** 邮件正文（纯文本 + 未消毒 HTML），与后端 email::EmailMessageParts 对应。 */
+export interface EmailMessageParts {
+  text: string;
+  html: string;
+}
+
 /** 收件箱一条邮件的元信息（与后端 email::EmailMeta 对应）。 */
 export interface EmailMeta {
   uid: number;
@@ -127,6 +133,8 @@ export const api = {
     invoke("email_save_uid", { args: { account, uid, folder } }),
   emailGetBody: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_get_body", { args: { account, uid, folder } }),
+  emailGetMessage: (account: EmailAccount, uid: number, folder: string) =>
+    invoke("email_get_message", { args: { account, uid, folder } }),
   emailSaveAccount: (account: EmailAccount) =>
     invoke("email_save_account", { account }),
   emailGetAccount: () => invoke("email_get_account", undefined),

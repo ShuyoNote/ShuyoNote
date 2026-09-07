@@ -111,6 +111,7 @@ export interface CommandMap {
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
   email_get_html: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
+  email_get_message: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: { text: string; html: string } };
   email_save_account: { args: { account: EmailAccount }; result: void };
   email_get_account: { args: undefined; result: EmailAccount | null };
   email_unseen_count: { args: { args: EmailAccount }; result: number };

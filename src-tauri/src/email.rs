@@ -212,6 +212,13 @@ pub struct EmailSaveUidArgs {
     pub folder: String,
 }
 
+/// 一封邮件的正文（纯文本 + 未消毒 HTML），供前端一次拉取同时拿到两者。
+#[derive(Serialize)]
+pub struct EmailMessageParts {
+    pub text: String,
+    pub html: String,
+}
+
 fn default_folder() -> String {
     "INBOX".to_string()
 }
@@ -721,6 +728,18 @@ pub async fn email_get_html(args: EmailSaveUidArgs) -> Result<String, String> {
     } else {
         Ok(email_text(&parsed))
     }
+}
+
+/// 按 UID 一次拉取并解析，同时返回纯文本 + 未消毒 HTML（供前端一次调用拿到两者，
+/// 避免此前点开一封邮件时并发两次 IMAP 连接 + 两次拉取完整报文 + 两次解析）。
+#[tauri::command]
+pub async fn email_get_message(args: EmailSaveUidArgs) -> Result<EmailMessageParts, String> {
+    let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
+    let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
+    let text = email_text(&parsed);
+    let mut html = String::new();
+    let html = if email_html_collect(&parsed, &mut html) { html } else { text.clone() };
+    Ok(EmailMessageParts { text, html })
 }
 
 /// 递归取邮件正文：收集所有候选（text/plain 与 text/html），返回**最长**的一个。

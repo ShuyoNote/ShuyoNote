@@ -12,6 +12,12 @@ import { InboxIcon, SendIcon, RefreshIcon, TrashIcon, SettingsIcon, BookmarkIcon
 
 type Section = { label: string; items: EmailMeta[] };
 
+// 邮件正文内存缓存：key = `${account.username}|${folder}|${uid}`。
+// 会话级，避免点同一封再走一次 IMAP 拉取+解析。
+const bodyCache = new Map<string, { text: string; html: string }>();
+const bodyCacheKey = (acc: EmailAccount, folder: string, uid: number) =>
+  `${acc.username}|${acc.host}|${folder}|${uid}`;
+
 const AVATAR_COLORS = ["#4f7cff", "#7b61ff", "#2f9e67", "#e0a13a", "#d05b8b", "#1591b0", "#c2493b", "#8a6fde"];
 
 function avatarColor(name: string): string {
@@ -566,20 +572,26 @@ export function EmailPanel() {
     setLoadingBody(true);
     setErr("");
     setShowImages(false);
-    try {
-      // 超时保护：避免正文拉取卡住导致无限“加载正文…”。
-      const [bodyText, htmlText] = await Promise.all([
-        api.emailGetBody(acc, m.uid, m.folder),
-        api.emailGetHtml(acc, m.uid, m.folder).catch(() => ""),
-      ]);
-      setBody(bodyText);
-      setHtml(htmlText);
-    } catch (e) {
-      setErr(String(e));
-      setBody("");
-      setHtml("");
-    } finally {
+    const key = bodyCacheKey(acc, m.folder, m.uid);
+    const hit = bodyCache.get(key);
+    if (hit) {
+      setBody(hit.text);
+      setHtml(hit.html);
       setLoadingBody(false);
+    } else {
+      try {
+        // 一次拉取同时拿纯文本 + HTML（此前并发两次，浪费一半连接/拉取/解析）。
+        const parts = await api.emailGetMessage(acc, m.uid, m.folder);
+        setBody(parts.text);
+        setHtml(parts.html);
+        bodyCache.set(key, { text: parts.text, html: parts.html });
+      } catch (e) {
+        setErr(String(e));
+        setBody("");
+        setHtml("");
+      } finally {
+        setLoadingBody(false);
+      }
     }
     // 自动可信（可在设置关闭）：打开一封邮件即把其发件人域名加入可信（下次自动放行图片）。
     if (acc.auto_trust_senders ?? true) {
@@ -700,6 +712,7 @@ export function EmailPanel() {
     setBusy(true);
     try {
       await api.emailMoveToTrash(account, m.uid, m.folder);
+      bodyCache.delete(bodyCacheKey(account, m.folder, m.uid));
       // 计算删除后要显示的下一条：当前选中项的下一条（最新在前 → 往后一条是较旧的）。
       const idx = list.findIndex((x) => x.uid === m.uid);
       const next = idx >= 0 ? list[idx + 1] : undefined;
@@ -741,6 +754,7 @@ export function EmailPanel() {
       for (const [folder, uids] of byFolder) {
         moved += await api.emailMoveManyToTrash(account, uids, folder);
       }
+      for (const m of target) bodyCache.delete(bodyCacheKey(account, m.folder, m.uid));
       setList((prev) => prev.filter((x) => !checked.has(x.uid)));
       setChecked(new Set());
       if (active && checked.has(active.uid)) {
