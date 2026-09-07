@@ -962,6 +962,8 @@ export function EmailPanel() {
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
   // 阅读区工具栏较窄时，把右侧次要按钮收进「更多」下拉。
   const toolbarNarrow = toolbarW < 660;
+  // 更窄时再把 删除/已读/转发/回复 也收进「更多」，只留「存为笔记」。
+  const toolbarVeryNarrow = toolbarW < 520;
 
   return (
     <>
@@ -1204,29 +1206,37 @@ export function EmailPanel() {
                       >
                         <BookmarkIcon width={14} height={14} /> 存为笔记
                       </button>
-                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>
-                        <SendIcon width={14} height={14} /> 回复
-                      </button>
-                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("forward")}>
-                        <SendIcon width={14} height={14} /> 转发
-                      </button>
-                      <button
-                        className={`sync-btn ghost${active?.seen ? "" : " is-active"}`}
-                        disabled={busy || !active}
-                        onClick={() => active && void markRead(active, !active.seen)}
-                      >
-                        {active?.seen ? "标为未读" : "标为已读"}
-                      </button>
-                      <button
-                        className="sync-btn ghost"
-                        disabled={busy || !active}
-                        onClick={() => {
-                          if (!active) return;
-                          if (window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active);
-                        }}
-                      >
-                        <TrashIcon width={14} height={14} /> 删除
-                      </button>
+                      {!toolbarVeryNarrow && (
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>
+                          <SendIcon width={14} height={14} /> 回复
+                        </button>
+                      )}
+                      {!toolbarVeryNarrow && (
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("forward")}>
+                          <SendIcon width={14} height={14} /> 转发
+                        </button>
+                      )}
+                      {!toolbarVeryNarrow && (
+                        <button
+                          className={`sync-btn ghost${active?.seen ? "" : " is-active"}`}
+                          disabled={busy || !active}
+                          onClick={() => active && void markRead(active, !active.seen)}
+                        >
+                          {active?.seen ? "标为未读" : "标为已读"}
+                        </button>
+                      )}
+                      {!toolbarVeryNarrow && (
+                        <button
+                          className="sync-btn ghost"
+                          disabled={busy || !active}
+                          onClick={() => {
+                            if (!active) return;
+                            if (window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active);
+                          }}
+                        >
+                          <TrashIcon width={14} height={14} /> 删除
+                        </button>
+                      )}
                       <span className="email-read-toolbar-spacer" />
                       {toolbarNarrow ? (
                         <div className="email-read-more-wrap">
@@ -1235,6 +1245,22 @@ export function EmailPanel() {
                           </button>
                           {moreOpen && (
                             <div className="email-read-more-menu" role="menu">
+                              {toolbarVeryNarrow && (
+                                <>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { openCompose("reply"); setMoreOpen(false); }}>
+                                    <SendIcon width={14} height={14} /> 回复
+                                  </button>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { openCompose("forward"); setMoreOpen(false); }}>
+                                    <SendIcon width={14} height={14} /> 转发
+                                  </button>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { active && void markRead(active, !active.seen); setMoreOpen(false); }}>
+                                    {active?.seen ? "标为未读" : "标为已读"}
+                                  </button>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { if (active && window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active); setMoreOpen(false); }}>
+                                    <TrashIcon width={14} height={14} /> 删除
+                                  </button>
+                                </>
+                              )}
                               {useRich && html && (
                                 <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { setShowImages((v) => !v); setMoreOpen(false); }}>
                                   {showImages ? "屏蔽图片" : "显示图片"}
