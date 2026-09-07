@@ -465,12 +465,13 @@ export function EmailPanel() {
 
   // 默认左右 1:2：左栏占 split 容器宽度的 1/3（正文视图默认占 2/3）。
   useEffect(() => {
+    if (!open) return;
     const el = splitRef.current;
     if (!el || dragTouched.current) return;
     const w = Math.round(el.getBoundingClientRect().width / 3);
     if (w > 240) setListW(w);
     // 仅设置一次默认，之后交给用户拖拽。
-  }, []);
+  }, [open]);
 
   // 点击「更多」下拉外部关闭。
   useEffect(() => {
