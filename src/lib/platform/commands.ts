@@ -126,6 +126,8 @@ export interface CommandMap {
   email_move_many_to_trash: { args: { args: { account: EmailAccount; uids: number[]; folder: string } }; result: number };
   email_mark_many_read: { args: { args: { account: EmailAccount; uids: number[]; folder: string }; read: boolean }; result: number };
   email_send: { args: { args: { account: EmailAccount; to: string; subject: string; body: string } }; result: void };
+  // ---- Update（更新清单，桌面 native 拉取；Web 走 server version.json） ----
+  fetch_update_manifest: { args: { url?: string }; result: { version: string | null; notes: string | null; pub_date: string | null } | null };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

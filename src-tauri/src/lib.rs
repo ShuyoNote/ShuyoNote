@@ -23,6 +23,7 @@ mod tags;
 mod templates;
 mod titlebar;
 mod trash;
+mod updates;
 mod versions;
 mod windows;
 mod workspace_io;
@@ -263,6 +264,7 @@ pub fn run() {
             email::email_move_many_to_trash,
             email::email_mark_many_read,
             email::email_send,
+            updates::fetch_update_manifest,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

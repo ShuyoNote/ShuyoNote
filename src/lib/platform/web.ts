@@ -1078,6 +1078,11 @@ function makeInvoke(store: SqliteStore) {
       // 聚合邮箱仅桌面版（Web 无法连接 IMAP）。
       throw new Error("聚合邮箱仅桌面版支持（请使用桌面版）");
     }
+    if (cmd === "fetch_update_manifest") {
+      // 更新清单仅桌面版（Web 走 server version.json）；Web 无法连 gitcode CDN，
+      // 返回 null 视为「无更新」，不抛错。
+      return null as T;
+    }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
       const args = a.args ?? a;

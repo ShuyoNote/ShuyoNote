@@ -13,8 +13,8 @@ import {
   getAllowExternal,
   setAllowExternal,
 } from "../lib/links";
-import { fetchLatestVersion, fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
-import { checkDesktopUpdate, type UpdateProgress } from "../lib/updater";
+import { fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
+import { checkDesktopUpdate, fetchUpdateManifestNative, type UpdateProgress } from "../lib/updater";
 import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
@@ -67,7 +67,7 @@ export function AboutDialog() {
     if (dbg) {
       setLatestVersion(dbg);
       setUpdateState("update-available");
-      const mf = await fetchUpdateManifest();
+      const mf = await (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
       setReleaseNotes(mf?.notes ?? null);
       setChecked(true);
       setChecking(false);
@@ -97,11 +97,12 @@ export function AboutDialog() {
       setDownload({ run: up.download });
       setUpdateState("update-available");
       // Pull the release notes (best-effort) so the user can read what's new.
-      const mf = await fetchUpdateManifest();
+      const mf = await (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
       if (mf?.notes) setReleaseNotes(mf.notes);
     } else {
-      const latest = await fetchLatestVersion();
-      console.error("[updater] desktop updater unavailable; fallback fetchLatestVersion ->", latest);
+      const mf = await (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
+      const latest = mf?.version ?? null;
+      console.error("[updater] desktop updater unavailable; fallback latest ->", latest);
       setLatestVersion(latest);
       setUpdateState(updateStatus(latest, APP_VERSION));
       // Surface the real updater error (if any) so we can tell what happened.

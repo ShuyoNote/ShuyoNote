@@ -1,11 +1,8 @@
 import { useEffect } from "react";
 import { useEditorStore } from "../store/editor";
-import { checkDesktopUpdate } from "./updater";
+import { checkDesktopUpdate, fetchUpdateManifestNative } from "./updater";
 import { APP_VERSION } from "./links";
 import { debugUpdateVersion, compareVersions } from "./updates";
-
-// The stable "latest" release channel that always carries the newest metadata.
-const LATEST_ENDPOINT = "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json";
 
 export const isDesktop = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -13,13 +10,15 @@ function normVer(v: string | null | undefined): string {
   return (v ?? "").match(/\d+\.\d+\.\d+/)?.[0] ?? (v ?? "");
 }
 
-/** Desktop fallback: compare against the gitcode release channel (install bundle). */
+/**
+ * Desktop fallback: compare against the gitcode release channel (install bundle).
+ * Reads via the native reqwest command so the WebView's browser `fetch` to
+ * gitcode (which 302s to a file-cdn URL and is denied by CORS) is avoided.
+ */
 async function detectFromGitcode(): Promise<{ available: boolean; latest: string | null }> {
   try {
-    const resp = await fetch(LATEST_ENDPOINT, { method: "GET" });
-    if (!resp.ok) return { available: false, latest: null };
-    const j = await resp.json();
-    const latest: string | null = j?.version ?? null;
+    const mf = await fetchUpdateManifestNative();
+    const latest: string | null = mf?.version ?? null;
     if (!latest) return { available: false, latest: null };
     const lv = normVer(latest), cur = normVer(APP_VERSION);
     return { available: compareVersions(lv, cur) > 0, latest: lv };

@@ -4,6 +4,8 @@
 // falls back to the releases-page fetch (stage 1). Not bundled into the smoke
 // harness (kept separate from updates.ts for that reason).
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
+import type { UpdateManifest } from "./updates";
 
 /** Phases of the in-app update flow, surfaced to the UI for feedback. */
 export type UpdatePhase = "downloading" | "installing" | "restarting";
@@ -24,6 +26,23 @@ export type DesktopUpdateResult =
       download: (onProgress?: (p: UpdateProgress) => void) => Promise<void>;
     }
   | { state: "unavailable"; error?: string };
+
+/** Desktop-only: native fetch of the gitcode `latest.json`.
+ *
+ * The WebView's browser `fetch` to gitcode is blocked by CORS: gitcode 302s to a
+ * `file-cdn.gitcode.com` signature URL whose response carries no
+ * `Access-Control-Allow-Origin` for the app origin, so the redirect is denied
+ * (`[Error] Cross-origin redirection ...`). This goes through reqwest on the
+ * Rust side, which is not subject to CORS and follows the redirect, returning
+ * the manifest. Degrades to `null` on failure (offline/not reachable). */
+export async function fetchUpdateManifestNative(url?: string): Promise<UpdateManifest | null> {
+  try {
+    return await invoke<UpdateManifest | null>("fetch_update_manifest", { url });
+  } catch (e) {
+    console.warn("[updater] native manifest fetch failed:", e);
+    return null;
+  }
+}
 
 /** Check for an update via the in-app updater (desktop only). */
 export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {
