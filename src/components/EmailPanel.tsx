@@ -310,6 +310,7 @@ export function EmailPanel() {
   const btnRef = useRef<HTMLButtonElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const dragTouched = useRef(false);
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const listScrollRef = useRef<HTMLDivElement>(null);
 
@@ -449,6 +450,15 @@ export function EmailPanel() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [headMoreOpen]);
+
+  // 默认左右 1:2：左栏占 split 容器宽度的 1/3（正文视图默认占 2/3）。
+  useEffect(() => {
+    const el = splitRef.current;
+    if (!el || dragTouched.current) return;
+    const w = Math.round(el.getBoundingClientRect().width / 3);
+    if (w > 240) setListW(w);
+    // 仅设置一次默认，之后交给用户拖拽。
+  }, []);
 
   // 点击「更多」下拉外部关闭。
   useEffect(() => {
@@ -919,6 +929,7 @@ export function EmailPanel() {
   // 拖动竖分隔线调整列表宽度。
   const onDividerDown = (e: React.MouseEvent) => {
     e.preventDefault();
+    dragTouched.current = true;
     dragRef.current = { startX: e.clientX, startW: listW };
     const onMove = (ev: MouseEvent) => {
       const d = dragRef.current;
