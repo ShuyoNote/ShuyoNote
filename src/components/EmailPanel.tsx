@@ -1660,8 +1660,8 @@ export function EmailPanel() {
                                 <button
                                   key={name}
                                   className={`email-month-cell${has ? " is-avail" : ""}`}
-                                  disabled={!has}
                                   onClick={() => scrollToMonth(pickerYear, m)}
+                                  title={has ? "" : "该月不一定有邮件，点击尝试"}
                                 >
                                   {name}
                                 </button>

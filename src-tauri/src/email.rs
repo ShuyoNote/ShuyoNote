@@ -526,12 +526,85 @@ pub async fn email_list_months(args: EmailMonthsArgs) -> Result<Vec<String>, Str
     list_account_months(&args.account, &args.folders).await
 }
 
+/// 把邮件 Date 规范化：去掉末尾 " (CST)" 注释、去掉开头的星期（QQ 等常写错星期，
+/// 而 chrono 的 %a/rfc2822 会校验星期与日期匹配导致 Impossible）、并把 1 位数字天补零成 "07"。
+fn normalize_email_date(s: &str) -> String {
+    const MONTHS: [&str; 12] = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const WDAYS: [&str; 7] = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    let s = s.trim();
+    let s = match s.find(" (") { Some(i) => &s[..i], None => s };
+    let mut parts: Vec<&str> = s.split_whitespace().collect();
+    if let Some(first) = parts.first() {
+        let name = first.trim_end_matches(',');
+        if WDAYS.contains(&name) && (first.ends_with(',') || first.len() <= 3) {
+            parts.remove(0);
+        }
+    }
+    let mut out: Vec<String> = Vec::with_capacity(parts.len());
+    let mut padded = false;
+    for (i, p) in parts.iter().enumerate() {
+        if !padded && p.len() == 1 && p.bytes().all(|b| b.is_ascii_digit()) {
+            if let Some(next) = parts.get(i + 1) {
+                if MONTHS.contains(next) {
+                    out.push(format!("0{}", p));
+                    padded = true;
+                    continue;
+                }
+            }
+        }
+        out.push(p.to_string());
+    }
+    out.join(" ")
+}
+
+/// 尽可能解析邮件 Date 字符串（RFC2822 / RFC3339 / 若干无时区变体），失败返回 None。
+/// 已先 normalize（去星期注释、补零），因此不依赖星期是否正确。
+fn parse_email_date(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    let s = normalize_email_date(s);
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(&s) {
+        return Some(t);
+    }
+    // 带时区（%z）：用 DateTime<FixedOffset> 解析（NaiveDateTime 不支持 %z）。
+    for fmt in ["%d %b %Y %H:%M:%S %z"] {
+        if let Ok(t) = chrono::DateTime::parse_from_str(&s, fmt) {
+            return Some(t);
+        }
+    }
+    // 无时区：NaiveDateTime + UTC 兜底（仅用于按月/排序，误差可接受）。
+    for fmt in ["%d %b %Y %H:%M:%S"] {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&s, fmt) {
+            if let Some(off) = chrono::FixedOffset::east_opt(0) {
+                return Some(chrono::DateTime::from_naive_utc_and_offset(naive, off));
+            }
+        }
+    }
+    // 纯日期
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(&s, "%d %b %Y") {
+        if let Some(naive) = d.and_hms_opt(0, 0, 0) {
+            if let Some(off) = chrono::FixedOffset::east_opt(0) {
+                return Some(chrono::DateTime::from_naive_utc_and_offset(naive, off));
+            }
+        }
+    }
+    None
+}
+
 /// 从 Date 字符串提取 `YYYY-M`（0-based 月）键；无法解析返回 None。
 fn month_key_from_date(s: &str) -> Option<String> {
-    // Date 形如 "Mon, 31 Aug 2026 11:40:54 +0800 (CST)" 或已标准化的 RFC2822。
-    use chrono::{DateTime, Datelike};
-    let t = DateTime::parse_from_rfc2822(s.trim()).ok()?;
+    use chrono::Datelike;
+    let t = parse_email_date(s)?;
     Some(format!("{}-{}", t.year(), t.month0()))
+}
+
+/// 从 "YYYY-MM-DD" 提取目标 (year, month)；解析失败兜底为 (1970,1)——几乎不命中。
+fn target_month(s: &str) -> (i32, u32) {
+    let p: Vec<&str> = s.split('-').collect();
+    if p.len() == 3 {
+        if let (Ok(y), Ok(m)) = (p[0].parse::<i32>(), p[1].parse::<u32>()) {
+            return (y, m);
+        }
+    }
+    (1970, 1)
 }
 
 /// 列出账号下所有可选文件夹（`LIST "" "*"`），供多选下拉用；跳过不可 SELECT 的（\Noselect）。
@@ -1179,9 +1252,7 @@ fn read_accounts(db: &State<'_, Db>, app: &tauri::AppHandle) -> Result<Vec<Email
 
 /// 把 Date 字符串解析成可排序的时间戳（毫秒）；失败返回 0。
 fn date_ts(s: &str) -> i64 {
-    chrono::DateTime::parse_from_rfc2822(s.trim())
-        .map(|d| d.timestamp_millis())
-        .unwrap_or(0)
+    parse_email_date(s).map(|d| d.timestamp_millis()).unwrap_or(0)
 }
 
 /// 从一条 FETCH 构造 EmailMeta（复用 email_fetch_inbox 的 build_meta 逻辑）。
@@ -1228,33 +1299,29 @@ async fn fetch_account_emails(
     date_to: Option<&str>,
 ) -> Result<(Vec<EmailMeta>, u32), String> {
     use futures_util::StreamExt;
+    use chrono::Datelike;
     let mut session = open_session(account, "INBOX").await?;
     let mut out = Vec::new();
     let mut unread = 0u32;
     for folder in folders {
         session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
         if let (Some(df), Some(dt)) = (date_from, date_to) {
-            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
-            let from_s = imap_date(df);
-            let to_s = imap_date(dt);
-            let query = format!("SINCE {} BEFORE {}", from_s, to_s);
-            let ids = session
-                .uid_search(&query)
-                .await
-                .map_err(|e| format!("按日期搜索 {} 失败: {}", folder, e))?;
-            if !ids.is_empty() {
-                let set = ids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
-                let mut stream = session
-                    .uid_fetch(set, "(ENVELOPE UID FLAGS)")
-                    .await
-                    .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
-                while let Some(Ok(m)) = stream.next().await {
-                    if let Some(meta) = meta_from_fetch(&m, folder) {
+            // 按月/日期区间：部分 IMAP 服务端（如 QQ 邮箱）对 SINCE/BEFORE 返回空或挑剔日期格式，
+            // 故改为「拉全量 → 按邮件的年月（以其自身时区）过滤」，服务端无关、更稳。
+            let m = target_month(df);
+            let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+            while let Some(Ok(msg)) = stream.next().await {
+                if let Some(meta) = meta_from_fetch(&msg, folder) {
+                    let in_month = parse_email_date(&meta.date)
+                        .map(|t| t.year() == m.0 && t.month() == m.1)
+                        .unwrap_or(false);
+                    if in_month {
                         if !meta.seen { unread += 1; }
                         out.push(meta);
                     }
                 }
             }
+            let _ = dt; // (保留 date_to 以维持接口签名；按月直接只用 from 的年月)
         } else {
             let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
             while let Some(Ok(m)) = stream.next().await {
@@ -1368,6 +1435,17 @@ mod tests {
         assert!(text.contains("日期: 2026-09-06"));
         assert!(text.contains("第一行"));
         assert!(text.contains("第二行"));
+    }
+
+    #[test]
+    fn parse_email_date_handles_qq_zone_comment_and_month() {
+        // QQ 邮箱日期带末尾括号时区注释 + 可能写错的星期 + 单位数字天，都要能解析。
+        assert_eq!(month_key_from_date("Mon, 7 Jul 2026 16:19:49 +0800 (CST)").as_deref(), Some("2026-6"));
+        assert_eq!(month_key_from_date("7 Sep 2026 16:19:49 +0800 (CST)").as_deref(), Some("2026-8"));
+        // 无括号的标准 RFC2822 也能解析
+        assert_eq!(month_key_from_date("Mon, 31 Aug 2026 11:40:54 +0800").as_deref(), Some("2026-7"));
+        // date_ts 不再因解析失败而恒为 0
+        assert!(date_ts("Mon, 7 Jul 2026 16:19:49 +0800 (CST)") > 0);
     }
 
     #[test]
