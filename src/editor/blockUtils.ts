@@ -1,5 +1,21 @@
-import { $isDecoratorNode, $isElementNode, type LexicalNode } from "lexical";
+import { $copyNode, $isDecoratorNode, $isElementNode, type LexicalNode } from "lexical";
 import { $isColumnNode } from "./nodes/ColumnNode";
+
+// Deep-clone a node (and its subtree) into a fresh, detached copy with a NEW key.
+// Lexical's `clone()` / `$copyNode()` do NOT copy an element's children, so we
+// recurse. (`$cloneWithProperties` must never be used for duplication — it keeps
+// the same key, which throws a duplicate-key error on insert.)
+export function $deepCloneBlock(node: LexicalNode): LexicalNode {
+  const copy = $copyNode(node);
+  if ($isElementNode(node)) {
+    const el = copy as typeof node;
+    for (const child of node.getChildren()) {
+      el.append($deepCloneBlock(child));
+    }
+  }
+  return copy;
+}
+
 
 // A top-level block is "empty" when it has no visible content: no text and no
 // non-empty children. Used to show the Feishu-style inline "+" (insert-block)

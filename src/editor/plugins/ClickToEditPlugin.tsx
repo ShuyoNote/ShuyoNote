@@ -3,9 +3,31 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $createParagraphNode, $getRoot, $isElementNode, type LexicalNode } from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
 
-// Blank-area interactions: dragging draws a rectangular box-select that selects
-// every top-level block it covers; a plain click places the caret in the nearest
-// block. Text-drag (starting on block content) still does normal text selection.
+// Blank-area interactions. The drag marquee (box-select) is only armed when the
+// mousedown lands on a non-text, non-block "safe" zone (page background / shell /
+// contenteditable root), so normal text selection is never hijacked. A plain
+// click (<6px) on that zone places the caret in the nearest block.
+//
+// Text selection stays the top priority. A mousedown that lands on a text glyph
+// (a Text node) OR inside a text-bearing block is left entirely to the browser.
+// A mousedown on a genuinely blank target — the page background / contenteditable
+// root / margins, or an empty block with no visible text — arms the marquee.
+const BLOCK_TAGS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th";
+
+function isSafeMarqueeTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof Node)) return false;
+  if (t.nodeType === Node.TEXT_NODE) return false; // on a glyph → normal text selection
+  const el = t as HTMLElement;
+  const block = el.closest(BLOCK_TAGS);
+  if (block) {
+    // Inside a block: if it has visible text, it's a 文字区 → text selection.
+    // An empty block (no text) is still blank → marquee allowed.
+    if ((block.textContent || "").trim().length > 0) return false;
+  }
+  if (!el.closest(".editor-content, .editor-shell")) return false; // must be in the editor
+  return true;
+}
+
 export function ClickToEditPlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -15,7 +37,6 @@ export function ClickToEditPlugin() {
     if (!rootEl || !shell) return;
 
     let downStart: { x: number; y: number } | null = null;
-    let downTarget: HTMLElement | null = null;
     let boxEl: HTMLDivElement | null = null;
     let selecting = false;
 
@@ -49,15 +70,15 @@ export function ClickToEditPlugin() {
     };
 
     const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
       const target = e.target as HTMLElement;
-      // Don't box-select from block handles / selection bar / popovers.
-      if (target.closest(".block-handle, .block-selection-bar, .tag-picker, .slash-menu")) {
-        return;
-      }
-      // Only within the editor content area (any direction/start point).
+      if (target.closest(".block-handle, .block-grip-menu, .block-selection-bar, .tag-picker, .slash-menu, .selection-toolbar")) return;
       if (!target.closest(".editor-content, .editor-shell")) return;
+      // Only arm the marquee from a non-text target (element/blank — not a glyph).
+      if (!isSafeMarqueeTarget(e.target)) return;
+      if (useBlockSelection.getState().selectMode) return; // select-mode handled elsewhere
+      e.preventDefault(); // stop the browser's native caret/text selection during a marquee drag
       downStart = { x: e.clientX, y: e.clientY };
-      downTarget = target;
       selecting = false;
       createBox();
     };
@@ -83,13 +104,11 @@ export function ClickToEditPlugin() {
     const onMouseUp = (e: MouseEvent) => {
       if (!downStart || !boxEl) return;
       const wasSelect = selecting;
-      const blankClick = downTarget === rootEl || downTarget === shell;
       removeBox();
       downStart = null;
-      downTarget = null;
       selecting = false;
       if (wasSelect) return; // box-select done (blocks highlighted)
-      if (!blankClick) return; // block/text click → browser placed the caret
+      if (useBlockSelection.getState().selectMode) return;
       // Plain blank click → place the caret in the nearest block.
       if (useBlockSelection.getState().keys.length > 0) return;
       const y = e.clientY;

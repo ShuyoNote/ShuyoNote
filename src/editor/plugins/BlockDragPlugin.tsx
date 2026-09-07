@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot } from "lexical";
+import { $getNearestNodeFromDOMNode, $getNodeByKey, $getRoot, $getSelection, $isRangeSelection } from "lexical";
 import { $findTableNode } from "@lexical/table";
 import { useBlockSelection } from "../../store/blockSelection";
-import { isEmptyBlock } from "../blockUtils";
+import { $deepCloneBlock, isEmptyBlock } from "../blockUtils";
+import { TrashIcon } from "../../components/icons";
 
 // Notion-style block drag handle: a "⋮⋮" grip appears to the left of the
 // top-level block under the cursor. Clicking it opens a small menu
@@ -87,7 +88,9 @@ function findTargetBlock(
 
 export function BlockDragPlugin() {
   const [editor] = useLexicalComposerContext();
+  const selectMode = useBlockSelection((s) => s.selectMode);
   const [handle, setHandle] = useState<HandleState | null>(null);
+  const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [ghostTop, setGhostTop] = useState(0);
   const [dropLine, setDropLine] = useState<DropLine | null>(null);
@@ -109,6 +112,11 @@ export function BlockDragPlugin() {
 
     const onMove = (e: MouseEvent) => {
       if (draggingRef.current) return;
+      if (useBlockSelection.getState().selectMode) {
+        // In 多选模式, block selection is driven by clicks, so no grip.
+        setHandle(null);
+        return;
+      }
       const target = e.target as Node;
 
       if (handleRef.current && handleRef.current.contains(target)) {
@@ -146,6 +154,26 @@ export function BlockDragPlugin() {
       document.removeEventListener("mousemove", onMove, true);
       clearHide();
     };
+  }, [editor]);
+
+  // 文字选中优先：一旦编辑器存在非折叠的 RangeSelection（用户正在拖选/已选中
+  // 一段文字），立即隐藏块手柄，避免它在沟槽里出现造成干扰或误把后续按下当块选。
+  useEffect(() => {
+    const hide = () => {
+      setHandle(null);
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+        hideTimerRef.current = null;
+      }
+    };
+    return editor.registerUpdateListener(() => {
+      let active = false;
+      editor.getEditorState().read(() => {
+        const sel = $getSelection();
+        if ($isRangeSelection(sel)) active = !sel.isCollapsed();
+      });
+      if (active) hide();
+    });
   }, [editor]);
 
   // Manual drag.
@@ -208,6 +236,25 @@ export function BlockDragPlugin() {
   }, [dragKey, editor]);
 
   // Close the block menu when clicking elsewhere.
+  // Close the block grip menu when clicking elsewhere.
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest(".block-grip-menu") || t.closest(".block-handle")) return;
+      setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [menu]);
+
   const beginDrag = (h: HandleState, clientY: number) => {
     draggingRef.current = true;
     ghostLeftRef.current = h.left;
@@ -215,6 +262,7 @@ export function BlockDragPlugin() {
     setDragKey(h.key);
     setGhostTop(clientY);
     setHandle(null);
+    setMenu(null);
   };
 
   const onHandleMouseDown = (e: ReactMouseEvent) => {
@@ -257,6 +305,10 @@ export function BlockDragPlugin() {
         } else {
           sel.setAnchor(h.key);
           sel.setKeys([h.key]);
+          // Single click on the grip → open the block's action menu near the grip.
+          const mx = Math.max(8, Math.min(h.left + HANDLE_OFFSET - 6, window.innerWidth - 150));
+          const my = Math.max(8, h.top + 30);
+          setMenu({ key: h.key, x: mx, y: my });
         }
         setHandle(null);
       }
@@ -266,17 +318,83 @@ export function BlockDragPlugin() {
     document.addEventListener("mouseup", onUp, true);
   };
 
+  const copyMenu = () => {
+    const s = useBlockSelection.getState();
+    editor.update(() => {
+      let last = null as ReturnType<typeof $deepCloneBlock> | null;
+      for (const k of s.keys) {
+        const node = $getNodeByKey(k);
+        if (!node) continue;
+        const clone = $deepCloneBlock(node);
+        if (last) last.insertAfter(clone);
+        else node.insertAfter(clone);
+        last = clone;
+      }
+    });
+    setMenu(null);
+  };
+
+  const delMenu = () => {
+    const s = useBlockSelection.getState();
+    editor.update(() => {
+      for (const k of s.keys) {
+        const n = $getNodeByKey(k);
+        if (n) n.remove();
+      }
+    });
+    useBlockSelection.getState().clear();
+    setMenu(null);
+  };
+
+  const clearMenu = () => {
+    useBlockSelection.getState().clear();
+    setMenu(null);
+  };
+
   return (
     <>
-      {handle && !dragKey && (
+      {handle && !dragKey && !selectMode && (
         <div
           ref={handleRef}
           className="block-handle"
           style={{ top: handle.top, left: handle.left }}
           onMouseDown={onHandleMouseDown}
-          title="点击选择 · Shift+点击多选 · 按住拖动排序"
+          title="点击打开菜单 · Shift+点击多选 · 按住拖动排序"
         >
           ⋮⋮
+        </div>
+      )}
+
+      {menu && (
+        <div
+          className="block-grip-menu"
+          style={{ position: "fixed", top: menu.y, left: menu.x }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <div className="block-grip-menu-head">
+            <span className="block-grip-menu-title">块操作</span>
+          </div>
+          <button className="block-grip-item" onClick={copyMenu}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span>复制</span>
+          </button>
+          <button className="block-grip-item danger" onClick={delMenu}>
+            <TrashIcon width={16} height={16} />
+            <span>删除</span>
+          </button>
+          <div className="block-grip-menu-sep" />
+          <button className="block-grip-item" onClick={clearMenu}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+            <span>清空选择</span>
+          </button>
         </div>
       )}
 

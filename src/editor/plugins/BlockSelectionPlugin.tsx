@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $cloneWithProperties, $getNodeByKey, $getRoot } from "lexical";
+import {
+  $getNearestNodeFromDOMNode,
+  $getNodeByKey,
+  $getRoot,
+} from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
 import { toast } from "../../store/toast";
+import { $deepCloneBlock } from "../blockUtils";
 
 function syncHighlight(editor: ReturnType<typeof useLexicalComposerContext>[0], keys: string[]) {
   const set = new Set(keys);
@@ -14,12 +19,33 @@ function syncHighlight(editor: ReturnType<typeof useLexicalComposerContext>[0], 
   });
 }
 
-// Multi-select of top-level blocks: box-select / handle selects and highlights,
-// and a right-click context menu (copy/delete/cancel) pops on the selected blocks.
+function topLevelKeyFromTarget(
+  editor: ReturnType<typeof useLexicalComposerContext>[0],
+  target: EventTarget | null,
+): string | null {
+  if (!(target instanceof Node)) return null;
+  const el = target instanceof HTMLElement ? target : target.parentElement;
+  if (!el) return null;
+  let key: string | null = null;
+  editor.getEditorState().read(() => {
+    const node = $getNearestNodeFromDOMNode(el);
+    if (!node) return;
+    const top = node.getTopLevelElement();
+    key = top ? top.getKey() : null;
+  });
+  return key;
+}
+
+// Block multi-selection (A grip + B select-mode + C box-select).
+//
+// Text selection is always a priority: block-select gestures live either on an
+// isolated grip (A) or behind an explicit "多选模式" switch (B) or a blank-area
+// box-select (C). In normal mode, a mousedown on text/blank just clears the
+// block selection and lets the browser do text selection.
 export function BlockSelectionPlugin() {
   const [editor] = useLexicalComposerContext();
   const keys = useBlockSelection((s) => s.keys);
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const selectMode = useBlockSelection((s) => s.selectMode);
 
   useEffect(() => {
     syncHighlight(editor, keys);
@@ -32,47 +58,48 @@ export function BlockSelectionPlugin() {
     );
   }, [editor]);
 
-  // Clear selection on any mousedown that isn't a handle/button or a right-click
-  // (right-click opens the context menu, so the selection must persist).
+  // mousedown: in select-mode, clicking a block toggles it / clicking blank clears;
+  // otherwise, pressing anywhere (except a block handle/bar) drops the block selection
+  // so the browser can do normal text selection.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (e.button === 2) return;
       const t = e.target as HTMLElement;
-      if (t.closest(".block-handle, .block-context-menu")) return;
-      useBlockSelection.getState().clear();
-      setMenu(null);
+      if (t.closest(".block-handle, .block-grip-menu, .block-selection-bar, .block-select-mode-btn, .selection-toolbar")) return;
+      const s = useBlockSelection.getState();
+      if (s.selectMode) {
+        const key = topLevelKeyFromTarget(editor, e.target);
+        if (key) {
+          e.preventDefault();
+          if (s.keys.length === 0) s.setAnchor(key);
+          s.toggleKey(key);
+        } else {
+          s.clear();
+        }
+        return;
+      }
+      if (t.closest(".block-handle")) return;
+      s.clear();
     };
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);
-  }, []);
+  }, [editor]);
 
-  // Right-click a selected block → show the context menu at the cursor.
-  useEffect(() => {
-    const onContext = (e: MouseEvent) => {
-      const s = useBlockSelection.getState();
-      if (s.keys.length === 0) return;
-      // Only when the right-click is inside the editor while blocks are selected.
-      // (Kept broad — not tied to the .block-selected highlight class — so the
-      // menu reliably appears even if highlight timing/class application lags.)
-      const target = e.target as HTMLElement;
-      if (!target.closest(".editor-content, .editor-shell")) return;
-      e.preventDefault();
-      setMenu({ x: e.clientX, y: e.clientY });
-    };
-    document.addEventListener("contextmenu", onContext, true);
-    return () => document.removeEventListener("contextmenu", onContext, true);
-  }, []);
-
-  // Delete/Backspace remove selected blocks; Escape clears.
+  // Escape clears (and exits select-mode); Delete/Backspace remove selected blocks.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const s = useBlockSelection.getState();
-      if (s.keys.length === 0) return;
-      if (e.key === "Escape") {
-        s.clear();
-        setMenu(null);
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        s.setSelectMode(!s.selectMode);
         return;
       }
+      if (e.key === "Escape") {
+        if (s.selectMode) s.setSelectMode(false);
+        s.clear();
+        return;
+      }
+      if (s.keys.length === 0) return;
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         editor.update(() => {
@@ -82,22 +109,21 @@ export function BlockSelectionPlugin() {
           }
         });
         s.clear();
-        setMenu(null);
       }
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
   }, [editor]);
 
-  if (keys.length === 0) return null;
+  const toggleMode = () => useBlockSelection.getState().setSelectMode(!selectMode);
 
   const copy = () => {
     editor.update(() => {
-      let last = null as ReturnType<typeof $cloneWithProperties> | null;
+      let last = null as ReturnType<typeof $deepCloneBlock> | null;
       for (const k of keys) {
         const node = $getNodeByKey(k);
         if (!node) continue;
-        const clone = $cloneWithProperties(node);
+        const clone = $deepCloneBlock(node);
         if (last) last.insertAfter(clone);
         else node.insertAfter(clone);
         last = clone;
@@ -114,20 +140,35 @@ export function BlockSelectionPlugin() {
       }
     });
     useBlockSelection.getState().clear();
-    setMenu(null);
   };
 
-  if (!menu) return null;
+  const clear = () => {
+    useBlockSelection.getState().clear();
+  };
+
+  if (keys.length === 0 && !selectMode) return null;
+
   return (
     <div
-      className="block-context-menu"
-      style={{ position: "fixed", top: menu.y + 4, left: menu.x, zIndex: 50 }}
+      className={`block-selection-bar${selectMode ? " is-select-mode" : ""}`}
+      onMouseDown={(e) => e.stopPropagation()}
+      onMouseUp={(e) => e.stopPropagation()}
     >
-      <div className="block-context-count">已选 {keys.length} 块</div>
-      <button onClick={() => { copy(); setMenu(null); }}>⧉ 复制</button>
-      <button className="danger" onClick={() => { del(); setMenu(null); }}>
-        🗑 删除
+      <span className="block-selection-count">
+        {selectMode ? "多选模式" : `已选 ${keys.length} 块`}
+      </span>
+      {selectMode && keys.length > 0 && <span className="block-selection-count">已选 {keys.length} 块</span>}
+      <button className="block-select-mode-btn" onClick={toggleMode} title="多选模式下点击块即可加入/移出选择（Mod+Shift+M）">
+        {selectMode ? "退出多选" : "多选模式"}
       </button>
+      {keys.length > 0 && (
+        <>
+          <button onClick={copy}>⧉ 复制</button>
+          <button className="danger" onClick={del}>🗑 删除</button>
+          <button className="block-selection-close" onClick={clear}>✕ 清空</button>
+        </>
+      )}
+      {selectMode && <span className="block-select-hint">点块加入/移出 · Esc 退出</span>}
     </div>
   );
 }

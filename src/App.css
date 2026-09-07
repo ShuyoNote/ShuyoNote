@@ -4942,7 +4942,10 @@ select.prop-value {
 .block-handle::before {
   content: "";
   position: absolute;
-  inset: -16px; /* enlarge the invisible hit area for easier drag/select */
+  /* 扩大不可见命中区便于抓取，但只向左/上下扩，且右侧留 4px 缝隙，
+     绝不越过手柄右缘伸进正文——段首（正文起点=rect.left）点选/拖拽文字时
+     命中的必定是正文而非手柄，保证文字选中优先。 */
+  inset: -16px 4px -16px -16px;
 }
 
 .block-handle:hover {
@@ -4962,6 +4965,68 @@ select.prop-value {
   opacity: 0.85;
   box-shadow: var(--shadow-md);
   transition: none;
+}
+
+/* 块手柄单击弹出的「块操作」菜单（复制/删除/清空选择）。 */
+.block-grip-menu {
+  z-index: 210;
+  display: flex;
+  flex-direction: column;
+  min-width: 172px;
+  padding: 6px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(10px) saturate(1.05);
+  -webkit-backdrop-filter: blur(10px) saturate(1.05);
+  font-size: 13px;
+  font-family: inherit;
+  animation: block-grip-menu-in 0.14s ease-out;
+}
+@keyframes block-grip-menu-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.block-grip-menu-head {
+  padding: 2px 8px 5px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+}
+.block-grip-menu-title {
+  color: var(--text-faint);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.block-grip-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 7px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.block-grip-item svg { flex: none; color: var(--text-dim); transition: color 0.12s; }
+.block-grip-item:hover { background: var(--hover); color: var(--text); }
+.block-grip-item:hover svg { color: var(--text); }
+.block-grip-item:active { transform: translateY(0.5px); }
+.block-grip-item.danger { color: var(--danger); }
+.block-grip-item.danger svg { color: var(--danger); }
+.block-grip-item.danger:hover { background: var(--danger-soft); }
+.block-grip-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 8px;
 }
 
 /* Insertion indicator shown while dragging a block. */
@@ -5147,7 +5212,7 @@ select.prop-value {
   border-radius: var(--radius-sm);
 }
 
-/* Rectangular box-select overlay drawn while dragging across blocks. */
+/* Drag marquee (box-select) overlay — armed only from the blank/safe zone. */
 .block-box-select {
   position: fixed;
   z-index: 28;
@@ -5157,10 +5222,13 @@ select.prop-value {
   pointer-events: none;
 }
 
-/* Batch action bar for selected blocks (positioned near the first block). */
+/* Batch action bar for selected blocks / 多选模式 —— 底部居中浮动条。 */
 .block-selection-bar {
   position: fixed;
-  z-index: 40;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 200;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -5168,13 +5236,32 @@ select.prop-value {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-  padding: 5px 8px 5px 12px;
+  padding: 6px 10px 6px 14px;
   font-size: 13px;
+  max-width: min(92vw, 720px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.block-selection-bar.is-select-mode {
+  border-color: color-mix(in srgb, var(--accent, #4f7cff) 55%, var(--border));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22), 0 0 0 3px var(--accent-soft);
 }
 .block-selection-count {
   color: var(--text-dim);
   font-weight: 600;
   margin-right: 2px;
+}
+.block-select-mode-btn {
+  border: 1px solid color-mix(in srgb, var(--accent, #4f7cff) 45%, var(--border)) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent, #4f7cff) !important;
+  font-weight: 600;
+}
+.block-selection-bar .block-select-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
 }
 .block-selection-bar button {
   border: none;
@@ -17173,6 +17260,58 @@ p:has(> .editor-drawing-container) {
 .email-folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .email-page-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .email-page-empty { padding: 24px; color: var(--text-dim); }
+
+/* 空账号引导态（聚合收件箱，未配置任何 IMAP 账号） */
+.email-empty-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 32px;
+  text-align: center;
+  position: relative;
+}
+.email-empty-art {
+  width: 88px;
+  height: 88px;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent, #4f7cff);
+  background: color-mix(in srgb, var(--accent, #4f7cff) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #4f7cff) 22%, transparent);
+  margin-bottom: 10px;
+}
+.email-empty-title { margin: 0; font-size: 18px; font-weight: 600; color: var(--text); }
+.email-empty-desc { max-width: 380px; margin: 2px 0 6px; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); }
+.email-empty-desc b { color: var(--text); font-weight: 600; }
+.email-empty-steps { margin: 8px 0 16px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.email-empty-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 8px 12px;
+  background: var(--bg-2, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 10px;
+}
+.email-empty-steps li::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #4f7cff);
+  opacity: 0.75;
+}
+.email-empty-steps b { color: var(--text); font-weight: 600; }
+.email-empty-cta { margin-top: 4px; }
 
 .email-split { flex: 1; min-height: 0; display: flex; position: relative; }
 

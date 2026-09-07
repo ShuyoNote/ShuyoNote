@@ -1562,7 +1562,29 @@ export function EmailPanel() {
 
             <div className="email-page-body">
               {accounts.length === 0 && (
-                <div className="email-page-empty">请先在 <b>设置 → 邮箱</b> 配置 IMAP 账号。</div>
+                <div className="email-empty-state">
+                  <div className="email-empty-art">
+                    <InboxIcon width={40} height={40} />
+                  </div>
+                  <h3 className="email-empty-title">还没有邮箱账号</h3>
+                  <p className="email-empty-desc">
+                    配置一个或多个 IMAP 邮箱（QQ / 企业邮箱等），即可把多账号邮件<b>聚合成一个收件箱</b>。
+                  </p>
+                  <ol className="email-empty-steps">
+                    <li>打开 <b>设置 → 邮箱</b>，添加账号并「测试连接」</li>
+                    <li>回到这里，按账号 / 月份筛选看聚合收件流</li>
+                    <li>一键存为笔记 / 任务，或让 AI 总结长邮件</li>
+                  </ol>
+                  <button
+                    className="sync-btn primary email-empty-cta"
+                    onClick={() => {
+                      closePanel();
+                      useEditorStore.getState().openSettings("email");
+                    }}
+                  >
+                    <SettingsIcon width={14} height={14} /> 去配置邮箱账号
+                  </button>
+                </div>
               )}
 
               {accounts.length > 0 && (
@@ -2000,7 +2022,7 @@ export function EmailPanel() {
                 </div>
               )}
 
-              {err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
+              {accounts.length > 0 && err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
             </div>
           </div>,
           document.querySelector(".main") ?? document.body,
