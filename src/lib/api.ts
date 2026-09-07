@@ -36,6 +36,7 @@ export interface EmailAccount {
   smtp_user: string;
   smtp_pass: string;
   trusted_domains: string[];
+  auto_trust_senders: boolean;
 }
 
 /** 收件箱一条邮件的元信息（与后端 email::EmailMeta 对应）。 */

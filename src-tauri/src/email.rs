@@ -93,6 +93,13 @@ pub struct EmailAccountArgs {
     /// 可信发件人域名列表：命中域的远程图片自动加载（默认空，serde默认）。
     #[serde(default)]
     pub trusted_domains: Vec<String>,
+    /// 打开邮件时自动把发件人域名加入可信（默认开，可在设置关闭）。
+    #[serde(default = "default_true")]
+    pub auto_trust_senders: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_email_interval() -> u16 {

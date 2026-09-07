@@ -294,6 +294,7 @@ function EmailPane() {
   const [smtpPass, setSmtpPass] = useState("");
   const [trustedDomains, setTrustedDomains] = useState<string[]>([]);
   const [trustInput, setTrustInput] = useState("");
+  const [autoTrust, setAutoTrust] = useState(true);
   const [err, setErr] = useState("");
   const desktop = isDesktopPlatform();
 
@@ -315,6 +316,7 @@ function EmailPane() {
           setSmtpUser(a.smtp_user);
           setSmtpPass(a.smtp_pass);
           setTrustedDomains(a.trusted_domains ?? []);
+          setAutoTrust(a.auto_trust_senders ?? true);
         }
       })
       .catch(() => {});
@@ -338,6 +340,7 @@ function EmailPane() {
         smtp_user: smtpUser.trim(),
         smtp_pass: smtpPass,
         trusted_domains: trustedDomains,
+        auto_trust_senders: autoTrust,
       });
       setErr("配置已保存 ✓");
     } catch (e) {
@@ -473,9 +476,23 @@ function EmailPane() {
               <div className="email-set-card-text">
                 <div className="email-set-card-title">可信发件人域名</div>
                 <div className="email-set-card-sub">
-                  这些域名的远程图片自动加载（不用点「显示图片」）。打开过的邮件发件人域名会自动加入。
+                  这些域名的远程图片自动加载（不用点「显示图片」）。可手动添加，或开启下方「自动信任」。
                 </div>
               </div>
+            </div>
+            <div className="email-set-row email-set-tls">
+              <span className="email-set-row-text">
+                <span className="email-set-row-name">打开邮件自动信任发件人</span>
+                <span className="email-set-row-sub">开启后每次打开一封邮件，会把其发件人域名加入可信（关闭则仅在点击「信任此发件人」时加入）。</span>
+              </span>
+              <button
+                className={`ui-toggle ${autoTrust ? "on" : ""}`}
+                role="switch"
+                aria-checked={autoTrust}
+                onClick={() => setAutoTrust(!autoTrust)}
+              >
+                <span className="ui-toggle-knob" />
+              </button>
             </div>
             <div className="email-set-trust">
               <div className="email-set-trust-list">

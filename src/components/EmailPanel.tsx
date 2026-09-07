@@ -69,6 +69,7 @@ function toAccount(a: EmailAccount): EmailAccount {
     smtp_user: a.smtp_user,
     smtp_pass: a.smtp_pass,
     trusted_domains: a.trusted_domains ?? [],
+    auto_trust_senders: a.auto_trust_senders ?? true,
   };
 }
 
@@ -523,8 +524,10 @@ export function EmailPanel() {
     } finally {
       setLoadingBody(false);
     }
-    // 自动可信：打开一封邮件即把其发件人域名加入可信（下次自动放行图片）。
-    void autoTrust(m, acc);
+    // 自动可信（可在设置关闭）：打开一封邮件即把其发件人域名加入可信（下次自动放行图片）。
+    if (acc.auto_trust_senders ?? true) {
+      void autoTrust(m, acc);
+    }
   };
 
   // 把发件人域名加入可信集合（内存 + 持久化）。已有则忽略。
