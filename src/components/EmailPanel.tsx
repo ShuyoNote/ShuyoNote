@@ -350,6 +350,7 @@ export function EmailPanel() {
   // 阅读区工具栏宽度检测：较窄时把次要按钮收进「更多」。
   const readToolbarRef = useRef<HTMLDivElement>(null);
   const [toolbarW, setToolbarW] = useState(9999);
+  const [toolbarOverflow, setToolbarOverflow] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
 
   // 当前列表里的去重发件人（供下拉选项）。
@@ -407,13 +408,18 @@ export function EmailPanel() {
       .catch(() => setAllFolders(["INBOX"]));
   }, [account]);
 
-  // 检测阅读区工具栏宽度：较窄时把次要按钮收进「更多」。
+  // 检测阅读区工具栏宽度/是否溢出：较窄或放不下时把按钮收进「更多」。
   useEffect(() => {
     const el = readToolbarRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setToolbarW(el.clientWidth));
+    const measure = () => {
+      setToolbarW(el.clientWidth);
+      // 内容超出可视宽度（按钮 nowrap 导致溢出）→ 需要收纳。
+      setToolbarOverflow(el.scrollWidth > el.clientWidth + 1);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setToolbarW(el.clientWidth);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -960,8 +966,8 @@ export function EmailPanel() {
   // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
   const narrow = listW < 380;
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
-  // 阅读区工具栏较窄时，把右侧次要按钮收进「更多」下拉。
-  const toolbarNarrow = toolbarW < 660;
+  // 阅读区工具栏放不下（按钮 nowrap 溢出）时，把右侧次要按钮收进「更多」下拉。
+  const toolbarNarrow = toolbarOverflow || toolbarW < 720;
   // 更窄时再把 删除/已读/转发/回复 也收进「更多」，只留「存为笔记」。
   const toolbarVeryNarrow = toolbarW < 520;
 

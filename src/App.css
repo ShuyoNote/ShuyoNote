@@ -17200,6 +17200,8 @@ p:has(> .editor-drawing-container) {
   padding: 16px 24px 32px;
 }
 .email-read-toolbar { display: flex; align-items: center; gap: 4px; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+/* 工具栏按钮永不换行/收缩——若放不下就由「更多」收纳，而不是压成两行 */
+.email-read-toolbar .sync-btn { flex: none; white-space: nowrap; }
 .email-read-toolbar-spacer { flex: 1; }
 
 /* 工具栏「更多」下拉（窄时收起次要按钮） */
