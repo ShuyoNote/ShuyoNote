@@ -931,6 +931,9 @@ export function EmailPanel() {
     }
   };
   const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
+  // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
+  const narrow = listW < 380;
+  const colTemplateNarrow = "32px 1fr 24px"; // 勾选 | 内容区(两行) | 星标
 
   return (
     <>
@@ -1075,11 +1078,17 @@ export function EmailPanel() {
                         aria-label="搜索"
                       />
                     </div>
-                    <div className="email-col-head" style={{ gridTemplateColumns: colTemplate }}>
+                    <div className="email-col-head" style={{ gridTemplateColumns: narrow ? colTemplateNarrow : colTemplate }}>
                       <span className="email-col-check" aria-hidden />
-                      <span className="email-col-from">发件人<span className="email-col-resizer" onMouseDown={onColResizeDown("from")} /></span>
-                      <span className="email-col-subject">主题<span className="email-col-resizer" onMouseDown={onColResizeDown("subject")} /></span>
-                      <span className="email-col-date">日期</span>
+                      {narrow ? (
+                        <span className="email-col-subject">收发件人 / 主题</span>
+                      ) : (
+                        <>
+                          <span className="email-col-from">发件人<span className="email-col-resizer" onMouseDown={onColResizeDown("from")} /></span>
+                          <span className="email-col-subject">主题<span className="email-col-resizer" onMouseDown={onColResizeDown("subject")} /></span>
+                          <span className="email-col-date">日期</span>
+                        </>
+                      )}
                       <span className="email-col-star" aria-hidden />
                     </div>
                     {filteredList.length === 0 && <div className="email-page-empty">
@@ -1095,8 +1104,8 @@ export function EmailPanel() {
                               if (el) rowRefs.current.set(m.uid, el);
                               else rowRefs.current.delete(m.uid);
                             }}
-                            className={`email-item${active?.uid === m.uid ? " is-selected" : ""}`}
-                            style={{ gridTemplateColumns: colTemplate }}
+                            className={`email-item${active?.uid === m.uid ? " is-selected" : ""}${narrow ? " is-narrow" : ""}`}
+                            style={{ gridTemplateColumns: narrow ? colTemplateNarrow : colTemplate }}
                             onClick={() => void selectEmail(m)}
                           >
                             <span
@@ -1113,9 +1122,21 @@ export function EmailPanel() {
                                 <path d="M20 6 9 17l-5-5" />
                               </svg>
                             </span>
-                            <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
-                            <span className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</span>
-                            <span className="email-item-date">{fmtListTime(m)}</span>
+                            {narrow ? (
+                              <div className="email-item-body">
+                                <div className="email-item-line1">
+                                  <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
+                                  <span className="email-item-date">{fmtListTime(m)}</span>
+                                </div>
+                                <div className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</div>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
+                                <span className="email-item-subject" title={m.subject}>{m.subject || "(无主题)"}</span>
+                                <span className="email-item-date">{fmtListTime(m)}</span>
+                              </>
+                            )}
                             <span
                               className={`email-item-star${m.flagged ? " is-starred" : ""}`}
                               role="button"

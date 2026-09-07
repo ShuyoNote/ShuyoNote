@@ -17117,6 +17117,37 @@ p:has(> .editor-drawing-container) {
   min-width: 0;
 }
 .email-item-date { color: var(--text-faint); font-size: 11px; text-align: right; white-space: nowrap; }
+
+/* 左侧栏较窄时的两行布局：首行 发件人+时间，二行 主题；邮件间加淡分割线 */
+.email-item.is-narrow { padding: 8px 12px; }
+.email-item-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.email-item-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.email-item-line1 .email-item-from {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.email-item-line1 .email-item-date { flex: none; }
+.email-item.is-narrow .email-item-subject {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* 邮件之间淡淡的细分隔细线（以 section 内相邻 item 分界） */
+.email-section { display: flex; flex-direction: column; }
+.email-section .email-item:not(:first-child) {
+  box-shadow: 0 -1px 0 0 var(--border-faint, rgba(128,128,128,.14));
+}
 .email-check {
   width: 18px;
   height: 18px;
