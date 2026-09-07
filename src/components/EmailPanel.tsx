@@ -438,7 +438,7 @@ export function EmailPanel() {
     measure();
     raf = requestAnimationFrame(measure);
     return () => { ro.disconnect(); cancelAnimationFrame(raf); };
-  }, []);
+  }, [open]);
 
   // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
   useEffect(() => {
@@ -449,7 +449,7 @@ export function EmailPanel() {
     ro.observe(el);
     measure();
     return () => ro.disconnect();
-  }, []);
+  }, [open]);
 
   // 点击标题栏「更多」下拉外部关闭。
   useEffect(() => {
