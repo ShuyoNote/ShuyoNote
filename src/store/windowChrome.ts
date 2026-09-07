@@ -22,13 +22,14 @@ interface WindowChromeState {
 function load(key: string): boolean {
   try {
     const v = localStorage.getItem(key);
-    return v === null ? defaultFor(key) : v === "1";
+    return v === null ? defaultFor() : v === "1";
   } catch {
-    return defaultFor(key);
+    return defaultFor();
   }
 }
-function defaultFor(key: string): boolean {
-  return key === KEY_TITLEBAR; // 标题栏默认开，材质默认关
+function defaultFor(): boolean {
+  // 自定义标题栏与材质均默认关闭（Windows 上默认系统栏，更稳妥；用户可在设置里开启）。
+  return false;
 }
 
 /** 把设置应用到窗口：无边框由前端 API 运行时切换，无需重启。 */
