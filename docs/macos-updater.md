@@ -3,6 +3,8 @@
 > 目标：在 **macOS 机器**上构建**签名 + 公证**的 `.dmg`/`.app`，并用 `tauri-plugin-updater` 做**自分发自动更新**（不走 App Store）。
 > 硬件前提：一台 **macOS 机器**（周一到位）+ 一个 **Apple Developer 账号**。
 
+> ⚠️ **当前状态**：macOS 构建**未启用**。GitHub Actions 的 `.github/workflows/release.yml` 里 macOS 矩阵（`macos-latest` → `dmg,app`）仍被注释，因为仓库缺少 Apple 签名/公证 secrets——只有 `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，没有 `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / Apple ID 三项。**这些只能由开发者提供**（`.p12` 证书 + 密码 + Apple ID 凭据），无法由他人生成。拿到后：在 GitHub 仓库 secrets 配好上述 5 项 → 解开 release.yml 第 26 行 `- platform: macos-latest  bundles: dmg,app` → 打 `v*` tag 即自动构建并签名/公证。下方为拿到证书后的完整流程。
+
 ## 一、Mac 机器要做的事（一次性）
 ```bash
 # Xcode Command Line Tools（签名/公证 + 编译需要）
@@ -73,7 +75,7 @@ node scripts/release.mjs --no-build
 - 注意：`latest.json` 的 `platforms` 会同时含 `darwin-x86_64`/`darwin-aarch64`（按 Mac CPU 选）。
 
 ## 六、CI（方案 A：GitHub Actions）
-`.github/workflows/release.yml` 里 macOS job 已预留 `APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID`；在 GitHub 仓库配好 **secrets**（上述 5 项），打 `v*` tag 即自动打三平台（含 mac 签名+公证）。
+`.github/workflows/release.yml` 里 macOS job 已预留 `APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD/APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID`；在 GitHub 仓库配好 **secrets**（上述 5 项）后，**解开第 26 行矩阵注释**，打 `v*` tag 即自动打三平台（含 mac 签名+公证）。**macOS 矩阵当前仍注释，等 secrets 就位再解开**。
 
 ## 七、边界 / 注意
 - **自动更新只对「签名+公证」版本有效**；未签名/未公证的 mac 包会被 Gatekeeper 拦，无法自动更新（可手动下载）。

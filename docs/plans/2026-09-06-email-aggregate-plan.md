@@ -1,6 +1,7 @@
 # 聚合邮箱（邮件即笔记）落地文档
 
-> 状态：**规划，建议**。定位：本地优先的桌面生产力工具，把**多个邮箱账号聚合成一个收件箱**，并让邮件**一键转成笔记 / 任务**进入知识库——**capture-first**，而非一个与 Thunderbird/Outlook 竞争的全功能邮件客户端。
+> 状态：**✅ 已实现（v1.83.0）**。定位：本地优先的桌面生产力工具，把**多个邮箱账号聚合成一个收件箱**，并让邮件**一键转成笔记 / 任务**进入知识库——**capture-first**，而非一个与 Thunderbird/Outlook 竞争的全功能邮件客户端。
+> 实现与交接见 [2026-09-07-email-multi-account-aggregation.md](2026-09-07-email-multi-account-aggregation.md)（后端 `email_fetch_all` / `email_fetch_all_months` / `email_test_connection` + 前端 `EmailPanel` 聚合视图）。本页保留为需求 / 范围 / 风险 / 决策记录。
 > 敏感/商业化部分（付费边界、OAuth 应用凭据、凭据保险库、服务端设想）见私有 `shuyonote-sync-server` 仓库 `docs/email-aggregate-monetization.md`。
 
 ## 1. 一句话定位
