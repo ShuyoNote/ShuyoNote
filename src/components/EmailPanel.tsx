@@ -349,7 +349,7 @@ export function EmailPanel() {
   const [pickerYear, setPickerYear] = useState<number>(new Date().getFullYear());
   const pickerRef = useRef<HTMLDivElement>(null);
   // 发信（回复/转发）撰写弹窗。
-  const [compose, setCompose] = useState<{ mode: "reply" | "forward"; to: string; subject: string; body: string } | null>(null);
+  const [compose, setCompose] = useState<{ mode: "reply" | "forward"; to: string; subject: string; body: string; quote: string; includeQuote: boolean } | null>(null);
   const composeBodyRef = useRef<HTMLTextAreaElement>(null);
   const [sending, setSending] = useState(false);
   const [folders, setFolders] = useState<string[]>(["INBOX"]);
@@ -827,19 +827,21 @@ export function EmailPanel() {
     }
   };
 
-  // 打开回复/转发撰写弹窗：预填收件人与主题，正文带上引用。
+  // 打开回复/转发撰写：预填收件人与主题，正文默认带引用（可取消）。
   const openCompose = (mode: "reply" | "forward") => {
     if (!active) return;
     const fwd = mode === "forward";
     const subject = fwd
       ? (active.subject.startsWith("Fwd:") || active.subject.startsWith("Fw:") ? active.subject : `Fwd: ${active.subject}`)
       : (active.subject.startsWith("Re:") ? active.subject : `Re: ${active.subject}`);
-    const quoted = `${active.subject}\n${active.from}\n${active.date}\n\n${"─".repeat(40)}\n\n${body}`;
+    const quote = `\n\n${active.subject}\n${active.from}\n${active.date}\n\n${"─".repeat(40)}\n\n${body}`;
     setCompose({
       mode,
       to: fwd ? "" : stripEmail(active.from),
       subject,
-      body: fwd ? `\n\n${quoted}` : `\n\n${quoted}`,
+      body: quote,
+      quote,
+      includeQuote: true,
     });
   };
 
@@ -1446,6 +1448,25 @@ export function EmailPanel() {
                               <label htmlFor="email-body">正文</label>
                               <textarea ref={composeBodyRef} id="email-body" className="set-input" value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
                             </div>
+                            <label className="email-compose-quote">
+                              <input
+                                type="checkbox"
+                                checked={compose.includeQuote}
+                                onChange={(e) => {
+                                  const on = e.target.checked;
+                                  setCompose((c) => {
+                                    if (!c) return c;
+                                    // 切到不引用：去掉引用前缀；切回：重新加回。
+                                    let body = c.body;
+                                    const q = c.quote;
+                                    if (on && !body.startsWith(q)) body = q + body;
+                                    else if (!on && body.startsWith(q)) body = body.slice(q.length);
+                                    return { ...c, includeQuote: on, body };
+                                  });
+                                }}
+                              />
+                              引用原文
+                            </label>
                             <div className="email-compose-actions">
                               <span className="email-compose-hint">
                                 {compose.mode === "forward" ? "转发需手动填写收件人；引用原文已附上。" : "回复默认给原发件人。请先在 设置→邮箱 填好 SMTP 发信信息。"}
