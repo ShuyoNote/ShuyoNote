@@ -749,6 +749,28 @@ pub async fn email_send(args: EmailSendArgs) -> Result<(), String> {
     smtp::send(&host, port, &user, &pass, sec, &from, &args.to, &msg).await
 }
 
+/// 测试 IMAP 连接（登录 + 选 INBOX），并可选的 SMTP 认证（不发信）。供配置面板「测试」用。
+#[tauri::command]
+pub async fn email_test_connection(account: EmailAccountArgs) -> Result<String, String> {
+    // IMAP：开会话并登录（open_session 已 login），再选 INBOX 验证可读。
+    let mut session = open_session(&account, "INBOX").await.map_err(|e| format!("IMAP: {}", e))?;
+    session.select("INBOX").await.map_err(|e| format!("IMAP 选择 INBOX 失败: {}", e))?;
+
+    // SMTP：仅当配置了 SMTP 服务器/账号/授权码才验证（不发信）。
+    let (host, port, sec, user, pass) = account.smtp();
+    let has_smtp = !account.smtp_host.trim().is_empty()
+        || !account.smtp_user.trim().is_empty()
+        || !account.smtp_pass.is_empty();
+    if has_smtp {
+        smtp::verify(&host, port, &user, &pass, sec)
+            .await
+            .map_err(|e| format!("SMTP: {}", e))?;
+        Ok("连接成功：IMAP 可用；SMTP 认证通过".to_string())
+    } else {
+        Ok("连接成功：IMAP 可用（未配置 SMTP，回复/转发不可用）".to_string())
+    }
+}
+
 /// 拉取 INBOX 未读数量（轻量 `STATUS INBOX (UNSEEN)`），供定时收取/未读角标用。
 #[tauri::command]
 pub async fn email_unseen_count(args: EmailAccountArgs) -> Result<u32, String> {
@@ -1259,6 +1281,9 @@ pub struct EmailFetchAllArgs {
     pub date_from: Option<String>,
     #[serde(default)]
     pub date_to: Option<String>,
+    /// 可选账号 key（host|username）过滤：空 = 全部账号；非空 = 仅聚合这些账号。
+    #[serde(default)]
+    pub accounts: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1268,8 +1293,9 @@ pub struct EmailAggregate {
     pub accounts: Vec<String>,
 }
 
-/// 聚合所有账号的收件流（B）：合并所有账号、按时间降序、分页；单账号失败跳过。
+/// 聚合所有（或指定）账号的收件流（B）：合并账号、按时间降序、分页；单账号失败跳过。
 /// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
+/// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
 #[tauri::command]
 pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
     let accounts = read_accounts(&db, &app)?;
@@ -1279,6 +1305,7 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
     let mut account_keys = Vec::new();
     for acc in &accounts {
         let key = account_key(acc);
+        if !args.accounts.is_empty() && !args.accounts.contains(&key) { continue; }
         account_keys.push(key.clone());
         match fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await {
             Ok((metas, u)) => {
@@ -1306,15 +1333,20 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
 pub struct EmailFetchAllMonthsArgs {
     #[serde(default)]
     pub folders: Vec<String>,
+    /// 可选账号 key（host|username）过滤：空 = 全部账号。
+    #[serde(default)]
+    pub accounts: Vec<String>,
 }
 
-/// 聚合所有账号的「含邮件月份」并集（供聚合视图月份选择器用）；单账号失败跳过。
+/// 聚合所有（或指定）账号的「含邮件月份」并集（供聚合视图月份选择器用）；单账号失败跳过。
 #[tauri::command]
 pub async fn email_fetch_all_months(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllMonthsArgs) -> Result<Vec<String>, String> {
     let accounts = read_accounts(&db, &app)?;
     let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders };
     let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for acc in &accounts {
+        let key = account_key(acc);
+        if !args.accounts.is_empty() && !args.accounts.contains(&key) { continue; }
         match list_account_months(acc, &folders).await {
             Ok(ms) => months.extend(ms),
             Err(_) => { /* 单账号失败跳过，不影响其它账号 */ }

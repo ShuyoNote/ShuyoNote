@@ -138,10 +138,10 @@ export const api = {
   emailSaveAsNote: (raw: string) => invoke("email_save_as_note", { args: { raw } }),
   emailFetchInbox: (account: EmailAccount, folders: string[], limit = 0, offset = 0, dateFrom?: string, dateTo?: string) =>
     invoke("email_fetch_inbox", { args: { account, folders, limit, offset, date_from: dateFrom, date_to: dateTo } }),
-  emailFetchAll: (folders: string[], limit = 0, offset = 0, dateFrom?: string, dateTo?: string) =>
-    invoke("email_fetch_all", { args: { folders, limit, offset, date_from: dateFrom, date_to: dateTo } }),
-  emailFetchAllMonths: (folders: string[]) =>
-    invoke("email_fetch_all_months", { args: { folders } }),
+  emailFetchAll: (folders: string[], limit = 0, offset = 0, dateFrom?: string, dateTo?: string, accounts?: string[]) =>
+    invoke("email_fetch_all", { args: { folders, limit, offset, date_from: dateFrom, date_to: dateTo, accounts } }),
+  emailFetchAllMonths: (folders: string[], accounts?: string[]) =>
+    invoke("email_fetch_all_months", { args: { folders, accounts } }),
   emailSaveUid: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_save_uid", { args: { account, uid, folder } }),
   emailGetBody: (account: EmailAccount, uid: number, folder: string) =>
@@ -174,6 +174,8 @@ export const api = {
     invoke("email_move_many_to_trash", { args: { account, uids, folder } }),
   emailSend: (account: EmailAccount, to: string, subject: string, body: string) =>
     invoke("email_send", { args: { account, to, subject, body } }),
+  emailTestConnection: (account: EmailAccount) =>
+    invoke("email_test_connection", { account }),
   emailGetHtml: (account: EmailAccount, uid: number, folder: string) =>
     invoke("email_get_html", { args: { account, uid, folder } }),
   savePage: (args: {

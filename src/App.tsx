@@ -93,6 +93,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const coverPosRef = useRef(50);
   const coverPosDrag = useRef<{ sy: number; sp: number; moved: boolean } | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+
+  // 自适应高度：标题超长时自动换行，而不是被截断。
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [title]);
 
   // Build breadcrumb trail from the page tree.
   const breadcrumbs = useMemo(() => {
@@ -198,7 +207,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
   };
 
   // 标题回车 → 进入正文编辑：把光标落到正文里（无正文时自动补一个段落）。
-  const onTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  // title 是 textarea（自动换行），Enter 不插入换行、改为聚焦正文。
+  const onTitleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
     const ed = useEditorStore.getState().editor;
@@ -441,8 +451,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
           </div>
           <div className="editor-head">
             <div className="title-row">
-              <input
+              <textarea
+                ref={titleRef}
                 className="title-input"
+                rows={1}
                 value={title}
                 placeholder="新页面"
                 onChange={(e) => onTitleChange(e.target.value)}

@@ -5,6 +5,7 @@ import { useNotes } from "../store/notes";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { printDoc } from "../lib/print";
+import { TruncatedText } from "./TruncatedText";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
 import {
   TableIcon,
@@ -396,8 +397,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
 
   const addColumn = async (attrId: string) => {
     try {
-      const columns = await api.addDbColumn(pageId, attrId);
-      setQuery((q) => q && { ...q, columns });
+      await api.addDbColumn(pageId, attrId);
+      // 重新拉取整页数据，让新列的值立即显示（不必手动刷新）。
+      load();
     } catch (e) {
       toast(`添加列失败：${e}`, "error");
     }
@@ -419,8 +421,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
 
   const removeColumn = async (attrId: string) => {
     try {
-      const columns = await api.removeDbColumn(pageId, attrId);
-      setQuery((q) => q && { ...q, columns });
+      await api.removeDbColumn(pageId, attrId);
+      // 重新拉取整页数据，让被移除列后的行数据同步更新。
+      load();
     } catch (e) {
       toast(`移除列失败：${e}`, "error");
     }
@@ -1226,6 +1229,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                     <div
                       key={r.page_id}
                       className="db-board-card"
+                      title={r.title || "未命名"}
                       onPointerDown={(e) => {
                         if (e.button !== 0) return;
                         boardDragRef.current = { sx: e.clientX, sy: e.clientY, moved: false };
@@ -1237,7 +1241,7 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
                         openPage(r.page_id);
                       }}
                     >
-                      {r.title || "未命名"}
+                      <TruncatedText className="db-board-card-title" text={r.title || "未命名"} />
                     </div>
                   ))}
                 </div>

@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
+import { TruncatedText } from "./TruncatedText";
 import type { AttrDef, PageMeta } from "../types";
 
 interface Group {
@@ -310,6 +311,7 @@ export function BoardView() {
                   id={`board-card-${p.id}`}
                   data-page={p.id}
                   className={`board-card${dragPage === p.id ? " board-card-dragging" : ""}`}
+                  title={p.title || "未命名"}
                   onPointerDown={(e) => {
                     if (e.button !== 0) return;
                     dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -322,7 +324,7 @@ export function BoardView() {
                     openPage(p.id);
                   }}
                 >
-                  <span className="board-card-title">{p.title || "未命名"}</span>
+                  <TruncatedText className="board-card-title" text={p.title || "未命名"} />
                 </div>
               ))}
               {col.pages.length === 0 && <div className="board-empty">拖拽卡片到这里</div>}

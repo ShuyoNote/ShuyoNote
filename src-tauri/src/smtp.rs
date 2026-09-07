@@ -100,17 +100,14 @@ fn ehlo() -> String {
     "EHLO shuyonote".to_string()
 }
 
-/// 发送一封邮件。`from` / `to` 为邮箱地址，`msg` 为完整 MIME 消息文本（含头 + 空行 + 正文）。
-pub async fn send(
+/// 连接 + 隐式/SMTP STARTTLS 升级 + AUTH LOGIN/PLAIN 认证，成功后返回可用的 SMTP 会话。
+async fn connect_and_auth(
     host: &str,
     port: u16,
     username: &str,
     password: &str,
     security: SmtpSecurity,
-    from: &str,
-    to: &str,
-    msg: &str,
-) -> Result<(), String> {
+) -> Result<SmtpStream, String> {
     let tcp = TcpStream::connect((host, port))
         .await
         .map_err(|e| format!("SMTP 连接失败: {}", e))?;
@@ -184,6 +181,29 @@ pub async fn send(
             return Err(format!("SMTP 认证失败: {}", r));
         }
     }
+    Ok(stream)
+}
+
+/// 仅验证 SMTP 连接与认证（不发信）：连接 → 认证 → QUIT。用于配置面板「测试」。
+pub async fn verify(host: &str, port: u16, username: &str, password: &str, security: SmtpSecurity) -> Result<(), String> {
+    let mut stream = connect_and_auth(host, port, username, password, security).await?;
+    write_cmd(&mut stream, "QUIT").await.map_err(|e| e.to_string())?;
+    let _r = read_response(&mut stream).await;
+    Ok(())
+}
+
+/// 发送一封邮件。`from` / `to` 为邮箱地址，`msg` 为完整 MIME 消息文本（含头 + 空行 + 正文）。
+pub async fn send(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+    security: SmtpSecurity,
+    from: &str,
+    to: &str,
+    msg: &str,
+) -> Result<(), String> {
+    let mut stream = connect_and_auth(host, port, username, password, security).await?;
 
     // MAIL FROM / RCPT TO
     write_cmd(&mut stream, &format!("MAIL FROM:<{}>", from)).await.map_err(|e| e.to_string())?;

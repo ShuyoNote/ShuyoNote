@@ -198,6 +198,7 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
   const [handle, setHandle] = useState<{ top: number; left: number; key: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAbove, setPanelAbove] = useState(false);
+  const [panelMaxH, setPanelMaxH] = useState(560);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsSubPos, setColumnsSubPos] = useState<{ top: number; left: number } | null>(null);
@@ -290,15 +291,22 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
     activeKeyRef.current = h.key;
     setQuery("");
     // Feishu anchors the panel near the "+"; flip above if there isn't enough room.
-    const above = window.innerHeight - h.top < 440;
-    setPanelAbove(above);
-    // Open to the LEFT of the "+" button (the anchor spans anchorLeft..anchorLeft+48).
-    // Clamp so the panel never overflows the viewport's left edge.
     const MENU_W = 300;
-    const MENU_H = 560;
+    const MENU_H = 560; // preferred height, shrinks if the viewport is short
     const anchorRight = h.left + 48;
     const left = Math.max(8, Math.min(anchorRight - MENU_W - 6, window.innerWidth - MENU_W - 8));
-    const top = above ? Math.max(8, h.top - MENU_H) : h.top;
+    // Available room (minus an 8px margin).
+    const belowSpace = window.innerHeight - h.top - 8;
+    const aboveSpace = h.top - 8;
+    const useAbove = belowSpace < 360;
+    setPanelAbove(useAbove);
+    // Panel max-height adapts to the side it opens, so it never runs past the viewport.
+    const avail = useAbove ? aboveSpace : belowSpace;
+    const maxH = Math.max(220, Math.min(MENU_H, avail));
+    setPanelMaxH(maxH);
+    const top = useAbove
+      ? Math.max(8, h.top - maxH)
+      : Math.max(8, Math.min(h.top, window.innerHeight - maxH - 8));
     setMenuPos({ top, left });
     setPanelOpen(true);
   };
@@ -438,7 +446,7 @@ export function BlockInsertPlugin({ pageId, gutterOffset = HANDLE_OFFSET }: { pa
               className="block-insert-popover"
               ref={popoverRef}
               data-above={panelAbove ? "1" : "0"}
-              style={{ top: menuPos.top, left: menuPos.left }}
+              style={{ top: menuPos.top, left: menuPos.left, maxHeight: panelMaxH }}
             >
               <button className="insert-ai-entry" onClick={aiHelp}>
                 <span className="insert-ai-icon">

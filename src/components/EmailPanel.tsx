@@ -37,15 +37,6 @@ function avatarBg(name: string): string {
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 
-// 从账号（邮箱地址）提取服务商短标注：取 @ 后的域名首段，如 zhaizy@qq.com → "qq"。
-function providerLabel(username: string): string {
-  const at = username.lastIndexOf("@");
-  if (at < 0) return "";
-  const domain = username.slice(at + 1).trim().toLowerCase();
-  if (!domain) return "";
-  return domain.split(".")[0] || domain;
-}
-
 // 从 "姓名 <a@b.com>" 形式提取裸邮箱地址。
 function stripEmail(v: string): string {
   const m = v.match(/<([^>]+)>/);
@@ -338,14 +329,19 @@ export function EmailPanel() {
   const listScrollRef = useRef<HTMLDivElement>(null);
 
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
-  // 当前「账号筛选」范围：null = 全部账号（聚合视图）；否则为该单账号的 key（host|username，小写）。
-  const [scopeKey, setScopeKey] = useState<string | null>(null);
+  // 账号多选筛选：当前勾选的账号 key 集合（空集/全选=聚合全部；子集=仅聚合这些）。由下拉框控制。
+  const [selectedAccountKeys, setSelectedAccountKeys] = useState<Set<string>>(new Set());
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountFilterRef = useRef<HTMLDivElement>(null);
   const [list, setList] = useState<EmailMeta[]>([]);
   const [active, setActive] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
   const [html, setHtml] = useState("");
   const [aiSummary, setAiSummary] = useState("");
   const [aiSummaryBusy, setAiSummaryBusy] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryOpenRef = useRef(false);
+  summaryOpenRef.current = summaryOpen;
   const [useRich, setUseRich] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -364,33 +360,30 @@ export function EmailPanel() {
   // 发信（回复/转发）撰写弹窗。
   const [compose, setCompose] = useState<{ mode: "reply" | "forward"; to: string; subject: string; body: string; quote: string; includeQuote: boolean } | null>(null);
   const composeBodyRef = useRef<HTMLTextAreaElement>(null);
+  const composeToRef = useRef<HTMLInputElement>(null);
+  const composeFocusedRef = useRef(false);
   const [sending, setSending] = useState(false);
   const [folders, setFolders] = useState<string[]>(["INBOX"]);
   const [allFolders, setAllFolders] = useState<string[]>([]);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const folderPickerRef = useRef<HTMLDivElement>(null);
-  // 存为笔记的目标父级（文件夹/页面）；null = 根目录。
-  const [saveParentId, setSaveParentId] = useState<"root" | string>("root");
-  const [saveParentOpen, setSaveParentOpen] = useState(false);
-  const saveParentRef = useRef<HTMLDivElement>(null);
-  const [saveCandidates, setSaveCandidates] = useState<{ id: string; title: string; kind: string; parent_id: string | null }[]>([]);
   // 关键词搜索：发件人/主题 子串匹配（统一搜索入口）。
   const [searchQuery, setSearchQuery] = useState("");
   // 懒加载分页：每页条数 + 是否还有更多。
   const PAGE_SIZE = 200;
   const [hasMore, setHasMore] = useState(false);
 
-  // 当前筛选范围对应的单账号（scopeKey 命中 accounts 里的一个）；null = 全部账号聚合。
-  const scopeAccount = useMemo(
-    () => (scopeKey ? accounts.find((a) => accountKey(a) === scopeKey) ?? null : null),
-    [scopeKey, accounts],
-  );
-  const isAggregate = scopeKey === null;
-  // 代表账号：单账号筛选用该账号；聚合视图的文件夹/月份选择仍以首个账号为准（后端聚合按相同文件夹名遍历各账号）。
-  const repAccount = scopeAccount ?? accounts[0] ?? null;
+  // 账号筛选派生：全选(空集或全勾) → 传空数组=聚合全部；否则仅聚合勾选的账号。
+  const isAllAccounts = selectedAccountKeys.size === 0 || selectedAccountKeys.size >= accounts.length;
+  const accountFilter = isAllAccounts ? [] : Array.from(selectedAccountKeys);
+  const accountFilterLabel = isAllAccounts ? "全部账号" : `${selectedAccountKeys.size} 个账号`;
+  // 代表账号（供文件夹列表）：仍以首个账号为准（后端聚合按相同文件夹名遍历各选中账号）。
+  const repAccount = accounts[0] ?? null;
+  // 多账号时列表行显示来源账号小标；单账号不显示（避免每行重复）。
+  const showAccountChip = accounts.length > 1;
 
   // 按一封邮件的 meta.account（host|username）定位其所属 EmailAccount（聚合流）。
-  // 单账号命令返回的 meta.account 为空 → 回退到当前筛选账号；都未命中再回退到首个账号。
+  // 未找到时回退到首个账号。
   const accountFor = (m: EmailMeta | null | undefined): EmailAccount | null => {
     if (!m) return null;
     const k = m.account;
@@ -398,7 +391,7 @@ export function EmailPanel() {
       const hit = accounts.find((a) => accountKey(a) === k);
       if (hit) return hit;
     }
-    return scopeAccount ?? accounts[0] ?? null;
+    return accounts[0] ?? null;
   };
 
   // 把某个账号的改动同步回 accounts 列表（如信任发件人后更新 trusted_domains）。
@@ -433,11 +426,12 @@ export function EmailPanel() {
   const [toolbarW, setToolbarW] = useState(9999);
   const [moreOpen, setMoreOpen] = useState(false);
   // 逐级收纳阈值：按按钮组实际宽度测量，而不是固定常量，避免控制条缩窄时横向溢出。
-  const measureCoreRef = useRef<HTMLDivElement>(null);
+  const measureSaveRef = useRef<HTMLDivElement>(null);
+  const measureIconRef = useRef<HTMLDivElement>(null);
   const measureActionRef = useRef<HTMLDivElement>(null);
   const measureRightRef = useRef<HTMLDivElement>(null);
   const measureMoreRef = useRef<HTMLDivElement>(null);
-  const [need, setNeed] = useState({ full: 9999, coreAction: 9999 });
+  const [need, setNeed] = useState({ full: 9999, noicon: 9999, icon: 9999 });
   // 顶部标题栏的逐级收纳阈值同样按实测宽度（而非固定 720/560）。
   const measureHeadTitleRef = useRef<HTMLSpanElement>(null);
   const measureHeadSubRef = useRef<HTMLSpanElement>(null);
@@ -475,7 +469,16 @@ export function EmailPanel() {
       .catch(() => {});
   }, []);
 
-  // 有账号后列出文件夹，并保证默认选「收件箱」；顺带拉取所有月份。
+  // 账号多选随账号列表同步：默认全选，剔除已删除账号。
+  useEffect(() => {
+    setSelectedAccountKeys((prev) => {
+      const valid = accounts.map((a) => accountKey(a));
+      const kept = new Set([...prev].filter((k) => valid.includes(k)));
+      return kept.size === 0 ? new Set(valid) : kept;
+    });
+  }, [accounts]);
+
+  // 有账号后列出文件夹，并保证默认选「收件箱」；顺带按当前账号筛选/文件夹拉取所有月份。
   useEffect(() => {
     if (repAccount) {
       api
@@ -488,9 +491,8 @@ export function EmailPanel() {
         .catch(() => setAllFolders(["INBOX"]));
     }
     void loadMonths();
-    void loadSaveCandidates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repAccount, accounts]);
+  }, [repAccount, accounts, selectedAccountKeys, folders]);
 
   // 检测阅读区宽度：放不下时把按钮收进「更多」。用工具栏自身可用宽（clientWidth）
   // 而非 readPane.clientWidth（后者含左右 padding，会高估可用宽度约 48px 导致轻微溢出）。
@@ -555,7 +557,19 @@ export function EmailPanel() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [moreOpen]);
 
-  // 打开时：按当前筛选范围拉取收件箱（聚合 / 单账号）。
+  // 点击账号筛选下拉外部关闭。
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (t && accountFilterRef.current?.contains(t)) return;
+      setAccountMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [accountMenuOpen]);
+
+  // 打开时：按当前账号筛选拉取收件箱（聚合）。
   useEffect(() => {
     if (!open) return;
     setErr("");
@@ -563,52 +577,36 @@ export function EmailPanel() {
       setErr("请先在 设置 → 邮箱 配置 IMAP 账号");
       return;
     }
-    void fetchInbox(scopeAccount);
+    void fetchInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // 切换账号筛选：key = null 表示「全部账号」（聚合）；否则为该单账号 key。
-  const switchScope = async (key: string | null) => {
-    setScopeKey(key);
-    setList([]);
-    setActive(null);
-    setBody("");
-    setHtml("");
-    setChecked(new Set());
-    const acc = key ? accounts.find((a) => accountKey(a) === key) ?? null : null;
-    await fetchInbox(acc);
+  // 切换账号多选：勾选/取消某账号后以新的筛选重新聚合。
+  const toggleAccountKey = (key: string) => {
+    const next = new Set(selectedAccountKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setSelectedAccountKeys(next);
+    const isAll = next.size === 0 || next.size >= accounts.length;
+    void fetchInbox(isAll ? [] : Array.from(next));
   };
 
-  // 拉取列表（聚合 = emailFetchAll(limit/offset)；单账号 = emailFetchInbox）。
-  const fetchInbox = async (acc: EmailAccount | null, fs: string[] = folders, offset = 0) => {
+  // 拉取列表（聚合 = emailFetchAll(limit/offset)，按账号筛选过滤；af 空数组=全部）。
+  const fetchInbox = async (af: string[] = accountFilter, fs: string[] = folders, offset = 0) => {
     setBusy(true);
     setErr("");
     try {
-      if (acc) {
-        const r = await api.emailFetchInbox(acc, fs, PAGE_SIZE, offset);
-        setList(r);
-        setUnread(r.filter((m) => !m.seen).length);
-        // 拉满一页说明后面可能还有更多。
-        setHasMore(r.length >= PAGE_SIZE);
-        if (r.length === 0) {
-          setErr("未拉到邮件（检查账号 / 认证）");
-        } else if (r.some((m) => (active ? emailKey(m) === emailKey(active) : false))) {
-          // 保持当前阅读的邮件选中，不打扰。
-        } else {
-          void selectEmail(r[0], acc);
-        }
+      const agg = await api.emailFetchAll(fs, PAGE_SIZE, offset, undefined, undefined, af);
+      setList(agg.emails);
+      // 聚合角标用后端汇总的 unread（跨所有账号），而非当前页列表统计。
+      setUnread(agg.unread);
+      setHasMore(agg.emails.length >= PAGE_SIZE);
+      if (agg.emails.length === 0) {
+        setErr("未拉到邮件（检查账号 / 认证）");
+      } else if (agg.emails.some((m) => (active ? emailKey(m) === emailKey(active) : false))) {
+        // 保持当前阅读的邮件选中，不打扰。
       } else {
-        const agg = await api.emailFetchAll(fs, PAGE_SIZE, offset);
-        setList(agg.emails);
-        // 聚合角标用后端汇总的 unread（跨所有账号），而非当前页列表统计。
-        setUnread(agg.unread);
-        setHasMore(agg.emails.length >= PAGE_SIZE);
-        if (agg.emails.length === 0) {
-          setErr("未拉到邮件（检查账号 / 认证）");
-        } else if (agg.emails.some((m) => (active ? emailKey(m) === emailKey(active) : false))) {
-        } else {
-          void selectEmail(agg.emails[0]);
-        }
+        void selectEmail(agg.emails[0]);
       }
     } catch (e) {
       setErr(String(e));
@@ -622,15 +620,9 @@ export function EmailPanel() {
     if (busy || !hasMore) return;
     setBusy(true);
     try {
-      if (scopeAccount) {
-        const r = await api.emailFetchInbox(scopeAccount, folders, PAGE_SIZE, list.length);
-        if (r.length > 0) setList((prev) => [...prev, ...r]);
-        setHasMore(r.length >= PAGE_SIZE);
-      } else {
-        const agg = await api.emailFetchAll(folders, PAGE_SIZE, list.length);
-        if (agg.emails.length > 0) setList((prev) => [...prev, ...agg.emails]);
-        setHasMore(agg.emails.length >= PAGE_SIZE);
-      }
+      const agg = await api.emailFetchAll(folders, PAGE_SIZE, list.length, undefined, undefined, accountFilter);
+      if (agg.emails.length > 0) setList((prev) => [...prev, ...agg.emails]);
+      setHasMore(agg.emails.length >= PAGE_SIZE);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -638,7 +630,7 @@ export function EmailPanel() {
     }
   };
 
-  // 按月份从后端拉取该月区间邮件（直接替换列表），用于月份选择器「直达某月」；聚合视图走聚合命令。
+  // 按月份从后端拉取该月区间邮件（直接替换列表），用于月份选择器「直达某月」；走聚合命令。
   const fetchMonth = async (year: number, month0: number) => {
     const from = `${year}-${String(month0 + 1).padStart(2, "0")}-01`;
     // IMAP SEARCH `BEFORE` 是严格小于，且不接受「当月最后一天」作为日期（30 天月传 31 无效）。
@@ -650,26 +642,14 @@ export function EmailPanel() {
     setBusy(true);
     setErr("");
     try {
-      if (isAggregate) {
-        const agg = await api.emailFetchAll(folders, 0, 0, from, to);
-        setList(agg.emails);
-        setUnread(agg.unread);
-        setHasMore(false);
-        if (agg.emails.length === 0) {
-          setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
-        } else {
-          void selectEmail(agg.emails[0]);
-        }
-      } else if (repAccount) {
-        const r = await api.emailFetchInbox(repAccount, folders, 0, 0, from, to);
-        setList(r);
-        setUnread(r.filter((m) => !m.seen).length);
-        setHasMore(false);
-        if (r.length === 0) {
-          setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
-        } else {
-          void selectEmail(r[0], repAccount);
-        }
+      const agg = await api.emailFetchAll(folders, 0, 0, from, to, accountFilter);
+      setList(agg.emails);
+      setUnread(agg.unread);
+      setHasMore(false);
+      if (agg.emails.length === 0) {
+        setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
+      } else {
+        void selectEmail(agg.emails[0]);
       }
     } catch (e) {
       setErr(String(e));
@@ -678,88 +658,14 @@ export function EmailPanel() {
     }
   };
 
-  // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用；聚合视图走聚合命令、单账号走该账号。
+  // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用；按当前账号筛选走聚合命令。
   const loadMonths = async (fs: string[] = folders) => {
     try {
-      if (isAggregate) {
-        const months = await api.emailFetchAllMonths(fs);
-        setAllMonths(new Set(months));
-      } else if (repAccount) {
-        const months = await api.emailListMonths(repAccount, fs);
-        setAllMonths(new Set(months));
-      }
+      const months = await api.emailFetchAllMonths(fs, accountFilter);
+      setAllMonths(new Set(months));
     } catch {
       // 列出月份失败不致命，月份网格回退到仅当前已加载列表。
     }
-  };
-
-  // 加载「存为笔记」的候选父级（文件夹/页面），供目标位置选择器用。
-  const loadSaveCandidates = async () => {
-    try {
-      const pages = await api.listPages();
-      setSaveCandidates(pages.map((p) => ({ id: p.id, title: p.title, kind: p.kind, parent_id: p.parent_id })));
-    } catch {
-      setSaveCandidates([]);
-    }
-  };
-
-  // 目录树：按 parent_id 建 children 映射，父级选择器据此渲染层级树（B1）。
-  const parentTree = useMemo(() => {
-    type P = { id: string; title: string; kind: string; parent_id: string | null };
-    const children = new Map<string, P[]>();
-    for (const p of saveCandidates) {
-      const key = p.parent_id ?? "root";
-      const arr = children.get(key) ?? [];
-      arr.push(p);
-      children.set(key, arr);
-    }
-    for (const arr of children.values()) arr.sort((a, b) => a.title.localeCompare(b.title));
-    return children;
-  }, [saveCandidates]);
-  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set(["root"]));
-  const toggleExpanded = (id: string) =>
-    setExpandedParents((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  // 递归渲染保存位置树：文件夹可展开/折叠，页面/文件夹均可选。
-  const renderSaveTree = (pid: string, depth: number) => {
-    const items = parentTree.get(pid) ?? [];
-    if (!items.length) return null;
-    const open = expandedParents.has(pid);
-    const out: React.ReactNode[] = [];
-    for (const p of items) {
-      const hasKids = (parentTree.get(p.id) ?? []).length > 0;
-      out.push(
-        <label
-          key={p.id}
-          className={`email-save-parent-item${saveParentId === p.id ? " is-on" : ""}`}
-          style={{ paddingLeft: 10 + depth * 14 }}
-          role="option"
-        >
-          {p.kind === "folder" ? (
-            <span
-              className="email-save-parent-toggle"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleExpanded(p.id); }}
-            >
-              {hasKids ? (open ? "▾" : "▸") : "·"}
-            </span>
-          ) : (
-            <span className="email-save-parent-toggle" style={{ visibility: "hidden" }}>·</span>
-          )}
-          <input
-            type="checkbox"
-            checked={saveParentId === p.id}
-            onChange={() => { setSaveParentId(p.id); setSaveParentOpen(false); }}
-          />
-          <span className="email-save-parent-name">{p.kind === "folder" ? "🗀 " : "📄 "}{p.title || "(无标题)"}</span>
-        </label>,
-      );
-      if (p.kind === "folder" && open) out.push(...(renderSaveTree(p.id, depth + 1) ?? []));
-    }
-    return out;
   };
 
   // 列表滚动接近底部时加载下一页。
@@ -826,7 +732,7 @@ export function EmailPanel() {
   };
 
   const refresh = async () => {
-    await fetchInbox(scopeAccount, folders);
+    await fetchInbox(accountFilter, folders);
     void loadMonths(folders);
   };
 
@@ -838,11 +744,13 @@ export function EmailPanel() {
       toast("请先在 设置 → AI 里配置模型", "info");
       return;
     }
+    setAiSummary("");
+    setSummaryOpen(true);
     setAiSummaryBusy(true);
     setErr("");
     try {
       const text = (body || "").trim();
-      if (!text) { setErr("正文为空，无法总结"); return; }
+      if (!text) { setAiSummary("正文为空，无法总结"); return; }
       const resp = await api.aiComplete({
         provider: cfg.provider,
         base_url: cfg.baseUrl,
@@ -855,9 +763,46 @@ export function EmailPanel() {
       });
       setAiSummary((resp as { content?: string })?.content?.trim() || "（无输出）");
     } catch (e) {
+      setAiSummary(String(e));
       setErr(String(e));
     } finally {
       setAiSummaryBusy(false);
+    }
+  };
+
+  // 把 AI 总结存为一条笔记（标题 = 邮件主题 + AI 总结，正文 = 总结内容）。
+  const saveSummaryAsNote = async () => {
+    if (!active) return;
+    const text = (aiSummary || "").trim();
+    if (!text) { toast("还没有总结内容，无法存为笔记", "info"); return; }
+    setErr("");
+    setBusy(true);
+    try {
+      const title = `${active.subject || "(无主题)"} · AI 总结`;
+      const paras = text.split(/\n{2,}/).map((s) => s.replace(/\r/g, "").trim()).filter(Boolean);
+      const html = paras.length
+        ? paras.map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`).join("")
+        : `<p>${escapeHtml(text)}</p>`;
+      const content = emailHtmlToLexical(html);
+      const target = null; // 去掉保存位置选择后固定存到根目录
+      const page = await api.createPage({
+        parent_id: target,
+        title,
+        content_json: content.content_json,
+        content_text: content.content_text,
+      }).catch(() => null);
+      if (page?.id) {
+        await writeEmailProps(page.id, active);
+        await api.addTag(page.id, senderNameOf(active.from)).catch(() => {});
+        await useNotes.getState().loadPages();
+        await useNotes.getState().openPage(page.id);
+        setErr("");
+        toast("AI 总结已存为笔记", "success");
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -868,8 +813,7 @@ export function EmailPanel() {
     setBusy(true);
     try {
       // 富文本存笔记：拉取邮件 HTML（纯文本兜底），前端转 Lexical JSON，再建页。
-      const target = saveParentId === "root" ? null : saveParentId;
-      let pageId: string | null = null;
+      const target = null; // 去掉保存位置选择后固定存到根目录
       let content: { content_json: string; content_text: string };
       const parts = await api.emailGetMessage(acc, uid, active.folder).catch(() => null);
       if (parts && parts.html.trim()) {
@@ -916,16 +860,20 @@ export function EmailPanel() {
           }
         }
       } catch { /* 去重检查失败不阻塞 */ }
-      pageId = await useNotes.getState().createPage(target, {
+      const page = await api.createPage({
+        parent_id: target,
         title,
         content_json: content.content_json,
         content_text: content.content_text,
-      });
-      if (pageId) {
+      }).catch(() => null);
+      if (page?.id) {
         // 邮件字段 → 页面属性（发件人/收件人/主题/日期），可在数据库视图筛选。
-        await writeEmailProps(pageId, active);
+        await writeEmailProps(page.id, active);
         // A2 标签映射：把发件人作为标签挂到笔记（addTag 按 name 幂等），便于按发件人筛选。
-        await api.addTag(pageId, senderNameOf(active.from)).catch(() => {});
+        await api.addTag(page.id, senderNameOf(active.from)).catch(() => {});
+        // 先写属性再跳转，避免属性面板先取到空值而不刷新。
+        await useNotes.getState().loadPages();
+        await useNotes.getState().openPage(page.id);
       }
       setErr("");
       toast("已存为笔记", "success");
@@ -936,16 +884,25 @@ export function EmailPanel() {
     }
   };
 
-  // 给页面写入邮件属性：查找或新建对应 attr，再 set_page_prop。失败不阻塞存笔记。
+  // 给页面写入邮件属性：查找或新建对应 attr，再 set_page_prop。失败会提示而不是静默吞掉。
   const writeEmailProps = async (pageId: string, m: EmailMeta) => {
-    const defs = await api.listAttrDefs().catch(() => []);
     const getOrCreate = async (name: string, value: string) => {
-      const v = value.trim();
+      const v = (value || "").trim();
       if (!v) return;
-      const existing = defs.find((d) => d.name === name);
-      const attrId = existing ? existing.id : (await api.createAttr({ name, attr_type: "text" }).catch(() => null))?.id;
-      if (!attrId) return;
-      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: v }).catch(() => {});
+      const defs = await api.listAttrDefs().catch(() => []);
+      let attrId = defs.find((d) => d.name === name)?.id;
+      if (!attrId) {
+        const created = await api.createAttr({ name, attr_type: "text" }).catch(() => null);
+        attrId = created?.id;
+      }
+      if (!attrId) {
+        // 兜底：可能在并发的另一次保存里已被创建（"属性已存在"）。
+        const again = await api.listAttrDefs().catch(() => []);
+        attrId = again.find((d) => d.name === name)?.id;
+      }
+      if (!attrId) { setErr(`属性「${name}」创建失败（请检查属性系统）`); return; }
+      const ok = await api.setPageProp({ page_id: pageId, attr_id: attrId, value: v }).catch((e) => String(e));
+      if (typeof ok === "string") setErr(`写入属性「${name}」失败：${ok}`);
     };
     const from = stripEmail(m.from);
     await getOrCreate("发件人", from);
@@ -961,19 +918,20 @@ export function EmailPanel() {
     setErr("");
     setBusy(true);
     try {
-      const target = saveParentId === "root" ? null : saveParentId;
+      const target = null; // 去掉保存位置选择后固定存到根目录
       const parts = await api.emailGetMessage(acc, active.uid, active.folder).catch(() => null);
       const text = parts ? parts.text : body;
       const title = active.subject || "(无主题)";
       // 待办块正文：拆成一行为一项，或用整个邮件正文。
       const todoText = text.trim() ? text.trim().split(/\n/).slice(0, 12).join("\n") : "处理此邮件";
       const content = emailHtmlToLexical(`<p>[ ] ${escapeHtml(todoText)}</p>`);
-      const pageId = await useNotes.getState().createPage(target, {
+      const page = await api.createPage({
+        parent_id: target,
         title: `[任务] ${title}`,
         content_json: content.content_json,
         content_text: content.content_text,
-      });
-      if (pageId) {
+      }).catch(() => null);
+      if (page?.id) {
         const defs = await api.listAttrDefs().catch(() => []);
         let due = defs.find((d) => d.name === "截止日期");
         let dueId = due?.id;
@@ -982,9 +940,11 @@ export function EmailPanel() {
           const tomorrow = new Date();
           tomorrow.setDate(tomorrow.getDate() + 1);
           const iso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
-          await api.setPageProp({ page_id: pageId, attr_id: dueId, value: iso }).catch(() => {});
+          await api.setPageProp({ page_id: page.id, attr_id: dueId, value: iso }).catch(() => {});
         }
-        await writeEmailProps(pageId, active);
+        await writeEmailProps(page.id, active);
+        await useNotes.getState().loadPages();
+        await useNotes.getState().openPage(page.id);
       }
       setErr("");
       toast("已存为任务（截止：明天）", "success");
@@ -1031,14 +991,15 @@ export function EmailPanel() {
     return () => unlisten?.();
   }, [setUnread]);
 
-  // 打开面板时同步一次当前未读数（不等下一次轮询）。仅单账号筛选可用（聚合无单账号计数）。
+  // 打开面板时同步一次当前未读数（不等下一次轮询）：累加所有开启了 auto_fetch 的账号。
   useEffect(() => {
-    if (!open || !scopeAccount?.auto_fetch) return;
-    api
-      .emailUnseenCount(scopeAccount)
-      .then((n) => setUnread(n))
+    if (!open) return;
+    const targets = accounts.filter((a) => a.auto_fetch);
+    if (targets.length === 0) return;
+    Promise.all(targets.map((a) => api.emailUnseenCount(a).catch(() => 0)))
+      .then((ns) => setUnread(ns.reduce((x, y) => x + y, 0)))
       .catch(() => {});
-  }, [scopeAccount, open, setUnread]);
+  }, [accounts, open, setUnread]);
 
   const toggleChecked = (key: string) => {
     setChecked((prev) => {
@@ -1193,6 +1154,7 @@ export function EmailPanel() {
     setBusy(true);
     try {
       let saved = 0;
+      let lastPageId: string | null = null;
       for (const m of target) {
         const a = accountFor(m);
         if (!a) continue;
@@ -1200,8 +1162,22 @@ export function EmailPanel() {
         let content: { content_json: string; content_text: string };
         if (html.trim()) content = emailHtmlToLexical(html);
         else content = emailHtmlToLexical(`<p>${escapeHtml(body)}</p>`);
-        await useNotes.getState().createPage(null, { title: m.subject || "(无主题)", content_json: content.content_json, content_text: content.content_text });
+        const page = await api.createPage({
+          parent_id: null,
+          title: m.subject || "(无主题)",
+          content_json: content.content_json,
+          content_text: content.content_text,
+        }).catch(() => null);
+        if (page?.id) {
+          await writeEmailProps(page.id, m);
+          await api.addTag(page.id, senderNameOf(m.from)).catch(() => {});
+          lastPageId = page.id;
+        }
         saved++;
+      }
+      if (lastPageId) {
+        await useNotes.getState().loadPages();
+        await useNotes.getState().openPage(lastPageId);
       }
       setChecked(new Set());
       toast(`已存为笔记 ${saved} 封`, "success");
@@ -1220,6 +1196,7 @@ export function EmailPanel() {
       ? (active.subject.startsWith("Fwd:") || active.subject.startsWith("Fw:") ? active.subject : `Fwd: ${active.subject}`)
       : (active.subject.startsWith("Re:") ? active.subject : `Re: ${active.subject}`);
     const quote = `\n\n${active.subject}\n${active.from}\n${active.date}\n\n${"─".repeat(40)}\n\n${body}`;
+    composeFocusedRef.current = false; // 每次打开都允许重新聚焦
     setCompose({
       mode,
       to: fwd ? "" : stripEmail(active.from),
@@ -1251,14 +1228,19 @@ export function EmailPanel() {
     }
   };
 
-  // 展开回复/转发后自动聚焦正文，并把光标移到末尾（引用之后）。
+  // 打开回复/转发时聚焦一次（转发聚焦收件人、回复聚焦正文并置顶）。
+  // 注意：compose 每次输入都会变，故用 ref 只聚焦一次，避免反复抢焦点。
   useEffect(() => {
-    if (!compose) return;
-    const el = composeBodyRef.current;
-    if (!el) return;
-    el.focus();
-    const len = el.value.length;
-    el.setSelectionRange(len, len);
+    if (!compose) { composeFocusedRef.current = false; return; }
+    if (composeFocusedRef.current) return;
+    composeFocusedRef.current = true;
+    if (compose.mode === "forward") {
+      const el = composeToRef.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    } else {
+      const el = composeBodyRef.current;
+      if (el) { el.focus(); el.setSelectionRange(0, 0); el.scrollTop = 0; }
+    }
   }, [compose]);
 
   // 月份选择：从后端拉取该月区间邮件（直达某月），关掉选择器。
@@ -1296,7 +1278,7 @@ export function EmailPanel() {
     const next = folders.includes(name) ? folders.filter((f) => f !== name) : [...folders, name];
     const final = next.length ? next : ["INBOX"];
     setFolders(final);
-    void fetchInbox(scopeAccount, final);
+    void fetchInbox(accountFilter, final);
     void loadMonths(final);
   };
 
@@ -1313,19 +1295,6 @@ export function EmailPanel() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [folderPickerOpen]);
 
-  // 点击「保存位置」选择器外部关闭。
-  useEffect(() => {
-    if (!saveParentOpen) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node | null;
-      if (!t) return;
-      if (saveParentRef.current?.contains(t)) return;
-      setSaveParentOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [saveParentOpen]);
-
   // 点击发件人下拉外部关闭。
 
   // 全局快捷键：Ctrl+Shift+E 打开 / Esc 关闭。
@@ -1334,8 +1303,9 @@ export function EmailPanel() {
       if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
         e.preventDefault();
         useEmailPanel.getState().openPanel();
-      } else if (e.key === "Escape" && useEmailPanel.getState().open) {
-        useEmailPanel.getState().closePanel();
+      } else if (e.key === "Escape") {
+        if (summaryOpenRef.current) setSummaryOpen(false);
+        else if (useEmailPanel.getState().open) useEmailPanel.getState().closePanel();
       }
     };
     window.addEventListener("keydown", h);
@@ -1409,29 +1379,31 @@ export function EmailPanel() {
   };
 
   const sections = groupEmails(filteredList);
-  const provider = scopeAccount ? providerLabel(scopeAccount.username) : "全部账号";
   const activeAcc = accountFor(active);
   // 可信发件人：当前邮件发件人域名在 trusted_domains 内 → 自动放行远程图片。
   const isTrusted = !!active && !!activeAcc && activeAcc.trusted_domains.includes(emailDomainOf(active.from));
   const effectiveShowImages = showImages || isTrusted;
 
-  // 测量工具栏各按钮组的实际宽度，用于逐级收纳（P+Q+R / P+Q+「更多」 / P+「更多」）。
+  // 测量工具栏各按钮组的实际宽度，用于逐级收纳（P+Q+R / P+Q+「更多」 / P+「更多」 / 仅保存+「更多」）。
   // 依赖按钮文本随 active/useRich/html/isTrusted/showImages 变化。
   useEffect(() => {
     const GAP = 4;
     const measure = () => {
-      const cw = measureCoreRef.current?.getBoundingClientRect().width ?? 0;
+      const sw = measureSaveRef.current?.getBoundingClientRect().width ?? 0;
+      const iw = measureIconRef.current?.getBoundingClientRect().width ?? 0;
       const aw = measureActionRef.current?.getBoundingClientRect().width ?? 0;
       const rw = measureRightRef.current?.getBoundingClientRect().width ?? 0;
       const mw = measureMoreRef.current?.getBoundingClientRect().width ?? 0;
       setNeed({
-        full: Math.ceil(cw + aw + rw + GAP * 2),
-        coreAction: Math.ceil(cw + aw + mw + GAP * 2),
+        full: Math.ceil(sw + iw + aw + rw + GAP * 3),
+        noicon: Math.ceil(sw + iw + aw + mw + GAP * 3),
+        icon: Math.ceil(sw + iw + mw + GAP * 2),
       });
     };
     measure();
     const ro = new ResizeObserver(measure);
-    if (measureCoreRef.current) ro.observe(measureCoreRef.current);
+    if (measureSaveRef.current) ro.observe(measureSaveRef.current);
+    if (measureIconRef.current) ro.observe(measureIconRef.current);
     if (measureActionRef.current) ro.observe(measureActionRef.current);
     if (measureRightRef.current) ro.observe(measureRightRef.current);
     if (measureMoreRef.current) ro.observe(measureMoreRef.current);
@@ -1456,7 +1428,7 @@ export function EmailPanel() {
     if (measureHeadActionsRef.current) ro.observe(measureHeadActionsRef.current);
     if (measureHeadTitleRef.current) ro.observe(measureHeadTitleRef.current);
     return () => ro.disconnect();
-  }, [folders, scopeAccount]);
+  }, [folders]);
   // 信任当前发件人域名：加入持久化配置并立即生效。
   const trustSender = async () => {
     const acc = accountFor(active);
@@ -1474,16 +1446,20 @@ export function EmailPanel() {
       setErr(String(e));
     }
   };
-  const colTemplate = `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
-  // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
-  // 阈值按三列的实际最小需求（拖动列宽后仍准确），而非固定 380。
-  const colMin = 26 + fromW + subjectW + 72 + 24 + 16;
+  const ACCT_W = 72; // 账号列宽度（仅多账号时显示）
+  const colTemplate = showAccountChip
+    ? `26px ${fromW}px ${ACCT_W}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`
+    : `26px ${fromW}px minmax(${subjectW}px, 1fr) minmax(72px, max-content) 24px`;
+  // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用网格。
+  // 阈值按各列的实际最小需求（拖动列宽后仍准确），而非固定 380。
+  const colMin = 26 + fromW + (showAccountChip ? ACCT_W : 0) + subjectW + 72 + 24 + 16;
   const narrow = listW < colMin;
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
   // 阅读区工具栏逐级收纳（阈值按按钮组实测宽度，而非固定常量）：
   //   宽 → P+Q+R 全显；中 → R 收进「更多」（P+Q+更多）；窄 → Q 也收进「更多」（P+更多）。
-  const toolbarNarrow = toolbarW < need.full;          // 放不下 P+Q+R → R 收紧进「更多」（出现「更多」按钮）
-  const toolbarVeryNarrow = toolbarW < need.coreAction; // 放不下 P+Q+「更多」 → Q 也收紧进「更多」
+  const toolbarNarrow = toolbarW < need.full;          // 放不下全部 → 右侧组收进「更多」
+  const toolbarVeryNarrow = toolbarW < need.noicon;    // 放不下 P+「更多」 → 无图标收尾按钮收进「更多」
+  const toolbarExtreme = toolbarW < need.icon;         // 放不下 保存+「更多」 → 图标核心按钮也收进「更多」
   // 顶部标题栏逐级收纳（阈值按实测内容宽度，而非固定 720/560）：32 = .email-page-head 左右 padding。
   const headSubNarrow = headW < headNeed.sub + 32;
   const headToolNarrow = headW < headNeed.tool + 32;
@@ -1501,32 +1477,6 @@ export function EmailPanel() {
       {open &&
         createPortal(
           <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
-            {accounts.length > 0 && (
-              <div className="email-account-tabs">
-                <button
-                  className={`email-account-tab${scopeKey === null ? " is-active" : ""}`}
-                  onClick={() => void switchScope(null)}
-                  title="全部账号（聚合收件流）"
-                >
-                  全部账号
-                </button>
-                {accounts.map((a) => {
-                  const key = accountKey(a);
-                  const isOn = scopeKey === key;
-                  const label = a.username.split("@")[0] || a.username;
-                  return (
-                    <button
-                      key={`${a.host}|${a.username}`}
-                      className={`email-account-tab${isOn ? " is-active" : ""}`}
-                      onClick={() => void switchScope(key)}
-                      title={`${a.username} · ${a.host}`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
             <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>
@@ -1619,7 +1569,46 @@ export function EmailPanel() {
                 <div className="email-split" ref={splitRef}>
                   <div className="email-pane-list" style={{ width: listW }} ref={listScrollRef} onScroll={onListScroll}>
                     <div className="email-list-head">
-                      <span className="email-list-head-title">邮件{provider ? ` · ${provider}` : ""}</span>
+                      <div className="email-list-head-left">
+                        <span className="email-list-head-title">邮件</span>
+                        {accounts.length > 1 && (
+                          <>
+                            <span className="email-list-head-sep">·</span>
+                            <div className="email-account-filter-wrap" ref={accountFilterRef}>
+                              <button
+                                className="email-account-filter-btn"
+                                onClick={() => setAccountMenuOpen((v) => !v)}
+                                aria-haspopup="listbox"
+                                aria-expanded={accountMenuOpen}
+                                title="选择要聚合的账号（多选）"
+                              >
+                                {accountFilterLabel}
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="m6 9 6 6 6-6" />
+                                </svg>
+                              </button>
+                              {accountMenuOpen && (
+                                <div className="email-account-filter-menu" role="listbox" aria-label="筛选账号">
+                                  {accounts.map((a) => {
+                                    const key = accountKey(a);
+                                    return (
+                                      <label key={key} className="email-account-filter-item">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedAccountKeys.has(key)}
+                                          onChange={() => toggleAccountKey(key)}
+                                        />
+                                        <span className="email-account-filter-label">{a.username}</span>
+                                        <span className="email-account-filter-host">{a.host}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
                       {checked.size > 0 && (
                         <>
                           <button className="email-list-head-delete" disabled={busy} onClick={() => void deleteSelected()}>
@@ -1691,19 +1680,16 @@ export function EmailPanel() {
                         aria-label="搜索"
                       />
                     </div>
-                    <div className="email-col-head" style={{ gridTemplateColumns: narrow ? colTemplateNarrow : colTemplate }}>
-                      <span className="email-col-check" aria-hidden />
-                      {narrow ? (
-                        <span className="email-col-subject">收发件人 / 主题</span>
-                      ) : (
-                        <>
-                          <span className="email-col-from">发件人<span className="email-col-resizer" onMouseDown={onColResizeDown("from")} /></span>
-                          <span className="email-col-subject">主题<span className="email-col-resizer" onMouseDown={onColResizeDown("subject")} /></span>
-                          <span className="email-col-date">日期</span>
-                        </>
-                      )}
-                      {!narrow && <span className="email-col-star" aria-hidden />}
-                    </div>
+                    {!narrow && (
+                      <div className={`email-col-head${showAccountChip ? " has-acct" : ""}`} style={{ gridTemplateColumns: colTemplate }}>
+                        <span className="email-col-check" aria-hidden />
+                        <span className="email-col-from">发件人<span className="email-col-resizer" onMouseDown={onColResizeDown("from")} /></span>
+                        {showAccountChip && <span className="email-col-acct" aria-hidden>账号</span>}
+                        <span className="email-col-subject">主题<span className="email-col-resizer" onMouseDown={onColResizeDown("subject")} /></span>
+                        <span className="email-col-date">日期</span>
+                        <span className="email-col-star" aria-hidden />
+                      </div>
+                    )}
                     {filteredList.length === 0 && <div className="email-page-empty">
                       {list.length === 0 ? "暂无邮件，点「拉取收件箱」。" : "没有匹配的邮件（调整关键字试试）。"}
                     </div>}
@@ -1739,14 +1725,16 @@ export function EmailPanel() {
                               <div className="email-item-body">
                                 <div className="email-item-line1">
                                   <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
+                                  {showAccountChip && <span className="email-item-acct">{renderAccountChip(m)}</span>}
                                   <span className="email-item-date">{fmtListTime(m)}</span>
                                 </div>
-                                <div className="email-item-subject" title={m.subject}>{isAggregate && renderAccountChip(m)}<span className="email-item-subject-text">{m.subject || "(无主题)"}</span></div>
+                                <div className="email-item-subject" title={m.subject}><span className="email-item-subject-text">{m.subject || "(无主题)"}</span></div>
                               </div>
                             ) : (
                               <>
                                 <span className="email-item-from" title={m.from}>{senderNameOf(m.from)}</span>
-                                <span className="email-item-subject" title={m.subject}>{isAggregate && renderAccountChip(m)}<span className="email-item-subject-text">{m.subject || "(无主题)"}</span></span>
+                                {showAccountChip && <span className="email-item-acct">{renderAccountChip(m)}</span>}
+                                <span className="email-item-subject" title={m.subject}><span className="email-item-subject-text">{m.subject || "(无主题)"}</span></span>
                                 <span className="email-item-date">{fmtListTime(m)}</span>
                               </>
                             )}
@@ -1782,20 +1770,28 @@ export function EmailPanel() {
 
                   <div className="email-pane-read" ref={readPaneRef}>
                     <div className="email-read-toolbar" ref={readToolbarRef}>
-                      <div className="email-save-parent-wrap" ref={saveParentRef}>
-                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => setSaveParentOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={saveParentOpen} title="选择保存位置">
-                          <BookmarkIcon width={14} height={14} /> 保存到…
+                      {!toolbarExtreme && (
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>
+                          <SendIcon width={14} height={14} /> 回复
                         </button>
-                        {saveParentOpen && (
-                          <div className="email-save-parent-menu" role="listbox" aria-label="选择保存位置">
-                            <label className={`email-save-parent-item${saveParentId === "root" ? " is-on" : ""}`}>
-                              <input type="checkbox" checked={saveParentId === "root"} onChange={() => { setSaveParentId("root"); setSaveParentOpen(false); }} />
-                              <span className="email-save-parent-name">根目录</span>
-                            </label>
-                            {renderSaveTree("root", 0)}
-                          </div>
-                        )}
-                      </div>
+                      )}
+                      {!toolbarExtreme && (
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("forward")}>
+                          <SendIcon width={14} height={14} /> 转发
+                        </button>
+                      )}
+                      {!toolbarExtreme && (
+                        <button
+                          className="sync-btn ghost"
+                          disabled={busy || !active}
+                          onClick={() => {
+                            if (!active) return;
+                            if (window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active);
+                          }}
+                        >
+                          <TrashIcon width={14} height={14} /> 删除
+                        </button>
+                      )}
                       <button
                         className="sync-btn ghost"
                         disabled={busy || !active}
@@ -1803,20 +1799,14 @@ export function EmailPanel() {
                       >
                         <BookmarkIcon width={14} height={14} /> 存为笔记
                       </button>
-                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAsTask()}>
-                        存为任务
-                      </button>
-                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAttachments()}>
-                        存附件
-                      </button>
                       {!toolbarVeryNarrow && (
-                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>
-                          <SendIcon width={14} height={14} /> 回复
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAsTask()}>
+                          存为任务
                         </button>
                       )}
                       {!toolbarVeryNarrow && (
-                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("forward")}>
-                          <SendIcon width={14} height={14} /> 转发
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAttachments()}>
+                          存附件
                         </button>
                       )}
                       {!toolbarVeryNarrow && (
@@ -1829,15 +1819,8 @@ export function EmailPanel() {
                         </button>
                       )}
                       {!toolbarVeryNarrow && (
-                        <button
-                          className="sync-btn ghost"
-                          disabled={busy || !active}
-                          onClick={() => {
-                            if (!active) return;
-                            if (window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active);
-                          }}
-                        >
-                          <TrashIcon width={14} height={14} /> 删除
+                        <button className="sync-btn ghost" disabled={!active} onClick={() => void summarizeEmail()}>
+                          AI 总结
                         </button>
                       )}
                       <span className="email-read-toolbar-spacer" />
@@ -1848,7 +1831,7 @@ export function EmailPanel() {
                           </button>
                           {moreOpen && (
                             <div className="email-read-more-menu" role="menu">
-                              {toolbarVeryNarrow && (
+                              {toolbarExtreme && (
                                 <>
                                   <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { openCompose("reply"); setMoreOpen(false); }}>
                                     <SendIcon width={14} height={14} /> 回复
@@ -1856,11 +1839,24 @@ export function EmailPanel() {
                                   <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { openCompose("forward"); setMoreOpen(false); }}>
                                     <SendIcon width={14} height={14} /> 转发
                                   </button>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { if (active && window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active); setMoreOpen(false); }}>
+                                    <TrashIcon width={14} height={14} /> 删除
+                                  </button>
+                                </>
+                              )}
+                              {toolbarVeryNarrow && (
+                                <>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { void saveAsTask(); setMoreOpen(false); }}>
+                                    存为任务
+                                  </button>
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { void saveAttachments(); setMoreOpen(false); }}>
+                                    存附件
+                                  </button>
                                   <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { active && void markRead(active, !active.seen); setMoreOpen(false); }}>
                                     {active?.seen ? "标为未读" : "标为已读"}
                                   </button>
-                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { if (active && window.confirm("确定把该邮件移到已删除？")) void deleteEmail(active); setMoreOpen(false); }}>
-                                    <TrashIcon width={14} height={14} /> 删除
+                                  <button className="sync-btn ghost email-read-more-item" role="menuitem" disabled={!active} onClick={() => { void summarizeEmail(); setMoreOpen(false); }}>
+                                    AI 总结
                                   </button>
                                 </>
                               )}
@@ -1897,17 +1893,19 @@ export function EmailPanel() {
 
                     {/* 隐藏测量基准：反映当前按钮文本的真实宽度，供逐级收纳阈值使用（不参与布局/交互）。 */}
                     <div className="email-read-measure" aria-hidden="true">
-                      <div ref={measureCoreRef} className="email-read-measure-row">
-                        <span className="sync-btn ghost"><BookmarkIcon width={14} height={14} /> 保存到…</span>
+                      <div ref={measureSaveRef} className="email-read-measure-row">
                         <span className="sync-btn ghost"><BookmarkIcon width={14} height={14} /> 存为笔记</span>
-                        <span className="sync-btn ghost">存为任务</span>
-                        <span className="sync-btn ghost">存附件</span>
                       </div>
-                      <div ref={measureActionRef} className="email-read-measure-row">
+                      <div ref={measureIconRef} className="email-read-measure-row">
                         <span className="sync-btn ghost"><SendIcon width={14} height={14} /> 回复</span>
                         <span className="sync-btn ghost"><SendIcon width={14} height={14} /> 转发</span>
-                        <span className="sync-btn ghost">{active?.seen ? "标为未读" : "标为已读"}</span>
                         <span className="sync-btn ghost"><TrashIcon width={14} height={14} /> 删除</span>
+                      </div>
+                      <div ref={measureActionRef} className="email-read-measure-row">
+                        <span className="sync-btn ghost">存为任务</span>
+                        <span className="sync-btn ghost">存附件</span>
+                        <span className="sync-btn ghost">{active?.seen ? "标为未读" : "标为已读"}</span>
+                        <span className="sync-btn ghost">AI 总结</span>
                       </div>
                       <div ref={measureRightRef} className="email-read-measure-row">
                         {useRich && html && <span className="sync-btn ghost">{showImages ? "屏蔽图片" : "显示图片"}</span>}
@@ -1936,23 +1934,6 @@ export function EmailPanel() {
                             </span>
                           </span>
                         </div>
-                        <div className="email-ai-summary">
-                          {aiSummary ? (
-                            <div className="email-ai-summary-block">
-                              <div className="email-ai-summary-head">
-                                <span>AI 总结</span>
-                                <button className="sync-btn ghost" disabled={aiSummaryBusy} onClick={() => void summarizeEmail()}>
-                                  {aiSummaryBusy ? "总结中…" : "重新总结"}
-                                </button>
-                              </div>
-                              <div className="email-ai-summary-text">{aiSummary}</div>
-                            </div>
-                          ) : (
-                            <button className="sync-btn ghost" disabled={aiSummaryBusy || !active} onClick={() => void summarizeEmail()}>
-                              {aiSummaryBusy ? "总结中…" : "AI 总结"}
-                            </button>
-                          )}
-                        </div>
                         <div className="email-read-body">
                           {loadingBody
                             ? "加载正文…"
@@ -1972,7 +1953,7 @@ export function EmailPanel() {
                             </div>
                             <div className="email-compose-field">
                               <label htmlFor="email-to">收件人</label>
-                              <input id="email-to" className="set-input" placeholder="对方邮箱地址" value={compose.to} onChange={(e) => setCompose({ ...compose, to: e.target.value })} />
+                              <input id="email-to" ref={composeToRef} className="set-input" placeholder="对方邮箱地址" value={compose.to} onChange={(e) => setCompose({ ...compose, to: e.target.value })} />
                             </div>
                             <div className="email-compose-field">
                               <label htmlFor="email-subject">主题</label>
@@ -2023,6 +2004,40 @@ export function EmailPanel() {
             </div>
           </div>,
           document.querySelector(".main") ?? document.body,
+        )}
+
+      {summaryOpen &&
+        createPortal(
+          <div className="email-ai-modal-overlay" role="dialog" aria-modal="true" aria-label="AI 总结">
+            <div className="email-ai-modal-backdrop" onClick={() => setSummaryOpen(false)} />
+            <div className="email-ai-modal">
+              <div className="email-ai-modal-head">
+                <span className="email-ai-modal-title">✦ AI 总结</span>
+                <button className="sync-btn ghost" onClick={() => setSummaryOpen(false)} aria-label="关闭">✕</button>
+              </div>
+              <div className="email-ai-modal-body">
+                {aiSummaryBusy ? (
+                  <div className="email-ai-modal-loading">
+                    <span className="email-ai-modal-spinner" />
+                    <span>正在总结这封邮件…</span>
+                  </div>
+                ) : aiSummary ? (
+                  <div className="email-ai-modal-text">{aiSummary}</div>
+                ) : (
+                  <div className="email-ai-modal-empty">暂无总结内容</div>
+                )}
+              </div>
+              <div className="email-ai-modal-footer">
+                <span className="email-ai-modal-hint">{active ? `${active.subject || "(无主题)"}` : ""}</span>
+                <span className="email-ai-modal-actions">
+                  <button className="sync-btn ghost" disabled={aiSummaryBusy || !aiSummary} onClick={() => void saveSummaryAsNote()}>存入笔记</button>
+                  <button className="sync-btn ghost" disabled={aiSummaryBusy} onClick={() => void summarizeEmail()}>重新总结</button>
+                  <button className="sync-btn primary" onClick={() => setSummaryOpen(false)}>关闭</button>
+                </span>
+              </div>
+            </div>
+          </div>,
+          document.body,
         )}
     </>
   );

@@ -8,7 +8,7 @@ import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
-import type { SyncProfile } from "../lib/api";
+import type { SyncProfile, EmailAccount } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
@@ -277,6 +277,11 @@ function SpacesPane() {
 
 // 「邮箱」页：聚合收件箱的 IMAP 账号配置。低频、全局，归设置；收件箱阅读/转换
 // 在「打开收件箱」的整页里做（此处只做"我是谁、连哪个邮箱"）。
+// 邮箱账号唯一键（与后端 account_key 一致：host|username，小写）。多账号管理用。
+function accountKey(a: EmailAccount): string {
+  return `${a.host.toLowerCase()}|${a.username.toLowerCase()}`;
+}
+
 function EmailPane() {
   const [host, setHost] = useState("");
   const [port, setPort] = useState("993");
@@ -295,37 +300,119 @@ function EmailPane() {
   const [trustInput, setTrustInput] = useState("");
   const [autoTrust, setAutoTrust] = useState(true);
   const [err, setErr] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState("");
   const desktop = isDesktopPlatform();
+  // 多账号管理：已保存账号列表 + 当前编辑目标（null=新增；否则 host|username 键）。
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+
+  const fillForm = (a: EmailAccount) => {
+    setHost(a.host);
+    setPort(String(a.port));
+    setUser(a.username);
+    setPass(a.password);
+    setUseTls(a.use_tls);
+    setAutoFetch(a.auto_fetch);
+    setIntervalMin(a.interval_minutes || 15);
+    setSmtpHost(a.smtp_host);
+    setSmtpPort(String(a.smtp_port || 465));
+    setSmtpSecurity(a.smtp_security || "ssl");
+    setSmtpUser(a.smtp_user);
+    setSmtpPass(a.smtp_pass);
+    setTrustedDomains(a.trusted_domains ?? []);
+    setAutoTrust(a.auto_trust_senders ?? true);
+  };
+  const resetForm = () => {
+    setHost(""); setPort("993"); setUser(""); setPass(""); setUseTls(true);
+    setAutoFetch(false); setIntervalMin(15); setSmtpHost(""); setSmtpPort("465");
+    setSmtpSecurity("ssl"); setSmtpUser(""); setSmtpPass(""); setTrustedDomains([]); setAutoTrust(true);
+  };
+
+  const reloadAccounts = async (justSaved?: EmailAccount) => {
+    try {
+      const list = await api.emailListAccounts();
+      setAccounts(list);
+      if (justSaved) setEditingKey(accountKey(justSaved));
+    } catch {}
+  };
 
   useEffect(() => {
     api
-      .emailGetAccount()
-      .then((a) => {
-        if (a) {
-          setHost(a.host);
-          setPort(String(a.port));
-          setUser(a.username);
-          setPass(a.password);
-          setUseTls(a.use_tls);
-          setAutoFetch(a.auto_fetch);
-          setIntervalMin(a.interval_minutes || 15);
-          setSmtpHost(a.smtp_host);
-          setSmtpPort(String(a.smtp_port || 465));
-          setSmtpSecurity(a.smtp_security || "ssl");
-          setSmtpUser(a.smtp_user);
-          setSmtpPass(a.smtp_pass);
-          setTrustedDomains(a.trusted_domains ?? []);
-          setAutoTrust(a.auto_trust_senders ?? true);
+      .emailListAccounts()
+      .then((list) => {
+        setAccounts(list);
+        if (list.length > 0) {
+          fillForm(list[0]); // 首位 = 当前活动账号
+          setEditingKey(accountKey(list[0]));
         }
       })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 点某条账号回填表单并进入编辑态。
+  const editAccount = (a: EmailAccount) => { fillForm(a); setEditingKey(accountKey(a)); setErr(""); };
+  // 新建账号：清空表单。
+  const startNew = () => { resetForm(); setEditingKey(null); setErr(""); };
+  const removeAccount = async (a: EmailAccount) => {
+    if (!window.confirm(`删除账号 ${a.username}（${a.host}）？`)) return;
+    setErr("");
+    try {
+      await api.emailRemoveAccount(a);
+      await reloadAccounts();
+      const list = await api.emailListAccounts().catch(() => []);
+      if (list.length > 0) { fillForm(list[0]); setEditingKey(accountKey(list[0])); }
+      else { resetForm(); setEditingKey(null); }
+      setErr("账号已删除 ✓");
+    } catch (e) { setErr(String(e)); }
+  };
+  // 设为活动账号：upsert 后插到列表首位即成为活动账号。
+  const setActiveAccount = async (a: EmailAccount) => {
+    setErr("");
+    try {
+      await api.emailSaveAccount(a);
+      await reloadAccounts(a);
+      setErr("已设为活动账号 ✓");
+    } catch (e) { setErr(String(e)); }
+  };
+
+  const testConnection = async () => {
+    if (!host) { setErr("请先填写服务器"); return; }
+    const payload: EmailAccount = {
+      host,
+      port: Number(port) || 993,
+      username: user,
+      password: pass,
+      use_tls: useTls,
+      auto_fetch: autoFetch,
+      interval_minutes: intervalMin,
+      smtp_host: smtpHost.trim(),
+      smtp_port: Number(smtpPort) || 465,
+      smtp_security: smtpSecurity,
+      smtp_user: smtpUser.trim(),
+      smtp_pass: smtpPass,
+      trusted_domains: trustedDomains,
+      auto_trust_senders: autoTrust,
+    };
+    setTesting(true);
+    setErr("");
+    setTestMsg("");
+    try {
+      const msg = await api.emailTestConnection(payload);
+      setTestMsg(msg);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const save = async () => {
     if (!host) return;
     setErr("");
     try {
-      await api.emailSaveAccount({
+      const payload: EmailAccount = {
         host,
         port: Number(port) || 993,
         username: user,
@@ -340,7 +427,9 @@ function EmailPane() {
         smtp_pass: smtpPass,
         trusted_domains: trustedDomains,
         auto_trust_senders: autoTrust,
-      });
+      };
+      await api.emailSaveAccount(payload);
+      await reloadAccounts(payload);
       setErr("配置已保存 ✓");
     } catch (e) {
       setErr(String(e));
@@ -366,6 +455,46 @@ function EmailPane() {
                   用于拉取收件箱。Gmail 需先开两步验证然后用「应用专用密码」；网易 / 腾讯用授权码。
                 </div>
               </div>
+            </div>
+
+            {accounts.length > 0 && (
+              <div className="email-set-accounts">
+                <div className="email-set-accounts-head">
+                  <span className="email-set-accounts-title">已保存账号（{accounts.length}）</span>
+                  <button className="set-btn" onClick={startNew} title="新增一个 IMAP 账号">＋ 新增账号</button>
+                </div>
+                <div className="email-set-accounts-list">
+                  {accounts.map((a, i) => {
+                    const key = accountKey(a);
+                    const isActive = i === 0;
+                    const isEditing = editingKey === key;
+                    return (
+                      <div key={key} className={`email-set-account-row${isActive ? " is-active" : ""}${isEditing ? " is-editing" : ""}`}>
+                        <span className="email-set-account-avatar" aria-hidden>{(a.username[0] || "?").toUpperCase()}</span>
+                        <span className="email-set-account-main">
+                          <span className="email-set-account-name" title={a.username}>
+                            <span className="email-set-account-user">{a.username}</span>
+                            {isActive && <span className="email-set-active-badge">当前活动</span>}
+                          </span>
+                          <span className="email-set-account-sub">{a.host} · {a.port}</span>
+                        </span>
+                        <span className="email-set-account-actions">
+                          <button className="set-btn" onClick={() => editAccount(a)}>编辑</button>
+                          {!isActive && <button className="set-btn" onClick={() => void setActiveAccount(a)}>设为活动</button>}
+                          <button className="set-btn is-danger" onClick={() => void removeAccount(a)}>删除</button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="email-set-form-head">
+              <span className="email-set-form-title">{editingKey ? "编辑账号" : "新增账号"}</span>
+              <span className="email-set-form-hint">
+                {editingKey ? "修改后点「保存配置」，同 服务器+账号 将覆盖保存。" : "填写下方信息后点「保存配置」，将新增一个账号并设为当前活动。"}
+              </span>
             </div>
 
             <div className="email-set-grid">
@@ -536,12 +665,17 @@ function EmailPane() {
               </div>
             </div>
 
-            <div className="set-actions">
+            <div className="set-actions email-set-actions">
               <button className="set-btn is-primary" disabled={!host} onClick={() => void save()}>保存配置</button>
-              <button className="set-btn" onClick={() => { useEmailPanel.getState().openPanel(); useEditorStore.getState().closeSettings(); }}>打开收件箱</button>
+              <button className="set-btn" onClick={() => { useEmailPanel.getState().openPanel(); useEditorStore.getState().closeSettings(); }}>
+                <InboxIcon width={14} height={14} /> 打开收件箱
+              </button>
+              <button className="set-btn" disabled={testing || !host} onClick={() => void testConnection()}>
+                {testing ? "测试中…" : "测试连接"}
+              </button>
             </div>
             {err && <div className="set-status-line">{err}</div>}
-            <p className="set-hint">密码目前本地明文存；生产将改用端到端加密 / 系统凭据库（见内部文档）。</p>
+            {testMsg && <div className="set-status-line is-ok">✓ {testMsg}</div>}
           </>
         )}
       </section>

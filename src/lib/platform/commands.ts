@@ -108,8 +108,8 @@ export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
-  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
-  email_fetch_all_months: { args: { args: { folders: string[] } }; result: string[] };
+  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
+  email_fetch_all_months: { args: { args: { folders: string[]; accounts?: string[] } }; result: string[] };
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
   email_get_html: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
@@ -128,6 +128,7 @@ export interface CommandMap {
   email_move_many_to_trash: { args: { args: { account: EmailAccount; uids: number[]; folder: string } }; result: number };
   email_mark_many_read: { args: { args: { account: EmailAccount; uids: number[]; folder: string }; read: boolean }; result: number };
   email_send: { args: { args: { account: EmailAccount; to: string; subject: string; body: string } }; result: void };
+  email_test_connection: { args: { account: EmailAccount }; result: string };
   // ---- Update（更新清单，桌面 native 拉取；Web 走 server version.json） ----
   fetch_update_manifest: { args: { url?: string }; result: { version: string | null; notes: string | null; pub_date: string | null } | null };
 
