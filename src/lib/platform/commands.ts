@@ -115,6 +115,8 @@ export interface CommandMap {
   email_get_attachments: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: AttachmentMeta[] };
   email_save_account: { args: { account: EmailAccount }; result: void };
   email_get_account: { args: undefined; result: EmailAccount | null };
+  email_list_accounts: { args: undefined; result: EmailAccount[] };
+  email_remove_account: { args: { account: EmailAccount }; result: boolean };
   email_unseen_count: { args: { args: EmailAccount }; result: number };
   email_list_folders: { args: { args: EmailAccount }; result: string[] };
   email_list_months: { args: { args: { account: EmailAccount; folders: string[] } }; result: string[] };

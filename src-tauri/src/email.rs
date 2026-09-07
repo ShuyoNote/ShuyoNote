@@ -62,7 +62,7 @@ async fn open_session(
 
 /// IMAP 账号参数（spike：应用密码 / 企业 IMAP；OAuth 后续）。
 /// 支持序列化，便于持久化到本地配置。
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct EmailAccountArgs {
     pub host: String,
     pub port: u16,
@@ -774,33 +774,36 @@ pub fn start_email_poller(app: AppHandle) {
         let mut failures: u32 = 0;
         loop {
             // 每次唤醒都重新读配置，这样账号/间隔/开关在运行中也能实时生效。
-            let account = email_get_account(app.state::<Db>(), app.clone()).ok().flatten();
-            match account {
-                Some(a) if a.auto_fetch => {
-                    let minutes = (a.interval_minutes.max(5)) as u64;
-                    // 门闩：加锁失败说明上次轮询或手动拉取仍在进行，跳过本轮。
-                    if let Ok(_guard) = state.busy.try_lock() {
-                        match fetch_unseen(&a).await {
-                            Ok(n) => {
-                                failures = 0;
-                                let _ = app.emit(POLL_EVENT, n);
-                                tokio::time::sleep(std::time::Duration::from_secs(minutes * 60)).await;
-                            }
-                            Err(_) => {
-                                failures += 1;
-                                // 退避：30s 起，指数翻倍，封顶 10 分钟。
-                                let backoff = 30u64.saturating_mul(2u64.saturating_pow(failures.min(6))).min(600);
-                                tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
-                            }
-                        }
-                    } else {
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let accounts = email_list_accounts(app.state::<Db>(), app.clone()).unwrap_or_default();
+            let fetchable: Vec<&EmailAccountArgs> = accounts.iter().filter(|a| a.auto_fetch).collect();
+            if fetchable.is_empty() {
+                // 未配置 / 未开启自动收取：每 30s 醒来看一眼配置变化，几乎零开销。
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                continue;
+            }
+            let minutes = fetchable.iter().map(|a| (a.interval_minutes.max(5)) as u64).min().unwrap_or(15);
+            // 门闩：加锁失败说明上次轮询或手动拉取仍在进行，跳过本轮。
+            if let Ok(_guard) = state.busy.try_lock() {
+                let mut total = 0u32;
+                let mut ok = false;
+                for a in &fetchable {
+                    if let Ok(n) = fetch_unseen(*a).await {
+                        total += n;
+                        ok = true;
                     }
                 }
-                _ => {
-                    // 未配置 / 未开启自动收取：每 30s 醒来看一眼配置变化，几乎零开销。
-                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if ok {
+                    failures = 0;
+                    let _ = app.emit(POLL_EVENT, total);
+                    tokio::time::sleep(std::time::Duration::from_secs(minutes * 60)).await;
+                } else {
+                    failures += 1;
+                    // 退避：30s 起，指数翻倍，封顶 10 分钟。
+                    let backoff = 30u64.saturating_mul(2u64.saturating_pow(failures.min(6))).min(600);
+                    tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
                 }
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
         }
     });
@@ -1010,48 +1013,125 @@ fn account_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
-/// 保存 IMAP 账号配置到本地（便于打开面板自动回填）。
-/// 安全：当工作区端到端加密开启且会话未锁定时，用会话密钥对 password/smtp_pass 加密后落盘；
-/// 否则（未加密或已锁定）保持明文，向后兼容。
-#[tauri::command]
-pub fn email_save_account(db: State<Db>, app: tauri::AppHandle, account: EmailAccountArgs) -> Result<(), String> {
-    let path = account_path(&app)?;
+/// 账号唯一键：host + username（同一邮箱服务器 + 用户名视为同一账号）。
+fn account_key(a: &EmailAccountArgs) -> String {
+    format!("{}|{}", a.host.to_lowercase(), a.username.to_lowercase())
+}
+
+/// 读取账号列表（未配置返回空）。兼容旧的单对象格式（包装成单元素列表）。
+fn load_accounts(path: &std::path::Path) -> Result<Vec<EmailAccountArgs>, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // 先按数组解析；失败则按单对象（旧格式）解析，包装成单元素。
+    if let Ok(list) = serde_json::from_str::<Vec<EmailAccountArgs>>(&content) {
+        return Ok(list);
+    }
+    if let Ok(single) = serde_json::from_str::<EmailAccountArgs>(&content) {
+        return Ok(vec![single]);
+    }
+    Ok(Vec::new())
+}
+
+/// 对账号列表按会话密钥加密密码后写盘。
+fn save_accounts(
+    path: &std::path::Path,
+    key: Option<&[u8; 32]>,
+    accounts: &[EmailAccountArgs],
+) -> Result<(), String> {
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
-    let mut acct = account;
-    if let Some(key) = crate::security::key_if_enabled(&db.0.lock().expect("db mutex poisoned")) {
-        acct.password = crate::crypto::encrypt_str(&acct.password, &key).unwrap_or_else(|_| acct.password.clone());
-        if !acct.smtp_pass.is_empty() {
-            acct.smtp_pass = crate::crypto::encrypt_str(&acct.smtp_pass, &key).unwrap_or_else(|_| acct.smtp_pass.clone());
+    let mut list = accounts.to_vec();
+    for a in list.iter_mut() {
+        if let Some(k) = key {
+            a.password = crate::crypto::encrypt_str(&a.password, k).unwrap_or_else(|_| a.password.clone());
+            if !a.smtp_pass.is_empty() {
+                a.smtp_pass = crate::crypto::encrypt_str(&a.smtp_pass, k).unwrap_or_else(|_| a.smtp_pass.clone());
+            }
         }
     }
-    let json = serde_json::to_string_pretty(&acct).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())?;
-    Ok(())
+    let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
-/// 读取已保存的 IMAP 账号配置（未配置返回 None）。密码若已加密则用会话密钥解密。
+/// 解密账号列表的密码（配合会话密钥）。
+fn decrypt_accounts(key: Option<&[u8; 32]>, mut accounts: Vec<EmailAccountArgs>) -> Vec<EmailAccountArgs> {
+    if let Some(k) = key {
+        for a in accounts.iter_mut() {
+            if let Ok(p) = crate::crypto::decrypt_str(&a.password, k) {
+                a.password = p;
+            }
+            if !a.smtp_pass.is_empty() {
+                if let Ok(p) = crate::crypto::decrypt_str(&a.smtp_pass, k) {
+                    a.smtp_pass = p;
+                }
+            }
+        }
+    }
+    accounts
+}
+
+fn session_key(db: &State<'_, Db>) -> Option<[u8; 32]> {
+    crate::security::key_if_enabled(&db.0.lock().expect("db mutex poisoned"))
+}
+
+/// 保存 IMAP 账号配置（支持多账号：按 host+username upsert，并把该账号设为「当前活动」）。
+/// 安全：开启 E1 且解锁时用会话密钥加密 password/smtp_pass 后落盘。
+#[tauri::command]
+pub fn email_save_account(db: State<Db>, app: tauri::AppHandle, account: EmailAccountArgs) -> Result<(), String> {
+    let path = account_path(&app)?;
+    let key = session_key(&db);
+    let mut list = if path.exists() {
+        load_accounts(&path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // upsert：同 host+username 替换，否则追加。
+    let k = account_key(&account);
+    list.retain(|a| account_key(a) != k);
+    list.insert(0, account); // 最新保存的设为活动（列表首位）
+    save_accounts(&path, key.as_ref(), &list)
+}
+
+/// 读取当前活动账号（列表首位；兼容旧单对象）。密码在未加密/未锁定时应为明文。
 #[tauri::command]
 pub fn email_get_account(db: State<Db>, app: tauri::AppHandle) -> Result<Option<EmailAccountArgs>, String> {
     let path = account_path(&app)?;
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut acct: Option<EmailAccountArgs> = serde_json::from_str(&content).ok();
-    if let (Some(a), Some(key)) = (acct.as_mut(), crate::security::key_if_enabled(&db.0.lock().expect("db mutex poisoned"))) {
-        // 若密码看起来被加密（能解出合法字符串），解密；否则保持原样。
-        if let Ok(p) = crate::crypto::decrypt_str(&a.password, &key) {
-            a.password = p;
-        }
-        if !a.smtp_pass.is_empty() {
-            if let Ok(p) = crate::crypto::decrypt_str(&a.smtp_pass, &key) {
-                a.smtp_pass = p;
-            }
-        }
+    let key = session_key(&db);
+    let list = load_accounts(&path)?;
+    let decrypted = decrypt_accounts(key.as_ref(), list);
+    Ok(decrypted.first().cloned())
+}
+
+/// 列出所有已保存邮箱账号（含解密后的密码），供前端标签/管理。
+#[tauri::command]
+pub fn email_list_accounts(db: State<Db>, app: tauri::AppHandle) -> Result<Vec<EmailAccountArgs>, String> {
+    let path = account_path(&app)?;
+    if !path.exists() {
+        return Ok(Vec::new());
     }
-    Ok(acct)
+    let key = session_key(&db);
+    let list = load_accounts(&path)?;
+    Ok(decrypt_accounts(key.as_ref(), list))
+}
+
+/// 删除一个邮箱账号（按 host+username）。返回是否删除到。
+#[tauri::command]
+pub fn email_remove_account(db: State<Db>, app: tauri::AppHandle, account: EmailAccountArgs) -> Result<bool, String> {
+    let path = account_path(&app)?;
+    if !path.exists() {
+        return Ok(false);
+    }
+    let key = session_key(&db);
+    let k = account_key(&account);
+    let mut list = load_accounts(&path)?;
+    list = decrypt_accounts(key.as_ref(), list);
+    let before = list.len();
+    list.retain(|a| account_key(a) != k);
+    save_accounts(&path, key.as_ref(), &list)?;
+    Ok(list.len() != before)
 }
 
 #[cfg(test)]

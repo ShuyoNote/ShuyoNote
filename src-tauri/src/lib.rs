@@ -252,6 +252,8 @@ pub fn run() {
             email::email_get_attachments,
             email::email_save_account,
             email::email_get_account,
+            email::email_list_accounts,
+            email::email_remove_account,
             email::email_unseen_count,
             email::email_list_folders,
             email::email_list_months,

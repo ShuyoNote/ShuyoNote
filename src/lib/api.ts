@@ -140,6 +140,9 @@ export const api = {
   emailSaveAccount: (account: EmailAccount) =>
     invoke("email_save_account", { account }),
   emailGetAccount: () => invoke("email_get_account", undefined),
+  emailListAccounts: () => invoke("email_list_accounts", undefined),
+  emailRemoveAccount: (account: EmailAccount) =>
+    invoke("email_remove_account", { account }),
   emailUnseenCount: (account: EmailAccount) =>
     invoke("email_unseen_count", { args: account }),
   emailListFolders: (account: EmailAccount) =>

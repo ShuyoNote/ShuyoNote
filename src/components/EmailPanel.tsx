@@ -326,6 +326,7 @@ export function EmailPanel() {
   const listScrollRef = useRef<HTMLDivElement>(null);
 
   const [account, setAccount] = useState<EmailAccount | null>(null);
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [list, setList] = useState<EmailMeta[]>([]);
   const [active, setActive] = useState<EmailMeta | null>(null);
   const [body, setBody] = useState("");
@@ -393,8 +394,14 @@ export function EmailPanel() {
     }
   }, [open]);
 
-  // 挂载时读一次已保存账号（供角标/定时收取用；不依赖面板是否打开）。
+  // 挂载时读一次已保存账号列表（供角标/定时收取/标签用；不依赖面板是否打开）。
   useEffect(() => {
+    api
+      .emailListAccounts()
+      .then((list) => {
+        setAccounts(list.map((a) => toAccount(a)));
+      })
+      .catch(() => {});
     api
       .emailGetAccount()
       .then((a) => {
@@ -504,8 +511,18 @@ export function EmailPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders, offset = 0) => {
-    setBusy(true);
+  // 切换活动账号：更新 setAccount 并拉取该账号收件箱。
+  const switchAccount = async (acc: EmailAccount) => {
+    setAccount(acc);
+    setList([]);
+    setActive(null);
+    setBody("");
+    setHtml("");
+    setChecked(new Set());
+    await fetchInbox(acc);
+  };
+
+  const fetchInbox = async (acc: EmailAccount = account!, fs: string[] = folders, offset = 0) => {    setBusy(true);
     setErr("");
     try {
       const r = await api.emailFetchInbox(acc, fs, PAGE_SIZE, offset);
@@ -1202,6 +1219,24 @@ export function EmailPanel() {
       {open &&
         createPortal(
           <div ref={pageRef} className="email-page" role="dialog" aria-label="邮箱">
+            {accounts.length > 1 && (
+              <div className="email-account-tabs">
+                {accounts.map((a) => {
+                  const active = account?.username === a.username && account?.host === a.host;
+                  const label = a.username.split("@")[0] || a.username;
+                  return (
+                    <button
+                      key={`${a.host}|${a.username}`}
+                      className={`email-account-tab${active ? " is-active" : ""}`}
+                      onClick={() => void switchAccount(a)}
+                      title={`${a.username} · ${a.host}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>
