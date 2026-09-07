@@ -552,6 +552,30 @@ export function EmailPanel() {
     }
   };
 
+  // 按月份从后端拉取该月区间邮件（直接替换列表），用于月份选择器「直达某月」。
+  const fetchMonth = async (year: number, month0: number) => {
+    if (!account) return;
+    const from = `${year}-${String(month0 + 1).padStart(2, "0")}-01`;
+    const to = `${year}-${String(month0 + 1).padStart(2, "0")}-31`;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.emailFetchInbox(account, folders, 0, 0, from, to);
+      setList(r);
+      setUnread(r.filter((m) => !m.seen).length);
+      setHasMore(false);
+      if (r.length === 0) {
+        setErr(`${year} 年 ${month0 + 1} 月没有邮件`);
+      } else {
+        void selectEmail(r[0], account);
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 列表滚动接近底部时加载下一页。
   const onListScroll = () => {
     const el = listScrollRef.current;
@@ -868,16 +892,10 @@ export function EmailPanel() {
     el.setSelectionRange(len, len);
   }, [compose]);
 
-  // 月份选择：跳到该月最新一封邮件（列表顶部）。
+  // 月份选择：从后端拉取该月区间邮件（直达某月），关掉选择器。
   const scrollToMonth = (year: number, month0: number) => {
-    const uid = monthIndex.firstUid.get(`${year}-${month0}`);
-    if (uid == null) return;
-    const el = rowRefs.current.get(uid);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      setActive(list.find((m) => m.uid === uid) ?? null);
-    }
     setPickerOpen(false);
+    void fetchMonth(year, month0);
   };
 
   // 点击月份选择器外部关闭。

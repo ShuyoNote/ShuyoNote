@@ -223,6 +223,24 @@ fn default_folder() -> String {
     "INBOX".to_string()
 }
 
+/// 把 ISO `YYYY-MM-DD` 转成 IMAP 的 `d-MMM-yyyy`（如 `2026-08-01` → `1-Aug-2026`），
+/// 用于 `SEARCH SINCE/BEFORE`。无法解析时原样返回。
+fn imap_date(s: &str) -> String {
+    const MONTHS: [&str; 12] = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() == 3 {
+        let y = parts[0];
+        let m = parts[1].parse::<usize>().ok();
+        let d = parts[2].trim_start_matches('0');
+        if let (Some(midx), Ok(dv)) = (m.and_then(|m| m.checked_sub(1)), d.parse::<u32>()) {
+            if let Some(mon) = MONTHS.get(midx) {
+                return format!("{}-{}-{}", dv, mon, y);
+            }
+        }
+    }
+    s.to_string()
+}
+
 /// 按 UID 拉取完整邮件（`BODY.PEEK[]`，不置已读）→ 存为笔记。
 #[tauri::command]
 pub async fn email_save_uid(db: State<'_, Db>, args: EmailSaveUidArgs) -> Result<crate::models::PageDetail, String> {
@@ -338,6 +356,11 @@ pub struct EmailFetchArgs {
     pub limit: u32,
     #[serde(default)]
     pub offset: u32,
+    /// 按日期区间过滤（ISO `YYYY-MM-DD`，含端点）。给定时用 IMAP `SEARCH SINCE/BEFORE` 只取该区间邮件。
+    #[serde(default)]
+    pub date_from: Option<String>,
+    #[serde(default)]
+    pub date_to: Option<String>,
 }
 
 #[tauri::command]
@@ -352,67 +375,97 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
 
     let mut session = open_session(&args.account, "INBOX").await?;
 
+    // 把一条 FETCH 消息的 ENVELOPE 行转成 EmailMeta（供「全量 FETCH」与「按日期 SEARCH+FETCH」两条路径复用）。
+    let build_meta = |m: &async_imap::types::Fetch, folder: &str| -> Option<EmailMeta> {
+        let env = m.envelope()?;
+        let subject = env
+            .subject
+            .as_ref()
+            .map(|s| decode_mime_words(&String::from_utf8_lossy(s.as_ref())))
+            .unwrap_or_default();
+        let from = env
+            .from
+            .as_ref()
+            .and_then(|v| v.first())
+            .map(|a| {
+                let mb = a
+                    .mailbox
+                    .as_ref()
+                    .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                    .unwrap_or_default();
+                let host = a
+                    .host
+                    .as_ref()
+                    .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
+                    .unwrap_or_default();
+                let addr = format!("{}@{}", mb, host);
+                // 显示名称（RFC2047 可能编码），如 "NetBird <no-reply@netbird.io>"。
+                let name = a
+                    .name
+                    .as_ref()
+                    .map(|n| decode_mime_words(&String::from_utf8_lossy(n.as_ref())).trim().to_string())
+                    .unwrap_or_default();
+                if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) {
+                    format!("{} <{}>", name, addr)
+                } else {
+                    addr
+                }
+            })
+            .unwrap_or_default();
+        let date = env
+            .date
+            .as_ref()
+            .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
+            .unwrap_or_default();
+        let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
+        let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+        Some(EmailMeta {
+            uid: m.uid.unwrap_or(0),
+            subject,
+            from,
+            date,
+            snippet: String::new(),
+            seen,
+            flagged,
+            folder: folder.to_string(),
+        })
+    };
+
     let mut out = Vec::new();
     for folder in &folders {
         session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
-        let mut stream = session
-            .fetch("1:*", "(ENVELOPE UID FLAGS)")
-            .await
-            .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
 
-        while let Some(Ok(m)) = stream.next().await {
-            if let Some(env) = m.envelope() {
-                let subject = env
-                    .subject
-                    .as_ref()
-                    .map(|s| decode_mime_words(&String::from_utf8_lossy(s.as_ref())))
-                    .unwrap_or_default();
-                let from = env
-                    .from
-                    .as_ref()
-                    .and_then(|v| v.first())
-                    .map(|a| {
-                        let mb = a
-                            .mailbox
-                            .as_ref()
-                            .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
-                            .unwrap_or_default();
-                        let host = a
-                            .host
-                            .as_ref()
-                            .map(|x| String::from_utf8_lossy(x.as_ref()).to_string())
-                            .unwrap_or_default();
-                        let addr = format!("{}@{}", mb, host);
-                        // 显示名称（RFC2047 可能编码），如 "NetBird <no-reply@netbird.io>"。
-                        let name = a
-                            .name
-                            .as_ref()
-                            .map(|n| decode_mime_words(&String::from_utf8_lossy(n.as_ref())).trim().to_string())
-                            .unwrap_or_default();
-                        if !name.is_empty() && !name.eq_ignore_ascii_case(&addr) {
-                            format!("{} <{}>", name, addr)
-                        } else {
-                            addr
-                        }
-                    })
-                    .unwrap_or_default();
-                let date = env
-                    .date
-                    .as_ref()
-                    .map(|d| String::from_utf8_lossy(d.as_ref()).to_string())
-                    .unwrap_or_default();
-                let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
-                let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
-                out.push(EmailMeta {
-                    uid: m.uid.unwrap_or(0),
-                    subject,
-                    from,
-                    date,
-                    snippet: String::new(),
-                    seen,
-                    flagged,
-                    folder: folder.clone(),
-                });
+        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {
+            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
+            // IMAP 日期格式为 `d-MMM-yyyy`，如 `01-Aug-2026`。
+            let from_s = imap_date(df);
+            let to_s = imap_date(dt);
+            let query = format!("SINCE {} BEFORE {}", from_s, to_s);
+            let ids = session
+                .uid_search(&query)
+                .await
+                .map_err(|e| format!("按日期搜索 {} 失败: {}", folder, e))?;
+            if !ids.is_empty() {
+                let set = ids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+                let mut stream = session
+                    .uid_fetch(set, "(ENVELOPE UID FLAGS)")
+                    .await
+                    .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+                while let Some(Ok(m)) = stream.next().await {
+                    if let Some(meta) = build_meta(&m, folder) {
+                        out.push(meta);
+                    }
+                }
+            }
+        } else {
+            let mut stream = session
+                .fetch("1:*", "(ENVELOPE UID FLAGS)")
+                .await
+                .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+            while let Some(Ok(m)) = stream.next().await {
+                if let Some(meta) = build_meta(&m, folder) {
+                    out.push(meta);
+                }
             }
         }
     }
