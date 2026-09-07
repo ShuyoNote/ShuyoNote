@@ -8,6 +8,8 @@
 // call). Config is read straight from localStorage to avoid pulling the AI store
 // into the platform layer (circular-import risk).
 
+import { coreFetch } from "./coreHttp";
+
 export interface EmbedConfig {
   provider: "ollama" | "openai";
   baseUrl: string;
@@ -120,7 +122,7 @@ export async function embedText(text: string, cfg: EmbedConfig): Promise<number[
     if (!url) return null;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
-    const resp = await fetch(url, {
+    const resp = await coreFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(embedBody(cfg.model, cfg.provider, text)),

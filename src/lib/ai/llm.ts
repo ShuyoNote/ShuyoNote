@@ -7,6 +7,7 @@
 // whether a saved config actually works. This module is transport-only (mockable).
 
 import type { AiMessage } from "./types";
+import { coreFetch } from "../coreHttp";
 
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
@@ -143,7 +144,7 @@ async function safeFetch(url: string, init: RequestInit, timeoutMs: number): Pro
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
+    return await coreFetch(url, { ...init, signal: ctrl.signal });
   } catch (e) {
     const timeout = String((e as Error)?.message ?? "").toLowerCase().includes("abort");
     if (timeout) throw new Error(`连接 ${url} 超时（${timeoutMs / 1000}s）。`);

@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "page-*"],
+  "windows": [
+    "main",
+    "page-*"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
@@ -17,17 +20,26 @@
     {
       "identifier": "opener:allow-open-path",
       "allow": [
-        { "path": "$APPDATA/**" },
-        { "path": "$HOME/**" }
+        {
+          "path": "$APPDATA/**"
+        },
+        {
+          "path": "$HOME/**"
+        }
       ]
     },
     {
       "identifier": "opener:allow-reveal-item-in-dir",
       "allow": [
-        { "path": "$APPDATA/**" },
-        { "path": "$HOME/**" }
+        {
+          "path": "$APPDATA/**"
+        },
+        {
+          "path": "$HOME/**"
+        }
       ]
     },
-    "dialog:default"
+    "dialog:default",
+    "http:default"
   ]
 }

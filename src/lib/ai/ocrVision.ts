@@ -3,6 +3,7 @@
 // 这是独立的视觉调用（不走 runAiLoop/transport 的纯文本通道）。
 import type { ProviderConfig } from "./llm";
 import { describeFetchError } from "./llm";
+import { coreFetch } from "../coreHttp";
 
 export interface VisionOcrResult {
   text: string | null;
@@ -29,7 +30,7 @@ async function postJson(
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: ctrl.signal });
+    return await coreFetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: ctrl.signal });
   } catch (e) {
     const timeout = String((e as Error)?.message ?? "").toLowerCase().includes("abort");
     if (timeout) throw new Error(`连接 ${url} 超时（${timeoutMs / 1000}s）。`);
