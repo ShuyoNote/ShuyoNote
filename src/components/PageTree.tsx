@@ -942,7 +942,7 @@ export function PageTree(_props: {
                       >
                         <span
                           className="space-item-mark"
-                          style={s.theme ? { background: s.theme, color: "#fff", border: "none" } : undefined}
+                          style={s.theme ? { background: lightenColor(s.theme), color: s.theme, border: "none" } : undefined}
                         >
                           {s.name.charAt(0)}
                         </span>

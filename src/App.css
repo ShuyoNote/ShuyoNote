@@ -737,7 +737,7 @@ body,
 .space-item-mark {
   width: 30px;
   height: 30px;
-  border-radius: var(--radius-md);
+  border-radius: 50%;
   background: var(--hover-strong);
   color: var(--text-dim);
   font-size: 13px;
