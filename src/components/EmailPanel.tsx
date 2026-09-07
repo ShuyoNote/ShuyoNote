@@ -111,15 +111,15 @@ function folderDisplay(name: string): string {
 }
 
 // 用 DOMPurify 白名单消毒邮件 HTML（去 script/iframe/事件属性/javascript: 协议等）。
-// 安全策略（用户选择：保持 CSP 严格）：远程图片一律不加载——始终替换成占位 + 可点链接，
-// 用户可点「查看原图」在新标签打开（导航不受 img-src 限制，且不触发图片加载/追踪）。
-function sanitizeEmailHtml(html: string): string {
+// 图片策略（用户选择 A）：保留 `<img>`（富排版），但默认把 `src` 移到 `data-src` 使浏览器不加载；
+// 用户点「显示图片」后再以 showImages=true 重新渲染，把 src 补回才加载（保留追踪防护，安全靠消毒+用户授权）。
+function sanitizeEmailHtml(html: string, showImages: boolean): string {
   const config = {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["iframe", "script", "object", "embed", "form", "input", "style", "link", "meta", "base", "svg", "math"],
     FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "formaction", "xlink:href", "srcset", "background"],
     ADD_ATTR: ["target", "rel"],
-    ALLOW_DATA_ATTR: false,
+    ALLOW_DATA_ATTR: true,
   };
   // 消毒后强制链接新开 + noreferrer（防 opener 泄露 / 追踪）。
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
@@ -131,21 +131,20 @@ function sanitizeEmailHtml(html: string): string {
   let clean = DOMPurify.sanitize(html, config);
   DOMPurify.removeHook("afterSanitizeAttributes");
 
-  // 始终屏蔽远程图片：<img src> → 占位 + 「查看原图」链接（永不直接加载外部图）。
-  const imgRe = /<img\b[^>]*>/gi;
-  clean = clean.replace(imgRe, (tag) => {
-    const alt = /alt=["']([^"']*)["']/.exec(tag)?.[1] ?? "";
-    const srcM = /src=["']([^"']*)["']/.exec(tag);
-    const src = srcM ? srcM[1] : "";
-    const label = `[图片${alt ? "：" + alt : ""}]`;
-    const isRemote = src.startsWith("http:") || src.startsWith("https:") || src.startsWith("//");
-    if (isRemote) {
-      return `<span class="email-img-placeholder">${label}<a class="email-img-link" href="${src}" target="_blank" rel="noreferrer noopener">查看原图</a></span>`;
-    }
-    return `<span class="email-img-placeholder">${label}</span>`;
-  });
   // 移除背景图/样式里的 url()（追踪/泄露风险）。
   clean = clean.replace(/url\s*\(\s*["']?[^"')]+["']?\s*\)/gi, "");
+
+  if (!showImages) {
+    // 默认不加载：把 <img src=...> 改成 <img data-src=...>（保留 tag 与尺寸，浏览器不请求 src）。
+    clean = clean.replace(/<img\b[^>]*>/gi, (tag) => {
+      const srcM = /src=["']([^"']*)["']/.exec(tag);
+      if (!srcM) return tag;
+      const src = srcM[1];
+      if (!(src.startsWith("http:") || src.startsWith("https:") || src.startsWith("//"))) return tag;
+      const withoutSrc = tag.replace(/src=["'][^"']*["']/, "");
+      return `${withoutSrc} data-src="${src}"`;
+    });
+  }
   return clean;
 }
 
@@ -227,9 +226,9 @@ function EmailBody({ text }: { text: string }) {
   );
 }
 
-// 富文本正文：经 DOMPurify 消毒后渲染；远程图片一律占位+链接（CSP 严格，不加载外部图）。
-function EmailRichBody({ html }: { html: string }) {
-  const clean = useMemo(() => sanitizeEmailHtml(html), [html]);
+// 富文本正文：经 DOMPurify 消毒后渲染；远程图片默认不加载（src→data-src），点「显示图片」才加载。
+function EmailRichBody({ html, showImages }: { html: string; showImages: boolean }) {
+  const clean = useMemo(() => sanitizeEmailHtml(html, showImages), [html, showImages]);
   return (
     <div
       className="email-rich-body"
@@ -327,6 +326,9 @@ export function EmailPanel() {
   const PAGE_SIZE = 60;
   const [listPage, setListPage] = useState<number>(1);
   const [hasMore, setHasMore] = useState(false);
+
+  // 富文本远程图：默认不加载，用户点「显示图片」才加载（data-src→src）。
+  const [showImages, setShowImages] = useState(false);
 
   // 当前列表里的去重发件人（供下拉选项）。
   const senders = useMemo(() => [...new Set(list.map((m) => m.from))].sort((a, b) => a.localeCompare(b, "zh")), [list]);
@@ -495,6 +497,7 @@ export function EmailPanel() {
     setActive(m);
     setLoadingBody(true);
     setErr("");
+    setShowImages(false);
     try {
       // 超时保护：避免正文拉取卡住导致无限“加载正文…”。
       const [bodyText, htmlText] = await Promise.all([
@@ -1230,6 +1233,11 @@ export function EmailPanel() {
                         <TrashIcon width={14} height={14} /> 删除
                       </button>
                       <span className="email-read-toolbar-spacer" />
+                      {useRich && html && (
+                        <button className="sync-btn ghost" disabled={!active} onClick={() => setShowImages((v) => !v)}>
+                          {showImages ? "屏蔽图片" : "显示图片"}
+                        </button>
+                      )}
                       <button className="sync-btn ghost" disabled={!active} onClick={() => setUseRich((v) => !v)}>
                         {useRich ? "纯文本" : "富文本"}
                       </button>
@@ -1256,7 +1264,7 @@ export function EmailPanel() {
                           {loadingBody
                             ? "加载正文…"
                             : useRich && html
-                              ? <EmailRichBody html={html} />
+                              ? <EmailRichBody html={html} showImages={showImages} />
                               : body
                                 ? <EmailBody text={body} />
                                 : err

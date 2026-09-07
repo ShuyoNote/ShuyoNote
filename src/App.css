@@ -17267,28 +17267,18 @@ p:has(> .editor-drawing-container) {
 /* 富文本正文（DOMPurify 消毒后渲染） */
 .email-rich-body { font-size: 15px; line-height: 1.8; color: var(--text); word-break: break-word; }
 .email-rich-body img { max-width: 100%; height: auto; }
+/* 图片未加载(仅 data-src)时留占位高度，避免排版塌陷 */
+.email-rich-body img[data-src] {
+  min-height: 80px;
+  min-width: 80px;
+  background: var(--chip-bg);
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -1px;
+}
 .email-rich-body a { color: var(--accent, #4f7cff); text-decoration: none; }
 .email-rich-body a:hover { text-decoration: underline; }
 .email-rich-body table { max-width: 100%; border-collapse: collapse; }
 .email-rich-body td, .email-rich-body th { padding: 4px 6px; }
-.email-img-placeholder {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  margin: 2px 0;
-  border: 1px dashed var(--border-strong);
-  border-radius: 6px;
-  background: var(--chip-bg);
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.email-img-link {
-  color: var(--accent, #4f7cff);
-  text-decoration: none;
-  cursor: pointer;
-}
-.email-img-link:hover { text-decoration: underline; }
 .email-paste { display: flex; flex-direction: column; gap: 8px; }
 
 
