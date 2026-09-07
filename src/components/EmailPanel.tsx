@@ -353,6 +353,11 @@ export function EmailPanel() {
   const [allFolders, setAllFolders] = useState<string[]>([]);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const folderPickerRef = useRef<HTMLDivElement>(null);
+  // 存为笔记的目标父级（文件夹/页面）；null = 根目录。
+  const [saveParentId, setSaveParentId] = useState<"root" | string>("root");
+  const [saveParentOpen, setSaveParentOpen] = useState(false);
+  const saveParentRef = useRef<HTMLDivElement>(null);
+  const [saveCandidates, setSaveCandidates] = useState<{ id: string; title: string; kind: string }[]>([]);
   // 关键词搜索：发件人/主题 子串匹配（统一搜索入口）。
   const [searchQuery, setSearchQuery] = useState("");
   // 懒加载分页：每页条数 + 是否还有更多。
@@ -410,6 +415,7 @@ export function EmailPanel() {
       })
       .catch(() => setAllFolders(["INBOX"]));
     void loadMonths(account);
+    void loadSaveCandidates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
@@ -570,6 +576,16 @@ export function EmailPanel() {
     }
   };
 
+  // 加载「存为笔记」的候选父级（文件夹/页面），供目标位置选择器用。
+  const loadSaveCandidates = async () => {
+    try {
+      const pages = await api.listPages();
+      setSaveCandidates(pages.map((p) => ({ id: p.id, title: p.title, kind: p.kind })));
+    } catch {
+      setSaveCandidates([]);
+    }
+  };
+
   // 列表滚动接近底部时加载下一页。
   const onListScroll = () => {
     const el = listScrollRef.current;
@@ -636,20 +652,100 @@ export function EmailPanel() {
     setErr("");
     setBusy(true);
     try {
-      // 富文本存笔记：拉取邮件 HTML（纯文本兜底），前端转 Lexical JSON，再用
-      // useNotes.createPage 建页——它会 loadPages()，让侧边栏页面树自动刷新。
-      let html = await api.emailGetHtml(account, uid, active.folder).catch(() => "");
-      if (html.trim()) {
-        const { content_json, content_text } = emailHtmlToLexical(html);
-        await useNotes.getState().createPage(null, { title: active.subject || "(无主题)", content_json, content_text });
+      // 富文本存笔记：拉取邮件 HTML（纯文本兜底），前端转 Lexical JSON，再建页。
+      const target = saveParentId === "root" ? null : saveParentId;
+      let pageId: string | null = null;
+      let content: { content_json: string; content_text: string };
+      const parts = await api.emailGetMessage(account, uid, active.folder).catch(() => null);
+      if (parts && parts.html.trim()) {
+        content = emailHtmlToLexical(parts.html);
+      } else if (parts) {
+        content = emailHtmlToLexical(`<p>${escapeHtml(parts.text)}</p>`);
       } else {
-        // 无 HTML（纯文本邮件），仍转成简单 Lexical 段落保存富文本格式。
-        const plainHtml = escapeHtml(body);
-        const { content_json, content_text } = emailHtmlToLexical(`<p>${plainHtml}</p>`);
-        await useNotes.getState().createPage(null, { title: active.subject || "(无主题)", content_json, content_text });
+        content = emailHtmlToLexical(`<p>${escapeHtml(body)}</p>`);
+      }
+      const title = active.subject || "(无主题)";
+      // 去重：同标题已有笔记时提示「继续新建」还是「打开已有（合并）」。取消 = 不存。
+      try {
+        const existing = await api.listPages();
+        const dup = existing.find((p) => p.title === title && p.kind === "page");
+        if (dup) {
+          const goNew = window.confirm(`已存在同标题笔记「${title}」。\n点「确定」仍新建一份；点「取消」打开已有笔记（不新建）。`);
+          if (!goNew) {
+            useNotes.getState().openPage(dup.id);
+            setErr("");
+            return;
+          }
+        }
+      } catch { /* 去重检查失败不阻塞 */ }
+      pageId = await useNotes.getState().createPage(target, {
+        title,
+        content_json: content.content_json,
+        content_text: content.content_text,
+      });
+      if (pageId) {
+        // 邮件字段 → 页面属性（发件人/收件人/主题/日期），可在数据库视图筛选。
+        await writeEmailProps(pageId, active);
       }
       setErr("");
       toast("已存为笔记", "success");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 给页面写入邮件属性：查找或新建对应 attr，再 set_page_prop。失败不阻塞存笔记。
+  const writeEmailProps = async (pageId: string, m: EmailMeta) => {
+    const defs = await api.listAttrDefs().catch(() => []);
+    const getOrCreate = async (name: string, value: string) => {
+      const v = value.trim();
+      if (!v) return;
+      const existing = defs.find((d) => d.name === name);
+      const attrId = existing ? existing.id : (await api.createAttr({ name, attr_type: "text" }).catch(() => null))?.id;
+      if (!attrId) return;
+      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: v }).catch(() => {});
+    };
+    const from = stripEmail(m.from);
+    await getOrCreate("发件人", from);
+    await getOrCreate("主题", m.subject);
+    await getOrCreate("邮件日期", m.date);
+  };
+
+  // 邮件 → 任务：建页 + 写「截止日期」属性（默认明天）+ 一个待办块。
+  const saveAsTask = async () => {
+    if (!account || !active) return;
+    setErr("");
+    setBusy(true);
+    try {
+      const target = saveParentId === "root" ? null : saveParentId;
+      const parts = await api.emailGetMessage(account, active.uid, active.folder).catch(() => null);
+      const text = parts ? parts.text : body;
+      const title = active.subject || "(无主题)";
+      // 待办块正文：拆成一行为一项，或用整个邮件正文。
+      const todoText = text.trim() ? text.trim().split(/\n/).slice(0, 12).join("\n") : "处理此邮件";
+      const content = emailHtmlToLexical(`<p>[ ] ${escapeHtml(todoText)}</p>`);
+      const pageId = await useNotes.getState().createPage(target, {
+        title: `[任务] ${title}`,
+        content_json: content.content_json,
+        content_text: content.content_text,
+      });
+      if (pageId) {
+        const defs = await api.listAttrDefs().catch(() => []);
+        let due = defs.find((d) => d.name === "截止日期");
+        let dueId = due?.id;
+        if (!dueId) dueId = (await api.createAttr({ name: "截止日期", attr_type: "date" }).catch(() => null))?.id;
+        if (dueId) {
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          const iso = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+          await api.setPageProp({ page_id: pageId, attr_id: dueId, value: iso }).catch(() => {});
+        }
+        await writeEmailProps(pageId, active);
+      }
+      setErr("");
+      toast("已存为任务（截止：明天）", "success");
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -942,6 +1038,19 @@ export function EmailPanel() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [folderPickerOpen]);
+
+  // 点击「保存位置」选择器外部关闭。
+  useEffect(() => {
+    if (!saveParentOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (saveParentRef.current?.contains(t)) return;
+      setSaveParentOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [saveParentOpen]);
 
   // 点击发件人下拉外部关闭。
 
@@ -1315,12 +1424,34 @@ export function EmailPanel() {
 
                   <div className="email-pane-read" ref={readPaneRef}>
                     <div className="email-read-toolbar" ref={readToolbarRef}>
+                      <div className="email-save-parent-wrap" ref={saveParentRef}>
+                        <button className="sync-btn ghost" disabled={busy || !active} onClick={() => setSaveParentOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={saveParentOpen} title="选择保存位置">
+                          <BookmarkIcon width={14} height={14} /> 保存到…
+                        </button>
+                        {saveParentOpen && (
+                          <div className="email-save-parent-menu" role="listbox" aria-label="选择保存位置">
+                            <label className={`email-save-parent-item${saveParentId === "root" ? " is-on" : ""}`}>
+                              <input type="checkbox" checked={saveParentId === "root"} onChange={() => { setSaveParentId("root"); setSaveParentOpen(false); }} />
+                              <span className="email-save-parent-name">根目录</span>
+                            </label>
+                            {saveCandidates.map((p) => (
+                              <label key={p.id} className={`email-save-parent-item${saveParentId === p.id ? " is-on" : ""}`}>
+                                <input type="checkbox" checked={saveParentId === p.id} onChange={() => { setSaveParentId(p.id); setSaveParentOpen(false); }} />
+                                <span className="email-save-parent-name">{p.kind === "folder" ? "🗀 " : "📄 "}{p.title || "(无标题)"}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <button
                         className="sync-btn ghost"
                         disabled={busy || !active}
                         onClick={() => active && void saveUid(active.uid)}
                       >
                         <BookmarkIcon width={14} height={14} /> 存为笔记
+                      </button>
+                      <button className="sync-btn ghost" disabled={busy || !active} onClick={() => void saveAsTask()}>
+                        存为任务
                       </button>
                       {!toolbarVeryNarrow && (
                         <button className="sync-btn ghost" disabled={busy || !active} onClick={() => openCompose("reply")}>
