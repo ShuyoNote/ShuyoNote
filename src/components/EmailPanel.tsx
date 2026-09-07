@@ -350,8 +350,8 @@ export function EmailPanel() {
   const [showImages, setShowImages] = useState(false);
   // 阅读区工具栏宽度检测：较窄时把次要按钮收进「更多」。
   const readToolbarRef = useRef<HTMLDivElement>(null);
+  const readPaneRef = useRef<HTMLDivElement>(null);
   const [toolbarW, setToolbarW] = useState(9999);
-  const [toolbarOverflow, setToolbarOverflow] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   // 顶部标题栏宽度检测：窄时隐藏说明 + 把工具按钮收进「更多」。
   const pageHeadRef = useRef<HTMLDivElement>(null);
@@ -413,16 +413,12 @@ export function EmailPanel() {
       .catch(() => setAllFolders(["INBOX"]));
   }, [account]);
 
-  // 检测阅读区工具栏宽度/是否溢出：放不下时把按钮收进「更多」。
+  // 检测阅读区宽度：放不下时把按钮收进「更多」（以 right pane 宽度为基准，避免自身 scrollWidth 误判）。
   useEffect(() => {
-    const el = readToolbarRef.current;
+    const el = readPaneRef.current;
     if (!el) return;
     let raf = 0;
-    const measure = () => {
-      setToolbarW(el.clientWidth);
-      // 内容超出可视宽度（按钮 nowrap 导致溢出）→ 需要收纳。
-      setToolbarOverflow(el.scrollWidth > el.clientWidth + 1);
-    };
+    const measure = () => setToolbarW(el.clientWidth);
     const schedule = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(measure);
@@ -430,7 +426,6 @@ export function EmailPanel() {
     const ro = new ResizeObserver(schedule);
     ro.observe(el);
     measure();
-    // 布局稳定后再量一次，排除首帧未完成布局的误判。
     raf = requestAnimationFrame(measure);
     return () => { ro.disconnect(); cancelAnimationFrame(raf); };
   }, []);
@@ -1011,8 +1006,8 @@ export function EmailPanel() {
   // 左侧栏较窄时改用两行布局（首行 发件人+时间，二行 主题），否则用三列网格。
   const narrow = listW < 380;
   const colTemplateNarrow = "32px 1fr"; // 勾选 | 内容区(两行)；窄布局不显示星标
-  // 阅读区工具栏放不下（按钮 nowrap 溢出）时，把右侧次要按钮收进「更多」下拉。
-  const toolbarNarrow = toolbarOverflow || toolbarW < 720;
+  // 阅读区工具栏放不下（按右栏宽度）时，把右侧次要按钮收进「更多」下拉。
+  const toolbarNarrow = toolbarW < 720;
   // 更窄时再把 删除/已读/转发/回复 也收进「更多」，只留「存为笔记」。
   const toolbarVeryNarrow = toolbarW < 520;
   // 顶部标题栏：宽时说明+工具按钮都显示；稍窄只隐藏说明；很窄再把工具按钮收进「更多」。
@@ -1274,7 +1269,7 @@ export function EmailPanel() {
                     <span className="email-divider-grip" aria-hidden>⋮⋮</span>
                   </div>
 
-                  <div className="email-pane-read">
+                  <div className="email-pane-read" ref={readPaneRef}>
                     <div className="email-read-toolbar" ref={readToolbarRef}>
                       <button
                         className="sync-btn ghost"
