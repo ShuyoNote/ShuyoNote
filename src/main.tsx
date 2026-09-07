@@ -17,6 +17,13 @@ import { version } from "../package.json";
 // Browser tab / window title carries the live build version (mirrors the desktop
 // window title set in src-tauri/src/lib.rs).
 document.title = `ShuyoNote 数友笔记 · v${version}`;
+
+// 平台标识：给 <html> 加 data-platform，供 CSS 按平台做差别（如 Windows 标题栏下的分隔线）。
+try {
+  const p = (navigator.platform || "").toLowerCase();
+  const plat = /win/.test(p) ? "win" : /mac|iphone|ipad/.test(p) ? "mac" : /linux/.test(p) ? "linux" : "other";
+  document.documentElement.setAttribute("data-platform", plat);
+} catch { /* ignore */ }
 // Marker so we can confirm which bundle the browser is actually running (stale
 // module caches otherwise make the console/behaviour lag behind the code).
 console.info(`[ShuyoNote] bootstrap v${version}`);

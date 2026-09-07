@@ -221,6 +221,10 @@ body,
   flex: 1;
   min-height: 0;
 }
+/* 仅 Windows：系统标题栏下加一条淡细横线，区分标题栏与内容区 */
+html[data-platform="win"] .app-body {
+  border-top: 1px solid var(--border);
+}
 
 /* ---------------------------------------------------------------------------
  * 自绘标题栏（桌面端，窗口无边框时渲染）。
@@ -533,8 +537,6 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
 }
 
 .sidebar-title {
