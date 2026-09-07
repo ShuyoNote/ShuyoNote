@@ -16815,10 +16815,11 @@ p:has(> .editor-drawing-container) {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
-.email-page-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.email-page-title-text { font-size: 15px; font-weight: 700; color: var(--text); }
-.email-page-sub { font-size: 12px; color: var(--text-faint); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.email-page-actions { display: flex; gap: 8px; align-items: center; }
+.email-page-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.email-page-title-text { font-size: 15px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.email-page-sub { font-size: 12px; color: var(--text-faint); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.email-page-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+.email-page-actions .sync-btn { flex: none; white-space: nowrap; }
 
 /* 文件夹多选下拉（邮箱页顶栏） */
 .email-folder-wrap { position: relative; }
