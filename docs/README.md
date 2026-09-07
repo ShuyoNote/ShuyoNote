@@ -92,7 +92,7 @@ CHANGELOG.md             # 版本变更日志
 | **M26** | **公式（数学）** | ✅（块级+行内） | [公式方案](plans/2026-08-30-formula-plan.md) |
 | **M27** | **团队版（自建协作）** | 规划 | [团队版方案](plans/2026-08-30-team-edition-plan.md) |
 
-> 另：非里程碑功能——**分栏**（`/分栏`，见 [分栏方案](plans/2026-08-26-columns-plan.md)）、绘图块（归 M22）、内联「+」插入块等。**邮箱聚合（邮件即笔记，v1.83.0 功能版）** 见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)。完整现状与里程碑细节见 [roadmap.md](roadmap.md)。
+> 另：非里程碑功能——**分栏**（`/分栏`，见 [分栏方案](plans/2026-08-26-columns-plan.md)）、绘图块（归 M22）、内联「+」插入块等。**邮箱聚合（邮件即笔记，v1.83.0 功能版）** 见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；**块操作 / 块多选体系（文字选中优先，v1.84.0）** 见 [块选择方案](plans/2026-09-07-block-selection-plan.md)。完整现状与里程碑细节见 [roadmap.md](roadmap.md)。
 
 ## 方案与规划（plans）
 
@@ -142,6 +142,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-05-sync-consistency-remediation-plan.md](plans/2026-09-05-sync-consistency-remediation-plan.md) | **「同步一致性整改 + 跨设备回归脚本」可执行方案（P0 地基）**：现状盘点（device_seq 全 0 / FNV vs SHA-256 / `.part` / 增量指针 / 幂等）；按文件/接口的具体整改（桌面 sync.rs、web web.ts、服务端 sync.rs）；`scripts/sync-regression.mjs` 两设备互改收敛 + 无 400/413 + 哈希一致 + 幂等 + 增量的回归断言；新增/改动文件清单、验收清单、最小交付物（整改 + 回归脚本 + docs/SYNC.md） |
 | [plans/2026-09-06-email-aggregate-plan.md](plans/2026-09-06-email-aggregate-plan.md) | **「聚合邮箱（邮件即笔记）」落地文档（✅ 已实现 v1.83.0）**：多账号 IMAP 聚合收件箱 + 一键转笔记/任务（capture-first）；范围界定（做/不做）、技术可行性、P0–P2 里程碑、验收清单、风险与决策点（OAuth 门槛/凭据安全/性能/范围失控）、文件级改动清单。**进展与实装详见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；商业化/OAuth 凭据/服务端设想等敏感部分见私有 shuyonote-sync-server 仓库 `docs/email-aggregate-monetization.md`** |
 | [plans/2026-09-07-email-multi-account-aggregation.md](plans/2026-09-07-email-multi-account-aggregation.md) | **「多账号聚合收件流」实现与交接（✅ 已落地 v1.83.0，方案 B 后端聚合）**：`email_fetch_all`（多账号合并/时间降序/分页/`date_from`+`date_to` 日期区间/`accounts` 筛选）+ `email_fetch_all_months`（聚合各账号含邮件月份）+ `email_test_connection`（IMAP 登录+选 INBOX+可选 SMTP 认证，不发信）；`smtp.rs` 抽 `connect_and_auth`/`verify`。前端：`EmailPanel` 账号「多选下拉」筛选、独立账号列、三级工具栏收纳、AI 总结弹窗、存为笔记先写属性再跳转、转发收件人聚焦修复、邮件 `Date` 解析兼容 QQ 等格式、按月直达（全量拉取后按邮件自身时区年月后端过滤）。**含第 1–4 步交付 commit、聚合视图按 `meta.account` 的 `accountFor` 账号定位、`emailKey` 防 uid 相撞、未读汇总与聚合月份直达等关键点** |
+| [plans/2026-09-07-block-selection-plan.md](plans/2026-09-07-block-selection-plan.md) | **「块操作 / 块多选体系」（✅ 已落地 v1.84.0）**：设计原则=**文字选中优先**，块操作只认独立触发区——**A** 沟槽 `⋮⋮` 手柄（单击弹「块操作」菜单/Shift 连续多选/拖动排序）、**B** 显式多选模式（`Mod+Shift+M` 逐个点块加入/移出）、**C** 页面空白/空块框选；判别标准 `isSafeMarqueeTarget`（文本节点或含文字块→文字选择，否则框选）；记录与文本手势冲突的右键菜单/正文橡皮筋的移除、格式工具条修复、`$deepCloneBlock` 修复块复制；含文件清单与边界 |
 
 ## 竞品对比
 
