@@ -58,6 +58,9 @@ pnpm run build:web     # dist-web/version.json → 该版本
 # 上传 dist-web/* 到 /var/www/shuyo-site/app/（scp）+ chmod -R 644/755
 ```
 
+> ⚠️ **清理旧 assets 必须保留「动态加载」资源（踩坑，v1.84.1）**：官网手动部署时若删旧产物，**不能只按 `index.html`/`sw.js` 的静态资源引用过滤**——sql.js 的 wasm（`new URL('sql-wasm-….wasm', import.meta.url)` 在 `vendor-*.js` 里运行时加载）和 pdf worker（`pdf.worker.min-….mjs`）等**不在静态引用里**，误删会导致 `Error: SqliteStore not initialized`（sql-wasm fetch 404 → `SqliteStore.init()` 抛错 → catch 返回未初始化 store → 所有 DB 查询报错）。
+> **正确做法**：要么整目录覆盖上传（`scp dist-web/assets/.`），要么删除前先比对**全部** `assets/` 内容（含 `new URL()` 动态引用 + 惰性 chunk + 字体）。**GitHub Pages 走 CI 全新构建不受影响**；只有手动 scp 的官方站需小心。
+
 ## ⑧ 检查 CHANGELOG 连续
 ```bash
 Select-String -Path CHANGELOG.md -Pattern '^## \[' | Select-Object -First 12
