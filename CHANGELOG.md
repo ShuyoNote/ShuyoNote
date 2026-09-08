@@ -2,6 +2,18 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.84.2] - 2026-09-08
+
+> 附件按哈希前缀分桶存储（内容寻址 + 旧数据双读兼容）
+
+### 新增
+- 无。
+
+### 变更
+- **附件按哈希前缀分桶存储**：附件落盘从单目录平铺 `attachments/<hash>.<ext>` 改为 `attachments/<hash前2字符>/<hash>.<ext>`（sha256 前 2 字符分桶，避免单目录文件过多）。**旧数据双读兼容**：`find_path_by_hash` 桶路径优先 + 旧单目录回退，不迁移不删除旧文件。同步（`sync_attachments`）上传/下载均兼容桶目录；Web 端 blobStore（IndexedDB 按 hash 为 key）不受影响。方案见 `docs/plans/2026-09-08-attachment-hash-bucket.md`。
+- **服务端对齐分桶**：空间附件桶内再按哈希前 2 字符分片（`attachments/<space_id>/<hash前2>/<hash>`），`resolve_hash_path` 双读兼容旧 `attachments/<space_id>/<hash>`。
+
+
 ## [1.84.1] - 2026-09-08
 
 > 修复版本历史恢复丢内容 + 侧栏同步胶囊登出仍显示 + 测试基线修复；新增桌面 dev 启动脚本
