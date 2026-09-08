@@ -18,6 +18,8 @@
 ### 修复
 - **文本格式工具条（B / I / U / S / <>）点击失效**：格式工具条纳入 mousedown 排除，点击不再被框选/清选劫持、不折叠选区。
 - **块复制报错**：`$cloneWithProperties`（保留同 key）改为 `$deepCloneBlock`（递归深拷贝 + 新 key），消除「重复 key」异常。
+- **版本历史「恢复」丢当前内容**：`restore_version` 覆盖当前页前**先快照当前内容**（与 `save_page` 一致），恢复后可撤回/找回恢复前的状态；Web 端 `restore_version` 同时补上 `recordChange`（对齐桌面），恢复后同步到服务端。（桌面 `src-tauri/src/versions.rs`、Web `src/lib/platform/web.ts`）
+- **侧边栏同步胶囊登出后仍显示**：胶囊只在「已登录（有 token）」时展示，与标题栏一致；登出后 `sync_profiles` 行虽保留 `server_url`（供再登录）但 token 被清，侧栏不再误显示。登出时（`setSyncProfile` 只传 `server_url`）Web 端也真正清空 token，与桌面一致、胶囊随登出消失。（`src/components/PageTree.tsx`、`src/lib/platform/web.ts`）
 
 
 ## [1.83.0] - 2026-09-08

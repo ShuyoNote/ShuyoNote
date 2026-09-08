@@ -2426,8 +2426,10 @@ function makeInvoke(store: SqliteStore) {
       const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
       const serverUrl = String(args.serverUrl ?? args.server_url ?? p.server_url);
-      const token = String(args.token ?? p.token ?? "");
-      const spaceId = String(args.spaceId ?? args.space_id ?? p.space_id);
+      // 未传 token/space_id 时清空（与桌面 set_sync_profile 一致：Option 缺省 → ""），
+      // 这样登出时前端只传 server_url 的调用能真正清除 token，侧栏/顶栏胶囊随登出消失。
+      const token = String(args.token ?? "");
+      const spaceId = String(args.spaceId ?? args.space_id ?? "");
       putProfile(store, { ...p, server_url: serverUrl, token, space_id: spaceId });
       // 记住本次填的登录邮箱（供重开面板预填），只更新 email，保留已有 token/user_id。
       const email = String(args.email ?? "");
@@ -2650,10 +2652,19 @@ function makeInvoke(store: SqliteStore) {
         [a.versionId ?? a.id ?? ""],
       )[0];
       if (!r) throw new Error("版本不存在");
+      // Preserve the CURRENT content before overwriting, so a restore is
+      // reversible (deduped against the newest snapshot). Matches desktop.
+      const cur = store.query<{ title: string; content_json: string; content_text: string }>(
+        "SELECT title, content_json, content_text FROM pages WHERE id = ?",
+        [r.page_id],
+      )[0];
+      if (cur) snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
       store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ? WHERE id = ?", [
         r.title, r.content_json, r.content_text, Date.now(), r.page_id,
       ]);
-      return store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0] as T;
+      const restored = store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0];
+      recordChange(store, "page", r.page_id, "upsert", restored ?? { id: r.page_id, title: r.title, content_json: r.content_json, content_text: r.content_text, updated_at: Date.now() }, Date.now());
+      return restored as T;
     }
     if (cmd === "clear_page_versions") {
       // 手动清空：删除该页的全部历史快照（保留当前内容）。

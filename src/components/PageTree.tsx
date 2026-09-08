@@ -14,6 +14,7 @@ import { useTemplateCenterStore } from "../store/templateCenter";
 import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
+import { useAuth } from "../store/auth";
 import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import { useActivity } from "../store/activity";
@@ -644,6 +645,9 @@ export function PageTree(_props: {
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
   const isDesktop = useMemo(() => (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window), []);
+  // 登录/登出（auth store 的 authed 变化）会影响各空间的同步 token：登出后
+  // ListSyncProfiles 里 server_url 仍在但 token 被清空，侧栏胶囊要随登出消失。
+  const authed = useAuth((s) => s.authed);
 
   // Load sync identities when the space switcher opens so the per-space tags
   // stay fresh (SyncPanel edits update sync_profiles).
@@ -676,7 +680,8 @@ export function PageTree(_props: {
   const activeSyncProfile = activeSpaceId ? syncProfiles[activeSpaceId] : undefined;
 
   // Also load identities when the active space changes so the header pill
-  // ("当前同步目标") reflects the current space's sync target.
+  // ("当前同步目标") reflects the current space's sync target. Reload on auth
+  // change too, so logout immediately hides the pill.
   useEffect(() => {
     if (!isDesktop) return;
     api
@@ -687,7 +692,7 @@ export function PageTree(_props: {
         setSyncProfiles(byWs);
       })
       .catch(() => {});
-  }, [activeSpaceId, isDesktop]);
+  }, [activeSpaceId, isDesktop, authed]);
 
   useEffect(() => {
     api
@@ -891,8 +896,10 @@ export function PageTree(_props: {
         )}
         {/* 同步状态：自绘标题栏开着时由 <TitleBar /> 承担（顶栏本就要有内容，
             也省下侧栏一行）；关掉自绘标题栏用系统栏时，这里补回来，否则这条
-            信息会整个消失。 */}
-        {!collapsed && isDesktop && !customTitleBar && activeSyncProfile && (
+            信息会整个消失。
+            只在「已登录(有 token)」时展示，与 TitleBar 一致——登出后 sync_profiles
+            行仍保留 server_url（供再登录），不能据此判定「已同步」。 */}
+        {!collapsed && isDesktop && !customTitleBar && activeSyncProfile?.token && (
           <div className="sidebar-sync-pill" title={`同步目标：${activeSyncProfile.server_url}`}>
             <span
               className="sidebar-sync-dot"

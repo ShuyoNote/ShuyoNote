@@ -108,6 +108,19 @@ pub fn restore_version(db: State<'_, Db>, version_id: String) -> Result<PageDeta
         .ok_or_else(|| "版本不存在".to_string())?;
 
     let now = now_ms();
+    // Preserve the CURRENT content before we overwrite it, so a restore is
+    // reversible (you can go back to what you had just before restoring).
+    // Dedups against the latest snapshot, so this is a no-op when the current
+    // content is already the newest snapshot.
+    let (cur_title, cur_json, cur_text): (String, String, String) = c
+        .query_row(
+            "SELECT title, content_json, content_text FROM pages WHERE id = ?1",
+            params![page_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    snapshot_before_save(&c, &page_id, &cur_title, &cur_json, &cur_text)?;
+
     c.execute(
         "UPDATE pages SET title = ?1, content_json = ?2, content_text = ?3, updated_at = ?4 WHERE id = ?5",
         params![title, content_json, content_text, now, page_id],
