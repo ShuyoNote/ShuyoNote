@@ -24,6 +24,52 @@ fn is_valid_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Bucket dir name = the first two hex chars of the hash (64-hex SHA-256).
+/// Split into 256 subdirectories so a single attachments dir never grows unbounded
+/// (avoids O(N) scans and per-dir dentry pressure).
+fn bucket_of(hash: &str) -> &str {
+    // hash is validated 64-hex elsewhere; guard defensively against short/non-hex.
+    if hash.len() >= 2 { &hash[0..2] } else { "_" }
+}
+
+/// New content-addressed path: `attachments/<hash[0..2]>/<hash>.<ext>`.
+/// Keeping the extension on the on-disk filename means the file is a real,
+/// OS-openable path (so `openPath`/`revealFile`/asset protocol all work); the
+/// extension also mirrors the DB `mime` so it stays consistent. Bucketing by the
+/// first two hex chars keeps a single attachment dir from growing unbounded.
+fn bucket_path(attachments_dir: &Path, hash: &str, ext: &str) -> PathBuf {
+    attachments_dir.join(bucket_of(hash)).join(format!("{hash}.{ext}"))
+}
+
+/// Locate an attachment's bytes by hash. New layout (`attachments/<bucket>/<hash>.<ext>`)
+/// is tried first (O(1) when the extension is known); if absent we fall back to
+/// scanning the bucket dir (and then the legacy flat dir) comparing the hash stem,
+/// so pre-bucket data keeps working (dual-read compat; we don't auto-migrate/delete).
+pub(crate) fn find_path_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
+    // 1. Bucket dir, exact ext match (fast path).
+    if let Ok(entries) = std::fs::read_dir(dir.join(bucket_of(hash))) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.split('.').next() {
+                if stem == hash {
+                    return Some(entry.path());
+                }
+            }
+        }
+    }
+    // 2. Legacy flat dir.
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(stem) = name.split('.').next() {
+            if stem == hash {
+                return Some(entry.path());
+            }
+        }
+    }
+    None
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
     pub index: usize,
@@ -90,19 +136,6 @@ fn mime_from_path(path: &Path) -> (String, String) {
         other => other,
     };
     (mime.to_string(), if canonical.is_empty() { "bin".to_string() } else { canonical.to_string() })
-}
-
-pub(crate) fn find_path_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if let Some(stem) = name.split('.').next() {
-            if stem == hash {
-                return Some(entry.path());
-            }
-        }
-    }
-    None
 }
 
 /// Stream-copy `src` to `dst` while computing SHA-256, without loading the
@@ -174,13 +207,15 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
     let attachments_dir = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
-    // Content-addressed storage: filename = sha256 + extension.
+    // Content-addressed storage: filename = sha256 + ext inside a 2-char bucket dir.
     let mut hasher = Sha256::new();
     hasher.update(&args.data);
     let hash = hex_of(&hasher.finalize());
     let ext = ext_from_mime(&args.mime);
-    let filename = format!("{hash}.{ext}");
-    let path = attachments_dir.join(&filename);
+    let path = bucket_path(&attachments_dir, &hash, ext);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
 
     // Dedup: write only if not already present, encrypting at rest with the session key
     // when encryption is on+unlocked (the hash is over the PLAINTEXT, so dedup still works).
@@ -218,6 +253,7 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
     }
 
     let id = uuid::Uuid::new_v4().to_string();
+    let filename = format!("{hash}.{ext}");
     let name = args.name.unwrap_or_else(|| filename.clone());
     let size = args.data.len() as i64;
     c.execute(
@@ -245,17 +281,9 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
 pub fn attachment_path(app: tauri::AppHandle, hash: String) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
-    // Find the file by hash prefix (extension unknown here).
-    let entries = std::fs::read_dir(&attachments_dir).map_err(|e| e.to_string())?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if let Some(stem) = name.split('.').next() {
-            if stem == hash {
-                return Ok(entry.path().to_string_lossy().into_owned());
-            }
-        }
-    }
-    Err("附件不存在".to_string())
+    find_path_by_hash(&attachments_dir, &hash)
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or_else(|| "附件不存在".to_string())
 }
 
 /// Copy an attachment (by hash) to a user-chosen destination path (download). When app
@@ -278,11 +306,33 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     let mut hashes = Vec::new();
+    // Bucketed layout: `attachments/<hh>/<hash>.<ext>` — hash is the stem.
+    if let Ok(bucket_entries) = std::fs::read_dir(&attachments_dir) {
+        for be in bucket_entries.flatten() {
+            let bname = be.file_name().to_string_lossy().into_owned();
+            // Only two-hex bucket dirs (skip ".part" and other stray files).
+            if bname.len() == 2 && bname.chars().all(|c| c.is_ascii_hexdigit()) && be.path().is_dir() {
+                if let Ok(files) = std::fs::read_dir(be.path()) {
+                    for f in files.flatten() {
+                        let n = f.file_name().to_string_lossy().into_owned();
+                        // Ignore stray .part files.
+                        if n.ends_with(".part") { continue; }
+                        if let Some(stem) = n.split('.').next() {
+                            if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+                                hashes.push(stem.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Legacy flat layout: `attachments/<hash>.<ext>`.
     if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if let Some(stem) = name.split('.').next() {
-                if !stem.is_empty() {
+                if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
                     hashes.push(stem.to_string());
                 }
             }
@@ -323,7 +373,10 @@ pub fn write_attachment_bytes(
     }
 
     let ext = ext_from_mime(&mime);
-    let path = attachments_dir.join(format!("{hash}.{ext}"));
+    let path = bucket_path(&attachments_dir, &hash, ext);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     if !path.exists() {
         let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &data)?;
@@ -372,8 +425,10 @@ pub fn import_attachment_files(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "file".to_string());
-        let (mime, ext) = mime_from_path(&src);
+        let (mime, ext) = mime_from_path(&src); // ext 同时用于存储文件名与 mime
 
+        // tmp lives in the flat attachments dir (part files never published); the
+        // final file goes into a 2-char bucket dir once the hash is known.
         let tmp = attachments_dir.join(format!("{}.part", uuid::Uuid::new_v4()));
         let app_progress = app.clone();
         let name_progress = name.clone();
@@ -393,7 +448,11 @@ pub fn import_attachment_files(
             Err(e) => return Err(e),
         };
 
-        let final_path = attachments_dir.join(format!("{hash}.{ext}"));
+        // Recompute the final path now that the real hash is known.
+        let final_path = bucket_path(&attachments_dir, &hash, &ext);
+        if let Some(parent) = final_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
         let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         if final_path.exists() {
             // Content-addressed dedup: identical file already stored (may have been

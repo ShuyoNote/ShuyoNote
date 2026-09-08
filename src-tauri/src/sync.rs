@@ -1474,6 +1474,24 @@ async fn sync_attachments(
 
     // 2. Local hashes (files on disk).
     let mut local_set = HashSet::new();
+    // Bucketed layout: `attachments/<hh>/<hash>.<ext>`.
+    if let Ok(bucket_entries) = std::fs::read_dir(&attachments_dir) {
+        for be in bucket_entries.flatten() {
+            let bname = be.file_name().to_string_lossy().into_owned();
+            if bname.len() == 2 && bname.chars().all(|c| c.is_ascii_hexdigit()) && be.path().is_dir() {
+                if let Ok(files) = std::fs::read_dir(be.path()) {
+                    for f in files.flatten() {
+                        let name = f.file_name().to_string_lossy().into_owned();
+                        if name.ends_with(".part") { continue; }
+                        if let Some(stem) = name.split('.').next() {
+                            if !stem.is_empty() { local_set.insert(stem.to_string()); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Legacy flat layout.
     if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -1573,7 +1591,10 @@ async fn sync_attachments(
             continue;
         }
         let ext = ext_from_mime(&item.mime);
-        let path = attachments_dir.join(format!("{}.{}", item.hash, ext));
+        let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let mut size: i64 = 0;
         if !path.exists() {
             let tmp = attachments_dir.join(format!("{}.part", item.hash));
@@ -1625,6 +1646,19 @@ fn is_valid_attachment_hash(hash: &str) -> bool {
 }
 
 fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {
+    // Bucketed layout first: `attachments/<stem[0..2]>/<stem>.<ext>`.
+    if stem.len() >= 2 {
+        if let Ok(entries) = std::fs::read_dir(dir.join(&stem[0..2])) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.ends_with(".part") { continue; }
+                if name.split('.').next() == Some(stem) {
+                    return Some(entry.path());
+                }
+            }
+        }
+    }
+    // Legacy flat dir fallback.
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
