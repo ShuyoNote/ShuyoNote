@@ -24,9 +24,13 @@ describe("lexicalStateValid", () => {
     expect(lexicalStateValid("")).toBeNull();
   });
 
-  it("returns null when the doc has no root", () => {
-    expect(lexicalStateValid(JSON.stringify({ foo: 1 }))).toBeNull();
-    expect(lexicalStateValid(JSON.stringify(null))).toBeNull();
+  it("returns a valid empty doc when the doc has no root", () => {
+    // 无 root（如 "{}"）不再判不可用：edc8057 起转为合法空页（EMPTY root），
+    // 编辑器据此打开空白页而非 blank/无法解析。
+    const empty = '{"root":{"type":"root","version":1,"direction":"ltr","format":"","indent":0,"children":[]}}';
+    expect(lexicalStateValid(JSON.stringify({ foo: 1 }))).toBe(empty);
+    // JSON `null`（字符串化）解析为 null → 也无 root → 同样判为合法空页。
+    expect(lexicalStateValid(JSON.stringify(null))).toBe(empty);
   });
 
   it("normalizes a missing root type to 'root'", () => {
@@ -50,8 +54,11 @@ describe("lexicalStateValid", () => {
     expect(out?.root.children[0].type).toBe("paragraph");
   });
 
-  it("returns null when nothing survives sanitization", () => {
-    expect(lexicalStateValid(doc([{ version: 1 }, { type: "undefined" }]))).toBeNull();
+  it("returns a valid empty doc when nothing survives sanitization", () => {
+    // 所有子节点都被剔除后不再是 null（旧行为），而是合法空页空 root——
+    // 与「no root → EMPTY」一致（edc8057 起）。
+    const empty = '{"root":{"type":"root","version":1,"direction":"ltr","format":"","indent":0,"children":[]}}';
+    expect(lexicalStateValid(doc([{ version: 1 }, { type: "undefined" }]))).toBe(empty);
   });
 
   it("drops types outside the allowed set (unregistered nodes)", () => {

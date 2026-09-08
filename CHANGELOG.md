@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.84.1] - 2026-09-08
+
+> 修复版本历史恢复丢内容 + 侧栏同步胶囊登出仍显示 + 测试基线修复；新增桌面 dev 启动脚本
+
+### 新增
+- **桌面 dev 启动脚本**：`pnpm run dev:desktop`（`scripts/tauri-dev.mjs`）。自动 `source ~/.cargo/env` + 自建干净 PATH（剔除 DSH 沙箱灌入的含空格路径，否则 `cargo-tauri` 会把它当子命令而崩）+ 端口 1420/1421 预检（可选清理残留）+ 后台拉起 `pnpm tauri dev`（日志 `/tmp/shuyonote-tauri-dev.log`）+ 打印健康 URL。
+
+### 变更
+- **测试基线修复**：`lexicalValidate` 在「无 root / 净化后无存活子节点」时返回合法空 root（不再是 `null`）——与 `edc8057` 起的实现契约对齐，`vitest` 由 86→88、`smoke-web` 由 347→350 全绿；`COVER_PRESETS` 断言下限由 ≥12 改为 ≥7（对齐 `649ba32` 用 7 张风景照替换 12 个渐变的现状）。
+
+### 修复
+- **版本历史「恢复」丢当前内容**：`restore_version`（桌面 + Web）在覆盖当前页前**先快照当前内容**（与 `save_page` 一致），恢复后可撤回/找回恢复前的状态；Web 端 `restore_version` 同时补上 `recordChange`（对齐桌面），恢复后同步到服务端。
+- **侧边栏同步胶囊登出后仍显示**：胶囊只在「已登录（有 token）」时展示（与标题栏一致）；登出后 `sync_profiles` 行虽保留 `server_url`（供再登录）但 token 被清，侧栏不再误显示。Web 端 `set_sync_profile` 未传 token/space_id 时清空（与桌面一致），登出真的清除 token。
+
+
+
+
 ## [1.84.0] - 2026-09-07
 
 > 块操作体系重构 + 文字选中优先 + 邮箱面板空态美化

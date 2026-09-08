@@ -1001,7 +1001,8 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("shortcutLabel mac form", aiMod.shortcutLabel({ label: "x", key: "y", group: "基础", keys: ["Ctrl", "N"], macKeys: ["⌘", "N"] }, true) === "⌘ + N");
   // Cover presets: a curated gallery of named covers (gradient OR inline-SVG image data-URIs).
   const covers = aiMod.COVER_PRESETS;
-  assert("COVER_PRESETS has >= 12 distinct covers", Array.isArray(covers) && covers.length >= 12, String(covers?.length));
+  // 649ba32 把 12 个渐变题头图替换为 7 张免版权风景照片，故此下限改为 >= 7。
+  assert("COVER_PRESETS has >= 7 distinct covers", Array.isArray(covers) && covers.length >= 7, String(covers?.length));
   assert("COVER_PRESETS all have css + kind + name", covers.every((c) => typeof c.css === "string" && (c.css.startsWith("linear-gradient") || c.css.startsWith('url("data:image/svg+xml,') || c.css.startsWith('url("/covers/') || c.css.startsWith('url("covers/')) && c.kind && c.name), JSON.stringify(covers.map((c) => c.id)));
   assert("COVER_PRESETS includes image-themed covers", covers.some((c) => c.kind === "image" && (c.css.startsWith('url("data:image/svg+xml,') || c.css.startsWith('url("/covers/') || c.css.startsWith('url("covers/'))), "checked image covers");
   // M25 P2 — external project-site links (single source) + privacy toggle.
@@ -1565,8 +1566,10 @@ trailer
   assert("lexicalValid salvages good blocks, drops corrupt ones", salvagedMixed !== null && salvagedMixed.includes('"text":"good"') && !salvagedMixed.includes('"foo"'));
   const salvagedBadText = aiMod.lexicalStateValid(onlyBadText);
   assert("lexicalValid drops a corrupt text node (keeps parent block)", salvagedBadText !== null && !salvagedBadText.includes('"text":"hi"'));
-  assert("lexicalValid rejects generic child without type", aiMod.lexicalStateValid(genericChild) === null);
-  assert("lexicalValid rejects empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === null);
+  // 无类型/空 root 不再判 null（edc8057 起返回合法空页 root，编辑器据此打开空白页）。
+  const emptyRootDoc = '{"root":{"type":"root","version":1,"direction":"ltr","format":"","indent":0,"children":[]}}';
+  assert("lexicalValid turns a generic child w/o type into a valid empty root", aiMod.lexicalStateValid(genericChild) === emptyRootDoc);
+  assert("lexicalValid turns an empty root into a valid empty root", aiMod.lexicalStateValid('{"root":{"children":[]}}') === emptyRootDoc);
   // A node whose `type` is the literal string "undefined" (not a real Lexical type)
   // must be dropped, not kept — keeping it makes Lexical throw "type undefined not found".
   const literalUndef = '{"root":{"children":[{"type":"undefined","version":1},{"type":"paragraph","version":1,"children":[{"type":"text","text":"ok","version":1}]}],"type":"root","version":1}}';
