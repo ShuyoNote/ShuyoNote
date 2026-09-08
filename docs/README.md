@@ -169,15 +169,6 @@ CHANGELOG.md             # 版本变更日志
 |---|---|
 | [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
 
-## 内容 / 文章（docs/content）
-
-> 面向外部分发的技术长文 / 介绍文章（「能打」的公开内容）。
-
-| 文档 | 内容 |
-|---|---|
-| [content/shuyonote-intro.md](content/shuyonote-intro.md) | **Open-source 发布 / 介绍长文**：一句话定位（本地优先的 Notion 替代，把生产力留在自己手里）、为什么本地优先、差异化（块编辑 + 数据库 8 视图含甘特/看板/日历 + 关系图 + PDF 批注/离线 OCR/AI + AI 助手 + 语义检索 + 公式/绘图）、技术选型、快速开始、适合谁 vs 竞品、开源与商用、求 Star。 |
-| [content/w5-local-first-storage.md](content/w5-local-first-storage.md) | **技术长文：本地优先的存储布局**（W5）：数据放哪、为什么每空间独立库 + 全局内容寻址附件、离线/备份/加密如何落盘。 |
-
 ## 变更记录（changelog）
 
 - [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.84.0`）。
