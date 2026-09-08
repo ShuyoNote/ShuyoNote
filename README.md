@@ -28,7 +28,7 @@
 无需安装，直接在浏览器里体验：
 
 - **国际 / GitHub Pages**：[https://shuyonote.github.io/ShuyoNote/](https://shuyonote.github.io/ShuyoNote/)
-- **国内 / 自托管主站**：[http://121.199.8.24/app/](http://121.199.8.24/app/)
+- **国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。多设备 / 团队同步需在桌面版配置自建 `shuyonote-sync-server` 后使用。
 
@@ -312,7 +312,7 @@ pnpm tauri build   # 打包桌面安装包
 本仓库负责的是**客户端接入**：装好 shuyonote-sync-server 后，到侧边栏「同步」里配置即可。
 
 1. 侧边栏点击「同步」。
-2. 填写服务地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址）。
+2. 填写服务地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址；官方可用实例 `https://shuyo.cn/sync`）。
 3. 可选填写访问令牌。
 4. 点击「立即同步」。
 
