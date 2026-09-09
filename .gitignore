@@ -60,3 +60,4 @@ regok.sh
 roundtrip.sh
 regcfg.sh
 .req.json
+.sync-verify-tmp/
