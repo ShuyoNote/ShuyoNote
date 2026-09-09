@@ -18056,3 +18056,14 @@ p:has(> .editor-drawing-container) {
   }
 }
 
+
+/* 移动端侧栏抽屉遮罩：点击关闭，让主区恢复交互。 */
+@media (max-width: 768px) {
+  .mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.4);
+  }
+}
+
