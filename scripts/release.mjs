@@ -160,6 +160,15 @@ for (const a of found) {
   }
 }
 await uploadFile(TAG, "latest.json", manifestPath);
+// 确保 `latest`（auto-update 通道）release 存在：首次发布时 gitcode 可能只有
+// `latest` 这个 git tag、尚无对应 release，`GET /releases/tags/latest` 会 404，
+// 导致 deleteAttach 报错中断。不存在则先创建，再更新其 latest.json。
+try {
+  await apiFetch("GET", `${API}/releases/tags/latest`);
+} catch {
+  await apiFetch("POST", `${API}/releases`, JSON.stringify({ tag_name: "latest", name: "ShuyoNote latest", body: "最新版本（auto-update 通道）", prerelease: false }));
+  console.log("  创建 release latest");
+}
 await deleteAttach("latest", "latest.json");
 await uploadFile("latest", "latest.json", manifestPath);
 await apiFetch("PATCH", `${API}/releases/${TAG}`, JSON.stringify({ name: `ShuyoNote v${version}`, body }));
