@@ -355,6 +355,7 @@ ShuyoNote/
 | 文档 | 内容 |
 |------|------|
 | [docs/README.md](docs/README.md) | **文档体系总索引**：定位 / 架构 / 方案 / 对比 / 设计交付 / 变更记录 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | **参与贡献指南**：从哪开始 / 看哪篇文档 / 提交前验证批次 / 代码风格 / 提交 PR 流程 |
 | [docs/SHUYONOTE_STATE.md](docs/SHUYONOTE_STATE.md) | **项目现状种子（新会话先读）**：版本 / M1–M27 里程碑进度 / 近期重大变更 / 关键架构 / 红线 / 验证循环 / 下一步候选（对齐到 v1.84.3） |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
