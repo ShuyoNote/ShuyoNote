@@ -7,6 +7,7 @@
 
 | 我想了解… | 从这里开始 |
 |---|---|
+| **当前做到哪一步了、新会话从这里续** | [项目现状·SHUYONOTE_STATE](SHUYONOTE_STATE.md) |
 | 产品是什么、定位与目标用户 | [产品定位](positioning.md) |
 | 功能怎么用、有哪些能力 | [README](../README.md) 功能清单 |
 | **系统怎么搭起来的、分层与存储模型** | [系统架构](architecture.md) |
