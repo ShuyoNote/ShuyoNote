@@ -20,10 +20,57 @@
 
 关键分层：`src/lib/platform/` 定义 `Executor` / driver 接口，`tauri.ts` 桌面宿主、`web.ts` 浏览器宿主（含 sql.js + IndexedDB），`index.ts` 按 `__TAURI_INTERNALS__` 自动切换。**同一套前端可跑桌面与浏览器。**
 
-## 2. 环境准备
+## 2. 环境准备（从零搭建）
 
-- Node.js ≥ 20，pnpm（`corepack enable` 或 `npm i -g pnpm`）。
-- Rust toolchain（`rustup`），需 Tauri 系统依赖（Windows 需 WebView2；见 Tauri 官方 pre-reqs）。**MSRV 1.94**（声明于 `src-tauri/Cargo.toml` 的 `rust-version`，与 README 徽章 `1.94+` 一致）；不锁工具链，跟随 stable。
+> 目标：装好依赖后能跑 `pnpm tauri dev`（桌面）或 `pnpm dev:web`（浏览器）。需要 **Node.js ≥ 20 + pnpm、Rust stable（≥1.94）+ Tauri 2 系统依赖**。
+
+### 2.1 Node.js 与 pnpm
+
+- 安装 **Node.js ≥ 20**（推荐 LTS，如 22）。多版本管理可用 `nvm` / `fnm` / `n`。
+- 安装 **pnpm**（corepack 已随 Node 附带）：
+  ```bash
+  corepack enable            # 启用 pnpm（Node 22+ 自带 corepack）
+  # 或 npm i -g pnpm
+  pnpm -v                    # 应打印 10.x
+  ```
+
+### 2.2 Rust 工具链
+
+- 用 **rustup** 安装 **stable** 工具链（`rust-version = "1.94"` 为最低要求，跟随 stable 即可，不锁 channel）：
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # 按提示选默认
+  source "$HOME/.cargo/env"
+  rustc --version            # 应 ≥ 1.94
+  cargo --version
+  ```
+
+### 2.3 平台系统依赖（Tauri 2 需要）
+
+- **Windows**：需 **WebView2**（Win10 旧版手动装 runtime）；Rust MSVC 构建工具链（`rustup default stable-msvc`）；可选 Visual Studio C++ Build Tools。
+- **macOS**：需 **Xcode Command Line Tools**（`xcode-select --install`）。
+- **Linux（Debian/Ubuntu）**：
+  ```bash
+  sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+    libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
+  ```
+  （这些同时也是 `release.yml` CI 里 ubuntu 跑 `pnpm tauri build` 要装的包。）
+
+> 这些是 Tauri 官方 pre-requisites（见 [Tauri docs](https://tauri.app/start/prerequisites/) / Linux 需 `libwebkit2gtk-4.1`）。
+
+### 2.4 装依赖并跑起来
+
+```bash
+git clone https://gitcode.com/shuyo-cn/ShuyoNote.git
+cd ShuyoNote
+pnpm install        # 安装前端依赖（含 PDF/OCR 资源，见下）
+pnpm tauri dev      # 桌面（Tauri + Rust，端口 1420）
+pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
+```
+
+> **PDF/OCR 资源**：`dev`/`dev:web`/`build` 前自动跑 `scripts/copy-pdfjs-assets.mjs`（PDF CJK→`public/pdfjs`）与 `scripts/copy-tesseract-assets.mjs`（tesseract worker/core/双语模型→`public/ocr`）；两者是 gitignore 的生成物，`pnpm install` 后由脚本生成，OCR 才可离线工作。
+
+> **Windows 坑**：若 cargo 用镜像源遇到 SSL 撤销错误，先 `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再跑。
+
 
 ## 3. 运行
 
@@ -82,7 +129,7 @@ pnpm check:doc-links                  # 期望 "N 条相对链接全部可达"
 6. `CHANGELOG.md` → 顶部新增 `## [X.Y.Z] - 日期` 条目（Keep a Changelog）
 7. `src-tauri/Cargo.lock` → 由 `cargo check` 自动把 `shuyonote` 的 `version` 对齐上一步
 
-> ⚠️ **绝对不要用 shell 重写含中文的 UTF-8 文件**（`Get-Content -Raw` + `WriteAllText` 会产生乱码）。用编辑工具（edit/write）改。
+> [!] **绝对不要用 shell 重写含中文的 UTF-8 文件**（`Get-Content -Raw` + `WriteAllText` 会产生乱码）。用编辑工具（edit/write）改。
 
 ### 5.1 发布管线（自动升级，可选）
 
@@ -95,7 +142,7 @@ pnpm check:doc-links                  # 期望 "N 条相对链接全部可达"
    ```bash
    git tag v<version> && git push origin v<version> && git push origin main
    ```
-   > ⚠️ **gitcode 的 release 创建 API 用 `tag_name` 定位 git tag；tag 不存在会静默失败**（release 未建、`latest.json` 不更新，客户端就查不到更新）。`release.mjs` 现在在发布前校验本地 + 远程 tag 都存在，缺失会直接报错退出；但正常流程应**先打 tag 再发布**。
+   > [!] **gitcode 的 release 创建 API 用 `tag_name` 定位 git tag；tag 不存在会静默失败**（release 未建、`latest.json` 不更新，客户端就查不到更新）。`release.mjs` 现在在发布前校验本地 + 远程 tag 都存在，缺失会直接报错退出；但正常流程应**先打 tag 再发布**。
 5. **签名 + 构建 + 生成清单**：
    ```bash
    TAURI_SIGNING_PRIVATE_KEY=<...> TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<...> \
@@ -105,7 +152,7 @@ pnpm check:doc-links                  # 期望 "N 条相对链接全部可达"
 6. **发布**：把安装包 + `latest.json` 上传到更新托管，保证 `UPDATE_BASE_URL` / `endpoints` 可解析。
 7. **版本一致**：发布前按 §5 同步所有版本文件；`scripts/release.mjs` 以 `package.json` 的 `version` 为准。
 
-> ⚠️ 端到端升级需一次**真实签名发布**才能验证（本环境无法白测「真实更新」）。公钥为占位符时，`检查更新` 会优雅回退（见 [`src/lib/updates.ts`](../src/lib/updates.ts) / [`src/lib/updater.ts`](../src/lib/updater.ts)）。
+> [!] 端到端升级需一次**真实签名发布**才能验证（本环境无法白测「真实更新」）。公钥为占位符时，`检查更新` 会优雅回退（见 [`src/lib/updates.ts`](../src/lib/updates.ts) / [`src/lib/updater.ts`](../src/lib/updater.ts)）。
 
 ### 5.2 Web 版构建与部署（browser）
 
