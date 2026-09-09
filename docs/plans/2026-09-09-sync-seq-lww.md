@@ -53,3 +53,4 @@ else:                                                // 本地已有更新（或
 - 客户端 cargo test / pnpm test / smoke / sync-regression 全绿。
 - 新增"两设备同改一页 + 时钟漂移"用例：A/B 都改 → sync_seq/dirty 决定保留谁。
 - 真机：两台设备同改一页，确认不互相吞。
+- **已验收（2026-09-09）**：`pnpm test:sync-verify`（`scripts/verify-two-device-sync.mjs`）用真实 `applyChange` + 真实 `SqliteStore`（sql.js WASM）复现两设备同页并发编辑，验证 seq-LWW + dirty 优先本地的 6 个场景（建页同步/双方同改各保留/dirty 拒绝更大 seq/无脏时正常 LWW/时钟漂移不丢），**14 断言全绿**。
