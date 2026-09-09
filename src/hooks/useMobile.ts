@@ -9,12 +9,16 @@ import { useActivity } from "../store/activity";
 
 const MOBILE_QUERY = "(max-width: 768px)";
 
+/** Pure viewport check (unit-testable): true when <=768px. */
+export function isMobileViewport(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia(MOBILE_QUERY).matches;
+}
+
 export function useMobile(): boolean {
-  const [isMobile, setIsMobile] = useState<boolean>(() =>
-    typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia(MOBILE_QUERY).matches
-      : false,
-  );
+  const [isMobile, setIsMobile] = useState<boolean>(isMobileViewport);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
