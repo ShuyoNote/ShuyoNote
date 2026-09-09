@@ -259,6 +259,16 @@ pub struct SyncReport {
     pub last_pulled_seq: i64,
     /// Per-entity detail for "同步明细" (see SyncItem).
     pub items: Vec<SyncItem>,
+    /// P0.1 conflict hint: local dirty page that received a newer server change.
+    pub conflicts: Vec<SyncConflict>,
+}
+
+/// A page that both has an unsynced local edit (dirty) and a newer server change.
+/// Frontend prompts the user to keep local / adopt server.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncConflict {
+    pub entity_id: String,
+    pub title: String,
 }
 
 /// One entity touched by a sync run — shown in the "同步明细" list.
@@ -1202,7 +1212,7 @@ async fn do_push(
 async fn do_pull(
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(usize, i64, Vec<SyncItem>), String> {
+) -> Result<(usize, i64, Vec<SyncItem>, Vec<SyncConflict>), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
@@ -1239,6 +1249,7 @@ async fn do_pull(
     let mut max_pulled = last_pulled;
     let mut count: usize = 0;
     let mut items: Vec<SyncItem> = Vec::new();
+    let mut conflicts: Vec<SyncConflict> = Vec::new();
     {
         let c = db.0.lock().expect("db mutex poisoned");
         // 跨设备 pull 的变更可能引用了「尚未先到达」的父页 / 关联页，触发本地外键约束
@@ -1258,6 +1269,15 @@ async fn do_pull(
                         let plain = security::decrypt_payload(&c, payload)
                             .map_err(|e| format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）"))?;
                         if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
+                            // P0.1 冲突提示：应用远端变更前，若本地该页有未推送改动
+                            // （dirty=1），说明"本地未同步 + 服务端有新 seq"——记为冲突，
+                            // 交给前端提示用户选择（保留本地 / 采用服务端）。
+                            let local_dirty: i64 = c
+                                .query_row("SELECT dirty FROM pages WHERE id = ?1", params![page.id], |r| r.get(0))
+                                .unwrap_or(0);
+                            if local_dirty != 0 {
+                                conflicts.push(SyncConflict { entity_id: page.id.clone(), title: page.title.clone() });
+                            }
                             apply_upsert(&c, &page, change.seq)?;
                             count += 1;
                             // 仅在该条成功应用后推进游标，失败时不推进，避免静默丢变更。
@@ -1316,7 +1336,7 @@ async fn do_pull(
         let _ = c.execute_batch(&format!("PRAGMA foreign_keys = {orig_fk};"));
     }
 
-    Ok((count, max_pulled, items))
+    Ok((count, max_pulled, items, conflicts))
 }
 
 #[derive(Serialize)]
@@ -1327,6 +1347,7 @@ pub struct WorkspaceSyncResult {
     pub last_pushed_seq: i64,
     pub last_pulled_seq: i64,
     pub error: Option<String>,
+    pub conflicts: Vec<SyncConflict>,
 }
 
 async fn sync_workspace_only(
@@ -1335,12 +1356,12 @@ async fn sync_workspace_only(
     profile: &SyncProfile,
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
-    let (pulled, last_pulled_seq, pulled_items) = do_pull(db, profile).await?;
+    let (pulled, last_pulled_seq, pulled_items, conflicts) = do_pull(db, profile).await?;
     let att_items = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
     items.extend(pulled_items);
     items.extend(att_items);
-    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items })
+    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items, conflicts })
 }
 
 #[tauri::command]
@@ -1364,6 +1385,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pushed_seq: rep.last_pushed_seq,
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
+                conflicts: rep.conflicts,
             },
             Err(e) => WorkspaceSyncResult {
                 ws_id: profile.ws_id.clone(),
@@ -1372,6 +1394,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pushed_seq: 0,
                 last_pulled_seq: 0,
                 error: Some(e),
+                conflicts: Vec::new(),
             },
         });
     }
@@ -1416,6 +1439,7 @@ pub async fn sync_workspace(
                 last_pushed_seq: rep.last_pushed_seq,
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
+                conflicts: rep.conflicts,
             })
         }
         Err(e) => {

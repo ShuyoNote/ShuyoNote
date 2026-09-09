@@ -68,6 +68,12 @@ export interface WorkspaceSyncResult {
   last_pushed_seq: number;
   last_pulled_seq: number;
   error: string | null;
+  conflicts: SyncConflict[];
+}
+
+export interface SyncConflict {
+  entity_id: string;
+  title: string;
 }
 
 export interface EmailMeta {
