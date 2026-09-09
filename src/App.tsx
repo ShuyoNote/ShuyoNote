@@ -39,6 +39,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
+import { useSyncStream } from "./hooks/useSyncStream";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
@@ -518,6 +519,7 @@ function App() {
   const [enc, setEnc] = useState<{ enabled: boolean; locked: boolean } | null>(null);
   useAutoSync();
   usePresence();
+  useSyncStream();
   useUpdateChecker();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
