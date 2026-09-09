@@ -1715,6 +1715,94 @@ fn ext_from_mime(mime: &str) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Near-realtime collaboration (P0.2 presence / P1 comments+notifications / P1.5 SSE).
+// Client-side thin clients to the sync-server's collab endpoints. The desktop
+// client speaks HTTP via reqwest (no browser origin policy), so these mirror the
+// web.ts branches that use syncFetch — same endpoint, same auth.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn team_presence_beat(server_url: String, token: String, space_id: String, page_id: Option<String>, device_id: Option<String>) -> Result<serde_json::Value, String> {
+    let url = format!("{}/spaces/{}/presence", server_url.trim_end_matches('/'), space_id);
+    let client = reqwest::Client::new();
+    let resp = client.post(&url).bearer_auth(&token).json(&serde_json::json!({
+        "page_id": page_id.unwrap_or_default(),
+        "device_id": device_id.unwrap_or_default(),
+    })).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("presence 心跳失败 {}", resp.status())); }
+    Ok(resp.json().await.map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn team_online(server_url: String, token: String, space_id: String) -> Result<serde_json::Value, String> {
+    let url = format!("{}/spaces/{}/online", server_url.trim_end_matches('/'), space_id);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).bearer_auth(&token).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("获取在线失败 {}", resp.status())); }
+    Ok(resp.json().await.map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn team_list_comments(server_url: String, token: String, space_id: String, page_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let url = format!("{}/spaces/{}/pages/{}/comments", server_url.trim_end_matches('/'), space_id, page_id);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).bearer_auth(&token).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("拉取评论失败 {}", resp.status())); }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(v["items"].as_array().cloned().unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_add_comment(server_url: String, token: String, space_id: String, page_id: String, body: String, parent_id: Option<String>, mentions: Option<Vec<String>>) -> Result<serde_json::Value, String> {
+    let url = format!("{}/spaces/{}/pages/{}/comments", server_url.trim_end_matches('/'), space_id, page_id);
+    let client = reqwest::Client::new();
+    let resp = client.post(&url).bearer_auth(&token).json(&serde_json::json!({
+        "body": body,
+        "parent_id": parent_id,
+        "mentions": mentions.unwrap_or_default(),
+    })).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("添加评论失败 {}", resp.status())); }
+    Ok(resp.json().await.map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub async fn team_delete_comment(server_url: String, token: String, space_id: String, comment_id: String) -> Result<(), String> {
+    let url = format!("{}/spaces/{}/comments/{}", server_url.trim_end_matches('/'), space_id, comment_id);
+    let client = reqwest::Client::new();
+    let resp = client.delete(&url).bearer_auth(&token).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("删除评论失败 {}", resp.status())); }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn team_list_notifications(server_url: String, token: String) -> Result<Vec<serde_json::Value>, String> {
+    let url = format!("{}/notifications", server_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).bearer_auth(&token).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("拉取通知失败 {}", resp.status())); }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(v["items"].as_array().cloned().unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_seen_notification(server_url: String, token: String, id: String) -> Result<(), String> {
+    let url = format!("{}/notifications/{}/seen", server_url.trim_end_matches('/'), id);
+    let client = reqwest::Client::new();
+    let resp = client.post(&url).bearer_auth(&token).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("标记已读失败 {}", resp.status())); }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn team_seen_all_notifications(server_url: String, token: String) -> Result<(), String> {
+    let url = format!("{}/notifications/seen-all", server_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let resp = client.post(&url).bearer_auth(&token).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() { return Err(format!("全部已读失败 {}", resp.status())); }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

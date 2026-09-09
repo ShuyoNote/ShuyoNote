@@ -2565,6 +2565,49 @@ function makeInvoke(store: SqliteStore) {
       const args = a.args ?? a;
       return (await syncFetch(serverArg(), "/orgs/join", teamToken(serverArg()), { code: String(args.code ?? "") })) as T;
     }
+    if (cmd === "team_presence_beat") {
+      const args = a.args ?? a;
+      const spaceId = pv(args, "spaceId", "space_id");
+      const url = `${serverArg()}/spaces/${encodeURIComponent(spaceId)}/presence`;
+      return (await syncFetch(url, "", teamToken(serverArg()), { page_id: pv(args, "pageId", "page_id") || null, device_id: pv(args, "deviceId", "device_id") })) as T;
+    }
+    if (cmd === "team_online") {
+      const args = a.args ?? a;
+      const spaceId = pv(args, "spaceId", "space_id");
+      const res = (await syncFetch(`${serverArg()}/spaces/${encodeURIComponent(spaceId)}/online`, "", teamToken(serverArg()))) as any;
+      return (Array.isArray(res) ? res : (res?.online ?? [])) as T;
+    }
+    if (cmd === "team_list_comments") {
+      const args = a.args ?? a;
+      const spaceId = pv(args, "spaceId", "space_id");
+      const pageId = pv(args, "pageId", "page_id");
+      const res = (await syncFetch(`${serverArg()}/spaces/${encodeURIComponent(spaceId)}/pages/${encodeURIComponent(pageId)}/comments`, "", teamToken(serverArg()))) as any;
+      return (Array.isArray(res) ? res : (res?.items ?? [])) as T;
+    }
+    if (cmd === "team_add_comment") {
+      const args = a.args ?? a;
+      const spaceId = pv(args, "spaceId", "space_id");
+      const pageId = pv(args, "pageId", "page_id");
+      const url = `${serverArg()}/spaces/${encodeURIComponent(spaceId)}/pages/${encodeURIComponent(pageId)}/comments`;
+      return (await syncFetch(url, "", teamToken(serverArg()), { body: String(args.body ?? ""), parent_id: pv(args, "parentId", "parent_id") || null, mentions: Array.isArray(args.mentions) ? args.mentions : [] })) as T;
+    }
+    if (cmd === "team_delete_comment") {
+      const args = a.args ?? a;
+      const spaceId = pv(args, "spaceId", "space_id");
+      const cid = pv(args, "commentId", "comment_id");
+      return (await syncFetch(`${serverArg()}/spaces/${encodeURIComponent(spaceId)}/comments/${encodeURIComponent(cid)}`, "", teamToken(serverArg()), null, "DELETE")) as T;
+    }
+    if (cmd === "team_list_notifications") {
+      const res = (await syncFetch(serverArg(), "/notifications", teamToken(serverArg()))) as any;
+      return (Array.isArray(res) ? res : (res?.items ?? [])) as T;
+    }
+    if (cmd === "team_seen_notification") {
+      const args = a.args ?? a;
+      return (await syncFetch(`${serverArg()}/notifications/${encodeURIComponent(String(args.id ?? ""))}/seen`, "", teamToken(serverArg()))) as T;
+    }
+    if (cmd === "team_seen_all_notifications") {
+      return (await syncFetch(serverArg(), "/notifications/seen-all", teamToken(serverArg()))) as T;
+    }
     if (cmd === "team_create_org") {
       const args = a.args ?? a;
       return (await syncFetch(serverArg(), "/orgs", teamToken(serverArg()), { name: String(args.name ?? "") })) as T;

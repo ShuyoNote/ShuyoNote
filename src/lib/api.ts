@@ -261,6 +261,22 @@ export const api = {
     invoke("team_generate_org_invite_code", { serverUrl: server_url, token, orgId: org_id }),
   teamJoinOrgByCode: (server_url: string, token: string, code: string) =>
     invoke("team_join_org_by_code", { serverUrl: server_url, token, code }),
+  teamPresenceBeat: (server_url: string, token: string, space_id: string, page_id?: string | null, device_id?: string | null) =>
+    invoke("team_presence_beat", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id ?? null, deviceId: device_id ?? null }),
+  teamOnline: (server_url: string, token: string, space_id: string) =>
+    invoke("team_online", { serverUrl: server_url, token, spaceId: space_id }),
+  teamListComments: (server_url: string, token: string, space_id: string, page_id: string) =>
+    invoke("team_list_comments", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id }),
+  teamAddComment: (server_url: string, token: string, space_id: string, page_id: string, body: string, parent_id?: string | null, mentions?: string[]) =>
+    invoke("team_add_comment", { serverUrl: server_url, token, spaceId: space_id, pageId: page_id, body, parentId: parent_id ?? null, mentions: mentions ?? [] }),
+  teamDeleteComment: (server_url: string, token: string, space_id: string, comment_id: string) =>
+    invoke("team_delete_comment", { serverUrl: server_url, token, spaceId: space_id, commentId: comment_id }),
+  teamListNotifications: (server_url: string, token: string) =>
+    invoke("team_list_notifications", { serverUrl: server_url, token }),
+  teamSeenNotification: (server_url: string, token: string, id: string) =>
+    invoke("team_seen_notification", { serverUrl: server_url, token, id }),
+  teamSeenAllNotifications: (server_url: string, token: string) =>
+    invoke("team_seen_all_notifications", { serverUrl: server_url, token }),
   saveImage: async (args: {
     page_id: string | null;
     name: string | null;
