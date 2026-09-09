@@ -27,9 +27,13 @@ WebView 壳在 `window.__SHUYONOTE_MOBILE__` 注入以下**可选**桥接方法�
 
 ## 3. 各平台壳（原生工程，待补）
 
-> 当前环境**无完整 Xcode / Android SDK**，无法本地构建原生壳——以下为原生工程的实现要点，需在具备工具链的环境完成。
+> **环境结论（2026-09）**：**Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当前 Mac（无 Homebrew + 系统 Ruby 2.6）**不可行**——它会逐个要求 `brew` 装系统工具（xcodegen / libimobiledevice / …），且强依赖 **CocoaPods**（`pod install`，在旧 Ruby 上安装极慢/易卡）。已装好：Xcode 26.6 + iOS Rust targets + Tauri CLI（真实 node）+ xcodegen 2.46.0。**渲染验证建议用 WebView 壳路径**（复用 Web 版，无需 Tauri 原生全链路）；Tauri 原生 iOS 留给具备 Homebrew / 正常工具链的环境。
+>
+> 移动端适配以 **M16 平台无关核心 + 可插拔平台壳**为路线：核心 = Web 版（`web.ts` + sql.js WASM），壳 = 各平台 WebView + 最小 JSBridge。
 
-- **原生壳（安卓 WebView / iOS WKWebView / 鸿蒙 ArkWeb）**：
+### 原生壳（安卓 WebView / iOS WKWebView / 鸿蒙 ArkWeb）
+
+- **宿主**：
   1. 加载 `dist-web/index.html`（Web 层复用 Web 版构建产物）。
   2. 注入 `window.__SHUYONOTE_MOBILE__`（openUrl / convertFileSrc / saveBytes 由原生 JSBridge 实现）。
   3. 处理文件选择（`dialog.open` 在 WebView 里走 `<input type=file>`，`web.ts` 已支持 `pickBrowserFiles`）。
