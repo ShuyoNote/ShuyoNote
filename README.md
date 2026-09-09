@@ -79,6 +79,17 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 
 > 如果 ShuyoNote 对你有用，欢迎 **点个 Star**，或 [参与开发](CONTRIBUTING.md)（AGPL-3.0）。自托管 / 团队同步见下方「多设备同步」。
 
+### 开发与贡献
+
+想跑起来、改代码或提建议？从这里开始：
+
+| 目的 | 入口 |
+|---|---|
+| **搭建开发环境**（Node / pnpm / Rust / 平台依赖，到 `pnpm tauri dev`） | [docs/development.md](docs/development.md)「环境准备」 |
+| **贡献指南**（从哪开始 / 看哪篇 / 提交前验证 / PR 流程） | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 运行 / 测试 / 验证循环 / 版本号提升 / 常见坑 | [docs/development.md](docs/development.md) 开发指南 |
+| 全量文档索引 | [docs/README.md](docs/README.md) |
+
 ---
 
 ## 特性
