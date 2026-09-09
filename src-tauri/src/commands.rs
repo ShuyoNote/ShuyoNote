@@ -392,7 +392,7 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     versions::snapshot_before_save(&c, &args.id, &title, &content_json, &content_text)?;
 
     c.execute(
-        "UPDATE pages SET title = ?1, content_json = ?2, content_text = ?3, updated_at = ?4 WHERE id = ?5",
+        "UPDATE pages SET title = ?1, content_json = ?2, content_text = ?3, updated_at = ?4, dirty = 1 WHERE id = ?5",
         params![title, content_json, content_text, now, args.id],
     )
     .map_err(|e| e.to_string())?;

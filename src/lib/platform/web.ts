@@ -602,6 +602,8 @@ interface SyncProfile {
 }
 interface SyncChange {
   id: number;
+  /** 服务端下发的变更序号（pull 时总是存在）。 */
+  seq: number;
   device_id: string;
   device_seq: number;
   entity: string;
@@ -678,7 +680,8 @@ function maxOutboxSeq(store: SqliteStore, lastSeq: number): number {
 }
 
 // Apply the payload of a pulled change to local tables (LWW, mirror sync.rs).
-function applyChange(store: SqliteStore, change: SyncChange): void {
+// exported for the sync LWW unit test.
+export function applyChange(store: SqliteStore, change: SyncChange): void {
   const op = change.op;
   const entity = change.entity;
   const eid = change.entity_id;
@@ -691,12 +694,32 @@ function applyChange(store: SqliteStore, change: SyncChange): void {
     }
     const p = parseJson(change.payload || "{}") as Record<string, any>;
     if (p.id) {
-      store.run(
-        `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO UPDATE SET title=excluded.title, kind=excluded.kind, parent_id=excluded.parent_id, sort_order=excluded.sort_order, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, content_json=excluded.content_json, content_text=excluded.content_text, db_rule=excluded.db_rule, icon=excluded.icon, cover=excluded.cover, cover_height=excluded.cover_height, cover_pos=excluded.cover_pos, workspace_id=excluded.workspace_id`,
-        [p.id, p.workspace_id ?? "active", p.parent_id ?? null, p.title ?? "", p.kind ?? "page", p.sort_order ?? 0, p.created_at ?? Date.now(), p.updated_at ?? Date.now(), p.deleted_at ?? null, p.content_json ?? "{}", p.content_text ?? "", p.db_rule ?? "{}", p.icon ?? "", p.cover ?? "", p.cover_height ?? 300, p.cover_pos ?? 50],
-      );
+      // seq-based LWW + dirty-prefer-local（对齐桌面 sync.rs::apply_upsert，见
+      // plans/2026-09-09-sync-seq-lww.md）：本地有未同步改动(dirty=1)或已同步到
+      // 更晚 seq，则保留本地；否则接受远端并记录 sync_seq。
+      const useRemote = (() => {
+        const local = store.query<{ sync_seq: number; dirty: number }>(
+          "SELECT sync_seq, dirty FROM pages WHERE id = ?", [p.id],
+        )[0];
+        if (!local) return true; // 本地没有 → 插入（新建）
+        if (local.dirty !== 0) {
+          console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
+          return false;
+        }
+        if (local.sync_seq > change.seq) {
+          // 已同步到更晚的变更 → 保留本地。
+          return false;
+        }
+        return true; // 远端更新（seq 更大且本地无未同步改动）→ 用远端
+      })();
+      if (useRemote) {
+        store.run(
+          `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos, sync_seq, dirty)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+           ON CONFLICT(id) DO UPDATE SET title=excluded.title, kind=excluded.kind, parent_id=excluded.parent_id, sort_order=excluded.sort_order, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, content_json=excluded.content_json, content_text=excluded.content_text, db_rule=excluded.db_rule, icon=excluded.icon, cover=excluded.cover, cover_height=excluded.cover_height, cover_pos=excluded.cover_pos, workspace_id=excluded.workspace_id, sync_seq=excluded.sync_seq, dirty=0`,
+          [p.id, p.workspace_id ?? "active", p.parent_id ?? null, p.title ?? "", p.kind ?? "page", p.sort_order ?? 0, p.created_at ?? Date.now(), p.updated_at ?? Date.now(), p.deleted_at ?? null, p.content_json ?? "{}", p.content_text ?? "", p.db_rule ?? "{}", p.icon ?? "", p.cover ?? "", p.cover_height ?? 300, p.cover_pos ?? 50, change.seq],
+        );
+      }
     }
     return;
   }
@@ -796,6 +819,10 @@ async function doPush(store: SqliteStore, profile: SyncProfile): Promise<{ pushe
   });
   const maxSeq = maxOutboxSeq(store, profile.last_pushed_seq);
   putProfile(store, { ...profile, last_pushed_seq: maxSeq });
+  // 本次 push 已同步到服务端 → 清这些 page 的 dirty（标记无未同步改动）。
+  for (const c of changes) {
+    if (c.entity === "page") store.run("UPDATE pages SET dirty = 0 WHERE id = ?", [c.entity_id]);
+  }
   return { pushed: changes.length, lastSeq: maxSeq };
 }
 
@@ -1126,7 +1153,7 @@ function makeInvoke(store: SqliteStore) {
         // Snapshot the current content BEFORE we overwrite it (version history).
         snapshotBeforeSave(store, id, newTitle, json, text);
         store.run(
-          `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?
+          `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1
            WHERE id = ?`,
           [newTitle, json, text, Date.now(), id],
         );

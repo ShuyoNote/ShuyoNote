@@ -224,7 +224,9 @@ export class SqliteStore {
         icon TEXT NOT NULL DEFAULT '',
         cover TEXT NOT NULL DEFAULT '',
         cover_height INTEGER NOT NULL DEFAULT 300,
-        cover_pos REAL NOT NULL DEFAULT 50
+        cover_pos REAL NOT NULL DEFAULT 50,
+        sync_seq INTEGER NOT NULL DEFAULT 0,
+        dirty INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS pdf_annotations (
         id TEXT PRIMARY KEY,
@@ -369,6 +371,19 @@ export class SqliteStore {
     }
     try {
       this.db.run("ALTER TABLE pages ADD COLUMN cover_pos REAL NOT NULL DEFAULT 50");
+    } catch {
+      /* already exists */
+    }
+    // seq-based LWW: sync_seq = last accepted remote change seq; dirty = unsynced
+    // local edits (protects local edits from being overwritten on clock drift).
+    // See plans/2026-09-09-sync-seq-lww.md.
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0");
+    } catch {
+      /* already exists */
+    }
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
     } catch {
       /* already exists */
     }

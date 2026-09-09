@@ -131,25 +131,34 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
 
 // ---- remote apply (LWW) ----
 
-fn apply_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
-    let local_updated: Option<i64> = c
+fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), String> {
+    // seq-based LWW + dirty-prefer-local: protects local unsynced edits (and avoids
+    // device-clock-drift mishaps). If the local page has unsynced edits (dirty=1)
+    // OR it already synced past this change's seq, keep local; otherwise accept the
+    // remote and record sync_seq.
+    let local: Option<(i64, i64)> = c
         .query_row(
-            "SELECT updated_at FROM pages WHERE id = ?1",
+            "SELECT sync_seq, dirty FROM pages WHERE id = ?1",
             params![page.id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
 
-    if let Some(local) = local_updated {
-        if local > page.updated_at {
-            return Ok(()); // local wins
+    if let Some((local_seq, dirty)) = local {
+        if dirty != 0 {
+            // Local has unsynced edits → keep local (protect user's recent change).
+            return Ok(());
+        }
+        if local_seq > sync_seq {
+            // Already synced a more recent change → keep local.
+            return Ok(());
         }
     }
 
     c.execute(
-        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0)
          ON CONFLICT(id) DO UPDATE SET
            workspace_id = excluded.workspace_id,
            parent_id = excluded.parent_id,
@@ -159,7 +168,9 @@ fn apply_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
            kind = excluded.kind,
            sort_order = excluded.sort_order,
            updated_at = excluded.updated_at,
-           deleted_at = NULL",
+           deleted_at = NULL,
+           sync_seq = excluded.sync_seq,
+           dirty = 0",
         params![
             page.id,
             page.workspace_id,
@@ -170,7 +181,8 @@ fn apply_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
             page.kind,
             page.sort_order,
             page.created_at,
-            page.updated_at
+            page.updated_at,
+            sync_seq,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1135,6 +1147,12 @@ async fn do_push(
             SyncItem { entity: ch.entity.clone(), entity_id: ch.entity_id.clone(), op: ch.op.clone(), dir: "push".to_string(), title }
         })
         .collect();
+    // 本次 push 将同步的 page 实体 id（在 changes 被 move 进 PushRequest 前先收集）。
+    let pushed_page_ids: Vec<String> = changes
+        .iter()
+        .filter(|ch| ch.entity == "page")
+        .map(|ch| ch.entity_id.clone())
+        .collect();
 
     let client = reqwest::Client::new();
     let mut req = client
@@ -1171,6 +1189,10 @@ async fn do_push(
             )
             .map_err(|e| e.to_string())?;
         set_profile_field(&c, &profile.ws_id, "last_pushed_seq", max_seq)?;
+        // 本次 push 已同步到服务端 → 清这些 page 的 dirty（标记无未同步改动）。
+        for pid in &pushed_page_ids {
+            let _ = c.execute("UPDATE pages SET dirty = 0 WHERE id = ?1", params![pid]);
+        }
         (max_seq, count as usize)
     };
 
@@ -1238,7 +1260,7 @@ async fn do_pull(
                         // Decrypt if E2EE is enabled (passthrough otherwise).
                         if let Ok(plain) = security::decrypt_payload(&c, payload) {
                             if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
-                                apply_upsert(&c, &page)?;
+                                apply_upsert(&c, &page, change.seq)?;
                                 count += 1;
                             }
                         }

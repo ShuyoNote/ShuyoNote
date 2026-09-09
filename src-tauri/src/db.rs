@@ -685,6 +685,26 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute("ALTER TABLE pages ADD COLUMN db_rule TEXT NOT NULL DEFAULT '{}'", [])?;
     }
 
+    // Sync seq-based LWW: sync_seq = last accepted remote change seq; dirty = has
+    // local unsynced edits (protects local edits from being overwritten by a
+    // slightly-later remote when the device clocks drift — see plans/…seq-lww).
+    let pages_has_sync_seq: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'sync_seq'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pages_has_sync_seq == 0 {
+        conn.execute("ALTER TABLE pages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    let pages_has_dirty: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'dirty'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pages_has_dirty == 0 {
+        conn.execute("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+
     // Tag custom color (hex like "#c2410c"). NULL = use deterministic auto color.
     let tags_has_color: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'color'",
