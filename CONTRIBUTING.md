@@ -1,11 +1,11 @@
-# Contributing to ShuyoNote
+# 参与 ShuyoNote 开发
 
-欢迎参与 ShuyoNote 🎉。感谢你愿意为这个「本地优先」的知识库出一份力。下面从「从哪开始」到「怎么合入」都有，照着走就行。项目文档按主题组织，统一入口是 [`docs/README.md`](docs/README.md)。
+欢迎参与 ShuyoNote。感谢你愿意为这个「本地优先」的知识库出一份力。下面从「从哪开始」到「怎么合入」都有，照着走就行。项目文档按主题组织，统一入口是 [`docs/README.md`](docs/README.md)。
 
 ## 从哪开始（第一次参与）
 
 1. **跑起来**：`pnpm install && pnpm tauri dev`（桌面），或 `pnpm dev:web`（浏览器）。
-2. **找活干**：看 [路线图](docs/roadmap.md) 里还没实现/待做的项，或从 `docs/plans/` 挑一份已被拆解的方案；没有想法就从顺手的小事入手（修 UI 细节、补空/加载/错误态、加单测、修文档）。
+2. **找活干**：看 [路线图](docs/roadmap.md) 里还没实现 / 待做的项，或从 `docs/plans/` 挑一份已被拆解的方案；没有想法就从顺手的小事入手（修 UI 细节、补空 / 加载 / 错误态、加单测、修文档）。
 3. **提 Issue**：先搜有没有人提过；说清楚「复现步骤 / 期望 / 实际 / 版本」。**不要**在 Issue 里贴大段日志，给关键行 + 复现即可。
 
 ## 我要做什么 → 看哪里
@@ -26,7 +26,7 @@
   - `pnpm build`（含 tsc + vite + `check-web-commands` + `check-versions`）
   - `cargo check --manifest-path src-tauri/Cargo.toml`（若动了 Rust）
 - **发版要同步 6 处**：`package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` / `README.md` 徽章 / `docs/README.md` / `CHANGELOG.md`（详见 [docs/development.md](docs/development.md) 第 5 节）。
-- **不要用 shell 重写含中文的 UTF-8 文件**（会乱码）；用编辑器/文本工具改。
+- **不要用 shell 重写含中文的 UTF-8 文件**（会乱码）；用编辑器 / 文本工具改。
 - **新增文档记得登记进 `docs/README.md` 索引**。
 
 ## 代码风格
@@ -34,7 +34,7 @@
 - **前端**：TypeScript（严格）、React 函数组件 + hooks、Zustand store；组件按功能分目录；样式用 design token（`App.css` 里的 CSS 变量），不硬编码颜色。
 - **Rust**：`cargo fmt` + `cargo clippy` 无警告；错误用 `Result<_, String>`（与现有命令齐平）；读路径不阻塞（`spawn_blocking`）。
 - **命令契约**：新增后端命令须同步 `src/lib/platform/commands.ts` 的 `CommandMap`（`check-web-commands` 会校验 Rust 命令 ⊆ CommandMap）。
-- **命名/文案**：与现有 UI 一致（中文文案）；i18n 暂不做（边界说明见内部项目状态笔记）。
+- **命名 / 文案**：与现有 UI 一致（中文文案）；i18n 暂不做（边界说明见内部项目状态笔记）。
 
 ## 怎么提 PR
 
@@ -46,7 +46,7 @@
 
 ## License
 
-ShuyoNote 客户端以 **AGPL-3.0** 开源。参与即代表你同意以该许可贡献你的改动；自托管/团队同步的 `shuyonote-sync-server` 为独立商业组件，不适用本客户端仓库。
+ShuyoNote 客户端以 **AGPL-3.0** 开源。参与即代表你同意以该许可贡献你的改动；自托管 / 团队同步的 `shuyonote-sync-server` 为独立商业组件，不适用本客户端仓库。
 
 ## 其它
 
