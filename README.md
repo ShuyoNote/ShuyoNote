@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
   <img src="https://img.shields.io/badge/React-18-61dafb" alt="react">
   <img src="https://img.shields.io/badge/Vite-8-646cff" alt="vite">
-  <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-2ea44f" alt="platform">
+  <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web%20%7C%20Android%20%7C%20iOS%20(soon)-2ea44f" alt="platform">
   <img src="https://img.shields.io/badge/数据-本地%20SQLite%20%E5%8D%B3%E5%8F%AF%E7%94%A8-2ea44f" alt="data">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-orange" alt="license">
 </p>
@@ -42,7 +42,7 @@
 - **独有的邮箱聚合**：打通多账号 IMAP，邮件即笔记——聚合收件箱、按账号/月份筛选、一键存为笔记 / 任务、AI 总结。
 - **免费 + 开源**：核心功能永久免费；客户端 **AGPL-3.0 开源**，插件、主题、模板可扩展。
 - **可自托管、多设备同步**：多设备 / 团队同步用自建 `shuyonote-sync-server`（无云锁定，可私有部署）；outbox 增量 + 服务端 seq 基准的 LWW 合并（**多端同时改同一内容也不丢改动**）。
-- **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；同一份数据两端可用。
+- **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；同一份数据多端可用。**安卓 / iOS 移动端即将推出**（M16 平台无关核心 + 可插拔平台壳，浏览器 PWA 已作为首个 Web 壳）。
 
 ## 截图 / 演示
 
@@ -370,7 +370,7 @@ ShuyoNote/
 | [docs/SHUYONOTE_STATE.md](docs/SHUYONOTE_STATE.md) | **项目现状种子（新会话先读）**：版本 / M1–M27 里程碑进度 / 近期重大变更 / 关键架构 / 红线 / 验证循环 / 下一步候选（对齐到 v1.84.3） |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
-| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M26 大部分已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强 / M25 帮助系统 / M26 公式** 已达成；M27 团队版规划中；M6 移动端 / M11.3 / M11.4 已评估未做） |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M26 大部分已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强 / M25 帮助系统 / M26 公式** 已达成；M27 团队版规划中；**移动端（安卓/iOS）即将推出**；M11.3 / M11.4 已评估未做） |
 | [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
@@ -422,7 +422,8 @@ ShuyoNote/
 - [x] **内联 AI 起草**（M18：空行空格唤起随光标浮层 + 上下文自适应下拉 + 流式创作 + 完成/关闭，见 [方案](docs/plans/2026-08-24-inline-ai-draft-plan.md)；M19 织网 / M20 模板变量+语义检索 / M21 wiki 导出 / M22 绘图 / M23 Excalidraw 高级均已达标）
 - [x] **PDF 阅读/批注**（M24 阶段1/3：内置阅读器 + 连续滚动 + 高亮/画笔/便签 + 摘录成块（`pdf://` 回链）+ AI 帮读 + 对整篇 PDF 提问；见 [方案](docs/plans/2026-08-27-pdf-annotation-plan.md)）
 - [x] **PDF 阅读体验 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / **AI 一键生成目录（视觉优先、带层级、可范围）** / 系统朗读 / 识别结果弹层；见 [落地文档](docs/plans/2026-08-30-pdf-reader-ai-plan.md)）
-- [ ] 移动端适配（环境受限：缺 iOS/Android 工具链，已评估）
+- [x] **跨平台架构（M16 全端通吃）**：平台无关核心 + 可插拔平台壳 → 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb
+- [ ] **移动端（安卓 / iOS）即将推出**：Tauri 移动目标（M16 各平台壳）；浏览器 PWA 已作为首个 Web 壳，移动端复用同一套前端与数据模型。
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
 
