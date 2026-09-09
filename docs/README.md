@@ -61,36 +61,36 @@ CHANGELOG.md             # 版本变更日志
 
 ## 演进路线（里程碑总览）
 
-> 详细逐里程碑实现要点与版本号见 [docs/roadmap.md](roadmap.md)。状态：**✅ 已实现**；**🗓 部分/规划**；**未做** = 已评估延后。括号内为对应方案文档。
+> 详细逐里程碑实现要点与版本号见 [docs/roadmap.md](roadmap.md)。状态：**[x] 已实现**；**[ ] 部分/规划**；**未做** = 已评估延后。括号内为对应方案文档。
 
 | 里程碑 | 主题 | 状态 | 方案文档 |
 |--------|------|------|----------|
-| **M1** | Markdown 无损往返 | ✅ | [本地优先方案](plans/2026-08-15-local-first-note-app-plan.md) |
-| **M2** | 端到端加密 | ✅ | [多工作空间方案 §8](plans/2026-08-22-multi-workspace-plan.md) |
-| **M3** | 主题 / 外观自定义 + 插件雏形 | ✅ | [插件方案](plans/2026-08-22-plugin-plan.md) |
-| **M4** | 属性驱动仪表盘聚合 | ✅ | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
-| **M5** | PDF 导出 | ✅ | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
+| **M1** | Markdown 无损往返 | [x] | [本地优先方案](plans/2026-08-15-local-first-note-app-plan.md) |
+| **M2** | 端到端加密 | [x] | [多工作空间方案 §8](plans/2026-08-22-multi-workspace-plan.md) |
+| **M3** | 主题 / 外观自定义 + 插件雏形 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md) |
+| **M4** | 属性驱动仪表盘聚合 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
+| **M5** | PDF 导出 | [x] | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
 | **M6** | 移动端适配 | 未做（环境受限） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
-| **M7** | 数据库视图扩展 | ✅ | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
-| **M8** | 新页面引导层 | ✅ | — |
-| **M9** | 模板 | ✅ | [模板方案](plans/2026-08-22-template-plan.md) |
-| **M10** | 多工作空间 | ✅ | [多工作空间方案](plans/2026-08-22-multi-workspace-plan.md) + [工作空间 CRUD](plans/2026-08-22-workspace-crud-plan.md) |
-| **M11** | 插件 | ✅ | [插件方案](plans/2026-08-22-plugin-plan.md)（M11.3 UI 型 / M11.4 市场已评估未做） |
-| **M12** | 文件夹 = 网盘 | ✅ | [文件夹网盘方案](plans/2026-08-22-folder-netdisk-plan.md) |
-| **M13** | 数据库 = 透镜 | ✅ | [数据库透镜方案](plans/2026-08-22-database-lens-plan.md) |
-| **M14** | 空间清理 / 存储管理 | ✅ | [存储清理方案](plans/2026-08-22-storage-cleanup-plan.md) |
-| **M15** | 每空间独立存储（物理隔离） | ✅ | [每空间独立存储方案](plans/2026-08-22-per-workspace-storage-plan.md) |
-| **M16** | 跨平台适配（全平台通吃） | ✅（部分） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md) + [web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md) |
-| **M17** | AI 薄 Agent | ✅ | [薄 Agent 方案](plans/2026-08-24-thin-agent-interface-plan.md) + [实现方案](plans/2026-08-24-thin-agent-interface-implementation-plan.md) |
-| **M18** | 内联 AI 起草 | ✅ | [内联起草方案](plans/2026-08-24-inline-ai-draft-plan.md) |
-| **M19** | Wiki 织网增强 | ✅ | [织网方案](plans/2026-08-24-wiki-weave-plan.md) |
-| **M20** | 模板变量 + 语义检索 | ✅ | [模板变量 + 语义检索方案](plans/2026-08-24-template-var-semantic-search-plan.md) |
-| **M21** | 静态 wiki 导出 + 关系图探索 | ✅ | [静态 wiki 导出方案](plans/2026-08-24-static-wiki-export-graph-plan.md) |
-| **M22** | 绘图（Excalidraw / mermaid / AI 文生图） | ✅ | [绘图方案](plans/2026-08-24-drawing-solution-design.md) |
-| **M23** | Excalidraw 绘图高级功能 | ✅（M23.5 协同/代码生成未做） | [Excalidraw 高级方案](plans/2026-08-24-excalidraw-advanced-plan.md) |
-| **M24** | **PDF 批注** | ✅（阶段1/3 + 阅读器 + OCR/AI 增强已落地；阶段2 写回待做） | [PDF 批注方案](plans/2026-08-27-pdf-annotation-plan.md) + [PDF 阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md) |
-| **M25** | **帮助系统** | ✅（P0/P1） | [帮助系统方案](plans/2026-08-27-help-system-plan.md) |
-| **M26** | **公式（数学）** | ✅（块级+行内） | [公式方案](plans/2026-08-30-formula-plan.md) |
+| **M7** | 数据库视图扩展 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
+| **M8** | 新页面引导层 | [x] | — |
+| **M9** | 模板 | [x] | [模板方案](plans/2026-08-22-template-plan.md) |
+| **M10** | 多工作空间 | [x] | [多工作空间方案](plans/2026-08-22-multi-workspace-plan.md) + [工作空间 CRUD](plans/2026-08-22-workspace-crud-plan.md) |
+| **M11** | 插件 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md)（M11.3 UI 型 / M11.4 市场已评估未做） |
+| **M12** | 文件夹 = 网盘 | [x] | [文件夹网盘方案](plans/2026-08-22-folder-netdisk-plan.md) |
+| **M13** | 数据库 = 透镜 | [x] | [数据库透镜方案](plans/2026-08-22-database-lens-plan.md) |
+| **M14** | 空间清理 / 存储管理 | [x] | [存储清理方案](plans/2026-08-22-storage-cleanup-plan.md) |
+| **M15** | 每空间独立存储（物理隔离） | [x] | [每空间独立存储方案](plans/2026-08-22-per-workspace-storage-plan.md) |
+| **M16** | 跨平台适配（全平台通吃） | [x]（部分） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md) + [web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md) |
+| **M17** | AI 薄 Agent | [x] | [薄 Agent 方案](plans/2026-08-24-thin-agent-interface-plan.md) + [实现方案](plans/2026-08-24-thin-agent-interface-implementation-plan.md) |
+| **M18** | 内联 AI 起草 | [x] | [内联起草方案](plans/2026-08-24-inline-ai-draft-plan.md) |
+| **M19** | Wiki 织网增强 | [x] | [织网方案](plans/2026-08-24-wiki-weave-plan.md) |
+| **M20** | 模板变量 + 语义检索 | [x] | [模板变量 + 语义检索方案](plans/2026-08-24-template-var-semantic-search-plan.md) |
+| **M21** | 静态 wiki 导出 + 关系图探索 | [x] | [静态 wiki 导出方案](plans/2026-08-24-static-wiki-export-graph-plan.md) |
+| **M22** | 绘图（Excalidraw / mermaid / AI 文生图） | [x] | [绘图方案](plans/2026-08-24-drawing-solution-design.md) |
+| **M23** | Excalidraw 绘图高级功能 | [x]（M23.5 协同/代码生成未做） | [Excalidraw 高级方案](plans/2026-08-24-excalidraw-advanced-plan.md) |
+| **M24** | **PDF 批注** | [x]（阶段1/3 + 阅读器 + OCR/AI 增强已落地；阶段2 写回待做） | [PDF 批注方案](plans/2026-08-27-pdf-annotation-plan.md) + [PDF 阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md) |
+| **M25** | **帮助系统** | [x]（P0/P1） | [帮助系统方案](plans/2026-08-27-help-system-plan.md) |
+| **M26** | **公式（数学）** | [x]（块级+行内） | [公式方案](plans/2026-08-30-formula-plan.md) |
 | **M27** | **团队版（自建协作）** | 规划 | [团队版方案](plans/2026-08-30-team-edition-plan.md) |
 
 > 另：非里程碑功能——**分栏**（`/分栏`，见 [分栏方案](plans/2026-08-26-columns-plan.md)）、绘图块（归 M22）、内联「+」插入块等。**邮箱聚合（邮件即笔记，v1.83.0 功能版）** 见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；**块操作 / 块多选体系（文字选中优先，v1.84.0）** 见 [块选择方案](plans/2026-09-07-block-selection-plan.md)。完整现状与里程碑细节见 [roadmap.md](roadmap.md)。
@@ -127,7 +127,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-08-29-pdf-continuous-scroll-plan.md](plans/2026-08-29-pdf-continuous-scroll-plan.md) | **「PDF 连续滚动（虚拟化）」落地文档（方案 B / 已实现，待发布）**：把阅读器从「单页翻页」升级为「整篇纵向连续滚动」——所有页块纵向堆叠，一次可自由滚过整篇；只挂载视口 ± 1 页缓冲的页块（其余页占位不渲染，内存可控）。**批注随页块**（每页仍是自包含 `PdfAnnotationCanvas`，工具条/撤销/选中/批注都在块内）；导航升级（侧栏/目录跳页滚到目标页顶；←/→/↑/↓ 逐页滚动取代「滚动边缘自动翻页」；F 适配页宽）；布局数学抽成纯函数 `pdfLayout.ts`（前缀和 + 视口挂载范围），首屏预取全部页尺寸使滚动轴稳定；修复暗色下透明底 PDF 不可读。**v1.59.187 已落地**；**v1.59.188** 增量：修复缩放迟钝/抖动（页块宽随 `scale` 真实放大 + 缩放后重光栅化）+ 缩放下拉 + 点击 PDF 附件/文件树节点直达阅读器；**v1.59.189** 增量：缩放下拉重构为桌面阅读器式；**v1.59.190** 增量：批注工具栏改为顶部单份固定（工具跨页共享 + 页句柄注册 + 状态条跟当前页） |
 | [plans/2026-08-30-pdf-reader-ai-plan.md](plans/2026-08-30-pdf-reader-ai-plan.md) | **「PDF 阅读器 + OCR/AI 增强」落地文档（叠加于 v1.59.190，已落地）**：阅读体验（光标修正/便签钉+内容气泡/按住即拖/双击编辑/控制条陈旧闭包修复）+ 侧栏与定位（标注后右栏刷新/批注定位到视口中央/跳转闪烁框贴合）+ **护眼模式（多档位）** + **OCR 彻底离线**（`copy-tesseract-assets.mjs` 本地打包 worker/core/双语完整模型；修复 `is-url` 相对路径误判走 readCache；`4.0.0_best_int`→完整 `4.0.0`）+ **AI 视觉识别**（`ocrVision.ts`，页图直发多模态模型）+ **AI 一键生成目录（视觉大模型优先）**（`generateOutlineFromVision`）+ **系统朗读**（`speech.ts`，Web Speech）+ 识别结果居中可缩放弹层（朗读/复制/写入便签） |
 | [plans/2026-08-30-formula-plan.md](plans/2026-08-30-formula-plan.md) | **「公式」方案（M26）**：正文块级 `$$…$$` + 行内 `$…$` 数学公式，渲染为 KaTeX（懒加载，独立 chunk 不进首屏）。块级 `FormulaNode`（`DecoratorNode`，对齐 Mermaid，`/公式` 插入 + markdown `FORMULA` transformer + 就地编辑）；行内 `InlineFormulaNode`（`TextNode` 子类 + `registerNodeTransform`，保留字面 `$…$` 进 `content_text`）。**阶段 1 块级 + 阶段 2 行内已落地**；边界：`$5`/`$100` 类误判控制、块级/行内 `$$`/`$` 区分、KaTeX `throwOnError:false` 回退源文本 |
-| [plans/2026-08-30-formula-recognition-plan.md](plans/2026-08-30-formula-recognition-plan.md) | **「公式图片 / 手写识别」方案（M26 扩展）**：给公式编辑器弹窗加「图片识别」（上传/拖入/粘贴含公式图片 → LaTeX）与「手写识别」（canvas 手写板 → LaTeX）。**复用 `ocrVision.ts` 的 `ocrWithVision`**（视觉大模型，Ollama/OpenAI 兼容，已是独立视觉通道，不新增后端）；识别结果自动回填 textarea、用户可改后再提交（保留人工确认）；付费识别服务（Mathpix/MyScript）不接、不做云端限流；依赖用户已配置视觉模型，未配置/弱模型优雅降级。**已实现**（`formulaVision.ts` + `FormulaHandwritePad`（DPR 跟手手写板）+ `FormulaEditorDialog` 🖼/✎ 入口） |
+| [plans/2026-08-30-formula-recognition-plan.md](plans/2026-08-30-formula-recognition-plan.md) | **「公式图片 / 手写识别」方案（M26 扩展）**：给公式编辑器弹窗加「图片识别」（上传/拖入/粘贴含公式图片 → LaTeX）与「手写识别」（canvas 手写板 → LaTeX）。**复用 `ocrVision.ts` 的 `ocrWithVision`**（视觉大模型，Ollama/OpenAI 兼容，已是独立视觉通道，不新增后端）；识别结果自动回填 textarea、用户可改后再提交（保留人工确认）；付费识别服务（Mathpix/MyScript）不接、不做云端限流；依赖用户已配置视觉模型，未配置/弱模型优雅降级。**已实现**（`formulaVision.ts` + `FormulaHandwritePad`（DPR 跟手手写板）+ `FormulaEditorDialog` (图)/(笔) 入口） |
 | [plans/2026-08-27-help-system-plan.md](plans/2026-08-27-help-system-plan.md) | **「帮助系统」方案（M25）**：本地优先/键盘驱动的四层帮助（P0 就地提示+快捷键面板；P1 内置「使用指南」页+新手清单；P2 外部静态站可选）；主张帮助页=可编辑笔记（同源/可搜/可导出）；复用命令面板/斜杠/模板/`shortcuts.ts` 单一来源。**§9 已细化**：`shortcuts.ts` 数据结构 + 权威快捷键清单 + `ShortcutsPanel` 交互细则 + 「使用指南」页块级大纲 + 入口/状态 + 实现顺序（P0→P1）。**P0/P1 已落地（v1.59.177）+ P1 新手清单/P2「关于」/外链入口已落地**（见[项目网站导航方案](plans/2026-08-27-project-website-navigation-plan.md)） |
 | [plans/2026-08-27-project-website-navigation-plan.md](plans/2026-08-27-project-website-navigation-plan.md) | **「项目网站导航」方案（M25 P2 细化）**：让用户方便导航到外部项目网站的**利弊权衡 + 决策 + 入口设计**。结论=做成「可发现但克制、绝不阻塞、绝不跟踪」的被动出口；拆分三类外部站点（项目主页/文档站/营销落地页），只承接前两类；落地=「关于」对话框（版本/AGPL-3.0 许可/四干净链接）+「检查更新」+ 帮助页脚注 + **「禁用外部导航」隐私开关**；链接走 `src/lib/links.ts` 单一来源、无 `utm`/埋点；站点自控（仓库 Pages）优先、主页偏透明+文档+下载。**「关于」对话框 + 四链接 + 隐私开关已实装**（外部静态站本身待做） |
 | [plans/2026-08-27-auto-update-plan.md](plans/2026-08-27-auto-update-plan.md) | **「自动升级」方案（规划，建议）**：本地优先/离线/自托管/AGPL 下的升级边界——**半自动**（后台 `check()` + 用户点「下载并安装」），**绝不静默强制重启**，离线优雅降级、Web 端禁用。技术走 Tauri 2 官方 `tauri-plugin-updater`（签名 `tauri signer` + 更新清单 `latest.json` + `createUpdaterArtifacts` `.sig` + 稳定 HTTPS 端点）。**真正的成本在签名 + 更新清单的发布管线**（手工，接入现有提版流程）；分阶段：阶段 1 先做「检查更新」检测入口（不依赖完整签名）、阶段 2 完整应用内下载安装、阶段 3 增量/通道/自托管。**规划，未实装** |
@@ -141,9 +141,9 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-04-near-realtime-plan.md](plans/2026-09-04-near-realtime-plan.md) | **「团队版近实时协作」落地实现方案（规划）**：在页级 LWW + 轮询之上加**协作感知层**——P0 同页冲突提示 + 在线/谁在编辑（presence 心跳）、P1 评论/@/通知中心、P1.5 可选 SSE/WebSocket 推送；含数据模型（`presence`/`comments`/`notifications`）、新接口清单、客户端组件、里程碑与验收；**明确不做块级 CRDT**、个人空间保留 E2E（依据 [实时协同利弊分析](realtime-collab-analysis.md)） |
 | [plans/2026-09-05-desktop-product-polish-plan.md](plans/2026-09-05-desktop-product-polish-plan.md) | **「桌面端产品打磨计划」（规划）**：依据 [产品评价](product-review.md)，**桌面是主线**。四根柱子——① 同步地基（一致性整改 + 跨设备回归脚本 + 自托管 SYNC 文档）、② 数据安全（一键备份/恢复 + 回收站兜底 + 整空间导出）、③ 桌面体验打磨（z-index 统一 + 空/加载/错误态 + 编辑器/数据库打磨）、④ 交付/产品化（自动升级 + 关于/许可证 + 发布节奏收紧）；含优先级 P0–P3、验收与交付物；**最小可交付三件事 = 同步一致性 + 备份/恢复 + 自动升级** |
 | [plans/2026-09-05-sync-consistency-remediation-plan.md](plans/2026-09-05-sync-consistency-remediation-plan.md) | **「同步一致性整改 + 跨设备回归脚本」可执行方案（P0 地基）**：现状盘点（device_seq 全 0 / FNV vs SHA-256 / `.part` / 增量指针 / 幂等）；按文件/接口的具体整改（桌面 sync.rs、web web.ts、服务端 sync.rs）；`scripts/sync-regression.mjs` 两设备互改收敛 + 无 400/413 + 哈希一致 + 幂等 + 增量的回归断言；新增/改动文件清单、验收清单、最小交付物（整改 + 回归脚本 + docs/SYNC.md） |
-| [plans/2026-09-06-email-aggregate-plan.md](plans/2026-09-06-email-aggregate-plan.md) | **「聚合邮箱（邮件即笔记）」落地文档（✅ 已实现 v1.83.0）**：多账号 IMAP 聚合收件箱 + 一键转笔记/任务（capture-first）；范围界定（做/不做）、技术可行性、P0–P2 里程碑、验收清单、风险与决策点（OAuth 门槛/凭据安全/性能/范围失控）、文件级改动清单。**进展与实装详见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；商业化/OAuth 凭据/服务端设想等敏感部分见私有 shuyonote-sync-server 仓库 `docs/email-aggregate-monetization.md`** |
-| [plans/2026-09-07-email-multi-account-aggregation.md](plans/2026-09-07-email-multi-account-aggregation.md) | **「多账号聚合收件流」实现与交接（✅ 已落地 v1.83.0，方案 B 后端聚合）**：`email_fetch_all`（多账号合并/时间降序/分页/`date_from`+`date_to` 日期区间/`accounts` 筛选）+ `email_fetch_all_months`（聚合各账号含邮件月份）+ `email_test_connection`（IMAP 登录+选 INBOX+可选 SMTP 认证，不发信）；`smtp.rs` 抽 `connect_and_auth`/`verify`。前端：`EmailPanel` 账号「多选下拉」筛选、独立账号列、三级工具栏收纳、AI 总结弹窗、存为笔记先写属性再跳转、转发收件人聚焦修复、邮件 `Date` 解析兼容 QQ 等格式、按月直达（全量拉取后按邮件自身时区年月后端过滤）。**含第 1–4 步交付 commit、聚合视图按 `meta.account` 的 `accountFor` 账号定位、`emailKey` 防 uid 相撞、未读汇总与聚合月份直达等关键点** |
-| [plans/2026-09-07-block-selection-plan.md](plans/2026-09-07-block-selection-plan.md) | **「块操作 / 块多选体系」（✅ 已落地 v1.84.0）**：设计原则=**文字选中优先**，块操作只认独立触发区——**A** 沟槽 `⋮⋮` 手柄（单击弹「块操作」菜单/Shift 连续多选/拖动排序）、**B** 显式多选模式（`Mod+Shift+M` 逐个点块加入/移出）、**C** 页面空白/空块框选；判别标准 `isSafeMarqueeTarget`（文本节点或含文字块→文字选择，否则框选）；记录与文本手势冲突的右键菜单/正文橡皮筋的移除、格式工具条修复、`$deepCloneBlock` 修复块复制；含文件清单与边界 |
+| [plans/2026-09-06-email-aggregate-plan.md](plans/2026-09-06-email-aggregate-plan.md) | **「聚合邮箱（邮件即笔记）」落地文档（[x] 已实现 v1.83.0）**：多账号 IMAP 聚合收件箱 + 一键转笔记/任务（capture-first）；范围界定（做/不做）、技术可行性、P0–P2 里程碑、验收清单、风险与决策点（OAuth 门槛/凭据安全/性能/范围失控）、文件级改动清单。**进展与实装详见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；商业化/OAuth 凭据/服务端设想等敏感部分见私有 shuyonote-sync-server 仓库 `docs/email-aggregate-monetization.md`** |
+| [plans/2026-09-07-email-multi-account-aggregation.md](plans/2026-09-07-email-multi-account-aggregation.md) | **「多账号聚合收件流」实现与交接（[x] 已落地 v1.83.0，方案 B 后端聚合）**：`email_fetch_all`（多账号合并/时间降序/分页/`date_from`+`date_to` 日期区间/`accounts` 筛选）+ `email_fetch_all_months`（聚合各账号含邮件月份）+ `email_test_connection`（IMAP 登录+选 INBOX+可选 SMTP 认证，不发信）；`smtp.rs` 抽 `connect_and_auth`/`verify`。前端：`EmailPanel` 账号「多选下拉」筛选、独立账号列、三级工具栏收纳、AI 总结弹窗、存为笔记先写属性再跳转、转发收件人聚焦修复、邮件 `Date` 解析兼容 QQ 等格式、按月直达（全量拉取后按邮件自身时区年月后端过滤）。**含第 1–4 步交付 commit、聚合视图按 `meta.account` 的 `accountFor` 账号定位、`emailKey` 防 uid 相撞、未读汇总与聚合月份直达等关键点** |
+| [plans/2026-09-07-block-selection-plan.md](plans/2026-09-07-block-selection-plan.md) | **「块操作 / 块多选体系」（[x] 已落地 v1.84.0）**：设计原则=**文字选中优先**，块操作只认独立触发区——**A** 沟槽 `⋮⋮` 手柄（单击弹「块操作」菜单/Shift 连续多选/拖动排序）、**B** 显式多选模式（`Mod+Shift+M` 逐个点块加入/移出）、**C** 页面空白/空块框选；判别标准 `isSafeMarqueeTarget`（文本节点或含文字块→文字选择，否则框选）；记录与文本手势冲突的右键菜单/正文橡皮筋的移除、格式工具条修复、`$deepCloneBlock` 修复块复制；含文件清单与边界 |
 
 ## 竞品对比
 
@@ -177,5 +177,5 @@ CHANGELOG.md             # 版本变更日志
 ## 约定
 
 - 功能规划、竞品分析、产品定位归 `docs/`；像素级 UI/UX 设计交付归 `design/`。
-- 里程碑完成的规划会标注 ✅ 并补充「实现」要点，对应到具体文件/命令。
+- 里程碑完成的规划会标注 [x] 并补充「实现」要点，对应到具体文件/命令。
 - 版本演进以 `CHANGELOG.md` 为准，`docs/` 文档聚焦"是什么 / 为什么 / 怎么做"。
