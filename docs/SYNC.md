@@ -25,7 +25,7 @@
 | `entity` | `page` / `attr` / `prop` / `page_tag` / `attachment`（改了哪类） |
 | `op` | `upsert`（写入/覆盖）或 `delete` |
 | `payload` | 该实体的**完整内容**（服务端与另一设备据此还原） |
-| `device_seq` / `seq` | 每台设备独立递增序号，用于"知道我推到哪了" |
+| `device_seq` / `seq` | `device_seq`=每台设备独立递增；`seq`=**服务端单调分配**（changes AUTOINCREMENT），作为 LWW 权威序 |
 
 > **附件（文件）同步 = 行元数据（changes）+ 字节（附件接口）两部分：**
 > - `attachment` 实体只带文件**元数据**（`id / page_id / name / hash / mime / size`），随 push/pull 走 `changes` 表，让文件在另一设备的「文件管理器 / 目录树」里出现。
@@ -64,9 +64,16 @@ GET {server}/pull?since={last_pulled_seq}&limit=500&space_id=..&exclude_device={
 
 > 结论：**近实时**（基于轮询间隔），不是毫秒级。跨设备在一台改完，另一台在下一次轮询/手动同步后看到。
 
-## 六、冲突（last-write-wins，LWW）
+## 六、冲突合并（服务端 seq 基准 + dirty 优先本地，v1.84.3）
 
-同时改动同一实体（如同一页面）：以服务端认为**最后到达**的变更覆盖（`op=upsert` 覆盖整个实体）。不做字段级合并。极端并发同改会**后者覆盖前者**——个人笔记足够；团队重要同改场景后续可加字段级合并/冲突提示。
+同时改动同一实体（如同一页面），不再用客户端时钟 `updated_at` 做 last-write-wins（时钟漂移会整页覆盖丢改动），而是用**服务端单调 `seq` 作为权威序** + **dirty 优先本地**（见 `docs/plans/2026-09-09-sync-seq-lww.md`）：
+
+- **LWW 键 = 服务端 `changes.seq`**（服务器接收顺序，全局唯一单调）。每页记录 `sync_seq`（该页最后**接受**的远端变更 seq）。
+- **本地未同步改动优先**：本地 `dirty=1`（有未 push 改动）时，远端变更**不覆盖本地**——保护用户最近的修改不被服务端稍晚 seq 覆盖。
+- **无未同步改动时正常 LWW**：`dirty=0` 且远端 `seq > sync_seq` → 接受远端并更新 `sync_seq`；否则保留本地。
+- **不丢不发**：`do_pull` 在某条变更**解密/应用失败时报错并停止、游标不推进**，避免静默丢变更。
+
+> 不做字段级合并。极端并发同改：**谁先 push 且未被覆盖，保留谁**；未同步的本地改动（dirty）优先保留。个人笔记足够；团队重要同改场景后续可加字段级合并/冲突提示。
 
 ## 七、加密与隔离
 
