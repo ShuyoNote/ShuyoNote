@@ -61,42 +61,21 @@
 ```bash
 git clone https://gitcode.com/shuyo-cn/ShuyoNote.git
 cd ShuyoNote
-pnpm install        # 安装依赖
-pnpm tauri dev      # 启动桌面应用（浏览器版用 pnpm dev:web）
+pnpm install          # 安装依赖
+
+pnpm tauri dev        # 桌面（Tauri）
+pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 ```
 
-> 首次启动后数据在应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`），WAL 模式，全在本机。
+> **Windows 提示**：若 cargo 使用镜像源且遇到 SSL 撤销错误（如 USTC），先执行 `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再运行。
+
+首次启动会在应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`，WAL 模式）创建：`meta.db`（应用级：空间 / 同步 / 模板 / 插件状态）+ `spaces/<ws_id>/`（每空间独立库）+ `attachments/`（全局内容寻址附件）。Web 版则在浏览器 IndexedDB 中持久化（`shuyonote` 存 SQLite 快照、`shuyonote-blobs` 存附件字节、`shuyonote-spaces` 存多空间 catalog + 快照）。
 
 ## ❤️ 支持
 
 > 如果 ShuyoNote 对你有用，欢迎 **点个 Star ⭐**，或 [参与开发](CONTRIBUTING.md)（AGPL-3.0）。自托管 / 团队同步见下方「多设备同步」。
 
 ---
-
-## 📖 简介
-
-ShuyoNote 是一款 **本地优先（local-first）的类 Notion 生产力工具**，覆盖**知识库 + 项目管理**：它借鉴 Notion 的块编辑器体验，但将全部数据保存在本机 SQLite 数据库中——无需注册、无云端依赖、离线即可使用。需要多设备协作时，可自建轻量同步服务，通过变更日志实现增量同步与冲突合并。除知识管理外，ShuyoNote 还内置**原生甘特图、看板拖拽、数据库多视图**，把笔记变成可管理的项目。
-
-- **本地优先**：数据即文件，存储在本机，离线可用。
-- **原生甘特图**：计划 / 实际两组、网格填色、可编辑日期、列宽拖拽——数据一键变专业甘特图。
-- **看板拖拽**：卡片跨列拖、列(分组)拖换序、插入位置竖线、未设置列固定。
-- **内容寻址去重**：附件按 SHA-256 哈希存储，跨文件夹 / 空间去重，省空间。
-- **可自建同步**：无云锁定，可选自建 shuyonote-sync-server（outbox + LWW + 附件增量）。
-- **可扩展**：磁盘加载命令插件（受限白名单 API）、主题 / 外观自定义。
-
-## 📑 目录
-
-- **特性** —— 编辑体验 / **PDF 阅读** / AI 助手 / 知识组织（数据库视图、**甘特图**、看板拖拽、语义检索） / 数据安全 / 多设备同步 / 体验优化
-- **架构** —— 前端 / Rust 后端 / SQLite / 同步服务端分层；以及可插拔平台 driver（桌面 Tauri / Web 浏览器）
-- **技术栈** —— 各层技术一览
-- **开发环境要求** —— Node / Rust / 平台
-- **快速开始** —— 安装与启动（桌面 + Web）
-- **构建发布** —— 产物
-- **多设备同步** —— shuyonote-sync-server + 配置
-- **项目结构** —— 目录说明
-- **文档体系** —— 文档索引
-- **路线图** —— 里程碑
-- **License**
 
 ## ✨ 特性
 
@@ -273,23 +252,6 @@ flowchart TB
 - **Rust** stable（1.94+，MSRV 见 `src-tauri/Cargo.toml` 的 `rust-version`）与 cargo
 - Windows / macOS / Linux
 
-## 🚀 快速开始
-
-```bash
-# 1. 安装依赖
-pnpm install
-
-# 2a. 桌面（Tauri）
-pnpm tauri dev
-
-# 2b. 浏览器（Web 平台，独立 5173）
-pnpm dev:web
-```
-
-> **Windows 提示**：若 cargo 使用镜像源且遇到 SSL 撤销错误（如 USTC），先执行 `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再运行。
-
-首次启动会在系统应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`）创建数据（WAL 模式）：`meta.db`（应用级：空间 / 同步 / 模板 / 插件状态）+ `spaces/<ws_id>/`（每空间独立 SQLite 库）+ `attachments/`（全局内容寻址附件）。Web 版则在浏览器 IndexedDB 中持久化（`shuyonote` 存 SQLite 快照、`shuyonote-blobs` 存附件字节、`shuyonote-spaces` 存多空间 catalog + 快照）。
-
 ## 📦 构建发布
 
 ```bash
@@ -328,7 +290,7 @@ pnpm tauri build   # 打包桌面安装包
 
 > 注意：导出 / 导入是**手动、全量**快照，多设备各自改动同一空间时不会自动合并。请以一台为主定期导出，或在迁移时自行保留最新版本。
 
-> 🔐 **版本号约 1.67.1 起，本仓库 README 只讲客户端**；同步服务端的启动/部署文档只放在私有仓库，公开处只给链接，避免读者误以为它属于 AGPL 开源代码。
+> 🔐 本仓库 README 只讲**客户端**（AGPL-3.0）；同步服务端的启动/部署文档只放在私有仓库，公开处只给链接，避免读者误以为它属于 AGPL 开源代码。
 
 ## 📁 项目结构
 
