@@ -23,7 +23,7 @@
 
 ---
 
-## 🕹️ 在线试用
+## 在线试用
 
 无需安装，直接在浏览器里体验：
 
@@ -32,7 +32,7 @@
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。多设备 / 团队同步需在桌面版配置自建 `shuyonote-sync-server` 后使用。
 
-## 🌟 为什么选 ShuyoNote
+## 为什么选 ShuyoNote
 
 - **数据是你自己的**：全部保存在本机 SQLite，离线可用、无需注册、无云端依赖；支持 Markdown 导出、整库备份，随时带走。
 - **不只是笔记，是知识工作台**：块编辑器 + 属性数据库（8 视图：表格 / 画廊 / 看板 / **日历** / 时间轴 / 目录 / **原生甘特图**）+ 块级引用 / 关系图 + 内置 **PDF 批注 · 离线 OCR · AI 视觉识别 · AI 目录**。
@@ -40,7 +40,7 @@
 - **可自托管、可扩展**：AGPL-3.0 开源；多设备 / 团队同步用自建 `shuyonote-sync-server`；插件、主题、模板可扩展。
 - **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；数据免云端、可私有部署。
 
-## 📸 截图 / 演示
+## 截图 / 演示
 
 <p align="center"><b>新页面 · 数据库 · AI 助手</b></p>
 <p align="center"><img src="docs/media/screenshot-ai.png" alt="新页面 · 数据库 · AI 助手" width="640" /></p>
@@ -56,7 +56,7 @@
 
 > 数据库（表格 / 看板 / 画廊 / 日历 / 时间轴 / 目录 / 甘特图）、块级引用 / 关系图、PDF 批注 · 离线 OCR · AI 视觉识别、AI 助手 / 内联起草、全局搜索 · 语义检索、公式、绘图——详见下方特性。
 
-## 🚀 快速开始
+## 快速开始
 
 ```bash
 git clone https://gitcode.com/shuyo-cn/ShuyoNote.git
@@ -71,13 +71,13 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 
 首次启动会在应用数据目录（Windows：`%APPDATA%\cn.shuyo.shuyonote\`，WAL 模式）创建：`meta.db`（应用级：空间 / 同步 / 模板 / 插件状态）+ `spaces/<ws_id>/`（每空间独立库）+ `attachments/`（全局内容寻址附件）。Web 版则在浏览器 IndexedDB 中持久化（`shuyonote` 存 SQLite 快照、`shuyonote-blobs` 存附件字节、`shuyonote-spaces` 存多空间 catalog + 快照）。
 
-## ❤️ 支持
+## 支持
 
-> 如果 ShuyoNote 对你有用，欢迎 **点个 Star ⭐**，或 [参与开发](CONTRIBUTING.md)（AGPL-3.0）。自托管 / 团队同步见下方「多设备同步」。
+> 如果 ShuyoNote 对你有用，欢迎 **点个 Star**，或 [参与开发](CONTRIBUTING.md)（AGPL-3.0）。自托管 / 团队同步见下方「多设备同步」。
 
 ---
 
-## ✨ 特性
+## 特性
 
 ### 编辑体验
 - **块编辑器**：基于 Lexical，支持标题、引用、Callout、代码块、列表、待办、表格、分隔线等 12 种块类型。
@@ -91,7 +91,7 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 - **网址书签**：`/wzsq` 或 `/bookmark` 插入 URL 为书签卡片（自动抓取 Open Graph 标题 / 摘要 / 预览图）；粘贴纯网址可一键「转换为网址书签」；预览图复用附件内容寻址存储。
 - **文件附件**：通用文件附件（多选导入、超大文件流式存取、打开 / 定位 / 移除）。
 - **Markdown**：快捷键输入、一键导入 / 导出、导出 HTML。
-- **数学公式**：块级 `/公式`（或 `$$…$$`）与行内 `$…$`，渲染为 **KaTeX**（懒加载）；公式编辑器有希腊字母 / 运算符 / 关系式 / 式子 / 箭头 / 化学六类符号面板；左下 🖼 / ✎ 可**识别图片中的公式**（上传/拖入/粘贴 → 自动转 LaTeX）与**识别手写公式**（手写板 → 自动转 LaTeX），需在 AI 设置配置支持图像的模型。
+- **数学公式**：块级 `/公式`（或 `$$…$$`）与行内 `$…$`，渲染为 **KaTeX**（懒加载）；公式编辑器有希腊字母 / 运算符 / 关系式 / 式子 / 箭头 / 化学六类符号面板；左下 (图) / (笔) 可**识别图片中的公式**（上传/拖入/粘贴 → 自动转 LaTeX）与**识别手写公式**（手写板 → 自动转 LaTeX），需在 AI 设置配置支持图像的模型。
 
 ### PDF 阅读
 - **完整 PDF 阅读器**：内置打开 PDF（点击附件/文件树直达），近全屏阅读器 + **整篇连续滚动（虚拟化）** + 左侧目录树 / 右侧批注侧栏 + 键盘导航（←/→/↑/↓ 平滑） + PageUp/PageDown 翻页 + 缩放下拉（适配页宽/页面/内容/实际 + 百分比阶梯）+ **护眼模式**（柔光/暖黄/夜间/淡绿多档位，暖色纸底 + 页图降蓝/柔光）。
@@ -150,11 +150,11 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 
 ### AI 助手（薄 Agent + 内联起草）
 - **可选、本地优先、安全**：AI 默认关闭，仅调用你配置的模型端点（本地 Ollama / OpenAI 兼容云）；白名单语义工具（搜索 / 读页 / 读块 / 建页 / 追加块 / 反链），无 shell / 任意文件 / 联网；写操作需确认（详见 [薄 Agent 方案](docs/plans/2026-08-24-thin-agent-interface-plan.md)）。
-- **侧边栏 AI 助手**：右侧 ✦ 面板，全局问答 / 总结 / 跨页检索 / 建页（草稿确认后落库），多轮上下文（支持"再详细点"）。
+- **侧边栏 AI 助手**：右侧 (AI) 面板，全局问答 / 总结 / 跨页检索 / 建页（草稿确认后落库），多轮上下文（支持"再详细点"）。
 - **内联 AI 起草**：空行按**空格**打开**跟随光标**的起草浮层；「用 AI 写作」下拉**按当前页上下文自适应**（有内容 → 续写 / 总结 / 翻译 / 润色 / 纠错；空页 → 创作类·小红书等）；选中即填入提示词、光标定位到省略号后；**流式创作** + 高亮待定草案 +「完成」插入到你按空格所在的块 /「关闭」丢弃 /「重新生成」；点击背景或 **Esc** 取消。
 - **思考过程实时流式**：推理型模型的 `reasoning_content` 边想边显示；R 重新生成 / Esc 停止。
 
-## ⌨️ 快捷键
+## 快捷键
 
 | 快捷键 | 功能 |
 |--------|------|
@@ -166,7 +166,7 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 | `Esc` | 关闭查找栏 / 命令面板 / 弹层 |
 | `/` | 打开斜杠菜单 |
 
-## 🏗️ 架构
+## 架构
 
 > 详细架构见 [docs/architecture.md](docs/architecture.md)。
 
@@ -228,7 +228,7 @@ flowchart TB
 
 **物理隔离**：每个工作空间一个独立 SQLite 库（`spaces/<ws_id>/`），应用级共享状态（workspaces / 模板 / 插件状态 / 同步配置）放 `meta.db`；附件字节全局内容寻址（跨空间去重），单空间可搬移经空间级附件子集导出实现。
 
-## 🧰 技术栈
+## 技术栈
 
 | 层 | 技术 |
 |----|------|
@@ -246,13 +246,13 @@ flowchart TB
 | OCR / AI 识别 | 离线 tesseract.js（`ocr.ts`，本地双语完整模型）+ 视觉大模型（`ai/ocrVision.ts`） | `src/lib/ocr.ts`、`src/lib/ai/ocrVision.ts` |
 | 朗读 / 目录 | Web Speech 朗读（`speech.ts`）+ AI 生成目录（`aiOutline.ts` + `pdfOutlineGen.ts`） | `src/lib/speech.ts`、`src/lib/aiOutline.ts` |
 
-## 🛠️ 开发环境要求
+## 开发环境要求
 
 - **Node.js** ≥ 20 + **pnpm**
 - **Rust** stable（1.94+，MSRV 见 `src-tauri/Cargo.toml` 的 `rust-version`）与 cargo
 - Windows / macOS / Linux
 
-## 📦 构建发布
+## 构建发布
 
 ```bash
 pnpm build      # 前端构建（tsc + vite build，产物到 dist/）
@@ -263,9 +263,9 @@ pnpm tauri build   # 打包桌面安装包
 
 > `dev`/`build` 前会自动运行 `scripts/copy-pdfjs-assets.mjs` 与 `scripts/copy-tesseract-assets.mjs`（PDF CJK 资源 + tesseract 离线 OCR 双语完整模型分别拷到 `public/pdfjs`、`public/ocr`，均为生成物、不入库）；`pnpm install` 后即可离线使用 OCR。
 
-## 🔄 多设备同步
+## 多设备同步
 
-> ⚠️ **仅桌面版**。Web 版（浏览器）不支持多设备同步与团队版，跨设备交换请用备份 / 导出 zip。原因与「若要开启」的路线见 [Web 同步能力边界](docs/web-sync-boundary.md)。
+> **仅桌面版**。Web 版（浏览器）不支持多设备同步与团队版，跨设备交换请用备份 / 导出 zip。原因与「若要开启」的路线见 [Web 同步能力边界](docs/web-sync-boundary.md)。
 >
 > 客户端（本仓库）是 **AGPL-3.0 开源**。多设备/团队实时同步需要 **shuyonote-sync-server**——它是**独立的商业授权组件**（私有仓库，不随本客户端开源）。部署与使用文档见其仓库 [`docs/deploy.md`](https://gitcode.com/shuyo-cn/shuyonote-sync-server/blob/main/docs/deploy.md)（该仓库仅对授权者可见）。
 
@@ -290,9 +290,9 @@ pnpm tauri build   # 打包桌面安装包
 
 > 注意：导出 / 导入是**手动、全量**快照，多设备各自改动同一空间时不会自动合并。请以一台为主定期导出，或在迁移时自行保留最新版本。
 
-> 🔐 本仓库 README 只讲**客户端**（AGPL-3.0）；同步服务端的启动/部署文档只放在私有仓库，公开处只给链接，避免读者误以为它属于 AGPL 开源代码。
+> 本仓库 README 只讲**客户端**（AGPL-3.0）；同步服务端的启动/部署文档只放在私有仓库，公开处只给链接，避免读者误以为它属于 AGPL 开源代码。
 
-## 📁 项目结构
+## 项目结构
 
 ```
 ShuyoNote/
@@ -341,7 +341,7 @@ ShuyoNote/
 └── CHANGELOG.md              # 版本变更日志
 ```
 
-## 📚 文档体系
+## 文档体系
 
 > 全量文档统一入口：[docs/README.md](docs/README.md)（按主题组织的索引）。
 
@@ -359,7 +359,7 @@ ShuyoNote/
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
-## 🗺️ 路线图
+## 路线图
 
 - [x] MVP：页面树 + 富文本 + 自动保存
 - [x] 块系统：斜杠菜单 / 待办 / 表格 / Callout
@@ -406,7 +406,7 @@ ShuyoNote/
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
 
-## 📄 License
+## License
 
 本仓库（ShuyoNote 客户端）以 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）开源，全文见仓库根 `LICENSE`。
 
