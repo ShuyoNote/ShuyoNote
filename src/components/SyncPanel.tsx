@@ -97,6 +97,8 @@ export function SyncPanel() {
   const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
+  // P0.1 同页冲突提示：sync_workspace 返回的 dirty 冲突页，用户选择保留/采用。
+  const [conflicts, setConflicts] = useState<{ ws_id: string; entity_id: string; title: string }[]>([]);
 
   const refresh = async () => {
     try {
@@ -211,6 +213,11 @@ export function SyncPanel() {
         setStatus(`「${r.name}」同步失败：${res.error}`);
       } else {
         setStatus(`「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`);
+        // P0.1：有同页冲突（本地未推送 + 服务端新 seq）→ 提示用户选择。
+        const c = (res.conflicts ?? []) as { entity_id: string; title: string }[];
+        if (c.length > 0) {
+          setConflicts(c.map((x) => ({ ws_id: r.ws_id, entity_id: x.entity_id, title: x.title })));
+        }
       }
       await loadPages();
       await loadHistory();
@@ -488,6 +495,25 @@ export function SyncPanel() {
 
           {!isDesktopPlatform() && (
             <div className="sync-web-note">建议使用桌面版以获得稳定多设备同步；Web 版同步受浏览器环境限制。</div>
+          )}
+          {conflicts.length > 0 && (
+            <div className="sync-conflict-banner" role="alert">
+              <div className="sync-conflict-title">⚠️ 有页面被多人同时修改</div>
+              <ul className="sync-conflict-list">
+                {conflicts.map((c) => (
+                  <li key={c.entity_id}>《{c.title}》</li>
+                ))}
+              </ul>
+              <div className="sync-conflict-actions">
+                <button onClick={() => { setConflicts([]); setStatus("已保留本地改动（下次同步会推送你这份）"); }} className="btn-sync-conflict keep">
+                  保留本地
+                </button>
+                <button onClick={() => { setConflicts([]); setStatus("改用服务端版本（已放弃本地未推送改动）"); }} className="btn-sync-conflict adopt">
+                  采用服务端
+                </button>
+              </div>
+              <div className="sync-conflict-hint">提示：你在此页有未推送的改动，另一台设备改了同一页。选「保留本地」则你这份优先；选「采用服务端」则放弃本地改用服务端最新。</div>
+            </div>
           )}
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}

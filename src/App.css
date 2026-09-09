@@ -1110,6 +1110,31 @@ html[data-platform="win"] .app-body {
   color: var(--text-dim);
   line-height: 1.5;
 }
+/* P0.1 同页冲突提示 */
+.sync-conflict-banner {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft, #ffecec);
+  border: 1px solid var(--danger, #e5484d);
+  font-size: 12px;
+  color: var(--text);
+}
+.sync-conflict-title { font-weight: 600; margin-bottom: 6px; }
+.sync-conflict-list { margin: 0 0 8px; padding-left: 18px; }
+.sync-conflict-actions { display: flex; gap: 8px; margin-bottom: 6px; }
+.btn-sync-conflict {
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-sync-conflict.keep { border-color: var(--success, #2e7d32); color: var(--success, #2e7d32); }
+.btn-sync-conflict.adopt { border-color: var(--primary); color: var(--primary); }
+.sync-conflict-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
 .sync-profiles {
   flex: 1;
   min-height: 0;
