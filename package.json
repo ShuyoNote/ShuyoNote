@@ -18,7 +18,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "changelog": "node scripts/update-changelog.mjs",
-    "test:sync-verify": "node scripts/verify-two-device-sync.mjs"
+    "test:sync-verify": "node scripts/verify-two-device-sync.mjs",
+    "test:sync-collab": "node scripts/sync-collab-regression.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",

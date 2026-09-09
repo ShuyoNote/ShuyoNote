@@ -26,6 +26,7 @@ import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
+import { CommentsDrawer } from "./components/CommentsDrawer";
 import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
@@ -37,6 +38,8 @@ import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
+import { usePresence } from "./hooks/usePresence";
+import { useSyncStream } from "./hooks/useSyncStream";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
@@ -515,6 +518,8 @@ function App() {
   // hold off loading and show a lock screen until the user enters the passphrase.
   const [enc, setEnc] = useState<{ enabled: boolean; locked: boolean } | null>(null);
   useAutoSync();
+  usePresence();
+  useSyncStream();
   useUpdateChecker();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
@@ -592,6 +597,7 @@ function App() {
         <ConfirmDialog />
         <InputDialog />
         <AiAssistantPanel />
+        <CommentsDrawer />
         <RightRail />
       </div>
     );
@@ -636,6 +642,7 @@ function App() {
       <InputDialog />
       <PluginManager />
       <AiAssistantPanel />
+      <CommentsDrawer />
       <RightRail />
       <ShortcutsPanel />
       <AboutDialog />

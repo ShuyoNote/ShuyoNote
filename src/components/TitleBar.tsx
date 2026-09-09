@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { PresenceBar } from "./PresenceBar";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import { useWindowChrome } from "../store/windowChrome";
@@ -140,6 +141,7 @@ export function TitleBar() {
       <div className="titlebar-title" data-tauri-drag-region title={label}>
         {label}
       </div>
+      <PresenceBar />
       {/* 同步状态搬到顶栏：自绘标题栏腾出来的这条空间总得有用处，顺带让侧栏
           少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。 */}
       {syncProfile?.server_url && syncProfile?.token && (

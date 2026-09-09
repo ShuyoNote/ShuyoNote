@@ -68,6 +68,12 @@ export interface WorkspaceSyncResult {
   last_pushed_seq: number;
   last_pulled_seq: number;
   error: string | null;
+  conflicts: SyncConflict[];
+}
+
+export interface SyncConflict {
+  entity_id: string;
+  title: string;
 }
 
 export interface EmailMeta {
@@ -256,6 +262,16 @@ export interface CommandMap {
   team_deactivate_org_member: { args: { serverUrl: string; token: string; orgId: string; userId: string }; result: void };
   team_generate_org_invite_code: { args: { serverUrl: string; token: string; orgId: string }; result: string };
   team_join_org_by_code: { args: { serverUrl: string; token: string; code: string }; result: void };
+
+  // ---- Near-realtime collaboration (P0.2 presence / P1 comments+notifications / P1.5 SSE) ----
+  team_presence_beat: { args: { serverUrl: string; token: string; spaceId: string; pageId?: string | null; deviceId?: string | null }; result: { ok: boolean; last_seen_at: number } };
+  team_online: { args: { serverUrl: string; token: string; spaceId: string }; result: { user_id: string; email?: string | null; page_id?: string | null; last_seen_at: number }[] };
+  team_list_comments: { args: { serverUrl: string; token: string; spaceId: string; pageId: string }; result: { id: string; parent_id?: string | null; author_id: string; body: string; created_at: number }[] };
+  team_add_comment: { args: { serverUrl: string; token: string; spaceId: string; pageId: string; body: string; parentId?: string | null; mentions?: string[] }; result: { id: string; created_at: number; notifications: string[] } };
+  team_delete_comment: { args: { serverUrl: string; token: string; spaceId: string; commentId: string }; result: void };
+  team_list_notifications: { args: { serverUrl: string; token: string }; result: { id: string; kind: string; actor_id: string; space_id?: string | null; page_id?: string | null; comment_id?: string | null; text: string; seen: number; created_at: number }[] };
+  team_seen_notification: { args: { serverUrl: string; token: string; id: string }; result: void };
+  team_seen_all_notifications: { args: { serverUrl: string; token: string }; result: void };
 
   // ---- Properties / Database ----
   list_attr_defs: { args: undefined; result: AttrDef[] };
