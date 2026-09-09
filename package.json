@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri",
-    "changelog": "node scripts/update-changelog.mjs"
+    "changelog": "node scripts/update-changelog.mjs",
+    "test:sync-verify": "node scripts/verify-two-device-sync.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
