@@ -26,6 +26,7 @@ import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
+import { CommentsDrawer } from "./components/CommentsDrawer";
 import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
@@ -594,6 +595,7 @@ function App() {
         <ConfirmDialog />
         <InputDialog />
         <AiAssistantPanel />
+        <CommentsDrawer />
         <RightRail />
       </div>
     );
@@ -638,6 +640,7 @@ function App() {
       <InputDialog />
       <PluginManager />
       <AiAssistantPanel />
+      <CommentsDrawer />
       <RightRail />
       <ShortcutsPanel />
       <AboutDialog />

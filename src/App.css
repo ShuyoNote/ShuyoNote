@@ -14273,6 +14273,42 @@ p:has(> .editor-drawing-container) {
   overflow: hidden;
   animation: ai-slide-in var(--transition-fast) ease;
 }
+/* P1 comments / notifications drawer */
+.comments-drawer {
+  position: fixed;
+  top: var(--titlebar-h, 0);
+  right: 0;
+  bottom: 0;
+  z-index: 74;
+  width: 340px;
+  max-width: calc(100vw - 64px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  animation: ai-slide-in var(--transition-fast) ease;
+}
+.comments-drawer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.comments-drawer-tabs button {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.comments-drawer-tabs button.active { color: var(--primary); background: var(--chip-bg); }
+.comments-drawer-close { margin-left: auto; font-size: 16px; }
+.comments-drawer-body { flex: 1; overflow: auto; padding: 10px; }
 @keyframes ai-slide-in {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
