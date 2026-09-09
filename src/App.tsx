@@ -37,6 +37,7 @@ import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
+import { usePresence } from "./hooks/usePresence";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
@@ -515,6 +516,7 @@ function App() {
   // hold off loading and show a lock screen until the user enters the passphrase.
   const [enc, setEnc] = useState<{ enabled: boolean; locked: boolean } | null>(null);
   useAutoSync();
+  usePresence();
   useUpdateChecker();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
