@@ -385,6 +385,11 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
                 }
             }
             // Delete the space DB + WAL/shm.
+            if !crate::db::is_safe_space_id(sid) {
+                // 纵深防御：id 来源（meta.workspaces）理论上已被写路径校验，但防止
+                // 历史脏数据/二次污染把 `../` id 拼进删除路径（任意文件删）。
+                continue;
+            }
             for suffix in ["", "-wal", "-shm"] {
                 let p = spaces_dir.join(format!("{sid}.db{suffix}"));
                 if let Ok(m) = std::fs::metadata(&p) {

@@ -82,6 +82,18 @@ fn plugins_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// 插件 id / 目录名白名单：只允许字母数字、`_`、`.`、`-`，且不得是 `.`/`..`。
+/// 用于 `root.join(&id)` 前校验，杜绝 `id=".."` / `id="../../x"` 导致的
+/// 任意目录删除/穿越（`uninstall_plugin` 此前可 `remove_dir_all` 整个应用数据目录）。
+fn is_safe_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
 fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     let p = dir.join("manifest.json");
     let text = std::fs::read_to_string(&p).map_err(|e| format!("读取 manifest 失败: {e}"))?;
@@ -300,6 +312,48 @@ fn run_command(source: &str, command_id: &str, state: &RunState) -> Result<Strin
     Ok(s.to_std_string_escaped())
 }
 
+/// 带超时的插件命令执行：把 JS 运行放到独立线程，主线程 `recv_timeout`。
+/// 防止一个死循环插件无限占用（此前它是同步执行且持有全局 DB 锁，会让整个
+/// 应用命令面雪崩）。超时/线程 panic 均返回错误，不拖垮主线程。
+fn run_command_timeout(
+    source: &str,
+    command_id: &str,
+    state: &RunState,
+) -> Result<(String, String), String> {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let source = source.to_string();
+    let command_id = command_id.to_string();
+    // RunState 是纯数据（String/usize），可 move 进线程；RUN_STATE/thread_local
+    // 会在该线程内由 set_run_state 正确重建。
+    let state = RunState {
+        current_page_json: state.current_page_json.clone(),
+        page_count: state.page_count,
+        insert_text: String::new(),
+    };
+    std::thread::Builder::new()
+        .name("plugin-run".to_string())
+        .spawn(move || {
+            let msg = run_command(&source, &command_id, &state);
+            let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
+            let _ = tx.send((msg, insert));
+        })
+        .map_err(|e| format!("插件线程启动失败: {e}"))?;
+
+    match rx.recv_timeout(TIMEOUT) {
+        Ok((msg, insert)) => {
+            let message = msg?;
+            Ok((message, insert))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err("插件执行超时（>5s），已终止".to_string())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("插件线程异常退出".to_string())
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DB helpers for enabled state
 // ---------------------------------------------------------------------------
@@ -365,7 +419,24 @@ fn set_enabled(c: &Connection, id: &str, on: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn list_plugins(app: AppHandle, db: State<Db>) -> Result<Vec<PluginMeta>, String> {
     let root = plugins_root(&app)?;
-    let c = conn(&db);
+    // 先在锁内取各插件的 enabled 状态，随后立即释放锁（drop c），再在锁外
+    // 执行 discover_commands（跑插件顶层 JS）——避免一个坏插件的顶层代码
+    // 无限占用全局 DB 锁。
+    let mut enabled_map: std::collections::HashMap<String, bool> = Default::default();
+    {
+        let c = conn(&db);
+        let entries = std::fs::read_dir(&root).map_err(|e| e.to_string())?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if let Ok(m) = read_manifest(&path) {
+                enabled_map.insert(m.id.clone(), enabled(&c, &m.id));
+            }
+        }
+    }
+
     let mut out = Vec::new();
     let entries = std::fs::read_dir(&root).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
@@ -389,7 +460,7 @@ pub fn list_plugins(app: AppHandle, db: State<Db>) -> Result<Vec<PluginMeta>, St
             name: manifest.name,
             version: manifest.version,
             description: manifest.description,
-            enabled: enabled(&c, &pid),
+            enabled: enabled_map.get(&pid).copied().unwrap_or(false),
             commands,
         });
     }
@@ -411,34 +482,41 @@ pub fn run_plugin_command(
     command_id: String,
     current_id: Option<String>,
 ) -> Result<PluginRunResult, String> {
+    if !is_safe_plugin_id(&plugin_id) {
+        return Err("非法插件 id".to_string());
+    }
     let root = plugins_root(&app)?;
     let dir = root.join(&plugin_id);
     let manifest = read_manifest(&dir)?;
     let source = load_plugin_source(&dir, &manifest)?;
-    let c = conn(&db);
-    let page_count: usize = c
-        .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .map(|n| n as usize)
-        .unwrap_or(0);
-    let current_page_json = if let Some(id) = current_id {
-        c.query_row(
-            "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-            params![id],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap_or_default()
-    } else {
-        String::new()
+    // 读 DB 的数据在锁内取出，之后立即释放锁（drop c），再把 JS 执行放到
+    // 独立线程 + 超时 —— 避免一个死循环插件无限占住全局 DB 锁（全应用雪崩）。
+    let (page_count, current_page_json) = {
+        let c = conn(&db);
+        let page_count: usize = c
+            .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
+            .unwrap_or(0);
+        let current_page_json = if let Some(id) = current_id {
+            c.query_row(
+                "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        (page_count, current_page_json)
     };
     let state = RunState {
         page_count,
         current_page_json,
         insert_text: String::new(),
     };
-    let message = run_command(&source, &command_id, &state)?;
-    let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
+    let (message, insert) = run_command_timeout(&source, &command_id, &state)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
@@ -461,6 +539,9 @@ fn copy_dir(src: &Path, dest: &Path) -> Result<(), String> {
 
 #[tauri::command]
 pub fn uninstall_plugin(app: AppHandle, id: String) -> Result<(), String> {
+    if !is_safe_plugin_id(&id) {
+        return Err("非法插件 id".to_string());
+    }
     let root = plugins_root(&app)?;
     let dir = root.join(&id);
     if !dir.is_dir() {
@@ -477,6 +558,9 @@ pub fn install_plugin(app: AppHandle, source_path: String) -> Result<PluginMeta,
         return Err("插件源目录不存在".to_string());
     }
     let manifest = read_manifest(&src)?;
+    if !is_safe_plugin_id(&manifest.id) {
+        return Err("非法插件 id（manifest.id）".to_string());
+    }
     let dest = plugins_root(&app)?.join(&manifest.id);
     if dest.exists() {
         return Err("同名插件已存在".to_string());

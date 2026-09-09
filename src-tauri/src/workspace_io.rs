@@ -243,10 +243,14 @@ pub async fn import_workspace(
     .map_err(|e| e.to_string())??;
 
     // Decide a fresh workspace id (import never clobbers an existing space).
+    // 安全：zip 内的 workspace id 不可信（可能为 `../../x` 等穿越值），必须先过
+    // `is_safe_space_id` 白名单再用于 `spaces/<id>.db` 路径拼接；不安全即改用 UUID。
     let new_id = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let base = meta_file.as_ref().map(|m| m.id.clone()).filter(|i| !i.is_empty());
-        let mut candidate = base.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let raw = meta_file.as_ref().map(|m| m.id.clone()).filter(|i| !i.is_empty());
+        let mut candidate = raw
+            .filter(|i| crate::db::is_safe_space_id(i))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         // Ensure uniqueness against meta.workspaces.
         loop {
             let exists: bool = c

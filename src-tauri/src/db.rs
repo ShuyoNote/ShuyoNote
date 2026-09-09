@@ -28,7 +28,7 @@ pub(crate) fn space_db_path(app_data_dir: &Path, space_id: &str) -> PathBuf {
 /// from meta (trusted), but `open_space_conn` takes it from an IPC parameter, so
 /// validate it on both open paths to prevent `../` from opening an arbitrary
 /// SQLite file outside the spaces dir.
-fn is_safe_space_id(id: &str) -> bool {
+pub fn is_safe_space_id(id: &str) -> bool {
     !id.is_empty()
         && !id.contains('/')
         && !id.contains('\\')
