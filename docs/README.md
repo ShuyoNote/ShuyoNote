@@ -72,7 +72,7 @@ CHANGELOG.md             # 版本变更日志
 | **M3** | 主题 / 外观自定义 + 插件雏形 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md) |
 | **M4** | 属性驱动仪表盘聚合 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M5** | PDF 导出 | [x] | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
-| **M6** | 移动端适配 | 🗓（WebView 壳进行中） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃）+ [移动端适配](MOBILE.md) |
+| **M6** | 移动端适配 | [规划]（WebView 壳进行中） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃）+ [移动端适配](MOBILE.md) |
 | **M7** | 数据库视图扩展 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M8** | 新页面引导层 | [x] | — |
 | **M9** | 模板 | [x] | [模板方案](plans/2026-08-22-template-plan.md) |
