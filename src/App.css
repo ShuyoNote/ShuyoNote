@@ -18014,3 +18014,45 @@ p:has(> .editor-drawing-container) {
 .email-paste { display: flex; flex-direction: column; gap: 8px; }
 
 
+
+/* ---------------------------------------------------------------------------
+ * 移动端 / 小屏响应式（手机浏览器 + WebView 壳）：<=768px
+ * - 侧栏变左侧抽屉 overlay（不占主区宽度），主区全屏。
+ * - 右侧 AI / 评论抽屉全屏叠加。
+ * - 活动栏保留（瘦条导航）。
+ * ------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  /* 侧栏：显示时不再占 flex 流，改为左侧滑入抽屉 + 遮罩。 */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: min(320px, 88vw);
+    min-width: 0;
+    max-width: 88vw;
+    box-shadow: var(--shadow-xl);
+    animation: mobile-sidebar-in var(--transition-fast) ease;
+  }
+  @keyframes mobile-sidebar-in {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  /* 侧栏收起后主区自动全宽（sidebar 不再占 flex 流）。 */
+  .main {
+    width: 100%;
+  }
+  /* 右抽屉：AI / 评论，窄屏全屏叠加。 */
+  .ai-panel,
+  .comments-drawer {
+    width: 100%;
+    max-width: 100%;
+  }
+  /* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
+  .titlebar-sync,
+  .presence-bar {
+    display: none;
+  }
+}
+
