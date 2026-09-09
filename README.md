@@ -254,7 +254,10 @@ flowchart TB
 
 - **Node.js** ≥ 20 + **pnpm**
 - **Rust** stable（1.94+，MSRV 见 `src-tauri/Cargo.toml` 的 `rust-version`）与 cargo
+- **Tauri 2 系统依赖**（Windows WebView2 / macOS Xcode CLT / Linux `libwebkit2gtk-4.1` 等）
 - Windows / macOS / Linux
+
+> 完整的分平台搭建步骤（Node/pnpm/Rust/系统依赖，直到 `pnpm tauri dev` 跑起来）见 [docs/development.md](docs/development.md)「环境准备」。
 
 ## 构建发布
 
