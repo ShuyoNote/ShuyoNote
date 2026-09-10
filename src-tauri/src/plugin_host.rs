@@ -43,6 +43,145 @@ pub const HOST_FLAG: &str = "--plugin-host";
 /// 既不可靠也不是我们该依赖的东西。只在 debug 构建里认这个开关，生产二进制根本不看它。
 pub const CRASH_FLAG: &str = "--crash-on-run";
 
+/// 宿主子进程的常驻内存上限（D6 拍板：默认 256 MiB）。
+///
+/// 这是**进程级兜底**：Boa 侧的内存预算（限流分配器）先兜一道，但预算只统计走了我们那条
+/// 分配路径的分配，且它管不了碎片、管不了 `mmap` 之类的原生用量。RSS 看门狗是"无论如何都
+/// 不许把机器吃干"的那一层——超了就直接杀（见方案 §3.5）。
+pub const HOST_RSS_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// 看门狗轮询间隔：够快到能拦住增长，又不至于把 CPU 花在轮询上。
+const RSS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// 读一个进程的**常驻内存**（字节）。读不到就返回 `None`——不猜、不编。
+///
+/// 平台差异如实写在这里：Linux 读 `/proc/<pid>/statm`（干净、无副作用）；macOS 借 `ps`
+/// （不想为这一件事引入 libc/`libproc` 绑定，而 `ps` 是系统自带的）；Windows 还没有实现
+/// （见方案 §8.2 的"仍未做"）——那边要 `GetProcessMemoryInfo`，得引 winapi 之类。
+pub fn resident_bytes(pid: u32) -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        // statm 的字段（页数）：size resident shared text lib data dt
+        let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+        let resident_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+        // 页大小：Linux 上应用实际会用到的常见值就是 4 KiB；用 `sysconf` 要引 libc，
+        // 而这里只要"够准到能拦暴走"，宁可简单。
+        return Some(resident_pages * 4096);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let kib: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+        return Some(kib * 1024);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// RSS 看门狗：在子进程跑插件期间轮询它的常驻内存，超限就杀。
+struct RssWatchdog {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    over_limit: Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RssWatchdog {
+    fn start(killer: HostKiller, limit: u64, poll: std::time::Duration) -> Self {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let stop = Arc::new(AtomicBool::new(false));
+        let over_limit = Arc::new(AtomicBool::new(false));
+        let (stop2, over2, killer2) = (stop.clone(), over_limit.clone(), killer.clone());
+        let handle = std::thread::Builder::new()
+            .name("plugin-host-rss".to_string())
+            .spawn(move || {
+                while !stop2.load(Ordering::Relaxed) {
+                    if let Some(bytes) = resident_bytes(killer2.pid) {
+                        if bytes > limit {
+                            over2.store(true, Ordering::Relaxed);
+                            // 超限就杀：这一层不跟插件商量（方案 §3.5）。
+                            killer2.kill();
+                            return;
+                        }
+                    }
+                    std::thread::sleep(poll);
+                }
+            })
+            .ok();
+        RssWatchdog { stop, over_limit, handle }
+    }
+
+    fn stop_and_join(&mut self) {
+        use std::sync::atomic::Ordering;
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+
+    fn tripped(&self) -> bool {
+        self.over_limit.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// 传给宿主子进程的环境变量**白名单**（方案 §3.7：默认全不给）。
+///
+/// 为什么不是彻底清空：子进程要**起得来**。Linux/AppImage 上 `LD_LIBRARY_PATH` 少了，
+/// 动态加载器根本找不到 webkit 那堆库（我们起动的是同一个二进制），进程直接死在 loader 里；
+/// Windows 少了 `SystemRoot` 同理。所以留下的是"能起来"必需的那几个 + locale/临时目录，
+/// **其余一律不传**——尤其是应用自己可能带的各种 token/密钥/路径类变量，不可信代码不该在
+/// 环境里捡到任何东西。
+const ENV_ALLOW: &[&str] = &[
+    // 动态加载器（少了就起不来）
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "APPDIR",
+    "OWD",
+    // Windows 必需
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "PATH",
+    "PATHEXT",
+    // 时区/编码/临时目录（不影响安全性，但缺了会出各种怪问题）
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "HOME",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+];
+
+/// 组装"起一个宿主子进程"的命令行。**单独抽出来是为了能测**：环境白名单这种约定，
+/// 不测就只能靠人记得（而它一旦退化，表现是"插件的进程里能看到应用的密钥"这种没人发现的错）。
+fn host_command(exe: &std::path::Path, extra_args: &[&str]) -> Command {
+    let mut cmd = Command::new(exe);
+    cmd.arg(HOST_FLAG)
+        .args(extra_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        // stderr 继承：子进程的 panic 信息直接进父进程的日志/控制台，不吞掉。
+        .stderr(Stdio::inherit());
+    cmd.env_clear();
+    for key in ENV_ALLOW {
+        if let Ok(v) = std::env::var(key) {
+            cmd.env(key, v);
+        }
+    }
+    cmd
+}
+
 /// 子进程是不是被要求"跑插件前先崩"（只影响 debug 构建）。
 fn crash_on_run_requested() -> bool {
     if !cfg!(debug_assertions) {
@@ -354,6 +493,9 @@ pub struct HostClient {
     stdout: BufReader<ChildStdout>,
     /// 握手时子进程报上来的 pid（日志用；测试也靠它断言"确实另起了一个进程"）。
     pub child_pid: u32,
+    /// 常驻内存上限与轮询间隔（测试里可以调小，用来确定性地验证"超限即杀"）。
+    rss_limit: u64,
+    rss_poll: std::time::Duration,
 }
 
 /// 只有"杀"和"看退出状态"两件事的句柄（超时路径用它，不用把整个 client 搬来搬去）。
@@ -415,14 +557,7 @@ impl HostClient {
     /// 同 [`HostClient::spawn_with_exe`]，但可以额外塞命令行参数（**测试专用**，例如
     /// `--crash-on-run`；生产只传 `--plugin-host`）。
     pub fn spawn_with_exe_args(exe: &std::path::Path, extra_args: &[&str]) -> Result<Self, String> {
-        let mut child = Command::new(exe)
-            .arg(HOST_FLAG)
-            .args(extra_args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // stderr 继承：子进程的 panic 信息直接进父进程的日志/控制台，
-            // 不吞掉（阶段 1 不解析它，但也不该消失）。
-            .stderr(Stdio::inherit())
+        let mut child = host_command(exe, extra_args)
             .spawn()
             .map_err(|e| format!("起插件宿主子进程失败：{e}"))?;
 
@@ -433,6 +568,8 @@ impl HostClient {
             stdin,
             stdout: BufReader::new(stdout),
             child_pid: 0,
+            rss_limit: HOST_RSS_LIMIT_BYTES,
+            rss_poll: RSS_POLL_INTERVAL,
         };
         client.handshake()?;
         Ok(client)
@@ -484,10 +621,14 @@ impl HostClient {
         F: FnMut(&str, &str) -> Result<String, String>,
     {
         write_frame(&mut self.stdin, &HostIn::Run(req)).map_err(|e| e.to_string())?;
-        loop {
+
+        // RSS 看门狗：跑插件期间盯着常驻内存，超限直接杀（进程级兜底，见方案 §3.5）。
+        let mut watchdog = RssWatchdog::start(self.killer(), self.rss_limit, self.rss_poll);
+
+        let outcome = loop {
             match read_frame::<_, HostOut>(&mut self.stdout) {
-                Ok(Some(HostOut::Done(res))) => return Ok(res),
-                Ok(Some(HostOut::Failed { code, message })) => return Err(format!("{code}: {message}")),
+                Ok(Some(HostOut::Done(res))) => break Ok(res),
+                Ok(Some(HostOut::Failed { code, message })) => break Err(format!("{code}: {message}")),
                 Ok(Some(HostOut::Cap { id, method, args_json })) => {
                     let reply = match server(&method, &args_json) {
                         Ok(value) => HostIn::CapResult { id, ok: true, value, error: String::new() },
@@ -495,20 +636,37 @@ impl HostClient {
                     };
                     write_frame(&mut self.stdin, &reply).map_err(|e| e.to_string())?;
                 }
-                Ok(Some(HostOut::Ready { .. })) => return Err("宿主子进程重复握手".into()),
+                Ok(Some(HostOut::Ready { .. })) => break Err("宿主子进程重复握手".into()),
                 // 通道断了：**区分"插件把进程搞崩了"和"协议/管道出问题"**——前者是作者的
                 // bug（要指出来），后者是宿主的问题（别赖到插件头上）。
                 Ok(None) => {
-                    return Err(format!("plugin_crash: 宿主进程异常退出（{}）", self.killer().describe_exit()))
+                    break Err(format!("plugin_crash: 宿主进程异常退出（{}）", self.killer().describe_exit()))
                 }
                 Err(e) => {
-                    return Err(format!(
+                    break Err(format!(
                         "plugin_crash: 宿主进程异常退出（{}）：{e}",
                         self.killer().describe_exit()
                     ))
                 }
             }
+        };
+
+        let tripped = watchdog.tripped();
+        watchdog.stop_and_join();
+        if tripped {
+            // 看门狗先杀的：这时读通道必然也失败了，但原因要说对——是内存超限，不是"崩了"。
+            return Err(format!(
+                "out_of_memory: 插件宿主进程常驻内存超过上限（{} MiB），已终止",
+                self.rss_limit / (1024 * 1024)
+            ));
         }
+        outcome
+    }
+
+    /// 调整常驻内存上限与轮询间隔（测试用：调成 1 字节就能确定性地验证"超限即杀"）。
+    pub fn set_rss_limit(&mut self, bytes: u64, poll: std::time::Duration) {
+        self.rss_limit = bytes;
+        self.rss_poll = poll;
     }
 
     /// 拿一个只管"杀/看退出状态"的句柄（超时路径用）。
@@ -556,6 +714,38 @@ mod tests {
             page_count: 0,
             mode: HostRunMode::Command,
         }
+    }
+
+    #[test]
+    fn the_child_inherits_only_the_allowlisted_environment() {
+        // 「默认全不给」是这条边界的一部分：不可信代码不该在环境里捡到应用的东西。
+        let cmd = host_command(std::path::Path::new("/bin/true"), &["--crash-on-run"]);
+        let keys: Vec<String> = cmd
+            .get_envs()
+            .map(|(k, _)| k.to_string_lossy().to_string())
+            .collect();
+        for k in &keys {
+            assert!(
+                ENV_ALLOW.contains(&k.as_str()),
+                "子进程环境里出现了白名单外的 {k}（应用自己的变量不该递给插件进程）"
+            );
+        }
+        // 参数也要照传（测试开关靠它）
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        assert_eq!(args, vec![HOST_FLAG.to_string(), CRASH_FLAG.to_string()]);
+    }
+
+    #[test]
+    fn a_secret_in_our_environment_is_not_passed_on() {
+        std::env::set_var("SHUYONOTE_TEST_SECRET", "别传给我");
+        let cmd = host_command(std::path::Path::new("/bin/true"), &[]);
+        let leaked: Vec<String> = cmd
+            .get_envs()
+            .filter(|(k, _)| k.to_string_lossy().contains("SECRET"))
+            .map(|(k, _)| k.to_string_lossy().to_string())
+            .collect();
+        std::env::remove_var("SHUYONOTE_TEST_SECRET");
+        assert!(leaked.is_empty(), "应用环境里的 SHUYONOTE_TEST_SECRET 被递给子进程了：{leaked:?}");
     }
 
     #[test]

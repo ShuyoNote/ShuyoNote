@@ -266,7 +266,7 @@
 | 0. 前置 | ✅ | CI 已有 `cargo test --lib`；阶段 1 扩为 `cargo test`（含集成测试） |
 | 1. 协议与子进程骨架 | ✅ | `plugin_host.rs`（协议 + 帧编解码 + 子进程主循环 + `HostClient`）、`lib.rs` 的 `--plugin-host` 分流（在 Tauri 之前）、`cap_stub` 假能力、4 个集成测试 |
 | 2. 能力 RPC 上移 | ✅ **已完成（2a + 2b）** | **2a**：协议加 `Cap` / `CapResult` 两帧、子进程 `__cap` 走 IPC、父进程 `run_with_server` 提供能力服务。**2b**：`run_plugin_command` 与事件派发**都改走 `run_command_via_host` / `run_event_via_host`**（装 RunState → 起子进程 → 同步回答能力 → 合并产出）；`cap_stub` 与 `CapMode` **已删除**（D7：只留一条路）；那 14 处直接调 `run_command_timeout` / `run_event_timeout` 的测试**全部迁到生产那条路**（`run_command_in_host_for_test` 起真子进程），176 个 lib 测试 + 7 个集成测试全绿。**应用现在真的跑在子进程上。** |
-| 3. 生命周期与上限 | 🚧 **3a 已完成，3b 待做** | **3a（本轮）**：超时 = **真杀进程**（调用方到点就 `kill`，子进程与工作线程一起收摊；错误码 `timeout`）、崩溃语义（异常退出 → `plugin_crash` + 退出码/信号，与"协议坏了"分开说）、`HostKiller` 共享句柄（父进程要能在一条线程死等它时、从另一条线程杀它）、错误码归一到**注册表**（此前自造的 `plugin_budget`/`plugin_timeout` 文档里查不到；Boa 的循环预算也归到 `loop_limit`）、新增注册表错误码 `plugin_crash`。**3b 待做**：三平台 rlimit / Job Object + RSS 看门狗、env 清空、崩溃与 RSS 进审计、取消接前端按钮、打包产物手工验收 |
+| 3. 生命周期与上限 | 🚧 **3a + 3b 主体已完成** | **3a**：超时 = **真杀进程**、崩溃语义（`plugin_crash` + 退出码/信号）、`HostKiller` 共享句柄、错误码归一到注册表并新增 `plugin_crash`。**3b（本轮）**：**RSS 看门狗**（进程级兜底，默认 256 MiB，100 ms 轮询，超限即杀并报 `out_of_memory`；Linux 读 `/proc/<pid>/statm`、macOS 借 `ps`）、**子进程环境白名单**（`env_clear` + 只留"起得来"必需的动态加载器/locale/临时目录那几项；应用自己的变量——尤其是 token/密钥类——一律不递）、`set_rss_limit` 让测试能确定性地验证"超限即杀"。**仍未做**：Windows 的 RSS（要 `GetProcessMemoryInfo`）、Linux rlimit / Windows Job Object 这类**硬**上限（RSS 看门狗是轮询式的兜底，不是内核强制的账目）、崩溃与峰值 RSS 进审计、取消接前端按钮、打包产物手工验收、13 处进程内测试的迁移 |
 | 4. 收口与观测 | ⏳ | 启动开销基准、峰值 RSS 进审计、文档与前端文案 |
 
 **2b 落地后的实测开销**（release 档、热启动、本机 macOS；一次调用 = 一次进程启动 + 每个能力一次 IPC）：
@@ -290,9 +290,22 @@
 （如 `legacy_globals_go_through_the_same_permission_check`）会因此多起几次子进程。**留待下一轮
 与 3b 一起做**，不假装已经清完。
 
-**仍未做的（阶段 3b）**：三平台 OS 级上限（Linux rlimit / Windows Job Object）+ RSS 看门狗、
-env 清空、崩溃与峰值 RSS 进审计、**取消接前端按钮**（现在只有超时会杀），以及**打包产物上的手工
-验收**（§6.3：装一个恶意插件、看应用不崩、退出后 `ps` 无残留）——到现在为止，验证都发生在
+**3b 的实测数据**（release 档，macOS）：
+
+| 场景 | 常驻内存（RSS） |
+|---|---|
+| 刚起来的空闲宿主子进程 | **10.5 MiB** |
+| 跑一个分配约 4 MB JS 数组的插件（峰值） | **30.4 MiB** |
+| 默认上限（D6 拍板） | 256 MiB |
+
+也就是说 256 MiB 这个默认值对"正常插件"很宽松（基线之上还有 200+ MiB），而它要拦的是暴走型
+插件——Boa 侧的内存预算（64 MiB，限流分配器）先兜一道，RSS 看门狗兜住预算看不到的那部分
+（碎片、原生用量、以及"预算只算我们那条分配路径"的边界）。
+
+**仍未做的（阶段 3b 收尾）**：Windows 的 RSS 读数（要 `GetProcessMemoryInfo`）、Linux rlimit /
+Windows Job Object 这类**内核强制**的硬上限（现在这层是轮询兜底）、崩溃与峰值 RSS 进审计、
+**取消接前端按钮**（现在只有超时会杀）、13 处进程内测试的迁移，以及**打包产物上的手工验收**
+（§6.3：装一个恶意插件、看应用不崩、退出后 `ps` 无残留）——到现在为止，验证都发生在
 `cargo test` 的真子进程 + 真 IPC 上，还没有在打包后的 GUI 里点过一次插件命令。
 
 **阶段 1/2a 的已知限制**（如实记着，阶段 2b/3 会消掉）：

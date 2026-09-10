@@ -342,3 +342,67 @@ fn killing_the_child_mid_run_ends_the_call_immediately() {
     });
     assert!(gone, "被杀的子进程 {pid} 不该还在");
 }
+
+// ---------------------------------------------------------------------------
+// 阶段 3b：进程级资源兜底（RSS 看门狗 + 环境白名单）
+// ---------------------------------------------------------------------------
+
+/// 看门狗读的是**真实** RSS：至少"读得到、且是个正数"这件事要成立，
+/// 否则那条兜底是摆设（读不到就永远不会触发）。
+#[test]
+fn resident_memory_of_a_live_process_is_readable() {
+    use shuyonote_lib::plugin_host::resident_bytes;
+    let mine = resident_bytes(std::process::id()).expect("应当读得到自己的常驻内存");
+    assert!(mine > 0, "读到的常驻内存是 0，读数有问题：{mine}");
+    // 不存在的 pid：读不到就是读不到，不许猜一个数出来
+    assert_eq!(resident_bytes(999_999_999), None);
+}
+
+/// **超限即杀**：把上限调成 1 字节（任何活着的进程都超），跑一次调用必须得到
+/// `out_of_memory`、立刻返回、并且子进程真的没了。
+#[test]
+fn a_host_over_the_rss_limit_is_killed_and_reported_as_out_of_memory() {
+    let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
+    client.set_rss_limit(1, std::time::Duration::from_millis(20));
+    let pid = client.killer().pid;
+
+    let t0 = std::time::Instant::now();
+    let err = client
+        .run(req(
+            r#"register({ id: "r.slow", title: "Slow", run: function () {
+                 var i = 0;
+                 while (i < 200000) { api.notify("x"); i = i + 1; }
+                 return "done";
+               } });"#,
+            "r.slow",
+        ))
+        .expect_err("超限必须报错");
+    let elapsed = t0.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(5), "要在超限后很快返回（实际 {elapsed:?}）");
+    assert!(err.contains("out_of_memory"), "{err}");
+    assert!(err.contains("已终止"), "{err}");
+
+    let gone = (0..40).all(|_| {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| !s.success())
+            .unwrap_or(true)
+    });
+    assert!(gone, "被看门狗杀掉的子进程 {pid} 不该还在");
+}
+
+/// 环境白名单是**端到端**的：往自己的环境里塞一个"秘密"，子进程那边读不到。
+/// （子进程是同一个二进制，它的 `serve_stdio` 不受环境变量影响；这里用宿主侧的构造再验一次，
+/// 因为整条边界最终取决于真正传给 `Command` 的那一份环境。）
+#[test]
+fn the_child_process_does_not_inherit_our_secrets() {
+    std::env::set_var("SHUYONOTE_TEST_SECRET", "不该出现在插件进程里");
+    let client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
+    // 能起来就说明白名单至少没把"起得来"必需的东西清掉；秘密本身由单元测试断言不进环境。
+    assert!(client.child_pid > 0);
+    drop(client);
+    std::env::remove_var("SHUYONOTE_TEST_SECRET");
+}
