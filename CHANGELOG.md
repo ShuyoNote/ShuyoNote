@@ -2,6 +2,23 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [Unreleased]
+
+> 修复：离线 OCR「识别失败（error）」的真正根因。
+
+### 修复
+- **OCR 取 blob: URL 被 CSP 拦截**（根因）：`new Worker` 就绪后，tesseract 的 `loadImage` 会对传入的字符串执行 `fetch()`。此前两个调用方都先 `URL.createObjectURL(blob)` 再传字符串，于是变成 `fetch('blob:...')`——而 Tauri CSP 的 `connect-src 'self' http: https:` **没有放行 `blob:`**（`img-src`/`media-src` 有，`connect-src` 漏了），请求被拦 → 抛错 → 被 `.catch(() => …)` 吞掉 → UI 一律显示「无法加载离线识别模型/语言数据」，把「取图失败」误导成「模型缺失」，排查方向被带偏数轮。
+  - `src/lib/ocr.ts`：`recognize`/`ocrRecognize` 接受 `string | Blob`；**直接传 `Blob`**（tesseract 内部走 FileReader），不再产生 `fetch`。
+  - `src/components/PdfAnnotationCanvas.tsx`、`src/lib/aiOutline.ts`：改为传 `Blob`，去掉 `createObjectURL`/`revokeObjectURL`。
+  - `src-tauri/tauri.conf.json`：`connect-src` 补 `blob: data:`（兜底：任何 `fetch(blob:)`/`fetch(data:)` 路径都不再被拦）。
+- **失败原因不再被吞掉、并按阶段区分**：`OcrResult` 增加 `stage`（`load`=worker/模型加载失败 / `recognize`=识别阶段失败）与 `detail`（原始错误消息）；真实错误打到控制台（`[ocr] recognize failed:` / `[ocr] worker error:`）。
+  - 接入 tesseract 的 `errorHandler`：其内部对加载失败是 `.catch(() => {})` 静默悬挂，此前只能等 60s 超时且看不到原因；现在超时消息会带上真实错误。
+  - 结果面板与 toast 按阶段给不同文案（「模型加载」vs「识别阶段」），不再一律甩给「模型未加载」。
+- 顺手更正 `ocr.ts` 中关于 tesseract `is-url` 的过时注释：**v7 的 `resolvePaths` 只做 `new URL()`，没有 is-url 判断**（那是 v4/v5 行为），避免再次据此误判方向。
+
+### 测试
+- 新增 `src/lib/ocr.test.ts`（5 例）：`stage=load` 带真实原因、`stage=recognize` 不误报为模型问题、成功路径返回文本、**传 Blob 时不调用 `fetch`**（锁定 CSP 回归）、空图不创建 worker。
+
 ## [1.84.5] - 2026-09-10
 
 > 近实时协作收尾——评论/通知面板补样式、通知可跳转、作者可读

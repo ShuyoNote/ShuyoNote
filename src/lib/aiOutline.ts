@@ -72,13 +72,11 @@ export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<Ou
       let t = cache.get(i);
       if (t === undefined) {
         const blob = await o.renderPage(o.attachmentId, i, OCR_OUTLINE_SCALE);
-        const url = URL.createObjectURL(blob);
-        try {
-          const res = await ocr.recognize(url);
-          t = res.text ?? "";
-        } finally {
-          URL.revokeObjectURL(url);
-        }
+        // 直接传 Blob（tesseract 内部用 FileReader）。不要转 objectURL 再传字符串：
+        // 那样 tesseract 会 `fetch('blob:...')`，桌面壳 CSP 的 connect-src 未放行 blob: 时会被拦，
+        // 表现为「识别失败/像模型没加载」，实为取图失败。
+        const res = await ocr.recognize(blob);
+        t = res.text ?? "";
         cache.set(i, t);
       }
       texts[i - o.start] = t;
