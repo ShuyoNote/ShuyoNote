@@ -11,6 +11,7 @@ import { DatabaseView } from "./components/DatabaseView";
 import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
+import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -608,6 +609,7 @@ function App() {
           </div>
         </div>
         <CommandPalette />
+      <PluginViewOverlay />
         <ShortcutsPanel />
         <AboutDialog />
         <SettingsDialog />
@@ -685,6 +687,7 @@ function App() {
       )}
       </div>
       <CommandPalette />
+      <PluginViewOverlay />
       <Toaster />
       <ConfirmDialog />
       <InputDialog />

@@ -157,6 +157,25 @@ export interface PluginSetting {
   default?: unknown;
 }
 
+/**
+ * 声明式视图（`runtime: "declarative"` 的插件唯一的产出方式）。
+ *
+ * 宿主按这份声明查询并渲染——插件侧**没有代码**，这正是它安全的原因。
+ */
+export interface PluginView {
+  id: string;
+  title: string;
+  query: {
+    kind?: string;
+    title_contains?: string;
+    updated_within_days?: number;
+    sort?: string;
+    limit?: number;
+  };
+  columns: string[];
+  summary: boolean;
+}
+
 /** 一条校验问题。`severity=error` 会让插件装不进去/跑不起来，`warning` 只是建议。 */
 /** 一次事件派发给某个插件的结果（后端 `emit_plugin_event`）。 */
 export interface PluginEventOutcome {
@@ -201,6 +220,10 @@ export interface PluginMeta {
   permissions_baseline: boolean;
   /** 声明订阅的事件（用户没点命令时也会运行）——启用前必须让用户看到。 */
   events: PluginEventMeta[];
+  /** 运行档：`logic`（有代码）或 `declarative`（零 JS，只有声明）。 */
+  runtime: string;
+  /** 声明式视图（宿主渲染）。 */
+  views: PluginView[];
 }
 
 export interface PluginPermissionMeta {

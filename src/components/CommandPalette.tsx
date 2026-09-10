@@ -4,6 +4,7 @@ import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
 import { runPluginCommandWithUi } from "../lib/pluginRun";
 import { usePalette } from "../store/palette";
+import { usePluginViewStore } from "../store/pluginViews";
 import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
 import { buildCommandArgs, initialParamValues } from "../lib/pluginParams";
@@ -23,7 +24,14 @@ type Item =
       /** 命令参数声明：非空时先渲染宿主生成的参数表单，再执行。 */
       params?: PluginCommandParam[];
     }
-  | { kind: "plugin-toggle"; pluginId: string; title: string };
+  | { kind: "plugin-toggle"; pluginId: string; title: string }
+  | {
+      kind: "plugin-view";
+      pluginId: string;
+      pluginName: string;
+      view: import("../types").PluginView;
+      title: string;
+    };
 
 export function CommandPalette() {
   const { t } = useTranslation();
@@ -106,8 +114,23 @@ export function CommandPalette() {
     return out;
   }, [plugins, q]);
 
+  // 声明式视图（零代码插件的产出）：宿主渲染，所以这里只是"打开哪个视图"的入口。
+  const viewItems = useMemo<Item[]>(() => {
+    const out: Item[] = [];
+    for (const p of plugins) {
+      if (!p.enabled) continue;
+      for (const v of p.views ?? []) {
+        const title = `插件视图：${v.title || v.id}`;
+        if (!q || title.toLowerCase().includes(q)) {
+          out.push({ kind: "plugin-view", pluginId: p.id, pluginName: p.name, view: v, title });
+        }
+      }
+    }
+    return out;
+  }, [plugins, q]);
+
   const flat = useMemo(
-    () => [...pageItems, ...cmdItems, ...pluginItems],
+    () => [...pageItems, ...cmdItems, ...pluginItems, ...viewItems],
     [pageItems, cmdItems, pluginItems],
   );
   useEffect(() => setSel(0), [query]);
@@ -165,6 +188,11 @@ export function CommandPalette() {
       await runPlugin(item);
       return;
     }
+    if (item.kind === "plugin-view") {
+      usePluginViewStore.getState().open(item.pluginId, item.pluginName, item.view);
+      setOpen(false);
+      return;
+    }
     if (item.kind === "plugin-toggle") {
       // toggle 会把后端的原始错误文本带回来：失败时**不能**报成功。
       const r = await usePlugins.getState().toggle(item.pluginId);
@@ -211,18 +239,24 @@ export function CommandPalette() {
 
   const renderItem = (it: Item, idx: number) => (
     <button
-      key={`${it.kind}-${"id" in it ? it.id : it.pluginId}`}
+      key={`${it.kind}-${"id" in it ? it.id : it.kind === "plugin-view" ? `view:${it.view.id}` : it.pluginId}`}
       className={`palette-item ${idx === sel ? "palette-item-active" : ""}`}
       onClick={() => run(it)}
       onMouseEnter={() => setSel(idx)}
     >
       <span className="palette-title">
-        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : ""}
+        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : it.kind === "plugin-view" ? "▦ " : ""}
         {it.title}
         {it.kind === "plugin" && (it.params?.length ?? 0) > 0 && <span className="palette-params-badge">需填参数</span>}
       </span>
       <span className="palette-desc">
-        {it.kind === "page" ? "打开页面" : it.kind === "plugin-toggle" ? "切换插件" : it.description ?? ""}
+        {it.kind === "page"
+          ? "打开页面"
+          : it.kind === "plugin-toggle"
+            ? "切换插件"
+            : it.kind === "plugin-view"
+              ? `来自插件「${it.pluginName}」`
+              : (it.description ?? "")}
       </span>
     </button>
   );
@@ -281,6 +315,10 @@ export function CommandPalette() {
             <div className="palette-group">{t("common.palettePlugins")}</div>
           )}
           {pluginItems.map((it, i) => renderItem(it, pageItems.length + cmdItems.length + i))}
+          {viewItems.length > 0 && <div className="palette-group">插件视图</div>}
+          {viewItems.map((it, i) =>
+            renderItem(it, pageItems.length + cmdItems.length + pluginItems.length + i),
+          )}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}
         </div>
         )}

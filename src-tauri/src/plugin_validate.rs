@@ -83,6 +83,10 @@ pub struct ValidateReport {
     pub events: Vec<PluginEventMeta>,
     /// 声明的可配置项（宿主据此渲染设置表单）。
     pub settings: Vec<crate::plugins::SettingDecl>,
+    /// 运行档：`logic`（有代码）或 `declarative`（零 JS，只有声明）。
+    pub runtime: String,
+    /// 声明式视图（宿主渲染；逻辑档恒为空）。
+    pub views: Vec<crate::plugins::ViewDecl>,
     /// 是否走了老 manifest 的基线授权（作者应显式声明）。
     pub permissions_baseline: bool,
     pub problems: Vec<PluginProblem>,
@@ -91,6 +95,125 @@ pub struct ValidateReport {
 impl ValidateReport {
     pub fn errors(&self) -> impl Iterator<Item = &PluginProblem> {
         self.problems.iter().filter(|p| p.severity == "error")
+    }
+}
+
+/// 声明式（零代码）插件的校验。
+///
+/// **单独一个函数**，而不是在主流程里插条件分支：两档的检查项几乎没有交集——声明式没有
+/// 入口文件、没有 Boa 语法、没有命令注册、也不需要权限/事件/设置；硬塞在一起只会让
+/// 「逻辑档走到一半被声明式的判断截住」这种错法变得容易发生（写这段时就这么错过一次）。
+#[allow(clippy::too_many_arguments)]
+fn validate_declarative(
+    value: Option<&serde_json::Value>,
+    dir_name: String,
+    id: String,
+    name: String,
+    version: String,
+    api_version: String,
+    main: String,
+    mut problems: Vec<PluginProblem>,
+) -> ValidateReport {
+    let views: Vec<crate::plugins::ViewDecl> = value
+        .and_then(|v| manifest_from_value(v, &dir_name))
+        .and_then(|m| m.views.clone())
+        .unwrap_or_default();
+
+    // 声明式插件没有代码，所以权限/事件/设置都无从使用——写了要**如实告知**，
+    // 而不是默默收下（那会让作者以为自己申请到了什么）。
+    if let Some(v) = value {
+        for (field, code, msg) in [
+            ("permissions", "declarative_has_permissions", "声明式插件没有代码，manifest.permissions 不会被用到（它可以不申请任何权限）"),
+            ("events", "declarative_has_events", "声明式插件没有代码，manifest.events 收不到任何事件（需要事件就用 logic 档）"),
+            ("settings", "declarative_has_settings", "声明式插件没有代码去读设置（需要用户可配就用 logic 档）"),
+            ("main", "declarative_has_main", "runtime=declarative 时 main.js 不会被读取或执行（零代码正是它安全的原因），建议删掉这个字段与文件"),
+        ] {
+            if v.get(field).is_some() {
+                problems.push(PluginProblem::warn(code, msg, Some("manifest.json")));
+            }
+        }
+    }
+
+    if views.is_empty() {
+        problems.push(PluginProblem::error(
+            "declarative_no_views",
+            "声明式插件必须声明至少一个 views：它没有代码，视图就是它唯一的产出（否则装了也不会显示任何东西）",
+            Some("manifest.json"),
+        ));
+    }
+    if views.len() > crate::plugins::MAX_VIEWS {
+        problems.push(PluginProblem::warn(
+            "too_many_views",
+            format!("声明了 {} 个视图（上限 {}）：声明是给人看的，堆量只会让插件面板变得难选", views.len(), crate::plugins::MAX_VIEWS),
+            Some("manifest.json"),
+        ));
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for vw in &views {
+        if vw.id.trim().is_empty() {
+            problems.push(PluginProblem::error("view_no_id", "views 里有一项没有 id", Some("manifest.json")));
+        } else if seen.contains(&vw.id.as_str()) {
+            problems.push(PluginProblem::warn("view_duplicate", format!("视图 id 重复：{}", vw.id), Some("manifest.json")));
+        }
+        seen.push(&vw.id);
+        if vw.title.trim().is_empty() {
+            problems.push(PluginProblem::warn("view_no_title", format!("视图 {} 没有 title（菜单里会显示成 id）", vw.id), Some("manifest.json")));
+        }
+        if vw.columns.is_empty() {
+            problems.push(PluginProblem::warn("view_no_columns", format!("视图 {} 没有声明 columns（会只显示标题）", vw.id), Some("manifest.json")));
+        }
+        for c in &vw.columns {
+            if !crate::plugins::VIEW_COLUMNS.iter().any(|(k, _)| k == c) {
+                problems.push(PluginProblem::warn(
+                    "view_unknown_column",
+                    format!(
+                        "视图 {} 声明了宿主不支持的列「{}」（可用：{}）",
+                        vw.id,
+                        c,
+                        crate::plugins::VIEW_COLUMNS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(" / ")
+                    ),
+                    Some("manifest.json"),
+                ));
+            }
+        }
+        if let Some(kind) = &vw.query.kind {
+            if !crate::plugins::VIEW_KINDS.contains(&kind.as_str()) {
+                problems.push(PluginProblem::warn("view_bad_kind", format!("视图 {} 的 query.kind「{kind}」不认识（可用：{}）", vw.id, crate::plugins::VIEW_KINDS.join(" / ")), Some("manifest.json")));
+            }
+        }
+        if let Some(sort) = &vw.query.sort {
+            if !crate::plugins::VIEW_SORTS.contains(&sort.as_str()) {
+                problems.push(PluginProblem::warn("view_bad_sort", format!("视图 {} 的 query.sort「{sort}」不认识（可用：{}）", vw.id, crate::plugins::VIEW_SORTS.join(" / ")), Some("manifest.json")));
+            }
+        }
+        if let Some(limit) = vw.query.limit {
+            if !(1..=500).contains(&limit) {
+                problems.push(PluginProblem::warn("view_bad_limit", format!("视图 {} 的 query.limit {limit} 超出范围（1–500）", vw.id), Some("manifest.json")));
+            }
+        }
+    }
+
+    let ok = !problems.iter().any(|p| p.severity == "error");
+    ValidateReport {
+        ok,
+        dir_name,
+        id,
+        name,
+        version,
+        api_version: if api_version.is_empty() { capabilities_gen::API_VERSION.to_string() } else { api_version },
+        main,
+        entry_bytes: 0,
+        commands: Vec::new(),
+        // 没有代码 → 不需要权限、收不到事件、读不了设置：这里必须是空的，
+        // 否则界面会显示「按 v1 基线授权 11 项」这种与事实不符的信息。
+        permissions: Vec::new(),
+        granted: Vec::new(),
+        events: Vec::new(),
+        settings: Vec::new(),
+        runtime: "declarative".to_string(),
+        views,
+        permissions_baseline: false,
+        problems,
     }
 }
 
@@ -195,6 +318,29 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                 Some("manifest.json"),
             ));
         }
+    }
+
+    // 运行档：从这一步起，声明式与逻辑档走**不同的检查**（前者没有代码，后者没有视图）。
+    let runtime = value
+        .as_ref()
+        .map(|v| v.get("runtime").and_then(|r| r.as_str()).unwrap_or("logic").to_string())
+        .unwrap_or_else(|| "logic".to_string());
+    if runtime != "logic" && runtime != "declarative" {
+        problems.push(PluginProblem::error(
+            "runtime_unknown",
+            format!("manifest.runtime 不认识：{runtime}（本应用支持 logic / declarative），会被拒载"),
+            Some("manifest.json"),
+        ));
+    }
+    if runtime == "declarative" {
+        return validate_declarative(value.as_ref(), dir_name, id, name, version, api_version, main, problems);
+    }
+    if value.as_ref().and_then(|v| v.get("views")).is_some() {
+        problems.push(PluginProblem::warn(
+            "views_ignored",
+            "manifest.views 只在 runtime=declarative 时生效；这个插件有代码（logic 档），视图不会被渲染",
+            Some("manifest.json"),
+        ));
     }
 
     // ---- 3. 入口文件 ----
@@ -436,6 +582,8 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         granted,
         events,
         settings,
+        runtime: "logic".to_string(),
+        views: Vec::new(),
         permissions_baseline,
         problems,
     }
@@ -495,6 +643,8 @@ impl ValidateReport {
             granted: Vec::new(),
             events: Vec::new(),
             settings: Vec::new(),
+            runtime: "logic".to_string(),
+            views: Vec::new(),
             permissions_baseline: false,
             problems: vec![PluginProblem::error(
                 "dir_missing",
@@ -622,6 +772,13 @@ mod tests {
                 r.problems
             );
             assert!(r.ok, "示例插件 {} 应当 ok", d.display());
+            if r.runtime == "declarative" {
+                // 零代码插件：没有命令、不需要权限——但必须有视图，那是它唯一的产出
+                assert!(!r.views.is_empty(), "声明式示例 {} 必须声明视图", d.display());
+                assert!(r.commands.is_empty(), "声明式插件不该有命令");
+                assert!(r.permissions.is_empty(), "声明式插件没有代码，不该申请权限");
+                continue;
+            }
             assert!(!r.commands.is_empty(), "示例插件 {} 至少要注册一个命令", d.display());
             assert!(
                 !r.permissions.is_empty(),
@@ -639,6 +796,118 @@ mod tests {
                 assert!(!ev.reason.trim().is_empty(), "示例插件 {} 的事件 {} 应当写 reason（示范给用户看的授权面）", d.display(), ev.id);
             }
         }
+    }
+
+    // ---- 声明式（零代码）插件（M11.9）----
+
+    fn declarative_plugin(dirname: &str, body: &str) -> PathBuf {
+        let base = temp_dir(dirname);
+        let dir = base.join(dirname);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("manifest.json"), body.replace("{dir}", dirname)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn declarative_plugin_needs_no_js_at_all() {
+        let dir = declarative_plugin(
+            "reading-board",
+            r#"{ "id": "reading-board", "name": "阅读统计", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "recent", "title": "最近更新", "summary": true,
+                              "query": { "kind": "any", "sort": "updated_desc", "limit": 20 },
+                              "columns": ["title", "kind", "updated_at"] } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        // 关键：没有 main.js 也**不能**被判成「加载器会拒载」——声明式本来就没有代码
+        assert_eq!(r.errors().count(), 0, "零代码插件不该有错误：{:?}", r.problems);
+        assert!(r.ok);
+        assert_eq!(r.runtime, "declarative");
+        assert_eq!(r.views.len(), 1);
+        assert!(r.commands.is_empty());
+        assert!(r.permissions.is_empty(), "没有代码就不该有权限，也不该走基线授权");
+        assert!(!r.permissions_baseline);
+    }
+
+    #[test]
+    fn declarative_without_views_is_an_error() {
+        let dir = declarative_plugin(
+            "empty-panel",
+            r#"{ "id": "empty-panel", "name": "空面板", "apiVersion": "1.0.0", "runtime": "declarative" }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(codes(&r).contains(&"declarative_no_views".to_string()), "{:?}", r.problems);
+        assert!(!r.ok, "没有视图的声明式插件装了什么都不显示，必须报错");
+    }
+
+    #[test]
+    fn declarative_with_code_or_permissions_is_flagged() {
+        let dir = declarative_plugin(
+            "confused",
+            r#"{ "id": "confused", "name": "混搭", "version": "1.0.0", "apiVersion": "1.0.0", "runtime": "declarative",
+                 "main": "main.js", "permissions": [ { "id": "read:pages", "reason": "x" } ],
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"] } ] }"#,
+        );
+        write_main(&dir, "main.js", OK_MAIN); // 有代码但不会被读
+        let r = validate_dir(&dir);
+        assert!(r.ok, "这些都是提醒而不是错误：{:?}", r.problems);
+        for code in ["declarative_has_main", "declarative_has_permissions"] {
+            assert!(codes(&r).contains(&code.to_string()), "应提示 {code}：{:?}", r.problems);
+        }
+    }
+
+    #[test]
+    fn unknown_runtime_is_rejected() {
+        let dir = declarative_plugin(
+            "weird-runtime",
+            r#"{ "id": "weird-runtime", "name": "W", "version": "1.0.0", "apiVersion": "1.0.0", "runtime": "wasm" }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(codes(&r).contains(&"runtime_unknown".to_string()), "{:?}", r.problems);
+        assert!(!r.ok);
+    }
+
+    #[test]
+    fn declarative_view_mistakes_are_reported() {
+        let dir = declarative_plugin(
+            "bad-views",
+            r#"{ "id": "bad-views", "name": "B", "version": "1.0.0", "apiVersion": "1.0.0", "runtime": "declarative",
+                 "views": [
+                   { "id": "a", "title": "A", "columns": ["title", "不存在的列"],
+                     "query": { "kind": "很久以前", "sort": "按心情", "limit": 9999 } },
+                   { "id": "a", "title": "", "columns": [] }
+                 ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(r.ok, "列/排序/取值写错都只是提醒（宿主会忽略并按默认来）：{:?}", r.problems);
+        for code in ["view_unknown_column", "view_bad_kind", "view_bad_sort", "view_bad_limit", "view_duplicate", "view_no_title", "view_no_columns"] {
+            assert!(codes(&r).contains(&code.to_string()), "应提示 {code}：{:?}", r.problems);
+        }
+    }
+
+    #[test]
+    fn loader_refuses_to_read_code_from_a_declarative_plugin() {
+        let dir = declarative_plugin(
+            "no-code",
+            r#"{ "id": "no-code", "name": "N", "version": "1.0.0", "apiVersion": "1.0.0", "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"] } ] }"#,
+        );
+        let m = crate::plugins::read_manifest(&dir).unwrap();
+        let err = crate::plugins::load_plugin_source(&dir, &m).unwrap_err();
+        assert!(err.contains("declarative_no_code"), "{err}");
+    }
+
+    #[test]
+    fn views_declared_on_a_logic_plugin_are_flagged() {
+        let dir = plugin("logic-with-views", &manifest_json("logic-with-views", ""));
+        write_main(&dir, "main.js", OK_MAIN);
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+        v["views"] = serde_json::json!([{ "id": "v", "title": "V", "columns": ["title"] }]);
+        fs::write(dir.join("manifest.json"), v.to_string()).unwrap();
+        let r = validate_dir(&dir);
+        assert!(r.ok, "{:?}", r.problems);
+        assert!(codes(&r).contains(&"views_ignored".to_string()), "有代码的插件声明 views 要说明它不生效：{:?}", r.problems);
     }
 
     // ---- 作者会犯的错：每种都要报出来，且给稳定的 code ----

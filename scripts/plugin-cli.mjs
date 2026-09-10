@@ -21,6 +21,42 @@ import { loadRegistry } from "./gen-capabilities.mjs";
 const ESC = { reset: "\x1b[0m", dim: "\x1b[2m", red: "\x1b[31m", yellow: "\x1b[33m", green: "\x1b[32m" };
 const color = (s, c) => (process.stdout.isTTY ? `${ESC[c]}${s}${ESC.reset}` : s);
 
+/**
+ * 声明式（零代码）插件的检查：与 Rust 侧 `validate_declarative` 一一对应。
+ * 列/排序/取值写错只是**提醒**（宿主会忽略并按默认来），但没有 views 是**错误**——
+ * 那样的插件装上去什么都不会显示。
+ */
+function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, dirName) {
+  const views = Array.isArray(m.views) ? m.views : [];
+  if (views.length === 0) {
+    push("error", "declarative_no_views", "声明式插件必须声明至少一个 views：它没有代码，视图就是它唯一的产出");
+  }
+  if (views.length > 8) push("warning", "too_many_views", `声明了 ${views.length} 个视图（上限 8）`);
+  const seen = new Set();
+  for (const v of views) {
+    if (!v || typeof v !== "object" || typeof v.id !== "string" || !v.id) {
+      push("error", "view_no_id", "views 里有一项没有 id");
+      continue;
+    }
+    if (seen.has(v.id)) push("warning", "view_duplicate", `视图 id 重复：${v.id}`);
+    seen.add(v.id);
+    if (typeof v.title !== "string" || !v.title.trim()) push("warning", "view_no_title", `视图 ${v.id} 没有 title（菜单里会显示成 id）`);
+    const cols = Array.isArray(v.columns) ? v.columns : [];
+    if (cols.length === 0) push("warning", "view_no_columns", `视图 ${v.id} 没有声明 columns（会只显示标题）`);
+    for (const c of cols) {
+      if (!knownColumns.has(c)) {
+        push("warning", "view_unknown_column", `视图 ${v.id} 声明了宿主不支持的列「${c}」（可用：${[...knownColumns].join(" / ")}）`);
+      }
+    }
+    const q = v.query ?? {};
+    if (q.kind !== undefined && !knownKinds.has(q.kind)) push("warning", "view_bad_kind", `视图 ${v.id} 的 query.kind「${q.kind}」不认识（可用：${[...knownKinds].join(" / ")}）`);
+    if (q.sort !== undefined && !knownSorts.has(q.sort)) push("warning", "view_bad_sort", `视图 ${v.id} 的 query.sort「${q.sort}」不认识（可用：${[...knownSorts].join(" / ")}）`);
+    if (q.limit !== undefined && (typeof q.limit !== "number" || q.limit < 1 || q.limit > 500)) {
+      push("warning", "view_bad_limit", `视图 ${v.id} 的 query.limit 超出范围（1–500）`);
+    }
+  }
+}
+
 /** 与 Rust `is_safe_plugin_id` 同一套规则（见 src-tauri/src/plugins.rs）。 */
 function isSafeId(id) {
   if (!id || id === "." || id === "..") return false;
@@ -72,6 +108,15 @@ function validate(dirArg) {
   let id = "";
   let main = "main.js";
   let entries = [];
+  const runtime = typeof m?.runtime === "string" && m.runtime ? m.runtime : "logic";
+  if (runtime !== "logic" && runtime !== "declarative") {
+    push("error", "runtime_unknown", `manifest.runtime 不认识：${runtime}（本应用支持 logic / declarative），会被拒载`);
+  }
+  const knownColumns = new Set([
+    "title", "kind", "updated_at", "created_at", "days_since_update", "title_length",
+  ]);
+  const knownSorts = new Set(["updated_desc", "created_desc", "title_asc", "title_desc"]);
+  const knownKinds = new Set(["any", "page", "database"]);
   if (m) {
     id = typeof m.id === "string" ? m.id : "";
     if (!id) push("error", "id_missing", "manifest.id 缺失（每个插件必须有唯一 id）");
@@ -89,7 +134,12 @@ function validate(dirArg) {
     }
 
     main = typeof m.main === "string" && m.main ? m.main : "main.js";
-    if (!isBareFileName(main)) {
+    if (runtime === "declarative") {
+      // 零代码插件：没有 main.js、没有语法可查、也不需要权限（不去申请任何能力）。
+      // 这里必须与 Rust 侧（plugin_validate.rs 的 validate_declarative）一致，
+      // 否则作者 CLI 会把一个本来能用的零代码插件报成"装不上"。
+      checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, dirName, resolve(dir));
+    } else if (!isBareFileName(main)) {
       push("error", "main_invalid", `manifest.main（${main}）必须是同级文件名：不得含路径分隔符，也不得是 . / ..`);
     } else {
       try {
@@ -105,7 +155,16 @@ function validate(dirArg) {
     }
 
     // ---- 权限（与运行直接相关的事实全部来自注册表）----
-    if (m.permissions === undefined) {
+    if (runtime === "declarative") {
+      for (const [field, code, msg] of [
+        ["permissions", "declarative_has_permissions", "声明式插件没有代码，manifest.permissions 不会被用到"],
+        ["events", "declarative_has_events", "声明式插件没有代码，manifest.events 收不到任何事件"],
+        ["settings", "declarative_has_settings", "声明式插件没有代码去读设置"],
+        ["main", "declarative_has_main", "runtime=declarative 时 main.js 不会被读取或执行"],
+      ]) {
+        if (m[field] !== undefined) push("warning", code, msg);
+      }
+    } else if (m.permissions === undefined) {
       push("warning", "permissions_absent", `manifest 未声明 permissions：应用会按 v1 基线权限授权（${reg.permissions.length} 项），新插件请显式声明`);
     } else if (!Array.isArray(m.permissions)) {
       push("error", "permissions_invalid", "manifest.permissions 必须是数组：[{ id, reason }]");
@@ -160,7 +219,7 @@ function validate(dirArg) {
   } catch {
     /* 已在上面报过 main_missing */
   }
-  if (source) {
+  if (source && runtime !== "declarative") {
     try {
       new vm.Script(source, { filename: main });
     } catch (e) {
@@ -205,9 +264,19 @@ function report(r, json) {
   }
 
   console.log(`${color("插件校验", "dim")} ${r.dir}`);
-  console.log(`  id=${r.id || "(缺)"}  main=${r.main}  API=${r.reg.apiVersion}`);
+  const isDecl = (r.manifest?.runtime ?? "logic") === "declarative";
+  console.log(`  id=${r.id || "(缺)"}  ${isDecl ? "runtime=declarative" : `main=${r.main}`}  API=${r.reg.apiVersion}`);
 
-  const declares = Array.isArray(r.manifest?.permissions) ? r.manifest.permissions : [];
+  const declarative = (r.manifest?.runtime ?? "logic") === "declarative";
+  if (declarative) {
+    const views = Array.isArray(r.manifest?.views) ? r.manifest.views : [];
+    console.log(`  ${color("零代码插件", "dim")}（runtime=declarative）：${views.length} 个视图，由宿主渲染，不申请任何权限`);
+    for (const v of views) {
+      const cols = Array.isArray(v?.columns) ? v.columns.filter((c) => r.knownColumns?.has(c) ?? true) : [];
+      console.log(`    ▦ ${v?.title || v?.id || "(无标题)"}  ${color(`列：${cols.join(" / ") || "标题"}`, "dim")}`);
+    }
+  }
+  const declares = declarative ? [] : Array.isArray(r.manifest?.permissions) ? r.manifest.permissions : [];
   if (declares.length > 0) {
     console.log(`  ${color("权限清单", "dim")}（用户装的时候会看到这些）：`);
     for (const d of declares) {
@@ -219,7 +288,7 @@ function report(r, json) {
       const tail = p ? "" : color("  ← 本版本不认识，装了也不生效", "yellow");
       console.log(`    ${mark} ${String(d?.id).padEnd(20)} ${risk.padEnd(9)} ${p?.title ?? ""} —— ${reason}${tail}`);
     }
-  } else if (r.manifest) {
+  } else if (r.manifest && !declarative) {
     console.log(`  ${color("权限清单", "dim")}：未声明 → 应用会按 v1 基线权限授权（${r.reg.permissions.length} 项，等于全给）`);
   }
 
@@ -242,7 +311,7 @@ function report(r, json) {
   if (errors.length === 0) {
     console.log(
       `  ${color("✓", "green")} 本地检查通过${warnings.length ? `（${warnings.length} 条提醒）` : ""}` +
-        `　${color("JS 语法由 V8 检查，最终以应用内「验证」为准（Boa）", "dim")}`,
+        (isDecl ? "" : `　${color("JS 语法由 V8 检查，最终以应用内「验证」为准（Boa）", "dim")}`),
     );
   } else {
     console.log(`  ${color(`✗ ${errors.length} 个错误`, "red")}（${warnings.length} 条提醒）`);

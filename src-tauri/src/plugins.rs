@@ -116,6 +116,10 @@ pub struct PluginMeta {
     pub permissions_baseline: bool,
     /// 订阅了哪些事件：**必须在启用前让用户看到**（事件 = 用户没点命令时也会跑代码）。
     pub events: Vec<PluginEventMeta>,
+    /// 运行档（`logic` / `declarative`）——界面要能说清"这个插件有没有代码"。
+    pub runtime: String,
+    /// 声明式视图：宿主渲染，插件零代码。
+    pub views: Vec<ViewDecl>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -318,6 +322,12 @@ pub(crate) struct Manifest {
     /// 逐条声明的权限，带理由。缺省 = 走 v1 基线授权（见 resolve_permissions）。
     #[serde(default)]
     pub(crate) permissions: Option<Vec<PermissionDecl>>,
+    /// 运行档：`logic`（默认，有 main.js 的脚本插件）或 `declarative`（零 JS，只有声明）。
+    #[serde(default)]
+    pub(crate) runtime: Option<String>,
+    /// 声明式视图：宿主按这份声明渲染（零 JS 插件唯一的产出方式）。
+    #[serde(default)]
+    pub(crate) views: Option<Vec<ViewDecl>>,
     /// 用户可配置项：宿主据此渲染设置表单（**写只发生在宿主界面**）。
     #[serde(default)]
     pub(crate) settings: Option<Vec<SettingDecl>>,
@@ -327,6 +337,65 @@ pub(crate) struct Manifest {
     /// 更不能默认给——老插件不会因为升级就突然有了后台行为。
     #[serde(default)]
     pub(crate) events: Option<Vec<EventDecl>>,
+}
+
+/// 一个声明式视图：宿主据此查询并渲染，插件侧**没有代码**。
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct ViewDecl {
+    pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) title: String,
+    #[serde(default)]
+    pub(crate) query: ViewQuery,
+    /// 要显示的列（宿主只认白名单里的列，未知列由校验器指出）。
+    #[serde(default)]
+    pub(crate) columns: Vec<String>,
+    /// 是否在顶部显示一行汇总（共几篇、最近 N 天更新几篇）。
+    #[serde(default)]
+    pub(crate) summary: bool,
+}
+
+#[derive(serde::Deserialize, Serialize, Clone, Debug, Default)]
+pub(crate) struct ViewQuery {
+    /// `any`（默认）或 `page` / `database`（按页面的 kind 过滤）。
+    #[serde(default)]
+    pub(crate) kind: Option<String>,
+    /// 标题包含（大小写不敏感的子串）。
+    #[serde(default)]
+    pub(crate) title_contains: Option<String>,
+    /// 只看最近 N 天内更新过的。
+    #[serde(default)]
+    pub(crate) updated_within_days: Option<i64>,
+    /// `updated_desc`（默认）/ `created_desc` / `title_asc`。
+    #[serde(default)]
+    pub(crate) sort: Option<String>,
+    #[serde(default)]
+    pub(crate) limit: Option<i64>,
+}
+
+/// 宿主支持的视图列（白名单：宿主渲染什么，作者只能从这里选）。
+pub(crate) const VIEW_COLUMNS: &[(&str, &str)] = &[
+    ("title", "标题"),
+    ("kind", "类型"),
+    ("updated_at", "更新时间"),
+    ("created_at", "创建时间"),
+    ("days_since_update", "距上次更新（天）"),
+    ("title_length", "标题长度"),
+];
+
+/// 宿主支持的排序与 kind 取值（校验器据此指出写错的值）。
+pub(crate) const VIEW_SORTS: &[&str] = &["updated_desc", "created_desc", "title_asc", "title_desc"];
+pub(crate) const VIEW_KINDS: &[&str] = &["any", "page", "database"];
+
+/// 声明式插件允许的视图数量上限（声明是给人看的，不是拿来堆量的）。
+pub(crate) const MAX_VIEWS: usize = 8;
+
+/// 这项声明的运行档（缺省 `logic`）。
+pub(crate) fn runtime_of(manifest: &Manifest) -> &str {
+    match manifest.runtime.as_deref() {
+        Some(r) if !r.is_empty() => r,
+        _ => "logic",
+    }
 }
 
 /// 一项用户设置的声明（宿主据此渲染设置表单，并据此校验用户填的值）。
@@ -427,7 +496,16 @@ pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     if m.id != dirname {
         return Err("manifest.id 必须等于目录名".to_string());
     }
-    if !is_bare_file_name(&m.main) {
+    // 运行档闸门：只认识 logic / declarative，其它值直接拒载（与 apiVersion 同样的思路：
+    // 不认识就明说，而不是让它跑起来一半再零碎失败）。
+    let runtime = runtime_of(&m);
+    if runtime != "logic" && runtime != "declarative" {
+        return Err(format!(
+            "manifest.runtime 不认识：{runtime}（本应用支持 logic / declarative）"
+        ));
+    }
+    // 声明式插件没有代码，所以不校验 main（写了的也不执行，由校验器提醒作者删掉）。
+    if runtime == "logic" && !is_bare_file_name(&m.main) {
         return Err("manifest.main 必须是同级文件名（不得含路径分隔符，也不得是 . 或 ..）".to_string());
     }
     // ABI 闸门：主版本不认识就直接拒载，而不是让插件在运行时零零碎碎地失败。
@@ -444,6 +522,9 @@ pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
 }
 
 pub(crate) fn load_plugin_source(dir: &Path, manifest: &Manifest) -> Result<String, String> {
+    if runtime_of(manifest) == "declarative" {
+        return Err("declarative_no_code: 声明式插件没有代码（只有 manifest 声明）".to_string());
+    }
     let p = dir.join(&manifest.main);
     if !p.exists() {
         return Err("插件入口文件不存在".to_string());
@@ -2247,6 +2328,38 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             Ok(m) => m,
             Err(_) => continue, // skip invalid dirs
         };
+        let runtime = runtime_of(&manifest).to_string();
+        // 声明式插件没有代码：不读入口、不跑 Boa（这正是它安全的原因——没有可执行的东西）。
+        if runtime == "declarative" {
+            // 声明式插件**没有代码**，所以它不可能调用能力、也收不到事件：
+            // 这里必须给空集合，否则界面会显示「需要 11 项基线权限」这种假信息
+            // （那是给「有代码但没声明权限」的老插件用的兜底）。
+            if manifest.permissions.is_some() {
+                push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.permissions 不会被用到");
+            }
+            if manifest.events.is_some() {
+                push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.events 收不到任何事件");
+            }
+            let permissions = Vec::new();
+            let permissions_baseline = false;
+            let events = Vec::new();
+            let views = manifest.views.clone().unwrap_or_default();
+            let pid = manifest.id.clone();
+            out.push(PluginMeta {
+                id: pid.clone(),
+                name: manifest.name,
+                version: manifest.version,
+                description: manifest.description,
+                enabled: enabled_map.get(&pid).copied().unwrap_or(false),
+                commands: Vec::new(),
+                permissions,
+                permissions_baseline,
+                events,
+                runtime,
+                views,
+            });
+            continue;
+        }
         let source = match load_plugin_source(&path, &manifest) {
             Ok(s) => s,
             Err(_) => continue,
@@ -2275,6 +2388,8 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             permissions,
             permissions_baseline,
             events,
+            runtime,
+            views: manifest.views.clone().unwrap_or_default(),
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -2459,6 +2574,9 @@ pub async fn install_plugin(
     }
     let (permissions, permissions_baseline) = permission_metas(&manifest);
     let events = event_metas(&manifest);
+    // 先取出这两项再移动其它字段（避免部分移动后还要借用 manifest）
+    let runtime = runtime_of(&manifest).to_string();
+    let views = manifest.views.clone().unwrap_or_default();
     Ok(PluginMeta {
         id: manifest.id,
         name: manifest.name,
@@ -2469,6 +2587,8 @@ pub async fn install_plugin(
         permissions,
         permissions_baseline,
         events,
+        runtime,
+        views,
     })
 }
 
@@ -3251,6 +3371,8 @@ register({ id: "s.run", title: "结构化", run: function () {
             api_version: None,
             permissions: None,
             settings: None,
+            runtime: None,
+            views: None,
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
@@ -3278,6 +3400,8 @@ register({ id: "s.run", title: "结构化", run: function () {
                 PermissionDecl { id: "net:https:example.com".into(), reason: "未来能力".into() },
             ]),
             settings: None,
+            runtime: None,
+            views: None,
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
@@ -3301,6 +3425,8 @@ register({ id: "s.run", title: "结构化", run: function () {
                 reason: "为了显示页面数".into(),
             }]),
             settings: None,
+            runtime: None,
+            views: None,
             events: None,
         };
         let (metas, baseline) = permission_metas(&declared);
@@ -3321,6 +3447,8 @@ register({ id: "s.run", title: "结构化", run: function () {
             api_version: None,
             permissions: None,
             settings: None,
+            runtime: None,
+            views: None,
             events: None,
         };
         let (metas2, baseline2) = permission_metas(&legacy);

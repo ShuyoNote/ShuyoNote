@@ -1,0 +1,17 @@
+{
+  "id": "reading-board",
+  "name": "阅读统计",
+  "version": "1.0.0",
+  "description": "零代码插件：一张「最近更新」表 + 一行汇总。整个插件只有这个 manifest.json，没有一行 JS。",
+  "runtime": "declarative",
+  "apiVersion": "1.0.0",
+  "views": [
+    {
+      "id": "recent",
+      "title": "最近更新",
+      "summary": true,
+      "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
+      "columns": ["title", "kind", "updated_at", "days_since_update"]
+    }
+  ]
+}

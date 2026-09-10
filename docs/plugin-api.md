@@ -439,6 +439,43 @@ var pages = api.pages.list(n);
   `"scope": "app"` 落 meta.db（**明文**，别放 token 这类东西）；
 - 用户在设置里填的值存在插件自己的数据区（`plugin_data`），与 `api.kv` 同一张表、不同命名空间。
 
+## 4.9 零代码插件（`runtime` = `declarative`）
+
+不需要写 JS 也能做插件：把 `runtime` 设成 `declarative`，只声明**视图**，宿主负责查询与渲染。
+整个插件就是一个 manifest.json——**没有代码，所以也没有可执行的东西**，这类插件的信任成本最低。
+
+```json
+{
+  "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
+  "runtime": "declarative", "apiVersion": "1.0.0",
+  "views": [ {
+    "id": "recent", "title": "最近更新", "summary": true,
+    "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
+    "columns": ["title", "kind", "updated_at", "days_since_update"]
+  } ]
+}
+```
+
+`query` 可用字段：`kind`（`any` / `page` / `database`）、`titleContains`、`updatedWithinDays`、`sort`（`updated_desc` / `created_desc` / `title_asc` / `title_desc`）、`limit`（1–500）。
+
+`columns` 可用列（宿主渲染什么，你只能从这里选）：
+
+| 列 | 说明 |
+|---|---|
+| `title` | 标题 |
+| `kind` | 类型 |
+| `updated_at` | 更新时间 |
+| `created_at` | 创建时间 |
+| `days_since_update` | 距上次更新（天） |
+| `title_length` | 标题长度 |
+
+几条要知道的：
+
+- **声明式插件不申请权限、收不到事件、读不了设置**（它没有代码）——写了这些字段会被提醒而不是默默生效；
+- 视图出现在命令面板里（搜「插件视图：…」），点开就是一张表，点某一行会打开那一页；
+- 列名 / 排序 / kind 写错**不会让视图打不开**，只是那一项按默认处理，校验器会告诉你哪个值不认识；
+- 想要用户可配置、想要条件逻辑，就写 `logic` 档（有 `main.js`）——两者的能力不同，不要混着声明。
+
 ## 5. 日志与提示
 
 - `api.log(message, level?)` —— 写日志，进插件日志环形缓冲（插件面板「日志」可查）。
