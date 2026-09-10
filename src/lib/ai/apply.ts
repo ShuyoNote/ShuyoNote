@@ -48,6 +48,25 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       return { ok: true, message: `已向「${page.title}」追加内容`, page };
     }
 
+    case "set_page_prop": {
+      const pageId = String(p.pageId ?? p.args?.pageId ?? "");
+      const attrId = String(p.attrId ?? "");
+      if (!pageId || !attrId) return { ok: false, message: "set_page_prop 参数不完整" };
+      await api.setPageProp({ page_id: pageId, attr_id: attrId, value: String(p.value ?? "") });
+      // 回读一次：调用方据此刷新当前页（属性面板共用同一份内存数据）。
+      const page = await api.getPage(pageId);
+      return { ok: true, message: "已设置属性", page };
+    }
+
+    case "add_tag": {
+      const pageId = String(p.pageId ?? p.args?.pageId ?? "");
+      const name = String(p.name ?? "").trim();
+      if (!pageId || !name) return { ok: false, message: "add_tag 参数不完整" };
+      await api.addTag(pageId, name);
+      const page = await api.getPage(pageId);
+      return { ok: true, message: `已加标签「${name}」`, page };
+    }
+
     default:
       return { ok: false, message: `未知草稿类型: ${kind || "(空)"}` };
   }

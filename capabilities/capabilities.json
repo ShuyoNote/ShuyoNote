@@ -50,6 +50,24 @@
       "title": "新建页面 / 追加内容",
       "risk": "medium",
       "desc": "新建页面或向页面追加内容；**写入前会先给你看草稿并等你确认**（不直接落库）"
+    },
+    {
+      "id": "read:properties",
+      "title": "读取属性定义",
+      "risk": "low",
+      "desc": "读取本空间的属性定义（名称/类型/id），供插件找到要写的属性"
+    },
+    {
+      "id": "write:properties",
+      "title": "设置页面属性",
+      "risk": "medium",
+      "desc": "给页面设置属性值；**写入前会先给你看草稿并等你确认**"
+    },
+    {
+      "id": "write:tags",
+      "title": "给页面加标签",
+      "risk": "medium",
+      "desc": "给页面加标签；**写入前会先给你看草稿并等你确认**"
     }
   ],
   "capabilities": [
@@ -472,6 +490,95 @@
       "rust": "cap_kv_remove",
       "mediate": "immediate",
       "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
+    },
+    {
+      "id": "properties.list",
+      "title": "列出属性定义",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:properties",
+      "since": "1.0.0",
+      "jsPath": [
+        "properties",
+        "list"
+      ],
+      "args": [],
+      "returns": {
+        "type": "array",
+        "desc": "[{id, name, type}]——插件据此找到要写的属性 id"
+      },
+      "rust": "cap_properties_list"
+    },
+    {
+      "id": "properties.set",
+      "title": "设置页面属性（草稿确认）",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:properties",
+      "since": "1.0.0",
+      "jsPath": [
+        "properties",
+        "set"
+      ],
+      "mediate": "draft",
+      "mediateWhy": "改动既有页面的属性 → 必须先给用户看草稿并等他确认",
+      "args": [
+        {
+          "name": "attrId",
+          "type": "string",
+          "required": true,
+          "desc": "属性定义 id（由 api.properties.list() 得到）"
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "目标页面 id；省略=当前页"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "desc": "{drafted: true, summary}——**不代表已写入**"
+      },
+      "rust": "cap_properties_set"
+    },
+    {
+      "id": "tags.add",
+      "title": "给页面加标签（草稿确认）",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:tags",
+      "since": "1.0.0",
+      "jsPath": [
+        "tags",
+        "add"
+      ],
+      "mediate": "draft",
+      "mediateWhy": "改动既有页面的标签 → 必须先给用户看草稿并等他确认",
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "desc": "标签名（不存在则新建）"
+        },
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "目标页面 id；省略=当前页"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "desc": "{drafted: true, summary}——**不代表已写入**"
+      },
+      "rust": "cap_tags_add"
     },
     {
       "id": "log.write",

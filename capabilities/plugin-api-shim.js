@@ -20,7 +20,8 @@ var api = {
     create: function(title, content, parentId) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId) }); }
   },
   tags: {
-    list: function() { return __capCall("tags.list", {}); }
+    list: function() { return __capCall("tags.list", {}); },
+    add: function(name, pageId) { return __capCall("tags.add", { name: name === undefined ? undefined : String(name), pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   backlinks: {
     list: function(pageId) { return __capCall("backlinks.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
@@ -39,6 +40,10 @@ var api = {
     get: function(key, scope) { return __capCall("kv.get", { key: key === undefined ? undefined : String(key), scope: scope === undefined ? "space" : String(scope) }); },
     set: function(key, value, scope) { return __capCall("kv.set", { key: key === undefined ? undefined : String(key), value: value === undefined ? undefined : String(value), scope: scope === undefined ? "space" : String(scope) }); },
     remove: function(key, scope) { return __capCall("kv.remove", { key: key === undefined ? undefined : String(key), scope: scope === undefined ? "space" : String(scope) }); }
+  },
+  properties: {
+    list: function() { return __capCall("properties.list", {}); },
+    set: function(attrId, value, pageId) { return __capCall("properties.set", { attrId: attrId === undefined ? undefined : String(attrId), value: value === undefined ? undefined : String(value), pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); }
 };

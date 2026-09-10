@@ -50,6 +50,10 @@ export interface PluginApi {
    * 返回：[{id, name, page_count}]
    */
     list(): unknown;
+  /** 给页面加标签（草稿确认）（权限 `write:tags`；1.0.0 起）
+   * 返回：{drafted: true, summary}——**不代表已写入**
+   */
+    add(name: string, pageId?: string): unknown;
   };
   backlinks: {
   /** 列出反链（权限 `read:backlinks`；1.0.0 起）
@@ -90,6 +94,16 @@ export interface PluginApi {
   /** 删插件私有数据（权限 `kv:own`；1.0.0 起）
    */
     remove(key: string, scope?: "space" | "app"): void;
+  };
+  properties: {
+  /** 列出属性定义（权限 `read:properties`；1.0.0 起）
+   * 返回：[{id, name, type}]——插件据此找到要写的属性 id
+   */
+    list(): unknown;
+  /** 设置页面属性（草稿确认）（权限 `write:properties`；1.0.0 起）
+   * 返回：{drafted: true, summary}——**不代表已写入**
+   */
+    set(attrId: string, value: string, pageId?: string): unknown;
   };
   /** 写作者侧日志（无需权限；1.0.0 起）
    * 返回：进插件日志环形缓冲，可在插件面板查看

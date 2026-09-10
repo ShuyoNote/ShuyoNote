@@ -34,6 +34,9 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "kv.get", kind: "read", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "-", rust: "cap_kv_get" },
     Capability { id: "kv.set", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "immediate", rust: "cap_kv_set" },
     Capability { id: "kv.remove", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "immediate", rust: "cap_kv_remove" },
+    Capability { id: "properties.list", kind: "read", scope: "current-space", permission: Some("read:properties"), since: "1.0.0", mediate: "-", rust: "cap_properties_list" },
+    Capability { id: "properties.set", kind: "write", scope: "current-space", permission: Some("write:properties"), since: "1.0.0", mediate: "draft", rust: "cap_properties_set" },
+    Capability { id: "tags.add", kind: "write", scope: "current-space", permission: Some("write:tags"), since: "1.0.0", mediate: "draft", rust: "cap_tags_add" },
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
 ];
 
@@ -55,6 +58,9 @@ pub const PERMISSION_LIST: &[Permission] = &[
     Permission { id: "read:files", title: "读取附件元数据", risk: "low" },
     Permission { id: "kv:own", title: "存储自己的数据", risk: "low" },
     Permission { id: "write:pages", title: "新建页面 / 追加内容", risk: "medium" },
+    Permission { id: "read:properties", title: "读取属性定义", risk: "low" },
+    Permission { id: "write:properties", title: "设置页面属性", risk: "medium" },
+    Permission { id: "write:tags", title: "给页面加标签", risk: "medium" },
 ];
 
 pub fn permission(id: &str) -> Option<&'static Permission> {

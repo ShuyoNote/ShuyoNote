@@ -927,6 +927,57 @@ fn cap_blocks_append(page_id: Option<&str>, text: &str) -> CapResult {
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
+fn cap_properties_list() -> CapResult {
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare("SELECT id, name, type FROM attr_defs ORDER BY sort_order, name")
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "type": r.get::<_, String>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// `properties.set`：**不写库**，只产出草稿（改的是既有页面的属性）。
+fn cap_properties_set(attr_id: &str, value: &str, page_id: Option<&str>) -> CapResult {
+    if attr_id.trim().is_empty() {
+        return Err("bad_args: 设置属性需要 attrId".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let summary = format!("给页面 {target} 设置属性 {attr_id} = {value}");
+    push_draft(
+        format!("set_page_prop:{target}:{attr_id}"),
+        summary.clone(),
+        serde_json::json!({ "kind": "set_page_prop", "pageId": target, "attrId": attr_id, "value": value }),
+    );
+    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
+/// `tags.add`：**不写库**，只产出草稿（标签不存在时由落库那一步新建）。
+fn cap_tags_add(name: &str, page_id: Option<&str>) -> CapResult {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("bad_args: 加标签需要 name".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let summary = format!("给页面 {target} 加标签「{name}」");
+    push_draft(
+        format!("add_tag:{target}:{name}"),
+        summary.clone(),
+        serde_json::json!({ "kind": "add_tag", "pageId": target, "name": name }),
+    );
+    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
@@ -1000,6 +1051,13 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
         "kv.remove" => cap_kv_remove(&arg_str("key")?, &scope_arg(&args)),
+        "properties.list" => cap_properties_list(),
+        "properties.set" => cap_properties_set(
+            &arg_str("attrId")?,
+            &arg_str("value")?,
+            arg_opt_str("pageId").as_deref(),
+        ),
+        "tags.add" => cap_tags_add(&arg_str("name")?, arg_opt_str("pageId").as_deref()),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
             &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -2518,6 +2576,73 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         }
         assert_eq!(capabilities_gen::lookup("pages.create").unwrap().mediate, "draft");
         assert_eq!(capabilities_gen::lookup("kv.set").unwrap().mediate, "immediate");
+    }
+
+    #[test]
+    fn property_and_tag_writes_are_also_drafts() {
+        let (space, dir) = seed_space("write-pt");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec![
+            "write:properties".to_string(),
+            "write:tags".to_string(),
+            "read:properties".to_string(),
+        ];
+        st.current_page_id = Some("p1".to_string());
+
+        // 读属性定义（供插件找到 attrId）
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT INTO attr_defs (id, name, type, options, sort_order, created_at, updated_at)
+                 VALUES ('attr1','状态','select','[]',0,0,0)",
+                [],
+            )
+            .unwrap();
+        }
+        let defs = call(&st, "properties.list", "{}").unwrap();
+        assert_eq!(defs[0]["name"], "状态");
+        assert_eq!(defs[0]["type"], "select");
+
+        // 先记下落库前的真实状态（seed_space 里已有一页一标签，所以比"绝对值"不可靠）
+        let before = {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            let props: i64 = c.query_row("SELECT COUNT(*) FROM page_props", [], |r| r.get(0)).unwrap();
+            let tags: i64 = c.query_row("SELECT COUNT(*) FROM page_tags", [], |r| r.get(0)).unwrap();
+            (props, tags)
+        };
+
+        // 两个写能力都只产出草稿
+        assert_eq!(call(&st, "properties.set", r#"{"attrId":"attr1","value":"进行中"}"#).unwrap()["drafted"], true);
+        assert_eq!(call(&st, "tags.add", r#"{"name":"工作"}"#).unwrap()["drafted"], true);
+
+        // 关键：草稿阶段不得落库（与落库前的状态逐项相同）
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            let props: i64 = c.query_row("SELECT COUNT(*) FROM page_props", [], |r| r.get(0)).unwrap();
+            let tags: i64 = c.query_row("SELECT COUNT(*) FROM page_tags", [], |r| r.get(0)).unwrap();
+            assert_eq!((props, tags), before, "草稿阶段不该写入任何属性或标签");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn property_and_tag_drafts_carry_the_frontend_payload() {
+        let (space, dir) = seed_space("write-pt-payload");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec!["write:properties".to_string(), "write:tags".to_string()];
+        st.current_page_id = Some("p1".to_string());
+
+        let source = r#"register({ id: "w.pt", title: "W", description: "", closeOnRun: false,
+  run: function(){ api.properties.set("attr1", "进行中"); api.tags.add("工作"); return "ok"; } });"#;
+        let (_msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.pt", &st).unwrap();
+        assert_eq!(drafts.len(), 2);
+        assert_eq!(drafts[0].payload["kind"], "set_page_prop");
+        assert_eq!(drafts[0].payload["attrId"], "attr1");
+        assert_eq!(drafts[0].payload["value"], "进行中");
+        assert_eq!(drafts[0].payload["pageId"], "p1");
+        assert_eq!(drafts[1].payload["kind"], "add_tag");
+        assert_eq!(drafts[1].payload["name"], "工作");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- 内存预算（分配炸弹） ----

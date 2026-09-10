@@ -85,6 +85,9 @@ register({
 | `read:files` | 读取附件元数据：读取页面的附件元数据（名称/类型/大小），**不含文件字节** | low |
 | `kv:own` | 存储自己的数据：在插件自己的命名空间里读写键值（与其他插件、与笔记数据互不可见） | low |
 | `write:pages` | 新建页面 / 追加内容：新建页面或向页面追加内容；**写入前会先给你看草稿并等你确认**（不直接落库） | medium |
+| `read:properties` | 读取属性定义：读取本空间的属性定义（名称/类型/id），供插件找到要写的属性 | low |
+| `write:properties` | 设置页面属性：给页面设置属性值；**写入前会先给你看草稿并等你确认** | medium |
+| `write:tags` | 给页面加标签：给页面加标签；**写入前会先给你看草稿并等你确认** | medium |
 
 ## 4. 能力（`api.*`）
 
@@ -105,6 +108,9 @@ register({
 | `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
 | `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
+| `properties.list` | `api.properties.list()` | `read:properties` | `current-space` | — | array | 1.0.0 |
+| `properties.set` | `api.properties.set(attrId, value, pageId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
 
 ### `page.current` — 读取当前页
@@ -246,6 +252,36 @@ register({
 - 参数：
   - `key`: `string` —— 
   - `scope`: `string`（可选），默认 `space` —— 
+
+### `properties.list` — 列出属性定义
+
+- 调用：`api.properties.list()`
+- 权限：`read:properties`
+- scope：`current-space`
+- 返回：[{id, name, type}]——插件据此找到要写的属性 id
+
+### `properties.set` — 设置页面属性（草稿确认）
+
+- 调用：`api.properties.set(attrId, value, pageId)`
+- 权限：`write:properties`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改动既有页面的属性 → 必须先给用户看草稿并等他确认
+- 返回：{drafted: true, summary}——**不代表已写入**
+- 参数：
+  - `attrId`: `string` —— 属性定义 id（由 api.properties.list() 得到）
+  - `value`: `string` —— 
+  - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+
+### `tags.add` — 给页面加标签（草稿确认）
+
+- 调用：`api.tags.add(name, pageId)`
+- 权限：`write:tags`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 改动既有页面的标签 → 必须先给用户看草稿并等他确认
+- 返回：{drafted: true, summary}——**不代表已写入**
+- 参数：
+  - `name`: `string` —— 标签名（不存在则新建）
+  - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
 
 ### `log.write` — 写作者侧日志
 
