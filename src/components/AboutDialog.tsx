@@ -186,9 +186,7 @@ export function AboutDialog() {
               <path d="M 770 238 Q 775.4 262.6, 800 268 Q 775.4 273.4, 770 298 Q 764.6 273.4, 740 268 Q 764.6 262.6, 770 238 Z" fill="#FFFFFF"/>
             </svg>
           </div>
-          <div className="about-name">
-            <span className="about-name-en">{APP_NAME}</span>
-          </div>
+          <div className="about-name">{APP_NAME}</div>
           <div className="about-meta">
             <span className="about-pill about-pill-version">v{APP_VERSION}</span>
             <span className="about-pill about-pill-license">{APP_LICENSE}</span>

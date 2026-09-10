@@ -15838,50 +15838,52 @@ p:has(> .editor-drawing-container) {
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
   padding: 24px 24px 16px;
 }
+/* 头部（品牌区）。
+   去掉中文名与那句产品说明之后，这里只剩 logo + 名称 + 版本/许可两枚胶囊——
+   于是要靠**间距与层次**把版面撑住，而不是靠文字量：
+   ① logo 缩到 76px（原先 88px 是为两行标题配的比例，现在会显得"头重脚轻"）；
+   ② 名称升到 22px 并加重字距，成为唯一的视觉焦点；
+   ③ 头部底部留 18px——这正是原先那句说明（margin-bottom: 16px + 自身 4px）提供的呼吸，
+      少了它，第一段的分隔线会紧贴着胶囊，整块看起来像没画完。 */
 .about-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  padding-bottom: 18px;
   text-align: center;
 }
 .about-logo-wrap {
-  width: 88px;
-  height: 88px;
+  width: 76px;
+  height: 76px;
   border-radius: 50%;
   background: var(--accent-soft);
+  /* 内描边：浅色主题下纯色圆盘容易糊成一团，一圈极淡的边让它有实体感 */
+  box-shadow: inset 0 0 0 1px var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 2px;
 }
 .about-logo {
-  width: 60px;
-  height: 60px;
+  width: 52px;
+  height: 52px;
   flex-shrink: 0;
 }
 .about-name {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--text);
-  letter-spacing: 0.01em;
-}
-.about-name-en {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
   letter-spacing: 0.02em;
+  line-height: 1.2;
 }
 .about-meta {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: 2px;
 }
 .about-pill {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   border-radius: 999px;
   padding: 3px 10px;
@@ -15929,11 +15931,13 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   line-height: 1.5;
 }
+/* 第一段紧跟头部：比别的段多 2px，让"头部 / 内容"两级呼吸分得开 */
 .about-update-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  padding-top: 16px;
 }
 .about-update-state {
   font-size: 12px;
