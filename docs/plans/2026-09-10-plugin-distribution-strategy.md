@@ -208,6 +208,7 @@
 
 **M11.11a 落地情况（2026-09-10）**：协议 + 签名校验 + zip/URL 安装 + 前端「从索引安装（给 URL）」面板都已进代码；
 索引样例 [`plugin-index.example.json`](../plugin-index.example.json)、发布流程写进[插件配方](../plugin-recipes.md)。
+人工验收工具（本机回环，把示例插件打包 + 现成索引一起发出来）：`node scripts/plugin-index-demo.mjs <插件id> <端口>`。
 **仍未做的**（按原计划留给 b/c，不许含糊）：发布者签名与离线撤回列表（b）、应用内市场 UI / 多索引订阅（c）、
 索引的"自动更新检测"（c）、以及 Windows RSS 那类与 M11.13 相关的遗留（见[隔离方案 §8.2](2026-09-10-plugin-host-isolation-plan.md)）。
 **签名能力的一处硬缺口**：本机没有 minisign 可执行文件，`tauri signer` 在此环境也起不来，所以**签名验证测试用的是

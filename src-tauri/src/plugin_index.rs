@@ -769,6 +769,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_documented_example_index_stays_parseable() {
+        // 文档里的样例是**给人照抄的**：它一旦解析不过，"照着抄"就会直接装不上。
+        // 所以把它当固定装置：改了规范/校验规则而忘了同步样例，这里就会红。
+        let bytes = include_bytes!("../../docs/plugin-index.example.json");
+        let index = parse_index(bytes).unwrap_or_else(|e| panic!("文档里的样例索引应当能解析：{e}"));
+        assert_eq!(index.plugins.len(), 1);
+        let entry = &index.plugins[0];
+        assert_eq!(entry.id, "weekly-review");
+        assert_eq!(entry.api_version, crate::capabilities_gen::API_VERSION);
+        assert!(!entry.permissions.is_empty(), "样例要演示「权限 + 理由」这项必填");
+        assert!(entry.permissions.iter().all(|p| !p.reason.trim().is_empty()));
+        let view = index_view(&index, "1.87.0", None);
+        assert_eq!(view.plugins[0].blocked, "", "样例在声明的 minAppVersion 上应当是可安装的");
+        assert_eq!(view.signature_verified, None);
+    }
+
     // ---- 索引签名 ----
     //
     // 用的是 minisign 官方测试向量（minisign-verify 0.2.5 自带用例里的那对公钥/签名，
