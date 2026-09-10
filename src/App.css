@@ -15894,14 +15894,6 @@ p:has(> .editor-drawing-container) {
   color: var(--accent);
   background: var(--accent-soft);
 }
-.about-desc {
-  font-size: 13px;
-  color: var(--text-dim);
-  line-height: 1.7;
-  text-align: center;
-  margin: 4px auto 16px;
-  max-width: 340px;
-}
 .about-section {
   border-top: 1px solid var(--border);
   padding: 14px 0;

@@ -7,12 +7,8 @@
 import pkg from "../../package.json";
 
 export const APP_NAME = "ShuyoNote";
-/** App 中文名，用于"关于"等面向用户的中文界面。 */
-export const APP_NAME_ZH = "数友笔记";
 export const APP_VERSION: string = pkg.version || "0.0.0";
 export const APP_LICENSE = "AGPL-3.0";
-export const APP_DESCRIPTION =
-  "本地优先 · 类 Notion 的知识管理笔记应用。数据全在本机（SQLite + 附件目录），离线可用。";
 
 export interface LinkItem {
   id: string;

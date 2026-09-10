@@ -4,10 +4,8 @@ import { useEditorStore } from "../store/editor";
 import { platform } from "../lib/platform";
 import {
   APP_NAME,
-  APP_NAME_ZH,
   APP_VERSION,
   APP_LICENSE,
-  APP_DESCRIPTION,
   linkItems,
   sanitizeExternalUrl,
   getAllowExternal,
@@ -190,15 +188,12 @@ export function AboutDialog() {
           </div>
           <div className="about-name">
             <span className="about-name-en">{APP_NAME}</span>
-            {APP_NAME_ZH}
           </div>
           <div className="about-meta">
             <span className="about-pill about-pill-version">v{APP_VERSION}</span>
             <span className="about-pill about-pill-license">{APP_LICENSE}</span>
           </div>
         </div>
-
-        <p className="about-desc">{APP_DESCRIPTION}</p>
 
         <div className="about-section about-update-row">
           <button className="about-link" onClick={checkUpdate} disabled={checking}>
