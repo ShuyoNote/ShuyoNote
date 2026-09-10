@@ -2,12 +2,13 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
-import type { PluginIndexView } from "../types";
+import type { PluginIndexEntry, PluginIndexView } from "../types";
 import {
   addedPermissions,
   entryAction,
   entryMetaLine,
   entrySignatureNote,
+  publisherKeyChanged,
   indexSignatureLabel,
   indexSourceLabel,
   installConfirmMessage,
@@ -56,29 +57,54 @@ export function PluginIndexPanel() {
     const entry = view.plugins.find((p) => p.id === id);
     if (!entry) return;
     const installed = installedOf(id);
-    const act = entryAction(entry, installed?.version);
+    const changed = keyChanged(entry);
+    const act = entryAction(entry, installed?.version, changed);
     if (act.action === "blocked" || act.action === "newer-installed") return;
     const sourceLabel = indexSourceLabel(view, url.trim());
     const okToGo = await confirmDialog({
-      title: act.action === "upgrade" ? "升级插件" : act.action === "reinstall" ? "重装插件" : "从索引安装插件",
+      title:
+        act.action === "upgrade"
+          ? "升级插件"
+          : act.action === "reinstall"
+            ? "重装插件"
+            : act.action === "key-changed"
+              ? "发布者公钥变了"
+              : "从索引安装插件",
       message: installConfirmMessage(
         entry,
         sourceLabel,
         !!pubkey.trim(),
         installed?.version,
         addedPermissions(entry, installed),
+        {
+          pinned: pinnedOf(id)?.fingerprint ?? null,
+          incoming: entry.publisherKeyFingerprint || null,
+        },
       ),
+      danger: act.action === "key-changed",
     });
     if (!okToGo) return;
     setInstalling(id);
     try {
-      await installFromIndex(url.trim(), id, pubkey.trim() || null);
+      await installFromIndex(url.trim(), id, pubkey.trim() || null, act.action === "key-changed");
     } finally {
       setInstalling("");
     }
   };
 
   const sig = view ? indexSignatureLabel(view) : null;
+
+  /** 每个插件已固定的发布者公钥指纹（来自已装插件列表）。 */
+  const pinnedOf = (id: string) => installedOf(id)?.publisher_key ?? null;
+  /**
+   * 索引里那条声明的发布者公钥指纹。
+   *
+   * 这里**不自己算指纹**：指纹的算法只该有一处（后端 `publisher_key_fingerprint`），
+   * 前端算一份迟早会与后端不一致，而"不一致的指纹"恰好会让用户做出错误判断。
+   * 所以界面只显示后端给的固定指纹，索引里那把 key 的指纹由后端在安装时比较并报错。
+   */
+  const keyChanged = (p: PluginIndexEntry) =>
+    publisherKeyChanged(p, pinnedOf(p.id), p.publisherKeyFingerprint);
 
   return (
     <div className="pm-index">
@@ -119,7 +145,8 @@ export function PluginIndexPanel() {
           ) : (
             view.plugins.map((p) => {
               const installed = installedOf(p.id);
-              const act = entryAction(p, installed?.version);
+              const changed = keyChanged(p);
+              const act = entryAction(p, installed?.version, changed);
               const blocked = act.action === "blocked" || act.action === "newer-installed";
               const why = act.reason || "安装这个插件";
               return (
@@ -140,7 +167,24 @@ export function PluginIndexPanel() {
                             </div>
                           ))}
                     </div>
-                    <div className="pm-index-item-sig">{entrySignatureNote(p)}</div>
+                    {(() => {
+                      const note = entrySignatureNote(
+                        p,
+                        pinnedOf(p.id),
+                        p.publisherKeyFingerprint,
+                      );
+                      return (
+                        <div
+                          className={
+                            note.level === "warn"
+                              ? "pm-index-item-sig warn"
+                              : "pm-index-item-sig"
+                          }
+                        >
+                          {note.text}
+                        </div>
+                      );
+                    })()}
                     {installed && act.action === "upgrade" && (
                       <div className="pm-index-item-installed">
                         已装 v{installed.version}

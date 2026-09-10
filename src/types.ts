@@ -278,6 +278,8 @@ export interface PluginMeta {
    * 有值时宿主已经拒绝运行它——除非 `ignored`。
    */
   revoked?: PluginRevocation | null;
+  /** 装它时固定下来的发布者公钥（TOFU）。界面显示指纹，用户才有机会在别处对比。 */
+  publisher_key?: PublisherKeyInfo | null;
 }
 
 /**
@@ -293,6 +295,16 @@ export interface PluginRevocation {
   seen_at: number;
   /** 用户明确说过「我知道，仍然使用」——不再拦运行/安装，但界面照旧显示。 */
   ignored: boolean;
+}
+
+/** 一个插件当前信任的发布者公钥（TOFU 固定下来的那一把）。 */
+export interface PublisherKeyInfo {
+  plugin_id: string;
+  /** 解码后 42 字节的 sha256 前 16 位（按 4 位一组），用于人工对比。 */
+  fingerprint: string;
+  /** 这把 key 从哪来（今天记的是索引地址的域名）。 */
+  source: string;
+  pinned_at: number;
 }
 
 export interface PluginPermissionMeta {
@@ -367,8 +379,15 @@ export interface PluginIndexEntry {
   permissions: { id: string; reason: string }[];
   size: number;
   revoked: boolean;
-  /** 带了发布者签名；**阶段 1 不校验**（那是 M11.11b）。界面必须这么写。 */
+  /** 带了发布者签名（索引里有 `signature` + `publisherKey`）。 */
   publisherSigned: boolean;
+  /**
+   * 发布者公钥的指纹（**后端算好给的**，空 = 没带签名）。
+   *
+   * 界面不自己算：指纹只该有一处算法，两边各算一份迟早不一致，
+   * 而"两个不一样的指纹"恰好会让用户在最需要判断的时候判断错。
+   */
+  publisherKeyFingerprint: string;
   /** 装不了时的一句人话（空 = 可以装）。 */
   blocked: string;
 }

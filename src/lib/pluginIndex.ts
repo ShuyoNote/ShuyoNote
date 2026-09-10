@@ -55,11 +55,56 @@ export function entryMetaLine(entry: PluginIndexEntry): string {
   return bits.join(" · ");
 }
 
-/** 发布者签名状态。**阶段 1 不校验**，所以这句话必须自己说清楚。 */
-export function entrySignatureNote(entry: PluginIndexEntry): string {
-  return entry.publisherSigned
-    ? "带发布者签名（本版本不校验：那要等阶段 2 的发布者公钥）"
-    : "无发布者签名";
+/**
+ * 发布者签名状态。
+ *
+ * 三种情况必须说成三句话，因为它们给用户的安全含义完全不同：
+ *   · 没带签名 → 只有 sha256（保证"下载到的东西没坏"，不保证"是谁发布的"）；
+ *   · 带了、且与本地固定的一致 → 这个包确实是你信任的那把 key 签的；
+ *   · 带了、但和本地固定的**不是同一把** → 最该被看见的那一种：可能换了密钥，也可能索引被动过。
+ *
+ * `pinned` 是本地已固定的那个插件的指纹（没有对应已装插件时传 null）。
+ */
+export function entrySignatureNote(
+  entry: PluginIndexEntry,
+  pinned?: { fingerprint: string } | null,
+  incomingFingerprint?: string | null,
+): { text: string; level: "ok" | "warn" | "none" } {
+  if (!entry.publisherSigned) {
+    return {
+      text: "无发布者签名（只有 sha256：能证明下载到的包没坏，不能证明是谁发布的）",
+      level: "none",
+    };
+  }
+  if (pinned && incomingFingerprint && pinned.fingerprint !== incomingFingerprint) {
+    return {
+      text: `发布者公钥变了：已固定 ${pinned.fingerprint}，这份索引里是 ${incomingFingerprint}`,
+      level: "warn",
+    };
+  }
+  if (pinned) {
+    return { text: `发布者签名：与已固定的公钥一致（${pinned.fingerprint}）`, level: "ok" };
+  }
+  return {
+    text: incomingFingerprint
+      ? `发布者公钥 ${incomingFingerprint}（首次安装会固定下来，之后换 key 就拒绝安装）`
+      : "带发布者签名（装成功后会固定这把公钥）",
+    level: "ok",
+  };
+}
+
+/** 这次安装会不会**换掉**一把已固定的发布者公钥（换 key 需要用户明确同意）。 */
+export function publisherKeyChanged(
+  entry: PluginIndexEntry,
+  pinned?: { fingerprint: string } | null,
+  incomingFingerprint?: string | null,
+): boolean {
+  return !!(
+    entry.publisherSigned &&
+    pinned &&
+    incomingFingerprint &&
+    pinned.fingerprint !== incomingFingerprint
+  );
 }
 
 /** 粗粒度版本比较（与后端同一口径：`x.y.z` 逐段比，比不出来返回 null）。 */
@@ -80,7 +125,14 @@ export function compareVersions(a: string, b: string): number | null {
   return 0;
 }
 
-export type EntryAction = "install" | "upgrade" | "reinstall" | "blocked" | "newer-installed";
+export type EntryAction =
+  | "install"
+  | "upgrade"
+  | "reinstall"
+  | "blocked"
+  | "newer-installed"
+  /** 发布者公钥变了：按钮改成"信任新密钥并安装"，确认框里要把两个指纹都摆出来。 */
+  | "key-changed";
 
 /**
  * 这一条现在该做什么：新装 / 升级 / 重装 / 装不了。
@@ -91,9 +143,17 @@ export type EntryAction = "install" | "upgrade" | "reinstall" | "blocked" | "new
 export function entryAction(
   entry: PluginIndexEntry,
   installedVersion?: string | null,
+  keyChanged = false,
 ): { action: EntryAction; label: string; reason: string } {
   const gate = entryInstallable(entry);
   if (!gate.ok) return { action: "blocked", label: "安装", reason: gate.reason };
+  if (keyChanged) {
+    return {
+      action: "key-changed",
+      label: "信任新密钥并安装",
+      reason: "发布者公钥与已固定的那把不一样：确认无误后再信任新的",
+    };
+  }
   if (!installedVersion) return { action: "install", label: "安装", reason: "" };
   const cmp = compareVersions(installedVersion, entry.version);
   if (cmp === 0) return { action: "reinstall", label: `重装 v${entry.version}`, reason: "" };
@@ -134,6 +194,7 @@ export function installConfirmMessage(
   pubkeyGiven: boolean,
   installedVersion?: string | null,
   added: { id: string; reason: string }[] = [],
+  publisher?: { pinned?: string | null; incoming?: string | null } | null,
 ): string {
   const perms = entry.permissions.length
     ? entry.permissions.map((p) => `· ${p.id} —— ${p.reason || "（作者没写理由）"}`).join("\n")
@@ -152,9 +213,23 @@ export function installConfirmMessage(
       ? `这是「重装」：已装的 v${installedVersion} 会被这一份同版本覆盖（用它可以修好被改坏的插件目录）。`
       : `这是「升级」：已装的 v${installedVersion} 会被替换成 v${entry.version}（替换前会自动备份，装不上就回滚）。`
     : "";
+  // 换发布者公钥是这一屏里最重的一件事：两个指纹都要摆出来，并说清"这意味着什么"。
+  const keyNote =
+    publisher?.pinned && publisher.incoming && publisher.pinned !== publisher.incoming
+      ? [
+          "",
+          "⚠ 发布者公钥变了（这是替换信任对象的动作）：",
+          `· 你原来固定的：${publisher.pinned}`,
+          `· 这份索引里的：${publisher.incoming}`,
+          "可能是发布者换了密钥，也可能是这份索引被人动过。确认过发布者的公告之后再继续。",
+        ]
+      : publisher?.incoming && !publisher.pinned
+        ? ["", `发布者公钥（首次安装会固定下来）：${publisher.incoming}`]
+        : [];
   return [
     `来源：${sourceLabel}`,
     head,
+    ...keyNote,
     `插件：${entry.name || entry.id} v${entry.version}（发布者 ${entry.publisher || "未署名"}）`,
     "它要访问：",
     perms,

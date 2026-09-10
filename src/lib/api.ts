@@ -129,12 +129,24 @@ export const api = {
   fetchPluginIndex: (url: string, pubkey?: string | null) =>
     invoke("fetch_plugin_index", { url, pubkey: pubkey ?? null }),
   /** M11.11a：从索引安装一个插件。 */
-  installPluginFromIndex: (url: string, id: string, pubkey?: string | null) =>
-    invoke("install_plugin_from_index", { url, id, pubkey: pubkey ?? null }),
+  installPluginFromIndex: (
+    url: string,
+    id: string,
+    pubkey?: string | null,
+    trustNewKey?: boolean,
+  ) =>
+    invoke("install_plugin_from_index", {
+      url,
+      id,
+      pubkey: pubkey ?? null,
+      trustNewKey: trustNewKey ?? null,
+    }),
   /** 离线撤回列表。 */
   pluginRevocations: () => invoke("plugin_revocations"),
   /** 用户对一条撤回表态：「我知道，仍然使用」。 */
   ignorePluginRevocation: (id: string) => invoke("ignore_plugin_revocation", { id }),
+  /** 已固定下来的发布者公钥。 */
+  pluginPublisherKeys: () => invoke("plugin_publisher_keys"),
   openPluginDir: () => invoke("open_plugin_dir"),
   pluginLogs: (pluginId?: string | null, limit?: number | null) =>
     invoke("plugin_logs", { pluginId: pluginId ?? null, limit: limit ?? null }),

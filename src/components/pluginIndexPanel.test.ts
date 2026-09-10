@@ -51,6 +51,7 @@ const entry = (over: Partial<PluginIndexEntry> = {}): PluginIndexEntry => ({
   size: 2048,
   revoked: false,
   publisherSigned: false,
+  publisherKeyFingerprint: "",
   blocked: "",
   ...over,
 });
@@ -124,18 +125,21 @@ describe("从索引安装面板", () => {
     expect(text()).toContain("没有校验");
     expect(text()).toContain("read:pages —— 读本周有改动的页面标题");
     expect(text()).toContain("write:pages —— 写入周报页（先给草稿）");
-    expect(text()).toContain("无发布者签名");
+    expect(text()).toContain("无发布者签名（只有 sha256");
     expect(buttons()[0].disabled).toBe(false);
   });
 
-  it("填了公钥就带过去；发布者签名只显示「带了、未校验」", async () => {
-    fetchPluginIndex.mockResolvedValue(view([entry({ publisherSigned: true })], true));
+  it("填了公钥就带过去；索引签名验过要说「校验通过」", async () => {
+    fetchPluginIndex.mockResolvedValue(
+      view([entry({ publisherSigned: true, publisherKeyFingerprint: "cccc-3333" })], true),
+    );
     root = mount(React.createElement(PluginIndexPanel));
     await pull("https://example.com/plugin-index.json", "RWQf6LRC");
 
     expect(fetchPluginIndex).toHaveBeenCalledWith("https://example.com/plugin-index.json", "RWQf6LRC");
     expect(text()).toContain("校验通过");
-    expect(text()).toContain("带发布者签名（本版本不校验");
+    // 首次见到发布者公钥：说清装上之后会固定它
+    expect(text()).toContain("首次安装会固定下来");
     // 拉成功过才记住地址（打错了不该被记住）
     expect(window.localStorage.getItem("shuyonote.pluginIndexUrl")).toBe(
       "https://example.com/plugin-index.json",
@@ -179,6 +183,7 @@ describe("从索引安装面板", () => {
       "https://example.com/plugin-index.json",
       "weekly-report",
       "RWQf6LRC",
+      false,
     );
   });
 
@@ -235,6 +240,67 @@ describe("从索引安装面板", () => {
     expect(buttons()[0].getAttribute("title")).toContain("已装更新的版本 v1.4.0");
     flushSync(() => buttons()[0].click());
     expect(installPluginFromIndex).not.toHaveBeenCalled();
+  });
+
+  it("发布者公钥变了：按钮变成「信任新密钥并安装」，确认框摆出两个指纹，且带 trustNewKey", async () => {
+    fetchPluginIndex.mockResolvedValue(
+      view([entry({ publisherSigned: true, publisherKeyFingerprint: "bbbb-2222" })]),
+    );
+    usePlugins.setState({
+      plugins: [
+        {
+          id: "weekly-report",
+          name: "周报生成",
+          version: "1.0.0",
+          permissions: [],
+          publisher_key: { plugin_id: "weekly-report", fingerprint: "aaaa-1111", source: "example.com", pinned_at: 0 },
+        } as never,
+      ],
+    });
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+
+    // 光看列表就要能发现"密钥变了"
+    expect(text()).toContain("发布者公钥变了");
+    expect(text()).toContain("aaaa-1111");
+    expect(text()).toContain("bbbb-2222");
+    expect(buttons()[0].textContent).toContain("信任新密钥并安装");
+
+    flushSync(() => buttons()[0].click());
+    await vi.waitFor(() => expect(installPluginFromIndex).toHaveBeenCalled());
+    const msg = confirmDialog.mock.calls[0][0].message;
+    expect(msg).toContain("发布者公钥变了（这是替换信任对象的动作）");
+    expect(msg).toContain("你原来固定的：aaaa-1111");
+    expect(msg).toContain("这份索引里的：bbbb-2222");
+    // 只有用户点过确认，才会有 trustNewKey=true 这一步
+    expect(installPluginFromIndex).toHaveBeenCalledWith(
+      "https://example.com/plugin-index.json",
+      "weekly-report",
+      null,
+      true,
+    );
+  });
+
+  it("密钥没变时不显示任何警告，按钮也不是「信任新密钥」", async () => {
+    fetchPluginIndex.mockResolvedValue(
+      view([entry({ publisherSigned: true, publisherKeyFingerprint: "aaaa-1111" })]),
+    );
+    usePlugins.setState({
+      plugins: [
+        {
+          id: "weekly-report",
+          name: "周报生成",
+          version: "1.0.0",
+          permissions: [],
+          publisher_key: { plugin_id: "weekly-report", fingerprint: "aaaa-1111", source: "example.com", pinned_at: 0 },
+        } as never,
+      ],
+    });
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+    expect(text()).toContain("与已固定的公钥一致");
+    expect(text()).not.toContain("发布者公钥变了");
+    expect(buttons()[0].textContent).toBe("升级到 v1.2.0");
   });
 
   it("拉取失败：把后端原话显示出来，而不是留个空列表", async () => {

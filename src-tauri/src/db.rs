@@ -364,6 +364,17 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             seen_at     INTEGER NOT NULL DEFAULT 0,
             ignored_at  INTEGER
         );
+        -- 发布者公钥固定（TOFU，M11.11b 第二块）。
+        -- 索引声明的 key 证明不了"发布者是谁"，所以真正的价值在**第一次之后**：装上之后
+        -- 把这把 key 固定下来，此后同一个插件换了 key 就拒绝安装，并把新旧指纹摆给用户看。
+        -- 一行 = 一个插件当前信任的发布者 key（指纹是解码后 42 字节的 sha256 前 16 位十六进制）。
+        CREATE TABLE IF NOT EXISTS plugin_publisher_key (
+            plugin_id    TEXT PRIMARY KEY,
+            key_b64      TEXT NOT NULL,
+            fingerprint  TEXT NOT NULL,
+            source       TEXT NOT NULL DEFAULT '',
+            pinned_at    INTEGER NOT NULL DEFAULT 0
+        );
         -- 插件私有数据。scope='app' 的落这里（meta.db 是明文，只允许放非敏感配置）；
         -- scope='space:<id>' 的**必须落各空间库**，随该空间 SQLCipher 一起加密、随空间备份搬移。
         -- 这条落库约定见方案 §3.7：把空间级数据塞进 meta.db 会让它静默逃出 E2EE 边界。

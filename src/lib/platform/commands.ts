@@ -40,6 +40,7 @@ import type {
   PluginMeta,
   PluginIndexView,
   PluginRevocation,
+  PublisherKeyInfo,
   PluginSetting,
   PluginValidation,
   PluginAuditEntry,
@@ -190,13 +191,21 @@ export interface CommandMap {
   fetch_plugin_index: { args: { url: string; pubkey?: string | null }; result: PluginIndexView };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {
-    args: { url: string; id: string; pubkey?: string | null };
+    args: {
+      url: string;
+      id: string;
+      pubkey?: string | null;
+      /** 用户已在确认框里同意"信任这把新发布者密钥"（发布者换了 key）。 */
+      trustNewKey?: boolean | null;
+    };
     result: PluginMeta;
   };
   /** 离线撤回列表（M11.11b 第一块）：索引说过的"这个版本不该再用"。 */
   plugin_revocations: { args: undefined; result: PluginRevocation[] };
   /** 用户对一条撤回表态：「我知道，仍然使用」。 */
   ignore_plugin_revocation: { args: { id: string }; result: PluginRevocation };
+  /** 已固定下来的发布者公钥（界面显示指纹）。 */
+  plugin_publisher_keys: { args: undefined; result: PublisherKeyInfo[] };
   open_plugin_dir: { args: undefined; result: string };
   plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
   clear_plugin_logs: { args: undefined; result: void };

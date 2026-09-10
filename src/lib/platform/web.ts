@@ -2350,6 +2350,7 @@ function makeInvoke(store: SqliteStore) {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
     }
     if (cmd === "plugin_revocations") return [] as T;
+    if (cmd === "plugin_publisher_keys") return [] as T;
     if (cmd === "ignore_plugin_revocation") return null as T;
     if (cmd === "set_plugin_enabled") return undefined as T;
     if (cmd === "uninstall_plugin") return undefined as T;

@@ -10,6 +10,7 @@ import {
   indexHost,
   indexSignatureLabel,
   indexSourceLabel,
+  publisherKeyChanged,
   installConfirmMessage,
   loadIndexDraft,
   revocationNotice,
@@ -33,6 +34,7 @@ const entry = (over: Partial<PluginIndexEntry> = {}): PluginIndexEntry => ({
   size: 2048,
   revoked: false,
   publisherSigned: false,
+  publisherKeyFingerprint: "",
   blocked: "",
   ...over,
 });
@@ -76,11 +78,45 @@ describe("签名状态必须一眼能分辨", () => {
     expect(text).toContain("校验通过");
   });
 
-  it("发布者签名阶段 1 一律标注「不校验」，不许写成「已签名」就完事", () => {
-    const note = entrySignatureNote(entry({ publisherSigned: true }));
-    expect(note).toContain("不校验");
-    expect(note).toContain("阶段 2");
-    expect(entrySignatureNote(entry())).toBe("无发布者签名");
+  it("没带发布者签名时，说清 sha256 能证明什么、不能证明什么", () => {
+    const note = entrySignatureNote(entry());
+    expect(note.level).toBe("none");
+    expect(note.text).toContain("只有 sha256");
+    expect(note.text).toContain("不能证明是谁发布的");
+  });
+
+  it("带了签名且与本地固定的一致 → 说「一致」并给出指纹", () => {
+    const note = entrySignatureNote(
+      entry({ publisherSigned: true }),
+      { fingerprint: "abcd-ef01-2345-6789" },
+      "abcd-ef01-2345-6789",
+    );
+    expect(note.level).toBe("ok");
+    expect(note.text).toContain("与已固定的公钥一致");
+    expect(note.text).toContain("abcd-ef01-2345-6789");
+  });
+
+  it("首次见到这把 key：说清「装上之后会固定它」", () => {
+    const note = entrySignatureNote(entry({ publisherSigned: true }), null, "abcd-ef01-2345-6789");
+    expect(note.text).toContain("首次安装会固定下来");
+    expect(note.text).toContain("换 key 就拒绝安装");
+  });
+
+  it("**公钥变了**是最该被看见的一种：两个指纹都要摆出来", () => {
+    const note = entrySignatureNote(
+      entry({ publisherSigned: true }),
+      { fingerprint: "aaaaaaaa-1111" },
+      "bbbbbbbb-2222",
+    );
+    expect(note.level).toBe("warn");
+    expect(note.text).toContain("发布者公钥变了");
+    expect(note.text).toContain("aaaaaaaa-1111");
+    expect(note.text).toContain("bbbbbbbb-2222");
+    expect(publisherKeyChanged(entry({ publisherSigned: true }), { fingerprint: "a" }, "b")).toBe(true);
+    // 没带签名 / 没有固定记录 / 指纹一致 → 都不算"变了"
+    expect(publisherKeyChanged(entry(), { fingerprint: "a" }, "b")).toBe(false);
+    expect(publisherKeyChanged(entry({ publisherSigned: true }), null, "b")).toBe(false);
+    expect(publisherKeyChanged(entry({ publisherSigned: true }), { fingerprint: "a" }, "a")).toBe(false);
   });
 });
 

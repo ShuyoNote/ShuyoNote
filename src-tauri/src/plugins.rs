@@ -262,6 +262,9 @@ pub struct PluginMeta {
     /// 有值时：宿主已经拒绝运行它（除非 `ignored`），界面必须显示出来。
     #[serde(default)]
     pub revoked: Option<RevocationView>,
+    /// 装它时固定下来的发布者公钥（TOFU）。界面显示指纹，用户才有机会在别处对比。
+    #[serde(default)]
+    pub publisher_key: Option<PublisherKeyView>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -3410,6 +3413,95 @@ fn record_install(
     Ok(())
 }
 
+/// 一个插件当前信任的发布者公钥（TOFU 固定下来的那一把）。
+#[derive(Serialize, Clone, Debug)]
+pub struct PublisherKeyView {
+    pub plugin_id: String,
+    pub fingerprint: String,
+    /// 这把 key 是从哪来的（今天的来源是索引地址的域名）。
+    pub source: String,
+    pub pinned_at: i64,
+}
+
+/// 一次安装里，"发布者公钥"这件事的判断结果。
+#[derive(Debug, PartialEq, Eq)]
+pub enum PublisherKeyVerdict {
+    /// 索引没给签名（阶段 1 的索引）→ 不涉及。
+    None,
+    /// 第一次见到这把 key：装成功后就把它固定下来。
+    FirstPin,
+    /// 与固定的那把一致 → 正常。
+    Match,
+    /// **换了 key**：拒绝，并让用户明确决定（新旧指纹都要摆出来）。
+    Changed { pinned_fingerprint: String, incoming_fingerprint: String },
+}
+
+/// 判断"这次的发布者公钥算不算异常"。
+///
+/// 这条判断是整个 TOFU 的核心，也是它能买到的东西：**索引被换掉/被改，也换不掉你已经
+/// 固定过的那把 key**。索引声明的 key 本身证明不了发布者身份（它来自同一份索引），
+/// 所以第一次只能"见到就固定"（并把指纹显示给用户，让他有机会在别处对比），
+/// 而第二次开始就有了真正的约束力。
+fn publisher_key_verdict(
+    c: &Connection,
+    plugin_id: &str,
+    incoming_key: &str,
+) -> Result<PublisherKeyVerdict, String> {
+    if incoming_key.trim().is_empty() {
+        return Ok(PublisherKeyVerdict::None);
+    }
+    let incoming_fp = plugin_index::publisher_key_fingerprint(incoming_key)?;
+    let pinned = read_publisher_key(c, plugin_id);
+    match pinned {
+        None => Ok(PublisherKeyVerdict::FirstPin),
+        Some(p) if p.fingerprint == incoming_fp => Ok(PublisherKeyVerdict::Match),
+        Some(p) => Ok(PublisherKeyVerdict::Changed {
+            pinned_fingerprint: p.fingerprint,
+            incoming_fingerprint: incoming_fp,
+        }),
+    }
+}
+
+/// 读一个插件固定下来的发布者公钥。
+fn read_publisher_key(c: &Connection, id: &str) -> Option<PublisherKeyView> {
+    c.query_row(
+        "SELECT plugin_id, fingerprint, source, pinned_at FROM plugin_publisher_key WHERE plugin_id = ?1",
+        params![id],
+        |r| {
+            Ok(PublisherKeyView {
+                plugin_id: r.get(0)?,
+                fingerprint: r.get(1)?,
+                source: r.get(2)?,
+                pinned_at: r.get(3)?,
+            })
+        },
+    )
+    .ok()
+}
+
+/// 固定（或改固定）一个插件的发布者公钥。
+fn pin_publisher_key(c: &Connection, id: &str, key: &str, source: &str) -> Result<PublisherKeyView, String> {
+    let fingerprint = plugin_index::publisher_key_fingerprint(key)?;
+    let now = now_ms();
+    c.execute(
+        "INSERT INTO plugin_publisher_key (plugin_id, key_b64, fingerprint, source, pinned_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(plugin_id) DO UPDATE SET
+             key_b64 = excluded.key_b64,
+             fingerprint = excluded.fingerprint,
+             source = excluded.source,
+             pinned_at = excluded.pinned_at",
+        params![id, key.trim(), fingerprint, source, now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(PublisherKeyView {
+        plugin_id: id.to_string(),
+        fingerprint,
+        source: source.to_string(),
+        pinned_at: now,
+    })
+}
+
 /// 一条撤回记忆（`plugin_revocation` 一行）的展示形态。
 #[derive(Serialize, Clone, Debug)]
 pub struct RevocationView {
@@ -3624,9 +3716,13 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         let runtime = runtime_of(&manifest).to_string();
         let is_enabled = enabled_map.get(&manifest.id).copied().unwrap_or(false);
         // 撤回记忆：只在**记的就是这个版本**时才算数（索引后来发的修好的版本不该被牵连）。
-        let revoked = {
+        // 发布者公钥一起读出来（界面要显示指纹）。
+        let (revoked, publisher_key) = {
             let c = conn(&db);
-            read_revocation(&c, &manifest.id).filter(|r| r.version == manifest.version)
+            (
+                read_revocation(&c, &manifest.id).filter(|r| r.version == manifest.version),
+                read_publisher_key(&c, &manifest.id),
+            )
         };
         // 声明式插件没有代码：不读入口、不跑 Boa（这正是它安全的原因——没有可执行的东西）。
         if runtime == "declarative" {
@@ -3673,6 +3769,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 approval,
                 replaced_version: None,
                 revoked,
+                publisher_key,
             });
             continue;
         }
@@ -3722,6 +3819,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             approval,
             replaced_version: None,
             revoked,
+            publisher_key,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -4149,6 +4247,7 @@ fn install_from_dir(
         approval: approval_state_after,
         replaced_version: replaced,
         revoked: None,
+        publisher_key: None,
     })
 }
 
@@ -4314,6 +4413,30 @@ pub fn ignore_plugin_revocation(db: State<'_, Db>, id: String) -> Result<Revocat
     })
 }
 
+/// 已固定下来的发布者公钥（界面显示指纹用）。
+#[tauri::command]
+pub fn plugin_publisher_keys(db: State<'_, Db>) -> Vec<PublisherKeyView> {
+    let c = conn(&db);
+    let mut stmt = match c.prepare(
+        "SELECT plugin_id, fingerprint, source, pinned_at FROM plugin_publisher_key ORDER BY pinned_at DESC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok(PublisherKeyView {
+            plugin_id: r.get(0)?,
+            fingerprint: r.get(1)?,
+            source: r.get(2)?,
+            pinned_at: r.get(3)?,
+        })
+    });
+    match rows {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// 撤回记忆全貌（界面"撤回"一栏用）。
 #[tauri::command]
 pub fn plugin_revocations(db: State<'_, Db>) -> Vec<RevocationView> {
@@ -4328,6 +4451,7 @@ pub async fn install_plugin_from_index(
     url: String,
     id: String,
     pubkey: Option<String>,
+    trust_new_key: Option<bool>,
 ) -> Result<PluginMeta, String> {
     let version = app_version(&app);
     let (_, index) = load_plugin_index(&url, pubkey.as_deref(), &version).await?;
@@ -4353,8 +4477,55 @@ pub async fn install_plugin_from_index(
     }
     // 完整性：索引说这个包是这个哈希，下载到的东西就必须是它。先验再解包。
     plugin_index::verify_sha256(&bytes, &entry.sha256)?;
-    let kind = format!("index:{}", plugin_index::url_host(&url));
-    install_from_zip_bytes(&app, &db, &bytes, &kind)
+    let host = plugin_index::url_host(&url);
+    // 发布者签名（阶段 2）：索引给了 key 与签名就必须验过；TOFU 固定过的那把 key
+    // 一旦被换掉就拒绝——**索引被换掉也换不掉你已经固定过的 key**。
+    let mut pin_after = None;
+    if !entry.publisher_key.trim().is_empty() {
+        plugin_index::verify_package_signature(&bytes, &entry.signature, &entry.publisher_key)?;
+        match publisher_key_verdict(&conn(&db), &id, &entry.publisher_key)? {
+            PublisherKeyVerdict::None | PublisherKeyVerdict::Match => {}
+            PublisherKeyVerdict::FirstPin => pin_after = Some(entry.publisher_key.clone()),
+            PublisherKeyVerdict::Changed {
+                pinned_fingerprint,
+                incoming_fingerprint,
+            } => {
+                if !trust_new_key.unwrap_or(false) {
+                    return Err(format!(
+                        "publisher_key_changed: 插件「{id}」的发布者公钥变了（原来 {pinned_fingerprint}，现在 {incoming_fingerprint}）。这可能是发布者换了密钥，也可能是这份索引被人动过——确认无误后可以点「信任新密钥并安装」"
+                    ));
+                }
+                // 用户明确同意换信任对象：把新 key 固定下来（旧的那把就此不再受信）。
+                let c = conn(&db);
+                let view = pin_publisher_key(&c, &id, &entry.publisher_key, &host)?;
+                push_log(
+                    &id,
+                    "warn",
+                    &format!(
+                        "用户信任了新的发布者公钥：{pinned_fingerprint} → {}",
+                        view.fingerprint
+                    ),
+                );
+            }
+        }
+    }
+    let kind = format!("index:{host}");
+    let meta = install_from_zip_bytes(&app, &db, &bytes, &kind)?;
+    // 第一次见到的 key：**装成功之后**才固定（装失败的东西不该留下信任记录）。
+    if let Some(key) = pin_after {
+        let c = conn(&db);
+        let view = pin_publisher_key(&c, &id, &key, &host)?;
+        push_log(
+            &id,
+            "info",
+            &format!("已固定发布者公钥：{}（来源 {host}）", view.fingerprint),
+        );
+        return Ok(PluginMeta {
+            publisher_key: Some(view),
+            ..meta
+        });
+    }
+    Ok(meta)
 }
 
 #[tauri::command]
@@ -6690,6 +6861,86 @@ register({ id: "s.run", title: "结构化", run: function () {
         )
         .unwrap();
         assert!(run_gates(&c2, &manifest_with(&["read:pages"], &[], "1.1.0")).is_ok());
+    }
+
+    // ---- 发布者公钥固定（TOFU，M11.11b 第二块）----
+
+    fn state_conn_with_trust_store() -> Connection {
+        let c = state_conn_with_revocation();
+        c.execute_batch(
+            "CREATE TABLE meta.plugin_publisher_key (
+                 plugin_id    TEXT PRIMARY KEY,
+                 key_b64      TEXT NOT NULL,
+                 fingerprint  TEXT NOT NULL,
+                 source       TEXT NOT NULL DEFAULT '',
+                 pinned_at    INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    const KEY_A: &str = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+    const KEY_B: &str = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO2";
+
+    #[test]
+    fn a_publisher_key_is_pinned_once_and_compared_afterwards() {
+        let c = state_conn_with_trust_store();
+        // 第一次见到 → 固定（此时还没有任何信任记录）
+        assert_eq!(
+            publisher_key_verdict(&c, "p1", KEY_A).unwrap(),
+            PublisherKeyVerdict::FirstPin
+        );
+        let pinned = pin_publisher_key(&c, "p1", KEY_A, "example.com").unwrap();
+        assert_eq!(pinned.fingerprint, plugin_index::publisher_key_fingerprint(KEY_A).unwrap());
+        assert_eq!(pinned.source, "example.com");
+        // 同一把 key 再来 → 正常
+        assert_eq!(
+            publisher_key_verdict(&c, "p1", KEY_A).unwrap(),
+            PublisherKeyVerdict::Match
+        );
+        // 换了 key → 拒，并且要把新旧指纹都摆出来（用户没法比对一串 base64）
+        match publisher_key_verdict(&c, "p1", KEY_B).unwrap() {
+            PublisherKeyVerdict::Changed { pinned_fingerprint, incoming_fingerprint } => {
+                assert_ne!(pinned_fingerprint, incoming_fingerprint);
+                assert_eq!(pinned_fingerprint, pinned.fingerprint);
+            }
+            other => panic!("换 key 必须判成 Changed，实际 {other:?}"),
+        }
+        // 别的插件不受影响
+        assert_eq!(
+            publisher_key_verdict(&c, "p2", KEY_B).unwrap(),
+            PublisherKeyVerdict::FirstPin
+        );
+        // 索引没给签名（阶段 1 的索引）→ 不涉及
+        assert_eq!(
+            publisher_key_verdict(&c, "p1", "  ").unwrap(),
+            PublisherKeyVerdict::None
+        );
+        // 形状不对的 key 要报错，而不是"算出一个指纹就固定下来"
+        assert!(publisher_key_verdict(&c, "p1", "not-a-key").is_err());
+    }
+
+    #[test]
+    fn accepting_a_new_publisher_key_replaces_the_pinned_one() {
+        let c = state_conn_with_trust_store();
+        pin_publisher_key(&c, "p1", KEY_A, "example.com").unwrap();
+        assert!(matches!(
+            publisher_key_verdict(&c, "p1", KEY_B).unwrap(),
+            PublisherKeyVerdict::Changed { .. }
+        ));
+        // 用户点了「信任新密钥」→ 记录被换掉，此后按新的比
+        let view = pin_publisher_key(&c, "p1", KEY_B, "example.com").unwrap();
+        assert_eq!(view.fingerprint, plugin_index::publisher_key_fingerprint(KEY_B).unwrap());
+        assert_eq!(
+            publisher_key_verdict(&c, "p1", KEY_B).unwrap(),
+            PublisherKeyVerdict::Match
+        );
+        // 旧 key 现在反而是"变了"
+        assert!(matches!(
+            publisher_key_verdict(&c, "p1", KEY_A).unwrap(),
+            PublisherKeyVerdict::Changed { .. }
+        ));
     }
 
     #[test]

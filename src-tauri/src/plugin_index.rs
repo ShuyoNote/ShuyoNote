@@ -71,9 +71,18 @@ pub struct IndexEntry {
     #[serde(default)]
     pub size: u64,
     pub sha256: String,
-    /// 阶段 2 才必填（publisher 签名）；这里只解析，不假装校验。
+    /// 发布者对这个包（zip 的字节）的 minisign 分离签名。阶段 2 起可用；
+    /// 它与 `publisher_key` 必须**同时**给或同时不给，否则索引自己就是矛盾的。
     #[serde(default)]
     pub signature: String,
+    /// 发布者的 minisign 公钥（裸 base64 或 `minisign.pub` 文件内容）。
+    ///
+    /// 信任模型要说清楚：这把 key **来自索引**，所以它证明不了"发布者是谁"——
+    /// 它证明的是"这个包与这份索引里声明的那把 key 一致"。真正的价值在**第一次之后**：
+    /// 应用会把每个插件的发布者 key 固定下来（TOFU），此后**换了 key 就拒绝安装**并
+    /// 告诉用户新旧指纹。索引被换掉/被改，也换不掉你已经固定过的那把 key。
+    #[serde(default)]
+    pub publisher_key: String,
     #[serde(default)]
     pub revoked_at: Option<String>,
     #[serde(default)]
@@ -127,8 +136,13 @@ pub struct IndexEntryView {
     pub permissions: Vec<IndexPermission>,
     pub size: u64,
     pub revoked: bool,
-    /// 带了发布者签名（`signature` 非空）。**阶段 1 不校验它**，界面必须如实说明。
+    /// 带了发布者签名（`signature` 非空）。
     pub publisher_signed: bool,
+    /// 这把发布者公钥的指纹（**由后端算**，空 = 没带签名）。
+    ///
+    /// 为什么不让界面自己算：指纹只该有一处算法。前端另算一份，迟早会与后端不一致，
+    /// 而"两个不一样的指纹"恰好会让用户在最需要判断的时候判断错。
+    pub publisher_key_fingerprint: String,
     /// 装不了时的一句人话（空 = 可以装）。**说清为什么**，不静默隐藏。
     pub blocked: String,
 }
@@ -265,6 +279,22 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
                 p.id, p.download_url
             ));
         }
+        // 发布者签名与公钥必须成对：只给签名（没 key 可验）或只给 key（没签名可验）
+        // 都是索引自己的矛盾，早拒比装到一半才发现好。
+        let has_sig = !p.signature.trim().is_empty();
+        let has_key = !p.publisher_key.trim().is_empty();
+        if has_sig != has_key {
+            return Err(format!(
+                "插件 {} 的 signature 与 publisherKey 必须一起给（现在 {}）",
+                p.id,
+                if has_sig { "只有签名" } else { "只有公钥" }
+            ));
+        }
+        if has_key {
+            // 形状不对的 key 会让**每一次安装**都失败在验签那一步，而原因看起来像"签名不对"。
+            parse_index_pubkey(&p.publisher_key)
+                .map_err(|e| format!("插件 {} 的 publisherKey 不合法：{e}", p.id))?;
+        }
         for perm in &p.permissions {
             if perm.reason.trim().is_empty() {
                 return Err(format!(
@@ -317,9 +347,14 @@ pub fn index_view(index: &PluginIndex, app_version: &str, signature_verified: Op
             size: p.size,
             revoked: p.revoked_at.is_some(),
             blocked: entry_block_reason(p, app_version),
-            // 阶段 1 只校验索引签名，**不校验发布者签名**（那是阶段 2）。带了签名就如实说
-            // "带了、但这一版没验"，别让界面看起来像"验过了"。
             publisher_signed: !p.signature.trim().is_empty(),
+            // 指纹算不出来时留空 + 在下面被当成"没有指纹"（索引解析已经校验过 key 形状，
+            // 走到这里还失败只可能是极端情况，不该让整份索引打不开）。
+            publisher_key_fingerprint: if p.publisher_key.trim().is_empty() {
+                String::new()
+            } else {
+                publisher_key_fingerprint(&p.publisher_key).unwrap_or_default()
+            },
         })
         .collect();
     PluginIndexView {
@@ -531,6 +566,43 @@ pub fn url_host(url: &str) -> String {
     host.to_string()
 }
 
+/// 公钥指纹：解码后的 42 字节的 sha256 前 16 位十六进制（按 4 位一组显示更易读）。
+///
+/// 用它而不是整把 key 来做"是不是同一把钥匙"的判断与界面展示：一串 56 字符的 base64
+/// 没有人会去比对，而 16 位指纹可以让人在发布者的公告里对着看。
+pub fn publisher_key_fingerprint(pubkey: &str) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    // 先按同一个解析器校验形状（不合法的 key 在这里就报「公钥不合法」，而不是算出一个
+    // 看着像指纹的东西）；再从 base64 那一行取原始字节——`PublicKey` 不暴露原始字节。
+    parse_index_pubkey(pubkey)?;
+    let b64 = pubkey.trim().lines().last().unwrap_or("").trim();
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+        .map_err(|e| format!("公钥不合法：{e}"))?;
+    let mut h = Sha256::new();
+    h.update(&raw);
+    let hex = hex::encode(h.finalize());
+    let short = &hex[..16];
+    Ok(short
+        .as_bytes()
+        .chunks(4)
+        .map(|c| std::str::from_utf8(c).unwrap_or("").to_string())
+        .collect::<Vec<_>>()
+        .join("-"))
+}
+
+/// 校验**插件包**的发布者签名（同一个 minisign 习惯，只是签的字节是 zip 本身）。
+pub fn verify_package_signature(
+    package_bytes: &[u8],
+    signature: &str,
+    pubkey: &str,
+) -> Result<(), String> {
+    let pk = parse_index_pubkey(pubkey)?;
+    let sig = minisign_verify::Signature::decode(signature)
+        .map_err(|e| format!("发布者签名不合法：{e}"))?;
+    pk.verify(package_bytes, &sig, false)
+        .map_err(|_| "发布者签名校验失败（这个包不是那把发布者 key 签的，或包被换过）".to_string())
+}
+
 /// 解析用户给的那把 minisign 公钥。两种写法都收：
 /// - `minisign.pub` 文件内容（`untrusted comment: …` + 一行 base64）
 /// - 裸 base64（和 Tauri 更新器配置里的 pubkey 一个形状）
@@ -585,6 +657,7 @@ mod tests {
             size: 2048,
             sha256: "a".repeat(64),
             signature: String::new(),
+            publisher_key: String::new(),
             revoked_at: None,
             revoked_reason: String::new(),
         }
@@ -853,6 +926,57 @@ mod tests {
     }
 
     #[test]
+    fn a_publisher_key_has_a_stable_short_fingerprint() {
+        let fp = publisher_key_fingerprint(MINISIGN_TEST_PUBKEY).unwrap();
+        assert_eq!(fp.len(), 19, "16 位十六进制 + 3 个分隔符：{fp}");
+        assert_eq!(fp, publisher_key_fingerprint(MINISIGN_TEST_PUBKEY).unwrap());
+        // 文件形式（带注释行）与裸 base64 是同一把 key → 同一个指纹
+        let file_form =
+            format!("untrusted comment: minisign public key E7620F1842B4E81F\n{MINISIGN_TEST_PUBKEY}");
+        assert_eq!(publisher_key_fingerprint(&file_form).unwrap(), fp);
+        // 改一个字节就是另一把 key
+        let other = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO2";
+        assert_ne!(publisher_key_fingerprint(other).unwrap(), fp);
+        assert!(publisher_key_fingerprint("not-a-key").is_err());
+    }
+
+    #[test]
+    fn publisher_signature_and_key_must_come_as_a_pair() {
+        let with = |sig: &str, key: &str| {
+            let mut e = good_entry("weekly-report");
+            e.signature = sig.into();
+            e.publisher_key = key.into();
+            index_json(vec![e])
+        };
+        // 只有签名、没有公钥 → 索引自己就矛盾
+        let err = parse_index(&with("untrusted comment: x\nAAAA", "")).unwrap_err();
+        assert!(err.contains("必须一起给") && err.contains("只有签名"), "{err}");
+        // 只有公钥、没有签名
+        let err = parse_index(&with("", MINISIGN_TEST_PUBKEY)).unwrap_err();
+        assert!(err.contains("只有公钥"), "{err}");
+        // 形状不对的公钥：早拒，别让它变成"每次安装都失败在验签那一步"
+        let err = parse_index(&with("untrusted comment: x\nAAAA", "not-a-key")).unwrap_err();
+        assert!(err.contains("publisherKey 不合法"), "{err}");
+        // 成对且形状正确 → 过
+        assert!(parse_index(&with("untrusted comment: x\nAAAA", MINISIGN_TEST_PUBKEY)).is_ok());
+        // 两个都不给（阶段 1 的索引）→ 也过
+        assert!(parse_index(&with("", "")).is_ok());
+    }
+
+    #[test]
+    fn a_package_signature_is_verified_against_the_package_bytes() {
+        // 官方测试向量签的是 4 个字节 "test"；这里把"包"就当那 4 个字节，
+        // 验的是**包字节这一层**的校验路径（而不是索引 JSON 那一层）。
+        verify_package_signature(b"test", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
+            .expect("真签名应当通过");
+        let err = verify_package_signature(b"test!", &minisign_test_signature(), MINISIGN_TEST_PUBKEY)
+            .unwrap_err();
+        assert!(err.contains("发布者签名校验失败"), "{err}");
+        let err = verify_package_signature(b"test", "garbage", MINISIGN_TEST_PUBKEY).unwrap_err();
+        assert!(err.contains("发布者签名不合法"), "{err}");
+    }
+
+    #[test]
     fn malformed_signature_material_reports_which_side_is_broken() {
         let err = verify_index_signature(b"{}", &minisign_test_signature(), "not-a-key").unwrap_err();
         assert!(err.contains("公钥不合法"), "{err}");
@@ -919,6 +1043,7 @@ mod tests {
         assert!(!view.plugins[2].publisher_signed, "没写签名就不该显示成「已签名」");
         let mut signed = ok.clone();
         signed.signature = "untrusted comment: x\nAAAA".into();
+        signed.publisher_key = MINISIGN_TEST_PUBKEY.into();
         let idx = parse_index(&index_json(vec![signed])).unwrap();
         assert!(index_view(&idx, "1.87.0", None).plugins[0].publisher_signed);
     }

@@ -104,7 +104,13 @@ interface PluginsState {
    *
    * `pubkey` 是用户信任的 minisign 公钥；给了就必须验签通过才继续。
    */
-  installFromIndex: (url: string, id: string, pubkey?: string | null) => Promise<PluginActionResult>;
+  installFromIndex: (
+    url: string,
+    id: string,
+    pubkey?: string | null,
+    /** 用户已明确同意信任新的发布者公钥（发布者换 key 之后唯一的放行方式）。 */
+    trustNewKey?: boolean,
+  ) => Promise<PluginActionResult>;
   /**
    * M11.11b 第一块：对一条撤回表态「我知道，仍然使用」。
    *
@@ -240,9 +246,9 @@ export const usePlugins = create<PluginsState>((set) => ({
       return { ok: false, error };
     }
   },
-  installFromIndex: async (url, id, pubkey) => {
+  installFromIndex: async (url, id, pubkey, trustNewKey) => {
     try {
-      const meta = await api.installPluginFromIndex(url, id, pubkey ?? null);
+      const meta = await api.installPluginFromIndex(url, id, pubkey ?? null, trustNewKey);
       await usePlugins.getState().load();
       toast(installToast(meta, "从索引"), "success");
       return { ok: true };

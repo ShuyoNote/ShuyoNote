@@ -451,6 +451,8 @@ pub fn run() {
             // M11.11b 第一块：离线撤回列表（记住"这个版本不该再用"，离线也拦得住）。
             plugins::plugin_revocations,
             plugins::ignore_plugin_revocation,
+            // M11.11b 第二块：发布者公钥固定（TOFU）。
+            plugins::plugin_publisher_keys,
             plugins::open_plugin_dir,
             plugin_validate::validate_plugin,
             plugin_validate::plugin_dir_stamp,
