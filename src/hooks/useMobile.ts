@@ -30,9 +30,10 @@ export function useMobile(): boolean {
 
   // On entering the mobile viewport, close the sidebar so the main area is full
   // width (the sidebar becomes an overlay drawer on mobile, not an inline column).
+  // 不写 localStorage：这是屏幕尺寸导致的布局状态，不该覆盖桌面端的侧栏偏好。
   useEffect(() => {
     if (isMobile) {
-      useActivity.getState().setSidebarOpen(false);
+      useActivity.getState().setSidebarOpen(false, { persist: false });
     }
   }, [isMobile]);
 

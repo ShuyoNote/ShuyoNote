@@ -617,7 +617,7 @@ function App() {
         {isMobile && sidebarOpen && (
           <div
             className="mobile-sidebar-backdrop"
-            onClick={() => useActivity.getState().setSidebarOpen(false)}
+            onClick={() => useActivity.getState().setSidebarOpen(false, { persist: false })}
             aria-hidden
           />
         )}

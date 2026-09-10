@@ -291,7 +291,8 @@ function TreeItem({
       openPage(node.id);
     }
     // 移动端：选完就自动收起抽屉，把整屏交还给内容（桌面端侧栏常驻，不动）。
-    if (isMobileViewport()) useActivity.getState().setSidebarOpen(false);
+    // 不写 localStorage：移动端抽屉的开合不该改变桌面端的侧栏偏好。
+    if (isMobileViewport()) useActivity.getState().setSidebarOpen(false, { persist: false });
   };
 
   return (
