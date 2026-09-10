@@ -117,10 +117,16 @@ jobs:
   #
   # 依赖列表与 rust 工具链**照抄** release.yml 的 Linux 档：这个 crate 在 Linux 上要链
   # webkit2gtk + bundled-sqlcipher 用的 OpenSSL，少一个包都编译不过。
-  # `cargo test --lib` 编译的是 dev 档（走 tauri.conf.json 的 devUrl 分支），
+  # `cargo test` 编译的是 dev 档（走 tauri.conf.json 的 devUrl 分支），
   # tauri-codegen 不会去校验 `../dist`，所以这里不需要先跑前端构建 / 装 node。
+  #
+  # M11.13 阶段 1 起这一档是 `cargo test`（不只 `--lib`）：插件宿主的**集成测试**
+  # （`src-tauri/tests/plugin_host.rs`）要起一个真的子进程——它拿 `CARGO_BIN_EXE_shuyonote`
+  # 拿到应用二进制并 re-exec 自己，所以必须编译 bin target。那些断言（分流在 Tauri 之前、
+  # 握手先于请求、能力通道穿得过、父进程 drop 不留孤儿）**只有在 CI 里跑才有价值**——
+  # 它们正是"进程边界可用"的回归。构建时间长一点是值得的（方案 §6.2：宁可测试慢一点）。
   rust-tests:
-    name: Rust 单元测试（cargo test --lib）
+    name: Rust 测试（cargo test，含宿主子进程集成测试）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,5 +141,5 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
 
-      - name: 单元测试（cargo test --lib）
-        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
+      - name: 单元测试 + 集成测试（cargo test）
+        run: cargo test --manifest-path src-tauri/Cargo.toml

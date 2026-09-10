@@ -15,6 +15,7 @@ mod models;
 mod capabilities_gen;
 mod pdf_native;
 mod plugin_budget;
+pub mod plugin_host;
 mod plugin_validate;
 mod plugins;
 mod properties;
@@ -63,6 +64,16 @@ fn with_cache_headers(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
+    // 放在后面会出两个真实后果（见方案 §7）：macOS 上多一个 Dock 图标；single-instance
+    // 插件把子进程当成"第二个实例"，于是用户开第二个窗口时被"唤起已有窗口"。
+    //
+    // 子进程是**纯解释器**：不碰数据库、不拿解密密钥、没有路径，只跑插件 JS 并把结果
+    // 回给父进程（能力调用在阶段 1 是假应答，阶段 2 起改成 RPC 回父进程）。
+    if std::env::args().any(|a| a == plugin_host::HOST_FLAG) {
+        std::process::exit(plugin_host::serve_stdio());
+    }
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())

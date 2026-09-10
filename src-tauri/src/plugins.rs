@@ -324,6 +324,12 @@ struct RunState {
     /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
     /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
     toasts: Vec<String>,
+    /// M11.13 阶段 1：这次运行在**子进程**里，能力调用回一个假应答（echo）。
+    ///
+    /// 子进程没有数据库、没有密钥、没有路径——它跑不动真能力，也不该跑。阶段 2 会把
+    /// `__cap` 改成 RPC 回父进程（那里已经有权限校验、审计与写中介）；在那之前，
+    /// 这个开关让"通道 + 解释器 + 插件 JS"这三段能在真进程边界上先跑通、被测住。
+    cap_stub: bool,
 }
 
 /// 一次导出请求（`api.files.export` 的产物）。
@@ -1893,6 +1899,21 @@ fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
+    // M11.13 阶段 1：子进程里没有数据可读，能力调用回一个**假应答**。
+    //
+    // 这个分支必须在**任何数据库访问之前**：子进程连库都打不开（没有密钥、没有路径），
+    // 走到下面任何一条 arm 都只会失败。假应答的用处是让"协议 + 解释器 + 插件 JS"这三段
+    // 能在真进程边界上跑通并被测住；阶段 2 把它换成 `__cap` 走 IPC 回父进程，
+    // **权限校验与审计仍然只发生在父进程那一侧**（那里本来就有一份，不需要第二份）。
+    if RUN_STATE.with(|s| s.borrow().cap_stub) {
+        return Ok(serde_json::json!({
+            "stub": true,
+            "method": method,
+            "args": serde_json::from_str::<serde_json::Value>(args_json)
+                .unwrap_or(serde_json::Value::Null),
+        })
+        .to_string());
+    }
     let plugin_id = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
     let cap = match capabilities_gen::lookup(method) {
         Some(c) => c,
@@ -2149,6 +2170,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             exports: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
+            cap_stub: state.cap_stub,
         }
     });
     Ok(())
@@ -2204,6 +2226,7 @@ fn run_command_timeout(
         exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
+        cap_stub: state.cap_stub,
     };
     let args = args_json.to_string();
     with_timeout(RUN_TIMEOUT, "插件执行", move || {
@@ -2219,6 +2242,64 @@ fn run_command_timeout(
         });
         Ok((msg, insert, toasts, drafts, exports))
     })
+}
+
+/// M11.13 阶段 1：在**子进程**里跑一次命令（`--plugin-host` 时由 `plugin_host` 调用）。
+///
+/// 与父进程那条路（`run_plugin_command`）的差别只有一处：能力走**假应答**（`cap_stub`）。
+/// 权限解析、草稿确认、导出对话框这些仍然只发生在父进程那一侧——子进程是纯解释器，
+/// 它没有库、没有密钥、没有路径，所以它**做不到**这些事，也不需要能做。
+pub(crate) fn run_command_in_host_process(
+    req: &crate::plugin_host::HostRunRequest,
+) -> Result<crate::plugin_host::HostRunResult, (String, String)> {
+    let state = RunState {
+        plugin_id: req.plugin_id.clone(),
+        current_page_json: req.current_page_json.clone(),
+        page_count: req.page_count,
+        permissions: req.permissions.clone(),
+        current_page_id: req.current_page_id.clone(),
+        // 子进程里这些一律没有：读哪张表、哪个空间、哪个目录都由父进程决定。
+        read_space: None,
+        read_dir: None,
+        setting_scopes: Default::default(),
+        drafts: Vec::new(),
+        exports: Vec::new(),
+        insert_text: String::new(),
+        toasts: Vec::new(),
+        cap_stub: true,
+    };
+    match run_command_timeout(&req.source, &req.command_id, &req.args_json, &state) {
+        Ok((message, insert_text, toasts, drafts, exports)) => Ok(crate::plugin_host::HostRunResult {
+            message,
+            insert_text,
+            toasts,
+            // 形状原样透传：草稿/导出的落地规则只在父进程与前端那一侧，这里不做第二套。
+            drafts: serde_json::to_value(&drafts).unwrap_or(serde_json::Value::Null),
+            exports: serde_json::to_value(&exports).unwrap_or(serde_json::Value::Null),
+        }),
+        Err(e) => Err(classify_run_error(&e)),
+    }
+}
+
+/// 把内部错误串分成 `(code, message)`。
+///
+/// 为什么要 code：前端与日志要能区分"预算超了 / 超时了 / 插件自己抛错"，而现有的错误串
+/// 是人话（"插件超出内存预算（64 MiB）"）。这里按**已有串**归类，不新造一套错误文案——
+/// 阶段 2 把能力 RPC 挪上来之后，这套归类仍然是唯一的出口。
+pub(crate) fn classify_run_error(e: &str) -> (String, String) {
+    for code in ["approval_required", "bad_args", "unknown_capability"] {
+        if e.starts_with(code) {
+            return (code.to_string(), e.to_string());
+        }
+    }
+    let code = if e.contains("超出内存预算") {
+        "plugin_budget"
+    } else if e.contains("超时") {
+        "plugin_timeout"
+    } else {
+        "plugin_error"
+    };
+    (code.to_string(), e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -2427,6 +2508,8 @@ fn run_event_timeout(
         exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
+        // 事件路径目前仍在父进程内跑（M11.13 阶段 2 起才会挪到子进程）
+        cap_stub: state.cap_stub,
     };
     let src = source.to_string();
     let ev = event.to_string();
@@ -2607,6 +2690,7 @@ pub async fn emit_plugin_event(
             current_page_id: payload_page_id.clone(),
             read_space: read_space.clone(),
             read_dir: None,
+            cap_stub: false,
             setting_scopes,
             drafts: Vec::new(),
             exports: Vec::new(),
@@ -3205,6 +3289,7 @@ pub async fn run_plugin_command(
         current_page_id: current_id,
         read_space,
         read_dir: None,
+        cap_stub: false,
         setting_scopes: setting_scopes_of(&manifest),
         drafts: Vec::new(),
         exports: Vec::new(),
