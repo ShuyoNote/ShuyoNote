@@ -488,7 +488,9 @@ if (isMain) {
     const abs = resolve(root, rel);
     if (check) {
       const cur = existsSync(abs) ? readFileSync(abs, "utf8") : null;
-      if (cur !== content) stale.push(rel);
+      // 行尾无关比较（Windows 检出常是 CRLF；见 .gitattributes）
+      const norm = (x) => (x === null ? null : x.replace(/\r\n/g, "\n"));
+      if (norm(cur) !== norm(content)) stale.push(rel);
     } else {
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, content, "utf8");

@@ -1,0 +1,8 @@
+# 统一换行符：仓库内容全部是 LF，显式声明让 Windows 检出也拿到 LF。
+#
+# 为什么需要：没有这条时，Windows 上的 git（GitHub runner 默认 core.autocrlf=true）
+# 会把文本文件检出成 CRLF，于是「按源代码逐字节比对」的检查（如
+# scripts/check-capabilities.mjs 校验生成物是否与注册表一致）在 Windows 上必然失败
+# ——v1.84.6 的发布构建正是这样被打断的（Linux 绿、Windows 红）。
+# `text=auto` 让 git 自行判定文本/二进制，`eol=lf` 只作用于文本文件，二进制不受影响。
+* text=auto eol=lf

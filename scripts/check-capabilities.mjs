@@ -24,6 +24,16 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 const problems = [];
 const fail = (msg) => problems.push(msg);
 
+/**
+ * 比较生成物时忽略行尾差异（CRLF vs LF）。
+ *
+ * 这条检查的语义是"改了注册表却忘了重新生成"，不是"检出行尾被转成了 CRLF"——
+ * 后者在 Windows 上是常态（GitHub runner 默认 core.autocrlf=true）。把行尾当成差异
+ * 会让门禁在 Windows 上必然失败（v1.84.6 的发布构建就是这样被打断的）。
+ * 同时也加了 .gitattributes 统一为 LF，这里是第二道保险。
+ */
+const normEol = (t) => (t === null ? null : t.replace(/\r\n/g, "\n"));
+
 const reg = loadRegistry();
 
 // ---- 1. 完整性 ----
@@ -96,7 +106,7 @@ for (const [rel, content] of Object.entries(files)) {
   } catch {
     cur = null;
   }
-  if (cur !== content) stale.push(rel);
+  if (normEol(cur) !== normEol(content)) stale.push(rel);
 }
 if (stale.length) {
   fail(`生成物与 capabilities/capabilities.json 不一致（跑 node scripts/gen-capabilities.mjs）：${stale.join(", ")}`);
