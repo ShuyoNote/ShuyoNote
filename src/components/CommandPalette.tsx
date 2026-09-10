@@ -4,6 +4,8 @@ import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRang
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
 import { toast } from "../store/toast";
+import { confirmDialog } from "../store/confirm";
+import { applyDraftAndRefresh } from "../lib/applyDraftAndRefresh";
 import { useEditorStore } from "../store/editor";
 import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
@@ -145,6 +147,32 @@ export function CommandPalette() {
         // 插件用 __toast(...) 发的提示：此前只写 stderr，用户完全看不到。
         for (const t of res.toasts ?? []) toast(t, "info");
         if (res.insert) insertText(res.insert);
+
+        // 写能力不直接落库：先把草稿摊给用户，确认后才走共用的 applyDraftAndRefresh。
+        const drafts = res.drafts ?? [];
+        if (drafts.length > 0) {
+          const list = drafts.map((d, i) => `${i + 1}. ${d.summary}`).join("\n");
+          const ok = await confirmDialog({
+            title: "应用插件改动",
+            message: `「${item.title}」想对笔记做这些改动：\n\n${list}\n\n点「确定」才会真正写入。`,
+          });
+          if (!ok) {
+            setResult(`已放弃 ${drafts.length} 项改动（未写入）`);
+            return;
+          }
+          const applied: string[] = [];
+          for (const d of drafts) {
+            try {
+              const r = await applyDraftAndRefresh(d.payload);
+              applied.push(r.ok ? `✓ ${d.summary}` : `✗ ${d.summary}：${r.message}`);
+            } catch (e) {
+              applied.push(`✗ ${d.summary}：${String(e)}`);
+            }
+          }
+          setResult(applied.join("；"));
+          return;
+        }
+
         // closeOnRun 现在能正确解析了（此前是死字段），所以照它关闭面板。
         if (item.closeOnRun) setOpen(false);
       } catch (e) {

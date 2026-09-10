@@ -41,11 +41,16 @@ const jsSig = (cap) => `api.${cap.jsPath.join(".")}(${cap.args.map((a) => a.name
 /** JS 侧实参 → 传给 __cap 的对象字面量片段。 */
 function argExpr(a) {
   const coerce = a.type === "number" ? "Number" : "String";
-  const base = `${coerce}(${a.name})`;
+  // 关键：`undefined` 必须原样传下去（JSON.stringify 会丢掉这个键），
+  // 否则 String(undefined) = "undefined" 会让宿主把"没传参"当成"传了个字符串"，
+  // 变成静默的错误输入（曾把 api.blocks.append("文本") 的文本当成 pageId）。
   if (a.required === false && a.default !== undefined) {
     return `${a.name}: ${a.name} === undefined ? ${JSON.stringify(a.default)} : ${coerce}(${a.name})`;
   }
-  return `${a.name}: ${base}`;
+  if (a.required === false) {
+    return `${a.name}: ${a.name} === undefined ? undefined : ${coerce}(${a.name})`;
+  }
+  return `${a.name}: ${a.name} === undefined ? undefined : ${coerce}(${a.name})`;
 }
 
 export function genShim(reg) {
@@ -105,6 +110,8 @@ export function genRust(reg) {
   l.push("    pub scope: &'static str,");
   l.push("    pub permission: Option<&'static str>,");
   l.push("    pub since: &'static str,");
+  l.push("    /// 写能力的中介方式：`draft`（落库前需用户确认）/ `immediate`（即时）/ `-`（非写）。");
+  l.push("    pub mediate: &'static str,");
   l.push("    /// 实现函数名（在 plugins.rs 里），供 check-capabilities 做覆盖校验。");
   l.push("    pub rust: &'static str,");
   l.push("}");
@@ -118,7 +125,7 @@ export function genRust(reg) {
     l.push(
       `    Capability { id: ${JSON.stringify(c.id)}, kind: ${JSON.stringify(c.kind)}, scope: ${JSON.stringify(
         c.scope,
-      )}, permission: ${perm}, since: ${JSON.stringify(c.since)}, rust: ${JSON.stringify(c.rust)} },`,
+      )}, permission: ${perm}, since: ${JSON.stringify(c.since)}, mediate: ${JSON.stringify(c.mediate ?? "-")}, rust: ${JSON.stringify(c.rust)} },`,
     );
   }
   l.push("];");
@@ -311,13 +318,13 @@ export function genDocs(reg) {
   l.push("");
   l.push("## 4. 能力（`api.*`）");
   l.push("");
-  l.push("| 能力 | 签名 | 需要权限 | scope | 返回 | 自 |");
-  l.push("|---|---|---|---|---|---|");
+  l.push("| 能力 | 签名 | 需要权限 | scope | 写入中介 | 返回 | 自 |");
+  l.push("|---|---|---|---|---|---|---|");
   for (const c of reg.capabilities) {
     l.push(
       `| \`${c.id}\` | \`${jsSig(c)}\` | ${c.permission ? "`" + c.permission + "`" : "—"} | \`${c.scope}\` | ${
-        c.returns?.type ?? "void"
-      } | ${c.since} |`,
+        c.kind !== "write" ? "—" : c.mediate === "draft" ? "**草稿确认**" : "即时"
+      } | ${c.returns?.type ?? "void"} | ${c.since} |`,
     );
   }
   l.push("");
@@ -327,6 +334,12 @@ export function genDocs(reg) {
     l.push(`- 调用：\`${jsSig(c)}\``);
     l.push(`- 权限：${c.permission ? "`" + c.permission + "`" : "无需权限"}`);
     l.push(`- scope：\`${c.scope}\``);
+    if (c.kind === "write") {
+      l.push(
+        `- 写入中介：**${c.mediate === "draft" ? "草稿确认（落库前需用户点确认）" : "即时生效"}**` +
+          (c.mediateWhy ? ` —— ${c.mediateWhy}` : ""),
+      );
+    }
     if (c.returns?.desc) l.push(`- 返回：${c.returns.desc}`);
     if (c.args?.length) {
       l.push("- 参数：");

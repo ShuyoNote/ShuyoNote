@@ -44,6 +44,12 @@
       "title": "存储自己的数据",
       "risk": "low",
       "desc": "在插件自己的命名空间里读写键值（与其他插件、与笔记数据互不可见）"
+    },
+    {
+      "id": "write:pages",
+      "title": "新建页面 / 追加内容",
+      "risk": "medium",
+      "desc": "新建页面或向页面追加内容；**写入前会先给你看草稿并等你确认**（不直接落库）"
     }
   ],
   "capabilities": [
@@ -256,7 +262,80 @@
       "returns": {
         "type": "void"
       },
-      "rust": "cap_editor_insert_text"
+      "rust": "cap_editor_insert_text",
+      "mediate": "immediate",
+      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
+    },
+    {
+      "id": "pages.create",
+      "title": "新建页面（草稿确认）",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "pages",
+        "create"
+      ],
+      "mediate": "draft",
+      "mediateWhy": "会新建笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库",
+      "args": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": false,
+          "desc": "正文纯文本（按空行分段）"
+        },
+        {
+          "name": "parentId",
+          "type": "string",
+          "required": false,
+          "desc": "父页面 id；省略=顶层"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "desc": "{drafted: true, summary}——**不代表已创建**，用户确认后才落库"
+      },
+      "rust": "cap_pages_create"
+    },
+    {
+      "id": "blocks.append",
+      "title": "向页面追加内容（草稿确认）",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "blocks",
+        "append"
+      ],
+      "mediate": "draft",
+      "mediateWhy": "会改动既有页面内容 → 必须先给用户看草稿并等他确认；落库时按当时的页面重读后再追加，不覆盖并发编辑",
+      "args": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "desc": "要追加的纯文本（按空行分段）"
+        },
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "目标页面 id；省略=当前页"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "desc": "{drafted: true, summary}——**不代表已写入**"
+      },
+      "rust": "cap_blocks_append"
     },
     {
       "id": "user.notify",
@@ -355,7 +434,9 @@
         "type": "void",
         "desc": "立即写入（不走草稿确认：只动插件自己的数据，不碰笔记内容）"
       },
-      "rust": "cap_kv_set"
+      "rust": "cap_kv_set",
+      "mediate": "immediate",
+      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
     },
     {
       "id": "kv.remove",
@@ -388,7 +469,9 @@
       "returns": {
         "type": "void"
       },
-      "rust": "cap_kv_remove"
+      "rust": "cap_kv_remove",
+      "mediate": "immediate",
+      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
     },
     {
       "id": "log.write",

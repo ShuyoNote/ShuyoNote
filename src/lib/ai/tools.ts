@@ -1,5 +1,5 @@
 import { api } from "../api";
-import { appendBlocksToJson, contentTextOf } from "./lexical";
+import { pageJsonFromText } from "./lexical";
 import type { AiTool, DraftResult } from "./types";
 
 // Generate a UUID for block ids (mirrors web.ts uid(), kept local to avoid
@@ -13,14 +13,6 @@ function makeId(): string {
 
 function draft(key: string, summary: string, payload: unknown): DraftResult {
   return { draft: true, key, summary, payload };
-}
-
-// Build a Lexical content_json for a new page from a plain-text `content` string.
-function pageJsonFromText(content: string): { content_json: string; content_text: string } {
-  const content_json = String(content ?? "").trim()
-    ? appendBlocksToJson("", content, makeId)
-    : '{"root":{"children":[],"type":"root","version":1}}';
-  return { content_json, content_text: contentTextOf(content_json) };
 }
 
 const TOOL_LIST: AiTool[] = [
@@ -139,7 +131,7 @@ const TOOL_LIST: AiTool[] = [
     run: async (args) => {
       const title = String(args.title ?? "").trim();
       if (!title) return { ok: false, error: "create_page 需要 title" };
-      const { content_json, content_text } = pageJsonFromText(String(args.content ?? ""));
+      const { content_json, content_text } = pageJsonFromText(String(args.content ?? ""), makeId);
       const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
       return draft(
         `create_page:${title}`,

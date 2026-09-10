@@ -40,6 +40,10 @@ export interface PluginApi {
    * 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
    */
     search(q: string, limit?: number): unknown;
+  /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
+   * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+   */
+    create(title: string, content?: string, parentId?: string): unknown;
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
@@ -63,6 +67,12 @@ export interface PluginApi {
   /** 向当前页插入纯文本（权限 `write:page.current`；1.0.0 起）
    */
     insertText(text: string): void;
+  };
+  blocks: {
+  /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
+   * 返回：{drafted: true, summary}——**不代表已写入**
+   */
+    append(text: string, pageId?: string): unknown;
   };
   /** 向用户显示一条提示（无需权限；1.0.0 起）
    * 返回：执行结束后随结果一起弹给用户

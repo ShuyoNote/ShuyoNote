@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { runAiLoop } from "../lib/ai/host";
-import { applyDraft as commitDraft } from "../lib/ai/apply";
+import { applyDraftAndRefresh } from "../lib/applyDraftAndRefresh";
 import {
   createProviderTransport,
   OLLAMA_DEFAULT_MODEL,
@@ -262,23 +262,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     const draft = get().drafts.find((d) => d.key === key);
     if (!draft) return;
     try {
-      const res = await commitDraft(draft.payload);
-      const notes = useNotes.getState();
-      await notes.loadPages();
-      // If the commit touched the currently-open page, refresh its in-memory detail
-      // so the editor reflects the append; a freshly created page is opened so the
-      // user lands on it.
-      if (res.page) {
-        if (res.page.id === notes.currentId) {
-          notes.updateCurrent({ title: res.page.title, content_json: res.page.content_json, content_text: res.page.content_text });
-          // The live Lexical editor keeps its own state, so an externally-applied
-          // change (e.g. AI append) wouldn't show on the current page. Bumping the
-          // reload tick remounts the editor, re-parsing the updated content.
-          notes.bumpReload();
-        } else {
-          await notes.openPage(res.page.id);
-        }
-      }
+      // 落库 + 界面刷新走共用路径（与磁盘插件同一条）。
+      const res = await applyDraftAndRefresh(draft.payload);
       // Only clear the confirmed draft; keep any others.
       set({ drafts: get().drafts.filter((d) => d.key !== key), error: res.ok ? null : res.message });
     } catch (e) {

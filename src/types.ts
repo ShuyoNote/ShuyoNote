@@ -104,11 +104,21 @@ export interface PluginPermissionMeta {
   risk: string;
 }
 
+/** 插件写能力产出的一条草稿：**还没落库**，等用户确认。 */
+export interface PluginDraft {
+  key: string;
+  summary: string;
+  /** `applyDraft` 认识的原样载荷。 */
+  payload: unknown;
+}
+
 /** 插件在本次执行里通过 `__toast(...)` 发出的提示（随结果回传，由前端弹出）。 */
 export interface PluginRunResult {
   message: string;
   insert?: string | null;
   toasts?: string[];
+  /** 写能力产出的草稿（方案 §3.5 的写中介：落库前需用户确认）。 */
+  drafts?: PluginDraft[];
 }
 
 /** 一条能力调用审计记录：只记元数据（谁、调了什么、成没成），不记内容。 */

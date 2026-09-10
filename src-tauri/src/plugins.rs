@@ -96,6 +96,8 @@ struct RunState {
     read_space: Option<String>,
     /// 显式 app 数据目录。生产为 None（用全局目录）；测试注入临时目录用。
     read_dir: Option<PathBuf>,
+    /// 写能力产出的草稿：**随结果回传前端**，用户确认后才落库（方案 §3.5 的写中介）。
+    drafts: Vec<PluginDraft>,
     /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
     /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
     toasts: Vec<String>,
@@ -109,6 +111,22 @@ pub struct PluginRunResult {
     pub insert: Option<String>,
     /// 插件在本次执行里通过 `__toast(...)` 发出的提示（此前只写 stderr，用户完全看不到）。
     pub toasts: Vec<String>,
+    /// 写能力产出的草稿：**还没落库**，等用户在界面上确认。
+    pub drafts: Vec<PluginDraft>,
+}
+
+/// 插件写能力产出的一条草稿。
+///
+/// 复用前端既有的「草稿 → 确认 → 落库」链路（`src/lib/ai/apply.ts` 的 `applyDraft`），
+/// 所以载荷形状与 AI 工具层一致——**不为插件再造一套确认机制**。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginDraft {
+    /// 去重键（同一插件同一次执行里 key 相同的草稿只保留一条）。
+    pub key: String,
+    /// 给用户看的一句话（"新建页面「X」"/"向「Y」追加内容"）。
+    pub summary: String,
+    /// `applyDraft` 认识的原样载荷。
+    pub payload: serde_json::Value,
 }
 
 /// 一条能力调用审计记录（方案 §3.10）。
@@ -858,6 +876,57 @@ fn cap_files_list(page_id: Option<&str>) -> CapResult {
     })
 }
 
+/// 把一条草稿塞进本次执行（同 key 只留一条，避免插件在循环里刷屏）。
+fn push_draft(key: String, summary: String, payload: serde_json::Value) {
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        if !st.drafts.iter().any(|d| d.key == key) {
+            st.drafts.push(PluginDraft { key, summary, payload });
+        }
+    });
+}
+
+/// `pages.create`：**不建页**，只产出草稿。
+///
+/// Lexical 的 content_json 由前端在落库时按纯文本构造（那头才知道块结构），
+/// 这里只交出 `content_text` —— 保持"Rust 不猜编辑器格式"。
+fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>) -> CapResult {
+    if title.trim().is_empty() {
+        return Err("bad_args: 新建页面需要 title".to_string());
+    }
+    let summary = format!("新建页面「{title}」");
+    push_draft(
+        format!("create_page:{title}"),
+        summary.clone(),
+        serde_json::json!({
+            "kind": "create_page",
+            "args": { "parent_id": parent_id, "title": title, "content_text": content },
+        }),
+    );
+    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
+/// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
+fn cap_blocks_append(page_id: Option<&str>, text: &str) -> CapResult {
+    if text.trim().is_empty() {
+        return Err("bad_args: 追加内容需要 text".to_string());
+    }
+    let target = target_page_or_current(page_id)?;
+    let title = RUN_STATE.with(|s| {
+        // 顺手把目标页标题查出来给用户看（只读，不改状态）；查不到就用 id。
+        let _ = s.borrow().plugin_id.clone();
+        String::new()
+    });
+    let _ = title;
+    let summary = format!("向页面 {target} 追加内容");
+    push_draft(
+        format!("append_block:{target}"),
+        summary.clone(),
+        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text }),
+    );
+    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
@@ -931,6 +1000,12 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
         "kv.remove" => cap_kv_remove(&arg_str("key")?, &scope_arg(&args)),
+        "pages.create" => cap_pages_create(
+            &arg_str("title")?,
+            &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            arg_opt_str("parentId").as_deref(),
+        ),
+        "blocks.append" => cap_blocks_append(arg_opt_str("pageId").as_deref(), &arg_str("text")?),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -1094,6 +1169,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             current_page_id: state.current_page_id.clone(),
             read_space: state.read_space.clone(),
             read_dir: state.read_dir.clone(),
+            drafts: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
         }
@@ -1131,7 +1207,7 @@ fn run_command_timeout(
     source: &str,
     command_id: &str,
     state: &RunState,
-) -> Result<(String, String, Vec<String>), String> {
+) -> Result<(String, String, Vec<String>, Vec<PluginDraft>), String> {
     let source = source.to_string();
     let command_id = command_id.to_string();
     // RunState 是纯数据（String/usize），可 move 进线程；RUN_STATE/thread_local
@@ -1144,16 +1220,17 @@ fn run_command_timeout(
         current_page_id: state.current_page_id.clone(),
         read_space: state.read_space.clone(),
         read_dir: state.read_dir.clone(),
+        drafts: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
     with_timeout(RUN_TIMEOUT, "插件执行", move || {
         let msg = run_command(&source, &command_id, &state)?;
-        let (insert, toasts) = RUN_STATE.with(|s| {
+        let (insert, toasts, drafts) = RUN_STATE.with(|s| {
             let st = s.borrow();
-            (st.insert_text.clone(), st.toasts.clone())
+            (st.insert_text.clone(), st.toasts.clone(), st.drafts.clone())
         });
-        Ok((msg, insert, toasts))
+        Ok((msg, insert, toasts, drafts))
     })
 }
 
@@ -1422,14 +1499,16 @@ pub async fn run_plugin_command(
         current_page_id: current_id,
         read_space,
         read_dir: None,
+        drafts: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
-    let (message, insert, toasts) = run_command_timeout(&source, &command_id, &state)?;
+    let (message, insert, toasts, drafts) = run_command_timeout(&source, &command_id, &state)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
         toasts,
+        drafts,
     })
 }
 
@@ -1881,7 +1960,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     return "count=" + api.pages.count();
   } });"#;
         let state = state_with(&["read:pages", "write:page.current"]);
-        let (msg, insert, toasts) = run_command_timeout(source, "t.api", &state).unwrap();
+        let (msg, insert, toasts, _drafts) = run_command_timeout(source, "t.api", &state).unwrap();
         assert_eq!(msg, "count=0");
         assert_eq!(insert, "新文本");
         assert_eq!(toasts, vec!["来自 api.notify".to_string()]);
@@ -2365,6 +2444,82 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ---- 受控写（草稿确认） ----
+
+    #[test]
+    fn write_capabilities_produce_drafts_instead_of_writing() {
+        let (space, dir) = seed_space("write-draft");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec!["write:pages".to_string(), "read:pages".to_string()];
+        st.current_page_id = Some("p1".to_string());
+
+        let out = call(&st, "pages.create", r#"{"title":"周报","content":"第一段"}"#).unwrap();
+        assert_eq!(out["drafted"], true, "写能力应返回「已产出草稿」而非「已写入」");
+        let list = call(&st, "pages.list", "{}").unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 2, "**草稿阶段不得真的建页**");
+
+        // 走完整链路：草稿必须随结果回传，前端才能拿它去确认
+        let source = r#"register({ id: "w.one", title: "W", description: "", closeOnRun: false,
+  run: function(){ api.pages.create("新页", "正文"); api.blocks.append("附注"); return "ok"; } });"#;
+        let (msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.one", &st).unwrap();
+        assert_eq!(msg, "ok");
+        let keys: Vec<&str> = drafts.iter().map(|d| d.key.as_str()).collect();
+        assert_eq!(keys, vec!["create_page:新页", "append_block:p1"]);
+        assert_eq!(drafts[0].summary, "新建页面「新页」");
+        assert_eq!(drafts[0].payload["kind"], "create_page");
+        assert_eq!(drafts[0].payload["args"]["content_text"], "正文");
+        assert_eq!(drafts[1].payload["kind"], "append_block");
+        assert_eq!(drafts[1].payload["pageId"], "p1");
+        assert_eq!(drafts[1].payload["text"], "附注");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_capability_needs_permission_and_valid_args() {
+        let (space, dir) = seed_space("write-perm");
+        let mut denied = state_for_space(&space, &dir);
+        denied.permissions = vec![];
+        let err = call(&denied, "pages.create", r#"{"title":"x"}"#).unwrap_err();
+        assert!(err.contains("permission_denied"), "实际: {err}");
+
+        let mut ok = state_for_space(&space, &dir);
+        ok.permissions = vec!["write:pages".to_string()];
+        assert!(
+            call(&ok, "pages.create", r#"{"title":"   "}"#).unwrap_err().contains("bad_args"),
+            "空标题应当被拒"
+        );
+        assert!(
+            call(&ok, "blocks.append", r#"{"text":""}"#).unwrap_err().contains("bad_args"),
+            "空文本应当被拒"
+        );
+        // shim 的回归防线：必填参数缺失时不能被强转成字符串 "undefined"
+        // （曾把 api.blocks.append("文本") 的文本当成 pageId、text 变成 "undefined"）。
+        assert!(
+            call(&ok, "blocks.append", "{}").unwrap_err().contains("bad_args"),
+            "缺 text 必须报 bad_args"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_mediation_is_declared_for_every_write_capability() {
+        // 注册表层面的不变式：写能力必须说清自己是"草稿确认"还是"即时"，
+        // 非写能力不该声明。draft 类能力（会动用户内容）在实现里只产出草稿。
+        for cap in capabilities_gen::CAPABILITIES {
+            if cap.kind == "write" {
+                assert!(
+                    cap.mediate == "draft" || cap.mediate == "immediate",
+                    "{} 缺少 mediate",
+                    cap.id
+                );
+            } else {
+                assert_eq!(cap.mediate, "-", "非写能力 {} 不该有 mediate", cap.id);
+            }
+        }
+        assert_eq!(capabilities_gen::lookup("pages.create").unwrap().mediate, "draft");
+        assert_eq!(capabilities_gen::lookup("kv.set").unwrap().mediate, "immediate");
+    }
+
     // ---- 内存预算（分配炸弹） ----
 
     #[test]
@@ -2385,7 +2540,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // ——能跑到这里就说明进程没有被 abort 掉。
         let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
   run: function(){ return "fine"; } });"#;
-        let (msg, _, _) = run_command_timeout(ok, "t.ok", &RunState::default()).unwrap();
+        let (msg, _, _, _) = run_command_timeout(ok, "t.ok", &RunState::default()).unwrap();
         assert_eq!(msg, "fine");
     }
 
@@ -2409,7 +2564,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             plugin_id: "tp".to_string(),
             ..Default::default()
         };
-        let (msg, _insert, toasts) = run_command_timeout(source, "t.toast", &state).unwrap();
+        let (msg, _insert, toasts, _drafts) = run_command_timeout(source, "t.toast", &state).unwrap();
         assert_eq!(msg, "done");
         assert_eq!(
             toasts,

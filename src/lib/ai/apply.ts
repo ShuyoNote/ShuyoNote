@@ -3,7 +3,7 @@
 // makes the "draft → confirm → commit" boundary explicit and hard to bypass.
 
 import { api } from "../api";
-import { appendBlocksToJson, contentTextOf } from "./lexical";
+import { appendBlocksToJson, contentTextOf, pageJsonFromText } from "./lexical";
 import type { PageDetail } from "../../types";
 
 export interface ApplyResult {
@@ -18,11 +18,18 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
 
   switch (kind) {
     case "create_page": {
+      // 草稿可能只带纯文本（插件侧不知道 Lexical 块结构）：
+      // 这时在**落库这一刻**由这一层构造 content_json。
+      const built = p.args?.content_json
+        ? {
+            content_json: String(p.args.content_json),
+            content_text: String(p.args.content_text ?? ""),
+          }
+        : pageJsonFromText(String(p.args?.content_text ?? ""), uid);
       const page = await api.createPage({
         parent_id: p.args?.parent_id ?? null,
         title: String(p.args?.title ?? ""),
-        content_json: String(p.args?.content_json || '{"root":{"children":[]}}'),
-        content_text: String(p.args?.content_text ?? ""),
+        ...built,
       });
       return { ok: true, message: `已创建页面「${page.title}」`, page };
     }

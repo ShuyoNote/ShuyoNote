@@ -55,6 +55,13 @@ for (const c of reg.capabilities) {
   }
   if (!c.returns?.type || !TYPES.has(c.returns.type)) fail(`能力 ${c.id} 的 returns.type 非法`);
   if (!c.rust) fail(`能力 ${c.id} 缺 rust 实现函数名`);
+  if (c.kind === "write") {
+    if (!["draft", "immediate"].includes(c.mediate)) {
+      fail(`写能力 ${c.id} 必须声明 mediate（draft = 落库前需用户确认 / immediate）`);
+    }
+  } else if (c.mediate) {
+    fail(`非写能力 ${c.id} 不该有 mediate`);
+  }
   for (const a of c.args ?? []) {
     if (!a.name) fail(`能力 ${c.id} 有参数缺 name`);
     if (!TYPES.has(a.type)) fail(`能力 ${c.id} 的参数 ${a.name} 类型非法：${a.type}`);

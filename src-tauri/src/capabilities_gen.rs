@@ -9,6 +9,8 @@ pub struct Capability {
     pub scope: &'static str,
     pub permission: Option<&'static str>,
     pub since: &'static str,
+    /// 写能力的中介方式：`draft`（落库前需用户确认）/ `immediate`（即时）/ `-`（非写）。
+    pub mediate: &'static str,
     /// 实现函数名（在 plugins.rs 里），供 check-capabilities 做覆盖校验。
     pub rust: &'static str,
 }
@@ -17,20 +19,22 @@ pub const API_VERSION: &str = "1.0.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
-    Capability { id: "page.current", kind: "read", scope: "current-space", permission: Some("read:page.current"), since: "1.0.0", rust: "cap_page_current" },
-    Capability { id: "pages.count", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", rust: "cap_pages_count" },
-    Capability { id: "pages.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", rust: "cap_pages_list" },
-    Capability { id: "pages.get", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", rust: "cap_pages_get" },
-    Capability { id: "pages.search", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", rust: "cap_pages_search" },
-    Capability { id: "tags.list", kind: "read", scope: "current-space", permission: Some("read:tags"), since: "1.0.0", rust: "cap_tags_list" },
-    Capability { id: "backlinks.list", kind: "read", scope: "current-space", permission: Some("read:backlinks"), since: "1.0.0", rust: "cap_backlinks_list" },
-    Capability { id: "files.list", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.0.0", rust: "cap_files_list" },
-    Capability { id: "editor.insertText", kind: "write", scope: "current-space", permission: Some("write:page.current"), since: "1.0.0", rust: "cap_editor_insert_text" },
-    Capability { id: "user.notify", kind: "host", scope: "app", permission: None, since: "1.0.0", rust: "cap_user_notify" },
-    Capability { id: "kv.get", kind: "read", scope: "app", permission: Some("kv:own"), since: "1.0.0", rust: "cap_kv_get" },
-    Capability { id: "kv.set", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", rust: "cap_kv_set" },
-    Capability { id: "kv.remove", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", rust: "cap_kv_remove" },
-    Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", rust: "cap_log_write" },
+    Capability { id: "page.current", kind: "read", scope: "current-space", permission: Some("read:page.current"), since: "1.0.0", mediate: "-", rust: "cap_page_current" },
+    Capability { id: "pages.count", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_count" },
+    Capability { id: "pages.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_list" },
+    Capability { id: "pages.get", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_get" },
+    Capability { id: "pages.search", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_pages_search" },
+    Capability { id: "tags.list", kind: "read", scope: "current-space", permission: Some("read:tags"), since: "1.0.0", mediate: "-", rust: "cap_tags_list" },
+    Capability { id: "backlinks.list", kind: "read", scope: "current-space", permission: Some("read:backlinks"), since: "1.0.0", mediate: "-", rust: "cap_backlinks_list" },
+    Capability { id: "files.list", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.0.0", mediate: "-", rust: "cap_files_list" },
+    Capability { id: "editor.insertText", kind: "write", scope: "current-space", permission: Some("write:page.current"), since: "1.0.0", mediate: "immediate", rust: "cap_editor_insert_text" },
+    Capability { id: "pages.create", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_create" },
+    Capability { id: "blocks.append", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_blocks_append" },
+    Capability { id: "user.notify", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_user_notify" },
+    Capability { id: "kv.get", kind: "read", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "-", rust: "cap_kv_get" },
+    Capability { id: "kv.set", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "immediate", rust: "cap_kv_set" },
+    Capability { id: "kv.remove", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", mediate: "immediate", rust: "cap_kv_remove" },
+    Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
 ];
 
 /// 权限清单（manifest 校验 + 旧 manifest 无 permissions 时的基线授权 + 安装界面展示用）。
@@ -50,6 +54,7 @@ pub const PERMISSION_LIST: &[Permission] = &[
     Permission { id: "read:backlinks", title: "读取反链", risk: "low" },
     Permission { id: "read:files", title: "读取附件元数据", risk: "low" },
     Permission { id: "kv:own", title: "存储自己的数据", risk: "low" },
+    Permission { id: "write:pages", title: "新建页面 / 追加内容", risk: "medium" },
 ];
 
 pub fn permission(id: &str) -> Option<&'static Permission> {

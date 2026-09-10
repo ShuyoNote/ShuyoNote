@@ -85,3 +85,19 @@ export function cleanDraftText(text: string): string {
     .filter(Boolean)
     .join("\n");
 }
+
+/**
+ * 由纯文本构造新页面的 content_json（空内容给一个合法的空 root）。
+ *
+ * 放在这里而不是各调用方：**Lexical 的块结构只该在这一层被知道**。
+ * 插件侧（Rust）只交出纯文本，落库时由这里构造 JSON。
+ */
+export function pageJsonFromText(
+  content: string,
+  makeId: () => string,
+): { content_json: string; content_text: string } {
+  const content_json = String(content ?? "").trim()
+    ? appendBlocksToJson("", content, makeId)
+    : '{"root":{"children":[],"type":"root","version":1}}';
+  return { content_json, content_text: contentTextOf(content_json) };
+}

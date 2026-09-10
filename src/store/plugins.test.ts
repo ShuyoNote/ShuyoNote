@@ -186,6 +186,22 @@ describe("plugins store · 运行态 / 取消 / __toast / 日志", () => {
     expect(r.toasts).toBeUndefined();
   });
 
+  it("写能力的草稿随结果回传（store 不自行落库）", async () => {
+    vi.mocked(api.runPluginCommand).mockResolvedValue({
+      message: "ok",
+      insert: null,
+      toasts: [],
+      drafts: [
+        { key: "create_page:X", summary: "新建页面「X」", payload: { kind: "create_page", args: { title: "X" } } },
+      ],
+    });
+
+    const r = await usePlugins.getState().runCommand("demo", "w.create", null);
+
+    expect(r.drafts).toHaveLength(1);
+    expect(r.drafts?.[0].summary).toBe("新建页面「X」");
+  });
+
   it("日志：按插件读取 / 清空 / 失败可见", async () => {
     vi.mocked(api.pluginLogs).mockResolvedValue([
       { plugin_id: "demo", level: "info", message: "你好", at_ms: 1 },

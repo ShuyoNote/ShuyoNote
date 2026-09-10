@@ -84,25 +84,28 @@ register({
 | `read:backlinks` | 读取反链：读取哪些页面引用了某个页面 | low |
 | `read:files` | 读取附件元数据：读取页面的附件元数据（名称/类型/大小），**不含文件字节** | low |
 | `kv:own` | 存储自己的数据：在插件自己的命名空间里读写键值（与其他插件、与笔记数据互不可见） | low |
+| `write:pages` | 新建页面 / 追加内容：新建页面或向页面追加内容；**写入前会先给你看草稿并等你确认**（不直接落库） | medium |
 
 ## 4. 能力（`api.*`）
 
-| 能力 | 签名 | 需要权限 | scope | 返回 | 自 |
-|---|---|---|---|---|---|
-| `page.current` | `api.page.current()` | `read:page.current` | `current-space` | string | 1.0.0 |
-| `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | number | 1.0.0 |
-| `pages.list` | `api.pages.list(limit)` | `read:pages` | `current-space` | array | 1.0.0 |
-| `pages.get` | `api.pages.get(id)` | `read:pages` | `current-space` | object | 1.0.0 |
-| `pages.search` | `api.pages.search(q, limit)` | `read:pages` | `current-space` | array | 1.0.0 |
-| `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | array | 1.0.0 |
-| `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | array | 1.0.0 |
-| `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | array | 1.0.0 |
-| `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | void | 1.0.0 |
-| `user.notify` | `api.notify(message)` | — | `app` | void | 1.0.0 |
-| `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | string | 1.0.0 |
-| `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | void | 1.0.0 |
-| `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | void | 1.0.0 |
-| `log.write` | `api.log(message, level)` | — | `app` | void | 1.0.0 |
+| 能力 | 签名 | 需要权限 | scope | 写入中介 | 返回 | 自 |
+|---|---|---|---|---|---|---|
+| `page.current` | `api.page.current()` | `read:page.current` | `current-space` | — | string | 1.0.0 |
+| `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | — | number | 1.0.0 |
+| `pages.list` | `api.pages.list(limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `pages.get` | `api.pages.get(id)` | `read:pages` | `current-space` | — | object | 1.0.0 |
+| `pages.search` | `api.pages.search(q, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
+| `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
+| `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
+| `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
+| `pages.create` | `api.pages.create(title, content, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.append` | `api.blocks.append(text, pageId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `user.notify` | `api.notify(message)` | — | `app` | — | void | 1.0.0 |
+| `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
+| `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
+| `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
+| `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
 
 ### `page.current` — 读取当前页
 
@@ -176,8 +179,32 @@ register({
 - 调用：`api.editor.insertText(text)`
 - 权限：`write:page.current`
 - scope：`current-space`
+- 写入中介：**即时生效** —— 只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容
 - 参数：
   - `text`: `string` —— 要插入的纯文本
+
+### `pages.create` — 新建页面（草稿确认）
+
+- 调用：`api.pages.create(title, content, parentId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
+- 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+- 参数：
+  - `title`: `string` —— 
+  - `content`: `string`（可选） —— 正文纯文本（按空行分段）
+  - `parentId`: `string`（可选） —— 父页面 id；省略=顶层
+
+### `blocks.append` — 向页面追加内容（草稿确认）
+
+- 调用：`api.blocks.append(text, pageId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会改动既有页面内容 → 必须先给用户看草稿并等他确认；落库时按当时的页面重读后再追加，不覆盖并发编辑
+- 返回：{drafted: true, summary}——**不代表已写入**
+- 参数：
+  - `text`: `string` —— 要追加的纯文本（按空行分段）
+  - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
 
 ### `user.notify` — 向用户显示一条提示
 
@@ -203,6 +230,7 @@ register({
 - 调用：`api.kv.set(key, value, scope)`
 - 权限：`kv:own`
 - scope：`app`
+- 写入中介：**即时生效** —— 只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容
 - 返回：立即写入（不走草稿确认：只动插件自己的数据，不碰笔记内容）
 - 参数：
   - `key`: `string` —— 
@@ -214,6 +242,7 @@ register({
 - 调用：`api.kv.remove(key, scope)`
 - 权限：`kv:own`
 - scope：`app`
+- 写入中介：**即时生效** —— 只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容
 - 参数：
   - `key`: `string` —— 
   - `scope`: `string`（可选），默认 `space` —— 

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import { toast } from "./toast";
-import type { PluginAuditEntry, PluginLogLine, PluginMeta } from "../types";
+import type { PluginAuditEntry, PluginDraft, PluginLogLine, PluginMeta } from "../types";
 
 // Disk-loaded plugins (scanned/manifest-validated by the backend, executed in a
 // restricted boa runtime). Persisted enabled state lives in the DB.
@@ -27,6 +27,8 @@ export interface PluginRunOutcome {
   insert?: string | null;
   /** 插件通过 `__toast(...)` 发出的提示，由调用方弹给用户。 */
   toasts?: string[];
+  /** 写能力产出的草稿：**还没落库**，需调用方先让用户确认。 */
+  drafts?: PluginDraft[];
   cancelled?: boolean;
 }
 

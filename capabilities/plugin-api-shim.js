@@ -15,26 +15,30 @@ var api = {
   pages: {
     count: function() { return __capCall("pages.count", {}); },
     list: function(limit) { return __capCall("pages.list", { limit: limit === undefined ? 50 : Number(limit) }); },
-    get: function(id) { return __capCall("pages.get", { id: String(id) }); },
-    search: function(q, limit) { return __capCall("pages.search", { q: String(q), limit: limit === undefined ? 20 : Number(limit) }); }
+    get: function(id) { return __capCall("pages.get", { id: id === undefined ? undefined : String(id) }); },
+    search: function(q, limit) { return __capCall("pages.search", { q: q === undefined ? undefined : String(q), limit: limit === undefined ? 20 : Number(limit) }); },
+    create: function(title, content, parentId) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId) }); }
   },
   tags: {
     list: function() { return __capCall("tags.list", {}); }
   },
   backlinks: {
-    list: function(pageId) { return __capCall("backlinks.list", { pageId: String(pageId) }); }
+    list: function(pageId) { return __capCall("backlinks.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   files: {
-    list: function(pageId) { return __capCall("files.list", { pageId: String(pageId) }); }
+    list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   editor: {
-    insertText: function(text) { return __capCall("editor.insertText", { text: String(text) }); }
+    insertText: function(text) { return __capCall("editor.insertText", { text: text === undefined ? undefined : String(text) }); }
   },
-  notify: function(message) { return __capCall("user.notify", { message: String(message) }); },
+  blocks: {
+    append: function(text, pageId) { return __capCall("blocks.append", { text: text === undefined ? undefined : String(text), pageId: pageId === undefined ? undefined : String(pageId) }); }
+  },
+  notify: function(message) { return __capCall("user.notify", { message: message === undefined ? undefined : String(message) }); },
   kv: {
-    get: function(key, scope) { return __capCall("kv.get", { key: String(key), scope: scope === undefined ? "space" : String(scope) }); },
-    set: function(key, value, scope) { return __capCall("kv.set", { key: String(key), value: String(value), scope: scope === undefined ? "space" : String(scope) }); },
-    remove: function(key, scope) { return __capCall("kv.remove", { key: String(key), scope: scope === undefined ? "space" : String(scope) }); }
+    get: function(key, scope) { return __capCall("kv.get", { key: key === undefined ? undefined : String(key), scope: scope === undefined ? "space" : String(scope) }); },
+    set: function(key, value, scope) { return __capCall("kv.set", { key: key === undefined ? undefined : String(key), value: value === undefined ? undefined : String(value), scope: scope === undefined ? "space" : String(scope) }); },
+    remove: function(key, scope) { return __capCall("kv.remove", { key: key === undefined ? undefined : String(key), scope: scope === undefined ? "space" : String(scope) }); }
   },
-  log: function(message, level) { return __capCall("log.write", { message: String(message), level: level === undefined ? "info" : String(level) }); }
+  log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); }
 };

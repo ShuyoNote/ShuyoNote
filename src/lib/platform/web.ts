@@ -2338,7 +2338,7 @@ function makeInvoke(store: SqliteStore) {
     // ---- Plugins ----
     if (cmd === "list_plugins") return [] as T;
     if (cmd === "open_plugin_dir") return "" as T;
-    if (cmd === "run_plugin_command") return { message: "", insert: null, toasts: [] } as T;
+    if (cmd === "run_plugin_command") return { message: "", insert: null, toasts: [], drafts: [] } as T;
     // Plugin management is a no-op on Web (no disk plugin runtime): return safe
     // defaults instead of throwing so the UI degrades gracefully.
     if (cmd === "install_plugin") return undefined as T;
