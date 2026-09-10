@@ -3,11 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useSpaceStore } from "../store/space";
+import { useNotes } from "../store/notes";
+import { useRightPanel } from "../store/rightPanel";
 
 interface Notif {
   id: string;
   kind: string;
   actor_id: string;
+  /** 服务端 JOIN users 带出的触发者邮箱（text 里也含），老服务端可能没有。 */
+  actor_email?: string | null;
   space_id?: string | null;
   page_id?: string | null;
   text: string;
@@ -62,6 +66,31 @@ export function NotificationCenter() {
 
   const unread = notifs.filter((n) => n.seen === 0).length;
 
+  /**
+   * 点通知：标记已读 + **跳到目标**。
+   *
+   * 通知的全部意义就是「有人 @ 了你，去看那一条」。只标已读不跳转，用户还得
+   * 自己回想是哪个空间哪一页——多空间下基本等于找不到。通知里带着
+   * space_id / page_id，之所以还要先切空间，是因为通知是**按用户全局**的，
+   * 目标页可能在另一个空间里。
+   */
+  const jumpTo = async (n: Notif) => {
+    if (n.seen === 0) void seenOne(n.id);
+    try {
+      if (n.space_id && n.space_id !== activeId) {
+        const ok = await useSpaceStore.getState().switchTo(n.space_id);
+        if (ok) await useNotes.getState().loadPages();
+      }
+      if (n.page_id) {
+        await useNotes.getState().openPage(n.page_id);
+        // 已经跳到目标了，抽屉自己让开，别挡着内容。
+        useRightPanel.getState().openComments(false);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   return (
     <div className="notif-center">
       <div className="notif-head">
@@ -73,7 +102,12 @@ export function NotificationCenter() {
       <div className="notif-list">
         {notifs.length === 0 && <div className="notif-empty">没有通知</div>}
         {notifs.map((n) => (
-          <div key={n.id} className={`notif-item${n.seen === 0 ? " is-unread" : ""}`} onClick={() => { if (n.seen === 0) void seenOne(n.id); }}>
+          <div
+            key={n.id}
+            className={`notif-item${n.seen === 0 ? " is-unread" : ""}${n.page_id ? " is-clickable" : ""}`}
+            title={n.page_id ? "点击跳转到目标页面" : undefined}
+            onClick={() => void jumpTo(n)}
+          >
             <div className="notif-text">{n.text}</div>
             <div className="notif-meta">{n.kind} · {new Date(n.created_at).toLocaleString()}</div>
           </div>

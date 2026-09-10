@@ -100,11 +100,21 @@ async function main() {
   ok(Boolean(c1?.id), "A 添加评论");
   const comments = JSON.parse((await req("GET", `${SERVER}/spaces/${spaceId}/pages/page-1/comments`, { token: tokenB })).text);
   ok(Array.isArray(comments?.items) && comments.items.length === 1, "B 拉到评论列表（1 条）");
+  // 评论要能显示「谁说的」：只给 author_id 的话界面只能渲染一串十六进制，
+  // 而在线成员列表却能显示邮箱，两边不一致。
+  ok(comments?.items?.[0]?.author_email === emailA, `评论带可读作者邮箱（实际 ${comments?.items?.[0]?.author_email}）`);
 
   // 6. 通知生成（@ 成员）+ 列表 / 已读 / 全部
   const c2 = JSON.parse((await req("POST", `${SERVER}/spaces/${spaceId}/pages/page-1/comments`, { token: tokenA, body: { body: "mention B", mentions: [emailB] } })).text);
   ok(Array.isArray(c2?.notifications) && c2.notifications.length >= 1, "@B 生成通知");
   const notifs = JSON.parse((await req("GET", `${SERVER}/notifications`, { token: tokenB })).text);
+  // 通知文案要说明「是谁 @ 的」，否则收件人只看到一句「提到了你」。
+  const mentionNotif = (notifs?.items ?? []).find((n) => n.kind === "mention");
+  ok(mentionNotif?.actor_email === emailA, `通知带触发者邮箱（实际 ${mentionNotif?.actor_email}）`);
+  ok(
+    typeof mentionNotif?.text === "string" && mentionNotif.text.includes(emailA),
+    `通知文案含触发者（实际 ${JSON.stringify(mentionNotif?.text)}）`,
+  );
   ok(Array.isArray(notifs?.items), "B 拉到通知列表");
   const unread = (notifs?.items ?? []).filter((n) => n.seen === 0).length;
   ok(unread >= 1, `B 有未读通知（${unread}）`);

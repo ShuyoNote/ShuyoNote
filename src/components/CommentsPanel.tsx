@@ -9,6 +9,8 @@ interface Comment {
   id: string;
   parent_id?: string | null;
   author_id: string;
+  /** 服务端 JOIN users 带出的邮箱；老服务端可能没有，届时退回 id 前缀。 */
+  author_email?: string | null;
   body: string;
   created_at: number;
 }
@@ -90,7 +92,9 @@ export function CommentsPanel() {
         {comments.map((c) => (
           <div key={c.id} className="comment-item">
             <div className="comment-meta">
-              <span className="comment-author">{c.author_id.slice(0, 8)}</span>
+              <span className="comment-author" title={c.author_email ?? c.author_id}>
+                {c.author_email ?? c.author_id.slice(0, 8)}
+              </span>
               <span className="comment-time">{new Date(c.created_at).toLocaleString()}</span>
               <button className="comment-del" onClick={() => void del(c.id)} title="删除评论">×</button>
             </div>
