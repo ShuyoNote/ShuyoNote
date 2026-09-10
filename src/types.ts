@@ -268,6 +268,11 @@ export interface PluginMeta {
   triggers: PluginTrigger[];
   /** 主题声明（宿主应用到界面；只有通过校验的变量会被带上）。 */
   theme?: { name?: string; tokens: Record<string, string> } | null;
+  /**
+   * 这一次安装**替换掉**的版本（升级 / 重装的返回值才有）。界面据此说清
+   * "这不是新装，是把它从 v1 换成了 v2"，而不是假装一切都全新。
+   */
+  replaced_version?: string | null;
 }
 
 export interface PluginPermissionMeta {

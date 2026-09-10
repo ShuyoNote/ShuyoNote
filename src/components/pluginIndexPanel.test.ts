@@ -193,6 +193,50 @@ describe("从索引安装面板", () => {
     expect(installPluginFromIndex).not.toHaveBeenCalled();
   });
 
+  it("已装旧版本：按钮变成「升级到 vX」，确认框说清新增了哪几项权限", async () => {
+    fetchPluginIndex.mockResolvedValue(view([entry({ version: "1.3.0" })]));
+    usePlugins.setState({
+      plugins: [
+        {
+          id: "weekly-report",
+          name: "周报生成",
+          version: "1.2.0",
+          permissions: [{ id: "read:pages", title: "读页面", reason: "r", risk: "low" }],
+        } as never,
+      ],
+    });
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+
+    expect(buttons()[0].textContent).toContain("升级到 v1.3.0");
+    expect(text()).toContain("已装 v1.2.0");
+    expect(text()).toContain("会新增 1 项权限");
+
+    flushSync(() => buttons()[0].click());
+    await vi.waitFor(() => expect(installPluginFromIndex).toHaveBeenCalled());
+    const msg = confirmDialog.mock.calls[0][0].message;
+    expect(msg).toContain("「升级」");
+    expect(msg).toContain("read:pages"); // 完整清单照旧全列
+    // 「新增」那一段只该有这次多出来的那一项
+    const growth = msg.split("这次升级新增了")[1] ?? "";
+    expect(growth).toContain("write:pages");
+    expect(growth).not.toContain("read:pages");
+  });
+
+  it("已装更新的版本：按钮点不动，理由写清要先卸载", async () => {
+    fetchPluginIndex.mockResolvedValue(view([entry({ version: "1.0.0" })]));
+    usePlugins.setState({
+      plugins: [{ id: "weekly-report", name: "周报生成", version: "1.4.0", permissions: [] } as never],
+    });
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+
+    expect(buttons()[0].disabled).toBe(true);
+    expect(buttons()[0].getAttribute("title")).toContain("已装更新的版本 v1.4.0");
+    flushSync(() => buttons()[0].click());
+    expect(installPluginFromIndex).not.toHaveBeenCalled();
+  });
+
   it("拉取失败：把后端原话显示出来，而不是留个空列表", async () => {
     fetchPluginIndex.mockRejectedValue(new Error("地址必须是 https"));
     root = mount(React.createElement(PluginIndexPanel));

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PluginIndexEntry, PluginIndexView } from "../types";
 import {
+  addedPermissions,
+  compareVersions,
+  entryAction,
   entryInstallable,
   entryMetaLine,
   entrySignatureNote,
@@ -97,6 +100,25 @@ describe("条目与安装确认", () => {
     expect(bad.reason).toContain("撤回");
   });
 
+  it("升级时确认框说清「替换」与「新增了哪几项权限」", () => {
+    const msg = installConfirmMessage(entry({ version: "2.0.0" }), "数友社区（example.com）", false, "1.0.0", [
+      { id: "write:pages", reason: "写入周报页" },
+    ]);
+    expect(msg).toContain("「升级」");
+    expect(msg).toContain("v1.0.0 会被替换成 v2.0.0");
+    expect(msg).toContain("这次升级新增了 1 项权限");
+    expect(msg).toContain("write:pages —— 写入周报页");
+    expect(msg).toContain("确认之后才会恢复运行");
+    // 同版本：说成重装，而不是升级
+    const same = installConfirmMessage(entry(), "x", false, "1.2.0", []);
+    expect(same).toContain("「重装」");
+    expect(same).not.toContain("会被替换成 v");
+    // 全新安装：不该出现任何"替换/新增"的字样
+    const fresh = installConfirmMessage(entry(), "x", false, null, []);
+    expect(fresh).not.toContain("「升级」");
+    expect(fresh).not.toContain("新增");
+  });
+
   it("确认框摊开权限理由，并明确说「没有人工审查」", () => {
     const msg = installConfirmMessage(entry(), "数友社区（example.com）", false);
     expect(msg).toContain("read:pages —— 读本周有改动的页面标题");
@@ -110,6 +132,65 @@ describe("条目与安装确认", () => {
     expect(installConfirmMessage(entry({ permissions: [] }), "x", true)).toContain(
       "不申请任何数据权限",
     );
+  });
+});
+
+describe("升级 / 重装 / 拒绝降级", () => {
+  it("版本比较与后端同一口径（逐段比，比不出来返回 null）", () => {
+    expect(compareVersions("1.9.0", "1.10.0")).toBe(-1);
+    expect(compareVersions("2.0.0", "1.9.9")).toBe(1);
+    expect(compareVersions("1.0.0", "1.0.0")).toBe(0);
+    expect(compareVersions("1.0.1-rc.1", "1.0.1")).toBe(0);
+    expect(compareVersions("1.2", "1.3")).toBeNull();
+    expect(compareVersions("v2", "1.0.0")).toBeNull();
+  });
+
+  it("没装过就是安装", () => {
+    expect(entryAction(entry()).action).toBe("install");
+    expect(entryAction(entry(), null).label).toBe("安装");
+  });
+
+  it("装过更旧的 → 升级，按钮上写清目标版本", () => {
+    const act = entryAction(entry({ version: "1.3.0" }), "1.2.0");
+    expect(act.action).toBe("upgrade");
+    expect(act.label).toBe("升级到 v1.3.0");
+  });
+
+  it("同版本 → 重装（修好被改坏的目录），不假装是升级", () => {
+    const act = entryAction(entry(), "1.2.0");
+    expect(act.action).toBe("reinstall");
+    expect(act.label).toContain("重装");
+  });
+
+  it("已装更新的版本 → 不让点，并说清怎么办", () => {
+    const act = entryAction(entry({ version: "1.0.0" }), "1.2.0");
+    expect(act.action).toBe("newer-installed");
+    expect(act.reason).toContain("已装更新的版本 v1.2.0");
+    expect(act.reason).toContain("先卸载");
+  });
+
+  it("已被索引撤回的条目：连升级都不给", () => {
+    const act = entryAction(entry({ blocked: "已被索引撤回：有严重漏洞" }), "1.0.0");
+    expect(act.action).toBe("blocked");
+    expect(act.reason).toContain("撤回");
+  });
+
+  it("新增权限只算「这次多出来的」", () => {
+    const two = entry({
+      permissions: [
+        { id: "read:pages", reason: "读标题" },
+        { id: "write:pages", reason: "写入周报页" },
+      ],
+    });
+    // 已装的那版只有 read:pages → 这次多出来的是 write:pages
+    expect(addedPermissions(two, { permissions: [{ id: "read:pages" }] }).map((p) => p.id)).toEqual([
+      "write:pages",
+    ]);
+    // 没装过就谈不上"新增"（那是全新安装，权限清单本来就全部要确认）
+    expect(addedPermissions(two, null)).toEqual([]);
+    expect(addedPermissions(two, { permissions: [] })).toHaveLength(2);
+    // 已装的权限这版没有了（作者缩权）→ 不算"新增"
+    expect(addedPermissions(entry(), { permissions: [{ id: "read:pages" }, { id: "write:pages" }] })).toEqual([]);
   });
 });
 

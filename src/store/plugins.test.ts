@@ -31,7 +31,7 @@ import { api } from "../lib/api";
 import type { PluginEventOutcome, PluginMeta, PluginValidation } from "../types";
 import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
 import { emitHostEvent } from "../lib/pluginEvents";
-import { usePlugins } from "./plugins";
+import { installToast, usePlugins } from "./plugins";
 import { useToast } from "./toast";
 
 const PLUGIN: PluginMeta = {
@@ -514,5 +514,51 @@ describe("plugins store · 宿主事件桥", () => {
     expect(() => emitHostEvent("app.started", {})).not.toThrow();
     await Promise.resolve();
     expect(api.emitPluginEvent).not.toHaveBeenCalled();
+  });
+});
+
+// 安装/升级完的提示：三种结局必须说成三句不同的话。
+//
+// 为什么值得单独测：把"升级"说成"已安装"会让用户以为磁盘上多了一个插件，而实际上
+// 原来那个已经被换掉了；升级后如果新版本声明更大，后端**已经把它暂停了**，
+// 提示不说这一句，用户就会在点命令时撞上"运行已暂停"而不知道为什么。
+describe("安装完成的提示", () => {
+  const meta = (over: Partial<PluginMeta> = {}): PluginMeta =>
+    ({ ...PLUGIN, replaced_version: null, ...over }) as PluginMeta;
+
+  it("新装：默认未启用", () => {
+    const msg = installToast(meta());
+    expect(msg).toContain("已安装插件「演示插件」");
+    expect(msg).toContain("默认未启用");
+  });
+
+  it("升级：说清从哪一版换过来的", () => {
+    const msg = installToast(meta({ version: "2.0.0", replaced_version: "1.0.0" }));
+    expect(msg).toContain("已升级插件「演示插件」到 v2.0.0");
+    expect(msg).toContain("原 v1.0.0");
+  });
+
+  it("同版本重装：不假装是升级", () => {
+    const msg = installToast(meta({ replaced_version: "1.0.0" }));
+    expect(msg).toContain("已重装插件");
+    expect(msg).not.toContain("原 v");
+  });
+
+  it("新版本声明变大：直接告诉用户下一步要去重新确认", () => {
+    const msg = installToast(
+      meta({
+        version: "2.0.0",
+        replaced_version: "1.0.0",
+        approval: { required: true, added_permissions: ["write:pages"], added_events: [], approved_version: "1.0.0" },
+      }),
+    );
+    expect(msg).toContain("重新确认");
+    expect(msg).not.toContain("默认未启用");
+  });
+
+  it("从索引来的会说清来源；Web 版没有 meta 也不报错", () => {
+    expect(installToast(meta(), "从索引")).toContain("已从索引安装插件「演示插件」");
+    expect(installToast(undefined)).toBe("插件安装成功");
+    expect(installToast(null)).toBe("插件安装成功");
   });
 });

@@ -62,6 +62,61 @@ export function entrySignatureNote(entry: PluginIndexEntry): string {
     : "无发布者签名";
 }
 
+/** 粗粒度版本比较（与后端同一口径：`x.y.z` 逐段比，比不出来返回 null）。 */
+export function compareVersions(a: string, b: string): number | null {
+  const parse = (v: string) => {
+    const core = v.split(/[-+]/)[0] ?? "";
+    const parts = core.split(".");
+    if (parts.length !== 3) return null;
+    const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+    return nums.some((n) => Number.isNaN(n)) ? null : nums;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return null;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+export type EntryAction = "install" | "upgrade" | "reinstall" | "blocked" | "newer-installed";
+
+/**
+ * 这一条现在该做什么：新装 / 升级 / 重装 / 装不了。
+ *
+ * 已装的版本更新时**不让点**（后端也会拒）：装一个更旧的版本几乎总是误操作，
+ * 而代价是功能悄悄退回去——事后极难发现。要降级就得先卸载，那是个明确的动作。
+ */
+export function entryAction(
+  entry: PluginIndexEntry,
+  installedVersion?: string | null,
+): { action: EntryAction; label: string; reason: string } {
+  const gate = entryInstallable(entry);
+  if (!gate.ok) return { action: "blocked", label: "安装", reason: gate.reason };
+  if (!installedVersion) return { action: "install", label: "安装", reason: "" };
+  const cmp = compareVersions(installedVersion, entry.version);
+  if (cmp === 0) return { action: "reinstall", label: `重装 v${entry.version}`, reason: "" };
+  if (cmp !== null && cmp > 0) {
+    return {
+      action: "newer-installed",
+      label: "安装",
+      reason: `已装更新的版本 v${installedVersion}（要降级请先卸载）`,
+    };
+  }
+  return { action: "upgrade", label: `升级到 v${entry.version}`, reason: "" };
+}
+
+/** 这次安装/升级**新增**的权限（升级时最该让用户看到的东西）。 */
+export function addedPermissions(
+  entry: PluginIndexEntry,
+  installed?: { permissions?: { id: string }[] } | null,
+): { id: string; reason: string }[] {
+  if (!installed) return [];
+  const had = new Set((installed.permissions ?? []).map((p) => p.id));
+  return entry.permissions.filter((p) => !had.has(p.id));
+}
+
 /** 这条记录能不能点「安装」；不能时给出给人看的理由。 */
 export function entryInstallable(entry: PluginIndexEntry): { ok: boolean; reason: string } {
   if (entry.blocked) return { ok: false, reason: entry.blocked };
@@ -77,15 +132,33 @@ export function installConfirmMessage(
   entry: PluginIndexEntry,
   sourceLabel: string,
   pubkeyGiven: boolean,
+  installedVersion?: string | null,
+  added: { id: string; reason: string }[] = [],
 ): string {
   const perms = entry.permissions.length
     ? entry.permissions.map((p) => `· ${p.id} —— ${p.reason || "（作者没写理由）"}`).join("\n")
     : "· （不申请任何数据权限）";
+  // 升级时把"新增了哪几项权限"单独摊出来：这是用户在这一刻最该读的一行。
+  const growth = added.length
+    ? [
+        "",
+        `这次升级新增了 ${added.length} 项权限（旧的已装版本没有）：`,
+        ...added.map((p) => `· ${p.id} —— ${p.reason || "（作者没写理由）"}`),
+        "宿主会先暂停它，你确认之后才会恢复运行。",
+      ]
+    : [];
+  const head = installedVersion
+    ? installedVersion === entry.version
+      ? `这是「重装」：已装的 v${installedVersion} 会被这一份同版本覆盖（用它可以修好被改坏的插件目录）。`
+      : `这是「升级」：已装的 v${installedVersion} 会被替换成 v${entry.version}（替换前会自动备份，装不上就回滚）。`
+    : "";
   return [
     `来源：${sourceLabel}`,
+    head,
     `插件：${entry.name || entry.id} v${entry.version}（发布者 ${entry.publisher || "未署名"}）`,
     "它要访问：",
     perms,
+    ...growth,
     "",
     "索引**没有人工审查**：能装不等于可信。装完默认未启用，你可以先看权限再决定。",
     pubkeyGiven

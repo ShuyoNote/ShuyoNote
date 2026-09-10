@@ -69,6 +69,27 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * 安装/升级完的那句提示。
+ *
+ * 三种结局必须说成三句不同的话（否则用户以为"又装了一个"，而磁盘上的那个已经被换掉了）：
+ * 新装、升级（替换了 vX）、重装同一版本；升级后如果声明变大，后端已经把插件暂停了，
+ * 提示里要直接告诉他下一步做什么，而不是等他点命令才发现跑不动。
+ */
+export function installToast(meta: PluginMeta | undefined | null, via = ""): string {
+  const prefix = via ? `已${via}安装` : "已安装";
+  if (!meta?.name) return "插件安装成功";
+  const tail = meta.approval?.required
+    ? "（新版本新增了权限/事件，插件已暂停：请在插件管理里「重新确认」后才会恢复运行）"
+    : "（默认未启用，请确认权限后点「启用」）";
+  if (meta.replaced_version) {
+    const verb = meta.replaced_version === meta.version ? "已重装" : "已升级";
+    const from = meta.replaced_version === meta.version ? "" : `（原 v${meta.replaced_version}）`;
+    return `${verb}插件「${meta.name}」到 v${meta.version}${from}${tail}`;
+  }
+  return `${prefix}插件「${meta.name}」${tail}`;
+}
+
 interface PluginsState {
   plugins: PluginMeta[];
   managerOpen: boolean;
@@ -202,11 +223,7 @@ export const usePlugins = create<PluginsState>((set) => ({
       // 后端装完就返回该插件的 meta（Web 版是 no-op，返回 undefined）。
       const meta = await api.installPlugin(sourcePath);
       await usePlugins.getState().load();
-      // 新装的插件默认**未启用**：提示用户先看权限再启用（安装不等于授权）。
-      toast(
-        meta?.name ? `已安装插件「${meta.name}」（默认未启用，请确认权限后点「启用」）` : "插件安装成功",
-        "success",
-      );
+      toast(installToast(meta), "success");
       return { ok: true };
     } catch (e) {
       console.error("install plugin failed", e);
@@ -219,13 +236,7 @@ export const usePlugins = create<PluginsState>((set) => ({
     try {
       const meta = await api.installPluginFromIndex(url, id, pubkey ?? null);
       await usePlugins.getState().load();
-      // 与本地安装同一条规矩：装完默认禁用，先看权限再启用。
-      toast(
-        meta?.name
-          ? `已从索引安装插件「${meta.name}」（默认未启用，请确认权限后点「启用」）`
-          : "已从索引安装插件",
-        "success",
-      );
+      toast(installToast(meta, "从索引"), "success");
       return { ok: true };
     } catch (e) {
       console.error("install plugin from index failed", e);

@@ -161,7 +161,10 @@ fn is_index_safe_id(id: &str) -> bool {
 
 /// 粗粒度 semver：`x.y.z`（允许 `-pre` / `+build` 尾巴）。索引里的版本要能与 manifest 对上，
 /// 这里不做完整 semver 实现，只保证"形状对、能比较"。
-fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+///
+/// 同一个函数也用来判断"这一次安装算升级还是降级"（见 `plugins::install_action`）——
+/// 两处必须是同一口径，否则会出现"界面按一种比较说能装、后端按另一种拒了"。
+pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     // 要求**三段齐全**（`1.2.0`）：少写一段在索引里只会造成"展示成 1.2、实际装出 1.2.0"
     // 这种说不清的差异，不如直接拒。
     let core = v.split(['-', '+']).next()?;

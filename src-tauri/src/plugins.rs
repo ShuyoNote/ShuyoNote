@@ -254,6 +254,10 @@ pub struct PluginMeta {
     pub approval: ApprovalState,
     /// 主题声明（只有**通过校验**的变量会被带上）。
     pub theme: Option<ThemeDecl>,
+    /// 这一次安装**替换掉**的那个版本（升级 / 重装的返回值才有；`list_plugins` 不带）。
+    /// 有它，界面才能说清"这不是新装、是把它从 v1 换成了 v2"，而不是假装一切都全新。
+    #[serde(default)]
+    pub replaced_version: Option<String>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -3501,6 +3505,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 triggers: Vec::new(),
                 theme,
                 approval,
+                replaced_version: None,
             });
             continue;
         }
@@ -3548,6 +3553,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             triggers,
             theme,
             approval,
+            replaced_version: None,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -3783,11 +3789,88 @@ fn install_from_zip_bytes(
     result
 }
 
+/// 同名（同 id）目录里已经装着一个时，这一次安装算什么。
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum InstallAction {
+    /// 没装过。
+    Fresh,
+    /// 装过别的版本 → 整体替换（升级 / 降级式替换由版本比较决定，见下）。
+    Replace,
+    /// 装的就是这个版本 → 覆盖一遍（"重装修好它"）。
+    Same,
+    /// 已装的版本**明确更新** → 拒绝。
+    Downgrade,
+}
+
+/// 装之前先判断"这一次算什么"。
+///
+/// 版本比不出来（作者写的不是 `x.y.z`）时**不拒绝**：那种情况下"谁更新"本来就无从判断，
+/// 而用户已经明确选了这份包（自己挑的 zip，或来自他订阅的索引）。唯一硬拒的是**能证明的
+/// 降级**——装一个更旧的版本几乎总是误操作，而代价是"功能悄悄退回去"，事后极难发现。
+/// 同版本允许覆盖：那正是"重装一遍，把它修回来"。
+///
+/// 比较口径与索引里的兼容性判定共用 `plugin_index::parse_version`，避免两处各有一套。
+pub(crate) fn install_action(installed: Option<&str>, incoming: &str) -> InstallAction {
+    let Some(installed) = installed else {
+        return InstallAction::Fresh;
+    };
+    if installed == incoming {
+        return InstallAction::Same;
+    }
+    match (
+        plugin_index::parse_version(installed),
+        plugin_index::parse_version(incoming),
+    ) {
+        (Some(a), Some(b)) if b < a => InstallAction::Downgrade,
+        _ => InstallAction::Replace,
+    }
+}
+
+/// 用 `src` 的内容**整体替换** `dest`（升级 / 重装）。
+///
+/// 替换是「先备份、再动手、出事回滚」：这是这个函数存在的全部理由——插件目录被清空到一半
+/// 就失败，会留下一个占着 id 的半残目录，用户连重装都做不到（早先 `install_plugin`
+/// 踩过这个坑，当时的修法是"先校验后写盘"，但那挡不住"写盘中途失败"）。
+///
+/// 备份放在系统临时目录，**不放在插件目录里**：插件目录会被扫描，多出来的备份目录里同样有
+/// `manifest.json`，会被当成"第二个同名插件"。跨卷也没关系——这里用的是拷贝不是改名。
+fn replace_plugin_dir(src: &Path, dest: &Path, manifest: &Manifest) -> Result<(), String> {
+    let backup = plugin_index::package_temp_dir();
+    copy_dir(dest, &backup).map_err(|e| format!("备份已装版本失败（还没动过任何东西）：{e}"))?;
+    let rollback = |why: String| -> String {
+        let _ = std::fs::remove_dir_all(dest);
+        match copy_dir(&backup, dest) {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(&backup);
+                format!("{why}（已回滚到原来那一版）")
+            }
+            // 回滚也失败时**不删备份**：那是用户唯一还能拿回旧版本的地方，把路径告诉他。
+            Err(e) => format!(
+                "{why}；回滚也失败了：{e}（原版本还在 {}，可手工拷回）",
+                backup.display()
+            ),
+        }
+    };
+    if let Err(e) = std::fs::remove_dir_all(dest) {
+        return Err(rollback(format!("清空旧版本失败：{e}")));
+    }
+    if let Err(e) = copy_dir(src, dest) {
+        return Err(rollback(format!("写入新版本失败：{e}")));
+    }
+    if let Err(e) = load_plugin_source(dest, manifest) {
+        return Err(rollback(format!("新版本的入口文件加载失败：{e}")));
+    }
+    let _ = std::fs::remove_dir_all(&backup);
+    Ok(())
+}
+
 /// 安装一个**已经在磁盘上**的插件目录。
 ///
 /// 顺序是刻意的：先把所有前置条件验完（含**入口文件真的能被加载**），再往盘上写。
 /// 此前是「先 copy_dir 再 load_plugin_source」：一旦入口文件有问题，
-/// 已经拷过去的目录会留下并占住这个 id，用户连重装都做不到（报"同名插件已存在"）。
+/// 已经拷过去的目录会留下并占住这个 id，用户连重装都做不到。
+/// 同 id 已装时不再一律拒绝（那条路让"升级"无路可走），而是按 `install_action` 判定：
+/// 升级/重装整体替换并且**可回滚**，明确降级拒掉。
 fn install_from_dir(
     app: &AppHandle,
     db: &State<Db>,
@@ -3811,24 +3894,72 @@ fn install_from_dir(
     let commands = discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)?;
 
     let dest = plugins_root(app)?.join(&manifest.id);
-    if dest.exists() {
-        return Err("同名插件已存在".to_string());
+    // "现在装着哪个版本"以**磁盘上的 manifest** 为准：手工拷进去的插件目录没有 DB 行，
+    // 而它恰恰是用户看得见、跑得起来的那个。
+    let installed = if dest.is_dir() {
+        read_manifest(&dest).ok().map(|m| m.version)
+    } else {
+        None
+    };
+    let action = install_action(installed.as_deref(), &manifest.version);
+    if action == InstallAction::Downgrade {
+        return Err(format!(
+            "已装的版本更新（{} → {}）：拒绝安装更旧的版本。确实要降级，请先卸载再装",
+            installed.as_deref().unwrap_or("未知"),
+            manifest.version
+        ));
     }
-    copy_dir(src, &dest)?;
-    // 拷贝后确认入口文件确实落到盘上；失败就把半残目录清掉，别留垃圾。
-    if let Err(e) = load_plugin_source(&dest, &manifest) {
-        let _ = std::fs::remove_dir_all(&dest);
-        return Err(format!("安装失败（已回滚）：{e}"));
+    let replaced = match action {
+        InstallAction::Fresh => {
+            copy_dir(src, &dest)?;
+            None
+        }
+        // 升级 / 重装：整体替换（内部自带备份与回滚）。
+        _ => {
+            replace_plugin_dir(src, &dest, &manifest)?;
+            installed.clone()
+        }
+    };
+    // 新装这条路上再确认一次入口文件真的落到盘上；失败就把这次装的东西清掉，别留垃圾。
+    // （替换那条路由 `replace_plugin_dir` 自己验并回滚，这里不必重来一遍。）
+    if replaced.is_none() {
+        if let Err(e) = load_plugin_source(&dest, &manifest) {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(format!("安装失败（已回滚）：{e}"));
+        }
     }
     // 新装的插件**默认禁用**：先让用户看清它要哪些权限、干什么，再自己去启用。
     // （插件默认启用时，"安装"就等于一次性授予了它声明的全部数据访问权。）
-    {
+    let approval_state_after = {
         let c = conn(db);
+        // `record_install` 在冲突时**不动** `enabled`（用户的选择不能被一次升级冲掉），
+        // 只更新版本与来源。授权快照同理不动：新版本要是多声明了权限/事件，
+        // `approval_state` 立刻就会说 `required`，宿主会在用户「重新确认」之前拒绝运行它。
         record_install(&c, &manifest.id, &manifest.version, source_kind, false, false)?;
+        approval_state(&c, &manifest, false)
+    };
+    match &replaced {
+        Some(old) => push_log(
+            &manifest.id,
+            "info",
+            &format!("已更新：{old} → {}（来源：{source_kind}）", manifest.version),
+        ),
+        None => {
+            // 来源不是"本地文件夹"时，在插件日志里留一行出处（索引装完之后能追溯是谁给的）。
+            if source_kind != "local" {
+                push_log(&manifest.id, "info", &format!("已安装（来源：{source_kind}）"));
+            }
+        }
     }
-    // 来源不是"本地文件夹"时，在插件日志里留一行出处（索引装完之后能追溯是谁给的）。
-    if source_kind != "local" {
-        push_log(&manifest.id, "info", &format!("已安装（来源：{source_kind}）"));
+    if approval_state_after.required {
+        push_log(
+            &manifest.id,
+            "warn",
+            &format!(
+                "新版本新增了{}：运行已暂停，等你重新确认",
+                describe_drift(&approval_state_after)
+            ),
+        );
     }
     let (permissions, permissions_baseline) = permission_metas(&manifest);
     let events = event_metas(&manifest);
@@ -3852,7 +3983,10 @@ fn install_from_dir(
         triggers,
         theme,
         // 新装默认禁用、也还没"同意过"任何东西：等用户看权限清单点启用时才会记快照。
-        approval: ApprovalState::default(),
+        // 替换（升级/重装）时这里可能是 `required`——那时它说的是实话：新版本声明更大，
+        // 宿主已经暂停它，等用户重新确认。界面据此提示，而不是等用户点命令才发现跑不动。
+        approval: approval_state_after,
+        replaced_version: replaced,
     })
 }
 
@@ -6180,6 +6314,100 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(plugin_logs(Some("别的插件".to_string()), None).is_empty(), "按插件过滤应当生效");
         clear_plugin_logs();
         assert!(plugin_logs(None, None).is_empty());
+    }
+
+    // ---- 升级 / 重装（同名 id 再装一次）----
+
+    #[test]
+    fn install_action_only_refuses_a_provable_downgrade() {
+        assert_eq!(install_action(None, "1.0.0"), InstallAction::Fresh);
+        assert_eq!(install_action(Some("1.0.0"), "1.0.0"), InstallAction::Same);
+        assert_eq!(install_action(Some("1.0.0"), "1.2.0"), InstallAction::Replace);
+        // 逐段比较，不是字符串比较（1.10 > 1.9）
+        assert_eq!(install_action(Some("1.9.0"), "1.10.0"), InstallAction::Replace);
+        assert_eq!(install_action(Some("1.10.0"), "1.9.0"), InstallAction::Downgrade);
+        // 预发布尾巴不参与主段比较
+        assert_eq!(install_action(Some("1.0.0"), "1.0.1-rc.1"), InstallAction::Replace);
+
+        // 比不出来（作者写 1.2 / v2 / 日期串）→ 不拒：那种情况下"谁更新"无从判断，
+        // 而用户已经明确选了这份包。硬拒只留给能证明的降级。
+        for (was, now) in [("1.2", "1.3"), ("v2", "1.0.0"), ("1.0.0", "v2"), ("2026.09", "2026.1")] {
+            assert_eq!(
+                install_action(Some(was), now),
+                InstallAction::Replace,
+                "{was} → {now} 不该被当成降级"
+            );
+        }
+    }
+
+    /// 写一个最小可用插件目录（`manifest.json` + 入口文件）。
+    fn write_plugin_dir(dir: &Path, id: &str, version: &str, entry: &str, extra: &[(&str, &str)]) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::json!({ "id": id, "name": "P", "version": version, "main": "main.js" })
+                .to_string(),
+        )
+        .unwrap();
+        std::fs::write(dir.join("main.js"), entry).unwrap();
+        for (name, body) in extra {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+    }
+
+    #[test]
+    fn replacing_an_installed_plugin_swaps_content_and_drops_removed_files() {
+        let src = temp_dir("upgrade-src");
+        let dest = temp_dir("upgrade-dest");
+        write_plugin_dir(&dest, "p1", "1.0.0", "register({id:'p1.a'});", &[("legacy.txt", "old")]);
+        write_plugin_dir(&src, "p1", "1.1.0", "register({id:'p1.a'});", &[("fresh.txt", "new")]);
+
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "P", "version": "1.1.0", "main": "main.js"
+        }))
+        .unwrap();
+        replace_plugin_dir(&src, &dest, &manifest).unwrap();
+
+        assert!(dest.join("fresh.txt").exists(), "新版本的文件要到位");
+        assert!(
+            !dest.join("legacy.txt").exists(),
+            "新版本里删掉的文件必须跟着消失——否则旧代码会以「没人再引用」的方式留在盘上"
+        );
+        let on_disk: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(on_disk.version, "1.1.0");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn a_failed_replacement_rolls_back_to_the_old_version() {
+        let src = temp_dir("upgrade-src-bad");
+        let dest = temp_dir("upgrade-dest-keep");
+        write_plugin_dir(&dest, "p1", "1.0.0", "register({id:'p1.a'});", &[("legacy.txt", "old")]);
+        // 新版本的入口文件**不存在**：写盘过程中必然失败，正是要验的那条路
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("manifest.json"),
+            serde_json::json!({ "id": "p1", "name": "P", "version": "2.0.0", "main": "main.js" }).to_string(),
+        )
+        .unwrap();
+
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "P", "version": "2.0.0", "main": "main.js"
+        }))
+        .unwrap();
+        let err = replace_plugin_dir(&src, &dest, &manifest).unwrap_err();
+        assert!(err.contains("已回滚"), "失败必须回滚，且说清回滚了：{err}");
+
+        // 磁盘上还是原来那一版，能跑的老插件不该被半装的新版本毁掉
+        let on_disk: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(dest.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(on_disk.version, "1.0.0");
+        assert!(dest.join("main.js").exists());
+        assert!(dest.join("legacy.txt").exists());
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
     }
 
     // ---- 索引安装（M11.11a）：下载与上限 ----
