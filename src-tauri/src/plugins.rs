@@ -2241,6 +2241,65 @@ fn run_command_timeout(
     })
 }
 
+/// 用户点「取消」时调用：**终止**那次运行的宿主子进程（D4）。
+///
+/// 返回是否真的杀到了（运行已经结束或 id 不认识都返回 false，不报错——取消本身是"尽力而为"，
+/// 用户点的那一下不该因为他手慢而弹一个错误）。
+#[tauri::command]
+pub fn cancel_plugin_run(run_id: u64) -> bool {
+    let killed = cancel_run(run_id);
+    if !killed {
+        push_log("host", "info", &format!("取消 run {run_id}：它已经结束了"));
+    }
+    killed
+}
+
+/// 在飞的插件运行：`run id → (killer, 是否被用户取消)`。
+///
+/// 为什么需要它：**取消 = 终止进程**（D4）。前端在发起调用时就带一个 `runId` 过来，于是用户在
+/// 等待期间点「取消」，后端能凭它找到那一刻的宿主子进程并**真的杀掉**——而不是像从前那样
+/// 只是不再等它（插件代码还在后台跑完）。
+///
+/// 只登记**用户发起**的命令运行：事件派发是后台行为，没有"用户点取消"这个动作。
+static RUN_KILLERS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<u64, crate::plugin_host::HostKiller>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+/// 被用户取消的 run id（运行结束时据此把错误说成"已终止"而不是"崩了"）。
+static CANCELLED_RUNS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+fn register_run(run_id: u64, killer: crate::plugin_host::HostKiller) {
+    let mut m = RUN_KILLERS.lock().unwrap_or_else(|e| e.into_inner());
+    m.insert(run_id, killer);
+}
+
+fn unregister_run(run_id: u64) -> bool {
+    let mut m = RUN_KILLERS.lock().unwrap_or_else(|e| e.into_inner());
+    m.remove(&run_id).is_some()
+}
+
+/// 用户取消：杀掉那次运行的宿主子进程。返回"是否真的杀到了"（已经跑完就返回 false）。
+pub(crate) fn cancel_run(run_id: u64) -> bool {
+    let killer = {
+        let m = RUN_KILLERS.lock().unwrap_or_else(|e| e.into_inner());
+        m.get(&run_id).cloned()
+    };
+    let Some(killer) = killer else { return false };
+    CANCELLED_RUNS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(run_id);
+    killer.kill();
+    true
+}
+
+fn take_cancelled(run_id: u64) -> bool {
+    CANCELLED_RUNS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&run_id)
+}
+
 /// M11.13 阶段 2b：把一次命令放到**子进程**里跑，能力由**本进程**服务。
 ///
 /// 这是生产路径（`run_plugin_command` 与事件派发都走它）。它做的事：
@@ -2259,9 +2318,16 @@ fn run_command_via_host(
     command_id: &str,
     args_json: &str,
     state: &RunState,
+    run_id: Option<u64>,
 ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
-    let (message, insert, toasts, drafts, exports, _dropped) =
-        run_via_host(source, command_id, args_json, state, crate::plugin_host::HostRunMode::Command)?;
+    let (message, insert, toasts, drafts, exports, _dropped) = run_via_host(
+        source,
+        command_id,
+        args_json,
+        state,
+        crate::plugin_host::HostRunMode::Command,
+        run_id,
+    )?;
     Ok((message, insert, toasts, drafts, exports))
 }
 
@@ -2276,7 +2342,7 @@ fn run_event_via_host(
     state: &RunState,
 ) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
     let (message, _insert, toasts, drafts, exports, _dropped) =
-        run_via_host(source, event, payload_json, state, crate::plugin_host::HostRunMode::Event)?;
+        run_via_host(source, event, payload_json, state, crate::plugin_host::HostRunMode::Event, None)?;
     // 事件里没有保存对话框可弹，也没有人在等：真的出现导出请求就**明确丢弃并留痕**
     // （与"事件里的 insert 会被忽略"同一条规矩，见调用点）。
     if !exports.is_empty() {
@@ -2295,13 +2361,14 @@ fn run_via_host(
     args_json: &str,
     state: &RunState,
     mode: crate::plugin_host::HostRunMode,
+    run_id: Option<u64>,
 ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
     let timeout = if mode == crate::plugin_host::HostRunMode::Event {
         EVENT_TIMEOUT
     } else {
         RUN_TIMEOUT
     };
-    run_via_host_with_timeout(source, what, args_json, state, mode, timeout)
+    run_via_host_with_timeout(source, what, args_json, state, mode, timeout, run_id)
 }
 
 /// 同上，但可以指定墙钟预算（测试用：几百毫秒就能验证"超时 = 杀进程"）。
@@ -2315,6 +2382,7 @@ fn run_via_host_with_timeout(
     state: &RunState,
     mode: crate::plugin_host::HostRunMode,
     timeout: std::time::Duration,
+    run_id: Option<u64>,
 ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
     let req = crate::plugin_host::HostRunRequest {
         plugin_id: state.plugin_id.clone(),
@@ -2333,6 +2401,9 @@ fn run_via_host_with_timeout(
     // 子进程在**本线程**起（约 5 ms），句柄留一份给"超时即杀"用，流交给工作线程。
     let mut client = spawn_host_client()?;
     let killer = client.killer();
+    if let Some(id) = run_id {
+        register_run(id, killer.clone());
+    }
     let serve_state = state.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
@@ -2349,7 +2420,13 @@ fn run_via_host_with_timeout(
         })
         .map_err(|e| format!("插件宿主线程启动失败：{e}"))?;
 
-    let (served, drafts, exports, cap_toasts, cap_insert, dropped) = match rx.recv_timeout(timeout) {
+    let received = rx.recv_timeout(timeout);
+    // 不管哪条路，先把这次运行从"可取消"里摘掉（否则用户还能"取消"一个已经结束的运行）。
+    if let Some(id) = run_id {
+        unregister_run(id);
+    }
+    let cancelled_by_user = run_id.is_some_and(take_cancelled);
+    let (served, drafts, exports, cap_toasts, cap_insert, dropped) = match received {
         Ok(v) => v,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             // **超时 = 杀进程**（方案 §3.3）：不再"放弃等待"留一个跑到天荒地老的子进程。
@@ -2369,7 +2446,14 @@ fn run_via_host_with_timeout(
         }
     };
 
-    let res = served?;
+    let res = match served {
+        Ok(res) => res,
+        // 用户取消 → 说清是**被他终止的**，而不是"插件崩了"（两者都会让通道断开）。
+        Err(e) if cancelled_by_user => {
+            return Err(format!("cancelled: 已终止插件（用户取消）；底层原因：{e}"))
+        }
+        Err(e) => return Err(e),
+    };
     // 两种插入来源合并：能力那条（父进程）优先，JS 原生那条（子进程）兜底。
     let insert_text = if cap_insert.is_empty() { res.insert_text } else { cap_insert };
     let mut toasts = cap_toasts;
@@ -2494,6 +2578,7 @@ pub(crate) fn classify_run_error(e: &str) -> (String, String) {
         "plugin_error",
         // 宿主侧的门（不是能力错误，但作者会看到，保持原样透传）
         "approval_required",
+        "cancelled",
     ] {
         if e.starts_with(code) {
             return (code.to_string(), e.to_string());
@@ -3416,6 +3501,7 @@ pub async fn run_plugin_command(
     command_id: String,
     current_id: Option<String>,
     args_json: Option<String>,
+    run_id: Option<u64>,
 ) -> Result<PluginRunResult, String> {
     if !is_safe_plugin_id(&plugin_id) {
         return Err("非法插件 id".to_string());
@@ -3510,7 +3596,8 @@ pub async fn run_plugin_command(
         insert_text: String::new(),
         toasts: Vec::new(),
     };
-    let (message, insert, toasts, drafts, exports) = run_command_via_host(&source, &command_id, &args_json, &state)?;
+    let (message, insert, toasts, drafts, exports) =
+        run_command_via_host(&source, &command_id, &args_json, &state, run_id)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
@@ -3712,7 +3799,7 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
             permissions: vec!["read:pages".to_string()],
             ..Default::default()
         };
-        let res = run_command(source, "t.hello", "", &state).unwrap();
+        let res = run_command_msg_in_host_for_test(source, "t.hello", "", &state).unwrap();
         assert_eq!(res, "hi 7");
     }
 
@@ -3720,7 +3807,7 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
     fn reports_missing_command() {
         let source = r#"register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false, run: function(){ return "x"; } });"#;
         let state = RunState { page_count: 0, ..Default::default() };
-        let res = run_command(source, "t.nope", "", &state).unwrap();
+        let res = run_command_msg_in_host_for_test(source, "t.nope", "", &state).unwrap();
         assert!(res.contains("命令不存在"));
     }
 
@@ -3735,9 +3822,10 @@ register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
             permissions: vec!["write:page.current".to_string()],
             ..Default::default()
         };
-        let message = run_command(source, "t.ins", "", &state).unwrap();
+        let (message, insert, ..) = run_command_in_host_for_test(source, "t.ins", "", &state).unwrap();
         assert_eq!(message, "ok");
-        let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
+        // 插入文本产生在**子进程**（JS 侧的原生函数），随结果帧回来；
+        // 父进程那边的 `editor.insertText` 能力走的是另一条（同样会被合并进来）。
         assert_eq!(insert, "hello from plugin");
     }
 
@@ -3759,7 +3847,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
     return found.length ? ("LEAK:" + found.join(",")) : "clean";
   } });
 "#;
-        let res = run_command(source, "t.probe", "", &RunState::default()).unwrap();
+        let res = run_command_msg_in_host_for_test(source, "t.probe", "", &RunState::default()).unwrap();
         assert_eq!(res, "clean", "沙箱里出现了宿主能力");
     }
 
@@ -3776,7 +3864,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         let source = r#"register({ id: "t.loop", title: "L", description: "", closeOnRun: false,
   run: function(){ while(true){} } });"#;
         let started = std::time::Instant::now();
-        let err = run_command(source, "t.loop", "", &RunState::default())
+        let err = run_command_msg_in_host_for_test(source, "t.loop", "", &RunState::default())
             .expect_err("死循环应当被循环预算截断成错误，而不是正常返回");
         assert!(
             started.elapsed() < Duration::from_secs(20),
@@ -4000,7 +4088,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
         let _g = capability_test_guard();
         ensure_host_exe();
-        run_command_via_host(source, command_id, args_json, state)
+        run_command_via_host(source, command_id, args_json, state, None)
     }
 
     /// 事件路径同理（生产也跑在子进程里了）。
@@ -4033,6 +4121,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             &RunState::default(),
             crate::plugin_host::HostRunMode::Command,
             std::time::Duration::from_millis(400),
+            None,
         )
         .expect_err("死循环的插件必须超时");
         let elapsed = t0.elapsed();
@@ -4081,6 +4170,73 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert_eq!(code, "plugin_crash", "{err}");
     }
 
+    /// **取消 = 终止那次运行的宿主子进程**（D4）。这一条把"登记 → 取消 → 错误文案 → 清理"
+    /// 整条链走一遍：前端点一下取消，用户该看到"已终止插件"，而且进程真的没了。
+    #[test]
+    fn cancelling_a_run_kills_its_host_process() {
+        let _g = log_test_guard();
+        let _cap = capability_test_guard();
+        ensure_host_exe();
+        let run_id = 4242;
+
+        let started = std::time::Instant::now();
+        let handle = std::thread::spawn(move || {
+            run_via_host_with_timeout(
+                // **无限**问能力：没有取消的话它永远不会自己结束（只会撞上 30s 墙钟）。
+                // 这样这条测试才真的在测"杀掉它"，而不是"等它跑完"。
+                "register({ id: 'c', title: 'C', run: function () { while (true) { api.notify('x'); } } });",
+                "c",
+                "",
+                &RunState::default(),
+                crate::plugin_host::HostRunMode::Command,
+                std::time::Duration::from_secs(30),
+                Some(run_id),
+            )
+        });
+
+        // 等它**真的登记**进来（否则可能取消了一个还没开始的运行，测了个寂寞）。
+        let mut registered = false;
+        for _ in 0..300 {
+            if RUN_KILLERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&run_id)
+            {
+                registered = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(registered, "运行应当先登记进来（否则前端无从取消）");
+
+        assert!(cancel_run(run_id), "取消应当真的杀到");
+        let err = handle.join().unwrap().expect_err("被取消的运行必须报错");
+        let elapsed = started.elapsed();
+        assert!(err.contains("cancelled") && err.contains("已终止"), "{err}");
+        // 三条一起才说明"是**杀**掉了它"，而不是"它自己跑完了"或"被别的原因终结了"：
+        // ① 很快返回（不然就是等满了 30s 墙钟）；② 不是超时；③ 不是内存看门狗。
+        assert!(elapsed < std::time::Duration::from_secs(5), "取消要立刻生效（实际 {elapsed:?}）");
+        assert!(!err.contains("timeout"), "不该是等到墙钟超时：{err}");
+        assert!(!err.contains("out_of_memory"), "不该是内存看门狗动的刀：{err}");
+
+        // 收尾要干净：取消标记被消费、登记被摘掉（再取消一次应当返回 false）
+        assert!(!take_cancelled(run_id), "取消标记不该留到下一次运行");
+        assert!(!cancel_run(run_id), "已经结束的运行不该还能被取消");
+    }
+
+    /// 测试里跑一次命令、只要它的返回值（插入文本/提示/草稿用五元组那版）。
+    ///
+    /// 存在意义就是让"迁移到生产那条路"变成一次改名：这 13 处此前直接调**进程内**解释器入口
+    /// `run_command`（没有 IPC 传输），按 D7 属于"测试走进程内、生产走子进程"的分叉。
+    fn run_command_msg_in_host_for_test(
+        source: &str,
+        command_id: &str,
+        args_json: &str,
+        state: &RunState,
+    ) -> Result<String, String> {
+        run_command_in_host_for_test(source, command_id, args_json, state).map(|(msg, ..)| msg)
+    }
+
     fn state_with(permissions: &[&str]) -> RunState {
         RunState {
             plugin_id: "t".to_string(),
@@ -4126,7 +4282,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // `setting:*` 是宿主界面独占的命名空间：插件能读自己的设置，但**不能改**——
         // 否则用户看到的配置就不再是他亲手设的那个。
         let state = state_with(&["kv:own"]);
-        let set = run_command(
+        let set = run_command_msg_in_host_for_test(
             r#"register({ id: "s.set", title: "t", run: function () { api.kv.set("setting:mode", "被插件改掉"); return "done"; } });"#,
             "s.set",
             "",
@@ -4134,7 +4290,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         )
         .unwrap();
         assert!(set.contains("permission_denied"), "写保留键必须被拒：{set}");
-        let remove = run_command(
+        let remove = run_command_msg_in_host_for_test(
             r#"register({ id: "s.rm", title: "t", run: function () { api.kv.remove("setting:mode"); return "done"; } });"#,
             "s.rm",
             "",
@@ -4154,7 +4310,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             ..Default::default()
         };
         state.setting_scopes.insert("mode".into(), "app".into());
-        let out = run_command(
+        let out = run_command_msg_in_host_for_test(
             r#"register({ id: "s.get", title: "t", run: function () { var v = api.settings.get("mode"); return v === null ? "null" : String(v); } });"#,
             "s.get",
             "",
@@ -4165,7 +4321,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
 
         // 没声明的 key → 明确报错而不是静默返回 null：key 名字写错是最常见的低级错误，
         // 返回 null 会让作者以为"用户没设过"，查很久。
-        let err = run_command(
+        let err = run_command_msg_in_host_for_test(
             r#"register({ id: "s.bad", title: "t", run: function () { api.settings.get("没声明的"); return "不应到这里"; } });"#,
             "s.bad",
             "",
@@ -4583,7 +4739,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 关键性质：权限是**后端逐次调用校验**的，不是只在 UI 上隐藏。
         let source = r#"register({ id: "t.deny", title: "D", description: "", closeOnRun: false,
   run: function(){ return "count=" + api.pages.count(); } });"#;
-        let res = run_command(source, "t.deny", "", &state_with(&[])).unwrap();
+        let res = run_command_msg_in_host_for_test(source, "t.deny", "", &state_with(&[])).unwrap();
         assert!(res.contains("permission_denied"), "实际: {res}");
         assert!(res.contains("read:pages"), "错误里应点明缺哪个权限");
     }
@@ -4593,19 +4749,19 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 老写法不能成为绕过点。
         let source = r#"register({ id: "t.legacy", title: "L", description: "", closeOnRun: false,
   run: function(){ return "count=" + __pages(); } });"#;
-        let denied = run_command(source, "t.legacy", "", &state_with(&[])).unwrap();
+        let denied = run_command_msg_in_host_for_test(source, "t.legacy", "", &state_with(&[])).unwrap();
         assert!(denied.contains("permission_denied"), "老全局也要过权限校验，实际: {denied}");
 
         let mut ok_state = state_with(&["read:pages"]);
         ok_state.page_count = 7;
-        assert_eq!(run_command(source, "t.legacy", "", &ok_state).unwrap(), "count=7");
+        assert_eq!(run_command_msg_in_host_for_test(source, "t.legacy", "", &ok_state).unwrap(), "count=7");
     }
 
     #[test]
     fn unknown_capability_is_rejected() {
         let source = r#"register({ id: "t.unknown", title: "U", description: "", closeOnRun: false,
   run: function(){ return String(__cap("pages.deleteEverything", "{}")); } });"#;
-        let res = run_command(source, "t.unknown", "", &state_with(&[])).unwrap();
+        let res = run_command_msg_in_host_for_test(source, "t.unknown", "", &state_with(&[])).unwrap();
         assert!(res.contains("unknown_capability"), "实际: {res}");
     }
 

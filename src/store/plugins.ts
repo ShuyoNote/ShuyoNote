@@ -31,7 +31,10 @@ export interface PluginActionResult {
  *
  * `cancelled=true` 表示用户在等待期间点了「取消」——此时**结果被丢弃**：
  * 因为命令的副作用（`insert` 与 `toasts`）全都在返回值里，丢掉返回值就等于
- * 不产生任何半途写入（插件线程本身可能仍在后台跑完，Boa 没有中断 API）。
+ * 不产生任何半途写入。
+ *
+ * M11.13 起「取消」是**真的终止**：前端把 `runId` 随调用带过去，取消时调
+ * `cancel_plugin_run` 杀掉那次运行的宿主子进程（此前只是不再等它，插件代码还在后台跑完）。
  */
 export interface PluginRunOutcome {
   message: string;
@@ -225,12 +228,17 @@ export const usePlugins = create<PluginsState>((set) => ({
       commandId;
     set({ running: { seq, pluginId, commandId, title } });
     try {
-      const res = await api.runPluginCommand(pluginId, commandId, currentId, argsJson);
+      const res = await api.runPluginCommand(pluginId, commandId, currentId, argsJson, seq);
       if (cancelledRuns.delete(seq)) {
         // 用户已取消：丢弃结果。副作用都在返回值里，丢掉即「无半途写入」。
         return { message: "", cancelled: true };
       }
       return res;
+    } catch (e) {
+      // 取消会让后端以 cancelled 结束（子进程被杀 → 通道断开 → 我们**翻译**成"用户取消"）。
+      // 这是用户自己的动作，不该再弹一个错误给他。
+      if (cancelledRuns.delete(seq)) return { message: "", cancelled: true };
+      throw e;
     } finally {
       if (usePlugins.getState().running?.seq === seq) set({ running: null });
     }
@@ -241,9 +249,10 @@ export const usePlugins = create<PluginsState>((set) => ({
     if (!r) return;
     cancelledRuns.add(r.seq);
     set({ running: null });
-    // 诚实提示：我们放弃的是「等待」，不是插件线程 —— Boa 没有中断 API，
-    // 被遗弃的线程会自己跑完（彻底解决要等 M11.13 宿主子进程化）。
-    toast("已取消等待；插件代码可能仍在后台跑完", "info");
+    // **真的终止**：让后端杀掉这次运行的宿主子进程（M11.13 / D4）。失败不报错——
+    // 取消是"尽力而为"，用户手慢一点（那次运行刚好结束）不该换来一个错误提示。
+    void api.cancelPluginRun(r.seq).catch((e) => console.error("cancel plugin run failed", e));
+    toast("已终止插件", "info");
   },
   logsFor: null,
   logs: [],

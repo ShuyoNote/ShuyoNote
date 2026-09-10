@@ -88,7 +88,9 @@ export async function runPluginCommandWithUi(
 ): Promise<PluginRunUiResult> {
   const res = await usePlugins.getState().runCommand(pluginId, commandId, currentPageId, argsJson);
   if (res.cancelled) {
-    return { message: "已取消执行（结果已丢弃）", cancelled: true };
+    // M11.13 起"取消"是真的终止那次运行的宿主子进程（见 store/plugins 的 cancelRun），
+    // 所以文案如实说"已终止"，而不是从前那句"已取消等待"。
+    return { message: "已终止插件（结果已丢弃）", cancelled: true };
   }
   for (const t of res.toasts ?? []) toast(t, "info");
   if (res.insert) insertTextIntoEditor(res.insert);

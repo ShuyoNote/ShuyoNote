@@ -440,6 +440,8 @@ pub fn run() {
             plugins::list_plugins,
             plugins::set_plugin_enabled,
             plugins::run_plugin_command,
+            // 「取消」= 终止那次运行的宿主子进程（M11.13 / D4）。
+            plugins::cancel_plugin_run,
             plugins::uninstall_plugin,
             plugins::install_plugin,
             plugins::open_plugin_dir,

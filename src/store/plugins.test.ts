@@ -14,6 +14,7 @@ vi.mock("../lib/api", () => ({
     installPlugin: vi.fn(),
     openPluginDir: vi.fn(),
     runPluginCommand: vi.fn(),
+    cancelPluginRun: vi.fn(),
     pluginLogs: vi.fn(),
     clearPluginLogs: vi.fn(),
     validatePlugin: vi.fn(),
@@ -193,27 +194,51 @@ describe("plugins store · 运行态 / 取消 / __toast / 日志", () => {
     expect(r.toasts).toEqual(["来自插件的提示"]);
   });
 
-  it("取消：丢弃结果（cancelled=true），且提示是诚实文案", async () => {
+  it("取消：**真的终止**那次运行（调 cancel_plugin_run），并丢弃结果", async () => {
     let release: (v: unknown) => void = () => {};
     vi.mocked(api.runPluginCommand).mockReturnValue(
       new Promise((res) => {
         release = res;
       }) as never,
     );
+    vi.mocked(api.cancelPluginRun).mockResolvedValue(true);
 
     const p = usePlugins.getState().runCommand("demo", "demo.slow", null);
+    // runId 要随调用带过去——后端靠它找到那一刻的宿主子进程（否则取消无从下手）。
+    // 序号是模块级自增的（跨测试连续），所以这里取"这次调用实际用的那个"来断言。
+    const calls = vi.mocked(api.runPluginCommand).mock.calls;
+    const runId = calls[calls.length - 1]?.[4];
+    expect(runId, "调用要带上 runId").toBeTypeOf("number");
     usePlugins.getState().cancelRun();
 
     expect(usePlugins.getState().running).toBeNull();
-    // 插件线程本身停不下来，所以文案不能说「已终止」，只能说「已取消等待」。
-    expect(lastToast()?.message).toContain("取消等待");
-    expect(lastToast()?.message).toContain("仍在后台");
+    expect(api.cancelPluginRun, "取消 = 让后端杀掉子进程，不是「不再等它」").toHaveBeenCalledWith(runId);
+    expect(lastToast()?.message).toContain("已终止");
 
     release({ message: "太晚了", insert: "不该被写入", toasts: ["也不该弹"] });
     const r = await p;
     expect(r.cancelled).toBe(true);
     expect(r.insert).toBeUndefined();
     expect(r.toasts).toBeUndefined();
+  });
+
+  it("取消后端的调用以错误结束（子进程被杀）时，不该再弹一个错误给用户", async () => {
+    vi.mocked(api.runPluginCommand).mockRejectedValue(new Error("cancelled: 已终止插件（用户取消）"));
+    vi.mocked(api.cancelPluginRun).mockResolvedValue(true);
+
+    const p = usePlugins.getState().runCommand("demo", "demo.slow", null);
+    usePlugins.getState().cancelRun();
+    const r = await p;
+    expect(r, "取消是用户自己的动作，结果按「已取消」处理").toEqual({ message: "", cancelled: true });
+  });
+
+  it("用户取消之后，后端说「已经跑完了」（没杀到）也不报错", async () => {
+    vi.mocked(api.cancelPluginRun).mockResolvedValue(false);
+    vi.mocked(api.runPluginCommand).mockResolvedValue({ message: "跑完了", insert: null, toasts: [] });
+    const p = usePlugins.getState().runCommand("demo", "demo.ok", null);
+    usePlugins.getState().cancelRun();
+    const r = await p;
+    expect(r.cancelled, "结果仍然按取消丢弃（用户已经不等了）").toBe(true);
   });
 
   it("写能力的草稿随结果回传（store 不自行落库）", async () => {

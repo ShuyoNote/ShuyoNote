@@ -114,8 +114,14 @@ export const api = {
     invoke("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
   listPlugins: () => invoke("list_plugins"),
   setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
-  runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null, argsJson?: string) =>
-    invoke("run_plugin_command", { pluginId, commandId, currentId, argsJson }),
+  /** `runId` 让前端能在等待期间**真的终止**这次运行（见 store/plugins 的 cancelRun）。 */
+  runPluginCommand: (
+    pluginId: string,
+    commandId: string,
+    currentId?: string | null,
+    argsJson?: string,
+    runId?: number,
+  ) => invoke("run_plugin_command", { pluginId, commandId, currentId, argsJson, runId }),
   uninstallPlugin: (id: string) => invoke("uninstall_plugin", { id }),
   installPlugin: (sourcePath: string) => invoke("install_plugin", { sourcePath }),
   openPluginDir: () => invoke("open_plugin_dir"),
@@ -129,6 +135,8 @@ export const api = {
   validatePlugin: (id: string) => invoke("validate_plugin", { id }),
   // 重新确认插件声明（新增权限/事件之后唯一的放行方式）。
   approvePlugin: (id: string) => invoke("approve_plugin", { id }),
+  /** 终止某次正在跑的插件命令（结果会被丢弃：副作用都在返回值里）。 */
+  cancelPluginRun: (runId: number) => invoke("cancel_plugin_run", { runId }),
   // 插件设置：声明来自 manifest，值只有宿主界面能写（插件侧 settings.get 只读）。
   pluginSettings: (pluginId: string) => invoke("plugin_settings", { pluginId }),
   setPluginSetting: (pluginId: string, key: string, value: string) =>

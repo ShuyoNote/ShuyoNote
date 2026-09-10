@@ -177,7 +177,10 @@ export interface CommandMap {
   // ---- Plugins ----
   list_plugins: { args: undefined; result: PluginMeta[] };
   set_plugin_enabled: { args: { id: string; enabled: boolean }; result: void };
-  run_plugin_command: { args: { pluginId: string; commandId: string; currentId?: string | null; argsJson?: string }; result: PluginRunResult };
+  run_plugin_command: {
+    args: { pluginId: string; commandId: string; currentId?: string | null; argsJson?: string; runId?: number };
+    result: PluginRunResult;
+  };
   uninstall_plugin: { args: { id: string }; result: void };
   install_plugin: { args: { sourcePath: string }; result: PluginMeta };
   open_plugin_dir: { args: undefined; result: string };
@@ -187,6 +190,8 @@ export interface CommandMap {
   clear_plugin_audit: { args: undefined; result: void };
   validate_plugin: { args: { id: string }; result: PluginValidation };
   approve_plugin: { args: { id: string }; result: PluginApproval };
+  /** 终止某次正在跑的插件命令（M11.13：取消 = 真的杀掉宿主子进程）。返回是否杀到了。 */
+  cancel_plugin_run: { args: { runId: number }; result: boolean };
   plugin_dir_stamp: { args: undefined; result: string };
   emit_plugin_event: { args: { event: string; payloadJson?: string }; result: PluginEventOutcome[] };
   plugin_settings: { args: { pluginId: string }; result: PluginSetting[] };

@@ -461,7 +461,8 @@ export function CommandPalette() {
         )}
         {running && (
           // 「运行态可见 + 可取消」：此前插件命令跑起来后界面只有长时间无反应。
-          // 取消放弃的是**等待**（结果被丢弃 → 无半途写入），不是插件线程本身。
+          // M11.13 起取消是**真的终止**那次运行的宿主子进程（后端 cancel_plugin_run），
+          // 结果同样丢弃（副作用都在返回值里 → 无半途写入）。
           <div className="palette-result">
             <span>⏳ 正在执行「{running.title}」…</span>
             <button className="set-btn" onClick={() => usePlugins.getState().cancelRun()}>

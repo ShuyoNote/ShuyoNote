@@ -2351,6 +2351,8 @@ function makeInvoke(store: SqliteStore) {
     // 校验/热重载在 Web 上是空实现：Web 没有磁盘插件运行时（见上方注释）。
     if (cmd === "validate_plugin") return { ok: false, problems: [], permissions: [], commands: [], granted: [] } as T;
     if (cmd === "approve_plugin") return { required: false, added_permissions: [], added_events: [], approved_version: "" } as T;
+    // Web 平台没有插件运行时，也就没有"在跑的宿主子进程"可终止。
+    if (cmd === "cancel_plugin_run") return false as T;
     if (cmd === "plugin_dir_stamp") return "" as T;
     // Web 没有磁盘插件运行时，事件无处可发（返回空数组＝没有插件响应）。
     if (cmd === "emit_plugin_event") return [] as T;
