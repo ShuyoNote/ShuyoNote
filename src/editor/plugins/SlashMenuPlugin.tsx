@@ -119,6 +119,10 @@ export function makeOptions(pageId: string): SlashOption[] {
         topLevel.replace(paragraph);
         linkNode.selectStart();
       }) },
+    { key: "help", title: "帮助 / 使用指南", badge: "?", group: "基础", pinyin: "bz", run: () => {
+      // Opens the built-in guide page (creates it on first use); navigates away.
+      void openGuide();
+    } },
     { key: "todo", title: "待办事项", badge: "☑", group: "列表", shortcut: "Ctrl+Alt+T", pinyin: "dblb", run: (editor) => {
       editor.dispatchCommand(INSERT_CHECK_LIST_COMMAND, undefined); } },
     { key: "ul", title: "无序列表", badge: "•", group: "列表", shortcut: "Ctrl+Alt+U", pinyin: "wxlb", run: (editor) => {
@@ -255,10 +259,6 @@ export function makeOptions(pageId: string): SlashOption[] {
         hr.insertAfter(paragraph);
         paragraph.select();
       }); } },
-    { key: "help", title: "帮助 / 使用指南", badge: "?", group: "基础", pinyin: "bz", run: () => {
-      // Opens the built-in guide page (creates it on first use); navigates away.
-      void openGuide();
-    } },
     { key: "table", title: "表格", badge: "▦", group: "嵌入", pinyin: "bg", run: (editor) => {
       editor.dispatchCommand(INSERT_TABLE_COMMAND, {
         columns: "3",

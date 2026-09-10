@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getSelection, $isRangeSelection, $isTextNode, COMMAND_PRIORITY_EDITOR, KEY_DOWN_COMMAND } from "lexical";
+import { $getSelection, $isRangeSelection, $isTextNode, COMMAND_PRIORITY_LOW, KEY_DOWN_COMMAND } from "lexical";
 import { useNotes } from "../../store/notes";
 import { suggestPageLinks } from "../../lib/mention";
 
@@ -100,7 +100,10 @@ export function PageLinkSuggestPlugin() {
         }
         return false;
       },
-      COMMAND_PRIORITY_EDITOR,
+      // LOW 而非 EDITOR，理由同 InsertShortcutPlugin：EDITOR 档在 Lexical 自己那支
+      // 「对每次 keydown 都 return true」的 $handleKeyDown 之后，排在它后面的同档监听器
+      // 永远收不到事件——那样这里的 ↑/↓/Enter/Esc 会全部失效（Enter 变成换行）。
+      COMMAND_PRIORITY_LOW,
     );
   }, [open, editor, matches, sel]);
 
