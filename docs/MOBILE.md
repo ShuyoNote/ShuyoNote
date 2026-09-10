@@ -49,9 +49,33 @@ WebView 壳在 `window.__SHUYONOTE_MOBILE__` 注入以下**可选**桥接方法�
 
 ## 5. 测试与验收
 
-- `pnpm test`（vitest）：`mobile.test.ts` 验证 bridge 探测 / 回退 / 优先 —— **94 passed**。
+### 5.1 单测
+
+- `pnpm test`（vitest）：`mobile.test.ts` 验证 bridge 探测 / 回退 / 优先；`useMobile.test.ts` 验证窄屏判定；`useGlobalShortcuts.test.ts` 验证侧栏快捷键守卫；`activity.test.ts` 验证侧栏开合的持久化语义 —— **109 passed**。
 - 每个平台壳在真实设备上：打开外链走系统、附件可读、编辑/数据库/检索正常。
 - 同 Web 版回归（`scripts/smoke-web.mjs`）。
+
+### 5.2 布局验收（真实浏览器）
+
+```bash
+pnpm dev:web                # 另开一个终端
+pnpm test:mobile-layout     # 有失败即非零退出
+```
+
+`scripts/verify-mobile-layout.mjs` 用真实 Chromium 在 **390×844（手机）** 与 **1280×800（桌面）** 两种视口下断言 20 项行为，覆盖的全是**单测够不到的交叉地带**（CSS 层叠 + matchMedia + z-index + localStorage）：
+
+| 断言 | 为什么必须由真实浏览器验 |
+|---|---|
+| 侧栏默认收起（`display:none`） | `.sidebar{display:flex}` 会压过 `[hidden]{display:none}`，元素照样可见且不报错 |
+| 窄屏显示开合按钮 / 桌面不显示 | 媒体查询只在真实视口下求值 |
+| 点按钮 → 抽屉滑入 + 遮罩出现 | 触屏没有 hover，收起后没有入口是"能用但没人找得到" |
+| 点遮罩 → 抽屉关闭 | 遮罩中心点被侧栏盖住，交互层级（z-index）必须实测 |
+| 抽屉打开时遮罩挡住右侧悬浮工具栏 | 同上，`elementFromPoint` 才能判定 |
+| 移动端自动收起**不写** localStorage | 写了会污染桌面端偏好（手机上开过一次，桌面端下次启动侧栏就是收起的） |
+
+前置：本机有 Chrome/Chromium（`PUPPETEER_EXECUTABLE_PATH` 或 `CHROME_PATH` 可指定），以及已启动的 web 开发服务。`--shots <dir>` 可顺便存图。依赖只用 `puppeteer-core`（不含浏览器下载）。
+
+> 该脚本本身验证过「能失败」：临时删掉 `.sidebar[hidden]` 兜底规则后，它会报 6 项失败并以非零码退出，直指 `display=flex`。
 
 ## 6. 边界（诚实标注）
 
