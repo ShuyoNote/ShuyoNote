@@ -98,6 +98,60 @@ impl ValidateReport {
     }
 }
 
+/// 主题声明的检查（**两档共用**：主题是纯数据，逻辑档插件同样可以出主题）。
+///
+/// 为什么单独一个函数：这条检查要同时在「逻辑档」与「声明式」两条路径上跑，而在主流程里
+/// 插条件分支已经让我错过一次（把声明式的早退嵌进了 `if !declarative` 里）。独立函数 +
+/// 两处显式调用，谁都不会漏。
+fn check_theme_declaration(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
+    let Some(theme) = value.and_then(|v| v.get("theme")) else {
+        return;
+    };
+    let Some(map) = theme.get("tokens").and_then(|t| t.as_object()) else {
+        problems.push(PluginProblem::error(
+            "theme_no_tokens",
+            "theme 里没有 tokens（主题插件就是一组设计变量）",
+            Some("manifest.json"),
+        ));
+        return;
+    };
+    if map.len() > crate::plugins::MAX_THEME_TOKENS {
+        problems.push(PluginProblem::warn(
+            "theme_too_many",
+            format!(
+                "声明了 {} 个主题变量（上限 {}）：主题是一组外观值，堆量只会让界面变成四不像",
+                map.len(),
+                crate::plugins::MAX_THEME_TOKENS
+            ),
+            Some("manifest.json"),
+        ));
+    }
+    let mut names: Vec<&String> = map.keys().collect();
+    names.sort();
+    for name in names {
+        let val = map.get(name).and_then(|x| x.as_str()).unwrap_or("");
+        match capabilities_gen::theme_token(name) {
+            None => problems.push(PluginProblem::warn(
+                "theme_unknown_token",
+                format!(
+                    "主题变量 {name} 不在白名单里（宿主只应用外观类变量，布局度量刻意不给改）——这一项会被忽略"
+                ),
+                Some("manifest.json"),
+            )),
+            Some(tok) => {
+                if let Err(e) = crate::plugins::validate_theme_value(tok, val) {
+                    // 值不合法是**错误**而不是提醒：它会被写进页面样式，一个 url( 就能对外发请求。
+                    problems.push(PluginProblem::error(
+                        "theme_bad_value",
+                        format!("主题变量 {name} 的值「{val}」不合法：{e}"),
+                        Some("manifest.json"),
+                    ));
+                }
+            }
+        }
+    }
+}
+
 /// 声明式（零代码）插件的校验。
 ///
 /// **单独一个函数**，而不是在主流程里插条件分支：两档的检查项几乎没有交集——声明式没有
@@ -142,6 +196,8 @@ fn validate_declarative(
         .and_then(|t| t.as_object())
         .map(|m| !m.is_empty())
         .unwrap_or(false);
+    check_theme_declaration(value, &mut problems);
+
     if views.is_empty() && !has_theme {
         problems.push(PluginProblem::error(
             "declarative_no_views",
@@ -489,6 +545,8 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
             }
         }
     }
+
+    check_theme_declaration(value.as_ref(), &mut problems);
 
     // ---- 5. JS 语法（Boa 解析，不执行）----
     // 与运行同一个引擎，所以「本地能过、应用装上去语法错」不可能发生。
@@ -1072,4 +1130,38 @@ mod tests {
         assert_eq!(r.permissions[0].title.is_empty(), false);
         assert!(r.entry_bytes > 0);
     }
+    #[test]
+    fn theme_declaration_is_checked() {
+        let dir = declarative_plugin(
+            "bad-theme",
+            r##"{ "id": "bad-theme", "name": "坏主题", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "theme": { "name": "坏主题", "tokens": {
+                    "--bg": "#1b1714", "--radius": "6px",
+                    "--doc-width": "1200px",
+                    "--text": "url(http://evil/x.png)" } } }"##,
+        );
+        let r = validate_dir(&dir);
+        assert!(!r.ok, "非法值必须报错（它会被写进页面样式）：{:?}", r.problems);
+        assert!(codes(&r).contains(&"theme_unknown_token".to_string()), "布局度量要指出不在白名单：{:?}", r.problems);
+        assert!(codes(&r).contains(&"theme_bad_value".to_string()), "url( 必须报错：{:?}", r.problems);
+        // 合法的那些不该被牵连
+        assert!(r.problems.iter().all(|p| !p.message.contains("--radius")), "{:?}", r.problems);
+    }
+
+    #[test]
+    fn theme_is_checked_on_logic_plugins_too() {
+        let dir = plugin(
+            "logic-theme",
+            &manifest_json(
+                "logic-theme",
+                r##", "theme": { "tokens": { "--bg": "url(http://evil/x)", "--不存在的变量": "#fff" } }"##,
+            ),
+        );
+        write_main(&dir, "main.js", OK_MAIN);
+        let r = validate_dir(&dir);
+        assert!(codes(&r).contains(&"theme_bad_value".to_string()), "逻辑档插件同样要检查主题：{:?}", r.problems);
+        assert!(codes(&r).contains(&"theme_unknown_token".to_string()), "{:?}", r.problems);
+    }
+
 }
