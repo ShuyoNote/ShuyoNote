@@ -57,3 +57,22 @@ register({
     return "待确认：" + draft.summary;
   }
 });
+
+// 事件钩子：**用户没点任何命令**时也会跑，所以 manifest 里必须声明（用户启用前看得到），
+// 而这里没写 `on(...)` 就什么都不会发生——两处都在才算数。
+//
+// 注意写操作依然走草稿确认：事件触发时你并没有在看确认框，所以宿主会把这次改动
+// 汇总成一次确认，而不是替你静默贴上去。
+on("page.saved", function (payload) {
+  var tag = today();
+  var existing = api.tags.list();
+  var already = existing.some(function (t) {
+    return t.name === tag;
+  });
+  if (already) {
+    api.log("「" + String(payload.title) + "」已有 " + tag + " 标签，跳过");
+    return;
+  }
+  var draft = api.tags.add(tag);        // 省略 pageId → 作用在刚保存的这一页
+  api.log("保存后补标签 " + tag + "：" + draft.summary);
+});

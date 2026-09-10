@@ -6,7 +6,27 @@
   "apiVersion": "1.0.0",
   "main": "main.js",
   "permissions": [
-    { "id": "write:pages", "reason": "创建今天的日记页（落库前会先把草稿给你确认）" },
-    { "id": "kv:own", "reason": "记住上次创建的是哪一天，用来避免重复创建" }
+    {
+      "id": "write:pages",
+      "reason": "创建今天的日记页（落库前会先把草稿给你确认）"
+    },
+    {
+      "id": "kv:own",
+      "reason": "记住上次创建的是哪一天，用来避免重复创建"
+    },
+    {
+      "id": "read:tags",
+      "reason": "保存后先看看今天的日期标签有没有贴过，避免重复贴"
+    },
+    {
+      "id": "write:tags",
+      "reason": "保存后补上今天的日期标签（同样会先给你确认）"
+    }
+  ],
+  "events": [
+    {
+      "on": "page.saved",
+      "reason": "保存后把今天的日期标签补上，方便按天回溯（写之前会问你一次）"
+    }
   ]
 }

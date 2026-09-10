@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import { toast } from "./toast";
+import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
 import type {
   PluginAuditEntry,
+  PluginEventOutcome,
   PluginDraft,
   PluginLogLine,
   PluginMeta,
@@ -105,6 +107,14 @@ interface PluginsState {
   dirStamp: string | null;
   autoReloadedAt: number | null;
   watchPluginDir: () => Promise<void>;
+  /**
+   * 派发一个宿主事件给声明订阅了它的启用插件。
+   *
+   * 调用方**不 await**（保存路径不该等插件），失败也不影响主流程。结果处理见实现：
+   * 提示直接弹；**草稿汇总成一次确认**（事件触发时用户没在看确认框，但插件也绝不能
+   * 静默写入笔记）；失败只汇总提示一句，明细在插件日志里。
+   */
+  emitEvent: (event: string, payload?: Record<string, unknown>) => Promise<void>;
 }
 
 export const usePlugins = create<PluginsState>((set) => ({
@@ -272,6 +282,32 @@ export const usePlugins = create<PluginsState>((set) => ({
     }),
   dirStamp: null,
   autoReloadedAt: null,
+  emitEvent: async (event, payload) => {
+    let outcomes: PluginEventOutcome[] = [];
+    try {
+      outcomes = await api.emitPluginEvent(event, payload ? JSON.stringify(payload) : undefined);
+    } catch (e) {
+      // 事件派发失败不该影响保存本身（例如插件目录读不到）：记 console，不打扰用户。
+      console.error("emit plugin event failed", e);
+      return;
+    }
+    if (outcomes.length === 0) return;
+    for (const o of outcomes) for (const t of o.toasts) toast(t, "info");
+
+    const withDrafts = outcomes.filter((o) => o.drafts.length > 0);
+    if (withDrafts.length > 0) {
+      const all = withDrafts.flatMap((o) => o.drafts);
+      const who = withDrafts.map((o) => `「${o.plugin_name}」`).join("、");
+      await confirmAndApplyDrafts(`${who}（${event}）`, all);
+    }
+    const failed = outcomes.filter((o) => o.error);
+    if (failed.length > 0) {
+      toast(
+        `${failed.length} 个插件的「${event}」处理失败：${failed.map((o) => o.plugin_name).join("、")}（详见插件日志）`,
+        "error",
+      );
+    }
+  },
   watchPluginDir: async () => {
     let stamp: string;
     try {

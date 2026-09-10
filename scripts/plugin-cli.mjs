@@ -128,6 +128,30 @@ function validate(dirArg) {
     }
   }
 
+  // ---- 事件订阅（与 Rust 侧同一套判定：未知事件忽略 + 警告、缺 reason 警告）----
+  const knownEvents = new Map((reg.events ?? []).map((e) => [e.id, e]));
+  if (m) {
+    if (m.events !== undefined && !Array.isArray(m.events)) {
+      push("error", "events_invalid", "manifest.events 必须是数组：[{ on, reason }]");
+    } else if (Array.isArray(m.events)) {
+      const seen = new Set();
+      for (const [i, d] of m.events.entries()) {
+        if (!d || typeof d !== "object" || typeof d.on !== "string" || !d.on) {
+          push("error", "events_invalid", `events[${i}] 必须形如 { "on": "...", "reason": "..." }`);
+          continue;
+        }
+        if (seen.has(d.on)) push("warning", "event_duplicate", `事件重复声明：${d.on}`);
+        seen.add(d.on);
+        if (!knownEvents.has(d.on)) {
+          push("warning", "event_unknown", `忽略未知事件 ${d.on}（API v${reg.apiVersion} 不认识它：声明了也收不到）`);
+        }
+        if (typeof d.reason !== "string" || !d.reason.trim()) {
+          push("warning", "event_no_reason", `事件 ${d.on} 没有写 reason（用户看不到它为什么要常驻运行）`);
+        }
+      }
+    }
+  }
+
   // ---- JS 语法（V8；权威是应用内的 Boa）----
   const mainPath = join(dir, main);
   let source = null;
@@ -144,7 +168,7 @@ function validate(dirArg) {
     }
   }
 
-  return { dir, dirName, manifest: m, id, main, source, problems, reg, knownPerms };
+  return { dir, dirName, manifest: m, id, main, source, problems, reg, knownPerms, knownEvents };
 }
 
 function report(r, json) {
@@ -164,6 +188,12 @@ function report(r, json) {
             reason: d?.reason ?? "",
             known: r.knownPerms.has(d?.id),
             title: r.knownPerms.get(d?.id)?.title ?? "",
+          })),
+          events: (Array.isArray(r.manifest?.events) ? r.manifest.events : []).map((d) => ({
+            on: d?.on ?? "",
+            reason: d?.reason ?? "",
+            known: r.knownEvents.has(d?.on),
+            title: r.knownEvents.get(d?.on)?.title ?? "",
           })),
           problems: r.problems,
         },
@@ -191,6 +221,18 @@ function report(r, json) {
     }
   } else if (r.manifest) {
     console.log(`  ${color("权限清单", "dim")}：未声明 → 应用会按 v1 基线权限授权（${r.reg.permissions.length} 项，等于全给）`);
+  }
+
+  const declaresEvents = Array.isArray(r.manifest?.events) ? r.manifest.events : [];
+  if (declaresEvents.length > 0) {
+    console.log(`  ${color("事件订阅", "dim")}（用户没点命令时也会跑代码，启用前会展示）：`);
+    for (const d of declaresEvents) {
+      const e = r.knownEvents.get(d?.on);
+      const mark = e ? color("✓", "green") : color("?", "yellow");
+      const reason = d?.reason?.trim() ? d.reason : color("（缺 reason）", "yellow");
+      const tail = e ? "" : color("  ← 本版本不认识，收不到", "yellow");
+      console.log(`    ${mark} ${String(d?.on).padEnd(16)} ${e?.title ?? ""} —— ${reason}${tail}`);
+    }
   }
 
   for (const p of r.problems) {

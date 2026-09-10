@@ -1,5 +1,7 @@
 // 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 
+use serde::Serialize;
+
 /// 生成物：字段不全都在当前版本被读到，但它们是被门禁与后续能力档用到的事实。
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -82,6 +84,30 @@ pub const LEGACY_GLOBALS: &[(&str, &str)] = &[
     ("__toast", "user.notify"),
     ("__insert", "editor.insertText"),
 ];
+
+/// 一个事件：`id` 是 manifest `events[].on` 用的名字。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginEvent {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub desc: &'static str,
+    pub since: &'static str,
+}
+
+pub const EVENTS: &[PluginEvent] = &[
+    PluginEvent { id: "app.started", title: "应用启动", desc: "应用启动完成、插件已加载后触发一次", since: "1.0.0" },
+    PluginEvent { id: "space.switched", title: "切换空间", desc: "切换到另一个空间后触发（payload: spaceId）", since: "1.0.0" },
+    PluginEvent { id: "page.opened", title: "打开页面", desc: "打开一个页面后触发（payload: pageId）", since: "1.0.0" },
+    PluginEvent { id: "page.saved", title: "页面已保存", desc: "页面内容或标题保存后触发（payload: pageId, title）", since: "1.0.0" },
+    PluginEvent { id: "page.deleted", title: "页面已删除", desc: "页面被删除后触发（payload: pageId）", since: "1.0.0" },
+    PluginEvent { id: "import.finished", title: "导入完成", desc: "一次导入结束后触发（payload: count）", since: "1.0.0" },
+    PluginEvent { id: "sync.completed", title: "同步完成", desc: "一次同步结束后触发（payload: pushed, pulled）", since: "1.0.0" },
+];
+
+/// 按 id 找事件（manifest 声明校验用）。
+pub fn event(id: &str) -> Option<&'static PluginEvent> {
+    EVENTS.iter().find(|e| e.id == id)
+}
 
 pub fn lookup(id: &str) -> Option<&'static Capability> {
     CAPABILITIES.iter().find(|c| c.id == id)

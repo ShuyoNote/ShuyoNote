@@ -81,6 +81,8 @@ pub struct PluginMeta {
     pub permissions: Vec<PluginPermissionMeta>,
     /// 是否走了「老 manifest 无 permissions」的基线授权（界面需要如实标注）。
     pub permissions_baseline: bool,
+    /// 订阅了哪些事件：**必须在启用前让用户看到**（事件 = 用户没点命令时也会跑代码）。
+    pub events: Vec<PluginEventMeta>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -280,6 +282,20 @@ pub(crate) struct Manifest {
     /// 逐条声明的权限，带理由。缺省 = 走 v1 基线授权（见 resolve_permissions）。
     #[serde(default)]
     pub(crate) permissions: Option<Vec<PermissionDecl>>,
+    /// 声明要订阅的事件，带理由。
+    ///
+    /// 与权限不同，**缺失 = 一个事件都不订阅**（没有基线）：在用户没点命令时后台跑代码，
+    /// 更不能默认给——老插件不会因为升级就突然有了后台行为。
+    #[serde(default)]
+    pub(crate) events: Option<Vec<EventDecl>>,
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub(crate) struct EventDecl {
+    /// 事件名（`capabilities/capabilities.json` 的 `events[].id`）。
+    pub(crate) on: String,
+    #[serde(default)]
+    pub(crate) reason: String,
 }
 
 #[derive(serde::Deserialize, Clone, Debug)]
@@ -437,6 +453,36 @@ function __describe(){
 //   对象 {message, toast, toasts, insert} —— 结构化返回，等价于调用对应的宿主原语。
 //   刻意**没有** `open`：那是"让宿主导航到某页"的新副作用面，属于 ABI 决策，
 //   不夹带在参数这一档里（见路线图 M11.8 备注）。
+// 事件订阅：作者在顶层 `on(name, handler)`。宿主派发时用 `__emit` 触发。
+// 与 register 一样，处理器只活在 JS 里，宿主不持有任何回调对象。
+var __handlers = {};
+function on(name, handler){
+  if(!name || typeof handler !== "function") return;
+  var k = String(name);
+  if(!__handlers[k]) __handlers[k] = [];
+  __handlers[k].push(handler);
+}
+function __emit(name, payloadJson){
+  var hs = __handlers[name];
+  if(!hs || !hs.length) return "";
+  var payload = {};
+  if(payloadJson){
+    try { payload = JSON.parse(payloadJson); } catch(e) { payload = {}; }
+    if(payload === null || typeof payload !== "object" || payload.length !== undefined) payload = {};
+  }
+  var out = [];
+  for(var i=0;i<hs.length;i++){
+    try {
+      var r = hs[i](payload);
+      if(r !== undefined && r !== null && r !== "") out.push(String(r));
+    } catch(e) {
+      // 一个处理器出错不该吃掉其它处理器，也不该静默：错误随结果回传，宿主写进插件日志
+      out.push("出错：" + e);
+    }
+  }
+  return out.join("；");
+}
+
 function __run(id, argsJson){
   var c = __cmds[id];
   if(!c) return "__plugin: 命令不存在";
@@ -628,6 +674,59 @@ pub(crate) fn resolve_permissions(manifest: &Manifest) -> (Vec<String>, Vec<Stri
             (granted, warnings)
         }
     }
+}
+
+/// 解析 manifest 的事件订阅，并给出要记录给用户的警告。
+///
+/// 与权限同样的前向兼容策略（未知事件名忽略 + 警告），但**没有基线授权**：
+/// 没写 `events` 就是一个都不订阅。
+pub(crate) fn resolve_events(manifest: &Manifest) -> (Vec<String>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let Some(decls) = &manifest.events else {
+        return (Vec::new(), warnings);
+    };
+    let mut subscribed: Vec<String> = Vec::new();
+    for d in decls {
+        if capabilities_gen::event(&d.on).is_some() {
+            if d.reason.trim().is_empty() {
+                warnings.push(format!(
+                    "事件 {} 没有写 reason（用户看不到它为什么要在后台运行）",
+                    d.on
+                ));
+            }
+            if !subscribed.contains(&d.on) {
+                subscribed.push(d.on.clone());
+            }
+        } else {
+            warnings.push(format!("忽略未知事件 {}（当前 API 版本不认识它）", d.on));
+        }
+    }
+    (subscribed, warnings)
+}
+
+/// 事件派发时展示给用户的事件声明（安装/启用界面看得到，才能授权）。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginEventMeta {
+    pub id: String,
+    pub title: String,
+    pub reason: String,
+}
+
+pub(crate) fn event_metas(manifest: &Manifest) -> Vec<PluginEventMeta> {
+    let (subscribed, _) = resolve_events(manifest);
+    let reasons: std::collections::HashMap<&str, &str> = manifest
+        .events
+        .as_ref()
+        .map(|ds| ds.iter().map(|d| (d.on.as_str(), d.reason.as_str())).collect())
+        .unwrap_or_default();
+    subscribed
+        .iter()
+        .map(|id| PluginEventMeta {
+            id: id.clone(),
+            title: capabilities_gen::event(id).map(|e| e.title.to_string()).unwrap_or_else(|| id.clone()),
+            reason: reasons.get(id.as_str()).copied().unwrap_or_default().to_string(),
+        })
+        .collect()
 }
 
 thread_local! {
@@ -1437,6 +1536,234 @@ fn run_command_timeout(
 }
 
 // ---------------------------------------------------------------------------
+// 事件派发（M11.8）
+// ---------------------------------------------------------------------------
+
+/// 事件处理器的墙钟预算。
+///
+/// 明显短于命令执行（5s）：事件跑在**保存路径**上，用户在等保存落地；
+/// 一个后台钩子不该让保存变慢。超时只终结这次派发，并写进插件日志。
+const EVENT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// 事件 payload 的体积上限（它就是页面 id / 标题这类小字段）。
+const MAX_EVENT_PAYLOAD_BYTES: usize = 4 * 1024;
+
+fn run_event(source: &str, event: &str, payload_json: &str, state: &RunState) -> Result<String, String> {
+    let mut ctx = plugin_context(RUN_LOOP_LIMIT);
+    set_run_state(&mut ctx, state)?;
+    eval_plugin_preamble(&mut ctx)?;
+    ctx.eval(Source::from_bytes(source.as_bytes()))
+        .map_err(|e| format!("插件初始化失败: {e}"))?;
+    let expr = format!("__emit({:?}, {:?})", event, payload_json);
+    let value = ctx
+        .eval(Source::from_bytes(expr.as_bytes()))
+        .map_err(|e| format!("事件处理失败: {e}"))?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(String::new());
+    }
+    let msg = value.to_string(&mut ctx).map_err(|e| e.to_string())?;
+    Ok(msg.to_std_string_escaped())
+}
+
+/// 带超时的事件执行。返回值里**没有 `insert`**：事件触发时没人在等你插入文本，
+/// 凭空出现文字比不支持更糟（见作者文档 §4.6）。
+fn run_event_timeout(
+    source: &str,
+    event: &str,
+    payload_json: &str,
+    state: &RunState,
+) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
+    let state = RunState {
+        plugin_id: state.plugin_id.clone(),
+        current_page_json: state.current_page_json.clone(),
+        page_count: state.page_count,
+        permissions: state.permissions.clone(),
+        current_page_id: state.current_page_id.clone(),
+        read_space: state.read_space.clone(),
+        read_dir: state.read_dir.clone(),
+        drafts: Vec::new(),
+        insert_text: String::new(),
+        toasts: Vec::new(),
+    };
+    let src = source.to_string();
+    let ev = event.to_string();
+    let payload = payload_json.to_string();
+    with_timeout(EVENT_TIMEOUT, "插件事件", move || {
+        let msg = run_event(&src, &ev, &payload, &state)?;
+        let (toasts, drafts) = RUN_STATE.with(|s| {
+            let st = s.borrow();
+            (st.toasts.clone(), st.drafts.clone())
+        });
+        Ok((msg, toasts, drafts))
+    })
+}
+
+/// 一次事件派发给一个插件的结果。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginEventOutcome {
+    pub plugin_id: String,
+    pub plugin_name: String,
+    pub message: String,
+    pub toasts: Vec<String>,
+    /// 事件里产出的草稿：**没有落库**，由前端汇总成一次用户确认。
+    pub drafts: Vec<PluginDraft>,
+    /// 该插件这次失败的原因（写进插件日志；前端只在有失败时提示一句）。
+    pub error: Option<String>,
+}
+
+/// 把一个事件派发给所有**启用中且声明订阅了它**的插件。
+///
+/// 顺序执行、逐个独立上下文（不变式：每次调用新 Context、无常驻）；一个插件失败
+/// 不影响其它插件，也不影响主流程（调用方是 fire-and-forget）。
+#[tauri::command]
+pub async fn emit_plugin_event(
+    app: AppHandle,
+    db: State<'_, Db>,
+    event: String,
+    payload_json: Option<String>,
+) -> Result<Vec<PluginEventOutcome>, String> {
+    if capabilities_gen::event(&event).is_none() {
+        return Err(format!("未知事件：{event}"));
+    }
+    let payload_json = payload_json.unwrap_or_default();
+    if payload_json.len() > MAX_EVENT_PAYLOAD_BYTES {
+        return Err(format!("事件 payload 过大（上限 {MAX_EVENT_PAYLOAD_BYTES} 字节）"));
+    }
+    if !payload_json.is_empty() {
+        match serde_json::from_str::<serde_json::Value>(&payload_json) {
+            Ok(v) if v.is_object() => {}
+            Ok(_) => return Err("事件 payload 必须是 JSON 对象".to_string()),
+            Err(_) => return Err("事件 payload 不是合法 JSON".to_string()),
+        }
+    }
+    let payload_value: serde_json::Value = if payload_json.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&payload_json).unwrap_or_else(|_| serde_json::json!({}))
+    };
+    // 事件里的「当前页」= payload 里的 pageId（例如保存事件：作者省略 pageId 时
+    // 应当作用在刚保存的那一页，而不是别处）。
+    let payload_page_id = payload_value
+        .get("pageId")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    let root = plugins_root(&app)?;
+    // 结果里带插件显示名，前端提示才写得像人话。
+    let mut out: Vec<PluginEventOutcome> = Vec::new();
+    let mut targets: Vec<(String, String, String, Vec<String>)> = Vec::new(); // id, name, source, perms
+    let (page_count, current_page_json, read_space, enabled_ids) = {
+        let c = conn(&db);
+        let page_count: usize = c
+            .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map(|n| n as usize)
+            .unwrap_or(0);
+        let current_page_json = payload_page_id
+            .as_deref()
+            .and_then(|id| {
+                c.query_row(
+                    "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                    params![id],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+        let read_space = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                params![crate::db::ACTIVE_KEY],
+                |r| r.get::<_, String>(0),
+            )
+            .ok();
+        let mut enabled_ids: Vec<String> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                if let Ok(m) = read_manifest(&path) {
+                    if enabled(&c, &m.id) {
+                        enabled_ids.push(m.id);
+                    }
+                }
+            }
+        }
+        (page_count, current_page_json, read_space, enabled_ids)
+    };
+
+    for id in enabled_ids {
+        let dir = root.join(&id);
+        let manifest = match read_manifest(&dir) {
+            Ok(m) => m,
+            Err(_) => continue, // 坏插件在 list_plugins 里已经暴露，这里不重复打扰
+        };
+        let (subscribed, warnings) = resolve_events(&manifest);
+        for w in &warnings {
+            push_log(&id, "warn", w);
+        }
+        if !subscribed.iter().any(|e| e == &event) {
+            continue; // 没声明订阅这个事件：连代码都不跑（这是 manifest 声明的意义）
+        }
+        match load_plugin_source(&dir, &manifest) {
+            Ok(src) => targets.push((id, manifest.name.clone(), src, resolve_permissions(&manifest).0)),
+            Err(e) => out.push(PluginEventOutcome {
+                plugin_id: id.clone(),
+                plugin_name: manifest.name.clone(),
+                message: String::new(),
+                toasts: Vec::new(),
+                drafts: Vec::new(),
+                error: Some(e),
+            }),
+        }
+    }
+
+    for (id, name, source, permissions) in targets {
+        let state = RunState {
+            plugin_id: id.clone(),
+            page_count,
+            current_page_json: current_page_json.clone(),
+            permissions,
+            current_page_id: payload_page_id.clone(),
+            read_space: read_space.clone(),
+            read_dir: None,
+            drafts: Vec::new(),
+            insert_text: String::new(),
+            toasts: Vec::new(),
+        };
+        match run_event_timeout(&source, &event, &payload_json, &state) {
+            Ok((message, toasts, drafts)) => {
+                push_log(
+                    &id,
+                    if drafts.is_empty() { "info" } else { "info" },
+                    &format!(
+                        "事件 {event}：{}{}",
+                        if message.is_empty() { "已处理" } else { message.as_str() },
+                        if drafts.is_empty() { String::new() } else { format!("（产出 {} 项待确认改动）", drafts.len()) }
+                    ),
+                );
+                out.push(PluginEventOutcome { plugin_id: id, plugin_name: name, message, toasts, drafts, error: None });
+            }
+            Err(e) => {
+                push_log(&id, "error", &format!("事件 {event} 处理失败：{e}"));
+                out.push(PluginEventOutcome {
+                    plugin_id: id,
+                    plugin_name: name,
+                    message: String::new(),
+                    toasts: Vec::new(),
+                    drafts: Vec::new(),
+                    error: Some(e),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // DB helpers for enabled state
 // ---------------------------------------------------------------------------
 
@@ -1608,11 +1935,16 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         for w in &warnings {
             push_log(&manifest.id, "warn", w);
         }
+        let (_subscribed, event_warnings) = resolve_events(&manifest);
+        for w in &event_warnings {
+            push_log(&manifest.id, "warn", w);
+        }
         let commands =
             discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)
                 .unwrap_or_default();
         let pid = manifest.id.clone();
         let (permissions, permissions_baseline) = permission_metas(&manifest);
+        let events = event_metas(&manifest);
         out.push(PluginMeta {
             id: pid.clone(),
             name: manifest.name,
@@ -1622,6 +1954,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             commands,
             permissions,
             permissions_baseline,
+            events,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -1804,6 +2137,7 @@ pub async fn install_plugin(
         record_install(&c, &manifest.id, &manifest.version, "local", false, false)?;
     }
     let (permissions, permissions_baseline) = permission_metas(&manifest);
+    let events = event_metas(&manifest);
     Ok(PluginMeta {
         id: manifest.id,
         name: manifest.name,
@@ -1813,6 +2147,7 @@ pub async fn install_plugin(
         commands,
         permissions,
         permissions_baseline,
+        events,
     })
 }
 
@@ -2166,6 +2501,111 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         }
     }
 
+    // ---- 事件（M11.8）----
+
+    fn manifest_of(json: &str) -> Manifest {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn events_are_opt_in_and_unknown_names_are_ignored() {
+        let _g = log_test_guard();
+        // 声明了：认识的留下，不认识的忽略 + 警告
+        let m = manifest_of(
+            r#"{ "id": "e", "name": "E", "events": [
+                 { "on": "page.saved", "reason": "保存后补标签" },
+                 { "on": "不存在的.事件", "reason": "试试" }
+               ] }"#,
+        );
+        let (subscribed, warnings) = resolve_events(&m);
+        assert_eq!(subscribed, vec!["page.saved".to_string()]);
+        assert!(warnings.iter().any(|w| w.contains("未知事件")), "{warnings:?}");
+
+        // 没写 events → **一个都不订阅**（与权限的基线授权不同：后台运行不能默认给）
+        let none = manifest_of(r#"{ "id": "e", "name": "E" }"#);
+        let (subscribed, warnings) = resolve_events(&none);
+        assert!(subscribed.is_empty());
+        assert!(warnings.is_empty(), "缺 events 不该报警告：那是显式的默认值");
+    }
+
+    #[test]
+    fn event_without_reason_is_warned() {
+        let _g = log_test_guard();
+        let m = manifest_of(r#"{ "id": "e", "name": "E", "events": [ { "on": "page.saved" } ] }"#);
+        let (subscribed, warnings) = resolve_events(&m);
+        assert_eq!(subscribed.len(), 1);
+        assert!(warnings.iter().any(|w| w.contains("reason")), "{warnings:?}");
+    }
+
+    #[test]
+    fn event_metas_gives_user_visible_title_and_reason() {
+        let _g = log_test_guard();
+        let m = manifest_of(
+            r#"{ "id": "e", "name": "E", "events": [ { "on": "page.saved", "reason": "保存后补标签" } ] }"#,
+        );
+        let metas = event_metas(&m);
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, "page.saved");
+        assert_eq!(metas[0].title, "页面已保存");
+        assert_eq!(metas[0].reason, "保存后补标签");
+    }
+
+    #[test]
+    fn event_handler_runs_and_drafts_are_collected() {
+        let _g = log_test_guard();
+        let src = r#"
+on("page.saved", function (payload) {
+  api.tags.add("已保存-" + payload.title);   // 写能力 → 产出草稿，不落库
+  return "处理了 " + payload.title;
+});
+"#;
+        // 事件派发时「当前页」= payload 里的 pageId（生产路径由 emit_plugin_event 设置），
+        // 所以作者省略 pageId 时写的是刚保存的那一页。
+        let mut state = state_with(&["write:tags"]);
+        state.current_page_id = Some("p1".to_string());
+        let (msg, _toasts, drafts) =
+            run_event_timeout(src, "page.saved", r#"{"pageId":"p1","title":"甲"}"#, &state).unwrap();
+        assert!(msg.contains("处理了 甲"), "{msg}");
+        assert_eq!(drafts.len(), 1, "事件里的写操作必须产出草稿，由用户确认后才落库");
+        assert!(drafts[0].summary.contains("已保存-甲"), "{:?}", drafts[0].summary);
+    }
+
+    #[test]
+    fn event_handler_without_permission_is_denied_not_silently_ignored() {
+        let _g = log_test_guard();
+        let src = r#"on("page.saved", function () { api.tags.add("x"); return "done"; });"#;
+        let mut state = state_with(&[]); // 没给 write:tags
+        state.current_page_id = Some("p1".to_string());
+        let (msg, _toasts, drafts) =
+            run_event_timeout(src, "page.saved", r#"{"pageId":"p1"}"#, &state).unwrap();
+        // 能力被拒时 shim 会**抛错**（作者看得见），处理器就此中止：
+        // 既不会静默成功，也不会产出草稿——错误随结果回传，宿主写进插件日志。
+        assert!(msg.contains("permission_denied"), "拒绝必须可见：{msg}");
+        assert!(drafts.is_empty(), "未授予权限时不能有草稿");
+    }
+
+    #[test]
+    fn one_throwing_handler_does_not_eat_the_others() {
+        let _g = log_test_guard();
+        let src = r#"
+on("page.saved", function () { throw new Error("第一个炸了"); });
+on("page.saved", function () { return "第二个正常"; });
+"#;
+        let (msg, _, _) = run_event_timeout(src, "page.saved", "{}", &RunState::default()).unwrap();
+        assert!(msg.contains("第一个炸了"), "错误必须回传而不是被吞：{msg}");
+        assert!(msg.contains("第二个正常"), "后面的处理器仍要执行：{msg}");
+    }
+
+    #[test]
+    fn unsubscribed_event_runs_nothing() {
+        let _g = log_test_guard();
+        let src = r#"on("page.saved", function () { return "不该被触发"; });"#;
+        let (msg, toasts, drafts) =
+            run_event_timeout(src, "page.deleted", "{}", &RunState::default()).unwrap();
+        assert_eq!(msg, "");
+        assert!(toasts.is_empty() && drafts.is_empty());
+    }
+
     // ---- 命令参数（M11.8）----
 
     #[test]
@@ -2361,6 +2801,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             main: "main.js".into(),
             api_version: None,
             permissions: None,
+            events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
         assert_eq!(
@@ -2386,6 +2827,7 @@ register({ id: "s.run", title: "结构化", run: function () {
                 PermissionDecl { id: "read:pages".into(), reason: String::new() },
                 PermissionDecl { id: "net:https:example.com".into(), reason: "未来能力".into() },
             ]),
+            events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
         assert_eq!(granted, vec!["read:pages".to_string()], "未知权限应被忽略而不是静默全拒");
@@ -2407,6 +2849,7 @@ register({ id: "s.run", title: "结构化", run: function () {
                 id: "read:pages".into(),
                 reason: "为了显示页面数".into(),
             }]),
+            events: None,
         };
         let (metas, baseline) = permission_metas(&declared);
         assert!(!baseline);
@@ -2425,6 +2868,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             main: "main.js".into(),
             api_version: None,
             permissions: None,
+            events: None,
         };
         let (metas2, baseline2) = permission_metas(&legacy);
         assert!(baseline2);

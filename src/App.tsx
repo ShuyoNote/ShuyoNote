@@ -46,6 +46,7 @@ import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
+import { usePlugins } from "./store/plugins";
 import { useActivity } from "./store/activity";
 import { useSpaceStore } from "./store/space";
 import { useEditorStore } from "./store/editor";
@@ -196,6 +197,12 @@ function NoteEditor({ pageId }: { pageId: string }) {
         loadPages();
         // Invalidate block-reference/embed caches so mirrors refresh.
         useBlockCache.getState().bump();
+        // 保存后派发事件（M11.8）：只有**声明订阅了 page.saved** 的启用插件会收到。
+        // 不 await：保存路径不该等插件；插件产出的写操作仍要用户确认才落库。
+        void usePlugins.getState().emitEvent("page.saved", {
+          pageId: p.pageId,
+          title: updated?.title ?? "",
+        });
       } catch (e) {
         console.error("save failed", e);
         toast(`保存失败：${e}`, "error");

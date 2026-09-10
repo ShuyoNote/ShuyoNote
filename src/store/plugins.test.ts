@@ -18,11 +18,17 @@ vi.mock("../lib/api", () => ({
     clearPluginLogs: vi.fn(),
     validatePlugin: vi.fn(),
     pluginDirStamp: vi.fn(),
+    emitPluginEvent: vi.fn(),
   },
 }));
 
+vi.mock("../lib/pluginDrafts", () => ({
+  confirmAndApplyDrafts: vi.fn().mockResolvedValue(""),
+}));
+
 import { api } from "../lib/api";
-import type { PluginMeta, PluginValidation } from "../types";
+import type { PluginEventOutcome, PluginMeta, PluginValidation } from "../types";
+import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
 import { usePlugins } from "./plugins";
 import { useToast } from "./toast";
 
@@ -35,6 +41,7 @@ const PLUGIN: PluginMeta = {
   commands: [],
   permissions: [{ id: "read:pages", title: "读取本空间页面统计", reason: "为了显示页面数", risk: "low" }],
   permissions_baseline: false,
+  events: [],
 };
 
 const VALIDATION: PluginValidation = {
@@ -335,5 +342,93 @@ describe("plugins store · 作者校验", () => {
     expect(usePlugins.getState().validations.demo).toBeUndefined();
     expect(lastToast()).toMatchObject({ kind: "error" });
     expect(lastToast()?.message).toContain("../evil");
+  });
+});
+
+/**
+ * 事件派发的契约。
+ *
+ * 这里最要紧的一条：**事件里的写操作也必须经用户确认**。事件触发时用户并没有在看
+ * 确认框（他只是在编辑笔记），但这恰恰是"插件绝不静默改你的笔记"最容易被绕过的缝隙，
+ * 所以用测试钉住：有草稿就必须走 confirmAndApplyDrafts，而不是直接落库。
+ */
+describe("plugins store · 事件派发", () => {
+  const outcome = (over: Partial<PluginEventOutcome> = {}): PluginEventOutcome => ({
+    plugin_id: "demo",
+    plugin_name: "演示插件",
+    message: "",
+    toasts: [],
+    drafts: [],
+    error: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.emitPluginEvent).mockResolvedValue([]);
+  });
+
+  it("没有插件订阅时什么都不做", async () => {
+    await usePlugins.getState().emitEvent("page.saved", { pageId: "p1" });
+
+    expect(api.emitPluginEvent).toHaveBeenCalledWith("page.saved", JSON.stringify({ pageId: "p1" }));
+    expect(confirmAndApplyDrafts).not.toHaveBeenCalled();
+    expect(lastToast()).toBeUndefined();
+  });
+
+  it("事件里的草稿必须走确认，而不是直接落库", async () => {
+    vi.mocked(api.emitPluginEvent).mockResolvedValue([
+      outcome({
+        drafts: [{ key: "tag:今天", summary: "给页面加标签「今天」", payload: {} }],
+      }),
+    ]);
+
+    await usePlugins.getState().emitEvent("page.saved", { pageId: "p1" });
+
+    expect(confirmAndApplyDrafts).toHaveBeenCalledTimes(1);
+    const [who, drafts] = vi.mocked(confirmAndApplyDrafts).mock.calls[0];
+    expect(String(who)).toContain("演示插件");
+    expect(String(who)).toContain("page.saved");
+    expect(drafts).toHaveLength(1);
+  });
+
+  it("多个插件都产出草稿时，汇总成一次确认（不是每插件弹一次）", async () => {
+    vi.mocked(api.emitPluginEvent).mockResolvedValue([
+      outcome({ plugin_id: "a", plugin_name: "甲", drafts: [{ key: "1", summary: "甲改动", payload: {} }] }),
+      outcome({ plugin_id: "b", plugin_name: "乙", drafts: [{ key: "2", summary: "乙改动", payload: {} }] }),
+    ]);
+
+    await usePlugins.getState().emitEvent("page.saved");
+
+    expect(confirmAndApplyDrafts).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(confirmAndApplyDrafts).mock.calls[0][1]).toHaveLength(2);
+  });
+
+  it("插件的提示会弹出来", async () => {
+    vi.mocked(api.emitPluginEvent).mockResolvedValue([outcome({ toasts: ["自动归档完成"] })]);
+
+    await usePlugins.getState().emitEvent("page.saved");
+
+    expect(lastToast()?.message).toBe("自动归档完成");
+  });
+
+  it("某个插件失败：只汇总提示一句（明细在插件日志里），不逐条刷屏", async () => {
+    vi.mocked(api.emitPluginEvent).mockResolvedValue([
+      outcome({ plugin_id: "a", plugin_name: "甲", error: "超时" }),
+      outcome({ plugin_id: "b", plugin_name: "乙", error: "出错" }),
+    ]);
+
+    await usePlugins.getState().emitEvent("page.saved");
+
+    expect(lastToast()).toMatchObject({ kind: "error" });
+    expect(lastToast()?.message).toContain("2 个插件");
+    expect(lastToast()?.message).toContain("插件日志");
+  });
+
+  it("派发本身失败不影响保存路径：不抛错、不弹 error（记 console）", async () => {
+    vi.mocked(api.emitPluginEvent).mockRejectedValue("插件目录读不到");
+
+    await expect(usePlugins.getState().emitEvent("page.saved")).resolves.toBeUndefined();
+
+    expect(lastToast()).toBeUndefined();
   });
 });

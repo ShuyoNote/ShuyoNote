@@ -21,8 +21,8 @@ use tauri::AppHandle;
 
 use crate::capabilities_gen;
 use crate::plugins::{
-    PluginCommandMeta, is_bare_file_name, is_safe_plugin_id, plugins_root, read_manifest,
-    resolve_permissions,
+    PluginCommandMeta, PluginEventMeta, is_bare_file_name, is_safe_plugin_id, plugins_root,
+    read_manifest, resolve_permissions,
 };
 
 /// 入口文件超过这个体积就提醒（插件应当是脚本，不是打包产物）。
@@ -79,6 +79,8 @@ pub struct ValidateReport {
     pub permissions: Vec<PermissionView>,
     /// 最终**实际授予**的权限（未声明 permissions 时是 v1 基线集合）。
     pub granted: Vec<String>,
+    /// 订阅了哪些事件（用户没点命令时也会跑代码，所以要在报告里说清楚）。
+    pub events: Vec<PluginEventMeta>,
     /// 是否走了老 manifest 的基线授权（作者应显式声明）。
     pub permissions_baseline: bool,
     pub problems: Vec<PluginProblem>,
@@ -285,6 +287,18 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         }
     }
 
+    // ---- 4.5 事件订阅（与权限同源的判定：未知事件忽略 + 警告、缺 reason 警告）----
+    let mut events: Vec<PluginEventMeta> = Vec::new();
+    if let Some(v) = &value {
+        if let Some(m) = manifest_from_value(v, &dir_name) {
+            let (_subscribed, warns) = crate::plugins::resolve_events(&m);
+            for w in warns {
+                problems.push(PluginProblem::warn("event_note", w, Some("manifest.json")));
+            }
+            events = crate::plugins::event_metas(&m);
+        }
+    }
+
     // ---- 5. JS 语法（Boa 解析，不执行）----
     // 与运行同一个引擎，所以「本地能过、应用装上去语法错」不可能发生。
     if let Some(src) = read_entry_source(dir, &main) {
@@ -364,6 +378,7 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         commands,
         permissions,
         granted,
+        events,
         permissions_baseline,
         problems,
     }
@@ -421,6 +436,7 @@ impl ValidateReport {
             commands: Vec::new(),
             permissions: Vec::new(),
             granted: Vec::new(),
+            events: Vec::new(),
             permissions_baseline: false,
             problems: vec![PluginProblem::error(
                 "dir_missing",
@@ -561,6 +577,9 @@ mod tests {
                 r.permissions
             );
             assert!(!r.permissions_baseline, "示例插件 {} 不应走基线授权（那会示范成坏习惯）", d.display());
+            for ev in &r.events {
+                assert!(!ev.reason.trim().is_empty(), "示例插件 {} 的事件 {} 应当写 reason（示范给用户看的授权面）", d.display(), ev.id);
+            }
         }
     }
 

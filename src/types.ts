@@ -105,6 +105,18 @@ export interface PluginCommandParam {
  * `permissions` 是**作者声明**的视图（含本版本不认识的那些，`known=false`）；
  * `granted` 才是运行时实际授予的集合——两者不同，界面要能分别说清楚。
  */
+/**
+ * 插件声明订阅的一个事件。
+ *
+ * 必须让用户在**启用之前**看到：事件意味着「你没点任何命令，它也会跑代码」，
+ * 这与权限是同一类授权，只是触发方式不同。
+ */
+export interface PluginEventMeta {
+  id: string;
+  title: string;
+  reason: string;
+}
+
 export interface PluginValidation {
   ok: boolean;
   dir_name: string;
@@ -122,6 +134,18 @@ export interface PluginValidation {
 }
 
 /** 一条校验问题。`severity=error` 会让插件装不进去/跑不起来，`warning` 只是建议。 */
+/** 一次事件派发给某个插件的结果（后端 `emit_plugin_event`）。 */
+export interface PluginEventOutcome {
+  plugin_id: string;
+  plugin_name: string;
+  message: string;
+  toasts: string[];
+  /** 事件里产出的草稿：**还没落库**，必须由用户确认（见 lib/pluginDrafts）。 */
+  drafts: PluginDraft[];
+  /** 该插件这次失败的原因（后端已写进它的插件日志）。 */
+  error: string | null;
+}
+
 export interface PluginProblem {
   code: string;
   message: string;
@@ -151,6 +175,8 @@ export interface PluginMeta {
   permissions: PluginPermissionMeta[];
   /** 是否走了「旧 manifest 未声明权限」的基线授权（界面要如实标注）。 */
   permissions_baseline: boolean;
+  /** 声明订阅的事件（用户没点命令时也会运行）——启用前必须让用户看到。 */
+  events: PluginEventMeta[];
 }
 
 export interface PluginPermissionMeta {

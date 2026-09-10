@@ -46,6 +46,20 @@ export interface PluginCommand {
  */
 export type PluginCommandArgs = Record<string, any>;
 
+/** 宿主事件名（manifest `events[].on` 只能填这些）。 */
+export type PluginEventName =
+  | "app.started"
+  | "space.switched"
+  | "page.opened"
+  | "page.saved"
+  | "page.deleted"
+  | "import.finished"
+  | "sync.completed"
+  ;
+
+/** 注册事件处理器：在插件顶层调用（与 `register` 并列）。 */
+export declare function on(event: PluginEventName, handler: (payload: Record<string, any>) => void): void;
+
 /** 结构化返回：等价于调用对应的宿主原语。 */
 export interface PluginCommandResult {
   /** 显示在命令面板底部的消息。 */

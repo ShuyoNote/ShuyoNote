@@ -341,6 +341,42 @@ register({
 以及体积上限：
 那一步宿主逐次校验权限与参数。
 
+## 4.6 事件钩子（manifest 声明 + `on(...)`）
+
+事件让插件在**用户没点命令**时也能跑（例如「保存后自动加今天的日期标签」）。
+它要**两处**都写，缺一不可——这是有意的：manifest 是给用户看的授权面，
+JS 里没注册就什么都不会发生，而 JS 里注册了但 manifest 没声明则收不到事件。
+
+```json
+"events": [
+  { "on": "page.saved", "reason": "每次保存后把今天的日期标签补上" }
+]
+```
+
+```js
+on("page.saved", function (payload) {
+  api.tags.add(todayTag());   // 省略 pageId 时作用于当前页；写操作仍然走草稿确认
+});
+```
+
+| 事件 | 触发时机 | payload |
+|---|---|---|
+| `app.started` | 应用启动：应用启动完成、插件已加载后触发一次 | |
+| `space.switched` | 切换空间：切换到另一个空间后触发（payload: spaceId） | |
+| `page.opened` | 打开页面：打开一个页面后触发（payload: pageId） | |
+| `page.saved` | 页面已保存：页面内容或标题保存后触发（payload: pageId, title） | |
+| `page.deleted` | 页面已删除：页面被删除后触发（payload: pageId） | |
+| `import.finished` | 导入完成：一次导入结束后触发（payload: count） | |
+| `sync.completed` | 同步完成：一次同步结束后触发（payload: pushed, pulled） | |
+
+几条必须知道的规则：
+
+- **只有启用中的插件会收到事件**；
+- **写操作仍然要用户确认**：事件里产出的草稿会汇总成一次确认（不会静默写入笔记）；
+- **事件里的 `insert` 会被忽略**（没有人正在等你插入文本，凭空出现文字更糟）；
+- **没声明 `events` 的老插件不会收到任何事件**（与权限的基线授权不同：在后台运行代码更不能默认给）；
+- 事件处理器有**更短的墙钟预算**（保存路径上不该有慢活），超时会记进插件日志。
+
 ## 5. 日志与提示
 
 - `api.log(message, level?)` —— 写日志，进插件日志环形缓冲（插件面板「日志」可查）。

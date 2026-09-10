@@ -100,6 +100,17 @@ export function PluginManager() {
                     )}
                   </div>
                 )}
+                {/* 事件和权限是同一类授权：用户没点命令时它也会跑代码，必须在启用前看到。 */}
+                {p.events.length > 0 && (
+                  <div className="pm-item-perms">
+                    会在这些时候自动运行：
+                    {p.events.map((ev) => (
+                      <span key={ev.id} className="pm-perm" title={ev.reason || ev.id}>
+                        {ev.title}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="pm-item-actions">
                 <button onClick={() => toggle(p.id)}>{p.enabled ? "禁用" : "启用"}</button>
