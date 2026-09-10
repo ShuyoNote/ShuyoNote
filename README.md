@@ -370,7 +370,7 @@ ShuyoNote/
 | [docs/SHUYONOTE_STATE.md](docs/SHUYONOTE_STATE.md) | **项目现状种子（新会话先读）**：版本 / M1–M27 里程碑进度 / 近期重大变更 / 关键架构 / 红线 / 验证循环 / 下一步候选（对齐到 v1.84.3） |
 | [docs/architecture.md](docs/architecture.md) | **系统架构**：前端 / 平台 driver / Rust 后端 / SQLite / 同步服务端分层；数据模型与存储布局 |
 | [docs/design-philosophy.md](docs/design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器 / 空间=隔离容器 |
-| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M26 大部分已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强 / M25 帮助系统 / M26 公式** 已达成；M27 团队版规划中；**移动端（安卓/iOS）即将推出**；M11.3 / M11.4 已评估未做） |
+| [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M26 大部分已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强 / M25 帮助系统 / M26 公式** 已达成；M27 团队版规划中；**移动端（安卓/iOS）即将推出**；M11.10 / M11.11 已评估未做，带启动闸门：见 [插件体系进化方案](docs/plans/2026-09-10-plugin-evolution-plan.md)） |
 | [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
