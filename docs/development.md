@@ -233,3 +233,40 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
 - **浏览器缓存**：web 端改源码后必须 **Ctrl+Shift+R**，否则还在跑旧模块（以 `[ShuyoNote] bootstrap vX.Y.Z` 确认版本）。
 - **`ERR_CACHE_READ_FAILURE` / 模块 re-hash**：Vite dep 优化缓存与浏览器缓存不对齐时，重启 `pnpm dev:web` + 强刷即可。
 - **怀疑坏了**：先看 Console 是否打印 `[ShuyoNote] bootstrap v…`，确认跑的是不是当前构建。
+
+## 10. 分支模型与合并流
+
+```
+main    ← 只放「已发布」的代码。推 main = GitHub Pages 自动部署 + 可打 tag 发版。
+          只接受两类提交：版本号 bump（发版）与 hotfix。
+ dev    ← 日常集成分支。feat/* 完成后合到这里，跑完 §4 的全套检查。
+feat/*  ← 单个特性，从 dev 切出，完成后合回 dev。
+```
+
+**为什么 main 要这么严**：`.github/workflows/pages.yml` 在 push main 时自动把 Web 版发布到 GitHub Pages——落到 main 的 WIP 会被**公开部署出去**。加上 tag 触发三平台构建发版，main 实际上就是"线上"。
+
+**为什么要有 dev**：本仓库常有**多个会话/机器并行改动**（同一时间可能存在多条 `feat/*`）。没有统一集成点，大家各自从 main 切、越走越远，最后合并时冲突面很大。更麻烦的是**特性与修复会互相缠住**：`feat/mobile` 里就同时装着移动端适配和一个桌面端 bug 修复（`.sidebar[hidden]` 让侧栏收不起来），导致那个修复没法单独发版。
+
+### 10.1 日常
+
+```bash
+git checkout dev && git pull
+git checkout -b feat/your-change
+# …改代码 + 跑 §4 的验证循环…
+git checkout dev && git merge --no-ff feat/your-change && git push origin dev
+```
+
+### 10.2 发版
+
+```bash
+git checkout dev && git pull
+git checkout main && git merge --no-ff dev     # main 只做这一次合并
+# 按 §5 同步 6 处版本号 + 写 CHANGELOG → cargo check 对齐 Cargo.lock
+git commit -m "release: X.Y.Z（…）"
+git tag -a vX.Y.Z -m "X.Y.Z：…"
+git push origin main --follow-tags             # 触发 CI 三平台构建 + Pages 部署
+# CI 出包后 → scripts/release.mjs --no-build 发 gitcode + 更新 latest 更新通道
+```
+
+> **hotfix**：从 main 切 `fix/*`，修完合回 main 并发补丁版，同时**把这个修复也合回 dev**，否则下次从 dev 发版会把修复覆盖掉。
+

@@ -18,6 +18,16 @@
 | UI/UX 设计系统与实现 | `design/`、[design/README.md](design/README.md) |
 | 版本变更历史 | [CHANGELOG.md](CHANGELOG.md) |
 
+## 分支模型
+
+```
+main    ← 已发布的代码。推 main 会**自动部署 Web 版**，只接受发版与 hotfix。
+ dev    ← 集成分支，日常往这里合。
+feat/*  ← 你的特性分支，从 dev 切出。
+```
+
+所以：**不要直接往 `main` 提交**（那等于直接上线），特性一律从 `dev` 切、完成后再合回 `dev`。详见 [docs/development.md](docs/development.md) 第 10 节。
+
 ## 提交前请遵守（硬性）
 
 - **改功能先验证**：跑
@@ -38,7 +48,7 @@
 
 ## 怎么提 PR
 
-1. 从最新的 `main` 拉一个分支：`git checkout -b feat/your-change`。
+1. 从最新的 `dev` 拉一个分支：`git checkout dev && git pull && git checkout -b feat/your-change`。
 2. **小步**：一个 PR 只做一件事；提交信息用 `type(scope): summary`（如 `feat(db): add rollup column`、`fix(sync): exclude .part on upload`）。
 3. 提交前跑上面「提交前请遵守」的验证。
 4. 开 PR 时描述：**改了什么 / 为什么 / 怎么验证 / 有没有破坏点**；关联 Issue。
