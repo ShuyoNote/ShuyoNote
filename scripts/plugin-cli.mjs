@@ -26,7 +26,7 @@ const color = (s, c) => (process.stdout.isTTY ? `${ESC[c]}${s}${ESC.reset}` : s)
  * 列/排序/取值写错只是**提醒**（宿主会忽略并按默认来），但没有 views 是**错误**——
  * 那样的插件装上去什么都不会显示。
  */
-function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, themeTokenNames) {
+function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, knownPlacements, themeTokenNames) {
   const views = Array.isArray(m.views) ? m.views : [];
   const themeTokens = m.theme && typeof m.theme === "object" && m.theme.tokens && typeof m.theme.tokens === "object" ? Object.keys(m.theme.tokens) : [];
   if (views.length === 0 && themeTokens.length === 0) {
@@ -61,6 +61,17 @@ function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, th
     if (isLiteralField(q.sort) && !knownSorts.has(q.sort)) push("warning", "view_bad_sort", `视图 ${v.id} 的 query.sort「${q.sort}」不认识（可用：${[...knownSorts].join(" / ")}）`);
     if (isLiteralField(q.limit) && (q.limit < 1 || q.limit > 500)) {
       push("warning", "view_bad_limit", `视图 ${v.id} 的 query.limit 超出范围（1–500）`);
+    }
+    // 落点（`overlay` 浮层 / `rail` 右侧常驻面板）：取值不认识只是**提醒**（视图照常打得开，
+    // 按浮层处理）；形态不对（数字/对象）会让整份 manifest 解析失败，所以是**错误**。
+    // 这两条与 Rust 侧（plugin_validate.rs 的 view_bad_placement / view_field_shape）逐字对应，
+    // 否则会出现"CLI 说没问题、应用却报错"或反过来。
+    if (v.placement !== undefined) {
+      if (typeof v.placement !== "string") {
+        push("error", "view_field_shape", `views[${views.indexOf(v)}].placement 的写法不对：只能是字符串 "overlay"（浮层，默认）或 "rail"（右侧常驻面板）（现在是 ${JSON.stringify(v.placement)}）`);
+      } else if (v.placement.trim() && !knownPlacements.has(v.placement.trim())) {
+        push("warning", "view_bad_placement", `视图 ${v.id} 的 placement「${v.placement}」不认识（可用：${[...knownPlacements].join(" / ")}）——按 overlay（浮层）处理`);
+      }
     }
   }
 }
@@ -311,6 +322,8 @@ function validate(dirArg) {
   ]);
   const knownSorts = new Set(["updated_desc", "created_desc", "title_asc", "title_desc"]);
   const knownKinds = new Set(["any", "page", "database"]);
+  // 视图落点白名单（与 Rust 侧 plugins::VIEW_PLACEMENTS、前端 lib/pluginViews 三处同名同值）
+  const knownPlacements = new Set(["overlay", "rail"]);
   // 主题白名单从注册表取（不 import 生成的 .ts：CI 的 Node 22 不支持直接 import TS）
   const themeTokenNames = new Set(((reg.theme && reg.theme.tokens) || []).map((x) => x.name));
   if (m) {
@@ -334,7 +347,7 @@ function validate(dirArg) {
       // 零代码插件：没有 main.js、没有语法可查、也不需要权限（不去申请任何能力）。
       // 这里必须与 Rust 侧（plugin_validate.rs 的 validate_declarative）一致，
       // 否则作者 CLI 会把一个本来能用的零代码插件报成"装不上"。
-      checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, themeTokenNames);
+      checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, knownPlacements, themeTokenNames);
       // 视图参数（查询字段引用用户设置）：形态 → 引用 → 类型能不能对上。
       // 「加载器会不会拒」那一层兜底只有应用内验证有（CLI 不跑 Rust 的 manifest 解析）。
       checkViewFieldShapes(m, push);
@@ -487,7 +500,12 @@ function report(r, json) {
     console.log(`  ${color("零代码插件", "dim")}（runtime=declarative）：${parts.join(" + ") || "无产出"}，由宿主渲染，不申请任何权限`);
     for (const v of views) {
       const cols = Array.isArray(v?.columns) ? v.columns.filter((c) => r.knownColumns?.has(c) ?? true) : [];
-      console.log(`    ▦ ${v?.title || v?.id || "(无标题)"}  ${color(`列：${cols.join(" / ") || "标题"}`, "dim")}`);
+      // 落点也印出来：`rail` 的视图会出现在右侧竖条上，作者得知道自己的声明开在哪里
+      // （不认识的值按 overlay 处理，与运行时同一口径——这里印的就是运行时会发生的事）。
+      const where = v?.placement === "rail" ? "右侧常驻面板" : "浮层";
+      console.log(
+        `    ▦ ${v?.title || v?.id || "(无标题)"}  ${color(`列：${cols.join(" / ") || "标题"}`, "dim")}  ${color(`→ ${where}`, "dim")}`,
+      );
     }
   }
   const declares = declarative ? [] : Array.isArray(r.manifest?.permissions) ? r.manifest.permissions : [];

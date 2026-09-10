@@ -479,11 +479,25 @@ var pages = api.pages.list(n);
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
     "columns": ["title", "kind", "updated_at", "days_since_update"]
+  }, {
+    "id": "board", "title": "待整理", "placement": "rail",
+    "query": { "sort": "updated_desc", "limit": 20 },
+    "columns": ["title", "days_since_update"]
   } ]
 }
 ```
 
 `query` 可用字段：`kind`（`any` / `page` / `database`）、`titleContains`、`updatedWithinDays`、`sort`（`updated_desc` / `created_desc` / `title_asc` / `title_desc`）、`limit`（1–500）。
+
+`placement`：这个视图**开在哪里**——省略（或 `"overlay"`）是浮层，`"rail"` 是右侧常驻面板。
+
+| 落点 | 长什么样 | 什么时候用 |
+|---|---|---|
+| `overlay`（默认） | 占满屏幕的浮层，点空白或 × 关掉 | 「看一下就走」：查一查最近更新、翻一遍清单 |
+| `rail` | 右侧常驻面板，与正文并排，点行**不关面板** | 「一边看正文一边看着它」：待整理清单、周回顾、写作时的参照表 |
+
+两种形态的表格完全一样（查询、列、汇总、点行打开那一页），差别只在**开在哪里、关不关**。
+`rail` 的视图会在右侧竖条上占一个按钮（工具条那一列），停用插件后按钮随之消失。
 
 `columns` 可用列（宿主渲染什么，你只能从这里选）：
 
@@ -500,7 +514,7 @@ var pages = api.pages.list(n);
 
 - **声明式插件不申请权限、收不到事件**（它没有代码）——写了这些字段会被提醒而不是默默生效；
 - 视图出现在命令面板里（搜「插件视图：…」），点开就是一张表，点某一行会打开那一页；
-- 列名 / 排序 / kind 写错**不会让视图打不开**，只是那一项按默认处理，校验器会告诉你哪个值不认识；
+- 列名 / 排序 / kind / placement 写错**不会让视图打不开**，只是那一项按默认处理（落点不认识就是浮层），校验器会告诉你哪个值不认识；
 - 想要条件逻辑就写 `logic` 档（有 `main.js`）——两者的能力不同，不要混着声明。
 
 ### 4.9.1 让用户能调（查询字段引用设置）
@@ -527,7 +541,7 @@ var pages = api.pages.list(n);
 - 查询字段的形态只有两种：**字面量**（`20` / `"updated_desc"`）或 **`{ "fromSetting": "设置key" }`**。写成别的（比如 `"limit": "20"`）会让整份 manifest 解析失败、插件被拒载——校验器会直接告诉你哪一项、该怎么写；
 - **声明了设置却没有任何视图引用它** → 提醒（用户填了也不会改变任何东西）。
 
-完整可跑的零代码示例见 [`examples/plugins/reading-board/`](../examples/plugins/reading-board/)（一张表 + 两个可调设置，没有一行 JS）。
+完整可跑的零代码示例见 [`examples/plugins/reading-board/`](../examples/plugins/reading-board/)（一张浮层表 + 一个 `rail` 常驻面板 + 两个可调设置，没有一行 JS——两种落点都在里面）。
 
 ## 4.10 主题插件（只出一组 token）
 

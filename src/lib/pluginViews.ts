@@ -34,6 +34,35 @@ export interface PluginView {
   query: PluginViewQuery;
   columns: string[];
   summary: boolean;
+  /** 开在哪里（manifest `placement`）：`overlay` 浮层 / `rail` 右侧常驻面板。缺省 = overlay。 */
+  placement?: string;
+}
+
+/** 视图的两种落点：浮层（默认）与右侧常驻面板。 */
+export type ViewPlacement = "overlay" | "rail";
+
+/** Rust 侧白名单（`plugins::VIEW_PLACEMENTS`）的镜像；不认识的值一律按 `overlay` 处理。 */
+export const VIEW_PLACEMENTS: ViewPlacement[] = ["overlay", "rail"];
+
+/**
+ * 这个视图该开在哪里。**默认只有一处**：不认识的值（拼错的 `"sidebar"`、老插件没写）
+ * 一律按 `overlay`，与 Rust 侧白名单同口径——声明式插件的原则是"永远打得开"，而浮层是
+ * 那个永远成立的形态。校验器已经在作者那边把不认识的值指出来了。
+ */
+export function viewPlacement(view: { placement?: string }): ViewPlacement {
+  const p = (view.placement ?? "").trim();
+  return (VIEW_PLACEMENTS as string[]).includes(p) ? (p as ViewPlacement) : "overlay";
+}
+
+/**
+ * 右侧抽屉的占用键：`插件id::视图id`。
+ *
+ * 为什么需要它：右侧一次只开一个抽屉（AI / 目录 / 评论 / 插件面板），"当前开的是哪个插件
+ * 的哪个视图"必须是一个**可比较的值**——用 id 而不是视图对象，因为视图对象每次刷新
+ * （页面列表变化）都可能是新引用，拿对象做相等判断会让面板自己闪掉。
+ */
+export function viewPlacementKey(pluginId: string, view: { id: string }): string {
+  return `${pluginId}::${view.id}`;
 }
 
 /** 已解析的查询：字段都是普通值（`resolveView` 的产物）。 */

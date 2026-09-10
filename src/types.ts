@@ -175,6 +175,8 @@ export interface PluginView {
   };
   columns: string[];
   summary: boolean;
+  /** 开在哪里：`overlay`（浮层，默认）或 `rail`（右侧常驻面板）——见 lib/pluginViews。 */
+  placement?: string;
 }
 
 /**

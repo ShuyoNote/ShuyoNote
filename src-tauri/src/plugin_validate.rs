@@ -317,6 +317,19 @@ fn check_view_field_shapes(value: Option<&serde_json::Value>, problems: &mut Vec
         return;
     };
     for (i, vw) in list.iter().enumerate() {
+        // `placement` 与查询字段同属"形态写错就整份拒载"那一类，所以也在这里看原始 JSON。
+        // （取值不认识是另一回事：那是**提醒**，视图照常打得开，见 check_view_declarations。）
+        if let Some(raw) = vw.get("placement") {
+            if !raw.is_string() {
+                problems.push(PluginProblem::error(
+                    "view_field_shape",
+                    format!(
+                        "views[{i}].placement 的写法不对：只能是字符串 \"overlay\"（浮层，默认）或 \"rail\"（右侧常驻面板）（现在是 {raw}）——形态不对会让整份 manifest 解析失败、插件被拒载"
+                    ),
+                    Some("manifest.json"),
+                ));
+            }
+        }
         let Some(query) = vw.get("query").and_then(|q| q.as_object()) else {
             continue;
         };
@@ -648,6 +661,23 @@ fn validate_declarative(
         if let Some(limit) = vw.query.limit.as_ref().and_then(|f| f.literal()) {
             if !(1..=500).contains(&limit) {
                 problems.push(PluginProblem::warn("view_bad_limit", format!("视图 {} 的 query.limit {limit} 超出范围（1–500）", vw.id), Some("manifest.json")));
+            }
+        }
+        // 落点（`overlay` 浮层 / `rail` 右侧常驻面板）：不认识的值按浮层处理、视图照样打得开，
+        // 所以是**提醒**不是错误——口径与 kind / sort / columns 一致（声明式插件的原则是
+        // "永远打得开"）。这里多说一句它按什么处理，作者才知道自己看到的不是他要的形态。
+        if let Some(p) = vw.placement.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            if !crate::plugins::VIEW_PLACEMENTS.contains(&p) {
+                problems.push(PluginProblem::warn(
+                    "view_bad_placement",
+                    format!(
+                        "视图 {} 的 placement「{}」不认识（可用：{}）——按 overlay（浮层）处理",
+                        vw.id,
+                        p,
+                        crate::plugins::VIEW_PLACEMENTS.join(" / ")
+                    ),
+                    Some("manifest.json"),
+                ));
             }
         }
     }
@@ -1820,6 +1850,49 @@ mod tests {
         assert!(codes(&r).contains(&"declarative_setting_unused".to_string()), "没人用的设置要提醒：{:?}", r.problems);
         let string_source = r.problems.iter().find(|p| p.code == "view_param_string_source").unwrap();
         assert_eq!(string_source.severity, "warning", "能填对也可能填错，所以只是提醒");
+    }
+
+    #[test]
+    fn view_placement_is_a_whitelist_with_a_fallback_not_a_rejection() {
+        // `rail` 是认识的落点 → 干净通过；不认识的值 → **提醒**（视图照常打得开，按 overlay
+        // 处理），绝不能报成错误：声明式插件的原则是"永远打得开"。
+        let good = declarative_plugin(
+            "rail-view",
+            r#"{ "id": "rail-view", "name": "常驻面板", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"], "placement": "rail" } ] }"#,
+        );
+        let r = validate_dir(&good);
+        assert!(r.ok, "{:?}", r.problems);
+        assert!(r.problems.is_empty(), "认识的落点不该有任何提示：{:?}", r.problems);
+
+        let bad = declarative_plugin(
+            "weird-view",
+            r#"{ "id": "weird-view", "name": "落点写错", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"], "placement": "sidebar" } ] }"#,
+        );
+        let r = validate_dir(&bad);
+        assert!(r.ok, "落点不认识只是提醒，不该拒载：{:?}", r.problems);
+        let p = r.problems.iter().find(|p| p.code == "view_bad_placement").expect("应提示 view_bad_placement");
+        assert!(p.message.contains("sidebar") && p.message.contains("overlay"), "要说清按什么处理：{}", p.message);
+    }
+
+    #[test]
+    fn malformed_view_placement_shape_is_explained_before_anything_else() {
+        // `"placement": 1` 形态不对 → 整份 manifest 解析失败（`Option<String>` 收不下数字）。
+        // 这时必须指出是 placement 写错了，而不是让兜底报一句笼统的"加载器会拒载"。
+        let dir = declarative_plugin(
+            "bad-placement",
+            r#"{ "id": "bad-placement", "name": "形态不对", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"], "placement": 1 } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(!r.ok, "加载器会拒就必须报错：{:?}", r.problems);
+        let shape = r.problems.iter().find(|p| p.code == "view_field_shape").expect("应提示 view_field_shape");
+        assert!(shape.message.contains("placement"), "{}", shape.message);
+        assert!(!codes(&r).contains(&"declarative_no_views".to_string()), "别把形态错报成没写视图：{:?}", r.problems);
     }
 
     #[test]

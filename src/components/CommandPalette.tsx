@@ -5,6 +5,7 @@ import { usePlugins } from "../store/plugins";
 import { runPluginCommandWithUi } from "../lib/pluginRun";
 import { usePalette } from "../store/palette";
 import { usePluginViewStore } from "../store/pluginViews";
+import { viewPlacement } from "../lib/pluginViews";
 import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
 import { buildCommandArgs, initialParamValues } from "../lib/pluginParams";
@@ -166,7 +167,10 @@ export function CommandPalette() {
     for (const p of plugins) {
       if (!p.enabled) continue;
       for (const v of p.views ?? []) {
-        const title = `插件视图：${v.title || v.id}`;
+        // 入口文案说清**会开在哪里**：常驻面板与浮层是两种用法（一个是"一直看着"、
+        // 一个是"看完了关"），用户点之前就该知道。文案来自 lib/pluginViews 的
+        // `viewPlacement`——与真正决定落点的是同一个函数，不会各写一份。
+        const title = `${viewPlacement(v) === "rail" ? "插件面板" : "插件视图"}：${v.title || v.id}`;
         if (!q || title.toLowerCase().includes(q)) {
           out.push({ kind: "plugin-view", pluginId: p.id, pluginName: p.name, view: v, title });
         }

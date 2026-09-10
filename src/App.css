@@ -18422,9 +18422,10 @@ p:has(> .editor-drawing-container) {
     z-index: 58;
     background: rgba(0, 0, 0, 0.35);
   }
-  /* 右抽屉：AI / 评论，窄屏全屏叠加。 */
+  /* 右抽屉：AI / 评论 / 插件面板，窄屏全屏叠加。 */
   .ai-panel,
-  .comments-drawer {
+  .comments-drawer,
+  .plugin-panel {
     width: 100%;
     max-width: 100%;
   }
@@ -18432,7 +18433,8 @@ p:has(> .editor-drawing-container) {
      （padding-right: 280px / 380px）在窄屏会把主区内容盒挤成 0 宽，并把
      .main 撑出 .app-body —— flex 项缩不到 padding 以下，宽度被顶成 380px。 */
   body.is-toc-open .main,
-  body.is-ai-open .main {
+  body.is-ai-open .main,
+  body.is-plugin-panel-open .main {
     padding-right: 0;
   }
   /* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
@@ -18731,3 +18733,27 @@ p:has(> .editor-drawing-container) {
 .plugin-view-table tbody tr { cursor: pointer; }
 .plugin-view-table tbody tr:hover { background: var(--hover); }
 .plugin-view-cell-title { color: var(--text); }
+
+/* 声明式插件视图的**右侧常驻面板**（manifest `placement: "rail"`）。
+   与浮层同一张表（PluginViewTable），差别是"一边看正文一边看着它"：
+   宽度够放几列（表格在 380px 下会挤成一条），窄屏则与 AI/评论一样整屏叠加。 */
+.plugin-panel {
+  position: fixed;
+  top: var(--titlebar-h, 0);
+  right: 0;
+  bottom: 0;
+  z-index: 73;
+  width: var(--plugin-panel-w, 420px);
+  max-width: calc(100vw - 64px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-xl);
+  overflow: auto;
+  animation: ai-slide-in var(--transition-fast) ease;
+}
+/* 桌面：面板占位，主区让出同样宽度（与 AI / 目录同一条规则）。 */
+body.is-plugin-panel-open .main {
+  padding-right: var(--plugin-panel-w, 420px);
+}

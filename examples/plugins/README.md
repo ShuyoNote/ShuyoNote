@@ -20,7 +20,7 @@
 | [`csv-table/`](csv-table/) | **CSV 转表格**：选中 `.csv` / `.tsv` → 转成 Markdown 表格放进一篇新页面（导入触发 + 引号/换行的容错解析） | 导入触发 / `pages.create`（草稿）
 | [`page-status/`](page-status/) | **页面状态**：给当前页一键标状态（待办/进行中/已完成）——**有「状态」属性就写属性，没有就用同名标签兜底**，用户永远知道走的是哪条路 | `properties.list` / `properties.set`（草稿）/ `tags.add`（草稿） |
 | [`search-collect/`](search-collect/) | **检索汇总**：用关键词检索本空间，把命中整理成一页清单草稿（资料收集时省事） | `pages.search` / `pages.create`（草稿） |
-| [`reading-board/`](reading-board/) | **阅读看板**：一张「最近更新」表 + 汇总，查询条件**引用用户设置**（零代码也能「用户可配」） | 无（声明式视图） |
+| [`reading-board/`](reading-board/) | **阅读看板**：一张「最近更新」**浮层**表（查询条件引用用户设置）+ 一个「本月新增」**右侧常驻面板**（`placement: "rail"`）——零代码也能「用户可配」，也能常驻 | 无（声明式视图） |
 
 ## 教学示例
 

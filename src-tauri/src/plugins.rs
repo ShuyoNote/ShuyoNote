@@ -542,7 +542,22 @@ pub(crate) struct ViewDecl {
     /// 是否在顶部显示一行汇总（共几篇、最近 N 天更新几篇）。
     #[serde(default)]
     pub(crate) summary: bool,
+    /// 这个视图**开在哪里**（M11.9 收尾）：`overlay`（默认，占满屏幕的浮层）或 `rail`（右侧
+    /// 常驻面板，与正文并排）。
+    ///
+    /// 为什么要有第二种形态：浮层是"看完了就关"的形态，而"面板"是"一边看正文一边看着它"的
+    /// 形态——周回顾、待整理清单这类清单**本来就该常驻**，每次都要开一次浮层、关一次浮层，
+    /// 那不是插件的错，是宿主只给了一种形态。它同时也是 M11.10（沙盒 UI 插件）的启动闸门
+    /// 里的那句话：多数「我要一个插件面板」应当由声明式渲染器满足。
+    ///
+    /// 取值不认识时**不拒载**（与 `query.kind`/`sort`、`columns` 同一套口径）：视图照常打得开，
+    /// 只是按 `overlay` 处理，校验器会指出哪个值不认识——声明式插件的原则是"永远打得开"。
+    #[serde(default)]
+    pub(crate) placement: Option<String>,
 }
+
+/// 视图的落点白名单：`overlay` = 浮层（默认），`rail` = 右侧常驻面板。
+pub(crate) const VIEW_PLACEMENTS: &[&str] = &["overlay", "rail"];
 
 /// 查询字段的取值：**字面量**，或**指向用户在插件管理里设的那个设置**（M11.9 收口）。
 ///
@@ -4292,6 +4307,27 @@ register({ id: "s.run", title: "结构化", run: function () {
         ] {
             assert!(normalize_extension(bad).is_none(), "{bad:?} 不该被当成扩展名");
         }
+    }
+
+    #[test]
+    fn view_placement_is_carried_through_to_the_ui() {
+        // 落点（`overlay` / `rail`）必须是**前端读得到**的：声明在 manifest 里、由宿主决定
+        // 开在浮层还是右侧常驻面板。这条测试钉住"声明真的流到了 PluginMeta"——否则前端只会
+        // 永远按默认（浮层）渲染，作者写了 `rail` 却看不到任何变化，而且不会有任何报错。
+        let base = temp_dir("view-placement");
+        let dir = base.join("board");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{ "id": "board", "name": "B", "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"], "placement": "rail" },
+                            { "id": "w", "title": "W", "columns": ["title"] } ] }"#,
+        )
+        .unwrap();
+        let m = read_manifest(&dir).unwrap();
+        let views = m.views.as_ref().unwrap();
+        assert_eq!(views[0].placement.as_deref(), Some("rail"), "manifest 里的落点要被读到");
+        assert_eq!(views[1].placement, None, "没写就是没写（前端按 overlay 处理，默认只有一处）");
     }
 
     #[test]

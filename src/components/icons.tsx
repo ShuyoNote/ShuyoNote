@@ -759,3 +759,17 @@ export function DirectoryIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** 面板：右栏里的插件常驻面板入口（一张表 + 侧边留白，与"视图"这个形态对应）。 */
+export function PanelIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="14" y1="4" x2="14" y2="20" />
+      <line x1="6.5" y1="9" x2="11" y2="9" />
+      <line x1="6.5" y1="13" x2="11" y2="13" />
+      <line x1="16.5" y1="9" x2="18" y2="9" />
+      <line x1="16.5" y1="13" x2="18" y2="13" />
+    </Icon>
+  );
+}

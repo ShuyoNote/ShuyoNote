@@ -9,6 +9,9 @@ import {
   selectViewRows,
   summaryText,
   viewNeedsSettings,
+  viewPlacement,
+  viewPlacementKey,
+  VIEW_PLACEMENTS,
   type PluginView,
   type ResolvedView,
 } from "./pluginViews";
@@ -221,5 +224,35 @@ describe("resolveView", () => {
     ]);
     const { rows } = selectViewRows(pages, resolved, NOW);
     expect(rows.map((p) => p.id)).toEqual(["a"]);
+  });
+});
+
+// ---- 落点（placement）：浮层 or 右侧常驻面板 ----
+//
+// 这是"同一个视图开在哪里"的唯一判断处（两个宿主组件、命令面板入口文案都读它）。默认与
+// 兜底必须是**一处**：不认识的值按 overlay，与 Rust 侧白名单（VIEW_PLACEMENTS）同口径。
+describe("视图落点", () => {
+  it("没写 = overlay（老插件与默认形态）", () => {
+    expect(viewPlacement({})).toBe("overlay");
+    expect(viewPlacement({ placement: "" })).toBe("overlay");
+    expect(viewPlacement({ placement: "overlay" })).toBe("overlay");
+  });
+
+  it("rail = 右侧常驻面板", () => {
+    expect(viewPlacement({ placement: "rail" })).toBe("rail");
+    expect(viewPlacement({ placement: " rail " })).toBe("rail");
+  });
+
+  it("不认识的值按 overlay（视图永远打得开），白名单只有两项", () => {
+    for (const bad of ["sidebar", "RAIL", "panel", "浮层"]) {
+      expect(viewPlacement({ placement: bad }), `${bad} 不该被当成落点`).toBe("overlay");
+    }
+    expect(VIEW_PLACEMENTS).toEqual(["overlay", "rail"]);
+  });
+
+  it("抽屉占用键由 id 组成（同插件不同视图互不相等、稳定可比较）", () => {
+    expect(viewPlacementKey("p1", { id: "v1" })).toBe("p1::v1");
+    expect(viewPlacementKey("p1", { id: "v2" })).not.toBe(viewPlacementKey("p1", { id: "v1" }));
+    expect(viewPlacementKey("p2", { id: "v1" })).not.toBe(viewPlacementKey("p1", { id: "v1" }));
   });
 });

@@ -2,7 +2,7 @@
   "id": "reading-board",
   "name": "阅读统计",
   "version": "1.0.0",
-  "description": "零代码插件：一张「最近更新」表 + 一行汇总，看多少天 / 显示几条由你在设置里调。整个插件只有这个 manifest.json，没有一行 JS。",
+  "description": "零代码插件：一张「最近更新」浮层表（看多少天 / 显示几条由你在设置里调）+ 一个「本月新增」常驻面板（在右侧竖条上，一边写一边看着它）。整个插件只有这个 manifest.json，没有一行 JS。",
   "runtime": "declarative",
   "apiVersion": "1.0.0",
   "settings": [
@@ -32,6 +32,13 @@
         "limit": { "fromSetting": "limit" }
       },
       "columns": ["title", "kind", "updated_at", "days_since_update"]
+    },
+    {
+      "id": "fresh",
+      "title": "本月新增",
+      "placement": "rail",
+      "query": { "sort": "created_desc", "limit": 20 },
+      "columns": ["title", "created_at"]
     }
   ]
 }

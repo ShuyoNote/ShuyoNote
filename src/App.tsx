@@ -12,6 +12,7 @@ import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
+import { PluginViewPanel } from "./components/PluginViewPanel";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
 import { AboutDialog } from "./components/AboutDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -626,6 +627,9 @@ function App() {
         <PanelBoundary name="插件视图">
           <PluginViewOverlay />
         </PanelBoundary>
+        <PanelBoundary name="插件面板">
+          <PluginViewPanel />
+        </PanelBoundary>
         <PanelBoundary name="插件管理">
           <PluginManager />
         </PanelBoundary>
@@ -714,6 +718,9 @@ function App() {
       </PanelBoundary>
       <PanelBoundary name="插件视图">
         <PluginViewOverlay />
+      </PanelBoundary>
+      <PanelBoundary name="插件面板">
+        <PluginViewPanel />
       </PanelBoundary>
       {/* 其余根部浮层给一道兜底边界：它们与上面三个同理，不该因为一个渲染错误
           把整个界面带走（1.85.1 的白屏就是这么发生的）。 */}

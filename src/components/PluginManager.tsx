@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { platform, isDesktopPlatform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
+import { viewPlacement } from "../lib/pluginViews";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
 
@@ -134,6 +135,27 @@ export function PluginManager() {
                     {p.events.map((ev) => (
                       <span key={ev.id} className="pm-perm" title={ev.reason || ev.id}>
                         {ev.title}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* 声明式视图也是"这个插件会干什么"的一部分：用户该在启用前就知道
+                    它会往哪儿加东西——尤其是 `placement: "rail"`，那是**界面右侧多一个按钮**，
+                    不说的话用户只会看到一个不明来历的图标。 */}
+                {(p.views ?? []).length > 0 && (
+                  <div className="pm-item-perms">
+                    会加上这些视图：
+                    {(p.views ?? []).map((v) => (
+                      <span
+                        key={v.id}
+                        className="pm-perm"
+                        title={
+                          viewPlacement(v) === "rail"
+                            ? "常驻面板：出现在右侧竖条上，与正文并排（点行不关面板）"
+                            : "浮层：从命令面板打开，看完关掉"
+                        }
+                      >
+                        {v.title || v.id}（{viewPlacement(v) === "rail" ? "右侧常驻面板" : "浮层"}）
                       </span>
                     ))}
                   </div>
