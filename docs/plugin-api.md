@@ -138,7 +138,7 @@ register({
 - 调用：`api.pages.list(limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{id, title, updated_at}]，按更新时间倒序；不含正文
+- 返回：[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳
 - 参数：
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（上限 200）
 

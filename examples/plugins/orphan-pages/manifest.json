@@ -1,0 +1,22 @@
+{
+  "id": "orphan-pages",
+  "name": "孤立页面巡检",
+  "version": "1.0.0",
+  "description": "找出没有任何页面链过去的「孤岛」，生成一篇清单草稿，方便你补链接或归档。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:pages",
+      "reason": "读取本空间的页面标题与创建时间（不含正文）"
+    },
+    {
+      "id": "read:backlinks",
+      "reason": "逐个页面查它有没有被别处链接（这是判断孤岛的唯一依据）"
+    },
+    {
+      "id": "write:pages",
+      "reason": "新建「孤立页面」清单页（落库前会先把草稿给你确认）"
+    }
+  ]
+}

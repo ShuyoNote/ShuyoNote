@@ -134,9 +134,9 @@ export interface PluginApi {
    */
     count(): number;
   /** 列出本空间页面（权限 `read:pages`；1.0.0 起）
-   * 返回：[{id, title, updated_at}]，按更新时间倒序；不含正文
+   * 返回：[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳
    */
-    list(limit?: number): { id: string; title: string; updated_at: string }[];
+    list(limit?: number): { id: string; title: string; created_at: number; updated_at: number }[];
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
    * 返回：{id, title, content_text, kind}；不存在返回 null
    */

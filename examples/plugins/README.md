@@ -15,6 +15,9 @@
 | [`page-to-md/`](page-to-md/) | **当前页导出 Markdown**：命令面板点「导出」，把当前打开的页面写成一份 `.md`（保存位置由你选） | `blocks.list`（省略 pageId = 当前页）/ `files.export`（用户选位置） |
 | [`eye-care-theme/`](eye-care-theme/) | **护眼主题**：暖白背景 + 降蓝正文，长时间读写不那么累（零代码） | 主题 token |
 | [`high-contrast-theme/`](high-contrast-theme/) | **高对比主题**：纯黑纯白，投屏 / 投影 / 视力不佳时看得清（零代码） | 主题 token |
+| [`stale-triage/`](stale-triage/) | **陈旧页巡检**：找出 N 天没更新的页面，一次性地给它们打 #待整理——**一次运行产出多条草稿**，汇总成一次确认 | `pages.list` / `tags.list` / `tags.add`（草稿）
+| [`orphan-pages/`](orphan-pages/) | **孤立页面巡检**：逐页查反向链接，找出没人链过去的「孤岛」，生成清单草稿 | `pages.list` / `backlinks.list` / `pages.create`（草稿）
+| [`csv-table/`](csv-table/) | **CSV 转表格**：选中 `.csv` / `.tsv` → 转成 Markdown 表格放进一篇新页面（导入触发 + 引号/换行的容错解析） | 导入触发 / `pages.create`（草稿）
 | [`reading-board/`](reading-board/) | **阅读看板**：一张「最近更新」表 + 汇总，查询条件**引用用户设置**（零代码也能「用户可配」） | 无（声明式视图） |
 
 ## 教学示例

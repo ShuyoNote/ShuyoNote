@@ -33,8 +33,13 @@ register({
       return "最近 " + days + " 天没有更新，什么都没生成";
     }
 
+    var created = 0;
+    for (var k = 0; k < recent.length; k++) {
+      if (Number(recent[k].created_at) >= since) created++;
+    }
+
     var lines = ["# 回顾（最近 " + days + " 天）", ""];
-    lines.push("共 " + recent.length + " 篇有更新。");
+    lines.push("共 " + recent.length + " 篇有更新，其中 " + created + " 篇是这几天新建的。");
     lines.push("");
     for (var j = 0; j < recent.length && j < limit; j++) {
       var p = recent[j];
@@ -42,7 +47,7 @@ register({
     }
     if (recent.length > limit) lines.push("- …还有 " + (recent.length - limit) + " 篇");
 
-    var title = "回顾：" + days + " 天（" + recent.length + " 篇）";
+    var title = "回顾：" + days + " 天（" + recent.length + " 篇，新建 " + created + "）";
     api.pages.create(title, lines.join("\n"));
     return "已生成「" + title + "」的草稿（确认后落库）";
   }

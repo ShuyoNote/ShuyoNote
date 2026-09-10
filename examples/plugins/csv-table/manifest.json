@@ -1,0 +1,22 @@
+{
+  "id": "csv-table",
+  "name": "CSV 转表格",
+  "version": "1.0.0",
+  "description": "选中一个 .csv 文件，把它转成 Markdown 表格放进一篇新页面的草稿里。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "write:pages",
+      "reason": "新建「表格：文件名」页面（落库前会先把草稿给你确认）"
+    }
+  ],
+  "triggers": [
+    {
+      "kind": "import",
+      "extensions": [".csv", ".tsv"],
+      "command": "csv-table.fromFile",
+      "title": "用「CSV 转表格」导入表格"
+    }
+  ]
+}

@@ -226,8 +226,8 @@
       ],
       "returns": {
         "type": "array",
-        "ts": "{ id: string; title: string; updated_at: string }[]",
-        "desc": "[{id, title, updated_at}]，按更新时间倒序；不含正文"
+        "ts": "{ id: string; title: string; created_at: number; updated_at: number }[]",
+        "desc": "[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳"
       },
       "rust": "cap_pages_list"
     },

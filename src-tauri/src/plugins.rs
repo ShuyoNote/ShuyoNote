@@ -1511,9 +1511,12 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
 fn cap_pages_list(limit: i64) -> CapResult {
     let limit = limit.clamp(1, 200);
     with_read_conn(|c| {
+        // created_at 一起给：插件判断"这页是不是刚建的"只能靠它（updated_at 会被编辑
+        // 刷新）。写「孤立页巡检」「本周新建了哪些」这类插件时撞到的就是这个字段的缺失——
+        // 加字段是非破坏性的（读不到就别读），比新加一条能力便宜得多。
         let mut stmt = c
             .prepare(
-                "SELECT id, title, updated_at FROM pages WHERE deleted_at IS NULL
+                "SELECT id, title, created_at, updated_at FROM pages WHERE deleted_at IS NULL
                  ORDER BY updated_at DESC LIMIT ?1",
             )
             .map_err(|e| format!("db_error: {e}"))?;
@@ -1522,7 +1525,8 @@ fn cap_pages_list(limit: i64) -> CapResult {
                 Ok(serde_json::json!({
                     "id": r.get::<_, String>(0)?,
                     "title": r.get::<_, String>(1)?,
-                    "updated_at": r.get::<_, i64>(2)?,
+                    "created_at": r.get::<_, i64>(2)?,
+                    "updated_at": r.get::<_, i64>(3)?,
                 }))
             })
             .map_err(|e| format!("db_error: {e}"))?
@@ -4639,6 +4643,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         let list = call(&st, "pages.list", "{}").unwrap();
         assert_eq!(list.as_array().unwrap().len(), 2, "应当列出本空间两个页面");
         assert_eq!(list[0]["title"], "读书笔记", "按更新时间倒序");
+        assert!(
+            list[0]["created_at"].as_i64().unwrap_or(0) > 0,
+            "创建时间要给出来（插件判断「刚建的页面」只能靠它）：{list:?}"
+        );
 
         let one = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
         assert_eq!(one["title"], "会议纪要");

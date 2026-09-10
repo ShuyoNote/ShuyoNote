@@ -1,0 +1,22 @@
+{
+  "id": "stale-triage",
+  "name": "陈旧页巡检",
+  "version": "1.0.0",
+  "description": "找出很久没更新的页面，一次性地给它们打上 #待整理 标签（打之前会把每一条摊给你确认）。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:pages",
+      "reason": "读取本空间的页面标题与更新时间（不含正文）"
+    },
+    {
+      "id": "read:tags",
+      "reason": "先看看这些页面有没有已经贴过这个标签，避免重复打"
+    },
+    {
+      "id": "write:tags",
+      "reason": "给陈旧页打上 #待整理 标签（每一页都会先出草稿，你确认后才落库）"
+    }
+  ]
+}
