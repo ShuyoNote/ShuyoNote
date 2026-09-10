@@ -31,6 +31,8 @@ const PLUGIN: PluginMeta = {
   description: "",
   enabled: true,
   commands: [],
+  permissions: [{ id: "read:pages", title: "读取本空间页面统计", reason: "为了显示页面数", risk: "low" }],
+  permissions_baseline: false,
 };
 
 const lastToast = () => {

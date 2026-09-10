@@ -53,10 +53,11 @@ jobs:
       - name: 同步一致性（两设备并发，真实 applyChange + 真实 sql.js）
         run: node scripts/verify-two-device-sync.mjs
 
-      - name: 版本 / 命令契约 / 文档链接
+      - name: 版本 / 命令契约 / 能力注册表 / 文档链接
         run: |
           node scripts/check-versions.mjs
           node scripts/check-web-commands.mjs
+          node scripts/check-capabilities.mjs
           node scripts/check-doc-links.mjs
 
   mobile-layout:

@@ -125,7 +125,11 @@ export const usePlugins = create<PluginsState>((set) => ({
       // 后端装完就返回该插件的 meta（Web 版是 no-op，返回 undefined）。
       const meta = await api.installPlugin(sourcePath);
       await usePlugins.getState().load();
-      toast(meta?.name ? `已安装插件「${meta.name}」` : "插件安装成功", "success");
+      // 新装的插件默认**未启用**：提示用户先看权限再启用（安装不等于授权）。
+      toast(
+        meta?.name ? `已安装插件「${meta.name}」（默认未启用，请确认权限后点「启用」）` : "插件安装成功",
+        "success",
+      );
       return { ok: true };
     } catch (e) {
       console.error("install plugin failed", e);

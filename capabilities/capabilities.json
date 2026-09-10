@@ -1,0 +1,120 @@
+{
+  "registryVersion": 1,
+  "apiVersion": "1.0.0",
+  "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
+  "permissions": [
+    {
+      "id": "read:page.current",
+      "title": "读取当前页正文",
+      "risk": "low",
+      "desc": "读取当前打开页面的 content_json"
+    },
+    {
+      "id": "read:pages",
+      "title": "读取本空间页面统计",
+      "risk": "low",
+      "desc": "读取本空间的页面数量等汇总信息（不含正文）"
+    },
+    {
+      "id": "write:page.current",
+      "title": "向当前页写入纯文本",
+      "risk": "low",
+      "desc": "往当前页面插入一段纯文本（不接受 HTML/Markdown，不可删改既有内容）"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "page.current",
+      "title": "读取当前页",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:page.current",
+      "since": "1.0.0",
+      "jsPath": ["page", "current"],
+      "args": [],
+      "returns": {
+        "type": "string",
+        "desc": "当前页的 content_json 原始字符串（未解析；插件自行 JSON.parse）"
+      },
+      "rust": "cap_page_current"
+    },
+    {
+      "id": "pages.count",
+      "title": "本空间页面总数",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.0.0",
+      "jsPath": ["pages", "count"],
+      "args": [],
+      "returns": { "type": "number", "desc": "本空间未删除页面的数量" },
+      "rust": "cap_pages_count"
+    },
+    {
+      "id": "editor.insertText",
+      "title": "向当前页插入纯文本",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:page.current",
+      "since": "1.0.0",
+      "jsPath": ["editor", "insertText"],
+      "args": [{ "name": "text", "type": "string", "required": true, "desc": "要插入的纯文本" }],
+      "returns": { "type": "void" },
+      "rust": "cap_editor_insert_text"
+    },
+    {
+      "id": "user.notify",
+      "title": "向用户显示一条提示",
+      "kind": "host",
+      "scope": "app",
+      "permission": null,
+      "since": "1.0.0",
+      "jsPath": ["notify"],
+      "args": [{ "name": "message", "type": "string", "required": true, "desc": "提示内容" }],
+      "returns": { "type": "void", "desc": "执行结束后随结果一起弹给用户" },
+      "rust": "cap_user_notify"
+    },
+    {
+      "id": "log.write",
+      "title": "写作者侧日志",
+      "kind": "host",
+      "scope": "app",
+      "permission": null,
+      "since": "1.0.0",
+      "jsPath": ["log"],
+      "args": [
+        { "name": "message", "type": "string", "required": true, "desc": "日志内容" },
+        {
+          "name": "level",
+          "type": "string",
+          "required": false,
+          "default": "info",
+          "enum": ["info", "warn", "error"],
+          "desc": "日志级别"
+        }
+      ],
+      "returns": { "type": "void", "desc": "进插件日志环形缓冲，可在插件面板查看" },
+      "rust": "cap_log_write"
+    }
+  ],
+  "legacyGlobals": [
+    {
+      "global": "__get_current_page",
+      "capability": "page.current",
+      "note": "v1 之前的老写法，保留以兼容已装在磁盘上的插件；新插件请用 api.*"
+    },
+    { "global": "__pages", "capability": "pages.count", "note": "同上（注意：返回数量而非列表）" },
+    { "global": "__toast", "capability": "user.notify", "note": "同上" },
+    { "global": "__insert", "capability": "editor.insertText", "note": "同上" }
+  ],
+  "errorCodes": [
+    { "code": "unknown_capability", "desc": "调用了注册表里没有的能力" },
+    { "code": "permission_denied", "desc": "插件未在 manifest.permissions 里声明该能力所需权限" },
+    { "code": "bad_args", "desc": "能力参数不符合注册表里的 args 声明" },
+    { "code": "space_locked", "desc": "目标空间处于锁定态（E1 加密），不可读（留待 M11.7 / 方案 §3.9 使用）" },
+    { "code": "timeout", "desc": "执行超出墙钟预算" },
+    { "code": "loop_limit", "desc": "执行超出循环预算" },
+    { "code": "out_of_memory", "desc": "执行超出内存预算（64 MiB）" },
+    { "code": "plugin_error", "desc": "插件自身抛错" }
+  ]
+}

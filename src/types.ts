@@ -89,6 +89,19 @@ export interface PluginMeta {
   description: string;
   enabled: boolean;
   commands: PluginCommandMeta[];
+  /** 这个插件要哪些权限、为什么 —— 直接摊给用户看（「用户敢装」的前提）。 */
+  permissions: PluginPermissionMeta[];
+  /** 是否走了「旧 manifest 未声明权限」的基线授权（界面要如实标注）。 */
+  permissions_baseline: boolean;
+}
+
+export interface PluginPermissionMeta {
+  id: string;
+  /** 人类可读标题（来自能力注册表），不是裸 id。 */
+  title: string;
+  /** 插件作者写的理由。 */
+  reason: string;
+  risk: string;
 }
 
 /** 插件在本次执行里通过 `__toast(...)` 发出的提示（随结果回传，由前端弹出）。 */

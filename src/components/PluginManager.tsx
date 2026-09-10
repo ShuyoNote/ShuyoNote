@@ -64,6 +64,22 @@ export function PluginManager() {
                 </div>
                 <div className="pm-item-desc">{p.description || "—"}</div>
                 <div className="pm-item-cmds">{p.commands.length} 个命令</div>
+                {/* 权限 + 理由必须摊在用户面前：新装的插件默认禁用，用户看完再启用。 */}
+                {p.permissions.length === 0 ? (
+                  <div className="pm-item-perms">不需要任何权限</div>
+                ) : (
+                  <div className="pm-item-perms">
+                    需要权限：
+                    {p.permissions.map((perm) => (
+                      <span key={perm.id} className={`pm-perm${perm.risk === "high" ? " pm-perm-high" : ""}`} title={perm.reason || perm.id}>
+                        {perm.title}
+                      </span>
+                    ))}
+                    {p.permissions_baseline && (
+                      <span className="pm-perm-baseline">旧插件：未声明权限，按基线授权</span>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="pm-item-actions">
                 <button onClick={() => toggle(p.id)}>{p.enabled ? "禁用" : "启用"}</button>

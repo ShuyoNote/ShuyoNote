@@ -1,3 +1,4 @@
+use crate::capabilities_gen;
 use crate::db::Db;
 use boa_engine::vm::RuntimeLimits;
 use boa_engine::{Context, JsString, JsValue, NativeFunction, Source};
@@ -32,6 +33,47 @@ pub struct PluginMeta {
     pub description: String,
     pub enabled: bool,
     pub commands: Vec<PluginCommandMeta>,
+    /// 这个插件要哪些权限、为什么 —— 直接摊给用户看（「用户敢装」的前提）。
+    pub permissions: Vec<PluginPermissionMeta>,
+    /// 是否走了「老 manifest 无 permissions」的基线授权（界面需要如实标注）。
+    pub permissions_baseline: bool,
+}
+
+/// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
+#[derive(Serialize, Clone)]
+pub struct PluginPermissionMeta {
+    pub id: String,
+    pub title: String,
+    pub reason: String,
+    pub risk: String,
+}
+
+/// 把 manifest 的权限声明整理成给用户看的清单。
+fn permission_metas(manifest: &Manifest) -> (Vec<PluginPermissionMeta>, bool) {
+    let baseline = manifest.permissions.is_none();
+    let (granted, _) = resolve_permissions(manifest);
+    let reasons: std::collections::HashMap<&str, &str> = manifest
+        .permissions
+        .as_ref()
+        .map(|ds| ds.iter().map(|d| (d.id.as_str(), d.reason.as_str())).collect())
+        .unwrap_or_default();
+    let metas = granted
+        .iter()
+        .map(|id| {
+            let p = capabilities_gen::permission(id);
+            PluginPermissionMeta {
+                id: id.clone(),
+                title: p.map(|p| p.title.to_string()).unwrap_or_else(|| id.clone()),
+                reason: if baseline {
+                    "（旧 manifest 未声明权限，按 v1 基线授权）".to_string()
+                } else {
+                    reasons.get(id.as_str()).copied().unwrap_or_default().to_string()
+                },
+                risk: p.map(|p| p.risk.to_string()).unwrap_or_default(),
+            }
+        })
+        .collect();
+    (metas, baseline)
 }
 
 // The `__od` host object methods read the current invocation from here.
@@ -46,6 +88,8 @@ struct RunState {
     page_count: usize,
     /// Text a plugin requested to insert at the cursor via `__insert(...)`.
     insert_text: String,
+    /// 本次执行被授权的权限（来自 manifest.permissions；老 manifest 走基线授权）。
+    permissions: Vec<String>,
     /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
     /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
     toasts: Vec<String>,
@@ -103,7 +147,7 @@ fn push_log(plugin_id: &str, level: &str, message: &str) {
 // Manifest
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 struct Manifest {
     id: String,
     name: String,
@@ -116,6 +160,19 @@ struct Manifest {
     author: Option<String>,
     #[serde(default = "default_main")]
     main: String,
+    /// 插件针对的 API 版本（如 `"1.0.0"`）。缺省按当前版本处理并记一条警告。
+    #[serde(default, rename = "apiVersion")]
+    api_version: Option<String>,
+    /// 逐条声明的权限，带理由。缺省 = 走 v1 基线授权（见 resolve_permissions）。
+    #[serde(default)]
+    permissions: Option<Vec<PermissionDecl>>,
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+struct PermissionDecl {
+    id: String,
+    #[serde(default)]
+    reason: String,
 }
 
 fn default_main() -> String {
@@ -180,6 +237,16 @@ fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     if !is_bare_file_name(&m.main) {
         return Err("manifest.main 必须是同级文件名（不得含路径分隔符，也不得是 . 或 ..）".to_string());
     }
+    // ABI 闸门：主版本不认识就直接拒载，而不是让插件在运行时零零碎碎地失败。
+    if let Some(v) = &m.api_version {
+        let major = v.split('.').next().unwrap_or_default().parse::<u32>().unwrap_or(0);
+        if major != capabilities_gen::API_MAJOR {
+            return Err(format!(
+                "插件 API 主版本不受支持：manifest.apiVersion={v}，本应用支持 {}",
+                capabilities_gen::API_VERSION
+            ));
+        }
+    }
     Ok(m)
 }
 
@@ -194,6 +261,10 @@ fn load_plugin_source(dir: &Path, manifest: &Manifest) -> Result<String, String>
 // ---------------------------------------------------------------------------
 // Boa runtime (restricted)
 // ---------------------------------------------------------------------------
+
+/// 插件看到的 `api.*`（由 capabilities/capabilities.json 生成）。
+/// 宿主只认 `__cap(method, argsJson)` 一个原语，换引擎/加传输都不破坏插件（方案 §3.3）。
+const API_SHIM: &str = include_str!("../../capabilities/plugin-api-shim.js");
 
 const BOOTSTRAP: &str = r#"
 var __cmds = {};
@@ -315,24 +386,6 @@ where
 }
 
 
-fn host_get_current_page(
-    _this: &JsValue,
-    _args: &[JsValue],
-    _ctx: &mut Context,
-) -> boa_engine::JsResult<JsValue> {
-    let json = RUN_STATE.with(|s| s.borrow().current_page_json.clone());
-    Ok(JsString::from(json).into())
-}
-
-fn host_page_count(
-    _this: &JsValue,
-    _args: &[JsValue],
-    _ctx: &mut Context,
-) -> boa_engine::JsResult<JsValue> {
-    let n = RUN_STATE.with(|s| s.borrow().page_count);
-    Ok(JsValue::from(n as i64))
-}
-
 /// 取第 `idx` 个参数并转成 Rust 字符串（类型不符/缺失一律当空串）。
 fn js_string_arg(args: &[JsValue], idx: usize) -> String {
     args.get(idx)
@@ -343,59 +396,212 @@ fn js_string_arg(args: &[JsValue], idx: usize) -> String {
 
 /// `__toast(msg)`：插件给用户的一句提示。
 ///
-/// 现在**真的能到用户眼前**：提示随本次调用结果回传前端、由前端弹 toast，
-/// 同时进日志环形缓冲供作者侧排查。此前只 `eprintln!`，用户完全看不到。
-fn host_toast(
-    _this: &JsValue,
-    args: &[JsValue],
-    _ctx: &mut Context,
-) -> boa_engine::JsResult<JsValue> {
-    let msg = js_string_arg(args, 0);
-    if !msg.is_empty() {
-        let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
-        push_log(&pid, "info", &msg);
-        RUN_STATE.with(|s| s.borrow_mut().toasts.push(msg));
-    }
-    Ok(JsValue::undefined())
-}
-
 /// `__log(level, msg)`：作者侧日志。
 ///
-/// 必要性：插件的运行时**连 `console` 都没有**（`boa_engine` 0.21 不含 console
-/// 对象，它只在 `boa_runtime` 里），此前作者在沙箱里没有任何打日志的手段，
-/// 排错只能靠猜。日志进环形缓冲，可在插件面板里查看。
-fn host_log(
-    _this: &JsValue,
-    args: &[JsValue],
-    _ctx: &mut Context,
-) -> boa_engine::JsResult<JsValue> {
-    let level = js_string_arg(args, 0);
-    let msg = js_string_arg(args, 1);
-    let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
-    let level = if level.is_empty() { "info" } else { level.as_str() };
-    push_log(&pid, level, &msg);
-    Ok(JsValue::undefined())
+// `__insert(text)`: request the plugin's text be inserted into the current page.
+// ---------------------------------------------------------------------------
+// 能力派发：宿主能力面的**唯一入口**
+// ---------------------------------------------------------------------------
+
+/// v1 基线权限：给「没有 permissions 字段的老 manifest」用，避免升级即失效。
+fn baseline_permissions() -> Vec<String> {
+    capabilities_gen::permission_ids().iter().map(|s| s.to_string()).collect()
 }
 
-// `__insert(text)`: request the plugin's text be inserted into the current page.
-fn host_insert(
-    _this: &JsValue,
-    args: &[JsValue],
-    _ctx: &mut Context,
-) -> boa_engine::JsResult<JsValue> {
-    let text = js_string_arg(args, 0);
-    if !text.is_empty() {
-        RUN_STATE.with(|s| s.borrow_mut().insert_text.push_str(&text));
+/// 解析 manifest 的能力授权，并给出要记录给用户的警告。
+///
+///   - 没有 `permissions` 字段 → v1 基线授权 + 警告（老插件兼容）；
+///   - 声明了但引用了本版本不认识的权限 → 忽略该条 + 警告（前向兼容）；
+///   - 声明了权限但没写 `reason` → 警告（用户看不到它为什么要这项权限）。
+fn resolve_permissions(manifest: &Manifest) -> (Vec<String>, Vec<String>) {
+    let mut warnings = Vec::new();
+    if manifest.api_version.is_none() {
+        warnings.push(format!(
+            "manifest 未声明 apiVersion：按 {} 处理（建议显式声明）",
+            capabilities_gen::API_VERSION
+        ));
     }
-    Ok(JsValue::undefined())
+    match &manifest.permissions {
+        None => {
+            warnings.push(
+                "manifest 未声明 permissions：按 v1 基线权限授权（新插件请显式声明）".to_string(),
+            );
+            (baseline_permissions(), warnings)
+        }
+        Some(decls) => {
+            let mut granted: Vec<String> = Vec::new();
+            for d in decls {
+                if capabilities_gen::permission(&d.id).is_some() {
+                    if d.reason.trim().is_empty() {
+                        warnings.push(format!(
+                            "权限 {} 没有写 reason（用户看不到它为什么要这项权限）",
+                            d.id
+                        ));
+                    }
+                    if !granted.contains(&d.id) {
+                        granted.push(d.id.clone());
+                    }
+                } else {
+                    warnings.push(format!("忽略未知权限 {}（当前 API 版本不认识它）", d.id));
+                }
+            }
+            (granted, warnings)
+        }
+    }
+}
+
+/// 一个能力的实现：成功给 JSON 值（shim 侧 JSON.parse），失败给「错误码: 说明」。
+type CapResult = Result<serde_json::Value, String>;
+
+fn cap_page_current() -> CapResult {
+    Ok(serde_json::Value::String(
+        RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
+    ))
+}
+
+fn cap_pages_count() -> CapResult {
+    Ok(serde_json::json!(RUN_STATE.with(|s| s.borrow().page_count)))
+}
+
+fn cap_editor_insert_text(text: &str) -> CapResult {
+    if !text.is_empty() {
+        RUN_STATE.with(|s| s.borrow_mut().insert_text.push_str(text));
+    }
+    Ok(serde_json::Value::Null)
+}
+
+fn cap_user_notify(message: &str) -> CapResult {
+    if !message.is_empty() {
+        let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+        push_log(&pid, "info", message);
+        RUN_STATE.with(|s| s.borrow_mut().toasts.push(message.to_string()));
+    }
+    Ok(serde_json::Value::Null)
+}
+
+fn cap_log_write(message: &str, level: &str) -> CapResult {
+    let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    let level = if level.is_empty() { "info" } else { level };
+    push_log(&pid, level, message);
+    Ok(serde_json::Value::Null)
+}
+
+/// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
+/// 所以权限校验只有一个点，不存在绕过路径。
+fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
+    let cap = capabilities_gen::lookup(method)
+        .ok_or_else(|| format!("unknown_capability: 宿主没有名为 {method} 的能力"))?;
+
+    // 权限：逐次调用校验，不是只在 UI 上隐藏。
+    if let Some(perm) = cap.permission {
+        let granted = RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == perm));
+        if !granted {
+            return Err(format!(
+                "permission_denied: 能力 {method} 需要权限 {perm}，但 manifest.permissions 未声明它"
+            ));
+        }
+    }
+
+    let args: serde_json::Value = if args_json.trim().is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(args_json).map_err(|e| format!("bad_args: 参数不是合法 JSON（{e}）"))?
+    };
+    let arg_str = |name: &str| -> Result<String, String> {
+        match args.get(name) {
+            Some(serde_json::Value::String(v)) => Ok(v.clone()),
+            Some(other) => Ok(other.to_string()), // 宽容：非字符串就 stringify
+            None => Err(format!("bad_args: 缺少参数 {name}")),
+        }
+    };
+
+    let out = match cap.id {
+        "page.current" => cap_page_current(),
+        "pages.count" => cap_pages_count(),
+        "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
+        "user.notify" => cap_user_notify(&arg_str("message")?),
+        "log.write" => {
+            let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+            cap_log_write(&arg_str("message")?, level)
+        }
+        other => return Err(format!("unknown_capability: {other}")),
+    }?;
+    serde_json::to_string(&out).map_err(|e| e.to_string())
+}
+
+/// `__cap(method, argsJson)` → JSON 字符串（shim 侧解析）。
+/// 失败抛 JS 异常：插件可以 catch，也可以让宿主把它显示成可见错误。
+fn host_cap(_this: &JsValue, args: &[JsValue], _ctx: &mut Context) -> boa_engine::JsResult<JsValue> {
+    let method = js_string_arg(args, 0);
+    let args_json = js_string_arg(args, 1);
+    match dispatch_capability(&method, &args_json) {
+        Ok(json) => Ok(JsString::from(json).into()),
+        Err(e) => Err(boa_engine::JsNativeError::error().with_message(e).into()),
+    }
+}
+
+/// 老全局名（v1 之前）：内部走同一套派发，保证权限校验不被绕过。
+/// 仅用于兼容已装在磁盘上的插件——新插件请用 `api.*`。
+fn legacy_dispatch(id: &str, args_json: &str) -> boa_engine::JsResult<JsValue> {
+    match dispatch_capability(id, args_json) {
+        Ok(json) => Ok(JsString::from(json).into()),
+        Err(e) => Err(boa_engine::JsNativeError::error().with_message(e).into()),
+    }
+}
+
+fn legacy_get_current_page(
+    _t: &JsValue,
+    _a: &[JsValue],
+    _c: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    legacy_dispatch("page.current", "{}")
+}
+
+fn legacy_pages(_t: &JsValue, _a: &[JsValue], _c: &mut Context) -> boa_engine::JsResult<JsValue> {
+    legacy_dispatch("pages.count", "{}")
+}
+
+fn legacy_toast(_t: &JsValue, args: &[JsValue], _c: &mut Context) -> boa_engine::JsResult<JsValue> {
+    let message = js_string_arg(args, 0);
+    legacy_dispatch(
+        "user.notify",
+        &serde_json::json!({ "message": message }).to_string(),
+    )
+}
+
+fn legacy_insert(_t: &JsValue, args: &[JsValue], _c: &mut Context) -> boa_engine::JsResult<JsValue> {
+    let text = js_string_arg(args, 0);
+    legacy_dispatch(
+        "editor.insertText",
+        &serde_json::json!({ "text": text }).to_string(),
+    )
+}
+
+/// 老写法是 `__log(level, message)`（新的 `api.log(message, level)` 参数顺序相反）。
+fn legacy_log(_t: &JsValue, args: &[JsValue], _c: &mut Context) -> boa_engine::JsResult<JsValue> {
+    let level = js_string_arg(args, 0);
+    let message = js_string_arg(args, 1);
+    legacy_dispatch(
+        "log.write",
+        &serde_json::json!({ "message": message, "level": level }).to_string(),
+    )
+}
+
+/// evaluate 插件前导：BOOTSTRAP（register / __describe / __run）+ 生成的 api.* shim。
+/// 两处执行路径（发现与运行）必须用同一套前导，否则 ABI 会分叉。
+fn eval_plugin_preamble(ctx: &mut Context) -> Result<(), String> {
+    ctx.eval(Source::from_bytes(BOOTSTRAP.as_bytes()))
+        .map_err(|e| format!("bootstrap 失败: {e}"))?;
+    ctx.eval(Source::from_bytes(API_SHIM.as_bytes()))
+        .map_err(|e| format!("api shim 加载失败: {e}"))?;
+    Ok(())
 }
 
 /// Run a plugin's `main.js` and collect the registered command metadata.
 fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommandMeta>, String> {
     let mut ctx = plugin_context(DISCOVER_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
-    ctx.eval(Source::from_bytes(BOOTSTRAP.as_bytes()))
-        .map_err(|e| format!("bootstrap 失败: {e}"))?;
+    eval_plugin_preamble(&mut ctx)?;
     ctx.eval(Source::from_bytes(source.as_bytes()))
         .map_err(|e| format!("插件初始化失败: {e}"))?;
     // 命令元数据由 BOOTSTRAP 的 `__describe()` 以 JSON 形式交回。
@@ -416,16 +622,19 @@ fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommand
 /// 带墙钟超时的 discovery：插件顶层代码跑在独立线程里，超时不再挂住调用方。
 fn discover_commands_timed(
     plugin_id: &str,
+    permissions: &[String],
     source: &str,
     timeout: Duration,
 ) -> Result<Vec<PluginCommandMeta>, String> {
     let src = source.to_string();
     let pid = plugin_id.to_string();
+    let perms = permissions.to_vec();
     with_timeout(timeout, "插件加载", move || {
         discover_commands(
             &src,
             &RunState {
                 plugin_id: pid,
+                permissions: perms,
                 ..Default::default()
             },
         )
@@ -433,42 +642,29 @@ fn discover_commands_timed(
 }
 
 fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
-    ctx.register_global_callable(
-        JsString::from("__get_current_page"),
+    let mut reg = |name: &str, argc: usize, f: NativeFunction| -> Result<(), String> {
+        ctx.register_global_callable(JsString::from(name), argc, f)
+            .map_err(|e| e.to_string())
+    };
+    // 唯一的能力原语：生成的 api.* shim 调它（换引擎/加传输都不破坏插件）。
+    reg("__cap", 2, NativeFunction::from_fn_ptr(host_cap))?;
+    // v1 之前的老全局名：仅为兼容已装在磁盘上的插件。它们内部走**同一套**派发与权限校验，
+    // 所以不构成绕过点；新插件请用 api.*。
+    reg(
+        "__get_current_page",
         0,
-        NativeFunction::from_fn_ptr(host_get_current_page),
-    )
-    .map_err(|e| e.to_string())?;
-    ctx.register_global_callable(
-        JsString::from("__pages"),
-        0,
-        NativeFunction::from_fn_ptr(host_page_count),
-    )
-    .map_err(|e| e.to_string())?;
-    ctx.register_global_callable(
-        JsString::from("__toast"),
-        1,
-        NativeFunction::from_fn_ptr(host_toast),
-    )
-    .map_err(|e| e.to_string())?;
-    ctx.register_global_callable(
-        JsString::from("__insert"),
-        1,
-        NativeFunction::from_fn_ptr(host_insert),
-    )
-    .map_err(|e| e.to_string())?;
-    // `__log(level, msg)`：作者侧日志（插件运行时没有 console，见 host_log）。
-    ctx.register_global_callable(
-        JsString::from("__log"),
-        2,
-        NativeFunction::from_fn_ptr(host_log),
-    )
-    .map_err(|e| e.to_string())?;
+        NativeFunction::from_fn_ptr(legacy_get_current_page),
+    )?;
+    reg("__pages", 0, NativeFunction::from_fn_ptr(legacy_pages))?;
+    reg("__toast", 1, NativeFunction::from_fn_ptr(legacy_toast))?;
+    reg("__insert", 1, NativeFunction::from_fn_ptr(legacy_insert))?;
+    reg("__log", 2, NativeFunction::from_fn_ptr(legacy_log))?;
     RUN_STATE.with(|s| {
         *s.borrow_mut() = RunState {
             plugin_id: state.plugin_id.clone(),
             current_page_json: state.current_page_json.clone(),
             page_count: state.page_count,
+            permissions: state.permissions.clone(),
             insert_text: String::new(),
             toasts: Vec::new(),
         }
@@ -481,8 +677,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
 fn run_command(source: &str, command_id: &str, state: &RunState) -> Result<String, String> {
     let mut ctx = plugin_context(RUN_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
-    ctx.eval(Source::from_bytes(BOOTSTRAP.as_bytes()))
-        .map_err(|e| format!("bootstrap 失败: {e}"))?;
+    eval_plugin_preamble(&mut ctx)?;
     ctx.eval(Source::from_bytes(source.as_bytes()))
         .map_err(|e| format!("插件初始化失败: {e}"))?;
     // __run('<id>') — Rust `{:?}` yields a quoted, escaped JS string literal.
@@ -516,6 +711,7 @@ fn run_command_timeout(
         plugin_id: state.plugin_id.clone(),
         current_page_json: state.current_page_json.clone(),
         page_count: state.page_count,
+        permissions: state.permissions.clone(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
@@ -563,15 +759,19 @@ pub fn ensure_demo_plugin(app: &AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(
         dir.join("manifest.json"),
-        r#"{"id":"demo","name":"示例插件","version":"0.1.0","description":"ShuyoNote 示例插件","main":"main.js"}"#,
+        r#"{"id":"demo","name":"示例插件","version":"0.2.0","description":"ShuyoNote 示例插件（用 v1 的 api.* 写）","apiVersion":"1.0.0","main":"main.js","permissions":[{"id":"read:pages","reason":"在提示里显示本空间页面数"},{"id":"read:page.current","reason":"演示读取当前页"},{"id":"write:page.current","reason":"演示把文本插入当前页"}]}"#,
     )
     .map_err(|e| e.to_string())?;
     std::fs::write(
         dir.join("main.js"),
         r#"
-register({ id: "demo.hello", title: "你好", description: "示例命令", closeOnRun: false, run: function(){ return "你好，ShuyoNote！页面数=" + __pages(); } });
-register({ id: "demo.toast", title: "提示", description: "调用 toast", closeOnRun: false, run: function(){ __toast("来自示例插件的提示"); return "已调用 toast"; } });
-register({ id: "demo.insert", title: "插入文本", description: "把一段文本插入到当前页面", closeOnRun: false, run: function(){ __insert("由示例插件插入的一段文本。"); return "已请求插入文本"; } });
+// 示例插件：用 API v1 的 api.* 写。日志见「插件管理 → 日志」。
+register({ id: "demo.hello", title: "你好", description: "示例命令：读取本空间页面数", closeOnRun: false,
+  run: function(){ api.log("demo.hello 开始执行"); api.notify("你好，ShuyoNote！本空间页面数=" + api.pages.count()); return "你好，ShuyoNote！"; } });
+register({ id: "demo.inspect", title: "查看当前页", description: "演示读取当前页的 content_json", closeOnRun: false,
+  run: function(){ var raw = api.page.current(); return raw ? ("当前页 JSON 长度=" + raw.length) : "没有打开页面"; } });
+register({ id: "demo.insert", title: "插入文本", description: "把一段文本插入到当前页面", closeOnRun: false,
+  run: function(){ api.editor.insertText("由示例插件插入的一段文本。"); return "已请求插入文本"; } });
 "#,
     )
     .map_err(|e| e.to_string())?;
@@ -656,9 +856,15 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             Ok(s) => s,
             Err(_) => continue,
         };
-        let commands = discover_commands_timed(&manifest.id, &source, DISCOVER_TIMEOUT)
-            .unwrap_or_default();
+        let (permissions, warnings) = resolve_permissions(&manifest);
+        for w in &warnings {
+            push_log(&manifest.id, "warn", w);
+        }
+        let commands =
+            discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)
+                .unwrap_or_default();
         let pid = manifest.id.clone();
+        let (permissions, permissions_baseline) = permission_metas(&manifest);
         out.push(PluginMeta {
             id: pid.clone(),
             name: manifest.name,
@@ -666,6 +872,8 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             description: manifest.description,
             enabled: enabled_map.get(&pid).copied().unwrap_or(false),
             commands,
+            permissions,
+            permissions_baseline,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -723,10 +931,15 @@ pub async fn run_plugin_command(
         };
         (page_count, current_page_json)
     };
+    let (permissions, warnings) = resolve_permissions(&manifest);
+    for w in &warnings {
+        push_log(&plugin_id, "warn", w);
+    }
     let state = RunState {
         plugin_id: plugin_id.clone(),
         page_count,
         current_page_json,
+        permissions,
         insert_text: String::new(),
         toasts: Vec::new(),
     };
@@ -770,7 +983,11 @@ pub fn uninstall_plugin(app: AppHandle, db: State<Db>, id: String) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn install_plugin(app: AppHandle, source_path: String) -> Result<PluginMeta, String> {
+pub async fn install_plugin(
+    app: AppHandle,
+    db: State<'_, Db>,
+    source_path: String,
+) -> Result<PluginMeta, String> {
     let src = PathBuf::from(&source_path);
     if !src.is_dir() {
         return Err("插件源目录不存在".to_string());
@@ -784,7 +1001,12 @@ pub async fn install_plugin(app: AppHandle, source_path: String) -> Result<Plugi
     }
     let source = load_plugin_source(&src, &manifest)?;
     // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
-    let commands = discover_commands_timed(&manifest.id, &source, DISCOVER_TIMEOUT)?;
+    // 权限警告先记下来，装完在插件日志里就能看到（例如"没写 permissions，走基线授权"）。
+    let (permissions, warnings) = resolve_permissions(&manifest);
+    for w in &warnings {
+        push_log(&manifest.id, "warn", w);
+    }
+    let commands = discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)?;
 
     let dest = plugins_root(&app)?.join(&manifest.id);
     if dest.exists() {
@@ -796,13 +1018,19 @@ pub async fn install_plugin(app: AppHandle, source_path: String) -> Result<Plugi
         let _ = std::fs::remove_dir_all(&dest);
         return Err(format!("安装失败（已回滚）：{e}"));
     }
+    // 新装的插件**默认禁用**：先让用户看清它要哪些权限、干什么，再自己去启用。
+    // （插件默认启用时，"安装"就等于一次性授予了它声明的全部数据访问权。）
+    set_enabled(&conn(&db), &manifest.id, false)?;
+    let (permissions, permissions_baseline) = permission_metas(&manifest);
     Ok(PluginMeta {
         id: manifest.id,
         name: manifest.name,
         version: manifest.version,
         description: manifest.description,
-        enabled: true,
+        enabled: false,
         commands,
+        permissions,
+        permissions_baseline,
     })
 }
 
@@ -866,7 +1094,11 @@ mod tests {
 register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
   run: function(){ return "hi " + __pages(); } });
 "#;
-        let state = RunState { page_count: 7, ..Default::default() };
+        let state = RunState {
+            page_count: 7,
+            permissions: vec!["read:pages".to_string()],
+            ..Default::default()
+        };
         let res = run_command(source, "t.hello", &state).unwrap();
         assert_eq!(res, "hi 7");
     }
@@ -886,7 +1118,10 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
 register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
   run: function(){ __insert("hello from plugin"); return "ok"; } });
 "#;
-        let state = RunState { page_count: 0, ..Default::default() };
+        let state = RunState {
+            permissions: vec!["write:page.current".to_string()],
+            ..Default::default()
+        };
         let message = run_command(source, "t.ins", &state).unwrap();
         assert_eq!(message, "ok");
         let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
@@ -942,7 +1177,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         // 此前 discovery 完全没有超时：插件顶层写个 while(true) 就能让
         // list_plugins 永不返回（而那是同步命令，会占住调用线程）。
         let started = std::time::Instant::now();
-        let res = discover_commands_timed("t.discover", "while(true){}", DISCOVER_TIMEOUT);
+        let res = discover_commands_timed("t.discover", &[], "while(true){}", DISCOVER_TIMEOUT);
         assert!(res.is_err(), "顶层死循环应当失败而不是成功");
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -1094,6 +1329,187 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // 永远是 false。现在由 JS 的 __describe() 给出真布尔值。
         assert!(!cmds[0].close_on_run);
         assert!(cmds[1].close_on_run, "closeOnRun: true 必须被解析出来");
+    }
+
+    // ---- 能力注册表 / api.* / 权限 ----
+
+    fn state_with(permissions: &[&str]) -> RunState {
+        RunState {
+            plugin_id: "t".to_string(),
+            permissions: permissions.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn api_shim_exposes_v1_surface_with_permissions() {
+        let _g = log_test_guard();
+        clear_plugin_logs();
+        let source = r#"register({ id: "t.api", title: "A", description: "", closeOnRun: false,
+  run: function(){
+    api.log("来自 api.log");
+    api.notify("来自 api.notify");
+    api.editor.insertText("新文本");
+    return "count=" + api.pages.count();
+  } });"#;
+        let state = state_with(&["read:pages", "write:page.current"]);
+        let (msg, insert, toasts) = run_command_timeout(source, "t.api", &state).unwrap();
+        assert_eq!(msg, "count=0");
+        assert_eq!(insert, "新文本");
+        assert_eq!(toasts, vec!["来自 api.notify".to_string()]);
+        let logs = plugin_logs(Some("t".to_string()), None);
+        assert!(logs.iter().any(|l| l.message == "来自 api.log"));
+    }
+
+    #[test]
+    fn capability_call_without_declared_permission_is_denied() {
+        // 关键性质：权限是**后端逐次调用校验**的，不是只在 UI 上隐藏。
+        let source = r#"register({ id: "t.deny", title: "D", description: "", closeOnRun: false,
+  run: function(){ return "count=" + api.pages.count(); } });"#;
+        let res = run_command(source, "t.deny", &state_with(&[])).unwrap();
+        assert!(res.contains("permission_denied"), "实际: {res}");
+        assert!(res.contains("read:pages"), "错误里应点明缺哪个权限");
+    }
+
+    #[test]
+    fn legacy_globals_go_through_the_same_permission_check() {
+        // 老写法不能成为绕过点。
+        let source = r#"register({ id: "t.legacy", title: "L", description: "", closeOnRun: false,
+  run: function(){ return "count=" + __pages(); } });"#;
+        let denied = run_command(source, "t.legacy", &state_with(&[])).unwrap();
+        assert!(denied.contains("permission_denied"), "老全局也要过权限校验，实际: {denied}");
+
+        let mut ok_state = state_with(&["read:pages"]);
+        ok_state.page_count = 7;
+        assert_eq!(run_command(source, "t.legacy", &ok_state).unwrap(), "count=7");
+    }
+
+    #[test]
+    fn unknown_capability_is_rejected() {
+        let source = r#"register({ id: "t.unknown", title: "U", description: "", closeOnRun: false,
+  run: function(){ return String(__cap("pages.deleteEverything", "{}")); } });"#;
+        let res = run_command(source, "t.unknown", &state_with(&[])).unwrap();
+        assert!(res.contains("unknown_capability"), "实际: {res}");
+    }
+
+    #[test]
+    fn registered_api_surface_matches_the_generated_table() {
+        // 门禁之外的运行时抽检：注册表里的每条能力都真的能派发（不认识的能力会被拒）。
+        for cap in capabilities_gen::CAPABILITIES {
+            assert!(
+                capabilities_gen::lookup(cap.id).is_some(),
+                "{} 在表里却查不到",
+                cap.id
+            );
+            assert!(!cap.rust.is_empty(), "{} 缺少实现函数名", cap.id);
+        }
+        assert!(capabilities_gen::lookup("pages.deleteEverything").is_none());
+        assert_eq!(capabilities_gen::API_MAJOR, 1);
+    }
+
+    #[test]
+    fn manifest_api_major_is_enforced() {
+        let base = temp_dir("api-version");
+        let mk = |dir: &str, v: serde_json::Value| {
+            let d = base.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("manifest.json"), v.to_string()).unwrap();
+            d
+        };
+        let good = mk("good", serde_json::json!({"id":"good","name":"G","main":"main.js","apiVersion":"1.0.0"}));
+        assert!(read_manifest(&good).is_ok(), "同主版本应当放行");
+
+        let future = mk("future", serde_json::json!({"id":"future","name":"F","main":"main.js","apiVersion":"2.0.0"}));
+        let err = read_manifest(&future).unwrap_err();
+        assert!(err.contains("主版本不受支持"), "实际: {err}");
+
+        // 缺 apiVersion：放行（老 manifest 兼容），由 resolve_permissions 记警告
+        let legacy = mk("legacy", serde_json::json!({"id":"legacy","name":"L","main":"main.js"}));
+        assert!(read_manifest(&legacy).is_ok());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn missing_permissions_gets_the_v1_baseline_and_a_warning() {
+        let m = Manifest {
+            id: "legacy".into(),
+            name: "L".into(),
+            version: String::new(),
+            description: String::new(),
+            author: None,
+            main: "main.js".into(),
+            api_version: None,
+            permissions: None,
+        };
+        let (granted, warnings) = resolve_permissions(&m);
+        assert_eq!(
+            granted.len(),
+            capabilities_gen::PERMISSION_LIST.len(),
+            "老 manifest 应拿到基线授权"
+        );
+        assert!(warnings.iter().any(|w| w.contains("基线")), "应记录基线授权警告: {warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("apiVersion")), "应提醒补 apiVersion");
+    }
+
+    #[test]
+    fn unknown_permission_is_ignored_and_missing_reason_warns() {
+        let m = Manifest {
+            id: "p".into(),
+            name: "P".into(),
+            version: String::new(),
+            description: String::new(),
+            author: None,
+            main: "main.js".into(),
+            api_version: Some("1.0.0".into()),
+            permissions: Some(vec![
+                PermissionDecl { id: "read:pages".into(), reason: String::new() },
+                PermissionDecl { id: "net:https:example.com".into(), reason: "未来能力".into() },
+            ]),
+        };
+        let (granted, warnings) = resolve_permissions(&m);
+        assert_eq!(granted, vec!["read:pages".to_string()], "未知权限应被忽略而不是静默全拒");
+        assert!(warnings.iter().any(|w| w.contains("没有写 reason")));
+        assert!(warnings.iter().any(|w| w.contains("未知权限")));
+    }
+
+    #[test]
+    fn permission_metas_explains_what_is_granted() {
+        let declared = Manifest {
+            id: "p".into(),
+            name: "P".into(),
+            version: String::new(),
+            description: String::new(),
+            author: None,
+            main: "main.js".into(),
+            api_version: Some("1.0.0".into()),
+            permissions: Some(vec![PermissionDecl {
+                id: "read:pages".into(),
+                reason: "为了显示页面数".into(),
+            }]),
+        };
+        let (metas, baseline) = permission_metas(&declared);
+        assert!(!baseline);
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, "read:pages");
+        assert_eq!(metas[0].title, "读取本空间页面统计", "标题来自注册表，不是裸 id");
+        assert_eq!(metas[0].reason, "为了显示页面数");
+
+        // 老 manifest：走基线授权，且界面要能如实标注
+        let legacy = Manifest {
+            id: "l".into(),
+            name: "L".into(),
+            version: String::new(),
+            description: String::new(),
+            author: None,
+            main: "main.js".into(),
+            api_version: None,
+            permissions: None,
+        };
+        let (metas2, baseline2) = permission_metas(&legacy);
+        assert!(baseline2);
+        assert_eq!(metas2.len(), capabilities_gen::PERMISSION_LIST.len());
+        assert!(metas2[0].reason.contains("基线"), "基线授权必须说清楚是怎么来的");
     }
 
     // ---- 内存预算（分配炸弹） ----

@@ -18392,3 +18392,29 @@ p:has(> .editor-drawing-container) {
   }
 }
 
+
+/* 插件权限清单（id → 人类可读标题 + 作者给的理由） */
+.pm-item-perms {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.pm-perm {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  border-radius: 3px;
+  padding: 0 5px;
+  cursor: help;
+}
+.pm-perm-high {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.pm-perm-baseline {
+  color: var(--cat-orange);
+}

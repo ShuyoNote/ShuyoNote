@@ -12,6 +12,7 @@ mod email;
 mod smtp;
 mod graph;
 mod models;
+mod capabilities_gen;
 mod pdf_native;
 mod plugin_budget;
 mod plugins;
