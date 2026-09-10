@@ -258,6 +258,10 @@ pub struct PluginMeta {
     /// 有它，界面才能说清"这不是新装、是把它从 v1 换成了 v2"，而不是假装一切都全新。
     #[serde(default)]
     pub replaced_version: Option<String>,
+    /// 这个**已装的版本**被索引撤回过（离线记忆，见 `plugin_revocation`）。
+    /// 有值时：宿主已经拒绝运行它（除非 `ignored`），界面必须显示出来。
+    #[serde(default)]
+    pub revoked: Option<RevocationView>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -2685,7 +2689,8 @@ pub(crate) fn classify_run_error(e: &str) -> (String, String) {
     (code.to_string(), e.to_string())
 }
 
-/// 给同 crate 其它模块的测试用的小工具（不参与生产路径）。
+/// 给同 crate 其它模块的测试用的小工具（不参与生产路径，`cfg(test)` 时不编译）。
+#[cfg(test)]
 pub(crate) mod tests_support {
     use std::path::PathBuf;
 
@@ -3405,6 +3410,162 @@ fn record_install(
     Ok(())
 }
 
+/// 一条撤回记忆（`plugin_revocation` 一行）的展示形态。
+#[derive(Serialize, Clone, Debug)]
+pub struct RevocationView {
+    pub plugin_id: String,
+    pub version: String,
+    pub reason: String,
+    pub revoked_at: String,
+    pub seen_at: i64,
+    /// 用户明确说过"我知道，继续用"（在那之后不再拦运行/安装，但界面照旧显示）。
+    pub ignored: bool,
+}
+
+/// 把一份索引里"被撤回"的条目记进离线撤回列表。
+///
+/// 为什么必须落库：撤回的意义在于"**别再用这个版本**"，而用户可能再也不会重新拉这份索引
+/// （或者索引整个下线）。只在拉索引的那一刻显示一次"已撤回"，等于把安全性寄托在"用户正好
+/// 看到过"上。这里记下来之后，运行与安装两条路都会拦，且拦得住离线。
+///
+/// 只记 id/版本/原因这三种元数据。用户已经点过「仍然使用」时：
+/// **同一个版本**再看到一次就保住他的表态（刷新索引不该复活它），
+/// 而**换了版本**的撤回是一条新事实，要重新问他——否则一句「我知道」会顺着插件 id
+/// 无限延长到将来所有版本上，正好是撤回最该起作用的时候。
+fn record_revocations(c: &Connection, index: &plugin_index::PluginIndex) -> Result<usize, String> {
+    let now = now_ms();
+    let mut n = 0usize;
+    for e in index.plugins.iter().filter(|p| p.revoked_at.is_some()) {
+        let changed = c
+            .execute(
+                "INSERT INTO plugin_revocation (plugin_id, version, reason, revoked_at, seen_at, ignored_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)
+                 ON CONFLICT(plugin_id) DO UPDATE SET
+                     version = excluded.version,
+                     reason = excluded.reason,
+                     revoked_at = excluded.revoked_at,
+                     seen_at = excluded.seen_at,
+                     -- 同一个版本的撤回，用户表达过的意思要保住（刷新索引不该复活它）；
+                     -- 换成**另一个版本**的撤回则是新事实，得重新问他一次——否则一句
+                     -- 「我知道」会顺着插件 id 无限延长到将来所有版本上。
+                     ignored_at = CASE
+                         WHEN plugin_revocation.version = excluded.version
+                         THEN plugin_revocation.ignored_at
+                         ELSE NULL
+                     END",
+                params![
+                    e.id,
+                    e.version,
+                    e.revoked_reason,
+                    e.revoked_at.clone().unwrap_or_default(),
+                    now
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        n += changed;
+    }
+    Ok(n)
+}
+
+/// **运行前的三道闸门**（全部在后端强制，不靠前端从命令面板里过滤——IPC 直调绕不过）。
+///
+/// 顺序即优先级：先看用户自己的开关，再看"他同意过的那份能力"，最后看索引的撤回记忆。
+/// 抽成一个函数是为了**可测**：这三条各自都对应一次真实的事故类型（禁用插件照样被跑、
+/// 插件被换成更大声明后静默拿到新权限、有问题的版本撤回后照跑），而它们的判定只需要
+/// 一个连接和一个 manifest——不必把整个命令（要 AppHandle）搬进测试。
+fn run_gates(c: &Connection, manifest: &Manifest) -> Result<(), String> {
+    let id = &manifest.id;
+    // 「禁用」：否则被禁用的插件仍然可以被 IPC 直接调用执行。
+    if !enabled(c, id) {
+        return Err(format!("插件「{id}」已被禁用"));
+    }
+    // 声明扩张（新增权限/事件）：插件文件被换成更大声明的版本之后，在用户重新确认之前它不跑
+    // ——否则"用户同意的那份能力"就被静默改写了。这里 **不** grandfather（不补记快照）：
+    // 存量插件由 list_plugins 补记，而这里出现"没有快照"只可能是 IPC 直调，不该顺手授予。
+    let approval = approval_state(c, manifest, false);
+    if approval.required {
+        return Err(format!(
+            "approval_required: 插件「{id}」的声明新增了{}，运行已暂停——请在插件管理里重新确认",
+            describe_drift(&approval)
+        ));
+    }
+    // 撤回记忆（离线撤回列表）：索引说过这个版本不该再用，那就别跑——**离线也拦得住**。
+    // 用户明确选择过「仍然使用」就不再拦（记忆里带着 ignored 标记）。
+    if let Some(why) = revocation_blocks(c, id, &manifest.version) {
+        return Err(format!(
+            "plugin_revoked: 插件「{id}」v{} {why}。你可以在插件管理里选择「仍然使用」，或者卸载它",
+            manifest.version
+        ));
+    }
+    Ok(())
+}
+
+/// 读一条撤回记忆。
+fn read_revocation(c: &Connection, id: &str) -> Option<RevocationView> {
+    c.query_row(
+        "SELECT plugin_id, version, reason, revoked_at, seen_at, ignored_at
+         FROM plugin_revocation WHERE plugin_id = ?1",
+        params![id],
+        |r| {
+            Ok(RevocationView {
+                plugin_id: r.get(0)?,
+                version: r.get(1)?,
+                reason: r.get(2)?,
+                revoked_at: r.get(3)?,
+                seen_at: r.get(4)?,
+                ignored: r.get::<_, Option<i64>>(5)?.is_some(),
+            })
+        },
+    )
+    .ok()
+}
+
+/// 全部撤回记忆（界面要能一次列出来，不只是"被撤的那个插件旁边一行"）。
+fn all_revocations(c: &Connection) -> Vec<RevocationView> {
+    let mut stmt = match c.prepare(
+        "SELECT plugin_id, version, reason, revoked_at, seen_at, ignored_at
+         FROM plugin_revocation ORDER BY seen_at DESC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok(RevocationView {
+            plugin_id: r.get(0)?,
+            version: r.get(1)?,
+            reason: r.get(2)?,
+            revoked_at: r.get(3)?,
+            seen_at: r.get(4)?,
+            ignored: r.get::<_, Option<i64>>(5)?.is_some(),
+        })
+    });
+    match rows {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// **撤回是否拦住这个版本**。
+///
+/// 判定只看两件事：这条记忆记的是不是**同一个版本**，以及用户有没有选择忽略。
+/// 索引后来发布了修好的新版本时，记忆里仍是旧版本号 → 新版本不受影响（这是刻意的：
+/// 撤回撤的是那个有问题的版本，不是这个插件）。
+///
+/// 用户选过「仍然使用」就不再拦——索引拥有者不是用户的上司，这一层的作用是
+/// **让他知道并明确表态**，而不是替他把插件关掉。
+fn revocation_blocks(c: &Connection, id: &str, version: &str) -> Option<String> {
+    let r = read_revocation(c, id)?;
+    if r.ignored || r.version != version {
+        return None;
+    }
+    let why = if r.reason.trim().is_empty() {
+        "索引没有写原因".to_string()
+    } else {
+        r.reason.clone()
+    };
+    Some(format!("已被你订阅的索引撤回：{why}"))
+}
+
 /// 卸载时删掉安装行。
 ///
 /// 此前卸载只删目录、不删状态行，于是**重装同一个 id 会静默继承旧的「已禁用」**，
@@ -3462,6 +3623,11 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         };
         let runtime = runtime_of(&manifest).to_string();
         let is_enabled = enabled_map.get(&manifest.id).copied().unwrap_or(false);
+        // 撤回记忆：只在**记的就是这个版本**时才算数（索引后来发的修好的版本不该被牵连）。
+        let revoked = {
+            let c = conn(&db);
+            read_revocation(&c, &manifest.id).filter(|r| r.version == manifest.version)
+        };
         // 声明式插件没有代码：不读入口、不跑 Boa（这正是它安全的原因——没有可执行的东西）。
         if runtime == "declarative" {
             // 声明式插件**没有代码**，所以它不可能调用能力、也收不到事件：
@@ -3506,6 +3672,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 theme,
                 approval,
                 replaced_version: None,
+                revoked,
             });
             continue;
         }
@@ -3554,6 +3721,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             theme,
             approval,
             replaced_version: None,
+            revoked,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -3637,22 +3805,7 @@ pub async fn run_plugin_command(
     // 独立线程 + 超时 —— 避免一个死循环插件无限占住全局 DB 锁（全应用雪崩）。
     let (page_count, current_page_json) = {
         let c = conn(&db);
-        // 「禁用」必须在后端强制，不能只靠前端从命令面板里过滤掉：
-        // 否则被禁用的插件仍然可以被 IPC 直接调用执行。
-        if !enabled(&c, &plugin_id) {
-            return Err(format!("插件「{plugin_id}」已被禁用"));
-        }
-        // 声明扩张（新增权限/事件）同样在后端强制：插件文件被换成更大声明的版本之后，
-        // 在用户重新确认之前它不跑——否则"用户同意的那份能力"就被静默改写了。
-        // 注意这里 **不** grandfather（不补记快照）：存量插件由 list_plugins 补记，
-        // 而这里出现"没有快照"只可能是 IPC 直调，不该顺手授予。
-        let approval = approval_state(&c, &manifest, false);
-        if approval.required {
-            return Err(format!(
-                "approval_required: 插件「{plugin_id}」的声明新增了{}，运行已暂停——请在插件管理里重新确认",
-                describe_drift(&approval)
-            ));
-        }
+        run_gates(&c, &manifest)?;
         let page_count: usize = c
             .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
                 r.get::<_, i64>(0)
@@ -3884,6 +4037,14 @@ fn install_from_dir(
     if !is_safe_plugin_id(&manifest.id) {
         return Err("非法插件 id（manifest.id）".to_string());
     }
+    // 撤回记忆同样拦安装：装一个有问题的版本（哪怕是从别处拿到的同一份包）没有意义。
+    // 只拦**同一个版本**；索引后来发的修好的新版本不受影响。
+    if let Some(why) = revocation_blocks(&conn(db), &manifest.id, &manifest.version) {
+        return Err(format!(
+            "不能安装「{}」v{}：{why}。确实要装，请先在插件管理里对它选择「仍然使用」",
+            manifest.id, manifest.version
+        ));
+    }
     let source = load_plugin_source(src, &manifest)?;
     // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
     // 权限警告先记下来，装完在插件日志里就能看到（例如"没写 permissions，走基线授权"）。
@@ -3987,6 +4148,7 @@ fn install_from_dir(
         // 宿主已经暂停它，等用户重新确认。界面据此提示，而不是等用户点命令才发现跑不动。
         approval: approval_state_after,
         replaced_version: replaced,
+        revoked: None,
     })
 }
 
@@ -4088,11 +4250,74 @@ async fn load_plugin_index(
 #[tauri::command]
 pub async fn fetch_plugin_index(
     app: AppHandle,
+    db: State<'_, Db>,
     url: String,
     pubkey: Option<String>,
 ) -> Result<plugin_index::PluginIndexView, String> {
-    let (view, _) = load_plugin_index(&url, pubkey.as_deref(), &app_version(&app)).await?;
+    let (view, index) = load_plugin_index(&url, pubkey.as_deref(), &app_version(&app)).await?;
+    // **离线撤回列表**：把这份索引里"被撤回"的条目记下来。之后即使再也不联网、索引下线，
+    // 宿主仍然拦得住那个版本（运行与安装两条路都会查这条记忆）。
+    // 记失败不该让"看索引"这件事失败——所以只记日志，不把它变成错误。
+    // 每条撤回也写进**对应插件自己**的日志（插件管理里点「日志」能看到）——
+    // 日志面板是按插件开的，挂在一个不存在的插件 id 上等于没人看得见。
+    let n = {
+        let c = conn(&db);
+        match record_revocations(&c, &index) {
+            Ok(n) => n,
+            // 记不下来不该让"看索引"失败，但也不能装作没发生
+            Err(e) => {
+                eprintln!("记录撤回失败：{e}");
+                0
+            }
+        }
+    };
+    if n > 0 {
+        for e in index.plugins.iter().filter(|p| p.revoked_at.is_some()) {
+            push_log(
+                &e.id,
+                "warn",
+                &format!(
+                    "索引撤回了 v{}：{}（已记入离线撤回列表，该版本会被拦下）",
+                    e.version,
+                    if e.revoked_reason.trim().is_empty() {
+                        "索引没写原因"
+                    } else {
+                        e.revoked_reason.as_str()
+                    }
+                ),
+            );
+        }
+    }
     Ok(view)
+}
+
+/// 用户对一条撤回表态：「我知道，仍然使用」。
+///
+/// 索引拥有者不是用户的上司：这一层的作用是**让他知道并明确表态**，而不是替他把插件关掉。
+/// 表态会被记住（`ignored_at`），之后运行/安装都不再拦，但界面照旧显示"你忽略过一次撤回"。
+#[tauri::command]
+pub fn ignore_plugin_revocation(db: State<'_, Db>, id: String) -> Result<RevocationView, String> {
+    if !is_safe_plugin_id(&id) {
+        return Err("非法插件 id".to_string());
+    }
+    let c = conn(&db);
+    let v = read_revocation(&c, &id).ok_or_else(|| format!("没有「{id}」的撤回记录"))?;
+    c.execute(
+        "UPDATE plugin_revocation SET ignored_at = ?2 WHERE plugin_id = ?1",
+        params![id, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    push_log(&id, "warn", "用户选择忽略索引的撤回（仍然使用）");
+    Ok(RevocationView {
+        ignored: true,
+        ..v
+    })
+}
+
+/// 撤回记忆全貌（界面"撤回"一栏用）。
+#[tauri::command]
+pub fn plugin_revocations(db: State<'_, Db>) -> Vec<RevocationView> {
+    all_revocations(&conn(&db))
 }
 
 /// 从索引安装一个插件：索引里能找到、能装、sha256 对得上，才落盘。
@@ -6314,6 +6539,170 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(plugin_logs(Some("别的插件".to_string()), None).is_empty(), "按插件过滤应当生效");
         clear_plugin_logs();
         assert!(plugin_logs(None, None).is_empty());
+    }
+
+    // ---- 离线撤回列表（M11.11b 第一块）----
+
+    /// 撤回表加进测试用的内存库（生产库里由 db.rs 建表）。
+    fn state_conn_with_revocation() -> Connection {
+        let c = state_conn();
+        c.execute_batch(
+            "CREATE TABLE meta.plugin_revocation (
+                 plugin_id   TEXT PRIMARY KEY,
+                 version     TEXT NOT NULL DEFAULT '',
+                 reason      TEXT NOT NULL DEFAULT '',
+                 revoked_at  TEXT NOT NULL DEFAULT '',
+                 seen_at     INTEGER NOT NULL DEFAULT 0,
+                 ignored_at  INTEGER
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn index_with(entries: Vec<crate::plugin_index::IndexEntry>) -> crate::plugin_index::PluginIndex {
+        serde_json::from_value(serde_json::json!({
+            "indexVersion": 1,
+            "generatedAt": "2026-09-10T00:00:00Z",
+            "plugins": entries,
+        }))
+        .unwrap()
+    }
+
+    fn index_entry(id: &str, version: &str, revoked: Option<(&str, &str)>) -> crate::plugin_index::IndexEntry {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": "P",
+            "version": version,
+            "downloadUrl": "https://example.com/p.zip",
+            "sha256": "a".repeat(64),
+            "revokedAt": revoked.map(|(at, _)| at),
+            "revokedReason": revoked.map(|(_, why)| why).unwrap_or(""),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_revocation_from_an_index_is_remembered() {
+        let c = state_conn_with_revocation();
+        let index = index_with(vec![
+            index_entry("bad-one", "1.0.0", Some(("2026-09-01T00:00:00Z", "有严重漏洞"))),
+            index_entry("fine", "1.0.0", None),
+        ]);
+        assert_eq!(record_revocations(&c, &index).unwrap(), 1, "只有被撤回的那条要记");
+        let r = read_revocation(&c, "bad-one").expect("应当记住了");
+        assert_eq!(r.version, "1.0.0");
+        assert_eq!(r.reason, "有严重漏洞");
+        assert!(!r.ignored);
+        assert!(read_revocation(&c, "fine").is_none(), "没撤回的不该凭空冒出记忆");
+    }
+
+    #[test]
+    fn the_memory_blocks_that_version_only_and_offline() {
+        let c = state_conn_with_revocation();
+        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有问题")))])).unwrap();
+
+        // 记忆里的那个版本：拦，且说清原因
+        let why = revocation_blocks(&c, "p1", "1.0.0").expect("这个版本应当被拦");
+        assert!(why.contains("撤回") && why.contains("有问题"), "{why}");
+        // 修好的新版本：不拦（撤回撤的是那个版本，不是这个插件）
+        assert!(revocation_blocks(&c, "p1", "1.1.0").is_none());
+        // 别的插件：不拦
+        assert!(revocation_blocks(&c, "p2", "1.0.0").is_none());
+        // 没有原因时也要说得出话，而不是留空
+        let c2 = state_conn_with_revocation();
+        record_revocations(&c2, &index_with(vec![index_entry("p9", "2.0.0", Some(("2026-09-01", "")))])).unwrap();
+        assert!(revocation_blocks(&c2, "p9", "2.0.0").unwrap().contains("没有写原因"));
+    }
+
+    #[test]
+    fn the_user_can_explicitly_override_a_revocation() {
+        let c = state_conn_with_revocation();
+        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有问题")))])).unwrap();
+        assert!(revocation_blocks(&c, "p1", "1.0.0").is_some());
+
+        // 用户说"我知道，仍然使用" → 不再拦（但记忆还在，界面照旧显示）
+        c.execute(
+            "UPDATE meta.plugin_revocation SET ignored_at = 1 WHERE plugin_id = 'p1'",
+            [],
+        )
+        .unwrap();
+        assert!(revocation_blocks(&c, "p1", "1.0.0").is_none());
+        let r = read_revocation(&c, "p1").unwrap();
+        assert!(r.ignored, "界面要能显示「你选择忽略过一次撤回」");
+        assert_eq!(r.reason, "有问题", "忽略不等于删掉记忆");
+    }
+
+    #[test]
+    fn refreshing_the_index_does_not_undo_the_users_override() {
+        let c = state_conn_with_revocation();
+        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有问题")))])).unwrap();
+        c.execute(
+            "UPDATE meta.plugin_revocation SET ignored_at = 42 WHERE plugin_id = 'p1'",
+            [],
+        )
+        .unwrap();
+        // 再拉一次同一份索引（撤回条目还在）：用户的表态不能被悄悄改回去
+        record_revocations(&c, &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-02", "还是有问题")))])).unwrap();
+        let r = read_revocation(&c, "p1").unwrap();
+        assert!(r.ignored, "刷新索引不该复活已经忽略的撤回");
+        assert_eq!(r.reason, "还是有问题", "原因要跟着索引更新");
+        // 索引撤回了**另一个版本**：那是新的一条事实，仍然要拦（用户之前忽略的是旧版本）
+        record_revocations(&c, &index_with(vec![index_entry("p1", "1.1.0", Some(("2026-09-03", "新版本也有问题")))])).unwrap();
+        assert!(revocation_blocks(&c, "p1", "1.1.0").is_some());
+    }
+
+    #[test]
+    fn run_gates_stop_disabled_pending_approval_and_revoked_plugins() {
+        let c = state_conn_with_revocation();
+        let small = manifest_with(&["read:pages"], &[], "1.0.0");
+        // 默认启用、没有快照、没有撤回 → 放行
+        assert!(run_gates(&c, &small).is_ok());
+
+        // 1) 用户关了它（前端过滤只是方便，后端必须自己拦）
+        set_enabled(&c, "p1", false, None).unwrap();
+        assert!(run_gates(&c, &small).unwrap_err().contains("已被禁用"));
+        set_enabled(&c, "p1", true, None).unwrap();
+
+        // 2) 用户同意过的声明是 read:pages，现在文件被换成多一项的版本 → 拦
+        write_approval(&c, "p1", &approval_snapshot(&small)).unwrap();
+        let bigger = manifest_with(&["read:pages", "write:pages"], &[], "1.0.0");
+        let err = run_gates(&c, &bigger).unwrap_err();
+        assert!(err.contains("approval_required") && err.contains("write:pages"), "{err}");
+
+        // 3) 索引撤回了这个版本 → 拦（离线也拦得住：这条记忆已经落库）
+        record_revocations(
+            &c,
+            &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "有严重漏洞")))]),
+        )
+        .unwrap();
+        let err = run_gates(&c, &small).unwrap_err();
+        assert!(err.contains("plugin_revoked") && err.contains("有严重漏洞"), "{err}");
+        // 用户点过「仍然使用」之后放行（记忆仍在，但不再拦）
+        c.execute("UPDATE meta.plugin_revocation SET ignored_at = 1 WHERE plugin_id = 'p1'", [])
+            .unwrap();
+        assert!(run_gates(&c, &small).is_ok());
+        // 撤回的是 1.0.0，装的是 1.1.0 → 不拦
+        let c2 = state_conn_with_revocation();
+        record_revocations(
+            &c2,
+            &index_with(vec![index_entry("p1", "1.0.0", Some(("2026-09-01", "x")))]),
+        )
+        .unwrap();
+        assert!(run_gates(&c2, &manifest_with(&["read:pages"], &[], "1.1.0")).is_ok());
+    }
+
+    #[test]
+    fn all_revocations_lists_what_was_seen() {
+        let c = state_conn_with_revocation();
+        record_revocations(&c, &index_with(vec![
+            index_entry("a", "1.0.0", Some(("2026-09-01", "x"))),
+            index_entry("b", "2.0.0", Some(("2026-09-02", "y"))),
+        ]))
+        .unwrap();
+        let all = all_revocations(&c);
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|r| !r.ignored));
     }
 
     // ---- 升级 / 重装（同名 id 再装一次）----

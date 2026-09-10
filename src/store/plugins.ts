@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import { toast } from "./toast";
+import { confirmDialog } from "./confirm";
 import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
 import { registerHostEventEmitter } from "../lib/pluginEvents";
 import type {
@@ -104,6 +105,13 @@ interface PluginsState {
    * `pubkey` 是用户信任的 minisign 公钥；给了就必须验签通过才继续。
    */
   installFromIndex: (url: string, id: string, pubkey?: string | null) => Promise<PluginActionResult>;
+  /**
+   * M11.11b 第一块：对一条撤回表态「我知道，仍然使用」。
+   *
+   * 索引拥有者不是用户的上司——这一层的作用是**让他知道并明确表态**，不是替他把插件关掉。
+   * 表态会被后端记住（之后不再拦运行/安装），但界面照旧显示"这是你忽略过的撤回"。
+   */
+  ignoreRevocation: (id: string) => Promise<PluginActionResult>;
   openDir: () => Promise<PluginActionResult>;
   runCommand: (
     pluginId: string,
@@ -242,6 +250,32 @@ export const usePlugins = create<PluginsState>((set) => ({
       console.error("install plugin from index failed", e);
       const error = errText(e);
       toast(`从索引安装失败：${error}`, "error");
+      return { ok: false, error };
+    }
+  },
+  ignoreRevocation: async (id) => {
+    const name = usePlugins.getState().plugins.find((p) => p.id === id)?.name ?? id;
+    if (
+      !(await confirmDialog({
+        title: "仍然使用被撤回的插件",
+        message:
+          `插件「${name}」的这个版本已被你订阅的索引撤回。\n` +
+          "继续使用意味着：索引拥有者（以及他代表的安全判断）认为它不该再跑，而你选择相信自己的判断。\n" +
+          "撤回记录不会被删除，插件管理里会一直标着「你选择继续使用」。",
+        okLabel: "仍然使用",
+        danger: true,
+      }))
+    )
+      return { ok: false, error: "已取消" };
+    try {
+      await api.ignorePluginRevocation(id);
+      await usePlugins.getState().load();
+      toast(`已忽略「${name}」的这次撤回（撤回记录仍在）`, "success");
+      return { ok: true };
+    } catch (e) {
+      console.error("ignore revocation failed", e);
+      const error = errText(e);
+      toast(`忽略撤回失败：${error}`, "error");
       return { ok: false, error };
     }
   },

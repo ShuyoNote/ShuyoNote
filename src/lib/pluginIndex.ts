@@ -167,6 +167,31 @@ export function installConfirmMessage(
   ].join("\n");
 }
 
+/**
+ * 已装插件被撤回时的界面文案。
+ *
+ * 三种状态必须说成三句不同的话，否则用户分不清"它被撤回了、跑不了"和"它还好好的"：
+ *   · 撤回 + 没忽略 → 已经拦住运行，给出他唯一的两个出口（仍然使用 / 卸载）；
+ *   · 撤回 + 已忽略 → 说明这是他自己选的，别让界面显得像在指责他；
+ *   · 没有 → 空字符串（界面不显示任何东西）。
+ */
+export function revocationNotice(
+  revoked: { version: string; reason: string; ignored: boolean } | null | undefined,
+): { text: string; blocked: boolean } {
+  if (!revoked) return { text: "", blocked: false };
+  const why = revoked.reason.trim() || "索引没有写原因";
+  if (revoked.ignored) {
+    return {
+      text: `索引撤回的 v${revoked.version} 你选择继续使用（原因：${why}）`,
+      blocked: false,
+    };
+  }
+  return {
+    text: `已被索引撤回，运行已被拦下：${why}（撤回的是 v${revoked.version}）`,
+    blocked: true,
+  };
+}
+
 /** 上一次填过的索引地址 / 公钥（只是省得每次重打，不是"信任配置"）。 */
 export const INDEX_URL_KEY = "shuyonote.pluginIndexUrl";
 export const INDEX_PUBKEY_KEY = "shuyonote.pluginIndexPubkey";

@@ -448,6 +448,9 @@ pub fn run() {
             // M11.11a：索引协议（拉索引 / 从索引安装）。
             plugins::fetch_plugin_index,
             plugins::install_plugin_from_index,
+            // M11.11b 第一块：离线撤回列表（记住"这个版本不该再用"，离线也拦得住）。
+            plugins::plugin_revocations,
+            plugins::ignore_plugin_revocation,
             plugins::open_plugin_dir,
             plugin_validate::validate_plugin,
             plugin_validate::plugin_dir_stamp,

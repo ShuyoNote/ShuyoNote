@@ -12,6 +12,7 @@ import {
   indexSourceLabel,
   installConfirmMessage,
   loadIndexDraft,
+  revocationNotice,
   saveIndexDraft,
   INDEX_PUBKEY_KEY,
   INDEX_URL_KEY,
@@ -191,6 +192,33 @@ describe("升级 / 重装 / 拒绝降级", () => {
     expect(addedPermissions(two, { permissions: [] })).toHaveLength(2);
     // 已装的权限这版没有了（作者缩权）→ 不算"新增"
     expect(addedPermissions(entry(), { permissions: [{ id: "read:pages" }, { id: "write:pages" }] })).toEqual([]);
+  });
+});
+
+describe("已装插件被撤回（离线记忆）", () => {
+  it("没撤回就不显示任何东西", () => {
+    expect(revocationNotice(null)).toEqual({ text: "", blocked: false });
+    expect(revocationNotice(undefined).text).toBe("");
+  });
+
+  it("被撤回且用户没表态：界面必须说「运行已被拦下」，并给出两个出口", () => {
+    const n = revocationNotice({ version: "1.0.0", reason: "有严重漏洞", ignored: false });
+    expect(n.blocked).toBe(true);
+    expect(n.text).toContain("运行已被拦下");
+    expect(n.text).toContain("有严重漏洞");
+    expect(n.text).toContain("v1.0.0");
+  });
+
+  it("原因缺失也要说得出话（不许留空，空着会像「没有原因所以不严重」）", () => {
+    const n = revocationNotice({ version: "1.0.0", reason: "   ", ignored: false });
+    expect(n.text).toContain("没有写原因");
+  });
+
+  it("用户表过态「仍然使用」：不再拦，但照旧如实写着（别装作没这回事）", () => {
+    const n = revocationNotice({ version: "1.0.0", reason: "有严重漏洞", ignored: true });
+    expect(n.blocked).toBe(false);
+    expect(n.text).toContain("你选择继续使用");
+    expect(n.text).toContain("有严重漏洞");
   });
 });
 

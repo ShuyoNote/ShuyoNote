@@ -8,6 +8,7 @@ import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { PluginIndexPanel } from "./PluginIndexPanel";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
+import { revocationNotice } from "../lib/pluginIndex";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
@@ -16,6 +17,7 @@ export function PluginManager() {
     managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir,
     logsFor, logs, openLogs, closeLogs, clearLogs,
     auditFor, audit, openAudit, closeAudit, clearAudit,
+    ignoreRevocation,
     validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
     settingsFor, settings, openSettings, closeSettings, saveSetting,
     approve,
@@ -121,6 +123,27 @@ export function PluginManager() {
                 </div>
                 <div className="pm-item-desc">{p.description || "—"}</div>
                 <div className="pm-item-cmds">{p.commands.length} 个命令</div>
+                {/* 撤回记忆（M11.11b 第一块）：索引说过这个版本不该再用，宿主已经拦下运行。
+                    给两个出口：仍然使用（明确表态）或卸载。索引拥有者不是用户的上司，
+                    所以"仍然使用"这条路必须存在，但要说清它意味着什么。 */}
+                {p.revoked &&
+                  (() => {
+                    const notice = revocationNotice(p.revoked);
+                    return (
+                      <div className={notice.blocked ? "pm-revoked" : "pm-revoked pm-revoked-ignored"}>
+                        <div className="pm-revoked-text">{notice.text}</div>
+                        {!p.revoked!.ignored && (
+                          <button
+                            className="pm-revoked-btn"
+                            onClick={() => void ignoreRevocation(p.id)}
+                            title="索引拥有者认为它不该再跑；这个按钮表示你选择相信自己的判断"
+                          >
+                            仍然使用
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 {/* 声明扩张过：宿主已经暂停它了，这里说清新增了什么 + 给唯一的放行按钮。
                     刻意不叫"启用"——用户要做的是"看了新增项再确认"，不是一个无关开关。 */}
                 {p.approval?.required && (

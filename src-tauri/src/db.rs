@@ -350,6 +350,20 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             content_hash  TEXT,
             seeded        INTEGER NOT NULL DEFAULT 0
         );
+        -- 插件撤回记忆（M11.11b 的第一块：**离线撤回列表**）。
+        -- 用户订阅的索引说过"这个插件的这个版本被撤回了"，这句话必须被**记住**——否则
+        -- 只要不再联网、或者索引整个下线，撤回就形同不存在，而用户手里那个有问题的版本
+        -- 照跑不误。一行 = 一条记忆：谁、哪个版本、为什么、什么时候看到的、用户有没有
+        -- 明确选择"我知道，继续用"。
+        -- 只记元数据（插件 id / 版本 / 一句原因 / 时间戳），**不含用户内容**。
+        CREATE TABLE IF NOT EXISTS plugin_revocation (
+            plugin_id   TEXT PRIMARY KEY,
+            version     TEXT NOT NULL DEFAULT '',
+            reason      TEXT NOT NULL DEFAULT '',
+            revoked_at  TEXT NOT NULL DEFAULT '',
+            seen_at     INTEGER NOT NULL DEFAULT 0,
+            ignored_at  INTEGER
+        );
         -- 插件私有数据。scope='app' 的落这里（meta.db 是明文，只允许放非敏感配置）；
         -- scope='space:<id>' 的**必须落各空间库**，随该空间 SQLCipher 一起加密、随空间备份搬移。
         -- 这条落库约定见方案 §3.7：把空间级数据塞进 meta.db 会让它静默逃出 E2EE 边界。

@@ -19,8 +19,14 @@ vi.mock("../lib/api", () => ({
     clearPluginLogs: vi.fn(),
     validatePlugin: vi.fn(),
     pluginDirStamp: vi.fn(),
+    ignorePluginRevocation: vi.fn(),
+    pluginRevocations: vi.fn(),
     emitPluginEvent: vi.fn(),
   },
+}));
+
+vi.mock("./confirm", () => ({
+  confirmDialog: vi.fn(async () => true),
 }));
 
 vi.mock("../lib/pluginDrafts", () => ({
@@ -31,6 +37,7 @@ import { api } from "../lib/api";
 import type { PluginEventOutcome, PluginMeta, PluginValidation } from "../types";
 import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
 import { emitHostEvent } from "../lib/pluginEvents";
+import { confirmDialog } from "./confirm";
 import { installToast, usePlugins } from "./plugins";
 import { useToast } from "./toast";
 
@@ -514,6 +521,47 @@ describe("plugins store · 宿主事件桥", () => {
     expect(() => emitHostEvent("app.started", {})).not.toThrow();
     await Promise.resolve();
     expect(api.emitPluginEvent).not.toHaveBeenCalled();
+  });
+});
+
+// 「仍然使用被撤回的插件」：确认在前，确认后才会记下用户的意思。
+//
+// 为什么必须在确认框里挡一下：这是**用户在替自己做安全判断**，而索引拥有者的判断相反。
+// 点错一次的代价是继续跑一个有问题的版本，所以文案要说清"意味着什么"，且不能顺手
+// 把撤回记录删掉（那是历史事实，不是待办事项）。
+describe("忽略撤回", () => {
+  beforeEach(() => {
+    vi.mocked(api.ignorePluginRevocation).mockReset();
+    vi.mocked(confirmDialog).mockReset();
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+  });
+
+  it("确认后才写；文案说清代价", async () => {
+    vi.mocked(api.ignorePluginRevocation).mockResolvedValue({
+      plugin_id: "demo",
+      version: "1.0.0",
+      reason: "r",
+      revoked_at: "",
+      seen_at: 0,
+      ignored: true,
+    });
+    vi.mocked(api.listPlugins).mockResolvedValue([]);
+    vi.mocked(confirmDialog).mockResolvedValueOnce(true);
+    const r = await usePlugins.getState().ignoreRevocation("demo");
+    expect(r.ok).toBe(true);
+    expect(api.ignorePluginRevocation).toHaveBeenCalledWith("demo");
+    const calls = vi.mocked(confirmDialog).mock.calls;
+    const msg = calls[calls.length - 1][0].message;
+    expect(msg).toContain("已被你订阅的索引撤回");
+    expect(msg).toContain("相信自己的判断");
+    expect(msg).toContain("撤回记录不会被删除");
+  });
+
+  it("取消则一个字节都不写", async () => {
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    const r = await usePlugins.getState().ignoreRevocation("demo");
+    expect(r.ok).toBe(false);
+    expect(api.ignorePluginRevocation).not.toHaveBeenCalled();
   });
 });
 

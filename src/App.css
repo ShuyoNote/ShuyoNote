@@ -5632,6 +5632,48 @@ select.prop-value {
   background: var(--danger-soft);
 }
 
+/* 撤回记忆（M11.11b）：已装插件被索引撤回 —— 宿主已拦下运行，必须一眼看见 */
+.pm-revoked {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+}
+/* 用户已经明确表态过的那一条：不再拦，但也不装作没这回事——用中性色，别继续报警 */
+.pm-revoked-ignored {
+  border-color: var(--border);
+  background: var(--hover);
+}
+.pm-revoked-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--danger);
+}
+.pm-revoked-ignored .pm-revoked-text {
+  color: var(--text-dim);
+}
+.pm-revoked-btn {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-revoked-btn:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
 /* 「从索引安装」（M11.11a）：来源、签名状态、权限逐条摊开 */
 .pm-index-fold {
   margin: 4px 0 10px;

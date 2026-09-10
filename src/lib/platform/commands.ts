@@ -39,6 +39,7 @@ import type {
   PluginEventOutcome,
   PluginMeta,
   PluginIndexView,
+  PluginRevocation,
   PluginSetting,
   PluginValidation,
   PluginAuditEntry,
@@ -192,6 +193,10 @@ export interface CommandMap {
     args: { url: string; id: string; pubkey?: string | null };
     result: PluginMeta;
   };
+  /** 离线撤回列表（M11.11b 第一块）：索引说过的"这个版本不该再用"。 */
+  plugin_revocations: { args: undefined; result: PluginRevocation[] };
+  /** 用户对一条撤回表态：「我知道，仍然使用」。 */
+  ignore_plugin_revocation: { args: { id: string }; result: PluginRevocation };
   open_plugin_dir: { args: undefined; result: string };
   plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
   clear_plugin_logs: { args: undefined; result: void };

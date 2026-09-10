@@ -273,6 +273,26 @@ export interface PluginMeta {
    * "这不是新装，是把它从 v1 换成了 v2"，而不是假装一切都全新。
    */
   replaced_version?: string | null;
+  /**
+   * 这个**已装的版本**被索引撤回过（只在该版本被撤回时才有值）。
+   * 有值时宿主已经拒绝运行它——除非 `ignored`。
+   */
+  revoked?: PluginRevocation | null;
+}
+
+/**
+ * 一条撤回记忆（`plugin_revocation` 一行）：你订阅的索引说过"这个版本不该再用"。
+ *
+ * 它是**离线**的：记下来之后，就算再也不联网、索引整个下线，宿主仍然拦得住那个版本。
+ */
+export interface PluginRevocation {
+  plugin_id: string;
+  version: string;
+  reason: string;
+  revoked_at: string;
+  seen_at: number;
+  /** 用户明确说过「我知道，仍然使用」——不再拦运行/安装，但界面照旧显示。 */
+  ignored: boolean;
 }
 
 export interface PluginPermissionMeta {
