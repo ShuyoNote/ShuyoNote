@@ -3998,6 +3998,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         args_json: &str,
         state: &RunState,
     ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
+        let _g = capability_test_guard();
         ensure_host_exe();
         run_command_via_host(source, command_id, args_json, state)
     }
@@ -4009,6 +4010,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         payload_json: &str,
         state: &RunState,
     ) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
+        let _g = capability_test_guard();
         ensure_host_exe();
         run_event_via_host(source, event, payload_json, state)
     }
@@ -4018,6 +4020,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     #[test]
     fn a_hung_plugin_is_killed_and_reported_as_timeout() {
         let _g = log_test_guard();
+        let _cap = capability_test_guard();
         ensure_host_exe();
         // 用一个"每次迭代都问一次能力"的循环：`while (true) {}` 会先撞上 Boa 的循环预算
         // （1e6 次）而不是墙钟超时；而每次能力调用都是一次真 IPC，几百毫秒内注定撞上墙钟。
@@ -4052,6 +4055,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     #[test]
     fn a_crashed_host_process_is_reported_as_a_crash() {
         let _g = log_test_guard();
+        let _cap = capability_test_guard();
         ensure_host_exe();
         let exe = std::env::var("SHUYONOTE_PLUGIN_HOST_EXE").expect("宿主二进制");
         let mut client = crate::plugin_host::HostClient::spawn_with_exe_args(
@@ -5043,9 +5047,49 @@ register({ id: "s.run", title: "结构化", run: function () {
     /// 审计是进程级环形缓冲，与日志同样需要串行。
     static AUDIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// 测试里"会走能力的那一段"的**可重入**串行锁。
+    ///
+    /// 为什么需要它：审计环是**进程级**的（生产里界面就读它），而 Rust 测试默认并行跑。
+    /// 任何会走能力的测试都可能往环里推条目、也可能清空它，于是彼此把对方刚推的条目挤掉。
+    /// 这不是洁癖——CI 上真的红过：`audit_is_scoped_per_plugin_and_capped` 断言"缓冲必须封顶
+    /// （= 我推的 505 条都在）"时，发现自己的条目被另一个测试挤走了（那个测试的插件也在调能力，
+    /// 而能力现在跑在父进程里、推的是同一个环）。
+    ///
+    /// 为什么**可重入**：整段测试（自己的 `clear` + 断言）都要在锁里，而测试装置
+    /// （`call` / `run_*_in_host_for_test`）内部也会拿同一把锁——同一个线程重复加锁不能死锁。
+    struct CapabilityTestGuard(Option<std::sync::MutexGuard<'static, ()>>);
+
+    static CAPABILITY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    thread_local! {
+        static CAPABILITY_TEST_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn capability_test_guard() -> CapabilityTestGuard {
+        let depth = CAPABILITY_TEST_DEPTH.with(|d| d.get());
+        if depth == 0 {
+            let g = CAPABILITY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            CAPABILITY_TEST_DEPTH.with(|d| d.set(1));
+            CapabilityTestGuard(Some(g))
+        } else {
+            CAPABILITY_TEST_DEPTH.with(|d| d.set(depth + 1));
+            CapabilityTestGuard(None)
+        }
+    }
+
+    impl Drop for CapabilityTestGuard {
+        fn drop(&mut self) {
+            if self.0.is_some() {
+                CAPABILITY_TEST_DEPTH.with(|d| d.set(0));
+            }
+        }
+    }
+
     #[test]
     fn audit_records_success_and_permission_denial() {
-        let _g = AUDIT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // **整段持锁**：连 `clear_plugin_audit()` 与断言都要在锁里，否则并行跑的另一条审计测试
+        // 会在我们"清完还没断言"之间把环清掉（CI 上就是这样红的）。锁可重入，所以下面的测试
+        // 装置还会再拿一次，不会死锁。
+        let _g = capability_test_guard();
         clear_plugin_audit();
 
         // 被拒的调用也要留痕 —— 这恰恰是最该查的那类记录
@@ -5055,7 +5099,8 @@ register({ id: "s.run", title: "结构化", run: function () {
             plugin_id: "auditp".to_string(),
             ..Default::default()
         };
-        assert_eq!(run_command(denied, "t.audit", "", &state).unwrap(), "caught");
+        let (msg, ..) = run_command_in_host_for_test(denied, "t.audit", "", &state).unwrap();
+        assert_eq!(msg, "caught");
         let rows = plugin_audit(Some("auditp".to_string()), None);
         assert_eq!(rows.len(), 1, "应当留下一条审计");
         assert!(!rows[0].ok);
@@ -5066,7 +5111,8 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 授权后的成功调用
         let mut ok_state = state.clone();
         ok_state.permissions = vec!["read:pages".to_string()];
-        assert_eq!(run_command(denied, "t.audit", "", &ok_state).unwrap(), "no-throw");
+        let (msg, ..) = run_command_in_host_for_test(denied, "t.audit", "", &ok_state).unwrap();
+        assert_eq!(msg, "no-throw");
         let rows = plugin_audit(Some("auditp".to_string()), None);
         assert_eq!(rows.len(), 2);
         assert!(rows[1].ok);
@@ -5078,7 +5124,7 @@ register({ id: "s.run", title: "结构化", run: function () {
 
     #[test]
     fn audit_is_scoped_per_plugin_and_capped() {
-        let _g = AUDIT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = capability_test_guard();
         clear_plugin_audit();
         for i in 0..(PLUGIN_AUDIT_CAPACITY + 5) {
             push_audit("cap", "pages.count", "current-space", true, None);
@@ -5144,6 +5190,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     }
 
     fn call(state: &RunState, method: &str, args: &str) -> Result<serde_json::Value, String> {
+        let _g = capability_test_guard();
         RUN_STATE.with(|s| *s.borrow_mut() = state.clone());
         let out = dispatch_capability(method, args)?;
         serde_json::from_str(&out).map_err(|e| e.to_string())
