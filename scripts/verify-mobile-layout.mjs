@@ -75,19 +75,31 @@ function findChrome() {
   return null;
 }
 
-// 在页面里读「侧栏 / 开合按钮 / 遮罩」的真实计算样式与属性。
+// 在页面里读「竖条 / 侧栏 / 遮罩 / 按钮」的真实几何与计算样式。
 const probe = () => {
   const sidebar = document.querySelector(".sidebar");
+  const railEl = document.querySelector(".activity-bar");
   const toggle = document.querySelector(".sidebar-toggle-btn");
+  const railToggle = document.querySelector(".mobile-rail-toggle");
   const backdrop = document.querySelector(".mobile-sidebar-backdrop");
+  const railBackdrop = document.querySelector(".mobile-rail-backdrop");
+  const main = document.querySelector(".main");
   const disp = (el) => (el ? getComputedStyle(el).display : null);
+  // 窄屏竖条是浮层：收起时被 translateX(-100%) 推到屏外，display 仍是 flex。
+  // 所以判"可见"必须看几何（右边缘是否落在视口内），不能看 display。
+  const railRect = railEl?.getBoundingClientRect();
   return {
     mobileMQ: matchMedia("(max-width: 768px)").matches,
     sidebarDisplay: disp(sidebar),
     sidebarHidden: sidebar ? sidebar.hasAttribute("hidden") : null,
+    railVisible: !!railRect && railRect.right > 1,
+    railRight: railRect ? Math.round(railRect.right) : null,
+    mainWidth: main ? Math.round(main.getBoundingClientRect().width) : null,
     toggleDisplay: disp(toggle),
     toggleAria: toggle?.getAttribute("aria-expanded") ?? null,
+    railToggleDisplay: disp(railToggle),
     backdrop: !!backdrop,
+    railBackdrop: !!railBackdrop,
     stored: localStorage.getItem("shuyonote:sidebarOpen"),
   };
 };
@@ -148,33 +160,67 @@ async function main() {
     ok(s.mobileMQ, "命中窄屏媒体查询");
     ok(s.sidebarDisplay === "none", `侧栏默认收起（display=${s.sidebarDisplay}）——hidden 未被 .sidebar 的 display:flex 压掉`);
     ok(s.sidebarHidden === true, "侧栏带 hidden 属性");
-    ok(s.toggleDisplay !== "none", `窄屏显示开合按钮（display=${s.toggleDisplay}）`);
-    ok(s.toggleAria === "false", `开合按钮 aria-expanded=false（实际 ${s.toggleAria}）`);
-    ok(!s.backdrop, "无遮罩");
+    ok(s.railVisible === false, `左侧竖条默认收起（浮层，右边缘=${s.railRight} 在屏外）`);
+    ok(s.mainWidth === PHONE.width, `主区拿到全宽 ${PHONE.width}px（实际 ${s.mainWidth}）——竖条不再常驻吃掉 12% 宽度`);
+    ok(s.railToggleDisplay !== "none", `显示浮层唤出按钮（display=${s.railToggleDisplay}）`);
+    ok(!s.backdrop && !s.railBackdrop, "初始无任何遮罩");
     ok(s.stored === null, `移动端自动收起不写 localStorage（实际 ${JSON.stringify(s.stored)}）——否则会污染桌面端偏好`);
     await shot(phone, "01-phone-closed");
 
-    console.log(`\n【手机 · 点开合按钮】`);
+    console.log(`\n【手机 · 点唤出按钮 → 竖条滑入】`);
+    await phone.click(".mobile-rail-toggle");
+    await sleep(800);
+    s = await phone.evaluate(probe);
+    ok(s.railVisible === true, `竖条滑入（右边缘=${s.railRight}）`);
+    ok(s.railBackdrop, "出现浮层遮罩");
+    ok(s.mainWidth === PHONE.width, `主区宽度不受影响（仍 ${s.mainWidth}px）——浮层不挤内容`);
+    ok(s.toggleDisplay !== "none", "竖条里的侧栏开合按钮可见");
+    await shot(phone, "02-phone-rail-open");
+
+    console.log(`\n【手机 · 点竖条里的侧栏开合按钮】`);
     await phone.click(".sidebar-toggle-btn");
     await sleep(900);
     s = await phone.evaluate(probe);
-    ok(s.sidebarDisplay === "flex", `抽屉滑入（display=${s.sidebarDisplay}）`);
+    ok(s.sidebarDisplay === "flex", `侧栏抽屉打开（display=${s.sidebarDisplay}）`);
     ok(s.sidebarHidden === false, "hidden 属性已摘除");
-    ok(s.backdrop, "出现遮罩");
+    ok(s.railVisible === false, "竖条自动收起（选完就把整屏交还内容）");
     ok(s.toggleAria === "true", `开合按钮 aria-expanded=true（实际 ${s.toggleAria}）`);
     ok((await phone.evaluate(railBlockedByBackdrop)) === true, "遮罩挡住右侧悬浮工具栏（抽屉打开时不该点得到）");
-    await shot(phone, "02-phone-open");
+    await shot(phone, "03-phone-sidebar-open");
 
-    console.log(`\n【手机 · 点遮罩】`);
+    console.log(`\n【手机 · 点遮罩收起侧栏】`);
     // 遮罩是 inset:0 的整屏元素，但侧栏（更宽、z-index 更高）盖住了它左侧一大块，
     // 元素中心点落在侧栏上——必须点右侧真正露出来的区域。
     await phone.mouse.click(PHONE.width - 20, 500);
     await sleep(900);
     s = await phone.evaluate(probe);
     ok(s.sidebarDisplay === "none", "抽屉关闭");
-    ok(!s.backdrop, "遮罩消失");
+    ok(!s.backdrop, "侧栏遮罩消失");
     ok(s.toggleAria === "false", "开合按钮状态复位");
-    await shot(phone, "03-phone-backdrop-closed");
+    await shot(phone, "04-phone-backdrop-closed");
+
+    console.log(`\n【手机 · 再开竖条，点遮罩收起】`);
+    await phone.click(".mobile-rail-toggle");
+    await sleep(800);
+    s = await phone.evaluate(probe);
+    ok(s.railVisible === true, "竖条再次滑入");
+    await phone.mouse.click(PHONE.width - 20, 500);
+    await sleep(800);
+    s = await phone.evaluate(probe);
+    ok(s.railVisible === false, "点遮罩后竖条收起");
+    ok(!s.railBackdrop, "浮层遮罩消失");
+    console.log(`\n【手机 · 竖条里点非活动按钮（设置）】`);
+    await phone.click(".mobile-rail-toggle");
+    await sleep(700);
+    const endBtns = await phone.$$(".activity-group-end .activity-btn");
+    // .activity-group-end 顺序：回收站 / 模板中心 / 设置 / 关于
+    await endBtns[2]?.click();
+    await sleep(900);
+    s = await phone.evaluate(probe);
+    ok(s.railVisible === false, "点竖条里的非活动按钮也会收起浮层（不只是活动图标）");
+    await phone.keyboard.press("Escape");
+    await sleep(600);
+
     ok(pageErrors.length === 0, `页面无 JS 报错${pageErrors.length ? "：" + pageErrors.join(" | ") : ""}`);
 
     // ---------- 手机 · 右侧面板叠加：主区不该被"让位"内边距挤压 ----------
@@ -228,6 +274,8 @@ async function main() {
     s = await desktop.evaluate(probe);
     ok(!s.mobileMQ, "不命中窄屏媒体查询");
     ok(s.sidebarDisplay === "flex", `侧栏常驻可见（display=${s.sidebarDisplay}）`);
+    ok(s.railVisible === true, `桌面竖条常驻在布局流内（右边缘=${s.railRight}）`);
+    ok(s.railToggleDisplay === null, "桌面根本不渲染浮层唤出按钮（元素不存在，不只是 display:none）");
     ok(s.toggleDisplay === "none", `桌面不显示开合按钮（display=${s.toggleDisplay}）——点活动图标即可开合`);
     ok(!s.backdrop, "桌面无移动端遮罩");
     await shot(desktop, "04-desktop");

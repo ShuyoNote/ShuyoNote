@@ -9,9 +9,13 @@ interface ActivityState {
   activity: Activity;
   /** 侧栏是否展开（竖条常驻；点当前活动图标可收起侧栏，VS Code 行为）。 */
   sidebarOpen: boolean;
+  /** 窄屏的浮层竖条是否展开。**不持久化**：它是瞬时的布局状态，由屏幕尺寸
+   *  决定，跨会话记住没有意义（和 sidebarOpen 的区别就在这）。 */
+  railOpen: boolean;
   setActivity: (a: Activity) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (v: boolean, opts?: { persist?: boolean }) => void;
+  setRailOpen: (v: boolean) => void;
 }
 
 const KEY_ACTIVITY = "shuyonote:activity";
@@ -28,6 +32,8 @@ function initialActivity(): Activity {
 export const useActivity = create<ActivityState>((set, get) => ({
   activity: initialActivity(),
   sidebarOpen: localStorage.getItem(KEY_SIDEBAR) !== "0",
+  railOpen: false,
+  setRailOpen: (v) => set({ railOpen: v }),
   setActivity: (a) => {
     try {
       localStorage.setItem(KEY_ACTIVITY, a);

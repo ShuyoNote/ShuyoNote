@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useActivity, type Activity } from "../store/activity";
+import { isMobileViewport } from "../hooks/useMobile";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
@@ -39,6 +40,7 @@ export function ActivityBar() {
   const { t } = useTranslation();
   const activity = useActivity((s) => s.activity);
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
+  const railOpen = useActivity((s) => s.railOpen);
   const setActivity = useActivity((s) => s.setActivity);
   const toggleSidebar = useActivity((s) => s.toggleSidebar);
   const setSidebarOpen = useActivity((s) => s.setSidebarOpen);
@@ -65,7 +67,16 @@ export function ActivityBar() {
   };
 
   return (
-    <nav className="activity-bar" aria-label="主导航">
+    <nav
+      className={`activity-bar${railOpen ? " is-open" : ""}`}
+      aria-label="主导航"
+      onClick={() => {
+        // 窄屏竖条是浮层：在里面点任何东西（活动 / 搜索 / 回收站 / 模板 / 设置 /
+        // 关于）都顺手把它收起来，免得面板都弹出来了、竖条还盖在旁边。
+        // 桌面端竖条常驻，不做处理。
+        if (isMobileViewport()) useActivity.getState().setRailOpen(false);
+      }}
+    >
       <div className="activity-group">
         {/* 窄屏专有的侧栏开合按钮。桌面端点活动图标就能开合、还有 hover 提示，
             触屏没有 hover，「图标可以点」这件事完全不可见——所以小屏给一个

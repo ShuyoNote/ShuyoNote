@@ -29,7 +29,7 @@ import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
 import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
-import { SmileIcon, ImageIcon, PropertyIcon, TagIcon } from "./components/icons";
+import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, MenuIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useTemplateCenterStore } from "./store/templateCenter";
@@ -524,6 +524,7 @@ function App() {
   useSyncStream();
   const isMobile = useMobile();
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
+  const railOpen = useActivity((s) => s.railOpen);
   useUpdateChecker();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
@@ -620,6 +621,25 @@ function App() {
             onClick={() => useActivity.getState().setSidebarOpen(false, { persist: false })}
             aria-hidden
           />
+        )}
+        {/* 窄屏：左侧竖条改成浮层，默认收起（48px 常驻会吃掉 390px 视口的 12%）。
+            左下角一个小圆钮唤出，点遮罩或选完活动自动收回。 */}
+        {isMobile && railOpen && (
+          <div
+            className="mobile-rail-backdrop"
+            onClick={() => useActivity.getState().setRailOpen(false)}
+            aria-hidden
+          />
+        )}
+        {isMobile && !railOpen && (
+          <button
+            className="mobile-rail-toggle"
+            title="展开工具栏"
+            aria-label="展开工具栏"
+            onClick={() => useActivity.getState().setRailOpen(true)}
+          >
+            <MenuIcon width={18} height={18} />
+          </button>
         )}
       {templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>

@@ -18253,6 +18253,51 @@ p:has(> .editor-drawing-container) {
   .main {
     width: 100%;
   }
+  /* 左侧竖条改为**浮层**：常驻 48px 在 390px 视口上吃掉 12%，窄屏太奢侈。
+     收起后竖条脱离 flex 流，主区直接拿到全宽；展开时浮在内容之上。 */
+  .activity-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 62;
+    width: 48px;
+    transform: translateX(-100%);
+    transition: transform var(--transition-fast) ease;
+    box-shadow: var(--shadow-xl);
+  }
+  .activity-bar.is-open {
+    transform: translateX(0);
+  }
+  /* 唤出按钮：左下角，拇指够得到；展开时它自己不显示（改由遮罩收起）。 */
+  .mobile-rail-toggle {
+    position: fixed;
+    left: 12px;
+    bottom: 18px;
+    z-index: 45;
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--text-dim);
+    box-shadow: var(--shadow-md);
+    cursor: pointer;
+  }
+  .mobile-rail-toggle:active {
+    background: var(--hover);
+    color: var(--text);
+  }
+  /* 浮层遮罩：点它收起竖条（z 高于内容与唤出按钮，低于竖条本身）。 */
+  .mobile-rail-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 58;
+    background: rgba(0, 0, 0, 0.35);
+  }
   /* 右抽屉：AI / 评论，窄屏全屏叠加。 */
   .ai-panel,
   .comments-drawer {
