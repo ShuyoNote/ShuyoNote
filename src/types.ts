@@ -327,6 +327,37 @@ export interface PluginAuditEntry {
   peak_rss_bytes?: number | null;
 }
 
+/** M11.11a：索引里的一条插件记录（后端已算好"能不能装"）。 */
+export interface PluginIndexEntry {
+  id: string;
+  name: string;
+  version: string;
+  apiVersion: string;
+  runtime: string;
+  description: string;
+  publisher: string;
+  license: string;
+  homepage: string;
+  discussionUrl: string;
+  permissions: { id: string; reason: string }[];
+  size: number;
+  revoked: boolean;
+  /** 带了发布者签名；**阶段 1 不校验**（那是 M11.11b）。界面必须这么写。 */
+  publisherSigned: boolean;
+  /** 装不了时的一句人话（空 = 可以装）。 */
+  blocked: string;
+}
+
+/** M11.11a：一份插件索引（来源 + 签名状态 + 条目）。 */
+export interface PluginIndexView {
+  indexVersion: number;
+  owner?: { id: string; name: string; url: string } | null;
+  generatedAt: string;
+  /** `null` = 这份索引没有签名（也就没验过）；`true` = 签过且校验通过。 */
+  signatureVerified: boolean | null;
+  plugins: PluginIndexEntry[];
+}
+
 /** 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都进这个环形缓冲）。 */
 export interface PluginLogLine {
   plugin_id: string;

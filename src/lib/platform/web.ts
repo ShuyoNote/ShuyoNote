@@ -2342,6 +2342,13 @@ function makeInvoke(store: SqliteStore) {
     // Plugin management is a no-op on Web (no disk plugin runtime): return safe
     // defaults instead of throwing so the UI degrades gracefully.
     if (cmd === "install_plugin") return undefined as T;
+    // 索引安装同样需要磁盘插件运行时（下载 + 落盘 + 子进程），Web 上不可用。
+    // 拉索引本身可以返回一份空索引，让界面显示"没有条目"而不是报错。
+    if (cmd === "fetch_plugin_index")
+      return { indexVersion: 1, owner: null, generatedAt: "", signatureVerified: null, plugins: [] } as T;
+    if (cmd === "install_plugin_from_index") {
+      throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
+    }
     if (cmd === "set_plugin_enabled") return undefined as T;
     if (cmd === "uninstall_plugin") return undefined as T;
     if (cmd === "plugin_logs") return [] as T;

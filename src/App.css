@@ -5632,6 +5632,166 @@ select.prop-value {
   background: var(--danger-soft);
 }
 
+/* 「从索引安装」（M11.11a）：来源、签名状态、权限逐条摊开 */
+.pm-index-fold {
+  margin: 4px 0 10px;
+}
+.pm-index-fold > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.pm-index-fold > summary:hover {
+  color: var(--text);
+}
+.pm-index-form {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.pm-index-url {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pm-index-key {
+  flex: 0 1 34%;
+  min-width: 0;
+}
+.pm-index-form input {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+}
+.pm-index-form button {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-index-form button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+.pm-index-form button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pm-index-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+.pm-index-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.pm-index-source {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* 签名状态：没验过必须是黄的那种"没验"，不能和"验过了"长得一样 */
+.pm-index-sig {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+.pm-index-sig.ok {
+  color: var(--text-dim);
+  background: var(--hover);
+}
+.pm-index-sig.warn {
+  color: var(--warning, var(--danger));
+  background: var(--danger-soft);
+}
+.pm-index-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+}
+.pm-index-item-main {
+  flex: 1;
+  min-width: 0;
+}
+.pm-index-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pm-index-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+}
+.pm-index-item-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.pm-index-item-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+.pm-index-item-perms {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  line-height: 1.6;
+}
+.pm-index-item-sig {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+.pm-index-item-blocked {
+  font-size: 11.5px;
+  color: var(--danger);
+  margin-top: 3px;
+}
+.pm-index-item > button {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-index-item > button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+.pm-index-item > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* 插件日志面板（__log / __toast 的输出） */
 .pm-logs {
   flex-basis: 100%;

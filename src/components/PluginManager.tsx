@@ -6,6 +6,7 @@ import { viewPlacement } from "../lib/pluginViews";
 import { pluginMenuHosted, pluginMenuTitle } from "../lib/capabilities/menus.meta";
 import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
 import { PluginFieldInput } from "./PluginFieldInput";
+import { PluginIndexPanel } from "./PluginIndexPanel";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
@@ -54,6 +55,16 @@ export function PluginManager() {
     if (typeof sel === "string") await install(sel);
   };
 
+  // .zip 插件包走的是同一条安装路径（先校验后落盘），只是多了一步解包。
+  const pickInstallZip = async () => {
+    const sel = await platform.dialog.open({
+      multiple: false,
+      title: "选择插件包（.zip）",
+      filters: [{ name: "插件包", extensions: ["zip"] }],
+    });
+    if (typeof sel === "string") await install(sel);
+  };
+
   // 卸载在磁盘上是 `remove_dir_all`，删掉就找不回来，所以和仓库里其它破坏性操作
   // 一样先确认；失败文案由 store 统一弹 toast（含后端原始错误文本）。
   const uninstallWithConfirm = async (id: string, name: string) => {
@@ -83,14 +94,20 @@ export function PluginManager() {
           </div>
           <div className="pm-actions">
             <button onClick={pickInstall} title="从本地文件夹安装插件">从文件夹安装</button>
+            <button onClick={pickInstallZip} title="安装一个 .zip 插件包">装 zip 包</button>
             <button onClick={openDir} title="在文件管理器中打开插件目录">打开插件目录</button>
             <button className="pm-close" title="关闭" onClick={() => setManagerOpen(false)}>
               ×
             </button>
           </div>
         </div>
-        {!isDesktopPlatform() && (
+        {!isDesktopPlatform() ? (
           <div className="sync-web-note">Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。</div>
+        ) : (
+          <details className="pm-index-fold">
+            <summary title="用一个索引地址安装插件（自托 / 社区索引）">从索引安装（给 URL）</summary>
+            <PluginIndexPanel />
+          </details>
         )}
         {plugins.length === 0 ? (
           <div className="pm-empty">未发现插件 · 可从文件夹安装，或把插件放入插件目录</div>

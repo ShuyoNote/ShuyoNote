@@ -123,7 +123,14 @@ export const api = {
     runId?: number,
   ) => invoke("run_plugin_command", { pluginId, commandId, currentId, argsJson, runId }),
   uninstallPlugin: (id: string) => invoke("uninstall_plugin", { id }),
+  /** `sourcePath` 可以是插件目录，也可以是 `.zip` 插件包（M11.11a）。 */
   installPlugin: (sourcePath: string) => invoke("install_plugin", { sourcePath }),
+  /** M11.11a：拉取一份插件索引（只读；给了公钥就必须验签通过）。 */
+  fetchPluginIndex: (url: string, pubkey?: string | null) =>
+    invoke("fetch_plugin_index", { url, pubkey: pubkey ?? null }),
+  /** M11.11a：从索引安装一个插件。 */
+  installPluginFromIndex: (url: string, id: string, pubkey?: string | null) =>
+    invoke("install_plugin_from_index", { url, id, pubkey: pubkey ?? null }),
   openPluginDir: () => invoke("open_plugin_dir"),
   pluginLogs: (pluginId?: string | null, limit?: number | null) =>
     invoke("plugin_logs", { pluginId: pluginId ?? null, limit: limit ?? null }),

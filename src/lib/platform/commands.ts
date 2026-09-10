@@ -38,6 +38,7 @@ import type {
   PdfAnnotationRecord,
   PluginEventOutcome,
   PluginMeta,
+  PluginIndexView,
   PluginSetting,
   PluginValidation,
   PluginAuditEntry,
@@ -182,7 +183,15 @@ export interface CommandMap {
     result: PluginRunResult;
   };
   uninstall_plugin: { args: { id: string }; result: void };
+  /** `sourcePath` 可以是插件目录，也可以是 `.zip` 插件包（M11.11a）。 */
   install_plugin: { args: { sourcePath: string }; result: PluginMeta };
+  /** 拉取并校验一份插件索引（只读，不装任何东西）。 */
+  fetch_plugin_index: { args: { url: string; pubkey?: string | null }; result: PluginIndexView };
+  /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
+  install_plugin_from_index: {
+    args: { url: string; id: string; pubkey?: string | null };
+    result: PluginMeta;
+  };
   open_plugin_dir: { args: undefined; result: string };
   plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
   clear_plugin_logs: { args: undefined; result: void };

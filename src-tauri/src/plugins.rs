@@ -1,5 +1,6 @@
 use crate::capabilities_gen;
 use crate::db::Db;
+use crate::plugin_index;
 use boa_engine::vm::RuntimeLimits;
 use boa_engine::{Context, JsString, JsValue, NativeFunction, Source};
 use rusqlite::{params, Connection};
@@ -2680,6 +2681,25 @@ pub(crate) fn classify_run_error(e: &str) -> (String, String) {
     (code.to_string(), e.to_string())
 }
 
+/// 给同 crate 其它模块的测试用的小工具（不参与生产路径）。
+pub(crate) mod tests_support {
+    use std::path::PathBuf;
+
+    /// 一个空临时目录（与测试模块里的那个同语义；生产代码永远不调用它）。
+    pub(crate) fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 插件设置（M11.8）：声明在 manifest，写只发生在宿主界面
 // ---------------------------------------------------------------------------
@@ -3724,17 +3744,64 @@ pub async fn install_plugin(
     source_path: String,
 ) -> Result<PluginMeta, String> {
     let src = PathBuf::from(&source_path);
+    if src.is_dir() {
+        return install_from_dir(&app, &db, &src, "local");
+    }
+    if src.is_file() {
+        // `.zip` 插件包：解到临时目录，再走**同一条**目录安装路径（校验全部在写盘之前完成）。
+        if !source_path.to_ascii_lowercase().ends_with(".zip") {
+            return Err("只支持 .zip 插件包，或一个插件目录".to_string());
+        }
+        let bytes = std::fs::read(&src).map_err(|e| format!("读取插件包失败：{e}"))?;
+        if bytes.len() as u64 > plugin_index::MAX_PACKAGE_BYTES {
+            return Err(format!(
+                "插件包超过上限 {} MiB",
+                plugin_index::MAX_PACKAGE_BYTES / (1024 * 1024)
+            ));
+        }
+        return install_from_zip_bytes(&app, &db, &bytes, "zip");
+    }
+    Err("插件源不存在（要么是插件目录，要么是 .zip 包）".to_string())
+}
+
+/// 解压 → 安装（临时目录一定清理）。zip 与索引两条来源共用。
+fn install_from_zip_bytes(
+    app: &AppHandle,
+    db: &State<Db>,
+    bytes: &[u8],
+    source_kind: &str,
+) -> Result<PluginMeta, String> {
+    let dir = plugin_index::package_temp_dir();
+    let result = (|| {
+        plugin_index::extract_package(bytes, &dir)?;
+        // `zip -r pkg.zip my-plugin/` 会在包里多一层目录，这里自动下钻；
+        // 其它情况按原样交给 install_from_dir（它会报"读不到 manifest.json"）。
+        let root = plugin_index::resolve_package_root(&dir);
+        install_from_dir(app, db, &root, source_kind)
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+/// 安装一个**已经在磁盘上**的插件目录。
+///
+/// 顺序是刻意的：先把所有前置条件验完（含**入口文件真的能被加载**），再往盘上写。
+/// 此前是「先 copy_dir 再 load_plugin_source」：一旦入口文件有问题，
+/// 已经拷过去的目录会留下并占住这个 id，用户连重装都做不到（报"同名插件已存在"）。
+fn install_from_dir(
+    app: &AppHandle,
+    db: &State<Db>,
+    src: &Path,
+    source_kind: &str,
+) -> Result<PluginMeta, String> {
     if !src.is_dir() {
         return Err("插件源目录不存在".to_string());
     }
-    // 先把所有前置条件验完（含**入口文件真的能被加载**），再往盘上写。
-    // 此前是「先 copy_dir 再 load_plugin_source」：一旦入口文件有问题，
-    // 已经拷过去的目录会留下并占住这个 id，用户连重装都做不到（报"同名插件已存在"）。
-    let manifest = read_manifest(&src)?;
+    let manifest = read_manifest(src)?;
     if !is_safe_plugin_id(&manifest.id) {
         return Err("非法插件 id（manifest.id）".to_string());
     }
-    let source = load_plugin_source(&src, &manifest)?;
+    let source = load_plugin_source(src, &manifest)?;
     // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
     // 权限警告先记下来，装完在插件日志里就能看到（例如"没写 permissions，走基线授权"）。
     let (permissions, warnings) = resolve_permissions(&manifest);
@@ -3743,11 +3810,11 @@ pub async fn install_plugin(
     }
     let commands = discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)?;
 
-    let dest = plugins_root(&app)?.join(&manifest.id);
+    let dest = plugins_root(app)?.join(&manifest.id);
     if dest.exists() {
         return Err("同名插件已存在".to_string());
     }
-    copy_dir(&src, &dest)?;
+    copy_dir(src, &dest)?;
     // 拷贝后确认入口文件确实落到盘上；失败就把半残目录清掉，别留垃圾。
     if let Err(e) = load_plugin_source(&dest, &manifest) {
         let _ = std::fs::remove_dir_all(&dest);
@@ -3756,8 +3823,12 @@ pub async fn install_plugin(
     // 新装的插件**默认禁用**：先让用户看清它要哪些权限、干什么，再自己去启用。
     // （插件默认启用时，"安装"就等于一次性授予了它声明的全部数据访问权。）
     {
-        let c = conn(&db);
-        record_install(&c, &manifest.id, &manifest.version, "local", false, false)?;
+        let c = conn(db);
+        record_install(&c, &manifest.id, &manifest.version, source_kind, false, false)?;
+    }
+    // 来源不是"本地文件夹"时，在插件日志里留一行出处（索引装完之后能追溯是谁给的）。
+    if source_kind != "local" {
+        push_log(&manifest.id, "info", &format!("已安装（来源：{source_kind}）"));
     }
     let (permissions, permissions_baseline) = permission_metas(&manifest);
     let events = event_metas(&manifest);
@@ -3783,6 +3854,148 @@ pub async fn install_plugin(
         // 新装默认禁用、也还没"同意过"任何东西：等用户看权限清单点启用时才会记快照。
         approval: ApprovalState::default(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// 索引安装（M11.11a）：给一个 URL，拉索引 → 校验 → 下载 → 校验 → 解包 → 安装
+// ---------------------------------------------------------------------------
+
+fn app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+fn index_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// 带体积上限的 GET。上限在**读取过程中**也守着：只看 `Content-Length` 会被
+/// "不报长度、慢慢灌"的服务器绕过。
+async fn http_get_capped(
+    client: &reqwest::Client,
+    url: &str,
+    cap: u64,
+) -> Result<Vec<u8>, String> {
+    let mut resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_connect() || e.is_timeout() {
+                format!("无法连接到 {url}（网络或地址不可达）")
+            } else {
+                format!("请求 {url} 失败：{e}")
+            }
+        })?;
+    if !resp.status().is_success() {
+        return Err(format!("{url} 返回 HTTP {}", resp.status()));
+    }
+    // 重定向可能把我们带到 http://（reqwest 允许降级）；落地地址要**再查一遍**。
+    let landed = resp.url().to_string();
+    if landed != url {
+        plugin_index::check_source_url(&landed)
+            .map_err(|e| format!("{url} 重定向到了不允许的地址（{landed}）：{e}"))?;
+    }
+    if let Some(len) = resp.content_length() {
+        if len > cap {
+            return Err(format!(
+                "{url} 体积 {len} 字节，超过体积上限 {} MiB",
+                cap / (1024 * 1024)
+            ));
+        }
+    }
+    let mut out: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("读取 {url} 失败：{e}"))? {
+        if out.len() as u64 + chunk.len() as u64 > cap {
+            return Err(format!(
+                "{url} 超过体积上限 {} MiB（已中止下载）",
+                cap / (1024 * 1024)
+            ));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+/// 拉一份索引并按需验签。**没给公钥就不假装验过**（`signatureVerified: null`）。
+async fn load_plugin_index(
+    url: &str,
+    pubkey: Option<&str>,
+    app_version: &str,
+) -> Result<(plugin_index::PluginIndexView, plugin_index::PluginIndex), String> {
+    let url = plugin_index::check_source_url(url)?;
+    let client = index_http_client()?;
+    let bytes = http_get_capped(&client, &url, plugin_index::MAX_INDEX_BYTES).await?;
+    let verified = match pubkey.map(str::trim).filter(|k| !k.is_empty()) {
+        Some(key) => {
+            // 给了公钥就必须验签**成功**才继续：拉不到签名 = 失败（fail closed），
+            // 否则"签名服务器挂了"就成了绕过校验的开关。
+            let sig_url = plugin_index::signature_url(&url);
+            let raw = http_get_capped(&client, &sig_url, plugin_index::MAX_SIGNATURE_BYTES)
+                .await
+                .map_err(|e| format!("指定了索引公钥，但取不到签名文件：{e}"))?;
+            let text = String::from_utf8(raw).map_err(|_| "签名文件不是 UTF-8 文本".to_string())?;
+            plugin_index::verify_index_signature(&bytes, &text, key)?;
+            Some(true)
+        }
+        None => None,
+    };
+    let index = plugin_index::parse_index(&bytes)?;
+    Ok((
+        plugin_index::index_view(&index, app_version, verified),
+        index,
+    ))
+}
+
+/// 拉取并校验一份插件索引（**只读**：不下载任何插件包，也不碰磁盘）。
+#[tauri::command]
+pub async fn fetch_plugin_index(
+    app: AppHandle,
+    url: String,
+    pubkey: Option<String>,
+) -> Result<plugin_index::PluginIndexView, String> {
+    let (view, _) = load_plugin_index(&url, pubkey.as_deref(), &app_version(&app)).await?;
+    Ok(view)
+}
+
+/// 从索引安装一个插件：索引里能找到、能装、sha256 对得上，才落盘。
+#[tauri::command]
+pub async fn install_plugin_from_index(
+    app: AppHandle,
+    db: State<'_, Db>,
+    url: String,
+    id: String,
+    pubkey: Option<String>,
+) -> Result<PluginMeta, String> {
+    let version = app_version(&app);
+    let (_, index) = load_plugin_index(&url, pubkey.as_deref(), &version).await?;
+    let entry = index
+        .plugins
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| format!("这份索引里没有插件「{id}」"))?;
+    // 装不装得了以**索引里的原始数据**为准（和界面显示用的是同一个判定函数）。
+    let blocked = plugin_index::entry_block_reason(entry, &version);
+    if !blocked.is_empty() {
+        return Err(format!("不能安装「{id}」：{blocked}"));
+    }
+    let pkg_url = plugin_index::check_source_url(&entry.download_url)?;
+    let client = index_http_client()?;
+    let bytes = http_get_capped(&client, &pkg_url, plugin_index::MAX_PACKAGE_BYTES).await?;
+    if entry.size != 0 && bytes.len() as u64 != entry.size {
+        return Err(format!(
+            "下载到的插件包体积（{} 字节）与索引里写的（{} 字节）不一致，拒绝安装",
+            bytes.len(),
+            entry.size
+        ));
+    }
+    // 完整性：索引说这个包是这个哈希，下载到的东西就必须是它。先验再解包。
+    plugin_index::verify_sha256(&bytes, &entry.sha256)?;
+    let kind = format!("index:{}", plugin_index::url_host(&url));
+    install_from_zip_bytes(&app, &db, &bytes, &kind)
 }
 
 #[tauri::command]
@@ -5373,9 +5586,6 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!((v.as_str(), src.as_str(), seeded), ("2.0.0", "bundled", 1));
     }
 
-    /// 审计是进程级环形缓冲，与日志同样需要串行。
-    static AUDIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// 测试里"会走能力的那一段"的**可重入**串行锁。
     ///
     /// 为什么需要它：审计环是**进程级**的（生产里界面就读它），而 Rust 测试默认并行跑。
@@ -5970,6 +6180,182 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(plugin_logs(Some("别的插件".to_string()), None).is_empty(), "按插件过滤应当生效");
         clear_plugin_logs();
         assert!(plugin_logs(None, None).is_empty());
+    }
+
+    // ---- 索引安装（M11.11a）：下载与上限 ----
+
+    /// 极小的回环 HTTP 服务器：只按路径回固定内容，用来测"下载这一层"。
+    ///
+    /// 只绑 127.0.0.1（正是 `check_source_url` 允许的那一种明文地址），不碰外网。
+    /// `with_length = false` 时不发 `Content-Length` 就关连接：用来测"服务器不报长度、
+    /// 只想慢慢灌"的那条路径（只看响应头的上限在这里是挡不住的）。
+    async fn serve_full(routes: Vec<(&'static str, Vec<u8>, bool)>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let routes = routes.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let hit = routes
+                        .iter()
+                        .find(|(p, _, _)| *p == path)
+                        .map(|(_, b, l)| (b.clone(), *l));
+                    let (head, body) = match hit {
+                        Some((b, true)) => (
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                b.len()
+                            ),
+                            b,
+                        ),
+                        Some((b, false)) => (
+                            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_string(),
+                            b,
+                        ),
+                        None => (
+                            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                .to_string(),
+                            Vec::new(),
+                        ),
+                    };
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(&body).await;
+                    let _ = sock.flush().await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    async fn serve(routes: Vec<(&'static str, Vec<u8>)>) -> String {
+        serve_full(routes.into_iter().map(|(p, b)| (p, b, true)).collect()).await
+    }
+
+    fn index_body() -> Vec<u8> {
+        format!(
+            r#"{{"indexVersion":1,"owner":{{"id":"self","name":"自托","url":"http://127.0.0.1"}},
+"generatedAt":"2026-09-10T00:00:00Z","plugins":[
+{{"id":"weekly-report","name":"周报","version":"1.2.0","apiVersion":"{}","minAppVersion":"1.0.0",
+"runtime":"logic","description":"d","publisher":"alice","license":"MIT",
+"permissions":[{{"id":"read:pages","reason":"读标题"}}],
+"downloadUrl":"https://example.com/p.zip","size":2048,"sha256":"{}"}}]}}"#,
+            crate::capabilities_gen::API_VERSION,
+            "a".repeat(64)
+        )
+        .into_bytes()
+    }
+
+    #[tokio::test]
+    async fn download_stops_at_the_size_cap() {
+        let base = serve_full(vec![
+            ("/big.bin", vec![7u8; 512 * 1024], true),
+            // 不发 Content-Length：只能靠"读的过程中"守住上限
+            ("/stream.bin", vec![7u8; 512 * 1024], false),
+        ])
+        .await;
+        let client = index_http_client().unwrap();
+        // 上限之内的正常下载
+        let ok = http_get_capped(&client, &format!("{base}/big.bin"), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(ok.len(), 512 * 1024);
+        // 报了长度的：看响应头就拒，不必先收完
+        let err = http_get_capped(&client, &format!("{base}/big.bin"), 64 * 1024)
+            .await
+            .unwrap_err();
+        assert!(err.contains("超过体积上限") && !err.contains("已中止下载"), "{err}");
+        // 不报长度的：必须在读取途中中止（只看响应头的实现会在这里放行）
+        let err = http_get_capped(&client, &format!("{base}/stream.bin"), 64 * 1024)
+            .await
+            .unwrap_err();
+        assert!(err.contains("已中止下载"), "{err}");
+        // 404 要说清是 HTTP 状态，不是"解析失败"
+        let err = http_get_capped(&client, &format!("{base}/nope.bin"), 1024)
+            .await
+            .unwrap_err();
+        assert!(err.contains("HTTP 404"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn index_signature_state_is_reported_honestly() {
+        let base = serve(vec![("/index.json", index_body())]).await;
+        // 没给公钥：不验签，但必须如实说"没有验"（None），而不是假装验过
+        let (view, index) = load_plugin_index(&format!("{base}/index.json"), None, "1.87.0")
+            .await
+            .unwrap();
+        assert_eq!(view.signature_verified, None);
+        assert_eq!(index.plugins.len(), 1);
+        assert_eq!(view.plugins[0].blocked, "", "这条应当是可安装的");
+
+        // 给了公钥却没签名文件 → 失败（fail closed，不能"取不到就当没要求"）
+        let err = load_plugin_index(&format!("{base}/index.json"), Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"), "1.87.0")
+            .await
+            .unwrap_err();
+        assert!(err.contains("取不到签名文件"), "{err}");
+
+        // 签名文件是垃圾 → 明确报"签名不合法"
+        let bad = serve(vec![
+            ("/index.json", index_body()),
+            ("/index.json.minisig", b"garbage".to_vec()),
+        ])
+        .await;
+        let err = load_plugin_index(
+            &format!("{bad}/index.json"),
+            Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"),
+            "1.87.0",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("签名不合法"), "{err}");
+
+        // 真签名，但签的不是这份索引 → 必须拒（这就是"索引被改过"的样子）
+        let sig_of_other_data = [
+            "untrusted comment: signature from minisign secret key",
+            "RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=",
+            "trusted comment: timestamp:1556193335\tfile:test",
+            "y/rUw2y8/hOUYjZU71eHp/Wo1KZ40fGy2VJEDl34XMJM+TX48Ss/17u3IvIfbVR1FkZZSNCisQbuQY+bHwhEBg==",
+        ]
+        .join("\n")
+        .into_bytes();
+        let mismatched = serve(vec![
+            ("/index.json", index_body()),
+            ("/index.json.minisig", sig_of_other_data),
+        ])
+        .await;
+        let err = load_plugin_index(
+            &format!("{mismatched}/index.json"),
+            Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"),
+            "1.87.0",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("签名校验失败"), "{err}");
+
+        // 索引本身不合规（版本形状不对）→ 解析阶段就拒
+        let broken = serve(vec![("/index.json", b"{\"indexVersion\":1,\"plugins\":[{\"id\":\"x\",\"version\":\"1\",\"downloadUrl\":\"https://e.com/p.zip\",\"sha256\":\"aa\"}]}".to_vec())]).await;
+        let err = load_plugin_index(&format!("{broken}/index.json"), None, "1.87.0")
+            .await
+            .unwrap_err();
+        assert!(!err.is_empty(), "不合规的索引要有明确报错");
+    }
+
+    #[tokio::test]
+    async fn index_sources_must_be_https_before_any_network_call() {
+        // 明文 http 的外网地址：在发请求**之前**就拒（因此不会真的联网）
+        let err = load_plugin_index("http://example.com/index.json", None, "1.87.0")
+            .await
+            .unwrap_err();
+        assert!(err.contains("https"), "{err}");
+        let err = load_plugin_index("ftp://example.com/index.json", None, "1.87.0")
+            .await
+            .unwrap_err();
+        assert!(err.contains("https://"), "{err}");
     }
 
     // ---- 工具 ----

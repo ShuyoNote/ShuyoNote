@@ -77,6 +77,12 @@ interface PluginsState {
   toggle: (id: string) => Promise<PluginActionResult>;
   uninstall: (id: string) => Promise<PluginActionResult>;
   install: (sourcePath: string) => Promise<PluginActionResult>;
+  /**
+   * M11.11a：从一份索引安装一个插件（URL + 索引里那条的 id）。
+   *
+   * `pubkey` 是用户信任的 minisign 公钥；给了就必须验签通过才继续。
+   */
+  installFromIndex: (url: string, id: string, pubkey?: string | null) => Promise<PluginActionResult>;
   openDir: () => Promise<PluginActionResult>;
   runCommand: (
     pluginId: string,
@@ -206,6 +212,25 @@ export const usePlugins = create<PluginsState>((set) => ({
       console.error("install plugin failed", e);
       const error = errText(e);
       toast(`安装插件失败：${error}`, "error");
+      return { ok: false, error };
+    }
+  },
+  installFromIndex: async (url, id, pubkey) => {
+    try {
+      const meta = await api.installPluginFromIndex(url, id, pubkey ?? null);
+      await usePlugins.getState().load();
+      // 与本地安装同一条规矩：装完默认禁用，先看权限再启用。
+      toast(
+        meta?.name
+          ? `已从索引安装插件「${meta.name}」（默认未启用，请确认权限后点「启用」）`
+          : "已从索引安装插件",
+        "success",
+      );
+      return { ok: true };
+    } catch (e) {
+      console.error("install plugin from index failed", e);
+      const error = errText(e);
+      toast(`从索引安装失败：${error}`, "error");
       return { ok: false, error };
     }
   },

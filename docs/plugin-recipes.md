@@ -47,6 +47,56 @@
 - **整理类**（`weekly-review` / `stale-triage` / `orphan-pages` / `page-status`）：只解决
   "一堆页面需要有人看一眼"这件事——它们不会替你改笔记，只会把值得看的那几页整理成一份草稿。
 
+## 发布：让别人也能一键装（索引 + 签名）
+
+上面「安装（三步）」是**手动**的把目录拷进去。想让别人一条 URL 就装上，需要一份**索引**——
+一个静态 JSON，放在任何能被访问到的位置（代码托管站的 release / Pages / 企业内网 / 自己的服务器）。
+规范全文见[分发策略 §3.1](plans/2026-09-10-plugin-distribution-strategy.md)，可照抄的样例在
+[`plugin-index.example.json`](plugin-index.example.json)。
+
+**1. 打包**（包内**根目录**就是插件目录；多包一层也没关系——应用会自动下钻一层）：
+
+```bash
+cd examples/plugins && zip -r /tmp/weekly-review-1.0.0.zip weekly-review
+```
+
+**2. 算 sha256 和体积**（`sha256` 是**必填**的：应用拿它校验下载到的包，对不上就拒绝安装）：
+
+```bash
+shasum -a 256 /tmp/weekly-review-1.0.0.zip     # macOS / Linux
+sha256sum /tmp/weekly-review-1.0.0.zip         # Linux
+wc -c < /tmp/weekly-review-1.0.0.zip           # size
+```
+```powershell
+Get-FileHash .\weekly-review-1.0.0.zip -Algorithm SHA256   # Windows
+(Get-Item .\weekly-review-1.0.0.zip).Length
+```
+
+**3. 写进索引**：把 `id / version / apiVersion / minAppVersion / runtime / permissions(含 reason) /
+license / downloadUrl / size / sha256` 填好。**权限理由请照实写**——用户在确认框里读到的是它，
+含糊其辞等于让他盲装。
+
+**4.（可选但强烈建议）签一份索引签名**，让用户能用公钥确认「这份索引没被人换过」：
+
+```bash
+minisign -Sm plugin-index.json        # 生成 plugin-index.json.minisig，与索引放同一目录
+minisign -G -p mykey.pub              # 还没密钥就先建一对；私钥自己收好，公钥发给用户
+```
+
+用户在应用里填**索引地址**（必须 https）与**公钥**（可选，minisign 的裸 base64 或
+`mykey.pub` 文件内容都认）：填了公钥就必须取到 `.minisig` 并校验通过，否则**直接失败**——
+不会"取不到签名就跳过校验"。
+
+**应用侧的规矩**（`插件管理 → 从索引安装（给 URL）`）：
+
+- 索引与包都只走 **https**（唯一的例外是本机回环地址，给自托调试用）；
+- 装之前按索引里的 `sha256` 校验包，先校验后落盘；`size` 与实际不符也拒；
+- 界面显示**来源**（索引拥有者 + 域名）与**签名状态**（验过 / 没验过，两者一眼能分辨）；
+- **没有人工审查**：能装不等于可信；装完默认未启用，权限逐条确认后才启用；
+- 阶段 2 才做**发布者签名**（`signature` 字段）：现在索引里带了它也只是显示"带了、未校验"。
+
+> 撤回：索引里把 `revokedAt` 填上（可附 `revokedReason`），应用会显示它但**不给装**。
+
 ## 想加更多插件时
 
 - **同一个人写的配方帖请合成一篇**（"某某的三件套"），不要把社区刷成一个人的清单；

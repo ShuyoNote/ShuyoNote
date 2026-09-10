@@ -16,6 +16,7 @@ mod capabilities_gen;
 mod pdf_native;
 mod plugin_budget;
 pub mod plugin_host;
+mod plugin_index;
 mod plugin_validate;
 mod plugins;
 mod properties;
@@ -444,6 +445,9 @@ pub fn run() {
             plugins::cancel_plugin_run,
             plugins::uninstall_plugin,
             plugins::install_plugin,
+            // M11.11a：索引协议（拉索引 / 从索引安装）。
+            plugins::fetch_plugin_index,
+            plugins::install_plugin_from_index,
             plugins::open_plugin_dir,
             plugin_validate::validate_plugin,
             plugin_validate::plugin_dir_stamp,
