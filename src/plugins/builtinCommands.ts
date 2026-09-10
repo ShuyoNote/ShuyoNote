@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { isDesktopPlatform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
 import { usePlugins } from "../store/plugins";
@@ -113,6 +114,10 @@ registerCommandGroup({
       id: "export.workspace-wiki",
       title: "导出当前空间为 wiki",
       description: "把当前空间导出为可独立浏览的静态 HTML wiki（双链/反链/索引页）",
+      // **只在 web 平台出现**：静态 HTML wiki 导出目前只有 web 平台实现（Rust 侧没有
+      // 这条命令），桌面端点下去只会得到 "command export_wiki not found"。宁可不显示，
+      // 也不给一条必然失败的入口。桌面端要这个功能的话，是在 Rust 侧补一条 `export_wiki`。
+      when: () => !isDesktopPlatform(),
       closeOnRun: true,
       run: async () => {
         const result = await api.exportWiki("wiki-export.zip");

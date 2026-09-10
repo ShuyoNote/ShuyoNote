@@ -1,6 +1,11 @@
-// 命令覆盖率检查：比对桌面 Rust 后端注册的 command 与 web.ts 实现的命令，
-// 以及 CommandMap 契约层是否覆盖了全部 Rust 命令。
-// 输出「Rust 有但 web.ts 未实现」「Rust 有但 CommandMap 未定义」的命令。
+// 命令覆盖率检查（三个方向）：
+//   1. Rust 有 → web.ts 必须实现；
+//   2. Rust 有 → CommandMap 必须声明；
+//   3. **CommandMap 有的 → 桌面 Rust 必须注册**（或明确登记为「web 专属」）。
+// 前两个方向是"换平台时别漏"，第三个方向是"别让前端调用一个桌面根本不存在的命令"——
+// 2026-09 就是它漏掉了 `approve_plugin`：前端有契约、有 API、有按钮（插件被暂停后的
+// 「重新确认」），Rust 侧却忘了进 `generate_handler!`，于是桌面点下去只会看到
+// "command approve_plugin not found"（而 web 平台的 stub 让它看起来一切正常）。
 // 用法：node scripts/check-web-commands.mjs  （有缺失即非零退出）
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -38,6 +43,19 @@ for (const m of cmTs.matchAll(/^\s{2}([a-z_0-9]+):\s*\{\s*args/gm)) {
 
 const missingWeb = [...rustCommands].filter((c) => !webCommands.has(c)).sort();
 const missingContract = [...rustCommands].filter((c) => !contractCommands.has(c)).sort();
+
+// 4. 反向：CommandMap 声明了、但桌面 Rust 没注册的命令。
+//    这些在桌面点下去必然抛「command … not found」，而 web 平台往往有 stub ——
+//    于是只有桌面用户会撞上，而且只有点到那条命令时才会。所以要么补 Rust 命令，
+//    要么把它登记成**web 专属**（列在这里 = 明确承认"桌面没有这条命令"，
+//    调用点必须自己按平台收口，例如 `when: () => !isDesktopPlatform()`）。
+const WEB_ONLY_COMMANDS = new Map([
+  ["request_persistent_storage", "浏览器的 Storage API，桌面端没有对应概念（UI 按 supported 决定显不显示）"],
+  ["export_wiki", "静态 HTML wiki 导出目前只在 web 平台实现（桌面端命令面板按平台隐藏它）"],
+]);
+const missingRust = [...contractCommands]
+  .filter((c) => !rustCommands.has(c) && !WEB_ONLY_COMMANDS.has(c))
+  .sort();
 
 // 4. 参数键大小写：Tauri 2 只接受 camelCase 参数键（运行时映射到 Rust 的
 //    snake_case 形参）。传 `server_url` 会在**运行时**报「missing required key
@@ -97,5 +115,14 @@ if (missingContract.length) {
   console.error(`CommandMap 契约层缺少 ${missingContract.length} 个桌面命令（新命令须同步到 commands.ts，否则 api.ts 调用无编译期校验）：`);
   for (const c of missingContract) console.error("  - " + c);
 }
+if (missingRust.length) {
+  failed = true;
+  console.error(`CommandMap 有 ${missingRust.length} 个命令桌面 Rust 没注册（桌面调用会抛 command not found）：`);
+  for (const c of missingRust) console.error("  - " + c);
+  console.error("  若它本来就是 web 专属，请登记进本脚本的 WEB_ONLY_COMMANDS 并说明理由。");
+}
 if (failed) process.exit(1);
-console.log(`命令覆盖完整：Rust ${rustCommands.size} 个命令，web.ts 全部实现（web 共 ${webCommands.size} 个），CommandMap 契约全覆盖（${contractCommands.size} 个），参数键均为 camelCase。`);
+console.log(
+  `命令覆盖完整：Rust ${rustCommands.size} 个命令，web.ts 全部实现（web 共 ${webCommands.size} 个），` +
+    `CommandMap 契约全覆盖（${contractCommands.size} 个，其中 web 专属 ${WEB_ONLY_COMMANDS.size} 个），参数键均为 camelCase。`,
+);

@@ -420,6 +420,11 @@ pub fn run() {
             titlebar::set_mica_effect,
             plugins::plugin_settings,
             plugins::set_plugin_setting,
+            // 「重新确认」：插件声明扩张后宿主会暂停它，用户点这个按钮才恢复。
+            // **别漏**：漏了的话前端有契约、有按钮，桌面点下去只有
+            // "command approve_plugin not found"（而 web 平台的 stub 让它看起来正常）。
+            // scripts/check-web-commands.mjs 现在会拦这种"CommandMap 有、Rust 没注册"。
+            plugins::approve_plugin,
             plugins::emit_plugin_event,
             plugins::list_plugins,
             plugins::set_plugin_enabled,
