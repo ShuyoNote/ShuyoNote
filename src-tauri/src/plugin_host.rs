@@ -91,20 +91,24 @@ pub fn resident_bytes(pid: u32) -> Option<u64> {
 struct RssWatchdog {
     stop: Arc<std::sync::atomic::AtomicBool>,
     over_limit: Arc<std::sync::atomic::AtomicBool>,
+    /// 观测到的**峰值**（即使没超限也记）：它是"这个插件到底吃了多少"唯一的第一手数据，
+    /// 会被写进审计（方案阶段 4 的可观测项）。
+    peak: Arc<std::sync::atomic::AtomicU64>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl RssWatchdog {
-    fn start(killer: HostKiller, limit: u64, poll: std::time::Duration) -> Self {
+    fn start(killer: HostKiller, limit: u64, poll: std::time::Duration, peak: Arc<std::sync::atomic::AtomicU64>) -> Self {
         use std::sync::atomic::{AtomicBool, Ordering};
         let stop = Arc::new(AtomicBool::new(false));
         let over_limit = Arc::new(AtomicBool::new(false));
-        let (stop2, over2, killer2) = (stop.clone(), over_limit.clone(), killer.clone());
+        let (stop2, over2, peak2, killer2) = (stop.clone(), over_limit.clone(), peak.clone(), killer.clone());
         let handle = std::thread::Builder::new()
             .name("plugin-host-rss".to_string())
             .spawn(move || {
                 while !stop2.load(Ordering::Relaxed) {
                     if let Some(bytes) = resident_bytes(killer2.pid) {
+                        peak2.fetch_max(bytes, Ordering::Relaxed);
                         if bytes > limit {
                             over2.store(true, Ordering::Relaxed);
                             // 超限就杀：这一层不跟插件商量（方案 §3.5）。
@@ -116,7 +120,7 @@ impl RssWatchdog {
                 }
             })
             .ok();
-        RssWatchdog { stop, over_limit, handle }
+        RssWatchdog { stop, over_limit, peak, handle }
     }
 
     fn stop_and_join(&mut self) {
@@ -129,6 +133,10 @@ impl RssWatchdog {
 
     fn tripped(&self) -> bool {
         self.over_limit.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn peak(&self) -> u64 {
+        self.peak.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -496,6 +504,24 @@ pub struct HostClient {
     /// 常驻内存上限与轮询间隔（测试里可以调小，用来确定性地验证"超限即杀"）。
     rss_limit: u64,
     rss_poll: std::time::Duration,
+    /// 这次调用期间观测到的**峰值常驻内存**（0 = 一次都没读到，例如 Windows 还没实现读数）。
+    peak_rss: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// 读"这次运行观测到的峰值常驻内存"的句柄（见 [`HostClient::peak_rss_handle`]）。
+#[derive(Clone)]
+pub struct PeakRssHandle {
+    peak: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl PeakRssHandle {
+    /// 峰值字节数；`0` 表示一次都没读到 → `None`（不猜）。
+    pub fn bytes(&self) -> Option<u64> {
+        match self.peak.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => None,
+            n => Some(n),
+        }
+    }
 }
 
 /// 只有"杀"和"看退出状态"两件事的句柄（超时路径用它，不用把整个 client 搬来搬去）。
@@ -570,6 +596,7 @@ impl HostClient {
             child_pid: 0,
             rss_limit: HOST_RSS_LIMIT_BYTES,
             rss_poll: RSS_POLL_INTERVAL,
+            peak_rss: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         client.handshake()?;
         Ok(client)
@@ -623,7 +650,12 @@ impl HostClient {
         write_frame(&mut self.stdin, &HostIn::Run(req)).map_err(|e| e.to_string())?;
 
         // RSS 看门狗：跑插件期间盯着常驻内存，超限直接杀（进程级兜底，见方案 §3.5）。
-        let mut watchdog = RssWatchdog::start(self.killer(), self.rss_limit, self.rss_poll);
+        let mut watchdog = RssWatchdog::start(
+            self.killer(),
+            self.rss_limit,
+            self.rss_poll,
+            self.peak_rss.clone(),
+        );
 
         let outcome = loop {
             match read_frame::<_, HostOut>(&mut self.stdout) {
@@ -661,6 +693,18 @@ impl HostClient {
             ));
         }
         outcome
+    }
+
+    /// 这次调用观测到的峰值常驻内存（字节）。`None` = 一次都没读到（Windows 还没实现读数，
+    /// 或者进程活得比轮询还短）——**不猜**。
+    pub fn peak_rss_bytes(&self) -> Option<u64> {
+        self.peak_rss_handle().bytes()
+    }
+
+    /// 峰值的**共享句柄**：`client` 会被移进工作线程，调用方要在那之前拿一份，
+    /// 才能在这次运行结束之后读到峰值。
+    pub fn peak_rss_handle(&self) -> PeakRssHandle {
+        PeakRssHandle { peak: self.peak_rss.clone() }
     }
 
     /// 调整常驻内存上限与轮询间隔（测试用：调成 1 字节就能确定性地验证"超限即杀"）。

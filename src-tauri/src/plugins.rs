@@ -424,6 +424,12 @@ pub struct PluginAuditEntry {
     pub ok: bool,
     /// 失败时的错误码前缀（permission_denied / unknown_capability / bad_args …）。
     pub error_code: Option<String>,
+    /// `capability = "host.run"` 这类**运行记录**上带的峰值常驻内存（字节）。
+    ///
+    /// 为什么记它：内存看门狗只能"拦住暴走"，而"这个插件平时吃多少"是另一件同样有用的事——
+    /// 用户据此判断要不要禁用它，作者据此判断自己是不是写得太肥。读不到读数时是 `None`。
+    #[serde(default)]
+    pub peak_rss_bytes: Option<u64>,
 }
 
 /// 审计环形缓冲容量。内存里留最近这些，足够复盘一次会话里的行为。
@@ -441,6 +447,31 @@ fn error_code_of(msg: &str) -> Option<String> {
     }
 }
 
+/// 记一条**运行记录**（不是能力调用）：一次命令/事件跑完（或被杀）之后的结局。
+///
+/// 与能力审计共用同一个环与同一份界面，因为它回答的是同一个问题——"这个插件刚才干了什么"。
+fn push_run_audit(
+    plugin_id: &str,
+    kind: &str,
+    ok: bool,
+    error_code: Option<String>,
+    peak_rss_bytes: Option<u64>,
+) {
+    let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+    if q.len() >= PLUGIN_AUDIT_CAPACITY {
+        q.pop_front();
+    }
+    q.push_back(PluginAuditEntry {
+        plugin_id: plugin_id.to_string(),
+        capability: "host.run".to_string(),
+        scope: kind.to_string(),
+        at_ms: now_ms(),
+        ok,
+        error_code,
+        peak_rss_bytes,
+    });
+}
+
 fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
@@ -453,6 +484,7 @@ fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_co
         at_ms: now_ms(),
         ok,
         error_code,
+        peak_rss_bytes: None,
     });
 }
 
@@ -2404,6 +2436,8 @@ fn run_via_host_with_timeout(
     if let Some(id) = run_id {
         register_run(id, killer.clone());
     }
+    // 峰值内存要在 `client` 被移进工作线程**之前**拿一个共享句柄（运行结束后读它）。
+    let peak_rss_handle = client.peak_rss_handle();
     let serve_state = state.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
@@ -2426,23 +2460,27 @@ fn run_via_host_with_timeout(
         unregister_run(id);
     }
     let cancelled_by_user = run_id.is_some_and(take_cancelled);
+    // 峰值内存在这里读一次（进程被杀之后读不到了），下面的每条出口都要带上它。
+    let peak_rss = peak_rss_handle.bytes();
+    let kind = if mode == crate::plugin_host::HostRunMode::Event { "event" } else { "command" };
     let (served, drafts, exports, cap_toasts, cap_insert, dropped) = match received {
         Ok(v) => v,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             // **超时 = 杀进程**（方案 §3.3）：不再"放弃等待"留一个跑到天荒地老的子进程。
             // 杀掉之后工作线程会因管道断开而自行退出。
             killer.kill();
-            return Err(format!(
-                "timeout: {what_label}超时（>{:?}），已终止宿主进程",
-                timeout
-            ));
+            let msg = format!("timeout: {what_label}超时（>{:?}），已终止宿主进程", timeout);
+            record_run_end(&state.plugin_id, kind, &Err(msg.clone()), peak_rss);
+            return Err(msg);
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             killer.kill();
-            return Err(format!(
+            let msg = format!(
                 "plugin_crash: {what_label}的宿主线程异常结束（{}）",
                 killer.describe_exit()
-            ));
+            );
+            record_run_end(&state.plugin_id, kind, &Err(msg.clone()), peak_rss);
+            return Err(msg);
         }
     };
 
@@ -2450,9 +2488,14 @@ fn run_via_host_with_timeout(
         Ok(res) => res,
         // 用户取消 → 说清是**被他终止的**，而不是"插件崩了"（两者都会让通道断开）。
         Err(e) if cancelled_by_user => {
-            return Err(format!("cancelled: 已终止插件（用户取消）；底层原因：{e}"))
+            let msg = format!("cancelled: 已终止插件（用户取消）；底层原因：{e}");
+            record_run_end(&state.plugin_id, kind, &Err(msg.clone()), peak_rss);
+            return Err(msg);
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            record_run_end(&state.plugin_id, kind, &Err(e.clone()), peak_rss);
+            return Err(e);
+        }
     };
     // 两种插入来源合并：能力那条（父进程）优先，JS 原生那条（子进程）兜底。
     let insert_text = if cap_insert.is_empty() { res.insert_text } else { cap_insert };
@@ -2465,7 +2508,42 @@ fn run_via_host_with_timeout(
     // 子进程不会产出草稿/导出（它没有能力，只能问），所以这两个字段正常是空的。
     // 这里仍然只认**本进程**收集到的那份：能力的产出全部发生在这一侧。
     let _ = (&res.drafts, &res.exports);
+    record_run_end(&state.plugin_id, kind, &Ok(res.message.clone()), peak_rss);
     Ok((res.message, insert_text, toasts, drafts, exports, dropped))
+}
+
+/// 一次运行结束时记一条审计。
+///
+/// 记哪些：**命令**每次都记（用户点一下才跑，量小、也正是他想复盘的东西）；
+/// **事件**只在**失败时**记——事件是后台高频行为（每次保存 × 每个订阅插件），
+/// 每条都记会把环灌满、把真正想看的能力调用挤掉。
+fn record_run_end(
+    plugin_id: &str,
+    kind: &str,
+    outcome: &Result<String, String>,
+    peak_rss_bytes: Option<u64>,
+) {
+    let is_event = kind == "event";
+    if is_event && outcome.is_ok() && !plugin_raised(outcome) {
+        return;
+    }
+    let (ok, error_code) = match outcome {
+        // 插件**抛错**在宿主这一层是"跑完了、结果是一句话"（shim 把异常转成返回值），
+        // 所以这里按前缀认出来——否则审计会把这个插件记成"一切正常"，而那正是最误导的。
+        // （更干净的做法是让 shim 回一个结构化标志；那要动 ABI 生成物，等有需要再说。）
+        Ok(msg) if plugin_raised(outcome) => {
+            let _ = msg;
+            (false, Some("plugin_error".to_string()))
+        }
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(classify_run_error(e).0)),
+    };
+    push_run_audit(plugin_id, kind, ok, error_code, peak_rss_bytes);
+}
+
+/// 结果里那句话是不是"插件抛错了"（见 `record_run_end` 的注释）。
+fn plugin_raised(outcome: &Result<String, String>) -> bool {
+    matches!(outcome, Ok(msg) if msg.starts_with("__plugin: 执行出错") || msg.starts_with("出错："))
 }
 
 /// 起宿主子进程。生产用**当前可执行文件**（同二进制 re-exec）。
@@ -4237,6 +4315,101 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         run_command_in_host_for_test(source, command_id, args_json, state).map(|(msg, ..)| msg)
     }
 
+    /// **运行记录进审计**：跑完一次命令之后，审计里要有一条 `host.run`，带上结局与**峰值内存**。
+    /// 没有这条，用户就只能看到"能力被调过"，看不到"这次运行吃了多少、是不是被杀过"。
+    #[test]
+    fn a_run_records_its_outcome_and_peak_memory_in_the_audit() {
+        let _g = log_test_guard();
+        let _cap = capability_test_guard();
+        clear_plugin_audit();
+        let st = RunState {
+            plugin_id: "audit-run".to_string(),
+            ..Default::default()
+        };
+        let (msg, ..) = run_command_in_host_for_test(
+            r#"register({ id: "a.run", title: "A", run: function () { return "ok"; } });"#,
+            "a.run",
+            "",
+            &st,
+        )
+        .unwrap();
+        assert_eq!(msg, "ok");
+
+        let rows = plugin_audit(Some("audit-run".to_string()), None);
+        let run = rows
+            .iter()
+            .find(|r| r.capability == "host.run")
+            .expect("应当有一条运行记录");
+        assert!(run.ok, "跑成功要记 ok");
+        assert_eq!(run.scope, "command", "要能区分命令与事件");
+        assert!(run.error_code.is_none());
+        assert!(
+            run.peak_rss_bytes.unwrap_or(0) > 0,
+            "峰值内存要真的读到（读不到就等于这条兜底的可见性没了）：{:?}",
+            (run.capability.as_str(), run.ok, run.peak_rss_bytes)
+        );
+
+        // 失败的那次：插件**抛错**在宿主这层是"跑完了、结果是一句话"（shim 把异常转成返回值），
+        // 但审计必须把它记成**失败**——否则用户看到的是"一切正常"。
+        let (msg, ..) = run_command_in_host_for_test(
+            r#"register({ id: "a.boom", title: "B", run: function () { throw new Error("炸了"); } });"#,
+            "a.boom",
+            "",
+            &st,
+        )
+        .unwrap();
+        assert!(msg.contains("炸了"), "{msg}");
+        let rows = plugin_audit(Some("audit-run".to_string()), None);
+        let failed = rows.iter().rev().find(|r| r.capability == "host.run").expect("应当有记录");
+        assert!(!failed.ok);
+        assert_eq!(failed.error_code.as_deref(), Some("plugin_error"));
+        clear_plugin_audit();
+    }
+
+    /// 事件**成功**时不记运行记录：事件是后台高频行为（每次保存 × 每个订阅插件），
+    /// 每条都记会把环灌满、把真正想看的能力调用挤掉；失败才记。
+    #[test]
+    fn successful_events_do_not_flood_the_audit() {
+        let _g = log_test_guard();
+        let _cap = capability_test_guard();
+        clear_plugin_audit();
+        let st = RunState {
+            plugin_id: "audit-event".to_string(),
+            ..Default::default()
+        };
+        let (msg, ..) = run_event_in_host_for_test(
+            r#"on("page.saved", function () { return "handled"; });"#,
+            "page.saved",
+            r#"{"pageId":"p1"}"#,
+            &st,
+        )
+        .unwrap();
+        assert_eq!(msg, "handled");
+        assert!(
+            plugin_audit(Some("audit-event".to_string()), None)
+                .iter()
+                .all(|r| r.capability != "host.run"),
+            "成功的事件不该往审计里灌运行记录"
+        );
+
+        // 失败的事件要记（那正是用户需要知道的）
+        let (msg, ..) = run_event_in_host_for_test(
+            r#"on("page.saved", function () { throw new Error("事件炸了"); });"#,
+            "page.saved",
+            r#"{"pageId":"p1"}"#,
+            &st,
+        )
+        .unwrap();
+        assert!(msg.contains("事件炸了"), "{msg}");
+        assert!(
+            plugin_audit(Some("audit-event".to_string()), None)
+                .iter()
+                .any(|r| r.capability == "host.run" && !r.ok),
+            "失败的事件要留下运行记录"
+        );
+        clear_plugin_audit();
+    }
+
     fn state_with(permissions: &[&str]) -> RunState {
         RunState {
             plugin_id: "t".to_string(),
@@ -5257,8 +5430,11 @@ register({ id: "s.run", title: "结构化", run: function () {
         };
         let (msg, ..) = run_command_in_host_for_test(denied, "t.audit", "", &state).unwrap();
         assert_eq!(msg, "caught");
-        let rows = plugin_audit(Some("auditp".to_string()), None);
-        assert_eq!(rows.len(), 1, "应当留下一条审计");
+        let rows: Vec<_> = plugin_audit(Some("auditp".to_string()), None)
+            .into_iter()
+            .filter(|r| r.capability != "host.run") // 运行记录是另一类，见 a_run_records_…
+            .collect();
+        assert_eq!(rows.len(), 1, "应当留下一条能力审计");
         assert!(!rows[0].ok);
         assert_eq!(rows[0].capability, "pages.count");
         assert_eq!(rows[0].scope, "current-space");
@@ -5269,7 +5445,10 @@ register({ id: "s.run", title: "结构化", run: function () {
         ok_state.permissions = vec!["read:pages".to_string()];
         let (msg, ..) = run_command_in_host_for_test(denied, "t.audit", "", &ok_state).unwrap();
         assert_eq!(msg, "no-throw");
-        let rows = plugin_audit(Some("auditp".to_string()), None);
+        let rows: Vec<_> = plugin_audit(Some("auditp".to_string()), None)
+            .into_iter()
+            .filter(|r| r.capability != "host.run")
+            .collect();
         assert_eq!(rows.len(), 2);
         assert!(rows[1].ok);
         assert_eq!(rows[1].error_code, None);

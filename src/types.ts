@@ -320,6 +320,11 @@ export interface PluginAuditEntry {
   ok: boolean;
   /** 失败时的错误码（permission_denied / bad_args / unknown_capability …）。 */
   error_code?: string | null;
+  /**
+   * `capability === "host.run"` 这类**运行记录**上带的峰值常驻内存（字节）。
+   * 读不到读数（Windows 还没实现）或没轮到轮询时是 null。
+   */
+  peak_rss_bytes?: number | null;
 }
 
 /** 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都进这个环形缓冲）。 */

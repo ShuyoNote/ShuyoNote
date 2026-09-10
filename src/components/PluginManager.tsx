@@ -4,6 +4,7 @@ import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 import { viewPlacement } from "../lib/pluginViews";
 import { pluginMenuHosted, pluginMenuTitle } from "../lib/capabilities/menus.meta";
+import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
 
@@ -234,15 +235,15 @@ export function PluginManager() {
               {auditFor === p.id && (
                 <div className="pm-logs">
                   {audit.length === 0 ? (
-                    <div className="pm-log-empty">暂无能力调用记录</div>
+                    <div className="pm-log-empty">暂无活动记录</div>
                   ) : (
                     audit.map((a, i) => (
                       <div key={`${a.at_ms}-${i}`} className={`pm-log ${a.ok ? "" : "pm-log-error"}`}>
                         <span className="pm-log-time">{new Date(a.at_ms).toLocaleTimeString()}</span>
-                        <span className="pm-log-level">{a.ok ? "ok" : a.error_code ?? "err"}</span>
+                        <span className="pm-log-level">{auditStatus(a)}</span>
                         <span className="pm-log-msg">
-                          {a.capability}
-                          <span className="pm-log-scope">（{a.scope}）</span>
+                          {auditTitle(a)}
+                          {auditDetail(a) && <span className="pm-log-scope">（{auditDetail(a)}）</span>}
                         </span>
                       </div>
                     ))
