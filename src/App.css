@@ -453,6 +453,13 @@ html[data-platform="win"] .app-body {
   overflow: hidden;
 }
 
+/* `hidden` 属性必须显式打回 display:none。作者样式里的 `.sidebar{display:flex}`
+ * 会压过浏览器默认的 `[hidden]{display:none}`（普通作者声明优先于普通 UA 声明），
+ * 所以只写 hidden 属性侧栏根本不会消失——桌面端收起、移动端抽屉关闭都失效。 */
+.sidebar[hidden] {
+  display: none;
+}
+
 .sidebar-resizer {
   position: absolute;
   right: 0;

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
+import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
@@ -289,6 +290,8 @@ function TreeItem({
     } else {
       openPage(node.id);
     }
+    // 移动端：选完就自动收起抽屉，把整屏交还给内容（桌面端侧栏常驻，不动）。
+    if (isMobileViewport()) useActivity.getState().setSidebarOpen(false);
   };
 
   return (
