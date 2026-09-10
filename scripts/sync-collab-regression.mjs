@@ -1,14 +1,23 @@
 #!/usr/bin/env node
 // 近实时协作集成回归（服务端契约）：presence / comment / notification / SSE。
 // 用法：node scripts/sync-collab-regression.mjs [--server http://127.0.0.1:8787]
-// 验证：注册→建空间→presence 心跳/在线→评论增/删→通知生成/已读/全部→（可选 SSE）。
+//                                            [--register-code <邀请码>]
+// 验证：注册→建空间→presence 心跳/在线→评论增/删→通知生成/已读/全部→
+//       权限 gate→SSE 变更推送（秒级到达）。
 // 有失败即非零退出。
+//
+// 指向线上（需邀请码）：--server https://shuyo.cn/sync --register-code <码>
+// 或 SYNC_REGISTER_CODE=<码>。注意：会在目标服务端真实建用户/空间/评论。
 const arg = (name, def) => {
   const i = process.argv.indexOf(name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def;
 };
 const SERVER = (arg("--server", "http://127.0.0.1:8787") || "").replace(/\/+$/, "");
 const BASE = `${SERVER}/spaces`;
+// 注册邀请码：服务端配了 register_code 就必须带，否则 400。
+const REGISTER_CODE = arg("--register-code", process.env.SYNC_REGISTER_CODE || "");
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { if (cond) { pass++; console.log(`  ✓ ${msg}`); } else { fail++; console.error(`  ✗ FAIL: ${msg}`); } };
@@ -26,6 +35,9 @@ async function main() {
   const emailA = `collab-a-${suffix}@test.local`;
   const emailB = `collab-b-${suffix}@test.local`;
   const password = "syncpass" + Math.random().toString(36).slice(2, 10);
+  // device_id 必须每次运行都不同：服务端把 device_id 绑定到首次使用它的用户
+  // （防冒充），写死的话第二次对同一服务端运行会被判 403（设备不属于你）。
+  const devA = "devA-" + suffix;
   console.log(`\n[近实时协作回归] server=${SERVER}\n`);
 
   // 0. health
@@ -33,16 +45,31 @@ async function main() {
   ok(h.status === 200, "服务端 /health=ok");
 
   // 1. register A + B
-  const regA = JSON.parse((await req("POST", `${SERVER}/auth/register`, { body: { email: emailA, password, display: "collabA", register_code: "" } })).text);
-  let tokenA = regA?.token;
-  if (!tokenA) {
-    const r2 = JSON.parse((await req("POST", `${SERVER}/auth/register`, { body: { email: emailA, password, display: "collabA" } })).text);
-    tokenA = r2?.token;
-  }
+  // 1. register A + B（服务端可能配了邀请码：先带码试，再退回不带码的老服务端）
+  const register = async (email, display) => {
+    const bodies = REGISTER_CODE
+      ? [{ email, password, display, register_code: REGISTER_CODE }, { email, password, display }]
+      : [{ email, password, display }, { email, password, display, register_code: "" }];
+    for (const body of bodies) {
+      const r = await req("POST", `${SERVER}/auth/register`, { body });
+      try {
+        const j = JSON.parse(r.text);
+        if (j?.token) return j.token;
+      } catch {
+        /* 非 JSON（如 400 空体）继续尝试下一种 */
+      }
+    }
+    return null;
+  };
+  const tokenA = await register(emailA, "collabA");
   ok(Boolean(tokenA), "注册用户A并取得 token");
-  const regB = JSON.parse((await req("POST", `${SERVER}/auth/register`, { body: { email: emailB, password, display: "collabB", register_code: "" } })).text);
-  const tokenB = regB?.token;
+  const tokenB = await register(emailB, "collabB");
   ok(Boolean(tokenB), "注册用户B并取得 token");
+  if (!tokenA || !tokenB) {
+    console.error("注册失败（若目标服务端要求邀请码，用 --register-code 或 SYNC_REGISTER_CODE 传入）。");
+    console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
+    process.exit(1);
+  }
 
   // 2. A 建空间
   const sp = JSON.parse((await req("POST", `${SERVER}/spaces`, { token: tokenA, body: { name: "近实时空间" } })).text);
@@ -54,10 +81,19 @@ async function main() {
   ok(mem.status === 200, "A 邀请 B 为成员");
 
   // 4. presence 心跳 + 在线
-  const beat = JSON.parse((await req("POST", `${SERVER}/spaces/${spaceId}/presence`, { token: tokenA, body: { page_id: "page-1", device_id: "devA" } })).text);
+  const beat = JSON.parse((await req("POST", `${SERVER}/spaces/${spaceId}/presence`, { token: tokenA, body: { page_id: "page-1", device_id: devA } })).text);
   ok(beat?.ok === true, "A presence 心跳成功");
   const online = JSON.parse((await req("GET", `${SERVER}/spaces/${spaceId}/online`, { token: tokenA })).text);
   ok(Array.isArray(online?.online) && online.online.length >= 1, `在线列表含 A（${online?.online?.length} 人）`);
+
+  // 4b. presence 离线超时：心跳停了就该下线。
+  //     服务端默认窗口 30s，直接等太慢——用 window_ms 把窗口收到 1s 来验同一段逻辑。
+  await sleep(1500);
+  const stale = JSON.parse((await req("GET", `${SERVER}/spaces/${spaceId}/online?window_ms=1000`, { token: tokenA })).text);
+  ok(
+    !(stale?.online ?? []).some((o) => o.email === emailA),
+    "心跳停止超过窗口后从在线列表消失（离线超时）",
+  );
 
   // 5. 评论添加 + 列表
   const c1 = JSON.parse((await req("POST", `${SERVER}/spaces/${spaceId}/pages/page-1/comments`, { token: tokenA, body: { body: "评论A @ " + emailB, mentions: [] } })).text);
@@ -86,6 +122,58 @@ async function main() {
   const sp2 = JSON.parse((await req("POST", `${SERVER}/spaces`, { token: tokenA, body: { name: "私有空间" } })).text);
   const online2 = await req("GET", `${SERVER}/spaces/${sp2?.id}/online`, { token: tokenB });
   ok(online2.status === 403, "非成员访问在线列表=403（角色 gate）");
+
+  // 8. P1.5 SSE：B 订阅变更流 → A 推一次改动 → B 应在秒级内收到事件
+  //
+  // 这是「近实时」唯一的端到端证据：前面所有断言都是请求-响应式的，谁也不会
+  // 暴露「服务端不主动推」这件事。真正会让它静默失效的是反向代理——
+  // nginx 默认 proxy_buffering on 会把事件攒在缓冲区里不发，而 /health、
+  // 鉴权、普通 API 全部正常，只有真机长连接上才看得出来。
+  const sseCtrl = new AbortController();
+  const sseRes = await fetch(`${SERVER}/spaces/${spaceId}/changes-stream`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+    signal: sseCtrl.signal,
+  }).catch(() => null);
+  ok(sseRes?.status === 200, `B 订阅变更流成功（HTTP ${sseRes?.status}）`);
+  const ctype = sseRes?.headers.get("content-type") || "";
+  ok(ctype.includes("text/event-stream"), `SSE Content-Type=text/event-stream（实际 ${ctype || "—"}）`);
+
+  let eventAt = null;
+  const waitEvent = (async () => {
+    if (!sseRes?.body) return;
+    const reader = sseRes.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      // 只看 data: 帧；axum 的 KeepAlive 发的是注释行（":"），不算事件。
+      if (buf.includes("data:")) { eventAt = Date.now(); break; }
+    }
+  })().catch(() => {});
+
+  // 订阅是连接建立后才挂到服务端 broadcast 上的，给它一点时间再触发变更。
+  await sleep(700);
+  const pushSentAt = Date.now();
+  const pushed = await req("POST", `${SERVER}/push`, {
+    token: tokenA,
+    body: {
+      device_id: devA,
+      space_id: spaceId,
+      changes: [{
+        device_seq: 1, entity: "page", entity_id: "page-sse",
+        op: "upsert", payload: "{}", updated_at: Date.now(),
+      }],
+    },
+  });
+  ok(pushed.status === 200, `A 推送一次变更成功（HTTP ${pushed.status}）`);
+
+  await Promise.race([waitEvent, sleep(8000)]);
+  const latency = eventAt === null ? null : eventAt - pushSentAt;
+  ok(eventAt !== null, `B 收到变更推送（${latency === null ? "8s 内未收到，超时" : latency + "ms"}）`);
+  ok(latency !== null && latency < 3000, `推送延迟 < 3s（实际 ${latency === null ? "—" : latency + "ms"}）`);
+  sseCtrl.abort();
 
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
   if (fail) { console.error("近实时协作回归未通过。"); process.exit(1); }
