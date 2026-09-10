@@ -6,6 +6,7 @@ import { usePopover } from "../hooks/usePopover";
 import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
+import { PluginMenuItems } from "./PluginMenuItems";
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
@@ -310,6 +311,14 @@ function TreeItem({
           onRowPointerDown(node.id, e);
         }}
         onClick={handleClick}
+        onContextMenu={(e) => {
+          // 注册表（与作者文档）写的是「页面列表里那一行的 ⋯ 菜单（在行上右键同样是它）」，
+          // 所以右键必须真的打开同一个菜单，而不是只有 ⋯ 能点。
+          e.preventDefault();
+          e.stopPropagation();
+          setMenuAnchor({ x: e.clientX, y: e.clientY });
+          setMenuOpen(true);
+        }}
       >
         <span
           className="tree-toggle"
@@ -439,6 +448,7 @@ function TreeItem({
                   <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">{t("trees.newSubFolder")}</span>
                 </button>
               )}
+              <PluginMenuItems menuId="page.context" pageId={node.id} onDone={() => setMenuOpen(false)} />
               <button
                 className="tree-menu-danger"
                 onClick={async () => {

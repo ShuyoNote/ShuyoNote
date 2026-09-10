@@ -137,8 +137,8 @@
     {
       "id": "page.context",
       "title": "页面右键菜单",
-      "hosted": false,
-      "desc": "在页面列表里右键（宿主还没接这个入口）"
+      "hosted": true,
+      "desc": "页面列表里那一行的「⋯」菜单（在行上右键同样是它）：你的命令会拿到**被点的那一页**作为当前页"
     },
     {
       "id": "file.context",

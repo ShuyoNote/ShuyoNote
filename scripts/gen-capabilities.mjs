@@ -33,6 +33,7 @@ export const OUTPUTS = {
   pkg: "packages/plugin-types/package.json",
   docs: "docs/plugin-api.md",
   aiTools: "src/lib/capabilities/aiTools.meta.ts",
+  menusMeta: "src/lib/capabilities/menus.meta.ts",
 };
 
 const HEADER = "本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。";
@@ -439,6 +440,47 @@ export function genGlobals(reg) {
  * 主题 token 的**运行时**清单（类型包只有类型，前端应用主题要用真值）。
  * 与 Rust 侧 `THEME_TOKENS`、类型包 `ThemeTokenName` 同一个源，所以三边不会漂移。
  */
+/**
+ * 触发面（`register({ menus })`）的元数据 —— 前端要说得出「这个插件的命令会出现在哪」。
+ *
+ * 为什么也走生成物：插件管理要如实告诉用户"启用它之后，页面列表的行菜单里会多出东西"，
+ * 而菜单的 id → 中文标题只有注册表一处有。前端手抄一份必然漂（id 改了没人发现）。
+ * `hosted` 一起带上：还没实现的入口不该被说成"会出现"。
+ */
+export function genMenusMeta(reg) {
+  const l = [];
+  l.push("// " + HEADER);
+  l.push("");
+  l.push("/** 插件命令可以挂的宿主入口（`register({ menus: [...] })`）。 */");
+  l.push("export interface PluginMenuMeta {");
+  l.push("  id: string;");
+  l.push("  title: string;");
+  l.push("  desc: string;");
+  l.push("  /** 宿主是否已经实现了这个入口（没实现的不会真的出现）。 */");
+  l.push("  hosted: boolean;");
+  l.push("}");
+  l.push("");
+  l.push("export const PLUGIN_MENUS: PluginMenuMeta[] = [");
+  for (const m of reg.menus) {
+    l.push(`  { id: ${JSON.stringify(m.id)}, title: ${JSON.stringify(m.title)}, desc: ${JSON.stringify(m.desc)}, hosted: ${m.hosted} },`);
+  }
+  l.push("];");
+  l.push("");
+  l.push("const BY_ID = new Map(PLUGIN_MENUS.map((m) => [m.id, m]));");
+  l.push("");
+  l.push("/** 入口的中文标题（不认识就退回 id——宁可显示得丑一点，也不要显示成空）。 */");
+  l.push("export function pluginMenuTitle(id: string): string {");
+  l.push("  return BY_ID.get(id)?.title ?? id;");
+  l.push("}");
+  l.push("");
+  l.push("/** 这个入口宿主是否已经实现。 */");
+  l.push("export function pluginMenuHosted(id: string): boolean {");
+  l.push("  return BY_ID.get(id)?.hosted ?? false;");
+  l.push("}");
+  l.push("");
+  return l.join("\n");
+}
+
 export function genThemeMeta(reg) {
   const l = [];
   l.push("// 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。");
@@ -1053,6 +1095,7 @@ export function buildAll(reg = loadRegistry()) {
     [OUTPUTS.pkg]: genPackageJson(reg),
     [OUTPUTS.docs]: genDocs(reg),
     [OUTPUTS.aiTools]: genAiTools(reg),
+    [OUTPUTS.menusMeta]: genMenusMeta(reg),
   };
 }
 

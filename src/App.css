@@ -3690,6 +3690,27 @@ select.sync-input {
   flex: 1;
   min-width: 0;
 }
+/* 插件命令分组：与内置项之间留一道分隔线，并标出"这是插件给的"（用户才知道谁在动他的笔记）。 */
+.tree-node-menu .menu-section-title {
+  margin: 6px 4px 2px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.tree-node-menu button.tree-menu-plugin .menu-icon {
+  font-size: 12px;
+}
+.tree-node-menu .menu-badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 400;
+}
 .tree-node-menu button:hover {
   background: var(--hover);
   color: var(--text);

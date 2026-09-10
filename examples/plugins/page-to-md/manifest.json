@@ -2,7 +2,7 @@
   "id": "page-to-md",
   "name": "当前页导出 Markdown",
   "version": "1.0.0",
-  "description": "把当前打开的页面写成一份 .md：命令面板点「导出」，保存位置由你选。",
+  "description": "把页面写成一份 .md：命令面板点「导出」，或在页面列表那一行的「⋯」菜单里对**任意一页**用（保存位置由你选）。",
   "apiVersion": "1.0.0",
   "main": "main.js",
   "permissions": [

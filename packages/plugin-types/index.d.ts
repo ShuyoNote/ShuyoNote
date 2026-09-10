@@ -107,6 +107,7 @@ export declare function on(event: PluginEventName, handler: (payload: Record<str
  */
 export type PluginMenuName =
   | "slash"
+  | "page.context"
   ;
 
 /** 结构化返回：等价于调用对应的宿主原语。 */

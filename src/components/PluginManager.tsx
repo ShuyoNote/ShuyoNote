@@ -3,6 +3,7 @@ import { platform, isDesktopPlatform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 import { viewPlacement } from "../lib/pluginViews";
+import { pluginMenuHosted, pluginMenuTitle } from "../lib/capabilities/menus.meta";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
 
@@ -139,6 +140,27 @@ export function PluginManager() {
                     ))}
                   </div>
                 )}
+                {/* 命令挂在哪个入口也是"这个插件会干什么"的一部分：`page.context` 会让
+                    页面列表的行菜单里多出东西，不说的话用户只会觉得"菜单里怎么多了个选项"。
+                    标题从注册表生成物取（lib/capabilities/menus.meta），不手抄。 */}
+                {(() => {
+                  const hosted = Array.from(
+                    new Set(
+                      (p.commands ?? []).flatMap((c) => (c.menus ?? []).filter((m) => pluginMenuHosted(m))),
+                    ),
+                  );
+                  if (hosted.length === 0) return null;
+                  return (
+                    <div className="pm-item-perms">
+                      命令会出现在：
+                      {hosted.map((m) => (
+                        <span key={m} className="pm-perm" title={m}>
+                          {pluginMenuTitle(m)}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {/* 声明式视图也是"这个插件会干什么"的一部分：用户该在启用前就知道
                     它会往哪儿加东西——尤其是 `placement: "rail"`，那是**界面右侧多一个按钮**，
                     不说的话用户只会看到一个不明来历的图标。 */}
