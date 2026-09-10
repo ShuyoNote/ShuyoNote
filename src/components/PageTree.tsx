@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { clampSidebarWidth, dragOutcome, normalizeStoredWidth } from "../lib/sidebarDrag";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { isMobileViewport } from "../hooks/useMobile";
@@ -610,10 +611,9 @@ export function PageTree(_props: {
   const SIDEBAR_W_KEY = "shuyonote.sidebarWidth";
   const loadSidebarWidth = () => {
     try {
-      const n = Number(localStorage.getItem(SIDEBAR_W_KEY));
-      return Number.isFinite(n) && n >= 240 ? n : 240;
+      return normalizeStoredWidth(localStorage.getItem(SIDEBAR_W_KEY));
     } catch {
-      return 240;
+      return normalizeStoredWidth(null);
     }
   };
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth);
@@ -622,16 +622,38 @@ export function PageTree(_props: {
     sidebarWidthRef.current = sidebarWidth;
     document.documentElement.style.setProperty("--sidebar-w", `${sidebarWidth}px`);
   }, [sidebarWidth]);
+  /**
+   * 拖分隔条调宽；**继续往左拖过阈值就把它收起来**（VS Code 同款手感）。
+   *
+   * 收起的判断在 lib/sidebarDrag（纯函数、有单测）；这里只负责事件与清理。
+   * 收起时**不写宽度存档**：存档留着原来那个宽度，下次展开还是原来那么宽——
+   * 把 120px 写进去会让"再次展开"变回一条细缝。
+   */
   const onSidebarResizeStart = (e: React.PointerEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = sidebarWidthRef.current;
-    const clamp = (w: number) => Math.min(460, Math.max(240, w));
-    const onMove = (ev: PointerEvent) => setSidebarWidth(clamp(startW + (ev.clientX - startX)));
-    const onUp = () => {
+    let done = false;
+    const cleanup = () => {
+      done = true;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       document.body.classList.remove("is-sidebar-resizing");
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (done) return;
+      const raw = startW + (ev.clientX - startX);
+      if (dragOutcome(raw) === "collapse") {
+        cleanup();
+        // 用户主动拖出来的收起是一次**偏好**（与移动端"屏幕太窄自动收起"不同），
+        // 所以 persist 默认 true：下次启动保持收起。
+        useActivity.getState().setSidebarOpen(false);
+        return;
+      }
+      setSidebarWidth(clampSidebarWidth(raw));
+    };
+    const onUp = () => {
+      cleanup();
       try {
         localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidthRef.current));
       } catch {

@@ -388,10 +388,13 @@ html[data-platform="win"] .app-body {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-/* 侧栏开合按钮：只在窄屏出现（桌面端点活动图标即可开合，且还有 hover 提示；
-   触屏没有 hover，必须给一个看得见的入口）。默认不显示，见文件末尾的媒体查询。 */
+/* 侧栏开合按钮：**桌面也显示**。
+   早先只在窄屏显示（理由是"桌面点活动图标就能开合、还有 hover 提示"）——但那条路有两个
+   坑：① 收起侧栏之后，桌面上没有任何**看得见**的入口能把它拉回来（图标上那句提示是 hover
+   才有的，而"点已选中的图标会收起"本身就是隐式约定）；② 拖分隔条把侧栏拖到底时也没地方
+   回来。所以这个按钮现在常驻：它是"侧栏还能找回来"的唯一可见保证（触屏上更是唯一入口）。 */
 .sidebar-toggle-btn {
-  display: none;
+  display: grid;
 }
 .activity-btn.is-on {
   color: var(--accent);
@@ -18369,10 +18372,6 @@ p:has(> .editor-drawing-container) {
   @keyframes mobile-sidebar-in {
     from { transform: translateX(-100%); }
     to { transform: translateX(0); }
-  }
-  /* 窄屏显示侧栏开合按钮：触屏没有 hover 提示，收起后必须有个看得见的入口。 */
-  .sidebar-toggle-btn {
-    display: grid;
   }
   /* 侧栏收起后主区自动全宽（sidebar 不再占 flex 流）。 */
   .main {
