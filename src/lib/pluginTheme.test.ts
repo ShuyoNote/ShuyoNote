@@ -18,6 +18,7 @@ const plugin = (id: string, tokens: Record<string, string>, enabled = true): Plu
     runtime: "declarative",
     views: [],
     triggers: [],
+    approval: { required: false, added_permissions: [], added_events: [], approved_version: "" },
     theme: { name: id, tokens },
   }) as PluginMeta;
 

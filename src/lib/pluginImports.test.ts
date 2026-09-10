@@ -24,6 +24,7 @@ const plugin = (id: string, enabled: boolean, triggers: PluginTrigger[]): Plugin
     id, name: `插件 ${id}`, version: "1.0.0", description: "", enabled,
     commands: [], permissions: [], permissions_baseline: false, events: [],
     runtime: "logic", views: [], triggers,
+    approval: { required: false, added_permissions: [], added_events: [], approved_version: "" },
   }) as PluginMeta;
 
 describe("pluginImportItems", () => {

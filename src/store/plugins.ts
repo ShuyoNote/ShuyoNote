@@ -114,6 +114,13 @@ interface PluginsState {
    * 作者工具链：按插件 id 的校验结果（后端 `validate_plugin`，与加载器同源）。
    * 只在用户点了「验证」的插件上有值。
    */
+  /**
+   * 重新确认插件声明：插件新增权限/事件后，宿主会暂停它，这是唯一的放行方式。
+   *
+   * 刻意**不是**"再点一次启用"：用户要做的是"看了新增的那几项再确认"，
+   * 而不是去点一个与权限无关的开关（那样他根本不会意识到自己同意了新东西）。
+   */
+  approve: (id: string) => Promise<PluginActionResult>;
   validations: Record<string, PluginValidation>;
   verify: (id: string) => Promise<void>;
   closeVerify: (id: string) => void;
@@ -303,6 +310,20 @@ export const usePlugins = create<PluginsState>((set) => ({
     } catch (e) {
       console.error("clear plugin logs failed", e);
       toast(`清空插件日志失败：${errText(e)}`, "error");
+    }
+  },
+  approve: async (id) => {
+    const name = usePlugins.getState().plugins.find((x) => x.id === id)?.name ?? id;
+    try {
+      await api.approvePlugin(id);
+      await usePlugins.getState().load();
+      toast(`已重新确认插件「${name}」的声明`, "success");
+      return { ok: true };
+    } catch (e) {
+      console.error("approve plugin failed", e);
+      const error = errText(e);
+      toast(`重新确认插件「${name}」失败：${error}`, "error");
+      return { ok: false, error };
     }
   },
   validations: {},

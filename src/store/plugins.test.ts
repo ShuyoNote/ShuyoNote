@@ -46,6 +46,7 @@ const PLUGIN: PluginMeta = {
   runtime: "logic",
   views: [],
   triggers: [],
+  approval: { required: false, added_permissions: [], added_events: [], approved_version: "" },
 };
 
 const VALIDATION: PluginValidation = {

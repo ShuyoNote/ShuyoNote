@@ -19,6 +19,7 @@ import type { PluginCommandParam } from "../types";
 import { api } from "../lib/api";
 import { platform } from "../lib/platform";
 import { PluginFieldInput } from "./PluginFieldInput";
+import { approvalLabel, needsApproval } from "../lib/pluginApproval";
 
 type Item =
   | { kind: "page"; id: string; title: string }
@@ -138,12 +139,16 @@ export function CommandPalette() {
   const pluginItems = useMemo<Item[]>(() => {
     const out: Item[] = [];
     for (const p of plugins) {
+      // 声明扩张过、还没重新确认的插件：宿主会拒绝执行（后端强制），入口上先说出来，
+      // 别让用户以为是插件坏了。
+      const paused = needsApproval(p) ? `（${approvalLabel()}）` : "";
       if (p.enabled) {
         out.push({ kind: "plugin-toggle", pluginId: p.id, title: `禁用插件「${p.name}」` });
         for (const c of p.commands) {
           if (!q || c.title.toLowerCase().includes(q)) {
             out.push({
-              kind: "plugin", pluginId: p.id, id: c.id, title: c.title, description: c.description,
+              kind: "plugin", pluginId: p.id, id: c.id, title: c.title + paused,
+              description: p.approval?.required ? "插件声明新增了权限/事件，需在插件管理里重新确认" : c.description,
               closeOnRun: c.close_on_run, params: c.params,
             });
           }

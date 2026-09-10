@@ -4978,6 +4978,40 @@ select.prop-value {
   max-width: 640px;
 }
 
+/* 插件声明扩张后的提示条（components/PluginManager.tsx）：宿主已经暂停它，
+   这里说清新增了什么并给出唯一的放行按钮。 */
+.pm-approval {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--danger);
+  background: var(--hover);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.pm-approval-text {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.pm-approval-btn {
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pm-approval-btn:hover {
+  background: var(--card-bg);
+}
+
 /* 根部浮层崩溃后的就地提示（components/PanelBoundary.tsx）。
    两个要求：**看得见**（不静默吞掉错误，否则排查时只能靠猜）、**不抢焦点**（其余界面
    照常可用，用户可以先干别的，不必被迫重载）。 */

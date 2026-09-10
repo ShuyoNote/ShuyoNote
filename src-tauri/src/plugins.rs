@@ -247,6 +247,9 @@ pub struct PluginMeta {
     pub views: Vec<ViewDecl>,
     /// 导入触发（**只带通过校验的那些**）：命令面板据此加入口。
     pub triggers: Vec<TriggerDecl>,
+    /// 授权状态：插件文件被换成声明更大的版本时 `required = true`（宿主会暂停它，
+    /// 直到用户点了「重新确认」）。**这是后端强制的**，不是界面上的提醒而已。
+    pub approval: ApprovalState,
     /// 主题声明（只有**通过校验**的变量会被带上）。
     pub theme: Option<ThemeDecl>,
 }
@@ -2511,6 +2514,23 @@ pub async fn emit_plugin_event(
         if !subscribed.iter().any(|e| e == &event) {
             continue; // 没声明订阅这个事件：连代码都不跑（这是 manifest 声明的意义）
         }
+        // 与命令执行同一条规矩：声明扩张过、还没重新确认的插件**后台也不跑**。
+        // 事件恰恰是最需要拦的那种——用户没点任何东西，插件自己在后台动。
+        let approval = {
+            let c = conn(&db);
+            approval_state(&c, &manifest, false)
+        };
+        if approval.required {
+            push_log(
+                &id,
+                "warn",
+                &format!(
+                    "声明新增了{}，已暂停运行（事件 {event} 被跳过）；在插件管理里重新确认后才会恢复",
+                    describe_drift(&approval)
+                ),
+            );
+            continue;
+        }
         match load_plugin_source(&dir, &manifest) {
             Ok(src) => targets.push((
                 id,
@@ -2635,6 +2655,169 @@ register({ id: "demo.insert", title: "插入文本", description: "把一段文�
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 授权快照（M11.9 收口）：声明扩张必须重新征求同意
+// ---------------------------------------------------------------------------
+
+/// 用户在启用那一刻看到并同意的**能力面**（权限 + 事件）快照。
+///
+/// 为什么需要它：插件是磁盘上的一个目录，更新它的方式就是"把新文件盖进去"。而
+/// `resolve_permissions` 每次运行都重读 manifest——于是**声明扩张是静默生效的**：
+/// 用户当初在"没有事件、只有一项只读权限"的前提下点了启用，更新后它可能已经在后台
+/// 收 `page.saved`、读全部页面。这不是"多给了一项权限"的技术问题，而是**用户同意的
+/// 那份东西已经不等于跑起来的那份东西**，而这套体系卖的就是"用户敢装"。
+///
+/// 快照里存的是**列表而不是哈希**：界面要说得出"这次新增了什么"，哈希只能说"变了"。
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub(crate) struct ApprovalSnapshot {
+    /// 当时被授予的权限（排序后）。
+    pub permissions: Vec<String>,
+    /// 当时订阅到的事件（排序后）。
+    pub events: Vec<String>,
+    /// 只是给人看的事实（"你同意的是 v1.0.0，现在是 v1.2.0"）。
+    #[serde(default)]
+    pub version: String,
+}
+
+/// 这份声明"现在"的能力面（排序去重，便于比较与展示）。
+pub(crate) fn approval_snapshot(manifest: &Manifest) -> ApprovalSnapshot {
+    let (mut permissions, _) = resolve_permissions(manifest);
+    let (mut events, _) = resolve_events(manifest);
+    permissions.sort();
+    permissions.dedup();
+    events.sort();
+    events.dedup();
+    ApprovalSnapshot {
+        permissions,
+        events,
+        version: manifest.version.clone(),
+    }
+}
+
+/// 相对快照**扩张**了什么（两边都空 = 没扩张）。
+///
+/// 只认"新增"：收敛声明（删掉一项权限/事件）**不需要**重新确认——用户当初同意的是更多
+/// 东西，缩减不会让他多承担任何风险，为此打断他一次是纯粹的骚扰。
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct ApprovalDrift {
+    pub added_permissions: Vec<String>,
+    pub added_events: Vec<String>,
+}
+
+impl ApprovalDrift {
+    pub fn is_empty(&self) -> bool {
+        self.added_permissions.is_empty() && self.added_events.is_empty()
+    }
+}
+
+pub(crate) fn approval_drift(snapshot: &ApprovalSnapshot, current: &ApprovalSnapshot) -> ApprovalDrift {
+    ApprovalDrift {
+        added_permissions: current
+            .permissions
+            .iter()
+            .filter(|p| !snapshot.permissions.contains(p))
+            .cloned()
+            .collect(),
+        added_events: current
+            .events
+            .iter()
+            .filter(|e| !snapshot.events.contains(e))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// 读授权快照（没有行 / 没有快照 → `None`，见 `approval_state` 怎么处理"从没记录过"）。
+fn read_approval(c: &Connection, id: &str) -> Option<ApprovalSnapshot> {
+    let raw: Option<Option<String>> = c
+        .query_row(
+            "SELECT approved_json FROM meta.plugin_install WHERE plugin_id = ?1",
+            params![id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok();
+    raw.flatten()
+        .and_then(|t| serde_json::from_str::<ApprovalSnapshot>(&t).ok())
+}
+
+/// 写授权快照（用户启用 / 点了「重新确认」时调用）。
+///
+/// 用 upsert：插件可能根本没有安装行（手动丢进目录的那种，`enabled()` 默认启用），
+/// 但"用户同意了什么"必须记下来，否则下一次改动就没人能比对。
+fn write_approval(c: &Connection, id: &str, snapshot: &ApprovalSnapshot) -> Result<(), String> {
+    let json = serde_json::to_string(snapshot).map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT INTO meta.plugin_install (plugin_id, approved_json, installed_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(plugin_id) DO UPDATE SET approved_json = excluded.approved_json",
+        params![id, json, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 一个插件当前的授权状态：需要重新确认时，带上**具体新增了什么**。
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct ApprovalState {
+    pub required: bool,
+    pub added_permissions: Vec<String>,
+    pub added_events: Vec<String>,
+    /// 快照里的版本（用户当时同意的那版）；没有快照时为空。
+    pub approved_version: String,
+}
+
+/// 现在是需要重新确认、还是可以照常跑。
+///
+/// **从没记录过快照时按"照常"处理并顺手补记一次**（grandfather）：这个机制是随升级进来的，
+/// 存量插件的用户从来没有"同意过某个快照"这一事实可查——把老插件一律暂停等于升级后所有
+/// 插件集体停摆，那是拿用户当测试。补记之后，**后续**的扩张才受约束。
+fn approval_state(c: &Connection, manifest: &Manifest, grandfather: bool) -> ApprovalState {
+    let current = approval_snapshot(manifest);
+    let Some(saved) = read_approval(c, &manifest.id) else {
+        if grandfather {
+            let _ = write_approval(c, &manifest.id, &current);
+        }
+        return ApprovalState::default();
+    };
+    let drift = approval_drift(&saved, &current);
+    ApprovalState {
+        required: !drift.is_empty(),
+        added_permissions: drift.added_permissions,
+        added_events: drift.added_events,
+        approved_version: saved.version,
+    }
+}
+
+/// 给 `PluginMeta` 用的授权状态。
+///
+/// **只对"启用中"的插件算**（也只在此时补记快照）：
+/// - 禁用中的插件根本不跑，没有什么需要用户现在就同意的；
+/// - 更要紧的是作者工作流：插件装在那儿、还没启用，作者一边改 manifest 一边点「校验」——
+///   如果这时候给他弹"声明变了，需重新确认"，他就得为每次编辑点一遍确认，纯噪音。
+///   等他真去点「启用」时，快照按当下的声明记，不会漏掉任何东西。
+fn approval_for_meta(db: &State<'_, Db>, manifest: &Manifest, is_enabled: bool) -> ApprovalState {
+    if !is_enabled {
+        return ApprovalState::default();
+    }
+    let c = conn(db);
+    approval_state(&c, manifest, true)
+}
+
+/// 把"新增了什么"写成一句给人看的话（错误提示与插件日志共用，避免两处措辞漂移）。
+fn describe_drift(state: &ApprovalState) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !state.added_permissions.is_empty() {
+        parts.push(format!("权限 {}", state.added_permissions.join("、")));
+    }
+    if !state.added_events.is_empty() {
+        parts.push(format!("事件 {}", state.added_events.join("、")));
+    }
+    if parts.is_empty() {
+        "内容".to_string()
+    } else {
+        parts.join(" 与 ")
+    }
+}
+
 /// 读启停状态：以 `plugin_install` 行为准；**没有行时默认启用**。
 ///
 /// "没有行却默认启用"是有意的：手动往插件目录丢文件夹的人（专家操作）本来就在表达同意，
@@ -2650,13 +2833,19 @@ fn enabled(c: &Connection, id: &str) -> bool {
     .unwrap_or(true) // 没有安装行 → 默认启用（见上面的说明）
 }
 
-fn set_enabled(c: &Connection, id: &str, on: bool) -> Result<(), String> {
+/// 记启停状态。**启用时同时记一份授权快照**——"点启用"就是用户看那份权限清单并同意的时刻。
+fn set_enabled(c: &Connection, id: &str, on: bool, snapshot: Option<&ApprovalSnapshot>) -> Result<(), String> {
     c.execute(
         "INSERT INTO meta.plugin_install (plugin_id, enabled, installed_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(plugin_id) DO UPDATE SET enabled = excluded.enabled",
         params![id, if on { 1 } else { 0 }, now_ms()],
     )
     .map_err(|e| e.to_string())?;
+    if on {
+        if let Some(snap) = snapshot {
+            write_approval(c, id, snap)?;
+        }
+    }
     Ok(())
 }
 
@@ -2739,6 +2928,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             Err(_) => continue, // skip invalid dirs
         };
         let runtime = runtime_of(&manifest).to_string();
+        let is_enabled = enabled_map.get(&manifest.id).copied().unwrap_or(false);
         // 声明式插件没有代码：不读入口、不跑 Boa（这正是它安全的原因——没有可执行的东西）。
         if runtime == "declarative" {
             // 声明式插件**没有代码**，所以它不可能调用能力、也收不到事件：
@@ -2757,12 +2947,20 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             let theme = sanitized_theme(&manifest);
             let views = manifest.views.clone().unwrap_or_default();
             let pid = manifest.id.clone();
+            let approval = approval_for_meta(&db, &manifest, is_enabled);
+            if approval.required {
+                push_log(
+                    &pid,
+                    "warn",
+                    "插件声明新增了权限/事件，已暂停运行；在插件管理里重新确认后才会恢复",
+                );
+            }
             out.push(PluginMeta {
                 id: pid.clone(),
                 name: manifest.name,
                 version: manifest.version,
                 description: manifest.description,
-                enabled: enabled_map.get(&pid).copied().unwrap_or(false),
+                enabled: is_enabled,
                 commands: Vec::new(),
                 permissions,
                 permissions_baseline,
@@ -2773,6 +2971,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 // 也按这条规则返回空）——这里写死空集合，界面就不会出现点不动的入口。
                 triggers: Vec::new(),
                 theme,
+                approval,
             });
             continue;
         }
@@ -2788,6 +2987,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         for w in &event_warnings {
             push_log(&manifest.id, "warn", w);
         }
+        let is_enabled = enabled_map.get(&manifest.id).copied().unwrap_or(false);
         let commands =
             discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)
                 .unwrap_or_default();
@@ -2796,12 +2996,20 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         let events = event_metas(&manifest);
         let theme = sanitized_theme(&manifest);
         let triggers = sanitized_triggers(&manifest);
+        let approval = approval_for_meta(&db, &manifest, is_enabled);
+        if approval.required {
+            push_log(
+                &pid,
+                "warn",
+                "插件声明新增了权限/事件，已暂停运行；在插件管理里重新确认后才会恢复",
+            );
+        }
         out.push(PluginMeta {
             id: pid.clone(),
             name: manifest.name,
             version: manifest.version,
             description: manifest.description,
-            enabled: enabled_map.get(&pid).copied().unwrap_or(false),
+            enabled: is_enabled,
             commands,
             permissions,
             permissions_baseline,
@@ -2810,6 +3018,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             views: manifest.views.clone().unwrap_or_default(),
             triggers,
             theme,
+            approval,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -2817,12 +3026,40 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
 }
 
 #[tauri::command]
-pub fn set_plugin_enabled(db: State<Db>, id: String, enabled: bool) -> Result<(), String> {
+pub fn set_plugin_enabled(app: AppHandle, db: State<Db>, id: String, enabled: bool) -> Result<(), String> {
     if !is_safe_plugin_id(&id) {
         return Err("非法插件 id".to_string());
     }
+    // 启用 = 用户看着那份权限清单点下去的：这一刻把"他同意了什么"记成快照。
+    // 禁用只需改开关，不必读 manifest（插件目录可能已经被删了）。
+    let snapshot = if enabled {
+        let dir = plugins_root(&app)?.join(&id);
+        read_manifest(&dir).ok().map(|m| approval_snapshot(&m))
+    } else {
+        None
+    };
     let c = conn(&db);
-    set_enabled(&c, &id, enabled)
+    set_enabled(&c, &id, enabled, snapshot.as_ref())
+}
+
+/// 「重新确认」：把插件**现在**的声明记成用户已经同意的那一份。
+///
+/// 这是插件新增权限/事件之后唯一的放行方式（见 `approval_state`）——不是让用户去点一次
+/// 无关的开关，而是一个明确的动作：他看了新增的那几项再确认。
+#[tauri::command]
+pub fn approve_plugin(app: AppHandle, db: State<'_, Db>, id: String) -> Result<ApprovalState, String> {
+    if !is_safe_plugin_id(&id) {
+        return Err("非法插件 id".to_string());
+    }
+    let dir = plugins_root(&app)?.join(&id);
+    let manifest = read_manifest(&dir)?;
+    let snapshot = approval_snapshot(&manifest);
+    {
+        let c = conn(&db);
+        write_approval(&c, &id, &snapshot)?;
+    }
+    push_log(&id, "info", "已重新确认插件声明（授权快照已更新）");
+    Ok(ApprovalState::default())
 }
 
 #[tauri::command]
@@ -2868,6 +3105,17 @@ pub async fn run_plugin_command(
         // 否则被禁用的插件仍然可以被 IPC 直接调用执行。
         if !enabled(&c, &plugin_id) {
             return Err(format!("插件「{plugin_id}」已被禁用"));
+        }
+        // 声明扩张（新增权限/事件）同样在后端强制：插件文件被换成更大声明的版本之后，
+        // 在用户重新确认之前它不跑——否则"用户同意的那份能力"就被静默改写了。
+        // 注意这里 **不** grandfather（不补记快照）：存量插件由 list_plugins 补记，
+        // 而这里出现"没有快照"只可能是 IPC 直调，不该顺手授予。
+        let approval = approval_state(&c, &manifest, false);
+        if approval.required {
+            return Err(format!(
+                "approval_required: 插件「{plugin_id}」的声明新增了{}，运行已暂停——请在插件管理里重新确认",
+                describe_drift(&approval)
+            ));
         }
         let page_count: usize = c
             .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
@@ -3020,6 +3268,8 @@ pub async fn install_plugin(
         views,
         triggers,
         theme,
+        // 新装默认禁用、也还没"同意过"任何东西：等用户看权限清单点启用时才会记快照。
+        approval: ApprovalState::default(),
     })
 }
 
@@ -3302,7 +3552,8 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
                  installed_at INTEGER NOT NULL DEFAULT 0,
                  source TEXT NOT NULL DEFAULT 'local',
                  content_hash TEXT,
-                 seeded INTEGER NOT NULL DEFAULT 0
+                 seeded INTEGER NOT NULL DEFAULT 0,
+                 approved_json TEXT
              );
              CREATE TABLE meta.plugin_data (
                  plugin_id TEXT NOT NULL,
@@ -3322,9 +3573,9 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         let c = state_conn();
         assert!(enabled(&c, "p1"), "没有行时默认启用");
 
-        set_enabled(&c, "p1", false).unwrap();
+        set_enabled(&c, "p1", false, None).unwrap();
         assert!(!enabled(&c, "p1"));
-        set_enabled(&c, "p1", true).unwrap();
+        set_enabled(&c, "p1", true, None).unwrap();
         assert!(enabled(&c, "p1"));
     }
 
@@ -3332,7 +3583,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
     fn uninstall_clears_enabled_state_so_reinstall_is_not_poisoned() {
         let c = state_conn();
         // 用户禁用了插件，然后卸载
-        set_enabled(&c, "p1", false).unwrap();
+        set_enabled(&c, "p1", false, None).unwrap();
         clear_enabled(&c, "p1").unwrap();
 
         // 重装后必须回到"默认启用"，而不是静默继承旧的已禁用
@@ -4139,7 +4390,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             [],
         )
         .unwrap();
-        set_enabled(&c, "p1", false).unwrap();
+        set_enabled(&c, "p1", false, None).unwrap();
         assert!(!enabled(&c, "p1"));
 
         clear_enabled(&c, "p1").unwrap();
@@ -4150,12 +4401,106 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(left, 0, "卸载应当连私有数据一起清掉");
     }
 
+    // ---- 授权快照：声明扩张必须重新征求同意 ----
+
+    /// 造一个 manifest（可选权限 / 事件 / 版本）。
+    fn manifest_with(perms: &[&str], events: &[&str], version: &str) -> Manifest {
+        serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "name": "P",
+            "version": version,
+            "main": "main.js",
+            "permissions": perms.iter().map(|p| serde_json::json!({ "id": p, "reason": "x" })).collect::<Vec<_>>(),
+            "events": events.iter().map(|e| serde_json::json!({ "on": e, "reason": "x" })).collect::<Vec<_>>(),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn approval_drift_only_counts_growth() {
+        let base = approval_snapshot(&manifest_with(&["read:pages"], &["page.saved"], "1.0.0"));
+
+        // 一模一样 → 不算扩张
+        let same = approval_snapshot(&manifest_with(&["read:pages"], &["page.saved"], "1.0.1"));
+        assert!(approval_drift(&base, &same).is_empty(), "只有版本号变了不该要求重新确认");
+
+        // 顺序变了（声明顺序/解析顺序不同）→ 也不算：快照是排序后的集合
+        let reordered = approval_snapshot(&manifest_with(&["read:tags", "read:pages"], &["page.opened", "page.saved"], "1.0.0"));
+        let base2 = approval_snapshot(&manifest_with(&["read:pages", "read:tags"], &["page.saved", "page.opened"], "1.0.0"));
+        assert!(approval_drift(&base2, &reordered).is_empty());
+
+        // 收敛（删掉一项）→ 不算：用户当初同意的是更多东西，缩减不增加他的风险
+        let shrunk = approval_snapshot(&manifest_with(&[], &[], "1.0.0"));
+        assert!(approval_drift(&base, &shrunk).is_empty(), "缩减声明不该打断用户");
+
+        // 新增权限 / 新增事件 → 都必须报出来，且说得出具体是哪一项
+        let grown = approval_snapshot(&manifest_with(&["read:pages", "write:pages"], &["page.saved", "page.deleted"], "1.1.0"));
+        let drift = approval_drift(&base, &grown);
+        assert_eq!(drift.added_permissions, vec!["write:pages".to_string()]);
+        assert_eq!(drift.added_events, vec!["page.deleted".to_string()]);
+    }
+
+    #[test]
+    fn enabling_records_the_approval_and_growth_pauses_the_plugin() {
+        let c = state_conn();
+        let v1 = manifest_with(&["read:pages"], &[], "1.0.0");
+        // 用户点「启用」→ 记下他同意的快照
+        set_enabled(&c, "p1", true, Some(&approval_snapshot(&v1))).unwrap();
+        assert!(!approval_state(&c, &v1, false).required, "刚同意的声明当然可以跑");
+
+        // 插件目录被换成声明更大的版本：不用重新启用，**也进不去**
+        let v2 = manifest_with(&["read:pages", "write:pages"], &["page.saved"], "1.1.0");
+        let state = approval_state(&c, &v2, false);
+        assert!(state.required, "新增权限/事件必须要求重新确认");
+        assert_eq!(state.added_permissions, vec!["write:pages".to_string()]);
+        assert_eq!(state.added_events, vec!["page.saved".to_string()]);
+        assert_eq!(state.approved_version, "1.0.0", "界面要说得出你同意的是哪一版");
+
+        // 重新确认 → 放行，且快照更新到当前
+        write_approval(&c, "p1", &approval_snapshot(&v2)).unwrap();
+        assert!(!approval_state(&c, &v2, false).required);
+
+        // 只收不扩：不再要求确认
+        let v3 = manifest_with(&["read:pages"], &[], "1.1.1");
+        assert!(!approval_state(&c, &v3, false).required);
+    }
+
+    #[test]
+    fn legacy_plugins_are_grandfathered_once() {
+        let c = state_conn();
+        let m = manifest_with(&["read:pages"], &[], "1.0.0");
+        // 升级前装的插件没有快照：第一次扫描按"照常"处理，并把当前声明补记成快照——
+        // 否则升级后所有存量插件集体停摆，那是拿用户当测试。
+        assert!(!approval_state(&c, &m, true).required);
+        assert!(!approval_state(&c, &m, false).required, "补记之后照样能跑");
+
+        // 补记之后，扩张就开始受约束了（这才是有意义的那一半）
+        let grown = manifest_with(&["read:pages", "write:pages"], &[], "1.1.0");
+        assert!(approval_state(&c, &grown, false).required);
+    }
+
+    #[test]
+    fn baseline_legacy_manifests_do_not_look_like_growth() {
+        let c = state_conn();
+        // 老 manifest 完全不声明 permissions → 走 v1 基线授权（等于全给）。
+        // 快照记的就是那份基线，所以它自己不会跟自己"看起来像新增"。
+        let legacy: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "P", "main": "main.js",
+        }))
+        .unwrap();
+        set_enabled(&c, "p1", true, Some(&approval_snapshot(&legacy))).unwrap();
+        assert!(!approval_state(&c, &legacy, false).required);
+        // 老插件后来显式声明了**一部分**权限：那是收敛，不该要求确认
+        let narrowed = manifest_with(&["read:pages"], &[], "1.0.0");
+        assert!(!approval_state(&c, &narrowed, false).required);
+    }
+
     #[test]
     fn record_install_keeps_the_users_enabled_choice() {
         let c = state_conn();
         record_install(&c, "p1", "1.0.0", "local", false, false).unwrap();
         assert!(!enabled(&c, "p1"), "新装默认禁用（安装 ≠ 授权）");
-        set_enabled(&c, "p1", true).unwrap();
+        set_enabled(&c, "p1", true, None).unwrap();
 
         // 再次播种/记录（例如升级）不该把用户的选择冲掉
         record_install(&c, "p1", "2.0.0", "bundled", true, true).unwrap();

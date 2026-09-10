@@ -390,6 +390,19 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         conn.execute("DELETE FROM plugin_state WHERE key LIKE 'plugin_enabled::%'", [])?;
     }
+    // 授权快照（M11.9 收口）：用户在启用插件那一刻看到并同意的那份"能力面"（权限 + 事件），
+    // 以 JSON 存在这里。插件文件被换成声明更大的版本时，宿主据此**暂停它**并要求用户重新确认
+    // ——否则"用户当初同意的那份能力"和"现在跑起来的那份能力"可以静默不一致，而用户看不到。
+    // 只有"新增"会被判为需要重新确认（收敛声明不需要），快照里存的是列表而不是哈希，因为
+    // 要让界面说得出**具体新增了什么**。
+    let has_approved: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('plugin_install') WHERE name = 'approved_json'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_approved == 0 {
+        conn.execute("ALTER TABLE plugin_install ADD COLUMN approved_json TEXT", [])?;
+    }
     // E1 per-space at-rest encryption marker (idempotent for existing meta.db).
     let has_enc: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'encrypted'",

@@ -3,6 +3,7 @@ import { platform, isDesktopPlatform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 import { PluginFieldInput } from "./PluginFieldInput";
+import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
@@ -13,6 +14,7 @@ export function PluginManager() {
     auditFor, audit, openAudit, closeAudit, clearAudit,
     validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
     settingsFor, settings, openSettings, closeSettings, saveSetting,
+    approve,
   } = usePlugins();
 
   useEffect(() => {
@@ -99,6 +101,16 @@ export function PluginManager() {
                 </div>
                 <div className="pm-item-desc">{p.description || "—"}</div>
                 <div className="pm-item-cmds">{p.commands.length} 个命令</div>
+                {/* 声明扩张过：宿主已经暂停它了，这里说清新增了什么 + 给唯一的放行按钮。
+                    刻意不叫"启用"——用户要做的是"看了新增项再确认"，不是一个无关开关。 */}
+                {p.approval?.required && (
+                  <div className="pm-approval">
+                    <div className="pm-approval-text">{approvalDetail(p)}</div>
+                    <button className="pm-approval-btn" onClick={() => void approve(p.id)}>
+                      {approvalLabel()}并继续运行
+                    </button>
+                  </div>
+                )}
                 {/* 权限 + 理由必须摊在用户面前：新装的插件默认禁用，用户看完再启用。 */}
                 {p.permissions.length === 0 ? (
                   <div className="pm-item-perms">不需要任何权限</div>

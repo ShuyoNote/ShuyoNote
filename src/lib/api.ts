@@ -126,6 +126,8 @@ export const api = {
   clearPluginAudit: () => invoke("clear_plugin_audit"),
   // 作者工具链：校验一个已安装插件（与加载器同源，一次列出所有问题）。
   validatePlugin: (id: string) => invoke("validate_plugin", { id }),
+  // 重新确认插件声明（新增权限/事件之后唯一的放行方式）。
+  approvePlugin: (id: string) => invoke("approve_plugin", { id }),
   // 插件设置：声明来自 manifest，值只有宿主界面能写（插件侧 settings.get 只读）。
   pluginSettings: (pluginId: string) => invoke("plugin_settings", { pluginId }),
   setPluginSetting: (pluginId: string, key: string, value: string) =>

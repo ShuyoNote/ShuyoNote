@@ -49,6 +49,7 @@ import type {
   Tag,
   TemplateMeta,
   WorkspaceMeta,
+  PluginApproval,
 } from "../../types";
 
 export interface SyncConfig {
@@ -185,6 +186,7 @@ export interface CommandMap {
   plugin_audit: { args: { pluginId?: string | null; limit?: number | null }; result: PluginAuditEntry[] };
   clear_plugin_audit: { args: undefined; result: void };
   validate_plugin: { args: { id: string }; result: PluginValidation };
+  approve_plugin: { args: { id: string }; result: PluginApproval };
   plugin_dir_stamp: { args: undefined; result: string };
   emit_plugin_event: { args: { event: string; payloadJson?: string }; result: PluginEventOutcome[] };
   plugin_settings: { args: { pluginId: string }; result: PluginSetting[] };

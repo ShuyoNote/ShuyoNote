@@ -226,6 +226,23 @@ export interface PluginPermissionView {
   has_reason: boolean;
 }
 
+/**
+ * 一个插件的**授权状态**（后端强制，不是界面上的提醒）。
+ *
+ * 插件是磁盘上的一个目录，更新方式就是"把新文件盖进去"；如果新版本声明了更多权限或事件，
+ * 那"用户当初同意的那份能力"就和"现在跑起来的那份能力"不一致了。此时宿主**暂停它**，
+ * 直到用户在插件管理里点了「重新确认」。
+ */
+export interface PluginApproval {
+  /** true = 声明扩张过、还没重新确认（宿主会拒绝执行，事件也不再派发）。 */
+  required: boolean;
+  /** 具体新增了哪些权限 id / 事件 id（界面要说得出来，不能只说"变了"）。 */
+  added_permissions: string[];
+  added_events: string[];
+  /** 用户当时同意的那一版（用于"你同意的是 v1.0.0"）。 */
+  approved_version: string;
+}
+
 export interface PluginMeta {
   id: string;
   name: string;
@@ -239,6 +256,8 @@ export interface PluginMeta {
   permissions_baseline: boolean;
   /** 声明订阅的事件（用户没点命令时也会运行）——启用前必须让用户看到。 */
   events: PluginEventMeta[];
+  /** 授权状态：声明扩张时要求重新确认（宿主停止执行，直到用户确认）。 */
+  approval: PluginApproval;
   /** 运行档：`logic`（有代码）或 `declarative`（零 JS，只有声明）。 */
   runtime: string;
   /** 声明式视图（宿主渲染）。 */
