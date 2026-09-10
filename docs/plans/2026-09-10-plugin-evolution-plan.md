@@ -390,7 +390,7 @@ iframe 能提供**能力**隔离，但不能当作**内存**边界：macOS WKWeb
 
 **验收**：一个 `while(true)` 插件既不挂窗口也不泄漏线程（有测试断言）；**一个分配炸弹插件（如 `new Array(1e9).fill(0)`）只终结该次调用、应用存活（有测试断言）**；所有插件失败路径 UI 可见；禁用插件 IPC 不可执行；运行中的插件有可见状态且用户能取消；**资源结论已落地（§3.11，M11.13 去留已定并写进路线图）**。
 
-### M11.6 ABI v1 冻结 + 能力注册表 + 权限模型 — 5–8 人日
+### M11.6 ABI v1 冻结 + 能力注册表 + 权限模型 — 5–8 人日 ✅ **已落地**（含作者工具链）
 
 **交付**：§3.2 的注册表 + 生成物 + 门禁（每条能力**必须声明 `scope`**）；**生成并发布 `@shuyonote/plugin-types` 类型包**（作者侧 IDE 补全与编译期检查——对齐 Figma `@figma/plugin-typings` / VS Code `@types/vscode`）；Boa 只留 `__cap`/`__log` 两个原语；`apiVersion` 必填且用**语义化写法**（`"1.0.0"`，对齐 Figma manifest 的 `api` 字段；缺省按 `1.0.0` + 警告）；`permissions` 为**带 `reason` 的对象数组**（§3.5）+ 安装授权界面显示「权限 + 理由」+ 后端逐调用校验；**§3.9 权限×加密边界**落地（能力上下文只含活动空间、锁定空间返回 `space_locked`、`plugin_data` 按 scope 落库）；**§3.10 审计与可见性**落地（权限使用审计轨迹 + 文档化错误码表）；**作者 CLI 与热重载从 M11.11 前移到本档**（`validate` / `dev` 监听热重载 / 日志查看——开发循环与 API 同时交付，而不是最后）；`plugin_install` / `plugin_data` 两表与迁移；id 规则收紧（兼容老 id）；`docs/plugin-api.md` 作者文档 + 示例插件（覆盖 `declarative` / `logic` 两档）+ 开发期校验命令（Boa 解析 + manifest 校验 + **权限清单与理由打印**）。
 
@@ -398,7 +398,7 @@ iframe 能提供**能力**隔离，但不能当作**内存**边界：macOS WKWeb
 
 **顺带清理**：§6.3 的正名与死代码删除（纯前端、无行为变更）。
 
-### M11.7 能力扩容：读 + 受控写（与 AI 工具层合并）— 5–8 人日
+### M11.7 能力扩容：读 + 受控写（与 AI 工具层合并）— 5–8 人日 ✅ **已落地**
 
 **交付**：读能力（`page.current` / `pages.list` / `pages.search` / `pages.get` / `tags.list` / `backlinks.list` / `files.list`，**默认 scope = 活动空间**）；写能力三档（`editor.insertText` 即时；`pages.create` / `blocks.append` / `properties.set` / `tags.add` 走草稿确认）；`kv.own` 读写（`app` / `space:<id>` 两 scope，宿主按 §3.7 路由到 `meta.db` 或空间库）；**`src/lib/ai/tools.ts` 重构为消费同一注册表**，AI 宿主与插件共用一份能力层；权限矩阵测试（含锁定空间 `space_locked` 与跨空间逐空间检查）。
 

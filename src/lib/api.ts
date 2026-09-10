@@ -124,6 +124,10 @@ export const api = {
   pluginAudit: (pluginId?: string | null, limit?: number | null) =>
     invoke("plugin_audit", { pluginId: pluginId ?? null, limit: limit ?? null }),
   clearPluginAudit: () => invoke("clear_plugin_audit"),
+  // 作者工具链：校验一个已安装插件（与加载器同源，一次列出所有问题）。
+  validatePlugin: (id: string) => invoke("validate_plugin", { id }),
+  // 插件目录指纹：热重载用（面板打开期间低频轮询，变了就重新扫描）。
+  pluginDirStamp: () => invoke("plugin_dir_stamp"),
   setEncryption: (passphrase: string) => invoke("set_encryption", { passphrase }),
   encryptionStatus: () => invoke("encryption_status"),
   lockEncryption: () => invoke("lock_encryption"),

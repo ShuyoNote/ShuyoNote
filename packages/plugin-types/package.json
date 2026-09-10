@@ -4,7 +4,8 @@
   "description": "ShuyoNote 插件 API 类型定义（由 capabilities/capabilities.json 生成）",
   "types": "index.d.ts",
   "files": [
-    "index.d.ts"
+    "index.d.ts",
+    "globals.d.ts"
   ],
   "license": "AGPL-3.0",
   "private": true

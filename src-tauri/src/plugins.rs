@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager, State};
 // Plugin model
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PluginCommandMeta {
     pub id: String,
     pub title: String,
@@ -49,7 +49,7 @@ pub struct PluginPermissionMeta {
 }
 
 /// 把 manifest 的权限声明整理成给用户看的清单。
-fn permission_metas(manifest: &Manifest) -> (Vec<PluginPermissionMeta>, bool) {
+pub(crate) fn permission_metas(manifest: &Manifest) -> (Vec<PluginPermissionMeta>, bool) {
     let baseline = manifest.permissions.is_none();
     let (granted, _) = resolve_permissions(manifest);
     let reasons: std::collections::HashMap<&str, &str> = manifest
@@ -218,9 +218,9 @@ fn push_log(plugin_id: &str, level: &str, message: &str) {
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize, Debug)]
-struct Manifest {
-    id: String,
-    name: String,
+pub(crate) struct Manifest {
+    pub(crate) id: String,
+    pub(crate) name: String,
     #[serde(default)]
     version: String,
     #[serde(default)]
@@ -235,21 +235,21 @@ struct Manifest {
     api_version: Option<String>,
     /// 逐条声明的权限，带理由。缺省 = 走 v1 基线授权（见 resolve_permissions）。
     #[serde(default)]
-    permissions: Option<Vec<PermissionDecl>>,
+    pub(crate) permissions: Option<Vec<PermissionDecl>>,
 }
 
 #[derive(serde::Deserialize, Clone, Debug)]
-struct PermissionDecl {
-    id: String,
+pub(crate) struct PermissionDecl {
+    pub(crate) id: String,
     #[serde(default)]
-    reason: String,
+    pub(crate) reason: String,
 }
 
 fn default_main() -> String {
     "main.js".to_string()
 }
 
-fn plugins_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn plugins_root(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -265,7 +265,7 @@ fn plugins_root(app: &AppHandle) -> Result<PathBuf, String> {
 ///
 /// 另外拒掉「全是点」与「以点结尾」：Windows 会规范化结尾的点
 /// （`...` / `foo.` 在磁盘上会落到与预期不同的名字），这类 id 没有合法用途。
-fn is_safe_plugin_id(id: &str) -> bool {
+pub(crate) fn is_safe_plugin_id(id: &str) -> bool {
     !id.is_empty()
         && id != "."
         && id != ".."
@@ -281,7 +281,7 @@ fn is_safe_plugin_id(id: &str) -> bool {
 /// 用「单一 `Component::Normal`」判定，而不是此前那句
 /// `components().count() != 1`——那个写法两头都不对：
 /// **误拒**常见的 `./main.js`（它有两个组件），**放行** `.` 与 `..`（它们各只有一个组件）。
-fn is_bare_file_name(main: &str) -> bool {
+pub(crate) fn is_bare_file_name(main: &str) -> bool {
     // 结尾的分隔符会被 Path 规范化掉（`sub/` 看起来就是一个组件），
     // 但它语义上是目录，直接按原文拒掉。
     if main.ends_with('/') || main.ends_with('\\') {
@@ -293,7 +293,7 @@ fn is_bare_file_name(main: &str) -> bool {
     matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }
 
-fn read_manifest(dir: &Path) -> Result<Manifest, String> {
+pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     let p = dir.join("manifest.json");
     let text = std::fs::read_to_string(&p).map_err(|e| format!("读取 manifest 失败: {e}"))?;
     let m: Manifest = serde_json::from_str(&text).map_err(|e| format!("manifest 解析失败: {e}"))?;
@@ -320,7 +320,7 @@ fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     Ok(m)
 }
 
-fn load_plugin_source(dir: &Path, manifest: &Manifest) -> Result<String, String> {
+pub(crate) fn load_plugin_source(dir: &Path, manifest: &Manifest) -> Result<String, String> {
     let p = dir.join(&manifest.main);
     if !p.exists() {
         return Err("插件入口文件不存在".to_string());
@@ -388,7 +388,7 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 发现（跑插件顶层代码）的墙钟上限。
 /// 此前 discovery **完全没有超时**，一个顶层死循环就能让 `list_plugins` 永不返回。
-const DISCOVER_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const DISCOVER_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// 建一个带预算的插件上下文。
 ///
@@ -402,6 +402,18 @@ fn plugin_context(loop_limit: u64) -> Context {
     limits.set_recursion_limit(256);
     ctx.set_runtime_limits(limits);
     ctx
+}
+
+/// 只做语法解析的上下文（Boa 的 `Script::parse` 也要求一个 Context）。
+/// 解析不执行代码，所以不给循环预算也无所谓；单独一个函数是为了让「解析用」与
+/// 「执行用」在调用点一眼可分。
+pub(crate) fn plugin_parse_context() -> Context {
+    plugin_context(DISCOVER_LOOP_LIMIT)
+}
+
+/// v1 基线权限集合（校验内核在 manifest 不可用时也要能跑一次 discovery）。
+pub(crate) fn baseline_permission_ids() -> Vec<String> {
+    baseline_permissions()
 }
 
 /// 把一段「跑插件代码」的闭包丢进独立线程并加墙钟超时。
@@ -483,7 +495,7 @@ fn baseline_permissions() -> Vec<String> {
 ///   - 没有 `permissions` 字段 → v1 基线授权 + 警告（老插件兼容）；
 ///   - 声明了但引用了本版本不认识的权限 → 忽略该条 + 警告（前向兼容）；
 ///   - 声明了权限但没写 `reason` → 警告（用户看不到它为什么要这项权限）。
-fn resolve_permissions(manifest: &Manifest) -> (Vec<String>, Vec<String>) {
+pub(crate) fn resolve_permissions(manifest: &Manifest) -> (Vec<String>, Vec<String>) {
     let mut warnings = Vec::new();
     if manifest.api_version.is_none() {
         warnings.push(format!(
@@ -1210,7 +1222,7 @@ fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommand
 }
 
 /// 带墙钟超时的 discovery：插件顶层代码跑在独立线程里，超时不再挂住调用方。
-fn discover_commands_timed(
+pub(crate) fn discover_commands_timed(
     plugin_id: &str,
     permissions: &[String],
     source: &str,

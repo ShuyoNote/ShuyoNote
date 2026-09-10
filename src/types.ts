@@ -82,6 +82,47 @@ export interface PluginCommandMeta {
   close_on_run: boolean;
 }
 
+/**
+ * 插件校验报告（后端 `validate_plugin`，与加载器同源，见 src-tauri/src/plugin_validate.rs）。
+ *
+ * `permissions` 是**作者声明**的视图（含本版本不认识的那些，`known=false`）；
+ * `granted` 才是运行时实际授予的集合——两者不同，界面要能分别说清楚。
+ */
+export interface PluginValidation {
+  ok: boolean;
+  dir_name: string;
+  id: string;
+  name: string;
+  version: string;
+  api_version: string;
+  main: string;
+  entry_bytes: number;
+  commands: PluginCommandMeta[];
+  permissions: PluginPermissionView[];
+  granted: string[];
+  permissions_baseline: boolean;
+  problems: PluginProblem[];
+}
+
+/** 一条校验问题。`severity=error` 会让插件装不进去/跑不起来，`warning` 只是建议。 */
+export interface PluginProblem {
+  code: string;
+  message: string;
+  severity: "error" | "warning";
+  file?: string;
+}
+
+/** 作者视角下的一条权限声明。 */
+export interface PluginPermissionView {
+  id: string;
+  title: string;
+  reason: string;
+  risk: string;
+  /** 当前应用版本是否认识这项权限（不认识 = 该条会被忽略）。 */
+  known: boolean;
+  has_reason: boolean;
+}
+
 export interface PluginMeta {
   id: string;
   name: string;

@@ -15,6 +15,7 @@ mod models;
 mod capabilities_gen;
 mod pdf_native;
 mod plugin_budget;
+mod plugin_validate;
 mod plugins;
 mod properties;
 mod search;
@@ -411,6 +412,8 @@ pub fn run() {
             plugins::uninstall_plugin,
             plugins::install_plugin,
             plugins::open_plugin_dir,
+            plugin_validate::validate_plugin,
+            plugin_validate::plugin_dir_stamp,
             plugins::plugin_logs,
             plugins::clear_plugin_logs,
             plugins::plugin_audit,

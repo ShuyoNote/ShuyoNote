@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import { toast } from "./toast";
-import type { PluginAuditEntry, PluginDraft, PluginLogLine, PluginMeta } from "../types";
+import type {
+  PluginAuditEntry,
+  PluginDraft,
+  PluginLogLine,
+  PluginMeta,
+  PluginValidation,
+} from "../types";
 
 // Disk-loaded plugins (scanned/manifest-validated by the backend, executed in a
 // restricted boa runtime). Persisted enabled state lives in the DB.
@@ -79,6 +85,20 @@ interface PluginsState {
   openAudit: (pluginId: string) => Promise<void>;
   closeAudit: () => void;
   clearAudit: () => Promise<void>;
+  /**
+   * 作者工具链：按插件 id 的校验结果（后端 `validate_plugin`，与加载器同源）。
+   * 只在用户点了「验证」的插件上有值。
+   */
+  validations: Record<string, PluginValidation>;
+  verify: (id: string) => Promise<void>;
+  closeVerify: (id: string) => void;
+  /**
+   * 热重载：插件目录的指纹。打开插件面板时低频轮询，指纹变了就重新扫描列表
+   * （命令面板同步刷新）并重跑已展开的校验——作者改完文件不必手动重启。
+   */
+  dirStamp: string | null;
+  autoReloadedAt: number | null;
+  watchPluginDir: () => Promise<void>;
 }
 
 export const usePlugins = create<PluginsState>((set) => ({
@@ -226,5 +246,45 @@ export const usePlugins = create<PluginsState>((set) => ({
       console.error("clear plugin logs failed", e);
       toast(`清空插件日志失败：${errText(e)}`, "error");
     }
+  },
+  validations: {},
+  verify: async (id) => {
+    try {
+      const r = await api.validatePlugin(id);
+      set((s) => ({ validations: { ...s.validations, [id]: r } }));
+    } catch (e) {
+      console.error("validate plugin failed", e);
+      toast(`校验插件失败：${errText(e)}`, "error");
+    }
+  },
+  // 收起校验面板：连同结果一起清掉，下次点是重新跑（插件文件可能已经改了）。
+  closeVerify: (id) =>
+    set((s) => {
+      const next = { ...s.validations };
+      delete next[id];
+      return { validations: next };
+    }),
+  dirStamp: null,
+  autoReloadedAt: null,
+  watchPluginDir: async () => {
+    let stamp: string;
+    try {
+      stamp = await api.pluginDirStamp();
+    } catch {
+      return; // Web 版没有磁盘插件（返回空串），静默跳过
+    }
+    const prev = usePlugins.getState().dirStamp;
+    if (prev === null) {
+      // 首次只记基线：否则一打开面板就"检测到变化"，等于每次都在自欺。
+      set({ dirStamp: stamp });
+      return;
+    }
+    if (stamp === prev) return;
+    set({ dirStamp: stamp });
+    await usePlugins.getState().load();
+    // 已展开的校验结果基于旧文件，重跑一遍（作者的循环：改文件 → 自动重扫 → 看结果）
+    const open = Object.keys(usePlugins.getState().validations);
+    for (const id of open) await usePlugins.getState().verify(id);
+    set({ autoReloadedAt: Date.now() });
   },
 }));

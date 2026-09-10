@@ -1,11 +1,14 @@
-// 能力注册表的代码生成器（单一事实源 → 四处生成物）。
+// 能力注册表的代码生成器（单一事实源 → 各处生成物）。
 //
 // 源：capabilities/capabilities.json
 // 生成：
-//   1. capabilities/plugin-api-shim.js      —— 插件看到的 `api.*`（唯一 ABI 面）
-//   2. src-tauri/src/capabilities_gen.rs    —— Rust 绑定表（id → 权限 / scope / 实现函数名）
-//   3. packages/plugin-types/index.d.ts     —— 作者用的类型包 @shuyonote/plugin-types
-//   4. docs/plugin-api.md                   —— 面向作者的 API 文档
+//   1. capabilities/plugin-api-shim.js       —— 插件看到的 `api.*`（唯一 ABI 面）
+//   2. src-tauri/src/capabilities_gen.rs     —— Rust 绑定表（id → 权限 / scope / 实现函数名）
+//   3. packages/plugin-types/index.d.ts      —— 作者用的类型包 @shuyonote/plugin-types
+//   4. packages/plugin-types/globals.d.ts    —— 脚本式插件的全局声明（`api` / `register`）
+//   5. packages/plugin-types/package.json    —— 类型包元数据
+//   6. docs/plugin-api.md                    —— 面向作者的 API 文档
+//   7. src/lib/capabilities/aiTools.meta.ts  —— AI 宿主工具元数据
 //
 // 用法：
 //   node scripts/gen-capabilities.mjs           写入生成物
@@ -25,6 +28,7 @@ export const OUTPUTS = {
   shim: "capabilities/plugin-api-shim.js",
   rust: "src-tauri/src/capabilities_gen.rs",
   types: "packages/plugin-types/index.d.ts",
+  globals: "packages/plugin-types/globals.d.ts",
   pkg: "packages/plugin-types/package.json",
   docs: "docs/plugin-api.md",
   aiTools: "src/lib/capabilities/aiTools.meta.ts",
@@ -219,7 +223,7 @@ export function genTypes(reg) {
           const doc = [`  /** ${val.title}（${perm}；${val.since} 起）`];
           if (val.returns?.desc) doc.push(`   * 返回：${val.returns.desc}`);
           doc.push("   */");
-          return `${doc.join("\n")}\n${pad}${key}(${params}): ${tsType(val.returns?.type ?? "void")};`;
+          return `${doc.join("\n")}\n${pad}${key}(${params}): ${val.returns?.ts ?? tsType(val.returns?.type ?? "void")};`;
         }
         return `${pad}${key}: {\n${emitTs(val, indent + 2)}\n${pad}};`;
       })
@@ -230,6 +234,35 @@ export function genTypes(reg) {
   l.push("}");
   l.push("");
   l.push(`export declare const SDK_API_VERSION: ${JSON.stringify(reg.apiVersion)};`);
+  l.push("");
+  return l.join("\n");
+}
+
+/**
+ * 脚本式插件的**全局**声明。
+ *
+ * 为什么必须有这一份：插件是**脚本**不是模块（Boa 里没有 `import`），作者写的是
+ * `register({...})` 与 `api.pages.list()` 这种裸标识符。而 `index.d.ts` 是模块
+ * （带 `export`），`// @ts-check` 的脚本文件看不见它的成员——于是"有类型包但没补全"
+ * 就成了空档：作者要么手写 `import type`（脚本里用不了），要么干脆没类型。
+ * 这里用 `declare global` 把两样东西变成全局，编辑器与 `tsc` 才能对脚本式插件生效。
+ */
+export function genGlobals(reg) {
+  const l = [];
+  l.push("// 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。");
+  l.push("// 用途：脚本式插件（非模块）的全局声明。作者的 tsconfig 里 include 本文件即可获得补全。");
+  l.push('import type { PluginApi, PluginCommand } from "./index";');
+  l.push("");
+  l.push("declare global {");
+  l.push("  /** 宿主能力面。每一项需要的权限见 manifest.permissions（未声明的权限调用会被后端拒绝）。 */");
+  l.push("  const api: PluginApi;");
+  l.push("  /** 注册一个命令：在插件顶层调用，命令会出现在命令面板（Ctrl+K）。 */");
+  l.push("  function register(cmd: PluginCommand): void;");
+  l.push(`  /** 本应用支持的 API 版本（与 manifest.apiVersion 的主版本必须一致）。 */`);
+  l.push(`  const SDK_API_VERSION: ${JSON.stringify(reg.apiVersion)};`);
+  l.push("}");
+  l.push("");
+  l.push("export {};");
   l.push("");
   return l.join("\n");
 }
@@ -285,16 +318,18 @@ export function genDocs(reg) {
   l.push("");
   l.push("要点：");
   l.push("");
-  l.push("- `id` 必须**等于目录名**，且只能是小写字母、数字与 `-`；");
+  l.push("- `id` 必须**等于目录名**；可用字符：字母、数字、`_`、`.`、`-`（推荐只用小写字母、数字与 `-`）；");
   l.push("- `main` 只能是同级文件名（`main.js` 或 `./main.js`）；");
   l.push("- 每次执行都会**重新 eval** 插件代码并新建一个沙箱 —— 不要在顶层做耗时工作；");
   l.push("- 返回的字符串会显示在命令面板底部；`closeOnRun: true` 执行后关闭面板。");
+  l.push("");
+  l.push("写完之后怎么跑起来、怎么排错：见 [§9 开发循环](#9-开发循环写--校验--看日志)。");
   l.push("");
   l.push("## 2. manifest 字段");
   l.push("");
   l.push("| 字段 | 必填 | 说明 |");
   l.push("|---|---|---|");
-  l.push("| `id` | ✅ | 插件 id，必须等于目录名；单段 `[a-z0-9-]` |");
+  l.push("| `id` | ✅ | 插件 id，必须等于目录名；单段，可用 `A-Za-z0-9_.-`（推荐 `[a-z0-9-]`） |");
   l.push("| `name` | ✅ | 显示名 |");
   l.push("| `version` | 建议 | 插件自身版本 |");
   l.push("| `description` | 建议 | 一句话说明 |");
@@ -393,6 +428,43 @@ export function genDocs(reg) {
   l.push("另外：**没写 `permissions` 的老 manifest** 会被授予 v1 基线权限（上表三项）并记录一条警告日志，");
   l.push("以便老插件升级后仍可用；新插件请显式声明。");
   l.push("");
+  l.push("## 9. 开发循环：写 → 校验 → 看日志");
+  l.push("");
+  l.push("插件目录就是你的工程目录，没有编译步骤（宿主直接读 `main.js`）。改完文件后：");
+  l.push("");
+  l.push("1. **应用内自动重扫**：插件面板打开时，插件目录一变就会自动重新加载（面板标题会显示");
+  l.push("   「已自动重新扫描 …」）——命令面板里的命令、行为、日志随即是新的，不用重启应用。");
+  l.push("2. **点「校验」**：列出这个插件**全部**问题（不是只报第一个）：manifest 字段、权限与理由、");
+  l.push("   JS 语法（用宿主同一个 Boa 引擎解析）、能不能注册出命令。校验通过 = 应用能装能跑。");
+  l.push("3. **看「日志」与「活动」**：`api.log(...)` 的输出去「日志」；插件调用过哪些能力、");
+  l.push("   有没有被权限拦下，去「活动」（被拒的调用同样留痕）。");
+  l.push("");
+  l.push("在仓库里开发（或接 CI）时，命令行也有一份**对照检查**：");
+  l.push("");
+  l.push("```bash");
+  l.push("pnpm plugin:validate <插件目录>          # 校验 manifest / 权限与理由 / API 版本 / JS 语法");
+  l.push("pnpm check:examples                      # 用类型包对示例插件做 tsc 类型检查");
+  l.push("```");
+  l.push("");
+  l.push("> JS 语法在命令行由 V8 检查，而应用里跑的是 Boa——两者对新语法的宽容度可能不同。");
+  l.push("> **最终以应用内「校验」为准**（它走的是与加载器完全同一条路径）。");
+  l.push("");
+  l.push("编辑器里想要补全与类型检查，把类型包加进 tsconfig（脚本式插件用 `globals.d.ts`）：");
+  l.push("");
+  l.push("```json");
+  l.push("{");
+  l.push('  "compilerOptions": {');
+  l.push('    "allowJs": true, "checkJs": true, "noEmit": true, "strict": true,');
+  l.push('    "paths": { "@shuyonote/plugin-types": ["<仓库>/packages/plugin-types/index.d.ts"] }');
+  l.push("  },");
+  l.push('  "files": ["<仓库>/packages/plugin-types/globals.d.ts"],');
+  l.push('  "include": ["main.js"]');
+  l.push("}");
+  l.push("```");
+  l.push("");
+  l.push("仓库里 `examples/plugins/` 有三个可直接抄的示例（只读、写草稿、插件私有数据各一），");
+  l.push("它们同时被 CI 用作者 CLI 与类型检查钉住——所以示例永远是可用的。");
+  l.push("");
   return l.join("\n");
 }
 
@@ -458,7 +530,7 @@ export function genPackageJson(reg) {
         version: reg.apiVersion,
         description: "ShuyoNote 插件 API 类型定义（由 capabilities/capabilities.json 生成）",
         types: "index.d.ts",
-        files: ["index.d.ts"],
+        files: ["index.d.ts", "globals.d.ts"],
         license: "AGPL-3.0",
         private: true,
       },
@@ -473,6 +545,7 @@ export function buildAll(reg = loadRegistry()) {
     [OUTPUTS.shim]: genShim(reg),
     [OUTPUTS.rust]: genRust(reg),
     [OUTPUTS.types]: genTypes(reg),
+    [OUTPUTS.globals]: genGlobals(reg),
     [OUTPUTS.pkg]: genPackageJson(reg),
     [OUTPUTS.docs]: genDocs(reg),
     [OUTPUTS.aiTools]: genAiTools(reg),

@@ -53,6 +53,15 @@ jobs:
       - name: 同步一致性（两设备并发，真实 applyChange + 真实 sql.js）
         run: node scripts/verify-two-device-sync.mjs
 
+      - name: 示例插件（类型检查 + 作者 CLI 校验）
+        # 这两条是「只看文档就能写出插件」的机器化验收：类型包必须能让脚本式插件
+        # 通过 tsc，CLI 必须认得出示例里的权限与 API 版本。
+        run: |
+          pnpm check:examples
+          for d in examples/plugins/*/; do
+            node scripts/plugin-cli.mjs validate "$d"
+          done
+
       - name: 版本 / 命令契约 / 能力注册表 / 文档链接
         run: |
           node scripts/check-versions.mjs

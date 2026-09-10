@@ -10,11 +10,22 @@ export function PluginManager() {
     managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir,
     logsFor, logs, openLogs, closeLogs, clearLogs,
     auditFor, audit, openAudit, closeAudit, clearAudit,
+    validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
   } = usePlugins();
 
   useEffect(() => {
     if (managerOpen) load();
   }, [managerOpen, load]);
+
+  // 热重载：面板打开期间低频轮询插件目录指纹，作者改完文件（或放了新插件目录）就
+  // 自动重扫，不必手动开关面板或重启应用。1.5s 一次只做一次 read_dir + 元数据，
+  // 代价可以忽略；关掉面板即停止轮询。
+  useEffect(() => {
+    if (!managerOpen) return;
+    watchPluginDir();
+    const t = window.setInterval(() => watchPluginDir(), 1500);
+    return () => window.clearInterval(t);
+  }, [managerOpen, watchPluginDir]);
 
   if (!managerOpen) return null;
 
@@ -41,7 +52,15 @@ export function PluginManager() {
     <div className="plugin-manager-overlay" onClick={() => setManagerOpen(false)}>
       <div className="plugin-manager" onClick={(e) => e.stopPropagation()}>
         <div className="pm-head">
-          <div className="pm-title">插件管理</div>
+          <div className="pm-title">
+            插件管理
+            {/* 作者循环的可见反馈：文件改动被自动识别时给出时间，而不是"悄悄变了" */}
+            {autoReloadedAt && (
+              <span className="pm-autoreload">
+                已自动重新扫描 {new Date(autoReloadedAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
           <div className="pm-actions">
             <button onClick={pickInstall} title="从本地文件夹安装插件">从文件夹安装</button>
             <button onClick={openDir} title="在文件管理器中打开插件目录">打开插件目录</button>
@@ -99,6 +118,14 @@ export function PluginManager() {
                 >
                   {auditFor === p.id ? "收起活动" : "活动"}
                 </button>
+                {/* 作者工具链：一次列出全部问题（manifest / 权限 / Boa 语法 / 命令注册），
+                    走的是与加载器同一条路径，所以"校验通过"= 应用能装能跑。 */}
+                <button
+                  onClick={() => (validations[p.id] ? closeVerify(p.id) : verify(p.id))}
+                  title="校验这个插件：manifest、权限与理由、JS 语法、命令注册"
+                >
+                  {validations[p.id] ? "收起校验" : "校验"}
+                </button>
                 <button className="danger" onClick={() => uninstallWithConfirm(p.id, p.name)}>
                   卸载
                 </button>
@@ -124,11 +151,60 @@ export function PluginManager() {
                   </div>
                 </div>
               )}
+              {validations[p.id] &&
+                (() => {
+                  const v = validations[p.id];
+                  const errors = v.problems.filter((x) => x.severity === "error").length;
+                  return (
+                    <div className="pm-verify">
+                      <div className="pm-verify-head">
+                        {v.ok ? (
+                          <span className="pm-verify-ok">✓ 校验通过</span>
+                        ) : (
+                          <span className="pm-verify-bad">✗ {errors} 个错误</span>
+                        )}
+                        <span className="pm-verify-meta">
+                          API {v.api_version} · 入口 {v.main}（{(v.entry_bytes / 1024).toFixed(1)} KiB）·{" "}
+                          {v.commands.length} 个命令
+                        </span>
+                      </div>
+                      {v.commands.length > 0 && (
+                        <div className="pm-verify-line">
+                          命令：{v.commands.map((c) => (c.title ? `${c.title}（${c.id}）` : c.id)).join("、")}
+                        </div>
+                      )}
+                      <div className="pm-verify-line">
+                        实际授予 {v.granted.length} 项：{v.granted.join("、") || "（无）"}
+                        {v.permissions_baseline && "（未声明 permissions → 按 v1 基线授权）"}
+                      </div>
+                      {v.permissions.some((x) => !x.known) && (
+                        <div className="pm-verify-warn">
+                          有权限本版本不认识，会被忽略：
+                          {v.permissions
+                            .filter((x) => !x.known)
+                            .map((x) => x.id)
+                            .join("、")}
+                        </div>
+                      )}
+                      {v.problems.length === 0 ? (
+                        <div className="pm-problem pm-problem-ok">没有发现问题</div>
+                      ) : (
+                        v.problems.map((pr, i) => (
+                          <div key={`${pr.code}-${i}`} className={`pm-problem pm-problem-${pr.severity}`}>
+                            <span className="pm-problem-code">[{pr.code}]</span>
+                            <span className="pm-problem-msg">{pr.message}</span>
+                            {pr.file && <span className="pm-problem-file">{pr.file}</span>}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  );
+                })()}
               {logsFor === p.id && (
                 <div className="pm-logs">
                   {logs.length === 0 ? (
                     <div className="pm-log-empty">
-                      暂无日志 · 插件可用 <code>__log("info", "…")</code> 或 <code>__toast("…")</code> 写日志
+                      暂无日志 · 插件可用 <code>api.log("…")</code> 或 <code>api.notify("…")</code> 写日志
                     </div>
                   ) : (
                     logs.map((l, i) => (

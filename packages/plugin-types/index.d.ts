@@ -31,51 +31,51 @@ export interface PluginApi {
   /** 列出本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, updated_at}]，按更新时间倒序；不含正文
    */
-    list(limit?: number): unknown;
+    list(limit?: number): { id: string; title: string; updated_at: string }[];
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
    * 返回：{id, title, content_text, kind}；不存在返回 null
    */
-    get(id: string): unknown;
+    get(id: string): { id: string; title: string; content_text: string; kind: string } | null;
   /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
    */
-    search(q: string, limit?: number): unknown;
+    search(q: string, limit?: number): { id: string; title: string; snippet: string }[];
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
-    create(title: string, content?: string, parentId?: string): unknown;
+    create(title: string, content?: string, parentId?: string): { drafted: true; summary: string };
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
    * 返回：[{id, name, page_count}]
    */
-    list(): unknown;
+    list(): { id: string; name: string; page_count: number }[];
   /** 给页面加标签（草稿确认）（权限 `write:tags`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    add(name: string, pageId?: string): unknown;
+    add(name: string, pageId?: string): { drafted: true; summary: string };
   };
   blocks: {
   /** 列出页面块（权限 `read:pages`；1.0.0 起）
    * 返回：[{blockId, text}]
    */
-    list(pageId: string, limit?: number): unknown;
+    list(pageId: string, limit?: number): { blockId: string; text: string }[];
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    append(text: string, pageId?: string): unknown;
+    append(text: string, pageId?: string): { drafted: true; summary: string };
   };
   backlinks: {
   /** 列出反链（权限 `read:backlinks`；1.0.0 起）
    * 返回：[{source_page_id, source_title, kind}]
    */
-    list(pageId?: string): unknown;
+    list(pageId?: string): { source_page_id: string; source_title: string; kind: string }[];
   };
   files: {
   /** 列出页面附件元数据（权限 `read:files`；1.0.0 起）
    * 返回：[{id, name, mime, size}]，**不含字节**
    */
-    list(pageId?: string): unknown;
+    list(pageId?: string): { id: string; name: string; mime: string; size: number }[];
   };
   editor: {
   /** 向当前页插入纯文本（权限 `write:page.current`；1.0.0 起）
@@ -90,7 +90,7 @@ export interface PluginApi {
   /** 读插件私有数据（权限 `kv:own`；1.0.0 起）
    * 返回：存过的字符串；键不存在返回 null
    */
-    get(key: string, scope?: "space" | "app"): string;
+    get(key: string, scope?: "space" | "app"): string | null;
   /** 写插件私有数据（权限 `kv:own`；1.0.0 起）
    * 返回：立即写入（不走草稿确认：只动插件自己的数据，不碰笔记内容）
    */
@@ -103,11 +103,11 @@ export interface PluginApi {
   /** 列出属性定义（权限 `read:properties`；1.0.0 起）
    * 返回：[{id, name, type}]——插件据此找到要写的属性 id
    */
-    list(): unknown;
+    list(): { id: string; name: string; type: string }[];
   /** 设置页面属性（草稿确认）（权限 `write:properties`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    set(attrId: string, value: string, pageId?: string): unknown;
+    set(attrId: string, value: string, pageId?: string): { drafted: true; summary: string };
   };
   /** 写作者侧日志（无需权限；1.0.0 起）
    * 返回：进插件日志环形缓冲，可在插件面板查看

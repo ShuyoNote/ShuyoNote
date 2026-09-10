@@ -2348,6 +2348,9 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "clear_plugin_logs") return undefined as T;
     if (cmd === "plugin_audit") return [] as T;
     if (cmd === "clear_plugin_audit") return undefined as T;
+    // 校验/热重载在 Web 上是空实现：Web 没有磁盘插件运行时（见上方注释）。
+    if (cmd === "validate_plugin") return { ok: false, problems: [], permissions: [], commands: [], granted: [] } as T;
+    if (cmd === "plugin_dir_stamp") return "" as T;
 
     // ---- Sync ----
     const wsIdNow = (): string => getWs()?.id ?? getActiveWsId();

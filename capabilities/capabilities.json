@@ -129,6 +129,7 @@
       ],
       "returns": {
         "type": "array",
+        "ts": "{ id: string; title: string; updated_at: string }[]",
         "desc": "[{id, title, updated_at}]，按更新时间倒序；不含正文"
       },
       "rust": "cap_pages_list"
@@ -154,6 +155,7 @@
       ],
       "returns": {
         "type": "object",
+        "ts": "{ id: string; title: string; content_text: string; kind: string } | null",
         "desc": "{id, title, content_text, kind}；不存在返回 null"
       },
       "rust": "cap_pages_get",
@@ -188,6 +190,7 @@
       ],
       "returns": {
         "type": "array",
+        "ts": "{ id: string; title: string; snippet: string }[]",
         "desc": "[{id, title, snippet}]；v1 是子串匹配，不做相关度排序"
       },
       "rust": "cap_pages_search",
@@ -208,6 +211,7 @@
       "args": [],
       "returns": {
         "type": "array",
+        "ts": "{ id: string; name: string; page_count: number }[]",
         "desc": "[{id, name, page_count}]"
       },
       "rust": "cap_tags_list"
@@ -242,6 +246,7 @@
       ],
       "returns": {
         "type": "array",
+        "ts": "{ blockId: string; text: string }[]",
         "desc": "[{blockId, text}]"
       },
       "rust": "cap_blocks_list"
@@ -267,6 +272,7 @@
       ],
       "returns": {
         "type": "array",
+        "ts": "{ source_page_id: string; source_title: string; kind: string }[]",
         "desc": "[{source_page_id, source_title, kind}]"
       },
       "rust": "cap_backlinks_list",
@@ -294,6 +300,7 @@
       ],
       "returns": {
         "type": "array",
+        "ts": "{ id: string; name: string; mime: string; size: number }[]",
         "desc": "[{id, name, mime, size}]，**不含字节**"
       },
       "rust": "cap_files_list",
@@ -360,6 +367,7 @@
       ],
       "returns": {
         "type": "object",
+        "ts": "{ drafted: true; summary: string }",
         "desc": "{drafted: true, summary}——**不代表已创建**，用户确认后才落库"
       },
       "rust": "cap_pages_create",
@@ -395,6 +403,7 @@
       ],
       "returns": {
         "type": "object",
+        "ts": "{ drafted: true; summary: string }",
         "desc": "{drafted: true, summary}——**不代表已写入**"
       },
       "rust": "cap_blocks_append",
@@ -456,6 +465,7 @@
       ],
       "returns": {
         "type": "string",
+        "ts": "string | null",
         "desc": "存过的字符串；键不存在返回 null"
       },
       "rust": "cap_kv_get"
@@ -551,6 +561,7 @@
       "args": [],
       "returns": {
         "type": "array",
+        "ts": "{ id: string; name: string; type: string }[]",
         "desc": "[{id, name, type}]——插件据此找到要写的属性 id"
       },
       "rust": "cap_properties_list"
@@ -589,6 +600,7 @@
       ],
       "returns": {
         "type": "object",
+        "ts": "{ drafted: true; summary: string }",
         "desc": "{drafted: true, summary}——**不代表已写入**"
       },
       "rust": "cap_properties_set"
@@ -622,6 +634,7 @@
       ],
       "returns": {
         "type": "object",
+        "ts": "{ drafted: true; summary: string }",
         "desc": "{drafted: true, summary}——**不代表已写入**"
       },
       "rust": "cap_tags_add"

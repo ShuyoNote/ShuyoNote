@@ -1,0 +1,11 @@
+{
+  "id": "reading-stats",
+  "name": "空间概览",
+  "version": "1.0.0",
+  "description": "统计本空间的页面数与最近更新的页面。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    { "id": "read:pages", "reason": "读取本空间的页面数量与标题（不含正文）" }
+  ]
+}

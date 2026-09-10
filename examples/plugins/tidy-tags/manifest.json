@@ -1,0 +1,12 @@
+{
+  "id": "tidy-tags",
+  "name": "日期标签",
+  "version": "1.0.0",
+  "description": "给当前页打上今天的日期标签，方便按天回溯。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    { "id": "read:tags", "reason": "先看这个标签有没有用过，用来提示你" },
+    { "id": "write:tags", "reason": "给当前页加日期标签（落库前会先把草稿给你确认）" }
+  ]
+}

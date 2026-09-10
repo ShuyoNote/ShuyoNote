@@ -1,0 +1,12 @@
+{
+  "id": "daily-note",
+  "name": "每日笔记",
+  "version": "1.0.0",
+  "description": "一键创建今天的日记页；今天建过就提醒你，不会重复建。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    { "id": "write:pages", "reason": "创建今天的日记页（落库前会先把草稿给你确认）" },
+    { "id": "kv:own", "reason": "记住上次创建的是哪一天，用来避免重复创建" }
+  ]
+}

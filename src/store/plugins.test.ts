@@ -16,11 +16,13 @@ vi.mock("../lib/api", () => ({
     runPluginCommand: vi.fn(),
     pluginLogs: vi.fn(),
     clearPluginLogs: vi.fn(),
+    validatePlugin: vi.fn(),
+    pluginDirStamp: vi.fn(),
   },
 }));
 
 import { api } from "../lib/api";
-import type { PluginMeta } from "../types";
+import type { PluginMeta, PluginValidation } from "../types";
 import { usePlugins } from "./plugins";
 import { useToast } from "./toast";
 
@@ -33,6 +35,22 @@ const PLUGIN: PluginMeta = {
   commands: [],
   permissions: [{ id: "read:pages", title: "读取本空间页面统计", reason: "为了显示页面数", risk: "low" }],
   permissions_baseline: false,
+};
+
+const VALIDATION: PluginValidation = {
+  ok: true,
+  dir_name: "demo",
+  id: "demo",
+  name: "演示插件",
+  version: "1.0.0",
+  api_version: "1.0.0",
+  main: "main.js",
+  entry_bytes: 128,
+  commands: [{ id: "demo.hello", title: "打个招呼", description: "", close_on_run: false }],
+  permissions: [{ id: "read:pages", title: "读取本空间页面统计", reason: "为了显示页面数", risk: "low", known: true, has_reason: true }],
+  granted: ["read:pages"],
+  permissions_baseline: false,
+  problems: [],
 };
 
 const lastToast = () => {
@@ -223,5 +241,99 @@ describe("plugins store · 运行态 / 取消 / __toast / 日志", () => {
     vi.mocked(api.pluginLogs).mockRejectedValue("读取日志失败");
     await usePlugins.getState().openLogs("demo");
     expect(lastToast()).toMatchObject({ kind: "error" });
+  });
+});
+
+/**
+ * 热重载的契约。轮询最怕两种**不报错**的反向错误：
+ * 「第一次就当成变化」（一打开面板就白扫一轮）与「变了却没重扫」（作者改了文件
+ * 以为生效了，其实还是旧的）。两者都会让人慢慢不信这个工具，所以都钉住。
+ */
+describe("plugins store · 热重载", () => {
+  beforeEach(() => {
+    usePlugins.setState({ dirStamp: null, autoReloadedAt: null, validations: {} });
+    vi.mocked(api.pluginDirStamp).mockResolvedValue("stamp-1");
+    vi.mocked(api.validatePlugin).mockResolvedValue(VALIDATION);
+  });
+
+  it("首次只记基线，不触发重扫", async () => {
+    await usePlugins.getState().watchPluginDir();
+
+    expect(usePlugins.getState().dirStamp).toBe("stamp-1");
+    expect(api.listPlugins).not.toHaveBeenCalled();
+    expect(usePlugins.getState().autoReloadedAt).toBeNull();
+  });
+
+  it("指纹没变就不重扫（轮询不该反复打后端）", async () => {
+    usePlugins.setState({ dirStamp: "stamp-1" });
+
+    await usePlugins.getState().watchPluginDir();
+
+    expect(api.listPlugins).not.toHaveBeenCalled();
+    expect(api.pluginDirStamp).toHaveBeenCalledTimes(1);
+  });
+
+  it("指纹变了 → 重扫列表 + 重跑已展开的校验 + 记录时间", async () => {
+    usePlugins.setState({ dirStamp: "stamp-1", validations: { demo: VALIDATION } });
+    vi.mocked(api.pluginDirStamp).mockResolvedValue("stamp-2");
+
+    await usePlugins.getState().watchPluginDir();
+
+    expect(api.listPlugins).toHaveBeenCalledTimes(1);
+    expect(api.validatePlugin).toHaveBeenCalledWith("demo");
+    expect(usePlugins.getState().dirStamp).toBe("stamp-2");
+    expect(usePlugins.getState().autoReloadedAt).toBeTypeOf("number");
+  });
+
+  it("没有展开校验时，重扫不会去校验任何插件", async () => {
+    usePlugins.setState({ dirStamp: "stamp-1" });
+    vi.mocked(api.pluginDirStamp).mockResolvedValue("stamp-2");
+
+    await usePlugins.getState().watchPluginDir();
+
+    expect(api.listPlugins).toHaveBeenCalledTimes(1);
+    expect(api.validatePlugin).not.toHaveBeenCalled();
+  });
+
+  it("取指纹失败（Web 端没有磁盘插件）时静默跳过，不打断面板", async () => {
+    vi.mocked(api.pluginDirStamp).mockRejectedValue("Web 版没有插件目录");
+
+    await expect(usePlugins.getState().watchPluginDir()).resolves.toBeUndefined();
+
+    expect(usePlugins.getState().dirStamp).toBeNull();
+    expect(lastToast()).toBeUndefined();
+  });
+});
+
+/** 作者校验：结果按插件 id 存档；收起即清掉（下次点是重跑，因为文件可能已经改了）。 */
+describe("plugins store · 作者校验", () => {
+  beforeEach(() => {
+    usePlugins.setState({ validations: {} });
+    vi.mocked(api.validatePlugin).mockResolvedValue(VALIDATION);
+  });
+
+  it("校验结果按 id 存档", async () => {
+    await usePlugins.getState().verify("demo");
+
+    expect(api.validatePlugin).toHaveBeenCalledWith("demo");
+    expect(usePlugins.getState().validations.demo?.ok).toBe(true);
+    expect(usePlugins.getState().validations.demo?.granted).toEqual(["read:pages"]);
+  });
+
+  it("收起校验：连结果一起清掉", async () => {
+    await usePlugins.getState().verify("demo");
+    usePlugins.getState().closeVerify("demo");
+
+    expect(usePlugins.getState().validations.demo).toBeUndefined();
+  });
+
+  it("失败可见：弹 error toast 且带后端原文，不留半截结果", async () => {
+    vi.mocked(api.validatePlugin).mockRejectedValue("非法插件 id：../evil");
+
+    await usePlugins.getState().verify("demo");
+
+    expect(usePlugins.getState().validations.demo).toBeUndefined();
+    expect(lastToast()).toMatchObject({ kind: "error" });
+    expect(lastToast()?.message).toContain("../evil");
   });
 });
