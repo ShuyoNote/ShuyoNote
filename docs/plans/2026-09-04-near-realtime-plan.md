@@ -217,13 +217,13 @@ created_at   INTEGER NOT NULL
 | **NR-3 评论/@/通知** | 评论/通知表接口 + 前端 | 1-2 周 |
 | **NR-4（可选）推送** | SSE/WebSocket 变更通知 | 按需 |
 
-> **状态：NR-1 ~ NR-4 全部完成并发布**（客户端 v1.84.4 / 服务端 v1.2.0，2026-09-10），验收见 §12。
+> **状态：NR-1 ~ NR-4 全部完成并发布**（客户端 v1.84.5 / 服务端 v1.2.1，2026-09-10），验收见 §12。
 
 ---
 
 ## 12. 验收标准
 
-> **已全部验收（2026-09-10）**，含**线上端到端**：客户端 v1.84.4 + 服务端 v1.2.0 已发布，
+> **已全部验收（2026-09-10）**，含**线上端到端**：客户端 v1.84.5 + 服务端 v1.2.1 已发布，
 > 生产 `https://shuyo.cn/sync` 跑通 `test:sync-collab` **27 断言全绿**（SSE 推送 41ms）。
 
 - [x] 两人同改一页：后到者看到「此页被多人修改」提示，可保留本地/采用服务端，**不静默覆盖**。
@@ -247,7 +247,7 @@ created_at   INTEGER NOT NULL
 
 | 项 | 值 |
 |---|---|
-| 客户端 | v1.84.4（tag `v1.84.4`，gitcode + GitHub + 官网 `/app/` + updater `latest.json`） |
+| 客户端 | **v1.84.5**（tag `v1.84.5`，gitcode + GitHub + 官网 `/app/` + updater `latest.json`）。1.84.4 先发了近实时主功能，1.84.5 补齐 P1 面板样式/通知跳转/可读作者 |
 | 服务端 | v1.2.1（tag `v1.2.1`；1.2.0 已先上线，1.2.1 补可读作者后再次部署，生产 `/usr/local/bin/shuyonote-sync-server`，schema v10） |
 | 反向代理 | nginx `location /sync/` 必须 `proxy_buffering off`（否则 SSE 被缓冲，近实时静默退化） |
 | 验收命令 | `node scripts/sync-collab-regression.mjs --server https://shuyo.cn/sync --register-code <码>` |
