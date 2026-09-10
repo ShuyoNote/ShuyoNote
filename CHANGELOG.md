@@ -2,43 +2,16 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
-## [1.85.2] - 2026-09-10
+## [1.86.0] - 2026-09-10
 
-> **热修复：文档里写的 10 个编辑器快捷键其实一直是死的，`[[` 菜单的键盘操作同样收不到按键。**
-> 两者根因相同——按键注册在 Lexical 优先级的**最后一档**。只修这个，不夹带任何新功能。
+> **插件体系补完。** 三件事：**声明式贡献面**（零代码插件的视图现在有两种落点：浮层 / 右侧常驻面板）、
+> **触发面与事件面补齐**（插件命令进入页面列表的行菜单；`import.finished` / `sync.completed` 真的会发了），
+> 以及此前攒下的 **UI 打磨**（侧栏拖拽收起、关于弹窗瘦身）。另有若干处「说了做不到」的地方被门禁钉住。
 
 ### 修复
-- **`Ctrl+Alt+1/2/3/U/O/T/Q/C/L/M`（文档「编辑器」组）十条全部无效**（**自这批快捷键上线起**）。
-  - **现象**：在编辑器里按这些组合键等于什么都没发生，文档/快捷键面板却写着能用。
-  - **根因**：`InsertShortcutPlugin` 把 `KEY_DOWN_COMMAND` 注册在 `COMMAND_PRIORITY_EDITOR`。
-    Lexical 的优先级队列是 `CRITICAL > HIGH > NORMAL > LOW > **EDITOR（最后一档）**`，而
-    Lexical 自己那支 `$handleKeyDown` 就在 EDITOR 档、且对**每一次** keydown 都 `return true`；
-    它由 `RichTextPlugin` 在 **layout effect** 里装进编辑器，插件则在 `useEffect`（被动 effect，
-    永远晚于 layout effect）里注册 —— 同档里的后来者排在它后面，**一次都收不到事件**。
-  - **改动**：改用 `COMMAND_PRIORITY_LOW`（与已在用的 `SlashMenuPlugin` / `ImagePastePlugin` 一致）。
-- **`[[` 页面链接菜单的 ↑/↓/Enter/Esc 同样收不到**（`PageLinkSuggestPlugin`，同一个档）。
-  - **现象**：菜单开着时按 Enter 不是选中候选，而是**换行**——菜单等于只能用鼠标点。
-  - **改动**：同因同修，改用 `COMMAND_PRIORITY_LOW`。
-- **斜杠菜单的分组标题重复**：菜单按「同组相邻」推断标题，而后来追加的「帮助」落到了「表格」
-  之后，收尾顺序成了 `…嵌入 → 基础 → 嵌入 → 引用`，于是菜单里**「基础」「嵌入」各出现两次**
-  （React 还会报 duplicate key）。把这两条挪回各自的分组块，分组改为连续。
-
-### 其它
-- **补上 25 条快捷键的行为测试 + 一条覆盖率闸门**（这一版顺带把「文档里的快捷键能不能测」这件事做完）：
-  - 真编辑器、真事件、真断言：`src/editor/insertShortcut.test.ts`（Ctrl+Alt 那一组走真
-    `dispatchCommand(KEY_DOWN_COMMAND, …)`，断言 `preventDefault` 与块类型/标签）、
-    `src/editor/editorInputShortcuts.test.ts`（Markdown 行首语法**逐字输入**、`/` 斜杠菜单、
-    Ctrl+F 查找条、空行空格开 AI，含「有字的行不许抢空格」这类反向守卫）、
-    `src/components/overlayShortcuts.test.ts`（Ctrl+K、Esc）、`src/hooks/globalShortcuts.test.ts`。
-  - `src/lib/shortcutCoverage.test.ts` 是闸门：`src/lib/shortcuts.ts` 里每一条都必须指到一个
-    **真存在**的用例（映射表里的标题要在那个文件的 `it(...)` 里真的找得到）；`InsertShortcutPlugin`
-    的分支与文档「编辑器」组**双向**一一对应；`src/editor/plugins` 下不许再把
-    `KEY_DOWN_COMMAND` 注册到 EDITOR 档。
-- `docs/development.md` 补一节「快捷键：清单改动要同步哪四处 + 插件里别用 EDITOR 档」，把这次
-  的坑写进开发循环。
-
-## [Unreleased]
-
+- **插件被暂停后的「重新确认」按钮在桌面端点了没用**（自授权快照上线起）：`approve_plugin` 有前端契约、有 API、有按钮，**Rust 侧却忘了进 `generate_handler!`**——桌面点下去只有 `command approve_plugin not found`（web 平台的 stub 让它看起来一切正常）。这条直接影响"声明扩张后能不能恢复"：插件被暂停、用户点了按钮还是暂停。已补上注册。
+  - 这个缺口能存在，是因为 `check-web-commands` 只查了**一个方向**（Rust 有 → web/契约必须有）。现在补上反向：**CommandMap 有的，桌面 Rust 必须注册**；确实是 web 专属的要显式登记并写明理由（`request_persistent_storage`、`export_wiki`）。
+- **命令面板里的「导出当前空间为 wiki」在桌面端必然失败**：静态 HTML wiki 导出目前只有 web 平台实现（Rust 侧没有这条命令）。宁可不显示也不给一条必然失败的入口——该入口现在按平台收口（`when: () => !isDesktopPlatform()`），并有测试钉住两端。
 ### 新增
 - **触发面第二档：`page.context` —— 插件命令进入页面列表的行菜单。** 用法是 `register({ id, title, run, menus: ["page.context"] })`：那行菜单里（**在行上右键同样是它**）会多出一组「插件命令」，与内置动作之间有一道分隔。
   - **关键语义：这次运行的"当前页"是用户点的那一页**，不是"现在打开的那一页"。所以 `page-to-md` 一行 JS 都没改，就能导出列表里随手点的一页——如果传错成"当前打开的页"，「导出这一页」导出的是别人，那比没有这个入口更糟（这条专门有测试）。
@@ -65,17 +38,6 @@
   - 作者可见性做全三处：作者 CLI 的视图清单印出「→ 浮层 / 右侧常驻面板」、应用内插件管理列出「会加上这些视图」（`rail` 会往界面右侧加一个按钮，不说明的话用户只会看到一个不明来历的图标）、命令面板入口文案区分「插件视图：/ 插件面板：」。示例 `reading-board` 两种落点各示范一个（「最近更新」浮层 + 「本月新增」常驻面板）。
   - 这一条同时是对 M11.10（沙盒 UI 插件）启动闸门里那句话的正面回答：**"多数「我要一个插件面板」应当由声明式渲染器满足"**——现在它能满足了。
 
-
-### 修复
-- （已随 `[1.85.2]` 发版，正文见下方）**照文档逐条按键时发现的两组静默失效**——`Ctrl+Alt+1/2/3/U/O/T/Q/C/L/M`
-  十条与 `[[` 菜单的 ↑/↓/Enter/Esc（根因都是按键注册在 Lexical 优先级的最后一档），以及斜杠菜单
-  分组标题重复。写测试时发现的，代码改动只在 `src/editor/plugins` 三个文件里。
-
-### 测试
-- 前端新增 26 个：25 条文档快捷键的行为测试（真编辑器 / 真事件 / 真断言，含「有字的行不许抢空格」
-  这类反向守卫）+ `src/lib/shortcutCoverage.test.ts` 覆盖率闸门（清单每条都必须指到一个真存在的
-  用例；插件分支 ⟷ 文档双向对齐；`src/editor/plugins` 下不许再把 `KEY_DOWN_COMMAND` 注册到 EDITOR 档）。
-  闸门用植入式变异实测过会失败。随 `[1.85.2]` 进仓库，见下方。
 
 ### 新增
 - **侧栏：拖分隔条到底就直接收起；工具条顶部那个开合按钮现在桌面也常驻。** 原先这条链在桌面上只通一半——
@@ -225,6 +187,8 @@
 ### 测试
 - Rust 新增 7 个（零代码插件零错误且不被误判拒载、没有 views 是错误、声明了 main/permissions 会被提醒、runtime 不认识被拒、视图列/排序/取值写错的提醒、加载器拒绝从声明式插件读代码、logic 档声明 views 被提醒）。
 - 前端新增 13 个（视图的过滤/排序/limit/列过滤/单元格格式化/汇总行——这些规则作者没法用代码绕过，写错也不报错，只会显示成「结果不对」，所以必须钉住）。
+
+## [Unreleased]
 
 ## [1.85.1] - 2026-09-10
 
