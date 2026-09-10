@@ -13,6 +13,7 @@ mod smtp;
 mod graph;
 mod models;
 mod pdf_native;
+mod plugin_budget;
 mod plugins;
 mod properties;
 mod search;

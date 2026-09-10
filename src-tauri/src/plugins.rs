@@ -1,10 +1,12 @@
 use crate::db::Db;
+use boa_engine::vm::RuntimeLimits;
 use boa_engine::{Context, JsString, JsValue, NativeFunction, Source};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::MutexGuard;
+use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
 // ---------------------------------------------------------------------------
@@ -85,13 +87,35 @@ fn plugins_root(app: &AppHandle) -> Result<PathBuf, String> {
 /// 插件 id / 目录名白名单：只允许字母数字、`_`、`.`、`-`，且不得是 `.`/`..`。
 /// 用于 `root.join(&id)` 前校验，杜绝 `id=".."` / `id="../../x"` 导致的
 /// 任意目录删除/穿越（`uninstall_plugin` 此前可 `remove_dir_all` 整个应用数据目录）。
+///
+/// 另外拒掉「全是点」与「以点结尾」：Windows 会规范化结尾的点
+/// （`...` / `foo.` 在磁盘上会落到与预期不同的名字），这类 id 没有合法用途。
 fn is_safe_plugin_id(id: &str) -> bool {
     !id.is_empty()
         && id != "."
         && id != ".."
+        && !id.chars().all(|c| c == '.')
+        && !id.ends_with('.')
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
+/// `manifest.main` 必须是**同级文件名**：不得含路径分隔符，也不得是 `.` / `..`。
+///
+/// 用「单一 `Component::Normal`」判定，而不是此前那句
+/// `components().count() != 1`——那个写法两头都不对：
+/// **误拒**常见的 `./main.js`（它有两个组件），**放行** `.` 与 `..`（它们各只有一个组件）。
+fn is_bare_file_name(main: &str) -> bool {
+    // 结尾的分隔符会被 Path 规范化掉（`sub/` 看起来就是一个组件），
+    // 但它语义上是目录，直接按原文拒掉。
+    if main.ends_with('/') || main.ends_with('\\') {
+        return false;
+    }
+    let mut parts = Path::new(main)
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir));
+    matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }
 
 fn read_manifest(dir: &Path) -> Result<Manifest, String> {
@@ -105,10 +129,8 @@ fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     if m.id != dirname {
         return Err("manifest.id 必须等于目录名".to_string());
     }
-    // main must be a bare filename inside the dir (no path traversal).
-    let main_path = Path::new(&m.main);
-    if main_path.components().count() != 1 {
-        return Err("manifest.main 必须是同级文件名".to_string());
+    if !is_bare_file_name(&m.main) {
+        return Err("manifest.main 必须是同级文件名（不得含路径分隔符，也不得是 . 或 ..）".to_string());
     }
     Ok(m)
 }
@@ -139,6 +161,96 @@ function __run(id){
   }
 }
 "#;
+
+// ---------------------------------------------------------------------------
+// 执行预算
+// ---------------------------------------------------------------------------
+
+/// 单次命令执行的循环迭代预算。
+///
+/// ⚠️ 这个值**不只是 CPU 预算，同时是「分配循环」的实际内存上限**：
+/// 峰值 ≈ 迭代次数 × 每次迭代分配字节。1e6 次 ≈ 最坏几十 MB 量级；
+/// 刻意不取 1e7 —— 那允许 GB 级累积分配，而 Boa **没有堆上限 API**
+/// （已核实 0.21.1 与最新 0.22.0 均无，见
+/// `docs/plans/2026-09-10-plugin-evolution-plan.md` §3.11）。
+/// 调大之前请先读那一节。
+const RUN_LOOP_LIMIT: u64 = 1_000_000;
+
+/// 插件顶层代码（发现 / 注册）的循环预算：正常插件顶层几乎没有循环。
+const DISCOVER_LOOP_LIMIT: u64 = 100_000;
+
+/// 单次命令执行的墙钟上限。
+const RUN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 发现（跑插件顶层代码）的墙钟上限。
+/// 此前 discovery **完全没有超时**，一个顶层死循环就能让 `list_plugins` 永不返回。
+const DISCOVER_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// 建一个带预算的插件上下文。
+///
+/// 所有执行插件代码的地方都必须走这里，**不要直接 `Context::default()`** ——
+/// 那等于循环迭代无上限（Boa 默认 `loop_iteration = u64::MAX`）。
+fn plugin_context(loop_limit: u64) -> Context {
+    let mut ctx = Context::default();
+    let mut limits = RuntimeLimits::default();
+    limits.set_loop_iteration_limit(loop_limit);
+    // Boa 默认递归 512 / 栈 10KB 本来就有界；这里把递归收紧到更贴近插件实际需要的量。
+    limits.set_recursion_limit(256);
+    ctx.set_runtime_limits(limits);
+    ctx
+}
+
+/// 把一段「跑插件代码」的闭包丢进独立线程并加墙钟超时。
+///
+/// ⚠️ 已知边界（诚实记账，不在本档解决）：超时后**只是遗弃那个线程**——
+/// Boa 没有中断/取消 API，无法真正终止它，线程会继续跑到自己结束。
+/// 彻底方案是宿主子进程化（M11.13）。这里的价值是**主线程不被无限占用**。
+fn with_timeout<T, F>(timeout: Duration, what: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("plugin-run".to_string())
+        .spawn(move || {
+            // 内存预算只武装在本线程上（其它线程不受影响）。超预算时分配器会
+            // panic —— 这里捕获它并转成一条干净错误，而不是让 abort 带走整个应用。
+            // 依据见 `plugin_budget` 模块头注释（stable Rust 下返回 null 会 abort）。
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::plugin_budget::with_budget(crate::plugin_budget::PLUGIN_ALLOC_BUDGET, f)
+            }));
+            let res = match outcome {
+                Ok(r) => r,
+                Err(payload) => {
+                    let over_budget = payload
+                        .downcast_ref::<&str>()
+                        .is_some_and(|s| *s == crate::plugin_budget::BUDGET_PANIC);
+                    Err(if over_budget {
+                        format!(
+                            "插件超出内存预算（{} MiB）",
+                            crate::plugin_budget::PLUGIN_ALLOC_BUDGET / (1024 * 1024)
+                        )
+                    } else {
+                        "插件线程 panic（引擎内部错误）".to_string()
+                    })
+                }
+            };
+            let _ = tx.send(res);
+        })
+        .map_err(|e| format!("插件线程启动失败: {e}"))?;
+
+    match rx.recv_timeout(timeout) {
+        Ok(r) => r,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(format!("{what}超时（>{:?}）", timeout))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("插件线程异常退出".to_string())
+        }
+    }
+}
+
 
 fn host_get_current_page(
     _this: &JsValue,
@@ -242,7 +354,7 @@ fn host_register(
 /// Run a plugin's `main.js` and collect the registered command metadata.
 fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommandMeta>, String> {
     DISCOVERED.with(|d| d.borrow_mut().clear());
-    let mut ctx = Context::default();
+    let mut ctx = plugin_context(DISCOVER_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
     ctx.eval(Source::from_bytes(BOOTSTRAP.as_bytes()))
         .map_err(|e| format!("bootstrap 失败: {e}"))?;
@@ -250,6 +362,17 @@ fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommand
         .map_err(|e| format!("插件初始化失败: {e}"))?;
     let cmds = DISCOVERED.with(|d| d.borrow().clone());
     Ok(cmds)
+}
+
+/// 带墙钟超时的 discovery：插件顶层代码跑在独立线程里，超时不再挂住调用方。
+fn discover_commands_timed(
+    source: &str,
+    timeout: Duration,
+) -> Result<Vec<PluginCommandMeta>, String> {
+    let src = source.to_string();
+    with_timeout(timeout, "插件加载", move || {
+        discover_commands(&src, &RunState::default())
+    })
 }
 
 fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
@@ -294,7 +417,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
 /// Execute a single plugin command in a fresh boa context (re-evaluate the
 /// plugin, then run the command). Returns the command's result string.
 fn run_command(source: &str, command_id: &str, state: &RunState) -> Result<String, String> {
-    let mut ctx = Context::default();
+    let mut ctx = plugin_context(RUN_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
     ctx.eval(Source::from_bytes(BOOTSTRAP.as_bytes()))
         .map_err(|e| format!("bootstrap 失败: {e}"))?;
@@ -313,15 +436,16 @@ fn run_command(source: &str, command_id: &str, state: &RunState) -> Result<Strin
 }
 
 /// 带超时的插件命令执行：把 JS 运行放到独立线程，主线程 `recv_timeout`。
-/// 防止一个死循环插件无限占用（此前它是同步执行且持有全局 DB 锁，会让整个
-/// 应用命令面雪崩）。超时/线程 panic 均返回错误，不拖垮主线程。
+///
+/// 此前它是**同步执行且持有全局 DB 锁**，一个死循环插件会让整个应用命令面雪崩；
+/// 现在锁已在执行前释放，且主线程最多等 `RUN_TIMEOUT`。
+/// ⚠️ 超时只保证「主线程不再被占用」——被遗弃的线程本身停不下来（Boa 无中断 API，
+/// 见 `with_timeout` 的说明与 M11.13）。
 fn run_command_timeout(
     source: &str,
     command_id: &str,
     state: &RunState,
 ) -> Result<(String, String), String> {
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-    let (tx, rx) = std::sync::mpsc::channel();
     let source = source.to_string();
     let command_id = command_id.to_string();
     // RunState 是纯数据（String/usize），可 move 进线程；RUN_STATE/thread_local
@@ -331,27 +455,11 @@ fn run_command_timeout(
         page_count: state.page_count,
         insert_text: String::new(),
     };
-    std::thread::Builder::new()
-        .name("plugin-run".to_string())
-        .spawn(move || {
-            let msg = run_command(&source, &command_id, &state);
-            let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
-            let _ = tx.send((msg, insert));
-        })
-        .map_err(|e| format!("插件线程启动失败: {e}"))?;
-
-    match rx.recv_timeout(TIMEOUT) {
-        Ok((msg, insert)) => {
-            let message = msg?;
-            Ok((message, insert))
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err("插件执行超时（>5s），已终止".to_string())
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err("插件线程异常退出".to_string())
-        }
-    }
+    with_timeout(RUN_TIMEOUT, "插件执行", move || {
+        let msg = run_command(&source, &command_id, &state)?;
+        let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
+        Ok((msg, insert))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -359,15 +467,30 @@ fn run_command_timeout(
 // ---------------------------------------------------------------------------
 
 fn conn<'a>(db: &'a State<'_, Db>) -> MutexGuard<'a, Connection> {
-    db.0.lock().unwrap()
+    // 不让 poison 变成"整个插件面板永久打不开"：锁被 poison 说明此前有个
+    // 持锁 panic，但连接本身仍可用，取回内层数据继续用即可。
+    db.0.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// 播种标记文件名：`<plugins>/.demo-seeded`。
+///
+/// 用「标记文件」而不是「看 demo 目录在不在」，是为了让用户**真的能把示例插件卸掉**——
+/// 此前卸载 `demo` 后每次启动都会被原样复活，等于一个删不掉的插件。
+const DEMO_SEED_MARKER: &str = ".demo-seeded";
+
 /// Seed a bundled demo plugin on first run so `list_plugins` / `run_plugin_command`
-/// have something to discover and execute (idempotent).
+/// have something to discover and execute (idempotent, **once ever**).
 pub fn ensure_demo_plugin(app: &AppHandle) -> Result<(), String> {
     let root = plugins_root(app)?;
+    let marker = root.join(DEMO_SEED_MARKER);
     let dir = root.join("demo");
+
+    if marker.exists() {
+        return Ok(()); // 已经播种过：即使用户把它卸了，也不再复活
+    }
     if dir.join("main.js").exists() {
+        // 已有手放的 demo（老版本或用户自己）：只补标记，不覆盖内容。
+        std::fs::write(&marker, b"1").map_err(|e| e.to_string())?;
         return Ok(());
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -385,6 +508,7 @@ register({ id: "demo.insert", title: "插入文本", description: "把一段文�
 "#,
     )
     .map_err(|e| e.to_string())?;
+    std::fs::write(&marker, b"1").map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -412,12 +536,25 @@ fn set_enabled(c: &Connection, id: &str, on: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 卸载时清掉启停状态行。
+///
+/// 此前卸载只删目录、不删这一行，于是**重装同一个 id 会静默继承旧的「已禁用」**，
+/// 而且残留行永远没人回收（`plugin_state` 里此前没有任何 `DELETE`）。
+fn clear_enabled(c: &Connection, id: &str) -> Result<(), String> {
+    c.execute(
+        "DELETE FROM meta.plugin_state WHERE key = ?1",
+        params![enabled_key(id)],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn list_plugins(app: AppHandle, db: State<Db>) -> Result<Vec<PluginMeta>, String> {
+pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<PluginMeta>, String> {
     let root = plugins_root(&app)?;
     // 先在锁内取各插件的 enabled 状态，随后立即释放锁（drop c），再在锁外
     // 执行 discover_commands（跑插件顶层 JS）——避免一个坏插件的顶层代码
@@ -452,8 +589,7 @@ pub fn list_plugins(app: AppHandle, db: State<Db>) -> Result<Vec<PluginMeta>, St
             Ok(s) => s,
             Err(_) => continue,
         };
-        let state = RunState::default();
-        let commands = discover_commands(&source, &state).unwrap_or_default();
+        let commands = discover_commands_timed(&source, DISCOVER_TIMEOUT).unwrap_or_default();
         let pid = manifest.id.clone();
         out.push(PluginMeta {
             id: pid.clone(),
@@ -470,14 +606,17 @@ pub fn list_plugins(app: AppHandle, db: State<Db>) -> Result<Vec<PluginMeta>, St
 
 #[tauri::command]
 pub fn set_plugin_enabled(db: State<Db>, id: String, enabled: bool) -> Result<(), String> {
+    if !is_safe_plugin_id(&id) {
+        return Err("非法插件 id".to_string());
+    }
     let c = conn(&db);
     set_enabled(&c, &id, enabled)
 }
 
 #[tauri::command]
-pub fn run_plugin_command(
+pub async fn run_plugin_command(
     app: AppHandle,
-    db: State<Db>,
+    db: State<'_, Db>,
     plugin_id: String,
     command_id: String,
     current_id: Option<String>,
@@ -493,6 +632,11 @@ pub fn run_plugin_command(
     // 独立线程 + 超时 —— 避免一个死循环插件无限占住全局 DB 锁（全应用雪崩）。
     let (page_count, current_page_json) = {
         let c = conn(&db);
+        // 「禁用」必须在后端强制，不能只靠前端从命令面板里过滤掉：
+        // 否则被禁用的插件仍然可以被 IPC 直接调用执行。
+        if !enabled(&c, &plugin_id) {
+            return Err(format!("插件「{plugin_id}」已被禁用"));
+        }
         let page_count: usize = c
             .query_row("SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL", [], |r| {
                 r.get::<_, i64>(0)
@@ -538,7 +682,7 @@ fn copy_dir(src: &Path, dest: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn uninstall_plugin(app: AppHandle, id: String) -> Result<(), String> {
+pub fn uninstall_plugin(app: AppHandle, db: State<Db>, id: String) -> Result<(), String> {
     if !is_safe_plugin_id(&id) {
         return Err("非法插件 id".to_string());
     }
@@ -548,26 +692,39 @@ pub fn uninstall_plugin(app: AppHandle, id: String) -> Result<(), String> {
         return Err("插件不存在".to_string());
     }
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    // 删目录还不够：启停状态行也要清，否则重装同一个 id 会**静默继承**旧的「已禁用」，
+    // 且残留行永远不会被回收。
+    clear_enabled(&conn(&db), &id)?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn install_plugin(app: AppHandle, source_path: String) -> Result<PluginMeta, String> {
+pub async fn install_plugin(app: AppHandle, source_path: String) -> Result<PluginMeta, String> {
     let src = PathBuf::from(&source_path);
     if !src.is_dir() {
         return Err("插件源目录不存在".to_string());
     }
+    // 先把所有前置条件验完（含**入口文件真的能被加载**），再往盘上写。
+    // 此前是「先 copy_dir 再 load_plugin_source」：一旦入口文件有问题，
+    // 已经拷过去的目录会留下并占住这个 id，用户连重装都做不到（报"同名插件已存在"）。
     let manifest = read_manifest(&src)?;
     if !is_safe_plugin_id(&manifest.id) {
         return Err("非法插件 id（manifest.id）".to_string());
     }
+    let source = load_plugin_source(&src, &manifest)?;
+    // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
+    let commands = discover_commands_timed(&source, DISCOVER_TIMEOUT)?;
+
     let dest = plugins_root(&app)?.join(&manifest.id);
     if dest.exists() {
         return Err("同名插件已存在".to_string());
     }
     copy_dir(&src, &dest)?;
-    let source = load_plugin_source(&dest, &manifest)?;
-    let commands = discover_commands(&source, &RunState::default()).unwrap_or_default();
+    // 拷贝后确认入口文件确实落到盘上；失败就把半残目录清掉，别留垃圾。
+    if let Err(e) = load_plugin_source(&dest, &manifest) {
+        let _ = std::fs::remove_dir_all(&dest);
+        return Err(format!("安装失败（已回滚）：{e}"));
+    }
     Ok(PluginMeta {
         id: manifest.id,
         name: manifest.name,
@@ -581,9 +738,19 @@ pub fn install_plugin(app: AppHandle, source_path: String) -> Result<PluginMeta,
 #[tauri::command]
 pub fn open_plugin_dir(app: AppHandle) -> Result<String, String> {
     let root = plugins_root(&app)?;
+    // 此前只有 Windows 分支，导致 macOS / Linux 上这个按钮点了完全没反应
+    // （前端又丢掉了返回值，连路径都看不到）。三平台都给上。
     #[cfg(target_os = "windows")]
     {
         let _ = std::process::Command::new("explorer").arg(&root).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(&root).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&root).spawn();
     }
     Ok(root.to_string_lossy().to_string())
 }
@@ -623,5 +790,229 @@ register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
         assert_eq!(message, "ok");
         let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
         assert_eq!(insert, "hello from plugin");
+    }
+
+    // ---- 安全回归：沙箱的能力面必须仍然是"什么都不给" ----
+
+    #[test]
+    fn sandbox_exposes_no_host_capabilities() {
+        // 这条是能力缺席的回归测试：任何一项变成 "不是 undefined"，
+        // 都说明有人往宿主里加了能力，必须在这里先红掉。
+        let source = r#"
+register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
+  run: function(){
+    var names = ["fetch","require","process","window","document","XMLHttpRequest",
+                 "localStorage","sessionStorage","__TAURI__","invoke","setTimeout","setInterval"];
+    var found = [];
+    for (var i = 0; i < names.length; i++) {
+      if (typeof globalThis[names[i]] !== "undefined") { found.push(names[i]); }
+    }
+    return found.length ? ("LEAK:" + found.join(",")) : "clean";
+  } });
+"#;
+        let res = run_command(source, "t.probe", &RunState::default()).unwrap();
+        assert_eq!(res, "clean", "沙箱里出现了宿主能力");
+    }
+
+    // ---- 循环 / 时间预算 ----
+
+    #[test]
+    fn infinite_loop_is_cut_off_by_the_loop_budget() {
+        // 此前 RuntimeLimits 是默认值（loop_iteration = u64::MAX），死循环只能靠
+        // 5s 墙钟兜底、且被遗弃的线程会一直占核。现在循环预算先把它截断。
+        //
+        // 注意实测行为：Boa 的 loop iteration 上限**不是** JS 层可 catch 的异常，
+        // 它会让 `eval` 直接返回 Rust 层错误（所以插件 catch 不住、也不会被
+        // `__run` 的 try/catch 吞掉），最终表现为一条可见的命令执行错误——正是我们要的。
+        let source = r#"register({ id: "t.loop", title: "L", description: "", closeOnRun: false,
+  run: function(){ while(true){} } });"#;
+        let started = std::time::Instant::now();
+        let err = run_command(source, "t.loop", &RunState::default())
+            .expect_err("死循环应当被循环预算截断成错误，而不是正常返回");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "循环预算没生效（跑到墙钟超时了）"
+        );
+        assert!(!err.is_empty(), "错误信息不应为空");
+    }
+
+    #[test]
+    fn discovery_of_a_top_level_infinite_loop_fails_fast() {
+        // 此前 discovery 完全没有超时：插件顶层写个 while(true) 就能让
+        // list_plugins 永不返回（而那是同步命令，会占住调用线程）。
+        let started = std::time::Instant::now();
+        let res = discover_commands_timed("while(true){}", DISCOVER_TIMEOUT);
+        assert!(res.is_err(), "顶层死循环应当失败而不是成功");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "应当很快失败（循环预算或墙钟超时），而不是无限挂住"
+        );
+    }
+
+    #[test]
+    fn with_timeout_reports_a_timeout_instead_of_blocking_forever() {
+        let res: Result<(), String> =
+            with_timeout(Duration::from_millis(50), "测试任务", || {
+                std::thread::sleep(Duration::from_millis(600));
+                Ok(())
+            });
+        let err = res.expect_err("超时应当返回错误");
+        assert!(err.contains("超时"), "错误信息里应说明超时，实际: {err}");
+    }
+
+    #[test]
+    fn with_timeout_passes_through_results_and_errors() {
+        let ok: Result<u32, String> = with_timeout(RUN_TIMEOUT, "测试", || Ok(7));
+        assert_eq!(ok.unwrap(), 7);
+        let err: Result<u32, String> =
+            with_timeout(RUN_TIMEOUT, "测试", || Err("插件初始化失败: boom".to_string()));
+        assert!(err.unwrap_err().contains("boom"));
+    }
+
+    // ---- 标识与 manifest 校验矩阵 ----
+
+    #[test]
+    fn plugin_id_whitelist() {
+        for good in ["demo", "a", "my-plugin", "plugin_1", "a.b", "x-y-z-9", "a..b"] {
+            assert!(is_safe_plugin_id(good), "{good} 应当合法");
+        }
+        // 注意 `..-` 是**合法**的：`root.join("..-")` 只是名字里带点的普通目录，
+        // 不构成穿越（穿越要求组件恰好是 `.` 或 `..`）。
+        assert!(is_safe_plugin_id("..-"));
+        for bad in ["", ".", "..", "...", "foo.", "a/b", "a\\b", "a b", "插件"] {
+            assert!(!is_safe_plugin_id(bad), "{bad} 应当非法");
+        }
+    }
+
+    #[test]
+    fn manifest_main_must_be_a_bare_file_name() {
+        // 同级文件名：接受
+        for good in ["main.js", "./main.js", "index.js", "a.b.c.js"] {
+            assert!(is_bare_file_name(good), "{good} 应当被接受");
+        }
+        // 目录 / 相对跳转 / 绝对路径 / 空：拒绝
+        for bad in ["", ".", "..", "./", "sub/main.js", "../main.js", "a/../main.js", "/etc/passwd", "sub/"] {
+            assert!(!is_bare_file_name(bad), "{bad} 应当被拒绝");
+        }
+    }
+
+    #[test]
+    fn read_manifest_accepts_dot_slash_and_rejects_escapes() {
+        let base = temp_dir("manifest-matrix");
+
+        // 合法：id 等于目录名；`./main.js` 是常见写法，此前被误拒
+        let good = base.join("good");
+        std::fs::create_dir_all(&good).unwrap();
+        std::fs::write(
+            good.join("manifest.json"),
+            serde_json::json!({ "id": "good", "name": "G", "main": "./main.js" }).to_string(),
+        )
+        .unwrap();
+        assert!(read_manifest(&good).is_ok(), "./main.js 应当被接受");
+
+        // id 与目录名不一致
+        let mismatch = base.join("real-dir");
+        std::fs::create_dir_all(&mismatch).unwrap();
+        std::fs::write(
+            mismatch.join("manifest.json"),
+            serde_json::json!({ "id": "other", "name": "O", "main": "main.js" }).to_string(),
+        )
+        .unwrap();
+        assert!(read_manifest(&mismatch).is_err(), "id 必须等于目录名");
+
+        // main 想跑出目录：`.` / `..` 此前恰好只有一个路径组件，会被放行
+        for (i, bad) in ["..", ".", "sub/main.js", "../main.js"].iter().enumerate() {
+            let d = base.join(format!("bad{i}"));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(
+                d.join("manifest.json"),
+                serde_json::json!({ "id": format!("bad{i}"), "name": "B", "main": bad })
+                    .to_string(),
+            )
+            .unwrap();
+            assert!(read_manifest(&d).is_err(), "main={bad} 应当被拒绝");
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ---- 启停状态：往返 + 卸载清理 ----
+
+    /// 只带 `meta.plugin_state` 的内存库（真实 SQL，含 `meta.` 限定名）。
+    fn state_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.plugin_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn enabled_state_defaults_on_and_round_trips() {
+        let c = state_conn();
+        assert!(enabled(&c, "p1"), "没有行时默认启用");
+
+        set_enabled(&c, "p1", false).unwrap();
+        assert!(!enabled(&c, "p1"));
+        set_enabled(&c, "p1", true).unwrap();
+        assert!(enabled(&c, "p1"));
+    }
+
+    #[test]
+    fn uninstall_clears_enabled_state_so_reinstall_is_not_poisoned() {
+        let c = state_conn();
+        // 用户禁用了插件，然后卸载
+        set_enabled(&c, "p1", false).unwrap();
+        clear_enabled(&c, "p1").unwrap();
+
+        // 重装后必须回到"默认启用"，而不是静默继承旧的已禁用
+        assert!(enabled(&c, "p1"), "卸载后残留状态会让重装继承旧的已禁用");
+
+        let left: i64 = c
+            .query_row("SELECT COUNT(*) FROM meta.plugin_state", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "卸载不应留下任何状态行");
+    }
+
+    // ---- 内存预算（分配炸弹） ----
+
+    #[test]
+    fn alloc_bomb_only_kills_that_invocation() {
+        // Boa 侧设不了内存上限（无堆 API），所以由插件线程的限流分配器兜：
+        // 一次要 100 MB（> 64 MiB 预算）应当被截断。`repeat` 的保护是
+        // MAX_STRING_LENGTH ≈ 4 GB 的"规范形状"保护，不是预算，所以拦不住这个。
+        let bomb = r#"register({ id: "t.bomb", title: "B", description: "", closeOnRun: false,
+  run: function(){ return "x".repeat(1e8); } });"#;
+        let err = run_command_timeout(bomb, "t.bomb", &RunState::default())
+            .expect_err("分配炸弹应当失败而不是正常返回");
+        assert!(
+            err.contains("内存预算"),
+            "应当报内存预算超限（说明是分配器拦下的），实际: {err}"
+        );
+
+        // 关键性质：**只终结这一次调用**。新调用是新线程 + 新预算，照常工作
+        // ——能跑到这里就说明进程没有被 abort 掉。
+        let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
+  run: function(){ return "fine"; } });"#;
+        let (msg, _) = run_command_timeout(ok, "t.ok", &RunState::default()).unwrap();
+        assert_eq!(msg, "fine");
+    }
+
+    // ---- 工具 ----
+
+    /// 建一个本次测试专属的临时目录（带进程号 + 时间戳，避免并发/残留互相干扰）。
+    fn temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-plugin-test-{}-{tag}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }

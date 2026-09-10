@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { platform, isDesktopPlatform } from "../lib/platform";
+import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
@@ -17,6 +18,20 @@ export function PluginManager() {
   const pickInstall = async () => {
     const sel = await platform.dialog.open({ multiple: false, directory: true, title: "选择插件目录" });
     if (typeof sel === "string") await install(sel);
+  };
+
+  // 卸载在磁盘上是 `remove_dir_all`，删掉就找不回来，所以和仓库里其它破坏性操作
+  // 一样先确认；失败文案由 store 统一弹 toast（含后端原始错误文本）。
+  const uninstallWithConfirm = async (id: string, name: string) => {
+    if (
+      !(await confirmDialog({
+        title: "卸载插件",
+        message: `卸载插件「${name}」？插件目录将被删除，此操作不可恢复。`,
+        danger: true,
+      }))
+    )
+      return;
+    await uninstall(id);
   };
 
   return (
@@ -50,7 +65,7 @@ export function PluginManager() {
               </div>
               <div className="pm-item-actions">
                 <button onClick={() => toggle(p.id)}>{p.enabled ? "禁用" : "启用"}</button>
-                <button className="danger" onClick={() => uninstall(p.id)}>
+                <button className="danger" onClick={() => uninstallWithConfirm(p.id, p.name)}>
                   卸载
                 </button>
               </div>

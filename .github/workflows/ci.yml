@@ -99,3 +99,31 @@ jobs:
       - name: 失败时输出 dev server 日志
         if: failure()
         run: cat /tmp/webdev.log || true
+
+  # 为什么要有这个 job：`src-tauri` 里有真正的 Rust 单测（如 plugins.rs 的 manifest
+  # 校验 / 插件 id 白名单 / manifest.main 同级文件名约束），但此前**没有任何 CI 跑过
+  # 它们**——上面那个 job 是纯 JS 侧检查，release.yml 只出安装包，GitCode 流水线只构建
+  # .deb/.AppImage，Rust 侧回归只能靠人记得敲 `cargo test`。这里把它顶上。
+  #
+  # 依赖列表与 rust 工具链**照抄** release.yml 的 Linux 档：这个 crate 在 Linux 上要链
+  # webkit2gtk + bundled-sqlcipher 用的 OpenSSL，少一个包都编译不过。
+  # `cargo test --lib` 编译的是 dev 档（走 tauri.conf.json 的 devUrl 分支），
+  # tauri-codegen 不会去校验 `../dist`，所以这里不需要先跑前端构建 / 装 node。
+  rust-tests:
+    name: Rust 单元测试（cargo test --lib）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
+
+      - name: 单元测试（cargo test --lib）
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml

@@ -143,8 +143,9 @@ export function CommandPalette() {
       return;
     }
     if (item.kind === "plugin-toggle") {
-      await usePlugins.getState().toggle(item.pluginId);
-      setResult("已切换插件状态");
+      // toggle 会把后端的原始错误文本带回来：失败时**不能**报成功。
+      const r = await usePlugins.getState().toggle(item.pluginId);
+      setResult(r.ok ? "已切换插件状态" : `切换插件失败：${r.error ?? "未知错误"}`);
       return;
     }
     const cmd = getAllCommands().find((c) => c.id === item.id);
