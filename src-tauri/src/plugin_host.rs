@@ -26,6 +26,7 @@
 
 use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +36,20 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// 命令行开关：带这个开关启动 = 当宿主子进程跑（不是开界面）。
 pub const HOST_FLAG: &str = "--plugin-host";
+
+/// **测试专用**开关：子进程一开始跑插件就 `abort()`。
+///
+/// 用来验证父进程的崩溃语义（"插件把解释器进程搞崩了，应用还在"）——真去构造一个 Boa 段错误
+/// 既不可靠也不是我们该依赖的东西。只在 debug 构建里认这个开关，生产二进制根本不看它。
+pub const CRASH_FLAG: &str = "--crash-on-run";
+
+/// 子进程是不是被要求"跑插件前先崩"（只影响 debug 构建）。
+fn crash_on_run_requested() -> bool {
+    if !cfg!(debug_assertions) {
+        return false;
+    }
+    std::env::args().any(|a| a == CRASH_FLAG)
+}
 
 /// 单帧上限。插件源码、入参、以及结果里的草稿/导出都在帧里，所以给得比调用参数宽
 /// （`MAX_ARGS_BYTES` 是 1 MiB），但仍然是个**界**：没有它，一个坏掉的对端就能让
@@ -252,6 +267,11 @@ pub fn serve_stdio() -> i32 {
                 return 2;
             }
             Ok(Some(HostIn::Run(req))) => {
+                if crash_on_run_requested() {
+                    // 测试专用：模拟"插件把解释器进程搞崩了"（原生崩溃/abort）。
+                    eprintln!("[plugin-host] crash-on-run：按测试要求直接 abort");
+                    std::process::abort();
+                }
                 let frame = match crate::plugins::run_in_host_process(&req) {
                     Ok(res) => HostOut::Done(res),
                     Err((code, message)) => HostOut::Failed { code, message },
@@ -326,11 +346,57 @@ pub fn rpc_transport() -> std::sync::Arc<dyn Fn(&str, &str) -> Result<String, St
 /// `Drop` 会**杀掉**子进程（方案 §3.3：一次调用一个子进程，取消/超时 = 杀进程）。
 /// 阶段 3 会把"杀"接上真正的墙钟超时与 OS 级上限；阶段 1 先把句柄与握手管好。
 pub struct HostClient {
-    child: Child,
+    /// 子进程句柄放在 `Arc<Mutex<_>>` 里：**父进程要能在一个线程死等它时、从另一个线程杀掉它**
+    /// （阶段 3：超时/取消 = 杀进程，方案 §3.3）。`std::process::Child::kill` 要 `&mut self`，
+    /// 所以只能共享。
+    child: Arc<Mutex<Child>>,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     /// 握手时子进程报上来的 pid（日志用；测试也靠它断言"确实另起了一个进程"）。
     pub child_pid: u32,
+}
+
+/// 只有"杀"和"看退出状态"两件事的句柄（超时路径用它，不用把整个 client 搬来搬去）。
+#[derive(Clone)]
+pub struct HostKiller {
+    child: Arc<Mutex<Child>>,
+    pub pid: u32,
+}
+
+impl HostKiller {
+    /// 杀掉宿主子进程。已经退出的进程上调用是**无害**的。
+    pub fn kill(&self) {
+        let mut c = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+
+    /// 这个子进程是怎么结束的（给用户看的说法）。
+    ///
+    /// 崩溃与"正常退出但没回结果"要分开说：前者是插件把解释器搞崩了（作者的 bug），
+    /// 后者是通道/协议问题（宿主的问题）。
+    pub fn describe_exit(&self) -> String {
+        let mut c = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match c.try_wait() {
+            Ok(Some(st)) => describe_status(st),
+            Ok(None) => {
+                let _ = c.kill();
+                let st = c.wait().ok();
+                match st {
+                    Some(st) => format!("已终止（{}）", describe_status(st)),
+                    None => "已终止".to_string(),
+                }
+            }
+            Err(e) => format!("拿不到退出状态：{e}"),
+        }
+    }
+}
+
+fn describe_status(st: std::process::ExitStatus) -> String {
+    match st.code() {
+        Some(code) => format!("退出码 {code}"),
+        None => "被信号终止".to_string(),
+    }
 }
 
 impl HostClient {
@@ -343,8 +409,15 @@ impl HostClient {
     /// 起一个宿主子进程（可指定可执行文件——集成测试用测试配置里给出的**应用二进制**，
     /// 因为测试进程自己不是宿主）。
     pub fn spawn_with_exe(exe: &std::path::Path) -> Result<Self, String> {
+        Self::spawn_with_exe_args(exe, &[])
+    }
+
+    /// 同 [`HostClient::spawn_with_exe`]，但可以额外塞命令行参数（**测试专用**，例如
+    /// `--crash-on-run`；生产只传 `--plugin-host`）。
+    pub fn spawn_with_exe_args(exe: &std::path::Path, extra_args: &[&str]) -> Result<Self, String> {
         let mut child = Command::new(exe)
             .arg(HOST_FLAG)
+            .args(extra_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // stderr 继承：子进程的 panic 信息直接进父进程的日志/控制台，
@@ -356,7 +429,7 @@ impl HostClient {
         let stdin = child.stdin.take().ok_or("子进程 stdin 不可用")?;
         let stdout = child.stdout.take().ok_or("子进程 stdout 不可用")?;
         let mut client = HostClient {
-            child,
+            child: Arc::new(Mutex::new(child)),
             stdin,
             stdout: BufReader::new(stdout),
             child_pid: 0,
@@ -423,10 +496,24 @@ impl HostClient {
                     write_frame(&mut self.stdin, &reply).map_err(|e| e.to_string())?;
                 }
                 Ok(Some(HostOut::Ready { .. })) => return Err("宿主子进程重复握手".into()),
-                Ok(None) => return Err("宿主子进程没回结果就退出了".into()),
-                Err(e) => return Err(e.to_string()),
+                // 通道断了：**区分"插件把进程搞崩了"和"协议/管道出问题"**——前者是作者的
+                // bug（要指出来），后者是宿主的问题（别赖到插件头上）。
+                Ok(None) => {
+                    return Err(format!("plugin_crash: 宿主进程异常退出（{}）", self.killer().describe_exit()))
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "plugin_crash: 宿主进程异常退出（{}）：{e}",
+                        self.killer().describe_exit()
+                    ))
+                }
             }
         }
+    }
+
+    /// 拿一个只管"杀/看退出状态"的句柄（超时路径用）。
+    pub fn killer(&self) -> HostKiller {
+        HostKiller { child: self.child.clone(), pid: self.child_pid }
     }
 
     /// 收工：让子进程读到 `Shutdown` 就 return 0，并等它退出。
@@ -436,7 +523,8 @@ impl HostClient {
     /// （进程已经退出了），语义仍然干净。
     pub fn shutdown(&mut self) -> Result<(), String> {
         let _ = write_frame(&mut self.stdin, &HostIn::Shutdown);
-        match self.child.wait() {
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match child.wait() {
             Ok(st) if st.success() => Ok(()),
             Ok(st) => Err(format!("宿主子进程退出码 {:?}", st.code())),
             Err(e) => Err(format!("等宿主子进程退出失败：{e}")),
@@ -446,10 +534,9 @@ impl HostClient {
 
 impl Drop for HostClient {
     fn drop(&mut self) {
-        // 父进程无论如何都不留下孤儿子进程（方案 §6.3 的手工验收项）：
-        // 正常路径已经 shutdown 过，这里是异常路径。
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // 父进程无论如何都不留下孤儿子进程（方案 §6.3 的验收项）：
+        // 正常路径已经 shutdown 过，这里是异常路径（panic、提前返回、超时……）。
+        self.killer().kill();
     }
 }
 

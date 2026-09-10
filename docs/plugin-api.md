@@ -708,6 +708,7 @@ register({
 | `out_of_memory` | 执行超出内存预算（64 MiB） |
 | `plugin_error` | 插件自身抛错 |
 | `quota_exceeded` | 插件私有数据超出配额（每个 scope 256 KiB） |
+| `plugin_crash` | 插件把宿主解释器进程搞崩了（原生崩溃 / abort）：这次调用被终止，应用本身不受影响 |
 
 ## 8. 兼容与老写法
 

@@ -2296,6 +2296,26 @@ fn run_via_host(
     state: &RunState,
     mode: crate::plugin_host::HostRunMode,
 ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
+    let timeout = if mode == crate::plugin_host::HostRunMode::Event {
+        EVENT_TIMEOUT
+    } else {
+        RUN_TIMEOUT
+    };
+    run_via_host_with_timeout(source, what, args_json, state, mode, timeout)
+}
+
+/// 同上，但可以指定墙钟预算（测试用：几百毫秒就能验证"超时 = 杀进程"）。
+///
+/// **超时语义（M11.13 阶段 3）**：到点就**杀掉宿主子进程**，并把这次调用判为 `timeout`。
+/// 在阶段 3 之前这里是"放弃等待"——线程与子进程会继续跑到自然结束（旧行为）。
+fn run_via_host_with_timeout(
+    source: &str,
+    what: &str,
+    args_json: &str,
+    state: &RunState,
+    mode: crate::plugin_host::HostRunMode,
+    timeout: std::time::Duration,
+) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
     let req = crate::plugin_host::HostRunRequest {
         plugin_id: state.plugin_id.clone(),
         source: source.to_string(),
@@ -2308,33 +2328,60 @@ fn run_via_host(
         current_page_json: state.current_page_json.clone(),
         page_count: state.page_count,
     };
-    let timeout = if mode == crate::plugin_host::HostRunMode::Event { EVENT_TIMEOUT } else { RUN_TIMEOUT };
     let what_label = if mode == crate::plugin_host::HostRunMode::Event { "插件事件" } else { "插件执行" };
-    let serve_state = state.clone();
-    with_timeout(timeout, what_label, move || {
-        let mut client = spawn_host_client()?;
-        // 把上下文装到**本线程**：能力在这里执行，`with_read_conn` 也在这里惰性开连接。
-        install_run_state(&serve_state);
-        let served = client.run_with_server(req, |method, args| dispatch_capability(method, args));
-        // 先取走本进程侧收集到的产出，再把 RunState 清干净（无论成功失败）。
-        let (drafts, exports, cap_toasts, cap_insert) = take_run_state_outputs();
-        let dropped = exports.len();
-        clear_run_state();
 
-        let res = served?;
-        // 两种插入来源合并：能力那条（父进程）优先，JS 原生那条（子进程）兜底。
-        let insert_text = if cap_insert.is_empty() { res.insert_text } else { cap_insert };
-        let mut toasts = cap_toasts;
-        for t in res.toasts {
-            if !toasts.contains(&t) {
-                toasts.push(t);
-            }
+    // 子进程在**本线程**起（约 5 ms），句柄留一份给"超时即杀"用，流交给工作线程。
+    let mut client = spawn_host_client()?;
+    let killer = client.killer();
+    let serve_state = state.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("plugin-host-serve".to_string())
+        .spawn(move || {
+            // 能力在**这条线程**上执行：上下文装在这里，`with_read_conn` 也在这里惰性开连接。
+            install_run_state(&serve_state);
+            let served = client.run_with_server(req, |method, args| dispatch_capability(method, args));
+            let (drafts, exports, cap_toasts, cap_insert) = take_run_state_outputs();
+            let dropped = exports.len();
+            clear_run_state();
+            // 调用方可能已经超时走人了（那时这条 send 失败，无害）。
+            let _ = tx.send((served, drafts, exports, cap_toasts, cap_insert, dropped));
+        })
+        .map_err(|e| format!("插件宿主线程启动失败：{e}"))?;
+
+    let (served, drafts, exports, cap_toasts, cap_insert, dropped) = match rx.recv_timeout(timeout) {
+        Ok(v) => v,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // **超时 = 杀进程**（方案 §3.3）：不再"放弃等待"留一个跑到天荒地老的子进程。
+            // 杀掉之后工作线程会因管道断开而自行退出。
+            killer.kill();
+            return Err(format!(
+                "timeout: {what_label}超时（>{:?}），已终止宿主进程",
+                timeout
+            ));
         }
-        // 子进程不会产出草稿/导出（它没有能力，只能问），所以这两个字段正常是空的。
-        // 这里仍然只认**本进程**收集到的那份：能力的产出全部发生在这一侧。
-        let _ = (&res.drafts, &res.exports);
-        Ok((res.message, insert_text, toasts, drafts, exports, dropped))
-    })
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            killer.kill();
+            return Err(format!(
+                "plugin_crash: {what_label}的宿主线程异常结束（{}）",
+                killer.describe_exit()
+            ));
+        }
+    };
+
+    let res = served?;
+    // 两种插入来源合并：能力那条（父进程）优先，JS 原生那条（子进程）兜底。
+    let insert_text = if cap_insert.is_empty() { res.insert_text } else { cap_insert };
+    let mut toasts = cap_toasts;
+    for t in res.toasts {
+        if !toasts.contains(&t) {
+            toasts.push(t);
+        }
+    }
+    // 子进程不会产出草稿/导出（它没有能力，只能问），所以这两个字段正常是空的。
+    // 这里仍然只认**本进程**收集到的那份：能力的产出全部发生在这一侧。
+    let _ = (&res.drafts, &res.exports);
+    Ok((res.message, insert_text, toasts, drafts, exports, dropped))
 }
 
 /// 起宿主子进程。生产用**当前可执行文件**（同二进制 re-exec）。
@@ -2432,15 +2479,38 @@ pub(crate) fn run_in_host_process(
 /// 是人话（"插件超出内存预算（64 MiB）"）。这里按**已有串**归类，不新造一套错误文案——
 /// 阶段 2 把能力 RPC 挪上来之后，这套归类仍然是唯一的出口。
 pub(crate) fn classify_run_error(e: &str) -> (String, String) {
-    for code in ["approval_required", "bad_args", "unknown_capability"] {
+    // 错误码是**作者文档的一部分**（注册表里的 `errorCodes`），所以这里只认那套名字，
+    // 不自造第二套（此前这里冒出过 `plugin_budget` / `plugin_timeout`，文档里根本查不到）。
+    for code in [
+        "unknown_capability",
+        "permission_denied",
+        "bad_args",
+        "space_locked",
+        "quota_exceeded",
+        "loop_limit",
+        "timeout",
+        "out_of_memory",
+        "plugin_crash",
+        "plugin_error",
+        // 宿主侧的门（不是能力错误，但作者会看到，保持原样透传）
+        "approval_required",
+    ] {
         if e.starts_with(code) {
             return (code.to_string(), e.to_string());
         }
     }
     let code = if e.contains("超出内存预算") {
-        "plugin_budget"
+        "out_of_memory"
+    } else if e.contains("超时") && e.contains("终止") {
+        "timeout"
+    } else if e.contains("宿主进程异常退出") || e.contains("宿主线程异常结束") {
+        "plugin_crash"
     } else if e.contains("超时") {
-        "plugin_timeout"
+        "timeout"
+    } else if e.contains("loop iteration limit") {
+        // Boa 的原文（"RuntimeLimit: Maximum loop iteration limit exceeded"）要归到
+        // 注册表里的 `loop_limit`——否则作者按文档找这个码，永远找不到。
+        "loop_limit"
     } else {
         "plugin_error"
     };
@@ -3941,6 +4011,70 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     ) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
         ensure_host_exe();
         run_event_via_host(source, event, payload_json, state)
+    }
+
+    /// **超时 = 杀进程**（M11.13 阶段 3）：插件死循环时这次调用要在预算内返回 `timeout`，
+    /// 而且**不能留下一个跑到天荒地老的宿主子进程**（阶段 3 之前这里是"放弃等待"）。
+    #[test]
+    fn a_hung_plugin_is_killed_and_reported_as_timeout() {
+        let _g = log_test_guard();
+        ensure_host_exe();
+        // 用一个"每次迭代都问一次能力"的循环：`while (true) {}` 会先撞上 Boa 的循环预算
+        // （1e6 次）而不是墙钟超时；而每次能力调用都是一次真 IPC，几百毫秒内注定撞上墙钟。
+        let hang = "register({ id: 'h', title: 'H', run: function () { var i = 0; while (i < 200000) { api.notify('x'); i = i + 1; } return 'done'; } });";
+        let t0 = std::time::Instant::now();
+        let err = run_via_host_with_timeout(
+            hang,
+            "h",
+            "",
+            &RunState::default(),
+            crate::plugin_host::HostRunMode::Command,
+            std::time::Duration::from_millis(400),
+        )
+        .expect_err("死循环的插件必须超时");
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "超时要在预算附近就返回（实际 {:?}）——拖到插件自己跑完就等于没超时",
+            elapsed
+        );
+        assert!(err.contains("timeout") || err.contains("超时"), "{err}");
+        assert!(
+            err.contains("终止"),
+            "要说清是「已经把它终止了」，而不是「不再等它了」：{err}"
+        );
+        let (code, _) = classify_run_error(&err);
+        assert_eq!(code, "timeout", "错误码要落在注册表里：{err}");
+    }
+
+    /// 崩溃语义：子进程异常退出 → 明确的 `plugin_crash`（而不是笼统的"没回结果"），
+    /// 而且**不该**被当成通道坏了之后悄悄重试或静默成功。
+    #[test]
+    fn a_crashed_host_process_is_reported_as_a_crash() {
+        let _g = log_test_guard();
+        ensure_host_exe();
+        let exe = std::env::var("SHUYONOTE_PLUGIN_HOST_EXE").expect("宿主二进制");
+        let mut client = crate::plugin_host::HostClient::spawn_with_exe_args(
+            std::path::Path::new(&exe),
+            &[crate::plugin_host::CRASH_FLAG],
+        )
+        .expect("子进程应当起得来");
+        let err = client
+            .run(crate::plugin_host::HostRunRequest {
+                plugin_id: "t".into(),
+                source: "register({ id: 'c', title: 'C', run: function () { return 'x'; } });".into(),
+                command_id: "c".into(),
+                mode: crate::plugin_host::HostRunMode::Command,
+                ..Default::default()
+            })
+            .expect_err("崩溃要变成错误");
+        assert!(err.contains("plugin_crash"), "{err}");
+        assert!(
+            err.contains("退出码") || err.contains("信号"),
+            "要说清进程是怎么结束的：{err}"
+        );
+        let (code, _) = classify_run_error(&err);
+        assert_eq!(code, "plugin_crash", "{err}");
     }
 
     fn state_with(permissions: &[&str]) -> RunState {

@@ -296,3 +296,49 @@ fn a_capability_request_without_a_server_says_so_in_the_message() {
     );
     client.shutdown().ok();
 }
+
+/// **取消 = 杀进程**（M11.13 阶段 3）：父进程在子进程正跑插件时把它杀掉，这次调用要立刻
+/// 以错误结束（而不是等插件自己跑完），而且不留下孤儿。这是"用户点取消"最终要走的那条路。
+#[test]
+fn killing_the_child_mid_run_ends_the_call_immediately() {
+    let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
+    let killer = client.killer();
+    let pid = killer.pid;
+
+    // 150ms 后从**另一个线程**杀（模拟超时/取消那条路径：调用方不打算再等了）。
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        killer.kill();
+    });
+
+    // 插件会一直问能力（每次都是一次 IPC），所以它不可能自己先跑完。
+    let t0 = std::time::Instant::now();
+    let err = client
+        .run_with_server(
+            req(
+                r#"register({ id: "k.slow", title: "Slow", run: function () {
+                     var i = 0;
+                     while (i < 200000) { api.notify("x"); i = i + 1; }
+                     return "done";
+                   } });"#,
+                "k.slow",
+            ),
+            |_m, _a| Ok("null".to_string()),
+        )
+        .expect_err("被杀之后这次调用必须报错");
+    let elapsed = t0.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(3), "要在被杀后立刻返回（实际 {elapsed:?}）");
+    assert!(err.contains("plugin_crash") && err.contains("退出"), "{err}");
+
+    // 进程真的没了
+    let gone = (0..40).all(|_| {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| !s.success())
+            .unwrap_or(true)
+    });
+    assert!(gone, "被杀的子进程 {pid} 不该还在");
+}
