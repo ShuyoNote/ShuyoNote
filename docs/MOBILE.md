@@ -62,7 +62,7 @@ pnpm dev:web                # 另开一个终端
 pnpm test:mobile-layout     # 有失败即非零退出
 ```
 
-`scripts/verify-mobile-layout.mjs` 用真实 Chromium 在 **390×844（手机）** 与 **1280×800（桌面）** 两种视口下断言 20 项行为，覆盖的全是**单测够不到的交叉地带**（CSS 层叠 + matchMedia + z-index + localStorage）：
+`scripts/verify-mobile-layout.mjs` 用真实 Chromium 在 **390×844（手机）** 与 **1280×800（桌面）** 两种视口下断言 29 项行为，覆盖的全是**单测够不到的交叉地带**（CSS 层叠 + matchMedia + z-index + localStorage）：
 
 | 断言 | 为什么必须由真实浏览器验 |
 |---|---|
@@ -71,7 +71,10 @@ pnpm test:mobile-layout     # 有失败即非零退出
 | 点按钮 → 抽屉滑入 + 遮罩出现 | 触屏没有 hover，收起后没有入口是"能用但没人找得到" |
 | 点遮罩 → 抽屉关闭 | 遮罩中心点被侧栏盖住，交互层级（z-index）必须实测 |
 | 抽屉打开时遮罩挡住右侧悬浮工具栏 | 同上，`elementFromPoint` 才能判定 |
+| 打开 AI / 评论 / 目录面板时，主区 `padding-right=0` 且不超出视口 | 桌面端的让位规则（`body.is-ai-open .main`）在窄屏会把主区内容盒挤成 0 宽，并把 `.main` 顶出 `.app-body`——flex 项缩不到 padding 以下 |
 | 移动端自动收起**不写** localStorage | 写了会污染桌面端偏好（手机上开过一次，桌面端下次启动侧栏就是收起的） |
+
+> 两个断言都验证过"确实会失败"：删掉 `.sidebar[hidden]` 兜底规则 → 6 项失败、退出码 1，直指 `display=flex`；去掉窄屏的 `padding-right: 0` → 主区宽度被顶成 380px（视口 342px）、`right=428`。
 
 前置：本机有 Chrome/Chromium（`PUPPETEER_EXECUTABLE_PATH` 或 `CHROME_PATH` 可指定），以及已启动的 web 开发服务。`--shots <dir>` 可顺便存图。依赖只用 `puppeteer-core`（不含浏览器下载）。
 

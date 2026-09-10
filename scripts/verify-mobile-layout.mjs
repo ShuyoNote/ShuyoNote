@@ -176,6 +176,45 @@ async function main() {
     ok(s.toggleAria === "false", "开合按钮状态复位");
     await shot(phone, "03-phone-backdrop-closed");
     ok(pageErrors.length === 0, `页面无 JS 报错${pageErrors.length ? "：" + pageErrors.join(" | ") : ""}`);
+
+    // ---------- 手机 · 右侧面板叠加：主区不该被"让位"内边距挤压 ----------
+    // 桌面端 TOC/AI 是固定宽侧板，主区靠 padding-right 让位；窄屏它们是全屏叠加，
+    // 再让位就会把主区内容盒挤成 0 宽，并把 .main 撑出 .app-body
+    // （flex 项缩不到 padding 以下，宽度被顶成 380px > 视口 342px）。
+    const RIGHT_PANELS = [
+      { index: 0, name: "AI 助手" },
+      { index: 1, name: "评论 / 通知" },
+      { index: 2, name: "目录" },
+    ];
+    const mainGeometry = () => {
+      const main = document.querySelector(".main");
+      if (!main) return null;
+      const r = main.getBoundingClientRect();
+      return {
+        right: Math.round(r.right),
+        paddingRight: getComputedStyle(main).paddingRight,
+        docWidth: document.documentElement.scrollWidth,
+        winWidth: innerWidth,
+      };
+    };
+    for (const p of RIGHT_PANELS) {
+      // 每次重新加载，避免上一个面板的开关状态串进来
+      await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await sleep(2000);
+      const btns = await phone.$$(".right-rail button");
+      if (!btns[p.index]) {
+        ok(false, `${p.name}：右侧悬浮栏没有第 ${p.index} 个按钮`);
+        continue;
+      }
+      await btns[p.index].click();
+      await sleep(1400);
+      const g = await phone.evaluate(mainGeometry);
+      console.log(`\n【手机 · 打开「${p.name}」】`);
+      ok(g.paddingRight === "0px", `主区不让位（padding-right=${g.paddingRight}）`);
+      ok(g.right <= g.winWidth, `主区不超出视口（right=${g.right} ≤ ${g.winWidth}）`);
+      ok(g.docWidth <= g.winWidth, `无横向溢出（文档宽=${g.docWidth}）`);
+      await shot(phone, `05-phone-panel-${p.index}`);
+    }
     await phoneCtx.close();
 
     // ---------- 桌面视口：独立 context，默认偏好（侧栏展开）----------

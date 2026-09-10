@@ -18065,6 +18065,13 @@ p:has(> .editor-drawing-container) {
     width: 100%;
     max-width: 100%;
   }
+  /* 窄屏下 TOC / AI 是叠加层，主区不需要为它们让位。桌面端那两条让位规则
+     （padding-right: 280px / 380px）在窄屏会把主区内容盒挤成 0 宽，并把
+     .main 撑出 .app-body —— flex 项缩不到 padding 以下，宽度被顶成 380px。 */
+  body.is-toc-open .main,
+  body.is-ai-open .main {
+    padding-right: 0;
+  }
   /* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
   .titlebar-sync,
   .presence-bar {
