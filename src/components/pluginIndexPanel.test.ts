@@ -10,22 +10,28 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import "../i18n";
 
-const fetchPluginIndex = vi.fn();
-const installPluginFromIndex = vi.fn(async () => ({ name: "周报生成" }));
+// `vi.hoisted`：mock 工厂在 import 之前就会跑，直接引用下面的 const 会踩 TDZ。
+const mocks = vi.hoisted(() => ({
+  fetchPluginIndex: vi.fn<(url: string, pubkey: string | null) => Promise<unknown>>(),
+  installPluginFromIndex:
+    vi.fn<(url: string, id: string, pubkey: string | null) => Promise<{ name: string }>>(),
+  // 确认框默认点"确定"——本测试要验的是"确定之后拿什么去安装"。
+  confirmDialog: vi.fn<(options: { title?: string; message: string }) => Promise<boolean>>(),
+}));
 vi.mock("../lib/api", () => ({
   api: {
-    fetchPluginIndex: (...a: unknown[]) => fetchPluginIndex(...a),
-    installPluginFromIndex: (...a: unknown[]) => installPluginFromIndex(...a),
+    fetchPluginIndex: mocks.fetchPluginIndex,
+    installPluginFromIndex: mocks.installPluginFromIndex,
     listPlugins: async () => [],
   },
 }));
-// 确认框一律点"确定"——本测试要验的是"确定之后拿什么去安装"。
-const confirmDialog = vi.fn(async () => true);
-vi.mock("../store/confirm", () => ({ confirmDialog: (...a: unknown[]) => confirmDialog(...a) }));
+vi.mock("../store/confirm", () => ({ confirmDialog: mocks.confirmDialog }));
 
 import { PluginIndexPanel } from "./PluginIndexPanel";
 import { usePlugins } from "../store/plugins";
 import type { PluginIndexEntry, PluginIndexView } from "../types";
+
+const { fetchPluginIndex, installPluginFromIndex, confirmDialog } = mocks;
 
 const entry = (over: Partial<PluginIndexEntry> = {}): PluginIndexEntry => ({
   id: "weekly-report",
@@ -92,8 +98,10 @@ describe("从索引安装面板", () => {
 
   beforeEach(() => {
     fetchPluginIndex.mockReset();
-    installPluginFromIndex.mockClear();
-    confirmDialog.mockClear();
+    installPluginFromIndex.mockReset();
+    installPluginFromIndex.mockResolvedValue({ name: "周报生成" });
+    confirmDialog.mockReset();
+    confirmDialog.mockResolvedValue(true);
     window.localStorage.clear();
     usePlugins.setState({ plugins: [], managerOpen: true });
   });
@@ -164,7 +172,7 @@ describe("从索引安装面板", () => {
     flushSync(() => buttons()[0].click());
     await vi.waitFor(() => expect(installPluginFromIndex).toHaveBeenCalled());
     expect(confirmDialog).toHaveBeenCalledTimes(1);
-    const confirmArgs = confirmDialog.mock.calls[0][0] as unknown as { message: string };
+    const confirmArgs = confirmDialog.mock.calls[0][0];
     expect(confirmArgs.message).toContain("read:pages —— 读本周有改动的页面标题");
     expect(confirmArgs.message).toContain("没有人工审查");
     expect(installPluginFromIndex).toHaveBeenCalledWith(
