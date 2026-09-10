@@ -8,6 +8,7 @@
 //   node scripts/plugin-index-demo.mjs                 # 默认 weekly-review，端口 8787
 //   node scripts/plugin-index-demo.mjs page-to-md 9000
 //   node scripts/plugin-index-demo.mjs weekly-review 8787 --pubkey <minisign 公钥>
+//   node scripts/plugin-index-demo.mjs weekly-review 8787 --version 9.9.9   # 演一次"升级到 9.9.9"
 //
 // `--pubkey` 给定时会顺手找 `--sig <签名文件>`（默认 `<索引>.minisig`）并把签名也发出去，
 // 用来验"填了公钥就必须验签通过"这条路。没给公钥时索引不带签名，应用会如实显示"没有校验"。
@@ -18,7 +19,7 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +35,7 @@ const pluginId = positional[0] ?? "weekly-review";
 const port = Number(positional[1] ?? 8787);
 const pubkey = flag("--pubkey");
 const sigPath = flag("--sig");
+const versionOverride = flag("--version");
 
 const pluginDir = join(root, "examples", "plugins", pluginId);
 if (!existsSync(join(pluginDir, "manifest.json"))) {
@@ -50,11 +52,25 @@ for (const field of ["id", "version", "apiVersion"]) {
 
 // 打成 zip：包内是**一层以插件 id 命名的目录**（`zip -r` 的常见形态），
 // 应用侧会自动下钻一层——这里正好顺带把那条规则跑通。
+//
+// 打包前先把插件目录**照抄到临时区**再压：这样 `--version` 能改一份副本里的版本号，
+// 用来演"已装 1.0.0 → 索引里是 9.9.9 → 点升级"这条路，而不必动仓库里的示例文件。
+// （索引里的版本必须与包内 manifest 的版本一致，否则装完仍显示旧版本、升级会一直重复提示。）
 const tmp = mkdtempSync(join(tmpdir(), "shuyonote-index-demo-"));
-const zipPath = join(tmp, `${manifest.id}-${manifest.version}.zip`);
+const stage = join(tmp, "stage");
+const stagePlugin = join(stage, manifest.id);
+// 用 Node 自己的递归拷贝（不依赖 cp，也省得为 Windows 另写一条分支）。
+cpSync(pluginDir, stagePlugin, { recursive: true });
+const version = versionOverride ?? manifest.version;
+if (versionOverride) {
+  const m = JSON.parse(readFileSync(join(stagePlugin, "manifest.json"), "utf8"));
+  m.version = versionOverride;
+  writeFileSync(join(stagePlugin, "manifest.json"), JSON.stringify(m, null, 2) + "\n", "utf8");
+}
+const zipPath = join(tmp, `${manifest.id}-${version}.zip`);
 try {
   execFileSync("zip", ["-qr", zipPath, manifest.id], {
-    cwd: join(root, "examples", "plugins"),
+    cwd: stage,
     stdio: ["ignore", "ignore", "pipe"],
   });
 } catch (e) {
@@ -73,7 +89,7 @@ const index = {
     {
       id: manifest.id,
       name: manifest.name ?? manifest.id,
-      version: manifest.version,
+      version,
       apiVersion: manifest.apiVersion,
       minAppVersion: "1.87.0",
       runtime: manifest.runtime === "declarative" ? "declarative" : "logic",
@@ -87,7 +103,7 @@ const index = {
         id: p?.id ?? "",
         reason: p?.reason ?? "",
       })),
-      downloadUrl: `http://127.0.0.1:${port}/${manifest.id}-${manifest.version}.zip`,
+      downloadUrl: `http://127.0.0.1:${port}/${manifest.id}-${version}.zip`,
       size: statSync(zipPath).size,
       sha256,
       signature: "",
@@ -108,7 +124,7 @@ const server = createServer((req, res) => {
     if (!signature) return res.writeHead(404).end();
     return send("text/plain", Buffer.from(signature, "utf8"));
   }
-  if (path === `/${manifest.id}-${manifest.version}.zip`) return send("application/zip", pkg);
+  if (path === `/${manifest.id}-${version}.zip`) return send("application/zip", pkg);
   res.writeHead(404).end();
 });
 
@@ -116,7 +132,7 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`索引地址（填进「插件管理 → 从索引安装（给 URL）」）：\n  http://127.0.0.1:${port}/plugin-index.json`);
   console.log(`公钥：${pubkey ? pubkey : "（没给 --pubkey，应用会显示「没有校验」——这是诚实的状态，不是错误）"}`);
   console.log(`签名：${signature ? "已随索引发出（/plugin-index.json.minisig）" : "无"}`);
-  console.log(`插件：${manifest.id} v${manifest.version}  ${statSync(zipPath).size} 字节  sha256=${sha256.slice(0, 16)}…`);
+  console.log(`插件：${manifest.id} v${version}  ${statSync(zipPath).size} 字节  sha256=${sha256.slice(0, 16)}…`);
   console.log("\n怎么算通过：界面上能看到来源「本机演示索引（127.0.0.1:…）」+ 条目 + 权限与理由；");
   console.log("点安装 → 确认框 → 装完默认未启用（再去「启用」）。Ctrl+C 结束（临时 zip 会被清掉）。");
 });

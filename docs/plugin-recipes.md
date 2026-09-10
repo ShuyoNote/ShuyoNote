@@ -93,7 +93,12 @@ minisign -G -p mykey.pub              # 还没密钥就先建一对；私钥自�
 ```bash
 node scripts/plugin-index-demo.mjs weekly-review 8787
 # 然后把打印出来的 http://127.0.0.1:8787/plugin-index.json 填进「从索引安装（给 URL）」
+
+# 演一次升级：先按上面的步骤装 1.0.0，然后换个端口 + 抬个版本号再来一遍，
+# 面板上的按钮就会变成「升级到 9.9.9」
+node scripts/plugin-index-demo.mjs weekly-review 8788 --version 9.9.9
 ```
+（`--version` 只改**副本**里的版本号，不会动仓库里的示例文件；索引里的版本与包内 manifest 的版本始终一致。）
 （明文 http 只允许本机回环地址，正是给这种自托调试用的；样例索引 `docs/plugin-index.example.json`
 也被一条 Rust 测试盯着——规范改了而样例没同步，门禁就会红。）
 
