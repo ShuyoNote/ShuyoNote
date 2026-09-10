@@ -139,17 +139,17 @@ async function main() {
   ok(ctype.includes("text/event-stream"), `SSE Content-Type=text/event-stream（实际 ${ctype || "—"}）`);
 
   let eventAt = null;
+  let rawSse = "";
   const waitEvent = (async () => {
     if (!sseRes?.body) return;
     const reader = sseRes.body.getReader();
     const dec = new TextDecoder();
-    let buf = "";
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      buf += dec.decode(value, { stream: true });
+      rawSse += dec.decode(value, { stream: true });
       // 只看 data: 帧；axum 的 KeepAlive 发的是注释行（":"），不算事件。
-      if (buf.includes("data:")) { eventAt = Date.now(); break; }
+      if (rawSse.includes("data:")) { eventAt = Date.now(); break; }
     }
   })().catch(() => {});
 
@@ -173,6 +173,16 @@ async function main() {
   const latency = eventAt === null ? null : eventAt - pushSentAt;
   ok(eventAt !== null, `B 收到变更推送（${latency === null ? "8s 内未收到，超时" : latency + "ms"}）`);
   ok(latency !== null && latency < 3000, `推送延迟 < 3s（实际 ${latency === null ? "—" : latency + "ms"}）`);
+
+  // 客户端 useSyncStream 的切帧方式是 `buf.split("\n\n")`，所以帧分隔符必须是
+  // **纯 LF 空行**。若服务端或中间层改成 CRLF（\r\n\r\n），服务端照常在推、
+  // 客户端永远切不出帧、两边日志都干干净净——把这条隐式契约钉在这里。
+  ok(rawSse.includes("\n\n"), "帧分隔符是 LF 空行（客户端 split(\"\\n\\n\") 能切出帧）");
+  ok(!rawSse.includes("\r\n"), "帧分隔符不是 CRLF（CRLF 会让客户端切不出帧）");
+  ok(
+    rawSse.split("\n\n").some((f) => f.includes("data:")),
+    "按客户端的方式切帧确实能取到 data 帧",
+  );
   sseCtrl.abort();
 
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);

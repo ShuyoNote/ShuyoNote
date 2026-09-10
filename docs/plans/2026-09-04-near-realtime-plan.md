@@ -224,7 +224,7 @@ created_at   INTEGER NOT NULL
 ## 12. 验收标准
 
 > **已全部验收（2026-09-10）**，含**线上端到端**：客户端 v1.84.4 + 服务端 v1.2.0 已发布，
-> 生产 `https://shuyo.cn/sync` 跑通 `test:sync-collab` **21 断言全绿**（SSE 推送 35ms）。
+> 生产 `https://shuyo.cn/sync` 跑通 `test:sync-collab` **24 断言全绿**（SSE 推送 32ms）。
 
 - [x] 两人同改一页：后到者看到「此页被多人修改」提示，可保留本地/采用服务端，**不静默覆盖**。
       — `pnpm test:sync-verify` 14 断言（真实 `applyChange` + 真实 sql.js SQLite，覆盖双方同改各保留 / dirty 拒绝更大 seq / 时钟漂移不丢）。
@@ -236,8 +236,10 @@ created_at   INTEGER NOT NULL
       — `test:sync-collab`：单条已读使未读 -1、`seen-all` 后全部 `seen=1`。
 - [x] （若做 P1.5）另一设备改动后，本设备在秒级内收到推送并自动拉取。
       — `test:sync-collab` 新增 SSE 断言：B 订阅 → A push → 断言事件到达且延迟 < 3s。
-      **线上实测 35ms（经 nginx/HTTPS）**；本地 3-5ms。这条是「近实时」唯一能证明服务端真的主动推的证据——
+      **线上实测 32ms（经 nginx/HTTPS）**；本地 3-5ms。这条是「近实时」唯一能证明服务端真的主动推的证据——
       前面的断言全是请求-响应式的，谁都不会暴露代理把事件缓冲住这件事。
+      另断言帧分隔符必须是 **LF 空行**：客户端用 `buf.split("\n\n")` 切帧，若服务端/中间层改成 CRLF，
+      服务端照常在推、客户端永远切不出帧，两边日志都干净——这条隐式契约已钉进测试。
 - [x] 增量、不加 CRDT；个人空间（E2E）不受影响。
       — 仍为增量 changes + seq-LWW，未引入 CRDT；协作能力只作用于团队空间，个人空间不参与实时协作。
 
@@ -249,7 +251,7 @@ created_at   INTEGER NOT NULL
 | 服务端 | v1.2.0（tag `v1.2.0`，生产 `/usr/local/bin/shuyonote-sync-server`，schema v10） |
 | 反向代理 | nginx `location /sync/` 必须 `proxy_buffering off`（否则 SSE 被缓冲，近实时静默退化） |
 | 验收命令 | `node scripts/sync-collab-regression.mjs --server https://shuyo.cn/sync --register-code <码>` |
-| 结果 | **21 通过 / 0 失败**，SSE 端到端 35ms |
+| 结果 | **24 通过 / 0 失败**，SSE 端到端 32ms |
 | 测试数据 | 验证用临时账号/空间已在同一次操作内清理，生产数据逐表回到基线 |
 
 > 该脚本对**持久化服务端**必须可重复运行：`device_id` 每次运行随机（服务端会把 device_id
