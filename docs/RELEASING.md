@@ -51,7 +51,7 @@ for id in $(curl -s -H "Authorization: Bearer $GH" \
 done
 cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 的 --no-build 即可
 ```
-`release.mjs` 只收集**文件名含当前版本号**的安装包，所以 bundle 目录里留着旧版本产物不会污染发布。
+`release.mjs` 按**版本号整词匹配**挑产物（`_1.84.6_` ✓，`_1.84.60_` / `11.84.6` ✗），所以 bundle 目录里留着旧版本产物不会污染发布；同平台出现同类候选（例如上次 run 的同版本残留）会**直接报错**而不是随便挑一个，可用 `--artifacts a.exe,b.deb` 显式指定。
 
 **⚠️ 换行符**：Windows runner 默认 `core.autocrlf=true`，若仓库未固定 `eol=lf`，文本会被检出成 CRLF；对生成物做逐字节比对的门禁（如 `check-capabilities`）会在 Windows 上必失败，而它跑在 Tauri 的 `beforeBuildCommand` 里 → 整个 Windows 构建红掉（v1.84.6 首次发布即如此，Linux 正常）。仓库已加 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，门禁也比较时忽略行尾——两层都在，别退回逐字节比较。
 
@@ -70,7 +70,24 @@ GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更�
 它建 GitCode release、上传 installer/`.sig`/`latest.json`、并更新 `latest` 通道（应用内「检查更新」读的就是它）。注意 `latest.json` 的 `url` 指向 gitcode release，签名用同一签名密钥产出的 `.sig`，须与文件字节一致。
 `--no-build` 前提是安装包已就绪（如 GitHub Actions 产物）；缺省会先 `pnpm tauri build`。
 建议用 `--body` 传发布说明（从 `CHANGELOG.md` 对应版本段生成，`###` 降一级即可）；不传则只有一行 `ShuyoNote vX.Y.Z`，与 CHANGELOG 脱节。
-**发布后自检**（更新通道最容易悄悄坏）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
+
+### 发布前的自动拦截（都在 `scripts/release.mjs`，发布前跑 `--dry-run` 可先看一眼）
+
+更新通道的故障几乎都是「发布时毫无征兆、用户点检查更新才炸」，所以下面的检查都是**硬失败**（列出全部问题后中止，不做任何发布）：
+
+| 检查 | 拦住的真实事故 |
+| --- | --- |
+| 版本号整词匹配 | `1.84.6` 误纳 `1.84.60` 的产物 |
+| 同平台同类候选 → 报错 | 上次 run 的同版本残留，被随便挑一个发出去 |
+| 缺/空 `.sig` → 报错 | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
+| **`.sig` 与安装包字节互验**（minisign 预哈希：BLAKE2b-512 + ed25519，见 `scripts/lib/`） | 安装包与 `.sig` 不是同一次构建的一对（手工从两次 run 各取一个）→ 用户更新时报校验失败 |
+| 线上 `latest.json` 平台键覆盖检查 | 本次只构建了 Linux，就悄悄砍掉 `windows-x86_64` → Windows 用户从此收不到更新 |
+| 打印每个产物的 sha256 | 事后可与 CI 产物逐个比对（同时写 `src-tauri/target/release/release-artifacts.json`） |
+
+逃生口（都需显式写出，且有明确风险提示）：`--artifacts` 指定产物、`--allow-platform-drop` 允许少平台、`--skip-sig-verify` 跳过签名校验。
+`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、macOS 取 dmg），不再依赖目录遍历顺序；另一个（如 AppImage）照样挂到 release 上。
+
+**发布后自检**（自动检查之外的兜底）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
 
 ## ⑦ Web 版（可选，同步上线）
 ```bash

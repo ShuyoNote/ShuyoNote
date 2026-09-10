@@ -1,14 +1,23 @@
 // ShuyoNote 桌面版自动发布脚本（gitcode）。
 //
 // 完整流水线：校验签名密钥/公钥 → `pnpm tauri build`（签名）→ 收集安装包+.sig
-//           → 生成 latest.json（Tauri updater 清单）→ 发布到 gitcode：
-//             建 release v<version>、上传 installer/.sig/latest.json、
-//             更新「latest」auto-update 通道、UTF-8 修正正文。
+//           → 逐项校验（版本号整词匹配 / 同平台歧义 / 缺签名 / .sig 与字节互验 /
+//             线上 latest.json 的平台覆盖）→ 生成 latest.json（Tauri updater 清单）
+//           → 发布到 gitcode：建 release v<version>、上传 installer/.sig/latest.json、
+//             更新「latest」auto-update 通道。
+// 检查明细见 docs/RELEASING.md ⑥；纯逻辑与单测在 scripts/lib/releaseArtifacts.mjs。
 //
 // 用法：
 //   GITCODE_TOKEN=<令牌> TAURI_SIGNING_PRIVATE_KEY=<...> \
 //   TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<...> RELEASE_NOTES="ShuyoNote v1.64.x" \
-//   node scripts/release.mjs [--dry-run] [--body <文件.md>]
+//   node scripts/release.mjs [--dry-run] [--body <文件.md>] [--artifacts a.exe,b.deb]
+//
+// 可选参数：
+//   --dry-run               只收集/校验/写清单，不发布
+//   --no-build              跳过 `pnpm tauri build`（产物已就绪时用）
+//   --artifacts <名字,…>    显式指定要发布的产物（替代「文件名含版本号」自动挑选）
+//   --allow-platform-drop   允许本次清单丢掉线上已有的平台键（默认禁止）
+//   --skip-sig-verify       跳过「.sig 确实是这些字节的签名」校验（不建议）
 //
 // 密钥一次性生成（保密）：pnpm tauri signer generate -w ~/.tauri/shuyonote.key
 // 公钥写入 src-tauri/tauri.conf.json → plugins.updater.pubkey。
@@ -16,6 +25,16 @@ import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  INSTALLER_DIRS,
+  coverageProblems,
+  fmtSize,
+  fmtTime,
+  manifestPicks,
+  selectArtifacts,
+  sha256File,
+  verifyArtifactSignature,
+} from "./lib/releaseArtifacts.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -82,49 +101,140 @@ async function apiFetch(method, url, body) {
 }
 
 // ---- 构建 + 签名 ----
-console.log(`[release] 构建 v${version}（签名）…`);
+console.log(`[release] ${NO_BUILD ? "跳过构建（--no-build，产物须已就绪）" : `构建 v${version}（签名）`}…`);
 if (!DRY && !NO_BUILD) execSync(`pnpm tauri build`, { stdio: "inherit", env: process.env });
 
-// ---- 收集安装包 + .sig ----
+// ---- 收集候选产物 ----
+const argOf = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+};
+const explicit = (argOf("--artifacts") ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const SKIP_SIG = process.argv.includes("--skip-sig-verify");
+const ALLOW_DROP = process.argv.includes("--allow-platform-drop");
+
 const bundleDir = join(root, "src-tauri", "target", "release", "bundle");
-const found = [];
-for (const plat of ["nsis", "msi", "dmg", "appimage", "deb", "rpm"]) {
-  const dir = join(bundleDir, plat);
-  if (!existsSync(dir)) continue;
-  for (const f of readdirSync(dir)) {
-    const full = join(dir, f);
-    // 只收集与当前版本号匹配的安装包，避免把 bundle 目录里历史遗留的
-    // 其它版本 installer 一起当作本次产物发布（曾导致 latest.json 被挤占/污染）。
-    if (/\.(exe|msi|dmg|appimage|deb|rpm)$/i.test(f) && f.includes(version)) {
-      const sigFile = full + ".sig";
-      const sig = existsSync(sigFile) ? readFileSync(sigFile, "utf8").trim() : "";
-      if (!sig) console.warn(`[release] ⚠️ 缺签名文件：${f}.sig`);
-      found.push({ file: full, name: f, size: statSync(full).size, sig });
-    }
+const entries = [];
+for (const dir of INSTALLER_DIRS) {
+  const d = join(bundleDir, dir);
+  if (!existsSync(d)) continue;
+  for (const name of readdirSync(d)) {
+    const file = join(d, name);
+    const st = statSync(file);
+    if (!st.isFile()) continue; // AppDir/、解包目录等中间产物
+    const sigPath = file + ".sig";
+    const hasSig = existsSync(sigPath);
+    entries.push({
+      dir,
+      name,
+      file,
+      size: st.size,
+      mtimeMs: st.mtimeMs,
+      sigPath: hasSig ? sigPath : null,
+      sigText: hasSig ? readFileSync(sigPath, "utf8") : null,
+    });
   }
 }
-if (found.length === 0) { console.error("[release] 未找到安装包产物。"); process.exit(1); }
 
-const platformKeyFor = (name) => {
-  if (/\.(exe|msi)$/i.test(name)) return "windows-x86_64";
-  if (/\.dmg$/i.test(name)) return /aarch64|arm64/i.test(name) ? "darwin-aarch64" : "darwin-x86_64";
-  if (/\.appimage$/i.test(name)) return /aarch64|arm64/i.test(name) ? "linux-aarch64" : "linux-x86_64";
-  if (/\.(deb|rpm|tar\.gz|tar\.xz)$/i.test(name)) return "linux-x86_64";
-  return null;
-};
+const { picked, problems, warnings } = selectArtifacts({ entries, version, explicit });
+for (const w of warnings) console.warn(`[release] ⚠️ ${w}`);
+// 一次列全所有问题再中止（歧义/缺签名/什么都没找到），不用反复试
+if (problems.length > 0) {
+  console.error(`[release] 产物检查未通过（${problems.length} 项）：`);
+  for (const p of problems) console.error(`  ✗ ${p}`);
+  console.error("[release] 未做任何发布。");
+  process.exit(1);
+}
+console.log(`[release] 选中 ${picked.length} 个产物：${picked.map((a) => a.name).join("、")}`);
+
+// ---- 校验 .sig 确实是这些字节的签名（Tauri 更新器做的就是这件事）----
+// 拦的是「安装包与 .sig 不是同一次构建的一对」——这种事故发布时毫无征兆，
+// 只在用户点「检查更新」时才炸。Tauri 用 minisign 预哈希模式：BLAKE2b-512 + ed25519。
+if (!SKIP_SIG) {
+  console.log("[release] 校验签名…");
+  const bad = [];
+  for (const a of picked) {
+    const r = await verifyArtifactSignature({ filePath: a.file, sigText: a.sigText, publicKey: pubKey });
+    if (r.status === "ok") console.log(`  ✓ ${a.name}`);
+    else if (r.status === "unsupported") console.warn(`  ⚠️ ${a.name}：${r.detail}（跳过校验，不阻断）`);
+    else {
+      console.error(`  ✗ ${a.name}：${r.detail}`);
+      bad.push(a.name);
+    }
+  }
+  if (bad.length > 0) {
+    console.error(`[release] ${bad.length} 个产物的签名校验失败，已中止（发布出去会让用户更新时报校验错误）。`);
+    process.exit(1);
+  }
+} else {
+  console.warn("[release] ⚠️ --skip-sig-verify：跳过签名校验（发布风险自负）。");
+}
+
+// ---- 指纹（事后可与 CI 产物逐个比对）----
+console.log("[release] 产物指纹（sha256）：");
+for (const a of picked) {
+  a.sha256 = await sha256File(a.file);
+  console.log(`  ${a.sha256}  ${fmtSize(a.size).padStart(9)}  ${fmtTime(a.mtimeMs)}  ${a.name}`);
+}
 
 // ---- 生成 latest.json（updater 清单）----
-const notes = process.env.RELEASE_NOTES ?? `ShuyoNote v${version}`;
+// 同一平台键只能留一个 url：取哪个由 manifestPicks 写死偏好，不靠遍历顺序。
+const { picks, notes } = manifestPicks(picked);
+for (const n of notes) console.log(`[release] ${n}`);
+const notes_ = process.env.RELEASE_NOTES ?? `ShuyoNote v${version}`;
 const platforms = {};
-for (const a of found) {
-  const keyy = platformKeyFor(a.name);
-  if (!keyy) continue;
-  const url = `https://gitcode.com/${OWNER}/${REPO}/releases/download/v${version}/${a.name}`;
-  platforms[keyy] = { signature: a.sig, url };
+for (const [key, a] of picks) {
+  platforms[key] = {
+    signature: a.sigText.trim(),
+    url: `https://gitcode.com/${OWNER}/${REPO}/releases/download/${TAG}/${a.name}`,
+  };
 }
+
+// ---- 平台覆盖检查：别把线上已有的平台键悄悄砍掉 ----
+// 少一个键 = 该平台用户从此收不到更新，而且没有任何报错。
+const prevManifestUrl = `https://gitcode.com/${OWNER}/${REPO}/releases/download/latest/latest.json`;
+let prevKeys = [];
+try {
+  const r = await fetch(prevManifestUrl, { headers: { "User-Agent": "ShuyoNote-release" } });
+  if (r.status === 404) {
+    console.log("[release] 线上还没有 latest 清单（首次发布），跳过平台覆盖检查。");
+  } else if (!r.ok) {
+    throw new Error(`${r.status} GET latest.json`);
+  } else {
+    const prev = JSON.parse(await r.text());
+    prevKeys = Object.keys(prev.platforms ?? {});
+    console.log(`[release] 线上清单 v${prev.version}：${prevKeys.join(", ") || "(无平台)"}`);
+  }
+} catch (e) {
+  if (DRY) console.warn(`[release] ⚠️ 读不到线上 latest.json（${e.message}），--dry-run 下跳过覆盖检查。`);
+  else {
+    console.error(`[release] 读不到线上 latest.json（${e.message}）：无法确认不会砍掉某个平台的更新通道。`);
+    console.error("[release] 网络确实不通时可用 --allow-platform-drop 明确接受风险。");
+    process.exit(1);
+  }
+}
+const dropped = coverageProblems({ previousKeys: prevKeys, nextKeys: Object.keys(platforms) });
+if (dropped.length > 0) {
+  if (ALLOW_DROP) for (const d of dropped) console.warn(`[release] ⚠️ --allow-platform-drop：${d}`);
+  else {
+    for (const d of dropped) console.error(`  ✗ ${d}`);
+    console.error(`[release] 本次清单只有 ${Object.keys(platforms).join(", ")}，已中止；确认要这样发就加 --allow-platform-drop。`);
+    process.exit(1);
+  }
+}
+
 const manifestPath = join(root, "src-tauri", "target", "release", "latest.json");
-writeFileSync(manifestPath, JSON.stringify({ version, notes, pub_date: new Date().toISOString(), platforms }, null, 2) + "\n");
-console.log(`[release] latest.json → ${manifestPath}`);
+writeFileSync(manifestPath, JSON.stringify({ version, notes: notes_, pub_date: new Date().toISOString(), platforms }, null, 2) + "\n");
+console.log(`[release] latest.json → ${manifestPath}（${Object.keys(platforms).join(", ")}）`);
+const auditPath = join(root, "src-tauri", "target", "release", "release-artifacts.json");
+writeFileSync(
+  auditPath,
+  JSON.stringify({ version, tag: TAG, at: new Date().toISOString(), artifacts: picked.map(({ name, size, sha256, dir }) => ({ name, dir, size, sha256 })) }, null, 2) + "\n",
+);
+console.log(`[release] 产物指纹清单 → ${auditPath}`);
 
 // ---- 发布到 gitcode ----
 if (DRY) {
@@ -152,7 +262,7 @@ async function deleteAttach(releaseTag, name) {
 const bi = process.argv.indexOf("--body");
 const body = bi >= 0 && process.argv[bi + 1]
   ? readFileSync(process.argv[bi + 1], "utf8")
-  : `# ShuyoNote v${version}\n\n${notes}\n\n## 安装（Windows x64）\n下载 \`ShuyoNote_${version}_x64-setup.exe\` 运行即可。`;
+  : `# ShuyoNote v${version}\n\n${notes_}\n\n## 安装（Windows x64）\n下载 \`ShuyoNote_${version}_x64-setup.exe\` 运行即可。`;
 
 try {
   await apiFetch("GET", `${API}/releases/tags/${TAG}`);
@@ -160,11 +270,9 @@ try {
   await apiFetch("POST", `${API}/releases`, JSON.stringify({ tag_name: TAG, name: `ShuyoNote v${version}`, body, prerelease: false }));
   console.log(`  创建 release ${TAG}`);
 }
-for (const a of found) {
-  if (a.sig) {
-    await uploadFile(TAG, a.name, a.file);
-    await uploadFile(TAG, a.name + ".sig", a.file + ".sig");
-  }
+for (const a of picked) {
+  await uploadFile(TAG, a.name, a.file);
+  await uploadFile(TAG, a.name + ".sig", a.sigPath);
 }
 await uploadFile(TAG, "latest.json", manifestPath);
 // 确保 `latest`（auto-update 通道）release 存在：首次发布时 gitcode 可能只有
