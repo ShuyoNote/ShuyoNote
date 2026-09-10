@@ -41,6 +41,18 @@ export function CommandPalette() {
   const [result, setResult] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 参数表单的状态（选中带参数的命令后，面板就地切成表单，而不是弹第二个对话框）。
+  //
+  // 这三个 useState 必须待在这里、而不是 `if (!open) return null` 之后：**hooks 不能
+  // 有条件地调用**——面板关闭时少调 3 个、打开时又多调 3 个，React 会直接抛
+  // 「Rendered more hooks than during the previous render」（生产构建是 Minified React
+  // error #310），也就是**按 Ctrl+K 就白屏**（M11.8 加参数表单时把它们放在了早退之后，
+  // 1.85.0 起线上如此；回归测试见 `commandPaletteHooks.test.ts`）。
+  const [paramItem, setParamItem] = useState<
+    Extract<Item, { kind: "plugin" }> | null
+  >(null);
+  const [paramValues, setParamValues] = useState<Record<string, string | boolean>>({});
+  const [paramError, setParamError] = useState("");
 
   const plugins = usePlugins((s) => s.plugins);
   const running = usePlugins((s) => s.running);
@@ -146,13 +158,6 @@ export function CommandPalette() {
   }, [sel, flat.length]);
 
   if (!open) return null;
-
-  // 参数表单：选中带参数的命令后，面板就地切成表单（而不是弹第二个对话框）。
-  const [paramItem, setParamItem] = useState<
-    Extract<Item, { kind: "plugin" }> | null
-  >(null);
-  const [paramValues, setParamValues] = useState<Record<string, string | boolean>>({});
-  const [paramError, setParamError] = useState("");
 
   const openParams = (item: Extract<Item, { kind: "plugin" }>) => {
     setParamValues(initialParamValues(item.params ?? []));
