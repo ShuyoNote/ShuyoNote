@@ -237,7 +237,7 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
 
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
-- **git autocrlf**：Windows 提交时出现 `LF will be replaced by CRLF` 是**正常的**，忽略。
+- **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
 - **提交信息**：`git commit -m "..."` 里避免内嵌 `"` 或 `·`，否则会被拆断导致 pathspec 报错。
 - **浏览器缓存**：web 端改源码后必须 **Ctrl+Shift+R**，否则还在跑旧模块（以 `[ShuyoNote] bootstrap vX.Y.Z` 确认版本）。
 - **`ERR_CACHE_READ_FAILURE` / 模块 re-hash**：Vite dep 优化缓存与浏览器缓存不对齐时，重启 `pnpm dev:web` + 强刷即可。

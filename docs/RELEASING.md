@@ -38,6 +38,23 @@ git push origin main && git push origin vX.Y.Z
 
 产物上传到 GitHub Release（`softprops` 未用，`release` job 用 curl+GitHub API 只挂安装包）。仓库 Secrets：`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（必填），macOS 另需 `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD`/`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`。
 
+**⚠️ GitHub Release 里没有 `.sig`**：`release` job 显式只挑 `.exe/.dmg/.deb/.AppImage`。要发 GitCode（更新通道需要签名）就得从 **run artifacts** 取，两个 build job 上传的 `bundle-<platform>` 含完整 `bundle/` 目录（含 `.sig`，保留 7 天）：
+
+```bash
+# 需要 GitHub token（artifacts 下载要鉴权，匿名 401）+ jq；RUN 取该 tag 对应的 run id
+GH=<GitHub token>; RUN=<run id>
+for id in $(curl -s -H "Authorization: Bearer $GH" \
+  "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/runs/$RUN/artifacts" | jq -r '.artifacts[].id'); do
+  curl -sL -H "Authorization: Bearer $GH" \
+    "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/artifacts/$id/zip" -o "$id.zip"
+  unzip -q -o "$id.zip" -d unpacked/          # 解出来的就是 bundle/ 的内容（nsis/ deb/ appimage/）
+done
+cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 的 --no-build 即可
+```
+`release.mjs` 只收集**文件名含当前版本号**的安装包，所以 bundle 目录里留着旧版本产物不会污染发布。
+
+**⚠️ 换行符**：Windows runner 默认 `core.autocrlf=true`，若仓库未固定 `eol=lf`，文本会被检出成 CRLF；对生成物做逐字节比对的门禁（如 `check-capabilities`）会在 Windows 上必失败，而它跑在 Tauri 的 `beforeBuildCommand` 里 → 整个 Windows 构建红掉（v1.84.6 首次发布即如此，Linux 正常）。仓库已加 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，门禁也比较时忽略行尾——两层都在，别退回逐字节比较。
+
 ### 本机（Windows 签名构建）
 ```bash
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$HOME\.tauri\shuyonote.key").Trim()
@@ -47,10 +64,13 @@ pnpm tauri build      # 产出 setup.exe + .sig
 
 ## ⑥ 发布到 GitCode（更新通道）
 ```bash
-node scripts/release.mjs --no-build   # 需 GITCODE_TOKEN + RELEASE_NOTES
+GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更新」显示）" \
+  node scripts/release.mjs --no-build --body /tmp/body.md   # 需先备好 ⑤ 的产物
 ```
 它建 GitCode release、上传 installer/`.sig`/`latest.json`、并更新 `latest` 通道（应用内「检查更新」读的就是它）。注意 `latest.json` 的 `url` 指向 gitcode release，签名用同一签名密钥产出的 `.sig`，须与文件字节一致。
 `--no-build` 前提是安装包已就绪（如 GitHub Actions 产物）；缺省会先 `pnpm tauri build`。
+建议用 `--body` 传发布说明（从 `CHANGELOG.md` 对应版本段生成，`###` 降一级即可）；不传则只有一行 `ShuyoNote vX.Y.Z`，与 CHANGELOG 脱节。
+**发布后自检**（更新通道最容易悄悄坏）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
 
 ## ⑦ Web 版（可选，同步上线）
 ```bash
