@@ -80,6 +80,9 @@ register({
 | `read:page.current` | 读取当前页正文：读取当前打开页面的 content_json | low |
 | `read:pages` | 读取本空间页面统计：读取本空间的页面数量等汇总信息（不含正文） | low |
 | `write:page.current` | 向当前页写入纯文本：往当前页面插入一段纯文本（不接受 HTML/Markdown，不可删改既有内容） | low |
+| `read:tags` | 读取本空间标签：读取本空间的标签清单（名称与关联页面数） | low |
+| `read:backlinks` | 读取反链：读取哪些页面引用了某个页面 | low |
+| `read:files` | 读取附件元数据：读取页面的附件元数据（名称/类型/大小），**不含文件字节** | low |
 
 ## 4. 能力（`api.*`）
 
@@ -87,6 +90,12 @@ register({
 |---|---|---|---|---|---|
 | `page.current` | `api.page.current()` | `read:page.current` | `current-space` | string | 1.0.0 |
 | `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | number | 1.0.0 |
+| `pages.list` | `api.pages.list(limit)` | `read:pages` | `current-space` | array | 1.0.0 |
+| `pages.get` | `api.pages.get(id)` | `read:pages` | `current-space` | object | 1.0.0 |
+| `pages.search` | `api.pages.search(q, limit)` | `read:pages` | `current-space` | array | 1.0.0 |
+| `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | array | 1.0.0 |
+| `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | array | 1.0.0 |
+| `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | array | 1.0.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | void | 1.0.0 |
 | `user.notify` | `api.notify(message)` | — | `app` | void | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | void | 1.0.0 |
@@ -104,6 +113,59 @@ register({
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：本空间未删除页面的数量
+
+### `pages.list` — 列出本空间页面
+
+- 调用：`api.pages.list(limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：[{id, title, updated_at}]，按更新时间倒序；不含正文
+- 参数：
+  - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（上限 200）
+
+### `pages.get` — 读取指定页面
+
+- 调用：`api.pages.get(id)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：{id, title, content_text, kind}；不存在返回 null
+- 参数：
+  - `id`: `string` —— 页面 id
+
+### `pages.search` — 搜索本空间页面
+
+- 调用：`api.pages.search(q, limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
+- 参数：
+  - `q`: `string` —— 关键词
+  - `limit`: `number`（可选），默认 `20` —— 最多返回多少条（上限 100）
+
+### `tags.list` — 列出本空间标签
+
+- 调用：`api.tags.list()`
+- 权限：`read:tags`
+- scope：`current-space`
+- 返回：[{id, name, page_count}]
+
+### `backlinks.list` — 列出反链
+
+- 调用：`api.backlinks.list(pageId)`
+- 权限：`read:backlinks`
+- scope：`current-space`
+- 返回：[{source_page_id, source_title, kind}]
+- 参数：
+  - `pageId`: `string`（可选） —— 目标页面 id；省略则用当前打开的页面
+
+### `files.list` — 列出页面附件元数据
+
+- 调用：`api.files.list(pageId)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：[{id, name, mime, size}]，**不含字节**
+- 参数：
+  - `pageId`: `string`（可选） —— 页面 id；省略则用当前打开的页面
 
 ### `editor.insertText` — 向当前页插入纯文本
 

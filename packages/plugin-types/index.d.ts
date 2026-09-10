@@ -28,6 +28,36 @@ export interface PluginApi {
    * 返回：本空间未删除页面的数量
    */
     count(): number;
+  /** 列出本空间页面（权限 `read:pages`；1.0.0 起）
+   * 返回：[{id, title, updated_at}]，按更新时间倒序；不含正文
+   */
+    list(limit?: number): unknown;
+  /** 读取指定页面（权限 `read:pages`；1.0.0 起）
+   * 返回：{id, title, content_text, kind}；不存在返回 null
+   */
+    get(id: string): unknown;
+  /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
+   * 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
+   */
+    search(q: string, limit?: number): unknown;
+  };
+  tags: {
+  /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
+   * 返回：[{id, name, page_count}]
+   */
+    list(): unknown;
+  };
+  backlinks: {
+  /** 列出反链（权限 `read:backlinks`；1.0.0 起）
+   * 返回：[{source_page_id, source_title, kind}]
+   */
+    list(pageId?: string): unknown;
+  };
+  files: {
+  /** 列出页面附件元数据（权限 `read:files`；1.0.0 起）
+   * 返回：[{id, name, mime, size}]，**不含字节**
+   */
+    list(pageId?: string): unknown;
   };
   editor: {
   /** 向当前页插入纯文本（权限 `write:page.current`；1.0.0 起）

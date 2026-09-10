@@ -90,6 +90,12 @@ struct RunState {
     insert_text: String,
     /// 本次执行被授权的权限（来自 manifest.permissions；老 manifest 走基线授权）。
     permissions: Vec<String>,
+    /// 当前打开的页面 id（`api.backlinks.list()` / `api.files.list()` 省略参数时用它）。
+    current_page_id: Option<String>,
+    /// 数据能力的读取目标：**活动空间** id（由主线程解析后传入）。
+    read_space: Option<String>,
+    /// 显式 app 数据目录。生产为 None（用全局目录）；测试注入临时目录用。
+    read_dir: Option<PathBuf>,
     /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
     /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
     toasts: Vec<String>,
@@ -496,6 +502,53 @@ fn resolve_permissions(manifest: &Manifest) -> (Vec<String>, Vec<String>) {
     }
 }
 
+thread_local! {
+    /// 插件线程内的一次性读连接（**惰性**打开，随线程结束释放）。
+    /// 插件线程没有 `State<Db>`，所以数据能力自己开一条连接：`open_space_conn` 已经
+    /// 处理好 E1 加密（PRAGMA key）、WAL、meta attach 与建表迁移。
+    static READ_CONN: RefCell<Option<Connection>> = const { RefCell::new(None) };
+}
+
+/// 把打开空间库的失败映射成**稳定错误码**（作者能据此分支处理，用户看到人话）。
+///
+/// 加密空间在会话锁定时会走到 `space_locked`——插件调用不能成为绕过启动锁的通路，
+/// 更不能静默返回空数据装作"没有内容"（方案 §3.9）。
+fn map_open_error(e: String) -> String {
+    if e.contains("会话未解锁") || e.contains("locked") {
+        "space_locked: 当前空间已加密且会话未解锁，插件不可读".to_string()
+    } else {
+        format!("db_error: {e}")
+    }
+}
+
+/// 在插件线程内借一条到**活动空间**的读连接。
+///
+/// 三条约束（方案 §3.9）：
+///   1. 只作用于活动空间——插件拿不到别的空间的数据，不是靠自觉而是宿主不给；
+///   2. 空间已加密而会话未解锁 → 返回 `space_locked`，**明确报错**，不静默返回空、
+///      更不得隐式触发解锁（插件调用不能成为绕过启动锁的通路）；
+///   3. 惰性打开：不用数据能力的插件不付这个成本。
+fn with_read_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+    READ_CONN.with(|cell| {
+        if cell.borrow().is_none() {
+            let (space, dir) = RUN_STATE.with(|s| {
+                let st = s.borrow();
+                (st.read_space.clone(), st.read_dir.clone())
+            });
+            let space =
+                space.ok_or_else(|| "space_unknown: 无法确定当前空间，数据能力不可用".to_string())?;
+            let opened = match &dir {
+                Some(d) => crate::db::open_space_conn_at(&space, d),
+                None => crate::db::open_space_conn(&space),
+            };
+            let conn = opened.map_err(map_open_error)?;
+            *cell.borrow_mut() = Some(conn);
+        }
+        let borrow = cell.borrow();
+        f(borrow.as_ref().expect("read conn 刚被赋值"))
+    })
+}
+
 /// 一个能力的实现：成功给 JSON 值（shim 侧 JSON.parse），失败给「错误码: 说明」。
 type CapResult = Result<serde_json::Value, String>;
 
@@ -530,6 +583,165 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
     let level = if level.is_empty() { "info" } else { level };
     push_log(&pid, level, message);
     Ok(serde_json::Value::Null)
+}
+
+fn cap_pages_list(limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 200);
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, updated_at FROM pages WHERE deleted_at IS NULL
+                 ORDER BY updated_at DESC LIMIT ?1",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows = stmt
+            .query_map(params![limit], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "updated_at": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+fn cap_pages_get(id: &str) -> CapResult {
+    with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        let row = c
+            .query_row(
+                "SELECT id, title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![id],
+                |r| {
+                    Ok(serde_json::json!({
+                        "id": r.get::<_, String>(0)?,
+                        "title": r.get::<_, String>(1)?,
+                        "content_text": r.get::<_, String>(2)?,
+                        "kind": r.get::<_, String>(3)?,
+                    }))
+                },
+            )
+            .optional()
+            .map_err(|e| format!("db_error: {e}"))?;
+        Ok(row.unwrap_or(serde_json::Value::Null))
+    })
+}
+
+fn cap_pages_search(q: &str, limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 100);
+    // v1 用子串匹配（诚实标注：不做相关度排序，FTS 复用留后续）。
+    let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let pattern = format!("%{escaped}%");
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT id, title, content_text FROM pages
+                 WHERE deleted_at IS NULL
+                   AND (title LIKE ?1 ESCAPE '\\' OR content_text LIKE ?1 ESCAPE '\\')
+                 ORDER BY updated_at DESC LIMIT ?2",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows = stmt
+            .query_map(params![pattern, limit], |r| {
+                let text: String = r.get::<_, String>(2)?;
+                let snippet: String = text.chars().take(80).collect();
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "title": r.get::<_, String>(1)?,
+                    "snippet": snippet,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+fn cap_tags_list() -> CapResult {
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT t.id, t.name, COUNT(pt.page_id) FROM tags t
+                 LEFT JOIN page_tags pt ON pt.tag_id = t.id
+                 GROUP BY t.id, t.name ORDER BY t.name",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "page_count": r.get::<_, i64>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+/// 省略 pageId 时用当前打开的页面（没有就明确报错，而不是猜一个）。
+fn target_page_or_current(page_id: Option<&str>) -> Result<String, String> {
+    match page_id {
+        Some(p) if !p.is_empty() => Ok(p.to_string()),
+        _ => RUN_STATE
+            .with(|s| s.borrow().current_page_id.clone())
+            .ok_or_else(|| "bad_args: 未指定 pageId，且当前没有打开的页面".to_string()),
+    }
+}
+
+fn cap_backlinks_list(page_id: Option<&str>) -> CapResult {
+    let target = target_page_or_current(page_id)?;
+    with_read_conn(|c| {
+        let mut stmt = c
+            .prepare(
+                "SELECT b.source_page_id, COALESCE(p.title, ''), b.kind FROM backlinks b
+                 LEFT JOIN pages p ON p.id = b.source_page_id
+                 WHERE b.target_page_id = ?1",
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows = stmt
+            .query_map(params![target], |r| {
+                Ok(serde_json::json!({
+                    "source_page_id": r.get::<_, String>(0)?,
+                    "source_title": r.get::<_, String>(1)?,
+                    "kind": r.get::<_, String>(2)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
+}
+
+fn cap_files_list(page_id: Option<&str>) -> CapResult {
+    let target = target_page_or_current(page_id)?;
+    with_read_conn(|c| {
+        // 只给元数据，**不给字节**——读文件内容是另一个（更高风险的）能力。
+        let mut stmt = c
+            .prepare("SELECT id, name, mime, size FROM attachments WHERE page_id = ?1 ORDER BY created_at DESC")
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows = stmt
+            .query_map(params![target], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                    "mime": r.get::<_, String>(2)?,
+                    "size": r.get::<_, i64>(3)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::Value::Array(rows))
+    })
 }
 
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
@@ -573,10 +785,27 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
             None => Err(format!("bad_args: 缺少参数 {name}")),
         }
     };
+    let arg_i64 = |name: &str, default: i64| -> i64 {
+        args.get(name)
+            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .unwrap_or(default)
+    };
+    let arg_opt_str = |name: &str| -> Option<String> {
+        match args.get(name) {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        }
+    };
 
     let out = match cap.id {
         "page.current" => cap_page_current(),
         "pages.count" => cap_pages_count(),
+        "pages.list" => cap_pages_list(arg_i64("limit", 50)),
+        "pages.get" => cap_pages_get(&arg_str("id")?),
+        "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 20)),
+        "tags.list" => cap_tags_list(),
+        "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
+        "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -737,6 +966,9 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             current_page_json: state.current_page_json.clone(),
             page_count: state.page_count,
             permissions: state.permissions.clone(),
+            current_page_id: state.current_page_id.clone(),
+            read_space: state.read_space.clone(),
+            read_dir: state.read_dir.clone(),
             insert_text: String::new(),
             toasts: Vec::new(),
         }
@@ -784,6 +1016,9 @@ fn run_command_timeout(
         current_page_json: state.current_page_json.clone(),
         page_count: state.page_count,
         permissions: state.permissions.clone(),
+        current_page_id: state.current_page_id.clone(),
+        read_space: state.read_space.clone(),
+        read_dir: state.read_dir.clone(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
@@ -1028,7 +1263,7 @@ pub async fn run_plugin_command(
             })
             .map(|n| n as usize)
             .unwrap_or(0);
-        let current_page_json = if let Some(id) = current_id {
+        let current_page_json = if let Some(id) = current_id.as_deref() {
             c.query_row(
                 "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
@@ -1040,6 +1275,16 @@ pub async fn run_plugin_command(
         };
         (page_count, current_page_json)
     };
+    // 数据能力的读取目标：活动空间。由主线程解析后交给插件线程（它没有 State<Db>）。
+    let read_space = {
+        let c = conn(&db);
+        c.query_row(
+            "SELECT value FROM meta.sync_state WHERE key = ?1",
+            params![crate::db::ACTIVE_KEY],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    };
     let (permissions, warnings) = resolve_permissions(&manifest);
     for w in &warnings {
         push_log(&plugin_id, "warn", w);
@@ -1049,6 +1294,9 @@ pub async fn run_plugin_command(
         page_count,
         current_page_json,
         permissions,
+        current_page_id: current_id,
+        read_space,
+        read_dir: None,
         insert_text: String::new(),
         toasts: Vec::new(),
     };
@@ -1759,6 +2007,147 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert!(plugin_audit(Some("别的插件".to_string()), None).is_empty());
         assert_eq!(plugin_audit(Some("cap".to_string()), Some(3)).len(), 3);
         clear_plugin_audit();
+    }
+
+    // ---- 读能力（活动空间的数据访问） ----
+
+    /// 准备一个带内容的临时空间库，返回 (空间 id, 目录)。
+    fn seed_space(tag: &str) -> (String, PathBuf) {
+        let dir = temp_dir(tag);
+        // 生产路径由 db::init 建 spaces/ 目录；测试里自己补上。
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let space = "s1".to_string();
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            let now = now_ms();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('p1','s1','会议纪要','{}','本周进展与下周计划','page',?1,?1)",
+                params![now],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('p2','s1','读书笔记','{}','无关内容','page',?1,?1)",
+                params![now + 1],
+            )
+            .unwrap();
+            c.execute("INSERT INTO tags (id, name) VALUES ('t1','工作')", []).unwrap();
+            c.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('p1','t1')", []).unwrap();
+            c.execute(
+                "INSERT INTO backlinks (source_page_id, source_block_id, target_page_id, target_block_id, kind)
+                 VALUES ('p2','','p1','','link')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                 VALUES ('a1','p1','周报.pdf','h','application/pdf',1024,?1)",
+                params![now],
+            )
+            .unwrap();
+        }
+        (space, dir)
+    }
+
+    fn state_for_space(space: &str, dir: &Path) -> RunState {
+        RunState {
+            plugin_id: "t".to_string(),
+            permissions: capabilities_gen::permission_ids().iter().map(|s| s.to_string()).collect(),
+            current_page_id: Some("p1".to_string()),
+            read_space: Some(space.to_string()),
+            read_dir: Some(dir.to_path_buf()),
+            ..Default::default()
+        }
+    }
+
+    fn call(state: &RunState, method: &str, args: &str) -> Result<serde_json::Value, String> {
+        RUN_STATE.with(|s| *s.borrow_mut() = state.clone());
+        let out = dispatch_capability(method, args)?;
+        serde_json::from_str(&out).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn read_capabilities_query_the_active_space() {
+        let (space, dir) = seed_space("read-caps");
+        let st = state_for_space(&space, &dir);
+
+        let list = call(&st, "pages.list", "{}").unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 2, "应当列出本空间两个页面");
+        assert_eq!(list[0]["title"], "读书笔记", "按更新时间倒序");
+
+        let one = call(&st, "pages.get", r#"{"id":"p1"}"#).unwrap();
+        assert_eq!(one["title"], "会议纪要");
+        assert_eq!(one["content_text"], "本周进展与下周计划");
+        assert!(
+            call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
+            "不存在的页面返回 null 而不是报错"
+        );
+
+        let hits = call(&st, "pages.search", r#"{"q":"进展"}"#).unwrap();
+        assert_eq!(hits.as_array().unwrap().len(), 1, "只应命中含关键词的那页");
+        assert_eq!(hits[0]["id"], "p1");
+        assert!(hits[0]["snippet"].as_str().unwrap().contains("进展"));
+
+        let tags = call(&st, "tags.list", "{}").unwrap();
+        assert_eq!(tags[0]["name"], "工作");
+        assert_eq!(tags[0]["page_count"], 1);
+
+        let backs = call(&st, "backlinks.list", "{}").unwrap();
+        assert_eq!(backs.as_array().unwrap().len(), 1);
+        assert_eq!(backs[0]["source_page_id"], "p2");
+        assert_eq!(backs[0]["source_title"], "读书笔记");
+
+        let files = call(&st, "files.list", "{}").unwrap();
+        assert_eq!(files[0]["name"], "周报.pdf");
+        assert_eq!(files[0]["size"], 1024);
+        assert!(files[0].get("content").is_none(), "只能给元数据，不给字节");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_capabilities_still_need_permission() {
+        let (space, dir) = seed_space("read-perm");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec![]; // 什么都不授权
+        let err = call(&st, "pages.list", "{}").unwrap_err();
+        assert!(err.contains("permission_denied"), "实际: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn data_capability_without_a_space_says_so_instead_of_guessing() {
+        // 无法确定活动空间时必须明确失败，而不是静默返回空列表装作"没有数据"。
+        let st = RunState {
+            plugin_id: "t".to_string(),
+            permissions: vec!["read:pages".to_string()],
+            read_space: None,
+            ..Default::default()
+        };
+        let err = call(&st, "pages.list", "{}").unwrap_err();
+        assert!(err.contains("space_unknown"), "实际: {err}");
+    }
+
+    #[test]
+    fn page_scoped_capability_needs_an_id_or_an_open_page() {
+        let (space, dir) = seed_space("read-target");
+        let mut st = state_for_space(&space, &dir);
+        st.current_page_id = None;
+        let err = call(&st, "backlinks.list", "{}").unwrap_err();
+        assert!(err.contains("bad_args"), "实际: {err}");
+        // 显式给 id 就没事
+        let ok = call(&st, "backlinks.list", r#"{"pageId":"p1"}"#).unwrap();
+        assert_eq!(ok.as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn locked_space_maps_to_a_stable_error_code() {
+        // 端到端要真建一个加密空间；这里钉住映射本身，保证错误码稳定（作者可分支）。
+        assert!(map_open_error("工作空间已加密但会话未解锁".to_string()).starts_with("space_locked"));
+        assert!(map_open_error("file is not a database (locked)".to_string()).starts_with("space_locked"));
+        assert!(map_open_error("disk I/O error".to_string()).starts_with("db_error"));
     }
 
     // ---- 内存预算（分配炸弹） ----

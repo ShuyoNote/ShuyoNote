@@ -20,6 +20,24 @@
       "title": "向当前页写入纯文本",
       "risk": "low",
       "desc": "往当前页面插入一段纯文本（不接受 HTML/Markdown，不可删改既有内容）"
+    },
+    {
+      "id": "read:tags",
+      "title": "读取本空间标签",
+      "risk": "low",
+      "desc": "读取本空间的标签清单（名称与关联页面数）"
+    },
+    {
+      "id": "read:backlinks",
+      "title": "读取反链",
+      "risk": "low",
+      "desc": "读取哪些页面引用了某个页面"
+    },
+    {
+      "id": "read:files",
+      "title": "读取附件元数据",
+      "risk": "low",
+      "desc": "读取页面的附件元数据（名称/类型/大小），**不含文件字节**"
     }
   ],
   "capabilities": [
@@ -30,7 +48,10 @@
       "scope": "current-space",
       "permission": "read:page.current",
       "since": "1.0.0",
-      "jsPath": ["page", "current"],
+      "jsPath": [
+        "page",
+        "current"
+      ],
       "args": [],
       "returns": {
         "type": "string",
@@ -45,10 +66,167 @@
       "scope": "current-space",
       "permission": "read:pages",
       "since": "1.0.0",
-      "jsPath": ["pages", "count"],
+      "jsPath": [
+        "pages",
+        "count"
+      ],
       "args": [],
-      "returns": { "type": "number", "desc": "本空间未删除页面的数量" },
+      "returns": {
+        "type": "number",
+        "desc": "本空间未删除页面的数量"
+      },
       "rust": "cap_pages_count"
+    },
+    {
+      "id": "pages.list",
+      "title": "列出本空间页面",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "pages",
+        "list"
+      ],
+      "args": [
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 50,
+          "desc": "最多返回多少条（上限 200）"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "desc": "[{id, title, updated_at}]，按更新时间倒序；不含正文"
+      },
+      "rust": "cap_pages_list"
+    },
+    {
+      "id": "pages.get",
+      "title": "读取指定页面",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "pages",
+        "get"
+      ],
+      "args": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "desc": "页面 id"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "desc": "{id, title, content_text, kind}；不存在返回 null"
+      },
+      "rust": "cap_pages_get"
+    },
+    {
+      "id": "pages.search",
+      "title": "搜索本空间页面",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "pages",
+        "search"
+      ],
+      "args": [
+        {
+          "name": "q",
+          "type": "string",
+          "required": true,
+          "desc": "关键词"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 20,
+          "desc": "最多返回多少条（上限 100）"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "desc": "[{id, title, snippet}]；v1 是子串匹配，不做相关度排序"
+      },
+      "rust": "cap_pages_search"
+    },
+    {
+      "id": "tags.list",
+      "title": "列出本空间标签",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:tags",
+      "since": "1.0.0",
+      "jsPath": [
+        "tags",
+        "list"
+      ],
+      "args": [],
+      "returns": {
+        "type": "array",
+        "desc": "[{id, name, page_count}]"
+      },
+      "rust": "cap_tags_list"
+    },
+    {
+      "id": "backlinks.list",
+      "title": "列出反链",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:backlinks",
+      "since": "1.0.0",
+      "jsPath": [
+        "backlinks",
+        "list"
+      ],
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "目标页面 id；省略则用当前打开的页面"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "desc": "[{source_page_id, source_title, kind}]"
+      },
+      "rust": "cap_backlinks_list"
+    },
+    {
+      "id": "files.list",
+      "title": "列出页面附件元数据",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:files",
+      "since": "1.0.0",
+      "jsPath": [
+        "files",
+        "list"
+      ],
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": false,
+          "desc": "页面 id；省略则用当前打开的页面"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "desc": "[{id, name, mime, size}]，**不含字节**"
+      },
+      "rust": "cap_files_list"
     },
     {
       "id": "editor.insertText",
@@ -57,9 +235,21 @@
       "scope": "current-space",
       "permission": "write:page.current",
       "since": "1.0.0",
-      "jsPath": ["editor", "insertText"],
-      "args": [{ "name": "text", "type": "string", "required": true, "desc": "要插入的纯文本" }],
-      "returns": { "type": "void" },
+      "jsPath": [
+        "editor",
+        "insertText"
+      ],
+      "args": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "desc": "要插入的纯文本"
+        }
+      ],
+      "returns": {
+        "type": "void"
+      },
       "rust": "cap_editor_insert_text"
     },
     {
@@ -69,9 +259,21 @@
       "scope": "app",
       "permission": null,
       "since": "1.0.0",
-      "jsPath": ["notify"],
-      "args": [{ "name": "message", "type": "string", "required": true, "desc": "提示内容" }],
-      "returns": { "type": "void", "desc": "执行结束后随结果一起弹给用户" },
+      "jsPath": [
+        "notify"
+      ],
+      "args": [
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "desc": "提示内容"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "desc": "执行结束后随结果一起弹给用户"
+      },
       "rust": "cap_user_notify"
     },
     {
@@ -81,19 +283,33 @@
       "scope": "app",
       "permission": null,
       "since": "1.0.0",
-      "jsPath": ["log"],
+      "jsPath": [
+        "log"
+      ],
       "args": [
-        { "name": "message", "type": "string", "required": true, "desc": "日志内容" },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "desc": "日志内容"
+        },
         {
           "name": "level",
           "type": "string",
           "required": false,
           "default": "info",
-          "enum": ["info", "warn", "error"],
+          "enum": [
+            "info",
+            "warn",
+            "error"
+          ],
           "desc": "日志级别"
         }
       ],
-      "returns": { "type": "void", "desc": "进插件日志环形缓冲，可在插件面板查看" },
+      "returns": {
+        "type": "void",
+        "desc": "进插件日志环形缓冲，可在插件面板查看"
+      },
       "rust": "cap_log_write"
     }
   ],
@@ -103,18 +319,54 @@
       "capability": "page.current",
       "note": "v1 之前的老写法，保留以兼容已装在磁盘上的插件；新插件请用 api.*"
     },
-    { "global": "__pages", "capability": "pages.count", "note": "同上（注意：返回数量而非列表）" },
-    { "global": "__toast", "capability": "user.notify", "note": "同上" },
-    { "global": "__insert", "capability": "editor.insertText", "note": "同上" }
+    {
+      "global": "__pages",
+      "capability": "pages.count",
+      "note": "同上（注意：返回数量而非列表）"
+    },
+    {
+      "global": "__toast",
+      "capability": "user.notify",
+      "note": "同上"
+    },
+    {
+      "global": "__insert",
+      "capability": "editor.insertText",
+      "note": "同上"
+    }
   ],
   "errorCodes": [
-    { "code": "unknown_capability", "desc": "调用了注册表里没有的能力" },
-    { "code": "permission_denied", "desc": "插件未在 manifest.permissions 里声明该能力所需权限" },
-    { "code": "bad_args", "desc": "能力参数不符合注册表里的 args 声明" },
-    { "code": "space_locked", "desc": "目标空间处于锁定态（E1 加密），不可读（留待 M11.7 / 方案 §3.9 使用）" },
-    { "code": "timeout", "desc": "执行超出墙钟预算" },
-    { "code": "loop_limit", "desc": "执行超出循环预算" },
-    { "code": "out_of_memory", "desc": "执行超出内存预算（64 MiB）" },
-    { "code": "plugin_error", "desc": "插件自身抛错" }
+    {
+      "code": "unknown_capability",
+      "desc": "调用了注册表里没有的能力"
+    },
+    {
+      "code": "permission_denied",
+      "desc": "插件未在 manifest.permissions 里声明该能力所需权限"
+    },
+    {
+      "code": "bad_args",
+      "desc": "能力参数不符合注册表里的 args 声明"
+    },
+    {
+      "code": "space_locked",
+      "desc": "目标空间处于锁定态（E1 加密），不可读（留待 M11.7 / 方案 §3.9 使用）"
+    },
+    {
+      "code": "timeout",
+      "desc": "执行超出墙钟预算"
+    },
+    {
+      "code": "loop_limit",
+      "desc": "执行超出循环预算"
+    },
+    {
+      "code": "out_of_memory",
+      "desc": "执行超出内存预算（64 MiB）"
+    },
+    {
+      "code": "plugin_error",
+      "desc": "插件自身抛错"
+    }
   ]
 }

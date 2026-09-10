@@ -13,7 +13,19 @@ var api = {
     current: function() { return __capCall("page.current", {}); }
   },
   pages: {
-    count: function() { return __capCall("pages.count", {}); }
+    count: function() { return __capCall("pages.count", {}); },
+    list: function(limit) { return __capCall("pages.list", { limit: limit === undefined ? 50 : Number(limit) }); },
+    get: function(id) { return __capCall("pages.get", { id: String(id) }); },
+    search: function(q, limit) { return __capCall("pages.search", { q: String(q), limit: limit === undefined ? 20 : Number(limit) }); }
+  },
+  tags: {
+    list: function() { return __capCall("tags.list", {}); }
+  },
+  backlinks: {
+    list: function(pageId) { return __capCall("backlinks.list", { pageId: String(pageId) }); }
+  },
+  files: {
+    list: function(pageId) { return __capCall("files.list", { pageId: String(pageId) }); }
   },
   editor: {
     insertText: function(text) { return __capCall("editor.insertText", { text: String(text) }); }
