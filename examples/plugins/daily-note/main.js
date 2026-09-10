@@ -19,6 +19,25 @@ function today() {
 }
 
 register({
+  id: "daily-note.todo",
+  title: "每日笔记：写一条待办",
+  description: "追加到**当前打开的页面**（落库前先给你确认）",
+  params: [
+    { name: "text", label: "内容", type: "string", required: true, placeholder: "要做什么" },
+    { name: "minutes", label: "预计分钟", type: "number", default: 25 },
+    { name: "urgent", label: "标记紧急", type: "boolean" }
+  ],
+  run: function (args) {
+    var line = "- [ ] " + String(args.text) + "（预计 " + String(args.minutes) + " 分钟）" + (args.urgent ? " ⚡" : "");
+    // 省略 pageId → 作用于当前打开的页面。
+    // 注意：这里**不能**写"追加到今天的日记页"——建页那步产出的是草稿，页面 id 要等
+    // 用户确认后才存在，插件在这次运行里拿不到它（已记入 M11.8 的待办）。
+    var draft = api.blocks.append(line);
+    return draft.summary;
+  }
+});
+
+register({
   id: "daily-note.create",
   title: "每日笔记：创建今天的日记",
   description: "在顶层新建「今天日期」页面；今天已经建过就只提醒",

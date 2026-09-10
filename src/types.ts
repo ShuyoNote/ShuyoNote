@@ -80,6 +80,23 @@ export interface PluginCommandMeta {
   title: string;
   description: string;
   close_on_run: boolean;
+  /** 命令参数声明（作者在 `register({ params })` 里写）；宿主据此渲染参数表单。 */
+  params: PluginCommandParam[];
+}
+
+/**
+ * 一个命令参数的声明。宿主**只按这份声明**渲染表单与校验，
+ * 所以作者改 schema 就等于改表单，不存在"表单与实现不一致"。
+ */
+export interface PluginCommandParam {
+  name: string;
+  label: string;
+  type: "string" | "number" | "boolean" | "select";
+  required: boolean;
+  placeholder: string;
+  options: { value: string; label: string }[];
+  /** 默认值（可能缺省：没有默认值就不预填）。 */
+  default?: unknown;
 }
 
 /**

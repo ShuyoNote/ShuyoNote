@@ -306,6 +306,41 @@ register({
   - `message`: `string` —— 日志内容
   - `level`: `string`（可选），默认 `info` —— 日志级别
 
+## 4.5 命令参数（宿主渲染表单）
+
+命令可以声明参数：宿主会**照着声明**渲染一个表单，用户填完才执行（`run(args)` 收到整理好的对象）。
+声明什么就渲染什么，所以不存在「表单和实现对不上」这回事。
+
+```js
+register({
+  id: "my-plugin.todo",
+  title: "写一条待办",
+  params: [
+    { name: "text",    label: "内容", type: "string", required: true },
+    { name: "minutes", label: "预计分钟", type: "number", default: 25 },
+    { name: "urgent",  label: "标记紧急", type: "boolean" },
+    { name: "bucket",  label: "归到", type: "select", options: ["今天", "本周"] }
+  ],
+  run: function (args) {
+    return api.blocks.append(args.text + "（预计 " + args.minutes + " 分钟）");
+  }
+});
+```
+
+规则（都可预期，不会悄悄替你做主）：
+
+- **必填留空 → 表单拒绝提交**（不会传空串下去，空串往往是有效值）；
+- **非必填留空 → 不传这个键**，插件里 `args.x === undefined` 即可按「没给」处理；
+- `number` 会转成数字，填了非数字会提示；`0` 是有效值；
+- `boolean` **总是传布尔值**（没勾就是 `false`）；
+- 类型写错（拼错的 `type`）按 `string` 处理——宁可给个文本框，也不让命令从面板里消失。
+
+两个诚实的边界：**参数值不做静态类型推导**（它来自运行期表单，`args` 是 `Record<string, any>`，
+按自己的声明收窄即可）；**参数不构成安全边界**（它只会流进插件自己的 JS），真正碰数据的是 `api.*`，
+
+以及体积上限：
+那一步宿主逐次校验权限与参数。
+
 ## 5. 日志与提示
 
 - `api.log(message, level?)` —— 写日志，进插件日志环形缓冲（插件面板「日志」可查）。

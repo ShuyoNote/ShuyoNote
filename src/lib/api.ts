@@ -113,8 +113,8 @@ export const api = {
     invoke("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
   listPlugins: () => invoke("list_plugins"),
   setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
-  runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null) =>
-    invoke("run_plugin_command", { pluginId, commandId, currentId }),
+  runPluginCommand: (pluginId: string, commandId: string, currentId?: string | null, argsJson?: string) =>
+    invoke("run_plugin_command", { pluginId, commandId, currentId, argsJson }),
   uninstallPlugin: (id: string) => invoke("uninstall_plugin", { id }),
   installPlugin: (sourcePath: string) => invoke("install_plugin", { sourcePath }),
   openPluginDir: () => invoke("open_plugin_dir"),

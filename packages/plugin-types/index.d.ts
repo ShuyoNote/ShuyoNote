@@ -1,15 +1,59 @@
 // 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 // 用法：tsconfig 里把 "@shuyonote/plugin-types" 指到本文件，即可获得 api.* 的补全与类型检查。
 
-/** 插件命令：`register(...)` 注册后出现在命令面板（Ctrl+K）。 */
+/** 命令参数：宿主按这份声明**渲染参数表单**，所以声明什么就渲染什么、就校验什么。 */
+export interface PluginCommandParam {
+  /** 参数名（`run(args)` 里的键）。 */
+  name: string;
+  /** 表单上显示的名字；不写就用 `name`。 */
+  label?: string;
+  /** 控件类型：文本框 / 数字框 / 复选框 / 下拉框（默认 `string`）。 */
+  type?: "string" | "number" | "boolean" | "select";
+  /** 必填：留空时表单会拒绝提交（而不是传空串下去）。 */
+  required?: boolean;
+  placeholder?: string;
+  /** `type: "select"` 的候选项：字符串数组，或 `{ value, label }`。 */
+  options?: (string | { value: string; label?: string })[];
+  /** 默认值（表单预填）。 */
+  default?: string | number | boolean;
+}
+
+/**
+ * 插件命令：`register(...)` 注册后出现在命令面板（Ctrl+K）。
+ *
+ * 返回值两种形态：**字符串**（显示在命令面板底部）或**结构化对象**
+ * （`{ message, insert, toasts }`，等价于调用对应的宿主原语）。
+ */
 export interface PluginCommand {
   id: string;
   title: string;
   description?: string;
   /** 执行后关闭命令面板（适合跳转类命令）。 */
   closeOnRun?: boolean;
-  /** 返回值会显示在命令面板底部；抛错会被宿主转成可见错误。 */
-  run: () => string | void;
+  /** 声明参数后，宿主会先弹出参数表单再执行（`run(args)` 收到整理好的对象）。 */
+  params?: PluginCommandParam[];
+  /** 抛错会被宿主转成可见错误，不会让面板卡住。 */
+  run: (args: PluginCommandArgs) => string | number | PluginCommandResult | void;
+}
+
+/**
+ * 命令参数值。
+ *
+ * **刻意不做静态推导**：参数值是用户在表单里现填的（字符串/数字/布尔），
+ * 想按 `params` 声明推出精确类型需要让作者把数组写成 `as const`，而 TS 在
+ * 这里对字面量类型的推断并不可靠——推出一个**看起来精确、其实会撒谎**的类型，
+ * 比诚实地给出 `any` 更糟。插件里按自己的 `params` 声明收窄即可。
+ */
+export type PluginCommandArgs = Record<string, any>;
+
+/** 结构化返回：等价于调用对应的宿主原语。 */
+export interface PluginCommandResult {
+  /** 显示在命令面板底部的消息。 */
+  message?: string;
+  /** 追加到当前页末尾（需要 `write:page.current` 权限）。 */
+  insert?: string;
+  /** 提示（单个或数组），执行结束后弹给用户。 */
+  toasts?: string | string[];
 }
 
 /** 注册一个命令。插件顶层调用（每次执行都会重新 eval 插件代码）。 */

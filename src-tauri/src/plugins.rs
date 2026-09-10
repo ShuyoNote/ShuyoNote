@@ -23,7 +23,51 @@ pub struct PluginCommandMeta {
     /// 反序列化接受 `closeOnRun`，序列化仍输出 `close_on_run`。
     #[serde(alias = "closeOnRun")]
     pub close_on_run: bool,
+    /// 命令参数声明（作者在 `register({ params })` 里写）。
+    ///
+    /// **这是宿主渲染参数表单的唯一依据**——作者声明什么，表单就渲染什么、就校验什么，
+    /// 所以不存在"表单与实现不一致"。参数值本身**不构成安全边界**（它只会流进插件自己的
+    /// JS；真正碰数据的是 `api.*`，那一步宿主逐次校验权限与参数），因此这里不做第二套
+    /// 校验实现，只做 JSON 体积上限。
+    #[serde(default)]
+    pub params: Vec<PluginCommandParam>,
 }
+
+/// 一个命令参数的声明（对应作者侧的 `register({ params: [...] })`）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PluginCommandParam {
+    pub name: String,
+    /// 表单上显示的名字；作者不写就用 `name`。
+    #[serde(default)]
+    pub label: String,
+    /// `string` | `number` | `boolean` | `select`（未知值在 JS 侧已归一为 `string`）。
+    #[serde(rename = "type", default = "default_param_type")]
+    pub param_type: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub placeholder: String,
+    /// `select` 的候选项。
+    #[serde(default)]
+    pub options: Vec<PluginCommandParamOption>,
+    /// 默认值（`serde_json::Value`：可能是字符串/数字/布尔）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PluginCommandParamOption {
+    pub value: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+fn default_param_type() -> String {
+    "string".to_string()
+}
+
+/// 参数 JSON 的体积上限：命令参数是给表单用的短值，不该被当成数据传输通道。
+const MAX_ARGS_BYTES: usize = 16 * 1024;
 
 #[derive(Serialize, Clone)]
 pub struct PluginMeta {
@@ -339,6 +383,37 @@ const API_SHIM: &str = include_str!("../../capabilities/plugin-api-shim.js");
 const BOOTSTRAP: &str = r#"
 var __cmds = {};
 function register(cmd){ if(cmd && cmd.id){ __cmds[cmd.id] = cmd; } }
+// 参数声明归一化：宿主按它渲染表单。类型不认识就当 string（宁可给个文本框，
+// 也不要因为作者写错一个词就让整个命令消失）。
+function __normParams(list){
+  if(!list || !list.length) return [];
+  var out = [];
+  for(var i=0;i<list.length;i++){
+    var p = list[i];
+    if(!p || !p.name) continue;
+    var t = String(p.type === undefined ? "string" : p.type);
+    if(t !== "string" && t !== "number" && t !== "boolean" && t !== "select") t = "string";
+    var item = {
+      name: String(p.name),
+      label: p.label === undefined ? String(p.name) : String(p.label),
+      type: t,
+      required: p.required === true,
+      placeholder: p.placeholder === undefined ? "" : String(p.placeholder),
+      options: []
+    };
+    if(p.options && p.options.length){
+      for(var j=0;j<p.options.length;j++){
+        var o = p.options[j];
+        if(o === undefined || o === null) continue;
+        if(typeof o === "object") item.options.push({ value: String(o.value === undefined ? "" : o.value), label: o.label === undefined ? "" : String(o.label) });
+        else item.options.push({ value: String(o), label: String(o) });
+      }
+    }
+    if(p.default !== undefined) item.default = p.default;
+    out.push(item);
+  }
+  return out;
+}
 // 把已注册命令的元数据交回宿主（discovery 用）。走 JSON 而不是「注册时回调宿主」，
 // 是为了让命令对象只活在 JS 里，宿主不持有它；顺带 closeOnRun 能保持真正的布尔值。
 function __describe(){
@@ -349,16 +424,39 @@ function __describe(){
       id: String(c.id),
       title: c.title === undefined ? "" : String(c.title),
       description: c.description === undefined ? "" : String(c.description),
-      closeOnRun: c.closeOnRun === true
+      closeOnRun: c.closeOnRun === true,
+      params: __normParams(c.params)
     });
   }
   return JSON.stringify(out);
 }
-function __run(id){
+// 命令执行。`argsJson` 是宿主渲染的参数表单交回的值（没有参数时为空串）。
+//
+// 返回值两种形态都支持：
+//   字符串/数字          —— 直接作为结果消息（老写法，保持兼容）；
+//   对象 {message, toast, toasts, insert} —— 结构化返回，等价于调用对应的宿主原语。
+//   刻意**没有** `open`：那是"让宿主导航到某页"的新副作用面，属于 ABI 决策，
+//   不夹带在参数这一档里（见路线图 M11.8 备注）。
+function __run(id, argsJson){
   var c = __cmds[id];
   if(!c) return "__plugin: 命令不存在";
+  var args = {};
+  if(argsJson){
+    try { args = JSON.parse(argsJson); } catch(e) { return "__plugin: 参数不是合法 JSON"; }
+    // 数组也是 typeof "object"，但命令参数是**具名**的：退回空对象而不是把数组塞进去
+    if(args === null || typeof args !== "object" || args.length !== undefined) args = {};
+  }
   try {
-    var res = c.run();
+    var res = c.run(args);
+    if(res !== null && typeof res === "object"){
+      if(res.insert !== undefined && res.insert !== null) __insert(String(res.insert));
+      var list = res.toasts === undefined ? res.toast : res.toasts;
+      if(list !== undefined && list !== null){
+        if(typeof list === "string") __toast(list);
+        else if(list.length) for(var i=0;i<list.length;i++) __toast(String(list[i]));
+      }
+      return res.message === undefined || res.message === null ? "" : String(res.message);
+    }
     return res === undefined ? "" : String(res);
   } catch(e) {
     return "__plugin: 执行出错 " + e;
@@ -1280,14 +1378,15 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
 
 /// Execute a single plugin command in a fresh boa context (re-evaluate the
 /// plugin, then run the command). Returns the command's result string.
-fn run_command(source: &str, command_id: &str, state: &RunState) -> Result<String, String> {
+fn run_command(source: &str, command_id: &str, args_json: &str, state: &RunState) -> Result<String, String> {
     let mut ctx = plugin_context(RUN_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
     eval_plugin_preamble(&mut ctx)?;
     ctx.eval(Source::from_bytes(source.as_bytes()))
         .map_err(|e| format!("插件初始化失败: {e}"))?;
-    // __run('<id>') — Rust `{:?}` yields a quoted, escaped JS string literal.
-    let expr = format!("__run({:?})", command_id);
+    // __run('<id>', '<args>') — Rust `{:?}` yields a quoted, escaped JS string literal,
+    // 所以参数里的引号/换行不会破坏这次 eval。
+    let expr = format!("__run({:?}, {:?})", command_id, args_json);
     let value = ctx
         .eval(Source::from_bytes(expr.as_bytes()))
         .map_err(|e| format!("命令执行失败: {e}"))?;
@@ -1307,6 +1406,7 @@ fn run_command(source: &str, command_id: &str, state: &RunState) -> Result<Strin
 fn run_command_timeout(
     source: &str,
     command_id: &str,
+    args_json: &str,
     state: &RunState,
 ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>), String> {
     let source = source.to_string();
@@ -1325,8 +1425,9 @@ fn run_command_timeout(
         insert_text: String::new(),
         toasts: Vec::new(),
     };
+    let args = args_json.to_string();
     with_timeout(RUN_TIMEOUT, "插件执行", move || {
-        let msg = run_command(&source, &command_id, &state)?;
+        let msg = run_command(&source, &command_id, &args, &state)?;
         let (insert, toasts, drafts) = RUN_STATE.with(|s| {
             let st = s.borrow();
             (st.insert_text.clone(), st.toasts.clone(), st.drafts.clone())
@@ -1543,9 +1644,25 @@ pub async fn run_plugin_command(
     plugin_id: String,
     command_id: String,
     current_id: Option<String>,
+    args_json: Option<String>,
 ) -> Result<PluginRunResult, String> {
     if !is_safe_plugin_id(&plugin_id) {
         return Err("非法插件 id".to_string());
+    }
+    // 参数是给表单用的短值：限个体积，别让它变成数据传输通道。
+    // 这里**不做**第二套 schema 校验：参数只会流进插件自己的 JS，真正碰数据的是
+    // `api.*`（宿主逐次校验权限与参数），所以校验留在表单侧（作者自己声明的 schema）
+    // 与能力侧即可，多一套实现只会多一处漂移。
+    let args_json = args_json.unwrap_or_default();
+    if args_json.len() > MAX_ARGS_BYTES {
+        return Err(format!("命令参数过大（上限 {MAX_ARGS_BYTES} 字节）"));
+    }
+    if !args_json.is_empty() {
+        match serde_json::from_str::<serde_json::Value>(&args_json) {
+            Ok(v) if v.is_object() => {}
+            Ok(_) => return Err("命令参数必须是 JSON 对象（如 {\"title\":\"…\"}）".to_string()),
+            Err(_) => return Err("命令参数不是合法 JSON".to_string()),
+        }
     }
     let root = plugins_root(&app)?;
     let dir = root.join(&plugin_id);
@@ -1604,7 +1721,7 @@ pub async fn run_plugin_command(
         insert_text: String::new(),
         toasts: Vec::new(),
     };
-    let (message, insert, toasts, drafts) = run_command_timeout(&source, &command_id, &state)?;
+    let (message, insert, toasts, drafts) = run_command_timeout(&source, &command_id, &args_json, &state)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
@@ -1791,7 +1908,7 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
             permissions: vec!["read:pages".to_string()],
             ..Default::default()
         };
-        let res = run_command(source, "t.hello", &state).unwrap();
+        let res = run_command(source, "t.hello", "", &state).unwrap();
         assert_eq!(res, "hi 7");
     }
 
@@ -1799,7 +1916,7 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
     fn reports_missing_command() {
         let source = r#"register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false, run: function(){ return "x"; } });"#;
         let state = RunState { page_count: 0, ..Default::default() };
-        let res = run_command(source, "t.nope", &state).unwrap();
+        let res = run_command(source, "t.nope", "", &state).unwrap();
         assert!(res.contains("命令不存在"));
     }
 
@@ -1814,7 +1931,7 @@ register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
             permissions: vec!["write:page.current".to_string()],
             ..Default::default()
         };
-        let message = run_command(source, "t.ins", &state).unwrap();
+        let message = run_command(source, "t.ins", "", &state).unwrap();
         assert_eq!(message, "ok");
         let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
         assert_eq!(insert, "hello from plugin");
@@ -1838,7 +1955,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
     return found.length ? ("LEAK:" + found.join(",")) : "clean";
   } });
 "#;
-        let res = run_command(source, "t.probe", &RunState::default()).unwrap();
+        let res = run_command(source, "t.probe", "", &RunState::default()).unwrap();
         assert_eq!(res, "clean", "沙箱里出现了宿主能力");
     }
 
@@ -1855,7 +1972,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         let source = r#"register({ id: "t.loop", title: "L", description: "", closeOnRun: false,
   run: function(){ while(true){} } });"#;
         let started = std::time::Instant::now();
-        let err = run_command(source, "t.loop", &RunState::default())
+        let err = run_command(source, "t.loop", "", &RunState::default())
             .expect_err("死循环应当被循环预算截断成错误，而不是正常返回");
         assert!(
             started.elapsed() < Duration::from_secs(20),
@@ -2049,6 +2166,101 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         }
     }
 
+    // ---- 命令参数（M11.8）----
+
+    #[test]
+    fn command_params_are_described_and_reach_run() {
+        let _g = log_test_guard();
+        let src = r#"
+register({
+  id: "p.run", title: "带参数", description: "",
+  params: [
+    { name: "title", type: "string", required: true, label: "标题" },
+    { name: "count", type: "number", default: 3 },
+    { name: "mode", type: "select", options: ["a", { value: "b", label: "乙" }] },
+    { name: "loud", type: "boolean" },
+    { name: "weird", type: "不认识的类型" }
+  ],
+  run: function (args) {
+    return args.title + "/" + args.count + "/" + args.mode + "/" + args.loud + "/" + typeof args.weird;
+  }
+});
+"#;
+        let (msg, _, _, _) = run_command_timeout(
+            src,
+            "p.run",
+            r#"{"title":"你好","count":2,"mode":"b","loud":true,"weird":"x"}"#,
+            &RunState::default(),
+        )
+        .unwrap();
+        assert_eq!(msg, "你好/2/b/true/string");
+
+        // 宿主渲染表单只依据 `__describe()` 交回的这份声明
+        let cmds = discover_commands(src, &RunState::default()).unwrap();
+        assert_eq!(cmds.len(), 1);
+        let params = &cmds[0].params;
+        assert_eq!(params.len(), 5);
+        assert_eq!(params[0].name, "title");
+        assert_eq!(params[0].label, "标题");
+        assert!(params[0].required);
+        assert_eq!(params[1].param_type, "number");
+        assert_eq!(params[1].default, Some(serde_json::json!(3)));
+        assert_eq!(params[2].param_type, "select");
+        assert_eq!(params[2].options.len(), 2);
+        assert_eq!(params[2].options[1].value, "b");
+        assert_eq!(params[2].options[1].label, "乙");
+        assert_eq!(params[3].param_type, "boolean");
+        // 不认识的类型归一为 string：宁可给个文本框，也不要让命令从面板里消失
+        assert_eq!(params[4].param_type, "string");
+        assert!(!params[0].placeholder.is_empty() || params[0].placeholder.is_empty());
+    }
+
+    #[test]
+    fn command_without_params_keeps_working() {
+        let _g = log_test_guard();
+        // 老插件：`run()` 不声明参数、也不接受参数 —— 必须原样可用
+        let src = r#"register({ id: "old.run", title: "老命令", run: function () { return "ok"; } });"#;
+        let (msg, _, _, _) = run_command_timeout(src, "old.run", "", &RunState::default()).unwrap();
+        assert_eq!(msg, "ok");
+        let cmds = discover_commands(src, &RunState::default()).unwrap();
+        assert!(cmds[0].params.is_empty(), "没声明参数时不应凭空多出参数");
+    }
+
+    #[test]
+    fn structured_return_translates_to_host_primitives() {
+        let _g = log_test_guard();
+        // 对象返回 = 结构化返回：message 走结果消息，insert/toast 等价于对应宿主原语
+        let src = r#"
+register({ id: "s.run", title: "结构化", run: function () {
+  return { message: "完成", insert: "追加的文本", toasts: ["提示一", "提示二"] };
+}});
+"#;
+        let (msg, insert, toasts, _) =
+            run_command_timeout(src, "s.run", "", &state_with(&["write:page.current"])).unwrap();
+        assert_eq!(msg, "完成");
+        assert_eq!(insert, "追加的文本");
+        assert_eq!(toasts, vec!["提示一".to_string(), "提示二".to_string()]);
+    }
+
+    #[test]
+    fn structured_return_still_obeys_permissions() {
+        let _g = log_test_guard();
+        // 结构化返回**不是**绕过权限的后门：没有 write:page.current 时 insert 仍被拒
+        let src = r#"register({ id: "s.deny", title: "结构化", run: function () { return { insert: "不该写入" }; } });"#;
+        let (_msg, insert, _, _) = run_command_timeout(src, "s.deny", "", &state_with(&[])).unwrap();
+        assert!(insert.is_empty(), "未授予写权限时不应写入，实际：{insert:?}");
+    }
+
+    #[test]
+    fn bad_args_json_is_reported_not_silently_ignored() {
+        let _g = log_test_guard();
+        let src = r#"register({ id: "a.run", title: "参数", run: function (args) { return "收到" + JSON.stringify(args); } });"#;
+        // 第一道在命令层（`run_plugin_command` 要求 JSON 对象）；这里验证第二道：
+        // 直接 eval 到 `__run` 时，非具名的参数（数组）也退回空对象而不是被当成参数用
+        let (msg, _, _, _) = run_command_timeout(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
+        assert_eq!(msg, "收到{}", "数组不是合法参数对象，应退回空对象");
+    }
+
     #[test]
     fn api_shim_exposes_v1_surface_with_permissions() {
         let _g = log_test_guard();
@@ -2061,7 +2273,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     return "count=" + api.pages.count();
   } });"#;
         let state = state_with(&["read:pages", "write:page.current"]);
-        let (msg, insert, toasts, _drafts) = run_command_timeout(source, "t.api", &state).unwrap();
+        let (msg, insert, toasts, _drafts) = run_command_timeout(source, "t.api", "", &state).unwrap();
         assert_eq!(msg, "count=0");
         assert_eq!(insert, "新文本");
         assert_eq!(toasts, vec!["来自 api.notify".to_string()]);
@@ -2074,7 +2286,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // 关键性质：权限是**后端逐次调用校验**的，不是只在 UI 上隐藏。
         let source = r#"register({ id: "t.deny", title: "D", description: "", closeOnRun: false,
   run: function(){ return "count=" + api.pages.count(); } });"#;
-        let res = run_command(source, "t.deny", &state_with(&[])).unwrap();
+        let res = run_command(source, "t.deny", "", &state_with(&[])).unwrap();
         assert!(res.contains("permission_denied"), "实际: {res}");
         assert!(res.contains("read:pages"), "错误里应点明缺哪个权限");
     }
@@ -2084,19 +2296,19 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // 老写法不能成为绕过点。
         let source = r#"register({ id: "t.legacy", title: "L", description: "", closeOnRun: false,
   run: function(){ return "count=" + __pages(); } });"#;
-        let denied = run_command(source, "t.legacy", &state_with(&[])).unwrap();
+        let denied = run_command(source, "t.legacy", "", &state_with(&[])).unwrap();
         assert!(denied.contains("permission_denied"), "老全局也要过权限校验，实际: {denied}");
 
         let mut ok_state = state_with(&["read:pages"]);
         ok_state.page_count = 7;
-        assert_eq!(run_command(source, "t.legacy", &ok_state).unwrap(), "count=7");
+        assert_eq!(run_command(source, "t.legacy", "", &ok_state).unwrap(), "count=7");
     }
 
     #[test]
     fn unknown_capability_is_rejected() {
         let source = r#"register({ id: "t.unknown", title: "U", description: "", closeOnRun: false,
   run: function(){ return String(__cap("pages.deleteEverything", "{}")); } });"#;
-        let res = run_command(source, "t.unknown", &state_with(&[])).unwrap();
+        let res = run_command(source, "t.unknown", "", &state_with(&[])).unwrap();
         assert!(res.contains("unknown_capability"), "实际: {res}");
     }
 
@@ -2278,7 +2490,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             plugin_id: "auditp".to_string(),
             ..Default::default()
         };
-        assert_eq!(run_command(denied, "t.audit", &state).unwrap(), "caught");
+        assert_eq!(run_command(denied, "t.audit", "", &state).unwrap(), "caught");
         let rows = plugin_audit(Some("auditp".to_string()), None);
         assert_eq!(rows.len(), 1, "应当留下一条审计");
         assert!(!rows[0].ok);
@@ -2289,7 +2501,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // 授权后的成功调用
         let mut ok_state = state.clone();
         ok_state.permissions = vec!["read:pages".to_string()];
-        assert_eq!(run_command(denied, "t.audit", &ok_state).unwrap(), "no-throw");
+        assert_eq!(run_command(denied, "t.audit", "", &ok_state).unwrap(), "no-throw");
         let rows = plugin_audit(Some("auditp".to_string()), None);
         assert_eq!(rows.len(), 2);
         assert!(rows[1].ok);
@@ -2562,7 +2774,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // 走完整链路：草稿必须随结果回传，前端才能拿它去确认
         let source = r#"register({ id: "w.one", title: "W", description: "", closeOnRun: false,
   run: function(){ api.pages.create("新页", "正文"); api.blocks.append("附注"); return "ok"; } });"#;
-        let (msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.one", &st).unwrap();
+        let (msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.one", "", &st).unwrap();
         assert_eq!(msg, "ok");
         let keys: Vec<&str> = drafts.iter().map(|d| d.key.as_str()).collect();
         assert_eq!(keys, vec!["create_page:新页", "append_block:p1"]);
@@ -2677,7 +2889,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
 
         let source = r#"register({ id: "w.pt", title: "W", description: "", closeOnRun: false,
   run: function(){ api.properties.set("attr1", "进行中"); api.tags.add("工作"); return "ok"; } });"#;
-        let (_msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.pt", &st).unwrap();
+        let (_msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.pt", "", &st).unwrap();
         assert_eq!(drafts.len(), 2);
         assert_eq!(drafts[0].payload["kind"], "set_page_prop");
         assert_eq!(drafts[0].payload["attrId"], "attr1");
@@ -2697,7 +2909,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // MAX_STRING_LENGTH ≈ 4 GB 的"规范形状"保护，不是预算，所以拦不住这个。
         let bomb = r#"register({ id: "t.bomb", title: "B", description: "", closeOnRun: false,
   run: function(){ return "x".repeat(1e8); } });"#;
-        let err = run_command_timeout(bomb, "t.bomb", &RunState::default())
+        let err = run_command_timeout(bomb, "t.bomb", "", &RunState::default())
             .expect_err("分配炸弹应当失败而不是正常返回");
         assert!(
             err.contains("内存预算"),
@@ -2708,7 +2920,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         // ——能跑到这里就说明进程没有被 abort 掉。
         let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
   run: function(){ return "fine"; } });"#;
-        let (msg, _, _, _) = run_command_timeout(ok, "t.ok", &RunState::default()).unwrap();
+        let (msg, _, _, _) = run_command_timeout(ok, "t.ok", "", &RunState::default()).unwrap();
         assert_eq!(msg, "fine");
     }
 
@@ -2732,7 +2944,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             plugin_id: "tp".to_string(),
             ..Default::default()
         };
-        let (msg, _insert, toasts, _drafts) = run_command_timeout(source, "t.toast", &state).unwrap();
+        let (msg, _insert, toasts, _drafts) = run_command_timeout(source, "t.toast", "", &state).unwrap();
         assert_eq!(msg, "done");
         assert_eq!(
             toasts,
@@ -2757,7 +2969,7 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
             plugin_id: "tlog".to_string(),
             ..Default::default()
         };
-        run_command_timeout(source, "t.log", &state).unwrap();
+        run_command_timeout(source, "t.log", "", &state).unwrap();
         let logs = plugin_logs(Some("tlog".to_string()), None);
         assert!(logs.iter().any(|l| l.level == "warn" && l.message == "注意"));
         assert!(

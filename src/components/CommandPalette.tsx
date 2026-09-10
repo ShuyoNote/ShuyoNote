@@ -9,11 +9,22 @@ import { applyDraftAndRefresh } from "../lib/applyDraftAndRefresh";
 import { useEditorStore } from "../store/editor";
 import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
+import { buildCommandArgs, initialParamValues } from "../lib/pluginParams";
+import type { PluginCommandParam } from "../types";
 
 type Item =
   | { kind: "page"; id: string; title: string }
   | { kind: "command"; id: string; title: string; description?: string }
-  | { kind: "plugin"; pluginId: string; id: string; title: string; description?: string; closeOnRun?: boolean }
+  | {
+      kind: "plugin";
+      pluginId: string;
+      id: string;
+      title: string;
+      description?: string;
+      closeOnRun?: boolean;
+      /** 命令参数声明：非空时先渲染宿主生成的参数表单，再执行。 */
+      params?: PluginCommandParam[];
+    }
   | { kind: "plugin-toggle"; pluginId: string; title: string };
 
 // Insert a text paragraph into the active editor (at cursor if possible, else
@@ -101,7 +112,7 @@ export function CommandPalette() {
           if (!q || c.title.toLowerCase().includes(q)) {
             out.push({
               kind: "plugin", pluginId: p.id, id: c.id, title: c.title, description: c.description,
-              closeOnRun: c.close_on_run,
+              closeOnRun: c.close_on_run, params: c.params,
             });
           }
         }
@@ -130,6 +141,33 @@ export function CommandPalette() {
 
   if (!open) return null;
 
+  // 参数表单：选中带参数的命令后，面板就地切成表单（而不是弹第二个对话框）。
+  const [paramItem, setParamItem] = useState<
+    Extract<Item, { kind: "plugin" }> | null
+  >(null);
+  const [paramValues, setParamValues] = useState<Record<string, string | boolean>>({});
+  const [paramError, setParamError] = useState("");
+
+  const openParams = (item: Extract<Item, { kind: "plugin" }>) => {
+    setParamValues(initialParamValues(item.params ?? []));
+    setParamError("");
+    setParamItem(item);
+  };
+
+  /** 表单提交：转换规则在 lib/pluginParams（纯函数、有单测），组件只负责渲染。 */
+  const submitParams = async () => {
+    const item = paramItem;
+    if (!item) return;
+    const built = buildCommandArgs(item.params ?? [], paramValues);
+    if (!built.ok) {
+      setParamError(built.error);
+      return;
+    }
+    setParamItem(null);
+    setParamError("");
+    await runPlugin(item, built.json);
+  };
+
   const run = async (item: Item) => {
     if (item.kind === "page") {
       openPage(item.id);
@@ -137,8 +175,36 @@ export function CommandPalette() {
       return;
     }
     if (item.kind === "plugin") {
+      if ((item.params?.length ?? 0) > 0) {
+        openParams(item);
+        return;
+      }
+      await runPlugin(item);
+      return;
+    }
+    if (item.kind === "plugin-toggle") {
+      // toggle 会把后端的原始错误文本带回来：失败时**不能**报成功。
+      const r = await usePlugins.getState().toggle(item.pluginId);
+      setResult(r.ok ? "已切换插件状态" : `切换插件失败：${r.error ?? "未知错误"}`);
+      return;
+    }
+    const cmd = getBuiltinCommands().find((c) => c.id === item.id);
+    if (!cmd) return;
+    const ctx: CommandContext = { pages, currentId };
+    try {
+      const msg = await cmd.run(ctx);
+      setResult(msg);
+      if (cmd.closeOnRun) setOpen(false);
+    } catch (e) {
+      setResult(String(e));
+    }
+  };
+
+  /** 插件命令的实际执行 + 结果处理（直接执行与表单提交共用同一条路径）。 */
+  const runPlugin = async (item: Extract<Item, { kind: "plugin" }>, argsJson?: string) => {
+    {
       try {
-        const res = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId);
+        const res = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId, argsJson);
         if (res.cancelled) {
           setResult("已取消执行（结果已丢弃）");
           return;
@@ -178,23 +244,6 @@ export function CommandPalette() {
       } catch (e) {
         setResult(String(e));
       }
-      return;
-    }
-    if (item.kind === "plugin-toggle") {
-      // toggle 会把后端的原始错误文本带回来：失败时**不能**报成功。
-      const r = await usePlugins.getState().toggle(item.pluginId);
-      setResult(r.ok ? "已切换插件状态" : `切换插件失败：${r.error ?? "未知错误"}`);
-      return;
-    }
-    const cmd = getBuiltinCommands().find((c) => c.id === item.id);
-    if (!cmd) return;
-    const ctx: CommandContext = { pages, currentId };
-    try {
-      const msg = await cmd.run(ctx);
-      setResult(msg);
-      if (cmd.closeOnRun) setOpen(false);
-    } catch (e) {
-      setResult(String(e));
     }
   };
 
@@ -207,7 +256,9 @@ export function CommandPalette() {
       setSel((s) => Math.max(s - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (flat[sel]) run(flat[sel]);
+      // 表单模式下 Enter 是「提交」，不是「再选一次同一条命令」（否则会原地打转）
+      if (paramItem) submitParams();
+      else if (flat[sel]) run(flat[sel]);
     }
   };
 
@@ -221,6 +272,7 @@ export function CommandPalette() {
       <span className="palette-title">
         {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : ""}
         {it.title}
+        {it.kind === "plugin" && (it.params?.length ?? 0) > 0 && <span className="palette-params-badge">需填参数</span>}
       </span>
       <span className="palette-desc">
         {it.kind === "page" ? "打开页面" : it.kind === "plugin-toggle" ? "切换插件" : it.description ?? ""}
@@ -239,6 +291,66 @@ export function CommandPalette() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
         />
+        {paramItem ? (
+          <div className="palette-form">
+            <div className="palette-form-title">{paramItem.title}</div>
+            {(paramItem.params ?? []).map((p) => (
+              <label key={p.name} className="palette-field">
+                <span className="palette-field-label">
+                  {p.label || p.name}
+                  {p.required && <span className="palette-field-req">*</span>}
+                </span>
+                {p.type === "boolean" ? (
+                  <input
+                    type="checkbox"
+                    checked={paramValues[p.name] === true}
+                    onChange={(e) => setParamValues((v) => ({ ...v, [p.name]: e.target.checked }))}
+                  />
+                ) : p.type === "select" ? (
+                  <select
+                    value={String(paramValues[p.name] ?? "")}
+                    onChange={(e) => setParamValues((v) => ({ ...v, [p.name]: e.target.value }))}
+                  >
+                    <option value="">（不指定）</option>
+                    {p.options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label || o.value}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={p.type === "number" ? "number" : "text"}
+                    placeholder={p.placeholder}
+                    value={String(paramValues[p.name] ?? "")}
+                    onChange={(e) => setParamValues((v) => ({ ...v, [p.name]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitParams();
+                      }
+                    }}
+                  />
+                )}
+              </label>
+            ))}
+            {paramError && <div className="palette-form-error">{paramError}</div>}
+            <div className="palette-form-actions">
+              <button className="set-btn" onClick={submitParams}>
+                执行
+              </button>
+              <button
+                className="set-btn"
+                onClick={() => {
+                  setParamItem(null);
+                  setParamError("");
+                }}
+              >
+                返回
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="palette-list" ref={listRef}>
           {pageItems.length > 0 && <div className="palette-group">{t("common.palettePages")}</div>}
           {pageItems.map((it, i) => renderItem(it, i))}
@@ -250,6 +362,7 @@ export function CommandPalette() {
           {pluginItems.map((it, i) => renderItem(it, pageItems.length + cmdItems.length + i))}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}
         </div>
+        )}
         {running && (
           // 「运行态可见 + 可取消」：此前插件命令跑起来后界面只有长时间无反应。
           // 取消放弃的是**等待**（结果被丢弃 → 无半途写入），不是插件线程本身。

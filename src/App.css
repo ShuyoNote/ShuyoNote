@@ -18491,3 +18491,62 @@ p:has(> .editor-drawing-container) {
 .pm-problem-ok {
   color: var(--text-dim);
 }
+
+/* 命令参数表单（由 manifest/register 的 schema 生成，作者声明什么就渲染什么） */
+.palette-params-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+.palette-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.palette-form-title {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.palette-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.palette-field-label {
+  flex: none;
+  width: 34%;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.palette-field-req {
+  color: var(--danger);
+  margin-left: 3px;
+}
+.palette-field input[type="text"],
+.palette-field input[type="number"],
+.palette-field select {
+  flex: 1;
+  min-width: 0;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 4px 8px;
+}
+.palette-form-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+.palette-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

@@ -68,7 +68,13 @@ interface PluginsState {
   uninstall: (id: string) => Promise<PluginActionResult>;
   install: (sourcePath: string) => Promise<PluginActionResult>;
   openDir: () => Promise<PluginActionResult>;
-  runCommand: (pluginId: string, commandId: string, currentId?: string | null) => Promise<PluginRunOutcome>;
+  runCommand: (
+    pluginId: string,
+    commandId: string,
+    currentId?: string | null,
+    /** 参数表单交回的值（JSON 字符串）；命令没有参数时不传。 */
+    argsJson?: string,
+  ) => Promise<PluginRunOutcome>;
   /** 当前正在执行的插件命令（null = 空闲）。 */
   running: RunningRun | null;
   /** 放弃等待当前执行（结果会被丢弃）。 */
@@ -178,14 +184,14 @@ export const usePlugins = create<PluginsState>((set) => ({
       return { ok: false, error };
     }
   },
-  runCommand: async (pluginId, commandId, currentId) => {
+  runCommand: async (pluginId, commandId, currentId, argsJson) => {
     const seq = ++runSeq;
     const title =
       usePlugins.getState().plugins.find((p) => p.id === pluginId)?.commands.find((c) => c.id === commandId)?.title ??
       commandId;
     set({ running: { seq, pluginId, commandId, title } });
     try {
-      const res = await api.runPluginCommand(pluginId, commandId, currentId);
+      const res = await api.runPluginCommand(pluginId, commandId, currentId, argsJson);
       if (cancelledRuns.delete(seq)) {
         // 用户已取消：丢弃结果。副作用都在返回值里，丢掉即「无半途写入」。
         return { message: "", cancelled: true };
