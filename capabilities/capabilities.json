@@ -184,7 +184,8 @@
         "type": "string",
         "desc": "当前页的 content_json 原始字符串（未解析；插件自行 JSON.parse）"
       },
-      "rust": "cap_page_current"
+      "rust": "cap_page_current",
+      "desc": "读取当前打开页面的正文（Lexical content_json 的原始字符串）。没有打开页面时返回空串。"
     },
     {
       "id": "pages.count",
@@ -202,7 +203,8 @@
         "type": "number",
         "desc": "本空间未删除页面的数量"
       },
-      "rust": "cap_pages_count"
+      "rust": "cap_pages_count",
+      "desc": "本空间未删除页面的数量。"
     },
     {
       "id": "pages.list",
@@ -229,7 +231,8 @@
         "ts": "{ id: string; title: string; created_at: number; updated_at: number }[]",
         "desc": "[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳"
       },
-      "rust": "cap_pages_list"
+      "rust": "cap_pages_list",
+      "desc": "列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序。参数: limit (可选, 默认 50, 上限 200)。不含正文。"
     },
     {
       "id": "pages.get",
@@ -311,7 +314,8 @@
         "ts": "{ id: string; name: string; page_count: number }[]",
         "desc": "[{id, name, page_count}]"
       },
-      "rust": "cap_tags_list"
+      "rust": "cap_tags_list",
+      "desc": "列出本空间用到的标签及各自的页面数。返回 [{id, name, page_count}]。"
     },
     {
       "id": "blocks.list",
@@ -428,7 +432,8 @@
       },
       "rust": "cap_editor_insert_text",
       "mediate": "immediate",
-      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
+      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容",
+      "desc": "把一段纯文本插入到当前页的光标处（没有光标则追加到页尾）。**即时生效**，不进草稿确认——它只动你正在编辑的这一页。参数: text (必填)。"
     },
     {
       "id": "pages.create",
@@ -529,7 +534,8 @@
         "type": "void",
         "desc": "执行结束后随结果一起弹给用户"
       },
-      "rust": "cap_user_notify"
+      "rust": "cap_user_notify",
+      "desc": "给用户弹一条提示。参数: message (必填)。命令执行结束后显示；插件没有 console，这是给人看的那条路（写日志用 log.write）。"
     },
     {
       "id": "kv.get",
@@ -565,7 +571,8 @@
         "ts": "string | null",
         "desc": "存过的字符串；键不存在返回 null"
       },
-      "rust": "cap_kv_get"
+      "rust": "cap_kv_get",
+      "desc": "读取插件自己的私有数据。参数: key (必填), scope (可选, 默认 space)。没存过返回 null。与 api.settings 的区别：settings 是**用户**设的、插件只读；kv 是插件自己存的。"
     },
     {
       "id": "kv.set",
@@ -607,7 +614,8 @@
       },
       "rust": "cap_kv_set",
       "mediate": "immediate",
-      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
+      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容",
+      "desc": "写插件自己的私有数据。参数: key (必填), value (必填), scope (可选, 默认 space = 随空间加密；'app' = 明文 meta 库，别放敏感内容)。**即时生效**：只动插件自己的数据，不碰笔记内容，所以不走草稿确认。"
     },
     {
       "id": "kv.remove",
@@ -642,7 +650,8 @@
       },
       "rust": "cap_kv_remove",
       "mediate": "immediate",
-      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
+      "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容",
+      "desc": "删掉插件自己的一条私有数据。参数: key (必填), scope (可选, 默认 space)。即时生效。"
     },
     {
       "id": "settings.get",
@@ -688,7 +697,8 @@
         "ts": "{ id: string; name: string; type: string }[]",
         "desc": "[{id, name, type}]——插件据此找到要写的属性 id"
       },
-      "rust": "cap_properties_list"
+      "rust": "cap_properties_list",
+      "desc": "列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。"
     },
     {
       "id": "properties.set",
@@ -727,7 +737,8 @@
         "ts": "{ drafted: true; summary: string }",
         "desc": "{drafted: true, summary}——**不代表已写入**"
       },
-      "rust": "cap_properties_set"
+      "rust": "cap_properties_set",
+      "desc": "设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。"
     },
     {
       "id": "tags.add",
@@ -761,7 +772,8 @@
         "ts": "{ drafted: true; summary: string }",
         "desc": "{drafted: true, summary}——**不代表已写入**"
       },
-      "rust": "cap_tags_add"
+      "rust": "cap_tags_add",
+      "desc": "给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。"
     },
     {
       "id": "log.write",
@@ -797,7 +809,8 @@
         "type": "void",
         "desc": "进插件日志环形缓冲，可在插件面板查看"
       },
-      "rust": "cap_log_write"
+      "rust": "cap_log_write",
+      "desc": "写一条插件日志（进插件面板可查的日志缓冲）。参数: message (必填), level (可选, 默认 'info')。**插件里没有 console**，排错只能靠它。"
     },
     {
       "id": "files.export",

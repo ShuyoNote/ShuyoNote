@@ -1,0 +1,22 @@
+{
+  "id": "page-status",
+  "name": "页面状态",
+  "version": "1.0.0",
+  "description": "给当前打开的页面一键标状态（待办 / 进行中 / 已完成）：有「状态」属性就写属性，没有就用同名标签兜底。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:properties",
+      "reason": "先查这个空间里有没有「状态」属性，决定是写属性还是用标签兜底"
+    },
+    {
+      "id": "write:properties",
+      "reason": "把当前页的「状态」属性改成你选的值（落库前会先把草稿给你确认）"
+    },
+    {
+      "id": "write:tags",
+      "reason": "没有「状态」属性时，用 #待办 / #进行中 / #已完成 标签兜底（同样是草稿）"
+    }
+  ]
+}

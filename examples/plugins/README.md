@@ -18,6 +18,8 @@
 | [`stale-triage/`](stale-triage/) | **陈旧页巡检**：找出 N 天没更新的页面，一次性地给它们打 #待整理——**一次运行产出多条草稿**，汇总成一次确认 | `pages.list` / `tags.list` / `tags.add`（草稿）
 | [`orphan-pages/`](orphan-pages/) | **孤立页面巡检**：逐页查反向链接，找出没人链过去的「孤岛」，生成清单草稿 | `pages.list` / `backlinks.list` / `pages.create`（草稿）
 | [`csv-table/`](csv-table/) | **CSV 转表格**：选中 `.csv` / `.tsv` → 转成 Markdown 表格放进一篇新页面（导入触发 + 引号/换行的容错解析） | 导入触发 / `pages.create`（草稿）
+| [`page-status/`](page-status/) | **页面状态**：给当前页一键标状态（待办/进行中/已完成）——**有「状态」属性就写属性，没有就用同名标签兜底**，用户永远知道走的是哪条路 | `properties.list` / `properties.set`（草稿）/ `tags.add`（草稿） |
+| [`search-collect/`](search-collect/) | **检索汇总**：用关键词检索本空间，把命中整理成一页清单草稿（资料收集时省事） | `pages.search` / `pages.create`（草稿） |
 | [`reading-board/`](reading-board/) | **阅读看板**：一张「最近更新」表 + 汇总，查询条件**引用用户设置**（零代码也能「用户可配」） | 无（声明式视图） |
 
 ## 教学示例

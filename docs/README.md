@@ -57,6 +57,8 @@ CHANGELOG.md             # 版本变更日志
 | [macos-updater.md](macos-updater.md) | **macOS 构建 · 签名 · 公证 · 自动更新**：mac 机器一次性准备（Xcode/rust/node）、Apple Developer ID 证书 + notarization 凭据、`tauri.conf.json` updater/endpoints/pubkey 配置、mac 上打签名+公证 dmg、`release.mjs` 发布与 mac `latest.json`、CI secrets、边界（未签名无法自动更新）、Mac 到手当天清单 |
 | [free-site-export-guide.md](free-site-export-guide.md) | **免费客户出口 · 网站/帮助站导出与发布指南**：免费/开源社区的**被动出口**——三层出口（就地提示/内置指南/外部静态站）、导出三种方式（M21 静态 wiki 导出建帮助站 / 仓库 Pages 建主页 / 应用内「关于」对话框）、干净链接策略（无 utm/埋点）、发布路径、与付费侧对照、发布核对清单与红线。**付费客户沟通/商务运营材料见私有 shuyonote-sync-server 仓库** |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
+| [plugin-api.md](plugin-api.md) | **插件 API（面向作者，生成物）**：只读这一份就能写出可安装可运行的插件——最小插件、能力表、权限与写中介、命令参数、事件钩子、更新时新增权限要用户重新确认、触发面、设置、零代码插件（声明式视图 / 视图参数化 / 主题）、导入导出、执行预算与错误码。由 `capabilities/capabilities.json` 生成（跑 `node scripts/gen-capabilities.mjs`） |
+| [plugin-recipes.md](plugin-recipes.md) | **插件配方（第一批可发布清单）**：可直接贴到社区的插件清单——每个插件的一句话定位、要哪些权限、怎么装，以及发布时可以直接用的三段话 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.10 UI 插件/M11.11 市场已评估未做（带启动闸门，见 [插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)））、竞品差距跟踪 |
 | [product-review.md](product-review.md) | **产品全面评价**：本地优先定位、强项（功能密度/架构/加密/产品化观）、短板（同步健壮性/自托管精度/Web 内存/AI 迭代节奏）、技术选型判断、按优先级的总体建议与一句话结论 |
 | [harmony-web-ceiling.md](harmony-web-ceiling.md) | **基于 Web 版开发鸿蒙桌面应用的能力边界（天花板）分析**：ArkWeb 壳不改变浏览器内核；能力矩阵（DB/文件系统/原生引擎/加密/系统集成/同步/插件）；路线 A（纯套壳≈PWA）vs 路线 B（加 ArkTS 原生桥）；对 ShuyoNote 的建议与取舍 |

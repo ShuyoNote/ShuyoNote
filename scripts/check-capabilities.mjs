@@ -53,6 +53,9 @@ for (const c of reg.capabilities) {
   if (capIds.has(c.id)) fail(`能力 id 重复：${c.id}`);
   capIds.add(c.id);
   if (!c.title) fail(`能力 ${c.id} 缺 title`);
+  // 描述是**作者文档的唯一来源**：缺了它，那份"只看这一份就能写出插件"的文档里就会出现一个
+  // 空白格子，而没人会为此报错——所以这里把它变成门禁（原先只对 ai:true 的能力要求 desc）。
+  if (!c.desc) fail(`能力 ${c.id} 缺 desc（作者文档的能力表会留一个空白格子）`);
   if (!KINDS.has(c.kind)) fail(`能力 ${c.id} 的 kind 非法：${c.kind}`);
   if (!SCOPES.has(c.scope)) fail(`能力 ${c.id} 的 scope 非法：${c.scope}`);
   if (!SEMVER.test(c.since)) fail(`能力 ${c.id} 的 since 必须是 x.y.z`);
