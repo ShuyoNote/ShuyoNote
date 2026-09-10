@@ -26,10 +26,17 @@ const color = (s, c) => (process.stdout.isTTY ? `${ESC[c]}${s}${ESC.reset}` : s)
  * 列/排序/取值写错只是**提醒**（宿主会忽略并按默认来），但没有 views 是**错误**——
  * 那样的插件装上去什么都不会显示。
  */
-function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, dirName) {
+function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, themeTokenNames) {
   const views = Array.isArray(m.views) ? m.views : [];
-  if (views.length === 0) {
-    push("error", "declarative_no_views", "声明式插件必须声明至少一个 views：它没有代码，视图就是它唯一的产出");
+  const themeTokens = m.theme && typeof m.theme === "object" && m.theme.tokens && typeof m.theme.tokens === "object" ? Object.keys(m.theme.tokens) : [];
+  if (views.length === 0 && themeTokens.length === 0) {
+    push("error", "declarative_no_views", "声明式插件必须声明 views 或 theme 之一：它没有代码，视图或主题就是它唯一的产出");
+  }
+  if (themeTokens.length > 0) {
+    const known = new Set(themeTokenNames);
+    for (const name of themeTokens) {
+      if (!known.has(name)) push("warning", "theme_unknown_token", `主题变量 ${name} 不在白名单里（宿主只应用外观类变量）`);
+    }
   }
   if (views.length > 8) push("warning", "too_many_views", `声明了 ${views.length} 个视图（上限 8）`);
   const seen = new Set();
@@ -117,6 +124,8 @@ function validate(dirArg) {
   ]);
   const knownSorts = new Set(["updated_desc", "created_desc", "title_asc", "title_desc"]);
   const knownKinds = new Set(["any", "page", "database"]);
+  // 主题白名单从注册表取（不 import 生成的 .ts：CI 的 Node 22 不支持直接 import TS）
+  const themeTokenNames = new Set(((reg.theme && reg.theme.tokens) || []).map((x) => x.name));
   if (m) {
     id = typeof m.id === "string" ? m.id : "";
     if (!id) push("error", "id_missing", "manifest.id 缺失（每个插件必须有唯一 id）");
@@ -138,7 +147,7 @@ function validate(dirArg) {
       // 零代码插件：没有 main.js、没有语法可查、也不需要权限（不去申请任何能力）。
       // 这里必须与 Rust 侧（plugin_validate.rs 的 validate_declarative）一致，
       // 否则作者 CLI 会把一个本来能用的零代码插件报成"装不上"。
-      checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, dirName, resolve(dir));
+      checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, themeTokenNames);
     } else if (!isBareFileName(main)) {
       push("error", "main_invalid", `manifest.main（${main}）必须是同级文件名：不得含路径分隔符，也不得是 . / ..`);
     } else {
@@ -270,7 +279,11 @@ function report(r, json) {
   const declarative = (r.manifest?.runtime ?? "logic") === "declarative";
   if (declarative) {
     const views = Array.isArray(r.manifest?.views) ? r.manifest.views : [];
-    console.log(`  ${color("零代码插件", "dim")}（runtime=declarative）：${views.length} 个视图，由宿主渲染，不申请任何权限`);
+    const themeCount = r.manifest?.theme?.tokens ? Object.keys(r.manifest.theme.tokens).length : 0;
+    const parts = [];
+    if (views.length > 0) parts.push(`${views.length} 个视图`);
+    if (themeCount > 0) parts.push(`${themeCount} 个主题变量`);
+    console.log(`  ${color("零代码插件", "dim")}（runtime=declarative）：${parts.join(" + ") || "无产出"}，由宿主渲染，不申请任何权限`);
     for (const v of views) {
       const cols = Array.isArray(v?.columns) ? v.columns.filter((c) => r.knownColumns?.has(c) ?? true) : [];
       console.log(`    ▦ ${v?.title || v?.id || "(无标题)"}  ${color(`列：${cols.join(" / ") || "标题"}`, "dim")}`);

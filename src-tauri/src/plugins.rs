@@ -95,6 +95,88 @@ pub(crate) fn validate_setting_value(decl: &SettingDecl, raw: &str) -> Result<St
     }
 }
 
+/// 主题声明：一组设计变量（纯数据，插件侧没有代码）。
+#[derive(serde::Deserialize, Serialize, Clone, Debug, Default)]
+pub(crate) struct ThemeDecl {
+    #[serde(default)]
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) tokens: std::collections::BTreeMap<String, String>,
+}
+
+/// 单个主题变量值的长度上限（它就该是 `#fff` 这种短值）。
+const MAX_THEME_VALUE_LEN: usize = 64;
+/// 一个主题最多覆盖多少个变量。
+pub(crate) const MAX_THEME_TOKENS: usize = 40;
+
+/// 校验一个主题变量的值。
+///
+/// **这不是风格检查，是安全边界**：这些值会被写进页面样式，所以必须挡住 `url(` 这类
+/// 会造成**外部请求**的写法（本项目「绝不跟踪」的承诺不允许这种口子），以及能破坏声明
+/// 结构的字符。前端应用前还会再筛一遍（纵深防御：校验器报错不代表加载时就不会遇到坏值）。
+pub(crate) fn validate_theme_value(token: &capabilities_gen::ThemeToken, raw: &str) -> Result<(), String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Err("值是空的".to_string());
+    }
+    if v.chars().count() > MAX_THEME_VALUE_LEN {
+        return Err(format!("值太长（上限 {MAX_THEME_VALUE_LEN} 字符）"));
+    }
+    let lower = v.to_ascii_lowercase();
+    for bad in ["url(", "@", ";", "{", "}", "<", ">", "\\", "\n", "/*"] {
+        if lower.contains(bad) {
+            return Err(format!(
+                "值里不允许出现 `{bad}`：主题变量会被写进页面样式，这类写法会造成外部请求或破坏样式"
+            ));
+        }
+    }
+    match token.kind {
+        "color" => {
+            let hex = v.starts_with('#')
+                && (4..=9).contains(&v.len())
+                && v[1..].chars().all(|c| c.is_ascii_hexdigit());
+            let func = lower.starts_with("rgb(") || lower.starts_with("rgba(") || lower.starts_with("hsl(") || lower.starts_with("hsla(");
+            let named = matches!(lower.as_str(), "transparent" | "currentcolor" | "inherit")
+                || v.chars().all(|c| c.is_ascii_alphabetic());
+            if !(hex || func || named) {
+                return Err("看起来不是颜色（可以是 #rgb / #rrggbb / rgb(...) / hsl(...) / 颜色名）".to_string());
+            }
+        }
+        "length" => {
+            let starts_number = v.chars().next().map(|c| c.is_ascii_digit() || c == '.').unwrap_or(false);
+            let unit = ["px", "em", "rem", "%"].iter().any(|u| lower.ends_with(u));
+            if !(v == "0" || (starts_number && unit)) {
+                return Err("看起来不是长度（可以是 0 / 4px / 0.5rem / 8% 这类）".to_string());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// 取一个插件**可用**的主题变量：白名单内 + 值通过校验。
+///
+/// 无效的**丢弃而不是整体失败**：一个写错的主题不该让插件装不上（校验器会明确报错），
+/// 但它也绝不该被应用到界面上——所以这里与前端各筛一遍。
+pub(crate) fn sanitized_theme(manifest: &Manifest) -> Option<ThemeDecl> {
+    let t = manifest.theme.as_ref()?;
+    let tokens: std::collections::BTreeMap<String, String> = t
+        .tokens
+        .iter()
+        .filter(|(k, v)| {
+            capabilities_gen::theme_token(k)
+                .map(|tok| validate_theme_value(tok, v).is_ok())
+                .unwrap_or(false)
+        })
+        .map(|(k, v)| (k.clone(), v.trim().to_string()))
+        .collect();
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(ThemeDecl { name: t.name.clone(), tokens })
+    }
+}
+
 fn default_param_type() -> String {
     "string".to_string()
 }
@@ -120,6 +202,8 @@ pub struct PluginMeta {
     pub runtime: String,
     /// 声明式视图：宿主渲染，插件零代码。
     pub views: Vec<ViewDecl>,
+    /// 主题声明（只有**通过校验**的变量会被带上）。
+    pub theme: Option<ThemeDecl>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -325,6 +409,9 @@ pub(crate) struct Manifest {
     /// 运行档：`logic`（默认，有 main.js 的脚本插件）或 `declarative`（零 JS，只有声明）。
     #[serde(default)]
     pub(crate) runtime: Option<String>,
+    /// 主题：一组设计变量（纯数据，两档插件都可以声明）。
+    #[serde(default)]
+    pub(crate) theme: Option<ThemeDecl>,
     /// 声明式视图：宿主按这份声明渲染（零 JS 插件唯一的产出方式）。
     #[serde(default)]
     pub(crate) views: Option<Vec<ViewDecl>>,
@@ -2343,6 +2430,8 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             let permissions = Vec::new();
             let permissions_baseline = false;
             let events = Vec::new();
+            // 主题是纯数据，声明式插件同样可以出主题（它没有代码，这正是最安全的一类）
+            let theme = sanitized_theme(&manifest);
             let views = manifest.views.clone().unwrap_or_default();
             let pid = manifest.id.clone();
             out.push(PluginMeta {
@@ -2357,6 +2446,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 events,
                 runtime,
                 views,
+                theme,
             });
             continue;
         }
@@ -2378,6 +2468,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         let pid = manifest.id.clone();
         let (permissions, permissions_baseline) = permission_metas(&manifest);
         let events = event_metas(&manifest);
+        let theme = sanitized_theme(&manifest);
         out.push(PluginMeta {
             id: pid.clone(),
             name: manifest.name,
@@ -2390,6 +2481,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             events,
             runtime,
             views: manifest.views.clone().unwrap_or_default(),
+            theme,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -2577,6 +2669,7 @@ pub async fn install_plugin(
     // 先取出这两项再移动其它字段（避免部分移动后还要借用 manifest）
     let runtime = runtime_of(&manifest).to_string();
     let views = manifest.views.clone().unwrap_or_default();
+    let theme = sanitized_theme(&manifest);
     Ok(PluginMeta {
         id: manifest.id,
         name: manifest.name,
@@ -2589,6 +2682,7 @@ pub async fn install_plugin(
         events,
         runtime,
         views,
+        theme,
     })
 }
 
@@ -3372,6 +3466,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             permissions: None,
             settings: None,
             runtime: None,
+            theme: None,
             views: None,
             events: None,
         };
@@ -3401,6 +3496,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             ]),
             settings: None,
             runtime: None,
+            theme: None,
             views: None,
             events: None,
         };
@@ -3426,6 +3522,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             }]),
             settings: None,
             runtime: None,
+            theme: None,
             views: None,
             events: None,
         };
@@ -3448,6 +3545,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             permissions: None,
             settings: None,
             runtime: None,
+            theme: None,
             views: None,
             events: None,
         };

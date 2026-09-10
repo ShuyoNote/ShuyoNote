@@ -124,6 +124,46 @@ pub const MENUS: &[PluginMenu] = &[
     PluginMenu { id: "editor.toolbar", title: "编辑器工具栏", hosted: false, desc: "编辑器顶部工具栏按钮（宿主还没接这个入口）" },
 ];
 
+/// 一个可主题化的 CSS 变量。
+#[derive(Serialize, Clone, Debug)]
+pub struct ThemeToken {
+    pub name: &'static str,
+    /// `color` / `length`：值的形态检查据此做。
+    pub kind: &'static str,
+    pub desc: &'static str,
+}
+
+pub const THEME_TOKENS: &[ThemeToken] = &[
+    ThemeToken { name: "--bg", kind: "color", desc: "主背景" },
+    ThemeToken { name: "--bg-sidebar", kind: "color", desc: "侧栏背景" },
+    ThemeToken { name: "--text", kind: "color", desc: "正文色" },
+    ThemeToken { name: "--text-dim", kind: "color", desc: "次要文字" },
+    ThemeToken { name: "--text-faint", kind: "color", desc: "更浅的文字" },
+    ThemeToken { name: "--border", kind: "color", desc: "边框" },
+    ThemeToken { name: "--border-strong", kind: "color", desc: "较重的边框" },
+    ThemeToken { name: "--hover", kind: "color", desc: "悬停底色" },
+    ThemeToken { name: "--hover-strong", kind: "color", desc: "较重的悬停底色" },
+    ThemeToken { name: "--card-bg", kind: "color", desc: "卡片背景" },
+    ThemeToken { name: "--code-bg", kind: "color", desc: "行内代码背景" },
+    ThemeToken { name: "--codeblock-bg", kind: "color", desc: "代码块背景" },
+    ThemeToken { name: "--accent", kind: "color", desc: "强调色" },
+    ThemeToken { name: "--accent-strong", kind: "color", desc: "强调色（深）" },
+    ThemeToken { name: "--accent-soft", kind: "color", desc: "强调色（浅）" },
+    ThemeToken { name: "--danger", kind: "color", desc: "危险色" },
+    ThemeToken { name: "--cat-red", kind: "color", desc: "分类色·红" },
+    ThemeToken { name: "--cat-orange", kind: "color", desc: "分类色·橙" },
+    ThemeToken { name: "--cat-yellow", kind: "color", desc: "分类色·黄" },
+    ThemeToken { name: "--cat-green", kind: "color", desc: "分类色·绿" },
+    ThemeToken { name: "--cat-blue", kind: "color", desc: "分类色·蓝" },
+    ThemeToken { name: "--cat-purple", kind: "color", desc: "分类色·紫" },
+    ThemeToken { name: "--radius", kind: "length", desc: "圆角" },
+    ThemeToken { name: "--radius-sm", kind: "length", desc: "小圆角" },
+];
+
+pub fn theme_token(name: &str) -> Option<&'static ThemeToken> {
+    THEME_TOKENS.iter().find(|t| t.name == name)
+}
+
 pub fn menu(id: &str) -> Option<&'static PluginMenu> {
     MENUS.iter().find(|m| m.id == id)
 }

@@ -62,6 +62,38 @@ export type PluginEventName =
   | "page.deleted"
   ;
 
+/**
+ * 主题插件可覆盖的设计变量（manifest `theme.tokens` 的键）。
+ *
+ * 只含外观值（颜色 / 圆角）——布局度量刻意不在内：让插件改列宽页宽会砸掉版面。
+ */
+export type ThemeTokenName =
+  | "--bg"
+  | "--bg-sidebar"
+  | "--text"
+  | "--text-dim"
+  | "--text-faint"
+  | "--border"
+  | "--border-strong"
+  | "--hover"
+  | "--hover-strong"
+  | "--card-bg"
+  | "--code-bg"
+  | "--codeblock-bg"
+  | "--accent"
+  | "--accent-strong"
+  | "--accent-soft"
+  | "--danger"
+  | "--cat-red"
+  | "--cat-orange"
+  | "--cat-yellow"
+  | "--cat-green"
+  | "--cat-blue"
+  | "--cat-purple"
+  | "--radius"
+  | "--radius-sm"
+  ;
+
 /** 注册事件处理器：在插件顶层调用（与 `register` 并列）。 */
 export declare function on(event: PluginEventName, handler: (payload: Record<string, any>) => void): void;
 

@@ -476,6 +476,54 @@ var pages = api.pages.list(n);
 - 列名 / 排序 / kind 写错**不会让视图打不开**，只是那一项按默认处理，校验器会告诉你哪个值不认识；
 - 想要用户可配置、想要条件逻辑，就写 `logic` 档（有 `main.js`）——两者的能力不同，不要混着声明。
 
+## 4.10 主题插件（只出一组 token）
+
+主题插件也是**零代码**的：只声明一组设计变量，宿主把它们应用到界面上（停用即恢复）。
+
+```json
+"theme": { "name": "暖色夜晚", "tokens": {
+  "--bg": "#1b1714", "--text": "#efe6dd", "--accent": "#e0956a"
+} }
+```
+
+可覆盖的变量（**只含外观**；布局度量刻意不在内——让插件改列宽页宽会砸掉版面）：
+
+| 变量 | 类型 | 说明 |
+|---|---|---|
+| `--bg` | color | 主背景 |
+| `--bg-sidebar` | color | 侧栏背景 |
+| `--text` | color | 正文色 |
+| `--text-dim` | color | 次要文字 |
+| `--text-faint` | color | 更浅的文字 |
+| `--border` | color | 边框 |
+| `--border-strong` | color | 较重的边框 |
+| `--hover` | color | 悬停底色 |
+| `--hover-strong` | color | 较重的悬停底色 |
+| `--card-bg` | color | 卡片背景 |
+| `--code-bg` | color | 行内代码背景 |
+| `--codeblock-bg` | color | 代码块背景 |
+| `--accent` | color | 强调色 |
+| `--accent-strong` | color | 强调色（深） |
+| `--accent-soft` | color | 强调色（浅） |
+| `--danger` | color | 危险色 |
+| `--cat-red` | color | 分类色·红 |
+| `--cat-orange` | color | 分类色·橙 |
+| `--cat-yellow` | color | 分类色·黄 |
+| `--cat-green` | color | 分类色·绿 |
+| `--cat-blue` | color | 分类色·蓝 |
+| `--cat-purple` | color | 分类色·紫 |
+| `--radius` | length | 圆角 |
+| `--radius-sm` | length | 小圆角 |
+
+几条规则：
+
+- **值里不允许出现 `url(` / `@` / 分号 / 花括号等**：这些变量会被写进页面样式，
+  一个 `url(` 就足以让它对外发请求（本项目「绝不跟踪」的承诺不允许这种口子）；
+- 同一个变量**只会有一个插件生效**：多个主题插件同时启用时按插件 id 排序取第一个，
+  插件面板会明确提示冲突（而不是「看谁最后加载」这种不确定行为）；
+- 停用插件即恢复你的主题（值只在启用期间应用，不写进任何配置文件）；
+- 白名单外的变量改了没用，校验器会告诉你哪些名字不认识。
+
 ## 5. 日志与提示
 
 - `api.log(message, level?)` —— 写日志，进插件日志环形缓冲（插件面板「日志」可查）。

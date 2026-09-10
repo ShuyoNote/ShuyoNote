@@ -29,6 +29,7 @@ export const OUTPUTS = {
   rust: "src-tauri/src/capabilities_gen.rs",
   types: "packages/plugin-types/index.d.ts",
   globals: "packages/plugin-types/globals.d.ts",
+  themeMeta: "src/lib/capabilities/theme.meta.ts",
   pkg: "packages/plugin-types/package.json",
   docs: "docs/plugin-api.md",
   aiTools: "src/lib/capabilities/aiTools.meta.ts",
@@ -205,6 +206,25 @@ export function genRust(reg) {
   }
   l.push("];");
   l.push("");
+  l.push("/// 一个可主题化的 CSS 变量。");
+  l.push("#[derive(Serialize, Clone, Debug)]");
+  l.push("pub struct ThemeToken {");
+  l.push("    pub name: &'static str,");
+  l.push("    /// `color` / `length`：值的形态检查据此做。");
+  l.push("    pub kind: &'static str,");
+  l.push("    pub desc: &'static str,");
+  l.push("}");
+  l.push("");
+  l.push("pub const THEME_TOKENS: &[ThemeToken] = &[");
+  for (const t of reg.theme.tokens) {
+    l.push(`    ThemeToken { name: ${JSON.stringify(t.name)}, kind: ${JSON.stringify(t.kind)}, desc: ${JSON.stringify(t.desc)} },`);
+  }
+  l.push("];");
+  l.push("");
+  l.push("pub fn theme_token(name: &str) -> Option<&'static ThemeToken> {");
+  l.push("    THEME_TOKENS.iter().find(|t| t.name == name)");
+  l.push("}");
+  l.push("");
   l.push("pub fn menu(id: &str) -> Option<&'static PluginMenu> {");
   l.push("    MENUS.iter().find(|m| m.id == id)");
   l.push("}");
@@ -281,6 +301,15 @@ export function genTypes(reg) {
   l.push(" */");
   l.push("export type PluginEventName =");
   for (const e of reg.events.filter((x) => x.hosted)) l.push(`  | ${JSON.stringify(e.id)}`);
+  l.push("  ;");
+  l.push("");
+  l.push("/**");
+  l.push(" * 主题插件可覆盖的设计变量（manifest `theme.tokens` 的键）。");
+  l.push(" *");
+  l.push(" * 只含外观值（颜色 / 圆角）——布局度量刻意不在内：让插件改列宽页宽会砸掉版面。");
+  l.push(" */");
+  l.push("export type ThemeTokenName =");
+  for (const t of reg.theme.tokens) l.push(`  | ${JSON.stringify(t.name)}`);
   l.push("  ;");
   l.push("");
   l.push("/** 注册事件处理器：在插件顶层调用（与 `register` 并列）。 */");
@@ -379,6 +408,33 @@ export function genGlobals(reg) {
   l.push("}");
   l.push("");
   l.push("export {};");
+  l.push("");
+  return l.join("\n");
+}
+
+/**
+ * 主题 token 的**运行时**清单（类型包只有类型，前端应用主题要用真值）。
+ * 与 Rust 侧 `THEME_TOKENS`、类型包 `ThemeTokenName` 同一个源，所以三边不会漂移。
+ */
+export function genThemeMeta(reg) {
+  const l = [];
+  l.push("// 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。");
+  l.push("");
+  l.push("/** 一个可主题化的设计变量。 */");
+  l.push("export interface ThemeToken {");
+  l.push("  name: string;");
+  l.push('  /** `color` / `length`：值的形态检查据此做。 */');
+  l.push("  kind: string;");
+  l.push("  desc: string;");
+  l.push("}");
+  l.push("");
+  l.push("export const THEME_TOKENS: ThemeToken[] = [");
+  for (const t of reg.theme.tokens) {
+    l.push(`  { name: ${JSON.stringify(t.name)}, kind: ${JSON.stringify(t.kind)}, desc: ${JSON.stringify(t.desc)} },`);
+  }
+  l.push("];");
+  l.push("");
+  l.push("export const THEME_TOKEN_NAMES = THEME_TOKENS.map((t) => t.name);");
   l.push("");
   return l.join("\n");
 }
@@ -652,6 +708,31 @@ export function genDocs(reg) {
   l.push("- 列名 / 排序 / kind 写错**不会让视图打不开**，只是那一项按默认处理，校验器会告诉你哪个值不认识；");
   l.push("- 想要用户可配置、想要条件逻辑，就写 `logic` 档（有 `main.js`）——两者的能力不同，不要混着声明。");
   l.push("");
+  l.push("## 4.10 主题插件（只出一组 token）");
+  l.push("");
+  l.push("主题插件也是**零代码**的：只声明一组设计变量，宿主把它们应用到界面上（停用即恢复）。");
+  l.push("");
+  l.push("```json");
+  l.push('"theme": { "name": "暖色夜晚", "tokens": {');
+  l.push('  "--bg": "#1b1714", "--text": "#efe6dd", "--accent": "#e0956a"');
+  l.push("} }");
+  l.push("```");
+  l.push("");
+  l.push("可覆盖的变量（**只含外观**；布局度量刻意不在内——让插件改列宽页宽会砸掉版面）：");
+  l.push("");
+  l.push("| 变量 | 类型 | 说明 |");
+  l.push("|---|---|---|");
+  for (const t of reg.theme.tokens) l.push(`| \`${t.name}\` | ${t.kind} | ${t.desc} |`);
+  l.push("");
+  l.push("几条规则：");
+  l.push("");
+  l.push("- **值里不允许出现 `url(` / `@` / 分号 / 花括号等**：这些变量会被写进页面样式，");
+  l.push("  一个 `url(` 就足以让它对外发请求（本项目「绝不跟踪」的承诺不允许这种口子）；");
+  l.push("- 同一个变量**只会有一个插件生效**：多个主题插件同时启用时按插件 id 排序取第一个，");
+  l.push("  插件面板会明确提示冲突（而不是「看谁最后加载」这种不确定行为）；");
+  l.push("- 停用插件即恢复你的主题（值只在启用期间应用，不写进任何配置文件）；");
+  l.push("- 白名单外的变量改了没用，校验器会告诉你哪些名字不认识。");
+  l.push("");
   l.push("## 5. 日志与提示");
   l.push("");
   l.push("- `api.log(message, level?)` —— 写日志，进插件日志环形缓冲（插件面板「日志」可查）。");
@@ -811,6 +892,7 @@ export function buildAll(reg = loadRegistry()) {
     [OUTPUTS.rust]: genRust(reg),
     [OUTPUTS.types]: genTypes(reg),
     [OUTPUTS.globals]: genGlobals(reg),
+    [OUTPUTS.themeMeta]: genThemeMeta(reg),
     [OUTPUTS.pkg]: genPackageJson(reg),
     [OUTPUTS.docs]: genDocs(reg),
     [OUTPUTS.aiTools]: genAiTools(reg),

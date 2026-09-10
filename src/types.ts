@@ -224,6 +224,8 @@ export interface PluginMeta {
   runtime: string;
   /** 声明式视图（宿主渲染）。 */
   views: PluginView[];
+  /** 主题声明（宿主应用到界面；只有通过校验的变量会被带上）。 */
+  theme?: { name?: string; tokens: Record<string, string> } | null;
 }
 
 export interface PluginPermissionMeta {

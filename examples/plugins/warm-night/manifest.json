@@ -1,0 +1,24 @@
+{
+  "id": "warm-night",
+  "name": "暖色夜晚",
+  "version": "1.0.0",
+  "description": "零代码主题插件：只出一组设计变量，宿主应用到界面；停用即恢复你原来的主题。",
+  "runtime": "declarative",
+  "apiVersion": "1.0.0",
+  "views": [],
+  "theme": {
+    "name": "暖色夜晚",
+    "tokens": {
+      "--bg": "#1b1714",
+      "--bg-sidebar": "#161311",
+      "--text": "#efe6dd",
+      "--text-dim": "#b3a79c",
+      "--border": "#332c27",
+      "--hover": "#241f1b",
+      "--card-bg": "#221d1a",
+      "--accent": "#e0956a",
+      "--accent-strong": "#f0a97c",
+      "--radius": "8px"
+    }
+  }
+}

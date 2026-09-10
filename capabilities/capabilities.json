@@ -839,5 +839,130 @@
       "code": "quota_exceeded",
       "desc": "插件私有数据超出配额（每个 scope 256 KiB）"
     }
-  ]
+  ],
+  "theme": {
+    "note": "主题插件可覆盖的 CSS 变量白名单。只含颜色/圆角这类外观值——布局度量（列宽、页宽、栏宽）刻意不在内：让插件随便改会砸掉版面，那不是主题。",
+    "tokens": [
+      {
+        "name": "--bg",
+        "kind": "color",
+        "desc": "主背景"
+      },
+      {
+        "name": "--bg-sidebar",
+        "kind": "color",
+        "desc": "侧栏背景"
+      },
+      {
+        "name": "--text",
+        "kind": "color",
+        "desc": "正文色"
+      },
+      {
+        "name": "--text-dim",
+        "kind": "color",
+        "desc": "次要文字"
+      },
+      {
+        "name": "--text-faint",
+        "kind": "color",
+        "desc": "更浅的文字"
+      },
+      {
+        "name": "--border",
+        "kind": "color",
+        "desc": "边框"
+      },
+      {
+        "name": "--border-strong",
+        "kind": "color",
+        "desc": "较重的边框"
+      },
+      {
+        "name": "--hover",
+        "kind": "color",
+        "desc": "悬停底色"
+      },
+      {
+        "name": "--hover-strong",
+        "kind": "color",
+        "desc": "较重的悬停底色"
+      },
+      {
+        "name": "--card-bg",
+        "kind": "color",
+        "desc": "卡片背景"
+      },
+      {
+        "name": "--code-bg",
+        "kind": "color",
+        "desc": "行内代码背景"
+      },
+      {
+        "name": "--codeblock-bg",
+        "kind": "color",
+        "desc": "代码块背景"
+      },
+      {
+        "name": "--accent",
+        "kind": "color",
+        "desc": "强调色"
+      },
+      {
+        "name": "--accent-strong",
+        "kind": "color",
+        "desc": "强调色（深）"
+      },
+      {
+        "name": "--accent-soft",
+        "kind": "color",
+        "desc": "强调色（浅）"
+      },
+      {
+        "name": "--danger",
+        "kind": "color",
+        "desc": "危险色"
+      },
+      {
+        "name": "--cat-red",
+        "kind": "color",
+        "desc": "分类色·红"
+      },
+      {
+        "name": "--cat-orange",
+        "kind": "color",
+        "desc": "分类色·橙"
+      },
+      {
+        "name": "--cat-yellow",
+        "kind": "color",
+        "desc": "分类色·黄"
+      },
+      {
+        "name": "--cat-green",
+        "kind": "color",
+        "desc": "分类色·绿"
+      },
+      {
+        "name": "--cat-blue",
+        "kind": "color",
+        "desc": "分类色·蓝"
+      },
+      {
+        "name": "--cat-purple",
+        "kind": "color",
+        "desc": "分类色·紫"
+      },
+      {
+        "name": "--radius",
+        "kind": "length",
+        "desc": "圆角"
+      },
+      {
+        "name": "--radius-sm",
+        "kind": "length",
+        "desc": "小圆角"
+      }
+    ]
+  }
 }

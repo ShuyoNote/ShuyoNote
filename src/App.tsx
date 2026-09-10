@@ -49,6 +49,7 @@ import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
 import { usePlugins } from "./store/plugins";
 import { emitHostEvent } from "./lib/pluginEvents";
+import { applyThemeTokens, resolveTheme } from "./lib/pluginTheme";
 import { useActivity } from "./store/activity";
 import { useSpaceStore } from "./store/space";
 import { useEditorStore } from "./store/editor";
@@ -253,6 +254,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
       }
     };
   }, []);
+
+  // 主题插件：启用中的插件声明的设计变量应用到界面上；停用即移除（见 lib/pluginTheme）。
+  // 解析规则（白名单 + 单赢家 + 冲突报出）在纯函数里，有单测。
+  const themePlugins = usePlugins((s) => s.plugins);
+  const appliedThemeRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const { tokens } = resolveTheme(themePlugins);
+    applyThemeTokens(tokens, appliedThemeRef.current);
+    appliedThemeRef.current = tokens;
+  }, [themePlugins]);
 
   // 启动时加载一次插件列表：事件派发要判断"有没有订阅者"，列表为空会让所有事件静默丢失。
   // 加载完再播报 app.started（顺序有意：插件得先被认出来，才能收到启动事件）。

@@ -134,10 +134,18 @@ fn validate_declarative(
         }
     }
 
-    if views.is_empty() {
+    // 只出主题、不出视图也是合法的一种声明式插件（主题插件就是这样）：
+    // 它的产出是设计变量，不是面板。
+    let has_theme = value
+        .and_then(|v| v.get("theme"))
+        .and_then(|t| t.get("tokens"))
+        .and_then(|t| t.as_object())
+        .map(|m| !m.is_empty())
+        .unwrap_or(false);
+    if views.is_empty() && !has_theme {
         problems.push(PluginProblem::error(
             "declarative_no_views",
-            "声明式插件必须声明至少一个 views：它没有代码，视图就是它唯一的产出（否则装了也不会显示任何东西）",
+            "声明式插件必须声明 views 或 theme 之一：它没有代码，视图或主题就是它唯一的产出（否则装了什么都不会发生）",
             Some("manifest.json"),
         ));
     }
@@ -740,6 +748,15 @@ mod tests {
         fs::write(dir.join(name), src).unwrap();
     }
 
+    /// 该示例目录的 manifest 是否声明了非空 theme.tokens。
+    fn value_has_theme(dir: &Path) -> bool {
+        std::fs::read_to_string(dir.join("manifest.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("theme").and_then(|t| t.get("tokens")).and_then(|t| t.as_object()).map(|m| !m.is_empty()))
+            .unwrap_or(false)
+    }
+
     fn codes(r: &ValidateReport) -> Vec<String> {
         r.problems.iter().map(|p| p.code.clone()).collect()
     }
@@ -774,7 +791,12 @@ mod tests {
             assert!(r.ok, "示例插件 {} 应当 ok", d.display());
             if r.runtime == "declarative" {
                 // 零代码插件：没有命令、不需要权限——但必须有视图，那是它唯一的产出
-                assert!(!r.views.is_empty(), "声明式示例 {} 必须声明视图", d.display());
+                // 声明式插件的产出是「视图」或「主题」之一（主题插件就没有视图）
+                assert!(
+                    !r.views.is_empty() || value_has_theme(d),
+                    "声明式示例 {} 至少要声明视图或主题，否则装了什么都不会发生",
+                    d.display()
+                );
                 assert!(r.commands.is_empty(), "声明式插件不该有命令");
                 assert!(r.permissions.is_empty(), "声明式插件没有代码，不该申请权限");
                 continue;
