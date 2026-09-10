@@ -79,7 +79,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
   // OCR 结果状态（用于显示"未识别到文字/失败"等，而非只有成功文本才出面板）。
-  const [ocrStatus, setOcrStatus] = useState<"idle" | "empty" | "timeout" | "error">("idle");
+  const [ocrStatus, setOcrStatus] = useState<"idle" | "empty" | "timeout" | "error" | "error-recognize">("idle");
   const [ocrBusy, setOcrBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState<string | null>(null);
@@ -153,21 +153,19 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setOcrText(null);
     setOcrStatus("idle");
     // 单页 OCR 用固定高分辨率重渲染（而非当前缩放下可能很低的显示图），显著提升识别精度。
-    let source = fallback;
-    let tmpUrl: string | null = null;
+    // 直接把 Blob 交给 tesseract（内部走 FileReader）；不要先转 objectURL——
+    // 传 URL 字符串时 tesseract 会 `fetch('blob:...')`，桌面壳 CSP 的 connect-src 未放行 blob:
+    // 时会被拦下，表现成「识别失败/加载不了模型」，实为取图失败。
+    let source: string | Blob | null = fallback;
     if (renderPage) {
       try {
         const blob = await renderPage(pageIndex, OCR_PAGE_SCALE);
-        if (blob && blob.size > 0) {
-          tmpUrl = URL.createObjectURL(blob);
-          source = tmpUrl;
-        }
+        if (blob && blob.size > 0) source = blob;
       } catch {
         /* 重渲染失败则退回当前显示图 */
       }
     }
-    const res = await ocrRecognize(source ?? "");
-    if (tmpUrl) URL.revokeObjectURL(tmpUrl);
+    const res = source ? await ocrRecognize(source) : { text: null, error: "none" as const };
     ocrBusyRef.current = false;
     setOcrBusy(false);
     if (res.text) {
@@ -178,8 +176,14 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       setOcrStatus("timeout");
       toast("OCR 识别超时，请稍后重试", "error");
     } else if (res.error === "error") {
-      setOcrStatus("error");
-      toast("OCR 识别失败：无法加载识别模型/语言数据", "error");
+      setOcrStatus(res.stage === "recognize" ? "error-recognize" : "error");
+      // 区分阶段：只有 worker/模型加载失败才是「模型」问题；识别阶段失败通常是取图/引擎问题，
+      // 一律说成「无法加载模型」会把排查方向带偏（历史踩坑点）。
+      if (res.stage === "recognize") {
+        toast("OCR 识别失败：未能读取页面图像或引擎报错（详见控制台 [ocr] recognize failed）", "error");
+      } else {
+        toast("OCR 识别失败：无法加载离线识别模型/语言数据", "error");
+      }
     } else {
       setOcrStatus("empty");
       toast("未识别到文字", "error");
@@ -908,7 +912,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
             ) : ocrStatus === "timeout" ? (
               <div className="pdf-ocr-tip">识别超时（timeout）：模型加载或识别时间过长，请稍后重试。</div>
             ) : ocrStatus === "error" ? (
-              <div className="pdf-ocr-tip">识别失败（error）：无法加载离线识别模型/语言数据。请刷新页面、确认控制台「[ocr] local assets」路径为 http(s) 开头且 public/ocr 已生成；可看到上方结果即表示识别已执行。</div>
+              <div className="pdf-ocr-tip">识别失败（error·模型加载）：无法加载离线识别模型/语言数据。请确认 `public/ocr` 已生成（`pnpm install` 后由脚本拷贝），并查看控制台「[ocr] local assets」与「[ocr] worker error」。</div>
+            ) : ocrStatus === "error-recognize" ? (
+              <div className="pdf-ocr-tip">识别失败（error·识别阶段）：模型已加载，失败发生在取图/引擎环节（例如页面图像读取被拦、位图过大）。请查看控制台「[ocr] recognize failed」的具体原因。</div>
             ) : (
               <div className="pdf-ocr-tip">本页未识别到文字（empty）：可能为空页/图表页，或扫描清晰度不足。模型已加载，请换一页正文再试。</div>
             )}
