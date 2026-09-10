@@ -8,12 +8,12 @@ import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { esbuild } from "./lib/load-esbuild.mjs";
 import { unzipSync } from "fflate";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const require = createRequire(import.meta.url);
-const esbuild = require(join(root, "node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild"));
 
 // Node has a global `crypto` (getter-only); the mock uses `crypto.randomUUID`.
 // sql.js uses `window`? No. We only need `window` for the platform-level open().

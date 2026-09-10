@@ -30,7 +30,7 @@ feat/*  ← 你的特性分支，从 dev 切出。
 
 ## 提交前请遵守（硬性）
 
-- **改功能先验证**：跑
+- **CI 会跑这些**（push/PR 到 `main` / `dev` 时自动触发，见 `.github/workflows/ci.yml`）——但本地先跑一遍能省一轮往返：
   - `node scripts/smoke-web.mjs`（期望 `N passed, 0 failed`）
   - `npx tsc --noEmit`
   - `pnpm build`（含 tsc + vite + `check-web-commands` + `check-versions`）

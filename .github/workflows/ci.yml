@@ -1,0 +1,101 @@
+name: CI
+
+# 单测 / 冒烟 / 布局验收 / 契约检查。
+#
+# 为什么必须有这个 workflow：这些检查此前**只靠人记得跑**。两套既有 CI 都不跑测试
+# ——pages.yml 只 install + build:web，release.yml 只构建安装包，所以
+# `scripts/smoke-web.mjs`（350 断言，被文档定为「web 平台行为的事实标准」）
+# 曾因一处无守卫的 localStorage 访问**整套崩掉**而长期无人察觉：没有自动化在跑它，
+# 谁都没看见它是红的。同理，27 断言的近实时集成回归、40 断言的移动端布局验收，
+# 也都只能靠人肉保证。
+#
+# 需要服务端的集成脚本（sync-regression / sync-collab-regression）**不在这里**：
+# 它们要一个跑着的同步服务端，放在服务端仓库的 CI 里——那边能直接构建二进制。
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: 单测 / 冒烟 / 契约
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: 安装依赖
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      - name: 单元测试（vitest）
+        run: pnpm test
+
+      - name: 冒烟测试（web 平台行为的事实标准）
+        run: node scripts/smoke-web.mjs
+
+      - name: 同步一致性（两设备并发，真实 applyChange + 真实 sql.js）
+        run: node scripts/verify-two-device-sync.mjs
+
+      - name: 版本 / 命令契约 / 文档链接
+        run: |
+          node scripts/check-versions.mjs
+          node scripts/check-web-commands.mjs
+          node scripts/check-doc-links.mjs
+
+  mobile-layout:
+    name: 移动端布局验收（真实 Chromium）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: 安装依赖
+        run: pnpm install --no-frozen-lockfile
+
+      # 这一档刻意用真实浏览器：侧栏/竖条的行为藏在「CSS 层叠 + matchMedia +
+      # z-index + localStorage」的交叉处，happy-dom 不按视口重算媒体查询，
+      # 单测覆盖不到（`.sidebar{display:flex}` 压掉 `[hidden]` 就是这类）。
+      - name: 启动 web 开发服务
+        run: |
+          nohup pnpm dev:web > /tmp/webdev.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:5173/; then
+              echo "dev server 就绪"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::dev server 未在 120s 内就绪"
+          cat /tmp/webdev.log
+          exit 1
+
+      - name: 布局验收
+        run: node scripts/verify-mobile-layout.mjs
+
+      - name: 失败时输出 dev server 日志
+        if: failure()
+        run: cat /tmp/webdev.log || true

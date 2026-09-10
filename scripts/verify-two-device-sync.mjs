@@ -14,11 +14,11 @@ import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { esbuild } from "./lib/load-esbuild.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const require = createRequire(import.meta.url);
-const esbuild = require(join(root, "node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild"));
 
 // ---- 1. bundle web.ts（含 applyChange + SqliteStore）到临时 ESM ----
 const tmpDir = join(root, ".sync-verify-tmp");
