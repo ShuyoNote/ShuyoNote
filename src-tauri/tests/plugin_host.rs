@@ -11,8 +11,9 @@
 //! 不需要数据的东西：返回字符串、`api.log`（走能力通道 → 假应答）、以及订阅一个事件。
 //! 阶段 2 会把能力改成 RPC 回父进程，那时这批断言会跟着长大。
 
-use shuyonote_lib::plugin_host::{HostClient, HostRunRequest};
+use shuyonote_lib::plugin_host::{CapMode, HostClient, HostRunRequest};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 fn app_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_shuyonote"))
@@ -28,7 +29,13 @@ fn req(source: &str, command_id: &str) -> HostRunRequest {
         current_page_id: Some("p1".into()),
         current_page_json: "{}".into(),
         page_count: 3,
+        cap_mode: CapMode::Stub,
     }
+}
+
+/// 把请求改成"能力走 IPC 回父进程"（阶段 2 的模式）。
+fn rpc_req(source: &str, command_id: &str) -> HostRunRequest {
+    HostRunRequest { cap_mode: CapMode::Rpc, ..req(source, command_id) }
 }
 
 #[test]
@@ -187,4 +194,108 @@ fn dropping_the_client_leaves_no_orphan_host_process() {
         gone,
         "父进程 drop 之后宿主子进程 {pid} 还活着——这正是「退出应用后 ps 里还有残留」那种事故",
     );
+}
+
+// ---------------------------------------------------------------------------
+// 阶段 2：能力调用的往返（子进程问 → 父进程查 → 值回到插件的 JS 里）
+// ---------------------------------------------------------------------------
+
+/// 父进程这边的"能力服务"：这个测试里用一个**记账的假服务**，好处是能断言
+/// "子进程到底问了什么、带没带参数"——真接上数据库是切流那一步的事。
+fn recording_server(
+    seen: Arc<Mutex<Vec<(String, String)>>>,
+) -> impl FnMut(&str, &str) -> Result<String, String> {
+    move |method: &str, args: &str| {
+        seen.lock().unwrap().push((method.to_string(), args.to_string()));
+        match method {
+            // 返回形状与进程内那条路完全一致（能力的返回值就是 JSON 字符串）
+            "pages.count" => Ok("7".into()),
+            "kv.get" => Ok("\"存过的值\"".into()),
+            // 父进程拒绝：错误要**原样**传回插件的 JS（插件能 catch 到），
+            // 而不是变成"通道坏了"。
+            "pages.list" => Err("bad_args: 阶段 2 的测试服务故意拒绝".into()),
+            other => Err(format!("unknown_capability: 测试服务没有 {other}")),
+        }
+    }
+}
+
+#[test]
+fn capability_calls_round_trip_through_the_parent() {
+    let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+
+    let res = client
+        .run_with_server(
+            rpc_req(
+                r#"register({ id: "c.all", title: "Cap", run: function (a) {
+                     var n = api.pages.count();
+                     var v = api.kv.get("k");
+                     return "count=" + n + " kv=" + v + " arg=" + String(a.tag);
+                   } });"#,
+                "c.all",
+            ),
+            recording_server(seen.clone()),
+        )
+        .expect("能力往返要跑得通");
+
+    assert_eq!(
+        res.message, "count=7 kv=存过的值 arg=undefined",
+        "子进程要拿到**父进程给的**值（而不是假应答）"
+    );
+
+    let calls = seen.lock().unwrap().clone();
+    let methods: Vec<&str> = calls.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(methods, vec!["pages.count", "kv.get"], "父进程要收到这两次请求");
+    // 参数原样过来（shim 会给没有参数的调用带一个空对象）
+    assert!(calls[0].1.parse::<serde_json::Value>().is_ok(), "argsJson 要是合法 JSON：{}", calls[0].1);
+
+    client.shutdown().ok();
+}
+
+#[test]
+fn capability_errors_come_back_into_the_plugins_js() {
+    let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+
+    // 插件**捕获**能力错误：说明错误是以异常/返回值的形式进到 JS 里的，
+    // 而不是把整次调用变成通道故障（否则用户看到的是"插件坏了"，而不是"这一步被拒了"）。
+    let res = client
+        .run_with_server(
+            rpc_req(
+                r#"register({ id: "c.err", title: "Err", run: function () {
+                     try { api.pages.list(); return "没抛错（不对）"; }
+                     catch (e) { return "被拒：" + String(e.message || e); }
+                   } });"#,
+                "c.err",
+            ),
+            recording_server(seen.clone()),
+        )
+        .expect("被父进程拒绝不该变成通道故障");
+
+    assert!(res.message.starts_with("被拒："), "{}", res.message);
+    assert!(res.message.contains("bad_args"), "错误内容要能到插件手里：{}", res.message);
+    assert_eq!(seen.lock().unwrap().len(), 1);
+
+    client.shutdown().ok();
+}
+
+#[test]
+fn a_capability_request_without_a_server_says_so_in_the_message() {
+    // 阶段 1 的 `run()`（stub 模式）如果收到能力请求，必须**明确报错**而不是静默假答——
+    // 否则"父进程没接能力服务"这件事会装成"插件拿到了数据"。
+    let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
+    let res = client
+        .run(rpc_req(
+            r#"register({ id: "c.ask", title: "Ask", run: function () { return String(api.pages.count()); } });"#,
+            "c.ask",
+        ))
+        .expect("命令本身跑完了——插件的异常由 shim 转成一句给用户看的结果");
+    // 关键不是"它报错了"，而是**报的是真原因**：父进程没接能力服务这件事必须出现在
+    // 用户看得到的那句话里，而不是装成"插件拿到了数据"或一句笼统的"插件执行出错"。
+    assert!(
+        res.message.contains("cap_no_server") && res.message.contains("pages.count"),
+        "要说清是哪个能力没服务：{}",
+        res.message
+    );
+    client.shutdown().ok();
 }

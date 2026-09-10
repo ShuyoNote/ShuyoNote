@@ -51,6 +51,18 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub enum HostIn {
     /// 跑一次命令。
     Run(HostRunRequest),
+    /// 能力调用的**回包**（阶段 2）：子进程问"`pages.count` 是多少"，父进程在这儿回答。
+    ///
+    /// 数据访问**只发生在父进程**：子进程没有库、没有密钥、没有路径，它只能问。
+    /// 权限校验、审计、写中介也都在父进程那一侧——这里只是把答案递回去。
+    CapResult {
+        id: u64,
+        ok: bool,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        error: String,
+    },
     /// 收工：子进程退出 0（一次调用一个子进程，见方案 §3.3）。
     Shutdown,
 }
@@ -61,6 +73,14 @@ pub enum HostIn {
 pub enum HostOut {
     /// 握手：子进程起来了、协议版本对得上。父进程必须**先收到它**才敢发请求。
     Ready { protocol: u32, pid: u32 },
+    /// 能力调用**请求**（阶段 2）：子进程在跑插件的过程中，每调一次 `api.*` 就发一帧。
+    /// 父进程必须**立即**回 `CapResult`（两边都是同步的：此刻子进程正阻塞等这一个回答）。
+    Cap {
+        id: u64,
+        method: String,
+        #[serde(default)]
+        args_json: String,
+    },
     /// 这次命令跑完了。
     Done(HostRunResult),
     /// 跑失败了（插件自己的异常、语法错、预算超限……都走这里，不是"通道坏了"）。
@@ -88,6 +108,21 @@ pub struct HostRunRequest {
     pub current_page_json: String,
     #[serde(default)]
     pub page_count: usize,
+    /// 能力调用怎么回：假应答（默认）还是走 IPC 回父进程。
+    #[serde(default)]
+    pub cap_mode: CapMode,
+}
+
+/// 子进程里"能力怎么回"。
+///
+/// 阶段 1 只有 [`CapMode::Stub`]（假应答）；阶段 2 加了 [`CapMode::Rpc`]，切流时会**只留
+/// Rpc**——现在两条都在，是因为父进程还没把能力服务接上（见方案 §8.2 的进展表）。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CapMode {
+    #[default]
+    Stub,
+    Rpc,
 }
 
 /// 一次命令执行的结果。
@@ -181,10 +216,11 @@ pub fn read_frame<R: Read, T: serde::de::DeserializeOwned>(r: &mut R) -> Result<
 ///
 /// 返回进程退出码：0 = 正常收工；2 = 通道层面坏了（父进程读得到错误，能如实报给用户）。
 pub fn serve_stdio() -> i32 {
-    let stdin = std::io::stdin();
-    let mut input = BufReader::new(stdin.lock());
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    // **不要**在这里长期持有 stdin/stdout 的锁：跑插件的工作线程同样要读 stdin（等能力回包）
+    // 与写 stdout（发能力请求）。`std::io::stdin()` / `stdout()` 每次调用各自加锁，正好够用——
+    // 主线程在 Run 期间是阻塞的，两边不会同时用。
+    let mut input = std::io::stdin();
+    let mut out = std::io::stdout();
 
     if write_frame(
         &mut out,
@@ -202,6 +238,18 @@ pub fn serve_stdio() -> i32 {
         match read_frame::<_, HostIn>(&mut input) {
             Ok(None) => return 0, // 父进程关了管道 = 收工
             Ok(Some(HostIn::Shutdown)) => return 0,
+            Ok(Some(HostIn::CapResult { id, .. })) => {
+                // 能力回包只会被**正在等它的那个工作线程**吃掉；主循环看到它说明帧的
+                // 时序错乱（比如父进程在没跑命令时乱回包），按通道故障处理。
+                let _ = write_frame(
+                    &mut out,
+                    &HostOut::Failed {
+                        code: "host_protocol_error".into(),
+                        message: format!("收到没有对应请求的能力回包（id={id}）"),
+                    },
+                );
+                return 2;
+            }
             Ok(Some(HostIn::Run(req))) => {
                 let frame = match crate::plugins::run_command_in_host_process(&req) {
                     Ok(res) => HostOut::Done(res),
@@ -224,6 +272,48 @@ pub fn serve_stdio() -> i32 {
             }
         }
     }
+}
+
+/// 子进程里的一次能力往返：发请求帧 → **阻塞等**回包。
+///
+/// 谁在跑：跑插件的那条**工作线程**（`run_command_timeout` 里起的）。此刻子进程的主线程
+/// 正阻塞在"等这次命令跑完"，所以这一对读写不会与它抢 stdin/stdout；父进程那边同样在
+/// serve 循环里等，于是这一问一答是严格同步的——这也正是"父进程绝不能在持锁时等子进程"
+/// 那条铁律的另一面：**子进程等父进程的这段时间里，父进程手里不能有库锁**（方案 §7）。
+fn cap_rpc_round_trip(seq: &std::sync::atomic::AtomicU64, method: &str, args_json: &str) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    let id = seq.fetch_add(1, Ordering::Relaxed);
+    write_frame(
+        &mut std::io::stdout(),
+        &HostOut::Cap {
+            id,
+            method: method.to_string(),
+            args_json: args_json.to_string(),
+        },
+    )
+    .map_err(|e| format!("cap_transport: 发能力请求失败：{e}"))?;
+
+    match read_frame::<_, HostIn>(&mut std::io::stdin()) {
+        Ok(Some(HostIn::CapResult { id: rid, ok, value, error })) => {
+            if rid != id {
+                return Err(format!("cap_transport: 能力回包 id 不对（期望 {id}，收到 {rid}）"));
+            }
+            if ok {
+                Ok(value)
+            } else {
+                Err(error)
+            }
+        }
+        Ok(Some(other)) => Err(format!("cap_transport: 能力调用期间收到了 {other:?}")),
+        Ok(None) => Err("cap_transport: 父进程在能力调用期间关闭了通道".into()),
+        Err(e) => Err(format!("cap_transport: 读能力回包失败：{e}")),
+    }
+}
+
+/// 给这一次运行装上"能力走 IPC"的通道（`CapMode::Rpc` 时由 `run_command_in_host_process` 调）。
+pub fn rpc_transport() -> std::sync::Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync> {
+    let seq = std::sync::atomic::AtomicU64::new(0);
+    std::sync::Arc::new(move |method: &str, args_json: &str| cap_rpc_round_trip(&seq, method, args_json))
 }
 
 // ---------------------------------------------------------------------------
@@ -293,15 +383,48 @@ impl HostClient {
         }
     }
 
-    /// 让子进程跑一次命令。
+    /// 让子进程跑一次命令（`CapMode::Stub`：不提供能力服务，子进程也不该来问）。
     pub fn run(&mut self, req: HostRunRequest) -> Result<HostRunResult, String> {
+        self.run_with_server(req, |method, _| {
+            Err(format!(
+                "cap_no_server: 子进程请求了能力 {method}，但父进程没有提供能力服务\
+                 （阶段 1 的 stub 模式不该发出这种请求）"
+            ))
+        })
+    }
+
+    /// 让子进程跑一次命令，并**在它跑的过程中服务它的能力调用**（阶段 2 的通道）。
+    ///
+    /// `server` 收到 `(method, argsJson)` 就返回一个 JSON 字符串（能力的返回形状，与
+    /// 进程内那条路完全一致）或者一句错误。数据访问、权限、审计、写中介都在 `server` 里——
+    /// 也就是**留在父进程**，子进程只是问。
+    ///
+    /// ⚠️ 铁律（方案 §7）：`server` **绝不能在持数据库锁时等子进程**。它是被同步调用的
+    /// （子进程此刻正阻塞等这个回答），所以它自己必须尽快返回；锁只在单次查询内持有。
+    pub fn run_with_server<F>(
+        &mut self,
+        req: HostRunRequest,
+        mut server: F,
+    ) -> Result<HostRunResult, String>
+    where
+        F: FnMut(&str, &str) -> Result<String, String>,
+    {
         write_frame(&mut self.stdin, &HostIn::Run(req)).map_err(|e| e.to_string())?;
-        match read_frame::<_, HostOut>(&mut self.stdout) {
-            Ok(Some(HostOut::Done(res))) => Ok(res),
-            Ok(Some(HostOut::Failed { code, message })) => Err(format!("{code}: {message}")),
-            Ok(Some(HostOut::Ready { .. })) => Err("宿主子进程重复握手".into()),
-            Ok(None) => Err("宿主子进程没回结果就退出了".into()),
-            Err(e) => Err(e.to_string()),
+        loop {
+            match read_frame::<_, HostOut>(&mut self.stdout) {
+                Ok(Some(HostOut::Done(res))) => return Ok(res),
+                Ok(Some(HostOut::Failed { code, message })) => return Err(format!("{code}: {message}")),
+                Ok(Some(HostOut::Cap { id, method, args_json })) => {
+                    let reply = match server(&method, &args_json) {
+                        Ok(value) => HostIn::CapResult { id, ok: true, value, error: String::new() },
+                        Err(error) => HostIn::CapResult { id, ok: false, value: String::new(), error },
+                    };
+                    write_frame(&mut self.stdin, &reply).map_err(|e| e.to_string())?;
+                }
+                Ok(Some(HostOut::Ready { .. })) => return Err("宿主子进程重复握手".into()),
+                Ok(None) => return Err("宿主子进程没回结果就退出了".into()),
+                Err(e) => return Err(e.to_string()),
+            }
         }
     }
 
@@ -343,6 +466,7 @@ mod tests {
             current_page_id: None,
             current_page_json: String::new(),
             page_count: 0,
+            cap_mode: CapMode::Stub,
         }
     }
 

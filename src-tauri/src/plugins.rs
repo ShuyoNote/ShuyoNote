@@ -330,6 +330,12 @@ struct RunState {
     /// `__cap` 改成 RPC 回父进程（那里已经有权限校验、审计与写中介）；在那之前，
     /// 这个开关让"通道 + 解释器 + 插件 JS"这三段能在真进程边界上先跑通、被测住。
     cap_stub: bool,
+    /// M11.13 阶段 2：能力调用的**传输**。有它时每次 `api.*` 都走它回父进程（父进程在那里
+    /// 查库并回答）；没有时才轮到上面的假应答。
+    ///
+    /// 用 `Arc<dyn Fn>` 而不是把 io 句柄塞进来：跑插件的是工作线程，而"怎么跟父进程说话"
+    /// 是子进程那一侧的知识——`plugins` 这一层不该知道帧、stdin、pid 这些东西。
+    cap_rpc: Option<std::sync::Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>>,
 }
 
 /// 一次导出请求（`api.files.export` 的产物）。
@@ -1905,6 +1911,11 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
     // 走到下面任何一条 arm 都只会失败。假应答的用处是让"协议 + 解释器 + 插件 JS"这三段
     // 能在真进程边界上跑通并被测住；阶段 2 把它换成 `__cap` 走 IPC 回父进程，
     // **权限校验与审计仍然只发生在父进程那一侧**（那里本来就有一份，不需要第二份）。
+    // 阶段 2：装了传输就把这一问一答发回父进程（那边查库、校验权限、记审计）。
+    let rpc = RUN_STATE.with(|s| s.borrow().cap_rpc.clone());
+    if let Some(rpc) = rpc {
+        return rpc(method, args_json);
+    }
     if RUN_STATE.with(|s| s.borrow().cap_stub) {
         return Ok(serde_json::json!({
             "stub": true,
@@ -2171,6 +2182,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             insert_text: String::new(),
             toasts: Vec::new(),
             cap_stub: state.cap_stub,
+            cap_rpc: state.cap_rpc.clone(),
         }
     });
     Ok(())
@@ -2227,6 +2239,7 @@ fn run_command_timeout(
         insert_text: String::new(),
         toasts: Vec::new(),
         cap_stub: state.cap_stub,
+        cap_rpc: state.cap_rpc.clone(),
     };
     let args = args_json.to_string();
     with_timeout(RUN_TIMEOUT, "插件执行", move || {
@@ -2266,7 +2279,12 @@ pub(crate) fn run_command_in_host_process(
         exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
-        cap_stub: true,
+        cap_stub: req.cap_mode == crate::plugin_host::CapMode::Stub,
+        cap_rpc: if req.cap_mode == crate::plugin_host::CapMode::Rpc {
+            Some(crate::plugin_host::rpc_transport())
+        } else {
+            None
+        },
     };
     match run_command_timeout(&req.source, &req.command_id, &req.args_json, &state) {
         Ok((message, insert_text, toasts, drafts, exports)) => Ok(crate::plugin_host::HostRunResult {
@@ -2510,6 +2528,7 @@ fn run_event_timeout(
         toasts: Vec::new(),
         // 事件路径目前仍在父进程内跑（M11.13 阶段 2 起才会挪到子进程）
         cap_stub: state.cap_stub,
+        cap_rpc: state.cap_rpc.clone(),
     };
     let src = source.to_string();
     let ev = event.to_string();
@@ -2691,6 +2710,7 @@ pub async fn emit_plugin_event(
             read_space: read_space.clone(),
             read_dir: None,
             cap_stub: false,
+            cap_rpc: None,
             setting_scopes,
             drafts: Vec::new(),
             exports: Vec::new(),
@@ -3290,6 +3310,7 @@ pub async fn run_plugin_command(
         read_space,
         read_dir: None,
         cap_stub: false,
+        cap_rpc: None,
         setting_scopes: setting_scopes_of(&manifest),
         drafts: Vec::new(),
         exports: Vec::new(),
