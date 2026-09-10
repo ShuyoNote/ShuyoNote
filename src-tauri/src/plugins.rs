@@ -80,7 +80,7 @@ fn permission_metas(manifest: &Manifest) -> (Vec<PluginPermissionMeta>, bool) {
 thread_local! {
     static RUN_STATE: RefCell<RunState> = RefCell::new(RunState::default());
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct RunState {
     /// 当前调用属于哪个插件（用于把日志/提示归因到插件）。
     plugin_id: String,
@@ -103,6 +103,52 @@ pub struct PluginRunResult {
     pub insert: Option<String>,
     /// 插件在本次执行里通过 `__toast(...)` 发出的提示（此前只写 stderr，用户完全看不到）。
     pub toasts: Vec<String>,
+}
+
+/// 一条能力调用审计记录（方案 §3.10）。
+///
+/// **只记元数据，不记内容**：哪个插件、调了哪个能力、什么 scope、什么时候、成没成。
+/// 「用户敢装」需要证据链——出问题时能查到"这个插件用过哪些权限、被拒过几次"，
+/// 而权限被拒的记录恰恰是最该留的那部分。
+#[derive(Serialize, Clone)]
+pub struct PluginAuditEntry {
+    pub plugin_id: String,
+    pub capability: String,
+    pub scope: String,
+    pub at_ms: i64,
+    pub ok: bool,
+    /// 失败时的错误码前缀（permission_denied / unknown_capability / bad_args …）。
+    pub error_code: Option<String>,
+}
+
+/// 审计环形缓冲容量。内存里留最近这些，足够复盘一次会话里的行为。
+const PLUGIN_AUDIT_CAPACITY: usize = 500;
+
+static PLUGIN_AUDIT: std::sync::Mutex<std::collections::VecDeque<PluginAuditEntry>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+fn error_code_of(msg: &str) -> Option<String> {
+    let code = msg.split(':').next().unwrap_or("").trim();
+    if code.is_empty() || code.contains(' ') {
+        None
+    } else {
+        Some(code.to_string())
+    }
+}
+
+fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
+    let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+    if q.len() >= PLUGIN_AUDIT_CAPACITY {
+        q.pop_front();
+    }
+    q.push_back(PluginAuditEntry {
+        plugin_id: plugin_id.to_string(),
+        capability: capability.to_string(),
+        scope: scope.to_string(),
+        at_ms: now_ms(),
+        ok,
+        error_code,
+    });
 }
 
 /// 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都会进环形缓冲）。
@@ -489,13 +535,20 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
-    let cap = capabilities_gen::lookup(method)
-        .ok_or_else(|| format!("unknown_capability: 宿主没有名为 {method} 的能力"))?;
+    let plugin_id = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    let cap = match capabilities_gen::lookup(method) {
+        Some(c) => c,
+        None => {
+            push_audit(&plugin_id, method, "?", false, Some("unknown_capability".into()));
+            return Err(format!("unknown_capability: 宿主没有名为 {method} 的能力"));
+        }
+    };
 
     // 权限：逐次调用校验，不是只在 UI 上隐藏。
     if let Some(perm) = cap.permission {
         let granted = RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == perm));
         if !granted {
+            push_audit(&plugin_id, method, cap.scope, false, Some("permission_denied".into()));
             return Err(format!(
                 "permission_denied: 能力 {method} 需要权限 {perm}，但 manifest.permissions 未声明它"
             ));
@@ -505,7 +558,13 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
     let args: serde_json::Value = if args_json.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        serde_json::from_str(args_json).map_err(|e| format!("bad_args: 参数不是合法 JSON（{e}）"))?
+        match serde_json::from_str(args_json) {
+            Ok(v) => v,
+            Err(e) => {
+                push_audit(&plugin_id, method, cap.scope, false, Some("bad_args".into()));
+                return Err(format!("bad_args: 参数不是合法 JSON（{e}）"));
+            }
+        }
     };
     let arg_str = |name: &str| -> Result<String, String> {
         match args.get(name) {
@@ -524,9 +583,22 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
             let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("info");
             cap_log_write(&arg_str("message")?, level)
         }
-        other => return Err(format!("unknown_capability: {other}")),
-    }?;
-    serde_json::to_string(&out).map_err(|e| e.to_string())
+        other => {
+            push_audit(&plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
+            return Err(format!("unknown_capability: {other}"));
+        }
+    };
+    match out {
+        Ok(v) => {
+            push_audit(&plugin_id, method, cap.scope, true, None);
+            serde_json::to_string(&v).map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            let code = error_code_of(&e);
+            push_audit(&plugin_id, method, cap.scope, false, code);
+            Err(e)
+        }
+    }
 }
 
 /// `__cap(method, argsJson)` → JSON 字符串（shim 侧解析）。
@@ -751,6 +823,7 @@ pub fn ensure_demo_plugin(app: &AppHandle) -> Result<(), String> {
     if marker.exists() {
         return Ok(()); // 已经播种过：即使用户把它卸了，也不再复活
     }
+
     if dir.join("main.js").exists() {
         // 已有手放的 demo（老版本或用户自己）：只补标记，不覆盖内容。
         std::fs::write(&marker, b"1").map_err(|e| e.to_string())?;
@@ -776,41 +849,77 @@ register({ id: "demo.insert", title: "插入文本", description: "把一段文�
     )
     .map_err(|e| e.to_string())?;
     std::fs::write(&marker, b"1").map_err(|e| e.to_string())?;
+    // 出厂内容也留一行安装记录（seeded=1）：插件管理面板能看出它是随应用带的，
+    // 而且"用户之前禁用过它"不会被这里覆盖（record_install 只更新版本/来源）。
+    if let Some(db) = app.try_state::<Db>() {
+        let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = record_install(&c, "demo", "0.2.0", "bundled", true, true);
+    }
     Ok(())
 }
 
-fn enabled_key(id: &str) -> String {
-    format!("plugin_enabled::{id}")
-}
-
+/// 读启停状态：以 `plugin_install` 行为准；**没有行时默认启用**。
+///
+/// "没有行却默认启用"是有意的：手动往插件目录丢文件夹的人（专家操作）本来就在表达同意，
+/// 且示例插件等出厂内容没有行走过安装流程。走「从文件夹安装」的路径会显式写入
+/// `enabled=0`（安装 ≠ 授权），那条才是需要用户确认的入口。
 fn enabled(c: &Connection, id: &str) -> bool {
     c.query_row(
-        "SELECT value FROM meta.plugin_state WHERE key = ?1",
-        params![enabled_key(id)],
-        |r| r.get::<_, String>(0),
+        "SELECT enabled FROM meta.plugin_install WHERE plugin_id = ?1",
+        params![id],
+        |r| r.get::<_, i64>(0),
     )
-    .map(|v| v == "1")
-    .unwrap_or(true) // default enabled
+    .map(|v| v != 0)
+    .unwrap_or(true) // 没有安装行 → 默认启用（见上面的说明）
 }
 
 fn set_enabled(c: &Connection, id: &str, on: bool) -> Result<(), String> {
     c.execute(
-        "INSERT INTO meta.plugin_state (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![enabled_key(id), if on { "1" } else { "0" }],
+        "INSERT INTO meta.plugin_install (plugin_id, enabled, installed_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(plugin_id) DO UPDATE SET enabled = excluded.enabled",
+        params![id, if on { 1 } else { 0 }, now_ms()],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 卸载时清掉启停状态行。
+/// 记一条安装记录（安装成功 / 出厂播种时调用）。
+/// 已存在则只补**版本 / 来源 / 播种位**（这些是事实），**绝不覆盖 `enabled`**（那是用户的选择）。
+fn record_install(
+    c: &Connection,
+    id: &str,
+    version: &str,
+    source: &str,
+    seeded: bool,
+    enabled: bool,
+) -> Result<(), String> {
+    c.execute(
+        "INSERT INTO plugin_install (plugin_id, version, enabled, installed_at, source, seeded)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(plugin_id) DO UPDATE SET
+             version = excluded.version,
+             source = excluded.source,
+             seeded = excluded.seeded",
+        params![id, version, if enabled { 1 } else { 0 }, now_ms(), source, if seeded { 1 } else { 0 }],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 卸载时删掉安装行。
 ///
-/// 此前卸载只删目录、不删这一行，于是**重装同一个 id 会静默继承旧的「已禁用」**，
-/// 而且残留行永远没人回收（`plugin_state` 里此前没有任何 `DELETE`）。
+/// 此前卸载只删目录、不删状态行，于是**重装同一个 id 会静默继承旧的「已禁用」**，
+/// 而且残留行永远没人回收。现在"安装记录"本身就是一行，卸载 = 删行，残留从结构上消失。
 fn clear_enabled(c: &Connection, id: &str) -> Result<(), String> {
     c.execute(
-        "DELETE FROM meta.plugin_state WHERE key = ?1",
-        params![enabled_key(id)],
+        "DELETE FROM meta.plugin_install WHERE plugin_id = ?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    // 连带清掉这个插件的私有数据：卸载后不该留数据（也不该让重装继承）。
+    c.execute(
+        "DELETE FROM meta.plugin_data WHERE plugin_id = ?1",
+        params![id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1020,7 +1129,10 @@ pub async fn install_plugin(
     }
     // 新装的插件**默认禁用**：先让用户看清它要哪些权限、干什么，再自己去启用。
     // （插件默认启用时，"安装"就等于一次性授予了它声明的全部数据访问权。）
-    set_enabled(&conn(&db), &manifest.id, false)?;
+    {
+        let c = conn(&db);
+        record_install(&c, &manifest.id, &manifest.version, "local", false, false)?;
+    }
     let (permissions, permissions_baseline) = permission_metas(&manifest);
     Ok(PluginMeta {
         id: manifest.id,
@@ -1073,6 +1185,33 @@ pub fn plugin_logs(plugin_id: Option<String>, limit: Option<usize>) -> Vec<Plugi
         filtered.drain(0..filtered.len() - keep);
     }
     filtered
+}
+
+/// 读取能力调用审计（最近若干条，正序）。
+///
+/// 只回元数据，不回内容——审计的用途是"这个插件碰过哪些权限、有没有被拒"，
+/// 而不是记录它读到了什么。
+#[tauri::command]
+pub fn plugin_audit(plugin_id: Option<String>, limit: Option<usize>) -> Vec<PluginAuditEntry> {
+    let all: Vec<PluginAuditEntry> = {
+        let q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
+        q.iter().cloned().collect()
+    };
+    let mut filtered: Vec<PluginAuditEntry> = all
+        .into_iter()
+        .filter(|e| plugin_id.as_deref().is_none_or(|p| e.plugin_id == p))
+        .collect();
+    let keep = limit.unwrap_or(PLUGIN_AUDIT_CAPACITY).min(PLUGIN_AUDIT_CAPACITY);
+    if filtered.len() > keep {
+        filtered.drain(0..filtered.len() - keep);
+    }
+    filtered
+}
+
+/// 清空能力调用审计。
+#[tauri::command]
+pub fn clear_plugin_audit() {
+    PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 /// 清空插件日志。
@@ -1274,12 +1413,28 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
 
     // ---- 启停状态：往返 + 卸载清理 ----
 
-    /// 只带 `meta.plugin_state` 的内存库（真实 SQL，含 `meta.` 限定名）。
+    /// 只带插件相关表的内存库（真实 SQL，含 `meta.` 限定名）。
     fn state_conn() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
             "ATTACH DATABASE ':memory:' AS meta;
-             CREATE TABLE meta.plugin_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+             CREATE TABLE meta.plugin_install (
+                 plugin_id TEXT PRIMARY KEY,
+                 version TEXT NOT NULL DEFAULT '',
+                 enabled INTEGER NOT NULL DEFAULT 1,
+                 installed_at INTEGER NOT NULL DEFAULT 0,
+                 source TEXT NOT NULL DEFAULT 'local',
+                 content_hash TEXT,
+                 seeded INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE meta.plugin_data (
+                 plugin_id TEXT NOT NULL,
+                 scope TEXT NOT NULL,
+                 key TEXT NOT NULL,
+                 value TEXT NOT NULL,
+                 updated_at INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (plugin_id, scope, key)
+             );",
         )
         .unwrap();
         c
@@ -1307,9 +1462,9 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         assert!(enabled(&c, "p1"), "卸载后残留状态会让重装继承旧的已禁用");
 
         let left: i64 = c
-            .query_row("SELECT COUNT(*) FROM meta.plugin_state", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM meta.plugin_install", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(left, 0, "卸载不应留下任何状态行");
+        assert_eq!(left, 0, "卸载不应留下任何安装行");
     }
 
     // ---- 探针：discovery 是否真的发现了命令 ----
@@ -1510,6 +1665,100 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert!(baseline2);
         assert_eq!(metas2.len(), capabilities_gen::PERMISSION_LIST.len());
         assert!(metas2[0].reason.contains("基线"), "基线授权必须说清楚是怎么来的");
+    }
+
+    // ---- 安装行 / 私有数据 / 审计 ----
+
+    #[test]
+    fn uninstall_also_drops_the_plugins_private_data() {
+        let c = state_conn();
+        record_install(&c, "p1", "1.0.0", "local", false, true).unwrap();
+        c.execute(
+            "INSERT INTO meta.plugin_data (plugin_id, scope, key, value, updated_at)
+             VALUES ('p1', 'app', 'k', 'v', 0)",
+            [],
+        )
+        .unwrap();
+        set_enabled(&c, "p1", false).unwrap();
+        assert!(!enabled(&c, "p1"));
+
+        clear_enabled(&c, "p1").unwrap();
+        assert!(enabled(&c, "p1"), "卸载后重装不该继承旧的已禁用");
+        let left: i64 = c
+            .query_row("SELECT COUNT(*) FROM meta.plugin_data", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "卸载应当连私有数据一起清掉");
+    }
+
+    #[test]
+    fn record_install_keeps_the_users_enabled_choice() {
+        let c = state_conn();
+        record_install(&c, "p1", "1.0.0", "local", false, false).unwrap();
+        assert!(!enabled(&c, "p1"), "新装默认禁用（安装 ≠ 授权）");
+        set_enabled(&c, "p1", true).unwrap();
+
+        // 再次播种/记录（例如升级）不该把用户的选择冲掉
+        record_install(&c, "p1", "2.0.0", "bundled", true, true).unwrap();
+        assert!(enabled(&c, "p1"));
+        let (v, src, seeded): (String, String, i64) = c
+            .query_row(
+                "SELECT version, source, seeded FROM meta.plugin_install WHERE plugin_id = 'p1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((v.as_str(), src.as_str(), seeded), ("2.0.0", "bundled", 1));
+    }
+
+    /// 审计是进程级环形缓冲，与日志同样需要串行。
+    static AUDIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn audit_records_success_and_permission_denial() {
+        let _g = AUDIT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_plugin_audit();
+
+        // 被拒的调用也要留痕 —— 这恰恰是最该查的那类记录
+        let denied = r#"register({ id: "t.audit", title: "A", description: "", closeOnRun: false,
+  run: function(){ try { api.pages.count(); } catch (e) { return "caught"; } return "no-throw"; } });"#;
+        let state = RunState {
+            plugin_id: "auditp".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(run_command(denied, "t.audit", &state).unwrap(), "caught");
+        let rows = plugin_audit(Some("auditp".to_string()), None);
+        assert_eq!(rows.len(), 1, "应当留下一条审计");
+        assert!(!rows[0].ok);
+        assert_eq!(rows[0].capability, "pages.count");
+        assert_eq!(rows[0].scope, "current-space");
+        assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+
+        // 授权后的成功调用
+        let mut ok_state = state.clone();
+        ok_state.permissions = vec!["read:pages".to_string()];
+        assert_eq!(run_command(denied, "t.audit", &ok_state).unwrap(), "no-throw");
+        let rows = plugin_audit(Some("auditp".to_string()), None);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[1].ok);
+        assert_eq!(rows[1].error_code, None);
+
+        clear_plugin_audit();
+        assert!(plugin_audit(None, None).is_empty());
+    }
+
+    #[test]
+    fn audit_is_scoped_per_plugin_and_capped() {
+        let _g = AUDIT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_plugin_audit();
+        for i in 0..(PLUGIN_AUDIT_CAPACITY + 5) {
+            push_audit("cap", "pages.count", "current-space", true, None);
+            let _ = i;
+        }
+        let all = plugin_audit(Some("cap".to_string()), None);
+        assert_eq!(all.len(), PLUGIN_AUDIT_CAPACITY, "审计缓冲必须封顶");
+        assert!(plugin_audit(Some("别的插件".to_string()), None).is_empty());
+        assert_eq!(plugin_audit(Some("cap".to_string()), Some(3)).len(), 3);
+        clear_plugin_audit();
     }
 
     // ---- 内存预算（分配炸弹） ----

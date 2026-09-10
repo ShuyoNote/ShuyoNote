@@ -121,6 +121,9 @@ export const api = {
   pluginLogs: (pluginId?: string | null, limit?: number | null) =>
     invoke("plugin_logs", { pluginId: pluginId ?? null, limit: limit ?? null }),
   clearPluginLogs: () => invoke("clear_plugin_logs"),
+  pluginAudit: (pluginId?: string | null, limit?: number | null) =>
+    invoke("plugin_audit", { pluginId: pluginId ?? null, limit: limit ?? null }),
+  clearPluginAudit: () => invoke("clear_plugin_audit"),
   setEncryption: (passphrase: string) => invoke("set_encryption", { passphrase }),
   encryptionStatus: () => invoke("encryption_status"),
   lockEncryption: () => invoke("lock_encryption"),

@@ -1221,7 +1221,8 @@ function AppearancePane() {
   );
 }
 
-// 插件卡片图标：按 PLUGIN_META 的 icon 键绘制。内联 SVG，不引其它图标组件。
+// 插件卡片图标。内联 SVG，不引其它图标组件。
+// （曾经有一张「内置插件的图标/配色表」，随内置插件启停机制一起被删掉了——那是死代码。）
 function PluginGlyph({ icon }: { icon: string }) {
   const paths: Record<string, React.ReactNode> = {
     stats: <><path d="M4 20h16" /><path d="M7 20v-6M12 20V9M17 20V13" /></>,

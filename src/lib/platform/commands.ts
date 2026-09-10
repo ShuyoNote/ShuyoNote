@@ -37,6 +37,7 @@ import type {
   PageVersion,
   PdfAnnotationRecord,
   PluginMeta,
+  PluginAuditEntry,
   PluginLogLine,
   PluginRunResult,
   SearchBlock,
@@ -178,6 +179,8 @@ export interface CommandMap {
   open_plugin_dir: { args: undefined; result: string };
   plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
   clear_plugin_logs: { args: undefined; result: void };
+  plugin_audit: { args: { pluginId?: string | null; limit?: number | null }; result: PluginAuditEntry[] };
+  clear_plugin_audit: { args: undefined; result: void };
 
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };

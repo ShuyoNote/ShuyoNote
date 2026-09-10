@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
 import { toast } from "./toast";
-import type { PluginLogLine, PluginMeta } from "../types";
+import type { PluginAuditEntry, PluginLogLine, PluginMeta } from "../types";
 
 // Disk-loaded plugins (scanned/manifest-validated by the backend, executed in a
 // restricted boa runtime). Persisted enabled state lives in the DB.
@@ -71,6 +71,12 @@ interface PluginsState {
   openLogs: (pluginId: string) => Promise<void>;
   closeLogs: () => void;
   clearLogs: () => Promise<void>;
+  /** 正在查看哪个插件的能力调用审计（null = 未打开）。 */
+  auditFor: string | null;
+  audit: PluginAuditEntry[];
+  openAudit: (pluginId: string) => Promise<void>;
+  closeAudit: () => void;
+  clearAudit: () => Promise<void>;
 }
 
 export const usePlugins = create<PluginsState>((set) => ({
@@ -189,6 +195,27 @@ export const usePlugins = create<PluginsState>((set) => ({
     }
   },
   closeLogs: () => set({ logsFor: null, logs: [] }),
+  auditFor: null,
+  audit: [],
+  openAudit: async (pluginId) => {
+    try {
+      const audit = await api.pluginAudit(pluginId);
+      set({ audit, auditFor: pluginId });
+    } catch (e) {
+      console.error("load plugin audit failed", e);
+      toast(`读取插件活动失败：${errText(e)}`, "error");
+    }
+  },
+  closeAudit: () => set({ auditFor: null, audit: [] }),
+  clearAudit: async () => {
+    try {
+      await api.clearPluginAudit();
+      set({ audit: [] });
+    } catch (e) {
+      console.error("clear plugin audit failed", e);
+      toast(`清空插件活动失败：${errText(e)}`, "error");
+    }
+  },
   clearLogs: async () => {
     try {
       await api.clearPluginLogs();

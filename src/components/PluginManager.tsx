@@ -9,6 +9,7 @@ export function PluginManager() {
   const {
     managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir,
     logsFor, logs, openLogs, closeLogs, clearLogs,
+    auditFor, audit, openAudit, closeAudit, clearAudit,
   } = usePlugins();
 
   useEffect(() => {
@@ -87,14 +88,42 @@ export function PluginManager() {
                     所以日志必须有个能看的地方。 */}
                 <button
                   onClick={() => (logsFor === p.id ? closeLogs() : openLogs(p.id))}
-                  title="查看这个插件的日志（__log / __toast）"
+                  title="查看这个插件的日志（api.log / api.notify）"
                 >
                   {logsFor === p.id ? "收起日志" : "日志"}
+                </button>
+                {/* 能力调用审计：它碰过哪些权限、有没有被拒（权限被拒的记录最该看）。 */}
+                <button
+                  onClick={() => (auditFor === p.id ? closeAudit() : openAudit(p.id))}
+                  title="查看这个插件调用过哪些能力、有没有被权限拦下"
+                >
+                  {auditFor === p.id ? "收起活动" : "活动"}
                 </button>
                 <button className="danger" onClick={() => uninstallWithConfirm(p.id, p.name)}>
                   卸载
                 </button>
               </div>
+              {auditFor === p.id && (
+                <div className="pm-logs">
+                  {audit.length === 0 ? (
+                    <div className="pm-log-empty">暂无能力调用记录</div>
+                  ) : (
+                    audit.map((a, i) => (
+                      <div key={`${a.at_ms}-${i}`} className={`pm-log ${a.ok ? "" : "pm-log-error"}`}>
+                        <span className="pm-log-time">{new Date(a.at_ms).toLocaleTimeString()}</span>
+                        <span className="pm-log-level">{a.ok ? "ok" : a.error_code ?? "err"}</span>
+                        <span className="pm-log-msg">
+                          {a.capability}
+                          <span className="pm-log-scope">（{a.scope}）</span>
+                        </span>
+                      </div>
+                    ))
+                  )}
+                  <div className="pm-log-actions">
+                    <button onClick={() => clearAudit()}>清空活动</button>
+                  </div>
+                </div>
+              )}
               {logsFor === p.id && (
                 <div className="pm-logs">
                   {logs.length === 0 ? (

@@ -6,7 +6,7 @@ import { usePlugins } from "../store/plugins";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { useAiStore } from "../store/ai";
-import { getAllCommands, usePluginRevision, type CommandContext } from "../plugins/registry";
+import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
 
 type Item =
   | { kind: "page"; id: string; title: string }
@@ -80,16 +80,15 @@ export function CommandPalette() {
         .map((p) => ({ kind: "page", id: p.id, title: p.title || "未命名" })),
     [pages, q],
   );
-  const pluginRevision = usePluginRevision();
   // Subscribe so the gated "AI 助手" command appears/disappears when AI toggles.
   const aiEnabled = useAiStore((s) => s.config.enabled);
   const cmdItems = useMemo<Item[]>(
     () =>
-      getAllCommands()
+      getBuiltinCommands()
         .filter((c) => c.title.toLowerCase().includes(q))
         .map((c) => ({ kind: "command", id: c.id, title: c.title, description: c.description })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [q, pluginRevision, aiEnabled],
+    [q, aiEnabled],
   );
   const pluginItems = useMemo<Item[]>(() => {
     const out: Item[] = [];
@@ -159,7 +158,7 @@ export function CommandPalette() {
       setResult(r.ok ? "已切换插件状态" : `切换插件失败：${r.error ?? "未知错误"}`);
       return;
     }
-    const cmd = getAllCommands().find((c) => c.id === item.id);
+    const cmd = getBuiltinCommands().find((c) => c.id === item.id);
     if (!cmd) return;
     const ctx: CommandContext = { pages, currentId };
     try {

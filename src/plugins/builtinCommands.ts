@@ -1,4 +1,3 @@
-import { create } from "zustand";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
@@ -14,17 +13,22 @@ import { usePdfReader } from "../store/pdfReader";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
-// A lightweight plugin system: plugins register commands that are
-// surfaced in the command palette (Ctrl+K). Each command is a pure
-// function of the current context (selected page) and returns a result
-// message. This is the extension point for third-party plugins.
+// **内置命令组**——不是插件。
+//
+// 这里注册的是应用自身的功能在命令面板（Ctrl+K）里的分组入口（统计/导出/数据库/
+// 模板/插件/AI/设置/帮助/PDF/视图）。它们与「磁盘插件」是两套东西：
+//   · 内置命令组：编译进应用、跑在渲染进程、与应用同权限、装不了也卸不掉；
+//   · 磁盘插件：manifest + main.js、跑在受限沙箱里、有权限模型、可装可卸。
+// 二者共用命令面板与「命令」这个词，但生命周期/信任级别/持久化都不同——历史上
+// 正是这个命名混淆导致插件面板误把内置分组当成可开关插件展示（见 CHANGELOG）。
+// 所以：本文件与相关类型一律叫 Builtin*，「插件」一词专指磁盘插件。
 
 export interface CommandContext {
   pages: PageMeta[];
   currentId: string | null;
 }
 
-export interface PluginCommand {
+export interface BuiltinCommand {
   id: string;
   title: string;
   description?: string;
@@ -35,78 +39,32 @@ export interface PluginCommand {
   run: (ctx: CommandContext) => Promise<string> | string;
 }
 
-export interface Plugin {
+export interface BuiltinCommandGroup {
   id: string;
   name: string;
-  commands: PluginCommand[];
+  commands: BuiltinCommand[];
 }
 
-// 内置插件的展示图标、强调色与一句话用途。id → { icon, color, desc }。
-// 放在 registry 而非组件里，是为了将来插件管理器/命令面板也能复用同一套视觉。
-export interface PluginMeta {
-  icon: "stats" | "export" | "database" | "template" | "plugin" | "ai" | "help" | "view" | "pdf" | "sync" | "report";
-  color: string;
-  desc?: string;
+const registry: BuiltinCommandGroup[] = [];
+
+export function registerCommandGroup(group: BuiltinCommandGroup) {
+  registry.push(group);
 }
 
-export const PLUGIN_META: Record<string, Partial<PluginMeta>> = {
-  stats: { icon: "stats", color: "var(--cat-blue)", desc: "字数 / 页面总数统计" },
-  export: { icon: "export", color: "var(--cat-green)", desc: "导出 JSON / Markdown / 静态 wiki" },
-  database: { icon: "database", color: "var(--cat-purple)", desc: "数据库视图的创建与操作" },
-  template: { icon: "template", color: "var(--cat-orange)", desc: "把当前页存为模板" },
-  plugin: { icon: "plugin", color: "var(--cat-cyan)", desc: "插件管理与安装" },
-  ai: { icon: "ai", color: "var(--cat-red)", desc: "AI 助手入口" },
-  help: { icon: "help", color: "var(--cat-yellow)", desc: "快捷键 / 使用指南 / 关于" },
-  view: { icon: "view", color: "var(--cat-green)", desc: "图谱 / 看板 / 列表等视图" },
-  pdf: { icon: "pdf", color: "var(--cat-red)", desc: "PDF 批注与文件管理" },
-  sync: { icon: "sync", color: "var(--cat-blue)", desc: "多设备同步相关命令" },
-  report: { icon: "report", color: "var(--cat-orange)", desc: "审计 / 报告类命令" },
-};
-
-const registry: Plugin[] = [];
-
-// Plugin enable/disable state (persisted in-memory; default enabled).
-const usePluginState = create<{
-  enabled: Record<string, boolean>;
-  toggle: (id: string) => void;
-}>((set) => ({
-  enabled: {},
-  toggle: (id) =>
-    set((s) => ({ enabled: { ...s.enabled, [id]: !(s.enabled[id] ?? true) } })),
-}));
-
-export function registerPlugin(plugin: Plugin) {
-  registry.push(plugin);
+/**
+ * 命令面板要展示的全部内置命令（按 `when` 过滤）。
+ *
+ * 说明：这里曾经有一套「内置插件启停」机制（`usePluginState` / `togglePlugin` /
+ * `getEnabledPlugins` / `usePluginRevision`）。面板改成管理真正的磁盘插件后它就没有
+ * 调用方了，属于死代码，已删除——留着只会让人以为内置分组可以像插件一样装/卸。
+ */
+export function getBuiltinCommands(): BuiltinCommand[] {
+  return registry.flatMap((g) => g.commands).filter((c) => c.when?.() ?? true);
 }
 
-export function getPlugins(): Plugin[] {
-  return registry;
-}
+// ---- 内置命令组 ----
 
-export function getEnabledPlugins(): Plugin[] {
-  return registry.filter((p) => usePluginState.getState().enabled[p.id] !== false);
-}
-
-export function getAllCommands(): PluginCommand[] {
-  return getEnabledPlugins().flatMap((p) => p.commands).filter((c) => c.when?.() ?? true);
-}
-
-// Re-render hook for consumers that list plugins/commands (e.g. command palette).
-export function usePluginRevision() {
-  return usePluginState((s) => s.enabled);
-}
-
-export function togglePlugin(id: string) {
-  usePluginState.getState().toggle(id);
-}
-
-export function isPluginEnabled(id: string): boolean {
-  return usePluginState.getState().enabled[id] !== false;
-}
-
-// ---- built-in plugins ----
-
-registerPlugin({
+registerCommandGroup({
   id: "stats",
   name: "统计",
   commands: [
@@ -129,7 +87,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "export",
   name: "导出",
   commands: [
@@ -164,7 +122,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "database",
   name: "数据库",
   commands: [
@@ -181,7 +139,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "template",
   name: "模板",
   commands: [
@@ -218,7 +176,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "plugin",
   name: "插件",
   commands: [
@@ -235,7 +193,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "ai",
   name: "AI 助手",
   commands: [
@@ -253,7 +211,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "settings",
   name: "设置",
   commands: [
@@ -301,7 +259,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "help",
   name: "帮助",
   commands: [
@@ -358,7 +316,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "pdf",
   name: "PDF 批注",
   commands: [
@@ -391,7 +349,7 @@ registerPlugin({
   ],
 });
 
-registerPlugin({
+registerCommandGroup({
   id: "view",
   name: "视图",
   commands: [

@@ -111,6 +111,17 @@ export interface PluginRunResult {
   toasts?: string[];
 }
 
+/** 一条能力调用审计记录：只记元数据（谁、调了什么、成没成），不记内容。 */
+export interface PluginAuditEntry {
+  plugin_id: string;
+  capability: string;
+  scope: string;
+  at_ms: number;
+  ok: boolean;
+  /** 失败时的错误码（permission_denied / bad_args / unknown_capability …）。 */
+  error_code?: string | null;
+}
+
 /** 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都进这个环形缓冲）。 */
 export interface PluginLogLine {
   plugin_id: string;

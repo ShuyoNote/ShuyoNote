@@ -18418,3 +18418,6 @@ p:has(> .editor-drawing-container) {
 .pm-perm-baseline {
   color: var(--cat-orange);
 }
+.pm-log-scope {
+  color: var(--text-faint);
+}

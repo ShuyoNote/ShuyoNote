@@ -413,6 +413,8 @@ pub fn run() {
             plugins::open_plugin_dir,
             plugins::plugin_logs,
             plugins::clear_plugin_logs,
+            plugins::plugin_audit,
+            plugins::clear_plugin_audit,
             security::set_encryption,
             security::encryption_status,
             security::disable_encryption,

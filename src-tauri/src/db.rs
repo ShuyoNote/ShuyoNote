@@ -328,12 +328,57 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at    INTEGER NOT NULL,
             updated_at    INTEGER NOT NULL
         );
+        -- 插件安装记录：一行 = 一个已安装插件。卸载即删行，所以"残留状态"从结构上消失。
+        -- 只放安装元数据（id / 版本 / 开关 / 来源 / 内容 hash / 是否出厂播种），**不含用户内容**。
+        CREATE TABLE IF NOT EXISTS plugin_install (
+            plugin_id     TEXT PRIMARY KEY,
+            version       TEXT NOT NULL DEFAULT '',
+            enabled       INTEGER NOT NULL DEFAULT 1,
+            installed_at  INTEGER NOT NULL DEFAULT 0,
+            source        TEXT NOT NULL DEFAULT 'local',
+            content_hash  TEXT,
+            seeded        INTEGER NOT NULL DEFAULT 0
+        );
+        -- 插件私有数据。scope='app' 的落这里（meta.db 是明文，只允许放非敏感配置）；
+        -- scope='space:<id>' 的**必须落各空间库**，随该空间 SQLCipher 一起加密、随空间备份搬移。
+        -- 这条落库约定见方案 §3.7：把空间级数据塞进 meta.db 会让它静默逃出 E2EE 边界。
+        CREATE TABLE IF NOT EXISTS plugin_data (
+            plugin_id  TEXT NOT NULL,
+            scope      TEXT NOT NULL,
+            key        TEXT NOT NULL,
+            value      TEXT NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (plugin_id, scope, key)
+        );
+        -- 旧的泛 KV（只用来存 plugin_enabled::{id}）保留一个版本做迁移来源，迁移后清空。
         CREATE TABLE IF NOT EXISTS plugin_state (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
         "#,
     )?;
+
+    // 迁移 plugin_state 的 `plugin_enabled::{id}` → plugin_install 行。
+    // 幂等：目标行已存在就不覆盖（enabled 是用户选择，不能被迁移重置）。
+    {
+        let mut stmt = conn.prepare("SELECT key, value FROM plugin_state WHERE key LIKE 'plugin_enabled::%'")?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        for (key, value) in rows {
+            if let Some(id) = key.strip_prefix("plugin_enabled::") {
+                conn.execute(
+                    "INSERT INTO plugin_install (plugin_id, version, enabled, installed_at, source, seeded)
+                     VALUES (?1, '', ?2, ?3, 'local', 0)
+                     ON CONFLICT(plugin_id) DO NOTHING",
+                    rusqlite::params![id, if value == "1" { 1 } else { 0 }, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)],
+                )?;
+            }
+        }
+        conn.execute("DELETE FROM plugin_state WHERE key LIKE 'plugin_enabled::%'", [])?;
+    }
     // E1 per-space at-rest encryption marker (idempotent for existing meta.db).
     let has_enc: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'encrypted'",
@@ -358,6 +403,16 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
 pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
+        -- 插件私有数据（空间级）：落在这里才会随本空间一起被 SQLCipher 加密、
+        -- 随空间导出/搬移。宿主按 scope 路由，插件只看到 api.kv。
+        CREATE TABLE IF NOT EXISTS plugin_data (
+            plugin_id  TEXT NOT NULL,
+            scope      TEXT NOT NULL,
+            key        TEXT NOT NULL,
+            value      TEXT NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (plugin_id, scope, key)
+        );
         CREATE TABLE IF NOT EXISTS workspaces (
             id          TEXT PRIMARY KEY,
             name        TEXT NOT NULL,

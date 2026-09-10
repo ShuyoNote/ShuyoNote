@@ -2346,6 +2346,8 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "uninstall_plugin") return undefined as T;
     if (cmd === "plugin_logs") return [] as T;
     if (cmd === "clear_plugin_logs") return undefined as T;
+    if (cmd === "plugin_audit") return [] as T;
+    if (cmd === "clear_plugin_audit") return undefined as T;
 
     // ---- Sync ----
     const wsIdNow = (): string => getWs()?.id ?? getActiveWsId();
