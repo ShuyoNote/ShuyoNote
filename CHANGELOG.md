@@ -4,20 +4,51 @@
 
 ## [Unreleased]
 
-> 修复：离线 OCR「识别失败（error）」的真正根因。
+## [1.84.6] - 2026-09-10
+
+> **插件体系从「能跑」走到「能长生态」的地基**：能力注册表成为唯一事实源、`api.*` 冻结为 ABI v1、
+> 权限模型与写中介（草稿确认）落地、AI 工具层与插件合并到同一能力层；顺带修掉两个「装了也用不了」
+> 级别的真 bug。另含 CI 首次真正跑测试、移动端适配、OCR 根因修复。
+
+### 新增
+- **插件能力层（M11.5–M11.7）**——此前插件只有 4 个宿主函数、能力定义散在 5 处：
+  - **单一事实源**：`capabilities/capabilities.json` 是唯一事实源，`scripts/gen-capabilities.mjs` 由它生成 **6 类产物**——插件看到的 `api.*`（`capabilities/plugin-api-shim.js`）、Rust 绑定表（`src-tauri/src/capabilities_gen.rs`）、作者类型包（`packages/plugin-types`）、**面向作者的 API 文档**（`docs/plugin-api.md`，不读源码即可写插件）、AI 工具元数据；`scripts/check-capabilities.mjs` 门禁（注册表完整性 + 生成物一致 + **每条能力声明的实现函数真的存在** + 出现在作者文档/shim 里 + 无死权限 + AI 暴露项有前端实现与 LLM 可读 `desc`），**已进 CI 与 `pnpm build`**。
+  - **`api.*` 成为唯一 ABI 面**：宿主只注册 `__cap(method, argsJson)` 一个原语；老写法（`__toast`/`__insert`/`__pages`/`__get_current_page`/`__log`）保留为兼容别名但走**同一套派发**，不构成绕过点。
+  - **20 条能力**：读 —— `page.current`、`pages.count/list/get/search`、`blocks.list`、`tags.list`、`backlinks.list`、`files.list`（只给元数据不给字节）、`properties.list`；写 —— `editor.insertText`（即时）与 `pages.create`、`blocks.append`、`properties.set`、`tags.add`（**草稿确认**）；另有 `kv.get/set/remove`（插件私有数据）、`user.notify`、`log.write`。
+  - **权限模型**：manifest `permissions` 带 `reason` 声明、**后端逐次调用校验**（不是 UI 隐藏）；未写 `permissions` 的老 manifest 走基线授权 + 警告（升级不失效）；未知权限忽略 + 警告（前向兼容）；`apiVersion` 主版本不认识**直接拒载**。
+  - **写中介**：写能力**不落库**，只产出草稿 → 随结果回传 → 用户在命令面板确认后才落库；落库走**共用的** `applyDraft` 链路（AI 与插件同一条），不为插件再造第二套确认机制。
+  - **运行时硬化**：Boa 循环/墙钟/**内存预算**（64 MiB thread-local 限流分配器，超预算只终结该次调用而不拖垮应用）、discovery 带超时、`list_plugins`/`install_plugin`/`run_plugin_command` 改 `async`、卸载清状态行、安装先校验后落盘、`enabled` 后端强制。
+  - **可见性**：`__toast` 接通 UI、新增作者侧 `__log` + 日志环形缓冲（插件运行时连 `console` 都没有）、**能力调用审计**（「活动」面板可查，权限被拒同样留痕）、运行态可见 + 可取消。
+  - **状态与数据**：`plugin_install`（安装记录）取代泛 KV 并附幂等迁移；`plugin_data` 在 meta（app scope，明文）与空间库（space scope，**随 SQLCipher 加密**）两侧建表——空间级插件数据不会逃出 E2EE 边界；每 scope 256 KiB 配额。
+- **AI 工具层与插件合并到同一能力注册表（M11.7）**：AI 宿主的工具元数据（id / 描述 / 参数 schema / 是否写操作）由注册表生成，实现集中在适配表；**能力定义只有一处**，仓库里不再有第二套语义工具清单。
+- **CI 真正跑起来**：新增 `.github/workflows/ci.yml`（push/PR 到 `main`/`dev` 触发）——`tsc` / vitest / `smoke-web`（350 断言）/ 两设备同步验收 / 版本·命令契约·**能力注册表**·文档链接 / 移动端布局验收（真实 Chromium）/ **Rust 单测**。此前两套 workflow 一行测试都不跑。
+- **移动端适配**：≤768px 响应式断点（侧栏抽屉 + 遮罩、主区全宽、右抽屉全屏）、窄屏左侧竖条改为可收起浮层、侧栏三个展开入口（窄屏按钮 / 命令面板 / `Ctrl+B`）、WebView 壳 bridge 抽象、[docs/MOBILE.md](docs/MOBILE.md)；真实 Chromium 布局验收 20 断言。
+- 分支模型落定：`main` 只收发版与 hotfix、`dev` 为集成分支、`feat/*` 为特性（写进 CONTRIBUTING / development / RELEASING）。
 
 ### 修复
+- **插件命令此前从未出现在命令面板（P0，「装了也用不了」）**：宿主侧也注册了一个 `register` 全局用于收集命令元数据，但它被 BOOTSTRAP 里同名的 JS `function register` 覆盖，于是 discovery **恒返回空数组**——插件能装、能启停，命令却一条都不显示。改为由 `__describe()` 以 JSON 交回元数据（顺带修好一直是死字段的 `closeOnRun`），并加回归测试钉住「discovery 必须真的发现命令」。
+- **插件 shim 把缺失的必填参数强转成字符串 `"undefined"`**：宿主因此把「没传参」当成「传了个字符串」——实测 `api.blocks.append("文本")` 的文本被当成 `pageId`、`text` 变成 `"undefined"`。现在 `undefined` 原样传下去 → 宿主明确报 `bad_args`。
 - **OCR 取 blob: URL 被 CSP 拦截**（根因）：`new Worker` 就绪后，tesseract 的 `loadImage` 会对传入的字符串执行 `fetch()`。此前两个调用方都先 `URL.createObjectURL(blob)` 再传字符串，于是变成 `fetch('blob:...')`——而 Tauri CSP 的 `connect-src 'self' http: https:` **没有放行 `blob:`**（`img-src`/`media-src` 有，`connect-src` 漏了），请求被拦 → 抛错 → 被 `.catch(() => …)` 吞掉 → UI 一律显示「无法加载离线识别模型/语言数据」，把「取图失败」误导成「模型缺失」，排查方向被带偏数轮。
   - `src/lib/ocr.ts`：`recognize`/`ocrRecognize` 接受 `string | Blob`；**直接传 `Blob`**（tesseract 内部走 FileReader），不再产生 `fetch`。
   - `src/components/PdfAnnotationCanvas.tsx`、`src/lib/aiOutline.ts`：改为传 `Blob`，去掉 `createObjectURL`/`revokeObjectURL`。
   - `src-tauri/tauri.conf.json`：`connect-src` 补 `blob: data:`（兜底：任何 `fetch(blob:)`/`fetch(data:)` 路径都不再被拦）。
-- **失败原因不再被吞掉、并按阶段区分**：`OcrResult` 增加 `stage`（`load`=worker/模型加载失败 / `recognize`=识别阶段失败）与 `detail`（原始错误消息）；真实错误打到控制台（`[ocr] recognize failed:` / `[ocr] worker error:`）。
-  - 接入 tesseract 的 `errorHandler`：其内部对加载失败是 `.catch(() => {})` 静默悬挂，此前只能等 60s 超时且看不到原因；现在超时消息会带上真实错误。
-  - 结果面板与 toast 按阶段给不同文案（「模型加载」vs「识别阶段」），不再一律甩给「模型未加载」。
-- 顺手更正 `ocr.ts` 中关于 tesseract `is-url` 的过时注释：**v7 的 `resolvePaths` 只做 `new URL()`，没有 is-url 判断**（那是 v4/v5 行为），避免再次据此误判方向。
+  - **失败原因不再被吞掉、并按阶段区分**：`OcrResult` 增加 `stage`（`load` / `recognize`）与 `detail`；接入 tesseract `errorHandler`，结果面板与 toast 按阶段给不同文案。
+  - 顺手更正 `ocr.ts` 中关于 tesseract `is-url` 的过时注释（v7 的 `resolvePaths` 只做 `new URL()`）。
+- **侧栏收不起来**（`hidden` 被 `.sidebar` 的 `display:flex` 压掉）；**移动端自动收起污染桌面端侧栏偏好**；**窄屏打开 AI/TOC 面板时主区被让位内边距挤成 0 宽**。
+- **`syncDeviceId` 无守卫读取 `localStorage`**：Safari 无痕模式、禁用站点存储或配额耗尽时，`recordChange` 会在**每次写操作**时抛异常，表现为「什么都存不下」。现在退到进程内 id。
+
+### 变更
+- **新装插件默认禁用**：安装 ≠ 授权，用户看完「权限 + 理由」再自己启用；插件面板把权限与理由摊在插件卡片上（标题来自注册表，不是裸 id）。
+- 内置命令组正式与「插件」解耦：`src/plugins/registry.ts` → **`builtinCommands.ts`**，类型 `Plugin*` → `Builtin*`，删掉已无调用方的内置启停死代码与无人使用的 `PLUGIN_META`（顺带消除 `PluginMeta` 同名两义）。
+- 插件「打开插件目录」补齐 macOS / Linux（此前只有 Windows 分支，点了没反应）。
 
 ### 测试
+- Rust 单测 55 → **102**（插件相关 ~30 条：沙箱逃逸回归、循环/内存预算、分配炸弹只终结该次调用、discovery 快失败、manifest 与 id 白名单矩阵、权限逐次校验、草稿而非落库、审计、kv scope 路由与配额、读能力真库查询等），并**首次进 CI**。
+- 前端 vitest 114 → **139**；`smoke-web` 350 断言 / 两设备同步 14 断言 / 移动端布局 20 断言全部进 CI。
 - 新增 `src/lib/ocr.test.ts`（5 例）：`stage=load` 带真实原因、`stage=recognize` 不误报为模型问题、成功路径返回文本、**传 Blob 时不调用 `fetch`**（锁定 CSP 回归）、空图不创建 worker。
+
+### 文档
+- 新增 [插件体系进化方案](docs/plans/2026-09-10-plugin-evolution-plan.md)（含 §3.11 资源与故障隔离矩阵：已核实 Boa 无分配预算 API；9 项不可逆决策；M11.5–M11.13 里程碑）与 [插件分发策略](docs/plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯 + 社区上线清单）；新增 [docs/plugin-api.md](docs/plugin-api.md)（面向插件作者）与 [docs/MOBILE.md](docs/MOBILE.md)。
 
 ## [1.84.5] - 2026-09-10
 
