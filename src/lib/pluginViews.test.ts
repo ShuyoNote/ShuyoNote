@@ -1,8 +1,17 @@
 // 声明式视图的宿主渲染逻辑。
 // 作者没法写代码绕过这些规则，写错了也不会报错、只会显示成「结果不对」——所以钉住。
 import { describe, expect, it } from "vitest";
-import type { PageMeta } from "../types";
-import { cellText, effectiveColumns, selectViewRows, summaryText, type PluginView } from "./pluginViews";
+import type { PageMeta, PluginSetting } from "../types";
+import {
+  cellText,
+  effectiveColumns,
+  resolveView,
+  selectViewRows,
+  summaryText,
+  viewNeedsSettings,
+  type PluginView,
+  type ResolvedView,
+} from "./pluginViews";
 
 const NOW = Date.parse("2026-09-10T12:00:00Z");
 const day = 86_400_000;
@@ -21,7 +30,8 @@ const page = (over: Partial<PageMeta>): PageMeta => ({
   ...over,
 });
 
-const view = (over: Partial<PluginView> = {}): PluginView => ({
+// 查询已经解析过的视图（`selectViewRows` 只接受这个类型——解析只有一处，见 resolveView）
+const view = (over: Partial<ResolvedView> = {}): ResolvedView => ({
   id: "v",
   title: "视图",
   query: {},
@@ -55,12 +65,12 @@ describe("selectViewRows", () => {
 
   it("标题包含：大小写不敏感", () => {
     const pages = [page({ id: "a", title: "Weekly Review" }), page({ id: "b", title: "随手记" })];
-    expect(selectViewRows(pages, view({ query: { title_contains: "weekly" } }), NOW).rows.map((r) => r.id)).toEqual(["a"]);
+    expect(selectViewRows(pages, view({ query: { titleContains: "weekly" } }), NOW).rows.map((r) => r.id)).toEqual(["a"]);
   });
 
   it("最近 N 天：更早的排除掉", () => {
     const pages = [page({ id: "recent", updated_at: NOW - 3 * day }), page({ id: "old", updated_at: NOW - 40 * day })];
-    expect(selectViewRows(pages, view({ query: { updated_within_days: 30 } }), NOW).rows.map((r) => r.id)).toEqual(["recent"]);
+    expect(selectViewRows(pages, view({ query: { updatedWithinDays: 30 } }), NOW).rows.map((r) => r.id)).toEqual(["recent"]);
   });
 
   it("排序：created_desc / title_asc 都按声明生效", () => {
@@ -119,5 +129,97 @@ describe("summaryText", () => {
   it("说清范围、总数与是否被截断", () => {
     expect(summaryText(30, 10, false, null)).toBe("全部：30 篇，显示前 10 篇");
     expect(summaryText(3, 3, true, 30)).toBe("最近 30 天内更新：3 篇");
+  });
+});
+
+// 作者**声明**的视图：查询字段里可能带 `{ fromSetting }`，必须先过 resolveView 才能渲染。
+const declaredView = (over: Partial<PluginView> = {}): PluginView => ({
+  id: "v",
+  title: "视图",
+  query: {},
+  columns: ["title"],
+  summary: false,
+  ...over,
+});
+
+// 查询字段可以写成 `{ "fromSetting": "key" }`：这一层把"用户设的值"解析成普通查询。
+// 规则写错了不会报错、只会显示成「结果不对」，所以每条都要钉住。
+describe("viewNeedsSettings", () => {
+  it("只有真的引用了设置才需要去读设置（没用到就不打扰后端）", () => {
+    expect(viewNeedsSettings(declaredView({ query: { limit: 20, kind: "page" } }))).toBe(false);
+    expect(viewNeedsSettings(declaredView({ query: { limit: { fromSetting: "n" } } }))).toBe(true);
+  });
+});
+
+describe("resolveView", () => {
+  const setting = (over: Partial<PluginSetting> = {}): PluginSetting => ({
+    key: "k",
+    label: "K",
+    type: "number",
+    description: "",
+    scope: "space",
+    options: [],
+    value: null,
+    default: undefined,
+    ...over,
+  }) as PluginSetting;
+
+  it("字面量原样保留，并做该字段的取值校验", () => {
+    const resolved = resolveView(declaredView({ query: { limit: 20, sort: "title_asc", kind: "database" } }), []);
+    expect(resolved.query).toEqual({ limit: 20, sort: "title_asc", kind: "database" });
+  });
+
+  it("引用设置：优先用用户设过的值", () => {
+    const resolved = resolveView(declaredView({ query: { limit: { fromSetting: "n" }, updatedWithinDays: { fromSetting: "days" } } }), [
+      setting({ key: "n", value: "12" }),
+      setting({ key: "days", value: "7" }),
+    ]);
+    expect(resolved.query).toEqual({ limit: 12, updatedWithinDays: 7 });
+  });
+
+  it("没设过就退回设置声明的 default（默认值只有这一处）", () => {
+    const resolved = resolveView(declaredView({ query: { limit: { fromSetting: "n" } } }), [
+      setting({ key: "n", value: null, default: 30 }),
+    ]);
+    expect(resolved.query.limit).toBe(30);
+  });
+
+  it("设置不存在 / 没设过也没有 default → 按「没给」处理（绝不抛错）", () => {
+    expect(resolveView(declaredView({ query: { limit: { fromSetting: "nowhere" } } }), []).query.limit).toBeUndefined();
+    expect(resolveView(declaredView({ query: { limit: { fromSetting: "n" } } }), [setting({ key: "n" })]).query.limit).toBeUndefined();
+  });
+
+  it("值不可用时按「没给」处理：非数字、0/负数、白名单外的 sort/kind", () => {
+    const s = [
+      setting({ key: "text", value: "十二" }),
+      setting({ key: "zero", value: "0" }),
+      setting({ key: "sort", value: "按心情" }),
+      setting({ key: "kind", value: "很久以前" }),
+    ];
+    const resolved = resolveView(
+      declaredView({ query: { limit: { fromSetting: "text" }, updatedWithinDays: { fromSetting: "zero" }, sort: { fromSetting: "sort" }, kind: { fromSetting: "kind" } } }),
+      s,
+    );
+    expect(resolved.query).toEqual({});
+  });
+
+  it("数字取整、limit 上限交给 selectViewRows（这里只保证是自然数）", () => {
+    const resolved = resolveView(declaredView({ query: { limit: { fromSetting: "n" } } }), [setting({ key: "n", value: "20.7" })]);
+    expect(resolved.query.limit).toBe(20);
+  });
+
+  it("不修改入参（视图声明是插件列表里共用的对象，就地改会串到别人那里）", () => {
+    const original = declaredView({ query: { limit: { fromSetting: "n" } } });
+    resolveView(original, [setting({ key: "n", value: "5" })]);
+    expect(original.query.limit).toEqual({ fromSetting: "n" });
+  });
+
+  it("解析后的视图能直接喂给 selectViewRows（解析→渲染是一条链，中间不能漏）", () => {
+    const pages = [page({ id: "a", updated_at: NOW - day }), page({ id: "b", updated_at: NOW - 40 * day })];
+    const resolved = resolveView(declaredView({ query: { updatedWithinDays: { fromSetting: "days" } } }), [
+      setting({ key: "days", value: "30" }),
+    ]);
+    const { rows } = selectViewRows(pages, resolved, NOW);
+    expect(rows.map((p) => p.id)).toEqual(["a"]);
   });
 });

@@ -287,13 +287,228 @@ fn check_trigger_targets(
     }
 }
 
+/// 视图查询字段的**取值形态**检查（看原始 JSON，不看解析后的类型）。
+///
+/// 为什么必须单独看原始 JSON：查询字段是 `字面量 | { fromSetting }` 的联合类型，写错形态
+/// （例如 `"limit": "20"`）会让**整份 manifest 解析失败**——加载器直接拒载，而校验器如果
+/// 只看解析结果，就会报出「必须声明 views 或 theme 之一」这种把作者引向反方向的错误。
+/// 所以这一层专门负责说清「哪一项、写成什么才对」。
+fn check_view_field_shapes(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
+    let Some(list) = value.and_then(|v| v.get("views")).and_then(|v| v.as_array()) else {
+        return;
+    };
+    for (i, vw) in list.iter().enumerate() {
+        let Some(query) = vw.get("query").and_then(|q| q.as_object()) else {
+            continue;
+        };
+        for (field, numeric) in [
+            ("limit", true),
+            ("updatedWithinDays", true),
+            ("kind", false),
+            ("sort", false),
+            ("titleContains", false),
+        ] {
+            let Some(raw) = query.get(field) else {
+                continue;
+            };
+            // 合法形态只有两种：字面量，或 `{ "fromSetting": "key" }`
+            let from_setting = raw
+                .get("fromSetting")
+                .and_then(|s| s.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if from_setting.is_some() {
+                continue;
+            }
+            let literal_ok = if numeric {
+                raw.as_i64().is_some()
+            } else {
+                raw.as_str().is_some()
+            };
+            if literal_ok {
+                continue;
+            }
+            problems.push(PluginProblem::error(
+                "view_field_shape",
+                format!(
+                    "views[{i}].query.{field} 的写法不对：只能是{}，或指向一个设置 {{\"fromSetting\": \"设置key\"}}（现在是 {}）——形态不对会让整份 manifest 解析失败、插件被拒载",
+                    if numeric { "数字" } else { "字符串" },
+                    raw
+                ),
+                Some("manifest.json"),
+            ));
+        }
+    }
+}
+
+/// 视图参数（`{ "fromSetting": "key" }`）的检查：**引用的设置必须存在，且能产出这个字段要的值**。
+///
+/// 这是声明式插件「用户可配」的全部契约，两个端都在宿主手里（设置表单由宿主渲染、视图由宿主
+/// 渲染），所以这一层能把「永远拿不到可用值」写法的错误在作者那边就拦下来：
+/// - 引用的 key 没声明 → **错误**（这条参数永远不会生效）；
+/// - 类型对不上（例如数字字段引用一个布尔设置）→ **错误**（用户无论怎么填都解析不出数字）；
+/// - `select` 的候选项不在白名单里 / 不是数字 → **错误**（每个选项都会被忽略，选哪个都一样；
+///   这类错最阴——界面看起来完全正常，只是筛选永远按默认来）；
+/// - 用字符串设置去驱动数字/枚举字段 → **提醒**（可能填出可用值，也可能填不出来）。
+///
+/// 只在**声明式**这一档跑：逻辑档插件的 `views` 整体不生效（已由 `views_ignored` 提醒），
+/// 它的设置是给它自己的代码读的。
+fn check_view_params(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
+    let Some(list) = value.and_then(|v| v.get("views")).and_then(|v| v.as_array()) else {
+        return;
+    };
+    // 设置声明：key → (类型, 候选项)
+    let settings: Vec<(String, String, Vec<String>)> = value
+        .and_then(|v| v.get("settings"))
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|d| {
+                    let key = d.get("key").and_then(|k| k.as_str()).unwrap_or_default().to_string();
+                    let ty = d.get("type").and_then(|t| t.as_str()).unwrap_or("string").to_string();
+                    let options = d
+                        .get("options")
+                        .and_then(|o| o.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|o| match o {
+                                    serde_json::Value::String(s) => Some(s.clone()),
+                                    v => v.get("value").and_then(|v| v.as_str()).map(str::to_string),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (key, ty, options)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut used: Vec<String> = Vec::new();
+    for (i, vw) in list.iter().enumerate() {
+        let Some(query) = vw.get("query").and_then(|q| q.as_object()) else {
+            continue;
+        };
+        for (field, shape, allowed) in [
+            ("limit", Shape::Number, None),
+            ("updatedWithinDays", Shape::Number, None),
+            ("kind", Shape::Enum, Some(crate::plugins::VIEW_KINDS)),
+            ("sort", Shape::Enum, Some(crate::plugins::VIEW_SORTS)),
+            ("titleContains", Shape::Text, None),
+        ] {
+            let Some(key) = query
+                .get(field)
+                .and_then(|f| f.get("fromSetting"))
+                .and_then(|s| s.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let Some((_, ty, options)) = settings.iter().find(|(k, _, _)| k == key) else {
+                problems.push(PluginProblem::error(
+                    "view_param_unknown_setting",
+                    format!(
+                        "views[{i}].query.{field} 引用了设置「{key}」，但 manifest.settings 里没有这一项——这条参数永远不会生效{}",
+                        if settings.is_empty() { "（这个插件没有声明任何设置）" } else { "" }
+                    ),
+                    Some("manifest.json"),
+                ));
+                continue;
+            };
+            used.push(key.to_string());
+
+            let shape_name = match shape {
+                Shape::Number => "数字",
+                Shape::Enum => "白名单里的值",
+                Shape::Text => "文本",
+            };
+            match ty.as_str() {
+                "number" | "select" if shape == Shape::Number => {
+                    if ty == "select" {
+                        let bad: Vec<&String> = options.iter().filter(|o| o.parse::<f64>().is_err()).collect();
+                        if !bad.is_empty() {
+                            problems.push(PluginProblem::error(
+                                "view_param_bad_options",
+                                format!(
+                                    "views[{i}].query.{field} 用设置「{key}」取值，但它是 select、候选项里有不是数字的：{}——用户选到那些项时这条参数会被忽略",
+                                    bad.iter().map(|s| format!("「{s}」")).collect::<Vec<_>>().join("、")
+                                ),
+                                Some("manifest.json"),
+                            ));
+                        }
+                    }
+                }
+                "select" | "string" if shape == Shape::Enum => {
+                    if let Some(allowed) = allowed {
+                        let bad: Vec<&String> = options.iter().filter(|o| !allowed.contains(&o.as_str())).collect();
+                        if ty == "select" && !bad.is_empty() {
+                            problems.push(PluginProblem::error(
+                                "view_param_bad_options",
+                                format!(
+                                    "views[{i}].query.{field} 用设置「{key}」取值，但它的候选项不在白名单里：{}（可用：{}）——用户选哪个都会被忽略，界面看着正常、筛选却永远按默认来",
+                                    bad.iter().map(|s| format!("「{s}」")).collect::<Vec<_>>().join("、"),
+                                    allowed.join(" / ")
+                                ),
+                                Some("manifest.json"),
+                            ));
+                        } else if ty == "string" {
+                            problems.push(PluginProblem::warn(
+                                "view_param_string_source",
+                                format!(
+                                    "views[{i}].query.{field} 由文本设置「{key}」驱动：用户填出白名单外的值（可用：{}）时这条参数会被忽略，筛选会**静默**回到默认——建议改成 select 把可选项固定下来",
+                                    allowed.join(" / ")
+                                ),
+                                Some("manifest.json"),
+                            ));
+                        }
+                    }
+                }
+                "string" | "select" if shape == Shape::Text => {}
+                "string" if shape == Shape::Number => problems.push(PluginProblem::warn(
+                    "view_param_string_source",
+                    format!("views[{i}].query.{field} 由文本设置「{key}」驱动：用户填的不是数字时这条参数会被忽略（视图退回默认）——建议把设置的 type 改成 number"),
+                    Some("manifest.json"),
+                )),
+                _ => problems.push(PluginProblem::error(
+                    "view_param_bad_type",
+                    format!(
+                        "views[{i}].query.{field} 需要{shape_name}，但设置「{key}」的 type 是「{ty}」——它永远产不出可用的值，这条参数等于白写"
+                    ),
+                    Some("manifest.json"),
+                )),
+            }
+        }
+    }
+
+    // 声明了设置、却没有任何视图用到：它只会让用户在设置面板里填一个对什么都不起作用的值
+    for (key, _, _) in &settings {
+        if !used.contains(key) {
+            problems.push(PluginProblem::warn(
+                "declarative_setting_unused",
+                format!("设置「{key}」没有被任何视图用到：声明式插件没有代码去读设置，所以用户填了它也不会改变任何东西（要么让某个视图 query 用 {{\"fromSetting\": \"{key}\"}} 引用它，要么删掉它）"),
+                Some("manifest.json"),
+            ));
+        }
+    }
+}
+
+/// 一个查询字段期望的取值形态（用于把「设置能产出什么」与「字段要什么」对上）。
+#[derive(PartialEq)]
+enum Shape {
+    Number,
+    Enum,
+    Text,
+}
+
 /// 声明式（零代码）插件的校验。
 ///
 /// **单独一个函数**，而不是在主流程里插条件分支：两档的检查项几乎没有交集——声明式没有
-/// 入口文件、没有 Boa 语法、没有命令注册、也不需要权限/事件/设置；硬塞在一起只会让
+/// 入口文件、没有 Boa 语法、没有命令注册、也不需要权限/事件；硬塞在一起只会让
 /// 「逻辑档走到一半被声明式的判断截住」这种错法变得容易发生（写这段时就这么错过一次）。
 #[allow(clippy::too_many_arguments)]
 fn validate_declarative(
+    dir: &Path,
     value: Option<&serde_json::Value>,
     dir_name: String,
     id: String,
@@ -303,18 +518,27 @@ fn validate_declarative(
     main: String,
     mut problems: Vec<PluginProblem>,
 ) -> ValidateReport {
-    let views: Vec<crate::plugins::ViewDecl> = value
-        .and_then(|v| manifest_from_value(v, &dir_name))
+    let parsed = value.and_then(|v| manifest_from_value(v, &dir_name));
+    let views: Vec<crate::plugins::ViewDecl> = parsed
+        .as_ref()
         .and_then(|m| m.views.clone())
         .unwrap_or_default();
+    // 声明式插件的设置**不是摆设**：视图的查询字段可以写成 `{ "fromSetting": "key" }`，
+    // 由宿主在渲染时按用户设的值解析（M11.9 收口）——所以它要进报告。
+    let settings: Vec<crate::plugins::SettingDecl> = parsed
+        .as_ref()
+        .and_then(|m| m.settings.clone())
+        .unwrap_or_default();
 
-    // 声明式插件没有代码，所以权限/事件/设置都无从使用——写了要**如实告知**，
+    // 声明式插件没有代码，所以权限/事件/触发都无从使用——写了要**如实告知**，
     // 而不是默默收下（那会让作者以为自己申请到了什么）。
+    //
+    // 设置是个例外（它曾经也在这张表里）：**视图可以引用设置**，所以声明式插件声明设置
+    // 是有意义的，只提醒"没有任何视图用到它"（见下面的 declarative_setting_unused）。
     if let Some(v) = value {
         for (field, code, msg) in [
             ("permissions", "declarative_has_permissions", "声明式插件没有代码，manifest.permissions 不会被用到（它可以不申请任何权限）"),
             ("events", "declarative_has_events", "声明式插件没有代码，manifest.events 收不到任何事件（需要事件就用 logic 档）"),
-            ("settings", "declarative_has_settings", "声明式插件没有代码去读设置（需要用户可配就用 logic 档）"),
             ("triggers", "declarative_has_triggers", "声明式插件没有命令可以调用，manifest.triggers 不会接住任何文件（导入触发要调用命令，那需要 logic 档）"),
             ("main", "declarative_has_main", "runtime=declarative 时 main.js 不会被读取或执行（零代码正是它安全的原因），建议删掉这个字段与文件"),
         ] {
@@ -334,8 +558,21 @@ fn validate_declarative(
         .unwrap_or(false);
     check_theme_declaration(value, &mut problems);
     check_triggers_declaration(value, &mut problems);
+    // 视图参数（`{ "fromSetting": "key" }`）：形态 + 引用的设置存不存在 + 类型能不能对上。
+    // 与主题/触发一样是独立函数、显式调用——它要同时看 settings 与 views 两边，塞进下面
+    // 那个"逐视图"的循环里必然写成内外两层嵌套判断。
+    check_view_field_shapes(value, &mut problems);
+    check_view_params(value, &mut problems);
 
-    if views.is_empty() && !has_theme {
+    // 声明了 views、却因为字段写错而整份 manifest 解析不出来时，**不能**报成
+    // 「必须声明 views 或 theme」——那会把作者引到完全错误的方向（他明明写了）。
+    // 此时具体是哪一项写错了由 check_view_field_shapes 指出来。
+    let raw_views_declared = value
+        .and_then(|v| v.get("views"))
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    if views.is_empty() && !has_theme && !raw_views_declared {
         problems.push(PluginProblem::error(
             "declarative_no_views",
             "声明式插件必须声明 views 或 theme 之一：它没有代码，视图或主题就是它唯一的产出（否则装了什么都不会发生）",
@@ -377,20 +614,35 @@ fn validate_declarative(
                 ));
             }
         }
-        if let Some(kind) = &vw.query.kind {
-            if !crate::plugins::VIEW_KINDS.contains(&kind.as_str()) {
+        // 白名单只对**字面量**判定；`{ fromSetting }` 形态由 check_view_params 判定
+        // （它要看设置声明的类型与候选项，是另一套判断）。
+        if let Some(kind) = vw.query.kind.as_ref().and_then(|f| f.literal()) {
+            if !crate::plugins::VIEW_KINDS.contains(&kind) {
                 problems.push(PluginProblem::warn("view_bad_kind", format!("视图 {} 的 query.kind「{kind}」不认识（可用：{}）", vw.id, crate::plugins::VIEW_KINDS.join(" / ")), Some("manifest.json")));
             }
         }
-        if let Some(sort) = &vw.query.sort {
-            if !crate::plugins::VIEW_SORTS.contains(&sort.as_str()) {
+        if let Some(sort) = vw.query.sort.as_ref().and_then(|f| f.literal()) {
+            if !crate::plugins::VIEW_SORTS.contains(&sort) {
                 problems.push(PluginProblem::warn("view_bad_sort", format!("视图 {} 的 query.sort「{sort}」不认识（可用：{}）", vw.id, crate::plugins::VIEW_SORTS.join(" / ")), Some("manifest.json")));
             }
         }
-        if let Some(limit) = vw.query.limit {
+        if let Some(limit) = vw.query.limit.as_ref().and_then(|f| f.literal()) {
             if !(1..=500).contains(&limit) {
                 problems.push(PluginProblem::warn("view_bad_limit", format!("视图 {} 的 query.limit {limit} 超出范围（1–500）", vw.id), Some("manifest.json")));
             }
+        }
+    }
+
+    // ---- 兜底：按加载器的真实路径再走一遍 ----
+    //
+    // 逻辑档那一步还有一个「加载器会不会拒」的硬保证（`loader_rejected`），而声明式这边
+    // 此前**没有**：manifest 解析失败（例如某个字段形态写错、类型对不上）时，各条具体检查
+    // 可能一条都不报，报告于是显示 ok=true，可应用其实拒载——作者会以为没问题。
+    // 这里只走 `read_manifest`：`load_plugin_source` 对零代码插件必然返回
+    // `declarative_no_code`，那是设计如此，不是错误。
+    if let Err(e) = read_manifest(dir) {
+        if !problems.iter().any(|p| p.severity == "error") {
+            problems.push(PluginProblem::error("loader_rejected", format!("加载器会拒载这个插件：{e}"), None));
         }
     }
 
@@ -405,12 +657,14 @@ fn validate_declarative(
         main,
         entry_bytes: 0,
         commands: Vec::new(),
-        // 没有代码 → 不需要权限、收不到事件、读不了设置：这里必须是空的，
+        // 没有代码 → 不需要权限、收不到事件、也不走基线授权：这里必须是空的，
         // 否则界面会显示「按 v1 基线授权 11 项」这种与事实不符的信息。
         permissions: Vec::new(),
         granted: Vec::new(),
         events: Vec::new(),
-        settings: Vec::new(),
+        // 设置**要列出来**：声明式插件的视图可以引用它（`{ "fromSetting": "key" }`），
+        // 所以它是这个插件真实产出的一部分——对用户来说，那是"这个面板我能不能调"。
+        settings,
         runtime: "declarative".to_string(),
         views,
         permissions_baseline: false,
@@ -534,7 +788,7 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         ));
     }
     if runtime == "declarative" {
-        return validate_declarative(value.as_ref(), dir_name, id, name, version, api_version, main, problems);
+        return validate_declarative(dir, value.as_ref(), dir_name, id, name, version, api_version, main, problems);
     }
     if value.as_ref().and_then(|v| v.get("views")).is_some() {
         problems.push(PluginProblem::warn(
@@ -1431,5 +1685,123 @@ mod tests {
         let r = validate_dir(&dir);
         assert!(r.ok, "只是提醒（插件本身装得上）：{:?}", r.problems);
         assert!(codes(&r).contains(&"declarative_has_triggers".to_string()), "{:?}", r.problems);
+    }
+
+    // ---- 声明式视图的参数化（M11.9 收口）：查询字段引用用户设置 ----
+
+    #[test]
+    fn a_view_can_take_its_query_from_settings() {
+        let dir = declarative_plugin(
+            "param-view",
+            r#"{ "id": "param-view", "name": "可调视图", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "settings": [
+                   { "key": "recentDays", "label": "看多少天内更新的", "type": "number", "default": 30 },
+                   { "key": "order", "label": "排序", "type": "select", "options": ["updated_desc", "title_asc"] }
+                 ],
+                 "views": [ { "id": "v", "title": "最近更新", "columns": ["title"],
+                              "query": { "updatedWithinDays": { "fromSetting": "recentDays" },
+                                         "sort": { "fromSetting": "order" },
+                                         "limit": 20 } } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert_eq!(r.errors().count(), 0, "{:?}", r.problems);
+        assert!(
+            r.problems.iter().all(|p| !p.code.starts_with("view_param") && p.code != "declarative_setting_unused"),
+            "写得对的参数化视图不该有任何话说：{:?}",
+            r.problems
+        );
+        // 设置要进报告：它是这个插件真实产出的一部分（用户在设置面板里能调的就是它）
+        assert_eq!(r.settings.len(), 2, "{:?}", r.settings);
+    }
+
+    #[test]
+    fn view_param_mistakes_are_reported() {
+        let dir = declarative_plugin(
+            "bad-param-view",
+            r#"{ "id": "bad-param-view", "name": "坏参数", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "settings": [
+                   { "key": "flag", "label": "开关", "type": "boolean" },
+                   { "key": "text", "label": "文本", "type": "string" },
+                   { "key": "order", "label": "排序", "type": "select", "options": ["最近更新", "标题"] },
+                   { "key": "unused", "label": "没人用", "type": "number" }
+                 ],
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"],
+                              "query": { "limit": { "fromSetting": "flag" },
+                                         "updatedWithinDays": { "fromSetting": "text" },
+                                         "sort": { "fromSetting": "order" },
+                                         "kind": { "fromSetting": "nowhere" } } } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(!r.ok, "「永远拿不到可用值」的引用必须是错误：{:?}", r.problems);
+        assert!(codes(&r).contains(&"view_param_bad_type".to_string()), "布尔设置当数字用：{:?}", r.problems);
+        assert!(codes(&r).contains(&"view_param_unknown_setting".to_string()), "引用了不存在的设置：{:?}", r.problems);
+        assert!(codes(&r).contains(&"view_param_bad_options".to_string()), "select 的候选项不在白名单里：{:?}", r.problems);
+        assert!(codes(&r).contains(&"view_param_string_source".to_string()), "文本设置驱动数字字段只是提醒：{:?}", r.problems);
+        assert!(codes(&r).contains(&"declarative_setting_unused".to_string()), "没人用的设置要提醒：{:?}", r.problems);
+        let string_source = r.problems.iter().find(|p| p.code == "view_param_string_source").unwrap();
+        assert_eq!(string_source.severity, "warning", "能填对也可能填错，所以只是提醒");
+    }
+
+    #[test]
+    fn malformed_view_field_shape_is_explained_instead_of_misleading() {
+        // `"limit": "20"` 会让整份 manifest 解析失败。此时**不能**报成
+        // 「必须声明 views 或 theme 之一」——作者明明写了 views，那会把他引到反方向。
+        let dir = declarative_plugin(
+            "bad-shape",
+            r#"{ "id": "bad-shape", "name": "形态不对", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"], "query": { "limit": "20" } } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        let shape = r.problems.iter().find(|p| p.code == "view_field_shape");
+        assert!(shape.is_some(), "要说清是哪一项、该写成什么：{:?}", r.problems);
+        assert!(shape.unwrap().message.contains("query.limit"), "{:?}", shape);
+        assert!(
+            !codes(&r).contains(&"declarative_no_views".to_string()),
+            "别把「写错了形态」报成「没写 views」：{:?}",
+            r.problems
+        );
+    }
+
+    #[test]
+    fn declarative_manifest_that_the_loader_rejects_is_never_reported_ok() {
+        // 兜底保证：声明式这边原先**没有**「加载器会不会拒」这一步。manifest 解析失败
+        // （这里是 `summary` 写成了字符串）时各条具体检查可能一条都不报，报告会显示
+        // ok=true，可应用其实拒载——作者会以为没问题，装上去才发现。
+        let dir = declarative_plugin(
+            "silent-reject",
+            r#"{ "id": "silent-reject", "name": "S", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"], "summary": "yes" } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(!r.ok, "加载器会拒就必须报错：{:?}", r.problems);
+        assert!(codes(&r).contains(&"loader_rejected".to_string()), "{:?}", r.problems);
+    }
+
+    #[test]
+    fn select_options_accept_both_the_short_and_the_full_form() {
+        // 作者文档（生成物 §4.8）给的是短写法 `["最近更新", "标题"]`：它必须能装上去。
+        // 此前只认 { value, label } 对象，于是文档里那个例子会被加载器拒载。
+        let dir = declarative_plugin(
+            "short-options",
+            r#"{ "id": "short-options", "name": "短写法", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "settings": [
+                   { "key": "a", "label": "短写法", "type": "select", "options": ["updated_desc", "title_asc"] },
+                   { "key": "b", "label": "全写法", "type": "select",
+                     "options": [ { "value": "page", "label": "普通页" }, { "value": "database", "label": "数据库" } ] }
+                 ],
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"],
+                              "query": { "sort": { "fromSetting": "a" }, "kind": { "fromSetting": "b" } } } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert_eq!(r.errors().count(), 0, "两种写法都该被收下：{:?}", r.problems);
+        assert_eq!(r.settings.len(), 2);
+        assert_eq!(r.settings[0].options.len(), 2);
+        assert_eq!(r.settings[0].options[0].value, "updated_desc");
+        assert_eq!(r.settings[0].options[0].label, "updated_desc", "短写法里取值与显示名是同一个");
     }
 }

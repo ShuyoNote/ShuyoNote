@@ -10,7 +10,7 @@
 | [`daily-note/`](daily-note/) | **写能力走草稿确认** + 插件私有数据（按空间隔离、随空间加密） | `pages.create`（草稿）/ `kv.get` / `kv.set` |
 | [`tidy-tags/`](tidy-tags/) | 先读后写；省略 `pageId` 时作用于**当前打开的页面** | `tags.list` / `tags.add`（草稿） |
 | [`md-outline/`](md-outline/) | **导入触发**（manifest `triggers`）：用户选文件 → 宿主读内容 → 插件拿到 `{ fileName, content }`；写能力照样出草稿 | `pages.create`（草稿） |
-| [`reading-board/`](reading-board/) | **零代码插件**（`runtime: "declarative"`）：只有 manifest，宿主按声明查询并渲染视图 | 无（没有代码） |
+| [`reading-board/`](reading-board/) | **零代码插件**（`runtime: "declarative"`）：只有 manifest，宿主按声明查询并渲染视图；查询条件**引用用户设置**（`{ "fromSetting": "…" }`），所以零代码也能「用户可配」 | 无（没有代码） |
 | [`warm-night/`](warm-night/) | **零代码主题插件**：只出一组设计变量，停用即恢复 | 无（没有代码） |
 
 ## 怎么跑起来

@@ -1,4 +1,4 @@
-import type { PageMeta } from "../types";
+import type { PageMeta, PluginSetting } from "../types";
 
 /**
  * 声明式视图的**宿主渲染逻辑**（M11.9）。
@@ -12,12 +12,20 @@ import type { PageMeta } from "../types";
  * 校验器会明确告诉作者哪个值不认识。
  */
 
+/** 查询字段的取值：**字面量**，或指向用户在插件管理里设的那个设置（`{ fromSetting }`）。 */
+export type ViewField<T extends string | number> = T | { fromSetting: string };
+
+/**
+ * 视图查询（**manifest 里写 camelCase**：`titleContains` / `updatedWithinDays`——
+ * 与 `apiVersion` / `fromSetting` 一致。字段名跟着 Rust 侧的 `rename_all = "camelCase"`，
+ * 两边任何一边改名字，这条链路都会静默失效，所以 Rust 与这里各有一条测试钉住）。
+ */
 export interface PluginViewQuery {
-  kind?: string;
-  title_contains?: string;
-  updated_within_days?: number;
-  sort?: string;
-  limit?: number;
+  kind?: ViewField<string>;
+  titleContains?: ViewField<string>;
+  updatedWithinDays?: ViewField<number>;
+  sort?: ViewField<string>;
+  limit?: ViewField<number>;
 }
 
 export interface PluginView {
@@ -27,6 +35,26 @@ export interface PluginView {
   columns: string[];
   summary: boolean;
 }
+
+/** 已解析的查询：字段都是普通值（`resolveView` 的产物）。 */
+export interface ResolvedViewQuery {
+  kind?: string;
+  titleContains?: string;
+  updatedWithinDays?: number;
+  sort?: string;
+  limit?: number;
+}
+
+/**
+ * 已解析的视图。`selectViewRows` 只接受这个类型——**解析只有一处**（`resolveView`），
+ * 类型上就把"忘了先解析"这条路堵掉，而不是靠每个调用点自觉。
+ */
+export interface ResolvedView extends Omit<PluginView, "query"> {
+  query: ResolvedViewQuery;
+}
+
+/** 用户设置（后端 `plugin_settings`；`value` 是用户设过的值，没设过为 null）。 */
+export type ViewSetting = Pick<PluginSetting, "key" | "type" | "value" | "default" | "options">;
 
 /** 宿主支持的列（键 → 表头）。 */
 export const VIEW_COLUMNS: { key: string; title: string }[] = [
@@ -39,6 +67,9 @@ export const VIEW_COLUMNS: { key: string; title: string }[] = [
 ];
 
 export const VIEW_SORTS = ["updated_desc", "created_desc", "title_asc", "title_desc"] as const;
+
+/** 宿主支持的 kind 取值（与 Rust 侧 `VIEW_KINDS` 一致）。 */
+export const VIEW_KINDS = ["any", "page", "database"] as const;
 
 const DAY = 86_400_000;
 
@@ -75,20 +106,101 @@ export function effectiveColumns(view: PluginView): string[] {
   return known.length > 0 ? known : ["title"];
 }
 
+/** 这个视图是否用到了设置（不需要的话就不必读一遍设置再渲染）。 */
+export function viewNeedsSettings(view: PluginView): boolean {
+  const q = view.query ?? {};
+  return [q.kind, q.titleContains, q.updatedWithinDays, q.sort, q.limit].some(
+    (f) => typeof f === "object" && f !== null && typeof (f as { fromSetting?: unknown }).fromSetting === "string",
+  );
+}
+
+/**
+ * 把一个字段的原始取值解析成普通值。
+ *
+ * 规则（三条，都可预期）：
+ * 1. **字面量直接用**（并且仍然要过该字段的类型检查——`"limit": "x"` 这种形态根本进不来，
+ *    加载器会拒载，见校验器）；
+ * 2. **`{ fromSetting }`** 取用户设过的值，没设过取该设置声明的 `default`；
+ * 3. 两者都没有、或者值不可用（不是数字、不在白名单）→ **按"没给"处理**（即宿主的默认
+ *    行为），绝不抛错——插件声明的数据不该让面板打不开。这类问题由校验器在作者那边指出。
+ *
+ * 默认值**只有一处**（设置声明里的 `default`）：不在这里再放一个，两个默认值必然会漂。
+ */
+function rawValue(field: unknown, settings: ViewSetting[]): string | number | undefined {
+  if (typeof field === "string" || typeof field === "number") return field;
+  if (typeof field !== "object" || field === null) return undefined;
+  const key = (field as { fromSetting?: unknown }).fromSetting;
+  if (typeof key !== "string") return undefined;
+  const setting = settings.find((s) => s.key === key);
+  if (!setting) return undefined;
+  const value = setting.value ?? setting.default;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number" || typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return undefined;
+}
+
+function numeric(field: unknown, settings: ViewSetting[]): number | undefined {
+  const v = rawValue(field, settings);
+  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+function text(field: unknown, settings: ViewSetting[]): string | undefined {
+  const v = rawValue(field, settings);
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  return undefined;
+}
+
+/**
+ * 解析视图的查询：把 `{ fromSetting }` 换成用户设的值。
+ *
+ * 三条规则（与 Rust 侧 `check_view_params` 是同一套判断的两端，作者文档 §4.9 有表）：
+ * - **不认识的值一律按"没给"处理**（即宿主默认行为）——包括 `kind` / `sort` 的白名单外取值：
+ *   这一个和旧行为不同（旧代码会把白名单外的 `kind` 当作过滤条件、结果是一张空表），改成
+ *   与文档承诺一致："写错的值不会让视图打不开，只是那一项按默认处理"。
+ * - **默认值只有一处**：设置声明里的 `default`（这里不再放第二个）。
+ * - **不修改入参**（返回新的 view）：视图声明来自插件列表、多处共用，就地改会把"某个用户的
+ *   设置"写进所有人的视图里。
+ */
+export function resolveView(view: PluginView, settings: ViewSetting[] = []): ResolvedView {
+  const q = view.query ?? {};
+  const query: ResolvedViewQuery = {};
+  const kind = text(q.kind, settings);
+  if (kind && VIEW_KINDS.includes(kind as (typeof VIEW_KINDS)[number])) query.kind = kind;
+  const contains = text(q.titleContains, settings);
+  if (contains && contains.trim()) query.titleContains = contains;
+  const days = numeric(q.updatedWithinDays, settings);
+  if (days !== undefined && days > 0) query.updatedWithinDays = Math.trunc(days);
+  const sort = text(q.sort, settings);
+  if (sort && VIEW_SORTS.includes(sort as (typeof VIEW_SORTS)[number])) query.sort = sort;
+  const limit = numeric(q.limit, settings);
+  if (limit !== undefined && limit > 0) query.limit = Math.trunc(limit);
+  return { ...view, query };
+}
+
 /**
  * 按声明查询页面。返回 { rows, total }：
  * `total` 是**过滤后、截断前**的数量，用于汇总行（"共 N 篇，显示前 M 篇"）——
  * 只报显示条数会让用户以为是全部。
+ *
+ * 入参必须是**已解析**的视图（先过 `resolveView`）：`{ fromSetting }` 那种形态在这里
+ * 一律不认得，直接算"没给"——把解析放在唯一一处，避免每个调用点各写一遍。
  */
 export function selectViewRows(
   pages: PageMeta[],
-  view: PluginView,
+  view: ResolvedView,
   now = Date.now(),
 ): { rows: PageMeta[]; total: number } {
-  const q = view.query ?? {};
+  const q = view.query;
   const kind = q.kind && q.kind !== "any" ? q.kind : null;
-  const contains = (q.title_contains ?? "").trim().toLowerCase();
-  const withinDays = typeof q.updated_within_days === "number" && q.updated_within_days > 0 ? q.updated_within_days : null;
+  const contains = (q.titleContains ?? "").trim().toLowerCase();
+  const withinDays = typeof q.updatedWithinDays === "number" && q.updatedWithinDays > 0 ? q.updatedWithinDays : null;
 
   let filtered = pages.filter((p) => {
     if (p.deleted_at) return false; // 已删除的页面不该出现在任何视图里

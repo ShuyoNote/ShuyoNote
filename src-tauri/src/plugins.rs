@@ -62,11 +62,43 @@ pub struct PluginCommandParam {
     pub default: Option<serde_json::Value>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+/// `select` 的一个候选项。
+///
+/// **两种写法都收**：`"最近更新"` 与 `{ "value": "updated_desc", "label": "最近更新" }`。
+/// 为什么必须两种都收：作者文档（生成物 §4.8）给的就是短写法，而 `value`/`label` 分开写
+/// 在需要「用户看到中文、实际取值是英文枚举」时才有必要。此前只认后者，于是文档里那个
+/// 例子**会被加载器拒载**（结构体反序列化遇到裸字符串直接失败）——而且是静默的：
+/// 声明式插件那边当时没有"加载器会不会拒"的兜底检查，报告会显示一切正常。
+/// 命令参数（JS 侧 `register({ params })`）由 BOOTSTRAP 里的 `__normParams` 归一成对象，
+/// 走的是同一个类型，所以这里收两种形态对它也无害。
+#[derive(Serialize, Clone, Debug)]
 pub struct PluginCommandParamOption {
     pub value: String,
     #[serde(default)]
     pub label: String,
+}
+
+impl<'de> serde::Deserialize<'de> for PluginCommandParamOption {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            /// 短写法：一个字符串既是取值也是显示名。
+            Plain(String),
+            Full {
+                value: String,
+                #[serde(default)]
+                label: String,
+            },
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Plain(s) => PluginCommandParamOption { label: s.clone(), value: s },
+            Raw::Full { value, label } => PluginCommandParamOption { value, label },
+        })
+    }
 }
 
 /// 校验用户填的值是否符合该项声明。**这是宿主侧的边界**：插件拿到的值必然是
@@ -458,22 +490,85 @@ pub(crate) struct ViewDecl {
     pub(crate) summary: bool,
 }
 
+/// 查询字段的取值：**字面量**，或**指向用户在插件管理里设的那个设置**（M11.9 收口）。
+///
+/// 为什么要有第二种：声明式插件没有代码，查询原先被钉死在 manifest 里——用户想改
+/// 「看多少天内更新的」就只能去写一个 logic 插件。可这件事的两端**本来就都在宿主手里**：
+/// 设置由宿主渲染表单、宿主校验、宿主落库（`plugin_settings`），视图也由宿主渲染。
+/// 没有理由不让它们接上——接上之后，「用户可配」不再必然意味着「必须有代码」。
+///
+/// 语法：`"limit": { "fromSetting": "recentCount" }`（`"updatedWithinDays"` 同理）。
+///
+/// **默认值只有一处**：设置声明里的 `default`——刻意不在这里再给一个 `default`，两个默认值
+/// 必然会漂。设置也没设过、也没有 `default` 时，该字段按「没给」处理（即宿主的默认行为：
+/// 排序按最近更新、limit 50、不按天数筛…），校验器会在作者那边把问题指出来。
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub(crate) enum NumericField {
+    /// 先试这个变体：带 `fromSetting` 的对象。
+    Setting {
+        #[serde(rename = "fromSetting")]
+        from_setting: String,
+    },
+    /// 字面量（`20`）。写成字符串/布尔会两个变体都落空 → manifest 解析失败（校验器会给出
+    /// 具体是哪一项写错了，见 `check_view_field_shapes`）。
+    Value(i64),
+}
+
+/// 文本型查询字段（`kind` / `sort` / `titleContains`）的取值，形态与 [`NumericField`] 相同。
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+#[serde(untagged)]
+pub(crate) enum TextField {
+    Setting {
+        #[serde(rename = "fromSetting")]
+        from_setting: String,
+    },
+    Value(String),
+}
+
+impl NumericField {
+    /// 字面量取值（不是字面量则 `None`）。
+    pub(crate) fn literal(&self) -> Option<i64> {
+        match self {
+            NumericField::Value(v) => Some(*v),
+            NumericField::Setting { .. } => None,
+        }
+    }
+}
+
+impl TextField {
+    pub(crate) fn literal(&self) -> Option<&str> {
+        match self {
+            TextField::Value(v) => Some(v.as_str()),
+            TextField::Setting { .. } => None,
+        }
+    }
+}
+
+/// 视图查询。
+///
+/// **manifest 里写的是 camelCase**（`titleContains` / `updatedWithinDays`）——与
+/// `apiVersion` / `closeOnRun` / `fromSetting` 一致。这一条必须靠测试钉住：结构体字段是
+/// snake_case，早先漏了 `rename_all`，于是**作者文档与示例里写的 `updatedWithinDays` 被
+/// 静默丢掉**（"最近 30 天"从来没生效过，文档却写着能用）。同时用 `alias` 收下 snake_case
+/// 写法：那是照着结构体反推出来的形态，收下它不花任何代价。
 #[derive(serde::Deserialize, Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ViewQuery {
     /// `any`（默认）或 `page` / `database`（按页面的 kind 过滤）。
     #[serde(default)]
-    pub(crate) kind: Option<String>,
+    pub(crate) kind: Option<TextField>,
     /// 标题包含（大小写不敏感的子串）。
-    #[serde(default)]
-    pub(crate) title_contains: Option<String>,
+    #[serde(default, alias = "title_contains")]
+    pub(crate) title_contains: Option<TextField>,
     /// 只看最近 N 天内更新过的。
-    #[serde(default)]
-    pub(crate) updated_within_days: Option<i64>,
+    #[serde(default, alias = "updated_within_days")]
+    pub(crate) updated_within_days: Option<NumericField>,
     /// `updated_desc`（默认）/ `created_desc` / `title_asc`。
     #[serde(default)]
-    pub(crate) sort: Option<String>,
+    pub(crate) sort: Option<TextField>,
     #[serde(default)]
-    pub(crate) limit: Option<i64>,
+    pub(crate) limit: Option<NumericField>,
 }
 
 /// 宿主支持的视图列（白名单：宿主渲染什么，作者只能从这里选）。
@@ -3719,6 +3814,52 @@ register({ id: "s.run", title: "结构化", run: function () {
         ] {
             assert!(normalize_extension(bad).is_none(), "{bad:?} 不该被当成扩展名");
         }
+    }
+
+    #[test]
+    fn view_query_accepts_the_documented_camel_case_fields() {
+        // 作者文档（生成物 §4.9）与示例里写的是 `updatedWithinDays` / `titleContains`。
+        // 结构体字段是 snake_case，早先漏了 `rename_all = "camelCase"`，于是这两个字段
+        // **被静默丢掉**——视图的"最近 N 天"从来没生效过，而文档写着能用，校验器也不报
+        // （单字段名 kind/sort/limit 两种写法同名，所以只有多字段名暴露问题）。
+        // 这条测试钉的就是"文档写的形态真的能用"。
+        let base = temp_dir("view-camel");
+        let dir = base.join("camel");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{ "id": "camel", "name": "C", "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"],
+                              "query": { "updatedWithinDays": 30, "titleContains": "周报" } } ] }"#,
+        )
+        .unwrap();
+        let m = read_manifest(&dir).unwrap();
+        let q = &m.views.as_ref().unwrap()[0].query;
+        assert_eq!(
+            q.updated_within_days.as_ref().and_then(|f| f.literal()),
+            Some(30),
+            "文档写的 updatedWithinDays 必须真的被读到"
+        );
+        assert_eq!(
+            q.title_contains.as_ref().and_then(|f| f.literal()),
+            Some("周报"),
+            "文档写的 titleContains 必须真的被读到"
+        );
+
+        // 顺手收下的 snake_case 写法（照结构体反推出来的形态）也要能用
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{ "id": "camel", "name": "C", "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"],
+                              "query": { "updated_within_days": 7 } } ] }"#,
+        )
+        .unwrap();
+        let m2 = read_manifest(&dir).unwrap();
+        assert_eq!(
+            m2.views.as_ref().unwrap()[0].query.updated_within_days.as_ref().and_then(|f| f.literal()),
+            Some(7)
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

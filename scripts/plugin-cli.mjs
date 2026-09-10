@@ -55,14 +55,145 @@ function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, th
         push("warning", "view_unknown_column", `视图 ${v.id} 声明了宿主不支持的列「${c}」（可用：${[...knownColumns].join(" / ")}）`);
       }
     }
+    // 白名单只对**字面量**判定：`{ fromSetting }` 形态由 checkViewParams 判定（它要看设置声明的类型与候选项）
     const q = v.query ?? {};
-    if (q.kind !== undefined && !knownKinds.has(q.kind)) push("warning", "view_bad_kind", `视图 ${v.id} 的 query.kind「${q.kind}」不认识（可用：${[...knownKinds].join(" / ")}）`);
-    if (q.sort !== undefined && !knownSorts.has(q.sort)) push("warning", "view_bad_sort", `视图 ${v.id} 的 query.sort「${q.sort}」不认识（可用：${[...knownSorts].join(" / ")}）`);
-    if (q.limit !== undefined && (typeof q.limit !== "number" || q.limit < 1 || q.limit > 500)) {
+    if (isLiteralField(q.kind) && !knownKinds.has(q.kind)) push("warning", "view_bad_kind", `视图 ${v.id} 的 query.kind「${q.kind}」不认识（可用：${[...knownKinds].join(" / ")}）`);
+    if (isLiteralField(q.sort) && !knownSorts.has(q.sort)) push("warning", "view_bad_sort", `视图 ${v.id} 的 query.sort「${q.sort}」不认识（可用：${[...knownSorts].join(" / ")}）`);
+    if (isLiteralField(q.limit) && (q.limit < 1 || q.limit > 500)) {
       push("warning", "view_bad_limit", `视图 ${v.id} 的 query.limit 超出范围（1–500）`);
     }
   }
 }
+
+/**
+ * 查询字段的两种拼写都收（与 Rust 侧一致）：manifest 的正规写法是 camelCase
+ * （`titleContains` / `updatedWithinDays`，与 `apiVersion` / `fromSetting` 一致），
+ * snake_case 是照结构体反推出来的形态，应用侧用 `alias` 一并收下。
+ * 检查前统一成 camelCase，避免"应用能用、CLI 却按没写处理"。
+ */
+function normalizeViewQuery(q) {
+  if (!q || typeof q !== "object") return {};
+  const out = { ...q };
+  if (out.titleContains === undefined && out.title_contains !== undefined) out.titleContains = out.title_contains;
+  if (out.updatedWithinDays === undefined && out.updated_within_days !== undefined) out.updatedWithinDays = out.updated_within_days;
+  return out;
+}
+
+/** 查询字段是不是字面量（不是 `{ fromSetting }` 形态、也不是缺失）。 */
+function isLiteralField(f) {
+  return f !== undefined && (typeof f === "string" || typeof f === "number");
+}
+
+/** 查询字段里的设置引用 key（不是 `{ fromSetting }` 形态则 null）。 */
+function settingRef(f) {
+  if (!f || typeof f !== "object" || Array.isArray(f)) return null;
+  return typeof f.fromSetting === "string" && f.fromSetting.trim() ? f.fromSetting.trim() : null;
+}
+
+/**
+ * 视图参数的检查：与 Rust 侧 `check_view_params` 一一对应（只跑声明式这一档）。
+ *
+ * 三件事：**引用的设置必须存在**（错误）、**类型必须能产出这个字段要的值**（错误）、
+ * `select` 的候选项必须在白名单里 / 是数字（错误）——最后这条最阴：界面看着完全正常，
+ * 只是筛选永远按默认来。
+ */
+function checkViewParams(m, push, knownSorts, knownKinds) {
+  const views = Array.isArray(m.views) ? m.views : [];
+  const decls = Array.isArray(m.settings) ? m.settings : [];
+  const settings = new Map(
+    decls
+      .filter((d) => d && typeof d.key === "string")
+      .map((d) => [
+        d.key,
+        {
+          type: typeof d.type === "string" && d.type ? d.type : "string",
+          options: (Array.isArray(d.options) ? d.options : []).map((o) =>
+            typeof o === "string" ? o : typeof o?.value === "string" ? o.value : "",
+          ),
+        },
+      ]),
+  );
+  const used = new Set();
+  const shapes = [
+    ["limit", "number", null],
+    ["updatedWithinDays", "number", null],
+    ["kind", "enum", knownKinds],
+    ["sort", "enum", knownSorts],
+    ["titleContains", "text", null],
+  ];
+  for (const [i, v] of views.entries()) {
+    const q = normalizeViewQuery(v?.query);
+    for (const [field, shape, allowed] of shapes) {
+      const key = settingRef(q[field]);
+      if (!key) continue;
+      const decl = settings.get(key);
+      if (!decl) {
+        push("error", "view_param_unknown_setting", `views[${i}].query.${field} 引用了设置「${key}」，但 manifest.settings 里没有这一项——这条参数永远不会生效`);
+        continue;
+      }
+      used.add(key);
+      const shapeName = shape === "number" ? "数字" : shape === "enum" ? "白名单里的值" : "文本";
+      if (shape === "number" && (decl.type === "number" || decl.type === "select")) {
+        if (decl.type === "select") {
+          const bad = decl.options.filter((o) => !(o.trim() !== "" && Number.isFinite(Number(o))));
+          if (bad.length) {
+            push("error", "view_param_bad_options", `views[${i}].query.${field} 用设置「${key}」取值，但它是 select、候选项里有不是数字的：${bad.map((s) => `「${s}」`).join("、")}`);
+          }
+        }
+      } else if (shape === "enum" && (decl.type === "select" || decl.type === "string")) {
+        if (decl.type === "select") {
+          const bad = decl.options.filter((o) => !allowed.has(o));
+          if (bad.length) {
+            push("error", "view_param_bad_options", `views[${i}].query.${field} 用设置「${key}」取值，但它的候选项不在白名单里：${bad.map((s) => `「${s}」`).join("、")}（可用：${[...allowed].join(" / ")}）——用户选哪个都会被忽略，界面看着正常、筛选却永远按默认来`);
+          }
+        } else {
+          push("warning", "view_param_string_source", `views[${i}].query.${field} 由文本设置「${key}」驱动：用户填出白名单外的值（可用：${[...allowed].join(" / ")}）时这条参数会被忽略，筛选会静默回到默认——建议改成 select`);
+        }
+      } else if (shape === "text" && (decl.type === "string" || decl.type === "select")) {
+        // 文本字段什么都能塞，不必再说
+      } else if (shape === "number" && decl.type === "string") {
+        push("warning", "view_param_string_source", `views[${i}].query.${field} 由文本设置「${key}」驱动：用户填的不是数字时这条参数会被忽略（视图退回默认）——建议把设置的 type 改成 number`);
+      } else {
+        push("error", "view_param_bad_type", `views[${i}].query.${field} 需要${shapeName}，但设置「${key}」的 type 是「${decl.type}」——它永远产不出可用的值，这条参数等于白写`);
+      }
+    }
+  }
+  for (const key of settings.keys()) {
+    if (!used.has(key)) {
+      push("warning", "declarative_setting_unused", `设置「${key}」没有被任何视图用到：声明式插件没有代码去读设置，所以用户填了它也不会改变任何东西（要么让某个视图 query 用 {"fromSetting": "${key}"} 引用它，要么删掉它）`);
+    }
+  }
+}
+
+/**
+ * 视图查询字段的**取值形态**检查（看原始 JSON）。
+ *
+ * 为什么必须单独看形态：字段是 `字面量 | { fromSetting }` 的联合，写成 `"limit": "20"`
+ * 会让**整份 manifest 解析失败**（应用会直接拒载），而只报"必须声明 views"会把作者引向
+ * 反方向——他明明写了。
+ */
+function checkViewFieldShapes(m, push) {
+  const views = Array.isArray(m.views) ? m.views : [];
+  const fields = [
+    ["limit", true],
+    ["updatedWithinDays", true],
+    ["kind", false],
+    ["sort", false],
+    ["titleContains", false],
+  ];
+  for (const [i, v] of views.entries()) {
+    if (!v?.query || typeof v.query !== "object") continue;
+    const q = normalizeViewQuery(v.query);
+    for (const [field, numeric] of fields) {
+      const raw = q[field];
+      if (raw === undefined) continue;
+      if (settingRef(raw)) continue;
+      if (numeric ? Number.isInteger(raw) : typeof raw === "string") continue;
+      push("error", "view_field_shape", `views[${i}].query.${field} 的写法不对：只能是${numeric ? "数字" : "字符串"}，或指向一个设置 {"fromSetting": "设置key"}——形态不对会让整份 manifest 解析失败、插件被拒载`);
+    }
+  }
+}
+
 
 /**
  * 导入触发的检查：与 Rust 侧 `check_triggers_declaration` 一一对应（两档插件都跑）。
@@ -200,6 +331,10 @@ function validate(dirArg) {
       // 这里必须与 Rust 侧（plugin_validate.rs 的 validate_declarative）一致，
       // 否则作者 CLI 会把一个本来能用的零代码插件报成"装不上"。
       checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, themeTokenNames);
+      // 视图参数（查询字段引用用户设置）：形态 → 引用 → 类型能不能对上。
+      // 「加载器会不会拒」那一层兜底只有应用内验证有（CLI 不跑 Rust 的 manifest 解析）。
+      checkViewFieldShapes(m, push);
+      checkViewParams(m, push, knownSorts, knownKinds);
     } else if (!isBareFileName(main)) {
       push("error", "main_invalid", `manifest.main（${main}）必须是同级文件名：不得含路径分隔符，也不得是 . / ..`);
     } else {
@@ -220,7 +355,6 @@ function validate(dirArg) {
       for (const [field, code, msg] of [
         ["permissions", "declarative_has_permissions", "声明式插件没有代码，manifest.permissions 不会被用到"],
         ["events", "declarative_has_events", "声明式插件没有代码，manifest.events 收不到任何事件"],
-        ["settings", "declarative_has_settings", "声明式插件没有代码去读设置"],
         ["triggers", "declarative_has_triggers", "声明式插件没有命令可以调用，manifest.triggers 不会接住任何文件（要导入触发就得写 logic 档）"],
         ["main", "declarative_has_main", "runtime=declarative 时 main.js 不会被读取或执行"],
       ]) {

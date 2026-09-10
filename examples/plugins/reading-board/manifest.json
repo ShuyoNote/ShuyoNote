@@ -2,15 +2,35 @@
   "id": "reading-board",
   "name": "阅读统计",
   "version": "1.0.0",
-  "description": "零代码插件：一张「最近更新」表 + 一行汇总。整个插件只有这个 manifest.json，没有一行 JS。",
+  "description": "零代码插件：一张「最近更新」表 + 一行汇总，看多少天 / 显示几条由你在设置里调。整个插件只有这个 manifest.json，没有一行 JS。",
   "runtime": "declarative",
   "apiVersion": "1.0.0",
+  "settings": [
+    {
+      "key": "recentDays",
+      "label": "看多少天内更新的",
+      "type": "number",
+      "default": 30,
+      "description": "在「插件管理 → 设置」里改；不填就是 30 天"
+    },
+    {
+      "key": "limit",
+      "label": "最多显示几条",
+      "type": "number",
+      "default": 20
+    }
+  ],
   "views": [
     {
       "id": "recent",
       "title": "最近更新",
       "summary": true,
-      "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },
+      "query": {
+        "kind": "any",
+        "updatedWithinDays": { "fromSetting": "recentDays" },
+        "sort": "updated_desc",
+        "limit": { "fromSetting": "limit" }
+      },
       "columns": ["title", "kind", "updated_at", "days_since_update"]
     }
   ]

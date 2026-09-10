@@ -165,12 +165,13 @@ export interface PluginSetting {
 export interface PluginView {
   id: string;
   title: string;
+  /** 查询字段：字面量或 `{ fromSetting }`（见 lib/pluginViews 的 ViewField）。 */
   query: {
-    kind?: string;
-    title_contains?: string;
-    updated_within_days?: number;
-    sort?: string;
-    limit?: number;
+    kind?: string | { fromSetting: string };
+    titleContains?: string | { fromSetting: string };
+    updatedWithinDays?: number | { fromSetting: string };
+    sort?: string | { fromSetting: string };
+    limit?: number | { fromSetting: string };
   };
   columns: string[];
   summary: boolean;
