@@ -55,6 +55,38 @@
   ```
   （这些同时也是 `release.yml` CI 里 ubuntu 跑 `pnpm tauri build` 要装的包。）
 
+#### 2.3.1 OpenSSL（**Windows 必做**，macOS/Linux 一般可跳过）
+
+`src-tauri/Cargo.toml` 里 `rusqlite` 启用了 `bundled-sqlcipher`，而 **SQLCipher 需要链接系统 OpenSSL**：
+macOS/Linux 一般能被构建脚本自动找到（Linux 靠上面的 `libssl-dev`），**Windows 找不到就直接 panic**：
+
+```
+error: failed to run custom build command for `libsqlite3-sys vX.Y.Z`
+  thread 'main' panicked at ...libsqlite3-sys-.../build.rs:198:29:
+  Missing environment variable OPENSSL_DIR or OPENSSL_DIR is not set
+```
+
+> ⚠️ 这句报错**不代表代码有问题**，它只是「没找到 OpenSSL」。`Cargo.toml` 里的
+> `bundled-sqlcipher-vendored-openssl` 是 **Android 交叉编译专用**，桌面构建不会启用，所以桌面必须提供系统 OpenSSL。
+
+二选一（PowerShell）：
+
+```powershell
+# A. 已装 OpenSSL（如 Win64 安装包）→ 只把路径导出来即可
+$env:OPENSSL_DIR         = 'C:\Program Files\OpenSSL-Win64'
+$env:OPENSSL_LIB_DIR     = 'C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD'   # 按实际子目录调整（MD / MT）
+$env:OPENSSL_INCLUDE_DIR = 'C:\Program Files\OpenSSL-Win64\include'
+
+# B. 没装 → 用 vcpkg 装（与 CI 完全一致）
+vcpkg install openssl:x64-windows-static-md
+$env:OPENSSL_DIR = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+$env:VCPKG_ROOT  = $env:VCPKG_INSTALLATION_ROOT
+```
+
+> **CI 用的就是 B（vcpkg）** —— 见 `release.yml` 的 “Setup OpenSSL for SQLCipher (Windows)” 步骤。
+> 本地设好上面变量后，§4 第 5 步的 `cargo check` 即可通过（本机实测 `cargo check` 3m37s 通过）。
+> 这些变量**只在当前终端会话生效**，建议写进用户环境变量或启动脚本。
+
 > 这些是 Tauri 官方 pre-requisites（见 [Tauri docs](https://tauri.app/start/prerequisites/) / Linux 需 `libwebkit2gtk-4.1`）。
 
 ### 2.4 装依赖并跑起来
@@ -235,6 +267,7 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
 
 ## 9. 常见坑
 
+- **`Missing environment variable OPENSSL_DIR`（Windows）**：`rusqlite` 的 `bundled-sqlcipher` 要链接系统 OpenSSL，Windows 必须显式给路径 —— 装了 OpenSSL 也要导 `OPENSSL_DIR`（最常见就是「装了但没设变量」）。详见 **§2.3.1 OpenSSL（Windows 必做）**。
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **git autocrlf**：Windows 提交时出现 `LF will be replaced by CRLF` 是**正常的**，忽略。
