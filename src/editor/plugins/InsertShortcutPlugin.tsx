@@ -6,7 +6,7 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
-  COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_LOW,
   KEY_DOWN_COMMAND,
   type ElementNode,
 } from "lexical";
@@ -133,7 +133,15 @@ export function InsertShortcutPlugin() {
         }
         return false;
       },
-      COMMAND_PRIORITY_EDITOR,
+      // **必须是 LOW，不能是 EDITOR**：`COMMAND_PRIORITY_EDITOR` 是 Lexical 的**最后一档**
+      // 队列，而 Lexical 自己那支 `$handleKeyDown`（由 RichTextPlugin 在 layout effect 里
+      // 装进编辑器）就在那一档，且对**每一次** keydown 都 `return true`。同档里后来者是排在
+      // 它后面的，所以插件在 `useEffect` 里（被动 effect 永远晚于 layout effect）注册
+      // EDITOR 档的 KEY_DOWN_COMMAND，等于挂了一块**永远收不到事件的**牌子——下面这 10 个
+      // 组合键会全部静默失效（Lexical 反而把 Ctrl+Alt+1 当普通按键吞掉）。LOW 在第 1 档，
+      // 先于 EDITOR 档，与 SlashMenuPlugin / ImagePastePlugin 一致。
+      // 回归测试：src/editor/insertShortcut.test.ts（真编辑器 + 真 dispatchCommand）。
+      COMMAND_PRIORITY_LOW,
     );
   }, [editor]);
 
