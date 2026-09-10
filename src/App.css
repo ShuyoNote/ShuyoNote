@@ -5647,15 +5647,17 @@ select.prop-value {
 }
 .pm-index-form {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 8px 0 4px;
 }
+/* 地址一个人占满一行（它最长、也最容易被截断读错），公钥与按钮排第二行。 */
 .pm-index-url {
-  flex: 1 1 auto;
+  flex: 1 1 100%;
   min-width: 0;
 }
 .pm-index-key {
-  flex: 0 1 34%;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .pm-index-form input {
