@@ -16,5 +16,21 @@
       "on": "page.opened",
       "reason": "记录你打开了哪些页面（只写插件自己的日志，不碰笔记）"
     }
+  ],
+  "settings": [
+    {
+      "key": "recentCount",
+      "label": "最近更新显示几条",
+      "type": "number",
+      "default": 5,
+      "description": "在插件管理 → 设置里改；不填就是 5"
+    },
+    {
+      "key": "verboseLog",
+      "label": "详细日志",
+      "type": "boolean",
+      "default": false,
+      "description": "打开后把每条结果都写进插件日志"
+    }
   ]
 }

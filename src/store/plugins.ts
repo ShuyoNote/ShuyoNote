@@ -9,6 +9,7 @@ import type {
   PluginDraft,
   PluginLogLine,
   PluginMeta,
+  PluginSetting,
   PluginValidation,
 } from "../types";
 
@@ -88,6 +89,18 @@ interface PluginsState {
   openLogs: (pluginId: string) => Promise<void>;
   closeLogs: () => void;
   clearLogs: () => Promise<void>;
+  /**
+   * 正在查看哪个插件的设置（null = 未打开）。
+   *
+   * 设置是**用户在宿主界面填、插件只读**的配置（`api.settings.get`）。写权限只在
+   * 这里——插件侧对 `setting:` 命名空间是只读的（后端会拒），这样"用户看到的配置"
+   * 始终等于"他亲手设的那个"。
+   */
+  settingsFor: string | null;
+  settings: PluginSetting[];
+  openSettings: (pluginId: string) => Promise<void>;
+  closeSettings: () => void;
+  saveSetting: (pluginId: string, key: string, value: string) => Promise<void>;
   /** 正在查看哪个插件的能力调用审计（null = 未打开）。 */
   auditFor: string | null;
   audit: PluginAuditEntry[];
@@ -234,6 +247,31 @@ export const usePlugins = create<PluginsState>((set) => ({
     }
   },
   closeLogs: () => set({ logsFor: null, logs: [] }),
+  settingsFor: null,
+  settings: [],
+  openSettings: async (pluginId) => {
+    try {
+      const settings = await api.pluginSettings(pluginId);
+      set({ settings, settingsFor: pluginId });
+    } catch (e) {
+      console.error("load plugin settings failed", e);
+      toast(`读取插件设置失败：${errText(e)}`, "error");
+    }
+  },
+  closeSettings: () => set({ settingsFor: null, settings: [] }),
+  saveSetting: async (pluginId, key, value) => {
+    try {
+      await api.setPluginSetting(pluginId, key, value);
+      // 回读：让界面显示的是**真正落库的值**（后端可能规范化过，例如数字去空格），
+      // 而不是我们以为写进去的值。
+      const settings = await api.pluginSettings(pluginId);
+      set({ settings, settingsFor: pluginId });
+      toast("设置已保存", "success");
+    } catch (e) {
+      console.error("save plugin setting failed", e);
+      toast(`保存设置失败：${errText(e)}`, "error");
+    }
+  },
   auditFor: null,
   audit: [],
   openAudit: async (pluginId) => {

@@ -81,6 +81,8 @@ pub struct ValidateReport {
     pub granted: Vec<String>,
     /// 订阅了哪些事件（用户没点命令时也会跑代码，所以要在报告里说清楚）。
     pub events: Vec<PluginEventMeta>,
+    /// 声明的可配置项（宿主据此渲染设置表单）。
+    pub settings: Vec<crate::plugins::SettingDecl>,
     /// 是否走了老 manifest 的基线授权（作者应显式声明）。
     pub permissions_baseline: bool,
     pub problems: Vec<PluginProblem>,
@@ -299,6 +301,41 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         }
     }
 
+    // ---- 4.6 设置声明（宿主据此渲染表单，所以声明错了用户就会看到一个坏表单）----
+    let mut settings: Vec<crate::plugins::SettingDecl> = Vec::new();
+    if let Some(v) = &value {
+        if let Some(m) = manifest_from_value(v, &dir_name) {
+            if let Some(decls) = m.settings.clone() {
+                let mut seen: Vec<&str> = Vec::new();
+                for d in &decls {
+                    if d.key.trim().is_empty() {
+                        problems.push(PluginProblem::error("setting_no_key", "settings 里有一项没有 key", Some("manifest.json")));
+                        continue;
+                    }
+                    if seen.contains(&d.key.as_str()) {
+                        problems.push(PluginProblem::warn("setting_duplicate", format!("设置项 {} 重复声明", d.key), Some("manifest.json")));
+                    }
+                    seen.push(&d.key);
+                    if d.setting_type == "select" && d.options.is_empty() {
+                        problems.push(PluginProblem::error(
+                            "setting_select_no_options",
+                            format!("设置项 {} 声明为 select 却没有 options（用户将无法选择任何值）", d.key),
+                            Some("manifest.json"),
+                        ));
+                    }
+                    if d.scope != "app" && d.scope != "space" {
+                        problems.push(PluginProblem::error(
+                            "setting_bad_scope",
+                            format!("设置项 {} 的 scope 只能是 space（默认，随空间加密）或 app（明文），收到 {}", d.key, d.scope),
+                            Some("manifest.json"),
+                        ));
+                    }
+                }
+                settings = decls;
+            }
+        }
+    }
+
     // ---- 5. JS 语法（Boa 解析，不执行）----
     // 与运行同一个引擎，所以「本地能过、应用装上去语法错」不可能发生。
     if let Some(src) = read_entry_source(dir, &main) {
@@ -398,6 +435,7 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         permissions,
         granted,
         events,
+        settings,
         permissions_baseline,
         problems,
     }
@@ -456,6 +494,7 @@ impl ValidateReport {
             permissions: Vec::new(),
             granted: Vec::new(),
             events: Vec::new(),
+            settings: Vec::new(),
             permissions_baseline: false,
             problems: vec![PluginProblem::error(
                 "dir_missing",

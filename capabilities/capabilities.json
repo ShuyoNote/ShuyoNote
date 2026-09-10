@@ -625,6 +625,33 @@
       "mediateWhy": "只作用于当前页的纯文本插入 / 只动插件自己的数据，不碰既有内容"
     },
     {
+      "id": "settings.get",
+      "title": "读用户设置",
+      "kind": "read",
+      "scope": "app",
+      "permission": "kv:own",
+      "since": "1.0.0",
+      "jsPath": [
+        "settings",
+        "get"
+      ],
+      "args": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "desc": "manifest.settings 里声明的 key"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "ts": "string | null",
+        "desc": "用户在插件管理里为这项设置的值；没设过返回 null（此时用你自己的默认值）"
+      },
+      "rust": "cap_settings_get",
+      "desc": "读取用户在插件管理里为该插件设置的值。**只有宿主界面能写**——插件不能改用户给它设的配置"
+    },
+    {
       "id": "properties.list",
       "title": "列出属性定义",
       "kind": "read",

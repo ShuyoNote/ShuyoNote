@@ -126,6 +126,10 @@ export const api = {
   clearPluginAudit: () => invoke("clear_plugin_audit"),
   // 作者工具链：校验一个已安装插件（与加载器同源，一次列出所有问题）。
   validatePlugin: (id: string) => invoke("validate_plugin", { id }),
+  // 插件设置：声明来自 manifest，值只有宿主界面能写（插件侧 settings.get 只读）。
+  pluginSettings: (pluginId: string) => invoke("plugin_settings", { pluginId }),
+  setPluginSetting: (pluginId: string, key: string, value: string) =>
+    invoke("set_plugin_setting", { pluginId, key, value }),
   // 事件派发：把宿主事件交给声明订阅了它的启用插件（写能力仍走草稿确认）。
   emitPluginEvent: (event: string, payloadJson?: string) => invoke("emit_plugin_event", { event, payloadJson }),
   // 插件目录指纹：热重载用（面板打开期间低频轮询，变了就重新扫描）。

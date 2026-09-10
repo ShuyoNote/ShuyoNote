@@ -111,6 +111,7 @@ register({
 | `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
 | `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
+| `settings.get` | `api.settings.get(key)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `properties.list` | `api.properties.list()` | `read:properties` | `current-space` | — | array | 1.0.0 |
 | `properties.set` | `api.properties.set(attrId, value, pageId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
@@ -266,6 +267,15 @@ register({
   - `key`: `string` —— 
   - `scope`: `string`（可选），默认 `space` —— 
 
+### `settings.get` — 读用户设置
+
+- 调用：`api.settings.get(key)`
+- 权限：`kv:own`
+- scope：`app`
+- 返回：用户在插件管理里为这项设置的值；没设过返回 null（此时用你自己的默认值）
+- 参数：
+  - `key`: `string` —— manifest.settings 里声明的 key
+
 ### `properties.list` — 列出属性定义
 
 - 调用：`api.properties.list()`
@@ -398,6 +408,36 @@ register({ id: "my-plugin.today", title: "插入今天的日期", menus: ["slash
   校验器也会提醒你哪些值当前还没有宿主入口（不会静默丢掉你写的声明）；
 - 从 `/` 菜单触发的命令，如果它声明了参数，宿主会转交到命令面板让你填参数（同一套表单，不重复实现）；
 - 写能力在任何入口都走草稿确认——触发方式不影响这条。
+
+## 4.8 插件设置（用户填、你只读）
+
+需要用户配置的东西（文件夹、条数、开关）声明在 manifest 里，宿主会在「插件管理 → 设置」
+渲染成表单。**写只发生在那里**：插件侧 `api.settings.get` 是只读的（对 `setting:` 命名空间
+的写入会被后端拒绝）——这样用户看到的配置始终等于他亲手设的那个。
+
+```json
+"settings": [
+  { "key": "recentCount", "label": "显示条数", "type": "number", "default": 5 },
+  { "key": "folder", "label": "归档到", "type": "string", "description": "留空＝当前空间根目录" },
+  { "key": "verbose", "label": "详细日志", "type": "boolean", "default": false },
+  { "key": "mode", "label": "排序", "type": "select", "options": ["最近更新", "标题"] }
+]
+```
+
+```js
+var n = Number(api.settings.get("recentCount") || 5);   // 没设过返回 null
+var pages = api.pages.list(n);
+```
+
+几条规则：
+
+- **值由宿主校验**：`number` 一定是数字、`boolean` 一定是 true/false、`select` 一定在候选项里——
+  所以插件不必防御「用户填了乱七八糟的东西」；
+- **没设过返回 `null`**（不是空串）：据此退回你自己的默认值；
+- **没声明的 key 会报错**（而不是返回 null）：key 名字写错是最常见的低级错误，静默返回 null 会让你查很久；
+- **scope 由声明决定，不由你选**：`"scope": "space"`（默认）随空间 SQLCipher 加密，
+  `"scope": "app"` 落 meta.db（**明文**，别放 token 这类东西）；
+- 用户在设置里填的值存在插件自己的数据区（`plugin_data`），与 `api.kv` 同一张表、不同命名空间。
 
 ## 5. 日志与提示
 

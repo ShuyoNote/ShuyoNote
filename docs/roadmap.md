@@ -160,7 +160,8 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**状态*
   - ⚠️ **已知缺口（信任面）**：**插件更新后新增 `events`/权限不会重新征求同意**——用户当初是在没有事件的情况下启用它的，更新后它就开始在后台运行。修复方向：把授权快照记进 `plugin_install`，声明扩张时自动禁用 + 提示重新确认（归 M11.11b 治理面）。
   - ⏳ **未做**：`open`（让宿主导航到某页）——那是新的副作用面，属 ABI 决策，不夹带在参数这档。
   - ✅ **事件发射点补齐**：`app.started`（启动，插件列表先加载完再播报）/ `page.opened` / `page.deleted` / `space.switched` / `page.saved` 都已接；`import.finished` / `sync.completed` 在注册表里标为 **`hosted: false`**（不进类型包、校验器与日志明确告知「宿主还没开始发」——说了做不到的必须标出来）。派发走**零依赖公告口** `lib/pluginEvents.ts`（避免 store 循环依赖），并带「没人订阅就不发 IPC」的快速路径。
-  - ⏳ **未做**：其余触发面（`page.context`/`file.context`/`editor.toolbar` 已标为未实现，接一个就把 `hosted` 打开）；`import.finished`/`sync.completed` 两个事件的宿主发射；插件设置（manifest schema → `plugin_data`）。
+  - ✅ **插件设置**：manifest `settings` 声明 → 宿主在插件管理里渲染表单 → 落 `plugin_data`（复用同一张表，无新存储）；插件侧 `api.settings.get(key)` **只读**（`setting:` 命名空间对插件写入会被拒，有测试）。值由宿主按声明校验；scope 由声明决定（`space` 加密 / `app` 明文并提示）；未设返回 `null`、未声明 key 报错。
+  - ⏳ **未做**：其余触发面（`page.context`/`file.context`/`editor.toolbar` 已标为未实现，接一个就把 `hosted` 打开）；`import.finished`/`sync.completed` 两个事件的宿主发射。**M11.8 至此除这两项外均落地。**
   - ⚠️ **写作示例时发现的 API 缺口**：**草稿落库后插件拿不到新页面 id**（`pages.create` 返回草稿，确认发生在插件运行之外）→「先建页、之后往它追加」这类多步插件目前做不到；将来要么让草稿确认回传 id，要么给一个"草稿已应用"的回调面。示例已如实标注，不假装能做到。
 - **M11.9 声明式贡献面（无代码插件）** 🗓（规划）：manifest 即可声明面板/视图（复用数据库透镜 query+columns）、主题 token、导入导出触发、命令参数、菜单与斜杠项。**验收**：一个「阅读统计面板」插件**零 JS** 即可安装并显示。
 - **M11.10 沙盒 UI 插件**（原 M11.3，重编号）🗓（规划）：UI 型插件（沙盒 WebView + postMessage 桥）——实现 **Transport B**，复用 M11.6 的同一 shim 与权限模型；可贡献侧栏面板/自定义块/自定义视图。**评估结论不变（收益/风险比不足，后置）**，但补上**启动闸门**：M11.6 + **M11.9 声明式贡献面已穷尽**（多数「我要一个插件面板」应由声明式渲染器满足，否则等于为一个可声明解决的问题引入整套沙盒渲染面）。

@@ -8,6 +8,7 @@ import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
 import { buildCommandArgs, initialParamValues } from "../lib/pluginParams";
 import type { PluginCommandParam } from "../types";
+import { PluginFieldInput } from "./PluginFieldInput";
 
 type Item =
   | { kind: "page"; id: string; title: string }
@@ -246,38 +247,12 @@ export function CommandPalette() {
                   {p.label || p.name}
                   {p.required && <span className="palette-field-req">*</span>}
                 </span>
-                {p.type === "boolean" ? (
-                  <input
-                    type="checkbox"
-                    checked={paramValues[p.name] === true}
-                    onChange={(e) => setParamValues((v) => ({ ...v, [p.name]: e.target.checked }))}
-                  />
-                ) : p.type === "select" ? (
-                  <select
-                    value={String(paramValues[p.name] ?? "")}
-                    onChange={(e) => setParamValues((v) => ({ ...v, [p.name]: e.target.value }))}
-                  >
-                    <option value="">（不指定）</option>
-                    {p.options.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label || o.value}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type={p.type === "number" ? "number" : "text"}
-                    placeholder={p.placeholder}
-                    value={String(paramValues[p.name] ?? "")}
-                    onChange={(e) => setParamValues((v) => ({ ...v, [p.name]: e.target.value }))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        submitParams();
-                      }
-                    }}
-                  />
-                )}
+                <PluginFieldInput
+                  field={p}
+                  value={paramValues[p.name] ?? (p.type === "boolean" ? false : "")}
+                  onChange={(v) => setParamValues((prev) => ({ ...prev, [p.name]: v }))}
+                  onSubmit={submitParams}
+                />
               </label>
             ))}
             {paramError && <div className="palette-form-error">{paramError}</div>}

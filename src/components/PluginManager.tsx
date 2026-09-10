@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { platform, isDesktopPlatform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
+import { PluginFieldInput } from "./PluginFieldInput";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
@@ -11,6 +12,7 @@ export function PluginManager() {
     logsFor, logs, openLogs, closeLogs, clearLogs,
     auditFor, audit, openAudit, closeAudit, clearAudit,
     validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
+    settingsFor, settings, openSettings, closeSettings, saveSetting,
   } = usePlugins();
 
   useEffect(() => {
@@ -20,6 +22,19 @@ export function PluginManager() {
   // 热重载：面板打开期间低频轮询插件目录指纹，作者改完文件（或放了新插件目录）就
   // 自动重扫，不必手动开关面板或重启应用。1.5s 一次只做一次 read_dir + 元数据，
   // 代价可以忽略；关掉面板即停止轮询。
+  // 设置表单的草稿值：**必须受控**（否则输入框不显示你敲的字，而"保存"读到的是旧值——
+  // 这种"看着在改、其实没改"的错法比直接报错更难发现）。
+  const [draft, setDraft] = useState<Record<string, string | boolean>>({});
+  useEffect(() => {
+    if (!settingsFor) return;
+    const init: Record<string, string | boolean> = {};
+    for (const st of settings) {
+      if (st.type === "boolean") init[st.key] = st.value === "true" || (st.value === null && st.default === true);
+      else init[st.key] = st.value ?? (st.default === undefined || st.default === null ? "" : String(st.default));
+    }
+    setDraft(init);
+  }, [settingsFor, settings]);
+
   useEffect(() => {
     if (!managerOpen) return;
     watchPluginDir();
@@ -129,6 +144,13 @@ export function PluginManager() {
                 >
                   {auditFor === p.id ? "收起活动" : "活动"}
                 </button>
+                {/* 设置：用户在宿主界面填、插件只读（api.settings.get）——写只发生在这一处。 */}
+                <button
+                  onClick={() => (settingsFor === p.id ? closeSettings() : openSettings(p.id))}
+                  title="这个插件声明的可配置项（值存在插件自己的数据里）"
+                >
+                  {settingsFor === p.id ? "收起设置" : "设置"}
+                </button>
                 {/* 作者工具链：一次列出全部问题（manifest / 权限 / Boa 语法 / 命令注册），
                     走的是与加载器同一条路径，所以"校验通过"= 应用能装能跑。 */}
                 <button
@@ -160,6 +182,54 @@ export function PluginManager() {
                   <div className="pm-log-actions">
                     <button onClick={() => clearAudit()}>清空活动</button>
                   </div>
+                </div>
+              )}
+              {settingsFor === p.id && (
+                <div className="pm-settings">
+                  {settings.length === 0 ? (
+                    <div className="pm-log-empty">这个插件没有声明任何可配置项</div>
+                  ) : (
+                    settings.map((st) => (
+                      <div key={st.key} className="pm-setting-row">
+                        <span className="pm-setting-label" title={st.description || st.key}>
+                          {st.label}
+                          <span className="pm-setting-scope">{st.scope === "app" ? "应用级（明文）" : "本空间（加密）"}</span>
+                        </span>
+                        <PluginFieldInput
+                          field={{
+                            name: st.key,
+                            label: st.label,
+                            type: st.type,
+                            required: false,
+                            placeholder: st.description,
+                            options: st.options,
+                            default: st.default,
+                          }}
+                          value={draft[st.key] ?? ""}
+                          onChange={(v) => {
+                            setDraft((d) => ({ ...d, [st.key]: v }));
+                            // 复选框没有"保存"按钮可点：勾了就是决定了，立刻落库。
+                            if (st.type === "boolean") void saveSetting(p.id, st.key, v === true ? "true" : "false");
+                          }}
+                          onSubmit={() => void saveSetting(p.id, st.key, String(draft[st.key] ?? ""))}
+                        />
+                        {st.type !== "boolean" && (
+                          <button
+                            className="pm-setting-save"
+                            onClick={() => void saveSetting(p.id, st.key, String(draft[st.key] ?? ""))}
+                            title="保存这一项"
+                          >
+                            保存
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  {settings.some((x) => x.scope === "app") && (
+                    <div className="pm-setting-warn">
+                      标记「应用级（明文）」的项存在 meta.db，不随空间加密——别往里放 token 这类东西。
+                    </div>
+                  )}
                 </div>
               )}
               {validations[p.id] &&

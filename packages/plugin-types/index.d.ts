@@ -172,6 +172,12 @@ export interface PluginApi {
    */
     remove(key: string, scope?: "space" | "app"): void;
   };
+  settings: {
+  /** 读用户设置（权限 `kv:own`；1.0.0 起）
+   * 返回：用户在插件管理里为这项设置的值；没设过返回 null（此时用你自己的默认值）
+   */
+    get(key: string): string | null;
+  };
   properties: {
   /** 列出属性定义（权限 `read:properties`；1.0.0 起）
    * 返回：[{id, name, type}]——插件据此找到要写的属性 id

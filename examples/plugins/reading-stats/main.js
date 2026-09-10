@@ -9,7 +9,9 @@ register({
   description: "显示本空间共有多少页，以及最近更新的几页",
   run: function () {
     var total = api.pages.count();
-    var recent = api.pages.list(5);
+    // 用户在「插件管理 → 设置」里填的值；没设过返回 null，所以自己兜默认值。
+    var limit = Number(api.settings.get("recentCount") || 5);
+    var recent = api.pages.list(limit);
 
     if (total === 0) {
       api.notify("这个空间还没有页面");
@@ -19,7 +21,9 @@ register({
     var lines = recent.map(function (p) {
       return "· " + p.title + "（" + p.updated_at + "）";
     });
-    api.log("空间概览：" + total + " 页\n" + lines.join("\n"));
+    if (api.settings.get("verboseLog") === "true") {
+      api.log("空间概览：" + total + " 页\n" + lines.join("\n"));
+    }
     api.notify("共 " + total + " 页，最近更新：" + recent[0].title);
     return total + " 页";
   }

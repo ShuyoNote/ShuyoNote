@@ -2353,6 +2353,8 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "plugin_dir_stamp") return "" as T;
     // Web 没有磁盘插件运行时，事件无处可发（返回空数组＝没有插件响应）。
     if (cmd === "emit_plugin_event") return [] as T;
+    if (cmd === "plugin_settings") return [] as T;
+    if (cmd === "set_plugin_setting") return undefined as T;
 
     // ---- Sync ----
     const wsIdNow = (): string => getWs()?.id ?? getActiveWsId();

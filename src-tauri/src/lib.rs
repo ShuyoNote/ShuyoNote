@@ -418,6 +418,8 @@ pub fn run() {
             titlebar::set_titlebar_theme,
             titlebar::show_window_menu,
             titlebar::set_mica_effect,
+            plugins::plugin_settings,
+            plugins::set_plugin_setting,
             plugins::emit_plugin_event,
             plugins::list_plugins,
             plugins::set_plugin_enabled,

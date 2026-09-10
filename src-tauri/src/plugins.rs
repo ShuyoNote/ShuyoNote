@@ -69,6 +69,32 @@ pub struct PluginCommandParamOption {
     pub label: String,
 }
 
+/// 校验用户填的值是否符合该项声明。**这是宿主侧的边界**：插件拿到的值必然是
+/// 声明类型里的一种，所以插件不需要自己防御"用户填了乱七八糟的东西"。
+pub(crate) fn validate_setting_value(decl: &SettingDecl, raw: &str) -> Result<String, String> {
+    let label = if decl.label.trim().is_empty() { decl.key.as_str() } else { decl.label.as_str() };
+    match decl.setting_type.as_str() {
+        "number" => {
+            let n: f64 = raw.trim().parse().map_err(|_| format!("「{label}」需要一个数字"))?;
+            Ok(if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") })
+        }
+        "boolean" => match raw {
+            "true" | "false" => Ok(raw.to_string()),
+            _ => Err(format!("「{label}」只能是 true 或 false")),
+        },
+        "select" => {
+            if decl.options.iter().any(|o| o.value == raw) {
+                Ok(raw.to_string())
+            } else if decl.options.is_empty() {
+                Err(format!("「{label}」声明了 select 却没有 options"))
+            } else {
+                Err(format!("「{label}」的值不在候选项里"))
+            }
+        }
+        _ => Ok(raw.to_string()),
+    }
+}
+
 fn default_param_type() -> String {
     "string".to_string()
 }
@@ -150,6 +176,9 @@ struct RunState {
     /// 显式 app 数据目录。生产为 None（用全局目录）；测试注入临时目录用。
     read_dir: Option<PathBuf>,
     /// 写能力产出的草稿：**随结果回传前端**，用户确认后才落库（方案 §3.5 的写中介）。
+    /// 设置项 key → scope（`space`/`app`）：**scope 由 manifest 声明决定，不由插件选**。
+    /// 宿主在运行前从 manifest 填好，避免每次 `settings.get` 都去读盘。
+    setting_scopes: std::collections::HashMap<String, String>,
     drafts: Vec<PluginDraft>,
     /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
     /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
@@ -289,12 +318,39 @@ pub(crate) struct Manifest {
     /// 逐条声明的权限，带理由。缺省 = 走 v1 基线授权（见 resolve_permissions）。
     #[serde(default)]
     pub(crate) permissions: Option<Vec<PermissionDecl>>,
+    /// 用户可配置项：宿主据此渲染设置表单（**写只发生在宿主界面**）。
+    #[serde(default)]
+    pub(crate) settings: Option<Vec<SettingDecl>>,
     /// 声明要订阅的事件，带理由。
     ///
     /// 与权限不同，**缺失 = 一个事件都不订阅**（没有基线）：在用户没点命令时后台跑代码，
     /// 更不能默认给——老插件不会因为升级就突然有了后台行为。
     #[serde(default)]
     pub(crate) events: Option<Vec<EventDecl>>,
+}
+
+/// 一项用户设置的声明（宿主据此渲染设置表单，并据此校验用户填的值）。
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct SettingDecl {
+    pub(crate) key: String,
+    #[serde(default)]
+    pub(crate) label: String,
+    /// `string` | `number` | `boolean` | `select`（未知值按 string 处理）。
+    #[serde(rename = "type", default = "default_param_type")]
+    pub(crate) setting_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) default: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) options: Vec<PluginCommandParamOption>,
+    #[serde(default)]
+    pub(crate) description: String,
+    /// `space`（默认，随空间加密）或 `app`（应用级，明文）。
+    #[serde(default = "default_setting_scope")]
+    pub(crate) scope: String,
+}
+
+fn default_setting_scope() -> String {
+    "space".to_string()
 }
 
 #[derive(serde::Deserialize, Clone, Debug)]
@@ -839,6 +895,17 @@ fn with_meta_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result
 
 /// 按 scope 选库：`space`（默认）走空间库（随该空间加密/备份/搬移），
 /// `app` 走明文 meta.db（**只该放非敏感配置**——这条是方案 §3.7 的硬约定）。
+/// 设置项的键前缀：这一命名空间**由宿主界面独占写入**。
+///
+/// 为什么必须挡住插件：设置是用户为了这个插件亲手填的（例如"导入到哪个文件夹"），
+/// 如果插件能自己改，那用户看到的配置就不再是他设的那个——插件就绕过了唯一一处
+/// 需要他本人在场才能做的决定。读取不受限（插件当然要读自己的设置）。
+const SETTING_PREFIX: &str = "setting:";
+
+fn is_reserved_setting_key(key: &str) -> bool {
+    key.starts_with(SETTING_PREFIX)
+}
+
 fn kv_in_scope<T>(
     scope: &str,
     f: impl FnOnce(&Connection, &str) -> Result<T, String>,
@@ -869,6 +936,11 @@ fn cap_kv_get(key: &str, scope: &str) -> CapResult {
 }
 
 fn cap_kv_set(key: &str, value: &str, scope: &str) -> CapResult {
+    if is_reserved_setting_key(key) {
+        return Err(format!(
+            "permission_denied: {SETTING_PREFIX}* 由宿主界面管理（设置里填的值不该被插件改写）"
+        ));
+    }
     let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
     kv_in_scope(scope, |c, sc| {
         let used: i64 = c
@@ -907,7 +979,57 @@ fn cap_kv_set(key: &str, value: &str, scope: &str) -> CapResult {
     Ok(serde_json::Value::Null)
 }
 
+/// `api.settings.get(key)` —— 读用户在插件管理里填的值。
+///
+/// 落库位置与 kv 相同（`plugin_data`），键加 `setting:` 前缀，所以：scope=space 时随
+/// 空间 SQLCipher 加密、scope=app 时在 meta.db（明文）。默认 scope 是 **space**——
+/// 设置里常有 token / 路径这类东西，默认落明文不合适（见作者文档）。
+/// 从 manifest 取出「设置项 → scope」表，交给插件线程（避免每次调用读盘）。
+pub(crate) fn setting_scopes_of(manifest: &Manifest) -> std::collections::HashMap<String, String> {
+    manifest
+        .settings
+        .as_ref()
+        .map(|ds| {
+            ds.iter()
+                .map(|d| (d.key.clone(), if d.scope == "app" { "app".to_string() } else { "space".to_string() }))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cap_settings_get(key: &str) -> CapResult {
+    let (pid, scope) = RUN_STATE.with(|s| {
+        let st = s.borrow();
+        (st.plugin_id.clone(), st.setting_scopes.get(key).cloned())
+    });
+    // 未声明的 key 直接报错（而不是返回 null）：写错 key 名是最常见的低级错误，
+    // 静默返回 null 会让作者以为"用户没设过"，查很久。
+    let scope = scope.ok_or_else(|| {
+        format!("bad_args: manifest.settings 里没有声明设置项 {key}（可用键在插件管理里能看到）")
+    })?;
+    let full = format!("{SETTING_PREFIX}{key}");
+    let found = kv_in_scope(&scope, |c, sc| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT value FROM plugin_data WHERE plugin_id = ?1 AND scope = ?2 AND key = ?3",
+            rusqlite::params![pid, sc, full],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    Ok(match found {
+        Some(v) => serde_json::Value::String(v),
+        None => serde_json::Value::Null,
+    })
+}
+
 fn cap_kv_remove(key: &str, scope: &str) -> CapResult {
+    if is_reserved_setting_key(key) {
+        return Err(format!(
+            "permission_denied: {SETTING_PREFIX}* 由宿主界面管理（设置里填的值不该被插件改写）"
+        ));
+    }
     let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
     kv_in_scope(scope, |c, sc| {
         c.execute(
@@ -1320,6 +1442,9 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
         "kv.remove" => cap_kv_remove(&arg_str("key")?, &scope_arg(&args)),
+        // scope 由 manifest 声明决定（不由插件选）：设置里常有 token/路径这类东西，
+        // 声明为 space 才落加密库，声明为 app 才落 meta.db（明文）。
+        "settings.get" => cap_settings_get(&arg_str("key")?),
         "blocks.list" => cap_blocks_list(&arg_str("pageId")?, arg_i64("limit", 100)),
         "properties.list" => cap_properties_list(),
         "properties.set" => cap_properties_set(
@@ -1497,6 +1622,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             current_page_id: state.current_page_id.clone(),
             read_space: state.read_space.clone(),
             read_dir: state.read_dir.clone(),
+            setting_scopes: state.setting_scopes.clone(),
             drafts: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
@@ -1550,6 +1676,7 @@ fn run_command_timeout(
         current_page_id: state.current_page_id.clone(),
         read_space: state.read_space.clone(),
         read_dir: state.read_dir.clone(),
+        setting_scopes: state.setting_scopes.clone(),
         drafts: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
@@ -1563,6 +1690,161 @@ fn run_command_timeout(
         });
         Ok((msg, insert, toasts, drafts))
     })
+}
+
+// ---------------------------------------------------------------------------
+// 插件设置（M11.8）：声明在 manifest，写只发生在宿主界面
+// ---------------------------------------------------------------------------
+
+/// 一项设置的当前状态（宿主渲染设置表单用）。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginSettingView {
+    pub key: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub setting_type: String,
+    pub description: String,
+    pub scope: String,
+    pub options: Vec<PluginCommandParamOption>,
+    /// 用户设过的值；没设过为 None（表单里显示成空，插件侧 `settings.get` 返回 null）。
+    pub value: Option<String>,
+    /// manifest 里声明的默认值（表单预填用；插件拿不到它——插件自己写默认值）。
+    pub default: Option<serde_json::Value>,
+}
+
+/// 读一个插件的设置声明 + 当前值。
+#[tauri::command]
+pub async fn plugin_settings(app: AppHandle, db: State<'_, Db>, plugin_id: String) -> Result<Vec<PluginSettingView>, String> {
+    if !is_safe_plugin_id(&plugin_id) {
+        return Err("非法插件 id".to_string());
+    }
+    let dir = plugins_root(&app)?.join(&plugin_id);
+    let manifest = read_manifest(&dir)?;
+    let decls = manifest.settings.clone().unwrap_or_default();
+    let mut out = Vec::new();
+    for d in decls {
+        let full = format!("{SETTING_PREFIX}{}", d.key);
+        let scope = if d.scope == "app" { "app" } else { "space" };
+        let value = {
+            let c = conn(&db);
+            if scope == "app" {
+                // app 级设置落 meta.db（明文）
+                let dir = crate::db::app_data_dir_ref();
+                match dir {
+                    Some(dir) => crate::db::open_meta_conn_at(dir)
+                        .ok()
+                        .and_then(|mc| {
+                            use rusqlite::OptionalExtension;
+                            mc.query_row(
+                                "SELECT value FROM plugin_data WHERE plugin_id = ?1 AND scope = 'app' AND key = ?2",
+                                params![plugin_id, full],
+                                |r| r.get::<_, String>(0),
+                            )
+                            .optional()
+                            .ok()
+                            .flatten()
+                        }),
+                    None => None,
+                }
+            } else {
+                // space 级：落当前活动空间的库（随 SQLCipher 加密）
+                let active: Option<String> = c
+                    .query_row(
+                        "SELECT value FROM meta.sync_state WHERE key = ?1",
+                        params![crate::db::ACTIVE_KEY],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .ok();
+                match active {
+                    Some(space) => {
+                        use rusqlite::OptionalExtension;
+                        crate::db::open_space_conn(&space)
+                            .ok()
+                            .and_then(|sc| {
+                                sc.query_row(
+                                    "SELECT value FROM plugin_data WHERE plugin_id = ?1 AND scope = ?2 AND key = ?3",
+                                    params![plugin_id, space, full],
+                                    |r| r.get::<_, String>(0),
+                                )
+                                .optional()
+                                .ok()
+                                .flatten()
+                            })
+                    }
+                    None => None,
+                }
+            }
+        };
+        out.push(PluginSettingView {
+            key: d.key.clone(),
+            label: if d.label.trim().is_empty() { d.key.clone() } else { d.label.clone() },
+            setting_type: d.setting_type.clone(),
+            description: d.description.clone(),
+            scope: scope.to_string(),
+            options: d.options.clone(),
+            value,
+            default: d.default.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// 写入一项设置。**只有这里（宿主界面）能写**——插件侧对 `setting:` 前缀是只读的。
+#[tauri::command]
+pub async fn set_plugin_setting(
+    app: AppHandle,
+    db: State<'_, Db>,
+    plugin_id: String,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    if !is_safe_plugin_id(&plugin_id) {
+        return Err("非法插件 id".to_string());
+    }
+    let dir = plugins_root(&app)?.join(&plugin_id);
+    let manifest = read_manifest(&dir)?;
+    let decls = manifest.settings.clone().unwrap_or_default();
+    let decl = decls
+        .iter()
+        .find(|d| d.key == key)
+        .ok_or_else(|| format!("manifest 里没有声明设置项 {key}"))?;
+    // 类型/候选项在**宿主侧**把关：插件因此可以假设"用户填的一定是声明里那种值"。
+    let normalized = validate_setting_value(decl, &value)?;
+    if normalized.len() > 8 * 1024 {
+        return Err("设置项内容过长（上限 8 KiB）".to_string());
+    }
+    let full = format!("{SETTING_PREFIX}{key}");
+    let now = now_ms();
+    if decl.scope == "app" {
+        let dir = crate::db::app_data_dir_ref().ok_or_else(|| "db_error: app data dir 未初始化".to_string())?;
+        let mc = crate::db::open_meta_conn_at(dir).map_err(|e| format!("db_error: {e}"))?;
+        mc.execute(
+            "INSERT INTO plugin_data (plugin_id, scope, key, value, updated_at) VALUES (?1, 'app', ?2, ?3, ?4)
+             ON CONFLICT(plugin_id, scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![plugin_id, full, normalized, now],
+        )
+        .map_err(|e| format!("db_error: {e}"))?;
+    } else {
+        let active: Option<String> = {
+            let c = conn(&db);
+            c.query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                params![crate::db::ACTIVE_KEY],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        };
+        let space = active.ok_or_else(|| "space_unknown: 当前没有活动空间，无法保存空间级设置".to_string())?;
+        let sc = crate::db::open_space_conn(&space).map_err(|e| map_open_error(e))?;
+        sc.execute(
+            "INSERT INTO plugin_data (plugin_id, scope, key, value, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(plugin_id, scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![plugin_id, space, full, normalized, now],
+        )
+        .map_err(|e| format!("db_error: {e}"))?;
+    }
+    push_log(&plugin_id, "info", &format!("设置 {key} 已更新"));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1611,6 +1893,7 @@ fn run_event_timeout(
         current_page_id: state.current_page_id.clone(),
         read_space: state.read_space.clone(),
         read_dir: state.read_dir.clone(),
+        setting_scopes: state.setting_scopes.clone(),
         drafts: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
@@ -1681,7 +1964,7 @@ pub async fn emit_plugin_event(
     let root = plugins_root(&app)?;
     // 结果里带插件显示名，前端提示才写得像人话。
     let mut out: Vec<PluginEventOutcome> = Vec::new();
-    let mut targets: Vec<(String, String, String, Vec<String>)> = Vec::new(); // id, name, source, perms
+    let mut targets: Vec<(String, String, String, Vec<String>, std::collections::HashMap<String, String>)> = Vec::new();
     let (page_count, current_page_json, read_space, enabled_ids) = {
         let c = conn(&db);
         let page_count: usize = c
@@ -1739,7 +2022,13 @@ pub async fn emit_plugin_event(
             continue; // 没声明订阅这个事件：连代码都不跑（这是 manifest 声明的意义）
         }
         match load_plugin_source(&dir, &manifest) {
-            Ok(src) => targets.push((id, manifest.name.clone(), src, resolve_permissions(&manifest).0)),
+            Ok(src) => targets.push((
+                id,
+                manifest.name.clone(),
+                src,
+                resolve_permissions(&manifest).0,
+                setting_scopes_of(&manifest),
+            )),
             Err(e) => out.push(PluginEventOutcome {
                 plugin_id: id.clone(),
                 plugin_name: manifest.name.clone(),
@@ -1751,7 +2040,7 @@ pub async fn emit_plugin_event(
         }
     }
 
-    for (id, name, source, permissions) in targets {
+    for (id, name, source, permissions, setting_scopes) in targets {
         let state = RunState {
             plugin_id: id.clone(),
             page_count,
@@ -1760,6 +2049,7 @@ pub async fn emit_plugin_event(
             current_page_id: payload_page_id.clone(),
             read_space: read_space.clone(),
             read_dir: None,
+            setting_scopes,
             drafts: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
@@ -2080,6 +2370,7 @@ pub async fn run_plugin_command(
         current_page_id: current_id,
         read_space,
         read_dir: None,
+        setting_scopes: setting_scopes_of(&manifest),
         drafts: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
@@ -2531,6 +2822,92 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         }
     }
 
+    // ---- 插件设置（M11.8）----
+
+    #[test]
+    fn setting_values_are_validated_host_side() {
+        let decl = |t: &str, opts: Vec<&str>| SettingDecl {
+            key: "k".into(),
+            label: "目标文件夹".into(),
+            setting_type: t.into(),
+            default: None,
+            options: opts
+                .into_iter()
+                .map(|v| PluginCommandParamOption { value: v.into(), label: String::new() })
+                .collect(),
+            description: String::new(),
+            scope: "space".into(),
+        };
+        // 数字：规范化成整/小数
+        assert_eq!(validate_setting_value(&decl("number", vec![]), " 42 ").unwrap(), "42");
+        assert_eq!(validate_setting_value(&decl("number", vec![]), "1.5").unwrap(), "1.5");
+        assert!(validate_setting_value(&decl("number", vec![]), "abc").unwrap_err().contains("目标文件夹"));
+        // 布尔：只认 true/false
+        assert_eq!(validate_setting_value(&decl("boolean", vec![]), "true").unwrap(), "true");
+        assert!(validate_setting_value(&decl("boolean", vec![]), "yes").is_err());
+        // 下拉：必须是候选项之一
+        assert_eq!(validate_setting_value(&decl("select", vec!["a", "b"]), "b").unwrap(), "b");
+        assert!(validate_setting_value(&decl("select", vec!["a"]), "c").is_err());
+        assert!(validate_setting_value(&decl("select", vec![]), "c").is_err(), "声明了 select 却没有选项要报错");
+        // 未知类型当字符串
+        assert_eq!(validate_setting_value(&decl("weird", vec![]), "随便").unwrap(), "随便");
+    }
+
+    #[test]
+    fn plugins_cannot_rewrite_the_settings_users_set() {
+        let _g = log_test_guard();
+        // `setting:*` 是宿主界面独占的命名空间：插件能读自己的设置，但**不能改**——
+        // 否则用户看到的配置就不再是他亲手设的那个。
+        let state = state_with(&["kv:own"]);
+        let set = run_command(
+            r#"register({ id: "s.set", title: "t", run: function () { api.kv.set("setting:mode", "被插件改掉"); return "done"; } });"#,
+            "s.set",
+            "",
+            &state,
+        )
+        .unwrap();
+        assert!(set.contains("permission_denied"), "写保留键必须被拒：{set}");
+        let remove = run_command(
+            r#"register({ id: "s.rm", title: "t", run: function () { api.kv.remove("setting:mode"); return "done"; } });"#,
+            "s.rm",
+            "",
+            &state,
+        )
+        .unwrap();
+        assert!(remove.contains("permission_denied"), "删保留键也必须被拒：{remove}");
+    }
+
+    #[test]
+    fn settings_get_is_null_when_unset_and_errors_on_undeclared_keys() {
+        let _g = log_test_guard();
+        // 声明过、但用户没设过 → null（插件据此用自己的默认值）
+        let mut state = RunState {
+            plugin_id: "no-such-plugin".into(),
+            permissions: vec!["kv:own".into()],
+            ..Default::default()
+        };
+        state.setting_scopes.insert("mode".into(), "app".into());
+        let out = run_command(
+            r#"register({ id: "s.get", title: "t", run: function () { var v = api.settings.get("mode"); return v === null ? "null" : String(v); } });"#,
+            "s.get",
+            "",
+            &state,
+        )
+        .unwrap();
+        assert_eq!(out, "null");
+
+        // 没声明的 key → 明确报错而不是静默返回 null：key 名字写错是最常见的低级错误，
+        // 返回 null 会让作者以为"用户没设过"，查很久。
+        let err = run_command(
+            r#"register({ id: "s.bad", title: "t", run: function () { api.settings.get("没声明的"); return "不应到这里"; } });"#,
+            "s.bad",
+            "",
+            &state,
+        )
+        .unwrap();
+        assert!(err.contains("没有声明设置项"), "{err}");
+    }
+
     // ---- 事件（M11.8）----
 
     fn manifest_of(json: &str) -> Manifest {
@@ -2873,6 +3250,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             main: "main.js".into(),
             api_version: None,
             permissions: None,
+            settings: None,
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
@@ -2899,6 +3277,7 @@ register({ id: "s.run", title: "结构化", run: function () {
                 PermissionDecl { id: "read:pages".into(), reason: String::new() },
                 PermissionDecl { id: "net:https:example.com".into(), reason: "未来能力".into() },
             ]),
+            settings: None,
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
@@ -2921,6 +3300,7 @@ register({ id: "s.run", title: "结构化", run: function () {
                 id: "read:pages".into(),
                 reason: "为了显示页面数".into(),
             }]),
+            settings: None,
             events: None,
         };
         let (metas, baseline) = permission_metas(&declared);
@@ -2940,6 +3320,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             main: "main.js".into(),
             api_version: None,
             permissions: None,
+            settings: None,
             events: None,
         };
         let (metas2, baseline2) = permission_metas(&legacy);

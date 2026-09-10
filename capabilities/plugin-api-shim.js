@@ -42,6 +42,9 @@ var api = {
     set: function(key, value, scope) { return __capCall("kv.set", { key: key === undefined ? undefined : String(key), value: value === undefined ? undefined : String(value), scope: scope === undefined ? "space" : String(scope) }); },
     remove: function(key, scope) { return __capCall("kv.remove", { key: key === undefined ? undefined : String(key), scope: scope === undefined ? "space" : String(scope) }); }
   },
+  settings: {
+    get: function(key) { return __capCall("settings.get", { key: key === undefined ? undefined : String(key) }); }
+  },
   properties: {
     list: function() { return __capCall("properties.list", {}); },
     set: function(attrId, value, pageId) { return __capCall("properties.set", { attrId: attrId === undefined ? undefined : String(attrId), value: value === undefined ? undefined : String(value), pageId: pageId === undefined ? undefined : String(pageId) }); }

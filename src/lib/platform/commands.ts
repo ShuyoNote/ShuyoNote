@@ -38,6 +38,7 @@ import type {
   PdfAnnotationRecord,
   PluginEventOutcome,
   PluginMeta,
+  PluginSetting,
   PluginValidation,
   PluginAuditEntry,
   PluginLogLine,
@@ -186,6 +187,8 @@ export interface CommandMap {
   validate_plugin: { args: { id: string }; result: PluginValidation };
   plugin_dir_stamp: { args: undefined; result: string };
   emit_plugin_event: { args: { event: string; payloadJson?: string }; result: PluginEventOutcome[] };
+  plugin_settings: { args: { pluginId: string }; result: PluginSetting[] };
+  set_plugin_setting: { args: { pluginId: string; key: string; value: string }; result: void };
 
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };

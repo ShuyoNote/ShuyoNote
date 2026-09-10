@@ -138,6 +138,25 @@ export interface PluginValidation {
   problems: PluginProblem[];
 }
 
+/**
+ * 一项插件设置（后端 `plugin_settings`）。
+ *
+ * 声明来自 manifest，**值只有宿主界面能写**（插件侧 `api.settings.get` 只读）：
+ * 这样"用户看到的配置"始终等于"他亲手设的那个"。
+ */
+export interface PluginSetting {
+  key: string;
+  label: string;
+  type: "string" | "number" | "boolean" | "select";
+  description: string;
+  /** `space`（随空间加密）或 `app`（应用级，明文）。 */
+  scope: string;
+  options: { value: string; label: string }[];
+  /** 用户设过的值；没设过为 null（表单显示空）。 */
+  value: string | null;
+  default?: unknown;
+}
+
 /** 一条校验问题。`severity=error` 会让插件装不进去/跑不起来，`warning` 只是建议。 */
 /** 一次事件派发给某个插件的结果（后端 `emit_plugin_event`）。 */
 export interface PluginEventOutcome {

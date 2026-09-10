@@ -18550,3 +18550,58 @@ p:has(> .editor-drawing-container) {
   gap: 8px;
   justify-content: flex-end;
 }
+
+/* 插件设置（用户在宿主界面填，插件只读） */
+.pm-settings {
+  flex-basis: 100%;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  font-size: 12px;
+}
+.pm-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.pm-setting-label {
+  flex: none;
+  width: 34%;
+  color: var(--text-dim);
+}
+.pm-setting-scope {
+  margin-left: 6px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.pm-setting-row input[type="text"],
+.pm-setting-row input[type="number"],
+.pm-setting-row select {
+  flex: 1;
+  min-width: 0;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 7px;
+}
+.pm-setting-save {
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-setting-save:hover { color: var(--text); background: var(--hover-strong); }
+.pm-setting-warn {
+  margin-top: 6px;
+  color: var(--cat-orange);
+  line-height: 1.5;
+}
