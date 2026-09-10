@@ -976,6 +976,54 @@ mod tests {
         assert!(err.contains("发布者签名不合法"), "{err}");
     }
 
+    // ---- 自己有钥匙的一次端到端：真包 + 真签名 ----
+    //
+    // 上面用的是 minisign 官方测试向量（签的是 4 个字节 "test"）——那证明了"我们这一层
+    // 真在验签"，但没有证明"**我们自己签的包，我们自己验得过**"。本机没有 minisign
+    // 可执行文件，所以夹具是用 `scripts/minisign-fixture.mjs`（Node 的 Ed25519 + 一份带
+    // 官方向量自检的 BLAKE2b 实现）签的：一个**独立实现**签出来的向量被我们的校验器接受，
+    // 这比"用同一份代码签、同一份代码验"更有说服力。
+    //
+    // 夹具是一次性密钥，公钥与签名都在 `src-tauri/tests/fixtures/` 里，可以随时重签：
+    //   node scripts/minisign-fixture.mjs src-tauri/tests/fixtures/signed-plugin.zip \
+    //     --out src-tauri/tests/fixtures/
+    const SIGNED_PKG: &[u8] = include_bytes!("../tests/fixtures/signed-plugin.zip");
+    const SIGNED_PKG_SIG: &str = include_str!("../tests/fixtures/signed-plugin.zip.minisig");
+    const SIGNED_PKG_PUB: &str = include_str!("../tests/fixtures/signed-plugin-zip.pub");
+
+    #[test]
+    fn a_package_we_signed_ourselves_verifies_end_to_end() {
+        // 1) 真包 + 真签名 → 过
+        verify_package_signature(SIGNED_PKG, SIGNED_PKG_SIG, SIGNED_PKG_PUB)
+            .expect("我们自己签的包必须验得过（这条是「签名链路真的通」的端到端验收）");
+        // 2) 包被改一个字节 → 拒
+        let mut tampered = SIGNED_PKG.to_vec();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        let err = verify_package_signature(&tampered, SIGNED_PKG_SIG, SIGNED_PKG_PUB).unwrap_err();
+        assert!(err.contains("发布者签名校验失败"), "{err}");
+        // 3) 拿别的 key 来验 → 拒
+        let err = verify_package_signature(SIGNED_PKG, SIGNED_PKG_SIG, MINISIGN_TEST_PUBKEY)
+            .unwrap_err();
+        assert!(err.contains("发布者签名校验失败"), "{err}");
+        // 4) 这个包本身也得是一个能被解包的合法插件包（否则"验过了"没有意义）
+        let dir = crate::plugins::tests_support::temp_dir("signed-pkg");
+        extract_package(SIGNED_PKG, &dir).expect("夹具必须是一个真的插件包");
+        let root = resolve_package_root(&dir);
+        assert!(root.join("manifest.json").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_fixture_publisher_key_fingerprint_is_stable() {
+        // 指纹是"人用来比对"的东西：它在界面上出现，也在发布者的公告里出现。
+        // 夹具的指纹写死在这里，改了夹具（或改了算法）就会红——那正是想被发现的时刻。
+        assert_eq!(
+            publisher_key_fingerprint(SIGNED_PKG_PUB).unwrap(),
+            "5ee2-b2a1-c3cf-565c"
+        );
+    }
+
     #[test]
     fn malformed_signature_material_reports_which_side_is_broken() {
         let err = verify_index_signature(b"{}", &minisign_test_signature(), "not-a-key").unwrap_err();

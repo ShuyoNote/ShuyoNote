@@ -3436,6 +3436,51 @@ pub enum PublisherKeyVerdict {
     Changed { pinned_fingerprint: String, incoming_fingerprint: String },
 }
 
+/// 索引里的发布者签名这一关：**验签 + TOFU 判定**，返回"装成功后要固定哪把 key"。
+///
+/// 抽出来是为了可测（这条路上的每一段——真签名、被换过的包、换过的 key——都需要
+/// 一个连接和几份字节，不该被整条安装命令的 AppHandle 挡在测试之外）。
+fn check_entry_publisher_signature(
+    c: &Connection,
+    plugin_id: &str,
+    entry: &plugin_index::IndexEntry,
+    package_bytes: &[u8],
+    trust_new_key: bool,
+    source: &str,
+) -> Result<Option<String>, String> {
+    if entry.publisher_key.trim().is_empty() {
+        return Ok(None);
+    }
+    // 先验签：包不是那把 key 签的，后面的一切都不必谈。
+    plugin_index::verify_package_signature(package_bytes, &entry.signature, &entry.publisher_key)?;
+    match publisher_key_verdict(c, plugin_id, &entry.publisher_key)? {
+        PublisherKeyVerdict::None | PublisherKeyVerdict::Match => Ok(None),
+        // 第一次见到：**装成功之后**才固定（这里只把它交出去）。
+        PublisherKeyVerdict::FirstPin => Ok(Some(entry.publisher_key.clone())),
+        PublisherKeyVerdict::Changed {
+            pinned_fingerprint,
+            incoming_fingerprint,
+        } => {
+            if !trust_new_key {
+                return Err(format!(
+                    "publisher_key_changed: 插件「{plugin_id}」的发布者公钥变了（原来 {pinned_fingerprint}，现在 {incoming_fingerprint}）。                     这可能是发布者换了密钥，也可能是这份索引被人动过——确认无误后可以点「信任新密钥并安装」"
+                ));
+            }
+            // 用户明确同意换信任对象：把新 key 固定下来（旧的那把就此不再受信）。
+            let view = pin_publisher_key(c, plugin_id, &entry.publisher_key, source)?;
+            push_log(
+                plugin_id,
+                "warn",
+                &format!(
+                    "用户信任了新的发布者公钥：{pinned_fingerprint} → {}",
+                    view.fingerprint
+                ),
+            );
+            Ok(None)
+        }
+    }
+}
+
 /// 判断"这次的发布者公钥算不算异常"。
 ///
 /// 这条判断是整个 TOFU 的核心，也是它能买到的东西：**索引被换掉/被改，也换不掉你已经
@@ -4480,35 +4525,14 @@ pub async fn install_plugin_from_index(
     let host = plugin_index::url_host(&url);
     // 发布者签名（阶段 2）：索引给了 key 与签名就必须验过；TOFU 固定过的那把 key
     // 一旦被换掉就拒绝——**索引被换掉也换不掉你已经固定过的 key**。
-    let mut pin_after = None;
-    if !entry.publisher_key.trim().is_empty() {
-        plugin_index::verify_package_signature(&bytes, &entry.signature, &entry.publisher_key)?;
-        match publisher_key_verdict(&conn(&db), &id, &entry.publisher_key)? {
-            PublisherKeyVerdict::None | PublisherKeyVerdict::Match => {}
-            PublisherKeyVerdict::FirstPin => pin_after = Some(entry.publisher_key.clone()),
-            PublisherKeyVerdict::Changed {
-                pinned_fingerprint,
-                incoming_fingerprint,
-            } => {
-                if !trust_new_key.unwrap_or(false) {
-                    return Err(format!(
-                        "publisher_key_changed: 插件「{id}」的发布者公钥变了（原来 {pinned_fingerprint}，现在 {incoming_fingerprint}）。这可能是发布者换了密钥，也可能是这份索引被人动过——确认无误后可以点「信任新密钥并安装」"
-                    ));
-                }
-                // 用户明确同意换信任对象：把新 key 固定下来（旧的那把就此不再受信）。
-                let c = conn(&db);
-                let view = pin_publisher_key(&c, &id, &entry.publisher_key, &host)?;
-                push_log(
-                    &id,
-                    "warn",
-                    &format!(
-                        "用户信任了新的发布者公钥：{pinned_fingerprint} → {}",
-                        view.fingerprint
-                    ),
-                );
-            }
-        }
-    }
+    let pin_after = check_entry_publisher_signature(
+        &conn(&db),
+        &id,
+        entry,
+        &bytes,
+        trust_new_key.unwrap_or(false),
+        &host,
+    )?;
     let kind = format!("index:{host}");
     let meta = install_from_zip_bytes(&app, &db, &bytes, &kind)?;
     // 第一次见到的 key：**装成功之后**才固定（装失败的东西不该留下信任记录）。
@@ -6919,6 +6943,94 @@ register({ id: "s.run", title: "结构化", run: function () {
         );
         // 形状不对的 key 要报错，而不是"算出一个指纹就固定下来"
         assert!(publisher_key_verdict(&c, "p1", "not-a-key").is_err());
+    }
+
+    /// 夹具：一个真包 + 两把不同的一次性密钥各自对它的签名（字节完全相同，
+    /// 所以两份签名都对这个包成立——这正是"发布者换 key"该有的样子）。
+    fn signed_package() -> &'static [u8] {
+        include_bytes!("../tests/fixtures/signed-plugin.zip")
+    }
+    fn fixture_entry(key: &str, signature: &str, sha_hex: &str) -> crate::plugin_index::IndexEntry {
+        serde_json::from_value(serde_json::json!({
+            "id": "fixture-plugin",
+            "name": "签名夹具插件",
+            "version": "1.0.0",
+            "downloadUrl": "https://example.com/p.zip",
+            "size": signed_package().len(),
+            "sha256": sha_hex,
+            "publisherKey": key,
+            "signature": signature,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_real_signed_package_passes_and_a_tampered_one_does_not() {
+        let c = state_conn_with_trust_store();
+        let key_a = include_str!("../tests/fixtures/signed-plugin-zip.pub");
+        let sig_a = include_str!("../tests/fixtures/signed-plugin.zip.minisig");
+        let sha = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(signed_package());
+            hex::encode(h.finalize())
+        };
+        let entry = fixture_entry(key_a, sig_a, &sha);
+
+        // 第一次见到这把 key：验签通过，返回"装成功后固定它"
+        let pin = check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
+            .unwrap();
+        assert_eq!(pin.as_deref().map(str::trim), Some(key_a.trim()));
+
+        // 包被改一个字节：先验签就拦下来（连 TOFU 都不必谈）
+        let mut tampered = signed_package().to_vec();
+        tampered[0] ^= 0x01;
+        let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry, &tampered, false, "example.com")
+            .unwrap_err();
+        assert!(err.contains("发布者签名校验失败"), "{err}");
+
+        // 固定之后同一把 key 再来 → 不需要再固定（Match）
+        pin_publisher_key(&c, "fixture-plugin", key_a, "example.com").unwrap();
+        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
+            .unwrap()
+            .is_none());
+
+        // 索引没声明发布者 key（阶段 1 的索引）→ 这一关整段跳过
+        let no_key = fixture_entry("", "", &sha);
+        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &no_key, signed_package(), false, "example.com")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_changed_publisher_key_needs_explicit_consent_and_then_wins() {
+        let c = state_conn_with_trust_store();
+        let key_a = include_str!("../tests/fixtures/signed-plugin-zip.pub");
+        let key_b = include_str!("../tests/fixtures/signed-plugin-alt-zip.pub");
+        let sig_b = include_str!("../tests/fixtures/signed-plugin-alt.zip.minisig");
+        // 用户已经固定了 A
+        pin_publisher_key(&c, "fixture-plugin", key_a, "example.com").unwrap();
+        let entry = fixture_entry(key_b, sig_b, &"a".repeat(64));
+
+        // B 的签名本身是**真的**（同一个包、另一把 key）——所以拦下它的不是"验签失败"，
+        // 而是"你固定过的不是这把"。这正是要被测的那条路。
+        let err =
+            check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
+                .unwrap_err();
+        assert!(err.contains("publisher_key_changed"), "{err}");
+        assert!(err.contains("发布者公钥变了"), "{err}");
+        let fp_b = plugin_index::publisher_key_fingerprint(key_b).unwrap();
+        assert!(err.contains(&fp_b), "报错里要给出新指纹：{err}");
+
+        // 用户明确同意之后：固定被换成 B，且以后 A 反而成了"变了"的那一个
+        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), true, "example.com")
+            .unwrap()
+            .is_none());
+        assert_eq!(read_publisher_key(&c, "fixture-plugin").unwrap().fingerprint, fp_b);
+        let entry_a = fixture_entry(key_a, include_str!("../tests/fixtures/signed-plugin.zip.minisig"), &"a".repeat(64));
+        let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry_a, signed_package(), false, "example.com")
+            .unwrap_err();
+        assert!(err.contains("publisher_key_changed"), "{err}");
     }
 
     #[test]
