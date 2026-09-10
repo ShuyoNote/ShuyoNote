@@ -82,6 +82,11 @@ export interface PluginCommandMeta {
   close_on_run: boolean;
   /** 命令参数声明（作者在 `register({ params })` 里写）；宿主据此渲染参数表单。 */
   params: PluginCommandParam[];
+  /**
+   * 命令要出现在哪些触发面（`register({ menus })`）。宿主只渲染自己认识的入口，
+   * 认不出来的由**校验器**指出（不静默丢掉作者写的声明）。
+   */
+  menus: string[];
 }
 
 /**

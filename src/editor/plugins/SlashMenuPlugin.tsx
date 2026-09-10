@@ -19,6 +19,11 @@ import { $getInsertTargetBlock } from "../blockUtils";
 import { useAttachmentsStore } from "../../store/attachments";
 import { openGuide } from "../../lib/guide";
 import { inputDialog } from "../../store/input";
+import { usePlugins } from "../../store/plugins";
+import { useNotes } from "../../store/notes";
+import { usePalette } from "../../store/palette";
+import { runPluginCommandWithUi } from "../../lib/pluginRun";
+import { pluginSlashItems } from "../../lib/pluginMenus";
 import { openFormulaEditor } from "../../store/formulaEditor";
 import { $createCalloutNode } from "../nodes/CalloutNode";
 import { $createColumnsBlockNode, EMPTY_COLUMN_JSON } from "../nodes/ColumnsBlockNode";
@@ -286,7 +291,36 @@ function computeMenuPos(rect: DOMRect, menuHeight: number = MENU_MAX_H): { top: 
 
 export function SlashMenuPlugin({ pageId }: { pageId: string }) {
   const [editor] = useLexicalComposerContext();
-  const options = useMemo(() => makeOptions(pageId), [pageId]);
+  // 插件命令：声明了 `menus: ["slash"]` 的会出现在这里（按插件启用状态过滤）。
+  // 带参数的命令不在这里渲染表单——参数表单只实现一份（在命令面板里），
+  // 所以这类命令被选中时把面板打开并用它的标题预填查询，用户在那儿填参数。
+  const plugins = usePlugins((s) => s.plugins);
+  const pluginOptions = useMemo<SlashOption[]>(
+    () =>
+      pluginSlashItems(plugins).map((it) => ({
+        key: it.key,
+        title: it.title,
+        badge: it.hasParams ? "🔌…" : "🔌",
+        group: "插件",
+        pinyin: "",
+        run: async () => {
+          if (it.hasParams) {
+            usePalette.getState().seedQuery(it.title);
+            return;
+          }
+          const r = await runPluginCommandWithUi(
+            `「${it.title}」`,
+            it.pluginId,
+            it.commandId,
+            useNotes.getState().currentId,
+          );
+          if (r.message) toast(r.message, r.cancelled ? "info" : "success");
+        },
+      })),
+    [plugins],
+  );
+
+  const options = useMemo(() => [...makeOptions(pageId), ...pluginOptions], [pageId, pluginOptions]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });

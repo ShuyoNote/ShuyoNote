@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection } from "lexical";
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
-import { toast } from "../store/toast";
-import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
-import { useEditorStore } from "../store/editor";
+import { runPluginCommandWithUi } from "../lib/pluginRun";
+import { usePalette } from "../store/palette";
 import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
 import { buildCommandArgs, initialParamValues } from "../lib/pluginParams";
@@ -26,33 +24,11 @@ type Item =
     }
   | { kind: "plugin-toggle"; pluginId: string; title: string };
 
-// Insert a text paragraph into the active editor (at cursor if possible, else
-// append to the end of the page).
-function insertText(text: string) {
-  const editor = useEditorStore.getState().editor;
-  if (!editor) return;
-  editor.update(() => {
-    const para = $createParagraphNode();
-    para.append($createTextNode(text));
-    const sel = $getSelection();
-    if ($isRangeSelection(sel) && !sel.isCollapsed()) {
-      const top = sel.anchor.getNode().getTopLevelElement();
-      if (top) {
-        top.insertAfter(para);
-        para.selectStart();
-        return;
-      }
-    }
-    $getRoot().append(para);
-    para.selectStart();
-  });
-}
-
 export function CommandPalette() {
   const { t } = useTranslation();
   const { pages, currentId, openPage } = useNotes();
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+  // 开关与查询词在 store 里：编辑器 `/` 菜单要把「带参数的命令」转交到这里的参数表单。
+  const { open, setOpen, query, setQuery } = usePalette();
   const [result, setResult] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,7 +41,7 @@ export function CommandPalette() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
-        setOpen((v) => !v);
+        setOpen(!usePalette.getState().open);
         setQuery("");
         setResult(null);
         setSel(0);
@@ -78,6 +54,13 @@ export function CommandPalette() {
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // 查询词变化（含被 seedQuery 预填）时重置选中项与上一次结果，避免"看着是新的、
+  // 选中却还停在旧位置"。
+  useEffect(() => {
+    setSel(0);
+    setResult(null);
+  }, [query]);
 
   useEffect(() => {
     usePlugins.getState().load();
@@ -199,33 +182,14 @@ export function CommandPalette() {
     }
   };
 
-  /** 插件命令的实际执行 + 结果处理（直接执行与表单提交共用同一条路径）。 */
+  /** 插件命令执行：链路在 lib/pluginRun（命令面板与 `/` 菜单共用同一份）。 */
   const runPlugin = async (item: Extract<Item, { kind: "plugin" }>, argsJson?: string) => {
-    {
-      try {
-        const res = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId, argsJson);
-        if (res.cancelled) {
-          setResult("已取消执行（结果已丢弃）");
-          return;
-        }
-        setResult(res.message);
-        // 插件用 __toast(...) 发的提示：此前只写 stderr，用户完全看不到。
-        for (const t of res.toasts ?? []) toast(t, "info");
-        if (res.insert) insertText(res.insert);
-
-        // 写能力不直接落库：先把草稿摊给用户确认（规则见 lib/pluginDrafts，
-        // 与事件钩子共用同一条链路——两处各写一遍迟早会有一处忘了确认）。
-        const drafts = res.drafts ?? [];
-        if (drafts.length > 0) {
-          setResult(await confirmAndApplyDrafts(`「${item.title}」`, drafts));
-          return;
-        }
-
-        // closeOnRun 现在能正确解析了（此前是死字段），所以照它关闭面板。
-        if (item.closeOnRun) setOpen(false);
-      } catch (e) {
-        setResult(String(e));
-      }
+    try {
+      const r = await runPluginCommandWithUi(`「${item.title}」`, item.pluginId, item.id, currentId, argsJson);
+      setResult(r.message);
+      if (!r.cancelled && item.closeOnRun) setOpen(false);
+    } catch (e) {
+      setResult(String(e));
     }
   };
 

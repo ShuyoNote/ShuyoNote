@@ -104,6 +104,27 @@ pub const EVENTS: &[PluginEvent] = &[
     PluginEvent { id: "sync.completed", title: "同步完成", desc: "一次同步结束后触发（payload: pushed, pulled）", since: "1.0.0" },
 ];
 
+/// 一个触发面：命令能出现在哪里（作者在 `register({ menus })` 里声明）。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginMenu {
+    pub id: &'static str,
+    pub title: &'static str,
+    /// 宿主是否已经接了这个入口。**没接的值会被如实告知作者**，而不是静默丢掉。
+    pub hosted: bool,
+    pub desc: &'static str,
+}
+
+pub const MENUS: &[PluginMenu] = &[
+    PluginMenu { id: "slash", title: "编辑器「/」菜单", hosted: true, desc: "在编辑器里输入 / 就能选到；适合「写到一半要跑一下」的命令" },
+    PluginMenu { id: "page.context", title: "页面右键菜单", hosted: false, desc: "在页面列表里右键（宿主还没接这个入口）" },
+    PluginMenu { id: "file.context", title: "附件右键菜单", hosted: false, desc: "在附件/文件上右键（宿主还没接这个入口）" },
+    PluginMenu { id: "editor.toolbar", title: "编辑器工具栏", hosted: false, desc: "编辑器顶部工具栏按钮（宿主还没接这个入口）" },
+];
+
+pub fn menu(id: &str) -> Option<&'static PluginMenu> {
+    MENUS.iter().find(|m| m.id == id)
+}
+
 /// 按 id 找事件（manifest 声明校验用）。
 pub fn event(id: &str) -> Option<&'static PluginEvent> {
     EVENTS.iter().find(|e| e.id == id)

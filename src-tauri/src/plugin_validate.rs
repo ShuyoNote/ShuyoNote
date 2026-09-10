@@ -339,6 +339,25 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                     if c.title.trim().is_empty() {
                         problems.push(PluginProblem::warn("command_no_title", format!("命令 {} 没有 title（命令面板里会显示空）", c.id), Some(&main)));
                     }
+                    // 触发面：只认识注册表里的入口；**没实现的也如实告知**，不静默丢掉
+                    for m in &c.menus {
+                        match capabilities_gen::menu(m) {
+                            Some(menu) if menu.hosted => {}
+                            Some(menu) => problems.push(PluginProblem::warn(
+                                "menu_not_hosted",
+                                format!(
+                                    "命令 {} 声明出现在「{}」，但宿主还没实现这个入口（写了现在也不会出现）",
+                                    c.id, menu.title
+                                ),
+                                Some(&main),
+                            )),
+                            None => problems.push(PluginProblem::warn(
+                                "menu_unknown",
+                                format!("命令 {} 声明的触发面「{}」不存在（当前 API 版本不认识）", c.id, m),
+                                Some(&main),
+                            )),
+                        }
+                    }
                     if seen.contains(&c.id.as_str()) {
                         problems.push(PluginProblem::warn("command_duplicate", format!("命令 id 重复注册：{}", c.id), Some(&main)));
                     } else {

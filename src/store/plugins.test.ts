@@ -53,7 +53,7 @@ const VALIDATION: PluginValidation = {
   api_version: "1.0.0",
   main: "main.js",
   entry_bytes: 128,
-  commands: [{ id: "demo.hello", title: "打个招呼", description: "", close_on_run: false, params: [] }],
+  commands: [{ id: "demo.hello", title: "打个招呼", description: "", close_on_run: false, params: [], menus: [] }],
   permissions: [{ id: "read:pages", title: "读取本空间页面统计", reason: "为了显示页面数", risk: "low", known: true, has_reason: true }],
   granted: ["read:pages"],
   permissions_baseline: false,

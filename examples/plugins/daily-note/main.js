@@ -22,6 +22,8 @@ register({
   id: "daily-note.todo",
   title: "每日笔记：写一条待办",
   description: "追加到**当前打开的页面**（落库前先给你确认）",
+  // 触发面：在编辑器里输入 / 就能选到它（写入仍走草稿确认）。
+  menus: ["slash"],
   params: [
     { name: "text", label: "内容", type: "string", required: true, placeholder: "要做什么" },
     { name: "minutes", label: "预计分钟", type: "number", default: 25 },

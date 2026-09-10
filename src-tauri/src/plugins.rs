@@ -23,6 +23,13 @@ pub struct PluginCommandMeta {
     /// 反序列化接受 `closeOnRun`，序列化仍输出 `close_on_run`。
     #[serde(alias = "closeOnRun")]
     pub close_on_run: bool,
+    /// 命令要出现在哪些**触发面**（作者在 `register({ menus })` 里写）。
+    ///
+    /// 原样透传作者写的值（不做静默归一）：宿主只渲染自己认识的那些，而**校验器**
+    /// 会明确指出哪些值本版本还没有对应的宿主入口——静默丢掉等于让作者白写。
+    /// 目前宿主已实现的入口：`slash`（编辑器 `/` 菜单）。命令面板里的出现是所有命令的默认行为。
+    #[serde(default)]
+    pub menus: Vec<String>,
     /// 命令参数声明（作者在 `register({ params })` 里写）。
     ///
     /// **这是宿主渲染参数表单的唯一依据**——作者声明什么，表单就渲染什么、就校验什么，
@@ -399,6 +406,21 @@ const API_SHIM: &str = include_str!("../../capabilities/plugin-api-shim.js");
 const BOOTSTRAP: &str = r#"
 var __cmds = {};
 function register(cmd){ if(cmd && cmd.id){ __cmds[cmd.id] = cmd; } }
+// 触发面声明：只做「字符串化 + 去重 + 限量」，**不**过滤不认识的值——
+// 宿主渲染自己认识的，校验器负责告诉作者哪些值还没有对应入口。
+function __normMenus(list){
+  if(!list || !list.length) return [];
+  var out = [];
+  for(var i=0;i<list.length && out.length<8;i++){
+    var m = list[i];
+    if(m === undefined || m === null) continue;
+    var v = String(m).slice(0, 32);
+    if(!v) continue;
+    if(out.indexOf(v) < 0) out.push(v);
+  }
+  return out;
+}
+
 // 参数声明归一化：宿主按它渲染表单。类型不认识就当 string（宁可给个文本框，
 // 也不要因为作者写错一个词就让整个命令消失）。
 function __normParams(list){
@@ -441,6 +463,7 @@ function __describe(){
       title: c.title === undefined ? "" : String(c.title),
       description: c.description === undefined ? "" : String(c.description),
       closeOnRun: c.closeOnRun === true,
+      menus: __normMenus(c.menus),
       params: __normParams(c.params)
     });
   }
@@ -2653,6 +2676,23 @@ register({
         // 不认识的类型归一为 string：宁可给个文本框，也不要让命令从面板里消失
         assert_eq!(params[4].param_type, "string");
         assert!(!params[0].placeholder.is_empty() || params[0].placeholder.is_empty());
+    }
+
+    #[test]
+    fn command_menus_are_passed_through_verbatim() {
+        let _g = log_test_guard();
+        // 原样透传：宿主渲染自己认识的入口，**不认识的交给校验器去说**（静默丢掉
+        // 等于让作者白写一行声明却毫无反馈）
+        let src = r#"register({ id: "m.a", title: "甲", menus: ["slash", "page.context", "不存在的入口"], run: function(){ return ""; } });"#;
+        let cmds = discover_commands(src, &RunState::default()).unwrap();
+        assert_eq!(cmds[0].menus, vec!["slash", "page.context", "不存在的入口"]);
+        // 重复值去重、非字符串被字符串化、数量有上限（防奇怪输入撑爆元数据）
+        let messy = r#"register({ id: "m.b", title: "乙", menus: ["slash", "slash", 42], run: function(){ return ""; } });"#;
+        let cmds = discover_commands(messy, &RunState::default()).unwrap();
+        assert_eq!(cmds[0].menus, vec!["slash", "42"]);
+        let none = r#"register({ id: "m.c", title: "丙", run: function(){ return ""; } });"#;
+        let cmds = discover_commands(none, &RunState::default()).unwrap();
+        assert!(cmds[0].menus.is_empty(), "没声明触发面时不该凭空多出来");
     }
 
     #[test]

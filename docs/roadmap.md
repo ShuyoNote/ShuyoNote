@@ -155,10 +155,11 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**状态*
 - **M11.8 触发面与事件** 🚧（**第一档已落地：命令参数 + 结构化返回**）：
   - ✅ **命令参数 → 宿主渲染表单**：`register({ params })` 声明（string/number/boolean/select + label/required/placeholder/options/default），命令面板照它渲染表单，`run(args)` 收到整理好的对象。规则：必填留空拒绝提交、非必填留空不传键、`0` 有效、`boolean` 恒传布尔、未知 `type` 归一为 `string`；宿主层要求参数是 JSON 对象并限体积，但**不做第二套 schema 校验**（参数只流进插件自己的 JS，碰数据的是 `api.*`，那一步宿主逐次校验）——转换规则是纯函数并有单测。
   - ✅ **结构化返回**：`{ message, insert, toasts }` 等价于调用对应宿主原语，且仍受权限约束（有测试）。
+  - ✅ **触发面 v1（编辑器 `/` 菜单）**：`register({ menus: ["slash"] })`；合法入口进注册表，**类型包只广告已实现入口**（`PluginMenuName`），校验器对「入口存在但宿主未实现」如实告知（`menu_not_hosted`）；带参数的命令转交命令面板（表单只实现一份）；插件命令的执行/结果处理抽成共用链路 `lib/pluginRun.ts`（含草稿确认，触发方式不改变行为）。
   - ✅ **事件钩子 v1**：manifest `events: [{ on, reason }]`（用户启用前看得到的授权面）+ JS `on(name, handler)`；7 个事件（`app.started`/`space.switched`/`page.opened`/`page.saved`/`page.deleted`/`import.finished`/`sync.completed`）；只有启用中的插件会收到；**没有基线授权**（没声明就一个都收不到，老插件不会因升级突然有后台行为）；事件里的写操作汇总成**一次**用户确认（绝不静默落库，有测试）；`insert` 在事件里被忽略；处理器 2s 墙钟预算、单个处理器出错不影响其它处理器、错误进插件日志；事件里的「当前页」= payload `pageId`。已接的发射点：`page.saved`（App 的统一保存路径）。事件名进注册表单一事实源，两个校验器（应用内 + CLI）都查它。
   - ⚠️ **已知缺口（信任面）**：**插件更新后新增 `events`/权限不会重新征求同意**——用户当初是在没有事件的情况下启用它的，更新后它就开始在后台运行。修复方向：把授权快照记进 `plugin_install`，声明扩张时自动禁用 + 提示重新确认（归 M11.11b 治理面）。
   - ⏳ **未做**：`open`（让宿主导航到某页）——那是新的副作用面，属 ABI 决策，不夹带在参数这档。
-  - ⏳ **未做**：manifest 声明斜杠菜单/页面右键/文件右键/编辑器菜单入口；插件设置（manifest schema → `plugin_data`）；除 `page.saved` 外的发射点（`app.started`/`space.switched`/`page.opened`/`page.deleted`/`import.finished`/`sync.completed` 事件名已在注册表与类型包里，缺的是宿主侧的发射调用）。
+  - ⏳ **未做**：其余触发面（`page.context`/`file.context`/`editor.toolbar` 已在注册表里标为未实现，接一个就把 `hosted` 打开）；插件设置（manifest schema → `plugin_data`）；除 `page.saved` 外的发射点（`app.started`/`space.switched`/`page.opened`/`page.deleted`/`import.finished`/`sync.completed` 事件名已在注册表与类型包里，缺的是宿主侧的发射调用）。
   - ⚠️ **写作示例时发现的 API 缺口**：**草稿落库后插件拿不到新页面 id**（`pages.create` 返回草稿，确认发生在插件运行之外）→「先建页、之后往它追加」这类多步插件目前做不到；将来要么让草稿确认回传 id，要么给一个"草稿已应用"的回调面。示例已如实标注，不假装能做到。
 - **M11.9 声明式贡献面（无代码插件）** 🗓（规划）：manifest 即可声明面板/视图（复用数据库透镜 query+columns）、主题 token、导入导出触发、命令参数、菜单与斜杠项。**验收**：一个「阅读统计面板」插件**零 JS** 即可安装并显示。
 - **M11.10 沙盒 UI 插件**（原 M11.3，重编号）🗓（规划）：UI 型插件（沙盒 WebView + postMessage 桥）——实现 **Transport B**，复用 M11.6 的同一 shim 与权限模型；可贡献侧栏面板/自定义块/自定义视图。**评估结论不变（收益/风险比不足，后置）**，但补上**启动闸门**：M11.6 + **M11.9 声明式贡献面已穷尽**（多数「我要一个插件面板」应由声明式渲染器满足，否则等于为一个可声明解决的问题引入整套沙盒渲染面）。

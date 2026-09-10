@@ -32,6 +32,8 @@ export interface PluginCommand {
   closeOnRun?: boolean;
   /** 声明参数后，宿主会先弹出参数表单再执行（`run(args)` 收到整理好的对象）。 */
   params?: PluginCommandParam[];
+  /** 额外出现在哪些触发面（不写则只在命令面板里）。 */
+  menus?: PluginMenuName[];
   /** 抛错会被宿主转成可见错误，不会让面板卡住。 */
   run: (args: PluginCommandArgs) => string | number | PluginCommandResult | void;
 }
@@ -59,6 +61,16 @@ export type PluginEventName =
 
 /** 注册事件处理器：在插件顶层调用（与 `register` 并列）。 */
 export declare function on(event: PluginEventName, handler: (payload: Record<string, any>) => void): void;
+
+/**
+ * 命令的触发面（`register({ menus })`）。
+ *
+ * **只列出宿主已经实现的入口**——类型里没有的值写上去也不会出现，
+ * 所以让它在这里报错，比让作者对着文档猜要好。
+ */
+export type PluginMenuName =
+  | "slash"
+  ;
 
 /** 结构化返回：等价于调用对应的宿主原语。 */
 export interface PluginCommandResult {
