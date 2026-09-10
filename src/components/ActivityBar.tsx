@@ -15,6 +15,7 @@ import {
   TemplateIcon,
   SettingsIcon,
   InfoIcon,
+  SidebarIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -66,6 +67,18 @@ export function ActivityBar() {
   return (
     <nav className="activity-bar" aria-label="主导航">
       <div className="activity-group">
+        {/* 窄屏专有的侧栏开合按钮。桌面端点活动图标就能开合、还有 hover 提示，
+            触屏没有 hover，「图标可以点」这件事完全不可见——所以小屏给一个
+            明确的按钮（面板 + 左栏的图形，即 VS Code 的侧栏图标）。 */}
+        <button
+          className="activity-btn sidebar-toggle-btn"
+          title={sidebarOpen ? t("common.collapseSidebar") : t("common.expandSidebar")}
+          aria-label={sidebarOpen ? t("common.collapseSidebar") : t("common.expandSidebar")}
+          aria-expanded={sidebarOpen}
+          onClick={() => toggleSidebar()}
+        >
+          <SidebarIcon width={18} height={18} />
+        </button>
         {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
             所以不是一个「活动」，不参与选中态。 */}
         <SearchPanel />

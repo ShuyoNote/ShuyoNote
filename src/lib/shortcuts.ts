@@ -24,6 +24,7 @@ export const SHORTCUTS: Shortcut[] = [
   // ---- 基础 ----
   { key: "new-page", label: "新建页面", group: "基础", keys: ["Ctrl", "N"], macKeys: ["⌘", "N"], when: "全局" },
   { key: "command-palette", label: "命令面板", group: "基础", keys: ["Ctrl", "K"], macKeys: ["⌘", "K"], when: "全局" },
+  { key: "toggle-sidebar", label: "开合侧栏", group: "基础", keys: ["Ctrl", "B"], macKeys: ["⌘", "B"], when: "全局（编辑器内为加粗）" },
   { key: "focus-search", label: "聚焦搜索", group: "基础", keys: ["Ctrl", "Shift", "F"], macKeys: ["⌘", "⇧", "F"], when: "全局" },
   { key: "shortcuts", label: "快捷键面板（Ctrl+/ 或 ?）", group: "基础", keys: ["Ctrl", "/"], macKeys: ["⌘", "/"], when: "全局" },
   { key: "close", label: "关闭查找/命令面板/浮层", group: "基础", keys: ["Esc"], when: "全局" },

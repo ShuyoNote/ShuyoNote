@@ -388,6 +388,11 @@ html[data-platform="win"] .app-body {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* 侧栏开合按钮：只在窄屏出现（桌面端点活动图标即可开合，且还有 hover 提示；
+   触屏没有 hover，必须给一个看得见的入口）。默认不显示，见文件末尾的媒体查询。 */
+.sidebar-toggle-btn {
+  display: none;
+}
 .activity-btn.is-on {
   color: var(--accent);
 }
@@ -18045,6 +18050,10 @@ p:has(> .editor-drawing-container) {
   @keyframes mobile-sidebar-in {
     from { transform: translateX(-100%); }
     to { transform: translateX(0); }
+  }
+  /* 窄屏显示侧栏开合按钮：触屏没有 hover 提示，收起后必须有个看得见的入口。 */
+  .sidebar-toggle-btn {
+    display: grid;
   }
   /* 侧栏收起后主区自动全宽（sidebar 不再占 flex 流）。 */
   .main {

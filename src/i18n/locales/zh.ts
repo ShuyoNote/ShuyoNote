@@ -16,6 +16,8 @@ export default {
     followSystem: "跟随系统",
     collapse: "收起",
     expand: "展开",
+    expandSidebar: "展开侧栏",
+    collapseSidebar: "收起侧栏",
     minimize: "最小化",
     maximize: "最大化",
     restore: "向下还原",
