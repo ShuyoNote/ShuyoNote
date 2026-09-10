@@ -60,3 +60,14 @@ tauri-plugin-http = "2"
 [dev-dependencies]
 # For async integration tests (embed_text network round-trip / search_semantic ranking).
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Android 专属：native-tls 在 Android 上映射到 OpenSSL（桌面 Windows 走 Schannel 不受影响），
+# 交叉编译需要一个 Android 版 OpenSSL。这里用 vendored 从源码构建（借助 NDK 的 clang + Perl），
+# 从而不改动 native-tls 的调用代码，各平台行为一致。仅 Android 生效，桌面/Web 构建不受影响。
+[target.'cfg(target_os = "android")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+# SQLCipher 在 Android 上同样依赖 OpenSSL。启用 libsqlite3-sys 官方提供的
+# vendored-openssl 变体，让它复用上面这份从源码构建的 OpenSSL
+# （它经 openssl-sys 的 DEP_OPENSSL_INCLUDE 取得头文件，并静态链接 libcrypto）。
+# features 是可累加的，故这里与 [dependencies] 中的声明合并后仅对 Android 生效。
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
