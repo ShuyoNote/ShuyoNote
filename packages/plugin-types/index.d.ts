@@ -109,6 +109,7 @@ export type PluginMenuName =
   | "slash"
   | "page.context"
   | "file.context"
+  | "editor.toolbar"
   ;
 
 /** 结构化返回：等价于调用对应的宿主原语。 */

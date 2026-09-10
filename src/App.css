@@ -3701,6 +3701,9 @@ select.sync-input {
   font-size: 11px;
   letter-spacing: 0.02em;
 }
+/* 只写**结构**：字号/内边距/圆角交给各宿主自己的项类（`.tree-node-menu button`、
+   `.fm-ctx-item`、`.toolbar-menu-item`）——三个入口里都该长得像那个菜单里的原生项，
+   而不是三处一样、三处都别扭。 */
 .plugin-menu-item {
   display: flex;
   align-items: center;
@@ -3709,11 +3712,7 @@ select.sync-input {
   text-align: left;
   background: transparent;
   border: none;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 9px 10px;
-  border-radius: 8px;
+  color: inherit;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;

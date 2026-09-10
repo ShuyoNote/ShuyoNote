@@ -123,7 +123,7 @@ pub const MENUS: &[PluginMenu] = &[
     PluginMenu { id: "slash", title: "编辑器「/」菜单", hosted: true, desc: "在编辑器里输入 / 就能选到；适合「写到一半要跑一下」的命令" },
     PluginMenu { id: "page.context", title: "页面右键菜单", hosted: true, desc: "页面列表里那一行的「⋯」菜单（在行上右键同样是它）：你的命令会拿到**被点的那一页**作为当前页" },
     PluginMenu { id: "file.context", title: "附件右键菜单", hosted: true, desc: "文件（附件）列表里右键那一项：你的命令会拿到**被点的那个文件**的信息作为入参——`{ fileName, size, mime }`（**没有绝对路径**：插件本来也读不了文件，给路径只会让人以为能读），并且\"当前页\"是**这个文件所在的那一页**" },
-    PluginMenu { id: "editor.toolbar", title: "编辑器工具栏", hosted: false, desc: "编辑器顶部工具栏按钮（宿主还没接这个入口）" },
+    PluginMenu { id: "editor.toolbar", title: "编辑器工具栏", hosted: true, desc: "编辑器顶部工具栏的「⋯」菜单里（与导出 Markdown/HTML/PDF 同一处）：适合「边写边跑」的命令，省掉打 `/` 或开命令面板那一步；当前页就是正在编辑的这一页。插件给不出图标，所以不会变成工具栏上那排图标按钮" },
 ];
 
 /// 一个可主题化的 CSS 变量。

@@ -11,10 +11,11 @@ register({
   id: "page-to-md.current",
   title: "把当前页导出成 Markdown",
   description: "把当前页的段落写成一份 .md（保存位置由你选）",
-  // 触发面（`register({ menus })`）：除了命令面板，也出现在**页面列表那一行的「⋯」菜单**
-  // （在行上右键同样是它）。那里"当前页"就是**你点的那一页**——所以同一份代码既能导出
-  // 正打开的页，也能导出列表里随手点的一页，不需要多写一个命令。
-  menus: ["page.context"],
+  // 触发面（`register({ menus })`）：除了命令面板，还出现在**页面列表那一行的「⋯」菜单**
+  // （在行上右键同样是它）与**编辑器顶部工具栏的「⋯」菜单**（与导出 Markdown/HTML/PDF 同一处）。
+  // 两处的"当前页"都是它们各自语境里的那一页——所以同一份代码既能导出正打开的页，也能导出
+  // 列表里随手点的一页，不需要多写一个命令。
+  menus: ["page.context", "editor.toolbar"],
   run: function () {
     var blocks = api.blocks.list(undefined, 300); // 省略 pageId = 当前页
     if (blocks.length === 0) return "当前页没有内容，什么都没导出";

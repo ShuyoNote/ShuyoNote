@@ -73,6 +73,22 @@ describe("pluginMenuItems（按入口取）", () => {
     expect(pluginMenuItems(plugins, "file.context").map((i) => i.commandId)).toEqual(["a.one"]);
   });
 
+  it("三个已实现的入口各取各的（slash / page.context / file.context / editor.toolbar）", () => {
+    const plugins = [
+      plugin("a", true, [
+        cmd("a.slash", ["slash"]),
+        cmd("a.page", ["page.context"]),
+        cmd("a.file", ["file.context"]),
+        cmd("a.tb", ["editor.toolbar"]),
+        cmd("a.two", ["editor.toolbar", "page.context"]),
+      ]),
+    ];
+    expect(pluginMenuItems(plugins, "slash").map((i) => i.commandId)).toEqual(["a.slash"]);
+    expect(pluginMenuItems(plugins, "page.context").map((i) => i.commandId)).toEqual(["a.page", "a.two"]);
+    expect(pluginMenuItems(plugins, "file.context").map((i) => i.commandId)).toEqual(["a.file"]);
+    expect(pluginMenuItems(plugins, "editor.toolbar").map((i) => i.commandId)).toEqual(["a.tb", "a.two"]);
+  });
+
   it("pluginSlashItems 就是 slash 那一份（同一份实现，不是两套规则）", () => {
     const plugins = [plugin("a", true, [cmd("a.one", ["slash"]), cmd("a.two", ["page.context"])])];
     expect(pluginSlashItems(plugins)).toEqual(pluginMenuItems(plugins, "slash"));

@@ -12,6 +12,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon } from "./icons";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
+import { PluginMenuItems } from "./PluginMenuItems";
 import { docHtml, printDoc } from "../lib/print";
 
 function triggerFind() {
@@ -157,6 +158,15 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title={t("editor.exportPdf")}>
               <PrintIcon /> {t("editor.exportPdf")}
             </button>
+            {/* 插件命令（`menus: ["editor.toolbar"]`）：放在这里而不是那排图标按钮上——
+                插件给不出图标，一排一模一样的 🔌 反而更难认；这里的文字项正合适。
+                pageId 传的是**正在编辑的这一页**，所以省略 pageId 的能力调用作用在它身上。 */}
+            <PluginMenuItems
+              menuId="editor.toolbar"
+              pageId={pageId}
+              itemClass="toolbar-menu-item"
+              onDone={() => setExportOpen(false)}
+            />
           </div>
         )}
       </div>
