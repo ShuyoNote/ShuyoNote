@@ -324,14 +324,14 @@
         "blocks",
         "list"
       ],
-      "desc": "列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (必填)。返回块数组，可用于定位具体块。",
+      "desc": "列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (可选, 省略=当前打开的页面), limit (可选)。返回块数组，可用于定位具体块。",
       "ai": true,
       "args": [
         {
           "name": "pageId",
           "type": "string",
-          "required": true,
-          "desc": "页面 id"
+          "required": false,
+          "desc": "页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）"
         },
         {
           "name": "limit",
@@ -373,7 +373,7 @@
         "desc": "[{source_page_id, source_title, kind}]"
       },
       "rust": "cap_backlinks_list",
-      "desc": "查询哪些页面反向链接到目标页面。参数: pageId (必填)。返回引用它的页面列表。",
+      "desc": "查询哪些页面反向链接到目标页面。参数: pageId (可选, 省略=当前打开的页面)。返回引用它的页面列表。",
       "ai": true
     },
     {
@@ -401,7 +401,7 @@
         "desc": "[{id, name, mime, size}]，**不含字节**"
       },
       "rust": "cap_files_list",
-      "desc": "列出页面附件。参数: pageId (必填)。返回文件名/类型/大小。",
+      "desc": "列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。",
       "ai": true
     },
     {

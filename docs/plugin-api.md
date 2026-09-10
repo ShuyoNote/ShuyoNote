@@ -175,7 +175,7 @@ register({
 - scope：`current-space`
 - 返回：[{blockId, text}]
 - 参数：
-  - `pageId`: `string` —— 页面 id
+  - `pageId`: `string`（可选） —— 页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）
   - `limit`: `number`（可选），默认 `100` —— 最多返回多少块
 
 ### `backlinks.list` — 列出反链

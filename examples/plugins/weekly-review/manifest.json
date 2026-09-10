@@ -1,0 +1,18 @@
+{
+  "id": "weekly-review",
+  "name": "周回顾",
+  "version": "1.0.0",
+  "description": "一键把最近几天动过的页面汇成一篇「回顾」草稿：标题清单 + 统计。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:pages",
+      "reason": "读取本空间的页面标题与更新时间（不含正文）"
+    },
+    {
+      "id": "write:pages",
+      "reason": "新建「回顾」页面（落库前会先把草稿给你确认）"
+    }
+  ]
+}

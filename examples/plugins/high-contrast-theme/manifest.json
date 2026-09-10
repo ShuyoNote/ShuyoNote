@@ -1,0 +1,29 @@
+{
+  "id": "high-contrast-theme",
+  "name": "高对比（投屏 / 老花）",
+  "version": "1.0.0",
+  "description": "零代码主题插件：纯黑背景 + 纯白正文，投屏、投影仪或视力不佳时更容易看清。停用即恢复你原来的主题。",
+  "runtime": "declarative",
+  "apiVersion": "1.0.0",
+  "views": [],
+  "theme": {
+    "name": "高对比（投屏 / 老花）",
+    "tokens": {
+      "--bg": "#000000",
+      "--bg-sidebar": "#000000",
+      "--text": "#ffffff",
+      "--text-dim": "#d0d0d0",
+      "--text-faint": "#a0a0a0",
+      "--border": "#7a7a7a",
+      "--border-strong": "#ffffff",
+      "--hover": "#1c1c1c",
+      "--hover-strong": "#2e2e2e",
+      "--card-bg": "#0a0a0a",
+      "--code-bg": "#141414",
+      "--codeblock-bg": "#0f0f0f",
+      "--accent": "#ffd400",
+      "--accent-strong": "#ffe66d",
+      "--danger": "#ff6b6b"
+    }
+  }
+}

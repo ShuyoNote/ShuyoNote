@@ -164,7 +164,7 @@ export interface PluginApi {
   /** 列出页面块（权限 `read:pages`；1.0.0 起）
    * 返回：[{blockId, text}]
    */
-    list(pageId: string, limit?: number): { blockId: string; text: string }[];
+    list(pageId?: string, limit?: number): { blockId: string; text: string }[];
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */

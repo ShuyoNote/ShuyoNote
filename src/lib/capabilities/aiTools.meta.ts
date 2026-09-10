@@ -41,20 +41,20 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "blocks.list",
-    description: "列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (必填)。返回块数组，可用于定位具体块。",
+    description: "列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (可选, 省略=当前打开的页面), limit (可选)。返回块数组，可用于定位具体块。",
     argsSchema: {
       type: "object",
       properties: {
       "pageId": { type: "string" },
       "limit": { type: "number" },
       },
-      required: ["pageId"],
+      required: [],
     },
     isWrite: false,
   },
   {
     id: "backlinks.list",
-    description: "查询哪些页面反向链接到目标页面。参数: pageId (必填)。返回引用它的页面列表。",
+    description: "查询哪些页面反向链接到目标页面。参数: pageId (可选, 省略=当前打开的页面)。返回引用它的页面列表。",
     argsSchema: {
       type: "object",
       properties: {
@@ -66,7 +66,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "files.list",
-    description: "列出页面附件。参数: pageId (必填)。返回文件名/类型/大小。",
+    description: "列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。",
     argsSchema: {
       type: "object",
       properties: {

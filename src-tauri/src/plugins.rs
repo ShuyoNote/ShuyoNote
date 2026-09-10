@@ -1815,16 +1815,23 @@ fn cap_tags_add(name: &str, page_id: Option<&str>) -> CapResult {
 /// `blocks.list`：列出页面顶级块（id + 文本）。
 ///
 /// Lexical 的 JSON 走查复用 `blocks.rs` 里既有的一套辅助函数，**不在这里手写第二份**。
-fn cap_blocks_list(page_id: &str, limit: i64) -> CapResult {
+/// `blocks.list`：列出某页的顶级块。**省略 pageId = 当前打开的页面**——与
+/// `blocks.append` / `tags.add` / `backlinks.list` / `files.list` 一致。
+///
+/// 之前这个能力是唯一一个"必须显式给 id"的读能力，而插件又**拿不到当前页 id**
+/// （`page.current` 只给 content_json）：等于"能往当前页写，却读不到当前页"。
+/// 写参考插件时撞到的就是这个不对称——大纲 / 改写 / 导出当前页这一整类插件都被卡住。
+fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
     let limit = limit.clamp(1, 500) as usize;
+    let target = target_page_or_current(page_id)?;
     with_read_conn(|c| {
         let content_json: String = c
             .query_row(
                 "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                params![page_id],
+                params![target],
                 |r| r.get(0),
             )
-            .map_err(|_| format!("bad_args: 未找到页面 {page_id}"))?;
+            .map_err(|_| format!("bad_args: 未找到页面 {target}"))?;
         let v = crate::blocks::parse_json(&content_json).map_err(|e| format!("db_error: {e}"))?;
         let blocks: Vec<serde_json::Value> = crate::blocks::root_children(&v)
             .iter()
@@ -1919,7 +1926,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         // scope 由 manifest 声明决定（不由插件选）：设置里常有 token/路径这类东西，
         // 声明为 space 才落加密库，声明为 app 才落 meta.db（明文）。
         "settings.get" => cap_settings_get(&arg_str("key")?),
-        "blocks.list" => cap_blocks_list(&arg_str("pageId")?, arg_i64("limit", 100)),
+        "blocks.list" => cap_blocks_list(arg_opt_str("pageId").as_deref(), arg_i64("limit", 100)),
         "properties.list" => cap_properties_list(),
         "properties.set" => cap_properties_set(
             &arg_str("attrId")?,
@@ -4661,6 +4668,25 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(files[0].get("content").is_none(), "只能给元数据，不给字节");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn blocks_list_defaults_to_the_current_page() {
+        let (space, dir) = seed_space("blocks-current");
+        let mut st = state_for_space(&space, &dir);
+        // 当前打开的页面：插件拿不到 id（page.current 只给 content_json），
+        // 所以"省略 pageId = 当前页"是这类能力唯一的用法。
+        st.current_page_id = Some("p1".to_string());
+
+        let blocks = call(&st, "blocks.list", r#"{"limit":10}"#).unwrap();
+        assert!(blocks.is_array(), "省略 pageId 应当作用于当前页而不是报错：{blocks:?}");
+
+        // 显式给了 id 也一样能用；没给 id 又没有当前页时才报错
+        assert!(call(&st, "blocks.list", r#"{"pageId":"p1"}"#).is_ok());
+        let mut no_page = state_for_space(&space, &dir);
+        no_page.current_page_id = None;
+        let err = call(&no_page, "blocks.list", "{}").unwrap_err();
+        assert!(err.contains("bad_args"), "实际：{err}");
     }
 
     #[test]

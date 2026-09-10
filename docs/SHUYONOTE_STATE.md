@@ -21,6 +21,7 @@
 | M27 | 团队版（自建协作） | [部分] 部分（服务端 S1–S8 已落地；客户端 per-workspace `sync_profiles` + 账户 UI（U1–U4）+ E2E 加密已落地；**实时协同后置**） |
 
 ### 近期重大变更（v1.82 → v1.84.3）
+- **第一批一方插件 + 一处能力缺口**（`dev`，未发版）：`weekly-review` / `page-to-md` / `eye-care-theme` / `high-contrast-theme`（都能直接装来用，均进回归测试）；写它们时撞出并修掉 `blocks.list` 省略 pageId 不回退当前页（此前「能写当前页、读不到当前页」）；记下相邻缺口：插件拿不到当前页 id/标题（候选 `api.page.meta()`，等第二个插件也撞到再动）。
 - **信任面收口：插件更新后声明扩张必须重新确认**（`dev`，未发版）：启用时记授权快照，新增权限/事件后**后端拒绝执行 + 停止事件派发**，直到用户在插件管理里点「重新确认」；存量插件首次扫描补记一次；只跟踪启用中的插件。作者文档 §4.5.1 记了这条对发版的影响。
 - **v1.85.1 热修复：命令面板白屏**（2026-09-10）：1.85.0 起按 `Ctrl+K` 会抛 React 错误（生产为 Minified React error #310）并让**整棵树被卸载成白屏**——`CommandPalette` 把参数表单的三个 `useState` 放在了 `if (!open) return null` 之后（hooks 不能有条件调用），而它挂在 App 根部、上面没有 ErrorBoundary。修复 = hooks 移到早退之前；补上**渲染级**回归测试 `src/components/commandPaletteHooks.test.ts`（修复前必失败）。**教训**：既有验证全都不渲染 React 组件，主路径可以一直炸而全套检查全绿——所以随后补了两层：根部错误边界（`main.tsx` 的整屏兜底 + `PanelBoundary` 逐浮层隔离，`src/components/errorBoundary.test.ts` 钉住"边界外的界面照常可用"），以及开发指南里"组件/hooks 类改动要有渲染级测试"这一条。
 - **多账号聚合邮箱**（v1.83）：多账号 IMAP 聚合收件箱 + 存为笔记 + AI 总结 + 发件人标签 + 按月直达 + 设置多账号管理/测试连接。

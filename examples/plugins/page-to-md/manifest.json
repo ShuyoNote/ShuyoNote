@@ -1,0 +1,25 @@
+{
+  "id": "page-to-md",
+  "name": "当前页导出 Markdown",
+  "version": "1.0.0",
+  "description": "把当前打开的页面写成一份 .md：命令面板点「导出」，保存位置由你选。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:pages",
+      "reason": "读取当前页的段落文本（只读，不改任何东西）"
+    },
+    {
+      "id": "export:files",
+      "reason": "把内容保存成文件——存到哪里由你在系统保存对话框里选，点取消就什么都不写。注意导出的文件是明文，不随空间的加密一起保护"
+    }
+  ],
+  "triggers": [
+    {
+      "kind": "export",
+      "extensions": [".md"],
+      "command": "page-to-md.current"
+    }
+  ]
+}

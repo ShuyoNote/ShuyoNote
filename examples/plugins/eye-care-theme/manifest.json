@@ -1,0 +1,28 @@
+{
+  "id": "eye-care-theme",
+  "name": "护眼（低蓝光）",
+  "version": "1.0.0",
+  "description": "零代码主题插件：暖白背景 + 降蓝的正文色，长时间读写时眼睛没那么累。停用即恢复你原来的主题。",
+  "runtime": "declarative",
+  "apiVersion": "1.0.0",
+  "views": [],
+  "theme": {
+    "name": "护眼（低蓝光）",
+    "tokens": {
+      "--bg": "#f4efe4",
+      "--bg-sidebar": "#ebe4d6",
+      "--text": "#33302a",
+      "--text-dim": "#6b6459",
+      "--text-faint": "#948b7d",
+      "--border": "#d8cfbd",
+      "--border-strong": "#c2b7a1",
+      "--hover": "#e6dfd0",
+      "--hover-strong": "#dbd2c0",
+      "--card-bg": "#fbf7ee",
+      "--code-bg": "#eae3d4",
+      "--codeblock-bg": "#f0e9db",
+      "--accent": "#8c6b3f",
+      "--accent-strong": "#6f5330"
+    }
+  }
+}
