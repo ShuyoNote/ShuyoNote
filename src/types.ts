@@ -91,6 +91,22 @@ export interface PluginMeta {
   commands: PluginCommandMeta[];
 }
 
+/** 插件在本次执行里通过 `__toast(...)` 发出的提示（随结果回传，由前端弹出）。 */
+export interface PluginRunResult {
+  message: string;
+  insert?: string | null;
+  toasts?: string[];
+}
+
+/** 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都进这个环形缓冲）。 */
+export interface PluginLogLine {
+  plugin_id: string;
+  /** `info` / `warn` / `error` */
+  level: string;
+  message: string;
+  at_ms: number;
+}
+
 export interface WorkspaceMeta {
   id: string;
   name: string;

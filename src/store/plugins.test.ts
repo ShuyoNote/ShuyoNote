@@ -14,6 +14,8 @@ vi.mock("../lib/api", () => ({
     installPlugin: vi.fn(),
     openPluginDir: vi.fn(),
     runPluginCommand: vi.fn(),
+    pluginLogs: vi.fn(),
+    clearPluginLogs: vi.fn(),
   },
 }));
 
@@ -124,5 +126,84 @@ describe("plugins store · 失败必须看得见", () => {
 
     expect(lastToast()).toMatchObject({ kind: "error" });
     expect(lastToast()?.message).toContain("manifest 解析失败");
+  });
+});
+
+describe("plugins store · 运行态 / 取消 / __toast / 日志", () => {
+  it("执行期间 running 可见，结束后复位", async () => {
+    let release: (v: unknown) => void = () => {};
+    vi.mocked(api.runPluginCommand).mockReturnValue(
+      new Promise((res) => {
+        release = res;
+      }) as never,
+    );
+
+    const p = usePlugins.getState().runCommand("demo", "demo.hello", null);
+    expect(usePlugins.getState().running).toMatchObject({
+      pluginId: "demo",
+      commandId: "demo.hello",
+    });
+
+    release({ message: "done", insert: null, toasts: [] });
+    await p;
+    expect(usePlugins.getState().running).toBeNull();
+  });
+
+  it("__toast 的提示随结果回传（此前只写 stderr，用户看不到）", async () => {
+    vi.mocked(api.runPluginCommand).mockResolvedValue({
+      message: "已执行",
+      insert: null,
+      toasts: ["来自插件的提示"],
+    });
+
+    const r = await usePlugins.getState().runCommand("demo", "demo.toast", null);
+
+    expect(r.toasts).toEqual(["来自插件的提示"]);
+  });
+
+  it("取消：丢弃结果（cancelled=true），且提示是诚实文案", async () => {
+    let release: (v: unknown) => void = () => {};
+    vi.mocked(api.runPluginCommand).mockReturnValue(
+      new Promise((res) => {
+        release = res;
+      }) as never,
+    );
+
+    const p = usePlugins.getState().runCommand("demo", "demo.slow", null);
+    usePlugins.getState().cancelRun();
+
+    expect(usePlugins.getState().running).toBeNull();
+    // 插件线程本身停不下来，所以文案不能说「已终止」，只能说「已取消等待」。
+    expect(lastToast()?.message).toContain("取消等待");
+    expect(lastToast()?.message).toContain("仍在后台");
+
+    release({ message: "太晚了", insert: "不该被写入", toasts: ["也不该弹"] });
+    const r = await p;
+    expect(r.cancelled).toBe(true);
+    expect(r.insert).toBeUndefined();
+    expect(r.toasts).toBeUndefined();
+  });
+
+  it("日志：按插件读取 / 清空 / 失败可见", async () => {
+    vi.mocked(api.pluginLogs).mockResolvedValue([
+      { plugin_id: "demo", level: "info", message: "你好", at_ms: 1 },
+    ]);
+
+    await usePlugins.getState().openLogs("demo");
+
+    expect(api.pluginLogs).toHaveBeenCalledWith("demo");
+    expect(usePlugins.getState().logsFor).toBe("demo");
+    expect(usePlugins.getState().logs).toHaveLength(1);
+
+    vi.mocked(api.clearPluginLogs).mockResolvedValue(undefined);
+    await usePlugins.getState().clearLogs();
+    expect(usePlugins.getState().logs).toEqual([]);
+
+    usePlugins.getState().closeLogs();
+    expect(usePlugins.getState().logsFor).toBeNull();
+
+    vi.mocked(api.pluginLogs).mockRejectedValue("读取日志失败");
+    await usePlugins.getState().openLogs("demo");
+    expect(lastToast()).toMatchObject({ kind: "error" });
   });
 });

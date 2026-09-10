@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection } from "lexical";
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
+import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
 import { useAiStore } from "../store/ai";
 import { getAllCommands, usePluginRevision, type CommandContext } from "../plugins/registry";
@@ -45,6 +46,7 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const plugins = usePlugins((s) => s.plugins);
+  const running = usePlugins((s) => s.running);
 
   // Ctrl/Cmd+K toggles; focus and reset on open.
   useEffect(() => {
@@ -135,7 +137,13 @@ export function CommandPalette() {
     if (item.kind === "plugin") {
       try {
         const res = await usePlugins.getState().runCommand(item.pluginId, item.id, currentId);
+        if (res.cancelled) {
+          setResult("已取消执行（结果已丢弃）");
+          return;
+        }
         setResult(res.message);
+        // 插件用 __toast(...) 发的提示：此前只写 stderr，用户完全看不到。
+        for (const t of res.toasts ?? []) toast(t, "info");
         if (res.insert) insertText(res.insert);
       } catch (e) {
         setResult(String(e));
@@ -212,6 +220,16 @@ export function CommandPalette() {
           {pluginItems.map((it, i) => renderItem(it, pageItems.length + cmdItems.length + i))}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}
         </div>
+        {running && (
+          // 「运行态可见 + 可取消」：此前插件命令跑起来后界面只有长时间无反应。
+          // 取消放弃的是**等待**（结果被丢弃 → 无半途写入），不是插件线程本身。
+          <div className="palette-result">
+            <span>⏳ 正在执行「{running.title}」…</span>
+            <button className="set-btn" onClick={() => usePlugins.getState().cancelRun()}>
+              取消
+            </button>
+          </div>
+        )}
         {result && <div className="palette-result">{result}</div>}
         <div className="palette-foot">
           <span><kbd>↑</kbd> <kbd>↓</kbd> 导航</span>

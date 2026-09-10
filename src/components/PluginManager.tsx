@@ -6,8 +6,10 @@ import { usePlugins } from "../store/plugins";
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
 export function PluginManager() {
-  const { managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir } =
-    usePlugins();
+  const {
+    managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir,
+    logsFor, logs, openLogs, closeLogs, clearLogs,
+  } = usePlugins();
 
   useEffect(() => {
     if (managerOpen) load();
@@ -65,10 +67,40 @@ export function PluginManager() {
               </div>
               <div className="pm-item-actions">
                 <button onClick={() => toggle(p.id)}>{p.enabled ? "禁用" : "启用"}</button>
+                {/* 插件运行时连 console 都没有，__log/__toast 是作者唯一的排错手段，
+                    所以日志必须有个能看的地方。 */}
+                <button
+                  onClick={() => (logsFor === p.id ? closeLogs() : openLogs(p.id))}
+                  title="查看这个插件的日志（__log / __toast）"
+                >
+                  {logsFor === p.id ? "收起日志" : "日志"}
+                </button>
                 <button className="danger" onClick={() => uninstallWithConfirm(p.id, p.name)}>
                   卸载
                 </button>
               </div>
+              {logsFor === p.id && (
+                <div className="pm-logs">
+                  {logs.length === 0 ? (
+                    <div className="pm-log-empty">
+                      暂无日志 · 插件可用 <code>__log("info", "…")</code> 或 <code>__toast("…")</code> 写日志
+                    </div>
+                  ) : (
+                    logs.map((l, i) => (
+                      <div key={`${l.at_ms}-${i}`} className={`pm-log pm-log-${l.level}`}>
+                        <span className="pm-log-time">
+                          {new Date(l.at_ms).toLocaleTimeString()}
+                        </span>
+                        <span className="pm-log-level">{l.level}</span>
+                        <span className="pm-log-msg">{l.message}</span>
+                      </div>
+                    ))
+                  )}
+                  <div className="pm-log-actions">
+                    <button onClick={() => clearLogs()}>清空日志</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))
         )}

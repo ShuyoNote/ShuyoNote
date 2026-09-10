@@ -5510,6 +5510,69 @@ select.prop-value {
   background: var(--danger-soft);
 }
 
+/* 插件日志面板（__log / __toast 的输出） */
+.pm-logs {
+  flex-basis: 100%;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+.pm-log {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+.pm-log-time {
+  color: var(--text-faint);
+  flex: none;
+}
+.pm-log-level {
+  flex: none;
+  width: 38px;
+  color: var(--text-dim);
+}
+.pm-log-warn .pm-log-level {
+  color: var(--cat-orange);
+}
+.pm-log-error .pm-log-level {
+  color: var(--danger);
+}
+.pm-log-msg {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pm-log-empty {
+  color: var(--text-faint);
+}
+.pm-log-empty code {
+  background: var(--hover);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.pm-log-actions {
+  margin-top: 8px;
+}
+.pm-log-actions button {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-log-actions button:hover {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+
 /* Selection formatting toolbar */
 .selection-toolbar {
   position: fixed;

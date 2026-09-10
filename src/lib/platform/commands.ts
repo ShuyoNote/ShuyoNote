@@ -37,6 +37,8 @@ import type {
   PageVersion,
   PdfAnnotationRecord,
   PluginMeta,
+  PluginLogLine,
+  PluginRunResult,
   SearchBlock,
   SearchResult,
   StorageStats,
@@ -170,10 +172,12 @@ export interface CommandMap {
   // ---- Plugins ----
   list_plugins: { args: undefined; result: PluginMeta[] };
   set_plugin_enabled: { args: { id: string; enabled: boolean }; result: void };
-  run_plugin_command: { args: { pluginId: string; commandId: string; currentId?: string | null }; result: { message: string; insert?: string | null } };
+  run_plugin_command: { args: { pluginId: string; commandId: string; currentId?: string | null }; result: PluginRunResult };
   uninstall_plugin: { args: { id: string }; result: void };
   install_plugin: { args: { sourcePath: string }; result: PluginMeta };
   open_plugin_dir: { args: undefined; result: string };
+  plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
+  clear_plugin_logs: { args: undefined; result: void };
 
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };

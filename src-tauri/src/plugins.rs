@@ -37,10 +37,15 @@ thread_local! {
 }
 #[derive(Default)]
 struct RunState {
+    /// 当前调用属于哪个插件（用于把日志/提示归因到插件）。
+    plugin_id: String,
     current_page_json: String,
     page_count: usize,
     /// Text a plugin requested to insert at the cursor via `__insert(...)`.
     insert_text: String,
+    /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
+    /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
+    toasts: Vec<String>,
 }
 
 /// Result of running a plugin command: a display `message`, plus an optional
@@ -49,6 +54,46 @@ struct RunState {
 pub struct PluginRunResult {
     pub message: String,
     pub insert: Option<String>,
+    /// 插件在本次执行里通过 `__toast(...)` 发出的提示（此前只写 stderr，用户完全看不到）。
+    pub toasts: Vec<String>,
+}
+
+/// 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都会进环形缓冲）。
+#[derive(Serialize, Clone)]
+pub struct PluginLogLine {
+    pub plugin_id: String,
+    /// `info` / `warn` / `error`
+    pub level: String,
+    pub message: String,
+    pub at_ms: i64,
+}
+
+/// 日志环形缓冲容量：够定位问题，又不会无限增长。
+const PLUGIN_LOG_CAPACITY: usize = 200;
+
+static PLUGIN_LOGS: std::sync::Mutex<std::collections::VecDeque<PluginLogLine>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 记一条插件日志。锁被 poison 也照记（丢日志不该连累插件执行）。
+fn push_log(plugin_id: &str, level: &str, message: &str) {
+    let mut q = PLUGIN_LOGS.lock().unwrap_or_else(|e| e.into_inner());
+    let line = PluginLogLine {
+        plugin_id: plugin_id.to_string(),
+        level: level.to_string(),
+        message: message.to_string(),
+        at_ms: now_ms(),
+    };
+    if q.len() >= PLUGIN_LOG_CAPACITY {
+        q.pop_front();
+    }
+    q.push_back(line);
 }
 
 // ---------------------------------------------------------------------------
@@ -270,18 +315,47 @@ fn host_page_count(
     Ok(JsValue::from(n as i64))
 }
 
+/// 取第 `idx` 个参数并转成 Rust 字符串（类型不符/缺失一律当空串）。
+fn js_string_arg(args: &[JsValue], idx: usize) -> String {
+    args.get(idx)
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_default()
+}
+
+/// `__toast(msg)`：插件给用户的一句提示。
+///
+/// 现在**真的能到用户眼前**：提示随本次调用结果回传前端、由前端弹 toast，
+/// 同时进日志环形缓冲供作者侧排查。此前只 `eprintln!`，用户完全看不到。
 fn host_toast(
     _this: &JsValue,
     args: &[JsValue],
     _ctx: &mut Context,
 ) -> boa_engine::JsResult<JsValue> {
-    let msg = args
-        .get(0)
-        .and_then(|v| v.as_string())
-        .map(|s| s.to_std_string_escaped())
-        .unwrap_or_default();
-    // Bridge to the UI toast is a later step; for now surface via stderr.
-    eprintln!("[plugin toast] {msg}");
+    let msg = js_string_arg(args, 0);
+    if !msg.is_empty() {
+        let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+        push_log(&pid, "info", &msg);
+        RUN_STATE.with(|s| s.borrow_mut().toasts.push(msg));
+    }
+    Ok(JsValue::undefined())
+}
+
+/// `__log(level, msg)`：作者侧日志。
+///
+/// 必要性：插件的运行时**连 `console` 都没有**（`boa_engine` 0.21 不含 console
+/// 对象，它只在 `boa_runtime` 里），此前作者在沙箱里没有任何打日志的手段，
+/// 排错只能靠猜。日志进环形缓冲，可在插件面板里查看。
+fn host_log(
+    _this: &JsValue,
+    args: &[JsValue],
+    _ctx: &mut Context,
+) -> boa_engine::JsResult<JsValue> {
+    let level = js_string_arg(args, 0);
+    let msg = js_string_arg(args, 1);
+    let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    let level = if level.is_empty() { "info" } else { level.as_str() };
+    push_log(&pid, level, &msg);
     Ok(JsValue::undefined())
 }
 
@@ -291,11 +365,7 @@ fn host_insert(
     args: &[JsValue],
     _ctx: &mut Context,
 ) -> boa_engine::JsResult<JsValue> {
-    let text = args
-        .get(0)
-        .and_then(|v| v.as_string())
-        .map(|s| s.to_std_string_escaped())
-        .unwrap_or_default();
+    let text = js_string_arg(args, 0);
     if !text.is_empty() {
         RUN_STATE.with(|s| s.borrow_mut().insert_text.push_str(&text));
     }
@@ -366,12 +436,20 @@ fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommand
 
 /// 带墙钟超时的 discovery：插件顶层代码跑在独立线程里，超时不再挂住调用方。
 fn discover_commands_timed(
+    plugin_id: &str,
     source: &str,
     timeout: Duration,
 ) -> Result<Vec<PluginCommandMeta>, String> {
     let src = source.to_string();
+    let pid = plugin_id.to_string();
     with_timeout(timeout, "插件加载", move || {
-        discover_commands(&src, &RunState::default())
+        discover_commands(
+            &src,
+            &RunState {
+                plugin_id: pid,
+                ..Default::default()
+            },
+        )
     })
 }
 
@@ -406,10 +484,21 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
         NativeFunction::from_fn_ptr(host_insert),
     )
     .map_err(|e| e.to_string())?;
-    RUN_STATE.with(|s| *s.borrow_mut() = RunState {
-        current_page_json: state.current_page_json.clone(),
-        page_count: state.page_count,
-        insert_text: String::new(),
+    // `__log(level, msg)`：作者侧日志（插件运行时没有 console，见 host_log）。
+    ctx.register_global_callable(
+        JsString::from("__log"),
+        2,
+        NativeFunction::from_fn_ptr(host_log),
+    )
+    .map_err(|e| e.to_string())?;
+    RUN_STATE.with(|s| {
+        *s.borrow_mut() = RunState {
+            plugin_id: state.plugin_id.clone(),
+            current_page_json: state.current_page_json.clone(),
+            page_count: state.page_count,
+            insert_text: String::new(),
+            toasts: Vec::new(),
+        }
     });
     Ok(())
 }
@@ -445,20 +534,25 @@ fn run_command_timeout(
     source: &str,
     command_id: &str,
     state: &RunState,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, Vec<String>), String> {
     let source = source.to_string();
     let command_id = command_id.to_string();
     // RunState 是纯数据（String/usize），可 move 进线程；RUN_STATE/thread_local
     // 会在该线程内由 set_run_state 正确重建。
     let state = RunState {
+        plugin_id: state.plugin_id.clone(),
         current_page_json: state.current_page_json.clone(),
         page_count: state.page_count,
         insert_text: String::new(),
+        toasts: Vec::new(),
     };
     with_timeout(RUN_TIMEOUT, "插件执行", move || {
         let msg = run_command(&source, &command_id, &state)?;
-        let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
-        Ok((msg, insert))
+        let (insert, toasts) = RUN_STATE.with(|s| {
+            let st = s.borrow();
+            (st.insert_text.clone(), st.toasts.clone())
+        });
+        Ok((msg, insert, toasts))
     })
 }
 
@@ -589,7 +683,8 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             Ok(s) => s,
             Err(_) => continue,
         };
-        let commands = discover_commands_timed(&source, DISCOVER_TIMEOUT).unwrap_or_default();
+        let commands = discover_commands_timed(&manifest.id, &source, DISCOVER_TIMEOUT)
+            .unwrap_or_default();
         let pid = manifest.id.clone();
         out.push(PluginMeta {
             id: pid.clone(),
@@ -656,14 +751,17 @@ pub async fn run_plugin_command(
         (page_count, current_page_json)
     };
     let state = RunState {
+        plugin_id: plugin_id.clone(),
         page_count,
         current_page_json,
         insert_text: String::new(),
+        toasts: Vec::new(),
     };
-    let (message, insert) = run_command_timeout(&source, &command_id, &state)?;
+    let (message, insert, toasts) = run_command_timeout(&source, &command_id, &state)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
+        toasts,
     })
 }
 
@@ -713,7 +811,7 @@ pub async fn install_plugin(app: AppHandle, source_path: String) -> Result<Plugi
     }
     let source = load_plugin_source(&src, &manifest)?;
     // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
-    let commands = discover_commands_timed(&source, DISCOVER_TIMEOUT)?;
+    let commands = discover_commands_timed(&manifest.id, &source, DISCOVER_TIMEOUT)?;
 
     let dest = plugins_root(&app)?.join(&manifest.id);
     if dest.exists() {
@@ -755,6 +853,36 @@ pub fn open_plugin_dir(app: AppHandle) -> Result<String, String> {
     Ok(root.to_string_lossy().to_string())
 }
 
+/// 读取插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都会进这个环形缓冲）。
+///
+/// `plugin_id` 省略 = 全部插件；`limit` 省略 = 全量（上限即环形缓冲容量）。
+/// 返回按时间正序，前端可直接顺序渲染。
+#[tauri::command]
+pub fn plugin_logs(plugin_id: Option<String>, limit: Option<usize>) -> Vec<PluginLogLine> {
+    let all: Vec<PluginLogLine> = {
+        let q = PLUGIN_LOGS.lock().unwrap_or_else(|e| e.into_inner());
+        q.iter().cloned().collect()
+    };
+    let mut filtered: Vec<PluginLogLine> = all
+        .into_iter()
+        .filter(|l| plugin_id.as_deref().is_none_or(|p| l.plugin_id == p))
+        .collect();
+    let keep = limit.unwrap_or(PLUGIN_LOG_CAPACITY).min(PLUGIN_LOG_CAPACITY);
+    if filtered.len() > keep {
+        filtered.drain(0..filtered.len() - keep);
+    }
+    filtered
+}
+
+/// 清空插件日志。
+#[tauri::command]
+pub fn clear_plugin_logs() {
+    PLUGIN_LOGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -765,7 +893,7 @@ mod tests {
 register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
   run: function(){ return "hi " + __pages(); } });
 "#;
-        let state = RunState { current_page_json: String::new(), page_count: 7, insert_text: String::new() };
+        let state = RunState { page_count: 7, ..Default::default() };
         let res = run_command(source, "t.hello", &state).unwrap();
         assert_eq!(res, "hi 7");
     }
@@ -773,7 +901,7 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
     #[test]
     fn reports_missing_command() {
         let source = r#"register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false, run: function(){ return "x"; } });"#;
-        let state = RunState { current_page_json: String::new(), page_count: 0, insert_text: String::new() };
+        let state = RunState { page_count: 0, ..Default::default() };
         let res = run_command(source, "t.nope", &state).unwrap();
         assert!(res.contains("命令不存在"));
     }
@@ -785,7 +913,7 @@ register({ id: "t.hello", title: "Hello", description: "", closeOnRun: false,
 register({ id: "t.ins", title: "Insert", description: "", closeOnRun: false,
   run: function(){ __insert("hello from plugin"); return "ok"; } });
 "#;
-        let state = RunState { current_page_json: String::new(), page_count: 0, insert_text: String::new() };
+        let state = RunState { page_count: 0, ..Default::default() };
         let message = run_command(source, "t.ins", &state).unwrap();
         assert_eq!(message, "ok");
         let insert = RUN_STATE.with(|s| s.borrow().insert_text.clone());
@@ -841,7 +969,7 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         // 此前 discovery 完全没有超时：插件顶层写个 while(true) 就能让
         // list_plugins 永不返回（而那是同步命令，会占住调用线程）。
         let started = std::time::Instant::now();
-        let res = discover_commands_timed("while(true){}", DISCOVER_TIMEOUT);
+        let res = discover_commands_timed("t.discover", "while(true){}", DISCOVER_TIMEOUT);
         assert!(res.is_err(), "顶层死循环应当失败而不是成功");
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -996,8 +1124,86 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         // ——能跑到这里就说明进程没有被 abort 掉。
         let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
   run: function(){ return "fine"; } });"#;
-        let (msg, _) = run_command_timeout(ok, "t.ok", &RunState::default()).unwrap();
+        let (msg, _, _) = run_command_timeout(ok, "t.ok", &RunState::default()).unwrap();
         assert_eq!(msg, "fine");
+    }
+
+    // ---- 插件日志 / __toast 接通 UI ----
+
+    /// 日志是**进程级**环形缓冲，测试并行跑会互相踩；与日志相关的测试统一串行。
+    static LOG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn log_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        LOG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn toast_is_returned_to_the_caller_and_logged() {
+        let _g = log_test_guard();
+        clear_plugin_logs();
+        // 此前 __toast 只 eprintln，用户完全看不到；现在随结果回传前端。
+        let source = r#"register({ id: "t.toast", title: "T", description: "", closeOnRun: false,
+  run: function(){ __toast("你好"); return "done"; } });"#;
+        let state = RunState {
+            plugin_id: "tp".to_string(),
+            ..Default::default()
+        };
+        let (msg, _insert, toasts) = run_command_timeout(source, "t.toast", &state).unwrap();
+        assert_eq!(msg, "done");
+        assert_eq!(
+            toasts,
+            vec!["你好".to_string()],
+            "__toast 必须随结果回传给前端，否则用户还是看不到"
+        );
+        let logs = plugin_logs(Some("tp".to_string()), None);
+        assert!(
+            logs.iter().any(|l| l.message == "你好" && l.plugin_id == "tp"),
+            "__toast 也应进日志环形缓冲"
+        );
+    }
+
+    #[test]
+    fn plugin_log_goes_to_the_ring_buffer_with_level() {
+        let _g = log_test_guard();
+        clear_plugin_logs();
+        // 插件运行时没有 console（boa_engine 不含 console 对象），__log 是作者唯一手段。
+        let source = r#"register({ id: "t.log", title: "L", description: "", closeOnRun: false,
+  run: function(){ __log("warn", "注意"); __log("", "默认级别"); return "ok"; } });"#;
+        let state = RunState {
+            plugin_id: "tlog".to_string(),
+            ..Default::default()
+        };
+        run_command_timeout(source, "t.log", &state).unwrap();
+        let logs = plugin_logs(Some("tlog".to_string()), None);
+        assert!(logs.iter().any(|l| l.level == "warn" && l.message == "注意"));
+        assert!(
+            logs.iter().any(|l| l.level == "info" && l.message == "默认级别"),
+            "空 level 应当归一为 info"
+        );
+    }
+
+    #[test]
+    fn plugin_logs_are_capped_filterable_and_clearable() {
+        let _g = log_test_guard();
+        clear_plugin_logs();
+        for i in 0..(PLUGIN_LOG_CAPACITY + 10) {
+            push_log("cap", "info", &format!("line-{i}"));
+        }
+        let all = plugin_logs(None, None);
+        assert_eq!(all.len(), PLUGIN_LOG_CAPACITY, "环形缓冲必须封顶");
+        assert_eq!(
+            all.last().unwrap().message,
+            format!("line-{}", PLUGIN_LOG_CAPACITY + 9),
+            "保留的应当是最新的那批"
+        );
+
+        let tail = plugin_logs(Some("cap".to_string()), Some(3));
+        assert_eq!(tail.len(), 3, "limit 应当生效");
+        assert_eq!(tail.last().unwrap().message, format!("line-{}", PLUGIN_LOG_CAPACITY + 9));
+
+        assert!(plugin_logs(Some("别的插件".to_string()), None).is_empty(), "按插件过滤应当生效");
+        clear_plugin_logs();
+        assert!(plugin_logs(None, None).is_empty());
     }
 
     // ---- 工具 ----

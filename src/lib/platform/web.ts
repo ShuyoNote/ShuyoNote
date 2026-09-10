@@ -2338,12 +2338,14 @@ function makeInvoke(store: SqliteStore) {
     // ---- Plugins ----
     if (cmd === "list_plugins") return [] as T;
     if (cmd === "open_plugin_dir") return "" as T;
-    if (cmd === "run_plugin_command") return { message: "", insert: null } as T;
+    if (cmd === "run_plugin_command") return { message: "", insert: null, toasts: [] } as T;
     // Plugin management is a no-op on Web (no disk plugin runtime): return safe
     // defaults instead of throwing so the UI degrades gracefully.
     if (cmd === "install_plugin") return undefined as T;
     if (cmd === "set_plugin_enabled") return undefined as T;
     if (cmd === "uninstall_plugin") return undefined as T;
+    if (cmd === "plugin_logs") return [] as T;
+    if (cmd === "clear_plugin_logs") return undefined as T;
 
     // ---- Sync ----
     const wsIdNow = (): string => getWs()?.id ?? getActiveWsId();
