@@ -1,0 +1,251 @@
+// 移动端布局验收 · 用真实 Chromium 在窄屏/宽屏两种视口下断言侧栏行为。
+//
+// 为什么需要它：移动端的侧栏行为全都藏在「CSS 层叠 + matchMedia + z-index +
+// localStorage」的交叉处，单测覆盖不到，而且失败起来全是静默的——
+//   · 侧栏收不起来（.sidebar{display:flex} 压掉 [hidden]{display:none}）
+//   · 触屏没有 hover，收起后找不到展开入口
+//   · 移动端自动收起把 sidebarOpen 写进 localStorage，污染桌面端偏好
+// 这三类问题都真实发生过，且都不是报错，只是行为不对。
+//
+// 前置：本机有 Chrome/Chromium（或 PUPPETEER_EXECUTABLE_PATH 指定），
+//       以及已启动的 web 开发服务（默认 http://localhost:5173/）。
+//
+// 用法：
+//   pnpm dev:web                       # 另开一个终端
+//   pnpm test:mobile-layout            # 有失败即非零退出
+//   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-layout
+//   node scripts/verify-mobile-layout.mjs --shots /tmp/shots   # 顺便存图
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
+const PHONE = { width: 390, height: 844 };   // iPhone 14/15 逻辑分辨率
+const DESKTOP = { width: 1280, height: 800 };
+
+const shotsArg = process.argv.indexOf("--shots");
+const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
+
+let pass = 0;
+let fail = 0;
+const ok = (cond, msg) => {
+  if (cond) {
+    pass++;
+    console.log(`  ✓ ${msg}`);
+  } else {
+    fail++;
+    console.error(`  ✗ ${msg}`);
+  }
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 找一个可用的 Chrome。puppeteer-core 不带浏览器，所以这里自己找；
+// 找不到就明确报错，而不是静默跳过（否则这个验收脚本会假装通过）。
+function findChrome() {
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+
+  // puppeteer 的浏览器缓存（装了完整版 puppeteer 的话就在这里）
+  const cache = join(homedir(), ".cache", "puppeteer", "chrome");
+  if (existsSync(cache)) {
+    for (const ver of readdirSync(cache)) {
+      for (const rel of [
+        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        "chrome-linux64/chrome",
+        "chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      ]) {
+        const p = join(cache, ver, rel);
+        if (existsSync(p)) return p;
+      }
+    }
+  }
+
+  for (const p of [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+  ]) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+// 在页面里读「侧栏 / 开合按钮 / 遮罩」的真实计算样式与属性。
+const probe = () => {
+  const sidebar = document.querySelector(".sidebar");
+  const toggle = document.querySelector(".sidebar-toggle-btn");
+  const backdrop = document.querySelector(".mobile-sidebar-backdrop");
+  const disp = (el) => (el ? getComputedStyle(el).display : null);
+  return {
+    mobileMQ: matchMedia("(max-width: 768px)").matches,
+    sidebarDisplay: disp(sidebar),
+    sidebarHidden: sidebar ? sidebar.hasAttribute("hidden") : null,
+    toggleDisplay: disp(toggle),
+    toggleAria: toggle?.getAttribute("aria-expanded") ?? null,
+    backdrop: !!backdrop,
+    stored: localStorage.getItem("shuyonote:sidebarOpen"),
+  };
+};
+
+// 抽屉打开时，右侧悬浮工具栏（.right-rail）应该是被遮罩挡住、点不到的。
+const railBlockedByBackdrop = () => {
+  const rail = document.querySelector(".right-rail");
+  if (!rail) return null;
+  const r = rail.getBoundingClientRect();
+  const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return at?.classList?.contains("mobile-sidebar-backdrop") ?? false;
+};
+
+async function main() {
+  const executablePath = findChrome();
+  if (!executablePath) {
+    console.error("找不到 Chrome/Chromium。请安装 Google Chrome，或用 PUPPETEER_EXECUTABLE_PATH 指定路径。");
+    process.exit(1);
+  }
+  console.log(`浏览器: ${executablePath}`);
+
+  let reachable = false;
+  try {
+    const r = await fetch(APP_URL, { signal: AbortSignal.timeout(5000) });
+    reachable = r.ok;
+  } catch {
+    /* 下面统一报错 */
+  }
+  if (!reachable) {
+    console.error(`应用地址不可达：${APP_URL}\n请先启动：pnpm dev:web（或设置 APP_URL 指向已运行的服务）。`);
+    process.exit(1);
+  }
+  console.log(`应用地址: ${APP_URL}\n`);
+
+  const { default: puppeteer } = await import("puppeteer-core");
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: true,
+    args: ["--no-sandbox", "--disable-gpu"],
+  });
+  if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+  const shot = async (page, name) => {
+    if (SHOTS) await page.screenshot({ path: join(SHOTS, `${name}.png`) });
+  };
+
+  try {
+    // ---------- 手机视口：用独立 context，保证 localStorage 从零开始 ----------
+    const phoneCtx = await browser.createBrowserContext();
+    const phone = await phoneCtx.newPage();
+    const pageErrors = [];
+    phone.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
+    await phone.setViewport({ ...PHONE, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+    await sleep(3000);
+
+    console.log(`【手机 ${PHONE.width}x${PHONE.height} · 初始】`);
+    let s = await phone.evaluate(probe);
+    ok(s.mobileMQ, "命中窄屏媒体查询");
+    ok(s.sidebarDisplay === "none", `侧栏默认收起（display=${s.sidebarDisplay}）——hidden 未被 .sidebar 的 display:flex 压掉`);
+    ok(s.sidebarHidden === true, "侧栏带 hidden 属性");
+    ok(s.toggleDisplay !== "none", `窄屏显示开合按钮（display=${s.toggleDisplay}）`);
+    ok(s.toggleAria === "false", `开合按钮 aria-expanded=false（实际 ${s.toggleAria}）`);
+    ok(!s.backdrop, "无遮罩");
+    ok(s.stored === null, `移动端自动收起不写 localStorage（实际 ${JSON.stringify(s.stored)}）——否则会污染桌面端偏好`);
+    await shot(phone, "01-phone-closed");
+
+    console.log(`\n【手机 · 点开合按钮】`);
+    await phone.click(".sidebar-toggle-btn");
+    await sleep(900);
+    s = await phone.evaluate(probe);
+    ok(s.sidebarDisplay === "flex", `抽屉滑入（display=${s.sidebarDisplay}）`);
+    ok(s.sidebarHidden === false, "hidden 属性已摘除");
+    ok(s.backdrop, "出现遮罩");
+    ok(s.toggleAria === "true", `开合按钮 aria-expanded=true（实际 ${s.toggleAria}）`);
+    ok((await phone.evaluate(railBlockedByBackdrop)) === true, "遮罩挡住右侧悬浮工具栏（抽屉打开时不该点得到）");
+    await shot(phone, "02-phone-open");
+
+    console.log(`\n【手机 · 点遮罩】`);
+    // 遮罩是 inset:0 的整屏元素，但侧栏（更宽、z-index 更高）盖住了它左侧一大块，
+    // 元素中心点落在侧栏上——必须点右侧真正露出来的区域。
+    await phone.mouse.click(PHONE.width - 20, 500);
+    await sleep(900);
+    s = await phone.evaluate(probe);
+    ok(s.sidebarDisplay === "none", "抽屉关闭");
+    ok(!s.backdrop, "遮罩消失");
+    ok(s.toggleAria === "false", "开合按钮状态复位");
+    await shot(phone, "03-phone-backdrop-closed");
+    ok(pageErrors.length === 0, `页面无 JS 报错${pageErrors.length ? "：" + pageErrors.join(" | ") : ""}`);
+
+    // ---------- 手机 · 右侧面板叠加：主区不该被"让位"内边距挤压 ----------
+    // 桌面端 TOC/AI 是固定宽侧板，主区靠 padding-right 让位；窄屏它们是全屏叠加，
+    // 再让位就会把主区内容盒挤成 0 宽，并把 .main 撑出 .app-body
+    // （flex 项缩不到 padding 以下，宽度被顶成 380px > 视口 342px）。
+    const RIGHT_PANELS = [
+      { index: 0, name: "AI 助手" },
+      { index: 1, name: "评论 / 通知" },
+      { index: 2, name: "目录" },
+    ];
+    const mainGeometry = () => {
+      const main = document.querySelector(".main");
+      if (!main) return null;
+      const r = main.getBoundingClientRect();
+      return {
+        right: Math.round(r.right),
+        paddingRight: getComputedStyle(main).paddingRight,
+        docWidth: document.documentElement.scrollWidth,
+        winWidth: innerWidth,
+      };
+    };
+    for (const p of RIGHT_PANELS) {
+      // 每次重新加载，避免上一个面板的开关状态串进来
+      await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await sleep(2000);
+      const btns = await phone.$$(".right-rail button");
+      if (!btns[p.index]) {
+        ok(false, `${p.name}：右侧悬浮栏没有第 ${p.index} 个按钮`);
+        continue;
+      }
+      await btns[p.index].click();
+      await sleep(1400);
+      const g = await phone.evaluate(mainGeometry);
+      console.log(`\n【手机 · 打开「${p.name}」】`);
+      ok(g.paddingRight === "0px", `主区不让位（padding-right=${g.paddingRight}）`);
+      ok(g.right <= g.winWidth, `主区不超出视口（right=${g.right} ≤ ${g.winWidth}）`);
+      ok(g.docWidth <= g.winWidth, `无横向溢出（文档宽=${g.docWidth}）`);
+      await shot(phone, `05-phone-panel-${p.index}`);
+    }
+    await phoneCtx.close();
+
+    // ---------- 桌面视口：独立 context，默认偏好（侧栏展开）----------
+    const deskCtx = await browser.createBrowserContext();
+    const desktop = await deskCtx.newPage();
+    await desktop.setViewport(DESKTOP);
+    await desktop.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+    await sleep(2500);
+
+    console.log(`\n【桌面 ${DESKTOP.width}x${DESKTOP.height}】`);
+    s = await desktop.evaluate(probe);
+    ok(!s.mobileMQ, "不命中窄屏媒体查询");
+    ok(s.sidebarDisplay === "flex", `侧栏常驻可见（display=${s.sidebarDisplay}）`);
+    ok(s.toggleDisplay === "none", `桌面不显示开合按钮（display=${s.toggleDisplay}）——点活动图标即可开合`);
+    ok(!s.backdrop, "桌面无移动端遮罩");
+    await shot(desktop, "04-desktop");
+    await deskCtx.close();
+  } finally {
+    await browser.close();
+  }
+
+  console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
+  if (fail) {
+    console.error("存在失败项：移动端布局验收未通过。");
+    process.exit(1);
+  }
+  console.log("移动端布局验收全部通过 ✅");
+  if (SHOTS) console.log(`截图已保存到 ${SHOTS}`);
+}
+
+main().catch((e) => {
+  console.error("验收脚本异常:", e);
+  process.exit(1);
+});

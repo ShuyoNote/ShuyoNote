@@ -40,11 +40,13 @@ import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
+import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
+import { useActivity } from "./store/activity";
 import { useSpaceStore } from "./store/space";
 import { useEditorStore } from "./store/editor";
 import { $createParagraphNode, $getRoot } from "lexical";
@@ -520,6 +522,8 @@ function App() {
   useAutoSync();
   usePresence();
   useSyncStream();
+  const isMobile = useMobile();
+  const sidebarOpen = useActivity((s) => s.sidebarOpen);
   useUpdateChecker();
   useGlobalShortcuts(() =>
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
@@ -610,6 +614,13 @@ function App() {
       <div className="app-body">
         <ActivityBar />
         <PageTree view={view} onViewChange={setView} />
+        {isMobile && sidebarOpen && (
+          <div
+            className="mobile-sidebar-backdrop"
+            onClick={() => useActivity.getState().setSidebarOpen(false, { persist: false })}
+            aria-hidden
+          />
+        )}
       {templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
       ) : view === "graph" ? (

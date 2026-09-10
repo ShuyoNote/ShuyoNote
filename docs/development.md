@@ -108,7 +108,12 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 # 6. 文档相对链接（改动文档 / 挪动文件后跑）
 pnpm check:doc-links                  # 期望 "N 条相对链接全部可达"
+
+# 7. 移动端布局验收（改了侧栏/响应式 CSS 时跑；需本机 Chrome + 已启动 pnpm dev:web）
+pnpm test:mobile-layout               # 期望 "N 通过 / 0 失败"
 ```
+
+> **`test:mobile-layout` 补的是单测够不到的盲区**：侧栏的移动端行为藏在「CSS 层叠 + matchMedia + z-index + localStorage」的交叉处，用 happy-dom 测不出来（它不按视口重算媒体查询）。脚本用真实 Chromium 在 390×844 / 1280×800 两种视口下断言 20 项，详见 `docs/MOBILE.md` §5.2。依赖只用 `puppeteer-core`（不含浏览器下载），找不到 Chrome 会明确报错而不是静默跳过。
 
 > **命令契约守卫**（`scripts/check-web-commands.mjs`，已并入 `pnpm build`）校验三件事：Rust 命令 ⊆ `web.ts`、Rust 命令 ⊆ `CommandMap`、**`CommandMap` 顶层参数键必须是 camelCase**。第三条是运行时坑的静态兜底——**Tauri 2 只接受 camelCase 参数键**并在运行时映射到 Rust 的 snake_case 形参，传 `server_url` 会报 `missing required key serverUrl`；而 TS 查不出来（契约和调用点会「一起错」）。`args: { args: {...} }` 这种「整个结构体当一个参数」的写法除外，内层字段仍是 serde 的 snake_case。
 

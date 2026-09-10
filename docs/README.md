@@ -14,6 +14,7 @@
 | **身份 / 鉴权 / 加密模型（密钥 vs 账户、多空间、本地私密）** | [身份与隐私模型](identity-privacy-model.md) |
 | **身份 / 隐私落地节奏** | [身份与隐私子路线图](identity-privacy-roadmap.md) |
 | **Web 版为什么不能多设备同步** | [Web 同步能力边界](web-sync-boundary.md) |
+| **移动端怎么适配（安卓/iOS/鸿蒙壳）** | [移动端适配](MOBILE.md) |
 | 下一步做什么 | [路线图](roadmap.md) |
 | 免费客户出口怎么做 | [免费客户出口·网站/帮助站指南](free-site-export-guide.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
@@ -29,6 +30,7 @@ docs/
 ├── README.md            # 本文档：统一入口 / 导航 / 索引
 ├── development.md       # 开发指南：运行、测试、验证、提版规则
 ├── architecture.md      # 系统架构与存储模型
+├── MOBILE.md            # 移动端适配（WebView 壳 + MobileBridge）
 ├── web-sync-boundary.md # Web 版同步能力边界（为什么不支持多设备同步 + 若要做的路线）
 ├── identity-privacy-model.md # 身份/鉴权/加密模型（密钥 vs 账户、多空间、本地私密）
 ├── identity-privacy-roadmap.md # 身份/隐私落地子路线图
@@ -70,7 +72,7 @@ CHANGELOG.md             # 版本变更日志
 | **M3** | 主题 / 外观自定义 + 插件雏形 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md) |
 | **M4** | 属性驱动仪表盘聚合 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M5** | PDF 导出 | [x] | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
-| **M6** | 移动端适配 | 未做（环境受限） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
+| **M6** | 移动端适配 | [规划]（WebView 壳进行中） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃）+ [移动端适配](MOBILE.md) |
 | **M7** | 数据库视图扩展 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M8** | 新页面引导层 | [x] | — |
 | **M9** | 模板 | [x] | [模板方案](plans/2026-08-22-template-plan.md) |

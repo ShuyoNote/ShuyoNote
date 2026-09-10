@@ -388,6 +388,11 @@ html[data-platform="win"] .app-body {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* 侧栏开合按钮：只在窄屏出现（桌面端点活动图标即可开合，且还有 hover 提示；
+   触屏没有 hover，必须给一个看得见的入口）。默认不显示，见文件末尾的媒体查询。 */
+.sidebar-toggle-btn {
+  display: none;
+}
 .activity-btn.is-on {
   color: var(--accent);
 }
@@ -451,6 +456,13 @@ html[data-platform="win"] .app-body {
   position: relative;
   transition: width var(--transition), min-width var(--transition);
   overflow: hidden;
+}
+
+/* `hidden` 属性必须显式打回 display:none。作者样式里的 `.sidebar{display:flex}`
+ * 会压过浏览器默认的 `[hidden]{display:none}`（普通作者声明优先于普通 UA 声明），
+ * 所以只写 hidden 属性侧栏根本不会消失——桌面端收起、移动端抽屉关闭都失效。 */
+.sidebar[hidden] {
+  display: none;
 }
 
 .sidebar-resizer {
@@ -18207,4 +18219,68 @@ p:has(> .editor-drawing-container) {
 .email-rich-body td, .email-rich-body th { padding: 4px 6px; }
 .email-paste { display: flex; flex-direction: column; gap: 8px; }
 
+
+
+/* ---------------------------------------------------------------------------
+ * 移动端 / 小屏响应式（手机浏览器 + WebView 壳）：<=768px
+ * - 侧栏变左侧抽屉 overlay（不占主区宽度），主区全屏。
+ * - 右侧 AI / 评论抽屉全屏叠加。
+ * - 活动栏保留（瘦条导航）。
+ * ------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  /* 侧栏：显示时不再占 flex 流，改为左侧滑入抽屉 + 遮罩。 */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: min(320px, 88vw);
+    min-width: 0;
+    max-width: 88vw;
+    box-shadow: var(--shadow-xl);
+    animation: mobile-sidebar-in var(--transition-fast) ease;
+  }
+  @keyframes mobile-sidebar-in {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  /* 窄屏显示侧栏开合按钮：触屏没有 hover 提示，收起后必须有个看得见的入口。 */
+  .sidebar-toggle-btn {
+    display: grid;
+  }
+  /* 侧栏收起后主区自动全宽（sidebar 不再占 flex 流）。 */
+  .main {
+    width: 100%;
+  }
+  /* 右抽屉：AI / 评论，窄屏全屏叠加。 */
+  .ai-panel,
+  .comments-drawer {
+    width: 100%;
+    max-width: 100%;
+  }
+  /* 窄屏下 TOC / AI 是叠加层，主区不需要为它们让位。桌面端那两条让位规则
+     （padding-right: 280px / 380px）在窄屏会把主区内容盒挤成 0 宽，并把
+     .main 撑出 .app-body —— flex 项缩不到 padding 以下，宽度被顶成 380px。 */
+  body.is-toc-open .main,
+  body.is-ai-open .main {
+    padding-right: 0;
+  }
+  /* 顶栏标题栏在窄屏收起部分（保留标题与操作）。 */
+  .titlebar-sync,
+  .presence-bar {
+    display: none;
+  }
+}
+
+
+/* 移动端侧栏抽屉遮罩：点击关闭，让主区恢复交互。 */
+@media (max-width: 768px) {
+  .mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.4);
+  }
+}
 

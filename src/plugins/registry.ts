@@ -6,6 +6,7 @@ import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
+import { useActivity } from "../store/activity";
 import { useEditorStore } from "../store/editor";
 import { openGuide, guideText } from "../lib/guide";
 import { buildHelpSite } from "../lib/helpSite";
@@ -394,6 +395,18 @@ registerPlugin({
   id: "view",
   name: "视图",
   commands: [
+    {
+      // 侧栏收起后只剩左侧竖条可以点开，触屏上尤其不好发现；命令面板给一条
+      // 明路，也顺带让 Ctrl+B 这个组合在面板里可查。
+      id: "view.toggle-sidebar",
+      title: "切换侧栏",
+      description: "展开 / 收起左侧侧栏（Ctrl+B / ⌘B）",
+      closeOnRun: true,
+      run: () => {
+        useActivity.getState().toggleSidebar();
+        return useActivity.getState().sidebarOpen ? "已展开侧栏" : "已收起侧栏";
+      },
+    },
     {
       id: "view.graph",
       title: "打开关系图",

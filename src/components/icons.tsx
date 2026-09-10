@@ -196,6 +196,16 @@ export function MonitorIcon(props: IconProps) {
   );
 }
 
+/** 左侧栏开合：矩形 + 左侧竖线（对应 VS Code 的 layout-sidebar-left）。 */
+export function SidebarIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="9.5" y1="4" x2="9.5" y2="20" />
+    </Icon>
+  );
+}
+
 export function ChevronLeftIcon(props: IconProps) {
   return (
     <Icon {...props}>

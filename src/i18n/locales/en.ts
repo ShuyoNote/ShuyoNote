@@ -16,6 +16,8 @@ export default {
     followSystem: "Follow system",
     collapse: "Collapse",
     expand: "Expand",
+    expandSidebar: "Show sidebar",
+    collapseSidebar: "Hide sidebar",
     minimize: "Minimize",
     maximize: "Maximize",
     restore: "Restore",

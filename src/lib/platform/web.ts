@@ -19,6 +19,7 @@ import { DEFAULT_COVER } from "../covers";
 // backend. Commands that need it return empty/no-op here so the UI degrades
 // gracefully instead of crashing.
 import type { Platform } from "./types";
+import { getMobileBridge } from "./mobile";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { blobStore, contentHash } from "./blobStore";
 import { spaceStore, useSpaceCatalog } from "./spaceStore";
@@ -3264,6 +3265,11 @@ export function createWebPlatform(): Platform {
     },
     opener: {
       openUrl: async (url) => {
+        // Mobile WebView shell: hand the URL to the OS (dedicated browser/app).
+        const bridge = getMobileBridge();
+        if (bridge?.openUrl) {
+          return bridge.openUrl(url);
+        }
         window.open(url, "_blank", "noopener,noreferrer");
       },
       openPath: async () => {},
@@ -3284,7 +3290,13 @@ export function createWebPlatform(): Platform {
       },
     },
     asset: {
-      convertFileSrc: (path) => path,
+      convertFileSrc: (path) => {
+        // Mobile WebView shell may need to rewrite content-addressed asset paths
+        // to a URL the WebView can load (e.g. custom scheme / virtual file).
+        const bridge = getMobileBridge();
+        if (bridge?.convertFileSrc) return bridge.convertFileSrc(path);
+        return path;
+      },
     },
     webview: {
       onDragDropEvent: async () => () => {},
