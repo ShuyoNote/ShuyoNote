@@ -47,6 +47,7 @@ import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { useNotes } from "./store/notes";
 import { usePlugins } from "./store/plugins";
+import { emitHostEvent } from "./lib/pluginEvents";
 import { useActivity } from "./store/activity";
 import { useSpaceStore } from "./store/space";
 import { useEditorStore } from "./store/editor";
@@ -250,6 +251,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
         });
       }
     };
+  }, []);
+
+  // 启动时加载一次插件列表：事件派发要判断"有没有订阅者"，列表为空会让所有事件静默丢失。
+  // 加载完再播报 app.started（顺序有意：插件得先被认出来，才能收到启动事件）。
+  useEffect(() => {
+    void usePlugins
+      .getState()
+      .load()
+      .then(() => emitHostEvent("app.started", {}));
   }, []);
 
   // 自动同步：按 SyncPanel 里设置的间隔（localStorage "shuyonote:autoSync"），

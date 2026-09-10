@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { emitHostEvent } from "../lib/pluginEvents";
 import { api } from "../lib/api";
 import type { WorkspaceMeta } from "../types";
 
@@ -44,6 +45,7 @@ export const useSpaceStore = create<SpaceState>((set) => ({
     try {
       await api.setActiveWorkspaceId(id);
       set({ activeId: id });
+      emitHostEvent("space.switched", { spaceId: id });
       return true;
     } catch (e) {
       console.error("switch workspace failed", e);

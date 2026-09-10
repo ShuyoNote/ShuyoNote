@@ -359,15 +359,15 @@ on("page.saved", function (payload) {
 });
 ```
 
-| 事件 | 触发时机 | payload |
+| 事件 | 触发时机 | 宿主是否已发 |
 |---|---|---|
-| `app.started` | 应用启动：应用启动完成、插件已加载后触发一次 | |
-| `space.switched` | 切换空间：切换到另一个空间后触发（payload: spaceId） | |
-| `page.opened` | 打开页面：打开一个页面后触发（payload: pageId） | |
-| `page.saved` | 页面已保存：页面内容或标题保存后触发（payload: pageId, title） | |
-| `page.deleted` | 页面已删除：页面被删除后触发（payload: pageId） | |
-| `import.finished` | 导入完成：一次导入结束后触发（payload: count） | |
-| `sync.completed` | 同步完成：一次同步结束后触发（payload: pushed, pulled） | |
+| `app.started` | 应用启动：应用启动完成、插件已加载后触发一次 | ✅ 已在发 |
+| `space.switched` | 切换空间：切换到另一个空间后触发（payload: spaceId） | ✅ 已在发 |
+| `page.opened` | 打开页面：打开一个页面后触发（payload: pageId） | ✅ 已在发 |
+| `page.saved` | 页面已保存：页面内容或标题保存后触发（payload: pageId, title） | ✅ 已在发 |
+| `page.deleted` | 页面已删除：页面被删除后触发（payload: pageId） | ✅ 已在发 |
+| `import.finished` | 导入完成：一次导入结束后触发（payload: count） | ⏳ 还没接 |
+| `sync.completed` | 同步完成：一次同步结束后触发（payload: pushed, pulled） | ⏳ 还没接 |
 
 几条必须知道的规则：
 

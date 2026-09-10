@@ -6,6 +6,15 @@
   "apiVersion": "1.0.0",
   "main": "main.js",
   "permissions": [
-    { "id": "read:pages", "reason": "读取本空间的页面数量与标题（不含正文）" }
+    {
+      "id": "read:pages",
+      "reason": "读取本空间的页面数量与标题（不含正文）"
+    }
+  ],
+  "events": [
+    {
+      "on": "page.opened",
+      "reason": "记录你打开了哪些页面（只写插件自己的日志，不碰笔记）"
+    }
   ]
 }

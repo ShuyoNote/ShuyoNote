@@ -179,11 +179,13 @@ export function genRust(reg) {
   l.push("    pub title: &'static str,");
   l.push("    pub desc: &'static str,");
   l.push("    pub since: &'static str,");
+  l.push("    /// 宿主是否已经在发这个事件。**没接的不会进类型包**，且校验器会如实告知订阅者。");
+  l.push("    pub hosted: bool,");
   l.push("}");
   l.push("");
   l.push("pub const EVENTS: &[PluginEvent] = &[");
   for (const e of reg.events) {
-    l.push(`    PluginEvent { id: ${JSON.stringify(e.id)}, title: ${JSON.stringify(e.title)}, desc: ${JSON.stringify(e.desc)}, since: ${JSON.stringify(e.since)} },`);
+    l.push(`    PluginEvent { id: ${JSON.stringify(e.id)}, title: ${JSON.stringify(e.title)}, desc: ${JSON.stringify(e.desc)}, since: ${JSON.stringify(e.since)}, hosted: ${e.hosted} },`);
   }
   l.push("];");
   l.push("");
@@ -271,9 +273,14 @@ export function genTypes(reg) {
   l.push(" */");
   l.push("export type PluginCommandArgs = Record<string, any>;");
   l.push("");
-  l.push("/** 宿主事件名（manifest `events[].on` 只能填这些）。 */");
+  l.push("/**");
+  l.push(" * 宿主事件名（manifest `events[].on` 只能填这些）。");
+  l.push(" *");
+  l.push(" * **只列出宿主真的会发的**：写在类型外的值收不到任何事件，");
+  l.push(" * 所以让它在这里报错，比让作者对着文档空等要好。");
+  l.push(" */");
   l.push("export type PluginEventName =");
-  for (const e of reg.events) l.push(`  | ${JSON.stringify(e.id)}`);
+  for (const e of reg.events.filter((x) => x.hosted)) l.push(`  | ${JSON.stringify(e.id)}`);
   l.push("  ;");
   l.push("");
   l.push("/** 注册事件处理器：在插件顶层调用（与 `register` 并列）。 */");
@@ -549,9 +556,9 @@ export function genDocs(reg) {
   l.push("});");
   l.push("```");
   l.push("");
-  l.push("| 事件 | 触发时机 | payload |");
+  l.push("| 事件 | 触发时机 | 宿主是否已发 |");
   l.push("|---|---|---|");
-  for (const e of reg.events) l.push(`| \`${e.id}\` | ${e.title}：${e.desc} | |`);
+  for (const e of reg.events) l.push(`| \`${e.id}\` | ${e.title}：${e.desc} | ${e.hosted ? "✅ 已在发" : "⏳ 还没接"} |`);
   l.push("");
   l.push("几条必须知道的规则：");
   l.push("");

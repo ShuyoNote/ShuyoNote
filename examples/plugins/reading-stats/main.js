@@ -24,3 +24,9 @@ register({
     return total + " 页";
   }
 });
+
+// 事件钩子示例：订阅「打开页面」——只有 manifest 里声明了、且这里注册了，
+// 两处都在才会收到（缺一处都不会有任何提示，这是有意的设计）。
+on("page.opened", function (payload) {
+  api.log("打开了 " + String(payload.pageId));
+});

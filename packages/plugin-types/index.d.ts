@@ -48,15 +48,18 @@ export interface PluginCommand {
  */
 export type PluginCommandArgs = Record<string, any>;
 
-/** 宿主事件名（manifest `events[].on` 只能填这些）。 */
+/**
+ * 宿主事件名（manifest `events[].on` 只能填这些）。
+ *
+ * **只列出宿主真的会发的**：写在类型外的值收不到任何事件，
+ * 所以让它在这里报错，比让作者对着文档空等要好。
+ */
 export type PluginEventName =
   | "app.started"
   | "space.switched"
   | "page.opened"
   | "page.saved"
   | "page.deleted"
-  | "import.finished"
-  | "sync.completed"
   ;
 
 /** 注册事件处理器：在插件顶层调用（与 `register` 并列）。 */

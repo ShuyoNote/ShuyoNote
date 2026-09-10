@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { emitHostEvent } from "../lib/pluginEvents";
 import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
@@ -66,6 +67,8 @@ export const useNotes = create<NoteState>((set, get) => ({
       // overlay (template center).
       useViewStore.getState().setView("notes");
       useTemplateCenterStore.getState().setOpen(false);
+      // 播报事实即可，谁听由插件层决定（见 lib/pluginEvents）。
+      emitHostEvent("page.opened", { pageId: id });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -114,6 +117,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   deletePage: async (id) => {
     try {
       await api.deletePage(id);
+      emitHostEvent("page.deleted", { pageId: id });
       const { currentId } = get();
       if (currentId === id) {
         set({ currentId: null, current: null });

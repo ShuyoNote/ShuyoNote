@@ -92,16 +92,18 @@ pub struct PluginEvent {
     pub title: &'static str,
     pub desc: &'static str,
     pub since: &'static str,
+    /// 宿主是否已经在发这个事件。**没接的不会进类型包**，且校验器会如实告知订阅者。
+    pub hosted: bool,
 }
 
 pub const EVENTS: &[PluginEvent] = &[
-    PluginEvent { id: "app.started", title: "应用启动", desc: "应用启动完成、插件已加载后触发一次", since: "1.0.0" },
-    PluginEvent { id: "space.switched", title: "切换空间", desc: "切换到另一个空间后触发（payload: spaceId）", since: "1.0.0" },
-    PluginEvent { id: "page.opened", title: "打开页面", desc: "打开一个页面后触发（payload: pageId）", since: "1.0.0" },
-    PluginEvent { id: "page.saved", title: "页面已保存", desc: "页面内容或标题保存后触发（payload: pageId, title）", since: "1.0.0" },
-    PluginEvent { id: "page.deleted", title: "页面已删除", desc: "页面被删除后触发（payload: pageId）", since: "1.0.0" },
-    PluginEvent { id: "import.finished", title: "导入完成", desc: "一次导入结束后触发（payload: count）", since: "1.0.0" },
-    PluginEvent { id: "sync.completed", title: "同步完成", desc: "一次同步结束后触发（payload: pushed, pulled）", since: "1.0.0" },
+    PluginEvent { id: "app.started", title: "应用启动", desc: "应用启动完成、插件已加载后触发一次", since: "1.0.0", hosted: true },
+    PluginEvent { id: "space.switched", title: "切换空间", desc: "切换到另一个空间后触发（payload: spaceId）", since: "1.0.0", hosted: true },
+    PluginEvent { id: "page.opened", title: "打开页面", desc: "打开一个页面后触发（payload: pageId）", since: "1.0.0", hosted: true },
+    PluginEvent { id: "page.saved", title: "页面已保存", desc: "页面内容或标题保存后触发（payload: pageId, title）", since: "1.0.0", hosted: true },
+    PluginEvent { id: "page.deleted", title: "页面已删除", desc: "页面被删除后触发（payload: pageId）", since: "1.0.0", hosted: true },
+    PluginEvent { id: "import.finished", title: "导入完成", desc: "一次导入结束后触发（payload: count）", since: "1.0.0", hosted: false },
+    PluginEvent { id: "sync.completed", title: "同步完成", desc: "一次同步结束后触发（payload: pushed, pulled）", since: "1.0.0", hosted: false },
 ];
 
 /// 一个触发面：命令能出现在哪里（作者在 `register({ menus })` 里声明）。

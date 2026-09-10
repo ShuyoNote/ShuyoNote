@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import { toast } from "./toast";
 import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
+import { registerHostEventEmitter } from "../lib/pluginEvents";
 import type {
   PluginAuditEntry,
   PluginEventOutcome,
@@ -330,3 +331,20 @@ export const usePlugins = create<PluginsState>((set) => ({
     set({ autoReloadedAt: Date.now() });
   },
 }));
+
+/**
+ * 宿主事实 → 插件事件的桥（见 lib/pluginEvents 为什么要有这一层）。
+ *
+ * 这里有一道**快速路径**：没有「启用中且订阅了该事件」的插件时，连 IPC 都不发。
+ * 理由是 `page.opened` 这类事件每次切页都会播报，而为它每次都跨进程问一圈
+ * （读一遍各插件 manifest）是不必要的开销；插件列表本来就在内存里，判断是免费的。
+ * 代价：列表过期时可能漏发——但列表在启动时就加载，且插件增删都会刷新它。
+ */
+registerHostEventEmitter((event, payload) => {
+  const st = usePlugins.getState();
+  const hasSubscriber = st.plugins.some(
+    (pl) => pl.enabled && (pl.events ?? []).some((e) => e.id === event),
+  );
+  if (!hasSubscriber) return;
+  void st.emitEvent(event, payload);
+});

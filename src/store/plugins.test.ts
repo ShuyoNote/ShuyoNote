@@ -29,6 +29,7 @@ vi.mock("../lib/pluginDrafts", () => ({
 import { api } from "../lib/api";
 import type { PluginEventOutcome, PluginMeta, PluginValidation } from "../types";
 import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
+import { emitHostEvent } from "../lib/pluginEvents";
 import { usePlugins } from "./plugins";
 import { useToast } from "./toast";
 
@@ -430,5 +431,59 @@ describe("plugins store · 事件派发", () => {
     await expect(usePlugins.getState().emitEvent("page.saved")).resolves.toBeUndefined();
 
     expect(lastToast()).toBeUndefined();
+  });
+});
+
+/**
+ * 宿主事实 → 插件事件的桥（含"没人订阅就不发 IPC"的快速路径）。
+ *
+ * 这条快速路径是必要的：`page.opened` 每次切页都会播报，若每次都跨进程问一圈
+ * （读一遍各插件 manifest）就是白白开销。但它也有代价——列表过期时会漏发，
+ * 所以下面把"什么时候该发、什么时候不该发"钉清楚。
+ */
+describe("plugins store · 宿主事件桥", () => {
+  const withEvents = (enabled: boolean, ids: string[]): PluginMeta => ({
+    ...PLUGIN,
+    enabled,
+    events: ids.map((id) => ({ id, title: id, reason: "测试" })),
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.emitPluginEvent).mockResolvedValue([]);
+  });
+
+  it("没有启用中的订阅者 → 连 IPC 都不发", async () => {
+    usePlugins.setState({ plugins: [withEvents(true, ["page.saved"])] });
+
+    emitHostEvent("page.opened", { pageId: "p1" });
+    await Promise.resolve();
+
+    expect(api.emitPluginEvent).not.toHaveBeenCalled();
+  });
+
+  it("有订阅者 → 派发（带上 payload）", async () => {
+    usePlugins.setState({ plugins: [withEvents(true, ["page.opened"])] });
+
+    emitHostEvent("page.opened", { pageId: "p1" });
+    await Promise.resolve();
+
+    expect(api.emitPluginEvent).toHaveBeenCalledWith("page.opened", JSON.stringify({ pageId: "p1" }));
+  });
+
+  it("被禁用的插件不算订阅者（禁用了就不该在后台跑）", async () => {
+    usePlugins.setState({ plugins: [withEvents(false, ["page.opened"])] });
+
+    emitHostEvent("page.opened", { pageId: "p1" });
+    await Promise.resolve();
+
+    expect(api.emitPluginEvent).not.toHaveBeenCalled();
+  });
+
+  it("插件列表为空时不抛错（启动早期、或插件功能不可用时）", async () => {
+    usePlugins.setState({ plugins: [] });
+
+    expect(() => emitHostEvent("app.started", {})).not.toThrow();
+    await Promise.resolve();
+    expect(api.emitPluginEvent).not.toHaveBeenCalled();
   });
 });
