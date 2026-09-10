@@ -276,9 +276,26 @@ async function main() {
     ok(s.sidebarDisplay === "flex", `侧栏常驻可见（display=${s.sidebarDisplay}）`);
     ok(s.railVisible === true, `桌面竖条常驻在布局流内（右边缘=${s.railRight}）`);
     ok(s.railToggleDisplay === null, "桌面根本不渲染浮层唤出按钮（元素不存在，不只是 display:none）");
-    ok(s.toggleDisplay === "none", `桌面不显示开合按钮（display=${s.toggleDisplay}）——点活动图标即可开合`);
+    // 这条断言 2026-09 反转了：开合按钮此前桌面 display:none（理由"点活动图标也能开合"），
+    // 但那是**隐式约定**（提示只有 hover 才出现），而且拖分隔条收起侧栏后同样没有可见入口——
+    // "收起来就找不回"是真实可达的状态。现在按钮桌面常驻，所以这里断言它**可见**，
+    // 并且顺手把承诺验掉：点它真的能收起，再点真的能展开。
+    ok(s.toggleDisplay !== "none", `桌面也常驻开合按钮（display=${s.toggleDisplay}）——侧栏收起后靠它找回来`);
     ok(!s.backdrop, "桌面无移动端遮罩");
-    await shot(desktop, "04-desktop");
+
+    console.log(`\n【桌面 · 点开合按钮收起 → 再点展开】`);
+    await desktop.click(".sidebar-toggle-btn");
+    await sleep(700);
+    s = await desktop.evaluate(probe);
+    ok(s.sidebarDisplay === "none" || s.sidebarHidden === true, `点一下收起侧栏（display=${s.sidebarDisplay}, hidden=${s.sidebarHidden}）`);
+    ok(!s.backdrop, "桌面收起不引入移动端遮罩");
+    await shot(desktop, "05-desktop-collapsed");
+
+    await desktop.click(".sidebar-toggle-btn");
+    await sleep(700);
+    s = await desktop.evaluate(probe);
+    ok(s.sidebarDisplay === "flex" && s.sidebarHidden === false, `再点一下展开（display=${s.sidebarDisplay}）——"收起来找不回"就此闭环`);
+    await shot(desktop, "06-desktop-expanded");
     await deskCtx.close();
   } finally {
     await browser.close();
