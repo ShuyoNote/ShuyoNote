@@ -2,6 +2,41 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.85.2] - 2026-09-10
+
+> **热修复：文档里写的 10 个编辑器快捷键其实一直是死的，`[[` 菜单的键盘操作同样收不到按键。**
+> 两者根因相同——按键注册在 Lexical 优先级的**最后一档**。只修这个，不夹带任何新功能。
+
+### 修复
+- **`Ctrl+Alt+1/2/3/U/O/T/Q/C/L/M`（文档「编辑器」组）十条全部无效**（**自这批快捷键上线起**）。
+  - **现象**：在编辑器里按这些组合键等于什么都没发生，文档/快捷键面板却写着能用。
+  - **根因**：`InsertShortcutPlugin` 把 `KEY_DOWN_COMMAND` 注册在 `COMMAND_PRIORITY_EDITOR`。
+    Lexical 的优先级队列是 `CRITICAL > HIGH > NORMAL > LOW > **EDITOR（最后一档）**`，而
+    Lexical 自己那支 `$handleKeyDown` 就在 EDITOR 档、且对**每一次** keydown 都 `return true`；
+    它由 `RichTextPlugin` 在 **layout effect** 里装进编辑器，插件则在 `useEffect`（被动 effect，
+    永远晚于 layout effect）里注册 —— 同档里的后来者排在它后面，**一次都收不到事件**。
+  - **改动**：改用 `COMMAND_PRIORITY_LOW`（与已在用的 `SlashMenuPlugin` / `ImagePastePlugin` 一致）。
+- **`[[` 页面链接菜单的 ↑/↓/Enter/Esc 同样收不到**（`PageLinkSuggestPlugin`，同一个档）。
+  - **现象**：菜单开着时按 Enter 不是选中候选，而是**换行**——菜单等于只能用鼠标点。
+  - **改动**：同因同修，改用 `COMMAND_PRIORITY_LOW`。
+- **斜杠菜单的分组标题重复**：菜单按「同组相邻」推断标题，而后来追加的「帮助」落到了「表格」
+  之后，收尾顺序成了 `…嵌入 → 基础 → 嵌入 → 引用`，于是菜单里**「基础」「嵌入」各出现两次**
+  （React 还会报 duplicate key）。把这两条挪回各自的分组块，分组改为连续。
+
+### 其它
+- **补上 25 条快捷键的行为测试 + 一条覆盖率闸门**（这一版顺带把「文档里的快捷键能不能测」这件事做完）：
+  - 真编辑器、真事件、真断言：`src/editor/insertShortcut.test.ts`（Ctrl+Alt 那一组走真
+    `dispatchCommand(KEY_DOWN_COMMAND, …)`，断言 `preventDefault` 与块类型/标签）、
+    `src/editor/editorInputShortcuts.test.ts`（Markdown 行首语法**逐字输入**、`/` 斜杠菜单、
+    Ctrl+F 查找条、空行空格开 AI，含「有字的行不许抢空格」这类反向守卫）、
+    `src/components/overlayShortcuts.test.ts`（Ctrl+K、Esc）、`src/hooks/globalShortcuts.test.ts`。
+  - `src/lib/shortcutCoverage.test.ts` 是闸门：`src/lib/shortcuts.ts` 里每一条都必须指到一个
+    **真存在**的用例（映射表里的标题要在那个文件的 `it(...)` 里真的找得到）；`InsertShortcutPlugin`
+    的分支与文档「编辑器」组**双向**一一对应；`src/editor/plugins` 下不许再把
+    `KEY_DOWN_COMMAND` 注册到 EDITOR 档。
+- `docs/development.md` 补一节「快捷键：清单改动要同步哪四处 + 插件里别用 EDITOR 档」，把这次
+  的坑写进开发循环。
+
 ## [Unreleased]
 
 ### 修复
