@@ -47,10 +47,17 @@ try {
 
 
 // ---- 前置：签名私钥 + 公钥 ----
+// 私钥只在**本机构建并签名**时才用得到（`pnpm tauri build` 从 env 读它）。
+// `--no-build` 走的正是 docs/RELEASING.md ⑤/⑥ 那条路：产物已由 GitHub Actions
+// （或 Windows 机器）用同一把密钥签好，本机只负责「发布」——此时本机没有私钥是正常的，
+// 不该因此拦住发布。缺私钥 + 需要构建 = 真问题；缺私钥 + 不构建 = 正常。
 const key = process.env.TAURI_SIGNING_PRIVATE_KEY;
-if (!key) {
+if (!key && !NO_BUILD) {
   console.error("[release] 缺 TAURI_SIGNING_PRIVATE_KEY（保密私钥）。");
   process.exit(1);
+}
+if (!key && NO_BUILD) {
+  console.log("[release] --no-build：本机不签名，跳过私钥检查（产物必须自带 .sig）。");
 }
 const conf = JSON.parse(readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8"));
 const pubKey = conf?.plugins?.updater?.pubkey ?? "";
