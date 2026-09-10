@@ -13,7 +13,7 @@ import {
   dialogExtensions,
   filterLabel,
   importArgsJson,
-  pluginImportItems,
+  pluginTriggerItems,
 } from "../lib/pluginImports";
 import type { PluginCommandParam } from "../types";
 import { api } from "../lib/api";
@@ -42,7 +42,18 @@ type Item =
       title: string;
     }
   | {
+      /** 宿主读用户的文件、交给插件的命令（manifest `triggers` 的 `kind: "import"`）。 */
       kind: "plugin-import";
+      pluginId: string;
+      pluginName: string;
+      id: string;
+      commandId: string;
+      extensions: string[];
+      title: string;
+    }
+  | {
+      /** 跑的是一条导出命令：插件产出内容、用户在保存对话框里选存到哪里。 */
+      kind: "plugin-export";
       pluginId: string;
       pluginName: string;
       id: string;
@@ -159,25 +170,33 @@ export function CommandPalette() {
     return out;
   }, [plugins, q]);
 
-  // 导入触发（manifest `triggers`）：点一下 → 选文件 → **宿主**读内容 → 交给插件的命令。
+  // 文件进出（manifest `triggers`）：
+  //   import——点一下 → 选文件 → **宿主**读内容 → 交给插件的命令；
+  //   export——跑命令 → 插件用 api.files.export 登记内容 → 宿主逐个弹保存对话框。
   // 筛选规则在 lib/pluginImports（纯函数、有单测），这里只做入口与文案。
-  const importItems = useMemo<Item[]>(() => {
-    return pluginImportItems(plugins)
+  const triggerItems = useMemo<Item[]>(() => {
+    return pluginTriggerItems(plugins)
       .filter((i) => !q || i.title.toLowerCase().includes(q) || i.extensions.join(" ").includes(q))
-      .map((i) => ({
-        kind: "plugin-import" as const,
-        pluginId: i.pluginId,
-        pluginName: i.pluginName,
-        id: i.key,
-        commandId: i.commandId,
-        extensions: i.extensions,
-        title: i.title,
-      }));
+      .map((i): Item => {
+        const common = {
+          pluginId: i.pluginId,
+          pluginName: i.pluginName,
+          id: i.key,
+          commandId: i.commandId,
+          extensions: i.extensions,
+          title: i.title,
+        };
+        return i.kind === "export"
+          ? { kind: "plugin-export", ...common }
+          : { kind: "plugin-import", ...common };
+      });
   }, [plugins, q]);
+  const importItems = useMemo(() => triggerItems.filter((i) => i.kind === "plugin-import"), [triggerItems]);
+  const exportItems = useMemo(() => triggerItems.filter((i) => i.kind === "plugin-export"), [triggerItems]);
 
   const flat = useMemo(
-    () => [...pageItems, ...cmdItems, ...pluginItems, ...viewItems, ...importItems],
-    [pageItems, cmdItems, pluginItems, viewItems, importItems],
+    () => [...pageItems, ...cmdItems, ...pluginItems, ...viewItems, ...importItems, ...exportItems],
+    [pageItems, cmdItems, pluginItems, viewItems, importItems, exportItems],
   );
   useEffect(() => setSel(0), [query]);
 
@@ -234,6 +253,10 @@ export function CommandPalette() {
     }
     if (item.kind === "plugin-import") {
       await runImport(item);
+      return;
+    }
+    if (item.kind === "plugin-export") {
+      await runExport(item);
       return;
     }
     if (item.kind === "plugin-toggle") {
@@ -293,6 +316,22 @@ export function CommandPalette() {
     }
   };
 
+  /**
+   * 导出触发：跑命令 → 插件用 `api.files.export` 登记内容 → 宿主弹保存对话框。
+   *
+   * 与导入相反：**这次是插件产出、用户挑存到哪里**。命令行上什么都没有额外传给它
+   * （插件自己决定导什么），所以这里只负责把结果交给统一的执行链路——保存对话框、
+   * 「取消＝没写任何东西」的回报都发生在 `runPluginCommandWithUi` 里（只此一份）。
+   */
+  const runExport = async (item: Extract<Item, { kind: "plugin-export" }>) => {
+    try {
+      const r = await runPluginCommandWithUi(`「${item.title}」`, item.pluginId, item.commandId, currentId);
+      setResult(r.message);
+    } catch (e) {
+      setResult(`导出失败：${String(e)}`);
+    }
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -316,7 +355,7 @@ export function CommandPalette() {
       onMouseEnter={() => setSel(idx)}
     >
       <span className="palette-title">
-        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : it.kind === "plugin-view" ? "▦ " : it.kind === "plugin-import" ? "📥 " : ""}
+        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : it.kind === "plugin-view" ? "▦ " : it.kind === "plugin-import" ? "📥 " : it.kind === "plugin-export" ? "📤 " : ""}
         {it.title}
         {it.kind === "plugin" && (it.params?.length ?? 0) > 0 && <span className="palette-params-badge">需填参数</span>}
       </span>
@@ -329,7 +368,9 @@ export function CommandPalette() {
               ? `来自插件「${it.pluginName}」`
               : it.kind === "plugin-import"
                 ? `来自插件「${it.pluginName}」· 选中文件后由宿主读取内容`
-                : (it.description ?? "")}
+                : it.kind === "plugin-export"
+                  ? `来自插件「${it.pluginName}」· 保存位置由你在系统对话框里选`
+                  : (it.description ?? "")}
       </span>
     </button>
   );
@@ -397,6 +438,13 @@ export function CommandPalette() {
             renderItem(
               it,
               pageItems.length + cmdItems.length + pluginItems.length + viewItems.length + i,
+            ),
+          )}
+          {exportItems.length > 0 && <div className="palette-group">导出</div>}
+          {exportItems.map((it, i) =>
+            renderItem(
+              it,
+              pageItems.length + cmdItems.length + pluginItems.length + viewItems.length + importItems.length + i,
             ),
           )}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}

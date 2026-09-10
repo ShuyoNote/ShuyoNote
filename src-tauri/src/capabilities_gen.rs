@@ -42,6 +42,7 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "properties.set", kind: "write", scope: "current-space", permission: Some("write:properties"), since: "1.0.0", mediate: "draft", rust: "cap_properties_set" },
     Capability { id: "tags.add", kind: "write", scope: "current-space", permission: Some("write:tags"), since: "1.0.0", mediate: "draft", rust: "cap_tags_add" },
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
+    Capability { id: "files.export", kind: "write", scope: "app", permission: Some("export:files"), since: "1.0.0", mediate: "draft", rust: "cap_files_export" },
 ];
 
 /// 权限清单（manifest 校验 + 旧 manifest 无 permissions 时的基线授权 + 安装界面展示用）。
@@ -65,6 +66,7 @@ pub const PERMISSION_LIST: &[Permission] = &[
     Permission { id: "read:properties", title: "读取属性定义", risk: "low" },
     Permission { id: "write:properties", title: "设置页面属性", risk: "medium" },
     Permission { id: "write:tags", title: "给页面加标签", risk: "medium" },
+    Permission { id: "export:files", title: "把内容保存成文件", risk: "medium" },
 ];
 
 pub fn permission(id: &str) -> Option<&'static Permission> {
@@ -183,6 +185,7 @@ pub struct PluginTrigger {
 
 pub const TRIGGERS: &[PluginTrigger] = &[
     PluginTrigger { id: "import", title: "导入文件", hosted: true, desc: "命令面板里按扩展名出现；用户选中文件后宿主读成文本，把 { fileName, content } 交给你的命令" },
+    PluginTrigger { id: "export", title: "导出文件", hosted: true, desc: "命令面板里按扩展名出现；跑这条命令时插件用 api.files.export 登记内容，宿主逐个弹保存对话框（用户点保存才写）" },
 ];
 
 pub fn trigger(id: &str) -> Option<&'static PluginTrigger> {

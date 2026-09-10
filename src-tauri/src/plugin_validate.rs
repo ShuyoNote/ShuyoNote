@@ -247,7 +247,7 @@ fn check_triggers_declaration(value: Option<&serde_json::Value>, problems: &mut 
     }
 }
 
-/// 触发指向的命令**是否真的注册了**（以及它带不带参数表单）。
+/// 触发指向的命令**是否真的注册了**（以及它带不带参数表单、有没有申报需要的权限）。
 ///
 /// 单独一步的原因：这份名单要等 discovery（真跑一遍顶层代码）之后才有。放在这里而不是
 /// 塞进上面的共用检查，是因为共用检查在**两档**都要跑，而声明式插件没有命令可查。
@@ -257,6 +257,7 @@ fn check_triggers_declaration(value: Option<&serde_json::Value>, problems: &mut 
 fn check_trigger_targets(
     value: Option<&serde_json::Value>,
     commands: &[PluginCommandMeta],
+    declared_permissions: Option<&[String]>,
     problems: &mut Vec<PluginProblem>,
 ) {
     let Some(list) = value.and_then(|v| v.get("triggers")).and_then(|t| t.as_array()) else {
@@ -266,6 +267,24 @@ fn check_trigger_targets(
         let command = t.get("command").and_then(|c| c.as_str()).unwrap_or_default().trim();
         if command.is_empty() {
             continue; // 已经在 check_triggers_declaration 里报过
+        }
+        // 导出触发最终会调 `api.files.export`（除非命令压根不导出，那这条触发本身就没意义）：
+        // 显式声明了权限、却没写 `export:files` 时提醒一句——否则用户点了会看到权限不足。
+        // 只在**显式声明过 permissions** 时提醒：没声明 permissions 的老插件走基线授权，
+        // 那是全给的，不会缺这一项。
+        let kind = t.get("kind").and_then(|k| k.as_str()).unwrap_or_default().trim();
+        if kind == "export" {
+            if let Some(perms) = declared_permissions {
+                if !perms.iter().any(|p| p == "export:files") {
+                    problems.push(PluginProblem::warn(
+                        "trigger_export_without_permission",
+                        format!(
+                            "triggers[{i}] 是导出触发，但 manifest.permissions 里没有「export:files」：命令里调 api.files.export 会被拒（要么补上这项权限，要么删掉这条触发）"
+                        ),
+                        Some("manifest.json"),
+                    ));
+                }
+            }
         }
         match commands.iter().find(|c| c.id == command) {
             None => problems.push(PluginProblem::warn(
@@ -955,6 +974,18 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
         }
     }
 
+    // 「作者显式声明了哪些权限」：导出触发的预检要用（在 discovery 之前先取出来，
+    // 那段之后的 `value` 已经借给了别的调用）。
+    let declared_trigger_perms: Option<Vec<String>> = value
+        .as_ref()
+        .and_then(|v| v.get("permissions"))
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|d| d.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                .collect()
+        });
+
     // ---- 6. 顶层代码 + 命令注册（真正跑一次 discovery）----
     let mut commands: Vec<PluginCommandMeta> = Vec::new();
     if let Some(src) = &source {
@@ -1008,7 +1039,12 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                 commands = cmds;
                 // 触发指向的命令是否真的注册了：名单只有 discovery 之后才有，所以在这里查
                 // （只有 discovery 成功时才有意义——失败已经在上面报过 load_failed 了）。
-                check_trigger_targets(value.as_ref(), &commands, &mut problems);
+                check_trigger_targets(
+                    value.as_ref(),
+                    &commands,
+                    declared_trigger_perms.as_deref(),
+                    &mut problems,
+                );
             }
             Err(e) => problems.push(PluginProblem::error(
                 "load_failed",
@@ -1670,6 +1706,48 @@ mod tests {
         let r = validate_dir(&dir);
         assert!(r.ok, "{:?}", r.problems);
         assert!(codes(&r).contains(&"trigger_command_has_params".to_string()), "{:?}", r.problems);
+    }
+
+    #[test]
+    fn an_export_trigger_without_the_export_permission_is_flagged() {
+        // 导出触发最终会调 api.files.export：显式声明了权限却没写 export:files 时，
+        // 用户点下去只会看到「权限不足」——那不该靠他点一次才知道。
+        let dir = plugin(
+            "exp-noperm",
+            &manifest_json(
+                "exp-noperm",
+                r#", "permissions": [ { "id": "read:pages", "reason": "x" } ], "triggers": [
+                     { "kind": "export", "extensions": [".md"], "command": "exp-noperm.export" }
+                   ]"#,
+            ),
+        );
+        write_main(
+            &dir,
+            "main.js",
+            "register({ id: 'exp-noperm.export', title: '导出', run: function(){ return ''; } });",
+        );
+        let r = validate_dir(&dir);
+        assert!(r.ok, "只是提醒：{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_export_without_permission".to_string()), "{:?}", r.problems);
+
+        // 声明了就没事
+        let ok = plugin(
+            "exp-ok",
+            &manifest_json(
+                "exp-ok",
+                r#", "permissions": [ { "id": "export:files", "reason": "存成文件" } ], "triggers": [
+                     { "kind": "export", "extensions": [".md"], "command": "exp-ok.export" }
+                   ]"#,
+            ),
+        );
+        write_main(&ok, "main.js", "register({ id: 'exp-ok.export', title: '导出', run: function(){ return ''; } });");
+        let r2 = validate_dir(&ok);
+        assert_eq!(r2.errors().count(), 0, "{:?}", r2.problems);
+        assert!(
+            r2.problems.iter().all(|p| !p.code.starts_with("trigger")),
+            "写得对的导出触发不该有任何话说：{:?}",
+            r2.problems
+        );
     }
 
     #[test]

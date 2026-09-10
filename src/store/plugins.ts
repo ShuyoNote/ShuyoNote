@@ -7,6 +7,7 @@ import type {
   PluginAuditEntry,
   PluginEventOutcome,
   PluginDraft,
+  PluginExport,
   PluginLogLine,
   PluginMeta,
   PluginSetting,
@@ -39,6 +40,8 @@ export interface PluginRunOutcome {
   toasts?: string[];
   /** 写能力产出的草稿：**还没落库**，需调用方先让用户确认。 */
   drafts?: PluginDraft[];
+  /** `api.files.export` 的产物：**还没写盘**，需调用方弹保存对话框（见 lib/pluginExports）。 */
+  exports?: PluginExport[];
   cancelled?: boolean;
 }
 

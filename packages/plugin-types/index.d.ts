@@ -181,6 +181,10 @@ export interface PluginApi {
    * 返回：[{id, name, mime, size}]，**不含字节**
    */
     list(pageId?: string): { id: string; name: string; mime: string; size: number }[];
+  /** 把内容保存成文件（用户选位置）（权限 `export:files`；1.0.0 起）
+   * 返回：{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写
+   */
+    export(fileName: string, content: string): { queued: true; bytes: number };
   };
   editor: {
   /** 向当前页插入纯文本（权限 `write:page.current`；1.0.0 起）

@@ -10,6 +10,7 @@
 | [`daily-note/`](daily-note/) | **写能力走草稿确认** + 插件私有数据（按空间隔离、随空间加密） | `pages.create`（草稿）/ `kv.get` / `kv.set` |
 | [`tidy-tags/`](tidy-tags/) | 先读后写；省略 `pageId` 时作用于**当前打开的页面** | `tags.list` / `tags.add`（草稿） |
 | [`md-outline/`](md-outline/) | **导入触发**（manifest `triggers`）：用户选文件 → 宿主读内容 → 插件拿到 `{ fileName, content }`；写能力照样出草稿 | `pages.create`（草稿） |
+| [`index-export/`](index-export/) | **导出**（`api.files.export` + `kind: "export"` 触发）：命令产出内容，用户在系统保存对话框里选存到哪里；插件给不出路径，点取消就什么都没写 | `pages.list` / `files.export`（用户选位置） |
 | [`reading-board/`](reading-board/) | **零代码插件**（`runtime: "declarative"`）：只有 manifest，宿主按声明查询并渲染视图；查询条件**引用用户设置**（`{ "fromSetting": "…" }`），所以零代码也能「用户可配」 | 无（没有代码） |
 | [`warm-night/`](warm-night/) | **零代码主题插件**：只出一组设计变量，停用即恢复 | 无（没有代码） |
 
@@ -19,8 +20,9 @@
    粘贴到 `plugins/` 下（目录名必须与 `manifest.json` 里的 `id` 一致）；
 2. 面板里点「校验」——通过即可「启用」；
 3. 命令面板（`Ctrl+K`）里搜命令名执行。写能力会先给你一份**草稿**，你确认后才落库。
-   声明了**导入触发**的插件会在这里多出一条「导入：用「插件名」打开 .md」：点了选文件，
-   宿主把内容读出来交给插件（`md-outline` 就是这么工作的）。
+   声明了**触发**的插件会在这里多出对应入口：`md-outline` 是「导入：用「插件名」打开 .md」
+   （点了选文件，宿主把内容读出来交给插件），`index-export` 是「导出：用「插件名」保存为 .md」
+   （跑完命令后弹系统保存对话框，用户点保存才写）。
 
 开发时不必重启：面板打开期间，插件目录一有改动就会**自动重新扫描**（面板标题会显示
 「已自动重新扫描 …」）。

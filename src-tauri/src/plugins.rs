@@ -313,9 +313,58 @@ struct RunState {
     /// 宿主在运行前从 manifest 填好，避免每次 `settings.get` 都去读盘。
     setting_scopes: std::collections::HashMap<String, String>,
     drafts: Vec<PluginDraft>,
+    /// 本次执行里 `api.files.export` 产出的导出请求：**不写盘**，随结果回传前端，
+    /// 由前端逐个弹系统保存对话框（用户选位置才算数）。与草稿同一个中介思路：插件
+    /// 只能"申请"，落盘与否由用户决定。
+    exports: Vec<PluginExport>,
     /// `__toast(...)` 收集到的提示：**随调用结果回传前端**，由前端弹 toast。
     /// 走返回值而不是事件，是因为命令本来就是一次性的——不需要跨线程推事件。
     toasts: Vec<String>,
+}
+
+/// 一次导出请求（`api.files.export` 的产物）。
+///
+/// **插件给不出路径**（只给建议文件名，且目录部分会被去掉）：存到哪里由用户在系统保存
+/// 对话框里定。所以这条能力不是"写任意路径"——它没有那个自由度，也就没有那个风险。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginExport {
+    /// 建议的文件名（已去掉目录、已限长）。
+    pub file_name: String,
+    pub content: String,
+    pub bytes: usize,
+}
+
+/// 单个导出文件的体积上限。定在 4 MiB：够装"把一批笔记导出成一份 md"，又不至于让
+/// 一次执行的返回值（它要过 IPC 回前端、再交给保存对话框那一步）变得不可控。
+/// 一次运行最多几个文件同理（见 [`MAX_EXPORTS_PER_RUN`]）。
+const MAX_EXPORT_BYTES: usize = 4 * 1024 * 1024;
+/// 一次运行最多产出几个导出请求（会话里是逐个弹保存对话框，多了就是折磨人）。
+pub(crate) const MAX_EXPORTS_PER_RUN: usize = 4;
+
+/// 把一个"建议文件名"收拾成**光秃秃的文件名**：去掉目录、去掉控制字符、限长。
+///
+/// 不做"猜作者想要什么"的事，只做减法：插件可能习惯性写成 `dir/name.md`，那不该报错
+/// （用户本来就在下一步选真实位置），但宿主也绝不把它当成路径用。
+pub(crate) fn sanitize_export_file_name(raw: &str) -> Option<String> {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    let cleaned: String = base.chars().filter(|c| !c.is_control()).collect();
+    let cleaned = cleaned.trim().trim_matches('.').to_string();
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." || cleaned.contains("..") && cleaned.ends_with('.') {
+        return None;
+    }
+    let mut out: String = cleaned.chars().take(120).collect();
+    if out.is_empty() {
+        return None;
+    }
+    // Windows 不允许结尾的点/空格；截断后可能正好落在那里
+    while out.ends_with('.') || out.ends_with(' ') {
+        out.pop();
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Result of running a plugin command: a display `message`, plus an optional
@@ -324,6 +373,8 @@ struct RunState {
 pub struct PluginRunResult {
     pub message: String,
     pub insert: Option<String>,
+    /// `api.files.export` 的产物：**还没写盘**，前端逐个弹保存对话框。
+    pub exports: Vec<PluginExport>,
     /// 插件在本次执行里通过 `__toast(...)` 发出的提示（此前只写 stderr，用户完全看不到）。
     pub toasts: Vec<String>,
     /// 写能力产出的草稿：**还没落库**，等用户在界面上确认。
@@ -1590,6 +1641,49 @@ fn cap_backlinks_list(page_id: Option<&str>) -> CapResult {
     })
 }
 
+/// 把一条导出请求塞进本次执行（同文件名只留一条，避免插件在循环里刷屏）。
+fn push_export(file_name: String, content: String) -> Result<(), String> {
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        if st.exports.len() >= MAX_EXPORTS_PER_RUN {
+            return Err(format!("quota_exceeded: 一次运行最多导出 {MAX_EXPORTS_PER_RUN} 个文件"));
+        }
+        if st.exports.iter().any(|e| e.file_name == file_name) {
+            // 同名只留第一条：用户看到的是"保存 a.md"，多弹几次同样的对话框只会让人困惑
+            return Ok(());
+        }
+        let bytes = content.len();
+        st.exports.push(PluginExport { file_name, content, bytes });
+        Ok(())
+    })
+}
+
+/// `files.export`：**不写盘**，只登记一条导出请求。
+///
+/// 为什么不在这次调用里就写：插件跑在**后台线程**上，而系统保存对话框只能在主线程弹。
+/// 更要紧的是**用户必须有机会说不**——所以流程和草稿一样：先收集，命令跑完后由前端
+/// 逐个弹保存对话框，点了取消就什么都没写。
+fn cap_files_export(file_name: &str, content: &str) -> CapResult {
+    let Some(name) = sanitize_export_file_name(file_name) else {
+        return Err("bad_args: 文件名不可用（只给文件名，不要路径；也不能是 . / ..）".to_string());
+    };
+    if content.is_empty() {
+        return Err("bad_args: 要导出的内容为空".to_string());
+    }
+    if content.len() > MAX_EXPORT_BYTES {
+        return Err(format!(
+            "quota_exceeded: 单个导出文件上限 {} MiB（这次是 {:.1} MiB）",
+            MAX_EXPORT_BYTES / (1024 * 1024),
+            content.len() as f64 / 1048576.0
+        ));
+    }
+    let bytes = content.len();
+    match push_export(name.clone(), content.to_string()) {
+        Ok(()) => Ok(serde_json::json!({ "queued": true, "bytes": bytes, "fileName": name })),
+        Err(e) => Err(e),
+    }
+}
+
 fn cap_files_list(page_id: Option<&str>) -> CapResult {
     let target = target_page_or_current(page_id)?;
     with_read_conn(|c| {
@@ -1815,6 +1909,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
+        "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
         "kv.remove" => cap_kv_remove(&arg_str("key")?, &scope_arg(&args)),
@@ -2000,6 +2095,7 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             read_dir: state.read_dir.clone(),
             setting_scopes: state.setting_scopes.clone(),
             drafts: Vec::new(),
+            exports: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
         }
@@ -2039,7 +2135,7 @@ fn run_command_timeout(
     command_id: &str,
     args_json: &str,
     state: &RunState,
-) -> Result<(String, String, Vec<String>, Vec<PluginDraft>), String> {
+) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
     let source = source.to_string();
     let command_id = command_id.to_string();
     // RunState 是纯数据（String/usize），可 move 进线程；RUN_STATE/thread_local
@@ -2054,17 +2150,23 @@ fn run_command_timeout(
         read_dir: state.read_dir.clone(),
         setting_scopes: state.setting_scopes.clone(),
         drafts: Vec::new(),
+        exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
     let args = args_json.to_string();
     with_timeout(RUN_TIMEOUT, "插件执行", move || {
         let msg = run_command(&source, &command_id, &args, &state)?;
-        let (insert, toasts, drafts) = RUN_STATE.with(|s| {
+        let (insert, toasts, drafts, exports) = RUN_STATE.with(|s| {
             let st = s.borrow();
-            (st.insert_text.clone(), st.toasts.clone(), st.drafts.clone())
+            (
+                st.insert_text.clone(),
+                st.toasts.clone(),
+                st.drafts.clone(),
+                st.exports.clone(),
+            )
         });
-        Ok((msg, insert, toasts, drafts))
+        Ok((msg, insert, toasts, drafts, exports))
     })
 }
 
@@ -2271,18 +2373,30 @@ fn run_event_timeout(
         read_dir: state.read_dir.clone(),
         setting_scopes: state.setting_scopes.clone(),
         drafts: Vec::new(),
+        exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
     let src = source.to_string();
     let ev = event.to_string();
+    // 日志文案用同一份拷贝（闭包要求 'static，不能借用入参）
+    let ev_for_log = ev.clone();
     let payload = payload_json.to_string();
     with_timeout(EVENT_TIMEOUT, "插件事件", move || {
         let msg = run_event(&src, &ev, &payload, &state)?;
-        let (toasts, drafts) = RUN_STATE.with(|s| {
+        let (toasts, drafts, dropped_exports) = RUN_STATE.with(|s| {
             let st = s.borrow();
-            (st.toasts.clone(), st.drafts.clone())
+            (st.toasts.clone(), st.drafts.clone(), st.exports.len())
         });
+        // 事件里没有保存对话框可弹，也没有人在等：导出请求在这里**明确丢弃并留痕**，
+        // 而不是静默消失（与"事件里的 insert 会被忽略"同一条规矩）。
+        if dropped_exports > 0 {
+            push_log(
+                &state.plugin_id,
+                "warn",
+                &format!("事件 {ev_for_log} 里有 {dropped_exports} 次 api.files.export：事件没有保存对话框，已忽略"),
+            );
+        }
         Ok((msg, toasts, drafts))
     })
 }
@@ -2427,6 +2541,7 @@ pub async fn emit_plugin_event(
             read_dir: None,
             setting_scopes,
             drafts: Vec::new(),
+            exports: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
         };
@@ -2796,15 +2911,18 @@ pub async fn run_plugin_command(
         read_dir: None,
         setting_scopes: setting_scopes_of(&manifest),
         drafts: Vec::new(),
+        exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
     };
-    let (message, insert, toasts, drafts) = run_command_timeout(&source, &command_id, &args_json, &state)?;
+    let (message, insert, toasts, drafts, exports) = run_command_timeout(&source, &command_id, &args_json, &state)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
         toasts,
         drafts,
+        // 导出请求**还没写盘**：前端拿到后逐个弹保存对话框（用户选位置才算数）
+        exports,
     })
 }
 
@@ -3491,7 +3609,7 @@ register({
   }
 });
 "#;
-        let (msg, _, _, _) = run_command_timeout(
+        let (msg, _, _, _, _) = run_command_timeout(
             src,
             "p.run",
             r#"{"title":"你好","count":2,"mode":"b","loud":true,"weird":"x"}"#,
@@ -3542,7 +3660,7 @@ register({
         let _g = log_test_guard();
         // 老插件：`run()` 不声明参数、也不接受参数 —— 必须原样可用
         let src = r#"register({ id: "old.run", title: "老命令", run: function () { return "ok"; } });"#;
-        let (msg, _, _, _) = run_command_timeout(src, "old.run", "", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) = run_command_timeout(src, "old.run", "", &RunState::default()).unwrap();
         assert_eq!(msg, "ok");
         let cmds = discover_commands(src, &RunState::default()).unwrap();
         assert!(cmds[0].params.is_empty(), "没声明参数时不应凭空多出参数");
@@ -3557,11 +3675,109 @@ register({ id: "s.run", title: "结构化", run: function () {
   return { message: "完成", insert: "追加的文本", toasts: ["提示一", "提示二"] };
 }});
 "#;
-        let (msg, insert, toasts, _) =
+        let (msg, insert, toasts, _, _) =
             run_command_timeout(src, "s.run", "", &state_with(&["write:page.current"])).unwrap();
         assert_eq!(msg, "完成");
         assert_eq!(insert, "追加的文本");
         assert_eq!(toasts, vec!["提示一".to_string(), "提示二".to_string()]);
+    }
+
+    // ---- 导出能力（files.export）：登记请求，不写盘 ----
+
+    #[test]
+    fn export_is_queued_not_written() {
+        let _g = log_test_guard();
+        let dir = temp_dir("export-queued");
+        let target = dir.join("想要的名字.md");
+        // 插件把"文件名"写成带目录的样子：宿主只取最后一段，绝不拿它当路径用
+        let src = format!(
+            r#"register({{ id: "e.run", title: "E", description: "", closeOnRun: false,
+  run: function () {{
+    var r = api.files.export("../../{target}", "正文内容");
+    return "queued=" + r.queued + " bytes=" + r.bytes;
+  }} }});"#,
+            target = target.display()
+        );
+        let state = state_with(&["export:files"]);
+        let (msg, _insert, _toasts, _drafts, exports) =
+            run_command_timeout(&src, "e.run", "", &state).unwrap();
+
+        assert_eq!(exports.len(), 1, "应当登记一条导出请求");
+        assert_eq!(exports[0].file_name, "想要的名字.md", "目录部分必须被去掉：插件给不出路径");
+        assert_eq!(exports[0].content, "正文内容");
+        assert_eq!(exports[0].bytes, "正文内容".len());
+        assert!(msg.contains("queued=true"));
+        assert!(!target.exists(), "**这一步绝不能写盘**：写不写由用户在保存对话框里决定");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_needs_the_permission() {
+        let _g = log_test_guard();
+        // 没声明 export:files：拒绝（与其他能力一样，逐次校验，不靠 UI 隐藏）
+        let src = r#"register({ id: "e.deny", title: "E", description: "", closeOnRun: false,
+  run: function () { try { api.files.export("a.md", "x"); } catch (e) { return String(e); } return "no-throw"; } });"#;
+        let (msg, _i, _t, _d, exports) = run_command_timeout(src, "e.deny", "", &state_with(&[])).unwrap();
+        assert!(msg.contains("permission_denied"), "实际：{msg}");
+        assert!(exports.is_empty(), "被拒的调用不该留下导出请求");
+
+        // 文件名不可用 / 内容为空 → bad_args（走 JS，确认错误能回到插件里）
+        let bad = r#"register({ id: "e.bad", title: "E", description: "", closeOnRun: false,
+  run: function () {
+    var out = [];
+    try { api.files.export("..", "x"); } catch (e) { out.push(String(e).indexOf("bad_args") >= 0 ? "bad_args" : String(e)); }
+    try { api.files.export("a.md", ""); } catch (e) { out.push(String(e).indexOf("bad_args") >= 0 ? "bad_args" : String(e)); }
+    return out.join(" | ");
+  } });"#;
+        let (msg, ..) = run_command_timeout(bad, "e.bad", "", &state_with(&["export:files"])).unwrap();
+        assert_eq!(msg, "bad_args | bad_args");
+    }
+
+    #[test]
+    fn export_has_size_and_count_limits() {
+        let _g = log_test_guard();
+        // 直接调能力函数来卡边界：**不经过 Boa**。理由很实在——在 JS 里造一个 4 MiB 的字符串
+        // 会先撞到插件自己的内存预算（64 MiB，M11.5），根本走不到这条上限；那说明
+        //「导出上限是兜底，真正常先撞到的是插件的内存预算」，两条线分别测才说得清楚。
+        let big = "x".repeat(MAX_EXPORT_BYTES + 1);
+        let err = cap_files_export("a.md", &big).unwrap_err();
+        assert!(err.contains("quota_exceeded"), "实际：{err}");
+        assert!(cap_files_export("a.md", &"x".repeat(MAX_EXPORT_BYTES)).is_ok(), "正好到上限应当放行");
+
+        // 次数上限：超出的那条被拒，已登记的不受影响
+        RUN_STATE.with(|s| s.borrow_mut().exports.clear());
+        for i in 0..MAX_EXPORTS_PER_RUN {
+            cap_files_export(&format!("f{i}.md"), "x").unwrap();
+        }
+        let err = cap_files_export("over.md", "x").unwrap_err();
+        assert!(err.contains("quota_exceeded"), "实际：{err}");
+        RUN_STATE.with(|s| assert_eq!(s.borrow().exports.len(), MAX_EXPORTS_PER_RUN));
+
+        // 同名只留一条（用户在保存对话框里看到两次同样的名字只会困惑）
+        RUN_STATE.with(|s| s.borrow_mut().exports.clear());
+        cap_files_export("same.md", "第一次").unwrap();
+        cap_files_export("same.md", "第二次").unwrap();
+        RUN_STATE.with(|s| {
+            let st = s.borrow();
+            assert_eq!(st.exports.len(), 1);
+            assert_eq!(st.exports[0].content, "第一次");
+        });
+        RUN_STATE.with(|s| s.borrow_mut().exports.clear());
+    }
+
+    #[test]
+    fn export_file_names_are_sanitized() {
+        assert_eq!(sanitize_export_file_name("a.md").as_deref(), Some("a.md"));
+        assert_eq!(sanitize_export_file_name("  /tmp/x/笔记.md  ").as_deref(), Some("笔记.md"));
+        assert_eq!(sanitize_export_file_name(r"C:\Users\me\导出.csv").as_deref(), Some("导出.csv"));
+        // 结尾的点/空格在 Windows 上会落到别的名字，直接切掉
+        assert_eq!(sanitize_export_file_name("名字.").as_deref(), Some("名字"));
+        // 只剩点、纯空白、带控制字符到什么都不剩 → 拒
+        assert!(sanitize_export_file_name("..").is_none());
+        assert!(sanitize_export_file_name("   ").is_none());
+        assert!(sanitize_export_file_name("/").is_none());
+        assert!(sanitize_export_file_name("a\u{0}b").is_some(), "控制字符是滤掉而不是整名作废");
+        assert_eq!(sanitize_export_file_name("a\u{0}b").as_deref(), Some("ab"));
     }
 
     #[test]
@@ -3569,7 +3785,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _g = log_test_guard();
         // 结构化返回**不是**绕过权限的后门：没有 write:page.current 时 insert 仍被拒
         let src = r#"register({ id: "s.deny", title: "结构化", run: function () { return { insert: "不该写入" }; } });"#;
-        let (_msg, insert, _, _) = run_command_timeout(src, "s.deny", "", &state_with(&[])).unwrap();
+        let (_msg, insert, _, _, _) = run_command_timeout(src, "s.deny", "", &state_with(&[])).unwrap();
         assert!(insert.is_empty(), "未授予写权限时不应写入，实际：{insert:?}");
     }
 
@@ -3579,7 +3795,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let src = r#"register({ id: "a.run", title: "参数", run: function (args) { return "收到" + JSON.stringify(args); } });"#;
         // 第一道在命令层（`run_plugin_command` 要求 JSON 对象）；这里验证第二道：
         // 直接 eval 到 `__run` 时，非具名的参数（数组）也退回空对象而不是被当成参数用
-        let (msg, _, _, _) = run_command_timeout(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) = run_command_timeout(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
         assert_eq!(msg, "收到{}", "数组不是合法参数对象，应退回空对象");
     }
 
@@ -3595,7 +3811,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     return "count=" + api.pages.count();
   } });"#;
         let state = state_with(&["read:pages", "write:page.current"]);
-        let (msg, insert, toasts, _drafts) = run_command_timeout(source, "t.api", "", &state).unwrap();
+        let (msg, insert, toasts, _drafts, _exports) = run_command_timeout(source, "t.api", "", &state).unwrap();
         assert_eq!(msg, "count=0");
         assert_eq!(insert, "新文本");
         assert_eq!(toasts, vec!["来自 api.notify".to_string()]);
@@ -3867,11 +4083,12 @@ register({ id: "s.run", title: "结构化", run: function () {
         let m = trigger_manifest(serde_json::json!([
             { "kind": "import", "extensions": [".MD", "md", ".csv"], "command": " imp.run " },
             { "kind": "export", "extensions": [".md"], "command": "imp.run" },
+            { "kind": "wasm", "extensions": [".md"], "command": "imp.run" },
             { "kind": "import", "extensions": [".md"], "command": "" },
             { "kind": "import", "extensions": ["没 有"], "command": "imp.run" }
         ]));
         let got = sanitized_triggers(&m);
-        assert_eq!(got.len(), 1, "只应留下读得懂的那一条：{got:?}");
+        assert_eq!(got.len(), 2, "读得懂的只有 import 与 export 那两条：{got:?}");
         assert_eq!(got[0].kind, "import");
         assert_eq!(got[0].command, "imp.run", "命令 id 去掉首尾空白");
         assert_eq!(
@@ -3879,6 +4096,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             vec![".md".to_string(), ".csv".to_string()],
             "扩展名规范化 + 去重 + 保持作者写的顺序"
         );
+        assert_eq!(got[1].kind, "export", "导出触发同样只认注册表里的 kind");
     }
 
     #[test]
@@ -4251,7 +4469,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 走完整链路：草稿必须随结果回传，前端才能拿它去确认
         let source = r#"register({ id: "w.one", title: "W", description: "", closeOnRun: false,
   run: function(){ api.pages.create("新页", "正文"); api.blocks.append("附注"); return "ok"; } });"#;
-        let (msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.one", "", &st).unwrap();
+        let (msg, _insert, _toasts, drafts, _exports) = run_command_timeout(source, "w.one", "", &st).unwrap();
         assert_eq!(msg, "ok");
         let keys: Vec<&str> = drafts.iter().map(|d| d.key.as_str()).collect();
         assert_eq!(keys, vec!["create_page:新页", "append_block:p1"]);
@@ -4366,7 +4584,7 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         let source = r#"register({ id: "w.pt", title: "W", description: "", closeOnRun: false,
   run: function(){ api.properties.set("attr1", "进行中"); api.tags.add("工作"); return "ok"; } });"#;
-        let (_msg, _insert, _toasts, drafts) = run_command_timeout(source, "w.pt", "", &st).unwrap();
+        let (_msg, _insert, _toasts, drafts, _exports) = run_command_timeout(source, "w.pt", "", &st).unwrap();
         assert_eq!(drafts.len(), 2);
         assert_eq!(drafts[0].payload["kind"], "set_page_prop");
         assert_eq!(drafts[0].payload["attrId"], "attr1");
@@ -4397,7 +4615,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // ——能跑到这里就说明进程没有被 abort 掉。
         let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
   run: function(){ return "fine"; } });"#;
-        let (msg, _, _, _) = run_command_timeout(ok, "t.ok", "", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) = run_command_timeout(ok, "t.ok", "", &RunState::default()).unwrap();
         assert_eq!(msg, "fine");
     }
 
@@ -4421,7 +4639,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             plugin_id: "tp".to_string(),
             ..Default::default()
         };
-        let (msg, _insert, toasts, _drafts) = run_command_timeout(source, "t.toast", "", &state).unwrap();
+        let (msg, _insert, toasts, _drafts, _exports) = run_command_timeout(source, "t.toast", "", &state).unwrap();
         assert_eq!(msg, "done");
         assert_eq!(
             toasts,

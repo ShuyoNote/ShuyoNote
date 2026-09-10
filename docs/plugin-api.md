@@ -90,6 +90,7 @@ register({
 | `read:properties` | 读取属性定义：读取本空间的属性定义（名称/类型/id），供插件找到要写的属性 | low |
 | `write:properties` | 设置页面属性：给页面设置属性值；**写入前会先给你看草稿并等你确认** | medium |
 | `write:tags` | 给页面加标签：给页面加标签；**写入前会先给你看草稿并等你确认** | medium |
+| `export:files` | 把内容保存成文件：由你把文件保存到哪里、存不存（宿主弹系统保存对话框）。插件只能给一个建议文件名，给不了路径 | medium |
 
 ## 4. 能力（`api.*`）
 
@@ -116,6 +117,7 @@ register({
 | `properties.set` | `api.properties.set(attrId, value, pageId)` | `write:properties` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
+| `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
 
 ### `page.current` — 读取当前页
 
@@ -315,6 +317,17 @@ register({
 - 参数：
   - `message`: `string` —— 日志内容
   - `level`: `string`（可选），默认 `info` —— 日志级别
+
+### `files.export` — 把内容保存成文件（用户选位置）
+
+- 调用：`api.files.export(fileName, content)`
+- 权限：`export:files`
+- scope：`app`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会把内容写到笔记之外的文件里：这条能力不直接写盘——先收集，等命令跑完由用户在系统保存对话框里逐个选位置（取消＝不写），与写能力的草稿确认同一个中介思路
+- 返回：{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写
+- 参数：
+  - `fileName`: `string` —— 建议的文件名（只给名字——路径里的目录会被去掉，文件存哪里由用户在保存对话框里定）
+  - `content`: `string` —— 要写入的内容（单文件上限 4 MiB，一次运行最多 4 个文件）
 
 ## 4.5 命令参数（宿主渲染表单）
 
@@ -576,6 +589,7 @@ register({
 | kind | 说明 | 宿主是否已实现 |
 |---|---|---|
 | `import` | 导入文件：命令面板里按扩展名出现；用户选中文件后宿主读成文本，把 { fileName, content } 交给你的命令 | ✅ 已实现 |
+| `export` | 导出文件：命令面板里按扩展名出现；跑这条命令时插件用 api.files.export 登记内容，宿主逐个弹保存对话框（用户点保存才写） | ✅ 已实现 |
 
 几条必须知道的规则：
 
@@ -591,6 +605,45 @@ register({
 - 一次调用携带的内容有**体积上限**（1 MiB）：这条通道是「够装常见文本 / 表格文件」的行为界，
   不是「参数必须是短值」——但它也**不是数据通道**，插件要读笔记数据仍然只能用 `api.*`；
 - `title` 不写就用默认的「导入：用「插件名」打开 .md」。
+
+### 4.11.1 导出（把内容保存成文件）
+
+反过来也成立：插件可以**产出**一个文件。用 `api.files.export(fileName, content)`：
+
+```js
+register({
+  id: "my-plugin.exportMd",
+  title: "把当前页导出成 Markdown",
+  run: function () {
+    var page = api.page.current();          // 只读能力，需要 read:page.current
+    api.files.export("导出.md", String(page));
+    return "已准备好导出";
+  }
+});
+```
+
+```json
+"permissions": [
+  { "id": "export:files", "reason": "把导出的内容保存成文件（存哪里由你选）" }
+]
+```
+
+几条关键规则：
+
+- **它不直接写盘**：`api.files.export(...)` 只是**登记**一次导出请求，命令跑完后宿主**逐个弹系统保存对话框**——用户点「保存」才写，点取消就什么都没写。和写笔记一样是「插件申请、用户决定」；
+- **你给不出路径**：`fileName` 只是**建议的文件名**（目录部分会被去掉、长度会被截断），存到哪里由用户在对话框里定。所以这条能力不是「写任意路径」——它没有那个自由度，也就没有那个风险；
+- **返回的 `{queued: true}` 不代表已保存**（它只说明请求被登记了）。保存对话框在插件跑完之后才弹，那时你的代码已经结束了——所以不要用它来判断「保存成功」；
+- 上限：**单个文件 4 MiB、一次运行最多 4 个文件**（超了会抛错，你可以在 JS 里 `try/catch` 之后改写错误提示）。同名文件只保留第一次登记的那一份；
+- **事件里无效**：事件（`on(...)`）触发时没有保存对话框可弹，导出请求会被忽略并写进插件日志；
+- 需要权限 `export:files`（能力注册表里的写能力，风险等级 medium——它会把内容写到笔记之外）。
+
+配合 `kind: "export"` 的触发声明，用户还能在命令面板里直接看到「导出：用「插件名」保存为 .md」：
+
+```json
+"triggers": [
+  { "kind": "export", "extensions": [".md"], "command": "my-plugin.exportMd" }
+]
+```
 
 ## 5. 日志与提示
 

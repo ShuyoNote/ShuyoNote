@@ -1,0 +1,25 @@
+{
+  "id": "index-export",
+  "name": "页面索引导出",
+  "version": "1.0.0",
+  "description": "把本空间的页面清单导出成一份 Markdown 索引：命令面板点「导出」，你自己选存到哪里。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:pages",
+      "reason": "读取本空间的页面标题与更新时间（不含正文）"
+    },
+    {
+      "id": "export:files",
+      "reason": "把索引内容保存成文件——存到哪里由你在系统保存对话框里选，点取消就什么都不写"
+    }
+  ],
+  "triggers": [
+    {
+      "kind": "export",
+      "extensions": [".md"],
+      "command": "index-export.pages"
+    }
+  ]
+}

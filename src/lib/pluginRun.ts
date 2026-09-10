@@ -2,7 +2,11 @@ import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRang
 import { useEditorStore } from "../store/editor";
 import { usePlugins } from "../store/plugins";
 import { toast } from "../store/toast";
+import { api } from "./api";
+import { platform } from "./platform";
 import { confirmAndApplyDrafts } from "./pluginDrafts";
+import { exportDialogOptions, exportOutcomeMessage, type ExportOutcome } from "./pluginExports";
+import type { PluginExport } from "../types";
 
 /**
  * 插件命令的**统一执行链路**（命令面板与编辑器 `/` 菜单共用）。
@@ -34,6 +38,43 @@ export interface PluginRunUiResult {
 }
 
 /**
+ * 把 `api.files.export` 的产物写出去：**逐个**弹系统保存对话框。
+ *
+ * 为什么在这里（而不是每个入口各做一遍）：插件命令的副作用全部体现在返回值里，导出也是
+ * 其中一种——命令面板、`/` 菜单、导入触发都走 `runPluginCommandWithUi`，所以"导出要不要
+ * 问用户"这个问题只有一处答案。
+ *
+ * 三条规则：
+ * - **用户点取消 = 没写任何东西**（如实回报，不混进"已完成"）；
+ * - **写的是用户选定的那个路径**：插件只给了建议文件名，路径来自保存对话框；
+ * - 写失败要说出来（文件名 + 原因），不能只报"导出完成"。
+ */
+export async function savePluginExports(exports: PluginExport[]): Promise<ExportOutcome> {
+  const outcome: ExportOutcome = { written: 0, cancelled: 0, failed: [] };
+  for (const item of exports) {
+    let path: string | null = null;
+    try {
+      const chosen = await platform.dialog.save(exportDialogOptions(item));
+      path = Array.isArray(chosen) ? chosen[0] : chosen;
+    } catch (e) {
+      outcome.failed.push({ fileName: item.file_name, error: String(e) });
+      continue;
+    }
+    if (!path) {
+      outcome.cancelled += 1;
+      continue;
+    }
+    try {
+      await api.writeTextFile(path, item.content);
+      outcome.written += 1;
+    } catch (e) {
+      outcome.failed.push({ fileName: item.file_name, error: String(e) });
+    }
+  }
+  return outcome;
+}
+
+/**
  * 执行一个插件命令并处理它的全部返回值。
  *
  * @param source 谁在跑（命令标题 / 插件名），用于草稿确认的提示文案
@@ -56,6 +97,14 @@ export async function runPluginCommandWithUi(
   if (drafts.length > 0) {
     // 写能力不直接落库：草稿确认的规则只此一份（见 lib/pluginDrafts）。
     return { message: await confirmAndApplyDrafts(source, drafts), cancelled: false };
+  }
+
+  const exports = res.exports ?? [];
+  if (exports.length > 0) {
+    // 导出同样是"插件申请、用户决定"：这里弹的是系统保存对话框，点了取消就什么都没写。
+    const outcome = await savePluginExports(exports);
+    const head = res.message ? `${res.message}；` : "";
+    return { message: head + exportOutcomeMessage(outcome), cancelled: false };
   }
   return { message: res.message, cancelled: false };
 }

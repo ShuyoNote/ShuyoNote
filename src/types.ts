@@ -266,6 +266,19 @@ export interface PluginDraft {
   payload: unknown;
 }
 
+/**
+ * 一次导出请求（`api.files.export` 的产物）。
+ *
+ * **还没写盘**：命令跑完后前端逐个弹系统保存对话框，用户选位置才写——插件给不出路径
+ * （只有建议文件名），所以这条能力不是"写任意路径"。
+ */
+export interface PluginExport {
+  /** 建议的文件名（后端已去掉目录、限长）。 */
+  file_name: string;
+  content: string;
+  bytes: number;
+}
+
 /** 插件在本次执行里通过 `__toast(...)` 发出的提示（随结果回传，由前端弹出）。 */
 export interface PluginRunResult {
   message: string;
@@ -273,6 +286,8 @@ export interface PluginRunResult {
   toasts?: string[];
   /** 写能力产出的草稿（方案 §3.5 的写中介：落库前需用户确认）。 */
   drafts?: PluginDraft[];
+  /** `api.files.export` 的产物（**未写盘**，由前端弹保存对话框）。 */
+  exports?: PluginExport[];
 }
 
 /** 一条能力调用审计记录：只记元数据（谁、调了什么、成没成），不记内容。 */

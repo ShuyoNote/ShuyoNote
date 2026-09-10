@@ -68,6 +68,12 @@
       "title": "给页面加标签",
       "risk": "medium",
       "desc": "给页面加标签；**写入前会先给你看草稿并等你确认**"
+    },
+    {
+      "id": "export:files",
+      "title": "把内容保存成文件",
+      "risk": "medium",
+      "desc": "由你把文件保存到哪里、存不存（宿主弹系统保存对话框）。插件只能给一个建议文件名，给不了路径"
     }
   ],
   "events": [
@@ -153,6 +159,12 @@
       "title": "导入文件",
       "hosted": true,
       "desc": "命令面板里按扩展名出现；用户选中文件后宿主读成文本，把 { fileName, content } 交给你的命令"
+    },
+    {
+      "id": "export",
+      "title": "导出文件",
+      "hosted": true,
+      "desc": "命令面板里按扩展名出现；跑这条命令时插件用 api.files.export 登记内容，宿主逐个弹保存对话框（用户点保存才写）"
     }
   ],
   "capabilities": [
@@ -786,6 +798,41 @@
         "desc": "进插件日志环形缓冲，可在插件面板查看"
       },
       "rust": "cap_log_write"
+    },
+    {
+      "id": "files.export",
+      "title": "把内容保存成文件（用户选位置）",
+      "kind": "write",
+      "scope": "app",
+      "permission": "export:files",
+      "since": "1.0.0",
+      "jsPath": [
+        "files",
+        "export"
+      ],
+      "args": [
+        {
+          "name": "fileName",
+          "type": "string",
+          "required": true,
+          "desc": "建议的文件名（只给名字——路径里的目录会被去掉，文件存哪里由用户在保存对话框里定）"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true,
+          "desc": "要写入的内容（单文件上限 4 MiB，一次运行最多 4 个文件）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ queued: true; bytes: number }",
+        "desc": "{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写"
+      },
+      "rust": "cap_files_export",
+      "mediate": "draft",
+      "mediateWhy": "会把内容写到笔记之外的文件里：这条能力不直接写盘——先收集，等命令跑完由用户在系统保存对话框里逐个选位置（取消＝不写），与写能力的草稿确认同一个中介思路",
+      "desc": "把文本内容保存成文件：用户点「保存」才写。参数: fileName (必填, 建议的文件名), content (必填, 要写入的文本)。"
     }
   ],
   "legacyGlobals": [

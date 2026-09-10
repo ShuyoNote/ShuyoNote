@@ -31,7 +31,8 @@ var api = {
     list: function(pageId) { return __capCall("backlinks.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   files: {
-    list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
+    list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); },
+    export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); }
   },
   editor: {
     insertText: function(text) { return __capCall("editor.insertText", { text: text === undefined ? undefined : String(text) }); }

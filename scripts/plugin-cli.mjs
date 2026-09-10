@@ -224,7 +224,11 @@ function checkTriggers(m, push, knownTriggerKinds) {
       push("warning", "trigger_not_hosted", `${at} 的 kind「${kind}」本版本还没有宿主入口：写了现在也不会出现`);
     }
     if (!command) {
-      push("error", "trigger_no_command", `${at} 没有 command：导入触发要把文件内容交给一个命令，没写就等于让用户点了没反应`);
+      push("error", "trigger_no_command", `${at} 没有 command：触发要把文件交给一个命令（或让命令产出内容），没写就等于让用户点了没反应`);
+    }
+    // 导出触发会调 api.files.export：显式声明了权限却没写 export:files 时，点了只会看到权限不足
+    if (kind === "export" && Array.isArray(m.permissions) && !m.permissions.some((p) => p?.id === "export:files")) {
+      push("warning", "trigger_export_without_permission", `${at} 是导出触发，但 manifest.permissions 里没有「export:files」：命令里调 api.files.export 会被拒（要么补上这项权限，要么删掉这条触发）`);
     }
     const exts = t ? t.extensions : undefined;
     if (!Array.isArray(exts) || exts.length === 0) {
@@ -517,7 +521,7 @@ function report(r, json) {
   const declaresTriggers = Array.isArray(r.manifest?.triggers) ? r.manifest.triggers : [];
   if (declaresTriggers.length > 0) {
     const knownTriggers = new Map((r.reg.triggers ?? []).map((t) => [t.id, t]));
-    console.log(`  ${color("导入触发", "dim")}（命令面板里会多出这些入口）：`);
+    console.log(`  ${color("文件触发", "dim")}（命令面板里会多出这些入口）：`);
     for (const t of declaresTriggers) {
       const k = knownTriggers.get(t?.kind);
       const mark = k ? color("✓", "green") : color("?", "yellow");

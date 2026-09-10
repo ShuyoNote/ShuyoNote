@@ -16,6 +16,8 @@ export interface PluginImportItem {
   key: string;
   /** 入口标题（作者写了 title 就用它，否则用默认文案）。 */
   title: string;
+  /** `import`（宿主读用户的文件交给命令）或 `export`（命令产出内容、用户选位置保存）。 */
+  kind: "import" | "export";
   pluginId: string;
   pluginName: string;
   commandId: string;
@@ -23,9 +25,23 @@ export interface PluginImportItem {
   extensions: string[];
 }
 
-/** 默认入口标题的模板（作者不写 `title` 时用它）。 */
+/**
+ * 默认入口标题的模板（作者不写 `title` 时用它）。
+ *
+ * 两个方向的说法不一样，因为对用户来说它们确实是两件事：
+ * - `import`：**打开**一个文件（用户去挑文件，宿主读给它）；
+ * - `export`：**保存为**某个格式（插件产出内容，用户挑存到哪里）。
+ */
+export function defaultTriggerTitle(kind: "import" | "export", pluginName: string, extensions: string[]): string {
+  const exts = extensions.join(" / ");
+  return kind === "export"
+    ? `导出：用「${pluginName}」保存为 ${exts}`
+    : `导入：用「${pluginName}」打开 ${exts}`;
+}
+
+/** 兼容旧名字（导入侧的默认标题）。 */
 export function defaultImportTitle(pluginName: string, extensions: string[]): string {
-  return `导入：用「${pluginName}」打开 ${extensions.join(" / ")}`;
+  return defaultTriggerTitle("import", pluginName, extensions);
 }
 
 /** 系统文件选择器的过滤器需要**不带点**的扩展名（`dialog.open` 的约定）。 */
@@ -59,24 +75,28 @@ export function baseName(path: string): string {
 }
 
 /**
- * 启用中的插件 → 命令面板里的导入入口（一条触发一个入口）。
+ * 启用中的插件 → 命令面板里的文件入口（一条触发一个入口）。
  *
  * 三条规则，每条都对应一种"静默失效"：
  * - **没启用的插件不出现**（与命令、`/` 菜单一致：禁用就不该在界面上露脸）；
  * - **命令为空不出现**（后端已经筛过，这里是第二道）；
- * - **扩展名为空不出现**（没有扩展名 = 不知道该在什么文件上出现 = 点不到）。
+ * - **扩展名为空不出现**（没有扩展名 = 不知道该在什么文件上出现 = 点不到）；
+ * - **只认识 import / export**（别的 kind 后端已经筛掉；这里再确认一次，界面里不该出现
+ *   一个点下去不知道会发生什么的入口）。
  */
-export function pluginImportItems(plugins: PluginMeta[]): PluginImportItem[] {
+export function pluginTriggerItems(plugins: PluginMeta[]): PluginImportItem[] {
   const out: PluginImportItem[] = [];
   for (const p of plugins) {
     if (!p.enabled) continue;
     for (const t of p.triggers ?? []) {
+      if (t.kind !== "import" && t.kind !== "export") continue;
       if (!t.command) continue;
       const extensions = [...new Set(t.extensions ?? [])].filter(Boolean);
       if (extensions.length === 0) continue;
       out.push({
-        key: `plugin-import:${p.id}:${t.kind}:${extensions.join(",")}:${t.command}`,
-        title: t.title || defaultImportTitle(p.name, extensions),
+        key: `plugin-${t.kind}:${p.id}:${extensions.join(",")}:${t.command}`,
+        title: t.title || defaultTriggerTitle(t.kind, p.name, extensions),
+        kind: t.kind,
         pluginId: p.id,
         pluginName: p.name,
         commandId: t.command,
@@ -85,4 +105,9 @@ export function pluginImportItems(plugins: PluginMeta[]): PluginImportItem[] {
     }
   }
   return out;
+}
+
+/** 兼容旧名字（与 `pluginTriggerItems` 同一个实现）。 */
+export function pluginImportItems(plugins: PluginMeta[]): PluginImportItem[] {
+  return pluginTriggerItems(plugins);
 }
