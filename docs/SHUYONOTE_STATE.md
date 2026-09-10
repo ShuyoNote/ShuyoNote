@@ -21,6 +21,7 @@
 | M27 | 团队版（自建协作） | [部分] 部分（服务端 S1–S8 已落地；客户端 per-workspace `sync_profiles` + 账户 UI（U1–U4）+ E2E 加密已落地；**实时协同后置**） |
 
 ### 近期重大变更（v1.82 → v1.84.3）
+- **v1.85.1 热修复：命令面板白屏**（2026-09-10）：1.85.0 起按 `Ctrl+K` 会抛 React 错误（生产为 Minified React error #310）并让**整棵树被卸载成白屏**——`CommandPalette` 把参数表单的三个 `useState` 放在了 `if (!open) return null` 之后（hooks 不能有条件调用），而它挂在 App 根部、上面没有 ErrorBoundary。修复 = hooks 移到早退之前；补上**渲染级**回归测试 `src/components/commandPaletteHooks.test.ts`（修复前必失败）。**教训**：既有验证全都不渲染 React 组件，主路径可以一直炸而全套检查全绿——后续应把「渲染级」检查纳入验证循环，并给 App 根部补 ErrorBoundary。
 - **多账号聚合邮箱**（v1.83）：多账号 IMAP 聚合收件箱 + 存为笔记 + AI 总结 + 发件人标签 + 按月直达 + 设置多账号管理/测试连接。
 - **附件哈希前缀分桶存储**（v1.84.2）：附件从单目录平铺改为 `attachments/<hash前2>/<hash>.<ext>`，旧数据双读兼容，服务端空间桶内再按哈希前 2 字符分片。
 - **同步一致性加固（seq-LWW + dirty 优先本地）**（v1.84.3）：根治团队多人同改时钟漂移丢改动。
