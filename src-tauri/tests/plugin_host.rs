@@ -11,7 +11,7 @@
 //! 不需要数据的东西：返回字符串、`api.log`（走能力通道 → 假应答）、以及订阅一个事件。
 //! 阶段 2 会把能力改成 RPC 回父进程，那时这批断言会跟着长大。
 
-use shuyonote_lib::plugin_host::{CapMode, HostClient, HostRunRequest};
+use shuyonote_lib::plugin_host::{HostClient, HostRunRequest, HostRunMode};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -29,13 +29,8 @@ fn req(source: &str, command_id: &str) -> HostRunRequest {
         current_page_id: Some("p1".into()),
         current_page_json: "{}".into(),
         page_count: 3,
-        cap_mode: CapMode::Stub,
+        mode: HostRunMode::Command,
     }
-}
-
-/// 把请求改成"能力走 IPC 回父进程"（阶段 2 的模式）。
-fn rpc_req(source: &str, command_id: &str) -> HostRunRequest {
-    HostRunRequest { cap_mode: CapMode::Rpc, ..req(source, command_id) }
 }
 
 #[test]
@@ -58,18 +53,20 @@ fn a_real_child_process_runs_plugin_js_and_returns_the_result() {
     assert_eq!(res.message, "来自子进程");
     assert!(res.drafts.is_null() || res.drafts.as_array().is_some(), "草稿形状原样透传");
 
-    // 能力调用：阶段 1 是假应答，但仍然要**穿过** `__cap` 这条通道（回归价值在"通道通"，
-    // 不在"数据对"——数据对是阶段 2 的事）。
+    // 能力调用**必须回父进程**：`run()` 是"父进程没提供能力服务"的那一版，所以这里要看到
+    // 明确的 `cap_no_server`（点名是哪个能力），而不是"插件拿到了数据"。
+    // （真能力往返在下面的 `capability_calls_round_trip_through_the_parent` 里。）
     let res = client
         .run(req(
-            r#"register({ id: "h.cap", title: "Cap", run: function () {
-                 var echoed = api.kv.get("hello");
-                 return "echo=" + String(echoed && echoed.method);
-               } });"#,
+            r#"register({ id: "h.cap", title: "Cap", run: function () { return "n=" + api.kv.get("hello"); } });"#,
             "h.cap",
         ))
-        .expect("有假应答的能力调用也要跑得通");
-    assert_eq!(res.message, "echo=kv.get", "能力调用要穿过 __cap 并拿到假应答：{}", res.message);
+        .expect("命令本身跑得完（插件的异常由 shim 转成一句结果）");
+    assert!(
+        res.message.contains("cap_no_server") && res.message.contains("kv.get"),
+        "没有能力服务时要说清真原因：{}",
+        res.message
+    );
 
     // 入参照传：宿主给的 argsJson 要走完整条链。
     let mut with_args = req(
@@ -226,7 +223,7 @@ fn capability_calls_round_trip_through_the_parent() {
 
     let res = client
         .run_with_server(
-            rpc_req(
+            req(
                 r#"register({ id: "c.all", title: "Cap", run: function (a) {
                      var n = api.pages.count();
                      var v = api.kv.get("k");
@@ -261,7 +258,7 @@ fn capability_errors_come_back_into_the_plugins_js() {
     // 而不是把整次调用变成通道故障（否则用户看到的是"插件坏了"，而不是"这一步被拒了"）。
     let res = client
         .run_with_server(
-            rpc_req(
+            req(
                 r#"register({ id: "c.err", title: "Err", run: function () {
                      try { api.pages.list(); return "没抛错（不对）"; }
                      catch (e) { return "被拒：" + String(e.message || e); }
@@ -285,7 +282,7 @@ fn a_capability_request_without_a_server_says_so_in_the_message() {
     // 否则"父进程没接能力服务"这件事会装成"插件拿到了数据"。
     let mut client = HostClient::spawn_with_exe(&app_bin()).expect("宿主子进程应当起得来");
     let res = client
-        .run(rpc_req(
+        .run(req(
             r#"register({ id: "c.ask", title: "Ask", run: function () { return String(api.pages.count()); } });"#,
             "c.ask",
         ))

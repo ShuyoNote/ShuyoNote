@@ -96,7 +96,11 @@ pub struct HostRunRequest {
     pub plugin_id: String,
     /// 插件源码（父进程读盘后传进来；子进程没有路径，也就读不了别的文件）。
     pub source: String,
+    /// 命令 id（`mode = event` 时这里放**事件名**——两者是同一件事："跑哪一个"）。
     pub command_id: String,
+    /// 跑命令还是跑事件（两条路的能力通道是同一条，只有入口不同）。
+    #[serde(default)]
+    pub mode: HostRunMode,
     #[serde(default)]
     pub args_json: String,
     /// 本次运行被授权的权限（父进程按 manifest 解析后传进来）。
@@ -108,27 +112,24 @@ pub struct HostRunRequest {
     pub current_page_json: String,
     #[serde(default)]
     pub page_count: usize,
-    /// 能力调用怎么回：假应答（默认）还是走 IPC 回父进程。
-    #[serde(default)]
-    pub cap_mode: CapMode,
-}
-
-/// 子进程里"能力怎么回"。
-///
-/// 阶段 1 只有 [`CapMode::Stub`]（假应答）；阶段 2 加了 [`CapMode::Rpc`]，切流时会**只留
-/// Rpc**——现在两条都在，是因为父进程还没把能力服务接上（见方案 §8.2 的进展表）。
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CapMode {
-    #[default]
-    Stub,
-    Rpc,
 }
 
 /// 一次命令执行的结果。
 ///
 /// 草稿与导出用 `serde_json::Value` 原样透传：阶段 1 只证明"数据过得去"，它们的**形状**
 /// 与落地规则仍然只在前端与父进程那一侧（写中介没变，也不需要变）。
+/// 这次运行是"跑命令"还是"派发事件"。
+///
+/// 两条路共用一个子进程、一条能力通道，差别只在子进程里调哪个入口：命令返回 message 与
+/// 可插入文本，事件返回 message 与草稿（事件里没有编辑器，`insert_text` 会被忽略）。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HostRunMode {
+    #[default]
+    Command,
+    Event,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct HostRunResult {
@@ -251,7 +252,7 @@ pub fn serve_stdio() -> i32 {
                 return 2;
             }
             Ok(Some(HostIn::Run(req))) => {
-                let frame = match crate::plugins::run_command_in_host_process(&req) {
+                let frame = match crate::plugins::run_in_host_process(&req) {
                     Ok(res) => HostOut::Done(res),
                     Err((code, message)) => HostOut::Failed { code, message },
                 };
@@ -466,7 +467,7 @@ mod tests {
             current_page_id: None,
             current_page_json: String::new(),
             page_count: 0,
-            cap_mode: CapMode::Stub,
+            mode: HostRunMode::Command,
         }
     }
 

@@ -329,7 +329,6 @@ struct RunState {
     /// 子进程没有数据库、没有密钥、没有路径——它跑不动真能力，也不该跑。阶段 2 会把
     /// `__cap` 改成 RPC 回父进程（那里已经有权限校验、审计与写中介）；在那之前，
     /// 这个开关让"通道 + 解释器 + 插件 JS"这三段能在真进程边界上先跑通、被测住。
-    cap_stub: bool,
     /// M11.13 阶段 2：能力调用的**传输**。有它时每次 `api.*` 都走它回父进程（父进程在那里
     /// 查库并回答）；没有时才轮到上面的假应答。
     ///
@@ -1905,25 +1904,12 @@ fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
-    // M11.13 阶段 1：子进程里没有数据可读，能力调用回一个**假应答**。
-    //
-    // 这个分支必须在**任何数据库访问之前**：子进程连库都打不开（没有密钥、没有路径），
-    // 走到下面任何一条 arm 都只会失败。假应答的用处是让"协议 + 解释器 + 插件 JS"这三段
-    // 能在真进程边界上跑通并被测住；阶段 2 把它换成 `__cap` 走 IPC 回父进程，
-    // **权限校验与审计仍然只发生在父进程那一侧**（那里本来就有一份，不需要第二份）。
-    // 阶段 2：装了传输就把这一问一答发回父进程（那边查库、校验权限、记审计）。
+    // M11.13：装了传输就说明这次运行在**子进程**里——把这一问一答发回父进程，由那边
+    // 查库、校验权限、记审计、出草稿。下面这些 arm 只会跑在**父进程**：子进程没有库、
+    // 没有密钥、没有路径，它根本走不到这里。
     let rpc = RUN_STATE.with(|s| s.borrow().cap_rpc.clone());
     if let Some(rpc) = rpc {
         return rpc(method, args_json);
-    }
-    if RUN_STATE.with(|s| s.borrow().cap_stub) {
-        return Ok(serde_json::json!({
-            "stub": true,
-            "method": method,
-            "args": serde_json::from_str::<serde_json::Value>(args_json)
-                .unwrap_or(serde_json::Value::Null),
-        })
-        .to_string());
     }
     let plugin_id = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
     let cap = match capabilities_gen::lookup(method) {
@@ -2181,7 +2167,6 @@ fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
             exports: Vec::new(),
             insert_text: String::new(),
             toasts: Vec::new(),
-            cap_stub: state.cap_stub,
             cap_rpc: state.cap_rpc.clone(),
         }
     });
@@ -2238,7 +2223,6 @@ fn run_command_timeout(
         exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
-        cap_stub: state.cap_stub,
         cap_rpc: state.cap_rpc.clone(),
     };
     let args = args_json.to_string();
@@ -2257,12 +2241,151 @@ fn run_command_timeout(
     })
 }
 
-/// M11.13 阶段 1：在**子进程**里跑一次命令（`--plugin-host` 时由 `plugin_host` 调用）。
+/// M11.13 阶段 2b：把一次命令放到**子进程**里跑，能力由**本进程**服务。
 ///
-/// 与父进程那条路（`run_plugin_command`）的差别只有一处：能力走**假应答**（`cap_stub`）。
+/// 这是生产路径（`run_plugin_command` 与事件派发都走它）。它做的事：
+///   1. 在本线程上装好 `RunState`（能力执行时要从这里读权限、空间、当前页、设置 scope）；
+///   2. 起一个宿主子进程，把源码/入参/上下文递过去；
+///   3. **同步回答**子进程的每一次能力调用（`dispatch_capability` —— 查库、校验权限、
+///      记审计、把草稿/导出收进 RunState）；
+///   4. 把两边的产出合起来：草稿与导出在**本进程**产生（能力在这里跑），
+///      `insert_text` 与 `__toast` 的提示在**子进程**产生（JS 侧的原生函数）。
+///
+/// ⚠️ 铁律（方案 §7）：回答能力调用时**绝不能持着数据库锁等子进程**。`dispatch_capability`
+/// 内部只在单次查询期间持锁，而它是被同步调用的（子进程此刻正阻塞等这个回答），所以
+/// 顺序天然是"子进程问 → 父进程查完就答"——不要在这中间插入等待子进程的代码。
+fn run_command_via_host(
+    source: &str,
+    command_id: &str,
+    args_json: &str,
+    state: &RunState,
+) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
+    let (message, insert, toasts, drafts, exports, _dropped) =
+        run_via_host(source, command_id, args_json, state, crate::plugin_host::HostRunMode::Command)?;
+    Ok((message, insert, toasts, drafts, exports))
+}
+
+/// 事件路径的同一条路（阶段 2b 起事件也跑在子进程里）。
+///
+/// 与命令那条共用全部机制：装 RunState、起子进程、同步回答能力、合并产出。差别只有
+/// 子进程里调哪个入口（`run_event_timeout` vs `run_command_timeout`）与错误码前缀。
+fn run_event_via_host(
+    source: &str,
+    event: &str,
+    payload_json: &str,
+    state: &RunState,
+) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
+    let (message, _insert, toasts, drafts, exports, _dropped) =
+        run_via_host(source, event, payload_json, state, crate::plugin_host::HostRunMode::Event)?;
+    // 事件里没有保存对话框可弹，也没有人在等：真的出现导出请求就**明确丢弃并留痕**
+    // （与"事件里的 insert 会被忽略"同一条规矩，见调用点）。
+    if !exports.is_empty() {
+        push_log(
+            &state.plugin_id,
+            "warn",
+            &format!("事件 {event} 里有 {} 次 api.files.export：事件没有保存对话框，已忽略", exports.len()),
+        );
+    }
+    Ok((message, toasts, drafts))
+}
+
+fn run_via_host(
+    source: &str,
+    what: &str,
+    args_json: &str,
+    state: &RunState,
+    mode: crate::plugin_host::HostRunMode,
+) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>, usize), String> {
+    let req = crate::plugin_host::HostRunRequest {
+        plugin_id: state.plugin_id.clone(),
+        source: source.to_string(),
+        // 命令 id 与事件名是同一件事："跑哪一个"（见 HostRunRequest 的注释）。
+        command_id: what.to_string(),
+        mode,
+        args_json: args_json.to_string(),
+        permissions: state.permissions.clone(),
+        current_page_id: state.current_page_id.clone(),
+        current_page_json: state.current_page_json.clone(),
+        page_count: state.page_count,
+    };
+    let timeout = if mode == crate::plugin_host::HostRunMode::Event { EVENT_TIMEOUT } else { RUN_TIMEOUT };
+    let what_label = if mode == crate::plugin_host::HostRunMode::Event { "插件事件" } else { "插件执行" };
+    let serve_state = state.clone();
+    with_timeout(timeout, what_label, move || {
+        let mut client = spawn_host_client()?;
+        // 把上下文装到**本线程**：能力在这里执行，`with_read_conn` 也在这里惰性开连接。
+        install_run_state(&serve_state);
+        let served = client.run_with_server(req, |method, args| dispatch_capability(method, args));
+        // 先取走本进程侧收集到的产出，再把 RunState 清干净（无论成功失败）。
+        let (drafts, exports, cap_toasts, cap_insert) = take_run_state_outputs();
+        let dropped = exports.len();
+        clear_run_state();
+
+        let res = served?;
+        // 两种插入来源合并：能力那条（父进程）优先，JS 原生那条（子进程）兜底。
+        let insert_text = if cap_insert.is_empty() { res.insert_text } else { cap_insert };
+        let mut toasts = cap_toasts;
+        for t in res.toasts {
+            if !toasts.contains(&t) {
+                toasts.push(t);
+            }
+        }
+        // 子进程不会产出草稿/导出（它没有能力，只能问），所以这两个字段正常是空的。
+        // 这里仍然只认**本进程**收集到的那份：能力的产出全部发生在这一侧。
+        let _ = (&res.drafts, &res.exports);
+        Ok((res.message, insert_text, toasts, drafts, exports, dropped))
+    })
+}
+
+/// 起宿主子进程。生产用**当前可执行文件**（同二进制 re-exec）。
+///
+/// 唯一的例外是测试：`cargo test` 里"当前可执行文件"是测试二进制，不是宿主，所以允许
+/// 用 `SHUYONOTE_PLUGIN_HOST_EXE` 显式指定（测试专用，应用永远不会设它）。
+fn spawn_host_client() -> Result<crate::plugin_host::HostClient, String> {
+    match std::env::var("SHUYONOTE_PLUGIN_HOST_EXE") {
+        Ok(p) if !p.trim().is_empty() => {
+            crate::plugin_host::HostClient::spawn_with_exe(std::path::Path::new(p.trim()))
+        }
+        _ => crate::plugin_host::HostClient::spawn(),
+    }
+}
+
+/// 在**当前线程**装上一次运行的上下文（能力执行时要读它）。
+fn install_run_state(state: &RunState) {
+    RUN_STATE.with(|s| *s.borrow_mut() = state.clone());
+    // 能力用的是本线程的连接：换一次运行就换一次上下文，连接要跟着重开。
+    READ_CONN.with(|c| *c.borrow_mut() = None);
+    META_CONN.with(|c| *c.borrow_mut() = None);
+}
+
+/// 取走本线程上收集到的**能力产出**：草稿 / 导出 / 提示 / 插入文本。
+///
+/// 插入文本有两种来源：`__insert(...)`（JS 侧原生函数，发生在**子进程**）与能力
+/// `editor.insertText`（结构化返回里的 `insert` 走它，发生在**父进程**）。两边都要收。
+fn take_run_state_outputs() -> (Vec<PluginDraft>, Vec<PluginExport>, Vec<String>, String) {
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        (
+            std::mem::take(&mut st.drafts),
+            std::mem::take(&mut st.exports),
+            std::mem::take(&mut st.toasts),
+            std::mem::take(&mut st.insert_text),
+        )
+    })
+}
+
+/// 清掉本线程的运行上下文（别把一次运行的权限/空间留给下一次）。
+fn clear_run_state() {
+    RUN_STATE.with(|s| *s.borrow_mut() = RunState::default());
+    READ_CONN.with(|c| *c.borrow_mut() = None);
+    META_CONN.with(|c| *c.borrow_mut() = None);
+}
+
+/// M11.13：在**子进程**里跑一次命令或派发一次事件（`--plugin-host` 时由 `plugin_host` 调用）。
+///
 /// 权限解析、草稿确认、导出对话框这些仍然只发生在父进程那一侧——子进程是纯解释器，
 /// 它没有库、没有密钥、没有路径，所以它**做不到**这些事，也不需要能做。
-pub(crate) fn run_command_in_host_process(
+pub(crate) fn run_in_host_process(
     req: &crate::plugin_host::HostRunRequest,
 ) -> Result<crate::plugin_host::HostRunResult, (String, String)> {
     let state = RunState {
@@ -2279,14 +2402,18 @@ pub(crate) fn run_command_in_host_process(
         exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
-        cap_stub: req.cap_mode == crate::plugin_host::CapMode::Stub,
-        cap_rpc: if req.cap_mode == crate::plugin_host::CapMode::Rpc {
-            Some(crate::plugin_host::rpc_transport())
-        } else {
-            None
-        },
+        // 子进程里的每一次能力调用都要问父进程——这正是这条边界：子进程没有库、没有密钥、
+        // 没有路径，它做不了数据访问，只能问。
+        cap_rpc: Some(crate::plugin_host::rpc_transport()),
     };
-    match run_command_timeout(&req.source, &req.command_id, &req.args_json, &state) {
+    let outcome = match req.mode {
+        crate::plugin_host::HostRunMode::Command => {
+            run_command_timeout(&req.source, &req.command_id, &req.args_json, &state)
+        }
+        crate::plugin_host::HostRunMode::Event => run_event_timeout(&req.source, &req.command_id, &req.args_json, &state)
+            .map(|(message, toasts, drafts)| (message, String::new(), toasts, drafts, Vec::new())),
+    };
+    match outcome {
         Ok((message, insert_text, toasts, drafts, exports)) => Ok(crate::plugin_host::HostRunResult {
             message,
             insert_text,
@@ -2526,8 +2653,6 @@ fn run_event_timeout(
         exports: Vec::new(),
         insert_text: String::new(),
         toasts: Vec::new(),
-        // 事件路径目前仍在父进程内跑（M11.13 阶段 2 起才会挪到子进程）
-        cap_stub: state.cap_stub,
         cap_rpc: state.cap_rpc.clone(),
     };
     let src = source.to_string();
@@ -2709,7 +2834,6 @@ pub async fn emit_plugin_event(
             current_page_id: payload_page_id.clone(),
             read_space: read_space.clone(),
             read_dir: None,
-            cap_stub: false,
             cap_rpc: None,
             setting_scopes,
             drafts: Vec::new(),
@@ -2717,7 +2841,7 @@ pub async fn emit_plugin_event(
             insert_text: String::new(),
             toasts: Vec::new(),
         };
-        match run_event_timeout(&source, &event, &payload_json, &state) {
+        match run_event_via_host(&source, &event, &payload_json, &state) {
             Ok((message, toasts, drafts)) => {
                 push_log(
                     &id,
@@ -3309,7 +3433,6 @@ pub async fn run_plugin_command(
         current_page_id: current_id,
         read_space,
         read_dir: None,
-        cap_stub: false,
         cap_rpc: None,
         setting_scopes: setting_scopes_of(&manifest),
         drafts: Vec::new(),
@@ -3317,7 +3440,7 @@ pub async fn run_plugin_command(
         insert_text: String::new(),
         toasts: Vec::new(),
     };
-    let (message, insert, toasts, drafts, exports) = run_command_timeout(&source, &command_id, &args_json, &state)?;
+    let (message, insert, toasts, drafts, exports) = run_command_via_host(&source, &command_id, &args_json, &state)?;
     Ok(PluginRunResult {
         message: if message.is_empty() { "已执行".to_string() } else { message },
         insert: if insert.is_empty() { None } else { Some(insert) },
@@ -3770,6 +3893,56 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
 
     // ---- 能力注册表 / api.* / 权限 ----
 
+    /// 把"宿主二进制"指对。
+    ///
+    /// 生产路径是**同二进制 re-exec**（`current_exe()`）；但 `cargo test` 里 current_exe 是
+    /// **测试二进制**（它没有 `--plugin-host` 分支），所以测试要么显式指定，要么测不到真边界。
+    fn ensure_host_exe() {
+        use std::sync::OnceLock;
+        static DONE: OnceLock<()> = OnceLock::new();
+        DONE.get_or_init(|| {
+            let exe = std::env::current_exe().expect("current_exe");
+            // target/<profile>/deps/<test-bin> → target/<profile>/shuyonote
+            let profile_dir = exe
+                .parent()
+                .and_then(|p| p.parent())
+                .expect("拿不到 target/<profile>");
+            let candidate = profile_dir.join(format!("shuyonote{}", std::env::consts::EXE_SUFFIX));
+            assert!(
+                candidate.exists(),
+                "找不到宿主二进制 {}：请用 `cargo test`（会先构建应用二进制），不要用 `cargo test --lib`",
+                candidate.display()
+            );
+            std::env::set_var("SHUYONOTE_PLUGIN_HOST_EXE", &candidate);
+        });
+    }
+
+    /// 测试里跑插件命令**必须走生产那条路**：真子进程 + 父进程服务能力。
+    ///
+    /// D7 明确不留"测试走进程内、生产走子进程"的分叉——那种分叉会让两条路的语义差异**
+    /// 恰好两边都测不到**（各自都能过）。所以这里不调 `run_command_timeout`（那已经是
+    /// **子进程内部**的入口），而是调生产用的 `run_command_via_host`。
+    fn run_command_in_host_for_test(
+        source: &str,
+        command_id: &str,
+        args_json: &str,
+        state: &RunState,
+    ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
+        ensure_host_exe();
+        run_command_via_host(source, command_id, args_json, state)
+    }
+
+    /// 事件路径同理（生产也跑在子进程里了）。
+    fn run_event_in_host_for_test(
+        source: &str,
+        event: &str,
+        payload_json: &str,
+        state: &RunState,
+    ) -> Result<(String, Vec<String>, Vec<PluginDraft>), String> {
+        ensure_host_exe();
+        run_event_via_host(source, event, payload_json, state)
+    }
+
     fn state_with(permissions: &[&str]) -> RunState {
         RunState {
             plugin_id: "t".to_string(),
@@ -3995,7 +4168,7 @@ on("page.saved", function (payload) {
         let mut state = state_with(&["write:tags"]);
         state.current_page_id = Some("p1".to_string());
         let (msg, _toasts, drafts) =
-            run_event_timeout(src, "page.saved", r#"{"pageId":"p1","title":"甲"}"#, &state).unwrap();
+            run_event_in_host_for_test(src, "page.saved", r#"{"pageId":"p1","title":"甲"}"#, &state).unwrap();
         assert!(msg.contains("处理了 甲"), "{msg}");
         assert_eq!(drafts.len(), 1, "事件里的写操作必须产出草稿，由用户确认后才落库");
         assert!(drafts[0].summary.contains("已保存-甲"), "{:?}", drafts[0].summary);
@@ -4008,7 +4181,7 @@ on("page.saved", function (payload) {
         let mut state = state_with(&[]); // 没给 write:tags
         state.current_page_id = Some("p1".to_string());
         let (msg, _toasts, drafts) =
-            run_event_timeout(src, "page.saved", r#"{"pageId":"p1"}"#, &state).unwrap();
+            run_event_in_host_for_test(src, "page.saved", r#"{"pageId":"p1"}"#, &state).unwrap();
         // 能力被拒时 shim 会**抛错**（作者看得见），处理器就此中止：
         // 既不会静默成功，也不会产出草稿——错误随结果回传，宿主写进插件日志。
         assert!(msg.contains("permission_denied"), "拒绝必须可见：{msg}");
@@ -4022,7 +4195,7 @@ on("page.saved", function (payload) {
 on("page.saved", function () { throw new Error("第一个炸了"); });
 on("page.saved", function () { return "第二个正常"; });
 "#;
-        let (msg, _, _) = run_event_timeout(src, "page.saved", "{}", &RunState::default()).unwrap();
+        let (msg, _, _) = run_event_in_host_for_test(src, "page.saved", "{}", &RunState::default()).unwrap();
         assert!(msg.contains("第一个炸了"), "错误必须回传而不是被吞：{msg}");
         assert!(msg.contains("第二个正常"), "后面的处理器仍要执行：{msg}");
     }
@@ -4032,7 +4205,7 @@ on("page.saved", function () { return "第二个正常"; });
         let _g = log_test_guard();
         let src = r#"on("page.saved", function () { return "不该被触发"; });"#;
         let (msg, toasts, drafts) =
-            run_event_timeout(src, "page.deleted", "{}", &RunState::default()).unwrap();
+            run_event_in_host_for_test(src, "page.deleted", "{}", &RunState::default()).unwrap();
         assert_eq!(msg, "");
         assert!(toasts.is_empty() && drafts.is_empty());
     }
@@ -4057,7 +4230,7 @@ register({
   }
 });
 "#;
-        let (msg, _, _, _, _) = run_command_timeout(
+        let (msg, _, _, _, _) = run_command_in_host_for_test(
             src,
             "p.run",
             r#"{"title":"你好","count":2,"mode":"b","loud":true,"weird":"x"}"#,
@@ -4108,7 +4281,7 @@ register({
         let _g = log_test_guard();
         // 老插件：`run()` 不声明参数、也不接受参数 —— 必须原样可用
         let src = r#"register({ id: "old.run", title: "老命令", run: function () { return "ok"; } });"#;
-        let (msg, _, _, _, _) = run_command_timeout(src, "old.run", "", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) = run_command_in_host_for_test(src, "old.run", "", &RunState::default()).unwrap();
         assert_eq!(msg, "ok");
         let cmds = discover_commands(src, &RunState::default()).unwrap();
         assert!(cmds[0].params.is_empty(), "没声明参数时不应凭空多出参数");
@@ -4124,7 +4297,7 @@ register({ id: "s.run", title: "结构化", run: function () {
 }});
 "#;
         let (msg, insert, toasts, _, _) =
-            run_command_timeout(src, "s.run", "", &state_with(&["write:page.current"])).unwrap();
+            run_command_in_host_for_test(src, "s.run", "", &state_with(&["write:page.current"])).unwrap();
         assert_eq!(msg, "完成");
         assert_eq!(insert, "追加的文本");
         assert_eq!(toasts, vec!["提示一".to_string(), "提示二".to_string()]);
@@ -4148,7 +4321,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         );
         let state = state_with(&["export:files"]);
         let (msg, _insert, _toasts, _drafts, exports) =
-            run_command_timeout(&src, "e.run", "", &state).unwrap();
+            run_command_in_host_for_test(&src, "e.run", "", &state).unwrap();
 
         assert_eq!(exports.len(), 1, "应当登记一条导出请求");
         assert_eq!(exports[0].file_name, "想要的名字.md", "目录部分必须被去掉：插件给不出路径");
@@ -4165,7 +4338,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 没声明 export:files：拒绝（与其他能力一样，逐次校验，不靠 UI 隐藏）
         let src = r#"register({ id: "e.deny", title: "E", description: "", closeOnRun: false,
   run: function () { try { api.files.export("a.md", "x"); } catch (e) { return String(e); } return "no-throw"; } });"#;
-        let (msg, _i, _t, _d, exports) = run_command_timeout(src, "e.deny", "", &state_with(&[])).unwrap();
+        let (msg, _i, _t, _d, exports) = run_command_in_host_for_test(src, "e.deny", "", &state_with(&[])).unwrap();
         assert!(msg.contains("permission_denied"), "实际：{msg}");
         assert!(exports.is_empty(), "被拒的调用不该留下导出请求");
 
@@ -4177,7 +4350,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     try { api.files.export("a.md", ""); } catch (e) { out.push(String(e).indexOf("bad_args") >= 0 ? "bad_args" : String(e)); }
     return out.join(" | ");
   } });"#;
-        let (msg, ..) = run_command_timeout(bad, "e.bad", "", &state_with(&["export:files"])).unwrap();
+        let (msg, ..) = run_command_in_host_for_test(bad, "e.bad", "", &state_with(&["export:files"])).unwrap();
         assert_eq!(msg, "bad_args | bad_args");
     }
 
@@ -4233,7 +4406,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _g = log_test_guard();
         // 结构化返回**不是**绕过权限的后门：没有 write:page.current 时 insert 仍被拒
         let src = r#"register({ id: "s.deny", title: "结构化", run: function () { return { insert: "不该写入" }; } });"#;
-        let (_msg, insert, _, _, _) = run_command_timeout(src, "s.deny", "", &state_with(&[])).unwrap();
+        let (_msg, insert, _, _, _) = run_command_in_host_for_test(src, "s.deny", "", &state_with(&[])).unwrap();
         assert!(insert.is_empty(), "未授予写权限时不应写入，实际：{insert:?}");
     }
 
@@ -4243,7 +4416,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let src = r#"register({ id: "a.run", title: "参数", run: function (args) { return "收到" + JSON.stringify(args); } });"#;
         // 第一道在命令层（`run_plugin_command` 要求 JSON 对象）；这里验证第二道：
         // 直接 eval 到 `__run` 时，非具名的参数（数组）也退回空对象而不是被当成参数用
-        let (msg, _, _, _, _) = run_command_timeout(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) = run_command_in_host_for_test(src, "a.run", "[1,2,3]", &RunState::default()).unwrap();
         assert_eq!(msg, "收到{}", "数组不是合法参数对象，应退回空对象");
     }
 
@@ -4259,7 +4432,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     return "count=" + api.pages.count();
   } });"#;
         let state = state_with(&["read:pages", "write:page.current"]);
-        let (msg, insert, toasts, _drafts, _exports) = run_command_timeout(source, "t.api", "", &state).unwrap();
+        let (msg, insert, toasts, _drafts, _exports) = run_command_in_host_for_test(source, "t.api", "", &state).unwrap();
         assert_eq!(msg, "count=0");
         assert_eq!(insert, "新文本");
         assert_eq!(toasts, vec!["来自 api.notify".to_string()]);
@@ -5055,7 +5228,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 走完整链路：草稿必须随结果回传，前端才能拿它去确认
         let source = r#"register({ id: "w.one", title: "W", description: "", closeOnRun: false,
   run: function(){ api.pages.create("新页", "正文"); api.blocks.append("附注"); return "ok"; } });"#;
-        let (msg, _insert, _toasts, drafts, _exports) = run_command_timeout(source, "w.one", "", &st).unwrap();
+        let (msg, _insert, _toasts, drafts, _exports) = run_command_in_host_for_test(source, "w.one", "", &st).unwrap();
         assert_eq!(msg, "ok");
         let keys: Vec<&str> = drafts.iter().map(|d| d.key.as_str()).collect();
         assert_eq!(keys, vec!["create_page:新页", "append_block:p1"]);
@@ -5170,7 +5343,7 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         let source = r#"register({ id: "w.pt", title: "W", description: "", closeOnRun: false,
   run: function(){ api.properties.set("attr1", "进行中"); api.tags.add("工作"); return "ok"; } });"#;
-        let (_msg, _insert, _toasts, drafts, _exports) = run_command_timeout(source, "w.pt", "", &st).unwrap();
+        let (_msg, _insert, _toasts, drafts, _exports) = run_command_in_host_for_test(source, "w.pt", "", &st).unwrap();
         assert_eq!(drafts.len(), 2);
         assert_eq!(drafts[0].payload["kind"], "set_page_prop");
         assert_eq!(drafts[0].payload["attrId"], "attr1");
@@ -5190,7 +5363,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // MAX_STRING_LENGTH ≈ 4 GB 的"规范形状"保护，不是预算，所以拦不住这个。
         let bomb = r#"register({ id: "t.bomb", title: "B", description: "", closeOnRun: false,
   run: function(){ return "x".repeat(1e8); } });"#;
-        let err = run_command_timeout(bomb, "t.bomb", "", &RunState::default())
+        let err = run_command_in_host_for_test(bomb, "t.bomb", "", &RunState::default())
             .expect_err("分配炸弹应当失败而不是正常返回");
         assert!(
             err.contains("内存预算"),
@@ -5201,7 +5374,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         // ——能跑到这里就说明进程没有被 abort 掉。
         let ok = r#"register({ id: "t.ok", title: "O", description: "", closeOnRun: false,
   run: function(){ return "fine"; } });"#;
-        let (msg, _, _, _, _) = run_command_timeout(ok, "t.ok", "", &RunState::default()).unwrap();
+        let (msg, _, _, _, _) = run_command_in_host_for_test(ok, "t.ok", "", &RunState::default()).unwrap();
         assert_eq!(msg, "fine");
     }
 
@@ -5225,7 +5398,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             plugin_id: "tp".to_string(),
             ..Default::default()
         };
-        let (msg, _insert, toasts, _drafts, _exports) = run_command_timeout(source, "t.toast", "", &state).unwrap();
+        let (msg, _insert, toasts, _drafts, _exports) = run_command_in_host_for_test(source, "t.toast", "", &state).unwrap();
         assert_eq!(msg, "done");
         assert_eq!(
             toasts,
@@ -5250,7 +5423,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             plugin_id: "tlog".to_string(),
             ..Default::default()
         };
-        run_command_timeout(source, "t.log", "", &state).unwrap();
+        run_command_in_host_for_test(source, "t.log", "", &state).unwrap();
         let logs = plugin_logs(Some("tlog".to_string()), None);
         assert!(logs.iter().any(|l| l.level == "warn" && l.message == "注意"));
         assert!(
