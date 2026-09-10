@@ -4978,6 +4978,38 @@ select.prop-value {
   max-width: 640px;
 }
 
+/* 根部浮层崩溃后的就地提示（components/PanelBoundary.tsx）。
+   两个要求：**看得见**（不静默吞掉错误，否则排查时只能靠猜）、**不抢焦点**（其余界面
+   照常可用，用户可以先干别的，不必被迫重载）。 */
+.panel-error {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 4000;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--danger);
+  background: var(--card-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel-error-title {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.panel-error-detail {
+  color: var(--text-faint);
+  font-size: 12px;
+  word-break: break-all;
+}
+
 /* Block drag handle */
 .block-handle {
   position: fixed;

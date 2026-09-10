@@ -3,6 +3,8 @@ import "./i18n"; // 初始化 i18next（zh/en）
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { AppCrashScreen } from "./components/AppCrashScreen";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { version } from "../package.json";
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
@@ -144,6 +146,11 @@ window.addEventListener("unhandledrejection", (e) => {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    {/* 最外层兜底：App 自身（或任何没有自己边界的子树）渲染期抛错时，给的是**能看懂的错误 + 重新加载**，
+        而不是一整屏白。1.85.1 的白屏事故就是这么来的——根部原先一处边界都没有。
+        浮层级的隔离见 components/PanelBoundary.tsx。 */}
+    <ErrorBoundary label="应用" fallback={(error) => <AppCrashScreen error={error} />}>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );

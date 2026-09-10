@@ -37,6 +37,7 @@ import { useTemplateCenterStore } from "./store/templateCenter";
 import { EmojiPicker } from "./components/EmojiPicker";
 import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { PanelBoundary } from "./components/PanelBoundary";
 import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
@@ -619,21 +620,32 @@ function App() {
             <NoteEditor pageId={standaloneId} />
           </div>
         </div>
-        <CommandPalette />
-      <PluginViewOverlay />
-        <ShortcutsPanel />
-        <AboutDialog />
-        <SettingsDialog />
-        <SpaceTransferProgress />
-        <FilePreviewDialog />
-        <PdfReader />
-        <FormulaEditorDialog />
-        <Toaster />
-        <ConfirmDialog />
-        <InputDialog />
-        <AiAssistantPanel />
-        <CommentsDrawer />
-        <RightRail />
+        <PanelBoundary name="命令面板">
+          <CommandPalette />
+        </PanelBoundary>
+        <PanelBoundary name="插件视图">
+          <PluginViewOverlay />
+        </PanelBoundary>
+        <PanelBoundary name="插件管理">
+          <PluginManager />
+        </PanelBoundary>
+        {/* 其余根部浮层给一道兜底边界：它们与上面三个同理，不该因为一个渲染错误
+            把整个界面带走（1.85.1 的白屏就是这么发生的）。 */}
+        <PanelBoundary name="浮层">
+          <ShortcutsPanel />
+          <AboutDialog />
+          <SettingsDialog />
+          <SpaceTransferProgress />
+          <FilePreviewDialog />
+          <PdfReader />
+          <FormulaEditorDialog />
+          <Toaster />
+          <ConfirmDialog />
+          <InputDialog />
+          <AiAssistantPanel />
+          <CommentsDrawer />
+          <RightRail />
+        </PanelBoundary>
       </div>
     );
   }
@@ -697,22 +709,34 @@ function App() {
         </div>
       )}
       </div>
-      <CommandPalette />
-      <PluginViewOverlay />
-      <Toaster />
-      <ConfirmDialog />
-      <InputDialog />
-      <PluginManager />
-      <AiAssistantPanel />
-      <CommentsDrawer />
-      <RightRail />
-      <ShortcutsPanel />
-      <AboutDialog />
-      <SettingsDialog />
-      <SpaceTransferProgress />
-      <FilePreviewDialog />
-      <PdfReader />
-      <FormulaEditorDialog />
+      <PanelBoundary name="命令面板">
+        <CommandPalette />
+      </PanelBoundary>
+      <PanelBoundary name="插件视图">
+        <PluginViewOverlay />
+      </PanelBoundary>
+      {/* 其余根部浮层给一道兜底边界：它们与上面三个同理，不该因为一个渲染错误
+          把整个界面带走（1.85.1 的白屏就是这么发生的）。 */}
+      <PanelBoundary name="浮层">
+        <Toaster />
+        <ConfirmDialog />
+        <InputDialog />
+        <AiAssistantPanel />
+        <CommentsDrawer />
+        <RightRail />
+        <ShortcutsPanel />
+        <AboutDialog />
+        <SettingsDialog />
+        <SpaceTransferProgress />
+        <FilePreviewDialog />
+        <PdfReader />
+        <FormulaEditorDialog />
+      </PanelBoundary>
+      {/* 插件管理单独一层：它渲染的全是插件声明的数据（权限/设置/日志/校验报告），
+          是根部浮层里最可能崩的一个，所以不与别的浮层共享边界。 */}
+      <PanelBoundary name="插件管理">
+        <PluginManager />
+      </PanelBoundary>
     </div>
   );
 }

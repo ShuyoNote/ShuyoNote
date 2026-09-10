@@ -153,6 +153,12 @@ pnpm test:mobile-layout               # 期望 "N 通过 / 0 失败"
 
 > **命令契约守卫**（`scripts/check-web-commands.mjs`，已并入 `pnpm build`）校验三件事：Rust 命令 ⊆ `web.ts`、Rust 命令 ⊆ `CommandMap`、**`CommandMap` 顶层参数键必须是 camelCase**。第三条是运行时坑的静态兜底——**Tauri 2 只接受 camelCase 参数键**并在运行时映射到 Rust 的 snake_case 形参，传 `server_url` 会报 `missing required key serverUrl`；而 TS 查不出来（契约和调用点会「一起错」）。`args: { args: {...} }` 这种「整个结构体当一个参数」的写法除外，内层字段仍是 serde 的 snake_case。
 
+> [!] **组件 / hooks 类改动要有渲染级测试**（1.85.1 白屏事故的教训）。上面那一整套检查**一个都不渲染 React 组件**：vitest 只跑纯函数，`tsc` / `cargo test` / 作者 CLI / 门禁都不碰 DOM。后果是真实发生过的——`CommandPalette` 里三个 `useState` 被放在 `if (!open) return null` 之后（hooks 有条件调用），**按 `Ctrl+K` 直接抛错并把整棵树卸载成白屏**，而 CI 全绿、后面几档功能照常提交，谁都没察觉。
+>
+> 所以：改组件（尤其是根部常驻组件、浮层、以及任何"点了才打开"的状态切换）时，顺手写一条真的把组件挂起来的测试——`createRoot` + `flushSync` 就够，不需要 testing-library，见 `src/components/commandPaletteHooks.test.ts` 与 `src/components/errorBoundary.test.ts`。要钉的是**状态切换的每一条路径**（关→开→关、表单开着时关面板…），以及**崩了之后别人还在不在**。
+>
+> 渲染兜底是分层的：`main.tsx` 的整屏兜底（`AppCrashScreen`）+ App 根部浮层的 `PanelBoundary`。**新加根部浮层时给它一道边界**，否则一个渲染错误又等于整屏白。
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。
