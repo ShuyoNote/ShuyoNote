@@ -27,6 +27,9 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "files.list", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.0.0", rust: "cap_files_list" },
     Capability { id: "editor.insertText", kind: "write", scope: "current-space", permission: Some("write:page.current"), since: "1.0.0", rust: "cap_editor_insert_text" },
     Capability { id: "user.notify", kind: "host", scope: "app", permission: None, since: "1.0.0", rust: "cap_user_notify" },
+    Capability { id: "kv.get", kind: "read", scope: "app", permission: Some("kv:own"), since: "1.0.0", rust: "cap_kv_get" },
+    Capability { id: "kv.set", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", rust: "cap_kv_set" },
+    Capability { id: "kv.remove", kind: "write", scope: "app", permission: Some("kv:own"), since: "1.0.0", rust: "cap_kv_remove" },
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", rust: "cap_log_write" },
 ];
 
@@ -46,6 +49,7 @@ pub const PERMISSION_LIST: &[Permission] = &[
     Permission { id: "read:tags", title: "读取本空间标签", risk: "low" },
     Permission { id: "read:backlinks", title: "读取反链", risk: "low" },
     Permission { id: "read:files", title: "读取附件元数据", risk: "low" },
+    Permission { id: "kv:own", title: "存储自己的数据", risk: "low" },
 ];
 
 pub fn permission(id: &str) -> Option<&'static Permission> {

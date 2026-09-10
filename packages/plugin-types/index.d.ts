@@ -68,6 +68,19 @@ export interface PluginApi {
    * 返回：执行结束后随结果一起弹给用户
    */
   notify(message: string): void;
+  kv: {
+  /** 读插件私有数据（权限 `kv:own`；1.0.0 起）
+   * 返回：存过的字符串；键不存在返回 null
+   */
+    get(key: string, scope?: "space" | "app"): string;
+  /** 写插件私有数据（权限 `kv:own`；1.0.0 起）
+   * 返回：立即写入（不走草稿确认：只动插件自己的数据，不碰笔记内容）
+   */
+    set(key: string, value: string, scope?: "space" | "app"): void;
+  /** 删插件私有数据（权限 `kv:own`；1.0.0 起）
+   */
+    remove(key: string, scope?: "space" | "app"): void;
+  };
   /** 写作者侧日志（无需权限；1.0.0 起）
    * 返回：进插件日志环形缓冲，可在插件面板查看
    */

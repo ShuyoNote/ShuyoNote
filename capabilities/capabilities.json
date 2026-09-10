@@ -38,6 +38,12 @@
       "title": "读取附件元数据",
       "risk": "low",
       "desc": "读取页面的附件元数据（名称/类型/大小），**不含文件字节**"
+    },
+    {
+      "id": "kv:own",
+      "title": "存储自己的数据",
+      "risk": "low",
+      "desc": "在插件自己的命名空间里读写键值（与其他插件、与笔记数据互不可见）"
     }
   ],
   "capabilities": [
@@ -277,6 +283,114 @@
       "rust": "cap_user_notify"
     },
     {
+      "id": "kv.get",
+      "title": "读插件私有数据",
+      "kind": "read",
+      "scope": "app",
+      "permission": "kv:own",
+      "since": "1.0.0",
+      "jsPath": [
+        "kv",
+        "get"
+      ],
+      "args": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "required": false,
+          "default": "space",
+          "enum": [
+            "space",
+            "app"
+          ],
+          "desc": "space（默认，随空间加密）或 app（应用级，明文，勿放敏感信息）"
+        }
+      ],
+      "returns": {
+        "type": "string",
+        "desc": "存过的字符串；键不存在返回 null"
+      },
+      "rust": "cap_kv_get"
+    },
+    {
+      "id": "kv.set",
+      "title": "写插件私有数据",
+      "kind": "write",
+      "scope": "app",
+      "permission": "kv:own",
+      "since": "1.0.0",
+      "jsPath": [
+        "kv",
+        "set"
+      ],
+      "args": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "required": false,
+          "default": "space",
+          "enum": [
+            "space",
+            "app"
+          ],
+          "desc": "space（默认）或 app"
+        }
+      ],
+      "returns": {
+        "type": "void",
+        "desc": "立即写入（不走草稿确认：只动插件自己的数据，不碰笔记内容）"
+      },
+      "rust": "cap_kv_set"
+    },
+    {
+      "id": "kv.remove",
+      "title": "删插件私有数据",
+      "kind": "write",
+      "scope": "app",
+      "permission": "kv:own",
+      "since": "1.0.0",
+      "jsPath": [
+        "kv",
+        "remove"
+      ],
+      "args": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "scope",
+          "type": "string",
+          "required": false,
+          "default": "space",
+          "enum": [
+            "space",
+            "app"
+          ]
+        }
+      ],
+      "returns": {
+        "type": "void"
+      },
+      "rust": "cap_kv_remove"
+    },
+    {
       "id": "log.write",
       "title": "写作者侧日志",
       "kind": "host",
@@ -367,6 +481,10 @@
     {
       "code": "plugin_error",
       "desc": "插件自身抛错"
+    },
+    {
+      "code": "quota_exceeded",
+      "desc": "插件私有数据超出配额（每个 scope 256 KiB）"
     }
   ]
 }

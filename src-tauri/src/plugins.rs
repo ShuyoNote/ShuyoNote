@@ -542,11 +542,125 @@ fn with_read_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result
                 None => crate::db::open_space_conn(&space),
             };
             let conn = opened.map_err(map_open_error)?;
+            // 插件线程的连接与主连接并发：给一点 busy 等待，别一撞就 SQLITE_BUSY。
+            let _ = conn.busy_timeout(Duration::from_millis(500));
             *cell.borrow_mut() = Some(conn);
         }
         let borrow = cell.borrow();
         f(borrow.as_ref().expect("read conn 刚被赋值"))
     })
+}
+
+thread_local! {
+    /// 插件线程内的 meta.db 连接（**app scope** 的私有数据用）。
+    /// 单独开一条的原因：meta.db 是明文库，即使当前空间被加密锁定，app 级数据也应该能读
+    /// ——否则"锁定空间"会顺带让插件的应用级配置不可用（那是另一件事，不该被连带）。
+    static META_CONN: RefCell<Option<Connection>> = const { RefCell::new(None) };
+}
+
+/// 每个插件、每个 scope 的私有数据配额（方案 §3.7）。超限报错，不静默截断。
+const PLUGIN_KV_QUOTA: i64 = 256 * 1024;
+
+fn with_meta_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+    META_CONN.with(|cell| {
+        if cell.borrow().is_none() {
+            let dir = RUN_STATE.with(|s| s.borrow().read_dir.clone());
+            let dir = match dir {
+                Some(d) => d,
+                None => crate::db::app_data_dir_ref()
+                    .ok_or_else(|| "db_error: app data dir 未初始化".to_string())?
+                    .to_path_buf(),
+            };
+            // 走 db 的入口（打开 + 确保 schema + busy timeout），不自己拼路径开连接。
+            let conn = crate::db::open_meta_conn_at(&dir).map_err(|e| format!("db_error: {e}"))?;
+            *cell.borrow_mut() = Some(conn);
+        }
+        let borrow = cell.borrow();
+        f(borrow.as_ref().expect("meta conn 刚被赋值"))
+    })
+}
+
+/// 按 scope 选库：`space`（默认）走空间库（随该空间加密/备份/搬移），
+/// `app` 走明文 meta.db（**只该放非敏感配置**——这条是方案 §3.7 的硬约定）。
+fn kv_in_scope<T>(
+    scope: &str,
+    f: impl FnOnce(&Connection, &str) -> Result<T, String>,
+) -> Result<T, String> {
+    match scope {
+        "space" => with_read_conn(|c| f(c, "space")),
+        "app" => with_meta_conn(|c| f(c, "app")),
+        other => Err(format!("bad_args: scope 只能是 space 或 app（收到 {other}）")),
+    }
+}
+
+fn cap_kv_get(key: &str, scope: &str) -> CapResult {
+    let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    let found = kv_in_scope(scope, |c, sc| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT value FROM plugin_data WHERE plugin_id = ?1 AND scope = ?2 AND key = ?3",
+            params![pid, sc, key],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    Ok(match found {
+        Some(v) => serde_json::Value::String(v),
+        None => serde_json::Value::Null,
+    })
+}
+
+fn cap_kv_set(key: &str, value: &str, scope: &str) -> CapResult {
+    let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    kv_in_scope(scope, |c, sc| {
+        let used: i64 = c
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(value)), 0) FROM plugin_data
+                 WHERE plugin_id = ?1 AND scope = ?2",
+                params![pid, sc],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("db_error: {e}"))?;
+        let existing: i64 = c
+            .query_row(
+                "SELECT COALESCE(LENGTH(value), 0) FROM plugin_data
+                 WHERE plugin_id = ?1 AND scope = ?2 AND key = ?3",
+                params![pid, sc, key],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let after = used - existing + value.len() as i64;
+        if after > PLUGIN_KV_QUOTA {
+            return Err(format!(
+                "quota_exceeded: 插件私有数据超出配额（{} KiB / scope），当前 {} 字节",
+                PLUGIN_KV_QUOTA / 1024,
+                after
+            ));
+        }
+        c.execute(
+            "INSERT INTO plugin_data (plugin_id, scope, key, value, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(plugin_id, scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![pid, sc, key, value, now_ms()],
+        )
+        .map_err(|e| format!("db_error: {e}"))?;
+        Ok(())
+    })?;
+    Ok(serde_json::Value::Null)
+}
+
+fn cap_kv_remove(key: &str, scope: &str) -> CapResult {
+    let pid = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    kv_in_scope(scope, |c, sc| {
+        c.execute(
+            "DELETE FROM plugin_data WHERE plugin_id = ?1 AND scope = ?2 AND key = ?3",
+            params![pid, sc, key],
+        )
+        .map_err(|e| format!("db_error: {e}"))?;
+        Ok(())
+    })?;
+    Ok(serde_json::Value::Null)
 }
 
 /// 一个能力的实现：成功给 JSON 值（shim 侧 JSON.parse），失败给「错误码: 说明」。
@@ -790,6 +904,14 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
             .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
             .unwrap_or(default)
     };
+    // kv 的 scope：默认 space（随空间加密的那一侧），显式 'app' 才落到明文 meta。
+    let scope_arg = |args: &serde_json::Value| -> String {
+        args.get("scope")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("space")
+            .to_string()
+    };
     let arg_opt_str = |name: &str| -> Option<String> {
         match args.get(name) {
             Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.clone()),
@@ -806,6 +928,9 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
+        "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
+        "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
+        "kv.remove" => cap_kv_remove(&arg_str("key")?, &scope_arg(&args)),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -2148,6 +2273,96 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert!(map_open_error("工作空间已加密但会话未解锁".to_string()).starts_with("space_locked"));
         assert!(map_open_error("file is not a database (locked)".to_string()).starts_with("space_locked"));
         assert!(map_open_error("disk I/O error".to_string()).starts_with("db_error"));
+    }
+
+    // ---- kv.own（插件私有数据 + scope 路由） ----
+
+    #[test]
+    fn kv_round_trips_and_is_scoped_by_plugin() {
+        let (space, dir) = seed_space("kv");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec!["kv:own".to_string()];
+
+        assert!(call(&st, "kv.get", r#"{"key":"a"}"#).unwrap().is_null(), "没存过就是 null");
+        call(&st, "kv.set", r#"{"key":"a","value":"1"}"#).unwrap();
+        assert_eq!(call(&st, "kv.get", r#"{"key":"a"}"#).unwrap(), "1");
+
+        // 不同插件的同名键互不可见（命名空间隔离）
+        let mut other = st.clone();
+        other.plugin_id = "other".to_string();
+        assert!(call(&other, "kv.get", r#"{"key":"a"}"#).unwrap().is_null());
+
+        call(&st, "kv.remove", r#"{"key":"a"}"#).unwrap();
+        assert!(call(&st, "kv.get", r#"{"key":"a"}"#).unwrap().is_null());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn kv_scope_routing_puts_data_in_the_right_database() {
+        // space（默认）→ 空间库（随 SQLCipher 加密）；app → 明文 meta.db。
+        // 这条约定就是方案 §3.7：空间级数据塞进 meta 会静默逃出 E2EE 边界。
+        let (space, dir) = seed_space("kv-scope");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec!["kv:own".to_string()];
+
+        call(&st, "kv.set", r#"{"key":"inspace","value":"s"}"#).unwrap();
+        call(&st, "kv.set", r#"{"key":"inapp","value":"a","scope":"app"}"#).unwrap();
+
+        {
+            let sc = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            let in_space: i64 = sc
+                .query_row("SELECT COUNT(*) FROM plugin_data WHERE key = 'inspace'", [], |r| r.get(0))
+                .unwrap();
+            let not_in_space: i64 = sc
+                .query_row("SELECT COUNT(*) FROM plugin_data WHERE key = 'inapp'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(in_space, 1, "默认 scope 必须落空间库");
+            assert_eq!(not_in_space, 0, "app scope 不该出现在空间库");
+        }
+        {
+            let meta = Connection::open(crate::db::meta_path(&dir)).unwrap();
+            let in_app: i64 = meta
+                .query_row("SELECT COUNT(*) FROM plugin_data WHERE key = 'inapp'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(in_app, 1, "app scope 必须落 meta.db");
+        }
+
+        // 非法 scope 明确报错，而不是猜一个
+        let err = call(&st, "kv.set", r#"{"key":"k","value":"v","scope":"space:s1"}"#).unwrap_err();
+        assert!(err.contains("bad_args"), "实际: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn kv_quota_is_enforced_per_scope() {
+        let (space, dir) = seed_space("kv-quota");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec!["kv:own".to_string()];
+
+        let big = "x".repeat(PLUGIN_KV_QUOTA as usize + 1);
+        let err = call(&st, "kv.set", &serde_json::json!({ "key": "k", "value": big }).to_string())
+            .unwrap_err();
+        assert!(err.contains("quota_exceeded"), "超配额要报错而不是静默截断，实际: {err}");
+
+        // 覆盖写不该被"自己占的空间"挡住：先写小值再覆盖成大值（仍在配额内）
+        call(&st, "kv.set", r#"{"key":"k","value":"small"}"#).unwrap();
+        let ok = "y".repeat(1024);
+        call(&st, "kv.set", &serde_json::json!({ "key": "k", "value": ok }).to_string()).unwrap();
+        assert_eq!(
+            call(&st, "kv.get", r#"{"key":"k"}"#).unwrap().as_str().unwrap().len(),
+            1024
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn kv_also_needs_its_permission() {
+        let (space, dir) = seed_space("kv-perm");
+        let mut st = state_for_space(&space, &dir);
+        st.permissions = vec![];
+        let err = call(&st, "kv.set", r#"{"key":"k","value":"v"}"#).unwrap_err();
+        assert!(err.contains("permission_denied"), "实际: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- 内存预算（分配炸弹） ----

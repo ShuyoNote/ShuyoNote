@@ -31,5 +31,10 @@ var api = {
     insertText: function(text) { return __capCall("editor.insertText", { text: String(text) }); }
   },
   notify: function(message) { return __capCall("user.notify", { message: String(message) }); },
+  kv: {
+    get: function(key, scope) { return __capCall("kv.get", { key: String(key), scope: scope === undefined ? "space" : String(scope) }); },
+    set: function(key, value, scope) { return __capCall("kv.set", { key: String(key), value: String(value), scope: scope === undefined ? "space" : String(scope) }); },
+    remove: function(key, scope) { return __capCall("kv.remove", { key: String(key), scope: scope === undefined ? "space" : String(scope) }); }
+  },
   log: function(message, level) { return __capCall("log.write", { message: String(message), level: level === undefined ? "info" : String(level) }); }
 };

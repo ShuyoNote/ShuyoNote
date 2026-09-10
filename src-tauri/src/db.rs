@@ -117,6 +117,17 @@ pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
     open_space_conn_at(space_id, dir)
 }
 
+/// 打开 meta.db 并确保 schema 就绪（幂等）。
+///
+/// 给插件线程用：它拿不到主连接，但 app scope 的插件私有数据在 meta.db 里。
+/// 走这个入口而不是自己 `Connection::open`，是为了**不让 meta 的 schema 出现第二份定义**。
+pub(crate) fn open_meta_conn_at(dir: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(meta_path(dir)).map_err(|e| e.to_string())?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+    meta_migrate(&conn).map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
 /// [`open_space_conn`] with an explicit app-data-dir (testable without the global).
 pub(crate) fn open_space_conn_at(space_id: &str, dir: &Path) -> Result<Connection, String> {
     if !is_safe_space_id(space_id) {

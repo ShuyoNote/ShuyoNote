@@ -83,6 +83,7 @@ register({
 | `read:tags` | 读取本空间标签：读取本空间的标签清单（名称与关联页面数） | low |
 | `read:backlinks` | 读取反链：读取哪些页面引用了某个页面 | low |
 | `read:files` | 读取附件元数据：读取页面的附件元数据（名称/类型/大小），**不含文件字节** | low |
+| `kv:own` | 存储自己的数据：在插件自己的命名空间里读写键值（与其他插件、与笔记数据互不可见） | low |
 
 ## 4. 能力（`api.*`）
 
@@ -98,6 +99,9 @@ register({
 | `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | array | 1.0.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | void | 1.0.0 |
 | `user.notify` | `api.notify(message)` | — | `app` | void | 1.0.0 |
+| `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | string | 1.0.0 |
+| `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | void | 1.0.0 |
+| `kv.remove` | `api.kv.remove(key, scope)` | `kv:own` | `app` | void | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | void | 1.0.0 |
 
 ### `page.current` — 读取当前页
@@ -184,6 +188,36 @@ register({
 - 参数：
   - `message`: `string` —— 提示内容
 
+### `kv.get` — 读插件私有数据
+
+- 调用：`api.kv.get(key, scope)`
+- 权限：`kv:own`
+- scope：`app`
+- 返回：存过的字符串；键不存在返回 null
+- 参数：
+  - `key`: `string` —— 
+  - `scope`: `string`（可选），默认 `space` —— space（默认，随空间加密）或 app（应用级，明文，勿放敏感信息）
+
+### `kv.set` — 写插件私有数据
+
+- 调用：`api.kv.set(key, value, scope)`
+- 权限：`kv:own`
+- scope：`app`
+- 返回：立即写入（不走草稿确认：只动插件自己的数据，不碰笔记内容）
+- 参数：
+  - `key`: `string` —— 
+  - `value`: `string` —— 
+  - `scope`: `string`（可选），默认 `space` —— space（默认）或 app
+
+### `kv.remove` — 删插件私有数据
+
+- 调用：`api.kv.remove(key, scope)`
+- 权限：`kv:own`
+- scope：`app`
+- 参数：
+  - `key`: `string` —— 
+  - `scope`: `string`（可选），默认 `space` —— 
+
 ### `log.write` — 写作者侧日志
 
 - 调用：`api.log(message, level)`
@@ -229,6 +263,7 @@ register({
 | `loop_limit` | 执行超出循环预算 |
 | `out_of_memory` | 执行超出内存预算（64 MiB） |
 | `plugin_error` | 插件自身抛错 |
+| `quota_exceeded` | 插件私有数据超出配额（每个 scope 256 KiB） |
 
 ## 8. 兼容与老写法
 
