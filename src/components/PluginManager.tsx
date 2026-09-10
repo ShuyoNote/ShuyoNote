@@ -126,6 +126,18 @@ export function PluginManager() {
                     ))}
                   </div>
                 )}
+                {/* 导入触发同样是"这个插件会干什么"的一部分：用户该在启用前就知道
+                    命令面板里会多出哪些入口、它们接住哪些文件。 */}
+                {(p.triggers ?? []).length > 0 && (
+                  <div className="pm-item-perms">
+                    会接住这些文件：
+                    {(p.triggers ?? []).map((tg) => (
+                      <span key={`${tg.kind}:${tg.command}:${tg.extensions.join(",")}`} className="pm-perm" title={`导入触发：选中文件后由宿主读取内容，交给命令 ${tg.command}`}>
+                        {tg.extensions.join(" / ")}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="pm-item-actions">
                 <button onClick={() => toggle(p.id)}>{p.enabled ? "禁用" : "启用"}</button>

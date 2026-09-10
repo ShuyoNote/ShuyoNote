@@ -147,6 +147,14 @@
       "desc": "编辑器顶部工具栏按钮（宿主还没接这个入口）"
     }
   ],
+  "triggers": [
+    {
+      "id": "import",
+      "title": "导入文件",
+      "hosted": true,
+      "desc": "命令面板里按扩展名出现；用户选中文件后宿主读成文本，把 { fileName, content } 交给你的命令"
+    }
+  ],
   "capabilities": [
     {
       "id": "page.current",

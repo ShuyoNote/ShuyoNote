@@ -181,8 +181,19 @@ fn default_param_type() -> String {
     "string".to_string()
 }
 
-/// 参数 JSON 的体积上限：命令参数是给表单用的短值，不该被当成数据传输通道。
-const MAX_ARGS_BYTES: usize = 16 * 1024;
+/// 一次调用能携带的参数 JSON 上限：**这是「行为」的界，不是「参数必须是短值」的语义**。
+///
+/// 这条通道实际承载两种东西：① 用户在参数表单里填的短值；② **导入触发**把用户选中的
+/// 文件读成文本后的 `{ fileName, content }`。1 MiB 是按后者定的——够装下常见的文本 /
+/// 表格文件（一本几万字的 md、一张几千行的 csv），又不让单次调用携带**不可控**的数据量
+/// （这是个参数通道，不该被当成批量数据的搬运面）。
+///
+/// 两个边界必须说清，否则这个常量会被后人按错误的理解调整：
+/// - 它**不是安全边界**：参数只会流进插件自己的 JS，真正碰数据的是 `api.*`（宿主逐次
+///   校验权限与参数）。所以这里不做第二套 schema 校验，只做体积上限。
+/// - 它**不是数据通道**：插件要读笔记 / 文件数据，能力面只有 `api.*`——把内容塞进参数
+///   不会让插件多出任何能力，写能力照样出草稿、照样要用户确认。
+const MAX_ARGS_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize, Clone)]
 pub struct PluginMeta {
@@ -202,6 +213,8 @@ pub struct PluginMeta {
     pub runtime: String,
     /// 声明式视图：宿主渲染，插件零代码。
     pub views: Vec<ViewDecl>,
+    /// 导入触发（**只带通过校验的那些**）：命令面板据此加入口。
+    pub triggers: Vec<TriggerDecl>,
     /// 主题声明（只有**通过校验**的变量会被带上）。
     pub theme: Option<ThemeDecl>,
 }
@@ -415,6 +428,9 @@ pub(crate) struct Manifest {
     /// 声明式视图：宿主按这份声明渲染（零 JS 插件唯一的产出方式）。
     #[serde(default)]
     pub(crate) views: Option<Vec<ViewDecl>>,
+    /// 导入触发：命令面板里按扩展名加入口，用户选中文件后宿主读内容并交给命令。
+    #[serde(default)]
+    pub(crate) triggers: Option<Vec<TriggerDecl>>,
     /// 用户可配置项：宿主据此渲染设置表单（**写只发生在宿主界面**）。
     #[serde(default)]
     pub(crate) settings: Option<Vec<SettingDecl>>,
@@ -476,6 +492,103 @@ pub(crate) const VIEW_KINDS: &[&str] = &["any", "page", "database"];
 
 /// 声明式插件允许的视图数量上限（声明是给人看的，不是拿来堆量的）。
 pub(crate) const MAX_VIEWS: usize = 8;
+
+/// 一条**导入触发**（manifest `triggers[]`）：宿主按扩展名在命令面板里加一个入口，
+/// 用户选中文件后由**宿主**把它读成文本，作为命令参数 `{ fileName, content }` 交给插件。
+///
+/// 和命令参数（`register({ params })`）是同一类东西——**入参不是能力**：插件拿到的
+/// 只是这一次调用的数据，它要碰笔记数据仍然只能走 `api.*`（写能力照样出草稿、要用户确认）。
+/// 也正因如此，它不需要新能力、不需要新命令，权限模型与写中介原样成立。
+///
+/// 为什么声明在 manifest 而不是 JS 里：它是**给用户看的**功能声明（插件管理里要能说出
+/// "这个插件会接住哪些文件"），而 JS 只能等点了才知道。
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+pub(crate) struct TriggerDecl {
+    /// 触发类型：只认识注册表里的值（`capabilities_gen::trigger`），目前只有 `import`。
+    pub(crate) kind: String,
+    /// 接住的扩展名（**规范化后**形如 `.md`，见 `normalize_extension`）。
+    #[serde(default)]
+    pub(crate) extensions: Vec<String>,
+    /// 被调用的命令 id（必须是这个插件自己 `register` 过的命令）。
+    #[serde(default)]
+    pub(crate) command: String,
+    /// 命令面板里那条入口的标题；不写就用默认的「导入：用「插件名」打开 .md」。
+    #[serde(default)]
+    pub(crate) title: String,
+}
+
+/// 一条触发最多声明多少个扩展名（够用即可：一个命令通常只处理一两种格式）。
+pub(crate) const MAX_TRIGGER_EXTENSIONS: usize = 12;
+/// 一个插件最多声明多少条触发（与视图同理：声明是给人看的，不是拿来堆量的）。
+pub(crate) const MAX_TRIGGERS: usize = 4;
+
+/// 把一个扩展名规范化成 `.md` 这种**小写带点**形式；不合法返回 `None`。
+///
+/// 规范化而不是原样透传：`"MD"` / `".Md"` / `" md "` 说的是同一件事，而宿主只需要一种
+/// 形态——命令面板的入口文案与文件选择器的过滤器都按它来，两处各写一遍必然出现
+/// 「文案说 .md、选择器却在筛 MD」这种不一致。
+///
+/// 不合法的**一律不接**（而不是猜作者想接什么）：扩展名里出现空格 / 分隔符 / 通配符
+/// 只可能是写错了，猜着接住会变成"这个插件连 xx 文件都吃"。
+pub(crate) fn normalize_extension(raw: &str) -> Option<String> {
+    let t = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+    if t.is_empty() || t.len() > 16 {
+        return None;
+    }
+    if !t.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return None;
+    }
+    Some(format!(".{t}"))
+}
+
+/// 取一个插件**可用**的触发声明：kind 认识且宿主已实现、命令非空、至少一个合法扩展名。
+///
+/// 与主题同样的取舍：无效的**丢弃而不是整体失败**（校验器会明确报错），但宿主绝不按一条
+/// 读不懂的声明去接文件。
+///
+/// 另外，**声明式插件（零代码）的触发恒为空**：它没有命令可以调用，留着入口只会让用户
+/// 点到一个必然报「命令不存在」的按钮。这条规则放在这里（而不是各个调用点），是为了让
+/// `list_plugins` / `install_plugin` 自动一致。
+pub(crate) fn sanitized_triggers(manifest: &Manifest) -> Vec<TriggerDecl> {
+    if runtime_of(manifest) == "declarative" {
+        return Vec::new();
+    }
+    let Some(list) = &manifest.triggers else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for t in list.iter().take(MAX_TRIGGERS) {
+        // 只渲染宿主真的接了的触发：kind 不认识、或认识了但还没实现的，一律不出现
+        // （作者那边由校验器明说，而不是让他对着一个不出现的入口猜）。
+        if !capabilities_gen::trigger(t.kind.trim()).map(|k| k.hosted).unwrap_or(false) {
+            continue;
+        }
+        if t.command.trim().is_empty() {
+            continue;
+        }
+        let mut extensions: Vec<String> = Vec::new();
+        for e in t.extensions.iter() {
+            if let Some(n) = normalize_extension(e) {
+                if !extensions.contains(&n) {
+                    extensions.push(n);
+                }
+            }
+            if extensions.len() >= MAX_TRIGGER_EXTENSIONS {
+                break;
+            }
+        }
+        if extensions.is_empty() {
+            continue;
+        }
+        out.push(TriggerDecl {
+            kind: t.kind.trim().to_string(),
+            extensions,
+            command: t.command.trim().to_string(),
+            title: t.title.trim().to_string(),
+        });
+    }
+    out
+}
 
 /// 这项声明的运行档（缺省 `logic`）。
 pub(crate) fn runtime_of(manifest: &Manifest) -> &str {
@@ -2446,6 +2559,9 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 events,
                 runtime,
                 views,
+                // 零代码插件没有命令可调，触发声明接不了任何东西（sanitized_triggers 里
+                // 也按这条规则返回空）——这里写死空集合，界面就不会出现点不动的入口。
+                triggers: Vec::new(),
                 theme,
             });
             continue;
@@ -2469,6 +2585,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         let (permissions, permissions_baseline) = permission_metas(&manifest);
         let events = event_metas(&manifest);
         let theme = sanitized_theme(&manifest);
+        let triggers = sanitized_triggers(&manifest);
         out.push(PluginMeta {
             id: pid.clone(),
             name: manifest.name,
@@ -2481,6 +2598,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             events,
             runtime,
             views: manifest.views.clone().unwrap_or_default(),
+            triggers,
             theme,
         });
     }
@@ -2509,13 +2627,17 @@ pub async fn run_plugin_command(
     if !is_safe_plugin_id(&plugin_id) {
         return Err("非法插件 id".to_string());
     }
-    // 参数是给表单用的短值：限个体积，别让它变成数据传输通道。
+    // 参数是这次调用的入参：限个体积，别让它变成数据传输通道。
+    // 上限的语义见 MAX_ARGS_BYTES 的注释（导入触发要靠它装下**一个文件**的内容）。
     // 这里**不做**第二套 schema 校验：参数只会流进插件自己的 JS，真正碰数据的是
     // `api.*`（宿主逐次校验权限与参数），所以校验留在表单侧（作者自己声明的 schema）
     // 与能力侧即可，多一套实现只会多一处漂移。
     let args_json = args_json.unwrap_or_default();
     if args_json.len() > MAX_ARGS_BYTES {
-        return Err(format!("命令参数过大（上限 {MAX_ARGS_BYTES} 字节）"));
+        return Err(format!(
+            "命令参数过大（上限 {} MiB）",
+            MAX_ARGS_BYTES / (1024 * 1024)
+        ));
     }
     if !args_json.is_empty() {
         match serde_json::from_str::<serde_json::Value>(&args_json) {
@@ -2669,6 +2791,7 @@ pub async fn install_plugin(
     // 先取出这两项再移动其它字段（避免部分移动后还要借用 manifest）
     let runtime = runtime_of(&manifest).to_string();
     let views = manifest.views.clone().unwrap_or_default();
+    let triggers = sanitized_triggers(&manifest);
     let theme = sanitized_theme(&manifest);
     Ok(PluginMeta {
         id: manifest.id,
@@ -2682,6 +2805,7 @@ pub async fn install_plugin(
         events,
         runtime,
         views,
+        triggers,
         theme,
     })
 }
@@ -3468,6 +3592,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             runtime: None,
             theme: None,
             views: None,
+            triggers: None,
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
@@ -3498,6 +3623,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             runtime: None,
             theme: None,
             views: None,
+            triggers: None,
             events: None,
         };
         let (granted, warnings) = resolve_permissions(&m);
@@ -3524,6 +3650,7 @@ register({ id: "s.run", title: "结构化", run: function () {
             runtime: None,
             theme: None,
             views: None,
+            triggers: None,
             events: None,
         };
         let (metas, baseline) = permission_metas(&declared);
@@ -3547,12 +3674,98 @@ register({ id: "s.run", title: "结构化", run: function () {
             runtime: None,
             theme: None,
             views: None,
+            triggers: None,
             events: None,
         };
         let (metas2, baseline2) = permission_metas(&legacy);
         assert!(baseline2);
         assert_eq!(metas2.len(), capabilities_gen::PERMISSION_LIST.len());
         assert!(metas2[0].reason.contains("基线"), "基线授权必须说清楚是怎么来的");
+    }
+
+    // ---- 导入触发（M11.9）：扩展名规范化 + 只渲染读得懂的声明 ----
+
+    /// 用一段 `triggers` JSON 造一个逻辑档 manifest（其余字段用默认值）。
+    fn trigger_manifest(triggers: serde_json::Value) -> Manifest {
+        serde_json::from_value(serde_json::json!({
+            "id": "imp",
+            "name": "导入",
+            "main": "main.js",
+            "triggers": triggers,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn extensions_are_normalized_to_a_lowercase_dotted_form() {
+        assert_eq!(normalize_extension("md").as_deref(), Some(".md"));
+        assert_eq!(normalize_extension(".MD").as_deref(), Some(".md"));
+        assert_eq!(normalize_extension("  .Csv ").as_deref(), Some(".csv"));
+        assert_eq!(normalize_extension(".tar_gz").as_deref(), Some(".tar_gz"));
+
+        // 只接**一个**扩展名：`md.txt` 不是「两个扩展名」，而是写错了；带空格/分隔符/
+        // 通配符的同样不是——猜着接住会变成"这个插件连不该吃的文件也吃"。
+        for bad in [
+            "",
+            " ",
+            ".",
+            "...",
+            "m d",
+            "m/d",
+            "*.md",
+            "md.txt",
+            "md\\",
+            "aaaaaaaaaaaaaaaaaaaa",
+        ] {
+            assert!(normalize_extension(bad).is_none(), "{bad:?} 不该被当成扩展名");
+        }
+    }
+
+    #[test]
+    fn only_understandable_triggers_are_rendered() {
+        let m = trigger_manifest(serde_json::json!([
+            { "kind": "import", "extensions": [".MD", "md", ".csv"], "command": " imp.run " },
+            { "kind": "export", "extensions": [".md"], "command": "imp.run" },
+            { "kind": "import", "extensions": [".md"], "command": "" },
+            { "kind": "import", "extensions": ["没 有"], "command": "imp.run" }
+        ]));
+        let got = sanitized_triggers(&m);
+        assert_eq!(got.len(), 1, "只应留下读得懂的那一条：{got:?}");
+        assert_eq!(got[0].kind, "import");
+        assert_eq!(got[0].command, "imp.run", "命令 id 去掉首尾空白");
+        assert_eq!(
+            got[0].extensions,
+            vec![".md".to_string(), ".csv".to_string()],
+            "扩展名规范化 + 去重 + 保持作者写的顺序"
+        );
+    }
+
+    #[test]
+    fn declarative_plugins_never_get_triggers() {
+        // 零代码插件没有命令可调：留着入口只会让用户点到一个必然报「命令不存在」的按钮
+        let m: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "d",
+            "name": "D",
+            "runtime": "declarative",
+            "views": [{ "id": "v", "title": "V", "columns": ["title"] }],
+            "triggers": [{ "kind": "import", "extensions": [".md"], "command": "d.run" }],
+        }))
+        .unwrap();
+        assert!(sanitized_triggers(&m).is_empty());
+    }
+
+    #[test]
+    fn triggers_and_extensions_are_capped() {
+        let many: Vec<serde_json::Value> = (0..(MAX_TRIGGERS + 3))
+            .map(|i| serde_json::json!({ "kind": "import", "extensions": [format!(".e{i}")], "command": "imp.run" }))
+            .collect();
+        assert_eq!(sanitized_triggers(&trigger_manifest(serde_json::json!(many))).len(), MAX_TRIGGERS);
+
+        let exts: Vec<String> = (0..(MAX_TRIGGER_EXTENSIONS + 5)).map(|i| format!(".e{i}")).collect();
+        let one = trigger_manifest(serde_json::json!([
+            { "kind": "import", "extensions": exts, "command": "imp.run" }
+        ]));
+        assert_eq!(sanitized_triggers(&one)[0].extensions.len(), MAX_TRIGGER_EXTENSIONS);
     }
 
     // ---- 安装行 / 私有数据 / 审计 ----

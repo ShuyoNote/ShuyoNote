@@ -152,6 +152,141 @@ fn check_theme_declaration(value: Option<&serde_json::Value>, problems: &mut Vec
     }
 }
 
+/// `manifest.triggers` 的**共用检查**（导入触发，M11.9）。
+///
+/// 与主题检查同样是**独立函数 + 两档各显式调一次**：这条检查要在「逻辑档」与「声明式」
+/// 两条路径上都跑，而在主流程里插条件分支已经让我错过一次（把声明式的早退嵌进了
+/// `if !declarative` 里，逻辑档的检查全被截住）。独立函数 + 两处显式调用，谁都不会漏。
+///
+/// 严重度按「用户会不会白点一次」分：
+/// - **kind 不认识 → 错误**：宿主不会为它加入口，作者以为接住了某类文件，实际什么都不发生；
+/// - **command 为空 → 错误**：入口就算出现，点了也只会拿到「命令不存在」；
+/// - **extensions 为空 / 不合法 → 提醒**：宿主会忽略这一项（不猜作者想接什么文件），
+///   插件本身仍然装得上、跑得起来，所以只是提醒。
+fn check_triggers_declaration(value: Option<&serde_json::Value>, problems: &mut Vec<PluginProblem>) {
+    let Some(raw) = value.and_then(|v| v.get("triggers")) else {
+        return;
+    };
+    let Some(list) = raw.as_array() else {
+        // 写成对象/字符串会被加载器整个拒载（serde 解析失败），所以这是错误而不是提醒。
+        problems.push(PluginProblem::error(
+            "trigger_not_array",
+            "manifest.triggers 必须是数组：[{ kind, extensions, command }]",
+            Some("manifest.json"),
+        ));
+        return;
+    };
+    if list.len() > crate::plugins::MAX_TRIGGERS {
+        problems.push(PluginProblem::warn(
+            "trigger_too_many",
+            format!(
+                "声明了 {} 条导入触发（上限 {}）：声明是给人看的，堆量只会让命令面板变成一锅粥",
+                list.len(),
+                crate::plugins::MAX_TRIGGERS
+            ),
+            Some("manifest.json"),
+        ));
+    }
+    let known: Vec<&str> = capabilities_gen::TRIGGERS.iter().map(|t| t.id).collect();
+    for (i, t) in list.iter().enumerate() {
+        let at = format!("triggers[{i}]");
+        let kind = t.get("kind").and_then(|k| k.as_str()).unwrap_or_default().trim().to_string();
+        let command = t.get("command").and_then(|c| c.as_str()).unwrap_or_default().trim().to_string();
+
+        match capabilities_gen::trigger(&kind) {
+            None => problems.push(PluginProblem::error(
+                "trigger_unknown_kind",
+                format!(
+                    "{at} 的 kind「{kind}」不认识（本版本支持：{}）：宿主不会为它加入口，写上去什么都不会发生",
+                    known.join(" / ")
+                ),
+                Some("manifest.json"),
+            )),
+            Some(k) if !k.hosted => problems.push(PluginProblem::warn(
+                "trigger_not_hosted",
+                format!("{at} 的 kind「{kind}」本版本还没有宿主入口（{}）：写了现在也不会出现", k.title),
+                Some("manifest.json"),
+            )),
+            Some(_) => {}
+        }
+
+        if command.is_empty() {
+            problems.push(PluginProblem::error(
+                "trigger_no_command",
+                format!("{at} 没有 command：导入触发要把文件内容交给一个命令，没写就等于让用户点了没反应"),
+                Some("manifest.json"),
+            ));
+        }
+
+        match t.get("extensions").and_then(|e| e.as_array()) {
+            None => problems.push(PluginProblem::warn(
+                "trigger_no_extensions",
+                format!("{at} 没有声明 extensions：宿主不知道该在哪些文件上出现这个入口（例如 [\".md\", \".csv\"]）"),
+                Some("manifest.json"),
+            )),
+            Some(items) if items.is_empty() => problems.push(PluginProblem::warn(
+                "trigger_no_extensions",
+                format!("{at} 的 extensions 是空的：没有任何扩展名，入口就不会出现"),
+                Some("manifest.json"),
+            )),
+            Some(items) => {
+                for item in items {
+                    let raw_ext = item.as_str().unwrap_or_default();
+                    if crate::plugins::normalize_extension(raw_ext).is_none() {
+                        problems.push(PluginProblem::warn(
+                            "trigger_bad_extension",
+                            format!(
+                                "{at} 的扩展名「{raw_ext}」不合法（写成 .md 这样：小写、带点、一个扩展名）：这一项会被忽略"
+                            ),
+                            Some("manifest.json"),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 触发指向的命令**是否真的注册了**（以及它带不带参数表单）。
+///
+/// 单独一步的原因：这份名单要等 discovery（真跑一遍顶层代码）之后才有。放在这里而不是
+/// 塞进上面的共用检查，是因为共用检查在**两档**都要跑，而声明式插件没有命令可查。
+///
+/// 为什么值得查：命令 id 写错、或者忘了 `register`，宿主这边什么都不报——入口照常出现在
+/// 命令面板里，用户点下去才看到「命令不存在」。作者不该靠用户点一次才知道。
+fn check_trigger_targets(
+    value: Option<&serde_json::Value>,
+    commands: &[PluginCommandMeta],
+    problems: &mut Vec<PluginProblem>,
+) {
+    let Some(list) = value.and_then(|v| v.get("triggers")).and_then(|t| t.as_array()) else {
+        return;
+    };
+    for (i, t) in list.iter().enumerate() {
+        let command = t.get("command").and_then(|c| c.as_str()).unwrap_or_default().trim();
+        if command.is_empty() {
+            continue; // 已经在 check_triggers_declaration 里报过
+        }
+        match commands.iter().find(|c| c.id == command) {
+            None => problems.push(PluginProblem::warn(
+                "trigger_command_missing",
+                format!(
+                    "triggers[{i}] 要调用的命令「{command}」没有被注册（register({{ id: \"{command}\", … }})）——现在点这个入口只会得到「命令不存在」"
+                ),
+                Some("manifest.json"),
+            )),
+            Some(c) if !c.params.is_empty() => problems.push(PluginProblem::warn(
+                "trigger_command_has_params",
+                format!(
+                    "triggers[{i}] 调用的命令「{command}」声明了参数：导入触发**不会**渲染参数表单，它只把 {{ fileName, content }} 交给命令（参数表单只在命令面板里出现）"
+                ),
+                Some("manifest.json"),
+            )),
+            Some(_) => {}
+        }
+    }
+}
+
 /// 声明式（零代码）插件的校验。
 ///
 /// **单独一个函数**，而不是在主流程里插条件分支：两档的检查项几乎没有交集——声明式没有
@@ -180,6 +315,7 @@ fn validate_declarative(
             ("permissions", "declarative_has_permissions", "声明式插件没有代码，manifest.permissions 不会被用到（它可以不申请任何权限）"),
             ("events", "declarative_has_events", "声明式插件没有代码，manifest.events 收不到任何事件（需要事件就用 logic 档）"),
             ("settings", "declarative_has_settings", "声明式插件没有代码去读设置（需要用户可配就用 logic 档）"),
+            ("triggers", "declarative_has_triggers", "声明式插件没有命令可以调用，manifest.triggers 不会接住任何文件（导入触发要调用命令，那需要 logic 档）"),
             ("main", "declarative_has_main", "runtime=declarative 时 main.js 不会被读取或执行（零代码正是它安全的原因），建议删掉这个字段与文件"),
         ] {
             if v.get(field).is_some() {
@@ -197,6 +333,7 @@ fn validate_declarative(
         .map(|m| !m.is_empty())
         .unwrap_or(false);
     check_theme_declaration(value, &mut problems);
+    check_triggers_declaration(value, &mut problems);
 
     if views.is_empty() && !has_theme {
         problems.push(PluginProblem::error(
@@ -547,6 +684,7 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
     }
 
     check_theme_declaration(value.as_ref(), &mut problems);
+    check_triggers_declaration(value.as_ref(), &mut problems);
 
     // ---- 5. JS 语法（Boa 解析，不执行）----
     // 与运行同一个引擎，所以「本地能过、应用装上去语法错」不可能发生。
@@ -614,6 +752,9 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                     }
                 }
                 commands = cmds;
+                // 触发指向的命令是否真的注册了：名单只有 discovery 之后才有，所以在这里查
+                // （只有 discovery 成功时才有意义——失败已经在上面报过 load_failed 了）。
+                check_trigger_targets(value.as_ref(), &commands, &mut problems);
             }
             Err(e) => problems.push(PluginProblem::error(
                 "load_failed",
@@ -875,6 +1016,14 @@ mod tests {
             for ev in &r.events {
                 assert!(!ev.reason.trim().is_empty(), "示例插件 {} 的事件 {} 应当写 reason（示范给用户看的授权面）", d.display(), ev.id);
             }
+            // 导入触发：示例里写了就必须是「干干净净」的——命令注册过、扩展名合法、
+            // 没有拿去接一条带参数表单的命令（这些正是作者最容易写错的地方）。
+            assert!(
+                r.problems.iter().all(|p| !p.code.starts_with("trigger")),
+                "示例插件 {} 的导入触发不该有任何问题（它示范的是正确写法）：{:?}",
+                d.display(),
+                r.problems
+            );
         }
     }
 
@@ -1164,4 +1313,123 @@ mod tests {
         assert!(codes(&r).contains(&"theme_unknown_token".to_string()), "{:?}", r.problems);
     }
 
+    // ---- 导入触发（M11.9）----
+
+    #[test]
+    fn import_trigger_mistakes_are_reported() {
+        let dir = plugin(
+            "bad-triggers",
+            &manifest_json(
+                "bad-triggers",
+                r#", "permissions": [ { "id": "read:pages", "reason": "x" } ], "triggers": [
+                     { "kind": "import", "extensions": [".md"], "command": "bad-triggers.import" },
+                     { "kind": "wasm", "extensions": [".md"], "command": "bad-triggers.import" },
+                     { "kind": "import", "extensions": [".md"] },
+                     { "kind": "import", "extensions": [], "command": "bad-triggers.import" },
+                     { "kind": "import", "command": "bad-triggers.import" },
+                     { "kind": "import", "extensions": ["*", "m d", "ok.md"], "command": "bad-triggers.import" }
+                   ]"#,
+            ),
+        );
+        write_main(
+            &dir,
+            "main.js",
+            "register({ id: 'bad-triggers.import', title: '导入', run: function(){ return ''; } });",
+        );
+        let r = validate_dir(&dir);
+        assert!(!r.ok, "kind 不认识 / 没有命令必须是错误：{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_unknown_kind".to_string()), "{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_no_command".to_string()), "{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_no_extensions".to_string()), "{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_bad_extension".to_string()), "通配符/空格不是扩展名：{:?}", r.problems);
+        // 严重度：只有「kind 不认识」与「没有命令」是错误，扩展名的问题只是提醒
+        let bad_ext = r.problems.iter().find(|p| p.code == "trigger_bad_extension").unwrap();
+        assert_eq!(bad_ext.severity, "warning", "扩展名写错不该让插件装不上");
+        // 合法的那条不该被牵连
+        assert!(
+            r.problems.iter().all(|p| !p.message.contains("trigger_no_command") || !p.message.contains("triggers[0]")),
+            "{:?}",
+            r.problems
+        );
+    }
+
+    #[test]
+    fn a_clean_import_trigger_reports_nothing() {
+        let dir = plugin(
+            "good-triggers",
+            &manifest_json(
+                "good-triggers",
+                r#", "permissions": [ { "id": "read:pages", "reason": "x" } ], "triggers": [
+                     { "kind": "import", "extensions": ["MD", ".csv"], "command": "good-triggers.import" }
+                   ]"#,
+            ),
+        );
+        write_main(
+            &dir,
+            "main.js",
+            "register({ id: 'good-triggers.import', title: '导入', run: function(){ return ''; } });",
+        );
+        let r = validate_dir(&dir);
+        assert_eq!(r.errors().count(), 0, "{:?}", r.problems);
+        assert!(
+            r.problems.iter().all(|p| !p.code.starts_with("trigger")),
+            "写得对的触发不该有任何话说：{:?}",
+            r.problems
+        );
+    }
+
+    #[test]
+    fn trigger_pointing_at_an_unregistered_command_is_flagged() {
+        // 命令 id 写错 / 忘了 register：宿主什么都不报，用户点下去才看到「命令不存在」
+        let dir = plugin(
+            "lost-trigger",
+            &manifest_json(
+                "lost-trigger",
+                r#", "permissions": [ { "id": "read:pages", "reason": "x" } ], "triggers": [
+                     { "kind": "import", "extensions": [".md"], "command": "lost-trigger.nope" }
+                   ]"#,
+            ),
+        );
+        write_main(&dir, "main.js", OK_MAIN); // 只注册了 demo.run
+        let r = validate_dir(&dir);
+        assert!(r.ok, "装得上、跑得起来，所以只是提醒：{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_command_missing".to_string()), "{:?}", r.problems);
+    }
+
+    #[test]
+    fn trigger_on_a_command_with_params_is_explained() {
+        // 导入触发的入参就是 { fileName, content }：带参数表单的命令不会弹表单，得说清楚
+        let dir = plugin(
+            "param-trigger",
+            &manifest_json(
+                "param-trigger",
+                r#", "permissions": [ { "id": "read:pages", "reason": "x" } ], "triggers": [
+                     { "kind": "import", "extensions": [".md"], "command": "param-trigger.import" }
+                   ]"#,
+            ),
+        );
+        write_main(
+            &dir,
+            "main.js",
+            "register({ id: 'param-trigger.import', title: '导入', params: [ { name: 'x' } ], run: function(){ return ''; } });",
+        );
+        let r = validate_dir(&dir);
+        assert!(r.ok, "{:?}", r.problems);
+        assert!(codes(&r).contains(&"trigger_command_has_params".to_string()), "{:?}", r.problems);
+    }
+
+    #[test]
+    fn declarative_plugins_are_told_triggers_do_nothing() {
+        // 零代码插件没有命令：写了 triggers 要如实告知，而不是让它显得能接文件
+        let dir = declarative_plugin(
+            "decl-trigger",
+            r#"{ "id": "decl-trigger", "name": "D", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "runtime": "declarative",
+                 "views": [ { "id": "v", "title": "V", "columns": ["title"] } ],
+                 "triggers": [ { "kind": "import", "extensions": [".md"], "command": "decl-trigger.import" } ] }"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(r.ok, "只是提醒（插件本身装得上）：{:?}", r.problems);
+        assert!(codes(&r).contains(&"declarative_has_triggers".to_string()), "{:?}", r.problems);
+    }
 }

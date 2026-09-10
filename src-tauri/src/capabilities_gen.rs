@@ -168,6 +168,27 @@ pub fn menu(id: &str) -> Option<&'static PluginMenu> {
     MENUS.iter().find(|m| m.id == id)
 }
 
+/// 一种导入触发：manifest `triggers[].kind` 只能填这里有的值。
+///
+/// 与 `menus` 同一类事实（作者声明 → 宿主渲染一个入口），所以同样放在注册表里：
+/// 校验器据此区分「kind 不认识」（错误）与「kind 认识但宿主还没接」（提醒）。
+#[derive(Serialize, Clone, Debug)]
+pub struct PluginTrigger {
+    pub id: &'static str,
+    pub title: &'static str,
+    /// 宿主是否已经接了这个触发。
+    pub hosted: bool,
+    pub desc: &'static str,
+}
+
+pub const TRIGGERS: &[PluginTrigger] = &[
+    PluginTrigger { id: "import", title: "导入文件", hosted: true, desc: "命令面板里按扩展名出现；用户选中文件后宿主读成文本，把 { fileName, content } 交给你的命令" },
+];
+
+pub fn trigger(id: &str) -> Option<&'static PluginTrigger> {
+    TRIGGERS.iter().find(|t| t.id == id)
+}
+
 /// 按 id 找事件（manifest 声明校验用）。
 pub fn event(id: &str) -> Option<&'static PluginEvent> {
     EVENTS.iter().find(|e| e.id == id)

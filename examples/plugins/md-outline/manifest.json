@@ -1,0 +1,21 @@
+{
+  "id": "md-outline",
+  "name": "Markdown 大纲",
+  "version": "1.0.0",
+  "description": "选中一个 Markdown 文件，把它的标题抽成一篇新页面（草稿，需你确认）。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "write:pages",
+      "reason": "用它新建「大纲：文件名」页面（落库前会先把草稿给你确认）"
+    }
+  ],
+  "triggers": [
+    {
+      "kind": "import",
+      "extensions": [".md", ".markdown"],
+      "command": "md-outline.fromFile"
+    }
+  ]
+}

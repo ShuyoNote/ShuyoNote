@@ -176,6 +176,24 @@ export interface PluginView {
   summary: boolean;
 }
 
+/**
+ * 一条**导入触发**（manifest `triggers[]`，后端已按可用性筛过一遍）。
+ *
+ * 宿主在命令面板里按扩展名加一个入口：用户选中文件后由**宿主**读成文本，把
+ * `{ fileName, content }` 当命令参数交给插件。所以它不授予任何新能力——插件仍然
+ * 只能通过 `api.*` 产出（写能力照样出草稿、照样要用户确认）。
+ */
+export interface PluginTrigger {
+  /** 触发类型，目前只有 `import`。 */
+  kind: string;
+  /** 规范化后的扩展名（`.md` 这种小写带点形式）。 */
+  extensions: string[];
+  /** 被调用的命令 id（插件自己注册的命令）。 */
+  command: string;
+  /** 入口标题；空串表示用宿主默认的「导入：用「插件名」打开 .md」。 */
+  title: string;
+}
+
 /** 一条校验问题。`severity=error` 会让插件装不进去/跑不起来，`warning` 只是建议。 */
 /** 一次事件派发给某个插件的结果（后端 `emit_plugin_event`）。 */
 export interface PluginEventOutcome {
@@ -224,6 +242,8 @@ export interface PluginMeta {
   runtime: string;
   /** 声明式视图（宿主渲染）。 */
   views: PluginView[];
+  /** 导入触发（宿主在命令面板里加入口；只有通过校验的那些会被带上）。 */
+  triggers: PluginTrigger[];
   /** 主题声明（宿主应用到界面；只有通过校验的变量会被带上）。 */
   theme?: { name?: string; tokens: Record<string, string> } | null;
 }

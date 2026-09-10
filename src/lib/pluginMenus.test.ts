@@ -11,7 +11,7 @@ const cmd = (id: string, menus: string[], params: unknown[] = []) => ({
 const plugin = (id: string, enabled: boolean, commands: unknown[]): PluginMeta =>
   ({
     id, name: `插件 ${id}`, version: "1.0.0", description: "", enabled,
-    commands, permissions: [], permissions_baseline: false, events: [], runtime: "logic", views: [],
+    commands, permissions: [], permissions_baseline: false, events: [], runtime: "logic", views: [], triggers: [],
   }) as PluginMeta;
 
 describe("pluginSlashItems", () => {

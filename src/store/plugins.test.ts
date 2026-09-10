@@ -45,6 +45,7 @@ const PLUGIN: PluginMeta = {
   events: [],
   runtime: "logic",
   views: [],
+  triggers: [],
 };
 
 const VALIDATION: PluginValidation = {

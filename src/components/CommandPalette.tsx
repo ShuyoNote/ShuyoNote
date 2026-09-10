@@ -8,7 +8,16 @@ import { usePluginViewStore } from "../store/pluginViews";
 import { useAiStore } from "../store/ai";
 import { getBuiltinCommands, type CommandContext } from "../plugins/builtinCommands";
 import { buildCommandArgs, initialParamValues } from "../lib/pluginParams";
+import {
+  baseName,
+  dialogExtensions,
+  filterLabel,
+  importArgsJson,
+  pluginImportItems,
+} from "../lib/pluginImports";
 import type { PluginCommandParam } from "../types";
+import { api } from "../lib/api";
+import { platform } from "../lib/platform";
 import { PluginFieldInput } from "./PluginFieldInput";
 
 type Item =
@@ -30,6 +39,15 @@ type Item =
       pluginId: string;
       pluginName: string;
       view: import("../types").PluginView;
+      title: string;
+    }
+  | {
+      kind: "plugin-import";
+      pluginId: string;
+      pluginName: string;
+      id: string;
+      commandId: string;
+      extensions: string[];
       title: string;
     };
 
@@ -141,9 +159,25 @@ export function CommandPalette() {
     return out;
   }, [plugins, q]);
 
+  // 导入触发（manifest `triggers`）：点一下 → 选文件 → **宿主**读内容 → 交给插件的命令。
+  // 筛选规则在 lib/pluginImports（纯函数、有单测），这里只做入口与文案。
+  const importItems = useMemo<Item[]>(() => {
+    return pluginImportItems(plugins)
+      .filter((i) => !q || i.title.toLowerCase().includes(q) || i.extensions.join(" ").includes(q))
+      .map((i) => ({
+        kind: "plugin-import" as const,
+        pluginId: i.pluginId,
+        pluginName: i.pluginName,
+        id: i.key,
+        commandId: i.commandId,
+        extensions: i.extensions,
+        title: i.title,
+      }));
+  }, [plugins, q]);
+
   const flat = useMemo(
-    () => [...pageItems, ...cmdItems, ...pluginItems, ...viewItems],
-    [pageItems, cmdItems, pluginItems],
+    () => [...pageItems, ...cmdItems, ...pluginItems, ...viewItems, ...importItems],
+    [pageItems, cmdItems, pluginItems, viewItems, importItems],
   );
   useEffect(() => setSel(0), [query]);
 
@@ -198,6 +232,10 @@ export function CommandPalette() {
       setOpen(false);
       return;
     }
+    if (item.kind === "plugin-import") {
+      await runImport(item);
+      return;
+    }
     if (item.kind === "plugin-toggle") {
       // toggle 会把后端的原始错误文本带回来：失败时**不能**报成功。
       const r = await usePlugins.getState().toggle(item.pluginId);
@@ -227,6 +265,34 @@ export function CommandPalette() {
     }
   };
 
+  /**
+   * 导入触发：选文件 → **宿主**读内容 → 当成命令参数交给插件。
+   *
+   * 三件事值得写下来：
+   * - **读文件的是宿主**（`readTextFile`），插件手里仍然没有任何文件能力；内容只是这一次
+   *   调用的入参，插件要产出笔记依旧只能走 `api.*`（写能力照样出草稿、要用户确认）。
+   * - **用户取消选择就什么都不做**（不弹错、也不拿空内容跑一次命令）；
+   * - **插件没有被启用时后端会拒**（这里只是不显示入口，真正的闸门在 `run_plugin_command`）。
+   */
+  const runImport = async (item: Extract<Item, { kind: "plugin-import" }>) => {
+    try {
+      const selected = await platform.dialog.open({
+        title: `选择要导入的文件（${item.extensions.join(" / ")}）`,
+        filters: [{ name: filterLabel(item.extensions), extensions: dialogExtensions(item.extensions) }],
+        multiple: false,
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path) return;
+      const content = await api.readTextFile(path);
+      const argsJson = importArgsJson(baseName(path), content);
+      const r = await runPluginCommandWithUi(`「${item.title}」`, item.pluginId, item.commandId, currentId, argsJson);
+      setResult(r.message);
+    } catch (e) {
+      setResult(`导入失败：${String(e)}`);
+    }
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -250,7 +316,7 @@ export function CommandPalette() {
       onMouseEnter={() => setSel(idx)}
     >
       <span className="palette-title">
-        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : it.kind === "plugin-view" ? "▦ " : ""}
+        {it.kind === "page" ? "📄 " : it.kind === "plugin-toggle" ? "◉ " : it.kind === "plugin-view" ? "▦ " : it.kind === "plugin-import" ? "📥 " : ""}
         {it.title}
         {it.kind === "plugin" && (it.params?.length ?? 0) > 0 && <span className="palette-params-badge">需填参数</span>}
       </span>
@@ -261,7 +327,9 @@ export function CommandPalette() {
             ? "切换插件"
             : it.kind === "plugin-view"
               ? `来自插件「${it.pluginName}」`
-              : (it.description ?? "")}
+              : it.kind === "plugin-import"
+                ? `来自插件「${it.pluginName}」· 选中文件后由宿主读取内容`
+                : (it.description ?? "")}
       </span>
     </button>
   );
@@ -323,6 +391,13 @@ export function CommandPalette() {
           {viewItems.length > 0 && <div className="palette-group">插件视图</div>}
           {viewItems.map((it, i) =>
             renderItem(it, pageItems.length + cmdItems.length + pluginItems.length + i),
+          )}
+          {importItems.length > 0 && <div className="palette-group">导入</div>}
+          {importItems.map((it, i) =>
+            renderItem(
+              it,
+              pageItems.length + cmdItems.length + pluginItems.length + viewItems.length + i,
+            ),
           )}
           {flat.length === 0 && <div className="palette-empty">无匹配结果</div>}
         </div>

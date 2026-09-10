@@ -78,6 +78,7 @@ describe("命令面板打开 / 关闭不违反 hooks 规则", () => {
           events: [],
           runtime: "logic",
           views: [],
+          triggers: [],
         } as never,
       ],
       running: null,

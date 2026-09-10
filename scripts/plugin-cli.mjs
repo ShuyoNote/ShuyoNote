@@ -64,6 +64,58 @@ function checkDeclarativeViews(m, push, knownColumns, knownSorts, knownKinds, th
   }
 }
 
+/**
+ * 导入触发的检查：与 Rust 侧 `check_triggers_declaration` 一一对应（两档插件都跑）。
+ *
+ * 严重度与那边一致：**kind 不认识 / 没有 command → 错误**（用户点了必然没反应），
+ * **extensions 为空或不合法 → 提醒**（宿主会忽略，插件本身装得上）。
+ *
+ * 这里**刻意不查**「command 是否真的注册了」：那要跑一遍 discovery，而 CLI 只做 V8 语法
+ * 检查（见文件头：权威始终是应用内的「验证」）。所以这条只有应用内验证会报。
+ */
+function checkTriggers(m, push, knownTriggerKinds) {
+  const triggers = m.triggers;
+  if (triggers === undefined) return;
+  if (!Array.isArray(triggers)) {
+    push("error", "trigger_not_array", "manifest.triggers 必须是数组：[{ kind, extensions, command }]");
+    return;
+  }
+  if (triggers.length > 4) push("warning", "trigger_too_many", `声明了 ${triggers.length} 条导入触发（上限 4）`);
+  const known = [...knownTriggerKinds.keys()];
+  triggers.forEach((t, i) => {
+    const at = `triggers[${i}]`;
+    const kind = t && typeof t.kind === "string" ? t.kind.trim() : "";
+    const command = t && typeof t.command === "string" ? t.command.trim() : "";
+    if (!knownTriggerKinds.has(kind)) {
+      push("error", "trigger_unknown_kind", `${at} 的 kind「${kind}」不认识（本版本支持：${known.join(" / ")}）：宿主不会为它加入口`);
+    } else if (!knownTriggerKinds.get(kind)) {
+      // 注册表认识、宿主还没接：与 Rust 侧同样是提醒（写了现在也不会出现）
+      push("warning", "trigger_not_hosted", `${at} 的 kind「${kind}」本版本还没有宿主入口：写了现在也不会出现`);
+    }
+    if (!command) {
+      push("error", "trigger_no_command", `${at} 没有 command：导入触发要把文件内容交给一个命令，没写就等于让用户点了没反应`);
+    }
+    const exts = t ? t.extensions : undefined;
+    if (!Array.isArray(exts) || exts.length === 0) {
+      push("warning", "trigger_no_extensions", `${at} 没有声明 extensions：宿主不知道该在哪些文件上出现这个入口（例如 [".md", ".csv"]）`);
+      return;
+    }
+    for (const e of exts) {
+      if (normalizeExtension(e) === null) {
+        push("warning", "trigger_bad_extension", `${at} 的扩展名「${String(e)}」不合法（写成 .md 这样：小写、带点、一个扩展名）：这一项会被忽略`);
+      }
+    }
+  });
+}
+
+/** 与 Rust `normalize_extension` 同一套规则：小写、带点、单个扩展名；不合法返回 null。 */
+function normalizeExtension(raw) {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim().replace(/^\.+/, "").toLowerCase();
+  if (!t || t.length > 16) return null;
+  return /^[a-z0-9_-]+$/.test(t) ? `.${t}` : null;
+}
+
 /** 与 Rust `is_safe_plugin_id` 同一套规则（见 src-tauri/src/plugins.rs）。 */
 function isSafeId(id) {
   if (!id || id === "." || id === "..") return false;
@@ -169,6 +221,7 @@ function validate(dirArg) {
         ["permissions", "declarative_has_permissions", "声明式插件没有代码，manifest.permissions 不会被用到"],
         ["events", "declarative_has_events", "声明式插件没有代码，manifest.events 收不到任何事件"],
         ["settings", "declarative_has_settings", "声明式插件没有代码去读设置"],
+        ["triggers", "declarative_has_triggers", "声明式插件没有命令可以调用，manifest.triggers 不会接住任何文件（要导入触发就得写 logic 档）"],
         ["main", "declarative_has_main", "runtime=declarative 时 main.js 不会被读取或执行"],
       ]) {
         if (m[field] !== undefined) push("warning", code, msg);
@@ -220,6 +273,9 @@ function validate(dirArg) {
     }
   }
 
+  // ---- 导入触发（与 Rust 侧 check_triggers_declaration 同源，两档都跑）----
+  if (m) checkTriggers(m, push, new Map((reg.triggers ?? []).map((t) => [t.id, t.hosted])));
+
   // ---- JS 语法（V8；权威是应用内的 Boa）----
   const mainPath = join(dir, main);
   let source = null;
@@ -262,6 +318,13 @@ function report(r, json) {
             reason: d?.reason ?? "",
             known: r.knownEvents.has(d?.on),
             title: r.knownEvents.get(d?.on)?.title ?? "",
+          })),
+          // 扩展名在这里也按宿主的规则规范化，CI 才拿得到"用户实际会看到哪些入口"
+          triggers: (Array.isArray(r.manifest?.triggers) ? r.manifest.triggers : []).map((t) => ({
+            kind: t?.kind ?? "",
+            command: t?.command ?? "",
+            extensions: (Array.isArray(t?.extensions) ? t.extensions : []).map((e) => normalizeExtension(e)).filter(Boolean),
+            known: new Set((r.reg.triggers ?? []).map((x) => x.id)).has(t?.kind),
           })),
           problems: r.problems,
         },
@@ -314,6 +377,19 @@ function report(r, json) {
       const reason = d?.reason?.trim() ? d.reason : color("（缺 reason）", "yellow");
       const tail = e ? "" : color("  ← 本版本不认识，收不到", "yellow");
       console.log(`    ${mark} ${String(d?.on).padEnd(16)} ${e?.title ?? ""} —— ${reason}${tail}`);
+    }
+  }
+
+  const declaresTriggers = Array.isArray(r.manifest?.triggers) ? r.manifest.triggers : [];
+  if (declaresTriggers.length > 0) {
+    const knownTriggers = new Map((r.reg.triggers ?? []).map((t) => [t.id, t]));
+    console.log(`  ${color("导入触发", "dim")}（命令面板里会多出这些入口）：`);
+    for (const t of declaresTriggers) {
+      const k = knownTriggers.get(t?.kind);
+      const mark = k ? color("✓", "green") : color("?", "yellow");
+      const exts = (Array.isArray(t?.extensions) ? t.extensions : []).map((e) => normalizeExtension(e)).filter(Boolean);
+      const tail = k ? "" : color("  ← 本版本不认识这种触发", "yellow");
+      console.log(`    ${mark} ${String(t?.kind ?? "").padEnd(10)} ${(exts.join(" / ") || color("（没有合法扩展名）", "yellow")).padEnd(18)} → ${t?.command ?? ""}${tail}`);
     }
   }
 
