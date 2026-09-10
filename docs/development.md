@@ -159,6 +159,10 @@ pnpm test:mobile-layout               # 期望 "N 通过 / 0 失败"
 >
 > 渲染兜底是分层的：`main.tsx` 的整屏兜底（`AppCrashScreen`）+ App 根部浮层的 `PanelBoundary`。**新加根部浮层时给它一道边界**，否则一个渲染错误又等于整屏白。
 
+> [!] **快捷键：清单改动要同步覆盖率映射；插件里拦按键不要用 `COMMAND_PRIORITY_EDITOR`。** `src/lib/shortcuts.ts` 是清单的单一来源（快捷键面板、文档、tooltip 都读它），但**实现分散在组件与 Lexical 插件里**——2026-09 照文档逐条按键时才发现两组功能一直是死的：`InsertShortcutPlugin`（Ctrl+Alt+1/2/3/U/O/T/Q/C/L/M 共 10 条）与 `PageLinkSuggestPlugin`（`[[` 菜单的 ↑/↓/Enter/Esc，Enter 变成换行）。根因是 **Lexical 的优先级队列是 `CRITICAL > HIGH > NORMAL > LOW > EDITOR`，EDITOR 是最后一档**，而 Lexical 自己那支 `$handleKeyDown`（由 `RichTextPlugin` 在 **layout effect** 里装进编辑器）就在那一档、且对**每一次** keydown 都 `return true`；插件在 `useEffect`（被动 effect，永远晚于 layout effect）里注册，于是永远排在它后面，**一次都收不到事件**——但注册本身是成功的，清单也一致，所以当时的全部检查都是绿的。**在插件里拦按键请用 `COMMAND_PRIORITY_LOW`**（与 `SlashMenuPlugin` / `ImagePastePlugin` 一致）。
+>
+> 行为测试在 `src/editor/insertShortcut.test.ts`（真编辑器 + 真 `dispatchCommand`）、`src/editor/editorInputShortcuts.test.ts`（Markdown 行首语法逐字输入、`/`、Ctrl+F、空行空格）、`src/components/overlayShortcuts.test.ts`（Ctrl+K、Esc）、`src/hooks/globalShortcuts.test.ts`；闸门 `src/lib/shortcutCoverage.test.ts` 要求清单**每一条都指到一个真存在的用例**（映射表里的用例标题必须真在 `it(...)` 里），并扫出 `src/editor/plugins` 下 EDITOR 档的 `KEY_DOWN_COMMAND` 注册与「插件分支 ⟷ 文档」的双向差异。**加/改快捷键时，这四处要一起动。**
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。

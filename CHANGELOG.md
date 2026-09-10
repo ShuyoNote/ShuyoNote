@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 修复
+- **把文档里 25 条快捷键逐条按了一遍，发现两组功能其实一直是死的——根因同一个：按键注册在 Lexical 优先级的最后一档。**
+  - **`Ctrl+Alt+1/2/3/U/O/T/Q/C/L/M` 十条（文档「编辑器」组）全部无效**：`InsertShortcutPlugin` 把 `KEY_DOWN_COMMAND` 注册在 `COMMAND_PRIORITY_EDITOR`。而 Lexical 的优先级队列是 `CRITICAL > HIGH > NORMAL > LOW > EDITOR（最后一档）`，**Lexical 自己那支 `$handleKeyDown` 就在 EDITOR 档，且对每一次 keydown 都 `return true`**（`Lexical.dev.mjs` 的 `$handleKeyDown` 末尾无条件 return true）。`RichTextPlugin` 是在 **layout effect** 里把它装进编辑器的，插件在 **`useEffect`（被动 effect，永远晚于 layout effect）** 里注册，于是永远排在它后面——同档里的后来者一次都收不到事件。按 Ctrl+Alt+1 的表现是"什么都没发生"。改用 `COMMAND_PRIORITY_LOW`（与已经在用的 `SlashMenuPlugin` / `ImagePastePlugin` 一致）后十条全部恢复。
+  - **`[[` 页面链接菜单的 ↑/↓/Enter/Esc 同样收不到**（`PageLinkSuggestPlugin` 踩了同一个档）：菜单开着时按 Enter 不是选中候选，而是变成换行——菜单等于只能用鼠标点。同因同修。
+  - **斜杠菜单的分组标题重复**：菜单是按"同组相邻"推断标题的（`option.group !== lastGroup` 才插一条），而清单里后来追加的「帮助」落到了「表格」后面、表格又落在 `hr` 之后，于是收尾顺序成了 `…嵌入 → 基础 → 嵌入 → 引用`，菜单里**「基础」「嵌入」各出现两次**（React 还会报 duplicate key）。把这两条挪回各自的分组块，分组改成连续；并加测试按真实 DOM 钉住"分组标题不重复"。
+- **补上 25 条快捷键的行为测试 + 一条覆盖率闸门**（这一轮"文档说的能不能测"的正面回答）：
+  - 真编辑器、真事件、真断言：`insertShortcut.test.ts`（Ctrl+Alt 那一组，走真 `dispatchCommand(KEY_DOWN_COMMAND, …)` 并断言 `preventDefault` 与块类型/标签）、`editorInputShortcuts.test.ts`（Markdown 行首语法**逐字输入**、`/` 斜杠菜单、Ctrl+F 查找条、空行空格开 AI——**外加反向守卫**：有字的行不许抢空格、带 Shift 的 Ctrl+Alt+Shift+1 不许抢）、`overlayShortcuts.test.ts`（Ctrl+K 开合命令面板、Esc 关浮层）、`globalShortcuts.test.ts`（Ctrl+N/E/B/Shift+F、Ctrl+/ 与 ?，含"编辑器内让给加粗"的守卫）。
+  - `src/lib/shortcutCoverage.test.ts` 是闸门：`shortcuts.ts` 里**每一条都必须指到一个真存在的用例**——映射表里的用例标题要去那个文件里真的找得到、且必须在 `it(...)`/`describe(...)` 里（光写文件名糊弄不过去）；反向也不许留"清单已删掉"的映射。再加两条防同类回归的：`src/editor/plugins` 下**不许**把 `KEY_DOWN_COMMAND` 注册到 `COMMAND_PRIORITY_EDITOR`（扫注册实参，剥掉注释再扫）；`InsertShortcutPlugin` 里手写的 `if (key === "x")` 分支必须与文档「编辑器」组**双向**一一对应（多了少了都拦）。三条都用植入式变异实测过：加一条没人测的快捷键、改掉被指到的用例标题、给插件加一条文档没有的分支，闸门都逐条报出来。
+  - 写测试的过程本身也验证了"只测渲染/只测清单"不够：这两组功能此前都过了当时的全部检查，因为它们**注册成功、清单也一致**，只是永远收不到事件。
+
 ### 新增
 - **侧栏：拖分隔条到底就直接收起；工具条顶部那个开合按钮现在桌面也常驻。** 原先这条链在桌面上只通一半——
   - **拖到底收不起来**：拖动只夹在 240–460px，想"把侧栏让出来"只能去点图标或按快捷键。现在继续往左拖过 180px 就收起（阈值取在最小宽之下 60px，留出余量免得手抖就收掉；判断在 `lib/sidebarDrag`，纯函数有单测）。收起时**不写宽度存档**——存档留着原宽度，下次展开还是原来那么宽，而不是一条 120px 的细缝。
