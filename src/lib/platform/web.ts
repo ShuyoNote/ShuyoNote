@@ -576,13 +576,23 @@ async function streamZip(
 
 const SYNC_DEVICE_KEY = "shuyo.device_id";
 
+// 进程内兜底：本模块也会在 Node 里被加载（scripts/smoke-web.mjs 打包 web.ts
+// 跑真实 sql.js）。那里没有 localStorage，而 recordChange 会在**每次写操作**
+// 时调用 syncDeviceId —— 不兜底的话建页/改页/传附件全部抛 ReferenceError，
+// 整个冒烟脚本当场崩掉。同一进程内保持稳定即可（跨进程本来就该换 id）。
+let memoryDeviceId: string | null = null;
+
 function syncDeviceId(): string {
-  let id = localStorage.getItem(SYNC_DEVICE_KEY);
-  if (!id) {
-    id = uid();
-    localStorage.setItem(SYNC_DEVICE_KEY, id);
+  try {
+    const existing = localStorage.getItem(SYNC_DEVICE_KEY);
+    if (existing) return existing;
+    const fresh = uid();
+    localStorage.setItem(SYNC_DEVICE_KEY, fresh);
+    return fresh;
+  } catch {
+    if (!memoryDeviceId) memoryDeviceId = uid();
+    return memoryDeviceId;
   }
-  return id;
 }
 
 interface SyncAuthSession {
