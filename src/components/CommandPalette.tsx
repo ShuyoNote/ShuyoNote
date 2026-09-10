@@ -11,7 +11,7 @@ import { getAllCommands, usePluginRevision, type CommandContext } from "../plugi
 type Item =
   | { kind: "page"; id: string; title: string }
   | { kind: "command"; id: string; title: string; description?: string }
-  | { kind: "plugin"; pluginId: string; id: string; title: string; description?: string }
+  | { kind: "plugin"; pluginId: string; id: string; title: string; description?: string; closeOnRun?: boolean }
   | { kind: "plugin-toggle"; pluginId: string; title: string };
 
 // Insert a text paragraph into the active editor (at cursor if possible, else
@@ -100,6 +100,7 @@ export function CommandPalette() {
           if (!q || c.title.toLowerCase().includes(q)) {
             out.push({
               kind: "plugin", pluginId: p.id, id: c.id, title: c.title, description: c.description,
+              closeOnRun: c.close_on_run,
             });
           }
         }
@@ -145,6 +146,8 @@ export function CommandPalette() {
         // 插件用 __toast(...) 发的提示：此前只写 stderr，用户完全看不到。
         for (const t of res.toasts ?? []) toast(t, "info");
         if (res.insert) insertText(res.insert);
+        // closeOnRun 现在能正确解析了（此前是死字段），所以照它关闭面板。
+        if (item.closeOnRun) setOpen(false);
       } catch (e) {
         setResult(String(e));
       }

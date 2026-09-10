@@ -2,7 +2,7 @@ use crate::db::Db;
 use boa_engine::vm::RuntimeLimits;
 use boa_engine::{Context, JsString, JsValue, NativeFunction, Source};
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::path::{Component, Path, PathBuf};
 use std::sync::MutexGuard;
@@ -13,11 +13,14 @@ use tauri::{AppHandle, Manager, State};
 // Plugin model
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PluginCommandMeta {
     pub id: String,
     pub title: String,
     pub description: String,
+    /// JS 侧（`__describe()`）用 camelCase 交回，前端契约仍是 snake_case：
+    /// 反序列化接受 `closeOnRun`，序列化仍输出 `close_on_run`。
+    #[serde(alias = "closeOnRun")]
     pub close_on_run: bool,
 }
 
@@ -195,6 +198,21 @@ fn load_plugin_source(dir: &Path, manifest: &Manifest) -> Result<String, String>
 const BOOTSTRAP: &str = r#"
 var __cmds = {};
 function register(cmd){ if(cmd && cmd.id){ __cmds[cmd.id] = cmd; } }
+// 把已注册命令的元数据交回宿主（discovery 用）。走 JSON 而不是「注册时回调宿主」，
+// 是为了让命令对象只活在 JS 里，宿主不持有它；顺带 closeOnRun 能保持真正的布尔值。
+function __describe(){
+  var out = [];
+  for (var k in __cmds) {
+    var c = __cmds[k];
+    out.push({
+      id: String(c.id),
+      title: c.title === undefined ? "" : String(c.title),
+      description: c.description === undefined ? "" : String(c.description),
+      closeOnRun: c.closeOnRun === true
+    });
+  }
+  return JSON.stringify(out);
+}
 function __run(id){
   var c = __cmds[id];
   if(!c) return "__plugin: 命令不存在";
@@ -372,65 +390,26 @@ fn host_insert(
     Ok(JsValue::undefined())
 }
 
-// `register(cmd)` host fn: capture command metadata during discovery.
-thread_local! {
-    static DISCOVERED: RefCell<Vec<PluginCommandMeta>> = RefCell::new(vec![]);
-}
-
-fn host_register(
-    _this: &JsValue,
-    args: &[JsValue],
-    ctx: &mut Context,
-) -> boa_engine::JsResult<JsValue> {
-    let mut meta = PluginCommandMeta {
-        id: String::new(),
-        title: String::new(),
-        description: String::new(),
-        close_on_run: false,
-    };
-    if let Some(obj) = args.get(0).and_then(|v| v.as_object()) {
-        meta.id = obj
-            .get(JsString::from("id"), ctx)
-            .ok()
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        meta.title = obj
-            .get(JsString::from("title"), ctx)
-            .ok()
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        meta.description = obj
-            .get(JsString::from("description"), ctx)
-            .ok()
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default();
-        meta.close_on_run = obj
-            .get(JsString::from("closeOnRun"), ctx)
-            .ok()
-            .and_then(|v| v.as_string())
-            .map(|s| s.to_std_string_escaped())
-            .unwrap_or_default()
-            == "true";
-    }
-    if !meta.id.is_empty() {
-        DISCOVERED.with(|d| d.borrow_mut().push(meta));
-    }
-    Ok(JsValue::undefined())
-}
-
 /// Run a plugin's `main.js` and collect the registered command metadata.
 fn discover_commands(source: &str, state: &RunState) -> Result<Vec<PluginCommandMeta>, String> {
-    DISCOVERED.with(|d| d.borrow_mut().clear());
     let mut ctx = plugin_context(DISCOVER_LOOP_LIMIT);
     set_run_state(&mut ctx, state)?;
     ctx.eval(Source::from_bytes(BOOTSTRAP.as_bytes()))
         .map_err(|e| format!("bootstrap 失败: {e}"))?;
     ctx.eval(Source::from_bytes(source.as_bytes()))
         .map_err(|e| format!("插件初始化失败: {e}"))?;
-    let cmds = DISCOVERED.with(|d| d.borrow().clone());
+    // 命令元数据由 BOOTSTRAP 的 `__describe()` 以 JSON 形式交回。
+    // 此前是「宿主也注册一个 register 全局」靠回调收集——那个全局会被 BOOTSTRAP 里
+    // 同名的 JS `function register` 覆盖，导致 discovery **一直返回空数组**：
+    // 插件能装、能启停，但命令永远不出现在命令面板里（等于装了用不了）。
+    let described = ctx
+        .eval(Source::from_bytes(b"__describe()".as_slice()))
+        .map_err(|e| format!("读取命令列表失败: {e}"))?
+        .to_string(&mut ctx)
+        .map_err(|e| e.to_string())?
+        .to_std_string_escaped();
+    let cmds: Vec<PluginCommandMeta> = serde_json::from_str(&described)
+        .map_err(|e| format!("命令元数据解析失败: {e}"))?;
     Ok(cmds)
 }
 
@@ -454,12 +433,6 @@ fn discover_commands_timed(
 }
 
 fn set_run_state(ctx: &mut Context, state: &RunState) -> Result<(), String> {
-    ctx.register_global_callable(
-        JsString::from("register"),
-        1,
-        NativeFunction::from_fn_ptr(host_register),
-    )
-    .map_err(|e| e.to_string())?;
     ctx.register_global_callable(
         JsString::from("__get_current_page"),
         0,
@@ -1102,6 +1075,25 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
             .query_row("SELECT COUNT(*) FROM meta.plugin_state", [], |r| r.get(0))
             .unwrap();
         assert_eq!(left, 0, "卸载不应留下任何状态行");
+    }
+
+    // ---- 探针：discovery 是否真的发现了命令 ----
+
+    #[test]
+    fn discovery_actually_finds_registered_commands() {
+        let source = r#"
+register({ id: "d.one", title: "One", description: "第一", closeOnRun: false, run: function(){ return "1"; } });
+register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, run: function(){ return "2"; } });
+"#;
+        let cmds = discover_commands(source, &RunState::default()).unwrap();
+        let ids: Vec<&str> = cmds.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["d.one", "d.two"], "discovery 必须真的把命令收集出来");
+        assert_eq!(cmds[1].title, "Two");
+        assert_eq!(cmds[1].description, "第二");
+        // closeOnRun 此前是死字段：宿主版 register 用 as_string() == "true" 解析布尔，
+        // 永远是 false。现在由 JS 的 __describe() 给出真布尔值。
+        assert!(!cmds[0].close_on_run);
+        assert!(cmds[1].close_on_run, "closeOnRun: true 必须被解析出来");
     }
 
     // ---- 内存预算（分配炸弹） ----
