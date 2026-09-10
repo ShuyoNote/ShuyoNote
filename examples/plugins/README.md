@@ -27,6 +27,7 @@
 
 | 示例 | 演示什么 | 用到的能力 |
 |---|---|---|
+| [`attachment-report/`](attachment-report/) | **文件右键菜单**（`file.context`）：报告被右键那个附件的名字/大小/类型，以及它在所属页里排第几——演示"入参由宿主给"的入口（**没有路径**） | `files.list` |
 | [`reading-stats/`](reading-stats/) | 最小只读插件：一项低风险权限，读当前空间的页面 | `pages.count` / `pages.list` |
 | [`daily-note/`](daily-note/) | **写能力走草稿确认** + 插件私有数据（按空间隔离、随空间加密） | `pages.create`（草稿）/ `kv.get` / `kv.set` |
 | [`tidy-tags/`](tidy-tags/) | 先读后写；省略 `pageId` 时作用于**当前打开的页面** | `tags.list` / `tags.add`（草稿） |

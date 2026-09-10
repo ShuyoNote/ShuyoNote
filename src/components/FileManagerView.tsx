@@ -11,6 +11,8 @@ import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon } from "./icons";
+import { PluginMenuItems } from "./PluginMenuItems";
+import { fileContextArgs } from "../lib/pluginMenus";
 
 // 右键菜单用的内联 SVG（打开 / 改名）。
 const OpenIcon = ({ size = 14 }: { size?: number }) => (
@@ -971,6 +973,25 @@ export function FileManagerView() {
               )}
               {ctxItem(<EditIcon size={14} />, "改名", () => { renameRow(row); closeCtx(); })}
               {ctxItem(<TrashIcon width={14} height={14} />, "删除", () => { void deleteRow(row); closeCtx(); }, true)}
+              {/* 插件命令：文件行给 `file.context`（入参是**被点的这个文件**的信息），
+                  页面行给 `page.context`（"当前页"就是被点的那一页）。同一份组件，
+                  两边都不会漏掉"只列启用中的插件"这类规矩。 */}
+              {isFile ? (
+                <PluginMenuItems
+                  menuId="file.context"
+                  pageId={row.pageId ?? null}
+                  argsJson={fileContextArgs(row.file!)}
+                  itemClass="fm-ctx-item"
+                  onDone={closeCtx}
+                />
+              ) : (
+                <PluginMenuItems
+                  menuId="page.context"
+                  pageId={row.pageId ?? null}
+                  itemClass="fm-ctx-item"
+                  onDone={closeCtx}
+                />
+              )}
             </div>
           </div>
         );

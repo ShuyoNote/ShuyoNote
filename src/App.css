@@ -3690,8 +3690,10 @@ select.sync-input {
   flex: 1;
   min-width: 0;
 }
-/* 插件命令分组：与内置项之间留一道分隔线，并标出"这是插件给的"（用户才知道谁在动他的笔记）。 */
-.tree-node-menu .menu-section-title {
+/* 插件命令分组：与内置项之间留一道分隔线，并标出"这是插件给的"（用户才知道谁在动他的笔记）。
+   样式写成**与容器无关**的一份：同一组按钮既在页面列表的行菜单里（.tree-node-menu），
+   也在文件列表的右键菜单里（.fm-ctx）——两处各写一套必然长得不一样。 */
+.plugin-menu-title {
   margin: 6px 4px 2px;
   padding-top: 7px;
   border-top: 1px solid var(--border);
@@ -3699,10 +3701,41 @@ select.sync-input {
   font-size: 11px;
   letter-spacing: 0.02em;
 }
-.tree-node-menu button.tree-menu-plugin .menu-icon {
+.plugin-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;
+}
+.plugin-menu-item:hover {
+  background: var(--hover);
+  color: var(--text);
+  transform: translateX(2px);
+}
+.plugin-menu-ic {
+  width: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 12px;
 }
-.tree-node-menu .menu-badge {
+.plugin-menu-label {
+  flex: 1;
+  min-width: 0;
+}
+.plugin-menu-badge {
   margin-left: 6px;
   padding: 1px 5px;
   border-radius: 6px;

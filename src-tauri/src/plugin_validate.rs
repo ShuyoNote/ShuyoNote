@@ -1059,6 +1059,21 @@ pub fn validate_dir(dir: &Path) -> ValidateReport {
                                 Some(&main),
                             )),
                         }
+                        // 入口的**入参由谁给**：`file.context` 是宿主把"被点的那个文件"当入参
+                        // 递过来（与导入触发同一个通道），所以参数表单不会被渲染——命令若还
+                        // 声明了 params，用户填不到，插件只会收到宿主那份数据。这与导入触发
+                        // 是同一条规矩，所以也照那样说清楚。
+                        if m == "file.context" && !c.params.is_empty() {
+                            problems.push(PluginProblem::warn(
+                                "menu_host_args_ignores_params",
+                                format!(
+                                    "命令 {} 声明出现在「附件右键菜单」，但它声明了 {} 个参数——这个入口不渲染参数表单（入参是宿主给的文件信息 {{ fileName, size, mime }}），用户填不到",
+                                    c.id,
+                                    c.params.len()
+                                ),
+                                Some(&main),
+                            ));
+                        }
                     }
                     if seen.contains(&c.id.as_str()) {
                         problems.push(PluginProblem::warn("command_duplicate", format!("命令 id 重复注册：{}", c.id), Some(&main)));
@@ -1432,6 +1447,36 @@ mod tests {
         for code in ["view_unknown_column", "view_bad_kind", "view_bad_sort", "view_bad_limit", "view_duplicate", "view_no_title", "view_no_columns"] {
             assert!(codes(&r).contains(&code.to_string()), "应提示 {code}：{:?}", r.problems);
         }
+    }
+
+    #[test]
+    fn a_host_args_menu_entry_that_declares_params_is_flagged() {
+        // `file.context` 的入参是**宿主**递过来的文件信息（与导入触发同一个通道），
+        // 所以那个入口不渲染参数表单：声明了 params 的用户填不到，插件只会收到宿主那份数据。
+        // 这类声明不会报错、只会"参数永远是空的"，所以必须在作者那边就说清楚。
+        let dir = plugin(
+            "host-args-menu",
+            r#"{ "id": "host-args-menu", "name": "附件菜单", "version": "1.0.0", "apiVersion": "1.0.0",
+                 "main": "main.js", "permissions": [ { "id": "read:files", "reason": "看附件" } ] }"#,
+        );
+        write_main(
+            &dir,
+            "main.js",
+            r#"register({ id: "h.a", title: "甲", menus: ["file.context"], params: [ { name: "tag" } ], run: function (a) { return String(a.tag) + api.files.list().length; } });
+register({ id: "h.b", title: "乙", menus: ["file.context"], run: function () { return api.files.list().length; } });
+register({ id: "h.c", title: "丙", menus: ["page.context"], params: [ { name: "tag" } ], run: function (a) { return String(a.tag); } });"#,
+        );
+        let r = validate_dir(&dir);
+        assert!(r.ok, "只是提醒，不该拒载：{:?}", r.problems);
+        let hits: Vec<&str> = r
+            .problems
+            .iter()
+            .filter(|p| p.code == "menu_host_args_ignores_params")
+            .map(|p| p.message.as_str())
+            .collect();
+        assert_eq!(hits.len(), 1, "只有 h.a 该被提醒（h.b 没声明参数、h.c 是 page.context）：{:?}", r.problems);
+        assert!(hits[0].contains("h.a"), "{}", hits[0]);
+        assert!(hits[0].contains("file.context") || hits[0].contains("附件右键菜单"), "{}", hits[0]);
     }
 
     #[test]

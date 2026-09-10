@@ -58,7 +58,7 @@ function mount(node: React.ReactElement) {
 }
 
 const buttonFor = (commandId: string) =>
-  document.querySelector(`.tree-menu-plugin[data-command="${commandId}"]`) as HTMLElement | null;
+  document.querySelector(`.plugin-menu-item[data-command="${commandId}"]`) as HTMLElement | null;
 
 describe("菜单里的插件命令（page.context）", () => {
   let root: ReturnType<typeof createRoot> | null = null;
@@ -92,7 +92,7 @@ describe("菜单里的插件命令（page.context）", () => {
     // 一条插件命令都没有时：连"插件命令"这个分组标题都不该出现
     usePlugins.setState({ plugins: [plugin("on", true, [cmd("on.slash", ["slash"])])] });
     root = mount(React.createElement(PluginMenuItems, { menuId: "page.context", pageId: "p1" }));
-    expect(document.querySelector(".menu-section-title")).toBeNull();
+    expect(document.querySelector(".plugin-menu-title")).toBeNull();
   });
 
   it("点一下真的跑那条命令，而且「当前页」是**被点的那一页**", async () => {
@@ -101,7 +101,8 @@ describe("菜单里的插件命令（page.context）", () => {
 
     flushSync(() => buttonFor("on.ctx")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await vi.waitFor(() => expect(runPluginCommandWithUi).toHaveBeenCalled());
-    expect(runPluginCommandWithUi).toHaveBeenCalledWith("「命令 on.ctx」", "on", "on.ctx", "page-42");
+    // 第 5 个参数是"宿主给的入参"：这个入口不传（只有 file.context 那类才传），所以是 undefined
+    expect(runPluginCommandWithUi).toHaveBeenCalledWith("「命令 on.ctx」", "on", "on.ctx", "page-42", undefined);
   });
 
   it("跑完把结果说给用户（导出/草稿确认的文案都从这儿出去）", async () => {
@@ -128,5 +129,39 @@ describe("菜单里的插件命令（page.context）", () => {
     root = mount(React.createElement(PluginMenuItems, { menuId: "page.context", pageId: "p1", onDone }));
     flushSync(() => buttonFor("on.ctx")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onDone).toHaveBeenCalled();
+  });
+
+  // 宿主自己给入参时（文件右键菜单：`{ fileName, size, mime }`），**不能再转交命令面板**：
+  // 面板是让用户填参数的，而这里用户已经用"点了哪个文件"表达过意图；弹表单只会把刚拿到的
+  // 文件信息丢掉，插件收到空参数后只会报 bad_args。
+  it("带宿主入参的入口（file.context）：带参数的命令也直接跑，入参原样传下去", async () => {
+    usePlugins.setState({ plugins: [plugin("on", true, [cmd("on.ctx", ["file.context"], [{ name: "x" }])])] });
+    root = mount(
+      React.createElement(PluginMenuItems, {
+        menuId: "file.context",
+        pageId: "page-9",
+        argsJson: '{"fileName":"a.png","size":3,"mime":"image/png"}',
+      }),
+    );
+    expect(buttonFor("on.ctx")!.textContent, "有宿主入参时不该标「需填参数」").not.toContain("需填参数");
+    flushSync(() => buttonFor("on.ctx")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await vi.waitFor(() => expect(runPluginCommandWithUi).toHaveBeenCalled());
+    expect(runPluginCommandWithUi).toHaveBeenCalledWith(
+      "「命令 on.ctx」",
+      "on",
+      "on.ctx",
+      "page-9",
+      '{"fileName":"a.png","size":3,"mime":"image/png"}',
+    );
+    expect(usePalette.getState().open, "不该顺手打开命令面板").toBe(false);
+  });
+
+  it("没有宿主入参时仍然转交面板——两种入口的行为差别就在这一处", async () => {
+    usePlugins.setState({ plugins: [plugin("on", true, [cmd("on.ctx", ["file.context"], [{ name: "x" }])])] });
+    root = mount(React.createElement(PluginMenuItems, { menuId: "file.context", pageId: "p1" }));
+    expect(buttonFor("on.ctx")!.textContent).toContain("需填参数");
+    flushSync(() => buttonFor("on.ctx")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(runPluginCommandWithUi).not.toHaveBeenCalled();
+    expect(usePalette.getState().open).toBe(true);
   });
 });

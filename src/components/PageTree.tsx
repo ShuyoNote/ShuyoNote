@@ -448,7 +448,12 @@ function TreeItem({
                   <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">{t("trees.newSubFolder")}</span>
                 </button>
               )}
-              <PluginMenuItems menuId="page.context" pageId={node.id} onDone={() => setMenuOpen(false)} />
+              <PluginMenuItems
+                menuId="page.context"
+                pageId={node.id}
+                itemClass="tree-menu-plugin"
+                onDone={() => setMenuOpen(false)}
+              />
               <button
                 className="tree-menu-danger"
                 onClick={async () => {

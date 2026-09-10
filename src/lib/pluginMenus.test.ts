@@ -2,7 +2,7 @@
 // 错了不会报错——只会在菜单里多出点不动的项、或少了本该有的项。
 import { describe, expect, it } from "vitest";
 import type { PluginMeta } from "../types";
-import { pluginMenuItems, pluginSlashItems } from "./pluginMenus";
+import { fileContextArgs, pluginMenuItems, pluginSlashItems } from "./pluginMenus";
 
 const cmd = (id: string, menus: string[], params: unknown[] = []) => ({
   id, title: `命令 ${id}`, description: "", close_on_run: false, params, menus,
@@ -76,5 +76,20 @@ describe("pluginMenuItems（按入口取）", () => {
   it("pluginSlashItems 就是 slash 那一份（同一份实现，不是两套规则）", () => {
     const plugins = [plugin("a", true, [cmd("a.one", ["slash"]), cmd("a.two", ["page.context"])])];
     expect(pluginSlashItems(plugins)).toEqual(pluginMenuItems(plugins, "slash"));
+  });
+});
+
+// 文件右键菜单（`file.context`）交给插件的入参：名字/大小/类型。
+// **不给绝对路径**——插件本来就没有读文件的能力，递 path 过去只会让人以为能读。
+describe("fileContextArgs", () => {
+  it("给的只有名字/大小/类型三样，没有路径", () => {
+    const json = fileContextArgs({ name: "周报.pdf", size: 12345, mime: "application/pdf" });
+    expect(JSON.parse(json)).toEqual({ fileName: "周报.pdf", size: 12345, mime: "application/pdf" });
+    // 键就是这三样：多一个字段（比如 path）就等于把"宿主内部的位置"递给了插件
+    expect(Object.keys(JSON.parse(json))).toEqual(["fileName", "size", "mime"]);
+  });
+
+  it("是合法 JSON（宿主直接把它当 argsJson 传下去）", () => {
+    expect(() => JSON.parse(fileContextArgs({ name: 'a"b\\c.txt', size: 0, mime: "" }))).not.toThrow();
   });
 });

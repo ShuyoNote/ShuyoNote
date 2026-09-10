@@ -1,0 +1,14 @@
+{
+  "id": "attachment-report",
+  "name": "附件信息",
+  "version": "1.0.0",
+  "description": "教学示例：在文件列表里右键一个附件 → 报告它的名字/大小/类型，以及它属于哪一页。演示 file.context 这个入口怎么把「被点的那个文件」交给插件。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "read:files",
+      "reason": "列出这一页的附件清单，好把「这个文件在它所属页里排第几」一起报出来（只读，不改任何东西）"
+    }
+  ]
+}
