@@ -41,6 +41,12 @@ scripts/export-customer-playbook.mjs
 # Rust build artifacts
 src-tauri/target
 
+# Tauri 生成的移动端工程与校验 schema（`tauri android init` / build 生成，可重建）
+src-tauri/gen
+
+# 本地产出的发布物 / 安装包（本地构建产物，不入库）
+release/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

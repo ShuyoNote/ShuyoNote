@@ -62,10 +62,17 @@ fn with_cache_headers(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // 桌面专属插件：移动端（Android/iOS）不适用，仅在桌面注册。
+    // - single-instance：只为 windows/macos/linux 实现（移动系统本身保证单实例），
+    //   移动端引用其 `init` 会编译报 `cannot find function init`。
+    // - updater：依赖桌面更新机制（移动端走应用商店更新）。
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         // 单实例：禁止多开。ShuyoNote 是本地优先单库（meta.db 一个 device_id /
         // token / auth_sessions），多实例会互相覆盖 token、device 绑定冲突（同机多实例
@@ -81,7 +88,9 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("main") {
                 raise(w);
             }
-        }))
+        }));
+
+    builder
         // E1 attachment at-rest decryption-on-serve: `convertFileSrc(path, "attachment")`
         // produces a platform-correct `attachment://`/`http://attachment.localhost` URL;
         // this handler percent-decodes the target path, validates it is under the app's
@@ -190,13 +199,16 @@ pub fn run() {
             let url = WebviewUrl::App("index.html".into());
             let main_builder = WebviewWindowBuilder::new(app, "main", url)
                 .title(format!("ShuyoNote 数友笔记 · v{version}"))
-                .inner_size(1200.0, 800.0)
-                // 自绘标题栏（前端 <TitleBar />）。做成无边框而不是保留系统栏，
-                // 是为了让顶栏能显示「当前页面 · 空间」并与应用配色连成一体。
-                // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
-                // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
-                // 与边缘 resize，万一某台机器手感不对得有退路。
-                .decorations(false);
+                .inner_size(1200.0, 800.0);
+            // 自绘标题栏（前端 <TitleBar />）。做成无边框而不是保留系统栏，
+            // 是为了让顶栏能显示「当前页面 · 空间」并与应用配色连成一体。
+            // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
+            // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
+            // 与边缘 resize，万一某台机器手感不对得有退路。
+            // 注意：`decorations` 是桌面概念，移动端（Android/iOS）的 builder 无此
+            // 方法（窗口装饰由系统管理），故按平台条件编译——与下面 drag_and_drop 同款写法。
+            #[cfg(desktop)]
+            let main_builder = main_builder.decorations(false);
             // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
             // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
             // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
