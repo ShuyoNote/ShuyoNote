@@ -59,19 +59,19 @@ function toolNote(
   const a = (s: string) => String(args[s] ?? "");
   const pageLabel = (id: string) => pages.find((p) => p.id === id)?.title || id;
   switch (toolId) {
-    case "search_pages":
-      return `搜索「${a("query")}」`;
-    case "read_page":
-      return `读取页面 «${pageLabel(a("pageId"))}»`;
-    case "read_block":
+    case "pages.search":
+      return `搜索「${a("q")}」`;
+    case "pages.get":
+      return `读取页面 «${pageLabel(a("id"))}»`;
+    case "blocks.list":
       return `读取页面块 «${pageLabel(a("pageId"))}»`;
-    case "get_backlinks":
+    case "backlinks.list":
       return `反链 «${pageLabel(a("pageId"))}»`;
-    case "list_files":
+    case "files.list":
       return `列出附件 «${pageLabel(a("pageId"))}»`;
-    case "create_page":
+    case "pages.create":
       return `新建页面「${a("title")}」`;
-    case "append_block":
+    case "blocks.append":
       return `追加内容到 «${pageLabel(a("pageId"))}»`;
     default:
       return toolId;

@@ -27,6 +27,7 @@ export const OUTPUTS = {
   types: "packages/plugin-types/index.d.ts",
   pkg: "packages/plugin-types/package.json",
   docs: "docs/plugin-api.md",
+  aiTools: "src/lib/capabilities/aiTools.meta.ts",
 };
 
 const HEADER = "本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。";
@@ -395,6 +396,60 @@ export function genDocs(reg) {
   return l.join("\n");
 }
 
+/**
+ * AI 工具元数据（由注册表里 `ai: true` 的能力生成）。
+ *
+ * 生成的是**元数据**（id / 描述 / 参数 schema / 是否写操作）；**实现**在前端的
+ * 适配表 `src/lib/capabilities/frontend.ts` 里，由门禁校验覆盖。
+ * 这样 AI 宿主与插件消费的是同一份能力定义，仓库里不再有第二套语义工具清单。
+ */
+export function genAiTools(reg) {
+  const tsType = (t) => ({ string: "string", number: "number", boolean: "boolean" })[t] ?? "string";
+  const tools = reg.capabilities.filter((c) => c.ai);
+  const l = [];
+  l.push(`// ${HEADER}`);
+  l.push("// 这里是**元数据**；实现见 src/lib/capabilities/frontend.ts（门禁校验覆盖）。");
+  l.push("");
+  l.push("/** 一个暴露给 AI 宿主的能力（= 注册表里 ai:true 的条目）。 */");
+  l.push("export interface AiCapabilityMeta {");
+  l.push("  id: string;");
+  l.push("  description: string;");
+  l.push("  argsSchema: {");
+  l.push('    type: "object";');
+  l.push("    properties: Record<string, { type: string; enum?: string[]; description?: string }>;");
+  l.push("    required: string[];");
+  l.push("  };");
+  l.push("  isWrite: boolean;");
+  l.push("}");
+  l.push("");
+  l.push("export const AI_TOOL_META: AiCapabilityMeta[] = [");
+  for (const c of tools) {
+    const props = (c.args ?? [])
+      .map((a) => {
+        const bits = [`type: ${JSON.stringify(tsType(a.type))}`];
+        if (a.enum) bits.push(`enum: ${JSON.stringify(a.enum)}`);
+        return `      ${JSON.stringify(a.name)}: { ${bits.join(", ")} },`;
+      })
+      .join("\n");
+    const required = (c.args ?? []).filter((a) => a.required !== false).map((a) => JSON.stringify(a.name));
+    l.push("  {");
+    l.push(`    id: ${JSON.stringify(c.id)},`);
+    l.push(`    description: ${JSON.stringify(c.desc ?? c.title)},`);
+    l.push("    argsSchema: {");
+    l.push('      type: "object",');
+    l.push("      properties: {");
+    if (props) l.push(props);
+    l.push("      },");
+    l.push(`      required: [${required.join(", ")}],`);
+    l.push("    },");
+    l.push(`    isWrite: ${c.kind === "write"},`);
+    l.push("  },");
+  }
+  l.push("];");
+  l.push("");
+  return l.join("\n");
+}
+
 export function genPackageJson(reg) {
   return (
     JSON.stringify(
@@ -420,6 +475,7 @@ export function buildAll(reg = loadRegistry()) {
     [OUTPUTS.types]: genTypes(reg),
     [OUTPUTS.pkg]: genPackageJson(reg),
     [OUTPUTS.docs]: genDocs(reg),
+    [OUTPUTS.aiTools]: genAiTools(reg),
   };
 }
 

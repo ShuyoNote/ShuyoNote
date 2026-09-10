@@ -55,6 +55,16 @@ export interface PluginApi {
    */
     add(name: string, pageId?: string): unknown;
   };
+  blocks: {
+  /** 列出页面块（权限 `read:pages`；1.0.0 起）
+   * 返回：[{blockId, text}]
+   */
+    list(pageId: string, limit?: number): unknown;
+  /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
+   * 返回：{drafted: true, summary}——**不代表已写入**
+   */
+    append(text: string, pageId?: string): unknown;
+  };
   backlinks: {
   /** 列出反链（权限 `read:backlinks`；1.0.0 起）
    * 返回：[{source_page_id, source_title, kind}]
@@ -71,12 +81,6 @@ export interface PluginApi {
   /** 向当前页插入纯文本（权限 `write:page.current`；1.0.0 起）
    */
     insertText(text: string): void;
-  };
-  blocks: {
-  /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
-   * 返回：{drafted: true, summary}——**不代表已写入**
-   */
-    append(text: string, pageId?: string): unknown;
   };
   /** 向用户显示一条提示（无需权限；1.0.0 起）
    * 返回：执行结束后随结果一起弹给用户

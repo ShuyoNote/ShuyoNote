@@ -16,12 +16,16 @@ var api = {
     count: function() { return __capCall("pages.count", {}); },
     list: function(limit) { return __capCall("pages.list", { limit: limit === undefined ? 50 : Number(limit) }); },
     get: function(id) { return __capCall("pages.get", { id: id === undefined ? undefined : String(id) }); },
-    search: function(q, limit) { return __capCall("pages.search", { q: q === undefined ? undefined : String(q), limit: limit === undefined ? 20 : Number(limit) }); },
+    search: function(q, limit) { return __capCall("pages.search", { q: q === undefined ? undefined : String(q), limit: limit === undefined ? 8 : Number(limit) }); },
     create: function(title, content, parentId) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId) }); }
   },
   tags: {
     list: function() { return __capCall("tags.list", {}); },
     add: function(name, pageId) { return __capCall("tags.add", { name: name === undefined ? undefined : String(name), pageId: pageId === undefined ? undefined : String(pageId) }); }
+  },
+  blocks: {
+    list: function(pageId, limit) { return __capCall("blocks.list", { pageId: pageId === undefined ? undefined : String(pageId), limit: limit === undefined ? 100 : Number(limit) }); },
+    append: function(text, pageId) { return __capCall("blocks.append", { text: text === undefined ? undefined : String(text), pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   backlinks: {
     list: function(pageId) { return __capCall("backlinks.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }
@@ -31,9 +35,6 @@ var api = {
   },
   editor: {
     insertText: function(text) { return __capCall("editor.insertText", { text: text === undefined ? undefined : String(text) }); }
-  },
-  blocks: {
-    append: function(text, pageId) { return __capCall("blocks.append", { text: text === undefined ? undefined : String(text), pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
   notify: function(message) { return __capCall("user.notify", { message: message === undefined ? undefined : String(message) }); },
   kv: {

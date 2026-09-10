@@ -1,168 +1,27 @@
-import { api } from "../api";
-import { pageJsonFromText } from "./lexical";
-import type { AiTool, DraftResult } from "./types";
+import { AI_TOOL_META } from "../capabilities/aiTools.meta";
+import { FRONTEND_ADAPTERS } from "../capabilities/frontend";
+import type { AiTool } from "./types";
 
-// Generate a UUID for block ids (mirrors web.ts uid(), kept local to avoid
-// importing platform internals into the AI layer).
-function makeId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `blk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
+// 工具清单**不再是这里手写的**：元数据（id / 描述 / 参数 schema / 是否写操作）来自
+// 能力注册表（生成物 `capabilities/aiTools.meta.ts`），实现在 `capabilities/frontend.ts`。
+// 于是"AI 宿主"与"磁盘插件"消费同一份能力定义，仓库里不再有第二套语义工具清单。
+//
+// 行为不变：读取类立即执行；写入类返回草稿（`{draft:true, key, summary, payload}`），
+// 由 host 累积、用户确认后经 lib/ai/apply.ts 落库。
 
-function draft(key: string, summary: string, payload: unknown): DraftResult {
-  return { draft: true, key, summary, payload };
-}
-
-const TOOL_LIST: AiTool[] = [
-  {
-    id: "search_pages",
-    description:
-      "在全库中检索页面，按相关度排序(关键词匹配 + 语义相近, 意思相近的内容也能命中)。参数: query (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
-    argsSchema: {
-      type: "object",
-      properties: { query: { type: "string" }, limit: { type: "number" } },
-      required: ["query"],
-    },
-    isWrite: false,
-    run: async (args) => {
-      const query = String(args.query ?? "");
-      const limit = typeof args.limit === "number" ? args.limit : 8;
-      if (!query) return { ok: false, error: "search_pages 需要 query" };
-      const rows = await api.search(query, limit, false);
-      return { ok: true, pages: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.snippet })) };
-    },
+const TOOL_LIST: AiTool[] = AI_TOOL_META.map((meta) => ({
+  id: meta.id,
+  description: meta.description,
+  argsSchema: meta.argsSchema,
+  isWrite: meta.isWrite,
+  run: async (args, ctx) => {
+    const adapter = FRONTEND_ADAPTERS[meta.id];
+    // 门禁会挡住"注册表声明了 ai:true 却没有前端实现"，这里是运行期的兜底。
+    if (!adapter) return { ok: false, error: `能力 ${meta.id} 没有前端实现` };
+    // 把宿主上下文透传下去：适配层据此解析"省略 pageId 时用当前页"。
+    return adapter(args as Record<string, unknown>, { currentPageId: ctx?.currentPageId });
   },
-  {
-    id: "read_page",
-    description:
-      "读取单个页面的标题与正文纯文本。参数: pageId (必填)。返回 id/title/content_text(截断显示)。",
-    argsSchema: {
-      type: "object",
-      properties: { pageId: { type: "string" } },
-      required: ["pageId"],
-    },
-    isWrite: false,
-    run: async (args) => {
-      const pageId = String(args.pageId ?? "");
-      if (!pageId) return { ok: false, error: "read_page 需要 pageId" };
-      const p = await api.getPage(pageId);
-      if (!p) return { ok: false, error: `未找到页面 ${pageId}` };
-      const text = (p.content_text ?? "").trim();
-      return {
-        ok: true,
-        page: {
-          id: p.id,
-          title: p.title,
-          content_text: text.length > 6000 ? `${text.slice(0, 6000)}…` : text,
-        },
-      };
-    },
-  },
-  {
-    id: "read_block",
-    description:
-      "列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (必填)。返回块数组，可用于定位具体块。",
-    argsSchema: {
-      type: "object",
-      properties: { pageId: { type: "string" } },
-      required: ["pageId"],
-    },
-    isWrite: false,
-    run: async (args) => {
-      const pageId = String(args.pageId ?? "");
-      if (!pageId) return { ok: false, error: "read_block 需要 pageId" };
-      const blocks = await api.getPageBlocks(pageId);
-      return { ok: true, blocks: blocks.map((b) => ({ blockId: b.block_id, text: b.text })) };
-    },
-  },
-  {
-    id: "get_backlinks",
-    description:
-      "查询哪些页面反向链接到目标页面。参数: pageId (必填)。返回引用它的页面列表。",
-    argsSchema: {
-      type: "object",
-      properties: { pageId: { type: "string" } },
-      required: ["pageId"],
-    },
-    isWrite: false,
-    run: async (args) => {
-      const pageId = String(args.pageId ?? "");
-      if (!pageId) return { ok: false, error: "get_backlinks 需要 pageId" };
-      const links = await api.getBacklinks(pageId);
-      return { ok: true, backlinks: links.map((l) => ({ id: l.id, title: l.title })) };
-    },
-  },
-  {
-    id: "list_files",
-    description:
-      "列出页面附件。参数: pageId (必填)。返回文件名/类型/大小。",
-    argsSchema: {
-      type: "object",
-      properties: { pageId: { type: "string" } },
-      required: ["pageId"],
-    },
-    isWrite: false,
-    run: async (args) => {
-      const pageId = String(args.pageId ?? "");
-      if (!pageId) return { ok: false, error: "list_files 需要 pageId" };
-      const files = await api.listPageAttachments(pageId);
-      return {
-        ok: true,
-        files: files.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size })),
-      };
-    },
-  },
-  {
-    id: "create_page",
-    description:
-      "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
-    argsSchema: {
-      type: "object",
-      properties: {
-        title: { type: "string" },
-        content: { type: "string" },
-        parentId: { type: "string" },
-      },
-      required: ["title"],
-    },
-    isWrite: true,
-    run: async (args) => {
-      const title = String(args.title ?? "").trim();
-      if (!title) return { ok: false, error: "create_page 需要 title" };
-      const { content_json, content_text } = pageJsonFromText(String(args.content ?? ""), makeId);
-      const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
-      return draft(
-        `create_page:${title}`,
-        `新建页面「${title}」`,
-        { kind: "create_page", args: { parent_id: parentId, title, content_json, content_text } },
-      );
-    },
-  },
-  {
-    id: "append_block",
-    description:
-      "向现存页面追加一个或多个段落(按换行分段)。参数: pageId (必填), text (必填正文)。这是写操作，返回草稿供用户确认。",
-    argsSchema: {
-      type: "object",
-      properties: { pageId: { type: "string" }, text: { type: "string" } },
-      required: ["pageId", "text"],
-    },
-    isWrite: true,
-    run: async (args) => {
-      const pageId = String(args.pageId ?? "");
-      const text = String(args.text ?? "").trim();
-      if (!pageId) return { ok: false, error: "append_block 需要 pageId" };
-      if (!text) return { ok: false, error: "append_block 需要 text" };
-      return draft(
-        `append_block:${pageId}:${text.slice(0, 24)}`,
-        `向页面追加 ${text.split("\n").filter((s) => s.trim()).length} 个段落`,
-        { kind: "append_block", pageId, text },
-      );
-    },
-  },
-];
+}));
 
 export const aiTools: AiTool[] = TOOL_LIST;
 

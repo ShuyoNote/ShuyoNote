@@ -156,7 +156,9 @@
         "type": "object",
         "desc": "{id, title, content_text, kind}；不存在返回 null"
       },
-      "rust": "cap_pages_get"
+      "rust": "cap_pages_get",
+      "desc": "读取单个页面的标题与正文纯文本。参数: id (必填)。正文过长时会截断显示。",
+      "ai": true
     },
     {
       "id": "pages.search",
@@ -180,7 +182,7 @@
           "name": "limit",
           "type": "number",
           "required": false,
-          "default": 20,
+          "default": 8,
           "desc": "最多返回多少条（上限 100）"
         }
       ],
@@ -188,7 +190,9 @@
         "type": "array",
         "desc": "[{id, title, snippet}]；v1 是子串匹配，不做相关度排序"
       },
-      "rust": "cap_pages_search"
+      "rust": "cap_pages_search",
+      "desc": "在本空间检索页面（关键词匹配 + 语义相近，意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
+      "ai": true
     },
     {
       "id": "tags.list",
@@ -207,6 +211,40 @@
         "desc": "[{id, name, page_count}]"
       },
       "rust": "cap_tags_list"
+    },
+    {
+      "id": "blocks.list",
+      "title": "列出页面块",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "blocks",
+        "list"
+      ],
+      "desc": "列出页面中的所有顶级块(每块 id + 文本)。参数: pageId (必填)。返回块数组，可用于定位具体块。",
+      "ai": true,
+      "args": [
+        {
+          "name": "pageId",
+          "type": "string",
+          "required": true,
+          "desc": "页面 id"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 100,
+          "desc": "最多返回多少块"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "desc": "[{blockId, text}]"
+      },
+      "rust": "cap_blocks_list"
     },
     {
       "id": "backlinks.list",
@@ -231,7 +269,9 @@
         "type": "array",
         "desc": "[{source_page_id, source_title, kind}]"
       },
-      "rust": "cap_backlinks_list"
+      "rust": "cap_backlinks_list",
+      "desc": "查询哪些页面反向链接到目标页面。参数: pageId (必填)。返回引用它的页面列表。",
+      "ai": true
     },
     {
       "id": "files.list",
@@ -256,7 +296,9 @@
         "type": "array",
         "desc": "[{id, name, mime, size}]，**不含字节**"
       },
-      "rust": "cap_files_list"
+      "rust": "cap_files_list",
+      "desc": "列出页面附件。参数: pageId (必填)。返回文件名/类型/大小。",
+      "ai": true
     },
     {
       "id": "editor.insertText",
@@ -320,7 +362,9 @@
         "type": "object",
         "desc": "{drafted: true, summary}——**不代表已创建**，用户确认后才落库"
       },
-      "rust": "cap_pages_create"
+      "rust": "cap_pages_create",
+      "desc": "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
+      "ai": true
     },
     {
       "id": "blocks.append",
@@ -353,7 +397,9 @@
         "type": "object",
         "desc": "{drafted: true, summary}——**不代表已写入**"
       },
-      "rust": "cap_blocks_append"
+      "rust": "cap_blocks_append",
+      "desc": "向现存页面追加一个或多个段落(按换行分段)。参数: pageId (必填), text (必填正文)。这是写操作，返回草稿供用户确认。",
+      "ai": true
     },
     {
       "id": "user.notify",

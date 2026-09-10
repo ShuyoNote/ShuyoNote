@@ -4,7 +4,7 @@
 /** A tool the model may call. Read tools execute immediately; write tools return
  *  a DraftResult that the host must hold for explicit user confirmation. */
 export interface AiTool {
-  /** Stable identifier used in tool calls, e.g. "search_pages". */
+  /** Stable identifier used in tool calls —— 就是能力 id，例如 "pages.search"。 */
   id: string;
   /** Short human/LLM-facing description (also fed to the model). */
   description: string;

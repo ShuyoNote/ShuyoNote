@@ -102,6 +102,19 @@ if (stale.length) {
   fail(`生成物与 capabilities/capabilities.json 不一致（跑 node scripts/gen-capabilities.mjs）：${stale.join(", ")}`);
 }
 
+// ---- 2b. AI 暴露的能力：元数据在这里生成，实现必须在适配表里 ----
+const frontendAdapters = read("src/lib/capabilities/frontend.ts");
+const aiMeta = read(OUTPUTS.aiTools);
+const aiCaps = reg.capabilities.filter((c) => c.ai);
+for (const c of aiCaps) {
+  if (!c.desc) fail(`能力 ${c.id} 暴露给 AI（ai:true）但没有 desc——LLM 只能看到描述来选工具`);
+  if (!new RegExp(`"${c.id}"\\s*:`).test(frontendAdapters)) {
+    fail(`能力 ${c.id} 暴露给 AI，但 src/lib/capabilities/frontend.ts 里没有它的前端实现`);
+  }
+  if (!aiMeta.includes(`"${c.id}"`)) fail(`能力 ${c.id} 没有出现在生成的 AI 工具元数据里`);
+}
+if (aiCaps.length === 0) fail("没有任何能力暴露给 AI（ai:true）——AI 宿主会失去全部工具");
+
 // ---- 3. 覆盖：实现函数在 plugins.rs 里、能力 id 在作者文档里 ----
 const pluginsRs = read("src-tauri/src/plugins.rs");
 const docs = read(OUTPUTS.docs);

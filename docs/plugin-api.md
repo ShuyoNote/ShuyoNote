@@ -99,6 +99,7 @@ register({
 | `pages.get` | `api.pages.get(id)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
+| `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
 | `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
@@ -153,7 +154,7 @@ register({
 - 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
 - 参数：
   - `q`: `string` —— 关键词
-  - `limit`: `number`（可选），默认 `20` —— 最多返回多少条（上限 100）
+  - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
 
 ### `tags.list` — 列出本空间标签
 
@@ -161,6 +162,16 @@ register({
 - 权限：`read:tags`
 - scope：`current-space`
 - 返回：[{id, name, page_count}]
+
+### `blocks.list` — 列出页面块
+
+- 调用：`api.blocks.list(pageId, limit)`
+- 权限：`read:pages`
+- scope：`current-space`
+- 返回：[{blockId, text}]
+- 参数：
+  - `pageId`: `string` —— 页面 id
+  - `limit`: `number`（可选），默认 `100` —— 最多返回多少块
 
 ### `backlinks.list` — 列出反链
 

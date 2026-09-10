@@ -978,6 +978,36 @@ fn cap_tags_add(name: &str, page_id: Option<&str>) -> CapResult {
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
+/// `blocks.list`：列出页面顶级块（id + 文本）。
+///
+/// Lexical 的 JSON 走查复用 `blocks.rs` 里既有的一套辅助函数，**不在这里手写第二份**。
+fn cap_blocks_list(page_id: &str, limit: i64) -> CapResult {
+    let limit = limit.clamp(1, 500) as usize;
+    with_read_conn(|c| {
+        let content_json: String = c
+            .query_row(
+                "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                params![page_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| format!("bad_args: 未找到页面 {page_id}"))?;
+        let v = crate::blocks::parse_json(&content_json).map_err(|e| format!("db_error: {e}"))?;
+        let blocks: Vec<serde_json::Value> = crate::blocks::root_children(&v)
+            .iter()
+            .filter_map(|child| {
+                child.get("blockId").and_then(|b| b.as_str()).map(|id| {
+                    serde_json::json!({
+                        "blockId": id,
+                        "text": crate::blocks::node_text(child).trim(),
+                    })
+                })
+            })
+            .take(limit)
+            .collect();
+        Ok(serde_json::Value::Array(blocks))
+    })
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
@@ -1051,6 +1081,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
         "kv.remove" => cap_kv_remove(&arg_str("key")?, &scope_arg(&args)),
+        "blocks.list" => cap_blocks_list(&arg_str("pageId")?, arg_i64("limit", 100)),
         "properties.list" => cap_properties_list(),
         "properties.set" => cap_properties_set(
             &arg_str("attrId")?,

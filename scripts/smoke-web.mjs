@@ -912,8 +912,8 @@ assert("workspace name persists across instances", wsAgain !== "");
 // 14. Pure-logic unit tests for the thin-AI layer (transforms + write-draft loop).
 {
   // extractToolCalls: explicit <tool_calls> fence.
-  const fenced = aiMod.extractToolCalls('<tool_calls>[{"name":"search_pages","arguments":{"query":"会议"}}]</tool_calls>');
-  assert("extractToolCalls parses fence", fenced.length === 1 && fenced[0].name === "search_pages" && fenced[0].arguments.query === "会议", JSON.stringify(fenced));
+  const fenced = aiMod.extractToolCalls('<tool_calls>[{"name":"pages.search","arguments":{"q":"会议"}}]</tool_calls>');
+  assert("extractToolCalls parses fence", fenced.length === 1 && fenced[0].name === "pages.search" && fenced[0].arguments.q === "会议", JSON.stringify(fenced));
   // ```json block fallback.
   const jsonBlock = aiMod.extractToolCalls('```json\n[{"name":"read_page","arguments":{"pageId":"p1"}}]\n```');
   assert("extractToolCalls parses json block", jsonBlock.length === 1 && jsonBlock[0].name === "read_page" && jsonBlock[0].arguments.pageId === "p1");
@@ -1161,25 +1161,25 @@ trailer
 
   // runAiLoop write path: create_page returns a draft, never commits (api stub never called).
   const respSeq = [
-    { content: '<tool_calls>[{"name":"create_page","arguments":{"title":"会议","content":"要点一\\n要点二"}}]</tool_calls>' },
+    { content: '<tool_calls>[{"name":"pages.create","arguments":{"title":"会议","content":"要点一\\n要点二"}}]</tool_calls>' },
     { content: "我为你起草了一个新页面。" },
   ];
   const transport = { complete: async () => respSeq.shift() || { content: "done" } };
   const ctx = { currentPageId: null, allPages: [{ id: "a", title: "A", parent_id: null }] };
   const r1 = await aiMod.runAiLoop("帮我新建一个会议页", [{ id: "a", title: "A" }], ctx, { transport });
-  assert("runAiLoop create_page drafts exactly one", r1.drafts.length === 1 && r1.drafts[0].payload.kind === "create_page", JSON.stringify(r1.drafts));
-  assert("runAiLoop create_page carries title", r1.drafts[0].payload.args.title === "会议");
-  assert("runAiLoop create_page builds content_json", r1.drafts[0].payload.args.content_json.includes("要点一") && r1.drafts[0].payload.args.content_json.includes("要点二"));
-  assert("runAiLoop records activity for create_page", Array.isArray(r1.activity) && r1.activity.some((a) => a.tool === "create_page"), JSON.stringify(r1.activity));
+  assert("runAiLoop pages.create drafts exactly one", r1.drafts.length === 1 && r1.drafts[0].payload.kind === "create_page", JSON.stringify(r1.drafts));
+  assert("runAiLoop pages.create carries title", r1.drafts[0].payload.args.title === "会议");
+  assert("runAiLoop pages.create builds content_json", r1.drafts[0].payload.args.content_json.includes("要点一") && r1.drafts[0].payload.args.content_json.includes("要点二"));
+  assert("runAiLoop records activity for pages.create", Array.isArray(r1.activity) && r1.activity.some((a) => a.tool === "pages.create"), JSON.stringify(r1.activity));
 
   // append_block returns a draft with pageId + text.
   const respSeq2 = [
-    { content: '<tool_calls>[{"name":"append_block","arguments":{"pageId":"p1","text":"新增行"}}]</tool_calls>' },
+    { content: '<tool_calls>[{"name":"blocks.append","arguments":{"pageId":"p1","text":"新增行"}}]</tool_calls>' },
     { content: "已起草追加。" },
   ];
   const transport2 = { complete: async () => respSeq2.shift() || { content: "done" } };
   const r2 = await aiMod.runAiLoop("追加到 p1", [{ id: "p1", title: "P1" }], ctx, { transport: transport2 });
-  assert("runAiLoop append_block drafts with pageId+text", r2.drafts.length === 1 && r2.drafts[0].payload.kind === "append_block" && r2.drafts[0].payload.pageId === "p1" && r2.drafts[0].payload.text === "新增行");
+  assert("runAiLoop blocks.append drafts with pageId+text", r2.drafts.length === 1 && r2.drafts[0].payload.kind === "append_block" && r2.drafts[0].payload.pageId === "p1" && r2.drafts[0].payload.text === "新增行");
 
   // Final-answer-only turn → no drafts.
   const r3 = await aiMod.runAiLoop("你好", [{ id: "a", title: "A" }], ctx, { transport: { complete: async () => ({ content: "你好，有什么可以帮你？" }) } });
@@ -1391,7 +1391,7 @@ trailer
     if (req.url === "/api/chat") {
       res.writeHead(200, { "Content-Type": "application/x-ndjson" });
       res.write('{"message":{"content":""}}\n');
-      res.end('{"message":{"content":"","tool_calls":[{"function":{"name":"create_page","arguments":{"title":"周计划"}}}]},"done":true}\n');
+      res.end('{"message":{"content":"","tool_calls":[{"function":{"name":"pages.create","arguments":{"title":"周计划"}}}]},"done":true}\n');
       return;
     }
     res.writeHead(404);
@@ -1403,7 +1403,7 @@ trailer
   try {
     const transport5 = aiMod.createOllamaTransport(base5, "qwen2.5:7b");
     const res5b = await transport5.complete([{ role: "user", content: "新建周计划" }], { onDelta: () => {} });
-    assert("streaming captures native tool_call", Array.isArray(res5b.nativeToolCalls) && res5b.nativeToolCalls[0].name === "create_page", JSON.stringify(res5b.nativeToolCalls));
+    assert("streaming captures native tool_call", Array.isArray(res5b.nativeToolCalls) && res5b.nativeToolCalls[0].name === "pages.create", JSON.stringify(res5b.nativeToolCalls));
     const loopRes = await aiMod.runAiLoop("帮我新建周计划", [{ id: "a", title: "A" }], { currentPageId: null, allPages: [{ id: "a", title: "A", parent_id: null }] }, { transport: transport5, maxSteps: 2, onDelta: () => {} });
     assert("streaming write turns into a draft", loopRes.drafts.length === 1 && loopRes.drafts[0].payload.kind === "create_page", JSON.stringify(loopRes.drafts));
   } finally {

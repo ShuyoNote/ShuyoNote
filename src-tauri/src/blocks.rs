@@ -38,11 +38,11 @@ pub struct BlockBacklink {
     pub kind: String,
 }
 
-fn parse_json(content_json: &str) -> Result<Value, String> {
+pub(crate) fn parse_json(content_json: &str) -> Result<Value, String> {
     serde_json::from_str(content_json).map_err(|e| e.to_string())
 }
 
-fn root_children(v: &Value) -> Vec<&Value> {
+pub(crate) fn root_children(v: &Value) -> Vec<&Value> {
     v.get("root")
         .and_then(|r| r.get("children"))
         .and_then(|c| c.as_array())
@@ -62,7 +62,7 @@ fn collect_text(node: &Value, out: &mut String) {
     }
 }
 
-fn node_text(node: &Value) -> String {
+pub(crate) fn node_text(node: &Value) -> String {
     let mut out = String::new();
     collect_text(node, &mut out);
     out
