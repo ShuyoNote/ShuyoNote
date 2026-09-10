@@ -60,6 +60,8 @@ export type PluginEventName =
   | "page.opened"
   | "page.saved"
   | "page.deleted"
+  | "import.finished"
+  | "sync.completed"
   ;
 
 /**

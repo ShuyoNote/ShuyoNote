@@ -105,8 +105,8 @@ pub const EVENTS: &[PluginEvent] = &[
     PluginEvent { id: "page.opened", title: "打开页面", desc: "打开一个页面后触发（payload: pageId）", since: "1.0.0", hosted: true },
     PluginEvent { id: "page.saved", title: "页面已保存", desc: "页面内容或标题保存后触发（payload: pageId, title）", since: "1.0.0", hosted: true },
     PluginEvent { id: "page.deleted", title: "页面已删除", desc: "页面被删除后触发（payload: pageId）", since: "1.0.0", hosted: true },
-    PluginEvent { id: "import.finished", title: "导入完成", desc: "一次导入结束后触发（payload: count）", since: "1.0.0", hosted: false },
-    PluginEvent { id: "sync.completed", title: "同步完成", desc: "一次同步结束后触发（payload: pushed, pulled）", since: "1.0.0", hosted: false },
+    PluginEvent { id: "import.finished", title: "导入完成", desc: "一次附件导入结束后触发（payload: count = 导入了几份、pageId = 导到哪一页；封面/画布这类不属于页面的导入为 null）", since: "1.0.0", hosted: true },
+    PluginEvent { id: "sync.completed", title: "同步完成", desc: "一次同步结束后触发（payload: pushed, pulled = 本次推送/拉取的变更数；整次调用失败时不发）", since: "1.0.0", hosted: true },
 ];
 
 /// 一个触发面：命令能出现在哪里（作者在 `register({ menus })` 里声明）。

@@ -20,6 +20,7 @@
 | [`csv-table/`](csv-table/) | **CSV 转表格**：选中 `.csv` / `.tsv` → 转成 Markdown 表格放进一篇新页面（导入触发 + 引号/换行的容错解析） | 导入触发 / `pages.create`（草稿）
 | [`page-status/`](page-status/) | **页面状态**：给当前页一键标状态（待办/进行中/已完成）——**有「状态」属性就写属性，没有就用同名标签兜底**，用户永远知道走的是哪条路 | `properties.list` / `properties.set`（草稿）/ `tags.add`（草稿） |
 | [`search-collect/`](search-collect/) | **检索汇总**：用关键词检索本空间，把命中整理成一页清单草稿（资料收集时省事） | `pages.search` / `pages.create`（草稿） |
+| [`activity-digest/`](activity-digest/) | **活动摘要**：把「同步完成」「附件导入完成」这两件**后台**事记成一条摘要——日志里能看到每一条明细，同步真有推拉时提示一次（同步是后台上传，界面上看不到它到底动没动） | 事件 `sync.completed` / `import.finished` / `log.write` / `user.notify`（免权限）/ `kv:own` |
 | [`reading-board/`](reading-board/) | **阅读看板**：一张「最近更新」**浮层**表（查询条件引用用户设置）+ 一个「本月新增」**右侧常驻面板**（`placement: "rail"`）——零代码也能「用户可配」，也能常驻 | 无（声明式视图） |
 
 ## 教学示例
@@ -60,3 +61,7 @@ pnpm check:examples                                # 类型检查（tsc）
 > **以应用内「校验」为准**（它用的是同一个 Boa 与同一个 manifest 解析）。
 
 完整的作者文档见 [`docs/plugin-api.md`](../../docs/plugin-api.md)。
+
+> **事件钩子要两处都在才算数**：manifest 的 `events` 声明（用户启用前看得到）+ `main.js` 里的
+> `on(...)` 注册。`reading-stats` 是 `page.opened` 的最小例子，`activity-digest` 演示两个
+> **后台**事件（`sync.completed` / `import.finished`）——用户没做任何动作时插件也会被叫醒。

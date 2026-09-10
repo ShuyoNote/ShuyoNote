@@ -1,0 +1,34 @@
+{
+  "id": "activity-digest",
+  "name": "活动摘要",
+  "version": "1.0.0",
+  "description": "把「同步完成」和「附件导入完成」这两件后台事记成一条摘要：日志里能看到，同步真有推拉时提示一次。同步是往服务器传东西，界面上看不到它到底动没动——这个插件就是那只眼睛。",
+  "apiVersion": "1.0.0",
+  "main": "main.js",
+  "permissions": [
+    {
+      "id": "kv:own",
+      "reason": "把累计的同步/导入条数存在插件自己的数据区（与笔记内容无关，也读不到你的笔记）"
+    }
+  ],
+  "events": [
+    {
+      "on": "sync.completed",
+      "reason": "同步结束后记一条日志：本次推了多少、拉了多少（否则用户根本不知道同步有没有真的在动）"
+    },
+    {
+      "on": "import.finished",
+      "reason": "导入附件后记一条日志：这批进了几份、进到哪一页"
+    }
+  ],
+  "commands": [
+    {
+      "id": "digest.show",
+      "title": "看活动摘要"
+    },
+    {
+      "id": "digest.reset",
+      "title": "清空活动摘要"
+    }
+  ]
+}

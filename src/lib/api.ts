@@ -1,4 +1,5 @@
 import { platform } from "./platform";
+import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
 import type { CommandMap } from "./platform/commands";
@@ -220,12 +221,23 @@ export const api = {
   getSyncConfig: () => invoke("get_sync_config"),
   setSyncConfig: (args: { server_url: string; token?: string; space_id?: string }) =>
     invoke("set_sync_config", { args }),
-  syncNow: () => invoke("sync_now"),
+  // 同步是**宿主**行为，插件想知道"同步结束了"只能靠事件。所以两条同步入口都在这里
+  // 播报一次（`sync.completed`）——放在调用点上会漏：全仓有 5 处调 syncWorkspace
+  // （自动同步、启动绑定、设置页、同步面板、SSE 流），逐个加迟早会漂。
+  syncNow: async () => {
+    const results = await invoke("sync_now");
+    emitSyncCompleted(results ?? []);
+    return results;
+  },
   // S8: per-workspace sync profiles (one local workspace → one remote target).
   listSyncProfiles: () => invoke("list_sync_profiles"),
   setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string; email?: string }) =>
     invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id, email: args.email }),
-  syncWorkspace: (wsId: string) => invoke("sync_workspace", { wsId }),
+  syncWorkspace: async (wsId: string) => {
+    const r = await invoke("sync_workspace", { wsId });
+    emitSyncCompleted(r ? [r] : []);
+    return r;
+  },
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
@@ -330,8 +342,14 @@ export const api = {
     invoke("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
     invoke("copy_attachment", { hash, destPath }),
-  importAttachmentFiles: (pageId: string | null, paths: string[]) =>
-    invoke("import_attachment_files", { pageId, paths }),
+  // 附件导入同样是宿主行为：导完之后播报一次（`import.finished`，带份数与页）。
+  // 只有宿主界面会走这条路径（能力注册表里没有"插件导入附件"这项），所以不存在
+  // "插件命令跑到一半又触发别的插件"的嵌套——将来若加了这种能力，这里要重新想。
+  importAttachmentFiles: async (pageId: string | null, paths: string[]) => {
+    const metas = await invoke("import_attachment_files", { pageId, paths });
+    emitImportFinished(metas ?? [], pageId);
+    return metas;
+  },
   /** pageId 传 null 列出空间根下的「未整理」文件（page_id IS NULL）。 */
   listPageAttachments: (pageId: string | null) =>
     invoke("list_page_attachments", { pageId }),

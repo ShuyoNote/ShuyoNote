@@ -1211,28 +1211,49 @@ pub(crate) fn resolve_events(manifest: &Manifest) -> (Vec<String>, Vec<String>) 
     };
     let mut subscribed: Vec<String> = Vec::new();
     for d in decls {
-        match capabilities_gen::event(&d.on) {
-            // 只有宿主**真的会发**的事件才算订阅成功：否则作者写对了名字、
-            // 启用了插件、却永远收不到——那是比报错更难查的失败。
-            Some(ev) if ev.hosted => {
-                if d.reason.trim().is_empty() {
-                    warnings.push(format!(
-                        "事件 {} 没有写 reason（用户看不到它为什么要在后台运行）",
-                        d.on
-                    ));
-                }
-                if !subscribed.contains(&d.on) {
-                    subscribed.push(d.on.clone());
-                }
-            }
-            Some(ev) => warnings.push(format!(
-                "事件 {} 宿主还没开始发（订阅了现在也收不到）",
-                ev.id
-            )),
-            None => warnings.push(format!("忽略未知事件 {}（当前 API 版本不认识它）", d.on)),
+        let decision = decide_event(capabilities_gen::event(&d.on), &d.on, &d.reason);
+        warnings.extend(decision.warnings);
+        if decision.subscribe && !subscribed.contains(&d.on) {
+            subscribed.push(d.on.clone());
         }
     }
     (subscribed, warnings)
+}
+
+/// 一条事件声明的判定：**算不算订阅成功**，以及要告诉作者什么。
+///
+/// 单独抽出来是因为这里有一条**必须一直有覆盖**的保护：宿主还没开始发的事件不算订阅
+/// （写对了名字、启用了插件、却永远收不到，比报错更难查）。2026-09 把最后两个事件
+/// （`import.finished` / `sync.completed`）接上之后，注册表里已经没有这种事件了——
+/// 但保护本身不能因此失去测试：它由一条**合成的** `hosted: false` 声明直接调这个函数来覆盖，
+/// 另有一条测试钉住"注册表里不许再出现还没接的事件"。将来谁想"先声明、后实现"，
+/// 两条中的任何一条都会当场拦下来。
+struct EventDecision {
+    subscribe: bool,
+    warnings: Vec<String>,
+}
+
+fn decide_event(ev: Option<&capabilities_gen::PluginEvent>, on: &str, reason: &str) -> EventDecision {
+    let Some(ev) = ev else {
+        return EventDecision {
+            subscribe: false,
+            warnings: vec![format!("忽略未知事件 {on}（当前 API 版本不认识它）")],
+        };
+    };
+    if !ev.hosted {
+        return EventDecision {
+            subscribe: false,
+            warnings: vec![format!("事件 {} 宿主还没开始发（订阅了现在也收不到）", ev.id)],
+        };
+    }
+    let mut warnings = Vec::new();
+    if reason.trim().is_empty() {
+        warnings.push(format!(
+            "事件 {} 没有写 reason（用户看不到它为什么要在后台运行）",
+            ev.id
+        ));
+    }
+    EventDecision { subscribe: true, warnings }
 }
 
 /// 事件派发时展示给用户的事件声明（安装/启用界面看得到，才能授权）。
@@ -3764,28 +3785,71 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     }
 
     #[test]
-    fn subscribing_to_an_unshipped_event_is_not_a_real_subscription() {
-        let _g = log_test_guard();
-        // import.finished 在注册表里存在、但宿主还没接（hosted=false）：
-        // 写对了名字也收不到，所以既不算订阅成功、也要明确告诉作者。
-        let m = manifest_of(
-            r#"{ "id": "e", "name": "E", "events": [ { "on": "import.finished", "reason": "导入后整理" } ] }"#,
-        );
-        let (subscribed, warnings) = resolve_events(&m);
-        assert!(subscribed.is_empty(), "没接的事件不该算订阅成功");
+    fn registry_never_advertises_an_event_the_host_does_not_send() {
+        // **注册表门禁**：`hosted: false` 意味着"作者写对了名字、启用了插件、却永远收不到"。
+        // 校验器会提醒他（下面那条测试钉住提醒本身），但那份声明仍然是白写的——作者不该
+        // 需要知道"这个事件接没接"。所以口径是：**要么接上，要么从注册表里删掉**。
+        // 2026-09 之前 `import.finished` / `sync.completed` 就挂在这里，两个都已接上。
+        let unshipped: Vec<&str> = capabilities_gen::EVENTS
+            .iter()
+            .filter(|e| !e.hosted)
+            .map(|e| e.id)
+            .collect();
         assert!(
-            warnings.iter().any(|w| w.contains("还没开始发")),
-            "必须告知作者而不是静默无效：{warnings:?}"
+            unshipped.is_empty(),
+            "注册表里还有宿主不发的 {}：接上它，或从注册表删掉（别让作者订阅一个永远不来的事件）",
+            unshipped.join(" / ")
         );
-        assert!(event_metas(&m).is_empty(), "面板也不该把它显示成生效中");
+    }
 
-        // 已接的事件仍然正常
-        let ok = manifest_of(
-            r#"{ "id": "e", "name": "E", "events": [ { "on": "page.opened", "reason": "打开时统计" } ] }"#,
+    #[test]
+    fn an_unshipped_event_is_not_a_real_subscription() {
+        // 上一条门禁保证注册表里暂时没有这种事件，所以这条用**合成的**声明直接测保护本身：
+        // 将来谁想"先声明、后实现"，这条保护仍然在（而不是等着作者踩）。
+        let future = capabilities_gen::PluginEvent {
+            id: "future.event",
+            title: "将来的事件",
+            desc: "还没实现",
+            since: "1.0.0",
+            hosted: false,
+        };
+        let d = decide_event(Some(&future), "future.event", "想订阅它");
+        assert!(!d.subscribe, "宿主还没开始发的事件不该算订阅成功");
+        assert!(
+            d.warnings.iter().any(|w| w.contains("还没开始发")),
+            "必须告知作者而不是静默无效：{:?}",
+            d.warnings
         );
-        let (subscribed, warnings) = resolve_events(&ok);
-        assert_eq!(subscribed, vec!["page.opened".to_string()]);
-        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // 未知事件：同样不算订阅，提示是另一句（别把"没接"和"不认识"混成一句）
+        let unknown = decide_event(None, "no.such.event", "随便写");
+        assert!(!unknown.subscribe);
+        assert!(unknown.warnings.iter().any(|w| w.contains("未知事件")), "{:?}", unknown.warnings);
+    }
+
+    #[test]
+    fn every_hosted_event_subscribes_and_asks_for_a_reason() {
+        let _g = log_test_guard();
+        // 注册表里**每一个**已接的事件都必须真的能订阅成功（名字、hosted、reason 判定这条链）。
+        for ev in capabilities_gen::EVENTS {
+            let m = manifest_of(&format!(
+                r#"{{ "id": "e", "name": "E", "events": [ {{ "on": "{}", "reason": "测试" }} ] }}"#,
+                ev.id
+            ));
+            let (subscribed, warnings) = resolve_events(&m);
+            assert_eq!(subscribed, vec![ev.id.to_string()], "{} 应当订阅成功", ev.id);
+            assert!(warnings.is_empty(), "{} 不该有警告：{warnings:?}", ev.id);
+            assert_eq!(event_metas(&m).len(), 1, "{} 应当出现在启用界面", ev.id);
+        }
+
+        // 缺 reason：仍然订阅（理由是否齐全不该让订阅失败），但必须提醒——用户看不到
+        // 一个后台运行理由，就没法授权。
+        let no_reason = manifest_of(
+            r#"{ "id": "e", "name": "E", "events": [ { "on": "import.finished" } ] }"#,
+        );
+        let (subscribed, warnings) = resolve_events(&no_reason);
+        assert_eq!(subscribed, vec!["import.finished".to_string()]);
+        assert!(warnings.iter().any(|w| w.contains("没有写 reason")), "{warnings:?}");
     }
 
     #[test]

@@ -115,16 +115,16 @@
     {
       "id": "import.finished",
       "title": "导入完成",
-      "desc": "一次导入结束后触发（payload: count）",
+      "desc": "一次附件导入结束后触发（payload: count = 导入了几份、pageId = 导到哪一页；封面/画布这类不属于页面的导入为 null）",
       "since": "1.0.0",
-      "hosted": false
+      "hosted": true
     },
     {
       "id": "sync.completed",
       "title": "同步完成",
-      "desc": "一次同步结束后触发（payload: pushed, pulled）",
+      "desc": "一次同步结束后触发（payload: pushed, pulled = 本次推送/拉取的变更数；整次调用失败时不发）",
       "since": "1.0.0",
-      "hosted": false
+      "hosted": true
     }
   ],
   "menus": [
