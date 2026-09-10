@@ -1,10 +1,12 @@
 // 能力注册表门禁。
 //
-// 校验四件事：
-//   1. 注册表自身的完整性（id 唯一、权限存在、scope/kind 合法、必有实现函数名…）；
+// 校验五件事：
+//   1. 注册表自身的完整性（id 唯一、权限存在、scope/kind 合法、必有实现函数名、必有 desc…）；
 //   2. 生成物与源一致（生成物没跟上就失败，避免"改了源忘了生成"）；
 //   3. 覆盖：每条能力声明的实现函数真的在 plugins.rs 里、且出现在作者文档里；
-//   4. 交叉：legacyGlobals 指向的能力存在；声明的权限至少被一条能力用到（不留死权限）。
+//   4. **参数口径：声明 ⟷ 代码**（下面 §3b）——"文档说必填、代码按可选读"这类
+//      **不会报错、只会误导作者**的错，只能机械比对；
+//   5. 交叉：legacyGlobals 指向的能力存在；声明的权限至少被一条能力用到（不留死权限）。
 //
 // 用法：node scripts/check-capabilities.mjs  （有问题即非零退出）
 
@@ -139,6 +141,110 @@ for (const c of reg.capabilities) {
   }
   if (!docs.includes(c.id)) fail(`能力 ${c.id} 没有出现在作者文档 ${OUTPUTS.docs} 里`);
   if (!shim.includes(`"${c.id}"`)) fail(`能力 ${c.id} 没有出现在生成的 shim 里（api.* 暴露不到）`);
+}
+
+// ---- 3b. 参数口径：注册表里声明的必填/可选，必须与 dispatch 里怎么读它一致 ----
+//
+// 为什么值得专门一条检查：这类不一致**不会报错**——`required: true` 而代码按可选读，
+// 作者省略参数时不会失败、只是行为与他读到的不一样；反过来 `required: false` 而代码用
+// `arg_str` 读，作者按文档省略参数就直接收到一个 bad_args。两者都只坑作者，不坑写代码的人，
+// 所以没人会自然地发现它们（本仓已经手工撞到过好几次：`blocks.list` 的 pageId、
+// `backlinks.list`/`files.list` 的描述、能力表里 13 个空白描述）。
+//
+// 做法是**按括号配对**从 dispatch 的 match 块里切出每条能力的 arm，看它怎么读参数：
+//   `arg_str("x")`      → 必填（省略即报错）
+//   `arg_opt_str("x")`  → 可选
+//   `arg_i64("x", 默认)` → 可选
+//   `args.get("x")`     → 可选（函数内部自己兜默认）
+//   `scope_arg(&args)`  → `scope` 参数走统一解析
+// 然后与注册表的 `args[].required` 对照；再顺手检查 desc 里该参数的窗口里有没有
+// 「必填 / 可选 / 省略」这类与标记相反的说法。
+function dispatchArms(src) {
+  const start = src.indexOf("let out = match cap.id {");
+  if (start < 0) return null;
+  const end = src.indexOf("\n    };\n", start);
+  const body = src.slice(start, end < 0 ? undefined : end);
+  const arms = new Map();
+  const re = /"([a-z][\w.]*)"\s*=>/g;
+  let m;
+  while ((m = re.exec(body))) {
+    let i = m.index + m[0].length;
+    let depth = 0;
+    let out = "";
+    for (; i < body.length; i++) {
+      const ch = body[i];
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        if (depth === 0) break;
+        depth--;
+      } else if (ch === "," && depth === 0) break;
+      out += ch;
+    }
+    arms.set(m[1], out.replace(/\s+/g, " ").trim());
+  }
+  return arms;
+}
+
+const arms = dispatchArms(pluginsRs);
+if (!arms) {
+  fail("在 plugins.rs 里找不到 dispatch 的 match 块（识别不了参数口径）——检查脚本是否要跟着代码改");
+} else {
+  const namesIn = (arm, re) => new Set([...arm.matchAll(re)].map((x) => x[1]));
+  for (const c of reg.capabilities) {
+    const arm = arms.get(c.id);
+    if (arm === undefined) {
+      fail(`能力 ${c.id} 在 dispatch 里没有分支（注册表说有，代码里没有）`);
+      continue;
+    }
+    const readRequired = namesIn(arm, /arg_str\("(\w+)"\)/g);
+    const readOptional = new Set([
+      ...namesIn(arm, /arg_opt_str\("(\w+)"\)/g),
+      ...namesIn(arm, /arg_i64\("(\w+)"/g),
+      ...namesIn(arm, /args\.get\("(\w+)"\)/g),
+    ]);
+    if (arm.includes("scope_arg(")) readOptional.add("scope");
+
+    for (const a of c.args ?? []) {
+      const required = a.required === true;
+      const readAs = readRequired.has(a.name) ? "required" : readOptional.has(a.name) ? "optional" : "never";
+      if (readAs === "never") {
+        fail(`能力 ${c.id} 声明了参数 ${a.name}，但 dispatch 里根本没读它（作者照文档传了也没用）`);
+      } else if (required && readAs === "optional") {
+        fail(`能力 ${c.id} 的参数 ${a.name} 声明必填、代码按可选读（作者省略它不会报错 → 文档在撒谎）`);
+      } else if (!required && readAs === "required") {
+        fail(`能力 ${c.id} 的参数 ${a.name} 声明可选、代码用 arg_str 读（作者照文档省略会直接报 bad_args）`);
+      }
+    }
+    for (const name of new Set([...readRequired, ...readOptional])) {
+      if (!(c.args ?? []).some((a) => a.name === name)) {
+        fail(`能力 ${c.id} 的代码读了参数 ${name}，但注册表没声明它（作者文档里看不到这个参数）`);
+      }
+    }
+
+    // desc 里逐参数的窗口：该参数名 → 下一个参数名之间，不能出现与标记相反的说法
+    const desc = c.desc ?? "";
+    const argNames = (c.args ?? []).map((a) => a.name);
+    for (const a of c.args ?? []) {
+      const at = desc.search(new RegExp(`\\b${a.name}\\b`));
+      if (at < 0) continue;
+      const rest = desc.slice(at + a.name.length);
+      let cut = rest.length;
+      for (const other of argNames) {
+        if (other === a.name) continue;
+        const j = rest.indexOf(other);
+        if (j >= 0 && j < cut) cut = j;
+      }
+      const win = rest.slice(0, cut);
+      const saysRequired = win.includes("必填");
+      const saysOptional = win.includes("可选") || win.includes("省略");
+      if (a.required === true && saysOptional) {
+        fail(`能力 ${c.id} 的参数 ${a.name} 是必填，但 desc 里写成可选/可省略：「…${win.trim().slice(0, 40)}」`);
+      }
+      if (a.required !== true && saysRequired) {
+        fail(`能力 ${c.id} 的参数 ${a.name} 是可选的，但 desc 里写成必填：「…${win.trim().slice(0, 40)}」`);
+      }
+    }
+  }
 }
 
 // 注册表条数兜底：小于 1 说明文件被写坏了

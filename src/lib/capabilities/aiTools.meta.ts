@@ -92,7 +92,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "blocks.append",
-    description: "向现存页面追加一个或多个段落(按换行分段)。参数: pageId (必填), text (必填正文)。这是写操作，返回草稿供用户确认。",
+    description: "向现存页面追加一个或多个段落(按换行分段)。参数: text (必填正文), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。",
     argsSchema: {
       type: "object",
       properties: {
