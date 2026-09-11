@@ -178,7 +178,14 @@ for (const dir of dirs) {
     version: pluginVersion,
     apiVersion: manifest.apiVersion ?? "1.0.0",
     minAppVersion,
-    runtime: "logic",
+    // 从 **manifest** 读，不写死：`runtime` 是"这个插件是什么形态"，只有作者知道。
+    // 原先写死 `"logic"`，于是 4 个声明式插件（`eye-care-theme` / `high-contrast-theme` /
+    // `reading-board` / `warm-night`）在索引里被标成了逻辑插件——**应用当前两种都接受
+    // （`plugin_index.rs` 只校验取值合法、行为一致），所以它不报错**，但这正是"索引说了假话"
+    // 那一类：将来真出现"声明式 vs 逻辑"的差别时（例如声明式免权限审查、逻辑插件要过闸门），
+    // 索引里就已经是错的了，而错在**发布的产物**里，改不掉（资源不可覆盖重传）。
+    // 缺省仍给 "logic"：manifest 没写 runtime 的按逻辑插件算（那是绝大多数）。
+    runtime: manifest.runtime ?? "logic",
     description: manifest.description ?? "",
     publisher: flag("--publisher", "ShuyoNote"),
     license: manifest.license ?? flag("--license", "AGPL-3.0"),
