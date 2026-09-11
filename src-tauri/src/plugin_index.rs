@@ -1120,6 +1120,16 @@ mod tests {
         let app_version = std::env::var("SHUYONOTE_INDEX_APP_VERSION")
             .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
         let bytes = std::fs::read(&path).expect("读取索引失败");
+        // 可选：把**索引签名**也验一遍（给"托管索引的人"用——签了却验不过，是发布前最该发现的事）。
+        if let (Ok(sig), Ok(pubkey)) = (
+            std::env::var("SHUYONOTE_INDEX_SIG"),
+            std::env::var("SHUYONOTE_INDEX_PUBKEY"),
+        ) {
+            let sig_text = std::fs::read_to_string(&sig).expect("读取索引签名失败");
+            let pub_text = std::fs::read_to_string(&pubkey).expect("读取索引公钥失败");
+            verify_index_signature(&bytes, &sig_text, &pub_text).expect("索引签名必须验得过");
+            eprintln!("索引签名验过 ✓（公钥 {}）", pubkey);
+        }
         let index = parse_index(&bytes).expect("索引必须能被应用解析");
         eprintln!(
             "索引合法：owner={} 插件 {} 个，应用版本 {}",

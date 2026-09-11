@@ -125,17 +125,30 @@ node scripts/plugin-index-demo.mjs weekly-review 8787            # 打包 + 起�
 node scripts/plugin-index-demo.mjs weekly-review 8788 --version 9.9.9   # 再演一次"升级"
 ```
 
-也可以直接拿**线上一份验收夹具**走一遍（不需要自己打包，也不需要任何密钥决定）：
+**也可以直接订阅一份线上索引**（数友社区托管的第一方插件索引，真实可用）：
 
 ```
-索引：https://shuyo.cn/plugins/plugin-index.json      ← owner 如实写着「验收夹具（非社区官方）」
-包  ：https://shuyo.cn/plugins/fixture-plugin-1.0.0.zip   （918 字节）
+索引：https://community.shuyo.cn/plugins/plugin-index.json
+签名：https://community.shuyo.cn/plugins/plugin-index.json.minisig
+公钥：untrusted comment: minisign public key 305A2DFBAC0773C1
+      RWTBcwes+y1aMIEdFdER5PCz4QsdYqVlBSMr6++SnWdoRUVI3DLcduK4
 ```
 
-把它填进「从索引安装（给 URL）」→ 拉取 → 订阅 → 安装即可。这份索引的发布者密钥是仓库里
-**已提交的一次性夹具密钥**（指纹 `5ee2-b2a1-c3cf-565c`），索引本身**没有索引签名**——
-所以面板会如实显示"没有校验签名"，这正是那条"不装样子"的规则在起作用。
-它只是为了验收"订阅 → 下载 → 校验 → 安装"这条链，**不要**把它当成社区商店。
+把索引地址与公钥一起填进「从索引安装（给 URL）」→ 拉取（应当显示"校验通过"）→ 订阅 → 安装。
+里面的 18 个插件就是仓库 `examples/plugins/` 里的那些，每个都有发布者签名，索引本身也有签名。
+
+> 托管方在发布前应当自己先验一遍（这三步都用应用**真正的**代码，不是眼看）：
+> ```bash
+> curl -sO https://community.shuyo.cn/plugins/plugin-index.json{,.minisig}
+> SHUYONOTE_INDEX_FIXTURE=plugin-index.json \
+> SHUYONOTE_INDEX_SIG=plugin-index.json.minisig \
+> SHUYONOTE_INDEX_PUBKEY=<公钥文件> SHUYONOTE_INDEX_APP_VERSION=<当前版本> \
+>   cargo test --lib external_index -- --ignored --nocapture
+> ```
+> 顺带提醒两条**签名格式**上的坑（都踩过）：公钥盒的算法字节是 `Ed`(0x45 0x64)，
+> 而签名盒是 `ED`(0x45 0x44)——写错时应用**两种都收**、测试全绿，只有真 minisign 会拒绝；
+> 索引与 `.minisig` 的缓存头必须 `no-store`（索引被长缓存 = 新插件永远看不到），
+> 插件包则 `immutable`（名字带版本号，内容不变）。
 
 ## 7. 多源与订阅
 
