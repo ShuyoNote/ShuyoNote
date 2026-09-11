@@ -355,6 +355,12 @@ export interface PluginFacts {
   declaredPermissions: string[];
   baselinePermissions: boolean;
   events: string[];
+  /** 安装时记下的内容指纹（空 = 这一版之前装的，没记）。 */
+  installed_hash: string;
+  /** 现在磁盘上那份内容的指纹。 */
+  current_hash: string;
+  /** 装完之后被改动过吗（`null` = 没记过，无从判断）。 */
+  content_changed?: boolean | null;
   facts: PluginFact[];
 }
 

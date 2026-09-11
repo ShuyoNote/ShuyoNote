@@ -347,6 +347,9 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             enabled       INTEGER NOT NULL DEFAULT 1,
             installed_at  INTEGER NOT NULL DEFAULT 0,
             source        TEXT NOT NULL DEFAULT 'local',
+            -- 装完之后**磁盘上那份内容**的指纹（`dir_content_hash`）。
+            -- 它回答的是下载校验答不了的那个问题：装到盘上之后，这份文件有没有被改过。
+            -- 空 = 这一列加上之前装的插件，无从判断（事实清单会如实说"没有指纹可对"）。
             content_hash  TEXT,
             seeded        INTEGER NOT NULL DEFAULT 0
         );

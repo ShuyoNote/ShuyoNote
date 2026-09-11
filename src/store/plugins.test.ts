@@ -652,6 +652,9 @@ describe("插件事实清单", () => {
       declaredPermissions: [],
       baselinePermissions: false,
       events: [],
+      installed_hash: "abc12345",
+      current_hash: "abc12345",
+      content_changed: false,
       facts: [{ code: "entry_size", text: "入口 100 字节" }],
     });
     await usePlugins.getState().openFacts("demo");

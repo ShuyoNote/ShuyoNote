@@ -3195,7 +3195,7 @@ register({ id: "demo.insert", title: "插入文本", description: "把一段文�
     // 而且"用户之前禁用过它"不会被这里覆盖（record_install 只更新版本/来源）。
     if let Some(db) = app.try_state::<Db>() {
         let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = record_install(&c, "demo", "0.2.0", "bundled", true, true);
+        let _ = record_install(&c, "demo", "0.2.0", "bundled", true, true, None);
     }
     Ok(())
 }
@@ -3403,15 +3403,29 @@ fn record_install(
     source: &str,
     seeded: bool,
     enabled: bool,
+    // 最后一个参数是**装完之后磁盘上那份内容**的指纹（`dir_content_hash`），空 = 没记。
+    // 记它的理由只有一个：装完之后那份文件有没有被改过。下载时我们验 sha256 与发布者签名，
+    // 但装到盘上之后那就是用户自己的目录了——这个指纹让"被改过"在事实清单里看得出来
+    // （作者自己改的也会显示成"不一致"，那同样是真的）。
+    content_hash: Option<&str>,
 ) -> Result<(), String> {
     c.execute(
-        "INSERT INTO plugin_install (plugin_id, version, enabled, installed_at, source, seeded)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO plugin_install (plugin_id, version, enabled, installed_at, source, seeded, content_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(plugin_id) DO UPDATE SET
              version = excluded.version,
              source = excluded.source,
-             seeded = excluded.seeded",
-        params![id, version, if enabled { 1 } else { 0 }, now_ms(), source, if seeded { 1 } else { 0 }],
+             seeded = excluded.seeded,
+             content_hash = excluded.content_hash",
+        params![
+            id,
+            version,
+            if enabled { 1 } else { 0 },
+            now_ms(),
+            source,
+            if seeded { 1 } else { 0 },
+            content_hash.unwrap_or("")
+        ],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -3450,6 +3464,12 @@ pub struct PluginFacts {
     pub baseline_permissions: bool,
     /// 订阅的事件（订阅了事件 = 用户没点命令时也会跑代码）。
     pub events: Vec<String>,
+    /// 安装时记下的内容指纹（空 = 这一版之前装的，没记）。
+    pub installed_hash: String,
+    /// 现在磁盘上那份内容的指纹。
+    pub current_hash: String,
+    /// 装完之后被改动过吗（`None` = 没记过安装时的指纹，无从判断）。
+    pub content_changed: Option<bool>,
     /// 静态看得出来的事实（不执行代码）。
     pub facts: Vec<PluginFact>,
 }
@@ -3535,8 +3555,34 @@ pub fn build_plugin_facts(
     file_count: usize,
     total_bytes: u64,
     source_text: Option<&str>,
+    content_changed: Option<bool>,
+    installed_hash: &str,
+    current_hash: &str,
 ) -> Vec<PluginFact> {
     let mut facts = Vec::new();
+    // "装完之后被改过吗"对所有插件都成立（零代码插件也一样：它的 manifest 也能被改）。
+    // 三种情况分开说，其中"没记过指纹"必须说出来——否则用户会把它读成"没被改过"。
+    match content_changed {
+        Some(true) => facts.push(PluginFact {
+            code: "content_changed".into(),
+            text: format!(
+                "**内容与安装时不同**：装完之后这个目录被改动过（安装时 {}，现在 {}）——作者自己改的也会是这样，但它确实不是当初装下来的那一份",
+                &installed_hash[..8.min(installed_hash.len())],
+                &current_hash[..8.min(current_hash.len())]
+            ),
+        }),
+        Some(false) => facts.push(PluginFact {
+            code: "content_unchanged".into(),
+            text: format!(
+                "内容与安装时一致（指纹 {}）",
+                &current_hash[..8.min(current_hash.len())]
+            ),
+        }),
+        None => facts.push(PluginFact {
+            code: "content_unknown".into(),
+            text: "没有安装时的内容指纹可对（这一版之前装的），所以无法判断装完之后有没有被改过".into(),
+        }),
+    }
     if runtime == "declarative" {
         facts.push(PluginFact {
             code: "no_code".into(),
@@ -4560,11 +4606,22 @@ fn install_from_dir(
     }
     // 新装的插件**默认禁用**：先让用户看清它要哪些权限、干什么，再自己去启用。
     // （插件默认启用时，"安装"就等于一次性授予了它声明的全部数据访问权。）
+    // 记下**装完之后磁盘上那份内容**的指纹：以后就能回答"装完之后被改过吗"。
+    // 算不出来（读目录失败）不该让安装失败——那只是少了一条日后可查证的事实。
+    let installed_hash = dir_content_hash(&dest).ok();
     let approval_state_after = {
         // `record_install` 在冲突时**不动** `enabled`（用户的选择不能被一次升级冲掉），
         // 只更新版本与来源。授权快照同理不动：新版本要是多声明了权限/事件，
         // `approval_state` 立刻就会说 `required`，宿主会在用户「重新确认」之前拒绝运行它。
-        record_install(&c, &manifest.id, &manifest.version, source_kind, false, false)?;
+        record_install(
+            &c,
+            &manifest.id,
+            &manifest.version,
+            source_kind,
+            false,
+            false,
+            installed_hash.as_deref(),
+        )?;
         approval_state(&c, &manifest, false)
     };
     match &replaced {
@@ -5024,14 +5081,20 @@ pub async fn plugin_facts(app: AppHandle, db: State<'_, Db>, id: String) -> Resu
         .as_ref()
         .map(|evs| evs.iter().map(|e| e.on.clone()).collect())
         .unwrap_or_default();
-    let source_kind = {
+    let (source_kind, installed_hash) = {
         let c = conn(&db);
         c.query_row(
-            "SELECT source FROM plugin_install WHERE plugin_id = ?1",
+            "SELECT source, COALESCE(content_hash, '') FROM plugin_install WHERE plugin_id = ?1",
             params![id],
-            |r| r.get::<_, String>(0),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )
         .unwrap_or_default()
+    };
+    let current_hash = dir_content_hash(&dir).unwrap_or_default();
+    let content_changed = if installed_hash.is_empty() || current_hash.is_empty() {
+        None
+    } else {
+        Some(installed_hash != current_hash)
     };
     Ok(PluginFacts {
         id: manifest.id.clone(),
@@ -5045,8 +5108,63 @@ pub async fn plugin_facts(app: AppHandle, db: State<'_, Db>, id: String) -> Resu
         declared_permissions: permissions,
         baseline_permissions: baseline,
         events,
-        facts: build_plugin_facts(&runtime, main_bytes, file_count, total_bytes, source.as_deref()),
+        installed_hash: installed_hash.clone(),
+        current_hash: current_hash.clone(),
+        content_changed,
+        facts: build_plugin_facts(
+            &runtime,
+            main_bytes,
+            file_count,
+            total_bytes,
+            source.as_deref(),
+            content_changed,
+            &installed_hash,
+            &current_hash,
+        ),
     })
+}
+
+/// 一个插件目录的**内容指纹**（确定性：与文件顺序、mtime 无关，只看相对路径与字节）。
+///
+/// 用途只有一个：和"安装时记下的那个指纹"比一比，回答"装完之后这份文件有没有被改过"。
+/// 所以它必须**稳定**——目录遍历顺序、mtime、inode 都不该影响结果，否则每次读都会"不一致"，
+/// 这个事实就变成了噪音。
+fn dir_content_hash(dir: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        entries.sort();
+        for p in entries {
+            if p.is_dir() {
+                walk(&p, base, out)?;
+            } else if p.is_file() {
+                let rel = p
+                    .strip_prefix(base)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.push((rel, p));
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files)?;
+    files.sort();
+    let mut h = Sha256::new();
+    for (rel, path) in files {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        // 路径与长度都进哈希：只hash内容的话，"把 a.js 改名成 b.js"看起来会像没变。
+        h.update(rel.as_bytes());
+        h.update([0u8]);
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(&bytes);
+    }
+    Ok(hex::encode(h.finalize()))
 }
 
 /// 目录里的文件数与总字节数（插件目录很小，直接递归统计）。
@@ -6629,7 +6747,7 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn uninstall_also_drops_the_plugins_private_data() {
         let c = state_conn();
-        record_install(&c, "p1", "1.0.0", "local", false, true).unwrap();
+        record_install(&c, "p1", "1.0.0", "local", false, true, None).unwrap();
         c.execute(
             "INSERT INTO meta.plugin_data (plugin_id, scope, key, value, updated_at)
              VALUES ('p1', 'app', 'k', 'v', 0)",
@@ -6744,12 +6862,12 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn record_install_keeps_the_users_enabled_choice() {
         let c = state_conn();
-        record_install(&c, "p1", "1.0.0", "local", false, false).unwrap();
+        record_install(&c, "p1", "1.0.0", "local", false, false, None).unwrap();
         assert!(!enabled(&c, "p1"), "新装默认禁用（安装 ≠ 授权）");
         set_enabled(&c, "p1", true, None).unwrap();
 
         // 再次播种/记录（例如升级）不该把用户的选择冲掉
-        record_install(&c, "p1", "2.0.0", "bundled", true, true).unwrap();
+        record_install(&c, "p1", "2.0.0", "bundled", true, true, None).unwrap();
         assert!(enabled(&c, "p1"));
         let (v, src, seeded): (String, String, i64) = c
             .query_row(
@@ -7859,16 +7977,21 @@ register({ id: "s.run", title: "结构化", run: function () {
     #[test]
     fn the_fact_sheet_says_what_kind_of_plugin_it_is() {
         // 零代码插件：一条事实就够（也是最重要的一条）
-        let f = build_plugin_facts("declarative", 0, 1, 512, None);
-        assert_eq!(f.len(), 1);
-        assert_eq!(f[0].code, "no_code");
-        assert!(f[0].text.contains("没有一行可执行的代码"));
+        let f = build_plugin_facts("declarative", 0, 1, 512, None, Some(false), "abcdef1234", "abcdef1234");
+        // 内容一致性 + "零代码"这两条：对零代码插件同样成立（它的 manifest 也能被改）
+        assert_eq!(f.len(), 2);
+        assert_eq!(f[0].code, "content_unchanged");
+        assert!(f[0].text.contains("abcdef12"), "要给出可核对的前缀：{}", f[0].text);
+        assert_eq!(f[1].code, "no_code");
+        assert!(f[1].text.contains("没有一行可执行的代码"));
 
         // 有代码的：体积事实 + 扫描事实
-        let f = build_plugin_facts("logic", 1024, 3, 4096, Some("eval('x')"));
-        assert_eq!(f[0].code, "entry_size");
-        assert!(f[0].text.contains("1024 字节"));
-        assert!(f[0].text.contains("3 个文件"));
+        let f = build_plugin_facts("logic", 1024, 3, 4096, Some("eval('x')"), Some(false), "aaa", "aaa");
+        // 第一条是"内容有没有被改过"（对所有插件都成立），第二条才是体积
+        assert_eq!(f[0].code, "content_unchanged");
+        assert_eq!(f[1].code, "entry_size");
+        assert!(f[1].text.contains("1024 字节"));
+        assert!(f[1].text.contains("3 个文件"));
         assert!(f.iter().any(|x| x.code == "dynamic_code"));
     }
 
@@ -7964,6 +8087,45 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(s.last_error.contains("无法连接"));
         // 失败的记录不该把上一次成功的数字改掉（用户要看的是"上次成功时有多少"）
         assert_eq!(s.plugin_count, 0);
+    }
+
+    #[test]
+    fn the_content_hash_is_stable_and_notices_real_changes() {
+        let dir = temp_dir("hash-a");
+        write_plugin_dir(&dir, "p1", "1.0.0", "register({id:'p1.a'});", &[("x.txt", "hello")]);
+        let h1 = dir_content_hash(&dir).unwrap();
+        // 同样的内容 → 同样的指纹（mtime 之类不该掺进来，否则每次读都"被改过"）
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(dir_content_hash(&dir).unwrap(), h1, "指纹必须只由内容决定");
+
+        // 改一个字节
+        std::fs::write(dir.join("x.txt"), "hellp").unwrap();
+        assert_ne!(dir_content_hash(&dir).unwrap(), h1);
+        std::fs::write(dir.join("x.txt"), "hello").unwrap();
+        assert_eq!(dir_content_hash(&dir).unwrap(), h1, "改回去应当回到同一个指纹");
+
+        // 加文件 / 删文件 / 改名（只hash内容的话改名会看不出来）
+        std::fs::write(dir.join("y.txt"), "new").unwrap();
+        assert_ne!(dir_content_hash(&dir).unwrap(), h1);
+        std::fs::remove_file(dir.join("y.txt")).unwrap();
+        std::fs::rename(dir.join("x.txt"), dir.join("z.txt")).unwrap();
+        assert_ne!(dir_content_hash(&dir).unwrap(), h1, "改名也是变化");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_fact_sheet_says_whether_the_files_were_touched() {
+        // 一致
+        let same = build_plugin_facts("logic", 1, 1, 1, None, Some(false), "aaaaaaaa", "aaaaaaaa");
+        assert!(same[0].text.contains("内容与安装时一致"));
+        // 不一致：两个指纹都要给出来（用户要能自己对）
+        let diff = build_plugin_facts("logic", 1, 1, 1, None, Some(true), "aaaa1111", "bbbb2222");
+        assert!(diff[0].text.contains("内容与安装时不同"));
+        assert!(diff[0].text.contains("aaaa1111") && diff[0].text.contains("bbbb2222"));
+        // 没记过：**必须说出来**，否则会被读成"没被改过"
+        let unknown = build_plugin_facts("logic", 1, 1, 1, None, None, "", "");
+        assert!(unknown[0].text.contains("无法判断"));
     }
 
     #[test]
