@@ -29,6 +29,7 @@
     "check:web-build": "node scripts/check-web-build.mjs",
     "check:panel-layout": "node scripts/check-panel-layout.mjs",
     "check:pdf-reload": "node scripts/check-pdf-reload.mjs",
+    "check:ps1-ascii": "node scripts/check-ps1-ascii.mjs",
     "check:web-deploy": "node scripts/check-web-deploy.mjs"
   },
   "dependencies": {
