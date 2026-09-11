@@ -1181,10 +1181,26 @@ mod tests {
         let sig_text = std::fs::read_to_string(&sig).expect("读取签名失败");
         let pub_text = std::fs::read_to_string(&pub_path).expect("读取公钥失败");
         verify_package_signature(&bytes, &sig_text, &pub_text).expect("发布者签名必须验得过");
+        // **还要能真的解开**：签名验过但解不开的包，装的时候才会炸——
+        // 而"打包方式换了"（例如从命令行 zip 换成库）恰好会改字节布局，
+        // 所以这条必须走应用**真正的**解包器，而不是拿 unzip 看一眼就算。
+        let dir = crate::plugins::tests_support::temp_dir("external-pkg");
+        extract_package(&bytes, &dir).expect("发布者签过名的包必须能被应用解包");
+        let root = resolve_package_root(&dir);
+        let manifest = root.join("manifest.json");
+        assert!(manifest.is_file(), "解出来必须能找到 manifest.json（包内根目录结构不对）");
+        let text = std::fs::read_to_string(&manifest).expect("读 manifest");
+        let id = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(!id.is_empty(), "manifest 里必须写出 id");
+        let _ = std::fs::remove_dir_all(&dir);
         eprintln!(
-            "包可验：{}（{} 字节）· 发布者指纹 {}",
+            "包可验且可解：{}（{} 字节，插件 {}）· 发布者指纹 {}",
             zip.rsplit('/').next().unwrap_or(&zip),
             bytes.len(),
+            id,
             publisher_key_fingerprint(&pub_text).expect("指纹必须算得出")
         );
     }

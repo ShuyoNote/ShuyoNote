@@ -171,3 +171,47 @@ jobs:
 
       - name: 单元测试 + 集成测试（cargo test）
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # 外部产物的验收：**我们打出来的包、我们签出来的索引，应用真正的解析器与校验器认不认**。
+      # 两段分别在别处有测试（打包工具在 JS 侧、解析/校验在 Rust 侧），但"接起来"那段
+      # 只有靠人记得敲命令——而它恰恰是最容易在改动里悄悄坏掉的一段
+      # （实测过：打包从命令行 zip 换成库，字节布局变了；签名验过但解不开，只有装的时候才炸）。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 安装依赖（供打包工具用它自己那份 fflate）
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 打一个真包（一次性密钥，只用于流水线自检）
+        run: |
+          node scripts/plugin-fragment.mjs \
+            --plugins examples/plugins/md-outline \
+            --out "$RUNNER_TEMP/frag" \
+            --ephemeral-key
+
+      - name: 用应用真解析器 / 真校验器验收它
+        # 应用版本要取**当前**那个：片段里的 `minAppVersion` 就是它，填个小版本会让
+        # "可安装"这条断言变成"需要应用 X+"——我第一次就填了 1.0.0，本地演练当场抓出来。
+        run: |
+          APP_VERSION="$(node -p "require('./package.json').version")"
+          SHUYONOTE_INDEX_APP_VERSION="$APP_VERSION" \
+            cargo test --manifest-path src-tauri/Cargo.toml --lib external_index -- --ignored --nocapture
+          cargo test --manifest-path src-tauri/Cargo.toml --lib external_package -- --ignored --nocapture
+        env:
+          SHUYONOTE_INDEX_FIXTURE: ${{ runner.temp }}/frag/plugin-index.preview.json
+          SHUYONOTE_PKG_ZIP: ${{ runner.temp }}/frag/md-outline-1.0.0.zip
+          SHUYONOTE_PKG_SIG: ${{ runner.temp }}/frag/md-outline-1.0.0.zip.minisig
+          SHUYONOTE_PKG_PUB: ${{ runner.temp }}/frag/publisher.pub
+
+      # 顺手挡住回来路：打包**不许**再依赖命令行的 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条）
+      - name: 打包工具不许依赖系统 zip
+        run: |
+          if grep -nE 'execFileSync\("zip"|execSync\("zip' scripts/plugin-fragment.mjs; then
+            echo "::error::plugin-fragment.mjs 又用命令行 zip 了——Windows 上没有它，请用 fflate"
+            exit 1
+          fi
