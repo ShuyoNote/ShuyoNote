@@ -176,6 +176,22 @@ describe("条目与安装确认", () => {
       "不申请任何数据权限",
     );
   });
+
+  it("装之前把「社区讨论」摆出来（有就显示，没有就不提）", () => {
+    // 索引条目里本来就有这个字段；不显示等于让用户自己去搜。
+    const withOne = installConfirmMessage(
+      entry({ discussionUrl: "https://community.shuyo.cn/post/weekly" }),
+      "x",
+      true,
+    );
+    expect(withOne).toContain("社区讨论：https://community.shuyo.cn/post/weekly");
+    // 没有讨论地址时不该出现半句空话
+    expect(installConfirmMessage(entry(), "x", true)).not.toContain("社区讨论");
+    // 非 http(s) 一律不显示（安全判定只有一处：sanitizeExternalUrl）
+    expect(installConfirmMessage(entry({ discussionUrl: "javascript:alert(1)" }), "x", true)).not.toContain(
+      "社区讨论",
+    );
+  });
 });
 
 describe("升级 / 重装 / 拒绝降级", () => {

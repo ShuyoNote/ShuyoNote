@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { sanitizeExternalUrl } from "../lib/links";
+import { platform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 import type { PluginIndexEntry, PluginIndexView } from "../types";
@@ -7,6 +9,7 @@ import {
   addedPermissions,
   entryAction,
   entryMetaLine,
+  pluginLinks,
   entrySignatureNote,
   publisherKeyChanged,
   indexSignatureLabel,
@@ -108,6 +111,17 @@ export function PluginIndexPanel() {
   };
 
   const sig = view ? indexSignatureLabel(view) : null;
+
+  /** 打开外部链接：与关于对话框同一条路——先 sanitize，再用平台 opener；失败就安静失败。 */
+  const openExternal = async (url: string) => {
+    const safe = sanitizeExternalUrl(url);
+    if (!safe) return;
+    try {
+      await platform.opener.openUrl(safe);
+    } catch {
+      /* 浏览器被拦时不该把界面弄崩：这是一次"看看外面的东西"，不是数据操作 */
+    }
+  };
 
   /** 每个插件已固定的发布者公钥指纹（来自已装插件列表）。 */
   const pinnedOf = (id: string) => installedOf(id)?.publisher_key ?? null;
@@ -270,6 +284,22 @@ export function PluginIndexPanel() {
                     </div>
                     <div className="pm-index-item-meta">{entryMetaLine(p)}</div>
                     {p.description && <div className="pm-index-item-desc">{p.description}</div>}
+                    {/* 索引里的「社区讨论 / 主页」：装了之后去哪问、去哪看更新。
+                        没有就不显示（不摆一个点了没反应的链接）。 */}
+                    {pluginLinks(p).length > 0 && (
+                      <div className="pm-index-item-links">
+                        {pluginLinks(p).map((l) => (
+                          <button
+                            key={l.kind}
+                            className="pm-index-item-link"
+                            title={`${l.url}（在浏览器里打开）`}
+                            onClick={() => openExternal(l.url)}
+                          >
+                            {l.label} · {l.host}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="pm-index-item-perms">
                       {p.permissions.length === 0
                         ? "不申请任何数据权限"

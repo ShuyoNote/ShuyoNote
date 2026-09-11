@@ -5958,6 +5958,27 @@ select.prop-value {
   color: var(--text-faint);
   margin-top: 3px;
 }
+/* 索引条目里的「社区讨论 / 主页」。做成小按钮而不是 <a>：打开动作统一走平台的 opener
+   （Web 版是新标签页、桌面版是系统浏览器），不在这里各自实现一套。 */
+.pm-index-item-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+.pm-index-item-link {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pm-index-item-link:hover {
+  color: var(--text);
+  border-color: var(--accent, var(--text-dim));
+}
 .pm-index-item-installed {
   font-size: 11.5px;
   color: var(--text-dim);
