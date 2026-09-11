@@ -64,3 +64,8 @@ ShuyoNote 客户端以 **AGPL-3.0** 开源。参与即代表你同意以该许�
 - **有问题**：在 Issue 或 Discussions 里讨论；先读 [docs/development.md](docs/development.md) 的「常见坑」，很多答案在里面。
 
 > 详细约定见 [docs/development.md](docs/development.md)；当前状态见内部项目状态笔记。
+
+## 社区
+
+提问、经验分享、插件配方与更新公告都在社区：**[community.shuyo.cn](https://community.shuyo.cn)**。
+提 issue 之前先搜一下社区，很多问题已经有人踩过并写下来了。
