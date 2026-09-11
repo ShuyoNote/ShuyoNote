@@ -705,7 +705,10 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
         console.error("loadPdf failed", { attachmentId, bytes: bytes?.length ?? 0, error: e });
         if (alive) {
           setPageCount(0);
-          setLoadError(why);
+          // 把字节数也报出来：文件明明 2MB 而这里显示 0 字节，说明 buffer 已经被
+          // "交接"走了（pdf.js 会 transfer 传给它的 buffer）——那是另一类问题，
+          // 光看一句 "The object can not be cloned." 是看不出来的。
+          setLoadError(`${why}（字节 ${bytes?.length ?? 0}）`);
         }
       }
     })();

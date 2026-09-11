@@ -5,6 +5,10 @@
 ## [Unreleased]
 
 ### 修复
+- **"这份 PDF 没能打开 / The object can not be cloned."——pdf.js 会接管你传进去的 buffer**。上一版修好原生渲染后用户重开，报的却是加载阶段的新错。查下来是 pdf.js 的既定行为：`getDocument` 把 `data.buffer` 放进 `GetDocRequest` 的 transfer list（pdf.mjs 原文 `sendWithPromise("GetDocRequest", docParams, data ? [data.buffer] : null)`）——**传一次，调用方那块 buffer 就 detached 了**。而 React 18 开发模式开着 `StrictMode`，`[open, bytes]` 这个加载 effect 会"挂载 → 清理 → 再挂载"跑两遍，第二次交出去的就是已 detach 的 buffer，于是 DataCloneError（WebKit 的话术正是 "The object can not be cloned."）。这也解释了它为什么时好时坏：两遍的先后顺序决定了谁先撞上。
+  - 修法：`createPdfjsEngine.loadPdf` 交给 pdf.js 的永远是**一份私有副本**（`new Uint8Array(data)`），调用方手里的 bytes 不再被"交接"走。代价是一次内存拷贝，换"重复加载不会莫名失败"——Web 端同样受影响，一并修好。
+  - 加载失败的提示里补上**字节数**：文件明明 2MB 而这里显示 0 字节，一眼就知道 buffer 已经被交出去了（这句诊断本来能省掉我一轮排查）。
+  - 新增门禁 `pnpm check:pdf-reload`（进 CI）：用真实 Chromium + **真实的 pdfjsEngine** 证明两件事——(1) 直接调 pdf.js 传两次同一份 buffer，第一次成功、原 buffer 长度变 0、第二次以 DataCloneError 失败（这是"为什么必须拷贝"的证据，将来 pdf.js 若不再接管，这条会红，注释也就该改）；(2) 经过引擎连续两次加载同一份 bytes 都成功、且调用方 bytes 完好。**变异验证**：把引擎里那份拷贝去掉 → 门禁以 `DataCloneError: … An ArrayBuffer is detached and could not be cloned.` 转红。
 - **PDF 空白页的真凶找到了：原生渲染的响应在 macOS 上根本不是字节**。上一版把"渲染失败被吞掉"补上之后，用户截图上出现了具体原因：`Value NaN is outside the range [-2147483648, 2147483647]`——这是 WKWebView 对 `createImageData(NaN, NaN)` 这类整型参数的报错。
   - 根因：`render_pdf_page` 返回 `InvokeResponseBody::Raw`，前端按"`ArrayBuffer` + 8 字节头"解析。但 Tauri **只在能用 binary channel 的平台**把原始响应当字节送；**macOS/iOS 走的是 `format_result(Ok(Vec<u8>))`，即把字节 JSON 编码成数字数组**。于是 `buf instanceof ArrayBuffer` 为假 → 落到兜底分支 → `width`/`height` 是 `undefined` → 画布尺寸 NaN → WKWebView 抛错（Chrome 不抛，只是静默画出 0×0，也就是更早那次"看不到内容"）。**这也是为什么同一份代码 Web 端正常、桌面端空白。**
   - 修法：命令改返回 `{ width, height, rgba_base64 }`——base64 是同一份数据在 JSON 通道上最省的表达（一页 RGBA 从"几百万个 JSON 数字"变成一段字符串），且**所有平台行为一致**。前端新增 `parseNativePageResponse`（`src/lib/pdfNativePage.ts`）作为唯一闸门：兼容 `{width,height,rgba_base64}`、`ArrayBuffer`/`Uint8Array`、数字数组三种真实形状，并校验"解码后字节数恰为 宽×高×4、宽高为正整数、面积不超过 40MP"，**任何一条不过就报出具体数值**，绝不让 NaN 流到画布 API 上。

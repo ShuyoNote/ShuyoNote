@@ -104,8 +104,17 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
   return {
     async loadPdf(data: Uint8Array): Promise<PdfDocumentMeta> {
       ensureWorker();
+      // pdf.js **接管**（transfer）你传进去的 ArrayBuffer：`GetDocRequest` 的 transfer
+      // list 里就是 `data.buffer`（见 pdf.mjs），传过一次，原 buffer 就 detached 了。
+      // 而调用方常常持有同一份 bytes——React 18 开发模式开着 StrictMode，effect 会
+      // "挂载 → 清理 → 再挂载"，`[open, bytes]` 就是拿同一个对象跑两遍：第二次交出去的
+      // 是一块已经 detach 的 buffer，直接抛 DataCloneError（WebKit 的话术是
+      // "The object can not be cloned."），界面就成了"这份 PDF 没能打开"。
+      // 所以交给 pdf.js 的永远是**一份私有副本**：一次内存拷贝，换"重复加载不会莫名失败"。
+      // 这条机制由 scripts/check-pdf-reload.mjs 钉住（直接调 pdf.js 传两次必然失败）。
+      const owned = new Uint8Array(data);
       task = pdfjs.getDocument({
-        data,
+        data: owned,
         // Relative (not "/pdfjs/..."): the web app is served under a sub-path
         // (e.g. /app/), so an absolute URL would resolve to the domain root and
         // 404, and pdf.js would parse the returned HTML as a cmap → "Cannot

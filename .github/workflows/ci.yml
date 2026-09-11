@@ -50,6 +50,12 @@ jobs:
       - name: 冒烟测试（web 平台行为的事实标准）
         run: node scripts/smoke-web.mjs
 
+      - name: PDF 重复加载验收（真实 Chromium + 真实引擎）
+        # 挡的是"这份 PDF 没能打开 / The object can not be cloned."：pdf.js 会**接管**
+        # 传入的 buffer，而 React StrictMode 让加载 effect 跑两遍——第二次交出去的是
+        # 已 detach 的 buffer。单元测试摸不到这条（要真的 worker + 真的 transfer）。
+        run: node scripts/check-pdf-reload.mjs
+
       - name: 面板布局验收（真实 Chromium 量几何）
         # 挡的是"文字被挤成一条竖柱"这类：单元测试看不见（happy-dom 不做布局）、
         # 类型检查看不见，只有打开看一眼才发现——而这一步最容易被跳过。
