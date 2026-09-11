@@ -17,6 +17,7 @@
 //   --no-build              跳过 `pnpm tauri build`（产物已就绪时用）
 //   --artifacts <名字,…>    显式指定要发布的产物（替代「文件名含版本号」自动挑选）
 //   --no-web                不打包/上传 Web 版（dist-web/）
+//   --no-plugins            不产出第一方插件索引片段（默认：配了发布者私钥就产出）
 //   --allow-platform-drop   允许本次清单丢掉线上已有的平台键（默认禁止）
 //   --skip-sig-verify       跳过「.sig 确实是这些字节的签名」校验（不建议）
 //
@@ -73,6 +74,7 @@ const TAG = "v" + version;
 const DRY = process.argv.includes("--dry-run");
 const NO_BUILD = process.argv.includes("--no-build");
 const NO_WEB = process.argv.includes("--no-web");
+const NO_PLUGINS = process.argv.includes("--no-plugins");
 
 // ---- 前置：git tag vX.Y.Z 必须已存在并推到远程 ----
 // gitcode 的 release 创建 API 用 tag_name 定位 tag；tag 不存在会「静默失败」
@@ -252,6 +254,74 @@ if (!NO_WEB && existsSync(join(webDir, "index.html"))) {
   console.log("[release] 没找到 dist-web/：跳过 Web 版（要带上就先 pnpm build:web）。");
 }
 
+// ---- 第一方插件 → 索引片段（给社区合并用）----
+//
+// 为什么放在发布流程里：社区侧只做"合并片段 + 签索引 + 托管"，**不写条目、不碰包字节、
+// 也不持有我们的发布者私钥**。所以供给侧的片段必须在发版时产出，字段齐全
+// （downloadUrl / size / sha256 / publisherKey / signature / permissions / minAppVersion）。
+//
+// **私钥不进仓库、也不进 CI 的普通变量**：只从环境变量读一个**路径**。
+// 没配就明确跳过并说清后果（这一版的第一方插件不进社区索引）——不做"静默跳过"。
+const PUBLISHER_KEY = process.env.SHUYONOTE_PUBLISHER_KEY ?? "";
+let pluginPackages = [];
+let fragmentPath = null;
+if (NO_PLUGINS) {
+  console.log("[release] --no-plugins：跳过第一方插件片段。");
+} else if (!PUBLISHER_KEY) {
+  console.log(
+    "[release] 未配置 SHUYONOTE_PUBLISHER_KEY（发布者私钥路径）：跳过第一方插件片段 —— " +
+      "这一版的第一方插件不进社区索引（社区索引里不会有它们的条目）。",
+  );
+} else {
+  const minisign = process.env.SHUYONOTE_MINISIGN ?? "minisign";
+  const pub = process.env.SHUYONOTE_PUBLISHER_PUB ?? PUBLISHER_KEY.replace(/\.key$/, ".pub");
+  const fragOut = join(root, "src-tauri", "target", "release", "plugin-fragment");
+  rmSync(fragOut, { recursive: true, force: true });
+  console.log(`[release] 打包第一方插件 → 索引片段（minisign: ${minisign}）…`);
+  // 失败要说人话：`execSync` 默认把一整个栈丢出来，看起来像"发布脚本自己坏了"，
+  // 而真实原因通常是"这台机器没装 minisign"。所以这里接住并给两条出路。
+  const fragmentCmd = (() => { try { execSync(
+    [
+      "node",
+      JSON.stringify(join(root, "scripts", "plugin-fragment.mjs")),
+      "--plugins",
+      JSON.stringify(join(root, "examples", "plugins")),
+      "--out",
+      JSON.stringify(fragOut),
+      "--version",
+      version,
+      "--url-base",
+      `https://gitcode.com/${OWNER}/${REPO}/releases/download/${TAG}`,
+      "--minisign",
+      JSON.stringify(minisign),
+      "--key",
+      JSON.stringify(PUBLISHER_KEY),
+      "--pub",
+      JSON.stringify(pub),
+    ].join(" "),
+    { stdio: "inherit" },
+  ); } catch (e) {
+    console.error(
+      [
+        "[release] 第一方插件片段产出失败，已中止。真实原因见上面那几行。",
+        "  装了 minisign 再发，或明确加 --no-plugins 跳过（那样这一版的第一方插件不进社区索引）。",
+      ].join("\n"),
+    );
+    process.exit(1);
+  } })();
+  fragmentPath = join(fragOut, "plugin-index.fragment.json");
+  const fragment = JSON.parse(readFileSync(fragmentPath, "utf8"));
+  pluginPackages = fragment.plugins.map((e) => {
+    const zipPath = join(fragOut, `${e.id}-${e.version}.zip`);
+    return { name: `${e.id}-${e.version}.zip`, path: zipPath, sigPath: `${zipPath}.minisig`, size: statSync(zipPath).size };
+  });
+  console.log(`[release] 插件片段 → ${fragmentPath}（${pluginPackages.length} 个包）`);
+  console.log(
+    "[release] 交出去之前请用应用真正的解析器验一遍：\n" +
+      `  SHUYONOTE_INDEX_FIXTURE=${join(fragOut, "plugin-index.preview.json")} cargo test --lib external_index -- --ignored --nocapture`,
+  );
+}
+
 // ---- 生成 latest.json（updater 清单）----
 // 同一平台键只能留一个 url：取哪个由 manifestPicks 写死偏好，不靠遍历顺序。
 const { picks, notes } = manifestPicks(picked);
@@ -312,6 +382,13 @@ writeFileSync(
       artifacts: picked.map(({ name, size, sha256, dir }) => ({ name, dir, size, sha256 })),
       // Web 版单独列：它不参与更新清单，但发布物里有它，事后要能核对
       web: webZip ? { name: webZip.name, size: webZip.size, sha256: await sha256File(webZip.path) } : null,
+      // 第一方插件包同样单独列：它们不进更新清单，但社区索引会长期引用它们的 sha256
+      plugins: pluginPackages.length
+        ? await Promise.all(
+            pluginPackages.map(async (p) => ({ name: p.name, size: p.size, sha256: await sha256File(p.path) })),
+          )
+        : null,
+      pluginFragment: fragmentPath ? basename(fragmentPath) : null,
     },
     null,
     2,
@@ -360,6 +437,14 @@ for (const a of picked) {
 if (webZip) {
   await deleteAttach(TAG, webZip.name);
   await uploadFile(TAG, webZip.name, webZip.path);
+}
+// 第一方插件包与片段：包要能被社区索引长期引用（名字带版本号，资源不可覆盖重传）。
+for (const p of pluginPackages) {
+  await uploadFile(TAG, p.name, p.path);
+  await uploadFile(TAG, `${p.name}.sig`, p.sigPath);
+}
+if (fragmentPath) {
+  await uploadFile(TAG, basename(fragmentPath), fragmentPath);
 }
 await uploadFile(TAG, "latest.json", manifestPath);
 // 确保 `latest`（auto-update 通道）release 存在：首次发布时 gitcode 可能只有

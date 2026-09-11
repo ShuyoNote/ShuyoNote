@@ -97,6 +97,21 @@ GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更�
 > `pnpm check:web-deploy`（比对两个入口的 `version.json` 与 `package.json`，并把线上
 > `index.html` 引用的每个资源都取一遍）。
 
+**第一方插件 → 索引片段（可选，配了发布者私钥就自动做）**：`release.mjs` 会在发版时调用
+`scripts/plugin-fragment.mjs`，把 `examples/plugins/` 里的插件逐个**过作者 CLI → 打包 → 算 sha256/size →
+签发布者签名**，产出 `plugin-index.fragment.json` 并随 release 上传（包名带版本号：资源不可覆盖重传）。
+社区侧只做"合并片段 + 签索引 + 托管"——**不写条目、不碰包字节、也不持有我们的发布者私钥**。
+
+```bash
+SHUYONOTE_PUBLISHER_KEY=~/.minisign/shuyonote.key \   # 私钥**路径**（内容不进仓库、不进普通 CI 变量）
+SHUYONOTE_PUBLISHER_PUB=~/.minisign/shuyonote.pub  \  # 公钥（省略则按 .key → .pub 推）
+SHUYONOTE_MINISIGN=$(which minisign)               \  # 默认找 PATH 里的 minisign
+  pnpm release ...                                     # 或 node scripts/release.mjs ...
+```
+
+没配私钥 → **明确跳过并说清后果**（这一版的第一方插件不进社区索引），不做静默跳过；
+要显式跳过就加 `--no-plugins`。产出之后请用应用真正的解析器验一遍（命令在 release 日志里打印）。
+
 **Web 整包会随发布一起上传**：`pnpm build:web` 之后跑 `release.mjs` 时，它会校验
 `dist-web/version.json` 与本次版本一致，再打成 `ShuyoNote_<版本>_web.zip` 作为 release 附件
 （内含 `SELF-HOST.txt`：别漏掉运行时才加载的 `sql-wasm`/`pdf.worker`、`.wasm` 要以
