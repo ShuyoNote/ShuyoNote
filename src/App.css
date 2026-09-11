@@ -5958,6 +5958,27 @@ select.prop-value {
   color: var(--text-faint);
   margin-top: 3px;
 }
+/* 索引条目里的「社区讨论 / 主页」。做成小按钮而不是 <a>：打开动作统一走平台的 opener
+   （Web 版是新标签页、桌面版是系统浏览器），不在这里各自实现一套。 */
+.pm-index-item-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+.pm-index-item-link {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pm-index-item-link:hover {
+  color: var(--text);
+  border-color: var(--accent, var(--text-dim));
+}
 .pm-index-item-installed {
   font-size: 11.5px;
   color: var(--text-dim);
@@ -19352,3 +19373,163 @@ body.is-plugin-panel-open .main {
 /* 「管理插件」按钮用了 margin-left:auto，会压窄同一行的标题与计数——
    它们必须保持一行（截图里出现过「插件/管理」「1/1 已启/用」竖排）。 */
 .plugin-count { white-space: nowrap; flex: 0 0 auto; }
+
+/* 「从社区链接存一篇笔记」：两步 UI（粘贴 → 预览 → 存/取消）。
+   视觉上沿用确认框那套（同一种浮层 + 同一种盒子），因为它也是"看清楚再决定"的一屏。 */
+.community-save-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: rgba(15, 23, 42, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.community-save-box {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(76vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+}
+.community-save-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.community-save-close {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.community-save-body {
+  padding: 0 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.community-save-label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.community-save-row {
+  display: flex;
+  gap: 8px;
+}
+.community-save-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+.community-save-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--danger, #c0392b);
+  border: 1px solid var(--danger, #c0392b);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger, #c0392b) 8%, transparent);
+}
+.community-save-preview {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.community-save-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.community-save-preview-meta {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+.community-save-source {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent, var(--text-dim));
+  font-size: 11.5px;
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+}
+.community-save-preview-body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 34vh;
+  overflow: auto;
+}
+.community-save-more {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.community-save-target {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.community-save-stored {
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.community-save-stored-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.community-save-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 14px;
+}
+.community-save-btn {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.community-save-btn.primary {
+  background: var(--accent, #2563eb);
+  border-color: transparent;
+  color: #fff;
+}
+.community-save-btn.ghost {
+  background: transparent;
+}
+.community-save-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

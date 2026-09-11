@@ -1159,6 +1159,36 @@ mod tests {
         }
     }
 
+    /// 用**真校验器**验一个外部产出的包（默认忽略）。给"要发插件包的人"用：
+    /// `scripts/plugin-fragment.mjs` 打完包签完名之后，先用这里过一遍，再交给社区。
+    ///
+    ///   SHUYONOTE_PKG_ZIP=/tmp/frag/x-1.0.0.zip \
+    ///   SHUYONOTE_PKG_SIG=/tmp/frag/x-1.0.0.zip.minisig \
+    ///   SHUYONOTE_PKG_PUB=/tmp/frag/publisher.pub \
+    ///     cargo test --lib external_package -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn external_package_signature_verifies() {
+        let (Ok(zip), Ok(sig), Ok(pub_path)) = (
+            std::env::var("SHUYONOTE_PKG_ZIP"),
+            std::env::var("SHUYONOTE_PKG_SIG"),
+            std::env::var("SHUYONOTE_PKG_PUB"),
+        ) else {
+            eprintln!("跳过：需要 SHUYONOTE_PKG_ZIP / SHUYONOTE_PKG_SIG / SHUYONOTE_PKG_PUB");
+            return;
+        };
+        let bytes = std::fs::read(&zip).expect("读取包失败");
+        let sig_text = std::fs::read_to_string(&sig).expect("读取签名失败");
+        let pub_text = std::fs::read_to_string(&pub_path).expect("读取公钥失败");
+        verify_package_signature(&bytes, &sig_text, &pub_text).expect("发布者签名必须验得过");
+        eprintln!(
+            "包可验：{}（{} 字节）· 发布者指纹 {}",
+            zip.rsplit('/').next().unwrap_or(&zip),
+            bytes.len(),
+            publisher_key_fingerprint(&pub_text).expect("指纹必须算得出")
+        );
+    }
+
     #[test]
     fn the_fixture_publisher_key_fingerprint_is_stable() {
         // 指纹是"人用来比对"的东西：它在界面上出现，也在发布者的公告里出现。

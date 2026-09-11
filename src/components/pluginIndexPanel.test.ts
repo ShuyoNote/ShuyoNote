@@ -95,6 +95,50 @@ async function pull(url: string, pubkey = "") {
   await vi.waitFor(() => expect(document.querySelector(".pm-index-source")).toBeTruthy());
 }
 
+describe("索引里的「社区讨论 / 主页」", () => {
+  // 规范里这两个字段一直都有，但界面从不显示——"讨论串挂在插件上"因此等于没做。
+  let root: ReturnType<typeof createRoot> | null = null;
+
+  beforeEach(() => {
+    fetchPluginIndex.mockReset();
+    window.localStorage.clear();
+    usePlugins.setState({ plugins: [], managerOpen: true });
+  });
+
+  afterEach(() => {
+    if (root) flushSync(() => root!.unmount());
+    root = null;
+    document.body.innerHTML = "";
+  });
+
+  const links = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".pm-index-item-link"));
+
+  it("有值就显示成可点的链接（标签 + 域名）", async () => {
+    fetchPluginIndex.mockResolvedValue(
+      view([entry({ discussionUrl: "https://community.shuyo.cn/post/weekly", homepage: "https://example.com/p" })]),
+    );
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+    expect(links().map((b) => b.textContent)).toEqual(["社区讨论 · community.shuyo.cn", "主页 · example.com"]);
+  });
+
+  it("没有值就不显示（不摆一个点了没反应的链接）", async () => {
+    fetchPluginIndex.mockResolvedValue(view([entry()]));
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+    expect(links()).toHaveLength(0);
+  });
+
+  it("非 http(s) 的地址一律不显示（与打开外链同一条安全判定）", async () => {
+    fetchPluginIndex.mockResolvedValue(
+      view([entry({ discussionUrl: "javascript:alert(1)", homepage: "data:text/html,x" })]),
+    );
+    root = mount(React.createElement(PluginIndexPanel));
+    await pull("https://example.com/plugin-index.json");
+    expect(links()).toHaveLength(0);
+  });
+});
+
 describe("从索引安装面板", () => {
   let root: ReturnType<typeof createRoot> | null = null;
 

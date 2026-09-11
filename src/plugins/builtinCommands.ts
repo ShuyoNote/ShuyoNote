@@ -11,6 +11,7 @@ import { useEditorStore } from "../store/editor";
 import { openGuide, guideText } from "../lib/guide";
 import { buildHelpSite } from "../lib/helpSite";
 import { usePdfReader } from "../store/pdfReader";
+import { useCommunitySave } from "../store/communitySave";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
 import type { PageMeta } from "../types";
 
@@ -388,6 +389,28 @@ registerCommandGroup({
       run: () => {
         useViewStore.getState().setView("board");
         return "已切换到看板";
+      },
+    },
+  ],
+});
+
+// 「社区」——把外面的东西拿进来。目前只有一条：从社区链接存一篇笔记。
+//
+// 为什么先做成命令面板里的一条：深链要等操作系统把链接交进来（Windows 侧在做），
+// 而"粘贴一条链接 → 预览 → 存进笔记"这条路**今天就能走完整条**，
+// 并且把解析、抓取、预览、确认、幂等、落库六个环节全部串起来练一遍。
+// 等深链接好，只要把同一个对话框从"粘贴"改成"被唤起时带上链接"即可。
+registerCommandGroup({
+  id: "community",
+  name: "社区",
+  commands: [
+    {
+      id: "community.save-post",
+      title: "从社区链接存一篇笔记",
+      description: "粘贴社区帖子链接（或 shuyonote://save?url=…），先预览再存进笔记",
+      run: () => {
+        useCommunitySave.getState().openDialog();
+        return "已打开「从社区链接存一篇笔记」";
       },
     },
   ],

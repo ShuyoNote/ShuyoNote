@@ -31,7 +31,9 @@
     "check:panel-layout": "node scripts/check-panel-layout.mjs",
     "check:pdf-reload": "node scripts/check-pdf-reload.mjs",
     "check:ps1-ascii": "node scripts/check-ps1-ascii.mjs",
-    "check:web-deploy": "node scripts/check-web-deploy.mjs"
+    "check:web-deploy": "node scripts/check-web-deploy.mjs",
+    "plugin:fragment": "node scripts/plugin-fragment.mjs",
+    "test:plugin-fragment": "vitest run scripts/plugin-fragment.test.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",

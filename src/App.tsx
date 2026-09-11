@@ -19,6 +19,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { SpaceTransferProgress } from "./components/SpaceTransferProgress";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { FilePreviewDialog } from "./components/FilePreviewDialog";
+import { CommunitySaveDialog } from "./components/CommunitySaveDialog";
 import { PdfReader } from "./components/PdfReader";
 import { FormulaEditorDialog } from "./components/FormulaEditorDialog";
 import { CoverPicker } from "./components/CoverPicker";
@@ -54,6 +55,8 @@ import { emitHostEvent } from "./lib/pluginEvents";
 import { applyThemeTokens, resolveTheme } from "./lib/pluginTheme";
 import { useActivity } from "./store/activity";
 import { useSpaceStore } from "./store/space";
+import { useCommunitySave } from "./store/communitySave";
+import { mountDeepLinks } from "./lib/deepLinkBridge";
 import { useEditorStore } from "./store/editor";
 import { $createParagraphNode, $getRoot } from "lexical";
 import { useBlockCache } from "./store/blockCache";
@@ -163,6 +166,18 @@ function NoteEditor({ pageId }: { pageId: string }) {
   useEffect(() => {
     void useAuth.getState().init();
   }, []);
+
+  // `shuyonote://` 的投递：把"操作系统交给应用的那条 URL"送进应用内接入缝。
+  //
+  // 这两行是整条深链的**最后一厘米**：Rust 侧（`src-tauri/src/deeplink.rs`）负责
+  // 注册 scheme、被唤起、已有实例转发；`mountDeepLinks` 负责把 URL 搬进来；
+  // 判断"这是什么动作、要不要预览"由接入缝自己做（`openWithLink`，语义层）。
+  //
+  // ⚠️ **不能只写"听事件"这一半**：冷启动那条 URL 的事件在前端挂载之前就发过了
+  // （主窗口 `visible(false)`，插件 setup 时 emit）。只订阅会稳定漏掉**第一次**深链，
+  // 而第二次正常——那种"第一次不灵"最容易被当成偶发。`mountDeepLinks` 里
+  // "先订阅、再 drain 队列"两件事一起做，就是为了盖住这个洞。
+  useEffect(() => mountDeepLinks((url) => useCommunitySave.getState().openWithLink(url)), []);
 
   // 窗口是以无边框创建的（自绘标题栏）。若用户关掉了这个设置，启动时把系统
   // 标题栏恢复回来——设置存在 localStorage，Rust 侧读不到，只能前端补一刀。
@@ -647,6 +662,7 @@ function App() {
           <SettingsDialog />
           <SpaceTransferProgress />
           <FilePreviewDialog />
+          <CommunitySaveDialog />
           <PdfReader />
           <FormulaEditorDialog />
           <Toaster />
@@ -744,6 +760,7 @@ function App() {
         <SettingsDialog />
         <SpaceTransferProgress />
         <FilePreviewDialog />
+        <CommunitySaveDialog />
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
         <FormulaEditorDialog />

@@ -1,4 +1,5 @@
 import type { PluginIndexEntry, PluginIndexView } from "../types";
+import { sanitizeExternalUrl } from "./links";
 import { formatBytes } from "./pluginAudit";
 
 /**
@@ -53,6 +54,34 @@ export function entryMetaLine(entry: PluginIndexEntry): string {
     entry.runtime ? `运行时 ${entry.runtime}` : "",
   ].filter(Boolean);
   return bits.join(" · ");
+}
+
+/**
+ * 索引条目里"外面还有东西"的那几个地址：社区讨论 / 主页 / 更新说明。
+ *
+ * 为什么要做：这三个字段**规范里一直都有**（`docs/plugin-index-spec.md`：`homepage` /
+ * `discussionUrl` / `changelogUrl`），但界面从来没显示过——于是"讨论串挂在插件上"这件事
+ * 等于没做，用户只能自己去社区搜。这里只做一件事：把**能安全打开**的地址挑出来并给出人话标签。
+ *
+ * 两条口径：
+ *   · 空值不显示（不显示一个点了没反应的链接）；
+ *   · 非 http(s) 一律丢掉——与"打开外部链接"那条路复用同一个 `sanitizeExternalUrl`，
+ *     安全判定只有一处，别在界面里另写一遍。
+ */
+export function pluginLinks(
+  entry: PluginIndexEntry,
+): { kind: "discussion" | "homepage" | "changelog"; label: string; url: string; host: string }[] {
+  const candidates: { kind: "discussion" | "homepage" | "changelog"; label: string; raw: string }[] = [
+    { kind: "discussion", label: "社区讨论", raw: entry.discussionUrl },
+    { kind: "homepage", label: "主页", raw: entry.homepage },
+  ];
+  const out: { kind: "discussion" | "homepage" | "changelog"; label: string; url: string; host: string }[] = [];
+  for (const c of candidates) {
+    const url = sanitizeExternalUrl((c.raw ?? "").trim());
+    if (!url) continue;
+    out.push({ kind: c.kind, label: c.label, url, host: indexHost(url) });
+  }
+  return out;
 }
 
 /**
@@ -235,6 +264,12 @@ export function installConfirmMessage(
     perms,
     ...growth,
     "",
+    ...(() => {
+      // 装之前把"这个插件在社区的讨论"摆出来：它是用户在按下确认之前最该看的第二样东西
+      //（第一样是权限）。索引条目里本来就有这个字段，不显示等于白给。
+      const discussion = pluginLinks(entry).find((l) => l.kind === "discussion");
+      return discussion ? ["", `社区讨论：${discussion.url}`] : [];
+    })(),
     "索引**没有人工审查**：能装不等于可信。装完默认未启用，你可以先看权限再决定。",
     pubkeyGiven
       ? "索引签名已用你填的公钥校验通过；插件包已按索引里的 sha256 校验完整。"
