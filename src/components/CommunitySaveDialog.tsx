@@ -14,6 +14,8 @@ import { api } from "../lib/api";
 import { markdownToPageContent } from "../lib/mdPreview";
 import { type CommunityPost } from "../lib/communityPost";
 import { findStoredPost, linkIntentOf, noteForPost, previewOf, searchKeyOf } from "../lib/communitySave";
+import { parseTemplatePayload, templateManifest, type ImportedTemplate } from "../lib/communityImport";
+import { useTemplates } from "../store/templates";
 import { platform } from "../lib/platform";
 import { useCommunitySave } from "../store/communitySave";
 import { useNotes } from "../store/notes";
@@ -33,6 +35,10 @@ export function CommunitySaveDialog() {
   const [post, setPost] = useState<CommunityPost | null>(null);
   /** 已经存过时命中的那一页（标题给人看，id 用来"打开那篇"）。 */
   const [existing, setExisting] = useState<{ id: string; title: string } | null>(null);
+  /** 这条链接要做什么：`save` 存笔记 / `import` 导入产物。**动作不同，承诺不同**。 */
+  const [action, setAction] = useState<"save" | "import">("save");
+  /** 导入预览：模板 + 逐行清单（"会创建什么"要摆在最前面）。 */
+  const [imported, setImported] = useState<{ template: ImportedTemplate; manifest: string[] } | null>(null);
 
   // 每次打开都从干净状态开始：上一次的链接与预览不该"粘"到这一次。
   // 深链那一路会带 `pendingLink` 进来：**预填并直接读一次**（读=抓取+预览），
@@ -42,6 +48,8 @@ export function CommunitySaveDialog() {
     setReason("");
     setPost(null);
     setExisting(null);
+    setImported(null);
+    setAction("save");
     if (pendingLink) {
       setLink(pendingLink);
       void load(pendingLink);
@@ -59,6 +67,8 @@ export function CommunitySaveDialog() {
     setReason("");
     setPost(null);
     setExisting(null);
+    setImported(null);
+    setAction("save");
   };
 
   /** 第一步：认链接 → 抓回来 → 查是不是已经存过 → 摆出预览。 */
@@ -69,8 +79,40 @@ export function CommunitySaveDialog() {
       setPhase("input");
       return;
     }
+    setAction(intent.action);
     setPhase("loading");
     setReason("");
+
+    // **`import` 走另一条路**：它要的是"把产物导进来"，不是"存一篇笔记"。
+    // 之前这两支被合并成一条（点导入模板会去存笔记，且不报错），现在分开。
+    if (intent.action === "import") {
+      let text: string;
+      try {
+        text = await platform.community.fetchDocument(intent.url);
+      } catch (e) {
+        setReason(e instanceof Error ? e.message : String(e));
+        setPhase("input");
+        return;
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch (e) {
+        setReason(`这份文件不是合法的 JSON：${e instanceof Error ? e.message : String(e)}`);
+        setPhase("input");
+        return;
+      }
+      const parsed = parseTemplatePayload(raw);
+      if (!parsed.ok) {
+        setReason(parsed.reason);
+        setPhase("input");
+        return;
+      }
+      setImported({ template: parsed.template, manifest: templateManifest(parsed.template, intent.url) });
+      setPhase("preview");
+      return;
+    }
+
     // 走平台驱动：**桌面端是原生命令**（没有 CORS，401/404 能如实上报），
     // Web 版是浏览器 fetch（受 CORS 约束——社区侧要给 Access-Control-Allow-Origin）。
     let fetchedPost: CommunityPost;
@@ -103,8 +145,24 @@ export function CommunitySaveDialog() {
     setPhase("preview");
   };
 
-  /** 第二步：只在人点「存进笔记」之后才写。 */
+  /** 第二步：只在人点了确认之后才写（存笔记 / 导入模板各一条路）。 */
   const save = async () => {
+    if (action === "import") {
+      if (!imported) return;
+      const ok = await useTemplates.getState().saveAs({
+        name: imported.template.name,
+        category: imported.template.category,
+        content_json: imported.template.content_json,
+        content_text: imported.template.content_text,
+      });
+      if (!ok) {
+        setReason("导入模板失败（模板中心没有接受这份内容）");
+        return;
+      }
+      toast(`已导入模板：${imported.template.name}`, "success");
+      close();
+      return;
+    }
     if (!post) return;
     const note = noteForPost(post);
     const payload = markdownToPageContent(note.markdown);
@@ -147,7 +205,7 @@ export function CommunitySaveDialog() {
     <div className="community-save-overlay" onClick={close}>
       <div className="community-save-box" onClick={(e) => e.stopPropagation()}>
         <div className="community-save-head">
-          <span>从社区链接存一篇笔记</span>
+          <span>{action === "import" ? "从社区链接导入模板" : "从社区链接存一篇笔记"}</span>
           <button className="community-save-close" onClick={close} title="关闭">
             ×
           </button>
@@ -174,6 +232,16 @@ export function CommunitySaveDialog() {
           </div>
 
           {reason && <div className="community-save-error">{reason}</div>}
+
+          {imported && (
+            <div className="community-save-preview">
+              {imported.manifest.map((line, i) => (
+                <div key={i} className={i === 0 ? "community-save-preview-title" : "community-save-preview-meta"}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
 
           {post && preview && (
             <div className="community-save-preview">
@@ -216,7 +284,7 @@ export function CommunitySaveDialog() {
         <div className="community-save-foot">
           {phase === "preview" && (
             <button className="community-save-btn primary" onClick={() => void save()}>
-              存进笔记
+              {action === "import" ? "导入模板" : "存进笔记"}
             </button>
           )}
           <button className="community-save-btn" onClick={close}>

@@ -169,6 +169,52 @@ export async function fetchCommunityPost(
   }
 }
 
+/**
+ * 抓一份社区托管的 JSON 文档，返回**原文**（形状校验交给调用方）。
+ *
+ * 与 `fetchCommunityPost` 共用同一条策略与同一套加固，只是**不解释内容**：
+ * `import` 拿到的可能是模板文件，而"模板长什么样"是模板中心那边的知识。
+ */
+export async function fetchCommunityDocument(
+  url: string,
+  opts: { fetchImpl?: FetchLike; timeoutMs?: number; maxBytes?: number } = {},
+): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+  const target = checkCommunityUrl(url);
+  if (!target.ok) return { ok: false, reason: target.reason };
+  const doFetch = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  if (typeof doFetch !== "function") return { ok: false, reason: "这个平台没有可用的网络请求能力" };
+  const maxBytes = opts.maxBytes ?? MAX_POST_JSON_BYTES;
+  const timeoutMs = opts.timeoutMs ?? POST_FETCH_TIMEOUT_MS;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    let resp;
+    try {
+      resp = await doFetch(target.url, { signal: ac.signal, headers: { Accept: "application/json" } });
+    } catch (e) {
+      const why = e instanceof Error && e.name === "AbortError" ? `请求超时（${timeoutMs / 1000} 秒）` : String(e);
+      return { ok: false, reason: `取不到这份文件：${why}` };
+    }
+    const landed = checkCommunityUrl(resp.url || target.url);
+    if (!landed.ok) {
+      return { ok: false, reason: `这个地址被重定向到了不允许的地方（${resp.url}）：${landed.reason}` };
+    }
+    if (!resp.ok) return { ok: false, reason: `取不到这份文件：HTTP ${resp.status}` };
+    const ctype = (resp.headers.get("content-type") ?? "").toLowerCase();
+    if (!ctype.includes("json")) {
+      return {
+        ok: false,
+        reason: `这个地址返回的不是 JSON（Content-Type: ${ctype || "未提供"}）——模板导入要的是模板文件`,
+      };
+    }
+    const read = await readCapped(resp, maxBytes);
+    if (!read.ok) return read;
+    return { ok: true, text: new TextDecoder().decode(read.bytes) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 流式读取并在**读的过程中**守上限（只看 Content-Length 会被"慢慢灌"绕过）。 */
 async function readCapped(
   resp: { body: { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> } } | null; text(): Promise<string> },

@@ -90,6 +90,8 @@ export interface CommunityPostDto {
 export interface CommunityDriver {
   /** 抓一篇帖子。**不做任何写入**——落库由"预览 → 确认"那一步决定。 */
   fetchPost(url: string): Promise<CommunityPostDto>;
+  /** 抓一份社区托管的 JSON 文档（模板文件那类），返回**原文**：形状校验在调用方。 */
+  fetchDocument(url: string): Promise<string>;
 }
 
 export interface Platform {

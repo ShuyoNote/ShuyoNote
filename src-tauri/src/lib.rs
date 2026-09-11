@@ -360,6 +360,7 @@ pub fn run() {
             commands::list_all_pdf_annotations,
             commands::render_pdf_page,
             community::fetch_community_post,
+            community::fetch_community_json,
             commands::delete_page,
             commands::move_page,
             search::search,

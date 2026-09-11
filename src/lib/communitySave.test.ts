@@ -20,20 +20,33 @@ const post: CommunityPost = {
 };
 
 describe("linkIntentOf — 深链与网址都认，认不出就说清为什么", () => {
-  it("深链的 save / import 都归一到「要抓的地址」", () => {
+  it("深链的 save / import **动作要分开**（存笔记 ≠ 导入产物）", () => {
     expect(linkIntentOf("shuyonote://save?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fpost%2Fx")).toEqual({
       ok: true,
+      action: "save",
       url: "https://community.shuyo.cn/post/x",
     });
-    expect(linkIntentOf("shuyonote://import?url=https://community.shuyo.cn/post/x")).toEqual({
+    expect(linkIntentOf("shuyonote://import?url=https://community.shuyo.cn/tpl.json")).toEqual({
       ok: true,
-      url: "https://community.shuyo.cn/post/x",
+      action: "import",
+      url: "https://community.shuyo.cn/tpl.json",
     });
   });
 
+  it("compose 还没做 → 说清「这条路还没做」，并给出替代做法", () => {
+    const r = linkIntentOf("shuyonote://compose?title=hi");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain("还没做");
+      expect(r.reason).toContain("新建页面");
+    }
+  });
+
   it("普通网址也认（深链还没接完时，用户粘网址就能用）", () => {
+    // 手动粘网址默认按「存笔记」处理；要导入模板就粘 shuyonote://import?…（动作由链接说清，不靠猜）
     expect(linkIntentOf("  https://community.shuyo.cn/post/x  ")).toEqual({
       ok: true,
+      action: "save",
       url: "https://community.shuyo.cn/post/x",
     });
   });
@@ -44,10 +57,7 @@ describe("linkIntentOf — 深链与网址都认，认不出就说清为什么",
       ok: false,
       reason: expect.stringContaining("只接受这些来源"),
     });
-    expect(linkIntentOf("shuyonote://compose?title=hi")).toEqual({
-      ok: false,
-      reason: expect.stringContaining("不是"),
-    });
+    expect(linkIntentOf("shuyonote://compose?title=hi").ok).toBe(false);
     expect(linkIntentOf("shuyonote://nope")).toEqual({ ok: false, reason: expect.stringContaining("不认识") });
   });
 });

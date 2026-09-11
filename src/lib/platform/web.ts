@@ -2361,6 +2361,12 @@ function makeInvoke(store: SqliteStore) {
       if (!r.ok) throw new Error(r.reason);
       return r.post as T;
     }
+    if (cmd === "fetch_community_json") {
+      const { fetchCommunityDocument } = await import("../communityPost");
+      const r = await fetchCommunityDocument((args as { url: string }).url);
+      if (!r.ok) throw new Error(r.reason);
+      return r.text as T;
+    }
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
     }
@@ -3355,6 +3361,13 @@ export function createWebPlatform(): Platform {
         const r = await fetchCommunityPost(url);
         if (!r.ok) throw new Error(r.reason);
         return r.post;
+      },
+      // 文档抓取同样受 CORS 约束（Web 版没有 Rust）：社区侧要给 Access-Control-Allow-Origin。
+      fetchDocument: async (url) => {
+        const { fetchCommunityDocument } = await import("../communityPost");
+        const r = await fetchCommunityDocument(url);
+        if (!r.ok) throw new Error(r.reason);
+        return r.text;
       },
     },
     pdfRender: {

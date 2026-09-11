@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   createPage: vi.fn<(parent: string | null, content?: unknown) => Promise<string | null>>(),
   openPage: vi.fn<(id: string) => Promise<void>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
+  saveAs: vi.fn<(arg: unknown) => Promise<boolean>>(),
   toast: vi.fn<(msg: string, kind?: string) => void>(),
 }));
 
@@ -26,6 +27,12 @@ vi.mock("../lib/platform", () => ({
   platform: {
     opener: { openUrl: mocks.openUrl },
     community: {
+      fetchDocument: async (url: string) => {
+        const { fetchCommunityDocument } = await import("../lib/communityPost");
+        const r = await fetchCommunityDocument(url, { fetchImpl: mocks.fetchImpl as never });
+        if (!r.ok) throw new Error(r.reason);
+        return r.text;
+      },
       fetchPost: async (url: string) => {
         const { fetchCommunityPost } = await import("../lib/communityPost");
         const r = await fetchCommunityPost(url, { fetchImpl: mocks.fetchImpl as never });
@@ -35,6 +42,11 @@ vi.mock("../lib/platform", () => ({
     },
   },
   isDesktopPlatform: () => false,
+}));
+vi.mock("../store/templates", () => ({
+  useTemplates: Object.assign(() => ({}), {
+    getState: () => ({ saveAs: mocks.saveAs }),
+  }),
 }));
 vi.mock("../store/notes", () => ({
   useNotes: Object.assign(() => ({}), {
@@ -114,6 +126,8 @@ beforeEach(() => {
   mocks.createPage.mockReset();
   mocks.openPage.mockReset();
   mocks.openUrl.mockReset();
+  mocks.saveAs.mockReset();
+  mocks.saveAs.mockResolvedValue(true);
   mocks.toast.mockReset();
   mocks.search.mockResolvedValue([]);
   mocks.createPage.mockResolvedValue("new-page-id");
@@ -201,6 +215,71 @@ describe("存社区帖子：预览在前，落库在后", () => {
     flushSync(() => byText("读取").click());
     await vi.waitFor(() => expect(text()).toContain("返回的不是 JSON"));
     expect(mocks.createPage).not.toHaveBeenCalled();
+  });
+});
+
+describe("import 链接：导入的是**产物**，不是「存一篇笔记」", () => {
+  const TPL = {
+    name: "周回顾",
+    category: "我的模板",
+    content_json: '{"root":{}}',
+    content_text: "要点",
+  };
+
+  it("`import` 链接 → 出的是导入清单（会创建什么），**不是帖子预览**，且未落库", async () => {
+    mocks.fetchImpl.mockImplementation(() => jsonResponse(TPL, "https://community.shuyo.cn/tpl.json"));
+    mount();
+    type("shuyonote://import?url=https%3A%2F%2Fcommunity.shuyo.cn%2Ftpl.json");
+    flushSync(() => byText("读取").click());
+    await vi.waitFor(() => expect(text()).toContain("将创建"));
+    expect(text()).toContain("一个模板「周回顾」");
+    expect(text()).toContain("不会创建任何页面，也不会安装任何插件");
+    // 这是 import 不是 save：不该出现"存进笔记"，也不该建页面
+    expect(text()).not.toContain("存进笔记");
+    expect(mocks.createPage).not.toHaveBeenCalled();
+    expect(mocks.saveAs).not.toHaveBeenCalled();
+  });
+
+  it("点「导入模板」→ 恰好写一次模板，且用的是文件里的字段", async () => {
+    mocks.fetchImpl.mockImplementation(() => jsonResponse(TPL, "https://community.shuyo.cn/tpl.json"));
+    mount();
+    type("shuyonote://import?url=https%3A%2F%2Fcommunity.shuyo.cn%2Ftpl.json");
+    flushSync(() => byText("读取").click());
+    // 等**预览**出现再点：对话框标题里也有"导入模板"四个字，用它当条件是竞态（我踩了）
+    await vi.waitFor(() => expect(text()).toContain("将创建"));
+    flushSync(() => byText("导入模板").click());
+    await vi.waitFor(() => expect(mocks.saveAs).toHaveBeenCalledTimes(1));
+    expect(mocks.saveAs.mock.calls[0][0]).toEqual({
+      name: "周回顾",
+      category: "我的模板",
+      content_json: '{"root":{}}',
+      content_text: "要点",
+    });
+    expect(mocks.createPage).not.toHaveBeenCalled();
+  });
+
+  it("取消 → 零痕迹（不写模板、不建页面、不提示）", async () => {
+    mocks.fetchImpl.mockImplementation(() => jsonResponse(TPL, "https://community.shuyo.cn/tpl.json"));
+    mount();
+    type("shuyonote://import?url=https%3A%2F%2Fcommunity.shuyo.cn%2Ftpl.json");
+    flushSync(() => byText("读取").click());
+    await vi.waitFor(() => expect(text()).toContain("将创建"));
+    flushSync(() => byText("取消").click());
+    expect(mocks.saveAs).not.toHaveBeenCalled();
+    expect(mocks.createPage).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("不是模板文件 → 说清缺什么 + 两条替代路（插件走索引、主题没格式）", async () => {
+    mocks.fetchImpl.mockImplementation(() =>
+      jsonResponse({ hello: "world" }, "https://community.shuyo.cn/not-template.json"),
+    );
+    mount();
+    type("shuyonote://import?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fnot-template.json");
+    flushSync(() => byText("读取").click());
+    await vi.waitFor(() => expect(text()).toContain("content_json"));
+    expect(text()).toContain("索引订阅");
+    expect(mocks.saveAs).not.toHaveBeenCalled();
   });
 });
 

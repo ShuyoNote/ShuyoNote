@@ -8,8 +8,16 @@
 import { checkCommunityUrl, parseDeepLink } from "./deepLink";
 import type { CommunityPost } from "./communityPost";
 
-/** 用户可能粘进来的两种东西：深链，或一条社区帖子的普通网址。 */
-export type LinkIntent = { ok: true; url: string } | { ok: false; reason: string };
+/**
+ * 用户可能粘进来的东西：深链，或一条社区地址。
+ *
+ * `action` 必须带出来：**`save` 与 `import` 是两件事**（存一篇笔记 vs 导入一个产物），
+ * 之前这里只返回 url、调用方一律按"存笔记"处理——于是点"导入模板"会去存一篇笔记，
+ * 而且不报错。动作分不清就会静默做错事。
+ */
+export type LinkIntent =
+  | { ok: true; action: "save" | "import"; url: string }
+  | { ok: false; reason: string };
 
 /**
  * 认「用户粘进来的东西」。
@@ -23,12 +31,24 @@ export function linkIntentOf(input: string): LinkIntent {
   if (/^shuyonote:/i.test(text)) {
     const r = parseDeepLink(text);
     if (!r.ok) return { ok: false, reason: r.reason };
-    if (r.action.kind === "save" || r.action.kind === "import") return { ok: true, url: r.action.url };
-    return { ok: false, reason: `这条深链是「${r.action.kind}」，不是"存进笔记"那个动作` };
+    if (r.action.kind === "save" || r.action.kind === "import") {
+      return { ok: true, action: r.action.kind, url: r.action.url };
+    }
+    if (r.action.kind === "compose") {
+      return {
+        ok: false,
+        reason:
+          "「起一份草稿」这条路还没做（要的是「未保存的编辑器内容」，不是先落库再删）——" +
+          "现在请用「新建页面」手动粘贴，或让对方把内容发成帖子链接",
+      };
+    }
+    return { ok: false, reason: "这是应用内部的页面链接（shuyonote://page/…），不是社区内容" };
   }
   const checked = checkCommunityUrl(text);
   if (!checked.ok) return { ok: false, reason: checked.reason };
-  return { ok: true, url: checked.url };
+  // 手动粘一条社区地址：默认按"存笔记"处理（那是这条入口最常见的用途）；
+  // 要导入模板就粘 `shuyonote://import?url=…`（这样动作由链接本身说清，不靠猜）。
+  return { ok: true, action: "save", url: checked.url };
 }
 
 /**

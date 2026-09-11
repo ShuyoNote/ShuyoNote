@@ -244,6 +244,28 @@ pub async fn fetch_community_post(url: String) -> Result<CommunityPost, String> 
     fetch_post_with_hosts(&url, COMMUNITY_HOSTS).await
 }
 
+/// 抓一个社区托管的**文档**（模板文件那类），返回 JSON 文本。
+///
+/// 为什么不复用 `fetch_community_post`：那条要求"帖子"的形状（`body_markdown` 等），
+/// 而 `import` 拿到的是一份**模板文件**——形状不同、校验规则也不同（模板的校验在前端，
+/// 因为"模板长什么样"是那边的知识）。所以这里只做**传输**：同一个策略、同一个上限、
+/// 同样只认 JSON；解析与校验各归其位。
+#[tauri::command]
+pub async fn fetch_community_json(url: String) -> Result<String, String> {
+    let target = check_post_url(&url, COMMUNITY_HOSTS)?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (bytes, landed) = get_capped(&client, &target, MAX_POST_JSON_BYTES).await?;
+    if landed != target {
+        check_post_url(&landed, COMMUNITY_HOSTS)
+            .map_err(|e| format!("这个地址被重定向到了不允许的地方（{landed}）：{e}"))?;
+    }
+    String::from_utf8(bytes).map_err(|_| "这个地址返回的不是合法的 UTF-8".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -217,6 +217,8 @@ export interface CommandMap {
   // 社区帖子抓取走**原生**：桌面端的 WebView 是 http://tauri.localhost，而社区域只面向同源，
   // 浏览器 fetch 会被 CORS 拦下、把 401/404 压成一句 "Failed to fetch"（Windows 侧实测）。
   // Web 版仍然用浏览器 fetch（那里没有 Rust），所以社区侧仍需 Access-Control-Allow-Origin。
+  // 抓社区托管的**文档**（模板文件那类）：只做传输，形状校验在前端（模板长什么样是那边的知识）。
+  fetch_community_json: { args: { url: string }; result: string };
   fetch_community_post: {
     args: { url: string };
     result: {
