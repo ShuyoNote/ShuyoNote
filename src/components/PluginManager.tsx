@@ -154,6 +154,16 @@ export function PluginManager() {
                     </button>
                   </div>
                 )}
+                {/* 四组授权块（权限 / 会自动运行 / 命令出现在哪 / 会接住哪些文件）原来各自摊开，
+                    叠起来就是"一堵墙"，把操作按钮一路往下推。
+                    收进一个折叠区；但**默认收起不等于藏起来**：未启用的插件在标题上直说
+                    "启用前请看这里"——原设计（新装默认禁用、用户看完再启用）不能因为美化而破掉。
+                    不用 React 控制 open，避免把用户手动展开的状态顶回去。 */}
+                <details className="pm-perms-fold">
+                  <summary>
+                    它要什么权限、会在什么时候跑
+                    {!p.enabled && <span className="pm-fold-warn">启用前请看这里</span>}
+                  </summary>
                 {/* 权限 + 理由必须摊在用户面前：新装的插件默认禁用，用户看完再启用。 */}
                 {p.permissions.length === 0 ? (
                   <div className="pm-item-perms">不需要任何权限</div>
@@ -235,6 +245,7 @@ export function PluginManager() {
                     ))}
                   </div>
                 )}
+                </details>
               </div>
               <div className="pm-item-actions">
                 <button onClick={() => toggle(p.id)}>{p.enabled ? "禁用" : "启用"}</button>

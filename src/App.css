@@ -19104,3 +19104,15 @@ body.is-plugin-panel-open .main {
 .plugin-manager .pm-perms-fold[open] > summary::before { content: "▾ "; }
 .plugin-manager .pm-perms-fold > summary:hover { color: var(--brand, #2F6BFF); }
 .plugin-manager .pm-perms-fold[open] .pm-item-perms { margin-top: 6px; }
+
+/* == 折叠区内的授权块 == */
+.plugin-manager .pm-perms-fold > summary { display: flex; align-items: center; gap: 8px; }
+.plugin-manager .pm-fold-warn {
+  font-size: 11.5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(255, 138, 30, .12);
+  color: #E97712;
+  font-weight: 600;
+}
+.plugin-manager .pm-perms-fold[open] > summary { margin-bottom: 6px; }
