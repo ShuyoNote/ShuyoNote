@@ -123,7 +123,15 @@ pnpm check:web-build        # 能打开、DB 能初始化、版本号对、动�
 
 # 3) 部署后自检（两个入口一起验，版本 + 资源可达）
 pnpm check:web-deploy
+
+# 4) 还想更踏实一步：用真实 Chromium 打开**线上**那一份，确认它真的能用
+node scripts/check-web-build.mjs --url https://shuyo.cn/app/
+node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 ```
+
+> [!] **子路径的坑（v1.89.0 部署时踩到）**：主站挂在 `/app/` 下，而页面里的 `/assets/…` 会被
+> 解析到**域名根**。检查脚本第一次就是按根路径去取的，于是"线上资源 404"——其实是检查脚本
+> 自己找错了地方。凡是自己拼资源 URL 的地方，都要用 `new URL(…, APP_URL)` 而不是绝对路径。
 
 > [!] **部署路径坑（v1.84.4 实际踩到）**：`scp -r dist-web host:/app/` 会把 **`dist-web` 整个目录**传成 `app/dist-web/`，而**不是**把内容铺进 `app/`。结果 `app/index.html` 是新的（引用新 hash 资源），但 `app/assets/` 仍是旧资源 → 启动报「失败的资源: …/assets/index-*.js 404」。**必须用 `dist-web/.`（斜杠点）**把内容铺平，或先传再 `cp -rf app/dist-web/. app/ && rm -rf app/dist-web`。**部署后务必验证**：`curl -s https://shuyo.cn/app/index.html | grep -oE 'assets/[^\"]+\.(js|css)'` 逐个 `curl` 应全 200。
 

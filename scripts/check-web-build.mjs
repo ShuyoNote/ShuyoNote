@@ -14,6 +14,10 @@
 // 用法：
 //   pnpm build:web && node scripts/check-web-build.mjs
 //   node scripts/check-web-build.mjs --dir dist-web --shots /tmp/shots
+//   node scripts/check-web-build.mjs --url https://shuyo.cn/app/     # 验**线上**那一份
+//
+// `--url` 模式同样值得有：部署成功、`version.json` 对、资源 200 —— 这些都不等于"打开能用"
+// （DB 初始化失败就是既不看版本号也不看资源清单的一种坏法）。
 
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -24,6 +28,9 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dirArg = process.argv.indexOf("--dir");
 const DIR = resolve(root, dirArg > -1 ? process.argv[dirArg + 1] : "dist-web");
+const urlArg = process.argv.indexOf("--url");
+/** 给了 --url 就直接验线上那一份：不起本地服务器，其余断言完全一样。 */
+const LIVE_URL = urlArg > -1 ? process.argv[urlArg + 1].replace(/\/+$/, "") + "/" : null;
 const shotsArg = process.argv.indexOf("--shots");
 const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
 
@@ -102,8 +109,8 @@ function serveStatic(dir) {
   return new Promise((done) => server.listen(0, "127.0.0.1", () => done({ server, port: server.address().port })));
 }
 
-if (!existsSync(join(DIR, "index.html"))) {
-  console.error(`找不到构建产物：${join(DIR, "index.html")}——先跑 pnpm build:web`);
+if (!LIVE_URL && !existsSync(join(DIR, "index.html"))) {
+  console.error(`找不到构建产物：${join(DIR, "index.html")}——先跑 pnpm build:web（或用 --url 验线上）`);
   process.exit(2);
 }
 const chrome = findChrome();
@@ -113,12 +120,22 @@ if (!chrome) {
 }
 
 const expected = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
-const built = JSON.parse(readFileSync(join(DIR, "version.json"), "utf8")).version;
-console.log(`Web 构建产物验收 · ${DIR}`);
-console.log(`  期望版本 ${expected} · 产物版本 ${built}`);
+let built = null;
+if (LIVE_URL) {
+  try {
+    built = JSON.parse(await (await fetch(LIVE_URL + "version.json")).text()).version;
+  } catch {
+    built = null;
+  }
+} else {
+  built = JSON.parse(readFileSync(join(DIR, "version.json"), "utf8")).version;
+}
+console.log(LIVE_URL ? `Web 线上验收 · ${LIVE_URL}` : `Web 构建产物验收 · ${DIR}`);
+console.log(`  期望版本 ${expected} · 实测版本 ${built ?? "(取不到)"}`);
 
 const puppeteer = (await import("puppeteer-core")).default;
-const { server, port } = await serveStatic(DIR);
+const { server, port } = LIVE_URL ? { server: null, port: null } : await serveStatic(DIR);
+const APP_URL = LIVE_URL ?? `http://127.0.0.1:${port}/`;
 const browser = await puppeteer.launch({
   executablePath: chrome,
   headless: "shell",
@@ -147,10 +164,10 @@ page.on("response", (r) => {
 });
 
 try {
-  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle2", timeout: 60000 });
+  await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
   await page.waitForSelector(".sidebar, .app, #root", { timeout: 30000 });
 
-  ok(built === expected, `产物里的 version.json 是当前版本（${built}）`);
+  ok(built === expected, `${LIVE_URL ? "线上" : "产物"}的 version.json 是当前版本（${built ?? "取不到"}）`);
 
   // 数据库真的初始化了吗——用界面自己的入口建一页，再确认编辑器起来了。
   // 这一步才验得到 sql.js 的 wasm：v1.84.1 的坏法是"页面能开、DB 初始化失败"，
@@ -178,15 +195,25 @@ try {
       return links.some((n) => n.includes(p));
     }, pat);
     // 没被加载过不代表坏了：直接按清单取名去取一次
-    const rel = readdirSync(join(DIR, "assets")).find((f) => f.includes(pat));
+    const localAssets = LIVE_URL
+      ? existsSync(join(DIR, "assets"))
+        ? readdirSync(join(DIR, "assets"))
+        : []
+      : readdirSync(join(DIR, "assets"));
+    const rel = localAssets.find((f) => f.includes(pat));
     if (!rel) {
-      ok(false, `产物里找不到 ${pat} 资源`);
+      // 线上模式且本地没有 dist-web 时无从知道文件名——如实说，而不是假装通过
+      console.log(`  · ${pat}：${LIVE_URL ? "本地没有 dist-web 可比对文件名，跳过" : "产物里找不到"}`);
       continue;
     }
+    // 必须用**绝对**地址：Web 版可能挂在子路径下（国内主站就是 /app/），
+    // 而页面里的 `/assets/...` 会被解析到域名根 —— 那会得到 404，然后把这个 404
+    // 记成"线上资源缺失"，而其实是检查脚本自己找错了地方（第一次跑就踩了）。
+    const abs = new URL(`assets/${rel}`, APP_URL).toString();
     const status = await page.evaluate(async (u) => {
       const r = await fetch(u, { method: "GET" });
       return r.status;
-    }, `/assets/${rel}`);
+    }, abs);
     ok(status === 200, `${pat} 资源取得到（${rel} → ${status}${hit ? "，页面也用过它" : ""}）`);
   }
 
@@ -242,7 +269,7 @@ try {
   ok(failedRequests.length === 0, `没有失败请求（${failedRequests.length ? failedRequests.slice(0, 3).join(" | ") : "0"}）`);
 } finally {
   await browser.close();
-  server.close();
+  server?.close();
 }
 
 console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);

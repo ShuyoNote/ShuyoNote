@@ -11,6 +11,7 @@
   - 发布说明（GitCode / GitHub release）也补上了 Web 版一节：两个入口的地址、以及"多设备同步与磁盘插件需要桌面版"这句边界。
   - **Web 版整包随发布一起上传**：`release.mjs` 现在会校验 `dist-web/version.json` 与本次版本一致，再打成 `ShuyoNote_<版本>_web.zip` 挂到 release 上（内含 `SELF-HOST.txt`：别漏掉运行时才加载的 `sql-wasm`/`pdf.worker`、`.wasm` 要以 `application/wasm` 提供）。**它不进 `latest.json`**——更新通道只认真实安装包；`--no-web` 可跳过。这样"自己托管一份 Web 版"不再需要会构建：下载整包、解压到静态服务器即可。1.89.0 的整包已经补传上去（`ShuyoNote_1.89.0_web.zip`，52.89 MB，线上 sha256 与本地逐字节一致）。
   - 打包时踩了个小坑并修掉：说明文件的**文件名**改成了 ASCII（`SELF-HOST.txt`）——macOS 的 `zip` 不给非 ASCII 名字打 UTF-8 标记，中文名到 Windows 上解出来是乱码（实测过一次）。
+  - `check-web-build` 增加 `--url` 模式：**直接验线上那一份**（不起本地服务器，其余断言完全一样）。于是"部署成功"与"打开能用"之间那一步也有了自动化——1.89.0 部署后就是用它确认的。顺带修掉它自己的一个子路径 bug：主站挂在 `/app/` 下，而脚本按 `/assets/…` 去取资源会被解析到域名根，于是把"检查脚本找错地方"误报成"线上资源 404"（凡自己拼 URL 的地方都要 `new URL(…, APP_URL)`）。
 
 ## [1.89.0] - 2026-09-11
 
