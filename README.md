@@ -32,6 +32,9 @@
 
 > Web 版与桌面版共用同一套前端与数据模型（浏览器端本地优先、离线可用，用 sql.js + IndexedDB）。多设备 / 团队同步需在桌面版配置自建 `shuyonote-sync-server` 后使用。
 
+**社区**：[community.shuyo.cn](https://community.shuyo.cn) ——
+使用问题、经验分享、插件配方与更新公告都在这里。
+
 ## 为什么选 ShuyoNote
 
 - **数据是你自己的**：数据全部保存在本机 SQLite，离线可用、无需注册、无云端依赖；支持 Markdown 导出 / 整库备份 / 单空间导出，随时带走。**本地优先、数据主权**是它的根。
@@ -87,6 +90,7 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 |---|---|
 | **搭建开发环境**（Node / pnpm / Rust / 平台依赖，到 `pnpm tauri dev`） | [docs/development.md](docs/development.md)「环境准备」 |
 | **贡献指南**（从哪开始 / 看哪篇 / 提交前验证 / PR 流程） | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| **社区**（使用问题 / 经验分享 / 插件配方 / 更新公告） | [community.shuyo.cn](https://community.shuyo.cn) |
 | 运行 / 测试 / 验证循环 / 版本号提升 / 常见坑 | [docs/development.md](docs/development.md) 开发指南 |
 | 全量文档索引 | [docs/README.md](docs/README.md) |
 
