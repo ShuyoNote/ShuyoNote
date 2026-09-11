@@ -50,6 +50,15 @@ jobs:
       - name: 冒烟测试（web 平台行为的事实标准）
         run: node scripts/smoke-web.mjs
 
+      - name: Web 构建产物自检（真实 Chromium）
+        # 冒烟跑的是 dev server，跑不到"**构建产物**能不能打开"这件事。而 Web 版是每次推
+        # main 自动部署的（Pages），构建成功 ≠ 打开能用：v1.84.1 踩过一次，按静态引用过滤
+        # 删旧文件，把 sql.js 的 wasm / pdf worker 这类运行时才加载的资源删了——页面照开、
+        # DB 初始化失败、所有查询报错。这条在 CI 里先兜住。
+        run: |
+          pnpm build:web
+          node scripts/check-web-build.mjs
+
       - name: 同步一致性（两设备并发，真实 applyChange + 真实 sql.js）
         run: node scripts/verify-two-device-sync.mjs
 

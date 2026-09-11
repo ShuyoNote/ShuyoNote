@@ -33,6 +33,10 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Build Web
         run: pnpm build:web
+      - name: 构建产物自检（真实 Chromium：能打开、DB 能初始化、版本号对）
+        # 部署前最后一道：Pages 是自动部署的，坏产物一旦上线，用户拿到的是"能打开但用不了"。
+        run: node scripts/check-web-build.mjs
+
       - name: Add .nojekyll (serve static as-is)
         run: touch dist-web/.nojekyll
       - uses: actions/configure-pages@v5

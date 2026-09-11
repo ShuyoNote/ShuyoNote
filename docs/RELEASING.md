@@ -89,19 +89,42 @@ GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更�
 
 **发布后自检**（自动检查之外的兜底）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
 
-## ⑦ Web 版（可选，同步上线）
+## ⑦ Web 版（**必做**，两个入口都要）
+
+> 为什么从"可选"改成"必做"：它从 v1.84.5 起就没人跟了——本次（v1.89.0）自检发现
+> **国内主站还停在 1.84.5**，而 GitHub Pages 已经 1.89.0。没有任何东西会提醒这件事，
+> 于是"线上 Web 版"和"仓库里的版本"可以静默差五个版本。现在有命令可以一眼看出来：
+> `pnpm check:web-deploy`（比对两个入口的 `version.json` 与 `package.json`，并把线上
+> `index.html` 引用的每个资源都取一遍）。
+
+**两个入口，两种部署方式：**
+
+| 入口 | 怎么上线 | 谁负责 |
+|---|---|---|
+| GitHub Pages `https://shuyonote.github.io/ShuyoNote/` | **自动**：推 main → `.github/workflows/pages.yml` | CI（无需手工） |
+| 国内主站 `https://shuyo.cn/app/` | **手动上传**（下面三步） | 发布者 |
+
 ```bash
-pnpm run build:web     # dist-web/version.json → 该版本
-# 上传 dist-web 到 /var/www/shuyo-site/app/（scp）+ chmod -R 644/755
+# 1) 构建（version.json 会写成当前版本）+ 用真实 Chromium 验一遍产物
+pnpm build:web
+pnpm check:web-build        # 能打开、DB 能初始化、版本号对、动态资源取得到
+
+# 2) 上传到 /var/www/shuyo-site/app/（scp）+ chmod -R 644/755
 #   正确：scp -r dist-web/. root@host:/var/www/shuyo-site/app/   ← 注意 dist-web/.（斜杠点）
 #   或：  scp dist-web/* dist-web/.[!.]* root@host:/var/www/shuyo-site/app/
 #   错误：scp -r dist-web root@host:/var/www/shuyo-site/app/     ← 会传成 app/dist-web/，⚠️见下
+
+# 3) 部署后自检（两个入口一起验，版本 + 资源可达）
+pnpm check:web-deploy
 ```
 
 > [!] **部署路径坑（v1.84.4 实际踩到）**：`scp -r dist-web host:/app/` 会把 **`dist-web` 整个目录**传成 `app/dist-web/`，而**不是**把内容铺进 `app/`。结果 `app/index.html` 是新的（引用新 hash 资源），但 `app/assets/` 仍是旧资源 → 启动报「失败的资源: …/assets/index-*.js 404」。**必须用 `dist-web/.`（斜杠点）**把内容铺平，或先传再 `cp -rf app/dist-web/. app/ && rm -rf app/dist-web`。**部署后务必验证**：`curl -s https://shuyo.cn/app/index.html | grep -oE 'assets/[^\"]+\.(js|css)'` 逐个 `curl` 应全 200。
 
 > [!] **清理旧 assets 必须保留「动态加载」资源（踩坑，v1.84.1）**：官网手动部署时若删旧产物，**不能只按 `index.html`/`sw.js` 的静态资源引用过滤**——sql.js 的 wasm（`new URL('sql-wasm-….wasm', import.meta.url)` 在 `vendor-*.js` 里运行时加载）和 pdf worker（`pdf.worker.min-….mjs`）等**不在静态引用里**，误删会导致 `Error: SqliteStore not initialized`（sql-wasm fetch 404 → `SqliteStore.init()` 抛错 → catch 返回未初始化 store → 所有 DB 查询报错）。
 > **正确做法**：按**本地 `dist-web` 全量清单**同步（`find . -type f` 生成本地清单，服务器按清单删多余文件），既铺平目录又保留全部动态资源。**GitHub Pages 走 CI 全新构建不受影响**；只有手动 scp 的官方站需小心。
+
+> [!] **为什么"看版本号"不够**：`check:web-deploy` 会把线上 `index.html` 引用的**每个资源**
+> 都取一遍。版本号对、资源对不上，正是 v1.84.4 那种"页面能开、功能全废"的坏法。
 
 ## ⑧ 检查 CHANGELOG 连续
 ```bash
