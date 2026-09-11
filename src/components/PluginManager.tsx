@@ -115,7 +115,7 @@ export function PluginManager() {
           <div className="pm-empty">未发现插件 · 可从文件夹安装，或把插件放入插件目录</div>
         ) : (
           plugins.map((p) => (
-            <div key={p.id} className="pm-item">
+            <div key={p.id} className={`pm-item ${p.enabled ? "pm-on" : "pm-off"}`}>
               <div className="pm-item-info">
                 <div className="pm-item-name">
                   {p.name}
