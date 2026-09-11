@@ -86,6 +86,29 @@ execFileSync(minisignBin, ["-Sm", indexPath, "-s", keyPath], { stdio: ["ignore",
 const sigPath = `${indexPath}.minisig`;
 if (!existsSync(sigPath)) die(`minisign 没有产出签名：${sigPath}`);
 
+/**
+ * 签名文件最前面**不能有 BOM**。
+ *
+ * 不是洁癖：Windows 上 `Set-Content` / `Out-File -Encoding utf8` 默认会写 BOM，
+ * 而一旦 `.minisig` 首字节是 `EF BB BF`，应用那边 `Signature::decode()` 拿到的就是
+ * 一个以 BOM 开头的 base64 —— 失败信息是"签名不合法"，**真因却是 BOM**，
+ * 而"把公钥/签名文件从 Windows 拷到服务器"正是最容易带上 BOM 的路径。
+ * minisign 本体写的是纯 UTF-8；这里只做兜底检查：发现了就明确失败，而不是悄悄改字节
+ * （悄悄改会让"磁盘上的字节"与"被签的字节"这个不变式变得难追溯）。
+ */
+const sigBytes = readFileSync(sigPath);
+if (sigBytes.length >= 3 && sigBytes[0] === 0xef && sigBytes[1] === 0xbb && sigBytes[2] === 0xbf) {
+  die(`签名文件带 BOM（${sigPath}）—— 应用解析会失败，而真因是 BOM 不是内容`);
+}
+if (!sigBytes.toString("utf8").includes("untrusted comment:")) {
+  die(`签名文件不像 minisign 签名（没有 untrusted comment 行）：${sigPath}`);
+}
+// 索引本身同理：带 BOM 的 JSON 有些解析器会直接报 "expected value at line 1 column 1"。
+const idxBytes = readFileSync(indexPath);
+if (idxBytes.length >= 3 && idxBytes[0] === 0xef && idxBytes[1] === 0xbb && idxBytes[2] === 0xbf) {
+  die(`索引文件带 BOM（${indexPath}）—— 应用解析会失败`);
+}
+
 const urlBase = fragment.urlBase ?? "";
 info(`owner：${owner.name}（${owner.url}）`);
 info(`插件 ${index.plugins.length} 个；downloadUrl 前缀 ${urlBase || "（片段里没写）"}`);

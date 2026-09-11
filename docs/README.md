@@ -62,6 +62,7 @@ CHANGELOG.md             # 版本变更日志
 | [plugin-policy.md](plugin-policy.md) | **插件开发者政策**：发布前该读的底线（不许做什么、必须写什么、撤回与换密钥的规矩），以及应用会替用户摆出哪些**事实**、又刻意不给什么结论 |
 | [plugin-first-plugin.md](plugin-first-plugin.md) | **20 行写第一个插件**：从 `pnpm plugin:new` 生成起点 → 看懂 manifest 与权限三种写法 → 写第一个命令 → 装进应用跑一遍 → 出问题看哪里 → 发布给别人。目标是"只看文档不读源码" |
 | [plugin-index-spec.md](plugin-index-spec.md) | **`plugin-index.json` 公开规范（一页纸）**：最小可用索引、字段表与限制、应用会强制的规则、两级签名（索引 / 发布者）、两级撤回（版本 / 密钥）、发布三步。照着写就能托管一份索引 |
+| [plugin-hosting.md](plugin-hosting.md) | **第一方插件索引的托管运维**：社区索引的实际落地点与 URL、**为什么单开 `/plugins/` 而不复用 `/static/`**（后者统一长缓存、索引被长缓存 = 新插件永远看不到）、nginx 配置与那次 BOM 事故、发布新版本的完整命令与**上传顺序**、以及每次发布后的验收命令 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.10 UI 插件/M11.11 市场已评估未做（带启动闸门，见 [插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)））、竞品差距跟踪 |
 | [harmony-web-ceiling.md](harmony-web-ceiling.md) | **基于 Web 版开发鸿蒙桌面应用的能力边界（天花板）分析**：ArkWeb 壳不改变浏览器内核；能力矩阵（DB/文件系统/原生引擎/加密/系统集成/同步/插件）；路线 A（纯套壳≈PWA）vs 路线 B（加 ArkTS 原生桥）；对 ShuyoNote 的建议与取舍 |
 
