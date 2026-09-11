@@ -49,6 +49,7 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
+import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
 import { usePlugins } from "./store/plugins";
 import { emitHostEvent } from "./lib/pluginEvents";
@@ -177,7 +178,20 @@ function NoteEditor({ pageId }: { pageId: string }) {
   // （主窗口 `visible(false)`，插件 setup 时 emit）。只订阅会稳定漏掉**第一次**深链，
   // 而第二次正常——那种"第一次不灵"最容易被当成偶发。`mountDeepLinks` 里
   // "先订阅、再 drain 队列"两件事一起做，就是为了盖住这个洞。
-  useEffect(() => mountDeepLinks((url) => useCommunitySave.getState().openWithLink(url)), []);
+  // 深链进来之后**先分派**再决定去哪：`page/` 打开那一页、`save`/`import` 交给社区对话框、
+  // `compose` 如实说还没做。直接接到对话框上会把应用**自己生成的**页面链接也送进对话框
+  // （那是一条有效链接，接错了动作）。分派逻辑是纯的，见 `deepLinkDispatch.ts`。
+  useEffect(
+    () =>
+      mountDeepLinks(
+        createDeepLinkHandler({
+          openPage: (id) => useNotes.getState().openPage(id),
+          openCommunityDialog: (url) => useCommunitySave.getState().openWithLink(url),
+          notify: (message) => toast(message, "info"),
+        }),
+      ),
+    [],
+  );
 
   // 窗口是以无边框创建的（自绘标题栏）。若用户关掉了这个设置，启动时把系统
   // 标题栏恢复回来——设置存在 localStorage，Rust 侧读不到，只能前端补一刀。
