@@ -118,6 +118,13 @@ interface PluginsState {
    * 表态会被后端记住（之后不再拦运行/安装），但界面照旧显示"这是你忽略过的撤回"。
    */
   ignoreRevocation: (id: string) => Promise<PluginActionResult>;
+  /**
+   * 对"某把发布者密钥被索引撤回"表态：我知道，仍然使用。
+   *
+   * 与版撤回同一套语义：撤回一把 key 说的是"它签的东西都不作数了"，但索引拥有者
+   * 仍然不是用户的上司——这一层的作用是让他知道并明确表态。
+   */
+  ignoreRevokedKey: (fingerprint: string, pluginName?: string) => Promise<PluginActionResult>;
   openDir: () => Promise<PluginActionResult>;
   runCommand: (
     pluginId: string,
@@ -282,6 +289,32 @@ export const usePlugins = create<PluginsState>((set) => ({
       console.error("ignore revocation failed", e);
       const error = errText(e);
       toast(`忽略撤回失败：${error}`, "error");
+      return { ok: false, error };
+    }
+  },
+  ignoreRevokedKey: async (fingerprint, pluginName) => {
+    const who = pluginName ? `插件「${pluginName}」` : "这个插件";
+    if (
+      !(await confirmDialog({
+        title: "仍然使用被撤回的密钥",
+        message:
+          `${who}当初是用指纹 ${fingerprint} 的发布者密钥签的，而索引把这把密钥撤回了。\n` +
+          "撤回一把密钥意味着：索引拥有者认为这把密钥签的东西都不该再用（泄露、滥用、作者放弃）。\n" +
+          "继续使用 = 你选择相信自己的判断。撤回记录不会被删除，插件管理里会一直标着。",
+        okLabel: "仍然使用",
+        danger: true,
+      }))
+    )
+      return { ok: false, error: "已取消" };
+    try {
+      await api.ignoreRevokedPublisherKey(fingerprint);
+      await usePlugins.getState().load();
+      toast("已忽略这次密钥撤回（插件可以继续运行，撤回记录仍在）", "success");
+      return { ok: true };
+    } catch (e) {
+      console.error("ignore revoked key failed", e);
+      const error = errText(e);
+      toast(`忽略密钥撤回失败：${error}`, "error");
       return { ok: false, error };
     }
   },

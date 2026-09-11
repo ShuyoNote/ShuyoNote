@@ -14,6 +14,8 @@ import {
   installConfirmMessage,
   loadIndexDraft,
   revocationNotice,
+  revokedKeyNotice,
+  revokedKeysSummary,
   saveIndexDraft,
   INDEX_PUBKEY_KEY,
   INDEX_URL_KEY,
@@ -44,6 +46,7 @@ const view = (over: Partial<PluginIndexView> = {}): PluginIndexView => ({
   owner: { id: "shuyo-community", name: "数友社区", url: "https://example.com" },
   generatedAt: "2026-09-10T12:00:00Z",
   signatureVerified: null,
+  revokedKeys: [],
   plugins: [entry()],
   ...over,
 });
@@ -255,6 +258,46 @@ describe("已装插件被撤回（离线记忆）", () => {
     expect(n.blocked).toBe(false);
     expect(n.text).toContain("你选择继续使用");
     expect(n.text).toContain("有严重漏洞");
+  });
+});
+
+describe("发布者密钥被撤回（比撤回版本更重）", () => {
+  it("没撤回就不显示", () => {
+    expect(revokedKeyNotice(null)).toEqual({ text: "", blocked: false });
+  });
+
+  it("被撤回且没表态：说清「签名它的密钥被撤回」「运行已被拦下」并给出指纹", () => {
+    const n = revokedKeyNotice({ fingerprint: "aaaa-1111-2222-3333", reason: "这把 key 泄露了", ignored: false });
+    expect(n.blocked).toBe(true);
+    expect(n.text).toContain("签名它的发布者密钥已被索引撤回");
+    expect(n.text).toContain("这把 key 泄露了");
+    expect(n.text).toContain("aaaa-1111-2222-3333");
+    // 用词要和"版本被撤回"分开——两件事的严重程度不一样，用户得一眼看出是哪种
+    expect(n.text.startsWith("签名它的发布者密钥")).toBe(true);
+    expect(revocationNotice({ version: "1.0.0", reason: "r", ignored: false }).text.startsWith("已被索引撤回")).toBe(true);
+  });
+
+  it("原因缺失也要说得出话", () => {
+    expect(revokedKeyNotice({ fingerprint: "f", reason: "  ", ignored: false }).text).toContain(
+      "没有写原因",
+    );
+  });
+
+  it("用户表过态：不再拦，但照旧如实写着", () => {
+    const n = revokedKeyNotice({ fingerprint: "f", reason: "泄露", ignored: true });
+    expect(n.blocked).toBe(false);
+    expect(n.text).toContain("你选择继续使用");
+  });
+
+  it("索引撤回了哪几把 key 要列出来（指纹 + 原因 + 时间）", () => {
+    expect(revokedKeysSummary([])).toBe("");
+    const summary = revokedKeysSummary([
+      { fingerprint: "aaaa-1111", reason: "泄露", revokedAt: "2026-09-01" },
+      { fingerprint: "bbbb-2222", reason: "" },
+    ]);
+    expect(summary).toContain("撤回了 2 把发布者密钥");
+    expect(summary).toContain("aaaa-1111 —— 泄露（2026-09-01）");
+    expect(summary).toContain("bbbb-2222 —— 没写原因");
   });
 });
 

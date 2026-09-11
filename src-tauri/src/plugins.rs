@@ -265,6 +265,10 @@ pub struct PluginMeta {
     /// 装它时固定下来的发布者公钥（TOFU）。界面显示指纹，用户才有机会在别处对比。
     #[serde(default)]
     pub publisher_key: Option<PublisherKeyView>,
+    /// 这个插件当初固定的那把发布者密钥**已被索引撤回**（离线记忆）。
+    /// 有值时宿主已经拒绝运行它（除非用户点过「仍然使用」）。
+    #[serde(default)]
+    pub publisher_key_revoked: Option<RevokedKeyEntry>,
 }
 
 /// 一条权限的展示形态：id + 人类可读标题 + 插件自己给的理由。
@@ -3451,7 +3455,12 @@ fn check_entry_publisher_signature(
     if entry.publisher_key.trim().is_empty() {
         return Ok(None);
     }
-    // 先验签：包不是那把 key 签的，后面的一切都不必谈。
+    // 被撤回的 key 直接拒（离线记忆也算）：这把 key 签的东西都不作数了，
+    // 连"验签通过"都不必给——那不是用户此刻该关心的事。
+    if let Some(why) = revoked_key_blocks(c, &entry.publisher_key) {
+        return Err(format!("publisher_key_revoked: {why}。不接受这份包"));
+    }
+    // 验签：包不是那把 key 签的，后面的一切都不必谈。
     plugin_index::verify_package_signature(package_bytes, &entry.signature, &entry.publisher_key)?;
     match publisher_key_verdict(c, plugin_id, &entry.publisher_key)? {
         PublisherKeyVerdict::None | PublisherKeyVerdict::Match => Ok(None),
@@ -3547,6 +3556,108 @@ fn pin_publisher_key(c: &Connection, id: &str, key: &str, source: &str) -> Resul
     })
 }
 
+/// 一把被撤回的发布者密钥（`plugin_revoked_key` 一行）的展示形态。
+#[derive(Serialize, Clone, Debug)]
+pub struct RevokedKeyEntry {
+    pub fingerprint: String,
+    pub reason: String,
+    pub revoked_at: String,
+    pub seen_at: i64,
+    /// 用户明确说过"我知道，仍然使用"（在那之后不再拦；界面照旧显示）。
+    pub ignored: bool,
+}
+
+/// 把一份索引里"被撤回的发布者密钥"记进离线列表（与版本撤回同一套语义）。
+fn record_revoked_keys(
+    c: &Connection,
+    index: &plugin_index::PluginIndex,
+) -> Result<usize, String> {
+    let now = now_ms();
+    let mut n = 0usize;
+    for rk in &index.revoked_keys {
+        let fp = plugin_index::publisher_key_fingerprint(&rk.key)?;
+        let changed = c
+            .execute(
+                "INSERT INTO plugin_revoked_key (fingerprint, key_b64, reason, revoked_at, seen_at, ignored_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)
+                 ON CONFLICT(fingerprint) DO UPDATE SET
+                     key_b64 = excluded.key_b64,
+                     reason = excluded.reason,
+                     revoked_at = excluded.revoked_at,
+                     seen_at = excluded.seen_at",
+                params![
+                    fp,
+                    rk.key.trim(),
+                    rk.reason,
+                    rk.revoked_at.clone().unwrap_or_default(),
+                    now
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        n += changed;
+    }
+    Ok(n)
+}
+
+/// 读一把被撤回的 key（按指纹）。
+fn read_revoked_key(c: &Connection, fingerprint: &str) -> Option<RevokedKeyEntry> {
+    c.query_row(
+        "SELECT fingerprint, reason, revoked_at, seen_at, ignored_at
+         FROM plugin_revoked_key WHERE fingerprint = ?1",
+        params![fingerprint],
+        |r| {
+            Ok(RevokedKeyEntry {
+                fingerprint: r.get(0)?,
+                reason: r.get(1)?,
+                revoked_at: r.get(2)?,
+                seen_at: r.get(3)?,
+                ignored: r.get::<_, Option<i64>>(4)?.is_some(),
+            })
+        },
+    )
+    .ok()
+}
+
+fn all_revoked_keys(c: &Connection) -> Vec<RevokedKeyEntry> {
+    let mut stmt = match c.prepare(
+        "SELECT fingerprint, reason, revoked_at, seen_at, ignored_at
+         FROM plugin_revoked_key ORDER BY seen_at DESC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok(RevokedKeyEntry {
+            fingerprint: r.get(0)?,
+            reason: r.get(1)?,
+            revoked_at: r.get(2)?,
+            seen_at: r.get(3)?,
+            ignored: r.get::<_, Option<i64>>(4)?.is_some(),
+        })
+    });
+    match rows {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// **这把 key 是不是被撤回且用户没有忽略**。是 → 返回给人看的原因。
+///
+/// 撤回一把 key 比撤回一个版本更重：它说的是"这把 key 签的东西都不作数了"。
+/// 但语义上仍然一致——用户明确表态过就不再拦，索引拥有者不是用户的上司。
+fn revoked_key_blocks(c: &Connection, key: &str) -> Option<String> {
+    let fp = plugin_index::publisher_key_fingerprint(key).ok()?;
+    let r = read_revoked_key(c, &fp)?;
+    if r.ignored {
+        return None;
+    }
+    Some(if r.reason.trim().is_empty() {
+        format!("指纹 {fp} 的发布者密钥已被索引撤回（索引没有写原因）")
+    } else {
+        format!("指纹 {fp} 的发布者密钥已被索引撤回：{}", r.reason)
+    })
+}
+
 /// 一条撤回记忆（`plugin_revocation` 一行）的展示形态。
 #[derive(Serialize, Clone, Debug)]
 pub struct RevocationView {
@@ -3634,7 +3745,28 @@ fn run_gates(c: &Connection, manifest: &Manifest) -> Result<(), String> {
             manifest.version
         ));
     }
+    // 发布者密钥被撤回：这个插件当初就是那把 key 签的 → 它签的东西都不作数了。
+    if let Some(pinned) = read_publisher_key(c, id) {
+        if let Some(why) = pinned_key_revoked(c, &pinned) {
+            return Err(format!(
+                "publisher_key_revoked: 插件「{id}」的{why}。你可以在插件管理里选择「仍然使用」，或者卸载它"
+            ));
+        }
+    }
     Ok(())
+}
+
+/// 已固定的那把发布者 key 有没有被撤回。**用记忆里的 key 原文重算指纹**，
+/// 因为撤回记录按指纹索引，而固定记录里存的也是原文（两处必须按同一口径比）。
+fn pinned_key_revoked(c: &Connection, pinned: &PublisherKeyView) -> Option<String> {
+    match read_revoked_key(c, &pinned.fingerprint) {
+        Some(r) if !r.ignored => Some(if r.reason.trim().is_empty() {
+            "发布者密钥已被索引撤回（索引没有写原因）".to_string()
+        } else {
+            format!("发布者密钥已被索引撤回：{}", r.reason)
+        }),
+        _ => None,
+    }
 }
 
 /// 读一条撤回记忆。
@@ -3762,11 +3894,14 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
         let is_enabled = enabled_map.get(&manifest.id).copied().unwrap_or(false);
         // 撤回记忆：只在**记的就是这个版本**时才算数（索引后来发的修好的版本不该被牵连）。
         // 发布者公钥一起读出来（界面要显示指纹）。
-        let (revoked, publisher_key) = {
+        let (revoked, publisher_key, publisher_key_revoked) = {
             let c = conn(&db);
+            let pinned = read_publisher_key(&c, &manifest.id);
+            let key_revoked = pinned.as_ref().and_then(|p| read_revoked_key(&c, &p.fingerprint));
             (
                 read_revocation(&c, &manifest.id).filter(|r| r.version == manifest.version),
-                read_publisher_key(&c, &manifest.id),
+                pinned,
+                key_revoked,
             )
         };
         // 声明式插件没有代码：不读入口、不跑 Boa（这正是它安全的原因——没有可执行的东西）。
@@ -3815,6 +3950,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
                 replaced_version: None,
                 revoked,
                 publisher_key,
+                publisher_key_revoked,
             });
             continue;
         }
@@ -3865,6 +4001,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             replaced_version: None,
             revoked,
             publisher_key,
+            publisher_key_revoked,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -4293,6 +4430,7 @@ fn install_from_dir(
         replaced_version: replaced,
         revoked: None,
         publisher_key: None,
+        publisher_key_revoked: None,
     })
 }
 
@@ -4404,6 +4542,27 @@ pub async fn fetch_plugin_index(
     // 记失败不该让"看索引"这件事失败——所以只记日志，不把它变成错误。
     // 每条撤回也写进**对应插件自己**的日志（插件管理里点「日志」能看到）——
     // 日志面板是按插件开的，挂在一个不存在的插件 id 上等于没人看得见。
+    let revoked_keys = {
+        let c = conn(&db);
+        record_revoked_keys(&c, &index).unwrap_or(0)
+    };
+    if revoked_keys > 0 {
+        for rk in &index.revoked_keys {
+            let fp = plugin_index::publisher_key_fingerprint(&rk.key).unwrap_or_default();
+            push_log(
+                &format!("key:{fp}"),
+                "warn",
+                &format!(
+                    "索引撤回了这把发布者密钥：{}（用它签的插件会被拦下）",
+                    if rk.reason.trim().is_empty() {
+                        "索引没写原因"
+                    } else {
+                        rk.reason.as_str()
+                    }
+                ),
+            );
+        }
+    }
     let n = {
         let c = conn(&db);
         match record_revocations(&c, &index) {
@@ -4482,6 +4641,39 @@ pub fn plugin_publisher_keys(db: State<'_, Db>) -> Vec<PublisherKeyView> {
     }
 }
 
+/// 被撤回的发布者密钥（界面显示用）。
+#[tauri::command]
+pub fn plugin_revoked_keys(db: State<'_, Db>) -> Vec<RevokedKeyEntry> {
+    all_revoked_keys(&conn(&db))
+}
+
+/// 用户对"某个发布者密钥被撤回"表态：我知道，仍然使用。
+///
+/// 与版撤回同一套语义：索引拥有者不是用户的上司，这一层的作用是让他知道并明确表态。
+#[tauri::command]
+pub fn ignore_revoked_publisher_key(
+    db: State<'_, Db>,
+    fingerprint: String,
+) -> Result<RevokedKeyEntry, String> {
+    let c = conn(&db);
+    let entry = read_revoked_key(&c, &fingerprint)
+        .ok_or_else(|| format!("没有指纹为 {fingerprint} 的撤回记录"))?;
+    c.execute(
+        "UPDATE plugin_revoked_key SET ignored_at = ?2 WHERE fingerprint = ?1",
+        params![fingerprint, now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    push_log(
+        &format!("key:{fingerprint}"),
+        "warn",
+        "用户选择忽略这次密钥撤回（仍然使用）",
+    );
+    Ok(RevokedKeyEntry {
+        ignored: true,
+        ..entry
+    })
+}
+
 /// 撤回记忆全貌（界面"撤回"一栏用）。
 #[tauri::command]
 pub fn plugin_revocations(db: State<'_, Db>) -> Vec<RevocationView> {
@@ -4506,7 +4698,7 @@ pub async fn install_plugin_from_index(
         .find(|p| p.id == id)
         .ok_or_else(|| format!("这份索引里没有插件「{id}」"))?;
     // 装不装得了以**索引里的原始数据**为准（和界面显示用的是同一个判定函数）。
-    let blocked = plugin_index::entry_block_reason(entry, &version);
+    let blocked = plugin_index::entry_block_reason(entry, &version, &index.revoked_keys);
     if !blocked.is_empty() {
         return Err(format!("不能安装「{id}」：{blocked}"));
     }
@@ -7031,6 +7223,153 @@ register({ id: "s.run", title: "结构化", run: function () {
         let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry_a, signed_package(), false, "example.com")
             .unwrap_err();
         assert!(err.contains("publisher_key_changed"), "{err}");
+    }
+
+    /// 撤回表加进测试用的内存库（生产库里由 db.rs 建表）。
+    fn state_conn_with_revoked_keys() -> Connection {
+        let c = state_conn_with_trust_store();
+        c.execute_batch(
+            "CREATE TABLE meta.plugin_revoked_key (
+                 fingerprint TEXT PRIMARY KEY,
+                 key_b64     TEXT NOT NULL DEFAULT '',
+                 reason      TEXT NOT NULL DEFAULT '',
+                 revoked_at  TEXT NOT NULL DEFAULT '',
+                 seen_at     INTEGER NOT NULL DEFAULT 0,
+                 ignored_at  INTEGER
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn index_with_revoked(keys: Vec<(&str, &str)>) -> crate::plugin_index::PluginIndex {
+        serde_json::from_value(serde_json::json!({
+            "indexVersion": 1,
+            "generatedAt": "2026-09-10T00:00:00Z",
+            "revokedKeys": keys
+                .iter()
+                .map(|(k, why)| serde_json::json!({ "key": k, "reason": why, "revokedAt": "2026-09-01T00:00:00Z" }))
+                .collect::<Vec<_>>(),
+            "plugins": [{
+                "id": "fixture-plugin",
+                "name": "P",
+                "version": "1.0.0",
+                "downloadUrl": "https://example.com/p.zip",
+                "sha256": "a".repeat(64),
+            }],
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_revoked_publisher_key_is_remembered_and_blocks_that_key() {
+        let c = state_conn_with_revoked_keys();
+        let key_b = include_str!("../tests/fixtures/signed-plugin-alt-zip.pub");
+        let fp_b = plugin_index::publisher_key_fingerprint(key_b).unwrap();
+
+        assert_eq!(
+            record_revoked_keys(&c, &index_with_revoked(vec![(key_b.trim(), "这把 key 泄露了")])).unwrap(),
+            1
+        );
+        let r = read_revoked_key(&c, &fp_b).expect("应当记住了");
+        assert_eq!(r.reason, "这把 key 泄露了");
+        assert!(!r.ignored);
+
+        // 这把 key 签的东西一律拒，且**离线也拒**（记忆已落库，不必再拉索引）
+        let why = revoked_key_blocks(&c, key_b).expect("这把 key 应当被拦");
+        assert!(why.contains(&fp_b) && why.contains("泄露"), "{why}");
+        // 别的 key 不受影响
+        let key_a = include_str!("../tests/fixtures/signed-plugin-zip.pub");
+        assert!(revoked_key_blocks(&c, key_a).is_none());
+
+        // 用户明确表态之后不再拦
+        c.execute(
+            "UPDATE meta.plugin_revoked_key SET ignored_at = 1 WHERE fingerprint = ?1",
+            params![fp_b],
+        )
+        .unwrap();
+        assert!(revoked_key_blocks(&c, key_b).is_none());
+        assert!(read_revoked_key(&c, &fp_b).unwrap().ignored, "记忆还在，只是不再拦");
+    }
+
+    #[test]
+    fn an_index_marks_entries_signed_by_a_revoked_key_as_not_installable() {
+        let key_b = include_str!("../tests/fixtures/signed-plugin-alt-zip.pub");
+        let index = plugin_index::parse_index(
+            &serde_json::to_vec(
+                &serde_json::from_value::<serde_json::Value>(serde_json::json!({
+                    "indexVersion": 1,
+                    "revokedKeys": [{ "key": key_b.trim(), "reason": "滥用" }],
+                    "plugins": [{
+                        "id": "fixture-plugin",
+                        "name": "P",
+                        "version": "1.0.0",
+                        "apiVersion": "1.0.0",
+                        "minAppVersion": "1.0.0",
+                        "runtime": "logic",
+                        "license": "MIT",
+                        "downloadUrl": "https://example.com/p.zip",
+                        "size": 10,
+                        "sha256": "a".repeat(64),
+                        "publisherKey": key_b.trim(),
+                        "signature": "untrusted comment: x\nAAAA",
+                    }],
+                }))
+                .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let view = plugin_index::index_view(&index, "1.88.0", None);
+        assert!(view.plugins[0].blocked.contains("发布者密钥已被索引撤回"), "{:?}", view.plugins[0].blocked);
+        assert!(view.plugins[0].blocked.contains("滥用"));
+        // 界面也要能看到"撤回了哪把 key"
+        assert_eq!(view.revoked_keys.len(), 1);
+        assert_eq!(
+            view.revoked_keys[0].fingerprint,
+            plugin_index::publisher_key_fingerprint(key_b).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_run_gate_refuses_a_plugin_whose_publisher_key_was_revoked() {
+        let c = state_conn_with_revoked_keys();
+        let key_b = include_str!("../tests/fixtures/signed-plugin-alt-zip.pub");
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "fixture-plugin", "name": "P", "version": "1.0.0", "main": "main.js"
+        }))
+        .unwrap();
+        pin_publisher_key(&c, "fixture-plugin", key_b, "example.com").unwrap();
+        assert!(run_gates(&c, &manifest).is_ok(), "没撤回之前应当放行");
+
+        record_revoked_keys(&c, &index_with_revoked(vec![(key_b.trim(), "泄露")])).unwrap();
+        let err = run_gates(&c, &manifest).unwrap_err();
+        assert!(err.contains("publisher_key_revoked") && err.contains("泄露"), "{err}");
+
+        // 用户表态后放行；而换成另一把 key 的插件不受影响
+        c.execute(
+            "UPDATE meta.plugin_revoked_key SET ignored_at = 1",
+            [],
+        )
+        .unwrap();
+        assert!(run_gates(&c, &manifest).is_ok());
+    }
+
+    #[test]
+    fn installing_a_package_signed_by_a_revoked_key_is_refused() {
+        let c = state_conn_with_revoked_keys();
+        let key_b = include_str!("../tests/fixtures/signed-plugin-alt-zip.pub");
+        let sig_b = include_str!("../tests/fixtures/signed-plugin-alt.zip.minisig");
+        let entry = fixture_entry(key_b, sig_b, &"a".repeat(64));
+        record_revoked_keys(&c, &index_with_revoked(vec![(key_b.trim(), "泄露")])).unwrap();
+
+        let err = check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
+            .unwrap_err();
+        assert!(err.contains("publisher_key_revoked") && err.contains("不接受这份包"), "{err}");
+        // 用户表态之后才可能装上（这里只验"放行到下一步"：不再是撤回拦的）
+        c.execute("UPDATE meta.plugin_revoked_key SET ignored_at = 1", []).unwrap();
+        assert!(check_entry_publisher_signature(&c, "fixture-plugin", &entry, signed_package(), false, "example.com")
+            .is_ok());
     }
 
     #[test]

@@ -41,6 +41,7 @@ import type {
   PluginIndexView,
   PluginRevocation,
   PublisherKeyInfo,
+  RevokedPublisherKey,
   PluginSetting,
   PluginValidation,
   PluginAuditEntry,
@@ -206,6 +207,10 @@ export interface CommandMap {
   ignore_plugin_revocation: { args: { id: string }; result: PluginRevocation };
   /** 已固定下来的发布者公钥（界面显示指纹）。 */
   plugin_publisher_keys: { args: undefined; result: PublisherKeyInfo[] };
+  /** 被撤回的发布者密钥（离线记忆）。 */
+  plugin_revoked_keys: { args: undefined; result: RevokedPublisherKey[] };
+  /** 用户对"某把发布者密钥被撤回"表态：我知道，仍然使用。 */
+  ignore_revoked_publisher_key: { args: { fingerprint: string }; result: RevokedPublisherKey };
   open_plugin_dir: { args: undefined; result: string };
   plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
   clear_plugin_logs: { args: undefined; result: void };

@@ -147,6 +147,11 @@ export const api = {
   ignorePluginRevocation: (id: string) => invoke("ignore_plugin_revocation", { id }),
   /** 已固定下来的发布者公钥。 */
   pluginPublisherKeys: () => invoke("plugin_publisher_keys"),
+  /** 被撤回的发布者密钥。 */
+  pluginRevokedKeys: () => invoke("plugin_revoked_keys"),
+  /** 用户对"某把发布者密钥被撤回"表态。 */
+  ignoreRevokedPublisherKey: (fingerprint: string) =>
+    invoke("ignore_revoked_publisher_key", { fingerprint }),
   openPluginDir: () => invoke("open_plugin_dir"),
   pluginLogs: (pluginId?: string | null, limit?: number | null) =>
     invoke("plugin_logs", { pluginId: pluginId ?? null, limit: limit ?? null }),

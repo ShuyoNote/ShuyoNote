@@ -453,6 +453,9 @@ pub fn run() {
             plugins::ignore_plugin_revocation,
             // M11.11b 第二块：发布者公钥固定（TOFU）。
             plugins::plugin_publisher_keys,
+            // M11.11b：按发布者密钥撤回。
+            plugins::plugin_revoked_keys,
+            plugins::ignore_revoked_publisher_key,
             plugins::open_plugin_dir,
             plugin_validate::validate_plugin,
             plugin_validate::plugin_dir_stamp,

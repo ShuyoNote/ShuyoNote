@@ -280,6 +280,8 @@ export interface PluginMeta {
   revoked?: PluginRevocation | null;
   /** 装它时固定下来的发布者公钥（TOFU）。界面显示指纹，用户才有机会在别处对比。 */
   publisher_key?: PublisherKeyInfo | null;
+  /** 这个插件固定的那把发布者密钥**已被索引撤回**（有值时宿主已拒绝运行它）。 */
+  publisher_key_revoked?: RevokedPublisherKey | null;
 }
 
 /**
@@ -305,6 +307,16 @@ export interface PublisherKeyInfo {
   /** 这把 key 从哪来（今天记的是索引地址的域名）。 */
   source: string;
   pinned_at: number;
+}
+
+/** 一把被撤回的发布者密钥（离线记忆；指纹 + 原因）。 */
+export interface RevokedPublisherKey {
+  fingerprint: string;
+  reason: string;
+  revoked_at: string;
+  seen_at: number;
+  /** 用户明确说过「我知道，仍然使用」。 */
+  ignored: boolean;
 }
 
 export interface PluginPermissionMeta {
@@ -399,6 +411,8 @@ export interface PluginIndexView {
   generatedAt: string;
   /** `null` = 这份索引没有签名（也就没验过）；`true` = 签过且校验通过。 */
   signatureVerified: boolean | null;
+  /** 这份索引撤回的发布者密钥（指纹 + 原因）。 */
+  revokedKeys: { fingerprint: string; reason: string; revokedAt?: string | null }[];
   plugins: PluginIndexEntry[];
 }
 

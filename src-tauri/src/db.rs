@@ -375,6 +375,17 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             source       TEXT NOT NULL DEFAULT '',
             pinned_at    INTEGER NOT NULL DEFAULT 0
         );
+        -- 被撤回的**发布者密钥**（M11.11b：可按 key 撤回）。
+        -- 撤回版本是"这一个版本不该再用"，撤回 key 是"这把 key 签的东西都不作数了"——
+        -- 后者是发布者签名的另一半价值：被滥用时能止损。同样**离线也生效**（记住就不再联网）。
+        CREATE TABLE IF NOT EXISTS plugin_revoked_key (
+            fingerprint TEXT PRIMARY KEY,
+            key_b64     TEXT NOT NULL DEFAULT '',
+            reason      TEXT NOT NULL DEFAULT '',
+            revoked_at  TEXT NOT NULL DEFAULT '',
+            seen_at     INTEGER NOT NULL DEFAULT 0,
+            ignored_at  INTEGER
+        );
         -- 插件私有数据。scope='app' 的落这里（meta.db 是明文，只允许放非敏感配置）；
         -- scope='space:<id>' 的**必须落各空间库**，随该空间 SQLCipher 一起加密、随空间备份搬移。
         -- 这条落库约定见方案 §3.7：把空间级数据塞进 meta.db 会让它静默逃出 E2EE 边界。

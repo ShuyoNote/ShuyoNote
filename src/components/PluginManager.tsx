@@ -8,7 +8,7 @@ import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { PluginIndexPanel } from "./PluginIndexPanel";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
-import { revocationNotice } from "../lib/pluginIndex";
+import { revocationNotice, revokedKeyNotice } from "../lib/pluginIndex";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
@@ -17,7 +17,7 @@ export function PluginManager() {
     managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir,
     logsFor, logs, openLogs, closeLogs, clearLogs,
     auditFor, audit, openAudit, closeAudit, clearAudit,
-    ignoreRevocation,
+    ignoreRevocation, ignoreRevokedKey,
     validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
     settingsFor, settings, openSettings, closeSettings, saveSetting,
     approve,
@@ -137,6 +137,27 @@ export function PluginManager() {
                             className="pm-revoked-btn"
                             onClick={() => void ignoreRevocation(p.id)}
                             title="索引拥有者认为它不该再跑；这个按钮表示你选择相信自己的判断"
+                          >
+                            仍然使用
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+                {/* 发布者密钥被撤回：比"某个版本被撤回"更重（这把 key 签的都不作数了）。 */}
+                {p.publisher_key_revoked &&
+                  (() => {
+                    const notice = revokedKeyNotice(p.publisher_key_revoked);
+                    return (
+                      <div className={notice.blocked ? "pm-revoked" : "pm-revoked pm-revoked-ignored"}>
+                        <div className="pm-revoked-text">{notice.text}</div>
+                        {!p.publisher_key_revoked!.ignored && (
+                          <button
+                            className="pm-revoked-btn"
+                            onClick={() =>
+                              void ignoreRevokedKey(p.publisher_key_revoked!.fingerprint, p.name)
+                            }
+                            title="索引认为这把密钥签的东西都不该再用；这个按钮表示你选择相信自己的判断"
                           >
                             仍然使用
                           </button>

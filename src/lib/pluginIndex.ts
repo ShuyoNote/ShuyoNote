@@ -267,6 +267,43 @@ export function revocationNotice(
   };
 }
 
+/**
+ * 已装插件的**发布者密钥被撤回**时的界面文案。
+ *
+ * 与"版本被撤回"分开说：撤回一个版本说的是"这一个版本别用了"，
+ * 撤回一把密钥说的是"它签的东西都不作数了"——后者更重，文案不能混。
+ */
+export function revokedKeyNotice(
+  revoked: { fingerprint: string; reason: string; ignored: boolean } | null | undefined,
+): { text: string; blocked: boolean } {
+  if (!revoked) return { text: "", blocked: false };
+  const why = revoked.reason.trim() || "索引没有写原因";
+  if (revoked.ignored) {
+    return {
+      text: `发布者密钥 ${revoked.fingerprint} 已被索引撤回，你选择继续使用（原因：${why}）`,
+      blocked: false,
+    };
+  }
+  return {
+    text: `签名它的发布者密钥已被索引撤回，运行已被拦下：${why}（指纹 ${revoked.fingerprint}）`,
+    blocked: true,
+  };
+}
+
+/** 索引撤回了哪些发布者密钥（界面要显示"撤回了谁"，不只是"某个东西被撤了"）。 */
+export function revokedKeysSummary(
+  keys: { fingerprint: string; reason: string; revokedAt?: string | null }[],
+): string {
+  if (keys.length === 0) return "";
+  const head = `这份索引撤回了 ${keys.length} 把发布者密钥：`;
+  const lines = keys.map((k) => {
+    const why = k.reason.trim() || "没写原因";
+    const at = k.revokedAt ? `（${k.revokedAt}）` : "";
+    return `· ${k.fingerprint} —— ${why}${at}`;
+  });
+  return [head, ...lines].join("\n");
+}
+
 /** 上一次填过的索引地址 / 公钥（只是省得每次重打，不是"信任配置"）。 */
 export const INDEX_URL_KEY = "shuyonote.pluginIndexUrl";
 export const INDEX_PUBKEY_KEY = "shuyonote.pluginIndexPubkey";

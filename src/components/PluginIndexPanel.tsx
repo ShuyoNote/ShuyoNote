@@ -11,6 +11,7 @@ import {
   publisherKeyChanged,
   indexSignatureLabel,
   indexSourceLabel,
+  revokedKeysSummary,
   installConfirmMessage,
   loadIndexDraft,
   saveIndexDraft,
@@ -140,6 +141,15 @@ export function PluginIndexPanel() {
           <div className={sig.level === "ok" ? "pm-index-sig ok" : "pm-index-sig warn"}>
             {sig.text}
           </div>
+          {view.revokedKeys.length > 0 && (
+            <div className="pm-index-sig warn">
+              {revokedKeysSummary(view.revokedKeys)
+                .split("\n")
+                .map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+            </div>
+          )}
           {view.plugins.length === 0 ? (
             <div className="pm-empty">这份索引里没有插件</div>
           ) : (

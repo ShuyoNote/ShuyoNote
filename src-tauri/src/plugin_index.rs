@@ -107,6 +107,30 @@ pub struct IndexOwner {
     pub url: String,
 }
 
+/// 索引级撤回：**发布者密钥**被撤回（泄露、滥用、作者放弃）。
+///
+/// 与"撤回某个版本"不同：撤回一把 key 等于说"这把 key 签的东西都不作数了"。
+/// 它是发布者签名的另一半价值——没有它，签名只能证明"是谁签的"，不能在被滥用时止损。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RevokedKey {
+    /// 被撤回的发布者公钥（裸 base64 或 `minisign.pub` 内容）。
+    pub key: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+}
+
+/// 撤回的发布者密钥（给界面用：指纹 + 原因）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RevokedKeyView {
+    pub fingerprint: String,
+    pub reason: String,
+    pub revoked_at: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginIndex {
@@ -115,6 +139,9 @@ pub struct PluginIndex {
     pub owner: Option<IndexOwner>,
     #[serde(default)]
     pub generated_at: String,
+    /// 索引撤回了哪些发布者密钥（可选）。
+    #[serde(default)]
+    pub revoked_keys: Vec<RevokedKey>,
     #[serde(default)]
     pub plugins: Vec<IndexEntry>,
 }
@@ -157,6 +184,9 @@ pub struct PluginIndexView {
     /// 这份索引有没有随附签名、以及签名**是否校验通过**。
     /// `None` = 没有签名（阶段 1 允许，但要如实告诉用户）。
     pub signature_verified: Option<bool>,
+    /// 这份索引撤回的发布者密钥（指纹 + 原因）。界面要显示它们——被撤回的是"谁"，
+    /// 而这正是用户需要知道的事。
+    pub revoked_keys: Vec<RevokedKeyView>,
     pub plugins: Vec<IndexEntryView>,
 }
 
@@ -208,6 +238,16 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
     }
     if index.plugins.is_empty() {
         return Err("索引里一个插件都没有".to_string());
+    }
+    // 撤回的发布者密钥：形状不对的 key 会让"撤回"静默失效（永远匹配不上）。
+    let mut revoked_fps: Vec<String> = Vec::new();
+    for rk in &index.revoked_keys {
+        let fp = publisher_key_fingerprint(&rk.key)
+            .map_err(|e| format!("revokedKeys 里有一把公钥不合法：{e}"))?;
+        if revoked_fps.contains(&fp) {
+            return Err(format!("revokedKeys 里有重复的公钥（指纹 {fp}）"));
+        }
+        revoked_fps.push(fp);
     }
     let mut seen: Vec<&str> = Vec::new();
     for p in &index.plugins {
@@ -311,7 +351,7 @@ pub fn parse_index(bytes: &[u8]) -> Result<PluginIndex, String> {
 ///
 /// **界面上显示的和安装时判定的必须是同一个函数**：展示用一套、安装用另一套，
 /// 就会出现「界面说能装、点了报错」或更糟的「界面说不能装、其实装进去了」。
-pub fn entry_block_reason(entry: &IndexEntry, app_version: &str) -> String {
+pub fn entry_block_reason(entry: &IndexEntry, app_version: &str, revoked_keys: &[RevokedKey]) -> String {
     if entry.revoked_at.is_some() {
         return if entry.revoked_reason.trim().is_empty() {
             "已被索引撤回".to_string()
@@ -319,12 +359,32 @@ pub fn entry_block_reason(entry: &IndexEntry, app_version: &str) -> String {
             format!("已被索引撤回：{}", entry.revoked_reason)
         };
     }
+    // 发布者密钥被撤回 → 这一条整个不可信（它签的包都不作数了）。
+    if let Some(rk) = key_revoked(revoked_keys, &entry.publisher_key) {
+        let why = if rk.reason.trim().is_empty() {
+            "索引没写原因".to_string()
+        } else {
+            rk.reason.clone()
+        };
+        return format!("发布者密钥已被索引撤回：{why}");
+    }
     if let (Some(app), Some(min)) = (parse_version(app_version), parse_version(&entry.min_app_version)) {
         if min > app {
             return format!("需要应用 {}+（当前 {app_version}）", entry.min_app_version);
         }
     }
     String::new()
+}
+
+/// 这把发布者公钥有没有被这份索引撤回（按指纹比；没给 key 就是没有）。
+pub fn key_revoked<'a>(revoked_keys: &'a [RevokedKey], key: &str) -> Option<&'a RevokedKey> {
+    if key.trim().is_empty() {
+        return None;
+    }
+    let fp = publisher_key_fingerprint(key).ok()?;
+    revoked_keys
+        .iter()
+        .find(|rk| publisher_key_fingerprint(&rk.key).ok().as_deref() == Some(fp.as_str()))
 }
 
 /// 把索引转成界面用的视图：逐条算出"能不能装"，并**说清为什么不能**。
@@ -346,7 +406,7 @@ pub fn index_view(index: &PluginIndex, app_version: &str, signature_verified: Op
             permissions: p.permissions.clone(),
             size: p.size,
             revoked: p.revoked_at.is_some(),
-            blocked: entry_block_reason(p, app_version),
+            blocked: entry_block_reason(p, app_version, &index.revoked_keys),
             publisher_signed: !p.signature.trim().is_empty(),
             // 指纹算不出来时留空 + 在下面被当成"没有指纹"（索引解析已经校验过 key 形状，
             // 走到这里还失败只可能是极端情况，不该让整份索引打不开）。
@@ -362,6 +422,15 @@ pub fn index_view(index: &PluginIndex, app_version: &str, signature_verified: Op
         owner: index.owner.clone(),
         generated_at: index.generated_at.clone(),
         signature_verified,
+        revoked_keys: index
+            .revoked_keys
+            .iter()
+            .map(|rk| RevokedKeyView {
+                fingerprint: publisher_key_fingerprint(&rk.key).unwrap_or_default(),
+                reason: rk.reason.clone(),
+                revoked_at: rk.revoked_at.clone(),
+            })
+            .collect(),
         plugins,
     }
 }
@@ -672,6 +741,7 @@ mod tests {
                 url: "https://example.com".to_string(),
             }),
             generated_at: "2026-09-10T12:00:00Z".to_string(),
+            revoked_keys: Vec::new(),
             plugins: entries,
         };
         serde_json::to_vec(&idx).unwrap()
@@ -1086,7 +1156,11 @@ mod tests {
         let idx = parse_index(&index_json(vec![revoked.clone(), too_new.clone(), ok.clone()])).unwrap();
         let view = index_view(&idx, "1.87.0", None);
         for (entry, shown) in [(&revoked, &view.plugins[0]), (&too_new, &view.plugins[1]), (&ok, &view.plugins[2])] {
-            assert_eq!(entry_block_reason(entry, "1.87.0"), shown.blocked, "界面与安装判定必须同源");
+            assert_eq!(
+                entry_block_reason(entry, "1.87.0", &[]),
+                shown.blocked,
+                "界面与安装判定必须同源"
+            );
         }
         assert!(!view.plugins[2].publisher_signed, "没写签名就不该显示成「已签名」");
         let mut signed = ok.clone();

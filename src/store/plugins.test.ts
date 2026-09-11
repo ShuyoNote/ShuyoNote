@@ -20,6 +20,7 @@ vi.mock("../lib/api", () => ({
     validatePlugin: vi.fn(),
     pluginDirStamp: vi.fn(),
     ignorePluginRevocation: vi.fn(),
+    ignoreRevokedPublisherKey: vi.fn(),
     pluginRevocations: vi.fn(),
     emitPluginEvent: vi.fn(),
   },
@@ -562,6 +563,42 @@ describe("忽略撤回", () => {
     const r = await usePlugins.getState().ignoreRevocation("demo");
     expect(r.ok).toBe(false);
     expect(api.ignorePluginRevocation).not.toHaveBeenCalled();
+  });
+});
+
+// 「仍然使用被撤回的密钥」：确认在前，确认后才写。
+describe("忽略密钥撤回", () => {
+  beforeEach(() => {
+    vi.mocked(api.ignoreRevokedPublisherKey).mockReset();
+    vi.mocked(confirmDialog).mockReset();
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    vi.mocked(api.listPlugins).mockResolvedValue([]);
+  });
+
+  it("确认后才写，文案说清「撤回一把 key 意味着什么」", async () => {
+    vi.mocked(api.ignoreRevokedPublisherKey).mockResolvedValue({
+      fingerprint: "aaaa-1111",
+      reason: "泄露",
+      revoked_at: "",
+      seen_at: 0,
+      ignored: true,
+    });
+    const r = await usePlugins.getState().ignoreRevokedKey("aaaa-1111", "演示插件");
+    expect(r.ok).toBe(true);
+    expect(api.ignoreRevokedPublisherKey).toHaveBeenCalledWith("aaaa-1111");
+    const calls = vi.mocked(confirmDialog).mock.calls;
+    const msg = calls[calls.length - 1][0].message;
+    expect(msg).toContain("插件「演示插件」");
+    expect(msg).toContain("aaaa-1111");
+    expect(msg).toContain("这把密钥签的东西都不该再用");
+    expect(msg).toContain("撤回记录不会被删除");
+  });
+
+  it("取消则一个字节都不写", async () => {
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    const r = await usePlugins.getState().ignoreRevokedKey("aaaa-1111");
+    expect(r.ok).toBe(false);
+    expect(api.ignoreRevokedPublisherKey).not.toHaveBeenCalled();
   });
 });
 

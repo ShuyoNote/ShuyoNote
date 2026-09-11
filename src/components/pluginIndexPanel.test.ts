@@ -61,6 +61,7 @@ const view = (plugins: PluginIndexEntry[], signatureVerified: boolean | null = n
   owner: { id: "self", name: "我自己的索引", url: "https://example.com" },
   generatedAt: "2026-09-10T12:00:00Z",
   signatureVerified,
+  revokedKeys: [],
   plugins,
 });
 
