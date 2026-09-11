@@ -5863,22 +5863,15 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert!(run.ok, "跑成功要记 ok");
         assert_eq!(run.scope, "command", "要能区分命令与事件");
         assert!(run.error_code.is_none());
-        if cfg!(target_os = "windows") {
-            // Windows 上还没实现读子进程内存（`resident_bytes` 只有 linux/macos 两个分支，
-            // 仓库文档里如实记着这个缺口）。此时**唯一正确的行为是如实记 None**——
-            // 最危险的是"读不到却写个 0"：那会让"这条兜底的可见性还在"的假象成立。
-            assert!(
-                run.peak_rss_bytes.is_none(),
-                "读不到就该记 None，不能编一个数字：{:?}",
-                (run.capability.as_str(), run.ok, run.peak_rss_bytes)
-            );
-        } else {
-            assert!(
-                run.peak_rss_bytes.unwrap_or(0) > 0,
-                "峰值内存要真的读到（读不到就等于这条兜底的可见性没了）：{:?}",
-                (run.capability.as_str(), run.ok, run.peak_rss_bytes)
-            );
-        }
+        // 三个平台都能读了（Windows 走工作集，见 `resident_bytes`），所以这里
+        // **不再按平台分叉**：任何一个平台上"读到 0 / 读不到"都是缺陷。
+        // （上一版曾在 Windows 上断言"必须如实记 None"——那时 Windows 确实还没实现；
+        //   实现补上之后那条断言就该退回强断言，否则它会拦住正确的行为。）
+        assert!(
+            run.peak_rss_bytes.unwrap_or(0) > 0,
+            "峰值内存要真的读到（读不到就等于这条兜底的可见性没了）：{:?}",
+            (run.capability.as_str(), run.ok, run.peak_rss_bytes)
+        );
 
         // 失败的那次：插件**抛错**在宿主这层是"跑完了、结果是一句话"（shim 把异常转成返回值），
         // 但审计必须把它记成**失败**——否则用户看到的是"一切正常"。

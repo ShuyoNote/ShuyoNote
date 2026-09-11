@@ -109,7 +109,73 @@ pub fn resident_bytes(pid: u32) -> Option<u64> {
         }
         return Some(info.pti_resident_size);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        // Windows 上的"常驻内存"对应**工作集**（WorkingSetSize）。
+        //
+        // 手写 FFI 而不是引一个 windows crate：这里只要 OpenProcess / 读内存 / 关句柄
+        // 三件事，而本仓库的依赖是刻意保持精简的（不为一个读数拉起 windows-sys 的 feature 树）。
+        //
+        // 结构体**必须写全 10 个字段**：`cb` 告诉 API"我给了多大缓冲"，
+        // 字段少了 API 会认为缓冲区不合法而失败（失败只会返回 None，不会写坏内存，
+        // 但那样这个能力就等于白做）。字段布局按 PROCESS_MEMORY_COUNTERS 原样。
+        #[repr(C)]
+        struct ProcessMemoryCounters {
+            cb: u32,
+            page_fault_count: u32,
+            peak_working_set_size: usize,
+            working_set_size: usize,
+            quota_peak_paged_pool_usage: usize,
+            quota_paged_pool_usage: usize,
+            quota_peak_non_paged_pool_usage: usize,
+            quota_non_paged_pool_usage: usize,
+            pagefile_usage: usize,
+            peak_pagefile_usage: usize,
+        }
+
+        extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
+            fn CloseHandle(h: *mut core::ffi::c_void) -> i32;
+            fn GetCurrentProcess() -> *mut core::ffi::c_void;
+            // 现代 Windows 在 kernel32 里导出 K32GetProcessMemoryInfo（psapi 那版是它的壳）。
+            fn K32GetProcessMemoryInfo(
+                process: *mut core::ffi::c_void,
+                counters: *mut ProcessMemoryCounters,
+                cb: u32,
+            ) -> i32;
+        }
+
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+        unsafe {
+            let mut counters: ProcessMemoryCounters = std::mem::zeroed();
+            counters.cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+
+            // 自己用伪句柄（**不能**关它）；别的进程要 OpenProcess，用完必须关。
+            let current = std::process::id();
+            let handle = if pid == current {
+                GetCurrentProcess()
+            } else {
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+            };
+            if handle.is_null() {
+                return None;
+            }
+            let ok = K32GetProcessMemoryInfo(handle, &mut counters, counters.cb);
+            if pid != current {
+                CloseHandle(handle);
+            }
+            if ok == 0 {
+                return None;
+            }
+            return Some(counters.working_set_size as u64);
+        }
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows"
+    )))]
     {
         let _ = pid;
         None
