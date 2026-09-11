@@ -60,6 +60,8 @@ CHANGELOG.md             # 版本变更日志
 | [plugin-api.md](plugin-api.md) | **插件 API（面向作者，生成物）**：只读这一份就能写出可安装可运行的插件——最小插件、能力表、权限与写中介、命令参数、事件钩子、更新时新增权限要用户重新确认、触发面、设置、零代码插件（声明式视图 / 视图参数化 / 主题）、导入导出、执行预算与错误码。由 `capabilities/capabilities.json` 生成（跑 `node scripts/gen-capabilities.mjs`） |
 | [plugin-recipes.md](plugin-recipes.md) | **插件配方（第一批可发布清单）**：可直接贴到社区的插件清单——每个插件的一句话定位、要哪些权限、怎么装，以及打包 / sha256 / minisign 签名 / 发布索引的完整流程 |
 | [plugin-policy.md](plugin-policy.md) | **插件开发者政策**：发布前该读的底线（不许做什么、必须写什么、撤回与换密钥的规矩），以及应用会替用户摆出哪些**事实**、又刻意不给什么结论 |
+| [plugin-first-plugin.md](plugin-first-plugin.md) | **20 行写第一个插件**：从 `pnpm plugin:new` 生成起点 → 看懂 manifest 与权限三种写法 → 写第一个命令 → 装进应用跑一遍 → 出问题看哪里 → 发布给别人。目标是"只看文档不读源码" |
+| [plugin-index-spec.md](plugin-index-spec.md) | **`plugin-index.json` 公开规范（一页纸）**：最小可用索引、字段表与限制、应用会强制的规则、两级签名（索引 / 发布者）、两级撤回（版本 / 密钥）、发布三步。照着写就能托管一份索引 |
 | [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.10 UI 插件/M11.11 市场已评估未做（带启动闸门，见 [插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)））、竞品差距跟踪 |
 | [product-review.md](product-review.md) | **产品全面评价**：本地优先定位、强项（功能密度/架构/加密/产品化观）、短板（同步健壮性/自托管精度/Web 内存/AI 迭代节奏）、技术选型判断、按优先级的总体建议与一句话结论 |
 | [harmony-web-ceiling.md](harmony-web-ceiling.md) | **基于 Web 版开发鸿蒙桌面应用的能力边界（天花板）分析**：ArkWeb 壳不改变浏览器内核；能力矩阵（DB/文件系统/原生引擎/加密/系统集成/同步/插件）；路线 A（纯套壳≈PWA）vs 路线 B（加 ArkTS 原生桥）；对 ShuyoNote 的建议与取舍 |

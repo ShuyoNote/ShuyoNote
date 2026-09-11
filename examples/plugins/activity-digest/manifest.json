@@ -20,15 +20,5 @@
       "on": "import.finished",
       "reason": "导入附件后记一条日志：这批进了几份、进到哪一页"
     }
-  ],
-  "commands": [
-    {
-      "id": "digest.show",
-      "title": "看活动摘要"
-    },
-    {
-      "id": "digest.reset",
-      "title": "清空活动摘要"
-    }
   ]
 }

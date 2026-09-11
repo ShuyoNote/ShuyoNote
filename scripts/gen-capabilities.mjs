@@ -510,6 +510,11 @@ export function genDocs(reg) {
   l.push("");
   l.push(`> ${HEADER}`);
   l.push("> 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。");
+  l.push(">");
+  l.push("> 相关：[20 行写第一个插件](plugin-first-plugin.md)（从脚手架到跑起来）·");
+  l.push("> [`plugin-index.json` 规范](plugin-index-spec.md)（发布给别人）·");
+  l.push("> [插件配方](plugin-recipes.md)（打包 / 签名 / 索引用法）·");
+  l.push("> [开发者政策](plugin-policy.md)（发布前必读）");
   l.push("");
   l.push("## 1. 最小插件（20 行）");
   l.push("");

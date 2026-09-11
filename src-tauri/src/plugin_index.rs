@@ -1046,6 +1046,26 @@ mod tests {
         assert!(err.contains("发布者签名不合法"), "{err}");
     }
 
+    #[test]
+    fn the_spec_documents_minimal_example_actually_parses() {
+        // 公开规范里那段"最小可用索引"是给人照抄的：它一旦解析不过，"照着抄"就直接装不上。
+        // 从 markdown 里把第一个 ```json 代码块抠出来喂给同一个解析器——文档与实现
+        // 从此不能再各说各话（这条和"样例索引是固定装置"那条是同一类保护）。
+        let spec = include_str!("../../docs/plugin-index-spec.md");
+        let block = spec
+            .split("```json")
+            .nth(1)
+            .and_then(|rest| rest.split("```").next())
+            .expect("规范里应当有一段 json 示例");
+        let index = parse_index(block.as_bytes())
+            .unwrap_or_else(|e| panic!("规范里的最小示例必须能解析：{e}"));
+        assert_eq!(index.plugins.len(), 1);
+        assert_eq!(index.plugins[0].id, "weekly-review");
+        // 示例里的 sha256 是占位的 64 个 0：形状对（这正是"形状校验"该干的事）
+        assert!(is_hex64(&index.plugins[0].sha256));
+        assert_eq!(index.plugins[0].api_version, crate::capabilities_gen::API_VERSION);
+    }
+
     // ---- 自己有钥匙的一次端到端：真包 + 真签名 ----
     //
     // 上面用的是 minisign 官方测试向量（签的是 4 个字节 "test"）——那证明了"我们这一层

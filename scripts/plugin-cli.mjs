@@ -280,6 +280,14 @@ function isBareFileName(main) {
 
 const BIG_ENTRY_BYTES = 512 * 1024;
 
+/** 应用**真的会读**的 manifest 字段（与 `src-tauri/src/plugins.rs` 的 `Manifest` 结构体一一对应）。 */
+const KNOWN_MANIFEST_FIELDS = new Set([
+  "id", "name", "version", "description", "author", "main", "apiVersion",
+  "permissions", "runtime", "theme", "views", "triggers", "settings", "events",
+]);
+/** 解析了但**界面上不显示**的字段：不拦，但要如实说（作者很容易以为用户看得到）。 */
+const PARSED_NOT_SHOWN_FIELDS = new Set(["author"]);
+
 function validate(dirArg) {
   const dir = resolve(dirArg);
   const dirName = basename(dir);
@@ -364,6 +372,23 @@ function validate(dirArg) {
         entries = readdirSync(dir);
       } catch {
         push("error", "main_missing", `入口文件 ${main} 不存在`);
+      }
+    }
+
+    // ---- 未知字段：应用**不会读**它，作者却以为它生效了 ----
+    //
+    // 起因：示例插件里有一个 `"commands": [{id,title}]`，而 `Manifest` 结构体**没有这个字段**
+    // （命令是顶层 `register(...)` 跑出来的），serde 默认忽略未知字段 —— 于是它静静躺在那里
+    // 好几个月，还教坏了照着抄的人。提示一句的成本极低，沉默的成本很高。
+    for (const key of Object.keys(m)) {
+      if (!KNOWN_MANIFEST_FIELDS.has(key)) {
+        const hint =
+          key === "commands"
+            ? "命令是从顶层 register({...}) 发现的，不需要在 manifest 里声明"
+            : "应用会忽略它（未知字段不报错，但也不生效）";
+        push("warning", "manifest_unknown_field", `manifest.${key} 应用不会读：${hint}`);
+      } else if (PARSED_NOT_SHOWN_FIELDS.has(key)) {
+        push("warning", "manifest_field_not_shown", `manifest.${key} 应用会解析，但界面上不显示（用户看不到它）`);
       }
     }
 
@@ -458,6 +483,7 @@ function report(r, json) {
           id: r.id,
           main: r.main,
           apiVersion: r.reg.apiVersion,
+          permissionsBaseline: r.manifest ? r.manifest.permissions === undefined : false,
           permissions: (Array.isArray(r.manifest?.permissions) ? r.manifest.permissions : []).map((d) => ({
             id: d?.id ?? "",
             reason: d?.reason ?? "",
@@ -508,7 +534,13 @@ function report(r, json) {
       );
     }
   }
-  const declares = declarative ? [] : Array.isArray(r.manifest?.permissions) ? r.manifest.permissions : [];
+  // 注意「没写 permissions」与「permissions: []」是**两回事**（应用侧同样区分）：
+  //   · 没写  → 按 v1 基线授权（12 项，等于全给）——老插件的兼容路径；
+  //   · 空数组 → 一项都不给。
+  // 此前这里只看数组长度，于是 `permissions: []` 会被打印成"未声明 → 基线全给"，
+  // 与应用做的事正好相反（脚手架生成的插件就是空数组，第一次跑就撞上了）。
+  const declsRaw = r.manifest?.permissions;
+  const declares = declarative ? [] : Array.isArray(declsRaw) ? declsRaw : [];
   if (declares.length > 0) {
     console.log(`  ${color("权限清单", "dim")}（用户装的时候会看到这些）：`);
     for (const d of declares) {
@@ -521,7 +553,11 @@ function report(r, json) {
       console.log(`    ${mark} ${String(d?.id).padEnd(20)} ${risk.padEnd(9)} ${p?.title ?? ""} —— ${reason}${tail}`);
     }
   } else if (r.manifest && !declarative) {
-    console.log(`  ${color("权限清单", "dim")}：未声明 → 应用会按 v1 基线权限授权（${r.reg.permissions.length} 项，等于全给）`);
+    if (Array.isArray(declsRaw) && declsRaw.length === 0) {
+      console.log(`  ${color("权限清单", "dim")}：声明为空 → 一项能力都不授予（插件只能做免权限的事）`);
+    } else {
+      console.log(`  ${color("权限清单", "dim")}：未声明 → 应用会按 v1 基线权限授权（${r.reg.permissions.length} 项，等于全给）`);
+    }
   }
 
   const declaresEvents = Array.isArray(r.manifest?.events) ? r.manifest.events : [];

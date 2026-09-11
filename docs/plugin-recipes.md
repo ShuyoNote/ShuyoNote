@@ -16,7 +16,9 @@
 3. 回到面板点「校验」→ 看清权限与理由 → 「启用」。
 
 新装的插件**默认未启用**，所有写操作都会先给你一份草稿，你确认后才落库。
-想自己改或自己写：作者文档见 [`plugin-api.md`](plugin-api.md)。
+想自己改或自己写：[**20 行写第一个插件**](plugin-first-plugin.md)（`pnpm plugin:new <id>` 一条命令生成起点，
+再 `pnpm plugin:validate` 校验）；能力全表见 [`plugin-api.md`](plugin-api.md)，发布细则看
+[`plugin-index.json` 规范](plugin-index-spec.md) 与[开发者政策](plugin-policy.md)。
 
 ## 清单
 

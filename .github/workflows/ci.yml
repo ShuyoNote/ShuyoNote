@@ -70,6 +70,9 @@ jobs:
           for d in examples/plugins/*/; do
             node scripts/plugin-cli.mjs validate "$d"
           done
+          # 脚手架冒烟：生成的起点必须**当场**能过作者 CLI（它自己会跑一遍校验，
+          # 不通过就非零退出）——"跟着文档走第一步就卡住"是最伤的。
+          node scripts/plugin-new.mjs ci-smoke-plugin /tmp/plugin-new-smoke
 
       - name: 版本 / 命令契约 / 能力注册表 / 文档链接
         run: |
