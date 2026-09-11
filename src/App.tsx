@@ -58,6 +58,8 @@ import { useEditorStore } from "./store/editor";
 import { $createParagraphNode, $getRoot } from "lexical";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
+import { usePdfReader } from "./store/pdfReader";
+import { pdfPlacement } from "./lib/pdfPlacement";
 import { useFileManagerStore } from "./store/fileManager";
 import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
@@ -554,6 +556,10 @@ function App() {
   usePresence();
   useSyncStream();
   const isMobile = useMobile();
+  // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
+  // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
+  const pdfOpen = usePdfReader((s) => s.open);
+  const pdfWhere = pdfPlacement(pdfOpen, isMobile);
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
   const railOpen = useActivity((s) => s.railOpen);
   useUpdateChecker();
@@ -687,7 +693,9 @@ function App() {
             <MenuIcon width={18} height={18} />
           </button>
         )}
-      {templateOpen ? (
+      {pdfWhere === "inline" ? (
+        <div className="main pdf-main"><PdfReader inline /></div>
+      ) : templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
       ) : view === "graph" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><GraphView /></Suspense></div>
@@ -736,7 +744,8 @@ function App() {
         <SettingsDialog />
         <SpaceTransferProgress />
         <FilePreviewDialog />
-        <PdfReader />
+        {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
+        {pdfWhere === "overlay" && <PdfReader />}
         <FormulaEditorDialog />
       </PanelBoundary>
       {/* 插件管理单独一层：它渲染的全是插件声明的数据（权限/设置/日志/校验报告），

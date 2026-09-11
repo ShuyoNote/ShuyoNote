@@ -66,6 +66,22 @@ function findChrome() {
 
 /** 有代表性的结构：两张插件卡（一张展开折叠区与事实面板）+ 索引面板（订阅列表与条目）。 */
 const FIXTURE = `
+<div class="app">
+  <div class="app-body">
+    <div class="activity-bar"></div>
+    <div class="sidebar"></div>
+    <div class="main pdf-main">
+      <div class="pdf-reader-overlay">
+        <div class="pdf-reader maximized">
+          <div class="pdf-reader-head"><span class="pdf-reader-name">示例.pdf</span></div>
+          <div class="pdf-reader-body"></div>
+        </div>
+      </div>
+    </div>
+    <div class="right-rail"></div>
+  </div>
+</div>
+
 <div class="plugin-manager-overlay"><div class="plugin-manager">
   <div class="pm-head">
     <div class="pm-title">插件管理</div>
@@ -238,6 +254,63 @@ try {
   );
   ok(m.urlInputWidth > 160, `索引地址输入框够宽（${Math.round(m.urlInputWidth)}px）`);
   ok(m.subTitleLines <= 2, `订阅标题没有被压成竖柱（${m.subTitleLines} 行）`);
+
+  // ---- PDF 阅读器：桌面端是内容区的一种视图，不许盖住侧边栏与右栏 ----
+  // 注意视口要换成**桌面宽度**再量：在 ≤768px 上应用本来就切到移动布局（侧边栏变抽屉、
+  // 浮层允许覆盖），拿那个宽度去断言"不许压住侧边栏"是在断言一件不该成立的事
+  // ——第一次跑就是这么红的（560px 下量到 sidebar 0..320、main 铺满 560）。
+  await page.setViewport({ width: 1280, height: 800 });
+  await new Promise((r) => setTimeout(r, 200));
+  // （2026-09-11 之前它是 `position: fixed; inset: 0` 的全屏浮层，把左竖条、页面树、右栏
+  //   全盖住了；"像 MD 阅读器那样"就是这条断言。）
+  const pdf = await page.evaluate(() => {
+    const box = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), width: Math.round(r.width) };
+    };
+    return {
+      rail: box(".activity-bar"),
+      sidebar: box(".sidebar"),
+      main: box(".main"),
+      reader: box(".main .pdf-reader"),
+      rightRail: box(".right-rail"),
+      readerPosition: getComputedStyle(document.querySelector(".main > .pdf-reader-overlay")).position,
+      sidebarInFlow: ["flex", "block"].includes(getComputedStyle(document.querySelector(".sidebar")).display),
+      mobileMQ: matchMedia("(max-width: 768px)").matches,
+    };
+  });
+  ok(pdf.reader && pdf.sidebar, "沙盘里量到了侧边栏与 PDF 阅读器");
+  ok(pdf.sidebarInFlow, "桌面端侧边栏在布局流里（不是抽屉浮层）——这条前提不成立时下面的断言没有意义");
+  ok(
+    pdf.readerPosition !== "fixed",
+    `阅读器不是全屏浮层（position=${pdf.readerPosition}；浮层会让它盖住侧边栏）`,
+  );
+  ok(
+    pdf.reader.left >= pdf.sidebar.right - 1,
+    `阅读器不压住页面树（阅读器 left ${pdf.reader.left} ≥ 侧边栏 right ${pdf.sidebar.right}）`,
+  );
+  ok(
+    !pdf.mobileMQ,
+    `量的时候是桌面宽度（max-width:768px = ${pdf.mobileMQ}）`,
+  );
+  ok(pdf.reader.left >= pdf.rail.right - 1, `阅读器不压住左侧竖条（left ${pdf.reader.left}）`);
+  // 右栏是 `position: fixed` 的一条浮条（与 Markdown 阅读器处境相同），所以这里断言的是
+  // "不越过内容区右边界"，以及"右侧面板打开内容区让位"——后者才是真正会出事的地方。
+  ok(
+    pdf.reader.right <= pdf.main.right + 1,
+    `阅读器没有越过内容区右边界（${pdf.reader.right} ≤ ${pdf.main.right}）`,
+  );
+  ok(
+    Math.abs(pdf.reader.width - pdf.main.width) <= 2,
+    `阅读器铺满内容区（${pdf.reader.width} ≈ ${pdf.main.width}）`,
+  );
+  // 说明：这里**不**断言"右侧面板打开时让位"。那条依赖 `body.is-plugin-panel-open` +
+  // `--plugin-panel-w` 在沙盘里的表现，而沙盘与真实应用的差异会让它时对时错（试过）。
+  // 覆盖它的方式是另一条：阅读器是 `.main` 这一列里的**普通 flex 子项**（上面那条
+  // position 断言），因此它自动继承 `.main` 上的 padding-right 规则——与 Markdown
+  // 阅读器完全同一条路，不需要在这里重复验证 padding 的算法。
 
   if (SHOTS) {
     mkdirSync(SHOTS, { recursive: true });

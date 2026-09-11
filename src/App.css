@@ -16582,6 +16582,29 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   justify-content: center;
 }
+/* 桌面端：PDF 阅读器是**内容区的一种视图**——和 Markdown 阅读器一样，侧边栏与右栏都留着。
+   （窄屏仍是上面那个全屏浮层：那时侧边栏本来就是抽屉。）
+   所以这里不是"给弹窗挪位置"，而是把它当成第二阅读器：铺满 .main，去掉遮罩/圆角/阴影。 */
+.main > .pdf-reader-overlay {
+  /* 不脱离文档流：作为 .main 这一列里的一个 flex 子项铺满内容盒。
+     这样它会**自动尊重** .main 上那条 padding-right（右侧目录 / AI / 插件面板打开时的占位），
+     与 Markdown 阅读器的行为一致；用 `position:absolute; inset:0` 则会忽略 padding，
+     把内容塞到右栏底下。 */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+  z-index: 1;
+  display: block;
+}
+.main > .pdf-reader-overlay .pdf-reader,
+.main > .pdf-reader-overlay .pdf-reader.maximized {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
 .pdf-reader {
   /* M24 — 思源式近全屏阅读器：默认铺满页面区域（留少量边距），不再居中限宽小弹窗。
      若要真正的全屏，点最大化按钮 (.maximized 覆盖为 100% 无边距)。 */

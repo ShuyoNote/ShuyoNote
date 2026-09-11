@@ -219,7 +219,15 @@ function PdfContinuousPage({
 // M24 — PDF reader modal. 方案 B：虚拟化连续滚动。文档以「页块栈」纵向排布：
 // 每个页块绝对定位在累计偏移处（占位高 = 固定 chrome 带 + 页面图像高，宽统一为内容宽），
 // 舞台只挂载视口 ± 缓冲的页块，其余页只占位（不渲染），保持整段可滚且不叠盖。
-export function PdfReader() {
+/**
+ * PDF 阅读器。
+ *
+ * `inline` = 它是**内容区里的一种视图**（桌面端默认这样）：和 Markdown 阅读器一样铺满 `.main`，
+ * 侧边栏与右栏都留着。此时"最大化窗口"没有意义（它已经在内容区里铺满），按钮不显示——
+ * 留一个按下去什么都不发生的按钮，比没有更糟。
+ * 窄屏（以及单页独立窗口）仍然按全屏浮层渲染。
+ */
+export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState<ZoomMode>({ mode: "fit-width" });
@@ -1072,7 +1080,13 @@ export function PdfReader() {
   }
 
   return createPortal(
-    <div className="pdf-reader-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div
+      className="pdf-reader-overlay"
+      // 浮层模式下点空白关闭；inline 模式下它就是内容区（铺满），没有"空白"可点。
+      onMouseDown={(e) => {
+        if (!inline && e.target === e.currentTarget) close();
+      }}
+    >
       <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeMode !== "off" ? ` eye-${eyeMode}` : ""}`}>
         {/* 标题区整体可拖窗口（配合 dragDropEnabled=false）。按钮/控件不挂在
             drag-region 上，否则点击会被当成拖窗口——与主窗口 TitleBar 一致。 */}
@@ -1192,6 +1206,7 @@ export function PdfReader() {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
+            {!inline && (
             <button className="pdf-reader-btn" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
               {maximized ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
@@ -1199,6 +1214,7 @@ export function PdfReader() {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 4h12v12M4 8l16-4"/></svg>
               )}
             </button>
+            )}
             <button className="pdf-reader-btn" onClick={() => setSidebarOpen((s) => !s)} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
               {sidebarOpen ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
