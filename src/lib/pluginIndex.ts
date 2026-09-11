@@ -304,6 +304,19 @@ export function revokedKeysSummary(
   return [head, ...lines].join("\n");
 }
 
+/** 安装来源说人话（`plugin_install.source` 的取值）。 */
+export function sourceLabel(source: string): string {
+  if (!source) return "未记录";
+  if (source === "local") return "本地文件夹";
+  if (source === "zip") return "zip 包";
+  if (source === "bundled") return "随应用附带";
+  if (source.startsWith("index:")) {
+    const host = source.slice("index:".length);
+    return host ? `索引（${host}）` : "索引";
+  }
+  return source;
+}
+
 /** 上一次填过的索引地址 / 公钥（只是省得每次重打，不是"信任配置"）。 */
 export const INDEX_URL_KEY = "shuyonote.pluginIndexUrl";
 export const INDEX_PUBKEY_KEY = "shuyonote.pluginIndexPubkey";

@@ -16,6 +16,7 @@ import {
   revocationNotice,
   revokedKeyNotice,
   revokedKeysSummary,
+  sourceLabel,
   saveIndexDraft,
   INDEX_PUBKEY_KEY,
   INDEX_URL_KEY,
@@ -298,6 +299,18 @@ describe("发布者密钥被撤回（比撤回版本更重）", () => {
     expect(summary).toContain("撤回了 2 把发布者密钥");
     expect(summary).toContain("aaaa-1111 —— 泄露（2026-09-01）");
     expect(summary).toContain("bbbb-2222 —— 没写原因");
+  });
+});
+
+describe("安装来源说人话", () => {
+  it("本地 / zip / 附带 / 索引 / 未知各有各的说法", () => {
+    expect(sourceLabel("local")).toBe("本地文件夹");
+    expect(sourceLabel("zip")).toBe("zip 包");
+    expect(sourceLabel("bundled")).toBe("随应用附带");
+    expect(sourceLabel("index:example.com")).toBe("索引（example.com）");
+    // 老行没有 source 值：说"未记录"，而不是留空（留空会被读成"没有来源"）
+    expect(sourceLabel("")).toBe("未记录");
+    expect(sourceLabel("未来某种来源")).toBe("未来某种来源");
   });
 });
 

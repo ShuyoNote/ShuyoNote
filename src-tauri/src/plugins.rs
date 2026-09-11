@@ -3417,6 +3417,146 @@ fn record_install(
     Ok(())
 }
 
+/// 一条**事实**（不是结论）。
+///
+/// 治理这一块刻意只做"把可查证的事摆出来"：不评分、不排好坏、不说"这个插件危险"。
+/// 判断留给用户，而用户要做出判断，就得先看到事实——而且事实必须是**看得出来怎么来的**
+/// （所以在哪里出现、出现几次都写进 `text` 里）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFact {
+    /// 机器可读的短标识（`uses_eval` / `embedded_blob` …），便于以后按需过滤。
+    pub code: String,
+    /// 给人看的一句话。
+    pub text: String,
+}
+
+/// 一个插件的"事实清单"（M11.11b 治理部分里唯一能自动化的那块）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFacts {
+    pub id: String,
+    pub version: String,
+    /// 安装来源：`local` / `zip` / `index:<域名>` / `bundled`（或空=不知道）。
+    pub source: String,
+    pub runtime: String,
+    pub main_file: String,
+    pub main_bytes: u64,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    /// 声明的权限 id（风险与中文标题由前端注册表映射，后端不重复维护一份）。
+    pub declared_permissions: Vec<String>,
+    /// 走了"旧 manifest 没声明权限"的基线授权（等于全给）。
+    pub baseline_permissions: bool,
+    /// 订阅的事件（订阅了事件 = 用户没点命令时也会跑代码）。
+    pub events: Vec<String>,
+    /// 静态看得出来的事实（不执行代码）。
+    pub facts: Vec<PluginFact>,
+}
+
+/// 静态扫描插件源码，只报**看得出来**的事实。
+///
+/// 边界写在最前面：这只是文本匹配，**不是安全分析**。它不判断好坏，也抓不住真正聪明的
+/// 恶意代码（那正是"不评分"的理由——一个假的安全感比没有更糟）。它能做的是：把"这段代码
+/// 里有 eval""里面塞了大段编码数据"这类事摆在用户和审阅者眼前。
+pub fn scan_plugin_source(source: &str) -> Vec<PluginFact> {
+    let mut facts = Vec::new();
+    let count = |needle: &str| source.matches(needle).count();
+
+    // 动态代码执行：代码的内容不完全是你能读到的那些。
+    let eval_n = count("eval(");
+    let fn_n = count("new Function(");
+    if eval_n > 0 || fn_n > 0 {
+        let mut parts = Vec::new();
+        if eval_n > 0 {
+            parts.push(format!("eval( ×{eval_n}"));
+        }
+        if fn_n > 0 {
+            parts.push(format!("new Function( ×{fn_n}"));
+        }
+        facts.push(PluginFact {
+            code: "dynamic_code".into(),
+            text: format!(
+                "会在运行时构造并执行代码（{}）——执行的到底是什么，只有跑起来才知道",
+                parts.join("、")
+            ),
+        });
+    }
+
+    // 大段编码数据：常见于内嵌资源，也常见于混淆/打包产物。
+    let longest_encoded = source
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='))
+        .filter(|tok| tok.len() >= 512 && tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='))
+        .map(|tok| tok.len())
+        .max();
+    if let Some(len) = longest_encoded {
+        facts.push(PluginFact {
+            code: "embedded_blob".into(),
+            text: format!("含一段 {len} 字符的连续编码文本（通常是内嵌资源，也可能是打包/混淆后的代码）"),
+        });
+    }
+
+    // 超长单行：压缩/打包过的代码几乎总是这样。
+    if let Some((line_no, len)) = source
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l.chars().count()))
+        .max_by_key(|(_, l)| *l)
+    {
+        if len >= 2000 {
+            facts.push(PluginFact {
+                code: "long_line".into(),
+                text: format!("第 {line_no} 行有 {len} 个字符（压缩或打包后的代码通常长这样）"),
+            });
+        }
+    }
+
+    // 网络访问：这一版**没有任何联网能力**，所以任何「看起来在联网」的写法都值得指出
+    // ——它要么是死代码，要么是在等一个还不存在的能力。
+    for needle in ["XMLHttpRequest", "fetch(", "WebSocket", "require(\"http", "require('http"] {
+        if source.contains(needle) {
+            facts.push(PluginFact {
+                code: "network_hint".into(),
+                text: format!(
+                    "出现了 {needle} —— 本版本的插件能力面**没有任何联网能力**，这段代码现在做不了任何网络请求"
+                ),
+            });
+            break;
+        }
+    }
+
+    facts
+}
+
+/// 把"关于这个插件已知的事实"装配成一份清单（纯函数：分离出来才好测）。
+pub fn build_plugin_facts(
+    runtime: &str,
+    main_bytes: u64,
+    file_count: usize,
+    total_bytes: u64,
+    source_text: Option<&str>,
+) -> Vec<PluginFact> {
+    let mut facts = Vec::new();
+    if runtime == "declarative" {
+        facts.push(PluginFact {
+            code: "no_code".into(),
+            text: "零代码插件：没有一行可执行的代码，界面由宿主按声明渲染".into(),
+        });
+        return facts;
+    }
+    facts.push(PluginFact {
+        code: "entry_size".into(),
+        text: format!(
+            "入口文件 {} 字节；整个插件目录 {} 个文件、共 {} 字节",
+            main_bytes, file_count, total_bytes
+        ),
+    });
+    if let Some(src) = source_text {
+        facts.extend(scan_plugin_source(src));
+    }
+    facts
+}
+
 /// 一个插件当前信任的发布者公钥（TOFU 固定下来的那一把）。
 #[derive(Serialize, Clone, Debug)]
 pub struct PublisherKeyView {
@@ -4639,6 +4779,86 @@ pub fn plugin_publisher_keys(db: State<'_, Db>) -> Vec<PublisherKeyView> {
         Ok(it) => it.filter_map(|r| r.ok()).collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// 一个插件的**事实清单**：来源、体积、权限与事件的声明，加上静态扫描看得出来的事实。
+///
+/// 刻意不含任何评分或结论——治理这一块只把可查证的东西摆出来，判断留给用户。
+#[tauri::command]
+pub async fn plugin_facts(app: AppHandle, db: State<'_, Db>, id: String) -> Result<PluginFacts, String> {
+    if !is_safe_plugin_id(&id) {
+        return Err("非法插件 id".to_string());
+    }
+    let dir = plugins_root(&app)?.join(&id);
+    if !dir.is_dir() {
+        return Err("插件不存在".to_string());
+    }
+    let manifest = read_manifest(&dir)?;
+    let runtime = runtime_of(&manifest).to_string();
+    let main_file = manifest.main.clone();
+    let main_bytes = std::fs::metadata(dir.join(&main_file)).map(|m| m.len()).unwrap_or(0);
+    let (file_count, total_bytes) = dir_stats(&dir);
+    let source = if runtime == "logic" {
+        load_plugin_source(&dir, &manifest).ok()
+    } else {
+        None
+    };
+    let (permissions, baseline) = {
+        let (perm_metas, baseline) = permission_metas(&manifest);
+        (
+            perm_metas.into_iter().map(|p| p.id).collect::<Vec<_>>(),
+            baseline,
+        )
+    };
+    let events = manifest
+        .events
+        .as_ref()
+        .map(|evs| evs.iter().map(|e| e.on.clone()).collect())
+        .unwrap_or_default();
+    let source_kind = {
+        let c = conn(&db);
+        c.query_row(
+            "SELECT source FROM plugin_install WHERE plugin_id = ?1",
+            params![id],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap_or_default()
+    };
+    Ok(PluginFacts {
+        id: manifest.id.clone(),
+        version: manifest.version.clone(),
+        source: source_kind,
+        runtime: runtime.clone(),
+        main_file,
+        main_bytes,
+        file_count,
+        total_bytes,
+        declared_permissions: permissions,
+        baseline_permissions: baseline,
+        events,
+        facts: build_plugin_facts(&runtime, main_bytes, file_count, total_bytes, source.as_deref()),
+    })
+}
+
+/// 目录里的文件数与总字节数（插件目录很小，直接递归统计）。
+fn dir_stats(dir: &Path) -> (usize, u64) {
+    let mut count = 0usize;
+    let mut bytes = 0u64;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            let (c, b) = dir_stats(&p);
+            count += c;
+            bytes += b;
+        } else if let Ok(m) = e.metadata() {
+            count += 1;
+            bytes += m.len();
+        }
+    }
+    (count, bytes)
 }
 
 /// 被撤回的发布者密钥（界面显示用）。
@@ -7392,6 +7612,55 @@ register({ id: "s.run", title: "结构化", run: function () {
             publisher_key_verdict(&c, "p1", KEY_A).unwrap(),
             PublisherKeyVerdict::Changed { .. }
         ));
+    }
+
+    // ---- 事实清单（M11.11b 治理：只摆事实，不评分）----
+
+    #[test]
+    fn the_scan_reports_what_it_can_actually_see() {
+        // 干净的小插件：一条事实都不该编出来
+        assert!(scan_plugin_source("register({ id: 'a', run: function(){ return __pages(); } });").is_empty());
+
+        // 动态代码
+        let f = scan_plugin_source("var x = eval('1+1'); var y = new Function('return 1');");
+        let dyn_fact = f.iter().find(|x| x.code == "dynamic_code").expect("要报出动态代码");
+        assert!(dyn_fact.text.contains("eval( ×1"), "{}", dyn_fact.text);
+        assert!(dyn_fact.text.contains("new Function( ×1"), "{}", dyn_fact.text);
+
+        // 大段编码文本（放在一处不代表它是恶意的——事实就是"有这么一段"）
+        let blob = "A".repeat(600);
+        let f = scan_plugin_source(&format!("var data = '{blob}';"));
+        let blob_fact = f.iter().find(|x| x.code == "embedded_blob").expect("要报出内嵌编码段");
+        assert!(blob_fact.text.contains("600 字符"), "{}", blob_fact.text);
+        // 短一点的编码串不报（避免噪音）
+        let f = scan_plugin_source(&format!("var data = '{}';", "A".repeat(64)));
+        assert!(f.iter().all(|x| x.code != "embedded_blob"));
+
+        // 超长单行（压缩/打包产物）
+        let f = scan_plugin_source(&format!("var a = 1;\nvar b = '{}';", "x".repeat(2500)));
+        let line_fact = f.iter().find(|x| x.code == "long_line").expect("要报出超长单行");
+        assert!(line_fact.text.contains("第 2 行"), "{}", line_fact.text);
+
+        // 看起来在联网：报，并且说清"这一版没有联网能力"
+        let f = scan_plugin_source("fetch('https://example.com')");
+        let net = f.iter().find(|x| x.code == "network_hint").expect("要报出联网迹象");
+        assert!(net.text.contains("没有任何联网能力"), "{}", net.text);
+    }
+
+    #[test]
+    fn the_fact_sheet_says_what_kind_of_plugin_it_is() {
+        // 零代码插件：一条事实就够（也是最重要的一条）
+        let f = build_plugin_facts("declarative", 0, 1, 512, None);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].code, "no_code");
+        assert!(f[0].text.contains("没有一行可执行的代码"));
+
+        // 有代码的：体积事实 + 扫描事实
+        let f = build_plugin_facts("logic", 1024, 3, 4096, Some("eval('x')"));
+        assert_eq!(f[0].code, "entry_size");
+        assert!(f[0].text.contains("1024 字节"));
+        assert!(f[0].text.contains("3 个文件"));
+        assert!(f.iter().any(|x| x.code == "dynamic_code"));
     }
 
     #[test]

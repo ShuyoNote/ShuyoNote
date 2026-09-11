@@ -21,6 +21,7 @@ vi.mock("../lib/api", () => ({
     pluginDirStamp: vi.fn(),
     ignorePluginRevocation: vi.fn(),
     ignoreRevokedPublisherKey: vi.fn(),
+    pluginFacts: vi.fn(),
     pluginRevocations: vi.fn(),
     emitPluginEvent: vi.fn(),
   },
@@ -563,6 +564,44 @@ describe("忽略撤回", () => {
     const r = await usePlugins.getState().ignoreRevocation("demo");
     expect(r.ok).toBe(false);
     expect(api.ignorePluginRevocation).not.toHaveBeenCalled();
+  });
+});
+
+// 事实清单：先开面板再拉数据（拉失败也要看见那句话），切走之后不许把结果塞回来。
+describe("插件事实清单", () => {
+  beforeEach(() => {
+    vi.mocked(api.pluginFacts).mockReset();
+    usePlugins.setState({ factsFor: null, facts: null });
+  });
+
+  it("打开时拉数据并记住", async () => {
+    vi.mocked(api.pluginFacts).mockResolvedValue({
+      id: "demo",
+      version: "1.0.0",
+      source: "index:example.com",
+      runtime: "logic",
+      mainFile: "main.js",
+      mainBytes: 100,
+      fileCount: 2,
+      totalBytes: 200,
+      declaredPermissions: [],
+      baselinePermissions: false,
+      events: [],
+      facts: [{ code: "entry_size", text: "入口 100 字节" }],
+    });
+    await usePlugins.getState().openFacts("demo");
+    expect(api.pluginFacts).toHaveBeenCalledWith("demo");
+    expect(usePlugins.getState().facts?.facts[0].text).toContain("100 字节");
+    usePlugins.getState().closeFacts();
+    expect(usePlugins.getState().factsFor).toBeNull();
+    expect(usePlugins.getState().facts).toBeNull();
+  });
+
+  it("拉失败：不把上一个插件的数据留在屏幕上，并弹错误", async () => {
+    vi.mocked(api.pluginFacts).mockRejectedValue("插件不存在");
+    await usePlugins.getState().openFacts("demo");
+    expect(usePlugins.getState().facts).toBeNull();
+    expect(lastToast()?.message).toContain("插件不存在");
   });
 });
 

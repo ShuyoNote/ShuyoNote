@@ -8,7 +8,8 @@ import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { PluginIndexPanel } from "./PluginIndexPanel";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
-import { revocationNotice, revokedKeyNotice } from "../lib/pluginIndex";
+import { revocationNotice, revokedKeyNotice, sourceLabel } from "../lib/pluginIndex";
+import { formatBytes } from "../lib/pluginAudit";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
@@ -18,6 +19,7 @@ export function PluginManager() {
     logsFor, logs, openLogs, closeLogs, clearLogs,
     auditFor, audit, openAudit, closeAudit, clearAudit,
     ignoreRevocation, ignoreRevokedKey,
+    factsFor, facts, openFacts, closeFacts,
     validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
     settingsFor, settings, openSettings, closeSettings, saveSetting,
     approve,
@@ -267,6 +269,13 @@ export function PluginManager() {
                 >
                   {logsFor === p.id ? "收起日志" : "日志"}
                 </button>
+                {/* 事实清单：来源、体积、声明、静态扫描看得出来的事——只摆事实，不评分。 */}
+                <button
+                  onClick={() => (factsFor === p.id ? closeFacts() : void openFacts(p.id))}
+                  title="这个插件可查证的事实（来源、体积、声明、静态扫描结果）——只摆事实，不给结论"
+                >
+                  {factsFor === p.id ? "收起事实" : "事实"}
+                </button>
                 {/* 能力调用审计：它碰过哪些权限、有没有被拒（权限被拒的记录最该看）。 */}
                 <button
                   onClick={() => (auditFor === p.id ? closeAudit() : openAudit(p.id))}
@@ -411,6 +420,53 @@ export function PluginManager() {
                     </div>
                   );
                 })()}
+              {factsFor === p.id && (
+                <div className="pm-facts">
+                  {/* 一句必要的说明：这不是安全分析，也抓不住聪明的恶意代码——
+                      一个假的安全感比没有更糟，所以边界要先讲清楚。 */}
+                  <div className="pm-facts-note">
+                    这是「事实清单」，不是安全评分：只列出可查证的东西，判断留给你。
+                    它抓不住真正聪明的恶意代码。
+                  </div>
+                  {!facts ? (
+                    <div className="pm-facts-empty">读取中…</div>
+                  ) : (
+                    <>
+                      <div className="pm-facts-row">
+                        <span className="pm-facts-key">来源</span>
+                        <span className="pm-facts-val">
+                          {sourceLabel(facts.source)}
+                          {facts.version ? ` · v${facts.version}` : ""}
+                          {` · ${facts.runtime === "declarative" ? "零代码" : "有代码"}`}
+                        </span>
+                      </div>
+                      <div className="pm-facts-row">
+                        <span className="pm-facts-key">体积</span>
+                        <span className="pm-facts-val">
+                          {formatBytes(facts.totalBytes)} · {facts.fileCount} 个文件 · 入口{" "}
+                          {formatBytes(facts.mainBytes)}
+                        </span>
+                      </div>
+                      <div className="pm-facts-row">
+                        <span className="pm-facts-key">声明</span>
+                        <span className="pm-facts-val">
+                          {facts.declaredPermissions.length === 0
+                            ? "不申请任何数据权限"
+                            : `${facts.declaredPermissions.length} 项权限：${facts.declaredPermissions.join(" / ")}`}
+                          {facts.baselinePermissions && "（按基线全给）"}
+                          {facts.events.length > 0 &&
+                            ` · 订阅 ${facts.events.length} 个事件（没点命令时也会跑代码）：${facts.events.join(" / ")}`}
+                        </span>
+                      </div>
+                      {facts.facts.map((f) => (
+                        <div key={f.code + f.text} className="pm-facts-item">
+                          {f.text}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
               {logsFor === p.id && (
                 <div className="pm-logs">
                   {logs.length === 0 ? (

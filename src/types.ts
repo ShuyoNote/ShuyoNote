@@ -319,6 +319,29 @@ export interface RevokedPublisherKey {
   ignored: boolean;
 }
 
+/** 一条**事实**（不是结论）：机器可读的短标识 + 给人看的一句话。 */
+export interface PluginFact {
+  code: string;
+  text: string;
+}
+
+/** 一个插件的事实清单（M11.11b 治理：只摆事实，不评分）。 */
+export interface PluginFacts {
+  id: string;
+  version: string;
+  /** 安装来源：local / zip / index:<域名> / bundled。 */
+  source: string;
+  runtime: string;
+  mainFile: string;
+  mainBytes: number;
+  fileCount: number;
+  totalBytes: number;
+  declaredPermissions: string[];
+  baselinePermissions: boolean;
+  events: string[];
+  facts: PluginFact[];
+}
+
 export interface PluginPermissionMeta {
   id: string;
   /** 人类可读标题（来自能力注册表），不是裸 id。 */

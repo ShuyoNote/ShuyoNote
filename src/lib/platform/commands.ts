@@ -39,6 +39,7 @@ import type {
   PluginEventOutcome,
   PluginMeta,
   PluginIndexView,
+  PluginFacts,
   PluginRevocation,
   PublisherKeyInfo,
   RevokedPublisherKey,
@@ -211,6 +212,8 @@ export interface CommandMap {
   plugin_revoked_keys: { args: undefined; result: RevokedPublisherKey[] };
   /** 用户对"某把发布者密钥被撤回"表态：我知道，仍然使用。 */
   ignore_revoked_publisher_key: { args: { fingerprint: string }; result: RevokedPublisherKey };
+  /** 一个插件的事实清单（只摆事实，不评分）。 */
+  plugin_facts: { args: { id: string }; result: PluginFacts };
   open_plugin_dir: { args: undefined; result: string };
   plugin_logs: { args: { pluginId?: string | null; limit?: number | null }; result: PluginLogLine[] };
   clear_plugin_logs: { args: undefined; result: void };

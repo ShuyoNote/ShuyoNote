@@ -7,6 +7,7 @@ import { registerHostEventEmitter } from "../lib/pluginEvents";
 import type {
   PluginAuditEntry,
   PluginEventOutcome,
+  PluginFacts,
   PluginDraft,
   PluginExport,
   PluginLogLine,
@@ -155,6 +156,16 @@ interface PluginsState {
   openSettings: (pluginId: string) => Promise<void>;
   closeSettings: () => void;
   saveSetting: (pluginId: string, key: string, value: string) => Promise<void>;
+  /**
+   * 正在查看哪个插件的**事实清单**（null = 未打开）。
+   *
+   * 这一屏是"治理"里唯一能自动化的那块：来源、体积、声明、静态扫描看得出来的事实。
+   * 它**不给结论**——不评分、不排好坏。用户要判断，先得看得见事实。
+   */
+  factsFor: string | null;
+  facts: PluginFacts | null;
+  openFacts: (pluginId: string) => Promise<void>;
+  closeFacts: () => void;
   /** 正在查看哪个插件的能力调用审计（null = 未打开）。 */
   auditFor: string | null;
   audit: PluginAuditEntry[];
@@ -400,8 +411,26 @@ export const usePlugins = create<PluginsState>((set) => ({
       toast(`保存设置失败：${errText(e)}`, "error");
     }
   },
+  factsFor: null,
+  facts: null,
   auditFor: null,
   audit: [],
+  openFacts: async (pluginId) => {
+    // 先开面板再拉数据：加载失败也要让用户看到那句话，而不是"点了没反应"。
+    set({ factsFor: pluginId, facts: null });
+    try {
+      const facts = await api.pluginFacts(pluginId);
+      // 期间用户可能已经切走/收起
+      if (usePlugins.getState().factsFor !== pluginId) return;
+      set({ facts });
+    } catch (e) {
+      console.error("load plugin facts failed", e);
+      if (usePlugins.getState().factsFor !== pluginId) return;
+      set({ facts: null });
+      toast(`读取插件事实失败：${errText(e)}`, "error");
+    }
+  },
+  closeFacts: () => set({ factsFor: null, facts: null }),
   openAudit: async (pluginId) => {
     try {
       const audit = await api.pluginAudit(pluginId);

@@ -458,6 +458,8 @@ pub fn run() {
             plugins::ignore_revoked_publisher_key,
             plugins::open_plugin_dir,
             plugin_validate::validate_plugin,
+            // M11.11b 治理：事实清单（只摆事实，不评分）。
+            plugins::plugin_facts,
             plugin_validate::plugin_dir_stamp,
             plugins::plugin_logs,
             plugins::clear_plugin_logs,

@@ -152,6 +152,8 @@ export const api = {
   /** 用户对"某把发布者密钥被撤回"表态。 */
   ignoreRevokedPublisherKey: (fingerprint: string) =>
     invoke("ignore_revoked_publisher_key", { fingerprint }),
+  /** 一个插件的事实清单（只摆事实，不评分）。 */
+  pluginFacts: (id: string) => invoke("plugin_facts", { id }),
   openPluginDir: () => invoke("open_plugin_dir"),
   pluginLogs: (pluginId?: string | null, limit?: number | null) =>
     invoke("plugin_logs", { pluginId: pluginId ?? null, limit: limit ?? null }),
