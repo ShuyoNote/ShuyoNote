@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { createPortal } from "react-dom";
 import { usePdfReader } from "../store/pdfReader";
 import { useAiStore } from "../store/ai";
-import type { createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
+import { canvasToPngBlob, type createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
 // NOTE: pdf.js is large (~1MB) and only needed when a PDF is actually opened,
 // so the runtime engine is imported lazily below (see the load effect), keeping
 // it out of the initial bundle. `createPdfjsEngine` is imported as a *type only*
@@ -137,9 +137,12 @@ async function renderPagePng(
     img.data.set(bytes);
     tctx.putImageData(img, 0, 0);
     ctx.drawImage(tmp, 0, 0);
-    return new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("导出页面失败"))), "image/jpeg", 0.92),
+    // 导出这页的 JPEG：同样不能只信 toBlob（见 canvasToPngBlob 的注释），
+    // 失败时退回 PNG 的编码路径，至少让导出这一步能完成。
+    const jpeg = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92),
     );
+    return jpeg ?? canvasToPngBlob(canvas);
   }
   return eng.renderPageToBlob(pageIndex, scale);
 }
@@ -160,6 +163,14 @@ interface PageBlockData {
   textItems: TextItemLike[] | null;
   hasTextLayer: boolean;
   meta: { w: number; h: number } | null;
+  /**
+   * 这一页光栅化失败的原因（成功时为 null）。
+   *
+   * 以前两处渲染路径的 catch 都是空的（`// 忽略：图像加载失败不影响跳转`），于是
+   * **失败看起来和"还没加载"一模一样**：页面位置、页码、工具条都在，就是一片空白，
+   * 用户只能报"看不到内容"。失败必须留下痕迹——既是给人看，也是给排查用。
+   */
+  error?: string | null;
 }
 
 // 方案 B — 连续滚动中的单个页块。每页一个自包含 PdfAnnotationCanvas，
@@ -177,6 +188,7 @@ function PdfContinuousPage({
   onStateChange,
   onChanged,
   renderPage,
+  onRetry,
 }: {
   pageIndex: number;
   attachmentId: string;
@@ -190,10 +202,21 @@ function PdfContinuousPage({
   onStateChange: () => void;
   onChanged: () => void;
   renderPage: (pageIndex: number, scale: number) => Promise<Blob>;
+  /** 重新光栅化这一页（失败后给用户一个出口，而不是让他去关掉重开）。 */
+  onRetry: (pageIndex: number) => void;
 }) {
-  const { url, textItems, hasTextLayer, meta } = data;
+  const { url, textItems, hasTextLayer, meta, error } = data;
   if (!meta) {
     return <div className="pdf-annot-placeholder" style={{ width }}>第 {pageIndex + 1} 页…</div>;
+  }
+  if (!url && error) {
+    return (
+      <div className="pdf-page-error" style={{ width }}>
+        <div className="pdf-page-error-title">第 {pageIndex + 1} 页没能显示</div>
+        <div className="pdf-page-error-why">{error}</div>
+        <button className="pdf-page-error-retry" onClick={() => onRetry(pageIndex)}>重试</button>
+      </div>
+    );
   }
   return (
     <PdfAnnotationCanvas
@@ -730,8 +753,17 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
         }
         cache.set(key, url);
         setPageData((d) => ({ ...d, [pageIndex]: { ...(d[pageIndex] ?? { meta: null, textItems: null, hasTextLayer: false }), url } }));
-      } catch {
-        // 忽略：图像加载失败不影响跳转。
+      } catch (e) {
+        // 不再静默：记进这一页的数据里，页块会把它显示出来（带「重试」）。
+        const why = e instanceof Error ? e.message : String(e);
+        console.error("renderPagePng failed", { pageIndex, scale, error: e });
+        setPageData((d) => ({
+          ...d,
+          [pageIndex]: {
+            ...(d[pageIndex] ?? { meta: null, textItems: null, hasTextLayer: false }),
+            error: why,
+          },
+        }));
       } finally {
         inflightRef.current.delete(key);
       }
@@ -901,6 +933,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
             if (inflightRef.current.has(key)) return;
             inflightRef.current.add(key);
             let url: string | null = null;
+            let failure: string | null = null;
             try {
               const blob = await renderPagePng(eng, attachmentId, i, scale);
               if (!alive) return;
@@ -918,15 +951,17 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
                 }
               }
               cache.set(key, url);
-            } catch {
+            } catch (e) {
               if (alive) url = null;
+              failure = e instanceof Error ? e.message : String(e);
+              console.error("renderPagePng failed", { pageIndex: i, scale, error: e });
             } finally {
               inflightRef.current.delete(key);
             }
             if (alive) {
               setPageData((d) => ({
                 ...d,
-                [i]: { ...(d[i] ?? { meta: null, textItems: null, hasTextLayer: false }), url },
+                [i]: { ...(d[i] ?? { meta: null, textItems: null, hasTextLayer: false }), url, error: failure },
               }));
             }
           }),
@@ -1073,6 +1108,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
             onStateChange={onAnnotStateChange}
             onChanged={refreshAnnRecords}
             renderPage={renderPageForOcr}
+            onRetry={launchPageImage}
           />
         </div>,
       );

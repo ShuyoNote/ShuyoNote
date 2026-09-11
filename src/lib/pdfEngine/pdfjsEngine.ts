@@ -66,6 +66,32 @@ async function toOutline(doc: PDFDocumentProxy, nodes: unknown[] | null | undefi
 }
 
 /** Create a PDF.js-backed render engine (browser). */
+/**
+ * `canvas.toBlob` 的回退版本。
+ *
+ * 为什么需要回退：`toBlob` 在个别 WebView / 画布尺寸下会**静默给出 null**
+ * （WKWebView 的画布内存限制是常见成因），于是页面图像永远出不来，而调用方只看到
+ * "一片空白"。`toDataURL` 的路径更老也更普遍可用，所以这里在 `toBlob` 失败时改走它
+ * ——多一步编码，换的是"能看见"。
+ */
+export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) return resolve(blob);
+      try {
+        const dataUrl = canvas.toDataURL("image/png");
+        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+        const bin = atob(base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        resolve(new Blob([bytes], { type: "image/png" }));
+      } catch (e) {
+        reject(new Error(`页面图像导出失败：${e instanceof Error ? e.message : String(e)}`));
+      }
+    }, "image/png");
+  });
+}
+
 export function createPdfjsEngine(): PdfRenderEngineApi {
   let doc: PDFDocumentProxy | null = null;
   let task: PDFDocumentLoadingTask | null = null;
@@ -149,9 +175,7 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("无法创建 2D 上下文");
       await p.render({ canvasContext: ctx, viewport: vp }).promise;
-      return new Promise<Blob>((resolve, reject) =>
-        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("导出页面失败"))), "image/png"),
-      );
+      return canvasToPngBlob(canvas);
     },
   };
 }

@@ -16960,6 +16960,48 @@ p:has(> .editor-drawing-container) {
   cursor: crosshair;
   touch-action: none;
 }
+/* 页面光栅化失败：以前是"一片空白"，现在把原因摆出来并给一个重试的出口。 */
+.pdf-page-error {
+  box-sizing: border-box;
+  border: 1px dashed var(--danger, #e5484d);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #e5484d) 6%, var(--surface));
+  color: var(--text-dim);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 220px;
+  padding: 20px;
+  text-align: center;
+  display: flex;
+}
+.pdf-page-error-title {
+  color: var(--danger, #e5484d);
+  font-size: 13px;
+  font-weight: 600;
+}
+.pdf-page-error-why {
+  max-width: 460px;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pdf-page-error-retry {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 14px;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.pdf-page-error-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .pdf-annot-placeholder {
   display: flex;
   align-items: center;
