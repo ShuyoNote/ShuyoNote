@@ -16,6 +16,7 @@
 // 而不是"颜色对不对"。改样式只要不破坏这些关系，就不会红。
 
 import { createServer } from "node:http";
+import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
@@ -37,32 +38,6 @@ const ok = (cond, msg) => {
   }
 };
 
-function findChrome() {
-  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const cache = join(homedir(), ".cache", "puppeteer", "chrome");
-  if (existsSync(cache)) {
-    for (const ver of readdirSync(cache)) {
-      for (const rel of [
-        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-linux64/chrome",
-      ]) {
-        const p = join(cache, ver, rel);
-        if (existsSync(p)) return p;
-      }
-    }
-  }
-  for (const p of [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ]) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
 
 /** 有代表性的结构：两张插件卡（一张展开折叠区与事实面板）+ 索引面板（订阅列表与条目）。 */
 const FIXTURE = `
@@ -174,12 +149,7 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 
-const puppeteer = (await import("puppeteer-core")).default;
-const browser = await puppeteer.launch({
-  executablePath: chrome,
-  headless: "shell",
-  args: ["--no-sandbox", "--disable-dev-shm-usage"],
-});
+const browser = await launchChrome({ executablePath: chrome });
 const page = await browser.newPage();
 console.log("面板布局验收（真实 Chromium + 真实 App.css）");
 

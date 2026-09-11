@@ -16,6 +16,7 @@
 //   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-layout
 //   node scripts/verify-mobile-layout.mjs --shots /tmp/shots   # 顺便存图
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -41,39 +42,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 找一个可用的 Chrome。puppeteer-core 不带浏览器，所以这里自己找；
 // 找不到就明确报错，而不是静默跳过（否则这个验收脚本会假装通过）。
-function findChrome() {
-  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-
-  // puppeteer 的浏览器缓存（装了完整版 puppeteer 的话就在这里）
-  const cache = join(homedir(), ".cache", "puppeteer", "chrome");
-  if (existsSync(cache)) {
-    for (const ver of readdirSync(cache)) {
-      for (const rel of [
-        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-linux64/chrome",
-        "chrome-headless-shell-mac-arm64/chrome-headless-shell",
-      ]) {
-        const p = join(cache, ver, rel);
-        if (existsSync(p)) return p;
-      }
-    }
-  }
-
-  for (const p of [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/snap/bin/chromium",
-  ]) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
 
 // 在页面里读「竖条 / 侧栏 / 遮罩 / 按钮」的真实几何与计算样式。
 const probe = () => {
@@ -135,18 +103,7 @@ async function main() {
   console.log(`应用地址: ${APP_URL}\n`);
 
   const { default: puppeteer } = await import("puppeteer-core");
-  const browser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-gpu",
-      // CI 容器里 /dev/shm 通常只有 64 MB，Chrome 启动时可能因此崩掉/卡住；
-      // 症状是"等 WS endpoint 超时 30 s"——2026-09-11 的 CI 就这样红过一次
-      // （同一个提交重跑就绿了，是 flake 而不是真故障）。这个开关是标准解法。
-      "--disable-dev-shm-usage",
-    ],
-  });
+  const browser = await launchChrome({ executablePath: chrome });
   if (SHOTS) mkdirSync(SHOTS, { recursive: true });
   const shot = async (page, name) => {
     if (SHOTS) await page.screenshot({ path: join(SHOTS, `${name}.png`) });

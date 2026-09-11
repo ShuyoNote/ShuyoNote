@@ -20,6 +20,7 @@
 // （DB 初始化失败就是既不看版本号也不看资源清单的一种坏法）。
 
 import { createServer } from "node:http";
+import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
@@ -46,32 +47,6 @@ const ok = (cond, msg) => {
   }
 };
 
-function findChrome() {
-  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const cache = join(homedir(), ".cache", "puppeteer", "chrome");
-  if (existsSync(cache)) {
-    for (const ver of readdirSync(cache)) {
-      for (const rel of [
-        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-linux64/chrome",
-      ]) {
-        const p = join(cache, ver, rel);
-        if (existsSync(p)) return p;
-      }
-    }
-  }
-  for (const p of [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ]) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -133,14 +108,9 @@ if (LIVE_URL) {
 console.log(LIVE_URL ? `Web 线上验收 · ${LIVE_URL}` : `Web 构建产物验收 · ${DIR}`);
 console.log(`  期望版本 ${expected} · 实测版本 ${built ?? "(取不到)"}`);
 
-const puppeteer = (await import("puppeteer-core")).default;
 const { server, port } = LIVE_URL ? { server: null, port: null } : await serveStatic(DIR);
 const APP_URL = LIVE_URL ?? `http://127.0.0.1:${port}/`;
-const browser = await puppeteer.launch({
-  executablePath: chrome,
-  headless: "shell",
-  args: ["--no-sandbox", "--disable-dev-shm-usage"],
-});
+const browser = await launchChrome({ executablePath: chrome });
 const page = await browser.newPage();
 const errors = [];
 /** 明确"这一版 Web 不支持、请用桌面版"之类的日志：是**设计内**的行为，不是坏掉。

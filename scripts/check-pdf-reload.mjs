@@ -19,6 +19,7 @@
 // 用法：node scripts/check-pdf-reload.mjs
 
 import { createServer } from "node:http";
+import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -40,32 +41,6 @@ const ok = (cond, msg) => {
   }
 };
 
-function findChrome() {
-  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const cache = join(homedir(), ".cache", "puppeteer", "chrome");
-  if (existsSync(cache)) {
-    for (const ver of readdirSync(cache)) {
-      for (const rel of [
-        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-linux64/chrome",
-      ]) {
-        const p = join(cache, ver, rel);
-        if (existsSync(p)) return p;
-      }
-    }
-  }
-  for (const p of [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ]) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
 
 const chrome = findChrome();
 if (!chrome) {
@@ -134,12 +109,7 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 
-const puppeteer = (await import("puppeteer-core")).default;
-const browser = await puppeteer.launch({
-  executablePath: chrome,
-  headless: "shell",
-  args: ["--no-sandbox", "--disable-dev-shm-usage"],
-});
+const browser = await launchChrome({ executablePath: chrome });
 const page = await browser.newPage();
 await page.setViewport({ width: 900, height: 700 });
 console.log("PDF 重复加载验收（真实 Chromium + 真实 pdfjsEngine）");
