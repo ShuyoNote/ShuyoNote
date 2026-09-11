@@ -460,6 +460,11 @@ pub fn run() {
             plugin_validate::validate_plugin,
             // M11.11b 治理：事实清单（只摆事实，不评分）。
             plugins::plugin_facts,
+            // M11.11a 多源：订阅一组索引（自托 / 社区 / 企业内网），可增删、可逐个检查。
+            plugins::plugin_index_subscriptions,
+            plugins::subscribe_plugin_index,
+            plugins::unsubscribe_plugin_index,
+            plugins::check_plugin_index_subscriptions,
             plugin_validate::plugin_dir_stamp,
             plugins::plugin_logs,
             plugins::clear_plugin_logs,

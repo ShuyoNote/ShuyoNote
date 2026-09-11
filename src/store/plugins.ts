@@ -6,6 +6,7 @@ import { confirmAndApplyDrafts } from "../lib/pluginDrafts";
 import { registerHostEventEmitter } from "../lib/pluginEvents";
 import type {
   PluginAuditEntry,
+  IndexSubscription,
   PluginEventOutcome,
   PluginFacts,
   PluginDraft,
@@ -156,6 +157,18 @@ interface PluginsState {
   openSettings: (pluginId: string) => Promise<void>;
   closeSettings: () => void;
   saveSetting: (pluginId: string, key: string, value: string) => Promise<void>;
+  /**
+   * 订阅的索引（多源：自托 / 社区 / 企业内网各一条）。
+   *
+   * 这是协议层的"多源"部分，**不是商店**：没有推荐、没有排序、没有内置任何官方索引。
+   * 索引内容永远现场拉——用一份过期的清单做判断（"可更新"、"已撤回"）比不判断更糟。
+   */
+  subscriptions: IndexSubscription[];
+  loadSubscriptions: () => Promise<void>;
+  subscribeIndex: (url: string, pubkey?: string, label?: string) => Promise<PluginActionResult>;
+  unsubscribeIndex: (url: string) => Promise<PluginActionResult>;
+  /** 逐个检查订阅：失败只影响那一条（网络本来就会断）。 */
+  checkSubscriptions: (url?: string) => Promise<PluginActionResult>;
   /**
    * 正在查看哪个插件的**事实清单**（null = 未打开）。
    *
@@ -415,6 +428,65 @@ export const usePlugins = create<PluginsState>((set) => ({
   facts: null,
   auditFor: null,
   audit: [],
+  subscriptions: [],
+  loadSubscriptions: async () => {
+    try {
+      set({ subscriptions: await api.pluginIndexSubscriptions() });
+    } catch (e) {
+      console.error("load subscriptions failed", e);
+    }
+  },
+  subscribeIndex: async (url, pubkey, label) => {
+    try {
+      await api.subscribePluginIndex(url, pubkey ?? null, label ?? null);
+      await usePlugins.getState().loadSubscriptions();
+      return { ok: true };
+    } catch (e) {
+      console.error("subscribe index failed", e);
+      const error = errText(e);
+      toast(`添加订阅失败：${error}`, "error");
+      return { ok: false, error };
+    }
+  },
+  unsubscribeIndex: async (url) => {
+    try {
+      await api.unsubscribePluginIndex(url);
+      await usePlugins.getState().loadSubscriptions();
+      return { ok: true };
+    } catch (e) {
+      console.error("unsubscribe index failed", e);
+      const error = errText(e);
+      toast(`取消订阅失败：${error}`, "error");
+      return { ok: false, error };
+    }
+  },
+  checkSubscriptions: async (url) => {
+    try {
+      const subs = await api.checkPluginIndexSubscriptions(url ?? null);
+      set({ subscriptions: url ? usePlugins.getState().subscriptions : subs });
+      if (url) await usePlugins.getState().loadSubscriptions();
+      // 有失败就说清是哪一条失败了——"检查完成"这种话在有一条挂了的时候是误导
+      const failed = subs.filter((s) => s.last_ok === false);
+      if (failed.length > 0) {
+        toast(
+          `${failed.length} 个索引检查失败：${failed.map((s) => s.last_error || s.url).join("；")}`,
+          "error",
+        );
+        return { ok: false, error: failed.map((s) => s.last_error).join("；") };
+      }
+      const updates = subs.reduce((n, s) => n + (s.updates_available ?? 0), 0);
+      toast(
+        updates > 0 ? `检查完成：共 ${updates} 个插件可更新` : "检查完成：没有可更新的插件",
+        "success",
+      );
+      return { ok: true };
+    } catch (e) {
+      console.error("check subscriptions failed", e);
+      const error = errText(e);
+      toast(`检查订阅失败：${error}`, "error");
+      return { ok: false, error };
+    }
+  },
   openFacts: async (pluginId) => {
     // 先开面板再拉数据：加载失败也要让用户看到那句话，而不是"点了没反应"。
     set({ factsFor: pluginId, facts: null });

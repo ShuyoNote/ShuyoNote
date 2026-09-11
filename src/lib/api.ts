@@ -152,6 +152,14 @@ export const api = {
   /** 用户对"某把发布者密钥被撤回"表态。 */
   ignoreRevokedPublisherKey: (fingerprint: string) =>
     invoke("ignore_revoked_publisher_key", { fingerprint }),
+  /** 订阅的索引（多源：自托 / 社区 / 企业内网）。 */
+  pluginIndexSubscriptions: () => invoke("plugin_index_subscriptions"),
+  subscribePluginIndex: (url: string, pubkey?: string | null, label?: string | null) =>
+    invoke("subscribe_plugin_index", { url, pubkey: pubkey ?? null, label: label ?? null }),
+  unsubscribePluginIndex: (url: string) => invoke("unsubscribe_plugin_index", { url }),
+  /** 逐个检查订阅（失败只影响那一条）。 */
+  checkPluginIndexSubscriptions: (url?: string | null) =>
+    invoke("check_plugin_index_subscriptions", { url: url ?? null }),
   /** 一个插件的事实清单（只摆事实，不评分）。 */
   pluginFacts: (id: string) => invoke("plugin_facts", { id }),
   openPluginDir: () => invoke("open_plugin_dir"),

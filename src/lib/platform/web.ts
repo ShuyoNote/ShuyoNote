@@ -2353,6 +2353,10 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "plugin_publisher_keys") return [] as T;
     if (cmd === "plugin_revoked_keys") return [] as T;
     if (cmd === "plugin_facts") return null as T;
+    if (cmd === "plugin_index_subscriptions") return [] as T;
+    if (cmd === "subscribe_plugin_index") return null as T;
+    if (cmd === "unsubscribe_plugin_index") return undefined as T;
+    if (cmd === "check_plugin_index_subscriptions") return [] as T;
     if (cmd === "ignore_revoked_publisher_key") return null as T;
     if (cmd === "ignore_plugin_revocation") return null as T;
     if (cmd === "set_plugin_enabled") return undefined as T;

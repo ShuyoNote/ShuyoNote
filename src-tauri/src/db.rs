@@ -375,6 +375,20 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             source       TEXT NOT NULL DEFAULT '',
             pinned_at    INTEGER NOT NULL DEFAULT 0
         );
+        -- 订阅的插件索引（M11.11a 的多源部分）：应用维护**一组**索引 URL，用户可增删
+        -- （自托一个、社区一个、企业内网一个）。这里只存"订阅关系"与**上次检查的结果**，
+        -- 不存索引内容本身——索引永远现场拉，避免"用一份过期的清单做判断"。
+        CREATE TABLE IF NOT EXISTS plugin_index_subscription (
+            url            TEXT PRIMARY KEY,
+            pubkey         TEXT NOT NULL DEFAULT '',
+            label          TEXT NOT NULL DEFAULT '',
+            added_at       INTEGER NOT NULL DEFAULT 0,
+            last_checked_at INTEGER,
+            last_ok        INTEGER,
+            last_error     TEXT NOT NULL DEFAULT '',
+            plugin_count   INTEGER NOT NULL DEFAULT 0,
+            updates_available INTEGER NOT NULL DEFAULT 0
+        );
         -- 被撤回的**发布者密钥**（M11.11b：可按 key 撤回）。
         -- 撤回版本是"这一个版本不该再用"，撤回 key 是"这把 key 签的东西都不作数了"——
         -- 后者是发布者签名的另一半价值：被滥用时能止损。同样**离线也生效**（记住就不再联网）。

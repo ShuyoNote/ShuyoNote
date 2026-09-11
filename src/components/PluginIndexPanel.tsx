@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
@@ -15,6 +15,8 @@ import {
   installConfirmMessage,
   loadIndexDraft,
   saveIndexDraft,
+  subscriptionStatus,
+  subscriptionTitle,
 } from "../lib/pluginIndex";
 
 /**
@@ -25,7 +27,10 @@ import {
  * 摊开权限。
  */
 export function PluginIndexPanel() {
-  const { installFromIndex, plugins } = usePlugins();
+  const {
+    installFromIndex, plugins,
+    subscriptions, loadSubscriptions, subscribeIndex, unsubscribeIndex, checkSubscriptions,
+  } = usePlugins();
   // 已装的版本：升级 / 重装 / 拒绝降级全靠它（与后端同一套版本比较口径）。
   const installedOf = (id: string) => plugins.find((p) => p.id === id) ?? null;
   // 上次填过的地址 / 公钥只读一次：它不是"信任配置"，只是省得每次重打。
@@ -37,14 +42,23 @@ export function PluginIndexPanel() {
   const [error, setError] = useState("");
   const [installing, setInstalling] = useState("");
 
-  const loadIndex = async () => {
+  const [checking, setChecking] = useState(false);
+  const [label, setLabel] = useState("");
+
+  useEffect(() => {
+    void loadSubscriptions();
+  }, [loadSubscriptions]);
+
+  const loadIndex = async (over?: { url?: string; pubkey?: string }) => {
+    const u = (over?.url ?? url).trim();
+    const k = (over?.pubkey ?? pubkey).trim();
     setBusy(true);
     setError("");
     try {
-      const v = await api.fetchPluginIndex(url.trim(), pubkey.trim() || null);
+      const v = await api.fetchPluginIndex(u, k || null);
       setView(v);
       // 只有真的拉到了才记住这份地址/公钥（打错了不该被记住）。
-      saveIndexDraft(window.localStorage, url.trim(), pubkey.trim());
+      saveIndexDraft(window.localStorage, u, k);
     } catch (e) {
       setView(null);
       setError(e instanceof Error ? e.message : String(e));
@@ -109,6 +123,76 @@ export function PluginIndexPanel() {
 
   return (
     <div className="pm-index">
+      {/* 多源订阅：一组索引 URL，可增删、可逐个检查。**不是商店**——没有推荐、没有排序，
+          也不内置任何官方索引；索引内容永远现场拉。 */}
+      <div className="pm-subs">
+        <div className="pm-subs-head">
+          <span>订阅的索引（{subscriptions.length}）</span>
+          <button
+            className="pm-subs-check"
+            disabled={checking || subscriptions.length === 0}
+            onClick={async () => {
+              setChecking(true);
+              try {
+                await checkSubscriptions();
+              } finally {
+                setChecking(false);
+              }
+            }}
+            title="逐个拉一遍，记下每条的结果（哪条挂了、有几条可更新）"
+          >
+            {checking ? "检查中…" : "检查更新"}
+          </button>
+        </div>
+        {subscriptions.length === 0 ? (
+          <div className="pm-subs-empty">
+            还没有订阅。下面填一个索引地址点「拉取索引」，就能把它存成订阅——自托一个、社区一个、
+            公司内网一个，各自独立。
+          </div>
+        ) : (
+          subscriptions.map((sub) => {
+            const st = subscriptionStatus(sub);
+            return (
+              <div key={sub.url} className="pm-sub">
+                <div className="pm-sub-main">
+                  <button
+                    className="pm-sub-open"
+                    onClick={() => {
+                      setUrl(sub.url);
+                      setPubkey(sub.pubkey);
+                      void loadIndex({ url: sub.url, pubkey: sub.pubkey });
+                    }}
+                    title={`拉取这一条：${sub.url}`}
+                  >
+                    {subscriptionTitle(sub)}
+                  </button>
+                  <span className={st.level === "warn" ? "pm-sub-status warn" : "pm-sub-status"}>
+                    {st.text}
+                  </span>
+                  <span className="pm-sub-sig">
+                    {sub.pubkey ? "验签公钥已设置" : "不验签（没填公钥）"}
+                  </span>
+                </div>
+                <button
+                  className="pm-sub-del"
+                  title="取消订阅（不会卸载任何插件）"
+                  onClick={async () => {
+                    if (
+                      await confirmDialog({
+                        title: "取消订阅",
+                        message: `不再订阅这份索引？\n${sub.url}\n已装的插件不受影响（订阅只是"从哪里找插件"）。`,
+                      })
+                    )
+                      await unsubscribeIndex(sub.url);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
       <div className="pm-index-form">
         <input
           className="pm-index-url"
@@ -124,8 +208,26 @@ export function PluginIndexPanel() {
           placeholder="索引公钥（可选，minisign）"
           spellCheck={false}
         />
-        <button onClick={loadIndex} disabled={busy || !url.trim()}>
+        <input
+          className="pm-index-label"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="备注（可选，如「公司内网」）"
+          spellCheck={false}
+        />
+        <button onClick={() => void loadIndex()} disabled={busy || !url.trim()}>
           {busy ? "拉取中…" : "拉取索引"}
+        </button>
+        <button
+          className="pm-index-save"
+          disabled={!url.trim()}
+          onClick={async () => {
+            const r = await subscribeIndex(url.trim(), pubkey.trim(), label.trim());
+            if (r.ok) setLabel("");
+          }}
+          title="存成订阅，之后一键切换、也能一次检查全部"
+        >
+          存为订阅
         </button>
       </div>
       <div className="pm-index-hint">

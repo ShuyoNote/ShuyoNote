@@ -17,6 +17,8 @@ import {
   revokedKeyNotice,
   revokedKeysSummary,
   sourceLabel,
+  subscriptionStatus,
+  subscriptionTitle,
   saveIndexDraft,
   INDEX_PUBKEY_KEY,
   INDEX_URL_KEY,
@@ -311,6 +313,32 @@ describe("安装来源说人话", () => {
     // 老行没有 source 值：说"未记录"，而不是留空（留空会被读成"没有来源"）
     expect(sourceLabel("")).toBe("未记录");
     expect(sourceLabel("未来某种来源")).toBe("未来某种来源");
+  });
+});
+
+describe("订阅的索引（多源，不是商店）", () => {
+  it("三种状态分开说：没查过 / 成功（带可更新数）/ 失败（带原因）", () => {
+    expect(subscriptionStatus({}).text).toBe("还没检查过");
+    expect(subscriptionStatus({}).level).toBe("none");
+
+    const ok = subscriptionStatus({ last_ok: true, plugin_count: 5, updates_available: 2 });
+    expect(ok.level).toBe("ok");
+    expect(ok.text).toBe("5 个插件，其中 2 个可更新");
+    expect(subscriptionStatus({ last_ok: true, plugin_count: 3, updates_available: 0 }).text).toBe(
+      "3 个插件，没有可更新的",
+    );
+
+    const bad = subscriptionStatus({ last_ok: false, last_error: "无法连接到 …", updates_available: 9 });
+    expect(bad.level).toBe("warn");
+    expect(bad.text).toContain("无法连接到");
+    // 失败时**不许**把上次成功时的"可更新数"混进来——那会让人以为刚查过
+    expect(bad.text).not.toContain("9");
+    expect(subscriptionStatus({ last_ok: false }).text).toContain("没有说明");
+  });
+
+  it("标题：备注优先，其次域名", () => {
+    expect(subscriptionTitle({ label: "公司内网", url: "https://a.test/i.json" })).toBe("公司内网");
+    expect(subscriptionTitle({ label: "  ", url: "https://a.test/i.json" })).toBe("a.test");
   });
 });
 

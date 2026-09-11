@@ -39,6 +39,7 @@ import type {
   PluginEventOutcome,
   PluginMeta,
   PluginIndexView,
+  IndexSubscription,
   PluginFacts,
   PluginRevocation,
   PublisherKeyInfo,
@@ -212,6 +213,18 @@ export interface CommandMap {
   plugin_revoked_keys: { args: undefined; result: RevokedPublisherKey[] };
   /** 用户对"某把发布者密钥被撤回"表态：我知道，仍然使用。 */
   ignore_revoked_publisher_key: { args: { fingerprint: string }; result: RevokedPublisherKey };
+  /** 订阅的索引（多源）。 */
+  plugin_index_subscriptions: { args: undefined; result: IndexSubscription[] };
+  subscribe_plugin_index: {
+    args: { url: string; pubkey?: string | null; label?: string | null };
+    result: IndexSubscription;
+  };
+  unsubscribe_plugin_index: { args: { url: string }; result: void };
+  /** 逐个检查订阅（失败只影响那一条，逐条记结果）。省略 url = 全部。 */
+  check_plugin_index_subscriptions: {
+    args: { url?: string | null };
+    result: IndexSubscription[];
+  };
   /** 一个插件的事实清单（只摆事实，不评分）。 */
   plugin_facts: { args: { id: string }; result: PluginFacts };
   open_plugin_dir: { args: undefined; result: string };

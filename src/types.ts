@@ -319,6 +319,22 @@ export interface RevokedPublisherKey {
   ignored: boolean;
 }
 
+/** 一条订阅的索引（多源：自托 / 社区 / 企业内网各一条）。 */
+export interface IndexSubscription {
+  url: string;
+  /** 该索引的签名公钥（空 = 不验签，界面要如实说）。 */
+  pubkey: string;
+  label: string;
+  added_at: number;
+  last_checked_at?: number | null;
+  /** `true` 上次拉取成功；`false` + `last_error` 说明白为什么失败。 */
+  last_ok?: boolean | null;
+  last_error?: string;
+  /** 上次成功时索引里的插件数，以及其中**比已装的更新**的条数。 */
+  plugin_count?: number;
+  updates_available?: number;
+}
+
 /** 一条**事实**（不是结论）：机器可读的短标识 + 给人看的一句话。 */
 export interface PluginFact {
   code: string;

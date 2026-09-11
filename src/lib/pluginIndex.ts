@@ -304,6 +304,41 @@ export function revokedKeysSummary(
   return [head, ...lines].join("\n");
 }
 
+/**
+ * 一条订阅的当前状态说人话。
+ *
+ * 三种状态必须分开说（用户要能一眼看出"这条索引还活着吗、它说的东西我能用吗"）：
+ * 从没查过 / 上次成功（顺带说清有几条可更新）/ 上次失败（把后端原话带上）。
+ * 失败时**不显示可更新数**：那是上一次成功时的旧数字，混在一起会让人以为"刚查过"。
+ */
+export function subscriptionStatus(sub: {
+  last_ok?: boolean | null;
+  last_error?: string;
+  updates_available?: number;
+  plugin_count?: number;
+}): { text: string; level: "none" | "ok" | "warn" } {
+  if (sub.last_ok === true) {
+    const updates = sub.updates_available ?? 0;
+    const total = sub.plugin_count ?? 0;
+    return {
+      text:
+        updates > 0
+          ? `${total} 个插件，其中 ${updates} 个可更新`
+          : `${total} 个插件，没有可更新的`,
+      level: "ok",
+    };
+  }
+  if (sub.last_ok === false) {
+    return { text: `上次检查失败：${sub.last_error?.trim() || "没有说明"}`, level: "warn" };
+  }
+  return { text: "还没检查过", level: "none" };
+}
+
+/** 订阅行的标题：备注优先，其次域名。 */
+export function subscriptionTitle(sub: { label?: string; url: string }): string {
+  return sub.label?.trim() || indexHost(sub.url) || sub.url;
+}
+
 /** 安装来源说人话（`plugin_install.source` 的取值）。 */
 export function sourceLabel(source: string): string {
   if (!source) return "未记录";

@@ -22,6 +22,10 @@ vi.mock("../lib/api", () => ({
     ignorePluginRevocation: vi.fn(),
     ignoreRevokedPublisherKey: vi.fn(),
     pluginFacts: vi.fn(),
+    pluginIndexSubscriptions: vi.fn(),
+    subscribePluginIndex: vi.fn(),
+    unsubscribePluginIndex: vi.fn(),
+    checkPluginIndexSubscriptions: vi.fn(),
     pluginRevocations: vi.fn(),
     emitPluginEvent: vi.fn(),
   },
@@ -564,6 +568,67 @@ describe("忽略撤回", () => {
     const r = await usePlugins.getState().ignoreRevocation("demo");
     expect(r.ok).toBe(false);
     expect(api.ignorePluginRevocation).not.toHaveBeenCalled();
+  });
+});
+
+// 多源订阅：增删改查 + "检查更新"必须把**哪一条挂了**说出来。
+//
+// 最后这条是要点：一批里有失败的却说"检查完成"，用户会以为全都好着；
+// 而失败恰恰是他此刻唯一想知道的。
+describe("订阅的索引", () => {
+  beforeEach(() => {
+    for (const fn of [
+      api.pluginIndexSubscriptions,
+      api.subscribePluginIndex,
+      api.unsubscribePluginIndex,
+      api.checkPluginIndexSubscriptions,
+    ])
+      vi.mocked(fn).mockReset();
+    usePlugins.setState({ subscriptions: [] });
+  });
+
+  it("加载 / 添加 / 取消订阅都会刷新列表", async () => {
+    vi.mocked(api.pluginIndexSubscriptions).mockResolvedValue([
+      { url: "https://a.test/i.json", pubkey: "", label: "", added_at: 1 },
+    ]);
+    await usePlugins.getState().loadSubscriptions();
+    expect(usePlugins.getState().subscriptions).toHaveLength(1);
+
+    vi.mocked(api.subscribePluginIndex).mockResolvedValue({
+      url: "https://b.test/i.json",
+      pubkey: "",
+      label: "社区",
+      added_at: 2,
+    });
+    const r = await usePlugins.getState().subscribeIndex("https://b.test/i.json", "", "社区");
+    expect(r.ok).toBe(true);
+    // 传了空字符串就按"没填"存（后端会把空公钥当"不验签"）；这里断言的是**透传**
+    expect(api.subscribePluginIndex).toHaveBeenCalledWith("https://b.test/i.json", "", "社区");
+
+    const r2 = await usePlugins.getState().unsubscribeIndex("https://a.test/i.json");
+    expect(r2.ok).toBe(true);
+    expect(api.unsubscribePluginIndex).toHaveBeenCalledWith("https://a.test/i.json");
+  });
+
+  it("检查更新：有失败就明说是哪条失败了，不许说「检查完成」", async () => {
+    vi.mocked(api.checkPluginIndexSubscriptions).mockResolvedValue([
+      { url: "https://a.test/i.json", pubkey: "", label: "", added_at: 1, last_ok: true, plugin_count: 4, updates_available: 1 },
+      { url: "https://b.test/i.json", pubkey: "", label: "", added_at: 2, last_ok: false, last_error: "无法连接到 b.test" },
+    ]);
+    const r = await usePlugins.getState().checkSubscriptions();
+    expect(r.ok).toBe(false);
+    expect(lastToast()?.message).toContain("1 个索引检查失败");
+    expect(lastToast()?.message).toContain("无法连接到 b.test");
+  });
+
+  it("全部成功：说清一共有几个可更新", async () => {
+    vi.mocked(api.checkPluginIndexSubscriptions).mockResolvedValue([
+      { url: "https://a.test/i.json", pubkey: "", label: "", added_at: 1, last_ok: true, plugin_count: 4, updates_available: 2 },
+      { url: "https://b.test/i.json", pubkey: "", label: "", added_at: 2, last_ok: true, plugin_count: 1, updates_available: 0 },
+    ]);
+    const r = await usePlugins.getState().checkSubscriptions();
+    expect(r.ok).toBe(true);
+    expect(lastToast()?.message).toContain("共 2 个插件可更新");
   });
 });
 

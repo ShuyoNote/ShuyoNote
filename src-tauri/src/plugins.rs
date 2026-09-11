@@ -3557,6 +3557,43 @@ pub fn build_plugin_facts(
     facts
 }
 
+/// 一条**订阅的索引**（多源：自托 / 社区 / 企业内网各一条）。
+///
+/// 只存订阅关系与上次检查的结果；索引内容永远现场拉——用一份过期的清单做判断
+/// （"可更新"、"已撤回"）比不判断更糟。
+#[derive(Serialize, Clone, Debug)]
+pub struct IndexSubscriptionView {
+    pub url: String,
+    /// 该索引的签名公钥（空 = 不验签，界面要如实说）。
+    pub pubkey: String,
+    pub label: String,
+    pub added_at: i64,
+    pub last_checked_at: Option<i64>,
+    /// `Some(true)` 上次拉取成功；`Some(false)` + `last_error` 说明白为什么失败。
+    pub last_ok: Option<bool>,
+    pub last_error: String,
+    /// 上次成功时索引里的插件数，以及其中**比已装的更新**的条数。
+    pub plugin_count: i64,
+    pub updates_available: i64,
+}
+
+/// 数一数"这份索引里有多少条比已装的更新"（纯函数，好测）。
+///
+/// 与安装时的判定共用 `install_action`：界面说"可更新"、点下去却报"拒绝降级"这种
+/// 不一致，比不显示更糟。
+pub fn count_updates(index: &plugin_index::PluginIndex, installed: &[(String, String)]) -> usize {
+    index
+        .plugins
+        .iter()
+        .filter(|e| {
+            installed
+                .iter()
+                .find(|(id, _)| id == &e.id)
+                .is_some_and(|(_, v)| install_action(Some(v), &e.version) == InstallAction::Replace)
+        })
+        .count()
+}
+
 /// 一个插件当前信任的发布者公钥（TOFU 固定下来的那一把）。
 #[derive(Serialize, Clone, Debug)]
 pub struct PublisherKeyView {
@@ -4790,6 +4827,167 @@ pub fn plugin_publisher_keys(db: State<'_, Db>) -> Vec<PublisherKeyView> {
         Ok(it) => it.filter_map(|r| r.ok()).collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// 读一条订阅。
+fn read_subscription(c: &Connection, url: &str) -> Option<IndexSubscriptionView> {
+    c.query_row(
+        "SELECT url, pubkey, label, added_at, last_checked_at, last_ok, last_error,
+                plugin_count, updates_available
+         FROM plugin_index_subscription WHERE url = ?1",
+        params![url],
+        |r| {
+            Ok(IndexSubscriptionView {
+                url: r.get(0)?,
+                pubkey: r.get(1)?,
+                label: r.get(2)?,
+                added_at: r.get(3)?,
+                last_checked_at: r.get(4)?,
+                last_ok: r.get::<_, Option<i64>>(5)?.map(|v| v != 0),
+                last_error: r.get(6)?,
+                plugin_count: r.get(7)?,
+                updates_available: r.get(8)?,
+            })
+        },
+    )
+    .ok()
+}
+
+/// 全部订阅（最近添加的在前）。
+fn all_subscriptions(c: &Connection) -> Vec<IndexSubscriptionView> {
+    let mut stmt = match c.prepare(
+        "SELECT url, pubkey, label, added_at, last_checked_at, last_ok, last_error,
+                plugin_count, updates_available
+         FROM plugin_index_subscription ORDER BY added_at DESC, url ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok(IndexSubscriptionView {
+            url: r.get(0)?,
+            pubkey: r.get(1)?,
+            label: r.get(2)?,
+            added_at: r.get(3)?,
+            last_checked_at: r.get(4)?,
+            last_ok: r.get::<_, Option<i64>>(5)?.map(|v| v != 0),
+            last_error: r.get(6)?,
+            plugin_count: r.get(7)?,
+            updates_available: r.get(8)?,
+        })
+    });
+    match rows {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 已装插件的 (id, 版本) 列表（判"可更新"用）。
+fn installed_versions(c: &Connection) -> Vec<(String, String)> {
+    let mut stmt = match c.prepare("SELECT plugin_id, version FROM plugin_install") {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+    match rows {
+        Ok(it) => it.filter_map(|r| r.ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 加一条订阅（同 URL 重复添加 = 更新它的公钥与备注，不报错——用户的意图很清楚）。
+#[tauri::command]
+pub fn subscribe_plugin_index(
+    db: State<'_, Db>,
+    url: String,
+    pubkey: Option<String>,
+    label: Option<String>,
+) -> Result<IndexSubscriptionView, String> {
+    let url = plugin_index::check_source_url(&url)?;
+    let pubkey = pubkey.unwrap_or_default().trim().to_string();
+    if !pubkey.is_empty() {
+        // 公钥形状要先校验：存下去之后每次检查都会失败在验签那一步，
+        // 而错误看起来像"索引有问题"，其实是这里存错了。
+        plugin_index::parse_index_pubkey(&pubkey)?;
+    }
+    let label = label.unwrap_or_default().trim().to_string();
+    let c = conn(&db);
+    let now = now_ms();
+    c.execute(
+        "INSERT INTO plugin_index_subscription (url, pubkey, label, added_at, last_checked_at, last_ok, last_error, plugin_count, updates_available)
+         VALUES (?1, ?2, ?3, ?4, NULL, NULL, '', 0, 0)
+         ON CONFLICT(url) DO UPDATE SET pubkey = excluded.pubkey, label = excluded.label",
+        params![url, pubkey, label, now],
+    )
+    .map_err(|e| e.to_string())?;
+    read_subscription(&c, &url).ok_or_else(|| "订阅写入后读不到".to_string())
+}
+
+#[tauri::command]
+pub fn unsubscribe_plugin_index(db: State<'_, Db>, url: String) -> Result<(), String> {
+    let c = conn(&db);
+    c.execute("DELETE FROM plugin_index_subscription WHERE url = ?1", params![url])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn plugin_index_subscriptions(db: State<'_, Db>) -> Vec<IndexSubscriptionView> {
+    all_subscriptions(&conn(&db))
+}
+
+/// 逐个检查订阅：拉索引（该验签就验签）、记下结果、并把撤回记忆刷新一遍。
+///
+/// **一条失败不影响其它条**：网络本来就会断，用户要看的是"哪几条还活着、哪条为什么挂了"，
+/// 而不是整批失败。所以这里逐条返回结果，失败只写进那条自己的 `last_error`。
+#[tauri::command]
+pub async fn check_plugin_index_subscriptions(
+    app: AppHandle,
+    db: State<'_, Db>,
+    // 只查这一条（省略 = 全部）
+    url: Option<String>,
+) -> Result<Vec<IndexSubscriptionView>, String> {
+    let version = app_version(&app);
+    let subs = {
+        let c = conn(&db);
+        match url.as_deref() {
+            Some(u) => read_subscription(&c, u).into_iter().collect::<Vec<_>>(),
+            None => all_subscriptions(&c),
+        }
+    };
+    for sub in subs {
+        let outcome = load_plugin_index(&sub.url, Some(sub.pubkey.as_str()), &version).await;
+        let c = conn(&db);
+        match outcome {
+            Ok((_view, index)) => {
+                // 撤回记忆跟着刷新：订阅的意义之一就是"它说了什么，我就记住什么"
+                let _ = record_revocations(&c, &index);
+                let _ = record_revoked_keys(&c, &index);
+                let updates = count_updates(&index, &installed_versions(&c)) as i64;
+                c.execute(
+                    "UPDATE plugin_index_subscription
+                     SET last_checked_at = ?2, last_ok = 1, last_error = '', plugin_count = ?3, updates_available = ?4
+                     WHERE url = ?1",
+                    params![sub.url, now_ms(), index.plugins.len() as i64, updates],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Err(e) => {
+                c.execute(
+                    "UPDATE plugin_index_subscription
+                     SET last_checked_at = ?2, last_ok = 0, last_error = ?3
+                     WHERE url = ?1",
+                    params![sub.url, now_ms(), e],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    let c = conn(&db);
+    Ok(match url.as_deref() {
+        Some(u) => read_subscription(&c, u).into_iter().collect(),
+        None => all_subscriptions(&c),
+    })
 }
 
 /// 一个插件的**事实清单**：来源、体积、权限与事件的声明，加上静态扫描看得出来的事实。
@@ -7672,6 +7870,100 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(f[0].text.contains("1024 字节"));
         assert!(f[0].text.contains("3 个文件"));
         assert!(f.iter().any(|x| x.code == "dynamic_code"));
+    }
+
+    // ---- 多源订阅（M11.11a：一组索引 URL，可增删）----
+
+    fn state_conn_with_subscriptions() -> Connection {
+        let c = state_conn_with_revoked_keys();
+        c.execute_batch(
+            "CREATE TABLE meta.plugin_index_subscription (
+                 url            TEXT PRIMARY KEY,
+                 pubkey         TEXT NOT NULL DEFAULT '',
+                 label          TEXT NOT NULL DEFAULT '',
+                 added_at       INTEGER NOT NULL DEFAULT 0,
+                 last_checked_at INTEGER,
+                 last_ok        INTEGER,
+                 last_error     TEXT NOT NULL DEFAULT '',
+                 plugin_count   INTEGER NOT NULL DEFAULT 0,
+                 updates_available INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn subscriptions_are_added_deduped_and_removed() {
+        let c = state_conn_with_subscriptions();
+        let now = now_ms();
+        let add = |url: &str, key: &str, label: &str| {
+            c.execute(
+                "INSERT INTO plugin_index_subscription (url, pubkey, label, added_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(url) DO UPDATE SET pubkey = excluded.pubkey, label = excluded.label",
+                params![url, key, label, now],
+            )
+            .unwrap();
+        };
+        add("https://a.test/index.json", "", "自托");
+        add("https://b.test/index.json", KEY_A, "社区");
+        assert_eq!(all_subscriptions(&c).len(), 2);
+
+        // 同一个 URL 再加一次 = 更新公钥/备注，不是多一条
+        add("https://a.test/index.json", KEY_A, "自托（带签名）");
+        let subs = all_subscriptions(&c);
+        assert_eq!(subs.len(), 2);
+        let a = subs.iter().find(|s| s.url.contains("a.test")).unwrap();
+        assert_eq!(a.label, "自托（带签名）");
+        assert_eq!(a.pubkey, KEY_A);
+        assert_eq!(a.last_ok, None, "还没查过就说「查过了」，那是编的");
+
+        c.execute("DELETE FROM plugin_index_subscription WHERE url = ?1", params!["https://b.test/index.json"])
+            .unwrap();
+        assert_eq!(all_subscriptions(&c).len(), 1);
+    }
+
+    #[test]
+    fn only_newer_versions_count_as_updates() {
+        let index = index_with(vec![
+            index_entry("newer", "2.0.0", None),
+            index_entry("same", "1.0.0", None),
+            index_entry("older", "1.0.0", None),
+            index_entry("not-installed", "1.0.0", None),
+        ]);
+        let installed = vec![
+            ("newer".to_string(), "1.0.0".to_string()),
+            ("same".to_string(), "1.0.0".to_string()),
+            ("older".to_string(), "2.0.0".to_string()),
+        ];
+        // 只有 newer 比已装的更新；same 是同版本（重装，不算更新）；older 是降级（不算）
+        assert_eq!(count_updates(&index, &installed), 1);
+        // 一个都没装 → 没有"更新"（那是新装）
+        assert_eq!(count_updates(&index, &[]), 0);
+        // 版本比不出来时不谎报"可更新"（install_action 会判成 Replace——这里如实跟着它）
+        let vague = index_with(vec![index_entry("vague", "2.0", None)]);
+        assert_eq!(count_updates(&vague, &[("vague".to_string(), "weird".to_string())]), 1);
+    }
+
+    #[test]
+    fn a_failing_subscription_records_its_own_error() {
+        let c = state_conn_with_subscriptions();
+        // 只验"逐条记结果"这件事本身：直接照 check_plugin_index_subscriptions 的写法更新一行
+        c.execute(
+            "INSERT INTO plugin_index_subscription (url, pubkey, label, added_at) VALUES ('https://a.test/i.json', '', 'A', 1)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE plugin_index_subscription SET last_checked_at = 2, last_ok = 0, last_error = '无法连接到 …' WHERE url = 'https://a.test/i.json'",
+            [],
+        )
+        .unwrap();
+        let s = read_subscription(&c, "https://a.test/i.json").unwrap();
+        assert_eq!(s.last_ok, Some(false));
+        assert!(s.last_error.contains("无法连接"));
+        // 失败的记录不该把上一次成功的数字改掉（用户要看的是"上次成功时有多少"）
+        assert_eq!(s.plugin_count, 0);
     }
 
     #[test]

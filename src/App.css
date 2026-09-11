@@ -5731,6 +5731,109 @@ select.prop-value {
 .pm-index-fold > summary:hover {
   color: var(--text);
 }
+/* 多源订阅（M11.11a）：一组索引 URL，可增删、可逐个检查——不是商店 */
+.pm-subs {
+  margin: 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.pm-subs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.pm-subs-head > span {
+  flex: 1;
+}
+.pm-subs-check {
+  border: 1px solid var(--border);
+  background: var(--hover);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pm-subs-check:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover-strong);
+}
+.pm-subs-check:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pm-subs-empty {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 5px;
+  line-height: 1.6;
+}
+.pm-sub {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.pm-sub-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.pm-sub-open {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.pm-sub-open:hover {
+  text-decoration: underline;
+}
+.pm-sub-status {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* 上次失败：用告警色，并且**不显示可更新数**（那是上次成功时的旧数字） */
+.pm-sub-status.warn {
+  color: var(--danger);
+}
+.pm-sub-sig {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.pm-sub-del {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+}
+.pm-sub-del:hover {
+  color: var(--danger);
+}
+.pm-index-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pm-index-save {
+  flex: none;
+}
 .pm-index-form {
   display: flex;
   flex-wrap: wrap;
