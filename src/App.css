@@ -19019,3 +19019,53 @@ p:has(> .editor-drawing-container) {
 body.is-plugin-panel-open .main {
   padding-right: var(--plugin-panel-w, 420px);
 }
+
+/* == 插件管理面板 polish (appended) == */
+/* 截图里最刺眼的是「权限胶囊竖排一长列」：12 项各占一行，把操作按钮一路往下推。
+   这里只做四件事：权限折行多列、卡片加边界与悬停、操作区收到底部一条、危险动作拉开距离。
+   用 `.plugin-manager .pm-*`（两个类）覆盖原来的单类规则，靠优先级取胜，不用 !important。 */
+.plugin-manager .pm-item {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 14px 16px;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.plugin-manager .pm-item:hover {
+  border-color: var(--brand, #2F6BFF);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .06);
+}
+.plugin-manager .pm-item-name { font-size: 16px; font-weight: 700; letter-spacing: .2px; }
+.plugin-manager .pm-item-ver {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft, rgba(47, 107, 255, .10));
+  color: var(--brand, #2F6BFF);
+}
+.plugin-manager .pm-item-cmds { font-size: 12px; color: var(--text-faint, #6b7280); }
+
+/* 权限：折行多列 —— 这是"那堵墙"的正解 */
+.plugin-manager .pm-item-perms { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.plugin-manager .pm-perm { display: inline-flex; align-items: center; max-width: 100%; }
+
+/* 操作区：收到底部一条，与信息之间用虚线分开；危险动作单独靠右留出间距 */
+.plugin-manager .pm-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border, #e5e7eb);
+}
+.plugin-manager .pm-item-actions button.danger { margin-left: 10px; }
+
+/* 警告与基线授权提示：做成带底色 + 左色条的提示条，而不是一行橙字 */
+.plugin-manager .pm-perm-baseline,
+.plugin-manager .pm-problem-warning {
+  background: rgba(255, 138, 30, .10);
+  border-left: 3px solid #E97712;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
