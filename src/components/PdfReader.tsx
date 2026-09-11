@@ -1079,7 +1079,11 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     }
   }
 
-  return createPortal(
+  // 浮层模式（窄屏 / 单页窗口）才 portal 到 body：那是一层盖住全屏的浮层，必须跳出
+  // 容器的层叠上下文。**内容区模式不能 portal**——portal 会把 DOM 挂到 body 下，
+  // CSS 里那条 `.main > .pdf-reader-overlay` 就永远匹配不上，于是"留在内容区里"这件事
+  // 只发生在 React 树里、没发生在真实 DOM 里（第一版就是这么错的）。
+  const tree = (
     <div
       className="pdf-reader-overlay"
       // 浮层模式下点空白关闭；inline 模式下它就是内容区（铺满），没有"空白"可点。
@@ -1325,7 +1329,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
           </div>
         )}
       </div>
-    </div>,
-    document.body,
+    </div>
   );
+  return inline ? tree : createPortal(tree, document.body);
 }
