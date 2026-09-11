@@ -275,7 +275,8 @@ export interface CommandMap {
   save_image: { args: { args: { page_id: string | null; name: string | null; mime: string; data: number[] } }; result: AttachmentMeta };
   attachment_path: { args: { hash: string }; result: string };
   get_attachment: { args: { id: string }; result: AttachmentMeta };
-  read_attachment_bytes: { args: { hash: string }; result: number[] };
+  /** 原始字节以 ArrayBuffer 回传（Rust 侧用 tauri::ipc::Response），不走 JSON 数字数组。 */
+  read_attachment_bytes: { args: { hash: string }; result: ArrayBuffer };
   fetch_bookmark_metadata: {
     args: { url: string };
     result: { url: string; title: string; description: string; site_name: string; image_hash: string; image_mime: string };

@@ -355,14 +355,27 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
 }
 
 #[tauri::command]
-pub fn read_attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -> Result<Vec<u8>, String> {
+pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &str) -> Result<Vec<u8>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     // 找不到文件时说清是"文件不在盘上"：这一条最常见的成因是外部把文件删了/移走了，
     // 而数据库里那行还在——笼统的"附件不存在"会让人以为是数据库的问题。
-    let raw = read_bytes_at(&attachments_dir, &hash)?;
+    let raw = read_bytes_at(&attachments_dir, hash)?;
     let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
     crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)
+}
+
+#[tauri::command]
+pub fn read_attachment_bytes(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hash: String,
+) -> Result<tauri::ipc::Response, String> {
+    // 用 `Response` 回原始字节（JS 侧拿到 ArrayBuffer）而不是 `Vec<u8>`：
+    // 后者会序列化成 JSON 数字数组——2 MB 的 PDF 就是两千多万字符的文本，
+    // 白白让 IPC 与 webview 各扛一次巨型 JSON 解析。图片/PDF 这类"要完整字节"的
+    // 调用点都受益。（纯函数 `attachment_bytes` 留给 Rust 侧自己用的调用点。）
+    Ok(tauri::ipc::Response::new(attachment_bytes(app, db, &hash)?))
 }
 
 #[tauri::command]

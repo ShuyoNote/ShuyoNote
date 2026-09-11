@@ -563,7 +563,7 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     let bytes = if crate::pdf_native::has_document(&hash) {
         Vec::new()
     } else {
-        crate::attachments::read_attachment_bytes(app, db, hash.clone())?
+        crate::attachments::attachment_bytes(app, db, &hash)?
     };
     let page_index = args.page_index;
     let scale = args.scale;

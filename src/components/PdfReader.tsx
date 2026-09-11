@@ -313,6 +313,14 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const [askOpen, setAskOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [ready, setReady] = useState(false);
+  /**
+   * 文档加载失败的原因（成功为 null）。
+   *
+   * 原来这里是空的 `catch { setPageCount(0) }`——于是"这份 PDF 根本没打开"和
+   * "正在加载"长得一模一样：舞台一直显示「加载中…」，页码还显示「第 1 / 1 页」
+   * （`pageCount || 1`），用户只能报"看不到内容"。失败必须说出来。
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [viewRange, setViewRange] = useState<{ start: number; end: number }>({ start: -1, end: -1 });
   const [pageData, setPageData] = useState<Record<number, PageBlockData>>({});
@@ -648,6 +656,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       setZoom({ mode: "fit-width" });
       setStageWidth(0);
       setStageHeight(0);
+      setLoadError(null);
       mountedPagesRef.current.clear();
       resyncedRef.current = false;
       autoFitRef.current = false;
@@ -672,8 +681,13 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
           setCurrentPage(target);
           setReady(true);
         }
-      } catch {
-        if (alive) setPageCount(0);
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        console.error("loadPdf failed", { attachmentId, bytes: bytes?.length ?? 0, error: e });
+        if (alive) {
+          setPageCount(0);
+          setLoadError(why);
+        }
       }
     })();
     return () => {
@@ -1144,7 +1158,13 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
               <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() - 1)} disabled={pageAtViewport() <= 0} title="上一页">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
-              <span className="pdf-reader-page">第 {Math.min(currentPage + 1, pageCount || 1)} / {pageCount || 1} 页</span>
+              <span className="pdf-reader-page">
+              {pageCount > 0
+                ? `第 ${Math.min(currentPage + 1, pageCount)} / ${pageCount} 页`
+                : // pageCount=0 时以前会显示"第 1 / 1 页"——那是在替一份打不开的文档
+                  // 说谎。宁可显示"页数未知"。
+                  "页数未知"}
+            </span>
               <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() + 1)} disabled={pageAtViewport() >= pageCount - 1} title="下一页">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
               </button>
@@ -1349,6 +1369,24 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
                   <div className="pdf-sidebar-resizer" onPointerDown={onSidebarResizeStart} title="拖拽调整批注侧栏宽度" />
                 </div>
               )}
+            </div>
+          ) : loadError ? (
+            <div className="pdf-page-error" style={{ margin: "24px auto", maxWidth: 520 }}>
+              <div className="pdf-page-error-title">这份 PDF 没能打开</div>
+              <div className="pdf-page-error-why">{loadError}</div>
+              <button
+                className="pdf-page-error-retry"
+                onClick={() => {
+                  // 重新加载同一份字节：先关掉（触发清理）再重开。
+                  const id = attachmentId;
+                  const nm = name;
+                  if (!id) return;
+                  close();
+                  setTimeout(() => void usePdfReader.getState().openPdf(id, nm), 0);
+                }}
+              >
+                重新打开
+              </button>
             </div>
           ) : (
             <div className="pdf-reader-loading">加载中…</div>
