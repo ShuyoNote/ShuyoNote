@@ -131,6 +131,12 @@ SHUYONOTE_MINISIGN=$(which minisign)               \  # 默认找 PATH 里的 mi
   pnpm release ...                                     # 或 node scripts/release.mjs ...
 ```
 
+**发版之后还有一步**：把产出的 `plugin-index.fragment.json` 交给**索引托管方**（当前是数友社区，
+见 [plugin-hosting.md](plugin-hosting.md)）。托管方合并片段 → 用自己的密钥签索引 → 托管；
+**上传顺序是先传包、后传索引**（顺序反了会出现"索引指向还不存在的包"，用户端表现为装不上）。
+交出去之前两边各跑一遍验收：托管方跑 `pnpm check:plugin-hosting --url <索引地址>`（线上那一份），
+我们这边跑 `external_index` / `external_package`（文件那一份，CI 里已经在跑）。
+
 没配私钥 → **明确跳过并说清后果**（这一版的第一方插件不进社区索引），不做静默跳过；
 要显式跳过就加 `--no-plugins`。产出之后请用应用真正的解析器验一遍（命令在 release 日志里打印）。
 

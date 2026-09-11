@@ -460,5 +460,14 @@ await deleteAttach("latest", "latest.json");
 await uploadFile("latest", "latest.json", manifestPath);
 await apiFetch("PATCH", `${API}/releases/${TAG}`, JSON.stringify({ name: `ShuyoNote v${version}`, body }));
 console.log(`[release] 完成 ✅ v${version}（含 latest 通道）`);
+if (fragmentPath) {
+  console.log(
+    [
+      "[release] 别忘了最后一步：把 plugin-index.fragment.json 交给索引托管方（先传包、后传索引）。",
+      `  片段：${fragmentPath}`,
+      "  交出去之前两边各验一遍：托管方跑 pnpm check:plugin-hosting --url <索引地址>；我们这边 CI 已在跑。",
+    ].join("\n"),
+  );
+}
 
 console.log("\n发布后：git tag v" + version + " && git push origin v" + version + " && git push origin main");
