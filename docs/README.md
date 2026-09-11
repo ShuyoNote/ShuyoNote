@@ -180,6 +180,13 @@ CHANGELOG.md             # 版本变更日志
 |---|---|
 | [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
 
+## 社区互动（社区接入）
+
+| 文档 | 内容 |
+|---|---|
+| [community-integration-status.md](community-integration-status.md) | **验收记录与现状**：深链 / 拿回内容 / 导入产物 / 插件分发四块——哪些已验过、用什么验的（含真机与线上证据）、还差什么，以及七条踩过的坑（每条都对应一个门禁）。交接时看这一份，不必翻聊天记录 |
+| [plugin-hosting.md](plugin-hosting.md) | **托管方怎么发**：索引与签名怎么签、缓存头规矩、**先传包后传索引**的上传顺序 |
+
 ## 变更记录（changelog）
 
 - [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.89.1`）。
