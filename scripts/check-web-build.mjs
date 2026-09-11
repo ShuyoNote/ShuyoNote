@@ -235,7 +235,9 @@ try {
     await new Promise((r) => setTimeout(r, 700));
     clickByText(/^插件/);
     await new Promise((r) => setTimeout(r, 500));
-    const openedManager = clickByText(/打开插件管理/);
+    // 两个入口都认：卡片里的「打开插件管理」与设置页头部的「管理插件」
+    // （界面在收拾信息层级，按钮文案可能变；这里不该因为换个词就红）
+    const openedManager = clickByText(/打开插件管理/) || clickByText(/管理插件/);
     await new Promise((r) => setTimeout(r, 700));
     const text = document.body.textContent || "";
     return {
