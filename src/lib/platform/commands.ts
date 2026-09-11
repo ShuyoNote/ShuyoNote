@@ -214,6 +214,22 @@ export interface CommandMap {
   install_plugin: { args: { sourcePath: string }; result: PluginMeta };
   /** 拉取并校验一份插件索引（只读，不装任何东西）。 */
   fetch_plugin_index: { args: { url: string; pubkey?: string | null }; result: PluginIndexView };
+  // 社区帖子抓取走**原生**：桌面端的 WebView 是 http://tauri.localhost，而社区域只面向同源，
+  // 浏览器 fetch 会被 CORS 拦下、把 401/404 压成一句 "Failed to fetch"（Windows 侧实测）。
+  // Web 版仍然用浏览器 fetch（那里没有 Rust），所以社区侧仍需 Access-Control-Allow-Origin。
+  fetch_community_post: {
+    args: { url: string };
+    result: {
+      id: string;
+      title: string;
+      bodyMarkdown: string;
+      author: string;
+      createdAt: string;
+      updatedAt: string;
+      tags: string[];
+      url: string;
+    };
+  };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {
     args: {

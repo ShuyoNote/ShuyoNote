@@ -21,7 +21,19 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/api", () => ({ api: { search: mocks.search, getPage: async () => ({}) } }));
 vi.mock("../store/toast", () => ({ toast: mocks.toast }));
 vi.mock("../lib/platform", () => ({
-  platform: { opener: { openUrl: mocks.openUrl } },
+  // 对话框走平台驱动：这里把它接回同一个假 fetch，于是"驱动把失败翻译成一句人话"
+  // 这一段也被测到（真机上桌面端走的是 Rust 命令，Web 端走浏览器 fetch）。
+  platform: {
+    opener: { openUrl: mocks.openUrl },
+    community: {
+      fetchPost: async (url: string) => {
+        const { fetchCommunityPost } = await import("../lib/communityPost");
+        const r = await fetchCommunityPost(url, { fetchImpl: mocks.fetchImpl as never });
+        if (!r.ok) throw new Error(r.reason);
+        return r.post;
+      },
+    },
+  },
   isDesktopPlatform: () => false,
 }));
 vi.mock("../store/notes", () => ({

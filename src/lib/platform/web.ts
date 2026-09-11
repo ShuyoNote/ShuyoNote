@@ -2352,6 +2352,15 @@ function makeInvoke(store: SqliteStore) {
     // 拉索引本身可以返回一份空索引，让界面显示"没有条目"而不是报错。
     if (cmd === "fetch_plugin_index")
       return { indexVersion: 1, owner: null, generatedAt: "", signatureVerified: null, plugins: [] } as T;
+    // 社区帖子抓取：Web 版没有 Rust，只能走浏览器 fetch —— 因此**受 CORS 约束**。
+    // 社区侧必须给 Access-Control-Allow-Origin，否则这里也只会看到一句 Failed to fetch
+    // （桌面端已经换成原生命令，不受这条影响）。
+    if (cmd === "fetch_community_post") {
+      const { fetchCommunityPost } = await import("../communityPost");
+      const r = await fetchCommunityPost((args as { url: string }).url);
+      if (!r.ok) throw new Error(r.reason);
+      return r.post as T;
+    }
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
     }
@@ -3337,6 +3346,16 @@ export function createWebPlatform(): Platform {
     },
     webview: {
       onDragDropEvent: async () => () => {},
+    },
+    community: {
+      // Web 版没有 Rust：只能走浏览器 fetch，因此**受 CORS 约束**——
+      // 社区侧必须给 Access-Control-Allow-Origin，否则这里同样只会看到 Failed to fetch。
+      fetchPost: async (url) => {
+        const { fetchCommunityPost } = await import("../communityPost");
+        const r = await fetchCommunityPost(url);
+        if (!r.ok) throw new Error(r.reason);
+        return r.post;
+      },
     },
     pdfRender: {
       renderPdfPage: async () => {

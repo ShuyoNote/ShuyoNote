@@ -75,6 +75,23 @@ export interface PdfRenderDriver {
 }
 
 /** The aggregate of every capability the app expects from its host. */
+/** 社区帖子（与 Rust `community::CommunityPost` 同形）。 */
+export interface CommunityPostDto {
+  id: string;
+  title: string;
+  bodyMarkdown: string;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  tags: string[];
+  url: string;
+}
+
+export interface CommunityDriver {
+  /** 抓一篇帖子。**不做任何写入**——落库由"预览 → 确认"那一步决定。 */
+  fetchPost(url: string): Promise<CommunityPostDto>;
+}
+
 export interface Platform {
   executor: Executor;
   dialog: DialogDriver;
@@ -83,4 +100,6 @@ export interface Platform {
   asset: AssetDriver;
   webview: WebviewDriver;
   pdfRender: PdfRenderDriver;
+  /** 社区帖子抓取（桌面走原生命令；Web 走浏览器 fetch，受 CORS 约束）。 */
+  community: CommunityDriver;
 }

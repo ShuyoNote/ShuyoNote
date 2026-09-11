@@ -32,8 +32,9 @@
 //   SHUYONOTE_INDEX_FIXTURE=<out>/plugin-index.preview.json cargo test --lib external_index -- --ignored --nocapture
 
 import { createHash } from "node:crypto";
+import { zipSync } from "fflate";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fingerprintOf, generateEphemeralKeypair, signBytes } from "./lib/minisign.mjs";
@@ -115,12 +116,33 @@ function validate(dir) {
   }
 }
 
+/**
+ * 打包（包内根目录就是插件目录——规范允许"多一层同名目录"，应用会自动下钻）。
+ *
+ * **为什么不用命令行的 `zip`**：Windows 上没有它。之前这里 shell out 到 `zip`，
+ * 于是在 Windows 侧 `pnpm test` 有 3 条红（`spawnSync zip ENOENT`），而且其中一条
+ * 「找不到插件目录」是被连带打死的——它本该测的东西在那边**永远测不到**（报这个的是 Windows 侧，
+ * 附了原始栈）。现在改用仓库里**已有的** `fflate`（浏览器侧的备份/工作区导出就是它）：
+ * 零新依赖、两平台一致、且不依赖 PATH 上有什么。
+ *
+ * 写入时间固定为常量：同样的输入产出同样的字节，sha256 才能复现
+ * （发布产物要能事后对账，别让"打包时间"跑进哈希里）。
+ */
+const FIXED_MTIME = new Date(Date.UTC(2020, 0, 1, 0, 0, 0));
 function pack(dir, zipPath) {
-  // 包内根目录就是插件目录（规范允许"多一层同名目录"，应用会自动下钻）。
-  execFileSync("zip", ["-r", "-X", "-q", zipPath, basename(dir), "-x", "*.DS_Store"], {
-    cwd: dirname(dir),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const root = basename(dir);
+  const files = {};
+  const walk = (abs, rel) => {
+    for (const name of readdirSync(abs)) {
+      if (name === ".DS_Store") continue;
+      const childAbs = join(abs, name);
+      const childRel = `${rel}/${name}`;
+      if (statSync(childAbs).isDirectory()) walk(childAbs, childRel);
+      else files[childRel] = [new Uint8Array(readFileSync(childAbs)), { mtime: FIXED_MTIME }];
+    }
+  };
+  walk(dir, root);
+  writeFileSync(zipPath, Buffer.from(zipSync(files, { level: 6 })));
 }
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");

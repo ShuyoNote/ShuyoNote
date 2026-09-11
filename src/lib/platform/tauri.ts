@@ -63,4 +63,9 @@ export const tauriPlatform: Platform = {
     },
     nativeAvailable: () => true,
   },
+  community: {
+    // 走原生抓取：CORS 在 WebView 里会把 401/404 变成一句 "Failed to fetch"，
+    // 而原生那条路（reqwest）没有这个问题，状态码能如实上报。
+    fetchPost: (url) => tauriInvoke("fetch_community_post", { url }),
+  },
 };

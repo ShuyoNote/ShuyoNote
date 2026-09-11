@@ -61,6 +61,9 @@ export const platform: Platform = {
   get webview() {
     return current.webview;
   },
+  get community() {
+    return current.community;
+  },
   get pdfRender() {
     return current.pdfRender;
   },

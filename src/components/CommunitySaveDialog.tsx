@@ -12,7 +12,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { markdownToPageContent } from "../lib/mdPreview";
-import { fetchCommunityPost, type CommunityPost } from "../lib/communityPost";
+import { type CommunityPost } from "../lib/communityPost";
 import { findStoredPost, linkIntentOf, noteForPost, previewOf, searchKeyOf } from "../lib/communitySave";
 import { platform } from "../lib/platform";
 import { useCommunitySave } from "../store/communitySave";
@@ -71,12 +71,17 @@ export function CommunitySaveDialog() {
     }
     setPhase("loading");
     setReason("");
-    const fetched = await fetchCommunityPost(intent.url);
-    if (!fetched.ok) {
-      setReason(fetched.reason);
+    // 走平台驱动：**桌面端是原生命令**（没有 CORS，401/404 能如实上报），
+    // Web 版是浏览器 fetch（受 CORS 约束——社区侧要给 Access-Control-Allow-Origin）。
+    let fetchedPost: CommunityPost;
+    try {
+      fetchedPost = await platform.community.fetchPost(intent.url);
+    } catch (e) {
+      setReason(e instanceof Error ? e.message : String(e));
       setPhase("input");
       return;
     }
+    const fetched = { ok: true as const, post: fetchedPost };
     // 幂等查询：搜索只负责捞候选，**准确性由逐字核对兜底**。
     try {
       const hits = await api.search(searchKeyOf(intent.url), 20, true);
