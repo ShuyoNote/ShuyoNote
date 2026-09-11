@@ -19,6 +19,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { SpaceTransferProgress } from "./components/SpaceTransferProgress";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { FilePreviewDialog } from "./components/FilePreviewDialog";
+import { CommunitySaveDialog } from "./components/CommunitySaveDialog";
 import { PdfReader } from "./components/PdfReader";
 import { FormulaEditorDialog } from "./components/FormulaEditorDialog";
 import { CoverPicker } from "./components/CoverPicker";
@@ -647,6 +648,7 @@ function App() {
           <SettingsDialog />
           <SpaceTransferProgress />
           <FilePreviewDialog />
+          <CommunitySaveDialog />
           <PdfReader />
           <FormulaEditorDialog />
           <Toaster />
@@ -744,6 +746,7 @@ function App() {
         <SettingsDialog />
         <SpaceTransferProgress />
         <FilePreviewDialog />
+        <CommunitySaveDialog />
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
         <FormulaEditorDialog />
