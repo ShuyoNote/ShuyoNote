@@ -3144,9 +3144,14 @@ pub async fn emit_plugin_event(
 // ---------------------------------------------------------------------------
 
 fn conn<'a>(db: &'a State<'_, Db>) -> MutexGuard<'a, Connection> {
+    lock_db(&db.0)
+}
+
+/// 同一把锁，但接受裸 `&Db`（异步命令里"锁不跨 await"的写法要用它，测试里也用它）。
+fn lock_db(m: &std::sync::Mutex<Connection>) -> MutexGuard<'_, Connection> {
     // 不让 poison 变成"整个插件面板永久打不开"：锁被 poison 说明此前有个
     // 持锁 panic，但连接本身仍可用，取回内层数据继续用即可。
-    db.0.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// 播种标记文件名：`<plugins>/.demo-seeded`。
@@ -5012,39 +5017,48 @@ pub async fn check_plugin_index_subscriptions(
             None => all_subscriptions(&c),
         }
     };
-    for sub in subs {
-        let outcome = load_plugin_index(&sub.url, Some(sub.pubkey.as_str()), &version).await;
-        let c = conn(&db);
-        match outcome {
-            Ok((_view, index)) => {
-                // 撤回记忆跟着刷新：订阅的意义之一就是"它说了什么，我就记住什么"
-                let _ = record_revocations(&c, &index);
-                let _ = record_revoked_keys(&c, &index);
-                let updates = count_updates(&index, &installed_versions(&c)) as i64;
-                c.execute(
-                    "UPDATE plugin_index_subscription
-                     SET last_checked_at = ?2, last_ok = 1, last_error = '', plugin_count = ?3, updates_available = ?4
-                     WHERE url = ?1",
-                    params![sub.url, now_ms(), index.plugins.len() as i64, updates],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            Err(e) => {
-                c.execute(
-                    "UPDATE plugin_index_subscription
-                     SET last_checked_at = ?2, last_ok = 0, last_error = ?3
-                     WHERE url = ?1",
-                    params![sub.url, now_ms(), e],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
-    }
+    check_subscriptions_into(&db, &subs, &version).await;
     let c = conn(&db);
     Ok(match url.as_deref() {
         Some(u) => read_subscription(&c, u).into_iter().collect(),
         None => all_subscriptions(&c),
     })
+}
+
+/// 逐个检查的主体（**不依赖 AppHandle**，所以能在测试里对着两个环回服务器跑：
+/// 一个正常、一个 404——"一条失败不影响其它"这句承诺只有这样才验证得了）。
+///
+/// 逐条记结果，失败只写进那条自己的 `last_error`；成功的那些顺带刷新撤回记忆
+/// （订阅的意义之一就是"它说了什么，我就记住什么"）。
+///
+/// 注意每个数据库操作都**单独取一次锁**，锁不跨 `await`：这不是风格问题，是编译期要求
+/// （`MutexGuard` 不是 `Send`，而 Tauri 的命令 future 必须是 `Send`）。
+async fn check_subscriptions_into(db: &Db, subs: &[IndexSubscriptionView], app_version: &str) {
+    for sub in subs {
+        match load_plugin_index(&sub.url, Some(sub.pubkey.as_str()), app_version).await {
+            Ok((_view, index)) => {
+                let c = lock_db(&db.0);
+                let _ = record_revocations(&c, &index);
+                let _ = record_revoked_keys(&c, &index);
+                let updates = count_updates(&index, &installed_versions(&c)) as i64;
+                let _ = c.execute(
+                    "UPDATE plugin_index_subscription
+                     SET last_checked_at = ?2, last_ok = 1, last_error = '', plugin_count = ?3, updates_available = ?4
+                     WHERE url = ?1",
+                    params![sub.url, now_ms(), index.plugins.len() as i64, updates],
+                );
+            }
+            Err(e) => {
+                let c = lock_db(&db.0);
+                let _ = c.execute(
+                    "UPDATE plugin_index_subscription
+                     SET last_checked_at = ?2, last_ok = 0, last_error = ?3
+                     WHERE url = ?1",
+                    params![sub.url, now_ms(), e],
+                );
+            }
+        }
+    }
 }
 
 /// 一个插件的**事实清单**：来源、体积、权限与事件的声明，加上静态扫描看得出来的事实。
@@ -8066,6 +8080,85 @@ register({ id: "s.run", title: "结构化", run: function () {
         // 版本比不出来时不谎报"可更新"（install_action 会判成 Replace——这里如实跟着它）
         let vague = index_with(vec![index_entry("vague", "2.0", None)]);
         assert_eq!(count_updates(&vague, &[("vague".to_string(), "weird".to_string())]), 1);
+    }
+
+    /// 逐个检查的**真**验收：一个正常索引 + 一个 404，两条各自记各自的结果。
+    ///
+    /// 为什么必须在环回服务器上跑：这条命令的承诺是"一条失败不影响其它"，而那正是最容易
+    /// 悄悄坏掉的地方（一个 `?` 提前返回、或者循环里把错误当成整批失败）。同时它还顺手
+    /// 验证了另一个承诺：检查订阅会**刷新撤回记忆**（"它说了什么，我就记住什么"）。
+    #[tokio::test]
+    async fn checking_subscriptions_records_each_source_separately() {
+        // 正常的那条：索引里有 2 个插件（一个比已装的更新），外加一条撤回
+        let good = serve(vec![("/index.json", {
+            serde_json::to_vec(&serde_json::json!({
+                "indexVersion": 1,
+                "generatedAt": "2026-09-11T00:00:00Z",
+                "plugins": [
+                    {
+                        "id": "pkg-a", "name": "A", "version": "2.0.0",
+                        "apiVersion": crate::capabilities_gen::API_VERSION,
+                        "minAppVersion": "1.0.0", "runtime": "logic", "license": "MIT",
+                        "downloadUrl": "https://e.test/a.zip", "size": 10, "sha256": "a".repeat(64),
+                        "revokedAt": "2026-09-01T00:00:00Z", "revokedReason": "有严重漏洞",
+                    },
+                    {
+                        "id": "pkg-b", "name": "B", "version": "1.0.0",
+                        "apiVersion": crate::capabilities_gen::API_VERSION,
+                        "minAppVersion": "1.0.0", "runtime": "logic", "license": "MIT",
+                        "downloadUrl": "https://e.test/b.zip", "size": 10, "sha256": "b".repeat(64),
+                    },
+                ],
+            }))
+            .unwrap()
+        })]).await;
+        let bad = serve(vec![("/nothing.json", b"x".to_vec())]).await;
+
+        let c = state_conn_with_subscriptions();
+        // **坏的那条排在前面**（added_at 更大 = 更靠前）：顺序在这里是有意义的——
+        // 如果实现里"一条失败就整批中断"，后面那条正常索引就根本不会被查到，
+        // 于是断言会看到它的 last_ok 还是 None。把失败的放最后，这个 bug 就藏起来了。
+        for (url, label, at) in [
+            (format!("{bad}/index.json"), "坏的", 2i64),
+            (format!("{good}/index.json"), "好的", 1i64),
+        ] {
+            c.execute(
+                "INSERT INTO plugin_index_subscription (url, pubkey, label, added_at) VALUES (?1, '', ?2, ?3)",
+                params![url, label, at],
+            )
+            .unwrap();
+        }
+        // 已装 pkg-a 1.0.0（索引里是 2.0.0 → 可更新），pkg-b 没装
+        record_install(&c, "pkg-a", "1.0.0", "local", false, true, None).unwrap();
+
+        let db = Db(std::sync::Mutex::new(c));
+        let subs = all_subscriptions(&lock_db(&db.0));
+        assert_eq!(subs.len(), 2);
+        check_subscriptions_into(&db, &subs, "1.88.0").await;
+
+        let after = all_subscriptions(&lock_db(&db.0));
+        let good_row = after.iter().find(|s| s.url.contains(&good)).unwrap();
+        assert_eq!(good_row.last_ok, Some(true));
+        assert_eq!(good_row.plugin_count, 2);
+        assert_eq!(good_row.updates_available, 1, "只有 pkg-a 比已装的更新");
+
+        let bad_row = after.iter().find(|s| s.url.contains(&bad)).unwrap();
+        assert_eq!(bad_row.last_ok, Some(false), "坏的那条要记成失败");
+        assert!(
+            bad_row.last_error.contains("404"),
+            "失败原因要说得出是 HTTP 404：{}",
+            bad_row.last_error
+        );
+        assert_eq!(
+            good_row.last_ok,
+            Some(true),
+            "一条失败**不能**把另一条也拖下水"
+        );
+
+        // 顺带：检查订阅会把撤回记忆刷新一遍
+        let revoked = read_revocation(&lock_db(&db.0), "pkg-a").expect("索引里的撤回应当被记住");
+        assert_eq!(revoked.version, "2.0.0");
+        assert_eq!(revoked.reason, "有严重漏洞");
     }
 
     #[test]
