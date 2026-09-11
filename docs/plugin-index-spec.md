@@ -125,6 +125,18 @@ node scripts/plugin-index-demo.mjs weekly-review 8787            # 打包 + 起�
 node scripts/plugin-index-demo.mjs weekly-review 8788 --version 9.9.9   # 再演一次"升级"
 ```
 
+也可以直接拿**线上一份验收夹具**走一遍（不需要自己打包，也不需要任何密钥决定）：
+
+```
+索引：https://shuyo.cn/plugins/plugin-index.json      ← owner 如实写着「验收夹具（非社区官方）」
+包  ：https://shuyo.cn/plugins/fixture-plugin-1.0.0.zip   （918 字节）
+```
+
+把它填进「从索引安装（给 URL）」→ 拉取 → 订阅 → 安装即可。这份索引的发布者密钥是仓库里
+**已提交的一次性夹具密钥**（指纹 `5ee2-b2a1-c3cf-565c`），索引本身**没有索引签名**——
+所以面板会如实显示"没有校验签名"，这正是那条"不装样子"的规则在起作用。
+它只是为了验收"订阅 → 下载 → 校验 → 安装"这条链，**不要**把它当成社区商店。
+
 ## 7. 多源与订阅
 
 应用支持**同时订阅多个索引**（自托一个、社区一个、企业内网一个）：面板里可增删、逐条切换、
