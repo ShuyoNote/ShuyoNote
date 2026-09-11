@@ -1104,6 +1104,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 用**真解析器**验收一份外部生成的索引（默认忽略）。给"要托管索引的人"用：
+    /// 交出去之前先让它过一遍应用真正会跑的解析 + 拦阻检查，而不是"看着像对的"。
+    ///
+    ///   SHUYONOTE_INDEX_FIXTURE=/path/plugin-index.json \
+    ///   SHUYONOTE_INDEX_APP_VERSION=1.89.1 \
+    ///     cargo test --lib external_index -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn external_index_fixture_parses_and_validates() {
+        let Ok(path) = std::env::var("SHUYONOTE_INDEX_FIXTURE") else {
+            eprintln!("跳过：未设置 SHUYONOTE_INDEX_FIXTURE");
+            return;
+        };
+        let app_version = std::env::var("SHUYONOTE_INDEX_APP_VERSION")
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let bytes = std::fs::read(&path).expect("读取索引失败");
+        let index = parse_index(&bytes).expect("索引必须能被应用解析");
+        eprintln!(
+            "索引合法：owner={} 插件 {} 个，应用版本 {}",
+            index
+                .owner
+                .as_ref()
+                .map(|o| o.name.as_str())
+                .unwrap_or("（未声明 owner）"),
+            index.plugins.len(),
+            app_version
+        );
+        for p in &index.plugins {
+            let fingerprint = if p.publisher_key.trim().is_empty() {
+                "（无发布者签名）".to_string()
+            } else {
+                publisher_key_fingerprint(&p.publisher_key).expect("publisherKey 必须能被解析")
+            };
+            let blocked = entry_block_reason(p, &app_version, &index.revoked_keys);
+            eprintln!(
+                "  - {} v{} · {} 字节 · sha256 {}… · 发布者指纹 {} · {}",
+                p.id,
+                p.version,
+                p.size,
+                &p.sha256[..12.min(p.sha256.len())],
+                fingerprint,
+                if blocked.is_empty() { "可安装" } else { blocked.as_str() }
+            );
+            // 索引里**故意**带撤回条目是合法的（撤回就是拿来拦的），所以只对
+            // "没有被撤回声明"的条目断言它不该被拦——否则这个工具会把合法索引判成坏索引。
+            if p.revoked_at.is_none() {
+                assert!(
+                    blocked.is_empty(),
+                    "这份索引里的 {} 在当前应用版本下装不了：{blocked}",
+                    p.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_fixture_publisher_key_fingerprint_is_stable() {
         // 指纹是"人用来比对"的东西：它在界面上出现，也在发布者的公告里出现。
