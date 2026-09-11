@@ -4324,7 +4324,7 @@ pub async fn install_plugin(
 ) -> Result<PluginMeta, String> {
     let src = PathBuf::from(&source_path);
     if src.is_dir() {
-        return install_from_dir(&app, &db, &src, "local");
+        return install_from_dir(&plugins_root(&app)?, &conn(&db), &src, "local");
     }
     if src.is_file() {
         // `.zip` 插件包：解到临时目录，再走**同一条**目录安装路径（校验全部在写盘之前完成）。
@@ -4350,13 +4350,25 @@ fn install_from_zip_bytes(
     bytes: &[u8],
     source_kind: &str,
 ) -> Result<PluginMeta, String> {
+    install_bytes_into(&plugins_root(app)?, &conn(db), bytes, source_kind)
+}
+
+/// 与 `install_from_zip_bytes` 同一条路，但**不依赖 AppHandle**：插件根目录与数据库连接
+/// 由调用方给。这样整条链（索引条目 → sha256 → 签名 → 解包 → manifest 校验 → 落盘 → 记账）
+/// 都能在测试里跑完，而不是"除了最后一层胶水都有测试"。
+fn install_bytes_into(
+    root: &Path,
+    c: &Connection,
+    bytes: &[u8],
+    source_kind: &str,
+) -> Result<PluginMeta, String> {
     let dir = plugin_index::package_temp_dir();
     let result = (|| {
         plugin_index::extract_package(bytes, &dir)?;
         // `zip -r pkg.zip my-plugin/` 会在包里多一层目录，这里自动下钻；
         // 其它情况按原样交给 install_from_dir（它会报"读不到 manifest.json"）。
-        let root = plugin_index::resolve_package_root(&dir);
-        install_from_dir(app, db, &root, source_kind)
+        let pkg_root = plugin_index::resolve_package_root(&dir);
+        install_from_dir(root, c, &pkg_root, source_kind)
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
@@ -4445,8 +4457,8 @@ fn replace_plugin_dir(src: &Path, dest: &Path, manifest: &Manifest) -> Result<()
 /// 同 id 已装时不再一律拒绝（那条路让"升级"无路可走），而是按 `install_action` 判定：
 /// 升级/重装整体替换并且**可回滚**，明确降级拒掉。
 fn install_from_dir(
-    app: &AppHandle,
-    db: &State<Db>,
+    root: &Path,
+    c: &Connection,
     src: &Path,
     source_kind: &str,
 ) -> Result<PluginMeta, String> {
@@ -4459,7 +4471,7 @@ fn install_from_dir(
     }
     // 撤回记忆同样拦安装：装一个有问题的版本（哪怕是从别处拿到的同一份包）没有意义。
     // 只拦**同一个版本**；索引后来发的修好的新版本不受影响。
-    if let Some(why) = revocation_blocks(&conn(db), &manifest.id, &manifest.version) {
+    if let Some(why) = revocation_blocks(c, &manifest.id, &manifest.version) {
         return Err(format!(
             "不能安装「{}」v{}：{why}。确实要装，请先在插件管理里对它选择「仍然使用」",
             manifest.id, manifest.version
@@ -4474,7 +4486,7 @@ fn install_from_dir(
     }
     let commands = discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)?;
 
-    let dest = plugins_root(app)?.join(&manifest.id);
+    let dest = root.join(&manifest.id);
     // "现在装着哪个版本"以**磁盘上的 manifest** 为准：手工拷进去的插件目录没有 DB 行，
     // 而它恰恰是用户看得见、跑得起来的那个。
     let installed = if dest.is_dir() {
@@ -4512,7 +4524,6 @@ fn install_from_dir(
     // 新装的插件**默认禁用**：先让用户看清它要哪些权限、干什么，再自己去启用。
     // （插件默认启用时，"安装"就等于一次性授予了它声明的全部数据访问权。）
     let approval_state_after = {
-        let c = conn(db);
         // `record_install` 在冲突时**不动** `enabled`（用户的选择不能被一次升级冲掉），
         // 只更新版本与来源。授权快照同理不动：新版本要是多声明了权限/事件，
         // `approval_state` 立刻就会说 `required`，宿主会在用户「重新确认」之前拒绝运行它。
@@ -7768,6 +7779,129 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(dest.join("legacy.txt").exists());
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    // ---- 整条链跑一遍：索引 → 下载 → 校验 → 解包 → 装进插件目录 → 记账 ----
+    //
+    // 这是"分发"这件事最该有的一条测试：此前每一段都有自己的测试（索引解析、签名、sha256、
+    // 解包、安装、记账），但**接起来**那一段只有人读过。所以这里把 `install_from_dir` 从
+    // AppHandle 上解耦出来（改成吃"插件根目录 + 连接"），用真夹具、真环回 HTTP、真子进程
+    // discovery 从头走到尾。
+
+    #[tokio::test]
+    async fn the_whole_chain_installs_a_signed_package_from_an_index() {
+        use sha2::{Digest, Sha256};
+        ensure_host_exe();
+
+        let pkg = signed_package();
+        let sha = {
+            let mut h = Sha256::new();
+            h.update(pkg);
+            hex::encode(h.finalize())
+        };
+        let key_a = include_str!("../tests/fixtures/signed-plugin-zip.pub");
+        let sig_a = include_str!("../tests/fixtures/signed-plugin.zip.minisig");
+        // 包与索引分成两个服务器：索引里的 downloadUrl 必须写出**真实**地址，
+        // 而端口要等服务起来才知道——所以先起"包"那台，拿到地址再拼索引。
+        let pkg_base = serve(vec![("/pkg.zip", pkg.to_vec())]).await;
+        let index_json = serde_json::to_vec(&serde_json::json!({
+            "indexVersion": 1,
+            "owner": { "id": "local", "name": "本机演示", "url": "http://127.0.0.1/" },
+            "generatedAt": "2026-09-11T00:00:00Z",
+            "plugins": [{
+                "id": "fixture-plugin",
+                "name": "签名夹具插件",
+                "version": "1.0.0",
+                "apiVersion": crate::capabilities_gen::API_VERSION,
+                "minAppVersion": "1.0.0",
+                "runtime": "logic",
+                "description": "夹具",
+                "publisher": "tester",
+                "license": "MIT",
+                "permissions": [{ "id": "read:pages", "reason": "读标题" }],
+                "downloadUrl": format!("{pkg_base}/pkg.zip"),
+                "size": pkg.len(),
+                "sha256": sha,
+                "publisherKey": key_a.trim(),
+                "signature": sig_a,
+            }],
+        }))
+        .unwrap();
+        let base = serve(vec![("/index.json", index_json)]).await;
+
+        // 1) 拉索引（并验签：这里不给索引公钥，所以只解析）
+        let (view, index) = load_plugin_index(&format!("{base}/index.json"), None, "1.88.0")
+            .await
+            .unwrap();
+        assert_eq!(view.plugins[0].blocked, "");
+        let entry = index.plugins[0].clone();
+
+        // 2) 下载 + 两层校验（sha256 与发布者签名）
+        let client = index_http_client().unwrap();
+        let bytes = http_get_capped(&client, &entry.download_url, plugin_index::MAX_PACKAGE_BYTES)
+            .await
+            .unwrap();
+        plugin_index::verify_sha256(&bytes, &entry.sha256).unwrap();
+        // 安装表 + 信任存储（生产库里由 db.rs 建；测试库里由前面几个 helper 建）
+        let conn = state_conn_with_revoked_keys();
+        let pin = check_entry_publisher_signature(&conn, "fixture-plugin", &entry, &bytes, false, "127.0.0.1")
+            .unwrap();
+        assert_eq!(pin.as_deref().map(str::trim), Some(key_a.trim()));
+
+        // 3) 装进一个临时插件根目录（真解包 + 真 discovery + 真落盘 + 真记账）
+        let root = temp_dir("chain-root");
+        let meta = install_bytes_into(&root, &conn, &bytes, "index:127.0.0.1").unwrap();
+        assert_eq!(meta.id, "fixture-plugin");
+        assert_eq!(meta.version, "1.0.0");
+        assert!(!meta.enabled, "新装必须默认未启用（安装 ≠ 授权）");
+        assert_eq!(meta.replaced_version, None, "这是新装，不该报「替换了哪一版」");
+        assert_eq!(meta.commands.len(), 1, "真跑了一遍 discovery，应当发现夹具里那个命令");
+        assert!(root.join("fixture-plugin/manifest.json").is_file(), "插件目录要就位");
+
+        // 4) 装成功之后才固定发布者密钥（并且能在库里查到）
+        let pinned = pin_publisher_key(&conn, "fixture-plugin", &pin.unwrap(), "127.0.0.1").unwrap();
+        assert_eq!(
+            pinned.fingerprint,
+            plugin_index::publisher_key_fingerprint(key_a).unwrap()
+        );
+        let (ver, src): (String, String) = conn
+            .query_row(
+                "SELECT version, source FROM plugin_install WHERE plugin_id = 'fixture-plugin'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ver, "1.0.0");
+        assert_eq!(src, "index:127.0.0.1", "来源要记成「从哪来的」，而不是笼统的 local");
+
+        // 5) 同一份包再装一次：同版本 → 重装（替换），并且报出替换掉的那一版
+        let again = install_from_dir(&root, &conn, &resolve_extracted(&bytes), "index:127.0.0.1");
+        let again = again.unwrap();
+        assert_eq!(again.replaced_version.as_deref(), Some("1.0.0"));
+        // 降级要拒：把目录里的 manifest 改成更高的版本再装旧包
+        let mut higher: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("fixture-plugin/manifest.json")).unwrap())
+                .unwrap();
+        higher["version"] = serde_json::json!("9.9.9");
+        std::fs::write(
+            root.join("fixture-plugin/manifest.json"),
+            serde_json::to_vec(&higher).unwrap(),
+        )
+        .unwrap();
+        let err = match install_bytes_into(&root, &conn, &bytes, "index:127.0.0.1") {
+            Err(e) => e,
+            Ok(_) => panic!("装了更旧的版本——降级必须被拒"),
+        };
+        assert!(err.contains("拒绝安装更旧的版本"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 解包到临时目录并返回真正的包根（测试里复用生产那两步）。
+    fn resolve_extracted(bytes: &[u8]) -> PathBuf {
+        let dir = plugin_index::package_temp_dir();
+        plugin_index::extract_package(bytes, &dir).unwrap();
+        plugin_index::resolve_package_root(&dir)
     }
 
     // ---- 索引安装（M11.11a）：下载与上限 ----

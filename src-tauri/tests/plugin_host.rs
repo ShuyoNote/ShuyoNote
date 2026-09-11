@@ -354,8 +354,37 @@ fn resident_memory_of_a_live_process_is_readable() {
     use shuyonote_lib::plugin_host::resident_bytes;
     let mine = resident_bytes(std::process::id()).expect("应当读得到自己的常驻内存");
     assert!(mine > 0, "读到的常驻内存是 0，读数有问题：{mine}");
+    // 量级也要合理：一个跑着测试的进程不会小于 1 MiB，也不可能大到 64 GiB
+    // （读错单位——页数当字节、KiB 当字节——正好会落在这条之外）
+    assert!(
+        mine > 1024 * 1024 && mine < 64 * 1024 * 1024 * 1024,
+        "读数的量级不合理：{mine} 字节"
+    );
     // 不存在的 pid：读不到就是读不到，不许猜一个数出来
     assert_eq!(resident_bytes(999_999_999), None);
+}
+
+/// 读常驻内存**不许起进程**。
+///
+/// 这是回归测试，不是性能测试：macOS 上这行代码曾经是 `Command::new("ps")`，而看门狗每 100 ms
+/// 轮询一次——每个在跑的插件都要持续付 fork+exec 的代价，还依赖 `ps` 存在。改成系统调用
+/// （`proc_pidinfo` / `/proc`）之后，一次读数应当是微秒级的。
+/// 阈值是按**量出来的**数定的（本机实测）：一次系统调用读数在微秒级，200 次约 0.2 ms；
+/// 而 `ps` 每次 fork+exec 约 1.5 ms，200 次约 290 ms。取 50 ms 作分界——对系统调用有 250 倍
+/// 余量，对起进程则小 6 倍，两头都不靠运气。
+#[test]
+fn reading_resident_memory_does_not_spawn_a_process() {
+    use shuyonote_lib::plugin_host::resident_bytes;
+    let pid = std::process::id();
+    let t0 = std::time::Instant::now();
+    for _ in 0..200 {
+        assert!(resident_bytes(pid).is_some());
+    }
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_millis(50),
+        "200 次读数花了 {elapsed:?}（系统调用应当在 1 ms 量级）：多半又重新起进程去读了"
+    );
 }
 
 /// **超限即杀**：把上限调成 1 字节（任何活着的进程都超），跑一次调用必须得到

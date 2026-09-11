@@ -53,32 +53,61 @@ pub const HOST_RSS_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 /// 看门狗轮询间隔：够快到能拦住增长，又不至于把 CPU 花在轮询上。
 const RSS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// 系统页大小（Linux 的 statm 是按页计的）。
+///
+/// **不能写死 4 KiB**：16 KiB 页的内核（Apple Silicon 上的 Linux 虚拟机、部分 arm64 发行版）
+/// 会让读出来的常驻内存只有真实值的四分之一，而看门狗据此判"没超限"——那是最糟的一类错：
+/// 拦暴走的那一层悄悄失效了，界面和日志还都显示正常。
+#[cfg(target_os = "linux")]
+fn page_size() -> u64 {
+    static PAGE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *PAGE.get_or_init(|| {
+        let n = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if n > 0 {
+            n as u64
+        } else {
+            4096 // sysconf 失败时的兜底；至少不是"算出一个假的偏小值"
+        }
+    })
+}
+
 /// 读一个进程的**常驻内存**（字节）。读不到就返回 `None`——不猜、不编。
 ///
-/// 平台差异如实写在这里：Linux 读 `/proc/<pid>/statm`（干净、无副作用）；macOS 借 `ps`
-/// （不想为这一件事引入 libc/`libproc` 绑定，而 `ps` 是系统自带的）；Windows 还没有实现
-/// （见方案 §8.2 的"仍未做"）——那边要 `GetProcessMemoryInfo`，得引 winapi 之类。
+/// 平台差异如实写在这里：Linux 读 `/proc/<pid>/statm`（干净、无副作用）；macOS 走
+/// `proc_pidinfo(PROC_PIDTASKINFO)`（一次系统调用，不额外起进程）；Windows 还没有实现
+/// （见方案 §8.2 的"仍未做"）——那边要 `GetProcessMemoryInfo`。
+///
+/// macOS 曾经是借 `ps` 命令读的（"不想为这一件事引 libc"）。那是个**错的取舍**：看门狗每
+/// 100 ms 轮询一次，而 fork+exec 一次 `ps` 要几毫秒——每个在跑的插件都要持续付这份代价，
+/// 还依赖 `ps` 在打包环境里存在。libc 本来就在依赖树里，改成系统调用后这两条一起消失。
 pub fn resident_bytes(pid: u32) -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
         // statm 的字段（页数）：size resident shared text lib data dt
         let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
         let resident_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
-        // 页大小：Linux 上应用实际会用到的常见值就是 4 KiB；用 `sysconf` 要引 libc，
-        // 而这里只要"够准到能拦暴走"，宁可简单。
-        return Some(resident_pages * 4096);
+        return Some(resident_pages * page_size());
     }
     #[cfg(target_os = "macos")]
     {
-        let out = Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        if !out.status.success() {
+        // SAFETY：`proc_pidinfo` 会把最多 `size` 字节写进我们给的缓冲区；`proc_taskinfo`
+        // 是 POD，全零初始化后按它自己的结构布局填写。返回值不是整个结构体大小就说明
+        // 这次调用没成功（进程已退出、权限不足），此时**不采信**缓冲区内容。
+        let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+        let n = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTASKINFO,
+                0,
+                &mut info as *mut libc::proc_taskinfo as *mut libc::c_void,
+                size,
+            )
+        };
+        if n != size {
             return None;
         }
-        let kib: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
-        return Some(kib * 1024);
+        return Some(info.pti_resident_size);
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {

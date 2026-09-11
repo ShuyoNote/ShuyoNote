@@ -35,6 +35,9 @@ zip = "8"
 hex = "0.4"
 # 索引签名（minisign）：与 updater 同一套习惯，只做校验（不内置任何"官方公钥"）。
 minisign-verify = "0.2"
+# RSS 看门狗读子进程常驻内存：Linux 要页大小（sysconf），macOS 走 proc_pidinfo。
+# 它本来就在依赖树里（随 rusqlite/tokio 进来），这里只是显式声明。
+libc = "0.2"
 boa_engine = "0.21.1"
 chacha20poly1305 = "0.11.0"
 argon2 = "0.5.3"

@@ -4805,6 +4805,7 @@ dependencies = [
  "encoding_rs",
  "futures-util",
  "hex",
+ "libc",
  "mailparse",
  "minisign-verify",
  "mupdf-sys",
