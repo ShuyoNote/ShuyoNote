@@ -1209,9 +1209,18 @@ mod tests {
     fn the_fixture_publisher_key_fingerprint_is_stable() {
         // 指纹是"人用来比对"的东西：它在界面上出现，也在发布者的公告里出现。
         // 夹具的指纹写死在这里，改了夹具（或改了算法）就会红——那正是想被发现的时刻。
+        //
+        // 2026-09-11 换过一次（`5ee2-b2a1-c3cf-565c` → `1c27-c843-2c55-2322`）：
+        // 夹具原先是用 `scripts/lib/minisign.mjs` 造的，而那份实现把**签名**的算法字节
+        // `ED`(0x45 0x44) 也用在了**公钥盒**上。minisign 的公钥盒应当是 `Ed`(0x45 0x64)：
+        // 真 minisign 会以 `Unsupported signature algorithm` 拒绝 `ED` 那种公钥，而本仓用的
+        // `minisign-verify` 两种都收（`(0x45,0x64) | (0x45,0x44)`）——所以**验签测试全绿，
+        // 但夹具其实不合规**。也就是说那些测试证明的是"应用接受我们自己造的字节"，
+        // 而不是"应用接受真 minisign 的公钥"，而用户手里拿的是后者。
+        // 修了实现、重签了夹具，因此指纹变更。
         assert_eq!(
             publisher_key_fingerprint(SIGNED_PKG_PUB).unwrap(),
-            "5ee2-b2a1-c3cf-565c"
+            "1c27-c843-2c55-2322"
         );
     }
 

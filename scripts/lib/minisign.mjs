@@ -105,7 +105,35 @@ export function assertSelfTest() {
   }
 }
 
-const ALG_PREHASHED = Buffer.from([0x45, 0x44]); // "ED"
+/**
+ * **签名**的算法字节：`ED`（预哈希）。放在签名盒前两字节。
+ */
+const ALG_SIG_PREHASHED = Buffer.from([0x45, 0x44]); // "ED"
+
+/**
+ * **公钥**的算法字节：`Ed`（0x45 0x64）。放在公钥盒前两字节。
+ *
+ * ⚠️ 这两个常量**不能合成一个** —— 这是这里踩过的一个真 bug（2026-09-11）：
+ * 原来只有一个 `ALG_PREHASHED = "ED"`，被**同时**用在签名盒和公钥盒上。
+ * 而 minisign 的公钥盒算法字节是 `Ed`（小写 d），不是 `ED`：
+ *
+ * ```
+ * 真 minisign 生成的公钥盒：0x45 0x64   ("Ed")
+ * 真 minisign 生成的签名盒：0x45 0x44   ("ED")
+ * ```
+ *
+ * 后果不是"报错"，而是**测试向量悄悄不合规**：应用侧的
+ * `minisign-verify::PublicKey::from_base64` 同时接受 `Ed` 和 `ED`
+ * （见该 crate 的 `match (…, …) { (0x45, 0x64) | (0x45, 0x44) => {} }`），
+ * 于是本仓所有验签测试都通过，**但真 minisign 会拒绝**这把公钥
+ * （`Unsupported signature algorithm`）。也就是说：测试证明的是"应用接受我们自己造的
+ * 公钥字节"，而不是"应用接受真 minisign 的公钥"——**两者不是一回事**，
+ * 而用户手里拿到的会是真 minisign 的那一种。
+ *
+ * 发现路径：社区侧挂的验收夹具用真 minisign 去验，报 `Unsupported signature algorithm`，
+ * 逐字节对比公钥盒才定位到这里。
+ */
+const ALG_PUBKEY = Buffer.from([0x45, 0x64]); // "Ed"
 
 /** 指纹口径与后端 `publisher_key_fingerprint` 一致：公钥盒 42 字节的 sha256 前 16 位。 */
 export function fingerprintOf(pubBoxB64) {
@@ -122,14 +150,14 @@ export function generateEphemeralKeypair() {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const rawPub = publicKey.export({ type: "spki", format: "der" }).subarray(-32);
   const keyId = randomBytes(8);
-  const pubBox = Buffer.concat([ALG_PREHASHED, keyId, rawPub]);
+  const pubBox = Buffer.concat([ALG_PUBKEY, keyId, rawPub]);
   return { privateKey, keyId, pubBox, pubText: `untrusted comment: minisign public key\n${pubBox.toString("base64")}\n` };
 }
 
 /** 用给定私钥对一段字节做预哈希签名，产出 minisign 签名盒的**全文**（四行）。 */
 export function signBytes(bytes, { privateKey, keyId, fileName }) {
   const signature = edSign(null, blake2b512(bytes), privateKey);
-  const sigBox = Buffer.concat([ALG_PREHASHED, keyId, signature]);
+  const sigBox = Buffer.concat([ALG_SIG_PREHASHED, keyId, signature]);
   const trustedComment = `timestamp:${Math.floor(Date.now() / 1000)}\tfile:${fileName}`;
   const globalSignature = edSign(null, Buffer.concat([signature, Buffer.from(trustedComment, "utf8")]), privateKey);
   return [
