@@ -103,7 +103,7 @@ async function main() {
   console.log(`应用地址: ${APP_URL}\n`);
 
   const { default: puppeteer } = await import("puppeteer-core");
-  const browser = await launchChrome({ executablePath: chrome });
+  const browser = await launchChrome({ executablePath });
   if (SHOTS) mkdirSync(SHOTS, { recursive: true });
   const shot = async (page, name) => {
     if (SHOTS) await page.screenshot({ path: join(SHOTS, `${name}.png`) });
