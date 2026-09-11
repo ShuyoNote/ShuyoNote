@@ -106,7 +106,8 @@ beforeEach(() => {
   mocks.search.mockResolvedValue([]);
   mocks.createPage.mockResolvedValue("new-page-id");
   vi.stubGlobal("fetch", mocks.fetchImpl);
-  useCommunitySave.setState({ open: true });
+  // 连 pendingLink 一起重置：只设 open:true 会让上一个用例的链接"漏"到下一个（我踩过）
+  useCommunitySave.setState({ open: true, pendingLink: null });
 });
 
 afterEach(() => {
@@ -188,6 +189,38 @@ describe("存社区帖子：预览在前，落库在后", () => {
     flushSync(() => byText("读取").click());
     await vi.waitFor(() => expect(text()).toContain("返回的不是 JSON"));
     expect(mocks.createPage).not.toHaveBeenCalled();
+  });
+});
+
+describe("深链进来（openWithLink）：预填并预览，但绝不自动保存", () => {
+  it("合法深链 → 直接出预览，**没有自动落库**", async () => {
+    mocks.fetchImpl.mockImplementation(() => jsonResponse(post));
+    mount();
+    flushSync(() => useCommunitySave.getState().openWithLink(`shuyonote://save?url=${encodeURIComponent(POST_URL)}`));
+    await vi.waitFor(() => expect(text()).toContain("插件配方：批量一"));
+    expect(input().value).toContain("shuyonote://save");
+    expect(mocks.createPage).not.toHaveBeenCalled();
+    expect(text()).toContain("将存到：工作区根目录");
+  });
+
+  it("非法深链（指向回环）→ 说清原因、**根本不发请求**、不落库", async () => {
+    mount();
+    flushSync(() =>
+      useCommunitySave.getState().openWithLink("shuyonote://save?url=http%3A%2F%2F127.0.0.1%2Fx"),
+    );
+    await vi.waitFor(() => expect(text()).toContain("只接受 https"));
+    expect(mocks.fetchImpl).not.toHaveBeenCalled();
+    expect(mocks.createPage).not.toHaveBeenCalled();
+  });
+
+  it("深链进来后取消 → 一样零痕迹（与手动粘贴同一条规矩）", async () => {
+    mocks.fetchImpl.mockImplementation(() => jsonResponse(post));
+    mount();
+    flushSync(() => useCommunitySave.getState().openWithLink(POST_URL));
+    await vi.waitFor(() => expect(text()).toContain("插件配方：批量一"));
+    flushSync(() => byText("取消").click());
+    expect(mocks.createPage).not.toHaveBeenCalled();
+    expect(useCommunitySave.getState().pendingLink).toBeNull();
   });
 });
 

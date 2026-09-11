@@ -24,6 +24,7 @@ type Phase = "input" | "loading" | "preview" | "stored";
 
 export function CommunitySaveDialog() {
   const open = useCommunitySave((s) => s.open);
+  const pendingLink = useCommunitySave((s) => s.pendingLink);
   const close = useCommunitySave((s) => s.close);
 
   const [link, setLink] = useState("");
@@ -34,14 +35,22 @@ export function CommunitySaveDialog() {
   const [existing, setExisting] = useState<{ id: string; title: string } | null>(null);
 
   // 每次打开都从干净状态开始：上一次的链接与预览不该"粘"到这一次。
+  // 深链那一路会带 `pendingLink` 进来：**预填并直接读一次**（读=抓取+预览），
+  // 但绝不自动保存——"网页发出的链接"不该比"用户自己粘贴"多出任何权限。
   useEffect(() => {
     if (!open) return;
-    setLink("");
-    setPhase("input");
     setReason("");
     setPost(null);
     setExisting(null);
-  }, [open]);
+    if (pendingLink) {
+      setLink(pendingLink);
+      void load(pendingLink);
+    } else {
+      setLink("");
+      setPhase("input");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pendingLink]);
 
   if (!open) return null;
 
@@ -53,8 +62,8 @@ export function CommunitySaveDialog() {
   };
 
   /** 第一步：认链接 → 抓回来 → 查是不是已经存过 → 摆出预览。 */
-  const load = async () => {
-    const intent = linkIntentOf(link);
+  const load = async (raw?: string) => {
+    const intent = linkIntentOf(raw ?? link);
     if (!intent.ok) {
       setReason(intent.reason);
       setPhase("input");
