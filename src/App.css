@@ -5524,7 +5524,15 @@ select.prop-value {
   padding-top: 8vh;
 }
 .plugin-manager {
-  width: min(520px, calc(100vw - 48px));
+  /* 520px 装不下插件索引那一块的真实内容：索引里必须有 56 字符的 base64 公钥、
+     以及带 sha256/指纹/权限理由的条目 —— 都是**机器串**，被折行就等于没法核对。
+     680px 是"常见笔记本 1366 宽下仍留出边距、又能让公钥一行显示完"的折中；
+     仍用 `min()` 对窄窗口收窄，所以小窗口不会溢出。 */
+  width: min(680px, calc(100vw - 48px));
+  /* 内容很高时（18 个插件的索引）允许内部滚动，而不是把弹窗顶出屏幕。
+     上限用 vh 而不是固定值，投屏/小屏下同样成立。 */
+  max-height: calc(100vh - 16vh);
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -5846,7 +5854,9 @@ select.prop-value {
   min-width: 0;
 }
 .pm-index-key {
-  flex: 1 1 auto;
+  /* 公钥被粘贴掉行过三次（真机上表现为"公钥不合法"）——所以给它**尽量宽**：
+     `flex: 1 1 100%` 独占一行，不与按钮抢宽度。 */
+  flex: 1 1 100%;
   min-width: 0;
 }
 .pm-index-form input {
@@ -5857,6 +5867,17 @@ select.prop-value {
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   font-family: inherit;
+}
+/* 地址与公钥都是**机器串**（URL / base64），用等宽字体：
+   一是像 l/1、O/0、+/t 这种一眼能分清，二是等宽下 56 字符的宽度可预测，
+   用户能直接看出"我粘进去的是不是完整的一条"。 */
+.plugin-manager .pm-index-url,
+.plugin-manager .pm-index-key {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  /* 比默认输入框高一点：点上去更容易落准，也更好读。 */
+  padding: 6px 8px;
+  font-size: 12px;
+  letter-spacing: 0.2px;
 }
 .pm-index-form button {
   flex: none;
