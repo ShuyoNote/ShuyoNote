@@ -32,7 +32,7 @@
     "check:ps1-ascii": "node scripts/check-ps1-ascii.mjs",
     "check:web-deploy": "node scripts/check-web-deploy.mjs",
     "plugin:fragment": "node scripts/plugin-fragment.mjs",
-    "test:plugin-fragment": "node scripts/plugin-fragment.test.mjs"
+    "test:plugin-fragment": "vitest run scripts/plugin-fragment.test.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
