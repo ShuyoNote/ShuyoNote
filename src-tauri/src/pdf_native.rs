@@ -225,6 +225,36 @@ pub unsafe fn render_page(
     Ok((out, w, h, stride))
 }
 
+/// 把 MuPDF 的行对齐样本压成紧凑 RGBA8（长度恰为 `w × h × 4`）。
+///
+/// 为什么需要：pixmap 每行可能带对齐填充（`stride ≥ w*4`），而前端按
+/// `宽 × 高 × 4` 校验字节数——多一个字节就会被判为"字节数对不上"。
+/// 填充必须在 Rust 侧去掉，别把这个差异漏到前端去当谜题。
+pub fn compact_rgba(samples: &[u8], w: usize, h: usize, stride: usize) -> Result<Vec<u8>, String> {
+    let row = w.checked_mul(4).ok_or_else(|| "MuPDF: 页面宽度溢出".to_string())?;
+    let need = stride
+        .checked_mul(h)
+        .ok_or_else(|| "MuPDF: 页面高度溢出".to_string())?;
+    if stride < row {
+        return Err(format!("MuPDF: 行跨距 {stride} 小于行宽 {row}"));
+    }
+    if samples.len() < need {
+        return Err(format!(
+            "MuPDF: 像素缓冲不足（需要 {need} 字节，实际 {} 字节）",
+            samples.len()
+        ));
+    }
+    if stride == row {
+        return Ok(samples[..row * h].to_vec());
+    }
+    let mut out = Vec::with_capacity(row * h);
+    for y in 0..h {
+        let off = y * stride;
+        out.extend_from_slice(&samples[off..off + row]);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +271,78 @@ mod tests {
                 Ok((_, w, h, _)) => assert!((w, h) == (200, 200), "unexpected size ({w}x{h})"),
                 Err(e) => panic!("render_page failed: {e}"),
             }
+        }
+    }
+
+    #[test]
+    fn compact_rgba_drops_row_padding() {
+        // 2×2 页、行跨距多 4 字节填充：第 2 行从 offset 12 开始。
+        let samples: Vec<u8> = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 0xAA, 0xAA, 0xAA, 0xAA, // y=0 (含填充)
+            9, 10, 11, 12, 13, 14, 15, 16, 0xAA, 0xAA, 0xAA, 0xAA, // y=1
+        ];
+        let out = compact_rgba(&samples, 2, 2, 12).expect("compact");
+        assert_eq!(out.len(), 2 * 2 * 4);
+        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    }
+
+    #[test]
+    fn compact_rgba_is_identity_when_stride_matches() {
+        let samples: Vec<u8> = (0..16).collect();
+        let out = compact_rgba(&samples, 2, 2, 8).expect("compact");
+        assert_eq!(out, samples);
+    }
+
+    #[test]
+    fn compact_rgba_rejects_inconsistent_inputs() {
+        assert!(compact_rgba(&[0u8; 16], 2, 2, 4).is_err(), "行跨距小于行宽必须报错");
+        assert!(compact_rgba(&[0u8; 15], 2, 2, 8).is_err(), "缓冲不足必须报错");
+    }
+
+    /// 真机 PDF 的显式冒烟测试（默认忽略）：一条命令跑完 Rust 侧整条链路——
+    /// 取页 → 栅格化 → 压掉行填充 → base64，并打印真实尺寸/体积。
+    /// 合成出来的 MIN_PDF 太大路货，真实文件（扫描件、奇怪 MediaBox、非 4 字节
+    /// 对齐的 stride）才会暴露问题。用法：
+    ///   SHUYONOTE_PDF_FIXTURE=/path/to.pdf cargo test --lib real_pdf -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_pdf_page_renders_and_matches_contract() {
+        use base64::Engine as _;
+        let Ok(path) = std::env::var("SHUYONOTE_PDF_FIXTURE") else {
+            eprintln!("跳过：未设置 SHUYONOTE_PDF_FIXTURE");
+            return;
+        };
+        let data = std::fs::read(&path).expect("读取 PDF 失败");
+        unsafe {
+            let (rgba, w, h, stride) = render_page("real-fixture", &data, 0, 1.0).expect("渲染第 1 页失败");
+            let compact = compact_rgba(&rgba, w, h, stride).expect("压缩像素失败");
+            assert_eq!(compact.len(), w * h * 4, "紧凑 RGBA 长度必须是 宽×高×4");
+            assert!(compact.iter().any(|b| *b != 0), "渲染结果全零");
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&compact);
+            let decoded = base64::engine::general_purpose::STANDARD.decode(&b64).expect("base64 解码失败");
+            assert_eq!(decoded.len(), w * h * 4);
+            eprintln!(
+                "第 1 页 {w}×{h}（stride {stride}）→ RGBA {} 字节，base64 {} 字节",
+                compact.len(),
+                b64.len()
+            );
+        }
+    }
+
+    /// 契约测试：命令层返回的载荷里，base64 解码后必须恰好是 `宽 × 高 × 4` 字节。
+    /// 前端就是用这条规则校验的（对不上就报错、不画），所以这里必须有闸门。
+    #[test]
+    fn compact_page_matches_frontend_contract() {
+        use base64::Engine as _;
+        unsafe {
+            let (rgba, w, h, stride) = render_page("test-min-contract", MIN_PDF, 0, 1.0).expect("render");
+            let compact = compact_rgba(&rgba, w, h, stride).expect("compact");
+            assert_eq!(compact.len(), w * h * 4);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&compact);
+            let decoded = base64::engine::general_purpose::STANDARD.decode(b64).expect("decode");
+            assert_eq!(decoded.len(), w * h * 4);
+            // 200×200 的页面不能是全零：那说明栅格化"成功"但什么也没画。
+            assert!(decoded.iter().any(|b| *b != 0), "渲染结果全零");
         }
     }
 }

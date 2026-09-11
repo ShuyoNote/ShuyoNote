@@ -16,15 +16,31 @@ export type ZoomMode =
   | { mode: "fit-width" | "fit-page" | "fit-content" | "actual" }
   | { mode: "pct"; pct: number };
 
+/**
+ * A4 宽（pt）—— 取不到页尺寸时的回退基准，和 PdfReader 里 refW 的回退保持一致。
+ */
+export const A4_WIDTH_FALLBACK = 612;
+
 /** 由「可用视口内容宽 + 基准页宽」算出适配页宽的缩放倍率。 */
 export function fitScaleForWidth(refW: number, avail: number): number {
   if (!refW || refW <= 0 || avail <= 0) return 1;
-  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(avail / refW).toFixed(3)));
+  const s = Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(avail / refW).toFixed(3)));
+  return Number.isFinite(s) && s > 0 ? s : 1;
 }
 
-/** 页块显示宽（px）：随缩放真实放大。缩放 1 = 基准页原始像素宽。 */
+/**
+ * 页块显示宽（px）：随缩放真实放大。缩放 1 = 基准页原始像素宽。
+ *
+ * 非有限值是必须挡住的：它最终会变成 canvas 的宽高，
+ * WKWebView 会直接抛 `Value NaN is outside the range [-2147483648, 2147483647]`，
+ * Chrome/WKWebView 的另一些路径则静默画成 0×0 —— 用户看到的就是"一片空白"。
+ * 退回「基准页宽 ×1」至少还是一页正常宽度。
+ */
 export function zoomContentWidth(refW: number, scale: number): number {
-  return Math.max(refW * scale, 40);
+  const w = refW * scale;
+  if (Number.isFinite(w) && w > 0) return Math.max(w, 40);
+  const base = Number.isFinite(refW) && refW > 0 ? refW : A4_WIDTH_FALLBACK;
+  return Math.max(base, 40);
 }
 
 /** 由缩放模式 + 视口尺寸解出实际缩放倍率。适配模式随视口变化自动重算（连续滚动）。 */
@@ -57,6 +73,9 @@ export function resolveZoomScale(
       s = zoom.pct / 100;
       break;
   }
+  // 退化输入（refW/refH 为 0 或 NaN、pct 为 NaN）会让 s 变成 NaN/Infinity。
+  // 倍率是"往画布上传"的第一个数：绝不允许非有限值出门。返回 1（实际大小）是安全的默认。
+  if (!Number.isFinite(s) || s <= 0) return 1;
   return Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(s).toFixed(3)));
 }
 

@@ -3,6 +3,7 @@
 // the app does changes — a future Web/ArkWeb/Android/iOS shell implements the
 // same interfaces in a sibling module (see ./index.ts).
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { parseNativePageResponse } from "../pdfNativePage";
 import { convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import { getCurrentWebview as tauriGetCurrentWebview } from "@tauri-apps/api/webview";
@@ -49,23 +50,16 @@ export const tauriPlatform: Platform = {
   },
   pdfRender: {
     renderPdfPage: async (attachmentId, pageIndex, scale) => {
-      // 二进制响应：8 字节头 (width:u32 LE, height:u32 LE) + RGBA8。避免 JSON number 数组
-      // 对 6.8MB 大页的巨量反序列化（适配页宽后翻页慢的主因）。
-      const buf = await tauriInvoke<ArrayBuffer | { bytes: number[]; width: number; height: number }>("render_pdf_page", {
+      // 倍率先校验：NaN/Infinity 会被 JSON 编成 null 送到 Rust，也会让画布尺寸变 NaN。
+      if (!Number.isFinite(scale) || scale <= 0) {
+        throw new Error(`原生 PDF 渲染的缩放倍率无效（scale=${String(scale)}）`);
+      }
+      // 响应形状按平台/版本都不同（macOS 的原始响应是数字数组、Windows 是 ArrayBuffer、
+      // 现在是 {width,height,rgba_base64}），全部交给 parseNativePageResponse 校验后再用。
+      const raw = await tauriInvoke<unknown>("render_pdf_page", {
         args: { attachment_id: attachmentId, page_index: pageIndex, scale },
       });
-      if (buf instanceof ArrayBuffer) {
-        const view = new DataView(buf);
-        const width = view.getUint32(0, true);
-        const height = view.getUint32(4, true);
-        return { bytes: new Uint8Array(buf, 8), width, height };
-      }
-      // 回退：某些环境若未能返回二进制，则按 JSON 结构解析。
-      return {
-        bytes: new Uint8Array((buf as { bytes: number[] }).bytes),
-        width: (buf as { width: number }).width,
-        height: (buf as { height: number }).height,
-      };
+      return parseNativePageResponse(raw);
     },
     nativeAvailable: () => true,
   },

@@ -5,6 +5,11 @@
 ## [Unreleased]
 
 ### 修复
+- **PDF 空白页的真凶找到了：原生渲染的响应在 macOS 上根本不是字节**。上一版把"渲染失败被吞掉"补上之后，用户截图上出现了具体原因：`Value NaN is outside the range [-2147483648, 2147483647]`——这是 WKWebView 对 `createImageData(NaN, NaN)` 这类整型参数的报错。
+  - 根因：`render_pdf_page` 返回 `InvokeResponseBody::Raw`，前端按"`ArrayBuffer` + 8 字节头"解析。但 Tauri **只在能用 binary channel 的平台**把原始响应当字节送；**macOS/iOS 走的是 `format_result(Ok(Vec<u8>))`，即把字节 JSON 编码成数字数组**。于是 `buf instanceof ArrayBuffer` 为假 → 落到兜底分支 → `width`/`height` 是 `undefined` → 画布尺寸 NaN → WKWebView 抛错（Chrome 不抛，只是静默画出 0×0，也就是更早那次"看不到内容"）。**这也是为什么同一份代码 Web 端正常、桌面端空白。**
+  - 修法：命令改返回 `{ width, height, rgba_base64 }`——base64 是同一份数据在 JSON 通道上最省的表达（一页 RGBA 从"几百万个 JSON 数字"变成一段字符串），且**所有平台行为一致**。前端新增 `parseNativePageResponse`（`src/lib/pdfNativePage.ts`）作为唯一闸门：兼容 `{width,height,rgba_base64}`、`ArrayBuffer`/`Uint8Array`、数字数组三种真实形状，并校验"解码后字节数恰为 宽×高×4、宽高为正整数、面积不超过 40MP"，**任何一条不过就报出具体数值**，绝不让 NaN 流到画布 API 上。
+  - 顺带：Rust 侧新增 `compact_rgba` 把 MuPDF 的行对齐填充压掉（前端就是按 宽×高×4 校验的，填充会让它误判"对不上"）；原生渲染失败时**自动退回 pdf.js** 而不是留一页空白；缩放倍率在 `resolveZoomScale` / `zoomContentWidth` / 引擎入口三处都做了有限性兜底（NaN/Infinity 一律退回确定值）。
+  - 验证：单测 15 条（解析器，含"NaN 宽高必须报错""字节数对不上必须报错"两条变异验证：去掉任一守卫即转红）+ 布局 2 条（同样变异验证）；Rust 侧 4 条（含用真实 mupdf 渲染 MIN_PDF 后 base64 往返、长度必须等于 宽×高×4）。另外加了一条**默认忽略的真机冒烟测试**：`SHUYONOTE_PDF_FIXTURE=<文件> cargo test --lib real_pdf -- --ignored --nocapture`，实测用户那份 2MB/17 页的 PDF 第 1 页 `461×657（stride 1844）→ RGBA 1211508 字节`，base64 往返一致。
 - **PDF"打不开"的第二种静默失败：文档加载失败也会假装在加载**。用户换了一份 PDF（那个文件本身是好的，在浏览器里 17 页正常渲染），桌面端却是「加载中…」永远转 + 页码显示「第 1 / 1 页」。查下来 `loadPdf` 的 catch 是空的（`catch { setPageCount(0) }`）——于是"这份 PDF 根本没打开"和"正在加载"长得一模一样，而 `pageCount || 1` 还替它显示了一个假的"共 1 页"。
   - 现在加载失败会 `console.error` 记真实原因，舞台直接显示「这份 PDF 没能打开 / <原因> / 重新打开」；`pageCount` 为 0 时页码显示**「页数未知」**而不是"第 1 / 1 页"（替一份打不开的文档报页数是在说谎）。实测（喂一份坏 PDF）：红框 + `Invalid PDF structure.` 如期出现。
 - **附件字节改走原始 IPC**：`read_attachment_bytes` 从 `Vec<u8>`（JSON 数字数组）改成 `tauri::ipc::Response`（JS 拿 ArrayBuffer）。2 MB 的 PDF 走 JSON 就是两千多万字符的文本，白白让 IPC 与 webview 各扛一次巨型 JSON 解析——图片/PDF 这类"要完整字节"的调用点都受益。（Rust 侧自己用的调用点改用一个纯函数 `attachment_bytes`，行为不变。）

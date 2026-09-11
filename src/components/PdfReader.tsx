@@ -117,34 +117,53 @@ async function renderPagePng(
   scale: number,
 ): Promise<Blob> {
   if (attachmentId && platform.pdfRender.nativeAvailable()) {
-    const { bytes, width, height } = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("无法创建 2D 上下文");
-    // 把 RGBA 叠到白纸上：PDF 常为透明底（alpha），直接 putImageData 会替换像素让透明
-    // 仍透明，JPEG 会把透明当成黑。先把含 alpha 的像素画进临时画布，再 drawImage 到白底画布
-    //（drawImage 做 alpha 混合），透明 → 白。
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, width, height);
-    const tmp = document.createElement("canvas");
-    tmp.width = width;
-    tmp.height = height;
-    const tctx = tmp.getContext("2d");
-    if (!tctx) throw new Error("无法创建 2D 上下文");
-    const img = tctx.createImageData(width, height);
-    img.data.set(bytes);
-    tctx.putImageData(img, 0, 0);
-    ctx.drawImage(tmp, 0, 0);
-    // 导出这页的 JPEG：同样不能只信 toBlob（见 canvasToPngBlob 的注释），
-    // 失败时退回 PNG 的编码路径，至少让导出这一步能完成。
-    const jpeg = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92),
-    );
-    return jpeg ?? canvasToPngBlob(canvas);
+    try {
+      return await renderPageNative(attachmentId, pageIndex, scale);
+    } catch (e) {
+      // 原生引擎坏了不该让整页空白：退回 pdf.js（慢一点，但看得见）。
+      // 这条日志是排查的第一个现场，别删。
+      console.error("native page render failed, falling back to pdf.js", { pageIndex, scale, error: e });
+    }
   }
   return eng.renderPageToBlob(pageIndex, scale);
+}
+
+/** 原生（MuPDF）渲染：RGBA8 → 白底画布 → JPEG Blob。 */
+async function renderPageNative(attachmentId: string, pageIndex: number, scale: number): Promise<Blob> {
+  const { bytes, width, height } = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale);
+  // 再挡一道：宽高/字节数不合法时绝不进画布（NaN 会让 WKWebView 抛
+  // "Value NaN is outside the range …"，Chrome 则静默画成 0×0）。
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error(`原生渲染返回的尺寸非法（${width}×${height}）`);
+  }
+  if (bytes.length !== width * height * 4) {
+    throw new Error(`原生渲染字节数对不上（${width}×${height} 应为 ${width * height * 4} 字节，实际 ${bytes.length} 字节）`);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("无法创建 2D 上下文");
+  // 把 RGBA 叠到白纸上：PDF 常为透明底（alpha），直接 putImageData 会替换像素让透明
+  // 仍透明，JPEG 会把透明当成黑。先把含 alpha 的像素画进临时画布，再 drawImage 到白底画布
+  //（drawImage 做 alpha 混合），透明 → 白。
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, width, height);
+  const tmp = document.createElement("canvas");
+  tmp.width = width;
+  tmp.height = height;
+  const tctx = tmp.getContext("2d");
+  if (!tctx) throw new Error("无法创建 2D 上下文");
+  const img = tctx.createImageData(width, height);
+  img.data.set(bytes);
+  tctx.putImageData(img, 0, 0);
+  ctx.drawImage(tmp, 0, 0);
+  // 导出这页的 JPEG：同样不能只信 toBlob（见 canvasToPngBlob 的注释），
+  // 失败时退回 PNG 的编码路径，至少让导出这一步能完成。
+  const jpeg = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92),
+  );
+  return jpeg ?? canvasToPngBlob(canvas);
 }
 
 /** 触发浏览器下载一个 Blob（用于「导出带批注的 PDF 副本」）。 */

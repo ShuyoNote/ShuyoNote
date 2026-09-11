@@ -166,12 +166,25 @@ export function createPdfjsEngine(): PdfRenderEngineApi {
     },
 
     async renderPageToBlob(pageIndex: number, scale: number): Promise<Blob> {
+      // 倍率必须在碰画布之前校验：非有限值会让 vp.width/height 变成 NaN，而
+      // `canvas.width = NaN` / `createImageData(NaN, NaN)` 在 WKWebView 上抛
+      // "Value NaN is outside the range [-2147483648, 2147483647]"，
+      // 在 Chrome 上则是静默的 0×0（用户看到的"一片空白"）。宁可在这一层报一句
+      // 看得懂的话，也不要让 NaN 流到画布 API 上。
+      if (!Number.isFinite(scale) || scale <= 0) {
+        throw new Error(`页面缩放倍率无效（scale=${String(scale)}）`);
+      }
       const d = expectDoc();
       const p = await d.getPage(pageIndex + 1);
       const vp = p.getViewport({ scale });
+      const width = Math.ceil(vp.width);
+      const height = Math.ceil(vp.height);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        throw new Error(`页面尺寸无效（${vp.width}×${vp.height}，scale=${scale}）`);
+      }
       const canvas = document.createElement("canvas");
-      canvas.width = Math.ceil(vp.width);
-      canvas.height = Math.ceil(vp.height);
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("无法创建 2D 上下文");
       await p.render({ canvasContext: ctx, viewport: vp }).promise;

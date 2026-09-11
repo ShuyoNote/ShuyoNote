@@ -532,14 +532,32 @@ pub struct RenderPdfPageArgs {
     pub scale: f32,
 }
 
+/// 原生 PDF 渲染的返回载荷：显式宽高 + base64 的 RGBA8。
+///
+/// 为什么不返回二进制（`tauri::ipc::Response` / `InvokeResponseBody::Raw`）：
+/// Tauri 只在能用 binary channel 的平台把它当字节送；**macOS/iOS 走的是
+/// `format_result(Ok(Vec<u8>))`——把字节 JSON 编码成数字数组**（一页 6.8MB 的
+/// RGBA 就是 680 万个 JSON 数字）。前端因此踩了两个坑：`buf instanceof ArrayBuffer`
+/// 为假 ⇒ 宽高取到 `undefined` ⇒ NaN ⇒ WKWebView 抛
+/// "Value NaN is outside the range [-2147483648, 2147483647]"（Chrome 则静默画成
+/// 0×0，即"一片空白"）；以及解析几十 MB 数字数组导致的卡顿。
+/// base64 是同一份数据在 JSON 通道上最省的表达，而且所有平台行为一致——
+/// 前端只需要一条解析路径（见 src/lib/pdfNativePage.ts）。
+#[derive(serde::Serialize)]
+pub struct PdfPagePayload {
+    pub width: u32,
+    pub height: u32,
+    pub rgba_base64: String,
+}
+
 /// Render an attachment's PDF page to bytes using MuPDF (desktop-native,
 /// faster for large/complex PDFs). Web degrades to pdf.js (see platform driver).
 ///
-/// Returns a binary IPC response (not JSON): 8-byte header [u32 width LE,
-/// u32 height LE] followed by raw RGBA8 samples. Frontend reads the
-/// `ArrayBuffer` directly, avoiding the huge JS-number-array deserialization
-/// that a JSON `Vec<u8>` payload causes (6.8MB → 6.8M numbers — the lag
-/// culprit on fit-width page flips).
+/// 返回 `PdfPagePayload`（显式宽高 + base64 的 RGBA8），见该结构体的注释：
+/// 二进制响应在 macOS/iOS 上会被 Tauri JSON 编码成**数字数组**，既和
+/// "前端拿到 ArrayBuffer"的预期不符（宽高取到 undefined → NaN → WKWebView 抛
+/// `Value NaN is outside the range …`），又要解析几十 MB 的 JSON 数字。
+/// 前端 `parseNativePageResponse` 会校验解码后恰为 `宽 × 高 × 4` 字节。
 ///
 /// IMPORTANT (fix): this was a *synchronous* command. MuPDF rasterization is
 /// CPU-intensive (a scanned/complex page can take seconds), and a sync command
@@ -548,7 +566,7 @@ pub struct RenderPdfPageArgs {
 /// rasterization runs on the blocking thread pool (`spawn_blocking`), so the
 /// UI thread stays responsive while the page renders in the background.
 #[tauri::command]
-pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: RenderPdfPageArgs) -> Result<tauri::ipc::InvokeResponseBody, String> {
+pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: RenderPdfPageArgs) -> Result<PdfPagePayload, String> {
     let hash: String = {
         let c = conn(&db);
         c.query_row(
@@ -568,16 +586,20 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     let page_index = args.page_index;
     let scale = args.scale;
     // 在阻塞线程池上执行 mupdf 栅格化，避免阻塞主（UI）线程。
-    let (rgba, w, h, _stride) = tauri::async_runtime::spawn_blocking(move || {
+    let (rgba, w, h, stride) = tauri::async_runtime::spawn_blocking(move || {
         unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }
     })
     .await
     .map_err(|e| format!("render task failed: {e}"))?
     .map_err(|e| format!("MuPDF render failed: {e}"))?;
-    // Header (8 bytes, little-endian) + RGBA.
-    let mut out = Vec::with_capacity(8 + rgba.len());
-    out.extend_from_slice(&(w as u32).to_le_bytes());
-    out.extend_from_slice(&(h as u32).to_le_bytes());
-    out.extend_from_slice(&rgba);
-    Ok(tauri::ipc::InvokeResponseBody::Raw(out))
+    // 压掉行对齐填充：前端按 宽×高×4 校验字节数，多出的填充会被判成"对不上"。
+    let compact = crate::pdf_native::compact_rgba(&rgba, w, h, stride)?;
+    let width = u32::try_from(w).map_err(|_| format!("MuPDF: 页面宽度 {w} 超出范围"))?;
+    let height = u32::try_from(h).map_err(|_| format!("MuPDF: 页面高度 {h} 超出范围"))?;
+    use base64::Engine as _;
+    Ok(PdfPagePayload {
+        width,
+        height,
+        rgba_base64: base64::engine::general_purpose::STANDARD.encode(&compact),
+    })
 }

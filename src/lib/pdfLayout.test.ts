@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  A4_WIDTH_FALLBACK,
   MAX_SCALE,
   MIN_SCALE,
   fitScaleForWidth,
@@ -33,12 +34,42 @@ describe("zoomContentWidth", () => {
     expect(zoomContentWidth(100, 1.5)).toBe(150);
     expect(zoomContentWidth(1, 1)).toBe(40);
   });
+
+  // 回归：NaN 宽度曾经变成 canvas 的 NaN 尺寸 ⇒ WKWebView 抛 RangeError、
+  // Chrome 静默画成 0×0（用户看到的"一片空白"）。
+  it("退化输入退回基准页宽，绝不返回 NaN", () => {
+    expect(zoomContentWidth(NaN, 1)).toBe(A4_WIDTH_FALLBACK);
+    expect(zoomContentWidth(600, NaN)).toBe(600);
+    expect(zoomContentWidth(0, 2)).toBe(A4_WIDTH_FALLBACK);
+    expect(zoomContentWidth(600, Infinity)).toBe(600);
+    for (const w of [zoomContentWidth(NaN, NaN), zoomContentWidth(Infinity, 2), zoomContentWidth(-5, 1)]) {
+      expect(Number.isFinite(w)).toBe(true);
+      expect(w).toBeGreaterThanOrEqual(40);
+    }
+  });
 });
 
 describe("resolveZoomScale", () => {
   it("fit-width uses available width", () => {
     const z: ZoomMode = { mode: "fit-width" };
     expect(resolveZoomScale(z, 100, 100, 200, 100)).toBe(2);
+  });
+
+  it("退化输入永远给有限倍率，绝不返回 NaN/Infinity", () => {
+    const cases: [ZoomMode, number, number, number, number][] = [
+      [{ mode: "fit-width" }, NaN, 100, 300, 400],
+      [{ mode: "fit-width" }, 0, 100, 300, 400],
+      [{ mode: "fit-page" }, 100, NaN, 300, 400],
+      [{ mode: "fit-content" }, 100, 0, 300, 400],
+      [{ mode: "pct", pct: NaN }, 100, 100, 300, 400],
+      [{ mode: "pct", pct: 100 }, 100, 100, NaN, NaN],
+      [{ mode: "fit-width" }, 100, 100, NaN, 400],
+    ];
+    for (const [z, w, h, aw, ah] of cases) {
+      const s = resolveZoomScale(z, w, h, aw, ah);
+      expect(Number.isFinite(s), `${JSON.stringify(z)} ref=${w}x${h} avail=${aw}x${ah} → ${s}`).toBe(true);
+      expect(s).toBeGreaterThan(0);
+    }
   });
 
   it("fit-page takes the smaller of width/height ratios", () => {
