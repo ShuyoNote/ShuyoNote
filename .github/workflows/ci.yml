@@ -50,6 +50,11 @@ jobs:
       - name: 冒烟测试（web 平台行为的事实标准）
         run: node scripts/smoke-web.mjs
 
+      - name: 面板布局验收（真实 Chromium 量几何）
+        # 挡的是"文字被挤成一条竖柱"这类：单元测试看不见（happy-dom 不做布局）、
+        # 类型检查看不见，只有打开看一眼才发现——而这一步最容易被跳过。
+        run: node scripts/check-panel-layout.mjs
+
       - name: Web 构建产物自检（真实 Chromium）
         # 冒烟跑的是 dev server，跑不到"**构建产物**能不能打开"这件事。而 Web 版是每次推
         # main 自动部署的（Pages），构建成功 ≠ 打开能用：v1.84.1 踩过一次，按静态引用过滤

@@ -27,6 +27,7 @@
     "test:sync-collab": "node scripts/sync-collab-regression.mjs",
     "test:mobile-layout": "node scripts/verify-mobile-layout.mjs",
     "check:web-build": "node scripts/check-web-build.mjs",
+    "check:panel-layout": "node scripts/check-panel-layout.mjs",
     "check:web-deploy": "node scripts/check-web-deploy.mjs"
   },
   "dependencies": {

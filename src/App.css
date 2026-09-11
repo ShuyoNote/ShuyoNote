@@ -19231,6 +19231,25 @@ body.is-plugin-panel-open .main {
 }
 .pm-open-btn:hover { border-color: var(--brand, #2F6BFF); color: var(--brand, #2F6BFF); }
 
+/* == 布局修复：信息块与操作条各占一整行 ==
+   原因：`.pm-item` 是「不换行的一行 flex」，而信息块（flex:1）与操作条（flex:none）都被
+   当成同一行里的两个格子 —— 7 个按钮占掉约 380px 之后，信息块只剩 58px，
+   标题被压成一个字一行（截图里那个竖排的「示例插件」就是这么来的），
+   `.pm-logs` / `.pm-facts` 这些本来就写着 `flex-basis:100%`（作者以为会换行）的面板
+   同样被挤在同一行里。
+   正解：让卡片**换行**，信息块与操作条各占 100%，操作条自然落到下面一条。 */
+.plugin-manager .pm-item {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.plugin-manager .pm-item-info {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.plugin-manager .pm-item-actions {
+  flex: 1 1 100%;
+}
+
 /* == 插件卡片状态色条（绿=启用 / 灰=禁用） == */
 /* "一眼看出状态"：不靠读按钮文字，靠左侧那条颜色。 */
 .plugin-manager .pm-item { border-left: 3px solid transparent; }
