@@ -162,7 +162,16 @@ async fn get_capped(
     url: &str,
     cap: u64,
 ) -> Result<(Vec<u8>, String), String> {
-    let resp = client.get(url).send().await.map_err(|e| {
+    // **带上 `Accept: application/json`**：深链里带的是**帖子页地址**（用户从浏览器复制的那条），
+    // 而社区侧最省的落地方式就是在同一个地址上做内容协商（返回 JSON）——这样应用不需要知道
+    // slug→id 的映射（那是他们的实现细节）。实测过：当前那个地址只回 HTML，
+    // 所以下面那条"不是 JSON"的错误信息要把**该怎么修**说清楚，而不是只说"类型不对"。
+    let resp = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| {
         if e.is_connect() || e.is_timeout() {
             format!("取不到这篇帖子：无法连接到 {url}（网络或地址不可达）")
         } else {
@@ -185,7 +194,11 @@ async fn get_capped(
         .to_ascii_lowercase();
     if !ctype.contains("json") {
         // 不内置 HTML 正文抽取（社区方案第七节）：拿到网页就说清"这不是 JSON"。
-        return Err(format!("这个地址返回的不是 JSON（Content-Type: {}）", if ctype.is_empty() { "未提供" } else { ctype.as_str() }));
+        let got = if ctype.is_empty() { "未提供".to_string() } else { ctype.clone() };
+        return Err(format!(
+            "这个地址返回的不是 JSON（Content-Type: {got}）——应用已经带着 `Accept: application/json` 去要了；\
+             社区侧要么在**同一个帖子页地址**上按 Accept 返回 JSON，要么给出 JSON 的 alternate 链接"
+        ));
     }
     if let Some(len) = resp.content_length() {
         if len > cap {
@@ -315,6 +328,46 @@ mod tests {
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .expect("client")
+    }
+
+    /// 按 `Accept` 协商的环回服务器：要 JSON 就给 JSON，否则给网页。
+    /// 用来证明**我们确实在要 JSON**，以及"社区只要支持内容协商，应用一行都不用改"。
+    fn serve_negotiating(json_body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                let resp = if req.contains("accept: application/json") {
+                    with_body(json_body, "application/json")
+                } else {
+                    with_body("<html>页面</html>", "text/html; charset=utf-8")
+                };
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}/post/x")
+    }
+
+    #[tokio::test]
+    async fn we_ask_for_json_so_content_negotiation_is_enough() {
+        let url = serve_negotiating(POST_BODY);
+        let (bytes, _) = get_capped(&client(), &url, MAX_POST_JSON_BYTES)
+            .await
+            .expect("带着 Accept: application/json 去要，就该拿到 JSON");
+        assert_eq!(parse_post(&String::from_utf8(bytes).unwrap()).unwrap().id, "1");
+    }
+
+    #[tokio::test]
+    async fn html_answer_says_how_to_fix_it() {
+        // 只回 HTML 的服务器（当前社区的真实表现）：错误信息要说清"我们已经在要 JSON 了"。
+        let url = serve_once(with_body("<html>页面</html>", "text/html; charset=utf-8"));
+        let err = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.unwrap_err();
+        assert!(err.contains("返回的不是 JSON"), "{err}");
+        assert!(err.contains("Accept: application/json"), "要说清我们已经在要 JSON：{err}");
     }
 
     #[tokio::test]

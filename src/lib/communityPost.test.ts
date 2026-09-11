@@ -25,12 +25,15 @@ const validPost = {
 };
 
 /** 造一个假响应：body 走流式（按 chunk 喂），headers 给指定 content-type。 */
+const seenInits: Array<{ headers?: Record<string, string> } | undefined> = [];
 function fakeFetch(
   init: { status?: number; url?: string; contentType?: string; chunks?: Uint8Array[]; text?: string },
 ): FetchLike {
   const status = init.status ?? 200;
   const chunks = init.chunks ?? [new TextEncoder().encode(init.text ?? "")];
-  return (async () => ({
+  return (async (_url: string, init2?: { headers?: Record<string, string> }) => {
+    seenInits.push(init2);
+    return {
     ok: status >= 200 && status < 300,
     status,
     url: init.url ?? POST_URL,
@@ -45,7 +48,8 @@ function fakeFetch(
             },
           },
     text: async () => init.text ?? "",
-  })) as unknown as FetchLike;
+    };
+  }) as unknown as FetchLike;
 }
 
 describe("parseCommunityPost — 缺字段是报错，不是填空", () => {
@@ -110,6 +114,12 @@ describe("parseCommunityPost — 缺字段是报错，不是填空", () => {
 });
 
 describe("fetchCommunityPost — 先判地址，再守体积，只认 JSON", () => {
+  it("**带着 `Accept: application/json` 去要**（深链带的是帖子页地址，社区靠内容协商给 JSON）", async () => {
+    seenInits.length = 0;
+    const r = await fetchCommunityPost(POST_URL, { fetchImpl: fakeFetch({ text: body(validPost) }) });
+    expect(r.ok).toBe(true);
+    expect(seenInits[0]?.headers?.Accept).toBe("application/json");
+  });
   it("正常：抓到并解析成结构化对象", async () => {
     const impl = fakeFetch({ text: body(validPost) });
     const r = await fetchCommunityPost(POST_URL, { fetchImpl: impl });
@@ -142,6 +152,8 @@ describe("fetchCommunityPost — 先判地址，再守体积，只认 JSON", () 
       fetchImpl: fakeFetch({ contentType: "text/html; charset=utf-8", text: "<html>…</html>" }),
     });
     expect(r).toEqual({ ok: false, reason: expect.stringContaining("返回的不是 JSON") });
+    // 错误信息要**说清怎么修**，而不是只说类型不对
+    if (!r.ok) expect(r.reason).toContain("Accept: application/json");
   });
 
   it("体积超限：**读的过程中**就停下（不靠 Content-Length）", async () => {

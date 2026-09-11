@@ -95,7 +95,7 @@ export function parseCommunityPost(raw: unknown): PostFetchResult {
 
 /** 抓取依赖注入点：测试里换成假 fetch（这里只用到最朴素的三件事）。 */
 export interface FetchLike {
-  (url: string, init?: { signal?: AbortSignal }): Promise<{
+  (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }): Promise<{
     ok: boolean;
     status: number;
     url: string;
@@ -127,7 +127,11 @@ export async function fetchCommunityPost(
   try {
     let resp;
     try {
-      resp = await doFetch(target.url, { signal: ac.signal });
+      // **带上 `Accept: application/json`**：深链里带的是**帖子页地址**（用户从浏览器复制的那条），
+      // 而社区侧最省的落地方式就是在同一个地址上做内容协商；这样应用不需要知道 slug→id 的映射
+      // （那是社区侧的实现细节）。实测：当前那个地址只回 HTML，所以下面那条错误信息
+      // 要把"该怎么修"说清楚，而不是只说类型不对。
+      resp = await doFetch(target.url, { signal: ac.signal, headers: { Accept: "application/json" } });
     } catch (e) {
       const why = e instanceof Error && e.name === "AbortError" ? `请求超时（${timeoutMs / 1000} 秒）` : String(e);
       return { ok: false, reason: `取不到这篇帖子：${why}` };
@@ -143,7 +147,13 @@ export async function fetchCommunityPost(
     const ctype = (resp.headers.get("content-type") ?? "").toLowerCase();
     if (!ctype.includes("json")) {
       // 不内置 HTML 抽取：拿到网页就说清"这不是 JSON"，而不是尽力抽一抽。
-      return { ok: false, reason: `这个地址返回的不是 JSON（Content-Type: ${ctype || "未提供"}）` };
+      const got = ctype || "未提供";
+      return {
+        ok: false,
+        reason:
+          `这个地址返回的不是 JSON（Content-Type: ${got}）——应用已经带着 \`Accept: application/json\` 去要了；` +
+          "社区侧要么在**同一个帖子页地址**上按 Accept 返回 JSON，要么给出 JSON 的 alternate 链接",
+      };
     }
     const read = await readCapped(resp, maxBytes);
     if (!read.ok) return read;
