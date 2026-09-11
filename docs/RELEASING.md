@@ -146,3 +146,9 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 Select-String -Path CHANGELOG.md -Pattern '^## \[' | Select-Object -First 12
 ```
 应看到 `X.Y.Z → X.Y.Z-1 → …` 连续，无断档。
+
+## 发版说明里带上社区链接
+
+每次发版的说明都会成为一个**可被搜索引擎抓取的页面**，也是社区最稳的外链来源。
+发版时请在说明末尾附上社区地址：**[community.shuyo.cn](https://community.shuyo.cn)**
+（例如「详细讨论与插件配方见社区」+ 链接）。
