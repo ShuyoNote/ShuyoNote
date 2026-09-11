@@ -93,6 +93,8 @@ pub struct ValidateReport {
 }
 
 impl ValidateReport {
+    /// 只给测试用：生产代码走 `problems` 全量判断，不单独筛 error。
+    #[cfg(test)]
     pub fn errors(&self) -> impl Iterator<Item = &PluginProblem> {
         self.problems.iter().filter(|p| p.severity == "error")
     }
