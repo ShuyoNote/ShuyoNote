@@ -19069,3 +19069,17 @@ body.is-plugin-panel-open .main {
   border-radius: 8px;
   padding: 8px 10px;
 }
+
+/* == 设置页「管理插件」按钮 == */
+.pm-open-btn {
+  margin-left: auto;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--surface, #fff);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .18s ease, color .18s ease;
+}
+.pm-open-btn:hover { border-color: var(--brand, #2F6BFF); color: var(--brand, #2F6BFF); }
