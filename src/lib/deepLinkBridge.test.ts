@@ -141,4 +141,33 @@ describe("mountDeepLinks（深链投递）", () => {
     expect(got).toHaveLength(2);
     expect(spy).toHaveBeenCalled();
   });
+
+  // ── OS 侧约定："原样传递"─────────────────────────────────────────────────
+  //
+  // 真机取证：系统交给应用的那条 URL 会被归一化成 `shuyonote://save/?url=…`
+  // （动作名后多一个 `/`），百分号编码完好。下面钉住投递层**不碰这些字节**：
+  // 它只做"是不是 shuyonote: 开头"这一个判断，然后原样交出去。
+  // 解析与拒绝（含"只接受 https"那类原因）由语义层负责，在
+  // `deepLink.test.ts` 与 `communitySaveDialog.test.ts` 里各自钉着。
+  it("原样传递：不做去空白以外的任何改动（含真机归一化出的 `save/` 与百分号编码）", async () => {
+    // 真机抓到的形状（不是我们造的，是 ShellExecute 交给应用的）：
+    const fromOs =
+      "shuyonote://save/?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fpost%2Fplugin-recipes-batch-1";
+    taken = [fromOs];
+    const { got, handler } = collector();
+    mountDeepLinks(handler);
+    await flush();
+    // 逐字节相同：没有去掉那个 `/`、没有解码 %3A、没有补 `//`。
+    expect(got).toEqual([fromOs]);
+  });
+
+  it("非法链接（指向回环）也照样原样送进语义层——由语义层给出原因，投递层不预判", async () => {
+    // 这一条正是"不许静默失败"的前提：投递层如果自作主张拦掉它，用户就永远看不到原因。
+    const bad = "shuyonote://save/?url=http%3A%2F%2F127.0.0.1%2Fx";
+    taken = [bad];
+    const { got, handler } = collector();
+    mountDeepLinks(handler);
+    await flush();
+    expect(got).toEqual([bad]);
+  });
 });
