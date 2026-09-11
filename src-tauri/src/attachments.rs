@@ -201,6 +201,17 @@ pub fn get_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> R
     Ok(AttachmentMeta { id, name, hash, mime, size, path })
 }
 
+/// 按 hash 在附件目录里把文件读出来（纯函数：把"找路径 + 读字节 + 出错怎么说"这三件事
+/// 从命令里拆出来，好测）。
+pub(crate) fn read_bytes_at(dir: &Path, hash: &str) -> Result<Vec<u8>, String> {
+    let path = find_path_by_hash(dir, hash).ok_or_else(|| {
+        // 说清是"文件不在盘上"，而不是笼统的"读取失败"：这一条最常见的成因是
+        // 外部把文件删了/移走了，而数据库里那行还在。
+        "附件文件不存在（可能被移动或删除）".to_string()
+    })?;
+    std::fs::read(&path).map_err(|e| format!("读取附件失败：{e}"))
+}
+
 #[tauri::command]
 pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -347,8 +358,9 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
 pub fn read_attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -> Result<Vec<u8>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
-    let p = find_path_by_hash(&attachments_dir, &hash).ok_or("附件不存在")?;
-    let raw = std::fs::read(&p).map_err(|e| e.to_string())?;
+    // 找不到文件时说清是"文件不在盘上"：这一条最常见的成因是外部把文件删了/移走了，
+    // 而数据库里那行还在——笼统的"附件不存在"会让人以为是数据库的问题。
+    let raw = read_bytes_at(&attachments_dir, &hash)?;
     let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
     crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)
 }
@@ -747,4 +759,46 @@ pub fn restore_attachment(
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     Ok(AttachmentMeta { id, name, hash, mime, size, path })
+}
+
+#[cfg(test)]
+mod read_bytes_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-att-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reads_bucketed_and_flat_attachments_and_says_what_is_missing() {
+        let dir = temp_dir("read-bytes");
+        let hash = "12d785817fcddf344ac33a36113281c27867c85b385f96771410b3ddccb3d223";
+        // 分桶布局（新）
+        let bucket = dir.join(&hash[..2]);
+        std::fs::create_dir_all(&bucket).unwrap();
+        std::fs::write(bucket.join(format!("{hash}.pdf")), b"%PDF-1.4 bucketed").unwrap();
+        assert_eq!(read_bytes_at(&dir, hash).unwrap(), b"%PDF-1.4 bucketed");
+
+        // 扁平布局（旧）：同一个 hash 也读得到
+        let flat = temp_dir("read-bytes-flat");
+        let h2 = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+        std::fs::write(flat.join(format!("{h2}.png")), b"flat bytes").unwrap();
+        assert_eq!(read_bytes_at(&flat, h2).unwrap(), b"flat bytes");
+
+        // 找不到时要说清是"文件不在盘上"，而不是笼统的读取失败
+        let err = read_bytes_at(&dir, h2).unwrap_err();
+        assert!(err.contains("附件文件不存在"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&flat);
+    }
 }

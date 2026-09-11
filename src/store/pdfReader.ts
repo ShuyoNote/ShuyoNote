@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api } from "../lib/api";
-import { platform } from "../lib/platform";
+import { isDesktopPlatform, platform } from "../lib/platform";
 import { toast } from "../store/toast";
 import { useFilePreview } from "../store/filePreview";
 
@@ -30,12 +30,30 @@ export const usePdfReader = create<PdfReaderState>((set, get) => ({
     if (get().open) return;
     try {
       const meta = await api.getAttachment(attachmentId);
-      const url = platform.asset.convertFileSrc((meta as { path?: string }).path ?? "");
-      const resp = await fetch(url);
-      const ab = await resp.arrayBuffer();
-      set({ open: true, attachmentId, name: name || (meta as { name?: string }).name || "PDF", bytes: new Uint8Array(ab), targetPage: Math.max(0, pageIndex) });
+      // 桌面端走 IPC 读字节（和 Markdown/图片预览同一条路：命令里会按需解密）。
+      //
+      // **不要**用 `fetch(convertFileSrc(path))`：那条路受 CSP 的 `connect-src` 管，
+      // 而自定义附件协议只被放进了 `img-src`（`<img src>` 能用、`fetch` 会被拒）——
+      // 桌面上表现就是"无法读取 PDF，请在文件夹中打开查看"，而 Web 平台因为换成
+      // blob: URL（blob: 在 connect-src 里）反而是好的。这个问题只在桌面端出现。
+      const bytes = isDesktopPlatform()
+        ? new Uint8Array(await api.readAttachmentBytes((meta as { hash?: string }).hash ?? ""))
+        : new Uint8Array(
+            await (await fetch(platform.asset.convertFileSrc((meta as { path?: string }).path ?? ""))).arrayBuffer(),
+          );
+      set({
+        open: true,
+        attachmentId,
+        name: name || (meta as { name?: string }).name || "PDF",
+        bytes,
+        targetPage: Math.max(0, pageIndex),
+      });
     } catch (e) {
-      toast("无法读取 PDF，请在文件夹中打开查看", "error");
+      // 失败要把**原因**说出来：以前这里只吞掉异常、弹一句笼统的话，于是
+      // "文件不在盘上""解密失败""命令报错"看起来一模一样，只能靠猜。
+      const why = e instanceof Error ? e.message : String(e);
+      console.error("openPdf failed", { attachmentId, error: e });
+      toast(`无法读取 PDF：${why}`, "error");
     }
   },
   close: () => set({ open: false, attachmentId: null, name: "", bytes: null, targetPage: 0 }),
