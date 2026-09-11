@@ -92,7 +92,10 @@ export function checkCommunityUrl(
  *
  * 手写拆分而不是 `new URL`：自定义 scheme 在 WHATWG 解析里有一堆边界（`shuyonote:save?x=1`
  * 没有 `//`、`page/<id>` 的 id 落在 path 里），手写反而只有一条路径、便于逐条测。
- * 认两种写法：`shuyonote://save?url=…` 与 `shuyonote:save?url=…`。
+ *
+ * 认的写法：`shuyonote://save?url=…`、`shuyonote:save?url=…`，以及**动作名后多一个 `/`**
+ * 的那种（`shuyonote://save/?url=…`）——最后这条不是猜的：Windows 的 shell 真机上就是这么
+ * 交给应用的（实测），而照文档写永远复现不出来。
  */
 export function parseDeepLink(raw: string, hosts: readonly string[] = DEEP_LINK_HOSTS): DeepLinkResult {
   const text = (raw ?? "").trim();

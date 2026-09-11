@@ -48,6 +48,20 @@ describe("parseDeepLink — 认得出的四种动作", () => {
     });
   });
 
+  it("动作名后面**多一个 `/`** 也认（真机归一化出来的形态，Windows 实测）", () => {
+    // Windows 的 shell 会把 `shuyonote://save?url=…` 交成 `shuyonote://save/?url=…`：
+    // 动作名后多一个 `/`，百分号编码完好。所以"规范化"这一步必须容忍它——
+    // 否则真机上这条链接会被判成"不认识的动作"，而开发者照文档写永远复现不出来。
+    expect(ok("shuyonote://save/?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fpost%2Fx")).toEqual({
+      kind: "save",
+      url: "https://community.shuyo.cn/post/x",
+    });
+    expect(ok("shuyonote://import/?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fr.json")).toEqual({
+      kind: "import",
+      url: "https://community.shuyo.cn/r.json",
+    });
+  });
+
   it("没有 // 的写法也认（有些平台就是这样投递的）", () => {
     expect(ok("shuyonote:save?url=https://community.shuyo.cn/post/x")).toEqual({
       kind: "save",
