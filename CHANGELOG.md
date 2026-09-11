@@ -9,6 +9,8 @@
   - `pnpm check:web-build`：用真实 Chromium 打开**构建产物**（不是 dev server），断言版本号是当前版本、**数据库真的初始化了**（点「新建页面」→ 编辑器起来）、`sql-wasm` 与 `pdf.worker` 这类**运行时才加载**的资源取得到、插件管理能打开且如实说明"Web 版不支持磁盘插件"、没有未捕获错误与失败请求。它进 CI（每次 push）与 Pages 部署前（坏产物不上线）。
   - `pnpm check:web-deploy`：比对**线上两个入口**的 `version.json` 与 `package.json`，并把线上 `index.html` 引用的**每个资源**取一遍——只看版本号不够：v1.84.4 那种"页面能开、功能全废"（新 `index.html` + 旧 `assets/`）正是版本号看不出来的坏法。
   - 发布说明（GitCode / GitHub release）也补上了 Web 版一节：两个入口的地址、以及"多设备同步与磁盘插件需要桌面版"这句边界。
+  - **Web 版整包随发布一起上传**：`release.mjs` 现在会校验 `dist-web/version.json` 与本次版本一致，再打成 `ShuyoNote_<版本>_web.zip` 挂到 release 上（内含 `SELF-HOST.txt`：别漏掉运行时才加载的 `sql-wasm`/`pdf.worker`、`.wasm` 要以 `application/wasm` 提供）。**它不进 `latest.json`**——更新通道只认真实安装包；`--no-web` 可跳过。这样"自己托管一份 Web 版"不再需要会构建：下载整包、解压到静态服务器即可。1.89.0 的整包已经补传上去（`ShuyoNote_1.89.0_web.zip`，52.89 MB，线上 sha256 与本地逐字节一致）。
+  - 打包时踩了个小坑并修掉：说明文件的**文件名**改成了 ASCII（`SELF-HOST.txt`）——macOS 的 `zip` 不给非 ASCII 名字打 UTF-8 标记，中文名到 Windows 上解出来是乱码（实测过一次）。
 
 ## [1.89.0] - 2026-09-11
 

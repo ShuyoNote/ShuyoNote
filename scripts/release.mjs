@@ -16,13 +16,22 @@
 //   --dry-run               只收集/校验/写清单，不发布
 //   --no-build              跳过 `pnpm tauri build`（产物已就绪时用）
 //   --artifacts <名字,…>    显式指定要发布的产物（替代「文件名含版本号」自动挑选）
+//   --no-web                不打包/上传 Web 版（dist-web/）
 //   --allow-platform-drop   允许本次清单丢掉线上已有的平台键（默认禁止）
 //   --skip-sig-verify       跳过「.sig 确实是这些字节的签名」校验（不建议）
 //
 // 密钥一次性生成（保密）：pnpm tauri signer generate -w ~/.tauri/shuyonote.key
 // 公钥写入 src-tauri/tauri.conf.json → plugins.updater.pubkey。
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -36,12 +45,34 @@ import {
   verifyArtifactSignature,
 } from "./lib/releaseArtifacts.mjs";
 
+/** 放进 Web 版压缩包里的一页说明：自托管时最容易踩的两个坑都在这里。 */
+const WEB_HOSTING_NOTE = `ShuyoNote Web 版（纯静态，自己托管即可）
+
+这是一个**静态站点**：把本目录里的全部文件原样放到任意静态服务器/对象存储上就行
+（放在子路径也可以，构建时用的是相对路径）。
+
+两件必须注意的事：
+
+1) **不要把文件漏掉**。目录里有几个文件不在 index.html 的静态引用里，是运行时才加载的：
+   · assets/sql-wasm-*.wasm   （sql.js 的 WebAssembly，数据库就是它）
+   · assets/pdf.worker.min-*.mjs（PDF 预览的 worker）
+   只按 index.html 里出现的文件名去挑选，会漏掉它们 —— 表现是"页面能打开、但数据库初始化
+   失败、所有操作报错"。**按本压缩包的全量清单同步**最稳妥。
+
+2) **.wasm 要以 application/wasm 提供**（有些服务器默认给 application/octet-stream，
+   这时 WebAssembly.instantiateStreaming 会失败）。Nginx 里加一行即可：
+     types { application/wasm wasm; }
+
+另外：数据全部存在**浏览器本地**（IndexedDB），服务器上不留任何笔记内容；换浏览器/清站点数据
+等于换一份数据，重要内容请用应用内的备份导出。多设备同步与磁盘插件需要桌面版。
+`;
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
 const TAG = "v" + version;
 const DRY = process.argv.includes("--dry-run");
 const NO_BUILD = process.argv.includes("--no-build");
+const NO_WEB = process.argv.includes("--no-web");
 
 // ---- 前置：git tag vX.Y.Z 必须已存在并推到远程 ----
 // gitcode 的 release 创建 API 用 tag_name 定位 tag；tag 不存在会「静默失败」
@@ -180,6 +211,47 @@ for (const a of picked) {
   console.log(`  ${a.sha256}  ${fmtSize(a.size).padStart(9)}  ${fmtTime(a.mtimeMs)}  ${a.name}`);
 }
 
+// ---- Web 版：一起发布（自己托管用得上，也省得别人为了自部署去构建一遍）----
+//
+// 它**不进 latest.json**（不是 updater 产物、也没有 `.sig`）：更新的那套东西只认真实安装包。
+// 但"发布物里带上 Web 版"是有意义的——Web 版是纯静态文件，任何人都能自己托管一份；
+// 而这些静态资源里有 sql.js 的 wasm 与 pdf worker 这类**运行时才加载**的文件，
+// 让发布者去猜该传哪些文件，正是 v1.84.1 那类事故的来源。
+const webDir = join(root, "dist-web");
+let webZip = null;
+if (!NO_WEB && existsSync(join(webDir, "index.html"))) {
+  const webVersion = existsSync(join(webDir, "version.json"))
+    ? JSON.parse(readFileSync(join(webDir, "version.json"), "utf8")).version
+    : null;
+  if (webVersion !== version) {
+    console.error(
+      `[release] dist-web 的 version.json 是 ${webVersion ?? "(缺失)"}，而本次发的是 ${version}。` +
+        `
+          先跑 pnpm build:web（或加 --no-web 明确跳过 Web 版）。`,
+    );
+    process.exit(1);
+  }
+  const zipName = `ShuyoNote_${version}_web.zip`;
+  const zipPath = join(root, "src-tauri", "target", "release", zipName);
+  // 先在临时目录里铺一份副本，再往里放一份"怎么自托管"的说明——
+  // 说明只进 zip，不进 dist-web（Pages 线上不该多出这么个文件）。
+  const stage = join(root, "src-tauri", "target", "release", `web-stage-${version}`);
+  rmSync(stage, { recursive: true, force: true });
+  cpSync(webDir, stage, { recursive: true });
+  // 文件名用 ASCII：macOS 的 zip 不给非 ASCII 名字打 UTF-8 标记，中文名到 Windows 上
+  // 解出来就是乱码（实测过一次）。内容照旧是中文。
+  writeFileSync(join(stage, "SELF-HOST.txt"), WEB_HOSTING_NOTE, "utf8");
+  rmSync(zipPath, { force: true });
+  // 用系统的 zip：它到处都有，而 dist-web 有几百个文件、近 90 MB，
+  // 为了这一件事引进一个 JS 打包库不划算。
+  execSync(`cd ${JSON.stringify(stage)} && zip -qr ${JSON.stringify(zipPath)} . -x '.*'`, { stdio: "inherit" });
+  rmSync(stage, { recursive: true, force: true });
+  webZip = { name: zipName, path: zipPath, size: statSync(zipPath).size };
+  console.log(`[release] Web 版打包 → ${zipName}（${fmtSize(webZip.size)}）`);
+} else if (!NO_WEB) {
+  console.log("[release] 没找到 dist-web/：跳过 Web 版（要带上就先 pnpm build:web）。");
+}
+
 // ---- 生成 latest.json（updater 清单）----
 // 同一平台键只能留一个 url：取哪个由 manifestPicks 写死偏好，不靠遍历顺序。
 const { picks, notes } = manifestPicks(picked);
@@ -232,7 +304,18 @@ console.log(`[release] latest.json → ${manifestPath}（${Object.keys(platforms
 const auditPath = join(root, "src-tauri", "target", "release", "release-artifacts.json");
 writeFileSync(
   auditPath,
-  JSON.stringify({ version, tag: TAG, at: new Date().toISOString(), artifacts: picked.map(({ name, size, sha256, dir }) => ({ name, dir, size, sha256 })) }, null, 2) + "\n",
+  JSON.stringify(
+    {
+      version,
+      tag: TAG,
+      at: new Date().toISOString(),
+      artifacts: picked.map(({ name, size, sha256, dir }) => ({ name, dir, size, sha256 })),
+      // Web 版单独列：它不参与更新清单，但发布物里有它，事后要能核对
+      web: webZip ? { name: webZip.name, size: webZip.size, sha256: await sha256File(webZip.path) } : null,
+    },
+    null,
+    2,
+  ) + "\n",
 );
 console.log(`[release] 产物指纹清单 → ${auditPath}`);
 
@@ -273,6 +356,10 @@ try {
 for (const a of picked) {
   await uploadFile(TAG, a.name, a.file);
   await uploadFile(TAG, a.name + ".sig", a.sigPath);
+}
+if (webZip) {
+  await deleteAttach(TAG, webZip.name);
+  await uploadFile(TAG, webZip.name, webZip.path);
 }
 await uploadFile(TAG, "latest.json", manifestPath);
 // 确保 `latest`（auto-update 通道）release 存在：首次发布时 gitcode 可能只有

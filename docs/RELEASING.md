@@ -97,6 +97,13 @@ GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更�
 > `pnpm check:web-deploy`（比对两个入口的 `version.json` 与 `package.json`，并把线上
 > `index.html` 引用的每个资源都取一遍）。
 
+**Web 整包会随发布一起上传**：`pnpm build:web` 之后跑 `release.mjs` 时，它会校验
+`dist-web/version.json` 与本次版本一致，再打成 `ShuyoNote_<版本>_web.zip` 作为 release 附件
+（内含 `SELF-HOST.txt`：别漏掉运行时才加载的 `sql-wasm`/`pdf.worker`、`.wasm` 要以
+`application/wasm` 提供）。**它不进 `latest.json`**——那套更新通道只认真实安装包；
+`--no-web` 可以跳过。所以"自己托管一份 Web 版"不再需要会构建：
+下载整包、解压到静态服务器即可。
+
 **两个入口，两种部署方式：**
 
 | 入口 | 怎么上线 | 谁负责 |
