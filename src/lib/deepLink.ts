@@ -52,12 +52,17 @@ function isPageId(v: string): boolean {
 }
 
 /**
- * 校验深链里的目标地址。
+ * 社区地址策略（**深链解析与帖子抓取共用这一条**，别在两处各写一遍）。
  *
- * 返回规范化后的 URL（去空白、`new URL().href`）或一句人话的原因。
- * 只看**字面**主机名，不做 DNS 解析——解析要在真正发请求的那一层做（那里才拿得到落点 IP）。
+ * 返回规范化后的 URL（`new URL().href`）或一句人话的原因。只看**字面**主机名，不做 DNS 解析：
+ * 解析要在真正发请求的那一层做（那里才拿得到落点 IP）。因为这里用的是**单主机白名单**，
+ * 私网/回环地址在"主机名不在名单里"这一步就被挡掉了；残余风险只剩 DNS 层面
+ * （社区域名被解析到内网地址——那需要先控制社区自己的 DNS 区，不在本层能防的范围）。
  */
-function checkTargetUrl(raw: string, hosts: readonly string[]): { ok: true; url: string } | { ok: false; reason: string } {
+export function checkCommunityUrl(
+  raw: string,
+  hosts: readonly string[] = DEEP_LINK_HOSTS,
+): { ok: true; url: string } | { ok: false; reason: string } {
   const value = raw.trim();
   if (!value) return { ok: false, reason: "链接里没有带上地址（`url` 参数是空的）" };
   let u: URL;
@@ -113,7 +118,7 @@ export function parseDeepLink(raw: string, hosts: readonly string[] = DEEP_LINK_
     }
     case "save":
     case "import": {
-      const target = checkTargetUrl(params.get("url") ?? "", hosts);
+      const target = checkCommunityUrl(params.get("url") ?? "", hosts);
       if (!target.ok) return { ok: false, reason: target.reason };
       return { ok: true, action: { kind: name, url: target.url } };
     }
