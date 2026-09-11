@@ -138,7 +138,14 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath,
     headless: true,
-    args: ["--no-sandbox", "--disable-gpu"],
+    args: [
+      "--no-sandbox",
+      "--disable-gpu",
+      // CI 容器里 /dev/shm 通常只有 64 MB，Chrome 启动时可能因此崩掉/卡住；
+      // 症状是"等 WS endpoint 超时 30 s"——2026-09-11 的 CI 就这样红过一次
+      // （同一个提交重跑就绿了，是 flake 而不是真故障）。这个开关是标准解法。
+      "--disable-dev-shm-usage",
+    ],
   });
   if (SHOTS) mkdirSync(SHOTS, { recursive: true });
   const shot = async (page, name) => {
