@@ -48,6 +48,18 @@ export function linkIntentOf(input: string): LinkIntent {
   if (!checked.ok) return { ok: false, reason: checked.reason };
   // 手动粘一条社区地址：默认按"存笔记"处理（那是这条入口最常见的用途）；
   // 要导入模板就粘 `shuyonote://import?url=…`（这样动作由链接本身说清，不靠猜）。
+  //
+  // 但有一种明确的错配值得**先拦一下**：以 `.json` 结尾的地址几乎一定是模板/清单文件，
+  // 按"存笔记"去抓只会得到一句"缺少 body_markdown"——那对用户毫无指导意义。
+  // 直接告诉他该怎么写（而不是猜他的意图去执行另一条路：动作不能靠猜）。
+  if (/\.json$/i.test(new URL(checked.url).pathname)) {
+    return {
+      ok: false,
+      reason:
+        "这条地址以 .json 结尾，看起来是模板/清单文件而不是帖子。" +
+        "要导入模板请用 `shuyonote://import?url=…`；要装插件请用插件管理里的索引订阅。",
+    };
+  }
   return { ok: true, action: "save", url: checked.url };
 }
 

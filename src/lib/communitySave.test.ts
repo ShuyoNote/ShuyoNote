@@ -51,6 +51,17 @@ describe("linkIntentOf — 深链与网址都认，认不出就说清为什么",
     });
   });
 
+  it("粘了一条 `.json` 网址 → 指出它更像模板导入（而不是按「存笔记」去抓出一句莫名其妙的错）", () => {
+    const r = linkIntentOf("https://community.shuyo.cn/files/tpl.json");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain("shuyonote://import?url=");
+      expect(r.reason).toContain("索引订阅");
+    }
+    // 帖子地址不受影响（路径里有 .json 才拦）
+    expect(linkIntentOf("https://community.shuyo.cn/post/json-tips").ok).toBe(true);
+  });
+
   it("空、非社区域名、别的动作、非法深链——每一种都说得出原因", () => {
     expect(linkIntentOf("")).toEqual({ ok: false, reason: expect.stringContaining("还没有粘贴链接") });
     expect(linkIntentOf("https://evil.example.com/post/x")).toEqual({
