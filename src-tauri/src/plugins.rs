@@ -5863,11 +5863,22 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
         assert!(run.ok, "跑成功要记 ok");
         assert_eq!(run.scope, "command", "要能区分命令与事件");
         assert!(run.error_code.is_none());
-        assert!(
-            run.peak_rss_bytes.unwrap_or(0) > 0,
-            "峰值内存要真的读到（读不到就等于这条兜底的可见性没了）：{:?}",
-            (run.capability.as_str(), run.ok, run.peak_rss_bytes)
-        );
+        if cfg!(target_os = "windows") {
+            // Windows 上还没实现读子进程内存（`resident_bytes` 只有 linux/macos 两个分支，
+            // 仓库文档里如实记着这个缺口）。此时**唯一正确的行为是如实记 None**——
+            // 最危险的是"读不到却写个 0"：那会让"这条兜底的可见性还在"的假象成立。
+            assert!(
+                run.peak_rss_bytes.is_none(),
+                "读不到就该记 None，不能编一个数字：{:?}",
+                (run.capability.as_str(), run.ok, run.peak_rss_bytes)
+            );
+        } else {
+            assert!(
+                run.peak_rss_bytes.unwrap_or(0) > 0,
+                "峰值内存要真的读到（读不到就等于这条兜底的可见性没了）：{:?}",
+                (run.capability.as_str(), run.ok, run.peak_rss_bytes)
+            );
+        }
 
         // 失败的那次：插件**抛错**在宿主这层是"跑完了、结果是一句话"（shim 把异常转成返回值），
         // 但审计必须把它记成**失败**——否则用户看到的是"一切正常"。
@@ -6297,14 +6308,21 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _g = log_test_guard();
         let dir = temp_dir("export-queued");
         let target = dir.join("想要的名字.md");
-        // 插件把"文件名"写成带目录的样子：宿主只取最后一段，绝不拿它当路径用
+        // 插件把"文件名"写成带目录的样子：宿主只取最后一段，绝不拿它当路径用。
+        //
+        // ★ 路径要塞进**JS 字符串字面量**，所以反斜杠必须再转义一层：
+        //   Windows 上 `display()` 给出 `C:\Users\…\想要的名字.md`，直接拼进去的话
+        //   JS 会把 `\U`、`\c` 当成转义吃掉，宿主收到的就成了"连分隔符都没有"的字符串
+        //   （实测：C:UserscnzenAppData…想要的名字.md）——测试因此红了好几轮，
+        //   而产品代码其实是对的。转义之后这条测试才**真的**覆盖 Windows 分隔符。
+        let target_js = target.display().to_string().replace('\\', "\\\\");
         let src = format!(
             r#"register({{ id: "e.run", title: "E", description: "", closeOnRun: false,
   run: function () {{
     var r = api.files.export("../../{target}", "正文内容");
     return "queued=" + r.queued + " bytes=" + r.bytes;
   }} }});"#,
-            target = target.display()
+            target = target_js
         );
         let state = state_with(&["export:files"]);
         let (msg, _insert, _toasts, _drafts, exports) =
