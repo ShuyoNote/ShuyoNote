@@ -18,11 +18,11 @@
 
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packDirToZip } from "./lib/pack-zip.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const args = process.argv.slice(2);
@@ -68,14 +68,13 @@ if (versionOverride) {
   writeFileSync(join(stagePlugin, "manifest.json"), JSON.stringify(m, null, 2) + "\n", "utf8");
 }
 const zipPath = join(tmp, `${manifest.id}-${version}.zip`);
+// 打包走共用实现（跨平台）：原来 shell out 到 `zip`，Windows 上没有这个命令，
+// 于是这个"本机先跑通"的演示脚本在最需要它的那台机器上跑不起来。
+// 理由与实测后果见 scripts/lib/pack-zip.mjs 顶部。
 try {
-  execFileSync("zip", ["-qr", zipPath, manifest.id], {
-    cwd: stage,
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  packDirToZip(stagePlugin, zipPath);
 } catch (e) {
-  console.error("打包失败：需要系统里有 zip 命令（macOS / Linux 自带；Windows 可用 Git Bash 或 WSL）");
-  console.error(String(e.stderr ?? e.message));
+  console.error(`打包失败：${e instanceof Error ? e.message : String(e)}`);
   process.exit(2);
 }
 const pkg = readFileSync(zipPath);

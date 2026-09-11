@@ -32,11 +32,13 @@
 //   SHUYONOTE_INDEX_FIXTURE=<out>/plugin-index.preview.json cargo test --lib external_index -- --ignored --nocapture
 
 import { createHash } from "node:crypto";
-import { zipSync } from "fflate";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// 打包（zip）走共用实现：原来这里 shell out 到 `zip`，Windows 上没有这个命令
+// （理由与实测后果都写在 scripts/lib/pack-zip.mjs 顶部）。
+import { packDirToZip } from "./lib/pack-zip.mjs";
 import { fingerprintOf, generateEphemeralKeypair, signBytes } from "./lib/minisign.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -83,7 +85,15 @@ if (!dryRun && !ephemeral && !minisignBin) {
 if (minisignBin && !existsSync(minisignBin)) die(`找不到 minisign：${minisignBin}`);
 if (minisignBin && !keyPath) die("用 --minisign 时必须同时给 --key <私钥文件>");
 
-/** 找到真正是插件的目录（含 manifest.json）。 */
+/**
+ * 找到真正是插件的目录（含 manifest.json）。
+ *
+ * 用 `readdirSync` 而不是 `ls -1`：后者是**同一个平台假设的第二次出现**（`pack()` 那边
+ * 已经踩过一次 `zip` 不存在）——在 Windows 上 `spawnSync ls ENOENT`，而且它挂在
+ * 「找不到插件目录」这条用例上，于是那条用例**永远测不到它本该测的提示**，
+ * 只留下一个看起来很吓人的 ENOENT 堆栈。排序是为了让"多个插件"的顺序稳定
+ * （索引里条目的顺序会进字节，稳定才可复现）。
+ */
 function expand(dirs) {
   const out = [];
   for (const d of dirs) {
@@ -92,8 +102,8 @@ function expand(dirs) {
       continue;
     }
     // 目录集合（例如 examples/plugins）：只收下一层里含 manifest.json 的
-    const listed = existsSync(d) ? execFileSync("ls", ["-1", d], { encoding: "utf8" }).split("\n").filter(Boolean) : [];
-    for (const name of listed) {
+    if (!existsSync(d)) continue;
+    for (const name of readdirSync(d).sort()) {
       const child = join(d, name);
       if (existsSync(join(child, "manifest.json"))) out.push(child);
     }
@@ -117,32 +127,13 @@ function validate(dir) {
 }
 
 /**
- * 打包（包内根目录就是插件目录——规范允许"多一层同名目录"，应用会自动下钻）。
+ * 打包插件目录（**包内根目录就是插件目录**，规范允许"多一层同名目录"，应用会自动下钻）。
  *
- * **为什么不用命令行的 `zip`**：Windows 上没有它。之前这里 shell out 到 `zip`，
- * 于是在 Windows 侧 `pnpm test` 有 3 条红（`spawnSync zip ENOENT`），而且其中一条
- * 「找不到插件目录」是被连带打死的——它本该测的东西在那边**永远测不到**（报这个的是 Windows 侧，
- * 附了原始栈）。现在改用仓库里**已有的** `fflate`（浏览器侧的备份/工作区导出就是它）：
- * 零新依赖、两平台一致、且不依赖 PATH 上有什么。
- *
- * 写入时间固定为常量：同样的输入产出同样的字节，sha256 才能复现
- * （发布产物要能事后对账，别让"打包时间"跑进哈希里）。
+ * 具体实现与"为什么不再 shell out 到 `zip`、为什么用 fflate、为什么钉死 mtime"
+ * 都在 `scripts/lib/pack-zip.mjs` 里（两个脚本共用一份，免得只改一处）。
  */
-const FIXED_MTIME = new Date(Date.UTC(2020, 0, 1, 0, 0, 0));
 function pack(dir, zipPath) {
-  const root = basename(dir);
-  const files = {};
-  const walk = (abs, rel) => {
-    for (const name of readdirSync(abs)) {
-      if (name === ".DS_Store") continue;
-      const childAbs = join(abs, name);
-      const childRel = `${rel}/${name}`;
-      if (statSync(childAbs).isDirectory()) walk(childAbs, childRel);
-      else files[childRel] = [new Uint8Array(readFileSync(childAbs)), { mtime: FIXED_MTIME }];
-    }
-  };
-  walk(dir, root);
-  writeFileSync(zipPath, Buffer.from(zipSync(files, { level: 6 })));
+  packDirToZip(dir, zipPath);
 }
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
