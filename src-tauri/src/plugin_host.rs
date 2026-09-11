@@ -120,9 +120,6 @@ pub fn resident_bytes(pid: u32) -> Option<u64> {
 struct RssWatchdog {
     stop: Arc<std::sync::atomic::AtomicBool>,
     over_limit: Arc<std::sync::atomic::AtomicBool>,
-    /// 观测到的**峰值**（即使没超限也记）：它是"这个插件到底吃了多少"唯一的第一手数据，
-    /// 会被写进审计（方案阶段 4 的可观测项）。
-    peak: Arc<std::sync::atomic::AtomicU64>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -149,7 +146,9 @@ impl RssWatchdog {
                 }
             })
             .ok();
-        RssWatchdog { stop, over_limit, peak, handle }
+        // peak 不留在结构体里：它只被监控线程写入，读它的是 `PeakRssHandle`
+        // （同一把 Arc）。留个访问器没人用，只会变成死代码。
+        RssWatchdog { stop, over_limit, handle }
     }
 
     fn stop_and_join(&mut self) {
@@ -164,9 +163,6 @@ impl RssWatchdog {
         self.over_limit.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn peak(&self) -> u64 {
-        self.peak.load(std::sync::atomic::Ordering::Relaxed)
-    }
 }
 
 /// 传给宿主子进程的环境变量**白名单**（方案 §3.7：默认全不给）。
@@ -538,6 +534,9 @@ pub struct HostClient {
 }
 
 /// 读"这次运行观测到的峰值常驻内存"的句柄（见 [`HostClient::peak_rss_handle`]）。
+///
+/// 峰值由 [`RssWatchdog`] 的监控线程写入（即使没超限也记）：它是"这个插件到底吃了多少"
+/// 唯一的第一手数据，会被写进审计（方案 §3.4 的可观测项）。
 #[derive(Clone)]
 pub struct PeakRssHandle {
     peak: Arc<std::sync::atomic::AtomicU64>,
