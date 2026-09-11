@@ -93,22 +93,16 @@ pub fn run() {
     //   移动端引用其 `init` 会编译报 `cannot find function init`。
     // - updater：依赖桌面更新机制（移动端走应用商店更新）。
     #[cfg(desktop)]
-    let builder = builder
-        .plugin(deeplink::plugin())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        // 单实例：禁止多开。ShuyoNote 是本地优先单库（meta.db 一个 device_id /
-        // token / auth_sessions），多实例会互相覆盖 token、device 绑定冲突（同机多实例
-        // 各自登录 = 之前 zhaizy/cnzen001 那类 403）。第二个实例启动时唤起第一个。
-        //
+    let builder = {
         // ⚠️ **`deep-link` feature 必须开**（见 Cargo.toml）。Windows 上系统唤起深链的
         // 方式是"起一个新进程、URL 作为唯一命令行参数"；没有这个 feature，回调里
         // **不会**把 argv 喂给 deep-link 插件，那条 URL 就被丢掉——而窗口照样会被还原，
         // 于是表现成"应用醒了，但什么也没发生"（最难查的那种：看起来像解析失败）。
-        // 开了之后顺序是：插件先 `handle_cli_arguments` ⇒ 入队 + emit，然后才是下面的
-        // 「还原窗口 + 抢焦点」。**注意这不是"注册顺序"问题**：state 是运行时查的。
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // `_args` 不用自己解析：上面的 deep-link feature 已经把 URL 送进
-            // deeplink 模块的队列并 emit 出去了，这里只负责让用户**看见**窗口。
+        // 开了之后顺序是：插件先 `handle_cli_arguments` ⇒ 入队 + emit，然后才是
+        // 「还原窗口 + 抢焦点」。
+        let single_instance = tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // `_args` 不用自己解析：`deep-link` feature 已经把 URL 送进 deeplink
+            // 模块的队列并 emit 出去了，这里只负责让用户**看见**窗口。
             //
             // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
             // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
@@ -120,7 +114,36 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("main") {
                 raise(w);
             }
-        }));
+        });
+        let updater = tauri_plugin_updater::Builder::new().build();
+
+        // 单实例：禁止多开。ShuyoNote 是本地优先单库（meta.db 一个 device_id /
+        // token / auth_sessions），多实例会互相覆盖 token、device 绑定冲突（同机多实例
+        // 各自登录 = 之前 zhaizy/cnzen001 那类 403）。第二个实例启动时唤起第一个。
+        //
+        // ## 与 deep-link 的注册先后：**与成败无关**
+        //
+        // 上一轮我怀疑"谁先注册"会决定"应用已开着时再点链接有没有反应"。查代码后否掉了，
+        // 理由是一条**结构性**的、不是靠试出来的：
+        //
+        // - 所有插件的 `setup` 都在 `App::run()` 内、**窗口与事件循环起来之前**按序同步执行
+        //   （tauri 的 plugin 初始化路径），所以等任何 WM_COPYDATA 回调可能发生时，
+        //   两个插件的托管状态都已建好；
+        // - `single-instance` 的 `deep-link` feature 是在**回调执行时**才
+        //   `app.try_state::<DeepLink<R>>()` 取插件的 —— 运行时查状态，不是注册时绑定。
+        // - 因此顺序不进入这条因果链。**真正会让第二次点击静默失效的是不开那个 feature**
+        //   （见 Cargo.toml）：回调照跑、窗口照样还原，只有 URL 没了。
+        //
+        // 真机三步跑的是**下面这个默认顺序**（deep-link 先）。留着这个常量是为了
+        // "需要时能一行切到另一种顺序再验一遍"，**不是**因为顺序可疑。
+        const DEEP_LINK_REGISTERED_FIRST: bool = true;
+        let builder = builder.plugin(updater);
+        if DEEP_LINK_REGISTERED_FIRST {
+            builder.plugin(deeplink::plugin()).plugin(single_instance)
+        } else {
+            builder.plugin(single_instance).plugin(deeplink::plugin())
+        }
+    };
 
     builder
         // E1 attachment at-rest decryption-on-serve: `convertFileSrc(path, "attachment")`
