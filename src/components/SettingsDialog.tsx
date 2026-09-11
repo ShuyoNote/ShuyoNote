@@ -1267,8 +1267,8 @@ function PluginsPane() {
       <div className="set-section-title">
         插件管理
         <span className="plugin-count">{enabled}/{managerPlugins.length} 已启用</span>
-        // 「管理插件」：权限、日志、活动、校验、卸载这些细节在管理弹窗里，
-        // 设置页只负责浏览与开关。store 里本来就有 setManagerOpen，不必新增 prop。
+        {/* 「管理插件」：权限、日志、活动、校验、卸载这些细节在管理弹窗里，
+            设置页只负责浏览与开关。store 里本来就有 setManagerOpen，不必新增 prop。 */}
         <button
           type="button"
           className="pm-open-btn"

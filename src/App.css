@@ -19116,3 +19116,8 @@ body.is-plugin-panel-open .main {
   font-weight: 600;
 }
 .plugin-manager .pm-perms-fold[open] > summary { margin-bottom: 6px; }
+
+/* == 设置页插件行：不许被挤成竖排 == */
+/* 「管理插件」按钮用了 margin-left:auto，会压窄同一行的标题与计数——
+   它们必须保持一行（截图里出现过「插件/管理」「1/1 已启/用」竖排）。 */
+.plugin-count { white-space: nowrap; flex: 0 0 auto; }
