@@ -8339,6 +8339,74 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _ = std::fs::remove_dir_all(&dest);
     }
 
+    /// **线上那份托管索引**的端到端验收（默认忽略；要联网）。
+    ///
+    /// 与下面那条环回夹具测试互补：那条证明"这条链是通的"，这条证明"**线上真正托管的
+    /// 那一份**也是通的"——用的是同一套生产代码（`index_http_client` / `http_get_capped` /
+    /// 发布者签名校验 / `install_bytes_into` / 真 discovery），只是把夹具换成了公网地址。
+    ///
+    ///   SHUYONOTE_LIVE_INDEX=https://community.shuyo.cn/plugins/plugin-index.json \
+    ///   SHUYONOTE_LIVE_PLUGIN=md-outline \
+    ///     cargo test --lib live_hosted_index -- --ignored --nocapture
+    ///
+    /// 装进的是**临时插件根目录**（不碰用户的插件目录），所以随便跑。
+    #[tokio::test]
+    #[ignore]
+    async fn live_hosted_index_installs_end_to_end() {
+        // 社区索引的公钥（公开信息，写死在这里是为了可复现；要换就换这一处）
+        const COMMUNITY_INDEX_PUBKEY: &str = "untrusted comment: minisign public key 305A2DFBAC0773C1\nRWTBcwes+y1aMIEdFdER5PCz4QsdYqVlBSMr6++SnWdoRUVI3DLcduK4\n";
+        let index_url = std::env::var("SHUYONOTE_LIVE_INDEX")
+            .unwrap_or_else(|_| "https://community.shuyo.cn/plugins/plugin-index.json".to_string());
+        let wanted = std::env::var("SHUYONOTE_LIVE_PLUGIN").unwrap_or_else(|_| "md-outline".to_string());
+        let pubkey = std::env::var("SHUYONOTE_LIVE_INDEX_PUBKEY").unwrap_or_else(|_| COMMUNITY_INDEX_PUBKEY.to_string());
+
+        // 1) 拉索引并**验索引签名**（托管方签了就必须验得过）
+        let (view, index) = load_plugin_index(&index_url, Some(&pubkey), "1.89.1")
+            .await
+            .expect("线上索引必须能拉取并通过索引签名校验");
+        eprintln!("索引 OK：owner={} 插件 {} 个", view.owner.as_ref().map(|o| o.name.as_str()).unwrap_or("?"), index.plugins.len());
+
+        // 2) 挑一个条目：**必须是"可安装"的**（被撤回/版本不够的会被拦住，这里直接失败更醒目）
+        let entry = index
+            .plugins
+            .iter()
+            .find(|p| p.id == wanted)
+            .unwrap_or_else(|| panic!("索引里没有插件 {wanted}"))
+            .clone();
+        let blocked = plugin_index::entry_block_reason(&entry, "1.89.1", &index.revoked_keys);
+        assert!(blocked.is_empty(), "{wanted} 装不了：{blocked}");
+
+        // 3) 下载 + 两层校验（sha256 与发布者签名），并固定发布者密钥
+        let client = index_http_client().unwrap();
+        let bytes = http_get_capped(&client, &entry.download_url, plugin_index::MAX_PACKAGE_BYTES)
+            .await
+            .expect("线上包必须下载得到");
+        plugin_index::verify_sha256(&bytes, &entry.sha256).expect("线上包 sha256 必须与索引一致");
+        let conn = state_conn_with_revoked_keys();
+        let pin = check_entry_publisher_signature(&conn, &entry.id, &entry, &bytes, false, "community.shuyo.cn")
+            .expect("发布者签名必须验得过");
+        assert!(pin.is_some(), "线上条目应当带发布者签名");
+
+        // 4) 装进**临时**插件根目录：真解包 + 真 discovery + 真落盘 + 真记账
+        let root = temp_dir("live-index-root");
+        let meta = install_bytes_into(&root, &conn, &bytes, "index:community.shuyo.cn")
+            .expect("从线上索引安装必须成功");
+        assert_eq!(meta.id, wanted);
+        assert!(!meta.enabled, "新装必须默认未启用（安装 ≠ 授权）");
+        assert!(root.join(format!("{wanted}/manifest.json")).is_file(), "插件目录要就位");
+        let _ = pin_publisher_key(&conn, &entry.id, pin.as_deref().unwrap(), "community.shuyo.cn");
+
+        eprintln!(
+            "端到端 OK：{} v{}（{} 字节）· 解出 {} 个命令 · 插件根目录 {}",
+            meta.id,
+            meta.version,
+            bytes.len(),
+            meta.commands.len(),
+            root.display()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // ---- 整条链跑一遍：索引 → 下载 → 校验 → 解包 → 装进插件目录 → 记账 ----
     //
     // 这是"分发"这件事最该有的一条测试：此前每一段都有自己的测试（索引解析、签名、sha256、
