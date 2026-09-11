@@ -145,6 +145,14 @@ node scripts/plugin-index-demo.mjs weekly-review 8788 --version 9.9.9   # 再演
 > SHUYONOTE_INDEX_PUBKEY=<公钥文件> SHUYONOTE_INDEX_APP_VERSION=<当前版本> \
 >   cargo test --lib external_index -- --ignored --nocapture
 > ```
+**托管方交出去之前，把"线上那一份"也验一遍**（HTTP 层，一条命令）：
+
+```bash
+pnpm check:plugin-hosting --url https://community.shuyo.cn/plugins/plugin-index.json
+#   索引/签名：200、且缓存头不会把它藏起来（no-store）
+#   每个包：线上字节与索引里的 size/sha256 **逐条一致**、可长缓存（immutable）、不是网页
+```
+
 > 顺带提醒两条**签名格式**上的坑（都踩过）：公钥盒的算法字节是 `Ed`(0x45 0x64)，
 > 而签名盒是 `ED`(0x45 0x44)——写错时应用**两种都收**、测试全绿，只有真 minisign 会拒绝；
 > 索引与 `.minisig` 的缓存头必须 `no-store`（索引被长缓存 = 新插件永远看不到），
