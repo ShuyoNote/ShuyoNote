@@ -55,6 +55,28 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 
 **⚠️ 换行符**：Windows runner 默认 `core.autocrlf=true`，若仓库未固定 `eol=lf`，文本会被检出成 CRLF；对生成物做逐字节比对的门禁（如 `check-capabilities`）会在 Windows 上必失败，而它跑在 Tauri 的 `beforeBuildCommand` 里 → 整个 Windows 构建红掉（v1.84.6 首次发布即如此，Linux 正常）。仓库已加 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，门禁也比较时忽略行尾——两层都在，别退回逐字节比较。
 
+### ⚠️ `shuyonote://` 协议注册依赖 Windows 档保持 `nsis`
+
+Windows 上「点社区链接 → 唤起应用」靠注册表 `HKCU\Software\Classes\shuyonote`。**这份注册与它的卸载清理都不是我们手写的**，而是：
+
+| 环节 | 谁做的 |
+|---|---|
+| scheme 声明 | `tauri.conf.json > plugins > deep-link > desktop > schemes` |
+| 声明 → bundler 的映射 | `tauri-cli`（`interface/rust.rs` 读 `plugins.deep-link` 填 `deep_link_protocols`） |
+| 装时写注册表、卸时删 | `tauri-bundler` 的 NSIS 模板 `installer.nsi`（安装段 + 卸载段） |
+
+所以：
+
+- **Windows 的 `--bundles` 必须保持 `nsis`**。换成 msi 就得在 WiX 侧另配一份等价的注册与清理，否则表现为「装完点链接没反应」，而且卸载后会留下一条指向已删 exe 的键；
+- 注册只写 **HKCU**（默认安装模式 `currentUser` ⇒ NSIS 的 `SHCTX` 就是 HKCU）⇒ **免 UAC、不碰 HKCR/HKLM**；
+- 卸载**不是无脑删**：模板先读回 `shell\open\command`，确认它确实指向本次安装的 exe 才 `DeleteRegKey`（避免删掉别的安装/别的用户的注册）。代价是：如果那个键被改到别的路径，卸载会**有意留下**它——这是保守方向，别"顺手改成无条件删除"。
+
+**门禁**：`node scripts/check-deep-link.mjs`（已进 `pnpm build` 与 release.yml 的构建前一步）查四件事，每件漏了都只表现为**静默失效**：scheme 声明、`single-instance` 的 `deep-link` feature、插件注册 + 接线 + 命令进 handler、事件名前后端一致。
+
+**真机三步验证**（2026-09-11，Windows x64，v1.89.1）已做完：注册表（装后存在、卸后干净）、
+浏览器式唤起（`ShellExecute` 拉起恰好一个进程）、已有实例转发（仍是同一 PID）。
+原始输出留在**私有工程信箱**里（不放公开仓库）。
+
 ### 本机（Windows 签名构建）
 ```bash
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$HOME\.tauri\shuyonote.key").Trim()

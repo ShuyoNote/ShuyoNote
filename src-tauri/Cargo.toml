@@ -48,7 +48,14 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 base64 = "0.23.1"
 percent-encoding = "2"
 tauri-plugin-updater = "=2.10.1"
-tauri-plugin-single-instance = "2"
+# 交付通道协议 `shuyonote://`：只做 **OS 层**（注册 scheme / 唤起 / 把整条 URL 交给应用），
+# 语义解析在 src/lib/deepLink.ts（纯函数，不在 Rust 侧重复一遍）。
+tauri-plugin-deep-link = "2"
+# 关键：`deep-link` feature 必须开。Windows 上系统是「新起一个进程、URL 作为唯一命令行参数」，
+# 没有这个 feature，single-instance 会在第二个进程里直接退出、URL 被丢掉——表现就是
+# 「应用已在运行时再点一次没有任何反应」。开了之后回调里会先把 argv 喂给 deep-link，
+# 由它解析并 emit `deep-link://new-url`，然后才走我们自己的「还原窗口 + 抢焦点」。
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # M24 desktop-native PDF render: use mupdf-sys (compiles cleanly on MSVC) rather
 # than the high-level `mupdf` crate, whose safe wrapper has an MSVC compile bug
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API

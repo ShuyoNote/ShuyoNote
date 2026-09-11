@@ -89,6 +89,16 @@ export interface SyncConflict {
   title: string;
 }
 
+/**
+ * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
+ *
+ * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
+ * 这类"前后端各写一遍字符串"是最容易悄悄对不上的地方，而且对不上的表现是
+ * **什么都没有发生**（不是报错），所以它放在契约层、由两边的注释互相指着。
+ * 事件载荷：`string[]`（原样的 URL 字符串，未解析）。
+ */
+export const DEEP_LINK_EVENT = "deep-link-new-url";
+
 export interface EmailMeta {
   uid: number;
   subject: string;
@@ -124,6 +134,18 @@ export interface EmailOpArgs {
 }
 
 export interface CommandMap {
+  // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
+  /**
+   * 取走**待处理**的深链 URL（启动时 drain 一次）。
+   *
+   * 为什么需要它，而不只是听事件：主窗口是 `visible(false)` 先隐藏、页面 load 完才 show
+   * （避免 WebView2 冷启动白屏），所以"应用没开时被唤起"那条事件在前端注册监听**之前**
+   * 就已经发过了——只听事件会稳定丢掉冷启动深链。队列空时返回 `[]`，前端据此不做任何事。
+   *
+   * 返回值是**原样的 URL 字符串**（不含任何解析结论）：是 `page/` 还是 `save?`、
+   * 参数合不合法，全部交给 `src/lib/deepLink.ts` 判——OS 层不重复一遍白名单。
+   */
+  deep_link_take: { args: undefined; result: string[] };
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };

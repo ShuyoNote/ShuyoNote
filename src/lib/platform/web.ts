@@ -1121,6 +1121,12 @@ function makeInvoke(store: SqliteStore) {
       // 返回 null 视为「无更新」，不抛错。
       return null as T;
     }
+    if (cmd === "deep_link_take") {
+      // OS 层深链仅桌面版：浏览器里没有"注册 scheme 并被系统唤起"这回事
+      // （Web 版的等价入口是 URL 参数 / 粘贴链接，见 deepLink.ts 的调用点）。
+      // 返回空数组＝没有待处理深链，调用方据此什么都不做——与桌面「队列空」同语义。
+      return [] as T;
+    }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
       const args = a.args ?? a;

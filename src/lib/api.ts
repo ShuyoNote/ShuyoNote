@@ -490,6 +490,13 @@ export const api = {
   openPageWindow: (pageId: string) => invoke("open_page_window", { pageId }),
   requestPersistentStorage: () =>
     invoke("request_persistent_storage"),
+  // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
+  //
+  // 前端**启动时 drain 一次**：主窗口是 `visible(false)` 先隐藏、页面 load 完才 show，
+  // 所以"应用没开时被系统唤起"那条事件在前端注册监听之前就发过了——只听事件会稳丢冷启动。
+  // 队列空 ⇒ 返回 `[]` ⇒ 调用方什么都不做（普通启动零副作用）。
+  // 拿到的是**原样 URL 字符串**，交给 src/lib/deepLink.ts 判语义。
+  deepLinkTake: () => invoke("deep_link_take"),
   // ---- AI proxy (desktop Rust forwards the LLM request, bypassing CORS) ----
   aiComplete: (args: {
     provider: string;

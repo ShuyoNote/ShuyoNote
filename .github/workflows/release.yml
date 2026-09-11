@@ -82,7 +82,21 @@ jobs:
           "OPENSSL_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: 交付通道协议门禁（shuyonote://）
+        # 这条**必须在打包之前**跑，而且不能只靠 `pnpm tauri build` 里 beforeBuildCommand 那一串：
+        # 协议注册是唯一一处"配置错了不会编译失败、只在装完之后表现为点链接没反应"的地方。
+        # 它查四件事，每件漏了都只表现为静默失效：
+        #   1. tauri.conf.json 里 scheme 声明（→ bundler 的 deep_link_protocols → NSIS 注册表）；
+        #   2. Cargo.toml 里 single-instance 的 `deep-link` feature（漏了 = 已开实例收到 URL 后丢掉）；
+        #   3. lib.rs 注册插件 + 命令进 generate_handler!；
+        #   4. 事件名前后端一致（对不上 = 前端永远等不到事件）。
+        run: node scripts/check-deep-link.mjs
+
       - name: Build bundles
+        # ⚠️ Windows 档**必须**保持 `nsis`：`shuyonote://` 的注册表写入（HKCU\Software\Classes）
+        # 与卸载清理都在 NSIS 模板里（tauri-bundler 的 installer.nsi：安装时写，卸载时先核对
+        # `shell\open\command` 确实指向本次安装的 exe 再删）。换成 msi 就得在 WiX 侧另配一份
+        # 等价的注册与清理，否则会变成「装完点链接没反应」，且卸载后留下一条指向已删 exe 的键。
         run: pnpm tauri build --bundles ${{ matrix.bundles }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

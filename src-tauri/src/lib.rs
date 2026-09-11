@@ -8,6 +8,10 @@ mod commands;
 mod crypto;
 mod database;
 mod db;
+// 交付通道协议 `shuyonote://` 的 **OS 层**。模块本身是跨平台编译的（队列与取件命令在
+// 移动端也注册着，只是永远为空）；真正桌面专属的是 `plugin()` / `attach()`，
+// 因为 `deep-link` 插件的移动实现是另一套 API（`on_open_url` 在移动端不存在）。
+mod deeplink;
 mod email;
 mod smtp;
 mod graph;
@@ -81,16 +85,31 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init());
 
     // 桌面专属插件：移动端（Android/iOS）不适用，仅在桌面注册。
+    // - deep-link：交付通道 `shuyonote://`。**只做 OS 层**（注册 scheme / 被唤起 /
+    //   已有实例转发 / 把整条 URL 原样交给前端），语义解析在前端 src/lib/deepLink.ts。
+    //   scheme 名单在 tauri.conf.json > plugins > deep-link > desktop > schemes，
+    //   打包时 tauri-cli 会把它映射给 bundler，由 NSIS 模板写注册表（见 docs）。
     // - single-instance：只为 windows/macos/linux 实现（移动系统本身保证单实例），
     //   移动端引用其 `init` 会编译报 `cannot find function init`。
     // - updater：依赖桌面更新机制（移动端走应用商店更新）。
     #[cfg(desktop)]
     let builder = builder
+        .plugin(deeplink::plugin())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // 单实例：禁止多开。ShuyoNote 是本地优先单库（meta.db 一个 device_id /
         // token / auth_sessions），多实例会互相覆盖 token、device 绑定冲突（同机多实例
         // 各自登录 = 之前 zhaizy/cnzen001 那类 403）。第二个实例启动时唤起第一个。
+        //
+        // ⚠️ **`deep-link` feature 必须开**（见 Cargo.toml）。Windows 上系统唤起深链的
+        // 方式是"起一个新进程、URL 作为唯一命令行参数"；没有这个 feature，回调里
+        // **不会**把 argv 喂给 deep-link 插件，那条 URL 就被丢掉——而窗口照样会被还原，
+        // 于是表现成"应用醒了，但什么也没发生"（最难查的那种：看起来像解析失败）。
+        // 开了之后顺序是：插件先 `handle_cli_arguments` ⇒ 入队 + emit，然后才是下面的
+        // 「还原窗口 + 抢焦点」。**注意这不是"注册顺序"问题**：state 是运行时查的。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // `_args` 不用自己解析：上面的 deep-link feature 已经把 URL 送进
+            // deeplink 模块的队列并 emit 出去了，这里只负责让用户**看见**窗口。
+            //
             // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
             // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
             fn raise(w: tauri::WebviewWindow) {
@@ -189,6 +208,16 @@ pub fn run() {
                 .unwrap()
         })
         .setup(|app| {
+            // 深链接线：建队列 → 补收冷启动那一次 → 订阅后续。
+            //
+            // 必须放在**本 setup 的最前面**，而且不能挪进 `deeplink::plugin()`：
+            // 插件的 `init()` 返回 `TauriPlugin<R, Option<Config>>`，而那个 `Config`
+            // 没有公开导出，所以没法自己用 `Builder` 复刻它的 setup（试过，见
+            // deeplink.rs 里那段 panic 记录）。放在这里还能顺带保证：下面任何一句
+            // 提前 return，都不会让深链处于"注册了但没人接"的半截状态。
+            #[cfg(desktop)]
+            deeplink::attach(&app.handle());
+
             let app_data_dir = app.path().app_data_dir()?;
             let conn = db::init(app_data_dir).map_err(|e| {
                 eprintln!("failed to init db: {e}");
@@ -478,6 +507,11 @@ pub fn run() {
             ai::ai_complete,
             ai::ai_probe,
             ai::ai_complete_stream,
+            // `shuyonote://` 冷启动取件：前端挂载时 drain 一次队列。
+            // 为什么要一条命令而不是只靠事件：主窗口是 `visible(false)` 先隐藏、
+            // 页面 load 完才 show，冷启动那条事件在前端注册监听之前就过去了。
+            // 队空 ⇒ 返回空数组 ⇒ 前端什么都不做（普通启动零副作用）。
+            deeplink::deep_link_take,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
