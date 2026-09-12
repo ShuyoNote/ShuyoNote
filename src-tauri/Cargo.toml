@@ -84,3 +84,15 @@ openssl = { version = "0.10", features = ["vendored"] }
 # （它经 openssl-sys 的 DEP_OPENSSL_INCLUDE 取得头文件，并静态链接 libcrypto）。
 # features 是可累加的，故这里与 [dependencies] 中的声明合并后仅对 Android 生效。
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+# 体积（2026-09-13，为 Android 上线而加；实测依据见
+# docs/plans/2026-09-13-android-launch-plan.md §3）：
+#   · `.debug_*` 段**一个都没有**（实测 0 个）——原来就没有调试信息，所以 strip 省的不是它；
+#   · strip 真正去掉的是 `.symtab` + `.strtab`：arm64 的 .so **101.2 → 88.4 MiB（−12.7 MiB / −12.6%）**。
+#
+# ⚠️ 代价：**丢掉符号名**，真机原生崩溃只能看到地址。需要符号化时用环境变量临时关掉即可，
+#    不必改这个文件（Cargo 认 `CARGO_PROFILE_<name>_<key>` 这种覆盖）：
+#      $env:CARGO_PROFILE_RELEASE_STRIP = "false"; pnpm tauri android build
+#    想长期两全，就让 CI 额外产出一份带符号的 .so 当构建附件（本轮没做）。
+[profile.release]
+strip = true

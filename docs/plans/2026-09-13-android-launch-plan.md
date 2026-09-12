@@ -72,19 +72,71 @@
 
 ---
 
-## 三、体积账（决定转化率，也是 Phase 0 的主线）
+## 三、体积账（**已实测**——本节第一版是估算，被实测推翻了）
 
-| 组成 | 现在 | 措施 | 目标 |
+### 3.1 先纠正一个错误结论
+
+本节最初写的是「`.so` 101 MiB → 加 `strip` 压到 ~30 MiB」。**实测推翻了它**：
+
+```text
+arm64 的 libshuyonote_lib.so = 101.2 MiB
+  llvm-strip --strip-unneeded → 88.4 MiB   只减 12.7 MiB（12.6%）
+  .debug_* 段数量 = 0                      ← 本来就没有调试信息，strip 省的不是它
+```
+
+省下的 12.7 MiB 正好等于 `.symtab`(5.79) + `.strtab`(6.96)。段构成：
+
+| 段 | 大小 | 占比 |
+|---|---|---|
+| **`.rodata`** | **55.95 MiB** | **63%** |
+| `.text`（真正的代码） | 23.23 MiB | 26% |
+| `.eh_frame` / `.rela.dyn` / `.data.rel.ro` 等 | ~8.7 MiB | 10% |
+
+**代码只有 23 MiB**，所以问题从来不在代码量，也不在符号。
+
+### 3.2 那 56 MiB 的 `.rodata` 是什么：**Tauri 把整个前端嵌进了 `.so`**
+
+`target/<triple>/release/build/shuyonote-*/out/tauri-codegen-assets/` = **304 个文件、50.2 MiB**，
+其中最大的两个 `.gz` 正是 OCR 语言包（**19.18 + 10.42 = 29.6 MiB** = `chi_sim` + `eng`）。
+
+于是 **Android 上前端被装了两遍**：
+
+| # | 位置 | 大小 | 谁在用 |
 |---|---|---|---|
-| Rust `.so`（arm64） | **101 MiB** | `Cargo.toml` 里**根本没有 `[profile.release]`** → 没 `strip`。加 `strip = true` + `lto` + `codegen-units = 1` | ~30 MiB |
-| `ocr/`（tesseract 语言数据） | **72.9 MiB** | 整个打进包。改为**首次使用 OCR 时按需下载**（或先只内置 `chi_sim`，`eng` 按需） | 包内 ~5 MiB |
-| `assets/`（JS 产物） | 13.2 MiB | 已 minify；可再拆 vendor | ~13 MiB |
-| `pdfjs/` + `prism/` + `covers/` + `icons/` | ~3 MiB | — | ~3 MiB |
-| **arm64 APK 合计** | **156 MiB** | | **目标 55–70 MiB** |
+| 1 | APK 的 `assets/`（= `dist/` 原始 89.2 MiB） | 89.2 MiB | **Android WebView 实际加载的就是这份** |
+| 2 | `.so` 里 Tauri 嵌的那份（压缩副本） | 50.2 MiB | 桌面端用 `tauri://localhost`；Android 上是重复的 |
 
-> ⚠️ `mupdf-sys` 在**主依赖**里（没有按平台排除），所以它被编译进 Android 的 `.so`——这是
-> 101 MiB 的另一半原因。Phase 0 要顺便量一下：PDF 在手机上走原生 mupdf 是否值得那部分体积，
-> 还是退到 pdf.js（Web 端本来就有这条退路）。
+### 3.3 `dist/` 的构成（89.2 MiB）与查出来的死重
+
+| 目录 | 大小 | 内容 |
+|---|---|---|
+| `ocr/` | **72.9** | `core/` **43.2**（6 个 tesseract-core 变体 × 2 种形态）、`tessdata/` 29.6（chi_sim 19.2 + eng 10.4） |
+| `assets/` | 13.4 | JS/CSS/字体 |
+| `pdfjs/` | 1.9 | |
+| `covers/` `icons/` `prism/` | ~1.1 | |
+
+**`ocr/core` 里的死重**：tesseract.js 7 的 worker 按「SIMD 支持 × `legacyCore`」选一档，
+而我们是 `createWorker(langs, 1, …)`（oem=1 纯 LSTM）且**从不设 `legacyCore`**、也不用 `worker.detect`
+⇒ 只会走 `-lstm` 那三档。**三个非 `-lstm` 变体（3 个 `.wasm.js` + 3 个 `.wasm` ≈ 23.3 MiB）永远用不到**，
+而它们在 Android 上还被装两遍。
+（`public/ocr` 因此从 **72.9 → 49.1 MiB**，core 从 43.2 → 19.4 MiB。）
+
+### 3.4 四个杠杆（按收益排序）
+
+| 杠杆 | 收益（APK 估算） | 状态 |
+|---|---|---|
+| 删掉 3 个用不到的 tesseract-core 变体 | 23.3 ×2 ≈ **46 MiB** | ✅ **本轮已做**（拷贝脚本改白名单 + `check:ocr-assets` 硬门禁，三条变异测试验过它能失败） |
+| OCR 语言包改按需下载 | 29.6 ×2 ≈ **59 MiB** | 已拍板要做；需要设计（首次联网下载一次，之后永久离线） |
+| 去掉 `.so` 里那份前端内嵌副本 | ≈ 50 MiB | ⏳ 待查 Tauri 是否允许移动端不嵌（APK 的 `assets/` 已经提供了） |
+| `strip = true` | 12.7 MiB | ✅ **本轮已做**（代价：丢符号名；`CARGO_PROFILE_RELEASE_STRIP=false` 可临时关） |
+
+**修正后的目标**：arm64 APK **156.7 MiB** → 本轮两项后约 **85 MiB** → 语言包按需后约 **55 MiB**
+→ 若能去掉内嵌副本，**~30 MiB 量级**。每一项都由实测推进，不再靠估。
+
+> **顺带排除一条疑问**：`mupdf-sys` 在**主依赖**里（未按平台排除），确实被编进了 Android 的 `.so`
+> （`.so` 里能查到 `NimbusRoman` 等内嵌字体名）。但它**不是大头**——最大的 mupdf `.o` 只有
+> 0.89 MiB（`pdf-cmap-load.o`）。所以"手机上 PDF 退到 pdf.js 以省体积"这条**收益很低**，
+> 不值得为它牺牲原生渲染能力。原计划把它列为 Phase 0 的待查项，现**排除**。
 
 > 数字说明：「strip 能省多少」是**高置信度假设**，不是实测——Phase 0 第一件事就是量它，
 > 而不是先写进结论。
@@ -110,10 +162,74 @@
 
 ### Phase 0 · 先能装（1–2 天）
 
-要做的事：
+#### 0.0 构建环境：**目前本机复现不出可用的组合**（2026-09-13 实测，重要）
 
-1. `Cargo.toml` 加 `[profile.release]`：`strip = true`、`lto = true`、`codegen-units = 1`；
-   量 `.so` 前后大小（**这是本阶段唯一的技术假设，先验证再继续**）。
+先说结论：**09-10 那次 APK 确实构建成功了，但那次的环境组合没有被记录下来，现在复现不出来。**
+下面是逐项实测到哪一步——下次（或 CI）从这份记录接着往下走，不要再从零猜。
+
+**已经确认可用的部分**：
+
+- NDK（`29.0.13846066`）、JDK 17、Android SDK 都在，环境变量齐全；
+- 四个 android target（aarch64 / armv7 / i686 / x86_64）都已 `rustup target add`；
+- `pnpm tauri android build --target aarch64` 能走到 `cargo build`，前端产物也正常生成。
+
+> ⚠️ **桌面与 Android 的 OpenSSL 环境互斥**：桌面构建要 `OPENSSL_DIR`（`rusqlite` 的
+> `bundled-sqlcipher` 要链系统 OpenSSL，见 `dev.ps1`），而 Android 侧要的是**从源码编译**的
+> OpenSSL。用 `dev.ps1` 那套设了 `OPENSSL_DIR` 再跑 Android 构建，`openssl-sys` 会直接炸。
+> 两个环境要分开：Android 构建前先 `Remove-Item Env:\OPENSSL_DIR`。
+
+**卡点一：Android 的 OpenSSL 需要一个「MSYS 类」的 Perl**
+
+`Cargo.toml` 的 Android 段让 `openssl` 走 `vendored`（从源码编译），而它的 `Configure` 是 Perl 脚本。
+两种 Perl 各自不行：
+
+| 用的 Perl | 结果 |
+|---|---|
+| Strawberry Perl（原生 Windows，`MSWin32-x64`） | **被 Configure 明确拒绝**：`This perl implementation doesn't produce Unix like paths … Please use an implementation that matches your building platform.` |
+| Git for Windows 自带（MSYS 版） | 类型对，但**缺 `Locale::Maketext::Simple`**（`Params::Check` → `IPC::Cmd` → OpenSSL 的 `config.pm` 一路要它）；报 `Can't locate Locale/Maketext/Simple.pm` |
+
+那个模块在 Perl 5.28 之后已从核心移除，但 CPAN 上还在（`Locale-Maketext-Simple-0.21`，作者 JESSE）。
+本次已把它取下来放进 `%LOCALAPPDATA%\ds-build-tools\perl5lib`（**仓库外**，用 `PERL5LIB` 注入，
+不动系统 Perl），实测 Git 的 Perl 能加载：
+
+```powershell
+$env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
+# 取模块（network 直连，别走那个会返回 402 的系统代理）：
+#   https://cpan.metacpan.org/authors/id/J/JE/JESSE/Locale-Maketext-Simple-0.21.tar.gz
+#   解出 lib/Locale/Maketext/Simple.pm → 放进 $env:PERL5LIB\Locale\Maketext\
+```
+
+**卡点二：`mupdf-sys` 的 Makefile 在 Windows 上两头不讨好**
+
+它用 GNU make 跑 mupdf 自己的 Makefile，而那份 Makefile 同时假设了 Unix 的 shell 与 Unix 的路径：
+
+| make 用的 shell | 失败方式 |
+|---|---|
+| 默认的 `cmd.exe` | `File not found - *.[ch]` / `The syntax of the command is incorrect.`（POSIX 语法） |
+| 换成 Git 的 `sh.exe`（`$env:SHELL`） | `sh: line 1: …: command not found`（**Error 127**）——因为 mupdf-sys 生成的 `CC` 是**带反斜杠的原生 Windows 路径**，被 sh 当转义吃掉了 |
+
+另外 `pkg-config` 本机没有（mupdf-sys 的构建脚本会去探测它）。
+
+**这件事的真正含义**：本计划把「`gen/android` 不在 git 里 → CI 里必须 `tauri android init`」
+列为风险，但**比它更早的一环是宿主工具链本身也不可复现**——09-10 能过、今天过不去，
+而差异没有被记录下来。所以 Phase 2 的 CI 任务里必须包含**把 Android 构建环境钉死**
+（固定 NDK / Perl / make / pkg-config 的来源与版本），否则"本地能过 CI 不能"会以更难查的形式出现。
+
+**逐项待办**（按性价比）：
+
+1. 先试 **MSYS2**：`pacman -S make pkg-config perl`，用它提供的 `make` + `pkg-config` + `perl`
+   （MSYS2 的 make 对反斜杠路径的处理比 Git 精简版更接近 mupdf 的假设）——**最可能一次通**。
+2. 或者绕开 OpenSSL：把「聚合邮箱」按平台收窄（见下面那条决策），Android 就不需要编译 OpenSSL，
+   卡点一整个消失，工具链只剩卡点二。
+3. CI 里用官方 `tauri-apps/tauri-action` 或 Ubuntu runner 交叉编译——**Linux runner 上没有这些
+   Windows 工具链问题**，所以 CI 出包比本地出包更稳（本地构建只需跑通给自己装机用）。
+
+#### 0.1 要做的事
+
+1. `Cargo.toml` 加 `[profile.release] strip = true`（**已做**）：实测 −12.7 MiB。
+   ~~`lto` / `codegen-units`~~ 未采纳：收益未测，而它们会显著拖慢每次发布构建——
+   要加先量，别凭"应该会更小"就加。
+   （原先写的"strip 能把 101 MiB 压到 ~30 MiB"是**错的**，见 §3.1。）
 2. OCR 语言包改为按需：先把 `public/ocr/tessdata` 从包内构建里去掉，改成首次用 OCR 时下载到
    `app_data_dir`（离线承诺不破：**下载一次之后永久离线可用**，且要如实告知"首次需要联网一次"）。
 3. 生成 keystore（`keytool`），**离线备份两份**（私钥丢了 = 再也无法给同一签名的用户升级，
@@ -211,3 +327,32 @@
 这条路径必须**由本人真机走过一遍**，而不是"CI 构建成功"。构建成功只证明它能编译，
 不证明它是一件能用的产品——这一点在 1.90.1 那版已经吃过一次教训
 （4 个插件"校验器说没问题、点安装必报错"，只有用真实路径跑才暴露）。
+
+---
+
+## 八、待决策（卡在别人身上的两件事，先说清选项）
+
+### 8.1 邮箱要不要保留在 Android 上？
+
+**这不是小事，它决定了工具链的复杂度**：Android 上的 OpenSSL **只服务于「聚合邮箱」**
+（`cargo tree` 实测：`native-tls` / `openssl` 是 `shuyonote` 自己直接依赖的，只有 IMAP 用它；
+reqwest 走的是 rustls）。而 OpenSSL 的交叉编译正是 §0.0 卡点一的全部来源。
+
+| 选项 | 收益 | 代价 |
+|---|---|---|
+| **A. Android 也保留邮箱** | 功能完整 | 必须解决 vendored OpenSSL 交叉编译（MSYS2 Perl + pkg-config），CI 也要固定这套环境 |
+| **B. 邮箱收窄为桌面专属** | 卡点一整个消失；`.so` 更小；CI 更简单 | Android 上没有聚合邮箱 |
+
+**倾向 B**，理由是这个仓库**自己已经这么声明过**：`EmailPanel.tsx:464` 写着
+「邮箱是**桌面版独有**能力。web 版调用它只会拿到…」，只是 `isDesktopPlatform()` 目前把
+Tauri 全家（含 Android）都算作桌面，所以这条声明还没落到 Android 上。
+把它落下去，是**让代码与既有声明一致**，不是新开一条产品边界。
+（注意：**不要**因此去改 `isDesktopPlatform()` 本身——插件、同步、原生 PDF 在 Android 上
+都是要保留的，它们同样用它判断。）
+
+### 8.2 Android 构建环境怎么钉
+
+无论选 A 还是 B，**宿主工具链都必须在 CI 里固定下来**（§0.0 的教训：09-10 能过、今天过不去）。
+倾向：**CI 用 Ubuntu runner 交叉编译**（Linux 上没有这些 Windows 工具链问题），
+本地构建只作为"给自己装机"的临时手段。
+
