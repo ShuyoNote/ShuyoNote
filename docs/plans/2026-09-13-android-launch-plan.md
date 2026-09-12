@@ -300,6 +300,9 @@ $env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
    - ⛔ **正式 keystore 仍未生成**——等你定口令与离线备份位置。
    - 说明：这版是 **release 构建**（`debuggable=false`），所以真机上只能靠 `adb logcat` 看日志，
      不能像 debug 包那样直接换 JS。
+   - ⚠️ 这个测试签名包**已经放到官网上**了（临时页 `https://shuyo.cn/apk/`，见 Phase 2 第 2 条），
+     页面顶部用醒目样式写明"测试包、将来装正式版要先卸载"。**这是对外可见的**——
+     正式 keystore 落地后必须把它换掉，别让测试签名包长期挂在官网上。
 4. ~~版本联动：一个脚本从 `package.json` 写 `gen/android/app/tauri.properties`~~
    **不需要做——Tauri 自己会同步**（2026-09-13 更正）。原先我写「停在 1.82.18、必须自动化」，
    那是因为只看了 09-10 留下的陈旧文件；今天构建时它被**自动重写成**
@@ -345,8 +348,22 @@ $env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
    Android SDK/NDK；`gen/android` 不在库里，所以 CI 自己 `pnpm tauri android init --ci`，
    产物（未签名 APK）走 artifacts。**keystore 走 Secrets 这一步还没做**，等签名方案定；
    要加的是 `signingConfig` 的脚本化 + Secrets 注入。
-2. **官网下载页**：`shuyo.cn/download`（或 `/app` 旁）给 APK 直链 + sha256 + 签名指纹 +
-   "怎么验证签名"；与 Web 版、桌面版并列。
+2. 🟡 **官网下载页**：目标是 `shuyo.cn/download`（或 `/app` 旁）给 APK 直链 + sha256 + 签名指纹 +
+   "怎么验证签名"，与 Web 版、桌面版并列。
+   **2026-09-13 先落了一个临时页**（为了让真机验收不必"手机和电脑同一个 Wi-Fi"）：
+   - 地址 **`https://shuyo.cn/apk/`**，内容是「两枚二维码（打开本页 / 直下 APK）+ 直链按钮 +
+     sha256 + 包名版本 + 证书指纹 + 各家安装拦截的说明」，带 `noindex,nofollow`。
+     二维码是**本地生成的内联 SVG**（DSH 自带 `qrcode` 包），不依赖任何外部服务。
+   - 页面与包在服务器 `/var/www/shuyo-site/apk/`（`index.html` + `ShuyoNote-1.90.1-arm64-test-signed.apk`）。
+   - nginx 只加了一行（`/etc/nginx/sites-enabled/shuyonote`，备份在
+     `/root/nginx-backups/shuyonote.bak-before-apk-20260913`）：
+     `location ~* \.apk$ { default_type application/vnd.android.package-archive; }`
+     —— nginx 自带 `mime.types` 里**没有** apk，不加会按 `application/octet-stream` 发。
+   - 验收（线上实测）：页面 200 / 两枚二维码 / `noindex` 在；APK `200`、`Content-Length 56087065`、
+     MIME 正确、支持 Range（206）；**整包下载后 sha256 与本地逐字符一致**。
+   - ⚠️ **它是临时页，且这个包用测试 key 签名**：页面顶部已用醒目样式写明"测试包、不是正式版，
+     将来装正式版要先卸载"。等正式 keystore 落地，这里要换成正式签名包 + 真正的下载页。
+   - 收尾口径：正式下载页做出来后，`/apk/` 目录与那行 nginx 要一起清掉（或改成正式页）。
 3. **应用内"检查更新"**：Android 不接 updater 插件，改为「发现新版本 → 打开下载页」。
    版本源可以复用桌面那套的 `latest.json`（加一个 `android` 键），**不要另起一套**。
 4. **崩溃与日志回流**：至少一个最小方案。没有它，酷安用户的反馈只能靠口述，排查成本极高。
