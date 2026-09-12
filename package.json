@@ -35,7 +35,8 @@
     "plugin:fragment": "node scripts/plugin-fragment.mjs",
     "test:plugin-fragment": "vitest run scripts/plugin-fragment.test.mjs",
     "check:plugin-hosting": "node scripts/check-plugin-hosting.mjs",
-    "test:live-index": "cargo test --manifest-path src-tauri/Cargo.toml --lib live_hosted_index -- --ignored --nocapture"
+    "test:live-index": "cargo test --manifest-path src-tauri/Cargo.toml --lib live_hosted_index -- --ignored --nocapture",
+    "sessions": "node scripts/session-grep.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
