@@ -1,7 +1,7 @@
 # 实时协同（Real-time Collaboration）利弊分析
 
 > 定位：评估 ShuyoNote 是否 / 何时引入「多人同页实时协作编辑」。为团队版后续「实时协同（P2 后置项）」提供决策依据。
-> 关联：[团队版方案](plans/2026-08-30-team-edition-plan.md) · [身份与隐私模型](identity-privacy-model.md) · [同步服务端](SYNC.md)
+> 关联：团队版方案（已移入私有仓库 `shuyonote-sync-server` 的 `docs/plans/2026-08-30-team-edition-plan.md`） · [身份与隐私模型](identity-privacy-model.md) · [同步服务端](SYNC.md)
 
 ---
 
@@ -66,7 +66,7 @@ ShuyoNote 核心是**本地优先、可离线编辑**。
 团队空间已放弃零知识（明文 OK）；但**个人空间保留 E2E**——若个人空间也要实时协同，则与 E2E 冲突。这是比「功能」更深的取舍（见 [身份与隐私模型](identity-privacy-model.md)）。
 
 ### 4.5 非团队购买点核心
-项目已明确：团队版核心是**共享 + 权限 + 评论 + 通知 + 私有化部署**（见 [团队版方案](plans/2026-08-30-team-edition-plan.md)）。
+项目已明确：团队版核心是**共享 + 权限 + 评论 + 通知 + 私有化部署**（见私有仓库 `shuyonote-sync-server` 的 `docs/plans/2026-08-30-team-edition-plan.md`）。
 实时协同被定为「**看起来该有、实际高成本低频**」的后置项（P2）。客户真正付费的是**数据不出去 + 权限审计 + 能自建**，而非「同页实时打架」。
 
 ### 4.6 迁移与兼容
