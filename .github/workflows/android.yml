@@ -14,6 +14,11 @@ name: Android (build)
 #
 # 3. 触发方式：手动（Actions 页 Run workflow），或本文件自身被改动时跑一次
 #    （这样落地就能立刻验证，不必先要 dispatch 权限）。
+#
+# 4. 首次跑（run #1，2026-09-12）在 OpenSSL 的 `make install_dev` 上翻了一个**只会在 Linux
+#    上暴露的坑**：NDK 没有 `aarch64-linux-android-ranlib` 这个前缀名 → Error 127。
+#    修法见 "Pick an NDK" 步骤里的注释。教训是：**"换个环境构建"必须真的跑一遍**，
+#    不能靠"Linux 上没有那些 Windows 工具链问题"推断——那一句在本 workflow 里被实测打脸了。
 
 on:
   workflow_dispatch:
@@ -60,7 +65,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Pick an NDK
+      - name: Pick an NDK + 钉死 binutils（**ranlib 那一条是必须的**）
         # 优先用本机验过的那个版本；装不上就退到 runner 上已有的最新一个。
         # **不写死"必须有某一个版本"**：NDK 版本不是这里要验的东西，构建能不能过才是。
         run: |
@@ -78,7 +83,31 @@ jobs:
           echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "选用 NDK: $NDK"
-          ls "$NDK/toolchains/llvm/prebuilt/" 
+          NDKBIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "--- bin 里的相关工具 ---"
+          ls "$NDKBIN" | grep -E 'ranlib|^llvm-ar$|^llvm-strip$|^llvm-nm$|^aarch64-linux-android[0-9]+-clang$' || true
+
+          # ⚠️ 第一次真的跑到 OpenSSL 的 `make install_dev` 才暴露的一处（run #1 的红灯）：
+          #    /bin/sh: 1: aarch64-linux-android-ranlib: not found
+          #    make: *** [Makefile:2797: install_dev] Error 127
+          # 原因是 NDK **只**提供 llvm-ar / llvm-ranlib，**没有** `aarch64-linux-android-ranlib`
+          # 这种前缀名（NDK 29 实测：带前缀的只有 aarch64-linux-androidNN-clang[++]）；
+          # 而 openssl-src 把 RANLIB 设成 cc crate 给的**前缀名**（裸名字，靠 PATH 找）。
+          # 注意这不是"换 NDK 版本"能解决的——它是现代 NDK 的结构性事实。
+          # 两条一起给：① 让 cc 直接拿到绝对路径；② 再放一组前缀名 wrapper 兜底（PATH 上只有
+          # 这 4 个名字，不会影响宿主侧编译）。
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_RANLIB=$NDKBIN/llvm-ranlib"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_AR=$NDKBIN/llvm-ar"
+          } >> "$GITHUB_ENV"
+          WRAP="$RUNNER_TEMP/ndk-bin"
+          mkdir -p "$WRAP"
+          for pair in ar:llvm-ar ranlib:llvm-ranlib strip:llvm-strip nm:llvm-nm; do
+            printf '#!/bin/sh\nexec "%s" "$@"\n' "$NDKBIN/${pair#*:}" > "$WRAP/aarch64-linux-android-${pair%%:*}"
+            chmod +x "$WRAP/aarch64-linux-android-${pair%%:*}"
+          done
+          echo "$WRAP" >> "$GITHUB_PATH"
+          echo "已就绪：$WRAP/{ar,ranlib,strip,nm}"
 
       - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
