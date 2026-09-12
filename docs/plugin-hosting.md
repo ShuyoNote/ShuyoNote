@@ -131,15 +131,27 @@ minisign -V -p community.pub -m plugin-index.json        # Signature and comment
 3. **公示一次就够**：发布说明里公示的新指纹同时覆盖两层——不会再出现
    "只换了其中一层、用户看不出来"这种半截状态。
 
-### 两台机器都还没设的一件事（**发布链路上的静默坑**）
+### 两台机器都还没设的一件事：`SHUYONOTE_PUBLISHER_KEY`
 
-产出插件片段那一步要看 `SHUYONOTE_PUBLISHER_KEY`（发布者私钥）：
+产出插件片段那一步要看 `SHUYONOTE_PUBLISHER_KEY`（发布者私钥，指向的文件就是上表的
+`community.key`）。**Windows 侧和 macOS 侧都没有设它**。
 
-- **Windows 侧和 macOS 侧都没有设它**；
-- 没设时**不会报错**，而是**静默跳过**产出片段 → 索引仍是旧的 18 个 →
-  表现为"我发了新版，但用户那边看不到新插件"。
-- 它指向的文件就是上表的 `community.key`。
+**它不是静默跳过的**——`scripts/release.mjs` 会打印一整行说清后果
+（"跳过第一方插件片段 —— 这一版的第一方插件不进社区索引"），源码注释里也写着"不做静默跳过"。
+⚠️ 这一段早先被我写成"静默跳过"，是**没核实就写下的**（2026-09-12 更正）：
+把工具说成会瞒着你，比这个坑本身更糟——有人会照着去"修"一个本来就对的地方。
 
-发版流程里若这一步没跑，要去确认索引里的 `generatedAt` 有没有跟着更新，
-而不是相信"发版脚本说成功了"。
+真正的坑在**别处**：跳过之后 `release.mjs` 照样成功、照样发版，所以
+"这一版插件没进索引"这件事**只出现在发布日志里**，没有人会回头读。核对办法：
+
+- 发版后看索引的 `generatedAt` 有没有跟着变（没变＝片段没合并进去）；
+- 别把"发版脚本说成功了"当成"插件也进了索引"——那是两件事。
+
+要让它真正产出片段，发版时带上私钥路径：
+
+```powershell
+$env:SHUYONOTE_PUBLISHER_KEY = "$env:USERPROFILE\.minisign\community.key"
+$env:SHUYONOTE_MINISIGN       = "$env:USERPROFILE\.minisign-bin\minisign.exe"
+```
+
 
