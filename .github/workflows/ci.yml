@@ -172,6 +172,15 @@ jobs:
       - name: 单元测试 + 集成测试（cargo test）
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: 插件测试必须能**单独跑**（挡住"只有全量跑才绿"的测试）
+        # 2026-09-13 修掉的那一类缺陷：`settings_get_is_null_when_unset_and_errors_on_undeclared_keys`
+        # 要写 meta.db，而库路径来自**进程级** `APP_DATA_DIR`——那个只由 `db::init` 设置。
+        # 于是它**单跑必红、全量跑反而绿**（别的测试碰巧先 init 过）。
+        # 这类测试最费时间：改一行、只跑一条、看到一个红，会以为是自己刚改坏的。
+        # 上面那步全量跑**永远不会**暴露它，所以这里把插件模块单独再跑一遍。
+        # 修法是测试侧自给自足（`db::ensure_test_app_data_dir()`），这条门禁防它回来。
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib plugins::
+
       # 外部产物的验收：**我们打出来的包、我们签出来的索引，应用真正的解析器与校验器认不认**。
       # 两段分别在别处有测试（打包工具在 JS 侧、解析/校验在 Rust 侧），但"接起来"那段
       # 只有靠人记得敲命令——而它恰恰是最容易在改动里悄悄坏掉的一段

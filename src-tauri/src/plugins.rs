@@ -5732,6 +5732,11 @@ register({ id: "d.two", title: "Two", description: "第二", closeOnRun: true, r
     ) -> Result<(String, String, Vec<String>, Vec<PluginDraft>, Vec<PluginExport>), String> {
         let _g = capability_test_guard();
         ensure_host_exe();
+        // 碰数据库的能力（`api.kv` / `api.settings` 的 app scope）要写 meta.db，而它的路径来自
+        // 进程级 `APP_DATA_DIR`——那个**只由 `db::init` 设置**。不在这里兜一下，这类测试就
+        // **单跑必红、全量跑反而绿**（隐式依赖别的测试先 init 过），最费时间。
+        // 幂等：已经在别处设过就沿用那个目录。
+        let _ = crate::db::ensure_test_app_data_dir();
         run_command_via_host(source, command_id, args_json, state, None)
     }
 
