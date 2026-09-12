@@ -68,7 +68,7 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 | 能力 | 移动端 | 为什么 / 边界落在哪 |
 |---|---|---|
 | **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 23 个命令带 `#[cfg(desktop)]`，**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
-| **插件运行时（Boa）** | ⚠️ **真机上 panic，插件用不了**（2026-09-13 真机实测；根因已定位、修法一行、**尚未实施**） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
+| **插件运行时（Boa）** | ✅ **已修**（2026-09-13 真机复验：那条 panic 在日志里消失） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
 
 #### ⚠️ Boa 的 nan-boxing 在 Android 上不成立（2026-09-13 真机实测）
 
@@ -103,12 +103,54 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 ```
 
 代价：`JsValue` 从 8 字节 nan-boxed 变成枚举（更大、更慢），但只在移动端。
-**状态：已定位、修法已定，尚未实施**（改完要重新出包 + 真机复验日志里不再出现这条 panic）。
+
+**状态：✅ 已修，并真机复验**（2026-09-13）：
+
+- 修法落在 `src-tauri/Cargo.toml` 的移动端依赖段（`features = ["jsvalue-enum"]`，**只对移动端开**）；
+- CI run #5 全绿 ⇒ 移动端带着枚举版 `JsValueInner` **编译通过**；
+- 新包（53.21 MiB，测试 key 签名）`adb install -r` 覆盖安装 + 冷启动，**日志里这条 panic 与
+  `plugin-run panicked` 都不再出现**，无 FATAL，界面正常渲染（截图存证）。
+
+⚠️ **这条只证明"那条 panic 消失了"，不证明"插件端到端可用"**——手机上没有任何插件可跑
+（插件列表是空的），而"从 zip 安装插件"那条路在 Android 上**另有问题**，见 §2.2。
+把"插件能在 Android 上跑起来"当成已验证，是这轮**没有**做的事。
 
 > ⚠️ 判定"某个只在桌面存在的功能"**不要**用 `isDesktopPlatform()`——它的真实语义是
 > "**有没有 Rust 内核**"，Tauri 的移动端为真，而同步/加密/插件在移动端是要保留的。
 > 每个桌面专属能力各自有一个**具体能力函数**（如 `emailSupported()`，见
 > `src/lib/platform/capabilities.ts`，纯函数可单测）。
+
+### 2.2 ⚠️ Android 上「选文件」拿不到可读路径（源码级已确认，**真机未验、尚未修**）
+
+上线计划把这条列为"风险最高、必须先 spike"的一项。2026-09-13 读源码把它确认了。
+
+**事实链**：
+
+1. `tauri-plugin-dialog` 的 Android 实现把系统返回的 URI **原样**交给前端——
+   `DialogPlugin.kt::createPickFilesResult()` 里就是 `uris.add(uri.toString())`，
+   拿到的是 `content://com.android.providers.media.documents/document/image%3A1234`
+   这种**内容 URI**；同一个文件里的 `FilePickerUtils.getPathFromUri()`（能反查真实路径）
+   **在这条路上根本没被调用**。
+2. 我们的导入路径把它当文件路径用：`attachments.rs` 的 `copy_and_hash()` 是
+   `std::fs::File::open(src)`；`plugins.rs` / `backup.rs` / `workspace_io.rs` 的导入同理
+   （`std::fs::read`）。`content://…` 在 `std::fs` 下**必然打不开**。
+3. 受影响的不止附件导入：**从文件夹 / zip 装插件、备份导入、空间导入、模板导入**
+   全都是"选文件 → 读路径"这条路。
+
+**官方通路是有的**（所以这不是"Tauri 做不到"）：
+`tauri-plugin-fs` 的 `Fs::open()` 在 Android 上是
+`FilePath::Url(u) → resolve_content_uri()`（经 Kotlin 的
+`contentResolver.openAssetFileDescriptor(Uri.parse(uri), mode)` 取 fd）→
+`std::fs::File::from_raw_fd(fd)`；在桌面上它就是
+`std::fs::OpenOptions::from(opts).open(path)`——**两个平台同一个 API，且桌面语义与我们现在完全一致**。
+
+**修法**：把"读用户选的文件"收敛到一个 helper，走 `tauri-plugin-fs` 的 `open()`
+（同时把该插件注册进 `lib.rs`；它的前端命令是**权限门控**的，我们不给 fs 权限 ⇒ 顺带不扩大攻击面）。
+涉及 `attachments.rs` / `plugins.rs` / `backup.rs` / `workspace_io.rs` 四处。
+
+**状态：已确认、修法已定，尚未实施**（改完要重新出包 + 真机验一次"从手机里选一张图导入附件"）。
+在修好之前，Android 上这些入口会报"读取失败（No such file or directory）"——
+**别把它当成"用户选错了文件"**，那是源码层面的问题。
 
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 

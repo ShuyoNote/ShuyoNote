@@ -56,6 +56,28 @@
 
 ### 修复
 
+- **Android 上插件运行时（Boa）一上来就 panic**（2026-09-13）。真机（HUAWEI Mate 40 /
+  Android 12）第一次跑起来，日志里就有：
+
+  ```text
+  thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
+  assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
+  enable the `jsvalue-enum` feature to use the enum-based `JsValueInner`
+  ```
+
+  **应用没崩**（panic 在插件线程上、主线程照常跑——M11.5 那套"超预算就 panic 让它 unwind、
+  应用存活"的设计顺带被真机验证了一次），但**插件不可用**。
+  根因：`nan_boxed.rs` 的 `MASK_POINTER_VALUE` 只留低 48 位，而真机上那个指针是
+  `0xB400007D1B960000`（真实地址 `0x7D1B960000`）——**最高字节被当 tag 用了**。
+  修法：移动端开 `boa_engine` 的 `jsvalue-enum`（枚举版 `JsValueInner`，不做指针标记），
+  **只对移动端开**（桌面 x64 用户态指针高位为 0、不受影响）。代价是 `JsValue` 从 8 字节
+  nan-boxed 变成枚举，但仅移动端。
+  - **真机复验**：新包（53.21 MiB，测试 key 签名）覆盖安装 + 冷启动后，
+    **日志里这条 panic 与 `plugin-run panicked` 都不再出现**，无 FATAL，界面正常渲染。
+  - ⚠️ 这只证明"**那条 panic 消失了**"，**不证明插件端到端可用**——手机上没有任何插件可跑，
+    而"从 zip 装插件"在 Android 上另有问题（见上面的「已知问题」）。
+  - 附带一条方法论：这回坐实了 **"CI 绿 ≠ 装上能用"**——这条平台差异在构建期**完全看不见**。
+
 - **从 Windows 发版时，`release.mjs` 会在打 Web 整包那一步直接崩掉**：那一步 shell out 到
   系统的 `zip`，而注释里写着「用它是因为它到处都有」——**Windows 上根本没有 `zip`**
   （实测：`'zip' is not recognized as an internal or external command`）。
@@ -70,24 +92,18 @@
 
 ### 已知问题（尚未修）
 
-- **Android 上插件运行时（Boa）会 panic，插件整个用不了**（2026-09-13 真机实测：
-  HUAWEI Mate 40 `OCE-AN10` · Android 12）。日志：
-
-  ```text
-  thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
-  assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
-  enable the `jsvalue-enum` feature to use the enum-based `JsValueInner`
-  ```
-
-  **应用没崩**——panic 在插件线程（`plugin-run`）上，主线程照常跑。M11.5 那套"超预算就 panic
-  让它 unwind、应用存活"的设计在这里顺带被真机验证了一次；但插件不可用。
-
-  根因：`nan_boxed.rs` 的 `MASK_POINTER_VALUE` 只留低 48 位，而真机上那个指针是
-  `0xB400007D1B960000`（真实地址 `0x7D1B960000`）——**最高字节被当 tag 用了**。
-  修法（Boa 自己给的提示）：移动端开 `boa_engine` 的 `jsvalue-enum`（枚举版 `JsValueInner`，
-  不做指针标记）；桌面 x64 指针高位为 0、不受影响，所以**只对移动端开**。代价是 `JsValue`
-  变大变慢，但仅移动端。详见 `docs/MOBILE.md` §2.1。**尚未实施**——改完要重新出包，
-  并在真机上复验这条 panic 消失。
+- **Android 上「选文件」拿不到可读路径**（2026-09-13 **源码级已确认，真机未验**）。
+  `tauri-plugin-dialog` 的 Android 实现把系统返回的 URI **原样**交给前端
+  （`DialogPlugin.kt::createPickFilesResult()` 里是 `uris.add(uri.toString())`，拿到的是
+  `content://…` 内容 URI；而同文件里能反查真实路径的 `FilePickerUtils.getPathFromUri()`
+  **在这条路上根本没被调用**），我们的导入路径却把它当文件路径用
+  （`attachments.rs::copy_and_hash()` 是 `std::fs::File::open(src)`；`plugins.rs` /
+  `backup.rs` / `workspace_io.rs` 同理）——`content://…` 在 `std::fs` 下必然打不开。
+  受影响：**附件导入、从文件夹 / zip 装插件、备份导入、空间导入、模板导入**。
+  官方通路存在：`tauri-plugin-fs` 的 `Fs::open()` 在 Android 上经 Kotlin 的
+  `contentResolver.openAssetFileDescriptor(uri, mode)` 取 fd 再 `File::from_raw_fd`，
+  桌面侧就是 `std::fs::OpenOptions`（**语义与我们现在的做法完全一致，且两平台同一 API**）。
+  详见 `docs/MOBILE.md` §2.2。**尚未实施。**
 
 ## [1.90.1] - 2026-09-12
 
