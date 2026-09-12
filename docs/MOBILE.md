@@ -104,16 +104,22 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 
 代价：`JsValue` 从 8 字节 nan-boxed 变成枚举（更大、更慢），但只在移动端。
 
-**状态：✅ 已修，并真机复验**（2026-09-13）：
+**状态：✅ 已修，真机复验**（2026-09-13）：
 
 - 修法落在 `src-tauri/Cargo.toml` 的移动端依赖段（`features = ["jsvalue-enum"]`，**只对移动端开**）；
 - CI run #5 全绿 ⇒ 移动端带着枚举版 `JsValueInner` **编译通过**；
-- 新包（53.21 MiB，测试 key 签名）`adb install -r` 覆盖安装 + 冷启动，**日志里这条 panic 与
+- 新包（53.21 MiB，同一把测试 key）`adb install -r` 覆盖安装 + 冷启动：**日志里这条 panic 与
   `plugin-run panicked` 都不再出现**，无 FATAL，界面正常渲染（截图存证）。
 
-⚠️ **这条只证明"那条 panic 消失了"，不证明"插件端到端可用"**——手机上没有任何插件可跑
-（插件列表是空的），而"从 zip 安装插件"那条路在 Android 上**另有问题**，见 §2.2。
-把"插件能在 Android 上跑起来"当成已验证，是这轮**没有**做的事。
+**这条能推出多少（写清楚，别多推）**：插件**发现**阶段是**真的在 Boa 里执行**插件代码的——
+`discover_commands()` 就是 `ctx.eval(Source::from_bytes(source))` 再 `__describe()`，
+而它跑在 `with_timeout()` 那个名为 `plugin-run` 的线程上（`plugins.rs:1171`）。
+所以这是一次**同触发路径的前后对照**：修前每次启动都在这里 panic，修后同样启动、同样路径、
+不再 panic ⇒ **Boa 能在 Android 上执行插件代码（发现阶段）**。
+
+⚠️ **没有**验证到的是：**执行一条插件命令**（那要宿主子进程 + UI 操作）。
+这轮试过用 `adb` 驱动界面去跑播种的示例插件命令，**没成功**（原因见 §2.3）。
+所以"插件在 Android 上端到端可用"仍然**未验证**——别把上面那条读成它。
 
 > ⚠️ 判定"某个只在桌面存在的功能"**不要**用 `isDesktopPlatform()`——它的真实语义是
 > "**有没有 Rust 内核**"，Tauri 的移动端为真，而同步/加密/插件在移动端是要保留的。
@@ -151,6 +157,33 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 **状态：已确认、修法已定，尚未实施**（改完要重新出包 + 真机验一次"从手机里选一张图导入附件"）。
 在修好之前，Android 上这些入口会报"读取失败（No such file or directory）"——
 **别把它当成"用户选错了文件"**，那是源码层面的问题。
+
+### 2.3 真机验收能用什么手段、有哪些边界（2026-09-13 实跑记录）
+
+**能用的**：
+
+| 手段 | 用途 |
+|---|---|
+| `adb install -r <apk>` | 覆盖安装（**同一签名**才行） |
+| `adb shell am start -W -n <pkg>/<activity>` | 冷启动 + 耗时（`TotalTime`） |
+| `adb shell screencap -p /sdcard/x.png` + `adb pull` | **唯一能"看见界面"的手段**（`adb exec-out` 在 PowerShell 里重定向二进制会坏，走文件最稳） |
+| `adb logcat -d -v brief` | Rust 侧 `println!` / panic 都以 `I/RustStdoutStderr` 出现——Boa 那条 panic 就是这么抓到的 |
+| `adb shell dumpsys window displays` | 确认前台是不是自家 Activity（`mCurrentFocus`） |
+| `adb shell ps -A` | 看插件宿主**子进程**在不在（注意：它**按需才起**，启动时通常没有，别据此说"没跑"） |
+| `adb shell uiautomator dump` | 对**桌面/系统界面**有效（能拿到文字 + 坐标） |
+
+**不能用（都实测过，别再重复踩）**：
+
+- **WebView 里的 DOM 读不到**：`uiautomator dump` 在本应用上只拿到约 2.2 KB 的空壳、**没有任何文字节点**
+  ⇒ 拿不到"插件管理"这类按钮的坐标，只能靠截图目测；
+- **`input keycombination` 发不出 Ctrl+K**（试过 `113 41`）：命令面板根本不弹，两次截图逐字节相同；
+- **盲点坐标不可靠**：右栏图标会被已打开的面板挡住（✨ 一开就连带挡住 💬 与 ☰）；
+  而两次 `BACK` 会直接退出应用——我那次点到了系统拨号盘。
+  ⇒ **需要点按的验收，交给人在真机上做**，别用盲点坐标假装自动化。
+
+**给下次的建议（把"可驱动点"做进应用）**：要自动化真机验收，应用侧得先有能脚本化的入口，比如
+一个只在测试构建里开的深链 `shuyonote://test/run-plugin?cmd=demo.hello`——把"跑一条插件命令"
+变成一次 `adb shell am start -d`。这比盲点坐标稳得多，也配得上一条门禁。
 
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
