@@ -4,7 +4,7 @@
 > **移动端 = Tauri 原生壳（Rust 内核）**；**WebView 壳路线只保留给 Tauri 不可达的平台**
 > （当前只有**鸿蒙 ArkWeb**）。
 >
-> 执行计划见 [移动端上线计划（Android 优先）](plans/2026-09-13-android-launch-plan.md)。
+> 执行计划见 移动端上线计划（Android 优先）（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`）。
 
 ## 0. 为什么是 Tauri 原生壳（这条决定要能扛住复读）
 
@@ -152,7 +152,7 @@ z-index + localStorage）：侧栏默认收起、竖条浮层化且主区拿到�
 
 ### 6.3 真机验收
 
-- **Tauri 原生壳（Android/iOS）**：见 [上线计划](plans/2026-09-13-android-launch-plan.md) 的
+- **Tauri 原生壳（Android/iOS）**：见 上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） 的
   Phase 1 清单（含**最高风险项：Android 选文件 SAF**——`import_attachment_files` 走
   `std::fs::read(path)`，而 `open()` 可能返回 `content://`）。
 - **WebView 壳（鸿蒙）**：每个壳在真实设备上验「打开外链走系统、附件可读、

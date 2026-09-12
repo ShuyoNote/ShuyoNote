@@ -106,7 +106,7 @@
   两个语言包（`chi_sim` 19.2 + `eng` 10.4 = 29.6 MiB）原先随包分发，而 **09-10 那份 Android APK
   实测装着两遍**（APK 的 `assets/` 一份 124.1 MiB + `.so` 里 Tauri 内嵌的前端副本一份；桌面安装包同样带着）。
   ⚠️ **2026-09-13 的 CI 构建实测只有一遍**（`assets/` 只剩 3.5 KB）——"两遍"是那次旧 CLI 生成的
-  工程的行为，**不是恒定事实**，别拿它当体积账的依据（见 `docs/plans/2026-09-13-android-launch-plan.md` §3.2）。
+  工程的行为，**不是恒定事实**，别拿它当体积账的依据（见 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §3.2）。
   现在改为：**首次使用 OCR 时联网下载一次，之后由 tesseract 的 IndexedDB 缓存复用 ⇒ 永久离线可用**。
   - 语言包托管在 `https://shuyo.cn/ocr/tessdata/4.0.0/`（**路径带 tessdata 版本号**，
     所以服务端可以 immutable 长缓存；换模型＝换路径，不会让用户跑着旧模型还看不出来）。

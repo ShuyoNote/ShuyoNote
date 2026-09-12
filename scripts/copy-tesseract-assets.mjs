@@ -70,7 +70,7 @@ if (existsSync(coreSrc)) {
 //
 // 为什么不打进包：两个语言包共 **29.6 MiB**，而 Android 上它们会被**装两遍**
 // （APK 的 `assets/` 一份 + `.so` 里 Tauri 内嵌的前端副本一份，实测见
-// docs/plans/2026-09-13-android-launch-plan.md §3）。改为运行时按需下载
+// 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §3）。改为运行时按需下载
 // （来源见 src/lib/ocr.ts 的 DEFAULT_OCR_LANG_BASE，托管规矩见 docs/nginx-ocr.conf）：
 // **首次用 OCR 联网一次，之后由 tesseract 的 IndexedDB 缓存复用 ⇒ 永久离线可用**。
 //

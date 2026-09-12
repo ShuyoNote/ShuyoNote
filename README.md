@@ -45,7 +45,7 @@
 - **独有的邮箱聚合**：打通多账号 IMAP，邮件即笔记——聚合收件箱、按账号/月份筛选、一键存为笔记 / 任务、AI 总结。
 - **免费 + 开源**：核心功能永久免费；客户端 **AGPL-3.0 开源**，插件、主题、模板可扩展。
 - **可自托管、多设备同步**：多设备 / 团队同步用自建 `shuyonote-sync-server`（无云锁定，可私有部署）；outbox 增量 + 服务端 seq 基准的 LWW 合并（**多端同时改同一内容也不丢改动**）。
-- **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；同一份数据多端可用。**Android 移动端正在做**（Tauri 原生壳，与桌面同一份 Rust 内核，所以加密/附件/插件/同步这些能力都在；执行计划见 [移动端上线计划](docs/plans/2026-09-13-android-launch-plan.md)）；iOS 随后。
+- **全平台**：桌面（Tauri + Rust）+ 浏览器（Web）同一套前端；同一份数据多端可用。**Android 移动端正在做**（Tauri 原生壳，与桌面同一份 Rust 内核，所以加密/附件/插件/同步这些能力都在；执行计划见 移动端上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`））；iOS 随后。
 
 ## 截图 / 演示
 
@@ -428,7 +428,7 @@ ShuyoNote/
 - [x] **PDF 阅读/批注**（M24 阶段1/3：内置阅读器 + 连续滚动 + 高亮/画笔/便签 + 摘录成块（`pdf://` 回链）+ AI 帮读 + 对整篇 PDF 提问；见 [方案](docs/plans/2026-08-27-pdf-annotation-plan.md)）
 - [x] **PDF 阅读体验 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / **AI 一键生成目录（视觉优先、带层级、可范围）** / 系统朗读 / 识别结果弹层；见 [落地文档](docs/plans/2026-08-30-pdf-reader-ai-plan.md)）
 - [x] **跨平台架构（M16 全端通吃）**：平台无关核心 + 可插拔平台壳 → 浏览器 PWA / 鸿蒙 ArkWeb（可插拔壳）；**安卓 / iOS 走 Tauri 原生壳**（同一份 Rust 内核）
-- [ ] **Android 移动端**：Tauri 原生壳；**CI 已跑通**（`.github/workflows/android.yml`），未签名 arm64 APK **53.41 MiB**（目标 55–70 MiB 已达成，156.7 → 53.41）；差**签名 / 真机验收 / 上架材料**，见 [移动端上线计划](docs/plans/2026-09-13-android-launch-plan.md) 与 [移动端路线](docs/MOBILE.md)。iOS 随后（那台 Mac 的工具链需先解决）。
+- [ ] **Android 移动端**：Tauri 原生壳；**CI 已跑通**（`.github/workflows/android.yml`），未签名 arm64 APK **53.41 MiB**（目标 55–70 MiB 已达成，156.7 → 53.41）；差**签名 / 真机验收 / 上架材料**，见 移动端上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） 与 [移动端路线](docs/MOBILE.md)。iOS 随后（那台 Mac 的工具链需先解决）。
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
 

@@ -4,9 +4,11 @@ name: Android (build)
 #
 # 1. 本机（Windows）目前构建不出 Android —— 卡在"要 Perl 的 OpenSSL 源码构建"与
 #    mupdf 那份 Makefile 的 shell/路径假设上（诊断见
-#    docs/plans/2026-09-13-android-launch-plan.md §0.0）。**Linux runner 上这些问题都不存在**：
-#    系统自带完整的 perl/make/pkg-config，而 mupdf 的 Makefile 本来就是 Unix 假设。
-#    所以"CI 出包"不是绕路，而是当前唯一跑得通的路。
+#    私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §0.0）。
+#    ⚠️ 但原先那句"Linux runner 上这些问题都不存在"**是错的**：那边只是没有**这一组**问题，
+#    却有自己的两个（见第 4 条）。真正成立的说法是——Linux runner 自带完整的
+#    perl/make/pkg-config，而 mupdf 的 Makefile 本来就是 Unix 假设 ⇒ "CI 出包"不是绕路，
+#    而是当前唯一跑得通的路。
 #
 # 2. 刻意**不挂 tag**：Android 还没有签名流程，产出的 APK 是**未签名**的、只用于
 #    "构建能不能过 + 体积到底多大"这两件事，不是可分发件。

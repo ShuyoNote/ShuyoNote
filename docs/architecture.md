@@ -196,7 +196,7 @@ Rust 后端是桌面 driver 的业务核心，SQL 收口在 Rust 侧，前端零
 
 - **能跑 → 走 Tauri 原生壳**：内核 / 数据库 / 加密 / 文件系统与桌面同一套，只是 `#[cfg(desktop)]` 分支
   要逐个过一遍（哪些是真正桌面专属的），`tauri.conf.json` 与平台工程按目标补。**安卓 / iOS 走这条**
-  （见 [移动端](MOBILE.md)、[上线计划](plans/2026-09-13-android-launch-plan.md)）。
+  （见 [移动端](MOBILE.md)、上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`））。
 - **跑不了 → 走 WebView 壳**：实现 `src/lib/platform/` 接口的新 driver（复用 `web.ts` 或按平台补
   JSBridge），`index.ts` 环境探测切换即可——业务与 UI 不动。**鸿蒙 ArkWeb 走这条**，但要如实标注
   它是**能力子集**（无真实文件系统 / 无原生加密 / 无插件运行时 / 无多设备同步）。

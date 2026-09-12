@@ -35,7 +35,7 @@
 | **P1** | 主题 / 外观自定义 | Obsidian 主题 | 扩展性雏形 | ✅ M3 |
 | **P2** | **文件夹 = 网盘**（文件库增强：拖拽上传 / 在线预览 / 搜索 / 下载 / 每夹统计） | FlowUs / Wolai / 有道 | 文件夹同时承载页面与文件，本地优先+去重+可加密形成差异化私域网盘 | ✅ M12（v1.33.0） |
 | **P2** | 数据库贯通：查询型数据库 / 保存视图 / ref 关联属性 / 公式汇总 | Notion / Dataview | 数据库从「表格」升级为「数据工作台」 | ✅ M13（v1.25.0） |
-| **P2** | 移动端适配 | 思源 / Obsidian | 多端能力 | M6 移动端（安卓/iOS）**执行中**——路线已定＝**Tauri 原生壳**（[上线计划](plans/2026-09-13-android-launch-plan.md) / [MOBILE.md](MOBILE.md)）；已升级为 **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
+| **P2** | 移动端适配 | 思源 / Obsidian | 多端能力 | M6 移动端（安卓/iOS）**执行中**——路线已定＝**Tauri 原生壳**（上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） / [MOBILE.md](MOBILE.md)）；已升级为 **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
 | **P2** | Markdown 无损往返 | Obsidian 存储哲学 | 消除「格式锁定」顾虑 | ✅ M1 |
 | **P2** | 属性驱动仪表盘聚合 | 思源数据库 + Dataview | 释放属性数据库价值 | ✅ M4 |
 | **P2** | PDF 导出 | 思源 / Obsidian | 导出矩阵补全 | ✅ M5 |
@@ -75,7 +75,7 @@
 复用 `$generateHtmlFromNodes` + `HTML_TEMPLATE` → 隐藏 iframe → `window.print()` 另存为 PDF。**数据库页 PDF**（v1.30.0）：数据库「⤓ PDF」把当前视图渲染为 HTML 表格并打印——抽取 `src/lib/print.ts` 供页面与数据库共用。
 
 ### M6 — 移动端适配（P2，执行中）
-Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线已定（2026-09-13）＝安卓/iOS 走 Tauri 原生壳（Rust 内核）**，WebView 壳路线只保留给 **Tauri 不可达的平台（当前只有鸿蒙 ArkWeb）**——理由与各平台对照见 [MOBILE.md](MOBILE.md)。**状态**：Android **CI 已跑通**（`.github/workflows/android.yml`），未签名 arm64 APK **53.41 MiB**（156.7 → 53.41，目标 55–70 MiB 已达成）；差**签名 / 真机验收 / 上架材料**，执行计划见 [移动端上线计划（Android 优先）](plans/2026-09-13-android-launch-plan.md)；窄屏 UI 布局与 43 项真实浏览器门禁已就位。
+Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线已定（2026-09-13）＝安卓/iOS 走 Tauri 原生壳（Rust 内核）**，WebView 壳路线只保留给 **Tauri 不可达的平台（当前只有鸿蒙 ArkWeb）**——理由与各平台对照见 [MOBILE.md](MOBILE.md)。**状态**：Android **CI 已跑通**（`.github/workflows/android.yml`），未签名 arm64 APK **53.41 MiB**（156.7 → 53.41，目标 55–70 MiB 已达成）；差**签名 / 真机验收 / 上架材料**，执行计划见 移动端上线计划（Android 优先）（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`）；窄屏 UI 布局与 43 项真实浏览器门禁已就位。
 
 ### M7 — 数据库视图扩展（P2）✅
 `DatabaseView` 八种视图（表格/画廊/看板/列表/日历/时间轴/目录/甘特图）；日历按 `date` 落格、时间轴按 `date` 排序、目录按页面层级、甘特图用开始/结束(或计划/实际 4 列)渲染网格填色。
@@ -333,7 +333,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 | 聚合能力 | 无汇总 | M4 仪表盘聚合（✅） |
 | 数据库视图 | 仅表格/画廊/看板 | M7 列表/日历/时间轴/目录（✅） |
 | 导出 | 缺 PDF | M5 PDF 导出（✅） |
-| 多端 | 仅桌面 | M6 移动端（安卓/iOS）**执行中**（Tauri 原生壳，[上线计划](plans/2026-09-13-android-launch-plan.md)）→ **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
+| 多端 | 仅桌面 | M6 移动端（安卓/iOS）**执行中**（Tauri 原生壳，上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`））→ **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
 | 新页面引导 | 直接空白编辑 | M8 引导层（✅） |
 | AI 写作 | 右侧聊天面板 + 草稿确认（M17） | **M18 内联起草**（✅，就地写 + 高亮待定块 + 快捷动作） |
 | 双链织网 | 仅普通双链 / 块引用 | **M19 未链接提及 + 双链别名 + 精确块链**（✅） |
