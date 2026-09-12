@@ -15,10 +15,14 @@ name: Android (build)
 # 3. 触发方式：手动（Actions 页 Run workflow），或本文件自身被改动时跑一次
 #    （这样落地就能立刻验证，不必先要 dispatch 权限）。
 #
-# 4. 首次跑（run #1，2026-09-12）在 OpenSSL 的 `make install_dev` 上翻了一个**只会在 Linux
-#    上暴露的坑**：NDK 没有 `aarch64-linux-android-ranlib` 这个前缀名 → Error 127。
-#    修法见 "Pick an NDK" 步骤里的注释。教训是：**"换个环境构建"必须真的跑一遍**，
-#    不能靠"Linux 上没有那些 Windows 工具链问题"推断——那一句在本 workflow 里被实测打脸了。
+# 4. 前两次跑各翻出一个**只在 Linux 上暴露**的坑，都不是"换 NDK 版本"能解决的：
+#    run #1：OpenSSL 的 `make install_dev` → `aarch64-linux-android-ranlib: not found`（Error 127），
+#            因为 NDK 只提供 llvm-ar / llvm-ranlib，没有那种前缀名。修法见 "Pick an NDK" 步骤。
+#    run #2：mupdf-sys 的 bindgen **不带 --target**，用宿主 triple 解析 mupdf 头文件，
+#            读到宿主 glibc 的 features-time64.h → `bits/wordsize.h` not found。
+#            修法见 "给 bindgen 指定 Android target" 步骤。
+#    教训：**"换个环境构建"必须真的跑一遍**——原注释里那句"Linux runner 上这些问题都不存在"
+#    被实测打脸了：问题确实不一样，但不是"没有"。
 
 on:
   workflow_dispatch:
@@ -108,6 +112,33 @@ jobs:
           done
           echo "$WRAP" >> "$GITHUB_PATH"
           echo "已就绪：$WRAP/{ar,ranlib,strip,nm}"
+
+      - name: 给 bindgen 指定 Android target + NDK sysroot（mupdf-sys 要用）
+        # run #2 的红灯。read 过 mupdf-sys 0.8.0 的 build.rs 才敢下这个结论：
+        # 它的 find_clang_sysroot() 只给 **emscripten** 返回 sysroot，别的 target 一律
+        # `Ok(None)`，而 generate_bindings() 里除了 sysroot 之外**从不传 --target**。
+        # 于是 bindgen 拿**宿主** triple 去解析 mupdf/fitz.h，读到宿主 glibc 的头：
+        #   /usr/include/features-time64.h:20:10: fatal error: 'bits/wordsize.h' file not found
+        # 而 features-time64.h / bits/wordsize.h 都是 glibc 专有，Android 的 bionic 里根本没有
+        # （NDK sysroot 实测：usr/include/bits 有 42 个文件，但没有 wordsize.h）——
+        # 所以这条**不是"缺头文件"，是"指错了 target"**。
+        #
+        # bindgen 唯一的口子就是 BINDGEN_EXTRA_CLANG_ARGS_<TARGET>（README：按 target 区分、
+        # 优先级高于不带后缀的那个）。这里从这个口子把 target 与 sysroot 递进去。
+        # 两个拼写都写（bindgen 两种都认）；**不设通用那个**，免得影响宿主侧 build script。
+        #
+        # 本机已用 NDK clang 按同一组参数试编过 <time.h>/<stdint.h>/<sys/types.h> 等，exit=0，
+        # 证明这套参数自足、不依赖宿主 glibc。
+        run: |
+          set -e
+          SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          test -d "$SYSROOT/usr/include" || { echo "找不到 NDK sysroot: $SYSROOT"; exit 1; }
+          ARGS="--target=aarch64-linux-android24 --sysroot=$SYSROOT -isystem $SYSROOT/usr/include -isystem $SYSROOT/usr/include/aarch64-linux-android"
+          {
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=$ARGS"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=$ARGS"
+          } >> "$GITHUB_ENV"
+          echo "BINDGEN args = $ARGS"
 
       - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
