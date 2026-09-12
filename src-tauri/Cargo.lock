@@ -4865,7 +4865,6 @@ dependencies = [
  "minisign-verify",
  "mupdf-sys",
  "native-tls",
- "openssl",
  "percent-encoding",
  "rand_core 0.6.4",
  "regex",

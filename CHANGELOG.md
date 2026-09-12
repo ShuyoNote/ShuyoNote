@@ -69,6 +69,20 @@
 
 ### 变更
 
+- **聚合邮箱收窄为桌面专属（移动端不提供）**。它走 `native-tls`（桌面用系统 TLS），
+  移动端要为此从源码交叉编译一份 OpenSSL，而移动端本就不做这个功能。
+  - Rust：`mod email` / `mod smtp` 与 **23 个邮箱命令**全部 `#[cfg(desktop)]`；邮箱那组依赖
+    （`mailparse` / `async-imap` / `tokio-native-tls` / `native-tls` / `encoding_rs`）移进
+    `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`。
+    **实测 Android 侧 `cargo tree -i native-tls` 现在是「nothing to print」**，桌面侧不变。
+  - 前端新增**具体能力**判定 `emailSupported()`（`src/lib/platform/capabilities.ts`，纯函数 + 5 条单测），
+    邮箱面板与设置区改用它。**刻意没有动 `isDesktopPlatform()`**：它的语义是"有没有 Rust 内核"，
+    Tauri 的移动端为真，而同步/加密/插件在移动端是要保留的——拿它当"桌面专属"的近似会误伤。
+  - ⚠️ 澄清一条**我先前判断错的说法**：收窄邮箱**并不能**让 Android 不再需要编译 OpenSSL。
+    实测 `cargo tree -i openssl-sys`（Android）显示，去掉邮箱后 OpenSSL 仍由
+    **`libsqlite3-sys`（SQLCipher 的加密后端）** 拉进来。所以"移动端构建要 Perl/make"这组卡点
+    原样还在，正解是换构建环境（CI 用 Linux runner），不是砍功能。
+
 - **OCR 语言包改为按需下载（安装包再减约 30 MiB，Android 上约 60 MiB）**。
   两个语言包（`chi_sim` 19.2 + `eng` 10.4 = 29.6 MiB）原先随包分发，而实测它们在 Android 上
   **会被装两遍**（APK 的 `assets/` 一份 + `.so` 里 Tauri 内嵌的前端副本一份；桌面安装包同样带着）。

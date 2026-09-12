@@ -13,7 +13,13 @@ mod db;
 // 移动端也注册着，只是永远为空）；真正桌面专属的是 `plugin()` / `attach()`，
 // 因为 `deep-link` 插件的移动实现是另一套 API（`on_open_url` 在移动端不存在）。
 mod deeplink;
+// 聚合邮箱（含发信）：**桌面专属**（2026-09-13 定）。它走 `native-tls`，而移动端为此要从
+// 源码交叉编译 OpenSSL；移动端本就不提供该功能（`EmailPanel` 里早就写着"桌面版独有能力"），
+// 所以模块连同依赖一起收窄到桌面。前端侧用 `emailSupported()` 判断，不要用
+// `isDesktopPlatform()` —— 后者在同步/插件/加密处表示"有没有 Rust 内核"，移动端是要有的。
+#[cfg(desktop)]
 mod email;
+#[cfg(desktop)]
 mod smtp;
 mod graph;
 mod models;
@@ -252,9 +258,12 @@ pub fn run() {
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
-            // 会节流 JS timer，所以放在 Rust 侧做）。
-            app.manage(email::EmailPollState::default());
-            email::start_email_poller(app.handle().clone());
+            // 会节流 JS timer，所以放在 Rust 侧做）。**桌面专属**，见 mod email 的说明。
+            #[cfg(desktop)]
+            {
+                app.manage(email::EmailPollState::default());
+                email::start_email_poller(app.handle().clone());
+            }
             // Seed a bundled demo plugin so the plugin system has something to load.
             let _ = plugins::ensure_demo_plugin(&app.handle());
 
@@ -325,28 +334,53 @@ pub fn run() {
             commands::get_page,
             commands::create_page,
             commands::create_folder,
+            // 聚合邮箱命令：**桌面专属**（与 mod email 同一条边界）。移动端这些命令**不存在**，
+            // 前端用 `emailSupported()` 把入口隐藏掉，不会去调它们。
+            #[cfg(desktop)]
             email::email_save_as_note,
+            #[cfg(desktop)]
             email::email_fetch_inbox,
+            #[cfg(desktop)]
             email::email_fetch_all,
+            #[cfg(desktop)]
             email::email_fetch_all_months,
+            #[cfg(desktop)]
             email::email_save_uid,
+            #[cfg(desktop)]
             email::email_get_body,
+            #[cfg(desktop)]
             email::email_get_html,
+            #[cfg(desktop)]
             email::email_get_message,
+            #[cfg(desktop)]
             email::email_get_attachments,
+            #[cfg(desktop)]
             email::email_save_account,
+            #[cfg(desktop)]
             email::email_get_account,
+            #[cfg(desktop)]
             email::email_list_accounts,
+            #[cfg(desktop)]
             email::email_remove_account,
+            #[cfg(desktop)]
             email::email_unseen_count,
+            #[cfg(desktop)]
             email::email_list_folders,
+            #[cfg(desktop)]
             email::email_list_months,
+            #[cfg(desktop)]
             email::email_set_flag,
+            #[cfg(desktop)]
             email::email_mark_read,
+            #[cfg(desktop)]
             email::email_move_to_trash,
+            #[cfg(desktop)]
             email::email_move_many_to_trash,
+            #[cfg(desktop)]
             email::email_mark_many_read,
+            #[cfg(desktop)]
             email::email_send,
+            #[cfg(desktop)]
             email::email_test_connection,
             updates::fetch_update_manifest,
             commands::create_database,

@@ -61,28 +61,38 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
 # via src/pdf_native.rs.
 mupdf-sys = "0.8.0"
-# 聚合邮箱：邮件解析（mailparse）+ IMAP 拉取。
-# IMAP 用 async-imap（契合 app 已是 tokio；支持后续 IDLE/推送），TLS 走 tokio-native-tls（Windows Schannel）。
+tauri-plugin-http = "2"
+
+# 聚合邮箱（**桌面专属**，2026-09-13 定）：邮件解析（mailparse）+ IMAP 拉取
+# （async-imap，契合 app 已是 tokio），TLS 走 tokio-native-tls（桌面走系统 TLS：
+# Windows Schannel / macOS Security.framework / Linux OpenSSL）。
+#
+# **移动端不提供该功能**，所以这一组连同 `email` / `smtp` 模块一起收窄到桌面（见下）。
+# 收窄的直接收益：移动端不再需要 `native-tls`，也就不再需要为它单独引一份 OpenSSL。
+#
+# ⚠️ **但它不等于"移动端不用编译 OpenSSL"**（这条我先前判断错过一次）：SQLCipher 仍然
+# 需要一个加密后端，而 Android 侧用的是 libsqlite3-sys 的 vendored-openssl，仍要从源码构建
+# OpenSSL。见下面 [target.'cfg(target_os = "android")'] 那段。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 mailparse = "0.15"
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 tokio-native-tls = "0.3"
 native-tls = "0.2"
 encoding_rs = "0.8"
-tauri-plugin-http = "2"
 
 [dev-dependencies]
 # For async integration tests (embed_text network round-trip / search_semantic ranking).
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
-# Android 专属：native-tls 在 Android 上映射到 OpenSSL（桌面 Windows 走 Schannel 不受影响），
-# 交叉编译需要一个 Android 版 OpenSSL。这里用 vendored 从源码构建（借助 NDK 的 clang + Perl），
-# 从而不改动 native-tls 的调用代码，各平台行为一致。仅 Android 生效，桌面/Web 构建不受影响。
-[target.'cfg(target_os = "android")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-# SQLCipher 在 Android 上同样依赖 OpenSSL。启用 libsqlite3-sys 官方提供的
-# vendored-openssl 变体，让它复用上面这份从源码构建的 OpenSSL
-# （它经 openssl-sys 的 DEP_OPENSSL_INCLUDE 取得头文件，并静态链接 libcrypto）。
+# Android 专属：**SQLCipher 需要一个加密后端**，这里用 libsqlite3-sys 官方提供的
+# vendored-openssl 变体，从源码构建 OpenSSL（借助 NDK 的 clang + Perl），并静态链接 libcrypto。
 # features 是可累加的，故这里与 [dependencies] 中的声明合并后仅对 Android 生效。
+#
+# ⚠️ 这份 OpenSSL **仍然必需**：邮箱已经收窄为桌面专属，但 SQLCipher 还是靠它。
+# 所以「移动端不做邮箱 ⇒ 不用编译 OpenSSL」是错的（我先前就是这么判断错的）。
+# 它的构建需要一个 **MSYS 类**的 Perl（原生 Windows Perl 会被 OpenSSL 的 Configure 拒绝），
+# 详见 docs/plans/2026-09-13-android-launch-plan.md §0.0。
+[target.'cfg(target_os = "android")'.dependencies]
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 # 体积（2026-09-13，为 Android 上线而加；实测依据见

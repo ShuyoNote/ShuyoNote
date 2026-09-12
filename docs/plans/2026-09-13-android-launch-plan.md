@@ -234,10 +234,12 @@ $env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
 
 1. 先试 **MSYS2**：`pacman -S make pkg-config perl`，用它提供的 `make` + `pkg-config` + `perl`
    （MSYS2 的 make 对反斜杠路径的处理比 Git 精简版更接近 mupdf 的假设）——**最可能一次通**。
-2. 或者绕开 OpenSSL：把「聚合邮箱」按平台收窄（见下面那条决策），Android 就不需要编译 OpenSSL，
-   卡点一整个消失，工具链只剩卡点二。
+2. ~~或者绕开 OpenSSL：把「聚合邮箱」按平台收窄，Android 就不需要编译 OpenSSL，卡点一整个消失。~~
+   ❌ **这条不成立**（我先前判断错过，见 §8.1 的纠正）：邮箱已收窄为桌面专属，但 **SQLCipher
+   仍要从源码构建 OpenSSL**，卡点一原样还在。**别再把"砍功能"当成解卡点一的手段。**
 3. CI 里用官方 `tauri-apps/tauri-action` 或 Ubuntu runner 交叉编译——**Linux runner 上没有这些
    Windows 工具链问题**，所以 CI 出包比本地出包更稳（本地构建只需跑通给自己装机用）。
+   **这也是目前最推荐的一条**：它同时解决卡点一与卡点二，且不需要往开发机塞工具链。
 
 #### 0.1 要做的事
 
@@ -350,23 +352,34 @@ $env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
 
 ## 八、待决策（卡在别人身上的两件事，先说清选项）
 
-### 8.1 邮箱要不要保留在 Android 上？
+### 8.1 邮箱要不要保留在 Android 上？—— **已拍板：不做移动端**（2026-09-13）
 
-**这不是小事，它决定了工具链的复杂度**：Android 上的 OpenSSL **只服务于「聚合邮箱」**
-（`cargo tree` 实测：`native-tls` / `openssl` 是 `shuyonote` 自己直接依赖的，只有 IMAP 用它；
-reqwest 走的是 rustls）。而 OpenSSL 的交叉编译正是 §0.0 卡点一的全部来源。
+**用户决定：聚合邮箱不做移动端。** 已落地（收窄为桌面专属）：
 
-| 选项 | 收益 | 代价 |
-|---|---|---|
-| **A. Android 也保留邮箱** | 功能完整 | 必须解决 vendored OpenSSL 交叉编译（MSYS2 Perl + pkg-config），CI 也要固定这套环境 |
-| **B. 邮箱收窄为桌面专属** | 卡点一整个消失；`.so` 更小；CI 更简单 | Android 上没有聚合邮箱 |
+- Rust：`mod email` / `mod smtp` 与 **23 个邮箱命令**全部 `#[cfg(desktop)]`；邮箱依赖
+  （`mailparse` / `async-imap` / `tokio-native-tls` / `native-tls` / `encoding_rs`）移进
+  `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`。
+- 前端：新增**具体能力**判定 `emailSupported()`（`src/lib/platform/capabilities.ts`，纯函数可测），
+  邮箱面板/设置区改用它。**没有**动 `isDesktopPlatform()` —— 它的语义是"有没有 Rust 内核"，
+  移动端为真，而同步/加密/插件在移动端是要保留的。
+- 实测：Android 侧 `cargo tree -i native-tls` 现在是 **nothing to print**（彻底移除）；
+  桌面侧仍在。`cargo check --lib` 与 `cargo test --lib`（245/0）通过。
 
-**倾向 B**，理由是这个仓库**自己已经这么声明过**：`EmailPanel.tsx:464` 写着
-「邮箱是**桌面版独有**能力。web 版调用它只会拿到…」，只是 `isDesktopPlatform()` 目前把
-Tauri 全家（含 Android）都算作桌面，所以这条声明还没落到 Android 上。
-把它落下去，是**让代码与既有声明一致**，不是新开一条产品边界。
-（注意：**不要**因此去改 `isDesktopPlatform()` 本身——插件、同步、原生 PDF 在 Android 上
-都是要保留的，它们同样用它判断。）
+#### ⚠️ 但**卡点一没有因此消失**——我先前那句判断是错的
+
+原先这里写「邮箱收窄 ⇒ 卡点一整个消失」，**这是错的**。Android 的 OpenSSL **不只**服务邮箱：
+
+```
+openssl-sys
+├── libsqlite3-sys ← SQLCipher（加密后端）也用，features 里确有 vendored-openssl
+└── native-tls     ← 邮箱（已收窄掉）✅
+```
+
+收窄邮箱去掉了 `native-tls` 与 `openssl`（crate），但 **SQLCipher 仍要从源码构建 OpenSSL**，
+所以**Perl / make / pkg-config 那组卡点原样还在**。实测确认：收窄后 Android 侧
+`cargo tree -i openssl-sys` 只剩 `libsqlite3-sys → rusqlite → shuyonote` 一条。
+
+**所以卡点一的正解不是"砍功能"，而是"换个构建环境"**——见 §8.2。
 
 ### 8.2 Android 构建环境怎么钉
 
@@ -400,8 +413,19 @@ Tauri 全家（含 Android）都算作桌面，所以这条声明还没落到 An
 周期：普通 **约 30 个工作日**；可加急（20 / 10 / 5 / 3 工作日，加急费约 1000–5000 元）。
 **个人可以申请**，流程与企业一致。
 
-> 行动：**今天**确定软著全称（建议与 App 显示名一致：`数友笔记 ShuyoNote` 或纯中文名），
-> 然后从仓库 `docs/` 与 README 生成说明书初稿、按格式排出 60 页源代码文档。
+> **已定（2026-09-13）**：软件全称 ＝ **`ShuyoNote 数友笔记`**，登记版本 **V1.90.1**。
+> 材料与流程落在 [`docs/softcopyright/`](../softcopyright/README.md)：
+> - **源代码文档**：`node scripts/software-copyright-doc.mjs` → 60 页 × 50 行、页眉带全称+版本、
+>   页码连续，**脚本自检格式**（不满足就非零退出）；浏览器打印成 PDF 即可提交。
+>   提交范围内被裁的长行只有 13/3000（最长原长 158），可忽略。
+> - **说明书草稿**：[`docs/softcopyright/说明书.md`](../softcopyright/说明书.md)
+>   —— 内容按 V1.90.1 的**实际发布状态**写（macOS 暂未提供安装包、Android 尚未发布，都已如实标注），
+>   仍需你补约 14 张界面截图与著作权人信息。
+> - 材料清单与两个高频补正的坑见该目录的 README。
+>
+> ⚠️ **一处商店会卡的点**：软著全称 `ShuyoNote 数友笔记` 与安装包里的 `productName`
+> （`ShuyoNote`）是**包含关系**（安全方向），但注册时仍要以各家商店当期规则确认；
+> 必要时改的是**商店后台的应用名**，不是 `productName`。
 
 ### 9.2 商店开发者账号（需逐家核对当前规则）
 
