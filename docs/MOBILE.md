@@ -1,20 +1,69 @@
-# ShuyoNote 移动端适配（M16 全端通吃 · WebView 壳）
+# ShuyoNote 移动端（M6 / M16）
 
-> 路线：**平台无关核心 + 可插拔平台壳**（见 `docs/plans/2026-08-24-cross-platform-plan.md`）。移动端（安卓 / iOS / 鸿蒙）复用 **Web 版**（`web.ts` + sql.js WASM）作为核心，套进各平台 WebView 壳，通过 **JSBridge** 补齐浏览器缺失的系统能力。
+> **路线已定（2026-09-13）**：
+> **移动端 = Tauri 原生壳（Rust 内核）**；**WebView 壳路线只保留给 Tauri 不可达的平台**
+> （当前只有**鸿蒙 ArkWeb**）。
+>
+> 执行计划见 [移动端上线计划（Android 优先）](plans/2026-09-13-android-launch-plan.md)。
 
-## 1. 技术路线（B：WebView 壳，复用 Web 版）
+## 0. 为什么是 Tauri 原生壳（这条决定要能扛住复读）
 
-移动端的核心功能（编辑器 / Lexical / 数据库 / 属性 / 检索 / PDF / 版本 / 备份 / 同步）**已由 Web 版全部实现**（`src/lib/platform/web.ts` 是从 Tauri 抽象出来的浏览器宿主）。移动端壳 = 在各平台 WebView 里加载 `dist-web` 构建产物 + 注入最小 JSBridge。
+此前本文档写的是「技术路线 B：WebView 壳，复用 Web 版」（加载 `dist-web` + sql.js WASM +
+IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理由是**产品承诺**而不是偏好：
 
-- **安卓**：`android.webkit.WebView` 加载 `dist-web/index.html`。
-- **iOS**：`WKWebView` 加载同一份。
-- **鸿蒙**：`ArkWeb`（见 `docs/鸿蒙桌面版计划.md`，方案 1 一致）。
+| 能力 | Tauri 原生壳 | WebView 壳（Web 内核） |
+|---|---|---|
+| 加密 | **SQLCipher 真加密**（与桌面同一套） | 无（数据在 IndexedDB 里） |
+| 数据落地 | 应用私有目录里的**真实文件**，可备份、可搬移 | **浏览器存储**，会被系统回收 |
+| 多设备同步 | ✅ 与桌面同一套 | ❌ `web.ts` 的 `sync_now`/`sync_workspace` 是 stub |
+| 插件 | ✅ 完整（Boa 运行时） | ❌ **根本性限制**：浏览器跑不了 Rust `boa_engine`，需重做 JS 沙盒（M16.3） |
+| PDF | 原生 mupdf + pdf.js 双引擎 | 只有 pdf.js |
+| 体积 | 大（需专门压，见计划里的体积账） | 小 |
 
-> 这样一套前端（`web.ts`）同时跑桌面（Tauri）、浏览器、安卓、iOS、鸿蒙——无需为每个平台重写。
+本应用的核心承诺是**本地优先 / 数据主权 / 离线**。把用户笔记放进**会被系统回收的浏览器存储**里，
+与这个承诺是直接冲突的——所以"WebView 壳更省事"不能作为选它的理由：它省下的是体积，
+而**体积在 Tauri 原生壳里是有解的**（strip + OCR 语言包按需下载），功能缺失却是无解的。
 
-## 2. MobileBridge 接口（`src/lib/platform/mobile.ts`）
+> 一句判据：**只要这个平台能跑 Tauri，就走 Tauri 原生壳。** 走不了才退到 WebView 壳，
+> 并且要如实标注该平台是**能力子集**。
 
-WebView 壳在 `window.__SHUYONOTE_MOBILE__` 注入以下**可选**桥接方法（缺任一都回退浏览器默认，保证降级可用）：
+## 1. 各平台路线
+
+| 平台 | 路线 | 状态 |
+|---|---|---|
+| **Android** | **Tauri 原生壳** | 已能构建出 APK（未签名）；见上线计划 |
+| **iOS** | **Tauri 原生壳** | 未开始；**环境结论见 §5**（那台 Mac 上 Tauri iOS 全链路不可行，需先解决工具链） |
+| **鸿蒙** | **WebView 壳（ArkWeb）** | Tauri 不可达 → 保留本文档原有的壳路线；见 [鸿蒙桌面版计划](鸿蒙桌面版计划.md) 与 [鸿蒙 Web 天花板](harmony-web-ceiling.md) |
+| **浏览器** | Web 平台（PWA） | ✅ M16.1b 已落地，是首个 Web 壳 |
+
+## 2. Android / iOS：Tauri 原生壳
+
+内核与桌面**同一套 Rust**，所以「移动端能不能用某功能」的问题，答案通常等于
+「那个功能有没有桌面专属假设」。已经做过的平台工作：
+
+- **Rust 平台分支已就位**：`#[cfg(desktop)]` 7 处（`lib.rs` / `deeplink.rs` / `windows.rs`）。
+  `single-instance` 只为桌面实现（移动系统本身保证单实例）；`updater` 桌面专属
+  （**移动端更新走应用商店 / 重新下载**，见上线计划的 Phase 2）。
+- **Android 交叉编译依赖已就位**：`[target.'cfg(target_os = "android")'.dependencies]`
+  里 `openssl` vendored + `rusqlite` 的 `bundled-sqlcipher-vendored-openssl`。
+- **加密不需要 Keystore 集成**：`security.rs` 的设计是**口令派生、密钥不落盘、只活在会话内存**
+  （E1 的核心不变式），所以移动端没有"系统钥匙串"这一层要做。
+- **UI 移动端布局已做且有门禁**：见 §4。
+
+**待做**（详见上线计划的阶段划分）：体积压缩、签名与密钥保管、版本号联动、CI 出包、
+应用内"检查更新"、真机验收、上架材料。
+
+## 3. 鸿蒙：WebView 壳（ArkWeb）
+
+鸿蒙是当前**唯一**保留 WebView 壳路线的平台。壳 = `ArkWeb` 加载 `dist-web` 构建产物 +
+注入最小 JSBridge。
+
+`dist-web` 由 `src/lib/platform/web.ts`（从 Tauri 抽象出来的浏览器宿主）驱动，
+它已经是完整可用的 Web 实现（M16.0b–M16.1b：真实 SQLite(sql.js WASM) / 属性数据库 /
+版本历史 / 文件导入导出 / 块引用反链 / 整库备份 / PWA）。
+
+**MobileBridge 接口**（`src/lib/platform/mobile.ts`）：壳在 `window.__SHUYONOTE_MOBILE__`
+注入以下**可选**方法（缺任一都回退浏览器默认，保证降级可用）：
 
 | 方法 | 用途 | 无 bridge 时 |
 |---|---|---|
@@ -23,33 +72,23 @@ WebView 壳在 `window.__SHUYONOTE_MOBILE__` 注入以下**可选**桥接方法�
 | `readAttachmentBytes(id)` | 读附件字节（base64） | 无（附件走 blob） |
 | `saveBytes(fileName, base64)` | 保存文件到系统/分享面板 | 无 |
 
-`web.ts::createWebPlatform` 的 `opener.openUrl` / `asset.convertFileSrc` 已优先用 bridge（见 `d237c64`）。其余平台能力（dialog/event/webview）在 WebView 里用浏览器原生（`web.ts` 已实现）。
+`web.ts::createWebPlatform` 的 `opener.openUrl` / `asset.convertFileSrc` 已优先用 bridge
+（`d237c64`）。其余平台能力（dialog/event/webview）在 WebView 里用浏览器原生实现。
 
-## 3. 各平台壳（原生工程，待补）
+壳宿主要做的三件事：
 
-> **环境结论（2026-09）**：**Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当前 Mac（无 Homebrew + 系统 Ruby 2.6）**不可行**——它会逐个要求 `brew` 装系统工具（xcodegen / libimobiledevice / …），且强依赖 **CocoaPods**（`pod install`，在旧 Ruby 上安装极慢/易卡）。已装好：Xcode 26.6 + iOS Rust targets + Tauri CLI（真实 node）+ xcodegen 2.46.0。**渲染验证建议用 WebView 壳路径**（复用 Web 版，无需 Tauri 原生全链路）；Tauri 原生 iOS 留给具备 Homebrew / 正常工具链的环境。
->
-> 移动端适配以 **M16 平台无关核心 + 可插拔平台壳**为路线：核心 = Web 版（`web.ts` + sql.js WASM），壳 = 各平台 WebView + 最小 JSBridge。
+1. 加载 `dist-web/index.html`；
+2. 注入 `window.__SHUYONOTE_MOBILE__`（由原生 JSBridge 实现）；
+3. 处理文件选择（`dialog.open` 在 WebView 里走 `<input type=file>`，`web.ts` 已支持 `pickBrowserFiles`）。
 
-### 原生壳（安卓 WebView / iOS WKWebView / 鸿蒙 ArkWeb）
+> ⚠️ **壳路线是能力子集**，且这是**根本性**的（不是"以后再补"）：真实文件系统、原生 OCR/加密、
+> 原生 PDF、插件运行时都不可用；数据落在浏览器存储里。这些边界在
+> [harmony-web-ceiling.md](harmony-web-ceiling.md) 里逐条写明——**对外描述该平台的可用范围时，
+> 要照它说，不要含糊**。
 
-- **宿主**：
-  1. 加载 `dist-web/index.html`（Web 层复用 Web 版构建产物）。
-  2. 注入 `window.__SHUYONOTE_MOBILE__`（openUrl / convertFileSrc / saveBytes 由原生 JSBridge 实现）。
-  3. 处理文件选择（`dialog.open` 在 WebView 里走 `<input type=file>`，`web.ts` 已支持 `pickBrowserFiles`）。
-- **数据持久化**：Web 版用 sql.js WASM + IndexedDB，移动端 WebView 的 IndexedDB 天然可用；附件走 `blobStore`（IndexedDB）。
-- **同步**：`web.ts` 的 `sync_now`/`sync_workspace` 是浏览器 stub（Web 版不支持多设备同步）；移动端同步需**原生 JSBridge 或走鸿蒙 ArkTS 原生同步客户端**（见鸿蒙方案阶段 2）。
+## 4. 窄屏导航（浮层化）· 所有移动端共用
 
-## 4. 建议实施顺序
-
-1. **（已做）** `web.ts` + MobileBridge 抽象（bridge 探测 + openUrl/convertFileSrc 优先）——`d237c64`。
-2. **WebView 壳宿主**：每个平台一个最小 WebView 加载 `dist-web` + 注入 bridge（需原生工具链）。
-3. **原生 JSBridge**：实现 `convertFileSrc`（虚拟文件/自定义 scheme）+ `saveBytes`（保存/分享）。
-4. **同步**：移动端复用 `web.ts` 的 stub 或接入原生同步客户端（鸿蒙已有方案）。
-
-## 4.1 窄屏导航（浮层化）
-
-窄屏（≤768px）下三处「常驻栏」全部改成浮层，把宽度还给内容：
+窄屏（≤768px）下三处「常驻栏」全部改成浮层，把宽度还给内容（`src/hooks/useMobile.ts` 判窄屏）：
 
 | 元素 | 桌面 | 窄屏 |
 |---|---|---|
@@ -57,42 +96,47 @@ WebView 壳在 `window.__SHUYONOTE_MOBILE__` 注入以下**可选**桥接方法�
 | 侧栏（页面树） | 常驻列 | 左侧抽屉 + 遮罩，选完自动收起 |
 | 右抽屉（AI / 评论 / 目录） | 固定宽侧板，主区 `padding-right` 让位 | 全屏叠加，**让位内边距清零**（否则主区内容盒被挤成 0 宽） |
 
-## 5. 测试与验收
+`useMobile` 进入窄屏时收起侧栏**但不写 localStorage**——那是屏幕尺寸导致的布局状态，
+不该覆盖桌面端的侧栏偏好（手机上开过一次、桌面端下次启动侧栏就是收起的，这个 bug 真实发生过）。
 
-### 5.1 单测
+## 5. iOS 环境结论（2026-09，仍然有效）
 
-- `pnpm test`（vitest）：`mobile.test.ts` 验证 bridge 探测 / 回退 / 优先；`useMobile.test.ts` 验证窄屏判定；`useGlobalShortcuts.test.ts` 验证侧栏快捷键守卫；`activity.test.ts` 验证侧栏开合的持久化语义 —— **109 passed**。
-- 每个平台壳在真实设备上：打开外链走系统、附件可读、编辑/数据库/检索正常。
-- 同 Web 版回归（`scripts/smoke-web.mjs`）。
+**Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当时的 Mac 上
+（无 Homebrew + 系统 Ruby 2.6）**不可行**：它会逐个要求 `brew` 装系统工具
+（xcodegen / libimobiledevice / …），且强依赖 **CocoaPods**（`pod install` 在旧 Ruby 上
+极慢/易卡）。已装好的只有：Xcode 26.6 + iOS Rust targets + Tauri CLI（真实 node）+ xcodegen 2.46.0。
 
-### 5.2 布局验收（真实浏览器）
+**结论**：做 iOS 之前先解决这台 Mac 的工具链（Homebrew / 正常 Ruby），
+否则会重新踩一遍上面这些。Android 不受此影响。
+
+## 6. 测试与验收
+
+### 6.1 单测
+
+`pnpm test`（vitest）：`mobile.test.ts` 验证 bridge 探测 / 回退 / 优先；`useMobile.test.ts`
+验证窄屏判定；`useGlobalShortcuts.test.ts` 验证侧栏快捷键守卫；`activity.test.ts`
+验证侧栏开合的持久化语义。
+
+### 6.2 布局验收（真实浏览器，43 项断言）
 
 ```bash
 pnpm dev:web                # 另开一个终端
 pnpm test:mobile-layout     # 有失败即非零退出
 ```
 
-`scripts/verify-mobile-layout.mjs` 用真实 Chromium 在 **390×844（手机）** 与 **1280×800（桌面）** 两种视口下断言 43 项行为，覆盖的全是**单测够不到的交叉地带**（CSS 层叠 + matchMedia + z-index + localStorage）：
+`scripts/verify-mobile-layout.mjs` 用真实 Chromium 在 **390×844（手机）** 与 **1280×800（桌面）**
+两种视口下断言 43 项行为，覆盖的全是**单测够不到的交叉地带**（CSS 层叠 + matchMedia +
+z-index + localStorage）：侧栏默认收起、竖条浮层化且主区拿到全宽、开合按钮在窄屏与桌面都必须常驻、
+点遮罩关闭、抽屉打开时遮罩挡住右侧悬浮工具栏、右面板打开时主区 `padding-right=0` 且不超出视口、
+移动端自动收起**不写** localStorage。
 
-| 断言 | 为什么必须由真实浏览器验 |
-|---|---|
-| 侧栏默认收起（`display:none`） | `.sidebar{display:flex}` 会压过 `[hidden]{display:none}`，元素照样可见且不报错 |
-| 左侧竖条默认收起、主区拿到全宽 390px | 竖条收起靠 `translateX(-100%)`，**`display` 仍是 flex**——判"可见"必须看几何（右边缘是否在视口内），看 display 会漏 |
-| 竖条展开是浮层，不挤主区宽度 | 常驻 48px 在 390px 视口上吃掉 12%；浮层化后内容明显变宽（标题从折两行变一行） |
-| 窄屏显示开合按钮 / **桌面也常驻**（2026-09 反转） | 媒体查询只在真实视口下求值；原先桌面 `display:none` 的理由是"点活动图标也能开合"，但那是隐式约定（提示只有 hover 才出现），拖分隔条收起侧栏后**没有任何可见入口**——现在按"收起来还能找回来"断言它可见，并真的点一遍（收起 → 再展开） |
-| 点按钮 → 抽屉滑入 + 遮罩出现 | 触屏没有 hover，收起后没有入口是"能用但没人找得到" |
-| 点遮罩 → 抽屉关闭 | 遮罩中心点被侧栏盖住，交互层级（z-index）必须实测 |
-| 抽屉打开时遮罩挡住右侧悬浮工具栏 | 同上，`elementFromPoint` 才能判定 |
-| 打开 AI / 评论 / 目录面板时，主区 `padding-right=0` 且不超出视口 | 桌面端的让位规则（`body.is-ai-open .main`）在窄屏会把主区内容盒挤成 0 宽，并把 `.main` 顶出 `.app-body`——flex 项缩不到 padding 以下 |
-| 移动端自动收起**不写** localStorage | 写了会污染桌面端偏好（手机上开过一次，桌面端下次启动侧栏就是收起的） |
+> 该脚本本身验证过「能失败」：临时删掉 `.sidebar[hidden]` 兜底规则后报 6 项失败并非零退出；
+> 去掉窄屏的 `padding-right: 0` 后主区被顶成 380px（视口 342px）。
 
-> 两个断言都验证过"确实会失败"：删掉 `.sidebar[hidden]` 兜底规则 → 6 项失败、退出码 1，直指 `display=flex`；去掉窄屏的 `padding-right: 0` → 主区宽度被顶成 380px（视口 342px）、`right=428`。
+### 6.3 真机验收
 
-前置：本机有 Chrome/Chromium（`PUPPETEER_EXECUTABLE_PATH` 或 `CHROME_PATH` 可指定），以及已启动的 web 开发服务。`--shots <dir>` 可顺便存图。依赖只用 `puppeteer-core`（不含浏览器下载）。
-
-> 该脚本本身验证过「能失败」：临时删掉 `.sidebar[hidden]` 兜底规则后，它会报 6 项失败并以非零码退出，直指 `display=flex`。
-
-## 6. 边界（诚实标注）
-
-- **WebView 壳不改变内核是浏览器**（见 `docs/harmony-web-ceiling.md`）：真实文件系统、系统级性能、原生 OCR/加密 / mpdf 等桌面原生能力不可用；这些在移动端以 Web 版能力为准。
-- **同步**：Web 版不支持多设备同步（`web-sync-boundary.md`），移动端若要同步需原生实现。
+- **Tauri 原生壳（Android/iOS）**：见 [上线计划](plans/2026-09-13-android-launch-plan.md) 的
+  Phase 1 清单（含**最高风险项：Android 选文件 SAF**——`import_attachment_files` 走
+  `std::fs::read(path)`，而 `open()` 可能返回 `content://`）。
+- **WebView 壳（鸿蒙）**：每个壳在真实设备上验「打开外链走系统、附件可读、
+  编辑/数据库/检索正常」，并跑 `scripts/smoke-web.mjs` 回归。

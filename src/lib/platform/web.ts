@@ -6,8 +6,12 @@ import { DEFAULT_COVER } from "../covers";
 
 // Browser (non-Tauri) implementation of the Platform drivers.
 //
-// This makes the app runnable in a plain browser (and, later, any non-Tauri
-// WebView such as ArkWeb / Android / iOS) WITHOUT a Rust/SQLite backend:
+// This makes the app runnable in a plain browser AND in any WebView shell for a
+// platform Tauri cannot reach (currently HarmonyOS ArkWeb) WITHOUT a Rust/SQLite
+// backend. **Android / iOS deliberately do NOT go through here** — they use the
+// Tauri native shell (`tauri.ts`) with the same Rust core as desktop, so that
+// SQLCipher encryption / real filesystem / plugins / multi-device sync stay
+// available (decision 2026-09-13, see docs/MOBILE.md).
 //   - `executor.invoke` is backed by a *real* SQLite database via sql.js (WASM),
 //     persisted to IndexedDB in the browser. Core note CRUD (pages / tags /
 //     page-tags / attachments / image saves) runs real SQL; the remaining

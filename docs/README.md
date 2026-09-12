@@ -77,7 +77,7 @@ CHANGELOG.md             # 版本变更日志
 | **M3** | 主题 / 外观自定义 + 插件雏形 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md) |
 | **M4** | 属性驱动仪表盘聚合 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M5** | PDF 导出 | [x] | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
-| **M6** | 移动端适配 | [规划]（WebView 壳进行中） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃）+ [移动端适配](MOBILE.md) |
+| **M6** | 移动端适配 | [执行中]（**Tauri 原生壳**；Android 已能出未签名 APK） | **[移动端上线计划（Android 优先）](plans/2026-09-13-android-launch-plan.md)** + [移动端](MOBILE.md)（路线与各平台对照）+ [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
 | **M7** | 数据库视图扩展 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M8** | 新页面引导层 | [x] | — |
 | **M9** | 模板 | [x] | [模板方案](plans/2026-08-22-template-plan.md) |
@@ -87,7 +87,7 @@ CHANGELOG.md             # 版本变更日志
 | **M13** | 数据库 = 透镜 | [x] | [数据库透镜方案](plans/2026-08-22-database-lens-plan.md) |
 | **M14** | 空间清理 / 存储管理 | [x] | [存储清理方案](plans/2026-08-22-storage-cleanup-plan.md) |
 | **M15** | 每空间独立存储（物理隔离） | [x] | [每空间独立存储方案](plans/2026-08-22-per-workspace-storage-plan.md) |
-| **M16** | 跨平台适配（全平台通吃） | [x]（部分） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md) + [web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md) |
+| **M16** | 跨平台适配（全平台通吃） | [x]（部分；**平台壳一项已收窄**——只涵盖 Tauri 不可达的平台如鸿蒙 ArkWeb，安卓/iOS 改走 Tauri 原生壳） | [跨平台方案](plans/2026-08-24-cross-platform-plan.md) + [web 补齐清单](plans/2026-08-24-web-polish-backlog-plan.md) + [移动端](MOBILE.md)（路线） |
 | **M17** | AI 薄 Agent | [x] | [薄 Agent 方案](plans/2026-08-24-thin-agent-interface-plan.md) + [实现方案](plans/2026-08-24-thin-agent-interface-implementation-plan.md) |
 | **M18** | 内联 AI 起草 | [x] | [内联起草方案](plans/2026-08-24-inline-ai-draft-plan.md) |
 | **M19** | Wiki 织网增强 | [x] | [织网方案](plans/2026-08-24-wiki-weave-plan.md) |

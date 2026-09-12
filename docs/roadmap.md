@@ -35,7 +35,7 @@
 | **P1** | 主题 / 外观自定义 | Obsidian 主题 | 扩展性雏形 | ✅ M3 |
 | **P2** | **文件夹 = 网盘**（文件库增强：拖拽上传 / 在线预览 / 搜索 / 下载 / 每夹统计） | FlowUs / Wolai / 有道 | 文件夹同时承载页面与文件，本地优先+去重+可加密形成差异化私域网盘 | ✅ M12（v1.33.0） |
 | **P2** | 数据库贯通：查询型数据库 / 保存视图 / ref 关联属性 / 公式汇总 | Notion / Dataview | 数据库从「表格」升级为「数据工作台」 | ✅ M13（v1.25.0） |
-| **P2** | 移动端适配 | 思源 / Obsidian | 多端能力 | M6 移动端（安卓/iOS）**即将推出**；已升级为 **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
+| **P2** | 移动端适配 | 思源 / Obsidian | 多端能力 | M6 移动端（安卓/iOS）**执行中**——路线已定＝**Tauri 原生壳**（[上线计划](plans/2026-09-13-android-launch-plan.md) / [MOBILE.md](MOBILE.md)）；已升级为 **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
 | **P2** | Markdown 无损往返 | Obsidian 存储哲学 | 消除「格式锁定」顾虑 | ✅ M1 |
 | **P2** | 属性驱动仪表盘聚合 | 思源数据库 + Dataview | 释放属性数据库价值 | ✅ M4 |
 | **P2** | PDF 导出 | 思源 / Obsidian | 导出矩阵补全 | ✅ M5 |
@@ -74,8 +74,8 @@
 ### M5 — PDF 导出（P2）✅
 复用 `$generateHtmlFromNodes` + `HTML_TEMPLATE` → 隐藏 iframe → `window.print()` 另存为 PDF。**数据库页 PDF**（v1.30.0）：数据库「⤓ PDF」把当前视图渲染为 HTML 表格并打印——抽取 `src/lib/print.ts` 供页面与数据库共用。
 
-### M6 — 移动端适配（P2，即将推出）
-Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**状态**：移动端（安卓 / iOS）**即将推出**——复用 M16 平台无关核心 + 可插拔平台壳，浏览器 PWA 已作为首个 Web 壳；移动端复用同一套前端与数据模型（见 [跨平台方案](plans/2026-08-24-cross-platform-plan.md)）。
+### M6 — 移动端适配（P2，执行中）
+Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线已定（2026-09-13）＝安卓/iOS 走 Tauri 原生壳（Rust 内核）**，WebView 壳路线只保留给 **Tauri 不可达的平台（当前只有鸿蒙 ArkWeb）**——理由与各平台对照见 [MOBILE.md](MOBILE.md)。**状态**：Android 已能构建出 APK（**未签名**），差体积压缩 / 签名 / 版本联动 / CI / 真机验收 / 上架材料，执行计划见 [移动端上线计划（Android 优先）](plans/2026-09-13-android-launch-plan.md)；窄屏 UI 布局与 43 项真实浏览器门禁已就位。
 
 ### M7 — 数据库视图扩展（P2）✅
 `DatabaseView` 八种视图（表格/画廊/看板/列表/日历/时间轴/目录/甘特图）；日历按 `date` 落格、时间轴按 `date` 排序、目录按页面层级、甘特图用开始/结束(或计划/实际 4 列)渲染网格填色。
@@ -221,7 +221,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**状态*
 > ⚠️ 取舍（诚实标注，与[规划](plans/2026-08-22-per-workspace-storage-plan.md)一致）：**附件字节保持全局内容寻址**（跨空间相同文件共享一份字节），而非每空间独立附件目录——这是取舍：换取「跨空间附件去重」与「不受每空间附件目录整改爆炸半径影响」，同时用「空间级附件子集导出」实现单空间可搬移；`attr_defs`/标签/模板按每空间库存；E2EE 密钥与同步游标保持每空间。**M15 已达成**。
 
 ### M16 — 跨平台适配（全平台通吃，[规划](plans/2026-08-24-cross-platform-plan.md)）
-> 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」，同一 bundle 跑 浏览器 PWA / 安卓 / iOS / 鸿蒙 ArkWeb，不再依赖 `window.__TAURI__`。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。**系统分层、存储模型与平台 driver 详见 [系统架构](architecture.md)**。
+> 从「Tauri 桌面绑定」演进为「**平台无关核心 + 可插拔平台壳**」：**Web 平台（浏览器 PWA）** 与 **鸿蒙 ArkWeb** 走可插拔壳（同一 bundle），不再依赖 `window.__TAURI__`；**安卓 / iOS 走 Tauri 原生壳**（同一份 Rust 内核、能力完整——2026-09-13 定，选型理由见 [MOBILE.md](MOBILE.md)）。由 [M6 移动端](roadmap.md) 升级为「**全端通吃**」。采用「分层 `pkg/core` + driver 可插拔 + 渐进迁移」策略。**系统分层、存储模型与平台 driver 详见 [系统架构](architecture.md)**。
 > **已达成**：M16.0（driver 抽象）+ M16.0b（浏览器 Web 平台）+ M16.1a（真实 SQLite）+ M16.1b 起的 Web 平台能力扩展（属性/数据库/版本/块引用/备份/PWA）+ **M16.6–M16.8（web 能力补齐 / 体验优化 / 数据安全，v1.59.24–35）**。**待做**：`pkg/core` 完整语义、OPFS/wa-sqlite 增量、插件运行时、其余平台壳。**现有 Tauri 桌面形态无回归**（架构隔离：`index.ts` 按环境自动切 tauri/web）。
 - **M16.0 存储/能力 driver 抽象** ✅（v1.46.0）：新增 `src/lib/platform/`（`types.ts` 接口 + `tauri.ts` `@tauri-apps/*` 唯一宿主 + `index.ts` `platform` 聚合/`setPlatform`）；`api.ts` ~60 个 `invoke` 改走 `platform.executor`（对外 API 不变）；12+ 组件内联的 dialog/opener/event/asset/webview 调用改消费 `platform`。**零行为变化**。
 - **M16.0b 浏览器 Web 平台可跑** ✅（v1.47.0）：`web.ts`（`createWebPlatform`）+ `pnpm dev:web`（独立 5173）。已用 Edge 无头验证 app 真实挂载、渲染种子页。
@@ -237,7 +237,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**状态*
 - **M16.1 核心语义 TS 化** 🗓（规划，部分达成）：Web 平台核心 CRUD 已用真实 SQLite；`pkg/core` 完整语义（迁移/加密/备份格式互操作，先以 rusqlite 驱动跑通）仍待做。**注**：浏览器壳用 sql.js + IndexedDB blob，未用 OPFS/wa-sqlite（见取舍）。
 - **M16.2 OPFS/wa-sqlite 增量持久化** 🗓（规划）：**已评估为「需真实浏览器验证」的长期项**——wa-sqlite 异步查询在 Node 报 code 21、OPFS 必须 Worker 且无头无法验证，故维持 sql.js + IndexedDB + persist() 作为当前正解（M16.1b 已覆盖核心能力）。
 - **M16.3 插件运行时降级迁移** 🗓（规划）：`boa_engine` 移入 WASM/浏览器——浏览器网页无法跑 Rust `boa_engine`，需重做 JS 沙盒；**根本性限制**，待后续。**注**：[插件进化方案](plans/2026-09-10-plugin-evolution-plan.md) M11.6 的「能力层传输无关（生成的 `api.*` shim + 可替换传输）」会显著降低这一项的成本——届时 web 只需新增一个传输与 JS 沙盒，不必改插件 ABI；「是否把 Boa 换成浏览器引擎」已列入该方案的**可延后决策**。
-- **M16.4 各平台壳** 🗓（规划）：安卓 / iOS / 鸿蒙 ArkWeb（各平台 JSBridge 补文件/外链/对话框）。浏览器 PWA（M16.1b）已作为首个 Web 壳。
+- **M16.4 各平台壳** 🗓（规划）：**鸿蒙 ArkWeb**（JSBridge 补文件/外链/对话框）。**2026-09-13 起本项只涵盖 Tauri 不可达的平台**——安卓 / iOS 已改走 **Tauri 原生壳**（[M6](roadmap.md) / [MOBILE.md](MOBILE.md)），不再属于本项。浏览器 PWA（M16.1b）已作为首个 Web 壳。
 - **M16.5 验收 + 回归** 🗓（规划）：全功能回归；原 Tauri 桌面形态保留为 driver A。**已验证桌面无回归**（编译 + 进程运行）。
 - **M16.6 web 能力补齐（P0）** ✅（[建议清单](plans/2026-08-24-web-polish-backlog-plan.md)）：**附件移动/批量删除/恢复、存储统计精确化、全文搜索（相关度排序）** 已实装（v1.59.24–26）；`scripts/smoke-web.mjs` 对应断言全绿。
 - **M16.7 web 体验优化（P1）** ✅（同上）：侧边栏拖拽自动展开/滚动（v1.59.27）、大媒体 50MB 上传上限（v1.59.28）、自动化测试补强 `computeReorder`/`tokenize`（v1.59.30）。
@@ -333,7 +333,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**状态*
 | 聚合能力 | 无汇总 | M4 仪表盘聚合（✅） |
 | 数据库视图 | 仅表格/画廊/看板 | M7 列表/日历/时间轴/目录（✅） |
 | 导出 | 缺 PDF | M5 PDF 导出（✅） |
-| 多端 | 仅桌面 | M6 移动端（安卓/iOS）**即将推出** → **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
+| 多端 | 仅桌面 | M6 移动端（安卓/iOS）**执行中**（Tauri 原生壳，[上线计划](plans/2026-09-13-android-launch-plan.md)）→ **M16 全平台通吃**（[规划](plans/2026-08-24-cross-platform-plan.md)） |
 | 新页面引导 | 直接空白编辑 | M8 引导层（✅） |
 | AI 写作 | 右侧聊天面板 + 草稿确认（M17） | **M18 内联起草**（✅，就地写 + 高亮待定块 + 快捷动作） |
 | 双链织网 | 仅普通双链 / 块引用 | **M19 未链接提及 + 双链别名 + 精确块链**（✅） |
