@@ -1,0 +1,136 @@
+name: Android (build)
+
+# 为什么单开这个 workflow、而且**只手动触发**：
+#
+# 1. 本机（Windows）目前构建不出 Android —— 卡在"要 Perl 的 OpenSSL 源码构建"与
+#    mupdf 那份 Makefile 的 shell/路径假设上（诊断见
+#    docs/plans/2026-09-13-android-launch-plan.md §0.0）。**Linux runner 上这些问题都不存在**：
+#    系统自带完整的 perl/make/pkg-config，而 mupdf 的 Makefile 本来就是 Unix 假设。
+#    所以"CI 出包"不是绕路，而是当前唯一跑得通的路。
+#
+# 2. 刻意**不挂 tag**：Android 还没有签名流程，产出的 APK 是**未签名**的、只用于
+#    "构建能不能过 + 体积到底多大"这两件事，不是可分发件。
+#    等签名与发布流程定了，再决定要不要并进 release.yml。
+#
+# 3. 触发方式：手动（Actions 页 Run workflow），或本文件自身被改动时跑一次
+#    （这样落地就能立刻验证，不必先要 dispatch 权限）。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["dev", "main", "feat/android-mobile"]
+    paths: [".github/workflows/android.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: Setup Rust + Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        # 首次跑没有收益，但后续每次调试能省十几分钟——这个 workflow 的价值就在于反复量体积。
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-aarch64
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Pick an NDK
+        # 优先用本机验过的那个版本；装不上就退到 runner 上已有的最新一个。
+        # **不写死"必须有某一个版本"**：NDK 版本不是这里要验的东西，构建能不能过才是。
+        run: |
+          set -e
+          WANT="29.0.13846066"
+          if [ ! -d "$ANDROID_SDK_ROOT/ndk/$WANT" ]; then
+            yes | sdkmanager --install "ndk;$WANT" >/dev/null 2>&1 || echo "装 $WANT 失败，改用已有的"
+          fi
+          if [ -d "$ANDROID_SDK_ROOT/ndk/$WANT" ]; then
+            NDK="$ANDROID_SDK_ROOT/ndk/$WANT"
+          else
+            NDK=$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -1)
+          fi
+          test -n "$NDK" || { echo "runner 上没有任何 NDK，且装不上"; exit 1; }
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "选用 NDK: $NDK"
+          ls "$NDK/toolchains/llvm/prebuilt/" 
+
+      - name: Install frontend deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build frontend + 跑门禁
+        # 顺带把仓库现有的门禁在 Linux 上也跑一遍（check:ocr-assets 之类）。
+        run: pnpm build
+
+      - name: Init Android project
+        # ⚠️ `src-tauri/gen` 在 .gitignore 里（"可重建"），所以 CI 必须自己 init。
+        # 也因此：**任何对 gen/android 的手工改动都不可复现**——需要的定制要么脚本化，要么
+        # 改成 tauri.conf.json / 平台配置文件里的声明。见上线计划的风险清单。
+        run: pnpm tauri android init --ci
+
+      - name: Build APK (arm64, unsigned)
+        run: pnpm tauri android build --target aarch64 --apk --ci
+
+      - name: 报告产物体积（**这正是这个 workflow 存在的理由**）
+        run: |
+          set -e
+          echo "===== 产出的安装包 ====="
+          find src-tauri/gen/android/app/build/outputs -type f \( -name '*.apk' -o -name '*.aab' \) -printf '%10s  %p\n' | sort -n
+          APK=$(find src-tauri/gen/android/app/build/outputs -type f -name '*.apk' | head -1)
+          test -n "$APK" || { echo "没有产出 APK"; exit 1; }
+          echo
+          echo "===== APK 内部构成（未压缩体积）====="
+          echo "APK: $APK  大小: $(du -h "$APK" | cut -f1)"
+          python3 - "$APK" <<'PY'
+          import sys, zipfile, collections
+          z = zipfile.ZipFile(sys.argv[1])
+          groups = collections.Counter()
+          files = collections.Counter()
+          for i in z.infolist():
+              top = i.filename.split('/')[0] + ('/' if '/' in i.filename else '')
+              groups[top] += i.file_size
+              files[top] += 1
+          total = sum(groups.values())
+          for k, v in groups.most_common(12):
+              print(f"  {v/1048576:10.1f} MiB  {files[k]:5d} 个  {k}")
+          print(f"  {total/1048576:10.1f} MiB  合计（未压缩）")
+          # 语言包应当不在包里（2026-09-13 起改为按需下载）；这条顺手在 CI 上把守住。
+          bad = [i.filename for i in z.infolist() if 'traineddata' in i.filename]
+          print("  OCR 语言包是否随包分发:", "是（不该）" if bad else "否 ✅")
+          if bad: sys.exit(1)
+          PY
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-aarch64-unsigned
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
+          retention-days: 14
