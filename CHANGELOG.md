@@ -67,6 +67,20 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **从 Windows 发版时，`release.mjs` 会在打 Web 整包那一步直接崩掉**：那一步 shell out 到
+  系统的 `zip`，而注释里写着「用它是因为它到处都有」——**Windows 上根本没有 `zip`**
+  （实测：`'zip' is not recognized as an internal or external command`）。
+  macOS 侧一切正常，所以一直没人发现；用户这次要求从 Windows 发版才撞上。
+  - 同一个坑在 `plugin-fragment.mjs` 里已经踩过一次（Windows 上 3 条测试红），
+    当时的修法是把打包收敛到 `scripts/lib/pack-zip.mjs`——这次是**同一处的另一半**。
+  - 修法：改用它，并给 `packDirToZip` 加 `flat` 选项。形状必须逐字对上原来的
+    `cd <stage> && zip -qr out.zip .`：条目**平铺在包根**（多一层 `web-stage-x/`，
+    用户"解压到静态服务器"就会把站点铺进子目录，页面全 404）。
+  - 门禁：`pack-zip.test.mjs` 新增 2 条——`flat: true` 平铺、以及**默认形状不许被改掉**
+    （插件包仍必须带目录名前缀）。
+
 ## [1.90.0] - 2026-09-11
 
 > **把「应用 ↔ 社区」这条通道打通，并让第一方插件真的能被装上。** 这一版三件事：

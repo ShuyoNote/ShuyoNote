@@ -64,15 +64,21 @@ function entryName(dir, abs) {
 /**
  * 把 `dir` 打成一个 zip 写到 `zipPath`。
  *
- * **包内根目录就是插件目录名**（`<base>/manifest.json`）：规范允许"多一层同名目录"，
+ * **包内根目录就是目录名**（`<base>/manifest.json`）：规范允许"多一层同名目录"，
  * 应用解包时会自动下钻（只在"恰好一层且里面有 manifest.json"时下钻），
  * 这也正是原来 `zip -r pkg.zip <basename>` 的形状。
  *
+ * `flat: true` 则**平铺**（条目就是 `manifest.json` 本身）。发布流程里的 Web 整包要的是
+ * 这一种——用户解开就该直接是站点根，多一层目录会让"解压到静态服务器"这一步出错。
+ * 两种形状以前分别由 `zip -r pkg.zip <dir>` 与 `cd <dir> && zip -qr out.zip .` 产出。
+ *
  * @param {string} dir 要打包的目录（绝对路径）
  * @param {string} zipPath 输出 zip 的路径
+ * @param {{ flat?: boolean }} [opts]
  * @returns {{ fileCount: number, bytes: number }} 文件数与产出的字节数
  */
-export function packDirToZip(dir, zipPath) {
+export function packDirToZip(dir, zipPath, opts = {}) {
+  const flat = opts.flat === true;
   const base = dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
   /** @type {Record<string, [Uint8Array, { mtime: Date }]>} */
   const files = {};
@@ -86,7 +92,8 @@ export function packDirToZip(dir, zipPath) {
       if (st.isDirectory()) {
         walk(abs);
       } else if (st.isFile()) {
-        files[`${base}/${entryName(dir, abs)}`] = [
+        const rel = entryName(dir, abs);
+        files[flat ? rel : `${base}/${rel}`] = [
           new Uint8Array(readFileSync(abs)),
           { mtime: FIXED_MTIME },
         ];
@@ -97,7 +104,7 @@ export function packDirToZip(dir, zipPath) {
 
   const fileCount = Object.keys(files).length;
   if (fileCount === 0) {
-    throw new Error(`插件目录是空的，拒绝打一个空包：${dir}`);
+    throw new Error(`目录是空的，拒绝打一个空包：${dir}`);
   }
   const out = zipSync(files, { level: 6 });
   writeFileSync(zipPath, Buffer.from(out));

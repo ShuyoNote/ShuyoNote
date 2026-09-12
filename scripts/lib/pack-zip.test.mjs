@@ -89,4 +89,26 @@ describe("packDirToZip（跨平台打包）", () => {
     const got = unzipSync(readFileSync(zipPath));
     expect(new TextDecoder().decode(got["my-plugin/manifest.json"])).toContain("my-plugin");
   });
+
+  it("`flat: true` **平铺**（条目不带目录名前缀）——发布流程的 Web 整包要的就是这个形状", () => {
+    // 这里的由来：`release.mjs` 打 Web 整包时原先 shell out 到 `cd <stage> && zip -qr out.zip .`。
+    // 那个 `zip` 在 Windows 上不存在，于是**从 Windows 发版会直接崩在这一步**
+    // （而 macOS 侧一切正常，所以一直没被发现）。收敛到这个打包器时，形状必须逐字对上：
+    // 多一层 `web-stage-x/`，用户"解压到静态服务器"就会把站点铺进子目录，页面全 404。
+    const { plugin, zipPath } = fixture();
+    packDirToZip(plugin, zipPath, { flat: true });
+    const entries = Object.keys(unzipSync(readFileSync(zipPath))).sort();
+    expect(entries).toEqual(["lib/util.js", "main.js", "manifest.json", "说明.txt"].sort());
+    for (const e of entries) {
+      expect(e).not.toContain("\\");
+      expect(e).not.toContain("my-plugin/");
+    }
+  });
+
+  it("默认（不传 flat）**仍然是带目录名的那一种**——插件包形状不许被这次改动改掉", () => {
+    const { plugin, zipPath } = fixture();
+    packDirToZip(plugin, zipPath, {});
+    const entries = Object.keys(unzipSync(readFileSync(zipPath)));
+    expect(entries.every((e) => e.startsWith("my-plugin/"))).toBe(true);
+  });
 });

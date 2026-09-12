@@ -45,6 +45,7 @@ import {
   sha256File,
   verifyArtifactSignature,
 } from "./lib/releaseArtifacts.mjs";
+import { packDirToZip } from "./lib/pack-zip.mjs";
 
 /** 放进 Web 版压缩包里的一页说明：自托管时最容易踩的两个坑都在这里。 */
 const WEB_HOSTING_NOTE = `ShuyoNote Web 版（纯静态，自己托管即可）
@@ -244,12 +245,22 @@ if (!NO_WEB && existsSync(join(webDir, "index.html"))) {
   // 解出来就是乱码（实测过一次）。内容照旧是中文。
   writeFileSync(join(stage, "SELF-HOST.txt"), WEB_HOSTING_NOTE, "utf8");
   rmSync(zipPath, { force: true });
-  // 用系统的 zip：它到处都有，而 dist-web 有几百个文件、近 90 MB，
-  // 为了这一件事引进一个 JS 打包库不划算。
-  execSync(`cd ${JSON.stringify(stage)} && zip -qr ${JSON.stringify(zipPath)} . -x '.*'`, { stdio: "inherit" });
+  // 用仓库里的跨平台打包器，**不要**调系统的 `zip`。
+  //
+  // 这里原先写的是「用系统的 zip：它到处都有」——那个假设是错的：Windows 上根本没有
+  // `zip`（实测：`'zip' is not recognized as an internal or external command`），
+  // 于是**从 Windows 发版就会在这里崩掉**，而 macOS 侧一切正常，所以一直没人发现。
+  // 同一个坑在 `plugin-fragment.mjs` 里已经踩过一次（Windows 上 3 条测试红），
+  // 当时的修法就是把打包收敛到 `scripts/lib/pack-zip.mjs`——这里是同一处的另一半。
+  //
+  // `flat: true` 才是原来 `cd <stage> && zip -qr out.zip .` 的形状：条目平铺在包根，
+  // 用户解开就是站点根（多一层 web-stage-x/ 会让"解压到静态服务器"直接出错）。
+  const packed = packDirToZip(stage, zipPath, { flat: true });
   rmSync(stage, { recursive: true, force: true });
   webZip = { name: zipName, path: zipPath, size: statSync(zipPath).size };
-  console.log(`[release] Web 版打包 → ${zipName}（${fmtSize(webZip.size)}）`);
+  console.log(
+    `[release] Web 版打包 → ${zipName}（${fmtSize(webZip.size)}，${packed.fileCount} 个文件）`,
+  );
 } else if (!NO_WEB) {
   console.log("[release] 没找到 dist-web/：跳过 Web 版（要带上就先 pnpm build:web）。");
 }
