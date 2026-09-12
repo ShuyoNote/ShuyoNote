@@ -12,6 +12,10 @@
 //   node scripts/software-copyright-doc.mjs                 # 输出到 tmp/softcopyright/
 //   node scripts/software-copyright-doc.mjs --out <目录>
 //
+// 材料清单 / 说明书草稿 / 登记流程见**私有仓库** `shuyonote-sync-server` 的 `docs/softcopyright/`
+// ——软著属公司运作材料，2026-09-13 移出公开仓库。本脚本留在公开仓库，是因为它要读**本仓库的源码树**
+// 来截取源代码文档；产物落在本站的 `tmp/softcopyright/`（gitignore）。
+//
 // 产物是**可打印的 HTML**（A4 纵向、每页一个 .page 块、print 时强制分页）：
 // 用浏览器打开 → 打印 → 另存为 PDF，就是可提交的那份。之所以不直接生成 PDF：
 // 不引入 PDF 库、也不依赖中文字体内嵌，交给浏览器排版最省事且分页确定。
