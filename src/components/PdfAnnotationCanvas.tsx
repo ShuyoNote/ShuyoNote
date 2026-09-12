@@ -182,7 +182,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       if (res.stage === "recognize") {
         toast("OCR 识别失败：未能读取页面图像或引擎报错（详见控制台 [ocr] recognize failed）", "error");
       } else {
-        toast("OCR 识别失败：无法加载离线识别模型/语言数据", "error");
+        // 语言包现在是按需下载的（见 lib/ocr.ts 的 DEFAULT_OCR_LANG_BASE），所以"加载失败"
+        // 最常见的原因变成**首次使用没联网**，而不是过去那句"本地资源没生成"。
+        toast("OCR 识别失败：识别模型加载失败。若这是第一次用 OCR，需要联网下载一次语言包（约 30 MB，之后永久离线可用）", "error");
       }
     } else {
       setOcrStatus("empty");
@@ -906,13 +908,13 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           </div>
           <div className="pdf-ocr-pop-body">
             {ocrBusy ? (
-              <div className="pdf-ocr-tip">识别中…（首次加载离线模型可能稍慢）</div>
+              <div className="pdf-ocr-tip">识别中…（模型随包分发时首次加载稍慢；语言包按需下载时首次还要联网取一次）</div>
             ) : ocrText ? (
               <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
             ) : ocrStatus === "timeout" ? (
               <div className="pdf-ocr-tip">识别超时（timeout）：模型加载或识别时间过长，请稍后重试。</div>
             ) : ocrStatus === "error" ? (
-              <div className="pdf-ocr-tip">识别失败（error·模型加载）：无法加载离线识别模型/语言数据。请确认 `public/ocr` 已生成（`pnpm install` 后由脚本拷贝），并查看控制台「[ocr] local assets」与「[ocr] worker error」。</div>
+              <div className="pdf-ocr-tip">识别失败（error·模型加载）：识别模型/语言包没能加载。<b>若这是第一次用 OCR，需要联网下载一次语言包（约 30 MB，之后永久离线可用）</b>；离线发行版则应随包分发语言包并设 `VITE_TESSERACT_LANG_PATH`。排查见控制台「[ocr] local assets」与「[ocr] worker error」。</div>
             ) : ocrStatus === "error-recognize" ? (
               <div className="pdf-ocr-tip">识别失败（error·识别阶段）：模型已加载，失败发生在取图/引擎环节（例如页面图像读取被拦、位图过大）。请查看控制台「[ocr] recognize failed」的具体原因。</div>
             ) : (

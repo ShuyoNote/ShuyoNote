@@ -126,12 +126,27 @@ arm64 的 libshuyonote_lib.so = 101.2 MiB
 | 杠杆 | 收益（APK 估算） | 状态 |
 |---|---|---|
 | 删掉 3 个用不到的 tesseract-core 变体 | 23.3 ×2 ≈ **46 MiB** | ✅ **本轮已做**（拷贝脚本改白名单 + `check:ocr-assets` 硬门禁，三条变异测试验过它能失败） |
-| OCR 语言包改按需下载 | 29.6 ×2 ≈ **59 MiB** | 已拍板要做；需要设计（首次联网下载一次，之后永久离线） |
+| OCR 语言包改按需下载 | 29.6 ×2 ≈ **59 MiB** | ✅ **已做**（2026-09-13）：语言包不再随包分发，改为运行时按需下载 + tesseract 的 IndexedDB 缓存 ⇒ 首次联网一次、之后永久离线。托管在 `shuyo.cn/ocr/tessdata/4.0.0/`（**路径带 tessdata 版本号**，故可 immutable 长缓存），规矩见 `docs/nginx-ocr.conf` |
 | 去掉 `.so` 里那份前端内嵌副本 | ≈ 50 MiB | ⏳ 待查 Tauri 是否允许移动端不嵌（APK 的 `assets/` 已经提供了） |
 | `strip = true` | 12.7 MiB | ✅ **本轮已做**（代价：丢符号名；`CARGO_PROFILE_RELEASE_STRIP=false` 可临时关） |
 
 **修正后的目标**：arm64 APK **156.7 MiB** → 本轮两项后约 **85 MiB** → 语言包按需后约 **55 MiB**
 → 若能去掉内嵌副本，**~30 MiB 量级**。每一项都由实测推进，不再靠估。
+
+### 3.5 语言包托管：**必须给 CORS**（这条只在应用里会坏）
+
+语言包托管在 `https://shuyo.cn/ocr/tessdata/4.0.0/`（与官网同域），文件取自 npm 包
+`@tesseract.js-data/<lang>/4.0.0/` 的**原字节**（sha256 已记录在提交说明里，线上逐一比对过）。
+
+⚠️ **那个 location 必须带 `Access-Control-Allow-Origin: *`**：桌面/Android 的应用壳里页面
+origin 是 `tauri://localhost`，去取 `https://shuyo.cn/...` 是**跨域 fetch**；
+而 **Web 版是同源、根本不会暴露这个问题**。所以漏了这个头的表现会是
+**"浏览器里测都正常、装成应用就不行"** —— 正是最难查的一类。规则源文件见
+[`docs/nginx-ocr.conf`](../nginx-ocr.conf)。
+
+> 附带一条：`.gz` **不能**再叠 `Content-Encoding: gzip`（应用侧 tesseract 用 `gzip: true`
+> 自己解压）。当前全局 `gzip_types` 里没有 `application/gzip`、`gzip_static` 也没开，
+> 所以默认安全——但**改全局 gzip 配置时要记得这一条**。
 
 > **顺带排除一条疑问**：`mupdf-sys` 在**主依赖**里（未按平台排除），确实被编进了 Android 的 `.so`
 > （`.so` 里能查到 `NimbusRoman` 等内嵌字体名）。但它**不是大头**——最大的 mupdf `.o` 只有

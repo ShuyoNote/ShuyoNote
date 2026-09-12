@@ -69,6 +69,23 @@
 
 ### 变更
 
+- **OCR 语言包改为按需下载（安装包再减约 30 MiB，Android 上约 60 MiB）**。
+  两个语言包（`chi_sim` 19.2 + `eng` 10.4 = 29.6 MiB）原先随包分发，而实测它们在 Android 上
+  **会被装两遍**（APK 的 `assets/` 一份 + `.so` 里 Tauri 内嵌的前端副本一份；桌面安装包同样带着）。
+  现在改为：**首次使用 OCR 时联网下载一次，之后由 tesseract 的 IndexedDB 缓存复用 ⇒ 永久离线可用**。
+  - 语言包托管在 `https://shuyo.cn/ocr/tessdata/4.0.0/`（**路径带 tessdata 版本号**，
+    所以服务端可以 immutable 长缓存；换模型＝换路径，不会让用户跑着旧模型还看不出来）。
+    托管规矩落在 `docs/nginx-ocr.conf`。
+  - ⚠️ 那个 location **必须给 CORS**：应用壳的页面 origin 是 `tauri://localhost`，
+    取 `https://shuyo.cn/...` 是跨域 fetch，而 **Web 版同源、不会暴露这个问题** ——
+    漏了它就会表现成"浏览器里正常、装成应用就不行"。
+  - ⚠️ **`cacheMethod` 必须跟着从 `"none"` 改成 `"write"`**：本地模型时代不缓存是对的，
+    改成远端后不缓存＝**每次 OCR 重下约 30 MB**。这两处在两个文件里、只看一处看不出来，
+    所以单测（`ocr.test.ts`）与构建门禁（`check:ocr-assets`）各钉了一道。
+  - 完全离线的发行版仍可打包：`SHUYONOTE_OCR_BUNDLE=1` 让脚本把语言包拷回 `public/ocr/tessdata`，
+    **并同时设** `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`（两处必须一致，门禁会拦住只设一半）。
+  - 顺带更正了几处已经不准的说法（帮助页与 `docs/development.md` 里"OCR 彻底离线"）。
+
 - **Android 上线准备：砍掉 OCR 资产里的死重（打包体积 −23.8 MiB）**。
   `public/ocr/core` 原先"整个目录全拷"= **43.2 MiB**（6 个 tesseract-core 变体 × 2 种形态），
   而 tesseract.js 7 的 worker 只按「SIMD 档 × `legacyCore`」取**一个**；我们调的是

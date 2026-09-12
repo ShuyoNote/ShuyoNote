@@ -66,12 +66,32 @@ if (existsSync(coreSrc)) {
   for (const f of CORE_KEEP) copyFileSync(join(coreReal, f), join(out, "core", f));
 }
 
-// 3) traineddata：用完整 4.0.0 模型。此前用 4.0.0_best_int（整数量化、体积小）在
-//    tesseract.js-core v7 的 worker 里「Failed loading language」——模型加载失败致识别为空。
-//    完整 4.0.0 可正常加载（体型更大，但可靠：中文 ~19MB / 英文 ~10.7MB 的 gz）。
-for (const lang of ["chi_sim", "eng"]) {
-  const s = join(dataSrc, lang, "4.0.0", `${lang}.traineddata.gz`);
-  if (existsSync(s)) copyFileSync(s, join(out, "tessdata", `${lang}.traineddata.gz`));
+// 3) 语言包（traineddata）——**默认不拷**（2026-09-13 改）。
+//
+// 为什么不打进包：两个语言包共 **29.6 MiB**，而 Android 上它们会被**装两遍**
+// （APK 的 `assets/` 一份 + `.so` 里 Tauri 内嵌的前端副本一份，实测见
+// docs/plans/2026-09-13-android-launch-plan.md §3）。改为运行时按需下载
+// （来源见 src/lib/ocr.ts 的 DEFAULT_OCR_LANG_BASE，托管规矩见 docs/nginx-ocr.conf）：
+// **首次用 OCR 联网一次，之后由 tesseract 的 IndexedDB 缓存复用 ⇒ 永久离线可用**。
+//
+// 仍然需要随包分发的发行版（自托管 / 完全离线）：
+//     SHUYONOTE_OCR_BUNDLE=1 pnpm build
+//   并同时设 `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`，让运行时指向本地那份。
+//   （两者必须一起设；check-ocr-assets 会拦住只设一半的情况。）
+//
+// 注意模型的**完整版**不能换回 `4.0.0_best_int`：那是量化版、体积小，但在
+// tesseract.js-core v7 的 worker 里会「Failed loading language」导致识别为空（踩过）。
+const BUNDLE = process.env.SHUYONOTE_OCR_BUNDLE === "1";
+if (BUNDLE) {
+  for (const lang of ["chi_sim", "eng"]) {
+    const s = join(dataSrc, lang, "4.0.0", `${lang}.traineddata.gz`);
+    if (existsSync(s)) copyFileSync(s, join(out, "tessdata", `${lang}.traineddata.gz`));
+  }
+  console.log("[copy-tesseract-assets] SHUYONOTE_OCR_BUNDLE=1 → 语言包已随包拷贝");
+} else {
+  // 留一个空目录会让 check-ocr-assets 误判为"打包了但缺文件"，直接删掉更干净
+  rmSync(join(out, "tessdata"), { recursive: true, force: true });
+  console.log("[copy-tesseract-assets] 语言包不随包分发（运行时按需下载 + 缓存）");
 }
 
-console.log("[copy-tesseract-assets] worker/core/tessdata -> public/ocr");
+console.log("[copy-tesseract-assets] worker/core -> public/ocr");

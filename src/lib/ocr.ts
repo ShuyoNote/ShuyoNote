@@ -1,7 +1,11 @@
 // M24 — OCR 兜底 (scanned PDFs without a text layer). Runs tesseract.js on a
-// page image and returns recognized text. 已彻底离线：worker 脚本、core wasm、
-// 中文/英文 traineddata 均由脚本拷贝进 public/ocr (见 scripts/copy-tesseract-assets.mjs)，
-// 运行时不再依赖 jsdelivr CDN。
+// page image and returns recognized text.
+//
+// 资源分两类，**来源不同**（2026-09-13 起）：
+//   · worker 脚本 + core wasm：仍随包分发（`public/ocr/worker.min.js` 与 `core/`，
+//     见 scripts/copy-tesseract-assets.mjs）——它们不大，且是"能不能跑起来"的前提；
+//   · **语言包（29.6 MiB）改为按需下载**（见 DEFAULT_OCR_LANG_BASE）并缓存在 IndexedDB，
+//     因为它在 Android 上会被装两遍（APK assets + .so 内嵌），见上线计划的体积账。
 // 提供两种用法：ocrRecognize（一次性）与 createOcrWorker（批量复用同一 worker，避免每页新建）。
 // 保持在 smoke 包外（动态 import；OCR 需真实机器 + 语言数据）。
 
@@ -47,6 +51,25 @@ const OCR_RECOGNIZE_OPTIONS: Record<string, string> = { tessedit_pageseg_mode: "
 // 首次构造 worker 选项时把实际用到的离线资源路径打印一次，便于排查。
 let loggedPaths = false;
 
+/**
+ * 语言包（`*.traineddata.gz`）的默认来源。
+ *
+ * **为什么不打进安装包**：实测（2026-09-13）两个语言包共 29.6 MiB，而 Android 上它们会被
+ * **装两遍** —— APK 的 `assets/` 一份、`.so` 里 Tauri 内嵌的前端副本里又一份；桌面安装包
+ * 同样带着它们。改为按需下载后：**首次使用 OCR 需要联网一次（约 30 MB），之后由 tesseract
+ * 的 IndexedDB 缓存复用，永久离线可用**。
+ *
+ * 路径里带的是 **tessdata 版本号**（取自 npm 包 `@tesseract.js-data/<lang>/<版本>/`），
+ * 所以服务端可以长缓存；换模型版本＝换路径，不会让用户跑着旧模型还看不出来。
+ *
+ * 托管与头部的规矩见 `docs/nginx-ocr.conf`（含**必须给 CORS** 那条：应用壳的 origin 是
+ * `tauri://localhost`，跨域取不到就会在 WebView 里被拦，而 Web 版同源不会暴露这个问题）。
+ *
+ * 自托管 / 完全离线发行：把语言包放进 `public/ocr/tessdata`，并设
+ * `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`；构建脚本侧用 `SHUYONOTE_OCR_BUNDLE=1` 自动拷贝。
+ */
+export const DEFAULT_OCR_LANG_BASE = "https://shuyo.cn/ocr/tessdata/4.0.0";
+
 function buildWorkerOptions(onWorkerError?: (msg: string) => void): Record<string, unknown> {
   // 本地打包资源路径（dev 与 Tauri 构建均为同源可 fetch/importScripts）。
   // 说明：tesseract.js v7 的 resolvePaths 只做 `new URL(p, location.href)`，**没有** is-url 判断
@@ -60,11 +83,15 @@ function buildWorkerOptions(onWorkerError?: (msg: string) => void): Record<strin
   const opts: Record<string, unknown> = {
     workerPath: abs(`${base}ocr/worker.min.js`),
     corePath: corePath ? (corePath.includes("://") ? corePath : abs(corePath)) : abs(`${base}ocr/core`),
-    langPath: langPath ? (langPath.includes("://") ? langPath : abs(langPath)) : abs(`${base}ocr/tessdata`),
+    // 默认走远端（见 DEFAULT_OCR_LANG_BASE）；给了 VITE_TESSERACT_LANG_PATH 就用它。
+    langPath: langPath ? (langPath.includes("://") ? langPath : abs(langPath)) : DEFAULT_OCR_LANG_BASE,
     // tesseract 默认 workerBlobURL=true（blob importScripts）；改为直接 new Worker(workerPath)。
     workerBlobURL: false,
-    // 每次从本地路径读取模型（不读 IndexedDB 旧缓存），gzip 模型为 .traineddata.gz。
-    cacheMethod: "none",
+    // ⚠️ **必须缓存**：语言包现在是从网络按需取的，`"write"` = 有缓存用缓存、没有才下载并写入。
+    // 这里原先写的是 `"none"`（注释是"每次从本地路径读取模型，不读 IndexedDB 旧缓存"）——
+    // 那是模型随包分发时才成立的前提；一旦改为远端，`"none"` 会让**每次 OCR 都重下约 30 MB**。
+    // 门禁 scripts/check-ocr-assets.mjs 钉住了这条对应关系。
+    cacheMethod: "write",
     gzip: true,
   };
   // tesseract 内部 createWorker 对 load/loadLanguage/initialize 的失败是 `.catch(() => {})` 静默吞掉的，

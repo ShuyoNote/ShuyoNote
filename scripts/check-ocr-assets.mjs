@@ -101,12 +101,52 @@ for (const f of REQUIRED.filter((x) => x.endsWith(".wasm.js"))) {
   if (!have.has(companion)) errors.push(`${CORE_DIR} 有 ${f} 但没有同伴 ${companion} —— 加载器会取不到字节。`);
 }
 
-// ---- 3. 语言包至少要有被默认请求的那两个（其余是否按需下载由 OCR 侧决定）----
+// ---- 3. 语言包：**来源与缓存策略必须自洽**（2026-09-13 起语言包默认不随包分发）----
+//
+// 这一节防的是两类**改动时容易漏、出问题又很贵**的组合：
+//   (a) 模型来自远端却把 `cacheMethod` 留成 `"none"` ⇒ 每次 OCR 重下约 30 MB。
+//       （本地模型时代写 `"none"` 是对的——不读 IndexedDB 旧缓存；改成远端后就不对了。
+//        这两处是**耦合**的，但它们在两个文件里，只看一处看不出来。）
+//   (b) 把语言包打进了 `public/ocr/tessdata`、运行时却指向远端 ⇒ 那份本地副本是纯死重，
+//       而它在 Android 上还会被装两遍——正是这次要消掉的体积问题。
+const ocrSrc = read("src/lib/ocr.ts");
+const baseMatch = ocrSrc.match(/export const DEFAULT_OCR_LANG_BASE\s*=\s*"([^"]+)"/);
 const TESS = "public/ocr/tessdata";
-if (existsSync(join(root, TESS))) {
-  const langs = readdirSync(join(root, TESS));
-  if (langs.length === 0) {
-    errors.push(`${TESS} 是空的 —— 离线 OCR 第一次使用就会失败（至少要有 eng）。`);
+
+if (!baseMatch) {
+  errors.push("src/lib/ocr.ts 里找不到 DEFAULT_OCR_LANG_BASE —— 语言包来源必须只有一处显式定义。");
+} else {
+  // 实际生效的是环境变量覆盖（构建期）优先
+  const envLang = process.env.VITE_TESSERACT_LANG_PATH ?? "";
+  const effective = envLang || baseMatch[1];
+  const effectiveRemote = /^https?:\/\//.test(effective);
+
+  if (effectiveRemote && !/cacheMethod:\s*"(write|refresh|readOnly)"/.test(ocrSrc)) {
+    errors.push(
+      `语言包来自远端（${effective}）但 ocr.ts 的 cacheMethod 不是 write/refresh/readOnly —— ` +
+        `那样每次 OCR 都会重新下载约 30 MB。本地模型时代写 "none" 是对的，改远端后不是。`,
+    );
+  }
+
+  const bundled = existsSync(join(root, TESS))
+    ? readdirSync(join(root, TESS)).filter((f) => f.endsWith(".traineddata.gz"))
+    : [];
+
+  if (bundled.length > 0 && effectiveRemote) {
+    errors.push(
+      `${TESS} 里有 ${bundled.length} 个语言包，但生效来源是远端（${effective}）—— ` +
+        `那份本地副本不会被用到，是纯死重（Android 上还会被装两遍）。` +
+        `要么别打（默认），要么 SHUYONOTE_OCR_BUNDLE=1 且设 VITE_TESSERACT_LANG_PATH 指向本地。`,
+    );
+  }
+  if (bundled.length === 0 && !effectiveRemote) {
+    errors.push(`生效来源是本地路径（${effective}）但 ${TESS} 里没有语言包 —— 运行时必然加载失败。`);
+  }
+  if (bundled.length > 0 && bundled.length < 2) {
+    errors.push(
+      `${TESS} 只打包了 ${bundled.length} 个语言包（默认请求 chi_sim+eng 两个，缺一个会加载失败）：` +
+        `${bundled.join(", ")}`,
+    );
   }
 }
 

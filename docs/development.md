@@ -99,7 +99,10 @@ pnpm tauri dev      # 桌面（Tauri + Rust，端口 1420）
 pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 ```
 
-> **PDF/OCR 资源**：`dev`/`dev:web`/`build` 前自动跑 `scripts/copy-pdfjs-assets.mjs`（PDF CJK→`public/pdfjs`）与 `scripts/copy-tesseract-assets.mjs`（tesseract worker/core/双语模型→`public/ocr`）；两者是 gitignore 的生成物，`pnpm install` 后由脚本生成，OCR 才可离线工作。
+> **PDF/OCR 资源**：`dev`/`dev:web`/`build` 前自动跑 `scripts/copy-pdfjs-assets.mjs`（PDF CJK→`public/pdfjs`）与 `scripts/copy-tesseract-assets.mjs`（tesseract worker + core→`public/ocr`）；两者是 gitignore 的生成物，`pnpm install` 后由脚本生成。
+>
+> ⚠️ **语言包（traineddata，29.6 MiB）自 2026-09-13 起不再随包分发**，改为首次使用 OCR 时按需下载并缓存（来源见 `src/lib/ocr.ts` 的 `DEFAULT_OCR_LANG_BASE`，托管规矩见 `docs/nginx-ocr.conf`）。理由：Android 上它会被装两遍（APK 的 `assets/` + `.so` 里 Tauri 内嵌的前端副本），实测见 [上线计划](plans/2026-09-13-android-launch-plan.md) §3。
+> 完全离线的发行版：`SHUYONOTE_OCR_BUNDLE=1` 让脚本把语言包拷回 `public/ocr/tessdata`，**并同时设** `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`（两处必须一致，`pnpm check:ocr-assets` 会拦住只设一半）。
 
 > **Windows 坑**：若 cargo 用镜像源遇到 SSL 撤销错误，先 `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再跑。
 
