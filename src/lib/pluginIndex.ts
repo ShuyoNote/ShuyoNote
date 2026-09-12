@@ -44,6 +44,19 @@ export function indexSignatureLabel(view: PluginIndexView): { text: string; leve
   };
 }
 
+/**
+ * 运行档的人话。
+ *
+ * 界面上**不写** `logic` / `declarative` 这两个词：它们是实现词汇，而用户只关心一件事——
+ * **这东西会不会自己跑代码**。所以直接回答那一句。认不出的值原样返回（新档位出现时
+ * 宁可显示生词，也不要谎称它是"有代码"）。
+ */
+export function runtimeLabel(runtime: string): string {
+  if (runtime === "declarative") return "零代码";
+  if (runtime === "logic") return "有代码";
+  return runtime;
+}
+
 /** 一条记录的副标题：谁发布的、多大、什么许可、跑在哪个运行时。 */
 export function entryMetaLine(entry: PluginIndexEntry): string {
   const bits = [
@@ -51,7 +64,7 @@ export function entryMetaLine(entry: PluginIndexEntry): string {
     entry.version ? `v${entry.version}` : "",
     entry.size > 0 ? formatBytes(entry.size) : "",
     entry.license ? entry.license : "",
-    entry.runtime ? `运行时 ${entry.runtime}` : "",
+    entry.runtime ? runtimeLabel(entry.runtime) : "",
   ].filter(Boolean);
   return bits.join(" · ");
 }

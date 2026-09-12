@@ -8,7 +8,7 @@ import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
 import { PluginFieldInput } from "./PluginFieldInput";
 import { PluginIndexPanel } from "./PluginIndexPanel";
 import { approvalDetail, approvalLabel } from "../lib/pluginApproval";
-import { revocationNotice, revokedKeyNotice, sourceLabel } from "../lib/pluginIndex";
+import { revocationNotice, revokedKeyNotice, runtimeLabel, sourceLabel } from "../lib/pluginIndex";
 import { formatBytes } from "../lib/pluginAudit";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
@@ -88,7 +88,15 @@ export function PluginManager() {
       <div className="plugin-manager" onClick={(e) => e.stopPropagation()}>
         <div className="pm-head">
           <div className="pm-title">
-            插件管理
+            <svg className="pm-mark" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="5" fill="none" stroke="currentColor" strokeWidth="2" />
+              <rect x="8.5" y="8.5" width="7" height="7" rx="2" fill="currentColor" />
+            </svg>
+            {/* 标题文字单独包一层并禁止折行：窄窗口下它曾被挤成「插件 / 管理」两行
+                （`.pm-title` 是 flex 容器，文字是匿名 flex 项，会跟着换行）。
+                徽章可以折到下一行，标题本身不行。 */}
+            <span className="pm-title-text">插件管理</span>
+            {plugins.length > 0 && <span className="pm-count">{plugins.length} 个已装</span>}
             {/* 作者循环的可见反馈：文件改动被自动识别时给出时间，而不是"悄悄变了" */}
             {autoReloadedAt && (
               <span className="pm-autoreload">
@@ -105,6 +113,8 @@ export function PluginManager() {
             </button>
           </div>
         </div>
+        {/* 头部固定、只有这一块滚动：插件多起来时标题与"装 zip 包"这些入口不该跟着滚走。 */}
+        <div className="pm-body">
         {!isDesktopPlatform() ? (
           <div className="sync-web-note">Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。</div>
         ) : (
@@ -116,15 +126,29 @@ export function PluginManager() {
         {plugins.length === 0 ? (
           <div className="pm-empty">未发现插件 · 可从文件夹安装，或把插件放入插件目录</div>
         ) : (
-          plugins.map((p) => (
+          <div className="pm-list">
+          {plugins.map((p) => (
             <div key={p.id} className={`pm-item ${p.enabled ? "pm-on" : "pm-off"}`}>
               <div className="pm-item-info">
-                <div className="pm-item-name">
-                  {p.name}
-                  <span className="pm-item-ver">v{p.version}</span>
+                {/* 卡片抬头：名字与"启没启用"在同一行，状态不靠读按钮文字 */}
+                <div className="pm-item-head">
+                  <div className="pm-item-name">
+                    {p.name}
+                    <span className="pm-item-ver">v{p.version}</span>
+                    <span className={`pm-item-runtime pm-rt-${p.runtime === "declarative" ? "decl" : "code"}`}>
+                      {runtimeLabel(p.runtime)}
+                    </span>
+                  </div>
+                  <span className={`pm-state ${p.enabled ? "pm-state-on" : "pm-state-off"}`}>
+                    {p.enabled ? "已启用" : "已禁用"}
+                  </span>
+                </div>
+                {/* 机器可核对的那几项放一行小字：id 用等宽（要和目录名对上），命令数用词 */}
+                <div className="pm-item-meta">
+                  <code className="pm-item-id" title="插件 id（等于插件目录名）">{p.id}</code>
+                  <span className="pm-item-cmds">{p.commands.length} 个命令</span>
                 </div>
                 <div className="pm-item-desc">{p.description || "—"}</div>
-                <div className="pm-item-cmds">{p.commands.length} 个命令</div>
                 {/* 撤回记忆（M11.11b 第一块）：索引说过这个版本不该再用，宿主已经拦下运行。
                     给两个出口：仍然使用（明确表态）或卸载。索引拥有者不是用户的上司，
                     所以"仍然使用"这条路必须存在，但要说清它意味着什么。 */}
@@ -501,8 +525,10 @@ export function PluginManager() {
                 </div>
               )}
             </div>
-          ))
+          ))}
+          </div>
         )}
+        </div>
       </div>
     </div>
   );

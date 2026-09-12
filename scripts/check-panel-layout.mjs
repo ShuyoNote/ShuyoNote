@@ -59,12 +59,18 @@ const FIXTURE = `
 
 <div class="plugin-manager-overlay"><div class="plugin-manager">
   <div class="pm-head">
-    <div class="pm-title">插件管理</div>
+    <div class="pm-title">
+      <svg class="pm-mark" viewBox="0 0 24 24" width="15" height="15"></svg>
+      <span class="pm-title-text">插件管理</span>
+      <span class="pm-count">2 个已装</span>
+      <span class="pm-autoreload">已自动重新扫描 12:00:00</span>
+    </div>
     <div class="pm-actions">
       <button>从文件夹安装</button><button>装 zip 包</button><button>打开插件目录</button>
       <button class="pm-close">×</button>
     </div>
   </div>
+  <div class="pm-body">
   <details class="pm-index-fold" open>
     <summary>从索引安装（给 URL）</summary>
     <div class="pm-index">
@@ -87,10 +93,12 @@ const FIXTURE = `
       </div>
       <div class="pm-index-hint">地址必须是 https。填了公钥就必须能取到 .minisig 签名并校验通过。</div>
       <div class="pm-index-source">来源：示例（example.com） · 生成于 2026-09-11</div>
+      <div class="pm-index-sig warn">索引签名：没有校验（没填公钥）</div>
+      <div class="pm-index-list">
       <div class="pm-index-item">
         <div class="pm-index-item-main">
           <div class="pm-index-item-title">周回顾</div>
-          <div class="pm-index-item-meta">发布者 alice · v1.3.0 · 2 KiB · MIT · 运行时 logic</div>
+          <div class="pm-index-item-meta">发布者 alice · v1.3.0 · 2 KiB · MIT · 有代码</div>
           <div class="pm-index-item-desc">把最近几天动过的页面汇成一篇草稿。</div>
           <div class="pm-index-item-perms">read:pages —— 读标题<br/>write:pages —— 写周报页</div>
           <div class="pm-index-item-sig">无发布者签名（只有 sha256）</div>
@@ -98,13 +106,18 @@ const FIXTURE = `
         </div>
         <button>升级到 v1.3.0</button>
       </div>
+      </div>
     </div>
   </details>
+  <div class="pm-list">
   <div class="pm-item pm-off">
     <div class="pm-item-info">
-      <div class="pm-item-name">示例插件<span class="pm-item-ver">v0.1.0</span></div>
+      <div class="pm-item-head">
+        <div class="pm-item-name">示例插件<span class="pm-item-ver">v0.1.0</span><span class="pm-item-runtime pm-rt-code">有代码</span></div>
+        <span class="pm-state pm-state-off">已禁用</span>
+      </div>
+      <div class="pm-item-meta"><code class="pm-item-id">demo-plugin</code><span class="pm-item-cmds">3 个命令</span></div>
       <div class="pm-item-desc">ShuyoNote 示例插件</div>
-      <div class="pm-item-cmds">3 个命令</div>
       <details class="pm-perms-fold" open>
         <summary>它要什么权限、会在什么时候跑<span class="pm-fold-warn">启用前请看这里</span></summary>
         <div class="pm-item-perms">需要权限：<span class="pm-perm">读取页面</span><span class="pm-perm">新建页面</span><span class="pm-perm">给页面加标签</span></div>
@@ -122,6 +135,19 @@ const FIXTURE = `
       <div class="pm-facts-row"><span class="pm-facts-key">体积</span><span class="pm-facts-val">12 KiB · 4 个文件 · 入口 3 KiB</span></div>
       <div class="pm-facts-item">内容与安装时一致（指纹 2790fb9b）</div>
     </div>
+  </div>
+  <div class="pm-item pm-on">
+    <div class="pm-item-info">
+      <div class="pm-item-head">
+        <div class="pm-item-name">护眼（低蓝光）<span class="pm-item-ver">v1.0.0</span><span class="pm-item-runtime pm-rt-decl">零代码</span></div>
+        <span class="pm-state pm-state-on">已启用</span>
+      </div>
+      <div class="pm-item-meta"><code class="pm-item-id">eye-care-theme</code><span class="pm-item-cmds">0 个命令</span></div>
+      <div class="pm-item-desc">零代码主题插件：暖白背景 + 降蓝的正文色，长时间读写时眼睛没那么累。停用即恢复你原来的主题。</div>
+    </div>
+    <div class="pm-item-actions"><button>禁用</button><button>事实</button><button class="danger">卸载</button></div>
+  </div>
+  </div>
   </div>
 </div></div>
 `;
@@ -175,6 +201,21 @@ try {
     const indexItem = box(".pm-index-item-main");
     const indexItemRow = box(".pm-index-item");
     const urlInput = box(".pm-index-url");
+    const state = box(".pm-state");
+    // scrollWidth/clientWidth 要元素本身，不能拿 box() 返回的那个 rect（它是纯几何快照）
+    const body = document.querySelector(".pm-body");
+    const managerEl = document.querySelector(".plugin-manager");
+    const manager = box(".plugin-manager");
+    // 主题强调色的真实取值 vs. 索引条目按钮实际用的描边色：
+    // 两者必须一致——这正是"样式用了不存在的 --brand、于是永远取兜底色"那个 bug 的判据。
+    const accentVar = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+    const probe = document.createElement("span");
+    probe.style.color = accentVar;
+    document.body.appendChild(probe);
+    const accentRgb = getComputedStyle(probe).color;
+    probe.remove();
+    const ctaBorder = getComputedStyle(document.querySelector(".pm-index-item > button")).borderTopColor;
+    const stateOn = document.querySelector(".pm-state-on");
     return {
       cardWidth: card?.width,
       infoWidth: info?.width,
@@ -190,6 +231,27 @@ try {
       indexItemRowWidth: indexItemRow?.width,
       urlInputWidth: urlInput?.width,
       subTitleLines: oneline(".pm-sub-open"),
+      titleLines: oneline(".pm-title-text"),
+      headWraps: (() => {
+        const h = document.querySelector(".pm-head");
+        const t = document.querySelector(".pm-title");
+        const a = document.querySelector(".pm-actions");
+        return t && a ? (a.getBoundingClientRect().top > t.getBoundingClientRect().bottom - 2 ? 2 : 1) : null;
+      })(),
+      headOverflowX: (() => {
+        const h = document.querySelector(".pm-head");
+        return h ? h.scrollWidth - h.clientWidth : null;
+      })(),
+      stateRight: state?.right,
+      stateLeft: state?.left,
+      stateBg: stateOn ? getComputedStyle(stateOn).backgroundColor : "",
+      cardRight: card?.right,
+      cardLeft: card?.left,
+      bodyOverflowX: body ? body.scrollWidth - body.clientWidth : null,
+      managerOverflowX: managerEl ? managerEl.scrollWidth - managerEl.clientWidth : null,
+      listColumns: getComputedStyle(document.querySelector(".pm-list")).gridTemplateColumns.split(" ").length,
+      accentRgb,
+      ctaBorder,
     };
   });
 
@@ -224,6 +286,40 @@ try {
   );
   ok(m.urlInputWidth > 160, `索引地址输入框够宽（${Math.round(m.urlInputWidth)}px）`);
   ok(m.subTitleLines <= 2, `订阅标题没有被压成竖柱（${m.subTitleLines} 行）`);
+
+  // ---- 状态徽章不许越出卡片：截图里"内容被裁掉"的那一类，几何上就是越界 ----
+  ok(
+    m.stateRight <= m.cardRight + 1 && m.stateLeft >= m.cardLeft - 1,
+    `状态徽章待在卡片内（徽章 ${Math.round(m.stateLeft)}..${Math.round(m.stateRight)}，卡片 ${Math.round(m.cardLeft)}..${Math.round(m.cardRight)}）`,
+  );
+  ok(m.stateBg && m.stateBg !== "rgba(0, 0, 0, 0)", `状态徽章有主题底色（${m.stateBg}）`);
+
+  // ---- 滚动区不许横向溢出：溢出就会被裁/出现横向滚动条，看起来就是"内容被裁了" ----
+  ok(
+    m.bodyOverflowX !== null && m.bodyOverflowX <= 1,
+    `正文区没有横向溢出（scrollWidth-clientWidth = ${m.bodyOverflowX}px）`,
+  );
+  ok(
+    m.managerOverflowX !== null && m.managerOverflowX <= 1,
+    `弹窗没有横向溢出（${m.managerOverflowX}px）`,
+  );
+
+  // ---- 强调色必须来自**真实存在的**主题令牌 ----
+  // 这条挡的是一次真实事故：样式里写了 `var(--brand, #2F6BFF)`，而 --brand 从未定义过，
+  // 于是永远取兜底色——亮色下差一点、暗色下完全不跟主题，而且**看不出错**。
+  ok(
+    m.ctaBorder === m.accentRgb,
+    `索引按钮用的是主题强调色（描边 ${m.ctaBorder} = --accent ${m.accentRgb}）`,
+  );
+
+  // ---- 弹窗标题不许被挤成两行 ----
+  // 窄窗口下 `.pm-title` 是 flex 容器、标题文字是匿名 flex 项，于是它跟着换行，
+  // 页眉变成「插件 / 管理」——和当初让这个门禁诞生的是同一类毛病。
+  ok(m.titleLines === 1, `弹窗标题保持一行（${m.titleLines} 行）`);
+  ok(
+    m.headOverflowX !== null && m.headOverflowX <= 1,
+    `页眉没有横向溢出（${m.headOverflowX}px；装不下时按钮应当换行而不是溢出）`,
+  );
 
   // ---- PDF 阅读器：桌面端是内容区的一种视图，不许盖住侧边栏与右栏 ----
   // 注意视口要换成**桌面宽度**再量：在 ≤768px 上应用本来就切到移动布局（侧边栏变抽屉、

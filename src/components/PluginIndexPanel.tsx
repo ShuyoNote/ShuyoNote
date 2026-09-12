@@ -269,7 +269,10 @@ export function PluginIndexPanel() {
           {view.plugins.length === 0 ? (
             <div className="pm-empty">这份索引里没有插件</div>
           ) : (
-            view.plugins.map((p) => {
+            /* 条目列表是**自己的网格**：18 个插件在宽窗口下两列，缩成一条 3000px 的竖列
+               读起来像流水账（每个条目的正文都比一列窄得多，白扔一半宽度）。 */
+            <div className="pm-index-list">
+            {view.plugins.map((p) => {
               const installed = installedOf(p.id);
               const changed = keyChanged(p);
               const act = entryAction(p, installed?.version, changed);
@@ -346,7 +349,8 @@ export function PluginIndexPanel() {
                   </button>
                 </div>
               );
-            })
+            })}
+            </div>
           )}
         </>
       )}

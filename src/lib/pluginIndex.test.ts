@@ -16,6 +16,7 @@ import {
   revocationNotice,
   revokedKeyNotice,
   revokedKeysSummary,
+  runtimeLabel,
   sourceLabel,
   subscriptionStatus,
   subscriptionTitle,
@@ -127,13 +128,23 @@ describe("签名状态必须一眼能分辨", () => {
 });
 
 describe("条目与安装确认", () => {
-  it("副标题把发布者、版本、体积、许可、运行时都说清楚", () => {
+  it("副标题把发布者、版本、体积、许可、运行档都说清楚，且不泄漏实现词汇", () => {
     const line = entryMetaLine(entry());
     expect(line).toContain("发布者 alice");
     expect(line).toContain("v1.2.0");
     expect(line).toContain("2 KiB");
     expect(line).toContain("MIT");
-    expect(line).toContain("运行时 logic");
+    // 运行档要说人话：用户在意的是"这东西会不会自己跑代码"，不是它叫什么档位。
+    expect(line).toContain("有代码");
+    expect(line).not.toContain("logic");
+    expect(line).not.toContain("declarative");
+    expect(entryMetaLine(entry({ runtime: "declarative" }))).toContain("零代码");
+  });
+
+  it("认不出的运行档原样显示，不谎称它是「有代码」", () => {
+    // 将来真出现新档位（比如 wasm）时，宁可显示生词，也不要给一个错的结论
+    expect(runtimeLabel("wasm")).toBe("wasm");
+    expect(runtimeLabel("")).toBe("");
   });
 
   it("被撤回/需要更新版本时不可安装，并原样给出理由", () => {
