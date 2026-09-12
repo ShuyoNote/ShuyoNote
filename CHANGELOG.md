@@ -150,6 +150,27 @@
   - 门禁：`pack-zip.test.mjs` 新增 2 条——`flat: true` 平铺、以及**默认形状不许被改掉**
     （插件包仍必须带目录名前缀）。
 
+### 已知问题（尚未修）
+
+- **Android 上插件运行时（Boa）会 panic，插件整个用不了**（2026-09-13 真机实测：
+  HUAWEI Mate 40 `OCE-AN10` · Android 12）。日志：
+
+  ```text
+  thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
+  assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
+  enable the `jsvalue-enum` feature to use the enum-based `JsValueInner`
+  ```
+
+  **应用没崩**——panic 在插件线程（`plugin-run`）上，主线程照常跑。M11.5 那套"超预算就 panic
+  让它 unwind、应用存活"的设计在这里顺带被真机验证了一次；但插件不可用。
+
+  根因：`nan_boxed.rs` 的 `MASK_POINTER_VALUE` 只留低 48 位，而真机上那个指针是
+  `0xB400007D1B960000`（真实地址 `0x7D1B960000`）——**最高字节被当 tag 用了**。
+  修法（Boa 自己给的提示）：移动端开 `boa_engine` 的 `jsvalue-enum`（枚举版 `JsValueInner`，
+  不做指针标记）；桌面 x64 指针高位为 0、不受影响，所以**只对移动端开**。代价是 `JsValue`
+  变大变慢，但仅移动端。详见 `docs/MOBILE.md` §2.1。**尚未实施**——改完要重新出包，
+  并在真机上复验这条 panic 消失。
+
 ## [1.90.0] - 2026-09-11
 
 > **把「应用 ↔ 社区」这条通道打通，并让第一方插件真的能被装上。** 这一版三件事：

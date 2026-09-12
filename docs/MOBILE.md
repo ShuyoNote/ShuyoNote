@@ -54,16 +54,56 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 （`.github/workflows/android.yml` 已跑通）、版本号联动（Tauri 每次 `android build` 自动同步
 `tauri.properties`，**不需要额外脚本**）。
 
-**待做**（详见上线计划的阶段划分）：签名与密钥保管、应用内"检查更新"、真机验收、上架材料。
+**已完成**：体积压缩（arm64 **156.7 → 53.41 MiB**）、CI 出包（`.github/workflows/android.yml`）、
+**首次真机跑通**（2026-09-13 · HUAWEI Mate 40 `OCE-AN10` / Android 12：装上、冷启动 589 ms、界面正常渲染）。
 
-### 2.1 移动端**不提供**的能力（边界要能说清，别含糊）
+**待做**（详见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` 的阶段划分）：
+正式 keystore 与密钥保管、应用内"检查更新"、逐条真机验收、上架材料。
 
-走 Tauri 原生壳意味着大部分能力与桌面一致（加密、附件、插件、同步、原生 PDF 都在），
-但**有一项明确不做**：
+### 2.1 移动端**不提供** / **已知有问题**的能力（边界要能说清，别含糊）
+
+走 Tauri 原生壳意味着大部分能力与桌面一致（加密、附件、同步、原生 PDF 都在），
+目前有**两项**要说清：
 
 | 能力 | 移动端 | 为什么 / 边界落在哪 |
 |---|---|---|
 | **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 23 个命令带 `#[cfg(desktop)]`，**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
+| **插件运行时（Boa）** | ⚠️ **真机上 panic，插件用不了**（2026-09-13 真机实测；根因已定位、修法一行、**尚未实施**） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
+
+#### ⚠️ Boa 的 nan-boxing 在 Android 上不成立（2026-09-13 真机实测）
+
+第一次真机跑起来时，日志里就有这么一条：
+
+```text
+thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
+assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
+enable the `jsvalue-enum` feature to use the enum-based `JsValueInner`
+  left: 537333788672          right: 12970367464160817152
+```
+
+**应用没崩**——panic 在插件线程（`plugin-run`）上，主线程照常跑。M11.5 那套"超预算就 panic 让它
+unwind、应用存活"的设计，在这里顺带被真机验证了一次；**但插件整个用不了**。
+
+根因（读 `nan_boxed.rs` 定位）：
+
+```rust
+const MASK_POINTER_VALUE: u64 = 0x0000_FFFF_FFFF_FFFF;   // 只留低 48 位
+assert_eq!(value_masked, value, "…not compatible with a nan-boxed JsValueInner");
+```
+
+而真机上那个指针是 **`0xB400007D1B960000`**，真实地址是 `0x7D1B960000` ——
+**最高字节被当 tag 用了**（Android/arm64 上的指针标记）。48 位的掩码装不下它，断言当场失败。
+
+修法（Boa 自己给的提示）：给移动端开 `boa_engine` 的 `jsvalue-enum`，改用**枚举版** `JsValueInner`
+（不做指针标记）。桌面 x64 用户态指针高位为 0，不受影响，所以**只对移动端开**：
+
+```toml
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
+```
+
+代价：`JsValue` 从 8 字节 nan-boxed 变成枚举（更大、更慢），但只在移动端。
+**状态：已定位、修法已定，尚未实施**（改完要重新出包 + 真机复验日志里不再出现这条 panic）。
 
 > ⚠️ 判定"某个只在桌面存在的功能"**不要**用 `isDesktopPlatform()`——它的真实语义是
 > "**有没有 Rust 内核**"，Tauri 的移动端为真，而同步/加密/插件在移动端是要保留的。
