@@ -23,11 +23,11 @@
 | Android 依赖 | ✅ **已做** | `[target.'cfg(target_os = "android")'.dependencies]`：`openssl` vendored + `rusqlite` bundled-sqlcipher-vendored-openssl（NDK clang 交叉编译） |
 | 加密密钥 | ✅ **无需改造** | `security.rs`：口令派生、**密钥不落盘**、只活在会话内存（E1 的核心）。所以 Android 上**不需要 Keystore 集成** |
 | Android 工程 | ⚠️ 本地生成、**未入库** | `.gitignore:45` → `src-tauri/gen`，注释写着"`tauri android init`/build 生成，可重建" |
-| 真机 APK | ⚠️ 能构建但**未签名** | 2026-09-10 产出 `app-arm64-release-unsigned.apk`(156.7 MiB)、`app-universal-release-unsigned.apk`(258.8 MiB) |
+| 真机 APK | ⚠️ 能构建但**未签名** | 09-10 本机产出 arm64 156.7 MiB / universal 258.8 MiB；**2026-09-13 CI 产出 arm64 53.41 MiB**（见「体积账」） |
 | 版本号联动 | ✅ **Tauri 自动同步** | `gen/android/app/tauri.properties` 每次 `android build` 刷新：`1.90.1 / 1090001`（口径 `major*1e6+minor*1e3+patch`）。~~停在 1.82.18~~ 是我看陈旧文件得出的错误结论，已更正 |
-| 体积 | ❌ arm64 **156 MiB** | 见下面「体积账」 |
+| 体积 | ✅ arm64 **53.41 MiB**（目标 55–70 MiB） | 见下面「体积账」 |
 | 签名 | ❌ 无 keystore、gradle 无 `signingConfig` | — |
-| CI | ❌ 无 Android 工作流 | `.github/workflows/` 只有 ci / pages / release；`.gitcode/workflows/` 只有 build-linux |
+| CI | ✅ **已跑通**（`.github/workflows/android.yml`，run #3 绿） | 路上翻出**两个只在 Linux 上暴露**的坑（NDK 无 `aarch64-linux-android-ranlib`、mupdf-sys 的 bindgen 不带 `--target`），修法与理由写在 workflow 的步骤注释里 |
 | 应用内更新 | ❌ Android 没有 | updater 被 `#[cfg(desktop)]` 关掉，且移动端本就该走商店/重新下载 |
 | iOS | ❌ 完全没有脚手架 | 无 `gen/apple` |
 
@@ -105,12 +105,22 @@ arm64 的 libshuyonote_lib.so = 101.2 MiB
 `target/<triple>/release/build/shuyonote-*/out/tauri-codegen-assets/` = **304 个文件、50.2 MiB**，
 其中最大的两个 `.gz` 正是 OCR 语言包（**19.18 + 10.42 = 29.6 MiB** = `chi_sim` + `eng`）。
 
-于是 **Android 上前端被装了两遍**：
+**这一节原先那句"Android 上前端被装了两遍"要分两次说**——2026-09-13 的 CI 构建推翻了它的一半：
 
-| # | 位置 | 大小 | 谁在用 |
+| 构建 | APK 的 `assets/` | `.so` 里的内嵌副本 | 前端装了几遍 |
 |---|---|---|---|
-| 1 | APK 的 `assets/`（= `dist/` 原始 89.2 MiB） | 89.2 MiB | **Android WebView 实际加载的就是这份** |
-| 2 | `.so` 里 Tauri 嵌的那份（压缩副本） | 50.2 MiB | 桌面端用 `tauri://localhost`；Android 上是重复的 |
+| 09-10 本机（旧 CLI 建的 `gen/android`） | **124.1 MiB / 306 个文件**（含 `index.html`、`boot-scripts.js`） | 有（`.so` 101.2 MiB） | **两遍** |
+| 2026-09-13 CI（`tauri android init --ci` 全新生成） | **3.5 KB / 3 个文件**（只有 `tauri.conf.json` + 两个 dexopt profile） | 有（`.so` 50.75 MiB） | **一遍** |
+
+两次的 `.so` 里都能查到 `index.html` / `/assets/` / `manifest.webmanifest` / `sw.js` /
+`tauri.localhost` 这些字符串，即**前端确实嵌在 `.so` 里**；差别只在 APK 的 `assets/` 那份副本。
+
+> ⚠️ **一处尚未定论的点，不许当成已解决**：Android WebView 到底从哪一份加载？
+> 支持"从 `.so` 那份加载"的证据是——两个 APK 的 `classes.dex` 里都只有 `WebViewAssetLoader`，
+> **没有** `android_asset` / `file:///android_asset`；而 `WebViewAssetLoader` 更像对着 CSP 里的
+> `asset.localhost`（用户文件的 asset 协议），`tauri.localhost` 只出现在 `.so` 里。
+> 但**这只是证据，不是真机验证**：按 §七 的规矩，它必须在真机上开一次才算数
+> （前置是签名，见私有仓库 `docs/android-launch-plan.md`）。
 
 ### 3.3 `dist/` 的构成（89.2 MiB）与查出来的死重
 
@@ -133,11 +143,22 @@ arm64 的 libshuyonote_lib.so = 101.2 MiB
 |---|---|---|
 | 删掉 3 个用不到的 tesseract-core 变体 | 23.3 ×2 ≈ **46 MiB** | ✅ **本轮已做**（拷贝脚本改白名单 + `check:ocr-assets` 硬门禁，三条变异测试验过它能失败） |
 | OCR 语言包改按需下载 | 29.6 ×2 ≈ **59 MiB** | ✅ **已做**（2026-09-13）：语言包不再随包分发，改为运行时按需下载 + tesseract 的 IndexedDB 缓存 ⇒ 首次联网一次、之后永久离线。托管在 `shuyo.cn/ocr/tessdata/4.0.0/`（**路径带 tessdata 版本号**，故可 immutable 长缓存），规矩见 `docs/nginx-ocr.conf` |
-| 去掉 `.so` 里那份前端内嵌副本 | ≈ 50 MiB | ⏳ 待查 Tauri 是否允许移动端不嵌（APK 的 `assets/` 已经提供了） |
+| ~~去掉 `.so` 里那份前端内嵌副本~~ | ~~≈ 50 MiB~~ | ❌ **不成立**（2026-09-13 CI 实测）：CI 全新 `init` 出来的工程**根本不往 `assets/` 放前端**，前端只在 `.so` 里一份 ⇒ **没有可砍的第二份**。原估的 ≈50 MiB 因此没有兑现，也不该再写进预期。要再压这一块，只能是"让前端别进二进制"（换 AssetLoader 形态），那是**产品级改动**，不在本轮 |
 | `strip = true` | 12.7 MiB | ✅ **本轮已做**（代价：丢符号名；`CARGO_PROFILE_RELEASE_STRIP=false` 可临时关） |
 
-**修正后的目标**：arm64 APK **156.7 MiB** → 本轮两项后约 **85 MiB** → 语言包按需后约 **55 MiB**
-→ 若能去掉内嵌副本，**~30 MiB 量级**。每一项都由实测推进，不再靠估。
+**实测结果（2026-09-13，CI run #3，未签名）**：
+
+| | arm64 APK |
+|---|---|
+| 09-10 那次（无 strip、语言包随包、core 变体全在、前端两遍） | **156.7 MiB** |
+| **2026-09-13 CI**（strip + core 白名单 + 语言包按需） | **53.41 MiB**（`56,000,758` 字节，sha256 `DB710745…`） |
+
+构成：`lib/arm64-v8a/libshuyonote_lib.so` **50.75 MiB** + `classes.dex` 2.0 + `resources.arsc` 1.1 + `res/` 0.7。
+**只含一个 ABI**（尽管产物目录名是 `universal` —— 那是"不做 ABI 拆分"的意思），
+**语言包不在包里**（CI 有一条硬断言守着，`traineddata` 出现就 fail）。
+
+⇒ **当初定的 55–70 MiB 目标已达成**（53.41 MiB），而且比中间那次估算（85 MiB）好得多——
+差额正是"前端两遍"这件事在 CI 构建里本来就不成立。
 
 ### 3.5 语言包托管：**必须给 CORS**（这条只在应用里会坏）
 
@@ -243,9 +264,13 @@ $env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
 2. ~~或者绕开 OpenSSL：把「聚合邮箱」按平台收窄，Android 就不需要编译 OpenSSL，卡点一整个消失。~~
    ❌ **这条不成立**（我先前判断错过，见 §8.1 的纠正）：邮箱已收窄为桌面专属，但 **SQLCipher
    仍要从源码构建 OpenSSL**，卡点一原样还在。**别再把"砍功能"当成解卡点一的手段。**
-3. CI 里用官方 `tauri-apps/tauri-action` 或 Ubuntu runner 交叉编译——**Linux runner 上没有这些
-   Windows 工具链问题**，所以 CI 出包比本地出包更稳（本地构建只需跑通给自己装机用）。
-   **这也是目前最推荐的一条**：它同时解决卡点一与卡点二，且不需要往开发机塞工具链。
+3. ✅ **已选并已跑通（2026-09-13）**：CI 里用 Ubuntu runner 交叉编译
+   （`.github/workflows/android.yml`，run #3 绿，arm64 APK 53.41 MiB）。
+   本地构建只作为"给自己装机"的临时手段。
+   ⚠️ **但原话"Linux runner 上没有这些 Windows 工具链问题"是错的**——Linux 上没有那组
+   Perl / make 问题，却有自己的两个（NDK 缺 `aarch64-linux-android-ranlib`、mupdf-sys 的
+   bindgen 不带 `--target`），见 §一 表格的 CI 行与 workflow 里的步骤注释。
+   正确的表述是：**换个环境不是"没有问题"，是"换一组问题"**——构建环境仍然必须钉死并实测。
 
 #### 0.1 要做的事
 
@@ -298,9 +323,10 @@ $env:PERL5LIB = "$env:LOCALAPPDATA\ds-build-tools\perl5lib"
 
 ### Phase 2 · 能持续发（约 1 周）
 
-1. **CI 出包**：GitHub Actions 加 Android job（ubuntu runner + Android SDK/NDK），
-   keystore 走 Secrets；产物上传 artifacts。**注意 `gen/android` 不在库里 → CI 必须先
-   `pnpm tauri android init`**，任何需要的 gradle/manifest 定制都要**脚本化**（否则本地能过、CI 不能）。
+1. ✅ **CI 出包：已跑通**（`.github/workflows/android.yml`，2026-09-13）——ubuntu runner +
+   Android SDK/NDK；`gen/android` 不在库里，所以 CI 自己 `pnpm tauri android init --ci`，
+   产物（未签名 APK）走 artifacts。**keystore 走 Secrets 这一步还没做**，等签名方案定；
+   要加的是 `signingConfig` 的脚本化 + Secrets 注入。
 2. **官网下载页**：`shuyo.cn/download`（或 `/app` 旁）给 APK 直链 + sha256 + 签名指纹 +
    "怎么验证签名"；与 Web 版、桌面版并列。
 3. **应用内"检查更新"**：Android 不接 updater 插件，改为「发现新版本 → 打开下载页」。

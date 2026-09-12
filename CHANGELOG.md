@@ -30,6 +30,25 @@
   那一步被跳过（`release.mjs` 会打印一行说明，**不是静默的**——这一点我先前写错过并已更正），
   表现为"发了新版但索引没更新"。
 
+- **Android 能在 CI 上出包了，安装包 156.7 → 53.41 MiB（当初定的 55–70 MiB 目标已达成）**。
+  新增 `.github/workflows/android.yml`（ubuntu runner + Android SDK/NDK；只手动触发或本文件被改动时跑，
+  正式签名流程定了再决定要不要并进 `release.yml`）。**实测产物**：arm64 未签名 APK **53.41 MiB**
+  （`56,000,758` 字节），只含一个 ABI（尽管产物目录名是 `universal`——那是"不做 ABI 拆分"的意思），
+  **语言包不在包里**（CI 里有硬断言守着，出现 `traineddata` 就 fail）。
+  - ⚠️ **路上翻出两个只在 Linux 上暴露的坑，都不是"换 NDK 版本"能解决的**：
+    ① OpenSSL 的 `make install_dev` 调 `aarch64-linux-android-ranlib` → **Error 127**，
+    因为 NDK 只提供 `llvm-ar` / `llvm-ranlib`，没有那种前缀名（本机 NDK 29 实测：带前缀的只有
+    `aarch64-linux-androidNN-clang[++]`）；② `mupdf-sys` 的 bindgen **不传 `--target`**
+    （它的 `find_clang_sysroot()` 只给 emscripten 返回 sysroot），于是在 Linux 上用宿主 triple
+    解析 mupdf 头文件、读到宿主 glibc 的 `features-time64.h` → `bits/wordsize.h` not found。
+    修法与理由都写在 workflow 的步骤注释里（两条互为兜底）。
+  - ⚠️ 顺带更正一句我自己写错的判断：原先写"Linux runner 上没有这些 Windows 工具链问题"——**实测打脸**。
+    换个环境不是"没有问题"，是"**换一组问题**"；构建环境仍然必须钉死并实测。
+  - ⚠️ 还有一条**尚未定论、不许当成已解决**：CI 那份 APK 的 `assets/` 里没有前端（只剩 3.5 KB），
+    而 09-10 那份有 124.1 MiB。证据指向"前端由 `.so` 内嵌副本经 `tauri.localhost` 提供、
+    `assets/` 那份是多余的"（两个 dex 里都只有 `WebViewAssetLoader`，没有 `android_asset`），
+    但**这必须真机开一次才算数**（前置是签名）。
+
 ### 修复
 
 - **插件管理面板的样式用了一套不存在的设计令牌**：写的是 `var(--brand)` /
@@ -84,8 +103,10 @@
     原样还在，正解是换构建环境（CI 用 Linux runner），不是砍功能。
 
 - **OCR 语言包改为按需下载（安装包再减约 30 MiB，Android 上约 60 MiB）**。
-  两个语言包（`chi_sim` 19.2 + `eng` 10.4 = 29.6 MiB）原先随包分发，而实测它们在 Android 上
-  **会被装两遍**（APK 的 `assets/` 一份 + `.so` 里 Tauri 内嵌的前端副本一份；桌面安装包同样带着）。
+  两个语言包（`chi_sim` 19.2 + `eng` 10.4 = 29.6 MiB）原先随包分发，而 **09-10 那份 Android APK
+  实测装着两遍**（APK 的 `assets/` 一份 124.1 MiB + `.so` 里 Tauri 内嵌的前端副本一份；桌面安装包同样带着）。
+  ⚠️ **2026-09-13 的 CI 构建实测只有一遍**（`assets/` 只剩 3.5 KB）——"两遍"是那次旧 CLI 生成的
+  工程的行为，**不是恒定事实**，别拿它当体积账的依据（见 `docs/plans/2026-09-13-android-launch-plan.md` §3.2）。
   现在改为：**首次使用 OCR 时联网下载一次，之后由 tesseract 的 IndexedDB 缓存复用 ⇒ 永久离线可用**。
   - 语言包托管在 `https://shuyo.cn/ocr/tessdata/4.0.0/`（**路径带 tessdata 版本号**，
     所以服务端可以 immutable 长缓存；换模型＝换路径，不会让用户跑着旧模型还看不出来）。
@@ -105,7 +126,8 @@
   而 tesseract.js 7 的 worker 只按「SIMD 档 × `legacyCore`」取**一个**；我们调的是
   `createWorker(langs, 1, …)`（oem=1 纯 LSTM）且从不设 `legacyCore`、也不用 `worker.detect`
   ⇒ 只会走 `-lstm` 那三档，**三个非 `-lstm` 变体（23.3 MiB）永远用不到**——
-  而它们在 Android 上还会被装两遍（APK 的 `assets/` 一份 + Tauri 嵌进 `.so` 一份）。
+  而它们在 09-10 那份 Android APK 上还被装了两遍（`assets/` 一份 + Tauri 嵌进 `.so` 一份；
+  CI 那份已只有一遍）。
   现在 `copy-tesseract-assets.mjs` 用显式白名单，**实测 `public/ocr` 72.9 → 49.1 MiB**。
   - 新增门禁 `check:ocr-assets`（已进 `pnpm build` / `build:web`），钉三件事：源码不许走
     legacy 路径 / 产物不许有死重变体 / 每个 `.wasm.js` 必须有 `.wasm` 同伴。

@@ -428,7 +428,7 @@ ShuyoNote/
 - [x] **PDF 阅读/批注**（M24 阶段1/3：内置阅读器 + 连续滚动 + 高亮/画笔/便签 + 摘录成块（`pdf://` 回链）+ AI 帮读 + 对整篇 PDF 提问；见 [方案](docs/plans/2026-08-27-pdf-annotation-plan.md)）
 - [x] **PDF 阅读体验 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / **AI 一键生成目录（视觉优先、带层级、可范围）** / 系统朗读 / 识别结果弹层；见 [落地文档](docs/plans/2026-08-30-pdf-reader-ai-plan.md)）
 - [x] **跨平台架构（M16 全端通吃）**：平台无关核心 + 可插拔平台壳 → 浏览器 PWA / 鸿蒙 ArkWeb（可插拔壳）；**安卓 / iOS 走 Tauri 原生壳**（同一份 Rust 内核）
-- [ ] **Android 移动端**：Tauri 原生壳，已能构建出 APK（未签名）；差体积压缩 / 签名 / CI / 真机验收 / 上架材料，见 [移动端上线计划](docs/plans/2026-09-13-android-launch-plan.md) 与 [移动端路线](docs/MOBILE.md)。iOS 随后（那台 Mac 的工具链需先解决）。
+- [ ] **Android 移动端**：Tauri 原生壳；**CI 已跑通**（`.github/workflows/android.yml`），未签名 arm64 APK **53.41 MiB**（目标 55–70 MiB 已达成，156.7 → 53.41）；差**签名 / 真机验收 / 上架材料**，见 [移动端上线计划](docs/plans/2026-09-13-android-launch-plan.md) 与 [移动端路线](docs/MOBILE.md)。iOS 随后（那台 Mac 的工具链需先解决）。
 
 > 详细演进路线与里程碑，见 [docs/roadmap.md](docs/roadmap.md)。
 
