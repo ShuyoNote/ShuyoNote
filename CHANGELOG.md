@@ -67,6 +67,22 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **Android 上线准备：砍掉 OCR 资产里的死重（打包体积 −23.8 MiB）**。
+  `public/ocr/core` 原先"整个目录全拷"= **43.2 MiB**（6 个 tesseract-core 变体 × 2 种形态），
+  而 tesseract.js 7 的 worker 只按「SIMD 档 × `legacyCore`」取**一个**；我们调的是
+  `createWorker(langs, 1, …)`（oem=1 纯 LSTM）且从不设 `legacyCore`、也不用 `worker.detect`
+  ⇒ 只会走 `-lstm` 那三档，**三个非 `-lstm` 变体（23.3 MiB）永远用不到**——
+  而它们在 Android 上还会被装两遍（APK 的 `assets/` 一份 + Tauri 嵌进 `.so` 一份）。
+  现在 `copy-tesseract-assets.mjs` 用显式白名单，**实测 `public/ocr` 72.9 → 49.1 MiB**。
+  - 新增门禁 `check:ocr-assets`（已进 `pnpm build` / `build:web`），钉三件事：源码不许走
+    legacy 路径 / 产物不许有死重变体 / 每个 `.wasm.js` 必须有 `.wasm` 同伴。
+    **三条变异测试验证过它会失败**，而且报错指名道姓（缺哪档、哪个文件第几行）。
+    它防的是最危险的那一类改动：哪天有人为了 `worker.detect` 打开 `legacyCore: true`，
+    而拷贝脚本仍只放 `-lstm` 三档 —— 那样离线 OCR 会在真机上加载失败，
+    而构建、单测、类型检查**全都发现不了**。
+
 ### 修复
 
 - **从 Windows 发版时，`release.mjs` 会在打 Web 整包那一步直接崩掉**：那一步 shell out 到
