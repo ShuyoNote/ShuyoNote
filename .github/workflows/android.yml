@@ -25,6 +25,14 @@ name: Android (build)
 #            修法见 "给 bindgen 指定 Android target" 步骤。
 #    教训：**"换个环境构建"必须真的跑一遍**——原注释里那句"Linux runner 上这些问题都不存在"
 #    被实测打脸了：问题确实不一样，但不是"没有"。
+#
+# 5. run #3 绿了之后、包真的装到真机上（2026-09-13 · HUAWEI Mate 40 / Android 12）才发现的
+#    第五个平台差异：**构建能过 ≠ 运行时能用**。boa_engine 的 nan-boxing 在 Android 上
+#    不成立（指针最高字节被当 tag 用，而它只留低 48 位），插件线程一上来就 panic：
+#      thread 'plugin-run' panicked at boa_engine-.../nan_boxed.rs:270:9
+#    修法在 `src-tauri/Cargo.toml` 的移动端依赖段：开 `jsvalue-enum`（枚举版 JsValueInner）。
+#    **所以"CI 绿了"只证明能出包，不证明装上能用**——这条 workflow 的价值边界就在这里，
+#    真机验收那一步不能省。
 
 on:
   workflow_dispatch:

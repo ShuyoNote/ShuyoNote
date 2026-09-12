@@ -38,6 +38,8 @@ minisign-verify = "0.2"
 # RSS 看门狗读子进程常驻内存：Linux 要页大小（sysconf），macOS 走 proc_pidinfo。
 # 它本来就在依赖树里（随 rusqlite/tokio 进来），这里只是显式声明。
 libc = "0.2"
+# 插件 JS 运行时。⚠️ **移动端必须额外开 `jsvalue-enum`**——理由见下面
+# [target.'cfg(any(target_os = "android", target_os = "ios"))'] 那段（真机实测的 panic）。
 boa_engine = "0.21.1"
 chacha20poly1305 = "0.11.0"
 argon2 = "0.5.3"
@@ -94,6 +96,22 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # 详见 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §0.0。
 [target.'cfg(target_os = "android")'.dependencies]
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+# 移动端专属（iOS 一并开着，同一个理由）：boa 的 **nan-boxing 在 Android 上不成立**
+# ——2026-09-13 真机实测（HUAWEI Mate 40 / Android 12）。它的 `tag_pointer()` 断言指针必须
+# 落在 `MASK_POINTER_VALUE`（低 48 位）内，而真机上拿到的是 **0xB400007D1B960000**
+# （真实地址 0x7D1B960000）——**最高字节被当 tag 用了**，断言当场失败：
+#
+#   thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
+#   assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
+#
+# 表现：**应用不崩**（panic 在插件线程上，主线程照常跑），但**插件整个用不了**。
+# boa 自己给的逃生口就是 `jsvalue-enum`：改用枚举版 `JsValueInner`，不做指针标记。
+# 代价：`JsValue` 从 8 字节 nan-boxed 变成枚举（更大更慢）——桌面 x64 用户态指针高位为 0、
+# 不受影响，所以**只对移动端开**。features 可累加：这里与 [dependencies] 的声明合并，
+# 且仅对移动端生效（与上面 rusqlite 那段同一个机制）。详见 docs/MOBILE.md §2.1。
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 
 # 体积（2026-09-13，为 Android 上线而加；实测依据见
 # 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §3）：
