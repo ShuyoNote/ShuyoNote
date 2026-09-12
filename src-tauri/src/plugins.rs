@@ -956,6 +956,18 @@ pub(crate) fn load_plugin_source(dir: &Path, manifest: &Manifest) -> Result<Stri
     std::fs::read_to_string(&p).map_err(|e| format!("读取插件失败: {e}"))
 }
 
+/// 装到盘上之后，「这个插件真的能用吗」的验收。
+///
+/// **声明式插件没有入口文件**：对它调 `load_plugin_source` 必然报
+/// `declarative_no_code`——那是"这里没有代码"的陈述，不是错误。拿它当验收标准，
+/// 每次安装都会把自己刚装好的插件再删掉。所以声明式只确认 manifest 落到了盘上。
+fn verify_installed_entry(dest: &Path, manifest: &Manifest) -> Result<(), String> {
+    if runtime_of(manifest) == "declarative" {
+        return read_manifest(dest).map(|_| ());
+    }
+    load_plugin_source(dest, manifest).map(|_| ())
+}
+
 // ---------------------------------------------------------------------------
 // Boa runtime (restricted)
 // ---------------------------------------------------------------------------
@@ -1339,6 +1351,24 @@ pub(crate) fn event_metas(manifest: &Manifest) -> Vec<PluginEventMeta> {
             reason: reasons.get(id.as_str()).copied().unwrap_or_default().to_string(),
         })
         .collect()
+}
+
+/// 一个 manifest 的**元数据类字段**（权限 / 基线标记 / 事件）最终该长什么样。
+///
+/// 声明式插件零代码，所以：没有权限可授（它调不到任何能力，"基线授权"对它是无意义的
+/// 概念——照 baseline 算会显示成「需要 11 项权限」这种假信息）、收不到任何事件。
+///
+/// 规则只写在这里一处。此前安装路径与加载路径各写各的，安装那条漏了声明式，
+/// 代价是索引里 4 个零代码插件（eye-care-theme / high-contrast-theme / reading-board /
+/// warm-night）**根本装不上**：校验器说没问题，点安装报 `declarative_no_code`。
+pub(crate) fn runtime_metas(
+    manifest: &Manifest,
+) -> (Vec<PluginPermissionMeta>, bool, Vec<PluginEventMeta>) {
+    if runtime_of(manifest) == "declarative" {
+        return (Vec::new(), false, Vec::new());
+    }
+    let (permissions, baseline) = permission_metas(manifest);
+    (permissions, baseline, event_metas(manifest))
 }
 
 thread_local! {
@@ -4133,6 +4163,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             )
         };
         // 声明式插件没有代码：不读入口、不跑 Boa（这正是它安全的原因——没有可执行的东西）。
+        // 权限 / 事件 / 视图这些**元数据**一律走 `runtime_metas`，与安装路径同一处判定。
         if runtime == "declarative" {
             // 声明式插件**没有代码**，所以它不可能调用能力、也收不到事件：
             // 这里必须给空集合，否则界面会显示「需要 11 项基线权限」这种假信息
@@ -4143,9 +4174,7 @@ pub async fn list_plugins(app: AppHandle, db: State<'_, Db>) -> Result<Vec<Plugi
             if manifest.events.is_some() {
                 push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.events 收不到任何事件");
             }
-            let permissions = Vec::new();
-            let permissions_baseline = false;
-            let events = Vec::new();
+            let (permissions, permissions_baseline, events) = runtime_metas(&manifest);
             // 主题是纯数据，声明式插件同样可以出主题（它没有代码，这正是最安全的一类）
             let theme = sanitized_theme(&manifest);
             let views = manifest.views.clone().unwrap_or_default();
@@ -4530,7 +4559,7 @@ fn replace_plugin_dir(src: &Path, dest: &Path, manifest: &Manifest) -> Result<()
     if let Err(e) = copy_dir(src, dest) {
         return Err(rollback(format!("写入新版本失败：{e}")));
     }
-    if let Err(e) = load_plugin_source(dest, manifest) {
+    if let Err(e) = verify_installed_entry(dest, manifest) {
         return Err(rollback(format!("新版本的入口文件加载失败：{e}")));
     }
     let _ = std::fs::remove_dir_all(&backup);
@@ -4565,14 +4594,31 @@ fn install_from_dir(
             manifest.id, manifest.version
         ));
     }
-    let source = load_plugin_source(src, &manifest)?;
-    // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
-    // 权限警告先记下来，装完在插件日志里就能看到（例如"没写 permissions，走基线授权"）。
-    let (permissions, warnings) = resolve_permissions(&manifest);
-    for w in &warnings {
-        push_log(&manifest.id, "warn", w);
-    }
-    let commands = discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)?;
+    // 运行档决定"要不要读入口"——这条分支必须在 `load_plugin_source` **之前**。
+    // 声明式插件没有代码，对它读入口必然拿到 `declarative_no_code`，于是每一个声明式
+    // 插件都会在安装这一步被自己的验收标准拒掉（`list_plugins` 那条路早就支持它们了，
+    // 只有安装这条路漏了）。
+    let runtime = runtime_of(&manifest).to_string();
+    let commands = if runtime == "declarative" {
+        // 与加载路径同样的提醒：声明式插件没有代码，这些字段不会被用到。
+        if manifest.permissions.is_some() {
+            push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.permissions 不会被用到");
+        }
+        if manifest.events.is_some() {
+            push_log(&manifest.id, "warn", "声明式插件没有代码，manifest.events 收不到任何事件");
+        }
+        // 零代码插件不可能注册命令，也就没有"跑一遍 discovery 看它注册了什么"这回事。
+        Vec::new()
+    } else {
+        let source = load_plugin_source(src, &manifest)?;
+        // 顶层就死循环的插件不该被装进来：用带超时的 discovery 先跑一遍。
+        // 权限警告先记下来，装完在插件日志里就能看到（例如"没写 permissions，走基线授权"）。
+        let (permissions, warnings) = resolve_permissions(&manifest);
+        for w in &warnings {
+            push_log(&manifest.id, "warn", w);
+        }
+        discover_commands_timed(&manifest.id, &permissions, &source, DISCOVER_TIMEOUT)?
+    };
 
     let dest = root.join(&manifest.id);
     // "现在装着哪个版本"以**磁盘上的 manifest** 为准：手工拷进去的插件目录没有 DB 行，
@@ -4604,7 +4650,7 @@ fn install_from_dir(
     // 新装这条路上再确认一次入口文件真的落到盘上；失败就把这次装的东西清掉，别留垃圾。
     // （替换那条路由 `replace_plugin_dir` 自己验并回滚，这里不必重来一遍。）
     if replaced.is_none() {
-        if let Err(e) = load_plugin_source(&dest, &manifest) {
+        if let Err(e) = verify_installed_entry(&dest, &manifest) {
             let _ = std::fs::remove_dir_all(&dest);
             return Err(format!("安装失败（已回滚）：{e}"));
         }
@@ -4652,10 +4698,8 @@ fn install_from_dir(
             ),
         );
     }
-    let (permissions, permissions_baseline) = permission_metas(&manifest);
-    let events = event_metas(&manifest);
-    // 先取出这两项再移动其它字段（避免部分移动后还要借用 manifest）
-    let runtime = runtime_of(&manifest).to_string();
+    let (permissions, permissions_baseline, events) = runtime_metas(&manifest);
+    // 先取出这一项再移动其它字段（避免部分移动后还要借用 manifest）
     let views = manifest.views.clone().unwrap_or_default();
     let triggers = sanitized_triggers(&manifest);
     let theme = sanitized_theme(&manifest);
@@ -5083,8 +5127,10 @@ pub async fn plugin_facts(app: AppHandle, db: State<'_, Db>, id: String) -> Resu
     } else {
         None
     };
+    // 声明式插件零代码：不能按「没声明 permissions ⇒ 走基线授权」算，那会显示成
+    // 「需要 11 项基线权限」——对一段不存在的代码说的假话。与加载/安装路径同一处判定。
     let (permissions, baseline) = {
-        let (perm_metas, baseline) = permission_metas(&manifest);
+        let (perm_metas, baseline, _) = runtime_metas(&manifest);
         (
             perm_metas.into_iter().map(|p| p.id).collect::<Vec<_>>(),
             baseline,
@@ -8307,6 +8353,69 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(on_disk.version, "1.1.0");
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    /// **仓库里 shipped 的每一个示例插件都必须装得上**——索引里托管的那 18 个就是它们。
+    ///
+    /// 为什么要有这条：作者侧的 `plugin-cli.mjs validate` 只做静态检查，而用户点「安装」
+    /// 走的是 `install_from_dir`。两边判定分叉过一次——索引里 4 个零代码插件
+    /// （eye-care-theme / high-contrast-theme / reading-board / warm-night）
+    /// 校验器说没问题、点安装报 `declarative_no_code`，**根本装不上**。
+    /// 所以这里不经过校验器，直接对示例目录调**真实安装路径**。
+    #[test]
+    fn every_shipped_example_plugin_can_be_installed() {
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins");
+        assert!(examples.is_dir(), "找不到示例插件目录：{}", examples.display());
+        let root = temp_dir("examples-install");
+        let c = state_conn_with_revocation();
+
+        let mut ids: Vec<String> = std::fs::read_dir(&examples)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        ids.sort();
+        assert!(ids.len() >= 18, "示例插件只有 {} 个，不对", ids.len());
+
+        let mut failures = Vec::new();
+        let mut declarative_seen = 0;
+        for id in &ids {
+            match install_from_dir(&root, &c, &examples.join(id), "examples") {
+                Ok(meta) => {
+                    if meta.runtime != "declarative" {
+                        continue;
+                    }
+                    declarative_seen += 1;
+                    // 声明式插件零代码，界面**不能**说它要权限：`permission_metas` 对
+                    // "没声明 permissions" 的老插件走基线授权兜底，照那条算就会显示成
+                    // 「需要 11 项基线权限」——对一段不存在的代码说的假话。
+                    assert!(
+                        meta.permissions.is_empty() && !meta.permissions_baseline,
+                        "{id} 零代码却报了权限：{:?}（baseline={}）",
+                        meta.permissions.iter().map(|p| &p.id).collect::<Vec<_>>(),
+                        meta.permissions_baseline
+                    );
+                    assert!(meta.events.is_empty(), "{id} 零代码却报了事件");
+                    assert!(meta.commands.is_empty(), "{id} 零代码却有命令");
+                    assert!(meta.triggers.is_empty(), "{id} 零代码却有导入触发");
+                    // 主题与视图是纯数据，正是声明式插件**该**有的东西，不能一起被清空
+                    assert!(
+                        meta.theme.is_some() || !meta.views.is_empty(),
+                        "{id} 是声明式插件，但没有主题也没有视图"
+                    );
+                    // 重装走的是**另一条**路径（`replace_plugin_dir`，带备份与回滚），
+                    // 它对入口文件的验收也曾把声明式插件判死：装得上、再装一次却回滚。
+                    if let Err(e) = install_from_dir(&root, &c, &examples.join(id), "examples") {
+                        failures.push(format!("  {id}（重装）：{e}"));
+                    }
+                }
+                Err(e) => failures.push(format!("  {id}: {e}")),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(failures.is_empty(), "有 {} 个示例插件装不上：\n{}", failures.len(), failures.join("\n"));
+        assert_eq!(declarative_seen, 4, "四个零代码示例插件都要被覆盖到，实际 {declarative_seen}");
     }
 
     #[test]

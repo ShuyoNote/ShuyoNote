@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **零代码（`runtime: declarative`）插件根本装不上**：索引里 4 个（`eye-care-theme`、
+  `high-contrast-theme`、`reading-board`、`warm-night`）点安装必报
+  `declarative_no_code: 声明式插件没有代码（只有 manifest 声明）`——**而校验器说它们没问题**。
+  - 根因：加载路径（`list_plugins`）早就支持声明式（不读入口、不跑 Boa），
+    安装路径（`install_from_dir` / `replace_plugin_dir`）却无条件拿
+    `load_plugin_source` 当"入口能用吗"的验收标准。对声明式，那个函数**必然**返回
+    `declarative_no_code`——它是"这里没有代码"的陈述，不是错误。于是每个声明式插件都被
+    自己的验收标准拒掉；`replace_plugin_dir` 更糟：装得上，**再装一次（升级/重装）反而回滚**。
+  - 修法：声明式规则收进 `verify_installed_entry`（验收）与 `runtime_metas`
+    （权限/基线/事件），加载与安装两条路都从这一处取——**此前正是"两条路各写各的"漏了这一条**。
+  - 顺带修掉同一个假信息：`plugin_facts`（事实清单）与安装返回值对声明式插件会走
+    "没声明 permissions ⇒ 基线授权"兜底，显示成**「需要 11 项基线权限」**——对一段
+    不存在的代码说的假话（加载路径的注释早就警告过这件事）。
+  - 门禁：新增 `every_shipped_example_plugin_can_be_installed`——对仓库里 shipped 的
+    **18 个示例插件**逐个调**真实安装路径**（不走校验器），并钉住声明式插件的用户可见声明
+    （零权限、零事件、零命令，但主题/视图必须在）与重装路径。修复前实测 **4/18 装不上**，
+    修复后 18/18。
+
 ## [1.90.0] - 2026-09-11
 
 > **把「应用 ↔ 社区」这条通道打通，并让第一方插件真的能被装上。** 这一版三件事：
