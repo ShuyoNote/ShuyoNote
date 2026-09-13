@@ -101,12 +101,16 @@ pub fn run() {
 
     // **深链在移动端也要注册**（桌面那份在下面的 `#[cfg(desktop)]` 块里，顺序有讲究）。
     // Android 上系统把 `shuyonote://…` 作为 intent 交给 Activity，插件的移动实现读走它并 emit
-    // **同名事件** `deep-link://new-url` —— 前端的 `mountDeepLinks` 听的正是这个事件，
-    // 所以语义分派（`page` / `save` / `test/…`）**两条路共用一套**，不需要各写一遍。
-    // 桌面多出来的那层"冷启动 argv → 队列 → drain"（见 `deeplink.rs`）在移动端没有对应物：
-    // 那边冷启动的 intent 由插件的移动实现自己处理。
+    // **同名事件** `deep-link://new-url`；再由 `deeplink::attach` 转成前端在听的
+    // `deep-link-new-url`，所以语义分派（`page` / `save` / `test/…`）**两条路共用一套**，
+    // 不需要各写一遍。
+    //
+    // **不要在这里直接写 `tauri_plugin_deep_link::init()`**：注册与接线必须成对出现，
+    // 走 `deeplink::plugin()` 才能被 `scripts/check-deep-link.mjs` 和接线那一句一起守住。
+    // （曾经这里直接调 `init()`、而 `attach` 是 `#[cfg(desktop)]`，结果手机上插件 emit 了
+    // 却没人接：点深链完全没反应。）
     #[cfg(mobile)]
-    let builder = builder.plugin(tauri_plugin_deep_link::init());
+    let builder = builder.plugin(deeplink::plugin());
 
     // 桌面专属插件：移动端（Android/iOS）不适用，仅在桌面注册。
     // - deep-link：交付通道 `shuyonote://`。**只做 OS 层**（注册 scheme / 被唤起 /
@@ -262,7 +266,9 @@ pub fn run() {
             // 没有公开导出，所以没法自己用 `Builder` 复刻它的 setup（试过，见
             // deeplink.rs 里那段 panic 记录）。放在这里还能顺带保证：下面任何一句
             // 提前 return，都不会让深链处于"注册了但没人接"的半截状态。
-            #[cfg(desktop)]
+            // **两个平台都接线**：桌面靠 argv、Android 靠 intent，但都收敛到同一条
+            // "先入队再 emit"（来源与对照表见 deeplink.rs 的 attach 文档）。
+            // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
 
             let app_data_dir = app.path().app_data_dir()?;
