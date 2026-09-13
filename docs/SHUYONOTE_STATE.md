@@ -72,16 +72,20 @@
    - **2026-09-13 这一轮做完的**（细节见 [MOBILE.md](MOBILE.md) 与 `CHANGELOG.md`）：
      - **正式 keystore 已生成**（RSA-4096 / 10000 天，`~/.shuyonote-release-keystore/` +
        一份异地备份；**测试专用 key 与它分开**，那个只用于真机自检包，别混用）；
+     - **深链在 Android 上修好了并真机验证**：原先 `attach()` 被 `#[cfg(desktop)]` 挡掉，
+       插件 emit 了 `deep-link://new-url` 却**没有订阅者**，表现是"点深链完全没反应"。
+       现在 warm（`onNewIntent`）与冷启动（`get_current` 补收）两条路径都在真机上收到 URL，
+       前端也真的执行了动作（见 §2.3）；
+     - **Rust 侧 HTTPS 的 panic 已修并真机验证**：启动时初始化系统证书校验器
+       （两套 jni 的裸指针桥，见 §2.4.1 / §2.5），真机上 `[tls]` 初始化成功、panic 0 条，
+       真实 HTTPS 请求取回了网页标题；
+     - **真机自动化有了四条测试钩子**（`run-plugin` / `new-page` / `http-probe` / `list-pages`），
+       只在 `VITE_TEST_HOOKS=1` 的构建里存在，正式发版不带。「跑一条插件命令」已端到端验通
+       （toast 报出插件返回值、页面上出现新建的页）；Phase 0 持久化判据改用 `list-pages` 问一次。
      - **「选文件」拿不到可读路径已实施**（`tauri-plugin-fs` 的 `open()`：Android 经
-       `ContentResolver` 取 fd，见 §2.2）——**CI 已编译通过，真机待点一次**；
-     - **深链在 Android 上修好了**：原先 `attach()` 被 `#[cfg(desktop)]` 挡掉，插件 emit 了
-       `deep-link://new-url` 却**没有订阅者**，表现是"点深链完全没反应"（见 §2.3）；
-     - **Rust 侧 HTTPS 的 panic 已实现修复**：启动时初始化系统证书校验器
-       （两套 jni 的裸指针桥，见 §2.4.1 / §2.5）；
-     - **真机自动化有了三条测试钩子**（`run-plugin` / `new-page` / `http-probe`），
-       只在 `VITE_TEST_HOOKS=1` 的构建里存在，正式发版不带。
+       `ContentResolver` 取 fd，见 §2.2）——**CI 已编译通过，真机待点一次**。
    - **仍未做 / 未验**：**签名进 CI**（要仓库 secrets 权限，当前 token 没有）、
-     上面三项的**真机复验**（CI 绿只证明能出包）、逐条真机验收清单
+     ② 的**真机点一次**、逐条真机验收清单
      （附件 / PDF / 离线 OCR / 加密锁定 / 深链 / 同步 / 备份 / 小屏横屏）。
      真机验收能用哪些手段、有哪些边界，见 [MOBILE.md](MOBILE.md) §2.3（别重复踩盲点坐标那个坑）。
      上线计划见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`（公开仓已不留副本）。
