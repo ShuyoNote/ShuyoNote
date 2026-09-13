@@ -393,6 +393,31 @@ Tauri 侧的官方写法是有的——[tauri#13267](https://github.com/tauri-ap
 会卡在 OpenSSL/mupdf 的构建脚本上），所以这类改动唯一的反馈是 CI（约 15 分钟一轮）+ 真机日志。
 结论还是那句——**"能编过"与"跑得起来"在这条链上是两个独立事实**，本节的每一步都必须有真机判据。
 
+#### 但"只有 CI 能编"要先怀疑一下：这段桥**可以**在本机试编
+
+这次我为它烧了**三轮 CI**（`E0308` ×2、`E0061` ×1）才想到这一步，教训是：
+**凡是"只有 CI 能编"的代码，先问一句"真的只有 CI 能编吗"**。
+
+`wry` 与 verifier 的 jni 类型都是**纯 Rust**，不需要 NDK。所以开一个临时 crate，把两套类型
+同时拉进来就能在本机做**类型检查**：
+
+```toml
+# Cargo.toml（临时仓库，别放进产品仓库）
+[dependencies]
+jni21 = { package = "jni", version = "=0.21.1" }   # ← wry 那一套
+jni22 = { package = "jni", version = "=0.22.4" }   # ← verifier 那一套
+```
+
+把那段代码抄成两个函数（唯一的改动：`init_with_env` 换成同名同签名的空函数），`cargo check`
+就能把形状查出来。**这次连栽的两个坑本地都能查出来**：
+
+- jni 0.21 的 `JObject` **没有实现 `Clone`**，而它 `Deref` 到裸指针 ⇒ `activity.clone()`
+  会静默命中 `*mut jobject` 的 `Clone`（报 `found &JObject`，改成 `(*activity).clone()`
+  又报 `found *mut _jobject`）。正解：直接 `as_raw()` 拿指针，谁也不用 clone。
+- jni 0.22 的 `JObject::from_raw` **要两个参数**（`&Env` + jobject）。
+
+查不出的是"真机上跑起来对不对"——那是另一回事，仍要真机判据。
+
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
 鸿蒙是当前**唯一**保留 WebView 壳路线的平台。壳 = `ArkWeb` 加载 `dist-web` 构建产物 +

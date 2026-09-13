@@ -66,25 +66,30 @@ pub fn init<R: Runtime>(window: &WebviewWindow<R>) {
     let res = window.with_webview(|pw| {
         pw.jni_handle().exec(|env, activity, _webview| {
             // Activity 本身也是 Context，但优先取 Application 的（见文件头"为什么"）。
-            let context = match env.call_method(
+            //
+            // ⚠️ 这一段**只经手裸指针**（`*mut c_void`），刻意不搬运 `JObject` 的所有权。
+            // 原因是 jni 0.21 的 `JObject` **没有实现 `Clone`**，而它 `Deref` 到裸指针
+            // （`jobject.rs` L54），所以 `activity.clone()` 会**静默**命中 `*mut jobject`
+            // 的 Clone、返回一个裸指针。我连栽两次才看明白：
+            //   run #11 `activity.clone()`        → `found &JObject<'_>`（命中的是 `&T: Clone`）
+            //   run #12 `(*activity).clone()`     → `found *mut _jobject`（命中的是 Deref 后的指针）
+            // 直接 `as_raw()` 取指针，就不存在"clone 到的是什么"这个问题。
+            let raw_context: *mut c_void = match env.call_method(
                 activity,
                 "getApplicationContext",
                 "()Landroid/content/Context;",
                 &[],
             ) {
                 Ok(v) => match v.l() {
-                    Ok(obj) if !obj.is_null() => obj,
+                    Ok(obj) if !obj.as_raw().is_null() => obj.as_raw().cast(),
                     _ => {
                         eprintln!("[tls] getApplicationContext() 返回空，退回复用 Activity 当 Context");
-                        // 注意是 `(*activity).clone()`：`activity` 是 `&JObject`，直接 `.clone()`
-                        // 会命中 `&T: Clone` 那个 impl，拿到的是**引用**而不是 JObject
-                        // （run #11 就是这么编不过的：`expected JObject<'_>, found &JObject<'_>`）。
-                        (*activity).clone()
+                        activity.as_raw().cast()
                     }
                 },
                 Err(e) => {
                     eprintln!("[tls] 调 getApplicationContext() 失败：{e}，退回复用 Activity 当 Context");
-                    (*activity).clone()
+                    activity.as_raw().cast()
                 }
             };
             let vm = match env.get_java_vm() {
@@ -94,10 +99,10 @@ pub fn init<R: Runtime>(window: &WebviewWindow<R>) {
                     return;
                 }
             };
-            // SAFETY: `vm` 与 `context` 都来自本次 JNI 调用——一个是本进程唯一的 JavaVM，
+            // SAFETY: `vm` 与 `raw_context` 都来自本次 JNI 调用——一个是本进程唯一的 JavaVM，
             // 一个是同一线程内有效的局部引用；`install_from_raw` 只在本次调用内用它，
             // 且 `init_with_env` 会立刻把 context 转成它自己的全局引用。
-            match unsafe { install_from_raw(vm.cast(), context.as_raw().cast()) } {
+            match unsafe { install_from_raw(vm.cast(), raw_context) } {
                 Ok(()) => eprintln!("[tls] 证书校验已交给 Android 系统证书库"),
                 Err(e) => eprintln!("[tls] rustls-platform-verifier 初始化失败：{e}（Rust 侧 HTTPS 会 panic）"),
             }
