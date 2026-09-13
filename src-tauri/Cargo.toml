@@ -64,6 +64,10 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # via src/pdf_native.rs.
 mupdf-sys = "0.8.0"
 tauri-plugin-http = "2"
+# fs 插件：**不是给前端用的**（capabilities 里没授它权限），而是给 `picked_file` 用——
+# Android 的系统选择器返回 `content://` URI，`std::fs` 打不开，只有它的 `Fs::open` 能开
+# （Android 经 Kotlin 的 ContentResolver 取 fd；桌面就是 `std::fs::OpenOptions`，等价）。
+tauri-plugin-fs = "2"
 
 # 聚合邮箱（**桌面专属**，2026-09-13 定）：邮件解析（mailparse）+ IMAP 拉取
 # （async-imap，契合 app 已是 tokio），TLS 走 tokio-native-tls（桌面走系统 TLS：

@@ -4439,7 +4439,11 @@ pub async fn install_plugin(
     db: State<'_, Db>,
     source_path: String,
 ) -> Result<PluginMeta, String> {
-    let src = PathBuf::from(&source_path);
+    // Android：选择器给的是 `content://` URI，先落成真实临时路径（桌面原样返回，不做多余的事）。
+    // 不这么做的话 `is_dir()`/`is_file()` 都是 false，会落到最后那句"插件源不存在"——
+    // 报的是误导性的话（文件明明在那儿）。
+    let picked = crate::picked_file::materialize(&app, &source_path)?;
+    let src = picked.path().to_path_buf();
     if src.is_dir() {
         return install_from_dir(&plugins_root(&app)?, &conn(&db), &src, "local");
     }

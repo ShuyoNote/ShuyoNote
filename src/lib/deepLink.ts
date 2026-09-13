@@ -40,7 +40,13 @@ export type DeepLinkAction =
   /** 导入配方 / 主题 / 模板：先给清单（是什么、来自谁、要什么权限）→ 确认后导入。 */
   | { kind: "import"; url: string }
   /** 在应用里起一份草稿：内容由人确认后再发。 */
-  | { kind: "compose"; title: string; body: string };
+  | { kind: "compose"; title: string; body: string }
+  /**
+   * **测试钩子**（真机自动化用）。**解析**它永远不产生副作用；
+   * 是否真的执行由 `deepLinkDispatch` 按构建开关（`VITE_TEST_HOOKS=1`）决定。
+   * 放在解析器里而不是别处：这样解析仍是纯函数、可测，而"关掉"只有一个地方要看。
+   */
+  | { kind: "test"; hook: string; params: Record<string, string> };
 
 export type DeepLinkResult = { ok: true; action: DeepLinkAction } | { ok: false; reason: string };
 
@@ -141,6 +147,16 @@ export function parseDeepLink(raw: string, hosts: readonly string[] = DEEP_LINK_
       return { ok: true, action: { kind: "compose", title, body } };
     }
     default:
+      // 测试钩子：`shuyonote://test/<hook>?k=v`。
+      // 刻意**不写进 `ACTIONS`**：那句错误提示是给用户看的，不该宣传一个测试入口；
+      // 这里只负责"认得它"，会不会真的执行由 deepLinkDispatch 按构建开关决定。
+      if (name === "test") {
+        const hook = rest.filter(Boolean).join("/").toLowerCase();
+        if (!hook) {
+          return { ok: false, reason: "测试钩子没写名字（形如 shuyonote://test/run-plugin?cmd=…）" };
+        }
+        return { ok: true, action: { kind: "test", hook, params: Object.fromEntries(params) } };
+      }
       return { ok: false, reason: `不认识的深链动作「${nameRaw}」（支持：${ACTIONS.join(" / ")}）` };
   }
 }
@@ -158,5 +174,7 @@ export function describeDeepLink(action: DeepLinkAction): string {
       return `导入一个配方 / 主题 / 模板（来源：${new URL(action.url).hostname}）`;
     case "compose":
       return "起一份草稿（内容由你确认后再发）";
+    case "test":
+      return `测试钩子：${action.hook}（只在带 VITE_TEST_HOOKS=1 的构建里会真的执行）`;
   }
 }

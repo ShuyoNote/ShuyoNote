@@ -36,6 +36,73 @@ export interface DeepLinkDeps {
   now?: () => number;
   /** 去重窗口（毫秒）。默认 1.5 秒。 */
   dedupeMs?: number;
+  /**
+   * **测试钩子**用：跑一条插件命令。
+   * 与界面里走的是**同一条路**（`usePlugins.runCommand`），权限与写中介原样成立——
+   * 这个钩子不绕过任何检查，只是把"点命令面板"换成"发一条深链"。
+   */
+  runPluginCommand?: (
+    pluginId: string,
+    commandId: string,
+    argsJson: string | null,
+  ) => Promise<unknown> | unknown;
+  /** **测试钩子**用：建一页并写入文本（用来验"写进去的东西杀进程重启后还在"）。 */
+  createPageWithText?: (text: string) => Promise<unknown> | unknown;
+}
+
+/** 测试钩子是否启用。**只有带 `VITE_TEST_HOOKS=1` 的构建**才会真的执行（见 android.yml）。 */
+export function testHooksEnabled(): boolean {
+  return import.meta.env.VITE_TEST_HOOKS === "1";
+}
+
+/** 测试钩子的分派。失败只提示、不抛——它是从应用外面进来的。 */
+async function runTestHook(
+  action: { hook: string; params: Record<string, string> },
+  deps: DeepLinkDeps,
+): Promise<void> {
+  try {
+    switch (action.hook) {
+      case "run-plugin": {
+        // ⚠️ **两个都要显式给**，不能从对方推：命令 id **不一定**带插件名前缀——
+        // 真实例子里 `activity-digest` 的命令叫 `digest.show`（不是 `activity-digest.show`）。
+        // 我第一版按"最后一个点"切，被测试当场逮住；改成"第一个点"也仍然错。
+        // 想从 `demo.hello` 推出插件名这条路，在这份数据上根本不成立。
+        const pluginId = (action.params.plugin ?? "").trim();
+        const commandId = (action.params.cmd ?? "").trim();
+        if (!pluginId || !commandId) {
+          deps.notify(
+            "测试钩子 run-plugin：要同时给 plugin=<插件id> 与 cmd=<命令id>（命令 id 不一定带插件名前缀）",
+          );
+          return;
+        }
+        if (!deps.runPluginCommand) {
+          deps.notify("测试钩子 run-plugin：宿主没接这个依赖");
+          return;
+        }
+        const r = await deps.runPluginCommand(pluginId, commandId, action.params.args ?? null);
+        deps.notify(`测试钩子 run-plugin 完成：${typeof r === "string" ? r : JSON.stringify(r)}`);
+        return;
+      }
+      case "new-page": {
+        const text = action.params.text ?? "";
+        if (!text) {
+          deps.notify("测试钩子 new-page：缺 text 参数");
+          return;
+        }
+        if (!deps.createPageWithText) {
+          deps.notify("测试钩子 new-page：宿主没接这个依赖");
+          return;
+        }
+        const r = await deps.createPageWithText(text);
+        deps.notify(`测试钩子 new-page 完成：${typeof r === "string" ? r : JSON.stringify(r)}`);
+        return;
+      }
+      default:
+        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page）`);
+    }
+  } catch (e) {
+    deps.notify(`测试钩子失败：${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /**
@@ -80,6 +147,16 @@ export function createDeepLinkHandler(deps: DeepLinkDeps): (raw: string) => Prom
         return;
       case "compose":
         deps.notify(COMPOSE_NOT_DONE);
+        return;
+      case "test":
+        // ⚠️ **只在带 VITE_TEST_HOOKS=1 的构建里生效**。正式包（`pnpm build` 不带它）走到这里
+        // 只会提示一句、什么也不做——测试入口不随正式版出门。
+        // Android 的 CI 工作流会显式带上这个环境变量（它的产物本来就是"未签名、只用于自检"）。
+        if (!testHooksEnabled()) {
+          deps.notify("测试钩子未启用（这是正式构建）");
+          return;
+        }
+        await runTestHook(parsed.action, deps);
         return;
     }
   };

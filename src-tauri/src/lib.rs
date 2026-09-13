@@ -25,6 +25,9 @@ mod graph;
 mod models;
 mod capabilities_gen;
 mod pdf_native;
+// 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
+// `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
+mod picked_file;
 mod plugin_budget;
 pub mod plugin_host;
 mod plugin_index;
@@ -89,6 +92,11 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        // fs 插件：**不是为了给前端开文件 API**（capabilities 里没授它任何权限，前端调不动），
+        // 而是为了 `picked_file` 能在 Android 上用它的 `Fs::open`——那一条经 Kotlin 的
+        // `ContentResolver` 取 fd，能打开选择器给的 `content://` URI。桌面侧它的 `open`
+        // 就是 `std::fs::OpenOptions`，等价，不受影响。
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init());
 
     // 桌面专属插件：移动端（Android/iOS）不适用，仅在桌面注册。

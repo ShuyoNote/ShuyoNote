@@ -155,6 +155,14 @@ jobs:
 
       - name: Build frontend + 跑门禁
         # 顺带把仓库现有的门禁在 Linux 上也跑一遍（check:ocr-assets 之类）。
+        #
+        # `VITE_TEST_HOOKS=1`：打开真机自动化用的**测试钩子**（`shuyonote://test/run-plugin`
+        # 与 `shuyonote://test/new-page`），好让下游能脚本化地在真机上跑一条插件命令、建一页。
+        # 敢在这里开，是因为**这个 workflow 的产物本来就不是可分发件**（未签名、只用于
+        # "构建能不能过 + 体积多大"，见文件头第 2 条）。**正式发版（release.yml）不带这个变量**，
+        # 没有它时钩子在分派层直接拒绝、什么也不做（有单测钉着）。
+        env:
+          VITE_TEST_HOOKS: "1"
         run: pnpm build
 
       - name: Init Android project

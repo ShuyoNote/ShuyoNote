@@ -188,6 +188,23 @@ function NoteEditor({ pageId }: { pageId: string }) {
           openPage: (id) => useNotes.getState().openPage(id),
           openCommunityDialog: (url) => useCommunitySave.getState().openWithLink(url),
           notify: (message) => toast(message, "info"),
+          // 测试钩子（只在 VITE_TEST_HOOKS=1 的构建里会真的被调用，见 deepLinkDispatch）。
+          // 两者都走**与界面完全相同**的那条路：插件命令经 usePlugins.runCommand（权限与写中介
+          // 原样成立），建页经 useNotes.createPage。钩子不绕过任何检查。
+          runPluginCommand: async (pluginId, commandId, argsJson) =>
+            usePlugins.getState().runCommand(pluginId, commandId, null, argsJson ?? undefined),
+          createPageWithText: async (text) => {
+            // 动态 import：这条路只在测试钩子里走，不该把 markdown→Lexical 的转换器
+            // 拉进首屏包（App.tsx 里重的东西都这么处理）。
+            const { markdownToPageContent } = await import("./lib/mdPreview");
+            const payload = markdownToPageContent(text);
+            if (!payload) throw new Error("这段文本转不成页面内容");
+            return useNotes.getState().createPage(null, {
+              title: text.split("\n")[0].slice(0, 24) || "测试钩子",
+              content_json: payload.content_json,
+              content_text: payload.content_text,
+            });
+          },
         }),
       ),
     [],

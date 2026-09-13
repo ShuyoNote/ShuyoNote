@@ -221,7 +221,9 @@ pub async fn import_workspace(
     src_path: String,
     name: Option<String>,
 ) -> Result<WorkspaceMeta, String> {
-    let src = PathBuf::from(&src_path);
+    // Android：选择器给的是 `content://` URI，先落成真实临时路径（桌面原样返回）。
+    let picked = crate::picked_file::materialize(&app, &src_path)?;
+    let src = picked.path().to_path_buf();
     if !src.exists() {
         return Err("空间包不存在".to_string());
     }
