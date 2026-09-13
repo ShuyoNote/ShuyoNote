@@ -2,7 +2,12 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
-## [Unreleased]
+## [1.90.2] - 2026-09-14
+
+> 这一版是 **Android 的「能用了」**：手机上一直连不上的 HTTPS（Let's Encrypt 证书吊销检查）、
+> 全线报错的临时目录、点了没反应的深链、一跑就 panic 的插件运行时，四条根因各自修掉；
+> 同时 **Android 第一次有了应用内更新通道**（发现新版 + 下载 APK，装机仍交给系统）。
+> 桌面侧照旧，另修掉一个「从 Windows 发版必崩」的既存缺陷。
 
 ### 修复
 
