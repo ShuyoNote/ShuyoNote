@@ -55,6 +55,7 @@ CHANGELOG.md             # 版本变更日志
 | [SYNC.md](SYNC.md) | **同步机制详解**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证 + 客户端侧排错（错误码）。服务端自托管部署 / 配置 / 排错见私有仓库 `docs/deploy.md` |
 | [multi-platform-ci.md](multi-platform-ci.md) | **多平台自动构建发布（CI）**：`v*` tag 自动打 Win/mac/Linux 安装包。GitCode 流水线只有 Linux runner；GitHub Actions 有全平台。给出 `.github/workflows/release.yml`（三平台 + secrets）与 `.gitcode/workflows/build-linux.yml`（Linux），及方案 A/B/C 取舍 |
 | [macos-updater.md](macos-updater.md) | **macOS 构建 · 签名 · 公证 · 自动更新**：mac 机器一次性准备（Xcode/rust/node）、Apple Developer ID 证书 + notarization 凭据、`tauri.conf.json` updater/endpoints/pubkey 配置、mac 上打签名+公证 dmg、`release.mjs` 发布与 mac `latest.json`、CI secrets、边界（未签名无法自动更新）、Mac 到手当天清单 |
+| [RELEASING.md](RELEASING.md) | **发布流程（桌面 + Android，runbook）**：① CHANGELOG → ② 多处版本同步 → ③ 校验/构建 → ④ 提交 + tag（**tag 必须同时推 `origin`/gitcode 与 `github`**，否则 `release.yml` 不触发或镜像缺 tag）→ ⑤ GitHub Actions 多平台构建（`shuyonote://` 注册依赖 Windows 保持 `nsis`）→ ⑥ GitCode 更新通道（`release.mjs`）→ ⑦ Web 版两入口 → ⑧ CHANGELOG 连续性；含 **§9 Android 发版与验证**（自检包≠发版件、正式密钥签名 + 指纹硬比对、dry-run 约定、已知边界）与 §9.6 发版检查清单 |
 | [free-site-export-guide.md](free-site-export-guide.md) | **免费客户出口 · 网站/帮助站导出与发布指南**：免费/开源社区的**被动出口**——三层出口（就地提示/内置指南/外部静态站）、导出三种方式（M21 静态 wiki 导出建帮助站 / 仓库 Pages 建主页 / 应用内「关于」对话框）、干净链接策略（无 utm/埋点）、发布路径、与付费侧对照、发布核对清单与红线。**付费客户沟通/商务运营材料见私有 shuyonote-sync-server 仓库** |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [plugin-api.md](plugin-api.md) | **插件 API（面向作者，生成物）**：只读这一份就能写出可安装可运行的插件——最小插件、能力表、权限与写中介、命令参数、事件钩子、更新时新增权限要用户重新确认、触发面、设置、零代码插件（声明式视图 / 视图参数化 / 主题）、导入导出、执行预算与错误码。由 `capabilities/capabilities.json` 生成（跑 `node scripts/gen-capabilities.mjs`） |
@@ -77,7 +78,7 @@ CHANGELOG.md             # 版本变更日志
 | **M3** | 主题 / 外观自定义 + 插件雏形 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md) |
 | **M4** | 属性驱动仪表盘聚合 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M5** | PDF 导出 | [x] | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
-| **M6** | 移动端适配 | [执行中]（**Tauri 原生壳**；Android CI 已跑通，未签名 arm64 APK **53.41 MiB**） | **移动端上线计划（Android 优先）**（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） + [移动端](MOBILE.md)（路线与各平台对照）+ [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
+| **M6** | 移动端适配 | [执行中]（**Tauri 原生壳**；Android CI 已跑通：`android.yml` 出自检包（**已用正式密钥签名**、带测试钩子、只可自检）+ 未签名包（保留用于量体积）；对外发版件走 `release.yml` 的 `android` job，同为正式密钥签名，实测 56,656,409 B ≈ 54.0 MiB） | **移动端上线计划（Android 优先）**（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） + [移动端](MOBILE.md)（路线与各平台对照）+ [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
 | **M7** | 数据库视图扩展 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M8** | 新页面引导层 | [x] | — |
 | **M9** | 模板 | [x] | [模板方案](plans/2026-08-22-template-plan.md) |

@@ -25,8 +25,17 @@ pnpm run build        # check-versions + tsc + vite build
 git add -A
 git commit -m "release: X.Y.Z(版本号 bump + CHANGELOG)"
 git tag -a vX.Y.Z -m "ShuyoNote vX.Y.Z"
-git push origin main && git push origin vX.Y.Z
+git push origin main
+git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端都推**，见下
 ```
+
+> **为什么 tag 必须两个远端都推**（`origin` = gitcode、`github` = GitHub，两个是**各自独立的仓库**）：
+> - **只推 gitcode ⇒ 发版流程不触发**：`release.yml` 是 **GitHub Actions** 的工作流，只有 **GitHub
+>   这个仓库收到 tag** 时才会跑（gitcode 上跑的是另一套 `.gitcode/workflows/build-linux.yml`，
+>   只出 Linux 包）⇒ 多平台构建（含 Android 发版件）**根本不会开始**；
+> - **只推 github ⇒ gitcode 上没有这个 tag**：而 gitcode 是应用内「检查更新」与下载通道（见文首）
+>   ⇒ 镜像与更新通道还停在旧版本、用户收不到新版。
+> 两条都不是"可有可无"：一个决定**能不能出包**，一个决定**用户能不能收到**。
 
 ## ⑤ 平台构建
 
@@ -326,9 +335,9 @@ git tag -d $TAG                    # 删本地 tag
 - [ ] `node scripts/check-versions.mjs` 过（`package.json` 等版本号一致，见 ②）
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 已开成本版本段（见 ①）
 - [ ] tag 名为 `v<版本>`，与 `package.json` 的版本一致（APK 文件名用的是 `package.json` 的版本）
-- [ ] tag 已推到**会跑流水线的那个远端**：`release.yml` 在 **GitHub** 上触发，而 ④ 的现有写法是
-      `git push origin vX.Y.Z`（本仓库 `origin` = gitcode、`github` = GitHub）⇒ 推哪个 / 是否两边都推，
-      以当次实情为准（这处不一致**没有擅自改**，见提交说明）
+- [ ] tag 已推到**两个远端**（④ 的写法即 `git push origin vX.Y.Z && git push github vX.Y.Z`；
+      `release.yml` 只在 **GitHub** 上触发，gitcode 负责镜像与更新通道）⇒ 两边各查一次
+      `git ls-remote origin refs/tags/vX.Y.Z` / `git ls-remote github refs/tags/vX.Y.Z`，两条 SHA 一致
 - [ ] Actions 里这条 tag 的 run **4 个 job 全绿**：`build`(ubuntu-24.04) / `build`(windows-latest) / `android` / `release`
 - [ ] `android` job 日志里 `✅ 指纹一致（正式密钥 shuyonote）`、`✅ ABI 恰为 arm64-v8a`
 - [ ] `release` job 日志里 `APK_N == 1` 通过（否则"少个包"会伪装成成功）

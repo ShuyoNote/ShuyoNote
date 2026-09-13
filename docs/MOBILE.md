@@ -58,7 +58,7 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 **首次真机跑通**（2026-09-13 · HUAWEI Mate 40 `OCE-AN10` / Android 12：装上、冷启动 589 ms、界面正常渲染）。
 
 **待做**（详见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` 的阶段划分）：
-正式 keystore 与密钥保管、应用内"检查更新"、逐条真机验收、上架材料。
+密钥保管、应用内"检查更新"、逐条真机验收、上架材料。
 
 ### 2.1 移动端**不提供** / **已知有问题**的能力（边界要能说清，别含糊）
 
@@ -469,9 +469,12 @@ Expect rustls-platform-verifier to be initialized
 
 1. `adb logcat -s RustStdoutStderr` 出现 `[tls] 证书校验已交给 Android 系统证书库` ⇒ 初始化跑到了；
 2. **不再出现** `Expect rustls-platform-verifier to be initialized` ⇒ reqwest 那条路不再 panic；
-3. 真机跑测试钩子 `shuyonote://test/http-probe?url=https%3A%2F%2Fcommunity.shuyo.cn%2F`
-   ⇒ 界面上提示"拿到 N 字节"才是**真的握手成功**（这条钩子复用现成的 `fetch_community_json`
-   命令，不新增命令、不动能力清单；只在 `VITE_TEST_HOOKS=1` 的构建里存在）。
+3. 真机跑测试钩子 `shuyonote://test/http-probe?url=https%3A%2F%2Fshuyo.cn%2F`
+   ⇒ 界面上出现 `http-probe <字节数>B：<内容开头>` 这样的提示才是**真的握手成功**（这条钩子复用现成的
+   `fetch_bookmark_metadata` 命令——它**接受任意 https 地址**并返回网页元数据，所以能看到成功路径；
+   ⚠️ 别用 `fetch_community_json`：它只认 `community.shuyo.cn` 一个域名，随便挑的地址必然 404，
+   只能看到"失败"，证明不了握手成功。都是现成命令，不新增命令、不动能力清单；
+   只在 `VITE_TEST_HOOKS=1` 的构建里存在）。
 
 ### 2.4.2 ⚠️ 又一个上游 bug：LE 取消 OCSP，让 Android 把所有 LE 站点判成"已吊销"（2026-09-13 找到并自带补丁修掉）
 
