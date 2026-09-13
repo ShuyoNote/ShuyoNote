@@ -291,13 +291,35 @@ aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|s
 - **① 的证书校验器＝已验证通过**：`[tls] 证书校验已交给 Android 系统证书库` 1 条、
   `Expect rustls-platform-verifier` panic **0 条**，并且**真实 HTTPS 请求成功取回了内容**：
   `shuyonote://test/http-probe?url=https://www.baidu.com/` → `http-probe 107B: {"url":…`。
-- ⚠️ **同一支探针打我们自己的域名却失败**——挖出来的根因在**服务端证书链**，不在客户端：
-  服务端发的是 LE 新层级 `leaf ← YE2 ← Root YE ← ISRG Root X2`（链本身完整），而这台设备的
-  系统库**只有 `ISRG Root X1`、没有 `X2`/`Root YE`**（`adb shell grep -l '名字' /system/etc/security/cacerts/* | wc -l`
-  实测：X1=1、X2=0、YE=0）⇒ rustls 按系统根库建不出链。浏览器能开同一个站点，是因为
-  **Chrome 自带根库**——"浏览器好使 ≠ Rust 好使"的教科书例子。
-  **修法在服务端**：发一条锚定 `ISRG Root X1` 的链（`certbot --preferred-chain "ISRG Root X1"`）。
-  影响面：Android 上走 Rust 访问 `shuyo.cn`/`community.shuyo.cn` 的功能（社区、AI）。
+- ⚠️ **同一支探针打我们自己的域名当时失败了**——但**根因不是证书链**，`shuyo.cn` 那条
+  「服务端要改链」的结论**当天就被我自己推翻了**（服务端**一个字没改，也不需要改**）。
+  那次设备侧的失败**另有原因、尚未查清**，待**连着手机复测**时以真实报错为准——**别拿这份
+  文档里下面这段旧结论去动生产服务器**。
+
+  **曾经写过的错误结论（留着当反面教材）**：当时看到「服务端链条最后一张是
+  `ISRG Root X2`」+「设备库 `grep` 计数 X1=1、X2=0」，就判成"rustls 按系统根库建不出链，
+  修法在服务端（`certbot --preferred-chain "ISRG Root X1"`）"。**这两条证据都不足以支持
+  那个结论**——链条里**第 4 张证书恰恰就是用来跨回 X1 的**：`ISRG Root X2` 由
+  `ISRG Root X1` **交叉签名**（2026-05-13 起、2032-09-02 止）。交叉签名就是为这种老设备
+  兼容性存在的，**"链条最后一张"往往不是终点**。
+
+  **2026-09-13 用两条独立方法把它证死**（本机可复现，不必等手机）：
+
+  1. **JDK 的 PKIX 校验器**（和 Android 系统根库是同一套路径构建算法）+ **只装
+     `ISRG Root X1` 的信任库** → 连 `shuyo.cn:443`：**`RESULT: OK`**，链被建成
+     `CN=shuyo.cn ← CN=YE2 ← CN=Root YE ← CN=ISRG Root X2 ←（锚）CN=ISRG Root X1`；
+  2. **对照组**（证明上面那条 OK 不是"什么都放行"）：同一个 X1-only 信任库连
+     `www.baidu.com` → **FAIL**；空信任库连 `shuyo.cn` → **FAIL**。
+  3. 旁证：`openssl s_client -CAfile <只含 X1 的库> -verify_return_error -verify_hostname shuyo.cn`
+     → **`Verification: OK` / `Verified peername: shuyo.cn`**。
+
+  复现方式：`keytool -importcert -noprompt -trustcacerts -alias isrgx1 -file ISRG_Root_X1.pem
+  -keystore x1.jks -storepass changeit`，再跑一个用 `TrustManagerFactory.getInstance("PKIX")`
+  初始化 `SSLContext` 的小 Java 程序去连（脚本见本轮会话；根证书可从服务器
+  `/etc/ssl/certs/ISRG_Root_X1.pem` 取，指纹 `96:BC:EC:…:08:C6`）。
+
+  **教训（比结论值钱）**：判断"某客户端能不能验某个站点"，**不能靠数设备里有哪些根文件 +
+  看链条最后一张是谁**来推，必须**拿一个只装那一条根的信任库真跑一次握手**。
 
 **两条诊断手法（都是这次现学的，下次别再摸黑）**：
 
