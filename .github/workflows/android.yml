@@ -38,7 +38,11 @@ on:
   workflow_dispatch:
   push:
     branches: ["dev", "main", "feat/android-mobile"]
-    paths: [".github/workflows/android.yml"]
+    paths:
+      - ".github/workflows/android.yml"
+      # Android 工程是从它**生成**的（应用名、包名、minSdk、**深链 intent-filter**…），
+      # 所以改它必须重新出包。漏了这条的话，清单会停在旧版本上，而那种漂移只在真机上才看得出。
+      - "src-tauri/tauri.conf.json"
 
 permissions:
   contents: read

@@ -99,6 +99,15 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init());
 
+    // **深链在移动端也要注册**（桌面那份在下面的 `#[cfg(desktop)]` 块里，顺序有讲究）。
+    // Android 上系统把 `shuyonote://…` 作为 intent 交给 Activity，插件的移动实现读走它并 emit
+    // **同名事件** `deep-link://new-url` —— 前端的 `mountDeepLinks` 听的正是这个事件，
+    // 所以语义分派（`page` / `save` / `test/…`）**两条路共用一套**，不需要各写一遍。
+    // 桌面多出来的那层"冷启动 argv → 队列 → drain"（见 `deeplink.rs`）在移动端没有对应物：
+    // 那边冷启动的 intent 由插件的移动实现自己处理。
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_deep_link::init());
+
     // 桌面专属插件：移动端（Android/iOS）不适用，仅在桌面注册。
     // - deep-link：交付通道 `shuyonote://`。**只做 OS 层**（注册 scheme / 被唤起 /
     //   已有实例转发 / 把整条 URL 原样交给前端），语义解析在前端 src/lib/deepLink.ts。

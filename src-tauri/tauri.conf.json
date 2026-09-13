@@ -54,7 +54,14 @@
         "schemes": [
           "shuyonote"
         ]
-      }
+      },
+      "mobile": [
+        {
+          "scheme": [
+            "shuyonote"
+          ]
+        }
+      ]
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIyQTk3Rjg1REVGOEQwMTMKUldRVDBQamVoWCtwSXJGS2UzbDU2akoyaTduQlJvZi9NT1cvb25mYzJaSHZieXZDQktCZDJGVS8K",
