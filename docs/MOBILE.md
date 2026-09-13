@@ -276,6 +276,19 @@ adb shell am start -W -n cn.shuyo.shuyonote/cn.shuyo.shuyonote.MainActivity \
 aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|shuyonote'
 ```
 
+**2026-09-13 实测结果（run #9 的包）**——这一段已经验过，不必再验：
+
+- **合并后 manifest 三样齐全**：`android.intent.action.VIEW` ✓ `CATEGORY_DEFAULT` ✓
+  `CATEGORY_BROWSABLE` ✓ `android:scheme="shuyonote"` ✓ ⇒ **浏览器里点链接能唤起应用**；
+  旁证：不带 `-n` 的隐式 intent 也投递成功（`am start` 回 `intent has been delivered to
+  currently running top-most instance`）。
+- **两条投递路径都在 Rust 侧被证明**：warm（`onNewIntent`）与**冷启动**（`force-stop` 后带 URL
+  启动，走 `load()` → `currentUrl` → `get_current()` 补收）各留下一条
+  `[deep-link] 收到 1 条 URL：…`；**普通冷启动（不带 URL）时是 0 行** ⇒「零副作用」也成立。
+- **前端确实收到了并进入分派**：界面弹出「测试钩子未启用（这是正式构建）」——这条提示本身就
+  证明事件到了前端、`parseDeepLink` 也判成了 `test` 动作（当时包里的钩子确实没开，见上）。
+
+
 一键跑完这套的脚本：`%TEMP%\device-hooks2.cjs <run_id>`（下载 CI 产物 → 静态查 intent-filter →
 签名安装 → 三条路径 + 重启持久化 + 崩溃检查）。
 
@@ -417,6 +430,25 @@ jni22 = { package = "jni", version = "=0.22.4" }   # ← verifier 那一套
 - jni 0.22 的 `JObject::from_raw` **要两个参数**（`&Env` + jobject）。
 
 查不出的是"真机上跑起来对不对"——那是另一回事，仍要真机判据。
+
+#### Gradle 那半边也能在本机先跑：只解析依赖，23 秒
+
+同理，**不要**为了验一句 Gradle 配置去烧 15 分钟 CI（run #13 就是"Rust 编过了、Gradle 找不到
+AAR"）。在生成出来的 Android 工程里只跑**依赖解析**，不编译任何东西：
+
+```powershell
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Android\jdk-17\jdk-17.0.20.1+1"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+cd src-tauri\gen\android      # 先 `pnpm tauri android init --ci` 生成它
+.\gradlew.bat --offline -q :app:dependencies --configuration universalReleaseRuntimeClasspath
+```
+
+本机实测 23 秒、退出码 0，且依赖树里能看到 `\--- rustls:rustls-platform-verifier:0.1.1`
+（`--offline` 能过说明它真的从 crate 自带的 maven 目录解析到了，没走网络）。
+顺带一个 **Gradle 的坑**（crate README 的示例在这里是错的）：加了
+`metadataSources { artifact() }` 之后 Gradle **不读 pom**，只按坐标名找
+`rustls-platform-verifier-0.1.1.jar`——而这里放的是 **.aar**（pom 里
+`<packaging>aar</packaging>` 正是给它看的）。用默认 metadataSources 才会去拿 `.aar`。
 
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 

@@ -165,10 +165,17 @@ function gradleSnippet(maven, version) {
 ${MARK}
 // 组件不在 Maven Central 上（rustls/rustls-platform-verifier#115），指向 crate 自带的 maven 目录。
 // 路径由脚本在构建时解析成绝对路径写进来 —— gen/ 不入库，所以不能靠相对路径猜。
+//
+// ⚠️ **不要写 metadataSources { artifact() }**（crate README 的 Groovy 示例里是这么写的，
+// 在这里恰好是错的）：那句会让 Gradle **不读 pom**、只按坐标名去找
+// \`rustls-platform-verifier-<版本>.jar\`，而这个目录里放的是 **.aar**（pom 里
+// \`<packaging>aar</packaging>\` 就是给它看的）。run #13 的报错正是这样：
+//   Could not find rustls:rustls-platform-verifier:0.1.1.
+//   Searched in: …/maven/rustls/rustls-platform-verifier/0.1.1/rustls-platform-verifier-0.1.1.jar
+// 用默认的 metadataSources（含 mavenPom），Gradle 才会读 packaging 并去拿 .aar。
 repositories {
     maven {
         url = uri(file("${kotlinPath(maven)}"))
-        metadataSources { artifact() }
     }
 }
 dependencies {
