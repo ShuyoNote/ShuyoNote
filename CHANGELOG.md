@@ -161,19 +161,25 @@
   `[tls] 证书校验已交给 Android 系统证书库`；② **不再出现**上面那条 panic；③ 真机跑
   `shuyonote://test/http-probe?url=…` 并拿到内容（那才是真的握手成功）。
 
-  **真机验证结论（2026-09-13）——只到"初始化"，请求本身仍失败**：
-  ① 初始化成功 1 条 ✓、② 那条 panic **0 条** ✓；**但真实请求仍然失败** ✗。
-  探针（`fetch_bookmark_metadata` 打 `https://shuyo.cn/`）在真机上返回
-  `无法获取网页: error sending request for url (https://shuyo.cn/)`——reqwest 的
-  **传输层错误**，而它的**根因在 `source()` 链里、当前没打印**（我们只 `{e}` 了一层，
-  这句话本身看不出是 TLS、DNS 还是超时）。已排掉的可能：
-  - **不是网络**：真机 Wi-Fi 正常，`ping community.shuyo.cn` 0% 丢包、40ms；
-  - **不是 AAR 没进包**：`classes.dex` 里能搜到 `platformverifier` 字符串（gradle 注入与
-    Proguard keep 都生效了）；
-  - **不是没初始化**：`[tls]` 那行日志就在，panic 也是 0。
-
-  ⇒ **下一步很明确**：把 `{e}` 换成**带 source 链**的输出（`e.source()` 递归），
-  再跑一次真机——修 TLS 之前必须先知道它在哪一层断的。**这条不算已修完。**
+  **真机验证结论（2026-09-13）——✅ 通过；但顺带挖出一个服务端问题**：
+  - 初始化：`[tls] 证书校验已交给 Android 系统证书库` 1 条、那条 panic **0 条** ✓；
+  - **真实 HTTPS 请求成功**：探针打 `https://www.baidu.com/` 取回 107 字节 JSON
+    （`http-probe 107B: {"url":"https://www.baidu.com/",…`）⇒ 证书校验器、系统根库、
+    reqwest 整条路都是通的 ✓✓。
+  - ⚠️ **但打我们自己的域名会失败**：`https://shuyo.cn/` 返回
+    `无法获取网页: error sending request for url (…)`。根因**不是客户端**，是**证书链与
+    系统根库对不上**：
+    - 服务端发的是 Let's Encrypt **新层级**：`leaf ← YE2 ← Root YE ← ISRG Root X2`（4 张，链完整）；
+    - 而这台设备的系统库实测 `grep -l` 计数：**`ISRG Root X1` = 1、`ISRG Root X2` = 0、
+      `Root YE` = 0`** ⇒ rustls 按系统根库校验证书**建不出链**；
+    - 浏览器能打开同一个站点，是因为 **Chrome 自带根库**（与系统库是两套）——这正是
+      "浏览器好使 ≠ Rust 好使"的教科书例子。
+    - **影响面**：Android 上所有走 Rust 访问 `shuyo.cn` / `community.shuyo.cn` 的功能
+      （社区、AI 等）。**修法在服务端**：让 nginx 发一条**锚定 ISRG Root X1** 的链
+      （certbot 的 `--preferred-chain "ISRG Root X1"`，X1 在 Android 7.1.1+ 普遍存在）。
+    - **未做**：服务端那一步（属于服务器侧改动，不在本轮客户端范围）。
+  - 顺带把"只打一层错误"这个坑填了：`bookmark.rs` 新增 `describe_err()`（沿 `source()` 串链）
+    并额外写一行 logcat——手机 toast 是单行截断的，根因在末尾。
 
 - **Android：深链点了完全没反应**（2026-09-13）。`adb shell am start -a android.intent.action.VIEW
   -d "shuyonote://test/new-page?text=…"` 打进 `MainActivity`（logcat 里能看到 `NewIntentItem`

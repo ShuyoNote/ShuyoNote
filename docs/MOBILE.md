@@ -288,8 +288,26 @@ aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|s
 - **前端确实收到并执行了动作**（不是只走到分派）：`new-page` 钩子让页面上真的出现新建的页
   （标题就是参数里的那段文本、状态"已保存"），`run-plugin` 钩子把插件返回值提示了出来
   —— 这两条要**先确认包里的钩子是开着的**（见上面的 `beforeBuildCommand` 坑）。
-- **① 的证书校验器**：logcat 有 `[tls] 证书校验已交给 Android 系统证书库` 1 条、
-  `Expect rustls-platform-verifier` panic **0 条**；探针请求走到了应用层（返回业务错误而不是崩溃）。
+- **① 的证书校验器＝已验证通过**：`[tls] 证书校验已交给 Android 系统证书库` 1 条、
+  `Expect rustls-platform-verifier` panic **0 条**，并且**真实 HTTPS 请求成功取回了内容**：
+  `shuyonote://test/http-probe?url=https://www.baidu.com/` → `http-probe 107B: {"url":…`。
+- ⚠️ **同一支探针打我们自己的域名却失败**——挖出来的根因在**服务端证书链**，不在客户端：
+  服务端发的是 LE 新层级 `leaf ← YE2 ← Root YE ← ISRG Root X2`（链本身完整），而这台设备的
+  系统库**只有 `ISRG Root X1`、没有 `X2`/`Root YE`**（`adb shell grep -l '名字' /system/etc/security/cacerts/* | wc -l`
+  实测：X1=1、X2=0、YE=0）⇒ rustls 按系统根库建不出链。浏览器能开同一个站点，是因为
+  **Chrome 自带根库**——"浏览器好使 ≠ Rust 好使"的教科书例子。
+  **修法在服务端**：发一条锚定 `ISRG Root X1` 的链（`certbot --preferred-chain "ISRG Root X1"`）。
+  影响面：Android 上走 Rust 访问 `shuyo.cn`/`community.shuyo.cn` 的功能（社区、AI）。
+
+**两条诊断手法（都是这次现学的，下次别再摸黑）**：
+
+1. **toast 单行截断** ⇒ 把手机**转横屏**（`settings put system user_rotation 1`）再截图，
+   一行能多显示一倍多；更彻底的是**让 Rust 侧 `eprintln!` 一行**到 logcat
+   （`adb logcat -s RustStdoutStderr` 看全，不受界面宽度限制）。
+2. **"分不清是哪一层"时先让错误自己说话**：`reqwest::Error` 的 `Display` 只有
+   `error sending request for url (…)`，根因在 `source()` 链里——`bookmark.rs` 的
+   `describe_err()` 就是干这个的。**在没有这行日志之前，我排掉了网络、AAR 没进包、
+   没初始化三种可能，唯独排不掉真正的那一种。**
 - **Phase 0 持久化判据（"新建一篇 → 写 → 重启后还在"）＝已验掉**：
   `list-pages` 基线 **41 页** → `new-page` → **42 页** → `force-stop` 重启 → **仍 42 页**。
   ⚠️ 这条**只能**靠"问列表"验：重启后应用总是停在空白新页上，**从界面看不出旧页在不在**
