@@ -40,6 +40,17 @@
 
 ### 变更
 
+- **CI 出包时用正式密钥签名，并且把"是不是正式密钥签的"变成硬判据**（2026-09-13）。
+  以前 CI 只出**未签名** APK，每次装真机都要在本机手工 `zipalign` + `apksigner` ——
+  本轮手工签了三次、还漏签过一次（`INSTALL_PARSE_FAILED_NO_CERTIFICATES`）。
+  现在 `android.yml` 从 Secrets 取 keystore（`ANDROID_KEYSTORE_BASE64` /
+  `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`）→ zipalign → apksigner sign →
+  `apksigner verify --print-certs`，并**把实测 SHA-256 指纹与 `6E:E8:…:7A:88` 硬比对**，
+  不一致直接让 CI 红；Secrets 缺失也**明确报错**，不会静默产出未签名包。
+  产物新增 `android-apk-aarch64-signed-test-hooks`（名字里写死 test-hooks，防止被当发版件拿走）；
+  未签名那份保留，继续用于量体积。
+  ⚠️ 边界：这里的包带 `VITE_TEST_HOOKS=1`，**签名 ≠ 可发版**；对外发布仍走 `release.yml`
+  （那一步的签名还未做）。
 - **深链到达时会在 logcat 留一行摘要**，让"URL 到底到没到 Rust"变成可程序化判定的事。
   以前只能靠截图猜，而"没反应"有两种完全不同的原因：URL 没进来，或者进来了前端没接住。
 
