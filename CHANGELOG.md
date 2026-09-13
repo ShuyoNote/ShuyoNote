@@ -6,6 +6,24 @@
 
 ### 修复
 
+- **Android 上所有 Let's Encrypt 站点都连不上（上游 bug，自带补丁修掉）**（2026-09-13）。
+  现象：安卓上走 Rust 的 HTTPS 打 LE 站点全报
+  `invalid peer certificate: Revoked`；`shuyo.cn`、`community.shuyo.cn`、**连 `letsencrypt.org` 自己**
+  都中招，`www.baidu.com` 正常 ⇒ **与我们的证书、我们的服务器都无关**（服务端一个字没改）。
+
+  根因：Let's Encrypt 从 2025-08 起**取消 OCSP**、只发 CRL，而 Android 的吊销检查器**默认先查 OCSP**，
+  证书里没有 OCSP 地址时抛 `Certificate does not specify OCSP responder`，上层当成**已吊销**
+  （该 fail-open 的地方 fail-closed）。上游 issue #221 至今未修、PR #179 未合并，我们用的 0.7.0
+  已是最新版 ⇒ 升级解决不了。
+
+  修法：把上游 `CertificateVerifier.kt` 自带进仓库（commit `73a4df87`，MIT OR Apache-2.0），
+  **只加两行** `PREFER_CRLS` + `NO_FALLBACK`，随 App 编译，不再用 crate 自带的 AAR。
+  脚本加构建期自检防止悄悄退回老毛病；溯源与复现见
+  `scripts/vendor/rustls-platform-verifier/README.md`，取证链见 `docs/MOBILE.md` §2.4.2。
+
+  排查过程中被排除的假设（都留了证）：链锚点不是 X2（第 4 张是 X2←X1 交叉签名，用只装 X1 的信任库
+  PKIX 握手 OK）；4 张 CRL 里没有我们的序列号；把 X1 根追加进链**没用**（已回滚）。
+
 - **Android 上「临时目录」全线修好：`std::env::temp_dir()` 在 Android 上就是 `/tmp`，而那里没有 `/tmp`**
   （2026-09-13）。桌面永远有 `/tmp`，所以这个坑**只在手机上暴露**，而且**一个根因长出 8 个症状**：
   选文件（真机报「建临时目录失败」）、备份导出/恢复、插件包解压、空间包导出/导入，

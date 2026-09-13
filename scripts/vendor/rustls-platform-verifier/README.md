@@ -58,6 +58,25 @@ JNI 契约核对过（2026-09-13，用 `javap` 对比 AAR 与我们编译出来�
 - 方法：`private static final VerificationResult verifyCertificateChain(Context, String, String, String[], byte[], long, byte[][])` ✓ 名字**未被混淆/未被 Kotlin mangle**；
 - AAR 里的类经过 R8 压缩，所以 App 侧仍需要 `-keep` 规则（脚本会写 `.pro`）。
 
+## 第二处改动：`BuildConfig` 垫片
+
+上游这份 Kotlin 是在它**自己的 Android 库模块**里编译的，那里会自动生成 `BuildConfig.TEST`
+（用来切"测试形态"：注入 mock 根证书、读 mock OCSP）。我们把它搬进 App 模块
+（`gen/android/app`）后，这个名字解析不到 —— CI run #23 报 `Unresolved reference: BuildConfig` ×5。
+
+所以文件末尾补了一个同包名的 `internal object BuildConfig { const val TEST = false }`。
+`TEST = false` 正好等于上游的**生产形态**：那 5 处用法（108 / 228 / 263 / 286 / 379 行）
+都会走"正常校验"这一支，**不碰 mock**。
+
+## 改这份文件时踩过的两个坑（各吃了一次 CI，别再犯）
+
+1. **注释行别吞掉代码行**：第一版补丁里，注释块末行没带换行，把
+   `revocationChecker.options = EnumSet.of(` 粘进了上一行的 `//` 注释里 ⇒ 后面几个
+   `PKIXRevocationChecker.Option.XXX,` 变成无头表达式，Kotlin 报 `Unexpected tokens` ×3 与
+   `Expecting an element`。**改完一定回看那一行有没有被注释掉。**
+2. **本机没有 Kotlin 编译器**：唯一能真编译的是 CI（约 15 分钟一轮），所以改动要小、
+   要一眼看清；`--check` 的自检只能管"补丁在不在"，管不了语法。
+
 ## 什么时候可以删掉这份拷贝
 
 上游把 PR #179（或等价修复）合并并发版后：升级 Rust 依赖到含修复的版本、恢复脚本里的

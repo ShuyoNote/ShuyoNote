@@ -451,6 +451,64 @@ Expect rustls-platform-verifier to be initialized
    ⇒ 界面上提示"拿到 N 字节"才是**真的握手成功**（这条钩子复用现成的 `fetch_community_json`
    命令，不新增命令、不动能力清单；只在 `VITE_TEST_HOOKS=1` 的构建里存在）。
 
+### 2.4.2 ⚠️ 又一个上游 bug：LE 取消 OCSP，让 Android 把所有 LE 站点判成"已吊销"（2026-09-13 找到并自带补丁修掉）
+
+**现象**：初始化明明成功（§2.4.1），但安卓上走 Rust 的 HTTPS 打 LE 站点全挂：
+
+```text
+[http] 取网页失败 https://shuyo.cn/：error sending request ← client error (Connect)
+                                      ← invalid peer certificate: Revoked
+```
+
+`shuyo.cn` ❌、`community.shuyo.cn` ❌、**`letsencrypt.org` 自己也 ❌**、`www.baidu.com` ✅。
+
+**这是本轮最容易误判的地方**：一看到 `Revoked` 很容易往"我们服务器证书有问题"想（我第一版就是这么判的，**错了**）。
+取证链（每一环都能自己复现）：
+
+1. 服务器发的链是 4 张，最后一张是 `ISRG Root X2` 由 `ISRG Root X1` **交叉签名** —— 也就是 §2.4.1
+   那种"给只信 X1 的老设备搭桥"的形态，**不是**"锚在 X2"；
+2. 用**只装 `ISRG Root X1`** 的信任库跑 PKIX 握手：`shuyo.cn` **OK**；同一个库连 `www.baidu.com`
+   **FAIL** ⇒ 说明这不是"什么都放行"，**链本身没问题**；
+3. 把 4 张 CRL 全拉下来逐条查序列号：我们链上 4 张证书**都不在吊销清单里**，
+   `openssl verify -crl_check_all` 也 OK；
+4. 上线试过一招：把 `ISRG Root X1` 自签根**追加进链**再验 —— **没用**
+   （Conscrypt 返回的"已验证链"不含信任锚，源码里那个"认识根就跳过吊销检查"的分支走不到），**已回滚**；
+5. **决定性对照**：`letsencrypt.org`（LE 官网自己）挂在**同一个错误**上 ⇒ 与我们的证书、我们的服务器**都无关**。
+
+**根因（上游，至今未修）**：Let's Encrypt 从 2025-08 起**取消 OCSP**、只发 CRL。而 Android 的吊销检查器
+**默认先查 OCSP**，证书里没有 OCSP 地址时抛
+`CertPathValidatorException: Certificate does not specify OCSP responder`，
+上层把它当成**已吊销**（该 fail-open 的地方 fail-closed）。百度的中间证书**有** OCSP 地址，所以它能过
+——这正好解释了"为什么偏偏别的站点没事"。
+
+- 上游 issue [#221](https://github.com/rustls/rustls-platform-verifier/issues/221)（2026-02 开，**至今 open**，已指派）
+- 上游 PR [#179](https://github.com/rustls/rustls-platform-verifier/pull/179)（**就是那两行**，未合并）
+- 我们用的 `0.7.0` **已是最新版** ⇒ **升级解决不了**
+
+**处置**：把上游那份 `CertificateVerifier.kt` **自带进仓库**（commit `73a4df87`，MIT OR Apache-2.0），
+只加两行 `PREFER_CRLS` + `NO_FALLBACK`（即 PR #179 的内容），由 Gradle 随 App 编译，
+**不再用 crate 自带的预编译 AAR**。溯源、许可证、复现步骤见
+`scripts/vendor/rustls-platform-verifier/README.md`。
+
+- 脚本里加了**构建期自检**：补丁选项不在、或 `gen/` 里还留着旧的 AAR 注入，就直接报错
+  （这类回归**只有真机看得见**，所以拦在构建期）；
+- JNI 契约核对过：用 `javap` 对比 AAR 与源码 —— 类名/包名一致，
+  `private static final VerificationResult verifyCertificateChain(Context, String, String, String[], byte[], long, byte[][])`
+  签名一致、名字**未被混淆**；
+- 选它而不是"改用内置根库"：**保留系统证书库语义**（自建私有 CA 仍可用），
+  且不必给 39 处 `reqwest::Client` 逐个塞自定义校验器。
+
+**改这份 Kotlin 踩的两个坑（各吃了一次 CI）**：
+
+1. **注释行吞掉了代码行**：补丁注释的末行没带换行，把 `revocationChecker.options = EnumSet.of(`
+   粘进了 `//` 注释里 ⇒ 后面几个 `PKIXRevocationChecker.Option.XXX,` 成了无头表达式，
+   Kotlin 报 `Unexpected tokens` ×3 + `Expecting an element`。**改完必须回看那一行有没有被注释掉。**
+2. **`BuildConfig` 解析不到**：上游代码是在它**自己的库模块**里编译的，`BuildConfig.TEST` 来自那个模块；
+   搬进 App 模块后 5 处 `Unresolved reference`。末尾补了个同包名垫片
+   `internal object BuildConfig { const val TEST = false }` —— `TEST=false` 正好等于上游的**生产形态**。
+
+**真机判据**：重跑 §2.4.1 那支探针，logcat 里 `[http] 取网页失败` **一条都不该有**。
+
 ### 2.5 修 A 路上的两套 jni：**已解决**（2026-09-13，原先判断为"硬阻塞"）
 
 Tauri 侧的官方写法是有的——[tauri#13267](https://github.com/tauri-apps/tauri/issues/13267) 里
