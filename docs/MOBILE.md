@@ -60,14 +60,14 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 **待做**（详见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` 的阶段划分）：
 逐条真机验收、上架材料。
 
-**应用内「检查更新」：第一版已做**（2026-09-15）。Android 上打开「关于」会自动检查，有新版时给一个
+**应用内「检查更新」：第一版已做**（2026-09-14）。Android 上打开「关于」会自动检查，有新版时给一个
 **「下载 APK」**按钮：地址取自更新清单 `latest.json` 的 `platforms["android-aarch64"].url`（与桌面
 **同一份清单、同一个 gitcode 通道**），点击后交给系统浏览器/DownloadManager，**下载完由用户自己安装**。
 边界要说清：**应用内不下载、不唤起安装器**（那要 `REQUEST_INSTALL_PACKAGES` + FileProvider，属后续增量），
 本版**没有新增权限、没有改 AndroidManifest**；apk 没有 minisign `.sig`（签名在包内），清单里用
 `sha256:<hex>` 记录字节。发布侧要求见 [RELEASING.md](RELEASING.md) §⑥ / §9.5。
 
-**启动时的红点/横幅：Android 上「有」**（2026-09-15 核实代码后定稿，**别写成"Android 没有红点"**）。
+**启动时的红点/横幅：Android 上「有」**（2026-09-14 核实代码后定稿，**别写成"Android 没有红点"**）。
 `useUpdateChecker()` 在 `App.tsx` 里无条件调用，而 `isDesktop()` 的真实语义是"有没有 Rust 内核"
 （本节 §2 开头那条边界，Android 壳为真）⇒ 它走桌面那一支；Android 上 `tauri-plugin-updater` 没注册
 （`lib.rs` 带 `#[cfg(desktop)]`）⇒ 那一步必然失败，代码随即**降级**到 gitcode 发布渠道清单
@@ -87,7 +87,7 @@ APK 地址与下载入口只在「关于」的 Android 分支；老清单（没�
 |---|---|---|
 | **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 23 个命令带 `#[cfg(desktop)]`，**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
 | **插件运行时（Boa）** | ✅ **已修**（2026-09-13 真机复验：那条 panic 在日志里消失） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
-| **应用内更新（in-app updater）** | ❌ 不做（2026-09-15 定） | `tauri-plugin-updater` **桌面专属**（`lib.rs` 里带 `#[cfg(desktop)]`）。⚠️ 但**这不等于"Android 不提醒更新"**：启动检查会降级到发布渠道清单，红点/横幅照常出现；边界在"装"（应用内不下载、不唤起安装器，只给「下载 APK」交给系统）。见上面「应用内『检查更新』」两段 |
+| **应用内更新（in-app updater）** | ❌ 不做（2026-09-14 定） | `tauri-plugin-updater` **桌面专属**（`lib.rs` 里带 `#[cfg(desktop)]`）。⚠️ 但**这不等于"Android 不提醒更新"**：启动检查会降级到发布渠道清单，红点/横幅照常出现；边界在"装"（应用内不下载、不唤起安装器，只给「下载 APK」交给系统）。见上面「应用内『检查更新』」两段 |
 
 #### ⚠️ Boa 的 nan-boxing 在 Android 上不成立（2026-09-13 真机实测）
 

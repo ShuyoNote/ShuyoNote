@@ -338,7 +338,7 @@ git tag -d $TAG                    # 删本地 tag
 
 - **只出 APK，不出 AAB**：AAB 是 Play 上架才需要的，而且 `apksigner` **签不了 AAB**（那是 jarsigner 的世界）
   ⇒ 签不了的 AAB 既不能装也不能做指纹自查，纯负担；
-- **Android 的应用内更新是"下载 APK"，不是"应用内装机"**（2026-09-15 上线第一版）：
+- **Android 的应用内更新是"下载 APK"，不是"应用内装机"**（2026-09-14 上线第一版）：
   应用内「检查更新」会读同一份 `latest.json`，有新版时给一个「下载 APK」按钮，
   地址取自 `platforms["android-aarch64"].url`，点击后**交给系统浏览器/DownloadManager**，
   下载完由用户自己安装（覆盖安装要求签名一致，安装签名由 Android 系统安装器强制校验）。
@@ -347,7 +347,7 @@ git tag -d $TAG                    # 删本地 tag
   ⇒ 所以：能"发现 + 拿到包"，但"装"这一步在系统里。仍没有的：应用商店 / 增量更新 / iOS。
   清单里的 `signature` 对 Android 用 `sha256:<hex>`（apk 没有 minisign `.sig`——签名在包内），
   这条字段**不能省**，理由见 §⑥（缺了会让整份清单解析失败、桌面更新一起挂）；
-  - **启动时的红点/顶部横幅：Android 上「有」**（口径 2026-09-15 核实代码后写死，别写反）。
+  - **启动时的红点/顶部横幅：Android 上「有」**（口径 2026-09-14 核实代码后写死，别写反）。
     `useUpdateChecker()` 在 `App.tsx` 里**无条件**调用；而 `isDesktop()` 的真实语义是"**有没有 Rust 内核**"
     （见 `src/lib/platform/capabilities.ts` 顶部的边界说明），**Android 壳为真** ⇒ 它走的是桌面那一支
     `checkDesktopUpdate()`。Android 上 `tauri-plugin-updater` 没注册（`src-tauri/src/lib.rs` 里带

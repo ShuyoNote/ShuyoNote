@@ -40,7 +40,7 @@
 
 ### 变更
 
-- **Android 有了应用内更新通道（最小第一步：发现 + 下载 APK）**（2026-09-15）。Android 上打开
+- **Android 有了应用内更新通道（最小第一步：发现 + 下载 APK）**（2026-09-14）。Android 上打开
   「关于」会自动检查版本：有新版时给一个**「下载 APK」**按钮，地址取自更新清单
   `platforms["android-aarch64"].url`（与桌面**同一份 `latest.json`、同一个 gitcode 通道**），
   点击后**交给系统浏览器/DownloadManager**，下载完由用户自己安装。
