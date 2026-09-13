@@ -130,7 +130,24 @@ export function NewPageGuide() {
     <>
       {!dismissed && (
         <div className="new-page-guide" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="new-page-guide-desc">回车开始编辑，或者从下方选择</div>
+        {/* ⚠️ 这一行**本身就是入口**，不只是提示（2026-09-13 真机暴露的问题）：
+            手机上**没有回车键**，而空页面上没有任何元素有焦点 ⇒ 按 Enter 无处置放，
+            用户进不去编辑态。原文案"回车开始编辑"是桌面假设。
+            现在点它就开始编辑；桌面按回车那条路仍然保留（键盘处理没动）。 */}
+        <div
+          className="new-page-guide-desc"
+          role="button"
+          tabIndex={0}
+          onClick={startEditing}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              startEditing();
+            }
+          }}
+        >
+          点这里开始编辑，或者从下方选择
+        </div>
         <div className="new-page-guide-list">
             {aiEnabled && (
               <button className="npg-act" onClick={() => useRightPanel.getState().openAi(true)}>
