@@ -97,11 +97,23 @@ jobs:
           node scripts/plugin-new.mjs ci-smoke-plugin /tmp/plugin-new-smoke
 
       - name: 版本 / 命令契约 / 能力注册表 / 文档链接
+        # workflow YAML 门禁为什么放在**这一档**（而不是只留在 `pnpm build` 链里）：
+        # 仓库里除本文件外的 workflow 都带 `paths:` 过滤（`android.yml` 只认它自己的文件与
+        # 构建输入），所以"只改坏 `.github/workflows/` 下**别的**文件"时，一个 job 都不会被
+        # 调度——门禁再准也没机会执行。本文件每次 push 都跑、没有 `paths`，由它来兜这个缺口。
+        #
+        # ⚠️ 自指边界（这条很重要，别当成万能）：它只能挡住**别的** workflow 文件被改坏。
+        # 如果坏掉的正是 `ci.yml` 自己，这个文件根本编译不过 ⇒ workflow 不会被调度 ⇒
+        # 下面这行也不会被执行 ⇒ **任何写在仓库里的自检都救不了自指**（`pnpm build` 同理，
+        # 它只在 CI 之外由人触发）。这种自指只能靠**外部观察**发现：run 名显示为**文件路径**
+        # 而不是 `name: CI`、job 数为 0、且无视 branches 过滤——2026-09-12 起 49 次 push 全红
+        # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
         run: |
           node scripts/check-versions.mjs
           node scripts/check-web-commands.mjs
           node scripts/check-capabilities.mjs
           node scripts/check-doc-links.mjs
+          node scripts/check-workflow-yaml.mjs
 
   mobile-layout:
     name: 移动端布局验收（真实 Chromium）
