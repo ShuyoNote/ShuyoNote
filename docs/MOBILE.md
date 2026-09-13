@@ -290,6 +290,10 @@ aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|s
   —— 这两条要**先确认包里的钩子是开着的**（见上面的 `beforeBuildCommand` 坑）。
 - **① 的证书校验器**：logcat 有 `[tls] 证书校验已交给 Android 系统证书库` 1 条、
   `Expect rustls-platform-verifier` panic **0 条**；探针请求走到了应用层（返回业务错误而不是崩溃）。
+- **Phase 0 持久化判据（"新建一篇 → 写 → 重启后还在"）＝已验掉**：
+  `list-pages` 基线 **41 页** → `new-page` → **42 页** → `force-stop` 重启 → **仍 42 页**。
+  ⚠️ 这条**只能**靠"问列表"验：重启后应用总是停在空白新页上，**从界面看不出旧页在不在**
+  （这一点我一开始没意识到，白拍了几张截图）。
 
 
 一键跑完这套的脚本：`%TEMP%\device-hooks2.cjs <run_id>`（下载 CI 产物 → 静态查 intent-filter →
