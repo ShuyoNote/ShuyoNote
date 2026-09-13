@@ -10,9 +10,12 @@ name: Android (build)
 #    perl/make/pkg-config，而 mupdf 的 Makefile 本来就是 Unix 假设 ⇒ "CI 出包"不是绕路，
 #    而是当前唯一跑得通的路。
 #
-# 2. 刻意**不挂 tag**：Android 还没有签名流程，产出的 APK 是**未签名**的、只用于
-#    "构建能不能过 + 体积到底多大"这两件事，不是可分发件。
-#    等签名与发布流程定了，再决定要不要并进 release.yml。
+# 2. 刻意**不挂 tag**：这个 workflow 产出的是**自检包**，不是可分发件。
+#    2026-09-13 起它会**用正式密钥签名**（keystore 从 Secrets 取，见「用正式密钥签名 APK」那一步），
+#    目的是让 CI 出的包**直接可装到真机上验**——在那之前每验一次都要在本机手工
+#    zipalign+apksigner（本轮手工签了三次，这件事本身就是该自动化的判据）。
+#    ⚠️ 但**签名 ≠ 可以发版**：这里的包带着 `VITE_TEST_HOOKS=1`（测试钩子），只能用于自检；
+#    对外发布仍然走 release.yml（不带钩子）。
 #
 # 3. 触发方式：手动（Actions 页 Run workflow），或本文件自身被改动时跑一次
 #    （这样落地就能立刻验证，不必先要 dispatch 权限）。
@@ -219,6 +222,42 @@ jobs:
       - name: Build APK (arm64, unsigned)
         run: pnpm tauri android build --target aarch64 --apk --ci
 
+      - name: 用正式密钥签名 APK（让 CI 出的包直接能装到真机上验）
+        # 为什么加这一步：CI 以前出的是**未签名**包，装真机前必须在本机手工
+        # zipalign + apksigner —— 本轮就手工签了三次，还漏签过一次（装的时候报
+        # INSTALL_PARSE_FAILED_NO_CERTIFICATES）。签名材料走 Secrets，
+        # **指纹核对放在同一步里**，于是"这个包是谁签的"在 CI 上就能程序化判定，
+        # 不靠人眼比对（指纹本身不是秘密，可以入库，见 keystore 目录的 README）。
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          EXPECT=6ee89e6f0f9326a40d3eac48b520c470d3fb6a7111a94fbe606510b489457a88
+          for v in KS_B64 KS_PASS KS_ALIAS; do
+            test -n "${!v}" || { echo "❌ 缺少 Secret：$v（名字见 ~/.shuyonote-release-keystore/README-必读.md）"; exit 1; }
+          done
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          IN=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-unsigned.apk' | sort | head -1)
+          test -n "$IN" || { echo "❌ 找不到未签名 APK"; exit 1; }
+          echo "输入: $IN"
+          OUT="$RUNNER_TEMP/shuyonote-aarch64-signed.apk"
+          "$BT/zipalign" -f -p 4 "$IN" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$KS_ALIAS" \
+            --ks-pass "env:KS_PASS" --key-pass "env:KS_PASS" \
+            --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+          echo "===== 签名自查 ====="
+          "$BT/apksigner" verify --print-certs "$OUT" | tee "$RUNNER_TEMP/certs.txt"
+          GOT=$(grep -i 'certificate SHA-256 digest' "$RUNNER_TEMP/certs.txt" | head -1 | awk '{print $NF}' | tr -d ':' | tr 'A-Z' 'a-z')
+          echo "实测指纹: $GOT"
+          echo "期望指纹: $EXPECT"
+          test "$GOT" = "$EXPECT" || { echo "❌ 签名指纹对不上：这个包不是正式密钥签的"; exit 1; }
+          echo "✅ 指纹一致（正式密钥 shuyonote）"
+          ls -l "$OUT"
+
       - name: 报告产物体积（**这正是这个 workflow 存在的理由**）
         run: |
           set -e
@@ -255,5 +294,15 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload 已签名 APK（可直接 adb install）
+        # 单独一个 artifact：未签名那份留着量体积，这份是拿来装机的。
+        # 名字里写明 **test-hooks**，避免以后有人把它当发版件拿走。
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-aarch64-signed-test-hooks
+          path: ${{ runner.temp }}/shuyonote-aarch64-signed.apk
           if-no-files-found: error
           retention-days: 14
