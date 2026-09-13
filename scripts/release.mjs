@@ -1,9 +1,9 @@
-// ShuyoNote 桌面版自动发布脚本（gitcode）。
+// ShuyoNote 发版脚本（gitcode）：桌面三平台安装包 + Android APK + Web 整包。
 //
-// 完整流水线：校验签名密钥/公钥 → `pnpm tauri build`（签名）→ 收集安装包+.sig
+// 完整流水线：校验签名密钥/公钥 → `pnpm tauri build`（签名）→ 收集安装包+.sig（+ `--android-apk` 给的 APK）
 //           → 逐项校验（版本号整词匹配 / 同平台歧义 / 缺签名 / .sig 与字节互验 /
-//             线上 latest.json 的平台覆盖）→ 生成 latest.json（Tauri updater 清单）
-//           → 发布到 gitcode：建 release v<version>、上传 installer/.sig/latest.json、
+//             缺 Android 发版件 / 线上 latest.json 的平台覆盖）→ 生成并校验 latest.json（Tauri updater 清单）
+//           → 发布到 gitcode：建 release v<version>、上传 installer/.sig/APK/latest.json、
 //             更新「latest」auto-update 通道。
 // 检查明细见 docs/RELEASING.md ⑥；纯逻辑与单测在 scripts/lib/releaseArtifacts.mjs。
 //
