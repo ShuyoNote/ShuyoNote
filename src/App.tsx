@@ -217,6 +217,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
           // Phase 0 持久化判据的程序化说法：重启后问一次"库里有哪些页"。
           // 为什么要这个钩子：重启后应用**总是停在空白新页**上，从界面看不出旧页在不在。
           listPages: () => api.listPages(),
+          // 测试钩子 pick-file：与附件面板**同一对调用**（选择器 → 附件导入），
+          // 用来在真机上验「选文件拿不到可读路径」那条修复（见 docs/MOBILE.md §2.2）。
+          openFileDialog: () => platform.dialog.open({ multiple: false, directory: false }),
+          importAttachments: (paths) => api.importAttachmentFiles(null, paths),
         }),
       ),
     [],

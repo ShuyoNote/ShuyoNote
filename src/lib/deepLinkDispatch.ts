@@ -65,6 +65,20 @@ export interface DeepLinkDeps {
    * 停在一个空白新页上，**从界面上根本看不出旧页在不在**（这是这一轮踩到的）。
    */
   listPages?: () => Promise<unknown> | unknown;
+  /**
+   * **测试钩子**用：打开系统选择器（与附件面板同一个入口），并把选中的项交给导入命令。
+   *
+   * 这是 §2.2「选文件拿不到可读路径」的验收手段：Android 的选择器返回的是 `content://` URI，
+   * 而修复点（`picked_file::materialize`）正是在"把 URI 变成可读文件"这一步——
+   * 所以**必须真的选一次并导入成功**才算验过，光看代码不算。
+   * 真实用户路径也是这两个调用（附件面板就是 `dialog.open` → `importAttachmentFiles`）。
+   */
+  openFileDialog?: () =>
+    | Promise<string | string[] | null>
+    | string
+    | string[]
+    | null;
+  importAttachments?: (paths: string[]) => Promise<unknown> | unknown;
 }
 
 /** 测试钩子是否启用。**只有带 `VITE_TEST_HOOKS=1` 的构建**才会真的执行（见 android.yml）。 */
@@ -146,8 +160,27 @@ async function runTestHook(
         deps.notify(`共 ${pages.length} 页：${titles}`);
         return;
       }
+      case "pick-file": {
+        if (!deps.openFileDialog || !deps.importAttachments) {
+          deps.notify("测试钩子 pick-file：宿主没接这个依赖");
+          return;
+        }
+        const picked = await deps.openFileDialog();
+        // 宿主返回三种形态都可能（字符串 / 数组 / null，取消时是 null）——统一成数组。
+        const paths = (Array.isArray(picked) ? picked : picked ? [picked] : []).filter(Boolean);
+        if (!paths.length) {
+          deps.notify("测试钩子 pick-file：没有选中任何文件");
+          return;
+        }
+        // 关键：把**选择器给的原样字符串**交给导入命令 —— Android 上是 `content://…`，
+        // 能不能读出来就是 §2.2 那个修复要回答的问题。
+        const metas = await deps.importAttachments(paths);
+        const n = Array.isArray(metas) ? metas.length : 1;
+        deps.notify(`pick-file 成功：导入 ${n} 个（选中形态 ${paths[0].slice(0, 18)}…）`);
+        return;
+      }
       default:
-        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page / http-probe / list-pages）`);
+        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page / http-probe / list-pages / pick-file）`);
     }
   } catch (e) {
     deps.notify(`测试钩子失败：${e instanceof Error ? e.message : String(e)}`);

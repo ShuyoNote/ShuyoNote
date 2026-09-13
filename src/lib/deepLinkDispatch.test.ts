@@ -12,6 +12,8 @@ type Deps = {
   createPageWithText?: (text: string) => unknown;
   httpProbe?: (url: string) => string | Promise<string>;
   listPages?: () => unknown;
+  openFileDialog?: () => string[];
+  importAttachments?: (paths: string[]) => unknown;
 };
 type Mocked = { [K in keyof Deps]: Deps[K] & ReturnType<typeof vi.fn> };
 
@@ -191,5 +193,24 @@ describe("测试钩子 —— 只在 VITE_TEST_HOOKS=1 的构建里生效（真�
     await createDeepLinkHandler(d)("shuyonote://test/http-probe");
     expect(httpProbe).not.toHaveBeenCalled();
     expect(d.notify).toHaveBeenCalledWith(expect.stringContaining("缺 url 参数"));
+  });
+
+  it("pick-file：把选择器给的原样字符串交给导入命令（Android 上是 content:// URI）", async () => {
+    vi.stubEnv("VITE_TEST_HOOKS", "1");
+    const openFileDialog = vi.fn(() => ["content://media/external/images/media/1234"]);
+    const importAttachments = vi.fn(async () => [{ hash: "a" }]);
+    const d = deps({ openFileDialog, importAttachments });
+    await createDeepLinkHandler(d)("shuyonote://test/pick-file");
+    expect(importAttachments).toHaveBeenCalledWith(["content://media/external/images/media/1234"]);
+    expect(d.notify).toHaveBeenCalledWith(expect.stringContaining("pick-file 成功"));
+  });
+
+  it("pick-file：没选中时不调导入命令，如实说", async () => {
+    vi.stubEnv("VITE_TEST_HOOKS", "1");
+    const importAttachments = vi.fn();
+    const d = deps({ openFileDialog: vi.fn(() => []), importAttachments });
+    await createDeepLinkHandler(d)("shuyonote://test/pick-file");
+    expect(importAttachments).not.toHaveBeenCalled();
+    expect(d.notify).toHaveBeenCalledWith(expect.stringContaining("没有选中任何文件"));
   });
 });
