@@ -92,6 +92,24 @@
 
 ### 已知问题（尚未修）
 
+- **Android 上 Rust 侧的 HTTPS 一请求就 panic**（2026-09-13 真机实测，**修复方案未定**）。
+  日志：
+
+  ```text
+  thread 'tokio-rt-worker' panicked at rustls-platform-verifier-0.7.0/src/android.rs:90:10:
+  Expect rustls-platform-verifier to be initialized
+  ```
+
+  `reqwest 0.13` 的默认 TLS 特性就是 `rustls`，而它内联了 `rustls-platform-verifier`
+  （其 `Cargo.toml` 里 `rustls = [..., "dep:rustls-platform-verifier", ...]`）；这个 verifier
+  在 Android 上**必须先初始化**，否则 `global()` 直接 `expect(...)` panic；而它要在 Android 上工作
+  还得**在 Gradle 里加一个 Kotlin 组件**（`rustls-platform-verifier-android`）——
+  可我们的 `gen/android` **不在版本控制里**。
+  受影响（**Rust 侧** HTTPS）：多设备同步（自建服务器走 https）、插件索引拉取、AI 调用、检查更新。
+  **WebView 自己的 HTTPS 不受影响**（OCR 语言包下载走浏览器栈），这两条别搞混。
+  两个候选修法见 `docs/MOBILE.md` §2.4（倾向"正经初始化"，但要把 gradle 定制脚本化）。
+  **属 Android 上线阻塞项。**
+
 - **Android 上「选文件」拿不到可读路径**（2026-09-13 **源码级已确认，真机未验**）。
   `tauri-plugin-dialog` 的 Android 实现把系统返回的 URI **原样**交给前端
   （`DialogPlugin.kt::createPickFilesResult()` 里是 `uris.add(uri.toString())`，拿到的是

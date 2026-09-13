@@ -177,13 +177,45 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 - **WebView 里的 DOM 读不到**：`uiautomator dump` 在本应用上只拿到约 2.2 KB 的空壳、**没有任何文字节点**
   ⇒ 拿不到"插件管理"这类按钮的坐标，只能靠截图目测；
 - **`input keycombination` 发不出 Ctrl+K**（试过 `113 41`）：命令面板根本不弹，两次截图逐字节相同；
+- **`input keyevent ENTER` + `input text` 也进不去编辑器**：想验计划里 Phase 0 那条判据
+  （"新建一篇笔记 → 写 → 重启后还在"），结果输入前后两张截图**逐字节相同** ⇒ 键没落到 WebView 里。
+  **所以那条判据到现在仍未验**（是"手段不够"，不是"功能坏了"——别把它当成红）。
 - **盲点坐标不可靠**：右栏图标会被已打开的面板挡住（✨ 一开就连带挡住 💬 与 ☰）；
   而两次 `BACK` 会直接退出应用——我那次点到了系统拨号盘。
-  ⇒ **需要点按的验收，交给人在真机上做**，别用盲点坐标假装自动化。
+  ⇒ **需要点按/打字的验收，交给人在真机上做**，别用盲点坐标假装自动化。
 
 **给下次的建议（把"可驱动点"做进应用）**：要自动化真机验收，应用侧得先有能脚本化的入口，比如
 一个只在测试构建里开的深链 `shuyonote://test/run-plugin?cmd=demo.hello`——把"跑一条插件命令"
 变成一次 `adb shell am start -d`。这比盲点坐标稳得多，也配得上一条门禁。
+
+### 2.4 ⚠️ Rust 侧的 HTTPS 在 Android 上一请求就 panic（2026-09-13 真机实测，**修复方案未定**）
+
+真机日志里逮到的第二处 Android 专属 panic（第一处是 §2.1 的 Boa）：
+
+```text
+thread 'tokio-rt-worker' (19189) panicked at rustls-platform-verifier-0.7.0/src/android.rs:90:10:
+Expect rustls-platform-verifier to be initialized
+```
+
+**根因链**：`reqwest 0.13` 的默认 TLS 特性就是 `rustls`，而它**内联了 `rustls-platform-verifier`**
+（其 `Cargo.toml` 里 `rustls = [..., "dep:rustls-platform-verifier", ...]`）；这个 verifier 在 Android 上
+**必须先初始化**，否则 `global()` 直接 `expect(...)` panic。而它要在 Android 上工作，按它自己的文档
+还需要**在 Gradle 里加一个 Kotlin 组件**（`rustls-platform-verifier-android`）——而我们的
+`gen/android` **不在版本控制里**（"可重建、不可复现"）。
+
+**影响面**（**Rust 侧**的 HTTPS，不是 WebView 的）：多设备同步（自建服务器走 https 时）、
+插件索引拉取、AI 调用、检查更新。
+⚠️ **WebView 自己的 HTTPS 不受影响**（OCR 语言包下载走的是浏览器栈）——这两条别搞混。
+
+**两个候选修法（都还没做，因为要先选一个）**：
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| **A. 正经初始化**（倾向） | Gradle 加那个 AAR + 启动时调 `rustls_platform_verifier::android::init_with_env(...)`（用 `ndk_context` 拿 JNI env / context） | 要改**不可复现的** `gen/android` ⇒ 必须脚本化（CI 里 `tauri android init` 之后跑），Rust 侧要加依赖与平台分支 |
+| **B. 换掉验证器** | 用 `ClientBuilder::use_preconfigured_tls(...)` 自建 `rustls::ClientConfig`（webpki-roots 或 rustls-native-certs） | **可能反而更糟**：webpki-roots 是内置根，**用私有 CA 自建服务器的用户会连不上**——而本项目定位是自托管优先 |
+
+**倾向 A**（保住"系统 CA / 私有 CA 可用"），但它动到不可复现的 Android 工程，得连同
+"把 gradle 定制脚本化"一起做。**状态：已确认、未修**——属 Android 上线的**阻塞项**。
 
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
