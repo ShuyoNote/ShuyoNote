@@ -341,7 +341,8 @@ internal object CertificateVerifier {
             // 上游 issue：rustls/rustls-platform-verifier#221（未修）
             // 上游 PR  ：rustls/rustls-platform-verifier#179（就是这两行，未合并）
             // 我们的处置：把这一份 Kotlin 连同改动放进仓库自己编译（不再用 crate 自带的 AAR）。
-            // ------------------------------------------------------------------            revocationChecker.options = EnumSet.of(
+            // ------------------------------------------------------------------
+            revocationChecker.options = EnumSet.of(
                 PKIXRevocationChecker.Option.SOFT_FAIL,
                 PKIXRevocationChecker.Option.ONLY_END_ENTITY,
                 PKIXRevocationChecker.Option.PREFER_CRLS,
@@ -480,4 +481,20 @@ internal object CertificateVerifier {
         // Not found in cache or store: non-public
         return false
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// 【ShuyoNote 本地补丁 2026-09-13 · 之二】BuildConfig 垫片
+//
+// 上游这份 Kotlin 是在它**自己的 Android 库模块**里编译的，那里会自动生成
+// `BuildConfig.TEST`（用来切"测试形态"：注入 mock 根证书、读 mock OCSP）。
+// 我们把它搬进 App 模块（`gen/android/app`）后，`BuildConfig` 这个名字解析不到，
+// CI run #23 的报错正是：`Unresolved reference: BuildConfig` ×5。
+//
+// 这里补一个同包名的常量对象，把 TEST 固定成 false —— 这正好等价于上游的**生产形态**：
+// 那 5 处用法（108 / 228 / 263 / 286 / 379 行）都会走"正常校验"这一支，不碰 mock。
+// ---------------------------------------------------------------------------
+internal object BuildConfig {
+    const val TEST = false
 }
