@@ -80,21 +80,26 @@ const NO_PLUGINS = process.argv.includes("--no-plugins");
 // ---- 前置：git tag vX.Y.Z 必须已存在并推到远程 ----
 // gitcode 的 release 创建 API 用 tag_name 定位 tag；tag 不存在会「静默失败」
 // （release 未建、latest.json 不更新，客户端就查不到更新——曾实际踩坑）。
+// ⚠️ tag 必须**两个远端都推**：`origin`(gitcode) 是应用内「检查更新」与下载通道，
+// 而 `.github/workflows/release.yml` 是 **GitHub Actions** 的工作流，只有 **`github`
+// 那个仓库收到 `v*` tag** 才会跑——只推 origin，多平台构建（含 Android 发版件）
+// **根本不会开始**（详见 docs/RELEASING.md ④）。下面只按 origin 做前置校验，
+// 因为它是发布这一步的必需条件；github 缺 tag 不阻断发布本身，但会让发版件一个都不产出。
 // 这里在发布前尽早拦住，而不是等发布后才发现查不到更新。
 try {
   execSync(`git rev-parse --verify --quiet refs/tags/${TAG}`, { stdio: "ignore" });
 } catch {
-  console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} 再发布。`);
+  console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} && git push github ${TAG} 再发布。`);
   process.exit(1);
 }
 try {
   const remote = execSync(`git -c http.proxy= -c https.proxy= ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
   if (!remote) {
-    console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} 再发布。`);
+    console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
     process.exit(1);
   }
 } catch {
-  console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} 再发布。`);
+  console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
   process.exit(1);
 }
 
@@ -481,4 +486,8 @@ if (fragmentPath) {
   );
 }
 
-console.log("\n发布后：git tag v" + version + " && git push origin v" + version + " && git push origin main");
+// tag 与分支都要推**两个远端**：`github` 收到 `v*` tag 才会跑
+// `.github/workflows/release.yml`（桌面三平台 + Android 发版件都从那儿产出），
+// `origin`(gitcode) 是应用内「检查更新」的下载通道与镜像——少推任一个都缺一半
+// （见 docs/RELEASING.md ④）。
+console.log("\n发布后：git tag v" + version + " && git push origin v" + version + " && git push github v" + version + " && git push origin main && git push github main");

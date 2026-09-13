@@ -75,7 +75,7 @@
 复用 `$generateHtmlFromNodes` + `HTML_TEMPLATE` → 隐藏 iframe → `window.print()` 另存为 PDF。**数据库页 PDF**（v1.30.0）：数据库「⤓ PDF」把当前视图渲染为 HTML 表格并打印——抽取 `src/lib/print.ts` 供页面与数据库共用。
 
 ### M6 — 移动端适配（P2，执行中）
-Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线已定（2026-09-13）＝安卓/iOS 走 Tauri 原生壳（Rust 内核）**，WebView 壳路线只保留给 **Tauri 不可达的平台（当前只有鸿蒙 ArkWeb）**——理由与各平台对照见 [MOBILE.md](MOBILE.md)。**状态**：Android **CI 已跑通**（`.github/workflows/android.yml`），未签名 arm64 APK **53.41 MiB**（156.7 → 53.41，目标 55–70 MiB 已达成）；差**签名 / 真机验收 / 上架材料**，执行计划见 移动端上线计划（Android 优先）（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`）；窄屏 UI 布局与 43 项真实浏览器门禁已就位。
+Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线已定（2026-09-13）＝安卓/iOS 走 Tauri 原生壳（Rust 内核）**，WebView 壳路线只保留给 **Tauri 不可达的平台（当前只有鸿蒙 ArkWeb）**——理由与各平台对照见 [MOBILE.md](MOBILE.md)。**状态**：Android **CI 已跑通**——`.github/workflows/android.yml` 出自检包、`.github/workflows/release.yml` 出对外发版件，**两者都用正式密钥签名并硬比对指纹**（见 [RELEASING.md](RELEASING.md) §⑨），arm64 APK **53.41 MiB**（156.7 → 53.41，该数字量的是 CI 的未签名包，目标 55–70 MiB 已达成）；真机自 2026-09-13 起已多轮跑通/复验（首次 HUAWEI Mate 40 `OCE-AN10` / Android 12），差**逐条真机验收 / 上架材料**，执行计划见 移动端上线计划（Android 优先）（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`）；窄屏 UI 布局与 43 项真实浏览器门禁已就位。
 
 ### M7 — 数据库视图扩展（P2）✅
 `DatabaseView` 八种视图（表格/画廊/看板/列表/日历/时间轴/目录/甘特图）；日历按 `date` 落格、时间轴按 `date` 排序、目录按页面层级、甘特图用开始/结束(或计划/实际 4 列)渲染网格填色。

@@ -31,7 +31,7 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 
 | 平台 | 路线 | 状态 |
 |---|---|---|
-| **Android** | **Tauri 原生壳** | 已能构建出 APK（未签名）；见上线计划 |
+| **Android** | **Tauri 原生壳** | 已能构建出**已签名**的 APK——自检包（`.github/workflows/android.yml`）与对外发版件（`.github/workflows/release.yml`）都用正式密钥签名并硬比对指纹；发版件见 [RELEASING.md](RELEASING.md) §⑨ |
 | **iOS** | **Tauri 原生壳** | 未开始；**环境结论见 §5**（那台 Mac 上 Tauri iOS 全链路不可行，需先解决工具链） |
 | **鸿蒙** | **WebView 壳（ArkWeb）** | Tauri 不可达 → 保留本文档原有的壳路线；见 [鸿蒙桌面版计划](鸿蒙桌面版计划.md) 与 [鸿蒙 Web 天花板](harmony-web-ceiling.md) |
 | **浏览器** | Web 平台（PWA） | ✅ M16.1b 已落地，是首个 Web 壳 |

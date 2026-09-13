@@ -141,8 +141,9 @@ async function runTestHook(
           return;
         }
         const body = await deps.httpProbe(url);
-        // ⚠️ toast 在手机上是**单行截断**的（实测只显示十几个字），所以内容要放最前面。
-        // 先报长度会白占位置——真正想看见的是"拿回来的是什么"。
+        // ⚠️ toast 在手机上是**单行截断**的（实测只显示十几个字），所以这条只报两样：
+        // **先报长度**（`<n>B`——0B 就是没拿到东西，数字大小一眼能判"通没通"），
+        // 后面跟的是正文**截断的开头**（前 32 字）。整页正文不往界面上贴。
         deps.notify(`http-probe ${body.length}B：${body.slice(0, 32)}`);
         return;
       }
