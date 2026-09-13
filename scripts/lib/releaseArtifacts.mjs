@@ -21,7 +21,27 @@ import { Blake2b512 } from "./blake2b512.mjs";
 export const INSTALLER_DIRS = ["nsis", "msi", "dmg", "appimage", "deb", "rpm"];
 
 /** 安装包后缀（中间产物如 `.app`、解包目录、`.tar.gz` 一律不算）。 */
-export const INSTALLER_RE = /\.(exe|msi|dmg|appimage|deb|rpm)$/i;
+export const INSTALLER_RE = /\.(exe|msi|dmg|appimage|deb|rpm|apk)$/i;
+
+/**
+ * Android 发版件的更新器平台键。**不要新开顶层键**：`tauri-plugin-updater` 只读
+ * `platforms[<target>]`，其中 `<target>` 就是 Rust target triple（Android 上即
+ * `aarch64-linux-android` 所在的 `android-aarch64` 家族命名），放进 `platforms` 里
+ * 客户端才能按同一套结构取到它。
+ */
+export const ANDROID_PLATFORM_KEY = "android-aarch64";
+
+/**
+ * APK **没有** minisign `.sig`：它不是 `tauri` 签的，而是 `apksigner` 用 Android
+ * keystore 签的（签名在 APK 内部的 META-INF 里，不是旁边的文件）。
+ *
+ * ⇒ 对 apk 必须开两处显式例外：① 不因缺 `.sig` 而硬失败；② 不参与「`.sig` 与字节互验」，
+ *    也不上传 `.sig`。清单里该平台的 `signature` 用 **`sha256:<hex>`** 记录字节指纹
+ *    （完整性由发布脚本自己算，安装时的强制签名校验由 Android 系统安装器负责）。
+ */
+export function isApk(name) {
+  return /\.apk$/i.test(name);
+}
 
 /** 文件名后缀 → 更新器清单里的平台键。 */
 export function platformKeyFor(name) {
@@ -29,6 +49,8 @@ export function platformKeyFor(name) {
   if (/\.dmg$/i.test(name)) return /aarch64|arm64/i.test(name) ? "darwin-aarch64" : "darwin-x86_64";
   if (/\.appimage$/i.test(name)) return /aarch64|arm64/i.test(name) ? "linux-aarch64" : "linux-x86_64";
   if (/\.(deb|rpm)$/i.test(name)) return "linux-x86_64";
+  // 目前只出 arm64-v8a（见 docs/RELEASING.md §9.5），arm32/其它 ABI 的包不进这个通道。
+  if (isApk(name)) return /arm64|aarch64/i.test(name) ? ANDROID_PLATFORM_KEY : null;
   return null;
 }
 
@@ -50,17 +72,17 @@ export function versionMatcher(version) {
 
 /** 扩展名（小写），用于区分同类产物。 */
 export function extensionOf(name) {
-  const m = /\.(exe|msi|dmg|appimage|deb|rpm)$/i.exec(name);
+  const m = /\.(exe|msi|dmg|appimage|deb|rpm|apk)$/i.exec(name);
   return m ? m[1].toLowerCase() : "";
 }
 
 /**
  * 更新器清单在同一平台键下只能留一个 url，取哪个必须**写死且可预期**，不能靠遍历顺序。
- * 顺序：exe > msi（Windows）、deb > appimage > rpm（Linux）、dmg（macOS）。
+ * 顺序：exe > msi（Windows）、deb > appimage > rpm（Linux）、dmg（macOS）、apk（Android）。
  * 选 deb 而非 AppImage 是沿用线上既有约定（1.84.5 的 latest.json 就是 deb）——
  * 两者都会挂到 release 上，只是清单指向 deb。
  */
-export const MANIFEST_PREFERENCE = ["exe", "msi", "dmg", "deb", "appimage", "rpm"];
+export const MANIFEST_PREFERENCE = ["exe", "msi", "dmg", "deb", "appimage", "rpm", "apk"];
 
 /**
  * 从同一平台键的多个产物里挑出进清单的那一个，并说明为什么。
@@ -139,7 +161,10 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
   }
 
   // 缺 .sig 是硬错误：发布出去会让该平台的自动更新静默失效。
+  // **例外：apk**——它的签名在包内（apksigner），本来就没有旁边的 `.sig`；
+  // 清单里用 sha256 记录字节，见 isApk 的注释。
   for (const e of picked) {
+    if (isApk(e.name)) continue;
     if (!e.sigPath) problems.push(`缺签名文件：${e.name}.sig（没有它就不能进更新通道）`);
     else if (!e.sigText || e.sigText.trim() === "") problems.push(`签名文件为空：${e.name}.sig`);
   }
@@ -171,6 +196,36 @@ export function coverageProblems({ previousKeys, nextKeys }) {
   const next = new Set(nextKeys);
   return (previousKeys ?? []).filter((k) => !next.has(k)).map((k) => `本次清单里没有 ${k}，但线上已经有它——发布会让该平台收不到更新`);
 }
+
+/**
+ * `--android-apk <路径>` 的检查（apk 不在 bundle 目录里，走独立入口，因此单独校验）。
+ *
+ * Android 包只能由 CI 产出（本机 Windows 出不了，见 docs/RELEASING.md §9 开头），
+ * 所以发版时必须显式把它拿过来；缺了就**硬失败**——否则 Android 的更新通道会静默消失，
+ * 而这种缺失在发布时毫无征兆。要明确跳过只能写 `--no-android`（与 `--allow-platform-drop`
+ * 同一套哲学：逃生口必须显式、且能被事后审计）。
+ */
+export function androidApkProblems({ name, version, exists, statIsFile }) {
+  const problems = [];
+  const warnings = [];
+  if (!name) return { problems: [`未提供 Android 发版件（--android-apk <路径>）。` + ANDROID_APK_HOWTO], warnings };
+  if (!exists || statIsFile === false) {
+    return { problems: [`Android 发版件不存在或不是普通文件：${name}。` + ANDROID_APK_HOWTO], warnings };
+  }
+  if (!isApk(name)) problems.push(`--android-apk 给的不是 .apk：${name}`);
+  if (!versionMatcher(version).test(name)) {
+    // 只警告不硬失败：CI 的 artifact 名字里带版本，但手工拿的包未必。
+    warnings.push(`Android 发版件文件名不含本次版本号 ${version}：${name}（确认拿的是这次的包，别发上次的）`);
+  }
+  return { problems, warnings };
+}
+
+/** 缺 APK 时的可操作提示（贴在错误信息后面，别让人去猜怎么拿包）。 */
+export const ANDROID_APK_HOWTO =
+  `拿包方式（本机 Windows 出不了 Android 包，一律从 CI 取）：` +
+  `① GitHub Actions 里该 tag 的 run → artifact android-release-apk（含 ShuyoNote_<版本>_android-arm64-release.apk 与同名 .sha256，保留 14 天）；` +
+  `② 或从 GitHub Release 的资产里下同名 apk（见 docs/RELEASING.md ⑤ 的下载说明）；` +
+  `③ 确实要这次不带 Android：加 --no-android（Android 用户本轮收不到新版本，会被记录在案）。`;
 
 /** 解析 minisign 公钥（tauri.conf.json 的 `plugins.updater.pubkey`，整份公钥文件的 base64）。 */
 export function parseMinisignPublicKey(pubkeyB64) {
@@ -254,6 +309,57 @@ export async function verifyArtifactSignature({ filePath, sigText, publicKey }) 
     return { status: "mismatch", detail: "原始字节的 ed25519 签名校验失败（安装包与 .sig 很可能不是同一次构建的产物）" };
   }
   return { status: "unsupported", detail: `未知的签名算法标识 ${JSON.stringify(sig.alg)}` };
+}
+
+/**
+ * 写盘前的清单门禁：**每个平台条目必须同时有 `url` 与 `signature`**。
+ *
+ * 为什么这条非有不可（不是"更保险一点"，是防一个会连坐的地雷）：
+ * `tauri-plugin-updater` 反序列化 `latest.json` 时把 `platforms` 的值解析成一个
+ * **每个字段都必需**的结构（`url: Url` + `signature: String`）。只要**任何一个**平台键
+ * 少了 `signature`（或写成空串导致解析失败），**整份 latest.json 解析就失败**——
+ * 于是不光是新加的那个平台，**桌面的自动更新也一起挂**，而症状是"检查更新什么都不发生"。
+ *
+ * 这正是本轮 Android 条目最容易踩的地方：APK 没有 minisign `.sig`，最省事的做法是
+ * 干脆不写 `signature` 字段——那一下就把桌面更新通道一起带走了。所以这里写死：
+ * 缺字段 = 发布中止。apk 的 `signature` 用 `sha256:<hex>` 顶上（多出来的字段无害）。
+ *
+ * @param manifest 即将写盘的 latest.json 对象
+ * @returns { problems, warnings } problems 非空即应中止发布
+ */
+export function validateManifest(manifest) {
+  const problems = [];
+  const warnings = [];
+  if (!manifest || typeof manifest !== "object") return { problems: ["清单不是对象"], warnings };
+  if (typeof manifest.version !== "string" || manifest.version.trim() === "") {
+    problems.push("清单缺 version（客户端拿不到版本号，等于没有更新通道）");
+  }
+  const platforms = manifest.platforms;
+  if (!platforms || typeof platforms !== "object" || Array.isArray(platforms)) {
+    return { problems: [...problems, "清单缺 platforms 对象"], warnings };
+  }
+  const keys = Object.keys(platforms);
+  if (keys.length === 0) problems.push("platforms 为空（任何平台都收不到更新）");
+  for (const key of keys) {
+    const e = platforms[key];
+    const at = `platforms["${key}"]`;
+    if (!e || typeof e !== "object") {
+      problems.push(`${at} 不是对象`);
+      continue;
+    }
+    // url：必须是非空字符串，且必须是**绝对 https**。相对地址在客户端解析失败；
+    // http 会被 updater 拒绝（且属于明文传输安装包）。
+    if (typeof e.url !== "string" || e.url.trim() === "") problems.push(`${at}.url 缺失或为空`);
+    else if (!/^https:\/\/[^\s]+$/i.test(e.url.trim())) problems.push(`${at}.url 必须是绝对 https 地址：${e.url}`);
+    if (typeof e.signature !== "string" || e.signature.trim() === "") {
+      // 这条就是那个连坐地雷：缺它 ⇒ 整个 latest.json 反序列化失败 ⇒ 桌面更新通道一起挂。
+      problems.push(`${at}.signature 缺失或为空（tauri-plugin-updater 会把每个平台条目解析成 url+signature 必需的结构；缺一个就会让**整份清单**解析失败，桌面更新通道一起挂）`);
+    } else if (key === ANDROID_PLATFORM_KEY && !/^sha256:[0-9a-f]{64}$/.test(e.signature.trim())) {
+      // Android 不是 minisign 签名（apk 的签名在包内、由系统安装器强制），清单里记字节指纹。
+      problems.push(`${at}.signature 应为 sha256:<64 位 hex>（apk 没有 minisign 签名，用字节指纹顶替）：${e.signature}`);
+    }
+  }
+  return { problems, warnings };
 }
 
 export function fmtSize(bytes) {

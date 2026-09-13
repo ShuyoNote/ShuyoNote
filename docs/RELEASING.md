@@ -96,10 +96,24 @@ pnpm tauri build      # 产出 setup.exe + .sig
 ## ⑥ 发布到 GitCode（更新通道）
 ```bash
 GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更新」显示）" \
-  node scripts/release.mjs --no-build --body /tmp/body.md   # 需先备好 ⑤ 的产物
+  node scripts/release.mjs --no-build --android-apk <APK 路径> --body /tmp/body.md   # 需先备好 ⑤ 的产物
 ```
-它建 GitCode release、上传 installer/`.sig`/`latest.json`、并更新 `latest` 通道（应用内「检查更新」读的就是它）。注意 `latest.json` 的 `url` 指向 gitcode release，签名用同一签名密钥产出的 `.sig`，须与文件字节一致。
+它建 GitCode release、上传 installer/`.sig`/APK/`latest.json`、并更新 `latest` 通道（应用内「检查更新」读的就是它）。注意 `latest.json` 的 `url` 指向 gitcode release，签名用同一签名密钥产出的 `.sig`，须与文件字节一致。
 `--no-build` 前提是安装包已就绪（如 GitHub Actions 产物）；缺省会先 `pnpm tauri build`。
+
+**`--android-apk` 是必需的（Android 发版件）**：本机 Windows 出不了 Android 包（§9 开头），所以 apk 一律从
+CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
+`ShuyoNote_<版本>_android-arm64-release.apk`（下载方式见 ⑤）。**缺了就硬失败**：清单里少了
+`android-aarch64` 时 Android 用户的更新入口会静默消失。要明确跳过只能加 `--no-android`（与
+`--allow-platform-drop` 同一套哲学：逃生口必须显式）。
+
+**apk 没有 `.sig`（这是有意的例外）**：它的签名是 `apksigner` 打在**包内**的，不是旁边的 minisign 文件。
+所以 apk ①不参与「`.sig` 与字节互验」②不上传 `.sig`，清单里 `platforms["android-aarch64"].signature`
+写 **`sha256:<hex>`**（发布脚本现算）。安装时的强制签名校验由 Android 系统安装器负责。
+⚠️ **这个字段不能省**：`tauri-plugin-updater` 把每个平台条目解析成 `url` + `signature` **都必需**的结构，
+任何一条缺 `signature` 会让**整份 latest.json** 解析失败 ⇒ **桌面的自动更新一起挂**（症状是"点检查更新
+什么都不发生"）。写盘前由 `validateManifest` 硬拦（见下表）。
+
 建议用 `--body` 传发布说明（从 `CHANGELOG.md` 对应版本段生成，`###` 降一级即可）；不传则只有一行 `ShuyoNote vX.Y.Z`，与 CHANGELOG 脱节。
 
 ### 发布前的自动拦截（都在 `scripts/release.mjs`，发布前跑 `--dry-run` 可先看一眼）
@@ -110,13 +124,19 @@ GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更�
 | --- | --- |
 | 版本号整词匹配 | `1.84.6` 误纳 `1.84.60` 的产物 |
 | 同平台同类候选 → 报错 | 上次 run 的同版本残留，被随便挑一个发出去 |
-| 缺/空 `.sig` → 报错 | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
+| 缺/空 `.sig` → 报错（**apk 例外**：签名在包内） | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
 | **`.sig` 与安装包字节互验**（minisign 预哈希：BLAKE2b-512 + ed25519，见 `scripts/lib/`） | 安装包与 `.sig` 不是同一次构建的一对（手工从两次 run 各取一个）→ 用户更新时报校验失败 |
-| 线上 `latest.json` 平台键覆盖检查 | 本次只构建了 Linux，就悄悄砍掉 `windows-x86_64` → Windows 用户从此收不到更新 |
+| **缺 Android 发版件 → 报错** | 忘了 `--android-apk` ⇒ 清单里没有 `android-aarch64` ⇒ Android 更新入口静默消失 |
+| **写盘前 `validateManifest`**（每个平台条目都要有绝对 https 的 `url` 与非空 `signature`；android 必须是 `sha256:<64 hex>`） | 某个平台条目缺 `signature` ⇒ **整份 latest.json 解析失败** ⇒ 连桌面的更新通道一起挂 |
+| 线上 `latest.json` 平台键覆盖检查 | 本次只构建了 Linux，就悄悄砍掉 `windows-x86_64`（或 `android-aarch64`）→ 该平台用户从此收不到更新 |
 | 打印每个产物的 sha256 | 事后可与 CI 产物逐个比对（同时写 `src-tauri/target/release/release-artifacts.json`） |
 
-逃生口（都需显式写出，且有明确风险提示）：`--artifacts` 指定产物、`--allow-platform-drop` 允许少平台、`--skip-sig-verify` 跳过签名校验。
-`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、macOS 取 dmg），不再依赖目录遍历顺序；另一个（如 AppImage）照样挂到 release 上。
+逃生口（都需显式写出，且有明确风险提示）：`--artifacts` 指定产物、`--allow-platform-drop` 允许少平台、`--no-android` 本轮不带 Android、`--skip-sig-verify` 跳过签名校验。
+`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、macOS 取 dmg、Android 取 apk），不再依赖目录遍历顺序；另一个（如 AppImage）照样挂到 release 上。
+
+> 覆盖检查可以用 `SHUYONOTE_PREV_MANIFEST_JSON=<文件>` 注入一份"线上清单"来验（**只为测试这条门禁**，
+> 正常发布别设）。为什么需要它：Android 通道上线前线上清单里**根本没有** `android-aarch64`，
+> 于是没有任何真实输入能证明"线上有、本次没有 → 会红"这条检查真的会拦——不会被触发的门禁等于没有。
 
 **发布后自检**（自动检查之外的兜底）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
 
@@ -214,7 +234,7 @@ Select-String -Path CHANGELOG.md -Pattern '^## \[' | Select-Object -First 12
 | 定位 | **自检包**（"能不能装、装上能不能用"） | **可发布件** |
 | 触发 | 手动 `workflow_dispatch`；或 push 到 `dev` / `main` / `feat/android-mobile` 且改动命中 `paths:` | **只有 push `v*` tag**（或手动 `workflow_dispatch`） |
 | `VITE_TEST_HOOKS` | **job 级设 `"1"`**（必须 job 级：`tauri.conf.json` 的 `beforeBuildCommand` 让 `tauri android build` 会**再跑一遍** `pnpm build`，只挂某一步等于没挂） | **任何层级都不设**，并在构建步骤里对空值做显式断言（`❌ 发版包不允许带测试钩子`） |
-| 产物 artifact | `android-apk-aarch64-signed-test-hooks`（可直接 `adb install`，**只能自检**）、`android-apk-aarch64-unsigned`（量体积用），均保留 14 天 | `android-release-apk`（保留 14 天），文件名 `ShuyoNote_<package.json 版本>_android-arm64-release.apk` |
+| 产物 artifact | `android-apk-aarch64-signed-test-hooks`（可直接 `adb install`，**只能自检**）、`android-apk-aarch64-unsigned`（量体积用），均保留 14 天 | `android-release-apk`（保留 14 天），含 `ShuyoNote_<package.json 版本>_android-arm64-release.apk` **与其 `.sha256`**（后者是更新清单里那个 `signature` 的凭据，`release` job 会断言它在） |
 | 与 Release 的关系 | 不挂 tag、不建 Release | `release` job `needs: [build, android]` ⇒ **Android 失败会阻断整个 Release**（有意的：宁可响亮失败，不发"缺平台却看起来正常"的半套） |
 | 只出 APK | — | **只出 APK，不出 AAB**（AAB 是 Play 上架件，且 `apksigner` **签不了 AAB**） |
 
@@ -246,7 +266,8 @@ scripts/**                         # pnpm build 里串着门禁脚本，改它�
 |---|---|---|
 | 签名指纹硬比对 | 两个 workflow 的签名步骤 | `apksigner verify --print-certs` 输出里的 `certificate SHA-256 digest` → 去冒号、转小写，与常量 `6ee89e6f0f9326a40d3eac48b520c470d3fb6a7111a94fbe606510b489457a88` 逐字符比对（文档里简写为 `6ee89e6f…` / `6E:E8:…:7A:88`）；不等则 `❌ 签名指纹对不上` 并失败 |
 | ABI 断言 | `release.yml` 的「断言 APK 内 ABI 恰为 arm64-v8a」 | 直接读 zip 里 `lib/` 前缀：ABI 集合必须**恰好**是 `['arm64-v8a']`；出现别的 ABI、或压根没有 `lib/`（`.so` 没进包）都失败。理由：`--target aarch64` 只是**要求**，不是**证明** |
-| `APK_N == 1` | `release.yml` 的 `release` job | 按 `ShuyoNote_*_android-arm64-release.apk` 独立数一遍，**必须恰好 1 个**。文件名由 `android` job 拼（版本取自 `package.json`），选择器是**另一处**字符串——两处对不上时"少个包"会伪装成成功 |
+| `APK_N == 1` 与 `.sha256` 各 1 份 | `release.yml` 的 `release` job | 按 `ShuyoNote_*_android-arm64-release.apk`（及其 `.apk.sha256`）独立数一遍，**各必须恰好 1 个**。文件名由 `android` job 拼（版本取自 `package.json`），选择器是**另一处**字符串——两处对不上时"少个包"会伪装成成功 |
+| `sha256:` 与 apk 字节一致 | `release.mjs` 写清单时现算 | 清单里 `platforms["android-aarch64"].signature` = 该 apk 的 sha256；`.sha256` 附件与 `release-artifacts.json` 里的指纹可事后逐个比对 |
 
 **② 本机独立复核（不信 CI 一次输出）**
 
@@ -317,9 +338,16 @@ git tag -d $TAG                    # 删本地 tag
 
 - **只出 APK，不出 AAB**：AAB 是 Play 上架才需要的，而且 `apksigner` **签不了 AAB**（那是 jarsigner 的世界）
   ⇒ 签不了的 AAB 既不能装也不能做指纹自查，纯负担；
-- **Android 没有应用内更新通道**：桌面用 `tauri-plugin-updater` + `latest.json`，移动端**不接**这个通道
-  （Release 说明里也写明了"Android 目前不接应用内更新"）；移动端的更新路径是应用商店 / 重新下载；
-- **arm64-only**：只出 `arm64-v8a`，**armv7 老机装不上**；
+- **Android 的应用内更新是"下载 APK"，不是"应用内装机"**（2026-09-15 上线第一版）：
+  应用内「检查更新」会读同一份 `latest.json`，有新版时给一个「下载 APK」按钮，
+  地址取自 `platforms["android-aarch64"].url`，点击后**交给系统浏览器/DownloadManager**，
+  下载完由用户自己安装（覆盖安装要求签名一致，安装签名由 Android 系统安装器强制校验）。
+  **应用内不下载、不唤起安装器**（那需要 `REQUEST_INSTALL_PACKAGES` 之类的权限与 FileProvider，
+  属于后续增量；本版**没有新增任何权限、没有改 AndroidManifest**）。
+  ⇒ 所以：能"发现 + 拿到包"，但"装"这一步在系统里。仍没有的：应用商店 / 增量更新 / iOS。
+  清单里的 `signature` 对 Android 用 `sha256:<hex>`（apk 没有 minisign `.sig`——签名在包内），
+  这条字段**不能省**，理由见 §⑥（缺了会让整份清单解析失败、桌面更新一起挂）；
+- **arm64-only**：只出 `arm64-v8a`，**armv7 老机装不上**（非 arm64 的 apk 也不进更新清单）；
 - **自带的 Kotlin 证书校验器是打过补丁的 fork**（`scripts/vendor/rustls-platform-verifier/`）：
   上游把 PR #179（或等价修复）合并并发版后，应升级依赖、恢复脚本里的 AAR 注入方式、删掉那个目录
   （判断条件与复现步骤见该目录的 `README.md`；**升级 Rust 依赖时务必回去核对它**）；
@@ -340,12 +368,19 @@ git tag -d $TAG                    # 删本地 tag
       `git ls-remote origin refs/tags/vX.Y.Z` / `git ls-remote github refs/tags/vX.Y.Z`，两条 SHA 一致
 - [ ] Actions 里这条 tag 的 run **4 个 job 全绿**：`build`(ubuntu-24.04) / `build`(windows-latest) / `android` / `release`
 - [ ] `android` job 日志里 `✅ 指纹一致（正式密钥 shuyonote）`、`✅ ABI 恰为 arm64-v8a`
-- [ ] `release` job 日志里 `APK_N == 1` 通过（否则"少个包"会伪装成成功）
-- [ ] Release 上挂着 `ShuyoNote_<版本>_android-arm64-release.apk`
+- [ ] `release` job 日志里 `APK_N == 1` 与 `.sha256` 断言通过（否则"少个包/少个指纹"会伪装成成功）
+- [ ] Release 上挂着 `ShuyoNote_<版本>_android-arm64-release.apk` 与其 `.sha256`
 - [ ] **本机独立复核**：`apksigner verify --print-certs <apk>` 的 SHA-256 指纹 = `6ee89e6f…`
+- [ ] **本机独立复核**：`Get-FileHash <apk> -Algorithm SHA256` / `sha256sum <apk>` 的结果，与
+      Release 上的 `.sha256`、以及发布后 `latest.json` 的 `platforms["android-aarch64"].signature`
+      （去掉 `sha256:` 前缀）**三者一致**
+- [ ] **发布时**：`node scripts/release.mjs --no-build --android-apk <APK 路径> …` —— 日志里应出现
+      `latest.json 校验通过：… android-aarch64 …`；**没有** apk 会直接失败（要跳过只能写 `--no-android`）
 - [ ] **真机**：`adb install -r`（同签名升级）成功，**数据未丢**（`firstInstallTime` 不变）
 - [ ] **真机**：启动无 panic（`adb logcat -d -v brief` 里没有 `RustStdoutStderr` 的 panic 行）
 - [ ] **反向判据**：给这个包发测试深链 → 得到「测试钩子未启用（这是正式构建）」
+- [ ] **真机（应用内更新入口）**：「关于」→「检查更新」：有新版本时出现**「下载 APK」**并按预期
+      打开浏览器/下载器拿到同名文件；已是最新时**不打扰**（无红点/无横幅）；离线时不崩、只提示检查失败
 - [ ] 桌面/Web 侧照 ⑤⑥⑦ 继续（Android 只是其中一件）
 
 **只有 dry-run（临时 tag）才多做的：**

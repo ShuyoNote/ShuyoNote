@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditorStore } from "../store/editor";
-import { platform } from "../lib/platform";
+import { platform, isMobileUserAgent } from "../lib/platform";
 import {
   APP_NAME,
   APP_VERSION,
@@ -29,6 +29,8 @@ export function AboutDialog() {
   const [download, setDownload] = useState<{ run: (onProgress?: (p: UpdateProgress) => void) => Promise<void> } | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
+  /** Android 发版件的下载地址（清单的 platforms["android-aarch64"].url）。 */
+  const [androidApkUrl, setAndroidApkUrl] = useState<string | null>(null);
   const [declined, setDeclined] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
@@ -37,6 +39,13 @@ export function AboutDialog() {
   useEffect(() => {
     if (open) setAllow(getAllowExternal());
   }, [open]);
+
+  // Web 版与桌面/移动版的更新形态不同：Web=刷新加载服务器新静态文件；
+  // 桌面=in-app 下载并安装；**Android=下载 APK 交给系统**（见下面的「下载 APK」分支）。
+  const isWeb = !isDesktop();
+  const isAndroidDevice = isWeb ? false : isMobileUserAgent(navigator.userAgent);
+  /** 有 Rust 内核的壳（桌面 + Android/iOS）：清单走 native reqwest 拉取（绕 CORS）。 */
+  const nativeManifest = () => (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
 
   useEffect(() => {
     if (!open) return;
@@ -55,6 +64,7 @@ export function AboutDialog() {
     setDownload(null);
     setCheckError(null);
     setReleaseNotes(null);
+    setAndroidApkUrl(null);
     setDeclined(false);
     setUpdating(false);
     setProgress(null);
@@ -65,8 +75,9 @@ export function AboutDialog() {
     if (dbg) {
       setLatestVersion(dbg);
       setUpdateState("update-available");
-      const mf = await (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
+      const mf = await nativeManifest();
       setReleaseNotes(mf?.notes ?? null);
+      setAndroidApkUrl(mf?.android_url ?? null);
       setChecked(true);
       setChecking(false);
       return;
@@ -86,6 +97,22 @@ export function AboutDialog() {
       setChecking(false);
       return;
     }
+    // Android：**不接**桌面那套 in-app 下载安装（`tauri-plugin-updater` 只在桌面可用，
+    // 且移动端装包要经系统安装器）。这里只做两件事：比对清单版本号 + 取出 APK 地址，
+    // 有新版就给「下载 APK」入口，交给系统浏览器/DownloadManager 下载，用户自行安装。
+    // 清单里没有 android-aarch64（老清单）时 androidApkUrl 为 null ⇒ 退回「前往发布页」。
+    if (isAndroidDevice) {
+      const mf = await fetchUpdateManifestNative();
+      const latest = mf?.version ?? null;
+      setLatestVersion(latest);
+      setUpdateState(updateStatus(latest, APP_VERSION));
+      setReleaseNotes(mf?.notes ?? null);
+      setAndroidApkUrl(mf?.android_url ?? null);
+      if (!latest) setCheckError("未取到发布清单：离线或发布通道不可达");
+      setChecked(true);
+      setChecking(false);
+      return;
+    }
     // Prefer the in-app updater (desktop); fall back to the releases-page fetch.
     const up = await checkDesktopUpdate();
     if (up.state === "up-to-date") {
@@ -95,10 +122,10 @@ export function AboutDialog() {
       setDownload({ run: up.download });
       setUpdateState("update-available");
       // Pull the release notes (best-effort) so the user can read what's new.
-      const mf = await (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
+      const mf = await nativeManifest();
       if (mf?.notes) setReleaseNotes(mf.notes);
     } else {
-      const mf = await (isDesktop() ? fetchUpdateManifestNative() : fetchUpdateManifest());
+      const mf = await nativeManifest();
       const latest = mf?.version ?? null;
       console.error("[updater] desktop updater unavailable; fallback latest ->", latest);
       setLatestVersion(latest);
@@ -140,9 +167,6 @@ export function AboutDialog() {
     if (p.phase === "installing") return "正在安装更新…";
     return "更新完成，即将重启…";
   };
-
-  // Web 版与桌面版更新形态不同：桌面=下载安装包，Web=刷新加载服务器新静态文件。
-  const isWeb = !isDesktop();
 
   if (!open) return null;
 
@@ -211,6 +235,19 @@ export function AboutDialog() {
                       </button>
                       <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
                     </>
+                  ) : isAndroidDevice ? (
+                    // Android：不在这里装包——把 APK 地址交给系统（浏览器/DownloadManager），
+                    // 下载完由用户自己安装（安装签名由 Android 系统安装器校验）。
+                    <>
+                      {androidApkUrl ? (
+                        <button className="about-update-install" onClick={() => openExternal(androidApkUrl)}>
+                          下载 APK
+                        </button>
+                      ) : (
+                        <button className="about-update-later" onClick={() => openExternal(RELEASES_URL)}>前往发布页</button>
+                      )}
+                      <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
+                    </>
                   ) : updating && progress ? (
                     <div className="about-update-progress">
                       <div className="about-update-progress-text">{phaseLabel(progress)}</div>
@@ -231,7 +268,12 @@ export function AboutDialog() {
                   )}
                   {updateError && <span className="about-update-error">更新失败：{updateError}</span>}
                 </span>
-                {!isWeb && !declined && download && releaseNotes && (
+                {/*
+                  发行说明：以前只有「桌面 + 有下载句柄」才显示（条件里含 download），
+                  Android 上 download 永远是空 ⇒ 明明拿到了 notes 却不显示。现在按
+                  「有 notes 且没点稍后」显示；顺带修掉 Android 上的这一条。
+                */}
+                {!isWeb && !declined && releaseNotes && (
                   <div className="about-release-notes">
                     <div className="about-release-notes-title">本次更新</div>
                     <pre className="about-release-notes-body">{releaseNotes}</pre>

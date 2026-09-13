@@ -62,6 +62,17 @@ export interface UpdateManifest {
   version: string | null;
   notes: string | null;
   pub_date: string | null;
+  /**
+   * Android 发版件（APK）的下载地址与字节指纹，取自清单里的
+   * `platforms["android-aarch64"]`（**不是**顶层键）。清单里没有这个平台键时是 null
+   * ——老清单照常可读，桌面更新不受影响。
+   *
+   * 为什么是 sha256 而不是 minisign 签名：APK 由 `apksigner` 签在**包内**，没有
+   * 旁边那个 `.sig`；Rust 侧只从 `signature`（约定的 `sha256:<hex>`）里剥出 hex。
+   * 应用内不安装它，只把地址交给系统浏览器/DownloadManager，安装由系统完成。
+   */
+  android_url: string | null;
+  android_sha256: string | null;
 }
 
 /**
@@ -74,10 +85,16 @@ export async function fetchUpdateManifest(url: string = LATEST_MANIFEST_URL): Pr
     const resp = await fetch(url, { method: "GET" });
     if (!resp.ok) return null;
     const j = await resp.json();
+    // 浏览器路径读不到 android 条目也无所谓（Web 版不接这条通道）——但形状要与
+    // Rust 侧一致，免得两个平台的返回类型悄悄分叉。
+    const android = j?.platforms?.["android-aarch64"];
+    const sig = typeof android?.signature === "string" ? android.signature.trim() : "";
     return {
       version: typeof j?.version === "string" ? j.version : null,
       notes: typeof j?.notes === "string" ? j.notes : null,
       pub_date: typeof j?.pub_date === "string" ? j.pub_date : null,
+      android_url: typeof android?.url === "string" ? android.url : null,
+      android_sha256: sig.startsWith("sha256:") ? sig.slice("sha256:".length) : null,
     };
   } catch {
     return null;

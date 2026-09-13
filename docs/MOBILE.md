@@ -58,7 +58,16 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 **首次真机跑通**（2026-09-13 · HUAWEI Mate 40 `OCE-AN10` / Android 12：装上、冷启动 589 ms、界面正常渲染）。
 
 **待做**（详见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` 的阶段划分）：
-应用内"检查更新"、逐条真机验收、上架材料。
+逐条真机验收、上架材料。
+
+**应用内「检查更新」：第一版已做**（2026-09-15）。Android 上打开「关于」会自动检查，有新版时给一个
+**「下载 APK」**按钮：地址取自更新清单 `latest.json` 的 `platforms["android-aarch64"].url`（与桌面
+**同一份清单、同一个 gitcode 通道**），点击后交给系统浏览器/DownloadManager，**下载完由用户自己安装**。
+边界要说清：**应用内不下载、不唤起安装器**（那要 `REQUEST_INSTALL_PACKAGES` + FileProvider，属后续增量），
+本版**没有新增权限、没有改 AndroidManifest**；apk 没有 minisign `.sig`（签名在包内），清单里用
+`sha256:<hex>` 记录字节。发布侧要求见 [RELEASING.md](RELEASING.md) §⑥ / §9.5。
+
+仍未做的：应用商店上架、增量更新、iOS。
 
 ### 2.1 移动端**不提供** / **已知有问题**的能力（边界要能说清，别含糊）
 

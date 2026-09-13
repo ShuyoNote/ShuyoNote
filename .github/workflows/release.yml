@@ -336,11 +336,37 @@ jobs:
           cp "$RUNNER_TEMP/shuyonote-aarch64-signed.apk" "$OUT"
           ls -l "$OUT"
 
+      - name: 记录 APK 的 sha256（应用内更新清单里用的就是它）
+        # 为什么单出一份 `.sha256`：apk **没有** minisign `.sig`（签名由 apksigner 打、
+        # 在包内，安装时由 Android 系统安装器强制校验），而更新清单 `latest.json` 的
+        # `platforms["android-aarch64"].signature` 必须是**非空**的——缺了它，
+        # `tauri-plugin-updater` 对**整份清单**的反序列化就失败，**桌面更新通道一起挂**。
+        # 所以这里产出字节指纹，随 artifact 一起传，发布时 `release.mjs --android-apk`
+        # 会自己再算一遍 sha256 写进清单；这份 sidecar 是给人/脚本事后核对用的。
+        #
+        # ⚠️ **不**给本 job 加 `TAURI_SIGNING_PRIVATE_KEY`：那是桌面的 minisign 私钥，
+        # 为了给 apk 造一个"看得过去"的 `.sig` 而把它铺到 Android 构建里，是白白扩大
+        # 私钥暴露面（apk 也用不上——updater 在 Android 上根本不跑那条路径）。
+        run: |
+          set -e
+          cd "$RUNNER_TEMP/dist"
+          for f in *.apk; do
+            sha256sum "$f" | tee "$f.sha256"
+            # 自检：第一列必须是 64 位 hex（防止将来 sha256sum 输出格式变化没人发现）。
+            # 用 test + cut 而不是 awk：awk 在"规则里 exit 1"的退出码上各实现有别
+            # （mawk 只在 END 里生效），门禁不能踩这种实现差异。
+            H=$(cut -d' ' -f1 < "$f.sha256")
+            test "${#H}" -eq 64 || { echo "❌ sha256 格式异常（期望 64 位 hex）：$H"; exit 1; }
+            printf '%s' "$H" | grep -Eq '^[0-9a-f]{64}$' || { echo "❌ sha256 含非 hex 字符：$H"; exit 1; }
+          done
+
       - name: Upload 发版 APK
         uses: actions/upload-artifact@v4
         with:
           name: android-release-apk
-          path: ${{ runner.temp }}/dist/*.apk
+          path: |
+            ${{ runner.temp }}/dist/*.apk
+            ${{ runner.temp }}/dist/*.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -367,7 +393,7 @@ jobs:
           RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | jq -r '.id // empty')
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"安装包：Windows 安装版 / Linux .deb + .AppImage / Android APK（arm64，正式密钥签名，可直接 adb install 或侧载）。桌面版安装后可在应用内「检查更新」升级；Android 目前不接应用内更新。\"}" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"安装包：Windows 安装版 / Linux .deb + .AppImage / Android APK（arm64，正式密钥签名，可直接 adb install 或侧载）。桌面版安装后可在应用内「检查更新」下载并安装；Android 版可在应用内「检查更新」发现自己有新版本，并从这里下载同名 APK 覆盖安装（应用内不装机，交给系统）。\"}" \
               "$API/releases")
             RID=$(echo "$RESP" | jq -r '.id // empty')
             [ -z "$RID" ] && { echo "release create failed: $RESP"; exit 1; }
@@ -388,6 +414,14 @@ jobs:
             find . -type f -name '*.apk' -print || true
             exit 1
           }
+          # 同理断言 sha256 sidecar 也在（它是"应用内更新清单里那个 signature 从哪来"的凭据，
+          # 缺了它 update/发布时就只能靠人手算——正是最容易漏的那一步）。
+          SHA_N=$(find . -type f -name 'ShuyoNote_*_android-arm64-release.apk.sha256' | wc -l | tr -d ' ')
+          [ "$SHA_N" -eq 1 ] || {
+            echo "❌ 期望恰好 1 个 Android APK 的 .sha256，实际 $SHA_N 个：android job 的指纹步骤没产出？"
+            find . -type f -name '*.sha256' -print || true
+            exit 1
+          }
           found=0
           while IFS= read -r f; do
             # `-f`：HTTP >=400 时 curl 以非 0 退出。**这不是风格问题**——原先只写 `-s`
@@ -400,6 +434,6 @@ jobs:
             fi
             echo "uploaded: $(basename "$f")"
             found=$((found+1))
-          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name 'ShuyoNote_*_android-arm64-release.apk' \))
+          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name 'ShuyoNote_*_android-arm64-release.apk' -o -name 'ShuyoNote_*_android-arm64-release.apk.sha256' \))
           echo "release $TAG -> $found installer(s) attached"
           [ "$found" -gt 0 ] || { echo "no installers found"; exit 1; }

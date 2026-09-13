@@ -40,6 +40,37 @@
 
 ### 变更
 
+- **Android 有了应用内更新通道（最小第一步：发现 + 下载 APK）**（2026-09-15）。Android 上打开
+  「关于」会自动检查版本：有新版时给一个**「下载 APK」**按钮，地址取自更新清单
+  `platforms["android-aarch64"].url`（与桌面**同一份 `latest.json`、同一个 gitcode 通道**），
+  点击后**交给系统浏览器/DownloadManager**，下载完由用户自己安装。
+  **应用内不下载、不唤起安装器**——那需要 `REQUEST_INSTALL_PACKAGES` 之类的权限与 FileProvider，
+  属后续增量；本版**没有新增任何权限、没有改 AndroidManifest**。
+
+  为什么这么设计（几条都不是随手定的）：
+
+  - **apk 没有 minisign `.sig`**：它的签名由 `apksigner` 打在**包内**，安装时的强制校验由 Android
+    系统安装器负责。所以清单里 android 条目的 `signature` 写 **`sha256:<hex>`**（发布脚本现算），
+    它不参与"`.sig` 与字节互验"、也不上传 `.sig`——两处都开了**显式**例外，并在发布日志里说明；
+  - **那个 `signature` 字段不能省，省了会连坐**：`tauri-plugin-updater` 反序列化 `latest.json` 时把
+    `platforms` 的每个值解析成 `url` + `signature` **都必需**的结构，任何一条缺 `signature` 会让
+    **整份清单**解析失败 ⇒ **桌面的自动更新一起挂**，而症状只是"点检查更新什么都不发生"。
+    所以新增 `validateManifest` 门禁（绝对 https 的 url + 非空 signature，android 必须是
+    `sha256:<64 hex>`），**写盘前**跑，失败就一个字节都不落盘；
+  - **发版强制带 APK**：`release.mjs` 新增 `--android-apk <路径>`；缺了就失败，且失败信息直接给出
+    "怎么从 CI 拿包"的三条出路。要明确跳过只能写 `--no-android`（与 `--allow-platform-drop`
+    同一套哲学：逃生口必须显式、可事后审计）；
+  - **Android 键放进 `platforms["android-aarch64"]`**，不新开顶层键——客户端要能用同一套结构取到它。
+
+  顺带修掉一个既存缺陷：「本次更新」的发行说明在 Android 上**从来不显示**（显示条件里含 `download`，
+  而移动端永远拿不到下载句柄）。
+
+  发布侧：CI 的 android job 增出 `…apk.sha256`（**不**给该 job 加桌面 minisign 私钥——为了给 apk
+  造个"看得过去"的 `.sig` 而扩大私钥暴露面不划算，apk 也用不上），`release` job 把它一并挂到
+  Release 并断言它在；`updates.rs` 的 `UpdateManifest` 增 `android_url` / `android_sha256`
+  （从 `platforms["android-aarch64"]` 读，**缺这个键时照常解析**，桌面更新不受影响，有单测钉住两态）。
+  细节与验收清单见 `docs/RELEASING.md` §⑥ / §9.5 / §9.6、`docs/MOBILE.md` §2。
+
 - **发版件接入 Android，并已用临时 tag 真跑验证**（2026-09-13/14）。`release.yml` 新增 `android` job：
   init → 注入自带的证书校验器 → build → zipalign → apksigner（正式密钥）→ **指纹硬比对** →
   **断言 ABI 恰为 arm64-v8a** → 改名 `ShuyoNote_<版本>_android-arm64-release.apk`；`release` job
@@ -53,7 +84,10 @@
   启动无 panic；**反向判据**：发测试深链得到「测试钩子未启用（这是正式构建）」⇒ 发版包不带钩子。
   验证后 tag 与 Release 均已删除（复核 404，run 记录保留）。
 
-  仍然没做的：AAB/上架 Play（apksigner 签不了 AAB）、Android 的**应用内更新通道**、arm64-only 的覆盖限制。- **CI 出包时用正式密钥签名，并且把"是不是正式密钥签的"变成硬判据**（2026-09-13）。
+  仍然没做的：AAB/上架 Play（apksigner 签不了 AAB）、arm64-only 的覆盖限制。
+  （当时还写着"Android 的应用内更新通道"——**已在本次 `[Unreleased]` 的第一条实现**：应用内能发现新版并下载 APK，装机仍交给系统。）
+
+- **CI 出包时用正式密钥签名，并且把"是不是正式密钥签的"变成硬判据**（2026-09-13）。
   以前 CI 只出**未签名** APK，每次装真机都要在本机手工 `zipalign` + `apksigner` ——
   本轮手工签了三次、还漏签过一次（`INSTALL_PARSE_FAILED_NO_CERTIFICATES`）。
   现在 `android.yml` 从 Secrets 取 keystore（`ANDROID_KEYSTORE_BASE64` /
