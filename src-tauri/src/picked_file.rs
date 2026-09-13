@@ -1,4 +1,4 @@
-//! 「用户选的文件」的**唯一落地入口**。
+﻿//! 「用户选的文件」的**唯一落地入口**。
 //!
 //! 为什么需要这一层：**Android 的系统选择器返回的不是文件路径。**
 //! `tauri-plugin-dialog` 的 Android 实现（`DialogPlugin.kt::createPickFilesResult`）是
@@ -25,6 +25,7 @@
 
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
+use tauri::Manager; // .path() 由这个 trait 提供（AppHandle 自己不提供）
 
 /// 值是不是 URI（`content://…` / `file://…`）而不是文件路径？
 ///
