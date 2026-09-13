@@ -43,6 +43,28 @@ on:
       # Android 工程是从它**生成**的（应用名、包名、minSdk、**深链 intent-filter**…），
       # 所以改它必须重新出包。漏了这条的话，清单会停在旧版本上，而那种漂移只在真机上才看得出。
       - "src-tauri/tauri.conf.json"
+      #
+      # ⚠️ 下面这一组是 2026-09-13 补的。补之前**Rust 源码改了根本不触发构建**：
+      # 当时改的是 `src-tauri/src/deeplink.rs`（深链接线不再桌面专属），推上去之后
+      # Actions 里**连一条运行记录都没有**——只有这个文件自己和 tauri.conf.json 能触发。
+      # 这与文件头第 5 条是同一类错误：**"改完会重新出包"这件事本身也要能被验证**，
+      # 判据是"推完去 Actions 看有没有新记录"，而不是"我记得它配了"。
+      #
+      # Rust 侧（整包编进 .so）：
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - "src-tauri/src/**"
+      - "src-tauri/capabilities/**" # 权限清单进包，`check-capabilities` 也读它
+      - "src-tauri/icons/**" # 图标进包
+      # 前端侧：`pnpm build` 的产物整包进 APK，而且 build 里串了仓库门禁
+      # （check-versions / check-web-commands / check-deep-link / check-capabilities…），
+      # 所以门禁脚本本身也算构建输入——改了它照样可能让这一步红。
+      - "src/**"
+      - "scripts/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
 
 permissions:
   contents: read
