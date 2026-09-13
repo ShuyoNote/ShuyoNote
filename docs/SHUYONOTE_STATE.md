@@ -69,9 +69,19 @@
    - **体积 156.7 → 53.41 MiB**（`strip` + tesseract-core 白名单 + OCR 语言包改按需下载），当初定的 55–70 MiB 目标已达成；
    - **真机首次跑通**（2026-09-13 · HUAWEI Mate 40 `OCE-AN10` / Android 12）：装上、冷启动、界面正常渲染（截图存证）；
    - **Boa 在 Android 上的 nan-boxing panic 已修并真机复验**（移动端开 `jsvalue-enum`）——见 [MOBILE.md](MOBILE.md) §2.1。
-   - **未做 / 未验**：正式 keystore（现在只有一把**测试专用** key）、签名进 CI、
-     **执行一条插件命令**（端到端未验）、**Android 上「选文件」拿不到可读路径**
-     （源码级已确认、修法已定、**尚未实施**，见 [MOBILE.md](MOBILE.md) §2.2）、逐条真机验收清单
+   - **2026-09-13 这一轮做完的**（细节见 [MOBILE.md](MOBILE.md) 与 `CHANGELOG.md`）：
+     - **正式 keystore 已生成**（RSA-4096 / 10000 天，`~/.shuyonote-release-keystore/` +
+       一份异地备份；**测试专用 key 与它分开**，那个只用于真机自检包，别混用）；
+     - **「选文件」拿不到可读路径已实施**（`tauri-plugin-fs` 的 `open()`：Android 经
+       `ContentResolver` 取 fd，见 §2.2）——**CI 已编译通过，真机待点一次**；
+     - **深链在 Android 上修好了**：原先 `attach()` 被 `#[cfg(desktop)]` 挡掉，插件 emit 了
+       `deep-link://new-url` 却**没有订阅者**，表现是"点深链完全没反应"（见 §2.3）；
+     - **Rust 侧 HTTPS 的 panic 已实现修复**：启动时初始化系统证书校验器
+       （两套 jni 的裸指针桥，见 §2.4.1 / §2.5）；
+     - **真机自动化有了三条测试钩子**（`run-plugin` / `new-page` / `http-probe`），
+       只在 `VITE_TEST_HOOKS=1` 的构建里存在，正式发版不带。
+   - **仍未做 / 未验**：**签名进 CI**（要仓库 secrets 权限，当前 token 没有）、
+     上面三项的**真机复验**（CI 绿只证明能出包）、逐条真机验收清单
      （附件 / PDF / 离线 OCR / 加密锁定 / 深链 / 同步 / 备份 / 小屏横屏）。
      真机验收能用哪些手段、有哪些边界，见 [MOBILE.md](MOBILE.md) §2.3（别重复踩盲点坐标那个坑）。
      上线计划见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`（公开仓已不留副本）。
