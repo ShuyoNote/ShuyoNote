@@ -87,8 +87,16 @@ pub(crate) fn materialize(app: &AppHandle, picked: &str) -> Result<PickedFile, S
         )
     })?;
 
-    let dir = std::env::temp_dir().join("shuyonote-picked");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败：{e}"))?;
+    // ⚠️ **不要用 `std::env::temp_dir()`**（2026-09-13 真机实测的教训）：Android 上它是
+    // `/tmp`（TMPDIR 未设时的等价物），而 **`/tmp` 在 Android 上不存在/不可写** ⇒
+    // `create_dir_all` 直接失败，真机上表现为「建临时目录失败」——选文件这条链路
+    // （② §2.2）就断在这最后一步。正解是走 Tauri 的路径 API：应用自己的 cache 目录。
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("拿不到应用缓存目录（Android 上不能用 /tmp）：{e}"))?
+        .join("shuyonote-picked");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败（{}）：{e}", dir.display()))?;
     let dst = dir.join(uuid::Uuid::new_v4().to_string());
     let mut out = std::fs::File::create(&dst).map_err(|e| format!("建临时文件失败：{e}"))?;
 
