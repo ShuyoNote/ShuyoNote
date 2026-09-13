@@ -307,38 +307,78 @@ Expect rustls-platform-verifier to be initialized
 插件索引拉取、AI 调用、检查更新。
 ⚠️ **WebView 自己的 HTTPS 不受影响**（OCR 语言包下载走的是浏览器栈）——这两条别搞混。
 
-**两个候选修法（都还没做，因为要先选一个）**：
+**两个候选修法**：
 
 | 方案 | 做法 | 代价 |
 |---|---|---|
-| **A. 正经初始化**（倾向） | Gradle 指向那个 AAR + 启动时初始化。**关键事实已查清**：那个 Java 组件**不在 Maven 上**，而是**随 crate 发布**——本机实测在 `~/.cargo/registry/src/*/rustls-platform-verifier-android-0.1.1/maven/`，坐标 `rustls:rustls-platform-verifier:0.1.1`；Gradle 要用 `cargo metadata --filter-platform aarch64-linux-android` 找到它（官方 README 的写法），版本从 metadata 里取准比 `latest.release` 稳。**⇒ 必须脚本化**（`gen/android` 不在版本控制里） |
+| **A. 正经初始化**（**已采用**） | Gradle 指向那个 AAR + 启动时初始化。**关键事实已查清**：那个 Java 组件**不在 Maven 上**，而是**随 crate 发布**——本机实测在 `~/.cargo/registry/src/*/rustls-platform-verifier-android-0.1.1/maven/`，坐标 `rustls:rustls-platform-verifier:0.1.1`。**⇒ 必须脚本化**（`gen/android` 不在版本控制里） |
 | **B. 换掉验证器** | 用 `ClientBuilder::use_preconfigured_tls(...)` 自建 `rustls::ClientConfig`（webpki-roots 或 rustls-native-certs） | **可能反而更糟**：webpki-roots 是内置根，**用私有 CA 自建服务器的用户会连不上**——而本项目定位是自托管优先 |
 
-**倾向 A**（保住"系统 CA / 私有 CA 可用"），但它动到不可复现的 Android 工程，得连同
-"把 gradle 定制脚本化"一起做。**状态：已确认、未修**——属 Android 上线的**阻塞项**。
+### 2.4.1 已按 A 实现（2026-09-13）
 
-### 2.5 ⚠️ 修 A 路上的一处**硬阻塞**：两套 jni 版本对不上（2026-09-13 查明）
+三处改动，都做成可复现的：
+
+| 位置 | 做了什么 | 为什么在那儿 |
+|---|---|---|
+| `scripts/android-platform-verifier.mjs` | 往 `gen/android/app/build.gradle.kts` **追加**指向 crate 内置 maven 目录的仓库 + `implementation("rustls:rustls-platform-verifier:0.1.1")`，并写 `app/rustls-platform-verifier.pro` | `gen/` 不入库，CI 每次自己 `init` ⇒ 定制**只能脚本化**。脚本可重复执行，`--check` 给门禁用 |
+| `src-tauri/src/tls_android.rs` | 启动时用 `JniHandle::exec` 拿 JNIEnv/Activity，初始化 verifier | 见 §2.5 的桥 |
+| `lib.rs` 的 setup（建完主窗口后立即） | `tls_android::init(&_window)` | 必须在**任何 HTTPS 请求之前**；`jni_handle()` 要有 WebView 才拿得到 |
+
+**Proguard 那条不能省**：release 开了 R8（`isMinifyEnabled = true`），而 `org.rustls.platformverifier.**`
+只被 **JNI 按名字**用到，R8 看不见任何 Java 引用 ⇒ 会被当死代码删掉，运行时 `ClassNotFoundException`。
+生成的 `build.gradle.kts` 正好用 `fileTree(".") { include("**/*.pro") }` 收集规则，所以脚本把 `.pro`
+写进 `app/` 就会被自动收走（不需要再改 gradle）。
+
+**验收判据**（三层，能程序化就不靠截图）：
+
+1. `adb logcat -s RustStdoutStderr` 出现 `[tls] 证书校验已交给 Android 系统证书库` ⇒ 初始化跑到了；
+2. **不再出现** `Expect rustls-platform-verifier to be initialized` ⇒ reqwest 那条路不再 panic；
+3. 真机跑测试钩子 `shuyonote://test/http-probe?url=https%3A%2F%2Fcommunity.shuyo.cn%2F`
+   ⇒ 界面上提示"拿到 N 字节"才是**真的握手成功**（这条钩子复用现成的 `fetch_community_json`
+   命令，不新增命令、不动能力清单；只在 `VITE_TEST_HOOKS=1` 的构建里存在）。
+
+### 2.5 修 A 路上的两套 jni：**已解决**（2026-09-13，原先判断为"硬阻塞"）
 
 Tauri 侧的官方写法是有的——[tauri#13267](https://github.com/tauri-apps/tauri/issues/13267) 里
-作者给出的可用写法是 `webview.jni_handle().exec(|env, context, _| …)` 拿到 JNIEnv/Context，
-再调 `rustls_platform_verifier::android::init_with_refs(env.get_java_vm()?, …)`。
-
-**但这组版本上编不过**：
+作者给出的写法是 `webview.jni_handle().exec(|env, context, _| …)` 拿到 JNIEnv/Context，
+再调 `rustls_platform_verifier::android::init_with_refs(env.get_java_vm()?, …)`。**这组版本上编不过**：
 
 | crate | 版本 | 依赖的 jni |
 |---|---|---|
-| `wry` 0.55.1（`jni_handle().exec` 给的就是它的类型） | 0.55.1 | **jni 0.21.1** |
+| `wry`（`jni_handle().exec` 给的就是它的类型） | 0.55.1 | **jni 0.21.1** |
 | `rustls-platform-verifier` | 0.7.0 | **jni 0.22.4** |
 
-两个 jni 大版本的 `Env`/`JObject` 是**不同类型**，不能直接传；而且 jni 0.22 刚改过 API
-（`JObject::from_raw` 现在要 `&Env`，crate 自己 README 里的例子还是旧签名）。
-所以要落地 A，得**跨这两个版本用裸指针搭桥**（`env.get_native_interface()` + `as_raw()`，
-在 0.22 侧重建 `Env`/`JObject`）——那是 unsafe JNI 细节，而**本地编不了 Android**
-（`cargo check --target aarch64-linux-android` 会卡在 OpenSSL/mupdf 的构建脚本上），
-只能靠 CI 编译 + 真机日志，一轮约 15 分钟。
+两个 jni 大版本的 `Env`/`JObject` 是**不同类型**。jni 0.22 的 `JavaVM::singleton()` 文档还专门
+警告过：**不同版本的 jni-rs 不共享任何状态**（`src/vm/java_vm.rs` L261-266），所以"随便找个版本
+先把它初始化掉"这条路不存在。
 
-**⇒ 这条不适合盲写。** 需要的是一个能连续跑几轮 CI 与真机的窗口，外加一个决定：
-是搭这座桥，还是等 wry 对齐到 jni 0.22（或改用 B 路线自建 `ClientConfig`）。
+**我原先写的"得用 `env.get_native_interface()` + `as_raw()` 重建 `Env`"是错的方向**——那是在
+按结构体布局硬转。查源码后走的是两边各自**文档化的构造器**，只传裸指针：
+
+| 步骤 | API | 出处 |
+|---|---|---|
+| 1. 拿到 env / Activity / WebView | `JniHandle::exec(FnOnce(&mut JNIEnv, &JObject, &JObject))` | wry `src/android/mod.rs` L479-484（注释原话："the jni environment, **Android activity** and WebView"）⇒ **Context 直接就有，不用反射去猜** |
+| 2. 取裸 `JavaVM*` | `env.get_java_vm()?.get_java_vm_pointer()` | jni 0.21 |
+| 3. 在 0.22 侧重建成 `JavaVM` | `unsafe { JavaVM::from_raw(ptr) }` | jni 0.22 `src/vm/java_vm.rs` L422 |
+| 4. 拿 0.22 的 `Env` | `vm.attach_current_thread(\|env\| …)` | 同文件 L488（当前线程本来就附着着，这一步是廉价空操作） |
+| 5. Context 转 0.22 引用 | `unsafe { JObject::from_raw(raw) }` → `init_with_env` | `rustls-platform-verifier` `src/android.rs` L97 |
+
+**顺带纠正 crate 文档的两处过时**（照抄会写不出来）：README 里说的 `init_hosted` / `init_external`
+在 0.7 里**已经不存在**（现在叫 `init_with_env` / `init_with_refs` / `init_with_runtime`，
+见 `src/android.rs` L97/124/152）；`android.rs` 顶部示例里的 `EnvUnowned::from_raw(...).unwrap()`
+也是旧签名——0.22.4 的 `from_raw` 直接返回 `Self`，没有 `Result`。
+
+**这条路上被否掉的另外两个方案**（省得下次再想）：
+
+- **`ndk_context`**：本机实测 **`cargo tree -i ndk-context --target aarch64-linux-android`
+  报 "did not match any packages"**——它根本不在这棵依赖树里，**没有任何人初始化它**，
+  `android_context()` 一调就 panic。要用它就得自己先有 vm/context ⇒ 循环。
+- **换一份用 jni 0.21 的 verifier 版本**：`cargo tree -i rustls-platform-verifier` 显示它由
+  **reqwest 0.13.4** 拉进来（tauri 自己也依赖），版本不是我们能挑的。
+
+**为什么这值得单独记一节**：本地**编不了 Android**（`cargo check --target aarch64-linux-android`
+会卡在 OpenSSL/mupdf 的构建脚本上），所以这类改动唯一的反馈是 CI（约 15 分钟一轮）+ 真机日志。
+结论还是那句——**"能编过"与"跑得起来"在这条链上是两个独立事实**，本节的每一步都必须有真机判据。
 
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 

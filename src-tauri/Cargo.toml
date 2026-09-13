@@ -101,6 +101,21 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [target.'cfg(target_os = "android")'.dependencies]
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 
+# Android 上 **TLS 信任链交给系统证书库**，而这件事需要我们自己插一脚：
+# reqwest 0.13 在 Android 上默认用 `rustls-platform-verifier`，它**必须在第一次 HTTPS
+# 请求之前**被初始化，否则进程直接 panic（真机 logcat 原话）：
+#   E/RustStdoutStderr: Expect rustls-platform-verifier to be initialized
+# 初始化点在 src/tls_android.rs（由 setup 调一次）。
+#
+# 为什么需要**直接**依赖它，而不是只把它当 reqwest 的传递依赖：我们要调它的
+# `android::init_with_env`，那个函数的参数类型来自**它自己那份 jni 0.22.4**。
+# ⚠️ 而 wry 0.55.1 用的是 **jni 0.21.1**——两版类型不能互换（连 `JavaVM::singleton()`
+# 都不共享，jni 0.22 的文档专门警告过）。所以这里也直接引 jni 0.22，两边用**裸指针**
+# 对接：`JavaVM::from_raw` / `JObject::from_raw` 都是 jni 文档化的 unsafe 构造器，
+# **不是**按结构体布局硬转。取证过程与备选方案见 docs/MOBILE.md §2.4。
+rustls-platform-verifier = "0.7"
+jni = "0.22"
+
 # 移动端专属（iOS 一并开着，同一个理由）：boa 的 **nan-boxing 在 Android 上不成立**
 # ——2026-09-13 真机实测（HUAWEI Mate 40 / Android 12）。它的 `tag_pointer()` 断言指针必须
 # 落在 `MASK_POINTER_VALUE`（低 48 位）内，而真机上拿到的是 **0xB400007D1B960000**

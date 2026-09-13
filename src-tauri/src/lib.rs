@@ -9,9 +9,10 @@ mod commands;
 mod crypto;
 mod database;
 mod db;
-// 交付通道协议 `shuyonote://` 的 **OS 层**。模块本身是跨平台编译的（队列与取件命令在
-// 移动端也注册着，只是永远为空）；真正桌面专属的是 `plugin()` / `attach()`，
-// 因为 `deep-link` 插件的移动实现是另一套 API（`on_open_url` 在移动端不存在）。
+// 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
+// Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
+// 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，
+// **那句话是错的**，代价是手机上点了深链完全没反应（2026-09-13 真机复现并修好）。
 mod deeplink;
 // 聚合邮箱（含发信）：**桌面专属**（2026-09-13 定）。它走 `native-tls`，而移动端为此要从
 // 源码交叉编译 OpenSSL；移动端本就不提供该功能（`EmailPanel` 里早就写着"桌面版独有能力"），
@@ -35,6 +36,11 @@ mod plugin_validate;
 mod plugins;
 mod properties;
 mod search;
+// Android 专属：把 TLS 证书校验交给系统证书库。**不是可选项**——不做这一步，
+// Rust 侧任何 HTTPS 一按就 panic（真机 logcat：`Expect rustls-platform-verifier to be initialized`）。
+// 为什么是个独立模块、以及为什么要在两套 jni 之间做裸指针桥接，见模块头注释。
+#[cfg(target_os = "android")]
+mod tls_android;
 mod security;
 mod storage;
 mod sync;
@@ -340,6 +346,15 @@ pub fn run() {
                 // devtools，看 console 报错（排查 mermaid 等问题）。
                 .devtools(true)
                 .build()?;
+
+            // Android：把 HTTPS 的证书校验交给系统证书库。**必须在任何 HTTPS 请求之前**——
+            // reqwest 在没初始化时是 **panic 不是报错**。放在这里是因为要从 WebView 才能
+            // 拿到 JNI env 与 Activity（`jni_handle()`）；`exec` 会把闭包投递到主线程，
+            // 所以真正生效的时机是 setup 之后、事件循环刚开始时，仍早于网页触发任何网络命令。
+            // 详见 `mod tls_android` 与 docs/MOBILE.md §2.4。
+            #[cfg(target_os = "android")]
+            tls_android::init(&_window);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

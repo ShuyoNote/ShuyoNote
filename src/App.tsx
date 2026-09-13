@@ -205,6 +205,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
               content_text: payload.content_text,
             });
           },
+          // 测试钩子 http-probe：让 **Rust 侧**发一次真实 HTTPS（走 reqwest），
+          // 用来验 Android 上系统证书库那条路通不通（见 docs/MOBILE.md §2.4）。
+          // 复用现成的 `fetchDocument`（= `fetch_community_json` 命令），所以不新增命令、
+          // 不动能力清单；它本身有 host 白名单，测试链接必须落在社区域名上。
+          httpProbe: (url) => platform.community.fetchDocument(url),
         }),
       ),
     [],

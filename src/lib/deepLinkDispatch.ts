@@ -48,6 +48,15 @@ export interface DeepLinkDeps {
   ) => Promise<unknown> | unknown;
   /** **测试钩子**用：建一页并写入文本（用来验"写进去的东西杀进程重启后还在"）。 */
   createPageWithText?: (text: string) => Promise<unknown> | unknown;
+  /**
+   * **测试钩子**用：让 **Rust 侧**发一次真实 HTTPS 请求（走 reqwest）。
+   *
+   * 这条是 `docs/MOBILE.md` §2.4 的验收手段：Android 上证书校验器
+   * （rustls-platform-verifier）没被初始化时 reqwest **直接 panic**，所以"没崩、而且真的
+   * 拿回了内容"才说明系统证书库那条路是通的。用的是**现成的** `fetch_community_json`
+   * 命令（它本身就是一次 reqwest GET），因此**不新增命令、也不动能力清单**。
+   */
+  httpProbe?: (url: string) => Promise<string> | string;
 }
 
 /** 测试钩子是否启用。**只有带 `VITE_TEST_HOOKS=1` 的构建**才会真的执行（见 android.yml）。 */
@@ -97,8 +106,25 @@ async function runTestHook(
         deps.notify(`测试钩子 new-page 完成：${typeof r === "string" ? r : JSON.stringify(r)}`);
         return;
       }
+      case "http-probe": {
+        // 用途：验 Android 上 Rust 侧 HTTPS 通不通（证书校验器有没有装上）。
+        // 必须真的走网络才有意义——这里刻意不做任何本地短路。
+        const url = (action.params.url ?? "").trim();
+        if (!url) {
+          deps.notify("测试钩子 http-probe：缺 url 参数");
+          return;
+        }
+        if (!deps.httpProbe) {
+          deps.notify("测试钩子 http-probe：宿主没接这个依赖");
+          return;
+        }
+        const body = await deps.httpProbe(url);
+        // 只报长度与开头一小段：测试钩子也没必要把整页内容贴到界面上。
+        deps.notify(`测试钩子 http-probe 成功：${body.length} 字节，开头「${body.slice(0, 48)}」`);
+        return;
+      }
       default:
-        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page）`);
+        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page / http-probe）`);
     }
   } catch (e) {
     deps.notify(`测试钩子失败：${e instanceof Error ? e.message : String(e)}`);

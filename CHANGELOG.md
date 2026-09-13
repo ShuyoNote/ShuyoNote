@@ -103,6 +103,41 @@
 
 ### 修复
 
+- **Android 上 Rust 侧的 HTTPS 一按就 panic**（2026-09-13 真机实测；**已实现，验收判据见下**）。
+  logcat 原话：
+
+  ```text
+  E/RustStdoutStderr: Expect rustls-platform-verifier to be initialized
+  ```
+
+  reqwest 0.13 在 Android 上默认用 `rustls-platform-verifier` 校验证书，而它**必须先被初始化**，
+  否则内部 `global()` 的 `expect(...)` 直接 panic。影响面是**所有 Rust 侧 HTTPS**：
+  多设备同步、插件索引、AI 调用、检查更新。（**WebView 自己的 HTTPS 不受影响**——OCR
+  语言包下载走浏览器栈，这两条别搞混。）
+
+  修法保住了"系统 CA / 私有 CA 可用"——换成内置 webpki 根会让**用私有 CA 自建服务器**的
+  用户连不上，而自托管优先是本项目的定位：
+
+  1. `scripts/android-platform-verifier.mjs`：把那套 Kotlin 组件（**不在 Maven Central 上**，
+     rustls-platform-verifier#115，只能引 crate 自带的 maven 目录）注入生成出来的
+     `gen/android/app/build.gradle.kts`，并写 Proguard 规则——release 开了 R8，而这些类
+     **只被 JNI 按名字**用到，不 keep 会被当死代码删掉。**必须是脚本**：`gen/` 不入库，
+     CI 每次自己 `init`，手工改动不可复现。
+  2. `src-tauri/src/tls_android.rs`：启动时（主窗口建好后立刻）初始化它。
+
+  真正的难点是**两套 jni 对不上**：wry 0.55.1 用 **0.21.1**，rustls-platform-verifier 0.7.0 用
+  **0.22.4**，类型不能互换（jni 0.22 文档专门警告不同版本不共享状态）。我在 `docs/MOBILE.md`
+  §2.5 里一度把它记成"硬阻塞、不适合盲写"——**那是当时的判断，不是结论**。实际解法是两边各自
+  **文档化的构造器** + 裸指针：`JniHandle::exec` 直接给 env 与 **Android Activity**
+  （Context 于是不必靠反射去猜）→ `env.get_java_vm()?.get_java_vm_pointer()` →
+  `unsafe { JavaVM::from_raw(..) }`(0.22) → `attach_current_thread` → `init_with_env`。
+  取证过程、被否掉的两个方案（`ndk_context` 根本不在这棵依赖树里；verifier 版本由 reqwest 定死）
+  见 §2.5。
+
+  **验收判据（三层，能程序化就不靠截图）**：① logcat 出现
+  `[tls] 证书校验已交给 Android 系统证书库`；② **不再出现**上面那条 panic；③ 真机跑
+  `shuyonote://test/http-probe?url=…` 并拿到内容（那才是真的握手成功）。
+
 - **Android：深链点了完全没反应**（2026-09-13）。`adb shell am start -a android.intent.action.VIEW
   -d "shuyonote://test/new-page?text=…"` 打进 `MainActivity`（logcat 里能看到 `NewIntentItem`
   已交给 Activity），但界面纹丝不动、没有 toast、没有任何提示。

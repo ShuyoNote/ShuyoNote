@@ -10,6 +10,7 @@ type Deps = {
   /** 测试钩子用（真机自动化）；正式构建里用不到。 */
   runPluginCommand?: (pluginId: string, commandId: string, argsJson: string | null) => unknown;
   createPageWithText?: (text: string) => unknown;
+  httpProbe?: (url: string) => string | Promise<string>;
 };
 type Mocked = { [K in keyof Deps]: Deps[K] & ReturnType<typeof vi.fn> };
 
@@ -139,5 +140,30 @@ describe("测试钩子 —— 只在 VITE_TEST_HOOKS=1 的构建里生效（真�
       createDeepLinkHandler(d)("shuyonote://test/new-page?text=hi"),
     ).resolves.toBeUndefined();
     expect(d.notify).toHaveBeenCalledWith(expect.stringContaining("磁盘满了"));
+  });
+
+  it("http-probe：把**真实** URL 交给宿主，并只报长度与开头（不把整页贴到界面）", async () => {
+    // 这条钩子是 Android 上"证书校验器装没装上"的判据（docs/MOBILE.md §2.4）：
+    // 没装上时 reqwest 直接 panic，装上才拿得到内容。
+    vi.stubEnv("VITE_TEST_HOOKS", "1");
+    const httpProbe = vi.fn(async () => "x".repeat(5000));
+    const d = deps({ httpProbe });
+    await createDeepLinkHandler(d)(
+      "shuyonote://test/http-probe?url=https%3A%2F%2Fcommunity.shuyo.cn%2F",
+    );
+    // 参数是**百分号编码**进来的，交给宿主的必须是解码后的原地址。
+    expect(httpProbe).toHaveBeenCalledWith("https://community.shuyo.cn/");
+    const msg = (d.notify as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(msg).toContain("5000 字节");
+    expect(msg.length).toBeLessThan(200);
+  });
+
+  it("http-probe：缺 url 时明说，不去发请求", async () => {
+    vi.stubEnv("VITE_TEST_HOOKS", "1");
+    const httpProbe = vi.fn();
+    const d = deps({ httpProbe });
+    await createDeepLinkHandler(d)("shuyonote://test/http-probe");
+    expect(httpProbe).not.toHaveBeenCalled();
+    expect(d.notify).toHaveBeenCalledWith(expect.stringContaining("缺 url 参数"));
   });
 });

@@ -13,6 +13,7 @@
     "check:ocr-assets": "node scripts/check-ocr-assets.mjs",
     "check:web-commands": "node scripts/check-web-commands.mjs",
     "check:deep-link": "node scripts/check-deep-link.mjs",
+    "android:platform-verifier": "node scripts/android-platform-verifier.mjs",
     "gen:capabilities": "node scripts/gen-capabilities.mjs",
     "check:capabilities": "node scripts/check-capabilities.mjs",
     "check:doc-links": "node scripts/check-doc-links.mjs",

@@ -197,6 +197,15 @@ jobs:
         # 改成 tauri.conf.json / 平台配置文件里的声明。见上线计划的风险清单。
         run: pnpm tauri android init --ci
 
+      - name: 注入 rustls-platform-verifier 的 JVM 组件
+        # 为什么需要：reqwest 在 Android 上用它校验证书，而它的 Android 后端要回调 JVM 里
+        # 的 `org.rustls.platformverifier.CertificateVerifier`；那个 Kotlin 组件**不在
+        # Maven Central 上**（rustls-platform-verifier#115），只能引 crate 自带 maven 目录。
+        # 为什么是这一步之后：**必须排在 `init` 之后**（gen/ 是刚生成的），而且它改的就是
+        # 生成出来的 `app/build.gradle.kts` —— 这正是"gen 定制必须脚本化"那条的落实。
+        # 顺带写 Proguard 规则：release 开了 R8，而这些类只被 JNI 按名字用，不 keep 会被删。
+        run: pnpm android:platform-verifier
+
       - name: Build APK (arm64, unsigned)
         run: pnpm tauri android build --target aarch64 --apk --ci
 
