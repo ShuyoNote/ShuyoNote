@@ -57,6 +57,14 @@ export interface DeepLinkDeps {
    * 命令（它本身就是一次 reqwest GET），因此**不新增命令、也不动能力清单**。
    */
   httpProbe?: (url: string) => Promise<string> | string;
+  /**
+   * **测试钩子**用：报出"库里有几页、标题各是什么"（用现成的 `list_pages` 命令）。
+   *
+   * 它是 **Phase 0 持久化判据**的程序化说法：建页 → 杀进程 → 重启 → 问一次这个，
+   * 列表里还有那几页 ⇒ 写进去的东西真的落盘了。比截图可靠得多——重启后应用总是
+   * 停在一个空白新页上，**从界面上根本看不出旧页在不在**（这是这一轮踩到的）。
+   */
+  listPages?: () => Promise<unknown> | unknown;
 }
 
 /** 测试钩子是否启用。**只有带 `VITE_TEST_HOOKS=1` 的构建**才会真的执行（见 android.yml）。 */
@@ -119,12 +127,27 @@ async function runTestHook(
           return;
         }
         const body = await deps.httpProbe(url);
-        // 只报长度与开头一小段：测试钩子也没必要把整页内容贴到界面上。
-        deps.notify(`测试钩子 http-probe 成功：${body.length} 字节，开头「${body.slice(0, 48)}」`);
+        // ⚠️ toast 在手机上是**单行截断**的（实测只显示十几个字），所以内容要放最前面。
+        // 先报长度会白占位置——真正想看见的是"拿回来的是什么"。
+        deps.notify(`http-probe ${body.length}B：${body.slice(0, 32)}`);
+        return;
+      }
+      case "list-pages": {
+        if (!deps.listPages) {
+          deps.notify("测试钩子 list-pages：宿主没接这个依赖");
+          return;
+        }
+        const raw = (await deps.listPages()) as Array<{ title?: string }> | null;
+        const pages = Array.isArray(raw) ? raw : [];
+        const titles = pages
+          .slice(0, 3)
+          .map((p) => (p?.title ?? "").trim() || "（无标题）")
+          .join("、");
+        deps.notify(`共 ${pages.length} 页：${titles}`);
         return;
       }
       default:
-        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page / http-probe）`);
+        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page / http-probe / list-pages）`);
     }
   } catch (e) {
     deps.notify(`测试钩子失败：${e instanceof Error ? e.message : String(e)}`);

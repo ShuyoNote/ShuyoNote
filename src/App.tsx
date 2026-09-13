@@ -207,9 +207,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
           },
           // 测试钩子 http-probe：让 **Rust 侧**发一次真实 HTTPS（走 reqwest），
           // 用来验 Android 上系统证书库那条路通不通（见 docs/MOBILE.md §2.4）。
-          // 复用现成的 `fetchDocument`（= `fetch_community_json` 命令），所以不新增命令、
-          // 不动能力清单；它本身有 host 白名单，测试链接必须落在社区域名上。
-          httpProbe: (url) => platform.community.fetchDocument(url),
+          //
+          // 用 `fetch_bookmark_metadata`：它**接受任意 https 地址**并返回网页元数据（含标题），
+          // 所以能看到**成功**路径（拿到标题），而不是只有一句错误。都是现成命令，
+          // 不新增命令、不动能力清单。
+          // ⚠️ 别换成 `fetch_community_json`：它只认 `community.shuyo.cn` 一个域名，
+          // 而那个域名下随便挑的地址会返回 404 ⇒ 只能看到"失败"，证明不了握手成功。
+          httpProbe: async (url) => JSON.stringify(await api.fetchBookmarkMetadata(url)),
+          // Phase 0 持久化判据的程序化说法：重启后问一次"库里有哪些页"。
+          // 为什么要这个钩子：重启后应用**总是停在空白新页**上，从界面看不出旧页在不在。
+          listPages: () => api.listPages(),
         }),
       ),
     [],

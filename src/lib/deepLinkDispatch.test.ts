@@ -11,6 +11,7 @@ type Deps = {
   runPluginCommand?: (pluginId: string, commandId: string, argsJson: string | null) => unknown;
   createPageWithText?: (text: string) => unknown;
   httpProbe?: (url: string) => string | Promise<string>;
+  listPages?: () => unknown;
 };
 type Mocked = { [K in keyof Deps]: Deps[K] & ReturnType<typeof vi.fn> };
 
@@ -154,8 +155,33 @@ describe("测试钩子 —— 只在 VITE_TEST_HOOKS=1 的构建里生效（真�
     // 参数是**百分号编码**进来的，交给宿主的必须是解码后的原地址。
     expect(httpProbe).toHaveBeenCalledWith("https://community.shuyo.cn/");
     const msg = (d.notify as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(msg).toContain("5000 字节");
+    // toast 在手机上是单行截断的 ⇒ 内容必须放最前面，长度只留一个数字。
+    expect(msg).toContain("5000B");
+    expect(msg.startsWith("http-probe")).toBe(true);
     expect(msg.length).toBeLessThan(200);
+  });
+
+  it("list-pages：报出页数与标题（**Phase 0 持久化**的程序化判据）", async () => {
+    // 为什么要它：重启后应用总是停在空白新页上，从界面**看不出旧页在不在**；
+    // 问一次"库里有哪几页"才是能读的判据。
+    vi.stubEnv("VITE_TEST_HOOKS", "1");
+    const listPages = vi.fn(async () => [
+      { id: "1", title: "warm-persist-023553" },
+      { id: "2", title: "cold-persist-023612" },
+    ]);
+    const d = deps({ listPages });
+    await createDeepLinkHandler(d)("shuyonote://test/list-pages");
+    expect(listPages).toHaveBeenCalled();
+    const msg = (d.notify as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(msg).toContain("共 2 页");
+    expect(msg).toContain("warm-persist-023553");
+  });
+
+  it("list-pages：返回不是数组时也不炸（钩子来自应用外面）", async () => {
+    vi.stubEnv("VITE_TEST_HOOKS", "1");
+    const d = deps({ listPages: vi.fn(async () => null) });
+    await createDeepLinkHandler(d)("shuyonote://test/list-pages");
+    expect(d.notify).toHaveBeenCalledWith(expect.stringContaining("共 0 页"));
   });
 
   it("http-probe：缺 url 时明说，不去发请求", async () => {
