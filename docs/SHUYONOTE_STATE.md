@@ -61,7 +61,11 @@
   硬比对，不一致即红）：
   - `android-apk-aarch64-signed-test-hooks` —— **可直接 `adb install`**，但带着测试钩子，**只能自检**；
   - `android-apk-aarch64-unsigned` —— 保留用于量体积。
-  对外发版件（不带测试钩子）在接进 `release.yml` 的 Android job；在那之前，发版链路上没有 Android 包。
+  对外发版件（不带测试钩子）**已接入** `release.yml` 的 Android job，并用一个**临时 tag**
+（`v1.90.1-rc1`）真跑过一次：四个 job 全绿，CI 与本地 `apksigner` **各读一遍指纹都对**（`6ee89e6f…`）、
+包内 ABI 恰为 `arm64-v8a`、真机 `install -r` 成功且**数据未丢**（firstInstallTime 不变）、
+反向判据「测试钩子未启用（这是正式构建）」成立 ⇒ 发版包**确实不带测试钩子**。
+验证完 tag 与 Release **已删除**（Release/ref-by-tag 均 404，run 记录保留）。详见 `CHANGELOG.md`。
 - `pnpm run dev:desktop`（桌面开发，自建干净 PATH，见 `scripts/tauri-dev.mjs`）。
 - 发布：`git tag vX && git push origin vX && git push origin main` → `node scripts/release.mjs`。
 

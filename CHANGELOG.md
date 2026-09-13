@@ -40,7 +40,20 @@
 
 ### 变更
 
-- **CI 出包时用正式密钥签名，并且把"是不是正式密钥签的"变成硬判据**（2026-09-13）。
+- **发版件接入 Android，并已用临时 tag 真跑验证**（2026-09-13/14）。`release.yml` 新增 `android` job：
+  init → 注入自带的证书校验器 → build → zipalign → apksigner（正式密钥）→ **指纹硬比对** →
+  **断言 ABI 恰为 arm64-v8a** → 改名 `ShuyoNote_<版本>_android-arm64-release.apk`；`release` job
+  `needs: [build, android]`（**Android 失败即阻断整个 Release**，宁可响亮失败也不要静默缺件）。
+  该 job **任何层级都不设 `VITE_TEST_HOOKS`**，并且**显式断言它为空**——不靠"我记得没设"。
+  顺带修一个既存缺陷：上传资产原用 `curl -s`（无 `-f`），同名资产 422 时**会假装成功**并让计数 +1。
+
+  **验证（不是"应该能行"）**：临时 tag `v1.90.1-rc1` 跑完整发版流程 → 四个 job 全绿；
+  CI 日志里 `V3.0 Signer … SHA-256 digest = 6ee89e6f…`，**本地再用 apksigner 独立复核同一指纹**；
+  产物 56,656,409 B、ABI 仅 `arm64-v8a`；真机 `adb install -r` 成功且 **firstInstallTime 不变 ⇒ 数据未丢**，
+  启动无 panic；**反向判据**：发测试深链得到「测试钩子未启用（这是正式构建）」⇒ 发版包不带钩子。
+  验证后 tag 与 Release 均已删除（复核 404，run 记录保留）。
+
+  仍然没做的：AAB/上架 Play（apksigner 签不了 AAB）、Android 的**应用内更新通道**、arm64-only 的覆盖限制。- **CI 出包时用正式密钥签名，并且把"是不是正式密钥签的"变成硬判据**（2026-09-13）。
   以前 CI 只出**未签名** APK，每次装真机都要在本机手工 `zipalign` + `apksigner` ——
   本轮手工签了三次、还漏签过一次（`INSTALL_PARSE_FAILED_NO_CERTIFICATES`）。
   现在 `android.yml` 从 Secrets 取 keystore（`ANDROID_KEYSTORE_BASE64` /
