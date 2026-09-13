@@ -67,17 +67,27 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 本版**没有新增权限、没有改 AndroidManifest**；apk 没有 minisign `.sig`（签名在包内），清单里用
 `sha256:<hex>` 记录字节。发布侧要求见 [RELEASING.md](RELEASING.md) §⑥ / §9.5。
 
+**启动时的红点/横幅：Android 上「有」**（2026-09-15 核实代码后定稿，**别写成"Android 没有红点"**）。
+`useUpdateChecker()` 在 `App.tsx` 里无条件调用，而 `isDesktop()` 的真实语义是"有没有 Rust 内核"
+（本节 §2 开头那条边界，Android 壳为真）⇒ 它走桌面那一支；Android 上 `tauri-plugin-updater` 没注册
+（`lib.rs` 带 `#[cfg(desktop)]`）⇒ 那一步必然失败，代码随即**降级**到 gitcode 发布渠道清单
+（`updates::fetch_update_manifest`，全平台注册）比对版本 ⇒ **线上 `latest` 比已装的新时，启动就会出现
+红点 + 顶部横幅**，与桌面同一套 UI。回归测试 `src/lib/useUpdateChecker.test.ts` 钉住这条降级路径。
+⇒ 真正成立的限制只在"**装**"这一步：启动红点/横幅**只是提醒**，其 CTA 只到「关于」（横幅里不给下载）；
+APK 地址与下载入口只在「关于」的 Android 分支；老清单（没有 `android-aarch64` 键）退回「前往发布页」。
+
 仍未做的：应用商店上架、增量更新、iOS。
 
 ### 2.1 移动端**不提供** / **已知有问题**的能力（边界要能说清，别含糊）
 
 走 Tauri 原生壳意味着大部分能力与桌面一致（加密、附件、同步、原生 PDF 都在），
-目前有**两项**要说清：
+目前有**三项**要说清：
 
 | 能力 | 移动端 | 为什么 / 边界落在哪 |
 |---|---|---|
 | **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 23 个命令带 `#[cfg(desktop)]`，**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
 | **插件运行时（Boa）** | ✅ **已修**（2026-09-13 真机复验：那条 panic 在日志里消失） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
+| **应用内更新（in-app updater）** | ❌ 不做（2026-09-15 定） | `tauri-plugin-updater` **桌面专属**（`lib.rs` 里带 `#[cfg(desktop)]`）。⚠️ 但**这不等于"Android 不提醒更新"**：启动检查会降级到发布渠道清单，红点/横幅照常出现；边界在"装"（应用内不下载、不唤起安装器，只给「下载 APK」交给系统）。见上面「应用内『检查更新』」两段 |
 
 #### ⚠️ Boa 的 nan-boxing 在 Android 上不成立（2026-09-13 真机实测）
 

@@ -347,6 +347,20 @@ git tag -d $TAG                    # 删本地 tag
   ⇒ 所以：能"发现 + 拿到包"，但"装"这一步在系统里。仍没有的：应用商店 / 增量更新 / iOS。
   清单里的 `signature` 对 Android 用 `sha256:<hex>`（apk 没有 minisign `.sig`——签名在包内），
   这条字段**不能省**，理由见 §⑥（缺了会让整份清单解析失败、桌面更新一起挂）；
+  - **启动时的红点/顶部横幅：Android 上「有」**（口径 2026-09-15 核实代码后写死，别写反）。
+    `useUpdateChecker()` 在 `App.tsx` 里**无条件**调用；而 `isDesktop()` 的真实语义是"**有没有 Rust 内核**"
+    （见 `src/lib/platform/capabilities.ts` 顶部的边界说明），**Android 壳为真** ⇒ 它走的是桌面那一支
+    `checkDesktopUpdate()`。Android 上 `tauri-plugin-updater` 没注册（`src-tauri/src/lib.rs` 里带
+    `#[cfg(desktop)]`）⇒ 这一步**必然失败**，代码随即**降级**到 gitcode 发布渠道清单
+    （`detectFromGitcode()` → `updates::fetch_update_manifest`，该命令在 `generate_handler!` 里
+    **没有** `#[cfg(desktop)]`，全平台注册）比对版本。⇒ **线上 `latest` 渠道比已装版本新时，Android
+    启动就会出现红点 + 顶部横幅**，与桌面同一套 UI。回归测试：`src/lib/useUpdateChecker.test.ts`。
+  - 上面这条**不是**"Android 支持自动更新"，真正的边界在"**装**"这一步，三条都要说清：
+    ① 启动红点/横幅**只是提醒**——它的 CTA 只到「关于」（`UpdateBanner` 的非 Web 分支只有「查看更新」
+    一个按钮），**不直接在横幅里给下载**；
+    ② APK 地址只有「关于」的 Android 分支才取（`platforms["android-aarch64"].url`），点「下载 APK」后由
+    **系统浏览器/DownloadManager** 下载，装机交给系统安装器——**应用内不下载、不唤起安装器**；
+    ③ 清单里**没有** `android-aarch64` 键（老清单）时退回「前往发布页」，不是什么都不给；
 - **arm64-only**：只出 `arm64-v8a`，**armv7 老机装不上**（非 arm64 的 apk 也不进更新清单）；
 - **自带的 Kotlin 证书校验器是打过补丁的 fork**（`scripts/vendor/rustls-platform-verifier/`）：
   上游把 PR #179（或等价修复）合并并发版后，应升级依赖、恢复脚本里的 AAR 注入方式、删掉那个目录
@@ -381,6 +395,10 @@ git tag -d $TAG                    # 删本地 tag
 - [ ] **反向判据**：给这个包发测试深链 → 得到「测试钩子未启用（这是正式构建）」
 - [ ] **真机（应用内更新入口）**：「关于」→「检查更新」：有新版本时出现**「下载 APK」**并按预期
       打开浏览器/下载器拿到同名文件；已是最新时**不打扰**（无红点/无横幅）；离线时不崩、只提示检查失败
+- [ ] **真机（启动红点）**：装一个**比线上 `latest` 渠道旧**的包（`adb install -r` 旧版本件）再冷启动
+      ⇒ 应出现**红点 + 顶部横幅**（点横幅进「关于」，再走「下载 APK」）。这条钉的是 §9.5 那条
+      "Android 上 in-app updater 不可用 ⇒ 降级到发布渠道清单"的路径；桌面/Web 侧预览同一条路可加
+      `?updateDebug=9.9.9`
 - [ ] 桌面/Web 侧照 ⑤⑥⑦ 继续（Android 只是其中一件）
 
 **只有 dry-run（临时 tag）才多做的：**

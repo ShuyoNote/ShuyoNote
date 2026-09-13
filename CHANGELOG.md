@@ -62,6 +62,21 @@
     同一套哲学：逃生口必须显式、可事后审计）；
   - **Android 键放进 `platforms["android-aarch64"]`**，不新开顶层键——客户端要能用同一套结构取到它。
 
+  **Android 用户实际能收到什么（口径 · 别写反）**：**① 启动提醒 + ② 「关于」里的下载入口**，
+  **不是**"支持自动更新"（应用内不下载、不安装），也**不是**"Android 没有红点"（有的，见下）。
+  逐条：
+  - **启动**就有**红点 + 顶部横幅**——`useUpdateChecker()` 在 `App.tsx` 里无条件调用，而 `isDesktop()`
+    的真实语义是"有没有 Rust 内核"（Android 壳为真）⇒ 走桌面那一支 `checkDesktopUpdate()`；
+    Android 上 `tauri-plugin-updater` 没注册（`lib.rs` 带 `#[cfg(desktop)]`）⇒ 这一步必然失败，
+    代码随即**降级**到 gitcode 发布渠道清单（`updates::fetch_update_manifest`，全平台注册）比对版本；
+    ⇒ 线上 `latest` 比已装版本新时，**启动即出红点/横幅**，与桌面共用同一套 UI。回归测试
+    `src/lib/useUpdateChecker.test.ts` 钉住这条降级路径（含"清单拉不到就静默当作无更新"）。
+    ⚠️ 这一步**只是提醒**：横幅的 CTA 只到「关于」（`UpdateBanner` 的非 Web 分支只有「查看更新」），
+    **横幅里不给下载**；
+  - **装机入口在「关于」**：APK 地址只有「关于」的 Android 分支才取（`platforms["android-aarch64"].url`），
+    点「下载 APK」后由**系统浏览器/DownloadManager** 下载，安装交给系统安装器；
+    清单里**没有** `android-aarch64`（老清单）时退回「前往发布页」，不是什么都不给。
+
   顺带修掉一个既存缺陷：「本次更新」的发行说明在 Android 上**从来不显示**（显示条件里含 `download`，
   而移动端永远拿不到下载句柄）。
 
