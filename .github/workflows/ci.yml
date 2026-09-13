@@ -179,7 +179,11 @@ jobs:
         # 这类测试最费时间：改一行、只跑一条、看到一个红，会以为是自己刚改坏的。
         # 上面那步全量跑**永远不会**暴露它，所以这里把插件模块单独再跑一遍。
         # 修法是测试侧自给自足（`db::ensure_test_app_data_dir()`），这条门禁防它回来。
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib plugins::
+        # ⚠️ 这个值必须**整个**加引号：YAML 的 plain scalar 不允许以 `:` 结尾，`plugins::`
+        # 行尾那个冒号会被当成 mapping 指示符 → 整个 workflow 文件编译不过。GitHub 对这种
+        # 错误**不给行号、不给日志**，只产出一条 0 个 job 的红色 run（run 名是文件路径而不是
+        # 上面的 `name: CI`）——2026-09-12 起 49 次 push 全红、连纯文档提交也红，就是这一行。
+        run: "cargo test --manifest-path src-tauri/Cargo.toml --lib plugins::"
 
       # 外部产物的验收：**我们打出来的包、我们签出来的索引，应用真正的解析器与校验器认不认**。
       # 两段分别在别处有测试（打包工具在 JS 侧、解析/校验在 Rust 侧），但"接起来"那段
