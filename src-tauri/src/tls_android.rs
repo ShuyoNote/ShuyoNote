@@ -76,12 +76,15 @@ pub fn init<R: Runtime>(window: &WebviewWindow<R>) {
                     Ok(obj) if !obj.is_null() => obj,
                     _ => {
                         eprintln!("[tls] getApplicationContext() 返回空，退回复用 Activity 当 Context");
-                        activity.clone()
+                        // 注意是 `(*activity).clone()`：`activity` 是 `&JObject`，直接 `.clone()`
+                        // 会命中 `&T: Clone` 那个 impl，拿到的是**引用**而不是 JObject
+                        // （run #11 就是这么编不过的：`expected JObject<'_>, found &JObject<'_>`）。
+                        (*activity).clone()
                     }
                 },
                 Err(e) => {
                     eprintln!("[tls] 调 getApplicationContext() 失败：{e}，退回复用 Activity 当 Context");
-                    activity.clone()
+                    (*activity).clone()
                 }
             };
             let vm = match env.get_java_vm() {
@@ -117,7 +120,10 @@ unsafe fn install_from_raw(raw_vm: *mut c_void, raw_context: *mut c_void) -> Res
 
     let vm = jni::JavaVM::from_raw(raw_vm.cast());
     vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
-        let context = JObject::from_raw(raw_context.cast());
+        // ⚠️ **jni 0.22 的 `JObject::from_raw` 要两个参数**（`&Env` + jobject）——
+        // 它自己的 README 与 `android.rs` 顶部示例还是旧的一参写法，照抄编不过
+        // （run #11 的 E0061 就是这条）。`&mut Env` 在这里自动重借用成 `&Env`。
+        let context = JObject::from_raw(env, raw_context.cast());
         rustls_platform_verifier::android::init_with_env(env, context)
     })
     .map_err(|e| e.to_string())

@@ -72,6 +72,19 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-24.04
+    # ⚠️ `VITE_TEST_HOOKS` **必须挂在 job 级**，不能只挂在某一步上。
+    #
+    # 为什么（**实测踩到的**）：`tauri.conf.json` 里有 `beforeBuildCommand: "pnpm build"`，
+    # 所以 `tauri android build` **会再跑一遍前端构建**，而它不继承别的 step 上的 `env:`。
+    # 只挂在下面那一步时，**进包的是没有钩子的那份**：APK 装到真机上，深链整条链路都通
+    # （Rust 收到 URL ✓、前端也走到了分派 ✓），却弹一句「测试钩子未启用（这是正式构建）」。
+    # 表现极具迷惑性——看起来像"深链没打通"，其实是**两个构建里的另一份**在跑。
+    #
+    # 敢开这个变量，是因为**本 workflow 的产物本来就不是可分发件**（未签名，只用于
+    # "构建能不能过 + 体积多大"，见文件头第 2 条）。**正式发版（release.yml）不带它**，
+    # 没有它时钩子在分派层直接拒绝、什么也不做（有单测钉着）。
+    env:
+      VITE_TEST_HOOKS: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -180,15 +193,12 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build frontend + 跑门禁
-        # 顺带把仓库现有的门禁在 Linux 上也跑一遍（check:ocr-assets 之类）。
+        # 顺带把仓库现有的门禁在 Linux 上也跑一遍（check:ocr-assets 之类），
+        # 让"门禁在 Linux 上过不过"早一步暴露（真正的失败点通常还在后面的 Rust 构建）。
         #
-        # `VITE_TEST_HOOKS=1`：打开真机自动化用的**测试钩子**（`shuyonote://test/run-plugin`
-        # 与 `shuyonote://test/new-page`），好让下游能脚本化地在真机上跑一条插件命令、建一页。
-        # 敢在这里开，是因为**这个 workflow 的产物本来就不是可分发件**（未签名、只用于
-        # "构建能不能过 + 体积多大"，见文件头第 2 条）。**正式发版（release.yml）不带这个变量**，
-        # 没有它时钩子在分派层直接拒绝、什么也不做（有单测钉着）。
-        env:
-          VITE_TEST_HOOKS: "1"
+        # ⚠️ **这一步的 `dist/` 不是最终进包的那份**：`tauri android build` 会按
+        # `tauri.conf.json` 的 `beforeBuildCommand` **再跑一遍 `pnpm build`**。
+        # 所以 `VITE_TEST_HOOKS` 挂在 job 级（见上），只挂这里会做出两份不一致的产物。
         run: pnpm build
 
       - name: Init Android project

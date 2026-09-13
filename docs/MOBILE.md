@@ -279,6 +279,19 @@ aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|s
 一键跑完这套的脚本：`%TEMP%\device-hooks2.cjs <run_id>`（下载 CI 产物 → 静态查 intent-filter →
 签名安装 → 三条路径 + 重启持久化 + 崩溃检查）。
 
+#### ⚠️ 两个坑都出在 **CI 自己身上**（2026-09-13 真机抓出来的）
+
+1. **进包的 `dist/` 不是"跑门禁"那一步做的那份**。`tauri.conf.json` 有
+   `beforeBuildCommand: "pnpm build"`，所以 `tauri android build` **会再跑一遍前端构建**，
+   而它**不继承别的 step 上的 `env:`**。`VITE_TEST_HOOKS` 原先只挂在那一步上 ⇒ **进包的是
+   没有钩子的那份**。现象极具迷惑性：深链整条链路都通（Rust 日志有、前端也走到了分派），
+   界面上却弹「测试钩子未启用（这是正式构建）」——看着像深链没打通，实际是**另一份构建在跑**。
+   改法：变量挂 **job 级**。
+
+   > 抓到它的办法值得记：**把截图间隔从 6 秒缩到 1.6 秒**。toast 只活几秒，
+   > 之前所有"界面没反应"的判据都被这一个时间差骗过——`handle_urls` 的日志也一样，
+   > 它只证明"URL 到了 Rust"，证明不了"前端用上了"。**两者要分开验。**
+
 #### ⚠️ 附带发现：这条 workflow 之前**不会**因 Rust 改动而构建
 
 `android.yml` 的 `paths:` 原本只有本文件与 `src-tauri/tauri.conf.json` 两条，于是改
