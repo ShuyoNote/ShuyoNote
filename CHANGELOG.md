@@ -52,6 +52,16 @@
     它只能证明"插件拿到了 URL"，不能证明"浏览器里点链接能唤起应用"。后者要看合并后
     的 manifest 里有没有 `VIEW` + `BROWSABLE` + `scheme=shuyonote`（`aapt2 dump xmltree`）。
     真机脚本 `device-hooks2.cjs` 两件事都测。
+  - **后来又补了两条**（`list-pages` 与换过的 `http-probe`），因为真机上跑完发现**两件事判不了**：
+    - **Phase 0 持久化判不了**：重启后应用**总是停在空白新页**上，旧页在不在界面上看不出来。
+      ⇒ `shuyonote://test/list-pages` 用现成的 `list_pages` 命令把"共 N 页：标题…"念出来，
+      重启后再问一次才作数。
+    - **`http-probe` 只能证明"失败了"**：原来打的 `community.shuyo.cn/` 必然 404，
+      于是无法区分"没握手"与"握手了但 404"。⇒ 改用 `fetch_bookmark_metadata`（接受任意
+      https 并返回网页元数据），打 `shuyo.cn` 就能看到**成功**路径。
+    两条都复用现成命令，**不新增命令、不动能力清单**。
+  - ⚠️ toast 在手机上是**单行截断**的（实测只显示十几个字）⇒ 判据要**把关键内容放最前面**；
+    这一条是踩出来的：`取不到这篇帖子：HTTP 404` 和 `…：无法连接` 在被截断后**看不出区别**。
 
 - **聚合邮箱收窄为桌面专属（移动端不提供）**。它走 `native-tls`（桌面用系统 TLS），
   移动端要为此从源码交叉编译一份 OpenSSL，而移动端本就不做这个功能。
@@ -148,6 +158,11 @@
   `[tls] 证书校验已交给 Android 系统证书库`；② **不再出现**上面那条 panic；③ 真机跑
   `shuyonote://test/http-probe?url=…` 并拿到内容（那才是真的握手成功）。
 
+  **真机验证结论（2026-09-13）**：① 1 条 ✓、② **0 条** ✓；③ 探针请求走到了应用层
+  （返回的是 `取不到这篇帖子：…` 这类**业务错误**，不再是崩溃）——这一条起初用的地址
+  （`community.shuyo.cn/`）必然 404，**证明不了握手成功**，所以换成了接受任意 https 的
+  `fetch_bookmark_metadata` 并用 `shuyo.cn` 探测。
+
 - **Android：深链点了完全没反应**（2026-09-13）。`adb shell am start -a android.intent.action.VIEW
   -d "shuyonote://test/new-page?text=…"` 打进 `MainActivity`（logcat 里能看到 `NewIntentItem`
   已交给 Activity），但界面纹丝不动、没有 toast、没有任何提示。
@@ -169,6 +184,17 @@
   `setEventHandler` 还没跑，`this.channel?.send(...)` 是空操作，URL 只落到 `currentUrl`——
   `get_current()` 补收那段代码一行不改地正好补上。桌面（argv）与 Android（intent）的
   冷启动，是**同一个洞的同一种补法**。
+
+  **真机验证结论（2026-09-13，HUAWEI Mate 40 / Android 12）**：
+  - warm（`onNewIntent`）与**冷启动**（`force-stop` 后带 URL 启动 → `load()` → `get_current()`）
+    两条路径都在 Rust 侧留下了 `[deep-link] 收到 1 条 URL：…`；
+  - **普通冷启动（不带 URL）是 0 行** ⇒「零副作用」也成立；
+  - **前端确实收到并执行了动作**：`new-page` 钩子让页面上真的出现了新建的页
+    （标题即参数内容、状态"已保存"），`run-plugin` 钩子把插件返回值提示了出来；
+  - **浏览器点链接能不能唤起**（这条与上面无关，因为 `am start -n` 绕过 intent-filter）：
+    合并后 manifest 里 `ACTION_VIEW` + `CATEGORY_DEFAULT` + `CATEGORY_BROWSABLE` +
+    `scheme="shuyonote"` 齐全（`aapt2 dump xmltree` 静态查），旁证是不带 `-n` 的隐式 intent
+    也投递成功。
 
 - **Android 上插件运行时（Boa）一上来就 panic**（2026-09-13）。真机（HUAWEI Mate 40 /
   Android 12）第一次跑起来，日志里就有：

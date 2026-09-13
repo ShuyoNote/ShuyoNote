@@ -276,7 +276,7 @@ adb shell am start -W -n cn.shuyo.shuyonote/cn.shuyo.shuyonote.MainActivity \
 aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|shuyonote'
 ```
 
-**2026-09-13 实测结果（run #9 的包）**——这一段已经验过，不必再验：
+**2026-09-13 实测结果**——下面这些已经验过，不必再验：
 
 - **合并后 manifest 三样齐全**：`android.intent.action.VIEW` ✓ `CATEGORY_DEFAULT` ✓
   `CATEGORY_BROWSABLE` ✓ `android:scheme="shuyonote"` ✓ ⇒ **浏览器里点链接能唤起应用**；
@@ -285,8 +285,11 @@ aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|s
 - **两条投递路径都在 Rust 侧被证明**：warm（`onNewIntent`）与**冷启动**（`force-stop` 后带 URL
   启动，走 `load()` → `currentUrl` → `get_current()` 补收）各留下一条
   `[deep-link] 收到 1 条 URL：…`；**普通冷启动（不带 URL）时是 0 行** ⇒「零副作用」也成立。
-- **前端确实收到了并进入分派**：界面弹出「测试钩子未启用（这是正式构建）」——这条提示本身就
-  证明事件到了前端、`parseDeepLink` 也判成了 `test` 动作（当时包里的钩子确实没开，见上）。
+- **前端确实收到并执行了动作**（不是只走到分派）：`new-page` 钩子让页面上真的出现新建的页
+  （标题就是参数里的那段文本、状态"已保存"），`run-plugin` 钩子把插件返回值提示了出来
+  —— 这两条要**先确认包里的钩子是开着的**（见上面的 `beforeBuildCommand` 坑）。
+- **① 的证书校验器**：logcat 有 `[tls] 证书校验已交给 Android 系统证书库` 1 条、
+  `Expect rustls-platform-verifier` panic **0 条**；探针请求走到了应用层（返回业务错误而不是崩溃）。
 
 
 一键跑完这套的脚本：`%TEMP%\device-hooks2.cjs <run_id>`（下载 CI 产物 → 静态查 intent-filter →
