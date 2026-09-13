@@ -1,9 +1,15 @@
 name: Release (Win/mac/Linux)
 
-# 打 tag v* 时自动构建三平台安装包并发布一个 GitHub/GitCode Release。
+# 打 tag v* 时自动构建各平台安装包（Windows / Linux / Android APK）并发布一个 GitHub/GitCode Release。
 # 需要配置仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY（签名私钥）、TAURI_SIGNING_PRIVATE_KEY_PASSWORD。
+# Android 发版件另需 ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS
+# （与 android.yml 用的是同一套；口令只经 env 传给 apksigner，不落文件、不进命令行）。
 # 可选 mac 签名：APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID（Apple 公证）。
 # 说明：若仓库不在 GitHub，可把代码镜像到 GitHub 仓库后用本 workflow；gitcode 自带流水线只有 Linux runner（见 .gitcode/workflows/build-linux.yml）。
+#
+# ⚠️ 结构上的一个取舍：`release` 的 needs 里**包含 android**，所以 **Android 失败会阻断整个
+# 桌面 Release**。这是有意的——发版件必须成套，"Android 挂了但 Release 看起来正常"属于静默缺件，
+# 比整条 Release 红掉更难发现，代价也更高。
 
 on:
   push:
@@ -116,8 +122,230 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  android:
+    # 对外发布的 Android APK（arm64，正式密钥签名）。
+    #
+    # 为什么它在这条 workflow 里、而且进了 `release.needs`：发版件必须成套。
+    # "Android 单独失败、桌面照发"产出的正是**一个缺平台却看起来正常的 Release**——
+    # 这类静默缺件比整条 Release 红掉贵得多（用户先看到 Release 才去点数）。
+    # 取舍是明确的：**Android 失败即阻断整个桌面 Release**，宁可晚发一次，不发半套。
+    #
+    # ⚠️ 与 `.github/workflows/android.yml` 的分工，别搞混：
+    #   那边 = **自检包**，带 `VITE_TEST_HOOKS=1`，artifact 名
+    #          `android-apk-aarch64-signed-test-hooks`，只用来验"能不能装、装上能不能用"；
+    #   这里 = **发版件**，artifact 名 `android-release-apk`。
+    # `VITE_TEST_HOOKS` 在**本 job 的任何层级都不设**（全仓库只有 android.yml 设它）——
+    # 注意 `tauri.conf.json` 的 `beforeBuildCommand: "pnpm build"` 让 `tauri android build`
+    # **会再跑一遍前端构建**，所以"只在某一步不设"等于没设：那份绕过钩子的 dist 一旦进包，
+    # 真机上表现为"深链看起来没打通"（android.yml 文件头第 2 条踩过一次）。
+    #
+    # **只出 APK，不出 AAB**：AAB 是给 Play 上架用的，而且 apksigner **签不了 AAB**
+    # （AAB 是 jarsigner 的世界）——出个签不了的 AAB 既不能装也不能验指纹，纯负担。
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: Setup Rust + Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android-aarch64
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Pick an NDK + 钉死 binutils（**ranlib 那一条是必须的**）
+        # 与 android.yml 逐字一致。删了这条就会在 OpenSSL 的 `make install_dev` 上炸：
+        #   /bin/sh: 1: aarch64-linux-android-ranlib: not found
+        #   make: *** [Makefile:2797: install_dev] Error 127
+        # 原因是 NDK 只提供 llvm-ar / llvm-ranlib，**没有**带前缀的 `aarch64-linux-android-ranlib`
+        # 那种名字（实测 NDK 29：带前缀的只有 aarch64-linux-androidNN-clang[++]），
+        # 而 openssl-src 把 RANLIB 设成 cc crate 给的前缀名（裸名字，靠 PATH 找）。
+        # 这不是"换 NDK 版本"能解决的，是现代 NDK 的结构性事实。两条一起给：
+        # ① 让 cc 拿到绝对路径；② 再放一组前缀名 wrapper 兜底（PATH 上只多这 4 个名字）。
+        run: |
+          set -e
+          WANT="29.0.13846066"
+          if [ ! -d "$ANDROID_SDK_ROOT/ndk/$WANT" ]; then
+            yes | sdkmanager --install "ndk;$WANT" >/dev/null 2>&1 || echo "装 $WANT 失败，改用已有的"
+          fi
+          if [ -d "$ANDROID_SDK_ROOT/ndk/$WANT" ]; then
+            NDK="$ANDROID_SDK_ROOT/ndk/$WANT"
+          else
+            NDK=$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -1)
+          fi
+          test -n "$NDK" || { echo "runner 上没有任何 NDK，且装不上"; exit 1; }
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "选用 NDK: $NDK"
+          NDKBIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "--- bin 里的相关工具 ---"
+          ls "$NDKBIN" | grep -E 'ranlib|^llvm-ar$|^llvm-strip$|^llvm-nm$|^aarch64-linux-android[0-9]+-clang$' || true
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_RANLIB=$NDKBIN/llvm-ranlib"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_AR=$NDKBIN/llvm-ar"
+          } >> "$GITHUB_ENV"
+          WRAP="$RUNNER_TEMP/ndk-bin"
+          mkdir -p "$WRAP"
+          for pair in ar:llvm-ar ranlib:llvm-ranlib strip:llvm-strip nm:llvm-nm; do
+            printf '#!/bin/sh\nexec "%s" "$@"\n' "$NDKBIN/${pair#*:}" > "$WRAP/aarch64-linux-android-${pair%%:*}"
+            chmod +x "$WRAP/aarch64-linux-android-${pair%%:*}"
+          done
+          echo "$WRAP" >> "$GITHUB_PATH"
+          echo "已就绪：$WRAP/{ar,ranlib,strip,nm}"
+
+      - name: 给 bindgen 指定 Android target + NDK sysroot（mupdf-sys 要用）
+        # 与 android.yml 逐字一致。删了这条，mupdf-sys 的 bindgen 会拿**宿主** triple
+        # 解析 mupdf 头文件，读到宿主 glibc 的 features-time64.h →
+        #   fatal error: 'bits/wordsize.h' file not found
+        # （bionic 里没有 wordsize.h —— 所以这不是"缺头文件"，是"指错了 target"）。
+        # mupdf-sys 0.8.0 的 build.rs 除 emscripten 外从不传 --target，唯一的口子就是
+        # BINDGEN_EXTRA_CLANG_ARGS_<TARGET>；**不设通用那个**，免得影响宿主侧 build script。
+        run: |
+          set -e
+          SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          test -d "$SYSROOT/usr/include" || { echo "找不到 NDK sysroot: $SYSROOT"; exit 1; }
+          ARGS="--target=aarch64-linux-android24 --sysroot=$SYSROOT -isystem $SYSROOT/usr/include -isystem $SYSROOT/usr/include/aarch64-linux-android"
+          {
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=$ARGS"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=$ARGS"
+          } >> "$GITHUB_ENV"
+          echo "BINDGEN args = $ARGS"
+
+      - name: Install frontend deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build frontend + 跑门禁
+        # 这一步的 `dist/` **不是最终进包的那份**（`tauri android build` 会按
+        # beforeBuildCommand 再跑一遍 pnpm build）；这里跑是为了让门禁早一步暴露。
+        run: pnpm build
+
+      - name: Init Android project
+        # ⚠️ `src-tauri/gen` 在 .gitignore 里（"可重建"），CI 必须自己 init。
+        # 也因此：**任何对 gen/android 的手工改动都不可复现**，需要的定制必须脚本化
+        # （下一个步骤就是这么落实的）。
+        run: pnpm tauri android init --ci
+
+      - name: 注入 rustls-platform-verifier 的 JVM 组件
+        # ⚠️ **必须排在 init 之后、build 之前**，顺序错了就是"能出包、真机上所有 HTTPS 全挂"：
+        # reqwest 在 Android 上用它校验证书，它的 Android 后端要回调 JVM 里的
+        # `org.rustls.platformverifier.CertificateVerifier`，而那个 Kotlin 组件**不在
+        # Maven Central 上**（rustls-platform-verifier#115），只能引 crate 自带的 maven 目录。
+        # 它改的就是 init 刚生成出来的 `app/build.gradle.kts`，漏了这一步构建照样绿。
+        run: pnpm android:platform-verifier
+
+      - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
+        # 只打 APK（`--apk`），**不打 AAB**。
+        # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
+        # （tauri.conf.json 的 beforeBuildCommand），所以只在别的 step 上不设还不够，
+        # 这里对着环境断言，杜绝以后有人"顺手在 job 级加个 env"把钩子带进发版包。
+        run: |
+          set -e
+          if [ -n "${VITE_TEST_HOOKS:-}" ]; then
+            echo "❌ 发版包不允许带测试钩子：VITE_TEST_HOOKS=${VITE_TEST_HOOKS}"
+            exit 1
+          fi
+          pnpm tauri android build --target aarch64 --apk --ci
+
+      - name: 用正式密钥签名 APK（逻辑与 android.yml 逐字一致）
+        # 全部逻辑照抄 `.github/workflows/android.yml` 的同名步骤：
+        # base64 落文件 → zipalign -f -p 4 → apksigner sign（口令只走 env:，不落文件、
+        # 不进命令行）→ apksigner verify --print-certs → 实测 SHA-256 与硬编码常量比对，
+        # 不一致 exit 1。指纹本身不是秘密，可以入库；Secrets 缺失要**显式报错**，
+        # 不能让它退化成一个没签名的包混进 Release。
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          EXPECT=6ee89e6f0f9326a40d3eac48b520c470d3fb6a7111a94fbe606510b489457a88
+          for v in KS_B64 KS_PASS KS_ALIAS; do
+            test -n "${!v}" || { echo "❌ 缺少 Secret：$v（名字见 ~/.shuyonote-release-keystore/README-必读.md）"; exit 1; }
+          done
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          IN=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-unsigned.apk' | sort | head -1)
+          test -n "$IN" || { echo "❌ 找不到未签名 APK"; exit 1; }
+          echo "输入: $IN"
+          OUT="$RUNNER_TEMP/shuyonote-aarch64-signed.apk"
+          "$BT/zipalign" -f -p 4 "$IN" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$KS_ALIAS" \
+            --ks-pass "env:KS_PASS" --key-pass "env:KS_PASS" \
+            --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+          echo "===== 签名自查 ====="
+          "$BT/apksigner" verify --print-certs "$OUT" | tee "$RUNNER_TEMP/certs.txt"
+          GOT=$(grep -i 'certificate SHA-256 digest' "$RUNNER_TEMP/certs.txt" | head -1 | awk '{print $NF}' | tr -d ':' | tr 'A-Z' 'a-z')
+          echo "实测指纹: $GOT"
+          echo "期望指纹: $EXPECT"
+          test "$GOT" = "$EXPECT" || { echo "❌ 签名指纹对不上：这个包不是正式密钥签的"; exit 1; }
+          echo "✅ 指纹一致（正式密钥 shuyonote）"
+          ls -l "$OUT"
+
+      - name: 断言 APK 内 ABI 恰为 arm64-v8a
+        # 为什么值得单列一条断言：`--target aarch64` 只是**要求**，不是**证明**。
+        # 一旦 NDK / tauri 的默认值漂移成"顺手把其它 ABI 也塞进来"，包会照签、照过指纹
+        # 自查、照发出去，只有装到 32 位设备上才暴露。这里直接读 zip 里的 `lib/` 前缀：
+        # 出现任何非 arm64-v8a 的 ABI、或压根没有 lib/（说明 .so 没进包）都直接失败。
+        run: |
+          set -e
+          python3 - "$RUNNER_TEMP/shuyonote-aarch64-signed.apk" <<'PY'
+          import sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          abis = sorted({n.split('/')[1] for n in z.namelist()
+                         if n.startswith('lib/') and len(n.split('/')) > 2})
+          print("APK 内 ABI:", abis)
+          if abis != ['arm64-v8a']:
+              print(f"❌ ABI 不是恰好 arm64-v8a：{abis}")
+              sys.exit(1)
+          print("✅ ABI 恰为 arm64-v8a")
+          PY
+
+      - name: 改名成可辨识的发版文件名
+        # 与自检包（`android-apk-aarch64-signed-test-hooks`）**一眼可分**：
+        # `ShuyoNote_<package.json 的版本>_android-arm64-release.apk`。
+        # 版本从 package.json 读，**不写死**——写死就是下一次发版时的静默错配
+        # （release 那边要靠这个名字挑选资产，见 release job 的硬断言）。
+        run: |
+          set -e
+          VER=$(node -p "require('./package.json').version")
+          DIST="$RUNNER_TEMP/dist"
+          mkdir -p "$DIST"
+          OUT="$DIST/ShuyoNote_${VER}_android-arm64-release.apk"
+          cp "$RUNNER_TEMP/shuyonote-aarch64-signed.apk" "$OUT"
+          ls -l "$OUT"
+
+      - name: Upload 发版 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-apk
+          path: ${{ runner.temp }}/dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
   release:
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -126,7 +354,7 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Create GitHub release (installers only)
-        # 用 curl + GitHub API 创建 Release 并只挂三平台安装包（不依赖 gh CLI）。
+        # 用 curl + GitHub API 创建 Release 并只挂各平台安装包（桌面 + Android，不依赖 gh CLI）。
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -139,7 +367,7 @@ jobs:
           RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | jq -r '.id // empty')
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"三平台安装包（Windows 安装版 / macOS .dmg / Linux .deb + .AppImage）。安装后可在应用内「检查更新」升级。\"}" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"安装包：Windows 安装版 / Linux .deb + .AppImage / Android APK（arm64，正式密钥签名，可直接 adb install 或侧载）。桌面版安装后可在应用内「检查更新」升级；Android 目前不接应用内更新。\"}" \
               "$API/releases")
             RID=$(echo "$RESP" | jq -r '.id // empty')
             [ -z "$RID" ] && { echo "release create failed: $RESP"; exit 1; }
@@ -147,12 +375,31 @@ jobs:
           # 取 upload_url（去掉模板后缀 {name,label}）
           UP=$(curl -s -H "$AUTH" "$API/releases/$RID" | jq -r '.upload_url // empty')
           UP="${UP%%\{*}"
-          # 只上传安装包，不传 .so/.tar.gz 等中间产物
+          # 只上传安装包，不传 .so/.tar.gz 等中间产物。
+          #
+          # ⚠️ 硬断言（2026-09-14 补）：**必须确认刚构建出来的 Android APK 真的被选择器匹配到**。
+          # 为什么单列一条：文件名是在 android job 里由 package.json 的版本拼出来的
+          # （`ShuyoNote_<ver>_android-arm64-release.apk`），而这个选择器是**另一处**字符串。
+          # 两处对不上时，find 少一项、循环少一轮、Release 照样成功——只是**静默缺件**。
+          # 所以这里先按同一模式独立数一遍，数量不对就直接失败，不让"少个包"伪装成成功。
+          APK_N=$(find . -type f -name 'ShuyoNote_*_android-arm64-release.apk' | wc -l | tr -d ' ')
+          [ "$APK_N" -eq 1 ] || {
+            echo "❌ 期望恰好 1 个 Android 发版 APK，实际 $APK_N 个：选择器与 android job 的文件名对不上？"
+            find . -type f -name '*.apk' -print || true
+            exit 1
+          }
           found=0
           while IFS= read -r f; do
-            curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" --data-binary "@$f" "$UP?name=$(basename "$f")" >/dev/null
+            # `-f`：HTTP >=400 时 curl 以非 0 退出。**这不是风格问题**——原先只写 `-s`
+            # 时，同名资产已存在（重跑同一个 tag）GitHub 返回 422，curl 仍退出 0，
+            # 于是打出 `uploaded`、`found` 还 +1：**重跑 tag 会假装成功**，
+            # 而 Release 上那份其实是上一次的旧件。宁可这里红，也不要旧件冒充新件。
+            if ! curl -sf -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" --data-binary "@$f" "$UP?name=$(basename "$f")" >/dev/null; then
+              echo "❌ 上传失败（HTTP 错误，如同名资产已存在 422）：$(basename "$f")"
+              exit 1
+            fi
             echo "uploaded: $(basename "$f")"
             found=$((found+1))
-          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \))
+          done < <(find . -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name 'ShuyoNote_*_android-arm64-release.apk' \))
           echo "release $TAG -> $found installer(s) attached"
           [ "$found" -gt 0 ] || { echo "no installers found"; exit 1; }
