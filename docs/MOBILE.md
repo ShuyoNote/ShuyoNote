@@ -202,7 +202,7 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
   而两次 `BACK` 会直接退出应用——我那次点到了系统拨号盘。
   ⇒ **需要点按/打字的验收，交给人在真机上做**，别用盲点坐标假装自动化。
 
-**给下次的建议（把"可驱动点"做进应用）→ 已实现一半**（2026-09-13）：
+**给下次的建议（把"可驱动点"做进应用）→ 管道已接（2026-09-13）**
 
 应用侧已经有测试钩子了，**只在带 `VITE_TEST_HOOKS=1` 的构建里生效**（正式发版不带它，
 没有它时分派层直接拒绝、只提示一句"未启用"，有 5 条单测钉着）：
@@ -219,12 +219,74 @@ adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/new-page?t
   不带插件名前缀）。这条路在这份数据上不成立。
 - 解析层**不把 `test` 写进给用户看的支持列表**（测试入口不该出现在错误提示里），有单测钉着。
 
-⚠️ **但它在 Android 上还用不了**——深链的移动端管道还没接，三处都缺：
-① `tauri.conf.json` 的 `deep-link` 只有 `desktop` 段（缺 `mobile`，那是 CLI 生成 Android
-intent-filter 的依据）；② `deeplink::plugin()` 只 `#[cfg(desktop)]` 注册；
-③ 移动端接 URL 是另一套 API（桌面走 `deep-link://new-url` 事件，移动端走 `onOpenUrl`）。
-接上这三处之后，本节开头那两条 `am start` 才真的能跑——那时"跑一条插件命令"与"Phase 0 持久化判据"
-就都能脚本化验掉了。
+#### 管道已接上（2026-09-13，含一处**我自己判断错**的更正）
+
+三处都补了：`tauri.conf.json` 加了 `plugins.deep-link.mobile`（注意字段是**单数** `scheme`，
+对应 `AssociatedDomain.scheme: Vec<String>`）；`deeplink::plugin()` / `attach()` 去掉
+`#[cfg(desktop)]`，两平台共用同一份"先入队再 emit"。
+
+**上面第 ③ 条（"移动端走 `onOpenUrl`"）是我编的，实际不存在这个 API。** 真实情况查
+`tauri-plugin-deep-link-2.4.10/src/lib.rs` 得到的（结构性理由，不是试出来的）：
+
+| | 桌面 | Android |
+|---|---|---|
+| 插件在 **Rust 侧**的入口 | `DeepLinkExt::deep_link()`（L481，**无 cfg**） | 同左（`mod imp` 那份 `DeepLink` 也 `pub use` 出来） |
+| 冷启动那一次 | 插件 setup 读 `argv`（`handle_cli_arguments`，L195，**这是唯一桌面专属的**） | Kotlin `load()` 存进 `currentUrl` → `get_current()` 取回 |
+| 应用已开着时 | `on_open_url`（L511，**无 cfg**） | `on_open_url`（Kotlin `onNewIntent` → channel → 插件 emit） |
+
+所以"移动端 API 不同"是假差异：**变的是谁把 URL 送进来，不变的是 Rust 侧的入口**。
+代价实测过——Android 上插件 emit 了 `deep-link://new-url` 却**没有订阅者**（`attach` 被
+`#[cfg(desktop)]` 挡掉），前端永远收不到，表现就是"点深链完全没反应"。
+
+**冷启动在 Android 上是同一个洞**：`DeepLinkPlugin.kt` L78-89 的 `load()` 里
+`setEventHandler` 还没跑，`this.channel?.send(...)` 是**空操作**，URL 只落到 `currentUrl`。
+`get_current()` 补收那段代码一行不改地正好补上——桌面（argv）与 Android（intent）的冷启动
+是同一个洞的同一种补法。
+
+#### 验收判据：能程序化就别靠截图
+
+真机排查最难判的恰恰是"**URL 到底到没到 Rust**"："没反应"有两种完全不同的原因——URL 没进来，
+或者进来了前端没接住。所以 `handle_urls` 现在会留一行**摘要**日志（只打动作、不打参数：
+`?url=` / `?title=` / `?text=` 里可能是用户内容，而 logcat 落在设备上）：
+
+```text
+I/RustStdoutStderr: [deep-link] 收到 1 条 URL：shuyonote://test/new-page/…
+```
+
+于是判据分三层：① 这行日志 = URL 到了 Rust；② 截图 = 界面确实变了；③ 重启后还在 = 持久化成立。
+
+**两条投递路径必须各验一次**（它们走的是不同代码，一条绿不代表另一条绿）：
+
+```bash
+# 路径 A：应用已开着（onNewIntent → on_open_url）
+adb shell am start -W -n cn.shuyo.shuyonote/cn.shuyo.shuyonote.MainActivity \
+  -a android.intent.action.VIEW -d "shuyonote://test/new-page?text=warm-1"
+
+# 路径 B：冷启动就带 URL（load() → currentUrl → get_current 补收）
+adb shell am force-stop cn.shuyo.shuyonote
+adb shell am start -W -n cn.shuyo.shuyonote/cn.shuyo.shuyonote.MainActivity \
+  -a android.intent.action.VIEW -d "shuyonote://test/new-page?text=cold-1"
+```
+
+⚠️ **`-n <组件>` 是显式 intent，绕过 intent-filter**：它只能证明"插件拿到了 URL"，
+**不能**证明"浏览器里点链接能唤起应用"。后者看的是**合并后 manifest** 里有没有
+`ACTION_VIEW` + `CATEGORY_BROWSABLE` + `scheme=shuyonote`（无需真机）：
+
+```bash
+aapt2 dump xmltree --file AndroidManifest.xml <apk> | grep -iE 'VIEW|BROWSABLE|shuyonote'
+```
+
+一键跑完这套的脚本：`%TEMP%\device-hooks2.cjs <run_id>`（下载 CI 产物 → 静态查 intent-filter →
+签名安装 → 三条路径 + 重启持久化 + 崩溃检查）。
+
+#### ⚠️ 附带发现：这条 workflow 之前**不会**因 Rust 改动而构建
+
+`android.yml` 的 `paths:` 原本只有本文件与 `src-tauri/tauri.conf.json` 两条，于是改
+`src-tauri/src/**`——恰恰是决定 APK 里跑什么的部分——推上去之后 **Actions 里连一条运行记录
+都没有**。发现方式很土但有效：推完去看一眼 Actions，空的。**已按构建输入补齐**（见
+`CHANGELOG.md`）。教训与本文件 §2.1 那条同源：**"改完会重新出包"这件事本身也要能被验证**，
+判据是"推完去 Actions 看有没有新记录"，不是"我记得它配了"。
+
 
 ### 2.4 ⚠️ Rust 侧的 HTTPS 在 Android 上一请求就 panic（2026-09-13 真机实测，**修复方案未定**）
 

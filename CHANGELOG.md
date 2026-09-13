@@ -6,6 +6,31 @@
 
 ### 变更
 
+- **深链到达时会在 logcat 留一行摘要**，让"URL 到底到没到 Rust"变成可程序化判定的事。
+  以前只能靠截图猜，而"没反应"有两种完全不同的原因：URL 没进来，或者进来了前端没接住。
+
+  ```text
+  I/RustStdoutStderr: [deep-link] 收到 1 条 URL：shuyonote://test/new-page/…
+  ```
+
+  只打**动作**、不打参数：`?url=` / `?title=` / `?text=` 里可能就是用户内容（被保存的
+  网页地址、笔记标题），而 logcat 落在设备上、`adb logcat` 能读。
+  ⚠️ 这条日志的**第一版自己就有这个洞**：先按 `/` 分段、没先切掉查询串，于是
+  `shuyonote://save?url=https%3A%2F%2F…` 的整段参数被当成"路径第二段"原样进了日志
+  （参数里的 `%2F` 是转义斜杠，按 `/` 分根本分不开）。单测当场钉住：
+  `log_summary_keeps_the_action_and_drops_everything_user_supplied`。
+  写下来是因为它说明**"加日志"本身也要有判据**——日志是一个新的泄露面。
+
+- **Android 构建的触发门禁补全**：改 Rust 源码以前**不会触发**构建。
+  `.github/workflows/android.yml` 的 `paths:` 原本只有本文件与 `src-tauri/tauri.conf.json`
+  两条，于是改 `src-tauri/src/**`——恰恰是决定 APK 里跑什么的那部分——推上去之后
+  Actions 里**连一条运行记录都没有**（发现方式：推完 `cbae0dd` 去看 Actions，空的）。
+  现按**构建输入**补齐：Rust 侧 `Cargo.toml` / `Cargo.lock` / `src/**` / `capabilities/**` /
+  `icons/**`；前端侧 `src/**` / `index.html` / `vite.config.ts` / `package.json` /
+  `pnpm-lock.yaml`；外加 `scripts/**`（`pnpm build` 里串着四个门禁脚本）。
+  代价是这些分支上的前端提交也会跑一次约 15 分钟的 Android 构建；公开仓库不计费，
+  而这些提交确实会改变 APK 内容。
+
 - **真机自动化多了个"可驱动点"：测试深链（正式包不带）**。真机验收此前卡在"驱动不了
   WebView"——`uiautomator` 读不到 DOM、Ctrl+K 与 `input text` 都进不去（见 `docs/MOBILE.md` §2.3）。
   现在多了两条**只在带 `VITE_TEST_HOOKS=1` 的构建里生效**的深链：
@@ -20,8 +45,13 @@
   - `plugin=` 与 `cmd=` **两个都必须给**：想从 `demo.hello` 推出插件名这条路不成立——
     先按最后一个点切被测试当场逮住，改成按第一个点切**仍然错**（真实例子里 `activity-digest`
     的命令叫 `digest.show`，不带插件名前缀）。
-  - ⚠️ **它在 Android 上还用不了**：深链的移动端管道还没接（`tauri.conf.json` 缺 `mobile` 段、
-    `deeplink::plugin()` 只对桌面注册、移动端接 URL 是另一套 API）。
+  - 移动端管道已接上（见 `### 修复` 里那条深链修复）：`tauri.conf.json` 补了
+    `plugins.deep-link.mobile`，`deeplink::plugin()` / `attach()` 两平台共用，
+    Kotlin 侧 intent 由 `on_open_url` 接住。
+  - **可达性判据先说清楚**：`am start -n <组件>` 是显式 intent，**绕过 intent-filter**；
+    它只能证明"插件拿到了 URL"，不能证明"浏览器里点链接能唤起应用"。后者要看合并后
+    的 manifest 里有没有 `VIEW` + `BROWSABLE` + `scheme=shuyonote`（`aapt2 dump xmltree`）。
+    真机脚本 `device-hooks2.cjs` 两件事都测。
 
 - **聚合邮箱收窄为桌面专属（移动端不提供）**。它走 `native-tls`（桌面用系统 TLS），
   移动端要为此从源码交叉编译一份 OpenSSL，而移动端本就不做这个功能。
@@ -72,6 +102,28 @@
     而构建、单测、类型检查**全都发现不了**。
 
 ### 修复
+
+- **Android：深链点了完全没反应**（2026-09-13）。`adb shell am start -a android.intent.action.VIEW
+  -d "shuyonote://test/new-page?text=…"` 打进 `MainActivity`（logcat 里能看到 `NewIntentItem`
+  已交给 Activity），但界面纹丝不动、没有 toast、没有任何提示。
+
+  根因不在插件、也不在 intent-filter，而在**我们自己的接线**：`deeplink::attach()` 整段带
+  `#[cfg(desktop)]`，注释给的理由是"移动端的 `DeepLink` 是另一套 API（没有 `on_open_url`）"
+  ——**那句是错的**。查 `tauri-plugin-deep-link-2.4.10/src/lib.rs`：
+
+  - `DeepLinkExt`（L481）与 `on_open_url`（L511）都在 `#[cfg]` 之外；
+  - Android 那份 `DeepLink`（`mod imp`，L87 起）**自己就有 `get_current`**
+    （L121 走 `run_mobile_plugin("getCurrent")`，读 Kotlin 的 `currentUrl`）；
+  - 真正桌面专属的只有 `handle_cli_arguments`（L195）——那是"从 argv 里读"，手机本来就没有 argv。
+
+  于是链路上出现一个**断点**：Kotlin `onNewIntent` → channel → 插件 emit
+  `deep-link://new-url` → **没有订阅者** → 前端永远收不到。现在两平台共用同一份
+  "先入队再 emit"，`plugin()` 也不再按平台分叉（注册与接线仍成对，门禁脚本守着）。
+
+  顺带发现**冷启动在 Android 上是同一个洞**：`DeepLinkPlugin.kt` L78-89 的 `load()` 里
+  `setEventHandler` 还没跑，`this.channel?.send(...)` 是空操作，URL 只落到 `currentUrl`——
+  `get_current()` 补收那段代码一行不改地正好补上。桌面（argv）与 Android（intent）的
+  冷启动，是**同一个洞的同一种补法**。
 
 - **Android 上插件运行时（Boa）一上来就 panic**（2026-09-13）。真机（HUAWEI Mate 40 /
   Android 12）第一次跑起来，日志里就有：

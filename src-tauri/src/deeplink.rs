@@ -188,9 +188,49 @@ fn handle_urls<R: Runtime>(app: &AppHandle<R>, urls: Vec<String>) {
             state.push(u.clone());
         }
     }
+    // 留一行**可程序化验证**的痕迹。真机排查时最难判的正是"URL 到底到没到 Rust"：
+    // 前端有没有反应要靠截图看，而"没反应"有两种完全不同的原因——URL 没进来，
+    // 或者进来了但前端没接住。有了这行，`adb logcat -s RustStdoutStderr` 就能把两者分开。
+    // 只打**摘要**（见 [`log_summary`]），不打全文。
+    eprintln!(
+        "[deep-link] 收到 {} 条 URL：{}",
+        urls.len(),
+        urls.iter().map(|u| log_summary(u)).collect::<Vec<_>>().join(" , ")
+    );
     // 事件也照发（"应用已经开着"那条路径的正常通道，前端此时在听）。
     // 发失败**不致命**：队列还在，前端的启动 drain 仍能取到。
     emit(app, &urls);
+}
+
+/// 日志专用的短摘要：只留 `scheme://host/首段/…`，**查询串与其余路径一律不进日志**。
+///
+/// 为什么不是直接打整条 URL：`shuyonote://save?url=…`、`…?title=…` 这类参数里会带
+/// 用户内容（被保存的网页地址、笔记标题），而 logcat 是落到设备上、`adb logcat` 能读的。
+/// 排查需要的是"哪一类动作到了"，不是"内容是什么"。
+///
+/// `./…` 结尾是**故意**的：让读日志的人一眼看出后面还有东西被省掉了。
+///
+/// ⚠️ **必须先切掉查询串再按 `/` 分段**。第一版写反了（直接 `split(['/', '?', '#'])`），
+/// 于是 `shuyonote://save?url=https%3A%2F%2F…` 的**整个 `url=` 参数**被当成"路径第二段"，
+/// 原样进了日志——而日志就是本函数要保护的东西。单测 `log_summary_keeps_the_action_...`
+/// 当场把它钉出来了（`left: "…save/url=https%3A%2F%2Fcommunity…"`）。参数里的 `%2F`
+/// 是转义过的斜杠，所以按 `/` 分段根本分不开它，这正是当初没想到的一层。
+fn log_summary(url: &str) -> String {
+    // 认不出 scheme 就一个字符都不打——这条路径正常情况下走不到（插件给的已经是解析过的
+    // `Url`），但日志函数**不能成为泄密或崩溃的入口**，所以宁可少说。
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<不是带 scheme 的 URL>".to_string();
+    };
+    // 先丢掉 `?query` 与 `#fragment`，剩下的才可能是路径。
+    let path_part = rest.split(['?', '#']).next().unwrap_or("");
+    let mut segs = path_part.split('/');
+    let host = segs.next().unwrap_or("");
+    let first = segs.next().unwrap_or("");
+    if first.is_empty() {
+        format!("{scheme}://{host}/…")
+    } else {
+        format!("{scheme}://{host}/{first}/…")
+    }
 }
 
 /// 发事件给前端。
@@ -211,6 +251,28 @@ pub fn deep_link_take(state: tauri::State<'_, PendingDeepLinks>) -> Vec<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 日志摘要**只留动作、不留内容**。这条不是洁癖：`?title=` / `?url=` / `?text=`
+    /// 里可能就是用户的笔记标题或被保存的网页地址，而 logcat 落在设备上、`adb logcat` 能读。
+    /// 真机排查需要的是"哪一类动作到了 Rust"。
+    #[test]
+    fn log_summary_keeps_the_action_and_drops_everything_user_supplied() {
+        // 社区链接：`url=` 里的整条地址（含域名与帖号）都不能出现。
+        let save = log_summary("shuyonote://save?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fpost%2F1");
+        assert_eq!(save, "shuyonote://save/…");
+        assert!(!save.contains("community") && !save.contains("post"), "参数泄进日志了：{save}");
+
+        // 测试钩子的 `text=` 同理（真机上跑的就是这条）。
+        let hook = log_summary("shuyonote://test/new-page?text=phase0-persist-011531");
+        assert_eq!(hook, "shuyonote://test/new-page/…");
+        assert!(!hook.contains("phase0"), "参数泄进日志了：{hook}");
+
+        // 有路径段时保留**一段**（够看清是哪类动作），其余仍省掉。
+        assert_eq!(log_summary("shuyonote://page/abc123?x=1"), "shuyonote://page/abc123/…");
+
+        // 认不出 scheme：**一个字都不打**（宁可少说，也不把可能是参数的原文写进日志）。
+        assert_eq!(log_summary("garbage"), "<不是带 scheme 的 URL>");
+    }
 
     /// 普通启动（没有深链）：队列空 ⇒ 前端拿到空数组 ⇒ 什么都不做。
     /// 这条是"零副作用"的可执行定义——不是"应该不会弹"，是 drain 出来就是空的。
