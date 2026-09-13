@@ -38,7 +38,7 @@ vi.mock("../lib/updater", () => ({
 import { AboutDialog } from "./AboutDialog";
 import { useEditorStore } from "../store/editor";
 import { APP_NAME } from "../lib/links";
-import { RELEASES_URL } from "../lib/updates";
+import { fetchUpdateManifest, RELEASES_URL } from "../lib/updates";
 
 // 弹窗在 Web 形态下会去取 `version.json`（`detectFromDeployed`）。不桩掉的话 happy-dom 会真的
 // 去连 http://localhost:3000：本机（Windows）实测它留下一个没人处理的
@@ -216,5 +216,59 @@ describe("「关于」弹窗的 Android 更新入口", () => {
 
     await vi.waitFor(() => expect(document.querySelector(".about-release-notes")).not.toBeNull());
     expect(document.querySelector(".about-release-notes-body")?.textContent).toContain("块操作体系重构");
+  });
+
+  // ── 安全判据：清单里的 apk 地址是明文 http（或被投毒）时，**界面不许把它交给打开动作** ──
+  //
+  // 这条走的是**真实解析器**（`fetchUpdateManifest`）而不是手搓的清单对象：上面的用例桩掉的是
+  // `fetchUpdateManifestNative`，直接喂一个对象——那样验证不了"清单里的 http 地址会不会一路走到
+  // 打开动作"。这里让 native 桩去调真解析器（其 `fetch` 是本文件顶部那个可改的桩），于是链路是
+  // 「latest.json 文本 → 解析器校验 → androidApkUrl → 按钮」，与真机同形。
+  //
+  // 为什么必须有：弹窗自己的兜底 `sanitizeExternalUrl` 只要求 `http(s)://`，**明文 http 是能通过的**
+  // ⇒ 若解析器不把 http 挡掉，清单被投毒（或发布脚本写错 scheme）时「下载 APK」真的会把用户送进
+  // 明文 HTTP 下载。闸门只有解析器那一处，所以两层一起钉：解析器出 null + 界面退回「前往发布页」。
+  it("清单里的 apk 地址是明文 http / scheme 混淆 → 不摆「下载 APK」，退回「前往发布页」", async () => {
+    for (const poisoned of [
+      "http://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1/x.apk",
+      "HTTP://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1/x.apk",
+      "Https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1/x.apk",
+    ]) {
+      // native 那条腿 = 真解析器（它读的 latest.json 由本文件的 fetch 桩给）
+      mocks.fetchUpdateManifestNative.mockImplementation(() => fetchUpdateManifest());
+      fetchStub.mockImplementation(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          version: "9.9.9",
+          notes: null,
+          pub_date: null,
+          platforms: { "android-aarch64": { url: poisoned, signature: `sha256:${"a".repeat(64)}` } },
+        }),
+      }));
+
+      useEditorStore.setState({ aboutOpen: true });
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const mounted = createRoot(host);
+      root = mounted;
+      flushSync(() => mounted.render(React.createElement(AboutDialog)));
+
+      await vi.waitFor(() => expect(buttonByText("前往发布页"), `${poisoned} 应当退回发布页`).not.toBeNull());
+      expect(buttonByText("下载 APK"), `${poisoned} 不该出现下载入口`).toBeNull();
+      expect(mocks.openUrl, `${poisoned} 不该被打开`).not.toHaveBeenCalled();
+
+      // 退路本身是好的：点它开的是发布页，而不是那个明文地址
+      flushSync(() => buttonByText("前往发布页")!.click());
+      await vi.waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith(RELEASES_URL));
+      expect(mocks.openUrl).not.toHaveBeenCalledWith(poisoned);
+
+      flushSync(() => mounted.unmount());
+      root = null;
+      document.body.innerHTML = "";
+      mocks.openUrl.mockReset();
+      mocks.openUrl.mockResolvedValue(undefined);
+      mocks.fetchUpdateManifestNative.mockReset();
+    }
   });
 });
