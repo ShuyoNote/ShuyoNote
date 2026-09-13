@@ -6,6 +6,23 @@
 
 ### 变更
 
+- **真机自动化多了个"可驱动点"：测试深链（正式包不带）**。真机验收此前卡在"驱动不了
+  WebView"——`uiautomator` 读不到 DOM、Ctrl+K 与 `input text` 都进不去（见 `docs/MOBILE.md` §2.3）。
+  现在多了两条**只在带 `VITE_TEST_HOOKS=1` 的构建里生效**的深链：
+
+  ```bash
+  adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/run-plugin?plugin=demo&cmd=demo.hello"
+  adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/new-page?text=hello"
+  ```
+
+  没有那个环境变量时分派层直接拒绝、只提示"未启用"（有单测钉着）；正式发版不带它。
+  钩子**不绕过任何检查**：插件命令走与界面相同的 `usePlugins.runCommand`，建页走 `useNotes.createPage`。
+  - `plugin=` 与 `cmd=` **两个都必须给**：想从 `demo.hello` 推出插件名这条路不成立——
+    先按最后一个点切被测试当场逮住，改成按第一个点切**仍然错**（真实例子里 `activity-digest`
+    的命令叫 `digest.show`，不带插件名前缀）。
+  - ⚠️ **它在 Android 上还用不了**：深链的移动端管道还没接（`tauri.conf.json` 缺 `mobile` 段、
+    `deeplink::plugin()` 只对桌面注册、移动端接 URL 是另一套 API）。
+
 - **聚合邮箱收窄为桌面专属（移动端不提供）**。它走 `native-tls`（桌面用系统 TLS），
   移动端要为此从源码交叉编译一份 OpenSSL，而移动端本就不做这个功能。
   - Rust：`mod email` / `mod smtp` 与 **23 个邮箱命令**全部 `#[cfg(desktop)]`；邮箱那组依赖
@@ -78,6 +95,25 @@
     而"从 zip 装插件"在 Android 上另有问题（见上面的「已知问题」）。
   - 附带一条方法论：这回坐实了 **"CI 绿 ≠ 装上能用"**——这条平台差异在构建期**完全看不见**。
 
+- **Android 上「选文件」拿不到可读路径**（2026-09-13）。根源在**别人的源码**里：
+  `tauri-plugin-dialog` 的 Android 实现是 `uris.add(uri.toString())`——把系统的 `content://` URI
+  **原样**交给前端（同一个文件里那个能反查真实路径的 `FilePickerUtils.getPathFromUri()`
+  在这条路上根本没被调用），而我们的导入路径全按"文件路径"用它。于是**附件导入 / 装 zip 插件 /
+  备份恢复 / 空间导入**要么报"不存在"、要么报"读取失败"——报的还是误导性的话。
+  - 做法：新增 `src-tauri/src/picked_file.rs` 作为「用户选的东西」的**唯一落地入口**——
+    不是把每处读取都改成读 fd，而是把选中项**拷成一条真实临时路径**，下游的 `exists()` /
+    `is_file()` / zip 解包 / 流式哈希**全都照旧能用**（各入口只改一行）。代价是一次拷贝，
+    正是上线计划里早就写下的"先拷到缓存"的退路。
+  - 判据：**只有看着像 URI 才走插件**（含 `://` 且 scheme ≥2 字符）。**Windows 的 `C:\…` 必须
+    判成路径**，否则桌面会被误路由到"为 Android 才存在"的分支上——有单测钉着。
+  - 打开走 `tauri-plugin-fs` 的 `Fs::open`（Android 经 Kotlin 的 ContentResolver 取 fd；
+    桌面就是 `std::fs::OpenOptions`，与原来等价）。⚠️ 必须用 `FilePath::from_str`——用
+    `Path::new` 会把它当普通路径，等于白改。fs 插件**不给前端开**（capabilities 里没授权限）。
+  - 拷出来的临时文件随 `PickedFile` 析构删除；用户原始文件不碰。按目录选择仍不支持
+    （系统给的是 tree URI），错误信息里如实说清。
+  - ⚠️ **状态是"实现完成 + CI 编译通过"，不是"真机验收通过"**：行为验证要人在手机上走一遍
+    （附件面板 → 选择文件 → 挑一张图 → 应正常导入）。
+
 - **从 Windows 发版时，`release.mjs` 会在打 Web 整包那一步直接崩掉**：那一步 shell out 到
   系统的 `zip`，而注释里写着「用它是因为它到处都有」——**Windows 上根本没有 `zip`**
   （实测：`'zip' is not recognized as an internal or external command`）。
@@ -109,19 +145,10 @@
   **WebView 自己的 HTTPS 不受影响**（OCR 语言包下载走浏览器栈），这两条别搞混。
   两个候选修法见 `docs/MOBILE.md` §2.4（倾向"正经初始化"，但要把 gradle 定制脚本化）。
   **属 Android 上线阻塞项。**
-
-- **Android 上「选文件」拿不到可读路径**（2026-09-13 **源码级已确认，真机未验**）。
-  `tauri-plugin-dialog` 的 Android 实现把系统返回的 URI **原样**交给前端
-  （`DialogPlugin.kt::createPickFilesResult()` 里是 `uris.add(uri.toString())`，拿到的是
-  `content://…` 内容 URI；而同文件里能反查真实路径的 `FilePickerUtils.getPathFromUri()`
-  **在这条路上根本没被调用**），我们的导入路径却把它当文件路径用
-  （`attachments.rs::copy_and_hash()` 是 `std::fs::File::open(src)`；`plugins.rs` /
-  `backup.rs` / `workspace_io.rs` 同理）——`content://…` 在 `std::fs` 下必然打不开。
-  受影响：**附件导入、从文件夹 / zip 装插件、备份导入、空间导入、模板导入**。
-  官方通路存在：`tauri-plugin-fs` 的 `Fs::open()` 在 Android 上经 Kotlin 的
-  `contentResolver.openAssetFileDescriptor(uri, mode)` 取 fd 再 `File::from_raw_fd`，
-  桌面侧就是 `std::fs::OpenOptions`（**语义与我们现在的做法完全一致，且两平台同一 API**）。
-  详见 `docs/MOBILE.md` §2.2。**尚未实施。**
+  2026-09-13 进一步查明**修 A 的路上有一处硬阻塞**：Tauri 侧的官方写法（
+  [tauri#13267](https://github.com/tauri-apps/tauri/issues/13267)）依赖 `webview.jni_handle().exec`，
+  而它给的 JNI 类型来自 **jni 0.21.1**（wry 0.55.1），`rustls-platform-verifier` 0.7.0 用的却是
+  **jni 0.22.4**——两个大版本的类型不通用，得跨版本用裸指针搭桥。详见 `docs/MOBILE.md` §2.5。
 
 ## [1.90.1] - 2026-09-12
 

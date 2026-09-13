@@ -126,7 +126,7 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 > 每个桌面专属能力各自有一个**具体能力函数**（如 `emailSupported()`，见
 > `src/lib/platform/capabilities.ts`，纯函数可单测）。
 
-### 2.2 ⚠️ Android 上「选文件」拿不到可读路径（源码级已确认，**真机未验、尚未修**）
+### 2.2 Android 上「选文件」拿不到可读路径（**已修**：2026-09-13 实现 + CI 编译验证；**真机待点一次**）
 
 上线计划把这条列为"风险最高、必须先 spike"的一项。2026-09-13 读源码把它确认了。
 
@@ -154,9 +154,27 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 （同时把该插件注册进 `lib.rs`；它的前端命令是**权限门控**的，我们不给 fs 权限 ⇒ 顺带不扩大攻击面）。
 涉及 `attachments.rs` / `plugins.rs` / `backup.rs` / `workspace_io.rs` 四处。
 
-**状态：已确认、修法已定，尚未实施**（改完要重新出包 + 真机验一次"从手机里选一张图导入附件"）。
-在修好之前，Android 上这些入口会报"读取失败（No such file or directory）"——
-**别把它当成"用户选错了文件"**，那是源码层面的问题。
+**状态：已实施**（2026-09-13）：
+
+- 做法：新增 `src-tauri/src/picked_file.rs` 作为「用户选的东西」的**唯一落地入口**——
+  不是把每处读取都改成读 fd，而是把选中项**拷成一条真实临时路径**，下游的 `exists()` /
+  `is_file()` / zip 解包 / 流式哈希**全都照旧能用**（各入口只改一行）。代价是一次拷贝，
+  这正是本计划早就写下的"先拷到缓存"的退路。
+- 判据：**只有看着像 URI 才走插件**（含 `://` 且 scheme ≥2 字符）。特别地，**Windows 的 `C:\…`
+  必须判成路径**，否则桌面会被误路由到"为 Android 才存在"的分支上——这条有单测钉着
+  （`picked_file::tests::only_real_uris_are_treated_as_uris`）。
+- 打开走 `tauri-plugin-fs` 的 `Fs::open`（Android 经 Kotlin 的 ContentResolver 取 fd；
+  桌面就是 `std::fs::OpenOptions`，与原来等价）。⚠️ 必须用 `FilePath::from_str`——
+  用 `Path::new` 会把它当普通路径，等于白改（编译期就错，已踩过）。
+- fs 插件**不是给前端开的**：capabilities 里没授它任何权限。
+- 拷出来的临时文件随 `PickedFile` 析构删除；用户原始文件不碰。
+- 改到的入口：`attachments.rs`（附件导入）、`plugins.rs`（装 zip 插件）、`backup.rs`（备份恢复）、
+  `workspace_io.rs`（空间导入）。
+- **先目录选择仍不支持**（系统给的是 tree URI，读不出目录树）——错误信息里如实说清。
+
+**还差最后一步：真机点一次。** CI run #6 已证明 Android 侧编得过；行为验证要人在手机上走一遍：
+**附件面板 → 选择文件 → 从「图片」里挑一张 → 应正常导入（不再报"不存在/读取失败"）**。
+在那之前，这条只算"实现完成、编译通过"，**不算真机验收通过**。
 
 ### 2.3 真机验收能用什么手段、有哪些边界（2026-09-13 实跑记录）
 
@@ -184,9 +202,29 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
   而两次 `BACK` 会直接退出应用——我那次点到了系统拨号盘。
   ⇒ **需要点按/打字的验收，交给人在真机上做**，别用盲点坐标假装自动化。
 
-**给下次的建议（把"可驱动点"做进应用）**：要自动化真机验收，应用侧得先有能脚本化的入口，比如
-一个只在测试构建里开的深链 `shuyonote://test/run-plugin?cmd=demo.hello`——把"跑一条插件命令"
-变成一次 `adb shell am start -d`。这比盲点坐标稳得多，也配得上一条门禁。
+**给下次的建议（把"可驱动点"做进应用）→ 已实现一半**（2026-09-13）：
+
+应用侧已经有测试钩子了，**只在带 `VITE_TEST_HOOKS=1` 的构建里生效**（正式发版不带它，
+没有它时分派层直接拒绝、只提示一句"未启用"，有 5 条单测钉着）：
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/run-plugin?plugin=demo&cmd=demo.hello"
+adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/new-page?text=hello"
+```
+
+- 钩子**不绕过任何检查**：插件命令走与界面完全相同的 `usePlugins.runCommand`（权限与写中介
+  原样成立），建页走 `useNotes.createPage`。它只是把"点命令面板/打字"换成"发一条深链"。
+- `plugin=` 与 `cmd=` **两个都必须给**：我第一版想从 `demo.hello` 推出插件名——按最后一个点切
+  被测试当场逮住，改成按第一个点切**仍然错**（真实例子里 `activity-digest` 的命令叫 `digest.show`，
+  不带插件名前缀）。这条路在这份数据上不成立。
+- 解析层**不把 `test` 写进给用户看的支持列表**（测试入口不该出现在错误提示里），有单测钉着。
+
+⚠️ **但它在 Android 上还用不了**——深链的移动端管道还没接，三处都缺：
+① `tauri.conf.json` 的 `deep-link` 只有 `desktop` 段（缺 `mobile`，那是 CLI 生成 Android
+intent-filter 的依据）；② `deeplink::plugin()` 只 `#[cfg(desktop)]` 注册；
+③ 移动端接 URL 是另一套 API（桌面走 `deep-link://new-url` 事件，移动端走 `onOpenUrl`）。
+接上这三处之后，本节开头那两条 `am start` 才真的能跑——那时"跑一条插件命令"与"Phase 0 持久化判据"
+就都能脚本化验掉了。
 
 ### 2.4 ⚠️ Rust 侧的 HTTPS 在 Android 上一请求就 panic（2026-09-13 真机实测，**修复方案未定**）
 
@@ -211,11 +249,34 @@ Expect rustls-platform-verifier to be initialized
 
 | 方案 | 做法 | 代价 |
 |---|---|---|
-| **A. 正经初始化**（倾向） | Gradle 加那个 AAR + 启动时调 `rustls_platform_verifier::android::init_with_env(...)`（用 `ndk_context` 拿 JNI env / context） | 要改**不可复现的** `gen/android` ⇒ 必须脚本化（CI 里 `tauri android init` 之后跑），Rust 侧要加依赖与平台分支 |
+| **A. 正经初始化**（倾向） | Gradle 指向那个 AAR + 启动时初始化。**关键事实已查清**：那个 Java 组件**不在 Maven 上**，而是**随 crate 发布**——本机实测在 `~/.cargo/registry/src/*/rustls-platform-verifier-android-0.1.1/maven/`，坐标 `rustls:rustls-platform-verifier:0.1.1`；Gradle 要用 `cargo metadata --filter-platform aarch64-linux-android` 找到它（官方 README 的写法），版本从 metadata 里取准比 `latest.release` 稳。**⇒ 必须脚本化**（`gen/android` 不在版本控制里） |
 | **B. 换掉验证器** | 用 `ClientBuilder::use_preconfigured_tls(...)` 自建 `rustls::ClientConfig`（webpki-roots 或 rustls-native-certs） | **可能反而更糟**：webpki-roots 是内置根，**用私有 CA 自建服务器的用户会连不上**——而本项目定位是自托管优先 |
 
 **倾向 A**（保住"系统 CA / 私有 CA 可用"），但它动到不可复现的 Android 工程，得连同
 "把 gradle 定制脚本化"一起做。**状态：已确认、未修**——属 Android 上线的**阻塞项**。
+
+### 2.5 ⚠️ 修 A 路上的一处**硬阻塞**：两套 jni 版本对不上（2026-09-13 查明）
+
+Tauri 侧的官方写法是有的——[tauri#13267](https://github.com/tauri-apps/tauri/issues/13267) 里
+作者给出的可用写法是 `webview.jni_handle().exec(|env, context, _| …)` 拿到 JNIEnv/Context，
+再调 `rustls_platform_verifier::android::init_with_refs(env.get_java_vm()?, …)`。
+
+**但这组版本上编不过**：
+
+| crate | 版本 | 依赖的 jni |
+|---|---|---|
+| `wry` 0.55.1（`jni_handle().exec` 给的就是它的类型） | 0.55.1 | **jni 0.21.1** |
+| `rustls-platform-verifier` | 0.7.0 | **jni 0.22.4** |
+
+两个 jni 大版本的 `Env`/`JObject` 是**不同类型**，不能直接传；而且 jni 0.22 刚改过 API
+（`JObject::from_raw` 现在要 `&Env`，crate 自己 README 里的例子还是旧签名）。
+所以要落地 A，得**跨这两个版本用裸指针搭桥**（`env.get_native_interface()` + `as_raw()`，
+在 0.22 侧重建 `Env`/`JObject`）——那是 unsafe JNI 细节，而**本地编不了 Android**
+（`cargo check --target aarch64-linux-android` 会卡在 OpenSSL/mupdf 的构建脚本上），
+只能靠 CI 编译 + 真机日志，一轮约 15 分钟。
+
+**⇒ 这条不适合盲写。** 需要的是一个能连续跑几轮 CI 与真机的窗口，外加一个决定：
+是搭这座桥，还是等 wry 对齐到 jni 0.22（或改用 B 路线自建 `ClientConfig`）。
 
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
