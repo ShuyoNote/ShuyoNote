@@ -41,9 +41,11 @@ import { APP_NAME } from "../lib/links";
 import { RELEASES_URL } from "../lib/updates";
 
 // 弹窗在 Web 形态下会去取 `version.json`（`detectFromDeployed`）。不桩掉的话 happy-dom 会真的
-// 去连 http://localhost:3000：本机上它留下一个没人处理的 `AggregateError: ECONNREFUSED`，
-// 结果是**全部用例都通过、`npx vitest run` 却以 1 退出**（CI 的 `pnpm test` 就是这条命令，
-// 于是"测试全绿"和"流水线红"会同时成立）。桩成"未部署"既挡掉真实网络，也钉住降级路径。
+// 去连 http://localhost:3000：本机（Windows）实测它留下一个没人处理的
+// `AggregateError: ECONNREFUSED`，结果是**全部用例都通过、`npx vitest run` 却以 1 退出**。
+// ⚠️ 口径注意：CI（ubuntu）上跑同一条 `pnpm test` **没有**这个问题（8d4437d 的 CI 全绿，vitest
+// 那一步 success）——所以它是一条**只在 Windows 上响**的噪声；但本机任何"看退出码"的门禁都会
+// 因此误判。桩成"未部署"既挡掉真实网络，也钉住降级路径（本机退出码随之回到 0）。
 const fetchStub = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }));
 
 beforeEach(() => {
