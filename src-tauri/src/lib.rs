@@ -46,6 +46,7 @@ mod storage;
 mod sync;
 mod tags;
 mod templates;
+mod tempdir;
 mod titlebar;
 mod trash;
 mod updates;
@@ -265,6 +266,17 @@ pub fn run() {
                 .unwrap()
         })
         .setup(|app| {
+            // 临时目录**最先**定向：Android 上 `std::env::temp_dir()` 就是 `/tmp`，而 Android
+            // 根下没有 `/tmp` ⇒ 晚一步就会有调用点先踩坑（真机症状是「建临时目录失败」，
+            // 原因离症状很远，见 `tempdir.rs` 的模块注释）。放最前面还顺带保证：下面任何
+            // 一句提前 return，临时根也已经是好的。
+            match app.path().app_cache_dir() {
+                Ok(cache) => tempdir::init(cache.join("tmp")),
+                Err(e) => eprintln!(
+                    "[tempdir] 拿不到应用缓存目录：{e}；临时文件将退回系统临时目录（Android 上必然失败）"
+                ),
+            }
+
             // 深链接线：建队列 → 补收冷启动那一次 → 订阅后续。
             //
             // 必须放在**本 setup 的最前面**，而且不能挪进 `deeplink::plugin()`：
