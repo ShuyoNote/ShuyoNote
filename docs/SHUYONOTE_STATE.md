@@ -76,12 +76,16 @@
        插件 emit 了 `deep-link://new-url` 却**没有订阅者**，表现是"点深链完全没反应"。
        现在 warm（`onNewIntent`）与冷启动（`get_current` 补收）两条路径都在真机上收到 URL，
        前端也真的执行了动作（见 §2.3）；
-     - **Rust 侧 HTTPS 的 panic 已修并真机验证**：启动时初始化系统证书校验器
+     - **Rust 侧 HTTPS 的 panic 已修并真机验证通过**：启动时初始化系统证书校验器
        （两套 jni 的裸指针桥，见 §2.4.1 / §2.5），真机上 `[tls]` 初始化成功、panic 0 条，
-       真实 HTTPS 请求取回了网页标题；
+       **真实 HTTPS 请求取回 107 字节内容**。⚠️ 顺带发现**服务端**问题：`shuyo.cn` 的证书链
+       锚在 `ISRG Root X2`，而这台设备的系统库只有 `X1`（实测 X2=0）⇒ Android 上走 Rust
+       访问**我们自己域名**会失败（社区、AI），修法是服务端发 X1 锚定的链，**未做**。
      - **真机自动化有了四条测试钩子**（`run-plugin` / `new-page` / `http-probe` / `list-pages`），
-       只在 `VITE_TEST_HOOKS=1` 的构建里存在，正式发版不带。「跑一条插件命令」已端到端验通
-       （toast 报出插件返回值、页面上出现新建的页）；Phase 0 持久化判据改用 `list-pages` 问一次。
+       只在 `VITE_TEST_HOOKS=1` 的构建里存在，正式发版不带。两条判据**都已验掉**：
+       「跑一条插件命令」端到端 ✓（toast 报出插件返回值、页面上出现新建的页）；
+       **Phase 0 持久化** ✓（`list-pages`：41 页 → 建页 42 页 → `force-stop` 重启**仍 42 页**）。
+       注意持久化**不能靠截图判**：重启后应用总停在空白新页上。
      - **「选文件」拿不到可读路径已实施**（`tauri-plugin-fs` 的 `open()`：Android 经
        `ContentResolver` 取 fd，见 §2.2）——**CI 已编译通过，真机待点一次**。
    - **仍未做 / 未验**：**签名进 CI**（要仓库 secrets 权限，当前 token 没有）、
