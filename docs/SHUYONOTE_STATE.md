@@ -53,9 +53,15 @@
 - Rust 侧另有 CI 在跑（`.github/workflows/ci.yml` 的 `rust-tests`）：`cargo test`（含宿主子进程集成测试）
   + **`cargo test --lib plugins::`** ——后者是 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试
   （那种测试单跑必红，最费时间）。
-- Android：改 `.github/workflows/android.yml`（或手动 dispatch）→ Linux runner 出未签名 APK；
-  **改 `Cargo.toml` / 源码不会触发它**（paths 只含 workflow 文件本身），要出包得动一下那个文件或手动触发。
-  产物未签名，装机前要先 zipalign + `apksigner`（测试 key 在仓库外，见 [MOBILE.md](MOBILE.md) §2.1）。
+- Android：改 `.github/workflows/android.yml` **或** `src-tauri/src/**` / `Cargo.toml` / `Cargo.lock` /
+  `src/**` / `scripts/**` / `tauri.conf.json` 等构建输入**都会触发**它（2026-09-13 之前 paths 只含
+  workflow 文件本身，于是"改了 Rust 源码、推上去后 Actions 里连一条运行记录都没有"——判据是
+  "推完去 Actions 看有没有新记录"，不是"我记得它配了"）。
+  产物**已经由 CI 用正式密钥签名**（Secrets → zipalign → apksigner → 实测指纹与 `6E:E8:…:7A:88`
+  硬比对，不一致即红）：
+  - `android-apk-aarch64-signed-test-hooks` —— **可直接 `adb install`**，但带着测试钩子，**只能自检**；
+  - `android-apk-aarch64-unsigned` —— 保留用于量体积。
+  对外发版件（不带测试钩子）在接进 `release.yml` 的 Android job；在那之前，发版链路上没有 Android 包。
 - `pnpm run dev:desktop`（桌面开发，自建干净 PATH，见 `scripts/tauri-dev.mjs`）。
 - 发布：`git tag vX && git push origin vX && git push origin main` → `node scripts/release.mjs`。
 
