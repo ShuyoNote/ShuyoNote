@@ -172,6 +172,25 @@ struct Parsed {
     image_bytes: Option<(Vec<u8>, String)>,
 }
 
+/// 把错误的**根因一起**描述出来：`reqwest::Error` 的 `Display` 只有
+/// `error sending request for url (…)` 这一句，真正的原因（TLS 校验失败 / DNS / 超时）
+/// 在 `source()` 链里。
+///
+/// 为什么非要这个（2026-09-13 真机实测的教训）：Android 上排查 Rust 侧 HTTPS 时，
+/// 我们**只打了一层**，于是日志里看到的永远是同一句"发送请求失败"，
+/// 完全分不清是"证书校验器没接上"还是"网不通"——而这两件事的修法毫无共同点。
+/// 见 `docs/MOBILE.md` §2.4。
+fn describe_err(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut cur = e.source();
+    while let Some(s) = cur {
+        out.push_str(" ← ");
+        out.push_str(&s.to_string());
+        cur = s.source();
+    }
+    out
+}
+
 async fn fetch_and_parse(url: &str) -> Result<Parsed, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (compatible; ShuyoNote/1.0)")
@@ -183,7 +202,13 @@ async fn fetch_and_parse(url: &str) -> Result<Parsed, String> {
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("无法获取网页: {e}"))?;
+        .map_err(|e| {
+            let msg = describe_err(&e);
+            // 也写一行 logcat：Android 上 toast 是**单行截断**的，而这条错误的根因往往在末尾
+            // （`adb logcat -s RustStdoutStderr` 才能看全）。见 docs/MOBILE.md §2.4。
+            eprintln!("[http] 取网页失败 {url}：{msg}");
+            format!("无法获取网页: {msg}")
+        })?;
     if !resp.status().is_success() {
         let host = resp.url().host_str().unwrap_or(url).to_string();
         return Ok(Parsed {
@@ -195,7 +220,10 @@ async fn fetch_and_parse(url: &str) -> Result<Parsed, String> {
         });
     }
     let final_url = resp.url().to_string();
-    let html = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+    let html = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", describe_err(&e)))?;
 
     let title = meta_value(&html, "og:title")
         .unwrap_or_else(|| title_from_html(&html))
@@ -264,6 +292,42 @@ impl PipeTrim for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `describe_err` 必须**把 source 链串起来**。
+    ///
+    /// 这条测试的由来：Android 上排查 Rust 侧 HTTPS 失败时，日志里只有 reqwest 的
+    /// `error sending request for url (…)`，看不出根因是 TLS 还是网络——
+    /// 而这两者的修法毫无共同点。所以"根因必须出现在错误串里"是**要求**，不是装饰。
+    #[test]
+    fn describe_err_walks_the_source_chain() {
+        #[derive(Debug)]
+        struct Leaf;
+        impl std::fmt::Display for Leaf {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "invalid peer certificate: UnknownIssuer")
+            }
+        }
+        impl std::error::Error for Leaf {}
+
+        #[derive(Debug)]
+        struct Mid(Leaf);
+        impl std::fmt::Display for Mid {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "tls handshake failed")
+            }
+        }
+        impl std::error::Error for Mid {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let s = describe_err(&Mid(Leaf));
+        assert!(s.contains("tls handshake failed"), "{s}");
+        assert!(s.contains("UnknownIssuer"), "根因没被串进来：{s}");
+        // 单层错误也不能炸、也不能多出一个空箭头
+        assert_eq!(describe_err(&Leaf), "invalid peer certificate: UnknownIssuer");
+    }
 
     #[test]
     fn extracts_og_meta_and_title() {
