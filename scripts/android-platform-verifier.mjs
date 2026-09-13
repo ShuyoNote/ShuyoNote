@@ -199,28 +199,51 @@ if (!existsSync(APP_GRADLE)) {
   )
 }
 
-const found = findMavenDir()
-console.log(`crate  : ${found.crate}（来自 ${found.from}）`)
-console.log(`maven  : ${found.maven}`)
-console.log(`artifact: rustls:rustls-platform-verifier:${found.version}`)
-console.log(`aar    : ${found.aar}`)
+// ---------------------------------------------------------------- 安装 Kotlin 组件
+//
+// 历史：2026-09-13 之前，这里是把 crate 自带 maven 目录里的 **AAR** 挂进 Gradle。
+// 现在改成用仓库里自带的、**打过补丁**的 Kotlin 源码（`scripts/vendor/rustls-platform-verifier/`）。
+// 理由见那个目录的 README：Let's Encrypt 从 2025-08 起取消 OCSP（只发 CRL），而 Android 的
+// 吊销检查器**默认先查 OCSP**，查不到就把证书判成"已吊销"⇒ 真机上所有 LE 站点都连不上
+// （我们自己的 shuyo.cn / community.shuyo.cn 首当其冲）。上游 issue #221 未修、PR #179 未合并，
+// 所以自带一份、随 App 一起编译。
+//
+// 上面那段 findCrateDir/findMavenDir 因此**暂时不再被调用**；留着是为了上游修复后能切回 AAR 方式。
 
-const current = readFileSync(APP_GRADLE, 'utf8')
-const injected = current.includes(MARK)
+const KT_SRC = join(ROOT, 'scripts/vendor/rustls-platform-verifier/CertificateVerifier.kt')
+const KT_DST = join(
+  ROOT,
+  'src-tauri/gen/android/app/src/main/java/org/rustls/platformverifier/CertificateVerifier.kt',
+)
+
+/** 把自带的（打过补丁的）Kotlin 校验器放进 App 源码集，由 Gradle 一起编译。 */
+function installKotlin() {
+  if (!existsSync(KT_SRC)) fail(`找不到自带的 Kotlin 校验器：${KT_SRC}`)
+  const src = readFileSync(KT_SRC, 'utf8')
+  // 兜底自检：补丁必须在。少了它就会退回"所有 LE 站点都报 Revoked"的老毛病，
+  // 而这种回归只有在真机上才看得见，所以在构建期就拦住。
+  for (const opt of ['PREFER_CRLS', 'NO_FALLBACK']) {
+    if (!src.includes(`PKIXRevocationChecker.Option.${opt}`)) {
+      fail(`自带的 Kotlin 校验器缺少补丁选项 ${opt} —— 见 scripts/vendor/ 下的 README，别改回去`)
+    }
+  }
+  mkdirSync(dirname(KT_DST), { recursive: true })
+  writeFileSync(KT_DST, src, 'utf8')
+  console.log(`已安装（含补丁）Kotlin 校验器 → ${KT_DST}`)
+}
 
 if (CHECK_ONLY) {
-  if (!injected) fail('app/build.gradle.kts 里还没有注入（CI 里应排在 tauri android init 之后）')
+  if (!existsSync(KT_DST)) fail(`缺少 ${KT_DST}（CI 里应排在 tauri android init 之后）`)
   if (!existsSync(PRO_FILE)) fail(`缺少 ${PRO_FILE}`)
-  console.log('✅ 已注入（--check）')
+  if (!readFileSync(KT_DST, 'utf8').includes('PREFER_CRLS')) fail('装进去的校验器没有补丁')
+  if (readFileSync(APP_GRADLE, 'utf8').includes(MARK)) {
+    fail('app/build.gradle.kts 里还留着旧的 AAR 注入 ⇒ 会与自编译的类重复，删掉 gen/ 重新 init')
+  }
+  console.log('✅ 校验器源码与 Proguard 规则都在（--check）')
   process.exit(0)
 }
 
-if (injected) {
-  console.log('app/build.gradle.kts 已注入过，跳过（可重复执行）')
-} else {
-  writeFileSync(APP_GRADLE, current + gradleSnippet(found.maven, found.version), 'utf8')
-  console.log(`已追加仓库与依赖 → ${APP_GRADLE}`)
-}
+installKotlin()
 
 // Proguard 规则每次覆盖写：它是我们自己的文件，内容必须跟着这里走（别让手工改动留在 gen 里）
 writeFileSync(PRO_FILE, PROGUARD, 'utf8')
