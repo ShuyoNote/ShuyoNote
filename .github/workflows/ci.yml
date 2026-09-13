@@ -14,8 +14,14 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    # `feat/android-mobile` 也要跑：Android 的高风险改动（签名/打包/权限清单）全落在那条分支上，
+    # 而此前这里只有 main/dev ⇒ **改动最危险的分支恰恰没有任何真实 CI 覆盖**。后果是实测过的：
+    # ci.yml 曾整个文件编译不过（run 值以 `:` 结尾），在这种"无 CI 分支"上 49 次 push 全红却
+    # 没人察觉，因为那条分支上"红"已经成了常态。代价是每次 push 多跑一轮完整 CI（约 5 分钟）。
+    branches: [main, dev, feat/android-mobile]
   pull_request:
+    # 不加 `feat/android-mobile`：pull_request 的 branches 过滤的是**基线分支**，从该分支发出的 PR
+    # 目标是 main/dev，已被上面两行覆盖；把它列为基线只对"往这条临时分支开的 PR"生效，没有价值。
     branches: [main, dev]
   workflow_dispatch:
 

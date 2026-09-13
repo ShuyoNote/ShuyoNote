@@ -119,7 +119,7 @@ pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 
 ## 4. 测试与验证（权威循环）
 
-> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接，外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
+> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev`、以及 push 到 `feat/android-mobile` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
 >
 > 在此之前这些检查**只靠人记得跑**：`smoke-web`（350 断言）曾因一处无守卫的 `localStorage` 访问整套崩掉而长期无人察觉——没有自动化在跑它，谁都没看见它是红的。
 
