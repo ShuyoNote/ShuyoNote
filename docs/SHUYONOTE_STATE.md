@@ -67,7 +67,9 @@
 反向判据「测试钩子未启用（这是正式构建）」成立 ⇒ 发版包**确实不带测试钩子**。
 验证完 tag 与 Release **已删除**（Release/ref-by-tag 均 404，run 记录保留）。详见 `CHANGELOG.md`。
 - `pnpm run dev:desktop`（桌面开发，自建干净 PATH，见 `scripts/tauri-dev.mjs`）。
-- 发布：`git tag vX && git push origin vX && git push origin main` → `node scripts/release.mjs`。
+- 发布：`git tag vX && git push origin vX && git push github vX && git push origin main && git push github main`
+  → `node scripts/release.mjs`。（tag 与 main 都推**两个远端**：`github` 才触发 Actions 的三平台构建 /
+  发版件，`origin`=gitcode 是镜像与应用内「检查更新」通道；口径见 [RELEASING.md](RELEASING.md) ④）
 
 ## 6. 下一步候选（按需选一项继续）
 

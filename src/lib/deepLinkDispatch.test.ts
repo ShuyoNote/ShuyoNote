@@ -157,7 +157,7 @@ describe("测试钩子 —— 只在 VITE_TEST_HOOKS=1 的构建里生效（真�
     // 参数是**百分号编码**进来的，交给宿主的必须是解码后的原地址。
     expect(httpProbe).toHaveBeenCalledWith("https://community.shuyo.cn/");
     const msg = (d.notify as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    // toast 在手机上是单行截断的 ⇒ 内容必须放最前面，长度只留一个数字。
+    // toast 在手机上是**单行截断**的 ⇒ **先报长度**（`<n>B`），后面跟正文**截断的开头**（前 32 字），整页正文不贴到界面。
     expect(msg).toContain("5000B");
     expect(msg.startsWith("http-probe")).toBe(true);
     expect(msg.length).toBeLessThan(200);

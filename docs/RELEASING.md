@@ -25,7 +25,7 @@ pnpm run build        # check-versions + tsc + vite build
 git add -A
 git commit -m "release: X.Y.Z(版本号 bump + CHANGELOG)"
 git tag -a vX.Y.Z -m "ShuyoNote vX.Y.Z"
-git push origin main
+git push origin main && git push github main     # main 同样两个远端都推（Pages 部署在 GitHub 侧）
 git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端都推**，见下
 ```
 
