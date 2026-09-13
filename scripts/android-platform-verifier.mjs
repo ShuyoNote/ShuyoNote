@@ -28,8 +28,9 @@
 // 用法：node scripts/android-platform-verifier.mjs [--check]
 //   --check：只检查"该注入的是不是已经在了"，不写文件（给门禁用）。
 
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 
@@ -47,14 +48,12 @@ function fail(msg) {
 
 // ---------------------------------------------------------------- 找 crate 的 maven 目录
 
-/** `rustls-platform-verifier-android` 那个 crate 自带的 maven 目录（含 AAR）。 */
-function findMavenDir() {
-  const cargoHome = process.env.CARGO_HOME || join(homedir(), '.cargo')
-  const srcRoot = join(cargoHome, 'registry/src')
-  if (!existsSync(srcRoot)) {
-    fail(`找不到 ${srcRoot} —— 先跑一次 cargo fetch，crate 源码里才带着那份 AAR`)
-  }
+const CARGO_HOME = process.env.CARGO_HOME || join(homedir(), '.cargo')
 
+/** 扫 `registry/src`：cargo 编译时把 .crate 解包到这里。 */
+function scanRegistrySrc() {
+  const srcRoot = join(CARGO_HOME, 'registry/src')
+  if (!existsSync(srcRoot)) return null
   const found = []
   for (const registry of readdirSync(srcRoot)) {
     const dir = join(srcRoot, registry)
@@ -67,30 +66,89 @@ function findMavenDir() {
     for (const name of names) {
       if (!name.startsWith('rustls-platform-verifier-android-')) continue
       const maven = join(dir, name, 'maven')
-      if (existsSync(maven)) found.push({ crate: name, maven })
+      if (existsSync(maven)) found.push({ crate: name, maven, from: 'registry/src' })
     }
   }
-  if (!found.length) {
-    fail(
-      'cargo registry 里没有 rustls-platform-verifier-android —— ' +
-        '它由 rustls-platform-verifier 带进来，先跑 `cargo fetch --manifest-path src-tauri/Cargo.toml`',
-    )
-  }
+  if (!found.length) return null
   // 多个 registry 镜像里都有时，取 crate 版本最大的那个（数字序，别用字典序：0.10 > 0.9）
   found.sort((a, b) => a.crate.localeCompare(b.crate, undefined, { numeric: true }))
-  const picked = found[found.length - 1]
+  return found[found.length - 1]
+}
+
+/**
+ * CI 上第一次跑会走到这里，而且**第一次就是失败**（run #10 的教训）：
+ * `cargo fetch` 只把 `.crate` 放进 `registry/cache`，**解包到 `registry/src` 是编译时**才做的，
+ * 而我们的注入步骤排在 `tauri android build` **之前**（gradle 配置阶段就要读这个依赖）。
+ * 所以这里自己补两步：先 fetch，再把 `.crate` 解开（`.crate` 就是 gzip 的 tar，
+ * `tar` 在 Linux 与 Windows 10+ 都有；**不调 cargo build**——那需要 NDK，本机做不了）。
+ */
+function fetchAndExtract() {
+  const manifest = join(ROOT, 'src-tauri/Cargo.toml')
+  console.log('registry/src 里还没有 rustls-platform-verifier-android —— 先 cargo fetch')
+  try {
+    execFileSync('cargo', ['fetch', '--manifest-path', manifest, '--target', 'aarch64-linux-android'], {
+      stdio: 'inherit',
+    })
+  } catch (e) {
+    fail(`cargo fetch 失败（${e.message}）—— 这一步需要网络与 cargo 在 PATH 上`)
+  }
+
+  const again = scanRegistrySrc()
+  if (again) return again
+
+  const cacheRoot = join(CARGO_HOME, 'registry/cache')
+  const crates = []
+  for (const registry of existsSync(cacheRoot) ? readdirSync(cacheRoot) : []) {
+    for (const file of readdirSync(join(cacheRoot, registry))) {
+      if (file.startsWith('rustls-platform-verifier-android-') && file.endsWith('.crate')) {
+        crates.push(join(cacheRoot, registry, file))
+      }
+    }
+  }
+  if (!crates.length) fail(`${cacheRoot} 里没有它的 .crate —— cargo fetch 没拉到？`)
+  crates.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  const crate = crates[crates.length - 1]
+
+  const dest = join(ROOT, 'src-tauri/target/platform-verifier-crate')
+  mkdirSync(dest, { recursive: true })
+  console.log(`从 .crate 解开：${crate}`)
+  try {
+    execFileSync('tar', ['-xzf', crate, '-C', dest], { stdio: 'inherit' })
+  } catch (e) {
+    fail(`解包失败（${e.message}）—— .crate 是 gzip 的 tar，系统 tar 应该能处理`)
+  }
+  const dir = readdirSync(dest)
+    .map((n) => join(dest, n))
+    .find((p) => safeIsDir(p) && basename(p).startsWith('rustls-platform-verifier-android-'))
+  if (!dir) fail(`解包后没找到 crate 目录：${dest}`)
+  const maven = join(dir, 'maven')
+  if (!existsSync(maven)) fail(`解出来的 crate 里没有 maven 目录：${dir}`)
+  return { crate: basename(dir), maven, from: 'tar 解包' }
+}
+
+function safeIsDir(p) {
+  try {
+    return statSync(p).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** `rustls-platform-verifier-android` 那个 crate 自带的 maven 目录（含 AAR）。 */
+function findMavenDir() {
+  const picked = scanRegistrySrc() ?? fetchAndExtract()
 
   // maven 坐标的**版本号是组件自己的**（0.1.x），不是 Rust crate 的 0.7.x —— 别混。
   const groupDir = join(picked.maven, 'rustls/rustls-platform-verifier')
   if (!existsSync(groupDir)) fail(`${groupDir} 不存在（crate 布局变了？）`)
-  const versions = readdirSync(groupDir).filter((v) => statSync(join(groupDir, v)).isDirectory())
+  const versions = readdirSync(groupDir).filter((v) => safeIsDir(join(groupDir, v)))
   if (!versions.length) fail(`${groupDir} 下没有任何版本目录`)
   versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
   const version = versions[versions.length - 1]
   const aar = join(groupDir, version, `rustls-platform-verifier-${version}.aar`)
   if (!existsSync(aar)) fail(`找不到 AAR：${aar}`)
 
-  return { maven: picked.maven, version, aar, crate: picked.crate }
+  return { maven: picked.maven, version, aar, crate: picked.crate, from: picked.from }
 }
 
 // ---------------------------------------------------------------- 生成要追加的两段
@@ -135,7 +193,7 @@ if (!existsSync(APP_GRADLE)) {
 }
 
 const found = findMavenDir()
-console.log(`crate  : ${found.crate}`)
+console.log(`crate  : ${found.crate}（来自 ${found.from}）`)
 console.log(`maven  : ${found.maven}`)
 console.log(`artifact: rustls:rustls-platform-verifier:${found.version}`)
 console.log(`aar    : ${found.aar}`)
