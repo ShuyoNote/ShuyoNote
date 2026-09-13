@@ -426,13 +426,28 @@ for (const [key, a] of picks) {
 // ---- 平台覆盖检查：别把线上已有的平台键悄悄砍掉 ----
 // 少一个键 = 该平台用户从此收不到更新，而且没有任何报错。
 //
-// 可注入（**只为测试覆盖检查本身**）：`SHUYONOTE_PREV_MANIFEST_JSON=<文件路径>` 时读本地
-// 那份当"线上清单"，不发请求、不管 `--dry-run`。理由：覆盖检查拦的是"线上已有 android-aarch64、
-// 本次却没有"这类事故，而线上在 Android 通道上线前**本来就没有**这个键——那就没有任何真实
-// 输入能证明这条检查真的会拦（一条不会被触发的门禁等于没有）。给它一个注入点，才能用真脚本
-// 跑出"该红就红"。正常发布不要设它。
+// ⚠️ 下面这个环境变量是**仅测试注入**（test-only）：`SHUYONOTE_PREV_MANIFEST_JSON=<文件路径>` 时读本地
+// 那份当"线上清单"，不发请求、不管 `--dry-run`。**生产发布不要设置它**（设置了就等于把"线上真实状态"
+// 换成一份本地文件，覆盖检查会以那份文件为基准）。
+//
+// 理由（为什么需要这个注入点）：覆盖检查拦的是"线上已有 android-aarch64、本次却没有"这类事故，
+// 而线上在 Android 通道上线前**本来就没有**这个键——那就没有任何真实输入能证明这条检查真的会拦
+// （一条不会被触发的门禁等于没有）。给它一个注入点，才能用真脚本跑出"该红就红"。
+//
+// ⚠️ 它**不削弱**门禁：注入点只替换**比较基准**（输入数据），检查逻辑本身一个字都没改——
+// 下面照样走 `coverageProblems()`，该 `exit(1)` 还是 `exit(1)`（要放行只能显式写
+// `--allow-platform-drop`）。设置时会在下面打印一条醒目警告，日志里也留下用的是哪份文件、有哪几个键。
 const prevManifestUrl = `https://gitcode.com/${OWNER}/${REPO}/releases/download/latest/latest.json`;
+/** ⚠️ **仅测试注入**（test-only）：模拟"线上已有的平台键"，用来验证覆盖检查门禁真的会拦。
+ *  **生产发布不要设置**——真实发布必须让脚本自己去读线上 `latest.json`。 */
 const prevFixture = process.env.SHUYONOTE_PREV_MANIFEST_JSON ?? "";
+if (prevFixture) {
+  // 醒目警告：这条一旦被带进真实发布，覆盖检查的基准就不是线上真实状态了。
+  console.warn(
+    `[release] ⚠️ SHUYONOTE_PREV_MANIFEST_JSON 已设置（${prevFixture}）：` +
+      "本次只用于测试覆盖检查，不代表线上真实状态（生产发布不要设置）。",
+  );
+}
 let prevKeys = [];
 try {
   if (prevFixture) {
