@@ -56,6 +56,27 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 >   ⇒ 镜像与更新通道还停在旧版本、用户收不到新版。
 > 两条都不是"可有可无"：一个决定**能不能出包**，一个决定**用户能不能收到**。
 
+> **推 GitHub 推不上去时（本机实测过三次，2026-09-15）**：这台机器的 `github.com` DNS 会被污染成
+> `127.0.0.1`，所以：
+> 1. **首选 SSH over 443**（最稳，实测可用）：
+>    ```powershell
+>    git -c core.sshCommand="ssh -p 443 -o HostName=ssh.github.com -i C:/Users/cnzen/.ssh/id_ed25519_fengjt007 -o StrictHostKeyChecking=no -o BatchMode=yes" push github main
+>    ```
+>    （`~/.ssh/config` 里的 `Host github-fengjt` 把 `HostName` 指向了 `github.com`，所以要在这里
+>    **覆盖** `HostName=ssh.github.com`；key 就是那个别名用的同一把。`ssh -p 443 git@ssh.github.com`
+>    能通就说明这条路可用。）
+> 2. 备选：HTTPS + 钉住 IP（IP 会变，且可能**连接被重置**）：
+>    ```powershell
+>    git -c http.proxy= -c https.proxy= -c http.curloptResolve=github.com:443:140.82.114.3 push https://github.com/ShuyoNote/ShuyoNote.git main
+>    ```
+>    可用 IP 先用 `curl.exe -s -o NUL -w "%{http_code}" --resolve github.com:443:<ip> https://github.com/` 探一下
+>    （实测 `20.205.243.166` 与 `140.82.114.3` 会**轮流**不通）。
+> 3. `api.github.com` **不**受影响（DNS 正常），查 CI 状态/下载 artifact 用 `curl` 直接打 API 即可。
+
+> ⚠️ **别连着推**：`ci.yml` 有 `concurrency: cancel-in-progress: true`，每推一次就取消在跑的那一轮，
+> 而 Rust job 是最长的一棒 ⇒ 推得越勤，"CI 绿"这个信号越不会出现（Android 构建同理，且它更慢）。
+> 等一轮**跑完**再推下一轮；查状态时 **CI / Android (build) / Deploy Web 三个都要看**。
+
 ## ⑤ 平台构建
 
 ### 多平台（推荐：GitHub Actions）
