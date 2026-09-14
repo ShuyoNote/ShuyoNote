@@ -98,7 +98,7 @@ jobs:
           # 不通过就非零退出）——"跟着文档走第一步就卡住"是最伤的。
           node scripts/plugin-new.mjs ci-smoke-plugin /tmp/plugin-new-smoke
 
-      - name: 版本 / 命令契约 / 能力注册表 / 文档链接
+      - name: 版本 / CHANGELOG / 命令契约 / 能力注册表 / 文档链接
         # workflow YAML 门禁为什么放在**这一档**（而不是只留在 `pnpm build` 链里）：
         # 仓库里除本文件外的 workflow 都带 `paths:` 过滤（`android.yml` 只认它自己的文件与
         # 构建输入），所以"只改坏 `.github/workflows/` 下**别的**文件"时，一个 job 都不会被
@@ -112,6 +112,7 @@ jobs:
         # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
         run: |
           node scripts/check-versions.mjs
+          node scripts/check-changelog.mjs
           node scripts/check-web-commands.mjs
           node scripts/check-capabilities.mjs
           node scripts/check-doc-links.mjs
