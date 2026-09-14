@@ -1265,6 +1265,35 @@ node scripts/android-mobile-shell.mjs --device-check
 | 单测（`useMobile.test.ts`，+2 条） | `subscribeOverlayViewport` **两条查询都要订阅**、取消订阅两条都要摘。变异自证：把矮视口那条改成订阅窄屏查询 ⇒ 2 条变红。这条挡的是"只在挂载时判一次视口/只盯窄屏 ⇒ 竖屏转横屏不更新" |
 | 真机 | 打开 PDF：目录/批注栏**默认不出现**、页面图不出屏；点工具条的目录按钮 ⇒ 抽屉盖上来（宽度 ≈ 86vw）；返回键照旧关层不退出 |
 
+### 4.3.5 同一次装机里接着暴露的另外三处（都已修 + 真机复验）
+
+4.3.4 修完装机一看，**同一个组件还有三处**，全部是"手机上那个按钮根本点不到"这一类。
+按发现顺序记，因为它们的**判据不一样**——最后一处只有**真实 tap** 能验。
+
+| # | 症状（真机实测） | 根因 | 判据 |
+|---|---|---|---|
+| ① | 头部工具条内容 **730px** 宽，`scrollWidth 617 > clientWidth 360`：放大 / 还原窗口 / 显示批注侧栏 / 提问 / 护眼 / 导出带批注副本 / **关闭（x=686..730）**整排**在屏外**（外层 `.pdf-reader` 是 `overflow:hidden` ⇒ 点不到）；批注工具行 489px 同理 | 头部/工具行是"一行排到底"，没有窄屏形态 | CSS 级：`.pdf-reader-head` 必须 `flex-wrap: wrap` |
+| ② | 加了 `flex-wrap` **仍然溢出**（`scrollWidth` 617） | 头部里的 `.pdf-reader-controls` **自己就是 603px 宽的行** ⇒ 换行只发生在"直接子元素"这一级，内层不换行就等于没换 | CSS 级：内层 `.pdf-reader-controls` 也必须 `flex-wrap` |
+| ③ | 阅读器内部 **18 个按钮 < 44×44**（头部一排 28×28） | §4.1 那条"命中区 ≥44"当初没覆盖到阅读器内部 | CSS 级：`.pdf-reader-head button` 等必须 `min-*: 44px` |
+| ④ | **目录开关物理点不到**：开关中心在设备 **y=96**（状态栏带 0..123 之内），`adb shell input tap 108 96` **什么都没发生** | 阅读器浮层 `position:fixed; inset:0` 且不给 `--sat` 让位 ⇒ 头部第一行整体落在 §4.2.1 那条"归 SystemUI"的触摸死区里 | **真实 tap**：修后点设备 (108,219) ⇒ `.pdf-outline-col` 出现在 DOM 里；同一手法点「关闭」⇒ 浮层消失且应用仍在前台 |
+
+修后真机复验（`tmp/fixture/pdfhead2.js` / `pdflayout2.js`）：
+
+```
+headButtonCount 12 · offscreen [] · smallCount 0 · closeVisible true · scrollWidth 360 == clientWidth 360
+outlineInDom false · sidebarInDom false · 页面图 x=12 w=328（right 340 ≤ 360）
+物理点 (108,219) ⇒ outlineInDom true        物理点 (972,819) ⇒ depth 1 → 0、应用仍在前台
+```
+
+**两条教训**（比修法更值得记）：
+
+1. **"加了 wrap" ≠ "不溢出了"**：CSS 级断言只能挡住"规则被删掉"，几何是否真的不溢出必须量
+   `getBoundingClientRect`。②就是"断言绿、真机仍溢出"的典型——断言查的是"有没有 wrap"，
+   而真机查的是"每个按钮的 right 是否 ≤ 视口宽"。
+2. **门禁自己的白名单也会假红**：那 8 条 PDF 断言的候选规则收集原先带一个"只收这些选择器"
+   的白名单，连着漏了 `.pdf-reader-head`、`.pdf-reader-controls`、`.pdf-reader-overlay`
+   ⇒ 三次都是"断言找不到规则 ⇒ 假红"。现在**全收**，筛选放到断言里。
+
 ## 5. iOS 环境结论（2026-09，仍然有效）
 
 **Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当时的 Mac 上
