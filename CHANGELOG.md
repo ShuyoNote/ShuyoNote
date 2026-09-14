@@ -4,6 +4,86 @@
 
 ## [Unreleased]
 
+> 「移动端弹窗/浮层适配」这一轮：窄屏下**修掉三个把功能直接弄坏、而且都不报错**的缺陷，
+> 并把 19 层浮层的窄屏形态一次做齐（底部弹层 / 全屏 + 内部滚动）。
+> **真机验收仍未做**，见本节末尾的"仍未做"。
+
+### 新增
+
+- **窄屏（≤768px）浮层/弹窗统一适配：19 层全部四边在视口内、能关能滚、命中区够大**。
+  现象是"弹窗在小屏上不适配"，但其中**三处不是难看、是功能不可用**：
+
+  1. **设置面板的 `min-width:640px` 压过 `max-width`**：390px 视口上面板被顶成 640px 宽、
+     右边缘越界 274px（360px 上 304px），**「关闭设置」直接不在视口里——面板关不上**。
+     公式编辑器的 `min-width:460px` 同理（溢出 35~50px）。
+  2. **浮层坐标没按包含块折算**：窄屏收起的左侧竖条用 `transform: translateX(-100%)`，
+     `transform` 会**建立包含块**，于是它（宽 48px、在 x=−48）成了搜索/回收站浮层
+     （`position:fixed`）的包含块——代码里算好的 `left:8` 实际落在 **−40px**，浮层左边被切 48px。
+     对照实验：注入 `transform:none` 后回到 8。
+  3. **全仓没有任何滚动锁**：搜索面板打开时手指拖背景能把正文拖走 323px。而且**真正滚动的是
+     `.note-scroll`**（`.app{overflow:hidden}` 把整页钉死）⇒ **锁 `body` 无效**。
+     同步面板另有第三处：桌面上它是 `overflow:hidden` + 内部几段各自滚动，「保存」在 360px 上
+     位于屏外 **121px** 且**滚不到**。
+
+  根因是**一类**而不是一个（所以不逐个组件打补丁）：
+
+  - `min-width` 压过 `max-width`（`.set-dialog` 那条）；
+  - 浮层坐标未按**包含块**折算（`transform` 建块那条）；
+  - 全仓没有滚动锁，且"该锁谁"搞错了（锁 `body` 无效，真正滚的是 `.note-scroll`）；
+  - `env(safe-area-inset-*)` 与 `viewport-fit=cover` **全缺**（不写 `viewport-fit=cover`
+    时 `env()` 一律返回 0，安全区 CSS 全白写），刘海/底部指示条区域会贴边或被系统手势条压住；
+  - 命中区普遍 **<44×44**，触屏下点不中。
+
+  修法（姿态是"一处生效优先"，不逐个组件抄样式）：
+
+  - `src/App.css` **末尾**新增 `@media (max-width: 768px)`。**必须放末尾**：`.plugin-panel`
+    的窄屏 `width:100%` 写在 18973 行，而它的基础规则在 19285 行，**特异性相同、后写的赢**，
+    于是 390px 下只剩 `min(420px, 100vw−64px)=326px`。不靠 `!important`、不堆特异性，
+    只靠"放在最后"这一条纪律。段内统一：小对话框 → **底部弹层**、大面板 → **全屏 + 内部滚动**，
+    一律 `min-width:0`、高度用 **`dvh` 而不是 `vh`**（`vh` 是地址栏收起后的高度，地址栏一露面
+    底部操作栏就被推出屏）、内容区唯一可滚 + `overscroll-behavior:contain`、操作栏吸底 +
+    `env(safe-area-inset-*)`、命中区 ≥44×44；并把散落的 **720 / 760 收敛到 768**
+    （与 `src/hooks/useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 同一个数）。
+  - 新增 `src/hooks/useOverlayScrollLock.ts`：锁 **`.note-scroll`（不是 body）**、
+    **引用计数**（叠层时最后关的那个才解锁）、保留并恢复 `scrollTop`，并用 `MutationObserver`
+    盯住 `.note-scroll` 被重建的情况补锁——第一版只在打开那一刻查一次，验收脚本跑到第 10 层时
+    抓到"那一刻它还没挂上来，于是一个都没锁"。
+  - `usePopover`：坐标改为**相对包含块**折算；打开期间监听 `resize` / `visualViewport.resize`
+    重算（软键盘、旋转、拖分隔条都会触发）；窄屏返回空坐标并带 `is-sheet` 走底部弹层。
+    同时把竖条收起从 `transform` 换成 `left: -48px`（`left` 不建立包含块），**从源头**掐掉这类坑。
+  - `index.html`：viewport 补 `viewport-fit=cover` 与 `interactive-widget=resizes-content`
+    （后者让软键盘不盖住操作栏）。
+
+  证据：新增 `scripts/verify-mobile-overlays.mjs`（真实 Chromium，**3 视口 × 19 层**
+  = 两档手机 360×640 / 390×844 + 一档桌面，**371 条断言 / 0 失败**）。**自证能失败**：
+  5 个变异测试（把修好的逐个改回坏的样子）**全部被判红**，其中两处**精确复现**了盘点里的数字——
+  加回 `min-width:640px` → 13 红；去掉滚动锁 → 40 红；去掉 `.plugin-panel` 窄屏宽度 → 2 红
+  （复现 **326px**）；竖条改回 `transform` → 10 红（复现 `x −48..−1`）；设置分类栏不改横条 → 2 红。
+  既有门禁一并全绿：43 条布局断言（`verify-mobile-layout`）、**607 条单测**、smoke-web 350 条，
+  以及 check-changelog / check-versions / check-doc-links / check-workflow-yaml / check-web-commands /
+  check-capabilities / check-deep-link / check-ocr-assets / check-ps1-ascii / check-panel-layout(25/0) /
+  check-pdf-reload(4/0)——全部 exit 0；CI 三个 job 全 success。
+  规则落到文档：[MOBILE.md](docs/MOBILE.md) 新增「窄屏浮层/弹窗硬约束」一节（照做即可）。
+
+  **仍未做（如实记）**：**真机验收未做**（手机不在本轮环境里），要看的是软键盘遮挡、
+  Android 返回键关层、安全区实际留白、横屏、`overscroll-behavior` 手感、触屏实际命中率；
+  另有一处**入口问题**留待评估——同步面板在窄屏的入口较隐蔽（顶栏的 `.titlebar-sync`
+  在 ≤768px 被 `display:none` 隐藏，只能从侧栏抽屉里的 SyncPanel 进）。
+
+### 修复
+
+- **`check-changelog` 门禁不再要求 `[Unreleased]` 段为空**（2026-09-14）。首版门禁把
+  "`[Unreleased]` 必须为空"写成了硬约束，这是**误读 Keep a Changelog**——`[Unreleased]` 的用途
+  **就是攒尚未发布的改动**，要求它为空等于"改动做完了却没处记账"（上面那条移动端适配就卡在这条上、
+  一度记不进来）。现在**只放开"有没有内容"**：仍要求它存在、唯一、在第一位、段头不带日期，
+  且**非空时**其 `###` 小标题走与"基线之后的新版本"**同一套**允许集合
+  （新增/变更/修复/移除/安全/废弃/其它）与唯一性，段内结构检查（围栏成对、无 ≥3 连续空行、
+  无空 `- ` 条目、标题前空行）一条没少。改口径已用**样本外挂 `%TEMP%`** 验过 9 例（样本不入库）：
+  空 ⇒ 通过；非空且小标题合规 ⇒ 通过；非空但用了 `### 优化` ⇒ 判红；缺 `[Unreleased]` ⇒ 判红；
+  `[Unreleased]` 不在首位 ⇒ 判红；外加段内"标题前缺空行 / 空 `- ` 条目 / 重复小标题 /
+  连续 3 行空行"四个结构回归 ⇒ 逐个判红。同步订正了脚本注释与
+  [RELEASING.md](docs/RELEASING.md) ⑧ 里对该门禁"能挡/挡不住"的描述。
+
 ## [1.90.2] - 2026-09-14
 
 > 这一版是 **Android 的「能用了」**：手机上一直连不上的 HTTPS（Let's Encrypt 证书吊销检查）、

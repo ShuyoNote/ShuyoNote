@@ -686,6 +686,99 @@ cd src-tauri\gen\android      # 先 `pnpm tauri android init --ci` 生成它
 `useMobile` 进入窄屏时收起侧栏**但不写 localStorage**——那是屏幕尺寸导致的布局状态，
 不该覆盖桌面端的侧栏偏好（手机上开过一次、桌面端下次启动侧栏就是收起的，这个 bug 真实发生过）。
 
+## 4.1 窄屏浮层 / 弹窗硬约束（新增浮层时照做 · 2026-09-14 落地）
+
+> 背景：19 层浮层在窄屏上**有三处是把功能弄坏、而且都不报错**的——设置面板 `min-width:640px`
+> 压过 `max-width` ⇒ 「关闭设置」跑到视口外、**面板关不上**；浮层坐标没按**包含块**折算 ⇒
+> 左侧被切 48px；全仓**没有滚动锁** ⇒ 浮层开着还能把正文拖走 323px。
+> 这三个是**一类**问题（`min-width` vs `max-width` / 定位上下文 / 滚动归属），
+> 所以规则写在下面，不逐个组件打补丁。
+
+### 4.1.1 形态：按"多大"选，不按"像不像弹窗"选
+
+| 形态 | 用在哪 | 关键点 |
+|---|---|---|
+| **底部弹层** | 小对话框、小选择器（确认/输入/快捷键/关于/图标/题头图…） | 贴底、顶部两角圆角、`max-height: calc(100dvh − 24px − env(safe-area-inset-bottom))` |
+| **全屏 + 内部滚动** | 大面板（设置/插件管理/命令面板/存储/`plugin-panel`…） | 占满视口、**只有内容区一个元素可滚** |
+
+- **断点唯一 `768`**：CSS 是 `src/App.css` **末尾**那段 `@media (max-width: 768px)`，
+  JS 是 `src/hooks/useMobile.ts` 的 `MOBILE_BREAKPOINT_PX`——**必须是同一个数**。
+  JS 说"这是手机"而 CSS 说"这是桌面"会同时废掉两边的分支。
+  > ⚠️ 那段 CSS **必须留在文件末尾**：`.plugin-panel` 的窄屏 `width:100%` 曾写在 18973 行，
+  > 而基础规则在 19285 行——**特异性相同、后写的赢**，于是 390px 下面板只剩 326px。
+  > 解决办法是"放在最后"这一条纪律，**不是 `!important`、也不是堆特异性**。
+- 盒子上**一律 `min-width: 0`**：`min-width` 会压过 `max-width`，这是三处功能损坏里最隐蔽的一处。
+- 高度用 **`dvh` 而不是 `vh`**：`vh` 是"地址栏收起后"的高度，地址栏一露面底部操作栏就被推出屏。
+
+### 4.1.2 四条硬约束
+
+1. **内容区唯一可滚，并加 `overscroll-behavior: contain`**。
+   否则要么内容高过盒子被裁掉**且滚不到**（同步面板的「保存」在 360px 上跑到屏外 121px、
+   被 `overflow:hidden` 裁掉，就是这样），要么滚动链穿透到背景。
+   列向 flex 里要让"该滚的那个"真的滚，还得给它 `min-height: 0`——自动最小高度是内容高度时它不滚。
+2. **操作栏吸底 + `env(safe-area-inset-bottom)`**。
+   吸底用 `position: sticky; bottom: 0`，并在同一个元素上叠加
+   `padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px))`，否则被系统手势条压住。
+   > ⚠️ `env(safe-area-inset-*)` 生效的前提是 `index.html` 的 viewport 里有
+   > **`viewport-fit=cover`**——不写它，`env()` **一律返回 0**，所有安全区 CSS 全白写（都是"静默失效"）。
+   > 同一个 viewport 里还有 `interactive-widget=resizes-content`，让软键盘不盖住操作栏。
+3. **命中区 ≥ 44×44**（触屏）。主要操作按钮与关闭类按钮上 `min-height: 44px` / `min-width: 44px`。
+   签收口径就是 `scripts/verify-mobile-overlays.mjs` 里那条断言。
+4. **打开时必须锁 `.note-scroll`——不是 `body`**。
+   理由：这套布局里滚动条**根本不在 body 上**——`.app { overflow: hidden }` 把整页钉死，
+   真正滚的是内容区 `.note-scroll`。所以 `document.body.style.overflow = "hidden"`
+   在这里**一点作用都没有**，是安慰剂。
+   别自己写：用 **`src/hooks/useOverlayScrollLock.ts`**（`useOverlayScrollLock(open)`），它已经处理了
+   三件容易漏的事：**多浮层叠着时按计数解锁**（关掉上面一层不能把锁提前解掉）、
+   **保留并恢复 `scrollTop`**、**用 `MutationObserver` 盯住 `.note-scroll` 被重建时补锁**
+   （只在"打开那一刻查一次"不够：那一刻它可能还没挂上，于是一个元素都没锁）。
+
+### 4.1.3 锚定浮层：`usePopover` 的两个坑
+
+用 `src/hooks/usePopover.ts` 的浮层（搜索/回收站/同步/备份菜单…）注意：
+
+- **坐标要相对包含块折算**。祖先上只要有 `transform` / `filter` / `will-change`，
+  它就成了 `position: fixed` 的**包含块**，`left: 8` 会落在别处（实测落在 −40px）。
+  所以窄屏收起的竖条用 **`left: -48px` 而不是 `transform: translateX(-100%)`**——
+  `left` 不建立包含块，**从源头**掐掉这类坑。
+- **打开期间要重算**：监听 `resize`、`orientationchange` 与 **`visualViewport` 的 `resize`/`scroll`**
+  （软键盘弹出、旋转、拖分隔条都会改可视区）。
+- 窄屏下 `usePopover` 返回**空坐标**并带 `isSheet`，由 CSS 走底部弹层（不再锚定触发按钮）。
+
+### 4.1.4 加了一层浮层之后：**必须**把它加进验收清单
+
+`scripts/verify-mobile-overlays.mjs` 里有一个层清单（`OVERLAYS` 数组），
+它是这套规则的**唯一执行点**——新浮层不登记，就等于没人验过。跑法与加法：
+
+```bash
+pnpm dev:web                  # 另开一个终端，脚本要连真实 Chromium
+pnpm test:mobile-overlays     # 有失败即非零退出
+```
+
+在 `OVERLAYS` 里加一行：
+
+```js
+{ id: "myDialog", label: "我的对话框", root: ".my-overlay", box: ".my-dialog", sheet: true },
+```
+
+- `root` 是**遮罩层**元素、`box` 是**那个盒子**（断言量的是盒子的四边）。
+- `sheet: true` 表示窄屏是底部弹层（若它还靠 `is-sheet` 类切样式，再加 `sheetClass: true`）。
+- 需要在**已打开的页面**或更深一层的入口才能取到触发器的，标 `optional: true`——
+  取不到时会记一条 note 并跳过（**不算通过也不算失败**，属"未验证项"，要写进报告）。
+- 打开动作写在脚本的 `openOverlay(which)` 的 `switch` 里，**走应用自己的 store**
+  （与界面同一条路），不要往 DOM 里塞假节点。
+
+跑到一层就断言：四边都在视口内、无横向溢出、被裁内容必须在可滚容器里、主要操作按钮够得到、
+`.note-scroll` 被锁且**触摸拖 300px 后 `scrollTop` 变化 ≤4px**、关闭类按钮 ≥44×44、
+`.plugin-panel` 在 768 下占满宽、**桌面仍是锚定浮层**（防窄屏规则把桌面也改成弹层）。
+
+> 规则改了要**自证能失败**：把修好的逐个改回坏的样子，看断言是否变红
+> （2026-09-14 的 5 个变异测试全部被判红，其中两处精确复现了盘点里的 −48/−40 与 326px）。
+> 只有能红的门禁才算门禁。
+
+相关：[RELEASING.md](RELEASING.md) ⑧（CHANGELOG 结构门禁）与 ①（`[Unreleased]` 的用法）。
+脚本清单见 [development.md](development.md) 的"测试与验证"一节。
+
 ## 5. iOS 环境结论（2026-09，仍然有效）
 
 **Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当时的 Mac 上
