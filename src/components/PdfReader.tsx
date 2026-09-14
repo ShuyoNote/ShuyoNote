@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useAiStore } from "../store/ai";
 import { canvasToPngBlob, type createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
@@ -271,6 +272,7 @@ function PdfContinuousPage({
  */
 export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
+  useOverlayScrollLock(open);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState<ZoomMode>({ mode: "fit-width" });
   const [maximized, setMaximized] = useState(true);

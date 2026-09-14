@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { platform, isDesktopPlatform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { viewPlacement } from "../lib/pluginViews";
 import { pluginMenuHosted, pluginMenuTitle } from "../lib/capabilities/menus.meta";
 import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
@@ -24,6 +25,7 @@ export function PluginManager() {
     settingsFor, settings, openSettings, closeSettings, saveSetting,
     approve,
   } = usePlugins();
+  useOverlayScrollLock(managerOpen);
 
   useEffect(() => {
     if (managerOpen) load();

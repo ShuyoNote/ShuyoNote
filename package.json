@@ -31,6 +31,7 @@
     "test:sync-verify": "node scripts/verify-two-device-sync.mjs",
     "test:sync-collab": "node scripts/sync-collab-regression.mjs",
     "test:mobile-layout": "node scripts/verify-mobile-layout.mjs",
+    "test:mobile-overlays": "node scripts/verify-mobile-overlays.mjs",
     "check:web-build": "node scripts/check-web-build.mjs",
     "check:panel-layout": "node scripts/check-panel-layout.mjs",
     "check:pdf-reload": "node scripts/check-pdf-reload.mjs",

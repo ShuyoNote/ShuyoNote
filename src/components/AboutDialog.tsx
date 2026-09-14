@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditorStore } from "../store/editor";
 import { platform, isMobileUserAgent } from "../lib/platform";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import {
   APP_NAME,
   APP_VERSION,
@@ -20,6 +21,7 @@ import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
 // external navigation. Reuses the shortcuts-overlay modal pattern.
 export function AboutDialog() {
   const open = useEditorStore((s) => s.aboutOpen);
+  useOverlayScrollLock(open);
   const close = useEditorStore((s) => s.closeAbout);
   const [allowExternal, setAllow] = useState(true);
   const [checking, setChecking] = useState(false);

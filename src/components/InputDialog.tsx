@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useInputStore } from "../store/input";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 // In-app text-input dialog, centered in the app window (reuses the confirm-box
 // visual language). Enter submits, Escape cancels.
@@ -7,6 +8,7 @@ export function InputDialog() {
   const options = useInputStore((s) => s.options);
   const close = useInputStore((s) => s.close);
   const inputRef = useRef<HTMLInputElement>(null);
+  useOverlayScrollLock(!!options);
 
   useEffect(() => {
     if (options) {

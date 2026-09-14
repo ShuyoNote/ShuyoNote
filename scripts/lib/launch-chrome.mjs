@@ -32,11 +32,28 @@ export function findChrome() {
         "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
         "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
         "chrome-linux64/chrome",
+        "chrome-win64/chrome.exe",
       ]) {
         const p = join(cache, ver, rel);
         if (existsSync(p)) return p;
       }
     }
+  }
+  // Windows 路径：此前只找 macOS/Linux，于是这些"真实浏览器验收"脚本在
+  // Windows 上一律以"找不到 Chrome"退出——而本仓库的开发机正是 Windows
+  //（发版脚本的 `zip` 那次事故也是同一个盲区）。Edge 是 Chromium，puppeteer-core
+  // 驱动它没有区别，所以放在 Chrome 之后当兜底。
+  const pf = process.env.ProgramFiles || "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA || "";
+  for (const p of [
+    join(pf, "Google\\Chrome\\Application\\chrome.exe"),
+    join(pf86, "Google\\Chrome\\Application\\chrome.exe"),
+    ...(local ? [join(local, "Google\\Chrome\\Application\\chrome.exe")] : []),
+    join(pf, "Microsoft\\Edge\\Application\\msedge.exe"),
+    join(pf86, "Microsoft\\Edge\\Application\\msedge.exe"),
+  ]) {
+    if (existsSync(p)) return p;
   }
   for (const p of [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

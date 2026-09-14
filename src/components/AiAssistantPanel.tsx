@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAiStore } from "../store/ai";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useRightPanel } from "../store/rightPanel";
 import { useNotes } from "../store/notes";
 import { SparkleIcon, SettingsIcon, SendIcon } from "./icons";
@@ -43,6 +44,7 @@ export function AiAssistantPanel() {
     resetError,
   } = useAiStore();
   const open = useRightPanel((s) => s.ai);
+  useOverlayScrollLock(open);
   const setOpen = useRightPanel((s) => s.openAi);
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);

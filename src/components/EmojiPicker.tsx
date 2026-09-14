@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EMOJI_GROUPS } from "../lib/emojis";
 import { useIconPicker } from "../store/iconPicker";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 const RECENT_KEY = "shuyo:icon-recent";
 const RECENT_MAX = 24;
@@ -25,6 +26,7 @@ function saveRecent(list: string[]) {
 // recent + emoji grid, styled like the reference Notion picker.
 export function EmojiPicker() {
   const { open, onPick, close } = useIconPicker();
+  useOverlayScrollLock(open);
   const [tab, setTab] = useState("face");
   const [query, setQuery] = useState("");
   const [recent, setRecent] = useState<string[]>([]);

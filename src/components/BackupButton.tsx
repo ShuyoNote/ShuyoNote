@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
@@ -20,7 +21,8 @@ type BackupProgress = {
 // 供设置中心「数据」页使用——同一份备份/恢复逻辑，两种外壳，不复制实现。
 export function BackupButton({ label }: { label?: string } = {}) {
   const { loadPages } = useNotes();
-  const { open: openMenu, pos, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
+  const { open: openMenu, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
+  useOverlayScrollLock(openMenu);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
   const [prog, setProg] = useState<BackupProgress | null>(null);
@@ -122,7 +124,7 @@ export function BackupButton({ label }: { label?: string } = {}) {
         {label ?? <DownloadIcon />}
       </button>
       {openMenu && (
-        <div ref={contentRef} className="backup-dropdown" style={{ top: pos.top, left: pos.left }}>
+        <div ref={contentRef} className={`backup-dropdown${isSheet ? " is-sheet" : ""}`} style={{ top: pos.top, left: pos.left }}>
           <button
             onClick={() => {
               close();

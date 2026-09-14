@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
@@ -1534,6 +1535,8 @@ function AboutPane() {
 export function SettingsDialog() {
   const { t } = useTranslation();
   const open = useEditorStore((s) => s.settingsOpen);
+  // 设置面板打开时锁住内容区滚动（锁 `.note-scroll`，不是 body）。
+  useOverlayScrollLock(open);
   const tab = useEditorStore((s) => s.settingsTab);
   const setTab = useEditorStore((s) => s.setSettingsTab);
   const close = useEditorStore((s) => s.closeSettings);

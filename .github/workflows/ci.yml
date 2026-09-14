@@ -155,6 +155,17 @@ jobs:
       - name: 布局验收
         run: node scripts/verify-mobile-layout.mjs
 
+      # 浮层/弹窗验收：接着上面那条跑，同一个 dev server。
+      # 挡的是三类"功能直接不可用、而且都不报错"的坏法：
+      #   · `.set-dialog{min-width:640px}` 压过 `max-width` ⇒ 设置面板**关不上**；
+      #   · 窄屏收起的竖条带 `transform`、成了 `position:fixed` 浮层的包含块 ⇒
+      #     算好的 `left:8` 落在 -40px；
+      #   · 没有滚动锁 ⇒ 浮层打开时手指拖背景把正文拖走（锁 body 无效，
+      #     真正滚的是 `.note-scroll`）。
+      # 视口两档（360x640 / 390x844）+ 一档桌面：后者防"窄屏规则把桌面也改成弹层"。
+      - name: 浮层 / 弹窗验收
+        run: node scripts/verify-mobile-overlays.mjs
+
       - name: 失败时输出 dev server 日志
         if: failure()
         run: cat /tmp/webdev.log || true

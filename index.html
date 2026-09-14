@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：iPhone 的刘海/底部指示条区域默认是**不可绘制**的，
+         不写它，`.env(safe-area-inset-*)` 一律返回 0，底部操作栏就会被 Home
+         Indicator 压住。interactive-widget=resizes-content：软键盘弹出时
+         按"压缩视口"而不是"覆盖内容"处理，底部弹层的操作栏才不会被键盘盖住。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="theme-color" content="#3370ff" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost attachment: http://attachment.localhost https: http:; media-src 'self' data: blob: asset: http://asset.localhost attachment: http://attachment.localhost; connect-src 'self' http: https: blob:; font-src 'self' data: https://esm.sh; object-src 'none'; base-uri 'none'; frame-src 'self' blob: asset: http://asset.localhost attachment: http://attachment.localhost; worker-src 'self' blob: 'unsafe-eval' 'wasm-unsafe-eval';" />
     <link rel="manifest" href="manifest.webmanifest" />

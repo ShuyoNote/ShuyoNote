@@ -9,6 +9,7 @@ import type { ProviderConfig } from "../lib/ai/llm";
 import { recognizeFormulaImage, fileToDataUrl } from "../lib/ai/formulaVision";
 import { tryConsume } from "../lib/ai/gate";
 import { FormulaHandwritePad } from "./FormulaHandwritePad";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 type Sym = { sym: string; latex: string };
 
@@ -96,6 +97,7 @@ const CATEGORIES: { label: string; tabSym: string; items: Sym[] }[] = [
 
 export function FormulaEditorDialog() {
   const { open, initial, original, anchor, livePreview, onCommit, close } = useFormulaEditorStore();
+  useOverlayScrollLock(open);
   const [latex, setLatex] = useState("");
   const [openCat, setOpenCat] = useState<number | null>(null);
   const [catAnchor, setCatAnchor] = useState<{ left: number; top: number } | null>(null);

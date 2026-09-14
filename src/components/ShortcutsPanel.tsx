@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useEditorStore } from "../store/editor";
 import { shortcutGroups, shortcutSearch, type Shortcut } from "../lib/shortcuts";
 
@@ -8,6 +9,7 @@ import { shortcutGroups, shortcutSearch, type Shortcut } from "../lib/shortcuts"
 // source of truth in `src/lib/shortcuts.ts`.
 export function ShortcutsPanel() {
   const open = useEditorStore((s) => s.shortcutsOpen);
+  useOverlayScrollLock(open);
   const close = useEditorStore((s) => s.closeShortcuts);
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);

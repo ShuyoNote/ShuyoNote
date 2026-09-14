@@ -21,11 +21,13 @@ import { useCommunitySave } from "../store/communitySave";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import { sanitizeExternalUrl } from "../lib/links";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 type Phase = "input" | "loading" | "preview" | "stored";
 
 export function CommunitySaveDialog() {
   const open = useCommunitySave((s) => s.open);
+  useOverlayScrollLock(open);
   const pendingLink = useCommunitySave((s) => s.pendingLink);
   const close = useCommunitySave((s) => s.close);
 

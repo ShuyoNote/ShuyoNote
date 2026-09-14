@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { api, type SyncProfile } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
@@ -75,10 +76,11 @@ interface EditRow {
 export function SyncPanel() {
   const { loadPages } = useNotes();
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
-  const { open, pos, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>({
+  const { open, pos, isSheet, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>({
     width: 452,
     minSpace: 420,
   });
+  useOverlayScrollLock(open);
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
   const authEmail = useAuth((s) => s.email);
@@ -476,7 +478,7 @@ export function SyncPanel() {
       {open && (
         <div
           ref={contentRef}
-          className="sync-popover is-sync"
+          className={`sync-popover is-sync${isSheet ? " is-sheet" : ""}`}
           style={{ top: pos.top, left: pos.left }}
           role="dialog"
           aria-label="同步设置"

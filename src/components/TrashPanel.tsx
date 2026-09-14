@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
@@ -37,7 +38,9 @@ function ItemIcon({ kind }: { kind: string }) {
 
 export function TrashPanel() {
   const { loadPages } = useNotes();
-  const { open, pos, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>();
+  const { open, pos, isSheet, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>();
+  // 与搜索浮层同根因（都在竖条里、都是 `position:fixed`），滚动锁一并挂上。
+  useOverlayScrollLock(open);
   const [items, setItems] = useState<PageMeta[]>([]);
 
   const load = () => {
@@ -148,7 +151,7 @@ export function TrashPanel() {
         {items.length > 0 && <span className="trash-badge">{items.length > 99 ? "99+" : items.length}</span>}
       </button>
       {open && (
-        <div ref={contentRef} className="trash-popover" style={{ top: pos.top, left: pos.left, bottom: pos.bottom }}>
+        <div ref={contentRef} className={`trash-popover${isSheet ? " is-sheet" : ""}`} style={{ top: pos.top, left: pos.left, bottom: pos.bottom }}>
           <div className="trash-head">
             <span className="trash-head-title">回收站</span>
             <span className="trash-count">{items.length ? `${items.length} 项` : ""}</span>

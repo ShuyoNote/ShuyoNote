@@ -4,9 +4,11 @@ import { useState } from "react";
 import { useRightPanel } from "../store/rightPanel";
 import { CommentsPanel } from "./CommentsPanel";
 import { NotificationCenter } from "./NotificationCenter";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 export function CommentsDrawer() {
   const open = useRightPanel((s) => s.comments);
+  useOverlayScrollLock(open);
   const setOpen = useRightPanel((s) => s.openComments);
   const [tab, setTab] = useState<"comments" | "notifications">("comments");
 

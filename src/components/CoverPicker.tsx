@@ -5,6 +5,7 @@ import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { CoverCrop } from "./CoverCrop";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 // Read a file's bytes (via its asset URL) into a source image data-URI for cropping.
 async function fileToCoverDataUrl(src: string): Promise<string | null> {
@@ -39,6 +40,8 @@ async function fileToCoverDataUrl(src: string): Promise<string | null> {
 export function CoverPicker({ onClose, onPick, current }: { onClose: () => void; onPick: (css: string) => void; current?: string }) {
   const [custom, setCustom] = useState("");
   const [uploading, setUploading] = useState(false);
+  // 这个组件只在「选择题头图」时被挂载（父级条件渲染），所以这里恒为真。
+  useOverlayScrollLock();
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
