@@ -115,6 +115,19 @@ fn android_apk_file_name(sha256_hex: &str) -> String {
     format!("ShuyoNote-android-{}.apk", &sha256_hex[..8.min(sha256_hex.len())])
 }
 
+/// `sha2` 的 `finalize()` 给的是 `GenericArray`，**没有** `LowerHex` 实现
+/// （CI 上就是这么红的：`the trait bound Array<u8, …>: LowerHex is not satisfied`），
+/// 所以自己按字节转十六进制。
+fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        // 写进 String 不会失败；真失败了也没别的办法，忽略即可。
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
 #[derive(Clone, Serialize)]
 struct AndroidUpdateProgress {
     done: u64,
@@ -138,7 +151,9 @@ pub async fn download_android_update(
     url: String,
     sha256: String,
 ) -> Result<String, String> {
-    use tauri::Emitter;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    use tauri::{Emitter, Manager}; // Manager 提供 `app.path()`
 
     if !url.starts_with("https://") {
         return Err("更新地址必须是 https".to_string());
@@ -155,10 +170,9 @@ pub async fn download_android_update(
 
     // 已经有同一指纹的包（上次装到一半/装失败）⇒ 不重下。
     if let Ok(existing) = std::fs::read(&dest) {
-        use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         h.update(&existing);
-        if format!("{:x}", h.finalize()) == expect {
+        if hex_of(&h.finalize()) == expect {
             return Ok(dest.to_string_lossy().into_owned());
         }
     }
@@ -174,8 +188,6 @@ pub async fn download_android_update(
     }
     let total = resp.content_length().unwrap_or(0);
 
-    use sha2::{Digest, Sha256};
-    use std::io::Write;
     let tmp = dir.join(format!("{}.part", android_apk_file_name(&expect)));
     let mut out = std::fs::File::create(&tmp).map_err(|e| format!("建临时文件失败：{e}"))?;
     let mut hasher = Sha256::new();
@@ -196,7 +208,7 @@ pub async fn download_android_update(
     out.flush().map_err(|e| format!("写入失败：{e}"))?;
     drop(out);
 
-    let got = format!("{:x}", hasher.finalize());
+    let got = hex_of(&hasher.finalize());
     if got != expect {
         let _ = std::fs::remove_file(&tmp);
         return Err(format!("更新包校验不通过（期望 {expect}，实际 {got}）——已丢弃，请重试或前往发布页手动下载"));
