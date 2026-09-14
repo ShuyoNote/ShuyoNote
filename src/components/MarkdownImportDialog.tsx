@@ -8,12 +8,18 @@ import { mdToHtml } from "../editor/mdToHtml";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 // Modal dialog for importing Markdown: paste or pick a file, then convert into
 // the current page (replacing its content).
 export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
   const editor = useEditorStore((s) => s.editor);
   const [text, setText] = useState("");
+  // 父级只在需要时挂载这个组件，所以这里恒为真。
+  useOverlayScrollLock();
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("markdownImport", true, onClose);
 
   const importFromFile = async () => {
     try {

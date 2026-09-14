@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useNotes } from "../store/notes";
 import { usePlugins } from "../store/plugins";
 import { runPluginCommandWithUi } from "../lib/pluginRun";
@@ -69,6 +71,10 @@ export function CommandPalette() {
   const { pages, currentId, openPage } = useNotes();
   // 开关与查询词在 store 里：编辑器 `/` 菜单要把「带参数的命令」转交到这里的参数表单。
   const { open, setOpen, query, setQuery } = usePalette();
+  // 命令面板打开时锁住内容区滚动（锁 `.note-scroll`，不是 body）。
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("palette", open, () => usePalette.getState().setOpen(false));
   const [result, setResult] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

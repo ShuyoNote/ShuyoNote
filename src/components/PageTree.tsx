@@ -617,6 +617,7 @@ export function PageTree(_props: {
   const {
     open: newMenuOpen,
     pos: newMenuPos,
+    isSheet: newMenuIsSheet,
     triggerRef: newMenuRef,
     contentRef: newMenuContentRef,
     toggle: toggleNewMenu,
@@ -954,7 +955,7 @@ export function PageTree(_props: {
         {spaceChooser.open && (
           <div
             ref={spaceChooser.contentRef}
-            className="space-switcher"
+            className={`space-switcher${spaceChooser.isSheet ? " is-sheet" : ""}`}
             style={{ top: spaceChooser.pos.top, left: spaceChooser.pos.left }}
             role="dialog"
             aria-label="工作空间"
@@ -1089,7 +1090,7 @@ export function PageTree(_props: {
               <span className="btn-new-label">{t("common.new")}</span>
             </button>
             {newMenuOpen && (
-              <div ref={newMenuContentRef} className="new-menu-dropdown" style={{ top: newMenuPos.top, left: newMenuPos.left }}>
+              <div ref={newMenuContentRef} className={`new-menu-dropdown${newMenuIsSheet ? " is-sheet" : ""}`} style={{ top: newMenuPos.top, left: newMenuPos.left }}>
                 <div className="new-menu-title">新建</div>
                 <button
                   className="new-menu-item"

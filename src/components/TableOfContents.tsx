@@ -3,6 +3,8 @@ import { $getNodeByKey, $getRoot, $isElementNode, type LexicalEditor, type Lexic
 import { $isHeadingNode } from "@lexical/rich-text";
 import { useEditorStore } from "../store/editor";
 import { useRightPanel } from "../store/rightPanel";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 // Page table of contents: lists the page's heading outline (h1–h6, indented by
 // level) in a right-hand toggle panel. Clicking an entry scrolls to the heading
@@ -38,6 +40,9 @@ export function TableOfContents() {
   const editor = useEditorStore((s) => s.editor);
   const [items, setItems] = useState<TocItem[]>([]);
   const open = useRightPanel((s) => s.toc);
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("toc", open, () => useRightPanel.getState().openToc(false));
   const setOpen = useRightPanel((s) => s.openToc);
   const [active, setActive] = useState<string | null>(null);
 

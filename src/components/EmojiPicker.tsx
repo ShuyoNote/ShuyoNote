@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { EMOJI_GROUPS } from "../lib/emojis";
 import { useIconPicker } from "../store/iconPicker";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 const RECENT_KEY = "shuyo:icon-recent";
 const RECENT_MAX = 24;
@@ -25,6 +27,9 @@ function saveRecent(list: string[]) {
 // recent + emoji grid, styled like the reference Notion picker.
 export function EmojiPicker() {
   const { open, onPick, close } = useIconPicker();
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("emojiPicker", open, () => useIconPicker.getState().close());
   const [tab, setTab] = useState("face");
   const [query, setQuery] = useState("");
   const [recent, setRecent] = useState<string[]>([]);

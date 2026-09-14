@@ -23,7 +23,7 @@ import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { dirname, extname, join, normalize, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -86,7 +86,12 @@ const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><tit
 
 const MIME = { ".mjs": "text/javascript; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".pdf": "application/pdf", ".json": "application/json" };
 const server = createServer((req, res) => {
-  const path = normalize(decodeURIComponent((req.url ?? "/").split("?")[0]));
+  // ⚠️ 必须用 `posix.normalize`：URL 路径永远是 POSIX 形式，而 Windows 上的
+  // `path.normalize` 会把 `/` 翻成 `\`——于是 `path === "/"`、`rel.startsWith("pdfjs-dist/")`
+  // 这类比较**全部失效**，最后落到 `join(tmp, "\\")` = 目录本身，`readFileSync` 抛 EISDIR。
+  // 这条只在 Windows 上暴露；此前这些脚本在本机以"找不到 Chrome"退出（exit 2），
+  // 所以一直没跑到这里。
+  const path = posix.normalize(decodeURIComponent((req.url ?? "/").split("?")[0]));
   const send = (body, type) => {
     res.writeHead(200, { "content-type": type, "content-length": body.length });
     res.end(body);

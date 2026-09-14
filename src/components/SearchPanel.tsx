@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
@@ -36,10 +38,14 @@ function Highlighted({ text }: { text: string }) {
 export function SearchPanel() {
   const { openPage, setSearchQuery } = useNotes();
   // 面板比默认弹层宽，把真实尺寸告诉 usePopover，靠边打开才不会被裁切。
-  const { open, pos, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
+  const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 468,
     minSpace: 420,
   });
+  // 搜索面板打开时锁住内容区滚动：实测（390x844 触屏）手指拖背景能把正文拖走 323px。
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("search", open, () => close());
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -153,7 +159,7 @@ export function SearchPanel() {
       {open && (
         <div
           ref={contentRef}
-          className="search-popover"
+          className={`search-popover${isSheet ? " is-sheet" : ""}`}
           style={{ top: pos.top, left: pos.left }}
           role="dialog"
           aria-label="搜索笔记"

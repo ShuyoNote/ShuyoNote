@@ -5,6 +5,8 @@ import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { DatabaseIcon } from "./icons";
 import type { StorageStats } from "../types";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 function fmt(bytes: number): string {
   if (!bytes) return "0 B";
@@ -39,6 +41,9 @@ interface Segment {
 // `label` 同 BackupButton：空=侧栏小图标；有值=设置中心「数据」页的文字按钮。
 export function StoragePanel({ label }: { label?: string } = {}) {
   const [open, setOpen] = useState(false);
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("storage", open, () => setOpen(false));
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [busy, setBusy] = useState(false);
   const [persist, setPersist] = useState<PersistInfo | null>(null);

@@ -219,6 +219,31 @@ jobs:
         # 顺带写 Proguard 规则：release 开了 R8，而这些类只被 JNI 按名字用，不 keep 会被删。
         run: pnpm android:platform-verifier
 
+      - name: 注入 Android 壳适配层（窗口 inset 桥 + 返回键）
+        # 为什么需要（2026-09-15 真机实测，Mate 40 / Android 12 / 密度 3.0）：
+        #   ① 顶部 41 CSS px 是**触摸死区**：状态栏属于 SystemUI 自己的窗口，应用在那一带
+        #      收不到触摸（`input tap` 打 y≤123 时 0 个 DOM 事件，y=130 时 100+ 个），
+        #      而 targetSdk=36 ⇒ Android 15 起对 SDK≥35 **强制** edge-to-edge，去掉
+        #      `enableEdgeToEdge()` 在 15+ 上退不回去 ⇒ 只能真的消费窗口 inset。
+        #      而且 **Android 上 env(safe-area-inset-*) 恒为 0**（它取自物理刘海，不是
+        #      系统状态栏），实测四个方向都是 0px ⇒ CSS 里写了也没用。
+        #   ② 软键盘遮挡底部弹层：edge-to-edge 下系统的 `adjustResize` **是空转的**，
+        #      实测键盘弹起后 innerHeight 与 visualViewport.height 都不变 ⇒ web 层
+        #      根本察觉不到键盘，键盘高度也只能走同一条 inset 桥（Type.ime()）。
+        #   ③ 返回键直接退出应用：`TauriActivity` 关掉了 wry 的回调
+        #      （handleBackNavigation = false），Tauri 的 AppPlugin 在"没有 back-button
+        #      监听者"时走 finish()。上游的 back-button 逃生口也救不了"退出"这一步——
+        #      `plugin:app|exit` 不在 core:app 的权限清单里（有 allow-register-listener，
+        #      **没有** allow-exit），ACL 会直接拒 ⇒ 只能由壳层退。
+        #      注入的回调先问页面的浮层栈（关掉最上层），栈空才放行退出。
+        # 为什么是这一步之后：同样是改 gen/（`MainActivity.kt` 是生成物，不入库）。
+        run: pnpm android:mobile-shell
+
+      - name: 自检：壳适配层确实注入了
+        # 与 platform-verifier 的 `--check` 同理：这类回归**只有真机看得见**，
+        # 所以拦在构建期（缺 inset 桥 ⇒ 顶部又变触摸死区；缺返回键回调 ⇒ 返回键退出应用）。
+        run: pnpm check:android-mobile-shell
+
       - name: Build APK (arm64, unsigned)
         run: pnpm tauri android build --target aarch64 --apk --ci
 

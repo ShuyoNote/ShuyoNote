@@ -162,6 +162,38 @@
   box-sizing: border-box;
 }
 
+/* ---------------------------------------------------------------------------
+ * 系统 inset / 软键盘 → CSS 变量（2026-09-15）
+ *
+ * 为什么不能直接用 `env(safe-area-inset-*)`：**在 Android 上它恒为 0**。
+ * WebView 的 safe-area inset 取自**屏幕物理刘海（display cutout）**，不是系统状态栏。
+ * 真机实测（Mate 40 / Android 12，密度 3.0）：`dumpsys` 里状态栏 inset 是 123 设备 px
+ * = **41 CSS px**，而四个方向的 `env()` 全是 **0px**。于是在 edge-to-edge 下
+ * （App 的 `targetSdk = 36`，Android 15 起对 SDK≥35 的 App **强制** edge-to-edge，
+ * 去掉 `enableEdgeToEdge()` 也退不回去）没有任何东西把内容让开状态栏：
+ * 标题压住系统时间，而且**顶部那 41px 是触摸死区**（状态栏属于 SystemUI 的窗口，
+ * 应用在那一带收不到任何触摸事件）。
+ *
+ * 所以壳层把真实 inset 送进来，写在这四个变量上（`src/lib/viewportInsets.ts`）：
+ *   · 有壳层报送（Android）⇒ `--sat/--sab/--sal/--sar/--kb` 是真实值；
+ *   · 没有（iOS / 浏览器）⇒ 保持下面 `env()` 的兜底值，行为与改动前**完全一致**。
+ *
+ * `--kb` 是**键盘额外盖住、而视口还没缩掉的那部分高度**（软键盘高度减去视口已缩量，
+ * 不许重复计算——见 `viewportInsets.ts` 的 `keyboardExtra()`）。
+ * `--ovh` 是**浮层可用的可视高度**：全程扣掉状态栏与底部（手势条 / 键盘取大者）。
+ * 全屏面板用它当高度，底部弹层用它当 `max-height` + 用 `bottom` 让开键盘。
+ * ------------------------------------------------------------------------- */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  /* 软键盘真正额外盖住的高度；无壳层报送时恒为 0。 */
+  --kb: 0px;
+  /* 浮层可用高度（扣掉状态栏 + 底部手势条/键盘）。 */
+  --ovh: calc(100dvh - var(--sat) - max(var(--sab), var(--kb)));
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -214,6 +246,14 @@ body,
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  /* 状态栏 / 手势条 / 软键盘都从外壳上让开（`box-sizing: border-box`，
+     所以 padding 会真的把内容区压小，而不是把它顶出屏幕）。
+     这是"顶部 41px 触摸死区"的正面修法：**不把可交互的 UI 放进去**——
+     那一带属于 SystemUI 的窗口，应用永远收不到那里的触摸。 */
+  padding-top: var(--sat);
+  padding-right: var(--sar);
+  padding-bottom: max(var(--sab), var(--kb));
+  padding-left: var(--sal);
 }
 /* 顶部横幅之下的主体区：sidebar + main 横向排列 */
 .app-body {
@@ -12413,7 +12453,8 @@ p:has(> .editor-drawing-container) {
 .plugin-empty .set-btn {
   align-self: flex-start;
 }
-@media (max-width: 720px) {
+/* 断点从 720 收敛到 768（与 useMobile.ts 同一个数）。 */
+@media (max-width: 768px) {
   .plugin-grid { grid-template-columns: 1fr; }
 }
 
@@ -15832,7 +15873,9 @@ p:has(> .editor-drawing-container) {
   min-height: 0;
 }
 /* 窄窗口/对话框时两列退单列，避免被挤/漏空。 */
-@media (max-width: 760px) {
+/* 断点从 760 收敛到 768：与 useMobile.ts 的 MOBILE_BREAKPOINT_PX 同一个数，
+   否则 761~768px 之间 JS 按手机算、CSS 按桌面算。 */
+@media (max-width: 768px) {
   .ai-settings-cols {
     grid-template-columns: 1fr;
   }
@@ -18923,20 +18966,24 @@ p:has(> .editor-drawing-container) {
     width: 100%;
   }
   /* 左侧竖条改为**浮层**：常驻 48px 在 390px 视口上吃掉 12%，窄屏太奢侈。
-     收起后竖条脱离 flex 流，主区直接拿到全宽；展开时浮在内容之上。 */
+     收起后竖条脱离 flex 流，主区直接拿到全宽；展开时浮在内容之上。
+     ⚠️ 收起用 `left` 而不是 `transform: translateX(-100%)`：竖条是搜索/回收站
+     浮层（`position: fixed`）的祖先，而**带 transform 的祖先会成为包含块**，
+     于是浮层里算出来的 `left: 8` 实际落在 **-40px**（实测，浮层左侧被切掉 48px）。
+     `left` 不建立包含块，从源头上没有这个坑；48px 的位移用 left 过渡同样顺滑。 */
   .activity-bar {
     position: fixed;
     top: 0;
-    left: 0;
+    left: -48px;
     bottom: 0;
     z-index: 62;
     width: 48px;
-    transform: translateX(-100%);
-    transition: transform var(--transition-fast) ease;
+    transform: none;
+    transition: left var(--transition-fast) ease;
     box-shadow: var(--shadow-xl);
   }
   .activity-bar.is-open {
-    transform: translateX(0);
+    left: 0;
   }
   /* 唤出按钮：左下角，拇指够得到；展开时它自己不显示（改由遮罩收起）。 */
   .mobile-rail-toggle {
@@ -20015,3 +20062,516 @@ body.is-plugin-panel-open .main {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ===========================================================================
+ * 窄屏浮层 / 弹窗适配（<=768px）· 2026-09-14
+ * ===========================================================================
+ * ⚠️ 本块**必须留在文件末尾**。
+ *   `.plugin-panel` 已经吃过一次亏：原有的 `@media (max-width:768px){width:100%}`
+ *   写在 18973 行，而它的基础规则在 19285 行——特异性相同，**后写的赢**，
+ *   于是 390px 视口上面板只有 `min(420px, 100vw-64px) = 326px`（实测）。
+ *   所以这里不靠 `!important`、也不靠堆特异性，只靠"放在最后"这一条纪律。
+ *
+ * 断点 768px 与 `src/hooks/useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 是**同一个数**
+ *   ——JS 说"这是手机"而 CSS 说"这是桌面"会同时废掉两边的分支。散落在别处的
+ *   720 / 760 已一并收敛到 768。
+ *
+ * 两条硬约束（都有断言钉着，见 scripts/verify-mobile-overlays.mjs）：
+ *   1. **`min-width` 会压过 `max-width`**：`.set-dialog{min-width:640px}` 在 390px
+ *      视口上把面板顶成 640px 宽，右边缘越界 274px（360px 视口越界 304px），
+ *      「关闭设置」直接不在视口里——这是**功能不可用**，不是不好看。
+ *      窄屏下这些盒子一律 `min-width: 0`。
+ *   2. **高度用 `dvh` 而不是 `vh`**：移动浏览器里 `vh` 是"地址栏收起后"的高度，
+ *      地址栏一露出来，底部那条操作栏就被推出屏幕。`dvh` 跟着可视高度变。
+ *
+ * 分工：小对话框 / 小选择器 → 底部弹层（本块第 3 节）；
+ *       大面板 → 全屏 + 内部滚动（第 4 节）。
+ *
+ * ⚠️ **断点是"窄**或**矮"，不是只有窄**（2026-09-15 补）：
+ *   `@media (max-width: 768px), (max-height: 520px)`。
+ *   只按宽度判会在**横屏手机**上漏掉一整类问题：792×360 走宽屏分支 ⇒
+ *   `.set-dialog` 用桌面样式（`min-width:640px` / `min-height:420px`）⇒
+ *   **min-height 压过 max-height**，实测 y=24 / h=420 / bottom=**444**，
+ *   **底部 84px 被裁在屏外**（同一类坑，只是从宽度轴换到了高度轴）。
+ *   520px 这个数与 `src/hooks/useMobile.ts` 的 `SHORT_VIEWPORT_MAX_PX` **必须是同一个数**
+ *   （JS 侧管 `usePopover` 的 `isSheet`），`verify-mobile-overlays.mjs` 会同时量两边。
+ * =========================================================================== */
+@media (max-width: 768px), (max-height: 520px) {
+  /* ---------- 1. 总根因：min-width 压过 max-width（**高度轴同理**） ----------
+     第二条根因此前只修了一半：上一轮把 `min-width:640px` 清零了，但
+     `min-height:420px` 原样留着——而 `min-*` 压 `max-*` 与轴无关。
+     现在两条轴一起清，并给每个盒子一个"绝不超过可视区"的封顶。 */
+  .set-dialog,
+  .formula-editor,
+  .pdf-ocr-popover,
+  .fm-version-pop,
+  .plugin-manager,
+  .palette,
+  .space-switcher,
+  .search-popover,
+  .sync-popover,
+  .trash-popover,
+  .backup-dropdown,
+  .new-menu-dropdown,
+  .shortcuts,
+  .about,
+  .emoji-picker,
+  .cover-picker,
+  .markdown-import,
+  .ai-settings,
+  .plugin-view,
+  .confirm-box,
+  .community-save-box,
+  .tag-picker {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    /* `--ovh` 已经扣掉状态栏与底部（手势条 / 键盘）：盒子在任何视口下都装得下。 */
+    max-height: calc(var(--ovh) - 24px);
+  }
+
+  /* ---------- 2. 内容区：唯一可滚 + 不把滚动惯性传给外层 ---------- */
+  .note-scroll {
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---------- 2b. 浮层化的外壳 chrome：`position: fixed` ⇒ 必须自己让位 ----------
+     窄屏把左侧竖条改成了 `position: fixed` 的浮层（`top:0; bottom:0; left:-48px`），
+     而 **fixed 定位不跟着 `.app` 的 padding 走**——它相对的是视口。
+     于是竖条展开（`left:0`）时，它的按钮仍从视口 y=8 开始 ⇒ **整条落在状态栏的
+     触摸死区里**（真机上就是"看得见、点不到"）。验收脚本正是靠
+     "`--sat=41px` 时不许有可交互元素在 41 之下"把它抓出来的。
+     唤出按钮同理：它是 `bottom: 18px`，键盘弹起时要抬到键盘之上。 */
+  .activity-bar {
+    top: var(--sat);
+    bottom: max(var(--sab), var(--kb));
+  }
+  /* 窄屏侧栏是 `position: fixed` 的抽屉 —— 同理，它也不跟着 `.app` 的 padding 走。
+     验收脚本抓到的是它的 `.sidebar-title` 停在 y=14（状态栏死区里）。 */
+  .sidebar {
+    top: var(--sat);
+    bottom: max(var(--sab), var(--kb));
+  }
+  .mobile-rail-toggle {
+    bottom: calc(18px + max(var(--sab), var(--kb)));
+  }
+
+  /* ---------- 3. 小对话框 / 小选择器 → 底部弹层 ----------
+     形态：遮罩只负责"靠底 + 留安全区"，盒子本身贴底、两边满宽。
+     为什么统一成弹层而不是继续居中：手机上拇指够不到屏幕上半部，
+     而这些浮层全都只有一两个决定要做（确定 / 取消 / 选一个）。
+
+     ⚠️ 底部让开的是 **`max(--sab, --kb)`**：有软键盘时键盘比手势条高得多，
+     只让 `--sab` 的话输入框正好被键盘盖住（真机实测：键盘盖住 CSS y≥468，
+     而弹层钉在 `bottom:0`）。`--kb` 由壳层把 IME 的窗口 inset 送进来——
+     **不能指望 `visualViewport`**：`enableEdgeToEdge()` 之下系统不为 IME 缩窗口，
+     实测 `innerHeight` 与 `visualViewport.height` 键盘弹起前后**都不变**
+     （`interactive-widget=resizes-content` 在这套 WebView 上同样不生效）。 */
+  .confirm-overlay,
+  .emoji-picker-overlay,
+  .cover-overlay,
+  .shortcuts-overlay,
+  .markdown-import-overlay,
+  .community-save-overlay,
+  .fm-version-overlay,
+  .ai-settings-overlay,
+  .plugin-view-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    /* 先重置四个方向（.ai-settings-overlay 原先有 padding-top:10vh、
+       .plugin-manager-overlay 有 padding:4vh 24px），再加安全区。 */
+    padding: 12px;
+    padding-top: calc(12px + var(--sat));
+    padding-bottom: calc(12px + max(var(--sab), var(--kb)));
+    padding-left: calc(12px + var(--sal));
+    padding-right: calc(12px + var(--sar));
+  }
+
+  .confirm-box,
+  .emoji-picker,
+  .cover-picker,
+  .shortcuts,
+  .about,
+  .markdown-import,
+  .community-save-box,
+  .ai-settings,
+  .fm-version-pop,
+  .plugin-view,
+  .tag-picker.tag-picker-modal {
+    position: static;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    /* 顶部留 24px：让用户看得见"后面还有内容"。`--ovh` 里已经扣掉了状态栏
+       与底部（手势条 / 键盘），所以这里只需要那个 24px 的呼吸位。 */
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px var(--radius-lg) var(--radius-lg);
+  }
+
+  /* `.ai-settings` 桌面是对齐黄金比例的横矩形；弹层里让高度跟内容走。 */
+  .ai-settings {
+    aspect-ratio: auto;
+  }
+  /* 这几个盒子桌面上是 `overflow:hidden` + 内部另行滚动；窄屏统一由盒子自己滚，
+     否则内容一高就被裁掉且**滚不到**（`.sync-popover` 的「保存」就是这样
+     在 360px 上跑到屏外 121px 的）。 */
+  .emoji-picker,
+  .markdown-import,
+  .plugin-view,
+  .tag-picker.tag-picker-modal {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  /* `.ep-main{flex:1}` 没有 `min-height:0`：在列向 flex 里它的自动最小高度就是
+     内容高度，于是"该滚的那个"不滚、外层 `overflow:hidden` 直接裁。
+     图标选择器在 390px 下 119 个图标里有一大半点不到，就是这条。 */
+  .emoji-picker .ep-main {
+    min-height: 0;
+  }
+  /* `minmax(360px, 1fr)` 在 342px 的容器里会撑出横向溢出（360 > 342）。 */
+  .plugin-manager .pm-list,
+  .plugin-manager .pm-index-list {
+    grid-template-columns: 1fr;
+  }
+  .plugin-manager .pm-body,
+  .plugin-manager .pm-head {
+    padding-left: 13px;
+    padding-right: 13px;
+  }
+
+  /* ---------- 4. 大面板 → 全屏 + 内部滚动 ----------
+     设置 / 存储 / 插件管理 / 目录 / AI / 评论 / 插件面板都是"要待一会儿"的面板，
+     底部弹层放不下，一律整屏，只有内部内容区滚动。
+
+     让开系统区域的方式是**给遮罩加 padding**（而不是给盒子加 `padding-top`）：
+     遮罩是 `position:fixed; inset:0`，加 padding 之后 `place-items:stretch`
+     的子项拿到的就是"已经让开状态栏/手势条/键盘"的那块区域，
+     盒子只要 `height:100%` 就正好填满它——一处改动同时管住四个方向和键盘。 */
+  .set-overlay,
+  .stg-overlay,
+  .plugin-manager-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+    place-items: stretch;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .set-dialog,
+  .stg-panel,
+  .plugin-manager {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    border: none;
+    /* 桌面上的 `resize: both` 在手机上没有意义，而且会把 min-width 一起带回来。 */
+    resize: none;
+  }
+  /* 设置：竖排分类栏改成顶部横向条（竖排 224px 在 390px 视口里占掉 57%）。 */
+  .set-dialog {
+    flex-direction: column;
+  }
+  /* ⚠️ 列向 flex 里"该滚的那个"必须能被压缩：`.set-body{flex:1}` 但**没有**
+     `min-height:0`，它的自动最小高度就是内容高度 ⇒ 面板一矮就不缩、也不滚，
+     外层 `.set-dialog{overflow:hidden}` 直接裁。实测 792×360（矮视口）下面板被裁 142px。
+     这条就是 §4.1.2 第 1 条那句"列向 flex 要让该滚的真的滚，还得给它 min-height:0"
+     ——规则早就写了，只是 `.set-body` 这一处漏了。 */
+  .set-body,
+  .set-body-scroll {
+    min-height: 0;
+  }
+  .set-rail {
+    flex: none;
+    width: 100%;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 4px;
+    padding: 6px 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .set-rail-title,
+  .set-rail-hint {
+    display: none;
+  }
+  .set-rail-item {
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    min-height: 44px;
+  }
+  .set-body-scroll {
+    padding: 16px 14px;
+    padding-bottom: 28px;
+    overscroll-behavior-y: contain;
+  }
+  .set-body-inner {
+    max-width: 100%;
+  }
+  .pm-body,
+  .stg-body {
+    overscroll-behavior-y: contain;
+    padding-bottom: 20px;
+  }
+
+  /* 右侧抽屉（AI / 评论 / 插件面板 / 目录）：窄屏整屏叠加。
+     `.plugin-panel` 必须在这里再写一遍 `width:100%`——它在文件里的位置比
+     18973 行那条窄屏规则**更靠后**，那条规则实际上从来没生效过。
+
+     `top` / `bottom` 也在这里改：它们原本是 `top: var(--titlebar-h)` + `bottom: 0`，
+     在 edge-to-edge 下会钻进状态栏（顶部内容点不到）与手势条。 */
+  .ai-panel,
+  .comments-drawer,
+  .toc-panel,
+  .plugin-panel {
+    width: 100%;
+    max-width: 100%;
+    left: 0;
+    right: 0;
+    top: var(--sat);
+    bottom: max(var(--sab), var(--kb));
+  }
+  /* 目录原先窄屏还是 300px 抽屉，在 390px 上占 77%、360px 上占 83%，
+     等于"开了个看不全正文的抽屉"。整屏 + 底部安全区。
+     ⚠️ `transform: none` 必须挂在 `.open` 上：基础规则用
+     `translateX(100%)` 表示"收起在屏外"，无条件清零会让**关着的目录也显示出来**。 */
+  .toc-panel.open {
+    transform: none;
+  }
+  .toc-list {
+    margin: 8px;
+    padding-bottom: 8px;
+    overscroll-behavior-y: contain;
+  }
+  .plugin-panel {
+    box-shadow: none;
+    border-left: none;
+  }
+
+  /* 命令面板：整宽 + 顶部对齐，列表只纵向滚（横向溢出 46~73px 是坐标/宽度算错，
+     不是"内容真的更宽"）。 */
+  .palette-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+    padding-top: calc(24px + var(--sat));
+    align-items: flex-start;
+  }
+  .palette {
+    /* 列向 flex：`.palette-input` 固定、`.palette-list` 自己滚。
+       写成"整个盒子定高 + overflow:hidden"是**错的**——base 的 `.palette-list{max-height:340px}`
+       会大于盒子能给的余量，多出来的部分被盒子裁掉且**永远滚不到**
+       （验收实测：360px 视口下 `.palette` 被裁 86px）。 */
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+  .palette-list {
+    /* `--ovh` 里已经扣掉状态栏与底部，再减掉遮罩的 24px 呼吸位。
+       ⚠️ `min-height: 0` 不能省：列向 flex 的自动最小高度是**内容高度**，
+       不写它这个列表就不缩、也不滚，只能被外层裁掉。 */
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+  }
+  .palette-item {
+    min-width: 0;
+  }
+  .palette-item .palette-title,
+  .palette-item .palette-desc {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 公式编辑器：`min-width:460px` 在 390px 上溢出 35~50px，且 `resize:both`
+     会把它再放大。窄屏整屏、内部滚动。 */
+  .formula-editor-overlay {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+  }
+  .formula-editor {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    border: none;
+    resize: none;
+  }
+
+  /* OCR 结果浮层：内容可以很长（实测 1470px），而 `.pdf-ocr-pop-body` 是
+     `overflow:hidden`——不改成可滚就是"看得见上半截、下半截永远够不到"。 */
+  .pdf-ocr-popover {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    transform: none;
+    width: auto;
+    height: auto;
+    max-height: calc(var(--ovh) - 24px);
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    resize: none;
+  }
+  .pdf-ocr-pop-body {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  /* 同步面板：桌面上是 `overflow:hidden` + 内部几段各自滚动，内容一高
+     「保存」就被裁在视口外且滚不到（360px 上实测跑出 121px）。
+     窄屏改成"整个弹层滚、操作栏吸底"。 */
+  .sync-popover,
+  .sync-popover.is-sync {
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: calc(var(--ovh) - 24px);
+    overscroll-behavior-y: contain;
+  }
+  .sync-popover.is-sync .sync-profiles {
+    overflow: visible;
+    flex: none;
+  }
+  .sync-popover.is-sync .sync-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding-bottom: 12px;
+  }
+
+  /* usePopover 在窄屏/矮视口返回空坐标并带上 `is-sheet`（见 hooks/usePopover.ts）：
+     这几个浮层不再锚定触发按钮，而是贴底成弹层。
+     `bottom` 让开的是 `max(--sab, --kb)`：软键盘比手势条高得多，弹层要抬到键盘之上，
+     否则输入框正好被键盘盖住（真机实测键盘盖住 CSS y≥468 而弹层钉在 bottom:0）。 */
+  .search-popover,
+  .trash-popover,
+  .sync-popover,
+  .backup-dropdown,
+  .space-switcher,
+  .new-menu-dropdown {
+    position: fixed;
+    inset: auto 0 0 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 14px;
+    z-index: 1600;
+  }
+  /* ⚠️ `.sync-popover.is-sync`（0,2,0）比 `.sync-popover`（0,1,0）特异性高，
+     所以那一条必须**逐条重复带 `.is-sync` 的选择器**，否则宽/高/overflow 会被它压回去——
+     实测症状正是"同步面板高 616px、底边跑到屏外 66px、「保存」点不到"。 */
+  .sync-popover.is-sync {
+    position: fixed;
+    inset: auto 0 0 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-width: 100%;
+    max-height: calc(var(--ovh) - 24px);
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    padding-bottom: 14px;
+    z-index: 1600;
+  }
+  /* 内部本来就有滚动条的，别叠两层滚动。 */
+  .search-popover .search-results,
+  .trash-popover .trash-list,
+  .space-switcher .space-switcher-list {
+    overflow-y: visible;
+    max-height: none;
+  }
+
+  /* ---------- 5. 命中区 >= 44x44 ----------
+     触屏没有 hover，也没有鼠标的精细定位：小于 44px 的目标在手机上
+     基本等于"点不中"。图标选择器实测 119/119 全是 38x34。 */
+  .mobile-rail-toggle {
+    width: 44px;
+    height: 44px;
+  }
+  .set-close,
+  .community-save-close,
+  .fm-version-close,
+  .plugin-view-close,
+  .pdf-ocr-pop-close,
+  .plugin-manager .pm-close,
+  .tag-picker-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* 弹层里的按钮统一给够高度（宽度不动：一排小按钮变宽会换行得很难看）。 */
+  .confirm-box button,
+  .community-save-box button,
+  .markdown-import button,
+  .shortcuts button,
+  .about button,
+  .ai-settings button,
+  .fm-version-pop button,
+  .plugin-view button,
+  .emoji-picker .ep-grid button,
+  .cover-picker button,
+  .search-popover button,
+  .trash-popover button,
+  .sync-popover button,
+  .palette button,
+  .set-dialog button,
+  .plugin-manager button,
+  .tag-picker button {
+    min-height: 44px;
+  }
+  /* 关闭类按钮必须**两个方向**都够 44：它们只有图形/一个 ×，
+     宽度不够等于点不中。这里用"类名里带 close"一条覆盖所有浮层，
+     比逐个列举 `.set-close / .pm-close / …` 更不容易漏（漏一个就是一处点不中）。 */
+  button[class*="close"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* 图标类按钮（只有图形、没有文字）宽度也要够。 */
+  .emoji-picker .ep-grid button,
+  .emoji-picker .ep-side-btn,
+  .emoji-picker .ep-search-btn,
+  .plugin-manager .pm-close,
+  .shortcuts button,
+  .about button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* 图标格子本身也要跟着放大到 44，否则按钮溢出 40px 的轨道 ⇒ 横向滚动条。 */
+  .emoji-picker .ep-grid {
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  }
+  /* 侧板 / 全屏面板里的按钮同理：触屏点不中就是点不中，跟它属于哪一层无关。 */
+  .ai-panel button,
+  .comments-drawer button,
+  .toc-panel button,
+  .formula-editor button,
+  .emoji-picker button {
+    min-height: 44px;
+  }
+}
+

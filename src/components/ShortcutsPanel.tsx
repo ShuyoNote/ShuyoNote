@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useEditorStore } from "../store/editor";
 import { shortcutGroups, shortcutSearch, type Shortcut } from "../lib/shortcuts";
 
@@ -8,6 +10,9 @@ import { shortcutGroups, shortcutSearch, type Shortcut } from "../lib/shortcuts"
 // source of truth in `src/lib/shortcuts.ts`.
 export function ShortcutsPanel() {
   const open = useEditorStore((s) => s.shortcutsOpen);
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("shortcuts", open, () => useEditorStore.getState().closeShortcuts());
   const close = useEditorStore((s) => s.closeShortcuts);
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);

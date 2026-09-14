@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useInputStore } from "../store/input";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 // In-app text-input dialog, centered in the app window (reuses the confirm-box
 // visual language). Enter submits, Escape cancels.
@@ -7,6 +9,9 @@ export function InputDialog() {
   const options = useInputStore((s) => s.options);
   const close = useInputStore((s) => s.close);
   const inputRef = useRef<HTMLInputElement>(null);
+  useOverlayScrollLock(!!options);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("input", !!options, () => useInputStore.getState().close());
 
   useEffect(() => {
     if (options) {

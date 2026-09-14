@@ -686,6 +686,361 @@ cd src-tauri\gen\android      # 先 `pnpm tauri android init --ci` 生成它
 `useMobile` 进入窄屏时收起侧栏**但不写 localStorage**——那是屏幕尺寸导致的布局状态，
 不该覆盖桌面端的侧栏偏好（手机上开过一次、桌面端下次启动侧栏就是收起的，这个 bug 真实发生过）。
 
+## 4.1 窄屏浮层 / 弹窗硬约束（新增浮层时照做 · 2026-09-14 落地）
+
+> 背景：19 层浮层在窄屏上**有三处是把功能弄坏、而且都不报错**的——设置面板 `min-width:640px`
+> 压过 `max-width` ⇒ 「关闭设置」跑到视口外、**面板关不上**；浮层坐标没按**包含块**折算 ⇒
+> 左侧被切 48px；全仓**没有滚动锁** ⇒ 浮层开着还能把正文拖走 323px。
+> 这三个是**一类**问题（`min-width` vs `max-width` / 定位上下文 / 滚动归属），
+> 所以规则写在下面，不逐个组件打补丁。
+
+### 4.1.1 形态：按"多大"选，不按"像不像弹窗"选
+
+| 形态 | 用在哪 | 关键点 |
+|---|---|---|
+| **底部弹层** | 小对话框、小选择器（确认/输入/快捷键/关于/图标/题头图…） | 贴底、顶部两角圆角、`max-height: calc(100dvh − 24px − env(safe-area-inset-bottom))` |
+| **全屏 + 内部滚动** | 大面板（设置/插件管理/命令面板/存储/`plugin-panel`…） | 占满视口、**只有内容区一个元素可滚** |
+
+- **浮层的断点是「窄**或**矮」**（2026-09-15 修正）：CSS 是 `src/App.css` **末尾**那段
+  `@media (max-width: 768px), (max-height: 520px)`，JS 是 `src/hooks/useMobile.ts` 的
+  `isMobileOverlayViewport()`（= `isNarrowViewport() || isShortViewport()`，两个常量是
+  `MOBILE_BREAKPOINT_PX = 768` 与 `SHORT_VIEWPORT_MAX_PX = 520`）——**三处必须是同一对数**。
+  JS 说"这是手机"而 CSS 说"这是桌面"会同时废掉两边的分支。
+
+  > **口径写清（这里此前含糊，直接导致了一个线上坏法）**
+  > · 「**窄**」（宽度 ≤768）回答的是"**布局**要不要换成窄屏形态"——侧栏收成抽屉、
+  >   右栏整屏叠加、主区让位。那是**宽度**问题（横向没地方放），高度再矮也不改变结论
+  >   （792×360 横屏仍放得下"侧栏 + 正文"两列）⇒ 所以 `isNarrowViewport()` **只看宽度**。
+  > · 「**矮**」（高度 ≤520）**只**用于决定**浮层形态**（大面板 → 整屏 + 内部滚动）。
+  > · 一句话：**布局看宽度，浮层看宽度和高度。**
+  >
+  > 只按宽度判会漏掉**横屏手机**：792×360 不窄 ⇒ 走桌面分支 ⇒ `.set-dialog` 用
+  > `min-height: 420px` ⇒ 它压过 `max-height: calc(100vh - 48px)` ⇒
+  > 实测 y=24 / h=420 / bottom=**444**，**底部 84px 被裁在屏外**（「关闭设置」就在里面）。
+
+  > ⚠️ 那段 CSS **必须留在文件末尾**：`.plugin-panel` 的窄屏 `width:100%` 曾写在 18973 行，
+  > 而基础规则在 19285 行——**特异性相同、后写的赢**，于是 390px 下面板只剩 326px。
+  > 解决办法是"放在最后"这一条纪律，**不是 `!important`、也不是堆特异性**。
+- 盒子上**一律 `min-width: 0` 且 `min-height: 0`**：`min-*` 会压过 `max-*`，
+  这是最隐蔽的一类坑，而且**与轴无关**。上一轮只清了宽度轴（`min-width:640px`），
+  高度轴的 `min-height:420px` 于是原样活到了横屏上——就是上面那条 84px。
+- 高度用 **`dvh` 而不是 `vh`**，而浮层高度一律取 **`var(--ovh)`**：
+  `--ovh: calc(100dvh - var(--sat) - max(var(--sab), var(--kb)))`
+  ——已经扣掉状态栏与底部（**手势条 / 软键盘取大者**）。
+  写死 `100dvh` 的面板在键盘弹起时底部那截会被键盘盖住；`vh` 则是"地址栏收起后"的高度，
+  地址栏一露面底部操作栏就被推出屏。
+
+### 4.1.2 四条硬约束
+
+1. **内容区唯一可滚，并加 `overscroll-behavior: contain`**。
+   否则要么内容高过盒子被裁掉**且滚不到**（同步面板的「保存」在 360px 上跑到屏外 121px、
+   被 `overflow:hidden` 裁掉，就是这样），要么滚动链穿透到背景。
+   列向 flex 里要让"该滚的那个"真的滚，还得给它 `min-height: 0`——自动最小高度是内容高度时它不滚。
+2. **操作栏吸底 + `var(--sab)` / `var(--kb)`**。
+   吸底用 `position: sticky; bottom: 0`，并在同一个元素上叠加
+   `padding-bottom: calc(12px + max(var(--sab), var(--kb)))`，否则被系统手势条压住；
+   **键盘弹起时还要再抬到键盘之上**（键盘比手势条高得多）。
+   > ⚠️ **安全区一律用 CSS 变量，不要直接用 `env(safe-area-inset-*)`**（2026-09-15 改）。
+   > 每个方向现在都有一层间接：`--sat/--sar/--sab/--sal`，由
+   > `src/lib/viewportInsets.ts` 从**壳层送来的窗口 inset** 写入，`:root` 里拿
+   > `env(safe-area-inset-*)` 当兜底。
+   >
+   > 为什么不能在 Android 上直接用 `env()`：WebView 的 safe-area inset 取自
+   > **屏幕物理刘海（display cutout）**，**不是系统状态栏**。真机实测（Mate 40 /
+   > Android 12 / 密度 3.0）：`dumpsys` 的状态栏 inset 是 123 设备 px = **41 CSS px**，
+   > 而四个方向的 `env()` **全是 0px**。也就是说：**Android 上所有 `env(safe-area-inset-*)`
+   > 的 CSS 都是安慰剂**——`viewport-fit=cover` 写了也一样（它是给 iOS 的）。
+   > 详见 §4.2。
+   > `index.html` 的 viewport 里那个 `interactive-widget=resizes-content` 同理
+   > **在这套 WebView 上不生效**（同样见 §4.2），别指望它挡住键盘。
+3. **命中区 ≥ 44×44**（触屏）。主要操作按钮与关闭类按钮上 `min-height: 44px` / `min-width: 44px`。
+   签收口径就是 `scripts/verify-mobile-overlays.mjs` 里那条断言。
+4. **打开时必须锁住「当前视图真实的那个滚动容器」——不是 `body`，也不只是 `.note-scroll`**。
+   理由 ①：这套布局里滚动条**根本不在 body 上**——`.app { overflow: hidden }` 把整页钉死，
+   所以 `document.body.style.overflow = "hidden"` 在这里**一点作用都没有**，是安慰剂。
+
+   > ⚠️ **理由 ②（2026-09-15 修正上一版的错话）**：上一版这里写的是"真正滚的是
+   > `.note-scroll`"，那是**在编辑器视图下**测出来的结论，被当成了普遍规律。
+   > 真机复验时抓到：**切到「文件」视图时 `.note-scroll` 根本不在 DOM 里**，
+   > 内容区换成了 `.file-manager-table-wrap`；侧栏抽屉打开时滚的是 `.sidebar-tree`。
+   > 只锁 `.note-scroll` ⇒ 那些视图下**一个容器都没锁到**，锁静默失效
+   > （当时"背景拖不动"其实是 `overscroll-behavior: contain` 挡住的，不是这把锁）。
+   >
+   > 现在改成**结构化发现**：应用外壳（`.app`）内、`overflow-y` 是 auto/scroll、
+   > 内容确实溢出、且**没有任何 `position: fixed` 祖先**的元素 —— 全部锁上。
+   > `position: fixed` 那一条是关键：它恰好把"浮层自己的滚动区"排除掉
+   > （实测设置 / 命令面板 / 插件管理 / 图标选择器打开时，浮层内部的
+   > `.palette-list` / `.ep-main` / `.set-body-scroll`… **无一例外**都有 `fixed` 祖先）。
+   > 锁 `.sidebar-tree` 是**故意**的：窄屏侧栏是抽屉，浮层开着时它就是背景。
+
+   别自己写：用 **`src/hooks/useOverlayScrollLock.ts`**（`useOverlayScrollLock(open)`），它已经处理了
+   四件容易漏的事：**多浮层叠着时按计数解锁**（关掉上面一层不能把锁提前解掉）、
+   **保留并恢复 `scrollTop`**、**用 `MutationObserver` 盯住滚动容器被重建时补锁**
+   （只在"打开那一刻查一次"不够：那一刻它可能还没挂上，于是一个元素都没锁）、
+   **不锁浮层内部的滚动区**（判据就是上面那条 `fixed` 结构事实）。
+
+### 4.1.3 锚定浮层：`usePopover` 的两个坑
+
+用 `src/hooks/usePopover.ts` 的浮层（搜索/回收站/同步/备份菜单…）注意：
+
+- **坐标要相对包含块折算**。祖先上只要有 `transform` / `filter` / `will-change`，
+  它就成了 `position: fixed` 的**包含块**，`left: 8` 会落在别处（实测落在 −40px）。
+  所以窄屏收起的竖条用 **`left: -48px` 而不是 `transform: translateX(-100%)`**——
+  `left` 不建立包含块，**从源头**掐掉这类坑。
+- **打开期间要重算**：监听 `resize`、`orientationchange` 与 **`visualViewport` 的 `resize`/`scroll`**
+  （软键盘弹出、旋转、拖分隔条都会改可视区）。
+- 窄屏 / **矮视口**下 `usePopover` 返回**空坐标**并带 `isSheet`，由 CSS 走底部弹层（不再锚定触发按钮）。
+  ⚠️ 判定用的是 `isMobileOverlayViewport()`（**宽 ≤768 或 高 ≤520**），不是只看宽度——
+  792×360 横屏下"锚在触发按钮下方"这件事本身就不成立（`minSpace` 默认 360 > 视口高度）。
+
+### 4.1.4 加了一层浮层之后：**必须**把它加进验收清单
+
+`scripts/verify-mobile-overlays.mjs` 里有一个层清单（`OVERLAYS` 数组），
+它是这套规则的执行点之一——新浮层不登记，就等于没人验过。跑法与加法：
+
+```bash
+pnpm dev:web                  # 另开一个终端，脚本要连真实 Chromium
+pnpm test:mobile-overlays     # 有失败即非零退出
+```
+
+在 `OVERLAYS` 里加一行：
+
+```js
+{ id: "myDialog", label: "我的对话框", root: ".my-overlay", box: ".my-dialog", sheet: true },
+```
+
+- `root` 是**遮罩层**元素、`box` 是**那个盒子**（断言量的是盒子的四边）。
+- `sheet: true` 表示窄屏是底部弹层（若它还靠 `is-sheet` 类切样式，再加 `sheetClass: true`）。
+- 需要在**已打开的页面**或更深一层的入口才能取到触发器的，标 `optional: true`——
+  取不到时会记一条 note 并跳过（**不算通过也不算失败**，属"未验证项"，要写进报告）。
+- 打开动作写在脚本的 `openOverlay(which)` 的 `switch` 里，**走应用自己的 store**
+  （与界面同一条路），不要往 DOM 里塞假节点。
+
+跑到一层就断言：四边都在视口内、**`min-width` 与 `min-height` 都为 0**、无横向溢出、
+被裁内容必须在可滚容器里、主要操作按钮够得到、**外壳真实的滚动容器被锁**（判据是
+"内联 `overflow-y:hidden` 的容器列表非空"，并反向断言**浮层自己的滚动区没被锁**）、
+触摸拖 300px 后那个容器的 `scrollTop` 变化 ≤4px、关闭类按钮 ≥44×44、
+`.plugin-panel` 在 768 下占满宽、**桌面仍是锚定浮层**（防窄屏规则把桌面也改成弹层）。
+
+另外三组（2026-09-15 新增，对应真机量出来的问题）：
+
+- **两个断点的 JS/CSS 一致性**：768（`matchMedia("(max-width:769px)")` 也命中）与
+  520（把视口卡到 521 高，`max-height:520px` 必须**不**命中；同时量 `isShortViewport()`）。
+- **视口数量从 2 变 3**：新增 **792×360 横屏**。上一轮只有竖屏，于是
+  "横屏不窄 ⇒ 走桌面分支 ⇒ `min-height:420px` 压过 `max-height` ⇒ 底部裁 84px"
+  整类坏法没被覆盖——**这是上一轮的断言放水**：只断言了 `min-width`，高度轴空着。
+- **注入 `--sat` / `--kb` 变量**量 CSS 那一半：`--sat=41px` 时**最高的可交互元素**必须在
+  41 之下、全屏面板顶部也要让开；`--kb=260px` 时底部弹层与全屏面板都必须抬到键盘之上。
+  （真机上这两个变量由壳层送进来，"送不送得进来"只能真机验——见 §4.2。）
+
+> 规则改了要**自证能失败**：把修好的逐个改回坏的样子，看断言是否变红
+> （2026-09-14 的 5 个变异测试全部被判红，其中两处精确复现了盘点里的 −48/−40 与 326px）。
+> 只有能红的门禁才算门禁。
+> 2026-09-15 新增的两条也自证过：把 `min-height:420px` 加回 `.set-dialog` ⇒ **792×360 那一档立刻红**
+> （`bottom=444 > 360`）；把 `.app` 的 `padding-top` 去掉 ⇒ `--sat=41px` 那一组红。
+
+#### 但"手写一张清单"本身漏一个就没人知道 ⇒ 补了**登记门禁**（2026-09-15）
+
+真机复验抓到的第 6 个问题就是这么来的：**版本历史弹层没登记进返回栈**——
+只开着它时 `window.__SHUYONOTE_BACK__.depth()` = **0** ⇒ 按返回键**直接退出应用**，
+而弹层还开着（"19 层浮层全部登记"的说法当场不成立）。
+漏一层**没有任何症状**：不报错、单测不红、`OVERLAYS` 那份手写清单也照样全绿
+（它只检查**已经写上**的那些层）。**清单与实现对不上时，缺的那一方永远不会自己暴露。**
+
+```bash
+pnpm check:overlays          # = node scripts/check-overlay-registry.mjs；也串在 pnpm build 与 CI 里
+```
+
+它**枚举**仓库里"看起来是覆盖层"的组件（只认一件事：JSX 里字面量写出来的、
+以 `-overlay` / `-popover` 结尾的 class token；刻意不做"文件名含 Panel/Dialog"这类模糊匹配，
+否则内联面板会被全拉进来、豁免清单被噪声淹掉），然后要求：
+
+| 判据 | 红了说明什么 |
+|---|---|
+| **A** 渲染浮层容器的组件必须调用 `useOverlayLayer("<id>", …)` | **新增浮层忘了登记**（或忘了显式豁免）——就是第 6 个问题那一类 |
+| **B** 每个登记过的 id，其组件渲染的类名必须出现在 `OVERLAYS` 的 `root`/`box` 里 | 登记了但**没人量过它**（移动端几何验收里没有这一层） |
+| **C** `OVERLAYS` 每一层的类名都要有组件真的渲染它、且其中至少一个登记了返回栈 | 清单里的**幽灵条目** / 类名被改名（改名后 `optional:true` 的层会**静默降级成一条 note**） |
+| **D** 豁免清单不许过期 | 写了豁免、那个组件已经不存在了 |
+
+豁免**必须显式**（脚本里的 `EXEMPT_COMPONENTS` / `EXEMPT_FROM_MOBILE_PASS`，每条都带理由），
+且每次运行都会把整张豁免表打印出来——豁免是**显式的欠账**，不是藏东西的地方。
+现在豁免表里有三处 `gap` 级别的同类缺口（**真的是应用级浮层、但没登记返回栈**：
+`.pdf-reader-overlay` 的浮层形态、插件声明式视图浮层、文件预览浮层）——
+它们不会让门禁变红（门禁的契约是"新增浮层不许悄悄出现"），但每次运行都会 ⚠️ 打印出来；
+各接一条 `useOverlayLayer` 即可修掉。
+
+另外两条与"版本历史"直接相关、本轮**没有**纳入几何验收（属未验证项，写在这里免得不一致）：
+
+- `history`：窄屏下 `.history-popover` 仍是 `position:absolute` 的 320px 锚定浮层，
+  360×640 实测**左边缘 = −6px**（越界 6px）；要纳入 `OVERLAYS` 得先给它一个窄屏形态
+  （同 §4.1.3 的 `is-sheet`）+ 滚动锁。
+- `backupMenu`：侧栏备份按钮上的下拉菜单（`usePopover` 已管定位），也没有对应的 `OVERLAYS` 条目。
+
+相关：[RELEASING.md](RELEASING.md) ⑧（CHANGELOG 结构门禁）与 ①（`[Unreleased]` 的用法）。
+脚本清单见 [development.md](development.md) 的"测试与验证"一节。
+
+### 4.1.5 验收口径：顶部那条 inset 带**永远归 SystemUI**（2026-09-15 真机确认）
+
+真机（Mate 40 / Android 12 / 密度 3.0）上量到的状态栏 inset = 123 设备 px = **41 CSS px**。
+`targetSdk = 36` ⇒ Android 15 起对 SDK≥35 的 App **强制 edge-to-edge**
+（壳里的 `enableEdgeToEdge()` 删掉也退不回去 ✗，见 §4.2.1），
+所以应用**永远**都能把内容画进那一条带里——**但那一条带的触摸不属于它**：
+状态栏是 SystemUI **自己的窗口**，位于应用窗口之上。
+
+> ⇒ **验收标准是"可交互 UI 全部移出该带、顶部控件物理可点"，
+> 不是"那条带变活"。** 别去想办法"穿透"它——那是按设计拿不到的。
+
+两条判据：
+
+1. **可交互 UI 全部移出该带**：`--sat` 取壳层报来的 inset；最高的那个可交互元素
+   （`button` / `input` / `select` / `[role=button]` …）的 `top` 必须 ≥ `--sat`。
+   浮层是 `position: fixed`，**不会跟着 `.app` 的 padding 走**，必须自己让位。
+   浏览器侧那一条由 `verify-mobile-overlays.mjs` 注入 `--sat=41px` 量（见 §4.1.4）。
+2. **顶部控件物理可点**：这一条**只能在真机上**验，而且要按下面这条做。
+
+> ⚠️ **真机必须用 `adb shell input tap`**。CDP 的 `Input.dispatchTouchEvent`
+> （`verify-mobile-overlays.mjs` 里那条"触摸拖背景"断言用的就是它）**直接注入渲染进程、
+> 绕过 SystemUI** ⇒ **在那条死带里也会"成功"**。用合成触摸去验"顶部点得到"，
+> 会把"点不到"验成"点得到"——**假绿**。
+>
+> 实测判据（§4.2.1 的原始记录）：`adb shell input tap` 打在 y ≤ 123 设备 px ⇒ DOM 收到 **0** 个事件；
+> 打在 y = 130 / 180 ⇒ **100+** 个事件。脚本化的那条在
+> `node scripts/android-mobile-shell.mjs --device-check`（走 `adb forward` + devtools socket）。
+
+（这条口径是三次踩坑换来的：① 以为 `env(safe-area-inset-*)` 能拿到状态栏高度——
+Android 上四个方向**全是 0px**，它取的是**屏幕物理刘海**；② 以为 `viewport-fit=cover` 或
+`interactive-widget=resizes-content` 能救——在这套 WebView 上都不生效；
+③ 用 CDP 合成触摸"验证修好了"——绕过 SystemUI，死带里照样"成功"。）
+
+## 4.2 Android 壳适配层：窗口 inset / 软键盘 / 返回键（2026-09-15）
+
+真机（Mate 40 `OCE-AN10` / Android 12 / 密度 **3.0**）上量出三个问题，**根因是同一个**：
+`targetSdk = 36` ⇒ Android 15 起对 SDK≥35 的 App **强制 edge-to-edge**，而应用**没有消费窗口 inset**。
+
+> 一句话结论：**edge-to-edge 之下，"画得到"不等于"点得到"。**
+> 状态栏是 SystemUI **自己的窗口**，位于应用窗口之上，那一带的触摸**按设计归它**。
+> 应用能把内容画在那里，却**永远收不到那里的触摸**——这正是 window insets 存在的理由。
+
+### 4.2.1 顶部 41px 触摸死区（**最严重**）
+
+**实测证据**：
+
+| 项 | 值 |
+|---|---|
+| `adb shell dumpsys window displays` 里的状态栏 inset | `visible=true frame=[0,0][1080,123]` = **41 CSS px**（123 / 3.0） |
+| 截图 | 应用标题「默认空间」与系统时间**文字重叠** |
+| `adb shell input tap` 打在 y≤123（设备 px） | **0 个 DOM 事件**（扫 y=60 / 90） |
+| 同上打在 y=130 / 180 | **100+ 个 DOM 事件** |
+| `env(safe-area-inset-top/right/bottom/left)` | **四个方向全是 0px** |
+
+**定位过程（先定位再改）**：
+
+1. **死区边界正好等于状态栏 inset**（123 设备 px）⇒ 不是"某个透明覆盖层"，也不是
+   WebView 命中测试的怪癖——那种原因的边界不会刚好卡在系统 inset 上；
+2. **`env()` 四个方向都是 0** ⇒ 说明 WebView 根本不认为这里需要安全区。
+   查下来是**语义不同**：WebView 的 safe-area inset 取自**屏幕物理刘海（display cutout）**，
+   **不是系统状态栏**。这台机器没有刘海 ⇒ 恒为 0。
+   ⇒ **Android 上所有 `env(safe-area-inset-*)` 的 CSS 都是安慰剂**，`viewport-fit=cover` 也救不了（那是给 iOS 的）；
+3. 于是只剩一个解释：窗口没让开系统栏，**状态栏那一带被 SystemUI 的窗口占着**，
+   应用在那一带收不到触摸。`MainActivity.kt` 里只有一句 `enableEdgeToEdge()`，**没有任何 inset 消费**。
+
+**改法**（`scripts/android-mobile-shell.mjs` 注入，见 §4.3）：
+
+- Kotlin 监听 `WindowInsetsCompat`，把 `systemBars()` 与 `ime()` 折算成 **CSS px**
+  （除以 `displayMetrics.density`，与页面里的 `devicePixelRatio` 一致），推给页面
+  `window.__SHUYONOTE_INSETS__({top,right,bottom,left,ime})`；
+- 页面侧 `src/lib/viewportInsets.ts` 把它们写成 `--sat/--sar/--sab/--sal/--kb`；
+- `App.css` 用这些变量给**外壳**（`.app` 的 padding）与**浮层**（`--ovh` / `bottom`）让位。
+  `:root` 里保留了 `env(safe-area-inset-*)` 作为兜底值（iOS / 浏览器照旧）。
+
+> **为什么不选"干脆不用 edge-to-edge"**：在 Android 12 上把 `enableEdgeToEdge()` 删掉确实有效，
+> 但 App 的 `targetSdk = 36`——**Android 15 起对 SDK≥35 的 App 强制 edge-to-edge**，
+> 删掉在 15/16 上**退不回去**，同一个 bug 会在新机器上原样复现。
+> 所以只能真的消费 inset。（这条也是"别在旧设备上验证完就收工"的例子。）
+
+**顺带抓到的一类**：窄屏把左侧竖条改成了 `position: fixed` 的浮层，
+而 **fixed 定位不跟着 `.app` 的 padding 走** ⇒ 竖条展开时它的按钮仍从视口 y=8 开始，
+**整条落在死区里**。同一个道理还适用于窄屏所有的 fixed chrome
+（右抽屉已用 `top: var(--sat)` / `bottom: max(--sab,--kb)`，唤出按钮用 `bottom: calc(18px + …)`）。
+
+### 4.2.2 底部弹层被软键盘盖住
+
+**实测**：键盘弹起后 `innerHeight` 与 `visualViewport.height` **都不变**；
+IME 覆盖 CSS y≥468，而底部弹层钉在 `bottom: 0` ⇒ 输入框正好被盖住。
+
+**根因**：`interactive-widget=resizes-content` 在这套 WebView 上**不生效**，
+而 `enableEdgeToEdge()`（= `setDecorFitsSystemWindows(false)`）之下**系统的 `adjustResize` 是空转的**
+——窗口不会为 IME 缩小。
+
+> ⚠️ **这一条推翻了本轮开工时的假设**：原计划是"读 `visualViewport` 写 `--kb`"，
+> 但既然 `visualViewport.height` 根本不变，**web 层就没有任何办法察觉键盘**。
+> 键盘高度只能走与 §4.2.1 同一条 inset 桥（`WindowInsetsCompat.Type.ime()`）。
+
+**关于 `windowSoftInputMode`**：manifest 里**没有**这一项 ⇒ 默认 `adjustResize`
+（**不是** `adjustPan`；若是 pan，内容会被整体上推，而实测内容纹丝不动）。
+但如上所述它在 edge-to-edge 下是**死代码**，所以**故意不改 manifest**——
+写上去只会让人以为"机制在 manifest 里"。
+
+**`--kb` 的语义**（`viewportInsets.ts` 的 `keyboardExtra()`，有单测）：
+**键盘额外盖住、而视口还没缩掉的那部分高度** = `max(0, 系统报的 IME 高度 − 视口已缩量)`。
+不这样写就会**顶两遍**（某些 OEM/浏览器真的 resize 了窗口时）。CSS 侧：
+
+- 底部弹层：`bottom: max(var(--sab), var(--kb))`，`max-height: calc(var(--ovh) - 24px)`；
+- 全屏面板：高度取 `var(--ovh)`（`--ovh` 已扣掉 `max(--sab, --kb)`）；
+- 外壳：`padding-bottom: max(var(--sab), var(--kb))`。
+
+### 4.2.3 返回键直接退出应用
+
+**实测**：搜索面板 / 设置 / 确认框三层，按返回键都是 `APP_STILL_FOREGROUND: False`（直接退出）。
+
+**根因链（读源码定位，不是猜的）**：
+
+1. `WryActivity.setWebView` 本来会注册一个返回回调，但 `TauriActivity` 把它**关掉了**：
+   `override val handleBackNavigation: Boolean = false`
+   （tauri `mobile/android-codegen/TauriActivity.kt:35`）⇒ wry 那条路不存在；
+2. Tauri 自己的 Kotlin `AppPlugin`（`mobile/android/src/main/java/app/tauri/AppPlugin.kt:28-46`，
+   由 `src/app/plugin.rs:141-146` 的 setup 注册）**确实**注册了一个 `OnBackPressedCallback`：
+   没有 `back-button` 监听者时走 `canGoBack()` ⇒ **SPA 没有历史 ⇒ `false`** ⇒
+   `activity.onBackPressed()` ⇒ `finish()`；
+3. 上游给的逃生口是 `back-button` 事件（web 监听后它就不再退出），
+   但**web 侧退不了应用**：`plugin:app|exit` **不在** `core:app` 的权限清单里
+   （`src-tauri/gen/schemas/acl-manifests.json` 的 `core:app.permissions` 有
+   `allow-register-listener` / `allow-remove-listener`，**没有** `allow-exit`），
+   调它会先被 ACL 拒掉（`tauri/src/webview/mod.rs:1823-1852`：plugin 命令一律过 ACL）。
+   ⇒ **"退出应用"这一步只能由壳层做。**
+
+**改法**：`onWebViewCreate` 里注册自己的 `OnBackPressedCallback`。
+
+- `OnBackPressedDispatcher` **后注册先派发**，而 AppPlugin 的回调是在 `Builder::build`
+  阶段注册的（远早于 webview 创建）⇒ 我们的回调**一定先被调用**；
+- 它先问页面：`window.__SHUYONOTE_BACK__.handle()`（`src/lib/overlayStack.ts`）
+  —— **`true` = 页面关掉了最上层浮层，本次返回键到此为止**；
+  **`false` = 栈是空的**，把自己 disable 后重新派发，落回 AppPlugin 那条回调（它没监听者 ⇒ `finish()`）。
+
+**浮层栈**由各浮层组件用 `useOverlayLayer(id, open, close)` 登记（本轮接了 **20 层**：
+2026-09-15 原为 19 层，真机复验补上了**漏掉的版本历史弹层**——见 §4.1.4 的登记门禁），
+**后进先出**：最后打开的最先关。逐条断言见 §4.1.4。
+
+### 4.2.4 这一层怎么验（脚本化）
+
+```bash
+# 静态：注入的内容在不在（给门禁用，CI 里也跑）
+pnpm check:android-mobile-shell
+# 真机：需要 adb + 已装调试包（`VITE_TEST_HOOKS` 那支自检包）
+node scripts/android-mobile-shell.mjs --device-check
+```
+
+`--device-check` 的判据（都走 `adb forward` + WebView 的 devtools socket + CDP）：
+
+| 判据 | 说明 |
+|---|---|
+| `--sat` > 0 | 修前是 0（`env()` 那条路） |
+| `.app` 的 `padding-top === --sat` | 外壳真的让开了 |
+| **最高的可交互元素 y ≥ `--sat`** | 状态栏那一条带里**不许有 UI** |
+| **`adb shell input tap` 打在顶部能收到 DOM 事件** | ⚠️ 必须用真实 tap：CDP 的 `Input.dispatchTouchEvent` 直接注入渲染进程、**绕过 SystemUI**，在死区里也会"成功" |
+| 返回键：浮层栈非空时 `dumpsys` 的 `APP_STILL_FOREGROUND` 仍为 `True` | 修前是 `False` |
+| 键盘可见时 `--kb` > 0 且弹层底边 ≤ `innerHeight − --kb` | |
+
 ## 5. iOS 环境结论（2026-09，仍然有效）
 
 **Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当时的 Mac 上

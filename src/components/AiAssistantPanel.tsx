@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAiStore } from "../store/ai";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useRightPanel } from "../store/rightPanel";
 import { useNotes } from "../store/notes";
 import { SparkleIcon, SettingsIcon, SendIcon } from "./icons";
@@ -43,6 +45,9 @@ export function AiAssistantPanel() {
     resetError,
   } = useAiStore();
   const open = useRightPanel((s) => s.ai);
+  useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("ai", open, () => useRightPanel.getState().openAi(false));
   const setOpen = useRightPanel((s) => s.openAi);
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);

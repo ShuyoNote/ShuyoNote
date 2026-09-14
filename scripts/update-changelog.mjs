@@ -19,8 +19,11 @@ if (!version) {
 const changelog = fileURLToPath(new URL("../CHANGELOG.md", import.meta.url));
 let content = fs.readFileSync(changelog, "utf8");
 
-// 首个 `## [` 版本段的起始位置（顶部为最新版本）。
-const m = content.match(/^## \[/m);
+// 首个 `## [X.Y.Z] 版本段的起始位置（顶部为最新版本）。
+// 注意跳过顶部的 `## [Unreleased]`：它是"下一版内容写哪儿"的落点，必须在最上面
+// （Keep a Changelog；`scripts/check-changelog.mjs` 会强制这一点）。
+// 故这里锚定的是第一个**带数字版本号**的段头，而不是第一个 `## [`。
+const m = content.match(/^## \[[0-9]/m);
 const pos = m ? m.index : content.length;
 
 const today = new Date().toISOString().slice(0, 10);
@@ -33,8 +36,9 @@ const seg =
   "- \n\n" +
   "\n";
 
-// 插入到现有最顶段之前，保留全部旧段（不再覆盖任何段头）。
+// 插入到现有最顶**版本**段之前（若有 `## [Unreleased]` 则插在它下面），保留全部旧段。
 content = content.slice(0, pos) + seg + content.slice(pos);
 fs.writeFileSync(changelog, content, "utf8");
 
-console.log(`已插入 ## [${version}] 段到 CHANGELOG 顶部之前（保留全部旧段）。`);
+console.log(`已插入 ## [${version}] 段（在 [Unreleased] 之下、最顶版本段之上；保留全部旧段）。`);
+console.log("提醒：小标题请只用 新增 / 变更 / 修复 / 移除 / 安全 / 废弃 / 其它（pnpm check:changelog 会挡）。");

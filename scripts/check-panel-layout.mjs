@@ -187,9 +187,25 @@ try {
 
   const m = await page.evaluate(() => {
     const box = (sel) => document.querySelector(sel)?.getBoundingClientRect() ?? null;
+    // 量"这段文字占了几行"。
+    // ⚠️ 不能用"元素高度 ÷ 行高"这个代理：一旦元素有 **min-height**，代理就失真——
+    // 触屏命中区要求按钮 ≥44px（`.plugin-manager button{min-height:44px}`），
+    // 于是一行字 + 44px 高会被算成 3 行，"标题没有被压成竖柱"当场误报。
+    // 所以改成直接数**文字的行盒**：取 Range 的 rects，按**行高**归桶——
+    // 同一行里的 inline-block 片段 top 会差几个像素，用固定 2px 归桶会多算，
+    // 按行高的 1/2 归桶才既能把它们并成一行、又不会把真正的换行并掉。
     const oneline = (sel) => {
       const el = document.querySelector(sel);
       if (!el) return null;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+      if (rects.length) {
+        const cs = getComputedStyle(el);
+        const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2 || 16;
+        const min = Math.min(...rects.map((r) => r.top));
+        return Math.max(1, new Set(rects.map((r) => Math.round((r.top - min) / lh))).size);
+      }
       const cs = getComputedStyle(el);
       const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
       return Math.round(el.getBoundingClientRect().height / lh);
