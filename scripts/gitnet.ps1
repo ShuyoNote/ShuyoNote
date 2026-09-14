@@ -26,8 +26,22 @@ $NoProxy = @("-c", "http.proxy=", "-c", "https.proxy=")
 
 function Invoke-Git {
     param([string[]]$GitArgs, [switch]$Quiet)
-    if ($Quiet) { & git @NoProxy @GitArgs 2>&1 | Out-Null } else { & git @NoProxy @GitArgs }
-    return $LASTEXITCODE
+    # Windows PowerShell 5.1 wraps a native command's stderr lines into ErrorRecords.
+    # Under $ErrorActionPreference = "Stop" that becomes a TERMINATING error -- so
+    # `git push` (which prints its progress on stderr) aborted this script AFTER the
+    # push had already succeeded, and the "after push:" check below never ran.
+    # Observed 2026-09-14 twice in a row: `push` reported failure on a push that
+    # landed fine, and once aborted the caller's loop before the 2nd remote ran.
+    # Keep Stop for cmdlets, relax it around native git, and judge success by
+    # $LASTEXITCODE only (which is what the callers already do).
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        if ($Quiet) { & git @NoProxy @GitArgs 2>&1 | Out-Null } else { & git @NoProxy @GitArgs }
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 function Show-Status {
