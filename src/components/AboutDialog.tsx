@@ -14,7 +14,7 @@ import {
   setAllowExternal,
 } from "../lib/links";
 import { fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
-import { checkDesktopUpdate, fetchUpdateManifestNative, type UpdateProgress } from "../lib/updater";
+import { checkDesktopUpdate, fetchUpdateManifestNative, installAndroidUpdate, type UpdateProgress } from "../lib/updater";
 import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
 
 // M25 P2 — "关于" dialog. Shows version, license, and the "开源与反馈" external
@@ -36,6 +36,10 @@ export function AboutDialog() {
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
   /** Android 发版件的下载地址（清单的 platforms["android-aarch64"].url）。 */
   const [androidApkUrl, setAndroidApkUrl] = useState<string | null>(null);
+  /** 同一个条目的 `signature`（`sha256:<hex>`）——**应用内更新的完整性判据**，没有它就不走自动安装。 */
+  const [androidApkSha, setAndroidApkSha] = useState<string | null>(null);
+  /** 交给系统安装器之后的提示（系统弹窗在应用外，界面里要留一句话）。 */
+  const [androidHint, setAndroidHint] = useState<string | null>(null);
   const [declined, setDeclined] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
@@ -70,6 +74,8 @@ export function AboutDialog() {
     setCheckError(null);
     setReleaseNotes(null);
     setAndroidApkUrl(null);
+    setAndroidApkSha(null);
+    setAndroidHint(null);
     setDeclined(false);
     setUpdating(false);
     setProgress(null);
@@ -83,6 +89,7 @@ export function AboutDialog() {
       const mf = await nativeManifest();
       setReleaseNotes(mf?.notes ?? null);
       setAndroidApkUrl(mf?.android_url ?? null);
+      setAndroidApkSha(mf?.android_sha256 ?? null);
       setChecked(true);
       setChecking(false);
       return;
@@ -102,10 +109,10 @@ export function AboutDialog() {
       setChecking(false);
       return;
     }
-    // Android：**不接**桌面那套 in-app 下载安装（`tauri-plugin-updater` 只在桌面可用，
-    // 且移动端装包要经系统安装器）。这里只做两件事：比对清单版本号 + 取出 APK 地址，
-    // 有新版就给「下载 APK」入口，交给系统浏览器/DownloadManager 下载，用户自行安装。
-    // 清单里没有 android-aarch64（老清单）时 androidApkUrl 为 null ⇒ 退回「前往发布页」。
+    // Android：**接**应用内更新（2026-09-15 起）——比对清单版本号 + 取 APK 地址与 sha256，
+    // 有新版就走「下载并安装」：Rust 侧下到应用缓存、边下边算 sha256，校验通过后交给
+    // **系统安装器**（装不装由用户在系统界面里决定）。清单里没有 android-aarch64（老清单）
+    // 或没有指纹时，退回「手动下载 / 前往发布页」。
     if (isAndroidDevice) {
       const mf = await fetchUpdateManifestNative();
       const latest = mf?.version ?? null;
@@ -113,6 +120,7 @@ export function AboutDialog() {
       setUpdateState(updateStatus(latest, APP_VERSION));
       setReleaseNotes(mf?.notes ?? null);
       setAndroidApkUrl(mf?.android_url ?? null);
+      setAndroidApkSha(mf?.android_sha256 ?? null);
       if (!latest) setCheckError("未取到发布清单：离线或发布通道不可达");
       setChecked(true);
       setChecking(false);
@@ -171,6 +179,32 @@ export function AboutDialog() {
     }
     if (p.phase === "installing") return "正在安装更新…";
     return "更新完成，即将重启…";
+  };
+
+  /**
+   * Android 应用内更新：**下载 + 校验 + 交给系统安装器**（两步都在 Rust 侧，见 updates.rs）。
+   *
+   * 与桌面那条路的区别：桌面是 `tauri-plugin-updater` 下载后自己装+重启；Android **不静默安装**
+   * ——`ACTION_VIEW` 拉起系统安装器，用户还得在系统界面里确认（Android 8+ 首次还要给本应用开
+   * 「安装未知应用」）。所以这里成功的定义是"安装器起来了"，界面留一句话说明下一步。
+   * 任何一步失败都把真正的原因显示出来，并且**始终**保留"手动下载"入口。
+   */
+  const installAndroid = async () => {
+    if (!androidApkUrl || !androidApkSha) return;
+    setUpdating(true);
+    setUpdateError(null);
+    setAndroidHint(null);
+    setProgress({ phase: "downloading", percent: 0 });
+    try {
+      await installAndroidUpdate(androidApkUrl, androidApkSha, (p) => setProgress(p));
+      setAndroidHint("已交给系统安装器：请在弹窗里确认安装（首次可能要求允许本应用安装应用）。");
+    } catch (e) {
+      setUpdateError(e instanceof Error ? e.message : String(e));
+      console.error("[update] Android 应用内更新失败:", e);
+    } finally {
+      setUpdating(false);
+      setProgress(null);
+    }
   };
 
   if (!open) return null;
@@ -241,17 +275,22 @@ export function AboutDialog() {
                       <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
                     </>
                   ) : isAndroidDevice ? (
-                    // Android：不在这里装包——把 APK 地址交给系统（浏览器/DownloadManager），
-                    // 下载完由用户自己安装（安装签名由 Android 系统安装器校验）。
+                    // Android：**应用内**下载 + sha256 校验 + 交给系统安装器（2026-09-15 起）。
+                    // 没指纹（老清单）或没地址时才退回"手动下载 / 前往发布页"。
                     <>
-                      {androidApkUrl ? (
-                        <button className="about-update-install" onClick={() => openExternal(androidApkUrl)}>
-                          下载 APK
+                      {androidApkUrl && androidApkSha ? (
+                        <button className="about-update-install" onClick={() => void installAndroid()} disabled={updating}>
+                          {updating ? `下载中 ${progress?.percent ?? 0}%` : "下载并安装"}
                         </button>
-                      ) : (
-                        <button className="about-update-later" onClick={() => openExternal(RELEASES_URL)}>前往发布页</button>
-                      )}
+                      ) : null}
+                      <button
+                        className="about-update-later"
+                        onClick={() => openExternal(androidApkUrl ?? RELEASES_URL)}
+                      >
+                        {androidApkUrl ? "手动下载" : "前往发布页"}
+                      </button>
                       <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
+                      {androidHint ? <div className="about-update-hint">{androidHint}</div> : null}
                     </>
                   ) : updating && progress ? (
                     <div className="about-update-progress">

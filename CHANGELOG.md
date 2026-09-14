@@ -92,6 +92,24 @@
   豁免清单每次运行都打印（5 类：宿主子浮层 / 视图内联浮层 / 非可关闭浮层 / 未纳入几何验收 / **同类缺口**）。
   见 [MOBILE.md](docs/MOBILE.md) §4.1.4。
 
+- **Android 应用内更新：下载 + 校验 + 交给系统安装器**（2026-09-15）。此前手机上只能"跳发布页手动下载"：
+  应用内拿到清单里 `android-aarch64` 的地址后就 `openExternal` 交给浏览器/DownloadManager，
+  用户还得自己去文件管理器点安装。现在两步都在应用内：
+  ① `download_android_update(url, sha256)` —— Rust 侧 reqwest 流式下到**应用缓存**（`updates/`），
+  **边下边算 sha256**，进度经 `android-update-progress` 事件回给界面；三道自保：只收 https、
+  指纹形状必须合法（64 hex）、**校验不通过就删文件**；同一指纹已存在则跳过重下。
+  ② `install_android_update(path)` —— 经 `FileProvider` 换成 `content://`（`file://` 从 Android 7 起抛
+  `FileUriExposedException`），`ACTION_VIEW` + APK 的 mime 拉起**系统安装器**。**刻意不做静默安装**：
+  Android 8+ 要用户先给本应用开「安装未知应用」，选择权在用户。清单里没有指纹（老清单）时界面
+  退回「手动下载 / 前往发布页」，两条路并存。
+  注：Android 通道**不发 minisign**，所以 sha256 校验是这条链上唯一的完整性判据（`updates.rs` 有专门
+  单测钉住指纹形状的校验）。
+  门禁：Kotlin/manifest/白名单都在 `scripts/android-mobile-shell.mjs` 里注入，`--check` 同时核 4 样
+  **加上** Rust↔Kotlin 的每一个命令名（不再只看第一个）。本机实证：
+  `:app:compileUniversalDebugKotlin` 与 `:app:minifyUniversalReleaseWithR8` 均 BUILD SUCCESSFUL、
+  manifest 注入后 XML 仍合法、R8 的 `usage.txt` 没有我们的类（没被删）、`mapping.txt` 里类名与
+  `installApk` 未改名。详见 [MOBILE.md](docs/MOBILE.md) §2.6。
+
 ### 修复
 
 - **窄屏下 PDF 阅读器的目录栏/批注栏把正文挤出屏幕**（真机：360×792 时目录栏仍 240px 常驻在左、

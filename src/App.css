@@ -16551,6 +16551,12 @@ p:has(> .editor-drawing-container) {
   color: var(--danger);
   font-size: 12px;
 }
+/* Android 应用内更新：交给系统安装器之后的提示（系统弹窗在应用外，界面里要留一句话）。 */
+.about-update-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .about-update-head {
   display: flex;
   align-items: center;
@@ -20725,6 +20731,55 @@ body.is-plugin-panel-open .main {
   .pdf-sidebar button {
     min-width: 44px;
     min-height: 44px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   横屏（**矮**视口专有）：PDF 阅读器的头部/批注行不许换行，改成单行横向滚动
+
+   上面那段"允许换行"是为了"不把按钮裁在屏外"（纵屏必备）。但到了横屏就走向反面：
+   12 + 6 个 44px 的按钮一换行，光这两行就吃掉整个高度——真机实测（792×360）
+
+     .pdf-reader-head        215px
+     .pdf-annot-toolbar      157px
+     .pdf-reader 总高        319px   ⇒ 正文区只剩 40px，页面图 y=429 **整页在屏外**
+
+   所以矮视口另给一套：**单行 + 横向滚动**（每个按钮仍然 44px、都摸得到，只是要滑一下），
+   关闭按钮 sticky 贴右端常驻（它是"离开"的唯一入口，不能滑走）。
+   为什么用"矮"而不是"窄"：窄而高的竖屏有足够高度换行，换行比横向滑动更好用。
+   --------------------------------------------------------------------------- */
+@media (max-height: 520px) {
+  .pdf-reader-head,
+  .pdf-reader-controls,
+  .pdf-annot-toolbar,
+  .pdf-annot-tools,
+  .pdf-annot-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .pdf-reader-head::-webkit-scrollbar,
+  .pdf-reader-controls::-webkit-scrollbar,
+  .pdf-annot-toolbar::-webkit-scrollbar,
+  .pdf-annot-tools::-webkit-scrollbar,
+  .pdf-annot-actions::-webkit-scrollbar {
+    display: none;
+  }
+  .pdf-reader-name {
+    max-width: 30%;
+  }
+  .pdf-reader-close {
+    position: sticky;
+    right: 0;
+    margin-left: auto;
+    background: var(--bg);
+  }
+  /* 批注工具行同理：单行滚动，别把正文挤没。 */
+  .pdf-annot-tools,
+  .pdf-annot-actions {
+    flex-shrink: 0;
   }
 }
 

@@ -183,6 +183,9 @@ export interface CommandMap {
       android_sha256: string | null;
     } | null;
   };
+  /** Android 应用内更新的两步（见 docs/MOBILE.md §2.5）：下载校验 → 交给系统安装器。 */
+  download_android_update: { args: { url: string; sha256: string }; result: string };
+  install_android_update: { args: { path: string }; result: void };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

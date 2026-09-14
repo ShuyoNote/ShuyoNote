@@ -96,10 +96,168 @@ pub async fn fetch_update_manifest(url: Option<String>) -> Result<Option<UpdateM
     }))
 }
 
+/// 校验一个 `sha256:<hex>` / 裸 hex 指纹，返回规范化的小写 hex。
+///
+/// 抽成纯函数是为了能单测：**这段是整条更新链上唯一的完整性判据**（Android 不发 minisign），
+/// 判错一次就等于把一个来路不明的 APK 交给系统安装器。
+fn normalize_sha256(raw: &str) -> Option<String> {
+    let hex = raw.trim().strip_prefix("sha256:").unwrap_or(raw.trim());
+    if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(hex.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+/// 更新包落盘的文件名（按指纹前 8 位）：同一个版本重下会复用同一个文件名 ⇒
+/// 用户"装失败再点一次"不必重下整包。
+fn android_apk_file_name(sha256_hex: &str) -> String {
+    format!("ShuyoNote-android-{}.apk", &sha256_hex[..8.min(sha256_hex.len())])
+}
+
+#[derive(Clone, Serialize)]
+struct AndroidUpdateProgress {
+    done: u64,
+    total: u64,
+    percent: f64,
+}
+
+/// **Android 应用内更新第一步**：把 APK 下到应用缓存里，并**边下边算 sha256**。
+///
+/// 为什么不让浏览器/DownloadManager 去下：那条路只能给用户一个文件，用户还得自己
+/// 去文件管理器点"安装"；手机上应有的形态是"下完直接把系统安装器拉起来"
+/// （第二步见 [`install_android_update`]，实现见 MOBILE.md §2.5）。
+///
+/// 三道自保：
+/// 1. **只收 https**（清单里已经是 https，这里再挡一次，避免前端被改出 http 地址）；
+/// 2. **指纹必须形状合法**，否则直接拒绝——宁可不更新，也不装一个没法校验的包；
+/// 3. **校验不通过就删文件**，不把半成品或改过的包留在缓存里等人误装。
+#[tauri::command]
+pub async fn download_android_update(
+    app: tauri::AppHandle,
+    url: String,
+    sha256: String,
+) -> Result<String, String> {
+    use tauri::Emitter;
+
+    if !url.starts_with("https://") {
+        return Err("更新地址必须是 https".to_string());
+    }
+    let expect = normalize_sha256(&sha256).ok_or_else(|| "更新指纹格式不对（应为 64 位十六进制）".to_string())?;
+
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("updates");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建更新缓存目录失败：{e}"))?;
+    let dest = dir.join(android_apk_file_name(&expect));
+
+    // 已经有同一指纹的包（上次装到一半/装失败）⇒ 不重下。
+    if let Ok(existing) = std::fs::read(&dest) {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&existing);
+        if format!("{:x}", h.finalize()) == expect {
+            return Ok(dest.to_string_lossy().into_owned());
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        // 不设总超时：几十 MB 的包在慢网上会超。只设"连接/首字节"超时。
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut resp = client.get(&url).send().await.map_err(|e| describe_net(&e, &url))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载更新失败：HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    let tmp = dir.join(format!("{}.part", android_apk_file_name(&expect)));
+    let mut out = std::fs::File::create(&tmp).map_err(|e| format!("建临时文件失败：{e}"))?;
+    let mut hasher = Sha256::new();
+    let mut done: u64 = 0;
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("下载中断：{e}"))? {
+        out.write_all(&chunk).map_err(|e| format!("写入失败：{e}"))?;
+        hasher.update(&chunk);
+        done += chunk.len() as u64;
+        let _ = app.emit(
+            "android-update-progress",
+            AndroidUpdateProgress {
+                done,
+                total,
+                percent: if total > 0 { (done as f64 / total as f64) * 100.0 } else { 0.0 },
+            },
+        );
+    }
+    out.flush().map_err(|e| format!("写入失败：{e}"))?;
+    drop(out);
+
+    let got = format!("{:x}", hasher.finalize());
+    if got != expect {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("更新包校验不通过（期望 {expect}，实际 {got}）——已丢弃，请重试或前往发布页手动下载"));
+    }
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("落盘失败：{e}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// **Android 应用内更新第二步**：把下好的 APK 交给**系统安装器**（不是我们静默安装）。
+///
+/// Android 8 起"从应用里装 APK"需要用户给本应用开「安装未知应用」权限，这个选择权
+/// **必须留给用户**：所以这里只 `startActivity(ACTION_VIEW)`，后面的确认界面是系统的。
+/// 路径经 `FileProvider` 换成 `content://`（`file://` 从 Android 7 起会抛
+/// `FileUriExposedException`）；Kotlin 侧的实现在 `scripts/android-mobile-shell.mjs`
+/// 注入的 `ShuyoFsPlugin.installApk`。
+#[tauri::command]
+pub fn install_android_update(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::android_fs::install_apk(&app, &path)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, path);
+        Err("应用内安装只在 Android 上可用".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// 指纹规范化：这是整条 Android 更新链上**唯一**的完整性判据（Android 不发 minisign），
+    /// 判松了就等于把来路不明的 APK 交给系统安装器。
+    #[test]
+    fn sha256_shape_is_enforced() {
+        let ok = "a".repeat(64);
+        assert_eq!(normalize_sha256(&ok).as_deref(), Some(ok.as_str()));
+        assert_eq!(normalize_sha256(&format!("sha256:{ok}")).as_deref(), Some(ok.as_str()));
+        // 大写要归一化（清单里出现过小写，但别假设）
+        assert_eq!(normalize_sha256(&"A".repeat(64)).as_deref(), Some(ok.as_str()));
+        // 形状不对一律拒绝：短、长、非十六进制、空
+        assert_eq!(normalize_sha256("abc"), None);
+        assert_eq!(normalize_sha256(&"a".repeat(63)), None);
+        assert_eq!(normalize_sha256(&"a".repeat(65)), None);
+        assert_eq!(normalize_sha256(&"z".repeat(64)), None);
+        assert_eq!(normalize_sha256(""), None);
+        assert_eq!(normalize_sha256("sha256:"), None);
+    }
+
+    /// 文件名按指纹前 8 位：同版本重下复用同名（"装失败再点一次"不必重下整包），
+    /// 不同版本不会互相覆盖。
+    #[test]
+    fn apk_file_name_is_derived_from_the_hash() {
+        let a = android_apk_file_name(&"1".repeat(64));
+        assert_eq!(a, "ShuyoNote-android-11111111.apk");
+        assert_ne!(a, android_apk_file_name(&"2".repeat(64)));
+        // 极端输入不许 panic（内部只在前 8 位切片，短串也不会越界）
+        assert!(android_apk_file_name("ab").ends_with(".apk"));
+    }
 
     /// 与 `scripts/release.mjs` 写盘形状一致的清单片段（桌面三键 + android）。
     fn manifest_with_android() -> serde_json::Value {

@@ -5,6 +5,7 @@
 // harness (kept separate from updates.ts for that reason).
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { UpdateManifest } from "./updates";
 
 /** Phases of the in-app update flow, surfaced to the UI for feedback. */
@@ -44,9 +45,49 @@ export async function fetchUpdateManifestNative(url?: string): Promise<UpdateMan
   }
 }
 
+/**
+ * **Android 应用内更新**：下载 APK（带进度）+ sha256 校验 + 交给系统安装器。
+ *
+ * 两次 `invoke` 都在 Rust 侧完成（`updates.rs`）：下载走 reqwest 流式落盘、边下边算 hash，
+ * 校验不通过就删掉并报错；第二步经 FileProvider + `ACTION_VIEW` 拉起**系统安装器**
+ * ——**不是**静默安装，用户在系统界面里确认（Android 8+ 首次还要允许本应用安装应用）。
+ *
+ * 进度来自 Rust 的 `android-update-progress` 事件；事件订阅失败**不影响**更新本身
+ * （只是进度条不动），与桌面那条路同一个取舍。
+ */
+export async function installAndroidUpdate(
+  url: string,
+  sha256: string,
+  onProgress?: (p: UpdateProgress) => void,
+): Promise<string> {
+  let unlisten: (() => void) | undefined;
+  try {
+    unlisten = await listen<{ done: number; total: number; percent: number }>(
+      "android-update-progress",
+      (e) => {
+        try {
+          const pct = Math.max(0, Math.min(100, Math.round(e.payload?.percent ?? 0)));
+          onProgress?.({ phase: "downloading", percent: pct });
+        } catch {
+          // 进度是装饰，回调出问题不能打断真正的下载。
+        }
+      },
+    );
+  } catch (e) {
+    console.warn("[updater] android progress subscribe failed:", e);
+  }
+  try {
+    const path = await invoke<string>("download_android_update", { url, sha256 });
+    onProgress?.({ phase: "installing", percent: null });
+    await invoke("install_android_update", { path });
+    return path;
+  } finally {
+    unlisten?.();
+  }
+}
+
 /** Check for an update via the in-app updater (desktop only). */
-export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {
-  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return { state: "unavailable" };
+export async function checkDesktopUpdate(): Promise<DesktopUpdateResult> {  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return { state: "unavailable" };
   try {
     const update = await checkUpdater();
     if (!update) return { state: "up-to-date" };

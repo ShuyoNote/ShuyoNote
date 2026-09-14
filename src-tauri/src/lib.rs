@@ -456,6 +456,10 @@ pub fn run() {
             #[cfg(desktop)]
             email::email_test_connection,
             updates::fetch_update_manifest,
+            // 应用内更新（Android）：下载 + 校验 + 交给系统安装器。桌面上第二条会报"只在 Android 可用"
+            // （桌面走 tauri-plugin-updater，见 AboutDialog 的分支）。
+            updates::download_android_update,
+            updates::install_android_update,
             commands::create_database,
             commands::save_page,
             commands::set_page_cover,

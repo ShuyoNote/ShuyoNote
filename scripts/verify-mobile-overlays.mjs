@@ -682,6 +682,7 @@ async function main() {
                   minWidth: st.minWidth,
                   minHeight: st.minHeight,
                   flexWrap: st.flexWrap,
+                  overflowX: st.overflowX,
                   padding: st.padding,
                 });
               }
@@ -734,6 +735,25 @@ async function main() {
           insetPad.length > 0,
           `浮层形态的阅读器用 --sat 让开系统栏（${insetPad.map((e) => e.sel).join("；") || "没找到规则"}）` +
             `——不让位的话第一行按钮在状态栏那一条带里，物理点不到（真机 y=96 < 123）`,
+        );
+        // 矮视口（横屏）**反过来**：换行会把正文挤没——真机实测 head 215 + annot 157 > 阅读器总高 319，
+        // 正文区只剩 40px、页面图整页在屏外 ⇒ 改成单行横向滚动，并让「关闭」sticky 常驻。
+        // ⚠️ 这条必须只看 **max-height 单独**那条查询（带 max-width 的是上面那套换行规则）。
+        const shortOnly = rules.filter((e) => /max-height:\s*520px/.test(e.cond) && !/max-width/.test(e.cond));
+        const headNowrap = shortOnly.filter(
+          // ⚠️ 别用 `/\.pdf-reader-head$/`：那条规则是**分组选择器**（头部 + 内层 + 批注行写在一起），
+          // selectorText 以逗号结尾 ⇒ 锚 `$` 永远不匹配（这条断言第一版就是这么假红的）。
+          (e) => /\.pdf-reader-head\b/.test(e.sel) && /nowrap/.test(e["flexWrap"] ?? "") && /auto/.test(e["overflowX"] ?? ""),
+        );
+        ok(
+          headNowrap.length > 0,
+          `矮视口（横屏）里阅读器头部改成单行横向滚动（${headNowrap.map((e) => e.sel).join("；") || "没找到规则"}）` +
+            `——横屏换行会把正文挤没（实测 215+157 > 319，页面图在屏外）`,
+        );
+        const closeSticky = shortOnly.filter((e) => /\.pdf-reader-close$/.test(e.sel) && /sticky/.test(e.position ?? ""));
+        ok(
+          closeSticky.length > 0,
+          `矮视口里「关闭」sticky 常驻（${closeSticky.map((e) => e.sel).join("；") || "没找到规则"}）——它是"离开"的唯一入口，不能跟着横滑走`,
         );
       }
 

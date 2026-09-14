@@ -708,6 +708,54 @@ cd src-tauri\gen\android      # 先 `pnpm tauri android init --ci` 生成它
 `rustls-platform-verifier-0.1.1.jar`——而这里放的是 **.aar**（pom 里
 `<packaging>aar</packaging>` 正是给它看的）。用默认 metadataSources 才会去拿 `.aar`。
 
+### 2.6 应用内更新：下载 + 校验 + 交给系统安装器（2026-09-15 落地）
+
+**改之前**手机上只能"跳发布页手动下载"：拿到清单里的 APK 地址就 `openExternal` 交给浏览器 /
+DownloadManager，用户还得自己去文件管理器点安装（三步，中途还容易走错）。现在两步都在应用内。
+
+| 步 | 命令 | 关键点 |
+|---|---|---|
+| ① 下载 | `download_android_update(url, sha256)` | reqwest 流式下到**应用缓存** `updates/`，**边下边算 sha256**，进度经 `android-update-progress` 事件回给界面；同一指纹已存在 ⇒ 直接复用（"装失败再点一次"不必重下整包） |
+| ② 安装 | `install_android_update(path)` | 经 `FileProvider` 换成 `content://`（`file://` 从 Android 7 起抛 `FileUriExposedException`），`ACTION_VIEW` + `application/vnd.android.package-archive` 拉起**系统安装器** |
+
+**三道自保**（这段是整条更新链上**唯一**的完整性判据——Android **不发 minisign**）：
+
+1. 只收 `https://`（清单里已经是 https，这里再挡一次，避免前端被改成 http 地址）；
+2. 指纹形状必须合法（64 位十六进制，`sha256:` 前缀可带可不带）——宁可不更新，也不装一个没法校验的包；
+3. **校验不通过就删文件并报错**（不给"缓存里躺着半成品/被改过的包"留机会）。
+
+**刻意不做静默安装**：Android 8 起"从应用里装 APK"需要用户给本应用开「安装未知应用」，
+那个确认界面是系统的 ⇒ 我们只 `startActivity`，**装不装由用户决定**。所以这一步"成功"的定义是
+"安装器起来了"，界面里留一句"请在弹窗里确认"（`.about-update-hint`）。
+没有指纹（老清单）时退回「手动下载 / 前往发布页」，两条路并存。
+
+**注入都在脚本里**（`scripts/android-mobile-shell.mjs`，`gen/` 不入库）：
+
+| 位置 | 内容 | 漏了会怎样 |
+|---|---|---|
+| `ShuyoFsPlugin.kt` | `@Command fun installApk`（`FileProvider.getUriForFile` + `ACTION_VIEW`） | 点"安装"静默没反应 |
+| `app/shuyo-fs.pro` | `-keep …InstallApkArgs` | **CI 全绿、release 真机上** `parseArgs` 反序列化不出来 |
+| `AndroidManifest.xml` | `REQUEST_INSTALL_PACKAGES` + `FileProvider`（authority `${applicationId}.fileprovider`） | 抛 `FileUriExposedException` / 根本装不了 |
+| `res/xml/shuyo_file_paths.xml` | `<cache-path name="updates" path="updates/" />` | `getUriForFile` 抛 `IllegalArgumentException` |
+
+`--check` 现在**同时**核这 4 样 + Rust↔Kotlin 的**每一个**命令名（不只是第一个——`pickedFileInfo`
+之外新加的 `installApk` 如果只写 Rust 不写 Kotlin，只 `match` 第一个的老写法会漏掉）。
+
+**本机实证**（不用等 CI，也不用真机）：
+
+```powershell
+cd src-tauri\gen\android
+.\gradlew.bat :app:compileUniversalDebugKotlin      # BUILD SUCCESSFUL（含 manifest 注入的校验）
+.\gradlew.bat :app:minifyUniversalReleaseWithR8     # BUILD SUCCESSFUL
+# R8 产物复核：usage.txt 里没有 ShuyoFsPlugin/InstallApkArgs（没被删），
+#             mapping.txt 里类名与 installApk 方法名原样（没被改名）
+```
+
+> ⚠️ 本机跑 R8 前要先把 `gen/android/app/build.gradle.kts` 里**旧的 AAR 注入**删掉
+> （`android-platform-verifier.mjs --check` 会提示这条）：那份 AAR 与"自带补丁的 Kotlin 源码"
+> 都定义了 `org.rustls.platformverifier.CertificateVerifier` ⇒ R8 报
+> `Type … is defined multiple times` 而失败。CI 每次从零 init，不会遇到。
+
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
 鸿蒙是当前**唯一**保留 WebView 壳路线的平台。壳 = `ArkWeb` 加载 `dist-web` 构建产物 +

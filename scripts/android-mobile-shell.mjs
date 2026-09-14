@@ -91,6 +91,10 @@ const SHUYO_FS_PLUGIN = join(JAVA_DIR, 'ShuyoFsPlugin.kt')
 const PRO_FILE = join(ROOT, 'src-tauri/gen/android/app/shuyo-fs.pro')
 /** Rust 侧那位"调用点"：脚本要从它里面读出类名/命令名，与 Kotlin 对齐。 */
 const RUST_ANDROID_FS = join(ROOT, 'src-tauri/src/android_fs.rs')
+/** AndroidManifest：应用内更新要往里面加 `REQUEST_INSTALL_PACKAGES` 与 FileProvider。 */
+const MANIFEST = join(ROOT, 'src-tauri/gen/android/app/src/main/AndroidManifest.xml')
+/** FileProvider 的白名单路径（APK 落在应用缓存里，所以 `<cache-path>` 就够）。 */
+const FILE_PATHS_XML = join(ROOT, 'src-tauri/gen/android/app/src/main/res/xml/shuyo_file_paths.xml')
 
 /** 页面侧桥名（与 `src/lib/overlayStack.ts` / `src/lib/viewportInsets.ts` 同一个字符串）。 */
 const INSETS_FN = '__SHUYONOTE_INSETS__'
@@ -272,15 +276,18 @@ const SHUYO_FS_PLUGIN_KT = `package cn.shuyo.shuyonote
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import java.io.File
 
 ${MARK}
 //
@@ -296,6 +303,11 @@ ${MARK}
 @InvokeArg
 class PickedFileInfoArgs {
   lateinit var uri: String
+}
+
+@InvokeArg
+class InstallApkArgs {
+  lateinit var path: String
 }
 
 @TauriPlugin
@@ -358,6 +370,38 @@ class ShuyoFsPlugin(private val activity: Activity) : Plugin(activity) {
       ""
     }
   }
+
+  /**
+   * 应用内更新的第二步：把下好的 APK 交给**系统安装器**。
+   *
+   * 三条必须守住的：
+   *  · 路径要经 FileProvider 换成 content:// —— file:// 从 Android 7 起直接抛
+   *    FileUriExposedException；authority 必须与 AndroidManifest 里那个 provider 一致
+   *    （脚本注入时用的是 \`\${applicationId}.fileprovider\`，这里用 packageName 拼，两者相同）。
+   *  · 只 \`startActivity(ACTION_VIEW)\`，**不做静默安装**：Android 8 起"从应用里装 APK"
+   *    要用户给本应用开「安装未知应用」，那个确认界面是系统的，选择权留给用户。
+   *  · 失败要把原因回给 Rust（前端据此给"前往发布页"的退路），不要静默什么都不发生。
+   */
+  @Command
+  fun installApk(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(InstallApkArgs::class.java)
+      val file = File(args.path)
+      if (!file.exists()) {
+        invoke.reject("安装包不存在：\${args.path}")
+        return
+      }
+      val uri = FileProvider.getUriForFile(activity, activity.packageName + ".fileprovider", file)
+      val intent = Intent(Intent.ACTION_VIEW)
+      intent.setDataAndType(uri, "application/vnd.android.package-archive")
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      activity.startActivity(intent)
+      invoke.resolve(JSObject())
+    } catch (e: Exception) {
+      invoke.reject(e.message ?: "拉起系统安装器失败")
+    }
+  }
 }
 `
 
@@ -371,6 +415,7 @@ const PROGUARD = `# 我们自己注入的 Android 壳插件（scripts/android-mo
 # 只被 JNI/反射按名字调用，必须 keep，否则 release（R8 开着）上找不到类/方法。
 -keep class cn.shuyo.shuyonote.ShuyoFsPlugin { *; }
 -keep class cn.shuyo.shuyonote.PickedFileInfoArgs { *; }
+-keep class cn.shuyo.shuyonote.InstallApkArgs { *; }
 # tauri 的注解与"被注解的方法/字段"是反射的入口。
 -keep class app.tauri.annotation.** { *; }
 -keepclassmembers class * { @app.tauri.annotation.Command <methods>; }
@@ -382,6 +427,67 @@ if (!existsSync(join(ROOT, 'src-tauri/gen/android/app'))) {
     `找不到 src-tauri/gen/android/app\n` +
       '  gen/ 是生成物（不入库），所以这一步必须在 `pnpm tauri android init` **之后**跑。',
   )
+}
+
+// ---------------------------------------------------------------- 应用内更新（APK 安装）
+
+/**
+ * AndroidManifest 的两处注入（应用内更新要拉起系统安装器）：
+ *  · `REQUEST_INSTALL_PACKAGES` 权限——Android 8 起"从应用里装 APK"需要它；
+ *    真正装不装仍由用户决定（系统会让你先给本应用开「安装未知应用」）。
+ *  · `FileProvider`——APK 必须以 `content://` 交出去（`file://` 从 Android 7 起抛
+ *    `FileUriExposedException`）。authority 用 `${applicationId}.fileprovider`，
+ *    与 Kotlin 侧 `activity.packageName + ".fileprovider"` 一致。
+ *
+ * 为什么用"找不到才插"而不是"整份覆盖写"：manifest 里有 tauri 生成的一堆节点
+ * （activity/usesCleartextTraffic 等），我们只该往里加东西，不该重写别人的。
+ */
+const FILE_PATHS = `<?xml version="1.0" encoding="utf-8"?>
+<!-- APK 落在应用缓存目录（app_cache_dir/updates/），所以 cache-path 就够。
+     这份白名单是 FileProvider 允许分享出去的路径**范围**：写宽了等于把私有目录
+     整个暴露给任何拿到 URI 的应用，所以只列真正用到的那一个。 -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="updates" path="updates/" />
+</paths>
+`
+
+function injectManifest() {
+  if (!existsSync(MANIFEST)) {
+    fail(`找不到 ${MANIFEST}\n  gen/ 是生成物，这一步必须在 \`pnpm tauri android init\` **之后**跑。`)
+  }
+  let xml = readFileSync(MANIFEST, 'utf8')
+  let changed = false
+  if (!xml.includes('android.permission.REQUEST_INSTALL_PACKAGES')) {
+    xml = xml.replace(
+      /<manifest([^>]*)>/,
+      (m, attrs) =>
+        `<manifest${attrs}>\n` +
+        '    <!-- 应用内更新：把下好的 APK 交给系统安装器（见 docs/MOBILE.md §2.5）。\n' +
+        '         装不装由用户决定——Android 8+ 还会要求用户给本应用开「安装未知应用」。 -->\n' +
+        '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
+    )
+    changed = true
+  }
+  if (!xml.includes('shuyo_file_paths')) {
+    xml = xml.replace(
+      /<\/application>/,
+      '        <!-- APK 经 FileProvider 换成 content://（file:// 从 Android 7 起会抛 FileUriExposedException）。\n' +
+        '             authority 必须与 ShuyoFsPlugin.installApk 里拼的那个一致。 -->\n' +
+        '        <provider\n' +
+        '            android:name="androidx.core.content.FileProvider"\n' +
+        '            android:authorities="${applicationId}.fileprovider"\n' +
+        '            android:exported="false"\n' +
+        '            android:grantUriPermissions="true">\n' +
+        '            <meta-data\n' +
+        '                android:name="android.support.FILE_PROVIDER_PATHS"\n' +
+        '                android:resource="@xml/shuyo_file_paths" />\n' +
+        '        </provider>\n' +
+        '    </application>',
+    )
+    changed = true
+  }
+  if (changed) writeFileSync(MANIFEST, xml, 'utf8')
+  return changed
 }
 
 if (CHECK_ONLY) {
@@ -420,26 +526,34 @@ if (CHECK_ONLY) {
     ['@InvokeArg', '没有 @InvokeArg ⇒ Kotlin 侧 parseArgs 反序列化不出 uri'],
     ['OpenableColumns.DISPLAY_NAME', '没有查 DISPLAY_NAME ⇒ 原始文件名还是拿不到（这条 bug 的一半）'],
     ['getType(', '没有 ContentResolver.getType ⇒ mime 拿不到'],
+    // 应用内更新第二步：没有这段，前端就只能让用户自己去文件管理器点安装。
+    ['FileProvider.getUriForFile', '没有 FileProvider ⇒ 交出去的是 file://，Android 7+ 抛 FileUriExposedException'],
+    ['application/vnd.android.package-archive', '拉安装器的 intent 类型不对 ⇒ 系统不知道这是个 APK'],
   ]) {
     if (!fsKt.includes(needle)) fail(`${SHUYO_FS_PLUGIN} 缺少 \`${needle}\`：${why}`)
   }
 
-  // **两边名字对齐**：Rust 侧声明了类名与命令名，Kotlin 侧必须真的存在同名类/方法。
+  // **两边名字对齐**：Rust 侧声明了类名与每个命令名，Kotlin 侧必须真的存在同名类/方法。
   // 这是唯一能挡住"改了一边忘了另一边"的机器判据。
+  // ⚠️ 命令可能不止一个（pickedFileInfo / installApk），所以要**全量**比对，
+  //    只 `match` 第一个的话，"新加的那个命令忘了写 Kotlin"会被漏掉。
   if (!existsSync(RUST_ANDROID_FS)) fail(`缺少 ${RUST_ANDROID_FS}（Rust 侧的调用点）`)
   const rust = readFileSync(RUST_ANDROID_FS, 'utf8')
   const className = (rust.match(/PLUGIN_CLASS:\s*&str\s*=\s*"([A-Za-z0-9_]+)"/) || [])[1]
-  const commandName = (rust.match(/run_mobile_plugin::<[^>]+>\("([A-Za-z0-9_]+)"/) || [])[1]
   if (!className) fail(`${RUST_ANDROID_FS} 里读不到 PLUGIN_CLASS（Rust 与 Kotlin 的类名要对齐）`)
-  if (!commandName) fail(`${RUST_ANDROID_FS} 里读不到 run_mobile_plugin 的命令名`)
   if (!fsKt.includes(`class ${className}`)) {
     fail(`Kotlin 里没有 \`class ${className}\` —— 与 Rust 侧 PLUGIN_CLASS 对不上`)
   }
-  if (!fsKt.includes(`fun ${commandName}(`)) {
-    fail(`Kotlin 里没有 \`fun ${commandName}(\` —— 与 Rust 侧 run_mobile_plugin 的命令名对不上`)
-  }
-  if (!fsKt.includes(`@Command\n  fun ${commandName}(`)) {
-    fail(`\`${commandName}\` 前面少了 @Command —— PluginManager 只登记被注解的方法`)
+  const allRust = readFileSync(join(ROOT, 'src-tauri/src/updates.rs'), 'utf8') + rust
+  const commands = [...allRust.matchAll(/run_mobile_plugin::<[^>]+>\("([A-Za-z0-9_]+)"/g)].map((m) => m[1])
+  if (commands.length === 0) fail('读不到任何 `run_mobile_plugin("<命令名>"` —— Rust 侧没有调用点？')
+  for (const cmd of new Set(commands)) {
+    if (!fsKt.includes(`fun ${cmd}(`)) {
+      fail(`Kotlin 里没有 \`fun ${cmd}(\` —— 与 Rust 侧 run_mobile_plugin 的命令名对不上`)
+    }
+    if (!fsKt.includes(`@Command\n  fun ${cmd}(`)) {
+      fail(`\`${cmd}\` 前面少了 @Command —— PluginManager 只登记被注解的方法`)
+    }
   }
 
   // 注入点那个包名也要与 Rust 侧一致（写错包名 = FindClass 失败）
@@ -456,10 +570,29 @@ if (CHECK_ONLY) {
   const pro = readFileSync(PRO_FILE, 'utf8')
   for (const [needle, why] of [
     [`-keep class ${pkg}.${className} { *; }`, '这个类只被 JNI/反射按名字调用，不 keep 会被删/改名'],
+    [`-keep class ${pkg}.InstallApkArgs { *; }`, '安装参数类同理（R8 改名后 parseArgs 反序列化不出来）'],
     ['@app.tauri.annotation.Command', '@Command 方法是反射入口，方法名不能被 R8 改掉'],
     ['@app.tauri.annotation.InvokeArg', '@InvokeArg 的字段是反射入口'],
   ]) {
     if (!pro.includes(needle)) fail(`${PRO_FILE} 缺少 \`${needle}\`：${why}`)
+  }
+
+  // ---- 应用内更新：manifest 权限 + FileProvider + 白名单路径 ----
+  // 这三样缺任何一个，手机上"下载完点安装"都会失败，而且**只有真机能发现**
+  // （CI 编译得过、桌面上根本不走这条路）。
+  if (!existsSync(MANIFEST)) fail(`缺少 ${MANIFEST}`)
+  const man = readFileSync(MANIFEST, 'utf8')
+  for (const [needle, why] of [
+    ['android.permission.REQUEST_INSTALL_PACKAGES', 'Android 8+ 从应用里装 APK 需要这个权限'],
+    ['androidx.core.content.FileProvider', '没有 FileProvider ⇒ APK 只能以 file:// 交出去，Android 7+ 直接抛异常'],
+    ['android:authorities="${applicationId}.fileprovider"', 'FileProvider 的 authority 与 Kotlin 侧拼的那个必须一致'],
+    ['@xml/shuyo_file_paths', 'FileProvider 没有路径白名单 ⇒ getUriForFile 抛 IllegalArgumentException'],
+  ]) {
+    if (!man.includes(needle)) fail(`${MANIFEST} 缺少 \`${needle}\`：${why}`)
+  }
+  if (!existsSync(FILE_PATHS_XML)) fail(`缺少 ${FILE_PATHS_XML}（FileProvider 的路径白名单）`)
+  if (!readFileSync(FILE_PATHS_XML, 'utf8').includes('cache-path')) {
+    fail(`${FILE_PATHS_XML} 里没有 <cache-path> —— APK 下在应用缓存目录，不在白名单里就分享不出去`)
   }
 
   console.log('✅ Android 壳适配层已注入（--check）')
@@ -478,6 +611,13 @@ writeFileSync(SHUYO_FS_PLUGIN, SHUYO_FS_PLUGIN_KT, 'utf8')
 console.log(`已写入 Android 选择器插件（DISPLAY_NAME + getType）→ ${SHUYO_FS_PLUGIN}`)
 writeFileSync(PRO_FILE, PROGUARD, 'utf8')
 console.log(`已写入 Proguard 规则（R8 keep）→ ${PRO_FILE}`)
+
+// 应用内更新的两处 manifest 注入 + FileProvider 白名单（找不到才插，不重写别人的节点）
+const manifestChanged = injectManifest()
+mkdirSync(dirname(FILE_PATHS_XML), { recursive: true })
+writeFileSync(FILE_PATHS_XML, FILE_PATHS, 'utf8')
+console.log(`已写入 FileProvider 白名单 → ${FILE_PATHS_XML}`)
+console.log(`AndroidManifest 注入（权限 + FileProvider）：${manifestChanged ? '本次写入' : '已存在，未改动'}`)
 
 
 // ---------------------------------------------------------------- 真机断言

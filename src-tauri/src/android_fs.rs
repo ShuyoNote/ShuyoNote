@@ -106,3 +106,22 @@ pub(crate) fn picked_file_info(app: &tauri::AppHandle, uri: &str) -> Option<Pick
         }
     }
 }
+
+#[derive(serde::Serialize)]
+struct InstallApkPayload<'a> {
+    path: &'a str,
+}
+
+/// 把下好的 APK 交给**系统安装器**（应用内更新的第二步，见 `updates.rs`）。
+///
+/// 与 `picked_file_info` 的**失败语义相反**：这条失败**必须**让用户知道
+/// —— 静默什么都不发生的话，用户会以为"点了没反应"，而其实只是缺个权限。
+/// Kotlin 侧实现在 `ShuyoFsPlugin.installApk`（FileProvider + ACTION_VIEW）。
+pub(crate) fn install_apk(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    let fs = app
+        .try_state::<ShuyoFs>()
+        .ok_or_else(|| "Android 壳插件没注册（应用内安装不可用）".to_string())?;
+    fs.0.run_mobile_plugin::<serde_json::Value>("installApk", InstallApkPayload { path })
+        .map(|_| ())
+        .map_err(|e| format!("拉起系统安装器失败：{e}"))
+}

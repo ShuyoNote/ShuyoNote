@@ -1125,6 +1125,11 @@ function makeInvoke(store: SqliteStore) {
       // 返回 null 视为「无更新」，不抛错。
       return null as T;
     }
+    if (cmd === "download_android_update" || cmd === "install_android_update") {
+      // 应用内更新只在 Android 壳里成立（Web 版刷新一下就是最新，浏览器也不能装 APK）。
+      // 这里抛错而**不**静默：真走到这一步说明前端的分支判断错了，报出来比"点了没反应"好。
+      throw new Error("应用内更新仅 Android 版支持（Web 版刷新即最新）");
+    }
     if (cmd === "deep_link_take") {
       // OS 层深链仅桌面版：浏览器里没有"注册 scheme 并被系统唤起"这回事
       // （Web 版的等价入口是 URL 参数 / 粘贴链接，见 deepLink.ts 的调用点）。
