@@ -180,8 +180,32 @@ SHUYONOTE_MINISIGN=$(which minisign)               \  # 默认找 PATH 里的 mi
 
 | 入口 | 怎么上线 | 谁负责 |
 |---|---|---|
-| GitHub Pages `https://shuyonote.github.io/ShuyoNote/` | **自动**：推 main → `.github/workflows/pages.yml` | CI（无需手工） |
+| GitHub Pages `https://shuyonote.github.io/ShuyoNote/` | **自动，但只在 `main`**：推 main → `.github/workflows/pages.yml` | CI（无需手工） |
 | 国内主站 `https://shuyo.cn/app/` | **手动上传**（下面三步） | 发布者 |
+
+> [!] **Pages 的环境分支策略：未合并进 `main` 就刷不了（v1.90.2 发版时实测，别当脚本 bug 查）**
+> `github-pages` 这个**环境**配了 `branch_policy`，**只允许 `main`**。所以只要在功能分支上发版
+> （本仓库常态：`feat/*` 领先 `main` 几十个提交），**"发 Web 版"这一步只能覆盖国内主站
+> `shuyo.cn/app/`，Pages 会静默停在旧版本**——`check:web-deploy` 会如实报"Pages 版本 ≠ 当前版本"，
+> 但很容易被当成"部署脚本坏了"。
+>
+> **判据（两条，都不用猜）**：
+> ```bash
+> # ① 环境策略里允许的分支：v1.90.2 时输出 total_count=1、唯一 name="main"
+> curl -s -H "Authorization: Bearer $GH" \
+>   https://api.github.com/repos/ShuyoNote/ShuyoNote/environments/github-pages/deployment-branch-policies
+> # ② 从别的 ref 手动 dispatch（ref: feat/...）时，run 的 build job 会全绿，
+> #    但 deploy job 秒级失败且 **steps 为空数组、runner_id=0**（没起 runner，被策略拒绝）
+> curl -s -X POST -H "Authorization: Bearer $GH" \
+>   https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/workflows/pages.yml/dispatches \
+>   -d '{"ref":"feat/xxx"}'
+> ```
+> ⚠️ 注意 ② 的迷惑性：**build 全绿 + deploy 一秒失败**，看起来像"部署脚本 bug"，
+> 实际是 `environment: github-pages` 的 OIDC 交换被分支策略挡了（deploy 的日志 API 还会返回
+> `BlobNotFound`，连日志都没有）。判据就是"**deploy 0 步 / runner_id=0**"。
+>
+> **放开该策略（例如把 `feat/*` 加进允许列表）需要发布者明确授权**——它是**安全面变化**
+> （非 `main` 分支从此也能改线上 Pages），**不要顺手改**。三条出路的取舍见 §⑦ 末的说明。
 
 ```bash
 # 1) 构建（version.json 会写成当前版本）+ 用真实 Chromium 验一遍产物
@@ -212,6 +236,20 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 
 > [!] **为什么"看版本号"不够**：`check:web-deploy` 会把线上 `index.html` 引用的**每个资源**
 > 都取一遍。版本号对、资源对不上，正是 v1.84.4 那种"页面能开、功能全废"的坏法。
+
+**未合并进 `main` 时，这一节的"两个入口"实际只能完成一个。** `github-pages` 环境的分支策略
+只允许 `main`（见上面的 [!]），所以此时三条出路是：
+
+1. **只发国内主站**（v1.90.2 的实际选择）：主站是用户的**主入口**，刷成新版本即可；
+   Pages 作为**备用**入口停在旧版本可以接受，等将来把功能分支合并进 `main` 时**自然对齐**
+   （`pages.yml` 在 push `main` 时自动跑）。**这也是本仓库当前的常态选择。**
+2. **推 `main`**：唯一不违反现有策略的部署方式，但它等于**合并功能分支**
+   （v1.90.2 时 `feat/android-mobile` 领先 `main` **77 个提交**）——那是**产品决策**，发布者不做。
+3. **放开环境分支策略**：能让 Pages 从任意 ref 部署，但**扩大安全面**（非 `main` 分支即可改
+   线上 Pages）⇒ **需要发布者明确授权，不为"刷新一个备用站"顺手改**。
+
+收尾时别忘了一句口径：**Pages 上那一份是从它被部署时的 ref 构建的**。若走第 2 条，Pages = `main`
+的构建；若走第 3 条，Pages 可能**与 `main` 不一致**——报告里要写明，不要让读者以为两者同源。
 
 ## ⑧ 检查 CHANGELOG 连续
 ```bash
