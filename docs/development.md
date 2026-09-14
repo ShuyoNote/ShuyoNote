@@ -119,7 +119,7 @@ pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 
 ## 4. 测试与验证（权威循环）
 
-> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
+> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**浮层登记门禁**（`check:overlays`）、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
 >
 > 在此之前这些检查**只靠人记得跑**：`smoke-web`（350 断言）曾因一处无守卫的 `localStorage` 访问整套崩掉而长期无人察觉——没有自动化在跑它，谁都没看见它是红的。
 
@@ -156,7 +156,17 @@ pnpm test:mobile-overlays             # 期望 "N 通过 / 0 失败"
 
 # 9. Android 壳适配层的注入自检（改了 scripts/android-mobile-shell.mjs 或 gen/ 时跑）
 pnpm check:android-mobile-shell       # 期望 "✅ …（--check）"
+
+# 10. 浮层登记门禁（加了/改了任何浮层组件都要跑；纯静态，秒级）
+pnpm check:overlays                   # 期望 "22 通过 / 0 失败"
 ```
+
+> **`check:overlays`（`scripts/check-overlay-registry.mjs`，也串在 `pnpm build` 与 CI 的静态检查那一档）**
+> 枚举仓库里渲染 `*-overlay` / `*-popover` 容器的组件，要求每个要么登记进返回栈
+> （`useOverlayLayer`）**且**在 `test:mobile-overlays` 的 `OVERLAYS` 里被量到，要么在脚本内
+> **显式豁免**并给出理由。它是被真机复验的第 6 个问题逼出来的：**版本历史弹层漏登记**
+> ⇒ 按返回键直接退出应用，而当时所有检查都是绿的（手写清单只检查已经写上的那些层）。
+> 判据 A–D 与豁免清单见 `docs/MOBILE.md` §4.1.4。
 
 > **`test:mobile-overlays` 覆盖 19 层浮层 × 3 个视口（360×640 / 390×844 / **792×360 横屏**）+ 桌面**，
 > 并额外注入 `--sat` / `--kb` 变量量"系统 inset / 软键盘让位"那一半。

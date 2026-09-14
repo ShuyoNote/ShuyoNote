@@ -796,7 +796,7 @@ cd src-tauri\gen\android      # 先 `pnpm tauri android init --ci` 生成它
 ### 4.1.4 加了一层浮层之后：**必须**把它加进验收清单
 
 `scripts/verify-mobile-overlays.mjs` 里有一个层清单（`OVERLAYS` 数组），
-它是这套规则的**唯一执行点**——新浮层不登记，就等于没人验过。跑法与加法：
+它是这套规则的执行点之一——新浮层不登记，就等于没人验过。跑法与加法：
 
 ```bash
 pnpm dev:web                  # 另开一个终端，脚本要连真实 Chromium
@@ -839,8 +839,78 @@ pnpm test:mobile-overlays     # 有失败即非零退出
 > 2026-09-15 新增的两条也自证过：把 `min-height:420px` 加回 `.set-dialog` ⇒ **792×360 那一档立刻红**
 > （`bottom=444 > 360`）；把 `.app` 的 `padding-top` 去掉 ⇒ `--sat=41px` 那一组红。
 
+#### 但"手写一张清单"本身漏一个就没人知道 ⇒ 补了**登记门禁**（2026-09-15）
+
+真机复验抓到的第 6 个问题就是这么来的：**版本历史弹层没登记进返回栈**——
+只开着它时 `window.__SHUYONOTE_BACK__.depth()` = **0** ⇒ 按返回键**直接退出应用**，
+而弹层还开着（"19 层浮层全部登记"的说法当场不成立）。
+漏一层**没有任何症状**：不报错、单测不红、`OVERLAYS` 那份手写清单也照样全绿
+（它只检查**已经写上**的那些层）。**清单与实现对不上时，缺的那一方永远不会自己暴露。**
+
+```bash
+pnpm check:overlays          # = node scripts/check-overlay-registry.mjs；也串在 pnpm build 与 CI 里
+```
+
+它**枚举**仓库里"看起来是覆盖层"的组件（只认一件事：JSX 里字面量写出来的、
+以 `-overlay` / `-popover` 结尾的 class token；刻意不做"文件名含 Panel/Dialog"这类模糊匹配，
+否则内联面板会被全拉进来、豁免清单被噪声淹掉），然后要求：
+
+| 判据 | 红了说明什么 |
+|---|---|
+| **A** 渲染浮层容器的组件必须调用 `useOverlayLayer("<id>", …)` | **新增浮层忘了登记**（或忘了显式豁免）——就是第 6 个问题那一类 |
+| **B** 每个登记过的 id，其组件渲染的类名必须出现在 `OVERLAYS` 的 `root`/`box` 里 | 登记了但**没人量过它**（移动端几何验收里没有这一层） |
+| **C** `OVERLAYS` 每一层的类名都要有组件真的渲染它、且其中至少一个登记了返回栈 | 清单里的**幽灵条目** / 类名被改名（改名后 `optional:true` 的层会**静默降级成一条 note**） |
+| **D** 豁免清单不许过期 | 写了豁免、那个组件已经不存在了 |
+
+豁免**必须显式**（脚本里的 `EXEMPT_COMPONENTS` / `EXEMPT_FROM_MOBILE_PASS`，每条都带理由），
+且每次运行都会把整张豁免表打印出来——豁免是**显式的欠账**，不是藏东西的地方。
+现在豁免表里有三处 `gap` 级别的同类缺口（**真的是应用级浮层、但没登记返回栈**：
+`.pdf-reader-overlay` 的浮层形态、插件声明式视图浮层、文件预览浮层）——
+它们不会让门禁变红（门禁的契约是"新增浮层不许悄悄出现"），但每次运行都会 ⚠️ 打印出来；
+各接一条 `useOverlayLayer` 即可修掉。
+
+另外两条与"版本历史"直接相关、本轮**没有**纳入几何验收（属未验证项，写在这里免得不一致）：
+
+- `history`：窄屏下 `.history-popover` 仍是 `position:absolute` 的 320px 锚定浮层，
+  360×640 实测**左边缘 = −6px**（越界 6px）；要纳入 `OVERLAYS` 得先给它一个窄屏形态
+  （同 §4.1.3 的 `is-sheet`）+ 滚动锁。
+- `backupMenu`：侧栏备份按钮上的下拉菜单（`usePopover` 已管定位），也没有对应的 `OVERLAYS` 条目。
+
 相关：[RELEASING.md](RELEASING.md) ⑧（CHANGELOG 结构门禁）与 ①（`[Unreleased]` 的用法）。
 脚本清单见 [development.md](development.md) 的"测试与验证"一节。
+
+### 4.1.5 验收口径：顶部那条 inset 带**永远归 SystemUI**（2026-09-15 真机确认）
+
+真机（Mate 40 / Android 12 / 密度 3.0）上量到的状态栏 inset = 123 设备 px = **41 CSS px**。
+`targetSdk = 36` ⇒ Android 15 起对 SDK≥35 的 App **强制 edge-to-edge**
+（壳里的 `enableEdgeToEdge()` 删掉也退不回去 ✗，见 §4.2.1），
+所以应用**永远**都能把内容画进那一条带里——**但那一条带的触摸不属于它**：
+状态栏是 SystemUI **自己的窗口**，位于应用窗口之上。
+
+> ⇒ **验收标准是"可交互 UI 全部移出该带、顶部控件物理可点"，
+> 不是"那条带变活"。** 别去想办法"穿透"它——那是按设计拿不到的。
+
+两条判据：
+
+1. **可交互 UI 全部移出该带**：`--sat` 取壳层报来的 inset；最高的那个可交互元素
+   （`button` / `input` / `select` / `[role=button]` …）的 `top` 必须 ≥ `--sat`。
+   浮层是 `position: fixed`，**不会跟着 `.app` 的 padding 走**，必须自己让位。
+   浏览器侧那一条由 `verify-mobile-overlays.mjs` 注入 `--sat=41px` 量（见 §4.1.4）。
+2. **顶部控件物理可点**：这一条**只能在真机上**验，而且要按下面这条做。
+
+> ⚠️ **真机必须用 `adb shell input tap`**。CDP 的 `Input.dispatchTouchEvent`
+> （`verify-mobile-overlays.mjs` 里那条"触摸拖背景"断言用的就是它）**直接注入渲染进程、
+> 绕过 SystemUI** ⇒ **在那条死带里也会"成功"**。用合成触摸去验"顶部点得到"，
+> 会把"点不到"验成"点得到"——**假绿**。
+>
+> 实测判据（§4.2.1 的原始记录）：`adb shell input tap` 打在 y ≤ 123 设备 px ⇒ DOM 收到 **0** 个事件；
+> 打在 y = 130 / 180 ⇒ **100+** 个事件。脚本化的那条在
+> `node scripts/android-mobile-shell.mjs --device-check`（走 `adb forward` + devtools socket）。
+
+（这条口径是三次踩坑换来的：① 以为 `env(safe-area-inset-*)` 能拿到状态栏高度——
+Android 上四个方向**全是 0px**，它取的是**屏幕物理刘海**；② 以为 `viewport-fit=cover` 或
+`interactive-widget=resizes-content` 能救——在这套 WebView 上都不生效；
+③ 用 CDP 合成触摸"验证修好了"——绕过 SystemUI，死带里照样"成功"。）
 
 ## 4.2 Android 壳适配层：窗口 inset / 软键盘 / 返回键（2026-09-15）
 
@@ -947,7 +1017,8 @@ IME 覆盖 CSS y≥468，而底部弹层钉在 `bottom: 0` ⇒ 输入框正好�
   —— **`true` = 页面关掉了最上层浮层，本次返回键到此为止**；
   **`false` = 栈是空的**，把自己 disable 后重新派发，落回 AppPlugin 那条回调（它没监听者 ⇒ `finish()`）。
 
-**浮层栈**由各浮层组件用 `useOverlayLayer(id, open, close)` 登记（本轮接了 19 层），
+**浮层栈**由各浮层组件用 `useOverlayLayer(id, open, close)` 登记（本轮接了 **20 层**：
+2026-09-15 原为 19 层，真机复验补上了**漏掉的版本历史弹层**——见 §4.1.4 的登记门禁），
 **后进先出**：最后打开的最先关。逐条断言见 §4.1.4。
 
 ### 4.2.4 这一层怎么验（脚本化）

@@ -4,6 +4,7 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import type { PageVersion } from "../types";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ClockIcon } from "./icons";
 
 // Compact, friendly timestamp: today/yesterday → 时:分, this year → 月日 时:分, else 年月日.
@@ -28,6 +29,10 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
 
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts 与 §4.1.4）。
+  // ⚠️ 这一条曾漏掉：弹层开着时浮层栈 depth=0 ⇒ 返回键**直接退出应用**而弹层还在。
+  useOverlayLayer("history", open, () => setOpen(false));
+
   const load = useCallback(() => {
     setLoading(true);
     api
@@ -49,6 +54,15 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  // Escape 关闭（与其它浮层同一条既有做法：window 上监听 keydown）。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
   const restore = async (versionId: string) => {

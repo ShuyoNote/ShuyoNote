@@ -98,7 +98,7 @@ jobs:
           # 不通过就非零退出）——"跟着文档走第一步就卡住"是最伤的。
           node scripts/plugin-new.mjs ci-smoke-plugin /tmp/plugin-new-smoke
 
-      - name: 版本 / CHANGELOG / 命令契约 / 能力注册表 / 文档链接
+      - name: 版本 / CHANGELOG / 命令契约 / 能力注册表 / 文档链接 / 浮层登记
         # workflow YAML 门禁为什么放在**这一档**（而不是只留在 `pnpm build` 链里）：
         # 仓库里除本文件外的 workflow 都带 `paths:` 过滤（`android.yml` 只认它自己的文件与
         # 构建输入），所以"只改坏 `.github/workflows/` 下**别的**文件"时，一个 job 都不会被
@@ -110,6 +110,12 @@ jobs:
         # 它只在 CI 之外由人触发）。这种自指只能靠**外部观察**发现：run 名显示为**文件路径**
         # 而不是 `name: CI`、job 数为 0、且无视 branches 过滤——2026-09-12 起 49 次 push 全红
         # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
+        #
+        # 浮层登记门禁（2026-09-15 加）：枚举仓库里**渲染 `*-overlay` / `*-popover` 容器的组件**，
+        # 要求每个要么登记进返回栈（`useOverlayLayer`）且在移动端 `OVERLAYS` 里被量到，
+        # 要么在脚本内**显式豁免**并给出理由。加它是因为真机复验抓到的第 6 个问题
+        # （版本历史弹层没登记 ⇒ 返回键直接退出应用）**正是"手写清单漏一项"**这一类：
+        # 清单和实现对不上时，缺的那一方永远不会自己暴露。
         run: |
           node scripts/check-versions.mjs
           node scripts/check-changelog.mjs
@@ -117,6 +123,7 @@ jobs:
           node scripts/check-capabilities.mjs
           node scripts/check-doc-links.mjs
           node scripts/check-workflow-yaml.mjs
+          node scripts/check-overlay-registry.mjs
 
   mobile-layout:
     name: 移动端布局验收（真实 Chromium）

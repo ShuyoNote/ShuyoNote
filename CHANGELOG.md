@@ -5,7 +5,9 @@
 ## [Unreleased]
 
 > **「Android 真机复验」这一轮**（2026-09-15）：上一轮的移动端适配在真机（Mate 40 / Android 12）上
-> 量出 **5 个问题**，本轮逐条修掉。最重的是**顶部 41 CSS px 是触摸死区**——
+> 量出 **5 个问题**，本轮逐条修掉（补验时又抓到**第 6 个**：版本历史弹层**漏登记**返回栈
+> ⇒ 按返回键直接退出应用，而当时所有检查都是绿的——见下面「修复」末条与
+> [MOBILE.md](docs/MOBILE.md) §4.1.4 的**浮层登记门禁**）。最重的是**顶部 41 CSS px 是触摸死区**——
 > 根因不是 CSS，是 **edge-to-edge 之下应用在状态栏那一带永远收不到触摸**，
 > 而 `env(safe-area-inset-*)` 在 Android 上**恒为 0**（它取自物理刘海，不是状态栏）。
 > 同一个根因还带出"软键盘盖住底部弹层"（`adjustResize` 在 edge-to-edge 下是死代码）。
@@ -83,6 +85,12 @@
   Android 返回键关层、安全区实际留白、横屏、`overscroll-behavior` 手感、触屏实际命中率；
   另有一处**入口问题**留待评估——同步面板在窄屏的入口较隐蔽（顶栏的 `.titlebar-sync`
   在 ≤768px 被 `display:none` 隐藏，只能从侧栏抽屉里的 SyncPanel 进）。
+- **`scripts/check-overlay-registry.mjs`（浮层登记门禁）+ `src/components/historyPanel.test.ts`**（2026-09-15）：
+  `pnpm check:overlays`，已串进 `pnpm build` 与 CI 的静态检查档。它**枚举**仓库里渲染
+  `*-overlay` / `*-popover` 容器的组件，要求每个要么登记进返回栈（`useOverlayLayer`）
+  **且**在 `test:mobile-overlays` 的 `OVERLAYS` 里被量到，要么在脚本内**显式豁免**并给出理由；
+  豁免清单每次运行都打印（5 类：宿主子浮层 / 视图内联浮层 / 非可关闭浮层 / 未纳入几何验收 / **同类缺口**）。
+  见 [MOBILE.md](docs/MOBILE.md) §4.1.4。
 
 ### 修复
 
@@ -144,6 +152,24 @@
   （最高的可交互元素必须在状态栏之下、弹层必须抬到键盘之上）。
   ⚠️ 断言里有一处**量错了对象**也已修正：`getBoundingClientRect()` 量的是 border box，
   `.app` 的 `padding-top` **不会**改变它的 `top`——原写法量出来永远是 0。
+
+- **【真机复验第 6 个】版本历史弹层没登记进返回栈 ⇒ 按返回键直接退出应用**（2026-09-15）。
+  实测证据（真实 Chromium / 390×844 等三档视口复现）：只开着版本历史时
+  `window.__SHUYONOTE_BACK__.depth()` = **0**、`handle()` 返回 **false**
+  ⇒ 壳层放行返回键 ⇒ **退出应用，而弹层还开着**（"19 层浮层全部登记"的说法当场不成立：
+  `src/components/HistoryPanel.tsx` 只有"点外面关闭"，既没有 `useOverlayLayer`、也没有 Esc）。
+  改法照其它浮层的既有模式，**两处最小改动**：
+  `useOverlayLayer("history", open, () => setOpen(false))` +
+  `window` 上的 Escape keydown（与 `AboutDialog` / `StoragePanel` 同一条写法）。
+  修后同视口复测：`depth()` = 1（`ids: ["history"]`）、`handle()` = **true**、弹层消失。
+  根因不是"写错了"而是"**漏了**"——所以同一提交附上**登记门禁**（见「新增」最后一条），
+  并用**变异测试**自证它会红：删掉那一行登记 ⇒ 门禁报"1 个组件渲染了浮层容器却既没登记也没豁免"
+  （注释掉也算没登记——门禁因此还补了一条"注释里的登记不算登记"）；
+  新建一个不登记的浮层组件 ⇒ 报同一个红；登记了却不加进 `OVERLAYS` ⇒ 报"这条登记在 OVERLAYS 里找不到对应的一层"；
+  把 `OVERLAYS` 里某个类名改名 ⇒ 报"幽灵条目"。
+  **仍未做（如实记）**：该层的窄屏形态没纳入几何验收——实测 360×640 下 `.history-popover`
+  左边缘 = **−6px**（越界 6px），它是 `position:absolute` 的 320px 锚定浮层、窄屏没走
+  `is-sheet` 形态，要纳入得先改形态（已在门禁的豁免表里写明，属未验证项）。
 
 - **`check-changelog` 门禁不再要求 `[Unreleased]` 段为空**（2026-09-14）。首版门禁把
   "`[Unreleased]` 必须为空"写成了硬约束，这是**误读 Keep a Changelog**——`[Unreleased]` 的用途
