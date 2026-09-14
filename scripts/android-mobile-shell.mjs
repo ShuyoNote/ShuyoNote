@@ -83,6 +83,14 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const JAVA_DIR = join(ROOT, 'src-tauri/gen/android/app/src/main/java/cn/shuyo/shuyonote')
 const MAIN_ACTIVITY = join(JAVA_DIR, 'MainActivity.kt')
+/** 问系统「这个 content:// URI 叫什么 / 是什么类型」的本地 Tauri 插件（Rust 侧在
+ *  `src-tauri/src/android_fs.rs`）。 */
+const SHUYO_FS_PLUGIN = join(JAVA_DIR, 'ShuyoFsPlugin.kt')
+/** Proguard 规则：R8 开着（`isMinifyEnabled = true`），而 `app/` 下的 `**`/*.pro`
+ *  会被 `proguardFiles(fileTree(".")...)` 自动收走。 */
+const PRO_FILE = join(ROOT, 'src-tauri/gen/android/app/shuyo-fs.pro')
+/** Rust 侧那位"调用点"：脚本要从它里面读出类名/命令名，与 Kotlin 对齐。 */
+const RUST_ANDROID_FS = join(ROOT, 'src-tauri/src/android_fs.rs')
 
 /** 页面侧桥名（与 `src/lib/overlayStack.ts` / `src/lib/viewportInsets.ts` 同一个字符串）。 */
 const INSETS_FN = '__SHUYONOTE_INSETS__'
@@ -243,7 +251,131 @@ class MainActivity : TauriActivity() {
 }
 `
 
-// ---------------------------------------------------------------- 注入
+// ------------------------------------------------- Android：文件选择器的"名字/类型"插件
+
+// 真机症状（2026-09-17）：经系统文件选择器导入的附件显示成
+//   📎41449ced-d44e-4d3c-8e14-7c6733ad042a  未整理  文件  1.8 KB
+// 名字和 mime 同时丢 —— 因为 `tauri-plugin-dialog` 的 Android 实现只把
+// `uri.toString()` 交出来（`DialogPlugin.kt::createPickFilesResult`），Rust 侧
+// 于是把选中文件拷成**裸 UUID、无扩展名**的临时文件，而下游 `mime_from_path`
+// **只看扩展名** ⇒ octet-stream ⇒ 前端的 `file.mime` 分支全都进不去
+// （内置文件预览 / PDF 阅读器 / 照片墙），掉到 `opener.openPath()` 也失败。
+//
+// URI 尾段救不了：外置存储那条是 `primary%3ADownload%2Fphoto.png`（能解出真名），
+// 但 MediaStore/Downloads 给的是 `image%3A1234` / `msf%3A1000000042` —— **那是 id**。
+// 名字只有 `ContentResolver.query(OpenableColumns.DISPLAY_NAME)` 知道，
+// mime 只有 `ContentResolver.getType(uri)` 知道，**两者都只在 Android 运行时里**。
+//
+// 所以这里注入一个正经的本地 Tauri 插件（与 tauri-plugin-fs/-opener/-dialog 同一套
+// 机制），Rust 侧 `api.register_android_plugin(...)` + `run_mobile_plugin(...)` 调用。
+const SHUYO_FS_PLUGIN_KT = `package cn.shuyo.shuyonote
+
+import android.app.Activity
+import android.content.ContentResolver
+import android.database.Cursor
+import android.net.Uri
+import android.provider.OpenableColumns
+import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
+import app.tauri.plugin.Plugin
+
+${MARK}
+//
+// 这个文件是**生成物**：内容在 scripts/android-mobile-shell.mjs 里，每次构建覆盖写。
+// 直接改 gen/ 不会进库（gen/ 在 .gitignore 里），下次 CI init 就没了。
+//
+// 它只回答一个问题：**系统选择器给的这个 content:// URI 叫什么名字、是什么类型**。
+// 调用方是 Rust：src-tauri/src/android_fs.rs（类名与命令名两边必须对得上，
+// scripts/android-mobile-shell.mjs --check 会把这两边一起核）。
+//
+// 失败一律**返回空串**，绝不抛出去：拿不到名字不该让导入失败 —— Rust 侧会依次
+// 退回"URI 尾段启发"与"按内容嗅探（magic bytes）"。
+@InvokeArg
+class PickedFileInfoArgs {
+  lateinit var uri: String
+}
+
+@TauriPlugin
+class ShuyoFsPlugin(private val activity: Activity) : Plugin(activity) {
+
+  @Command
+  fun pickedFileInfo(invoke: Invoke) {
+    val args = invoke.parseArgs(PickedFileInfoArgs::class.java)
+    val resolver = activity.contentResolver
+    val res = JSObject()
+    res.put("name", displayName(resolver, args.uri))
+    res.put("mime", mimeType(resolver, args.uri))
+    invoke.resolve(res)
+  }
+
+  /**
+   * OpenableColumns.DISPLAY_NAME —— **原始文件名**，这是唯一可靠来源。
+   *
+   * 刻意用最笨的写法（不用 use/非局部返回）：这段 Kotlin **本机编不了**
+   * （要 Android SDK/NDK），只有 CI 会编它，所以宁可啰嗦也不要巧妙。
+   */
+  private fun displayName(resolver: ContentResolver, raw: String): String {
+    if (!raw.startsWith("content://")) return ""
+    var out = ""
+    var cursor: Cursor? = null
+    try {
+      cursor = resolver.query(
+        Uri.parse(raw),
+        arrayOf(OpenableColumns.DISPLAY_NAME),
+        null,
+        null,
+        null,
+      )
+      if (cursor != null && cursor.moveToFirst()) {
+        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (idx >= 0) {
+          val value = cursor.getString(idx)
+          if (value != null) out = value
+        }
+      }
+    } catch (e: Exception) {
+      out = ""
+    } finally {
+      try {
+        cursor?.close()
+      } catch (e: Exception) {
+        // 关不掉就算了，别让它盖住真正的结果。
+      }
+    }
+    return out
+  }
+
+  /** ContentResolver.getType —— provider 自己声明的 mime，比我们那张扩展名表权威。 */
+  private fun mimeType(resolver: ContentResolver, raw: String): String {
+    if (!raw.startsWith("content://")) return ""
+    return try {
+      val t = resolver.getType(Uri.parse(raw))
+      if (t == null) "" else t
+    } catch (e: Exception) {
+      ""
+    }
+  }
+}
+`
+
+// ⚠️ **R8 是开着的**（`gen/android/app/build.gradle.kts` 的 `isMinifyEnabled = true`），
+// 而这个类**只被 JNI/反射按名字调用**（Rust 侧 FindClass + `PluginManager` 反射找
+// `@Command` 方法），R8 看不到任何 Java 静态引用 ⇒ 会把它当死代码删掉或改名，
+// 运行时直接 ClassNotFoundException / "Plugin shuyo-fs not initialized"。
+// **漏了这段就是"CI 绿、真机 release 炸"**（与 rustls-platform-verifier 那条同源，
+// 见 scripts/android-platform-verifier.mjs）。
+const PROGUARD = `# 我们自己注入的 Android 壳插件（scripts/android-mobile-shell.mjs 生成）。
+# 只被 JNI/反射按名字调用，必须 keep，否则 release（R8 开着）上找不到类/方法。
+-keep class cn.shuyo.shuyonote.ShuyoFsPlugin { *; }
+-keep class cn.shuyo.shuyonote.PickedFileInfoArgs { *; }
+# tauri 的注解与"被注解的方法/字段"是反射的入口。
+-keep class app.tauri.annotation.** { *; }
+-keepclassmembers class * { @app.tauri.annotation.Command <methods>; }
+-keepclassmembers class * { @app.tauri.annotation.InvokeArg <fields>; }
+`
 
 if (!existsSync(join(ROOT, 'src-tauri/gen/android/app'))) {
   fail(
@@ -270,6 +402,66 @@ if (CHECK_ONLY) {
   if (!kt.includes('.trim(\'"\')')) {
     fail('返回键回调没有按 "true" 判定 —— 返回值会被当成"永远关掉了浮层"，返回键再也退不出应用')
   }
+
+  // ---- 文件选择器插件：类 + .pro + 调用点，三样一起把关 ----
+  //
+  // 这一段存在的理由是**它坏起来只有真机 release 看得见**：
+  //   · Kotlin 类没注入 ⇒ Rust 侧 `register_android_plugin` 直接 FindClass 失败；
+  //   · 少一个 `@Command` 方法 ⇒ `run_mobile_plugin` 回"命令不存在"；
+  //   · 少了 .pro ⇒ debug/CI 全绿，**release 上才** ClassNotFoundException（R8 删了它）；
+  //   · 两边名字对不上（改了 Kotlin 忘了改 Rust）⇒ 编译全过，运行时静默退化成
+  //     "问不到名字"（表现就是这条 bug 原样复发）。
+  if (!existsSync(SHUYO_FS_PLUGIN)) {
+    fail(`缺少 ${SHUYO_FS_PLUGIN}（应排在 \`pnpm android:mobile-shell\` 之后）`)
+  }
+  const fsKt = readFileSync(SHUYO_FS_PLUGIN, 'utf8')
+  for (const [needle, why] of [
+    ['@TauriPlugin', '没有 @TauriPlugin 注解 ⇒ PluginManager 不认这个类'],
+    ['@InvokeArg', '没有 @InvokeArg ⇒ Kotlin 侧 parseArgs 反序列化不出 uri'],
+    ['OpenableColumns.DISPLAY_NAME', '没有查 DISPLAY_NAME ⇒ 原始文件名还是拿不到（这条 bug 的一半）'],
+    ['getType(', '没有 ContentResolver.getType ⇒ mime 拿不到'],
+  ]) {
+    if (!fsKt.includes(needle)) fail(`${SHUYO_FS_PLUGIN} 缺少 \`${needle}\`：${why}`)
+  }
+
+  // **两边名字对齐**：Rust 侧声明了类名与命令名，Kotlin 侧必须真的存在同名类/方法。
+  // 这是唯一能挡住"改了一边忘了另一边"的机器判据。
+  if (!existsSync(RUST_ANDROID_FS)) fail(`缺少 ${RUST_ANDROID_FS}（Rust 侧的调用点）`)
+  const rust = readFileSync(RUST_ANDROID_FS, 'utf8')
+  const className = (rust.match(/PLUGIN_CLASS:\s*&str\s*=\s*"([A-Za-z0-9_]+)"/) || [])[1]
+  const commandName = (rust.match(/run_mobile_plugin::<[^>]+>\("([A-Za-z0-9_]+)"/) || [])[1]
+  if (!className) fail(`${RUST_ANDROID_FS} 里读不到 PLUGIN_CLASS（Rust 与 Kotlin 的类名要对齐）`)
+  if (!commandName) fail(`${RUST_ANDROID_FS} 里读不到 run_mobile_plugin 的命令名`)
+  if (!fsKt.includes(`class ${className}`)) {
+    fail(`Kotlin 里没有 \`class ${className}\` —— 与 Rust 侧 PLUGIN_CLASS 对不上`)
+  }
+  if (!fsKt.includes(`fun ${commandName}(`)) {
+    fail(`Kotlin 里没有 \`fun ${commandName}(\` —— 与 Rust 侧 run_mobile_plugin 的命令名对不上`)
+  }
+  if (!fsKt.includes(`@Command\n  fun ${commandName}(`)) {
+    fail(`\`${commandName}\` 前面少了 @Command —— PluginManager 只登记被注解的方法`)
+  }
+
+  // 注入点那个包名也要与 Rust 侧一致（写错包名 = FindClass 失败）
+  const pkg = (rust.match(/PLUGIN_IDENTIFIER:\s*&str\s*=\s*"([a-z0-9_.]+)"/) || [])[1]
+  if (!pkg) fail(`${RUST_ANDROID_FS} 里读不到 PLUGIN_IDENTIFIER`)
+  if (!fsKt.startsWith(`package ${pkg}`)) {
+    fail(`${SHUYO_FS_PLUGIN} 的 package 必须是 ${pkg}（与 Rust 侧 PLUGIN_IDENTIFIER 一致）`)
+  }
+
+  // `.pro`：R8 开着，漏了就是"CI 绿、release 真机炸"。
+  if (!existsSync(PRO_FILE)) {
+    fail(`缺少 ${PRO_FILE} —— release 开了 R8，没有 keep 规则会把这个只被反射调用的类删掉`)
+  }
+  const pro = readFileSync(PRO_FILE, 'utf8')
+  for (const [needle, why] of [
+    [`-keep class ${pkg}.${className} { *; }`, '这个类只被 JNI/反射按名字调用，不 keep 会被删/改名'],
+    ['@app.tauri.annotation.Command', '@Command 方法是反射入口，方法名不能被 R8 改掉'],
+    ['@app.tauri.annotation.InvokeArg', '@InvokeArg 的字段是反射入口'],
+  ]) {
+    if (!pro.includes(needle)) fail(`${PRO_FILE} 缺少 \`${needle}\`：${why}`)
+  }
+
   console.log('✅ Android 壳适配层已注入（--check）')
   process.exit(0)
 }
@@ -280,6 +472,13 @@ mkdirSync(JAVA_DIR, { recursive: true })
 // 不让手工改动留在 gen/ 里。
 writeFileSync(MAIN_ACTIVITY, MAIN_ACTIVITY_KT, 'utf8')
 console.log(`已写入 Android 壳适配层（inset 桥 + 返回键）→ ${MAIN_ACTIVITY}`)
+
+// 选择器插件（Kotlin）+ 它的 Proguard 规则：同样是**整份覆盖写**的生成物。
+writeFileSync(SHUYO_FS_PLUGIN, SHUYO_FS_PLUGIN_KT, 'utf8')
+console.log(`已写入 Android 选择器插件（DISPLAY_NAME + getType）→ ${SHUYO_FS_PLUGIN}`)
+writeFileSync(PRO_FILE, PROGUARD, 'utf8')
+console.log(`已写入 Proguard 规则（R8 keep）→ ${PRO_FILE}`)
+
 
 // ---------------------------------------------------------------- 真机断言
 

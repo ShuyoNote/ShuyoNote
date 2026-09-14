@@ -94,6 +94,35 @@
 
 ### 修复
 
+- **Android：经系统文件选择器导入的附件，显示名与 MIME 同时丢失**（真机：列表显示成
+  `📎41449ced-d44e-4d3c-8e14-7c6733ad042a 未整理 文件 1.8 KB`）。
+  根因是一条**只丢元数据、不报错**的链：`tauri-plugin-dialog` 的 Android 实现
+  （`DialogPlugin.kt::createPickFilesResult`）只把 `uri.toString()` 交给 Rust，
+  于是 `picked_file::materialize()` 把选中文件拷成**裸 UUID、无扩展名**的临时文件；
+  而 `attachments.rs` 拿 `src.file_name()` 当附件名、拿 `mime_from_path()`（**只看扩展名**）
+  定 mime ⇒ 名字是 UUID、mime 是 `application/octet-stream`。后果不止难看：
+  `FileManagerView` / `PageTree` 都按 `file.mime` 分支，这类附件**永远进不了内置文件预览
+  与 PDF 阅读器**（`image/*`、`application/pdf`、`text/markdown` 三个分支全不命中），
+  掉到 `opener.openPath()` 也失败。
+  **修法分三层，逐层变弱**（桌面一层都不走 ⇒ 行为逐字节不变）：
+  ① **问系统**：新增本地 Tauri 插件（`src-tauri/src/android_fs.rs` +
+  `scripts/android-mobile-shell.mjs` 注入的 `ShuyoFsPlugin.kt`），Rust 侧经
+  `api.register_android_plugin(...)` / `run_mobile_plugin(...)` 调
+  `ContentResolver.query(OpenableColumns.DISPLAY_NAME)` 与 `getType(uri)` ——
+  名字**只有** Android 运行时知道（URI 尾段在 MediaStore/Downloads 上是 `image:1234`
+  这类 id，不是名字）；
+  ② **URI 尾段启发**（`picked_file::name_from_uri`，纯函数 + 单测）：外置存储那条
+  （`primary%3ADownload%2Fphoto.png`）能把真名恢复出来；
+  ③ **按内容嗅探**（新模块 `src-tauri/src/magic.rs`，魔数）：连名字都没有时也把类型认出来，
+  于是"图片能预览、PDF 能进内置阅读器"**不依赖任何 Android 专属代码**，也能在本机单测里钉住。
+  顺带修掉同一条链上另一处哑火：**临时文件名带上正确扩展名** —— `plugins.rs` 判断
+  "是不是 `.zip` 插件包"时用的是 `source_path`，Android 上那是
+  `content://…%3A1000000042`，`ends_with(".zip")` 恒为假，手机上装 zip 插件包**必然**
+  报"只支持 .zip 插件包"；现在判据走 `picked.effective_name()`（桌面等价，行为不变）。
+  另：`rename_attachment` 会在当前 mime 仍是 `application/octet-stream`（"不知道"）
+  而新名字带了认识的扩展名时把它补上 —— **单向**，已知道的类型绝不因改名降级
+  （否则 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢）。详见 [MOBILE.md](docs/MOBILE.md) §2.2。
+
 - **【最严重】顶部被状态栏压住 + 顶部约 41 CSS px 是触摸死区**（真机：标题与系统时间叠字，
   `adb shell input tap` 打在 y≤123 设备 px 时**0 个 DOM 事件**、y=130 时 100+ 个，
   编辑器工具条 6 个按钮**点不到**）。

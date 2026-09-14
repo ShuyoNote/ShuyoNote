@@ -29,6 +29,13 @@ mod pdf_native;
 // 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
 // `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
 mod picked_file;
+// 按**内容**（magic bytes）认类型：Android 导入的附件在拿到名字之前是无扩展名的，
+// 这一层让"图片能预览、PDF 能进内置阅读器"不依赖任何 Android 专属代码。
+mod magic;
+// Android 专属：自建本地 Tauri 插件，问系统「这个 `content://` URI 叫什么 / 是什么类型」。
+// 名字那半边**只能**这样拿（`ContentResolver` 是唯一可靠来源），理由见模块头注释。
+#[cfg(target_os = "android")]
+mod android_fs;
 mod plugin_budget;
 pub mod plugin_host;
 mod plugin_index;
@@ -105,6 +112,19 @@ pub fn run() {
         // 就是 `std::fs::OpenOptions`，等价，不受影响。
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init());
+
+    // Android 专属：我们自己的本地插件（Kotlin 类由
+    // `scripts/android-mobile-shell.mjs` 注入到 `gen/`）。它只回答一个问题——
+    // 「这个 `content://` URI 叫什么名字、是什么类型」。
+    //
+    // 为什么非要自建：选择器只把 URI 字符串交出来（`tauri-plugin-dialog` 的
+    // `DialogPlugin.kt::createPickFilesResult` 里只有 `uris.add(uri.toString())`），
+    // 而 URI 尾段在 MediaStore/Downloads 上是 **id 不是名字** ⇒ 名字只有
+    // `ContentResolver` 知道。走官方扩展点（`register_android_plugin`）是
+    // `tauri-plugin-fs`/`-opener`/`-dialog` 同款做法，Rust 侧因此能同步问 Kotlin。
+    // 桌面**完全不注册**（`#[cfg]`），连这个类型都不存在。
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_fs::plugin());
 
     // **深链在移动端也要注册**（桌面那份在下面的 `#[cfg(desktop)]` 块里，顺序有讲究）。
     // Android 上系统把 `shuyonote://…` 作为 intent 交给 Activity，插件的移动实现读走它并 emit

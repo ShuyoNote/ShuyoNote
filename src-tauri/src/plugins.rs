@@ -4449,7 +4449,13 @@ pub async fn install_plugin(
     }
     if src.is_file() {
         // `.zip` 插件包：解到临时目录，再走**同一条**目录安装路径（校验全部在写盘之前完成）。
-        if !source_path.to_ascii_lowercase().ends_with(".zip") {
+        //
+        // ⚠️ 判据必须是 `picked.effective_name()`（= 选择器给的原始文件名），**不能**是
+        // `source_path`：Android 上 `source_path` 是 `content://…/document/msf%3A1000000042`
+        // 这种 URI —— 拿它 `ends_with(".zip")` **必然为假**，于是手机上装 zip 插件包
+        // 永远报"只支持 .zip 插件包"。桌面两者等价（`effective_name()` 退化成
+        // `src.file_name()`，而 `src` 就是 `source_path`），所以桌面行为不变。
+        if !picked.effective_name().to_ascii_lowercase().ends_with(".zip") {
             return Err("只支持 .zip 插件包，或一个插件目录".to_string());
         }
         let bytes = std::fs::read(&src).map_err(|e| format!("读取插件包失败：{e}"))?;

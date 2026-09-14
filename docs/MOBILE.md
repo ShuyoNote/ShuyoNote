@@ -195,6 +195,71 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 **附件面板 → 选择文件 → 从「图片」里挑一张 → 应正常导入（不再报"不存在/读取失败"）**。
 在那之前，这条只算"实现完成、编译通过"，**不算真机验收通过**。
 
+#### 2.2.2 真机点完之后暴露的第二个问题：**导进来了，但名字和 mime 丢了**（2026-09-17 修）
+
+真机（Mate 40 / Android 12）走通上面那条之后，附件确实导进来了 —— 但列表里显示成：
+
+```text
+📎41449ced-d44e-4d3c-8e14-7c6733ad042a   未整理   文件   1.8 KB
+```
+
+**这不是难看，是功能坏了**：`FileManagerView.tsx` / `PageTree.tsx` 都按 `file.mime` 分支
+（`image/*` → 内置文件预览、`application/pdf` → 内置 PDF 阅读器、`text/markdown` → 预览），
+mime 是 `application/octet-stream` 就**一个分支都不命中**，最后掉到
+`platform.opener.openPath()`（Android 上 `content://` 转出来的临时路径也没法交给系统应用）。
+
+**根因链**（每一环都只丢元数据、不报错）：
+
+| # | 位置 | 发生了什么 |
+|---|---|---|
+| 1 | `tauri-plugin-dialog` 的 `DialogPlugin.kt::createPickFilesResult` | 只 `uris.add(uri.toString())` —— 系统给的 display name / mime **根本没进这条管道** |
+| 2 | `picked_file::materialize`（旧） | 临时文件名 = `uuid::Uuid::new_v4().to_string()` ⇒ **裸 UUID、无扩展名** |
+| 3 | `attachments.rs`（旧） | 用 `src.file_name()` 当**附件名**、用 `mime_from_path(&src)`（**只看扩展名**）定 mime ⇒ UUID 名 + octet-stream |
+
+**为什么不能只靠解析 URI**：尾段能不能当名字**全看 provider**——
+`com.android.externalstorage.documents` 给的是 `primary:Download/photo.png`（能解出真名），
+但 `com.android.providers.media.documents` 给的是 `image:1234`、
+`…downloads.documents` 给的是 `msf:1000000042` —— **那是 id，不是名字**。
+名字只有 `ContentResolver.query(OpenableColumns.DISPLAY_NAME)` 知道，而它和
+`getType(uri)` 都**只在 Android 运行时里**（`FilePickerUtils` 里两个函数都能做这件事，
+但在这条路上**零调用点**：全仓 grep `getNameFromUri` 只有定义没有调用）。
+
+**修法（三层，逐层变弱；桌面一层都不走）**：
+
+1. **问系统** —— 新增本地 Tauri 插件：`src-tauri/src/android_fs.rs` +
+   `scripts/android-mobile-shell.mjs` 注入的 `ShuyoFsPlugin.kt`（+ `shuyo-fs.pro`）。
+   Rust 侧走 tauri 的官方移动扩展点
+   （`tauri-2.11.5/src/plugin/mobile.rs:206` `api.register_android_plugin`），
+   之后 `PluginHandle::run_mobile_plugin("pickedFileInfo", { uri })` 就是一次**同步的**
+   Rust→Kotlin 调用 —— `tauri-plugin-fs`/`-opener`/`-dialog` 全走这条路，不是新机制。
+   **为什么不用 `tls_android.rs` 那种裸 JNI**：`jni_handle().exec` 是把闭包投递到主线程执行的
+   （wry 的 `MainPipe`），**拿不回返回值**，"发了就算"的初始化可以，取值不行。
+2. **URI 尾段启发** —— `picked_file::name_from_uri`（纯函数）：外置存储那条能救回来；
+   纯 id（`1234`）**主动拒绝**（当文件名显示比裸 UUID 更容易让人误以为"这就是原名"）。
+3. **按内容嗅探** —— 新模块 `src-tauri/src/magic.rs`（魔数：PNG/JPEG/GIF/WebP/PDF/ZIP/GZ/7z/
+   OggS/WAV/MP4/SVG/文本）。这一层让"图片能进预览、PDF 能进阅读器"**不依赖任何 Android 专属代码**，
+   所以它能在本机单测里钉住（桥挂了也照样成立）。
+
+**顺带修掉的同类哑火**：
+
+- **临时文件名现在带正确扩展名**（uuid 保证唯一、扩展名交给下游）。
+  这修掉了 `plugins.rs` 的"是不是 `.zip` 插件包"——它当时判的是 `source_path`，
+  Android 上那是 `content://…%3A1000000042`，`ends_with(".zip")` **恒为假** ⇒
+  手机上装 zip 插件包**必然**报"只支持 .zip 插件包"。现在判 `picked.effective_name()`
+  （桌面等价，行为不变）。
+- **`rename_attachment` 单向补 mime**：当前 mime 还是 `application/octet-stream`
+  而新名字带了认识的扩展名时补上（老数据可以靠改名自救）；已知道的类型**绝不**因改名降级
+  （否则 `report.pdf` 改成 `report` 就把 PDF 阅读器弄丢了）。
+
+⚠️ **R8 是开着的**（`isMinifyEnabled = true`），`ShuyoFsPlugin` 只被 JNI/反射按名字调用，
+所以必须有 Proguard keep 规则（脚本一并写 `gen/android/app/shuyo-fs.pro`）——
+漏了就是"**CI 绿、release 真机炸**"（`ClassNotFoundException` / Plugin not initialized），
+与 `rustls-platform-verifier` 那条同源。
+
+**真机怎么验（必须用 release 包，R8 才生效）**：见 §2.3 的判据；最短一条是
+**附件面板 → 选择文件 → 从「图片」里挑一张 ⇒ 列表里显示的是原文件名（不是 UUID）、
+类型不是「文件」，点它能进内置预览**；再挑一个 PDF ⇒ 点它进内置 PDF 阅读器。
+
 ### 2.2.1 Android 上没有 `/tmp`：**一个根因、8 个症状**（2026-09-13 找到并统一修掉）
 
 **起因**：§2.2 那次「真机点一次」正好撞上它——选文件链路的**最后一公里**断在这里，
