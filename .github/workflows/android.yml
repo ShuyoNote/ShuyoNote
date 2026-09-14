@@ -40,7 +40,7 @@ name: Android (build)
 on:
   workflow_dispatch:
   push:
-    branches: ["dev", "main", "feat/android-mobile"]
+    branches: ["dev", "main"]
     paths:
       - ".github/workflows/android.yml"
       # Android 工程是从它**生成**的（应用名、包名、minSdk、**深链 intent-filter**…），
