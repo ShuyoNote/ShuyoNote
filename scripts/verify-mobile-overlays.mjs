@@ -670,15 +670,10 @@ async function main() {
                 const st = inner.style || null;
                 if (!st) continue;
                 const sel = inner.selectorText || "";
-                // 只收我们关心的那几个选择器（含头部工具条与批注工具行——第一版漏了它们，
-                // 于是那两条断言永远看不到规则、只能假红）。
-                if (
-                  !/\.pdf-(outline|sidebar)-col|\.pdf-reader-stage-wrap|\.pdf-reader-head|\.pdf-reader-controls|\.pdf-annot-toolbar|\.pdf-annot-tools|\.pdf-annot-actions|\.pdf-reader-close/.test(
-                    sel,
-                  )
-                )
-                  continue;
-                if (/resizer/.test(sel)) continue;
+                if (!sel) continue; // @keyframes 之类没有 selectorText 的，跳过
+                // ⚠️ **不要**在这里加"只收某些选择器"的白名单：这个白名单连着坑了两次
+                // （先漏 `.pdf-reader-head`/`.pdf-annot-toolbar`，再漏 `.pdf-reader-overlay`）
+                // ——白名单漏了，断言看不到规则就只会假红，排查成本还高。全收，筛选放到断言里。
                 out.push({
                   sel: sel.trim(),
                   cond: r.conditionText.replace(/\s+/g, " "),
@@ -687,6 +682,7 @@ async function main() {
                   minWidth: st.minWidth,
                   minHeight: st.minHeight,
                   flexWrap: st.flexWrap,
+                  padding: st.padding,
                 });
               }
             }
@@ -730,6 +726,14 @@ async function main() {
         ok(
           bigTouch.length > 0,
           `阅读器内部按钮命中区 ≥44（原来 28×28，手机点不中）`,
+        );
+        // 头部第一行原来落在状态栏那一条带里（fixed inset:0 + 不让位）⇒ 目录开关这类按钮
+        // **物理点不到**（真机 y=96 < 状态栏 123）。判据：浮层形态必须带 --sat 让位。
+        const insetPad = rules.filter((e) => /\.pdf-reader-overlay/.test(e.sel) && /--sat/.test(e["padding"] ?? ""));
+        ok(
+          insetPad.length > 0,
+          `浮层形态的阅读器用 --sat 让开系统栏（${insetPad.map((e) => e.sel).join("；") || "没找到规则"}）` +
+            `——不让位的话第一行按钮在状态栏那一条带里，物理点不到（真机 y=96 < 123）`,
         );
       }
 
