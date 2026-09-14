@@ -25,7 +25,23 @@ export const MOBILE_BREAKPOINT_PX = 768;
 /** 与 `MOBILE_BREAKPOINT_PX` 同源的媒体查询串。 */
 export const MOBILE_QUERY = `(max-width: ${MOBILE_BREAKPOINT_PX}px)`;
 
-/** 纯视口判定（不依赖 matchMedia，便于在无 DOM 环境里直接算）。 */
+/**
+ * 纯视口判定（不依赖 matchMedia，便于在无 DOM 环境里直接算）。
+ *
+ * ⚠️ **只看宽度**，这是 2026-09-15 特意写清楚的一条口径（此前含糊，出了 bug）：
+ *
+ *   `isNarrowViewport()` 回答的是「**布局要不要换成窄屏形态**」——侧栏收成抽屉、
+ *   右栏整屏叠加、主区 `padding-right` 让位。这些是**宽度**问题（横向没地方放），
+ *   高度再矮也不改变这个结论，所以它**不该**把高度算进来：
+ *   792×360 的横屏手机仍然放得下"侧栏 + 正文"两列。
+ *
+ *   但**浮层形态**是另一回事，它同时受宽度和高度约束（见 `isShortViewport`）：
+ *   792×360 走宽屏分支 ⇒ `.set-dialog` 用桌面样式（`min-width:640px`、
+ *   高度按内容走）⇒ 实测 y=24 / h=420 / bottom=**444**，**底部 84px 被裁在屏外**。
+ *   所以浮层形态的判定必须是「**窄 或 矮**」，而不是只看窄。
+ *
+ *   一句话：**布局看宽度，浮层看宽度和高度。**
+ */
 export function isNarrowViewport(width?: number): boolean {
   const w =
     typeof width === "number"
@@ -34,6 +50,39 @@ export function isNarrowViewport(width?: number): boolean {
         ? Number.POSITIVE_INFINITY
         : window.innerWidth;
   return w <= MOBILE_BREAKPOINT_PX;
+}
+
+/**
+ * 矮视口断点（px）——**JS 与 CSS 必须是同一个数**。
+ *
+ * CSS 侧是 `src/App.css` 末尾那段 `@media (max-height: 520px)`；
+ * 改了这里忘了改那边，`verify-mobile-overlays.mjs` 会红（它同时量 JS 判定与 CSS 命中）。
+ */
+export const SHORT_VIEWPORT_MAX_PX = 520;
+
+/** 与 `SHORT_VIEWPORT_MAX_PX` 同源的媒体查询串。 */
+export const SHORT_QUERY = `(max-height: ${SHORT_VIEWPORT_MAX_PX}px)`;
+
+/**
+ * 纯视口判定：**矮视口**（高度 ≤ 520px）——横屏手机、分屏、以及被拖得很矮的桌面窗口。
+ *
+ * 用途**只有一个**：决定浮层取哪种形态。大面板（设置 / 存储 / 插件管理 / 命令面板 /
+ * 公式编辑器）在矮视口下必须和窄屏一样整屏 + 内部滚动；否则它们的固定高度会超出
+ * 可视区，底部那一块（含「保存 / 关闭」）被裁在屏外且滚不到。
+ */
+export function isShortViewport(height?: number): boolean {
+  const h =
+    typeof height === "number"
+      ? height
+      : typeof window === "undefined"
+        ? Number.POSITIVE_INFINITY
+        : window.innerHeight;
+  return h <= SHORT_VIEWPORT_MAX_PX;
+}
+
+/** 浮层形态判定：窄**或**矮都算（CSS 侧是 `@media (max-width:768px), (max-height:520px)`）。 */
+export function isMobileOverlayViewport(width?: number, height?: number): boolean {
+  return isNarrowViewport(width) || isShortViewport(height);
 }
 
 /** Pure viewport check (unit-testable): true when <=768px. */

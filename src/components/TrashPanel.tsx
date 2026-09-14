@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
@@ -38,9 +39,11 @@ function ItemIcon({ kind }: { kind: string }) {
 
 export function TrashPanel() {
   const { loadPages } = useNotes();
-  const { open, pos, isSheet, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>();
+  const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
   // 与搜索浮层同根因（都在竖条里、都是 `position:fixed`），滚动锁一并挂上。
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("trash", open, () => close());
   const [items, setItems] = useState<PageMeta[]>([]);
 
   const load = () => {

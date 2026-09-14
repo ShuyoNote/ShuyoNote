@@ -10,6 +10,7 @@ import { recognizeFormulaImage, fileToDataUrl } from "../lib/ai/formulaVision";
 import { tryConsume } from "../lib/ai/gate";
 import { FormulaHandwritePad } from "./FormulaHandwritePad";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 type Sym = { sym: string; latex: string };
 
@@ -98,6 +99,8 @@ const CATEGORIES: { label: string; tabSym: string; items: Sym[] }[] = [
 export function FormulaEditorDialog() {
   const { open, initial, original, anchor, livePreview, onCommit, close } = useFormulaEditorStore();
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("formulaEditor", open, () => useFormulaEditorStore.getState().close());
   const [latex, setLatex] = useState("");
   const [openCat, setOpenCat] = useState<number | null>(null);
   const [catAnchor, setCatAnchor] = useState<{ left: number; top: number } | null>(null);

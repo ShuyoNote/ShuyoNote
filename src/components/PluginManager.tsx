@@ -3,6 +3,7 @@ import { platform, isDesktopPlatform } from "../lib/platform";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { viewPlacement } from "../lib/pluginViews";
 import { pluginMenuHosted, pluginMenuTitle } from "../lib/capabilities/menus.meta";
 import { auditDetail, auditStatus, auditTitle } from "../lib/pluginAudit";
@@ -26,6 +27,8 @@ export function PluginManager() {
     approve,
   } = usePlugins();
   useOverlayScrollLock(managerOpen);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("pluginManager", managerOpen, () => usePlugins.getState().setManagerOpen(false));
 
   useEffect(() => {
     if (managerOpen) load();

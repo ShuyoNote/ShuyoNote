@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
@@ -43,6 +44,8 @@ export function SearchPanel() {
   });
   // 搜索面板打开时锁住内容区滚动：实测（390x844 触屏）手指拖背景能把正文拖走 323px。
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("search", open, () => close());
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [showResults, setShowResults] = useState(false);

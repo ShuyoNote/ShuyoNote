@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
@@ -23,6 +24,8 @@ export function BackupButton({ label }: { label?: string } = {}) {
   const { loadPages } = useNotes();
   const { open: openMenu, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
   useOverlayScrollLock(openMenu);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("backupMenu", openMenu, () => close());
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
   const [prog, setProg] = useState<BackupProgress | null>(null);

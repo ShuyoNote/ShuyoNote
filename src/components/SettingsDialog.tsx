@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
@@ -1537,6 +1538,8 @@ export function SettingsDialog() {
   const open = useEditorStore((s) => s.settingsOpen);
   // 设置面板打开时锁住内容区滚动（锁 `.note-scroll`，不是 body）。
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("settings", open, () => useEditorStore.getState().closeSettings());
   const tab = useEditorStore((s) => s.settingsTab);
   const setTab = useEditorStore((s) => s.setSettingsTab);
   const close = useEditorStore((s) => s.closeSettings);

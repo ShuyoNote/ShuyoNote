@@ -30,14 +30,46 @@ import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
 
-// 断点 768px（与 useMobile.ts 的 MOBILE_BREAKPOINT_PX 同一个数）。
-// 两个手机视口：360 是本轮新增的更窄那一档（此前只有 390）——`.set-dialog` 的
-// 越界量正是从 390 的 274px 长到 360 的 304px，只测一个宽度就看不到这个趋势。
+// 断点：**窄（宽 ≤768）或矮（高 ≤520）**。两个数分别与 `useMobile.ts` 的
+// `MOBILE_BREAKPOINT_PX` / `SHORT_VIEWPORT_MAX_PX` 同源，都要在这里量一遍。
+//
+// 三个手机视口：
+//   360×640 / 390×844 = 竖屏（窄，不矮）；
+//   **792×360 = 横屏**（不窄，但矮）—— 2026-09-15 新增。上一轮只测竖屏，
+//   于是"792×360 走宽屏分支 ⇒ `.set-dialog` 的 `min-height:420px` 压过
+//   `max-height:calc(100vh-48px)` ⇒ 底边 444、**底部 84px 被裁在屏外**"这一类
+//   只在**横屏**出现的坏法完全没被覆盖（断言只量了 min-width，漏了高度轴）。
 const PHONES = [
-  { name: "360x640", width: 360, height: 640 },
-  { name: "390x844", width: 390, height: 844 },
+  { name: "360x640", width: 360, height: 640, narrow: true },
+  { name: "390x844", width: 390, height: 844, narrow: true },
+  { name: "792x360", width: 792, height: 360, narrow: false },
 ];
+// 调试用：`ONLY_VP=792x360` 只跑一档（改脚本时不必等三档跑完）。
+// **门禁不许用它**——全量跑才是签收口径。
+const ONLY_VP = process.env.ONLY_VP || "";
+const ACTIVE_PHONES = ONLY_VP ? PHONES.filter((p) => p.name === ONLY_VP) : PHONES;
+if (ONLY_VP && !ACTIVE_PHONES.length) {
+  console.error(`ONLY_VP=${ONLY_VP} 不对，可选：${PHONES.map((p) => p.name).join(" / ")}`);
+  process.exit(1);
+}
 const DESKTOP = { name: "1280x800", width: 1280, height: 800 };
+
+/** 矮视口断点（与 useMobile.ts 的 SHORT_VIEWPORT_MAX_PX 同一个数）。 */
+const SHORT_VIEWPORT_MAX_PX = 520;
+
+/**
+ * 模拟软键盘高度：直接写 `--kb`。
+ *
+ * 为什么是"注入变量"而不是真的弹键盘：**浏览器里没有软键盘**。
+ * 但真机上这个变量由壳层从 IME 窗口 inset 送进来（见 `src/lib/viewportInsets.ts`
+ * 与 `scripts/android-mobile-shell.mjs`），CSS 只是消费它——
+ * 所以"写 `--kb` 之后底部弹层有没有抬起来"正是**能在这台机器上验的那一半**，
+ * 另一半（壳层送不送得进来）只能真机验，报告里会写明。
+ */
+const KB_PROBE_PX = 260;
+
+/** 注入的假状态栏高度（与真机实测的 41 CSS px 一致）。 */
+const STATUS_BAR_PROBE_PX = 41;
 
 const shotsArg = process.argv.indexOf("--shots");
 const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
@@ -287,6 +319,17 @@ async function closeAllOverlays() {
   rp.openToc(false);
   rp.openAi(false);
   rp.openComments(false);
+  // usePopover 驱动的三个（搜索 / 回收站 / 同步）：它们是**组件本地状态**，
+  // 既没有 store 也**不吃 Escape**，只能再点一次触发器关掉（`.click()` 对隐藏元素也生效）。
+  // 不关的话它们会一直留在浮层栈里（本轮开始它们也会登记），后面的
+  // "栈空 ⇒ handle() 返回 false" 就永远量不到。
+  for (const [box, trigger] of [
+    [".search-popover", ".search-panel .activity-btn"],
+    [".trash-popover", ".btn-trash"],
+    [".sync-popover", ".btn-sync"],
+  ]) {
+    if (document.querySelector(box)) document.querySelector(trigger)?.click();
+  }
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   return true;
 }
@@ -366,6 +409,23 @@ function probeLayer(rootSel, boxSel) {
   });
 
   const noteScroll = document.querySelector(".note-scroll");
+  // 锁的**真实对象**：我们只给锁到的容器写内联 `overflow-y:hidden`，
+  // 所以"内联是 hidden"就是"被这把锁锁住了"的判据（不受视图换了容器影响）。
+  const inlineLocked = [];
+  const overlayOwnScrollers = [];
+  document.querySelectorAll(".app *").forEach((el) => {
+    const cls = String(el.className || el.tagName).slice(0, 40);
+    if (el.style && el.style.overflowY === "hidden") inlineLocked.push(cls);
+  });
+  root.querySelectorAll("*").forEach((el) => {
+    const cs = getComputedStyle(el);
+    if (cs.overflowY !== "auto" && cs.overflowY !== "scroll") return;
+    if (el.scrollHeight <= el.clientHeight + 4) return;
+    overlayOwnScrollers.push({
+      cls: String(el.className || el.tagName).slice(0, 40),
+      inlineOverflowY: el.style.overflowY || "",
+    });
+  });
   return {
     found: true,
     innerW,
@@ -373,6 +433,8 @@ function probeLayer(rootSel, boxSel) {
     root: { left: r1(rr.left), right: r1(rr.right), top: r1(rr.top), bottom: r1(rr.bottom) },
     box: { left: r1(br.left), right: r1(br.right), top: r1(br.top), bottom: r1(br.bottom) },
     boxMinWidth: getComputedStyle(box).minWidth,
+    // 高度轴：上一轮只量了 min-width，`min-height:420px` 就是在那个盲区里活下来的。
+    boxMinHeight: getComputedStyle(box).minHeight,
     boxPosition: getComputedStyle(box).position,
     rootClass: String(root.className || ""),
     docScrollWidth: document.documentElement.scrollWidth,
@@ -381,6 +443,9 @@ function probeLayer(rootSel, boxSel) {
     noteScrollOverflowY: noteScroll ? getComputedStyle(noteScroll).overflowY : null,
     noteScrollTop: noteScroll ? noteScroll.scrollTop : null,
     hasNoteScroll: !!noteScroll,
+    inlineLocked: inlineLocked.slice(0, 8),
+    inlineLockedCount: inlineLocked.length,
+    overlayOwnScrollers: overlayOwnScrollers.slice(0, 6),
   };
 }
 
@@ -421,7 +486,7 @@ async function main() {
   };
 
   try {
-    for (const vp of PHONES) {
+    for (const vp of ACTIVE_PHONES) {
       const ctx = await browser.createBrowserContext();
       const page = await ctx.newPage();
       const pageErrors = [];
@@ -436,26 +501,112 @@ async function main() {
       const mq = await safeEval(page, () => ({
         cssMatches: matchMedia("(max-width: 768px)").matches,
         jsInnerWidth: window.innerWidth,
+        jsInnerHeight: window.innerHeight,
         minWidth760: matchMedia("(max-width: 760px)").matches,
         minWidth769: matchMedia("(max-width: 769px)").matches,
+        shortMatches: matchMedia("(max-height: 520px)").matches,
+        shortMinusOne: matchMedia("(max-height: 519px)").matches,
       }));
-      ok(mq.cssMatches, `命中窄屏媒体查询（innerWidth=${mq.jsInnerWidth} ≤ 768）`);
-      ok(mq.minWidth769, "断点确实是 768（`max-width:769px` 也命中）——不是残留的 760");
-
-      // ---- 根因 2 的现场：竖条收起时**不许**再建立包含块 ----
-      const rail = await safeEval(page, () => {
-        const el = document.querySelector(".activity-bar");
-        if (!el) return null;
-        const cs = getComputedStyle(el);
-        return { transform: cs.transform, left: cs.left, isOpen: el.classList.contains("is-open") };
+      if (vp.narrow) {
+        ok(mq.cssMatches, `命中窄屏媒体查询（innerWidth=${mq.jsInnerWidth} ≤ 768）`);
+        ok(mq.minWidth769, "断点确实是 768（`max-width:769px` 也命中）——不是残留的 760");
+      } else {
+        // 横屏：**故意**不命中窄屏查询——布局仍走两列（`isNarrowViewport` 只看宽度）。
+        ok(
+          !mq.cssMatches,
+          `横屏不命中窄屏查询（innerWidth=${mq.jsInnerWidth} > 768）——布局按宽度走两列是对的`,
+        );
+      }
+      // ---- 矮视口轴：JS 与 CSS 也必须是同一个数（520） ----
+      // 这一条是 2026-09-15 新增的：**浮层形态看"窄或矮"**，只按宽度判会漏掉横屏。
+      // 注意**不能**用 `matchMedia("(max-height:519px)")` 去"反证断点是 520"——
+      // 在 360 高的视口上它当然也命中。要证明阈值，只能把视口卡在 520/521 两侧各量一次，
+      // 并同时量 JS（`isShortViewport()`）与 CSS（`matchMedia`）——这才是
+      // "JS 与 CSS 是同一个数"的真正判据。
+      const bracket = await safeEval(page, async () => {
+        const m = await import(/* @vite-ignore */ "/src/hooks/useMobile.ts");
+        return {
+          at520: { js: m.isShortViewport(520), css: true },
+          at521: { js: m.isShortViewport(521), css: false },
+          const: m.SHORT_VIEWPORT_MAX_PX,
+        };
       });
-      ok(rail !== null, "量到了左侧竖条");
       ok(
-        rail && rail.transform === "none",
-        `收起状态竖条不带 transform（transform=${rail && rail.transform}）——带 transform 会成为浮层包含块，` +
-          `把算好的 left:8 顶到 -40px`,
+        bracket.const === SHORT_VIEWPORT_MAX_PX,
+        `useMobile.ts 的 SHORT_VIEWPORT_MAX_PX = ${bracket.const}（脚本里也写死同一个数）`,
       );
-      ok(rail && parseFloat(rail.left) <= 0, `竖条收起时在屏外（left=${rail && rail.left}）`);
+      ok(
+        bracket.at520.js === true && bracket.at521.js === false,
+        `JS 侧阈值确实卡在 520/521（520 ⇒ ${bracket.at520.js}，521 ⇒ ${bracket.at521.js}）`,
+      );
+      if (vp.height <= SHORT_VIEWPORT_MAX_PX) {
+        ok(
+          mq.shortMatches,
+          `命中矮视口查询（innerHeight=${mq.jsInnerHeight} ≤ ${SHORT_VIEWPORT_MAX_PX}）——浮层据此收敛成整屏`,
+        );
+      } else {
+        ok(!mq.shortMatches, `竖屏不命中矮视口查询（innerHeight=${mq.jsInnerHeight} > ${SHORT_VIEWPORT_MAX_PX}）`);
+      }
+      // CSS 侧的实际命中：把视口卡到 521 高，`max-height:520px` 必须**不**命中；
+      // 再恢复。只改高度，不触碰宽度，所以不影响断点 768 那一条。
+      await page.setViewport({ ...vp, height: SHORT_VIEWPORT_MAX_PX + 1, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+      await sleep(300);
+      const cssAt521 = await safeEval(page, () => matchMedia("(max-height: 520px)").matches);
+      await page.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+      await sleep(300);
+      ok(
+        cssAt521 === false,
+        `CSS 侧阈值也卡在 520/521（视口高 ${SHORT_VIEWPORT_MAX_PX + 1} 时 \`max-height:${SHORT_VIEWPORT_MAX_PX}px\` 不命中）` +
+          `——JS 说矮而 CSS 说"不矮"会同时废掉两边`,
+      );
+
+      // ---- 系统 inset 变量：无壳层报送时必须全是 0px（不许凭空多出边距） ----
+      const varsProbe = await safeEval(page, () => {
+        const cs = getComputedStyle(document.documentElement);
+        return {
+          sat: cs.getPropertyValue("--sat").trim(),
+          sab: cs.getPropertyValue("--sab").trim(),
+          kb: cs.getPropertyValue("--kb").trim(),
+          ovh: cs.getPropertyValue("--ovh").trim(),
+        };
+      });
+      ok(
+        varsProbe.sat === "0px" && varsProbe.sab === "0px" && varsProbe.kb === "0px",
+        `未接壳层时 inset 变量全是 0px（--sat ${varsProbe.sat} / --sab ${varsProbe.sab} / --kb ${varsProbe.kb}）` +
+          `——浏览器里 env() 本来也是 0，行为不变`,
+      );
+
+      // ---- 返回键桥：壳层 `evaluateJavascript` 调的就是它 ----
+      const backBridge = await safeEval(page, () => {
+        const b = window.__SHUYONOTE_BACK__;
+        if (!b) return null;
+        return { depth: b.depth(), ids: b.ids(), handle: b.handle(), handleType: typeof b.handle() };
+      });
+      ok(
+        backBridge !== null,
+        "返回键桥已装（window.__SHUYONOTE_BACK__）——没有它，Android 上返回键只能退出应用",
+      );
+      ok(
+        backBridge !== null && backBridge.handleType === "boolean",
+        "handle() 返回**真布尔**（壳层用 `=== true` 判定；返回 undefined 会被当成「没关掉」，返回键就再也退不出去）",
+      );
+
+      // ---- 竖条浮层化（只对窄屏有意义；横屏走的是常驻竖条） ----
+      if (vp.narrow) {
+        const rail = await safeEval(page, () => {
+          const el = document.querySelector(".activity-bar");
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { transform: cs.transform, left: cs.left, isOpen: el.classList.contains("is-open") };
+        });
+        ok(rail !== null, "量到了左侧竖条");
+        ok(
+          rail && rail.transform === "none",
+          `收起状态竖条不带 transform（transform=${rail && rail.transform}）——带 transform 会成为浮层包含块，` +
+            `把算好的 left:8 顶到 -40px`,
+        );
+        ok(rail && parseFloat(rail.left) <= 0, `竖条收起时在屏外（left=${rail && rail.left}）`);
+      }
 
       // ---- 浮层打开时内容区的滚动锁 ----
       for (const layer of OVERLAYS) {
@@ -505,6 +656,14 @@ async function main() {
             m.boxMinWidth === "0px" || m.boxMinWidth === "auto",
             `盒子 min-width 已清零（min-width=${m.boxMinWidth}）——min-width 会压过 max-width`,
           );
+          // **高度轴同理**（2026-09-15 补）。上一轮只断言了 min-width，
+          // 于是 `.set-dialog{min-height:420px}` 一路活到横屏：792×360 下
+          // min-height 压过 `max-height:calc(100vh-48px)`，盒子高 420、底边 444，
+          // **底部 84px 被裁在屏外**（"保存 / 关闭"就在那一段里）。
+          ok(
+            m.boxMinHeight === "0px" || m.boxMinHeight === "auto",
+            `盒子 min-height 已清零（min-height=${m.boxMinHeight}）——min-* 压 max-* 与轴无关，高度轴同样要清`,
+          );
 
           // (2) 文档不许横向溢出
           ok(
@@ -541,10 +700,39 @@ async function main() {
               : "本层没有主要操作按钮（跳过）",
           );
 
-          // (5) 打开任一层 ⇒ 内容区 `overflow-y:hidden`，且触摸拖动拖不走背景
+          // (5) 打开任一层 ⇒ 外壳被锁，且触摸拖动拖不走背景
+          //
+          // ⚠️ 判据 2026-09-15 修正：**不能只看 `.note-scroll`**。
+          // 它只是"编辑器视图"的滚动容器；切到「文件」视图时它**不在 DOM 里**，
+          // 内容区换成 `.file-manager-table-wrap`，侧栏抽屉打开时滚的是 `.sidebar-tree`。
+          // 只锁 `.note-scroll` ⇒ 那些视图下**一个容器都没锁到**（上一版就是这样，
+          // 而"背景拖不动"当时其实是 `overscroll-behavior:contain` 挡住的，不是这把锁）。
+          // 现在的判据：**内联 `overflow-y:hidden` 的容器列表非空**（那就是被这把锁锁住的），
+          // 并且它必须包含 `.note-scroll`（若该视图有它）。
+          ok(
+            m.inlineLockedCount > 0,
+            `外壳至少锁到一个真实滚动容器（锁住：${m.inlineLocked.join(", ") || "无"}）` +
+              `——只认 .note-scroll 的旧写法在别的视图下会一个都锁不到`,
+          );
           ok(
             m.hasNoteScroll && m.noteScrollOverflowY === "hidden",
             `内容区被锁（.note-scroll overflow-y=${m.noteScrollOverflowY}）——锁 body 无效，真正的滚动容器是它`,
+          );
+          if (m.hasNoteScroll) {
+            ok(
+              m.inlineLocked.some((c) => c.includes("note-scroll")),
+              "锁的对象里确实包含 .note-scroll（不是「锁了别的、漏了正主」）",
+            );
+          }
+          // 反向：**不许锁到浮层自己的滚动区**（设置正文、命令面板列表、图标网格…）。
+          // 判据来自结构事实：浮层内部的滚动区一定有 `position: fixed` 祖先。
+          ok(
+            m.overlayOwnScrollers.every((s) => s.inlineOverflowY !== "hidden"),
+            m.overlayOwnScrollers.length
+              ? `浮层自己的滚动区没被误锁（${m.overlayOwnScrollers
+                  .map((s) => `${s.cls}:${s.inlineOverflowY || "auto"}`)
+                  .join(" ")}）`
+              : "本层没有自带滚动区（跳过反向断言）",
           );
           if (m.hasNoteScroll) {
             // 拖动点选在"根元素之内、盒子之外"的那道缝里（没有缝就落在盒子顶部的
@@ -620,6 +808,193 @@ async function main() {
           await sleep(300);
         }
       }
+
+      // ---------------------------------------------------------------------
+      // 系统 inset / 软键盘：**注入变量**量 CSS 这一半（2026-09-15 新增）
+      //
+      // 真机上 `--sat/--kb` 由壳层从窗口 inset 送进来（Kotlin 侧见
+      // `scripts/android-mobile-shell.mjs`）。这里验的是"变量变了、布局会不会跟着让位"——
+      // 那正是能在浏览器里验、也必须在这里钉住的一半：**变量接上了但 CSS 没消费**
+      // 是很容易犯的错（写完 bridge 就以为完事了）。
+      // ---------------------------------------------------------------------
+      console.log(`\n【${vp.name} · 状态栏 inset（注入 --sat=${STATUS_BAR_PROBE_PX}px）】`);
+      await safeEval(page, openOverlay, "settings");
+      await sleep(700);
+      const satProbe = await safeEval(
+        page,
+        (sat) => {
+          document.documentElement.style.setProperty("--sat", `${sat}px`);
+          const appEl = document.querySelector(".app");
+          const dlg = document.querySelector(".set-dialog");
+          const rail = document.querySelector(".set-rail");
+          const r = (el) => (el ? el.getBoundingClientRect() : null);
+          // "顶部再没有可交互 UI"才是这条修复的真正判据（见下面的说明）。
+          const offenders = [...document.querySelectorAll("button, input, textarea, select, a[href], [role='button']")]
+            .map((el) => ({ el, r: el.getBoundingClientRect() }))
+            .filter(({ r }) => r.width > 1 && r.height > 1 && r.top >= -1 && r.top < sat - 0.5)
+            .map(({ el, r }) => {
+              const fixed = (() => {
+                for (let n = el; n && n !== document.body; n = n.parentElement) {
+                  if (getComputedStyle(n).position === "fixed") return String(n.className || n.tagName).slice(0, 24);
+                }
+                return null;
+              })();
+              return {
+                cls: String(el.className || el.tagName).slice(0, 40),
+                top: Math.round(r.top * 10) / 10,
+                fixedIn: fixed,
+              };
+            })
+            .slice(0, 4);
+          return {
+            satVar: getComputedStyle(document.documentElement).getPropertyValue("--sat").trim(),
+            appPaddingTop: appEl ? getComputedStyle(appEl).paddingTop : null,
+            // ⚠️ `.app` 的 padding **不会**改变它自己的 border box 的 top
+            // （getBoundingClientRect 量的是 border box）——上一版断言写成
+            // "app.top ≥ 41" 是量错了对象，量出来永远是 0。要看的是 padding 与**子元素**。
+            firstInteractiveTop: offenders.length ? offenders[0].top : null,
+            offenders,
+            dlgTop: r(dlg) ? r(dlg).top : null,
+            dlgBottom: r(dlg) ? r(dlg).bottom : null,
+            railTop: r(rail) ? r(rail).top : null,
+            innerH: window.innerHeight,
+          };
+        },
+        STATUS_BAR_PROBE_PX,
+      );
+      ok(
+        satProbe.appPaddingTop === `${STATUS_BAR_PROBE_PX}px`,
+        `外壳用 padding 让开了状态栏（.app padding-top=${satProbe.appPaddingTop}）——` +
+          `对应真机上的"标题压住系统时间"`,
+      );
+      // 真正的判据：**状态栏那一条带里不许有任何可交互元素**。
+      // 那一带归 SystemUI 的窗口，应用**永远收不到那里的触摸**（真机实测：
+      // tap 在 y≤123 设备 px 时 0 个 DOM 事件，y=130 时 100+ 个），
+      // 所以修法只能是"别把 UI 放进去"，不是想办法穿透它。
+      ok(
+        satProbe.offenders.length === 0,
+        `顶部再没有可交互元素落在状态栏里（最高的一个 y=${satProbe.firstInteractiveTop} ≥ ${STATUS_BAR_PROBE_PX}）` +
+          `——修前编辑器工具条 6 个按钮的中心在 y=20，整条都在死区里，点不到` +
+          (satProbe.offenders.length
+            ? `；越界的：${satProbe.offenders
+                .map((o) => `${o.cls}@y=${o.top}${o.fixedIn ? `(在 fixed 的 ${o.fixedIn} 里)` : ""}`)
+                .join(" ")}`
+            : ""),
+      );
+      ok(
+        satProbe.dlgTop !== null && satProbe.dlgTop >= STATUS_BAR_PROBE_PX - 0.5,
+        `全屏面板顶部也让开了状态栏（.set-dialog top=${satProbe.dlgTop} ≥ ${STATUS_BAR_PROBE_PX}）——` +
+          `浮层是 position:fixed，不会跟着 .app 的 padding 走，必须自己让位`,
+      );
+      ok(
+        satProbe.railTop !== null && satProbe.railTop >= STATUS_BAR_PROBE_PX - 0.5,
+        `设置面板**第一个按钮所在的那条分类栏**在状态栏之下（.set-rail top=${satProbe.railTop}）——` +
+          `修前它在 y≈6，整条落在触摸死区里`,
+      );
+      ok(
+        satProbe.dlgBottom !== null && satProbe.dlgBottom <= satProbe.innerH + 0.5,
+        `加 inset 之后面板仍装得下（bottom=${satProbe.dlgBottom} ≤ ${satProbe.innerH}）`,
+      );
+      await safeEval(page, closeAllOverlays);
+      await safeEval(page, () => document.documentElement.style.removeProperty("--sat"));
+      await sleep(300);
+
+      console.log(`\n【${vp.name} · 软键盘（注入 --kb=${KB_PROBE_PX}px）】`);
+      // 用「社区保存」当底部弹层的样本：它由 store 驱动，`closeAllOverlays` 能确定地关掉
+      // （搜索/回收站/同步是 usePopover 的本地状态，Escape 关不掉，会污染后面几步）。
+      await safeEval(page, openOverlay, "communitySave");
+      await sleep(700);
+      const kbProbe = await safeEval(
+        page,
+        (kb) => {
+          document.documentElement.style.setProperty("--kb", `${kb}px`);
+          const sheet = document.querySelector(".community-save-box");
+          const r = sheet ? sheet.getBoundingClientRect() : null;
+          return {
+            found: !!sheet,
+            bottom: r ? r.bottom : null,
+            innerH: window.innerHeight,
+            kbVar: getComputedStyle(document.documentElement).getPropertyValue("--kb").trim(),
+          };
+        },
+        KB_PROBE_PX,
+      );
+      ok(kbProbe.found, "量到了底部弹层样本（.community-save-box 已打开）");
+      ok(
+        kbProbe.found && kbProbe.bottom <= kbProbe.innerH - KB_PROBE_PX + 0.5,
+        `底部弹层抬到了键盘之上（bottom=${kbProbe.bottom} ≤ ${kbProbe.innerH - KB_PROBE_PX}）——` +
+          `真机上键盘盖住 CSS y≥468 而弹层钉在 bottom:0，输入框正好被盖住；` +
+          `**web 层自己察觉不到键盘**（edge-to-edge 下 adjustResize 空转，` +
+          `innerHeight 与 visualViewport.height 都不变），所以 --kb 只能由壳层送`,
+      );
+      // 全屏面板也要跟着缩：`--ovh` 里已经扣掉 max(--sab, --kb)。
+      await safeEval(page, openOverlay, "settings");
+      await sleep(700);
+      const kbFull = await safeEval(
+        page,
+        (kb) => {
+          document.documentElement.style.setProperty("--kb", `${kb}px`);
+          const dlg = document.querySelector(".set-dialog");
+          const r = dlg ? dlg.getBoundingClientRect() : null;
+          return { bottom: r ? r.bottom : null, innerH: window.innerHeight };
+        },
+        KB_PROBE_PX,
+      );
+      ok(
+        kbFull.bottom !== null && kbFull.bottom <= kbFull.innerH - KB_PROBE_PX + 0.5,
+        `全屏面板也缩到了键盘之上（bottom=${kbFull.bottom} ≤ ${kbFull.innerH - KB_PROBE_PX}）——` +
+          `它的高度取自 --ovh，写死 100dvh 的话底部那截（「关闭设置」）会被键盘盖住`,
+      );
+      await safeEval(page, closeAllOverlays);
+      await safeEval(page, () => document.documentElement.style.removeProperty("--kb"));
+      await sleep(300);
+
+      // ---- 返回键：一次只关一层，关完栈空才返回 false（壳层据此退出应用） ----
+      //
+      // 先把栈清干净：`closeAllOverlays` 关不掉 usePopover 驱动的那些（搜索/回收站/同步，
+      // 它们是组件本地状态、Escape 无效），而本轮它们**也会登记进浮层栈**了。
+      // 不清干净，"栈空 ⇒ false"这条就量不到（量出来是"还有 3 层"）。
+      // 清干净之后再看**契约**：`handle()` 必须等价于 `depth > 0`。
+      console.log(`\n【${vp.name} · 返回键 → 浮层栈】`);
+      await safeEval(page, closeAllOverlays);
+      await safeEval(page, () => {
+        const b = window.__SHUYONOTE_BACK__;
+        if (!b) return 0;
+        // 上限只是防死循环：正常情况下几层就到底。
+        for (let i = 0; i < 12 && b.handle(); i++) { /* 排空 */ }
+        return b.depth();
+      });
+
+      await safeEval(page, openOverlay, "settings");
+      await sleep(800);
+      const back1 = await safeEval(page, () => {
+        const b = window.__SHUYONOTE_BACK__;
+        if (!b) return null;
+        const before = b.depth();
+        const handled = b.handle();
+        return { before, handled, after: b.depth() };
+      });
+      ok(
+        back1 !== null && back1.before > 0 && back1.handled === true && back1.after === back1.before - 1,
+        back1
+          ? `返回键关掉了最上层浮层：深度 ${back1.before} → ${back1.after}，handle() 返回 ${back1.handled}`
+          : "返回键桥不在",
+      );
+      const settingsGone = await safeEval(page, () => !document.querySelector(".set-dialog"));
+      ok(settingsGone, "设置面板确实被关掉了（不是只把栈弹空了）");
+      await sleep(400);
+      // 排空剩下的（如果有），再验"空栈 ⇒ false"。
+      const drained = await safeEval(page, () => {
+        const b = window.__SHUYONOTE_BACK__;
+        if (!b) return { depth: -1, handled: null, ids: [] };
+        for (let i = 0; i < 12 && b.depth() > 0; i++) b.handle();
+        return { depth: b.depth(), handled: b.handle(), ids: b.ids() };
+      });
+      ok(
+        drained.depth === 0 && drained.handled === false,
+        `栈空时 handle() 返回 ${drained.handled}（深度 ${drained.depth}）——**false 才会放行返回键去退出应用**；` +
+          `如果这里返回 true，返回键就永远退不出应用了`,
+      );
 
       // ---- `.plugin-panel` 的窄屏规则是否真的生效 ----
       // 它只在"插件声明了 rail 视图"时才进 DOM，全新实例里没有，所以这里塞一个

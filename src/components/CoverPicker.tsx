@@ -6,6 +6,7 @@ import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { CoverCrop } from "./CoverCrop";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 // Read a file's bytes (via its asset URL) into a source image data-URI for cropping.
 async function fileToCoverDataUrl(src: string): Promise<string | null> {
@@ -42,6 +43,8 @@ export function CoverPicker({ onClose, onPick, current }: { onClose: () => void;
   const [uploading, setUploading] = useState(false);
   // 这个组件只在「选择题头图」时被挂载（父级条件渲染），所以这里恒为真。
   useOverlayScrollLock();
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("coverPicker", true, onClose);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 

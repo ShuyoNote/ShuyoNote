@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useEditorStore } from "../store/editor";
 import { platform, isMobileUserAgent } from "../lib/platform";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import {
   APP_NAME,
   APP_VERSION,
@@ -22,6 +23,8 @@ import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
 export function AboutDialog() {
   const open = useEditorStore((s) => s.aboutOpen);
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("about", open, () => useEditorStore.getState().closeAbout());
   const close = useEditorStore((s) => s.closeAbout);
   const [allowExternal, setAllow] = useState(true);
   const [checking, setChecking] = useState(false);

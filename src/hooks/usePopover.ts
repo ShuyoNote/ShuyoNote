@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isNarrowViewport } from "./useMobile";
+import { isMobileOverlayViewport } from "./useMobile";
 
 // Position a popover as `position: fixed` anchored to its trigger button, so
 // it is not clipped by an ancestor's `overflow: hidden`. Also closes the
@@ -30,14 +30,22 @@ import { isNarrowViewport } from "./useMobile";
 // 另外：打开期间监听 `resize` 与 `visualViewport.resize`（软键盘弹出、
 // 旋转、拖分隔条都会触发）并重算——此前只在 toggle 时算一次，
 // 键盘一弹浮层就停在旧坐标上。
+//
+// ── 2026-09-15：形态判定从"窄"改成"**窄或矮**" ─────────────────────────────
+//
+// 原判定只看宽度（`isNarrowViewport`），于是 **792×360 的横屏手机**走宽屏分支：
+// 浮层仍锚定触发按钮，而 360px 高的视口里下方根本没有锚定空间（`minSpace` 默认 360
+// ⇒ `belowSpace` 几乎必然不足），浮层被推到屏外。判定改走
+// `isMobileOverlayViewport()`（宽 ≤768 **或** 高 ≤520），与 CSS 的
+// `@media (max-width: 768px), (max-height: 520px)` 一一对应。
 export function usePopover<T extends HTMLElement = HTMLButtonElement>(
   opts: { width?: number; minSpace?: number } = {},
 ) {
   const { width = 340, minSpace = 360 } = opts;
   const [open, setOpen] = useState(false);
-  const [isSheet, setIsSheet] = useState<boolean>(() => isNarrowViewport());
+  const [isSheet, setIsSheet] = useState<boolean>(() => isMobileOverlayViewport());
   // 窄屏走底部弹层：`pos` 为空对象，内联样式什么都不设，
-  // 位置全部交给 App.css 里的 `@media (max-width: 768px)` 段。
+  // 位置全部交给 App.css 里的 `@media (max-width: 768px), (max-height: 520px)` 段。
   const [pos, setPos] = useState<{ top?: number; left?: number; bottom?: number }>({ left: 0 });
   const triggerRef = useRef<T | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -45,8 +53,8 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>(
   const place = useCallback(() => {
     const el = triggerRef.current;
     if (!el) return;
-    // 窄屏：不锚定，走底部弹层。
-    if (isNarrowViewport()) {
+    // 窄屏 / 矮视口：不锚定，走底部弹层。
+    if (isMobileOverlayViewport()) {
       setIsSheet(true);
       setPos({});
       return;
@@ -93,7 +101,7 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>(
   useEffect(() => {
     if (open) return;
     const onResize = () => {
-      if (isNarrowViewport() !== isSheet) setIsSheet(isNarrowViewport());
+      if (isMobileOverlayViewport() !== isSheet) setIsSheet(isMobileOverlayViewport());
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);

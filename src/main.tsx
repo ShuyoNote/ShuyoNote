@@ -6,6 +6,18 @@ import App from "./App";
 import { AppCrashScreen } from "./components/AppCrashScreen";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { version } from "../package.json";
+import { installViewportInsets } from "./lib/viewportInsets";
+import { installBackBridge } from "./lib/overlayStack";
+
+// 移动端壳（Android）的两条桥。**必须在 React 挂载之前装好**：
+//   · `installViewportInsets()` 定义 `window.__SHUYONOTE_INSETS__`——壳层在页面
+//     刚加载完就会推送窗口 inset（状态栏 / 手势条 / 软键盘）。晚一步装，
+//     第一次推送就丢了，而"丢了"的表现正是"顶部被状态栏压住、且点不动"。
+//   · `installBackBridge()` 定义 `window.__SHUYONOTE_BACK__`——返回键可能在
+//     任何时刻被按下：栈空时它返回 false，壳层才会退出应用。
+// 两者在浏览器 / 桌面上都是**空转**（没有任何东西调用它们），行为与改动前一致。
+installViewportInsets();
+installBackBridge();
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
 // module top-level; define `process` in the browser so it doesn't throw

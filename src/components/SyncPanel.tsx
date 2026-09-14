@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
@@ -76,11 +77,13 @@ interface EditRow {
 export function SyncPanel() {
   const { loadPages } = useNotes();
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
-  const { open, pos, isSheet, triggerRef, contentRef, toggle } = usePopover<HTMLButtonElement>({
+  const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
     minSpace: 420,
   });
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("sync", open, () => close());
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
   const authEmail = useAuth((s) => s.email);

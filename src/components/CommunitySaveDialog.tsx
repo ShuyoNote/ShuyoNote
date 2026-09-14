@@ -22,12 +22,15 @@ import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
 import { sanitizeExternalUrl } from "../lib/links";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 type Phase = "input" | "loading" | "preview" | "stored";
 
 export function CommunitySaveDialog() {
   const open = useCommunitySave((s) => s.open);
   useOverlayScrollLock(open);
+  // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
+  useOverlayLayer("communitySave", open, () => useCommunitySave.getState().close());
   const pendingLink = useCommunitySave((s) => s.pendingLink);
   const close = useCommunitySave((s) => s.close);
 
