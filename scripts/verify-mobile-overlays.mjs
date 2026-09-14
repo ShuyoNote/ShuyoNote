@@ -673,7 +673,7 @@ async function main() {
                 // 只收我们关心的那几个选择器（含头部工具条与批注工具行——第一版漏了它们，
                 // 于是那两条断言永远看不到规则、只能假红）。
                 if (
-                  !/\.pdf-(outline|sidebar)-col|\.pdf-reader-stage-wrap|\.pdf-reader-head|\.pdf-annot-toolbar|\.pdf-annot-tools|\.pdf-annot-actions|\.pdf-reader-close/.test(
+                  !/\.pdf-(outline|sidebar)-col|\.pdf-reader-stage-wrap|\.pdf-reader-head|\.pdf-reader-controls|\.pdf-annot-toolbar|\.pdf-annot-tools|\.pdf-annot-actions|\.pdf-reader-close/.test(
                     sel,
                   )
                 )
@@ -718,6 +718,13 @@ async function main() {
         ok(
           wrapHead.length > 0,
           `窄屏段里阅读器头部允许换行（不换行 = 右边那排按钮被 overflow:hidden 裁掉，真机实测 730 > 360）`,
+        );
+        // 只让 head 换行是不够的：内层 `.pdf-reader-controls` 自己是 603px 宽的行
+        // （真机实测），换行发生在子元素这一级 ⇒ 它必须也能换行。
+        const wrapControls = rules.filter((e) => /\.pdf-reader-controls$/.test(e.sel) && /wrap/.test(e["flexWrap"] ?? ""));
+        ok(
+          wrapControls.length > 0,
+          `窄屏段里阅读器头部的**内层** .pdf-reader-controls 也允许换行（真机实测它单独就有 603px）`,
         );
         const bigTouch = rules.filter((e) => /\.pdf-reader-head button|\.pdf-annot-toolbar button/.test(e.sel) && /44px/.test(`${e["minWidth"] ?? ""} ${e["minHeight"] ?? ""}`));
         ok(

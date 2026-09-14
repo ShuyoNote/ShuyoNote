@@ -20683,6 +20683,18 @@ body.is-plugin-panel-open .main {
     flex-wrap: wrap;
     row-gap: 6px;
   }
+  /* ⚠️ 只让 head 换行**不够**：它里面的 `.pdf-reader-controls` 自己是个 603px 宽的 flex 行
+     （真机实测），换行只能在"子元素"这一级发生 ⇒ 那一整块照样溢出、右边仍被裁。
+     内层容器也要允许换行，并让标题允许被压缩（原来 `flex:1` 会先吃掉 270px）。 */
+  .pdf-reader-controls {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    min-width: 0;
+  }
+  .pdf-reader-name {
+    flex: 0 1 auto;
+    max-width: 42%;
+  }
   .pdf-reader-close {
     margin-left: auto;
   }
