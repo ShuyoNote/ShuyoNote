@@ -174,3 +174,29 @@ describe("describeDeepLink — 确认框里的一句人话", () => {
     expect(describeDeepLink({ kind: "compose", title: "t", body: "b" })).toContain("确认后再发");
   });
 });
+
+describe("parseDeepLink —— 测试钩子（解析不产生副作用）", () => {
+  it("认得 test/<hook>?k=v，并**只**把它解析成一个动作", () => {
+    const r = parseDeepLink("shuyonote://test/run-plugin?cmd=demo.hello");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.action).toEqual({
+        kind: "test",
+        hook: "run-plugin",
+        params: { cmd: "demo.hello" },
+      });
+    }
+  });
+
+  it("不写钩子名字 → 明确报错（而不是解析成一个空动作）", () => {
+    const r = parseDeepLink("shuyonote://test/");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain("没写名字");
+  });
+
+  it("**错误提示里不宣传**这个入口（它是测试用的，不该出现在给用户看的支持列表里）", () => {
+    const r = parseDeepLink("shuyonote://nope");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).not.toContain("test");
+  });
+});

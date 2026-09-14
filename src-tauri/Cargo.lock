@@ -4849,7 +4849,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shuyonote"
-version = "1.90.1"
+version = "1.90.2"
 dependencies = [
  "argon2",
  "async-imap",
@@ -4860,17 +4860,18 @@ dependencies = [
  "encoding_rs",
  "futures-util",
  "hex",
+ "jni 0.22.4",
  "libc",
  "mailparse",
  "minisign-verify",
  "mupdf-sys",
  "native-tls",
- "openssl",
  "percent-encoding",
  "rand_core 0.6.4",
  "regex",
  "reqwest 0.13.4",
  "rusqlite",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4878,6 +4879,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
+ "tauri-plugin-fs",
  "tauri-plugin-http",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",

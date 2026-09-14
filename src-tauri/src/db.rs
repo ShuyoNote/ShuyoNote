@@ -13,6 +13,38 @@ pub struct Db(pub Mutex<Connection>);
 
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// 测试用的 app-data 目录。**必须只有这一个来源**：`APP_DATA_DIR` 是进程级 `OnceLock`，
+/// `set` 只在未设置时生效（先到先得），所以两处测试若各用各的目录，后跑的那处就会被静默忽略、
+/// 拿到别人的目录。
+#[cfg(test)]
+pub(crate) fn test_app_data_dir_path() -> PathBuf {
+    std::env::temp_dir().join("shuyonote-tests")
+}
+
+/// 测试用：确保全局 `APP_DATA_DIR` 已就绪（幂等）。
+///
+/// 为什么需要这个：`APP_DATA_DIR` **只由 [`init`] 设置**，于是"会碰数据库的插件测试"
+/// 就**隐式依赖别的测试先跑过一次 init**——表现在单跑必红：
+///
+/// ```text
+/// assertion `left == right` failed
+///   left: "__plugin: 执行出错 Error: db_error: app data dir 未初始化"
+///  right: "null"
+/// ```
+///
+/// 而 `cargo test --lib` 全量跑时它反而是绿的（别的测试碰巧先设了）。这种"只有单跑才红"的
+/// 测试最费时间：改了一行、只跑一条、看到一个红，会以为是自己的改动坏了。
+/// 这个 helper 让这类测试**自给自足**；`set` 幂等，已经在别处设过就沿用那个目录。
+#[cfg(test)]
+pub(crate) fn ensure_test_app_data_dir() -> &'static Path {
+    let _ = APP_DATA_DIR.set(test_app_data_dir_path());
+    let _ = std::fs::create_dir_all(test_app_data_dir_path());
+    APP_DATA_DIR
+        .get()
+        .map(|p| p.as_path())
+        .expect("刚 set 过，不可能为空")
+}
+
 /// Resolve data paths for the app-data dir.
 pub(crate) fn meta_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(META_DB)
@@ -920,7 +952,8 @@ mod tests {
     static TEST_DIR: OnceLock<PathBuf> = OnceLock::new();
     fn test_dir() -> &'static Path {
         TEST_DIR.get_or_init(|| {
-            let d = std::env::temp_dir().join("shuyonote-tests");
+            // 路径只有一处来源（`super::test_app_data_dir_path()`）——见那个函数上的说明。
+            let d = super::test_app_data_dir_path();
             let _ = std::fs::remove_dir_all(&d);
             std::fs::create_dir_all(&d).unwrap();
             d

@@ -445,7 +445,10 @@ pub fn import_attachment_files(
     let total_files = paths.len();
     let mut results = Vec::new();
     for (index, p) in paths.into_iter().enumerate() {
-        let src = PathBuf::from(&p);
+        // Android：系统选择器给的是 `content://` URI，不是文件路径。先落成真实临时路径
+        // （桌面原样返回、不做任何多余的事）；那份拷出来的临时文件随 `picked` 析构删除。
+        let picked = crate::picked_file::materialize(&app, &p)?;
+        let src = picked.path().to_path_buf();
         let name = src
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())

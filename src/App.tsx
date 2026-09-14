@@ -188,6 +188,39 @@ function NoteEditor({ pageId }: { pageId: string }) {
           openPage: (id) => useNotes.getState().openPage(id),
           openCommunityDialog: (url) => useCommunitySave.getState().openWithLink(url),
           notify: (message) => toast(message, "info"),
+          // 测试钩子（只在 VITE_TEST_HOOKS=1 的构建里会真的被调用，见 deepLinkDispatch）。
+          // 两者都走**与界面完全相同**的那条路：插件命令经 usePlugins.runCommand（权限与写中介
+          // 原样成立），建页经 useNotes.createPage。钩子不绕过任何检查。
+          runPluginCommand: async (pluginId, commandId, argsJson) =>
+            usePlugins.getState().runCommand(pluginId, commandId, null, argsJson ?? undefined),
+          createPageWithText: async (text) => {
+            // 动态 import：这条路只在测试钩子里走，不该把 markdown→Lexical 的转换器
+            // 拉进首屏包（App.tsx 里重的东西都这么处理）。
+            const { markdownToPageContent } = await import("./lib/mdPreview");
+            const payload = markdownToPageContent(text);
+            if (!payload) throw new Error("这段文本转不成页面内容");
+            return useNotes.getState().createPage(null, {
+              title: text.split("\n")[0].slice(0, 24) || "测试钩子",
+              content_json: payload.content_json,
+              content_text: payload.content_text,
+            });
+          },
+          // 测试钩子 http-probe：让 **Rust 侧**发一次真实 HTTPS（走 reqwest），
+          // 用来验 Android 上系统证书库那条路通不通（见 docs/MOBILE.md §2.4）。
+          //
+          // 用 `fetch_bookmark_metadata`：它**接受任意 https 地址**并返回网页元数据（含标题），
+          // 所以能看到**成功**路径（拿到标题），而不是只有一句错误。都是现成命令，
+          // 不新增命令、不动能力清单。
+          // ⚠️ 别换成 `fetch_community_json`：它只认 `community.shuyo.cn` 一个域名，
+          // 而那个域名下随便挑的地址会返回 404 ⇒ 只能看到"失败"，证明不了握手成功。
+          httpProbe: async (url) => JSON.stringify(await api.fetchBookmarkMetadata(url)),
+          // Phase 0 持久化判据的程序化说法：重启后问一次"库里有哪些页"。
+          // 为什么要这个钩子：重启后应用**总是停在空白新页**上，从界面看不出旧页在不在。
+          listPages: () => api.listPages(),
+          // 测试钩子 pick-file：与附件面板**同一对调用**（选择器 → 附件导入），
+          // 用来在真机上验「选文件拿不到可读路径」那条修复（见 docs/MOBILE.md §2.2）。
+          openFileDialog: () => platform.dialog.open({ multiple: false, directory: false }),
+          importAttachments: (paths) => api.importAttachmentFiles(null, paths),
         }),
       ),
     [],

@@ -1,0 +1,250 @@
+#!/usr/bin/env node
+// 给「生成出来的」Android 工程补上 rustls-platform-verifier 的 **JVM 组件**。
+//
+// ## 为什么需要这个 JVM 组件
+//
+// reqwest 0.13 在 Android 上用 `rustls-platform-verifier` 校验 TLS 证书，而它的 Android
+// 后端**要回调 JVM** 里的 `org.rustls.platformverifier.CertificateVerifier`（就是系统证书库
+// 那套 `TrustManager` 的封装）。那个 Kotlin 组件**不在 Maven Central 上**
+// （rustls/rustls-platform-verifier#115），只能用它 crate 内自带的 maven 目录。
+//
+// ## 为什么是脚本，而不是直接改文件
+//
+// `src-tauri/gen` 在 `.gitignore` 里（"可重建"），CI 每次都要自己 `tauri android init`
+// ——所以对 gen/android 的任何手工改动**都不可复现**。这是上线计划风险清单里那条
+// "gen 定制要么脚本化、要么改成声明式"的具体落实。
+//
+// ## 做三件事（可重复执行，已注入则跳过）
+//
+// 1. 往 `app/build.gradle.kts` **末尾追加**一个指向 crate 内置 maven 目录的仓库
+//    （追加而不是插入：不用解析 Kotlin 结构，`repositories {}` / `dependencies {}`
+//    都可以出现多次）；
+// 2. 追加一行 `implementation("rustls:rustls-platform-verifier:<版本>")`；
+// 3. 写 `app/rustls-platform-verifier.pro`：**release 开了 R8**（`isMinifyEnabled = true`），
+//    而这些类只被 JNI 按名字找，R8 看不见任何 Java 引用 ⇒ 会被当成死代码删掉/改名，
+//    运行时直接 `ClassNotFoundException`。生成的 build.gradle.kts 里正好用
+//    `fileTree(".") { include("**/*.pro") }` 收集规则，所以把 .pro 放进 app/ 就会被自动收走。
+//
+// 用法：node scripts/android-platform-verifier.mjs [--check]
+//   --check：只检查"该注入的是不是已经在了"，不写文件（给门禁用）。
+
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { homedir } from 'node:os'
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const APP_GRADLE = join(ROOT, 'src-tauri/gen/android/app/build.gradle.kts')
+const PRO_FILE = join(ROOT, 'src-tauri/gen/android/app/rustls-platform-verifier.pro')
+const MARK = '// [rustls-platform-verifier] 由 scripts/android-platform-verifier.mjs 注入'
+
+const CHECK_ONLY = process.argv.includes('--check')
+
+function fail(msg) {
+  console.error(`❌ ${msg}`)
+  process.exit(1)
+}
+
+// ---------------------------------------------------------------- 找 crate 的 maven 目录
+
+const CARGO_HOME = process.env.CARGO_HOME || join(homedir(), '.cargo')
+
+/** 扫 `registry/src`：cargo 编译时把 .crate 解包到这里。 */
+function scanRegistrySrc() {
+  const srcRoot = join(CARGO_HOME, 'registry/src')
+  if (!existsSync(srcRoot)) return null
+  const found = []
+  for (const registry of readdirSync(srcRoot)) {
+    const dir = join(srcRoot, registry)
+    let names
+    try {
+      names = readdirSync(dir)
+    } catch {
+      continue // 权限/竞争：跳过这个 registry，不要因此整个失败
+    }
+    for (const name of names) {
+      if (!name.startsWith('rustls-platform-verifier-android-')) continue
+      const maven = join(dir, name, 'maven')
+      if (existsSync(maven)) found.push({ crate: name, maven, from: 'registry/src' })
+    }
+  }
+  if (!found.length) return null
+  // 多个 registry 镜像里都有时，取 crate 版本最大的那个（数字序，别用字典序：0.10 > 0.9）
+  found.sort((a, b) => a.crate.localeCompare(b.crate, undefined, { numeric: true }))
+  return found[found.length - 1]
+}
+
+/**
+ * CI 上第一次跑会走到这里，而且**第一次就是失败**（run #10 的教训）：
+ * `cargo fetch` 只把 `.crate` 放进 `registry/cache`，**解包到 `registry/src` 是编译时**才做的，
+ * 而我们的注入步骤排在 `tauri android build` **之前**（gradle 配置阶段就要读这个依赖）。
+ * 所以这里自己补两步：先 fetch，再把 `.crate` 解开（`.crate` 就是 gzip 的 tar，
+ * `tar` 在 Linux 与 Windows 10+ 都有；**不调 cargo build**——那需要 NDK，本机做不了）。
+ */
+function fetchAndExtract() {
+  const manifest = join(ROOT, 'src-tauri/Cargo.toml')
+  console.log('registry/src 里还没有 rustls-platform-verifier-android —— 先 cargo fetch')
+  try {
+    execFileSync('cargo', ['fetch', '--manifest-path', manifest, '--target', 'aarch64-linux-android'], {
+      stdio: 'inherit',
+    })
+  } catch (e) {
+    fail(`cargo fetch 失败（${e.message}）—— 这一步需要网络与 cargo 在 PATH 上`)
+  }
+
+  const again = scanRegistrySrc()
+  if (again) return again
+
+  const cacheRoot = join(CARGO_HOME, 'registry/cache')
+  const crates = []
+  for (const registry of existsSync(cacheRoot) ? readdirSync(cacheRoot) : []) {
+    for (const file of readdirSync(join(cacheRoot, registry))) {
+      if (file.startsWith('rustls-platform-verifier-android-') && file.endsWith('.crate')) {
+        crates.push(join(cacheRoot, registry, file))
+      }
+    }
+  }
+  if (!crates.length) fail(`${cacheRoot} 里没有它的 .crate —— cargo fetch 没拉到？`)
+  crates.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  const crate = crates[crates.length - 1]
+
+  const dest = join(ROOT, 'src-tauri/target/platform-verifier-crate')
+  mkdirSync(dest, { recursive: true })
+  console.log(`从 .crate 解开：${crate}`)
+  try {
+    execFileSync('tar', ['-xzf', crate, '-C', dest], { stdio: 'inherit' })
+  } catch (e) {
+    fail(`解包失败（${e.message}）—— .crate 是 gzip 的 tar，系统 tar 应该能处理`)
+  }
+  const dir = readdirSync(dest)
+    .map((n) => join(dest, n))
+    .find((p) => safeIsDir(p) && basename(p).startsWith('rustls-platform-verifier-android-'))
+  if (!dir) fail(`解包后没找到 crate 目录：${dest}`)
+  const maven = join(dir, 'maven')
+  if (!existsSync(maven)) fail(`解出来的 crate 里没有 maven 目录：${dir}`)
+  return { crate: basename(dir), maven, from: 'tar 解包' }
+}
+
+function safeIsDir(p) {
+  try {
+    return statSync(p).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** `rustls-platform-verifier-android` 那个 crate 自带的 maven 目录（含 AAR）。 */
+function findMavenDir() {
+  const picked = scanRegistrySrc() ?? fetchAndExtract()
+
+  // maven 坐标的**版本号是组件自己的**（0.1.x），不是 Rust crate 的 0.7.x —— 别混。
+  const groupDir = join(picked.maven, 'rustls/rustls-platform-verifier')
+  if (!existsSync(groupDir)) fail(`${groupDir} 不存在（crate 布局变了？）`)
+  const versions = readdirSync(groupDir).filter((v) => safeIsDir(join(groupDir, v)))
+  if (!versions.length) fail(`${groupDir} 下没有任何版本目录`)
+  versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  const version = versions[versions.length - 1]
+  const aar = join(groupDir, version, `rustls-platform-verifier-${version}.aar`)
+  if (!existsSync(aar)) fail(`找不到 AAR：${aar}`)
+
+  return { maven: picked.maven, version, aar, crate: picked.crate, from: picked.from }
+}
+
+// ---------------------------------------------------------------- 生成要追加的两段
+
+/**
+ * Kotlin DSL 的路径必须写成 **正斜杠**：`uri("C:\Users\…")` 里的 `\U` 是转义，
+ * 而且 `java.net.URI("C:/x")` 会被解析成"scheme 是 C"的怪 URI。用 `file(...)` 包一层
+ * 由 Gradle 解析成本地文件，绕开这两个坑。
+ */
+const kotlinPath = (p) => p.replace(/\\/g, '/')
+
+function gradleSnippet(maven, version) {
+  return `
+${MARK}
+// 组件不在 Maven Central 上（rustls/rustls-platform-verifier#115），指向 crate 自带的 maven 目录。
+// 路径由脚本在构建时解析成绝对路径写进来 —— gen/ 不入库，所以不能靠相对路径猜。
+//
+// ⚠️ **不要写 metadataSources { artifact() }**（crate README 的 Groovy 示例里是这么写的，
+// 在这里恰好是错的）：那句会让 Gradle **不读 pom**、只按坐标名去找
+// \`rustls-platform-verifier-<版本>.jar\`，而这个目录里放的是 **.aar**（pom 里
+// \`<packaging>aar</packaging>\` 就是给它看的）。run #13 的报错正是这样：
+//   Could not find rustls:rustls-platform-verifier:0.1.1.
+//   Searched in: …/maven/rustls/rustls-platform-verifier/0.1.1/rustls-platform-verifier-0.1.1.jar
+// 用默认的 metadataSources（含 mavenPom），Gradle 才会读 packaging 并去拿 .aar。
+repositories {
+    maven {
+        url = uri(file("${kotlinPath(maven)}"))
+    }
+}
+dependencies {
+    implementation("rustls:rustls-platform-verifier:${version}")
+}
+`
+}
+
+const PROGUARD = `# rustls-platform-verifier 的 JVM 组件只被 **JNI 按名字** 调用（Rust 侧 FindClass），
+# R8 看不到任何 Java 引用，会把它当死代码删掉或改名 —— 运行时直接 ClassNotFoundException。
+# 规则出自 crate README 的 Proguard 一节。
+-keep,includedescriptorclasses class org.rustls.platformverifier.** { *; }
+`
+
+// ---------------------------------------------------------------- 主流程
+
+if (!existsSync(APP_GRADLE)) {
+  fail(
+    `找不到 ${APP_GRADLE}\n` +
+      '  gen/ 是生成物（不入库），所以这一步必须在 `pnpm tauri android init` **之后**跑。',
+  )
+}
+
+// ---------------------------------------------------------------- 安装 Kotlin 组件
+//
+// 历史：2026-09-13 之前，这里是把 crate 自带 maven 目录里的 **AAR** 挂进 Gradle。
+// 现在改成用仓库里自带的、**打过补丁**的 Kotlin 源码（`scripts/vendor/rustls-platform-verifier/`）。
+// 理由见那个目录的 README：Let's Encrypt 从 2025-08 起取消 OCSP（只发 CRL），而 Android 的
+// 吊销检查器**默认先查 OCSP**，查不到就把证书判成"已吊销"⇒ 真机上所有 LE 站点都连不上
+// （我们自己的 shuyo.cn / community.shuyo.cn 首当其冲）。上游 issue #221 未修、PR #179 未合并，
+// 所以自带一份、随 App 一起编译。
+//
+// 上面那段 findCrateDir/findMavenDir 因此**暂时不再被调用**；留着是为了上游修复后能切回 AAR 方式。
+
+const KT_SRC = join(ROOT, 'scripts/vendor/rustls-platform-verifier/CertificateVerifier.kt')
+const KT_DST = join(
+  ROOT,
+  'src-tauri/gen/android/app/src/main/java/org/rustls/platformverifier/CertificateVerifier.kt',
+)
+
+/** 把自带的（打过补丁的）Kotlin 校验器放进 App 源码集，由 Gradle 一起编译。 */
+function installKotlin() {
+  if (!existsSync(KT_SRC)) fail(`找不到自带的 Kotlin 校验器：${KT_SRC}`)
+  const src = readFileSync(KT_SRC, 'utf8')
+  // 兜底自检：补丁必须在。少了它就会退回"所有 LE 站点都报 Revoked"的老毛病，
+  // 而这种回归只有在真机上才看得见，所以在构建期就拦住。
+  for (const opt of ['PREFER_CRLS', 'NO_FALLBACK']) {
+    if (!src.includes(`PKIXRevocationChecker.Option.${opt}`)) {
+      fail(`自带的 Kotlin 校验器缺少补丁选项 ${opt} —— 见 scripts/vendor/ 下的 README，别改回去`)
+    }
+  }
+  mkdirSync(dirname(KT_DST), { recursive: true })
+  writeFileSync(KT_DST, src, 'utf8')
+  console.log(`已安装（含补丁）Kotlin 校验器 → ${KT_DST}`)
+}
+
+if (CHECK_ONLY) {
+  if (!existsSync(KT_DST)) fail(`缺少 ${KT_DST}（CI 里应排在 tauri android init 之后）`)
+  if (!existsSync(PRO_FILE)) fail(`缺少 ${PRO_FILE}`)
+  if (!readFileSync(KT_DST, 'utf8').includes('PREFER_CRLS')) fail('装进去的校验器没有补丁')
+  if (readFileSync(APP_GRADLE, 'utf8').includes(MARK)) {
+    fail('app/build.gradle.kts 里还留着旧的 AAR 注入 ⇒ 会与自编译的类重复，删掉 gen/ 重新 init')
+  }
+  console.log('✅ 校验器源码与 Proguard 规则都在（--check）')
+  process.exit(0)
+}
+
+installKotlin()
+
+// Proguard 规则每次覆盖写：它是我们自己的文件，内容必须跟着这里走（别让手工改动留在 gen 里）
+writeFileSync(PRO_FILE, PROGUARD, 'utf8')
+console.log(`已写入 Proguard 规则 → ${PRO_FILE}`)

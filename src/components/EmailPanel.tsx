@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { api, type EmailAccount, type EmailMeta } from "../lib/api";
 import { useAiStore } from "../store/ai";
 import { emailHtmlToLexical } from "../lib/emailRichNote";
-import { isDesktopPlatform, platform } from "../lib/platform";
+import { emailSupported, platform } from "../lib/platform";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
@@ -461,10 +461,11 @@ export function EmailPanel() {
 
   // 挂载时读一次已保存账号列表（供角标/定时收取/标签用；不依赖面板是否打开）。
   useEffect(() => {
-    // 邮箱是**桌面版独有**能力。web 版调用它只会拿到
-    // `[web] invoke error … 聚合邮箱仅桌面版支持`，而 api 层在 reject **之前**就已经把
-    // 那行错误打进控制台了——后面的 .catch 拦不住它。所以先判断平台，压根别去调。
-    if (!isDesktopPlatform()) return;
+    // 邮箱是**桌面版独有**能力（2026-09-13 明确，含移动端）。web 版调用它只会拿到
+    // `[web] invoke error … 聚合邮箱仅桌面版支持`；而**移动端这些命令压根不存在**
+    // （Rust 侧带 #[cfg(desktop)]），调了会拿到 "command not found"。两种都不该发生，
+    // 所以先判断能力，压根别去调。
+    if (!emailSupported()) return;
     api
       .emailListAccounts()
       .then((list) => {
@@ -664,9 +665,9 @@ export function EmailPanel() {
 
   // 拉取所有含邮件的月份（含未加载历史），供月份选择器启用；按当前账号筛选走聚合命令。
   const loadMonths = async (fs: string[] = folders) => {
-    // 同挂载那处：桌面独有能力，web 版直接返回——不是"失败无所谓"，
-    // 而是**连调都不该调**（调了就会在控制台留下 [web] invoke error）。
-    if (!isDesktopPlatform()) return;
+    // 同挂载那处：桌面独有能力（含移动端不提供），非桌面直接返回——不是"失败无所谓"，
+    // 而是**连调都不该调**（web 版会留 [web] invoke error，移动端会 command not found）。
+    if (!emailSupported()) return;
     try {
       const months = await api.emailFetchAllMonths(fs, accountFilter);
       setAllMonths(new Set(months));

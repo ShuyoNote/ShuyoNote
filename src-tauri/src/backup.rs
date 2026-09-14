@@ -119,7 +119,7 @@ pub async fn export_backup(
     // Stage a compact snapshot of meta.db + every per-space DB in a temp dir, then
     // stream them all into one zip. Online snapshotting is WAL-safe and holds each
     // source connection only briefly, so the live app keeps working throughout.
-    let tmp_root = std::env::temp_dir().join(format!("shuyonote-export-{}", uuid::Uuid::new_v4()));
+    let tmp_root = crate::tempdir::dir("shuyonote-export").map_err(|e| e.to_string())?;
     std::fs::create_dir_all(tmp_root.join("spaces")).map_err(|e| e.to_string())?;
 
     let tmp_meta = tmp_root.join("meta.db");
@@ -396,7 +396,10 @@ pub async fn import_backup(
     _db: State<'_, Db>,
     src_path: String,
 ) -> Result<ImportSummary, String> {
-    let src = PathBuf::from(&src_path);
+    // Android：选择器给的是 `content://` URI，先落成真实临时路径（桌面原样返回）。
+    // 否则下一行的 `exists()` 会 false，报"备份文件不存在"——文件明明在那儿。
+    let picked = crate::picked_file::materialize(&app, &src_path)?;
+    let src = picked.path().to_path_buf();
     if !src.exists() {
         return Err("备份文件不存在".to_string());
     }
@@ -407,7 +410,7 @@ pub async fn import_backup(
     let meta_file = crate::db::meta_path(&app_data_dir);
     std::fs::create_dir_all(&spaces_dir).map_err(|e| e.to_string())?;
 
-    let tmp_dir = std::env::temp_dir().join(format!("shuyonote-restore-{}", uuid::Uuid::new_v4()));
+    let tmp_dir = crate::tempdir::path("shuyonote-restore");
     let app2 = app.clone();
     let tmp2 = tmp_dir.clone();
     let src2 = src.clone();

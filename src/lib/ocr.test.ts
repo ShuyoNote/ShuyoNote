@@ -79,3 +79,39 @@ describe("ocrRecognize 失败阶段区分", () => {
     expect(createWorkerMock).not.toHaveBeenCalled();
   });
 });
+
+// 语言包自 2026-09-13 起不随包分发，改成运行时按需下载 + 缓存。这两件事是**耦合的**：
+// 一旦来源变成远端而 cacheMethod 还是 "none"（本地模型时代的值），
+// 每次 OCR 都会重新下载约 30 MB —— 功能看起来正常，只是慢得莫名其妙。
+// 所以这里把"远端来源"与"必须缓存"一起钉住（另一道构建期门禁在 scripts/check-ocr-assets.mjs）。
+describe("语言包来源与缓存策略的耦合", () => {
+  async function capturedOptions(): Promise<Record<string, unknown>> {
+    createWorkerMock.mockResolvedValue({
+      recognize: vi.fn().mockResolvedValue({ data: { text: "ok" } }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    });
+    const { ocrRecognize } = await loadModule();
+    await ocrRecognize(new Blob([new Uint8Array([1])]));
+    expect(createWorkerMock).toHaveBeenCalled();
+    return createWorkerMock.mock.calls[0][2] as Record<string, unknown>;
+  }
+
+  it("默认语言包来源是远端 https，且路径**带 tessdata 版本号**（服务端据此长缓存）", async () => {
+    const opts = await capturedOptions();
+    const p = String(opts.langPath);
+    expect(p).toMatch(/^https:\/\//);
+    // 路径必须以 /tessdata/<版本> 结尾：没有版本号就不能给 immutable 缓存，
+    // 否则换模型时用户会一直跑着旧模型，而且看不出来。
+    expect(p).toMatch(/\/tessdata\/\d+\.\d+\.\d+$/);
+  });
+
+  it("远端来源必须开缓存（cacheMethod=write）——否则每次 OCR 重下约 30 MB", async () => {
+    const opts = await capturedOptions();
+    expect(opts.cacheMethod).toBe("write");
+  });
+
+  it("gzip 仍为 true（远端给的是 .traineddata.gz，由 tesseract 自己解压）", async () => {
+    const opts = await capturedOptions();
+    expect(opts.gzip).toBe(true);
+  });
+});

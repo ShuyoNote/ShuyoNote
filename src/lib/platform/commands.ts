@@ -171,7 +171,18 @@ export interface CommandMap {
   email_send: { args: { args: { account: EmailAccount; to: string; subject: string; body: string } }; result: void };
   email_test_connection: { args: { account: EmailAccount }; result: string };
   // ---- Update（更新清单，桌面 native 拉取；Web 走 server version.json） ----
-  fetch_update_manifest: { args: { url?: string }; result: { version: string | null; notes: string | null; pub_date: string | null } | null };
+  // android_url / android_sha256 来自清单的 platforms["android-aarch64"]（老清单里没有
+  // 这个键时是 null）。Android 不接桌面那套下载并安装，只用它给「下载 APK」入口。
+  fetch_update_manifest: {
+    args: { url?: string };
+    result: {
+      version: string | null;
+      notes: string | null;
+      pub_date: string | null;
+      android_url: string | null;
+      android_sha256: string | null;
+    } | null;
+  };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };

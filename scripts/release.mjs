@@ -1,9 +1,9 @@
-// ShuyoNote 桌面版自动发布脚本（gitcode）。
+// ShuyoNote 发版脚本（gitcode）：桌面三平台安装包 + Android APK + Web 整包。
 //
-// 完整流水线：校验签名密钥/公钥 → `pnpm tauri build`（签名）→ 收集安装包+.sig
+// 完整流水线：校验签名密钥/公钥 → `pnpm tauri build`（签名）→ 收集安装包+.sig（+ `--android-apk` 给的 APK）
 //           → 逐项校验（版本号整词匹配 / 同平台歧义 / 缺签名 / .sig 与字节互验 /
-//             线上 latest.json 的平台覆盖）→ 生成 latest.json（Tauri updater 清单）
-//           → 发布到 gitcode：建 release v<version>、上传 installer/.sig/latest.json、
+//             缺 Android 发版件 / 线上 latest.json 的平台覆盖）→ 生成并校验 latest.json（Tauri updater 清单）
+//           → 发布到 gitcode：建 release v<version>、上传 installer/.sig/APK/latest.json、
 //             更新「latest」auto-update 通道。
 // 检查明细见 docs/RELEASING.md ⑥；纯逻辑与单测在 scripts/lib/releaseArtifacts.mjs。
 //
@@ -16,10 +16,17 @@
 //   --dry-run               只收集/校验/写清单，不发布
 //   --no-build              跳过 `pnpm tauri build`（产物已就绪时用）
 //   --artifacts <名字,…>    显式指定要发布的产物（替代「文件名含版本号」自动挑选）
+//   --android-apk <路径>    Android 发版 APK（本机出不了，从 CI artifact / Release 取；缺失即失败）
+//   --no-android            明确接受本次不带 Android 发版件（Android 用户本轮收不到更新）
 //   --no-web                不打包/上传 Web 版（dist-web/）
 //   --no-plugins            不产出第一方插件索引片段（默认：配了发布者私钥就产出）
 //   --allow-platform-drop   允许本次清单丢掉线上已有的平台键（默认禁止）
 //   --skip-sig-verify       跳过「.sig 确实是这些字节的签名」校验（不建议）
+//
+// ⚠️ Android 条目与桌面走**同一个** `platforms`：apk 没有 minisign `.sig`，所以它的
+//    `signature` 写成 `sha256:<hex>`（完整性在本脚本里算）。这一点不能省——只要有一个平台
+//    条目缺 `signature`，`tauri-plugin-updater` 对**整份 latest.json** 的解析就会失败，
+//    桌面更新通道跟着一起挂（写盘前由 validateManifest 硬拦）。
 //
 // 密钥一次性生成（保密）：pnpm tauri signer generate -w ~/.tauri/shuyonote.key
 // 公钥写入 src-tauri/tauri.conf.json → plugins.updater.pubkey。
@@ -33,16 +40,20 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { join, dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ANDROID_PLATFORM_KEY,
   INSTALLER_DIRS,
+  androidApkProblems,
   coverageProblems,
   fmtSize,
   fmtTime,
+  isApk,
   manifestPicks,
   selectArtifacts,
   sha256File,
+  validateManifest,
   verifyArtifactSignature,
 } from "./lib/releaseArtifacts.mjs";
 import { packDirToZip } from "./lib/pack-zip.mjs";
@@ -76,25 +87,31 @@ const DRY = process.argv.includes("--dry-run");
 const NO_BUILD = process.argv.includes("--no-build");
 const NO_WEB = process.argv.includes("--no-web");
 const NO_PLUGINS = process.argv.includes("--no-plugins");
+const NO_ANDROID = process.argv.includes("--no-android");
 
 // ---- 前置：git tag vX.Y.Z 必须已存在并推到远程 ----
 // gitcode 的 release 创建 API 用 tag_name 定位 tag；tag 不存在会「静默失败」
 // （release 未建、latest.json 不更新，客户端就查不到更新——曾实际踩坑）。
+// ⚠️ tag 必须**两个远端都推**：`origin`(gitcode) 是应用内「检查更新」与下载通道，
+// 而 `.github/workflows/release.yml` 是 **GitHub Actions** 的工作流，只有 **`github`
+// 那个仓库收到 `v*` tag** 才会跑——只推 origin，多平台构建（含 Android 发版件）
+// **根本不会开始**（详见 docs/RELEASING.md ④）。下面只按 origin 做前置校验，
+// 因为它是发布这一步的必需条件；github 缺 tag 不阻断发布本身，但会让发版件一个都不产出。
 // 这里在发布前尽早拦住，而不是等发布后才发现查不到更新。
 try {
   execSync(`git rev-parse --verify --quiet refs/tags/${TAG}`, { stdio: "ignore" });
 } catch {
-  console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} 再发布。`);
+  console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} && git push github ${TAG} 再发布。`);
   process.exit(1);
 }
 try {
   const remote = execSync(`git -c http.proxy= -c https.proxy= ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
   if (!remote) {
-    console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} 再发布。`);
+    console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
     process.exit(1);
   }
 } catch {
-  console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} 再发布。`);
+  console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
   process.exit(1);
 }
 
@@ -182,15 +199,71 @@ if (problems.length > 0) {
   console.error("[release] 未做任何发布。");
   process.exit(1);
 }
-console.log(`[release] 选中 ${picked.length} 个产物：${picked.map((a) => a.name).join("、")}`);
+console.log(`[release] 选中 ${picked.length} 个桌面产物：${picked.map((a) => a.name).join("、") || "(无)"}`);
+
+// ---- Android 发版件（APK）：**必须显式提供**，缺了就失败 ----
+//
+// 为什么它不像桌面产物那样从 bundle 目录里扫：本机（Windows）**出不了** Android 包
+// （卡在 OpenSSL 源码构建与 mupdf 的 Makefile 假设上，见 docs/RELEASING.md §9 开头），
+// 所以 apk 一律是 CI 产出后再拿过来的一**个外部文件**。
+//
+// 为什么缺包要硬失败：一旦本次清单里没有 android-aarch64，Android 用户的更新通道就
+// **静默消失**（发布时毫无征兆，用户点「检查更新」才发现）；而线上已经有这个键时，
+// 下面的平台覆盖检查会再拦一次。要明确跳过只能写 --no-android。
+//
+// 下面把它 push 进 `picked`：于是"签名互验（跳过）、指纹、清单挑选、上传"这几步都自动
+// 覆盖到它，不需要第二套并行逻辑。
+let androidApk = null;
+const androidArg = argOf("--android-apk");
+if (NO_ANDROID) {
+  console.warn(
+    androidArg
+      ? `[release] ⚠️ --no-android：忽略 --android-apk ${androidArg}，本次清单不含 android-aarch64。`
+      : "[release] ⚠️ --no-android：本次清单不含 android-aarch64（Android 用户本轮收不到更新）。",
+  );
+} else {
+  // resolve（不是 join）：apk 是外部文件，允许给**绝对路径**（`join` 会把 `C:\…` 拼在仓库根后面）。
+  const apkPath = androidArg ? resolve(root, androidArg) : null;
+  const apkName = apkPath ? basename(apkPath) : null;
+  const apkStat = apkPath && existsSync(apkPath) ? statSync(apkPath) : null;
+  const apkCheck = androidApkProblems({
+    name: apkName,
+    version,
+    exists: apkStat !== null,
+    statIsFile: apkStat ? apkStat.isFile() : undefined,
+  });
+  for (const w of apkCheck.warnings) console.warn(`[release] ⚠️ ${w}`);
+  if (apkCheck.problems.length > 0) {
+    console.error("[release] Android 发版件检查未通过：");
+    for (const p of apkCheck.problems) console.error(`  ✗ ${p}`);
+    console.error("[release] 未做任何发布。");
+    process.exit(1);
+  }
+  // sigPath: null 是**有意**的：apk 没有 minisign `.sig`（签名在包内，由 apksigner 打上、
+  // 安装时由系统安装器强制校验），所以它不参与 `.sig` 互验、也不上传 `.sig`；
+  // 清单里用 sha256 记录本次发布的字节指纹。selectArtifacts 已为 apk 开了显式例外。
+  androidApk = { name: apkName, file: apkPath, size: apkStat.size, mtimeMs: apkStat.mtimeMs, sigPath: null, sigText: null };
+  console.log(`[release] Android 发版件：${apkName}（${fmtSize(androidApk.size)}）`);
+  console.log(
+    "[release] 说明：apk 没有 minisign `.sig`（它的签名在包内，由 apksigner 打上、安装时由系统安装器强制校验），" +
+      "所以它不参与 `.sig` 互验、也不上传 `.sig`；清单里用 sha256 记录本次发布的字节指纹。",
+  );
+  picked.push(androidApk);
+  console.log(`[release] 本次共 ${picked.length} 个产物：${picked.map((a) => a.name).join("、")}`);
+}
 
 // ---- 校验 .sig 确实是这些字节的签名（Tauri 更新器做的就是这件事）----
 // 拦的是「安装包与 .sig 不是同一次构建的一对」——这种事故发布时毫无征兆，
 // 只在用户点「检查更新」时才炸。Tauri 用 minisign 预哈希模式：BLAKE2b-512 + ed25519。
+// **apk 跳过**：它没有 `.sig`（见上）。
 if (!SKIP_SIG) {
   console.log("[release] 校验签名…");
   const bad = [];
   for (const a of picked) {
+    if (isApk(a.name)) {
+      console.log(`  — ${a.name}：apk 无 minisign .sig，跳过（完整性由清单里的 sha256 记录，安装签名由系统安装器强制）`);
+      continue;
+    }
     const r = await verifyArtifactSignature({ filePath: a.file, sigText: a.sigText, publicKey: pubKey });
     if (r.status === "ok") console.log(`  ✓ ${a.name}`);
     else if (r.status === "unsupported") console.warn(`  ⚠️ ${a.name}：${r.detail}（跳过校验，不阻断）`);
@@ -335,31 +408,63 @@ if (NO_PLUGINS) {
 
 // ---- 生成 latest.json（updater 清单）----
 // 同一平台键只能留一个 url：取哪个由 manifestPicks 写死偏好，不靠遍历顺序。
+// apk 也走这里（platformKeyFor 把它归到 android-aarch64），于是 Android 与桌面在
+// **同一份清单、同一套结构**里，客户端不需要第二条通道。
 const { picks, notes } = manifestPicks(picked);
 for (const n of notes) console.log(`[release] ${n}`);
 const notes_ = process.env.RELEASE_NOTES ?? `ShuyoNote v${version}`;
 const platforms = {};
 for (const [key, a] of picks) {
+  // apk 没有 minisign `.sig`：signature 写 `sha256:<hex>`（字节指纹在上面指纹那一步算过）。
+  // 千万别为了"省事"省略 signature —— 见 validateManifest 的注释（会让整份清单解析失败）。
   platforms[key] = {
-    signature: a.sigText.trim(),
+    signature: isApk(a.name) ? `sha256:${a.sha256}` : a.sigText.trim(),
     url: `https://gitcode.com/${OWNER}/${REPO}/releases/download/${TAG}/${a.name}`,
   };
 }
 
 // ---- 平台覆盖检查：别把线上已有的平台键悄悄砍掉 ----
 // 少一个键 = 该平台用户从此收不到更新，而且没有任何报错。
+//
+// ⚠️ 下面这个环境变量是**仅测试注入**（test-only）：`SHUYONOTE_PREV_MANIFEST_JSON=<文件路径>` 时读本地
+// 那份当"线上清单"，不发请求、不管 `--dry-run`。**生产发布不要设置它**（设置了就等于把"线上真实状态"
+// 换成一份本地文件，覆盖检查会以那份文件为基准）。
+//
+// 理由（为什么需要这个注入点）：覆盖检查拦的是"线上已有 android-aarch64、本次却没有"这类事故，
+// 而线上在 Android 通道上线前**本来就没有**这个键——那就没有任何真实输入能证明这条检查真的会拦
+// （一条不会被触发的门禁等于没有）。给它一个注入点，才能用真脚本跑出"该红就红"。
+//
+// ⚠️ 它**不削弱**门禁：注入点只替换**比较基准**（输入数据），检查逻辑本身一个字都没改——
+// 下面照样走 `coverageProblems()`，该 `exit(1)` 还是 `exit(1)`（要放行只能显式写
+// `--allow-platform-drop`）。设置时会在下面打印一条醒目警告，日志里也留下用的是哪份文件、有哪几个键。
 const prevManifestUrl = `https://gitcode.com/${OWNER}/${REPO}/releases/download/latest/latest.json`;
+/** ⚠️ **仅测试注入**（test-only）：模拟"线上已有的平台键"，用来验证覆盖检查门禁真的会拦。
+ *  **生产发布不要设置**——真实发布必须让脚本自己去读线上 `latest.json`。 */
+const prevFixture = process.env.SHUYONOTE_PREV_MANIFEST_JSON ?? "";
+if (prevFixture) {
+  // 醒目警告：这条一旦被带进真实发布，覆盖检查的基准就不是线上真实状态了。
+  console.warn(
+    `[release] ⚠️ SHUYONOTE_PREV_MANIFEST_JSON 已设置（${prevFixture}）：` +
+      "本次只用于测试覆盖检查，不代表线上真实状态（生产发布不要设置）。",
+  );
+}
 let prevKeys = [];
 try {
-  const r = await fetch(prevManifestUrl, { headers: { "User-Agent": "ShuyoNote-release" } });
-  if (r.status === 404) {
-    console.log("[release] 线上还没有 latest 清单（首次发布），跳过平台覆盖检查。");
-  } else if (!r.ok) {
-    throw new Error(`${r.status} GET latest.json`);
-  } else {
-    const prev = JSON.parse(await r.text());
+  if (prevFixture) {
+    const prev = JSON.parse(readFileSync(prevFixture, "utf8"));
     prevKeys = Object.keys(prev.platforms ?? {});
-    console.log(`[release] 线上清单 v${prev.version}：${prevKeys.join(", ") || "(无平台)"}`);
+    console.log(`[release] 用注入的「线上清单」做覆盖检查：${prevFixture}（v${prev.version}：${prevKeys.join(", ") || "(无平台)"}）`);
+  } else {
+    const r = await fetch(prevManifestUrl, { headers: { "User-Agent": "ShuyoNote-release" } });
+    if (r.status === 404) {
+      console.log("[release] 线上还没有 latest 清单（首次发布），跳过平台覆盖检查。");
+    } else if (!r.ok) {
+      throw new Error(`${r.status} GET latest.json`);
+    } else {
+      const prev = JSON.parse(await r.text());
+      prevKeys = Object.keys(prev.platforms ?? {});
+      console.log(`[release] 线上清单 v${prev.version}：${prevKeys.join(", ") || "(无平台)"}`);
+    }
   }
 } catch (e) {
   if (DRY) console.warn(`[release] ⚠️ 读不到线上 latest.json（${e.message}），--dry-run 下跳过覆盖检查。`);
@@ -368,6 +473,13 @@ try {
     console.error("[release] 网络确实不通时可用 --allow-platform-drop 明确接受风险。");
     process.exit(1);
   }
+}
+// --no-android 是**显式**接受"本轮不带 Android"：那就把 android 键从比较基准里摘掉，
+// 免得到时候还得再叠一个 --allow-platform-drop（两个逃生口叠在一起才发得出去，
+// 反而会让人干脆两个都加上）。摘掉这一条本身会打日志、且写进产物清单，可事后审计。
+if (NO_ANDROID && prevKeys.includes(ANDROID_PLATFORM_KEY)) {
+  console.warn(`[release] ⚠️ --no-android：本轮有意不带 ${ANDROID_PLATFORM_KEY}（线上有，Android 用户本轮收不到更新）。`);
+  prevKeys = prevKeys.filter((k) => k !== ANDROID_PLATFORM_KEY);
 }
 const dropped = coverageProblems({ previousKeys: prevKeys, nextKeys: Object.keys(platforms) });
 if (dropped.length > 0) {
@@ -379,8 +491,23 @@ if (dropped.length > 0) {
   }
 }
 
+// ---- 写盘前的清单门禁 ----
+// 每个平台条目必须同时有 url（绝对 https）与 signature（非空）。少任何一个都会让
+// tauri-plugin-updater 解析**整份** latest.json 失败 ⇒ 桌面更新通道一起挂。
+// 放在写盘前，是为了"失败的清单一个字节都不落盘"。
+const manifest = { version, notes: notes_, pub_date: new Date().toISOString(), platforms };
+const manifestCheck = validateManifest(manifest);
+for (const w of manifestCheck.warnings) console.warn(`[release] ⚠️ ${w}`);
+if (manifestCheck.problems.length > 0) {
+  console.error(`[release] latest.json 校验未通过（${manifestCheck.problems.length} 项）：`);
+  for (const p of manifestCheck.problems) console.error(`  ✗ ${p}`);
+  console.error("[release] 未写盘、未发布。");
+  process.exit(1);
+}
+console.log(`[release] latest.json 校验通过：${Object.keys(platforms).join(", ")}（每项均有 https url 与非空 signature）`);
+
 const manifestPath = join(root, "src-tauri", "target", "release", "latest.json");
-writeFileSync(manifestPath, JSON.stringify({ version, notes: notes_, pub_date: new Date().toISOString(), platforms }, null, 2) + "\n");
+writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 console.log(`[release] latest.json → ${manifestPath}（${Object.keys(platforms).join(", ")}）`);
 const auditPath = join(root, "src-tauri", "target", "release", "release-artifacts.json");
 writeFileSync(
@@ -443,6 +570,8 @@ try {
 }
 for (const a of picked) {
   await uploadFile(TAG, a.name, a.file);
+  // apk 没有独立的 `.sig` 文件（签名在包内），上传它只会 404/空文件。
+  if (isApk(a.name)) continue;
   await uploadFile(TAG, a.name + ".sig", a.sigPath);
 }
 if (webZip) {
@@ -481,4 +610,8 @@ if (fragmentPath) {
   );
 }
 
-console.log("\n发布后：git tag v" + version + " && git push origin v" + version + " && git push origin main");
+// tag 与分支都要推**两个远端**：`github` 收到 `v*` tag 才会跑
+// `.github/workflows/release.yml`（桌面三平台 + Android 发版件都从那儿产出），
+// `origin`(gitcode) 是应用内「检查更新」的下载通道与镜像——少推任一个都缺一半
+// （见 docs/RELEASING.md ④）。
+console.log("\n发布后：git tag v" + version + " && git push origin v" + version + " && git push github v" + version + " && git push origin main && git push github main");

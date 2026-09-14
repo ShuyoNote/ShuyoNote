@@ -152,7 +152,7 @@ pub async fn export_workspace(
     }
 
     // Snapshot the space DB to a temp file (brief DB lock; online backup is WAL-safe).
-    let tmp_db = std::env::temp_dir().join(format!("shuyonote-ws-{}.db", uuid::Uuid::new_v4()));
+    let tmp_db = crate::tempdir::file("shuyonote-ws", "db");
     {
         let conn = db.0.lock().expect("db mutex poisoned");
         backup_db(&conn, &tmp_db)?;
@@ -221,7 +221,9 @@ pub async fn import_workspace(
     src_path: String,
     name: Option<String>,
 ) -> Result<WorkspaceMeta, String> {
-    let src = PathBuf::from(&src_path);
+    // Android：选择器给的是 `content://` URI，先落成真实临时路径（桌面原样返回）。
+    let picked = crate::picked_file::materialize(&app, &src_path)?;
+    let src = picked.path().to_path_buf();
     if !src.exists() {
         return Err("空间包不存在".to_string());
     }
@@ -230,8 +232,7 @@ pub async fn import_workspace(
     let attachments_dir = app_data_dir.join("attachments");
     let spaces_dir = app_data_dir.join("spaces");
 
-    let tmp_dir = std::env::temp_dir().join(format!("shuyonote-wsin-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let tmp_dir = crate::tempdir::dir("shuyonote-wsin").map_err(|e| e.to_string())?;
 
     // Extract zip off the main thread.
     let src2 = src.clone();

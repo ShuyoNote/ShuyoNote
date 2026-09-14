@@ -25,8 +25,17 @@ pnpm run build        # check-versions + tsc + vite build
 git add -A
 git commit -m "release: X.Y.Z(版本号 bump + CHANGELOG)"
 git tag -a vX.Y.Z -m "ShuyoNote vX.Y.Z"
-git push origin main && git push origin vX.Y.Z
+git push origin main && git push github main     # main 同样两个远端都推（Pages 部署在 GitHub 侧）
+git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端都推**，见下
 ```
+
+> **为什么 tag 必须两个远端都推**（`origin` = gitcode、`github` = GitHub，两个是**各自独立的仓库**）：
+> - **只推 gitcode ⇒ 发版流程不触发**：`release.yml` 是 **GitHub Actions** 的工作流，只有 **GitHub
+>   这个仓库收到 tag** 时才会跑（gitcode 上跑的是另一套 `.gitcode/workflows/build-linux.yml`，
+>   只出 Linux 包）⇒ 多平台构建（含 Android 发版件）**根本不会开始**；
+> - **只推 github ⇒ gitcode 上没有这个 tag**：而 gitcode 是应用内「检查更新」与下载通道（见文首）
+>   ⇒ 镜像与更新通道还停在旧版本、用户收不到新版。
+> 两条都不是"可有可无"：一个决定**能不能出包**，一个决定**用户能不能收到**。
 
 ## ⑤ 平台构建
 
@@ -87,10 +96,24 @@ pnpm tauri build      # 产出 setup.exe + .sig
 ## ⑥ 发布到 GitCode（更新通道）
 ```bash
 GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更新」显示）" \
-  node scripts/release.mjs --no-build --body /tmp/body.md   # 需先备好 ⑤ 的产物
+  node scripts/release.mjs --no-build --android-apk <APK 路径> --body /tmp/body.md   # 需先备好 ⑤ 的产物
 ```
-它建 GitCode release、上传 installer/`.sig`/`latest.json`、并更新 `latest` 通道（应用内「检查更新」读的就是它）。注意 `latest.json` 的 `url` 指向 gitcode release，签名用同一签名密钥产出的 `.sig`，须与文件字节一致。
+它建 GitCode release、上传 installer/`.sig`/APK/`latest.json`、并更新 `latest` 通道（应用内「检查更新」读的就是它）。注意 `latest.json` 的 `url` 指向 gitcode release，签名用同一签名密钥产出的 `.sig`，须与文件字节一致。
 `--no-build` 前提是安装包已就绪（如 GitHub Actions 产物）；缺省会先 `pnpm tauri build`。
+
+**`--android-apk` 是必需的（Android 发版件）**：本机 Windows 出不了 Android 包（§9 开头），所以 apk 一律从
+CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
+`ShuyoNote_<版本>_android-arm64-release.apk`（下载方式见 ⑤）。**缺了就硬失败**：清单里少了
+`android-aarch64` 时 Android 用户的更新入口会静默消失。要明确跳过只能加 `--no-android`（与
+`--allow-platform-drop` 同一套哲学：逃生口必须显式）。
+
+**apk 没有 `.sig`（这是有意的例外）**：它的签名是 `apksigner` 打在**包内**的，不是旁边的 minisign 文件。
+所以 apk ①不参与「`.sig` 与字节互验」②不上传 `.sig`，清单里 `platforms["android-aarch64"].signature`
+写 **`sha256:<hex>`**（发布脚本现算）。安装时的强制签名校验由 Android 系统安装器负责。
+⚠️ **这个字段不能省**：`tauri-plugin-updater` 把每个平台条目解析成 `url` + `signature` **都必需**的结构，
+任何一条缺 `signature` 会让**整份 latest.json** 解析失败 ⇒ **桌面的自动更新一起挂**（症状是"点检查更新
+什么都不发生"）。写盘前由 `validateManifest` 硬拦（见下表）。
+
 建议用 `--body` 传发布说明（从 `CHANGELOG.md` 对应版本段生成，`###` 降一级即可）；不传则只有一行 `ShuyoNote vX.Y.Z`，与 CHANGELOG 脱节。
 
 ### 发布前的自动拦截（都在 `scripts/release.mjs`，发布前跑 `--dry-run` 可先看一眼）
@@ -101,13 +124,19 @@ GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更�
 | --- | --- |
 | 版本号整词匹配 | `1.84.6` 误纳 `1.84.60` 的产物 |
 | 同平台同类候选 → 报错 | 上次 run 的同版本残留，被随便挑一个发出去 |
-| 缺/空 `.sig` → 报错 | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
+| 缺/空 `.sig` → 报错（**apk 例外**：签名在包内） | 旧实现只 warn 然后静默丢弃该产物，而 `latest.json` 留一个空签名条目 → 该平台更新静默失效 |
 | **`.sig` 与安装包字节互验**（minisign 预哈希：BLAKE2b-512 + ed25519，见 `scripts/lib/`） | 安装包与 `.sig` 不是同一次构建的一对（手工从两次 run 各取一个）→ 用户更新时报校验失败 |
-| 线上 `latest.json` 平台键覆盖检查 | 本次只构建了 Linux，就悄悄砍掉 `windows-x86_64` → Windows 用户从此收不到更新 |
+| **缺 Android 发版件 → 报错** | 忘了 `--android-apk` ⇒ 清单里没有 `android-aarch64` ⇒ Android 更新入口静默消失 |
+| **写盘前 `validateManifest`**（每个平台条目都要有绝对 https 的 `url` 与非空 `signature`；android 必须是 `sha256:<64 hex>`） | 某个平台条目缺 `signature` ⇒ **整份 latest.json 解析失败** ⇒ 连桌面的更新通道一起挂 |
+| 线上 `latest.json` 平台键覆盖检查 | 本次只构建了 Linux，就悄悄砍掉 `windows-x86_64`（或 `android-aarch64`）→ 该平台用户从此收不到更新 |
 | 打印每个产物的 sha256 | 事后可与 CI 产物逐个比对（同时写 `src-tauri/target/release/release-artifacts.json`） |
 
-逃生口（都需显式写出，且有明确风险提示）：`--artifacts` 指定产物、`--allow-platform-drop` 允许少平台、`--skip-sig-verify` 跳过签名校验。
-`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、macOS 取 dmg），不再依赖目录遍历顺序；另一个（如 AppImage）照样挂到 release 上。
+逃生口（都需显式写出，且有明确风险提示）：`--artifacts` 指定产物、`--allow-platform-drop` 允许少平台、`--no-android` 本轮不带 Android、`--skip-sig-verify` 跳过签名校验。
+`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、macOS 取 dmg、Android 取 apk），不再依赖目录遍历顺序；另一个（如 AppImage）照样挂到 release 上。
+
+> 覆盖检查可以用 `SHUYONOTE_PREV_MANIFEST_JSON=<文件>` 注入一份"线上清单"来验（**只为测试这条门禁**，
+> 正常发布别设）。为什么需要它：Android 通道上线前线上清单里**根本没有** `android-aarch64`，
+> 于是没有任何真实输入能证明"线上有、本次没有 → 会红"这条检查真的会拦——不会被触发的门禁等于没有。
 
 **发布后自检**（自动检查之外的兜底）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
 
@@ -151,8 +180,32 @@ SHUYONOTE_MINISIGN=$(which minisign)               \  # 默认找 PATH 里的 mi
 
 | 入口 | 怎么上线 | 谁负责 |
 |---|---|---|
-| GitHub Pages `https://shuyonote.github.io/ShuyoNote/` | **自动**：推 main → `.github/workflows/pages.yml` | CI（无需手工） |
+| GitHub Pages `https://shuyonote.github.io/ShuyoNote/` | **自动，但只在 `main`**：推 main → `.github/workflows/pages.yml` | CI（无需手工） |
 | 国内主站 `https://shuyo.cn/app/` | **手动上传**（下面三步） | 发布者 |
+
+> [!] **Pages 的环境分支策略：未合并进 `main` 就刷不了（v1.90.2 发版时实测，别当脚本 bug 查）**
+> `github-pages` 这个**环境**配了 `branch_policy`，**只允许 `main`**。所以只要在功能分支上发版
+> （本仓库常态：`feat/*` 领先 `main` 几十个提交），**"发 Web 版"这一步只能覆盖国内主站
+> `shuyo.cn/app/`，Pages 会静默停在旧版本**——`check:web-deploy` 会如实报"Pages 版本 ≠ 当前版本"，
+> 但很容易被当成"部署脚本坏了"。
+>
+> **判据（两条，都不用猜）**：
+> ```bash
+> # ① 环境策略里允许的分支：v1.90.2 时输出 total_count=1、唯一 name="main"
+> curl -s -H "Authorization: Bearer $GH" \
+>   https://api.github.com/repos/ShuyoNote/ShuyoNote/environments/github-pages/deployment-branch-policies
+> # ② 从别的 ref 手动 dispatch（ref: feat/...）时，run 的 build job 会全绿，
+> #    但 deploy job 秒级失败且 **steps 为空数组、runner_id=0**（没起 runner，被策略拒绝）
+> curl -s -X POST -H "Authorization: Bearer $GH" \
+>   https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/workflows/pages.yml/dispatches \
+>   -d '{"ref":"feat/xxx"}'
+> ```
+> ⚠️ 注意 ② 的迷惑性：**build 全绿 + deploy 一秒失败**，看起来像"部署脚本 bug"，
+> 实际是 `environment: github-pages` 的 OIDC 交换被分支策略挡了（deploy 的日志 API 还会返回
+> `BlobNotFound`，连日志都没有）。判据就是"**deploy 0 步 / runner_id=0**"。
+>
+> **放开该策略（例如把 `feat/*` 加进允许列表）需要发布者明确授权**——它是**安全面变化**
+> （非 `main` 分支从此也能改线上 Pages），**不要顺手改**。三条出路的取舍见 §⑦ 末的说明。
 
 ```bash
 # 1) 构建（version.json 会写成当前版本）+ 用真实 Chromium 验一遍产物
@@ -184,11 +237,213 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 > [!] **为什么"看版本号"不够**：`check:web-deploy` 会把线上 `index.html` 引用的**每个资源**
 > 都取一遍。版本号对、资源对不上，正是 v1.84.4 那种"页面能开、功能全废"的坏法。
 
+**未合并进 `main` 时，这一节的"两个入口"实际只能完成一个。** `github-pages` 环境的分支策略
+只允许 `main`（见上面的 [!]），所以此时三条出路是：
+
+1. **只发国内主站**（v1.90.2 的实际选择）：主站是用户的**主入口**，刷成新版本即可；
+   Pages 作为**备用**入口停在旧版本可以接受，等将来把功能分支合并进 `main` 时**自然对齐**
+   （`pages.yml` 在 push `main` 时自动跑）。**这也是本仓库当前的常态选择。**
+2. **推 `main`**：唯一不违反现有策略的部署方式，但它等于**合并功能分支**
+   （v1.90.2 时 `feat/android-mobile` 领先 `main` **77 个提交**）——那是**产品决策**，发布者不做。
+3. **放开环境分支策略**：能让 Pages 从任意 ref 部署，但**扩大安全面**（非 `main` 分支即可改
+   线上 Pages）⇒ **需要发布者明确授权，不为"刷新一个备用站"顺手改**。
+
+收尾时别忘了一句口径：**Pages 上那一份是从它被部署时的 ref 构建的**。若走第 2 条，Pages = `main`
+的构建；若走第 3 条，Pages 可能**与 `main` 不一致**——报告里要写明，不要让读者以为两者同源。
+
 ## ⑧ 检查 CHANGELOG 连续
 ```bash
 Select-String -Path CHANGELOG.md -Pattern '^## \[' | Select-Object -First 12
 ```
 应看到 `X.Y.Z → X.Y.Z-1 → …` 连续，无断档。
+
+## ⑨ Android 发版与验证（runbook，2026-09-13/14 落地）
+
+> 这一节回答两件事：**这次发的 Android 包对不对**，以及**怎么不踩坑地验一遍发版流程**。
+> 事实来源：`.github/workflows/android.yml`、`.github/workflows/release.yml`、`CHANGELOG.md`
+> 的 `[Unreleased]`、[MOBILE.md](MOBILE.md) §2.2.1 / §2.3 / §2.4.2、[SHUYONOTE_STATE.md](SHUYONOTE_STATE.md) §5。
+> 本机（Windows）**构建不出** Android 包（卡在 OpenSSL 源码构建与 mupdf 的 Makefile 假设上，见
+> `android.yml` 文件头第 1 条）⇒ 本机能做的只有**复核指纹**与**真机验收**，出包一律在 CI。
+
+### 9.1 两条流水线：自检包 ≠ 发版件（最容易搞混的地方）
+
+| | `.github/workflows/android.yml` | `.github/workflows/release.yml` 的 `android` job |
+|---|---|---|
+| 定位 | **自检包**（"能不能装、装上能不能用"） | **可发布件** |
+| 触发 | 手动 `workflow_dispatch`；或 push 到 `dev` / `main` / `feat/android-mobile` 且改动命中 `paths:` | **只有 push `v*` tag**（或手动 `workflow_dispatch`） |
+| `VITE_TEST_HOOKS` | **job 级设 `"1"`**（必须 job 级：`tauri.conf.json` 的 `beforeBuildCommand` 让 `tauri android build` 会**再跑一遍** `pnpm build`，只挂某一步等于没挂） | **任何层级都不设**，并在构建步骤里对空值做显式断言（`❌ 发版包不允许带测试钩子`） |
+| 产物 artifact | `android-apk-aarch64-signed-test-hooks`（可直接 `adb install`，**只能自检**）、`android-apk-aarch64-unsigned`（量体积用），均保留 14 天 | `android-release-apk`（保留 14 天），含 `ShuyoNote_<package.json 版本>_android-arm64-release.apk` **与其 `.sha256`**（后者是更新清单里那个 `signature` 的凭据，`release` job 会断言它在） |
+| 与 Release 的关系 | 不挂 tag、不建 Release | `release` job `needs: [build, android]` ⇒ **Android 失败会阻断整个 Release**（有意的：宁可响亮失败，不发"缺平台却看起来正常"的半套） |
+| 只出 APK | — | **只出 APK，不出 AAB**（AAB 是 Play 上架件，且 `apksigner` **签不了 AAB**） |
+
+`android.yml` 会在这些路径改动时触发（按"构建输入"补齐的，2026-09-13 之前只有 workflow 文件自身与
+`tauri.conf.json` 两条，于是**改了 Rust 源码推上去连一条 run 记录都没有**）：
+
+```text
+.github/workflows/android.yml
+src-tauri/tauri.conf.json          # Android 工程是从它生成的（应用名/包名/minSdk/深链 intent-filter）
+src-tauri/Cargo.toml  src-tauri/Cargo.lock  src-tauri/src/**
+src-tauri/capabilities/**          # 权限清单进包，check-capabilities 也读它
+src-tauri/icons/**                 # 图标进包
+src/**  index.html  vite.config.ts  package.json  pnpm-lock.yaml
+scripts/**                         # pnpm build 里串着门禁脚本，改它照样可能让这一步红
+```
+
+> 代价：这些分支上的前端提交也会跑一次（约 15 分钟的 Android 构建）。**判据是"推完去 Actions 看
+> 有没有新记录"，不是"我记得它配了"**——这条判据本身就是踩出来的。
+
+两条流水线的签名步骤**逐字一致**：base64 落 `release.jks` → `zipalign -f -p 4` →
+`apksigner sign`（口令只走 `env:`，不落文件、不进命令行）→ `apksigner verify --print-certs` →
+实测指纹与硬编码常量比对 → 不一致 `exit 1`；Secrets 缺失也**显式报错**，不会退化成"发个未签名包出去"。
+
+### 9.2 发版时的判据：怎么确认"这次发的包是对的"
+
+**① CI 侧（三道硬断言，绿了才算）**
+
+| 判据 | 在哪 | 具体是什么 |
+|---|---|---|
+| 签名指纹硬比对 | 两个 workflow 的签名步骤 | `apksigner verify --print-certs` 输出里的 `certificate SHA-256 digest` → 去冒号、转小写，与常量 `6ee89e6f0f9326a40d3eac48b520c470d3fb6a7111a94fbe606510b489457a88` 逐字符比对（文档里简写为 `6ee89e6f…` / `6E:E8:…:7A:88`）；不等则 `❌ 签名指纹对不上` 并失败 |
+| ABI 断言 | `release.yml` 的「断言 APK 内 ABI 恰为 arm64-v8a」 | 直接读 zip 里 `lib/` 前缀：ABI 集合必须**恰好**是 `['arm64-v8a']`；出现别的 ABI、或压根没有 `lib/`（`.so` 没进包）都失败。理由：`--target aarch64` 只是**要求**，不是**证明** |
+| `APK_N == 1` 与 `.sha256` 各 1 份 | `release.yml` 的 `release` job | 按 `ShuyoNote_*_android-arm64-release.apk`（及其 `.apk.sha256`）独立数一遍，**各必须恰好 1 个**。文件名由 `android` job 拼（版本取自 `package.json`），选择器是**另一处**字符串——两处对不上时"少个包"会伪装成成功 |
+| `sha256:` 与 apk 字节一致 | `release.mjs` 写清单时现算 | 清单里 `platforms["android-aarch64"].signature` = 该 apk 的 sha256；`.sha256` 附件与 `release-artifacts.json` 里的指纹可事后逐个比对 |
+
+**② 本机独立复核（不信 CI 一次输出）**
+
+```powershell
+# apksigner 在 Android SDK 的 build-tools 下，取最新一个（与 CI 的 `ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1` 同义）
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"     # 与 MOBILE.md §2.5 的写法一致
+$BT = (Get-ChildItem "$env:ANDROID_HOME\build-tools" -Directory | Sort-Object Name | Select-Object -Last 1).FullName
+& "$BT\apksigner.bat" verify --print-certs .\ShuyoNote_<版本>_android-arm64-release.apk
+# 看 "V3.0 Signer: … certificate SHA-256 digest"，应与 6ee89e6f… 一致（CI 日志里也有同一行）
+```
+
+**③ 真机（`adb install -r` + 启动 + 反向判据）**——手段与边界见 [MOBILE.md](MOBILE.md) §2.3：
+
+- `adb install -r <apk>`：**同一签名**才能覆盖安装；**数据不丢**的判据是 `firstInstallTime` 不变；
+- 启动无 panic：`adb logcat -d -v brief`（Rust 侧 `println!` / panic 都以 `I/RustStdoutStderr` 出现）；
+- **反向判据（关键）**：给**发版包**发一条测试深链，应得到「**测试钩子未启用（这是正式构建）**」。
+  这条正是"包里确实不带钩子"的证明，别只看"装上了、能开"。
+
+```powershell
+adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/new-page?text=release-check"
+```
+
+> 为什么反向判据是必要的：测试钩子只在带 `VITE_TEST_HOOKS=1` 的构建里生效，没有它时分派层**直接拒绝**、
+> 只提示"未启用"（有单测钉着）。所以"深链有反应"与"深链没反应"在这里的含义**正好相反**——
+> 对发版包来说，**没执行才是对的**。
+
+### 9.3 签名密钥与轮换（⚠️ 指纹常量有两份）
+
+- keystore 保管在 **`~/.shuyonote-release-keystore/`**（含 `README-必读.md`；RSA-4096 / 10000 天，
+  已有一份异地备份）；**测试专用 key 与它分开**，那个只用于真机自检包，**别混用**。
+- Secrets 三个（两个 workflow 用的是**同一套**）：
+  `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`。
+  缺任何一个，签名步骤会**显式报错退出**。
+- **⚠️ 指纹常量目前同时硬编码在两个 workflow 文件里**（`android.yml` 与 `release.yml` 各一份 `EXPECT=`）。
+  **轮换密钥时必须两处都改**，否则先跑的那条流水线会红。
+  仓库里目前**没有任何机制保证两处同步**（没有共享常量，也没有门禁脚本）——所以只能靠"记得两处都改"。
+  指纹本身不是秘密，可以入库。
+
+### 9.4 临时 dry-run 的约定（要验发版流程时照这个做）
+
+1. **打法**：读 `package.json` 的 `version` → 打 `v<版本>-rcN`。已跑过的实例：`package.json = 1.90.1`
+   时用 **`v1.90.1-rc1`**。
+   注意 **`-rcN` 只出现在 tag 与 Release 名上**：APK 文件名里的版本取自 `package.json`
+   （`ShuyoNote_1.90.1_android-arm64-release.apk`）⇒ **dry-run 不需要改仓库里的版本号**。
+2. **只推 `github` 远端**：`git push github v1.90.1-rc1`。**不要推 gitcode**——gitcode 上有**另一套**
+   同样在 `v*` tag 上触发的流水线（`.gitcode/workflows/build-linux.yml`，Linux 的
+   `.deb` + `.AppImage`），推过去只会白跑一轮与本轮验证无关的构建。
+3. **跑完必须删 tag 与 Release，而且先等 run 结束再删**：run 不会因为 tag 被删而停止——
+   若在它跑完前就把 Release 删了，`release` job 之后还会把它建回来（等于白删一次）。
+4. **删除后复核 404，`run` 记录保留**（run 记录是这次的证据，别一起清掉）。
+5. **重跑同一个 tag 会硬失败（422），这是预期行为**：GitHub 上同名资产已存在 → 上传返回 422 →
+   `release` job 现在用 `curl -sf` **直接红掉**（原先只写 `-s` 时 422 也退出 0，于是打出 `uploaded`
+   并让计数 +1，**旧件冒充新件**）。所以**要再跑一次就换一个 rcN（rc2、rc3…）**，别复用同一个 tag。
+
+```bash
+# 起（只推 github）
+git tag -a vX.Y.Z-rcN -m "ShuyoNote vX.Y.Z-rcN (dry run)"
+git push github vX.Y.Z-rcN
+# 收尾（**先等 run 结束**；token 需能读/写 release，取法与 ⑤ 里 GitHub API 的用法一致）
+GH=<GitHub token>; TAG=vX.Y.Z-rcN
+RID=$(curl -s -H "Authorization: Bearer $GH" "https://api.github.com/repos/ShuyoNote/ShuyoNote/releases/tags/$TAG" | jq -r '.id // empty')
+[ -n "$RID" ] && curl -s -X DELETE -H "Authorization: Bearer $GH" "https://api.github.com/repos/ShuyoNote/ShuyoNote/releases/$RID"
+git push github :refs/tags/$TAG    # 删远端 tag
+git tag -d $TAG                    # 删本地 tag
+```
+
+### 9.5 已知边界 / 未做的事（如实列）
+
+- **只出 APK，不出 AAB**：AAB 是 Play 上架才需要的，而且 `apksigner` **签不了 AAB**（那是 jarsigner 的世界）
+  ⇒ 签不了的 AAB 既不能装也不能做指纹自查，纯负担；
+- **Android 的应用内更新是"下载 APK"，不是"应用内装机"**（2026-09-14 上线第一版）：
+  应用内「检查更新」会读同一份 `latest.json`，有新版时给一个「下载 APK」按钮，
+  地址取自 `platforms["android-aarch64"].url`，点击后**交给系统浏览器/DownloadManager**，
+  下载完由用户自己安装（覆盖安装要求签名一致，安装签名由 Android 系统安装器强制校验）。
+  **应用内不下载、不唤起安装器**（那需要 `REQUEST_INSTALL_PACKAGES` 之类的权限与 FileProvider，
+  属于后续增量；本版**没有新增任何权限、没有改 AndroidManifest**）。
+  ⇒ 所以：能"发现 + 拿到包"，但"装"这一步在系统里。仍没有的：应用商店 / 增量更新 / iOS。
+  清单里的 `signature` 对 Android 用 `sha256:<hex>`（apk 没有 minisign `.sig`——签名在包内），
+  这条字段**不能省**，理由见 §⑥（缺了会让整份清单解析失败、桌面更新一起挂）；
+  - **启动时的红点/顶部横幅：Android 上「有」**（口径 2026-09-14 核实代码后写死，别写反）。
+    `useUpdateChecker()` 在 `App.tsx` 里**无条件**调用；而 `isDesktop()` 的真实语义是"**有没有 Rust 内核**"
+    （见 `src/lib/platform/capabilities.ts` 顶部的边界说明），**Android 壳为真** ⇒ 它走的是桌面那一支
+    `checkDesktopUpdate()`。Android 上 `tauri-plugin-updater` 没注册（`src-tauri/src/lib.rs` 里带
+    `#[cfg(desktop)]`）⇒ 这一步**必然失败**，代码随即**降级**到 gitcode 发布渠道清单
+    （`detectFromGitcode()` → `updates::fetch_update_manifest`，该命令在 `generate_handler!` 里
+    **没有** `#[cfg(desktop)]`，全平台注册）比对版本。⇒ **线上 `latest` 渠道比已装版本新时，Android
+    启动就会出现红点 + 顶部横幅**，与桌面同一套 UI。回归测试：`src/lib/useUpdateChecker.test.ts`。
+  - 上面这条**不是**"Android 支持自动更新"，真正的边界在"**装**"这一步，三条都要说清：
+    ① 启动红点/横幅**只是提醒**——它的 CTA 只到「关于」（`UpdateBanner` 的非 Web 分支只有「查看更新」
+    一个按钮），**不直接在横幅里给下载**；
+    ② APK 地址只有「关于」的 Android 分支才取（`platforms["android-aarch64"].url`），点「下载 APK」后由
+    **系统浏览器/DownloadManager** 下载，装机交给系统安装器——**应用内不下载、不唤起安装器**；
+    ③ 清单里**没有** `android-aarch64` 键（老清单）时退回「前往发布页」，不是什么都不给；
+- **arm64-only**：只出 `arm64-v8a`，**armv7 老机装不上**（非 arm64 的 apk 也不进更新清单）；
+- **自带的 Kotlin 证书校验器是打过补丁的 fork**（`scripts/vendor/rustls-platform-verifier/`）：
+  上游把 PR #179（或等价修复）合并并发版后，应升级依赖、恢复脚本里的 AAR 注入方式、删掉那个目录
+  （判断条件与复现步骤见该目录的 `README.md`；**升级 Rust 依赖时务必回去核对它**）；
+- `src-tauri/gen` **不在版本控制里**（"可重建"）⇒ CI 每次自己 `init`，而
+  `pnpm android:platform-verifier` 注入的证书校验器**必须排在 `init` 之后、`build` 之前**
+  （漏了它构建照样绿，但真机上**所有 HTTPS 全挂**）；
+- 本机 Windows **出不了 Android 包**（见本节开头）⇒ 出包只能在 CI。
+
+### 9.6 发版检查清单（照着勾）
+
+**每次正式发版：**
+
+- [ ] `node scripts/check-versions.mjs` 过（`package.json` 等版本号一致，见 ②）
+- [ ] `CHANGELOG.md` 的 `[Unreleased]` 已开成本版本段（见 ①）
+- [ ] tag 名为 `v<版本>`，与 `package.json` 的版本一致（APK 文件名用的是 `package.json` 的版本）
+- [ ] tag 已推到**两个远端**（④ 的写法即 `git push origin vX.Y.Z && git push github vX.Y.Z`；
+      `release.yml` 只在 **GitHub** 上触发，gitcode 负责镜像与更新通道）⇒ 两边各查一次
+      `git ls-remote origin refs/tags/vX.Y.Z` / `git ls-remote github refs/tags/vX.Y.Z`，两条 SHA 一致
+- [ ] Actions 里这条 tag 的 run **4 个 job 全绿**：`build`(ubuntu-24.04) / `build`(windows-latest) / `android` / `release`
+- [ ] `android` job 日志里 `✅ 指纹一致（正式密钥 shuyonote）`、`✅ ABI 恰为 arm64-v8a`
+- [ ] `release` job 日志里 `APK_N == 1` 与 `.sha256` 断言通过（否则"少个包/少个指纹"会伪装成成功）
+- [ ] Release 上挂着 `ShuyoNote_<版本>_android-arm64-release.apk` 与其 `.sha256`
+- [ ] **本机独立复核**：`apksigner verify --print-certs <apk>` 的 SHA-256 指纹 = `6ee89e6f…`
+- [ ] **本机独立复核**：`Get-FileHash <apk> -Algorithm SHA256` / `sha256sum <apk>` 的结果，与
+      Release 上的 `.sha256`、以及发布后 `latest.json` 的 `platforms["android-aarch64"].signature`
+      （去掉 `sha256:` 前缀）**三者一致**
+- [ ] **发布时**：`node scripts/release.mjs --no-build --android-apk <APK 路径> …` —— 日志里应出现
+      `latest.json 校验通过：… android-aarch64 …`；**没有** apk 会直接失败（要跳过只能写 `--no-android`）
+- [ ] **真机**：`adb install -r`（同签名升级）成功，**数据未丢**（`firstInstallTime` 不变）
+- [ ] **真机**：启动无 panic（`adb logcat -d -v brief` 里没有 `RustStdoutStderr` 的 panic 行）
+- [ ] **反向判据**：给这个包发测试深链 → 得到「测试钩子未启用（这是正式构建）」
+- [ ] **真机（应用内更新入口）**：「关于」→「检查更新」：有新版本时出现**「下载 APK」**并按预期
+      打开浏览器/下载器拿到同名文件；已是最新时**不打扰**（无红点/无横幅）；离线时不崩、只提示检查失败
+- [ ] **真机（启动红点）**：装一个**比线上 `latest` 渠道旧**的包（`adb install -r` 旧版本件）再冷启动
+      ⇒ 应出现**红点 + 顶部横幅**（点横幅进「关于」，再走「下载 APK」）。这条钉的是 §9.5 那条
+      "Android 上 in-app updater 不可用 ⇒ 降级到发布渠道清单"的路径；桌面/Web 侧预览同一条路可加
+      `?updateDebug=9.9.9`
+- [ ] 桌面/Web 侧照 ⑤⑥⑦ 继续（Android 只是其中一件）
+
+**只有 dry-run（临时 tag）才多做的：**
+
+- [ ] 用 `v<版本>-rcN`（**换一个没用过的 N**），**只推 `github` 远端**
+- [ ] 验证完**先等 run 结束**，再删 Release 与 tag
+- [ ] 复核删除生效（release / ref-by-tag 均 404），**`run` 记录保留**
 
 ## 发版说明里带上社区链接
 

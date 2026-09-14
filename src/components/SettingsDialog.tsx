@@ -9,7 +9,7 @@ import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
 import type { SyncProfile, EmailAccount } from "../lib/api";
-import { isDesktopPlatform } from "../lib/platform";
+import { emailSupported, isDesktopPlatform } from "../lib/platform";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
@@ -302,7 +302,9 @@ function EmailPane() {
   const [err, setErr] = useState("");
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState("");
-  const desktop = isDesktopPlatform();
+  // 邮箱区用**能力**判断而不是 `isDesktopPlatform()`：后者在 Tauri 的移动端也为真，
+  // 而邮箱在移动端不存在（Rust 侧那 23 个命令带 #[cfg(desktop)]）。
+  const desktop = emailSupported();
   // 多账号管理：已保存账号列表 + 当前编辑目标（null=新增；否则 host|username 键）。
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);

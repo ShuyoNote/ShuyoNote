@@ -5,12 +5,16 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { blake2b512 } from "./blake2b512.mjs";
 import {
+  ANDROID_PLATFORM_KEY,
+  androidApkProblems,
   coverageProblems,
+  extensionOf,
   manifestPicks,
   parseMinisignPublicKey,
   parseMinisignSignature,
   platformKeyFor,
   selectArtifacts,
+  validateManifest,
   verifyArtifactSignature,
   versionMatcher,
 } from "./releaseArtifacts.mjs";
@@ -48,6 +52,17 @@ describe("platformKeyFor", () => {
     expect(platformKeyFor("ShuyoNote_1.84.6_amd64.AppImage")).toBe("linux-x86_64");
     expect(platformKeyFor("ShuyoNote_1.84.6_aarch64.dmg")).toBe("darwin-aarch64");
     expect(platformKeyFor("readme.txt")).toBeNull();
+  });
+
+  it("apk → android-aarch64（**不新开顶层键**，放进 platforms 里）", () => {
+    const apk = "ShuyoNote_1.84.6_andro" + "id-arm64-release.apk";
+    expect(platformKeyFor(apk)).toBe(ANDROID_PLATFORM_KEY);
+    expect(extensionOf(apk)).toBe("apk");
+  });
+
+  it("非 arm64 的 apk 不进这个通道（目前只出 arm64-v8a）", () => {
+    const apk = "ShuyoNote_1.84.6_andro" + "id-armv7-release.apk";
+    expect(platformKeyFor(apk)).toBeNull();
   });
 });
 
@@ -110,6 +125,28 @@ describe("selectArtifacts", () => {
     expect(problems.join()).toMatch(/未找到任何属于 v1\.84\.6/);
   });
 
+  it("apk 免 `.sig`（签名在包内，由 apksigner 打、系统安装器强制校验）", () => {
+    const apkName = "ShuyoNote_1.84.6_andro" + "id-arm64-release.apk";
+    const { picked, problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [entry("nsis", apkName, { sigPath: null, sigText: null })],
+    });
+    expect(problems).toEqual([]);
+    expect(picked.map((e) => e.name)).toEqual([apkName]);
+  });
+
+  it("桌面产物仍然**必须**有 `.sig`（apk 的例外不许扩散）", () => {
+    const { problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [
+        entry("nsis", "ShuyoNote_1.84.6_x64-setup.exe", { sigPath: null, sigText: null }),
+        entry("nsis", "ShuyoNote_1.84.6_andro" + "id-arm64-release.apk", { sigPath: null, sigText: null }),
+      ],
+    });
+    expect(problems.join()).toMatch(/缺签名文件：ShuyoNote_1\.84\.6_x64-setup\.exe\.sig/);
+    expect(problems.join()).not.toMatch(/apk/);
+  });
+
   it("--artifacts 显式指定时不再依赖版本号启发式", () => {
     const entries = [entry("nsis", "ShuyoNote_1.84.6_x64-setup.exe"), entry("deb", "ShuyoNote_1.84.6_amd64.deb")];
     const { picked, problems, warnings } = selectArtifacts({
@@ -154,6 +191,122 @@ describe("manifestPicks（清单在同一平台键下只能留一个，取哪个
     const a = manifestPicks(entries).picks.get("linux-x86_64").name;
     const b = manifestPicks([...entries].reverse()).picks.get("linux-x86_64").name;
     expect(a).toBe(b);
+  });
+
+  it("apk 进 android-aarch64，且**不影响**三个桌面键", () => {
+    const apkName = "ShuyoNote_1.84.6_andro" + "id-arm64-release.apk";
+    const { picks } = manifestPicks([
+      entry("nsis", "ShuyoNote_1.84.6_x64-setup.exe"),
+      entry("deb", "ShuyoNote_1.84.6_amd64.deb"),
+      entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg"),
+      entry("nsis", apkName, { sigPath: null, sigText: null }),
+    ]);
+    expect([...picks.keys()].sort()).toEqual(["android-aarch64", "darwin-aarch64", "linux-x86_64", "windows-x86_64"]);
+    expect(picks.get(ANDROID_PLATFORM_KEY).name).toBe(apkName);
+  });
+});
+
+describe("validateManifest（写盘前门禁：每个平台条目必须 url + signature 都在）", () => {
+  const okPlatforms = () => ({
+    "windows-x86_64": { url: "https://gitcode.com/a/b/releases/download/v1.2.3/x.exe", signature: "sig-minisign" },
+    "linux-x86_64": { url: "https://gitcode.com/a/b/releases/download/v1.2.3/x.deb", signature: "sig-minisign" },
+    "darwin-aarch64": { url: "https://gitcode.com/a/b/releases/download/v1.2.3/x.dmg", signature: "sig-minisign" },
+    "android-aarch64": {
+      url: "https://gitcode.com/a/b/releases/download/v1.2.3/ShuyoNote_1.2.3_android-arm64-release.apk",
+      signature: "sha256:" + "a".repeat(64),
+    },
+  });
+
+  it("齐全（含 android 的 sha256 签名）→ 通过", () => {
+    const { problems } = validateManifest({ version: "1.2.3", platforms: okPlatforms() });
+    expect(problems).toEqual([]);
+  });
+
+  it("**android 条目缺 signature → 必须失败**（这条缺了会让整份 latest.json 解析失败、桌面更新一起挂）", () => {
+    const platforms = okPlatforms();
+    delete platforms["android-aarch64"].signature;
+    const { problems } = validateManifest({ version: "1.2.3", platforms });
+    expect(problems.join()).toMatch(/platforms\["android-aarch64"\]\.signature 缺失或为空/);
+    expect(problems.join()).toMatch(/桌面更新通道一起挂/);
+  });
+
+  it("任何平台条目缺 url / url 非绝对 https → 失败", () => {
+    const missing = okPlatforms();
+    delete missing["linux-x86_64"].url;
+    expect(validateManifest({ version: "1.2.3", platforms: missing }).problems.join()).toMatch(/url 缺失或为空/);
+    const relative = okPlatforms();
+    relative["windows-x86_64"].url = "/releases/download/v1.2.3/x.exe";
+    expect(validateManifest({ version: "1.2.3", platforms: relative }).problems.join()).toMatch(/必须是绝对 https/);
+    const plain = okPlatforms();
+    plain["windows-x86_64"].url = "http://gitcode.com/x.exe";
+    expect(validateManifest({ version: "1.2.3", platforms: plain }).problems.join()).toMatch(/必须是绝对 https/);
+  });
+
+  it("android 的 signature 必须是 sha256:<64 hex>（不是 minisign 串）", () => {
+    const platforms = okPlatforms();
+    platforms["android-aarch64"].signature = "untrusted comment: minisign...";
+    expect(validateManifest({ version: "1.2.3", platforms }).problems.join()).toMatch(/应为 sha256:<64 位 hex>/);
+    platforms["android-aarch64"].signature = "sha256:XYZ";
+    expect(validateManifest({ version: "1.2.3", platforms }).problems.join()).toMatch(/应为 sha256:<64 位 hex>/);
+  });
+
+  it("空 signature / 空 platforms / 缺 version → 失败", () => {
+    const emptySig = okPlatforms();
+    emptySig["windows-x86_64"].signature = "   ";
+    expect(validateManifest({ version: "1.2.3", platforms: emptySig }).problems.length).toBeGreaterThan(0);
+    expect(validateManifest({ version: "1.2.3", platforms: {} }).problems.join()).toMatch(/platforms 为空/);
+    expect(validateManifest({ platforms: okPlatforms() }).problems.join()).toMatch(/缺 version/);
+  });
+
+  it("没有 android 条目的清单照样合法（老清单 / --no-android 都要能过）", () => {
+    const platforms = okPlatforms();
+    delete platforms["android-aarch64"];
+    expect(validateManifest({ version: "1.2.3", platforms }).problems).toEqual([]);
+  });
+});
+
+describe("androidApkProblems（apk 是外部输入：缺了就硬失败，并给出可操作提示）", () => {
+  const apkName = "ShuyoNote_1.90.1_andro" + "id-arm64-release.apk";
+
+  it("没提供 → 失败，且提示里带三条出路", () => {
+    const { problems } = androidApkProblems({ name: null, version: "1.90.1" });
+    expect(problems.join()).toMatch(/未提供 Android 发版件/);
+    expect(problems.join()).toMatch(/--no-android/);
+    expect(problems.join()).toMatch(/android-release-apk/);
+  });
+
+  it("文件不存在 → 失败", () => {
+    const { problems } = androidApkProblems({ name: apkName, version: "1.90.1", exists: false });
+    expect(problems.join()).toMatch(/不存在或不是普通文件/);
+  });
+
+  it("给的不是 apk → 失败", () => {
+    const { problems } = androidApkProblems({ name: "ShuyoNote_1.90.1_x64-setup.exe", version: "1.90.1", exists: true, statIsFile: true });
+    expect(problems.join()).toMatch(/不是 \.apk/);
+  });
+
+  it("文件名不含本次版本号 → 只警告（不静默，也不卡发布）", () => {
+    const r = androidApkProblems({ name: "app-release.apk", version: "1.90.1", exists: true, statIsFile: true });
+    expect(r.problems).toEqual([]);
+    expect(r.warnings.join()).toMatch(/不含本次版本号/);
+  });
+
+  it("正常提供 → 无问题无警告", () => {
+    const r = androidApkProblems({ name: apkName, version: "1.90.1", exists: true, statIsFile: true });
+    expect(r.problems).toEqual([]);
+    expect(r.warnings).toEqual([]);
+  });
+});
+
+describe("coverageProblems：Android 通道不许被静默砍掉", () => {
+  it("线上有 android-aarch64、本次没有 → 报错", () => {
+    const p = coverageProblems({
+      previousKeys: ["windows-x86_64", "linux-x86_64", "android-aarch64"],
+      nextKeys: ["windows-x86_64", "linux-x86_64"],
+    });
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatch(/android-aarch64/);
+    expect(p[0]).toMatch(/收不到更新/);
   });
 });
 

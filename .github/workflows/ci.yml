@@ -14,8 +14,14 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    # `feat/android-mobile` 也要跑：Android 的高风险改动（签名/打包/权限清单）全落在那条分支上，
+    # 而此前这里只有 main/dev ⇒ **改动最危险的分支恰恰没有任何真实 CI 覆盖**。后果是实测过的：
+    # ci.yml 曾整个文件编译不过（run 值以 `:` 结尾），在这种"无 CI 分支"上 49 次 push 全红却
+    # 没人察觉，因为那条分支上"红"已经成了常态。代价是每次 push 多跑一轮完整 CI（约 5 分钟）。
+    branches: [main, dev, feat/android-mobile]
   pull_request:
+    # 不加 `feat/android-mobile`：pull_request 的 branches 过滤的是**基线分支**，从该分支发出的 PR
+    # 目标是 main/dev，已被上面两行覆盖；把它列为基线只对"往这条临时分支开的 PR"生效，没有价值。
     branches: [main, dev]
   workflow_dispatch:
 
@@ -91,11 +97,23 @@ jobs:
           node scripts/plugin-new.mjs ci-smoke-plugin /tmp/plugin-new-smoke
 
       - name: 版本 / 命令契约 / 能力注册表 / 文档链接
+        # workflow YAML 门禁为什么放在**这一档**（而不是只留在 `pnpm build` 链里）：
+        # 仓库里除本文件外的 workflow 都带 `paths:` 过滤（`android.yml` 只认它自己的文件与
+        # 构建输入），所以"只改坏 `.github/workflows/` 下**别的**文件"时，一个 job 都不会被
+        # 调度——门禁再准也没机会执行。本文件每次 push 都跑、没有 `paths`，由它来兜这个缺口。
+        #
+        # ⚠️ 自指边界（这条很重要，别当成万能）：它只能挡住**别的** workflow 文件被改坏。
+        # 如果坏掉的正是 `ci.yml` 自己，这个文件根本编译不过 ⇒ workflow 不会被调度 ⇒
+        # 下面这行也不会被执行 ⇒ **任何写在仓库里的自检都救不了自指**（`pnpm build` 同理，
+        # 它只在 CI 之外由人触发）。这种自指只能靠**外部观察**发现：run 名显示为**文件路径**
+        # 而不是 `name: CI`、job 数为 0、且无视 branches 过滤——2026-09-12 起 49 次 push 全红
+        # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
         run: |
           node scripts/check-versions.mjs
           node scripts/check-web-commands.mjs
           node scripts/check-capabilities.mjs
           node scripts/check-doc-links.mjs
+          node scripts/check-workflow-yaml.mjs
 
   mobile-layout:
     name: 移动端布局验收（真实 Chromium）
@@ -171,6 +189,19 @@ jobs:
 
       - name: 单元测试 + 集成测试（cargo test）
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: 插件测试必须能**单独跑**（挡住"只有全量跑才绿"的测试）
+        # 2026-09-13 修掉的那一类缺陷：`settings_get_is_null_when_unset_and_errors_on_undeclared_keys`
+        # 要写 meta.db，而库路径来自**进程级** `APP_DATA_DIR`——那个只由 `db::init` 设置。
+        # 于是它**单跑必红、全量跑反而绿**（别的测试碰巧先 init 过）。
+        # 这类测试最费时间：改一行、只跑一条、看到一个红，会以为是自己刚改坏的。
+        # 上面那步全量跑**永远不会**暴露它，所以这里把插件模块单独再跑一遍。
+        # 修法是测试侧自给自足（`db::ensure_test_app_data_dir()`），这条门禁防它回来。
+        # ⚠️ 这个值必须**整个**加引号：YAML 的 plain scalar 不允许以 `:` 结尾，`plugins::`
+        # 行尾那个冒号会被当成 mapping 指示符 → 整个 workflow 文件编译不过。GitHub 对这种
+        # 错误**不给行号、不给日志**，只产出一条 0 个 job 的红色 run（run 名是文件路径而不是
+        # 上面的 `name: CI`）——2026-09-12 起 49 次 push 全红、连纯文档提交也红，就是这一行。
+        run: "cargo test --manifest-path src-tauri/Cargo.toml --lib plugins::"
 
       # 外部产物的验收：**我们打出来的包、我们签出来的索引，应用真正的解析器与校验器认不认**。
       # 两段分别在别处有测试（打包工具在 JS 侧、解析/校验在 Rust 侧），但"接起来"那段

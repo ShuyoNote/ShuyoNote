@@ -1,6 +1,6 @@
 [package]
 name = "shuyonote"
-version = "1.90.1"
+version = "1.90.2"
 description = "A local-first Notion-like note app"
 authors = ["you"]
 edition = "2021"
@@ -38,6 +38,8 @@ minisign-verify = "0.2"
 # RSS 看门狗读子进程常驻内存：Linux 要页大小（sysconf），macOS 走 proc_pidinfo。
 # 它本来就在依赖树里（随 rusqlite/tokio 进来），这里只是显式声明。
 libc = "0.2"
+# 插件 JS 运行时。⚠️ **移动端必须额外开 `jsvalue-enum`**——理由见下面
+# [target.'cfg(any(target_os = "android", target_os = "ios"))'] 那段（真机实测的 panic）。
 boa_engine = "0.21.1"
 chacha20poly1305 = "0.11.0"
 argon2 = "0.5.3"
@@ -61,26 +63,83 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
 # via src/pdf_native.rs.
 mupdf-sys = "0.8.0"
-# 聚合邮箱：邮件解析（mailparse）+ IMAP 拉取。
-# IMAP 用 async-imap（契合 app 已是 tokio；支持后续 IDLE/推送），TLS 走 tokio-native-tls（Windows Schannel）。
+tauri-plugin-http = "2"
+# fs 插件：**不是给前端用的**（capabilities 里没授它权限），而是给 `picked_file` 用——
+# Android 的系统选择器返回 `content://` URI，`std::fs` 打不开，只有它的 `Fs::open` 能开
+# （Android 经 Kotlin 的 ContentResolver 取 fd；桌面就是 `std::fs::OpenOptions`，等价）。
+tauri-plugin-fs = "2"
+
+# 聚合邮箱（**桌面专属**，2026-09-13 定）：邮件解析（mailparse）+ IMAP 拉取
+# （async-imap，契合 app 已是 tokio），TLS 走 tokio-native-tls（桌面走系统 TLS：
+# Windows Schannel / macOS Security.framework / Linux OpenSSL）。
+#
+# **移动端不提供该功能**，所以这一组连同 `email` / `smtp` 模块一起收窄到桌面（见下）。
+# 收窄的直接收益：移动端不再需要 `native-tls`，也就不再需要为它单独引一份 OpenSSL。
+#
+# ⚠️ **但它不等于"移动端不用编译 OpenSSL"**（这条我先前判断错过一次）：SQLCipher 仍然
+# 需要一个加密后端，而 Android 侧用的是 libsqlite3-sys 的 vendored-openssl，仍要从源码构建
+# OpenSSL。见下面 [target.'cfg(target_os = "android")'] 那段。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 mailparse = "0.15"
 async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 tokio-native-tls = "0.3"
 native-tls = "0.2"
 encoding_rs = "0.8"
-tauri-plugin-http = "2"
 
 [dev-dependencies]
 # For async integration tests (embed_text network round-trip / search_semantic ranking).
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
-# Android 专属：native-tls 在 Android 上映射到 OpenSSL（桌面 Windows 走 Schannel 不受影响），
-# 交叉编译需要一个 Android 版 OpenSSL。这里用 vendored 从源码构建（借助 NDK 的 clang + Perl），
-# 从而不改动 native-tls 的调用代码，各平台行为一致。仅 Android 生效，桌面/Web 构建不受影响。
-[target.'cfg(target_os = "android")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-# SQLCipher 在 Android 上同样依赖 OpenSSL。启用 libsqlite3-sys 官方提供的
-# vendored-openssl 变体，让它复用上面这份从源码构建的 OpenSSL
-# （它经 openssl-sys 的 DEP_OPENSSL_INCLUDE 取得头文件，并静态链接 libcrypto）。
+# Android 专属：**SQLCipher 需要一个加密后端**，这里用 libsqlite3-sys 官方提供的
+# vendored-openssl 变体，从源码构建 OpenSSL（借助 NDK 的 clang + Perl），并静态链接 libcrypto。
 # features 是可累加的，故这里与 [dependencies] 中的声明合并后仅对 Android 生效。
+#
+# ⚠️ 这份 OpenSSL **仍然必需**：邮箱已经收窄为桌面专属，但 SQLCipher 还是靠它。
+# 所以「移动端不做邮箱 ⇒ 不用编译 OpenSSL」是错的（我先前就是这么判断错的）。
+# 它的构建需要一个 **MSYS 类**的 Perl（原生 Windows Perl 会被 OpenSSL 的 Configure 拒绝），
+# 详见 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §0.0。
+[target.'cfg(target_os = "android")'.dependencies]
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+# Android 上 **TLS 信任链交给系统证书库**，而这件事需要我们自己插一脚：
+# reqwest 0.13 在 Android 上默认用 `rustls-platform-verifier`，它**必须在第一次 HTTPS
+# 请求之前**被初始化，否则进程直接 panic（真机 logcat 原话）：
+#   E/RustStdoutStderr: Expect rustls-platform-verifier to be initialized
+# 初始化点在 src/tls_android.rs（由 setup 调一次）。
+#
+# 为什么需要**直接**依赖它，而不是只把它当 reqwest 的传递依赖：我们要调它的
+# `android::init_with_env`，那个函数的参数类型来自**它自己那份 jni 0.22.4**。
+# ⚠️ 而 wry 0.55.1 用的是 **jni 0.21.1**——两版类型不能互换（连 `JavaVM::singleton()`
+# 都不共享，jni 0.22 的文档专门警告过）。所以这里也直接引 jni 0.22，两边用**裸指针**
+# 对接：`JavaVM::from_raw` / `JObject::from_raw` 都是 jni 文档化的 unsafe 构造器，
+# **不是**按结构体布局硬转。取证过程与备选方案见 docs/MOBILE.md §2.4。
+rustls-platform-verifier = "0.7"
+jni = "0.22"
+
+# 移动端专属（iOS 一并开着，同一个理由）：boa 的 **nan-boxing 在 Android 上不成立**
+# ——2026-09-13 真机实测（HUAWEI Mate 40 / Android 12）。它的 `tag_pointer()` 断言指针必须
+# 落在 `MASK_POINTER_VALUE`（低 48 位）内，而真机上拿到的是 **0xB400007D1B960000**
+# （真实地址 0x7D1B960000）——**最高字节被当 tag 用了**，断言当场失败：
+#
+#   thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
+#   assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
+#
+# 表现：**应用不崩**（panic 在插件线程上，主线程照常跑），但**插件整个用不了**。
+# boa 自己给的逃生口就是 `jsvalue-enum`：改用枚举版 `JsValueInner`，不做指针标记。
+# 代价：`JsValue` 从 8 字节 nan-boxed 变成枚举（更大更慢）——桌面 x64 用户态指针高位为 0、
+# 不受影响，所以**只对移动端开**。features 可累加：这里与 [dependencies] 的声明合并，
+# 且仅对移动端生效（与上面 rusqlite 那段同一个机制）。详见 docs/MOBILE.md §2.1。
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
+
+# 体积（2026-09-13，为 Android 上线而加；实测依据见
+# 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §3）：
+#   · `.debug_*` 段**一个都没有**（实测 0 个）——原来就没有调试信息，所以 strip 省的不是它；
+#   · strip 真正去掉的是 `.symtab` + `.strtab`：arm64 的 .so **101.2 → 88.4 MiB（−12.7 MiB / −12.6%）**。
+#
+# ⚠️ 代价：**丢掉符号名**，真机原生崩溃只能看到地址。需要符号化时用环境变量临时关掉即可，
+#    不必改这个文件（Cargo 认 `CARGO_PROFILE_<name>_<key>` 这种覆盖）：
+#      $env:CARGO_PROFILE_RELEASE_STRIP = "false"; pnpm tauri android build
+#    想长期两全，就让 CI 额外产出一份带符号的 .so 当构建附件（本轮没做）。
+[profile.release]
+strip = true

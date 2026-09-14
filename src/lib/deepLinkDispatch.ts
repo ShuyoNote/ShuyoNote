@@ -36,6 +36,156 @@ export interface DeepLinkDeps {
   now?: () => number;
   /** 去重窗口（毫秒）。默认 1.5 秒。 */
   dedupeMs?: number;
+  /**
+   * **测试钩子**用：跑一条插件命令。
+   * 与界面里走的是**同一条路**（`usePlugins.runCommand`），权限与写中介原样成立——
+   * 这个钩子不绕过任何检查，只是把"点命令面板"换成"发一条深链"。
+   */
+  runPluginCommand?: (
+    pluginId: string,
+    commandId: string,
+    argsJson: string | null,
+  ) => Promise<unknown> | unknown;
+  /** **测试钩子**用：建一页并写入文本（用来验"写进去的东西杀进程重启后还在"）。 */
+  createPageWithText?: (text: string) => Promise<unknown> | unknown;
+  /**
+   * **测试钩子**用：让 **Rust 侧**发一次真实 HTTPS 请求（走 reqwest）。
+   *
+   * 这条是 `docs/MOBILE.md` §2.4 的验收手段：Android 上证书校验器
+   * （rustls-platform-verifier）没被初始化时 reqwest **直接 panic**，所以"没崩、而且真的
+   * 拿回了内容"才说明系统证书库那条路是通的。用的是**现成的** `fetch_community_json`
+   * 命令（它本身就是一次 reqwest GET），因此**不新增命令、也不动能力清单**。
+   */
+  httpProbe?: (url: string) => Promise<string> | string;
+  /**
+   * **测试钩子**用：报出"库里有几页、标题各是什么"（用现成的 `list_pages` 命令）。
+   *
+   * 它是 **Phase 0 持久化判据**的程序化说法：建页 → 杀进程 → 重启 → 问一次这个，
+   * 列表里还有那几页 ⇒ 写进去的东西真的落盘了。比截图可靠得多——重启后应用总是
+   * 停在一个空白新页上，**从界面上根本看不出旧页在不在**（这是这一轮踩到的）。
+   */
+  listPages?: () => Promise<unknown> | unknown;
+  /**
+   * **测试钩子**用：打开系统选择器（与附件面板同一个入口），并把选中的项交给导入命令。
+   *
+   * 这是 §2.2「选文件拿不到可读路径」的验收手段：Android 的选择器返回的是 `content://` URI，
+   * 而修复点（`picked_file::materialize`）正是在"把 URI 变成可读文件"这一步——
+   * 所以**必须真的选一次并导入成功**才算验过，光看代码不算。
+   * 真实用户路径也是这两个调用（附件面板就是 `dialog.open` → `importAttachmentFiles`）。
+   */
+  openFileDialog?: () =>
+    | Promise<string | string[] | null>
+    | string
+    | string[]
+    | null;
+  importAttachments?: (paths: string[]) => Promise<unknown> | unknown;
+}
+
+/** 测试钩子是否启用。**只有带 `VITE_TEST_HOOKS=1` 的构建**才会真的执行（见 android.yml）。 */
+export function testHooksEnabled(): boolean {
+  return import.meta.env.VITE_TEST_HOOKS === "1";
+}
+
+/** 测试钩子的分派。失败只提示、不抛——它是从应用外面进来的。 */
+async function runTestHook(
+  action: { hook: string; params: Record<string, string> },
+  deps: DeepLinkDeps,
+): Promise<void> {
+  try {
+    switch (action.hook) {
+      case "run-plugin": {
+        // ⚠️ **两个都要显式给**，不能从对方推：命令 id **不一定**带插件名前缀——
+        // 真实例子里 `activity-digest` 的命令叫 `digest.show`（不是 `activity-digest.show`）。
+        // 我第一版按"最后一个点"切，被测试当场逮住；改成"第一个点"也仍然错。
+        // 想从 `demo.hello` 推出插件名这条路，在这份数据上根本不成立。
+        const pluginId = (action.params.plugin ?? "").trim();
+        const commandId = (action.params.cmd ?? "").trim();
+        if (!pluginId || !commandId) {
+          deps.notify(
+            "测试钩子 run-plugin：要同时给 plugin=<插件id> 与 cmd=<命令id>（命令 id 不一定带插件名前缀）",
+          );
+          return;
+        }
+        if (!deps.runPluginCommand) {
+          deps.notify("测试钩子 run-plugin：宿主没接这个依赖");
+          return;
+        }
+        const r = await deps.runPluginCommand(pluginId, commandId, action.params.args ?? null);
+        deps.notify(`测试钩子 run-plugin 完成：${typeof r === "string" ? r : JSON.stringify(r)}`);
+        return;
+      }
+      case "new-page": {
+        const text = action.params.text ?? "";
+        if (!text) {
+          deps.notify("测试钩子 new-page：缺 text 参数");
+          return;
+        }
+        if (!deps.createPageWithText) {
+          deps.notify("测试钩子 new-page：宿主没接这个依赖");
+          return;
+        }
+        const r = await deps.createPageWithText(text);
+        deps.notify(`测试钩子 new-page 完成：${typeof r === "string" ? r : JSON.stringify(r)}`);
+        return;
+      }
+      case "http-probe": {
+        // 用途：验 Android 上 Rust 侧 HTTPS 通不通（证书校验器有没有装上）。
+        // 必须真的走网络才有意义——这里刻意不做任何本地短路。
+        const url = (action.params.url ?? "").trim();
+        if (!url) {
+          deps.notify("测试钩子 http-probe：缺 url 参数");
+          return;
+        }
+        if (!deps.httpProbe) {
+          deps.notify("测试钩子 http-probe：宿主没接这个依赖");
+          return;
+        }
+        const body = await deps.httpProbe(url);
+        // ⚠️ toast 在手机上是**单行截断**的（实测只显示十几个字），所以这条只报两样：
+        // **先报长度**（`<n>B`——0B 就是没拿到东西，数字大小一眼能判"通没通"），
+        // 后面跟的是正文**截断的开头**（前 32 字）。整页正文不往界面上贴。
+        deps.notify(`http-probe ${body.length}B：${body.slice(0, 32)}`);
+        return;
+      }
+      case "list-pages": {
+        if (!deps.listPages) {
+          deps.notify("测试钩子 list-pages：宿主没接这个依赖");
+          return;
+        }
+        const raw = (await deps.listPages()) as Array<{ title?: string }> | null;
+        const pages = Array.isArray(raw) ? raw : [];
+        const titles = pages
+          .slice(0, 3)
+          .map((p) => (p?.title ?? "").trim() || "（无标题）")
+          .join("、");
+        deps.notify(`共 ${pages.length} 页：${titles}`);
+        return;
+      }
+      case "pick-file": {
+        if (!deps.openFileDialog || !deps.importAttachments) {
+          deps.notify("测试钩子 pick-file：宿主没接这个依赖");
+          return;
+        }
+        const picked = await deps.openFileDialog();
+        // 宿主返回三种形态都可能（字符串 / 数组 / null，取消时是 null）——统一成数组。
+        const paths = (Array.isArray(picked) ? picked : picked ? [picked] : []).filter(Boolean);
+        if (!paths.length) {
+          deps.notify("测试钩子 pick-file：没有选中任何文件");
+          return;
+        }
+        // 关键：把**选择器给的原样字符串**交给导入命令 —— Android 上是 `content://…`，
+        // 能不能读出来就是 §2.2 那个修复要回答的问题。
+        const metas = await deps.importAttachments(paths);
+        const n = Array.isArray(metas) ? metas.length : 1;
+        deps.notify(`pick-file 成功：导入 ${n} 个（选中形态 ${paths[0].slice(0, 18)}…）`);
+        return;
+      }
+      default:
+        deps.notify(`不认识的测试钩子「${action.hook}」（有：run-plugin / new-page / http-probe / list-pages / pick-file）`);
+    }
+  } catch (e) {
+    deps.notify(`测试钩子失败：${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /**
@@ -80,6 +230,16 @@ export function createDeepLinkHandler(deps: DeepLinkDeps): (raw: string) => Prom
         return;
       case "compose":
         deps.notify(COMPOSE_NOT_DONE);
+        return;
+      case "test":
+        // ⚠️ **只在带 VITE_TEST_HOOKS=1 的构建里生效**。正式包（`pnpm build` 不带它）走到这里
+        // 只会提示一句、什么也不做——测试入口不随正式版出门。
+        // Android 的 CI 工作流会显式带上这个环境变量（它的产物本来就是"未签名、只用于自检"）。
+        if (!testHooksEnabled()) {
+          deps.notify("测试钩子未启用（这是正式构建）");
+          return;
+        }
+        await runTestHook(parsed.action, deps);
         return;
     }
   };

@@ -21,6 +21,10 @@
 //!   前端注册监听时那条事件**早就过去了** —— 只听事件会稳定丢掉"冷启动深链"。
 //! - **应用已开**：第二个进程的 argv 经 `single-instance` 转到本进程，事件在前端已经
 //!   监听着的时刻到达，这一条靠事件就够了。
+//! - **Android 上这两条都换成 intent**（对照表见 [`attach`] 的文档）：冷启动那次 URL 在
+//!   Kotlin `load()` 里 `channel` 还没建立，只留在 `currentUrl`；应用已开着时 `onNewIntent`
+//!   才经 `channel` 送过来。**变的是"谁把 URL 送进来"，不变的是 Rust 侧的入口 API**，
+//!   所以下面这套"先入队再 emit"一个字都不用改就同时覆盖手机。
 //!
 //! 两条都覆盖、又不重复投递的做法就是：**URL 一律先入队再 emit**，
 //! 前端"启动时 drain 一次 + 之后听事件"，两边取到的是同一个队列，自然去重（不是靠前端猜）。
@@ -33,9 +37,10 @@
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Runtime};
-// 桌面专属：`DeepLinkExt` 提供 `AppHandle::deep_link()`，没有它 `app.deep_link()` 找不到方法。
-// 移动端的 `DeepLink` 是另一套 API（没有 `on_open_url`），所以这个 import 也按平台收口。
-#[cfg(desktop)]
+// `DeepLinkExt` 提供 `app.deep_link()`。**它和 `on_open_url` 都不是桌面专属的**
+// （插件 src/lib.rs 的 L481 / L511，都在 `#[cfg]` 之外；Android 那份 `DeepLink`
+// 在 `mod imp` 里另有一份 `get_current`，走 `run_mobile_plugin("getCurrent")`），
+// 所以这个 import 不再按平台收口——收口过的那一版正好让手机彻底收不到深链。
 use tauri_plugin_deep_link::DeepLinkExt;
 
 /// 前端监听的事件名。**前后端各写一遍字符串是最容易悄悄对不上的地方**
@@ -104,8 +109,10 @@ impl PendingDeepLinks {
 /// **必须在建窗口之前注册**：它的 setup 会读 `std::env::args()` 处理"冷启动就是被深链唤起"
 /// 的那一次，而主窗口是先隐藏、页面 load 完才 show 的。
 ///
-/// 桌面专属：移动端 `deep-link` 插件走 intent-filter / universal link，入口 API 不同。
-#[cfg(desktop)]
+/// **移动端也走这个函数**，不要在别处再写一遍 `tauri_plugin_deep_link::init()`：
+/// Android 上它注册的是 Kotlin 侧的 `DeepLinkPlugin`（`android/` 模块由 tauri-cli 扫
+/// `Cargo.toml` 自动加进 gradle），intent 再经 `setEventHandler` 的 channel 转回 Rust。
+/// 注册与接线分成两个调用是插件的类型逼出来的（`Config` 没公开导出），不是平台差异。
 pub fn plugin<R: Runtime>() -> impl tauri::plugin::Plugin<R> {
     tauri_plugin_deep_link::init()
 }
@@ -129,7 +136,30 @@ pub fn plugin<R: Runtime>() -> impl tauri::plugin::Plugin<R> {
 /// | 前端挂载得比上面都晚 | 队列 drain（[`deep_link_take`] 命令） |
 ///
 /// 三条汇入同一个 [`handle_urls`]，所以不会重复投递：入队与 emit 是同一个动作的两半。
-#[cfg(desktop)]
+///
+/// ## 桌面与移动端共用这一份接线（不是"顺手兼容"）
+///
+/// 这里原本整段 `#[cfg(desktop)]`，注释理由是"移动端 `DeepLink` 是另一套 API（没有
+/// `on_open_url`）"。**那句是错的**，代价实测过：Android 上插件把事件 emit 出来却没人接，
+/// 表现就是"点深链完全没反应"（`adb shell am start -a android.intent.action.VIEW -d
+/// shuyonote://test/...` 打进来，logcat 能看到 `NewIntentItem` 已交给 Activity，界面纹丝不动）。
+///
+/// 查 `tauri-plugin-deep-link-2.4.10/src/lib.rs` 得到的是结构性理由，不是试出来的：
+/// `DeepLinkExt`（L481）与 `on_open_url`（L511）都在 `#[cfg]` 之外；Android 那份
+/// `DeepLink`（`mod imp`，L87 起）**自己就有 `get_current`**（L121 走 `run_mobile_plugin`，
+/// 读 Kotlin 的 `currentUrl`）。真正桌面专属的只有 `handle_cli_arguments`（L195）——
+/// 那是"从 argv 里读"，手机本来就没有 argv。
+///
+/// 两平台**谁把 URL 送进来**不同，但**送进来的接口相同**：
+///
+/// | | 冷启动那一次 | 应用已开着时 |
+/// |---|---|---|
+/// | 桌面 | 插件 setup 读 `argv` → `get_current()` | `on_open_url`（second-instance 转发 argv） |
+/// | Android | Kotlin `load()` 存进 `currentUrl` → `get_current()` | `on_open_url`（`onNewIntent` → channel） |
+///
+/// 注意 Android 的 `load()`（`DeepLinkPlugin.kt` L78-89）：那时 `setEventHandler` 还没跑，
+/// `this.channel?.send(...)` 是**空操作**，URL 只落到 `currentUrl` 上——所以冷启动在
+/// Android 上是**同一个洞**，`get_current()` 补收这段代码一行不改地正好补上。
 pub fn attach<R: Runtime>(app: &AppHandle<R>) {
     app.manage(PendingDeepLinks::default());
 
@@ -158,9 +188,49 @@ fn handle_urls<R: Runtime>(app: &AppHandle<R>, urls: Vec<String>) {
             state.push(u.clone());
         }
     }
+    // 留一行**可程序化验证**的痕迹。真机排查时最难判的正是"URL 到底到没到 Rust"：
+    // 前端有没有反应要靠截图看，而"没反应"有两种完全不同的原因——URL 没进来，
+    // 或者进来了但前端没接住。有了这行，`adb logcat -s RustStdoutStderr` 就能把两者分开。
+    // 只打**摘要**（见 [`log_summary`]），不打全文。
+    eprintln!(
+        "[deep-link] 收到 {} 条 URL：{}",
+        urls.len(),
+        urls.iter().map(|u| log_summary(u)).collect::<Vec<_>>().join(" , ")
+    );
     // 事件也照发（"应用已经开着"那条路径的正常通道，前端此时在听）。
     // 发失败**不致命**：队列还在，前端的启动 drain 仍能取到。
     emit(app, &urls);
+}
+
+/// 日志专用的短摘要：只留 `scheme://host/首段/…`，**查询串与其余路径一律不进日志**。
+///
+/// 为什么不是直接打整条 URL：`shuyonote://save?url=…`、`…?title=…` 这类参数里会带
+/// 用户内容（被保存的网页地址、笔记标题），而 logcat 是落到设备上、`adb logcat` 能读的。
+/// 排查需要的是"哪一类动作到了"，不是"内容是什么"。
+///
+/// `./…` 结尾是**故意**的：让读日志的人一眼看出后面还有东西被省掉了。
+///
+/// ⚠️ **必须先切掉查询串再按 `/` 分段**。第一版写反了（直接 `split(['/', '?', '#'])`），
+/// 于是 `shuyonote://save?url=https%3A%2F%2F…` 的**整个 `url=` 参数**被当成"路径第二段"，
+/// 原样进了日志——而日志就是本函数要保护的东西。单测 `log_summary_keeps_the_action_...`
+/// 当场把它钉出来了（`left: "…save/url=https%3A%2F%2Fcommunity…"`）。参数里的 `%2F`
+/// 是转义过的斜杠，所以按 `/` 分段根本分不开它，这正是当初没想到的一层。
+fn log_summary(url: &str) -> String {
+    // 认不出 scheme 就一个字符都不打——这条路径正常情况下走不到（插件给的已经是解析过的
+    // `Url`），但日志函数**不能成为泄密或崩溃的入口**，所以宁可少说。
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<不是带 scheme 的 URL>".to_string();
+    };
+    // 先丢掉 `?query` 与 `#fragment`，剩下的才可能是路径。
+    let path_part = rest.split(['?', '#']).next().unwrap_or("");
+    let mut segs = path_part.split('/');
+    let host = segs.next().unwrap_or("");
+    let first = segs.next().unwrap_or("");
+    if first.is_empty() {
+        format!("{scheme}://{host}/…")
+    } else {
+        format!("{scheme}://{host}/{first}/…")
+    }
 }
 
 /// 发事件给前端。
@@ -181,6 +251,28 @@ pub fn deep_link_take(state: tauri::State<'_, PendingDeepLinks>) -> Vec<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 日志摘要**只留动作、不留内容**。这条不是洁癖：`?title=` / `?url=` / `?text=`
+    /// 里可能就是用户的笔记标题或被保存的网页地址，而 logcat 落在设备上、`adb logcat` 能读。
+    /// 真机排查需要的是"哪一类动作到了 Rust"。
+    #[test]
+    fn log_summary_keeps_the_action_and_drops_everything_user_supplied() {
+        // 社区链接：`url=` 里的整条地址（含域名与帖号）都不能出现。
+        let save = log_summary("shuyonote://save?url=https%3A%2F%2Fcommunity.shuyo.cn%2Fpost%2F1");
+        assert_eq!(save, "shuyonote://save/…");
+        assert!(!save.contains("community") && !save.contains("post"), "参数泄进日志了：{save}");
+
+        // 测试钩子的 `text=` 同理（真机上跑的就是这条）。
+        let hook = log_summary("shuyonote://test/new-page?text=phase0-persist-011531");
+        assert_eq!(hook, "shuyonote://test/new-page/…");
+        assert!(!hook.contains("phase0"), "参数泄进日志了：{hook}");
+
+        // 有路径段时保留**一段**（够看清是哪类动作），其余仍省掉。
+        assert_eq!(log_summary("shuyonote://page/abc123?x=1"), "shuyonote://page/abc123/…");
+
+        // 认不出 scheme：**一个字都不打**（宁可少说，也不把可能是参数的原文写进日志）。
+        assert_eq!(log_summary("garbage"), "<不是带 scheme 的 URL>");
+    }
 
     /// 普通启动（没有深链）：队列空 ⇒ 前端拿到空数组 ⇒ 什么都不做。
     /// 这条是"零副作用"的可执行定义——不是"应该不会弹"，是 drain 出来就是空的。

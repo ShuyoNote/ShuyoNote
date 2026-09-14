@@ -443,7 +443,10 @@ pub fn index_view(index: &PluginIndex, app_version: &str, signature_verified: Op
 ///
 /// 解压**永远**先落在临时目录：装失败时不能留下半个插件目录占住那个 id。
 pub fn package_temp_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("shuyonote-plugin-{}", uuid::Uuid::new_v4()))
+    // ⚠️ 不能直接用 `std::env::temp_dir()`：Android 上它是 `/tmp`，而 Android 根下**没有**
+    // `/tmp`（见 `tempdir` 模块的说明）⇒ 真机上插件包解压会失败。
+    // 这里要的是"**尚不存在**的目录"（解压工具自己创建），所以用 `path()` 而不是 `dir()`。
+    crate::tempdir::path("shuyonote-plugin")
 }
 
 /// 插件包解压后的**真正根目录**。

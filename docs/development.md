@@ -99,7 +99,10 @@ pnpm tauri dev      # 桌面（Tauri + Rust，端口 1420）
 pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 ```
 
-> **PDF/OCR 资源**：`dev`/`dev:web`/`build` 前自动跑 `scripts/copy-pdfjs-assets.mjs`（PDF CJK→`public/pdfjs`）与 `scripts/copy-tesseract-assets.mjs`（tesseract worker/core/双语模型→`public/ocr`）；两者是 gitignore 的生成物，`pnpm install` 后由脚本生成，OCR 才可离线工作。
+> **PDF/OCR 资源**：`dev`/`dev:web`/`build` 前自动跑 `scripts/copy-pdfjs-assets.mjs`（PDF CJK→`public/pdfjs`）与 `scripts/copy-tesseract-assets.mjs`（tesseract worker + core→`public/ocr`）；两者是 gitignore 的生成物，`pnpm install` 后由脚本生成。
+>
+> ⚠️ **语言包（traineddata，29.6 MiB）自 2026-09-13 起不再随包分发**，改为首次使用 OCR 时按需下载并缓存（来源见 `src/lib/ocr.ts` 的 `DEFAULT_OCR_LANG_BASE`，托管规矩见 `docs/nginx-ocr.conf`）。理由：Android 上它会被装两遍（APK 的 `assets/` + `.so` 里 Tauri 内嵌的前端副本），实测见 上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） §3。
+> 完全离线的发行版：`SHUYONOTE_OCR_BUNDLE=1` 让脚本把语言包拷回 `public/ocr/tessdata`，**并同时设** `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`（两处必须一致，`pnpm check:ocr-assets` 会拦住只设一半）。
 
 > **Windows 坑**：若 cargo 用镜像源遇到 SSL 撤销错误，先 `$env:CARGO_HTTP_CHECK_REVOKE="false"` 再跑。
 
@@ -116,7 +119,7 @@ pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 
 ## 4. 测试与验证（权威循环）
 
-> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接，外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
+> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev`、以及 push 到 `feat/android-mobile` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
 >
 > 在此之前这些检查**只靠人记得跑**：`smoke-web`（350 断言）曾因一处无守卫的 `localStorage` 访问整套崩掉而长期无人察觉——没有自动化在跑它，谁都没看见它是红的。
 
@@ -191,8 +194,16 @@ pnpm test:mobile-layout               # 期望 "N 通过 / 0 失败"
 3. **配端点**：`plugins.updater.endpoints` → 你的 `latest.json` 实际地址（如 gitcode releases / CDN / 自建静态站）。
 4. **先打 tag 并推送（关键，顺序不能反）**：
    ```bash
-   git tag v<version> && git push origin v<version> && git push origin main
+   git tag v<version> \
+     && git push origin v<version> && git push github v<version> \
+     && git push origin main && git push github main
    ```
+   > **为什么 tag 与 main 都推两个远端**（`origin` = gitcode、`github` = GitHub，两个是各自独立的仓库）：
+   > `release.yml` 三平台构建与 `pages.yml` 的 Pages 部署都是 **GitHub Actions** 的工作流，**只有 GitHub
+   > 这个仓库收到 tag / main 才会跑**——只推 `origin` 的话发版件根本不会开始构建；反过来只推 `github`
+   > 的话 gitcode 上没有 tag，而 gitcode 是应用内「检查更新」与下载通道，用户收不到新版。
+   > 口径与 [RELEASING.md](RELEASING.md) ④ 一致。
+   >
    > [!] **gitcode 的 release 创建 API 用 `tag_name` 定位 git tag；tag 不存在会静默失败**（release 未建、`latest.json` 不更新，客户端就查不到更新）。`release.mjs` 现在在发布前校验本地 + 远程 tag 都存在，缺失会直接报错退出；但正常流程应**先打 tag 再发布**。
 5. **签名 + 构建 + 生成清单**：
    ```bash
@@ -307,7 +318,7 @@ feat/*  ← 单个特性，从 dev 切出，完成后合回 dev。
 git checkout dev && git pull
 git checkout -b feat/your-change
 # …改代码 + 跑 §4 的验证循环…
-git checkout dev && git merge --no-ff feat/your-change && git push origin dev
+git checkout dev && git merge --no-ff feat/your-change && git push origin dev && git push github dev   # 两个远端都推：Actions（ci.yml / android.yml）只在 GitHub 侧跑，gitcode 的流水线只在打 tag 时出 Linux 包
 ```
 
 ### 10.2 发版
@@ -318,7 +329,7 @@ git checkout main && git merge --no-ff dev     # main 只做这一次合并
 # 按 §5 同步 6 处版本号 + 写 CHANGELOG → cargo check 对齐 Cargo.lock
 git commit -m "release: X.Y.Z（…）"
 git tag -a vX.Y.Z -m "X.Y.Z：…"
-git push origin main --follow-tags             # 触发 CI 三平台构建 + Pages 部署
+git push origin main --follow-tags && git push github main --follow-tags   # 两个远端都推：三平台构建 + Pages 部署都是 GitHub Actions（release.yml / pages.yml）
 # CI 出包后 → scripts/release.mjs --no-build 发 gitcode + 更新 latest 更新通道
 ```
 

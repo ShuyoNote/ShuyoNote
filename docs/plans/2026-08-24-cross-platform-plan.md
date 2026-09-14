@@ -106,7 +106,7 @@ ShuyoNote 当前是 **Tauri 2 桌面应用**：前端 React 18 + Lexical + TS（
 - **M16.3 OPFS/wa-sqlite 增量持久化** 🗓（长期）：**已评估为「需真实浏览器验证」**——wa-sqlite 异步查询在 Node 报 code 21、OPFS 必须 Worker 且无头无法验证；维持 sql.js + IndexedDB + persist() 为当前正解。
 - **M16.4 插件运行时降级迁移** 🗓：`boa_engine` 移入 WASM/浏览器——浏览器网页无法跑 Rust `boa_engine`，**根本性限制**，需重做 JS 沙盒。
 - **M16.5 各平台壳** 🗓：~~安卓 WebView → iOS WKWebView →~~ **鸿蒙 ArkWeb**（JSBridge 补齐文件/外链/对话框）。浏览器 PWA（M16.1b）为首个 Web 壳。
-  > ⚠️ **2026-09-13 收窄**：**安卓 / iOS 不再走 WebView 壳**——已改为 **Tauri 原生壳**（同一份 Rust 内核，能力完整；理由与对照见 [MOBILE.md](../MOBILE.md)、执行计划见 [移动端上线计划](2026-09-13-android-launch-plan.md)）。本项现在**只涵盖 Tauri 不可达的平台**（当前只有鸿蒙 ArkWeb）。判据：**能跑 Tauri 就走 Tauri 原生壳，走不了才退到 WebView 壳并如实标注它是能力子集。**
+  > ⚠️ **2026-09-13 收窄**：**安卓 / iOS 不再走 WebView 壳**——已改为 **Tauri 原生壳**（同一份 Rust 内核，能力完整；理由与对照见 [MOBILE.md](../MOBILE.md)、执行计划见 移动端上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`））。本项现在**只涵盖 Tauri 不可达的平台**（当前只有鸿蒙 ArkWeb）。判据：**能跑 Tauri 就走 Tauri 原生壳，走不了才退到 WebView 壳并如实标注它是能力子集。**
 - **M16.6 验收 + 回归** 🗓：全功能回归；原 Tauri 桌面形态保留为 driver A。**已验证桌面无回归**（编译 + 进程运行）。
 
 > **落地说明**：M16.0 + M16.0b + M16.1a + M16.1b 已完成（浏览器版含 真实SQLite/属性数据库/版本/块引用/备份/PWA）。OPFS/wa-sqlite 与插件运行时列为需真实浏览器验证或根本性限制的长期项；多文件目录导出受浏览器权限限制（单文件导出 + 整库备份已可用）。

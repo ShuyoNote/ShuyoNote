@@ -2,6 +2,408 @@
 
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
+## [1.90.2] - 2026-09-14
+
+> 这一版是 **Android 的「能用了」**：手机上一直连不上的 HTTPS（Let's Encrypt 证书吊销检查）、
+> 全线报错的临时目录、点了没反应的深链、一跑就 panic 的插件运行时，四条根因各自修掉；
+> 同时 **Android 第一次有了应用内更新通道**（发现新版 + 下载 APK，装机仍交给系统）。
+> 桌面侧照旧，另修掉一个「从 Windows 发版必崩」的既存缺陷。
+
+### 修复
+
+- **Android 上所有 Let's Encrypt 站点都连不上（上游 bug，自带补丁修掉）**（2026-09-13）。
+  现象：安卓上走 Rust 的 HTTPS 打 LE 站点全报
+  `invalid peer certificate: Revoked`；`shuyo.cn`、`community.shuyo.cn`、**连 `letsencrypt.org` 自己**
+  都中招，`www.baidu.com` 正常 ⇒ **与我们的证书、我们的服务器都无关**（服务端一个字没改）。
+
+  根因：Let's Encrypt 从 2025-08 起**取消 OCSP**、只发 CRL，而 Android 的吊销检查器**默认先查 OCSP**，
+  证书里没有 OCSP 地址时抛 `Certificate does not specify OCSP responder`，上层当成**已吊销**
+  （该 fail-open 的地方 fail-closed）。上游 issue #221 至今未修、PR #179 未合并，我们用的 0.7.0
+  已是最新版 ⇒ 升级解决不了。
+
+  修法：把上游 `CertificateVerifier.kt` 自带进仓库（commit `73a4df87`，MIT OR Apache-2.0），
+  **只加两行** `PREFER_CRLS` + `NO_FALLBACK`，随 App 编译，不再用 crate 自带的 AAR。
+  脚本加构建期自检防止悄悄退回老毛病；溯源与复现见
+  `scripts/vendor/rustls-platform-verifier/README.md`，取证链见 `docs/MOBILE.md` §2.4.2。
+
+  排查过程中被排除的假设（都留了证）：链锚点不是 X2（第 4 张是 X2←X1 交叉签名，用只装 X1 的信任库
+  PKIX 握手 OK）；4 张 CRL 里没有我们的序列号；把 X1 根追加进链**没用**（已回滚）。
+
+- **Android 上「临时目录」全线修好：`std::env::temp_dir()` 在 Android 上就是 `/tmp`，而那里没有 `/tmp`**
+  （2026-09-13）。桌面永远有 `/tmp`，所以这个坑**只在手机上暴露**，而且**一个根因长出 8 个症状**：
+  选文件（真机报「建临时目录失败」）、备份导出/恢复、插件包解压、空间包导出/导入，
+  外加磁盘占用统计恒为 0、"清理临时文件"恒空转。
+  修法：新增 `src-tauri/src/tempdir.rs`，启动时（`lib.rs` 的 `setup` 第一句）把临时根定向到
+  `app_cache_dir()/tmp`，生产调用点全部改走它（`dir` / `path` / `file` / `subdir` 四种形态，
+  其中 `path` 是"只建父目录、不建叶子"，给"解压前目标必须不存在"的调用方用）；
+  `cargo test` 里的 `std::env::temp_dir()` 保持原样（测试只在桌面跑）。
+  顺带修掉一个**一直没生效**的清理：`cleanup_temp_files` 按 `shuyonote-backup-` 找，
+  而导出实际建的是 `shuyonote-export-` ⇒ 那半条清理从来没命中过。
+  调用点清单与取证见 `docs/MOBILE.md` §2.2.1。
+  教训：平台约定的差异（"有没有 `/tmp`"）会以 N 个互不相干的报错形式出现——
+  **按症状逐个修等于修 N 次**，要找共同的下游依赖一次修掉。
+
+### 变更
+
+- **Android 有了应用内更新通道（最小第一步：发现 + 下载 APK）**（2026-09-14）。Android 上打开
+  「关于」会自动检查版本：有新版时给一个**「下载 APK」**按钮，地址取自更新清单
+  `platforms["android-aarch64"].url`（与桌面**同一份 `latest.json`、同一个 gitcode 通道**），
+  点击后**交给系统浏览器/DownloadManager**，下载完由用户自己安装。
+  **应用内不下载、不唤起安装器**——那需要 `REQUEST_INSTALL_PACKAGES` 之类的权限与 FileProvider，
+  属后续增量；本版**没有新增任何权限、没有改 AndroidManifest**。
+
+  为什么这么设计（几条都不是随手定的）：
+
+  - **apk 没有 minisign `.sig`**：它的签名由 `apksigner` 打在**包内**，安装时的强制校验由 Android
+    系统安装器负责。所以清单里 android 条目的 `signature` 写 **`sha256:<hex>`**（发布脚本现算），
+    它不参与"`.sig` 与字节互验"、也不上传 `.sig`——两处都开了**显式**例外，并在发布日志里说明；
+  - **那个 `signature` 字段不能省，省了会连坐**：`tauri-plugin-updater` 反序列化 `latest.json` 时把
+    `platforms` 的每个值解析成 `url` + `signature` **都必需**的结构，任何一条缺 `signature` 会让
+    **整份清单**解析失败 ⇒ **桌面的自动更新一起挂**，而症状只是"点检查更新什么都不发生"。
+    所以新增 `validateManifest` 门禁（绝对 https 的 url + 非空 signature，android 必须是
+    `sha256:<64 hex>`），**写盘前**跑，失败就一个字节都不落盘；
+  - **发版强制带 APK**：`release.mjs` 新增 `--android-apk <路径>`；缺了就失败，且失败信息直接给出
+    "怎么从 CI 拿包"的三条出路。要明确跳过只能写 `--no-android`（与 `--allow-platform-drop`
+    同一套哲学：逃生口必须显式、可事后审计）；
+  - **Android 键放进 `platforms["android-aarch64"]`**，不新开顶层键——客户端要能用同一套结构取到它。
+
+  **Android 用户实际能收到什么（口径 · 别写反）**：**① 启动提醒 + ② 「关于」里的下载入口**，
+  **不是**"支持自动更新"（应用内不下载、不安装），也**不是**"Android 没有红点"（有的，见下）。
+  逐条：
+  - **启动**就有**红点 + 顶部横幅**——`useUpdateChecker()` 在 `App.tsx` 里无条件调用，而 `isDesktop()`
+    的真实语义是"有没有 Rust 内核"（Android 壳为真）⇒ 走桌面那一支 `checkDesktopUpdate()`；
+    Android 上 `tauri-plugin-updater` 没注册（`lib.rs` 带 `#[cfg(desktop)]`）⇒ 这一步必然失败，
+    代码随即**降级**到 gitcode 发布渠道清单（`updates::fetch_update_manifest`，全平台注册）比对版本；
+    ⇒ 线上 `latest` 比已装版本新时，**启动即出红点/横幅**，与桌面共用同一套 UI。回归测试
+    `src/lib/useUpdateChecker.test.ts` 钉住这条降级路径（含"清单拉不到就静默当作无更新"）。
+    ⚠️ 这一步**只是提醒**：横幅的 CTA 只到「关于」（`UpdateBanner` 的非 Web 分支只有「查看更新」），
+    **横幅里不给下载**；
+  - **装机入口在「关于」**：APK 地址只有「关于」的 Android 分支才取（`platforms["android-aarch64"].url`），
+    点「下载 APK」后由**系统浏览器/DownloadManager** 下载，安装交给系统安装器；
+    清单里**没有** `android-aarch64`（老清单）时退回「前往发布页」，不是什么都不给。
+
+  顺带修掉一个既存缺陷：「本次更新」的发行说明在 Android 上**从来不显示**（显示条件里含 `download`，
+  而移动端永远拿不到下载句柄）。
+
+  发布侧：CI 的 android job 增出 `…apk.sha256`（**不**给该 job 加桌面 minisign 私钥——为了给 apk
+  造个"看得过去"的 `.sig` 而扩大私钥暴露面不划算，apk 也用不上），`release` job 把它一并挂到
+  Release 并断言它在；`updates.rs` 的 `UpdateManifest` 增 `android_url` / `android_sha256`
+  （从 `platforms["android-aarch64"]` 读，**缺这个键时照常解析**，桌面更新不受影响，有单测钉住两态）。
+  细节与验收清单见 `docs/RELEASING.md` §⑥ / §9.5 / §9.6、`docs/MOBILE.md` §2。
+
+- **发版件接入 Android，并已用临时 tag 真跑验证**（2026-09-13/14）。`release.yml` 新增 `android` job：
+  init → 注入自带的证书校验器 → build → zipalign → apksigner（正式密钥）→ **指纹硬比对** →
+  **断言 ABI 恰为 arm64-v8a** → 改名 `ShuyoNote_<版本>_android-arm64-release.apk`；`release` job
+  `needs: [build, android]`（**Android 失败即阻断整个 Release**，宁可响亮失败也不要静默缺件）。
+  该 job **任何层级都不设 `VITE_TEST_HOOKS`**，并且**显式断言它为空**——不靠"我记得没设"。
+  顺带修一个既存缺陷：上传资产原用 `curl -s`（无 `-f`），同名资产 422 时**会假装成功**并让计数 +1。
+
+  **验证（不是"应该能行"）**：临时 tag `v1.90.1-rc1` 跑完整发版流程 → 四个 job 全绿；
+  CI 日志里 `V3.0 Signer … SHA-256 digest = 6ee89e6f…`，**本地再用 apksigner 独立复核同一指纹**；
+  产物 56,656,409 B、ABI 仅 `arm64-v8a`；真机 `adb install -r` 成功且 **firstInstallTime 不变 ⇒ 数据未丢**，
+  启动无 panic；**反向判据**：发测试深链得到「测试钩子未启用（这是正式构建）」⇒ 发版包不带钩子。
+  验证后 tag 与 Release 均已删除（复核 404，run 记录保留）。
+
+  仍然没做的：AAB/上架 Play（apksigner 签不了 AAB）、arm64-only 的覆盖限制。
+  （当时还写着"Android 的应用内更新通道"——**已在本次 `[Unreleased]` 的第一条实现**：应用内能发现新版并下载 APK，装机仍交给系统。）
+
+- **CI 出包时用正式密钥签名，并且把"是不是正式密钥签的"变成硬判据**（2026-09-13）。
+  以前 CI 只出**未签名** APK，每次装真机都要在本机手工 `zipalign` + `apksigner` ——
+  本轮手工签了三次、还漏签过一次（`INSTALL_PARSE_FAILED_NO_CERTIFICATES`）。
+  现在 `android.yml` 从 Secrets 取 keystore（`ANDROID_KEYSTORE_BASE64` /
+  `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`）→ zipalign → apksigner sign →
+  `apksigner verify --print-certs`，并**把实测 SHA-256 指纹与 `6E:E8:…:7A:88` 硬比对**，
+  不一致直接让 CI 红；Secrets 缺失也**明确报错**，不会静默产出未签名包。
+  产物新增 `android-apk-aarch64-signed-test-hooks`（名字里写死 test-hooks，防止被当发版件拿走）；
+  未签名那份保留，继续用于量体积。
+  ⚠️ 边界：这里的包带 `VITE_TEST_HOOKS=1`，**签名 ≠ 可发版**；对外发布仍走 `release.yml`
+  （那一步的签名**已做**，见上一条）。
+- **深链到达时会在 logcat 留一行摘要**，让"URL 到底到没到 Rust"变成可程序化判定的事。
+  以前只能靠截图猜，而"没反应"有两种完全不同的原因：URL 没进来，或者进来了前端没接住。
+
+  ```text
+  I/RustStdoutStderr: [deep-link] 收到 1 条 URL：shuyonote://test/new-page/…
+  ```
+
+  只打**动作**、不打参数：`?url=` / `?title=` / `?text=` 里可能就是用户内容（被保存的
+  网页地址、笔记标题），而 logcat 落在设备上、`adb logcat` 能读。
+  ⚠️ 这条日志的**第一版自己就有这个洞**：先按 `/` 分段、没先切掉查询串，于是
+  `shuyonote://save?url=https%3A%2F%2F…` 的整段参数被当成"路径第二段"原样进了日志
+  （参数里的 `%2F` 是转义斜杠，按 `/` 分根本分不开）。单测当场钉住：
+  `log_summary_keeps_the_action_and_drops_everything_user_supplied`。
+  写下来是因为它说明**"加日志"本身也要有判据**——日志是一个新的泄露面。
+
+- **Android 构建的触发门禁补全**：改 Rust 源码以前**不会触发**构建。
+  `.github/workflows/android.yml` 的 `paths:` 原本只有本文件与 `src-tauri/tauri.conf.json`
+  两条，于是改 `src-tauri/src/**`——恰恰是决定 APK 里跑什么的那部分——推上去之后
+  Actions 里**连一条运行记录都没有**（发现方式：推完 `cbae0dd` 去看 Actions，空的）。
+  现按**构建输入**补齐：Rust 侧 `Cargo.toml` / `Cargo.lock` / `src/**` / `capabilities/**` /
+  `icons/**`；前端侧 `src/**` / `index.html` / `vite.config.ts` / `package.json` /
+  `pnpm-lock.yaml`；外加 `scripts/**`（`pnpm build` 里串着四个门禁脚本）。
+  代价是这些分支上的前端提交也会跑一次约 15 分钟的 Android 构建；公开仓库不计费，
+  而这些提交确实会改变 APK 内容。
+
+- **真机自动化多了个"可驱动点"：测试深链（正式包不带）**。真机验收此前卡在"驱动不了
+  WebView"——`uiautomator` 读不到 DOM、Ctrl+K 与 `input text` 都进不去（见 `docs/MOBILE.md` §2.3）。
+  现在多了两条**只在带 `VITE_TEST_HOOKS=1` 的构建里生效**的深链：
+
+  ```bash
+  adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/run-plugin?plugin=demo&cmd=demo.hello"
+  adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/new-page?text=hello"
+  ```
+
+  没有那个环境变量时分派层直接拒绝、只提示"未启用"（有单测钉着）；正式发版不带它。
+  钩子**不绕过任何检查**：插件命令走与界面相同的 `usePlugins.runCommand`，建页走 `useNotes.createPage`。
+  - `plugin=` 与 `cmd=` **两个都必须给**：想从 `demo.hello` 推出插件名这条路不成立——
+    先按最后一个点切被测试当场逮住，改成按第一个点切**仍然错**（真实例子里 `activity-digest`
+    的命令叫 `digest.show`，不带插件名前缀）。
+  - 移动端管道已接上（见 `### 修复` 里那条深链修复）：`tauri.conf.json` 补了
+    `plugins.deep-link.mobile`，`deeplink::plugin()` / `attach()` 两平台共用，
+    Kotlin 侧 intent 由 `on_open_url` 接住。
+  - **可达性判据先说清楚**：`am start -n <组件>` 是显式 intent，**绕过 intent-filter**；
+    它只能证明"插件拿到了 URL"，不能证明"浏览器里点链接能唤起应用"。后者要看合并后
+    的 manifest 里有没有 `VIEW` + `BROWSABLE` + `scheme=shuyonote`（`aapt2 dump xmltree`）。
+    真机脚本 `device-hooks2.cjs` 两件事都测。
+  - **后来又补了两条**（`list-pages` 与换过的 `http-probe`），因为真机上跑完发现**两件事判不了**：
+    - **Phase 0 持久化判不了**：重启后应用**总是停在空白新页**上，旧页在不在界面上看不出来。
+      ⇒ `shuyonote://test/list-pages` 用现成的 `list_pages` 命令把"共 N 页：标题…"念出来，
+      重启后再问一次才作数。
+    - **Phase 0 持久化判据：已用它验掉**（2026-09-13 真机）：基线问一次 = **41 页** →
+      建一页 → **42 页** → **`force-stop` 重启后再问 = 仍是 42 页** ⇒ 写进去的东西真的落盘了。
+      对照组是关键：光看界面判不了——**重启后应用总是停在空白新页**上。
+    - **`http-probe` 只能证明"失败了"**：原来打的 `community.shuyo.cn/` 必然 404，
+      于是无法区分"没握手"与"握手了但 404"。⇒ 改用 `fetch_bookmark_metadata`（接受任意
+      https 并返回网页元数据），打 `shuyo.cn` 就能看到**成功**路径。
+    两条都复用现成命令，**不新增命令、不动能力清单**。
+  - ⚠️ toast 在手机上是**单行截断**的（实测只显示十几个字）⇒ 判据要**把关键内容放最前面**；
+    这一条是踩出来的：`取不到这篇帖子：HTTP 404` 和 `…：无法连接` 在被截断后**看不出区别**。
+
+- **聚合邮箱收窄为桌面专属（移动端不提供）**。它走 `native-tls`（桌面用系统 TLS），
+  移动端要为此从源码交叉编译一份 OpenSSL，而移动端本就不做这个功能。
+  - Rust：`mod email` / `mod smtp` 与 **23 个邮箱命令**全部 `#[cfg(desktop)]`；邮箱那组依赖
+    （`mailparse` / `async-imap` / `tokio-native-tls` / `native-tls` / `encoding_rs`）移进
+    `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`。
+    **实测 Android 侧 `cargo tree -i native-tls` 现在是「nothing to print」**，桌面侧不变。
+  - 前端新增**具体能力**判定 `emailSupported()`（`src/lib/platform/capabilities.ts`，纯函数 + 5 条单测），
+    邮箱面板与设置区改用它。**刻意没有动 `isDesktopPlatform()`**：它的语义是"有没有 Rust 内核"，
+    Tauri 的移动端为真，而同步/加密/插件在移动端是要保留的——拿它当"桌面专属"的近似会误伤。
+  - ⚠️ 澄清一条**我先前判断错的说法**：收窄邮箱**并不能**让 Android 不再需要编译 OpenSSL。
+    实测 `cargo tree -i openssl-sys`（Android）显示，去掉邮箱后 OpenSSL 仍由
+    **`libsqlite3-sys`（SQLCipher 的加密后端）** 拉进来。所以"移动端构建要 Perl/make"这组卡点
+    原样还在，正解是换构建环境（CI 用 Linux runner），不是砍功能。
+
+- **OCR 语言包改为按需下载（安装包再减约 30 MiB，Android 上约 60 MiB）**。
+  两个语言包（`chi_sim` 19.2 + `eng` 10.4 = 29.6 MiB）原先随包分发，而 **09-10 那份 Android APK
+  实测装着两遍**（APK 的 `assets/` 一份 124.1 MiB + `.so` 里 Tauri 内嵌的前端副本一份；桌面安装包同样带着）。
+  ⚠️ **2026-09-13 的 CI 构建实测只有一遍**（`assets/` 只剩 3.5 KB）——"两遍"是那次旧 CLI 生成的
+  工程的行为，**不是恒定事实**，别拿它当体积账的依据（见 私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` §3.2）。
+  现在改为：**首次使用 OCR 时联网下载一次，之后由 tesseract 的 IndexedDB 缓存复用 ⇒ 永久离线可用**。
+  - 语言包托管在 `https://shuyo.cn/ocr/tessdata/4.0.0/`（**路径带 tessdata 版本号**，
+    所以服务端可以 immutable 长缓存；换模型＝换路径，不会让用户跑着旧模型还看不出来）。
+    托管规矩落在 `docs/nginx-ocr.conf`。
+  - ⚠️ 那个 location **必须给 CORS**：应用壳的页面 origin 是 `tauri://localhost`，
+    取 `https://shuyo.cn/...` 是跨域 fetch，而 **Web 版同源、不会暴露这个问题** ——
+    漏了它就会表现成"浏览器里正常、装成应用就不行"。
+  - ⚠️ **`cacheMethod` 必须跟着从 `"none"` 改成 `"write"`**：本地模型时代不缓存是对的，
+    改成远端后不缓存＝**每次 OCR 重下约 30 MB**。这两处在两个文件里、只看一处看不出来，
+    所以单测（`ocr.test.ts`）与构建门禁（`check:ocr-assets`）各钉了一道。
+  - 完全离线的发行版仍可打包：`SHUYONOTE_OCR_BUNDLE=1` 让脚本把语言包拷回 `public/ocr/tessdata`，
+    **并同时设** `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`（两处必须一致，门禁会拦住只设一半）。
+  - 顺带更正了几处已经不准的说法（帮助页与 `docs/development.md` 里"OCR 彻底离线"）。
+
+- **Android 上线准备：砍掉 OCR 资产里的死重（打包体积 −23.8 MiB）**。
+  `public/ocr/core` 原先"整个目录全拷"= **43.2 MiB**（6 个 tesseract-core 变体 × 2 种形态），
+  而 tesseract.js 7 的 worker 只按「SIMD 档 × `legacyCore`」取**一个**；我们调的是
+  `createWorker(langs, 1, …)`（oem=1 纯 LSTM）且从不设 `legacyCore`、也不用 `worker.detect`
+  ⇒ 只会走 `-lstm` 那三档，**三个非 `-lstm` 变体（23.3 MiB）永远用不到**——
+  而它们在 09-10 那份 Android APK 上还被装了两遍（`assets/` 一份 + Tauri 嵌进 `.so` 一份；
+  CI 那份已只有一遍）。
+  现在 `copy-tesseract-assets.mjs` 用显式白名单，**实测 `public/ocr` 72.9 → 49.1 MiB**。
+  - 新增门禁 `check:ocr-assets`（已进 `pnpm build` / `build:web`），钉三件事：源码不许走
+    legacy 路径 / 产物不许有死重变体 / 每个 `.wasm.js` 必须有 `.wasm` 同伴。
+    **三条变异测试验证过它会失败**，而且报错指名道姓（缺哪档、哪个文件第几行）。
+    它防的是最危险的那一类改动：哪天有人为了 `worker.detect` 打开 `legacyCore: true`，
+    而拷贝脚本仍只放 `-lstm` 三档 —— 那样离线 OCR 会在真机上加载失败，
+    而构建、单测、类型检查**全都发现不了**。
+
+### 修复
+
+- **CI 出的 APK 里其实没有测试钩子**（2026-09-13 真机抓到，迷惑性极强）。
+  `tauri.conf.json` 有 `beforeBuildCommand: "pnpm build"`，所以 `tauri android build`
+  **会再跑一遍前端构建**，而它**不继承别的 step 上的 `env:`**——`VITE_TEST_HOOKS` 原先只挂在
+  前面那一步上，于是**进包的是没有钩子的那一份**（两份 `dist/`，一份被另一份覆盖）。
+
+  表现：深链整条链路**都是通的**（Rust 侧日志证明 URL 到了、前端也确实走到了分派），
+  界面上却弹一句「测试钩子未启用（这是正式构建）」——看着像"深链没打通"，实际是两个构建里的
+  另一份在跑。发现方式是**把截图间隔从 6 秒缩到 1.6 秒**：toast 只活几秒，之前一直没抓到。
+  改法：`VITE_TEST_HOOKS` 挂到 **job 级**。
+
+- **Android 上 Rust 侧的 HTTPS 一按就 panic**（2026-09-13 真机实测；**已实现，验收判据见下**）。
+  logcat 原话：
+
+  ```text
+  E/RustStdoutStderr: Expect rustls-platform-verifier to be initialized
+  ```
+
+  reqwest 0.13 在 Android 上默认用 `rustls-platform-verifier` 校验证书，而它**必须先被初始化**，
+  否则内部 `global()` 的 `expect(...)` 直接 panic。影响面是**所有 Rust 侧 HTTPS**：
+  多设备同步、插件索引、AI 调用、检查更新。（**WebView 自己的 HTTPS 不受影响**——OCR
+  语言包下载走浏览器栈，这两条别搞混。）
+
+  修法保住了"系统 CA / 私有 CA 可用"——换成内置 webpki 根会让**用私有 CA 自建服务器**的
+  用户连不上，而自托管优先是本项目的定位：
+
+  1. `scripts/android-platform-verifier.mjs`：把那套 Kotlin 组件（**不在 Maven Central 上**，
+     rustls-platform-verifier#115，只能引 crate 自带的 maven 目录）注入生成出来的
+     `gen/android/app/build.gradle.kts`，并写 Proguard 规则——release 开了 R8，而这些类
+     **只被 JNI 按名字**用到，不 keep 会被当死代码删掉。**必须是脚本**：`gen/` 不入库，
+     CI 每次自己 `init`，手工改动不可复现。
+  2. `src-tauri/src/tls_android.rs`：启动时（主窗口建好后立刻）初始化它。
+
+  真正的难点是**两套 jni 对不上**：wry 0.55.1 用 **0.21.1**，rustls-platform-verifier 0.7.0 用
+  **0.22.4**，类型不能互换（jni 0.22 文档专门警告不同版本不共享状态）。我在 `docs/MOBILE.md`
+  §2.5 里一度把它记成"硬阻塞、不适合盲写"——**那是当时的判断，不是结论**。实际解法是两边各自
+  **文档化的构造器** + 裸指针：`JniHandle::exec` 直接给 env 与 **Android Activity**
+  （Context 于是不必靠反射去猜）→ `env.get_java_vm()?.get_java_vm_pointer()` →
+  `unsafe { JavaVM::from_raw(..) }`(0.22) → `attach_current_thread` → `init_with_env`。
+  取证过程、被否掉的两个方案（`ndk_context` 根本不在这棵依赖树里；verifier 版本由 reqwest 定死）
+  见 §2.5。
+
+  **验收判据（三层，能程序化就不靠截图）**：① logcat 出现
+  `[tls] 证书校验已交给 Android 系统证书库`；② **不再出现**上面那条 panic；③ 真机跑
+  `shuyonote://test/http-probe?url=…` 并拿到内容（那才是真的握手成功）。
+
+  **真机验证结论（2026-09-13）——✅ 通过**（当天曾误判"顺带挖出一个服务端问题"，
+  **同日已自我更正为不成立**，见下面那条"更正"）：
+  - 初始化：`[tls] 证书校验已交给 Android 系统证书库` 1 条、那条 panic **0 条** ✓；
+  - **真实 HTTPS 请求成功**：探针打 `https://www.baidu.com/` 取回 107 字节 JSON
+    （`http-probe 107B: {"url":"https://www.baidu.com/",…`）⇒ 证书校验器、系统根库、
+    reqwest 整条路都是通的 ✓✓。
+  - ⚠️ **但打我们自己的域名会失败**：`https://shuyo.cn/` 返回
+    `无法获取网页: error sending request for url (…)`。根因**不是客户端**，是**证书链与
+    系统根库对不上**：
+    - 服务端发的是 Let's Encrypt **新层级**：`leaf ← YE2 ← Root YE ← ISRG Root X2`（4 张，链完整）；
+    - 而这台设备的系统库实测 `grep -l` 计数：**`ISRG Root X1` = 1、`ISRG Root X2` = 0、
+      `Root YE` = 0`** ⇒ rustls 按系统根库校验证书**建不出链**；
+    - 浏览器能打开同一个站点，是因为 **Chrome 自带根库**（与系统库是两套）——这正是
+      "浏览器好使 ≠ Rust 好使"的教科书例子。
+    - **影响面**：Android 上所有走 Rust 访问 `shuyo.cn` / `community.shuyo.cn` 的功能
+      （社区、AI 等）。**修法在服务端**：让 nginx 发一条**锚定 ISRG Root X1** 的链
+      （certbot 的 `--preferred-chain "ISRG Root X1"`，X1 在 Android 7.1.1+ 普遍存在）。
+    - **未做**：服务端那一步（属于服务器侧改动，不在本轮客户端范围）。
+  - 顺带把"只打一层错误"这个坑填了：`bookmark.rs` 新增 `describe_err()`（沿 `source()` 串链）
+    并额外写一行 logcat——手机 toast 是单行截断的，根因在末尾。
+
+- **Android：深链点了完全没反应**（2026-09-13）。`adb shell am start -a android.intent.action.VIEW
+  -d "shuyonote://test/new-page?text=…"` 打进 `MainActivity`（logcat 里能看到 `NewIntentItem`
+  已交给 Activity），但界面纹丝不动、没有 toast、没有任何提示。
+
+  根因不在插件、也不在 intent-filter，而在**我们自己的接线**：`deeplink::attach()` 整段带
+  `#[cfg(desktop)]`，注释给的理由是"移动端的 `DeepLink` 是另一套 API（没有 `on_open_url`）"
+  ——**那句是错的**。查 `tauri-plugin-deep-link-2.4.10/src/lib.rs`：
+
+  - `DeepLinkExt`（L481）与 `on_open_url`（L511）都在 `#[cfg]` 之外；
+  - Android 那份 `DeepLink`（`mod imp`，L87 起）**自己就有 `get_current`**
+    （L121 走 `run_mobile_plugin("getCurrent")`，读 Kotlin 的 `currentUrl`）；
+  - 真正桌面专属的只有 `handle_cli_arguments`（L195）——那是"从 argv 里读"，手机本来就没有 argv。
+
+  于是链路上出现一个**断点**：Kotlin `onNewIntent` → channel → 插件 emit
+  `deep-link://new-url` → **没有订阅者** → 前端永远收不到。现在两平台共用同一份
+  "先入队再 emit"，`plugin()` 也不再按平台分叉（注册与接线仍成对，门禁脚本守着）。
+
+  顺带发现**冷启动在 Android 上是同一个洞**：`DeepLinkPlugin.kt` L78-89 的 `load()` 里
+  `setEventHandler` 还没跑，`this.channel?.send(...)` 是空操作，URL 只落到 `currentUrl`——
+  `get_current()` 补收那段代码一行不改地正好补上。桌面（argv）与 Android（intent）的
+  冷启动，是**同一个洞的同一种补法**。
+
+  **真机验证结论（2026-09-13，HUAWEI Mate 40 / Android 12）**：
+  - warm（`onNewIntent`）与**冷启动**（`force-stop` 后带 URL 启动 → `load()` → `get_current()`）
+    两条路径都在 Rust 侧留下了 `[deep-link] 收到 1 条 URL：…`；
+  - **普通冷启动（不带 URL）是 0 行** ⇒「零副作用」也成立；
+  - **前端确实收到并执行了动作**：`new-page` 钩子让页面上真的出现了新建的页
+    （标题即参数内容、状态"已保存"），`run-plugin` 钩子把插件返回值提示了出来；
+  - **浏览器点链接能不能唤起**（这条与上面无关，因为 `am start -n` 绕过 intent-filter）：
+    合并后 manifest 里 `ACTION_VIEW` + `CATEGORY_DEFAULT` + `CATEGORY_BROWSABLE` +
+    `scheme="shuyonote"` 齐全（`aapt2 dump xmltree` 静态查），旁证是不带 `-n` 的隐式 intent
+    也投递成功。
+
+- **Android 上插件运行时（Boa）一上来就 panic**（2026-09-13）。真机（HUAWEI Mate 40 /
+  Android 12）第一次跑起来，日志里就有：
+
+  ```text
+  thread 'plugin-run' panicked at boa_engine-0.21.1/src/value/inner/nan_boxed.rs:270:9:
+  assertion `left == right` failed: this platform is not compatible with a nan-boxed `JsValueInner`
+  enable the `jsvalue-enum` feature to use the enum-based `JsValueInner`
+  ```
+
+  **应用没崩**（panic 在插件线程上、主线程照常跑——M11.5 那套"超预算就 panic 让它 unwind、
+  应用存活"的设计顺带被真机验证了一次），但**插件不可用**。
+  根因：`nan_boxed.rs` 的 `MASK_POINTER_VALUE` 只留低 48 位，而真机上那个指针是
+  `0xB400007D1B960000`（真实地址 `0x7D1B960000`）——**最高字节被当 tag 用了**。
+  修法：移动端开 `boa_engine` 的 `jsvalue-enum`（枚举版 `JsValueInner`，不做指针标记），
+  **只对移动端开**（桌面 x64 用户态指针高位为 0、不受影响）。代价是 `JsValue` 从 8 字节
+  nan-boxed 变成枚举，但仅移动端。
+  - **真机复验**：新包（53.21 MiB，测试 key 签名）覆盖安装 + 冷启动后，
+    **日志里这条 panic 与 `plugin-run panicked` 都不再出现**，无 FATAL，界面正常渲染。
+  - ⚠️ 这只证明"**那条 panic 消失了**"，**不证明插件端到端可用**——手机上没有任何插件可跑，
+    而"从 zip 装插件"在 Android 上另有问题（见上面的「已知问题」）。
+  - 附带一条方法论：这回坐实了 **"CI 绿 ≠ 装上能用"**——这条平台差异在构建期**完全看不见**。
+
+- **Android 上「选文件」拿不到可读路径**（2026-09-13）。根源在**别人的源码**里：
+  `tauri-plugin-dialog` 的 Android 实现是 `uris.add(uri.toString())`——把系统的 `content://` URI
+  **原样**交给前端（同一个文件里那个能反查真实路径的 `FilePickerUtils.getPathFromUri()`
+  在这条路上根本没被调用），而我们的导入路径全按"文件路径"用它。于是**附件导入 / 装 zip 插件 /
+  备份恢复 / 空间导入**要么报"不存在"、要么报"读取失败"——报的还是误导性的话。
+  - 做法：新增 `src-tauri/src/picked_file.rs` 作为「用户选的东西」的**唯一落地入口**——
+    不是把每处读取都改成读 fd，而是把选中项**拷成一条真实临时路径**，下游的 `exists()` /
+    `is_file()` / zip 解包 / 流式哈希**全都照旧能用**（各入口只改一行）。代价是一次拷贝，
+    正是上线计划里早就写下的"先拷到缓存"的退路。
+  - 判据：**只有看着像 URI 才走插件**（含 `://` 且 scheme ≥2 字符）。**Windows 的 `C:\…` 必须
+    判成路径**，否则桌面会被误路由到"为 Android 才存在"的分支上——有单测钉着。
+  - 打开走 `tauri-plugin-fs` 的 `Fs::open`（Android 经 Kotlin 的 ContentResolver 取 fd；
+    桌面就是 `std::fs::OpenOptions`，与原来等价）。⚠️ 必须用 `FilePath::from_str`——用
+    `Path::new` 会把它当普通路径，等于白改。fs 插件**不给前端开**（capabilities 里没授权限）。
+  - 拷出来的临时文件随 `PickedFile` 析构删除；用户原始文件不碰。按目录选择仍不支持
+    （系统给的是 tree URI），错误信息里如实说清。
+  - ⚠️ **状态是"实现完成 + CI 编译通过"，不是"真机验收通过"**：行为验证要人在手机上走一遍
+    （附件面板 → 选择文件 → 挑一张图 → 应正常导入）。
+
+- **从 Windows 发版时，`release.mjs` 会在打 Web 整包那一步直接崩掉**：那一步 shell out 到
+  系统的 `zip`，而注释里写着「用它是因为它到处都有」——**Windows 上根本没有 `zip`**
+  （实测：`'zip' is not recognized as an internal or external command`）。
+  macOS 侧一切正常，所以一直没人发现；用户这次要求从 Windows 发版才撞上。
+  - 同一个坑在 `plugin-fragment.mjs` 里已经踩过一次（Windows 上 3 条测试红），
+    当时的修法是把打包收敛到 `scripts/lib/pack-zip.mjs`——这次是**同一处的另一半**。
+  - 修法：改用它，并给 `packDirToZip` 加 `flat` 选项。形状必须逐字对上原来的
+    `cd <stage> && zip -qr out.zip .`：条目**平铺在包根**（多一层 `web-stage-x/`，
+    用户"解压到静态服务器"就会把站点铺进子目录，页面全 404）。
+  - 门禁：`pack-zip.test.mjs` 新增 2 条——`flat: true` 平铺、以及**默认形状不许被改掉**
+    （插件包仍必须带目录名前缀）。
+
+### 已知问题（尚未修）
+
+- **Android 上 Rust 侧的 HTTPS 一请求就 panic**（2026-09-13 真机实测，**修复方案未定**）。
+  日志：
+
+  ```text
+  thread 'tokio-rt-worker' panicked at rustls-platform-verifier-0.7.0/src/android.rs:90:10:
+  Expect rustls-platform-verifier to be initialized
+  ```
+
+  `reqwest 0.13` 的默认 TLS 特性就是 `rustls`，而它内联了 `rustls-platform-verifier`
+  （其 `Cargo.toml` 里 `rustls = [..., "dep:rustls-platform-verifier", ...]`）；这个 verifier
+  在 Android 上**必须先初始化**，否则 `global()` 直接 `expect(...)` panic；而它要在 Android 上工作
+  还得**在 Gradle 里加一个 Kotlin 组件**（`rustls-platform-verifier-android`）——
+  可我们的 `gen/android` **不在版本控制里**。
+  受影响（**Rust 侧** HTTPS）：多设备同步（自建服务器走 https）、插件索引拉取、AI 调用、检查更新。
+  **WebView 自己的 HTTPS 不受影响**（OCR 语言包下载走浏览器栈），这两条别搞混。
+  两个候选修法见 `docs/MOBILE.md` §2.4（倾向"正经初始化"，但要把 gradle 定制脚本化）。
+  **属 Android 上线阻塞项。**
+  2026-09-13 进一步查明**修 A 的路上有一处硬阻塞**：Tauri 侧的官方写法（
+  [tauri#13267](https://github.com/tauri-apps/tauri/issues/13267)）依赖 `webview.jni_handle().exec`，
+  而它给的 JNI 类型来自 **jni 0.21.1**（wry 0.55.1），`rustls-platform-verifier` 0.7.0 用的却是
+  **jni 0.22.4**——两个大版本的类型不通用，得跨版本用裸指针搭桥。详见 `docs/MOBILE.md` §2.5。
+
 ## [1.90.1] - 2026-09-12
 
 > 这一版两件事：**索引里那 4 个零代码插件终于能装了**（原先点安装必报
@@ -29,6 +431,25 @@
   与那条**只在发布日志里出现的坑**：`SHUYONOTE_PUBLISHER_KEY` 两台机器都没设，于是产出片段
   那一步被跳过（`release.mjs` 会打印一行说明，**不是静默的**——这一点我先前写错过并已更正），
   表现为"发了新版但索引没更新"。
+
+- **Android 能在 CI 上出包了，安装包 156.7 → 53.41 MiB（当初定的 55–70 MiB 目标已达成）**。
+  新增 `.github/workflows/android.yml`（ubuntu runner + Android SDK/NDK；只手动触发或本文件被改动时跑，
+  正式签名流程定了再决定要不要并进 `release.yml`）。**实测产物**：arm64 未签名 APK **53.41 MiB**
+  （`56,000,758` 字节），只含一个 ABI（尽管产物目录名是 `universal`——那是"不做 ABI 拆分"的意思），
+  **语言包不在包里**（CI 里有硬断言守着，出现 `traineddata` 就 fail）。
+  - ⚠️ **路上翻出两个只在 Linux 上暴露的坑，都不是"换 NDK 版本"能解决的**：
+    ① OpenSSL 的 `make install_dev` 调 `aarch64-linux-android-ranlib` → **Error 127**，
+    因为 NDK 只提供 `llvm-ar` / `llvm-ranlib`，没有那种前缀名（本机 NDK 29 实测：带前缀的只有
+    `aarch64-linux-androidNN-clang[++]`）；② `mupdf-sys` 的 bindgen **不传 `--target`**
+    （它的 `find_clang_sysroot()` 只给 emscripten 返回 sysroot），于是在 Linux 上用宿主 triple
+    解析 mupdf 头文件、读到宿主 glibc 的 `features-time64.h` → `bits/wordsize.h` not found。
+    修法与理由都写在 workflow 的步骤注释里（两条互为兜底）。
+  - ⚠️ 顺带更正一句我自己写错的判断：原先写"Linux runner 上没有这些 Windows 工具链问题"——**实测打脸**。
+    换个环境不是"没有问题"，是"**换一组问题**"；构建环境仍然必须钉死并实测。
+  - ⚠️ 还有一条**尚未定论、不许当成已解决**：CI 那份 APK 的 `assets/` 里没有前端（只剩 3.5 KB），
+    而 09-10 那份有 124.1 MiB。证据指向"前端由 `.so` 内嵌副本经 `tauri.localhost` 提供、
+    `assets/` 那份是多余的"（两个 dex 里都只有 `WebViewAssetLoader`，没有 `android_asset`），
+    但**这必须真机开一次才算数**（前置是签名）。
 
 ### 修复
 
@@ -64,22 +485,6 @@
 - **`check:panel-layout` 新增四条几何断言**（这条门禁本来就是为"看不到但很难看"的问题建的）：
   状态徽章不许越出卡片边界、正文区与弹窗不许横向溢出（"内容被裁了"在几何上就是越界）、
   弹窗标题保持一行、页眉不许横向溢出。截图能力（`--shots`）也用它复核过亮/暗两套主题。
-
-## [Unreleased]
-
-### 修复
-
-- **从 Windows 发版时，`release.mjs` 会在打 Web 整包那一步直接崩掉**：那一步 shell out 到
-  系统的 `zip`，而注释里写着「用它是因为它到处都有」——**Windows 上根本没有 `zip`**
-  （实测：`'zip' is not recognized as an internal or external command`）。
-  macOS 侧一切正常，所以一直没人发现；用户这次要求从 Windows 发版才撞上。
-  - 同一个坑在 `plugin-fragment.mjs` 里已经踩过一次（Windows 上 3 条测试红），
-    当时的修法是把打包收敛到 `scripts/lib/pack-zip.mjs`——这次是**同一处的另一半**。
-  - 修法：改用它，并给 `packDirToZip` 加 `flat` 选项。形状必须逐字对上原来的
-    `cd <stage> && zip -qr out.zip .`：条目**平铺在包根**（多一层 `web-stage-x/`，
-    用户"解压到静态服务器"就会把站点铺进子目录，页面全 404）。
-  - 门禁：`pack-zip.test.mjs` 新增 2 条——`flat: true` 平铺、以及**默认形状不许被改掉**
-    （插件包仍必须带目录名前缀）。
 
 ## [1.90.0] - 2026-09-11
 

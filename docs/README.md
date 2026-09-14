@@ -55,6 +55,7 @@ CHANGELOG.md             # 版本变更日志
 | [SYNC.md](SYNC.md) | **同步机制详解**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证 + 客户端侧排错（错误码）。服务端自托管部署 / 配置 / 排错见私有仓库 `docs/deploy.md` |
 | [multi-platform-ci.md](multi-platform-ci.md) | **多平台自动构建发布（CI）**：`v*` tag 自动打 Win/mac/Linux 安装包。GitCode 流水线只有 Linux runner；GitHub Actions 有全平台。给出 `.github/workflows/release.yml`（三平台 + secrets）与 `.gitcode/workflows/build-linux.yml`（Linux），及方案 A/B/C 取舍 |
 | [macos-updater.md](macos-updater.md) | **macOS 构建 · 签名 · 公证 · 自动更新**：mac 机器一次性准备（Xcode/rust/node）、Apple Developer ID 证书 + notarization 凭据、`tauri.conf.json` updater/endpoints/pubkey 配置、mac 上打签名+公证 dmg、`release.mjs` 发布与 mac `latest.json`、CI secrets、边界（未签名无法自动更新）、Mac 到手当天清单 |
+| [RELEASING.md](RELEASING.md) | **发布流程（桌面 + Android，runbook）**：① CHANGELOG → ② 多处版本同步 → ③ 校验/构建 → ④ 提交 + tag（**tag 必须同时推 `origin`/gitcode 与 `github`**，否则 `release.yml` 不触发或镜像缺 tag）→ ⑤ GitHub Actions 多平台构建（`shuyonote://` 注册依赖 Windows 保持 `nsis`）→ ⑥ GitCode 更新通道（`release.mjs`）→ ⑦ Web 版两入口 → ⑧ CHANGELOG 连续性；含 **§9 Android 发版与验证**（自检包≠发版件、正式密钥签名 + 指纹硬比对、dry-run 约定、已知边界）与 §9.6 发版检查清单 |
 | [free-site-export-guide.md](free-site-export-guide.md) | **免费客户出口 · 网站/帮助站导出与发布指南**：免费/开源社区的**被动出口**——三层出口（就地提示/内置指南/外部静态站）、导出三种方式（M21 静态 wiki 导出建帮助站 / 仓库 Pages 建主页 / 应用内「关于」对话框）、干净链接策略（无 utm/埋点）、发布路径、与付费侧对照、发布核对清单与红线。**付费客户沟通/商务运营材料见私有 shuyonote-sync-server 仓库** |
 | [positioning.md](positioning.md) | **产品定位**：一句话定位、目标用户、差异化 |
 | [plugin-api.md](plugin-api.md) | **插件 API（面向作者，生成物）**：只读这一份就能写出可安装可运行的插件——最小插件、能力表、权限与写中介、命令参数、事件钩子、更新时新增权限要用户重新确认、触发面、设置、零代码插件（声明式视图 / 视图参数化 / 主题）、导入导出、执行预算与错误码。由 `capabilities/capabilities.json` 生成（跑 `node scripts/gen-capabilities.mjs`） |
@@ -77,7 +78,7 @@ CHANGELOG.md             # 版本变更日志
 | **M3** | 主题 / 外观自定义 + 插件雏形 | [x] | [插件方案](plans/2026-08-22-plugin-plan.md) |
 | **M4** | 属性驱动仪表盘聚合 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M5** | PDF 导出 | [x] | [块引用方案](plans/2026-08-20-block-reference-plan.md) |
-| **M6** | 移动端适配 | [执行中]（**Tauri 原生壳**；Android 已能出未签名 APK） | **[移动端上线计划（Android 优先）](plans/2026-09-13-android-launch-plan.md)** + [移动端](MOBILE.md)（路线与各平台对照）+ [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
+| **M6** | 移动端适配 | [执行中]（**Tauri 原生壳**；Android CI 已跑通：`android.yml` 出自检包（**已用正式密钥签名**、带测试钩子、只可自检）+ 未签名包（保留用于量体积）；对外发版件走 `release.yml` 的 `android` job，同为正式密钥签名，实测 56,656,409 B ≈ 54.0 MiB） | **移动端上线计划（Android 优先）**（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） + [移动端](MOBILE.md)（路线与各平台对照）+ [跨平台方案](plans/2026-08-24-cross-platform-plan.md)（升级为 M16 全平台通吃） |
 | **M7** | 数据库视图扩展 | [x] | [属性 + 数据库方案](plans/2026-08-21-properties-database-plan.md) |
 | **M8** | 新页面引导层 | [x] | — |
 | **M9** | 模板 | [x] | [模板方案](plans/2026-08-22-template-plan.md) |
@@ -145,13 +146,22 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-01-structural-backlog-plan.md](plans/2026-09-01-structural-backlog-plan.md) | **「安全加固后的结构性改进」立项**（2026-09-01，**三项均达成**）：(1) markdown round-trip 单测（Lexical 无头测试，88 断言全绿）；(2) web.ts 命令契约层（`CommandMap` 类型 + api.ts invoke 编译期校验 + check-web-commands 纳入 build）；(3) 服务端单 Mutex 并发瓶颈（push 单事务 + 读写分离 + 只读连接池，见 shuyonote-sync-server）。 |
 | [plans/2026-09-05-desktop-product-polish-plan.md](plans/2026-09-05-desktop-product-polish-plan.md) | **「桌面端产品打磨计划」（规划）**：依据内部产品评价（**已移出公开仓库**，见私有 shuyonote-sync-server），**桌面是主线**。四根柱子——(1) 同步地基（一致性整改 + 跨设备回归脚本 + 自托管 SYNC 文档）、(2) 数据安全（一键备份/恢复 + 回收站兜底 + 整空间导出）、(3) 桌面体验打磨（z-index 统一 + 空/加载/错误态 + 编辑器/数据库打磨）、(4) 交付/产品化（自动升级 + 关于/许可证 + 发布节奏收紧）；含优先级 P0–P3、验收与交付物；**最小可交付三件事 = 同步一致性 + 备份/恢复 + 自动升级** |
 | [plans/2026-09-05-sync-consistency-remediation-plan.md](plans/2026-09-05-sync-consistency-remediation-plan.md) | **「同步一致性整改 + 跨设备回归脚本」可执行方案（P0 地基）**：现状盘点（device_seq 全 0 / FNV vs SHA-256 / `.part` / 增量指针 / 幂等）；按文件/接口的具体整改（桌面 sync.rs、web web.ts、服务端 sync.rs）；`scripts/sync-regression.mjs` 两设备互改收敛 + 无 400/413 + 哈希一致 + 幂等 + 增量的回归断言；新增/改动文件清单、验收清单、最小交付物（整改 + 回归脚本 + docs/SYNC.md） |
-| [plans/2026-09-06-email-aggregate-plan.md](plans/2026-09-06-email-aggregate-plan.md) | **「聚合邮箱（邮件即笔记）」落地文档（[x] 已实现 v1.83.0）**：多账号 IMAP 聚合收件箱 + 一键转笔记/任务（capture-first）；范围界定（做/不做）、技术可行性、P0–P2 里程碑、验收清单、风险与决策点（OAuth 门槛/凭据安全/性能/范围失控）、文件级改动清单。**进展与实装详见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；商业化/OAuth 凭据/服务端设想等敏感部分见私有 shuyonote-sync-server 仓库 `docs/email-aggregate-monetization.md`** |
+| [plans/2026-09-06-email-aggregate-plan.md](plans/2026-09-06-email-aggregate-plan.md) | **「聚合邮箱（邮件即笔记）」落地文档（[x] 已实现 v1.83.0；桌面版功能，移动端不提供）**：多账号 IMAP 聚合收件箱 + 一键转笔记/任务（capture-first）；范围界定（做/不做）、技术可行性、P0–P2 里程碑、验收清单、风险与决策点（OAuth 门槛/凭据安全/性能/范围失控）、文件级改动清单。**进展与实装详见 [多账号聚合收件流](plans/2026-09-07-email-multi-account-aggregation.md)；商业化/OAuth 凭据/服务端设想等敏感部分见私有 shuyonote-sync-server 仓库 `docs/email-aggregate-monetization.md`** |
 | [plans/2026-09-07-email-multi-account-aggregation.md](plans/2026-09-07-email-multi-account-aggregation.md) | **「多账号聚合收件流」实现与交接（[x] 已落地 v1.83.0，方案 B 后端聚合）**：`email_fetch_all`（多账号合并/时间降序/分页/`date_from`+`date_to` 日期区间/`accounts` 筛选）+ `email_fetch_all_months`（聚合各账号含邮件月份）+ `email_test_connection`（IMAP 登录+选 INBOX+可选 SMTP 认证，不发信）；`smtp.rs` 抽 `connect_and_auth`/`verify`。前端：`EmailPanel` 账号「多选下拉」筛选、独立账号列、三级工具栏收纳、AI 总结弹窗、存为笔记先写属性再跳转、转发收件人聚焦修复、邮件 `Date` 解析兼容 QQ 等格式、按月直达（全量拉取后按邮件自身时区年月后端过滤）。**含第 1–4 步交付 commit、聚合视图按 `meta.account` 的 `accountFor` 账号定位、`emailKey` 防 uid 相撞、未读汇总与聚合月份直达等关键点** |
 | [plans/2026-09-07-block-selection-plan.md](plans/2026-09-07-block-selection-plan.md) | **「块操作 / 块多选体系」（[x] 已落地 v1.84.0）**：设计原则=**文字选中优先**，块操作只认独立触发区——**A** 沟槽 `⋮⋮` 手柄（单击弹「块操作」菜单/Shift 连续多选/拖动排序）、**B** 显式多选模式（`Mod+Shift+M` 逐个点块加入/移出）、**C** 页面空白/空块框选；判别标准 `isSafeMarqueeTarget`（文本节点或含文字块→文字选择，否则框选）；记录与文本手势冲突的右键菜单/正文橡皮筋的移除、格式工具条修复、`$deepCloneBlock` 修复块复制；含文件清单与边界 |
 | [plans/2026-09-10-plugin-distribution-strategy.md](plans/2026-09-10-plugin-distribution-strategy.md) | **插件分发策略（M11.11 前置细化，规划）**：把「插件市场」从**平台工程**降级为**协议 + 索引**——结论=**市场解决「发现」，我们缺「供给」**，所以**先做供给、市场最后做，空商店比没有商店更伤**。「依托社区」的正确姿势=**社区当索引宿主（托一份 `plugin-index.json` + 开一个讨论分类），不当市场后端**（省得下身份/讨论，省不下代码审查/元数据/文件托管与滥用处置）。含：`plugin-index.json` 字段规范（`apiVersion`/`minAppVersion`/`permissions[].reason`/`sha256`/`size`/`runtime`/`license`/`discussionUrl`）+ **分级信任**（索引签名→publisher 签名→审查评分）+ 多源订阅与**撤回两级（含离线撤回列表）** + **与既有 `latest.json` + minisign 设施对照（复用而非新造，边际成本≈0）**；**贡献阶梯**（模板→主题→**声明式配方**→逻辑插件→UI 插件，前三级是惰性数据、**今天就能安全开放**，把社区贡献与 M11.13 安全闸门解耦）；**一方先行**（官方先写 3–5 个「只有用插件 API 才做得出来」的插件，兼作 API 实测/示例/模板/招募样板，并撬开「≥3 真实第三方插件」闸门）；**与「绝不跟踪」对齐**（允许/禁止清单：禁下载计数、埋点热门、应用内评分、竞价推荐位；评价走社区帖子）；**社区上线当天可执行清单**；M11.11 细分为 **a 索引协议+zip/URL 安装 → b 治理与信任 → c 应用内市场 UI（最后做）**；红线=**官方插件无特权旁路**（同一 manifest/权限/API） |
 | [plans/2026-09-10-plugin-host-isolation-plan.md](plans/2026-09-10-plugin-host-isolation-plan.md) | **插件宿主子进程化 + OS 级资源限制（M11.13）方案（规划，待拍板）**：把 Boa 挪进独立子进程，宿主成为**纯解释器**——不碰数据库、不拿解密密钥、没有任何路径（**今天插件的密钥与不可信代码同进程**，这是本文最要紧的发现，它决定了「能力全部 RPC 回父进程」这条边界）；超时与取消从「放弃等待」变成**真的杀进程**（顺带关掉 M11.5 遗留的线程空转）；OS 级内存/CPU 上限（Linux rlimit / Windows Job Object / 三平台统一 RSS 看门狗 + 峰值进审计）；IPC 用同二进制 re-exec（不新增二进制，打包签名不用改）；一次性执行不变式、写中介、权限逐次校验、审计全部保号；含 4 阶段迁移（约 9–10 天）、三条验收的自动化测法、现有 165 个测试怎么重排、6 个待拍板问题 |
 | [plans/2026-09-10-plugin-evolution-plan.md](plans/2026-09-10-plugin-evolution-plan.md) | **插件体系进化方案（M11 重基线，规划）**：把 M11 的「磁盘命令插件」从能跑推进到能长生态。**定位=做第一不做更大**——做**第一个「有权限模型 + 作用在端到端加密、可自托管数据上」的可信插件体系**（Figma 有权限但数据在云、VS Code 不在其问题域、**Obsidian 官方承认做不到权限限制**；没人把「插件+权限+E2EE+自托管」凑齐）。含：判据（用户敢装 / 碰不到加密边界之外 / 有人愿意写 / 不返工）与**分轴预期刻度**（权限/沙箱/声明式/加密边界/ABI 对齐或超出；隔离强度分两段闭合；DX 结构性低于顶级；治理与生态规模低于顶级）；**资源与故障隔离矩阵（§3.11，已核实源码）**——Boa 无分配预算 API（0.21.1 与最新 0.22.0 皆无，上游 issue 不涉内存）、`handle_alloc_error` 在 stable Rust 下是 abort 且可定制钩子为 nightly-only → **进程内正解是"超预算就 panic 让它 unwind"**（返回 null 反而确定性弄死应用），段错误/UB/OS 级账目留 M11.13；**权限 × 加密边界**（空间级能力只作用于活动空间、锁定空间返回 `space_locked` 且不隐式解锁、插件数据按 scope 落库——space 级进空间库随 SQLCipher 加密）；**审计与可见性**（权限使用审计轨迹 + 错误码表）；里程碑（M11.5 时限/资源上限/故障可见性 → M11.6 ABI v1 + 能力注册表单一事实源 + 带 `reason` 的权限声明 + **类型包** + **CLI/热重载前移** → M11.7 能力扩容并与 AI 语义工具层合并 → M11.8 触发面/事件 → M11.9 声明式无代码插件 →（闸门）M11.10 沙盒 UI / M11.11 分发治理；**M11.13 隔离强度（宿主子进程化 + OS 级资源限制）已判定必有，为 M11.11 分发硬前置**）；9 项**不可逆决策**与可延后决策清单；**弯路清单**（语言特性黑名单、插件进 renderer、能力广度军备竞赛、插件数据出加密边界、双重能力实现、常驻实例、用"对齐顶级实践"当验收标准、把内存缺口含糊掉等） |
-| [plans/2026-09-13-android-launch-plan.md](plans/2026-09-13-android-launch-plan.md) | **移动端上线计划（Android 优先，规划 → 执行中）**：目标是**上架 Android**，第一批用户走**官网 APK + 酷安**，商店与软著并行后补。含**现状审计**（UI 移动端布局与 `verify-mobile-layout` 已做、Rust `#[cfg(desktop)]` 已就位、`security.rs` 密钥**本就不落盘**所以 Android 无需 Keystore、APK 能构建但**未签名**、版本号停在 1.82.18、`gen/android` **不在 git 里**）；**体积账**（arm64 156 MiB = `.so` 101【`Cargo.toml` 里根本没有 `[profile.release]`，没 strip】+ OCR 语言包 72.9【应改按需下载】+ assets 13；目标 55–70 MiB）；**⚠️ 路线冲突**——既有 `MOBILE.md` 定的是「WebView 壳 + Web 内核」，与本计划的 **Tauri 原生（Rust 内核）** 是两个不同产品（前者无多设备同步、插件根本性不可用、数据落在会被回收的浏览器存储），已列出对照表与选型理由；五个阶段（先能装 → 手机上真的好用 → 能持续发 → 上商店，合规与工程并行）各自带**可核对判据**、按风险排序的八条风险清单，以及「上线」的定义＝**一个陌生人从官网下载到卸载重装能恢复**这条路径由本人真机走过 |
+
+> 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
+> 找不到是正常的——去私有仓库 `shuyonote-sync-server` 的 `docs/`：
+> **团队版方案**（总方案 / M27.1 账号空间绑定 / 近实时协作实现 → `docs/plans/`）、
+> **软著登记材料**（原 `docs/softcopyright/` → 私有仓 `docs/softcopyright/`）、
+> **移动端上线计划（Android 优先）整篇**（先拆成"工程侧/合规侧"两半，同日又合并回一篇
+> → 私有仓 `docs/android-launch-plan.md`）。判据：**产品 / 工程 / 给用户看的对比**留公开仓，
+> **合规 · 法务 · 商业化 · 上线推广 · 运营**进私有仓。
+> 本仓库里关于 Android 的**里程碑与当前状态**仍在 [roadmap](roadmap.md)、[MOBILE](MOBILE.md)、
+> [README](../README.md) 与 [CHANGELOG](../CHANGELOG.md) 里（数字与结论都保留）。
 
 
 > 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
@@ -194,7 +204,7 @@ CHANGELOG.md             # 版本变更日志
 
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.90.1`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.90.2`）。
 
 ## 约定
 

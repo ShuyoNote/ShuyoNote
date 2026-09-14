@@ -9,16 +9,26 @@ mod commands;
 mod crypto;
 mod database;
 mod db;
-// 交付通道协议 `shuyonote://` 的 **OS 层**。模块本身是跨平台编译的（队列与取件命令在
-// 移动端也注册着，只是永远为空）；真正桌面专属的是 `plugin()` / `attach()`，
-// 因为 `deep-link` 插件的移动实现是另一套 API（`on_open_url` 在移动端不存在）。
+// 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
+// Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
+// 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，
+// **那句话是错的**，代价是手机上点了深链完全没反应（2026-09-13 真机复现并修好）。
 mod deeplink;
+// 聚合邮箱（含发信）：**桌面专属**（2026-09-13 定）。它走 `native-tls`，而移动端为此要从
+// 源码交叉编译 OpenSSL；移动端本就不提供该功能（`EmailPanel` 里早就写着"桌面版独有能力"），
+// 所以模块连同依赖一起收窄到桌面。前端侧用 `emailSupported()` 判断，不要用
+// `isDesktopPlatform()` —— 后者在同步/插件/加密处表示"有没有 Rust 内核"，移动端是要有的。
+#[cfg(desktop)]
 mod email;
+#[cfg(desktop)]
 mod smtp;
 mod graph;
 mod models;
 mod capabilities_gen;
 mod pdf_native;
+// 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
+// `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
+mod picked_file;
 mod plugin_budget;
 pub mod plugin_host;
 mod plugin_index;
@@ -26,11 +36,17 @@ mod plugin_validate;
 mod plugins;
 mod properties;
 mod search;
+// Android 专属：把 TLS 证书校验交给系统证书库。**不是可选项**——不做这一步，
+// Rust 侧任何 HTTPS 一按就 panic（真机 logcat：`Expect rustls-platform-verifier to be initialized`）。
+// 为什么是个独立模块、以及为什么要在两套 jni 之间做裸指针桥接，见模块头注释。
+#[cfg(target_os = "android")]
+mod tls_android;
 mod security;
 mod storage;
 mod sync;
 mod tags;
 mod templates;
+mod tempdir;
 mod titlebar;
 mod trash;
 mod updates;
@@ -83,7 +99,25 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        // fs 插件：**不是为了给前端开文件 API**（capabilities 里没授它任何权限，前端调不动），
+        // 而是为了 `picked_file` 能在 Android 上用它的 `Fs::open`——那一条经 Kotlin 的
+        // `ContentResolver` 取 fd，能打开选择器给的 `content://` URI。桌面侧它的 `open`
+        // 就是 `std::fs::OpenOptions`，等价，不受影响。
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init());
+
+    // **深链在移动端也要注册**（桌面那份在下面的 `#[cfg(desktop)]` 块里，顺序有讲究）。
+    // Android 上系统把 `shuyonote://…` 作为 intent 交给 Activity，插件的移动实现读走它并 emit
+    // **同名事件** `deep-link://new-url`；再由 `deeplink::attach` 转成前端在听的
+    // `deep-link-new-url`，所以语义分派（`page` / `save` / `test/…`）**两条路共用一套**，
+    // 不需要各写一遍。
+    //
+    // **不要在这里直接写 `tauri_plugin_deep_link::init()`**：注册与接线必须成对出现，
+    // 走 `deeplink::plugin()` 才能被 `scripts/check-deep-link.mjs` 和接线那一句一起守住。
+    // （曾经这里直接调 `init()`、而 `attach` 是 `#[cfg(desktop)]`，结果手机上插件 emit 了
+    // 却没人接：点深链完全没反应。）
+    #[cfg(mobile)]
+    let builder = builder.plugin(deeplink::plugin());
 
     // 桌面专属插件：移动端（Android/iOS）不适用，仅在桌面注册。
     // - deep-link：交付通道 `shuyonote://`。**只做 OS 层**（注册 scheme / 被唤起 /
@@ -232,6 +266,17 @@ pub fn run() {
                 .unwrap()
         })
         .setup(|app| {
+            // 临时目录**最先**定向：Android 上 `std::env::temp_dir()` 就是 `/tmp`，而 Android
+            // 根下没有 `/tmp` ⇒ 晚一步就会有调用点先踩坑（真机症状是「建临时目录失败」，
+            // 原因离症状很远，见 `tempdir.rs` 的模块注释）。放最前面还顺带保证：下面任何
+            // 一句提前 return，临时根也已经是好的。
+            match app.path().app_cache_dir() {
+                Ok(cache) => tempdir::init(cache.join("tmp")),
+                Err(e) => eprintln!(
+                    "[tempdir] 拿不到应用缓存目录：{e}；临时文件将退回系统临时目录（Android 上必然失败）"
+                ),
+            }
+
             // 深链接线：建队列 → 补收冷启动那一次 → 订阅后续。
             //
             // 必须放在**本 setup 的最前面**，而且不能挪进 `deeplink::plugin()`：
@@ -239,7 +284,9 @@ pub fn run() {
             // 没有公开导出，所以没法自己用 `Builder` 复刻它的 setup（试过，见
             // deeplink.rs 里那段 panic 记录）。放在这里还能顺带保证：下面任何一句
             // 提前 return，都不会让深链处于"注册了但没人接"的半截状态。
-            #[cfg(desktop)]
+            // **两个平台都接线**：桌面靠 argv、Android 靠 intent，但都收敛到同一条
+            // "先入队再 emit"（来源与对照表见 deeplink.rs 的 attach 文档）。
+            // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
 
             let app_data_dir = app.path().app_data_dir()?;
@@ -252,9 +299,12 @@ pub fn run() {
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
-            // 会节流 JS timer，所以放在 Rust 侧做）。
-            app.manage(email::EmailPollState::default());
-            email::start_email_poller(app.handle().clone());
+            // 会节流 JS timer，所以放在 Rust 侧做）。**桌面专属**，见 mod email 的说明。
+            #[cfg(desktop)]
+            {
+                app.manage(email::EmailPollState::default());
+                email::start_email_poller(app.handle().clone());
+            }
             // Seed a bundled demo plugin so the plugin system has something to load.
             let _ = plugins::ensure_demo_plugin(&app.handle());
 
@@ -308,6 +358,15 @@ pub fn run() {
                 // devtools，看 console 报错（排查 mermaid 等问题）。
                 .devtools(true)
                 .build()?;
+
+            // Android：把 HTTPS 的证书校验交给系统证书库。**必须在任何 HTTPS 请求之前**——
+            // reqwest 在没初始化时是 **panic 不是报错**。放在这里是因为要从 WebView 才能
+            // 拿到 JNI env 与 Activity（`jni_handle()`）；`exec` 会把闭包投递到主线程，
+            // 所以真正生效的时机是 setup 之后、事件循环刚开始时，仍早于网页触发任何网络命令。
+            // 详见 `mod tls_android` 与 docs/MOBILE.md §2.4。
+            #[cfg(target_os = "android")]
+            tls_android::init(&_window);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -325,28 +384,53 @@ pub fn run() {
             commands::get_page,
             commands::create_page,
             commands::create_folder,
+            // 聚合邮箱命令：**桌面专属**（与 mod email 同一条边界）。移动端这些命令**不存在**，
+            // 前端用 `emailSupported()` 把入口隐藏掉，不会去调它们。
+            #[cfg(desktop)]
             email::email_save_as_note,
+            #[cfg(desktop)]
             email::email_fetch_inbox,
+            #[cfg(desktop)]
             email::email_fetch_all,
+            #[cfg(desktop)]
             email::email_fetch_all_months,
+            #[cfg(desktop)]
             email::email_save_uid,
+            #[cfg(desktop)]
             email::email_get_body,
+            #[cfg(desktop)]
             email::email_get_html,
+            #[cfg(desktop)]
             email::email_get_message,
+            #[cfg(desktop)]
             email::email_get_attachments,
+            #[cfg(desktop)]
             email::email_save_account,
+            #[cfg(desktop)]
             email::email_get_account,
+            #[cfg(desktop)]
             email::email_list_accounts,
+            #[cfg(desktop)]
             email::email_remove_account,
+            #[cfg(desktop)]
             email::email_unseen_count,
+            #[cfg(desktop)]
             email::email_list_folders,
+            #[cfg(desktop)]
             email::email_list_months,
+            #[cfg(desktop)]
             email::email_set_flag,
+            #[cfg(desktop)]
             email::email_mark_read,
+            #[cfg(desktop)]
             email::email_move_to_trash,
+            #[cfg(desktop)]
             email::email_move_many_to_trash,
+            #[cfg(desktop)]
             email::email_mark_many_read,
+            #[cfg(desktop)]
             email::email_send,
+            #[cfg(desktop)]
             email::email_test_connection,
             updates::fetch_update_manifest,
             commands::create_database,

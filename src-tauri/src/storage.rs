@@ -88,7 +88,7 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
     };
 
     let att_dir = attachment_dir.clone();
-    let tmp = std::env::temp_dir();
+    let tmp = crate::tempdir::root();
     // Physical isolation: DB bytes = sum of all per-space DB files under spaces/.
     let spaces_dir = app_data_dir.join("spaces");
     let att_dir2 = attachment_dir.clone();
@@ -303,14 +303,22 @@ pub async fn cleanup_old_versions(db: State<'_, Db>, max_keep: Option<i64>) -> R
 pub async fn cleanup_temp_files(app: tauri::AppHandle) -> Result<u64, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
-    let tmp = std::env::temp_dir();
+    let tmp = crate::tempdir::root();
     let att_dir = attachment_dir;
     let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
         let mut freed: u64 = 0;
         if let Ok(entries) = std::fs::read_dir(&tmp) {
             for e in entries.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with("shuyonote-backup-") || name.starts_with("shuyonote-restore-") {
+                // 前缀必须与创建时的 tag 一致（`tempdir::dir/path/file` 传的就是这些）。
+                // 原先这里写的是 `shuyonote-backup-`，而导出用的是 `shuyonote-export-`
+                // ⇒ 那半条清理**从来没生效过**；临时根现在是应用私有目录，一并列全。
+                // 故意不含 `picked/`：选文件复制出来的副本可能还被前端引用着。
+                if name.starts_with("shuyonote-export-")
+                    || name.starts_with("shuyonote-restore-")
+                    || name.starts_with("shuyonote-ws-")
+                    || name.starts_with("shuyonote-plugin-")
+                {
                     let p = e.path();
                     freed += dir_size(&p).bytes as u64;
                     let _ = std::fs::remove_dir_all(&p);

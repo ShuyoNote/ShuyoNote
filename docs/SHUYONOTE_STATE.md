@@ -24,7 +24,7 @@
 - **第一批一方插件 + 一处能力缺口**（`dev`，未发版）：`weekly-review` / `page-to-md` / `eye-care-theme` / `high-contrast-theme`（都能直接装来用，均进回归测试）；写它们时撞出并修掉 `blocks.list` 省略 pageId 不回退当前页（此前「能写当前页、读不到当前页」）；记下相邻缺口：插件拿不到当前页 id/标题（候选 `api.page.meta()`，等第二个插件也撞到再动）。
 - **信任面收口：插件更新后声明扩张必须重新确认**（`dev`，未发版）：启用时记授权快照，新增权限/事件后**后端拒绝执行 + 停止事件派发**，直到用户在插件管理里点「重新确认」；存量插件首次扫描补记一次；只跟踪启用中的插件。作者文档 §4.5.1 记了这条对发版的影响。
 - **v1.85.1 热修复：命令面板白屏**（2026-09-10）：1.85.0 起按 `Ctrl+K` 会抛 React 错误（生产为 Minified React error #310）并让**整棵树被卸载成白屏**——`CommandPalette` 把参数表单的三个 `useState` 放在了 `if (!open) return null` 之后（hooks 不能有条件调用），而它挂在 App 根部、上面没有 ErrorBoundary。修复 = hooks 移到早退之前；补上**渲染级**回归测试 `src/components/commandPaletteHooks.test.ts`（修复前必失败）。**教训**：既有验证全都不渲染 React 组件，主路径可以一直炸而全套检查全绿——所以随后补了两层：根部错误边界（`main.tsx` 的整屏兜底 + `PanelBoundary` 逐浮层隔离，`src/components/errorBoundary.test.ts` 钉住"边界外的界面照常可用"），以及开发指南里"组件/hooks 类改动要有渲染级测试"这一条。
-- **多账号聚合邮箱**（v1.83）：多账号 IMAP 聚合收件箱 + 存为笔记 + AI 总结 + 发件人标签 + 按月直达 + 设置多账号管理/测试连接。
+- **多账号聚合邮箱**（v1.83，**仅桌面版**——移动端不提供，见 [MOBILE.md](MOBILE.md) §2.1）：多账号 IMAP 聚合收件箱 + 存为笔记 + AI 总结 + 发件人标签 + 按月直达 + 设置多账号管理/测试连接。
 - **附件哈希前缀分桶存储**（v1.84.2）：附件从单目录平铺改为 `attachments/<hash前2>/<hash>.<ext>`，旧数据双读兼容，服务端空间桶内再按哈希前 2 字符分片。
 - **同步一致性加固（seq-LWW + dirty 优先本地）**（v1.84.3）：根治团队多人同改时钟漂移丢改动。
 - **v1.84.3 发布收尾 + 安全审计**（2026-09-09）：三平台安装包（Win/Linux）已发布 gitcode + GitHub + 官网/Pages（应用内「检查更新」通道 `latest/latest.json` 已通）；安全审计修 3 项上线前高危（插件持锁无超时、E2EE 同步不丢数据、import/purge id 校验），详见 `docs/SECURITY.md`。
@@ -50,17 +50,68 @@
 ## 5. 验证循环
 
 - `npx tsc --noEmit`、`pnpm build`（含 `check-versions` + `check-web-commands` + `tsc` + `vite`）、`node scripts/smoke-web.mjs`（**350 断言**）、`vitest`（**88**）、`cargo test`（**55**）。
+- Rust 侧另有 CI 在跑（`.github/workflows/ci.yml` 的 `rust-tests`）：`cargo test`（含宿主子进程集成测试）
+  + **`cargo test --lib plugins::`** ——后者是 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试
+  （那种测试单跑必红，最费时间）。
+- Android：改 `.github/workflows/android.yml` **或** `src-tauri/src/**` / `Cargo.toml` / `Cargo.lock` /
+  `src/**` / `scripts/**` / `tauri.conf.json` 等构建输入**都会触发**它（2026-09-13 之前 paths 只含
+  workflow 文件本身，于是"改了 Rust 源码、推上去后 Actions 里连一条运行记录都没有"——判据是
+  "推完去 Actions 看有没有新记录"，不是"我记得它配了"）。
+  产物**已经由 CI 用正式密钥签名**（Secrets → zipalign → apksigner → 实测指纹与 `6E:E8:…:7A:88`
+  硬比对，不一致即红）：
+  - `android-apk-aarch64-signed-test-hooks` —— **可直接 `adb install`**，但带着测试钩子，**只能自检**；
+  - `android-apk-aarch64-unsigned` —— 保留用于量体积。
+  对外发版件（不带测试钩子）**已接入** `release.yml` 的 Android job，并用一个**临时 tag**
+（`v1.90.1-rc1`）真跑过一次：四个 job 全绿，CI 与本地 `apksigner` **各读一遍指纹都对**（`6ee89e6f…`）、
+包内 ABI 恰为 `arm64-v8a`、真机 `install -r` 成功且**数据未丢**（firstInstallTime 不变）、
+反向判据「测试钩子未启用（这是正式构建）」成立 ⇒ 发版包**确实不带测试钩子**。
+验证完 tag 与 Release **已删除**（Release/ref-by-tag 均 404，run 记录保留）。详见 `CHANGELOG.md`。
 - `pnpm run dev:desktop`（桌面开发，自建干净 PATH，见 `scripts/tauri-dev.mjs`）。
-- 发布：`git tag vX && git push origin vX && git push origin main` → `node scripts/release.mjs`。
+- 发布：`git tag vX && git push origin vX && git push github vX && git push origin main && git push github main`
+  → `node scripts/release.mjs`。（tag 与 main 都推**两个远端**：`github` 才触发 Actions 的三平台构建 /
+  发版件，`origin`=gitcode 是镜像与应用内「检查更新」通道；口径见 [RELEASING.md](RELEASING.md) ④）
 
 ## 6. 下一步候选（按需选一项继续）
 
 1. **M27 团队版剩余**：实时协同（后置）；本地多用户档案。
 2. **PDF 批注阶段 2**：写回源 PDF / OCR 精确划词（延后；导出带批注副本已实现）。
-3. **M16 其余平台壳**：安卓 / iOS / 鸿蒙（浏览器 PWA 已作为首个 Web 壳）。
+3. **Android 移动端（M6）——当前最活跃的一条线**。路线＝**Tauri 原生壳**（不是 WebView 壳；后者只留给 Tauri 不可达的平台，如鸿蒙 ArkWeb）。
+   - **CI 能在 Linux runner 上出包**（`.github/workflows/android.yml`）：路上翻出并修掉**两个只在 Linux 上暴露**的坑
+     （NDK 没有 `aarch64-linux-android-ranlib`、`mupdf-sys` 的 bindgen 不带 `--target`）——修法与理由都写在 workflow 的步骤注释里；
+   - **体积 156.7 → 53.41 MiB**（`strip` + tesseract-core 白名单 + OCR 语言包改按需下载），当初定的 55–70 MiB 目标已达成；
+   - **真机首次跑通**（2026-09-13 · HUAWEI Mate 40 `OCE-AN10` / Android 12）：装上、冷启动、界面正常渲染（截图存证）；
+   - **Boa 在 Android 上的 nan-boxing panic 已修并真机复验**（移动端开 `jsvalue-enum`）——见 [MOBILE.md](MOBILE.md) §2.1。
+   - **2026-09-13 这一轮做完的**（细节见 [MOBILE.md](MOBILE.md) 与 `CHANGELOG.md`）：
+     - **正式 keystore 已生成**（RSA-4096 / 10000 天，`~/.shuyonote-release-keystore/` +
+       一份异地备份；**测试专用 key 与它分开**，那个只用于真机自检包，别混用）；
+     - **深链在 Android 上修好了并真机验证**：原先 `attach()` 被 `#[cfg(desktop)]` 挡掉，
+       插件 emit 了 `deep-link://new-url` 却**没有订阅者**，表现是"点深链完全没反应"。
+       现在 warm（`onNewIntent`）与冷启动（`get_current` 补收）两条路径都在真机上收到 URL，
+       前端也真的执行了动作（见 §2.3）；
+     - **Rust 侧 HTTPS 的 panic 已修并真机验证通过**：启动时初始化系统证书校验器
+       （两套 jni 的裸指针桥，见 §2.4.1 / §2.5），真机上 `[tls]` 初始化成功、panic 0 条，
+       **真实 HTTPS 请求取回 107 字节内容**。（**更正**：当天把"打 `shuyo.cn` 失败"判成**服务端证书链**
+        有问题、要上 `--preferred-chain "ISRG Root X1"`——**该结论同日已证伪作废**：那条链自带
+        `ISRG Root X2 ← ISRG Root X1` 交叉签名，用**只装 X1 的信任库**实测 PKIX 握手 `OK`
+        （对照组：同一个库连百度 FAIL）⇒ **服务端未动、也不需要动**；设备侧那次失败的真实报错
+        待连着手机复测。详见 [MOBILE.md](MOBILE.md) §2.4.1。）
+     - **真机自动化有了五条测试钩子**（`run-plugin` / `new-page` / `http-probe` / `list-pages` / `pick-file`），
+       只在 `VITE_TEST_HOOKS=1` 的构建里存在，正式发版不带。两条判据**都已验掉**：
+       「跑一条插件命令」端到端 ✓（toast 报出插件返回值、页面上出现新建的页）；
+       **Phase 0 持久化** ✓（`list-pages`：41 页 → 建页 42 页 → `force-stop` 重启**仍 42 页**）。
+       注意持久化**不能靠截图判**：重启后应用总停在空白新页上。
+     - **「选文件」拿不到可读路径已实施**（`tauri-plugin-fs` 的 `open()`：Android 经
+       `ContentResolver` 取 fd，见 §2.2）——**CI 已编译通过，真机待点一次**。
+       ⚠️ 真机点这一遍时撞上了**临时目录**的坑：Android 上**没有 `/tmp`**，于是选文件、备份
+       /恢复、插件包解压、空间包导入导出**全线**受影响。已统一收口到
+       `src-tauri/src/tempdir.rs`（临时根 = 应用缓存目录，启动时定向），见 [MOBILE.md](MOBILE.md) §2.2.1。
+   - **仍未做 / 未验**：② 的**真机点一次**、逐条真机验收清单
+     （附件 / PDF / 离线 OCR / 加密锁定 / 深链 / 同步 / 备份 / 小屏横屏；**其中「深链」这一项已真机验证**，见上）。
+     真机验收能用哪些手段、有哪些边界，见 [MOBILE.md](MOBILE.md) §2.3（别重复踩盲点坐标那个坑）。
+     上线计划见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`（公开仓已不留副本）。
 4. **插件体系：M11.13 方案已拍板、**阶段 1+2 已落地——应用已真正跑在子进程上**（协议 + 帧 + `HostClient`；能力调用走 IPC 回父进程服务；命令与事件两条路都已切流；进程内执行路径已删除、14 处测试迁到生产路；实测进程启动 ~5 ms、每次能力 IPC ~0.1 ms；阶段 3 = 超时即杀 + OS 上限 + 打包验收；6 个决定见方案 §8.1）**——[插件宿主子进程化 + OS 级资源限制方案](plans/2026-09-10-plugin-host-isolation-plan.md)：把 Boa 挪进独立子进程（纯解释器：不碰 DB/密钥/路径，能力全部 RPC 回父进程；**应用现已跑在这条边界上**），取消与超时改为真杀进程，OS 级内存/CPU 上限三平台落地，4 阶段约 9–10 天；它是 M11.11a 分发的硬前置。**M11.9 已全部收口**（视图落点 `overlay`/`rail`）；一方插件 11 个（8 个能直接用）+ [可发布清单](plugin-recipes.md) 已备好。
 5. **插件体系进化 M11.8 触发面与事件**：M11.5/M11.6/M11.7 均已落地（时限与资源上限、ABI v1 + 能力注册表 + 权限与写中介、20 条能力 + 与 AI 工具层合并，**以及 M11.6 收口的作者工具链**——应用内校验/热重载/`pnpm plugin:validate`/示例插件/类型包 globals）；**M11.8 已落地四档**（命令参数 → 宿主渲染表单、结构化返回、事件钩子 v1 + **7 个发射点全部接上**（`app.started`/`page.opened`/`page.deleted`/`space.switched`/`page.saved`/`import.finished`/`sync.completed`，后两个是后台事件、在单一咽喉点播报）、**触发面 v1：编辑器 `/` 菜单**）；**M11.8 已全部落地**（命令参数、结构化返回、事件钩子 + **7 个发射点全齐**、编辑器 `/` 菜单、**页面列表行菜单 `page.context`**、**文件列表右键菜单 `file.context`**、**编辑器工具栏 `editor.toolbar`**、插件设置）；**M11.9 已落地三档**（零代码插件 `runtime: declarative` + 宿主渲染的声明式视图 + 零 JS 示例 reading-board；主题插件 `theme.tokens` + 主题检查进校验器 + 示例 warm-night；**导入触发 `manifest.triggers`**——命令面板入口 → 选文件 → **宿主** `readTextFile` 读内容 → `{ fileName, content }` 当 `argsJson` 交给 `run_plugin_command`，**没有新能力也没有新命令**，权限与写中介原样成立，顺带把 `MAX_ARGS_BYTES` 16 KiB → 1 MiB 并把注释语义改成「行为的界」，示例 md-outline）；**M11.9 第四档也已落地**（声明式视图参数化：查询字段可用 `{fromSetting}` 引用用户设置——零代码也能「用户可配」；顺带修掉三个静默失效的坑：视图 camelCase 字段被丢弃、声明式缺「加载器会不会拒」兜底、`select` 候选项短写法被拒载）；**M11.9 第五档也已落地**（导出：新能力 `api.files.export` + 权限 `export:files` + 触发 `kind: "export"`——**不直接写盘**，命令跑完后逐个弹系统保存对话框、用户点保存才写；插件给不出路径；事件里无效；示例 index-export）；**M11.9 已完成**（第六档：视图落点 `views[].placement`——`overlay` 浮层 / `rail` 右侧常驻面板，两种形态共用同一张表、互斥与"点行不关面板"都有渲染级测试；示例 reading-board 两种落点各示范一个）；之后是 M11.10 沙盒 UI（闸门=M11.9 声明式穷尽）；**那处信任缺口已闭合**（授权快照：声明扩张由后端拒绝执行 `approval_required`，直到用户重新确认，见路线图）。见[插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)（**定位=做第一不做更大**：做**第一个「有权限模型 + 作用在 E2EE 可自托管数据上」的可信插件体系**，不比能力条数）。
-5. **数友社区上线当天（不等 M11.13）**：开「模板 / 主题 / 插件配方」分类 + 发布 `plugin-index.json` 规范 + 招募 3 位共创作者；**不做**应用内市场 UI——见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯，前三级为惰性数据可立即开放）。
-6. **插件分发（M11.11）已随 v1.88.0 / v1.89.0 发出**：**a** = `plugin-index.json` 索引 + 索引签名（minisign）+ zip/URL 安装（先校验后落盘：https 白名单 / 体积上限 / `sha256` / 临时目录解包 / manifest 校验）+ 前端「从索引安装（给 URL）」；**升级 / 重装 / 拒绝降级**（先备份后动手，失败回滚，不动用户的启用状态与授权快照）；**b 的技术核心** = 离线撤回列表（索引说过的"这个版本不该再用"落库，运行与安装两条路都拦，离线也拦得住，用户可显式「仍然使用」）+ 发布者公钥固定（TOFU：首次装成功后固定，换 key 一律拒绝并摆出新旧指纹，确认后可「信任新密钥并安装」）。v1.89.0 又补上：**多源订阅**（一组索引可增删、一次检查全部、逐条记结果）、**按发布者密钥撤回**（`revokedKeys`：用它签的条目不可安装、已装插件运行被拦、安装前也查；离线生效，用户可显式「仍然使用」）、**事实清单**（来源/体积/声明/静态扫描 + **内容指纹**：装完之后那份文件有没有被改过——只摆事实、不评分）、以及[插件开发者政策](plugin-policy.md)与 SECURITY 的插件一节。**仍未做**：市场 UI 的搜索/浏览（c）、评分卡（有意做成事实清单，不做评分）、Windows 的 RSS 与内核硬上限；闸门不变（作者文档 + ≥3 真实第三方插件）。M11.10 UI 插件 / M23.5 协同 / 移动端（M6）：已评估延后（M11.10 闸门=声明式贡献面穷尽）。
+6. **数友社区上线当天（不等 M11.13）**：开「模板 / 主题 / 插件配方」分类 + 发布 `plugin-index.json` 规范 + 招募 3 位共创作者；**不做**应用内市场 UI——见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯，前三级为惰性数据可立即开放）。
+7. **插件分发（M11.11）已随 v1.88.0 / v1.89.0 发出**：**a** = `plugin-index.json` 索引 + 索引签名（minisign）+ zip/URL 安装（先校验后落盘：https 白名单 / 体积上限 / `sha256` / 临时目录解包 / manifest 校验）+ 前端「从索引安装（给 URL）」；**升级 / 重装 / 拒绝降级**（先备份后动手，失败回滚，不动用户的启用状态与授权快照）；**b 的技术核心** = 离线撤回列表（索引说过的"这个版本不该再用"落库，运行与安装两条路都拦，离线也拦得住，用户可显式「仍然使用」）+ 发布者公钥固定（TOFU：首次装成功后固定，换 key 一律拒绝并摆出新旧指纹，确认后可「信任新密钥并安装」）。v1.89.0 又补上：**多源订阅**（一组索引可增删、一次检查全部、逐条记结果）、**按发布者密钥撤回**（`revokedKeys`：用它签的条目不可安装、已装插件运行被拦、安装前也查；离线生效，用户可显式「仍然使用」）、**事实清单**（来源/体积/声明/静态扫描 + **内容指纹**：装完之后那份文件有没有被改过——只摆事实、不评分）、以及[插件开发者政策](plugin-policy.md)与 SECURITY 的插件一节。**仍未做**：市场 UI 的搜索/浏览（c）、评分卡（有意做成事实清单，不做评分）、Windows 的 RSS 与内核硬上限；闸门不变（作者文档 + ≥3 真实第三方插件）。M11.10 UI 插件 / M23.5 协同 / 移动端（M6）：已评估延后（M11.10 闸门=声明式贡献面穷尽）。
 
 > 注：功能明细 / 里程碑总览以客户端 `docs/roadmap.md` + `docs/README.md`（文档索引）为准；本文件只作"新会话现状种子"，重开会话先读它再读 roadmap/architecture。
