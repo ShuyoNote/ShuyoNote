@@ -119,9 +119,11 @@
   "是不是 `.zip` 插件包"时用的是 `source_path`，Android 上那是
   `content://…%3A1000000042`，`ends_with(".zip")` 恒为假，手机上装 zip 插件包**必然**
   报"只支持 .zip 插件包"；现在判据走 `picked.effective_name()`（桌面等价，行为不变）。
-  另：`rename_attachment` 会在当前 mime 仍是 `application/octet-stream`（"不知道"）
-  而新名字带了认识的扩展名时把它补上 —— **单向**，已知道的类型绝不因改名降级
-  （否则 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢）。详见 [MOBILE.md](docs/MOBILE.md) §2.2。
+  另：`rename_attachment` 现在会**按新名字重算 mime**（判据只有一条：新名字认得出类型才写回）
+  —— `x.txt` 改成 `x.pdf` 立刻能进内置阅读器，老数据（裸 UUID + octet-stream）改成 `photo.png`
+  也能自救；而改成**认不出**的名字（`report.pdf` → `report`）**原样保留**，
+  所以改名永远不会把已知类型降级成 `application/octet-stream`（否则把 `report.pdf` 改成
+  `report` 就能把 PDF 阅读器弄丢）。详见 [MOBILE.md](docs/MOBILE.md) §2.2.2。
 
 - **【最严重】顶部被状态栏压住 + 顶部约 41 CSS px 是触摸死区**（真机：标题与系统时间叠字，
   `adb shell input tap` 打在 y≤123 设备 px 时**0 个 DOM 事件**、y=130 时 100+ 个，

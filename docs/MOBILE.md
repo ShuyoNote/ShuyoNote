@@ -247,9 +247,12 @@ mime 是 `application/octet-stream` 就**一个分支都不命中**，最后掉�
   Android 上那是 `content://…%3A1000000042`，`ends_with(".zip")` **恒为假** ⇒
   手机上装 zip 插件包**必然**报"只支持 .zip 插件包"。现在判 `picked.effective_name()`
   （桌面等价，行为不变）。
-- **`rename_attachment` 单向补 mime**：当前 mime 还是 `application/octet-stream`
-  而新名字带了认识的扩展名时补上（老数据可以靠改名自救）；已知道的类型**绝不**因改名降级
-  （否则 `report.pdf` 改成 `report` 就把 PDF 阅读器弄丢了）。
+- **`rename_attachment` 按新名字重算 mime**（判据只有一条：**新名字认得出类型才写回**）。
+  `x.txt` 改成 `x.pdf` 就能立刻进内置阅读器；老数据（裸 UUID 名 + octet-stream）改成
+  `photo.png` 也能自救。而改成**认不出**的名字（`report.pdf` → `report`、
+  `x.unknownext`）**原样保留**原来的 mime —— 所以改名**永远不会把已知类型降级**成
+  `application/octet-stream`（否则把 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢，
+  那是把能用的东西改坏）。
 
 ⚠️ **R8 是开着的**（`isMinifyEnabled = true`），`ShuyoFsPlugin` 只被 JNI/反射按名字调用，
 所以必须有 Proguard keep 规则（脚本一并写 `gen/android/app/shuyo-fs.pro`）——

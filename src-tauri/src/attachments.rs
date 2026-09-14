@@ -188,18 +188,20 @@ fn mime_and_ext(
     (ext_mime, ext)
 }
 
-/// 改名时要不要顺手修 mime（语义见 [`rename_attachment`] 的文档）。
+/// 改名时按新名字重算 mime（语义见 [`rename_attachment`] 的文档）。
 ///
-/// **单向**：只有"当前是 `application/octet-stream`（不知道）"且"新名字带了认识的
-/// 扩展名"这两件事同时成立才会改；其它一律原样返回。已知道的类型永远不会因为改名降级
-/// —— 否则把 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢。
+/// 判据只有一条：**新名字认得出类型就用它，认不出就原样保留**。
+/// `mime_from_path` 认不出时给的是 `GENERIC_MIME`（`application/octet-stream`），
+/// 那一支**不写回** —— 这是"永远不降级"的全部秘密：
+///
+/// - `report.pdf` → `report`（或 `report.unknownext`）：认不出 ⇒ 保留 `application/pdf`，
+///   **PDF 阅读器不会被改名弄丢**；
+/// - `x.txt` → `x.pdf`：认得出 ⇒ `application/pdf`，改名后就能进内置阅读器；
+/// - 老数据（裸 UUID 名 + octet-stream，Android 导入那批）→ `photo.png`：认得出 ⇒ `image/png`，
+///   用户靠改名**能自救**。
 fn repaired_mime(current: &str, new_name: &str) -> String {
-    if current != GENERIC_MIME {
-        return current.to_string();
-    }
-    let (mime, ext) = mime_from_path(Path::new(new_name));
-    // `ext == "bin"` ⇒ 新名字也没给出可用的扩展名 ⇒ 维持"不知道"，别编。
-    if ext == "bin" {
+    let (mime, _) = mime_from_path(Path::new(new_name));
+    if mime == GENERIC_MIME {
         current.to_string()
     } else {
         mime
@@ -376,8 +378,11 @@ pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, d
     let raw = std::fs::read(&p).map_err(|e| e.to_string())?;
     let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
     let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)?;
-    std::fs::write(&dest_path, &plain).map_err(|e| format!("复制失败: {e}"))?;
-    Ok(())
+    // Android：保存对话框给的是 `content://` URI，`std::fs::write(uri)` 会 EROFS（真机实测）。
+    // 走 SaveTarget：桌面=直接写（行为不变），URI=先写缓存再整份搬进去。
+    let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-att")?;
+    std::fs::write(target.write_path(), &plain).map_err(|e| format!("复制失败: {e}"))?;
+    target.commit()
 }
 
 #[tauri::command]
@@ -784,15 +789,15 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
 ///
 /// ## mime 随不随改名变（2026-09-17 定的语义，别改回去）
 ///
-/// **不改。** 名字是**标签**，mime 描述的是**内容**——按新名字重算 mime 会让
-/// `report.pdf` 改成 `report` 就把 PDF 阅读器弄丢（mime 掉回 octet-stream），
-/// 那是把一个能用的东西改坏。
+/// **按新名字重算**，但只有一条判据：新名字**认得出类型**才写回（[`repaired_mime`]）。
+/// 于是两件事同时成立：
 ///
-/// 只有一个例外，而且它**只能往上走**：当前 mime 还是 `application/octet-stream`
-/// （= "我们不知道这是什么"，Android 选择器导入那批老数据的典型签名：名字是裸 UUID、
-/// mime 是 octet-stream）而**新名字带了认识的扩展名**时，用新名字把这个洞补上。
-/// 于是"改名成 `.png`"确实能救回来 —— 这正是用户期望的那件事，而不是沉默地什么都不做。
-/// 反向永不发生：已知的 mime 绝不会因为改名而降级。
+/// - `x.txt` 改成 `x.pdf` ⇒ 立刻能进内置 PDF 阅读器；老数据（裸 UUID + octet-stream）
+///   改成 `photo.png` ⇒ 用户能自救。改名这条路上"用户敲的扩展名"是**显式声明**，
+///   该被采信。
+/// - 改成一个**认不出**的名字（`report.pdf` → `report`、或改成 `.unknownext`）⇒
+///   **原样保留**原来的 mime。改名永远不会把已知类型降级成 `application/octet-stream`
+///   —— 否则把 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢，那才是把能用的东西改坏。
 #[tauri::command]
 pub fn rename_attachment(db: State<'_, Db>, id: String, name: String) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -1024,20 +1029,23 @@ mod picked_mime_tests {
         );
     }
 
-    /// 改名那条语义（见 [`rename_attachment`] 的文档）：**只能往上走**。
+    /// 改名那条语义（见 [`rename_attachment`] 的文档）：**按新名字重算，但永不降级**。
     #[test]
-    fn renaming_only_upgrades_an_unknown_mime_and_never_downgrades() {
-        // 老数据（Android 导入那批：名字是裸 UUID、mime 是 octet-stream）改名成 .png ⇒ 救回来
+    fn renaming_recomputes_from_the_new_name_but_never_downgrades() {
+        // ① 老数据（Android 导入那批：名字是裸 UUID、mime 是 octet-stream）改名成 .png ⇒ 救回来
         assert_eq!(repaired_mime(GENERIC_MIME, "photo.png"), "image/png");
         assert_eq!(repaired_mime(GENERIC_MIME, "photo.jpeg"), "image/jpeg");
-        // 新名字还是没给出可用扩展名 ⇒ 维持"不知道"，不编
-        assert_eq!(repaired_mime(GENERIC_MIME, "41449ced-d44e"), GENERIC_MIME);
-        assert_eq!(repaired_mime(GENERIC_MIME, "photo.unknownext"), GENERIC_MIME);
-        // **已知的 mime 永远不因改名而降级**：否则 report.pdf → report 就能弄丢 PDF 阅读器
+        // ② 已知类型改成另一个**认得**的扩展名 ⇒ 采信用户敲的那个（改名 .txt→.pdf 之后
+        //    要能进内置 PDF 阅读器，这是这条语义存在的理由）
+        assert_eq!(repaired_mime("text/plain", "notes.pdf"), "application/pdf");
+        assert_eq!(repaired_mime("text/markdown", "readme.md"), "text/markdown");
+        // ③ **永不降级**：新名字认不出类型时原样保留 —— 否则 `report.pdf` 改成 `report`
+        //    就能把 PDF 阅读器弄丢，那是把能用的东西改坏
         assert_eq!(repaired_mime("application/pdf", "report"), "application/pdf");
-        assert_eq!(repaired_mime("image/png", "whatever.txt"), "image/png");
-        // 从别的已知类型改成另一个已知类型也不动（名字是标签，不是类型声明）
-        assert_eq!(repaired_mime("application/pdf", "report.png"), "application/pdf");
+        assert_eq!(repaired_mime("image/png", "whatever.unknownext"), "image/png");
+        assert_eq!(repaired_mime("application/pdf", "41449ced-d44e"), "application/pdf");
+        // ④ 认不出 → 仍然认不出：维持"不知道"，不编
+        assert_eq!(repaired_mime(GENERIC_MIME, "file.unknownext"), GENERIC_MIME);
     }
 
     /// `sniff_file` 要真的读盘（`materialize` 用它给无扩展名的临时文件补扩展名）。
