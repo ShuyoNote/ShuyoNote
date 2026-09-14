@@ -445,8 +445,14 @@ mod tests {
         assert_eq!(name_from_uri(r"C:\Users\cnzen\report.pdf"), None);
 
         // effective_name 在"没有选择器名字"时就是路径的文件名（桌面恒为此）
+        //
+        // ⚠️ 路径必须**平台无关**地构造：`PathBuf::from(r"C:\Users\cnzen\report.pdf")`
+        // 在 Linux 上整串就是一个文件名（`\` 不是分隔符），`file_name()` 会把整串返回，
+        // 于是这条断言**只在 Windows 成立**，而 CI 跑在 Linux 上 —— 2026-09-14 就是这么红的：
+        //   left: "C:\\Users\\cnzen\\report.pdf"  right: "report.pdf"
+        // （同一用例上面那两行 `looks_like_uri` / `name_from_uri` 不依赖分隔符，所以照旧。）
         let pf = PickedFile {
-            path: PathBuf::from(r"C:\Users\cnzen\report.pdf"),
+            path: PathBuf::from("notes").join("report.pdf"),
             copy: None,
             name: None,
             system_mime: None,
