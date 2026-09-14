@@ -171,9 +171,12 @@ async function openOverlay(which) {
         // 存储面板在「设置 → 数据」里，是个普通按钮。
         const m = await store("/src/store/editor.ts");
         m.useEditorStore.getState().openSettings("data");
-        await new Promise((r) => setTimeout(r, 400));
-        const btns = [...document.querySelectorAll(".set-dialog .set-btn")];
-        const t = btns.find((b) => (b.textContent || "").includes("打开"));
+        let t = null;
+        for (let i = 0; i < 30 && !t; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          const btns = [...document.querySelectorAll(".set-dialog .set-btn")];
+          t = btns.find((b) => (b.textContent || "").includes("打开")) || null;
+        }
         if (!t) return false;
         t.click();
         return true;
@@ -224,22 +227,35 @@ async function openOverlay(which) {
         return true;
       }
       case "markdownImport": {
-        // 需要先有打开的页面（工具栏才在）。
+        // 需要先有打开的页面（工具栏才在）。建页是异步的，所以**轮询**等触发器出现，
+        // 而不是睡固定时长。
         const n = await store("/src/store/notes.ts");
         if (!n.useNotes.getState().currentId) await n.useNotes.getState().createPage(null);
-        await new Promise((r) => setTimeout(r, 1200));
-        const btns = [...document.querySelectorAll(".toolbar-btn")];
-        const t = btns.find((b) => /Markdown/i.test(b.getAttribute("title") || ""));
+        let t = null;
+        for (let i = 0; i < 40 && !t; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          t = [...document.querySelectorAll(".toolbar-btn")].find((b) =>
+            /Markdown/i.test(b.getAttribute("title") || ""),
+          ) || null;
+        }
         if (!t) return false;
         t.click();
         return true;
       }
       case "cover": {
+        // 按钮的文案是**写死的中文**（`添加题头图` / `更换题头图`），不跟 i18n 走，
+        // 所以这个匹配与语言无关。
         const n = await store("/src/store/notes.ts");
         if (!n.useNotes.getState().currentId) await n.useNotes.getState().createPage(null);
-        await new Promise((r) => setTimeout(r, 1200));
-        const btns = [...document.querySelectorAll(".page-action-btn")];
-        const t = btns.find((b) => /封面|题头图/.test(`${b.getAttribute("title") || ""}${b.getAttribute("aria-label") || ""}${b.textContent || ""}`));
+        let t = null;
+        for (let i = 0; i < 40 && !t; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          t = [...document.querySelectorAll(".page-action-btn")].find((b) =>
+            /封面|题头图/.test(
+              `${b.getAttribute("title") || ""}${b.getAttribute("aria-label") || ""}${b.textContent || ""}`,
+            ),
+          ) || null;
+        }
         if (!t) return false;
         t.click();
         return true;
@@ -447,8 +463,20 @@ async function main() {
         // 不能把整轮跑挂掉——挂掉就没有汇总，等于白跑一次。
         try {
           const opened = await safeEval(page, openOverlay, layer.id);
-          await sleep(layer.id === "settings" || layer.id === "pluginManager" ? 900 : 500);
-          const m = await safeEval(page, probeLayer, layer.root, layer.box);
+          // 两段等待，缺一不可：
+          //   1) **下限时长**让滑入动画/过渡停稳。侧栏、竖条、TOC、AI、评论都是
+          //      `translateX(100%)` / `ai-slide-in` 进场的，量在滑动途中会得到
+          //      "盒子在屏外"这种**假红**——而且它们"没打开时也有几何"，
+          //      所以光靠"有没有渲染出来"判断不出该不该量。
+          //   2) **轮询**等它真的渲染出来。冷启动的 CI runner 上固定时长未必够，
+          //      那会把"还没画出来"记成"这一层坏了"。
+          await sleep(layer.id === "settings" || layer.id === "pluginManager" ? 900 : 600);
+          let m = { found: false };
+          for (let attempt = 0; attempt < 20; attempt++) {
+            m = await safeEval(page, probeLayer, layer.root, layer.box);
+            if (m.found) break;
+            await sleep(200);
+          }
           if (!m.found) {
             if (layer.optional) {
               note(`${vp.name} · ${layer.label}：未取到触发器（opened=${JSON.stringify(opened)}），本轮**未验证**`);
