@@ -18999,10 +18999,15 @@ p:has(> .editor-drawing-container) {
   .mobile-rail-toggle {
     position: fixed;
     left: 12px;
-    bottom: 18px;
+    /* 与弹层同一条口径：让开底部系统手势区（`--sab`）。**这台设备实测 `--sab = 0`**，
+       所以这条是防御性的（`max(18px, 0 + 12px)` 仍等于 18px）；手势条更高的机型上才有区别。
+       下面那个同步入口同理。 */
+    bottom: max(18px, calc(var(--sab) + 12px));
     z-index: 45;
-    width: 42px;
-    height: 42px;
+    /* 44 是仓库里那条"触屏命中区 ≥44"的口径（原来是 42，差 2px 也是点不中）；
+       与下面同步入口的高度对齐。 */
+    width: 44px;
+    height: 44px;
     display: grid;
     place-items: center;
     padding: 0;
@@ -19016,6 +19021,25 @@ p:has(> .editor-drawing-container) {
   .mobile-rail-toggle:active {
     background: var(--hover);
     color: var(--text);
+  }
+  /* 手机上同步入口的第二处（主界面可见的那个）：与「展开工具栏」并排。
+     为什么需要：手机上 `TitleBar` 整个不渲染 ⇒ 桌面的 `.titlebar-sync` 根本不存在，
+     只剩"侧栏抽屉 → 同步"（要先开抽屉）。这里补一个一次点击可达的入口；
+     按钮本身用 SyncPanel 自己的 `.btn-sync`（含云图标与同步中的脉冲点）。
+     位置：工具栏圆钮是 `left:12px / bottom:18px / 42px`，这里紧挨它右侧。 */
+  .mobile-sync-slot {
+    position: fixed;
+    left: 62px;
+    bottom: max(18px, calc(var(--sab) + 12px));
+    z-index: 45;
+  }
+  .mobile-sync-slot .btn-sync {
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
   }
   /* 浮层遮罩：点它收起竖条（z 高于内容与唤出按钮，低于竖条本身）。 */
   .mobile-rail-backdrop {

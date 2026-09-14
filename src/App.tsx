@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
+import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
 import { TitleBar } from "./components/TitleBar";
 import { useWindowChrome, applyDecorations } from "./store/windowChrome";
@@ -755,6 +756,15 @@ function App() {
           >
             <MenuIcon width={18} height={18} />
           </button>
+        )}
+        {/* 手机上**整个顶栏不渲染**（`TitleBar` 在 `!desktop` 时 return null），于是桌面那个
+            `.titlebar-sync` 根本不存在，同步入口只剩"侧栏抽屉 → 同步"这一条（要开抽屉才看得见）。
+            这里在主界面上再放一个：与「展开工具栏」并排、1 次点击可达；窄屏下面板自己会变成
+            底部弹层（`usePopover` 的 `is-sheet`）。侧栏抽屉里那个仍然保留（两处入口互不影响）。 */}
+        {isMobile && !railOpen && (
+          <div className="mobile-sync-slot">
+            <SyncPanel />
+          </div>
         )}
       {pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>

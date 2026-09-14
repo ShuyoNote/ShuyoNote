@@ -79,6 +79,8 @@ let fail = 0;
 // PDF 内部分栏的 CSS 级断言只需要跑一次（样式表与视口无关），但要在**已经进过窄屏视口**
 // 的页面里查（那段媒体查询只在命中时才出现在 cssRules 里）。
 let pdfCssChecked = false;
+// 手机上的同步入口同理：只在一个窄屏视口里查一次就够（它是个固定定位的小控件）。
+let mobileSyncChecked = false;
 const notes = [];
 const ok = (cond, msg) => {
   if (cond) {
@@ -755,6 +757,47 @@ async function main() {
           closeSticky.length > 0,
           `矮视口里「关闭」sticky 常驻（${closeSticky.map((e) => e.sel).join("；") || "没找到规则"}）——它是"离开"的唯一入口，不能跟着横滑走`,
         );
+      }
+
+      // ---- 手机上的同步入口：主界面必须有一个（不能只藏在侧栏抽屉里） ----
+      // 为什么值得钉：手机上 `TitleBar` **整个不渲染**（`!desktop` 时 return null），
+      // 桌面那个 `.titlebar-sync` 根本不存在 ⇒ 一旦忘记补这个入口，同步就只剩
+      // "开侧栏抽屉 → 同步"，而且**没有任何报错**（纯粹是找不到）。
+      if (!mobileSyncChecked && vp.narrow) {
+        mobileSyncChecked = true;
+        const sync = await safeEval(page, () => {
+          const slot = document.querySelector(".mobile-sync-slot");
+          const btn = slot ? slot.querySelector("button") : null;
+          const r = btn ? btn.getBoundingClientRect() : null;
+          return {
+            hasSlot: !!slot,
+            label: btn ? (btn.textContent || "").trim() : null,
+            w: r ? Math.round(r.width) : 0,
+            h: r ? Math.round(r.height) : 0,
+          };
+        });
+        ok(
+          sync.hasSlot && !!sync.label,
+          `手机上主界面有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，否则只能开抽屉才点得到`,
+        );
+        ok(sync.h >= 44, `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）`);
+        const clicked = await safeEval(page, () => {
+          const btn = document.querySelector(".mobile-sync-slot button");
+          if (!btn) return false;
+          btn.click();
+          return true;
+        });
+        await sleep(700);
+        const pop = await safeEval(page, () => ({
+          inDom: !!document.querySelector(".sync-popover"),
+          isSheet: !!document.querySelector(".sync-popover.is-sheet"),
+        }));
+        ok(clicked && pop.inDom, `点它就能打开同步面板（inDom=${pop.inDom}，底部弹层=${pop.isSheet}）`);
+        // 收起来，别影响后面的层验收
+        await safeEval(page, () => {
+          document.querySelector(".mobile-sync-slot button")?.click();
+        });
+        await sleep(300);
       }
 
       // ---- 系统 inset 变量：无壳层报送时必须全是 0px（不许凭空多出边距） ----
