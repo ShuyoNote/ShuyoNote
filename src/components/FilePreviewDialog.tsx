@@ -9,6 +9,7 @@ import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useFilePreview } from "../store/filePreview";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
@@ -232,6 +233,11 @@ export function FilePreviewDialog() {
   // Android 返回键：应用级文件预览浮层（`useFilePreview` 驱动，点空白/× 关闭）。
   // 只有 `target` 在（= 浮层真的渲染出来）时才登记——见 lib/overlayStack.ts 与 §4.1.4。
   useOverlayLayer("filePreview", !!target, close);
+  // §4.1.2 第 4 条：打开时锁住"当前视图真实的那个滚动容器"。
+  // 这一条此前**漏了**（是这一族里唯一没接锁的浮层）：实测只开着它时
+  // `overlayScrollLockCount()` = 0，也就是浮层开着还能把背景正文拖走。
+  // 验收脚本里它一度"通过"锁断言，靠的是**上一层泄漏的锁**（见 §4.1.4 的说明）。
+  useOverlayScrollLock(!!target);
 
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;

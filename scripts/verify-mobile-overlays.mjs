@@ -123,31 +123,44 @@ async function safeEval(page, fn, ...args) {
  * 每一层：怎么打开、根元素、盒子元素。
  * `optional` 的那些需要一个已经打开的页面 / 更深一层的入口，取不到触发器时
  * 记一条 note 并跳过（不算通过、也不算失败）——它们是**未验证项**，会写在报告里。
+ *
+ * `fullscreen: true` = §4.1.1 分类里的「**全屏 + 内部滚动**」那一族（大面板 / 右栏抽屉）：
+ * 该族必须**真的铺满**——遮罩铺满视口、盒子铺满遮罩内容盒。
+ * ⚠️ 这一族此前只有"四边在视口内"那条断言，而它**挡不住被压窄**（72px 宽的
+ * `.fm-preview-overlay` 四边也都在视口里、912 条断言全绿）。见下面 (1b)。
+ * 底部弹层那一族（`sheet: true`）**不标**：它们本来就只在底部、本来就不该铺满。
  */
 const OVERLAYS = [
-  { id: "settings", label: "设置面板", root: ".set-overlay", box: ".set-dialog", sheet: false },
+  { id: "settings", label: "设置面板", root: ".set-overlay", box: ".set-dialog", sheet: false, fullscreen: true },
   { id: "confirm", label: "确认框", root: ".confirm-overlay", box: ".confirm-box", sheet: true },
   { id: "input", label: "输入框", root: ".confirm-overlay", box: ".confirm-box", sheet: true },
   { id: "search", label: "搜索浮层", root: ".search-popover", box: ".search-popover", sheet: true, sheetClass: true },
   { id: "trash", label: "回收站", root: ".trash-popover", box: ".trash-popover", sheet: true, sheetClass: true },
   { id: "sync", label: "同步面板", root: ".sync-popover", box: ".sync-popover", sheet: true, sheetClass: true },
-  { id: "pluginManager", label: "插件管理", root: ".plugin-manager-overlay", box: ".plugin-manager", sheet: false },
-  { id: "storage", label: "存储 / 空间管理", root: ".stg-overlay", box: ".stg-panel", sheet: false, optional: true },
-  { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false },
+  { id: "pluginManager", label: "插件管理", root: ".plugin-manager-overlay", box: ".plugin-manager", sheet: false, fullscreen: true },
+  { id: "storage", label: "存储 / 空间管理", root: ".stg-overlay", box: ".stg-panel", sheet: false, optional: true, fullscreen: true },
+  { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false, fullscreen: true },
   { id: "shortcuts", label: "快捷键", root: ".shortcuts-overlay", box: ".shortcuts", sheet: true },
   { id: "about", label: "关于", root: ".shortcuts-overlay", box: ".about", sheet: true },
   { id: "communitySave", label: "社区保存", root: ".community-save-overlay", box: ".community-save-box", sheet: true },
-  { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false },
+  { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false, fullscreen: true },
   { id: "emoji", label: "图标选择器", root: ".emoji-picker-overlay", box: ".emoji-picker", sheet: true },
-  { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false },
-  { id: "ai", label: "AI 助手", root: ".ai-panel", box: ".ai-panel", sheet: false },
-  { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false },
+  { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false, fullscreen: true },
+  { id: "ai", label: "AI 助手", root: ".ai-panel", box: ".ai-panel", sheet: false, fullscreen: true },
+  { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false, fullscreen: true },
   { id: "markdownImport", label: "Markdown 导入", root: ".markdown-import-overlay", box: ".markdown-import", sheet: true, optional: true },
   { id: "cover", label: "题头图", root: ".cover-overlay", box: ".cover-picker", sheet: true, optional: true },
   // 2026-09-15 第二轮：`.history-popover` 原来是 `position:absolute` 的 320px 锚定浮层，
   // 窄屏**没走** §4.1.3 的 is-sheet 形态 ⇒ 360×640 实测左边缘 = **−6px**（越界）。
   // 改成 `usePopover` + `is-sheet` 之后才有资格进这份清单（`sheetClass` 钉住 JS 侧分支）。
   { id: "history", label: "版本历史", root: ".history-popover", box: ".history-popover", sheet: true, sheetClass: true },
+  // 2026-09-15 第三轮：`.fm-preview-overlay` 的 `left: calc(--activity-w + --sidebar-w)`
+  // 在窄屏**没被覆盖**，而 `--sidebar-w` 是**桌面**侧栏宽度——窄屏的侧栏早已收成抽屉，
+  // 变量却仍是 240px ⇒ 360×640 实测这个文件预览浮层只有 **72px 宽**
+  // （= 360 − 48 竖条 − 240 侧栏），文件预览在手机上等于打不开（与 `.set-dialog`
+  // 的 `min-width:640px` 同一类："功能不可用，而且不报错"）。
+  // 改成 §4.1.1 的"大面板 → 全屏 + 内部滚动"（遮罩加 inset padding）后才进的这份清单。
+  { id: "filePreview", label: "文件预览", root: ".fm-preview-overlay", box: ".fm-preview", sheet: false, fullscreen: true },
 ];
 
 /** 主要操作按钮的文案（验收口径写在任务里，别改）。 */
@@ -310,6 +323,26 @@ async function openOverlay(which) {
         t.click();
         return true;
       }
+      case "filePreview": {
+        // 走应用**自己的 store**（与界面同一条路），不是往 DOM 里塞假节点。
+        // `open()` 收的就是一份 `AttachmentMeta` **元数据**，浮层完全由它渲染——
+        // **不需要真的读文件**（这一点此前记错了：`EXEMPT_FROM_MOBILE_PASS` 里原写
+        // "需要一份真实附件才渲染"，那说的是 `.md` 分支要读字节；`target` 一落，
+        // 浮层就出来了）。
+        // 选 `image/*` 是因为它顺带渲染右上角那组按钮（窄屏 ≥44×44 那条断言的对象）；
+        // `path` 是**假路径**，web 平台的 `convertFileSrc` 只是原样返回字符串、不碰磁盘，
+        // 图片加载失败不影响几何——本层要量的是浮层自己的盒子。
+        const m = await store("/src/store/filePreview.ts");
+        m.useFilePreview.getState().open({
+          id: "vp-file-preview",
+          name: "示例图片.png",
+          hash: "",
+          mime: "image/png",
+          size: 1024,
+          path: "/tmp/示例图片.png",
+        });
+        return true;
+      }
       default:
         return false;
     }
@@ -333,6 +366,7 @@ async function closeAllOverlays() {
   (await store("/src/store/formulaEditor.ts")).useFormulaEditorStore.getState().close();
   (await store("/src/store/iconPicker.ts")).useIconPicker.getState().close();
   (await store("/src/store/plugins.ts")).usePlugins.getState().setManagerOpen(false);
+  (await store("/src/store/filePreview.ts")).useFilePreview.getState().close();
   const rp = (await store("/src/store/rightPanel.ts")).useRightPanel.getState();
   rp.openToc(false);
   rp.openAi(false);
@@ -349,6 +383,18 @@ async function closeAllOverlays() {
     [".history-popover", 'button[aria-label="版本历史"]'],
   ]) {
     if (document.querySelector(box)) document.querySelector(trigger)?.click();
+  }
+  // ⚠️ **`optional` 的那两层此前根本没人关**（2026-09-15 第三轮抓到）。
+  // `.markdown-import-overlay` 不吃 Escape、也不在上面那张触发器表里，
+  // 于是它一开就**再也没关过**：它组件里的 `useOverlayScrollLock()` 永久留着一把锁，
+  // 后面每一层看到的"外壳被锁 / 锁住：note-scroll"其实都是**它泄漏的那把锁**满足的——
+  // 假绿（实测：只有文件预览开着时 `overlayScrollLockCount()` = 0，而在整轮里同一个
+  // 浮层却"通过"了锁断言）。关干净是后面每一条锁断言有意义的前提。
+  if (document.querySelector(".markdown-import-overlay")) {
+    document.querySelector(".markdown-import-cancel")?.click();
+  }
+  if (document.querySelector(".cover-overlay")) {
+    document.querySelector(".cover-overlay")?.click();
   }
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   return true;
@@ -452,6 +498,17 @@ function probeLayer(rootSel, boxSel) {
     innerH,
     root: { left: r1(rr.left), right: r1(rr.right), top: r1(rr.top), bottom: r1(rr.bottom) },
     box: { left: r1(br.left), right: r1(br.right), top: r1(br.top), bottom: r1(br.bottom) },
+    // `root === box`（右栏抽屉那种"自己就是自己遮罩"的层）：横向铺满要按**视口**算，
+    // 而不是按"遮罩的内容盒"——否则它自己的 padding 会被当成安全区多减一遍。
+    rootIsBox: root === box,
+    // 遮罩**自己**的 padding：安全区（`--sat/--sar/--sab/--sal/--kb`）就写在这里，
+    // 所以"盒子该有多宽" = 遮罩的内容盒，不用在脚本里另抄一遍那些变量。
+    rootPad: {
+      left: parseFloat(getComputedStyle(root).paddingLeft) || 0,
+      right: parseFloat(getComputedStyle(root).paddingRight) || 0,
+      top: parseFloat(getComputedStyle(root).paddingTop) || 0,
+      bottom: parseFloat(getComputedStyle(root).paddingBottom) || 0,
+    },
     boxMinWidth: getComputedStyle(box).minWidth,
     // 高度轴：上一轮只量了 min-width，`min-height:420px` 就是在那个盲区里活下来的。
     boxMinHeight: getComputedStyle(box).minHeight,
@@ -671,6 +728,30 @@ async function main() {
             m.box.left >= -0.5 && m.box.right <= m.innerW + 0.5 && m.box.top >= -0.5 && m.box.bottom <= m.innerH + 0.5,
             `盒子在视口内（x ${m.box.left}..${m.box.right} / y ${m.box.top}..${m.box.bottom}）`,
           );
+
+          // (1b) **形态**：标了 `fullscreen` 的层必须**真的铺满**。
+          //
+          // ⚠️ 这条是 2026-09-15 第三轮补的，原因很实在：上面那条"四边都在视口内"
+          // **只挡越界，挡不住被压窄**——实测把 `.fm-preview-overlay` 加进 `OVERLAYS` 时，
+          // 它只有 **72px 宽**（`x 288..360`），四边**全都在视口里**，
+          // 于是那一轮 912 条断言**全部通过**：清单加上了、几何也"量到了"，缺陷照样活着。
+          // 判据取"盒子横向铺满**遮罩的内容盒**"：安全区就写在遮罩的 padding 上
+          // （`--sat/--sar/--sab/--sal/--kb`），所以这里不需要另抄一遍那些变量。
+          if (layer.fullscreen) {
+            const expLeft = m.rootIsBox ? 0 : m.root.left + m.rootPad.left;
+            const expRight = m.rootIsBox ? m.innerW : m.root.right - m.rootPad.right;
+            const rd = (n) => Math.round(n * 10) / 10;
+            ok(
+              m.rootIsBox || (m.root.left <= 0.5 && m.root.right >= m.innerW - 0.5),
+              `全屏层的遮罩横向铺满视口（root x ${m.root.left}..${m.root.right}，视口宽 ${m.innerW}）`,
+            );
+            ok(
+              Math.abs(m.box.left - expLeft) <= 1 && Math.abs(m.box.right - expRight) <= 1,
+              `全屏层的盒子横向铺满遮罩内容盒（盒 x ${m.box.left}..${m.box.right}，期望 ${rd(expLeft)}..${rd(expRight)}` +
+                `，实际宽 ${rd(m.box.right - m.box.left)}）——` +
+                `"四边在视口内"挡不住被压窄：72px 宽的浮层四边也都在视口里`,
+            );
+          }
           // 总根因：min-width 不许压过 max-width
           ok(
             m.boxMinWidth === "0px" || m.boxMinWidth === "auto",

@@ -20357,6 +20357,47 @@ body.is-plugin-panel-open .main {
     border-left: none;
   }
 
+  /* ---------- 4b. 文件预览浮层：窄屏整屏（2026-09-15 第三轮） ----------
+     桌面它是"避开左竖条 + 侧栏"的**内容区**浮层
+     （基础规则 `left: calc(--activity-w + --sidebar-w)`）——但**窄屏的侧栏早已收成抽屉**，
+     `--sidebar-w` 却仍是桌面的 240px，于是 360px 视口上 `left` 算成 48 + 240 = **288px**，
+     整个浮层只剩 **72px 宽**（实测 72×640）。这与设置面板的 `min-width:640px` 是**同一类**：
+     "功能不可用，而且不报错"——文件预览在手机上等于打不开。
+     ⚠️ 而且它**骗过了旧的几何断言**：`x 288..360` 的四边**全都在视口里**，
+     所以那一轮 900+ 条断言全绿（见 `verify-mobile-overlays.mjs` 的 (1b)）。
+
+     窄屏按 §4.1.1 走"大面板 → 全屏 + 内部滚动"。让位方式与 `.set-overlay` 一致：
+     **给遮罩加 padding**（遮罩是 `position:fixed`，它不跟着 `.app` 的 padding 走），
+     一处同时管住状态栏 / 手势条 / 软键盘 / 左右安全区。 */
+  .fm-preview-overlay {
+    left: 0;
+    right: 0;
+    /* 基础规则是 `top: var(--titlebar-h)`（自绘标题栏）；窄屏没有标题栏，改由 --sat 让位。 */
+    top: 0;
+    bottom: 0;
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+  }
+  .fm-preview {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+  /* §4.1.2 第 1 条：内容区**唯一**可滚 + 不把滚动惯性传给外层。
+     `.fm-preview-body` 已经是 `flex:1; min-height:0; overflow:auto`，
+     缺的只是那道 `overscroll-behavior`。 */
+  .fm-preview-body {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* §4.1.2 第 3 条：命中区 ≥44×44。图片预览右上角那组（旋转 / 查看原图）
+     桌面上是 32×32，触屏上点不中——它是这一层的主要操作，不只是"装饰按钮"。 */
+  .fm-img-btn,
+  .fm-img-original {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   /* 命令面板：整宽 + 顶部对齐，列表只纵向滚（横向溢出 46~73px 是坐标/宽度算错，
      不是"内容真的更宽"）。 */
   .palette-overlay {
