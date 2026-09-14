@@ -8484,44 +8484,56 @@ register({ id: "s.run", title: "结构化", run: function () {
             .expect("线上索引必须能拉取并通过索引签名校验");
         eprintln!("索引 OK：owner={} 插件 {} 个", view.owner.as_ref().map(|o| o.name.as_str()).unwrap_or("?"), index.plugins.len());
 
-        // 2) 挑一个条目：**必须是"可安装"的**（被撤回/版本不够的会被拦住，这里直接失败更醒目）
-        let entry = index
-            .plugins
-            .iter()
-            .find(|p| p.id == wanted)
-            .unwrap_or_else(|| panic!("索引里没有插件 {wanted}"))
-            .clone();
-        let blocked = plugin_index::entry_block_reason(&entry, "1.89.1", &index.revoked_keys);
-        assert!(blocked.is_empty(), "{wanted} 装不了：{blocked}");
+        // 默认**逐个装完索引里所有条目**（不是抽查一个）：线上清单上有几个，就应当有几个装得上。
+        // 这条是从一次真实事故里改出来的——19 个插件里有 4 个**声明式**插件在安装路径上被自己的
+        // 验收标准拒掉（`declarative_no_code`），而抽查（或只跑"能不能解析索引"）完全看不见。
+        let all = std::env::var("SHUYONOTE_LIVE_ALL").map(|v| v != "0").unwrap_or(true);
+        let entries: Vec<_> = if all {
+            index.plugins.clone()
+        } else {
+            index
+                .plugins
+                .iter()
+                .filter(|p| p.id == wanted)
+                .cloned()
+                .collect()
+        };
+        assert!(!entries.is_empty(), "索引里没有插件 {wanted}");
 
-        // 3) 下载 + 两层校验（sha256 与发布者签名），并固定发布者密钥
         let client = index_http_client().unwrap();
-        let bytes = http_get_capped(&client, &entry.download_url, plugin_index::MAX_PACKAGE_BYTES)
-            .await
-            .expect("线上包必须下载得到");
-        plugin_index::verify_sha256(&bytes, &entry.sha256).expect("线上包 sha256 必须与索引一致");
         let conn = state_conn_with_revoked_keys();
-        let pin = check_entry_publisher_signature(&conn, &entry.id, &entry, &bytes, false, "community.shuyo.cn")
-            .expect("发布者签名必须验得过");
-        assert!(pin.is_some(), "线上条目应当带发布者签名");
-
-        // 4) 装进**临时**插件根目录：真解包 + 真 discovery + 真落盘 + 真记账
         let root = temp_dir("live-index-root");
-        let meta = install_bytes_into(&root, &conn, &bytes, "index:community.shuyo.cn")
-            .expect("从线上索引安装必须成功");
-        assert_eq!(meta.id, wanted);
-        assert!(!meta.enabled, "新装必须默认未启用（安装 ≠ 授权）");
-        assert!(root.join(format!("{wanted}/manifest.json")).is_file(), "插件目录要就位");
-        let _ = pin_publisher_key(&conn, &entry.id, pin.as_deref().unwrap(), "community.shuyo.cn");
+        let mut installed = Vec::new();
+        for entry in &entries {
+            let blocked = plugin_index::entry_block_reason(entry, "1.89.1", &index.revoked_keys);
+            assert!(blocked.is_empty(), "{} 装不了：{blocked}", entry.id);
 
-        eprintln!(
-            "端到端 OK：{} v{}（{} 字节）· 解出 {} 个命令 · 插件根目录 {}",
-            meta.id,
-            meta.version,
-            bytes.len(),
-            meta.commands.len(),
-            root.display()
-        );
+            let bytes = http_get_capped(&client, &entry.download_url, plugin_index::MAX_PACKAGE_BYTES)
+                .await
+                .unwrap_or_else(|e| panic!("{} 的包下载失败：{e}", entry.id));
+            plugin_index::verify_sha256(&bytes, &entry.sha256)
+                .unwrap_or_else(|e| panic!("{} 的 sha256 对不上：{e}", entry.id));
+            let pin = check_entry_publisher_signature(&conn, &entry.id, entry, &bytes, false, "community.shuyo.cn")
+                .unwrap_or_else(|e| panic!("{} 的发布者签名验不过：{e}", entry.id));
+            assert!(pin.is_some(), "{} 应当带发布者签名", entry.id);
+
+            let meta = install_bytes_into(&root, &conn, &bytes, "index:community.shuyo.cn")
+                .unwrap_or_else(|e| panic!("{} 从线上索引装不上：{e}", entry.id));
+            assert_eq!(meta.id, entry.id);
+            assert!(!meta.enabled, "{} 新装必须默认未启用（安装 ≠ 授权）", entry.id);
+            assert!(
+                root.join(format!("{}/manifest.json", entry.id)).is_file(),
+                "{} 的插件目录要就位",
+                entry.id
+            );
+            let _ = pin_publisher_key(&conn, &entry.id, pin.as_deref().unwrap(), "community.shuyo.cn");
+            installed.push((entry.id.clone(), meta.version.clone(), bytes.len(), meta.commands.len()));
+        }
+
+        eprintln!("线上索引逐条安装：{} 个全部成功", installed.len());
+        for (id, version, size, cmds) in &installed {
+            eprintln!("  {id} v{version} · {size} 字节 · 解出 {cmds} 个命令");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
