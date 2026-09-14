@@ -27,6 +27,14 @@
 - 每档位只定义 CSS 变量（`--eye-bg/-bg-dark/-stage/-fg/-filter`），共享规则应用；对各档 `.pdf-reader.eye-*` 换暖色纸底 + 页图降蓝/柔光滤镜（`sepia`/`hue-rotate`），只作用于页面图像、不影响批注 SVG。
 
 ### 4. OCR 彻底离线
+
+> ⚠️ **本节为当时（2026-08-30）的设计记录，已被 2026-09-13 的改动取代，勿据此判断现状。**
+> 语言包**不再随包分发**：两个语言包共 29.6 MiB，而 Android 上会被装两遍（APK `assets/` 一份 +
+> `.so` 内嵌前端副本一份），故改为运行时按需下载 + IndexedDB 缓存。
+> 现状：**识别在本机完成、不上传，但首次使用需联网一次（约 30 MB），之后永久离线可用**；
+> 要做出完全离线发行版须 `SHUYONOTE_OCR_BUNDLE=1` + `VITE_TESSERACT_LANG_PATH=/ocr/tessdata` 一起设。
+> 见 `src/lib/ocr.ts:54-71`、`scripts/copy-tesseract-assets.mjs:69-95`。
+
 - `scripts/copy-tesseract-assets.mjs` 把 `tesseract.js/dist/worker.min.js`、`tesseract.js-core`（wasm 加载器 + .wasm）、`@tesseract.js-data/{chi_sim,eng}` 的**完整 `4.0.0`** 模型（`.traineddata.gz`，中文 ~19MB / 英文 ~10.4MB）拷进 `public/ocr`（已 gitignore）；`dev/dev:web/build` 前运行。新增 devDeps：`tesseract.js-core`、`@tesseract.js-data/chi_sim`、`@tesseract.js-data/eng`。
 - 关键修复：**tesseract.js `is-url` 判断 `langPath`**——相对路径 `/ocr/tessdata` 被判非 URL → 浏览器走 `readCache`(IndexedDB) 而非 `fetch` → 模型加载失败、识别空。改为 `workerPath/corePath/langPath` 统一**绝对 URL**（`new URL(path, location.origin)`）。首次构造输出 `[ocr] local assets`。
 - 模型切换：`4.0.0_best_int`（整数量化）在 core v7 下 `Failed loading language`；**完整 `4.0.0` 可加载**。
@@ -37,7 +45,7 @@
 
 ### 6. AI 一键生成目录（视觉大模型优先）
 - 新增 `generateOutlineFromVision`（`src/lib/aiOutline.ts`）：逐页把页面图发给视觉模型，用 `visionPagePrompt(pageNo)` 让其**直接输出该页章节标题+页码 JSON**，合并 → `toOutlineItems`。逐页进度 / 取消 / 缓存。
-- 旧 tesseract 路径 `generateOutlineFromOcr`（OCR 文本 → LLM 提取）保留作回退。
+- 旧 tesseract 路径 `generateOutlineFromOcr`（OCR 文本 → LLM 提取）当时计划"保留作回退"。**⚠️ 2026-09-14 核实：该函数全仓无调用点，回退从未接线**——未配视觉模型时不会自动走它。详见 `src/lib/aiOutline.ts` 函数上方注释。
 
 ### 7. 系统朗读（`src/lib/speech.ts`）
 - 封装 Web Speech API（`speechSynthesis` + `SpeechSynthesisUtterance`，`zh-CN`）：`speak/stopSpeech/isSpeaking/isSpeechSupported`。顶部工具栏「朗读本页」（有文本层拼 `textItems` 全文；扫描版提示先识别），识别结果弹层「朗读/停止」。

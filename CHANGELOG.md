@@ -112,6 +112,28 @@
 
 ### 修复
 
+- **README 与安装包文案的 OCR 声明与代码相反**（"离线 OCR"其实**首次要联网一次**）。
+  用户照 README 理解，会以为装完就能在断网状态下直接用 OCR 识别扫描件。
+  代码是明确的：`src/lib/ocr.ts:54-71` + `scripts/copy-tesseract-assets.mjs:69-95` ——
+  两个语言包共 **29.6 MiB**，因 Android 上会被**装两遍**（APK `assets/` 一份 + Tauri 嵌进
+  `.so` 的前端副本又一份）而**改为运行时按需下载 + IndexedDB 缓存**，
+  故正确表述是：**识别在本机完成、不上传也不调云端，但语言包首次使用时需联网下载一次（约 30 MB），
+  之后永久离线可用**；完全离线发行版须 `SHUYONOTE_OCR_BUNDLE=1` 与
+  `VITE_TESSERACT_LANG_PATH=/ocr/tessdata` **一起**设。
+  **上一轮只改对了应用内帮助页与 `docs/development.md`，漏了这几处**，本次一并改齐：
+  `README.md`（8 处：顶部卖点、截图说明、特性总览、PDF 特性条、技术栈表、开发说明、里程碑勾选）、
+  **`src-tauri/tauri.conf.json` 的 `shortDescription` / `longDescription`**（安装包与应用商店文案，
+  `longDescription` 原先写"完全离线的 OCR 文字识别"，最容易被当成承诺）、
+  `docs/roadmap.md` ×2、`docs/README.md` 索引行、`docs/SHUYONOTE_STATE.md` 真机验收清单。
+  `docs/plans/2026-08-30-pdf-reader-ai-plan.md` §4 属**历史设计记录**——**不改写原文**，
+  只在其上加一个"已被 2026-09-13 改动取代、勿据此判断现状"的更正框。
+  - 顺带补上帮助页「能离线用吗？」漏掉的这个例外（原文写"仅 AI / 同步 / 检查更新需联网"，
+    OCR 首次下载语言包同样要联网）。
+  - 顺带更正 `src/lib/aiOutline.ts` 的注释：它写着 `generateOutlineFromOcr`"作为无视觉模型时的
+    回退"，但**该函数全仓只有定义、没有任何调用点**——回退从未接线，未配视觉模型时不会走到它。
+    保留实现，注释已如实标注"当前无调用点"（接线或删除另行决定）。
+  - 自查方式：全仓按 `离线 OCR|彻底离线|免联网|离线 tesseract` grep，逐条回到代码行号核对；
+    剩余命中只有 `CHANGELOG.md` 自身的历史条目（历史不改写）。
 - **窄屏下 PDF 阅读器的目录栏/批注栏把正文挤出屏幕**（真机：360×792 时目录栏仍 240px 常驻在左、
   批注栏并排且右侧被裁，页面图 `x=99 / 宽 306` ⇒ **右边溢出屏幕**；"打得开"与"能看"是两件事）。
   修法同 §4.1 那 19 层浮层：窄**或**矮视口下两栏改成**盖在正文上的抽屉**（`position:absolute` +

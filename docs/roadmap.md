@@ -299,7 +299,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 > **渲染引擎（双引擎）**：桌面用 **Rust 原生渲染**（`pdfium-render` / `mupdf-rs`，扛大型复杂 PDF）+ Web 用 **pdf.js（Worker）** 优雅降级；`pdfRender` 暴露一致接口。**文本层判定/OCR 兜底**作为阶段 1 降级（无文本层 → 仅矩形框选 + 画笔 + 便签）。
 > **MVP 切割（阶段 1）**：双引擎分页渲染 + 批注 overlay（高亮/荧光笔/画笔/便签，坐标归一化、不写回源 PDF）+ 内容寻址持久化 + 「摘录成块」进反链/搜索。**阶段 2**：写回 PDF / OCR 精确划词（Tauri 专属、很贵、长尾）。**阶段 3**：AI 帮读（复用 M17/M18 薄 Agent）。
 > **明确不做**：写回源 PDF、多人实时协同、全文编辑。
-> 状态：**已落地（v1.59.178 起）**——**阶段 1**：`pdfRender` 双引擎接口 + `pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化 + `pdfjs-dist@4` 引擎（`pdfjsEngine`）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签/选择/删除/编辑/复制引用 + **摘录成块**含 `pdf://` 回链 + **文本层精确划词** + **OCR 兜底**）+ 全局批注检索。**桌面 native 引擎（mupdf-sys，v1.59.179）**：`render_pdf_page` + `src/pdf_native.rs`。**阶段 3**：AI 帮读（v1.59.181）+ 对整篇 PDF 提问（v1.59.182）。阅读器重构（v1.59.180 思源式近全屏 + v1.59.187 连续滚动 v1.59.190 顶部单份批注栏）；**阶段 2（写回 PDF）待做**。**阅读器 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / AI 一键目录（视觉优先、带层级、可范围、本地持久化）/ 系统朗读 / 识别弹层）已落地，见 [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md) 与 [连续滚动](plans/2026-08-29-pdf-continuous-scroll-plan.md)。
+> 状态：**已落地（v1.59.178 起）**——**阶段 1**：`pdfRender` 双引擎接口 + `pdfAnnotation` 纯函数（归一化/Schema/CRUD/摘录成块/文本层降级/`pdfRef`）+ `pdf_annotations` 持久化 + `pdfjs-dist@4` 引擎（`pdfjsEngine`）+ `PdfReader`/`PdfAnnotationCanvas`（高亮/画笔/便签/选择/删除/编辑/复制引用 + **摘录成块**含 `pdf://` 回链 + **文本层精确划词** + **OCR 兜底**）+ 全局批注检索。**桌面 native 引擎（mupdf-sys，v1.59.179）**：`render_pdf_page` + `src/pdf_native.rs`。**阶段 3**：AI 帮读（v1.59.181）+ 对整篇 PDF 提问（v1.59.182）。阅读器重构（v1.59.180 思源式近全屏 + v1.59.187 连续滚动 v1.59.190 顶部单份批注栏）；**阶段 2（写回 PDF）待做**。**阅读器 + OCR/AI 增强**（护眼多档位 / OCR 本地识别（语言包首次联网下载）/ AI 视觉识别 / AI 一键目录（视觉优先、带层级、可范围、本地持久化）/ 系统朗读 / 识别弹层）已落地，见 [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md) 与 [连续滚动](plans/2026-08-29-pdf-continuous-scroll-plan.md)。
 
 ### M25 — 帮助系统（P2，[方案](plans/2026-08-27-help-system-plan.md)，P0/P1 已落地）
 > 本地优先 / 键盘驱动：帮助 = **发现能力 + 一次解决**，不做"客服中心/文档门户"/在线工单。
@@ -339,7 +339,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 | 双链织网 | 仅普通双链 / 块引用 | **M19 未链接提及 + 双链别名 + 精确块链**（✅） |
 | 语义检索 | 仅 FTS 关键词搜索 | **M20 语义检索（char-bigram 版）+ 接入 AI 问答**（✅） |
 | wiki 导出 | 无「把你的知识库变成可浏览网站」能力 | **M21 静态 wiki 导出 + 关系图探索**（✅） |
-| PDF 阅读/批注 | 仅 PDF 导出，无阅读/批注 | **M24 PDF 批注 + 阅读器 + OCR/AI 增强**（✅，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)：批注/摘录成块/AI 帮读 + 连续滚动/护眼/离线 OCR/AI 识别/目录/朗读） |
+| PDF 阅读/批注 | 仅 PDF 导出，无阅读/批注 | **M24 PDF 批注 + 阅读器 + OCR/AI 增强**（✅，[方案](plans/2026-08-27-pdf-annotation-plan.md) + [阅读器/AI 增强](plans/2026-08-30-pdf-reader-ai-plan.md)：批注/摘录成块/AI 帮读 + 连续滚动/护眼/本地 OCR（语言包首次联网）/AI 识别/目录/朗读） |
 | 帮助/上手 | 靠占位符/tooltip/命令面板，无体系化帮助 | **M25 帮助系统**（[方案](plans/2026-08-27-help-system-plan.md)，规划：就地提示 + 快捷键面板 + 内置「使用指南」页） |
 | 数学公式 | 无正文公式渲染 | **M26 公式**（[方案](plans/2026-08-30-formula-plan.md)：块级 `$$…$$` + 行内 `$…$`，KaTeX 懒加载；已落地） |
 | 团队协作 / 多用户 | 单用户、无账号、无权限、无实时协同 | **M27 团队版**（账号/认证 + 权限，协同后置，全自建，方案见私有仓库 `shuyonote-sync-server`，规划） |

@@ -5,7 +5,7 @@
 //      "整个目录全拷"让**约 23.3 MiB 死重**进了产物；在 Android 上还会被装两遍
 //      （APK 的 assets/ 一份 + Tauri 嵌进 .so 一份）⇒ 白白多出 ~46 MiB。
 //   2. 反过来更危险：`createWorker` 的选择逻辑依赖 `legacyCore`。哪天有人为了 `worker.detect`
-//      打开 `legacyCore: true`，而拷贝脚本仍只放 `-lstm` 那三档，**离线 OCR 会在真机上
+//      打开 `legacyCore: true`，而拷贝脚本仍只放 `-lstm` 那三档，**本地 OCR 会在真机上
 //      报一个看不懂的加载错误**——构建、单测、类型检查全都发现不了。
 //
 // 所以这里钉三件事：源码不许用 legacy 路径 / 产物里不许有死重变体 / 每个 .wasm.js 必须有 .wasm 同伴。
@@ -46,7 +46,7 @@ for (const f of srcFiles) {
         errors.push(
           `${f}:${i + 1} 用了 legacyCore —— 那样 worker 会去取「非 -lstm」的 core，` +
             `而 scripts/copy-tesseract-assets.mjs 的 CORE_KEEP 只放 -lstm 那三档，` +
-            `离线 OCR 会在真机上加载失败。请同时更新 CORE_KEEP 与这里的白名单。`,
+            `本地 OCR 会在真机上加载失败。请同时更新 CORE_KEEP 与这里的白名单。`,
         );
       }
     }
