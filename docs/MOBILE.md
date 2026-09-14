@@ -756,6 +756,27 @@ cd src-tauri\gen\android
 > 都定义了 `org.rustls.platformverifier.CertificateVerifier` ⇒ R8 报
 > `Type … is defined multiple times` 而失败。CI 每次从零 init，不会遇到。
 
+**真机验收（2026-09-15，`ee3315d` 的签名包）**：
+
+| 步 | 观测 |
+|---|---|
+| 入口 | 清单带 url + sha256 时，「关于」摆出 **「下载并安装」**（旁边保留「手动下载」「稍后再说」） |
+| 进度 | 按钮文案 `下载中 16% → 61% → 94%`（`android-update-progress` 事件真的到界面） |
+| 交给安装器 | 前台 Activity = `com.android.packageinstaller/.InstallStaging`，界面「ShuyoNote / 安装来源：ShuyoNote / 正在查验…」，应用内留下 `.about-update-hint` |
+| **反面测试** | 故意给错指纹调 `download_android_update` ⇒ 「更新包校验不通过（期望 000…0，实际 d58f5bad…）——已丢弃」 |
+
+两个省事的手法（下次直接用）：
+
+```js
+// ① 不用发版就能验整条链路：应用自己的测试钩子（debugUpdateVersion 读的就是这个查询参数）
+location.href = "http://tauri.localhost/?updateDebug=9.9.9";   // 验完导航回 http://tauri.localhost/
+// ② 反面测试：小文件（latest.json）+ 错指纹 ⇒ 下载很快结束、校验立刻失败，不必再下 56MB
+window.__TAURI_INTERNALS__.invoke("download_android_update", { url: MANIFEST_URL, sha256: "0".repeat(64) })
+```
+
+未做的：**老清单（没有指纹）时"不摆应用内入口、只留手动下载"** 这一条只有单测覆盖
+（要造这种清单得改发布通道，本机不值得）。
+
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
 鸿蒙是当前**唯一**保留 WebView 壳路线的平台。壳 = `ArkWeb` 加载 `dist-web` 构建产物 +
