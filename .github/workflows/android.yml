@@ -120,6 +120,14 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # ⚠️ **不要用它的默认值**：默认是 `tools platform-tools`，而 Google 已经把 `tools`
+          # 从 SDK 仓库里撤掉了 —— 2026-09-15 CI 三连红，报的全是同一句：
+          #   Warning: Failed to find package 'tools' → sdkmanager 退出码 1
+          # 这与我们的代码无关（同一天早些时候同一套 workflow 还是绿的），但会让 Android 构建
+          # 彻底跑不起来 ⇒ 显式只装真正用到的那个：platform-tools（adb/aapt 等）。
+          # 后面那一步自己装 NDK，build-tools/platform 由 Gradle 按 `compileSdk` 自动拉。
+          packages: "platform-tools"
 
       - name: Pick an NDK + 钉死 binutils（**ranlib 那一条是必须的**）
         # 优先用本机验过的那个版本；装不上就退到 runner 上已有的最新一个。
