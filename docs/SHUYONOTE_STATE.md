@@ -1,15 +1,18 @@
 # ShuyoNote 项目现状摘要（客户端 · 会话延续种子）
 
-> 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到最新 v1.89.0（2026-09-11）**。
+> 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到最新 v1.90.2（2026-09-15）**。
 > 项目根：`~/zhai/ShuyoNote`（Mac）/ `C:\Users\cnzen\zhai\ShuyoNote`（Windows）；远端 gitcode + github。
-> 服务端现状见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`；跨平台开发接续见 `docs/SESSION_CONTINUE.md`（服务端仓库）。
+> 服务端现状见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`；**跨平台开发接续（环境事实、待办与下一步、
+> 换到 Mac 怎么接）见 `docs/SESSION_CONTINUE.md`（服务端仓库）**——本文件只写"现状"，不写操作步骤。
 
 ## 1. 项目概况
 
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
 - **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.50（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
 - **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver）。
-- **版本**：**v1.89.0**（`package.json` / `Cargo.toml` / `tauri.conf.json` 一致；tag `v1.89.0`）。
+- **版本**：**v1.90.2**（`package.json` / `src-tauri/tauri.conf.json` 一致；tag `v1.90.2` → `7daea43`）。
+  ⚠️ **`main` 与 `dev` 当前是真分叉**（`git merge-base --is-ancestor dev main` 为假），
+  两个分支的实际 sha 与处理办法见 `SESSION_CONTINUE.md` §12.2——**动 `dev` 或发版前先读那一节**。
 - **许可证**：客户端 **AGPL-3.0**；配套自建同步服务端 **商业**（`shuyonote-sync-server`，见其仓库）。
 
 ## 2. 已实现核心功能（里程碑 M1–M27）
@@ -20,7 +23,23 @@
 | M26 | 公式（数学） | [x] |
 | M27 | 团队版（自建协作） | [部分] 部分（服务端 S1–S8 已落地；客户端 per-workspace `sync_profiles` + 账户 UI（U1–U4）+ E2E 加密已落地；**实时协同后置**） |
 
-### 近期重大变更（v1.82 → v1.84.3）
+### 近期重大变更（v1.82 → v1.90.2）
+
+- **v1.90.2 已发版上线（Android 首个正式发布件）**：GitHub Release `v1.90.2` 挂 **5 个资产**
+  （`ShuyoNote_1.90.2_android-arm64-release.apk` + 其 `.sha256`、`_x64-setup.exe`、`_amd64.deb`、`_amd64.AppImage`）；
+  gitcode 更新通道 `latest.json` 的平台键 = `windows-x86_64` / `linux-x86_64` / **`android-aarch64`**，
+  **桌面两键仍是 minisign 签名**（Android 那条改动没有破坏桌面更新通道）。
+  ⇒ Windows / Linux / Android 三端**会**收到更新提示；**macOS 无 `darwin-*` 键**（`release.yml` 未启用 macOS job）。
+- **移动端适配（代码层已完成）**：窄屏（≤768px）浮层/弹窗 **19 层**统一适配（小对话框 → 底部弹层、
+  大面板 → 全屏 + 内部滚动），并新增 **Android 壳适配层**（窗口 inset 桥 / 软键盘 `--kb` / 返回键回调，
+  由 `scripts/android-mobile-shell.mjs` 注入 Kotlin）。**关键平台事实**：Android 上
+  `env(safe-area-inset-*)` **恒为 0**（WebView 的安全区取自**物理刘海**，不是系统状态栏），
+  且 `targetSdk = 36` 下 Android 15+ **强制 edge-to-edge** ⇒ 必须自己消费 window insets；
+  edge-to-edge 下 `adjustResize` 空转（`innerHeight` / `visualViewport.height` 都不变）
+  ⇒ **web 层根本察觉不到键盘**。详见 [MOBILE.md](MOBILE.md) §4.2 与 `CHANGELOG.md` 的 `[Unreleased]`。
+- **⚠️ 移动端真机复验未完成**（手机中途从 USB 掉了）：四项待验 = inset 是否真送进网页（`--sat` 应为 41）/
+  顶部 41 CSS px 死区是否恢复（**必须 `adb shell input tap`**，禁用 CDP 合成触摸）/ 返回键三层 + 栈空才退出 /
+  键盘 `--kb`。复验入口、"新包已生效"的判据见 `SESSION_CONTINUE.md` §12.5。
 - **第一批一方插件 + 一处能力缺口**（`dev`，未发版）：`weekly-review` / `page-to-md` / `eye-care-theme` / `high-contrast-theme`（都能直接装来用，均进回归测试）；写它们时撞出并修掉 `blocks.list` 省略 pageId 不回退当前页（此前「能写当前页、读不到当前页」）；记下相邻缺口：插件拿不到当前页 id/标题（候选 `api.page.meta()`，等第二个插件也撞到再动）。
 - **信任面收口：插件更新后声明扩张必须重新确认**（`dev`，未发版）：启用时记授权快照，新增权限/事件后**后端拒绝执行 + 停止事件派发**，直到用户在插件管理里点「重新确认」；存量插件首次扫描补记一次；只跟踪启用中的插件。作者文档 §4.5.1 记了这条对发版的影响。
 - **v1.85.1 热修复：命令面板白屏**（2026-09-10）：1.85.0 起按 `Ctrl+K` 会抛 React 错误（生产为 Minified React error #310）并让**整棵树被卸载成白屏**——`CommandPalette` 把参数表单的三个 `useState` 放在了 `if (!open) return null` 之后（hooks 不能有条件调用），而它挂在 App 根部、上面没有 ErrorBoundary。修复 = hooks 移到早退之前；补上**渲染级**回归测试 `src/components/commandPaletteHooks.test.ts`（修复前必失败）。**教训**：既有验证全都不渲染 React 组件，主路径可以一直炸而全套检查全绿——所以随后补了两层：根部错误边界（`main.tsx` 的整屏兜底 + `PanelBoundary` 逐浮层隔离，`src/components/errorBoundary.test.ts` 钉住"边界外的界面照常可用"），以及开发指南里"组件/hooks 类改动要有渲染级测试"这一条。
@@ -108,7 +127,11 @@
    - **仍未做 / 未验**：② 的**真机点一次**、逐条真机验收清单
      （附件 / PDF / 离线 OCR / 加密锁定 / 深链 / 同步 / 备份 / 小屏横屏；**其中「深链」这一项已真机验证**，见上）。
      真机验收能用哪些手段、有哪些边界，见 [MOBILE.md](MOBILE.md) §2.3（别重复踩盲点坐标那个坑）。
-     上线计划见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`（公开仓已不留副本）。
+         - **壳适配层的真机复验也没做完**（2026-09-15，手机中途从 USB 掉了）：四项判据（inset 是否真送进网页 /
+      顶部 41 CSS px 死区是否恢复 / 返回键三层 / 键盘 `--kb`）、新包 artifact、以及"新旧包
+      `versionName`/`versionCode` 相同、必须靠 `--kb` 与 `window.__SHUYONOTE_BACK__` 区分"这些
+      都在私有仓库 `shuyonote-sync-server` 的 `docs/SESSION_CONTINUE.md` **§12.5**；先读它再连设备。
+      上线计划见同仓库的 `docs/android-launch-plan.md`（公开仓已不留副本）。
 4. **插件体系：M11.13 方案已拍板、**阶段 1+2 已落地——应用已真正跑在子进程上**（协议 + 帧 + `HostClient`；能力调用走 IPC 回父进程服务；命令与事件两条路都已切流；进程内执行路径已删除、14 处测试迁到生产路；实测进程启动 ~5 ms、每次能力 IPC ~0.1 ms；阶段 3 = 超时即杀 + OS 上限 + 打包验收；6 个决定见方案 §8.1）**——[插件宿主子进程化 + OS 级资源限制方案](plans/2026-09-10-plugin-host-isolation-plan.md)：把 Boa 挪进独立子进程（纯解释器：不碰 DB/密钥/路径，能力全部 RPC 回父进程；**应用现已跑在这条边界上**），取消与超时改为真杀进程，OS 级内存/CPU 上限三平台落地，4 阶段约 9–10 天；它是 M11.11a 分发的硬前置。**M11.9 已全部收口**（视图落点 `overlay`/`rail`）；一方插件 11 个（8 个能直接用）+ [可发布清单](plugin-recipes.md) 已备好。
 5. **插件体系进化 M11.8 触发面与事件**：M11.5/M11.6/M11.7 均已落地（时限与资源上限、ABI v1 + 能力注册表 + 权限与写中介、20 条能力 + 与 AI 工具层合并，**以及 M11.6 收口的作者工具链**——应用内校验/热重载/`pnpm plugin:validate`/示例插件/类型包 globals）；**M11.8 已落地四档**（命令参数 → 宿主渲染表单、结构化返回、事件钩子 v1 + **7 个发射点全部接上**（`app.started`/`page.opened`/`page.deleted`/`space.switched`/`page.saved`/`import.finished`/`sync.completed`，后两个是后台事件、在单一咽喉点播报）、**触发面 v1：编辑器 `/` 菜单**）；**M11.8 已全部落地**（命令参数、结构化返回、事件钩子 + **7 个发射点全齐**、编辑器 `/` 菜单、**页面列表行菜单 `page.context`**、**文件列表右键菜单 `file.context`**、**编辑器工具栏 `editor.toolbar`**、插件设置）；**M11.9 已落地三档**（零代码插件 `runtime: declarative` + 宿主渲染的声明式视图 + 零 JS 示例 reading-board；主题插件 `theme.tokens` + 主题检查进校验器 + 示例 warm-night；**导入触发 `manifest.triggers`**——命令面板入口 → 选文件 → **宿主** `readTextFile` 读内容 → `{ fileName, content }` 当 `argsJson` 交给 `run_plugin_command`，**没有新能力也没有新命令**，权限与写中介原样成立，顺带把 `MAX_ARGS_BYTES` 16 KiB → 1 MiB 并把注释语义改成「行为的界」，示例 md-outline）；**M11.9 第四档也已落地**（声明式视图参数化：查询字段可用 `{fromSetting}` 引用用户设置——零代码也能「用户可配」；顺带修掉三个静默失效的坑：视图 camelCase 字段被丢弃、声明式缺「加载器会不会拒」兜底、`select` 候选项短写法被拒载）；**M11.9 第五档也已落地**（导出：新能力 `api.files.export` + 权限 `export:files` + 触发 `kind: "export"`——**不直接写盘**，命令跑完后逐个弹系统保存对话框、用户点保存才写；插件给不出路径；事件里无效；示例 index-export）；**M11.9 已完成**（第六档：视图落点 `views[].placement`——`overlay` 浮层 / `rail` 右侧常驻面板，两种形态共用同一张表、互斥与"点行不关面板"都有渲染级测试；示例 reading-board 两种落点各示范一个）；之后是 M11.10 沙盒 UI（闸门=M11.9 声明式穷尽）；**那处信任缺口已闭合**（授权快照：声明扩张由后端拒绝执行 `approval_required`，直到用户重新确认，见路线图）。见[插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)（**定位=做第一不做更大**：做**第一个「有权限模型 + 作用在 E2EE 可自托管数据上」的可信插件体系**，不比能力条数）。
 6. **数友社区上线当天（不等 M11.13）**：开「模板 / 主题 / 插件配方」分类 + 发布 `plugin-index.json` 规范 + 招募 3 位共创作者；**不做**应用内市场 UI——见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯，前三级为惰性数据可立即开放）。
