@@ -683,8 +683,13 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       setPageCount(0);
       setMaximized(true);
       setFocusTarget(null);
-      setSidebarOpen(true);
-      setOutlineOpen(true);
+      // ⚠️ 这里是**每次打开文档都会跑**的复位块——它一度把两栏硬写成 `true`，于是"窄屏默认收起"
+      // 被它覆盖掉（真机上第一版就栽在这：`useState(() => !overlayViewport)` 是对的，
+      // 打开 PDF 之后两栏又都在 DOM 里）。判据跟着**视口**走，别写死。
+      // 故意**不**把 `overlayViewport` 放进依赖数组：那会让旋转/拖窗口触发整个文档重新加载，
+      // 代价远大于"这次复位用的是上一个视口值"（而 effect 的闭包在 open/bytes 变化时是新的）。
+      setSidebarOpen(!overlayViewport);
+      setOutlineOpen(!overlayViewport);
       setOutline([]);
       aiOutlineAbortRef.current?.abort();
       aiOutlineAbortRef.current = null;
