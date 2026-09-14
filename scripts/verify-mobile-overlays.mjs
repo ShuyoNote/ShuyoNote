@@ -670,9 +670,24 @@ async function main() {
                 const st = inner.style || null;
                 if (!st) continue;
                 const sel = inner.selectorText || "";
-                if (!/\.pdf-(outline|sidebar)-col|\.pdf-reader-stage-wrap/.test(sel)) continue;
+                // 只收我们关心的那几个选择器（含头部工具条与批注工具行——第一版漏了它们，
+                // 于是那两条断言永远看不到规则、只能假红）。
+                if (
+                  !/\.pdf-(outline|sidebar)-col|\.pdf-reader-stage-wrap|\.pdf-reader-head|\.pdf-annot-toolbar|\.pdf-annot-tools|\.pdf-annot-actions|\.pdf-reader-close/.test(
+                    sel,
+                  )
+                )
+                  continue;
                 if (/resizer/.test(sel)) continue;
-                out.push({ sel: sel.trim(), cond: r.conditionText.replace(/\s+/g, " "), position: st.position, width: st.width });
+                out.push({
+                  sel: sel.trim(),
+                  cond: r.conditionText.replace(/\s+/g, " "),
+                  position: st.position,
+                  width: st.width,
+                  minWidth: st.minWidth,
+                  minHeight: st.minHeight,
+                  flexWrap: st.flexWrap,
+                });
               }
             }
           }
@@ -696,6 +711,18 @@ async function main() {
         ok(
           cols.some((e) => /86vw|100%/.test(e.width)) && rules.some((e) => /pdf-reader-stage-wrap/.test(e.sel) && /100%/.test(e.width)),
           `抽屉宽度有上限、正文区吃整宽（抽屉 ${cols.map((e) => e.width || "-").join(" / ")}；正文 ${rules.filter((e) => /stage-wrap/.test(e.sel)).map((e) => e.width || "-").join(" / ")}）`,
+        );
+        // 同一层真机上量到的第三处：头部工具条 730px 宽、外层 overflow:hidden ⇒ 关闭/导出/护眼
+        // 整排被裁在屏外点不到；批注工具行 489px 同理。这里钉住"允许换行 + 触摸目标 ≥44"。
+        const wrapHead = rules.filter((e) => /\.pdf-reader-head$/.test(e.sel) && /wrap/.test(e["flexWrap"] ?? ""));
+        ok(
+          wrapHead.length > 0,
+          `窄屏段里阅读器头部允许换行（不换行 = 右边那排按钮被 overflow:hidden 裁掉，真机实测 730 > 360）`,
+        );
+        const bigTouch = rules.filter((e) => /\.pdf-reader-head button|\.pdf-annot-toolbar button/.test(e.sel) && /44px/.test(`${e["minWidth"] ?? ""} ${e["minHeight"] ?? ""}`));
+        ok(
+          bigTouch.length > 0,
+          `阅读器内部按钮命中区 ≥44（原来 28×28，手机点不中）`,
         );
       }
 

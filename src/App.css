@@ -20666,5 +20666,38 @@ body.is-plugin-panel-open .main {
     width: 100%;
     flex: 1 1 auto;
   }
+
+  /* ---------------------------------------------------------------------------
+     PDF 阅读器的**头部工具条 / 批注工具行**（同一轮真机量到的第三处）
+
+     实测（360 宽）：头部内容 **730px** 宽，而外层 `.pdf-reader.maximized` 是
+     `overflow: hidden` ⇒ 放大 / 还原窗口 / 批注侧栏 / 对这篇 PDF 提问 / 护眼模式 /
+     导出带批注副本 / **关闭** 整排**被裁在屏外、点不到**；批注工具行同理（489 > 360）。
+     用户只能靠 Android 返回键离开，而屏幕上那个「关闭」其实一直在屏幕外。
+
+     改法：窄/矮视口下这两行**允许换行**（不裁 = 每个按钮都真的能按到），
+     并把「关闭」推到可见的一端；触摸目标补齐到 44×44（这一层原来是 28×28，
+     与 §4.1 那条"命中区 ≥44"是同一条规矩，只是当初没覆盖到阅读器内部）。
+     --------------------------------------------------------------------------- */
+  .pdf-reader-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .pdf-reader-close {
+    margin-left: auto;
+  }
+  .pdf-annot-toolbar,
+  .pdf-annot-tools,
+  .pdf-annot-actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .pdf-reader-head button,
+  .pdf-annot-toolbar button,
+  .pdf-outline button,
+  .pdf-sidebar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
