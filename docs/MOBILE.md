@@ -1225,6 +1225,34 @@ node scripts/android-mobile-shell.mjs --device-check
 | `node scripts/check-pdfjs-worker-shim.mjs` | **顺序不变量**：探针模块在自己的模块体里必须已经看到两个 API；把垫片里两条 import 调换 ⇒ 该断言变红（变异自证已做；报错原文就是"真 worker 的模块体里没有 Promise.withResolvers —— 垫片的顺序错了"） |
 | `pnpm vitest run scripts/es-polyfills.test.mjs` | 补齐层语义（resolve/reject 接通、`AbortSignal.any` 的 reason 传染与空数组）、幂等、**绝不覆盖原生实现**；把安装那行改成 no-op ⇒ 4 条断言变红 |
 
+### 4.3.3 真机验收实操：这一轮踩到的坑（下次直接照做）
+
+| 坑 | 现象 | 正确做法 |
+|---|---|---|
+| **adb 推进去的文件，选择器看不见** | `/sdcard/Download/` 里明明有 `plugin-x.zip`，系统选择器里**不出现** | 这台设备（EMUI/Android 12）的选择器是 **MediaStore 驱动**；`adb push` 的文件没有 MediaStore 条目，`am broadcast MEDIA_SCANNER_SCAN_FILE`（API 29 起已废弃）也扫不出来。⇒ **只能用 App 自己写出去的文件**当素材：先用「文件管理 → ⬇ 下载附件」把内部附件存到 Downloads（可在保存对话框里**改成唯一的名字**，如 `probe-zhenji.png`），再用它做导入素材。**这条同时是判据的强证据**：那个名字在库里不存在，能出现在列表里就说明名字是**问系统问到的** |
+| 只比"名字对不对"会**假绿** | 库里本来就有一行同名附件，导入后看起来还是那个名字 | 素材必须用**唯一名**（见上一条），否则分不清"新导入的行"与"原有行" |
+| 同名附件会被**合并成版本组** | 行尾多出一个 `↻`（历史版本按钮） | 这是 `FileManagerView` 的既有分组行为，不是 bug；判读时别当成异常 |
+| 设备会**自己转屏** | 上一秒量的还是 360×792，下一秒变成 792×360（横屏走"内联形态"，量出来的数字全变） | 量几何**当次**先读 `innerWidth/innerHeight` 并写进同一份结果（一次 CDP 调用里取全），别跨调用拼数字；要固定姿态用 `settings put system accelerometer_rotation 0` + `user_rotation 0`（这台设备会被系统重新打开自动旋转，必要时重设） |
+| 保存对话框的**文件名框** | 想改成唯一名，`input text` 只在**先点中那个输入框**后才生效 | `adb shell input tap <名框坐标>` → `keyevent KEYCODE_MOVE_END` → 多次 `KEYCODE_DEL` 清空 → `input text <ASCII 名>` → 点「保存」 |
+| `.ps1` 在 Windows PowerShell 5.1 下**乱码/解析失败** | 提示 `The string is missing the terminator` | `tmp/` 下的脚本要么纯 ASCII，要么**存成带 BOM 的 UTF-8**（仓库门禁 `check:ps1-ascii` 就是这个规矩；`write` 工具写出来的是无 BOM，加 BOM 用 `[System.IO.File]::WriteAllBytes`） |
+| 连续推送会**取消在跑的 CI** | `ci.yml` 有 `concurrency: cancel-in-progress: true`，而 Rust job 是最长一棒 ⇒ 推得越勤，"CI 绿"越不会出现 | 等一轮**跑完**再推下一轮；查状态时**三个 workflow 都要看**（只查名字像 CI 的那个会漏掉 Android/build 的红） |
+
+### 4.3.4 还没修：窄屏下 PDF 阅读器**内部分栏**没适配（2026-09-15 真机量到）
+
+4.3.2 修好的是"**打得开**"（`第 1 / 4 页`、正文渲染成 `.pdf-annot-img`、控制台有真 worker 的日志）。
+但真机上接着量到**第二个问题**：360 CSS px 宽时，阅读器**内部**仍是桌面的三栏布局——
+
+| 元素 | 实测（360×792） | 应为 |
+|---|---|---|
+| `.pdf-reader-overlay` / `.pdf-reader` | 0,0,360×792（整屏 ✓ 这条没问题） | 同左 |
+| `.pdf-outline-col`（目录） | **240 宽、常驻在左侧** | 窄屏应**默认收起**、展开时做整屏/抽屉浮层 |
+| 批注栏 | 与目录并排，右侧文字被**裁掉**（截图里"暂不…"被切） | 同上 |
+| 页面图 `.pdf-annot-img` | x=99、宽 306 ⇒ **右边溢出屏幕**（99+306=405 > 360） | 铺满内容宽度（`适合宽度`） |
+
+结论：**"能打开"与"能看"是两件事**——后者要在窄屏段里把目录/批注栏改成浮层并默认收起、
+把页面区改成整宽（改法与 §4.1 那 19 层浮层同一条纪律）。在那之前，"手机上 PDF 可用"这句
+只能说到"能打开、能翻页、能返回"，**不能说"阅读体验可用"**。
+
 ## 5. iOS 环境结论（2026-09，仍然有效）
 
 **Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当时的 Mac 上

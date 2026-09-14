@@ -37,9 +37,26 @@
   且 `targetSdk = 36` 下 Android 15+ **强制 edge-to-edge** ⇒ 必须自己消费 window insets；
   edge-to-edge 下 `adjustResize` 空转（`innerHeight` / `visualViewport.height` 都不变）
   ⇒ **web 层根本察觉不到键盘**。详见 [MOBILE.md](MOBILE.md) §4.2 与 `CHANGELOG.md` 的 `[Unreleased]`。
-- **⚠️ 移动端真机复验未完成**（手机中途从 USB 掉了）：四项待验 = inset 是否真送进网页（`--sat` 应为 41）/
-  顶部 41 CSS px 死区是否恢复（**必须 `adb shell input tap`**，禁用 CDP 合成触摸）/ 返回键三层 + 栈空才退出 /
-  键盘 `--kb`。复验入口、"新包已生效"的判据见 `SESSION_CONTINUE.md` §12.5。
+- **Android 真机复验：已完成两轮，第三轮（本轮两个新 bug 的验收）待插回手机**
+  （2026-09-15，Mate 40 / Android 12 / 自检包签名与正式密钥一致，升级不丢数据）：
+  - 第一轮：inset 桥（`--sat` = 41）/ 顶部死区 / 返回键三层 / 软键盘 `--kb` / 横屏裁切 → **全部通过**（必须 `adb shell input tap`，CDP 合成触摸会绕过 SystemUI 假成功）。
+  - 第二轮：窄屏浮层几何 + 返回栈，用自造**空间包**（`tmp/fixture/make-space.mjs`）在真机上造出**名字与 MIME 都正确**的附件当素材 → 文件预览几何 / 文件预览返回键 / PDF 返回键 **三项从"无法判定"转为通过**。
+  - **本轮又抓出两个"整个功能不可用"**（都已修 + CI 绿 + 已出签名 APK，**真机行为验收已做**）：
+    ① 手机上**保存到用户选的位置全部失败**（导出空间/导出备份/下载附件/导出 HTML/模板/标注副本；
+    真机红字 `Read-only file system`）——根因 `content://` URI 被当路径用，修法见 `save_target.rs`；
+    **真机已验：导出空间 15,870 B（含 `shuyonote.db` + 两个附件）、导出备份 220,743 B（含 `meta.db` + 3 个空间库 + 附件）、下载附件 9,582 B 且 sha256 与内容哈希逐字节一致**（修前那个是 0 字节）；
+    ② 手机上**打开任何 PDF 都失败**（真机 `Promise.withResolvers is not a function`）——根因设备系统
+    WebView 停在 **Chrome 114** 而 pdf.js 4.8 要 119+，修法见 `public/es-polyfills.js` + `pdfjs-worker-shim.mjs`；
+    **真机已验：`第 1 / 4 页`、正文渲染成页面图、控制台日志来自真 worker（无 `Setting up fake worker`）**。
+    选择器导入**丢附件名与 MIME**也已真机验证：用唯一名素材（`probe-zhenji.png` / `probe-pdf.pdf`）
+    导入后列表显示的就是**系统给的原名** + 🖼/📕 图标，点开进内置预览（`naturalWidth=256`）/ 内置 PDF 阅读器。
+  - **待办（本轮新发现）**：窄屏下 PDF 阅读器**内部分栏**没适配（目录栏 240 常驻、页面图右溢出屏幕）
+    ——"能打开"≠"能看"，改法与 §4.1 同一条纪律，见 [MOBILE.md](MOBILE.md) §4.3.4；
+    另一个未做真机验证的小项：手机上装 **zip 插件包**（判据已改对，但本机环境造不出选择器可见的
+    插件包：`adb push` 进去的文件没有 MediaStore 条目，见 §4.3.3）。
+  - 验收脚本与素材都在 `tmp/`（`fixture/make-space.mjs`、`savecheck.ps1`、`fetch-apk.ps1`、`reverify/`）；
+    **`gen/android` 必须重新 `pnpm tauri android init`**（本机那份是陈旧的，`--check` 会红，
+    现在它还会与 `scripts/vendor/` 逐字节比对）。
 - **第一批一方插件 + 一处能力缺口**（`dev`，未发版）：`weekly-review` / `page-to-md` / `eye-care-theme` / `high-contrast-theme`（都能直接装来用，均进回归测试）；写它们时撞出并修掉 `blocks.list` 省略 pageId 不回退当前页（此前「能写当前页、读不到当前页」）；记下相邻缺口：插件拿不到当前页 id/标题（候选 `api.page.meta()`，等第二个插件也撞到再动）。
 - **信任面收口：插件更新后声明扩张必须重新确认**（`dev`，未发版）：启用时记授权快照，新增权限/事件后**后端拒绝执行 + 停止事件派发**，直到用户在插件管理里点「重新确认」；存量插件首次扫描补记一次；只跟踪启用中的插件。作者文档 §4.5.1 记了这条对发版的影响。
 - **v1.85.1 热修复：命令面板白屏**（2026-09-10）：1.85.0 起按 `Ctrl+K` 会抛 React 错误（生产为 Minified React error #310）并让**整棵树被卸载成白屏**——`CommandPalette` 把参数表单的三个 `useState` 放在了 `if (!open) return null` 之后（hooks 不能有条件调用），而它挂在 App 根部、上面没有 ErrorBoundary。修复 = hooks 移到早退之前；补上**渲染级**回归测试 `src/components/commandPaletteHooks.test.ts`（修复前必失败）。**教训**：既有验证全都不渲染 React 组件，主路径可以一直炸而全套检查全绿——所以随后补了两层：根部错误边界（`main.tsx` 的整屏兜底 + `PanelBoundary` 逐浮层隔离，`src/components/errorBoundary.test.ts` 钉住"边界外的界面照常可用"），以及开发指南里"组件/hooks 类改动要有渲染级测试"这一条。
