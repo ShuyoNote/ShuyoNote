@@ -119,7 +119,7 @@ pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 
 ## 4. 测试与验证（权威循环）
 
-> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev`、以及 push 到 `feat/android-mobile` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
+> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
 >
 > 在此之前这些检查**只靠人记得跑**：`smoke-web`（350 断言）曾因一处无守卫的 `localStorage` 访问整套崩掉而长期无人察觉——没有自动化在跑它，谁都没看见它是红的。
 
@@ -334,4 +334,52 @@ git push origin main --follow-tags && git push github main --follow-tags   # 两
 ```
 
 > **hotfix**：从 main 切 `fix/*`，修完合回 main 并发补丁版，同时**把这个修复也合回 dev**，否则下次从 dev 发版会把修复覆盖掉。
+
+### 10.3 中转形态：`feat/*` → `dev` → `main`
+
+合入路径只有一条：**特性分支合成 `dev`，`dev` 再进 `main`**。§10.1 / §10.2 的写法即此意，这里
+把它写成规则和判据，免得只靠"记得"。
+
+**为什么 `main` 必须保持可发布**：推 `main` 就等于上线——`pages.yml` 在 push `main` 时自动把
+Web 版部署到 GitHub Pages，而 `github-pages` 环境的**分支策略只允许 `main`**，所以想让 Pages 跟上
+新版本，唯一不违反策略的路子就是把东西真的合进 `main`（见 [RELEASING.md](RELEASING.md) §⑦ 第 2 条）。
+落到 `main` 的 WIP 会被**公开部署出去**。
+
+**"`dev` 领先 `main`" 的准确语义**（别读成"必须永远领先"）：
+
+| 时点 | 两条分支的关系 |
+|---|---|
+| 有未发布的开发工作时 | `dev` **领先** `main` —— 这正是中转形态在起作用 |
+| 发版时（`dev → main`） | 合并后两者**对齐** |
+| `main` 上出现 `dev` 没有的提交之后 | 把 `dev` **FF 同步**回来 ⇒ 再次对齐 |
+
+⇒ **静止时 `main == dev` 是正常的，不是异常。**
+
+**规则：`main` 上出现 `dev` 没有的提交（例如纯清理 / 文档提交）时，随后应把 `dev` FF 同步回来**，
+否则 `dev` 会白白落在后面，下次合并时白白多出一段分叉：
+
+```bash
+git switch dev && git merge --ff-only main    # 能 FF 才对；被拒说明 dev 落后得不正常，先查清来源
+git push origin dev && git push github dev
+git ls-remote origin refs/heads/dev refs/heads/main    # 两侧 SHA 逐一核对，别只看推送输出
+git switch main                               # 别把工作区留在 dev（§9「常见坑」里两条都栽在这上面）
+```
+
+### 10.4 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
+
+如实记下，因为它是"要恢复中转形态"这件事的由来：
+
+- `feat/android-mobile`（tip `e4e2909`）**绕过了 `dev`，直接合进 `main`**：合并提交 **`31514c4`**
+  （`2026-09-14 09:12`），两个父提交是 `8eb456b`（`dev` 当时所在的位置）与 `e4e2909`。
+- 合并后 `dev` 被 **FF 同步**到 `31514c4` ⇒ **`main == dev`**；`feat/android-mobile` 也因此被删除
+  （local / origin / github 三处），它的 tip 已完全包含在 `main` 里，**没有未合并的提交**。
+- **所以这不是"改一个 SHA 就能修好"的状态**：`main == dev` 是上面那次偏差的结果，不是有人把
+  `dev` 推到了 `main`。**下一版起按 §10.3 的中转形态执行**；`dev` 重新领先 `main` 的方式是
+  **后续正常往 `dev` 提交**（切到 `dev` → 改 → 提交 → 推），**不是**造一个空提交或假提交去让
+  `dev`「看起来领先」——那是自欺，而且会把"静止时对齐"这个正常状态误标成异常。
+
+> **发版前判据**：确认这次进 `main` 的是 `dev`，而不是某条特性分支——`git merge-base --is-ancestor dev main`
+> 为真（PowerShell 里 `$LASTEXITCODE` 为 0），且这次合并是显式写的 `git merge --no-ff dev`
+> （见 §10.2）。为假 ⇒ 说明又绕过了 `dev`，**停下查清再发**。发版清单里也有一条对应的可勾选项
+> （[RELEASING.md](RELEASING.md) §9.6）。
 

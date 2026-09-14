@@ -29,6 +29,13 @@ git push origin main && git push github main     # main 同样两个远端都推
 git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端都推**，见下
 ```
 
+> **进 `main` 的东西必须来自 `dev`**：上面这段写法假定"已经按 [development.md](development.md) §10.2
+> 把 `dev` 合进了 `main`"。**合并前先确认这一点**，不要把某条特性分支直接合进 `main`——那正是
+> 2026-09-14 发生过的那次偏差（`feat/android-mobile` ⇒ `31514c4`，见 development.md §10.4）。
+> 两条判据都要真：`git merge-base --is-ancestor dev main`（PowerShell 里 `$LASTEXITCODE` 为 0），
+> 且这次合并是**显式**写的 `git merge --no-ff dev`。任何一条为假 ⇒ **停下查清，不要发版**
+> （§9.6 有对应的可勾选项）。
+
 > **为什么 tag 必须两个远端都推**（`origin` = gitcode、`github` = GitHub，两个是**各自独立的仓库**）：
 > - **只推 gitcode ⇒ 发版流程不触发**：`release.yml` 是 **GitHub Actions** 的工作流，只有 **GitHub
 >   这个仓库收到 tag** 时才会跑（gitcode 上跑的是另一套 `.gitcode/workflows/build-linux.yml`，
@@ -251,6 +258,12 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 收尾时别忘了一句口径：**Pages 上那一份是从它被部署时的 ref 构建的**。若走第 2 条，Pages = `main`
 的构建；若走第 3 条，Pages 可能**与 `main` 不一致**——报告里要写明，不要让读者以为两者同源。
 
+> **状态更新（2026-09-14）**：上面那个前提**已经不成立**了——`feat/android-mobile` 已经合进 `main`
+> （`31514c4`，见 [development.md](development.md) §10.4），`main` 与 `dev` 对齐，Pages 随之恢复正常：
+> push `main` 即自动对齐两个入口，**不必再在这三条出路里做取舍**。本节原样保留，因为将来若又要在
+> "未合并进 `main`"的状态下发版（长线开发期），这三条出路仍然是唯一的选择集，而第 1 条那种
+> "只发国内主站、Pages 停旧版"的做法**必须写明**，不能让读者以为两个入口同源。
+
 ## ⑧ 检查 CHANGELOG 连续
 ```bash
 Select-String -Path CHANGELOG.md -Pattern '^## \[' | Select-Object -First 12
@@ -270,7 +283,7 @@ Select-String -Path CHANGELOG.md -Pattern '^## \[' | Select-Object -First 12
 | | `.github/workflows/android.yml` | `.github/workflows/release.yml` 的 `android` job |
 |---|---|---|
 | 定位 | **自检包**（"能不能装、装上能不能用"） | **可发布件** |
-| 触发 | 手动 `workflow_dispatch`；或 push 到 `dev` / `main` / `feat/android-mobile` 且改动命中 `paths:` | **只有 push `v*` tag**（或手动 `workflow_dispatch`） |
+| 触发 | 手动 `workflow_dispatch`；或 push 到 `dev` / `main` 且改动命中 `paths:` | **只有 push `v*` tag**（或手动 `workflow_dispatch`） |
 | `VITE_TEST_HOOKS` | **job 级设 `"1"`**（必须 job 级：`tauri.conf.json` 的 `beforeBuildCommand` 让 `tauri android build` 会**再跑一遍** `pnpm build`，只挂某一步等于没挂） | **任何层级都不设**，并在构建步骤里对空值做显式断言（`❌ 发版包不允许带测试钩子`） |
 | 产物 artifact | `android-apk-aarch64-signed-test-hooks`（可直接 `adb install`，**只能自检**）、`android-apk-aarch64-unsigned`（量体积用），均保留 14 天 | `android-release-apk`（保留 14 天），含 `ShuyoNote_<package.json 版本>_android-arm64-release.apk` **与其 `.sha256`**（后者是更新清单里那个 `signature` 的凭据，`release` job 会断言它在） |
 | 与 Release 的关系 | 不挂 tag、不建 Release | `release` job `needs: [build, android]` ⇒ **Android 失败会阻断整个 Release**（有意的：宁可响亮失败，不发"缺平台却看起来正常"的半套） |
@@ -412,6 +425,10 @@ git tag -d $TAG                    # 删本地 tag
 
 **每次正式发版：**
 
+- [ ] **这次进 `main` 的是 `dev`，而不是某条特性分支**：`git merge-base --is-ancestor dev main` 为真
+      （PowerShell 里 `$LASTEXITCODE` 为 0），且 `main` 上那次合并是显式写的 `git merge --no-ff dev`
+      （见 ④ 与 [development.md](development.md) §10.3 / §10.4）。为假 ⇒ 又绕过了 `dev`，**停下查清再发**。
+      注意：**`main == dev` 本身不是问题**——静止时两者对齐是正常状态，别为了"看起来 dev 在领先"造提交
 - [ ] `node scripts/check-versions.mjs` 过（`package.json` 等版本号一致，见 ②）
 - [ ] `CHANGELOG.md` 的 `[Unreleased]` 已开成本版本段（见 ①）
 - [ ] tag 名为 `v<版本>`，与 `package.json` 的版本一致（APK 文件名用的是 `package.json` 的版本）
