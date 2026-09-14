@@ -236,10 +236,24 @@ if (CHECK_ONLY) {
   if (!existsSync(KT_DST)) fail(`缺少 ${KT_DST}（CI 里应排在 tauri android init 之后）`)
   if (!existsSync(PRO_FILE)) fail(`缺少 ${PRO_FILE}`)
   if (!readFileSync(KT_DST, 'utf8').includes('PREFER_CRLS')) fail('装进去的校验器没有补丁')
+  // ⚠️ 只查"含 PREFER_CRLS"是不够的：**一份被打坏、但还留着那个词的副本照样过关**。
+  // 2026-09-15 就踩到过：本机 gen/ 里那份是更早某次留下的产物，比 vendor 里少 12 行、
+  // 多行 `//` 注释被并成一行、`EnumSet.of(` 整行没了 ⇒ Kotlin 直接编不过
+  // （五处 Unexpected tokens），而 --check 当时是绿的。gen/ 不入库、CI 每次重建，
+  // 所以这个坑只有本机开发者会踩 —— 判据改成**逐字节相同**，陈旧或损坏一律拦下。
+  const srcKt = readFileSync(KT_SRC, 'utf8')
+  const dstKt = readFileSync(KT_DST, 'utf8')
+  if (dstKt !== srcKt) {
+    fail(
+      `${KT_DST} 与 scripts/vendor/ 里的那份**不一致**（陈旧或被打坏）：\n` +
+        `      注入 ${dstKt.length} 字符 / 源 ${srcKt.length} 字符\n` +
+        '      修法：删掉 src-tauri/gen 重新 `pnpm tauri android init`，再跑 pnpm android:platform-verifier',
+    )
+  }
   if (readFileSync(APP_GRADLE, 'utf8').includes(MARK)) {
     fail('app/build.gradle.kts 里还留着旧的 AAR 注入 ⇒ 会与自编译的类重复，删掉 gen/ 重新 init')
   }
-  console.log('✅ 校验器源码与 Proguard 规则都在（--check）')
+  console.log('✅ 校验器源码（与仓库内那份逐字节一致）与 Proguard 规则都在（--check）')
   process.exit(0)
 }
 

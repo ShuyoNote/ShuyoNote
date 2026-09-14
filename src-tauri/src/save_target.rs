@@ -76,6 +76,15 @@ struct Staged {
 }
 
 impl SaveTarget {
+    /// 目标就是一个**真实路径**：内容直接写在那里，`commit` 是空操作。
+    ///
+    /// 单独留这个构造器不只是为了桌面分支好读：它让"桌面这条路"变成**可以单测**的
+    /// ——`new()` 需要 `AppHandle`，单测里造不出来，而 `direct()` 不需要。
+    /// （`commit()` 需要把内容搬进 URI 的那一半仍然只有真机能验，见模块头注释。）
+    pub(crate) fn direct(path: PathBuf) -> Self {
+        Self { write_path: path, staged: None }
+    }
+
     /// 解析目标位置。URI 目标会**立刻**在缓存里建中转目录（失败就别开始写）。
     pub(crate) fn new(app: &AppHandle, dest: &str, tmp_stem: &str) -> Result<Self, String> {
         match classify(dest) {
@@ -87,7 +96,7 @@ impl SaveTarget {
                         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                     }
                 }
-                Ok(Self { write_path: p, staged: None })
+                Ok(Self::direct(p))
             }
             Dest::Uri(uri) => {
                 let dir = crate::tempdir::subdir(STAGING_SUBDIR).map_err(|e| {
@@ -200,5 +209,24 @@ mod tests {
             classify("file:///storage/emulated/0/Download/a.zip"),
             Dest::Uri("file:///storage/emulated/0/Download/a.zip".to_string())
         );
+    }
+
+    /// 桌面那条路的**契约**：内容写在目标路径上，`commit` 什么都不做（尤其不移动/不删除）。
+    /// 这条挡的是"为了 Android 顺手把桌面也改成先写缓存再搬"——那会改变桌面的落盘时机
+    /// 与失败表现（用户可能已经在保存对话框里建了文件）。
+    #[test]
+    fn direct_target_writes_in_place_and_commit_is_a_noop() {
+        let dir = std::env::temp_dir().join(format!("shuyonote-save-target-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("space.zip");
+
+        let target = SaveTarget::direct(out.clone());
+        assert_eq!(target.write_path(), out.as_path(), "桌面必须直接写在目标路径上");
+        std::fs::write(target.write_path(), b"payload").unwrap();
+        target.commit().unwrap();
+
+        assert_eq!(std::fs::read(&out).unwrap(), b"payload", "commit 不该动文件");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
