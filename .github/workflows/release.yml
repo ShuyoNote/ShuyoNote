@@ -113,6 +113,28 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      - name: 发布的包确实注册了 shuyonote:// 协议（Linux 档）
+        # 为什么只在这一档做**产物级**断言：Linux 的注册是 deb 里那个 .desktop 的
+        # `MimeType=x-scheme-handler/shuyonote`（由 bundler 从 deep_link_protocols 生成），
+        # 它是**纯文本**、可以直接从**发布产物**里读出来；Windows 那边的注册表串在 NSIS 的
+        # 压缩脚本块里，grep 安装包读不到（要用 7-Zip 解 NSIS 才看得到），所以那一档靠
+        # `check-deep-link.mjs` 的源码级四查 + 真机验证。
+        # 这条的价值：`scheme 声明漏了`在这档会表现为"deb 里没有这一行"，而**装完之后
+        # 点链接没反应**恰恰最难归因。
+        if: matrix.platform == 'ubuntu-24.04'
+        run: |
+          set -e
+          deb=$(ls src-tauri/target/release/bundle/deb/*.deb | head -1)
+          echo "检查产物：$deb"
+          rm -rf /tmp/debcheck && mkdir -p /tmp/debcheck
+          dpkg-deb -x "$deb" /tmp/debcheck
+          desktop=$(find /tmp/debcheck/usr/share/applications -name '*.desktop' | head -1)
+          [ -n "$desktop" ] || { echo "::error::deb 里没有 .desktop（协议注册会因此缺失）"; exit 1; }
+          grep -n "MimeType" "$desktop"
+          grep -q "x-scheme-handler/shuyonote" "$desktop" \
+            || { echo "::error::$desktop 缺少 MimeType=x-scheme-handler/shuyonote —— 装完点 shuyonote:// 链接不会唤起应用"; exit 1; }
+          echo "✓ deb 注册了 shuyonote:// 协议"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
