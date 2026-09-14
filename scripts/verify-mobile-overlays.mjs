@@ -76,6 +76,9 @@ const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
 
 let pass = 0;
 let fail = 0;
+// PDF 内部分栏的 CSS 级断言只需要跑一次（样式表与视口无关），但要在**已经进过窄屏视口**
+// 的页面里查（那段媒体查询只在命中时才出现在 cssRules 里）。
+let pdfCssChecked = false;
 const notes = [];
 const ok = (cond, msg) => {
   if (cond) {
@@ -636,6 +639,65 @@ async function main() {
         `CSS 侧阈值也卡在 520/521（视口高 ${SHORT_VIEWPORT_MAX_PX + 1} 时 \`max-height:${SHORT_VIEWPORT_MAX_PX}px\` 不命中）` +
           `——JS 说矮而 CSS 说"不矮"会同时废掉两边`,
       );
+
+      // ---- PDF 阅读器的内部分栏：窄/矮视口下必须是**抽屉**，不能是并排的列 ----
+      // 这条是 2026-09-15 真机量出来的第二个问题：阅读器**能打开**了，但 360 宽下目录栏
+      // 仍以 240px 常驻在左侧、批注栏并排 ⇒ 页面图 x=99/宽 306 **右边溢出屏幕**，正文被挤没。
+      // 判据放在 CSS 层（这一层不需要真 PDF 就能验）：窄屏段里 `.pdf-outline-col` /
+      // `.pdf-sidebar-col` 必须是 `position: absolute`，正文区必须吃掉整宽。
+      // 真机几何（页面图不出屏、两栏默认收起）另在设备上验。
+      if (!pdfCssChecked) {
+        pdfCssChecked = true;
+        const rules = await safeEval(page, () => {
+          // ⚠️ 三处容易写错，第一版全踩了：
+          //  1. 同一个类在窄屏段里出现在**多条**规则里（一条给 position、一条只给 left/box-shadow）
+          //     ⇒ 必须**全收集**，只留最后一条会把值覆盖成空串；
+          //  2. 段里还有 `@keyframes` 这类**没有 `.style`** 的对象 ⇒ 读 `inner.style.position` 直接抛；
+          //  3. 这个仓库的窄/矮是**同一条** `@media (max-width:768px), (max-height:520px)`
+          //     ⇒ 不要按"窄"或"矮"分桶，要看那条 conditionText 是否**两个轴都写了**。
+          const out = [];
+          for (const sheet of Array.from(document.styleSheets)) {
+            let list;
+            try {
+              list = Array.from(sheet.cssRules);
+            } catch {
+              continue;
+            }
+            for (const r of list) {
+              if (!r.conditionText) continue;
+              if (!/max-width:\s*768px/.test(r.conditionText) && !/max-height:\s*520px/.test(r.conditionText)) continue;
+              for (const inner of Array.from(r.cssRules || [])) {
+                const st = inner.style || null;
+                if (!st) continue;
+                const sel = inner.selectorText || "";
+                if (!/\.pdf-(outline|sidebar)-col|\.pdf-reader-stage-wrap/.test(sel)) continue;
+                if (/resizer/.test(sel)) continue;
+                out.push({ sel: sel.trim(), cond: r.conditionText.replace(/\s+/g, " "), position: st.position, width: st.width });
+              }
+            }
+          }
+          return out;
+        });
+        const cols = rules.filter((e) => /\.pdf-(outline|sidebar)-col/.test(e.sel));
+        const drawer = cols.filter((e) => /^(absolute|fixed)$/.test(e.position));
+        ok(
+          /\.pdf-outline-col/.test(drawer.map((e) => e.sel).join(",")),
+          `窄屏段里 PDF 目录栏是抽屉（${cols.map((e) => `${e.sel} → ${e.position || "（无 position）"}`).join("；")}）——并排的列会把正文挤出屏`,
+        );
+        ok(
+          /\.pdf-sidebar-col/.test(drawer.map((e) => e.sel).join(",")),
+          `窄屏段里 PDF 批注栏也是抽屉（${cols.map((e) => `${e.sel} → ${e.position || "（无 position）"}`).join("；")}）`,
+        );
+        ok(
+          drawer.length > 0 && drawer.every((e) => /max-height:\s*520px/.test(e.cond)),
+          `抽屉规则挂在"窄**或**矮"那同一条查询里（cond=${drawer[0]?.cond ?? "（没有抽屉规则）"}）` +
+            `——只写 max-width 的话，横屏手机（792×360）又会回到并排的列`,
+        );
+        ok(
+          cols.some((e) => /86vw|100%/.test(e.width)) && rules.some((e) => /pdf-reader-stage-wrap/.test(e.sel) && /100%/.test(e.width)),
+          `抽屉宽度有上限、正文区吃整宽（抽屉 ${cols.map((e) => e.width || "-").join(" / ")}；正文 ${rules.filter((e) => /stage-wrap/.test(e.sel)).map((e) => e.width || "-").join(" / ")}）`,
+        );
+      }
 
       // ---- 系统 inset 变量：无壳层报送时必须全是 0px（不许凭空多出边距） ----
       const varsProbe = await safeEval(page, () => {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { createPortal } from "react-dom";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
+import { useMobileOverlayViewport } from "../hooks/useMobile";
 import { usePdfReader } from "../store/pdfReader";
 import { useAiStore } from "../store/ai";
 import { canvasToPngBlob, type createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
@@ -279,11 +280,23 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   // 那时没有"最上层浮层"可言，登记进去只会让返回键先吃掉一次按键。
   // 浮层形态（窄屏 / 单页独立窗口）才登记。
   useOverlayLayer("pdfReader", open && !inline, close);
+  // 浮层形态视口（窄**或**矮）：目录栏 / 批注栏在这时是**盖在正文上的抽屉**，不是并排的列。
+  // 判据与 CSS 那段 `@media (max-width:768px), (max-height:520px)` 逐字对应（同一个 hook）。
+  const overlayViewport = useMobileOverlayViewport();
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState<ZoomMode>({ mode: "fit-width" });
   const [maximized, setMaximized] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [outlineOpen, setOutlineOpen] = useState(true);
+  // 宽屏默认两栏都开（桌面阅读习惯）；抽屉形态下**默认收起**——真机上 360 宽开着目录栏
+  // 等于正文看不见（页面图 x=99/宽 306，右边直接溢出屏幕）。
+  const [sidebarOpen, setSidebarOpen] = useState(() => !overlayViewport);
+  const [outlineOpen, setOutlineOpen] = useState(() => !overlayViewport);
+  // 转到抽屉形态（竖屏转横屏、把窗口拖矮、进分屏）时**收起来**：留着开就是拿两栏盖住正文。
+  // 只单向收敛（不回弹），把"要不要打开"的决定权留给用户。
+  useEffect(() => {
+    if (!overlayViewport) return;
+    setOutlineOpen(false);
+    setSidebarOpen(false);
+  }, [overlayViewport]);
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   // 「AI 生成目录（本段）」进行态（进度/阶段/取消）。扫描版无目录时才显示入口。
   const [aiOutline, setAiOutline] = useState<{ status: "idle" | "running" | "done" | "error"; stage: "ocr" | "ai"; done: number; total: number }>({ status: "idle", stage: "ocr", done: 0, total: 0 });
@@ -1366,7 +1379,13 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
               {outlineOpen && (
-                <div className="pdf-outline-col" ref={outlineColRef} style={{ width: outlineWidth, flexShrink: 0 }}>
+                <div
+                  className="pdf-outline-col"
+                  ref={outlineColRef}
+                  // 抽屉形态下**不写内联宽度**：宽度由窄屏那段 CSS 定（min(300px, 86vw)），
+                  // 内联样式优先级更高，写了就把抽屉顶成 240px 的列。
+                  style={overlayViewport ? { flexShrink: 0 } : { width: outlineWidth, flexShrink: 0 }}
+                >
                   <PdfOutline outline={outline} currentPage={currentPage} onJump={onOutlineJump} onAiGenerate={generateAiOutline} onAiCancel={cancelAiOutline} aiBusy={aiOutline.status === "running"} aiStage={aiOutline.stage} aiProgress={aiOutline.status === "running" ? { done: aiOutline.done, total: aiOutline.total } : null} aiCount={aiOutlineCount} aiCustom={aiOutlineCustom} onAiCountChange={setAiOutlineCount} onAiCustomChange={setAiOutlineCustom} />
                   <div className="pdf-outline-resizer" onPointerDown={onOutlineResizeStart} title="拖拽调整目录宽度" />
                 </div>
@@ -1389,7 +1408,11 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
                 </div>
               </div>
               {sidebarOpen && (
-                <div className="pdf-sidebar-col" ref={sidebarColRef} style={{ width: sidebarWidth, flexShrink: 0 }}>
+                <div
+                  className="pdf-sidebar-col"
+                  ref={sidebarColRef}
+                  style={overlayViewport ? { flexShrink: 0 } : { width: sidebarWidth, flexShrink: 0 }}
+                >
                   <PdfSidebar
                     records={annRecords}
                     currentPage={currentPage}

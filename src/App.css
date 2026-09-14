@@ -20622,5 +20622,49 @@ body.is-plugin-panel-open .main {
   .emoji-picker button {
     min-height: 44px;
   }
+
+  /* ---------------------------------------------------------------------------
+     PDF 阅读器的**内部分栏**（2026-09-15 真机量到的第二个问题：能打开 ≠ 能看）
+
+     症状（360×792 实测）：目录栏 240px 常驻在左、批注栏并排、页面图 x=99/宽 306
+     ⇒ **右边溢出屏幕**，正文被两栏挤在中间看不见。
+
+     改法与 §4.1 那 19 层同一条纪律：窄/矮视口下这两栏**不再是并排的列**，而是
+     **盖在正文上的抽屉**（贴左/贴右、整高、带阴影），默认收起由 JS 负责
+     （`PdfReader` 用 `useMobileOverlayViewport()` 把初始 state 设成 false）。
+     拖拽改宽的把手在抽屉形态下没有意义（宽度由 CSS 定），所以藏掉。
+     ⚠️ 抽屉宽度**故意写在 CSS 里**，所以 `PdfReader` 在浮层视口下必须**不写内联 width**
+     （内联样式优先级更高，会把这里顶掉——两边必须一起改）。
+     --------------------------------------------------------------------------- */
+  .pdf-reader-layout {
+    position: relative;
+  }
+  .pdf-outline-col,
+  .pdf-sidebar-col {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 6;
+    width: min(300px, 86vw);
+    max-width: 86vw;
+    background: var(--bg);
+  }
+  .pdf-outline-col {
+    left: 0;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.2);
+  }
+  .pdf-sidebar-col {
+    right: 0;
+    box-shadow: -2px 0 16px rgba(0, 0, 0, 0.2);
+  }
+  .pdf-outline-resizer,
+  .pdf-sidebar-resizer {
+    display: none;
+  }
+  /* 正文区必须吃掉整宽：两栏已经脱离文档流，不再参与分配。 */
+  .pdf-reader-layout > .pdf-reader-stage-wrap {
+    width: 100%;
+    flex: 1 1 auto;
+  }
 }
 

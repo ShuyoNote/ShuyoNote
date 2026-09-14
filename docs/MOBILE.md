@@ -1237,21 +1237,33 @@ node scripts/android-mobile-shell.mjs --device-check
 | `.ps1` 在 Windows PowerShell 5.1 下**乱码/解析失败** | 提示 `The string is missing the terminator` | `tmp/` 下的脚本要么纯 ASCII，要么**存成带 BOM 的 UTF-8**（仓库门禁 `check:ps1-ascii` 就是这个规矩；`write` 工具写出来的是无 BOM，加 BOM 用 `[System.IO.File]::WriteAllBytes`） |
 | 连续推送会**取消在跑的 CI** | `ci.yml` 有 `concurrency: cancel-in-progress: true`，而 Rust job 是最长一棒 ⇒ 推得越勤，"CI 绿"越不会出现 | 等一轮**跑完**再推下一轮；查状态时**三个 workflow 都要看**（只查名字像 CI 的那个会漏掉 Android/build 的红） |
 
-### 4.3.4 还没修：窄屏下 PDF 阅读器**内部分栏**没适配（2026-09-15 真机量到）
+### 4.3.4 窄屏下 PDF 阅读器**内部分栏**（2026-09-15 真机量到 → 已修）
 
 4.3.2 修好的是"**打得开**"（`第 1 / 4 页`、正文渲染成 `.pdf-annot-img`、控制台有真 worker 的日志）。
-但真机上接着量到**第二个问题**：360 CSS px 宽时，阅读器**内部**仍是桌面的三栏布局——
+真机上接着量到**第二个问题**：360 CSS px 宽时阅读器**内部**仍是桌面的三栏布局——
 
-| 元素 | 实测（360×792） | 应为 |
+| 元素 | 修前实测（360×792） | 修后 |
 |---|---|---|
-| `.pdf-reader-overlay` / `.pdf-reader` | 0,0,360×792（整屏 ✓ 这条没问题） | 同左 |
-| `.pdf-outline-col`（目录） | **240 宽、常驻在左侧** | 窄屏应**默认收起**、展开时做整屏/抽屉浮层 |
-| 批注栏 | 与目录并排，右侧文字被**裁掉**（截图里"暂不…"被切） | 同上 |
-| 页面图 `.pdf-annot-img` | x=99、宽 306 ⇒ **右边溢出屏幕**（99+306=405 > 360） | 铺满内容宽度（`适合宽度`） |
+| `.pdf-reader-overlay` / `.pdf-reader` | 0,0,360×792（整屏 ✓ 这条本来就对） | 不变 |
+| `.pdf-outline-col`（目录） | **240 宽、常驻在左侧**，压着正文 | 抽屉：`position:absolute` + `width:min(300px,86vw)`，**默认收起** |
+| 批注栏 `.pdf-sidebar-col` | 与目录并排，右侧文字被**裁掉**（截图里"暂不…"被切） | 同上（贴右抽屉，默认收起） |
+| 页面图 `.pdf-annot-img` | x=99、宽 306 ⇒ **右边溢出屏幕**（99+306=405 > 360） | 正文区 `width:100%`，页面按 `适合宽度` 铺满 |
+| 拖宽把手 | 并排形态下有意义 | 抽屉形态下 `display:none`（宽度由 CSS 定） |
 
-结论：**"能打开"与"能看"是两件事**——后者要在窄屏段里把目录/批注栏改成浮层并默认收起、
-把页面区改成整宽（改法与 §4.1 那 19 层浮层同一条纪律）。在那之前，"手机上 PDF 可用"这句
-只能说到"能打开、能翻页、能返回"，**不能说"阅读体验可用"**。
+**改法**（与 §4.1 那 19 层同一条纪律，两处必须一起改）：
+
+| 位置 | 改动 | 为什么 |
+|---|---|---|
+| `src/App.css` 末尾的 `@media (max-width:768px), (max-height:520px)` | 两栏 `position:absolute` + 贴左/贴右 + 阴影 + `min(300px,86vw)`；`.pdf-reader-layout > .pdf-reader-stage-wrap { width:100% }`；把手 `display:none` | 抽屉形态由 CSS 定宽 |
+| `src/components/PdfReader.tsx` | 用 `useMobileOverlayViewport()` 把 `outlineOpen`/`sidebarOpen` 的**初值**设成 `false`；切到浮层视口时**收敛为收起**；抽屉形态下**不写内联 width** | ⚠️ 内联 `style={{width}}` 优先级高于 CSS，写了就把抽屉顶回 240px 的列——两边必须同时改 |
+
+**判据（都能自动跑）**：
+
+| 层 | 判据 |
+|---|---|
+| CSS 级（`pnpm test:mobile-overlays`，+4 条断言） | 窄屏段里两栏必须是 `position:absolute`；**那条规则必须挂在"窄**或**矮"的同一条查询里**（只写 `max-width` 的话横屏手机又回到并排）；抽屉宽度有上限、正文区 `100%`。变异自证：把 `position:absolute` 去掉 ⇒ 3 条变红 |
+| 单测（`useMobile.test.ts`，+2 条） | `subscribeOverlayViewport` **两条查询都要订阅**、取消订阅两条都要摘。变异自证：把矮视口那条改成订阅窄屏查询 ⇒ 2 条变红。这条挡的是"只在挂载时判一次视口/只盯窄屏 ⇒ 竖屏转横屏不更新" |
+| 真机 | 打开 PDF：目录/批注栏**默认不出现**、页面图不出屏；点工具条的目录按钮 ⇒ 抽屉盖上来（宽度 ≈ 86vw）；返回键照旧关层不退出 |
 
 ## 5. iOS 环境结论（2026-09，仍然有效）
 
