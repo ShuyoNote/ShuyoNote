@@ -94,6 +94,37 @@
 
 ### 修复
 
+- **【手机功能整个不可用】Android 上"保存到用户选的位置"一律失败**（真机：设置 → 空间 →
+  导出当前空间 → 保存 ⇒ 红字 `空间导出失败：Read-only file system (os error 30)`，
+  而且 Downloads 里留下一个 **0 字节**的 `space-复验素材-….zip`）。
+  根因是 `content://` URI 被当路径用：Android 的**保存**对话框（`ACTION_CREATE_DOCUMENT`）
+  和打开对话框一样只给 URI（`DialogPlugin.kt::saveFileDialogResult`），而
+  `export_workspace` / `export_backup` / `copy_attachment` / `write_text_file` /
+  `write_binary_file` 全都是 `PathBuf::from(...)` + `File::create`。报 EROFS 不是权限问题：
+  `Path::new("content://com.android.providers…")` 是个**相对路径**（第一段是 `content:`），
+  相对进程 CWD —— Android 上 CWD 是 `/`，只读。后果是手机上**导出空间 / 导出备份 /
+  下载附件 / 导出 HTML / 导出模板 / 导出标注副本**六个入口全废（备份导不出去，属数据安全问题）。
+  **修法**：新增 `src-tauri/src/save_target.rs`（`picked_file` 的写侧孪生兄弟）——
+  桌面=直接写路径（**逐字节不变**），URI 目标=**先写缓存中转文件、写完再整份流式拷进 URI**
+  （`tauri-plugin-fs` 的 `Fs::open` + `write(true).truncate(true)`）。之所以不直接往 URI 里
+  流式生成 zip：`zip::ZipWriter` 需要 `Write + Seek`，而 `content://` 只能顺序写，
+  且写到一半失败会在用户文件里留半个包。中途失败由 `Drop` 清掉中转文件，用户原始数据一字不动。
+  详见 [MOBILE.md](docs/MOBILE.md) §4.3.1。
+- **【手机功能整个不可用】Android 上打开任何 PDF 都失败**（真机：`这份 PDF 没能打开：
+  Promise.withResolvers is not a function`；用一份**本机 pdf.js 能正常解析的 4 页 PDF**
+  作对照，先排除素材问题）。
+  根因是**引擎版本错配**：`Promise.withResolvers` 要 Chrome **119+**、`AbortSignal.any` 要
+  **116+**，而这台设备的系统 WebView 停在 **114**（华为不随 Play 更新；`navigator.userAgent`
+  实测 `Chrome/114.0.5735.196`）。pdfjs-dist 4.8 在 `pdf.mjs` 里有 **32 处**
+  `Promise.withResolvers`，worker 里另有 **13 处**，`AbortSignal.any` 也在关键路径上。
+  桌面 Chrome/Edge 早就支持 ⇒ 典型的"CI 绿、桌面对、真机死"。
+  **修法**：新增 `public/es-polyfills.js`（幂等、**绝不覆盖已有实现**），在 `index.html` 里
+  用同步脚本**先于任何模块**加载；worker 是另一个 JS 上下文、页面上的 polyfill 到不了它，
+  所以再加 `public/pdfjs-worker-shim.mjs`（先动态 `import` 补齐层、**再**加载真 worker ——
+  这个顺序就是垫片存在的全部理由）并由 `pdfjsEngine` 把 `workerSrc` 指向它。
+  **不选降级 pdf.js**：它的 legacy 构建只转译语法，实测同样调用这两个 API（33 处）。
+  详见 [MOBILE.md](docs/MOBILE.md) §4.3.2。
+
 - **Android：经系统文件选择器导入的附件，显示名与 MIME 同时丢失**（真机：列表显示成
   `📎41449ced-d44e-4d3c-8e14-7c6733ad042a 未整理 文件 1.8 KB`）。
   根因是一条**只丢元数据、不报错**的链：`tauri-plugin-dialog` 的 Android 实现

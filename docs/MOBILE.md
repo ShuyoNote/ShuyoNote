@@ -1155,6 +1155,76 @@ node scripts/android-mobile-shell.mjs --device-check
 | 返回键：浮层栈非空时 `dumpsys` 的 `APP_STILL_FOREGROUND` 仍为 `True` | 修前是 `False` |
 | 键盘可见时 `--kb` > 0 且弹层底边 ≤ `innerHeight − --kb` | |
 
+## 4.3 真机抓到的两个"整个功能不可用"（2026-09-15 复验中）
+
+这两个都不是样式问题，是**手机上那件事根本做不成**，而且桌面端完全正常、CI 全绿。
+放在一起是因为它们是同一类：**Android 给回来的东西不是路径**，以及**系统 WebView 比引擎要求的旧**。
+
+### 4.3.1 保存到用户选的位置：`content://` URI 被当路径用 ⇒ EROFS
+
+真机现象（Mate 40 / Android 12 / 自检包 `666c062`）：
+
+```text
+设置 → 空间 → 导出当前空间 → 系统保存对话框 → 保存
+  ⇒ 红字「空间导出失败：Read-only file system (os error 30)」
+  ⇒ Downloads 里留下一个 0 字节的 space-复验素材-….zip
+```
+
+| 项 | 值 |
+|---|---|
+| 保存对话框实际返回 | `content://com.android.providers.downloads.documents/document/msf%3A…`（`DialogPlugin.kt::saveFileDialogResult` 只 `put("file", uri.toString())`） |
+| 出错的那一行 | `std::fs::File::create("content://…")` |
+| 为什么是 EROFS 而不是"权限不够" | `Path::new("content://…")` 是**相对路径**（第一段 `content:`），相对进程 CWD；Android 上 CWD 是 `/`，只读 ⇒ `EROFS(30)` |
+| 受影响的命令 | `export_workspace`、`export_backup`、`copy_attachment`、`write_text_file`、`write_binary_file`（= 导出空间 / 导出备份 / 下载附件 / 导出 HTML / 导出模板 / 导出标注副本**六个入口**） |
+
+**修法**（`src-tauri/src/save_target.rs`，与 `picked_file` 对称的写侧）：
+
+| 目标 | 行为 |
+|---|---|
+| 桌面（普通路径） | 直接写该路径 —— **与改动前逐字节相同**（判据有单测：`classify()` 的路由） |
+| Android（URI） | ① 在应用缓存里写一份**中转文件**；② 写完再整份**流式**拷进 URI（`Fs::open` + `write(true).truncate(true)` ⇒ Kotlin 侧折算成 `openAssetFileDescriptor(uri, "wt")`）；③ 无论成败删掉中转文件 |
+
+**为什么不直接往 URI 里流式生成 zip**：`zip::ZipWriter` 需要 `Write + Seek`，而 `content://`
+只能顺序写；更要紧的是写到一半失败会在**用户看得见的文件**里留半个包（中转文件则不会）。
+`Drop` 兜底清理 —— 提前 `?` 返回也留不下垃圾，且**用户原始数据一字不动**。
+
+### 4.3.2 打开任何 PDF 都失败：系统 WebView 是 Chrome 114，pdf.js 4.8 要 119+
+
+真机现象：点开任何 PDF ⇒ 阅读器外壳起来了，正文里写
+
+```text
+这份 PDF 没能打开：Promise.withResolvers is not a function（字节 1820）
+```
+
+**先排除素材**：那份 PDF 在本机用**同一套 pdf.js** 解析正常（`numPages: 4`，页面 612×792）。
+再量环境：
+
+| 项 | 值 |
+|---|---|
+| `navigator.userAgent` | `… Android 12; OCE-AN10 … Chrome/114.0.5735.196 Mobile Safari/537.36` |
+| `typeof Promise.withResolvers` | `undefined`（Chrome **119+** 才有） |
+| `typeof AbortSignal.any` | `undefined`（Chrome **116+** 才有） |
+| pdfjs-dist 4.8 里的用量 | `pdf.mjs` **32 处** `Promise.withResolvers`、`pdf.worker.mjs` **13 处**，`AbortSignal.any` 在能力对象的关键路径上 |
+| legacy 构建能否救 | **不能**：`legacy/build/pdf.mjs` 里同样有 33 处（它只转译语法，不补运行时 API） |
+
+**修法**（两层，缺一不可）：
+
+| 层 | 文件 | 要点 |
+|---|---|---|
+| 页面 | `public/es-polyfills.js`（`index.html` 里**同步** `<script src>`，先于任何模块） | 幂等、**绝不覆盖已有实现**（现代浏览器上是空操作）；只用 `var`/`function`（`public/` 不过打包器，不依赖转译） |
+| pdf.js worker | `public/pdfjs-worker-shim.mjs`（`pdfjsEngine` 把 `workerSrc` 指向它，带 `?real=<真 worker>&v=<版本>`） | 先动态 `import` 补齐层、**再**加载真 worker。⚠️ 真 worker **必须动态**加载：写成顶层 `import` 会被提升到 polyfill 之前 |
+
+**worker 为什么必须单独补**：worker 是另一个 JS 上下文，页面上的 polyfill 到不了它；
+而 pdf.js 自己的兜底（worker 出错 ⇒ 退回主线程 fake worker）只在"worker 还没 ready 就抛错"时触发。
+**验收时要连控制台一起收**：出现 `Setting up fake worker` 即说明退回单线程 ⇒ 判不合格。
+
+**已落地的自证**（都能在本机跑，不必等 CI）：
+
+| 脚本 | 钉住什么 |
+|---|---|
+| `node scripts/check-pdfjs-worker-shim.mjs` | **顺序不变量**：探针模块在自己的模块体里必须已经看到两个 API；把垫片里两条 import 调换 ⇒ 该断言变红（变异自证已做；报错原文就是"真 worker 的模块体里没有 Promise.withResolvers —— 垫片的顺序错了"） |
+| `pnpm vitest run scripts/es-polyfills.test.mjs` | 补齐层语义（resolve/reject 接通、`AbortSignal.any` 的 reason 传染与空数组）、幂等、**绝不覆盖原生实现**；把安装那行改成 no-op ⇒ 4 条断言变红 |
+
 ## 5. iOS 环境结论（2026-09，仍然有效）
 
 **Tauri 原生 iOS 全链路**（`cargo tauri ios init/build`）在当时的 Mac 上

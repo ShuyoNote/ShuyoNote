@@ -81,8 +81,15 @@ const doc = await PDFDocument.create();
 for (let i = 0; i < 3; i++) doc.addPage([300, 400]);
 const fixture = Buffer.from(await doc.save());
 
-const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>pdf reload</title></head>
+// 两份 HTML：`/` 与生产一致（index.html 会在任何模块之前同步加载补齐层），
+// `/legacy.html` 故意**不带**补齐层 —— 它是"因果对照"那一半。
+// 为什么要对照：只证明"装了补齐层就能开"还不够，得同时证明**没装就必然开不了**，
+// 否则这个断言在"其实什么都不需要"的情况下也会绿。
+const pageHtml = (withPolyfill) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>pdf reload</title>${
+  withPolyfill ? '<script src="/es-polyfills.js"></script>' : ""
+}</head>
 <body><p id="status">running</p></body></html>`;
+const html = pageHtml(true);
 
 const MIME = { ".mjs": "text/javascript; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".pdf": "application/pdf", ".json": "application/json" };
 const server = createServer((req, res) => {
@@ -97,8 +104,12 @@ const server = createServer((req, res) => {
     res.end(body);
   };
   if (path === "/" || path === "/index.html") return send(Buffer.from(html, "utf8"), "text/html; charset=utf-8");
+  if (path === "/legacy.html") return send(Buffer.from(pageHtml(false), "utf8"), "text/html; charset=utf-8");
   if (path === "/fixture.pdf") return send(fixture, MIME[".pdf"]);
   if (path === "/pdf.mjs") return send(readFileSync(join(pdfjsDir, "build", "pdf.mjs")), MIME[".mjs"]);
+  // 补齐层与 worker 垫片：与生产同源（public/ 原样发出去）
+  if (path === "/es-polyfills.js") return send(readFileSync(join(root, "public", "es-polyfills.js")), MIME[".js"]);
+  if (path === "/pdfjs-worker-shim.mjs") return send(readFileSync(join(root, "public", "pdfjs-worker-shim.mjs")), MIME[".mjs"]);
   const rel = path.replace(/^\//, "");
   // 构建产物（engine.mjs 与它旁边的 worker 资源）
   const built = join(tmp, rel);
@@ -164,6 +175,69 @@ try {
     `引擎连续两次加载同一份 bytes 都成功（${r.pages?.join(" / ")} 页）—— StrictMode 下这是常态`,
   );
   ok(r.storeLengthAfter === r.storeLength, `调用方手里的 bytes 始终完好（${r.storeLengthAfter} 字节）`);
+
+  // ---------------------------------------------------------------------------------
+  // C. 老 WebView 处境：删掉 `Promise.withResolvers` / `AbortSignal.any`（真机 Mate 40 的
+  //    系统 WebView 是 Chrome 114，两个都缺）⇒ 打开任何 PDF 都报
+  //    "Promise.withResolvers is not a function"。这一节把那个处境**在本机复现**，
+  //    并给出一对因果对照：同一份引擎、同一份 PDF，唯一差别是**页面有没有加载补齐层**。
+  //
+  //    为什么必须成对：只证明"装了补齐层能开"不够——如果哪天 pdf.js 不再需要这两个 API，
+  //    单边的正例会在"其实什么都不需要"的情况下照样绿，等于断言失效。
+  // ---------------------------------------------------------------------------------
+  const stripModernApis = () => {
+    delete Promise.withResolvers;
+    delete AbortSignal.any;
+  };
+
+  // C1 — 对照（不带补齐层）：**必须失败**，而且失败原因要正是真机上那句话。
+  const control = await browser.newPage();
+  await control.setViewport({ width: 900, height: 700 });
+  await control.evaluateOnNewDocument(stripModernApis);
+  await control.goto(`${url}legacy.html`, { waitUntil: "load" });
+  const c1 = await control.evaluate(async () => {
+    const { createPdfjsEngine } = await import("/engine.mjs");
+    const bytes = new Uint8Array(await (await fetch("/fixture.pdf")).arrayBuffer());
+    try {
+      const eng = await createPdfjsEngine().loadPdf(bytes);
+      return { ok: true, pages: eng.pageCount };
+    } catch (e) {
+      return { ok: false, err: String((e && e.message) || e) };
+    }
+  });
+  ok(
+    !c1.ok && /withResolvers/i.test(c1.err ?? ""),
+    `没有补齐层时必然打不开（复现真机原话）：${c1.err ?? `（竟然成功了，${c1.pages} 页）`}`,
+  );
+  await control.close();
+
+  // C2 — 修好之后（index.html 里同步加载补齐层）：**必须成功**，且不许退回 fake worker。
+  const legacy = await browser.newPage();
+  await legacy.setViewport({ width: 900, height: 700 });
+  await legacy.evaluateOnNewDocument(stripModernApis);
+  const legacyConsole = [];
+  legacy.on("console", (m) => legacyConsole.push(m.text()));
+  legacy.on("pageerror", (e) => legacyConsole.push(String(e && e.message)));
+  await legacy.goto(url, { waitUntil: "load" });
+  const c2 = await legacy.evaluate(async () => {
+    const { createPdfjsEngine } = await import("/engine.mjs");
+    const bytes = new Uint8Array(await (await fetch("/fixture.pdf")).arrayBuffer());
+    const eng = await createPdfjsEngine().loadPdf(bytes);
+    return {
+      pages: eng.pageCount,
+      hasWithResolvers: typeof Promise.withResolvers === "function",
+      hasAny: typeof AbortSignal.any === "function",
+    };
+  });
+  ok(
+    c2.hasWithResolvers && c2.hasAny,
+    `缺失 API 的环境里，补齐层把两个都装上了（withResolvers=${c2.hasWithResolvers} / any=${c2.hasAny}）`,
+  );
+  ok(c2.pages === 3, `同一份 PDF 在补齐层到位后能打开（${c2.pages} 页）`);
+  ok(
+    !legacyConsole.some((t) => /fake worker/i.test(t)),
+    `没有退回 fake worker（worker 垫片生效）${legacyConsole.some((t) => /fake worker/i.test(t)) ? "：出现 Setting up fake worker" : ""}`,
+  );
 } finally {
   await browser.close();
   server.close();

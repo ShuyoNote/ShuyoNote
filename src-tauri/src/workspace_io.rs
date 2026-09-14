@@ -146,10 +146,10 @@ pub async fn export_workspace(
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
-    let dest = PathBuf::from(&dest_path);
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
+    // 目标位置：桌面=路径；Android=保存对话框给的 `content://` URI ⇒ 先写缓存再搬
+    // （zip 需要 Seek，URI 只能顺序写）。见 `save_target` 模块头。
+    let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-space")?;
+    let dest = target.write_path().to_path_buf();
 
     // Snapshot the space DB to a temp file (brief DB lock; online backup is WAL-safe).
     let tmp_db = crate::tempdir::file("shuyonote-ws", "db");
@@ -161,11 +161,12 @@ pub async fn export_workspace(
     let app2 = app.clone();
     let attachments2 = attachments_dir;
     let dest2 = dest.clone();
+    let dest_report = dest_path.clone();
     let tmp_db2 = tmp_db;
     let space2 = space.clone();
     let hashes2 = referenced_hashes.clone();
 
-    tauri::async_runtime::spawn_blocking(move || -> Result<WorkspaceExportResult, String> {
+    let out = tauri::async_runtime::spawn_blocking(move || -> Result<WorkspaceExportResult, String> {
         let file = std::fs::File::create(&dest2).map_err(|e| e.to_string())?;
         let mut zip = zip::ZipWriter::new(file);
         let opts = zip::write::SimpleFileOptions::default();
@@ -200,14 +201,19 @@ pub async fn export_workspace(
         emit(&app2, "export", total, total, bytes, "导出完成…");
         let _ = std::fs::remove_file(&tmp_db2);
         Ok(WorkspaceExportResult {
-            path: dest2.to_string_lossy().into_owned(),
+            // 报**用户选的位置**（URI 目标下中转文件路径对用户没有意义）。
+            path: dest_report,
             size,
             pages: 0,
             attachments: matched,
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    // URI 目标：把中转文件整份搬进用户选的位置（桌面是空操作）。
+    target.commit()?;
+    Ok(out)
 }
 
 /// Import a workspace from a self-contained zip produced by [`export_workspace`].

@@ -36,6 +36,9 @@ mod magic;
 // 名字那半边**只能**这样拿（`ContentResolver` 是唯一可靠来源），理由见模块头注释。
 #[cfg(target_os = "android")]
 mod android_fs;
+// 「用户选的目标位置」的落地入口（picked_file 的写侧）：Android 的**保存**对话框同样给
+// `content://` URI，`std::fs` 写它会得到 EROFS（真机实测）——这一层负责"先写缓存、再搬进 URI"。
+mod save_target;
 mod plugin_budget;
 pub mod plugin_host;
 mod plugin_index;

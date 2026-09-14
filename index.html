@@ -20,6 +20,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="ShuyoNote" />
     <title>ShuyoNote 数友笔记</title>
+    <!-- ES2024 补齐层：**必须在任何模块之前**执行。Android 的系统 WebView（这台设备停在
+         Chrome 114）没有 `Promise.withResolvers` / `AbortSignal.any`，而 pdf.js 4.8 一按就调
+         它们——真机上表现为"打开任何 PDF 都失败"。为什么放 public/ 且要同步引入，
+         见该文件头注释。 -->
+    <script src="es-polyfills.js"></script>
     <!-- Prism global (plain synchronous scripts, before any module) so that
          @lexical/code's bare `Prism` references resolve to window.Prism instead
          of an ESM-bundled copy that is never set as global. -->

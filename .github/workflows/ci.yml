@@ -69,6 +69,14 @@ jobs:
         # 已 detach 的 buffer。单元测试摸不到这条（要真的 worker + 真的 transfer）。
         run: node scripts/check-pdf-reload.mjs
 
+      - name: pdf.js worker 垫片验收（顺序不变量，裸 Node）
+        # 挡的是"手机（老 WebView）上打不开任何 PDF"：worker 是**另一个 JS 上下文**，
+        # 补齐层必须由垫片在 worker 内部先装一次，而这次 install 的顺序最容易被一次
+        # "顺手整理"破坏（把动态 import 改成顶层 import ⇒ 被提升到 polyfill 之前，
+        # 代码照样跑、review 看不出来、只有老 WebView 上死）。裸 Node 里删掉原生 API
+        # 就能复现那个处境，不需要真机也不需要 15 分钟一轮 CI。
+        run: node scripts/check-pdfjs-worker-shim.mjs
+
       - name: 面板布局验收（真实 Chromium 量几何）
         # 挡的是"文字被挤成一条竖柱"这类：单元测试看不见（happy-dom 不做布局）、
         # 类型检查看不见，只有打开看一眼才发现——而这一步最容易被跳过。
