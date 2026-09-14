@@ -195,10 +195,12 @@ const EXEMPT_COMPONENTS = new Map([
   ["src/editor/plugins/LinkPopoverPlugin.tsx", { kind: "inline", reason: "编辑器内联浮层（链接编辑气泡），同上" }],
   // ── 不是"可关闭浮层" ──────────────────────────────────────────────────────
   ["src/components/SpaceTransferProgress.tsx", { kind: "not-a-layer", reason: "全局导出/导入进度条：没有关闭动作（不吃点击、不吃 Esc）" }],
-  // ── ⚠️ 同类缺口：真的是应用级浮层，但**没有**登记返回栈（本轮未修，逐条打印） ────
-  ["src/components/PdfReader.tsx", { kind: "gap", reason: "窄屏/单页窗口下 `.pdf-reader-overlay` 是整屏浮层（portal 到 body、点空白与 Esc 都能关），但未登记返回栈" }],
-  ["src/components/PluginViewOverlay.tsx", { kind: "gap", reason: "插件声明式视图的整屏浮层（`usePluginViewStore` 驱动、点空白/× 关闭），但未登记返回栈" }],
-  ["src/components/FilePreviewDialog.tsx", { kind: "gap", reason: "应用级文件预览浮层（`useFilePreview` 驱动），但未登记返回栈" }],
+  // ── ⚠️ `gap` 级别的"同类缺口"目前**已经清零**（2026-09-15 第二轮） ─────────────
+  // 上一轮留下的三处（`PdfReader` 浮层形态 / `PluginViewOverlay` / `FilePreviewDialog`）
+  // 各接了一条 `useOverlayLayer`，因此不再是 `A` 判据下的"未登记"；它们转由 `B` 判据接管
+  // （已登记、但还没纳入移动端几何验收 ⇒ 见下面的 `EXEMPT_FROM_MOBILE_PASS`）。
+  // `gap` 这个类别仍然保留：下一次再发现"真的是应用级浮层却没登记"就先记在这里，
+  // 每次运行 ⚠️ 打印出来，而不是让它悄悄烂在豁免表里。
 ]);
 
 /** 已登记返回栈、但**不在**移动端几何验收清单里的 id（属"未验证项"）。 */
@@ -210,11 +212,32 @@ const EXEMPT_FROM_MOBILE_PASS = new Map([
         "锚在侧栏备份按钮上的下拉菜单（`usePopover` 已管定位与窄屏 is-sheet）；整屏几何验收里没有它 —— 属未验证项",
     },
   ],
+  // ── 本轮新登记的三层：返回栈这一半修好了（A 判据过），但**几何验收还没纳入** ──────
+  // 它们都需要"真实的文件/插件视图"才能打开，`verify-mobile-overlays.mjs` 在全新实例里
+  // 取不到触发器；硬塞一个假对象进去只会把"四边在视口内 / 外壳被锁"这些断言变成假红。
+  // 所以如实记成**未验证项**，而不是假装验过。
   [
-    "history",
+    "pdfReader",
     {
       reason:
-        "**本轮刚登记返回栈**（原问题就是漏了这一条）；窄屏形态尚未纳入几何验收：真机同尺寸复现（360×640 真实 Chromium）量到 `.history-popover` 左边缘 = **-6px**（越界 6px；它是 `position:absolute` 的 320px 锚定浮层，窄屏没有走 §4.1.3 的 is-sheet 形态）——要纳入就得先给它一个窄屏形态 + 滚动锁 —— 属未验证项",
+        "PDF 阅读器的**浮层形态**（窄屏 / 单页独立窗口；`inline` 模式是内容区视图、**不**登记）：" +
+        "打开它需要一份真实 PDF（`usePdfReader.openPdf` 要读字节），验收脚本在全新实例里造不出来 —— 属未验证项",
+    },
+  ],
+  [
+    "pluginView",
+    {
+      reason:
+        "插件声明式视图的整屏浮层（`placement` 为 `overlay` 时）：需要装一个带视图声明的插件才打得开，" +
+        "验收脚本里没有这样的实例 —— 属未验证项",
+    },
+  ],
+  [
+    "filePreview",
+    {
+      reason:
+        "应用级文件预览浮层（`useFilePreview` 驱动）：需要一份真实的附件（`target` 非空）才渲染，" +
+        "验收脚本在全新实例里没有文件 —— 属未验证项",
     },
   ],
 ]);
@@ -317,6 +340,9 @@ for (const [rel, ex] of EXEMPT_COMPONENTS) {
   console.log(`  ${ex.kind === "gap" ? "⚠️" : "  "} ${rel}  [${ex.kind}] ${ex.reason}`);
 }
 const gaps = [...EXEMPT_COMPONENTS.entries()].filter(([, ex]) => ex.kind === "gap");
+if (gaps.length === 0) {
+  console.log("\n  （`gap` 类别的同类缺口当前为 0：上一轮留下的三处已各接一条 useOverlayLayer，见 B 判据。）");
+}
 if (gaps.length) {
   console.log(`\n⚠️ 其中 ${gaps.length} 处是**同类缺口**（真的是应用级浮层，但没登记返回栈，本轮未修）：`);
   for (const [rel, ex] of gaps) console.log(`   · ${rel} —— ${ex.reason}`);

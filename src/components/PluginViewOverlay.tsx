@@ -1,6 +1,7 @@
 import { useNotes } from "../store/notes";
 import { usePluginViewStore } from "../store/pluginViews";
 import { viewPlacement } from "../lib/pluginViews";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { PluginViewTable } from "./PluginViewTable";
 
 /**
@@ -10,12 +11,18 @@ import { PluginViewTable } from "./PluginViewTable";
  * （与右侧常驻面板共用一份，见那里的注释）。
  */
 export function PluginViewOverlay() {
-  const { open, close, pluginId, pluginName, view } = usePluginViewStore();
+  const { close, pluginId, pluginName, view } = usePluginViewStore();
   const openPage = useNotes((s) => s.openPage);
 
-  if (!open || !view || !pluginId) return null;
   // 落点是 rail 的视图由 PluginViewPanel 渲染——两个宿主互斥，不能同时开。
-  if (viewPlacement(view) !== "overlay") return null;
+  // ⚠️ store 里的 `open` 是**动作**（`open(pluginId, …)`），不是布尔开关；
+  // 真正的"开着"判据是 `view` + `pluginId` 都在（原代码那个 `!open` 判断一直是空转）。
+  const isOverlay = !!view && !!pluginId && viewPlacement(view) === "overlay";
+  // Android 返回键：只有**真的以覆盖层身份**渲染时才登记（rail 形态不是浮层，
+  // 登记进去会让返回键先吃掉一次按键）。见 lib/overlayStack.ts 与 §4.1.4。
+  useOverlayLayer("pluginView", isOverlay, close);
+
+  if (!isOverlay || !view || !pluginId) return null;
 
   return (
     <div className="plugin-view-overlay" onClick={close}>

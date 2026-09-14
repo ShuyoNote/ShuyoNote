@@ -144,6 +144,10 @@ const OVERLAYS = [
   { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false },
   { id: "markdownImport", label: "Markdown 导入", root: ".markdown-import-overlay", box: ".markdown-import", sheet: true, optional: true },
   { id: "cover", label: "题头图", root: ".cover-overlay", box: ".cover-picker", sheet: true, optional: true },
+  // 2026-09-15 第二轮：`.history-popover` 原来是 `position:absolute` 的 320px 锚定浮层，
+  // 窄屏**没走** §4.1.3 的 is-sheet 形态 ⇒ 360×640 实测左边缘 = **−6px**（越界）。
+  // 改成 `usePopover` + `is-sheet` 之后才有资格进这份清单（`sheetClass` 钉住 JS 侧分支）。
+  { id: "history", label: "版本历史", root: ".history-popover", box: ".history-popover", sheet: true, sheetClass: true },
 ];
 
 /** 主要操作按钮的文案（验收口径写在任务里，别改）。 */
@@ -292,6 +296,20 @@ async function openOverlay(which) {
         t.click();
         return true;
       }
+      case "history": {
+        // 版本历史挂在**编辑器工具条**上（`HistoryPanel`），所以先要有打开的页面；
+        // 建页是异步的 ⇒ 轮询等那个按钮出现，而不是睡固定时长。
+        const n = await store("/src/store/notes.ts");
+        if (!n.useNotes.getState().currentId) await n.useNotes.getState().createPage(null);
+        let t = null;
+        for (let i = 0; i < 40 && !t; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          t = document.querySelector('button[aria-label="版本历史"]');
+        }
+        if (!t) return false;
+        t.click();
+        return true;
+      }
       default:
         return false;
     }
@@ -319,14 +337,16 @@ async function closeAllOverlays() {
   rp.openToc(false);
   rp.openAi(false);
   rp.openComments(false);
-  // usePopover 驱动的三个（搜索 / 回收站 / 同步）：它们是**组件本地状态**，
-  // 既没有 store 也**不吃 Escape**，只能再点一次触发器关掉（`.click()` 对隐藏元素也生效）。
-  // 不关的话它们会一直留在浮层栈里（本轮开始它们也会登记），后面的
+  // usePopover 驱动的这几个（搜索 / 回收站 / 同步 / 版本历史）：它们是**组件本地状态**，
+  // 既没有 store 也不一定吃 Escape，最稳的是再点一次触发器关掉（`.click()` 对隐藏元素也生效）。
+  // 不关的话它们会一直留在浮层栈里（它们都会登记），后面的
   // "栈空 ⇒ handle() 返回 false" 就永远量不到。
   for (const [box, trigger] of [
     [".search-popover", ".search-panel .activity-btn"],
     [".trash-popover", ".btn-trash"],
     [".sync-popover", ".btn-sync"],
+    // 版本历史本轮起也吃 Escape（并登记了返回栈），这里再显式点一次触发器兜底。
+    [".history-popover", 'button[aria-label="版本历史"]'],
   ]) {
     if (document.querySelector(box)) document.querySelector(trigger)?.click();
   }

@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useFilePreview } from "../store/filePreview";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
@@ -227,6 +228,10 @@ export function FilePreviewDialog() {
     }
     setAsset({ url: "", missing: true });
   }, [target?.id, target?.hash, target?.mime]);
+
+  // Android 返回键：应用级文件预览浮层（`useFilePreview` 驱动，点空白/× 关闭）。
+  // 只有 `target` 在（= 浮层真的渲染出来）时才登记——见 lib/overlayStack.ts 与 §4.1.4。
+  useOverlayLayer("filePreview", !!target, close);
 
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;

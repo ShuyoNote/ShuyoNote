@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { usePdfReader } from "../store/pdfReader";
 import { useAiStore } from "../store/ai";
 import { canvasToPngBlob, type createPdfjsEngine } from "../lib/pdfEngine/pdfjsEngine";
@@ -273,6 +274,11 @@ function PdfContinuousPage({
 export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
   useOverlayScrollLock(open);
+  // Android 返回键：**只在它确实以覆盖层身份出现时才登记**。
+  // `inline` 模式下它就是内容区里的一种视图（和 Markdown 阅读器一样铺满 `.main`），
+  // 那时没有"最上层浮层"可言，登记进去只会让返回键先吃掉一次按键。
+  // 浮层形态（窄屏 / 单页独立窗口）才登记。
+  useOverlayLayer("pdfReader", open && !inline, close);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState<ZoomMode>({ mode: "fit-width" });
   const [maximized, setMaximized] = useState(true);

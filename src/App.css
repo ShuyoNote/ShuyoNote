@@ -2681,10 +2681,14 @@ select.sync-input {
   color: var(--text);
 }
 
+/* 版本历史弹层：走 `usePopover`（`position: fixed` + 内联 top/left），与搜索/回收站/同步
+   同一条路——窄屏/矮视口由 usePopover 返回空坐标 + `is-sheet`，交给下面那段
+   `@media (max-width:768px), (max-height:520px)` 铺成底部弹层。
+   ⚠️ 原来是 `position: absolute; right: 0` 锚在工具条按钮上：360×640 实测**左边缘 = −6px**
+   （320px 宽、按钮右边缘离屏左边不足 320px ⇒ 直接越界）。改成 fixed 之后位置由 usePopover
+   按包含块折算的坐标给，窄屏则完全不锚定。 */
 .history-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   width: 320px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -20458,7 +20462,11 @@ body.is-plugin-panel-open .main {
   .sync-popover,
   .backup-dropdown,
   .space-switcher,
-  .new-menu-dropdown {
+  .new-menu-dropdown,
+  /* 版本历史也走这条（它同样是 usePopover 驱动的锚定浮层，JS 侧窄屏返回空坐标）。
+     带 `.is-sheet` 是为了压过基础规则 `.history-popover`（0,2,0 > 0,1,0）——
+     否则基础规则里的 `position: fixed; width: 320px` 会把它留在"320px 宽的锚定浮层"上。 */
+  .history-popover.is-sheet {
     position: fixed;
     inset: auto 0 0 0;
     left: 0;

@@ -167,9 +167,46 @@
   （注释掉也算没登记——门禁因此还补了一条"注释里的登记不算登记"）；
   新建一个不登记的浮层组件 ⇒ 报同一个红；登记了却不加进 `OVERLAYS` ⇒ 报"这条登记在 OVERLAYS 里找不到对应的一层"；
   把 `OVERLAYS` 里某个类名改名 ⇒ 报"幽灵条目"。
-  **仍未做（如实记）**：该层的窄屏形态没纳入几何验收——实测 360×640 下 `.history-popover`
+  **仍未做（如实记）**：该层的窄屏形态当初没纳入几何验收——实测 360×640 下 `.history-popover`
   左边缘 = **−6px**（越界 6px），它是 `position:absolute` 的 320px 锚定浮层、窄屏没走
-  `is-sheet` 形态，要纳入得先改形态（已在门禁的豁免表里写明，属未验证项）。
+  `is-sheet` 形态（已在门禁的豁免表里写明，属未验证项）。
+  ⇒ **同一轮的第二遍已修掉并纳入几何验收**，见下面「第 7 个问题」那条。
+
+- **浮层登记门禁查出的三处同类缺口：各接一条 `useOverlayLayer`**（2026-09-15 第二遍）。
+  上一轮的门禁把 `.pdf-reader-overlay`（浮层形态）、插件声明式视图浮层、文件预览浮层记成 `gap`
+  并在每次运行时 ⚠️ 打印；本轮逐条修掉，**且只在它们确实以"覆盖层"身份出现时才登记**：
+  `PdfReader` 用 `open && !inline`（`inline` 时它就是内容区的一种视图，登记进去会让返回键白吃一次按键）、
+  `PluginViewOverlay` 用"有视图 + 落点是 `overlay`"（⚠️ store 里的 `open` 是**动作**不是布尔开关，
+  原代码那个 `!open` 判断一直是空转）、`FilePreviewDialog` 用 `target != null`。
+  真实 Chromium 取证（360×640）：三层各自 打开 ⇒ `depth` **0→1**、`ids` 报出对应 id、
+  `handle()` 返回 **true**（真布尔）、层**真的从 DOM 消失**（不是只把栈弹空）。
+  **反证**（1280×800）：PDF 阅读器是 `.main` 里的内容区视图 ⇒ `depth` 仍为 **0**；
+  落点是 `rail` 的插件视图不由 `PluginViewOverlay` 渲染 ⇒ 也不登记（登记只跟着"覆盖层身份"走）。
+  门禁里那三条 `gap` 相应撤掉（`gap` 类别保留、当前为 0），改记为 B 判据下的
+  `EXEMPT_FROM_MOBILE_PASS`：三层各需要真实的 PDF / 装了视图声明的插件 / 真实附件才打得开，
+  几何验收仍属**未验证项**（不假装验过）。
+
+- **【真机复验第 7 个】窄屏 `.history-popover` 左边缘 −6px（越界）**（2026-09-15 第二遍）。
+  根因：它是 `position: absolute; right: 0` 的 **320px 锚定浮层**，窄屏**没走** §4.1.3 的
+  `is-sheet` 形态——360px 视口上工具条那个按钮的右边缘离屏左边不足 320px，于是直接越界。
+  改法照已有浮层：改用 `usePopover`（JS 侧窄屏不锚定、返回空坐标 + `is-sheet`）
+  + `App.css` 末尾那段 `is-sheet` 铺底 + 滚动锁（`useOverlayScrollLock`，与搜索/回收站/同步同一条）；
+  顺带把"点击外部关闭"交给 `usePopover`（原来是自己挂的一份 `document mousedown`）。
+  **纳入 `OVERLAYS` 并在两档视口真的量到**：360×640 ⇒ `x 0..360 / y 538..640`（改前左边缘 **−6px**）、
+  390×844 ⇒ `x 0..390 / y 742..844`；两档都断言 `class` 里带 `is-sheet`（钉住 JS 分支）、
+  四边在视口内、`.note-scroll` 被锁、触摸拖 300px 背景不动。门禁里它那条豁免同时撤掉。
+  验证：`pnpm check:overlays`（25 通过 / 0 失败）、`pnpm build`、`npx tsc --noEmit`、
+  `npx vitest run`（67 文件 / 630 用例全过）、`pnpm test:mobile-overlays`（真实 Chromium，
+  3 视口 × 20 层 = **873 通过 / 0 失败**），以及 check-changelog / check-doc-links /
+  check-versions / check-workflow-yaml 全绿。
+
+  **仍未做（如实记）**：本轮为"证明登记真的生效"而在浏览器里打开这三层时**顺带量到**一处
+  同族问题——`.fm-preview-overlay` 的 `left: calc(--activity-w + --sidebar-w)` 在窄屏没被覆盖
+  （`--sidebar-w` 是**桌面**侧栏宽度，窄屏侧栏已收成抽屉，但变量仍是 240px）⇒ 360×640 实测
+  这个文件预览浮层只有 **72px 宽**（= 360 − 48 竖条 − 240 侧栏）。它与"窄屏浮层不适配"是同一类，
+  但改它要连带窄屏 CSS（让开 `--sat/--sab/--kb`）、滚动锁与 44×44 命中区
+  （`.fm-preview-close` 也不在窄屏那条清单里）——**属独立一轮，本轮未动**（已同步写进
+  [MOBILE.md](docs/MOBILE.md) §4.1.4 的未验证项）。
 
 - **`check-changelog` 门禁不再要求 `[Unreleased]` 段为空**（2026-09-14）。首版门禁把
   "`[Unreleased]` 必须为空"写成了硬约束，这是**误读 Keep a Changelog**——`[Unreleased]` 的用途
