@@ -105,6 +105,18 @@
 
 ### 修复
 
+- **`Android (build)` 连续两次红在 `Setup Android SDK`（不是我们的代码）**：2026-09-15 起
+  `android-actions/setup-android@v3` 在 Google 侧改包后**必失败**——上游 issue #537（当天停止提供
+  `sdkmanager` 的 `tools` 包 ⇒ `Failed to find package 'tools'`）与 #536（commandlinetools 下载 URL
+  变更 ⇒ 直接 404）。它挂在这一步时后面十几步**全部 skip**，看起来像"我们的代码坏了"；
+  判据是"同一 workflow 上一个提交还是绿的 + 时间点与上游 issue 吻合"。
+  改法：**不再用这个 action**，直接用 ubuntu runner 镜像自带的 SDK（`ANDROID_HOME` / `ANDROID_SDK_ROOT`
+  由镜像设好，见 actions/runner-images 的 Ubuntu2404-Readme），并加三条断言——SDK 根存在、
+  `sdkmanager` 找得到（`latest` 与版本号目录都认）、否则**明确报错并列出目录**。
+  `release.yml` 的 Android job 同改：不改的话下一次发版出不了 APK，而 `release.mjs` 缺 APK 会硬失败。
+  本机用假 SDK 树验过四种输入：只有 `latest` ✓ / 只有版本号目录 `16.0` ✓ / 完全没有 → 明确失败 ✓ /
+  连环境变量都没有 → 明确失败 ✓。
+
 - **macOS 更新通道会指向 dmg ⇒「能下载、装不上」**（发 macOS 版之前必须先修的这条）。
   依据：`tauri-plugin-updater` 2.10.1 的 macOS `install_inner()` 直接 `GzDecoder` + `tar::Archive`
   解包 `.app.tar.gz`（docstring 也写明期望 `[AppName]_[version]_x64.app.tar.gz`），

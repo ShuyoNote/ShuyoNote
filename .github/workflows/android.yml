@@ -118,8 +118,37 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK（改用 runner 预装的那份，不再用 setup-android action）
+        # ⚠️ 2026-09-15 起 `android-actions/setup-android@v3` **必失败**，而且失败得极具误导性：
+        #   它挂在这一步时后面十几步全部 skip，看起来像"我们的代码坏了"。
+        #   上游根因有两条（都在该仓库当天/近期的 issue 里）：
+        #     ① #537：Google 当天停止提供 `sdkmanager` 的 `tools` 包 ⇒ `Failed to find package 'tools'`；
+        #     ② #536：commandlinetools 的下载 URL 变了 ⇒ `Downloading …commandlinetools-linux-<rev>_latest.zip`
+        #        直接 404。
+        #   两次连续失败（29ad73c / 7cfe95d）都停在同一步、`feae0fd` 还是绿的，时间点与 ① 吻合。
+        # ⇒ 改成**用 runner 镜像自带的 SDK**：ubuntu runner 本来就装了 Android SDK + NDK，
+        #   `ANDROID_HOME` / `ANDROID_SDK_ROOT` 由镜像设好（见 actions/runner-images 的 Ubuntu2404-Readme）。
+        #   好处不只是"少一个会坏的外部依赖"：下面几条断言会把"镜像变了"变成**一句明确的话**，
+        #   而不是等 `sdkmanager` 在别处神秘失败。
+        run: |
+          set -e
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          test -n "$SDK" || { echo "❌ runner 镜像没设 ANDROID_SDK_ROOT/ANDROID_HOME（镜像变了？）"; exit 1; }
+          SM=""
+          for c in "$SDK/cmdline-tools/latest/bin/sdkmanager" "$SDK"/cmdline-tools/*/bin/sdkmanager; do
+            if [ -x "$c" ]; then SM="$c"; break; fi
+          done
+          test -n "$SM" || {
+            echo "❌ 找不到预装的 sdkmanager；$SDK/cmdline-tools 下是："
+            ls -la "$SDK/cmdline-tools" 2>/dev/null || true
+            exit 1
+          }
+          echo "Android SDK: $SDK"
+          echo "sdkmanager: $SM"
+          "$SM" --version
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          echo "$(dirname "$SM")" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
 
       - name: Pick an NDK + 钉死 binutils（**ranlib 那一条是必须的**）
         # 优先用本机验过的那个版本；装不上就退到 runner 上已有的最新一个。
