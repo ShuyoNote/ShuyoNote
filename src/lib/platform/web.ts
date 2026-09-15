@@ -614,6 +614,9 @@ interface SyncProfile {
   space_id: string;
   last_pushed_seq: number;
   last_pulled_seq: number;
+  /** P6.1「每空间开关」：1 = 同步附件**字节**（默认）；0 = 只同步元数据、字节按需。
+   *  ⚠️ 只管字节——附件行仍随 `changes` 同步，所以关掉后对端"看得见但打不开"。 */
+  sync_attachments: number;
 }
 interface SyncChange {
   id: number;
@@ -643,15 +646,15 @@ function clearAuthSession(store: SqliteStore, serverUrl: string): void {
   store.run("DELETE FROM auth_sessions WHERE server_url = ?", [serverUrl]);
 }
 
-const EMPTY_PROFILE: SyncProfile = { ws_id: "", server_url: "", token: "", space_id: "", last_pushed_seq: 0, last_pulled_seq: 0 };
+const EMPTY_PROFILE: SyncProfile = { ws_id: "", server_url: "", token: "", space_id: "", last_pushed_seq: 0, last_pulled_seq: 0, sync_attachments: 1 };
 function getProfile(store: SqliteStore, wsId: string): SyncProfile {
   const r = store.query<SyncProfile>("SELECT * FROM sync_profiles WHERE ws_id = ?", [wsId])[0];
   return r ?? { ...EMPTY_PROFILE, ws_id: wsId };
 }
 function putProfile(store: SqliteStore, p: SyncProfile): void {
   store.run(
-    "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq) VALUES (?,?,?,?,?,?) ON CONFLICT(ws_id) DO UPDATE SET server_url=excluded.server_url, token=excluded.token, space_id=excluded.space_id, last_pushed_seq=excluded.last_pushed_seq, last_pulled_seq=excluded.last_pulled_seq",
-    [p.ws_id, p.server_url, p.token, p.space_id, p.last_pushed_seq, p.last_pulled_seq],
+    "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq, sync_attachments) VALUES (?,?,?,?,?,?,?) ON CONFLICT(ws_id) DO UPDATE SET server_url=excluded.server_url, token=excluded.token, space_id=excluded.space_id, last_pushed_seq=excluded.last_pushed_seq, last_pulled_seq=excluded.last_pulled_seq, sync_attachments=excluded.sync_attachments",
+    [p.ws_id, p.server_url, p.token, p.space_id, p.last_pushed_seq, p.last_pulled_seq, p.sync_attachments ?? 1],
   );
 }
 function listProfiles(store: SqliteStore): SyncProfile[] {
@@ -893,7 +896,20 @@ async function attachmentByteDownload(url: string, token: string): Promise<Blob 
   return new Blob(chunks as BlobPart[], { type: "application/octet-stream" });
 }
 
-async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promise<{ uploaded: number; downloaded: number }> {
+async function syncAttachments(
+  store: SqliteStore,
+  profile: SyncProfile,
+): Promise<{ uploaded: number; downloaded: number; paused: boolean; skippedUpload: number; skippedDownload: number }> {
+  // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **只跳过第 3/4 步的字节传输**（上传 / 下载
+  // 循环），而**第 1 步列远端 hash、第 2 步列本地 hash 照常做**——清单照拉的回报是：
+  // 两份清单的差集**正好**就是"未上传 N 个 / 未下载 M 个"（§六 验收 #4）。
+  // 附件**元数据**已由 doPush / doPull 经 `changes` 同步过，所以对端仍看得见这些文件，
+  // 只是没有字节（点开提示未下载）。
+  // ⚠️ 开关**每次迭代都从 store 重读**（`attEnabled()`），不用入参快照 —— 这样"中途关掉"能生效（§五.7）。
+  let paused = false;
+  const attEnabled = () => (getProfile(store, profile.ws_id).sync_attachments ?? 1) !== 0;
+  // 入口快照：只用来决定"清单拉不到时算不算失败"（开关关着时不该让整轮同步失败）。
+  const attOn = attEnabled();
   const server = profile.server_url.replace(/\/+$/, "");
   const token = getAuthSession(store, server).token || profile.token;
   const scoped = profile.space_id ? `/spaces/${encodeURIComponent(profile.space_id)}` : "";
@@ -903,7 +919,9 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
   try {
     remoteData = await syncFetch(server, `${scoped}/attachments`, token || null);
   } catch {
-    return { uploaded: 0, downloaded: 0 };
+    // 开关关着时拉不到清单不该让整轮同步失败（本轮本来就不传字节，只是件数显示不出来）；
+    // 开关开着时保持原样：拉不到清单就是这一支返回（与 Rust 侧 fetch_remote_attachments 的降级一致）。
+    return { uploaded: 0, downloaded: 0, paused: false, skippedUpload: 0, skippedDownload: 0 };
   }
   const remoteSet = new Set<string>((remoteData?.items ?? []).map((i: any) => String(i?.hash)));
   // 2. Local hashes from this workspace's attachments table (content-addressed bytes).
@@ -912,10 +930,22 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
   for (const r of localRows) {
     if (r.hash) localMap.set(String(r.hash), String(r.mime || "application/octet-stream"));
   }
-  // 3. Upload local attachments missing on the server (report progress).
+  // 3/4 步的待传清单：**一次算清**，既是循环的输入，也是"未上传/未下载 N 个"的来源。
   const upItems = Array.from(localMap).filter(([h]) => !remoteSet.has(h));
+  const downItems = Array.from(remoteSet).filter((h) => !localMap.has(h));
+  // 入口就是关的 ⇒ 全部待传件都被开关挡下（这一支不算 `paused`：稳态不是"停止"）。
+  let skippedUpload = attOn ? 0 : upItems.length;
+  let skippedDownload = attOn ? 0 : downItems.length;
+
+  // 3. Upload local attachments missing on the server (report progress).
   let uploaded = 0;
   for (let ui = 0; ui < upItems.length; ui++) {
+    // P6.1：同下载侧——每次迭代之间重读开关，命中即优雅停止（§五.7）。
+    if (!attEnabled()) {
+      paused = true;
+      skippedUpload = upItems.length - ui;
+      break;
+    }
     const [hash, mime] = upItems[ui];
     useSyncStatus.getState().setProgress({
       phase: "attachments",
@@ -955,9 +985,15 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
     }
   }
   // 4. Download remote attachments missing locally (so images/files render here).
-  const downItems = Array.from(remoteSet).filter((h) => !localMap.has(h));
   let downloaded = 0;
   for (let di = 0; di < downItems.length; di++) {
+    // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。粒度=文件级；
+    // 已完成的不回滚（与 Rust 侧 sync.rs 的同一处语义保持一致）。
+    if (!attEnabled()) {
+      paused = true;
+      skippedDownload = downItems.length - di;
+      break;
+    }
     const hash = downItems[di];
     useSyncStatus.getState().setProgress({
       phase: "attachments",
@@ -976,7 +1012,7 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
       /* best-effort */
     }
   }
-  return { uploaded, downloaded };
+  return { uploaded, downloaded, paused, skippedUpload, skippedDownload };
 }
 
 // 一次性迁移：把旧 16 位 FNV 的附件哈希统一转成 SHA-256(64 位)，并强制重推
@@ -2451,11 +2487,11 @@ function makeInvoke(store: SqliteStore) {
         try {
           const pushed = await doPush(store, profile);
           const pulled = await doPull(store, profile);
-          await syncAttachments(store, profile);
+          const att = await syncAttachments(store, profile);
           const latest = getProfile(store, profile.ws_id);
-          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null });
+          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload });
         } catch (e) {
-          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) });
+          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0 });
         }
       }
       return out as T;
@@ -2556,6 +2592,17 @@ function makeInvoke(store: SqliteStore) {
       }
       return undefined as T;
     }
+    // P6.1「每空间开关」：只切换附件**字节**同步。
+    // ⚠️ 刻意独立成命令，并且**用 putProfile 保留其余字段**——`set_sync_profile` 对未传字段是
+    // "清空"语义（见其分支注释），拿它翻转开关会清掉该空间的 token / space_id。
+    if (cmd === "set_sync_attachments") {
+      const args = a.args ?? a;
+      const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
+      const enabled = !!(args.enabled ?? args.syncAttachments);
+      const p = getProfile(store, wsId);
+      putProfile(store, { ...p, ws_id: wsId, sync_attachments: enabled ? 1 : 0 });
+      return undefined as T;
+    }
     if (cmd === "sync_workspace") {
       const wsId = String(a.wsId ?? a.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
@@ -2568,13 +2615,13 @@ function makeInvoke(store: SqliteStore) {
         useSyncStatus.getState().setProgress({ phase: "pulling", message: "正在拉取变更…" });
         const pulled = await doPull(store, p);
         useSyncStatus.getState().setProgress({ phase: "attachments", message: "正在同步附件…" });
-        await syncAttachments(store, p);
+        const att = await syncAttachments(store, p);
         const latest = getProfile(store, wsId);
         useSyncStatus.getState().end();
-        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null } as T;
+        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload } as T;
       } catch (e) {
         useSyncStatus.getState().end(String(e));
-        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) } as T;
+        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0 } as T;
       }
     }
     // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----

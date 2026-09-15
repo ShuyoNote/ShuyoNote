@@ -69,6 +69,9 @@ interface EditRow {
   memberOpen: boolean;
   inviteEmail: string;
   inviteRole: string;
+  // P6.1 每空间「附件同步」开关（默认 true）。**只控制附件字节**，笔记正文 / 标题 /
+  // 结构等元数据照常同步 ⇒ 关掉后另一端「看得见但打不开」。
+  syncAttachments: boolean;
 }
 
 // Per-workspace sync targets (S8): each local workspace binds to its own remote
@@ -159,6 +162,8 @@ export function SyncPanel() {
             memberOpen: false,
             inviteEmail: "",
             inviteRole: "editor",
+            // 缺省 1（开）：老库升级上来没有这一列时的存量行为必须保持不变。
+            syncAttachments: (p?.sync_attachments ?? 1) === 1,
           };
         }),
       );
@@ -226,7 +231,23 @@ export function SyncPanel() {
         syncErr = String(res.error);
         setStatus(`「${r.name}」同步失败：${res.error}`);
       } else {
-        setStatus(`「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`);
+        // P6.1：开关关闭（或同步途中被关掉）时，引擎会跳过附件并在返回值里带 paused
+        // 标记。不显示这一句的话，"附件没同步"看起来就像同步失败 / 丢文件。
+        // ⚠️ 停止时文案**不能出现"同步完成"**（§六 验收 #8 明确要求"因开关关闭而停止"
+        // 而不是"同步完成"）——否则用户以为附件也都对齐了。
+        // "未上传 N 个 / 未下载 M 个"来自引擎的两份清单差集（§六 验收 #4）。
+        const pending = [
+          res.attachments_skipped_upload > 0 ? `未上传 ${res.attachments_skipped_upload} 个` : "",
+          res.attachments_skipped_download > 0 ? `未下载 ${res.attachments_skipped_download} 个` : "",
+        ].filter(Boolean).join(" / ");
+        const att = pending ? `（附件 ${pending}）` : "";
+        setStatus(
+          res.attachments_paused
+            ? `「${r.name}」同步已停止：途中关闭了附件同步，已传完的附件保留${att}；上传 ${res.pushed} / 拉取 ${res.pulled}`
+            : pending
+              ? `「${r.name}」同步完成${att}：上传 ${res.pushed} / 拉取 ${res.pulled}`
+              : `「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`,
+        );
         // P0.1：有同页冲突（本地未推送 + 服务端新 seq）→ 提示用户选择。
         const c = (res.conflicts ?? []) as { entity_id: string; title: string }[];
         if (c.length > 0) {
@@ -246,6 +267,29 @@ export function SyncPanel() {
 
   const update = (ws_id: string, field: keyof EditRow, value: string) =>
     setRows((rs) => rs.map((r) => (r.ws_id === ws_id ? { ...r, [field]: value } : r)));
+
+  // P6.1 每空间「附件同步」开关。两条容易踩的坑，都在这里挡掉：
+  //
+  // ① **必须走窄命令 `setSyncAttachments`，不能顺手用 `setSyncProfile`**：后者的语义是
+  //    "没传的字段 = 清空"（Rust `sync.rs` 的 `token.as_deref().unwrap_or("")`，web.ts 同
+  //    语义），为了存一个开关而调用它会把该行的 token / space_id 一起抹掉。
+  // ② **必须立即落盘，不能等用户点「保存」**：这个开关的用途之一就是"同步跑到一半关掉
+  //    刹车"，同步引擎读的是数据库里的值；只存在面板 state 里的话，跑到一半关 = 关了个
+  //    寂寞，得等下一次点「同步」才生效。落盘失败要把 UI 回滚，否则显示成"已关"其实没关。
+  const setAttachments = async (r: EditRow, enabled: boolean) => {
+    setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, syncAttachments: enabled } : x)));
+    try {
+      await api.setSyncAttachments(r.ws_id, enabled);
+      setStatus(
+        enabled
+          ? `「${r.name}」已开启附件同步`
+          : `「${r.name}」已关闭附件同步：同步时只走笔记内容，不传附件文件`,
+      );
+    } catch (e) {
+      setRows((rs) => rs.map((x) => (x.ws_id === r.ws_id ? { ...x, syncAttachments: !enabled } : x)));
+      setStatus(`附件同步开关保存失败：${e}`);
+    }
+  };
 
   // 登录与注册共用的收尾：token 落到该行 + auth store + **落盘**，并尽力拉一次
   // 空间列表（列表失败不回滚会话——token 已有效，用户仍可手填空间 id）。
@@ -767,6 +811,25 @@ export function SyncPanel() {
                       <code> --issue-device-key</code> 拿到一串 <code>sk_…</code>，贴到这里即可；丢了只能重新签发。
                     </div>
                   </details>
+
+                  {/* P6.1 每空间附件开关：默认开。关掉只影响附件**字节**，元数据照常
+                      同步——另一端能看到附件条目但打不开，所以文案要说清后果而不是
+                      写成"不同步附件"（那听起来像附件也跟着消失）。 */}
+                  <div className="sync-att">
+                    <div className="sync-att-text">
+                      <div className="sync-att-name">同步附件文件</div>
+                      <div className="sync-hint">
+                        关闭后只同步笔记内容，不传图片 / 附件文件（省流量与磁盘；另一端会看到附件但打不开）。
+                        改变立即生效，正在同步的任务会在传完当前文件后停下。
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={r.syncAttachments}
+                      aria-label={`同步「${r.name}」的附件文件`}
+                      onChange={(e) => void setAttachments(r, e.target.checked)}
+                    />
+                  </div>
 
                   <div className="sync-card-actions">
                     {/* 登录/注册与选空间都会自动落盘，这里的「保存」只用于手填

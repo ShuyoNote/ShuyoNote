@@ -13,14 +13,16 @@ const invoke = <K extends keyof CommandMap>(
   args?: CommandMap[K]["args"],
 ): Promise<CommandMap[K]["result"]> =>
   platform.executor.invoke(cmd, args as Record<string, unknown>);
-export interface SyncConfig {
-  server_url: string;
-  token: string;
-  space_id: string;
-  device_id: string;
-  last_pushed_seq: number;
-  last_pulled_seq: number;
-}
+
+// 这三个是**平台契约**类型，权威定义在 `platform/commands.ts`（`CommandMap` 里
+// `list_sync_profiles` / `sync_workspace` 的 result 就是它们）。这里**只转发，不再
+// 手抄一份**。
+//
+// 教训（P6.1）：此处原本是第二份手抄声明，P6.1 往契约里加 `sync_attachments` /
+// `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
+// from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
+// 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
+export type { SyncConfig, SyncProfile, WorkspaceSyncResult } from "./platform/commands";
 
 /** 聚合邮箱的 IMAP 账号配置（与后端 email::EmailAccountArgs 对应）。 */
 export interface EmailAccount {
@@ -71,25 +73,9 @@ export interface EmailAggregate {
  * Per-workspace sync target (S8): each local workspace (ws_id) binds to its own
  * remote (server_url + token + space_id), so one person can sync different spaces
  * to different servers/accounts (multi-server × multi-space).
+ *
+ * 类型定义见文件顶部的转发声明（`platform/commands.ts` 是唯一权威）。
  */
-export interface SyncProfile {
-  ws_id: string;
-  server_url: string;
-  token: string;
-  space_id: string;
-  last_pushed_seq: number;
-  last_pulled_seq: number;
-}
-
-export interface WorkspaceSyncResult {
-  ws_id: string;
-  pushed: number;
-  pulled: number;
-  last_pushed_seq: number;
-  last_pulled_seq: number;
-  error: string | null;
-}
-
 export interface SyncReport {
   pushed: number;
   pulled: number;
@@ -279,6 +265,9 @@ export const api = {
   listSyncProfiles: () => invoke("list_sync_profiles"),
   setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string; email?: string }) =>
     invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id, email: args.email }),
+  /** P6.1「每空间开关」：只切换附件**字节**同步。
+   *  ⚠️ 刻意独立成命令：`setSyncProfile` 对未传字段是"清空"语义，用它翻转开关会清掉凭证。 */
+  setSyncAttachments: (wsId: string, enabled: boolean) => invoke("set_sync_attachments", { wsId, enabled }),
   syncWorkspace: async (wsId: string) => {
     const r = await invoke("sync_workspace", { wsId });
     emitSyncCompleted(r ? [r] : []);

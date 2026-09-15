@@ -329,7 +329,9 @@ export class SqliteStore {
         token TEXT NOT NULL DEFAULT '',
         space_id TEXT NOT NULL DEFAULT '',
         last_pushed_seq INTEGER NOT NULL DEFAULT 0,
-        last_pulled_seq INTEGER NOT NULL DEFAULT 0
+        last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+        -- P6.1「每空间开关」：1 = 同步附件字节（默认）；0 = 只同步元数据、字节按需。
+        sync_attachments INTEGER NOT NULL DEFAULT 1
       );
       CREATE TABLE IF NOT EXISTS auth_sessions (
         server_url TEXT PRIMARY KEY,
@@ -340,6 +342,13 @@ export class SqliteStore {
         expires_at INTEGER NOT NULL
       );
     `);
+    // P6.1「每空间开关」：老浏览器库补列。**`DEFAULT 1` 是有意的**——升级不能静默改变
+    // 同步范围（见 docs/plans/2026-09-15-attachment-on-demand-plan.md §五.4）。
+    try {
+      this.db.run("ALTER TABLE sync_profiles ADD COLUMN sync_attachments INTEGER NOT NULL DEFAULT 1");
+    } catch {
+      /* already exists */
+    }
     // Safe migration for pre-existing DBs whose `attachments` table predates
     // the page_id column (owns → which folder/page a file belongs to).
     try {

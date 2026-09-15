@@ -82,7 +82,7 @@
 | 2 | `src-tauri/src/db.rs`（迁移区，约 `:484-508`） | **加一段带守卫的 `ALTER TABLE`**（**供已有库**）；守卫写法照抄 `:492-499` 的 `pragma_table_info` 计数模式 | `:492-499` |
 | 3 | `src-tauri/src/sync.rs:319-330` | `SyncProfile` 加字段 + `PROFILE_COLS` 加列名 ⇒ **必须追加在最后**，否则 `row_to_profile`（`:332-341`）的下标全要改 | `:329-341` |
 | 4 | `src-tauri/src/sync.rs:403-411` | `set_profile_field` 的 `field` **是格式化进 SQL 的**（今天靠注释声明"只传常量"）⇒ 新增字段**必须同时把它纳入白名单**；⚠️ **建议顺手把"注释约定"改成显式 allowlist 校验**（`field` 来自命令入参的可能性一旦出现就是注入面） | `:403-411` 原文 |
-| 5 | `src-tauri/src/sync.rs:1496+` | `sync_attachments`：**入口处读该 profile 的开关**，关掉则**整个跳过第 3/4 步**（上传与下载）、照旧返回空 `att_items` 不报错；**并且在上传/下载的每次迭代之间重读一次开关**（见 §五.7：中途关掉要能停）。**§十.1 已证明这是客户端唯一取字节的入口 ⇒ 在这里早退就等于"关干净"** | `:1514-1690`；§五.7；§十.1 |
+| 5 | `src-tauri/src/sync.rs:1496+` | `sync_attachments`：**入口处读该 profile 的开关**，关掉则**整个跳过第 3/4 步**（上传与下载）、照旧返回空 `att_items` 不报错；**并且在上传/下载的每次迭代之间重读一次开关**（见 §五.7：中途关掉要能停）。**§十.1 已证明这是客户端唯一取字节的入口 ⇒ 在这里早退就等于"关干净"**。✅ **落地时收紧了一处**：闸门放在**第 1/2 步（两份 hash 清单）之后**、只挡第 3/4 步——见 §十一.2 | `:1514-1690`；§五.7；§十.1 |
 | 6 | `src/lib/platform/commands.ts:69`、`:353` | `SyncProfile` 接口加字段；**并新增一条窄命令 `set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void }`**（见 §五.8 陷阱 A）。⚠️ **不要**把它做成 `set_sync_profile` 的可选参数 | `:69`、`:353` |
 | 7 | `src/lib/platform/web.ts:646`、`:653`、`:2540`、`:896` | **同构改动**：`EMPTY_PROFILE`、`putProfile` 的 SQL、`set_sync_profile` 分支、`syncAttachments` 早退 | 四处均已存在 |
 | 8 | `src/components/SyncPanel.tsx` | 每个 profile 行加开关（`EditRow` 已在管理 profile 字段）+ **切换即落库**（走窄命令，见 §五.8） | `:523` 起的面板；`:198`、`:236` |
@@ -223,3 +223,83 @@
    `value: string`（`:236`），`save()`（`:198-200`）在点「保存」时把整行提交给 `set_sync_profile`。
    ⇒ 开关需要**自己的 setter**，且按 §五.7 **切换即落库**（不能只在保存时提交，
    否则"中途关掉"永远到不了 DB）。
+
+---
+
+## 十一、实现记录（P6.1 落地，2026-09-15）
+
+### 1. 落地清单
+
+| 层 | 文件 | 内容 |
+|---|---|---|
+| DB | `src-tauri/src/db.rs` | `CREATE TABLE sync_profiles` 加列 + `meta_migrate` 里带 `pragma_table_info` 守卫的 `ALTER TABLE`（**DEFAULT 1**） |
+| 引擎 | `src-tauri/src/sync.rs` | `SyncProfile.sync_attachments`；`PROFILE_COLS`；`attachments_enabled()`（**读 DB 不读快照**）；`set_attachments_enabled()`；`#[tauri::command] set_sync_attachments`；`set_profile_field` 白名单化；`sync_attachments` → `AttachmentSyncOutcome`；`SyncReport`/`WorkspaceSyncResult` 加 3 个字段 |
+| 注册 | `src-tauri/src/lib.rs` | 注册 `sync::set_sync_attachments` |
+| 契约 | `src/lib/platform/commands.ts` | `SyncProfile.sync_attachments`、`WorkspaceSyncResult.attachments_paused/_skipped_upload/_skipped_download`、新命令 `set_sync_attachments`；**`api.ts` 里那两份手抄声明改成 `export type { … } from "./platform/commands"` 转发** |
+| Web | `src/lib/platform/web.ts`、`sqliteStore.ts` | `SyncProfile`/`EMPTY_PROFILE`/`putProfile`/schema+`ALTER`、`set_sync_attachments` 分支、`syncAttachments` 同构改造、两处 `sync_workspace`/`sync_now` 调用点补齐 3 个字段 |
+| UI | `src/components/SyncPanel.tsx`、`src/App.css` | 每空间开关（`.sync-att`）+ `setAttachments()`（窄命令 + **切换即落库** + 失败回滚）+ 结果文案 |
+| 测试 | `src-tauri/src/sync.rs`、`db.rs` | 4 条 sync 单测（默认开 / 往返 / **不碰凭证** / `PROFILE_COLS` 带列）+ 1 条迁移单测（老库补列且存量值为 1、幂等） |
+
+**已跑通的门**：`npx tsc --noEmit` = 0；`pnpm test` = 70 文件 / 656 用例全过；
+`pnpm check:web-commands` 通过（Rust 215 命令 ↔ web 218 命令、`CommandMap` 全覆盖）；
+`cargo check --all-targets` = 0 错误（含新增单测的编译检查）。
+
+### 2. 施工单收紧一处：闸门放在"两份清单"之后（**这是 §六 #4 能成立的前提**）
+
+§四 步骤 5 原话是"入口处读开关 ⇒ 整个跳过第 3/4 步"。落地时**闸门下沉到第 1/2 步之后**，
+**只挡第 3/4 步的字节传输**——理由是代码里步骤编号本来就是
+`1. List remote hashes / 2. Local hashes / 3. Upload / 4. Download`（`web.ts` 与 `sync.rs` 同号），
+"跳过第 3/4 步"= 只跳这两段循环；而两份 hash 清单的**差集正好就是**
+"未上传 N 个 / 未下载 M 个"（§六 **验收 #4** 要求面板显示这个数）。
+
+**代价与取舍**：开关关着时**仍会发一次 `GET /attachments`**（只拉 hash+mime 清单，K 级）。
+换取的是"关掉后用户知道差多少件"，以及 P6.2 需要的现成数据。
+⚠️ 为守住"关掉不该让同步更容易失败"这条底线：**开关关着时清单拉不到 ⇒ 不报错**（按 0 件返回），
+开关开着时保持原样（拉不到就是失败）——两侧（`fetch_remote_attachments` / `syncFetch`）语义一致。
+
+**`attachments_paused` 与 `attachments_skipped_*` 的分工**（别混）：
+
+| 字段 | 何时为非零 | 面板文案 |
+|---|---|---|
+| `attachments_paused = true` | **途中**被关掉（入口是开的） | "**同步已停止**：途中关闭了附件同步…"（**不许出现"同步完成"**，验收 #8） |
+| `attachments_skipped_upload/download` | 被开关**挡下**的件数（入口关 = 全部；途中关 = 剩余） | "（附件 未上传 N 个 / 未下载 M 个）" |
+
+⇒ 稳态关掉**不算 `paused`**（用户主动选的，不是"停止"），但件数照报。
+
+### 3. 落地时踩到的四个坑（都已修，且都加了防回归注释/单测）
+
+| # | 坑 | 症状 | 处理 |
+|---|---|---|---|
+| **T1** | `SyncProfile` / `WorkspaceSyncResult` **在三处各声明一份**（`commands.ts:69`、`api.ts:75`、`web.ts:610`） | 只改了 `commands.ts` ⇒ `SyncPanel` 通过 `import type { SyncProfile } from "../lib/api"` 拿到的是**旧形状**，`tsc` 报 TS2339；而 `attachments_paused` 是**推断**类型的路径、不报错 ⇒ 同一原因下还有**静默不一致**（`api.ts` 的 `WorkspaceSyncResult` 就一直缺 `conflicts`） | `api.ts` 的两份手抄改为**转发** `commands.ts`（权威定义只有一处）；`web.ts` 那份是 Web 引擎的内部行类型，保留 |
+| **T2** | `sync.rs` 单测助手 `conn_with_meta()` **手写建表语句**，少一列 | `PROFILE_COLS` 是按列名 SELECT 的 ⇒ 少列**不是"少个字段"而是整条 SELECT 报错**，两条老单测会一起红 | 补列，并在助手函数上注明"**必须与 `meta_migrate` 同形**" |
+| **T3** | `set_profile_field(field)` **把 `field` 格式化进 SQL**（原仅靠注释声明"只传常量"） | 一旦有人把入参透传进来就是注入面 | 改成显式白名单，不匹配直接 `Err` |
+| **T4** | 下载循环里"hash 合法性"与"本地已有"两条 `continue` 校验，与新建的 `down_items` 过滤器**同义重复** | 同一件事写两处，改一处忘一处就是 bug | 校验只留在过滤器里，循环体不再重复判断 |
+
+### 4. ⚠️ 本机无法执行 Rust 单测（**与本次源码改动无关**）
+
+`cargo test --lib` 在本机**编译通过但加载即死**：`0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`
+（进程起不来 ⇒ 一条用例都跑不了）。本次为定位它排除了以下可能：
+
+| 假设 | 证据 | 结论 |
+|---|---|---|
+| 缺 `OPENSSL_DIR` | 未设时报 build.rs 直接失败 | 🟡 真问题，但**不是**加载失败的原因（设了之后仍 0xc0000139）；修法：`dev.ps1` 的 `OPENSSL_DIR` + `LIB` |
+| OpenSSL 版本不一致 | `OpenSSL-Win64\bin`、`System32`、`target\…\deps` 三份 `libcrypto-3-x64.dll` **同为 3.6.4、字节数相同**；install 的 `lib\VC\x64\MD\*.lib` 与 `bin\*.dll` 同为 2026-08-25 | ❌ 排除 |
+| `PATH` 上 Python 自带旧 VC 运行时 | `vcruntime140.dll` 解析到 `C:\Python313\vcruntime140.dll`（不是 System32） | 🟡 真隐患，但把 System32 提到最前仍失败 ⇒ 不是本次病因 |
+| `deps\` 下有陈旧同名 DLL | 只有 `libcrypto`/`libssl`/`shuyonote_lib.dll` 三个非 crate DLL；把陈旧的 `shuyonote_lib.dll` 改名后**仍失败** | ❌ 排除 |
+| 全局环境问题 | **同一个 shell 里 `shuyonote-sync-server` 的 `cargo test` 正常**（29+3 通过） | ❌ 排除 ⇒ 病因在 **shuyonote 自身的依赖链/产物**，尚未定位 |
+
+⇒ **本次新增的 5 条 Rust 单测只做了"编译检查"（`cargo check --all-targets` = 0 错误），未在本机执行。**
+它们会在 CI（Linux）上真正跑起来；**在那之前不要把它们当"已验证"**。
+
+### 5. 验收状态（对照 §六）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| 1 / 7 | ✅ | 开关开 = 原路径（默认 1，代码未改上传/下载逻辑）；`tsc`/`test`/`check:web-commands`/`cargo check` 全绿 |
+| 4 | ✅（代码层） | 两份清单差集 ⇒ `attachments_skipped_*` ⇒ 面板"未上传 N 个 / 未下载 M 个" |
+| 6 | ✅（单测写了，**本机未执行**） | `meta_migrate_adds_attachment_switch_backfilling_on` |
+| 2 / 3 / 5 / 8 / 9 | ⏳ **未验** | 需要**两台设备 + 真实服务端**跑 `sync-regression.mjs`（本机无此条件）⇒ 与 B4 并作同一次双机回归 |
+
+⚠️ 仍未做：`scripts/sync-regression.mjs` 的新断言（验收 2/3/5/8 的自动化）。它要连真服务端，
+所以和 **B4 的双机回归**合并成一次会更省事，且能顺带验证 B4 那条"下载侧 `page_id = NULL` 会不会
+在第二台设备产生重复行"的推断。

@@ -264,6 +264,12 @@ pub struct SyncReport {
     /// P6.1：**本轮附件同步因"开关被关掉"而中途停止**（不是在入口就没开）。
     /// 界面据此显示"因开关关闭而停止"，而不是"同步完成"——否则用户以为全下完了。
     pub attachments_paused: bool,
+    /// P6.1：本轮**因开关关闭而未传**的附件件数（入口就是关的 ⇒ 等于全部待传件数；
+    /// 中途关掉 ⇒ 剩余未尝试的件数）。界面据此显示"未上传 N 个"（§六 验收 #4）。
+    /// ⚠️ 定义是"**被开关挡下**的件数"，**不含**因网络失败而没传成功的件数。
+    pub attachments_skipped_upload: usize,
+    /// P6.1：同上，下载侧（"未下载 M 个"）。
+    pub attachments_skipped_download: usize,
 }
 
 /// A page that both has an unsynced local edit (dirty) and a newer server change.
@@ -460,12 +466,20 @@ fn attachments_enabled(c: &Connection, ws_id: &str) -> bool {
 #[tauri::command]
 pub fn set_sync_attachments(db: State<'_, Db>, ws_id: String, enabled: bool) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
+    set_attachments_enabled(&c, &ws_id, enabled)
+}
+
+/// `set_sync_attachments` 的实际实现（抽出来是为了能在单测里直接跑 SQL——
+/// `#[tauri::command]` 收 `State<Db>`，没有 Tauri App 就构造不出来）。
+fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result<(), String> {
     let n = c
         .execute(
             "UPDATE sync_profiles SET sync_attachments = ?1 WHERE ws_id = ?2",
             params![if enabled { 1 } else { 0 }, ws_id],
         )
         .map_err(|e| e.to_string())?;
+    // 0 行 = 该空间还没有 profile 行。**报错而不是静默成功**：面板据此提示"先填服务器地址
+    // 并绑定空间"，否则用户以为开关生效了（实际没有任何一行被写）。
     if n == 0 {
         return Err("该空间还没有同步配置（请先填服务器地址并绑定空间）".to_string());
     }
@@ -1412,6 +1426,9 @@ pub struct WorkspaceSyncResult {
     pub conflicts: Vec<SyncConflict>,
     /// P6.1：附件同步**因开关被关掉而中途停止**（见 `SyncReport::attachments_paused`）。
     pub attachments_paused: bool,
+    /// P6.1：本轮因开关关闭而未上传 / 未下载的件数（见 `SyncReport` 同名字段的定义）。
+    pub attachments_skipped_upload: usize,
+    pub attachments_skipped_download: usize,
 }
 
 async fn sync_workspace_only(
@@ -1421,11 +1438,21 @@ async fn sync_workspace_only(
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
     let (pulled, last_pulled_seq, pulled_items, conflicts) = do_pull(db, profile).await?;
-    let (att_items, attachments_paused) = sync_attachments(app, db, profile).await?;
+    let att = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
     items.extend(pulled_items);
-    items.extend(att_items);
-    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items, conflicts, attachments_paused })
+    items.extend(att.items);
+    Ok(SyncReport {
+        pushed,
+        pulled,
+        last_pushed_seq,
+        last_pulled_seq,
+        items,
+        conflicts,
+        attachments_paused: att.paused,
+        attachments_skipped_upload: att.skipped_upload,
+        attachments_skipped_download: att.skipped_download,
+    })
 }
 
 #[tauri::command]
@@ -1451,6 +1478,8 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 error: None,
                 conflicts: rep.conflicts,
                 attachments_paused: rep.attachments_paused,
+                attachments_skipped_upload: rep.attachments_skipped_upload,
+                attachments_skipped_download: rep.attachments_skipped_download,
             },
             Err(e) => WorkspaceSyncResult {
                 ws_id: profile.ws_id.clone(),
@@ -1461,6 +1490,8 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 error: Some(e),
                 conflicts: Vec::new(),
                 attachments_paused: false,
+                attachments_skipped_upload: 0,
+                attachments_skipped_download: 0,
             },
         });
     }
@@ -1507,6 +1538,8 @@ pub async fn sync_workspace(
                 error: None,
                 conflicts: rep.conflicts,
                 attachments_paused: rep.attachments_paused,
+                attachments_skipped_upload: rep.attachments_skipped_upload,
+                attachments_skipped_download: rep.attachments_skipped_download,
             })
         }
         Err(e) => {
@@ -1560,11 +1593,50 @@ struct RemoteAttachmentList {
     items: Vec<RemoteAttachment>,
 }
 
+/// P6.1：`sync_attachments` 的返回。加了"被开关挡下的件数"后已经是 4 个值，
+/// 元组读起来全是位置，改成一个具名结构。
+struct AttachmentSyncOutcome {
+    items: Vec<SyncItem>,
+    /// 本轮**因开关关闭而中途停止**（入口就是关的不算——那是稳态，不是"停止"）。
+    paused: bool,
+    /// 因开关关闭而未上传 / 未下载的件数（定义见 `SyncReport` 同名字段）。
+    skipped_upload: usize,
+    skipped_download: usize,
+}
+
+impl AttachmentSyncOutcome {
+    /// 开关关着且连清单都没拉到：不传字节、不报错、件数未知（记 0）。
+    fn skip_all() -> Self {
+        Self { items: Vec::new(), paused: false, skipped_upload: 0, skipped_download: 0 }
+    }
+}
+
+/// 拉取远端附件清单。抽成函数是为了让调用方能对"开关关着时拉不到"做优雅降级
+/// （见 `sync_attachments` 里的 `Err(_) if !att_on` 分支）。
+async fn fetch_remote_attachments(
+    client: &reqwest::Client,
+    att_base: &str,
+    token: &str,
+) -> Result<RemoteAttachmentList, String> {
+    let mut req = client.get(format!("{att_base}/attachments"));
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    req.send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn sync_attachments(
     app: &tauri::AppHandle,
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(Vec<SyncItem>, bool), String> {
+) -> Result<AttachmentSyncOutcome, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
@@ -1572,17 +1644,19 @@ async fn sync_attachments(
     // P6.1：本轮是否"因开关被关掉而中途停止"（与"入口就没开"区分——后者不算 paused）。
     let mut paused = false;
 
-    // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **整个跳过第 3/4 步（上传与下载）**，
-    // 但**不报错**——附件**元数据**已由 do_push / do_pull 经 `changes` 同步过，
+    // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **只跳过第 3/4 步的字节传输**
+    // （上传循环 / 下载循环），而**第 1 步列远端 hash、第 2 步列本地 hash 照常做**。
+    // 这正是 §四 步骤 5 说的"跳过第 3/4 步"——代码里的步骤编号就是上面这两句注释
+    // （1. List remote hashes / 2. Local hashes / 3. Upload / 4. Download）。清单照拉
+    // 是有回报的：两份清单的差集**正好**就是"未上传 N 个 / 未下载 M 个"（§六 验收 #4）。
+    // ⚠️ 开关**只**管字节：附件**元数据**已由 do_push / do_pull 经 `changes` 同步过，
     // 所以对端仍然看得见这些文件，只是没有字节（点开提示未下载）。
     // ⚠️ 这里**从 DB 读、不用 `profile.sync_attachments`**：`profile` 是本轮开始时的快照，
     // 用它会导致"中途关掉不生效"（详见 `attachments_enabled` 的注释）。
-    {
+    let att_on = {
         let c = db.0.lock().expect("db mutex poisoned");
-        if !attachments_enabled(&c, &profile.ws_id) {
-            return Ok((Vec::new(), false));
-        }
-    }
+        attachments_enabled(&c, &profile.ws_id)
+    };
 
     let client = reqwest::Client::new();
     // Space-scoped attachments when bound to a team space; legacy global path otherwise.
@@ -1593,20 +1667,15 @@ async fn sync_attachments(
     };
 
     // 1. List remote hashes.
-    let mut req = client.get(format!("{att_base}/attachments"));
     let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
-    if !token.is_empty() {
-        req = req.bearer_auth(&token);
-    }
-    let remote: RemoteAttachmentList = req
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
+    let remote = match fetch_remote_attachments(&client, &att_base, &token).await {
+        Ok(r) => r,
+        // 开关关着时，附件清单拉不到**不该让整轮同步失败**：本轮本来就不传字节，
+        // 拿不到清单只是"未上传/未下载件数"显示不出来（按 0 返回）。
+        // 开关开着时保持原样：拉不到清单就是同步失败（原先的行为）。
+        Err(_) if !att_on => return Ok(AttachmentSyncOutcome::skip_all()),
+        Err(e) => return Err(e),
+    };
     let remote_set: HashSet<String> = remote.items.iter().map(|i| i.hash.clone()).collect();
 
     // 2. Local hashes (files on disk).
@@ -1641,6 +1710,17 @@ async fn sync_attachments(
         }
     }
 
+    // 3/4 步的待传清单：**一次算清**，既是循环的输入，也是"未上传/未下载 N 个"的来源。
+    let up_items: Vec<String> = local_set.difference(&remote_set).cloned().collect();
+    let down_items: Vec<&RemoteAttachment> = remote
+        .items
+        .iter()
+        .filter(|i| is_valid_attachment_hash(&i.hash) && !local_set.contains(&i.hash))
+        .collect();
+    // 入口就是关的 ⇒ 全部待传件都被开关挡下（这一支不算 `paused`：稳态不是"停止"）。
+    let mut skipped_upload = if att_on { 0 } else { up_items.len() };
+    let mut skipped_download = if att_on { 0 } else { down_items.len() };
+
     // 3. Upload local attachments missing on server. When at-rest encryption is on
     // (session unlocked), the on-disk bytes are ciphertext (nonce||ct) while the
     // server verifies SHA-256 against the claimed (plaintext) hash — so we must
@@ -1650,13 +1730,15 @@ async fn sync_attachments(
         let c = db.0.lock().expect("db mutex poisoned");
         security::key_if_enabled(&c)
     };
-    for hash in local_set.difference(&remote_set) {
+    for (idx, hash) in up_items.iter().enumerate() {
         // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
         // 粒度 = 文件级：最坏等待 = 当前这一件的传输时间；**已完成的不回滚**。
         {
             let c = db.0.lock().expect("db mutex poisoned");
             if !attachments_enabled(&c, &profile.ws_id) {
                 paused = true;
+                // 剩余（含当前这件）都被挡下 ⇒ 面板能报出"未上传 N 个"。
+                skipped_upload = up_items.len() - idx;
                 break;
             }
         }
@@ -1718,24 +1800,23 @@ async fn sync_attachments(
         map
     };
 
-    for item in &remote.items {
+    for (idx, item) in down_items.iter().enumerate() {
         // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
         {
             let c = db.0.lock().expect("db mutex poisoned");
             if !attachments_enabled(&c, &profile.ws_id) {
                 paused = true;
+                skipped_download = down_items.len() - idx;
                 break;
             }
         }
         // The hash comes from the server (untrusted): reject anything that is not a
         // canonical SHA-256 hex before joining it into a filesystem path, to prevent
         // a malicious server from writing outside the attachments dir.
-        if !is_valid_attachment_hash(&item.hash) {
-            continue;
-        }
-        if local_set.contains(&item.hash) {
-            continue;
-        }
+        //
+        // ⚠️ 这条校验和下面那条"本地已有就跳过"现在**都在构造 `down_items` 时用同一个
+        // 谓词过滤过了**（见上面 `is_valid_attachment_hash(&i.hash) && !local_set.contains(...)`）。
+        // 这里不再重复判断：同一件事写两处，改了一处忘了另一处就是 bug。
         let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
         if !profile.token.is_empty() {
             req = req.bearer_auth(&profile.token);
@@ -1789,7 +1870,7 @@ async fn sync_attachments(
 
     // Reuse local mimes for hash resolution (kept for future use).
     let _ = local_mimes;
-    Ok((att_items, paused))
+    Ok(AttachmentSyncOutcome { items: att_items, paused, skipped_upload, skipped_download })
 }
 
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
@@ -1930,6 +2011,10 @@ mod tests {
     use super::*;
 
     /// 复刻生产布局：main 为空间库，meta 作为 ATTACH 库承载 workspaces/sync_profiles。
+    ///
+    /// ⚠️ 这里的建表语句**必须和 `db.rs::meta_migrate` 的 `sync_profiles` 保持同形**：
+    /// `PROFILE_COLS` 是按列名 SELECT 的，助手少一列 ⇒ `list_profiles` 直接 Err、
+    /// 老测试全红（P6.1 加 `sync_attachments` 时就踩过一次）。
     fn conn_with_meta() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
@@ -1941,7 +2026,8 @@ mod tests {
                  token TEXT NOT NULL DEFAULT '',
                  space_id TEXT NOT NULL DEFAULT '',
                  last_pushed_seq INTEGER NOT NULL DEFAULT 0,
-                 last_pulled_seq INTEGER NOT NULL DEFAULT 0
+                 last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1
              );",
         )
         .unwrap();
@@ -1982,5 +2068,76 @@ mod tests {
         let got = list_profiles(&c).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].server_url, "http://a");
+    }
+
+    // ---- P6.1「每空间开关」 ----
+
+    #[test]
+    fn attachments_enabled_defaults_on_for_missing_row_and_column() {
+        let c = conn_with_meta();
+        // 没有这一行 ⇒ 按"开"（与 `DEFAULT 1` 一致）：升级 / 新库都不能静默改同步范围。
+        assert!(attachments_enabled(&c, "nope"));
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, space_id) VALUES ('ws', 'http://a', 'sp');",
+        )
+        .unwrap();
+        // 建表默认值就是"开"。
+        assert!(attachments_enabled(&c, "ws"));
+    }
+
+    #[test]
+    fn set_attachments_enabled_round_trips_and_rejects_unknown_workspace() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, space_id) VALUES ('ws', 'http://a', 'sp');",
+        )
+        .unwrap();
+
+        set_attachments_enabled(&c, "ws", false).unwrap();
+        assert!(!attachments_enabled(&c, "ws"));
+        set_attachments_enabled(&c, "ws", true).unwrap();
+        assert!(attachments_enabled(&c, "ws"));
+
+        // 没有 profile 行 ⇒ 报错（面板据此提示"先绑定空间"），而不是静默成功。
+        assert!(set_attachments_enabled(&c, "ghost", false).is_err());
+    }
+
+    #[test]
+    fn set_attachments_enabled_leaves_credentials_untouched() {
+        // 这是 P6.1 最要紧的一条：翻转开关**绝不能**碰 token / space_id。
+        // （不用 `set_sync_profile` 的原因就是它对未传字段是"清空"语义。）
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, token, space_id)
+             VALUES ('ws', 'http://a', 'tok-secret', 'sp-1');",
+        )
+        .unwrap();
+
+        set_attachments_enabled(&c, "ws", false).unwrap();
+
+        let got = get_profile(&c, "ws").unwrap();
+        assert_eq!(got.token, "tok-secret");
+        assert_eq!(got.space_id, "sp-1");
+        assert_eq!(got.server_url, "http://a");
+        assert_eq!(got.sync_attachments, 0);
+    }
+
+    #[test]
+    fn list_profiles_carries_attachment_switch() {
+        // `PROFILE_COLS` 必须带上 `sync_attachments`：漏列会让整条 SELECT 报错
+        // （不是"少一个字段"而已），这里把它钉住。
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, sync_attachments) VALUES ('ws', 'http://a', 0);",
+        )
+        .unwrap();
+
+        let got = list_profiles(&c).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].sync_attachments, 0);
     }
 }

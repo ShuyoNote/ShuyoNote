@@ -993,6 +993,49 @@ mod tests {
         meta_migrate(&conn).unwrap();
     }
 
+    /// P6.1：老库（`sync_profiles` 没有 `sync_attachments` 列）跑一次 `meta_migrate`
+    /// 必须补上列，且**存量行的值是 1（开）**——升级不能静默把同步范围从"全量"改成"按需"。
+    #[test]
+    fn meta_migrate_adds_attachment_switch_backfilling_on() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 先按 P6.1 之前的形状建表（`meta_migrate` 里是 CREATE TABLE IF NOT EXISTS，
+        // 所以这张"老表"会被保留，正好模拟升级）。
+        conn.execute_batch(
+            "CREATE TABLE sync_profiles (
+                 ws_id TEXT PRIMARY KEY,
+                 server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '',
+                 space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0,
+                 last_pulled_seq INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO sync_profiles (ws_id, server_url, token, space_id)
+             VALUES ('ws', 'http://a', 'tok', 'sp');",
+        )
+        .unwrap();
+
+        meta_migrate(&conn).unwrap();
+
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'sync_attachments'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has, 1, "meta_migrate 没有给 sync_profiles 补 sync_attachments 列");
+        let v: i64 = conn
+            .query_row("SELECT sync_attachments FROM sync_profiles WHERE ws_id = 'ws'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 1, "存量 profile 的开关必须是 1（开）：升级不能改变同步范围");
+        // 幂等：再跑一次不报错，值不变。
+        meta_migrate(&conn).unwrap();
+        let again: i64 = conn
+            .query_row("SELECT sync_attachments FROM sync_profiles WHERE ws_id = 'ws'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(again, 1);
+    }
+
     #[test]
     fn migrate_adds_workspace_settings_columns() {
         let conn = Connection::open_in_memory().unwrap();
@@ -1012,8 +1055,7 @@ mod tests {
         migrate(&conn, "default").unwrap();
     }
 
-    // A fresh space DB (migrate'd) must accept a page whose workspace_id is the
-    // space's own id — create_workspace inserts the home page that way. With
+    // A fresh space DB (migrate'd) must accept a page whose workspace_id is the    // space's own id — create_workspace inserts the home page that way. With
     // foreign_keys=ON this previously failed because migrate only seeded 'default'.
     #[test]
     fn fresh_space_db_accepts_own_workspace_id_page() {

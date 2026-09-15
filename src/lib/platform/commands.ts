@@ -73,6 +73,9 @@ export interface SyncProfile {
   space_id: string;
   last_pushed_seq: number;
   last_pulled_seq: number;
+  /** P6.1「每空间开关」：1 = 同步附件**字节**（默认）；0 = 只同步元数据、字节按需。
+   *  ⚠️ 只管字节——附件行仍随 `changes` 同步，所以关掉后对端"看得见但打不开"。 */
+  sync_attachments: number;
 }
 export interface WorkspaceSyncResult {
   ws_id: string;
@@ -82,6 +85,12 @@ export interface WorkspaceSyncResult {
   last_pulled_seq: number;
   error: string | null;
   conflicts: SyncConflict[];
+  /** P6.1：附件同步**因开关被关掉而中途停止**（界面据此显示"因开关关闭而停止"）。 */
+  attachments_paused: boolean;
+  /** P6.1：本轮**因开关关闭而未传**的附件件数（界面显示"未上传 N 个 / 未下载 M 个"）。
+   *  ⚠️ 定义是"**被开关挡下**"的件数，**不含**因网络失败而没传成功的件数。 */
+  attachments_skipped_upload: number;
+  attachments_skipped_download: number;
 }
 
 export interface SyncConflict {
@@ -351,6 +360,10 @@ export interface CommandMap {
   sync_now: { args: undefined; result: WorkspaceSyncResult[] };
   list_sync_profiles: { args: undefined; result: SyncProfile[] };
   set_sync_profile: { args: { wsId: string; serverUrl: string; token?: string; spaceId?: string; email?: string }; result: void };
+  /** P6.1「每空间开关」：只切换附件**字节**同步。
+   *  ⚠️ **刻意独立成命令**、不复用 `set_sync_profile`——后者对未传字段是"清空"语义，
+   *  拿它翻转开关会把该空间的 `token` / `space_id` 清掉。 */
+  set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
 
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----

@@ -1531,6 +1531,36 @@ select.sync-input {
   margin-top: 4px;
 }
 
+/* P6.1 每空间「附件同步」开关：说明文字占满左侧、复选框靠右，与设置面板的
+ * .set-row 同构，但收在 sync- 命名空间里，不与设置弹层的布局耦合。 */
+.sync-att {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 2px;
+}
+.sync-att-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sync-att-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+.sync-att .sync-hint {
+  margin-top: 3px;
+}
+.sync-att > input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
 .sync-auto-label { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
 .sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: 12px; }
