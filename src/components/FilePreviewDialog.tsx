@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { platform } from "../lib/platform";
 import { api } from "../lib/api";
+import { ensureAttachmentBytes } from "../lib/attachmentBytes";
 import { useFilePreview } from "../store/filePreview";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
@@ -213,13 +214,23 @@ export function FilePreviewDialog() {
   // 解析媒体资产 URL：优先本地 path；path 缺失时按内容哈希读取字节（web/同步文件），
   // 避免「path 为空 → 误显示该文件类型暂不支持内嵌预览」。
   const [asset, setAsset] = useState<{ url: string; missing: boolean }>({ url: "", missing: false });
+  /** P6.3 续：手动/自动取回字节后靠它重跑下面这个 effect（不用把 target 换掉）。 */
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     if (!target) { setAsset({ url: "", missing: false }); return; }
     if (target.path) { setAsset({ url: platform.asset.convertFileSrc(target.path), missing: false }); return; }
     if (target.hash) {
       let objUrl = "";
       setAsset({ url: "", missing: false });
-      api.readAttachmentBytes(target.hash)
+      const readBytes = () => api.readAttachmentBytes(target.hash);
+      readBytes()
+        .catch(async (first) => {
+          // P6.3 续：这里的 `missing` 以前**只写不读**（三处赋值、零处使用），
+          // 所以字节缺失时只有一句"文件内容缺失"，没有任何动作。
+          // 现在先**自动按需取回来**再读一次；取不回来才落到下面那个可操作的状态。
+          if (!(await ensureAttachmentBytes(target.hash))) throw first;
+          return readBytes();
+        })
         .then((bytes) => {
           objUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: target.mime || "application/octet-stream" }));
           setAsset({ url: objUrl, missing: false });
@@ -228,7 +239,7 @@ export function FilePreviewDialog() {
       return () => { if (objUrl) URL.revokeObjectURL(objUrl); };
     }
     setAsset({ url: "", missing: true });
-  }, [target?.id, target?.hash, target?.mime]);
+  }, [target?.id, target?.hash, target?.mime, reloadKey]);
 
   // Android 返回键：应用级文件预览浮层（`useFilePreview` 驱动，点空白/× 关闭）。
   // 只有 `target` 在（= 浮层真的渲染出来）时才登记——见 lib/overlayStack.ts 与 §4.1.4。
@@ -241,6 +252,32 @@ export function FilePreviewDialog() {
 
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;
+
+  // P6.3 续（2026-09-15）：字节不在本机时的**可操作状态**。
+  //
+  // 这句话本身没错（"可能未同步到本机"），但它原来是**死胡同**——上面的 effect 已经
+  // 自动试过一次按需取回，走到这里说明那次也失败了（离线 / 服务端没有这份字节 /
+  // 没选空间），所以留一个手动重试入口，并把"为什么"说清楚。
+  //
+  // ⚠️ 这条**不影响 P6.1 的开关语义**：按需下载是用户显式动作，不受"每空间开关"与
+  // C1 预算闸门限制（见 sync.rs::download_attachment 的注释）。
+  const missingBlock = (
+    <div className="fm-preview-unsupported">
+      <p>这个文件的字节不在本机（可能关掉了该空间的附件同步、或被同步预算挡下了）。</p>
+      <button
+        className="fm-preview-fetch"
+        onClick={async () => {
+          if (!target.hash) return;
+          if (await ensureAttachmentBytes(target.hash)) {
+            // 取回来了 → 重跑读取 effect（换 key，不改 target，避免重建对象 URL 的引用问题）。
+            setReloadKey((k) => k + 1);
+          }
+        }}
+      >
+        从服务器下载
+      </button>
+    </div>
+  );
 
   return createPortal(
     <div className="fm-preview-overlay" onClick={close}>
@@ -303,7 +340,7 @@ export function FilePreviewDialog() {
             asset.url ? (
               <ImagePreview src={asset.url} name={target.name} onOpenOriginal={() => void platform.opener.openPath(target.path)} />
             ) : (
-              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+              missingBlock
             )
           ) : target.mime.startsWith("video/") ? (
             asset.url ? (
@@ -311,7 +348,7 @@ export function FilePreviewDialog() {
                 <video src={asset.url} controls preload="metadata" />
               </div>
             ) : (
-              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+              missingBlock
             )
           ) : target.mime.startsWith("audio/") ? (
             asset.url ? (
@@ -327,13 +364,13 @@ export function FilePreviewDialog() {
                 <audio src={asset.url} controls />
               </div>
             ) : (
-              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+              missingBlock
             )
           ) : target.mime === "application/pdf" ? (
             asset.url ? (
               <iframe src={asset.url} title={target.name} />
             ) : (
-              <div className="fm-preview-unsupported">文件内容缺失（可能未同步到本机，或已被删除）。</div>
+              missingBlock
             )
           ) : target.mime === "text/markdown" ? (
             mdLoading ? (

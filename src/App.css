@@ -14802,6 +14802,23 @@ p:has(> .editor-drawing-container) {
   line-height: 1.6;
   cursor: help;
 }
+/* P6.3 续：预览里"字节不在本机"那块的手动取回入口（自动取回失败后才出现）。 */
+.fm-preview-fetch {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.fm-preview-fetch:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
 /* Reveal file actions on row hover. */
 .fm-ops-col .fm-file-actions {
   opacity: 0;
