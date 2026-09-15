@@ -20,6 +20,7 @@ import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 import { useNotes } from "../store/notes";
+import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
@@ -764,13 +765,19 @@ function AccountPane() {
     setSyncing(true);
     setStatus("");
     try {
-      let ok = 0;
-      let fail = 0;
-      for (const w of g.wss) {
-        const r = await api.syncWorkspace(w.ws_id);
-        if (r.error) fail++;
-        else ok++;
-      }
+      // P1（2026-09-15）：**这里的同步也要配对 begin/end**——它同样会拉到附件，
+      // 而 Rust 的进度事件会把 `useSyncStatus` 置成"正在同步"；不套 `withSyncStatus`
+      // 就会在设置里同步完之后把面板留在"正在同步…"（真机上实测过这条路漏）。
+      const { ok, fail } = await withSyncStatus(`正在同步「${hostLabel(g.server_url)}」…`, async () => {
+        let ok = 0;
+        let fail = 0;
+        for (const w of g.wss) {
+          const r = await api.syncWorkspace(w.ws_id);
+          if (r.error) fail++;
+          else ok++;
+        }
+        return { ok, fail };
+      });
       setStatus(`「${hostLabel(g.server_url)}」同步：成功 ${ok}，失败 ${fail}`);
       await useNotes.getState().loadPages();
     } catch (e) {
