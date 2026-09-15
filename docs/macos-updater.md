@@ -21,12 +21,30 @@
 ```bash
 # Xcode Command Line Tools（签名/公证 + 编译需要）
 xcode-select --install
+# ⚠️ 接受 Xcode 许可（**升级 Xcode 之后必须重新接受**）
+sudo xcodebuild -license accept
 # Rust + node + pnpm
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 npm config set registry https://registry.npmmirror.com
 npm install -g pnpm@latest
 ```
-本机现状（已核）：Xcode 完整版在 `/Applications/Xcode.app`（`xcrun notarytool` 1.1.2 可用）、架构 arm64。
+本机现状（已核）：Xcode 完整版在 `/Applications/Xcode.app`（`xcrun notarytool` 在**接受许可后**可用）、架构 arm64。
+
+> ⚠️ **Xcode 许可没接受时，公证这条路是断的，而且报错很像"工具坏了"**（2026-09-15 实测）：
+> 本机已同意的许可版本是 **26.6**，而装着的 Xcode 是 **27.0**（升级后需重新接受），于是
+> `xcrun notarytool` / `xcrun stapler` / 连 `python3` 都只打印
+> `You have not agreed to the Xcode license agreements.` 就退出。
+> 后果：Tauri 的公证步骤（`xcrun notarytool submit` + `stapler`）**必然失败**，
+> 而 `tauri build` 本身不报这个错——**签名能过、公证过不去**。
+>
+> **判据**（做完上面那条命令后，这两条都要有正常输出）：
+> ```bash
+> xcrun notarytool --version     # 期望：打印版本号（本机实测 1.1.2），而不是许可提示
+> xcrun stapler --version
+> # 另可核对：已同意版本与当前 Xcode 是否一致
+> defaults read /Library/Preferences/com.apple.dt.Xcode IDEXcodeVersionForAgreedToGMLicense
+> xcodebuild -version
+> ```
 
 ## 二、Apple 签名 + 公证（自动更新的硬前提）
 
@@ -190,6 +208,8 @@ identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
   Mac 主要用来真机验收。
 
 ## 八、拿到 Apple 账号后的清单（照着做）
+0. **`sudo xcodebuild -license accept`**（Xcode 升级过就必须重来一次；判据见 §一那个警告框——
+   `xcrun notarytool --version` 要能打印版本号）。本机现在是**卡在这一步**的。
 1. §2.1 找到 **Team ID**（10 位）。
 2. §2.2–2.4 申请 **Developer ID Application** 证书 → 装进钥匙串 → 导出 `.p12`。
    **判断标准**：`security find-identity -v -p codesigning` 里有 1 个 `Developer ID Application`。
