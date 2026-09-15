@@ -1843,18 +1843,62 @@ async fn download_one_attachment(
             }
         }
     }
-    // Insert/ignore into attachments table.
+    // B4（2026-09-15）：**只有当这个 hash 还没有任何行时**才插一行兜底。
     {
         let c = db.0.lock().expect("db mutex poisoned");
-        let id = uuid::Uuid::new_v4().to_string();
-        c.execute(
-            "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
-             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
-            params![id, format!("{}.{}", item.hash, ext), item.hash, item.mime, size, crate::db::now_ms()],
-        )
-        .map_err(|e| e.to_string())?;
+        record_downloaded_attachment(&c, &item.hash, &item.mime, size, &format!("{}.{}", item.hash, ext))?;
     }
     Ok(size)
+}
+
+/// 把"刚下载完字节的附件"记进 `attachments`（**兜底行**），成功返回 `()`。
+///
+/// ## 为什么必须有"已经有行就不插"这条前置判断（B4 的结论）
+///
+/// 原先这里无条件插一行：**新 uuid + `page_id = NULL` + `INSERT OR IGNORE`**。
+/// 而 `INSERT OR IGNORE` 只对**主键**冲突生效 —— `attachments` 的主键是 `id`
+/// （`db.rs:622-632`），`hash` 上只有一个**非唯一**索引 ⇒ 这条 insert 永远不会被忽略。
+///
+/// 于是在**第二台设备**上，同一个 hash 会有两行：
+/// ① 附件**元数据**随 `changes` 同步进来那一行（`page_id` 正确、指向真实目录）；
+/// ② 这里插的兜底行（`page_id = NULL`）。
+/// 而根目录（「未整理」）视图正是按 `page_id IS NULL` 取的（`attachments.rs:643`）
+/// ⇒ **文件在「未整理」里多出一份 `hash.ext` 的副本**。
+///
+/// ⚠️ **Web 引擎没有这个毛病**：它的下载路径**根本不在 `attachments` 表里插行**
+/// （只 `blobStore.put(hash, blob)`，行由 `applyChange` 建），所以这条只是 Rust 侧的问题。
+///
+/// ⚠️ **这一步不能直接删掉**（"反正元数据会来"是错的）：兜底行存在的意义是
+/// **服务端有字节、而本地没有对应元数据行**时（老数据 / 元数据变更没拉到），
+/// 下载完的字节至少能被用户看见并管理。所以是"有就不插"，不是"不插"。
+///
+/// 另：`attachments.rs:743-755` 的"零引用才删字节"规则**本来就假设同一 hash 可以有多行**
+/// （本地重复添加同一份内容会出现），所以多行本身不是非法状态 —— 这里修的只是
+/// **同步下载路径制造出来的那一份重复**。
+fn record_downloaded_attachment(
+    c: &Connection,
+    hash: &str,
+    mime: &str,
+    size: i64,
+    name: &str,
+) -> Result<(), String> {
+    let existing: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM attachments WHERE hash = ?1",
+            params![hash],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if existing > 0 {
+        return Ok(());
+    }
+    c.execute(
+        "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+        params![uuid::Uuid::new_v4().to_string(), name, hash, mime, size, crate::db::now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 async fn sync_attachments(
@@ -2416,6 +2460,59 @@ mod tests {
         // 荒唐大的值同样夹住（防止 u64 乘法溢出）。
         set_meta_state(&c, KEY_MAX_RUN_MB, "18446744073709551615").unwrap();
         assert!(read_budget(&c).max_run_mb <= MAX_BUDGET_MB);
+    }
+
+    // ---- B4：同步下载不再制造重复行 ----
+
+    /// B4 的判据（2026-09-15）：**同一个 hash 在第二台设备上只能有一行**。
+    ///
+    /// 场景复刻：① 元数据随 `changes` 到了本地（`page_id` 指向真实目录）；
+    /// ② 字节下载完成，走兜底行插入。修复前这里是**两行**（`id` 是新 uuid、
+    /// `page_id = NULL`，而 `INSERT OR IGNORE` 只对主键生效）⇒ 文件在「未整理」
+    /// 里多出一份 `hash.ext` 副本。修复后必须仍是 1 行，且**保留原来那条真目录行**。
+    #[test]
+    fn downloading_bytes_does_not_duplicate_an_existing_attachment_row() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE attachments (
+                 id TEXT PRIMARY KEY, page_id TEXT, name TEXT NOT NULL, hash TEXT NOT NULL,
+                 mime TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL
+             );
+             CREATE INDEX idx_attachments_hash ON attachments(hash);",
+        )
+        .unwrap();
+        // ① 元数据路径（do_pull 的 upsert）：真 id + 真目录。
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('row-from-changes', 'folder-1', '报告.pdf', 'h1', 'application/pdf', 12, 1)",
+            [],
+        )
+        .unwrap();
+
+        // ② 字节下载完成的兜底插入：必须**什么都不做**。
+        record_downloaded_attachment(&c, "h1", "application/pdf", 12, "h1.pdf").unwrap();
+
+        let rows: Vec<(String, Option<String>)> = c
+            .prepare("SELECT id, page_id FROM attachments WHERE hash = 'h1'")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(rows.len(), 1, "同一 hash 不许出现第二行（多出来的那份会显示在「未整理」里）");
+        assert_eq!(rows[0].0, "row-from-changes", "必须保留元数据那一行（真目录），不能替换成兜底行");
+        assert_eq!(rows[0].1.as_deref(), Some("folder-1"), "page_id 必须还是真实目录");
+
+        // ③ 兜底行该出现的时候仍要出现：服务端有字节、本地没有元数据行。
+        record_downloaded_attachment(&c, "h2", "image/png", 34, "h2.png").unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM attachments WHERE hash = 'h2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "没有元数据行时，下载完的字节仍要能被用户看见（兜底行必须插）");
+        let page: Option<String> = c
+            .query_row("SELECT page_id FROM attachments WHERE hash = 'h2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(page, None, "兜底行落在「未整理」（page_id IS NULL）");
     }
 
     #[test]

@@ -345,8 +345,9 @@ class ShuyoFsPlugin(private val activity: Activity) : Plugin(activity) {
   /**
    * 传输类型：wifi / cellular / ethernet / other / none / unknown。
    *
-   * 与 displayName 同样的理由刻意写笨：这段 Kotlin **本机编不了**（要 Android SDK/NDK），
-   * 只有 CI 会编它 —— 宁可啰嗦也不要巧妙。任何异常都退化成 unknown，绝不抛出去。
+   * 与 displayName 同样的理由刻意写笨，而且它**已经在本机验过能编**
+   * （gradlew :app:compileUniversalDebugKotlin，2026-09-15）。
+   * 任何异常都退化成 unknown，绝不抛出去。
    */
   private fun currentNetworkKind(): String {
     try {
@@ -367,8 +368,15 @@ class ShuyoFsPlugin(private val activity: Activity) : Plugin(activity) {
   /**
    * OpenableColumns.DISPLAY_NAME —— **原始文件名**，这是唯一可靠来源。
    *
-   * 刻意用最笨的写法（不用 use/非局部返回）：这段 Kotlin **本机编不了**
-   * （要 Android SDK/NDK），只有 CI 会编它，所以宁可啰嗦也不要巧妙。
+   * 刻意用最笨的写法（不用 use/非局部返回）：这段 Kotlin 要 Android SDK/NDK 才编得了，
+   * 而**整个 Android app 在本机构建不出来**（卡在 Rust 侧的 OpenSSL 源码构建，见
+   * .github/workflows/android.yml 顶部的说明）——所以宁可啰嗦也不要巧妙。
+   *
+   * ⚠️ 更正（2026-09-15）：**单编这段 Kotlin 本机是可以的**（本机有 SDK/NDK/JDK17）：
+   *   cd src-tauri/gen/android && gradlew.bat :app:compileUniversalDebugKotlin
+   * C2 的 networkType 就是这么验的（BUILD SUCCESSFUL）。原来的注释写成"本机编不了"，
+   * 把"整个 app 编不了"和"这段 Kotlin 编不了"混为一谈了。
+   * （⚠️ 本文件是 JS 模板字符串，注释里**不许出现反引号**——会把模板提前截断。）
    */
   private fun displayName(resolver: ContentResolver, raw: String): String {
     if (!raw.startsWith("content://")) return ""
