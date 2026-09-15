@@ -9,6 +9,7 @@ import { inputDialog } from "../store/input";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
 import { usePdfReader } from "../store/pdfReader";
+import { useSyncStatus } from "../store/syncStatus";
 import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon } from "./icons";
@@ -169,6 +170,22 @@ export function FileManagerView() {
       .then((hs) => setOnDisk(new Set(hs)))
       .catch(() => {});
   };
+
+  // 一次同步**结束时**重载列表（`syncing` 由真变假）。
+  //
+  // 为什么需要：2026-09-15 真机验收时发现，后台/自动同步拉进来的新附件**不会自己出现**——
+  // `loadFiles()` 只在切换文件夹、导入、删除之后才跑，于是「未下载」标记要**重载页面**
+  // 才看得见，而那恰好是 P6.1 + P6.2 的主流程（关掉开关 → 同步 → 看哪些没下来）。
+  //
+  // 判据取 `useSyncStatus` 的下降沿：手动同步（`SyncPanel`）、自动同步（`useAutoSync` /
+  // `App.tsx` 的定时器）与 Web 引擎（`web.ts`）**三条路都会配对 begin/end** ⇒ 一处挂载全覆盖。
+  const syncing = useSyncStatus((s) => s.syncing);
+  const wasSyncing = useRef(false);
+  useEffect(() => {
+    if (wasSyncing.current && !syncing) loadFiles();
+    wasSyncing.current = syncing;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncing]);
 
   /** 把这一件的字节从服务器取回来（P6.3 按需取字节）。返回是否成功。 */
   const fetchBytes = async (f: AttachmentMeta): Promise<boolean> => {

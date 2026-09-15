@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import { shouldAutoSyncNow } from "../lib/syncGate";
 import { useNotes } from "../store/notes";
+import { useSyncStatus } from "../store/syncStatus";
 
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -29,7 +30,20 @@ export function useAutoSync() {
         if (!anyReady) return;
         syncing.current = true;
         try {
-          await api.syncNow();
+          // P1（2026-09-15）：**自动同步也要配对 begin/end**。
+          // Rust 侧的附件进度事件会调 `setProgress`，而它会 `syncing = true`——
+          // 自动这条路原先没人 `end()` ⇒ 面板会**永远停在"正在同步…"**，
+          // 手动同步的结果文案也被那段进度分支挡住（正是 B2 修过的那个 bug，从 P1 的门里回来）。
+          useSyncStatus.getState().begin("正在自动同步…");
+          let err: string | null = null;
+          try {
+            await api.syncNow();
+          } catch (e) {
+            err = String(e);
+            throw e;
+          } finally {
+            useSyncStatus.getState().end(err);
+          }
           if (!cancelled) await loadPages();
         } finally {
           syncing.current = false;

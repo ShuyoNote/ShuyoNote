@@ -72,6 +72,7 @@ import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
 import { useAuth } from "./store/auth";
+import { useSyncStatus } from "./store/syncStatus";
 import "./App.css";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
@@ -362,7 +363,23 @@ function NoteEditor({ pageId }: { pageId: string }) {
           const profiles = await api.listSyncProfiles();
           const bound = (profiles || []).filter((p: any) => p.server_url && p.space_id);
           if (bound.length) {
-            await Promise.all(bound.map((p: any) => api.syncWorkspace(p.ws_id).catch(() => null)));
+            // P1：与 `useAutoSync` 同理——**自动同步必须配对 begin/end**，
+            // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且**没人收尾**，
+            // 面板就永远停在"正在同步…"（B2 那个 bug 会从 P1 的门里回来）。
+            useSyncStatus.getState().begin("正在自动同步…");
+            let err: string | null = null;
+            try {
+              await Promise.all(
+                bound.map((p: any) =>
+                  api.syncWorkspace(p.ws_id).catch((e: unknown) => {
+                    err = String(e);
+                    return null;
+                  }),
+                ),
+              );
+            } finally {
+              useSyncStatus.getState().end(err);
+            }
             await loadPages();
           }
         } catch {
