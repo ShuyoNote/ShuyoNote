@@ -212,9 +212,18 @@ export function SyncPanel() {
     setSyncing(true);
     setStatus("");
     useSyncStatus.getState().begin("正在同步…");
+    // B2（2026-09-15）：**必须配对 end()**。此前只有 `web.ts` 调 `end()`，桌面 / Android 走
+    // Rust 命令、不会自己调 ⇒ store 的 `syncing` **永远是 true**，于是面板一直显示"正在同步…"，
+    // 而下面那些 `setStatus("…同步完成…")` 的结果文案被 `syncStatus.syncing` 的分支挡住、永远看不到。
+    // 把错误一并带出去，让 `end()` 能落到 `phase: "error"`。
+    //
+    // 这一步同时是 **P6.1（每空间开关）的前置**：P6.1 要求"中途关掉开关 ⇒ 面板报告
+    // *因开关关闭而停止*"，而没有结束态就没有地方显示停止原因。
+    let syncErr: string | null = null;
     try {
       const res = await api.syncWorkspace(r.ws_id);
       if (res.error) {
+        syncErr = String(res.error);
         setStatus(`「${r.name}」同步失败：${res.error}`);
       } else {
         setStatus(`「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`);
@@ -227,9 +236,11 @@ export function SyncPanel() {
       await loadPages();
       await loadHistory();
     } catch (e) {
+      syncErr = String(e);
       setStatus(`「${r.name}」同步失败：${e}`);
     } finally {
       setSyncing(false);
+      useSyncStatus.getState().end(syncErr);
     }
   };
 
