@@ -163,6 +163,10 @@ CHANGELOG.md             # 版本变更日志
 > 本仓库里关于 Android 的**里程碑与当前状态**仍在 [roadmap](roadmap.md)、[MOBILE](MOBILE.md)、
 > [README](../README.md) 与 [CHANGELOG](../CHANGELOG.md) 里（数字与结论都保留）。
 
+| 文档 | 内容 |
+|---|---|
+| [sync-multidevice-test.md](sync-multidevice-test.md) | **跨机器多端同步会合测试**（Windows ⇄ Mac，服务器放 Mac）：两侧各一条命令、互相等、各自出 PASS/FAIL；含 Mac 侧起服务端/发设备密钥/真客户端肉眼确认的步骤、常见不通过的四种原因、以及"还剩什么没覆盖"（冲突合并 / 跨机附件 / 断网重连） |
+
 
 > 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
 > 找不到是正常的——去私有仓库 `shuyonote-sync-server` 的 `docs/plans/`：
