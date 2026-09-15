@@ -83,10 +83,11 @@
 | 3 | `src-tauri/src/sync.rs:319-330` | `SyncProfile` 加字段 + `PROFILE_COLS` 加列名 ⇒ **必须追加在最后**，否则 `row_to_profile`（`:332-341`）的下标全要改 | `:329-341` |
 | 4 | `src-tauri/src/sync.rs:403-411` | `set_profile_field` 的 `field` **是格式化进 SQL 的**（今天靠注释声明"只传常量"）⇒ 新增字段**必须同时把它纳入白名单**；⚠️ **建议顺手把"注释约定"改成显式 allowlist 校验**（`field` 来自命令入参的可能性一旦出现就是注入面） | `:403-411` 原文 |
 | 5 | `src-tauri/src/sync.rs:1496+` | `sync_attachments`：**入口处读该 profile 的开关**，关掉则**整个跳过第 3/4 步**（上传与下载）、照旧返回空 `att_items` 不报错；**并且在上传/下载的每次迭代之间重读一次开关**（见 §五.7：中途关掉要能停）。**§十.1 已证明这是客户端唯一取字节的入口 ⇒ 在这里早退就等于"关干净"** | `:1514-1690`；§五.7；§十.1 |
-| 6 | `src/lib/platform/commands.ts:69`、`:353` | `SyncProfile` 接口加字段；`set_sync_profile` 的 `args` 加可选字段（如 `syncAttachments?: boolean`） | `:69`、`:353` |
+| 6 | `src/lib/platform/commands.ts:69`、`:353` | `SyncProfile` 接口加字段；**并新增一条窄命令 `set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void }`**（见 §五.8 陷阱 A）。⚠️ **不要**把它做成 `set_sync_profile` 的可选参数 | `:69`、`:353` |
 | 7 | `src/lib/platform/web.ts:646`、`:653`、`:2540`、`:896` | **同构改动**：`EMPTY_PROFILE`、`putProfile` 的 SQL、`set_sync_profile` 分支、`syncAttachments` 早退 | 四处均已存在 |
-| 8 | `src/components/SyncPanel.tsx` | 每个 profile 行加开关（`EditRow` 已在管理 profile 字段）+ 保存时一并提交 | `:523` 起的面板 |
-| 9 | 测试 | `scripts/sync-regression.mjs` 加"关掉附件后：元数据同步 / 字节不传 / 本机字节不丢"；Rust 侧加迁移与早退单测 | — |
+| 8 | `src/components/SyncPanel.tsx` | 每个 profile 行加开关（`EditRow` 已在管理 profile 字段）+ **切换即落库**（走窄命令，见 §五.8） | `:523` 起的面板；`:198`、`:236` |
+| 9 | `src-tauri/src/sync.rs`（新增） | **窄命令 `set_sync_attachments(ws_id, enabled)`**：只 `UPDATE sync_profiles SET sync_attachments = ?` 一列，**不碰 token / space_id**；并纳入 `lib.rs` 的命令注册表 | §五.8 陷阱 A |
+| 10 | 测试 | `scripts/sync-regression.mjs` 加"关掉附件后：元数据同步 / 字节不传 / 本机字节不丢"；Rust 侧加迁移与早退单测 | — |
 
 **判据（每步可验）**：
 - 步骤 2：老库升级后 `pragma_table_info('sync_profiles')` 含新列、且已有行的值为 `1`；
@@ -107,6 +108,20 @@
 | 6 | 要不要**同时做 P6.2 的最小版**？ | **建议不做**，先把开关落地 | 见 §三 的理由；P6.2 单独一轮，避免把"开关"和"读取路径改造"混在一个提交里 |
 | 7 | **开关的生效时机**？ | **允许同步中途关闭，且"中途生效"**：在下载/上传循环的**每次迭代之间**重读开关，命中即**优雅停止 + 报告原因**（详见下方） | 用户中途关掉的**意图就是"别再拉了"**；而循环里**本来**每件都要 `db.0.lock()` 做 INSERT（`:1679-1687`），再加一次 PK 查询可忽略；同一个 mutex 已有此用法 ⇒ **不引入新锁风险** |
 
+| 8 | **翻转开关用哪个命令**？ | **新增一个窄命令**（如 `set_sync_attachments(ws_id, enabled)`），**不复用 `set_sync_profile`** | ⚠️ **复用会清空凭证**——见下方"两个陷阱" |
+
+> ⚠️ **陷阱 A（会清空用户凭证，必须在实现前知道）**：`set_sync_profile` 对**未传的字段是"清空"**语义——
+> Rust 侧 `token.as_deref().unwrap_or("")`（`sync.rs:429`）、Web 侧 `web.ts:2546` 的注释明写
+> 「未传 token/space_id 时清空（与桌面一致：Option 缺省 → `""`）」。
+> 而 `SyncPanel` 里**已经有 5 处**在用这种"部分传参"的调用（`:250`、`:262`、`:405` 登出、`:422`、`:450`）
+> ——它们**故意**只传部分字段。
+> ⇒ **若为了翻转开关而复用 `set_sync_profile` 并省略 token/space_id，会把该空间的凭证清掉。**
+> ⇒ 所以：**新字段用 `None = 保持不变`**（不是清空），且**翻转走一个专门的窄命令**，天然碰不到凭证。
+>
+> ⚠️ **陷阱 B（UI 侧）**：`SyncPanel` 的 `update()` 签名是 **`value: string`**（`:236`），
+> 布尔开关塞不进去 ⇒ 需要单独的 setter；并且因为 §五.7 要求**中途生效**，
+> 开关**必须在切换的那一刻就落库**（不能只在点「保存」时才提交），否则"中途关掉"永远到不了 DB。
+>
 > **为什么"中途生效"必须显式做（代码事实）**：`sync_now` 在 `sync.rs:1369-1372` **一次性快照**全部 profile，
 > 之后 `sync_workspace_only(&app, &db, &profile)`（`:1379`）与 `sync_attachments(app, db, profile)`
 > （`:1360`，参数是 **`&SyncProfile`**）**全程只用那份不可变快照** ⇒
@@ -199,7 +214,12 @@
    ⚠️ **本次排查的边界**：覆盖 `ShuyoNote` 客户端（Rust + TS）的**取字节与写字节路径**；
    **未**核对"服务端会不会在客户端没请求时主动推字节"（服务端是 axum 请求/响应式，
    按构造只应回应 GET；但这条是**推断，未逐路由核对**）。
-2. **`set_sync_profile` 现在允许传入哪些字段、有没有被别处调用**（改 args 前要确认没有破坏
-   现有调用点；`web.ts:2540` 与 Rust `:420` 两侧都要看）。
-3. **`SyncPanel` 的 profile 行当前如何持久化**（改 UI 前先读 `EditRow` 的保存路径，
-   避免出现"改了开关但没落库"）。
+2. ✅ **已核实（2026-09-15）**：Rust 侧是 `set_sync_profile(db, ws_id, server_url, token?, space_id?, email?)`
+   （`sync.rs:419-443`：内部 `set_profile` + 写 `auth_sessions.email`）；TS 侧**调用点共 6 处**
+   （`SyncPanel.tsx:200`/`:250`/`:262`/`:405`/`:422`/`:450`、`SettingsDialog.tsx:733`），
+   **其中 5 处是"部分传参"**。⇒ **结论：不要给它加可选参数**——要么破坏"部分传参=清空"的既定语义，
+   要么让"翻转开关"顺手清掉凭证。**改用窄命令**（§五.8 陷阱 A）。
+3. ✅ **已核实（2026-09-15）**：`EditRow`（`SyncPanel.tsx:51`）是**字符串行**，`update()` 签名是
+   `value: string`（`:236`），`save()`（`:198-200`）在点「保存」时把整行提交给 `set_sync_profile`。
+   ⇒ 开关需要**自己的 setter**，且按 §五.7 **切换即落库**（不能只在保存时提交，
+   否则"中途关掉"永远到不了 DB）。
