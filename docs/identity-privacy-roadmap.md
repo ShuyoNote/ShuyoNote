@@ -22,8 +22,8 @@
 
 | 编号 | 项 | 优先级 | 依赖 | 说明 |
 |------|----|--------|------|------|
-| K1 | 服务端「个人/无账户」：给机主**签发/作废一个 `device key`**（Bearer 式或 E2E 密钥对），无需用户表 | P1 | sync-server auth（✅） | 「持钥即拥有该服务器空间」 |
-| K2 | 客户端「用密钥连个人服务器」流程（SyncPanel 输入/粘贴密钥） | P1 | K1 | 等价现有 `token`，来源=服务端发钥 |
+| K1 | ✅ **服务端签发/作废 `device key`**（Bearer 式，无需用户表）：`sk_` 明文只返回一次、库里只存 SHA-256 指纹、作用域一个空间；认下后以合成主体 `device:<key_id>` 写一行 owner 成员 ⇒ 19 个 `require_space` 调用点零改动；第一把由 CLI 发（`--issue-device-key`），之后可用它走 HTTP 再签发/作废 | ✅ P1 | sync-server auth（✅） | 「持钥即拥有该服务器空间」。2026-09-15 落地，schema **v14**；接口 `GET/POST /spaces/{id}/device-keys` + `.../revoke`（都需 `admin`）；单测 4 条 + 真服务端 curl 端到端验过（发钥→owner 身份→再签→作废后 401）。见私有仓 `docs/api.md`「设备密钥」与 `docs/SYNC_SERVER_STATE.md` 的 K1 小节 |
+| K2 | 客户端「用密钥连个人服务器」流程（SyncPanel 输入/粘贴密钥） | P1 | K1（✅） | 等价现有 `token`，来源=服务端发钥 |
 
 ## 4. 本地静置加密（P1/P2，较大）—— §5 at-rest
 
