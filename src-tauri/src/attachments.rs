@@ -375,14 +375,39 @@ pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, d
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     let p = find_path_by_hash(&attachments_dir, &hash).ok_or("附件不存在")?;
-    let raw = std::fs::read(&p).map_err(|e| e.to_string())?;
     let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
-    let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)?;
     // Android：保存对话框给的是 `content://` URI，`std::fs::write(uri)` 会 EROFS（真机实测）。
     // 走 SaveTarget：桌面=直接写（行为不变），URI=先写缓存再整份搬进去。
+    // ⚠️ P2a/B3 复核过：`write_path()` 在**桌面**是目标本身、在 **Android URI** 目标是缓存里的
+    // 真文件路径 ⇒ 两种情况下它都是**真实文件系统路径**，`fs::copy` 都能写（见 `save_target.rs`）。
     let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-att")?;
-    std::fs::write(target.write_path(), &plain).map_err(|e| format!("复制失败: {e}"))?;
+    export_attachment_to(&p, target.write_path(), key.as_ref())?;
     target.commit()
+}
+
+/// 把附件字节**以明文**落到 `write_path`。抽成纯函数就为了让"未加密 = 纯拷贝"这条能被单测钉住。
+///
+/// **P2a / B3（2026-09-15）**：未加密时磁盘上本来就是明文，原先却是
+/// `read`（整份进内存）→ `decrypt_attachment_bytes(None, …)`（透传，还是在内存里）→ `write`，
+/// **一读一写纯属白费**。这是全仓**唯一无条件**发生的整块读——导入 / 同步上传 / 同步下载
+/// 都只在"用户开了静态加密"时才整块读（见 `docs/plans/2026-09-15-attachment-sync-scope-plan.md` §2.6(2)）。
+/// 手机上"把传进去的视频导出到下载目录"当场 OOM 的就是它 ⇒ 改成 `fs::copy`（内核态拷贝，RSS 不随文件增长）。
+///
+/// ⚠️ **加密开启时仍是整块解密**，这里**不做**假优化："流式读 → 整块加密 → 流式写"并不降低
+/// 峰值内存（整块 AEAD 必然要求整个明文同时在内存里）。要真流式得改成分块 AEAD ⇒ 那是 P2b，
+/// 前提是**先真机实测是否真的 OOM**，且要兼容存量附件。
+fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
+    match key {
+        // 未加密：磁盘上就是明文 ⇒ 直接拷，别把整份读进内存。
+        None => std::fs::copy(src, write_path)
+            .map(|_| ())
+            .map_err(|e| format!("复制失败: {e}")),
+        Some(k) => {
+            let raw = std::fs::read(src).map_err(|e| e.to_string())?;
+            let plain = crate::security::decrypt_attachment_bytes(Some(k), &raw)?;
+            std::fs::write(write_path, &plain).map_err(|e| format!("复制失败: {e}"))
+        }
+    }
 }
 
 #[tauri::command]
@@ -909,6 +934,63 @@ mod read_bytes_tests {
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&flat);
+    }
+}
+
+/// **P2a / B3 的门禁**：导出（下载 / 另存为）分两条路，且**未加密那条必须是纯拷贝**。
+#[cfg(test)]
+mod export_attachment_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-att-export-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 未加密：导出的就是**逐字节相同**的原文件。
+    ///
+    /// 这条同时是"改成 `fs::copy` 之后行为没变"的判据——因为本分支原先走的是
+    /// `read` → `decrypt_attachment_bytes(None, …)`（透传）→ `write`，产物必须一模一样。
+    #[test]
+    fn unencrypted_export_is_a_byte_for_byte_copy() {
+        let dir = temp_dir("plain");
+        let src = dir.join("12d785817fcddf344ac33a36113281c27867c85b385f96771410b3ddccb3d223.mp4");
+        let dst = dir.join("out.mp4");
+        // 比一页大的内容：整块读的老实现在这里会把整份读进内存，拷贝路径不会。
+        let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&src, &payload).unwrap();
+
+        export_attachment_to(&src, &dst, None).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), payload, "未加密导出必须逐字节相同");
+        // 源文件仍在（导出是"另存一份"，不是"搬走"）。
+        assert!(src.exists(), "导出不能动源文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 加密开启：磁盘上是密文，导出的必须是**明文**（否则用户拿到一个解不开的文件）。
+    #[test]
+    fn encrypted_export_decrypts_to_plaintext() {
+        let dir = temp_dir("enc");
+        let src = dir.join("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899.pdf");
+        let dst = dir.join("out.pdf");
+        let key = [7u8; 32];
+        let plain = b"%PDF-1.7 real content";
+        // 磁盘上存密文（与 security::encrypt_attachment_bytes 的落盘格式一致）。
+        std::fs::write(&src, crate::security::encrypt_attachment_bytes(Some(&key), plain).unwrap()).unwrap();
+
+        export_attachment_to(&src, &dst, Some(&key)).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), plain, "加密导出必须解密成明文");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

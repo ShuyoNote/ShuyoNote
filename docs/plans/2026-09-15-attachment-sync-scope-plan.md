@@ -145,7 +145,7 @@
 | a | **导入**（文件夹 / 页面 / 画布**都走它**） | `attachments.rs:568-575` | **仅当开了加密**（`else if key.is_some()`） | 流式写**明文** tmp → rename → **整文件读进内存** → 加密 → 写回 |
 | b | **同步下载** | `sync.rs:1654-1677` | **仅当开了加密**（`:1670` `if let Some(k)`) | 分块落盘后**整块读回**再加密写回 |
 | c | **同步上传** | `sync.rs:1590-1599` | **仅当开了加密** | 加密时 `tokio::fs::read` 整块读 → 解密 → 发送；**未加密是流式**（`:1597-1599`） |
-| d | **导出 / 另存为** | `attachments.rs:374-386` | 🔴 **无条件**（与是否加密无关） | `std::fs::read` 整块读 → 解密 → `std::fs::write` 整块写 |
+| d ✅ **已修（B3）** | **导出 / 另存为** | `attachments.rs:374-386` | 🔴 **无条件**（与是否加密无关） | 旧：`std::fs::read` 整块读 → 解密 → `std::fs::write` 整块写；**现：未加密走 `fs::copy`**（见 §4.1 B3） |
 
 - **最重要的推论**：**静态加密是用户主动开启的**（`security.rs:35` 从 meta.db 读，默认关）⇒
   **默认配置下只有 d 会咬人**；a/b/c 要等用户开了加密才出现。
@@ -154,7 +154,12 @@
   而 key 为 `None` 时该函数**原样返回**（`security.rs` 里 `encrypt/decrypt(None, ..)` 的测试）⇒
   **未加密时这一读一写纯属白费**，可以直接 `std::fs::copy`。
   这条路正是文件管理器的「下载」（`FileManagerView.tsx:538`）⇒
-  **手机上"把传进去的视频下载出来"当场 OOM 的就是它，且不需要同步参与。**
+  **手机上"把传进去的视频下载出来"当场 OOM 的就是它，且不需要同步参与。** ✅ **已修（B3）**。
+- ⚠️ **口径收紧（B3 落地时复核）**：d 是**唯一"可修"的**无条件整块读。另有一条
+  `attachment_bytes` / `read_attachment_bytes`（`attachments.rs:431`、`:442`）也是无条件整块读，
+  但**它不在可修之列**：那条路要把整份字节**通过 IPC 交给 JS**（`read_attachment_bytes` 用
+  `tauri::ipc::Response` 回原始字节，正是为了避开 JSON 数字数组），
+  "整份同时在内存里"是这条通路的定义，不是浪费 ⇒ **别把它当成 d 的同类去"优化"**。
 - a 与 d 是**本地操作**、与同步无关；**只有 b/c 在同步链路上**。
 - 另有第 5 类 `attachments.rs:431-439`（`attachment_bytes`）会把**整个附件**解密后交给前端；
   但它是否落在**大媒体预览**的热路径上**本次未核实**（大媒体很可能走 `attachment_path` + 资源协议，
@@ -225,7 +230,8 @@
 | **B1** ✅ **已完成<br>（2026-09-15）** | **口径修正**：把"Web 同步**是 stub / 没实现**"这个与代码相反的说法改掉——三处文档/注释 + 跨仓核对表 **#40**（`web.ts:2429/2541/896` 是**完整实现**）。**最终口径由产品裁定**：Web 版**不提供**多设备同步，**实现保留** | 纯文档，≈0 | 已完成，交付见下 |
 | | ↳ **实际改了 6 个文件 + 2 个仓**（比原计划的"三处"多，因为查出同源错误还有：`docs/web-sync-boundary.md` **整篇核心论断与代码相反**、`docs/identity-privacy-roadmap.md:18`、社区仓事实纪律第 7 条 + 统一检查项 + 3 处描述性位置、`web.ts` 加决定注释）；另在 `shuyonote-sync-server` 修了 CORS 注释里过时的半句 | — | 提交：ShuyoNote `2e57574`（origin+github 三处 SHA 一致）· 社区仓 `484b6c7` · sync-server `ffe87e1`；`npx tsc --noEmit` 通过、`web.ts` 只增注释 0 删除；`check.mjs` 仍全绿 |
 | **B2** | **补 `end()`**：`SyncPanel.tsx:214` 调了 `begin()`，而全仓无配对 `end()`（只有 `web.ts:2555/2558` 有）⇒ 桌面/安卓手动同步后**永远停在"正在同步…"** | **一行** | 这是**纯 bug**，且**一物两用**：① P1 的进度上报以它为地基；② ⚠️ **它同时是 P6.1 的前置**——P6.1 要求"中途关掉开关 ⇒ 面板报告*因开关关闭而停止*"，而**没有 `end()` 就没有地方显示停止原因**（与"永远停在正在同步…"是同一个缺口）。详见[按需取字节立项](2026-09-15-attachment-on-demand-plan.md) §四 步骤 0 |
-| **B3** | **P2a**：导出 / 另存为在**未加密**时改 `fs::copy`，别 `read` → `decrypt` → `write` | 十几行，**无格式变更** | 唯一无条件的整块读；手机上"把传进去的视频下载出来"当场 OOM 的就是它 |
+| **B3** ✅ **已完成<br>（2026-09-15）** | **P2a**：导出 / 另存为在**未加密**时改 `fs::copy`，别 `read` → `decrypt` → `write` | 十几行，**无格式变更** | 唯一无条件的整块读；手机上"把传进去的视频下载出来"当场 OOM 的就是它 |
+| | ↳ **实际改动**：`attachments.rs` 抽出纯函数 `export_attachment_to(src, write_path, key)` —— `None` ⇒ `fs::copy`（内核态拷贝，RSS 不随文件大小增长）；`Some(k)` ⇒ 保持整块解密（**不做假优化**，见下）。配 2 条单测（未加密逐字节相同 + 加密导出必须解密成明文）。<br>⚠️ **动工前那条前置已核实**（原 §四 P2a 要求"确认 `SaveTarget::write_path()` 在桌面与 Android 两侧都能作为 `fs::copy` 目标"）：`save_target.rs:84-100` 桌面走 `direct(目标路径本身)`、Android URI 走缓存里的**真文件** `…/save/<stem>-<uuid>.part` ⇒ **两边都是真实文件系统路径**，`fs::copy` 都成立（URI 的落地仍由 `commit()` 的流式拷贝负责）。<br>✅ 未加密分支的产物与旧实现**逐字节相同**（旧路径是 `read` → `decrypt(None, …)` 透传 → `write`），有单测钉住 | — | `cargo check --all-targets` = 0 错误；⚠️ **本机 `cargo test` 加载即死（0xc0000139，与改动无关）⇒ 新单测目前只过了编译检查**，见[按需取字节立项](2026-09-15-attachment-on-demand-plan.md) §十一.4 |
 | **B4** | **先做一次两设备回归**，验证 §2.6（3）那个**重复行** | 一次 `sync-regression.mjs` | 只有代码依据、没实测；它决定"要不要单独立项"，**且必须先证实再动代码** |
 
 **第二批 —— Android 上架前必须做（2 件）**
@@ -339,9 +345,14 @@ let att_total = to_download.len();   // ← 先有总数，UI 的 N/M 才有意�
 ```
 **验收**：桌面/安卓手动同步一个含多个附件的空间 → 面板出现 `N/M` 计数与进度条（`SyncPanel.tsx:795-808` 现有的 UI 即可复用，**不需要改前端**）。
 
-### P2a 导出 / 另存为改真流式（第一批 B3，**先做这个**）
+### P2a 导出 / 另存为改真流式（第一批 B3）✅ **已落地 2026-09-15**
 
 **文件**：`src-tauri/src/attachments.rs`（Modify: `copy_attachment` `:374-386`）
+
+✅ **实际实现**：把这段决策抽成**纯函数** `export_attachment_to(src, write_path, key: Option<&[u8;32]>)`，
+`copy_attachment` 只负责找路径 / 建 `SaveTarget` / `commit()`。抽出来的理由和 `read_bytes_at` 一样：
+**能单测**（`copy_attachment` 本身要 `AppHandle`，构造不出来）。配 2 条单测：
+① 未加密导出**逐字节相同**且不动源文件；② 加密导出必须**解密成明文**。
 
 现在**无论是否加密**都是 `std::fs::read` 整块读 → `decrypt_attachment_bytes` → `std::fs::write` 整块写；
 而 key 为 `None` 时 `decrypt_attachment_bytes` **原样返回**（`security.rs` 里 `encrypt/decrypt(None, ..)` 的测试）
@@ -365,8 +376,14 @@ target.commit()
 - **为什么独立成档**：它是**唯一无条件**发生的一条（§2.6（2）d），而修复**不碰加密格式** ⇒
   风险与 P2b 差一个量级，不该被"P2b 风险最高"这个标签拖住。
 - **判据**：走 `FileManagerView.tsx:538` 的「下载」，未加密时导出 2 GB 文件 ⇒ **RSS 不随文件大小增长**。
-- ⚠️ 动工前确认 `SaveTarget.write_path()` 在桌面与 Android（`content://`）两侧都能作为 `fs::copy` 的目标
-  ——桌面是普通路径、Android 是先写缓存再整份搬（`attachments.rs:381-385` 的注释），语义一致。
+- ✅ **动工前那条前置已核实（2026-09-15）**：`SaveTarget::write_path()` 在桌面与 Android（`content://`）
+  两侧都能作为 `fs::copy` 的目标——`save_target.rs:84-100`：桌面 `direct()` 的 `write_path` 就是**目标路径本身**；
+  URI 目标则是缓存目录里的**真文件**（`<tempdir>/save/<stem>-<uuid>.part`），
+  落地仍由 `commit()` 的流式拷贝负责。**两边都是真实文件系统路径** ⇒ `fs::copy` 成立。
+- ⚠️ **本机 `cargo test` 加载即死（`0xc0000139`，与本次改动无关）⇒ 上面两条新单测只过了
+  `cargo check --all-targets`（0 错误），未在本机执行**；排查过程见
+  [按需取字节立项](2026-09-15-attachment-on-demand-plan.md) §十一.4。**验收判据（RSS 不随文件大小增长）
+  也仍未实测**——它要真机跑 2 GB 导出。
 
 ### P2b 加密开启时的流式化（**先实测，暂不动格式**）
 
