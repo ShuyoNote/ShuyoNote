@@ -43,15 +43,33 @@ export function isApk(name) {
   return /\.apk$/i.test(name);
 }
 
-/** 文件名后缀 → 更新器清单里的平台键。 */
-export function platformKeyFor(name) {
-  if (/\.(exe|msi)$/i.test(name)) return "windows-x86_64";
-  if (/\.dmg$/i.test(name)) return /aarch64|arm64/i.test(name) ? "darwin-aarch64" : "darwin-x86_64";
-  if (/\.appimage$/i.test(name)) return /aarch64|arm64/i.test(name) ? "linux-aarch64" : "linux-x86_64";
-  if (/\.(deb|rpm)$/i.test(name)) return "linux-x86_64";
+/**
+ * 文件名 → 更新器清单里的平台键（**可能不止一个**）。
+ *
+ * 为什么返回数组：macOS 的 **universal** 包（`tauri build --target universal-apple-darwin`，
+ * Tauri 产出 `…_universal.dmg`）在 Intel 与 Apple Silicon 上都能跑。若只把它归到
+ * `darwin-x86_64`，清单里就**没有** `darwin-aarch64` 这个键 ⇒ **Apple Silicon 用户
+ * 收不到任何 macOS 更新**（更新器按平台键找条目，找不到就是"无更新"，不报错）。
+ * 所以 universal 要同时占两个键（同一个 url / 同一个签名）。
+ * 这条以前没有判据（`releaseArtifacts.test.mjs` 里一个 dmg 用例都没有），
+ * 而 docs/macos-updater.md 正好建议用 universal ⇒ 属于"一启用 macOS 就会踩"的坑。
+ */
+export function platformKeysFor(name) {
+  if (/\.(exe|msi)$/i.test(name)) return ["windows-x86_64"];
+  if (/\.dmg$/i.test(name)) {
+    if (/universal/i.test(name)) return ["darwin-aarch64", "darwin-x86_64"];
+    return [/aarch64|arm64/i.test(name) ? "darwin-aarch64" : "darwin-x86_64"];
+  }
+  if (/\.appimage$/i.test(name)) return [/aarch64|arm64/i.test(name) ? "linux-aarch64" : "linux-x86_64"];
+  if (/\.(deb|rpm)$/i.test(name)) return ["linux-x86_64"];
   // 目前只出 arm64-v8a（见 docs/RELEASING.md §9.5），arm32/其它 ABI 的包不进这个通道。
-  if (isApk(name)) return /arm64|aarch64/i.test(name) ? ANDROID_PLATFORM_KEY : null;
-  return null;
+  if (isApk(name)) return /arm64|aarch64/i.test(name) ? [ANDROID_PLATFORM_KEY] : [];
+  return [];
+}
+
+/** 主平台键（多数产物只占一个键；需要全部键时用 platformKeysFor）。 */
+export function platformKeyFor(name) {
+  return platformKeysFor(name)[0] ?? null;
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -176,10 +194,12 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
 export function manifestPicks(picked) {
   const groups = new Map();
   for (const e of picked) {
-    const key = platformKeyFor(e.name);
-    if (!key) continue;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(e);
+    // ⚠️ 用 platformKeysFor（**全部**键）：universal dmg 要同时进 darwin-aarch64 与
+    // darwin-x86_64，否则 Apple Silicon 用户拿不到这条更新（详见该函数注释）。
+    for (const key of platformKeysFor(e.name)) {
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
   }
   const out = new Map();
   const notes = [];

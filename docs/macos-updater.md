@@ -74,6 +74,15 @@ node scripts/release.mjs --no-build
 - **mac 客户端**用 `endpoints`（`/releases/download/latest/latest.json`）查更新 → 下载公证后的新 dmg → 用户点「安装」更新。
 - 注意：`latest.json` 的 `platforms` 会同时含 `darwin-x86_64`/`darwin-aarch64`（按 Mac CPU 选）。
 
+> ⚠️ **如果打的是 universal 包**（`tauri build --target universal-apple-darwin`，产物名形如
+> `ShuyoNote_<版本>_universal.dmg`）：`release.mjs` 会把它**同时**写进 `darwin-aarch64` 与
+> `darwin-x86_64` 两个键（2026-09-15 修）。为什么必须这样：更新器是**按平台键找条目**的，
+> 只占 `darwin-x86_64` 的话，Apple Silicon 机器的清单里**根本没有** `darwin-aarch64`
+> ⇒ 表现为"检查更新什么都不发生"，**不报任何错**。
+> 判据在 `scripts/lib/releaseArtifacts.test.mjs`（`platformKeysFor` 与 `manifestPicks` 各有用例；
+> 变异自证：把 `manifestPicks` 改回按主键归组 ⇒ 该用例红）。
+> 出包方式二选一即可：要么分别出 `x64`/`aarch64` 两个 dmg（各占各的键），要么出一个 universal dmg（占两个键）。
+
 ## 六、CI（方案 A：GitHub Actions）
 `.github/workflows/release.yml` 里 macOS job 已预留 `APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD/APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID`；在 GitHub 仓库配好 **secrets**（上述 5 项）后，**解开第 26 行矩阵注释**，打 `v*` tag 即自动打三平台（含 mac 签名+公证）。**macOS 矩阵当前仍注释，等 secrets 就位再解开**。
 

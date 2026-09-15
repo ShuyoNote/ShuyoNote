@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 修复
+- **macOS universal 包会让 Apple Silicon 收不到更新**（2026-09-15 发现；macOS 版尚未启用，
+  属于"一启用就会踩"的坑，落在这一版还是随 1.91.2 一起走由发版时定）。
+  `platformKeyFor` 只按 `aarch64|arm64` 判断 dmg 归哪个平台键，于是
+  `…_universal.dmg`（`tauri build --target universal-apple-darwin` 的产物）被归到
+  **`darwin-x86_64` 一个键**，清单里就没有 `darwin-aarch64` ⇒ 更新器按平台键找不到条目，
+  表现为"检查更新什么都不发生"、**且不报任何错**。
+  修法：新增 `platformKeysFor()`（返回**全部**键），universal dmg 同时占 `darwin-aarch64`
+  与 `darwin-x86_64`；`manifestPicks` 改用它归组；`platformKeyFor` 保持旧语义（取主键）。
+  判据：`scripts/lib/releaseArtifacts.test.mjs` 新增 dmg 三种情形 + `manifestPicks` 两个用例
+  ——**此前这个文件里一个 dmg 用例都没有**（macOS 通道等于没判据）；
+  变异自证：把 `manifestPicks` 改回按主键归组 ⇒ 新用例红。
+  见 [macos-updater.md](docs/macos-updater.md) 五。
+
 ## [1.91.2] - 2026-09-15
 
 > 修「设置里加了邮箱账号、聚合邮箱不及时更新」；并把发版工具链补齐（打 tag 前前置检查 / 一条命令取产物 / 验 APK 产物 / 发布后自检 / 两条 Android 流水线的步骤一致性门禁）。
