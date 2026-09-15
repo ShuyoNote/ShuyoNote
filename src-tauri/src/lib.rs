@@ -480,6 +480,9 @@ pub fn run() {
             sync::sync_now,
             sync::list_sync_profiles,
             sync::set_sync_profile,
+            // P6.1「每空间开关」：只切换附件字节同步。**刻意不复用 set_sync_profile**——
+            // 那个命令对未传字段是"清空"语义，用它翻转开关会清掉 token / space_id。
+            sync::set_sync_attachments,
             sync::sync_workspace,
             sync::team_register,
             sync::team_login,

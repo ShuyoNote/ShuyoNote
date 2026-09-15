@@ -261,6 +261,9 @@ pub struct SyncReport {
     pub items: Vec<SyncItem>,
     /// P0.1 conflict hint: local dirty page that received a newer server change.
     pub conflicts: Vec<SyncConflict>,
+    /// P6.1：**本轮附件同步因"开关被关掉"而中途停止**（不是在入口就没开）。
+    /// 界面据此显示"因开关关闭而停止"，而不是"同步完成"——否则用户以为全下完了。
+    pub attachments_paused: bool,
 }
 
 /// A page that both has an unsynced local edit (dirty) and a newer server change.
@@ -324,10 +327,19 @@ pub struct SyncProfile {
     pub space_id: String,
     pub last_pushed_seq: i64,
     pub last_pulled_seq: i64,
+    /// P6.1「每空间开关」：1 = 同步附件**字节**（默认）；0 = 只同步元数据、字节按需。
+    /// ⚠️ 它**只管字节，不管元数据**——附件行仍随 `changes` 同步，所以对端"看得见但打不开"。
+    /// `serde(default)` = 1：容忍缺字段的旧载荷，且默认与升级前行为一致。
+    #[serde(default = "default_sync_attachments")]
+    pub sync_attachments: i64,
+}
+
+fn default_sync_attachments() -> i64 {
+    1
 }
 
 const PROFILE_COLS: &str =
-    "ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq";
+    "ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq, sync_attachments";
 
 fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncProfile> {
     Ok(SyncProfile {
@@ -337,6 +349,7 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncProfile> {
         space_id: r.get(3)?,
         last_pushed_seq: r.get::<_, i64>(4)?,
         last_pulled_seq: r.get::<_, i64>(5)?,
+        sync_attachments: r.get::<_, i64>(6)?,
     })
 }
 
@@ -356,6 +369,8 @@ fn get_profile(c: &Connection, ws_id: &str) -> Result<SyncProfile, String> {
             space_id: String::new(),
             last_pushed_seq: 0,
             last_pulled_seq: 0,
+            // 没有行 = 还没配同步 ⇒ 开关按"开"（与 `DEFAULT 1` 一致，不改变既有行为）。
+            sync_attachments: 1,
         });
     Ok(profile)
 }
@@ -400,13 +415,60 @@ fn set_profile(c: &Connection, ws_id: &str, server_url: &str, token: &str, space
 }
 
 /// Update a single numeric field on a workspace's sync profile (best-effort).
+///
+/// ⚠️ `field` 会被**格式化进 SQL**，所以这里必须是**白名单**（P6.1 加固，2026-09-15）：
+/// 原先只有一句注释「`field` is one of the trusted constants」——一旦哪天有人把入参透传进来，
+/// 那行 `format!` 就是注入面。现在不匹配直接报错；**加字段必须同时加到这里**。
 fn set_profile_field(c: &Connection, ws_id: &str, field: &str, value: i64) -> Result<(), String> {
-    // `field` is one of the trusted constants ("last_pushed_seq"/"last_pulled_seq").
+    let col = match field {
+        "last_pushed_seq" => "last_pushed_seq",
+        "last_pulled_seq" => "last_pulled_seq",
+        other => return Err(format!("不支持的 sync_profiles 字段：{other}")),
+    };
     c.execute(
-        &format!("UPDATE sync_profiles SET {field} = ?1 WHERE ws_id = ?2"),
+        &format!("UPDATE sync_profiles SET {col} = ?1 WHERE ws_id = ?2"),
         params![value, ws_id],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// P6.1「每空间开关」——读某个空间的附件字节开关（缺行/缺列按"开"处理，与 `DEFAULT 1` 一致）。
+///
+/// ⚠️ **为什么必须从 DB 读、而不是用 `profile.sync_attachments`**：`sync_now` 在
+/// `list_profiles` 时**一次性快照**了全部 profile，之后整轮同步用的都是那份不可变快照。
+/// 用快照 ⇒ **中途关掉开关不会生效**（会一直下完），而"中途关掉"正是这个开关最该起作用的时刻。
+fn attachments_enabled(c: &Connection, ws_id: &str) -> bool {
+    c.query_row(
+        "SELECT COALESCE(sync_attachments, 1) FROM sync_profiles WHERE ws_id = ?1",
+        params![ws_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .map(|v| v != 0)
+    .unwrap_or(true)
+}
+
+/// P6.1「每空间开关」：切换某个空间的**附件字节**同步（1 = 同步，0 = 只同步元数据）。
+///
+/// ⚠️ **刻意不复用 `set_sync_profile`**：那个命令对**未传的字段是"清空"**语义
+/// （`token.as_deref().unwrap_or("")`），而 UI 里已有 5 处在利用这种"部分传参"
+/// （`SyncPanel.tsx:250/262/405/422/450`）。若拿它翻转开关并省略凭证字段，
+/// **会把该空间的 token / space_id 清掉**。这个窄命令只动一列，碰不到凭证。
+#[tauri::command]
+pub fn set_sync_attachments(db: State<'_, Db>, ws_id: String, enabled: bool) -> Result<(), String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    let n = c
+        .execute(
+            "UPDATE sync_profiles SET sync_attachments = ?1 WHERE ws_id = ?2",
+            params![if enabled { 1 } else { 0 }, ws_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("该空间还没有同步配置（请先填服务器地址并绑定空间）".to_string());
+    }
     Ok(())
 }
 
@@ -1348,6 +1410,8 @@ pub struct WorkspaceSyncResult {
     pub last_pulled_seq: i64,
     pub error: Option<String>,
     pub conflicts: Vec<SyncConflict>,
+    /// P6.1：附件同步**因开关被关掉而中途停止**（见 `SyncReport::attachments_paused`）。
+    pub attachments_paused: bool,
 }
 
 async fn sync_workspace_only(
@@ -1357,11 +1421,11 @@ async fn sync_workspace_only(
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
     let (pulled, last_pulled_seq, pulled_items, conflicts) = do_pull(db, profile).await?;
-    let att_items = sync_attachments(app, db, profile).await?;
+    let (att_items, attachments_paused) = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
     items.extend(pulled_items);
     items.extend(att_items);
-    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items, conflicts })
+    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items, conflicts, attachments_paused })
 }
 
 #[tauri::command]
@@ -1386,6 +1450,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
                 conflicts: rep.conflicts,
+                attachments_paused: rep.attachments_paused,
             },
             Err(e) => WorkspaceSyncResult {
                 ws_id: profile.ws_id.clone(),
@@ -1395,6 +1460,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pulled_seq: 0,
                 error: Some(e),
                 conflicts: Vec::new(),
+                attachments_paused: false,
             },
         });
     }
@@ -1440,6 +1506,7 @@ pub async fn sync_workspace(
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
                 conflicts: rep.conflicts,
+                attachments_paused: rep.attachments_paused,
             })
         }
         Err(e) => {
@@ -1497,11 +1564,25 @@ async fn sync_attachments(
     app: &tauri::AppHandle,
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<Vec<SyncItem>, String> {
+) -> Result<(Vec<SyncItem>, bool), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     let mut att_items: Vec<SyncItem> = Vec::new();
+    // P6.1：本轮是否"因开关被关掉而中途停止"（与"入口就没开"区分——后者不算 paused）。
+    let mut paused = false;
+
+    // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **整个跳过第 3/4 步（上传与下载）**，
+    // 但**不报错**——附件**元数据**已由 do_push / do_pull 经 `changes` 同步过，
+    // 所以对端仍然看得见这些文件，只是没有字节（点开提示未下载）。
+    // ⚠️ 这里**从 DB 读、不用 `profile.sync_attachments`**：`profile` 是本轮开始时的快照，
+    // 用它会导致"中途关掉不生效"（详见 `attachments_enabled` 的注释）。
+    {
+        let c = db.0.lock().expect("db mutex poisoned");
+        if !attachments_enabled(&c, &profile.ws_id) {
+            return Ok((Vec::new(), false));
+        }
+    }
 
     let client = reqwest::Client::new();
     // Space-scoped attachments when bound to a team space; legacy global path otherwise.
@@ -1570,6 +1651,15 @@ async fn sync_attachments(
         security::key_if_enabled(&c)
     };
     for hash in local_set.difference(&remote_set) {
+        // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
+        // 粒度 = 文件级：最坏等待 = 当前这一件的传输时间；**已完成的不回滚**。
+        {
+            let c = db.0.lock().expect("db mutex poisoned");
+            if !attachments_enabled(&c, &profile.ws_id) {
+                paused = true;
+                break;
+            }
+        }
         let path = match find_file_by_stem(&attachments_dir, hash) {
             Some(p) => p,
             None => continue,
@@ -1629,6 +1719,14 @@ async fn sync_attachments(
     };
 
     for item in &remote.items {
+        // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
+        {
+            let c = db.0.lock().expect("db mutex poisoned");
+            if !attachments_enabled(&c, &profile.ws_id) {
+                paused = true;
+                break;
+            }
+        }
         // The hash comes from the server (untrusted): reject anything that is not a
         // canonical SHA-256 hex before joining it into a filesystem path, to prevent
         // a malicious server from writing outside the attachments dir.
@@ -1691,7 +1789,7 @@ async fn sync_attachments(
 
     // Reuse local mimes for hash resolution (kept for future use).
     let _ = local_mimes;
-    Ok(att_items)
+    Ok((att_items, paused))
 }
 
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes

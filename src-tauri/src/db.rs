@@ -328,7 +328,10 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             space_id        TEXT NOT NULL DEFAULT '',
             device_id       TEXT NOT NULL DEFAULT '',
             last_pushed_seq INTEGER NOT NULL DEFAULT 0,
-            last_pulled_seq INTEGER NOT NULL DEFAULT 0
+            last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+            -- P6.1「每空间开关」（2026-09-15）：1 = 同步附件字节（默认，保持既有行为），
+            -- 0 = 只同步元数据、字节按需。见 docs/plans/2026-09-15-attachment-on-demand-plan.md
+            sync_attachments INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS auth_sessions (
             server_url    TEXT PRIMARY KEY,
@@ -505,6 +508,19 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     if has_items == 0 {
         conn.execute("ALTER TABLE sync_history ADD COLUMN items TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    // P6.1「每空间开关」：老库补列。**DEFAULT 1 是有意的**——升级不能静默改变同步范围
+    // （"按需取字节"必须是用户主动选择）。见 docs/plans/2026-09-15-attachment-on-demand-plan.md §五.4
+    let has_att_switch: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'sync_attachments'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_att_switch == 0 {
+        conn.execute(
+            "ALTER TABLE sync_profiles ADD COLUMN sync_attachments INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
     }
     Ok(())
 }
