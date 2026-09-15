@@ -156,6 +156,19 @@ node scripts/release.mjs --no-build
 
 ## 六、CI（方案 A：GitHub Actions）
 
+### 6.1 自检（**不需要任何密钥**，已经在跑）
+
+`.github/workflows/macos.yml`：push 到 `dev`/`main` 且命中构建输入路径时，在 `macos-latest` 上
+**打一个未签名的 `.app + .dmg`**，再跑 `pnpm check:macos-bundle` 断言
+identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
+
+为什么要有它：签名链的密钥只在 `release.yml`，而没有密钥的地方仍能问一个关键问题——
+**"干净 macOS 环境里打包这一步过不过、产物对不对"**。这一仓库已经两次吃过
+「本机绿 ≠ 干净环境绿」的亏（Android 的 ranlib 与 bindgen target 都只在 Linux runner 上暴露）。
+它**刻意不碰密钥、不发布、不挂 tag**。
+
+### 6.2 签名 + 公证（等 secrets）
+
 `.github/workflows/release.yml` 的 macOS 步骤（导入证书 + keychain）**已经写好并留在文件里**，
 只差矩阵里那一行：
 

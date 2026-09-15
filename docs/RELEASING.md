@@ -64,6 +64,11 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 - `windows-latest` → `.exe (nsis)`
 - `macos-latest` → `.dmg/.app`（**待 Apple secrets 后启用**）
 
+> **另有 `.github/workflows/macos.yml`（不发布、不需密钥）**：命中构建输入路径时在 macOS runner 上
+> 打一个**未签名**的 `.app + .dmg`，再用 `pnpm check:macos-bundle` 断言
+> identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。它的价值是让"macOS 打包"在
+> **每次 push** 就被验一次，而不是等到打 tag 才发现——见 [macos-updater.md](macos-updater.md) §六。
+
 产物上传到 GitHub Release（`softprops` 未用，`release` job 用 curl+GitHub API 只挂安装包）。仓库 Secrets：`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（必填），macOS 另需 `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD`/`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`。
 
 **⚠️ GitHub Release 里没有 `.sig`**：`release` job 显式只挑 `.exe/.dmg/.deb/.AppImage`。要发 GitCode（更新通道需要签名）就得从 **run artifacts** 取，两个 build job 上传的 `bundle-<platform>` 含完整 `bundle/` 目录（含 `.sig`，保留 7 天）：

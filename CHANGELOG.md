@@ -19,6 +19,17 @@
 
 ### 新增
 
+- **macOS 打包有了每次 push 的自检**：`.github/workflows/macos.yml` 在 `macos-latest` 上打一个
+  **未签名**的 `.app + .dmg`（不碰任何密钥、不发布、不挂 tag），再用新增的
+  `scripts/check-macos-bundle.mjs`（`pnpm check:macos-bundle`）断言四件事——
+  `CFBundleIdentifier` 与 `tauri.conf.json` 一致、版本号与 `package.json` 一致、
+  **`CFBundleURLTypes` 里注册了 `shuyonote` 深链**（本机还会真的去问 LaunchServices 认领了哪些 scheme）、
+  以及 dmg 是本版本的那一个。这几条错了打包**不会报错**，只会在用户端以"身份变了 / 版本号不对 /
+  点链接没反应"的形式晚很久才暴露。
+  脚本自己踩过一次坑并留了回归用例：产物 plist 里 `CFBundleURLTypes` 是**数组套数组**，
+  按"先匹配外层再找内层"的写法会停在**内层** `</array>` 上、把"注册好了"误报成"没注册"。
+  11 条单测（做过变异验证）。
+
 - `scripts/android-mobile-shell.mjs`：把 Android 壳适配层（窗口 inset 桥 + 返回键回调）
   **脚本化注入** `gen/android/**/MainActivity.kt`（`gen/` 不入库，手改不可复现），
   `--check` 给门禁用、`--device-check` 走 adb + WebView devtools 做真机断言。
