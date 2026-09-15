@@ -72,7 +72,7 @@ const ALLOWED = {
   releaseOnly: {
     "用正式密钥签名 APK": "发版流水线专有：自检包也签名，但步骤名不同（见下一条）",
     "断言 APK 内 ABI 恰为 arm64-v8a": "发版流水线专有：产物级断言（自检包不需要）",
-    "断言发版 APK 的 dex 里真的有壳适配层": "发版流水线专有：v1.91.0 闪退的产物级判据，见 §9.1",
+    "断言发版 APK 里真的有壳适配层": "发版流水线专有：v1.91.0 闪退的产物级判据（scripts/check-apk-contents.mjs），见 §9.1",
     "改名成可辨识的发版文件名": "发版流水线专有：改成 ShuyoNote_<版本>_android-arm64-release.apk",
     "记录 APK 的 sha256": "发版流水线专有：产出更新清单里的 signature 凭据",
     "Upload 发版 APK": "发版流水线专有：artifact 名 android-release-apk",

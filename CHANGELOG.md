@@ -5,6 +5,15 @@
 ## [Unreleased]
 
 ### 新增
+- **`scripts/check-apk-contents.mjs`（验 APK 产物，一条命令，零依赖）**（2026-09-15）：
+  `pnpm check:apk <apk 文件>`。翻 APK 字节验五件事——dex 里有 `ShuyoFsPlugin` /
+  `__SHUYONOTE_INSETS__` / `__SHUYONOTE_BACK__` / `installApk`（每条对应一个真实能力，
+  缺第一个就是 **v1.91.0 那种装上闪退**）、ABI 恰好 arm64-v8a、含 apksigner 签名块。
+  自己读 ZIP 中央目录（Node 自带 zlib），不指望 `unzip`/`strings` 在不在，Windows/Linux/CI 一致。
+  CI 的 `release.yml` 现在**调用同一个脚本**（单一事实来源），本地也能拿它验 CI artifact 与
+  **线上那一份**。变异自证：1.91.0 的坏发版件 ⇒ **4 项红**逐条点名；1.91.1 的好包 ⇒ 7 项全绿。
+  见 [RELEASING.md](docs/RELEASING.md) §9.1。
+
 - **`scripts/check-release-state.mjs`（发布后自检，一条命令）**（2026-09-15）：`pnpm check:release-state`。
   一次核对：通道版本 = 仓库版本；每个平台键的 url 是绝对 https 且 signature 非空
   （android 必须是 `sha256:<64 hex>`）；每个产物 URL 真的可达（`-r 0-0` 取 1 字节探活——

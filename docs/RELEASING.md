@@ -393,9 +393,13 @@ scripts/**                         # pnpm build 里串着门禁脚本，改它�
 >    也会红（防止豁免表腐化成"看着豁免过、其实早没了"）。
 >    变异自证：把 `pnpm android:mobile-shell` 那两步从 `release.yml` 删掉 ⇒ **3 条红**，
 >    逐条点名缺的步骤名（等于复现 v1.91.0）。
-> 2. **产物级断言**（已进 `release.yml`）：签名后 `unzip classes*.dex` 再 grep
->    `ShuyoFsPlugin` / `__SHUYONOTE_INSETS__` / `__SHUYONOTE_BACK__` / `installApk`，
+> 2. **产物级断言**（已进 `release.yml`，命令是 `scripts/check-apk-contents.mjs`）：
+>    签名后翻 APK 字节，要求 dex 里有 `ShuyoFsPlugin` / `__SHUYONOTE_INSETS__` /
+>    `__SHUYONOTE_BACK__` / `installApk`，并且 ABI 恰为 arm64-v8a、含 apksigner 签名块，
 >    缺一个就 `exit 1`。源码级 `--check` 只能证明"写进了 gen/"，**证明不了"进包了 + R8 没删没改名"**。
+>    本地同一命令：**`pnpm check:apk <apk 文件>`**（用来验 CI artifact 或**线上那一份**）。
+>    它零依赖（自己读 ZIP 中央目录 + Node 的 zlib），Windows/Linux/CI 行为一致。
+>    变异自证：拿 v1.91.0 那个坏发版件跑 ⇒ **4 项红**并逐条点名缺的能力；1.91.1 的好包 ⇒ 7 项全绿。
 > 3. **发版前真机装一次发版件**（不是自检包）：这次就是"发版件从没被装上过"才漏的。
 >    同日对照（同一判据）：发版件 dex 命中 **0**、自检包命中 **1**。
 >
