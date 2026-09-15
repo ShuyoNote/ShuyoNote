@@ -318,6 +318,22 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
 ## 9. 常见坑
 
 - **`Missing environment variable OPENSSL_DIR`（Windows）**：`rusqlite` 的 `bundled-sqlcipher` 要链接系统 OpenSSL，Windows 必须显式给路径 —— 装了 OpenSSL 也要导 `OPENSSL_DIR`（最常见就是「装了但没设变量」）。详见 **§2.3.1 OpenSSL（Windows 必做）**。
+- **`cargo test` 编译得过、跑不起来：`0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`（Windows，2026-09-15 排查记录）**：
+  进程**在加载期就死**，一条用例都跑不了，而 `cargo check` / `cargo check --all-targets` / 应用本身都正常。
+  ⚠️ **这不是代码问题**（同机器上 `shuyonote-sync-server` 的 `cargo test` 正常，29+3 通过）。
+  **已经用证据排除的假设**（别重复挖）：
+
+  | 假设 | 证据 | 结论 |
+  |---|---|---|
+  | OpenSSL 版本不一致 | 三份 `libcrypto-3-x64.dll`（`OpenSSL-Win64\bin`、`System32`、`target\…\deps`）**SHA-256 完全相同** | ❌ 排除 |
+  | `PATH` 上 Python 自带的旧 VC 运行时抢先 | `vcruntime140.dll` 确实解析到 `C:\Python313\`；把 `System32` 提到最前仍失败 | 🟡 真隐患，非病因 |
+  | `deps\` 下有陈旧同名 DLL | 只有 `libcrypto`/`libssl`/`shuyonote_lib.dll`；把 exe 拷到**空目录**单独跑，照样 `0xc0000139` | ❌ 排除 |
+  | Debug CRT 版本旧（**关键线索**） | `dumpbin /dependents` 显示它导入 **`ucrtbased.dll` / `VCRUNTIME140D.dll` / `MSVCP140D.dll` / `VCRUNTIME140_1D.dll`**（**Debug** CRT，不是发布版）；把 14.44 工具集自带的 `Microsoft.VC143.DebugCRT` 与 SDK 的 `x64\ucrt` 放到 `PATH` 最前仍失败 | ❌ 排除（但**这条线索本身很有用**：任何机器上跑这个测试二进制，都必须能加载 **Debug CRT**） |
+  | 是 `LIB` 里 OpenSSL 的 **`MDd`**（debug）导入库把它带成 debug CRT 链接（`dev.ps1` 正是 `MDd;MD` 这个顺序） | 只留 release 的 `MD`、删掉测试 exe 强制重链后仍失败 | ❌ 排除 |
+
+  **仍未定位**。下次接手建议从"能加载 Debug CRT 的最小复现"入手（先确认一个只 import Debug CRT 的极简 Rust 测试二进制在本机能否加载），
+  把范围从"整个 crate 的依赖链"缩到 CRT 加载本身。
+  **在此之前：本机所有 Rust 单测只能过 `cargo check --all-targets` 的编译检查，不能当"已验证"。**
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
