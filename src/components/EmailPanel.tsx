@@ -5,6 +5,9 @@ import { api, type EmailAccount, type EmailMeta } from "../lib/api";
 import { useAiStore } from "../store/ai";
 import { emailHtmlToLexical } from "../lib/emailRichNote";
 import { emailSupported, platform } from "../lib/platform";
+// 账号唯一键：**别在本文件里再定义一份**——它曾与 SettingsDialog 各写一份完全相同的实现，
+// 而 store 又需要第三份，三份同逻辑的键函数只会静默分叉。统一在 lib/emailAccount.ts。
+import { accountKey } from "../lib/emailAccount";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
@@ -92,11 +95,6 @@ function toAccount(a: EmailAccount): EmailAccount {
     trusted_domains: a.trusted_domains ?? [],
     auto_trust_senders: a.auto_trust_senders ?? true,
   };
-}
-
-// 账号唯一键（与后端 account_key 一致：host|username，均小写）。聚合流里用 meta.account 据此定位所属账号。
-function accountKey(a: EmailAccount): string {
-  return `${a.host.toLowerCase()}|${a.username.toLowerCase()}`;
 }
 
 // 一封邮件的稳定标识：账号标注(host|username) + 文件夹 + uid。
@@ -328,7 +326,14 @@ export function EmailPanel() {
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const listScrollRef = useRef<HTMLDivElement>(null);
 
-  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  // 账号列表来自 store（**单一数据源**）：设置里增删账号后由它 reloadAccounts 推送过来，
+  // 面板这边不再自己持有一份副本（旧写法是各存一份、各自挂载时读一次，于是设置里加了账号
+  // 而面板不知情——2026-09-15 的 bug）。这里只把后端的账号对象补全成完整 EmailAccount。
+  const rawAccounts = useEmailPanel((s) => s.accounts);
+  const accountsLoaded = useEmailPanel((s) => s.accountsLoaded);
+  const reloadAccounts = useEmailPanel((s) => s.reloadAccounts);
+  const patchAccountInStore = useEmailPanel((s) => s.patchAccount);
+  const accounts = useMemo(() => rawAccounts.map((a) => toAccount(a)), [rawAccounts]);
   // 账号多选筛选：当前勾选的账号 key 集合（空集/全选=聚合全部；子集=仅聚合这些）。由下拉框控制。
   const [selectedAccountKeys, setSelectedAccountKeys] = useState<Set<string>>(new Set());
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -394,11 +399,9 @@ export function EmailPanel() {
     return accounts[0] ?? null;
   };
 
-  // 把某个账号的改动同步回 accounts 列表（如信任发件人后更新 trusted_domains）。
-  const patchAccount = (updated: EmailAccount) => {
-    const k = accountKey(updated);
-    setAccounts((prev) => prev.map((a) => (accountKey(a) === k ? updated : a)));
-  };
+  // 把某个账号的改动同步回账号列表（如信任发件人后更新 trusted_domains）。
+  // 写进 store，设置那边看到的才是同一份。
+  const patchAccount = (updated: EmailAccount) => patchAccountInStore(updated);
 
   // 按增量调整角标（避免用「当前一页」的未读数覆盖聚合/全量的真实值）。
   const adjustUnread = (delta: number) => {
@@ -459,20 +462,18 @@ export function EmailPanel() {
     }
   }, [open]);
 
-  // 挂载时读一次已保存账号列表（供角标/定时收取/标签用；不依赖面板是否打开）。
+  // 挂载时若还没读过账号列表，读一次（供角标/定时收取/标签用；不依赖面板是否打开）。
+  // ⚠️ 这里**不再是唯一的读取点**：设置里增删账号会调用 store 的 reloadAccounts，
+  // 结果直接流到本组件（旧写法把账号存在组件内、只在挂载时读一次，所以设置里加完账号面板不知情）。
   useEffect(() => {
     // 邮箱是**桌面版独有**能力（2026-09-13 明确，含移动端）。web 版调用它只会拿到
     // `[web] invoke error … 聚合邮箱仅桌面版支持`；而**移动端这些命令压根不存在**
     // （Rust 侧带 #[cfg(desktop)]），调了会拿到 "command not found"。两种都不该发生，
     // 所以先判断能力，压根别去调。
     if (!emailSupported()) return;
-    api
-      .emailListAccounts()
-      .then((list) => {
-        setAccounts(list.map((a) => toAccount(a)));
-      })
-      .catch(() => {});
-  }, []);
+    if (accountsLoaded) return;
+    void reloadAccounts().catch(() => {});
+  }, [accountsLoaded, reloadAccounts]);
 
   // 账号多选随账号列表同步：默认全选，剔除已删除账号。
   useEffect(() => {
@@ -585,6 +586,21 @@ export function EmailPanel() {
     void fetchInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // 账号列表变化（典型：刚在设置里加了账号）→ 重拉一次聚合流。
+  // 不这么做的话，新账号的邮件要等用户手动点刷新才出现——"账号加上了但看不到它的信"
+  // 同样属于"没及时更新账户"（2026-09-15 用户报障的一半）。
+  // 首次不做：那一次由上一条 [open] 负责，避免刚开面板就拉两遍。
+  const accountsSig = accounts.map(accountKey).join("|");
+  const accountsSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    const first = accountsSigRef.current === null;
+    accountsSigRef.current = accountsSig;
+    if (first) return;
+    if (!open || accounts.length === 0) return;
+    void fetchInbox(undefined, folders, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountsSig]);
 
   // 切换账号多选：勾选/取消某账号后以新的筛选重新聚合。
   const toggleAccountKey = (key: string) => {

@@ -62,6 +62,31 @@
 > 桌面与 Web 不受影响，1.91.0 的内容全在。
 
 ### 修复
+- **「设置里加了邮箱账号，聚合邮箱不及时更新账户」**（2026-09-15 用户报障）。
+  根因是**状态归属错了**：设置（`SettingsDialog` 邮箱区）与邮箱面板（`EmailPanel`）
+  **各持一份 `useState` 账号副本，各自只在自己挂载时读一次后端**。
+  于是「在设置里加账号」只改了后端与设置自己那份，**已经挂载的面板并不知情**——
+  受影响的不止"少一个账号"，而是一整串：账号下拉、来源账号小标、多账号筛选、
+  未读角标、定时收取的 `auto_fetch` 过滤，以及**活动账号**（upsert 会插到首位，面板那份还是旧的）。
+  最扎眼的一种：**面板挂载时一个账号都没有，用户去设置里加完回来，它仍显示「去配置邮箱账号」**。
+  - 修法：账号列表收敛到 `store/emailPanel` 作为**单一数据源**
+    （`accounts` / `accountsLoaded` / `reloadAccounts` / `patchAccount`），
+    并把「写后端 + 重读列表」合成 store 的两个动作 `saveAccount` / `removeAccount`——
+    **只要这个动作还散在组件里，就总有人写成"只改自己那份 state"，而跨组件同步正是靠它完成的**。
+    设置侧三个变更入口（保存 / 删除 / 设为活动账号）全部改走 store。
+  - 顺带：新增账号后**立刻重拉一次聚合流**（按 `accountsSig` 变化触发），
+    否则"账号加上了但看不到它的信"同样属于没及时更新；首次不拉，避免刚开面板就拉两遍。
+  - 顺带收敛：`accountKey`（`host|username` 小写）原先在 `EmailPanel` 与 `SettingsDialog`
+    **各写了一份完全相同的实现**，而 store 又需要第三份——三份同逻辑的键函数只会静默分叉，
+    统一到 `src/lib/emailAccount.ts`。
+  - 测试新建 `src/components/EmailPanel.test.ts`（6 例；**邮箱功能此前零测试**）：
+    ① store 契约（reload 后订阅者读到新列表 / patch 只改匹配项）；
+    ② 增删账号的两个动作会推动列表；③ **回归主体**——不重挂载面板、只换 store 的列表，
+    面板必须跟着变（空态消失、多账号筛选器出现）。
+    **变异自证**：把面板的账号列表冻结成"挂载时那一份"（等价旧写法）⇒ 后两例立刻红，
+    报错正是用户看到的那句「去配置邮箱账号」；其余 4 例不受影响（它们不依赖面板渲染）。
+    全量 **69 文件 / 647 例全过**，`tsc --noEmit` 通过。
+
 - **Android 发版 APK 启动即崩（`ClassNotFoundException: cn.shuyo.shuyonote.ShuyoFsPlugin`）**。
   根因不是代码，是**发版流水线漏了一步**：`android.yml`（自检包）里有
   `pnpm android:mobile-shell`（把 `ShuyoFsPlugin.kt`、inset 桥、返回键处理注入 `gen/`），
