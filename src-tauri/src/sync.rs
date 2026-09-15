@@ -2151,6 +2151,19 @@ async fn sync_attachments(
             Some(p) => p,
             None => continue,
         };
+        // ⚠️ 上传前先确认这个 stem **就是内容哈希**（64 位十六进制）。不是 ⇒ 跳过。
+        //
+        // 2026-09-15 真机验收发现：设备上残留了 9 个**两字符名**的文件（`9d.png` / `ac.png` …，
+        // 看着像旧版本"忘了分桶目录"写出来的），上传循环把它们当成本地待上传附件 ⇒
+        // 服务端 `valid_hash` 直接 400 并在**读完 body 之前关掉连接** ⇒ 客户端只看到
+        // `error sending request for url (...)`——这个报错与真实原因（名字不是哈希）
+        // 毫不相干，而且白传一遍大文件。
+        // 下载侧本来就有同一道校验（`is_valid_attachment_hash`），上传侧一直缺。
+        if !is_valid_attachment_hash(hash) {
+            failed += 1;
+            eprintln!("[sync] 附件 {hash} 的存储名不是 SHA-256（历史遗留文件？）——跳过上传");
+            continue;
+        }
         // Determine mime from local DB row.
         let mime = {
             let c = db.0.lock().expect("db mutex poisoned");
