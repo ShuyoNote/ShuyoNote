@@ -195,6 +195,13 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 与 android.yml 同一处坑：**默认值是 `tools platform-tools`，而 Google 已把 `tools`
+          # 从 SDK 仓库撤掉**（2026-09-15，报 `Failed to find package 'tools'` → sdkmanager 退出 1）。
+          # 发版当时只修了 android.yml，于是 release.yml 的 android job 在打 tag 那一刻照样红，
+          # 而它的红会连锁到 publish job 的硬断言（"必须恰好 1 个发版 APK"）⇒ **整个 Release 失败**。
+          # 两个 workflow 都要显式只装真正用到的：platform-tools；NDK 由下一步自己装。
+          packages: "platform-tools"
 
       - name: Pick an NDK + 钉死 binutils（**ranlib 那一条是必须的**）
         # 与 android.yml 逐字一致。删了这条就会在 OpenSSL 的 `make install_dev` 上炸：
