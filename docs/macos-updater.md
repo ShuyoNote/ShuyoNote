@@ -100,6 +100,14 @@ node scripts/release.mjs --no-build
 5. `node scripts/release.mjs --no-build` 上传 + 生成 mac latest.json。
 6. mac 上装一次确认 Gatekeeper 不拦（右键打开 / 已公证），再测「检查更新」。
 
+> **动手前两条（2026-09-15 的教训，别省）**：
+> - **先 `git pull` 再干活**：v1.91.0 那次事故就是"用旧 checkout 发版"——`release.yml` 少了两步
+>   Android 壳适配层注入，打出来的 APK 装上直接闪退，而 CI 全绿。旧分支/旧拷贝发版是同一类风险。
+> - **打 tag 前跑 `pnpm release:preflight`**：它一条命令查六件事，其中"`origin/dev` 是否已进 `main`"
+>   与"tag 是否已被占用"都是发 1.91.0 时真卡住过的地方。发布后跑 `pnpm check:release-state`。
+>   取 CI 产物用 `pnpm fetch:release-artifacts --tag vX.Y.Z --stage`（分片并行 + 续传 + 校验 +
+>   自动验 APK 字节）。详见 [RELEASING.md](RELEASING.md) ④⑤⑥。
+
 ## 相关文件
 - `scripts/release.mjs` —— 发布（含 dmg/darwin 平台 key）
 - `.github/workflows/release.yml` —— GitHub Actions 三平台（含 mac secrets 预留）
