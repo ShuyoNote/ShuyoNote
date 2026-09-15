@@ -16,7 +16,15 @@
 | 冷启动那条 URL 不丢 | ✅ | `src/lib/deepLinkBridge.ts`（三条路径收敛：`get_current` / `on_open_url` / `deep_link_take` drain）+ 9 条测试 |
 | 界面那一段 | ✅ **用户截图** | 应用内出现「从社区链接存一篇笔记」对话框，预填框里是**原样 URL**（含归一化的 `/?`） |
 
-**唯一没有真机验过的**：Linux 的协议注册（`.deb` 可 postinst、AppImage 不行）与 macOS（还没发桌面版）。
+**发布产物级的证据（v1.90.0 的安装包本体）**：
+
+- **Linux**：`ShuyoNote_1.90.0_amd64.deb` 里 `/usr/share/applications/ShuyoNote.desktop` 含
+  `MimeType=x-scheme-handler/shuyonote` ✓（解 deb + 读文本即可核对）——这条现在是**发布流程里的门禁**
+  （`release.yml` 的 Linux 档：解包 → 找 .desktop → 必须含这一行）；
+- **Windows**：注册表串在 NSIS 的**压缩脚本块**里，`grep` 安装包读不到（要 7-Zip 解 NSIS 才行），
+  所以那一档靠源码级四查（`scripts/check-deep-link.mjs`）+ **真机三步验证**；本项目没有在 macOS 上
+  直接读 Windows 安装包内注册表串的手段，这一点如实记着。
+- **macOS**：还没发布桌面版（缺 Apple 签名/公证凭据），所以协议注册无从验证。
 
 ## 二、把社区内容拿回来（`save`）
 
