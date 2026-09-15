@@ -1218,7 +1218,14 @@ html[data-platform="win"] .app-body {
   flex-direction: column;
   gap: 12px;
 }
-/* Web 版不支持多设备同步：下面整个面板禁灰、不可交互。 */
+/* 非 Tauri 平台（含手机浏览器）**不推荐**多设备同步，故整个面板禁灰、不可交互。
+ *
+ * ⚠️ 措辞修正（2026-09-15）：原文写的是"Web 版不支持多设备同步"，**与代码相反**——
+ * `web.ts` 里 `sync_now`(:2429) / `sync_workspace`(:2541) / `syncAttachments`(:896)
+ * **都是真实现，不是 stub**。置灰的理由是"**不推荐**"（浏览器存储会被系统回收，
+ * 不适合当唯一副本），不是"不支持"。
+ * 判据：`SyncPanel.tsx:502` 自己写的就是"Web 版同步受浏览器环境限制"（这句才是准的）。
+ * ⇒ **别据"不支持"把 web.ts 那段实现当死代码删掉。** */
 .sync-profiles.is-disabled {
   opacity: 0.45;
   filter: grayscale(0.4);
