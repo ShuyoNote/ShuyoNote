@@ -387,6 +387,9 @@ export interface CommandMap {
    *  ⚠️ **刻意独立成命令**、不复用 `set_sync_profile`——后者对未传字段是"清空"语义，
    *  拿它翻转开关会把该空间的 `token` / `space_id` 清掉。 */
   set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void };
+  /** P6.3「按需取字节」：用户主动下载**单件**附件，返回落盘字节数（失败即 throw）。
+   *  ⚠️ 与同步下载**同一个实现**；且**不受 C1 预算闸门约束**——显式操作照做。 */
+  download_attachment: { args: { wsId: string; hash: string }; result: number };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };

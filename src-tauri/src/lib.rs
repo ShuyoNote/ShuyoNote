@@ -485,6 +485,9 @@ pub fn run() {
             // P6.1「每空间开关」：只切换附件字节同步。**刻意不复用 set_sync_profile**——
             // 那个命令对未传字段是"清空"语义，用它翻转开关会清掉 token / space_id。
             sync::set_sync_attachments,
+            // P6.3「按需取字节」：用户主动下载**单件**附件（复用同步那条下载实现，
+            // 刻意不受 C1 预算闸门约束——显式操作照做）。
+            sync::download_attachment,
             // C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限。
             // 设备级设置，存 meta.sync_state 的 KV。
             sync::get_sync_budget,

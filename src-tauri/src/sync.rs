@@ -480,6 +480,22 @@ pub fn set_sync_attachments(db: State<'_, Db>, ws_id: String, enabled: bool) -> 
     set_attachments_enabled(&c, &ws_id, enabled)
 }
 
+/// 附件接口的 URL 前缀。**同步下载与按需下载必须走同一处**（P6.3 抽出）：
+/// 绑了团队空间走 space 作用域，否则退回旧的全局路径 —— 服务端两条路由都在，
+/// 但"哪一条"由 `space_id` 决定，两边各写一遍迟早会漂。
+///
+/// ⚠️ 顺手按本文件的既有约定 `trim_end_matches('/')`（见 presence/comments/notifications 那批）：
+/// `set_profile` 落库前本来就会 trim，所以这只是防"手改过的 / 老库里的带斜杠地址"拼出
+/// `https://host//spaces/x` 这种带双斜杠的 URL。
+fn attachment_base(profile: &SyncProfile) -> String {
+    let server = profile.server_url.trim_end_matches('/');
+    if profile.space_id.is_empty() {
+        server.to_string()
+    } else {
+        format!("{server}/spaces/{}", profile.space_id)
+    }
+}
+
 /// `set_sync_attachments` 的实际实现（抽出来是为了能在单测里直接跑 SQL——
 /// `#[tauri::command]` 收 `State<Db>`，没有 Tauri App 就构造不出来）。
 fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result<(), String> {
@@ -495,6 +511,64 @@ fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result
         return Err("该空间还没有同步配置（请先填服务器地址并绑定空间）".to_string());
     }
     Ok(())
+}
+
+/// P6.3「按需取字节」（2026-09-15）：用户**主动**要求下载其中一件附件。
+///
+/// 复用 `download_one_attachment()` —— **同一个函数，不允许再写第二份下载实现**
+/// （见 `docs/plans/2026-09-15-attachment-on-demand-plan.md` §七：P6.3 若复制一份循环
+/// 就会变成两套下载逻辑，落盘 / 加密 / 落库三件事只要有一边忘了改就是数据问题）。
+///
+/// ⚠️ **刻意不受 C1 预算闸门约束**（单文件阈值 / 本轮总量上限 / 磁盘余量下限都不拦）：
+/// C1 管的是"**自动**拉取别在用户不知情时把设备填满"（scope plan 的上架判据），
+/// 而这里是用户明确点了"下载这一件"——与"手动点同步不受 C2 仅 Wi-Fi 限制"
+/// 是同一条原则：**显式操作照做**。磁盘真满了由写失败兜底（错误会原样返回）。
+///
+/// 成功返回落盘的**明文字节数**（界面据此提示"已下载 X"）。
+#[tauri::command]
+pub async fn download_attachment(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    ws_id: String,
+    hash: String,
+) -> Result<i64, String> {
+    // 这个 hash 会被拼进文件路径 ⇒ 先当成**不可信输入**校验（与同步下载同一道门）。
+    if !is_valid_attachment_hash(&hash) {
+        return Err("附件标识不合法".to_string());
+    }
+    let (profile, mime) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let p = get_profile(&c, &ws_id)?;
+        // 落盘名是 `hash.<ext>`，而 ext 由 mime 决定 —— 只有本地那行元数据知道 mime；
+        // 拿不到就退化成 octet-stream（与同步路径的兜底一致）。
+        let mime = c
+            .query_row(
+                "SELECT mime FROM attachments WHERE hash = ?1 LIMIT 1",
+                params![hash],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        (p, mime)
+    };
+    if profile.server_url.is_empty() {
+        return Err("请先配置同步服务器".to_string());
+    }
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
+    let att_base = attachment_base(&profile);
+    let session_key = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        security::key_if_enabled(&c)
+    };
+    let client = reqwest::Client::new();
+    // 凭证取法与同步下载保持一致（都用 `profile.token`）：两条路若取不同的 token，就会出现
+    // "同步能下、点按钮下不了"这种最难查的不一致。
+    let item = RemoteAttachment { hash: hash.clone(), mime };
+    download_one_attachment(&client, &att_base, &profile.token, &item, &attachments_dir, session_key.as_ref(), &db).await
 }
 
 #[tauri::command]
@@ -1934,12 +2008,7 @@ async fn sync_attachments(
     };
 
     let client = reqwest::Client::new();
-    // Space-scoped attachments when bound to a team space; legacy global path otherwise.
-    let att_base = if profile.space_id.is_empty() {
-        profile.server_url.clone()
-    } else {
-        format!("{}/spaces/{}", profile.server_url, profile.space_id)
-    };
+    let att_base = attachment_base(profile);
 
     // 1. List remote hashes.
     let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
@@ -2460,6 +2529,30 @@ mod tests {
         // 荒唐大的值同样夹住（防止 u64 乘法溢出）。
         set_meta_state(&c, KEY_MAX_RUN_MB, "18446744073709551615").unwrap();
         assert!(read_budget(&c).max_run_mb <= MAX_BUDGET_MB);
+    }
+
+    // ---- P6.3：按需取字节 ----
+
+    /// 同步下载与按需下载**必须拼出同一个 URL**：绑了空间走 space 作用域，否则旧的全局路径。
+    /// 这条钉住的是"两处各写一遍迟早会漂"——P6.3 之前这两段代码就是复制关系。
+    #[test]
+    fn attachment_base_is_space_scoped_only_when_bound_to_a_space() {
+        let mk = |space: &str| SyncProfile {
+            ws_id: "ws".into(),
+            server_url: "https://s.example.com/".into(),
+            token: "t".into(),
+            space_id: space.into(),
+            last_pushed_seq: 0,
+            last_pulled_seq: 0,
+            sync_attachments: 1,
+        };
+        // 绑了空间：`<server>/spaces/<id>`（服务端 space 作用域路由）。
+        assert_eq!(attachment_base(&mk("sp-1")), "https://s.example.com/spaces/sp-1");
+        // 没绑（个人自建 / 旧配置）：就是 server_url 本身（旧的全局路由）。
+        assert_eq!(attachment_base(&mk("")), "https://s.example.com");
+        // ⚠️ **不产生双斜杠**：地址末尾带 `/` 时也要拼对（`set_profile` 会 trim，
+        //    但老库 / 手改过的值不能靠这个假设）。
+        assert!(!attachment_base(&mk("sp-1")).contains("//spaces"));
     }
 
     // ---- B4：同步下载不再制造重复行 ----

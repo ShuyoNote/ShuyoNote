@@ -2707,6 +2707,25 @@ function makeInvoke(store: SqliteStore) {
       putProfile(store, { ...p, ws_id: wsId, sync_attachments: enabled ? 1 : 0 });
       return undefined as T;
     }
+    // P6.3「按需取字节」：用户主动下载**单件**附件（返回落盘字节数）。
+    //
+    // 与桌面同构，但 Web 的"落盘"就是 blobStore。⚠️ 同样**不受 C1 预算闸门约束**
+    // （显式操作照做），也不查磁盘余量（浏览器没有那个 API，见 syncAttachments 里的说明）。
+    if (cmd === "download_attachment") {
+      const args = a.args ?? a;
+      const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
+      const hash = String(args.hash ?? "");
+      if (!hash) throw new Error("缺少附件标识");
+      const p = getProfile(store, wsId);
+      if (!p.server_url) throw new Error("请先配置同步服务器");
+      const server = p.server_url.replace(/\/+$/, "");
+      const token = getAuthSession(store, server).token || p.token;
+      const scoped = p.space_id ? `/spaces/${encodeURIComponent(p.space_id)}` : "";
+      const blob = await attachmentByteDownload(`${server}${scoped}/attachments/${hash}`, token);
+      if (!blob || blob.size === 0) throw new Error("服务端没有这个附件的字节（可能尚未上传）");
+      await blobStore.put(hash, blob);
+      return blob.size as T;
+    }
     // ---- C1 预算刹车 / C2 网络闸门（2026-09-15）设备级设置 ----
     //
     // 与桌面同构：四个键存 `sync_state`（Web 侧是同一个 KV 表名），默认值也与 Rust 侧一致。

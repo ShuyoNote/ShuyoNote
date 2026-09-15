@@ -268,6 +268,9 @@ export const api = {
   /** P6.1「每空间开关」：只切换附件**字节**同步。
    *  ⚠️ 刻意独立成命令：`setSyncProfile` 对未传字段是"清空"语义，用它翻转开关会清掉凭证。 */
   setSyncAttachments: (wsId: string, enabled: boolean) => invoke("set_sync_attachments", { wsId, enabled }),
+  /** P6.3「按需取字节」：用户主动下载单件附件（返回落盘字节数）。
+   *  复用同步那条下载实现，且**不受 C1 预算闸门约束**——显式操作照做。 */
+  downloadAttachment: (wsId: string, hash: string) => invoke("download_attachment", { wsId, hash }),
   /** C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限 / 仅 Wi-Fi。
    *  ⚠️ `setSyncBudget` 回显的是**夹取后**的值（磁盘余量下限不可关）⇒ 界面应当用返回值刷新自己。 */
   getSyncBudget: () => invoke("get_sync_budget"),
@@ -384,6 +387,9 @@ export const api = {
     invoke("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
     invoke("copy_attachment", { hash, destPath }),
+  /** P6.2：**盘上真实有的**附件 hash（走附件目录，不是数据库）。
+   *  用来把"数据库里有行、盘上没字节"如实标成「未下载」。 */
+  listAttachmentHashes: () => invoke("list_attachment_hashes"),
   // 附件导入同样是宿主行为：导完之后播报一次（`import.finished`，带份数与页）。
   // 只有宿主界面会走这条路径（能力注册表里没有"插件导入附件"这项），所以不存在
   // "插件命令跑到一半又触发别的插件"的嵌套——将来若加了这种能力，这里要重新想。

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { useNotes } from "../store/notes";
+import { useSpaceStore } from "../store/space";
 import { useFileManagerStore } from "../store/fileManager";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
@@ -148,10 +149,47 @@ export function FileManagerView() {
   const loadFiles = () => {
     api
       .listPageAttachments(folderId ?? null)
-      .then(setFiles)
+      .then((fs) => {
+        setFiles(fs);
+        loadOnDisk();
+      })
       .catch(() => {});
   };
   useEffect(loadFiles, [folderId]);
+
+  // P6.2「未下载」状态（2026-09-15）：附件**行**是随 `changes` 同步过来的，**字节不一定在**
+  // （这正是 P6.1 每空间开关关掉之后、以及预算刹车跳过之后的既有状态）。
+  // 判据用**盘上真实有的 hash**（`list_attachment_hashes` 走附件目录，不是数据库），
+  // 所以"数据库里有一行、盘上没文件"能被如实标出来。
+  const [onDisk, setOnDisk] = useState<Set<string>>(new Set());
+  const [fetching, setFetching] = useState<string | null>(null);
+  const loadOnDisk = () => {
+    api
+      .listAttachmentHashes()
+      .then((hs) => setOnDisk(new Set(hs)))
+      .catch(() => {});
+  };
+
+  /** 把这一件的字节从服务器取回来（P6.3 按需取字节）。返回是否成功。 */
+  const fetchBytes = async (f: AttachmentMeta): Promise<boolean> => {
+    const wsId = useSpaceStore.getState().activeId;
+    if (!wsId) {
+      toast("请先选择一个空间", "error");
+      return false;
+    }
+    setFetching(f.hash);
+    try {
+      await api.downloadAttachment(wsId, f.hash);
+      loadOnDisk();
+      toast(`已下载「${f.name}」`, "success");
+      return true;
+    } catch (e) {
+      toast(`下载失败：${e}`, "error");
+      return false;
+    } finally {
+      setFetching(null);
+    }
+  };
 
   // Streaming import progress from the backend (content-addressed, large-file safe).
   useEffect(() => {
@@ -855,6 +893,14 @@ export function FileManagerView() {
                     {row.kind === "file" && folderId === null && (
                       <span className="fm-inbox-tag">未整理</span>
                     )}
+                    {/* P6.2：**行有、字节不在**（P6.1 关了开关 / 预算刹车跳过 / 还没轮到）。
+                        不标出来的话，用户点开只会得到一句"附件文件不存在（可能被移动或删除）"，
+                        而其实字节完好地躺在服务器上 —— 那是把人往"文件坏了"的方向误导。 */}
+                    {row.kind === "file" && row.file && !onDisk.has(row.file.hash) && (
+                      <span className="fm-missing-tag" title="字节还没下载到本机（在服务器上）">
+                        未下载
+                      </span>
+                    )}
                   </button>
                 </td>
                 <td className="fm-kind-col">
@@ -903,15 +949,30 @@ export function FileManagerView() {
                       >
                         ↔
                       </button>
-                      <button
-                        title="下载"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          downloadFile(row.file!);
-                        }}
-                      >
-                        ⬇
-                      </button>
+                      {/* P6.2/P6.3：字节不在本机时，「下载」的含义变成**先从服务器取回来**
+                          （否则 save-as 只会失败说"附件不存在"）。取回成功后这一行立刻恢复正常。 */}
+                      {!onDisk.has(row.file!.hash) ? (
+                        <button
+                          title="从服务器下载到本机"
+                          disabled={fetching === row.file!.hash}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void fetchBytes(row.file!);
+                          }}
+                        >
+                          {fetching === row.file!.hash ? "…" : "☁"}
+                        </button>
+                      ) : (
+                        <button
+                          title="下载"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadFile(row.file!);
+                          }}
+                        >
+                          ⬇
+                        </button>
+                      )}
                       <button
                         title="在文件夹中显示"
                         onClick={(e) => {
@@ -965,7 +1026,10 @@ export function FileManagerView() {
               {isFile ? (
                 <>
                   {ctxItem(<OpenIcon size={14} />, "打开", () => { openRow(row); closeCtx(); })}
-                  {ctxItem(<DownloadIcon width={14} height={14} />, "下载", () => { downloadFile(row.file!); closeCtx(); })}
+                  {/* P6.2：字节不在本机时，右键里给的是"从服务器下载"，而不是会失败的 save-as。 */}
+                  {row.file && !onDisk.has(row.file.hash)
+                    ? ctxItem(<DownloadIcon width={14} height={14} />, "从服务器下载", () => { void fetchBytes(row.file!); closeCtx(); })
+                    : ctxItem(<DownloadIcon width={14} height={14} />, "下载", () => { downloadFile(row.file!); closeCtx(); })}
                   {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path); closeCtx(); })}
                 </>
               ) : (

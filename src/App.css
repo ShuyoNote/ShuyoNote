@@ -14788,6 +14788,20 @@ p:has(> .editor-drawing-container) {
   font-size: 10px;
   line-height: 1.6;
 }
+/* P6.2「未下载」：**行有、字节不在**（P6.1 关了开关 / 预算刹车跳过 / 还没轮到）。
+ * 与「未整理」同一形状，但要更显眼一档——它表示"这个文件现在打不开"，
+ * 而「未整理」只是分类信息。 */
+.fm-missing-tag {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.6;
+  cursor: help;
+}
 /* Reveal file actions on row hover. */
 .fm-ops-col .fm-file-actions {
   opacity: 0;
