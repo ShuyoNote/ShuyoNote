@@ -15,7 +15,7 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 |---|---|---|
 | 加密 | **SQLCipher 真加密**（与桌面同一套） | 无（数据在 IndexedDB 里） |
 | 数据落地 | 应用私有目录里的**真实文件**，可备份、可搬移 | **浏览器存储**，会被系统回收 |
-| 多设备同步 | ✅ 与桌面同一套 | ⚠️ **有实现、但 UI 置灰**：`web.ts:2429`（`sync_now`）/`:2541`（`sync_workspace`）/`:896`（`syncAttachments`）**都是真实现，不是 stub**；但 `SyncPanel.tsx:523` + `App.css:1222-1227` 在非 Tauri 平台把配置区置灰（`pointer-events: none`），`SyncPanel.tsx:502` 亦提示"Web 版同步受浏览器环境限制"——理由是**浏览器存储会被系统回收，不适合当唯一副本**，属**不推荐**而非"不支持" |
+| 多设备同步 | ✅ 与桌面同一套 | **不提供**（**产品决定 2026-09-15：Web 版不开多设备同步**）——`SyncPanel.tsx:523` + `App.css:1222-1227` 在非 Tauri 平台把配置区置灰，`SyncPanel.tsx:502` 提示"Web 版同步受浏览器环境限制"（根因：浏览器存储会被系统回收，不适合当唯一副本）。⚠️ 但 `web.ts:2429/2541/896`（`sync_now` / `sync_workspace` / `syncAttachments`）是**完整实现、不是 stub，且按决定保留**——**别当死代码删掉**（口径与缘由见 `web.ts` 里 `sync_now` 上方注释） |
 | 插件 | ✅ 完整（Boa 运行时） | ❌ **根本性限制**：浏览器跑不了 Rust `boa_engine`，需重做 JS 沙盒（M16.3） |
 | PDF | 原生 mupdf + pdf.js 双引擎 | 只有 pdf.js |
 | 体积 | 大（需专门压，见计划里的体积账） | 小 |

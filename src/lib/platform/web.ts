@@ -2426,6 +2426,24 @@ function makeInvoke(store: SqliteStore) {
       putProfile(store, { ...p, server_url });
       return undefined as T;
     }
+    // ⚠️ **产品决定（2026-09-15）：Web 版不提供多设备同步；但这段实现保留，不要删。**
+    //
+    // 为什么"不提供"而不是"没实现"：`sync_now` / `sync_workspace` / `syncAttachments`（本文件
+    // :896）都是**完整实现**，只是应用在**非 Tauri 平台**（含桌面浏览器与手机浏览器——
+    // `isDesktopPlatform()` 的语义是"有没有 Rust 内核"，见 `platform/index.ts:35-38`）
+    // 把配置入口置灰（`SyncPanel.tsx:523` + `App.css:1222-1227` 的 `pointer-events: none`），
+    // 并在 `SyncPanel.tsx:502` 提示"Web 版同步受浏览器环境限制"。
+    // 根本原因是**浏览器存储会被系统回收**，不适合当唯一副本。
+    //
+    // ⇒ 三条口径（写文档 / 答用户 / 改代码时都按这个）：
+    //   ① 可以说"Web 版**不提供**多设备同步"（这是产品决定）；
+    //   ② **不许**说"Web 版是 stub / 没有实现"——与代码相反（这正是 2026-09-15 修的那处口径错）；
+    //   ③ **别删这段实现**：删了会让平台层不完整、口径退回"没实现"，将来若要开放（先得解决
+    //      浏览器存储被回收的问题）还得重写。
+    //
+    // 触发路径（供判断"这段到底还会不会跑"）：`useAutoSync`（`App.tsx:618`）在 Web 上**仍会**
+    // 调用 `api.syncNow()`，但它只处理**已有 `space_id` 的 profile**（下面 :2432 的 `continue`）；
+    // 而配置入口在所有浏览器里都置灰 ⇒ 只有"历史遗留已配置过 profile"时才会真正走到这里。
     if (cmd === "sync_now") {
       const out: any[] = [];
       for (const profile of listProfiles(store)) {
