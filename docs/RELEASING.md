@@ -361,6 +361,28 @@ scripts/**                         # pnpm build 里串着门禁脚本，改它�
 `apksigner sign`（口令只走 `env:`，不落文件、不进命令行）→ `apksigner verify --print-certs` →
 实测指纹与硬编码常量比对 → 不一致 `exit 1`；Secrets 缺失也**显式报错**，不会退化成"发个未签名包出去"。
 
+> [!] **⚠️ 2026-09-15 实证：这两条流水线曾经"步骤不一致"，代价是 v1.91.0 装上就闪退。**
+>
+> `android.yml` 比 `release.yml` 的 android job **多了两步**：
+> `pnpm android:mobile-shell`（把 `ShuyoFsPlugin.kt` / inset 桥 / 返回键处理注入 `gen/`）与
+> `pnpm android:mobile-shell --check`。`release.yml` 少了它们 ⇒ 发版 APK 里**没有那个类**，
+> 启动时 `register_android_plugin` 抛 `ClassNotFoundException` → SIGABRT，
+> **用户从 1.90.2 应用内更新到 1.91.0 之后直接打不开**（报"安装了，闪退"）。
+> 自检包一直是好的 ⇒ 两条流水线的 CI 全绿 ⇒ 谁也没发现。
+>
+> 三条判据（事后补的，都是机器可跑的）：
+> 1. **步骤清单对齐**：改任一 workflow 后，把两个 android job 的 `- name:` 列表拉出来逐条比
+>    （`Select-String '^\s{6}- name:'`）——"看起来一样"不算。
+> 2. **产物级断言**（已进 `release.yml`）：签名后 `unzip classes*.dex` 再 grep
+>    `ShuyoFsPlugin` / `__SHUYONOTE_INSETS__` / `__SHUYONOTE_BACK__` / `installApk`，
+>    缺一个就 `exit 1`。源码级 `--check` 只能证明"写进了 gen/"，**证明不了"进包了 + R8 没删没改名"**。
+> 3. **发版前真机装一次发版件**（不是自检包）：这次就是"发版件从没被装上过"才漏的。
+>    同日对照（同一判据）：发版件 dex 命中 **0**、自检包命中 **1**。
+>
+> 附带一条：**已发布的 Release 资产不覆盖**（"旧件冒充新件"是明令禁止的），
+> 所以修法只能是发 1.91.1；而已经装坏的用户**打不开应用**，也就用不了应用内更新 ⇒
+> 这一版必须让用户手动装一次（发布页/Release 附件）。
+
 ### 9.2 发版时的判据：怎么确认"这次发的包是对的"
 
 **① CI 侧（三道硬断言，绿了才算）**
