@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
@@ -1975,6 +1975,55 @@ fn record_downloaded_attachment(
     Ok(())
 }
 
+/// P1（2026-09-15）：**附件同步进度**（Rust → 前端）。
+///
+/// ⚠️ **字段名故意用 camelCase，与前端 `useSyncStatus.setProgress` 逐个对齐**
+/// （`phase` / `message` / `attCurrent` / `attTotal` / `attName`）：前端拿到就能直接塞进 store，
+/// 不必在两侧各翻译一次字段名（那正是"改一处忘另一处"的老路）。
+///
+/// 为什么需要它：`web.ts`（Web 引擎）**自己**会 `setProgress`，而桌面 / 安卓走 Rust 命令——
+/// 那条链上原先**一处进度都没有**（全仓 `attCurrent`/`attTotal` 只出现在 `web.ts`），
+/// 于是面板上那段 `N/M` + 进度条**永远收不到数据**：只有 Web 版看得见进度。
+/// 见 `docs/plans/2026-09-15-attachment-sync-scope-plan.md` §4.4。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentSyncProgress {
+    /// 固定 `"attachments"`（与 `SyncPhase` 对齐）。
+    phase: &'static str,
+    /// 人话文案，与 `web.ts` 的两句保持一致（"正在上传附件（3/12）"）。
+    message: String,
+    att_current: usize,
+    att_total: usize,
+    /// 上传侧放 mime、下载侧放 hash 前 8 位（与 `web.ts` 同样处理）。
+    att_name: String,
+}
+
+/// 发一条附件进度。**失败只记一行日志**：进度上报是"锦上添花"，
+/// 它不该让同步本身失败（与 `attachments.rs` 的导入进度同样处理）。
+fn emit_attachment_progress(
+    app: &tauri::AppHandle,
+    direction: &str,
+    current: usize,
+    total: usize,
+    name: &str,
+) {
+    let message = if direction == "up" {
+        format!("正在上传附件（{current}/{total}）")
+    } else {
+        format!("正在下载附件（{current}/{total}）")
+    };
+    let _ = app.emit(
+        "attachment-sync-progress",
+        AttachmentSyncProgress {
+            phase: "attachments",
+            message,
+            att_current: current,
+            att_total: total,
+            att_name: name.to_string(),
+        },
+    );
+}
+
 async fn sync_attachments(
     app: &tauri::AppHandle,
     db: &State<'_, Db>,
@@ -2114,6 +2163,8 @@ async fn sync_attachments(
                 reqwest::Body::wrap_stream(ReaderStream::new(file))
             }
         };
+        // P1：上报进度（放在真正发请求之前，和 `web.ts` 的时机一致）。
+        emit_attachment_progress(app, "up", idx + 1, up_items.len(), &mime);
         let mut req = client
             .post(format!("{att_base}/attachments/{hash}?mime={mime}"))
             .body(body);
@@ -2208,6 +2259,9 @@ async fn sync_attachments(
         // ⚠️ 这条校验和"本地已有就跳过"**都在构造 `down_items` 时用同一个谓词过滤过了**
         // （见上面 `is_valid_attachment_hash(&i.hash) && !local_set.contains(...)`）。
         // 这里不再重复判断：同一件事写两处，改了一处忘了另一处就是 bug。
+        //
+        // P1：上报进度（与 `web.ts` 的时机、文案、字段一致）。
+        emit_attachment_progress(app, "down", idx + 1, down_items.len(), &item.hash[..8.min(item.hash.len())]);
         match download_one_attachment(&client, &att_base, &profile.token, item, &attachments_dir, session_key.as_ref(), db).await {
             Ok(size) => {
                 bytes_downloaded = bytes_downloaded.saturating_add(size.max(0) as u64);

@@ -45,6 +45,7 @@ import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
+import { useSyncProgress } from "./hooks/useSyncProgress";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
@@ -618,6 +619,8 @@ function App() {
   useAutoSync();
   usePresence();
   useSyncStream();
+  // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
+  useSyncProgress();
   const isMobile = useMobile();
   // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。

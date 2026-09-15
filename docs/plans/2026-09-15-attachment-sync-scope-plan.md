@@ -338,29 +338,35 @@ C2 原话是"`src-tauri` 全仓无网络类型能力 ⇒ 需确认 Tauri 2 有�
 
 ---
 
-### 4.4 ⚠️ P1 只做了一半：**结束态有了，进度还没上报**（2026-09-15 核查）
+### 4.4 ✅ P1 两半都补齐了（结束态 + **Rust 侧进度上报**）（2026-09-15）
 
 §4.1 的 P1 是**两件事**：① 修结束态（`begin()` 没有配对的 `end()`）；② 让 **Rust 侧**上报
 `attCurrent/attTotal`，面板才能显示 `N/M` 与进度条。
 
-**① 已完成**（= B2，`f4562cd`）：现在同步结束会有结果文案，不再永远停在"正在同步…"。
+**① 结束态** ✅ = **B2**（`f4562cd`）：同步结束会有结果文案，不再永远停在"正在同步…"。
 
-**② 没做。证据（两次 grep）：**
+**② 进度上报** ✅（2026-09-15 补齐）。补齐前它是**半成品**，证据（两次 grep）曾是：
 
-| 查什么 | 结果 |
+| 查什么 | 当时的结果 |
 |---|---|
-| Rust 全仓有没有 `attCurrent` / `attTotal`（或同义的进度事件） | **一处都没有**（`src-tauri/src` 全仓零命中） |
-| 谁在调 `useSyncStatus.setProgress` | **只有 `src/lib/platform/web.ts`**（Web 引擎）——也就是说**桌面 / 安卓这条链上根本没人上报进度** |
+| Rust 全仓有没有 `attCurrent` / `attTotal` | **一处都没有** |
+| 谁在调 `useSyncStatus.setProgress` | **只有 `web.ts`**（Web 引擎）⇒ 桌面 / 安卓这条链上没人上报 |
 
-⇒ **现象**：桌面 / 安卓点「同步」后，面板上**看不到** `N/M` 计数与附件进度条
-（`SyncPanel.tsx` 那段 UI 一直在，只是永远收不到数据）；只有 **Web 引擎**会填。
-而 P1 的验收原话是"用户第一次**看得见**同步在干什么、有没有结束"——**目前只兑现了后半句**。
+⇒ 现象：桌面 / 安卓点「同步」后**看不到** `N/M` 与附件进度条；只有 Web 引擎会填。
 
-**补法（下次做时按这个顺序）**：Rust 在 `sync_attachments` 的上传 / 下载循环里 emit 一条进度事件
-（形如 `attachment-sync-progress`，字段与 `useSyncStatus.setProgress` 的 `phase/message/attCurrent/attTotal/attName` 对齐），
-前端在 `App.tsx`（或 SyncPanel）`listen` 后写进 `useSyncStatus`——**与 `web.ts` 现在的写法同构**，
-不要另发明一套字段。⚠️ 顺带确认它**不被 P6.1 的"中途关掉开关"打断**：停下时也要把最后一条
-进度发出去，否则进度条会停在半路。
+**补法（就是按当初写下的方案做的）**：
+
+| 层 | 位置 | 内容 |
+|---|---|---|
+| Rust | `sync.rs::AttachmentSyncProgress` + `emit_attachment_progress()` | 每传一件附件前 emit `attachment-sync-progress`；字段 **`#[serde(rename_all = "camelCase")]`**，与前端 store 的 `phase/message/attCurrent/attTotal/attName` 逐个对齐（**不在两侧各翻译一次字段名**）；上传侧 `attName` 放 mime、下载侧放 hash 前 8 位，文案与 `web.ts` 的两句**逐字一致** |
+| 前端 | **新增** `hooks/useSyncProgress.ts`，在 `App.tsx` 与 `useAutoSync` 并列挂载 | 监听后写进 `useSyncStatus.setProgress`。⚠️ **挂 App 级而不是 SyncPanel 里**：自动同步在面板关着时也会跑，进度必须照样被记录 |
+
+⚠️ 有个细节**不需要**额外处理（当初我担心过）：不必在"优雅停止"时补发一条收尾进度——
+面板的进度条只在 `syncStatus.syncing` 为真时渲染，而 `end()`（B2）会把它翻成假并切到结果文案，
+所以停下来的那一刻进度条不会僵在半路。
+
+⚠️ **仍未做真机验收**：这条要装到真机上、同步一个含多个附件的空间才能看见 `N/M` 走动，
+本机没有 Android 构建能力（见 §4.5）。
 
 ---
 
