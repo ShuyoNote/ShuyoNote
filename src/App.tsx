@@ -46,6 +46,7 @@ import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
+import { shouldAutoSyncNow } from "./lib/syncGate";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
@@ -354,6 +355,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
       busy = true;
       (async () => {
         try {
+          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了
+          // `useAutoSync` 里那道检查——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
+          // 判据只有一处实现，见 `lib/syncGate.ts`。
+          if (!(await shouldAutoSyncNow())) return;
           const profiles = await api.listSyncProfiles();
           const bound = (profiles || []).filter((p: any) => p.server_url && p.space_id);
           if (bound.length) {
