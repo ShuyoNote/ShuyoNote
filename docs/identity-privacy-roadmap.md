@@ -23,7 +23,7 @@
 | 编号 | 项 | 优先级 | 依赖 | 说明 |
 |------|----|--------|------|------|
 | K1 | ✅ **服务端签发/作废 `device key`**（Bearer 式，无需用户表）：`sk_` 明文只返回一次、库里只存 SHA-256 指纹、作用域一个空间；认下后以合成主体 `device:<key_id>` 写一行 owner 成员 ⇒ 19 个 `require_space` 调用点零改动；第一把由 CLI 发（`--issue-device-key`），之后可用它走 HTTP 再签发/作废 | ✅ P1 | sync-server auth（✅） | 「持钥即拥有该服务器空间」。2026-09-15 落地，schema **v14**；接口 `GET/POST /spaces/{id}/device-keys` + `.../revoke`（都需 `admin`）；单测 4 条 + 真服务端 curl 端到端验过（发钥→owner 身份→再签→作废后 401）。见私有仓 `docs/api.md`「设备密钥」与 `docs/SYNC_SERVER_STATE.md` 的 K1 小节 |
-| K2 | 客户端「用密钥连个人服务器」流程（SyncPanel 输入/粘贴密钥） | P1 | K1（✅） | 等价现有 `token`，来源=服务端发钥 |
+| K2 | ✅ 客户端「用密钥连个人服务器」：SyncPanel 的「高级：手动填令牌 / 设备密钥」直接贴 `sk_…`（**不需要注册/登录**），文案与提示已写清"服务端 CLI 签发、只显示一次、丢了重签"；`scripts/sync-regression.mjs` 新增 `--device-key` 模式（跳过注册，改为问出空间并断言身份是 `owner`），并由服务端仓 CI 自动跑 | ✅ P1 | K1（✅） | 等价现有 `token`，来源=服务端发钥。2026-09-15 本机实测：设备密钥 **15 通过 / 0 失败**，账号制那条路 **14 / 0** 无回归 |
 
 ## 4. 本地静置加密（P1/P2，较大）—— §5 at-rest
 

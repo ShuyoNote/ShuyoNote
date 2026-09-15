@@ -737,16 +737,24 @@ export function SyncPanel() {
                     </div>
                   )}
 
-                  {/* 手动令牌是老配置法的后路，默认收起，避免面板一眼全是输入框。 */}
+                  {/* 手动令牌是老配置法的后路，默认收起，避免面板一眼全是输入框。
+                      两用途：① 团队版临时贴一个会话 token；② **「个人自建同步」那一档**
+                      （服务端由自己部署、没有账号）—— 把服务端 CLI 签发的那把 `sk_…` 设备密钥
+                      贴进来即可，**不需要注册/登录**（服务端侧见 sync-server 的 K1：
+                      `--issue-device-key`，持钥即拥有该空间）。 */}
                   <details className="sync-advanced">
-                    <summary>高级：手动填令牌{r.token ? "（已获取）" : ""}</summary>
+                    <summary>高级：手动填令牌 / 设备密钥{r.token ? "（已填）" : ""}</summary>
                     <input
                       className="sync-input"
                       type="password"
                       value={r.token}
-                      placeholder="组织 token"
+                      placeholder="组织 token，或个人自建部署签发的 sk_ 密钥"
                       onChange={(e) => update(r.ws_id, "token", e.target.value)}
                     />
+                    <div className="sync-hint">
+                      自己部署服务端（无账号）时：在服务器上跑
+                      <code> --issue-device-key</code> 拿到一串 <code>sk_…</code>，贴到这里即可；丢了只能重新签发。
+                    </div>
                   </details>
 
                   <div className="sync-card-actions">
