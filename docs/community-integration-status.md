@@ -24,7 +24,12 @@
 - **Windows**：注册表串在 NSIS 的**压缩脚本块**里，`grep` 安装包读不到（要 7-Zip 解 NSIS 才行），
   所以那一档靠源码级四查（`scripts/check-deep-link.mjs`）+ **真机三步验证**；本项目没有在 macOS 上
   直接读 Windows 安装包内注册表串的手段，这一点如实记着。
-- **macOS**：还没发布桌面版（缺 Apple 签名/公证凭据），所以协议注册无从验证。
+- **macOS**：桌面版仍未发布（Apple 证书刚到位、secrets 待配），但**协议注册已在系统层验过**
+  （2026-09-15，未签名的本机构建）：产物 `ShuyoNote.app/Contents/Info.plist` 里有
+  `CFBundleURLTypes → CFBundleURLSchemes = shuyonote`，`lsregister -dump` 对该 bundle 报
+  `claimed schemes: shuyonote:` ⇒ macOS 会把 `shuyonote://` 路由到本应用。
+  这条现有门禁守着：`pnpm check:macos-bundle`（`.github/workflows/macos.yml` 每次 push 跑）。
+  **仍未验**的是"应用内部真的收到了这个 URL"——那要等签名版装上后点一次链接触发，如实记着。
 
 ## 二、把社区内容拿回来（`save`）
 
