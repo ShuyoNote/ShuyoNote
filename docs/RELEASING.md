@@ -180,6 +180,21 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 
 **发布后自检**（自动检查之外的兜底）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
 
+上面这句现在有命令了 —— **`pnpm check:release-state`**（`scripts/check-release-state.mjs`）。
+它一次核对五件事，全部是"能挡住真实事故"的：
+
+| 检查 | 挡住的是 |
+|---|---|
+| 通道 `version` = `package.json` 版本 | "发了但通道没更新"（用户永远收不到） |
+| 每个平台键的 `url` 是绝对 https、`signature` 非空；android 必须是 `sha256:<64 hex>` | 少一个字段 ⇒ `tauri-plugin-updater` 解析**整份清单**失败 ⇒ 桌面更新通道一起挂 |
+| 每个产物 URL 真的可达（`-r 0-0` 取 1 字节，**不用 HEAD**：gitcode 对 HEAD 一律 401） | 通道指向 404 的包 |
+| **通道里 android 的 `sha256` = GitHub Release 上那份 `.apk.sha256`** | "通道指向的字节根本不是我们记录过指纹的那个"（发错件/传串了） |
+| 两个 Web 入口的 `version.json` = 当前版本 | "主站静默停在旧版本"（历史事故：主站 1.84.5、Pages 1.89.0） |
+
+> 网络失败与"真的不符"**分开报**：取不到 `.sha256` 时打印 `· 跳过（网络原因）`，
+> 只有真的读到指纹且不一致才红 —— 否则 GitHub 抽风会被误当成"发错包了"。
+> 它**不进 `pnpm build`**（要对线上发请求，不适合构建期跑），是发版当天的手工命令。
+
 ## ⑦ Web 版（**必做**，两个入口都要）
 
 > 为什么从"可选"改成"必做"：它从 v1.84.5 起就没人跟了——本次（v1.89.0）自检发现

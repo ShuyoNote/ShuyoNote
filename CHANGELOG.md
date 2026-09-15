@@ -5,6 +5,15 @@
 ## [Unreleased]
 
 ### 新增
+- **`scripts/check-release-state.mjs`（发布后自检，一条命令）**（2026-09-15）：`pnpm check:release-state`。
+  一次核对：通道版本 = 仓库版本；每个平台键的 url 是绝对 https 且 signature 非空
+  （android 必须是 `sha256:<64 hex>`）；每个产物 URL 真的可达（`-r 0-0` 取 1 字节探活——
+  **不能**用 HEAD，gitcode 对 HEAD 一律 401）；**通道里 android 的 sha256 = GitHub Release 上
+  那份 `.apk.sha256`**；两个 Web 入口的 `version.json` = 当前版本。历史上这些全靠手工看，
+  出过"主站静默停在 1.84.5"和"线上 APK 是坏的（装上闪退）而版本号自检全绿"两种事故。
+  网络失败与"真的不符"分开报（取不到 `.sha256` 只打印"跳过（网络原因）"），
+  它**不进 `pnpm build`**（要对线上发请求），是发版当天的手工命令。详见 [RELEASING.md](docs/RELEASING.md) §⑥。
+
 - **`scripts/check-release-parity.mjs`（两条 Android 流水线的步骤一致性门禁）**（2026-09-15）：
   `pnpm check:release-parity`，已串进 `pnpm build`。它把 `android.yml`（自检包）与
   `release.yml` 的 `android` job 的 `- name:` 归一化后逐一比对，**只出现在一边的步骤必须

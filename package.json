@@ -13,6 +13,7 @@
     "check:changelog": "node scripts/check-changelog.mjs",
     "check:workflow-yaml": "node scripts/check-workflow-yaml.mjs",
     "check:release-parity": "node scripts/check-release-parity.mjs",
+    "check:release-state": "node scripts/check-release-state.mjs",
     "check:overlays": "node scripts/check-overlay-registry.mjs",
     "check:ocr-assets": "node scripts/check-ocr-assets.mjs",
     "check:web-commands": "node scripts/check-web-commands.mjs",
