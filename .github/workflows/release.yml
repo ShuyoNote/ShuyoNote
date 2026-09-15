@@ -283,6 +283,21 @@ jobs:
         # 它改的就是 init 刚生成出来的 `app/build.gradle.kts`，漏了这一步构建照样绿。
         run: pnpm android:platform-verifier
 
+      - name: 注入 Android 壳适配层（窗口 inset 桥 + 返回键 + 选择器/安装插件）
+        # ⚠️⚠️ **v1.91.0 的闪退就是漏了这两步**（用户报"安装了，闪退"）：
+        # 这两步原先只在 `android.yml`（自检包）里有，`release.yml`（发版件）**没有** ⇒
+        # 发版 APK 里根本没有 `ShuyoFsPlugin` 类，启动时 `register_android_plugin` 直接
+        # `ClassNotFoundException` → SIGABRT **装完就打不开**；顺带还少了 inset 桥与返回键处理。
+        # 自检包一直是好的 ⇒ **CI 全绿**，正是 §9.1"自检包 ≠ 发版件"要防的那件事。
+        # 真机证据：`adb logcat -b crash` 里 `Caused by: java.lang.ClassNotFoundException:
+        # cn.shuyo.shuyonote.ShuyoFsPlugin`；产物级对照（同一方法）：
+        #   发版件 dex 里 `ShuyoFsPlugin` 命中 0 / 自检包命中 1。
+        run: pnpm android:mobile-shell
+
+      - name: 自检：壳适配层确实注入了
+        # 与 android.yml 逐字一致：gen/ 不入库，漏注入只有真机 release 看得见。
+        run: pnpm android:mobile-shell --check
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
@@ -350,6 +365,32 @@ jobs:
               sys.exit(1)
           print("✅ ABI 恰为 arm64-v8a")
           PY
+
+      - name: 断言发版 APK 的 dex 里真的有壳适配层（**v1.91.0 闪退的产物级判据**）
+        # 为什么断言在**产物字节**上、而不是只跑源码级 `--check`：
+        # 源码级 check 只能证明"gen/ 里写进去了"，证明不了"进包了 + R8 没删/没改名"，
+        # 而 v1.91.0 恰恰是"源码在、包里的类没了"（release.yml 漏了注入步骤）⇒ 装完闪退。
+        # 所以这里直接翻已签名 APK 的 dex：**类名、两个 JS 桥名、@Command 方法名**都在才算过。
+        # 每一条都对应一个真实能力，缺了都只表现为"真机上某个功能静默没了"：
+        #   ShuyoFsPlugin        → 启动注册插件（缺了 = 直接闪退）
+        #   __SHUYONOTE_INSETS__ → 状态栏/手势条 inset 桥（缺了 = 顶部回到触摸死区）
+        #   __SHUYONOTE_BACK__   → 返回键先关浮层（缺了 = 返回键直接退出应用）
+        #   installApk           → 应用内更新把 APK 交给系统安装器（缺了 = 点了没反应）
+        run: |
+          set -e
+          cd "$RUNNER_TEMP"
+          rm -rf apkchk && mkdir apkchk && cd apkchk
+          unzip -o -q "$RUNNER_TEMP/shuyonote-aarch64-signed.apk" 'classes*.dex'
+          ls -l classes*.dex
+          for s in ShuyoFsPlugin __SHUYONOTE_INSETS__ __SHUYONOTE_BACK__ installApk; do
+            if ! grep -q -- "$s" classes*.dex; then
+              echo "❌ 发版 APK 的 dex 里找不到 \`$s\` —— 这个包装上会闪退或丢功能，不能发。"
+              echo "   先查 release.yml 的 android job 有没有漏 \`pnpm android:mobile-shell\`（v1.91.0 就是这么炸的）。"
+              exit 1
+            fi
+            echo "✓ dex 含 $s"
+          done
+          echo "✅ 壳适配层确实进了发版 APK"
 
       - name: 改名成可辨识的发版文件名
         # 与自检包（`android-apk-aarch64-signed-test-hooks`）**一眼可分**：

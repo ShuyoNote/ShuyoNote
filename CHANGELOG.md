@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [1.91.1] - 2026-09-15
+
+> 修掉 1.91.0 的**发版 APK 装上就闪退**（用户报"安装了，闪退"）。只影响 Android 发版件；
+> 桌面与 Web 不受影响，1.91.0 的内容全在。
+
+### 修复
+- **Android 发版 APK 启动即崩（`ClassNotFoundException: cn.shuyo.shuyonote.ShuyoFsPlugin`）**。
+  根因不是代码，是**发版流水线漏了一步**：`android.yml`（自检包）里有
+  `pnpm android:mobile-shell`（把 `ShuyoFsPlugin.kt`、inset 桥、返回键处理注入 `gen/`），
+  而 `release.yml`（发版件）**没有**这两步 ⇒ 打出来的 APK 里根本没有那个类，
+  启动时 `register_android_plugin` 直接抛异常 → SIGABRT，**装完就打不开**
+  （顺带还少了状态栏 inset 桥与返回键先关浮层）。
+  自检包一直是好的，所以 **CI 全绿**——正是 runbook §9.1"自检包 ≠ 发版件"要防的那类事。
+  真机证据：`adb logcat -b crash` 的 `Caused by: java.lang.ClassNotFoundException: …ShuyoFsPlugin`；
+  产物级对照（同一判据）：**发版件 dex 里 `ShuyoFsPlugin` 命中 0 / 自检包命中 1**。
+  修法：`release.yml` 的 android job 补上注入与 `--check`（与 `android.yml` 逐字一致），
+  并**新增一条产物级断言**——构建后直接翻已签名 APK 的 dex，要求
+  `ShuyoFsPlugin`、`__SHUYONOTE_INSETS__`、`__SHUYONOTE_BACK__`、`installApk` 四个字符串都在，
+  缺任何一个直接失败。为什么断言在产物字节上：源码级 `--check` 只能证明"写进了 gen/"，
+  证明不了"进包了 + R8 没删没改名"，而这次恰恰是后者。
+  1.91.0 的 APK 资产**不覆盖**（保留原样，避免"旧件冒充新件"），发 1.91.1 修掉。
+  详见 [MOBILE.md](docs/MOBILE.md) §2.6 与 [RELEASING.md](docs/RELEASING.md) §9.1。
+
 ## [1.91.0] - 2026-09-15
 
 > **移动端可用性收口**：这一版把"手机上真的用得了"这件事做完——**PDF 在手机上从打不开到能看能点**
