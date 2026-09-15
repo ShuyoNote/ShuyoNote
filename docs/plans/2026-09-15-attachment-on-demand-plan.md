@@ -78,7 +78,7 @@
 | 2 | `src-tauri/src/db.rs`（迁移区，约 `:484-508`） | **加一段带守卫的 `ALTER TABLE`**（**供已有库**）；守卫写法照抄 `:492-499` 的 `pragma_table_info` 计数模式 | `:492-499` |
 | 3 | `src-tauri/src/sync.rs:319-330` | `SyncProfile` 加字段 + `PROFILE_COLS` 加列名 ⇒ **必须追加在最后**，否则 `row_to_profile`（`:332-341`）的下标全要改 | `:329-341` |
 | 4 | `src-tauri/src/sync.rs:403-411` | `set_profile_field` 的 `field` **是格式化进 SQL 的**（今天靠注释声明"只传常量"）⇒ 新增字段**必须同时把它纳入白名单**；⚠️ **建议顺手把"注释约定"改成显式 allowlist 校验**（`field` 来自命令入参的可能性一旦出现就是注入面） | `:403-411` 原文 |
-| 5 | `src-tauri/src/sync.rs:1496+` | `sync_attachments`：**开头读该 profile 的开关，关掉则跳过第 3/4 步**（上传与下载），但**照旧返回 `att_items` 为空数组**，不要报错 | `:1514-1690` |
+| 5 | `src-tauri/src/sync.rs:1496+` | `sync_attachments`：**开头读该 profile 的开关，关掉则跳过第 3/4 步**（上传与下载），但**照旧返回 `att_items` 为空数组**，不要报错。**§十.1 已证明这是客户端唯一取字节的入口 ⇒ 在这里早退就等于"关干净"** | `:1514-1690`；§十.1 |
 | 6 | `src/lib/platform/commands.ts:69`、`:353` | `SyncProfile` 接口加字段；`set_sync_profile` 的 `args` 加可选字段（如 `syncAttachments?: boolean`） | `:69`、`:353` |
 | 7 | `src/lib/platform/web.ts:646`、`:653`、`:2540`、`:896` | **同构改动**：`EMPTY_PROFILE`、`putProfile` 的 SQL、`set_sync_profile` 分支、`syncAttachments` 早退 | 四处均已存在 |
 | 8 | `src/components/SyncPanel.tsx` | 每个 profile 行加开关（`EditRow` 已在管理 profile 字段）+ 保存时一并提交 | `:523` 起的面板 |
@@ -151,8 +151,24 @@
 
 ## 十、动手前必须先验（别当已证）
 
-1. **`sync_attachments` 之外还有没有别的地方在拉附件字节**——本文只核到 `sync.rs:1531-1690`
-   与 `attachments.rs` 的读取路径；**没有全仓负向排查**"还有谁在下载字节"。
+1. ✅ **已排查（2026-09-15）：「`sync_attachments` 之外还有谁在拉附件字节」= 没有。**
+   **三步穷举（不是抽样）**：
+
+   | 步骤 | 范围 | 结果 |
+   |---|---|---|
+   | ① 所有 `/attachments` URL 构造点 | Rust 全仓 **5 处** | `sync.rs:1515`（列出）/`:1602`（上传）/`:1641`（**下载**）**全在 `sync_attachments` 内**；第 5 处 `workspace_io.rs:191` 是**本地 zip 条目名**、不是 URL |
+   | ② 所有 HTTP 客户端 | Rust `reqwest::Client::new()` 共 **53 处**，**全部在 `sync.rs`** | 只有四类端点：`/auth/*`+`/spaces*`+`/orgs*`（团队管理）、`POST /push`（变更日志）、`presence`/`online`/`comments`/`notifications`（协作，`:1749-1828`）、**附件三处（同上）**。TS 侧 `attachmentByteDownload`（唯一取字节的函数）**只有 1 个调用点**：`web.ts:970`（在 `syncAttachments` 内）；`attachmentByteUpload` 同理只有 `:951` |
+   | ③ 所有"把字节写进本地附件库"的点 | `blobStore.put` 共 **9 处** | 命令入参（`api.ts:369`、`web.ts:2010`）、前端传图（`:1825` `save_image`）、用户导入（`:1905` `import_attachment_files`）、备份/空间包导入（`:2924`、`:3051`）、一次性哈希迁移（`:1000`）、同步内（`:937`、`:972`）⇒ **只有 `:972` 来自远端** |
+
+   ⇒ **结论：客户端拉附件字节只有一条路**（`sync_attachments` / `syncAttachments`）。
+   ⇒ **对 P6.1 的意义：开关只需在这两处早退即可"关干净"**，不存在"关了这里、别处还在拉"的漏口。
+   另补一条边界：**SSE 不会绕过开关带字节**——`useSyncStream.ts:41` 收到推送后是
+   **调用 `api.syncWorkspace(...)`**（即走同一条 `sync_attachments`），**不是把 payload 当字节存下来**；
+   且它是 **Web 专属**（`:15` 桌面直接 return）⇒ 关掉开关后 SSE 只会触发一次"空跑的同步"。
+
+   ⚠️ **本次排查的边界**：覆盖 `ShuyoNote` 客户端（Rust + TS）的**取字节与写字节路径**；
+   **未**核对"服务端会不会在客户端没请求时主动推字节"（服务端是 axum 请求/响应式，
+   按构造只应回应 GET；但这条是**推断，未逐路由核对**）。
 2. **`set_sync_profile` 现在允许传入哪些字段、有没有被别处调用**（改 args 前要确认没有破坏
    现有调用点；`web.ts:2540` 与 Rust `:420` 两侧都要看）。
 3. **`SyncPanel` 的 profile 行当前如何持久化**（改 UI 前先读 `EditRow` 的保存路径，
