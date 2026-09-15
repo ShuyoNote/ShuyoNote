@@ -82,6 +82,12 @@ node scripts/release.mjs --no-build
 > 判据在 `scripts/lib/releaseArtifacts.test.mjs`（`platformKeysFor` 与 `manifestPicks` 各有用例；
 > 变异自证：把 `manifestPicks` 改回按主键归组 ⇒ 该用例红）。
 > 出包方式二选一即可：要么分别出 `x64`/`aarch64` 两个 dmg（各占各的键），要么出一个 universal dmg（占两个键）。
+>
+> ⚠️ **注意架构覆盖**：`release.yml` 的 `macos-latest` runner 是 **arm64**，默认只出
+> `..._aarch64.dmg` ⇒ 清单里只有 `darwin-aarch64` ⇒ **Intel Mac 收不到更新**（同样是静默的）。
+> 要覆盖 Intel，就在同一个 job 里加一次 `--target x86_64-apple-darwin`（产出 `..._x64.dmg`，
+> 与 aarch64 那份各占一个键），或直接出一个 universal dmg。**这是产品决定**（要不要支持 Intel Mac），
+> 不是脚本能替你定的——所以这里只把两条路的代价写清楚，不做强制。
 
 ## 六、CI（方案 A：GitHub Actions）
 `.github/workflows/release.yml` 里 macOS job 已预留 `APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD/APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID`；在 GitHub 仓库配好 **secrets**（上述 5 项）后，**解开第 26 行矩阵注释**，打 `v*` tag 即自动打三平台（含 mac 签名+公证）。**macOS 矩阵当前仍注释，等 secrets 就位再解开**。
