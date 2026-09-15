@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 新增
+- **`scripts/check-release-parity.mjs`（两条 Android 流水线的步骤一致性门禁）**（2026-09-15）：
+  `pnpm check:release-parity`，已串进 `pnpm build`。它把 `android.yml`（自检包）与
+  `release.yml` 的 `android` job 的 `- name:` 归一化后逐一比对，**只出现在一边的步骤必须
+  落进脚本里那张显式允许表并写明理由**，否则红；豁免表里写了而实际不存在的条目也会红
+  （防止表腐化）。存在的理由就是 v1.91.0 那次闪退：自检包有的注入步骤，发版件漏了，
+  两条流水线的 CI 全绿，直到用户装上才发现。变异自证：删掉那两步 ⇒ **3 条红**并逐条点名。
+  见 [RELEASING.md](docs/RELEASING.md) §9.1。
+
 ## [1.91.1] - 2026-09-15
 
 > 修掉 1.91.0 的**发版 APK 装上就闪退**（用户报"安装了，闪退"）。只影响 Android 发版件；

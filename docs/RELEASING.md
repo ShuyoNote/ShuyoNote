@@ -371,8 +371,13 @@ scripts/**                         # pnpm build 里串着门禁脚本，改它�
 > 自检包一直是好的 ⇒ 两条流水线的 CI 全绿 ⇒ 谁也没发现。
 >
 > 三条判据（事后补的，都是机器可跑的）：
-> 1. **步骤清单对齐**：改任一 workflow 后，把两个 android job 的 `- name:` 列表拉出来逐条比
->    （`Select-String '^\s{6}- name:'`）——"看起来一样"不算。
+> 1. **步骤清单对齐** —— 已经变成门禁：`pnpm check:release-parity`
+>    （`scripts/check-release-parity.mjs`，串在 `pnpm build` 里）。
+>    它把两个 android job 的 `- name:` 归一化后逐一比对，**任何只出现在一边的步骤都必须
+>    落在脚本里那张显式允许表里并写明理由**，否则 push 时就红；表里写了但实际不存在的条目
+>    也会红（防止豁免表腐化成"看着豁免过、其实早没了"）。
+>    变异自证：把 `pnpm android:mobile-shell` 那两步从 `release.yml` 删掉 ⇒ **3 条红**，
+>    逐条点名缺的步骤名（等于复现 v1.91.0）。
 > 2. **产物级断言**（已进 `release.yml`）：签名后 `unzip classes*.dex` 再 grep
 >    `ShuyoFsPlugin` / `__SHUYONOTE_INSETS__` / `__SHUYONOTE_BACK__` / `installApk`，
 >    缺一个就 `exit 1`。源码级 `--check` 只能证明"写进了 gen/"，**证明不了"进包了 + R8 没删没改名"**。

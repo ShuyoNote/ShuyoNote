@@ -292,6 +292,7 @@ jobs:
         # 真机证据：`adb logcat -b crash` 里 `Caused by: java.lang.ClassNotFoundException:
         # cn.shuyo.shuyonote.ShuyoFsPlugin`；产物级对照（同一方法）：
         #   发版件 dex 里 `ShuyoFsPlugin` 命中 0 / 自检包命中 1。
+        # 现在还有一道机器判据兜底：`pnpm check:release-parity`（见 scripts/check-release-parity.mjs）。
         run: pnpm android:mobile-shell
 
       - name: 自检：壳适配层确实注入了
