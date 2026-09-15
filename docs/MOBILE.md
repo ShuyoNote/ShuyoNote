@@ -740,8 +740,10 @@ DownloadManager，用户还得自己去文件管理器点安装（三步，中�
 | 位置 | 内容 | 漏了会怎样 |
 |---|---|---|
 | `ShuyoFsPlugin.kt` | `@Command fun installApk`（`FileProvider.getUriForFile` + `ACTION_VIEW`） | 点"安装"静默没反应 |
+| `ShuyoFsPlugin.kt` | `@Command fun networkType`（`ConnectivityManager` + `TRANSPORT_WIFI`/`TRANSPORT_CELLULAR`） | C2 的「仅 Wi-Fi 下自动同步」永远拿不到真值（Rust 侧回 `unknown` ⇒ 按 fail-safe **不自动拉取**，表现为"自动同步不动了"） |
 | `app/shuyo-fs.pro` | `-keep …InstallApkArgs` | **CI 全绿、release 真机上** `parseArgs` 反序列化不出来 |
 | `AndroidManifest.xml` | `REQUEST_INSTALL_PACKAGES` + `FileProvider`（authority `${applicationId}.fileprovider`） | 抛 `FileUriExposedException` / 根本装不了 |
+| `AndroidManifest.xml` | `ACCESS_NETWORK_STATE`（C2；**普通权限，安装即授予、不弹窗**） | `activeNetwork` 查询抛 `SecurityException` ⇒ 同上，退化成 `unknown` |
 | `res/xml/shuyo_file_paths.xml` | `<cache-path name="updates" path="updates/" />` | `getUriForFile` 抛 `IllegalArgumentException` |
 
 `--check` 现在**同时**核这 4 样 + Rust↔Kotlin 的**每一个**命令名（不只是第一个——`pickedFileInfo`

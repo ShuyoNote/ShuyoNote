@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -34,6 +34,11 @@ const relTime = (ts: number) => {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 const fmtDuration = (ms: number) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " 秒";
+/** C1：本次下载量说成人话（只用来展示，精度不重要）。 */
+const fmtMb = (bytes: number) => {
+  const mib = bytes / (1024 * 1024);
+  return mib >= 1 ? `${mib.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+};
 
 interface ServerSpace {
   id: string;
@@ -99,6 +104,12 @@ export function SyncPanel() {
   };
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
+  // C1 预算刹车：设备级设置（null = 还没读到，此时不渲染这一块）。
+  const [budget, setBudget] = useState<SyncBudget | null>(null);
+  const [budgetBusy, setBudgetBusy] = useState(false);
+  // C2 网络闸门：当前网络类型。**用真实查询结果当"这台机器支不支持这条闸门"的判据**，
+  // 而不是拿 UA / 平台名去近似（`network_type` 在非 Android 上回 `"n/a"` = 不适用）。
+  const [netKind, setNetKind] = useState<string>("n/a");
   // 实时同步状态（正在推送/拉取/附件进度），由同步引擎在 web.ts 上报。
   const syncStatus = useSyncStatus();
   const [loggingIn, setLoggingIn] = useState(false);
@@ -173,6 +184,30 @@ export function SyncPanel() {
     }
   };
 
+  // C1/C2：读设备级预算与当前网络类型。**失败不弹错**——这两个是"锦上添花"的设置，
+  // 读不到时面板少一块，但同步本身照样能用。
+  const refreshBudget = async () => {
+    const [b, kind] = await Promise.all([
+      api.getSyncBudget().catch(() => null),
+      api.networkType().catch(() => "n/a"),
+    ]);
+    if (b) setBudget(b);
+    setNetKind(kind || "n/a");
+  };
+
+  // C1：写预算。⚠️ 用**返回值**刷新自己——磁盘余量下限**不可关**，Rust 侧会把不合法的值夹回去
+  // （比如传 0 会回 256）。不采纳返回值的话，界面会显示一个数据库里并不存在的数。
+  const saveBudget = async (next: SyncBudget) => {
+    setBudgetBusy(true);
+    try {
+      setBudget(await api.setSyncBudget(next));
+    } catch (e) {
+      setStatus(`同步预算保存失败：${e}`);
+    } finally {
+      setBudgetBusy(false);
+    }
+  };
+
   // 同步历史（最新 15 条）。
   const loadHistory = async () => {
     try {
@@ -195,7 +230,11 @@ export function SyncPanel() {
   };
 
   useEffect(() => {
-    if (open) void refresh();
+    if (open) {
+      void refresh();
+      // C1/C2 的设备级设置与网络类型（与 profile 列表分开读：它们失败也不该让面板空白）。
+      void refreshBudget();
+    }
     // 打开面板 / 切换活动空间 / 空间列表变化时，都刷新到当前活动空间。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, activeId, spaces]);
@@ -236,15 +275,27 @@ export function SyncPanel() {
         // ⚠️ 停止时文案**不能出现"同步完成"**（§六 验收 #8 明确要求"因开关关闭而停止"
         // 而不是"同步完成"）——否则用户以为附件也都对齐了。
         // "未上传 N 个 / 未下载 M 个"来自引擎的两份清单差集（§六 验收 #4）。
-        const pending = [
+        const bits = [
           res.attachments_skipped_upload > 0 ? `未上传 ${res.attachments_skipped_upload} 个` : "",
           res.attachments_skipped_download > 0 ? `未下载 ${res.attachments_skipped_download} 个` : "",
+          // C1：被单文件阈值挡下的（不是"停止"，是"轮不到"）。
+          res.attachments_skipped_too_large > 0 ? `${res.attachments_skipped_too_large} 个超过单文件上限` : "",
+          // C1：**本该传但没传成**的——必须单独说，否则就是静默丢件。
+          res.attachments_failed > 0 ? `${res.attachments_failed} 个传输失败` : "",
+          res.attachments_bytes_downloaded > 0 ? `本次下载 ${fmtMb(res.attachments_bytes_downloaded)}` : "",
         ].filter(Boolean).join(" / ");
-        const att = pending ? `（附件 ${pending}）` : "";
+        const att = bits ? `（${bits}）` : "";
+        // C1：停止原因要说清是**哪一种**——"附件同步已关闭"和"磁盘要满了"对用户是两件事。
+        const stopReason =
+          res.attachments_paused_reason === "disk_floor"
+            ? "同步已停止：磁盘余量低于下限（可在下方调低「磁盘余量下限」）"
+            : res.attachments_paused_reason === "run_cap"
+              ? "同步已停止：已达「本次下载总量上限」"
+              : "同步已停止：途中关闭了附件同步";
         setStatus(
           res.attachments_paused
-            ? `「${r.name}」同步已停止：途中关闭了附件同步，已传完的附件保留${att}；上传 ${res.pushed} / 拉取 ${res.pulled}`
-            : pending
+            ? `「${r.name}」${stopReason}，已下载的附件保留${att}；上传 ${res.pushed} / 拉取 ${res.pulled}`
+            : bits
               ? `「${r.name}」同步完成${att}：上传 ${res.pushed} / 拉取 ${res.pulled}`
               : `「${r.name}」同步完成：上传 ${res.pushed} / 拉取 ${res.pulled}`,
         );
@@ -861,6 +912,79 @@ export function SyncPanel() {
                 <option value="300000">每 5 分钟</option>
               </select>
             </div>
+
+            {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
+                与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
+            {netKind !== "n/a" && (
+              <label className="sync-att sync-net">
+                <input
+                  type="checkbox"
+                  checked={budget?.wifi_only ?? true}
+                  disabled={budgetBusy}
+                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
+                />
+                <span className="sync-att-text">
+                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
+                  <span className="sync-hint">
+                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {/* C1 预算刹车：磁盘余量下限是**硬性**的（没有"关闭"选项）。 */}
+            {budget && (
+              <details className="sync-advanced sync-budget">
+                <summary>同步预算（磁盘余量 / 单文件上限 / 本次上限）</summary>
+                <div className="sync-budget-row">
+                  <span className="sync-auto-label">磁盘余量下限</span>
+                  <select
+                    className="sync-input"
+                    value={String(budget.disk_floor_mb)}
+                    disabled={budgetBusy}
+                    onChange={(e) => void saveBudget({ ...budget, disk_floor_mb: Number(e.target.value) })}
+                  >
+                    <option value="256">256 MB</option>
+                    <option value="512">512 MB</option>
+                    <option value="1024">1 GB</option>
+                    <option value="2048">2 GB</option>
+                    <option value="5120">5 GB</option>
+                  </select>
+                </div>
+                <div className="sync-budget-row">
+                  <span className="sync-auto-label">单文件上限</span>
+                  <select
+                    className="sync-input"
+                    value={String(budget.max_file_mb)}
+                    disabled={budgetBusy}
+                    onChange={(e) => void saveBudget({ ...budget, max_file_mb: Number(e.target.value) })}
+                  >
+                    <option value="0">不限</option>
+                    <option value="50">50 MB</option>
+                    <option value="100">100 MB</option>
+                    <option value="500">500 MB</option>
+                  </select>
+                </div>
+                <div className="sync-budget-row">
+                  <span className="sync-auto-label">本次下载上限</span>
+                  <select
+                    className="sync-input"
+                    value={String(budget.max_run_mb)}
+                    disabled={budgetBusy}
+                    onChange={(e) => void saveBudget({ ...budget, max_run_mb: Number(e.target.value) })}
+                  >
+                    <option value="0">只报告，不拦</option>
+                    <option value="500">500 MB</option>
+                    <option value="1024">1 GB</option>
+                    <option value="5120">5 GB</option>
+                  </select>
+                </div>
+                <p className="sync-hint">
+                  余量低于下限、或超过单文件上限的附件会停在安全的地方：已经下载的字节全部保留，
+                  下次同步接着下（按内容寻址，不会重复下）。磁盘余量下限不可关闭。
+                </p>
+              </details>
+            )}
             {syncStatus.syncing ? (
               <div className={`sync-status is-progress${syncStatus.phase === "error" ? " is-err" : ""}`}>
                 <div className="sync-progress-row">

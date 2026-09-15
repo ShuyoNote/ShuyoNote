@@ -90,6 +90,15 @@ encoding_rs = "0.8"
 # For async integration tests (embed_text network round-trip / search_semantic ranking).
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
+# C1 预算刹车的**硬性磁盘余量闸门**要问"这个卷还剩多少"：`std` 没有这个 API，
+# 而 `sysinfo` / `fs4` / `fs2` **都不在依赖树里**（查过 Cargo.lock）⇒ 引一个只为
+# 一次系统调用而存在的新包不划算。`windows-sys` 本来就在 lockfile 里
+# （随 tauri/tokio 进来，见 `0.61.2`），这里只是**显式声明**并用它调
+# `GetDiskFreeSpaceExW`；Unix/Android 那一侧用同样已在依赖树里的 `libc`（`statvfs`）。
+# 实现与取舍见 `src/disk.rs`。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 # Android 专属：**SQLCipher 需要一个加密后端**，这里用 libsqlite3-sys 官方提供的
 # vendored-openssl 变体，从源码构建 OpenSSL（借助 NDK 的 clang + Perl），并静态链接 libcrypto。
 # features 是可累加的，故这里与 [dependencies] 中的声明合并后仅对 Android 生效。

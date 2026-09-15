@@ -107,6 +107,36 @@ pub(crate) fn picked_file_info(app: &tauri::AppHandle, uri: &str) -> Option<Pick
     }
 }
 
+/// Kotlin 那边 `networkType` 命令的返回（C2 网络闸门）。
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+pub(crate) struct NetworkTypeInfo {
+    /// `wifi` / `cellular` / `ethernet` / `other` / `none` / `unknown`（Kotlin 侧见
+    /// `currentNetworkKind`；任何异常都退化成 `unknown`）。
+    #[serde(default)]
+    pub kind: String,
+}
+
+/// C2：问一次系统当前网络类型。**失败返回 `None`**（调用方把它当 `unknown`，
+/// 由前端按"不确定 ⇒ 不自动拉取"处理——这个方向是刻意选的 fail-safe）。
+///
+/// 与 `picked_file_info` 共用同一个已注册的插件句柄：**不新开插件**。
+/// Kotlin 侧的 `networkType` 与这里的命令名由 `scripts/android-mobile-shell.mjs --check`
+/// 一起核（它会把全部 `run_mobile_plugin` 命令名与 Kotlin 的 `fun <name>(` 对齐）。
+pub(crate) fn network_type(app: &tauri::AppHandle) -> Option<String> {
+    let fs = app.try_state::<ShuyoFs>()?;
+    match fs
+        .0
+        .run_mobile_plugin::<NetworkTypeInfo>("networkType", serde_json::json!({}))
+    {
+        Ok(info) => Some(info.kind),
+        Err(e) => {
+            // 与 picked_file_info 同样只记一行：这条失败**不是错误**，它只是"问不到"。
+            eprintln!("[net] 问系统「现在是什么网络」失败：{e}");
+            None
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 struct InstallApkPayload<'a> {
     path: &'a str,

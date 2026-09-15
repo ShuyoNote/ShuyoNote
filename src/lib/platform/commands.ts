@@ -91,6 +91,29 @@ export interface WorkspaceSyncResult {
    *  ⚠️ 定义是"**被开关挡下**"的件数，**不含**因网络失败而没传成功的件数。 */
   attachments_skipped_upload: number;
   attachments_skipped_download: number;
+  /** C1：停止原因——`""` / `"switch"`（P6.1 开关）/ `"disk_floor"`（磁盘余量不足）/
+   *  `"run_cap"`（撞上本轮总量上限）。`attachments_paused` 只说"停了"，这个说清"为什么停"。 */
+  attachments_paused_reason: string;
+  /** C1：因**单文件超过阈值**而跳过的件数。 */
+  attachments_skipped_too_large: number;
+  /** C1：**传输失败**（网络抖动 / 服务端错误）而跳过的件数。⚠️ 与"被开关挡下"是两码事：
+   *  这些是本该传、但没传成功的 ⇒ 必须单独可见，否则就是静默丢件。 */
+  attachments_failed: number;
+  /** C1：本轮实际下载的字节数（默认"只报告不拦截"，报告的就是它）。 */
+  attachments_bytes_downloaded: number;
+}
+
+/** C1 预算刹车（2026-09-15）的设备级设置。默认值由 Rust 侧裁定：
+ *  磁盘余量下限 **1 GB（硬性、不可关）**、单文件阈值 **100 MB**、本轮总量 **0 = 只报告不拦截**。 */
+export interface SyncBudget {
+  /** MB；**硬性、不可关**（Rust 侧会夹取到 ≥256）。 */
+  disk_floor_mb: number;
+  /** MB；`0` = 不限。 */
+  max_file_mb: number;
+  /** MB；`0` = 只报告不拦截。 */
+  max_run_mb: number;
+  /** C2：只在 Wi-Fi 下自动同步。 */
+  wifi_only: boolean;
 }
 
 export interface SyncConflict {
@@ -365,6 +388,15 @@ export interface CommandMap {
    *  拿它翻转开关会把该空间的 `token` / `space_id` 清掉。 */
   set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
+  /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
+  get_sync_budget: { args: undefined; result: SyncBudget };
+  /** ⚠️ 回显的是**夹取后**的值（磁盘余量下限不可关：传 0 会回 256）⇒ 界面要用返回值纠正自己。 */
+  set_sync_budget: { args: { budget: SyncBudget }; result: SyncBudget };
+  /** C2 网络闸门（2026-09-15）：`"wifi"`/`"cellular"`/`"ethernet"`/`"other"`/`"none"`/
+   *  `"unknown"`（Android 上问不到）/ `"n/a"`（非 Android，**闸门不适用**）。
+   *  ⚠️ 前端必须把 `"unknown"` 当"不确定 ⇒ 不自动拉取"，把 `"n/a"` 当"不适用 ⇒ 不拦"——
+   *  两者混同就会把桌面的自动同步也一起关掉。 */
+  network_type: { args: undefined; result: string };
 
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。

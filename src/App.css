@@ -1564,6 +1564,29 @@ select.sync-input {
 .sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
 .sync-auto-label { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
 .sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: 12px; }
+
+/* C1 预算刹车 / C2 网络闸门（2026-09-15）：收在 sync- 命名空间里。 */
+.sync-net {
+  margin: 0 0 6px;
+}
+.sync-net > input[type="checkbox"] {
+  margin-top: 1px;
+}
+.sync-budget .sync-budget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sync-budget .sync-budget-row select.sync-input {
+  width: auto;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.sync-budget > .sync-hint {
+  margin-top: 10px;
+}
 .sync-foot {
   display: flex;
   flex-direction: column;

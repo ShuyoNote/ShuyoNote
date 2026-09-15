@@ -276,8 +276,11 @@ const SHUYO_FS_PLUGIN_KT = `package cn.shuyo.shuyonote
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.database.Cursor
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
@@ -321,6 +324,44 @@ class ShuyoFsPlugin(private val activity: Activity) : Plugin(activity) {
     res.put("name", displayName(resolver, args.uri))
     res.put("mime", mimeType(resolver, args.uri))
     invoke.resolve(res)
+  }
+
+  /**
+   * C2 网络闸门：当前网络的**传输类型**。
+   *
+   * 只回答"现在是不是 Wi-Fi"，**不做任何猜测**——不用 UA、不看平台名。
+   * 拿不到就回 unknown，由前端按"不确定 ⇒ **不**自动拉取"处理（fail-safe）。
+   *
+   * ⚠️ 这段注释里**不要写反引号**：整个 Kotlin 源是 JS 模板字符串里的一段，
+   * 反引号会把模板提前截断（这次就踩了一次，脚本直接 SyntaxError）。
+   */
+  @Command
+  fun networkType(invoke: Invoke) {
+    val res = JSObject()
+    res.put("kind", currentNetworkKind())
+    invoke.resolve(res)
+  }
+
+  /**
+   * 传输类型：wifi / cellular / ethernet / other / none / unknown。
+   *
+   * 与 displayName 同样的理由刻意写笨：这段 Kotlin **本机编不了**（要 Android SDK/NDK），
+   * 只有 CI 会编它 —— 宁可啰嗦也不要巧妙。任何异常都退化成 unknown，绝不抛出去。
+   */
+  private fun currentNetworkKind(): String {
+    try {
+      val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+      val net = cm.activeNetwork
+      if (net == null) return "none"
+      val caps = cm.getNetworkCapabilities(net)
+      if (caps == null) return "none"
+      if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return "wifi"
+      if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return "cellular"
+      if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet"
+      return "other"
+    } catch (e: Exception) {
+      return "unknown"
+    }
   }
 
   /**
@@ -468,6 +509,20 @@ function injectManifest() {
     )
     changed = true
   }
+  // C2 网络闸门（2026-09-15）：读当前网络类型要 `ACCESS_NETWORK_STATE`。
+  // ⚠️ 它是**普通权限**（normal）——安装即授予，**不弹窗、不需要运行时申请**，
+  // 所以这里只加声明，不碰 `MainActivity` 的权限请求流程。
+  if (!xml.includes('android.permission.ACCESS_NETWORK_STATE')) {
+    xml = xml.replace(
+      /<manifest([^>]*)>/,
+      (m, attrs) =>
+        `<manifest${attrs}>\n` +
+        '    <!-- C2 网络闸门：读当前网络类型（是不是 Wi-Fi）要这个权限。\n' +
+        '         它是普通权限——安装即授予，不会弹窗。 -->\n' +
+        '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+    )
+    changed = true
+  }
   if (!xml.includes('shuyo_file_paths')) {
     xml = xml.replace(
       /<\/application>/,
@@ -529,6 +584,9 @@ if (CHECK_ONLY) {
     // 应用内更新第二步：没有这段，前端就只能让用户自己去文件管理器点安装。
     ['FileProvider.getUriForFile', '没有 FileProvider ⇒ 交出去的是 file://，Android 7+ 抛 FileUriExposedException'],
     ['application/vnd.android.package-archive', '拉安装器的 intent 类型不对 ⇒ 系统不知道这是个 APK'],
+    // C2 网络闸门：没有这段就只剩"猜"，而"猜"是我们明确拒绝的（见 platform/index.ts 的告警）。
+    ['ConnectivityManager', '没有 ConnectivityManager ⇒ 拿不到真实网络类型（C2 会退化成"永远 unknown"）'],
+    ['TRANSPORT_WIFI', '没有判 TRANSPORT_WIFI ⇒ 分不出 Wi-Fi 与蜂窝'],
   ]) {
     if (!fsKt.includes(needle)) fail(`${SHUYO_FS_PLUGIN} 缺少 \`${needle}\`：${why}`)
   }
@@ -584,6 +642,7 @@ if (CHECK_ONLY) {
   const man = readFileSync(MANIFEST, 'utf8')
   for (const [needle, why] of [
     ['android.permission.REQUEST_INSTALL_PACKAGES', 'Android 8+ 从应用里装 APK 需要这个权限'],
+    ['android.permission.ACCESS_NETWORK_STATE', 'C2 网络闸门读网络类型要它（普通权限，不弹窗）'],
     ['androidx.core.content.FileProvider', '没有 FileProvider ⇒ APK 只能以 file:// 交出去，Android 7+ 直接抛异常'],
     ['android:authorities="${applicationId}.fileprovider"', 'FileProvider 的 authority 与 Kotlin 侧拼的那个必须一致'],
     ['@xml/shuyo_file_paths', 'FileProvider 没有路径白名单 ⇒ getUriForFile 抛 IllegalArgumentException'],

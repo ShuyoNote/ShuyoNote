@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
@@ -270,6 +270,17 @@ pub struct SyncReport {
     pub attachments_skipped_upload: usize,
     /// P6.1：同上，下载侧（"未下载 M 个"）。
     pub attachments_skipped_download: usize,
+    /// C1（2026-09-15）：**停止原因**——`""` / `"switch"`（P6.1 开关）/ `"disk_floor"`（磁盘余量不足）
+    /// / `"run_cap"`（撞上本轮总量上限）。`attachments_paused` 只说"停了"，这个说清"为什么停"。
+    pub attachments_paused_reason: String,
+    /// C1：因**单文件超过阈值**而跳过的件数（"N 个因超过 X MB 未自动下载"）。
+    pub attachments_skipped_too_large: usize,
+    /// C1：**传输失败**（网络抖动 / 服务端错误）而跳过的件数。⚠️ 与"被开关挡下"是两码事：
+    /// 这些是本该传、但没传成功的 ⇒ 必须单独可见，否则就是静默丢件。
+    pub attachments_failed: usize,
+    /// C1：本轮**实际下载的字节数**。"本次下载总量上限"默认只报告不拦截（`DEFAULT_MAX_RUN_MB = 0`），
+    /// 报告的就是这个数——先拿数据，再定硬数字。
+    pub attachments_bytes_downloaded: u64,
 }
 
 /// A page that both has an unsynced local edit (dirty) and a newer server change.
@@ -1429,6 +1440,11 @@ pub struct WorkspaceSyncResult {
     /// P6.1：本轮因开关关闭而未上传 / 未下载的件数（见 `SyncReport` 同名字段的定义）。
     pub attachments_skipped_upload: usize,
     pub attachments_skipped_download: usize,
+    /// C1：停止原因 / 因超阈值跳过 / 传输失败 / 本轮下载字节（定义见 `SyncReport`）。
+    pub attachments_paused_reason: String,
+    pub attachments_skipped_too_large: usize,
+    pub attachments_failed: usize,
+    pub attachments_bytes_downloaded: u64,
 }
 
 async fn sync_workspace_only(
@@ -1452,6 +1468,10 @@ async fn sync_workspace_only(
         attachments_paused: att.paused,
         attachments_skipped_upload: att.skipped_upload,
         attachments_skipped_download: att.skipped_download,
+        attachments_paused_reason: att.paused_reason,
+        attachments_skipped_too_large: att.skipped_too_large,
+        attachments_failed: att.failed,
+        attachments_bytes_downloaded: att.bytes_downloaded,
     })
 }
 
@@ -1480,6 +1500,10 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 attachments_paused: rep.attachments_paused,
                 attachments_skipped_upload: rep.attachments_skipped_upload,
                 attachments_skipped_download: rep.attachments_skipped_download,
+                attachments_paused_reason: rep.attachments_paused_reason,
+                attachments_skipped_too_large: rep.attachments_skipped_too_large,
+                attachments_failed: rep.attachments_failed,
+                attachments_bytes_downloaded: rep.attachments_bytes_downloaded,
             },
             Err(e) => WorkspaceSyncResult {
                 ws_id: profile.ws_id.clone(),
@@ -1492,6 +1516,10 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 attachments_paused: false,
                 attachments_skipped_upload: 0,
                 attachments_skipped_download: 0,
+                attachments_paused_reason: String::new(),
+                attachments_skipped_too_large: 0,
+                attachments_failed: 0,
+                attachments_bytes_downloaded: 0,
             },
         });
     }
@@ -1540,6 +1568,10 @@ pub async fn sync_workspace(
                 attachments_paused: rep.attachments_paused,
                 attachments_skipped_upload: rep.attachments_skipped_upload,
                 attachments_skipped_download: rep.attachments_skipped_download,
+                attachments_paused_reason: rep.attachments_paused_reason,
+                attachments_skipped_too_large: rep.attachments_skipped_too_large,
+                attachments_failed: rep.attachments_failed,
+                attachments_bytes_downloaded: rep.attachments_bytes_downloaded,
             })
         }
         Err(e) => {
@@ -1597,17 +1629,37 @@ struct RemoteAttachmentList {
 /// 元组读起来全是位置，改成一个具名结构。
 struct AttachmentSyncOutcome {
     items: Vec<SyncItem>,
-    /// 本轮**因开关关闭而中途停止**（入口就是关的不算——那是稳态，不是"停止"）。
+    /// 本轮**中途停止**了（开关被关 / 磁盘余量不足 / 撞上本轮总量上限）。
+    /// 入口就是关的不算——那是稳态，不是"停止"。
     paused: bool,
+    /// 停止原因：`""` / `"switch"` / `"disk_floor"` / `"run_cap"`。
+    /// 界面据此说清**为什么停了**（三种原因的文案不同，混在一起用户只会以为同步坏了）。
+    paused_reason: String,
     /// 因开关关闭而未上传 / 未下载的件数（定义见 `SyncReport` 同名字段）。
     skipped_upload: usize,
     skipped_download: usize,
+    /// C1：因**单文件超过阈值**而跳过的件数（这些件不是"停止"，是"轮不到"）。
+    skipped_too_large: usize,
+    /// C1：**传输失败**（网络抖动 / 服务端 5xx）而被跳过的件数——原先这里是 `?`，
+    /// 一件失败就炸掉整轮；现在记一笔、继续，件数必须可见，否则是静默丢件。
+    failed: usize,
+    /// C1：本轮**实际下载的明文字节数**（"本次总量上限"默认只报告不拦截，报告的就是它）。
+    bytes_downloaded: u64,
 }
 
 impl AttachmentSyncOutcome {
     /// 开关关着且连清单都没拉到：不传字节、不报错、件数未知（记 0）。
     fn skip_all() -> Self {
-        Self { items: Vec::new(), paused: false, skipped_upload: 0, skipped_download: 0 }
+        Self {
+            items: Vec::new(),
+            paused: false,
+            paused_reason: String::new(),
+            skipped_upload: 0,
+            skipped_download: 0,
+            skipped_too_large: 0,
+            failed: 0,
+            bytes_downloaded: 0,
+        }
     }
 }
 
@@ -1632,6 +1684,179 @@ async fn fetch_remote_attachments(
         .map_err(|e| e.to_string())
 }
 
+// ---- C1 预算刹车 / C2 网络闸门：设备级设置 ----
+//
+// 存 `meta.sync_state` 的 KV（那张表本来就是 app 级 KV：device_id / token / 活动空间 id 都在里面），
+// **不新建表**：四个数字不值得为它加一张表 + 一次迁移。
+//
+// 为什么是**设备级**而不是每空间：磁盘余量是**设备**的属性（跟哪个空间无关）；单文件阈值与
+// 总量上限虽然可以想象成每空间，但用户的心智是"我这台手机别被塞满"⇒ 设备级更贴合，也少一层 UI。
+const KEY_DISK_FLOOR_MB: &str = "sync_disk_floor_mb";
+const KEY_MAX_FILE_MB: &str = "sync_max_file_mb";
+const KEY_MAX_RUN_MB: &str = "sync_max_run_mb";
+const KEY_WIFI_ONLY: &str = "sync_wifi_only";
+
+/// 磁盘余量下限默认 **1 GB**（2026-09-15 发布者拍板）。**硬性、不可关**：见 `set_sync_budget` 的夹取。
+pub const DEFAULT_DISK_FLOOR_MB: u64 = 1024;
+/// 单文件跳过阈值默认 **100 MB**（同日拍板）。它直接决定"海量视频"能不能被自动拉下来。
+pub const DEFAULT_MAX_FILE_MB: u64 = 100;
+/// 本次下载总量上限默认 **0 = 只报告不拦截**（同日拍板：先拿数据，再定硬数字）。
+pub const DEFAULT_MAX_RUN_MB: u64 = 0;
+/// C2「仅 Wi-Fi 时自动同步」默认 **开**（Android 尚未对外发布，先按"不偷跑流量"设默认）。
+pub const DEFAULT_WIFI_ONLY: bool = true;
+
+/// 磁盘余量下限的**兜底最小值**：允许用户调大，**不允许调成 0**——"硬性、不可关"是它的定义。
+const MIN_DISK_FLOOR_MB: u64 = 256;
+/// 上限的兜底最大值：防止把 `u64` 乘爆（1 TiB 足够表达"其实等于不限"）。
+const MAX_BUDGET_MB: u64 = 1024 * 1024;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncBudget {
+    /// 磁盘余量下限（MB）。**硬性、不可关**（≥ `MIN_DISK_FLOOR_MB`）。
+    pub disk_floor_mb: u64,
+    /// 单文件跳过阈值（MB）；`0` = 不限。
+    pub max_file_mb: u64,
+    /// 本次下载总量上限（MB）；`0` = 只报告不拦截。
+    pub max_run_mb: u64,
+    /// C2：只在 Wi-Fi 下自动同步。
+    pub wifi_only: bool,
+}
+
+impl Default for SyncBudget {
+    fn default() -> Self {
+        Self {
+            disk_floor_mb: DEFAULT_DISK_FLOOR_MB,
+            max_file_mb: DEFAULT_MAX_FILE_MB,
+            max_run_mb: DEFAULT_MAX_RUN_MB,
+            wifi_only: DEFAULT_WIFI_ONLY,
+        }
+    }
+}
+
+impl SyncBudget {
+    /// 夹取成合法范围。**读与写都过这一道**：写入要拦住坏值，读出也要拦——
+    /// 老库 / 手改过的 DB 里可能存着 `0` 或荒唐大的数字。
+    fn clamped(mut self) -> Self {
+        self.disk_floor_mb = self.disk_floor_mb.clamp(MIN_DISK_FLOOR_MB, MAX_BUDGET_MB);
+        self.max_file_mb = self.max_file_mb.min(MAX_BUDGET_MB);
+        self.max_run_mb = self.max_run_mb.min(MAX_BUDGET_MB);
+        self
+    }
+}
+
+fn parse_mb(c: &Connection, key: &str, default: u64) -> u64 {
+    get_meta_state(c, key).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(default)
+}
+
+/// 读设备级预算。**任何一项缺失 / 解析失败都退回默认值**（升级上来的老库没有这几个键）。
+pub fn read_budget(c: &Connection) -> SyncBudget {
+    SyncBudget {
+        disk_floor_mb: parse_mb(c, KEY_DISK_FLOOR_MB, DEFAULT_DISK_FLOOR_MB),
+        max_file_mb: parse_mb(c, KEY_MAX_FILE_MB, DEFAULT_MAX_FILE_MB),
+        max_run_mb: parse_mb(c, KEY_MAX_RUN_MB, DEFAULT_MAX_RUN_MB),
+        wifi_only: get_meta_state(c, KEY_WIFI_ONLY)
+            .map(|v| v.trim() != "0")
+            .unwrap_or(DEFAULT_WIFI_ONLY),
+    }
+    .clamped()
+}
+
+#[tauri::command]
+pub fn get_sync_budget(db: State<'_, Db>) -> Result<SyncBudget, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    Ok(read_budget(&c))
+}
+
+/// 写设备级预算。**磁盘余量下限不可关**：传 0 会被夹到 `MIN_DISK_FLOOR_MB`（见 `clamped`）。
+#[tauri::command]
+pub fn set_sync_budget(db: State<'_, Db>, budget: SyncBudget) -> Result<SyncBudget, String> {
+    let b = budget.clamped();
+    let c = db.0.lock().expect("db mutex poisoned");
+    set_meta_state(&c, KEY_DISK_FLOOR_MB, &b.disk_floor_mb.to_string())?;
+    set_meta_state(&c, KEY_MAX_FILE_MB, &b.max_file_mb.to_string())?;
+    set_meta_state(&c, KEY_MAX_RUN_MB, &b.max_run_mb.to_string())?;
+    set_meta_state(&c, KEY_WIFI_ONLY, if b.wifi_only { "1" } else { "0" })?;
+    // 回显**夹取后**的值：界面据此立刻纠正自己（比如用户填 0，回显 256）。
+    Ok(b)
+}
+
+/// C1：下载**单件**附件并落库，成功返回落盘的明文字节数。
+///
+/// 抽成函数有两个用处：① C1 要求"某一件失败**不该**炸掉整轮"——用 `Result` 表达最直接
+/// （原先这里是 `?`，一次网络抖动就让整轮同步失败，也就谈不上"优雅停止"）；
+/// ② P6.3 的"按需取字节"要复用它，**不许再写第二份下载实现**
+/// （见 `docs/plans/2026-09-15-attachment-on-demand-plan.md` §七）。
+#[allow(clippy::too_many_arguments)]
+async fn download_one_attachment(
+    client: &reqwest::Client,
+    att_base: &str,
+    token: &str,
+    item: &RemoteAttachment,
+    attachments_dir: &Path,
+    session_key: Option<&[u8; 32]>,
+    db: &State<'_, Db>,
+) -> Result<i64, String> {
+    let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("服务端返回 {}", resp.status()));
+    }
+    let ext = ext_from_mime(&item.mime);
+    let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut size: i64 = 0;
+    if !path.exists() {
+        let tmp = attachments_dir.join(format!("{}.part", item.hash));
+        let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    size += chunk.len() as i64;
+                    file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+                }
+                Err(e) => {
+                    // 半成品必须删掉：留着白占磁盘，也让"本轮下了多少"说不清。
+                    // （`.part` 已被 `local_set` 排除，不会被当成本地已有，但仍要清。）
+                    drop(file);
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.to_string());
+                }
+            }
+        }
+        file.flush().await.map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
+        // encrypted (nonce||ct) like every other attachment, so the read path
+        // (decrypt/passthrough) and the at-rest guarantee stay consistent.
+        if let Some(k) = session_key {
+            if let Ok(plain) = std::fs::read(&path) {
+                if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
+                    let _ = std::fs::write(&path, &bytes);
+                }
+            }
+        }
+    }
+    // Insert/ignore into attachments table.
+    {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let id = uuid::Uuid::new_v4().to_string();
+        c.execute(
+            "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+            params![id, format!("{}.{}", item.hash, ext), item.hash, item.mime, size, crate::db::now_ms()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(size)
+}
+
 async fn sync_attachments(
     app: &tauri::AppHandle,
     db: &State<'_, Db>,
@@ -1643,6 +1868,12 @@ async fn sync_attachments(
     let mut att_items: Vec<SyncItem> = Vec::new();
     // P6.1：本轮是否"因开关被关掉而中途停止"（与"入口就没开"区分——后者不算 paused）。
     let mut paused = false;
+    // C1：停止原因（`""` / `"switch"` / `"disk_floor"` / `"run_cap"`）。上传与下载两侧共用。
+    let mut paused_reason = String::new();
+    // C1：**传输失败**（网络抖动 / 服务端 5xx）而跳过的件数。上传与下载两侧共用。
+    // 原先两侧都是 `?` —— 一件失败就炸掉整轮同步，既谈不上"优雅停止"，也让用户
+    // 只看到"同步失败"而不知道坏在哪一件。
+    let mut failed = 0usize;
 
     // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **只跳过第 3/4 步的字节传输**
     // （上传循环 / 下载循环），而**第 1 步列远端 hash、第 2 步列本地 hash 照常做**。
@@ -1776,23 +2007,32 @@ async fn sync_attachments(
         if !profile.token.is_empty() {
             req = req.bearer_auth(&profile.token);
         }
-        req.send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
-        att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: hash.clone(), op: "upsert".to_string(), dir: "push".to_string(), title: String::new() });
+        // C1：**一件失败不炸整轮**（原先这里是 `?`）。上传失败多半是网络抖动或服务端
+        // 4xx/5xx；整轮失败会让"优雅停止"永远做不到，也让已经成功的部分白跑。
+        match req.send().await.and_then(|r| r.error_for_status()) {
+            Ok(_) => {
+                att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: hash.clone(), op: "upsert".to_string(), dir: "push".to_string(), title: String::new() });
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("[sync] 附件 {hash} 上传失败（跳过）：{e}");
+            }
+        }
     }
 
     // 4. Download remote attachments missing locally.
-    let local_mimes: std::collections::HashMap<String, String> = {
+    //
+    // C1：文件大小取自**同步过来的 `attachments.size`**（元数据本来就随 `changes` 到本地，
+    // 也正是"看得见但打不开"那条状态的来源）⇒ **不需要改服务端**、也不用为每个文件多发一次
+    // HEAD 请求。⚠️ 拿不到大小（本地还没有那行元数据）时不预判，交给磁盘余量与总量上限兜底。
+    let local_sizes: std::collections::HashMap<String, i64> = {
         let c = db.0.lock().expect("db mutex poisoned");
         let mut map = std::collections::HashMap::new();
         let mut stmt = c
-            .prepare("SELECT hash, mime FROM attachments")
+            .prepare("SELECT hash, size FROM attachments")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
             .map_err(|e| e.to_string())?;
         for r in rows.flatten() {
             map.insert(r.0, r.1);
@@ -1800,12 +2040,50 @@ async fn sync_attachments(
         map
     };
 
+    // ---- C1 预算刹车（2026-09-15）----
+    // 三道闸门，触发即**优雅停止 + 说明原因**，都不报错：
+    //   ① 磁盘余量 < 下限（硬性、不可关）——**停止**
+    //   ② 单文件超过阈值 —— **跳过该件、继续下一件**（不是停止）
+    //   ③ 本轮下载总量上限 —— **停止**（默认 `0` = 只报告不拦截）
+    let budget = { let c = db.0.lock().expect("db mutex poisoned"); read_budget(&c) };
+    let mb = 1024u64 * 1024;
+    let disk_floor_bytes = budget.disk_floor_mb.saturating_mul(mb);
+    let max_file_bytes = if budget.max_file_mb == 0 { u64::MAX } else { budget.max_file_mb.saturating_mul(mb) };
+    let run_cap_bytes = if budget.max_run_mb == 0 { u64::MAX } else { budget.max_run_mb.saturating_mul(mb) };
+    let mut bytes_downloaded: u64 = 0;
+    let mut skipped_too_large = 0usize;
+
     for (idx, item) in down_items.iter().enumerate() {
         // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
         {
             let c = db.0.lock().expect("db mutex poisoned");
             if !attachments_enabled(&c, &profile.ws_id) {
                 paused = true;
+                paused_reason = "switch".to_string();
+                skipped_download = down_items.len() - idx;
+                break;
+            }
+        }
+        let known_size = local_sizes.get(&item.hash).copied().unwrap_or(-1);
+        // ② 单文件阈值：跳过这一件，**继续**（用户要的是"别自动拉大视频"，不是"整个同步停摆"）。
+        if known_size > 0 && (known_size as u64) > max_file_bytes {
+            skipped_too_large += 1;
+            continue;
+        }
+        // ③ 本轮总量上限：把这一件算进去再判，避免"最后一件把上限顶穿"。
+        if known_size > 0 && bytes_downloaded.saturating_add(known_size as u64) > run_cap_bytes {
+            paused = true;
+            paused_reason = "run_cap".to_string();
+            skipped_download = down_items.len() - idx;
+            break;
+        }
+        // ① 磁盘余量下限：**硬性**。把这一件的大小一起算进去，否则会贴着下限把它写满。
+        // 查不到剩余空间时**不拦**（fail-open，见 `crate::disk` 的模块注释）。
+        if let Some(free) = crate::disk::available_bytes(&attachments_dir) {
+            let need = disk_floor_bytes.saturating_add(if known_size > 0 { known_size as u64 } else { 0 });
+            if free < need {
+                paused = true;
+                paused_reason = "disk_floor".to_string();
                 skipped_download = down_items.len() - idx;
                 break;
             }
@@ -1814,63 +2092,24 @@ async fn sync_attachments(
         // canonical SHA-256 hex before joining it into a filesystem path, to prevent
         // a malicious server from writing outside the attachments dir.
         //
-        // ⚠️ 这条校验和下面那条"本地已有就跳过"现在**都在构造 `down_items` 时用同一个
-        // 谓词过滤过了**（见上面 `is_valid_attachment_hash(&i.hash) && !local_set.contains(...)`）。
+        // ⚠️ 这条校验和"本地已有就跳过"**都在构造 `down_items` 时用同一个谓词过滤过了**
+        // （见上面 `is_valid_attachment_hash(&i.hash) && !local_set.contains(...)`）。
         // 这里不再重复判断：同一件事写两处，改了一处忘了另一处就是 bug。
-        let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
-        if !profile.token.is_empty() {
-            req = req.bearer_auth(&profile.token);
-        }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            continue;
-        }
-        let ext = ext_from_mime(&item.mime);
-        let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let mut size: i64 = 0;
-        if !path.exists() {
-            let tmp = attachments_dir.join(format!("{}.part", item.hash));
-            let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
-            let mut stream = resp.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|e| e.to_string())?;
-                size += chunk.len() as i64;
-                file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        match download_one_attachment(&client, &att_base, &profile.token, item, &attachments_dir, session_key.as_ref(), db).await {
+            Ok(size) => {
+                bytes_downloaded = bytes_downloaded.saturating_add(size.max(0) as u64);
+                att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
             }
-            file.flush().await.map_err(|e| e.to_string())?;
-            drop(file);
-            std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-            // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
-            // encrypted (nonce||ct) like every other attachment, so the read path
-            // (decrypt/passthrough) and the at-rest guarantee stay consistent.
-            if let Some(k) = &session_key {
-                if let Ok(plain) = std::fs::read(&path) {
-                    if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
-                        let _ = std::fs::write(&path, &bytes);
-                    }
-                }
+            Err(e) => {
+                // C1：**一件失败不炸整轮**（原先这里是 `?`：一次网络抖动就让整轮同步失败，
+                // 也就无法"优雅停止"）。记一笔、继续下一件，件数进报告——否则是静默丢件。
+                failed += 1;
+                eprintln!("[sync] 附件 {} 下载失败（跳过）：{e}", item.hash);
             }
         }
-        // Insert/ignore into attachments table.
-        {
-            let c = db.0.lock().expect("db mutex poisoned");
-            let id = uuid::Uuid::new_v4().to_string();
-            c.execute(
-                "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
-                params![id, format!("{}.{}", item.hash, ext), item.hash, item.mime, size, crate::db::now_ms()],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
     }
 
-    // Reuse local mimes for hash resolution (kept for future use).
-    let _ = local_mimes;
-    Ok(AttachmentSyncOutcome { items: att_items, paused, skipped_upload, skipped_download })
+    Ok(AttachmentSyncOutcome { items: att_items, paused, paused_reason, skipped_upload, skipped_download, skipped_too_large, failed, bytes_downloaded })
 }
 
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
@@ -2020,6 +2259,9 @@ mod tests {
         c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
         c.execute_batch(
             "CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, deleted_at INTEGER);
+             -- C1/C2 的设备级 KV（`read_budget` / `set_sync_budget` 依赖它；
+             --  与 `db.rs::meta_migrate` 里的同名表同形）。
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE meta.sync_profiles (
                  ws_id TEXT PRIMARY KEY,
                  server_url TEXT NOT NULL DEFAULT '',
@@ -2123,6 +2365,57 @@ mod tests {
         assert_eq!(got.space_id, "sp-1");
         assert_eq!(got.server_url, "http://a");
         assert_eq!(got.sync_attachments, 0);
+    }
+
+    // ---- C1 预算刹车 ----
+
+    #[test]
+    fn budget_defaults_match_the_decided_numbers() {
+        // 2026-09-15 发布者拍板：磁盘余量下限 1 GB（硬性）/ 单文件 100 MB / 本轮只报告不拦截。
+        // 这条钉的是**数字本身**：改默认值必须是有意的，不能顺手漂。
+        let c = conn_with_meta();
+        let b = read_budget(&c);
+        assert_eq!(b.disk_floor_mb, 1024, "磁盘余量下限默认必须是 1 GB");
+        assert_eq!(b.max_file_mb, 100, "单文件阈值默认必须是 100 MB");
+        assert_eq!(b.max_run_mb, 0, "本轮总量默认必须是 0 = 只报告不拦截");
+        assert!(b.wifi_only, "「仅 Wi-Fi」默认必须开（Android 未发布，先按不偷跑流量）");
+    }
+
+    #[test]
+    fn budget_round_trips_and_survives_garbage_values() {
+        let c = conn_with_meta();
+        set_meta_state(&c, KEY_MAX_FILE_MB, "50").unwrap();
+        set_meta_state(&c, KEY_MAX_RUN_MB, "2048").unwrap();
+        set_meta_state(&c, KEY_WIFI_ONLY, "0").unwrap();
+        let b = read_budget(&c);
+        assert_eq!(b.max_file_mb, 50);
+        assert_eq!(b.max_run_mb, 2048);
+        assert!(!b.wifi_only);
+
+        // 老库 / 手改过的 DB：解析不出来就退回默认值，**不许 panic、也不许当成 0**。
+        set_meta_state(&c, KEY_MAX_FILE_MB, "abc").unwrap();
+        set_meta_state(&c, KEY_DISK_FLOOR_MB, "").unwrap();
+        let b = read_budget(&c);
+        assert_eq!(b.max_file_mb, DEFAULT_MAX_FILE_MB);
+        assert_eq!(b.disk_floor_mb, DEFAULT_DISK_FLOOR_MB);
+    }
+
+    #[test]
+    fn the_disk_floor_cannot_be_switched_off() {
+        // 「硬性、不可关」是这条闸门的定义（§五 的设计决定）：写 0 必须被夹到下限，
+        // 而且**读出**也要夹——否则手改过的 DB 能让它失效。
+        let b = SyncBudget { disk_floor_mb: 0, max_file_mb: 0, max_run_mb: 0, wifi_only: false }.clamped();
+        assert_eq!(b.disk_floor_mb, MIN_DISK_FLOOR_MB, "0 必须被夹到最小下限");
+        // 同时确认"0 = 不限"在另外两项上仍然成立（它们是可关的）。
+        assert_eq!(b.max_file_mb, 0);
+        assert_eq!(b.max_run_mb, 0);
+
+        let c = conn_with_meta();
+        set_meta_state(&c, KEY_DISK_FLOOR_MB, "0").unwrap();
+        assert_eq!(read_budget(&c).disk_floor_mb, MIN_DISK_FLOOR_MB, "读出时也要夹");
+        // 荒唐大的值同样夹住（防止 u64 乘法溢出）。
+        set_meta_state(&c, KEY_MAX_RUN_MB, "18446744073709551615").unwrap();
+        assert!(read_budget(&c).max_run_mb <= MAX_BUDGET_MB);
     }
 
     #[test]

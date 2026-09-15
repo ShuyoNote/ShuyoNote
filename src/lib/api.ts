@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap } from "./platform/commands";
+import type { CommandMap, SyncBudget } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -22,7 +22,7 @@ const invoke = <K extends keyof CommandMap>(
 // `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
-export type { SyncConfig, SyncProfile, WorkspaceSyncResult } from "./platform/commands";
+export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult } from "./platform/commands";
 
 /** 聚合邮箱的 IMAP 账号配置（与后端 email::EmailAccountArgs 对应）。 */
 export interface EmailAccount {
@@ -268,6 +268,13 @@ export const api = {
   /** P6.1「每空间开关」：只切换附件**字节**同步。
    *  ⚠️ 刻意独立成命令：`setSyncProfile` 对未传字段是"清空"语义，用它翻转开关会清掉凭证。 */
   setSyncAttachments: (wsId: string, enabled: boolean) => invoke("set_sync_attachments", { wsId, enabled }),
+  /** C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限 / 仅 Wi-Fi。
+   *  ⚠️ `setSyncBudget` 回显的是**夹取后**的值（磁盘余量下限不可关）⇒ 界面应当用返回值刷新自己。 */
+  getSyncBudget: () => invoke("get_sync_budget"),
+  setSyncBudget: (budget: SyncBudget) => invoke("set_sync_budget", { budget }),
+  /** C2 网络闸门：Android 上真查，其它平台 `"n/a"`（闸门不适用）。
+   *  ⚠️ `"unknown"` = 不确定 ⇒ 调用方**不要**自动拉取；`"n/a"` = 不适用 ⇒ **不要**拦。 */
+  networkType: () => invoke("network_type"),
   syncWorkspace: async (wsId: string) => {
     const r = await invoke("sync_workspace", { wsId });
     emitSyncCompleted(r ? [r] : []);

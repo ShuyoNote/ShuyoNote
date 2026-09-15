@@ -9,6 +9,7 @@ mod commands;
 mod crypto;
 mod database;
 mod db;
+mod disk;
 // 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
 // Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
 // 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，
@@ -24,6 +25,7 @@ mod email;
 mod smtp;
 mod graph;
 mod models;
+mod net;
 mod capabilities_gen;
 mod pdf_native;
 // 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
@@ -483,6 +485,12 @@ pub fn run() {
             // P6.1「每空间开关」：只切换附件字节同步。**刻意不复用 set_sync_profile**——
             // 那个命令对未传字段是"清空"语义，用它翻转开关会清掉 token / space_id。
             sync::set_sync_attachments,
+            // C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限。
+            // 设备级设置，存 meta.sync_state 的 KV。
+            sync::get_sync_budget,
+            sync::set_sync_budget,
+            // C2 网络闸门（2026-09-15）：Android 上真查网络类型，其它平台回 "n/a"（闸门不适用）。
+            net::network_type,
             sync::sync_workspace,
             sync::team_register,
             sync::team_login,
