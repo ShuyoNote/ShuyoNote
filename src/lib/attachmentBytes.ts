@@ -27,10 +27,26 @@ import { useSpaceStore } from "./../store/space";
  * ⚠️ 判据用 `list_attachment_hashes`（走**附件目录**，不是数据库）——"数据库里有行"
  * 不代表"字节在盘上"，这正是本函数要修的那个区别。
  *
+ * ⚠️ **同一 hash 的并发调用会合并成一次**（2026-09-15 真机验收发现的问题）：
+ * 打开一个"未下载"的文件时，`filePreview`（markdown 读取）与预览弹层（图片/音视频读取）
+ * **会各调一次**，于是同一份字节被下两遍——除了浪费流量，还会让两个下载抢同一个
+ * `.part` 临时文件（真机上观测到 `os error 2`）。Rust 侧也一并把临时文件名改成唯一，
+ * 但"别下两遍"这件事只有在这里挡最省。
+ *
  * 返回 `false` 的三种情况都会给出可读的提示：没有活动空间 / 下载失败 / 服务端没有这份字节。
  */
-export async function ensureAttachmentBytes(hash: string): Promise<boolean> {
-  if (!hash) return false;
+const inFlight = new Map<string, Promise<boolean>>();
+
+export function ensureAttachmentBytes(hash: string): Promise<boolean> {
+  if (!hash) return Promise.resolve(false);
+  const running = inFlight.get(hash);
+  if (running) return running;
+  const p = ensureAttachmentBytesOnce(hash).finally(() => inFlight.delete(hash));
+  inFlight.set(hash, p);
+  return p;
+}
+
+async function ensureAttachmentBytesOnce(hash: string): Promise<boolean> {
   const onDisk = await api.listAttachmentHashes().catch(() => [] as string[]);
   if (onDisk.includes(hash)) return true;
 

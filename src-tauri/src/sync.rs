@@ -1885,7 +1885,12 @@ async fn download_one_attachment(
     }
     let mut size: i64 = 0;
     if !path.exists() {
-        let tmp = attachments_dir.join(format!("{}.part", item.hash));
+        // ⚠️ 临时文件名**必须唯一**（2026-09-15 真机验收修）：原先固定用 `<hash>.part`，
+        // 于是"同一件被并发下载"时两个请求会抢同一个临时文件——一个 rename 走之后，
+        // 另一个 rename 就 ENOENT（真机上观测到 `取回文件失败：No such file or directory (os error 2)`，
+        // 且白下了一遍）。用 uuid 后缀让每次尝试各写各的。
+        // （`.part` 结尾仍被 `local_set` 排除，不会被当成本地已有字节。）
+        let tmp = attachments_dir.join(format!("{}.{}.part", item.hash, uuid::Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -2124,12 +2129,19 @@ async fn sync_attachments(
         security::key_if_enabled(&c)
     };
     for (idx, hash) in up_items.iter().enumerate() {
+        // 入口就是关的 ⇒ 本轮不传字节（件数已在上面的初始化里记好），而且**不算"停止"**。
+        // ⚠️ 2026-09-15 真机验收修：原先只设了件数、循环照进，于是第一轮循环的开关检查立刻把
+        // `paused` 置真 ⇒ 面板报"**途中**关闭了附件同步"，而用户是在同步**之前**关的（文案与事实不符）。
+        if !att_on {
+            break;
+        }
         // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
         // 粒度 = 文件级：最坏等待 = 当前这一件的传输时间；**已完成的不回滚**。
         {
             let c = db.0.lock().expect("db mutex poisoned");
             if !attachments_enabled(&c, &profile.ws_id) {
                 paused = true;
+                paused_reason = "switch".to_string();
                 // 剩余（含当前这件）都被挡下 ⇒ 面板能报出"未上传 N 个"。
                 skipped_upload = up_items.len() - idx;
                 break;
@@ -2218,6 +2230,10 @@ async fn sync_attachments(
     let mut skipped_too_large = 0usize;
 
     for (idx, item) in down_items.iter().enumerate() {
+        // 入口就是关的 ⇒ 本轮不传字节、也**不算"停止"**（同上传侧，2026-09-15 真机验收修）。
+        if !att_on {
+            break;
+        }
         // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
         {
             let c = db.0.lock().expect("db mutex poisoned");

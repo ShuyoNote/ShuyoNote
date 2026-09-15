@@ -1013,6 +1013,9 @@ async function syncAttachments(
   // 3. Upload local attachments missing on the server (report progress).
   let uploaded = 0;
   for (let ui = 0; ui < upItems.length; ui++) {
+    // 入口就是关的 ⇒ 本轮不传字节，且**不算"停止"**（与 Rust 侧同一处理，
+    // 2026-09-15 真机验收发现：原先会误报"途中关闭了附件同步"）。
+    if (!attOn) break;
     // P6.1：同下载侧——每次迭代之间重读开关，命中即优雅停止（§五.7）。
     if (!attEnabled()) {
       paused = true;
@@ -1075,6 +1078,8 @@ async function syncAttachments(
   let skippedTooLarge = 0;
   let failed = 0;
   for (let di = 0; di < downItems.length; di++) {
+    // 入口就是关的 ⇒ 本轮不传字节、也不算"停止"（同 Rust 侧）。
+    if (!attOn) break;
     // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。粒度=文件级；
     // 已完成的不回滚（与 Rust 侧 sync.rs 的同一处语义保持一致）。
     if (!attEnabled()) {
