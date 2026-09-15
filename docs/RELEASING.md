@@ -33,6 +33,28 @@ pnpm run build        # check-versions + tsc + vite build
 ```
 
 ## ④ 提交 + Tag
+**打 tag 之前先跑 `pnpm release:preflight`**（`scripts/release-preflight.mjs`）。它一次查六件事，
+全是"人常常想当然、而机器一眼能看出来"的：
+
+| # | 查什么 | 不成立时会发生什么 |
+|---|---|---|
+| ① | 在 `main` 上、已跟踪文件没有未提交改动（未跟踪文件只提醒） | 发出去的东西里有没提交的改动 |
+| ② | 版本号六处互相一致（`check-versions`） | 各处版本不一致，装上去显示错的版本 |
+| ③ | CHANGELOG 有 `## [<版本>]` 段、`[Unreleased]` 仍在、结构校验通过 | 发布说明空着 / 下一版没落点 |
+| ④ | tag `v<版本>` 本地与**两个远端**都没有 | 复用已发布的 tag ⇒ 资产覆盖 ⇒「旧件冒充新件」 |
+| ⑤ | **`origin/dev` 已是 `main` 的祖先**（runbook ④ 的硬前提） | 2026-09-15 发 1.91.0 时就卡在这：推到一半发现 dev 还有 3 个提交没进来 |
+| ⑥ | `origin`（gitcode）与 `github` 都可达 | 推一半失败 |
+
+> ⑤⑥ 需要联网：离线可用 `--skip-remote` 跳过（会明确打印跳过了什么）。
+> 远端命令**先按环境跑、失败再显式绕开代理重试**，并如实报出走的哪条路——
+> 这台机器的 `HTTP(S)_PROXY` 指向本地 127.0.0.1:7897，那个代理不一定开着，
+> 报出来的是 `Failed to connect to 127.0.0.1 port 7897`，看着像"远端不可达"（其实要绕过代理）。
+
+```bash
+pnpm release:preflight                # 退出码非 0 就别打 tag
+pnpm release:preflight --version 1.92.0   # 预演还没 bump 的版本（会提示 package.json 还是旧的）
+```
+
 ```bash
 git add -A
 git commit -m "release: X.Y.Z(版本号 bump + CHANGELOG)"

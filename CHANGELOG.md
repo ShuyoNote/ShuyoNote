@@ -5,6 +5,16 @@
 ## [Unreleased]
 
 ### 新增
+- **`scripts/release-preflight.mjs`（打 tag 前的前置检查）**（2026-09-15）：`pnpm release:preflight`。
+  一次查六件事：① 在 `main` 上且已跟踪文件没有未提交改动（未跟踪文件只提醒）；
+  ② 版本号六处互相一致；③ CHANGELOG 有 `## [<版本>]` 段、`[Unreleased]` 仍在、结构校验通过；
+  ④ tag `v<版本>` 本地与**两个远端**都没有（复用已发布 tag ⇒ 资产覆盖 ⇒「旧件冒充新件」）；
+  ⑤ **`origin/dev` 已是 `main` 的祖先**——runbook ④ 的硬前提，2026-09-15 发 1.91.0 时就卡在这
+  （推到一半才发现 dev 还有 3 个提交没进来）；⑥ 两个远端都可达。
+  远端命令**先按环境跑、失败再显式绕开代理重试**并报出走哪条路（这台机器的 `HTTP(S)_PROXY`
+  指向本地 127.0.0.1:7897，那代理不一定开着，报错看着像"远端不可达"）。
+  离线可 `--skip-remote`；`--version` 可预演还没 bump 的版本。见 [RELEASING.md](docs/RELEASING.md) ④。
+
 - **`scripts/fetch-release-artifacts.mjs`（取 CI 产物并落位，一条命令）**（2026-09-15）：
   `pnpm fetch:release-artifacts --tag v1.91.1 --stage`（或 `--run <id>`）。它从 Release 流水线
   的 artifact 里把 `bundle-*` 与 `android-release-apk` 取回来、**按 API 给的 digest 校验整包
