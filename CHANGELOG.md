@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 新增
+- **跨机器多端同步会合测试（Windows ⇄ Mac，服务器在 Mac）已实测通过**（2026-09-15）：
+  新增 `scripts/sync-multidevice.mjs`（两端各跑一次、无需约定先后：写标记 → 等对方的页 →
+  **互改对方的页**再等回改 ⇒ 验的是"就地更新也双向到达"，不只是"新页能看见"）+ 手册
+  [sync-multidevice-test.md](docs/sync-multidevice-test.md)（含跨网段的 SSH 隧道方案与四种失败原因）。
+  实测（账号制：各自注册、Windows 建空间并把 Mac 加成 `editor`，**无任何密钥跨机器传递**）：
+  两端各 `pass: 6 / fail: 0`、`peerSeen`/`bidirectional` 均 `true`；顺带确认两台机器在同一网段
+  （局域网直连与公网隧道**两条都通**）。仍未做：**真客户端 GUI 那一步没人点**（Mac 侧无 GUI 自动化），
+  已如实记进服务端仓 `SESSION_CONTINUE.md` §13.4。
+
 ### 修复
 - **macOS universal 包会让 Apple Silicon 收不到更新**（2026-09-15 发现；macOS 版尚未启用，
   属于"一启用就会踩"的坑，落在这一版还是随 1.91.2 一起走由发版时定）。
