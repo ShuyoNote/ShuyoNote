@@ -17,11 +17,87 @@ import { createReadStream } from "node:fs";
 import { basename } from "node:path";
 import { Blake2b512 } from "./blake2b512.mjs";
 
-/** Tauri bundle 下的产物子目录（顺序即遍历顺序）。 */
-export const INSTALLER_DIRS = ["nsis", "msi", "dmg", "appimage", "deb", "rpm"];
+/**
+ * Tauri bundle 下的产物子目录（顺序即遍历顺序）。
+ *
+ * `macos/` 也要收：里面是 `ShuyoNote.app`（**目录**，会被下面的后缀正则挡掉）与
+ * `ShuyoNote.app.tar.gz`（macOS 的**更新通道产物**，必须收，见 `isUpdaterArchive`）。
+ */
+export const INSTALLER_DIRS = ["nsis", "msi", "dmg", "macos", "appimage", "deb", "rpm"];
 
-/** 安装包后缀（中间产物如 `.app`、解包目录、`.tar.gz` 一律不算）。 */
-export const INSTALLER_RE = /\.(exe|msi|dmg|appimage|deb|rpm|apk)$/i;
+/**
+ * 产物后缀。中间产物（`.app` 目录、解包目录、其它 `.tar.gz`）依旧不算，
+ * **唯一例外是 `.app.tar.gz`**——理由见 `isUpdaterArchive`。
+ */
+export const INSTALLER_RE = /\.(exe|msi|dmg|appimage|deb|rpm|apk|app\.tar\.gz)$/i;
+
+/**
+ * macOS 的更新通道产物 `<AppName>.app.tar.gz`。
+ *
+ * **为什么 darwin 的清单必须指向它、而不是 dmg**（这条是发版前最容易做错的地方）：
+ * `tauri-plugin-updater` 在 macOS 上只认这个格式——`src/updater.rs` 里 macOS 的
+ * `install_inner()` 直接 `GzDecoder::new(cursor)` + `tar::Archive::new(decoder)`，
+ * 函数 docstring 也写明期望 `[AppName]_[version]_x64.app.tar.gz` / 里面是 `[AppName].app`。
+ * 给它一个 `.dmg`（连 gzip 都不是）会解包失败：**能下载、装不上**，用户端只看到一句
+ * 无关的报错。dmg 照常上传（人工下载安装用），只是**不进更新清单**。
+ *
+ * 文件名由 `tauri-bundler` 的 `bundle::updater_bundle` 生成：
+ * `format!("{}.tar.gz", <…>/ShuyoNote.app)` ⇒ **`ShuyoNote.app.tar.gz`，不带版本号、不带架构**
+ * （所以版本要靠同一次构建里的 dmg 佐证，架构要从中推出来，见 `resolveUpdaterArchiveKeys`）。
+ */
+export function isUpdaterArchive(name) {
+  return /\.app\.tar\.gz$/i.test(name);
+}
+
+/** 条目 → 平台键：优先用 `resolveUpdaterArchiveKeys` 解析好的键（`.app.tar.gz` 名字里没有架构）。 */
+function keyOf(e) {
+  return e.platformKey ?? platformKeyFor(e.name);
+}
+
+/**
+ * `.app.tar.gz` 的文件名里**既没有版本号也没有架构**，所以它的平台键只能从本次构建的
+ * **dmg** 推出来。推不出来就报错，不许猜（猜错 = 把更新推给错误的架构）。
+ */
+export function resolveUpdaterArchiveKeys(entries) {
+  const problems = [];
+  const darwinKeys = new Set(
+    entries
+      .filter((e) => /\.dmg$/i.test(e.name))
+      .map((e) => platformKeyFor(e.name))
+      .filter(Boolean),
+  );
+  for (const e of entries) {
+    if (!isUpdaterArchive(e.name)) continue;
+    const hinted = platformKeyFor(e.name);
+    if (hinted) {
+      e.platformKey = hinted;
+      continue;
+    }
+    if (darwinKeys.size === 1) {
+      e.platformKey = [...darwinKeys][0];
+      continue;
+    }
+    problems.push(
+      darwinKeys.size === 0
+        ? `无法判定 ${e.name} 属于哪个 macOS 架构：本次没有同版本的 dmg 可作参照（.app.tar.gz 的名字里不带架构）`
+        : `无法判定 ${e.name} 属于哪个 macOS 架构：本次有 ${darwinKeys.size} 个 dmg（${[...darwinKeys].join("、")}）`,
+    );
+  }
+
+  // 有 dmg 却没有 `.app.tar.gz` = macOS 的自动更新必然失效（更新器只认 .app.tar.gz，
+  // 见 isUpdaterArchive）。这种缺失在发布时毫无征兆、只在用户端表现为"能下载装不上"，所以硬失败。
+  const covered = new Set(entries.filter((e) => isUpdaterArchive(e.name)).map((e) => keyOf(e)).filter(Boolean));
+  for (const key of darwinKeys) {
+    if (!covered.has(key)) {
+      problems.push(
+        `缺少 macOS 更新通道产物：${key} 只有 dmg 而没有 .app.tar.gz —— ` +
+          `更新器（tauri-plugin-updater）在 macOS 上只解 .app.tar.gz，指向 dmg 会"能下载、装不上"。` +
+          `打包时请确认 bundle.createUpdaterArtifacts 为 true 且签名私钥已配好。`,
+      );
+    }
+  }
+  return problems;
+}
 
 /**
  * Android 发版件的更新器平台键。**不要新开顶层键**：`tauri-plugin-updater` 只读
@@ -46,7 +122,13 @@ export function isApk(name) {
 /** 文件名后缀 → 更新器清单里的平台键。 */
 export function platformKeyFor(name) {
   if (/\.(exe|msi)$/i.test(name)) return "windows-x86_64";
-  if (/\.dmg$/i.test(name)) return /aarch64|arm64/i.test(name) ? "darwin-aarch64" : "darwin-x86_64";
+  // `.app.tar.gz` 要在 dmg 之前判（两者都是 darwin）。名字里带架构就用，不带返回 null，
+  // 由 `resolveUpdaterArchiveKeys` 从同批次的 dmg 推。
+  if (isUpdaterArchive(name)) {
+    if (/x86_64|x64|amd64/i.test(name)) return "darwin-x86_64";
+    return /aarch64|arm64/i.test(name) ? "darwin-aarch64" : null;
+  }
+  if (/\.dmg$/i.test(name)) return /aarch64|arm64|universal/i.test(name) ? "darwin-aarch64" : "darwin-x86_64";
   if (/\.appimage$/i.test(name)) return /aarch64|arm64/i.test(name) ? "linux-aarch64" : "linux-x86_64";
   if (/\.(deb|rpm)$/i.test(name)) return "linux-x86_64";
   // 目前只出 arm64-v8a（见 docs/RELEASING.md §9.5），arm32/其它 ABI 的包不进这个通道。
@@ -70,19 +152,23 @@ export function versionMatcher(version) {
   return new RegExp(`(?<![\\d.])${v}(?![\\d.])`, "i");
 }
 
-/** 扩展名（小写），用于区分同类产物。 */
+/** 扩展名（小写），用于区分同类产物。`.app.tar.gz` 单独返回（它含两个点）。 */
 export function extensionOf(name) {
+  if (isUpdaterArchive(name)) return "app.tar.gz";
   const m = /\.(exe|msi|dmg|appimage|deb|rpm|apk)$/i.exec(name);
   return m ? m[1].toLowerCase() : "";
 }
 
 /**
  * 更新器清单在同一平台键下只能留一个 url，取哪个必须**写死且可预期**，不能靠遍历顺序。
- * 顺序：exe > msi（Windows）、deb > appimage > rpm（Linux）、dmg（macOS）、apk（Android）。
+ * 顺序：exe > msi（Windows）、**app.tar.gz > dmg（macOS）**、deb > appimage > rpm（Linux）、apk（Android）。
  * 选 deb 而非 AppImage 是沿用线上既有约定（1.84.5 的 latest.json 就是 deb）——
  * 两者都会挂到 release 上，只是清单指向 deb。
+ *
+ * ⚠️ macOS 取 `app.tar.gz` 而不是 dmg：更新器在 macOS 上只会解 `.app.tar.gz`
+ * （证据见 `isUpdaterArchive` 的注释）。dmg 仍然发布，但只用于人工下载安装。
  */
-export const MANIFEST_PREFERENCE = ["exe", "msi", "dmg", "deb", "appimage", "rpm", "apk"];
+export const MANIFEST_PREFERENCE = ["exe", "msi", "app.tar.gz", "dmg", "deb", "appimage", "rpm", "apk"];
 
 /**
  * 从同一平台键的多个产物里挑出进清单的那一个，并说明为什么。
@@ -98,7 +184,7 @@ export function pickForManifest(list) {
   const pick = sorted[0];
   const note =
     sorted.length > 1
-      ? `${platformKeyFor(pick.name)} 的更新清单指向 ${pick.name}（同平台另有 ${sorted.slice(1).map((e) => e.name).join("、")} 也一并发布，但不进清单）`
+      ? `${keyOf(pick)} 的更新清单指向 ${pick.name}（同平台另有 ${sorted.slice(1).map((e) => e.name).join("、")} 也一并发布，但不进清单）`
       : null;
   return { pick, note };
 }
@@ -130,19 +216,35 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
     }
   } else {
     const re = versionMatcher(version);
-    for (const e of entries) {
-      if (INSTALLER_RE.test(e.name) && re.test(e.name)) picked.push(e);
+    const versioned = entries.filter((e) => INSTALLER_RE.test(e.name) && re.test(e.name));
+    for (const e of versioned) picked.push(e);
+    // `.app.tar.gz` 的名字里**没有版本号**（见 isUpdaterArchive），所以它不能靠文件名判版本；
+    // 判据换成"本次构建里有一个带版本号的 macOS dmg"——那是同一次 `tauri build` 的另一半产物。
+    const darwinWitness = versioned.some((e) => /\.dmg$/i.test(e.name));
+    if (darwinWitness) {
+      for (const e of entries) if (isUpdaterArchive(e.name) && !picked.includes(e)) picked.push(e);
+    } else {
+      const skipped = entries.filter((e) => isUpdaterArchive(e.name));
+      if (skipped.length > 0) {
+        warnings.push(
+          `跳过了 ${skipped.map((e) => e.name).join("、")}：它是 macOS 的更新通道产物，文件名**不带版本号**，` +
+            `而本次没有同版本的 dmg 可佐证它属于 v${version}。若本次确实要发 macOS，请确认 dmg 也构建出来了。`,
+        );
+      }
     }
     if (picked.length === 0) {
       problems.push(`未找到任何属于 v${version} 的安装包（bundle 目录里可能是别的版本，或构建产物没拷进来）`);
     }
   }
 
+  // `.app.tar.gz` 的架构只能从 dmg 推（名字里没有），推不出来就报错。
+  problems.push(...resolveUpdaterArchiveKeys(picked));
+
   // 同平台 + 同扩展名的多个候选 = 真歧义（典型的「上次 run 的同版本残留」）。
-  // 注意同平台不同扩展名（.deb 与 .AppImage）是正常的：两个都发，清单取 deb。
+  // 注意同平台不同扩展名（.deb 与 .AppImage / .app.tar.gz 与 .dmg）是正常的：都发，清单取偏好靠前那个。
   const groups = new Map();
   for (const e of picked) {
-    const key = platformKeyFor(e.name);
+    const key = keyOf(e);
     if (!key) {
       problems.push(`无法判定平台类型：${e.name}`);
       continue;
@@ -176,7 +278,7 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
 export function manifestPicks(picked) {
   const groups = new Map();
   for (const e of picked) {
-    const key = platformKeyFor(e.name);
+    const key = keyOf(e);
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(e);

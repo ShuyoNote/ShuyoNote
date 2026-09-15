@@ -151,7 +151,10 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 | 打印每个产物的 sha256 | 事后可与 CI 产物逐个比对（同时写 `src-tauri/target/release/release-artifacts.json`） |
 
 逃生口（都需显式写出，且有明确风险提示）：`--artifacts` 指定产物、`--allow-platform-drop` 允许少平台、`--no-android` 本轮不带 Android、`--skip-sig-verify` 跳过签名校验。
-`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、macOS 取 dmg、Android 取 apk），不再依赖目录遍历顺序；另一个（如 AppImage）照样挂到 release 上。
+`latest.json` 同一平台键只能留一个 url，取哪个由 `MANIFEST_PREFERENCE` **写死**（Windows 取 exe、Linux 取 deb、**macOS 取 `.app.tar.gz`**、Android 取 apk），不再依赖目录遍历顺序；另一个（如 AppImage、macOS 的 dmg）照样挂到 release 上。
+> macOS 取 `.app.tar.gz` 而非 dmg 是硬要求：更新器在 macOS 上只 `GzDecoder` + tar 解包 `.app.tar.gz`，
+> 指向 dmg 会"能下载、装不上"。证据与门禁（含"有 dmg 却没有 `.app.tar.gz` 就硬失败"）见
+> [macos-updater.md](macos-updater.md) 开头与 `scripts/lib/releaseArtifacts.mjs` 的 `isUpdaterArchive`。
 
 > 覆盖检查可以用 `SHUYONOTE_PREV_MANIFEST_JSON=<文件>` 注入一份"线上清单"来验（**只为测试这条门禁**，
 > 正常发布别设）。为什么需要它：Android 通道上线前线上清单里**根本没有** `android-aarch64`，

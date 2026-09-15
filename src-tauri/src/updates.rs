@@ -118,7 +118,9 @@ mod tests {
                 },
                 "darwin-aarch64": {
                     "signature": "dW50cnVzdGVkIGNvbW1lbnQ6...",
-                    "url": "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1.90.2/ShuyoNote_1.90.2_aarch64.dmg"
+                    // macOS 的更新通道产物是 `.app.tar.gz`（tauri-plugin-updater 在 macOS 上
+                    // 只会 `GzDecoder` + tar 解包它）；dmg 只用于人工下载安装。
+                    "url": "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/v1.90.2/ShuyoNote.app.tar.gz"
                 },
                 "android-aarch64": {
                     "signature": format!("sha256:{}", "ab".repeat(32)),

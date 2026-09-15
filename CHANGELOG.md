@@ -94,6 +94,17 @@
 
 ### 修复
 
+- **macOS 更新通道会指向 dmg ⇒「能下载、装不上」**（发 macOS 版之前必须先修的这条）。
+  依据：`tauri-plugin-updater` 2.10.1 的 macOS `install_inner()` 直接 `GzDecoder` + `tar::Archive`
+  解包 `.app.tar.gz`（docstring 也写明期望 `[AppName]_[version]_x64.app.tar.gz`），
+  给它 dmg（连 gzip 都不是）会解包失败；而 `tauri-bundler` 生成的正是
+  `ShuyoNote.app.tar.gz`（**不带版本号、不带架构**）。
+  改动：`scripts/lib/releaseArtifacts.mjs` 收 `.app.tar.gz`（`bundle/macos/` 一并遍历）、
+  `MANIFEST_PREFERENCE` 把 `app.tar.gz` 排在 `dmg` 之前（dmg 照发，只用于人工下载安装）、
+  架构从同批次 dmg 推（推不出来就报错、不猜）、**有 dmg 却没有 `.app.tar.gz` 时硬失败**。
+  测试见 `scripts/lib/releaseArtifacts.test.mjs` 的「macOS 更新通道」一组（已做变异验证）；
+  拿到证书后的操作步骤见 [docs/macos-updater.md](docs/macos-updater.md) §二。
+
 - **【最严重】顶部被状态栏压住 + 顶部约 41 CSS px 是触摸死区**（真机：标题与系统时间叠字，
   `adb shell input tap` 打在 y≤123 设备 px 时**0 个 DOM 事件**、y=130 时 100+ 个，
   编辑器工具条 6 个按钮**点不到**）。
