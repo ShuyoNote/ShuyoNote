@@ -9,70 +9,23 @@
 //
 // 同一个判据在三个地方都要能跑，所以抽成这一条命令（单一事实来源）：
 //   ① CI 的发版流水线（release.yml 打完包就验，见那里的调用）；
-//   ② 发布后拿线上/apk 再验一次（`pnpm check:apk <文件>`）；
+//   ② 发布后拿线上那份再验一次（`pnpm check:apk <文件>`）；
 //   ③ 本机拿到 CI artifact 后先验再装真机（自检包 vs 发版件两回事，见 RELEASING.md §9.1）。
 //
 // 零依赖：自己读 ZIP 的中央目录（Node 自带 zlib 解 inflate），
 // 这样 Windows / Linux / CI 上行为一致，不用指望 `unzip` 或 `strings` 在不在。
+// 读取实现抽在 `scripts/lib/zip.mjs`，与"取 CI 产物"那个脚本共用同一份。
 import { readFileSync } from "node:fs";
-import { inflateRawSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { listZipEntries, readZipEntry } from "./lib/zip.mjs";
 
 /** 必须能在 dex 里找到的字符串 —— 每一条都对应一个真实能力，缺了都会"真机上静默少功能"。 */
 const REQUIRED = [
-  ["ShuyoFsPlugin", "启动时注册 Android 壳插件（缺了 = **ClassNotFoundException，装上就闪退**）"],
+  ["ShuyoFsPlugin", "启动时注册 Android 壳插件（缺了 = ClassNotFoundException，**装上就闪退**）"],
   ["__SHUYONOTE_INSETS__", "状态栏/手势条 inset 桥（缺了 = 顶部 41 CSS px 回到触摸死区）"],
   ["__SHUYONOTE_BACK__", "返回键先关浮层（缺了 = 返回键直接退出应用）"],
   ["installApk", "应用内更新把 APK 交给系统安装器（缺了 = 点了没反应）"],
 ];
-
-/** 读 ZIP 的中央目录：返回 [{ name, method, compressedSize, size, localHeaderOffset }]。 */
-function zipEntries(buf) {
-  // 1) 从尾部往前找 EOCD（0x06054b50）——注释区最长 65535，所以最多回扫 66KB
-  let eocd = -1;
-  const minPos = Math.max(0, buf.length - 66000);
-  for (let i = buf.length - 22; i >= minPos; i--) {
-    if (buf.readUInt32LE(i) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) throw new Error("不是合法的 ZIP/APK：找不到 EOCD");
-  let count = buf.readUInt16LE(eocd + 10);
-  let cdOffset = buf.readUInt32LE(eocd + 16);
-  // ZIP64：本场景（<4GB、条目数不多）用不到，但要知道它会让上面两个字段失真
-  if (cdOffset === 0xffffffff || count === 0xffff) {
-    throw new Error("ZIP64 不受支持（本命令只用于 APK）");
-  }
-  const out = [];
-  let p = cdOffset;
-  for (let i = 0; i < count; i++) {
-    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error(`中央目录第 ${i} 项签名不对`);
-    const method = buf.readUInt16LE(p + 10);
-    const compressedSize = buf.readUInt32LE(p + 20);
-    const size = buf.readUInt32LE(p + 24);
-    const nameLen = buf.readUInt16LE(p + 28);
-    const extraLen = buf.readUInt16LE(p + 30);
-    const commentLen = buf.readUInt16LE(p + 32);
-    const localHeaderOffset = buf.readUInt32LE(p + 42);
-    const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
-    out.push({ name, method, compressedSize, size, localHeaderOffset });
-    p += 46 + nameLen + extraLen + commentLen;
-  }
-  return out;
-}
-
-/** 取某个条目的**解压后**内容。 */
-function readEntry(buf, e) {
-  if (buf.readUInt32LE(e.localHeaderOffset) !== 0x04034b50) throw new Error(`${e.name}：本地头签名不对`);
-  const nameLen = buf.readUInt16LE(e.localHeaderOffset + 26);
-  const extraLen = buf.readUInt16LE(e.localHeaderOffset + 28);
-  const dataAt = e.localHeaderOffset + 30 + nameLen + extraLen;
-  const raw = buf.subarray(dataAt, dataAt + e.compressedSize);
-  if (e.method === 0) return raw;
-  if (e.method === 8) return inflateRawSync(raw);
-  throw new Error(`${e.name}：不支持的压缩方式 ${e.method}`);
-}
 
 const apkPath = process.argv[2];
 if (!apkPath) {
@@ -95,25 +48,24 @@ const ok = (cond, msg) => {
 
 let entries;
 try {
-  entries = zipEntries(buf);
+  entries = listZipEntries(buf);
 } catch (e) {
   console.error(`✗ ${e.message}`);
   process.exit(1);
 }
 
-// ---- 1. dex ----
+// ---- 1. dex：四个能力字符串 ----
 const dex = entries.filter((e) => /^classes\d*\.dex$/.test(e.name));
 ok(dex.length > 0, `含 dex（${dex.map((d) => d.name).join(", ") || "一个都没有"}）`);
-const dexText = dex.map((d) => readEntry(buf, d).toString("latin1")).join("\n");
+const dexText = dex.map((d) => readZipEntry(buf, d).toString("latin1")).join("\n");
 for (const [needle, why] of REQUIRED) {
-  ok(
-    dexText.includes(needle),
-    `dex 含 \`${needle}\` —— ${why}`,
-  );
+  ok(dexText.includes(needle), `dex 含 \`${needle}\` —— ${why}`);
 }
 
 // ---- 2. ABI：必须恰好 arm64-v8a（`--target aarch64` 只是要求，不是证明） ----
-const abis = [...new Set(entries.filter((e) => e.name.startsWith("lib/")).map((e) => e.name.split("/")[1]))].filter(Boolean).sort();
+const abis = [...new Set(entries.filter((e) => e.name.startsWith("lib/")).map((e) => e.name.split("/")[1]))]
+  .filter(Boolean)
+  .sort();
 ok(
   abis.length === 1 && abis[0] === "arm64-v8a",
   `lib/ 下的 ABI 恰好是 arm64-v8a（实测 ${abis.join(", ") || "没有 lib/"}）`,

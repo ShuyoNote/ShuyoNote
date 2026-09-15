@@ -5,6 +5,21 @@
 ## [Unreleased]
 
 ### 新增
+- **`scripts/fetch-release-artifacts.mjs`（取 CI 产物并落位，一条命令）**（2026-09-15）：
+  `pnpm fetch:release-artifacts --tag v1.91.1 --stage`（或 `--run <id>`）。它从 Release 流水线
+  的 artifact 里把 `bundle-*` 与 `android-release-apk` 取回来、**按 API 给的 digest 校验整包
+  sha256**、零依赖解包，并按 `release.mjs` 期望的目录落位（`--stage`）。取到 APK 后**立刻**
+  跑 `check-apk-contents.mjs` 验字节。实现上用 Node 自己走完：分片并行（GitHub 单连接实测
+  ~40KB/s）+ 断点续传（中断重跑接着下）+ 解包复用 `scripts/lib/zip.mjs`。
+  为什么要有它：这一步原先全手工，2026-09-15 发 1.91.1 时踩了三个坑（连接太慢超时、分片断了
+  要重下、拼装辅助 `.ps1` 因无 BOM 的 UTF-8 中文在 PowerShell 5.1 里解析失败）。
+  见 [RELEASING.md](docs/RELEASING.md) ⑤。
+
+- **`scripts/lib/zip.mjs`（零依赖 ZIP 读取）**（2026-09-15）：`listZipEntries` / `readZipEntry` /
+  `extractZip`。自己读中央目录（EOCD 回扫 + 固定头解析），用 Node 自带 `zlib.inflateRawSync`
+  解 deflate；不支持 ZIP64 时**明确报错**而不是给错数据。给 `check-apk-contents` 与
+  `fetch-release-artifacts` 共用（同一份实现，别再抄第二份）。
+
 - **`scripts/check-apk-contents.mjs`（验 APK 产物，一条命令，零依赖）**（2026-09-15）：
   `pnpm check:apk <apk 文件>`。翻 APK 字节验五件事——dex 里有 `ShuyoFsPlugin` /
   `__SHUYONOTE_INSETS__` / `__SHUYONOTE_BACK__` / `installApk`（每条对应一个真实能力，

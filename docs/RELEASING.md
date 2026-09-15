@@ -89,6 +89,24 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 
 **⚠️ GitHub Release 里没有 `.sig`**：`release` job 显式只挑 `.exe/.dmg/.deb/.AppImage`。要发 GitCode（更新通道需要签名）就得从 **run artifacts** 取，两个 build job 上传的 `bundle-<platform>` 含完整 `bundle/` 目录（含 `.sig`，保留 7 天）：
 
+**一条命令（推荐）**：
+
+```bash
+pnpm fetch:release-artifacts --tag v1.91.1 --stage
+# 或指定 run：pnpm fetch:release-artifacts --run 34919151353 --stage
+```
+
+`scripts/fetch-release-artifacts.mjs` 做四件事：**分片并行**下载（GitHub 单连接实测 ~40KB/s，
+8 片并行才现实）、**断点续传**（中断后重跑接着下，不重下已完成的分片）、按 API 给的
+`digest` **校验整包 sha256**、零依赖解包（`scripts/lib/zip.mjs`）。取到 APK 后**立刻**跑
+`check-apk-contents.mjs` 验字节（v1.91.0 闪退的产物级判据）。`--stage` 会把
+nsis/deb/appimage 复制进 `src-tauri/target/release/bundle/`，随后 ⑥ 的 `--no-build` 直接可用。
+最后它会打印出下一步该跑的那条 `release.mjs` 命令。
+
+> 为什么不用下面那段手工脚本：2026-09-15 发 1.91.1 时手工做踩了三个坑（GitHub 单连接太慢、
+> 分片被中断后重下、拼装用的 `.ps1` 因无 BOM 的 UTF-8 中文在 PowerShell 5.1 里解析失败）。
+> 手工版留着当参考/兜底：
+
 ```bash
 # 需要 GitHub token（artifacts 下载要鉴权，匿名 401）+ jq；RUN 取该 tag 对应的 run id
 GH=<GitHub token>; RUN=<run id>
