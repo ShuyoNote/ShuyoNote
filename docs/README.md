@@ -21,6 +21,7 @@
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
 | 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
+| 回归门禁有哪些 / 结果在哪看 | [回归测试体系](TESTING.md) |
 | 版本演进 | [变更记录](#变更记录-changelog) |
 
 ## 目录结构
@@ -29,6 +30,7 @@
 docs/
 ├── README.md            # 本文档：统一入口 / 导航 / 索引
 ├── development.md       # 开发指南：运行、测试、验证、提版规则
+├── TESTING.md           # 回归测试体系：门禁清单 / 基线 / 结果公开 / 覆盖边界
 ├── architecture.md      # 系统架构与存储模型
 ├── MOBILE.md            # 移动端适配（WebView 壳 + MobileBridge）
 ├── web-sync-boundary.md # Web 版同步能力边界（为什么不支持多设备同步 + 若要做的路线）
@@ -201,6 +203,7 @@ CHANGELOG.md             # 版本变更日志
 | 文档 | 内容 |
 |---|---|
 | [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
+| [TESTING.md](TESTING.md) | **回归测试体系**：门禁清单的单一事实来源（`scripts/lib/gates.mjs`）/ `pnpm verify` 一键本地验收 / 断言数基线 `tests/baseline.json`（只增不减是硬校验）/ 结果公开在 step summary 与 artifact / **覆盖边界**（`sync-*-regression` 在私有服务端仓库、GitCode 只跑纯 Node 组） |
 
 ## 社区互动（社区接入）
 

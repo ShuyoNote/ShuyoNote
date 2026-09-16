@@ -15,6 +15,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const require = createRequire(import.meta.url);
 
+// 机器可读结果（回归体系 P0：让"绿"可核验，而不只是终端上闪过的一行）。
+// 默认**关**：不传参时行为与以前逐字节一致（仍是 `N passed, M failed` + exitCode），
+// 所以既有 CI、文档与 CHANGELOG 里的数字不受影响。传 `--json <path>` 或
+// `SMOKE_JSON=<path>` 时才额外落一份 JSON 给 scripts/test-report.mjs 汇总。
+const jsonArgIdx = process.argv.indexOf("--json");
+const reportPath = jsonArgIdx >= 0 ? process.argv[jsonArgIdx + 1] || "" : process.env.SMOKE_JSON || "";
+
 // Node has a global `crypto` (getter-only); the mock uses `crypto.randomUUID`.
 // sql.js uses `window`? No. We only need `window` for the platform-level open().
 
@@ -265,12 +272,16 @@ function newPlatform() {
 
 let pass = 0;
 let fail = 0;
+// 失败明细：只有在 `--json` 时才被写进报告，但无论如何都收集（开销可忽略），
+// 这样"哪条断言红了"能进汇总与 step summary，而不是只留在被刷掉的日志里。
+const failures = [];
 function assert(label, cond, extra = "") {
   if (cond) {
     pass++;
     console.log(`  \u2713 ${label}${extra ? " \u2014 " + extra : ""}`);
   } else {
     fail++;
+    failures.push(`${label}${extra ? " \u2014 " + extra : ""}`);
     console.log(`  \u2717 ${label}${extra ? " \u2014 " + extra : ""}`);
   }
 }
@@ -1741,6 +1752,29 @@ trailer
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
+// 报告写在**最终汇总之后**：解析汇总行的人（包括老脚本）看到的仍然是自己认识的那行。
+if (reportPath) {
+  mkdirSync(dirname(reportPath), { recursive: true });
+  writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        suite: "smoke-web",
+        label: "冒烟测试（web 平台行为的事实标准）",
+        passed: pass,
+        failed: fail,
+        total: pass + fail,
+        failures,
+        node: process.version,
+        platform: process.platform,
+        finishedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  console.log(`  (report → ${reportPath})`);
+}
 // Use exitCode (not process.exit()) so any still-closing libuv handles drain
 // before the process exits; process.exit() races teardown and hits a Windows
 // libuv assert when the smoke server was used.

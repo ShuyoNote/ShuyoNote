@@ -1,0 +1,61 @@
+name: ci
+
+# 为什么要有这个文件：项目主站是 GitCode，而 GitCode 侧此前**一条测试都不跑**
+# ——build-linux.yml 只在打 tag 时构建 .deb/.AppImage。于是"门禁全绿"在主站完全不可见：
+# 读者看到的"最近一次流水线成功"其实只是一次打包。测试只在 GitHub 镜像侧跑
+# （.github/workflows/ci.yml），对主站的贡献者与用户等于不存在。
+#
+# 覆盖：**纯 Node 组**（契约检查 / 类型检查 / 单测 / web 冒烟 / 两设备同步 / 插件作者路径）。
+# 门禁清单与 GitHub 侧**同源**——同一句 `node scripts/test-report.mjs`，同一份注册表
+# （scripts/lib/gates.mjs），所以这里不会出现"两边跑的不是同一件事"。
+#
+# 不在这一档的（见 docs/TESTING.md 的覆盖表，那里写了为什么）：
+#   · browser 组（check-pdf-reload / check-panel-layout / check-web-build）——要真实 Chromium
+#   · mobile 组（布局 / 浮层验收）——要真实 Chromium + dev server
+#   · rust 组（cargo test）——要 webkit2gtk 等一整套系统依赖，成本高于收益，留在 GitHub 侧
+#
+# ⚠️ 未在 GitCode 上实跑过（本机没有 GitCode runner）。命令与 GitHub 侧逐字一致，
+# 风险只在 GitCode 自己的 action 语义上：若 setup-node@0.0.1 不认 node-version 22，
+# 改成 20 即可（build-linux.yml 用的就是 20）。check-workflow-yaml 已扫过本文件。
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+jobs:
+  checks:
+    name: 单测 / 冒烟 / 契约
+    runs-on: euleros-2.10.1
+    steps:
+      - uses: checkout-action@0.0.1
+
+      - name: Install Node
+        uses: setup-node@0.0.1
+        with:
+          node-version: "22"
+
+      - name: Install pnpm + npm mirror
+        run: |
+          npm config set registry https://registry.npmmirror.com
+          npm install -g pnpm@10
+
+      - name: Install frontend deps
+        run: cd repo_workspace && pnpm install --no-frozen-lockfile
+
+      - name: 回归门禁（纯 Node 组，含基线校验）
+        # `--json` 落一份机器可读报告给下游/人工核验；门禁失败即非零退出 ⇒ 这一步红。
+        # 汇总表同时打印在流水线日志里（GitCode 没有 GITHUB_STEP_SUMMARY）。
+        run: cd repo_workspace && node scripts/test-report.mjs --group contract,smoke,sync,plugin --json test-report.json
+
+      - name: Upload report
+        # 与 build-linux.yml 同样的写法（本仓库里已知可用的 GitCode 约定）。
+        # 坦诚边界：这一步**不带 `if: always()`**——GitCode 上 `if` 的语义本机无法核实，
+        # 猜错会让整个 workflow 编译不过（0 个 job 的红 run，正是 ci.yml 记过的那类事故）。
+        # 代价：门禁失败时 artifact 不产出，但**失败明细仍然在日志里**（test-report 会打印）。
+        uses: upload-artifact@0.0.1
+        with:
+          name: test-report
+          path: repo_workspace/test-report.json

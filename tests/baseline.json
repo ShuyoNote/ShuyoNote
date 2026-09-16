@@ -1,0 +1,59 @@
+{
+  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。",
+  "counts": {
+    "vitest": 730,
+    "smoke-web": 350,
+    "check-pdf-reload": 8,
+    "check-panel-layout": 25,
+    "check-web-build": 8,
+    "mobile-layout": 43,
+    "mobile-overlays": 979
+  },
+  "gates": {
+    "contract": [
+      "check-capabilities",
+      "check-changelog",
+      "check-deep-link",
+      "check-doc-links",
+      "check-ocr-assets",
+      "check-overlay-registry",
+      "check-pdfjs-shim",
+      "check-plugin-hosting",
+      "check-ps1-ascii",
+      "check-versions",
+      "check-web-commands",
+      "check-workflow-yaml"
+    ],
+    "smoke": [
+      "smoke-web",
+      "tsc",
+      "vitest"
+    ],
+    "sync": [
+      "two-device-sync"
+    ],
+    "plugin": [
+      "examples-tsc",
+      "plugin-cli-validate",
+      "plugin-new-smoke"
+    ],
+    "browser": [
+      "check-panel-layout",
+      "check-pdf-reload",
+      "check-web-build"
+    ],
+    "mobile": [
+      "mobile-layout",
+      "mobile-overlays"
+    ],
+    "rust": [
+      "rust-plugins-alone",
+      "rust-test"
+    ],
+    "artifact": [
+      "external-index",
+      "external-package",
+      "plugin-fragment-no-zip"
+    ]
+  }
+}
