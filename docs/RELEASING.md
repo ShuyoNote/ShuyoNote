@@ -178,6 +178,25 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyon
 pnpm tauri build      # 产出 setup.exe + .sig
 ```
 
+> **换一台（新的）Windows 机器之前先跑 `pnpm check:win-build-env`**（2026-09-16 加）。
+> 它逐条问硬前置，并写明**缺了会怎样**——这几条都不会给出清楚的报错：
+>
+> | 前置 | 缺了的表现 |
+> |---|---|
+> | Node ≥ 20 / pnpm | 各种解析错（`corepack enable` 可补 pnpm） |
+> | `rustc` + 目标 `x86_64-pc-windows-msvc` | 出不了桌面包（Windows 要用 MSVC 目标） |
+> | **MSVC 链接器 `link.exe` 在 PATH** | 报 `link.exe not found`。装 VS 2022 Build Tools 的
+>   「使用 C++ 的桌面开发」，并在**已加载 vcvars 的**命令行里构建（普通 pwsh 里 `where link.exe` 找不到） |
+> | **OpenSSL**（`OPENSSL_DIR` 或默认安装路径） | 在**链接期**炸 `LNK2019 无法解析的外部符号`：
+>   `rusqlite` 用 `bundled-sqlcipher`，要链 OpenSSL。两条装法：① 装 OpenSSL-Win64 到默认路径
+>   （`openssl-sys` 会自动认 `C:\Program Files\OpenSSL-Win64`）；② 像 CI 那样
+>   `vcpkg install openssl:x64-windows-static-md` 并设 `OPENSSL_DIR`（见 `.github/workflows/release.yml` 那一步） |
+> | **`~/.tauri/shuyonote.key` + `.pw`** | 构建能过但**产不出 `.sig`** ⇒ 更新清单里该平台没 `signature`
+>   ⇒ 用户端**整份**清单解析失败（桌面的更新一起挂）。密钥**带外**从既有机器拷，绝不入库 |
+>
+> 可选：`~/.minisign/shuyonote.key`（发布者私钥）——没有则发版时**明确跳过**第一方插件片段。
+> Android 发版件**不要在这台机器上建**：一律从 CI 取（见 §9 开头）。
+
 ## ⑥ 发布到 GitCode（更新通道）
 ```bash
 GITCODE_TOKEN=… RELEASE_NOTES="一句话更新说明（应用内「检查更新」显示）" \
