@@ -1,0 +1,123 @@
+# PDFium 替换 MuPDF（桌面光栅化）· 落地方案（已开工）
+
+> 状态：**已拍板（2026-09-16）：开工。** 本文件是可执行的落地设计。
+> 动机：**闭源商业授权版的许可干净** —— 客户端当前是 AGPL-3.0，与 MuPDF（同为 AGPL 系）本来就兼容；只有要做**闭源授权版**时才必须换掉 MuPDF（或买 Artifex 商业授权）。
+> 上位决策文档：[国密 + PDFium 方案](2026-09-16-sm-crypto-and-pdfium-plan.md)。国密侧见 [国密全链路落地方案](2026-09-16-sm-crypto-full-plan.md)。
+
+---
+
+## 0. Spike 结果（**已跑通，2026-09-16**）
+
+问题：`pdfium-render` 会不会重演当年 `mupdf` 高层 crate 在 MSVC 上编不过的坑（bindgen 不产出内建类型 `max_align_t`，见 `src-tauri/Cargo.toml:61-65` 的注释）？
+
+做法：在**临时目录建一个空白 crate**（不碰主仓库），`cargo add pdfium-render` + `cargo check`，目标 `x86_64-pc-windows-msvc`。
+
+结果：**通过**。
+
+```
+Adding pdfium-render v0.9.4 to dependencies
+  Features: + image_025 + image_api + image_latest + pdfium_7881 + pdfium_latest + thread_safe
+  Locking 59 packages to latest Rust 1.94.0 compatible versions
+   Compiling pdfium-render v0.9.4
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.49s
+```
+
+**三条可直接写进设计的结论**：
+
+1. **不会重演那个坑**：`pdfium-render` 用**预生成绑定 ＋ `libloading 0.9.0` 动态加载**，**构建期不跑 bindgen** ⇒ MSVC 上无 `max_align_t` 问题。这是它与 `mupdf` 高层 crate 的根本差别。
+2. **`pdfium_7881`**：crate 把支持的 PDFium 版本钉成了 **build 7881**（同时还开着 `pdfium_latest`）。⇒ 我们**显式钉 7881**，别跟随 `latest`，避免 dll 与绑定漂移。
+3. 附带拉进来的依赖：`image 0.25`（图像解码）、`moxcms`（色彩管理）、`zune-jpeg`、`itertools`、`bitflags`、`once_cell` —— 许可均宽松（MIT/Apache/zlib 类），**不引入新的 copyleft**。
+
+> ⚠️ 编译通过 ≠ 跑得起来：**运行时**还需要 `pdfium.dll`（由 `libloading` 运行时加载，路径可指定）。库的获取与固定版本是 P0（§2）。
+
+---
+
+## 1. 范围：只换光栅化
+
+```ts
+// src/components/PdfReader.tsx:122,136,651 —— 桌面：native 只出「页位图」
+if (attachmentId && platform.pdfRender.nativeAvailable()) {
+  const { bytes, width, height } = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale);
+}
+// 文本层 / 坐标 / 页数 / 目录 —— 全部来自 createPdfjsEngine()（pdf.js，Apache-2.0）
+// src/lib/platform/web.ts:3605 —— Web：nativeAvailable() === false，全走 pdf.js
+```
+
+⇒ **坐标语义不经 native 引擎**，因此：
+
+- ❌ 不需要"两引擎坐标对拍"（当年那份方案担心的 `getPageTextItems` 坐标对齐，在现有分层下**不存在**）；
+- ✅ `render_pdf_page` 命令签名与 `{width,height,rgba_base64}` 契约**不变**；
+- ✅ `src/lib/pdfNativePage.ts:112` 的 `parseNativePageResponse` **一行不改**。
+
+**唯一用户可见的差异**应该是"渲染出来的像素"本身 —— 所以对拍（§4）是验收的核心。
+
+---
+
+## 2. 分阶段任务
+
+| 阶段 | 内容 | 估算 | 交付物 |
+|---|---|---|---|
+| **P0** | **拿到并固定 `pdfium.dll`（build 7881）**：自建（Chromium 工具链，重）或取预编译包 + **比对校验和**；把版本与 sha256 写进仓库 | 0.5–1 人日 | 库 + 校验记录（§6） |
+| **P1** | 新增 `src-tauri/src/pdfium_native.rs`（渲染 + 文档缓存 + 全局 init/锁），**保留 `pdf_native.rs`（MuPDF）不动** | 1–2 人日 | 新模块 + 单测 |
+| **P2** | `render_pdf_page` 按开关分派（Cargo feature 或运行时开关），两条路径都能跑 | 0.5 人日 | 可回滚的双路径 |
+| **P3** | **对拍**：同一批真实 PDF（含扫描件、中文、旋转页、超大文件）比较两引擎渲染结果与单页耗时 | 1 人日 | 对拍脚本 + 报告 |
+| **P4** | Windows 打包验收 → 多平台（macOS bundle ＋ 公证、Linux rpath、Android `jniLibs`）**作为独立任务** | 1 人日 + 2–3 人日 | 各平台安装包 |
+| **P5** | 灰度一个发布周期 → 默认切 PDFium → （可选）删 MuPDF | — | 发布记录 |
+
+**建议顺序**：P0 → P1 → P3（先证明渲染等价，再谈打包）。**P3 不对拍不算完成。**
+
+---
+
+## 3. 实现要点（可直接照着写）
+
+1. **位图通道顺序**：PDFium 常用档是 **BGRA/BGRx/GRAY**（按所钉 build 的枚举核对），**没有 RGBA** ⇒ 在 Rust 侧换成 RGBA，**保持前端契约**（与 `pdf_native.rs:233` `compact_rgba` 同一条原则：**差异在本侧消化，不漏给下游**）。
+2. **stride 反而更简单**：PDFium 的位图缓冲由**调用方分配**（`FPDFBitmap_CreateEx` 传自己的 buffer 与 stride）⇒ **行对齐填充问题消失**，`compact_rgba` 那套处理在 PDFium 路径上可退化为"无需处理"。
+3. **全局初始化 + 锁**：`fz_context` 那套模式（`pdf_native.rs:38-52`：进程级只建一次、永不释放、渲染全程持锁）**可以 1:1 搬迁** ⇒ `FPDF_InitLibrary` 一次 ＋ `Mutex`。两个最阴的坑（反复重建全局上下文崩 Windows、非线程安全）不会重踩。
+4. **文档缓存仍要管生命周期**：`FPDF_LoadMemDocument` 的**缓冲区必须活得比 document 长**（流是按需读的）——与 MuPDF 的 `CachedDocument`（`pdf_native.rs:57-60`）**是同一个坑**，注释里那条警告要一并搬过去；缓存同样要有界。
+5. **错误处理**：每次调用后检查 `FPDF_GetLastError()`，把错误码映射成可读信息（沿用现有"错误信息要有指向性"的原则）。
+6. **像素上限不变**：`MAX_PAGE_PIXELS = 40_000_000`（`pdfNativePage.ts:29`）继续作为防御闸门；PDFium 路径同样在**碰画布之前**校验倍率与尺寸。
+
+---
+
+## 4. 验收标准
+
+- [ ] **渲染等价**：同一批 PDF（印刷体 / 扫描件 / 中文 / 旋转页 / 超大页 / 透明底）两引擎输出**目视一致**，像素差异在约定容差内
+- [ ] **性能不退化**：单页耗时对比记录在案（PDFium 不得明显慢于 MuPDF；扫描件通常更快）
+- [ ] **契约不变**：`parseNativePageResponse` 与前端零改动即可工作
+- [ ] **回滚可用**：一键切回 MuPDF，不需要改前端、不需要回滚数据
+- [ ] **打包**：每个平台的安装包**首次启动即可渲染**（动态库随包、路径正确、macOS 过公证、Android 进 `jniLibs`）
+- [ ] **真机**：桌面（Windows + 至少一个其它平台）＋ Android 真机各跑一遍
+- [ ] 既有门禁全绿（`tsc`、`pnpm test`、`check:web-commands`、`cargo check --all-targets`）
+
+---
+
+## 5. 风险清单
+
+| 风险 | 影响 | 缓解 |
+|---|---|---|
+| 动态库打包（多平台/公证/Android） | 交付形态问题，**最容易漏** | P4 独立排期，逐平台验收；"首次启动即可渲染"写进验收 |
+| PDFium 无官方稳定 API/ABI | 升级即迁移 | **钉 build 7881**（crate 的 feature 已按版本门控）；升级当小迁移做 |
+| 预编译包来源是社区 | 商用交付的供应链问题 | **建议自己构建**并固定校验和；若用预编译，记录来源与 sha256（§6） |
+| 渲染结果与 MuPDF 有差异 | 用户可见 | P3 对拍，先出报告再切默认 |
+| 位图格式/通道顺序搞错 | 颜色错乱（**"能显示但不对"**） | Rust 侧转换 + 单测钉住通道顺序（红绿蓝各写一个已知值断言） |
+| 与国密工作流并发改 `Cargo.toml` | 冲突 | 串行：**先落国密的依赖，PDFium 再基于最新 main 落**（见国密方案 §9） |
+
+---
+
+## 6. 库获取策略（供应链，别跳过）
+
+三条路，按"商用交付的稳妥度"排序：
+
+1. **自己构建**（推荐用于交付）：按官方 Chromium 工具链（depot_tools/gn/ninja）构建指定 tag，产出各平台库；成本高但**可控、可复现**；
+2. **取预编译包 + 记录来源与校验和**（开发期可用）：把 URL、版本、sha256 写进仓库文档，并在 CI 里校验；
+3. **走系统/发行版包**（Linux 某些发行版有 `pdfium` 包）：版本不可控，商用交付不建议。
+
+无论哪条：**版本与校验和必须入库**，构建脚本要**校验后使用**，不许"下载了就塞进安装包"。
+
+---
+
+## 7. 与国密工作流的关系
+
+- **文件零重叠**：国密在 `crypto.rs`/`security.rs`，PDFium 在 `pdf_native.rs` ＋ 打包；
+- **唯一串行点**：`Cargo.toml` / `Cargo.lock`；
+- **发布纪律**：两者**不要同时合入 main 并发布** —— 一个动"数据能不能打开"，一个动"内容能不能显示"，同时上真机出问题时无法归因。
