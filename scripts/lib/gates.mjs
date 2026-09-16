@@ -40,6 +40,14 @@ export const GATES = [
     incident: "2026-09-12：`--lib plugins::` 行尾冒号 ⇒ 非法 YAML ⇒ 0 个 job 的红 run，49 次 push 全红无人察觉",
   },
   {
+    id: "check-gitcode-workflow-rules",
+    group: "contract",
+    label: "GitCode workflow 平台规则（runs-on 白名单 / step 必须有 name / action 写法）",
+    cmd: "node scripts/check-gitcode-workflow-rules.mjs",
+    incident:
+      "2026-09-16：GitCode 的校验接口实测出三条平台约束（GitHub 侧没有）——仓库既有的 euleros-2.10.1 与简写 action 都不合法；不合法时整条流水线不会被调度",
+  },
+  {
     id: "check-overlay-registry",
     group: "contract",
     label: "浮层登记（返回栈 / 移动端量测）",

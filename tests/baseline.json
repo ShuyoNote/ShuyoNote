@@ -18,6 +18,7 @@
       "check-changelog-numbers",
       "check-deep-link",
       "check-doc-links",
+      "check-gitcode-workflow-rules",
       "check-ocr-assets",
       "check-overlay-registry",
       "check-pdfjs-shim",

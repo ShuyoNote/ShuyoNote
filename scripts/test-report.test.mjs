@@ -27,6 +27,7 @@ const REQUIRED_GATE_IDS = [
   "check-capabilities",
   "check-doc-links",
   "check-workflow-yaml",
+  "check-gitcode-workflow-rules",
   "check-overlay-registry",
   "check-ps1-ascii",
   "check-pdfjs-shim",

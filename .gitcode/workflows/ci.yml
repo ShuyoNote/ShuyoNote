@@ -1,4 +1,4 @@
-name: ci
+﻿name: ci
 
 # 为什么要有这个文件：项目主站是 GitCode，而 GitCode 侧此前**一条测试都不跑**
 # ——build-linux.yml 只在打 tag 时构建 .deb/.AppImage。于是"门禁全绿"在主站完全不可见：
@@ -12,11 +12,19 @@ name: ci
 # 不在这一档的（见 docs/TESTING.md 的覆盖表，那里写了为什么）：
 #   · browser 组（check-pdf-reload / check-panel-layout / check-web-build）——要真实 Chromium
 #   · mobile 组（布局 / 浮层验收）——要真实 Chromium + dev server
-#   · rust 组（cargo test）——要 webkit2gtk 等一整套系统依赖，成本高于收益，留在 GitHub 侧
+#   · rust 组（cargo test）——要 webkit2gtk 一整套系统依赖；它的读数由 rust-baseline.yml 单独产出
 #
-# ⚠️ 未在 GitCode 上实跑过（本机没有 GitCode runner）。命令与 GitHub 侧逐字一致，
-# 风险只在 GitCode 自己的 action 语义上：若 setup-node@0.0.1 不认 node-version 22，
-# 改成 20 即可（build-linux.yml 用的就是 20）。check-workflow-yaml 已扫过本文件。
+# ⚠️ 2026-09-16：本文件与 rust-baseline.yml 已通过 GitCode 自己的
+#    POST /api/v8/repos/:owner/:repo/actions/workflows/validate   （valid=true）
+# 三条从校验器学到的硬约束（与 GitHub 侧写法不同，别照抄 GitHub 的习惯）：
+#   1) runs-on 以单个字符串给出时，只接受 [default, ubuntu-latest, euler-latest, ubuntu-24, ubuntu-22]；
+#      仓库原有 build-linux.yml 用的 euleros-2.10.1 **不在**白名单里（校验器报错）。
+#   2) 每个 step 都必须有非空的 name（裸 `- uses: ...` 会被拒），且名称只允许
+#      中文 / 英文字母数字 / - _ , ; : . / ( ) （） / 空格 —— 全角逗号与加号都不行。
+#   3) action 要用 actions/xxx@vN 形式；GitCode 简写（checkout-action@0.0.1 等）校验器报"不存在"。
+#
+# ⚠️ 仍未在 GitCode runner 上实跑过（本机没有 GitCode runner）。命令与 GitHub 侧逐字同源，
+#    差异只在上面那三条平台约束上——它们已经用校验器验过，不再靠猜。
 
 on:
   push:
@@ -28,34 +36,36 @@ on:
 jobs:
   checks:
     name: 单测 / 冒烟 / 契约
-    runs-on: euleros-2.10.1
+    runs-on: ubuntu-latest
     steps:
-      - uses: checkout-action@0.0.1
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Node
-        uses: setup-node@0.0.1
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Install pnpm + npm mirror
+      - name: Install pnpm and npm mirror
         run: |
           npm config set registry https://registry.npmmirror.com
           npm install -g pnpm@10
 
       - name: Install frontend deps
-        run: cd repo_workspace && pnpm install --no-frozen-lockfile
+        run: |
+          cd repo_workspace 2>/dev/null || true
+          pnpm install --no-frozen-lockfile
 
-      - name: 回归门禁（纯 Node 组，含基线校验）
-        # `--json` 落一份机器可读报告给下游/人工核验；门禁失败即非零退出 ⇒ 这一步红。
-        # 汇总表同时打印在流水线日志里（GitCode 没有 GITHUB_STEP_SUMMARY）。
-        run: cd repo_workspace && node scripts/test-report.mjs --group contract,smoke,sync,plugin --json test-report.json
+      - name: 回归门禁（纯 Node 组, 含基线校验）
+        run: |
+          cd repo_workspace 2>/dev/null || true
+          node scripts/test-report.mjs --group contract,smoke,sync,plugin --json test-report.json
 
       - name: Upload report
-        # 与 build-linux.yml 同样的写法（本仓库里已知可用的 GitCode 约定）。
-        # 坦诚边界：这一步**不带 `if: always()`**——GitCode 上 `if` 的语义本机无法核实，
-        # 猜错会让整个 workflow 编译不过（0 个 job 的红 run，正是 ci.yml 记过的那类事故）。
-        # 代价：门禁失败时 artifact 不产出，但**失败明细仍然在日志里**（test-report 会打印）。
-        uses: upload-artifact@0.0.1
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: repo_workspace/test-report.json
+          path: |
+            test-report.json
+            repo_workspace/test-report.json

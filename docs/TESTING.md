@@ -43,6 +43,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
 | contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉） |
+| contract | `check-gitcode-workflow-rules` | `.gitcode/workflows/*.yml` 的三条**平台**约束（runs-on 白名单 / 每个 step 必须有合法 `name` / action 用 `actions/xxx@vN`）——不合法时整条流水线不会被调度；规则由 GitCode 校验接口实测得出 |
 | contract | `check-overlay-registry` | 浮层没登记进返回栈 ⇒ 真机返回键直接退出应用（2026-09-15 第 6 个真机问题） |
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
@@ -175,8 +176,17 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   这三条的状态回写走 `scripts/external-suite-status.mjs`（见上一节）。
 - **GitCode 侧只跑纯 Node 组**（`.gitcode/workflows/ci.yml`）：EulerOS runner 上没有浏览器，
   browser / mobile 组要真实 Chromium，rust 组要 webkit2gtk 一整套系统依赖——那三组留在 GitHub 侧。
-  ⚠️ 该文件**尚未在 GitCode 上实跑过**（本机没有 GitCode runner）：命令与 GitHub 侧逐字一致，
-  风险只在 GitCode 自己的 action 语义上。
+  该文件与 `rust-baseline.yml` 已通过 **GitCode 自己的校验接口**（`valid=true`，2026-09-16）：
+
+  ```
+  POST https://api.gitcode.com/api/v8/repos/:owner/:repo/actions/workflows/validate?access_token=<token>
+  body: {"base64_content": "<yml 的 base64>"}        →  {valid, diagnostics[]}
+  ```
+  三条平台约束（GitHub 侧没有，照抄 GitHub 写法会踩；已固化成 `check-gitcode-workflow-rules` 门禁）：
+  `runs-on` 单串只接受 `default / ubuntu-latest / euler-latest / ubuntu-24 / ubuntu-22`（仓库原有的
+  `euleros-2.10.1` **不在**白名单）；每个 step 必须有合法 `name`（字符集受限，全角逗号与加号都不行）；
+  action 只能用 `actions/xxx@vN`（`checkout-action@0.0.1` 这类简写校验器报"不存在"）。
+  ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
 - **Windows 本机跑不了 rust 组**（2026-09-16 实测）：`cargo test` 的测试二进制在加载期以
