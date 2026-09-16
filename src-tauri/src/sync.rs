@@ -2754,6 +2754,21 @@ mod tests {
         .unwrap();
 
         adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+        // ⚠️ 这条测的是"**真实序列**不误伤"，而真实序列是**两步**：调用点（`sync.rs:1472-1479`）
+        // 先 reconcile、**紧接着自己 INSERT** 元数据行。`adopt_or_heal_fallback_row` 从设计上只做
+        // DELETE / UPDATE（两条语句的过滤都是 `name LIKE hash || '.%'`，只认"兜底行"那种形态），
+        // 所以**只调它拿不到第 2 行**——2026-09-16 这条断言 `left:1 right:2` 就是这么红的：
+        // 不是实现缺了 INSERT，是测试断言了"调用方那半件事"却只调了被调方。
+        // 定位在 Windows 侧（他们本机跑不了 cargo test：测试二进制 STATUS_ENTRYPOINT_NOT_FOUND），
+        // 补丁在 Mac 侧落、Mac 侧验。这里补上调用方那一步（SQL 与生产逐字一致）。
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'text/markdown', 12, 2)
+             ON CONFLICT(id) DO UPDATE SET page_id=excluded.page_id, name=excluded.name,
+                                           hash=excluded.hash, mime=excluded.mime, size=excluded.size",
+            params!["row-from-changes", Some("folder-1"), "验收说明.md", hash],
+        )
+        .unwrap();
 
         let rows = rows_for(&c, &hash);
         assert_eq!(rows.len(), 2, "用户导入的那行不该被删、也不该被改写");
