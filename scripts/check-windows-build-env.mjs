@@ -58,20 +58,28 @@ add(
 );
 
 // ---- OpenSSL（rusqlite bundled-sqlcipher 要链接它） ----
-const opensslCandidates = [
-  process.env.OPENSSL_DIR,
-  "C:\\Program Files\\OpenSSL-Win64",
-  "C:\\OpenSSL-Win64",
-  process.env.VCPKG_ROOT ? join(process.env.VCPKG_ROOT, "installed", "x64-windows-static-md") : null,
-  process.env.VCPKG_INSTALLATION_ROOT ? join(process.env.VCPKG_INSTALLATION_ROOT, "installed", "x64-windows-static-md") : null,
-].filter(Boolean);
-const opensslFound = opensslCandidates.find((p) => existsSync(p) && existsSync(join(p, "include")));
+// ⚠️ 2026-09-16 实测踩到：`libsqlite3-sys` 的 build.rs **不会**去猜默认安装路径，它**直接读
+// `OPENSSL_DIR` 环境变量**，没设就 panic：
+//     Missing environment variable OPENSSL_DIR or OPENSSL_DIR is not set
+// 所以判据必须是"**环境变量设了、且指向有效安装**"，不能只看到 `C:\Program Files\OpenSSL-Win64`
+// 存在就打勾（第一版就是这么写的，结果自检通过、真构建两分钟后炸在上面那行 panic）。
+const opensslEnv = (process.env.OPENSSL_DIR ?? "").trim();
+const opensslValid = opensslEnv !== "" && existsSync(opensslEnv) && existsSync(join(opensslEnv, "include"));
+const defaultInstall = ["C:\\Program Files\\OpenSSL-Win64", "C:\\OpenSSL-Win64"].find((p) => existsSync(p));
 add(
-  "OpenSSL（OPENSSL_DIR 或默认安装路径）",
-  !!opensslFound,
-  opensslFound ?? `都没找到（找过：${opensslCandidates.join(" / ")}）`,
-  "缺了在**链接期**炸：`LNK2019 无法解析的外部符号`（rusqlite 的 bundled-sqlcipher 要链 OpenSSL）。" +
-    "两条装法：① 装 OpenSSL-Win64 到默认路径（openssl-sys 会自动认）；② 像 CI 那样用 vcpkg 装 openssl:x64-windows-static-md 并设 OPENSSL_DIR",
+  "OPENSSL_DIR（环境变量，必须显式设）",
+  opensslValid,
+  opensslValid
+    ? opensslEnv
+    : opensslEnv === ""
+      ? defaultInstall
+        ? `没设，但本机有 ${defaultInstall}（装上不等于设上）`
+        : "没设，也没找到默认安装"
+      : `设成了 ${opensslEnv}，但那里没有 include/`,
+  `缺了当场炸在 libsqlite3-sys 的 build.rs：\`Missing environment variable OPENSSL_DIR\`。` +
+    (defaultInstall
+      ? `本机已有 ${defaultInstall} ⇒ 只要设 \$env:OPENSSL_DIR = "${defaultInstall}" 即可。`
+      : "两条装法：① 装 OpenSSL-Win64 到默认路径再设 OPENSSL_DIR；② 像 CI 那样 vcpkg 装 openssl:x64-windows-static-md 并把 OPENSSL_DIR 指过去"),
 );
 
 // ---- 更新器签名密钥（产出 .sig） ----
