@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### 安全
+
+- **发布自检脚本会把 GitHub token 打进日志**（2026-09-16 发 1.91.3 时当场踩到）。
+  `scripts/check-release-state.mjs` 用 `execFileSync("curl.exe", ["-H", "Authorization: Bearer ghp_…"])`
+  取 Release 信息，curl 一失败，Node 抛出的 message 里**带着整条 argv**，那句
+  `ok(false, …e.message…)` 就把 token 原样打进了终端（在 CI 上就是公开日志）。
+  修法：新增 `scripts/lib/redact.mjs`（`redactSecrets`，覆盖 `Bearer …`、`ghp_/gho_/ghs_/ghu_/ghr_`、
+  `github_pat_`、`token=/access_token=/private_token=`、URL 里的 `user:pass@`），
+  打外部命令错误前一律先过它；`scripts/lib/redact.test.mjs` 六条判据（含那次泄漏的**原样错误串**，
+  以及"正常日志不许被抹花"）。`scripts/release.mjs` 的 gitcode 请求错误只带状态码与 URL，
+  并在注释里写明"不要把 headers 塞进 message"的理由。
+  ⚠️ **已经在日志里露过的那把 token 要轮换**——抹的是以后，抹不掉已经写出去的那次。
+
 ## [1.91.3] - 2026-09-16
 
 > 开着加密重启不再崩溃；口令锁 UX 补齐（忘记口令的说法、立即锁定立刻切屏）

@@ -17,6 +17,7 @@
 //   node scripts/check-release-state.mjs --skip-remote      # 只跑本地/通道检查（离线兜底）
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { redactSecrets } from "./lib/redact.mjs";
 
 const argOf = (f) => {
   const i = process.argv.indexOf(f);
@@ -119,7 +120,10 @@ if (!SKIP_REMOTE) {
     try {
       rel = JSON.parse(execFileSync("curl.exe", args, { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
     } catch (e) {
-      ok(false, `取 GitHub Release ${TAG} 失败：${String(e.message).slice(0, 120)}`);
+      // ⚠️ 这里必须抹一道：`execFileSync` 失败时 message 里带着整条 argv，
+      // 而 argv 里有 `Authorization: Bearer <token>`——2026-09-16 发 1.91.3 时
+      // 真的把 token 打进了终端（CI 上就是公开日志）。判据见 scripts/lib/redact.test.mjs。
+      ok(false, `取 GitHub Release ${TAG} 失败：${redactSecrets(String(e.message)).slice(0, 120)}`);
     }
     if (rel) {
       const names = (rel.assets ?? []).map((a) => a.name);
