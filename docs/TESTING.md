@@ -39,6 +39,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | 组 | 门禁 | 挡什么 |
 | --- | --- | --- |
 | contract | `check-versions` / `check-changelog` | 版本号、CHANGELOG 与发布状态脱节 |
+| contract | `check-changelog-numbers` | 发版说明里的断言数被手抄漂移：**最新一段**里"套件名 + 数字"一对一绑定时必须等于基线（历史段落不碰；多套件/多数字/带 `历史`·`豁免` 的行跳过——宁可不判，也不误报） |
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
 | contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉） |
@@ -115,13 +116,18 @@ node scripts/test-report.mjs --group browser --retry 1   # 本地排查用
 
 ## 发版说明里的数字：机器生成
 
-CHANGELOG / 发版说明里"门禁全绿：… 730 用例 …"这类句子**不要人肉从终端抄**（抄错的数字
+CHANGELOG / 发版说明里"门禁全绿：… 732 用例 …"这类句子**不要人肉从终端抄**（抄错的数字
 在下一次改动后就成了假话，而且没人会发现）。加 `--line` 会多打一行可直接粘贴的汇总：
 
 ```powershell
 node scripts/test-report.mjs --line
-# 门禁全绿：smoke 3/3/1080 断言、sync 1/1/14 断言、…；合计 1200 条断言/用例。
+# 门禁全绿：smoke 3/3/1089 断言、sync 1/1/14 断言、…；合计 1209 条断言/用例。
 ```
+
+而且这句话**现在会被机器核对**：`check-changelog-numbers`（contract 组）只看 CHANGELOG 的
+**最新一段**——当某一行把某个套件名与一个数字绑在一起时，那个数字必须等于基线；
+历史段落一律不碰，含 `历史` / `此前` / `曾` / `豁免` 的行跳过，一行里出现多个套件或多个数字
+也跳过（说不清对应谁就不判）。**宁可不判，也不误报**——会误报的门禁很快就会被绕过，等于没有。
 
 ## 外部套件的回写路径
 
@@ -136,6 +142,25 @@ node scripts/external-suite-status.mjs --suite sync-regression --status passed \
 
 `--status` 只接受 `passed` / `failed` / `unknown`——"跑了但结果不明"就写 `unknown`，不许用
 `passed` 糊过去。回写会同时写入人类可读的 `status` 与机器可读的 `lastStatus` / `lastRunAt`。
+
+## 把 CI 的读数并进基线（`--baseline-from`）
+
+有些门禁本机跑不了（最典型：rust 组在 Windows 上测试二进制加载期就异常退出）。CI 跑出来的
+JSON 报告可以直接并入基线，不用手抄数字、也不用人工算术：
+
+```powershell
+# 1) 让 Linux 侧跑一次 rust 组并留下报告
+#    · GitCode：手动运行 .gitcode/workflows/rust-baseline.yml → 下载 rust-report.json
+#    · GitHub：ci.yml 的 rust-tests job 已经跑 --group rust，从 artifact 里取 test-report-rust.json
+# 2) 并入（只写 tests/baseline.json 的读数值，不跑任何门禁）
+node scripts/test-report.mjs --baseline-from rust-report.json
+```
+
+输出会逐条告诉你两件事：读数从多少变成多少；
+以及**它是否受基线契约保护**——`baseline.json` 的 `counts` 是"读数值"，注册表的
+`baseline: true` 才是"契约（缺失即违规）"。脚本**不擅自**改契约，要生效就在
+`scripts/lib/gates.mjs` 给对应门禁补上 `baseline: true`。若报告里的门禁 `status` 不是 `passed`，
+并入时会显式提醒"读数已并入，但请人工确认它可信"。
 
 ## 覆盖边界（诚实清单）
 
@@ -153,9 +178,9 @@ node scripts/external-suite-status.mjs --suite sync-regression --status passed \
   `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 异常退出——app（`shuyonote.exe`）能正常跑，且它的
   导入符号是测试二进制的**超集**，`target\debug` 下也没有抢占的 CRT/OpenSSL 副本；已排查到
   环境层为止，**没有**为此加任何"跳过"或"忽略"开关（那会让门禁失去意义）。因此：
-  rust 组的权威执行地是 **Linux CI**；`rust-test` / `rust-plugins-alone` **暂未纳入基线**
-  （读数解析 `counters: "cargo"` 已实现并有单测，缺的只是可信环境）。要建基线就在 Linux CI 上跑
-  `node scripts/test-report.mjs --group rust --update-baseline` 并把读数提交回来。
+  rust 组的权威执行地是 **Linux CI**（`.gitcode/workflows/rust-baseline.yml` 手动跑一次即可产出
+  读数，用 `--baseline-from` 并入，见上一节）；`rust-test` / `rust-plugins-alone` **暂未纳入基线
+  契约**（读数解析 `counters: "cargo"` 已实现并有单测，缺的只是可信环境）。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 

@@ -22,6 +22,13 @@ export const GATES = [
   // ---- contract ----
   { id: "check-versions", group: "contract", label: "版本号一致性", cmd: "node scripts/check-versions.mjs" },
   { id: "check-changelog", group: "contract", label: "CHANGELOG 结构", cmd: "node scripts/check-changelog.mjs" },
+  {
+    id: "check-changelog-numbers",
+    group: "contract",
+    label: "CHANGELOG 门禁数字（与基线一致）",
+    cmd: "node scripts/check-changelog-gate-numbers.mjs",
+    incident: "发版说明里的断言数一直靠人从终端抄：抄错了下一次改动后就成假话，而散文不参与构建，没人会发现",
+  },
   { id: "check-web-commands", group: "contract", label: "命令契约（web/桌面两侧）", cmd: "node scripts/check-web-commands.mjs" },
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },

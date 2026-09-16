@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   baselineViolations,
+  changelogNumberMismatches,
   countsForGate,
   countsFromCargoOutput,
   countsFromOutput,
@@ -14,6 +15,7 @@ import {
   countsFromVitestJson,
   extractFailures,
   markdownReport,
+  mergeBaselineCounts,
   summaryLine,
   upsertSuiteStatus,
 } from "./report-core.mjs";
@@ -219,6 +221,91 @@ describe("外部套件状态回写（upsertSuiteStatus）", () => {
     const { suites: next, found } = upsertSuiteStatus(suites, { id: "nope", status: "passed" });
     expect(found).toBe(false);
     expect(next).toEqual(suites);
+  });
+});
+
+describe("CHANGELOG 门禁数字校验（changelogNumberMismatches）", () => {
+  const counts = { vitest: 732, "smoke-web": 350, "mobile-overlays": 979 };
+
+  it("套件名与数字一对一绑定且一致 → 无违规", () => {
+    expect(changelogNumberMismatches("门禁全绿：smoke-web 350 条、732 条单测", counts)).toEqual([]);
+  });
+
+  it("数字对不上 → 点名报出（写的是 X，基线是 Y）", () => {
+    const bad = changelogNumberMismatches("smoke-web 300 条全绿", counts);
+    expect(bad).toHaveLength(1);
+    expect(bad[0]).toMatchObject({ suite: "smoke-web", found: 300, expected: 350 });
+  });
+
+  it("一行里出现多个套件或多个数字 → 跳过（说不清对应谁，宁可不判）", () => {
+    expect(changelogNumberMismatches("smoke-web 350 条 与 732 条单测 都绿", counts)).toEqual([]);
+    expect(changelogNumberMismatches("2026-09-16 门禁 smoke-web 350 条", counts)).toEqual([]);
+  });
+
+  it("历史/此前/曾/豁免 标记 → 跳过（历史段落的数字本来就不该被硬校验）", () => {
+    expect(changelogNumberMismatches("此前 smoke-web 300 条（历史）", counts)).toEqual([]);
+    expect(changelogNumberMismatches("smoke-web 300 条 <!-- 豁免 -->", counts)).toEqual([]);
+  });
+
+  it("没提到已知套件 → 跳过", () => {
+    expect(changelogNumberMismatches("修了三个 bug，顺带把面板对齐", counts)).toEqual([]);
+    expect(changelogNumberMismatches("", counts)).toEqual([]);
+  });
+
+  it("中文别名（单测/用例）绑定到 vitest", () => {
+    expect(changelogNumberMismatches("732 条单测全过", counts)).toEqual([]);
+    const bad = changelogNumberMismatches("700 条用例", counts);
+    expect(bad[0]).toMatchObject({ suite: "vitest", found: 700, expected: 732 });
+  });
+
+  it("版本号这种带点的数字不算候选（1.91.3 不该被当成读数）", () => {
+    expect(changelogNumberMismatches("v1.91.3 的 smoke-web 350 条", counts)).toEqual([]);
+  });
+});
+
+describe("从 CI 报告并入基线（mergeBaselineCounts）", () => {
+  const gates = [
+    { id: "rust-test", counters: "cargo" }, // 尚无 baseline 契约
+    { id: "smoke-web", counters: "smoke-web", baseline: true },
+    { id: "tsc" }, // 无 counters：读数不可信
+  ];
+
+  it("导入有读数的门禁，并保留其它已有读数", () => {
+    const { counts, imported } = mergeBaselineCounts({
+      baseline: { counts: { "smoke-web": 350 } },
+      results: [
+        { id: "rust-test", status: "passed", counts: { total: 143, passed: 143, failed: 0 } },
+        { id: "smoke-web", status: "passed", counts: { total: 350 } },
+      ],
+      gates,
+    });
+    expect(counts).toEqual({ "smoke-web": 350, "rust-test": 143 });
+    expect(imported.find((i) => i.id === "rust-test")).toMatchObject({ total: 143, before: undefined, enforced: false, changed: true });
+    expect(imported.find((i) => i.id === "smoke-web")).toMatchObject({ before: 350, enforced: true, changed: false });
+  });
+
+  it("无 counters 的门禁、缺读数的门禁、注册表里没有的 id → 一律不写，并说明原因", () => {
+    const { counts, unusable } = mergeBaselineCounts({
+      baseline: { counts: {} },
+      results: [
+        { id: "tsc", status: "passed", counts: { total: 1 } },
+        { id: "rust-test", status: "failed", counts: null },
+        { id: "ghost", status: "passed", counts: { total: 9 } },
+      ],
+      gates,
+    });
+    expect(counts).toEqual({});
+    expect(unusable.map((u) => u.id)).toEqual(["tsc", "rust-test", "ghost"]);
+  });
+
+  it("只写读数值，**不**擅自建立/取消 baseline 契约（enforced 仅作提示）", () => {
+    const { counts, imported } = mergeBaselineCounts({
+      baseline: { counts: {}, gates: { rust: ["rust-test"] } },
+      results: [{ id: "rust-test", status: "passed", counts: { total: 143 } }],
+      gates,
+    });
+    expect(counts["rust-test"]).toBe(143);
+    expect(imported[0].enforced).toBe(false); // 契约仍在注册表里，由人决定
   });
 });
 

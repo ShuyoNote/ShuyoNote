@@ -162,6 +162,81 @@ export function upsertSuiteStatus(suites, patch) {
   return { suites: next, found: true };
 }
 
+// CHANGELOG 里的门禁数字校验（P2：消除"手抄断言数"的漂移）。
+//
+// 为什么只做**最窄**的一条规则：CHANGELOG 的历史段落里那些数字（"607 条单测"）是在描述
+// **当时那次发布**的状态，硬校验必然误报——一个会误报的门禁很快就会被绕过，等于没有。
+// 所以这里的判定极保守，只有同时满足才比较：
+//   1. 只看**最新一段**（Unreleased 或最顶版本段），历史段落一律不碰；
+//   2. 该行必须**恰好提到一个**已知套件名，且**恰好含一个**数字（多个/零个都跳过）；
+//   3. 行内出现 `历史` / `此前` / `曾` / `豁免` 等标记时跳过（允许显式豁免）。
+// 宁可漏判（数字仍然是手抄的），也不要误报。
+const SUITE_ALIASES = [
+  ["smoke-web", "smoke-web"],
+  ["vitest", "vitest"],
+  ["单测", "vitest"],
+  ["用例", "vitest"],
+  ["mobile-overlays", "mobile-overlays"],
+  ["mobile-layout", "mobile-layout"],
+  ["check-panel-layout", "check-panel-layout"],
+  ["check-pdf-reload", "check-pdf-reload"],
+  ["check-web-build", "check-web-build"],
+];
+
+const EXEMPT_MARKERS = ["历史", "此前", "曾", "豁免"];
+
+export function changelogNumberMismatches(sectionText, counts) {
+  const out = [];
+  for (const raw of (sectionText || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || EXEMPT_MARKERS.some((m) => line.includes(m))) continue;
+    const suites = [...new Set(SUITE_ALIASES.filter(([alias]) => line.includes(alias)).map(([, key]) => key))];
+    if (suites.length !== 1) continue; // 零个：这行没谈门禁数字；多个：说不清对应谁
+    const nums = [...line.matchAll(/(?<![\d.])(\d{2,5})(?![\d.])/g)].map((m) => Number(m[1]));
+    if (nums.length !== 1) continue; // 日期、多组数字等一律跳过
+    const key = suites[0];
+    const expected = counts?.[key];
+    if (typeof expected !== "number") continue;
+    if (nums[0] !== expected) out.push({ line, suite: key, found: nums[0], expected });
+  }
+  return out;
+}
+
+// 把**别处跑出来的报告**（CI artifact）里的读数并进基线。
+//
+// 用途：rust 组只在 Linux CI 上有可信读数（本机 Windows 上测试二进制加载期就异常退出，
+// 见 docs/TESTING.md 的"已知边界"）。于是流程是：CI 出报告 → 下载 → 一条命令并入。
+// 语义边界（重要，别混）：
+//   · baseline.json 的 `counts` 是**读数值**；
+//   · 注册表的 `baseline: true` 是**契约**（"这条必须有读数，缺了就是违规"）。
+//   本函数只写读数值，不擅自改契约——是否需要把某条纳入契约由人显式决定（返回 enforced 供提示）。
+export function mergeBaselineCounts({ baseline, results, gates }) {
+  const byId = new Map(gates.map((g) => [g.id, g]));
+  const counts = { ...(baseline.counts || {}) };
+  const imported = [];
+  const unusable = [];
+  for (const r of results || []) {
+    const gate = byId.get(r.id);
+    if (!gate) {
+      unusable.push({ id: r.id, why: "注册表里没有这条门禁（改名了？）" });
+      continue;
+    }
+    if (!gate.counters) {
+      unusable.push({ id: r.id, why: "注册表未声明 counters，读数不可信" });
+      continue;
+    }
+    const total = r.counts?.total;
+    if (typeof total !== "number") {
+      unusable.push({ id: r.id, why: `报告里没有读数（status=${r.status}）` });
+      continue;
+    }
+    const before = counts[r.id];
+    counts[r.id] = total;
+    imported.push({ id: r.id, total, before, status: r.status, enforced: gate.baseline === true, changed: before !== total });
+  }
+  return { counts, imported, unusable };
+}
+
 export function markdownReport(report) {  const lines = [];
   lines.push(`## 回归门禁汇总（${report.groups.join(" + ") || "按 id 选择"}）`);
   lines.push("");

@@ -22,6 +22,7 @@ const baselinePath = join(root, "tests", "baseline.json");
 const REQUIRED_GATE_IDS = [
   "check-versions",
   "check-changelog",
+  "check-changelog-numbers",
   "check-web-commands",
   "check-capabilities",
   "check-doc-links",

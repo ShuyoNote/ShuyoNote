@@ -29,7 +29,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_GROUPS, GATES, GROUP_ORDER, gateSetOf } from "./lib/gates.mjs";
-import { baselineViolations, countsForGate, extractFailures, markdownReport, summaryLine } from "./lib/report-core.mjs";
+import {
+  baselineViolations,
+  countsForGate,
+  extractFailures,
+  markdownReport,
+  mergeBaselineCounts,
+  summaryLine,
+} from "./lib/report-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmpDir = join(root, ".test-report-tmp");
@@ -67,6 +74,47 @@ if (LIST) {
     console.log(`[${g}]${DEFAULT_GROUPS.includes(g) ? "（本地默认组）" : ""}`);
     for (const gate of inGroup) console.log(`  ${gate.id.padEnd(22)} ${gate.label}`);
   }
+  process.exit(0);
+}
+
+// 从别处跑出来的报告（CI artifact）并入基线：**不跑任何门禁**，只写 tests/baseline.json。
+// 典型用途：rust 组只在 Linux CI 上有可信读数（本机 Windows 上测试二进制加载期就异常退出，
+// 见 docs/TESTING.md 的"已知边界"）。用法：
+//   node scripts/test-report.mjs --baseline-from rust-report.json
+const baselineFrom = argValue("--baseline-from");
+if (baselineFrom) {
+  const files = baselineFrom.split(",").map((s) => s.trim()).filter(Boolean);
+  const imported = [];
+  for (const f of files) {
+    if (!existsSync(f)) {
+      console.error(`找不到报告文件：${f}`);
+      process.exit(2);
+    }
+    let j;
+    try {
+      j = JSON.parse(readFileSync(f, "utf8"));
+    } catch (err) {
+      console.error(`${f} 不是合法 JSON：${err.message}`);
+      process.exit(2);
+    }
+    if (!Array.isArray(j.results)) {
+      console.error(`${f} 不像 test-report 报告（缺 results 数组）`);
+      process.exit(2);
+    }
+    imported.push(...j.results);
+  }
+  const base = readBaseline();
+  const merged = mergeBaselineCounts({ baseline: base, results: imported, gates: GATES });
+  writeFileSync(baselinePath, JSON.stringify({ ...base, counts: merged.counts }, null, 2) + "\n");
+  console.log(`已并入 ${files.length} 份报告的读数 → ${baselinePath}`);
+  for (const i of merged.imported) {
+    const note = i.enforced
+      ? "受基线契约保护"
+      : "⚠️ 注册表里**未**标 baseline: true —— 读数已记下，但还不会被校验（要生效请在 scripts/lib/gates.mjs 补该字段）";
+    const warn = i.status === "passed" ? "" : `  ⚠️ 该门禁本次 status=${i.status}：读数已并入，但请人工确认它可信`;
+    console.log(`  ✓ ${i.id}: ${i.before ?? "(无)"} → ${i.total}  ${note}${warn}`);
+  }
+  for (const u of merged.unusable) console.log(`  ⏭ ${u.id}: 未并入 —— ${u.why}`);
   process.exit(0);
 }
 
