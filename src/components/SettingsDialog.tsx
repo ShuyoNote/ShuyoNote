@@ -10,6 +10,8 @@ import { BackupButton } from "./BackupButton";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
+import { disableVault, enableVault, lockVault, unlockVault } from "../lib/vault";
+import { useVault } from "../hooks/useVault";
 import type { SyncProfile, EmailAccount } from "../lib/api";
 import { emailSupported, isDesktopPlatform } from "../lib/platform";
 // 账号唯一键统一从 lib/emailAccount 引入：原先本文件与 EmailPanel 各有一份完全相同的实现，
@@ -1326,24 +1328,18 @@ function PluginsPane() {
 // 端到端加密：口令即密钥，关闭/开启都会触发全库重写，所以这里的破坏性操作
 // 一律要二次确认，且把「丢失不可找回」写在入口而不是等出事再说。
 function SecurityPane() {
-  const [enabled, setEnabled] = useState(false);
-  const [locked, setLocked] = useState(false);
+  // 状态来自 vault 状态中枢（不是本地 useState 的副本）：在这里点「立即锁定」，
+  // 整个界面会立刻切到锁定屏——旧写法只改了设置页自己的状态，用户会继续看着已经
+  // 读不出来的内容（E2 补的就是这一刀）。
+  const vault = useVault();
+  const { enabled, locked } = vault;
   const [busy, setBusy] = useState(false);
   const [pass, setPass] = useState("");
   const [pass2, setPass2] = useState("");
   const [confirmOff, setConfirmOff] = useState(false);
+  // 开启加密前的硬确认：口令即密钥，这是全应用里唯一"丢了就真没了"的操作。
+  const [acked, setAcked] = useState(false);
   const desktop = isDesktopPlatform();
-
-  const refresh = useCallback(() => {
-    api
-      .encryptionStatus()
-      .then((s) => {
-        setEnabled(s.enabled);
-        setLocked(s.locked);
-      })
-      .catch(() => {});
-  }, []);
-  useEffect(() => refresh(), [refresh]);
 
   const run = async (fn: () => Promise<unknown>, ok?: string) => {
     setBusy(true);
@@ -1353,7 +1349,7 @@ function SecurityPane() {
       setPass("");
       setPass2("");
       setConfirmOff(false);
-      refresh();
+      setAcked(false);
     } catch (e) {
       toast(String(e), "error");
     } finally {
@@ -1362,7 +1358,8 @@ function SecurityPane() {
   };
 
   const state = !enabled ? "off" : locked ? "locked" : "on";
-  const canEnable = pass.trim().length >= 8 && pass === pass2;
+  const canEnable = acked && pass.trim().length >= 8 && pass === pass2;
+  const doEnable = () => run(() => enableVault(pass), "已开启端到端加密");
 
   return (
     <section className="set-section">
@@ -1412,19 +1409,28 @@ function SecurityPane() {
               placeholder="确认口令"
               value={pass2}
               onChange={(e) => setPass2(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && canEnable && run(() => api.setEncryption(pass), "已开启端到端加密")}
+              onKeyDown={(e) => e.key === "Enter" && canEnable && doEnable()}
               disabled={!desktop}
             />
             {pass2 && pass !== pass2 && <p className="set-error">两次输入不一致</p>}
           </div>
           <div className="set-danger-note">
-            <b>口令即密钥，丢失无法找回。</b>没有任何后门或找回流程——忘记口令等于永久失去这些笔记，请先妥善保存（并建议先做一次备份导出）。
+            <b>口令即密钥，丢失无法找回。</b>口令不存本机也不上传，没有后门或找回流程：
+            忘记口令，等于永久失去这些笔记——<b>连已经同步到服务器的那份也一样打不开</b>
+            （同步内容用的就是这把钥匙）。所以先把它记在密码管理器里。
           </div>
+          <label className="set-check">
+            <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} disabled={!desktop} />
+            <span>
+              我已保管好口令，并知道丢了找不回。若想留后路，请先在开启加密<b>之前</b>导出一次备份
+              （开启后导出的备份同样是密文，一样要口令）。
+            </span>
+          </label>
           <div className="set-actions">
             <button
               className="set-btn is-primary"
               disabled={!desktop || busy || !canEnable}
-              onClick={() => run(() => api.setEncryption(pass), "已开启端到端加密")}
+              onClick={doEnable}
             >
               开启加密
             </button>
@@ -1443,11 +1449,11 @@ function SecurityPane() {
               placeholder="口令"
               value={pass}
               onChange={(e) => setPass(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && pass && run(() => api.unlockEncryption(pass), "已解锁")}
+              onKeyDown={(e) => e.key === "Enter" && pass && run(() => unlockVault(pass), "已解锁")}
             />
           </div>
           <div className="set-actions">
-            <button className="set-btn is-primary" disabled={busy || !pass} onClick={() => run(() => api.unlockEncryption(pass), "已解锁")}>
+            <button className="set-btn is-primary" disabled={busy || !pass} onClick={() => run(() => unlockVault(pass), "已解锁")}>
               解锁
             </button>
           </div>
@@ -1455,11 +1461,16 @@ function SecurityPane() {
       )}
 
       {state === "on" && (
-        <div className="set-actions">
-          <button className="set-btn" disabled={busy} onClick={() => run(() => api.lockEncryption(), "已锁定（下次同步前需解锁）")}>
-            立即锁定
-          </button>
-        </div>
+        <>
+          <div className="set-actions">
+            <button className="set-btn" disabled={busy} onClick={() => run(() => lockVault(), "已锁定：界面会切回锁定屏，解锁后才继续同步")}>
+              立即锁定
+            </button>
+          </div>
+          <div className="set-note">
+            锁定后立即生效：本会话的密钥被丢弃，界面切回锁定屏，同步也会被拒绝，直到重新输入口令。
+          </div>
+        </>
       )}
 
       {enabled && (
@@ -1486,7 +1497,7 @@ function SecurityPane() {
                 <button
                   className="set-btn is-danger"
                   disabled={busy}
-                  onClick={() => run(() => api.disableEncryption(), "已关闭端到端加密")}
+                  onClick={() => run(() => disableVault(), "已关闭端到端加密")}
                 >
                   确认关闭
                 </button>

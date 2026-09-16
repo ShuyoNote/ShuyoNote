@@ -238,11 +238,77 @@ describe("manifestPicks（清单在同一平台键下只能留一个，取哪个
   });
 });
 
+describe("macOS 更新通道（清单必须指向 .app.tar.gz，不是 dmg）", () => {
+  const macEntries = () => [entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg"), entry("macos", "ShuyoNote.app.tar.gz")];
+
+  it("platformKeyFor：名字里带架构就用，不带则返回 null（交给同批 dmg 推）", () => {
+    expect(platformKeyFor("ShuyoNote.app.tar.gz")).toBeNull(); // tauri 生成的正是这个名字
+    expect(platformKeyFor("ShuyoNote_aarch64.app.tar.gz")).toBe("darwin-aarch64");
+    expect(platformKeyFor("ShuyoNote_x64.app.tar.gz")).toBe("darwin-x86_64");
+    expect(extensionOf("ShuyoNote.app.tar.gz")).toBe("app.tar.gz");
+  });
+
+  it(".app.tar.gz 不带版本号，但同批有本版本 dmg 作证 → 照样收下，且与 dmg 并存不冲突", () => {
+    const { picked, problems } = selectArtifacts({ version: "1.84.6", entries: macEntries() });
+    expect(problems).toEqual([]);
+    expect(picked.map((e) => e.name).sort()).toEqual(["ShuyoNote.app.tar.gz", "ShuyoNote_1.84.6_aarch64.dmg"]);
+  });
+
+  it("**清单里 darwin 指向 .app.tar.gz**（dmg 依旧发布，只是不进清单）", () => {
+    const { picked } = selectArtifacts({ version: "1.84.6", entries: macEntries() });
+    const { picks, notes } = manifestPicks(picked);
+    expect(picks.get("darwin-aarch64").name).toBe("ShuyoNote.app.tar.gz");
+    expect(notes.join()).toMatch(/清单指向 ShuyoNote\.app\.tar\.gz/);
+  });
+
+  it("**只有 dmg、没有 .app.tar.gz → 硬失败**（否则 mac 上「能下载、装不上」）", () => {
+    const { problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg")],
+    });
+    expect(problems.join()).toMatch(/缺少 macOS 更新通道产物/);
+    expect(problems.join()).toMatch(/darwin-aarch64/);
+  });
+
+  it("`.app.tar.gz` 存在但没有本版本 dmg 佐证 → 跳过并警告（不发来路不明的更新包）", () => {
+    const { picked, warnings, problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [entry("macos", "ShuyoNote.app.tar.gz"), entry("nsis", "ShuyoNote_1.84.6_x64-setup.exe")],
+    });
+    expect(problems).toEqual([]);
+    expect(picked.map((e) => e.name)).toEqual(["ShuyoNote_1.84.6_x64-setup.exe"]);
+    expect(warnings.join()).toMatch(/不带版本号/);
+  });
+
+  it("bundle 里的 `.app`（目录）不会被当成产物", () => {
+    const { picked } = selectArtifacts({
+      version: "1.84.6",
+      entries: [...macEntries(), entry("macos", "ShuyoNote.app")],
+    });
+    expect(picked.map((e) => e.name)).not.toContain("ShuyoNote.app");
+  });
+
+  it("一次构建里出现两个 dmg（aarch64 + x86_64）时，架构无法判定 → 报错而不是猜", () => {
+    const { problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [
+        entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg"),
+        entry("dmg", "ShuyoNote_1.84.6_x64.dmg"),
+        entry("macos", "ShuyoNote.app.tar.gz"),
+      ],
+    });
+    expect(problems.join()).toMatch(/无法判定 ShuyoNote\.app\.tar\.gz 属于哪个 macOS 架构/);
+  });
+});
+
 describe("validateManifest（写盘前门禁：每个平台条目必须 url + signature 都在）", () => {
   const okPlatforms = () => ({
     "windows-x86_64": { url: "https://gitcode.com/a/b/releases/download/v1.2.3/x.exe", signature: "sig-minisign" },
     "linux-x86_64": { url: "https://gitcode.com/a/b/releases/download/v1.2.3/x.deb", signature: "sig-minisign" },
-    "darwin-aarch64": { url: "https://gitcode.com/a/b/releases/download/v1.2.3/x.dmg", signature: "sig-minisign" },
+    "darwin-aarch64": {
+      url: "https://gitcode.com/a/b/releases/download/v1.2.3/ShuyoNote.app.tar.gz",
+      signature: "sig-minisign",
+    },
     "android-aarch64": {
       url: "https://gitcode.com/a/b/releases/download/v1.2.3/ShuyoNote_1.2.3_android-arm64-release.apk",
       signature: "sha256:" + "a".repeat(64),

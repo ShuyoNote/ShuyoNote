@@ -36,6 +36,7 @@ import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, MenuIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
+import { useVault } from "./hooks/useVault";
 import { useTemplateCenterStore } from "./store/templateCenter";
 import { EmojiPicker } from "./components/EmojiPicker";
 import { useIconPicker } from "./store/iconPicker";
@@ -623,14 +624,34 @@ function NoteEditor({ pageId }: { pageId: string }) {
   );
 }
 
+// 口令锁的闸门与外壳**拆成两个组件**，不是为了好看，是为了不犯 hooks 的规矩。
+//
+// 原先闸门就是 App 里的一句早退，而它的位置在七八个 hooks **之前**：
+//
+//     const [enc, setEnc] = useState(...)   // 首帧 null → 不算锁定 → 这一帧跑了 N 个 hooks
+//     ...若干 hooks...
+//     if (locked) return <LockScreen/>      // 状态回来后的这一帧只跑 N-3 个 → React 直接抛错
+//
+// 于是「开着加密重启应用」这条最常见的路径上，第二帧就抛
+// `Rendered fewer hooks than expected. This may be caused by an accidental early
+// return statement.`，被根部 ErrorBoundary 接住——用户看到的是**崩溃屏**，
+// 而 E1 那道锁定屏**根本没机会出现**（真机没验过重启这条路径，所以一直没暴露）。
+//
+// 现在：`App` 自己只有一个 hook，分支只决定渲染**哪个组件**，不再改变 hook 数量；
+// 而读库的外壳（AppShell）在锁定态下**根本不挂载**，比"挂载起来再把界面挡住"更干净。
 function App() {
+  const vault = useVault();
+  // 状态未知的首帧什么都不渲染：锁定安装上若先挂外壳，外壳会立刻去读还没解锁的库。
+  if (!vault.ready) return null;
+  if (vault.enabled && vault.locked) return <LockScreen />;
+  return <AppShell />;
+}
+
+function AppShell() {
   const { pages, currentId, loadPages, error } = useNotes();
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useTemplateCenterStore((s) => s.open);
-  // E1: encryption gate — while enabled+locked the space DBs aren't readable, so we
-  // hold off loading and show a lock screen until the user enters the passphrase.
-  const [enc, setEnc] = useState<{ enabled: boolean; locked: boolean } | null>(null);
   useAutoSync();
   usePresence();
   useSyncStream();
@@ -648,28 +669,14 @@ function App() {
     setView(view === "notes" ? "board" : view === "board" ? "graph" : "notes"),
   );
 
-  useEffect(() => {
-    api
-      .encryptionStatus()
-      .then(setEnc)
-      .catch(() => setEnc({ enabled: false, locked: false }));
-  }, []);
-
   // Standalone window mode: ?page=<id> renders a single-page editor only.
   const standaloneId = new URLSearchParams(window.location.search).get("page");
 
-  // E1: while locked the space DBs aren't readable, so show a lock screen instead of
-  // loading any content. Unlock re-keys the DBs and the effect below reloads pages.
-  const locked = enc ? enc.enabled && enc.locked : false;
-  if (locked) {
-    return <LockScreen onUnlocked={() => setEnc({ enabled: true, locked: false })} />;
-  }
-
+  // 外壳只在**已解锁**时挂载（闸门在 App 里），所以这里直接加载即可：解锁后外壳是一次
+  // 全新挂载，页面必然重新读一遍。
   useEffect(() => {
-    if (!enc) return;
-    if (enc.enabled && enc.locked) return; // wait for unlock
     loadPages();
-  }, [enc]);
+  }, []);
 
   // Auto-open the first page/database (never a folder) when none is selected —
   // but only while sitting in the notes view, so navigating to a folder (files

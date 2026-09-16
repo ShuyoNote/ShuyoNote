@@ -3,8 +3,106 @@
 本文件记录 ShuyoNote 的版本变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 与语义化版本。
 
 ## [Unreleased]
+> **「Android 真机复验」这一轮**（2026-09-15）：上一轮的移动端适配在真机（Mate 40 / Android 12）上
+> 量出 **5 个问题**，本轮逐条修掉（补验时又抓到**第 6 个**：版本历史弹层**漏登记**返回栈
+> ⇒ 按返回键直接退出应用，而当时所有检查都是绿的——见下面「修复」末条与
+> [MOBILE.md](docs/MOBILE.md) §4.1.4 的**浮层登记门禁**）。最重的是**顶部 41 CSS px 是触摸死区**——
+> 根因不是 CSS，是 **edge-to-edge 之下应用在状态栏那一带永远收不到触摸**，
+> 而 `env(safe-area-inset-*)` 在 Android 上**恒为 0**（它取自物理刘海，不是状态栏）。
+> 同一个根因还带出"软键盘盖住底部弹层"（`adjustResize` 在 edge-to-edge 下是死代码）。
+> 详见 [MOBILE.md](docs/MOBILE.md) §4.2。
+
+> 「移动端弹窗/浮层适配」这一轮：窄屏下**修掉三个把功能直接弄坏、而且都不报错**的缺陷，
+> 并把 19 层浮层的窄屏形态一次做齐（底部弹层 / 全屏 + 内部滚动）。
+> **真机验收仍未做**，见本节末尾的"仍未做"。
 
 ### 新增
+
+
+- **macOS 打包有了每次 push 的自检**：`.github/workflows/macos.yml` 在 `macos-latest` 上打一个
+  **未签名**的 `.app + .dmg`（不碰任何密钥、不发布、不挂 tag），再用新增的
+  `scripts/check-macos-bundle.mjs`（`pnpm check:macos-bundle`）断言四件事——
+  `CFBundleIdentifier` 与 `tauri.conf.json` 一致、版本号与 `package.json` 一致、
+  **`CFBundleURLTypes` 里注册了 `shuyonote` 深链**（本机还会真的去问 LaunchServices 认领了哪些 scheme）、
+  以及 dmg 是本版本的那一个。这几条错了打包**不会报错**，只会在用户端以"身份变了 / 版本号不对 /
+  点链接没反应"的形式晚很久才暴露。
+  脚本自己踩过一次坑并留了回归用例：产物 plist 里 `CFBundleURLTypes` 是**数组套数组**，
+  按"先匹配外层再找内层"的写法会停在**内层** `</array>` 上、把"注册好了"误报成"没注册"。
+  11 条单测（做过变异验证）。
+
+- `scripts/android-mobile-shell.mjs`：把 Android 壳适配层（窗口 inset 桥 + 返回键回调）
+  **脚本化注入** `gen/android/**/MainActivity.kt`（`gen/` 不入库，手改不可复现），
+  `--check` 给门禁用、`--device-check` 走 adb + WebView devtools 做真机断言。
+  已接进 `.github/workflows/android.yml`（排在 `tauri android init` 之后）。
+- `src/lib/viewportInsets.ts`（inset → CSS 变量 + `keyboardExtra()` 纯函数）、
+  `src/lib/overlayStack.ts`（浮层栈 + 返回键桥）、
+  `src/hooks/useOverlayLayer.ts`；三者都有单测。
+- **窄屏（≤768px）浮层/弹窗统一适配：19 层全部四边在视口内、能关能滚、命中区够大**。
+  现象是"弹窗在小屏上不适配"，但其中**三处不是难看、是功能不可用**：
+
+  1. **设置面板的 `min-width:640px` 压过 `max-width`**：390px 视口上面板被顶成 640px 宽、
+     右边缘越界 274px（360px 上 304px），**「关闭设置」直接不在视口里——面板关不上**。
+     公式编辑器的 `min-width:460px` 同理（溢出 35~50px）。
+  2. **浮层坐标没按包含块折算**：窄屏收起的左侧竖条用 `transform: translateX(-100%)`，
+     `transform` 会**建立包含块**，于是它（宽 48px、在 x=−48）成了搜索/回收站浮层
+     （`position:fixed`）的包含块——代码里算好的 `left:8` 实际落在 **−40px**，浮层左边被切 48px。
+     对照实验：注入 `transform:none` 后回到 8。
+  3. **全仓没有任何滚动锁**：搜索面板打开时手指拖背景能把正文拖走 323px。而且**真正滚动的是
+     `.note-scroll`**（`.app{overflow:hidden}` 把整页钉死）⇒ **锁 `body` 无效**。
+     同步面板另有第三处：桌面上它是 `overflow:hidden` + 内部几段各自滚动，「保存」在 360px 上
+     位于屏外 **121px** 且**滚不到**。
+
+  根因是**一类**而不是一个（所以不逐个组件打补丁）：
+
+  - `min-width` 压过 `max-width`（`.set-dialog` 那条）；
+  - 浮层坐标未按**包含块**折算（`transform` 建块那条）；
+  - 全仓没有滚动锁，且"该锁谁"搞错了（锁 `body` 无效，真正滚的是 `.note-scroll`）；
+  - `env(safe-area-inset-*)` 与 `viewport-fit=cover` **全缺**（不写 `viewport-fit=cover`
+    时 `env()` 一律返回 0，安全区 CSS 全白写），刘海/底部指示条区域会贴边或被系统手势条压住；
+  - 命中区普遍 **<44×44**，触屏下点不中。
+
+  修法（姿态是"一处生效优先"，不逐个组件抄样式）：
+
+  - `src/App.css` **末尾**新增 `@media (max-width: 768px)`。**必须放末尾**：`.plugin-panel`
+    的窄屏 `width:100%` 写在 18973 行，而它的基础规则在 19285 行，**特异性相同、后写的赢**，
+    于是 390px 下只剩 `min(420px, 100vw−64px)=326px`。不靠 `!important`、不堆特异性，
+    只靠"放在最后"这一条纪律。段内统一：小对话框 → **底部弹层**、大面板 → **全屏 + 内部滚动**，
+    一律 `min-width:0`、高度用 **`dvh` 而不是 `vh`**（`vh` 是地址栏收起后的高度，地址栏一露面
+    底部操作栏就被推出屏）、内容区唯一可滚 + `overscroll-behavior:contain`、操作栏吸底 +
+    `env(safe-area-inset-*)`、命中区 ≥44×44；并把散落的 **720 / 760 收敛到 768**
+    （与 `src/hooks/useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 同一个数）。
+  - 新增 `src/hooks/useOverlayScrollLock.ts`：锁 **`.note-scroll`（不是 body）**、
+    **引用计数**（叠层时最后关的那个才解锁）、保留并恢复 `scrollTop`，并用 `MutationObserver`
+    盯住 `.note-scroll` 被重建的情况补锁——第一版只在打开那一刻查一次，验收脚本跑到第 10 层时
+    抓到"那一刻它还没挂上来，于是一个都没锁"。
+  - `usePopover`：坐标改为**相对包含块**折算；打开期间监听 `resize` / `visualViewport.resize`
+    重算（软键盘、旋转、拖分隔条都会触发）；窄屏返回空坐标并带 `is-sheet` 走底部弹层。
+    同时把竖条收起从 `transform` 换成 `left: -48px`（`left` 不建立包含块），**从源头**掐掉这类坑。
+  - `index.html`：viewport 补 `viewport-fit=cover` 与 `interactive-widget=resizes-content`
+    （后者让软键盘不盖住操作栏）。
+
+  证据：新增 `scripts/verify-mobile-overlays.mjs`（真实 Chromium，**3 视口 × 19 层**
+  = 两档手机 360×640 / 390×844 + 一档桌面，**371 条断言 / 0 失败**）。**自证能失败**：
+  5 个变异测试（把修好的逐个改回坏的样子）**全部被判红**，其中两处**精确复现**了盘点里的数字——
+  加回 `min-width:640px` → 13 红；去掉滚动锁 → 40 红；去掉 `.plugin-panel` 窄屏宽度 → 2 红
+  （复现 **326px**）；竖条改回 `transform` → 10 红（复现 `x −48..−1`）；设置分类栏不改横条 → 2 红。
+  既有门禁一并全绿：43 条布局断言（`verify-mobile-layout`）、**607 条单测**、smoke-web 350 条，
+  以及 check-changelog / check-versions / check-doc-links / check-workflow-yaml / check-web-commands /
+  check-capabilities / check-deep-link / check-ocr-assets / check-ps1-ascii / check-panel-layout(25/0) /
+  check-pdf-reload(4/0)——全部 exit 0；CI 三个 job 全 success。
+  规则落到文档：[MOBILE.md](docs/MOBILE.md) 新增「窄屏浮层/弹窗硬约束」一节（照做即可）。
+
+  **仍未做（如实记）**：**真机验收未做**（手机不在本轮环境里），要看的是软键盘遮挡、
+  Android 返回键关层、安全区实际留白、横屏、`overscroll-behavior` 手感、触屏实际命中率；
+  另有一处**入口问题**留待评估——同步面板在窄屏的入口较隐蔽（顶栏的 `.titlebar-sync`
+  在 ≤768px 被 `display:none` 隐藏，只能从侧栏抽屉里的 SyncPanel 进）。
+- **`scripts/check-overlay-registry.mjs`（浮层登记门禁）+ `src/components/historyPanel.test.ts`**（2026-09-15）：
+  `pnpm check:overlays`，已串进 `pnpm build` 与 CI 的静态检查档。它**枚举**仓库里渲染
+  `*-overlay` / `*-popover` 容器的组件，要求每个要么登记进返回栈（`useOverlayLayer`）
+  **且**在 `test:mobile-overlays` 的 `OVERLAYS` 里被量到，要么在脚本内**显式豁免**并给出理由；
+  豁免清单每次运行都打印（5 类：宿主子浮层 / 视图内联浮层 / 非可关闭浮层 / 未纳入几何验收 / **同类缺口**）。
+  见 [MOBILE.md](docs/MOBILE.md) §4.1.4。
+
 - **跨机器多端同步会合测试（Windows ⇄ Mac，服务器在 Mac）已实测通过**（2026-09-15）：
   新增 `scripts/sync-multidevice.mjs`（两端各跑一次、无需约定先后：写标记 → 等对方的页 →
   **互改对方的页**再等回改 ⇒ 验的是"就地更新也双向到达"，不只是"新页能看见"）+ 手册
@@ -15,6 +113,159 @@
   已如实记进服务端仓 `SESSION_CONTINUE.md` §13.4。
 
 ### 修复
+
+
+- **`Android (build)` 连续两次红在 `Setup Android SDK`（不是我们的代码）**：2026-09-15 起
+  `android-actions/setup-android@v3` 在 Google 侧改包后**必失败**——上游 issue #537（当天停止提供
+  `sdkmanager` 的 `tools` 包 ⇒ `Failed to find package 'tools'`）与 #536（commandlinetools 下载 URL
+  变更 ⇒ 直接 404）。它挂在这一步时后面十几步**全部 skip**，看起来像"我们的代码坏了"；
+  判据是"同一 workflow 上一个提交还是绿的 + 时间点与上游 issue 吻合"。
+  改法：**不再用这个 action**，直接用 ubuntu runner 镜像自带的 SDK（`ANDROID_HOME` / `ANDROID_SDK_ROOT`
+  由镜像设好，见 actions/runner-images 的 Ubuntu2404-Readme），并加三条断言——SDK 根存在、
+  `sdkmanager` 找得到（`latest` 与版本号目录都认）、否则**明确报错并列出目录**。
+  `release.yml` 的 Android job 同改：不改的话下一次发版出不了 APK，而 `release.mjs` 缺 APK 会硬失败。
+  本机用假 SDK 树验过四种输入：只有 `latest` ✓ / 只有版本号目录 `16.0` ✓ / 完全没有 → 明确失败 ✓ /
+  连环境变量都没有 → 明确失败 ✓。
+
+- **macOS 更新通道会指向 dmg ⇒「能下载、装不上」**（发 macOS 版之前必须先修的这条）。
+  依据：`tauri-plugin-updater` 2.10.1 的 macOS `install_inner()` 直接 `GzDecoder` + `tar::Archive`
+  解包 `.app.tar.gz`（docstring 也写明期望 `[AppName]_[version]_x64.app.tar.gz`），
+  给它 dmg（连 gzip 都不是）会解包失败；而 `tauri-bundler` 生成的正是
+  `ShuyoNote.app.tar.gz`（**不带版本号、不带架构**）。
+  改动：`scripts/lib/releaseArtifacts.mjs` 收 `.app.tar.gz`（`bundle/macos/` 一并遍历）、
+  `MANIFEST_PREFERENCE` 把 `app.tar.gz` 排在 `dmg` 之前（dmg 照发，只用于人工下载安装）、
+  架构从同批次 dmg 推（推不出来就报错、不猜）、**有 dmg 却没有 `.app.tar.gz` 时硬失败**。
+  测试见 `scripts/lib/releaseArtifacts.test.mjs` 的「macOS 更新通道」一组（已做变异验证）；
+  拿到证书后的操作步骤见 [docs/macos-updater.md](docs/macos-updater.md) §二。
+
+- **【最严重】顶部被状态栏压住 + 顶部约 41 CSS px 是触摸死区**（真机：标题与系统时间叠字，
+  `adb shell input tap` 打在 y≤123 设备 px 时**0 个 DOM 事件**、y=130 时 100+ 个，
+  编辑器工具条 6 个按钮**点不到**）。
+  **定位过程**：① 死区边界**正好等于**状态栏 inset（123 设备 px ÷ 密度 3.0 = 41 CSS px）
+  ⇒ 排除"透明覆盖层""WebView 命中测试"；② 实测四个方向的 `env(safe-area-inset-*)`
+  **全是 0px**（WebView 的 safe-area 取自**物理刘海**，不是系统状态栏 —— 所以 Android 上
+  所有 `env()` 安全区 CSS 都是安慰剂）；③ 于是结论是**窗口没让开系统栏**：状态栏是
+  SystemUI **自己的窗口**，那一带的触摸**按设计归它**，应用"画得到"但**永远点不到**。
+  **改法**：`scripts/android-mobile-shell.mjs` 注入 Kotlin，把 `WindowInsetsCompat` 的
+  `systemBars()` / `ime()` 折算成 CSS px 推给页面 → `--sat/--sar/--sab/--sal/--kb`
+  → `App.css` 给外壳与浮层让位。`:root` 里保留 `env()` 作兜底（iOS 照旧）。
+  ⚠️ **不选"干脆去掉 edge-to-edge"**：`targetSdk = 36`，Android 15 起对 SDK≥35 **强制**
+  edge-to-edge，删掉在 15/16 上**退不回去**，同一个 bug 会在新机上复现。
+  **顺带抓出一类**：窄屏把侧栏/竖条改成 `position: fixed` 的浮层，而 **fixed 不跟着
+  `.app` 的 padding 走** ⇒ 竖条按钮（y=8）与侧栏标题（y=14）仍整条落在死区里，一并修掉。
+- **软键盘遮挡底部弹层**（实测键盘盖住 CSS y≥468，而弹层钉在 `bottom:0`，输入框被盖住）。
+  根因：`enableEdgeToEdge()` 之下 **`adjustResize` 是空转的**，实测键盘弹起后
+  `innerHeight` 与 `visualViewport.height` **都不变** ⇒ **web 层根本无法察觉键盘**
+  （原计划的"读 visualViewport 写 `--kb`"这条路在这台设备上走不通）。
+  改法：键盘高度走同一条 inset 桥（`Type.ime()`），页面写成 `--kb`；
+  底部弹层 `bottom: max(var(--sab), var(--kb))`、全屏面板高度取 `--ovh`
+  （= `100dvh - --sat - max(--sab, --kb)`）。`--kb` 的定义是"**额外**盖住的高度"
+  （减去视口已缩量），避免某些环境顶两遍——这条有单测钉着。
+  **故意不改 manifest 的 `windowSoftInputMode`**：默认已是 `adjustResize`，
+  在 edge-to-edge 下是死代码，写上去只会让人以为机制在 manifest 里。
+- **Android 返回键直接退出应用**（三层浮层实测 `APP_STILL_FOREGROUND: False`）。
+  根因链（读源码）：`TauriActivity` 把 wry 的返回回调**关掉了**
+  （`handleBackNavigation = false`），而 Tauri 的 Kotlin `AppPlugin` 注册的那条在
+  "没有 `back-button` 监听者"时走 `canGoBack()` ⇒ SPA 无历史 ⇒ `finish()`。
+  上游的 `back-button` 逃生口救不了"退出"这一步：`plugin:app|exit` **不在** `core:app`
+  权限清单里（有 `allow-register-listener`，**没有** `allow-exit`），会被 ACL 拒。
+  改法：壳层注册自己的 `OnBackPressedCallback`（`OnBackPressedDispatcher` 后注册先派发，
+  而 AppPlugin 那条在 `Builder::build` 阶段就注册了 ⇒ 我们的**一定先被调用**），
+  它先问页面的**浮层栈** `window.__SHUYONOTE_BACK__.handle()`：
+  `true` = 关掉了最上层，`false` = 栈空 ⇒ 放行（应用正常退出）。
+  新增 `src/lib/overlayStack.ts` + `useOverlayLayer`，**19 层浮层全部登记**。
+- **横屏底部裁切**（792×360 实测 `.set-dialog` y=24 / h=420 / bottom=**444**，底部 84px 被裁）。
+  根因与上一轮修的那条**同类，只是换到了高度轴**：上一轮清了 `min-width:640px`，
+  却把 `min-height:420px` 留着——而 `min-*` 压 `max-*` **与轴无关**。
+  改法：断点从"只有窄"改成"**窄或矮**"（`@media (max-width:768px), (max-height:520px)`，
+  JS 侧 `isMobileOverlayViewport()` / `SHORT_VIEWPORT_MAX_PX = 520`），
+  并在窄屏块里一并 `min-height: 0`。**口径写清**：**布局看宽度，浮层看宽度和高度**。
+  顺带修掉列向 flex 的老坑：`.set-body` 缺 `min-height: 0` ⇒ 面板一矮就不缩不滚、被裁 142px。
+- **滚动锁可能锁错容器**（上一版只锁 `.note-scroll`；而「文件」视图下它**根本不在 DOM 里**，
+  内容区是 `.file-manager-table-wrap`，侧栏抽屉滚的是 `.sidebar-tree` ⇒ 那些视图下
+  **一个容器都没锁到**，当时"背景拖不动"其实是 `overscroll-behavior: contain` 挡住的）。
+  改法：改成**结构化发现**——外壳（`.app`）内、`overflow-y: auto/scroll`、内容确实溢出、
+  且**没有 `position: fixed` 祖先**的元素全部锁上（`fixed` 那条正好把浮层自己的滚动区排除，
+  实测设置/命令面板/插件管理/图标选择器内部的滚动区无一例外都有 `fixed` 祖先）。
+- **上一轮的验收断言有放水，已补**：① 只断言了 `min-width`，**高度轴空着** ⇒
+  `min-height:420px` 一路活到横屏（新增 `boxMinHeight` 断言）；
+  ② 只测竖屏两个视口 ⇒ 新增 **792×360 横屏**这一档（19 层照跑）；
+  ③ 断点只验了 768 一侧 ⇒ 新增 520 的 **JS/CSS 双侧**判据（把视口卡到 521 高量一次）；
+  ④ 滚动锁只认 `.note-scroll` 一个选择器 ⇒ 改成"内联 `overflow-y:hidden` 的容器列表非空"
+  并**反向断言浮层自己的滚动区没被误锁**；⑤ 新增 `--sat` / `--kb` 注入断言
+  （最高的可交互元素必须在状态栏之下、弹层必须抬到键盘之上）。
+  ⚠️ 断言里有一处**量错了对象**也已修正：`getBoundingClientRect()` 量的是 border box，
+  `.app` 的 `padding-top` **不会**改变它的 `top`——原写法量出来永远是 0。
+
+- **【真机复验第 6 个】版本历史弹层没登记进返回栈 ⇒ 按返回键直接退出应用**（2026-09-15）。
+  实测证据（真实 Chromium / 390×844 等三档视口复现）：只开着版本历史时
+  `window.__SHUYONOTE_BACK__.depth()` = **0**、`handle()` 返回 **false**
+  ⇒ 壳层放行返回键 ⇒ **退出应用，而弹层还开着**（"19 层浮层全部登记"的说法当场不成立：
+  `src/components/HistoryPanel.tsx` 只有"点外面关闭"，既没有 `useOverlayLayer`、也没有 Esc）。
+  改法照其它浮层的既有模式，**两处最小改动**：
+  `useOverlayLayer("history", open, () => setOpen(false))` +
+  `window` 上的 Escape keydown（与 `AboutDialog` / `StoragePanel` 同一条写法）。
+  修后同视口复测：`depth()` = 1（`ids: ["history"]`）、`handle()` = **true**、弹层消失。
+  根因不是"写错了"而是"**漏了**"——所以同一提交附上**登记门禁**（见「新增」最后一条），
+  并用**变异测试**自证它会红：删掉那一行登记 ⇒ 门禁报"1 个组件渲染了浮层容器却既没登记也没豁免"
+  （注释掉也算没登记——门禁因此还补了一条"注释里的登记不算登记"）；
+  新建一个不登记的浮层组件 ⇒ 报同一个红；登记了却不加进 `OVERLAYS` ⇒ 报"这条登记在 OVERLAYS 里找不到对应的一层"；
+  把 `OVERLAYS` 里某个类名改名 ⇒ 报"幽灵条目"。
+  **仍未做（如实记）**：该层的窄屏形态没纳入几何验收——实测 360×640 下 `.history-popover`
+  左边缘 = **−6px**（越界 6px），它是 `position:absolute` 的 320px 锚定浮层、窄屏没走
+  `is-sheet` 形态，要纳入得先改形态（已在门禁的豁免表里写明，属未验证项）。
+
+- **口令锁的「解锁 / 锁定 UX + 忘记口令」补齐（E2）**，并修掉它盖住的那个**必崩路径**。
+  两者是同一次动作，因为**不修那个崩溃，这块屏根本到不了用户眼前**：
+
+  - **修掉「开着加密重启 = 崩溃屏」**（真事故，本轮发现）。`App` 里的锁定闸门原先是一句
+    **早退**，而它排在七八个 hooks **之前**：首帧状态未知（`enc === null`）不算锁定、这一帧跑了
+    全部 hooks；状态回来后的第二帧早退，只跑其中一部分 ⇒ React 抛
+    `Rendered fewer hooks than expected`，被根部 `ErrorBoundary` 接住，用户看到的是**崩溃屏**。
+    也就是说 **E1 那道锁定屏在这条最常见的路径上一次都没出现过**（真机只验了设置页里的开关，
+    没验过"重启"，所以一直没暴露）。现在闸门与外壳**拆成两个组件**：`App` 自己只有一个 hook、
+    分支只决定渲染哪个组件；锁定态下读库的外壳**根本不挂载**（比"挂起来再挡住"更干净）。
+  - **状态只有一份**：新增 `src/lib/vault.ts`（`enabled`/`locked`/`ready` + 订阅 + 五个动作）
+    与 `src/hooks/useVault.ts`。此前 App 和设置页各自持有一个 `useState` 副本，于是
+    **在设置页点「立即锁定」界面不会切屏**，用户继续看着已经读不出来的内容、同步被拒却不知道
+    为什么。现在锁定立刻切到锁定屏，解锁后外壳全新挂载、重新读一遍页面。
+  - **锁定屏给忘记口令的人一条诚实的出路**：连错 3 次自动摊开「忘记口令？」，内容照代码写实——
+    **没有找回流程**；**同步到服务器的那份也打不开**（内核里同步载荷用的就是这把会话密钥，
+    `security::key_if_enabled`）；**唯一可能是"开启加密之前"导出的明文备份**；没有那样的备份
+    就永久取不回。同时给了「显示/隐藏」口令、输错即清空并回焦、错误计数。
+  - **开启加密多一道硬确认**：必须勾选「我已保管好口令，并知道丢了找不回」才能点开启
+    （全应用里唯一"丢了就真没了"的操作），并提示若想留后路要**在开启加密之前**导出备份
+    （开启后导出的备份同样是密文，一样要口令）。
+  - **测试与变异验证**：`src/vaultGate.test.ts`（7 例，直接渲染真 `App`，断言锁定启动得到
+    锁定屏、外壳不挂载、**没有任何 hooks 顺序报错**；另有运行中锁定、解锁、失败不改状态、
+    问不到内核按未开启兜底）与 `src/components/lockScreen.test.ts`（6 例）。两条都做过变异：
+    把 `App.tsx` 换回旧版 ⇒ 7 例里 **5 例红**、并复现出那条 `Rendered fewer hooks`；
+    把"错 3 次自动摊开"和"输错清空"分别拿掉 ⇒ 恰好对应用例红。
+  - **顺手把它变成门禁**（同一类错这是第二次：1.85.1 那次是命令面板白屏）：
+    `scripts/check-hook-order.mjs`（`pnpm check:hook-order`，自测 `--self-test`）扫全部
+    `.ts/.tsx`，报"同一个函数里 `return` 之后还有 hooks"。带自测——**两次真事故的原始写法必须判红**、
+    三种正确写法必须放过；另做交叉验证——同一份 `App.tsx`，修复后 0 处、修复前 1 处。
+    它**不是语法树**（本仓 TypeScript 7 是原生编译器、没有 JS API，也没有可用的解析器依赖），
+    是按 token + 花括号层级的启发式，边界写在脚本头注里；"hooks 放在条件里"那一种本门禁不查。
+    已接进 `pnpm build`（在 dev 上）。
+  - **仍未做（如实记）**：真机复验。以上都是渲染层判据（真 `App` + 真状态中枢），
+    **没有**在真机上跑一遍"开启加密 → 重启 → 解锁"（Android 上还要覆盖 SQLCipher 重开库）。
+    另外**这个修复目前只在 dev**：`main` 上仍是旧的 `App.tsx`，也就是**已发布的 1.91.x 里这条
+    崩溃路径仍然存在**，要等 dev 合进 main 才带上（`pnpm check:hook-order` 现在会在 main 上
+    直接报出这一处，属真阳性）。
+
+- **`check-changelog` 门禁不再要求 `[Unreleased]` 段为空**（2026-09-14）。首版门禁把
+  "`[Unreleased]` 必须为空"写成了硬约束，这是**误读 Keep a Changelog**——`[Unreleased]` 的用途
+  **就是攒尚未发布的改动**，要求它为空等于"改动做完了却没处记账"（上面那条移动端适配就卡在这条上、
+  一度记不进来）。现在**只放开"有没有内容"**：仍要求它存在、唯一、在第一位、段头不带日期，
+  且**非空时**其 `###` 小标题走与"基线之后的新版本"**同一套**允许集合
+  （新增/变更/修复/移除/安全/废弃/其它）与唯一性，段内结构检查（围栏成对、无 ≥3 连续空行、
+  无空 `- ` 条目、标题前空行）一条没少。改口径已用**样本外挂 `%TEMP%`** 验过 9 例（样本不入库）：
+  空 ⇒ 通过；非空且小标题合规 ⇒ 通过；非空但用了 `### 优化` ⇒ 判红；缺 `[Unreleased]` ⇒ 判红；
+  `[Unreleased]` 不在首位 ⇒ 判红；外加段内"标题前缺空行 / 空 `- ` 条目 / 重复小标题 /
+  连续 3 行空行"四个结构回归 ⇒ 逐个判红。同步订正了脚本注释与
+  [RELEASING.md](docs/RELEASING.md) ⑧ 里对该门禁"能挡/挡不住"的描述。
+
 - **macOS universal 包会让 Apple Silicon 收不到更新**（2026-09-15 发现；macOS 版尚未启用，
   属于"一启用就会踩"的坑，落在这一版还是随 1.91.2 一起走由发版时定）。
   `platformKeyFor` 只按 `aarch64|arm64` 判断 dmg 归哪个平台键，于是
