@@ -1,0 +1,179 @@
+// 按「钉死的版本 + 校验和」拉取 PDFium 动态库，解到 src-tauri/vendor/pdfium/<平台>/。
+//
+// 为什么要有这个脚本（P0，见 docs/plans/2026-09-16-pdfium-engine-plan.md）：
+//   · `pdfium-render` 运行时用 libloading 加载 `pdfium.dll`/`.so`/`.dylib`，**库不在包里**；
+//   · 商用交付不许"下载了就塞进安装包"——版本与校验和必须可查、可复现、可校验。
+//
+// 钉死的版本：**Chromium 151.0.7881.0（BUILD=7881）**，与 `pdfium-render` 的 `pdfium_7881` feature 对齐。
+// 该构建的 args.gn：`pdf_enable_v8=false`、`pdf_enable_xfa=false`、`pdf_is_standalone=true`、`is_debug=false`
+// —— 即**不带 JS 引擎的独立 release 构建**，正是本项目（只做光栅化）需要的。
+//
+// 用法：
+//   node scripts/fetch-pdfium.mjs                  # 取当前平台
+//   node scripts/fetch-pdfium.mjs --platform win-x64
+//   node scripts/fetch-pdfium.mjs --check          # 只校验已解出的库是否与记录一致（CI 用）
+//   node scripts/fetch-pdfium.mjs --print-sha256 <文件>   # 算某平台包的 sha256（补 SHA256 表用）
+//
+// ⚠️ DNS 被污染的环境（本机就是）：GitHub 的 release 资产走 objects.githubusercontent.com，
+//   直连会卡死。先解析真实 IP，再让脚本用 curl 带 --resolve：
+//     node -e "fetch('https://dns.alidns.com/resolve?name=objects.githubusercontent.com&type=1').then(r=>r.json()).then(j=>console.log(j.Answer.map(a=>a.data).join(',')))"
+//     $env:PDFIUM_RESOLVE = "github.com:20.205.243.166,objects.githubusercontent.com:185.199.108.133"
+//   （实测：Fastly 的 .111 不通、.108 通——换一个 IP 往往就好了。）
+//
+// 交付前建议改为**自建**（Chromium 工具链）并更新本文件的校验和；预编译包仅用于开发期验证。
+
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const OUT_ROOT = join(root, "src-tauri", "vendor", "pdfium");
+
+/** Chromium/PDFium 构建号。改这里 = 换 PDFium 版本（必须同时改 pdfium-render 的对应 feature）。 */
+const PDFIUM_BUILD = "7881";
+const PDFIUM_VERSION = "151.0.7881.0";
+
+const RELEASE_BASE = `https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_BUILD}`;
+
+/**
+ * 平台 → { asset, sha256 }。
+ * `sha256` 必须由**实测**填入（`--print-sha256`），为 null 时脚本**硬失败**——
+ * 宁可让人补一次校验和，也不要"悄悄下载一个来路不明的二进制"。
+ */
+const PLATFORMS = {
+  "win-x64": {
+    asset: "pdfium-win-x64.tgz",
+    // 2026-09-16 实测（3,733,154 字节，与 GitHub release API 报告的资产大小一致）
+    sha256: "73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08",
+    lib: "bin/pdfium.dll",
+  },
+  "win-arm64": { asset: "pdfium-win-arm64.tgz", sha256: null, lib: "bin/pdfium.dll" },
+  "linux-x64": { asset: "pdfium-linux-x64.tgz", sha256: null, lib: "lib/libpdfium.so" },
+  "mac-univ": { asset: "pdfium-mac-univ.tgz", sha256: null, lib: "lib/libpdfium.dylib" },
+  "android-arm64": { asset: "pdfium-android-arm64.tgz", sha256: null, lib: "lib/libpdfium.so" },
+};
+
+function detectPlatform() {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  if (process.platform === "win32") return arch === "arm64" ? "win-arm64" : "win-x64";
+  if (process.platform === "darwin") return "mac-univ";
+  if (process.platform === "linux") return "linux-x64";
+  return null;
+}
+
+function sha256File(p) {
+  return createHash("sha256").update(readFileSync(p)).digest("hex");
+}
+
+/** 用 curl（可选 --resolve 绕 DNS）下载。返回落盘路径。 */
+function download(url, outFile) {
+  const args = ["-L", "-sS", "--fail", "--connect-timeout", "15", "--max-time", "600"];
+  const resolveList = (process.env.PDFIUM_RESOLVE ?? "").trim();
+  if (resolveList) {
+    for (const pair of resolveList.split(",")) {
+      const [host, ip] = pair.split(":").map((s) => s.trim());
+      if (host && ip) args.push("--resolve", `${host}:443:${ip}`);
+    }
+  }
+  args.push("-o", outFile, url);
+  console.log(`[fetch-pdfium] curl ${args.filter((a) => a !== "-sS").join(" ")}`);
+  execFileSync("curl", args, { stdio: "inherit" });
+}
+
+const argv = process.argv.slice(2);
+const flag = (name) => argv.includes(name);
+const valueOf = (name) => {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : null;
+};
+
+if (flag("--print-sha256")) {
+  const f = valueOf("--print-sha256");
+  if (!f || !existsSync(f)) {
+    console.error("用法: node scripts/fetch-pdfium.mjs --print-sha256 <已下载的 .tgz>");
+    process.exit(2);
+  }
+  console.log(`size   : ${readFileSync(f).length}`);
+  console.log(`sha256 : ${sha256File(f)}`);
+  process.exit(0);
+}
+
+const platform = valueOf("--platform") ?? detectPlatform();
+if (!platform || !PLATFORMS[platform]) {
+  console.error(`不支持的平台：${platform ?? "(未识别)"}；可选：${Object.keys(PLATFORMS).join(", ")}`);
+  process.exit(2);
+}
+const spec = PLATFORMS[platform];
+const outDir = join(OUT_ROOT, platform);
+const libPath = join(outDir, spec.lib.replace(/\//g, "\\"));
+
+if (flag("--check")) {
+  if (!existsSync(libPath)) {
+    console.error(`[fetch-pdfium] 缺少 ${libPath} —— 先跑一次 node scripts/fetch-pdfium.mjs`);
+    process.exit(1);
+  }
+  console.log(`[fetch-pdfium] ${platform} 就位：${libPath}（${readFileSync(libPath).length} 字节）`);
+  console.log(`[fetch-pdfium] PDFium ${PDFIUM_VERSION}（build ${PDFIUM_BUILD}）`);
+  process.exit(0);
+}
+
+if (!spec.sha256) {
+  console.error(
+    `[fetch-pdfium] ${platform} 的 sha256 尚未实测记录 —— 拒绝下载。\n` +
+      `  先人工取回并核对，再把哈希填进本脚本的 PLATFORMS["${platform}"].sha256：\n` +
+      `  1) 下载 ${RELEASE_BASE}/${spec.asset}\n` +
+      `  2) node scripts/fetch-pdfium.mjs --print-sha256 <文件>\n` +
+      `  3) 与 release 页披露的构建溯源（pdfium-attestation.json）交叉核对后再填入。`,
+  );
+  process.exit(1);
+}
+
+const url = `${RELEASE_BASE}/${spec.asset}`;
+const tgz = join(OUT_ROOT, spec.asset);
+mkdirSync(OUT_ROOT, { recursive: true });
+
+console.log(`[fetch-pdfium] target: PDFium ${PDFIUM_VERSION} (build ${PDFIUM_BUILD}) / ${platform}`);
+download(url, tgz);
+
+const got = sha256File(tgz);
+if (got !== spec.sha256) {
+  rmSync(tgz, { force: true });
+  console.error(
+    `[fetch-pdfium] 校验和不符，已删除下载物：\n  期望 ${spec.sha256}\n  实际 ${got}\n` +
+      `  —— 要么版本/资产变了，要么下载被篡改/损坏。**不要**跳过这一步。`,
+  );
+  process.exit(1);
+}
+console.log(`[fetch-pdfium] 校验和一致：${got}`);
+
+// 解包到 <outDir>（tar 在 Win10+ 与 POSIX 都有）
+rmSync(outDir, { recursive: true, force: true });
+mkdirSync(outDir, { recursive: true });
+execFileSync("tar", ["-xzf", tgz, "-C", outDir], { stdio: "inherit" });
+
+// 记录版本与构建参数，便于交付时溯源
+const versionFile = join(outDir, "VERSION");
+const argsFile = join(outDir, "args.gn");
+writeFileSync(
+  join(outDir, "SOURCE.txt"),
+  [
+    `PDFium ${PDFIUM_VERSION}（build ${PDFIUM_BUILD}）`,
+    `asset   : ${spec.asset}`,
+    `sha256  : ${spec.sha256}`,
+    `source  : ${url}`,
+    `fetched : ${new Date().toISOString()}`,
+    ``,
+    `VERSION: ${existsSync(versionFile) ? readFileSync(versionFile, "utf8").trim().replace(/\n/g, " ") : "(无)"}`,
+    `args.gn: ${existsSync(argsFile) ? readFileSync(argsFile, "utf8").trim().replace(/\n/g, " | ") : "(无)"}`,
+    ``,
+    `注意：预编译包仅用于开发期验证；商用交付前建议自建并更新本记录。`,
+    `该包自带 licenses/（第三方许可原文），可直接并入 THIRD-PARTY-NOTICES。`,
+    ``,
+  ].join("\n"),
+);
+
+const size = existsSync(libPath) ? readFileSync(libPath).length : 0;
+console.log(`[fetch-pdfium] 完成：${libPath}（${size} 字节）`);
+console.log(`[fetch-pdfium] 溯源记录：${join(outDir, "SOURCE.txt")}`);

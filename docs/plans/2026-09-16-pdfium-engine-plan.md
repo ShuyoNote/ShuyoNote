@@ -32,6 +32,46 @@ Adding pdfium-render v0.9.4 to dependencies
 
 ---
 
+## 0.1 P0 已完成（2026-09-16）：库按「钉死版本 ＋ 校验和」落盘
+
+**结论：P0 完成**，且是可复现的——落库的是**脚本**，不是二进制。
+
+| 事实 | 值 |
+|---|---|
+| 版本 | **PDFium 151.0.7881.0（BUILD=7881，Chromium 151）**，与 crate 的 `pdfium_7881` feature 对齐 |
+| 资产 | `pdfium-win-x64.tgz`，**3,733,154 字节**（与 GitHub release API 报告的资产大小一致） |
+| 包 sha256 | `73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08` |
+| `pdfium.dll` | **7,211,520 字节**，sha256 `79d4676b656cfb1abcea88f9ade3b4b0826c5200382db5f4ec72a636c598c118` |
+| 构建参数（`args.gn`） | `pdf_enable_v8=false`、`pdf_enable_xfa=false`、`pdf_is_standalone=true`、`is_debug=false` ⇒ **不带 JS 引擎的独立 release 构建**，正是"只做光栅化"需要的 |
+| 附带资产 | **包内自带 `licenses/`（17 份第三方许可原文：freetype / icu / lcms / libjpeg-turbo / libopenjpeg / libpng / libtiff / zlib / abseil / simdutf / llvm-libc …）** ⇒ **可直接并入交付物的 `THIRD-PARTY-NOTICES`** |
+| 其它平台资产（同名 release 内已确认存在） | `pdfium-win-arm64`、`pdfium-linux-x64`、`pdfium-mac-univ`、`pdfium-android-arm64`…（`pdfium-v8-*` 变体**不用**——我们要的是不带 V8 的） |
+
+**交付物**：`scripts/fetch-pdfium.mjs`
+
+```bash
+node scripts/fetch-pdfium.mjs            # 取当前平台 → 校验和 → 解到 src-tauri/vendor/pdfium/<平台>/
+node scripts/fetch-pdfium.mjs --check    # 只校验（CI 用）
+node scripts/fetch-pdfium.mjs --print-sha256 <tgz>   # 补记某平台的校验和
+```
+
+三个设计点（都是"别让来路不明的二进制进交付物"这条原则的落地）：
+
+1. **校验和不符直接删档退出**，不给"跳过校验"的口子；
+2. **没实测记录校验和的平台硬失败**（其余平台 `sha256: null`）——宁可让人补一次，也不静默下载；
+3. 解包后写 `SOURCE.txt`（版本 / 资产 / sha256 / 来源 URL / 时间 / `VERSION` / `args.gn` 原文），`src-tauri/vendor/pdfium/` 已进 `.gitignore`（**二进制不入库**）。
+
+**⚠️ 本机 DNS 被污染时的取法**（实测踩过）：
+
+- GitHub release 资产走 `objects.githubusercontent.com`，**直连会卡死**（我卡了 4 分钟没动静）；
+- 先用 DoH 拿真实 IP，再用 `curl --resolve`：
+  ```
+  $env:PDFIUM_RESOLVE = "github.com:20.205.243.166,objects.githubusercontent.com:185.199.108.133"
+  ```
+- **同一个 Fastly 域名下不同 IP 通不通不一样**：实测 `.111` 超时、`.108` 成功——换一个 IP 往往就好了；
+- 该 release 还带 **`pdfium-attestation.json`（构建溯源）**，自建/交付前可与之交叉核对。
+
+---
+
 ## 1. 范围：只换光栅化
 
 ```ts
@@ -57,7 +97,7 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 
 | 阶段 | 内容 | 估算 | 交付物 |
 |---|---|---|---|
-| **P0** | **拿到并固定 `pdfium.dll`（build 7881）**：自建（Chromium 工具链，重）或取预编译包 + **比对校验和**；把版本与 sha256 写进仓库 | 0.5–1 人日 | 库 + 校验记录（§6） |
+| **P0** | **拿到并固定 `pdfium.dll`（build 7881）**：自建（Chromium 工具链，重）或取预编译包 + **比对校验和**；把版本与 sha256 写进仓库 | 0.5–1 人日 | ✅ **已完成**（§0.1）：`scripts/fetch-pdfium.mjs` ＋ 校验和 ＋ `SOURCE.txt` 溯源 |
 | **P1** | 新增 `src-tauri/src/pdfium_native.rs`（渲染 + 文档缓存 + 全局 init/锁），**保留 `pdf_native.rs`（MuPDF）不动** | 1–2 人日 | 新模块 + 单测 |
 | **P2** | `render_pdf_page` 按开关分派（Cargo feature 或运行时开关），两条路径都能跑 | 0.5 人日 | 可回滚的双路径 |
 | **P3** | **对拍**：同一批真实 PDF（含扫描件、中文、旋转页、超大文件）比较两引擎渲染结果与单页耗时 | 1 人日 | 对拍脚本 + 报告 |
