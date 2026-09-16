@@ -217,6 +217,10 @@ identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
 - **自动更新只对「签名+公证」版本有效**；未签名/未公证的 mac 包会被 Gatekeeper 拦（可手动下载）。
 - **更新器 macOS 是整包替换 `.app`**；用户需点「下载并安装」确认（半自动，不问强行重启）。
 - **Universal（同时支持 M 系 + Intel）**：`--target universal-apple-darwin`（产物更大）；
+  universal 的 dmg 会**同时占两个平台键**（`darwin-aarch64` + `darwin-x86_64`，同一 url、同一签名）；
+  同一次构建里那个 `.app.tar.gz` 也跟着占两个键 ⇒ 清单里两个键都指向它 ✓。
+  **不要**把它只归到一个键：另一架构的用户会"检查更新什么都不发生"，且不报错
+  （判据：`platformKeysFor("…_universal.dmg")` 必须返回两个键；`scripts/lib/releaseArtifacts.test.mjs`「macOS 更新通道」一组盯着它）。
   想省体积可分开出 aarch64 / x86_64 —— 但注意**一次构建只会有一个 `.app.tar.gz`**，
   若同时出两个架构的 dmg，`resolveUpdaterArchiveKeys` 会因"架构无法判定"而**报错**（不猜）。
 - Mac 本地打是一种方式；**长期建议**用 GitHub Actions（macos runner 免费）做全自动，
