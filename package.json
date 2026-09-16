@@ -39,6 +39,7 @@
     "verify:list": "node scripts/test-report.mjs --list",
     "verify:baseline": "node scripts/test-report.mjs --update-baseline",
     "suite:status": "node scripts/external-suite-status.mjs",
+    "gitcode:validate": "node scripts/gitcode-validate.mjs",
     "test:sync": "node scripts/sync-regression.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",

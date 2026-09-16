@@ -182,6 +182,8 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   POST https://api.gitcode.com/api/v8/repos/:owner/:repo/actions/workflows/validate?access_token=<token>
   body: {"base64_content": "<yml 的 base64>"}        →  {valid, diagnostics[]}
   ```
+  仓库里带了这个接口的封装：`pnpm gitcode:validate`（读 `GITCODE_TOKEN`；**不进 CI**——它要 token + 外网，
+  而门禁必须是离线可跑的）。改过 `.gitcode/workflows/*.yml` 后建议两条都跑：离线门禁 + 这个权威校验。
   三条平台约束（GitHub 侧没有，照抄 GitHub 写法会踩；已固化成 `check-gitcode-workflow-rules` 门禁）：
   `runs-on` 单串只接受 `default / ubuntu-latest / euler-latest / ubuntu-24 / ubuntu-22`（仓库原有的
   `euleros-2.10.1` **不在**白名单）；每个 step 必须有合法 `name`（字符集受限，全角逗号与加号都不行）；
