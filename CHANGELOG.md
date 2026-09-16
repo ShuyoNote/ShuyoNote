@@ -105,6 +105,17 @@
 
 ### 修复
 
+- **universal 的 macOS 包只占一个平台键 ⇒ 另一架构静默收不到更新**（这条修复曾在 `dev → main`
+  的合并里被整体丢掉，现已按原意重建，并与「清单指向 `.app.tar.gz`」那条**合并**成一套规则）。
+  `tauri build --target universal-apple-darwin` 产出 `…_universal.dmg`，它在 Intel 与 Apple Silicon
+  上都能跑，但 `platformKeyFor` 只按 `aarch64|arm64` 判断 ⇒ 被归到**一个**键 ⇒ 清单里缺另一个键 ⇒
+  更新器按平台键找条目、找不到就是"无更新"，**不报任何错**。
+  改法：新增 `platformKeysFor(name)` 返回**全部**键（universal dmg ⇒ 两个 darwin 键；同批次的
+  `.app.tar.gz` 跟着占同样两个键，两个键指向同一 url/签名），归组与清单都按全部键走。
+  判据：`scripts/lib/releaseArtifacts.test.mjs`「macOS 更新通道」一组（含 universal 一物两键、
+  漏了 `.app.tar.gz` 时**两个键都要报缺**、多个 dmg 时架构无法判定则报错不猜）；
+  **变异验证**：把 universal 那两处改回单键 ⇒ 3 条用例变红。
+
 - **`Android (build)` 连续两次红在 `Setup Android SDK`（不是我们的代码）**：2026-09-15 起
   `android-actions/setup-android@v3` 在 Google 侧改包后**必失败**——上游 issue #537（当天停止提供
   `sdkmanager` 的 `tools` 包 ⇒ `Failed to find package 'tools'`）与 #536（commandlinetools 下载 URL

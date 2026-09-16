@@ -13,6 +13,7 @@ import {
   parseMinisignPublicKey,
   parseMinisignSignature,
   platformKeyFor,
+  platformKeysFor,
   selectArtifacts,
   validateManifest,
   verifyArtifactSignature,
@@ -227,6 +228,45 @@ describe("macOS 更新通道（清单必须指向 .app.tar.gz，不是 dmg）", 
     const { picks, notes } = manifestPicks(picked);
     expect(picks.get("darwin-aarch64").name).toBe("ShuyoNote.app.tar.gz");
     expect(notes.join()).toMatch(/清单指向 ShuyoNote\.app\.tar\.gz/);
+  });
+
+  it("universal 的 dmg 同时占两个 darwin 键（只占一个 ⇒ 另一架构静默收不到更新）", () => {
+    expect(platformKeysFor("ShuyoNote_1.84.6_universal.dmg")).toEqual(["darwin-aarch64", "darwin-x86_64"]);
+    expect(platformKeyFor("ShuyoNote_1.84.6_universal.dmg")).toBe("darwin-aarch64"); // 主键仍是第一个
+    expect(platformKeysFor("ShuyoNote_1.84.6_aarch64.dmg")).toEqual(["darwin-aarch64"]);
+    expect(platformKeysFor("ShuyoNote_1.84.6_x64.dmg")).toEqual(["darwin-x86_64"]);
+  });
+
+  it("**universal 构建**：一个 .app.tar.gz 跟着 dmg 一起占两个键，清单两个键指向同一个文件", () => {
+    const entries = [entry("dmg", "ShuyoNote_1.84.6_universal.dmg"), entry("macos", "ShuyoNote.app.tar.gz")];
+    const { picked, problems } = selectArtifacts({ version: "1.84.6", entries });
+    expect(problems).toEqual([]); // 不许因为"两个键"就报错
+    const { picks } = manifestPicks(picked);
+    expect([...picks.keys()].sort()).toEqual(["darwin-aarch64", "darwin-x86_64"]);
+    expect(picks.get("darwin-aarch64").name).toBe("ShuyoNote.app.tar.gz");
+    expect(picks.get("darwin-x86_64").name).toBe("ShuyoNote.app.tar.gz");
+  });
+
+  it("universal 的 dmg 若**漏了** .app.tar.gz，两个键都要报缺（不是只报一个）", () => {
+    const { problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [entry("dmg", "ShuyoNote_1.84.6_universal.dmg")],
+    });
+    expect(problems.filter((p) => /缺少 macOS 更新通道产物/.test(p))).toHaveLength(2);
+    expect(problems.join()).toMatch(/darwin-aarch64/);
+    expect(problems.join()).toMatch(/darwin-x86_64/);
+  });
+
+  it("分别出了 aarch64 与 x64 两个 dmg、却只有一个不带架构的 .app.tar.gz → 报错不猜", () => {
+    const { problems } = selectArtifacts({
+      version: "1.84.6",
+      entries: [
+        entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg"),
+        entry("dmg", "ShuyoNote_1.84.6_x64.dmg"),
+        entry("macos", "ShuyoNote.app.tar.gz"),
+      ],
+    });
+    expect(problems.join()).toMatch(/无法判定 ShuyoNote\.app\.tar\.gz 属于哪个 macOS 架构/);
   });
 
   it("**只有 dmg、没有 .app.tar.gz → 硬失败**（否则 mac 上「能下载、装不上」）", () => {
