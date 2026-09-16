@@ -1467,6 +1467,9 @@ async fn do_pull(
                                 let hash = v["hash"].as_str().unwrap_or("").to_string();
                                 let mime = v["mime"].as_str().unwrap_or("").to_string();
                                 let size = v["size"].as_i64().unwrap_or(0);
+                                // B4-b：先收编 / 自愈"兜底行"，再走正常的 upsert
+                                // （为什么、以及兜底行是什么，见 `adopt_or_heal_fallback_row`）。
+                                adopt_or_heal_fallback_row(&c, &id, &name, page_id.as_deref(), &hash)?;
                                 c.execute(
                                     "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
                                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -2341,6 +2344,41 @@ fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {
     None
 }
 
+/// B4-b：**收编 / 自愈"兜底行"**（调用点与完整来龙去脉见 `do_pull` 的附件分支）。
+///
+/// 兜底行 = 下载路径在"元数据还没到"时建的那行：`name = <hash>.<ext>`、`page_id = NULL`、
+/// **纯本地**（不记 `change`，uuid 从未上过服务端）。元数据行到了之后：
+/// - 元数据行**已经**在 ⇒ 删掉多余的兜底行（自愈历史重复）；
+/// - 元数据行**还不在** ⇒ 把兜底行**原地改写**成元数据行（收编，不新增行）。
+///
+/// 判据里的 `page_id IS NULL AND name LIKE hash || '.%'` 是**防止误伤**：
+/// 用户自己导入的文件也是 `page_id = NULL`，但名字是原名（不带 hash 前缀）⇒ 不会被碰。
+fn adopt_or_heal_fallback_row(
+    c: &Connection,
+    id: &str,
+    name: &str,
+    page_id: Option<&str>,
+    hash: &str,
+) -> Result<(), String> {
+    // ① 自愈：元数据行已在 ⇒ 删掉那条多余的兜底行
+    c.execute(
+        "DELETE FROM attachments
+          WHERE hash = ?1 AND page_id IS NULL AND name LIKE ?1 || '.%'
+            AND EXISTS (SELECT 1 FROM attachments WHERE id = ?2)",
+        params![hash, id],
+    )
+    .map_err(|e| e.to_string())?;
+    // ② 收编：元数据行不在、但有兜底行 ⇒ 原地改写（`NOT EXISTS` 避开主键冲突）
+    c.execute(
+        "UPDATE attachments SET id = ?1, name = ?2, page_id = ?3
+          WHERE hash = ?4 AND page_id IS NULL AND name LIKE ?4 || '.%'
+            AND NOT EXISTS (SELECT 1 FROM attachments WHERE id = ?1)",
+        params![id, name, page_id, hash],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn ext_from_mime(mime: &str) -> &'static str {
     match mime {
         "image/png" => "png",
@@ -2636,6 +2674,92 @@ mod tests {
         // ⚠️ **不产生双斜杠**：地址末尾带 `/` 时也要拼对（`set_profile` 会 trim，
         //    但老库 / 手改过的值不能靠这个假设）。
         assert!(!attachment_base(&mk("sp-1")).contains("//spaces"));
+    }
+
+    // ---- B4-b：兜底行的收编与自愈 ----
+
+    fn conn_with_attachments() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE attachments (
+                 id TEXT PRIMARY KEY, page_id TEXT, name TEXT NOT NULL, hash TEXT NOT NULL,
+                 mime TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        c
+    }
+    fn rows_for(c: &Connection, hash: &str) -> Vec<(String, Option<String>, String)> {
+        c.prepare("SELECT id, page_id, name FROM attachments WHERE hash = ?1 ORDER BY id")
+            .unwrap()
+            .query_map(params![hash], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
+    /// **收编**：元数据还没到、只有兜底行 ⇒ 原地改写成元数据行（不新增行）。
+    #[test]
+    fn metadata_adopts_a_lone_fallback_row() {
+        let c = conn_with_attachments();
+        let hash = "a".repeat(64);
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('fallback-uuid', NULL, ?1, ?2, 'text/markdown', 12, 1)",
+            params![format!("{hash}.bin"), hash],
+        )
+        .unwrap();
+
+        adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+
+        let rows = rows_for(&c, &hash);
+        assert_eq!(rows.len(), 1, "收编之后仍应只有一行（不许变成两行）");
+        assert_eq!(rows[0].0, "row-from-changes", "id 应被改写成元数据行的 id");
+        assert_eq!(rows[0].1.as_deref(), Some("folder-1"), "page_id 应落到真实目录");
+        assert_eq!(rows[0].2, "验收说明.md", "名字应被改写成真名");
+    }
+
+    /// **自愈**：元数据行与兜底行都在（历史重复）⇒ 删掉多余的兜底行。
+    #[test]
+    fn metadata_heals_an_existing_duplicate_fallback_row() {
+        let c = conn_with_attachments();
+        let hash = "b".repeat(64);
+        c.execute_batch(&format!(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('row-from-changes', 'folder-1', '验收说明.md', '{hash}', 'text/markdown', 12, 1),
+                    ('fallback-uuid', NULL, '{hash}.bin', '{hash}', 'text/markdown', 12, 2);"
+        ))
+        .unwrap();
+        assert_eq!(rows_for(&c, &hash).len(), 2, "前提：先造出重复");
+
+        adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+
+        let rows = rows_for(&c, &hash);
+        assert_eq!(rows.len(), 1, "自愈之后只剩元数据那一行");
+        assert_eq!(rows[0].0, "row-from-changes");
+        assert_eq!(rows[0].1.as_deref(), Some("folder-1"));
+    }
+
+    /// **不许误伤**：用户自己导入的文件也是 `page_id = NULL`，但名字是原名（不带 hash 前缀）
+    /// ⇒ 同一个 hash 上那条行必须原样保留。
+    #[test]
+    fn a_user_imported_row_with_the_same_hash_is_left_alone() {
+        let c = conn_with_attachments();
+        let hash = "c".repeat(64);
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('user-import', NULL, '我的笔记.md', ?1, 'text/markdown', 12, 1)",
+            params![hash],
+        )
+        .unwrap();
+
+        adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+
+        let rows = rows_for(&c, &hash);
+        assert_eq!(rows.len(), 2, "用户导入的那行不该被删、也不该被改写");
+        let user = rows.iter().find(|r| r.0 == "user-import").expect("user-import 必须还在");
+        assert_eq!(user.2, "我的笔记.md", "原件名字不许被改");
+        assert_eq!(user.1, None, "page_id 不许被改");
     }
 
     // ---- B4：同步下载不再制造重复行 ----
