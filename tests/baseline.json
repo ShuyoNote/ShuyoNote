@@ -1,7 +1,7 @@
 {
   "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。",
   "counts": {
-    "vitest": 730,
+    "vitest": 732,
     "smoke-web": 350,
     "check-pdf-reload": 8,
     "check-panel-layout": 25,

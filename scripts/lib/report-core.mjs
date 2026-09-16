@@ -41,11 +41,29 @@ export function countsFromSmokeJson(j) {
   };
 }
 
+// cargo test 的汇总行是**每个测试二进制一行**：
+//   `test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`
+// 一个门禁（如 `cargo test` 全量）会打印好几行（lib 测试 / 集成测试 / 文档测试），
+// 所以这里必须**求和**，只取第一行会把 Rust 侧的读数算少一大截。
+export function countsFromCargoOutput(output) {
+  const re = /test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed/g;
+  let passed = 0;
+  let failed = 0;
+  let seen = false;
+  for (const m of (output || "").matchAll(re)) {
+    seen = true;
+    passed += Number(m[1]);
+    failed += Number(m[2]);
+  }
+  return seen ? { passed, failed, total: passed + failed } : null;
+}
+
 // gate.counters 决定读数来源；`auto`（或未声明）走文本兜底。
 // readJson(name) 由调用方注入（脚本里读临时文件，单测里给假数据）。
 export function countsForGate(gate, output, readJson) {
   if (gate.counters === "vitest") return countsFromVitestJson(readJson ? readJson("vitest.json") : null);
   if (gate.counters === "smoke-web") return countsFromSmokeJson(readJson ? readJson("smoke-web.json") : null);
+  if (gate.counters === "cargo") return countsFromCargoOutput(output);
   return countsFromOutput(output);
 }
 

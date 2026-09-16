@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   baselineViolations,
   countsForGate,
+  countsFromCargoOutput,
   countsFromOutput,
   countsFromSmokeJson,
   countsFromVitestJson,
@@ -64,6 +65,23 @@ describe("读数解析（JSON 来源）", () => {
     expect(countsFromSmokeJson({ total: 350, passed: 350, failed: 0 })).toEqual({ total: 350, passed: 350, failed: 0 });
     expect(countsFromSmokeJson({ passed: 1 })).toBeNull();
     expect(countsFromSmokeJson(undefined)).toBeNull();
+  });
+
+  it("cargo test：多个测试二进制的 `test result` 行必须**求和**（只取第一行会算少一大截）", () => {
+    const out = [
+      "running 12 tests",
+      "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+      "running 3 tests",
+      "test result: ok. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out",
+      "running 0 tests",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+    ].join("\n");
+    expect(countsFromCargoOutput(out)).toEqual({ passed: 15, failed: 1, total: 16 });
+  });
+
+  it("cargo test：没有汇总行 → null（别把编译期输出当读数）", () => {
+    expect(countsFromCargoOutput("   Compiling shuyonote v1.91.3\n    Finished `test` profile")).toBeNull();
+    expect(countsFromCargoOutput("")).toBeNull();
   });
 
   it("countsForGate 按 counters 路由，并注入 readJson（IO 留在调用方）", () => {

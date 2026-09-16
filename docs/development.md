@@ -119,7 +119,12 @@ pnpm dev:web        # 浏览器（Web 平台，Vite 5173）
 
 ## 4. 测试与验证（权威循环）
 
-> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**浮层登记门禁**（`check:overlays`）、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它。
+> **一条命令先跑起来**：`pnpm verify`（纯 Node 默认组，约 20 秒；`pnpm verify:all` 追加真实 Chromium 档，
+> `pnpm verify:rust` 跑 `cargo test`）。门禁清单的单一事实来源是 `scripts/lib/gates.mjs`——
+> 本地与 CI 跑的是**同一份**，不要再照 CI 的 YAML 手抄命令。结果、断言数基线与覆盖边界见
+> [回归测试体系](TESTING.md)。下面是逐条命令，等价但更细，便于单点排查。
+
+> **这些检查现在由 CI 跑**（`.github/workflows/ci.yml`，push/PR 到 `main` 或 `dev` 时触发，另有每日定时回归）：类型检查、vitest、smoke-web、两设备同步验收、版本/命令契约/文档链接、**浮层登记门禁**（`check:overlays`）、**workflow YAML 窄规则**（`check-workflow-yaml`），外加一档用真实 Chromium 的移动端布局验收（`test:mobile-layout`）。每轮跑完会把汇总写进 **step summary** 并上传 JSON 报告（artifact，30 天）。**需要服务端的两个集成脚本不在这里**（要一个跑着的同步服务端），它们在服务端仓库的 CI 里——那边构建二进制后，clone 本仓拿脚本去打它；状态登记在 `tests/external-suites.json`。
 >
 > 在此之前这些检查**只靠人记得跑**：`smoke-web`（350 断言）曾因一处无守卫的 `localStorage` 访问整套崩掉而长期无人察觉——没有自动化在跑它，谁都没看见它是红的。
 

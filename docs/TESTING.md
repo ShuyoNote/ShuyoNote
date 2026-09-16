@@ -47,7 +47,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
 | smoke | `tsc` | 类型错误 |
-| smoke | `vitest` | 单测回归（**730 用例**） |
+| smoke | `vitest` | 单测回归（**732 用例**） |
 | smoke | `smoke-web` | web 平台行为（**350 断言**，事实标准） |
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
@@ -93,6 +93,7 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 | GitHub Actions **artifact** | `test-report-*.json`（机器可读，可做趋势 / 断言） | 30 天 |
 | GitCode 流水线日志 | 同一张表（GitCode 没有 step summary 机制） | 随 run |
 | README 徽章 | GitHub 镜像 CI 当前状态 | 实时 |
+| `pnpm release:preflight` | 第 ⑦ 项直接读最近一份报告：**红了就不让打 tag**，并打印上面那行汇总 | 每次发版 |
 | `tests/external-suites.json` | **不在此仓库跑**的套件登记（见下） | 随仓库 |
 
 汇总里刻意区分 **`skipped`（没跑）** 与 `passed`：缺环境变量的门禁显示为"显式跳过"并列出原因，
@@ -148,6 +149,15 @@ node scripts/external-suite-status.mjs --suite sync-regression --status passed \
   风险只在 GitCode 自己的 action 语义上。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
+- **Windows 本机跑不了 rust 组**（2026-09-16 实测）：`cargo test` 的测试二进制在加载期以
+  `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 异常退出——app（`shuyonote.exe`）能正常跑，且它的
+  导入符号是测试二进制的**超集**，`target\debug` 下也没有抢占的 CRT/OpenSSL 副本；已排查到
+  环境层为止，**没有**为此加任何"跳过"或"忽略"开关（那会让门禁失去意义）。因此：
+  rust 组的权威执行地是 **Linux CI**；`rust-test` / `rust-plugins-alone` **暂未纳入基线**
+  （读数解析 `counters: "cargo"` 已实现并有单测，缺的只是可信环境）。要建基线就在 Linux CI 上跑
+  `node scripts/test-report.mjs --group rust --update-baseline` 并把读数提交回来。
+- **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
+  `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 
 ## 新增一条门禁
 
@@ -163,6 +173,8 @@ node scripts/external-suite-status.mjs --suite sync-regression --status passed \
 > 本地默认组不许依赖浏览器或 cargo / 标了 baseline 就必须有 counters / CI 必需门禁一条不少 /
 > 外部套件登记字段完整"。
 > 汇总器自己的**纯逻辑**（读数解析、基线判定、markdown 渲染、状态回写）在
-> `scripts/lib/report-core.mjs`，由 `scripts/lib/report-core.test.mjs`（23 条）覆盖——
+> `scripts/lib/report-core.mjs`，由 `scripts/lib/report-core.test.mjs`（28 条）覆盖——
 > 门禁清单和它的仪器**都**进了回归，它们同样是一种会被顺手改坏的代码。
 > 那次"把 `check-plugin-hosting` 的进度数字当成 `2280/4560 断言`"的事故，其回归用例也在那里。
+> 写这套单测时它还立刻抓出两个真问题：①"通过了却解析不出读数"（解析链断了）此前**不会**报违规；
+> ②cargo 的 `test result` 行每个测试二进制一行，只取第一行会把 Rust 读数算少一大截。
