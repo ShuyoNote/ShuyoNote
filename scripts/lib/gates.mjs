@@ -142,17 +142,18 @@ export const GATES = [
   { id: "mobile-overlays", group: "mobile", label: "浮层 / 弹窗验收（真实 Chromium）", cmd: "node scripts/verify-mobile-overlays.mjs", baseline: true, counters: "auto", flaky: true },
 
   // ---- rust ----
-  // ⚠️ 这两条**故意没有** `baseline: true`：本机（Windows）上测试二进制以
-  // `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 异常退出（加载期 DLL 入口点问题，见 docs/TESTING.md
-  // 的"已知边界"），因此拿不到可信读数；rust 组的权威执行地是 Linux CI。
-  // 想给它们建基线：在 Linux CI 跑一次 `node scripts/test-report.mjs --group rust --update-baseline`
-  // 并把生成的读数提交回来。读数解析（counters: "cargo"）已经实现且有单测，缺的只是可信环境。
+  // 读数（`counters: "cargo"`）**已在 Linux 侧实测并入** tests/baseline.json：
+  //   rust-test 310 / rust-plugins-alone 114（2026-09-16，dev=dc7fa13b，WSL2 Ubuntu 24.04）。
+  // 本机 Windows 跑不了它们（测试二进制加载期 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND`，见
+  // docs/TESTING.md 的"已知边界"），所以本机 `pnpm verify:rust` 会红——那是**环境**问题；
+  // 权威执行地是 Linux（CI / 本机 WSL）。基线校验只比较**跑通过**的门禁，本机红不产生假违规。
   {
     id: "rust-test",
     group: "rust",
     label: "Rust 单测 + 集成测试（cargo test）",
     cmd: "cargo test --manifest-path src-tauri/Cargo.toml",
     counters: "cargo",
+    baseline: true,
   },
   {
     id: "rust-plugins-alone",
@@ -160,6 +161,7 @@ export const GATES = [
     label: "插件测试必须能单独跑",
     cmd: "cargo test --manifest-path src-tauri/Cargo.toml --lib plugins::",
     counters: "cargo",
+    baseline: true,
     incident: "2026-09-13：某测试依赖进程级 APP_DATA_DIR ⇒ 单跑必红、全量反而绿，改一行只跑一条时极易误判",
   },
 

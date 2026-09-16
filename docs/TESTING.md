@@ -70,7 +70,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 两件事被机器校验：
 
 1. **只增不减**：上表里带读数的门禁（`vitest` / `smoke-web` / `check-pdf-reload` / `check-panel-layout` /
-   `check-web-build` / `mobile-layout` / `mobile-overlays`）跑出来的用例数**低于**基线即 CI 红。
+   `check-web-build` / `mobile-layout` / `mobile-overlays` / `rust-test` / `rust-plugins-alone`）跑出来的用例数**低于**基线即 CI 红。
    此前"117 → 223 → … → 350 只增不减"只是计划文档里的纪律，删一条断言不会有任何东西变红。
 2. **门禁集合**：`gates` 段记录每个组应有的门禁 id。少一条（被删掉 / 改了名而没同步）即 CI 红——
    那一刻没有任何测试会变红，正是最危险的一类退化。
@@ -177,10 +177,14 @@ node scripts/test-report.mjs --baseline-from rust-report.json
 - **Windows 本机跑不了 rust 组**（2026-09-16 实测）：`cargo test` 的测试二进制在加载期以
   `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 异常退出——app（`shuyonote.exe`）能正常跑，且它的
   导入符号是测试二进制的**超集**，`target\debug` 下也没有抢占的 CRT/OpenSSL 副本；已排查到
-  环境层为止，**没有**为此加任何"跳过"或"忽略"开关（那会让门禁失去意义）。因此：
-  rust 组的权威执行地是 **Linux CI**（`.gitcode/workflows/rust-baseline.yml` 手动跑一次即可产出
-  读数，用 `--baseline-from` 并入，见上一节）；`rust-test` / `rust-plugins-alone` **暂未纳入基线
-  契约**（读数解析 `counters: "cargo"` 已实现并有单测，缺的只是可信环境）。
+  环境层为止，**没有**为此加任何"跳过"或"忽略"开关（那会让门禁失去意义）。
+  ⇒ 权威执行地是 **Linux**：CI，或**本机 WSL2**（Ubuntu 24.04 + `build-essential` +
+  `libwebkit2gtk-4.1-dev` + `libssl-dev` + `libclang-dev` + rustup，源码从 `/mnt/c` 读、
+  `CARGO_TARGET_DIR` 放到 ext4 避开 9p 慢盘）。两条 rust 门禁的读数**已用这条路实测并进基线**
+  （`rust-test 310` / `rust-plugins-alone 114`，取自 `dev@dc7fa13b`）。
+  ⚠️ 顺序不是可选的：`rust-plugins-alone`（`--lib plugins::`）里有 34 条用例要起**真宿主进程**，
+  宿主二进制不存在时会以"找不到宿主二进制"整片红——所以**全量 `cargo test` 必须先跑**
+  （`ci.yml` 的 rust-tests job 与 reporter 的 rust 组都是这个顺序）。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 
