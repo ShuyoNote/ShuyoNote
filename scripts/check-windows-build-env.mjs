@@ -49,37 +49,78 @@ add(
 );
 
 // ---- MSVC 链接器 ----
-const link = tryRun("where", ["link.exe"]);
+// ⚠️ 2026-09-16 实测：**`where link.exe` 找不到 ≠ 构建会失败**——rustc 会自己按注册表/vswhere
+// 找到 MSVC 工具链（本机 `link.exe` 在 `…\VS\2022\BuildTools\VC\Tools\MSVC\<ver>\bin\HostX64\x64\`，
+// 不在 PATH 上，而构建**链接成功**并出了安装包）。所以判据改成"**装没装 C++ 工作负载**"，
+// 而不是"在不在 PATH 上"——第一版按 PATH 判，会把一个假问题报成硬前置。
+const linkOnPath = tryRun("where", ["link.exe"]);
+const vsRoots = [process.env["ProgramFiles(x86)"], process.env.ProgramFiles].filter(Boolean);
+const linkInVs = vsRoots.some((root) => {
+  const vsDir = join(root, "Microsoft Visual Studio");
+  if (!existsSync(vsDir)) return false;
+  for (const year of readdirSync(vsDir).filter((d) => /^\d{4}$/.test(d))) {
+    for (const edition of readdirSync(join(vsDir, year))) {
+      const msvc = join(vsDir, year, edition, "VC", "Tools", "MSVC");
+      if (!existsSync(msvc)) continue;
+      for (const ver of readdirSync(msvc)) {
+        if (existsSync(join(msvc, ver, "bin", "HostX64", "x64", "link.exe"))) return true;
+      }
+    }
+  }
+  return false;
+});
 add(
-  "MSVC 链接器（link.exe）",
-  link.ok,
-  link.ok ? link.out.split("\n")[0] : "PATH 里没有",
-  "缺了报 `link.exe not found`。装 VS 2022 Build Tools 的「使用 C++ 的桌面开发」；命令行里需先跑 vcvars64.bat",
+  "MSVC 链接器（VS 的 C++ 工具链）",
+  linkOnPath.ok || linkInVs,
+  linkOnPath.ok ? linkOnPath.out.split("\n")[0] : linkInVs ? "在 VS 安装目录里（不在 PATH，正常）" : "没找到",
+  "缺了报 `link.exe not found`。装 VS 2022 Build Tools 的「使用 C++ 的桌面开发」。" +
+    "注意：**不在 PATH 上不算问题**（rustc 自己会找到它），本机就是这么构建成功的",
 );
 
 // ---- OpenSSL（rusqlite bundled-sqlcipher 要链接它） ----
-// ⚠️ 2026-09-16 实测踩到：`libsqlite3-sys` 的 build.rs **不会**去猜默认安装路径，它**直接读
-// `OPENSSL_DIR` 环境变量**，没设就 panic：
-//     Missing environment variable OPENSSL_DIR or OPENSSL_DIR is not set
-// 所以判据必须是"**环境变量设了、且指向有效安装**"，不能只看到 `C:\Program Files\OpenSSL-Win64`
-// 存在就打勾（第一版就是这么写的，结果自检通过、真构建两分钟后炸在上面那行 panic）。
+// ⚠️ 2026-09-16 本机实测踩到**两道**坑，判据必须同时覆盖，否则会出现"自检全绿、真构建炸"：
+//   ① `libsqlite3-sys` 的 build.rs **不猜默认安装路径**，直接读 `OPENSSL_DIR`，没设就 panic：
+//        Missing environment variable OPENSSL_DIR or OPENSSL_DIR is not set
+//   ② 光设 `OPENSSL_DIR` 还不够：Shining Light 的 OpenSSL-Win64 把库放在
+//        `<dir>\lib\VC\x64\MD\libcrypto.lib`，而 `<dir>\lib\` 下**只有 VC 这个目录**，
+//      链接时直接 `LNK1181: 无法打开输入文件"libcrypto.lib"`。
+//      ⇒ 要么像 CI 那样用 vcpkg 的 `openssl:x64-windows-static-md`（`OPENSSL_DIR` 指到那个目录即可），
+//        要么把 `<dir>\lib\VC\x64\MD` 加进 `LIB`（本机就是这么跑通的，见 docs/RELEASING.md §5）。
 const opensslEnv = (process.env.OPENSSL_DIR ?? "").trim();
-const opensslValid = opensslEnv !== "" && existsSync(opensslEnv) && existsSync(join(opensslEnv, "include"));
-const defaultInstall = ["C:\\Program Files\\OpenSSL-Win64", "C:\\OpenSSL-Win64"].find((p) => existsSync(p));
+const libHas = (dir) => existsSync(join(dir, "libcrypto.lib"));
+// 库可能就在 OPENSSL_DIR\lib，也可能在其 VC 子目录里，或在 LIB 环境变量给的搜索路径里。
+const opensslLibFound = opensslEnv
+  ? libHas(join(opensslEnv, "lib")) ||
+    libHas(join(opensslEnv, "lib", "VC", "x64", "MD")) ||
+    (process.env.LIB ?? "").split(";").some((p) => p.trim() !== "" && libHas(p.trim()))
+  : false;
+const opensslInstallOk = opensslEnv !== "" && existsSync(join(opensslEnv, "include"));
 add(
   "OPENSSL_DIR（环境变量，必须显式设）",
-  opensslValid,
-  opensslValid
+  opensslInstallOk,
+  opensslInstallOk
     ? opensslEnv
     : opensslEnv === ""
-      ? defaultInstall
-        ? `没设，但本机有 ${defaultInstall}（装上不等于设上）`
+      ? ["C:\\Program Files\\OpenSSL-Win64", "C:\\OpenSSL-Win64"].find((p) => existsSync(p))
+        ? `没设（装上不等于设上；本机有 ${["C:\\Program Files\\OpenSSL-Win64", "C:\\OpenSSL-Win64"].find((p) => existsSync(p))}）`
         : "没设，也没找到默认安装"
       : `设成了 ${opensslEnv}，但那里没有 include/`,
-  `缺了当场炸在 libsqlite3-sys 的 build.rs：\`Missing environment variable OPENSSL_DIR\`。` +
-    (defaultInstall
-      ? `本机已有 ${defaultInstall} ⇒ 只要设 \$env:OPENSSL_DIR = "${defaultInstall}" 即可。`
-      : "两条装法：① 装 OpenSSL-Win64 到默认路径再设 OPENSSL_DIR；② 像 CI 那样 vcpkg 装 openssl:x64-windows-static-md 并把 OPENSSL_DIR 指过去"),
+  "缺了当场炸在 libsqlite3-sys 的 build.rs：`Missing environment variable OPENSSL_DIR`。" +
+    "装法：装 OpenSSL-Win64 到默认路径后 `$env:OPENSSL_DIR = \"C:\\Program Files\\OpenSSL-Win64\"`；" +
+    "或像 CI 那样 vcpkg 装 openssl:x64-windows-static-md 并把 OPENSSL_DIR 指过去",
+);
+add(
+  "OpenSSL 的库找得到（libcrypto.lib）",
+  opensslLibFound,
+  opensslLibFound
+    ? opensslEnv
+      ? `在 ${opensslEnv} 或 LIB 搜索路径里找到了`
+      : "在 LIB 搜索路径里找到了"
+    : "没找到",
+  "缺了在**链接期**炸：`LINK : fatal error LNK1181: 无法打开输入文件\"libcrypto.lib\"`" +
+    "（Shining Light 的 OpenSSL-Win64 把库放在 `<dir>\\lib\\VC\\x64\\MD\\`，而 `<dir>\\lib\\` 下只有 VC 目录）" +
+    "。修法二选一：① 用 vcpkg 的 openssl:x64-windows-static-md（CI 就是这么做的）；" +
+    "② `$env:LIB = \"C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MD;$env:LIB\"`（本机实测这条能出包）",
 );
 
 // ---- 更新器签名密钥（产出 .sig） ----

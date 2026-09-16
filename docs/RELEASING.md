@@ -172,11 +172,26 @@ Windows 上「点社区链接 → 唤起应用」靠注册表 `HKCU\Software\Cla
 原始输出留在**私有工程信箱**里（不放公开仓库）。
 
 ### 本机（Windows 签名构建）
-```bash
+```powershell
+# ① OpenSSL：两条都要（缺第一条当场 panic，缺第二条链接期报 LNK1181）
+$env:OPENSSL_DIR = "C:\Program Files\OpenSSL-Win64"
+$env:LIB = "C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD;$env:LIB"
+# ② 更新器签名密钥（产出 .sig）
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$HOME\.tauri\shuyonote.key").Trim()
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyonote.key.pw").Trim()
-pnpm tauri build      # 产出 setup.exe + .sig
+pnpm tauri build --bundles nsis   # 产出 bundle/nsis/ShuyoNote_<版本>_x64-setup.exe + 同名 .sig
 ```
+
+> **2026-09-16 本机实测（8 分钟出包，产物过了 `release.mjs` 的签名互验）**——两条 OpenSSL 的坑
+> 都不是"看一眼就知道"的，写在这里省下下次的排查时间：
+>
+> | 现象 | 真因 | 修法 |
+> |---|---|---|
+> | `libsqlite3-sys` build.rs 直接 panic：`Missing environment variable OPENSSL_DIR` | 它的 build.rs **不猜默认安装路径**，只读环境变量 | 显式设 `OPENSSL_DIR` |
+> | 链接期 `LINK : fatal error LNK1181: 无法打开输入文件"libcrypto.lib"` | Shining Light 的 OpenSSL-Win64 把库放在 `<dir>\lib\VC\x64\MD\`，而 `<dir>\lib\` 下**只有 VC 目录** | 把该目录加进 `LIB`（如上），或改用 CI 那种 vcpkg 的 `openssl:x64-windows-static-md` |
+>
+> **`where link.exe` 找不到不算问题**：rustc 自己会按注册表找到 VS 的 MSVC 工具链（本机就是这样链接成功的）。
+> 真正要确认的是"**装了 VS Build Tools 的 C++ 工作负载**"——这一条由 `pnpm check:win-build-env` 判。
 
 > **换一台（新的）Windows 机器之前先跑 `pnpm check:win-build-env`**（2026-09-16 加）。
 > 它逐条问硬前置，并写明**缺了会怎样**——这几条都不会给出清楚的报错：
@@ -185,17 +200,15 @@ pnpm tauri build      # 产出 setup.exe + .sig
 > |---|---|
 > | Node ≥ 20 / pnpm | 各种解析错（`corepack enable` 可补 pnpm） |
 > | `rustc` + 目标 `x86_64-pc-windows-msvc` | 出不了桌面包（Windows 要用 MSVC 目标） |
-> | **MSVC 链接器 `link.exe` 在 PATH** | 报 `link.exe not found`。装 VS 2022 Build Tools 的
->   「使用 C++ 的桌面开发」，并在**已加载 vcvars 的**命令行里构建（普通 pwsh 里 `where link.exe` 找不到） |
-> | **OpenSSL**（`OPENSSL_DIR` 或默认安装路径） | 在**链接期**炸 `LNK2019 无法解析的外部符号`：
->   `rusqlite` 用 `bundled-sqlcipher`，要链 OpenSSL。两条装法：① 装 OpenSSL-Win64 到默认路径
->   （`openssl-sys` 会自动认 `C:\Program Files\OpenSSL-Win64`）；② 像 CI 那样
->   `vcpkg install openssl:x64-windows-static-md` 并设 `OPENSSL_DIR`（见 `.github/workflows/release.yml` 那一步） |
+> | VS 2022 Build Tools 的 C++ 工作负载 | 报 `link.exe not found`（**不在 PATH 上不算问题**，见上表） |
+> | **`OPENSSL_DIR` + 库路径**（本机用 OpenSSL-Win64，CI 用 vcpkg） | 先 panic，再 `LNK1181`（见上表） |
 > | **`~/.tauri/shuyonote.key` + `.pw`** | 构建能过但**产不出 `.sig`** ⇒ 更新清单里该平台没 `signature`
 >   ⇒ 用户端**整份**清单解析失败（桌面的更新一起挂）。密钥**带外**从既有机器拷，绝不入库 |
 >
 > 可选：`~/.minisign/shuyonote.key`（发布者私钥）——没有则发版时**明确跳过**第一方插件片段。
 > Android 发版件**不要在这台机器上建**：一律从 CI 取（见 §9 开头）。
+> ⚠️ 另外：**本机构建不出的平台不要硬发**——`release.mjs` 的覆盖检查会（正确地）拒绝
+> "只有 Windows 的清单"，因为它会把线上已有的 `linux-x86_64` / `android-aarch64` 砍掉。
 
 ## ⑥ 发布到 GitCode（更新通道）
 ```bash
