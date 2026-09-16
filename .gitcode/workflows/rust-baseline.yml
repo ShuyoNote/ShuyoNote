@@ -9,11 +9,21 @@ name: rust-baseline
 # 本机无法核实那种语义，猜错会让整个 workflow 编译不过（0 个 job 的红 run，仓库里记过这类事故）。
 #
 # 用法：
-#   1. 在 GitCode 仓库「Pipeline」页手动运行本流水线；
-#   2. 下载产物 rust-report.json；
+#   1. 在 GitCode 仓库「Actions」页左侧选中本 workflow → 右侧 **Run workflow** → 选分支 → Run；
+#   2. 等作业跑完，下载产物 rust-report.json；
 #   3. node scripts/test-report.mjs --baseline-from rust-report.json
 #      （读数值写进 tests/baseline.json；要让它**被校验**，还需在 scripts/lib/gates.mjs
 #        给对应门禁补上 `baseline: true` —— 契约由人显式决定，脚本不擅自改。）
+#
+# ⚠️ GitCode 的一处行为（官方文档「手动触发流水线」的 FAQ 原文）：
+#   「workflow 的 `on` 字段**仅有** `workflow_dispatch` 事件时，yml 文件需要在**默认分支**下
+#     才会生成对应 workflow。」
+#   也就是说：本文件**只有** workflow_dispatch ⇒ 在它进入默认分支（main）之前，Actions 页里
+#   **看不到**它、自然也没有 Run workflow 按钮。两条可行路径：
+#     · 先把本分支合进 main/dev（推荐：合并后再手动跑一次，顺手把读数并进基线）；
+#     · 或在 `on` 下临时加一个 push 触发（例如 branches: [main]，跑完删掉）——不推荐常驻，
+#       那会让每次推 main 都跑一遍重依赖的 cargo test。
+#   另：手动触发时切换分支要求该分支上存在 `.gitcode/workflows/` 文件，并以该分支的版本执行。
 #
 # ⚠️ 与 .gitcode/workflows/ci.yml 一样：本文件**尚未在 GitCode 上实跑过**（本机没有 GitCode runner）。
 # 命令与 GitHub 侧同源，风险只在 GitCode 自己的 action 语义上。
