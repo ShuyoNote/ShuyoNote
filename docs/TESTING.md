@@ -82,6 +82,11 @@ node scripts/test-report.mjs --group contract,smoke,sync,plugin --update-baselin
 node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要 dev server
 ```
 
+> 两条方向都要能解释（Windows 侧 2026-09-16 补的口径）：
+> **降**要说明删了什么（那是硬约束，会红）；**升**也要说明多的是什么——
+> 例如 rust 从 298 涨到 310 是"集成测试目标这次终于跑到了"（`cargo test` 默认 fail-fast，
+> lib 一红后面就不跑），而不是凭空多出 12 条用例。基线只比较**状态为 passed** 的门禁。
+
 > ⚠️ 小坑（实测）：新增门禁后跑 `--update-baseline` 时，这一轮里 `vitest` 会红一次
 > （`701/702`）——因为自测断言"注册表里每条门禁都必须登记在基线里"，而基线是**跑完才写**的。
 > 写完再跑一次就是绿的；CI 上看不到这个中间态。
@@ -201,6 +206,10 @@ node scripts/test-report.mjs --baseline-from rust-report.json
 4. 跑 `node scripts/test-report.mjs --group <组> --update-baseline` 更新 `tests/baseline.json`。
 5. 更新本文件的表格。
 6. 本地跑一遍 `pnpm verify`；CI 会自动跑同一份清单——**不要**在 `ci.yml` 里另抄一份命令。
+7. **开 MR 前按目标分支对一次 diff**：`git diff --stat origin/<目标分支> <你的分支>`。
+   diff 里出现"你没动过的文件"就是信号——2026-09-16 的真实例子：把当时的 `main` merge 进分支取测试集，
+   而那条测试修法只在 `dev` 上，于是相对 `dev` 的 diff 里出现了 `src-tauri/src/sync.rs | 15 --`
+   （**合进去就会回退别人的修复**）。发现后再 merge 当前 `main` 即可消除。
 
 > 自测兜底：`scripts/test-report.test.mjs` 会校验"id 不重复 / 命令引用的脚本真实存在 /
 > 本地默认组不许依赖浏览器或 cargo / 标了 baseline 就必须有 counters / CI 必需门禁一条不少 /
