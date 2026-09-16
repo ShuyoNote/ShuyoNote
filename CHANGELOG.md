@@ -231,8 +231,18 @@
     问不到内核按未开启兜底）与 `src/components/lockScreen.test.ts`（6 例）。两条都做过变异：
     把 `App.tsx` 换回旧版 ⇒ 7 例里 **5 例红**、并复现出那条 `Rendered fewer hooks`；
     把"错 3 次自动摊开"和"输错清空"分别拿掉 ⇒ 恰好对应用例红。
+  - **顺手把它变成门禁**（同一类错这是第二次：1.85.1 那次是命令面板白屏）：
+    `scripts/check-hook-order.mjs`（`pnpm check:hook-order`，自测 `--self-test`）扫全部
+    `.ts/.tsx`，报"同一个函数里 `return` 之后还有 hooks"。带自测——**两次真事故的原始写法必须判红**、
+    三种正确写法必须放过；另做交叉验证——同一份 `App.tsx`，修复后 0 处、修复前 1 处。
+    它**不是语法树**（本仓 TypeScript 7 是原生编译器、没有 JS API，也没有可用的解析器依赖），
+    是按 token + 花括号层级的启发式，边界写在脚本头注里；"hooks 放在条件里"那一种本门禁不查。
+    已接进 `pnpm build`（在 dev 上）。
   - **仍未做（如实记）**：真机复验。以上都是渲染层判据（真 `App` + 真状态中枢），
     **没有**在真机上跑一遍"开启加密 → 重启 → 解锁"（Android 上还要覆盖 SQLCipher 重开库）。
+    另外**这个修复目前只在 dev**：`main` 上仍是旧的 `App.tsx`，也就是**已发布的 1.91.x 里这条
+    崩溃路径仍然存在**，要等 dev 合进 main 才带上（`pnpm check:hook-order` 现在会在 main 上
+    直接报出这一处，属真阳性）。
 
 - **`check-changelog` 门禁不再要求 `[Unreleased]` 段为空**（2026-09-14）。首版门禁把
   "`[Unreleased]` 必须为空"写成了硬约束，这是**误读 Keep a Changelog**——`[Unreleased]` 的用途
