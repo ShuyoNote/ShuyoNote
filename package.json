@@ -15,6 +15,7 @@
     "check:release-parity": "node scripts/check-release-parity.mjs",
     "check:release-state": "node scripts/check-release-state.mjs",
     "check:apk": "node scripts/check-apk-contents.mjs",
+    "check:win-build-env": "node scripts/check-windows-build-env.mjs",
     "fetch:release-artifacts": "node scripts/fetch-release-artifacts.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "check:overlays": "node scripts/check-overlay-registry.mjs",
