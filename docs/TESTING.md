@@ -185,6 +185,10 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⚠️ 顺序不是可选的：`rust-plugins-alone`（`--lib plugins::`）里有 34 条用例要起**真宿主进程**，
   宿主二进制不存在时会以"找不到宿主二进制"整片红——所以**全量 `cargo test` 必须先跑**
   （`ci.yml` 的 rust-tests job 与 reporter 的 rust 组都是这个顺序）。
+  ⚠️ 读数是 `passed + failed` 之和（不计 `ignored`），且 **`cargo test` 默认 fail-fast**：
+  前一个测试目标失败时，后面的目标（`main.rs` / `tests/plugin_host.rs` / doc-tests）**不会跑**，
+  于是同样一棵树"红的时候读数会显得更少"（实测：lib 失败 → 298；lib 通过 → 298 + 集成 12 = 310）。
+  这是 cargo 的预期行为，不是回归——所以基线校验只比较**状态为 passed** 的门禁。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 
