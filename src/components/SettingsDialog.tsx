@@ -14,11 +14,15 @@ import { disableVault, enableVault, lockVault, unlockVault } from "../lib/vault"
 import { useVault } from "../hooks/useVault";
 import type { SyncProfile, EmailAccount } from "../lib/api";
 import { emailSupported, isDesktopPlatform } from "../lib/platform";
+// 账号唯一键统一从 lib/emailAccount 引入：原先本文件与 EmailPanel 各有一份完全相同的实现，
+// 而 store 还需要第三份——三份同逻辑的键函数只会静默分叉。
+import { accountKey } from "../lib/emailAccount";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 import { useNotes } from "../store/notes";
+import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
 import { exportCurrentSpace, importSpacePackage, removeSpace } from "../lib/spaceTransfer";
 import { APP_VERSION, APP_LICENSE } from "../lib/links";
@@ -281,10 +285,6 @@ function SpacesPane() {
 
 // 「邮箱」页：聚合收件箱的 IMAP 账号配置。低频、全局，归设置；收件箱阅读/转换
 // 在「打开收件箱」的整页里做（此处只做"我是谁、连哪个邮箱"）。
-// 邮箱账号唯一键（与后端 account_key 一致：host|username，小写）。多账号管理用。
-function accountKey(a: EmailAccount): string {
-  return `${a.host.toLowerCase()}|${a.username.toLowerCase()}`;
-}
 
 function EmailPane() {
   const [host, setHost] = useState("");
@@ -309,8 +309,14 @@ function EmailPane() {
   // 邮箱区用**能力**判断而不是 `isDesktopPlatform()`：后者在 Tauri 的移动端也为真，
   // 而邮箱在移动端不存在（Rust 侧那 23 个命令带 #[cfg(desktop)]）。
   const desktop = emailSupported();
-  // 多账号管理：已保存账号列表 + 当前编辑目标（null=新增；否则 host|username 键）。
-  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  // 多账号管理：账号列表**读自 store**（与邮箱面板同一份，见 store/emailPanel.ts）；
+  // 本组件不再自持副本——否则在这里加完账号，已经打开的邮箱面板不会知道。
+  const accounts = useEmailPanel((s) => s.accounts);
+  const reloadAccountsFromStore = useEmailPanel((s) => s.reloadAccounts);
+  // 增删账号**走 store 的动作**（写后端 + 重读列表合在一起），
+  // 这样设置里改完，已经挂载的邮箱面板立刻跟着变。
+  const saveAccountToStore = useEmailPanel((s) => s.saveAccount);
+  const removeAccountFromStore = useEmailPanel((s) => s.removeAccount);
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
   const fillForm = (a: EmailAccount) => {
@@ -335,19 +341,9 @@ function EmailPane() {
     setSmtpSecurity("ssl"); setSmtpUser(""); setSmtpPass(""); setTrustedDomains([]); setAutoTrust(true);
   };
 
-  const reloadAccounts = async (justSaved?: EmailAccount) => {
-    try {
-      const list = await api.emailListAccounts();
-      setAccounts(list);
-      if (justSaved) setEditingKey(accountKey(justSaved));
-    } catch {}
-  };
-
   useEffect(() => {
-    api
-      .emailListAccounts()
+    reloadAccountsFromStore()
       .then((list) => {
-        setAccounts(list);
         if (list.length > 0) {
           fillForm(list[0]); // 首位 = 当前活动账号
           setEditingKey(accountKey(list[0]));
@@ -365,9 +361,9 @@ function EmailPane() {
     if (!window.confirm(`删除账号 ${a.username}（${a.host}）？`)) return;
     setErr("");
     try {
-      await api.emailRemoveAccount(a);
-      await reloadAccounts();
-      const list = await api.emailListAccounts().catch(() => []);
+      // 删除**走 store**：它会把新列表一起带回来（顺带带回来给邮箱面板）。
+      // 旧写法是"只改自己那份 state，再单独读一次后端"，面板那份就留在旧状态。
+      const list = await removeAccountFromStore(a);
       if (list.length > 0) { fillForm(list[0]); setEditingKey(accountKey(list[0])); }
       else { resetForm(); setEditingKey(null); }
       setErr("账号已删除 ✓");
@@ -377,8 +373,8 @@ function EmailPane() {
   const setActiveAccount = async (a: EmailAccount) => {
     setErr("");
     try {
-      await api.emailSaveAccount(a);
-      await reloadAccounts(a);
+      await saveAccountToStore(a);
+      setEditingKey(accountKey(a));
       setErr("已设为活动账号 ✓");
     } catch (e) { setErr(String(e)); }
   };
@@ -434,8 +430,8 @@ function EmailPane() {
         trusted_domains: trustedDomains,
         auto_trust_senders: autoTrust,
       };
-      await api.emailSaveAccount(payload);
-      await reloadAccounts(payload);
+      await saveAccountToStore(payload);
+      setEditingKey(accountKey(payload));
       setErr("配置已保存 ✓");
     } catch (e) {
       setErr(String(e));
@@ -771,13 +767,19 @@ function AccountPane() {
     setSyncing(true);
     setStatus("");
     try {
-      let ok = 0;
-      let fail = 0;
-      for (const w of g.wss) {
-        const r = await api.syncWorkspace(w.ws_id);
-        if (r.error) fail++;
-        else ok++;
-      }
+      // P1（2026-09-15）：**这里的同步也要配对 begin/end**——它同样会拉到附件，
+      // 而 Rust 的进度事件会把 `useSyncStatus` 置成"正在同步"；不套 `withSyncStatus`
+      // 就会在设置里同步完之后把面板留在"正在同步…"（真机上实测过这条路漏）。
+      const { ok, fail } = await withSyncStatus(`正在同步「${hostLabel(g.server_url)}」…`, async () => {
+        let ok = 0;
+        let fail = 0;
+        for (const w of g.wss) {
+          const r = await api.syncWorkspace(w.ws_id);
+          if (r.error) fail++;
+          else ok++;
+        }
+        return { ok, fail };
+      });
       setStatus(`「${hostLabel(g.server_url)}」同步：成功 ${ok}，失败 ${fail}`);
       await useNotes.getState().loadPages();
     } catch (e) {

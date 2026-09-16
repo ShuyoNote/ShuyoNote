@@ -614,6 +614,9 @@ interface SyncProfile {
   space_id: string;
   last_pushed_seq: number;
   last_pulled_seq: number;
+  /** P6.1「每空间开关」：1 = 同步附件**字节**（默认）；0 = 只同步元数据、字节按需。
+   *  ⚠️ 只管字节——附件行仍随 `changes` 同步，所以关掉后对端"看得见但打不开"。 */
+  sync_attachments: number;
 }
 interface SyncChange {
   id: number;
@@ -643,15 +646,15 @@ function clearAuthSession(store: SqliteStore, serverUrl: string): void {
   store.run("DELETE FROM auth_sessions WHERE server_url = ?", [serverUrl]);
 }
 
-const EMPTY_PROFILE: SyncProfile = { ws_id: "", server_url: "", token: "", space_id: "", last_pushed_seq: 0, last_pulled_seq: 0 };
+const EMPTY_PROFILE: SyncProfile = { ws_id: "", server_url: "", token: "", space_id: "", last_pushed_seq: 0, last_pulled_seq: 0, sync_attachments: 1 };
 function getProfile(store: SqliteStore, wsId: string): SyncProfile {
   const r = store.query<SyncProfile>("SELECT * FROM sync_profiles WHERE ws_id = ?", [wsId])[0];
   return r ?? { ...EMPTY_PROFILE, ws_id: wsId };
 }
 function putProfile(store: SqliteStore, p: SyncProfile): void {
   store.run(
-    "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq) VALUES (?,?,?,?,?,?) ON CONFLICT(ws_id) DO UPDATE SET server_url=excluded.server_url, token=excluded.token, space_id=excluded.space_id, last_pushed_seq=excluded.last_pushed_seq, last_pulled_seq=excluded.last_pulled_seq",
-    [p.ws_id, p.server_url, p.token, p.space_id, p.last_pushed_seq, p.last_pulled_seq],
+    "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq, sync_attachments) VALUES (?,?,?,?,?,?,?) ON CONFLICT(ws_id) DO UPDATE SET server_url=excluded.server_url, token=excluded.token, space_id=excluded.space_id, last_pushed_seq=excluded.last_pushed_seq, last_pulled_seq=excluded.last_pulled_seq, sync_attachments=excluded.sync_attachments",
+    [p.ws_id, p.server_url, p.token, p.space_id, p.last_pushed_seq, p.last_pulled_seq, p.sync_attachments ?? 1],
   );
 }
 function listProfiles(store: SqliteStore): SyncProfile[] {
@@ -660,6 +663,52 @@ function listProfiles(store: SqliteStore): SyncProfile[] {
   return store
     .query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id")
     .map((r) => ({ ...EMPTY_PROFILE, ...r, ws_id: r.ws_id }));
+}
+
+// ---- C1 预算刹车：设备级设置（KV，与桌面 `meta.sync_state` 同名同义）----
+//
+// ⚠️ 默认值必须与 Rust 侧**逐字一致**（`sync.rs` 的 `DEFAULT_*`）：
+// 两边不一致 ⇒ "会不会自动拉大附件"在两个引擎上给出不同答案，而用户看不出是哪边在拉。
+type SyncBudgetLike = { disk_floor_mb: number; max_file_mb: number; max_run_mb: number; wifi_only: boolean };
+const DEFAULT_BUDGET: SyncBudgetLike = { disk_floor_mb: 1024, max_file_mb: 100, max_run_mb: 0, wifi_only: true };
+/** 磁盘余量下限**不可关**（与 Rust 的 `MIN_DISK_FLOOR_MB` 一致）。 */
+const MIN_DISK_FLOOR_MB = 256;
+const MAX_BUDGET_MB = 1024 * 1024;
+
+function clampBudget(b: SyncBudgetLike): SyncBudgetLike {
+  const clamp = (n: number, lo: number) =>
+    Math.max(lo, Math.min(MAX_BUDGET_MB, Number.isFinite(n) ? Math.floor(n) : lo));
+  return {
+    disk_floor_mb: clamp(b.disk_floor_mb, MIN_DISK_FLOOR_MB),
+    max_file_mb: clamp(b.max_file_mb, 0),
+    max_run_mb: clamp(b.max_run_mb, 0),
+    wifi_only: !!b.wifi_only,
+  };
+}
+function readBudget(store: SqliteStore): SyncBudgetLike {
+  const kv = new Map(
+    store.query<{ key: string; value: string }>("SELECT key, value FROM sync_state").map((r) => [String(r.key), String(r.value)]),
+  );
+  const num = (key: string, def: number) => {
+    const v = kv.get(key);
+    if (v === undefined) return def;
+    const n = Number(v.trim());
+    return Number.isFinite(n) ? n : def;
+  };
+  return clampBudget({
+    disk_floor_mb: num("sync_disk_floor_mb", DEFAULT_BUDGET.disk_floor_mb),
+    max_file_mb: num("sync_max_file_mb", DEFAULT_BUDGET.max_file_mb),
+    max_run_mb: num("sync_max_run_mb", DEFAULT_BUDGET.max_run_mb),
+    wifi_only: kv.has("sync_wifi_only") ? kv.get("sync_wifi_only")!.trim() !== "0" : DEFAULT_BUDGET.wifi_only,
+  });
+}
+function writeBudget(store: SqliteStore, b: SyncBudgetLike): void {
+  const put = (key: string, value: string) =>
+    store.run("INSERT INTO sync_state (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
+  put("sync_disk_floor_mb", String(b.disk_floor_mb));
+  put("sync_max_file_mb", String(b.max_file_mb));
+  put("sync_max_run_mb", String(b.max_run_mb));
+  put("sync_wifi_only", b.wifi_only ? "1" : "0");
 }
 
 function recordChange(
@@ -893,7 +942,43 @@ async function attachmentByteDownload(url: string, token: string): Promise<Blob 
   return new Blob(chunks as BlobPart[], { type: "application/octet-stream" });
 }
 
-async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promise<{ uploaded: number; downloaded: number }> {
+// C1：把预算刹车的统计折进同步结果（两个构造点共用，避免同一组字段名抄两遍）。
+const attBudgetFields = (
+  att: { pausedReason: string; skippedTooLarge: number; failed: number; bytesDownloaded: number } | null,
+) => ({
+  attachments_paused_reason: att?.pausedReason ?? "",
+  attachments_skipped_too_large: att?.skippedTooLarge ?? 0,
+  attachments_failed: att?.failed ?? 0,
+  attachments_bytes_downloaded: att?.bytesDownloaded ?? 0,
+});
+
+async function syncAttachments(
+  store: SqliteStore,
+  profile: SyncProfile,
+): Promise<{
+  uploaded: number;
+  downloaded: number;
+  paused: boolean;
+  pausedReason: string;
+  skippedUpload: number;
+  skippedDownload: number;
+  skippedTooLarge: number;
+  failed: number;
+  bytesDownloaded: number;
+}> {
+  // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **只跳过第 3/4 步的字节传输**（上传 / 下载
+  // 循环），而**第 1 步列远端 hash、第 2 步列本地 hash 照常做**——清单照拉的回报是：
+  // 两份清单的差集**正好**就是"未上传 N 个 / 未下载 M 个"（§六 验收 #4）。
+  // 附件**元数据**已由 doPush / doPull 经 `changes` 同步过，所以对端仍看得见这些文件，
+  // 只是没有字节（点开提示未下载）。
+  // ⚠️ 开关**每次迭代都从 store 重读**（`attEnabled()`），不用入参快照 —— 这样"中途关掉"能生效（§五.7）。
+  let paused = false;
+  /** C1：停止原因（`""` / `"switch"` / `"run_cap"`）。与 Rust 侧同一套字面量。
+   *  ⚠️ Web 侧**不会**出现 `"disk_floor"`：浏览器查不到磁盘余量，那条闸门在 Web 上不存在。 */
+  let pausedReason = "";
+  const attEnabled = () => (getProfile(store, profile.ws_id).sync_attachments ?? 1) !== 0;
+  // 入口快照：只用来决定"清单拉不到时算不算失败"（开关关着时不该让整轮同步失败）。
+  const attOn = attEnabled();
   const server = profile.server_url.replace(/\/+$/, "");
   const token = getAuthSession(store, server).token || profile.token;
   const scoped = profile.space_id ? `/spaces/${encodeURIComponent(profile.space_id)}` : "";
@@ -903,19 +988,41 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
   try {
     remoteData = await syncFetch(server, `${scoped}/attachments`, token || null);
   } catch {
-    return { uploaded: 0, downloaded: 0 };
+    // 开关关着时拉不到清单不该让整轮同步失败（本轮本来就不传字节，只是件数显示不出来）；
+    // 开关开着时保持原样：拉不到清单就是这一支返回（与 Rust 侧 fetch_remote_attachments 的降级一致）。
+    return { uploaded: 0, downloaded: 0, paused: false, pausedReason: "", skippedUpload: 0, skippedDownload: 0, skippedTooLarge: 0, failed: 0, bytesDownloaded: 0 };
   }
   const remoteSet = new Set<string>((remoteData?.items ?? []).map((i: any) => String(i?.hash)));
   // 2. Local hashes from this workspace's attachments table (content-addressed bytes).
-  const localRows = store.query<{ hash: string; mime: string }>("SELECT DISTINCT hash, mime FROM attachments");
+  const localRows = store.query<{ hash: string; mime: string; size: number }>("SELECT DISTINCT hash, mime, size FROM attachments");
   const localMap = new Map<string, string>();
+  // C1：单文件阈值 / 本轮总量上限都要**下载前**知道大小。这张表来自**同步过来的元数据**
+  // （`changes` 里带着 `size`）⇒ 不需要额外请求，也不需要改服务端。
+  const localSizes = new Map<string, number>();
   for (const r of localRows) {
     if (r.hash) localMap.set(String(r.hash), String(r.mime || "application/octet-stream"));
+    if (r.hash && Number.isFinite(Number(r.size))) localSizes.set(String(r.hash), Number(r.size));
   }
-  // 3. Upload local attachments missing on the server (report progress).
+  // 3/4 步的待传清单：**一次算清**，既是循环的输入，也是"未上传/未下载 N 个"的来源。
   const upItems = Array.from(localMap).filter(([h]) => !remoteSet.has(h));
+  const downItems = Array.from(remoteSet).filter((h) => !localMap.has(h));
+  // 入口就是关的 ⇒ 全部待传件都被开关挡下（这一支不算 `paused`：稳态不是"停止"）。
+  let skippedUpload = attOn ? 0 : upItems.length;
+  let skippedDownload = attOn ? 0 : downItems.length;
+
+  // 3. Upload local attachments missing on the server (report progress).
   let uploaded = 0;
   for (let ui = 0; ui < upItems.length; ui++) {
+    // 入口就是关的 ⇒ 本轮不传字节，且**不算"停止"**（与 Rust 侧同一处理，
+    // 2026-09-15 真机验收发现：原先会误报"途中关闭了附件同步"）。
+    if (!attOn) break;
+    // P6.1：同下载侧——每次迭代之间重读开关，命中即优雅停止（§五.7）。
+    if (!attEnabled()) {
+      paused = true;
+      pausedReason = "switch";
+      skippedUpload = upItems.length - ui;
+      break;
+    }
     const [hash, mime] = upItems[ui];
     useSyncStatus.getState().setProgress({
       phase: "attachments",
@@ -955,10 +1062,46 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
     }
   }
   // 4. Download remote attachments missing locally (so images/files render here).
-  const downItems = Array.from(remoteSet).filter((h) => !localMap.has(h));
+  //
+  // ---- C1 预算刹车（2026-09-15，与 Rust 侧同构）----
+  // 文件大小取自**同步过来的 `attachments.size`**（元数据本来就随 `changes` 到本地）。
+  // ⚠️ **磁盘余量下限这一条在 Web 上做不到**，而且**不是"忘了"**：浏览器没有"这个卷还剩多少"
+  // 的 API；`navigator.storage.estimate()` 给的是**配额**（quota/usage），那是另一个量，
+  // 拿它当磁盘余量就是在编一个好看的假数字（正是 `src-tauri/src/net.rs` 里拒绝的那类近似）。
+  // ⇒ Web 侧只做**单文件阈值**与**本轮总量上限**这两条**能算准**的闸门。
+  const budget = readBudget(store);
+  const mb = 1024 * 1024;
+  const maxFileBytes = budget.max_file_mb === 0 ? Number.MAX_SAFE_INTEGER : budget.max_file_mb * mb;
+  const runCapBytes = budget.max_run_mb === 0 ? Number.MAX_SAFE_INTEGER : budget.max_run_mb * mb;
   let downloaded = 0;
+  let bytesDownloaded = 0;
+  let skippedTooLarge = 0;
+  let failed = 0;
   for (let di = 0; di < downItems.length; di++) {
+    // 入口就是关的 ⇒ 本轮不传字节、也不算"停止"（同 Rust 侧）。
+    if (!attOn) break;
+    // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。粒度=文件级；
+    // 已完成的不回滚（与 Rust 侧 sync.rs 的同一处语义保持一致）。
+    if (!attEnabled()) {
+      paused = true;
+      pausedReason = "switch";
+      skippedDownload = downItems.length - di;
+      break;
+    }
     const hash = downItems[di];
+    // 单文件阈值：跳过这一件、**继续**（用户要的是"别自动拉大视频"，不是"整个同步停摆"）。
+    const knownSize = localSizes.get(hash) ?? -1;
+    if (knownSize > 0 && knownSize > maxFileBytes) {
+      skippedTooLarge++;
+      continue;
+    }
+    // 本轮总量上限：把这一件算进去再判，避免"最后一件把上限顶穿"。
+    if (knownSize > 0 && bytesDownloaded + knownSize > runCapBytes) {
+      paused = true;
+      pausedReason = "run_cap";
+      skippedDownload = downItems.length - di;
+      break;
+    }
     useSyncStatus.getState().setProgress({
       phase: "attachments",
       message: `正在下载附件（${di + 1}/${downItems.length}）`,
@@ -971,12 +1114,14 @@ async function syncAttachments(store: SqliteStore, profile: SyncProfile): Promis
       if (blob && blob.size > 0) {
         await blobStore.put(hash, blob);
         downloaded++;
+        bytesDownloaded += blob.size;
       }
     } catch {
-      /* best-effort */
+      // C1：**一件失败不炸整轮**（与 Rust 侧一致）。件数进报告，否则是静默丢件。
+      failed++;
     }
   }
-  return { uploaded, downloaded };
+  return { uploaded, downloaded, paused, pausedReason, skippedUpload, skippedDownload, skippedTooLarge, failed, bytesDownloaded };
 }
 
 // 一次性迁移：把旧 16 位 FNV 的附件哈希统一转成 SHA-256(64 位)，并强制重推
@@ -1124,6 +1269,11 @@ function makeInvoke(store: SqliteStore) {
       // 更新清单仅桌面版（Web 走 server version.json）；Web 无法连 gitcode CDN，
       // 返回 null 视为「无更新」，不抛错。
       return null as T;
+    }
+    if (cmd === "download_android_update" || cmd === "install_android_update") {
+      // 应用内更新只在 Android 壳里成立（Web 版刷新一下就是最新，浏览器也不能装 APK）。
+      // 这里抛错而**不**静默：真走到这一步说明前端的分支判断错了，报出来比"点了没反应"好。
+      throw new Error("应用内更新仅 Android 版支持（Web 版刷新即最新）");
     }
     if (cmd === "deep_link_take") {
       // OS 层深链仅桌面版：浏览器里没有"注册 scheme 并被系统唤起"这回事
@@ -2421,6 +2571,24 @@ function makeInvoke(store: SqliteStore) {
       putProfile(store, { ...p, server_url });
       return undefined as T;
     }
+    // ⚠️ **产品决定（2026-09-15）：Web 版不提供多设备同步；但这段实现保留，不要删。**
+    //
+    // 为什么"不提供"而不是"没实现"：`sync_now` / `sync_workspace` / `syncAttachments`（本文件
+    // :896）都是**完整实现**，只是应用在**非 Tauri 平台**（含桌面浏览器与手机浏览器——
+    // `isDesktopPlatform()` 的语义是"有没有 Rust 内核"，见 `platform/index.ts:35-38`）
+    // 把配置入口置灰（`SyncPanel.tsx:523` + `App.css:1222-1227` 的 `pointer-events: none`），
+    // 并在 `SyncPanel.tsx:502` 提示"Web 版同步受浏览器环境限制"。
+    // 根本原因是**浏览器存储会被系统回收**，不适合当唯一副本。
+    //
+    // ⇒ 三条口径（写文档 / 答用户 / 改代码时都按这个）：
+    //   ① 可以说"Web 版**不提供**多设备同步"（这是产品决定）；
+    //   ② **不许**说"Web 版是 stub / 没有实现"——与代码相反（这正是 2026-09-15 修的那处口径错）；
+    //   ③ **别删这段实现**：删了会让平台层不完整、口径退回"没实现"，将来若要开放（先得解决
+    //      浏览器存储被回收的问题）还得重写。
+    //
+    // 触发路径（供判断"这段到底还会不会跑"）：`useAutoSync`（`App.tsx:618`）在 Web 上**仍会**
+    // 调用 `api.syncNow()`，但它只处理**已有 `space_id` 的 profile**（下面 :2432 的 `continue`）；
+    // 而配置入口在所有浏览器里都置灰 ⇒ 只有"历史遗留已配置过 profile"时才会真正走到这里。
     if (cmd === "sync_now") {
       const out: any[] = [];
       for (const profile of listProfiles(store)) {
@@ -2428,11 +2596,11 @@ function makeInvoke(store: SqliteStore) {
         try {
           const pushed = await doPush(store, profile);
           const pulled = await doPull(store, profile);
-          await syncAttachments(store, profile);
+          const att = await syncAttachments(store, profile);
           const latest = getProfile(store, profile.ws_id);
-          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null });
+          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att) });
         } catch (e) {
-          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) });
+          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null) });
         }
       }
       return out as T;
@@ -2533,6 +2701,61 @@ function makeInvoke(store: SqliteStore) {
       }
       return undefined as T;
     }
+    // P6.1「每空间开关」：只切换附件**字节**同步。
+    // ⚠️ 刻意独立成命令，并且**用 putProfile 保留其余字段**——`set_sync_profile` 对未传字段是
+    // "清空"语义（见其分支注释），拿它翻转开关会清掉该空间的 token / space_id。
+    if (cmd === "set_sync_attachments") {
+      const args = a.args ?? a;
+      const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
+      const enabled = !!(args.enabled ?? args.syncAttachments);
+      const p = getProfile(store, wsId);
+      putProfile(store, { ...p, ws_id: wsId, sync_attachments: enabled ? 1 : 0 });
+      return undefined as T;
+    }
+    // P6.3「按需取字节」：用户主动下载**单件**附件（返回落盘字节数）。
+    //
+    // 与桌面同构，但 Web 的"落盘"就是 blobStore。⚠️ 同样**不受 C1 预算闸门约束**
+    // （显式操作照做），也不查磁盘余量（浏览器没有那个 API，见 syncAttachments 里的说明）。
+    if (cmd === "download_attachment") {
+      const args = a.args ?? a;
+      const wsId = String(args.wsId ?? args.ws_id ?? wsIdNow());
+      const hash = String(args.hash ?? "");
+      if (!hash) throw new Error("缺少附件标识");
+      const p = getProfile(store, wsId);
+      if (!p.server_url) throw new Error("请先配置同步服务器");
+      const server = p.server_url.replace(/\/+$/, "");
+      const token = getAuthSession(store, server).token || p.token;
+      const scoped = p.space_id ? `/spaces/${encodeURIComponent(p.space_id)}` : "";
+      const blob = await attachmentByteDownload(`${server}${scoped}/attachments/${hash}`, token);
+      if (!blob || blob.size === 0) throw new Error("服务端没有这个附件的字节（可能尚未上传）");
+      await blobStore.put(hash, blob);
+      return blob.size as T;
+    }
+    // ---- C1 预算刹车 / C2 网络闸门（2026-09-15）设备级设置 ----
+    //
+    // 与桌面同构：四个键存 `sync_state`（Web 侧是同一个 KV 表名），默认值也与 Rust 侧一致。
+    // ⚠️ 保持一致不是形式主义：两个引擎的**默认值一旦不同**，同一台机器上 Web 版与桌面版
+    // 的"会不会自动拉大附件"就会给出不同答案，而用户看不出来是哪边在拉。
+    if (cmd === "get_sync_budget") return readBudget(store) as T;
+    if (cmd === "set_sync_budget") {
+      const raw = (a.budget ?? a) as Partial<SyncBudgetLike>;
+      const next = clampBudget({
+        disk_floor_mb: Number(raw.disk_floor_mb ?? DEFAULT_BUDGET.disk_floor_mb),
+        max_file_mb: Number(raw.max_file_mb ?? DEFAULT_BUDGET.max_file_mb),
+        max_run_mb: Number(raw.max_run_mb ?? DEFAULT_BUDGET.max_run_mb),
+        wifi_only: raw.wifi_only === undefined ? DEFAULT_BUDGET.wifi_only : !!raw.wifi_only,
+      });
+      writeBudget(store, next);
+      // 回显**夹取后**的值（与 Rust 侧同语义）。
+      return next as T;
+    }
+    // C2：浏览器的网络类型 —— **回 `n/a`（闸门不适用）**。
+    //
+    // ⚠️ 刻意**不**用 `navigator.onLine` / `navigator.connection` 去近似：前者只回答"有没有网"、
+    // 后者不是标准（Safari/Firefox 没有），都答不了"是不是 Wi-Fi"这个真问题 ——
+    // 而猜错的代价是"偷偷跑用户流量"（见 src-tauri/src/net.rs 的模块注释）。
+    // 产品上 Web 版本就不提供多设备同步，这里更没有理由靠猜。
+    if (cmd === "network_type") return "n/a" as T;
     if (cmd === "sync_workspace") {
       const wsId = String(a.wsId ?? a.ws_id ?? wsIdNow());
       const p = getProfile(store, wsId);
@@ -2545,13 +2768,13 @@ function makeInvoke(store: SqliteStore) {
         useSyncStatus.getState().setProgress({ phase: "pulling", message: "正在拉取变更…" });
         const pulled = await doPull(store, p);
         useSyncStatus.getState().setProgress({ phase: "attachments", message: "正在同步附件…" });
-        await syncAttachments(store, p);
+        const att = await syncAttachments(store, p);
         const latest = getProfile(store, wsId);
         useSyncStatus.getState().end();
-        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null } as T;
+        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att) } as T;
       } catch (e) {
         useSyncStatus.getState().end(String(e));
-        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e) } as T;
+        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null) } as T;
       }
     }
     // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----

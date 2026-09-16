@@ -198,6 +198,9 @@ jobs:
         # `android-actions/setup-android@v3` 因 Google 停 `tools` 包（上游 #537）与
         # commandlinetools 下载 URL 变更（上游 #536）而必失败；发版这条路同样会踩，
         # 所以这里也换成 runner 镜像自带的 SDK + 明确断言。
+        # （发版当时只修了 android.yml，于是 release.yml 的 android job 在打 tag 那一刻照样红，
+        #   而它的红会连锁到 publish job 的硬断言「必须恰好 1 个发版 APK」⇒ 整个 Release 失败。
+        #   现在两份 workflow 走同一条写法。）
         run: |
           set -e
           SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -298,6 +301,22 @@ jobs:
         # 它改的就是 init 刚生成出来的 `app/build.gradle.kts`，漏了这一步构建照样绿。
         run: pnpm android:platform-verifier
 
+      - name: 注入 Android 壳适配层（窗口 inset 桥 + 返回键 + 选择器/安装插件）
+        # ⚠️⚠️ **v1.91.0 的闪退就是漏了这两步**（用户报"安装了，闪退"）：
+        # 这两步原先只在 `android.yml`（自检包）里有，`release.yml`（发版件）**没有** ⇒
+        # 发版 APK 里根本没有 `ShuyoFsPlugin` 类，启动时 `register_android_plugin` 直接
+        # `ClassNotFoundException` → SIGABRT **装完就打不开**；顺带还少了 inset 桥与返回键处理。
+        # 自检包一直是好的 ⇒ **CI 全绿**，正是 §9.1"自检包 ≠ 发版件"要防的那件事。
+        # 真机证据：`adb logcat -b crash` 里 `Caused by: java.lang.ClassNotFoundException:
+        # cn.shuyo.shuyonote.ShuyoFsPlugin`；产物级对照（同一方法）：
+        #   发版件 dex 里 `ShuyoFsPlugin` 命中 0 / 自检包命中 1。
+        # 现在还有一道机器判据兜底：`pnpm check:release-parity`（见 scripts/check-release-parity.mjs）。
+        run: pnpm android:mobile-shell
+
+      - name: 自检：壳适配层确实注入了
+        # 与 android.yml 逐字一致：gen/ 不入库，漏注入只有真机 release 看得见。
+        run: pnpm android:mobile-shell --check
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
@@ -365,6 +384,14 @@ jobs:
               sys.exit(1)
           print("✅ ABI 恰为 arm64-v8a")
           PY
+
+      - name: 断言发版 APK 里真的有壳适配层（**v1.91.0 闪退的产物级判据**）
+        # 单一事实来源：`scripts/check-apk-contents.mjs`（同一命令本地也能跑：
+        # `pnpm check:apk <文件>`，用来验线上那份或 CI artifact）。它自己读 ZIP 中央目录，
+        # 不指望 unzip/strings 在不在；除了四个字符串，顺带验 ABI 与包内签名块。
+        # 为什么断言在**产物字节**上而不是只跑源码级 `--check`：源码级只能证明"写进了 gen/"，
+        # 证明不了"进包了 + R8 没删没改名"，而 v1.91.0 恰恰是后者（release.yml 漏了注入步骤）⇒ 装完闪退。
+        run: node scripts/check-apk-contents.mjs "$RUNNER_TEMP/shuyonote-aarch64-signed.apk"
 
       - name: 改名成可辨识的发版文件名
         # 与自检包（`android-apk-aarch64-signed-test-hooks`）**一眼可分**：

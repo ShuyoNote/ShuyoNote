@@ -6,8 +6,8 @@ use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::PathBuf;
-use tauri::{Manager, State};
+use std::path::{Path, PathBuf};
+use tauri::{Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
@@ -261,6 +261,26 @@ pub struct SyncReport {
     pub items: Vec<SyncItem>,
     /// P0.1 conflict hint: local dirty page that received a newer server change.
     pub conflicts: Vec<SyncConflict>,
+    /// P6.1：**本轮附件同步因"开关被关掉"而中途停止**（不是在入口就没开）。
+    /// 界面据此显示"因开关关闭而停止"，而不是"同步完成"——否则用户以为全下完了。
+    pub attachments_paused: bool,
+    /// P6.1：本轮**因开关关闭而未传**的附件件数（入口就是关的 ⇒ 等于全部待传件数；
+    /// 中途关掉 ⇒ 剩余未尝试的件数）。界面据此显示"未上传 N 个"（§六 验收 #4）。
+    /// ⚠️ 定义是"**被开关挡下**的件数"，**不含**因网络失败而没传成功的件数。
+    pub attachments_skipped_upload: usize,
+    /// P6.1：同上，下载侧（"未下载 M 个"）。
+    pub attachments_skipped_download: usize,
+    /// C1（2026-09-15）：**停止原因**——`""` / `"switch"`（P6.1 开关）/ `"disk_floor"`（磁盘余量不足）
+    /// / `"run_cap"`（撞上本轮总量上限）。`attachments_paused` 只说"停了"，这个说清"为什么停"。
+    pub attachments_paused_reason: String,
+    /// C1：因**单文件超过阈值**而跳过的件数（"N 个因超过 X MB 未自动下载"）。
+    pub attachments_skipped_too_large: usize,
+    /// C1：**传输失败**（网络抖动 / 服务端错误）而跳过的件数。⚠️ 与"被开关挡下"是两码事：
+    /// 这些是本该传、但没传成功的 ⇒ 必须单独可见，否则就是静默丢件。
+    pub attachments_failed: usize,
+    /// C1：本轮**实际下载的字节数**。"本次下载总量上限"默认只报告不拦截（`DEFAULT_MAX_RUN_MB = 0`），
+    /// 报告的就是这个数——先拿数据，再定硬数字。
+    pub attachments_bytes_downloaded: u64,
 }
 
 /// A page that both has an unsynced local edit (dirty) and a newer server change.
@@ -324,10 +344,19 @@ pub struct SyncProfile {
     pub space_id: String,
     pub last_pushed_seq: i64,
     pub last_pulled_seq: i64,
+    /// P6.1「每空间开关」：1 = 同步附件**字节**（默认）；0 = 只同步元数据、字节按需。
+    /// ⚠️ 它**只管字节，不管元数据**——附件行仍随 `changes` 同步，所以对端"看得见但打不开"。
+    /// `serde(default)` = 1：容忍缺字段的旧载荷，且默认与升级前行为一致。
+    #[serde(default = "default_sync_attachments")]
+    pub sync_attachments: i64,
+}
+
+fn default_sync_attachments() -> i64 {
+    1
 }
 
 const PROFILE_COLS: &str =
-    "ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq";
+    "ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq, sync_attachments";
 
 fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncProfile> {
     Ok(SyncProfile {
@@ -337,6 +366,7 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncProfile> {
         space_id: r.get(3)?,
         last_pushed_seq: r.get::<_, i64>(4)?,
         last_pulled_seq: r.get::<_, i64>(5)?,
+        sync_attachments: r.get::<_, i64>(6)?,
     })
 }
 
@@ -356,6 +386,8 @@ fn get_profile(c: &Connection, ws_id: &str) -> Result<SyncProfile, String> {
             space_id: String::new(),
             last_pushed_seq: 0,
             last_pulled_seq: 0,
+            // 没有行 = 还没配同步 ⇒ 开关按"开"（与 `DEFAULT 1` 一致，不改变既有行为）。
+            sync_attachments: 1,
         });
     Ok(profile)
 }
@@ -400,14 +432,143 @@ fn set_profile(c: &Connection, ws_id: &str, server_url: &str, token: &str, space
 }
 
 /// Update a single numeric field on a workspace's sync profile (best-effort).
+///
+/// ⚠️ `field` 会被**格式化进 SQL**，所以这里必须是**白名单**（P6.1 加固，2026-09-15）：
+/// 原先只有一句注释「`field` is one of the trusted constants」——一旦哪天有人把入参透传进来，
+/// 那行 `format!` 就是注入面。现在不匹配直接报错；**加字段必须同时加到这里**。
 fn set_profile_field(c: &Connection, ws_id: &str, field: &str, value: i64) -> Result<(), String> {
-    // `field` is one of the trusted constants ("last_pushed_seq"/"last_pulled_seq").
+    let col = match field {
+        "last_pushed_seq" => "last_pushed_seq",
+        "last_pulled_seq" => "last_pulled_seq",
+        other => return Err(format!("不支持的 sync_profiles 字段：{other}")),
+    };
     c.execute(
-        &format!("UPDATE sync_profiles SET {field} = ?1 WHERE ws_id = ?2"),
+        &format!("UPDATE sync_profiles SET {col} = ?1 WHERE ws_id = ?2"),
         params![value, ws_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// P6.1「每空间开关」——读某个空间的附件字节开关（缺行/缺列按"开"处理，与 `DEFAULT 1` 一致）。
+///
+/// ⚠️ **为什么必须从 DB 读、而不是用 `profile.sync_attachments`**：`sync_now` 在
+/// `list_profiles` 时**一次性快照**了全部 profile，之后整轮同步用的都是那份不可变快照。
+/// 用快照 ⇒ **中途关掉开关不会生效**（会一直下完），而"中途关掉"正是这个开关最该起作用的时刻。
+fn attachments_enabled(c: &Connection, ws_id: &str) -> bool {
+    c.query_row(
+        "SELECT COALESCE(sync_attachments, 1) FROM sync_profiles WHERE ws_id = ?1",
+        params![ws_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .map(|v| v != 0)
+    .unwrap_or(true)
+}
+
+/// P6.1「每空间开关」：切换某个空间的**附件字节**同步（1 = 同步，0 = 只同步元数据）。
+///
+/// ⚠️ **刻意不复用 `set_sync_profile`**：那个命令对**未传的字段是"清空"**语义
+/// （`token.as_deref().unwrap_or("")`），而 UI 里已有 5 处在利用这种"部分传参"
+/// （`SyncPanel.tsx:250/262/405/422/450`）。若拿它翻转开关并省略凭证字段，
+/// **会把该空间的 token / space_id 清掉**。这个窄命令只动一列，碰不到凭证。
+#[tauri::command]
+pub fn set_sync_attachments(db: State<'_, Db>, ws_id: String, enabled: bool) -> Result<(), String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    set_attachments_enabled(&c, &ws_id, enabled)
+}
+
+/// 附件接口的 URL 前缀。**同步下载与按需下载必须走同一处**（P6.3 抽出）：
+/// 绑了团队空间走 space 作用域，否则退回旧的全局路径 —— 服务端两条路由都在，
+/// 但"哪一条"由 `space_id` 决定，两边各写一遍迟早会漂。
+///
+/// ⚠️ 顺手按本文件的既有约定 `trim_end_matches('/')`（见 presence/comments/notifications 那批）：
+/// `set_profile` 落库前本来就会 trim，所以这只是防"手改过的 / 老库里的带斜杠地址"拼出
+/// `https://host//spaces/x` 这种带双斜杠的 URL。
+fn attachment_base(profile: &SyncProfile) -> String {
+    let server = profile.server_url.trim_end_matches('/');
+    if profile.space_id.is_empty() {
+        server.to_string()
+    } else {
+        format!("{server}/spaces/{}", profile.space_id)
+    }
+}
+
+/// `set_sync_attachments` 的实际实现（抽出来是为了能在单测里直接跑 SQL——
+/// `#[tauri::command]` 收 `State<Db>`，没有 Tauri App 就构造不出来）。
+fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result<(), String> {
+    let n = c
+        .execute(
+            "UPDATE sync_profiles SET sync_attachments = ?1 WHERE ws_id = ?2",
+            params![if enabled { 1 } else { 0 }, ws_id],
+        )
+        .map_err(|e| e.to_string())?;
+    // 0 行 = 该空间还没有 profile 行。**报错而不是静默成功**：面板据此提示"先填服务器地址
+    // 并绑定空间"，否则用户以为开关生效了（实际没有任何一行被写）。
+    if n == 0 {
+        return Err("该空间还没有同步配置（请先填服务器地址并绑定空间）".to_string());
+    }
+    Ok(())
+}
+
+/// P6.3「按需取字节」（2026-09-15）：用户**主动**要求下载其中一件附件。
+///
+/// 复用 `download_one_attachment()` —— **同一个函数，不允许再写第二份下载实现**
+/// （见 `docs/plans/2026-09-15-attachment-on-demand-plan.md` §七：P6.3 若复制一份循环
+/// 就会变成两套下载逻辑，落盘 / 加密 / 落库三件事只要有一边忘了改就是数据问题）。
+///
+/// ⚠️ **刻意不受 C1 预算闸门约束**（单文件阈值 / 本轮总量上限 / 磁盘余量下限都不拦）：
+/// C1 管的是"**自动**拉取别在用户不知情时把设备填满"（scope plan 的上架判据），
+/// 而这里是用户明确点了"下载这一件"——与"手动点同步不受 C2 仅 Wi-Fi 限制"
+/// 是同一条原则：**显式操作照做**。磁盘真满了由写失败兜底（错误会原样返回）。
+///
+/// 成功返回落盘的**明文字节数**（界面据此提示"已下载 X"）。
+#[tauri::command]
+pub async fn download_attachment(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    ws_id: String,
+    hash: String,
+) -> Result<i64, String> {
+    // 这个 hash 会被拼进文件路径 ⇒ 先当成**不可信输入**校验（与同步下载同一道门）。
+    if !is_valid_attachment_hash(&hash) {
+        return Err("附件标识不合法".to_string());
+    }
+    let (profile, mime) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let p = get_profile(&c, &ws_id)?;
+        // 落盘名是 `hash.<ext>`，而 ext 由 mime 决定 —— 只有本地那行元数据知道 mime；
+        // 拿不到就退化成 octet-stream（与同步路径的兜底一致）。
+        let mime = c
+            .query_row(
+                "SELECT mime FROM attachments WHERE hash = ?1 LIMIT 1",
+                params![hash],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        (p, mime)
+    };
+    if profile.server_url.is_empty() {
+        return Err("请先配置同步服务器".to_string());
+    }
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
+    let att_base = attachment_base(&profile);
+    let session_key = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        security::key_if_enabled(&c)
+    };
+    let client = reqwest::Client::new();
+    // 凭证取法与同步下载保持一致（都用 `profile.token`）：两条路若取不同的 token，就会出现
+    // "同步能下、点按钮下不了"这种最难查的不一致。
+    let item = RemoteAttachment { hash: hash.clone(), mime };
+    download_one_attachment(&client, &att_base, &profile.token, &item, &attachments_dir, session_key.as_ref(), &db).await
 }
 
 #[tauri::command]
@@ -1306,6 +1467,9 @@ async fn do_pull(
                                 let hash = v["hash"].as_str().unwrap_or("").to_string();
                                 let mime = v["mime"].as_str().unwrap_or("").to_string();
                                 let size = v["size"].as_i64().unwrap_or(0);
+                                // B4-b：先收编 / 自愈"兜底行"，再走正常的 upsert
+                                // （为什么、以及兜底行是什么，见 `adopt_or_heal_fallback_row`）。
+                                adopt_or_heal_fallback_row(&c, &id, &name, page_id.as_deref(), &hash)?;
                                 c.execute(
                                     "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
                                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -1348,6 +1512,16 @@ pub struct WorkspaceSyncResult {
     pub last_pulled_seq: i64,
     pub error: Option<String>,
     pub conflicts: Vec<SyncConflict>,
+    /// P6.1：附件同步**因开关被关掉而中途停止**（见 `SyncReport::attachments_paused`）。
+    pub attachments_paused: bool,
+    /// P6.1：本轮因开关关闭而未上传 / 未下载的件数（见 `SyncReport` 同名字段的定义）。
+    pub attachments_skipped_upload: usize,
+    pub attachments_skipped_download: usize,
+    /// C1：停止原因 / 因超阈值跳过 / 传输失败 / 本轮下载字节（定义见 `SyncReport`）。
+    pub attachments_paused_reason: String,
+    pub attachments_skipped_too_large: usize,
+    pub attachments_failed: usize,
+    pub attachments_bytes_downloaded: u64,
 }
 
 async fn sync_workspace_only(
@@ -1357,11 +1531,25 @@ async fn sync_workspace_only(
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
     let (pulled, last_pulled_seq, pulled_items, conflicts) = do_pull(db, profile).await?;
-    let att_items = sync_attachments(app, db, profile).await?;
+    let att = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
     items.extend(pulled_items);
-    items.extend(att_items);
-    Ok(SyncReport { pushed, pulled, last_pushed_seq, last_pulled_seq, items, conflicts })
+    items.extend(att.items);
+    Ok(SyncReport {
+        pushed,
+        pulled,
+        last_pushed_seq,
+        last_pulled_seq,
+        items,
+        conflicts,
+        attachments_paused: att.paused,
+        attachments_skipped_upload: att.skipped_upload,
+        attachments_skipped_download: att.skipped_download,
+        attachments_paused_reason: att.paused_reason,
+        attachments_skipped_too_large: att.skipped_too_large,
+        attachments_failed: att.failed,
+        attachments_bytes_downloaded: att.bytes_downloaded,
+    })
 }
 
 #[tauri::command]
@@ -1386,6 +1574,13 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
                 conflicts: rep.conflicts,
+                attachments_paused: rep.attachments_paused,
+                attachments_skipped_upload: rep.attachments_skipped_upload,
+                attachments_skipped_download: rep.attachments_skipped_download,
+                attachments_paused_reason: rep.attachments_paused_reason,
+                attachments_skipped_too_large: rep.attachments_skipped_too_large,
+                attachments_failed: rep.attachments_failed,
+                attachments_bytes_downloaded: rep.attachments_bytes_downloaded,
             },
             Err(e) => WorkspaceSyncResult {
                 ws_id: profile.ws_id.clone(),
@@ -1395,6 +1590,13 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pulled_seq: 0,
                 error: Some(e),
                 conflicts: Vec::new(),
+                attachments_paused: false,
+                attachments_skipped_upload: 0,
+                attachments_skipped_download: 0,
+                attachments_paused_reason: String::new(),
+                attachments_skipped_too_large: 0,
+                attachments_failed: 0,
+                attachments_bytes_downloaded: 0,
             },
         });
     }
@@ -1440,6 +1642,13 @@ pub async fn sync_workspace(
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
                 conflicts: rep.conflicts,
+                attachments_paused: rep.attachments_paused,
+                attachments_skipped_upload: rep.attachments_skipped_upload,
+                attachments_skipped_download: rep.attachments_skipped_download,
+                attachments_paused_reason: rep.attachments_paused_reason,
+                attachments_skipped_too_large: rep.attachments_skipped_too_large,
+                attachments_failed: rep.attachments_failed,
+                attachments_bytes_downloaded: rep.attachments_bytes_downloaded,
             })
         }
         Err(e) => {
@@ -1493,39 +1702,381 @@ struct RemoteAttachmentList {
     items: Vec<RemoteAttachment>,
 }
 
-async fn sync_attachments(
-    app: &tauri::AppHandle,
-    db: &State<'_, Db>,
-    profile: &SyncProfile,
-) -> Result<Vec<SyncItem>, String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
-    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-    let mut att_items: Vec<SyncItem> = Vec::new();
+/// P6.1：`sync_attachments` 的返回。加了"被开关挡下的件数"后已经是 4 个值，
+/// 元组读起来全是位置，改成一个具名结构。
+struct AttachmentSyncOutcome {
+    items: Vec<SyncItem>,
+    /// 本轮**中途停止**了（开关被关 / 磁盘余量不足 / 撞上本轮总量上限）。
+    /// 入口就是关的不算——那是稳态，不是"停止"。
+    paused: bool,
+    /// 停止原因：`""` / `"switch"` / `"disk_floor"` / `"run_cap"`。
+    /// 界面据此说清**为什么停了**（三种原因的文案不同，混在一起用户只会以为同步坏了）。
+    paused_reason: String,
+    /// 因开关关闭而未上传 / 未下载的件数（定义见 `SyncReport` 同名字段）。
+    skipped_upload: usize,
+    skipped_download: usize,
+    /// C1：因**单文件超过阈值**而跳过的件数（这些件不是"停止"，是"轮不到"）。
+    skipped_too_large: usize,
+    /// C1：**传输失败**（网络抖动 / 服务端 5xx）而被跳过的件数——原先这里是 `?`，
+    /// 一件失败就炸掉整轮；现在记一笔、继续，件数必须可见，否则是静默丢件。
+    failed: usize,
+    /// C1：本轮**实际下载的明文字节数**（"本次总量上限"默认只报告不拦截，报告的就是它）。
+    bytes_downloaded: u64,
+}
 
-    let client = reqwest::Client::new();
-    // Space-scoped attachments when bound to a team space; legacy global path otherwise.
-    let att_base = if profile.space_id.is_empty() {
-        profile.server_url.clone()
-    } else {
-        format!("{}/spaces/{}", profile.server_url, profile.space_id)
-    };
-
-    // 1. List remote hashes.
-    let mut req = client.get(format!("{att_base}/attachments"));
-    let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
-    if !token.is_empty() {
-        req = req.bearer_auth(&token);
+impl AttachmentSyncOutcome {
+    /// 开关关着且连清单都没拉到：不传字节、不报错、件数未知（记 0）。
+    fn skip_all() -> Self {
+        Self {
+            items: Vec::new(),
+            paused: false,
+            paused_reason: String::new(),
+            skipped_upload: 0,
+            skipped_download: 0,
+            skipped_too_large: 0,
+            failed: 0,
+            bytes_downloaded: 0,
+        }
     }
-    let remote: RemoteAttachmentList = req
-        .send()
+}
+
+/// 拉取远端附件清单。抽成函数是为了让调用方能对"开关关着时拉不到"做优雅降级
+/// （见 `sync_attachments` 里的 `Err(_) if !att_on` 分支）。
+async fn fetch_remote_attachments(
+    client: &reqwest::Client,
+    att_base: &str,
+    token: &str,
+) -> Result<RemoteAttachmentList, String> {
+    let mut req = client.get(format!("{att_base}/attachments"));
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    req.send()
         .await
         .map_err(|e| e.to_string())?
         .error_for_status()
         .map_err(|e| e.to_string())?
         .json()
         .await
+        .map_err(|e| e.to_string())
+}
+
+// ---- C1 预算刹车 / C2 网络闸门：设备级设置 ----
+//
+// 存 `meta.sync_state` 的 KV（那张表本来就是 app 级 KV：device_id / token / 活动空间 id 都在里面），
+// **不新建表**：四个数字不值得为它加一张表 + 一次迁移。
+//
+// 为什么是**设备级**而不是每空间：磁盘余量是**设备**的属性（跟哪个空间无关）；单文件阈值与
+// 总量上限虽然可以想象成每空间，但用户的心智是"我这台手机别被塞满"⇒ 设备级更贴合，也少一层 UI。
+const KEY_DISK_FLOOR_MB: &str = "sync_disk_floor_mb";
+const KEY_MAX_FILE_MB: &str = "sync_max_file_mb";
+const KEY_MAX_RUN_MB: &str = "sync_max_run_mb";
+const KEY_WIFI_ONLY: &str = "sync_wifi_only";
+
+/// 磁盘余量下限默认 **1 GB**（2026-09-15 发布者拍板）。**硬性、不可关**：见 `set_sync_budget` 的夹取。
+pub const DEFAULT_DISK_FLOOR_MB: u64 = 1024;
+/// 单文件跳过阈值默认 **100 MB**（同日拍板）。它直接决定"海量视频"能不能被自动拉下来。
+pub const DEFAULT_MAX_FILE_MB: u64 = 100;
+/// 本次下载总量上限默认 **0 = 只报告不拦截**（同日拍板：先拿数据，再定硬数字）。
+pub const DEFAULT_MAX_RUN_MB: u64 = 0;
+/// C2「仅 Wi-Fi 时自动同步」默认 **开**（Android 尚未对外发布，先按"不偷跑流量"设默认）。
+pub const DEFAULT_WIFI_ONLY: bool = true;
+
+/// 磁盘余量下限的**兜底最小值**：允许用户调大，**不允许调成 0**——"硬性、不可关"是它的定义。
+const MIN_DISK_FLOOR_MB: u64 = 256;
+/// 上限的兜底最大值：防止把 `u64` 乘爆（1 TiB 足够表达"其实等于不限"）。
+const MAX_BUDGET_MB: u64 = 1024 * 1024;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncBudget {
+    /// 磁盘余量下限（MB）。**硬性、不可关**（≥ `MIN_DISK_FLOOR_MB`）。
+    pub disk_floor_mb: u64,
+    /// 单文件跳过阈值（MB）；`0` = 不限。
+    pub max_file_mb: u64,
+    /// 本次下载总量上限（MB）；`0` = 只报告不拦截。
+    pub max_run_mb: u64,
+    /// C2：只在 Wi-Fi 下自动同步。
+    pub wifi_only: bool,
+}
+
+impl Default for SyncBudget {
+    fn default() -> Self {
+        Self {
+            disk_floor_mb: DEFAULT_DISK_FLOOR_MB,
+            max_file_mb: DEFAULT_MAX_FILE_MB,
+            max_run_mb: DEFAULT_MAX_RUN_MB,
+            wifi_only: DEFAULT_WIFI_ONLY,
+        }
+    }
+}
+
+impl SyncBudget {
+    /// 夹取成合法范围。**读与写都过这一道**：写入要拦住坏值，读出也要拦——
+    /// 老库 / 手改过的 DB 里可能存着 `0` 或荒唐大的数字。
+    fn clamped(mut self) -> Self {
+        self.disk_floor_mb = self.disk_floor_mb.clamp(MIN_DISK_FLOOR_MB, MAX_BUDGET_MB);
+        self.max_file_mb = self.max_file_mb.min(MAX_BUDGET_MB);
+        self.max_run_mb = self.max_run_mb.min(MAX_BUDGET_MB);
+        self
+    }
+}
+
+fn parse_mb(c: &Connection, key: &str, default: u64) -> u64 {
+    get_meta_state(c, key).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(default)
+}
+
+/// 读设备级预算。**任何一项缺失 / 解析失败都退回默认值**（升级上来的老库没有这几个键）。
+pub fn read_budget(c: &Connection) -> SyncBudget {
+    SyncBudget {
+        disk_floor_mb: parse_mb(c, KEY_DISK_FLOOR_MB, DEFAULT_DISK_FLOOR_MB),
+        max_file_mb: parse_mb(c, KEY_MAX_FILE_MB, DEFAULT_MAX_FILE_MB),
+        max_run_mb: parse_mb(c, KEY_MAX_RUN_MB, DEFAULT_MAX_RUN_MB),
+        wifi_only: get_meta_state(c, KEY_WIFI_ONLY)
+            .map(|v| v.trim() != "0")
+            .unwrap_or(DEFAULT_WIFI_ONLY),
+    }
+    .clamped()
+}
+
+#[tauri::command]
+pub fn get_sync_budget(db: State<'_, Db>) -> Result<SyncBudget, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    Ok(read_budget(&c))
+}
+
+/// 写设备级预算。**磁盘余量下限不可关**：传 0 会被夹到 `MIN_DISK_FLOOR_MB`（见 `clamped`）。
+#[tauri::command]
+pub fn set_sync_budget(db: State<'_, Db>, budget: SyncBudget) -> Result<SyncBudget, String> {
+    let b = budget.clamped();
+    let c = db.0.lock().expect("db mutex poisoned");
+    set_meta_state(&c, KEY_DISK_FLOOR_MB, &b.disk_floor_mb.to_string())?;
+    set_meta_state(&c, KEY_MAX_FILE_MB, &b.max_file_mb.to_string())?;
+    set_meta_state(&c, KEY_MAX_RUN_MB, &b.max_run_mb.to_string())?;
+    set_meta_state(&c, KEY_WIFI_ONLY, if b.wifi_only { "1" } else { "0" })?;
+    // 回显**夹取后**的值：界面据此立刻纠正自己（比如用户填 0，回显 256）。
+    Ok(b)
+}
+
+/// C1：下载**单件**附件并落库，成功返回落盘的明文字节数。
+///
+/// 抽成函数有两个用处：① C1 要求"某一件失败**不该**炸掉整轮"——用 `Result` 表达最直接
+/// （原先这里是 `?`，一次网络抖动就让整轮同步失败，也就谈不上"优雅停止"）；
+/// ② P6.3 的"按需取字节"要复用它，**不许再写第二份下载实现**
+/// （见 `docs/plans/2026-09-15-attachment-on-demand-plan.md` §七）。
+#[allow(clippy::too_many_arguments)]
+async fn download_one_attachment(
+    client: &reqwest::Client,
+    att_base: &str,
+    token: &str,
+    item: &RemoteAttachment,
+    attachments_dir: &Path,
+    session_key: Option<&[u8; 32]>,
+    db: &State<'_, Db>,
+) -> Result<i64, String> {
+    let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("服务端返回 {}", resp.status()));
+    }
+    let ext = ext_from_mime(&item.mime);
+    let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut size: i64 = 0;
+    if !path.exists() {
+        // ⚠️ 临时文件名**必须唯一**（2026-09-15 真机验收修）：原先固定用 `<hash>.part`，
+        // 于是"同一件被并发下载"时两个请求会抢同一个临时文件——一个 rename 走之后，
+        // 另一个 rename 就 ENOENT（真机上观测到 `取回文件失败：No such file or directory (os error 2)`，
+        // 且白下了一遍）。用 uuid 后缀让每次尝试各写各的。
+        // （`.part` 结尾仍被 `local_set` 排除，不会被当成本地已有字节。）
+        let tmp = attachments_dir.join(format!("{}.{}.part", item.hash, uuid::Uuid::new_v4()));
+        let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    size += chunk.len() as i64;
+                    file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+                }
+                Err(e) => {
+                    // 半成品必须删掉：留着白占磁盘，也让"本轮下了多少"说不清。
+                    // （`.part` 已被 `local_set` 排除，不会被当成本地已有，但仍要清。）
+                    drop(file);
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.to_string());
+                }
+            }
+        }
+        file.flush().await.map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
+        // encrypted (nonce||ct) like every other attachment, so the read path
+        // (decrypt/passthrough) and the at-rest guarantee stay consistent.
+        if let Some(k) = session_key {
+            if let Ok(plain) = std::fs::read(&path) {
+                if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
+                    let _ = std::fs::write(&path, &bytes);
+                }
+            }
+        }
+    }
+    // B4（2026-09-15）：**只有当这个 hash 还没有任何行时**才插一行兜底。
+    {
+        let c = db.0.lock().expect("db mutex poisoned");
+        record_downloaded_attachment(&c, &item.hash, &item.mime, size, &format!("{}.{}", item.hash, ext))?;
+    }
+    Ok(size)
+}
+
+/// 把"刚下载完字节的附件"记进 `attachments`（**兜底行**），成功返回 `()`。
+///
+/// ## 为什么必须有"已经有行就不插"这条前置判断（B4 的结论）
+///
+/// 原先这里无条件插一行：**新 uuid + `page_id = NULL` + `INSERT OR IGNORE`**。
+/// 而 `INSERT OR IGNORE` 只对**主键**冲突生效 —— `attachments` 的主键是 `id`
+/// （`db.rs:622-632`），`hash` 上只有一个**非唯一**索引 ⇒ 这条 insert 永远不会被忽略。
+///
+/// 于是在**第二台设备**上，同一个 hash 会有两行：
+/// ① 附件**元数据**随 `changes` 同步进来那一行（`page_id` 正确、指向真实目录）；
+/// ② 这里插的兜底行（`page_id = NULL`）。
+/// 而根目录（「未整理」）视图正是按 `page_id IS NULL` 取的（`attachments.rs:643`）
+/// ⇒ **文件在「未整理」里多出一份 `hash.ext` 的副本**。
+///
+/// ⚠️ **Web 引擎没有这个毛病**：它的下载路径**根本不在 `attachments` 表里插行**
+/// （只 `blobStore.put(hash, blob)`，行由 `applyChange` 建），所以这条只是 Rust 侧的问题。
+///
+/// ⚠️ **这一步不能直接删掉**（"反正元数据会来"是错的）：兜底行存在的意义是
+/// **服务端有字节、而本地没有对应元数据行**时（老数据 / 元数据变更没拉到），
+/// 下载完的字节至少能被用户看见并管理。所以是"有就不插"，不是"不插"。
+///
+/// 另：`attachments.rs:743-755` 的"零引用才删字节"规则**本来就假设同一 hash 可以有多行**
+/// （本地重复添加同一份内容会出现），所以多行本身不是非法状态 —— 这里修的只是
+/// **同步下载路径制造出来的那一份重复**。
+fn record_downloaded_attachment(
+    c: &Connection,
+    hash: &str,
+    mime: &str,
+    size: i64,
+    name: &str,
+) -> Result<(), String> {
+    let existing: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM attachments WHERE hash = ?1",
+            params![hash],
+            |row| row.get(0),
+        )
         .map_err(|e| e.to_string())?;
+    if existing > 0 {
+        return Ok(());
+    }
+    c.execute(
+        "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+        params![uuid::Uuid::new_v4().to_string(), name, hash, mime, size, crate::db::now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// P1（2026-09-15）：**附件同步进度**（Rust → 前端）。
+///
+/// ⚠️ **字段名故意用 camelCase，与前端 `useSyncStatus.setProgress` 逐个对齐**
+/// （`phase` / `message` / `attCurrent` / `attTotal` / `attName`）：前端拿到就能直接塞进 store，
+/// 不必在两侧各翻译一次字段名（那正是"改一处忘另一处"的老路）。
+///
+/// 为什么需要它：`web.ts`（Web 引擎）**自己**会 `setProgress`，而桌面 / 安卓走 Rust 命令——
+/// 那条链上原先**一处进度都没有**（全仓 `attCurrent`/`attTotal` 只出现在 `web.ts`），
+/// 于是面板上那段 `N/M` + 进度条**永远收不到数据**：只有 Web 版看得见进度。
+/// 见 `docs/plans/2026-09-15-attachment-sync-scope-plan.md` §4.4。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentSyncProgress {
+    /// 固定 `"attachments"`（与 `SyncPhase` 对齐）。
+    phase: &'static str,
+    /// 人话文案，与 `web.ts` 的两句保持一致（"正在上传附件（3/12）"）。
+    message: String,
+    att_current: usize,
+    att_total: usize,
+    /// 上传侧放 mime、下载侧放 hash 前 8 位（与 `web.ts` 同样处理）。
+    att_name: String,
+}
+
+/// 发一条附件进度。**失败只记一行日志**：进度上报是"锦上添花"，
+/// 它不该让同步本身失败（与 `attachments.rs` 的导入进度同样处理）。
+fn emit_attachment_progress(
+    app: &tauri::AppHandle,
+    direction: &str,
+    current: usize,
+    total: usize,
+    name: &str,
+) {
+    let message = if direction == "up" {
+        format!("正在上传附件（{current}/{total}）")
+    } else {
+        format!("正在下载附件（{current}/{total}）")
+    };
+    let _ = app.emit(
+        "attachment-sync-progress",
+        AttachmentSyncProgress {
+            phase: "attachments",
+            message,
+            att_current: current,
+            att_total: total,
+            att_name: name.to_string(),
+        },
+    );
+}
+
+async fn sync_attachments(
+    app: &tauri::AppHandle,
+    db: &State<'_, Db>,
+    profile: &SyncProfile,
+) -> Result<AttachmentSyncOutcome, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
+    let mut att_items: Vec<SyncItem> = Vec::new();
+    // P6.1：本轮是否"因开关被关掉而中途停止"（与"入口就没开"区分——后者不算 paused）。
+    let mut paused = false;
+    // C1：停止原因（`""` / `"switch"` / `"disk_floor"` / `"run_cap"`）。上传与下载两侧共用。
+    let mut paused_reason = String::new();
+    // C1：**传输失败**（网络抖动 / 服务端 5xx）而跳过的件数。上传与下载两侧共用。
+    // 原先两侧都是 `?` —— 一件失败就炸掉整轮同步，既谈不上"优雅停止"，也让用户
+    // 只看到"同步失败"而不知道坏在哪一件。
+    let mut failed = 0usize;
+
+    // P6.1「每空间开关」（2026-09-15）：关掉 ⇒ **只跳过第 3/4 步的字节传输**
+    // （上传循环 / 下载循环），而**第 1 步列远端 hash、第 2 步列本地 hash 照常做**。
+    // 这正是 §四 步骤 5 说的"跳过第 3/4 步"——代码里的步骤编号就是上面这两句注释
+    // （1. List remote hashes / 2. Local hashes / 3. Upload / 4. Download）。清单照拉
+    // 是有回报的：两份清单的差集**正好**就是"未上传 N 个 / 未下载 M 个"（§六 验收 #4）。
+    // ⚠️ 开关**只**管字节：附件**元数据**已由 do_push / do_pull 经 `changes` 同步过，
+    // 所以对端仍然看得见这些文件，只是没有字节（点开提示未下载）。
+    // ⚠️ 这里**从 DB 读、不用 `profile.sync_attachments`**：`profile` 是本轮开始时的快照，
+    // 用它会导致"中途关掉不生效"（详见 `attachments_enabled` 的注释）。
+    let att_on = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        attachments_enabled(&c, &profile.ws_id)
+    };
+
+    let client = reqwest::Client::new();
+    let att_base = attachment_base(profile);
+
+    // 1. List remote hashes.
+    let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
+    let remote = match fetch_remote_attachments(&client, &att_base, &token).await {
+        Ok(r) => r,
+        // 开关关着时，附件清单拉不到**不该让整轮同步失败**：本轮本来就不传字节，
+        // 拿不到清单只是"未上传/未下载件数"显示不出来（按 0 返回）。
+        // 开关开着时保持原样：拉不到清单就是同步失败（原先的行为）。
+        Err(_) if !att_on => return Ok(AttachmentSyncOutcome::skip_all()),
+        Err(e) => return Err(e),
+    };
     let remote_set: HashSet<String> = remote.items.iter().map(|i| i.hash.clone()).collect();
 
     // 2. Local hashes (files on disk).
@@ -1560,6 +2111,17 @@ async fn sync_attachments(
         }
     }
 
+    // 3/4 步的待传清单：**一次算清**，既是循环的输入，也是"未上传/未下载 N 个"的来源。
+    let up_items: Vec<String> = local_set.difference(&remote_set).cloned().collect();
+    let down_items: Vec<&RemoteAttachment> = remote
+        .items
+        .iter()
+        .filter(|i| is_valid_attachment_hash(&i.hash) && !local_set.contains(&i.hash))
+        .collect();
+    // 入口就是关的 ⇒ 全部待传件都被开关挡下（这一支不算 `paused`：稳态不是"停止"）。
+    let mut skipped_upload = if att_on { 0 } else { up_items.len() };
+    let mut skipped_download = if att_on { 0 } else { down_items.len() };
+
     // 3. Upload local attachments missing on server. When at-rest encryption is on
     // (session unlocked), the on-disk bytes are ciphertext (nonce||ct) while the
     // server verifies SHA-256 against the claimed (plaintext) hash — so we must
@@ -1569,11 +2131,42 @@ async fn sync_attachments(
         let c = db.0.lock().expect("db mutex poisoned");
         security::key_if_enabled(&c)
     };
-    for hash in local_set.difference(&remote_set) {
+    for (idx, hash) in up_items.iter().enumerate() {
+        // 入口就是关的 ⇒ 本轮不传字节（件数已在上面的初始化里记好），而且**不算"停止"**。
+        // ⚠️ 2026-09-15 真机验收修：原先只设了件数、循环照进，于是第一轮循环的开关检查立刻把
+        // `paused` 置真 ⇒ 面板报"**途中**关闭了附件同步"，而用户是在同步**之前**关的（文案与事实不符）。
+        if !att_on {
+            break;
+        }
+        // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
+        // 粒度 = 文件级：最坏等待 = 当前这一件的传输时间；**已完成的不回滚**。
+        {
+            let c = db.0.lock().expect("db mutex poisoned");
+            if !attachments_enabled(&c, &profile.ws_id) {
+                paused = true;
+                paused_reason = "switch".to_string();
+                // 剩余（含当前这件）都被挡下 ⇒ 面板能报出"未上传 N 个"。
+                skipped_upload = up_items.len() - idx;
+                break;
+            }
+        }
         let path = match find_file_by_stem(&attachments_dir, hash) {
             Some(p) => p,
             None => continue,
         };
+        // ⚠️ 上传前先确认这个 stem **就是内容哈希**（64 位十六进制）。不是 ⇒ 跳过。
+        //
+        // 2026-09-15 真机验收发现：设备上残留了 9 个**两字符名**的文件（`9d.png` / `ac.png` …，
+        // 看着像旧版本"忘了分桶目录"写出来的），上传循环把它们当成本地待上传附件 ⇒
+        // 服务端 `valid_hash` 直接 400 并在**读完 body 之前关掉连接** ⇒ 客户端只看到
+        // `error sending request for url (...)`——这个报错与真实原因（名字不是哈希）
+        // 毫不相干，而且白传一遍大文件。
+        // 下载侧本来就有同一道校验（`is_valid_attachment_hash`），上传侧一直缺。
+        if !is_valid_attachment_hash(hash) {
+            failed += 1;
+            eprintln!("[sync] 附件 {hash} 的存储名不是 SHA-256（历史遗留文件？）——跳过上传");
+            continue;
+        }
         // Determine mime from local DB row.
         let mime = {
             let c = db.0.lock().expect("db mutex poisoned");
@@ -1598,29 +2191,40 @@ async fn sync_attachments(
                 reqwest::Body::wrap_stream(ReaderStream::new(file))
             }
         };
+        // P1：上报进度（放在真正发请求之前，和 `web.ts` 的时机一致）。
+        emit_attachment_progress(app, "up", idx + 1, up_items.len(), &mime);
         let mut req = client
             .post(format!("{att_base}/attachments/{hash}?mime={mime}"))
             .body(body);
         if !profile.token.is_empty() {
             req = req.bearer_auth(&profile.token);
         }
-        req.send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?;
-        att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: hash.clone(), op: "upsert".to_string(), dir: "push".to_string(), title: String::new() });
+        // C1：**一件失败不炸整轮**（原先这里是 `?`）。上传失败多半是网络抖动或服务端
+        // 4xx/5xx；整轮失败会让"优雅停止"永远做不到，也让已经成功的部分白跑。
+        match req.send().await.and_then(|r| r.error_for_status()) {
+            Ok(_) => {
+                att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: hash.clone(), op: "upsert".to_string(), dir: "push".to_string(), title: String::new() });
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("[sync] 附件 {hash} 上传失败（跳过）：{e}");
+            }
+        }
     }
 
     // 4. Download remote attachments missing locally.
-    let local_mimes: std::collections::HashMap<String, String> = {
+    //
+    // C1：文件大小取自**同步过来的 `attachments.size`**（元数据本来就随 `changes` 到本地，
+    // 也正是"看得见但打不开"那条状态的来源）⇒ **不需要改服务端**、也不用为每个文件多发一次
+    // HEAD 请求。⚠️ 拿不到大小（本地还没有那行元数据）时不预判，交给磁盘余量与总量上限兜底。
+    let local_sizes: std::collections::HashMap<String, i64> = {
         let c = db.0.lock().expect("db mutex poisoned");
         let mut map = std::collections::HashMap::new();
         let mut stmt = c
-            .prepare("SELECT hash, mime FROM attachments")
+            .prepare("SELECT hash, size FROM attachments")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
             .map_err(|e| e.to_string())?;
         for r in rows.flatten() {
             map.insert(r.0, r.1);
@@ -1628,70 +2232,83 @@ async fn sync_attachments(
         map
     };
 
-    for item in &remote.items {
+    // ---- C1 预算刹车（2026-09-15）----
+    // 三道闸门，触发即**优雅停止 + 说明原因**，都不报错：
+    //   ① 磁盘余量 < 下限（硬性、不可关）——**停止**
+    //   ② 单文件超过阈值 —— **跳过该件、继续下一件**（不是停止）
+    //   ③ 本轮下载总量上限 —— **停止**（默认 `0` = 只报告不拦截）
+    let budget = { let c = db.0.lock().expect("db mutex poisoned"); read_budget(&c) };
+    let mb = 1024u64 * 1024;
+    let disk_floor_bytes = budget.disk_floor_mb.saturating_mul(mb);
+    let max_file_bytes = if budget.max_file_mb == 0 { u64::MAX } else { budget.max_file_mb.saturating_mul(mb) };
+    let run_cap_bytes = if budget.max_run_mb == 0 { u64::MAX } else { budget.max_run_mb.saturating_mul(mb) };
+    let mut bytes_downloaded: u64 = 0;
+    let mut skipped_too_large = 0usize;
+
+    for (idx, item) in down_items.iter().enumerate() {
+        // 入口就是关的 ⇒ 本轮不传字节、也**不算"停止"**（同上传侧，2026-09-15 真机验收修）。
+        if !att_on {
+            break;
+        }
+        // P6.1：**每次迭代之间重读开关**——中途关掉要能停（§五.7）。
+        {
+            let c = db.0.lock().expect("db mutex poisoned");
+            if !attachments_enabled(&c, &profile.ws_id) {
+                paused = true;
+                paused_reason = "switch".to_string();
+                skipped_download = down_items.len() - idx;
+                break;
+            }
+        }
+        let known_size = local_sizes.get(&item.hash).copied().unwrap_or(-1);
+        // ② 单文件阈值：跳过这一件，**继续**（用户要的是"别自动拉大视频"，不是"整个同步停摆"）。
+        if known_size > 0 && (known_size as u64) > max_file_bytes {
+            skipped_too_large += 1;
+            continue;
+        }
+        // ③ 本轮总量上限：把这一件算进去再判，避免"最后一件把上限顶穿"。
+        if known_size > 0 && bytes_downloaded.saturating_add(known_size as u64) > run_cap_bytes {
+            paused = true;
+            paused_reason = "run_cap".to_string();
+            skipped_download = down_items.len() - idx;
+            break;
+        }
+        // ① 磁盘余量下限：**硬性**。把这一件的大小一起算进去，否则会贴着下限把它写满。
+        // 查不到剩余空间时**不拦**（fail-open，见 `crate::disk` 的模块注释）。
+        if let Some(free) = crate::disk::available_bytes(&attachments_dir) {
+            let need = disk_floor_bytes.saturating_add(if known_size > 0 { known_size as u64 } else { 0 });
+            if free < need {
+                paused = true;
+                paused_reason = "disk_floor".to_string();
+                skipped_download = down_items.len() - idx;
+                break;
+            }
+        }
         // The hash comes from the server (untrusted): reject anything that is not a
         // canonical SHA-256 hex before joining it into a filesystem path, to prevent
         // a malicious server from writing outside the attachments dir.
-        if !is_valid_attachment_hash(&item.hash) {
-            continue;
-        }
-        if local_set.contains(&item.hash) {
-            continue;
-        }
-        let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
-        if !profile.token.is_empty() {
-            req = req.bearer_auth(&profile.token);
-        }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            continue;
-        }
-        let ext = ext_from_mime(&item.mime);
-        let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let mut size: i64 = 0;
-        if !path.exists() {
-            let tmp = attachments_dir.join(format!("{}.part", item.hash));
-            let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
-            let mut stream = resp.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|e| e.to_string())?;
-                size += chunk.len() as i64;
-                file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        //
+        // ⚠️ 这条校验和"本地已有就跳过"**都在构造 `down_items` 时用同一个谓词过滤过了**
+        // （见上面 `is_valid_attachment_hash(&i.hash) && !local_set.contains(...)`）。
+        // 这里不再重复判断：同一件事写两处，改了一处忘了另一处就是 bug。
+        //
+        // P1：上报进度（与 `web.ts` 的时机、文案、字段一致）。
+        emit_attachment_progress(app, "down", idx + 1, down_items.len(), &item.hash[..8.min(item.hash.len())]);
+        match download_one_attachment(&client, &att_base, &profile.token, item, &attachments_dir, session_key.as_ref(), db).await {
+            Ok(size) => {
+                bytes_downloaded = bytes_downloaded.saturating_add(size.max(0) as u64);
+                att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
             }
-            file.flush().await.map_err(|e| e.to_string())?;
-            drop(file);
-            std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-            // E1: when at-rest encryption is on, store the downloaded PLAINTEXT
-            // encrypted (nonce||ct) like every other attachment, so the read path
-            // (decrypt/passthrough) and the at-rest guarantee stay consistent.
-            if let Some(k) = &session_key {
-                if let Ok(plain) = std::fs::read(&path) {
-                    if let Ok(bytes) = security::encrypt_attachment_bytes(Some(k), &plain) {
-                        let _ = std::fs::write(&path, &bytes);
-                    }
-                }
+            Err(e) => {
+                // C1：**一件失败不炸整轮**（原先这里是 `?`：一次网络抖动就让整轮同步失败，
+                // 也就无法"优雅停止"）。记一笔、继续下一件，件数进报告——否则是静默丢件。
+                failed += 1;
+                eprintln!("[sync] 附件 {} 下载失败（跳过）：{e}", item.hash);
             }
         }
-        // Insert/ignore into attachments table.
-        {
-            let c = db.0.lock().expect("db mutex poisoned");
-            let id = uuid::Uuid::new_v4().to_string();
-            c.execute(
-                "INSERT OR IGNORE INTO attachments (id, page_id, name, hash, mime, size, created_at)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
-                params![id, format!("{}.{}", item.hash, ext), item.hash, item.mime, size, crate::db::now_ms()],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
     }
 
-    // Reuse local mimes for hash resolution (kept for future use).
-    let _ = local_mimes;
-    Ok(att_items)
+    Ok(AttachmentSyncOutcome { items: att_items, paused, paused_reason, skipped_upload, skipped_download, skipped_too_large, failed, bytes_downloaded })
 }
 
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
@@ -1725,6 +2342,41 @@ fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// B4-b：**收编 / 自愈"兜底行"**（调用点与完整来龙去脉见 `do_pull` 的附件分支）。
+///
+/// 兜底行 = 下载路径在"元数据还没到"时建的那行：`name = <hash>.<ext>`、`page_id = NULL`、
+/// **纯本地**（不记 `change`，uuid 从未上过服务端）。元数据行到了之后：
+/// - 元数据行**已经**在 ⇒ 删掉多余的兜底行（自愈历史重复）；
+/// - 元数据行**还不在** ⇒ 把兜底行**原地改写**成元数据行（收编，不新增行）。
+///
+/// 判据里的 `page_id IS NULL AND name LIKE hash || '.%'` 是**防止误伤**：
+/// 用户自己导入的文件也是 `page_id = NULL`，但名字是原名（不带 hash 前缀）⇒ 不会被碰。
+fn adopt_or_heal_fallback_row(
+    c: &Connection,
+    id: &str,
+    name: &str,
+    page_id: Option<&str>,
+    hash: &str,
+) -> Result<(), String> {
+    // ① 自愈：元数据行已在 ⇒ 删掉那条多余的兜底行
+    c.execute(
+        "DELETE FROM attachments
+          WHERE hash = ?1 AND page_id IS NULL AND name LIKE ?1 || '.%'
+            AND EXISTS (SELECT 1 FROM attachments WHERE id = ?2)",
+        params![hash, id],
+    )
+    .map_err(|e| e.to_string())?;
+    // ② 收编：元数据行不在、但有兜底行 ⇒ 原地改写（`NOT EXISTS` 避开主键冲突）
+    c.execute(
+        "UPDATE attachments SET id = ?1, name = ?2, page_id = ?3
+          WHERE hash = ?4 AND page_id IS NULL AND name LIKE ?4 || '.%'
+            AND NOT EXISTS (SELECT 1 FROM attachments WHERE id = ?1)",
+        params![id, name, page_id, hash],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn ext_from_mime(mime: &str) -> &'static str {
@@ -1832,18 +2484,26 @@ mod tests {
     use super::*;
 
     /// 复刻生产布局：main 为空间库，meta 作为 ATTACH 库承载 workspaces/sync_profiles。
+    ///
+    /// ⚠️ 这里的建表语句**必须和 `db.rs::meta_migrate` 的 `sync_profiles` 保持同形**：
+    /// `PROFILE_COLS` 是按列名 SELECT 的，助手少一列 ⇒ `list_profiles` 直接 Err、
+    /// 老测试全红（P6.1 加 `sync_attachments` 时就踩过一次）。
     fn conn_with_meta() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
         c.execute_batch(
             "CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, deleted_at INTEGER);
+             -- C1/C2 的设备级 KV（`read_budget` / `set_sync_budget` 依赖它；
+             --  与 `db.rs::meta_migrate` 里的同名表同形）。
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE meta.sync_profiles (
                  ws_id TEXT PRIMARY KEY,
                  server_url TEXT NOT NULL DEFAULT '',
                  token TEXT NOT NULL DEFAULT '',
                  space_id TEXT NOT NULL DEFAULT '',
                  last_pushed_seq INTEGER NOT NULL DEFAULT 0,
-                 last_pulled_seq INTEGER NOT NULL DEFAULT 0
+                 last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1
              );",
         )
         .unwrap();
@@ -1884,5 +2544,290 @@ mod tests {
         let got = list_profiles(&c).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].server_url, "http://a");
+    }
+
+    // ---- P6.1「每空间开关」 ----
+
+    #[test]
+    fn attachments_enabled_defaults_on_for_missing_row_and_column() {
+        let c = conn_with_meta();
+        // 没有这一行 ⇒ 按"开"（与 `DEFAULT 1` 一致）：升级 / 新库都不能静默改同步范围。
+        assert!(attachments_enabled(&c, "nope"));
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, space_id) VALUES ('ws', 'http://a', 'sp');",
+        )
+        .unwrap();
+        // 建表默认值就是"开"。
+        assert!(attachments_enabled(&c, "ws"));
+    }
+
+    #[test]
+    fn set_attachments_enabled_round_trips_and_rejects_unknown_workspace() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, space_id) VALUES ('ws', 'http://a', 'sp');",
+        )
+        .unwrap();
+
+        set_attachments_enabled(&c, "ws", false).unwrap();
+        assert!(!attachments_enabled(&c, "ws"));
+        set_attachments_enabled(&c, "ws", true).unwrap();
+        assert!(attachments_enabled(&c, "ws"));
+
+        // 没有 profile 行 ⇒ 报错（面板据此提示"先绑定空间"），而不是静默成功。
+        assert!(set_attachments_enabled(&c, "ghost", false).is_err());
+    }
+
+    #[test]
+    fn set_attachments_enabled_leaves_credentials_untouched() {
+        // 这是 P6.1 最要紧的一条：翻转开关**绝不能**碰 token / space_id。
+        // （不用 `set_sync_profile` 的原因就是它对未传字段是"清空"语义。）
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, token, space_id)
+             VALUES ('ws', 'http://a', 'tok-secret', 'sp-1');",
+        )
+        .unwrap();
+
+        set_attachments_enabled(&c, "ws", false).unwrap();
+
+        let got = get_profile(&c, "ws").unwrap();
+        assert_eq!(got.token, "tok-secret");
+        assert_eq!(got.space_id, "sp-1");
+        assert_eq!(got.server_url, "http://a");
+        assert_eq!(got.sync_attachments, 0);
+    }
+
+    // ---- C1 预算刹车 ----
+
+    #[test]
+    fn budget_defaults_match_the_decided_numbers() {
+        // 2026-09-15 发布者拍板：磁盘余量下限 1 GB（硬性）/ 单文件 100 MB / 本轮只报告不拦截。
+        // 这条钉的是**数字本身**：改默认值必须是有意的，不能顺手漂。
+        let c = conn_with_meta();
+        let b = read_budget(&c);
+        assert_eq!(b.disk_floor_mb, 1024, "磁盘余量下限默认必须是 1 GB");
+        assert_eq!(b.max_file_mb, 100, "单文件阈值默认必须是 100 MB");
+        assert_eq!(b.max_run_mb, 0, "本轮总量默认必须是 0 = 只报告不拦截");
+        assert!(b.wifi_only, "「仅 Wi-Fi」默认必须开（Android 未发布，先按不偷跑流量）");
+    }
+
+    #[test]
+    fn budget_round_trips_and_survives_garbage_values() {
+        let c = conn_with_meta();
+        set_meta_state(&c, KEY_MAX_FILE_MB, "50").unwrap();
+        set_meta_state(&c, KEY_MAX_RUN_MB, "2048").unwrap();
+        set_meta_state(&c, KEY_WIFI_ONLY, "0").unwrap();
+        let b = read_budget(&c);
+        assert_eq!(b.max_file_mb, 50);
+        assert_eq!(b.max_run_mb, 2048);
+        assert!(!b.wifi_only);
+
+        // 老库 / 手改过的 DB：解析不出来就退回默认值，**不许 panic、也不许当成 0**。
+        set_meta_state(&c, KEY_MAX_FILE_MB, "abc").unwrap();
+        set_meta_state(&c, KEY_DISK_FLOOR_MB, "").unwrap();
+        let b = read_budget(&c);
+        assert_eq!(b.max_file_mb, DEFAULT_MAX_FILE_MB);
+        assert_eq!(b.disk_floor_mb, DEFAULT_DISK_FLOOR_MB);
+    }
+
+    #[test]
+    fn the_disk_floor_cannot_be_switched_off() {
+        // 「硬性、不可关」是这条闸门的定义（§五 的设计决定）：写 0 必须被夹到下限，
+        // 而且**读出**也要夹——否则手改过的 DB 能让它失效。
+        let b = SyncBudget { disk_floor_mb: 0, max_file_mb: 0, max_run_mb: 0, wifi_only: false }.clamped();
+        assert_eq!(b.disk_floor_mb, MIN_DISK_FLOOR_MB, "0 必须被夹到最小下限");
+        // 同时确认"0 = 不限"在另外两项上仍然成立（它们是可关的）。
+        assert_eq!(b.max_file_mb, 0);
+        assert_eq!(b.max_run_mb, 0);
+
+        let c = conn_with_meta();
+        set_meta_state(&c, KEY_DISK_FLOOR_MB, "0").unwrap();
+        assert_eq!(read_budget(&c).disk_floor_mb, MIN_DISK_FLOOR_MB, "读出时也要夹");
+        // 荒唐大的值同样夹住（防止 u64 乘法溢出）。
+        set_meta_state(&c, KEY_MAX_RUN_MB, "18446744073709551615").unwrap();
+        assert!(read_budget(&c).max_run_mb <= MAX_BUDGET_MB);
+    }
+
+    // ---- P6.3：按需取字节 ----
+
+    /// 同步下载与按需下载**必须拼出同一个 URL**：绑了空间走 space 作用域，否则旧的全局路径。
+    /// 这条钉住的是"两处各写一遍迟早会漂"——P6.3 之前这两段代码就是复制关系。
+    #[test]
+    fn attachment_base_is_space_scoped_only_when_bound_to_a_space() {
+        let mk = |space: &str| SyncProfile {
+            ws_id: "ws".into(),
+            server_url: "https://s.example.com/".into(),
+            token: "t".into(),
+            space_id: space.into(),
+            last_pushed_seq: 0,
+            last_pulled_seq: 0,
+            sync_attachments: 1,
+        };
+        // 绑了空间：`<server>/spaces/<id>`（服务端 space 作用域路由）。
+        assert_eq!(attachment_base(&mk("sp-1")), "https://s.example.com/spaces/sp-1");
+        // 没绑（个人自建 / 旧配置）：就是 server_url 本身（旧的全局路由）。
+        assert_eq!(attachment_base(&mk("")), "https://s.example.com");
+        // ⚠️ **不产生双斜杠**：地址末尾带 `/` 时也要拼对（`set_profile` 会 trim，
+        //    但老库 / 手改过的值不能靠这个假设）。
+        assert!(!attachment_base(&mk("sp-1")).contains("//spaces"));
+    }
+
+    // ---- B4-b：兜底行的收编与自愈 ----
+
+    fn conn_with_attachments() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE attachments (
+                 id TEXT PRIMARY KEY, page_id TEXT, name TEXT NOT NULL, hash TEXT NOT NULL,
+                 mime TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        c
+    }
+    fn rows_for(c: &Connection, hash: &str) -> Vec<(String, Option<String>, String)> {
+        c.prepare("SELECT id, page_id, name FROM attachments WHERE hash = ?1 ORDER BY id")
+            .unwrap()
+            .query_map(params![hash], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
+    /// **收编**：元数据还没到、只有兜底行 ⇒ 原地改写成元数据行（不新增行）。
+    #[test]
+    fn metadata_adopts_a_lone_fallback_row() {
+        let c = conn_with_attachments();
+        let hash = "a".repeat(64);
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('fallback-uuid', NULL, ?1, ?2, 'text/markdown', 12, 1)",
+            params![format!("{hash}.bin"), hash],
+        )
+        .unwrap();
+
+        adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+
+        let rows = rows_for(&c, &hash);
+        assert_eq!(rows.len(), 1, "收编之后仍应只有一行（不许变成两行）");
+        assert_eq!(rows[0].0, "row-from-changes", "id 应被改写成元数据行的 id");
+        assert_eq!(rows[0].1.as_deref(), Some("folder-1"), "page_id 应落到真实目录");
+        assert_eq!(rows[0].2, "验收说明.md", "名字应被改写成真名");
+    }
+
+    /// **自愈**：元数据行与兜底行都在（历史重复）⇒ 删掉多余的兜底行。
+    #[test]
+    fn metadata_heals_an_existing_duplicate_fallback_row() {
+        let c = conn_with_attachments();
+        let hash = "b".repeat(64);
+        c.execute_batch(&format!(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('row-from-changes', 'folder-1', '验收说明.md', '{hash}', 'text/markdown', 12, 1),
+                    ('fallback-uuid', NULL, '{hash}.bin', '{hash}', 'text/markdown', 12, 2);"
+        ))
+        .unwrap();
+        assert_eq!(rows_for(&c, &hash).len(), 2, "前提：先造出重复");
+
+        adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+
+        let rows = rows_for(&c, &hash);
+        assert_eq!(rows.len(), 1, "自愈之后只剩元数据那一行");
+        assert_eq!(rows[0].0, "row-from-changes");
+        assert_eq!(rows[0].1.as_deref(), Some("folder-1"));
+    }
+
+    /// **不许误伤**：用户自己导入的文件也是 `page_id = NULL`，但名字是原名（不带 hash 前缀）
+    /// ⇒ 同一个 hash 上那条行必须原样保留。
+    #[test]
+    fn a_user_imported_row_with_the_same_hash_is_left_alone() {
+        let c = conn_with_attachments();
+        let hash = "c".repeat(64);
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('user-import', NULL, '我的笔记.md', ?1, 'text/markdown', 12, 1)",
+            params![hash],
+        )
+        .unwrap();
+
+        adopt_or_heal_fallback_row(&c, "row-from-changes", "验收说明.md", Some("folder-1"), &hash).unwrap();
+
+        let rows = rows_for(&c, &hash);
+        assert_eq!(rows.len(), 2, "用户导入的那行不该被删、也不该被改写");
+        let user = rows.iter().find(|r| r.0 == "user-import").expect("user-import 必须还在");
+        assert_eq!(user.2, "我的笔记.md", "原件名字不许被改");
+        assert_eq!(user.1, None, "page_id 不许被改");
+    }
+
+    // ---- B4：同步下载不再制造重复行 ----
+
+    /// B4 的判据（2026-09-15）：**同一个 hash 在第二台设备上只能有一行**。
+    ///
+    /// 场景复刻：① 元数据随 `changes` 到了本地（`page_id` 指向真实目录）；
+    /// ② 字节下载完成，走兜底行插入。修复前这里是**两行**（`id` 是新 uuid、
+    /// `page_id = NULL`，而 `INSERT OR IGNORE` 只对主键生效）⇒ 文件在「未整理」
+    /// 里多出一份 `hash.ext` 副本。修复后必须仍是 1 行，且**保留原来那条真目录行**。
+    #[test]
+    fn downloading_bytes_does_not_duplicate_an_existing_attachment_row() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE attachments (
+                 id TEXT PRIMARY KEY, page_id TEXT, name TEXT NOT NULL, hash TEXT NOT NULL,
+                 mime TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL
+             );
+             CREATE INDEX idx_attachments_hash ON attachments(hash);",
+        )
+        .unwrap();
+        // ① 元数据路径（do_pull 的 upsert）：真 id + 真目录。
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('row-from-changes', 'folder-1', '报告.pdf', 'h1', 'application/pdf', 12, 1)",
+            [],
+        )
+        .unwrap();
+
+        // ② 字节下载完成的兜底插入：必须**什么都不做**。
+        record_downloaded_attachment(&c, "h1", "application/pdf", 12, "h1.pdf").unwrap();
+
+        let rows: Vec<(String, Option<String>)> = c
+            .prepare("SELECT id, page_id FROM attachments WHERE hash = 'h1'")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(rows.len(), 1, "同一 hash 不许出现第二行（多出来的那份会显示在「未整理」里）");
+        assert_eq!(rows[0].0, "row-from-changes", "必须保留元数据那一行（真目录），不能替换成兜底行");
+        assert_eq!(rows[0].1.as_deref(), Some("folder-1"), "page_id 必须还是真实目录");
+
+        // ③ 兜底行该出现的时候仍要出现：服务端有字节、本地没有元数据行。
+        record_downloaded_attachment(&c, "h2", "image/png", 34, "h2.png").unwrap();
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM attachments WHERE hash = 'h2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "没有元数据行时，下载完的字节仍要能被用户看见（兜底行必须插）");
+        let page: Option<String> = c
+            .query_row("SELECT page_id FROM attachments WHERE hash = 'h2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(page, None, "兜底行落在「未整理」（page_id IS NULL）");
+    }
+
+    #[test]
+    fn list_profiles_carries_attachment_switch() {
+        // `PROFILE_COLS` 必须带上 `sync_attachments`：漏列会让整条 SELECT 报错
+        // （不是"少一个字段"而已），这里把它钉住。
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws', NULL);
+             INSERT INTO meta.sync_profiles (ws_id, server_url, sync_attachments) VALUES ('ws', 'http://a', 0);",
+        )
+        .unwrap();
+
+        let got = list_profiles(&c).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].sync_attachments, 0);
     }
 }

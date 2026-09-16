@@ -38,6 +38,20 @@ docs/duty-roster*
 docs/zammad-*.md
 scripts/export-customer-playbook.mjs
 
+# 内容运营 / 对外传播材料（知乎答题、公众号、推广文案等）同样属于运营材料，
+# 不进公开仓库：正文放 tmp/（第 29 行已忽略）或私有仓库。
+# 2026-09-14 新增，起因：知乎答题定稿曾放在仓库根目录待归档。
+docs/zhihu-*
+zhihu/
+zhihu-*.md
+docs/marketing-*
+docs/promo-*
+
+# 社区帖子的带时间戳生成型备份（表结构 / 正文快照），属生成产物，不入公开仓库。
+# 正式帖子正文仍由 docs/community/*.md 跟踪（如 plugin-recipes-post.md）。
+# 2026-09-14 新增：该目录为未跟踪状态且未命中任何规则，git add -A 会误收。
+docs/community/backup/
+
 # Rust build artifacts
 src-tauri/target
 
@@ -46,6 +60,9 @@ src-tauri/gen
 
 # 本地产出的发布物 / 安装包（本地构建产物，不入库）
 release/
+
+# PDFium 动态库（由 scripts/fetch-pdfium.mjs 按钉死版本 + 校验和拉取；二进制不入库）
+src-tauri/vendor/pdfium/
 
 # Editor directories and files
 .vscode/*

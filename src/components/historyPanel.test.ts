@@ -21,6 +21,7 @@ vi.mock("../lib/api", () => ({
 
 import { HistoryPanel } from "./HistoryPanel";
 import { closeTopOverlay, overlayDepth, overlayIds, resetOverlayStackForTest } from "../lib/overlayStack";
+import { overlayScrollLockCount } from "../hooks/useOverlayScrollLock";
 
 function mount() {
   const host = document.createElement("div");
@@ -102,5 +103,28 @@ describe("版本历史弹层 · Android 返回键", () => {
     expect(popover()).toBeNull();
     expect(overlayDepth()).toBe(0);
     flushSync(() => root.unmount());
+  });
+
+  it("窄屏走 usePopover 的 is-sheet 形态 + 挂上滚动锁（第 7 个问题：左边缘 −6px 的那个）", () => {
+    // 这一条钉的是**形态分支**：原来 `.history-popover` 是 CSS 里
+    // `position:absolute; right:0; width:320px` 的锚定浮层，窄屏没有别的形态，
+    // 360×640 实测左边缘 = **−6px**（越界）。现在 JS 侧窄屏必须带 `is-sheet`
+    // （CSS 那条由 `verify-mobile-overlays.mjs` 在两个视口上量几何）。
+    const original = window.innerWidth;
+    const lockBefore = overlayScrollLockCount();
+    Object.defineProperty(window, "innerWidth", { value: 360, writable: true, configurable: true });
+    try {
+      const root = mount();
+      flushSync(() => trigger()!.click());
+      expect(popover()!.className, "窄屏必须带 is-sheet（CSS 据此铺底）").toContain("is-sheet");
+      expect(overlayScrollLockCount(), "打开时外壳滚动锁要挂上（与搜索/回收站/同步同一条）").toBe(lockBefore + 1);
+
+      flushSync(() => trigger()!.click());
+      expect(popover()).toBeNull();
+      expect(overlayScrollLockCount(), "关掉后锁要放开").toBe(lockBefore);
+      flushSync(() => root.unmount());
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: original, writable: true, configurable: true });
+    }
   });
 });

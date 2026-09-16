@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
+import { shouldAutoSyncNow } from "../lib/syncGate";
 import { useNotes } from "../store/notes";
+import { withSyncStatus } from "../store/syncStatus";
 
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -15,6 +17,11 @@ export function useAutoSync() {
     const syncOnce = async () => {
       if (syncing.current) return;
       try {
+        // C2 网络闸门（2026-09-15）：开了「只在 Wi-Fi 下自动同步」时，**非 Wi-Fi 就不自动拉**。
+        // 判据只有一处实现（`lib/syncGate.ts`）——`App.tsx` 里那条按面板间隔跑的定时器
+        // 也必须过同一道闸门（真机验收时发现那条路会绕过）。
+        // ⚠️ 这里只管**自动**同步：手动点「同步」不走这条检查（用户明确要求，就该照做）。
+        if (!(await shouldAutoSyncNow())) return;
         // Gate on per-workspace sync profiles (S8) rather than the legacy global
         // config: a user who set up a profile (server + space) but never set the
         // old get_sync_config should still auto-sync.
@@ -23,7 +30,11 @@ export function useAutoSync() {
         if (!anyReady) return;
         syncing.current = true;
         try {
-          await api.syncNow();
+          // P1（2026-09-15）：**自动同步也要配对 begin/end**（用 `withSyncStatus` 保证）。
+          // Rust 侧的附件进度事件会调 `setProgress`，而它会 `syncing = true`——
+          // 自动这条路原先没人 `end()` ⇒ 面板会**永远停在"正在同步…"**（真机实测过），
+          // 手动同步的结果文案也被那段进度分支挡住（正是 B2 修过的那个 bug）。
+          await withSyncStatus("正在自动同步…", () => api.syncNow());
           if (!cancelled) await loadPages();
         } finally {
           syncing.current = false;

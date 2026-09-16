@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   openUrl: vi.fn<(url: string) => Promise<void>>(),
   fetchUpdateManifestNative: vi.fn<() => Promise<unknown>>(),
   checkDesktopUpdate: vi.fn<() => Promise<unknown>>(),
+  // 2026-09-15：Android 改成**应用内**下载 + 校验 + 交给系统安装器，所以这两个也要桩掉
+  // ——用例要断言"点了按钮真的按 url+sha256 去下、再把拿到的路径交给安装器"。
+  installAndroidUpdate: vi.fn<(url: string, sha: string, onProgress?: unknown) => Promise<string>>(),
 }));
 
 vi.mock("../lib/platform", () => ({
@@ -33,6 +36,7 @@ vi.mock("../lib/platform", () => ({
 vi.mock("../lib/updater", () => ({
   fetchUpdateManifestNative: mocks.fetchUpdateManifestNative,
   checkDesktopUpdate: mocks.checkDesktopUpdate,
+  installAndroidUpdate: mocks.installAndroidUpdate,
 }));
 
 import { AboutDialog } from "./AboutDialog";
@@ -139,6 +143,8 @@ describe("「关于」弹窗的 Android 更新入口", () => {
     mocks.fetchUpdateManifestNative.mockReset();
     mocks.checkDesktopUpdate.mockReset();
     mocks.checkDesktopUpdate.mockResolvedValue({ state: "unavailable" });
+    mocks.installAndroidUpdate.mockReset();
+    mocks.installAndroidUpdate.mockResolvedValue("/data/user/0/cn.shuyo.shuyonote/cache/updates/x.apk");
   });
 
   afterEach(() => {
@@ -165,7 +171,7 @@ describe("「关于」弹窗的 Android 更新入口", () => {
       (b) => (b.textContent ?? "").trim() === label,
     ) ?? null;
 
-  it("有新版 + 清单带 android 条目 → 「下载 APK」点击后打开的是清单里的地址（且不走桌面 in-app 通道）", async () => {
+  it("有新版 + 清单带 android 条目 → 「下载并安装」按 url+sha256 调应用内更新（且不走桌面 in-app 通道）", async () => {
     openAboutWith({
       version: "9.9.9",
       notes: "修了几个 bug",
@@ -174,14 +180,55 @@ describe("「关于」弹窗的 Android 更新入口", () => {
       android_sha256: "a".repeat(64),
     });
 
-    await vi.waitFor(() => expect(buttonByText("下载 APK"), "有 apk 地址就该出下载入口").not.toBeNull());
+    await vi.waitFor(() => expect(buttonByText("下载并安装"), "有 apk 地址 + 指纹就该出应用内更新入口").not.toBeNull());
     // 桌面那条腿在这台设备上必须完全不存在：移动端没有 updater 插件，真摆出来点了只会失败
-    expect(buttonByText("下载并安装")).toBeNull();
     expect(mocks.checkDesktopUpdate).not.toHaveBeenCalled();
+    // 手动下载始终留着（应用内这条路走不通时的退路）
+    expect(buttonByText("手动下载")).not.toBeNull();
 
-    flushSync(() => buttonByText("下载 APK")!.click());
-    await vi.waitFor(() => expect(mocks.openUrl).toHaveBeenCalledTimes(1));
-    expect(mocks.openUrl).toHaveBeenCalledWith(APK_URL);
+    flushSync(() => buttonByText("下载并安装")!.click());
+    await vi.waitFor(() => expect(mocks.installAndroidUpdate).toHaveBeenCalledTimes(1));
+    // 关键判据：把**清单里的地址与指纹**原样传下去（传错一个字符就会下载到坏包/校验不过）
+    expect(mocks.installAndroidUpdate.mock.calls[0][0]).toBe(APK_URL);
+    expect(mocks.installAndroidUpdate.mock.calls[0][1]).toBe("a".repeat(64));
+    // 成功之后要留一句"交给系统安装器了"——系统弹窗在应用之外，界面里什么都不说会很困惑
+    await vi.waitFor(() => expect(document.querySelector(".about-update-hint")).not.toBeNull());
+    // 而且**不能**把地址丢给浏览器（那正是这次要改掉的老行为）
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+  });
+
+  it("清单只有地址、**没有指纹**（老清单）→ 不出应用内入口，只留「手动下载」", async () => {
+    openAboutWith({
+      version: "9.9.9",
+      notes: null,
+      pub_date: null,
+      android_url: APK_URL,
+      android_sha256: null,
+    });
+
+    await vi.waitFor(() => expect(buttonByText("手动下载"), "没有指纹就得留手动退路").not.toBeNull());
+    // 没有指纹 ⇒ 不许走应用内（那种情况下载完没法校验，等于把来路不明的包装给用户）
+    expect(buttonByText("下载并安装")).toBeNull();
+    expect(mocks.installAndroidUpdate).not.toHaveBeenCalled();
+
+    flushSync(() => buttonByText("手动下载")!.click());
+    await vi.waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith(APK_URL));
+  });
+
+  it("应用内更新失败 → 把真正的原因显示出来，且手动下载仍在（不是静默失败）", async () => {
+    mocks.installAndroidUpdate.mockRejectedValueOnce(new Error("更新包校验不通过（期望 aa，实际 bb）"));
+    openAboutWith({
+      version: "9.9.9",
+      notes: null,
+      pub_date: "2026-09-14T00:00:00Z",
+      android_url: APK_URL,
+      android_sha256: "a".repeat(64),
+    });
+
+    await vi.waitFor(() => expect(buttonByText("下载并安装")).not.toBeNull());
+    flushSync(() => buttonByText("下载并安装")!.click());
+    await vi.waitFor(() => expect(document.querySelector(".about-update-error")?.textContent ?? "").toContain("校验不通过"));
+    expect(buttonByText("手动下载")).not.toBeNull();
   });
 
   it("有新版但清单是**老清单**（没有 android 条目）→ 退回「前往发布页」，点和开的是发布页", async () => {

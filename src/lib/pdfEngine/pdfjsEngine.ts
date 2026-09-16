@@ -13,12 +13,20 @@ function ensureWorker(): void {
   if (workerReady) return;
   workerReady = true;
   if (typeof document !== "undefined") {
-    // Vite rewrites this to a bundled asset URL. Append the app version as a
-    // cache-buster: the file name is content-hashed + served `immutable`, so a
-    // worker that had a stale MIME/response cached would otherwise be reused
-    // forever. Bumping the version changes the URL → browsers re-fetch it.
-    const worker = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
-    pdfjs.GlobalWorkerOptions.workerSrc = `${worker}?v=${encodeURIComponent(APP_VERSION)}`;
+    // 真正干活的是 pdf.js 自己的 worker（Vite 资源，文件内容哈希 + 长期缓存）。
+    const real = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
+    // ⚠️ 但 `workerSrc` 指给的是**我们的垫片**，不是它：Android 的系统 WebView（这台设备停在
+    // Chrome 114）缺 `Promise.withResolvers` / `AbortSignal.any`，而 pdf.js 的 worker 里就有
+    // 13 处 `Promise.withResolvers`（Chrome 119+ 才有）。页面那半边的补齐层进不了 worker 上下文，
+    // 所以由垫片在 worker 内部先补一次，再动态加载真 worker。
+    // 真机证据与取舍写在 `public/pdfjs-worker-shim.mjs` 的头部。
+    //
+    // 路径与 index.html 里引用 public 资源的方式一致（相对文档位置），
+    // 所以部署在 `/app/` 子路径下也能解析对。版本号当缓存失效用：垫片与补齐层都是
+    // 不带哈希的静态文件，改了内容而 URL 不变时，浏览器/WebView 可能一直用旧的。
+    const shim = new URL("pdfjs-worker-shim.mjs", document.baseURI).href;
+    pdfjs.GlobalWorkerOptions.workerSrc =
+      `${shim}?real=${encodeURIComponent(real)}&v=${encodeURIComponent(APP_VERSION)}`;
   }
 }
 

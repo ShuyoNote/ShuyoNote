@@ -111,10 +111,10 @@ pub async fn export_backup(
     let attachments_dir = app_data_dir.join("attachments");
     let spaces_dir = crate::db::spaces_dir(&app_data_dir);
     let meta_file = crate::db::meta_path(&app_data_dir);
-    let dest = PathBuf::from(&dest_path);
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
+    // 目标位置：桌面是路径、Android 是 `content://` URI（写 URI 只能"先写缓存再搬"，
+    // 而且 zip 需要 Seek，所以这里拿到的是**中转文件路径**）。见 `save_target` 模块头。
+    let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-backup")?;
+    let dest = target.write_path().to_path_buf();
 
     // Stage a compact snapshot of meta.db + every per-space DB in a temp dir, then
     // stream them all into one zip. Online snapshotting is WAL-safe and holds each
@@ -155,7 +155,7 @@ pub async fn export_backup(
     let attachments2 = attachments_dir;
     let dest2 = dest.clone();
     let tmp_root2 = tmp_root.clone();
-    tauri::async_runtime::spawn_blocking(move || -> Result<BackupResult, String> {
+    let out = tauri::async_runtime::spawn_blocking(move || -> Result<BackupResult, String> {
         let file = std::fs::File::create(&dest2).map_err(|e| e.to_string())?;
         let mut zip = zip::ZipWriter::new(file);
         let opts = zip::write::SimpleFileOptions::default();
@@ -205,12 +205,17 @@ pub async fn export_backup(
         let _ = std::fs::remove_dir_all(&tmp_root2);
         let _ = total_bytes;
         Ok(BackupResult {
-            path: dest2.to_string_lossy().into_owned(),
+            // 报**用户选的位置**，不是我们的中转文件路径（URI 目标下后者对用户没意义）。
+            path: dest_path.clone(),
             size,
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    // URI 目标：把中转文件整份搬进用户选的位置（桌面是空操作）。
+    target.commit()?;
+    Ok(out)
 }
 
 // Restore the database from a backup snapshot into the live connection.
@@ -496,21 +501,21 @@ pub async fn import_backup(
 }
 
 #[tauri::command]
-pub fn write_text_file(path: String, content: String) -> Result<(), String> {
-    if let Some(parent) = Path::new(&path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+pub fn write_text_file(app: tauri::AppHandle, path: String, content: String) -> Result<(), String> {
+    // Android：保存对话框给的是 `content://` URI，不能当路径用（真机实测 EROFS）。
+    // 走 SaveTarget：桌面=直接写路径（行为不变），URI=先写缓存再整份搬进去。
+    let target = crate::save_target::SaveTarget::new(&app, &path, "shuyonote-text")?;
+    std::fs::write(target.write_path(), content).map_err(|e| e.to_string())?;
+    target.commit()
 }
 
 /// Write raw bytes to a path. Used by the desktop "save as" of the exported PDF
 /// annotated copy (dialog.save → write_binary_file). Web degrades to download.
 #[tauri::command]
-pub fn write_binary_file(path: String, data: Vec<u8>) -> Result<(), String> {
-    if let Some(parent) = Path::new(&path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(&path, data).map_err(|e| e.to_string())
+pub fn write_binary_file(app: tauri::AppHandle, path: String, data: Vec<u8>) -> Result<(), String> {
+    let target = crate::save_target::SaveTarget::new(&app, &path, "shuyonote-bin")?;
+    std::fs::write(target.write_path(), data).map_err(|e| e.to_string())?;
+    target.commit()
 }
 
 #[tauri::command]

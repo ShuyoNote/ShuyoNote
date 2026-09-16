@@ -65,6 +65,22 @@ describe("platformKeyFor", () => {
     const apk = "ShuyoNote_1.84.6_andro" + "id-armv7-release.apk";
     expect(platformKeyFor(apk)).toBeNull();
   });
+
+  it("macOS：x64 / aarch64 / universal 三种 dmg 的归属", () => {
+    // x64 与 aarch64 各归各的键
+    expect(platformKeyFor("ShuyoNote_1.84.6_x64.dmg")).toBe("darwin-x86_64");
+    expect(platformKeyFor("ShuyoNote_1.84.6_aarch64.dmg")).toBe("darwin-aarch64");
+    // ⚠️ universal 同时占**两个**键：只归 darwin-x86_64 的话，
+    // 清单里就没有 darwin-aarch64 ⇒ Apple Silicon 用户收不到任何 macOS 更新（且不报错）。
+    expect(platformKeysFor("ShuyoNote_1.84.6_universal.dmg")).toEqual(["darwin-aarch64", "darwin-x86_64"]);
+    // 主键沿用旧口径（数组第一个），别把老调用点的语义改了
+    expect(platformKeyFor("ShuyoNote_1.84.6_universal.dmg")).toBe("darwin-aarch64");
+  });
+
+  it("macOS：没有 dmg 就没有任何 darwin 键（别凭空造键）", () => {
+    expect(platformKeysFor("ShuyoNote_1.84.6_x64-setup.exe")).toEqual(["windows-x86_64"]);
+    expect(platformKeysFor("readme.txt")).toEqual([]);
+  });
 });
 
 describe("selectArtifacts", () => {
@@ -192,6 +208,21 @@ describe("manifestPicks（清单在同一平台键下只能留一个，取哪个
     const a = manifestPicks(entries).picks.get("linux-x86_64").name;
     const b = manifestPicks([...entries].reverse()).picks.get("linux-x86_64").name;
     expect(a).toBe(b);
+  });
+
+  it("macOS universal dmg → **两个** darwin 键都指向它（否则 Apple Silicon 收不到更新）", () => {
+    const universal = "ShuyoNote_1.84.6_universal.dmg";
+    const { picks } = manifestPicks([entry("dmg", universal)]);
+    expect(picks.get("darwin-aarch64")?.name).toBe(universal);
+    expect(picks.get("darwin-x86_64")?.name).toBe(universal);
+    // 只有一个 dmg 时不该凭空多出别的平台键
+    expect([...picks.keys()].sort()).toEqual(["darwin-aarch64", "darwin-x86_64"]);
+  });
+
+  it("macOS 分别出 x64 与 aarch64 时各归各的键", () => {
+    const { picks } = manifestPicks([entry("dmg", "ShuyoNote_1.84.6_x64.dmg"), entry("dmg", "ShuyoNote_1.84.6_aarch64.dmg")]);
+    expect(picks.get("darwin-x86_64").name).toBe("ShuyoNote_1.84.6_x64.dmg");
+    expect(picks.get("darwin-aarch64").name).toBe("ShuyoNote_1.84.6_aarch64.dmg");
   });
 
   it("apk 进 android-aarch64，且**不影响**三个桌面键", () => {

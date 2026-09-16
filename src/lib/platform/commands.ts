@@ -73,6 +73,9 @@ export interface SyncProfile {
   space_id: string;
   last_pushed_seq: number;
   last_pulled_seq: number;
+  /** P6.1「每空间开关」：1 = 同步附件**字节**（默认）；0 = 只同步元数据、字节按需。
+   *  ⚠️ 只管字节——附件行仍随 `changes` 同步，所以关掉后对端"看得见但打不开"。 */
+  sync_attachments: number;
 }
 export interface WorkspaceSyncResult {
   ws_id: string;
@@ -82,6 +85,35 @@ export interface WorkspaceSyncResult {
   last_pulled_seq: number;
   error: string | null;
   conflicts: SyncConflict[];
+  /** P6.1：附件同步**因开关被关掉而中途停止**（界面据此显示"因开关关闭而停止"）。 */
+  attachments_paused: boolean;
+  /** P6.1：本轮**因开关关闭而未传**的附件件数（界面显示"未上传 N 个 / 未下载 M 个"）。
+   *  ⚠️ 定义是"**被开关挡下**"的件数，**不含**因网络失败而没传成功的件数。 */
+  attachments_skipped_upload: number;
+  attachments_skipped_download: number;
+  /** C1：停止原因——`""` / `"switch"`（P6.1 开关）/ `"disk_floor"`（磁盘余量不足）/
+   *  `"run_cap"`（撞上本轮总量上限）。`attachments_paused` 只说"停了"，这个说清"为什么停"。 */
+  attachments_paused_reason: string;
+  /** C1：因**单文件超过阈值**而跳过的件数。 */
+  attachments_skipped_too_large: number;
+  /** C1：**传输失败**（网络抖动 / 服务端错误）而跳过的件数。⚠️ 与"被开关挡下"是两码事：
+   *  这些是本该传、但没传成功的 ⇒ 必须单独可见，否则就是静默丢件。 */
+  attachments_failed: number;
+  /** C1：本轮实际下载的字节数（默认"只报告不拦截"，报告的就是它）。 */
+  attachments_bytes_downloaded: number;
+}
+
+/** C1 预算刹车（2026-09-15）的设备级设置。默认值由 Rust 侧裁定：
+ *  磁盘余量下限 **1 GB（硬性、不可关）**、单文件阈值 **100 MB**、本轮总量 **0 = 只报告不拦截**。 */
+export interface SyncBudget {
+  /** MB；**硬性、不可关**（Rust 侧会夹取到 ≥256）。 */
+  disk_floor_mb: number;
+  /** MB；`0` = 不限。 */
+  max_file_mb: number;
+  /** MB；`0` = 只报告不拦截。 */
+  max_run_mb: number;
+  /** C2：只在 Wi-Fi 下自动同步。 */
+  wifi_only: boolean;
 }
 
 export interface SyncConflict {
@@ -183,6 +215,9 @@ export interface CommandMap {
       android_sha256: string | null;
     } | null;
   };
+  /** Android 应用内更新的两步（见 docs/MOBILE.md §2.5）：下载校验 → 交给系统安装器。 */
+  download_android_update: { args: { url: string; sha256: string }; result: string };
+  install_android_update: { args: { path: string }; result: void };
 
   // ---- Pages ----
   list_pages: { args: undefined; result: PageMeta[] };
@@ -348,7 +383,23 @@ export interface CommandMap {
   sync_now: { args: undefined; result: WorkspaceSyncResult[] };
   list_sync_profiles: { args: undefined; result: SyncProfile[] };
   set_sync_profile: { args: { wsId: string; serverUrl: string; token?: string; spaceId?: string; email?: string }; result: void };
+  /** P6.1「每空间开关」：只切换附件**字节**同步。
+   *  ⚠️ **刻意独立成命令**、不复用 `set_sync_profile`——后者对未传字段是"清空"语义，
+   *  拿它翻转开关会把该空间的 `token` / `space_id` 清掉。 */
+  set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void };
+  /** P6.3「按需取字节」：用户主动下载**单件**附件，返回落盘字节数（失败即 throw）。
+   *  ⚠️ 与同步下载**同一个实现**；且**不受 C1 预算闸门约束**——显式操作照做。 */
+  download_attachment: { args: { wsId: string; hash: string }; result: number };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
+  /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
+  get_sync_budget: { args: undefined; result: SyncBudget };
+  /** ⚠️ 回显的是**夹取后**的值（磁盘余量下限不可关：传 0 会回 256）⇒ 界面要用返回值纠正自己。 */
+  set_sync_budget: { args: { budget: SyncBudget }; result: SyncBudget };
+  /** C2 网络闸门（2026-09-15）：`"wifi"`/`"cellular"`/`"ethernet"`/`"other"`/`"none"`/
+   *  `"unknown"`（Android 上问不到）/ `"n/a"`（非 Android，**闸门不适用**）。
+   *  ⚠️ 前端必须把 `"unknown"` 当"不确定 ⇒ 不自动拉取"，把 `"n/a"` 当"不适用 ⇒ 不拦"——
+   *  两者混同就会把桌面的自动同步也一起关掉。 */
+  network_type: { args: undefined; result: string };
 
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 参数键一律 camelCase：Tauri 2 只认 camelCase，再映射到 Rust 的 snake_case 形参。

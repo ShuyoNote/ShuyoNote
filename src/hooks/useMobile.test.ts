@@ -6,6 +6,7 @@ import {
   isMobileViewport,
   isNarrowViewport,
   isShortViewport,
+  subscribeOverlayViewport,
   SHORT_VIEWPORT_MAX_PX,
 } from "./useMobile";
 
@@ -74,5 +75,48 @@ describe("窄 / 矮两条轴", () => {
     expect(SHORT_VIEWPORT_MAX_PX).toBe(520);
     expect(isShortViewport(520)).toBe(true);
     expect(isShortViewport(521)).toBe(false);
+  });
+});
+
+// 2026-09-15：PDF 阅读器的目录/批注栏在真机上把正文挤出屏幕，根因是它只在**挂载时**
+// 判了一次视口。修法是"跟着视口变化"——而这里最容易犯的错是**只订阅窄屏那一条**：
+// 手机竖屏转横屏（360 → 792 宽）回调不触发，阅读器就一直留着桌面三栏。
+// 这条不变量必须钉住，否则下次"顺手简化"又会掉回去。
+describe("浮层视口的订阅：两条查询都要盯", () => {
+  it("订阅**窄**与**矮**两条查询，任一变化都会回调", () => {
+    const listeners = new Map<string, () => void>();
+    const mm = vi.fn((q: string) => ({
+      addEventListener: (_t: string, fn: EventListenerOrEventListenerObject) => {
+        listeners.set(q, fn as unknown as () => void);
+      },
+      removeEventListener: () => {},
+    }));
+    const onChange = vi.fn();
+
+    const off = subscribeOverlayViewport(mm, onChange);
+    expect(mm).toHaveBeenCalledTimes(2);
+    expect(mm.mock.calls.map((c) => c[0])).toEqual(["(max-width: 768px)", "(max-height: 520px)"]);
+    expect(listeners.size).toBe(2);
+
+    // 横屏（矮）那一条变了也要回调——这就是真机上漏掉的那次更新
+    listeners.get("(max-height: 520px)")?.();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    listeners.get("(max-width: 768px)")?.();
+    expect(onChange).toHaveBeenCalledTimes(2);
+
+    off();
+  });
+
+  it("取消订阅时两条都要摘掉（漏一条就是常驻监听 + 卸载后 setState）", () => {
+    const removed: string[] = [];
+    const mm = (q: string) => ({
+      addEventListener: (_t: string, _fn: EventListenerOrEventListenerObject) => {},
+      removeEventListener: (_t: string, _fn: EventListenerOrEventListenerObject) => {
+        removed.push(q);
+      },
+    });
+    const off = subscribeOverlayViewport(mm);
+    off();
+    expect(removed).toEqual(["(max-width: 768px)", "(max-height: 520px)"]);
   });
 });

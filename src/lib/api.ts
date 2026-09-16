@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap } from "./platform/commands";
+import type { CommandMap, SyncBudget } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -13,14 +13,16 @@ const invoke = <K extends keyof CommandMap>(
   args?: CommandMap[K]["args"],
 ): Promise<CommandMap[K]["result"]> =>
   platform.executor.invoke(cmd, args as Record<string, unknown>);
-export interface SyncConfig {
-  server_url: string;
-  token: string;
-  space_id: string;
-  device_id: string;
-  last_pushed_seq: number;
-  last_pulled_seq: number;
-}
+
+// 这三个是**平台契约**类型，权威定义在 `platform/commands.ts`（`CommandMap` 里
+// `list_sync_profiles` / `sync_workspace` 的 result 就是它们）。这里**只转发，不再
+// 手抄一份**。
+//
+// 教训（P6.1）：此处原本是第二份手抄声明，P6.1 往契约里加 `sync_attachments` /
+// `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
+// from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
+// 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
+export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult } from "./platform/commands";
 
 /** 聚合邮箱的 IMAP 账号配置（与后端 email::EmailAccountArgs 对应）。 */
 export interface EmailAccount {
@@ -71,25 +73,9 @@ export interface EmailAggregate {
  * Per-workspace sync target (S8): each local workspace (ws_id) binds to its own
  * remote (server_url + token + space_id), so one person can sync different spaces
  * to different servers/accounts (multi-server × multi-space).
+ *
+ * 类型定义见文件顶部的转发声明（`platform/commands.ts` 是唯一权威）。
  */
-export interface SyncProfile {
-  ws_id: string;
-  server_url: string;
-  token: string;
-  space_id: string;
-  last_pushed_seq: number;
-  last_pulled_seq: number;
-}
-
-export interface WorkspaceSyncResult {
-  ws_id: string;
-  pushed: number;
-  pulled: number;
-  last_pushed_seq: number;
-  last_pulled_seq: number;
-  error: string | null;
-}
-
 export interface SyncReport {
   pushed: number;
   pulled: number;
@@ -279,6 +265,19 @@ export const api = {
   listSyncProfiles: () => invoke("list_sync_profiles"),
   setSyncProfile: (wsId: string, args: { server_url: string; token?: string; space_id?: string; email?: string }) =>
     invoke("set_sync_profile", { wsId, serverUrl: args.server_url, token: args.token, spaceId: args.space_id, email: args.email }),
+  /** P6.1「每空间开关」：只切换附件**字节**同步。
+   *  ⚠️ 刻意独立成命令：`setSyncProfile` 对未传字段是"清空"语义，用它翻转开关会清掉凭证。 */
+  setSyncAttachments: (wsId: string, enabled: boolean) => invoke("set_sync_attachments", { wsId, enabled }),
+  /** P6.3「按需取字节」：用户主动下载单件附件（返回落盘字节数）。
+   *  复用同步那条下载实现，且**不受 C1 预算闸门约束**——显式操作照做。 */
+  downloadAttachment: (wsId: string, hash: string) => invoke("download_attachment", { wsId, hash }),
+  /** C1 预算刹车（2026-09-15）：磁盘余量下限 / 单文件阈值 / 本轮总量上限 / 仅 Wi-Fi。
+   *  ⚠️ `setSyncBudget` 回显的是**夹取后**的值（磁盘余量下限不可关）⇒ 界面应当用返回值刷新自己。 */
+  getSyncBudget: () => invoke("get_sync_budget"),
+  setSyncBudget: (budget: SyncBudget) => invoke("set_sync_budget", { budget }),
+  /** C2 网络闸门：Android 上真查，其它平台 `"n/a"`（闸门不适用）。
+   *  ⚠️ `"unknown"` = 不确定 ⇒ 调用方**不要**自动拉取；`"n/a"` = 不适用 ⇒ **不要**拦。 */
+  networkType: () => invoke("network_type"),
   syncWorkspace: async (wsId: string) => {
     const r = await invoke("sync_workspace", { wsId });
     emitSyncCompleted(r ? [r] : []);
@@ -388,6 +387,9 @@ export const api = {
     invoke("fetch_bookmark_metadata", { url }),
   copyAttachment: (hash: string, destPath: string) =>
     invoke("copy_attachment", { hash, destPath }),
+  /** P6.2：**盘上真实有的**附件 hash（走附件目录，不是数据库）。
+   *  用来把"数据库里有行、盘上没字节"如实标成「未下载」。 */
+  listAttachmentHashes: () => invoke("list_attachment_hashes"),
   // 附件导入同样是宿主行为：导完之后播报一次（`import.finished`，带份数与页）。
   // 只有宿主界面会走这条路径（能力注册表里没有"插件导入附件"这项），所以不存在
   // "插件命令跑到一半又触发别的插件"的嵌套——将来若加了这种能力，这里要重新想。

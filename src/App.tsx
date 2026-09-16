@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { PageTree } from "./components/PageTree";
+import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
 import { TitleBar } from "./components/TitleBar";
 import { useWindowChrome, applyDecorations } from "./store/windowChrome";
@@ -45,6 +46,8 @@ import { Editor } from "./editor/Editor";
 import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
+import { useSyncProgress } from "./hooks/useSyncProgress";
+import { shouldAutoSyncNow } from "./lib/syncGate";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
@@ -70,6 +73,7 @@ import { usePropertyUiStore } from "./store/propertyUi";
 import { toast } from "./store/toast";
 import { platform } from "./lib/platform";
 import { useAuth } from "./store/auth";
+import { withSyncStatus } from "./store/syncStatus";
 import "./App.css";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
@@ -353,10 +357,23 @@ function NoteEditor({ pageId }: { pageId: string }) {
       busy = true;
       (async () => {
         try {
+          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了
+          // `useAutoSync` 里那道检查——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
+          // 判据只有一处实现，见 `lib/syncGate.ts`。
+          if (!(await shouldAutoSyncNow())) return;
           const profiles = await api.listSyncProfiles();
           const bound = (profiles || []).filter((p: any) => p.server_url && p.space_id);
           if (bound.length) {
-            await Promise.all(bound.map((p: any) => api.syncWorkspace(p.ws_id).catch(() => null)));
+            // P1：与 `useAutoSync` 同理——**自动同步必须配对 begin/end**
+            // （`withSyncStatus` 保证），否则 Rust 侧的附件进度事件会把 store 置成
+            // "正在同步"且没人收尾，面板就永远停在"正在同步…"（真机实测过）。
+            await withSyncStatus("正在自动同步…", () =>
+              Promise.all(
+                bound.map((p: any) =>
+                  api.syncWorkspace(p.ws_id).catch(() => null),
+                ),
+              ),
+            );
             await loadPages();
           }
         } catch {
@@ -638,6 +655,8 @@ function AppShell() {
   useAutoSync();
   usePresence();
   useSyncStream();
+  // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
+  useSyncProgress();
   const isMobile = useMobile();
   // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
@@ -762,6 +781,15 @@ function AppShell() {
           >
             <MenuIcon width={18} height={18} />
           </button>
+        )}
+        {/* 手机上**整个顶栏不渲染**（`TitleBar` 在 `!desktop` 时 return null），于是桌面那个
+            `.titlebar-sync` 根本不存在，同步入口只剩"侧栏抽屉 → 同步"这一条（要开抽屉才看得见）。
+            这里在主界面上再放一个：与「展开工具栏」并排、1 次点击可达；窄屏下面板自己会变成
+            底部弹层（`usePopover` 的 `is-sheet`）。侧栏抽屉里那个仍然保留（两处入口互不影响）。 */}
+        {isMobile && !railOpen && (
+          <div className="mobile-sync-slot">
+            <SyncPanel />
+          </div>
         )}
       {pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>

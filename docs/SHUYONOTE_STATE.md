@@ -37,13 +37,30 @@
   且 `targetSdk = 36` 下 Android 15+ **强制 edge-to-edge** ⇒ 必须自己消费 window insets；
   edge-to-edge 下 `adjustResize` 空转（`innerHeight` / `visualViewport.height` 都不变）
   ⇒ **web 层根本察觉不到键盘**。详见 [MOBILE.md](MOBILE.md) §4.2 与 `CHANGELOG.md` 的 `[Unreleased]`。
-- **⚠️ 移动端真机复验未完成**（手机中途从 USB 掉了）：四项待验 = inset 是否真送进网页（`--sat` 应为 41）/
-  顶部 41 CSS px 死区是否恢复（**必须 `adb shell input tap`**，禁用 CDP 合成触摸）/ 返回键三层 + 栈空才退出 /
-  键盘 `--kb`。复验入口、"新包已生效"的判据见 `SESSION_CONTINUE.md` §12.5。
+- **Android 真机复验：已完成两轮，第三轮（本轮两个新 bug 的验收）待插回手机**
+  （2026-09-15，Mate 40 / Android 12 / 自检包签名与正式密钥一致，升级不丢数据）：
+  - 第一轮：inset 桥（`--sat` = 41）/ 顶部死区 / 返回键三层 / 软键盘 `--kb` / 横屏裁切 → **全部通过**（必须 `adb shell input tap`，CDP 合成触摸会绕过 SystemUI 假成功）。
+  - 第二轮：窄屏浮层几何 + 返回栈，用自造**空间包**（`tmp/fixture/make-space.mjs`）在真机上造出**名字与 MIME 都正确**的附件当素材 → 文件预览几何 / 文件预览返回键 / PDF 返回键 **三项从"无法判定"转为通过**。
+  - **本轮又抓出两个"整个功能不可用"**（都已修 + CI 绿 + 已出签名 APK，**真机行为验收已做**）：
+    ① 手机上**保存到用户选的位置全部失败**（导出空间/导出备份/下载附件/导出 HTML/模板/标注副本；
+    真机红字 `Read-only file system`）——根因 `content://` URI 被当路径用，修法见 `save_target.rs`；
+    **真机已验：导出空间 15,870 B（含 `shuyonote.db` + 两个附件）、导出备份 220,743 B（含 `meta.db` + 3 个空间库 + 附件）、下载附件 9,582 B 且 sha256 与内容哈希逐字节一致**（修前那个是 0 字节）；
+    ② 手机上**打开任何 PDF 都失败**（真机 `Promise.withResolvers is not a function`）——根因设备系统
+    WebView 停在 **Chrome 114** 而 pdf.js 4.8 要 119+，修法见 `public/es-polyfills.js` + `pdfjs-worker-shim.mjs`；
+    **真机已验：`第 1 / 4 页`、正文渲染成页面图、控制台日志来自真 worker（无 `Setting up fake worker`）**。
+    选择器导入**丢附件名与 MIME**也已真机验证：用唯一名素材（`probe-zhenji.png` / `probe-pdf.pdf`）
+    导入后列表显示的就是**系统给的原名** + 🖼/📕 图标，点开进内置预览（`naturalWidth=256`）/ 内置 PDF 阅读器。
+  - **待办（本轮新发现）**：窄屏下 PDF 阅读器**内部分栏**没适配（目录栏 240 常驻、页面图右溢出屏幕）
+    ——"能打开"≠"能看"，改法与 §4.1 同一条纪律，见 [MOBILE.md](MOBILE.md) §4.3.4；
+    另一个未做真机验证的小项：手机上装 **zip 插件包**（判据已改对，但本机环境造不出选择器可见的
+    插件包：`adb push` 进去的文件没有 MediaStore 条目，见 §4.3.3）。
+  - 验收脚本与素材都在 `tmp/`（`fixture/make-space.mjs`、`savecheck.ps1`、`fetch-apk.ps1`、`reverify/`）；
+    **`gen/android` 必须重新 `pnpm tauri android init`**（本机那份是陈旧的，`--check` 会红，
+    现在它还会与 `scripts/vendor/` 逐字节比对）。
 - **第一批一方插件 + 一处能力缺口**（`dev`，未发版）：`weekly-review` / `page-to-md` / `eye-care-theme` / `high-contrast-theme`（都能直接装来用，均进回归测试）；写它们时撞出并修掉 `blocks.list` 省略 pageId 不回退当前页（此前「能写当前页、读不到当前页」）；记下相邻缺口：插件拿不到当前页 id/标题（候选 `api.page.meta()`，等第二个插件也撞到再动）。
 - **信任面收口：插件更新后声明扩张必须重新确认**（`dev`，未发版）：启用时记授权快照，新增权限/事件后**后端拒绝执行 + 停止事件派发**，直到用户在插件管理里点「重新确认」；存量插件首次扫描补记一次；只跟踪启用中的插件。作者文档 §4.5.1 记了这条对发版的影响。
 - **v1.85.1 热修复：命令面板白屏**（2026-09-10）：1.85.0 起按 `Ctrl+K` 会抛 React 错误（生产为 Minified React error #310）并让**整棵树被卸载成白屏**——`CommandPalette` 把参数表单的三个 `useState` 放在了 `if (!open) return null` 之后（hooks 不能有条件调用），而它挂在 App 根部、上面没有 ErrorBoundary。修复 = hooks 移到早退之前；补上**渲染级**回归测试 `src/components/commandPaletteHooks.test.ts`（修复前必失败）。**教训**：既有验证全都不渲染 React 组件，主路径可以一直炸而全套检查全绿——所以随后补了两层：根部错误边界（`main.tsx` 的整屏兜底 + `PanelBoundary` 逐浮层隔离，`src/components/errorBoundary.test.ts` 钉住"边界外的界面照常可用"），以及开发指南里"组件/hooks 类改动要有渲染级测试"这一条。
-- **E2 口令锁 UX + 同一类 hooks 错的第二例**（2026-09-16，`feat/vault-lock-ux`）：给锁定屏补"忘记口令"出路与开启加密的硬确认时，先发现**锁定屏根本到不了用户眼前**——`App` 里的加密闸门是一句**排在七八个 hooks 之前**的早退（与 1.85.1 白屏**同一类**错：hooks 不能有条件地少跑），加密安装**重启即抛 `Rendered fewer hooks than expected`**，被根部 ErrorBoundary 接住 ⇒ 用户看到崩溃屏。E1 当初只验了设置页开关、没验"重启"，所以这道屏一次都没出现过。修法 = 闸门与外壳**拆成两个组件**（`App` 只有一个 hook，锁定态外壳**不挂载**）+ 新增状态中枢 `src/lib/vault.ts`（原来 App 与设置页各持一份副本，导致"设置页点立即锁定界面不切屏"）。判据 `src/vaultGate.test.ts`（渲染**真 App**）+ `src/components/lockScreen.test.ts`，都做过变异验证。**真机复验未做**。教训与 1.85.1 一致且再次成立：**渲染级测试是这类错的唯一有效门禁**。
+- **E2 口令锁 UX + 同一类 hooks 错的第二例**（2026-09-16，`feat/vault-lock-ux`）：给锁定屏补"忘记口令"出路与开启加密的硬确认时，先发现**锁定屏根本到不了用户眼前**——`App` 里的加密闸门是一句**排在七八个 hooks 之前**的早退（与 1.85.1 白屏**同一类**错：hooks 不能有条件地少跑），加密安装**重启即抛 `Rendered fewer hooks than expected`**，被根部 ErrorBoundary 接住 ⇒ 用户看到崩溃屏。E1 当初只验了设置页开关、没验"重启"，所以这道屏一次都没出现过。修法 = 闸门与外壳**拆成两个组件**（`App` 只有一个 hook，锁定态外壳**不挂载**）+ 新增状态中枢 `src/lib/vault.ts`（原来 App 与设置页各持一份副本，导致"设置页点立即锁定界面不切屏"）。判据 `src/vaultGate.test.ts`（渲染**真 App**）+ `src/components/lockScreen.test.ts`，都做过变异验证；并新增 `scripts/check-hook-order.mjs`（`pnpm check:hook-order`，已接进 `pnpm build`）把这类写法钉死。当天已随 `merge: dev 合入 main`（`62bc733`）进 `main`——合并时解掉五处冲突，其中 `scripts/lib/releaseArtifacts.mjs` 是**语义冲突**：main 的"universal 要占两个 darwin 键"与 dev 的"darwin 清单要指向 `.app.tar.gz`"互补，已合成一套（universal 的 `.app.tar.gz` 同时喂两个键；两个架构各自的 dmg + 无名 `.app.tar.gz` 仍照旧报错），两边判据都在。**已随 v1.91.3 发出**（2026-09-16：tag `v1.91.3` → GitHub Actions 出三平台包 + Android 发版件 → 发到 gitcode 更新通道，`latest.json` 已是 1.91.3，`check:release-state` 14 项通过 + GitHub Release 指纹互证通过；APK 证书指纹 `6ee89e6f…` 与正式 keystore 一致）。**真机复验仍未做**（手机不在本机，且这条路径要在真机上跑"开启加密 → 重启 → 解锁"）。注意两条环境事实：这台机器的系统 DNS 把 `api.github.com` 解析到假 IP（要钉 IP）、出方向 22 端口被封 ⇒ **国内主站 `shuyo.cn/app` 本次没上传，仍是 1.91.2**（Pages 入口已随 main 自动到 1.91.3；两个入口当前**不是同一版本**）。教训与 1.85.1 一致且再次成立：**渲染级测试是这类错的唯一有效门禁**。
 - **多账号聚合邮箱**（v1.83，**仅桌面版**——移动端不提供，见 [MOBILE.md](MOBILE.md) §2.1）：多账号 IMAP 聚合收件箱 + 存为笔记 + AI 总结 + 发件人标签 + 按月直达 + 设置多账号管理/测试连接。
 - **附件哈希前缀分桶存储**（v1.84.2）：附件从单目录平铺改为 `attachments/<hash前2>/<hash>.<ext>`，旧数据双读兼容，服务端空间桶内再按哈希前 2 字符分片。
 - **同步一致性加固（seq-LWW + dirty 优先本地）**（v1.84.3）：根治团队多人同改时钟漂移丢改动。
@@ -126,7 +143,7 @@
        /恢复、插件包解压、空间包导入导出**全线**受影响。已统一收口到
        `src-tauri/src/tempdir.rs`（临时根 = 应用缓存目录，启动时定向），见 [MOBILE.md](MOBILE.md) §2.2.1。
    - **仍未做 / 未验**：② 的**真机点一次**、逐条真机验收清单
-     （附件 / PDF / 离线 OCR / 加密锁定 / 深链 / 同步 / 备份 / 小屏横屏；**其中「深链」这一项已真机验证**，见上）。
+     （附件 / PDF / 本地 OCR（语言包首次需联网一次）/ 加密锁定 / 深链 / 同步 / 备份 / 小屏横屏；**其中「深链」这一项已真机验证**，见上）。
      真机验收能用哪些手段、有哪些边界，见 [MOBILE.md](MOBILE.md) §2.3（别重复踩盲点坐标那个坑）。
       上线计划见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`（公开仓已不留副本）。
     - **壳适配层的真机复验也没做完**（2026-09-15，手机中途从 USB 掉了）：四项判据（inset 是否真送进网页 /
@@ -138,5 +155,17 @@
 6. **数友社区上线当天（不等 M11.13）**：开「模板 / 主题 / 插件配方」分类 + 发布 `plugin-index.json` 规范 + 招募 3 位共创作者；**不做**应用内市场 UI——见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯，前三级为惰性数据可立即开放）。
    - **卡片阅读量已上线（v0.70.7，2026-09-15）**：首页与标签页的帖子卡片 meta 行，在点赞旁补了 `eye` 图标 + `p.views`（此前只有详情页与精选页有浏览数）。线上验收不是"页面上有数字就算"：① 结构判定——首页 16 张卡、标签页 1 张卡，**每张**卡片的 meta 行里点赞与浏览图标同时存在（`tmp/fixture/verify-community-views.mjs`）；② 活数据判定——先读某卡浏览量，**打开该帖详情**（服务端在此 +1）再回读同一张卡，`34 → 35`（`tmp/fixture/verify-community-views-live.mjs`）。两条都过才算数。
 7. **插件分发（M11.11）已随 v1.88.0 / v1.89.0 发出**：**a** = `plugin-index.json` 索引 + 索引签名（minisign）+ zip/URL 安装（先校验后落盘：https 白名单 / 体积上限 / `sha256` / 临时目录解包 / manifest 校验）+ 前端「从索引安装（给 URL）」；**升级 / 重装 / 拒绝降级**（先备份后动手，失败回滚，不动用户的启用状态与授权快照）；**b 的技术核心** = 离线撤回列表（索引说过的"这个版本不该再用"落库，运行与安装两条路都拦，离线也拦得住，用户可显式「仍然使用」）+ 发布者公钥固定（TOFU：首次装成功后固定，换 key 一律拒绝并摆出新旧指纹，确认后可「信任新密钥并安装」）。v1.89.0 又补上：**多源订阅**（一组索引可增删、一次检查全部、逐条记结果）、**按发布者密钥撤回**（`revokedKeys`：用它签的条目不可安装、已装插件运行被拦、安装前也查；离线生效，用户可显式「仍然使用」）、**事实清单**（来源/体积/声明/静态扫描 + **内容指纹**：装完之后那份文件有没有被改过——只摆事实、不评分）、以及[插件开发者政策](plugin-policy.md)与 SECURITY 的插件一节。**仍未做**：市场 UI 的搜索/浏览（c）、评分卡（有意做成事实清单，不做评分）、Windows 的 RSS 与内核硬上限；闸门不变（作者文档 + ≥3 真实第三方插件）。M11.10 UI 插件 / M23.5 协同 / 移动端（M6）：已评估延后（M11.10 闸门=声明式贡献面穷尽）。
+
+8. **跨机器多端同步测试（Windows ⇄ Mac，服务器放 Mac）—— ✅ 2026-09-15 已实测通过**：
+   会合协议 `scripts/sync-multidevice.mjs`（两端各跑一次、不需要约定先后：写标记 → 等对方 →
+   **互改对方的页**再等回改 ⇒ 证明"就地更新也双向到达"，不只是"新页能看见"）。
+   **实测结果**：Mac `{"role":"mac",…,"pass":6,"fail":0}`、Windows `{"role":"windows",…,"pass":6,"fail":0}`，
+   两端 `peerSeen`/`bidirectional` 均 `true`（账号制：各自注册、Windows 建空间并把 Mac 加为 editor，
+   无任何密钥跨机器传递）。顺带确认两台机器**在同一网段**（直连与隧道**两条都通**）。
+   手册 [sync-multidevice-test.md](sync-multidevice-test.md) 的 §0.5 记了完整结论与仍缺的一格
+   （**真客户端 GUI 那一步**没人点，Mac 侧无 GUI 自动化）。
+   凭据来源＝服务端 K1 设备密钥（schema v14，可签发/作废、只存指纹）+ 客户端 K2（粘贴密钥即可，
+   无需注册）；跨网段时用 SSH 反向隧道（公网服务器回环 + 8799）。交接与回报区在服务端仓
+   `docs/SESSION_CONTINUE.md` §13；往来信道是**信箱仓 `ShuyoNote-collab`**（不是这份文档）。
 
 > 注：功能明细 / 里程碑总览以客户端 `docs/roadmap.md` + `docs/README.md`（文档索引）为准；本文件只作"新会话现状种子"，重开会话先读它再读 roadmap/architecture。

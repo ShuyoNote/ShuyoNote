@@ -49,26 +49,33 @@ export function isUpdaterArchive(name) {
   return /\.app\.tar\.gz$/i.test(name);
 }
 
-/** 条目 → 平台键列表（**可能不止一个**：universal 包一物两键）。 */
+/**
+ * 条目 → 平台键（**全部**）：优先用 `resolveUpdaterArchiveKeys` 解析好的键
+ * （`.app.tar.gz` 名字里没有架构，自己判不出来）。
+ */
 function keysOf(e) {
-  return e.platformKeys ?? platformKeysFor(e.name);
+  if (e.platformKeys) return e.platformKeys;
+  if (e.platformKey) return [e.platformKey];
+  return platformKeysFor(e.name);
+}
+
+/** 单键视图（打印说明用）。判据请用 `keysOf`。 */
+function keyOf(e) {
+  return keysOf(e)[0] ?? null;
 }
 
 /**
  * `.app.tar.gz` 的文件名里**既没有版本号也没有架构**，所以它的平台键只能从本次构建的
  * **dmg** 推出来。推不出来就报错，不许猜（猜错 = 把更新推给错误的架构）。
  *
- * 三种情况分别处理：
- *   ① 名字里带架构（`…aarch64.app.tar.gz`）⇒ 直接用它；
- *   ② 本次**只有一个 dmg** ⇒ 把那个 dmg 的**全部**键给它（universal dmg 是两个键，
- *      于是这一个 `.app.tar.gz` 同时占 `darwin-aarch64` 与 `darwin-x86_64`：同一个 url、同一份签名）；
- *   ③ 有多个 dmg 又没有任何架构线索 ⇒ 报错（例如分别出了 aarch64 与 x64 两个 dmg，
- *      却只有一个不带架构的 `.app.tar.gz`——无法判断它属于哪一边）。
+ * universal 的例外：本次只有一个 dmg、而它自己就同时属于两个键（名字带 universal）时，
+ * 这个 `.app.tar.gz` 同样是 universal 的 ⇒ **两个键都喂它**，而不是只喂一个。
+ * （只喂一个的后果是另一半用户收不到更新，且不报错——正是这条要防的。）
  */
 export function resolveUpdaterArchiveKeys(entries) {
   const problems = [];
-  const dmgs = entries.filter((e) => /\.dmg$/i.test(e.name));
-  const dmgKeys = new Set(dmgs.flatMap((e) => platformKeysFor(e.name)));
+  const dmgEntries = entries.filter((e) => /\.dmg$/i.test(e.name));
+  const darwinKeys = new Set(dmgEntries.flatMap((e) => platformKeysFor(e.name)));
   for (const e of entries) {
     if (!isUpdaterArchive(e.name)) continue;
     const hinted = platformKeysFor(e.name);
@@ -76,22 +83,26 @@ export function resolveUpdaterArchiveKeys(entries) {
       e.platformKeys = hinted;
       continue;
     }
-    if (dmgs.length === 1) {
-      e.platformKeys = [...dmgKeys];
+    if (darwinKeys.size === 1) {
+      e.platformKeys = [...darwinKeys];
+      continue;
+    }
+    // 只有一个 dmg、但它自己占了多个键（universal）⇒ 更新通道产物也是 universal 的。
+    if (dmgEntries.length === 1 && darwinKeys.size > 1) {
+      e.platformKeys = [...darwinKeys];
       continue;
     }
     problems.push(
-      dmgs.length === 0
+      darwinKeys.size === 0
         ? `无法判定 ${e.name} 属于哪个 macOS 架构：本次没有同版本的 dmg 可作参照（.app.tar.gz 的名字里不带架构）`
-        : `无法判定 ${e.name} 属于哪个 macOS 架构：本次有 ${dmgs.length} 个 dmg（${dmgs.map((d) => d.name).join("、")}）`,
+        : `无法判定 ${e.name} 属于哪个 macOS 架构：本次有 ${darwinKeys.size} 个 dmg（${[...darwinKeys].join("、")}）`,
     );
   }
 
   // 有 dmg 却没有 `.app.tar.gz` = macOS 的自动更新必然失效（更新器只认 .app.tar.gz，
   // 见 isUpdaterArchive）。这种缺失在发布时毫无征兆、只在用户端表现为"能下载装不上"，所以硬失败。
-  // 注意 universal 的 dmg 会带来**两个**键，两个键都必须被覆盖。
   const covered = new Set(entries.filter((e) => isUpdaterArchive(e.name)).flatMap((e) => keysOf(e)));
-  for (const key of dmgKeys) {
+  for (const key of darwinKeys) {
     if (!covered.has(key)) {
       problems.push(
         `缺少 macOS 更新通道产物：${key} 只有 dmg 而没有 .app.tar.gz —— ` +
@@ -123,11 +134,22 @@ export function isApk(name) {
   return /\.apk$/i.test(name);
 }
 
-/** 文件名后缀 → 更新器清单里的平台键（**可能不止一个**：universal 包一物两键）。 */
+/**
+ * 文件名后缀 → 更新器清单里的平台键（**可能不止一个**）。
+ *
+ * 为什么必须是数组：macOS 的 **universal** 产物（`--target universal-apple-darwin`，
+ * 名字里带 `universal`）在 Intel 与 Apple Silicon 上都能跑。若只归到一个 darwin 键，
+ * 清单里就**没有**另一个键 ⇒ 那半边用户**一条更新都收不到**（更新器按平台键找条目，
+ * 找不到就是"无更新"，不报错、不提示）。所以 universal 要同时占两个键（同一个 url / 同一个签名）。
+ *
+ * 这条与 `.app.tar.gz` 那套是配套的：darwin 的清单**指向** `.app.tar.gz`（见 isUpdaterArchive），
+ * 而它的架构要由同批 dmg 推（见 resolveUpdaterArchiveKeys）——universal 构建下
+ * dmg 同时占两个键，那个 `.app.tar.gz` 也就同时喂给两个键。
+ */
 export function platformKeysFor(name) {
   if (/\.(exe|msi)$/i.test(name)) return ["windows-x86_64"];
-  // `.app.tar.gz` 要在 dmg 之前判（两者都是 darwin）。名字里带架构就用，不带返回空数组，
-  // 由 `resolveUpdaterArchiveKeys` 从同批次的 dmg 推。
+  // `.app.tar.gz` 要在 dmg 之前判（两者都是 darwin）。名字里带架构就用，
+  // 不带就返回空数组，由 `resolveUpdaterArchiveKeys` 从同批次的 dmg 推。
   if (isUpdaterArchive(name)) {
     if (/x86_64|x64|amd64/i.test(name)) return ["darwin-x86_64"];
     if (/aarch64|arm64/i.test(name)) return ["darwin-aarch64"];
@@ -135,9 +157,6 @@ export function platformKeysFor(name) {
     return [];
   }
   if (/\.dmg$/i.test(name)) {
-    // universal 的 dmg（`tauri build --target universal-apple-darwin` 产出 `…_universal.dmg`）
-    // 在 Intel 与 Apple Silicon 上都能跑 ⇒ **两个键都要占**。只归一个键的后果是：
-    // 另一架构的用户"检查更新什么都不发生"，且不报任何错（更新器按平台键找条目）。
     if (/universal/i.test(name)) return ["darwin-aarch64", "darwin-x86_64"];
     return [/aarch64|arm64/i.test(name) ? "darwin-aarch64" : "darwin-x86_64"];
   }
@@ -148,7 +167,10 @@ export function platformKeysFor(name) {
   return [];
 }
 
-/** 主键（既有调用点、说明文字用）：取平台键列表的第一个。 */
+/**
+ * 单键视图：取第一个键（**universal 的 dmg 这里给 `darwin-aarch64`**，与旧行为一致）。
+ * 需要"这个产物属于哪些平台"时请用 `platformKeysFor`——只取一个键会让 universal 漏掉另一半。
+ */
 export function platformKeyFor(name) {
   return platformKeysFor(name)[0] ?? null;
 }
@@ -199,9 +221,10 @@ export function pickForManifest(list) {
   };
   const sorted = [...list].sort((a, b) => rank(a) - rank(b));
   const pick = sorted[0];
+  const keys = keysOf(pick);
   const note =
     sorted.length > 1
-      ? `${keysOf(pick).join("、")} 的更新清单指向 ${pick.name}（同平台另有 ${sorted.slice(1).map((e) => e.name).join("、")} 也一并发布，但不进清单）`
+      ? `${keys.join("、")} 的更新清单指向 ${pick.name}（同平台另有 ${sorted.slice(1).map((e) => e.name).join("、")} 也一并发布，但不进清单）`
       : null;
   return { pick, note };
 }
@@ -259,6 +282,7 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
 
   // 同平台 + 同扩展名的多个候选 = 真歧义（典型的「上次 run 的同版本残留」）。
   // 注意同平台不同扩展名（.deb 与 .AppImage / .app.tar.gz 与 .dmg）是正常的：都发，清单取偏好靠前那个。
+  // 一个产物占多个键（universal）时，它对**每个**键各算一次候选。
   const groups = new Map();
   for (const e of picked) {
     const keys = keysOf(e);
@@ -266,7 +290,6 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
       problems.push(`无法判定平台类型：${e.name}`);
       continue;
     }
-    // 一个产物可能占**多个**平台键（universal 的 dmg / .app.tar.gz）⇒ 每个键下都要归一次。
     for (const key of keys) {
       const k = `${key}\u0000${extensionOf(e.name)}`;
       if (!groups.has(k)) groups.set(k, []);
@@ -298,8 +321,8 @@ export function selectArtifacts({ entries, version, explicit = [] }) {
 export function manifestPicks(picked) {
   const groups = new Map();
   for (const e of picked) {
-    // 一个产物可能占**多个**平台键：universal 的 dmg / `.app.tar.gz` ⇒ 两个 darwin 键
-    // 都指向同一个文件（同一 url、同一签名）——这正是 universal 该有的样子。
+    // 一个产物占多个键时（universal 的 dmg / 由 universal dmg 推出的 .app.tar.gz），
+    // **每个键都要有它**——只放一个键就是"另一半用户收不到更新"。
     for (const key of keysOf(e)) {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(e);
@@ -310,7 +333,8 @@ export function manifestPicks(picked) {
   for (const [key, list] of groups) {
     const { pick, note } = pickForManifest(list);
     if (pick) out.set(key, pick);
-    if (note) notes.push(note);
+    // 同一个产物占两个键时说明文字会一字不差地重复，去重后再交给人看。
+    if (note && !notes.includes(note)) notes.push(note);
   }
   return { picks: out, notes };
 }

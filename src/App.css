@@ -1218,7 +1218,16 @@ html[data-platform="win"] .app-body {
   flex-direction: column;
   gap: 12px;
 }
-/* Web 版不支持多设备同步：下面整个面板禁灰、不可交互。 */
+/* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
+ *
+ * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。
+ *
+ * ⚠️ 别把它写成"Web 版是 stub / 没实现"——`web.ts` 的 `sync_now`(:2429) /
+ * `sync_workspace`(:2541) / `syncAttachments`(:896) **都是真实现**（原文那句"不支持"
+ * 与代码相反，2026-09-15 已修）。准确说法是"**不提供**"，理由是**浏览器存储会被系统回收**、
+ * 不适合当唯一副本——`SyncPanel.tsx:502` 那句"Web 版同步受浏览器环境限制"是同一个意思。
+ * 完整说明与三条口径见 `web.ts` 里 `sync_now` 上方那段注释。
+ * ⇒ **别据"不支持 / 没实现"把那段实现当死代码删掉。** */
 .sync-profiles.is-disabled {
   opacity: 0.45;
   filter: grayscale(0.4);
@@ -1522,9 +1531,62 @@ select.sync-input {
   margin-top: 4px;
 }
 
+/* P6.1 每空间「附件同步」开关：说明文字占满左侧、复选框靠右，与设置面板的
+ * .set-row 同构，但收在 sync- 命名空间里，不与设置弹层的布局耦合。 */
+.sync-att {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 2px;
+}
+.sync-att-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sync-att-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+.sync-att .sync-hint {
+  margin-top: 3px;
+}
+.sync-att > input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin: 1px 0 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
 .sync-auto-label { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
 .sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: 12px; }
+
+/* C1 预算刹车 / C2 网络闸门（2026-09-15）：收在 sync- 命名空间里。 */
+.sync-net {
+  margin: 0 0 6px;
+}
+.sync-net > input[type="checkbox"] {
+  margin-top: 1px;
+}
+.sync-budget .sync-budget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sync-budget .sync-budget-row select.sync-input {
+  width: auto;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.sync-budget > .sync-hint {
+  margin-top: 10px;
+}
 .sync-foot {
   display: flex;
   flex-direction: column;
@@ -2681,10 +2743,14 @@ select.sync-input {
   color: var(--text);
 }
 
+/* 版本历史弹层：走 `usePopover`（`position: fixed` + 内联 top/left），与搜索/回收站/同步
+   同一条路——窄屏/矮视口由 usePopover 返回空坐标 + `is-sheet`，交给下面那段
+   `@media (max-width:768px), (max-height:520px)` 铺成底部弹层。
+   ⚠️ 原来是 `position: absolute; right: 0` 锚在工具条按钮上：360×640 实测**左边缘 = −6px**
+   （320px 宽、按钮右边缘离屏左边不足 320px ⇒ 直接越界）。改成 fixed 之后位置由 usePopover
+   按包含块折算的坐标给，窄屏则完全不锚定。 */
 .history-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   width: 320px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -14804,6 +14870,37 @@ p:has(> .editor-drawing-container) {
   font-size: 10px;
   line-height: 1.6;
 }
+/* P6.2「未下载」：**行有、字节不在**（P6.1 关了开关 / 预算刹车跳过 / 还没轮到）。
+ * 与「未整理」同一形状，但要更显眼一档——它表示"这个文件现在打不开"，
+ * 而「未整理」只是分类信息。 */
+.fm-missing-tag {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.6;
+  cursor: help;
+}
+/* P6.3 续：预览里"字节不在本机"那块的手动取回入口（自动取回失败后才出现）。 */
+.fm-preview-fetch {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.fm-preview-fetch:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
 /* Reveal file actions on row hover. */
 .fm-ops-col .fm-file-actions {
   opacity: 0;
@@ -16628,6 +16725,12 @@ p:has(> .editor-drawing-container) {
 .about-update-error {
   color: var(--danger);
   font-size: 12px;
+}
+/* Android 应用内更新：交给系统安装器之后的提示（系统弹窗在应用外，界面里要留一句话）。 */
+.about-update-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .about-update-head {
   display: flex;
@@ -19071,10 +19174,15 @@ p:has(> .editor-drawing-container) {
   .mobile-rail-toggle {
     position: fixed;
     left: 12px;
-    bottom: 18px;
+    /* 与弹层同一条口径：让开底部系统手势区（`--sab`）。**这台设备实测 `--sab = 0`**，
+       所以这条是防御性的（`max(18px, 0 + 12px)` 仍等于 18px）；手势条更高的机型上才有区别。
+       下面那个同步入口同理。 */
+    bottom: max(18px, calc(var(--sab) + 12px));
     z-index: 45;
-    width: 42px;
-    height: 42px;
+    /* 44 是仓库里那条"触屏命中区 ≥44"的口径（原来是 42，差 2px 也是点不中）；
+       与下面同步入口的高度对齐。 */
+    width: 44px;
+    height: 44px;
     display: grid;
     place-items: center;
     padding: 0;
@@ -19088,6 +19196,25 @@ p:has(> .editor-drawing-container) {
   .mobile-rail-toggle:active {
     background: var(--hover);
     color: var(--text);
+  }
+  /* 手机上同步入口的第二处（主界面可见的那个）：与「展开工具栏」并排。
+     为什么需要：手机上 `TitleBar` 整个不渲染 ⇒ 桌面的 `.titlebar-sync` 根本不存在，
+     只剩"侧栏抽屉 → 同步"（要先开抽屉）。这里补一个一次点击可达的入口；
+     按钮本身用 SyncPanel 自己的 `.btn-sync`（含云图标与同步中的脉冲点）。
+     位置：工具栏圆钮是 `left:12px / bottom:18px / 42px`，这里紧挨它右侧。 */
+  .mobile-sync-slot {
+    position: fixed;
+    left: 62px;
+    bottom: max(18px, calc(var(--sab) + 12px));
+    z-index: 45;
+  }
+  .mobile-sync-slot .btn-sync {
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
   }
   /* 浮层遮罩：点它收起竖条（z 高于内容与唤出按钮，低于竖条本身）。 */
   .mobile-rail-backdrop {
@@ -20435,6 +20562,47 @@ body.is-plugin-panel-open .main {
     border-left: none;
   }
 
+  /* ---------- 4b. 文件预览浮层：窄屏整屏（2026-09-15 第三轮） ----------
+     桌面它是"避开左竖条 + 侧栏"的**内容区**浮层
+     （基础规则 `left: calc(--activity-w + --sidebar-w)`）——但**窄屏的侧栏早已收成抽屉**，
+     `--sidebar-w` 却仍是桌面的 240px，于是 360px 视口上 `left` 算成 48 + 240 = **288px**，
+     整个浮层只剩 **72px 宽**（实测 72×640）。这与设置面板的 `min-width:640px` 是**同一类**：
+     "功能不可用，而且不报错"——文件预览在手机上等于打不开。
+     ⚠️ 而且它**骗过了旧的几何断言**：`x 288..360` 的四边**全都在视口里**，
+     所以那一轮 900+ 条断言全绿（见 `verify-mobile-overlays.mjs` 的 (1b)）。
+
+     窄屏按 §4.1.1 走"大面板 → 全屏 + 内部滚动"。让位方式与 `.set-overlay` 一致：
+     **给遮罩加 padding**（遮罩是 `position:fixed`，它不跟着 `.app` 的 padding 走），
+     一处同时管住状态栏 / 手势条 / 软键盘 / 左右安全区。 */
+  .fm-preview-overlay {
+    left: 0;
+    right: 0;
+    /* 基础规则是 `top: var(--titlebar-h)`（自绘标题栏）；窄屏没有标题栏，改由 --sat 让位。 */
+    top: 0;
+    bottom: 0;
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+  }
+  .fm-preview {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+  /* §4.1.2 第 1 条：内容区**唯一**可滚 + 不把滚动惯性传给外层。
+     `.fm-preview-body` 已经是 `flex:1; min-height:0; overflow:auto`，
+     缺的只是那道 `overscroll-behavior`。 */
+  .fm-preview-body {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* §4.1.2 第 3 条：命中区 ≥44×44。图片预览右上角那组（旋转 / 查看原图）
+     桌面上是 32×32，触屏上点不中——它是这一层的主要操作，不只是"装饰按钮"。 */
+  .fm-img-btn,
+  .fm-img-original {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   /* 命令面板：整宽 + 顶部对齐，列表只纵向滚（横向溢出 46~73px 是坐标/宽度算错，
      不是"内容真的更宽"）。 */
   .palette-overlay {
@@ -20540,7 +20708,11 @@ body.is-plugin-panel-open .main {
   .sync-popover,
   .backup-dropdown,
   .space-switcher,
-  .new-menu-dropdown {
+  .new-menu-dropdown,
+  /* 版本历史也走这条（它同样是 usePopover 驱动的锚定浮层，JS 侧窄屏返回空坐标）。
+     带 `.is-sheet` 是为了压过基础规则 `.history-popover`（0,2,0 > 0,1,0）——
+     否则基础规则里的 `position: fixed; width: 320px` 会把它留在"320px 宽的锚定浮层"上。 */
+  .history-popover.is-sheet {
     position: fixed;
     inset: auto 0 0 0;
     left: 0;
@@ -20654,6 +20826,159 @@ body.is-plugin-panel-open .main {
   .formula-editor button,
   .emoji-picker button {
     min-height: 44px;
+  }
+
+  /* ---------------------------------------------------------------------------
+     PDF 阅读器的**内部分栏**（2026-09-15 真机量到的第二个问题：能打开 ≠ 能看）
+
+     症状（360×792 实测）：目录栏 240px 常驻在左、批注栏并排、页面图 x=99/宽 306
+     ⇒ **右边溢出屏幕**，正文被两栏挤在中间看不见。
+
+     改法与 §4.1 那 19 层同一条纪律：窄/矮视口下这两栏**不再是并排的列**，而是
+     **盖在正文上的抽屉**（贴左/贴右、整高、带阴影），默认收起由 JS 负责
+     （`PdfReader` 用 `useMobileOverlayViewport()` 把初始 state 设成 false）。
+     拖拽改宽的把手在抽屉形态下没有意义（宽度由 CSS 定），所以藏掉。
+     ⚠️ 抽屉宽度**故意写在 CSS 里**，所以 `PdfReader` 在浮层视口下必须**不写内联 width**
+     （内联样式优先级更高，会把这里顶掉——两边必须一起改）。
+     --------------------------------------------------------------------------- */
+  .pdf-reader-layout {
+    position: relative;
+  }
+  .pdf-outline-col,
+  .pdf-sidebar-col {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 6;
+    width: min(300px, 86vw);
+    max-width: 86vw;
+    background: var(--bg);
+  }
+  .pdf-outline-col {
+    left: 0;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.2);
+  }
+  .pdf-sidebar-col {
+    right: 0;
+    box-shadow: -2px 0 16px rgba(0, 0, 0, 0.2);
+  }
+  .pdf-outline-resizer,
+  .pdf-sidebar-resizer {
+    display: none;
+  }
+  /* 正文区必须吃掉整宽：两栏已经脱离文档流，不再参与分配。 */
+  .pdf-reader-layout > .pdf-reader-stage-wrap {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  /* ---------------------------------------------------------------------------
+     PDF 阅读器的**头部工具条 / 批注工具行**（同一轮真机量到的第三处）
+
+     实测（360 宽）：头部内容 **730px** 宽，而外层 `.pdf-reader.maximized` 是
+     `overflow: hidden` ⇒ 放大 / 还原窗口 / 批注侧栏 / 对这篇 PDF 提问 / 护眼模式 /
+     导出带批注副本 / **关闭** 整排**被裁在屏外、点不到**；批注工具行同理（489 > 360）。
+     用户只能靠 Android 返回键离开，而屏幕上那个「关闭」其实一直在屏幕外。
+
+     改法：窄/矮视口下这两行**允许换行**（不裁 = 每个按钮都真的能按到），
+     并把「关闭」推到可见的一端；触摸目标补齐到 44×44（这一层原来是 28×28，
+     与 §4.1 那条"命中区 ≥44"是同一条规矩，只是当初没覆盖到阅读器内部）。
+     --------------------------------------------------------------------------- */
+  .pdf-reader-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  /* ---------------------------------------------------------------------------
+     浮层形态的阅读器**必须自己让开系统栏**（同一轮真机量到的第四处）
+
+     `.pdf-reader-overlay` 是 `position: fixed; inset: 0`，于是头部第一行落在
+     0..41 CSS px 那一条带里——而**那一条带的触摸按设计归 SystemUI**（§4.2.1）。
+     真机实证：目录开关的中心在设备 y=96（状态栏 0..123 之内），
+     `adb shell input tap` 打上去**什么都没发生**；而"目录栏默认收起"是我这一轮刚做的，
+     于是"手机上根本打不开目录"。
+
+     内联形态（横屏，挂在 `.main` 下）由外壳的 padding 让位，**不能**重复加，所以用
+     `:not()` 把它排除掉。变量用的是全仓一致那一套（`--sat/--sar/--sab/--sal/--kb`）。
+     --------------------------------------------------------------------------- */
+  .pdf-reader-overlay:not(.main > .pdf-reader-overlay) {
+    padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
+  }
+  /* ⚠️ 只让 head 换行**不够**：它里面的 `.pdf-reader-controls` 自己是个 603px 宽的 flex 行
+     （真机实测），换行只能在"子元素"这一级发生 ⇒ 那一整块照样溢出、右边仍被裁。
+     内层容器也要允许换行，并让标题允许被压缩（原来 `flex:1` 会先吃掉 270px）。 */
+  .pdf-reader-controls {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    min-width: 0;
+  }
+  .pdf-reader-name {
+    flex: 0 1 auto;
+    max-width: 42%;
+  }
+  .pdf-reader-close {
+    margin-left: auto;
+  }
+  .pdf-annot-toolbar,
+  .pdf-annot-tools,
+  .pdf-annot-actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .pdf-reader-head button,
+  .pdf-annot-toolbar button,
+  .pdf-outline button,
+  .pdf-sidebar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   横屏（**矮**视口专有）：PDF 阅读器的头部/批注行不许换行，改成单行横向滚动
+
+   上面那段"允许换行"是为了"不把按钮裁在屏外"（纵屏必备）。但到了横屏就走向反面：
+   12 + 6 个 44px 的按钮一换行，光这两行就吃掉整个高度——真机实测（792×360）
+
+     .pdf-reader-head        215px
+     .pdf-annot-toolbar      157px
+     .pdf-reader 总高        319px   ⇒ 正文区只剩 40px，页面图 y=429 **整页在屏外**
+
+   所以矮视口另给一套：**单行 + 横向滚动**（每个按钮仍然 44px、都摸得到，只是要滑一下），
+   关闭按钮 sticky 贴右端常驻（它是"离开"的唯一入口，不能滑走）。
+   为什么用"矮"而不是"窄"：窄而高的竖屏有足够高度换行，换行比横向滑动更好用。
+   --------------------------------------------------------------------------- */
+@media (max-height: 520px) {
+  .pdf-reader-head,
+  .pdf-reader-controls,
+  .pdf-annot-toolbar,
+  .pdf-annot-tools,
+  .pdf-annot-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .pdf-reader-head::-webkit-scrollbar,
+  .pdf-reader-controls::-webkit-scrollbar,
+  .pdf-annot-toolbar::-webkit-scrollbar,
+  .pdf-annot-tools::-webkit-scrollbar,
+  .pdf-annot-actions::-webkit-scrollbar {
+    display: none;
+  }
+  .pdf-reader-name {
+    max-width: 30%;
+  }
+  .pdf-reader-close {
+    position: sticky;
+    right: 0;
+    margin-left: auto;
+    background: var(--bg);
+  }
+  /* 批注工具行同理：单行滚动，别把正文挤没。 */
+  .pdf-annot-tools,
+  .pdf-annot-actions {
+    flex-shrink: 0;
   }
 }
 

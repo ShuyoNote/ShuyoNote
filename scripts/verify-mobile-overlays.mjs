@@ -76,6 +76,11 @@ const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
 
 let pass = 0;
 let fail = 0;
+// PDF 内部分栏的 CSS 级断言只需要跑一次（样式表与视口无关），但要在**已经进过窄屏视口**
+// 的页面里查（那段媒体查询只在命中时才出现在 cssRules 里）。
+let pdfCssChecked = false;
+// 手机上的同步入口同理：只在一个窄屏视口里查一次就够（它是个固定定位的小控件）。
+let mobileSyncChecked = false;
 const notes = [];
 const ok = (cond, msg) => {
   if (cond) {
@@ -123,27 +128,44 @@ async function safeEval(page, fn, ...args) {
  * 每一层：怎么打开、根元素、盒子元素。
  * `optional` 的那些需要一个已经打开的页面 / 更深一层的入口，取不到触发器时
  * 记一条 note 并跳过（不算通过、也不算失败）——它们是**未验证项**，会写在报告里。
+ *
+ * `fullscreen: true` = §4.1.1 分类里的「**全屏 + 内部滚动**」那一族（大面板 / 右栏抽屉）：
+ * 该族必须**真的铺满**——遮罩铺满视口、盒子铺满遮罩内容盒。
+ * ⚠️ 这一族此前只有"四边在视口内"那条断言，而它**挡不住被压窄**（72px 宽的
+ * `.fm-preview-overlay` 四边也都在视口里、912 条断言全绿）。见下面 (1b)。
+ * 底部弹层那一族（`sheet: true`）**不标**：它们本来就只在底部、本来就不该铺满。
  */
 const OVERLAYS = [
-  { id: "settings", label: "设置面板", root: ".set-overlay", box: ".set-dialog", sheet: false },
+  { id: "settings", label: "设置面板", root: ".set-overlay", box: ".set-dialog", sheet: false, fullscreen: true },
   { id: "confirm", label: "确认框", root: ".confirm-overlay", box: ".confirm-box", sheet: true },
   { id: "input", label: "输入框", root: ".confirm-overlay", box: ".confirm-box", sheet: true },
   { id: "search", label: "搜索浮层", root: ".search-popover", box: ".search-popover", sheet: true, sheetClass: true },
   { id: "trash", label: "回收站", root: ".trash-popover", box: ".trash-popover", sheet: true, sheetClass: true },
   { id: "sync", label: "同步面板", root: ".sync-popover", box: ".sync-popover", sheet: true, sheetClass: true },
-  { id: "pluginManager", label: "插件管理", root: ".plugin-manager-overlay", box: ".plugin-manager", sheet: false },
-  { id: "storage", label: "存储 / 空间管理", root: ".stg-overlay", box: ".stg-panel", sheet: false, optional: true },
-  { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false },
+  { id: "pluginManager", label: "插件管理", root: ".plugin-manager-overlay", box: ".plugin-manager", sheet: false, fullscreen: true },
+  { id: "storage", label: "存储 / 空间管理", root: ".stg-overlay", box: ".stg-panel", sheet: false, optional: true, fullscreen: true },
+  { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false, fullscreen: true },
   { id: "shortcuts", label: "快捷键", root: ".shortcuts-overlay", box: ".shortcuts", sheet: true },
   { id: "about", label: "关于", root: ".shortcuts-overlay", box: ".about", sheet: true },
   { id: "communitySave", label: "社区保存", root: ".community-save-overlay", box: ".community-save-box", sheet: true },
-  { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false },
+  { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false, fullscreen: true },
   { id: "emoji", label: "图标选择器", root: ".emoji-picker-overlay", box: ".emoji-picker", sheet: true },
-  { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false },
-  { id: "ai", label: "AI 助手", root: ".ai-panel", box: ".ai-panel", sheet: false },
-  { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false },
+  { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false, fullscreen: true },
+  { id: "ai", label: "AI 助手", root: ".ai-panel", box: ".ai-panel", sheet: false, fullscreen: true },
+  { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false, fullscreen: true },
   { id: "markdownImport", label: "Markdown 导入", root: ".markdown-import-overlay", box: ".markdown-import", sheet: true, optional: true },
   { id: "cover", label: "题头图", root: ".cover-overlay", box: ".cover-picker", sheet: true, optional: true },
+  // 2026-09-15 第二轮：`.history-popover` 原来是 `position:absolute` 的 320px 锚定浮层，
+  // 窄屏**没走** §4.1.3 的 is-sheet 形态 ⇒ 360×640 实测左边缘 = **−6px**（越界）。
+  // 改成 `usePopover` + `is-sheet` 之后才有资格进这份清单（`sheetClass` 钉住 JS 侧分支）。
+  { id: "history", label: "版本历史", root: ".history-popover", box: ".history-popover", sheet: true, sheetClass: true },
+  // 2026-09-15 第三轮：`.fm-preview-overlay` 的 `left: calc(--activity-w + --sidebar-w)`
+  // 在窄屏**没被覆盖**，而 `--sidebar-w` 是**桌面**侧栏宽度——窄屏的侧栏早已收成抽屉，
+  // 变量却仍是 240px ⇒ 360×640 实测这个文件预览浮层只有 **72px 宽**
+  // （= 360 − 48 竖条 − 240 侧栏），文件预览在手机上等于打不开（与 `.set-dialog`
+  // 的 `min-width:640px` 同一类："功能不可用，而且不报错"）。
+  // 改成 §4.1.1 的"大面板 → 全屏 + 内部滚动"（遮罩加 inset padding）后才进的这份清单。
+  { id: "filePreview", label: "文件预览", root: ".fm-preview-overlay", box: ".fm-preview", sheet: false, fullscreen: true },
 ];
 
 /** 主要操作按钮的文案（验收口径写在任务里，别改）。 */
@@ -292,6 +314,40 @@ async function openOverlay(which) {
         t.click();
         return true;
       }
+      case "history": {
+        // 版本历史挂在**编辑器工具条**上（`HistoryPanel`），所以先要有打开的页面；
+        // 建页是异步的 ⇒ 轮询等那个按钮出现，而不是睡固定时长。
+        const n = await store("/src/store/notes.ts");
+        if (!n.useNotes.getState().currentId) await n.useNotes.getState().createPage(null);
+        let t = null;
+        for (let i = 0; i < 40 && !t; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          t = document.querySelector('button[aria-label="版本历史"]');
+        }
+        if (!t) return false;
+        t.click();
+        return true;
+      }
+      case "filePreview": {
+        // 走应用**自己的 store**（与界面同一条路），不是往 DOM 里塞假节点。
+        // `open()` 收的就是一份 `AttachmentMeta` **元数据**，浮层完全由它渲染——
+        // **不需要真的读文件**（这一点此前记错了：`EXEMPT_FROM_MOBILE_PASS` 里原写
+        // "需要一份真实附件才渲染"，那说的是 `.md` 分支要读字节；`target` 一落，
+        // 浮层就出来了）。
+        // 选 `image/*` 是因为它顺带渲染右上角那组按钮（窄屏 ≥44×44 那条断言的对象）；
+        // `path` 是**假路径**，web 平台的 `convertFileSrc` 只是原样返回字符串、不碰磁盘，
+        // 图片加载失败不影响几何——本层要量的是浮层自己的盒子。
+        const m = await store("/src/store/filePreview.ts");
+        m.useFilePreview.getState().open({
+          id: "vp-file-preview",
+          name: "示例图片.png",
+          hash: "",
+          mime: "image/png",
+          size: 1024,
+          path: "/tmp/示例图片.png",
+        });
+        return true;
+      }
       default:
         return false;
     }
@@ -315,20 +371,35 @@ async function closeAllOverlays() {
   (await store("/src/store/formulaEditor.ts")).useFormulaEditorStore.getState().close();
   (await store("/src/store/iconPicker.ts")).useIconPicker.getState().close();
   (await store("/src/store/plugins.ts")).usePlugins.getState().setManagerOpen(false);
+  (await store("/src/store/filePreview.ts")).useFilePreview.getState().close();
   const rp = (await store("/src/store/rightPanel.ts")).useRightPanel.getState();
   rp.openToc(false);
   rp.openAi(false);
   rp.openComments(false);
-  // usePopover 驱动的三个（搜索 / 回收站 / 同步）：它们是**组件本地状态**，
-  // 既没有 store 也**不吃 Escape**，只能再点一次触发器关掉（`.click()` 对隐藏元素也生效）。
-  // 不关的话它们会一直留在浮层栈里（本轮开始它们也会登记），后面的
+  // usePopover 驱动的这几个（搜索 / 回收站 / 同步 / 版本历史）：它们是**组件本地状态**，
+  // 既没有 store 也不一定吃 Escape，最稳的是再点一次触发器关掉（`.click()` 对隐藏元素也生效）。
+  // 不关的话它们会一直留在浮层栈里（它们都会登记），后面的
   // "栈空 ⇒ handle() 返回 false" 就永远量不到。
   for (const [box, trigger] of [
     [".search-popover", ".search-panel .activity-btn"],
     [".trash-popover", ".btn-trash"],
     [".sync-popover", ".btn-sync"],
+    // 版本历史本轮起也吃 Escape（并登记了返回栈），这里再显式点一次触发器兜底。
+    [".history-popover", 'button[aria-label="版本历史"]'],
   ]) {
     if (document.querySelector(box)) document.querySelector(trigger)?.click();
+  }
+  // ⚠️ **`optional` 的那两层此前根本没人关**（2026-09-15 第三轮抓到）。
+  // `.markdown-import-overlay` 不吃 Escape、也不在上面那张触发器表里，
+  // 于是它一开就**再也没关过**：它组件里的 `useOverlayScrollLock()` 永久留着一把锁，
+  // 后面每一层看到的"外壳被锁 / 锁住：note-scroll"其实都是**它泄漏的那把锁**满足的——
+  // 假绿（实测：只有文件预览开着时 `overlayScrollLockCount()` = 0，而在整轮里同一个
+  // 浮层却"通过"了锁断言）。关干净是后面每一条锁断言有意义的前提。
+  if (document.querySelector(".markdown-import-overlay")) {
+    document.querySelector(".markdown-import-cancel")?.click();
+  }
+  if (document.querySelector(".cover-overlay")) {
+    document.querySelector(".cover-overlay")?.click();
   }
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   return true;
@@ -432,6 +503,17 @@ function probeLayer(rootSel, boxSel) {
     innerH,
     root: { left: r1(rr.left), right: r1(rr.right), top: r1(rr.top), bottom: r1(rr.bottom) },
     box: { left: r1(br.left), right: r1(br.right), top: r1(br.top), bottom: r1(br.bottom) },
+    // `root === box`（右栏抽屉那种"自己就是自己遮罩"的层）：横向铺满要按**视口**算，
+    // 而不是按"遮罩的内容盒"——否则它自己的 padding 会被当成安全区多减一遍。
+    rootIsBox: root === box,
+    // 遮罩**自己**的 padding：安全区（`--sat/--sar/--sab/--sal/--kb`）就写在这里，
+    // 所以"盒子该有多宽" = 遮罩的内容盒，不用在脚本里另抄一遍那些变量。
+    rootPad: {
+      left: parseFloat(getComputedStyle(root).paddingLeft) || 0,
+      right: parseFloat(getComputedStyle(root).paddingRight) || 0,
+      top: parseFloat(getComputedStyle(root).paddingTop) || 0,
+      bottom: parseFloat(getComputedStyle(root).paddingBottom) || 0,
+    },
     boxMinWidth: getComputedStyle(box).minWidth,
     // 高度轴：上一轮只量了 min-width，`min-height:420px` 就是在那个盲区里活下来的。
     boxMinHeight: getComputedStyle(box).minHeight,
@@ -560,6 +642,164 @@ async function main() {
           `——JS 说矮而 CSS 说"不矮"会同时废掉两边`,
       );
 
+      // ---- PDF 阅读器的内部分栏：窄/矮视口下必须是**抽屉**，不能是并排的列 ----
+      // 这条是 2026-09-15 真机量出来的第二个问题：阅读器**能打开**了，但 360 宽下目录栏
+      // 仍以 240px 常驻在左侧、批注栏并排 ⇒ 页面图 x=99/宽 306 **右边溢出屏幕**，正文被挤没。
+      // 判据放在 CSS 层（这一层不需要真 PDF 就能验）：窄屏段里 `.pdf-outline-col` /
+      // `.pdf-sidebar-col` 必须是 `position: absolute`，正文区必须吃掉整宽。
+      // 真机几何（页面图不出屏、两栏默认收起）另在设备上验。
+      if (!pdfCssChecked) {
+        pdfCssChecked = true;
+        const rules = await safeEval(page, () => {
+          // ⚠️ 三处容易写错，第一版全踩了：
+          //  1. 同一个类在窄屏段里出现在**多条**规则里（一条给 position、一条只给 left/box-shadow）
+          //     ⇒ 必须**全收集**，只留最后一条会把值覆盖成空串；
+          //  2. 段里还有 `@keyframes` 这类**没有 `.style`** 的对象 ⇒ 读 `inner.style.position` 直接抛；
+          //  3. 这个仓库的窄/矮是**同一条** `@media (max-width:768px), (max-height:520px)`
+          //     ⇒ 不要按"窄"或"矮"分桶，要看那条 conditionText 是否**两个轴都写了**。
+          const out = [];
+          for (const sheet of Array.from(document.styleSheets)) {
+            let list;
+            try {
+              list = Array.from(sheet.cssRules);
+            } catch {
+              continue;
+            }
+            for (const r of list) {
+              if (!r.conditionText) continue;
+              if (!/max-width:\s*768px/.test(r.conditionText) && !/max-height:\s*520px/.test(r.conditionText)) continue;
+              for (const inner of Array.from(r.cssRules || [])) {
+                const st = inner.style || null;
+                if (!st) continue;
+                const sel = inner.selectorText || "";
+                if (!sel) continue; // @keyframes 之类没有 selectorText 的，跳过
+                // ⚠️ **不要**在这里加"只收某些选择器"的白名单：这个白名单连着坑了两次
+                // （先漏 `.pdf-reader-head`/`.pdf-annot-toolbar`，再漏 `.pdf-reader-overlay`）
+                // ——白名单漏了，断言看不到规则就只会假红，排查成本还高。全收，筛选放到断言里。
+                out.push({
+                  sel: sel.trim(),
+                  cond: r.conditionText.replace(/\s+/g, " "),
+                  position: st.position,
+                  width: st.width,
+                  minWidth: st.minWidth,
+                  minHeight: st.minHeight,
+                  flexWrap: st.flexWrap,
+                  overflowX: st.overflowX,
+                  padding: st.padding,
+                });
+              }
+            }
+          }
+          return out;
+        });
+        const cols = rules.filter((e) => /\.pdf-(outline|sidebar)-col/.test(e.sel));
+        const drawer = cols.filter((e) => /^(absolute|fixed)$/.test(e.position));
+        ok(
+          /\.pdf-outline-col/.test(drawer.map((e) => e.sel).join(",")),
+          `窄屏段里 PDF 目录栏是抽屉（${cols.map((e) => `${e.sel} → ${e.position || "（无 position）"}`).join("；")}）——并排的列会把正文挤出屏`,
+        );
+        ok(
+          /\.pdf-sidebar-col/.test(drawer.map((e) => e.sel).join(",")),
+          `窄屏段里 PDF 批注栏也是抽屉（${cols.map((e) => `${e.sel} → ${e.position || "（无 position）"}`).join("；")}）`,
+        );
+        ok(
+          drawer.length > 0 && drawer.every((e) => /max-height:\s*520px/.test(e.cond)),
+          `抽屉规则挂在"窄**或**矮"那同一条查询里（cond=${drawer[0]?.cond ?? "（没有抽屉规则）"}）` +
+            `——只写 max-width 的话，横屏手机（792×360）又会回到并排的列`,
+        );
+        ok(
+          cols.some((e) => /86vw|100%/.test(e.width)) && rules.some((e) => /pdf-reader-stage-wrap/.test(e.sel) && /100%/.test(e.width)),
+          `抽屉宽度有上限、正文区吃整宽（抽屉 ${cols.map((e) => e.width || "-").join(" / ")}；正文 ${rules.filter((e) => /stage-wrap/.test(e.sel)).map((e) => e.width || "-").join(" / ")}）`,
+        );
+        // 同一层真机上量到的第三处：头部工具条 730px 宽、外层 overflow:hidden ⇒ 关闭/导出/护眼
+        // 整排被裁在屏外点不到；批注工具行 489px 同理。这里钉住"允许换行 + 触摸目标 ≥44"。
+        const wrapHead = rules.filter((e) => /\.pdf-reader-head$/.test(e.sel) && /wrap/.test(e["flexWrap"] ?? ""));
+        ok(
+          wrapHead.length > 0,
+          `窄屏段里阅读器头部允许换行（不换行 = 右边那排按钮被 overflow:hidden 裁掉，真机实测 730 > 360）`,
+        );
+        // 只让 head 换行是不够的：内层 `.pdf-reader-controls` 自己是 603px 宽的行
+        // （真机实测），换行发生在子元素这一级 ⇒ 它必须也能换行。
+        const wrapControls = rules.filter((e) => /\.pdf-reader-controls$/.test(e.sel) && /wrap/.test(e["flexWrap"] ?? ""));
+        ok(
+          wrapControls.length > 0,
+          `窄屏段里阅读器头部的**内层** .pdf-reader-controls 也允许换行（真机实测它单独就有 603px）`,
+        );
+        const bigTouch = rules.filter((e) => /\.pdf-reader-head button|\.pdf-annot-toolbar button/.test(e.sel) && /44px/.test(`${e["minWidth"] ?? ""} ${e["minHeight"] ?? ""}`));
+        ok(
+          bigTouch.length > 0,
+          `阅读器内部按钮命中区 ≥44（原来 28×28，手机点不中）`,
+        );
+        // 头部第一行原来落在状态栏那一条带里（fixed inset:0 + 不让位）⇒ 目录开关这类按钮
+        // **物理点不到**（真机 y=96 < 状态栏 123）。判据：浮层形态必须带 --sat 让位。
+        const insetPad = rules.filter((e) => /\.pdf-reader-overlay/.test(e.sel) && /--sat/.test(e["padding"] ?? ""));
+        ok(
+          insetPad.length > 0,
+          `浮层形态的阅读器用 --sat 让开系统栏（${insetPad.map((e) => e.sel).join("；") || "没找到规则"}）` +
+            `——不让位的话第一行按钮在状态栏那一条带里，物理点不到（真机 y=96 < 123）`,
+        );
+        // 矮视口（横屏）**反过来**：换行会把正文挤没——真机实测 head 215 + annot 157 > 阅读器总高 319，
+        // 正文区只剩 40px、页面图整页在屏外 ⇒ 改成单行横向滚动，并让「关闭」sticky 常驻。
+        // ⚠️ 这条必须只看 **max-height 单独**那条查询（带 max-width 的是上面那套换行规则）。
+        const shortOnly = rules.filter((e) => /max-height:\s*520px/.test(e.cond) && !/max-width/.test(e.cond));
+        const headNowrap = shortOnly.filter(
+          // ⚠️ 别用 `/\.pdf-reader-head$/`：那条规则是**分组选择器**（头部 + 内层 + 批注行写在一起），
+          // selectorText 以逗号结尾 ⇒ 锚 `$` 永远不匹配（这条断言第一版就是这么假红的）。
+          (e) => /\.pdf-reader-head\b/.test(e.sel) && /nowrap/.test(e["flexWrap"] ?? "") && /auto/.test(e["overflowX"] ?? ""),
+        );
+        ok(
+          headNowrap.length > 0,
+          `矮视口（横屏）里阅读器头部改成单行横向滚动（${headNowrap.map((e) => e.sel).join("；") || "没找到规则"}）` +
+            `——横屏换行会把正文挤没（实测 215+157 > 319，页面图在屏外）`,
+        );
+        const closeSticky = shortOnly.filter((e) => /\.pdf-reader-close$/.test(e.sel) && /sticky/.test(e.position ?? ""));
+        ok(
+          closeSticky.length > 0,
+          `矮视口里「关闭」sticky 常驻（${closeSticky.map((e) => e.sel).join("；") || "没找到规则"}）——它是"离开"的唯一入口，不能跟着横滑走`,
+        );
+      }
+
+      // ---- 手机上的同步入口：主界面必须有一个（不能只藏在侧栏抽屉里） ----
+      // 为什么值得钉：手机上 `TitleBar` **整个不渲染**（`!desktop` 时 return null），
+      // 桌面那个 `.titlebar-sync` 根本不存在 ⇒ 一旦忘记补这个入口，同步就只剩
+      // "开侧栏抽屉 → 同步"，而且**没有任何报错**（纯粹是找不到）。
+      if (!mobileSyncChecked && vp.narrow) {
+        mobileSyncChecked = true;
+        const sync = await safeEval(page, () => {
+          const slot = document.querySelector(".mobile-sync-slot");
+          const btn = slot ? slot.querySelector("button") : null;
+          const r = btn ? btn.getBoundingClientRect() : null;
+          return {
+            hasSlot: !!slot,
+            label: btn ? (btn.textContent || "").trim() : null,
+            w: r ? Math.round(r.width) : 0,
+            h: r ? Math.round(r.height) : 0,
+          };
+        });
+        ok(
+          sync.hasSlot && !!sync.label,
+          `手机上主界面有同步入口（${sync.label ?? "（没有）"}）——TitleBar 在手机端不渲染，否则只能开抽屉才点得到`,
+        );
+        ok(sync.h >= 44, `同步入口命中区高度 ≥44（实测 ${sync.h}×${sync.w}）`);
+        const clicked = await safeEval(page, () => {
+          const btn = document.querySelector(".mobile-sync-slot button");
+          if (!btn) return false;
+          btn.click();
+          return true;
+        });
+        await sleep(700);
+        const pop = await safeEval(page, () => ({
+          inDom: !!document.querySelector(".sync-popover"),
+          isSheet: !!document.querySelector(".sync-popover.is-sheet"),
+        }));
+        ok(clicked && pop.inDom, `点它就能打开同步面板（inDom=${pop.inDom}，底部弹层=${pop.isSheet}）`);
+        // 收起来，别影响后面的层验收
+        await safeEval(page, () => {
+          document.querySelector(".mobile-sync-slot button")?.click();
+        });
+        await sleep(300);
+      }
+
       // ---- 系统 inset 变量：无壳层报送时必须全是 0px（不许凭空多出边距） ----
       const varsProbe = await safeEval(page, () => {
         const cs = getComputedStyle(document.documentElement);
@@ -651,6 +891,30 @@ async function main() {
             m.box.left >= -0.5 && m.box.right <= m.innerW + 0.5 && m.box.top >= -0.5 && m.box.bottom <= m.innerH + 0.5,
             `盒子在视口内（x ${m.box.left}..${m.box.right} / y ${m.box.top}..${m.box.bottom}）`,
           );
+
+          // (1b) **形态**：标了 `fullscreen` 的层必须**真的铺满**。
+          //
+          // ⚠️ 这条是 2026-09-15 第三轮补的，原因很实在：上面那条"四边都在视口内"
+          // **只挡越界，挡不住被压窄**——实测把 `.fm-preview-overlay` 加进 `OVERLAYS` 时，
+          // 它只有 **72px 宽**（`x 288..360`），四边**全都在视口里**，
+          // 于是那一轮 912 条断言**全部通过**：清单加上了、几何也"量到了"，缺陷照样活着。
+          // 判据取"盒子横向铺满**遮罩的内容盒**"：安全区就写在遮罩的 padding 上
+          // （`--sat/--sar/--sab/--sal/--kb`），所以这里不需要另抄一遍那些变量。
+          if (layer.fullscreen) {
+            const expLeft = m.rootIsBox ? 0 : m.root.left + m.rootPad.left;
+            const expRight = m.rootIsBox ? m.innerW : m.root.right - m.rootPad.right;
+            const rd = (n) => Math.round(n * 10) / 10;
+            ok(
+              m.rootIsBox || (m.root.left <= 0.5 && m.root.right >= m.innerW - 0.5),
+              `全屏层的遮罩横向铺满视口（root x ${m.root.left}..${m.root.right}，视口宽 ${m.innerW}）`,
+            );
+            ok(
+              Math.abs(m.box.left - expLeft) <= 1 && Math.abs(m.box.right - expRight) <= 1,
+              `全屏层的盒子横向铺满遮罩内容盒（盒 x ${m.box.left}..${m.box.right}，期望 ${rd(expLeft)}..${rd(expRight)}` +
+                `，实际宽 ${rd(m.box.right - m.box.left)}）——` +
+                `"四边在视口内"挡不住被压窄：72px 宽的浮层四边也都在视口里`,
+            );
+          }
           // 总根因：min-width 不许压过 max-width
           ok(
             m.boxMinWidth === "0px" || m.boxMinWidth === "auto",

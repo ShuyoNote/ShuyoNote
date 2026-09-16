@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { mdToHtml } from "../editor/mdToHtml";
 import { sanitizePreviewHtml } from "../lib/sanitizeHtml";
 import { markdownToPageContent } from "../lib/mdPreview";
+import { ensureAttachmentBytes } from "../lib/attachmentBytes";
 import { toast } from "./toast";
 
 interface FilePreviewState {
@@ -34,7 +35,14 @@ export const useFilePreview = create<FilePreviewState>((set, get) => ({
           // Read by hash → the Rust command decrypts at-rest-encrypted bytes.
           // (read_text_file on the raw disk path would return ciphertext garbling
           // the preview when E1 encryption is on.)
-          const bytes = await api.readAttachmentBytes(a.hash);
+          let bytes: ArrayBuffer;
+          try {
+            bytes = await api.readAttachmentBytes(a.hash);
+          } catch (first) {
+            // P6.3 续：字节不在本机时先按需取回来再读一次（取不回就报最初那个错）。
+            if (!(await ensureAttachmentBytes(a.hash))) throw first;
+            bytes = await api.readAttachmentBytes(a.hash);
+          }
           const content = new TextDecoder("utf-8").decode(new Uint8Array(bytes));
           // Sanitize before `dangerouslySetInnerHTML`: the preview renders raw
           // HTML blocks verbatim (unlike the safe Lexical import path), so a

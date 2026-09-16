@@ -146,6 +146,8 @@ async function apiFetch(method, url, body) {
   const opts = { method, headers: method === "GET" ? GH : J };
   if (body !== undefined) opts.body = body;
   const r = await fetch(url, opts);
+  // 错误里**只带状态码与方法/URL**：token 走在请求头里，任何把 headers 或整个
+  // 请求对象塞进 message 的写法都会把它带进日志（同类事故见 scripts/lib/redact.mjs 的头注）。
   if (!r.ok) throw new Error(`${r.status} ${method} ${url}`);
   const t = await r.text();
   return t ? JSON.parse(t) : null;

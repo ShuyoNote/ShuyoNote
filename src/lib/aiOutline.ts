@@ -3,7 +3,9 @@
 // 两条路径：
 //  - generateOutlineFromVision（默认，侧重视觉大模型）：逐页把页面图发给多模态模型，由模型直接
 //    识别章节标题+页码（JSON），无需 tesseract，质量更高。
-//  - generateOutlineFromOcr（离线 tesseract）：逐页 OCR 文本 → LLM 提取，作为无视觉模型时的回退。
+//  - generateOutlineFromOcr（本地 tesseract）：逐页 OCR 文本 → LLM 提取。
+//    ⚠️ **当前全仓无调用点**（2026-09-14 核实）：它**不是**"无视觉模型时的自动回退"，
+//    未配视觉模型时不会走到这里。实现保留，但不要把它当已生效的能力对外描述。
 import type { ProviderConfig } from "./ai/llm";
 import { runInlineDraft } from "./ai/inlineDraft";
 import { ocrWithVision, blobToDataUrl } from "./ai/ocrVision";
@@ -54,6 +56,11 @@ export interface OutlineGenResult {
   totalChars: number;
 }
 
+/**
+ * ⚠️ **当前无调用点**（2026-09-14 核实：全仓仅此定义 + 注释，无任何调用）。
+ * 原设计意图是"未配视觉模型时的回退"，但那一步没接线——实际不会自动回退。
+ * 要么接线（无视觉模型时改走此函数），要么删除；在此之前不要对外称"有回退"。
+ */
 export async function generateOutlineFromOcr(o: GenerateOutlineOpts): Promise<OutlineGenResult> {
   const end = Math.min(o.start + o.count, o.pageCount);
   const empty: OutlineGenResult = { items: [], recognizedPages: 0, totalChars: 0 };

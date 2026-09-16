@@ -15,7 +15,7 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 |---|---|---|
 | 加密 | **SQLCipher 真加密**（与桌面同一套） | 无（数据在 IndexedDB 里） |
 | 数据落地 | 应用私有目录里的**真实文件**，可备份、可搬移 | **浏览器存储**，会被系统回收 |
-| 多设备同步 | ✅ 与桌面同一套 | ❌ `web.ts` 的 `sync_now`/`sync_workspace` 是 stub |
+| 多设备同步 | ✅ 与桌面同一套 | **不提供**（**产品决定 2026-09-15：Web 版不开多设备同步**）——`SyncPanel.tsx:523` + `App.css:1222-1227` 在非 Tauri 平台把配置区置灰，`SyncPanel.tsx:502` 提示"Web 版同步受浏览器环境限制"（根因：浏览器存储会被系统回收，不适合当唯一副本）。⚠️ 但 `web.ts:2429/2541/896`（`sync_now` / `sync_workspace` / `syncAttachments`）是**完整实现、不是 stub，且按决定保留**——**别当死代码删掉**（口径与缘由见 `web.ts` 里 `sync_now` 上方注释） |
 | 插件 | ✅ 完整（Boa 运行时） | ❌ **根本性限制**：浏览器跑不了 Rust `boa_engine`，需重做 JS 沙盒（M16.3） |
 | PDF | 原生 mupdf + pdf.js 双引擎 | 只有 pdf.js |
 | 体积 | 大（需专门压，见计划里的体积账） | 小 |
@@ -60,12 +60,15 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 **待做**（详见私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md` 的阶段划分）：
 逐条真机验收、上架材料。
 
-**应用内「检查更新」：第一版已做**（2026-09-14）。Android 上打开「关于」会自动检查，有新版时给一个
-**「下载 APK」**按钮：地址取自更新清单 `latest.json` 的 `platforms["android-aarch64"].url`（与桌面
-**同一份清单、同一个 gitcode 通道**），点击后交给系统浏览器/DownloadManager，**下载完由用户自己安装**。
-边界要说清：**应用内不下载、不唤起安装器**（那要 `REQUEST_INSTALL_PACKAGES` + FileProvider，属后续增量），
-本版**没有新增权限、没有改 AndroidManifest**；apk 没有 minisign `.sig`（签名在包内），清单里用
-`sha256:<hex>` 记录字节。发布侧要求见 [RELEASING.md](RELEASING.md) §⑥ / §9.5。
+**应用内「检查更新」：Android 上**已完整做到"下载 + 校验 + 交给系统安装器"**（2026-09-14 第一版 → **2026-09-15 补齐第二步**，见 §2.6）。
+打开「关于」自动检查，有新版时给**「下载并安装」**：地址与 `sha256` 取自更新清单 `latest.json` 的
+`platforms["android-aarch64"]`（与桌面**同一份清单、同一个 gitcode 通道**）；点击后由 Rust 侧
+**下到应用缓存、边下边算 sha256**，校验通过再经 `FileProvider` + `ACTION_VIEW` **拉起系统安装器**。
+边界要说清：**刻意不做静默安装** —— Android 8+ 要用户给本应用开「安装未知应用」，
+装不装由用户在**系统界面**里决定；我们只负责"把包下对、验对、把安装器拉起来"。
+apk 没有 minisign `.sig`（签名在包内，由 apksigner 打、系统安装器强制校验），清单里用
+`sha256:<hex>` 记录字节。真机实测（含反面测试：错指纹被拦下并删文件）见 §2.6；
+发布侧要求见 [RELEASING.md](RELEASING.md) §⑥ / §9.5。
 
 **启动时的红点/横幅：Android 上「有」**（2026-09-14 核实代码后定稿，**别写成"Android 没有红点"**）。
 `useUpdateChecker()` 在 `App.tsx` 里无条件调用，而 `isDesktop()` 的真实语义是"有没有 Rust 内核"
@@ -78,6 +81,9 @@ APK 地址与下载入口只在「关于」的 Android 分支；老清单（没�
 
 仍未做的：应用商店上架、增量更新、iOS。
 
+> 上表与本节其余部分 2026-09-15 校准过一次：**应用内更新**已从"只给下载入口"变成
+> "下载 + 校验 + 交给系统安装器"（见 §2.6），别再照旧稿写成"❌ 不做"。
+
 ### 2.1 移动端**不提供** / **已知有问题**的能力（边界要能说清，别含糊）
 
 走 Tauri 原生壳意味着大部分能力与桌面一致（加密、附件、同步、原生 PDF 都在），
@@ -87,7 +93,7 @@ APK 地址与下载入口只在「关于」的 Android 分支；老清单（没�
 |---|---|---|
 | **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 23 个命令带 `#[cfg(desktop)]`，**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
 | **插件运行时（Boa）** | ✅ **已修**（2026-09-13 真机复验：那条 panic 在日志里消失） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
-| **应用内更新（in-app updater）** | ❌ 不做（2026-09-14 定） | `tauri-plugin-updater` **桌面专属**（`lib.rs` 里带 `#[cfg(desktop)]`）。⚠️ 但**这不等于"Android 不提醒更新"**：启动检查会降级到发布渠道清单，红点/横幅照常出现；边界在"装"（应用内不下载、不唤起安装器，只给「下载 APK」交给系统）。见上面「应用内『检查更新』」两段 |
+| **应用内更新（in-app updater）** | ✅ **Android 有**（2026-09-15 补齐，见 §2.6） | 说的是 `tauri-plugin-updater`——它**桌面专属**（`lib.rs` 里带 `#[cfg(desktop)]`）。⚠️ 但"这个插件不能用"**不等于**"Android 没有应用内更新"：Android 上走的是**我们自己实现的那条**（Rust 下载 + sha256 校验 + `FileProvider` 拉起系统安装器）。这一条原先写成"❌ 不做"，是当时**只有第一版**（只给「下载 APK」交给系统）留下的旧结论，2026-09-15 已实现第二步并真机验过 |
 
 #### ⚠️ Boa 的 nan-boxing 在 Android 上不成立（2026-09-13 真机实测）
 
@@ -194,6 +200,74 @@ boa_engine = { version = "0.21.1", features = ["jsvalue-enum"] }
 **还差最后一步：真机点一次。** CI run #6 已证明 Android 侧编得过；行为验证要人在手机上走一遍：
 **附件面板 → 选择文件 → 从「图片」里挑一张 → 应正常导入（不再报"不存在/读取失败"）**。
 在那之前，这条只算"实现完成、编译通过"，**不算真机验收通过**。
+
+#### 2.2.2 真机点完之后暴露的第二个问题：**导进来了，但名字和 mime 丢了**（2026-09-17 修）
+
+真机（Mate 40 / Android 12）走通上面那条之后，附件确实导进来了 —— 但列表里显示成：
+
+```text
+📎41449ced-d44e-4d3c-8e14-7c6733ad042a   未整理   文件   1.8 KB
+```
+
+**这不是难看，是功能坏了**：`FileManagerView.tsx` / `PageTree.tsx` 都按 `file.mime` 分支
+（`image/*` → 内置文件预览、`application/pdf` → 内置 PDF 阅读器、`text/markdown` → 预览），
+mime 是 `application/octet-stream` 就**一个分支都不命中**，最后掉到
+`platform.opener.openPath()`（Android 上 `content://` 转出来的临时路径也没法交给系统应用）。
+
+**根因链**（每一环都只丢元数据、不报错）：
+
+| # | 位置 | 发生了什么 |
+|---|---|---|
+| 1 | `tauri-plugin-dialog` 的 `DialogPlugin.kt::createPickFilesResult` | 只 `uris.add(uri.toString())` —— 系统给的 display name / mime **根本没进这条管道** |
+| 2 | `picked_file::materialize`（旧） | 临时文件名 = `uuid::Uuid::new_v4().to_string()` ⇒ **裸 UUID、无扩展名** |
+| 3 | `attachments.rs`（旧） | 用 `src.file_name()` 当**附件名**、用 `mime_from_path(&src)`（**只看扩展名**）定 mime ⇒ UUID 名 + octet-stream |
+
+**为什么不能只靠解析 URI**：尾段能不能当名字**全看 provider**——
+`com.android.externalstorage.documents` 给的是 `primary:Download/photo.png`（能解出真名），
+但 `com.android.providers.media.documents` 给的是 `image:1234`、
+`…downloads.documents` 给的是 `msf:1000000042` —— **那是 id，不是名字**。
+名字只有 `ContentResolver.query(OpenableColumns.DISPLAY_NAME)` 知道，而它和
+`getType(uri)` 都**只在 Android 运行时里**（`FilePickerUtils` 里两个函数都能做这件事，
+但在这条路上**零调用点**：全仓 grep `getNameFromUri` 只有定义没有调用）。
+
+**修法（三层，逐层变弱；桌面一层都不走）**：
+
+1. **问系统** —— 新增本地 Tauri 插件：`src-tauri/src/android_fs.rs` +
+   `scripts/android-mobile-shell.mjs` 注入的 `ShuyoFsPlugin.kt`（+ `shuyo-fs.pro`）。
+   Rust 侧走 tauri 的官方移动扩展点
+   （`tauri-2.11.5/src/plugin/mobile.rs:206` `api.register_android_plugin`），
+   之后 `PluginHandle::run_mobile_plugin("pickedFileInfo", { uri })` 就是一次**同步的**
+   Rust→Kotlin 调用 —— `tauri-plugin-fs`/`-opener`/`-dialog` 全走这条路，不是新机制。
+   **为什么不用 `tls_android.rs` 那种裸 JNI**：`jni_handle().exec` 是把闭包投递到主线程执行的
+   （wry 的 `MainPipe`），**拿不回返回值**，"发了就算"的初始化可以，取值不行。
+2. **URI 尾段启发** —— `picked_file::name_from_uri`（纯函数）：外置存储那条能救回来；
+   纯 id（`1234`）**主动拒绝**（当文件名显示比裸 UUID 更容易让人误以为"这就是原名"）。
+3. **按内容嗅探** —— 新模块 `src-tauri/src/magic.rs`（魔数：PNG/JPEG/GIF/WebP/PDF/ZIP/GZ/7z/
+   OggS/WAV/MP4/SVG/文本）。这一层让"图片能进预览、PDF 能进阅读器"**不依赖任何 Android 专属代码**，
+   所以它能在本机单测里钉住（桥挂了也照样成立）。
+
+**顺带修掉的同类哑火**：
+
+- **临时文件名现在带正确扩展名**（uuid 保证唯一、扩展名交给下游）。
+  这修掉了 `plugins.rs` 的"是不是 `.zip` 插件包"——它当时判的是 `source_path`，
+  Android 上那是 `content://…%3A1000000042`，`ends_with(".zip")` **恒为假** ⇒
+  手机上装 zip 插件包**必然**报"只支持 .zip 插件包"。现在判 `picked.effective_name()`
+  （桌面等价，行为不变）。
+- **`rename_attachment` 按新名字重算 mime**（判据只有一条：**新名字认得出类型才写回**）。
+  `x.txt` 改成 `x.pdf` 就能立刻进内置阅读器；老数据（裸 UUID 名 + octet-stream）改成
+  `photo.png` 也能自救。而改成**认不出**的名字（`report.pdf` → `report`、
+  `x.unknownext`）**原样保留**原来的 mime —— 所以改名**永远不会把已知类型降级**成
+  `application/octet-stream`（否则把 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢，
+  那是把能用的东西改坏）。
+
+⚠️ **R8 是开着的**（`isMinifyEnabled = true`），`ShuyoFsPlugin` 只被 JNI/反射按名字调用，
+所以必须有 Proguard keep 规则（脚本一并写 `gen/android/app/shuyo-fs.pro`）——
+漏了就是"**CI 绿、release 真机炸**"（`ClassNotFoundException` / Plugin not initialized），
+与 `rustls-platform-verifier` 那条同源。
+
+**真机怎么验（必须用 release 包，R8 才生效）**：见 §2.3 的判据；最短一条是
+**附件面板 → 选择文件 → 从「图片」里挑一张 ⇒ 列表里显示的是原文件名（不是 UUID）、
+类型不是「文件」，点它能进内置预览**；再挑一个 PDF ⇒ 点它进内置 PDF 阅读器。
 
 ### 2.2.1 Android 上没有 `/tmp`：**一个根因、8 个症状**（2026-09-13 找到并统一修掉）
 
@@ -640,6 +714,95 @@ cd src-tauri\gen\android      # 先 `pnpm tauri android init --ci` 生成它
 `rustls-platform-verifier-0.1.1.jar`——而这里放的是 **.aar**（pom 里
 `<packaging>aar</packaging>` 正是给它看的）。用默认 metadataSources 才会去拿 `.aar`。
 
+### 2.6 应用内更新：下载 + 校验 + 交给系统安装器（2026-09-15 落地）
+
+**改之前**手机上只能"跳发布页手动下载"：拿到清单里的 APK 地址就 `openExternal` 交给浏览器 /
+DownloadManager，用户还得自己去文件管理器点安装（三步，中途还容易走错）。现在两步都在应用内。
+
+| 步 | 命令 | 关键点 |
+|---|---|---|
+| ① 下载 | `download_android_update(url, sha256)` | reqwest 流式下到**应用缓存** `updates/`，**边下边算 sha256**，进度经 `android-update-progress` 事件回给界面；同一指纹已存在 ⇒ 直接复用（"装失败再点一次"不必重下整包） |
+| ② 安装 | `install_android_update(path)` | 经 `FileProvider` 换成 `content://`（`file://` 从 Android 7 起抛 `FileUriExposedException`），`ACTION_VIEW` + `application/vnd.android.package-archive` 拉起**系统安装器** |
+
+**三道自保**（这段是整条更新链上**唯一**的完整性判据——Android **不发 minisign**）：
+
+1. 只收 `https://`（清单里已经是 https，这里再挡一次，避免前端被改成 http 地址）；
+2. 指纹形状必须合法（64 位十六进制，`sha256:` 前缀可带可不带）——宁可不更新，也不装一个没法校验的包；
+3. **校验不通过就删文件并报错**（不给"缓存里躺着半成品/被改过的包"留机会）。
+
+**刻意不做静默安装**：Android 8 起"从应用里装 APK"需要用户给本应用开「安装未知应用」，
+那个确认界面是系统的 ⇒ 我们只 `startActivity`，**装不装由用户决定**。所以这一步"成功"的定义是
+"安装器起来了"，界面里留一句"请在弹窗里确认"（`.about-update-hint`）。
+没有指纹（老清单）时退回「手动下载 / 前往发布页」，两条路并存。
+
+**注入都在脚本里**（`scripts/android-mobile-shell.mjs`，`gen/` 不入库）：
+
+| 位置 | 内容 | 漏了会怎样 |
+|---|---|---|
+| `ShuyoFsPlugin.kt` | `@Command fun installApk`（`FileProvider.getUriForFile` + `ACTION_VIEW`） | 点"安装"静默没反应 |
+| `ShuyoFsPlugin.kt` | `@Command fun networkType`（`ConnectivityManager` + `TRANSPORT_WIFI`/`TRANSPORT_CELLULAR`） | C2 的「仅 Wi-Fi 下自动同步」永远拿不到真值（Rust 侧回 `unknown` ⇒ 按 fail-safe **不自动拉取**，表现为"自动同步不动了"） |
+| `app/shuyo-fs.pro` | `-keep …InstallApkArgs` | **CI 全绿、release 真机上** `parseArgs` 反序列化不出来 |
+| `AndroidManifest.xml` | `REQUEST_INSTALL_PACKAGES` + `FileProvider`（authority `${applicationId}.fileprovider`） | 抛 `FileUriExposedException` / 根本装不了 |
+| `AndroidManifest.xml` | `ACCESS_NETWORK_STATE`（C2；**普通权限，安装即授予、不弹窗**） | `activeNetwork` 查询抛 `SecurityException` ⇒ 同上，退化成 `unknown` |
+| `res/xml/shuyo_file_paths.xml` | `<cache-path name="updates" path="updates/" />` | `getUriForFile` 抛 `IllegalArgumentException` |
+
+`--check` 现在**同时**核这 4 样 + Rust↔Kotlin 的**每一个**命令名（不只是第一个——`pickedFileInfo`
+之外新加的 `installApk` 如果只写 Rust 不写 Kotlin，只 `match` 第一个的老写法会漏掉）。
+
+**本机实证**（不用等 CI，也不用真机）：
+
+```powershell
+cd src-tauri\gen\android
+.\gradlew.bat :app:compileUniversalDebugKotlin      # BUILD SUCCESSFUL（含 manifest 注入的校验）
+.\gradlew.bat :app:minifyUniversalReleaseWithR8     # BUILD SUCCESSFUL
+# R8 产物复核：usage.txt 里没有 ShuyoFsPlugin/InstallApkArgs（没被删），
+#             mapping.txt 里类名与 installApk 方法名原样（没被改名）
+```
+
+> ⚠️ 本机跑 R8 前要先把 `gen/android/app/build.gradle.kts` 里**旧的 AAR 注入**删掉
+> （`android-platform-verifier.mjs --check` 会提示这条）：那份 AAR 与"自带补丁的 Kotlin 源码"
+> 都定义了 `org.rustls.platformverifier.CertificateVerifier` ⇒ R8 报
+> `Type … is defined multiple times` 而失败。CI 每次从零 init，不会遇到。
+
+**真机验收（2026-09-15，`ee3315d` 的签名包）**：
+
+| 步 | 观测 |
+|---|---|
+| 入口 | 清单带 url + sha256 时，「关于」摆出 **「下载并安装」**（旁边保留「手动下载」「稍后再说」） |
+| 进度 | 按钮文案 `下载中 16% → 61% → 94%`（`android-update-progress` 事件真的到界面） |
+| 交给安装器 | 前台 Activity = `com.android.packageinstaller/.InstallStaging`，界面「ShuyoNote / 安装来源：ShuyoNote / 正在查验…」，应用内留下 `.about-update-hint` |
+| **反面测试** | 故意给错指纹调 `download_android_update` ⇒ 「更新包校验不通过（期望 000…0，实际 d58f5bad…）——已丢弃」 |
+
+两个省事的手法（下次直接用）：
+
+```js
+// ① 不用发版就能验整条链路：应用自己的测试钩子（debugUpdateVersion 读的就是这个查询参数）
+location.href = "http://tauri.localhost/?updateDebug=9.9.9";   // 验完导航回 http://tauri.localhost/
+// ② 反面测试：小文件（latest.json）+ 错指纹 ⇒ 下载很快结束、校验立刻失败，不必再下 56MB
+window.__TAURI_INTERNALS__.invoke("download_android_update", { url: MANIFEST_URL, sha256: "0".repeat(64) })
+```
+
+未做的：**老清单（没有指纹）时"不摆应用内入口、只留手动下载"** 这一条只有单测覆盖
+（要造这种清单得改发布通道，本机不值得）。
+
+**发版后的真机实测（2026-09-15，v1.91.0 上线当天）**——这一次不是造场景，是真的升级：
+
+手机上装的是 1.90.2，通道上是 1.91.0。打开「关于」⇒ 界面显示
+**「发现新版本 v1.91.0，当前 v1.90.2」**、发布说明来自 `RELEASE_NOTES`，按钮是「下载并安装」✓。
+点它 ⇒ `下载中 30% → 62% → 93%` ⇒ 前台变成 `com.android.packageinstaller/.InstallStaging` ✓，
+应用里留下"已交给系统安装器"那句 ✓。**应用这一半到此为止，剩下全是系统/厂商的闸**：
+
+| # | 闸 | 实测 | 谁能过 |
+|---|---|---|---|
+| 1 | 「是否允许 ShuyoNote 安装应用？」（安装未知应用） | 出现 ✓ 点「允许」即过 | 设备主人点一下 |
+| 2 | **华为应用市场**的风险检查页（安全提示 + 推荐位 + 「已了解此应用未经检测…」复选框 + 「继续安装」） | 出现 ✓；`uiautomator` 读到复选框 bounds `[72,1879][180,1983]`、**「继续安装」在未勾选时 `enabled=false`**（所以"看不见的禁用按钮"会让盲点落到上一条「查找类似应用」上——我前两次就是这么踩空的） | 设备主人勾选 + 点 |
+| 3 | **身份验证**（`com.huawei.coauthservice/…UnifiedAuthenticationDialogActivity`，指纹/密码） | 出现 ✓ **到此停手**：这需要设备本人，替用户过这道闸是错的 | **只有设备主人** |
+
+⇒ 产品口径：我们的"应用内更新"做到"下载、校验、把安装器拉起来"为止，**装不装在系统界面里由用户决定**
+——这正是 §2.6 开头写的设计，真机走一遍也证实了每一道闸都在用户手里。
+附带的一条经验：手机上点这类系统弹窗**必须用 `uiautomator dump` 读真实 bounds**，
+不要凭截图按比例估算（华为那页勾选后布局会位移，估出来的坐标会打到隔壁按钮上）。
+
 ## 3. 鸿蒙：WebView 壳（ArkWeb）
 
 鸿蒙是当前**唯一**保留 WebView 壳路线的平台。壳 = `ArkWeb` 加载 `dist-web` 构建产物 +
@@ -822,6 +985,11 @@ pnpm test:mobile-overlays     # 有失败即非零退出
 触摸拖 300px 后那个容器的 `scrollTop` 变化 ≤4px、关闭类按钮 ≥44×44、
 `.plugin-panel` 在 768 下占满宽、**桌面仍是锚定浮层**（防窄屏规则把桌面也改成弹层）。
 
+> ⚠️ 「四边在视口内」**只挡越界、不挡被压窄**：2026-09-15 第三遍实测，
+> 一个只有 72px 宽的浮层四边全都在视口里，那条断言照样绿。
+> 所以标了 `fullscreen: true` 的层还要额外交两条**铺满**断言（遮罩铺满视口、
+> 盒子铺满遮罩内容盒）——见下面「第三遍」。
+
 另外三组（2026-09-15 新增，对应真机量出来的问题）：
 
 - **两个断点的 JS/CSS 一致性**：768（`matchMedia("(max-width:769px)")` 也命中）与
@@ -864,17 +1032,57 @@ pnpm check:overlays          # = node scripts/check-overlay-registry.mjs；也�
 
 豁免**必须显式**（脚本里的 `EXEMPT_COMPONENTS` / `EXEMPT_FROM_MOBILE_PASS`，每条都带理由），
 且每次运行都会把整张豁免表打印出来——豁免是**显式的欠账**，不是藏东西的地方。
-现在豁免表里有三处 `gap` 级别的同类缺口（**真的是应用级浮层、但没登记返回栈**：
-`.pdf-reader-overlay` 的浮层形态、插件声明式视图浮层、文件预览浮层）——
-它们不会让门禁变红（门禁的契约是"新增浮层不许悄悄出现"），但每次运行都会 ⚠️ 打印出来；
-各接一条 `useOverlayLayer` 即可修掉。
 
-另外两条与"版本历史"直接相关、本轮**没有**纳入几何验收（属未验证项，写在这里免得不一致）：
+**2026-09-15 第二遍：`gap` 类别的同类缺口已清零。** 上一轮留在 `EXEMPT_COMPONENTS` 里的三处
+（`.pdf-reader-overlay` 的浮层形态、插件声明式视图浮层、文件预览浮层）各接了一条
+`useOverlayLayer`，于是它们从 A 判据转到 B 判据——**返回栈这一半修好了，几何验收还没纳入**
+（打开它们需要一份真实 PDF / 装了视图声明的插件 / 一份真实附件，全新实例里造不出来；
+硬塞假对象只会把"四边在视口内 / 外壳被锁"这些断言变成假红），所以三条都如实记在
+`EXEMPT_FROM_MOBILE_PASS` 里，属**未验证项**。`gap` 这个类别保留着：下次再发现
+"真的是应用级浮层却没登记"就先记在那里，每次运行 ⚠️ 打印出来。
 
-- `history`：窄屏下 `.history-popover` 仍是 `position:absolute` 的 320px 锚定浮层，
-  360×640 实测**左边缘 = −6px**（越界 6px）；要纳入 `OVERLAYS` 得先给它一个窄屏形态
-  （同 §4.1.3 的 `is-sheet`）+ 滚动锁。
-- `backupMenu`：侧栏备份按钮上的下拉菜单（`usePopover` 已管定位），也没有对应的 `OVERLAYS` 条目。
+与"版本历史"相关的那条**已经修掉并纳入几何验收**了：`.history-popover` 原来是
+`position: absolute; right: 0` 的 320px 锚定浮层，窄屏**没走** §4.1.3 的 is-sheet 形态，
+360×640 实测**左边缘 = −6px**（越界 6px）。现在它改用 `usePopover` + `is-sheet`
+（JS 侧窄屏不锚定、CSS 侧铺底）+ 滚动锁，并进了 `OVERLAYS`：360×640 量到
+`x 0..360 / y 538..640`（四边都在视口内），390×844 量到 `x 0..390 / y 742..844`。
+
+另一条仍未纳入几何验收的是 `backupMenu`：侧栏备份按钮上的下拉菜单（`usePopover` 已管定位），
+`OVERLAYS` 里没有它。
+
+**2026-09-15 第三遍：`.fm-preview-overlay` 纳入几何验收，并补上"铺满"那条断言。**
+
+上一轮把"文件预览浮层"记成未验证项，理由写的是"需要一份真实的附件（`target` 非空）才渲染"——
+**这句是错的**：`useFilePreview.open()` 收的就是一份 `AttachmentMeta` **元数据**，
+浮层完全由它渲染、根本不读文件（"要读字节"的只是 `.md` 分支）。
+所以它现在进了 `OVERLAYS`（`fullscreen: true`），豁免同时撤掉。
+
+这一进去就量出了真问题：**360×640 上这个浮层只有 72px 宽**（`x 288..360 / y 0..640`）。
+根因是它基础规则的 `left: calc(var(--activity-w) + var(--sidebar-w))`——`--sidebar-w` 是
+**桌面**侧栏宽度（240px），而窄屏的侧栏**早已收成抽屉**，变量却没人改，
+于是 `left = 48 + 240 = 288`，`360 − 288 = 72`。与 `.set-dialog{min-width:640px}`
+是**同一类**："功能不可用，而且不报错"。改法照 §4.1.1：窄屏走"大面板 → 全屏 + 内部滚动"，
+让位方式与 `.set-overlay` 一致（给遮罩加 `var(--sat)/var(--sar)/max(--sab,--kb)/var(--sal)`），
+内容区 `overscroll-behavior: contain`、图片预览那组按钮 ≥44×44，
+并补上这一族唯一漏掉的那条 `useOverlayScrollLock`（实测只开着它时锁计数是 **0**）。
+
+> ⚠️ **顺手补掉一个更值钱的坑：旧的几何断言挡不住"被压窄"。**
+> 上面那个 72px 的浮层，四边**全都在视口里**（`x 288..360`），所以"根元素/盒子四边在视口内"
+> 那条**照样绿**——把 `filePreview` 加进清单后跑一遍，**912 条断言全部通过，缺陷原样活着**。
+> 于是新增 (1b)：标了 `fullscreen: true` 的层（§4.1.1 的"全屏 + 内部滚动"那一族：
+> 设置 / 存储 / 插件管理 / 命令面板 / 公式 / 文件预览 / 目录 / AI / 评论）必须
+> **遮罩横向铺满视口、盒子横向铺满遮罩内容盒**（安全区就写在遮罩的 padding 上，
+> 所以脚本不用另抄那些变量）。变异自证：把 `left` 改回 `--sidebar-w` 依赖 ⇒
+> **`✗ 全屏层的遮罩横向铺满视口（root x 288..360，视口宽 360）`**，327 通过 / **1 失败**；
+> 改回后 360×640 量到 `x 0..360 / y 0..640`、390×844 量到 `x 0..390 / y 0..844`，
+> 三档视口 966 通过 / 0 失败。
+
+> ⚠️ **同一遍还抓到一条"假绿"**：`closeAllOverlays()` **从来没关过** `optional` 的
+> `.markdown-import-overlay`（它不吃 Escape、也不在那张触发器表里）——
+> 它组件里的 `useOverlayScrollLock()` 于是**永久留着一把锁**，后面每一层的
+> "外壳被锁 / 锁住：note-scroll"都是被这把**泄漏的锁**满足的。
+> 只开着文件预览时 `overlayScrollLockCount()` 实测 = **0**，而在整轮里同一个浮层却"通过"了锁断言。
+> 现在 `closeAllOverlays` 会把它关掉（点「取消」），并**显式把封面浮层也一并关**。
 
 相关：[RELEASING.md](RELEASING.md) ⑧（CHANGELOG 结构门禁）与 ①（`[Unreleased]` 的用法）。
 脚本清单见 [development.md](development.md) 的"测试与验证"一节。
@@ -1017,9 +1225,10 @@ IME 覆盖 CSS y≥468，而底部弹层钉在 `bottom: 0` ⇒ 输入框正好�
   —— **`true` = 页面关掉了最上层浮层，本次返回键到此为止**；
   **`false` = 栈是空的**，把自己 disable 后重新派发，落回 AppPlugin 那条回调（它没监听者 ⇒ `finish()`）。
 
-**浮层栈**由各浮层组件用 `useOverlayLayer(id, open, close)` 登记（本轮接了 **20 层**：
-2026-09-15 原为 19 层，真机复验补上了**漏掉的版本历史弹层**——见 §4.1.4 的登记门禁），
-**后进先出**：最后打开的最先关。逐条断言见 §4.1.4。
+**浮层栈**由各浮层组件用 `useOverlayLayer(id, open, close)` 登记（现在共 **24 条登记**，
+`pnpm check:overlays` 的 B 段会逐条打印；2026-09-15 原为 19 层，真机复验补上了**漏掉的版本历史弹层**，
+同一轮的第二遍又把剩下三处同类缺口接上：PDF 阅读器的浮层形态 / 插件声明式视图浮层 / 文件预览浮层
+——见 §4.1.4 的登记门禁），**后进先出**：最后打开的最先关。逐条断言见 §4.1.4。
 
 ### 4.2.4 这一层怎么验（脚本化）
 
@@ -1040,6 +1249,145 @@ node scripts/android-mobile-shell.mjs --device-check
 | **`adb shell input tap` 打在顶部能收到 DOM 事件** | ⚠️ 必须用真实 tap：CDP 的 `Input.dispatchTouchEvent` 直接注入渲染进程、**绕过 SystemUI**，在死区里也会"成功" |
 | 返回键：浮层栈非空时 `dumpsys` 的 `APP_STILL_FOREGROUND` 仍为 `True` | 修前是 `False` |
 | 键盘可见时 `--kb` > 0 且弹层底边 ≤ `innerHeight − --kb` | |
+
+## 4.3 真机抓到的两个"整个功能不可用"（2026-09-15 复验中）
+
+这两个都不是样式问题，是**手机上那件事根本做不成**，而且桌面端完全正常、CI 全绿。
+放在一起是因为它们是同一类：**Android 给回来的东西不是路径**，以及**系统 WebView 比引擎要求的旧**。
+
+### 4.3.1 保存到用户选的位置：`content://` URI 被当路径用 ⇒ EROFS
+
+真机现象（Mate 40 / Android 12 / 自检包 `666c062`）：
+
+```text
+设置 → 空间 → 导出当前空间 → 系统保存对话框 → 保存
+  ⇒ 红字「空间导出失败：Read-only file system (os error 30)」
+  ⇒ Downloads 里留下一个 0 字节的 space-复验素材-….zip
+```
+
+| 项 | 值 |
+|---|---|
+| 保存对话框实际返回 | `content://com.android.providers.downloads.documents/document/msf%3A…`（`DialogPlugin.kt::saveFileDialogResult` 只 `put("file", uri.toString())`） |
+| 出错的那一行 | `std::fs::File::create("content://…")` |
+| 为什么是 EROFS 而不是"权限不够" | `Path::new("content://…")` 是**相对路径**（第一段 `content:`），相对进程 CWD；Android 上 CWD 是 `/`，只读 ⇒ `EROFS(30)` |
+| 受影响的命令 | `export_workspace`、`export_backup`、`copy_attachment`、`write_text_file`、`write_binary_file`（= 导出空间 / 导出备份 / 下载附件 / 导出 HTML / 导出模板 / 导出标注副本**六个入口**） |
+
+**修法**（`src-tauri/src/save_target.rs`，与 `picked_file` 对称的写侧）：
+
+| 目标 | 行为 |
+|---|---|
+| 桌面（普通路径） | 直接写该路径 —— **与改动前逐字节相同**（判据有单测：`classify()` 的路由） |
+| Android（URI） | ① 在应用缓存里写一份**中转文件**；② 写完再整份**流式**拷进 URI（`Fs::open` + `write(true).truncate(true)` ⇒ Kotlin 侧折算成 `openAssetFileDescriptor(uri, "wt")`）；③ 无论成败删掉中转文件 |
+
+**为什么不直接往 URI 里流式生成 zip**：`zip::ZipWriter` 需要 `Write + Seek`，而 `content://`
+只能顺序写；更要紧的是写到一半失败会在**用户看得见的文件**里留半个包（中转文件则不会）。
+`Drop` 兜底清理 —— 提前 `?` 返回也留不下垃圾，且**用户原始数据一字不动**。
+
+### 4.3.2 打开任何 PDF 都失败：系统 WebView 是 Chrome 114，pdf.js 4.8 要 119+
+
+真机现象：点开任何 PDF ⇒ 阅读器外壳起来了，正文里写
+
+```text
+这份 PDF 没能打开：Promise.withResolvers is not a function（字节 1820）
+```
+
+**先排除素材**：那份 PDF 在本机用**同一套 pdf.js** 解析正常（`numPages: 4`，页面 612×792）。
+再量环境：
+
+| 项 | 值 |
+|---|---|
+| `navigator.userAgent` | `… Android 12; OCE-AN10 … Chrome/114.0.5735.196 Mobile Safari/537.36` |
+| `typeof Promise.withResolvers` | `undefined`（Chrome **119+** 才有） |
+| `typeof AbortSignal.any` | `undefined`（Chrome **116+** 才有） |
+| pdfjs-dist 4.8 里的用量 | `pdf.mjs` **32 处** `Promise.withResolvers`、`pdf.worker.mjs` **13 处**，`AbortSignal.any` 在能力对象的关键路径上 |
+| legacy 构建能否救 | **不能**：`legacy/build/pdf.mjs` 里同样有 33 处（它只转译语法，不补运行时 API） |
+
+**修法**（两层，缺一不可）：
+
+| 层 | 文件 | 要点 |
+|---|---|---|
+| 页面 | `public/es-polyfills.js`（`index.html` 里**同步** `<script src>`，先于任何模块） | 幂等、**绝不覆盖已有实现**（现代浏览器上是空操作）；只用 `var`/`function`（`public/` 不过打包器，不依赖转译） |
+| pdf.js worker | `public/pdfjs-worker-shim.mjs`（`pdfjsEngine` 把 `workerSrc` 指向它，带 `?real=<真 worker>&v=<版本>`） | 先动态 `import` 补齐层、**再**加载真 worker。⚠️ 真 worker **必须动态**加载：写成顶层 `import` 会被提升到 polyfill 之前 |
+
+**worker 为什么必须单独补**：worker 是另一个 JS 上下文，页面上的 polyfill 到不了它；
+而 pdf.js 自己的兜底（worker 出错 ⇒ 退回主线程 fake worker）只在"worker 还没 ready 就抛错"时触发。
+**验收时要连控制台一起收**：出现 `Setting up fake worker` 即说明退回单线程 ⇒ 判不合格。
+
+**已落地的自证**（都能在本机跑，不必等 CI）：
+
+| 脚本 | 钉住什么 |
+|---|---|
+| `node scripts/check-pdfjs-worker-shim.mjs` | **顺序不变量**：探针模块在自己的模块体里必须已经看到两个 API；把垫片里两条 import 调换 ⇒ 该断言变红（变异自证已做；报错原文就是"真 worker 的模块体里没有 Promise.withResolvers —— 垫片的顺序错了"） |
+| `pnpm vitest run scripts/es-polyfills.test.mjs` | 补齐层语义（resolve/reject 接通、`AbortSignal.any` 的 reason 传染与空数组）、幂等、**绝不覆盖原生实现**；把安装那行改成 no-op ⇒ 4 条断言变红 |
+
+### 4.3.3 真机验收实操：这一轮踩到的坑（下次直接照做）
+
+| 坑 | 现象 | 正确做法 |
+|---|---|---|
+| **adb 推进去的文件，选择器看不见** | `/sdcard/Download/` 里明明有 `plugin-x.zip`，系统选择器里**不出现** | 这台设备（EMUI/Android 12）的选择器是 **MediaStore 驱动**；`adb push` 的文件没有 MediaStore 条目，`am broadcast MEDIA_SCANNER_SCAN_FILE`（API 29 起已废弃）也扫不出来。⇒ **只能用 App 自己写出去的文件**当素材：先用「文件管理 → ⬇ 下载附件」把内部附件存到 Downloads（可在保存对话框里**改成唯一的名字**，如 `probe-zhenji.png`），再用它做导入素材。**这条同时是判据的强证据**：那个名字在库里不存在，能出现在列表里就说明名字是**问系统问到的** |
+| 只比"名字对不对"会**假绿** | 库里本来就有一行同名附件，导入后看起来还是那个名字 | 素材必须用**唯一名**（见上一条），否则分不清"新导入的行"与"原有行" |
+| 同名附件会被**合并成版本组** | 行尾多出一个 `↻`（历史版本按钮） | 这是 `FileManagerView` 的既有分组行为，不是 bug；判读时别当成异常 |
+| 设备会**自己转屏** | 上一秒量的还是 360×792，下一秒变成 792×360（横屏走"内联形态"，量出来的数字全变） | 量几何**当次**先读 `innerWidth/innerHeight` 并写进同一份结果（一次 CDP 调用里取全），别跨调用拼数字；要固定姿态用 `settings put system accelerometer_rotation 0` + `user_rotation 0`（这台设备会被系统重新打开自动旋转，必要时重设） |
+| 保存对话框的**文件名框** | 想改成唯一名，`input text` 只在**先点中那个输入框**后才生效 | `adb shell input tap <名框坐标>` → `keyevent KEYCODE_MOVE_END` → 多次 `KEYCODE_DEL` 清空 → `input text <ASCII 名>` → 点「保存」 |
+| `.ps1` 在 Windows PowerShell 5.1 下**乱码/解析失败** | 提示 `The string is missing the terminator` | `tmp/` 下的脚本要么纯 ASCII，要么**存成带 BOM 的 UTF-8**（仓库门禁 `check:ps1-ascii` 就是这个规矩；`write` 工具写出来的是无 BOM，加 BOM 用 `[System.IO.File]::WriteAllBytes`） |
+| 连续推送会**取消在跑的 CI** | `ci.yml` 有 `concurrency: cancel-in-progress: true`，而 Rust job 是最长一棒 ⇒ 推得越勤，"CI 绿"越不会出现 | 等一轮**跑完**再推下一轮；查状态时**三个 workflow 都要看**（只查名字像 CI 的那个会漏掉 Android/build 的红） |
+
+### 4.3.4 窄屏下 PDF 阅读器**内部分栏**（2026-09-15 真机量到 → 已修）
+
+4.3.2 修好的是"**打得开**"（`第 1 / 4 页`、正文渲染成 `.pdf-annot-img`、控制台有真 worker 的日志）。
+真机上接着量到**第二个问题**：360 CSS px 宽时阅读器**内部**仍是桌面的三栏布局——
+
+| 元素 | 修前实测（360×792） | 修后 |
+|---|---|---|
+| `.pdf-reader-overlay` / `.pdf-reader` | 0,0,360×792（整屏 ✓ 这条本来就对） | 不变 |
+| `.pdf-outline-col`（目录） | **240 宽、常驻在左侧**，压着正文 | 抽屉：`position:absolute` + `width:min(300px,86vw)`，**默认收起** |
+| 批注栏 `.pdf-sidebar-col` | 与目录并排，右侧文字被**裁掉**（截图里"暂不…"被切） | 同上（贴右抽屉，默认收起） |
+| 页面图 `.pdf-annot-img` | x=99、宽 306 ⇒ **右边溢出屏幕**（99+306=405 > 360） | 正文区 `width:100%`，页面按 `适合宽度` 铺满 |
+| 拖宽把手 | 并排形态下有意义 | 抽屉形态下 `display:none`（宽度由 CSS 定） |
+
+**改法**（与 §4.1 那 19 层同一条纪律，两处必须一起改）：
+
+| 位置 | 改动 | 为什么 |
+|---|---|---|
+| `src/App.css` 末尾的 `@media (max-width:768px), (max-height:520px)` | 两栏 `position:absolute` + 贴左/贴右 + 阴影 + `min(300px,86vw)`；`.pdf-reader-layout > .pdf-reader-stage-wrap { width:100% }`；把手 `display:none` | 抽屉形态由 CSS 定宽 |
+| `src/components/PdfReader.tsx` | 用 `useMobileOverlayViewport()` 把 `outlineOpen`/`sidebarOpen` 的**初值**设成 `false`；切到浮层视口时**收敛为收起**；抽屉形态下**不写内联 width** | ⚠️ 内联 `style={{width}}` 优先级高于 CSS，写了就把抽屉顶回 240px 的列——两边必须同时改 |
+
+**判据（都能自动跑）**：
+
+| 层 | 判据 |
+|---|---|
+| CSS 级（`pnpm test:mobile-overlays`，+4 条断言） | 窄屏段里两栏必须是 `position:absolute`；**那条规则必须挂在"窄**或**矮"的同一条查询里**（只写 `max-width` 的话横屏手机又回到并排）；抽屉宽度有上限、正文区 `100%`。变异自证：把 `position:absolute` 去掉 ⇒ 3 条变红 |
+| 单测（`useMobile.test.ts`，+2 条） | `subscribeOverlayViewport` **两条查询都要订阅**、取消订阅两条都要摘。变异自证：把矮视口那条改成订阅窄屏查询 ⇒ 2 条变红。这条挡的是"只在挂载时判一次视口/只盯窄屏 ⇒ 竖屏转横屏不更新" |
+| 真机 | 打开 PDF：目录/批注栏**默认不出现**、页面图不出屏；点工具条的目录按钮 ⇒ 抽屉盖上来（宽度 ≈ 86vw）；返回键照旧关层不退出 |
+
+### 4.3.5 同一次装机里接着暴露的另外三处（都已修 + 真机复验）
+
+4.3.4 修完装机一看，**同一个组件还有三处**，全部是"手机上那个按钮根本点不到"这一类。
+按发现顺序记，因为它们的**判据不一样**——最后一处只有**真实 tap** 能验。
+
+| # | 症状（真机实测） | 根因 | 判据 |
+|---|---|---|---|
+| ① | 头部工具条内容 **730px** 宽，`scrollWidth 617 > clientWidth 360`：放大 / 还原窗口 / 显示批注侧栏 / 提问 / 护眼 / 导出带批注副本 / **关闭（x=686..730）**整排**在屏外**（外层 `.pdf-reader` 是 `overflow:hidden` ⇒ 点不到）；批注工具行 489px 同理 | 头部/工具行是"一行排到底"，没有窄屏形态 | CSS 级：`.pdf-reader-head` 必须 `flex-wrap: wrap` |
+| ② | 加了 `flex-wrap` **仍然溢出**（`scrollWidth` 617） | 头部里的 `.pdf-reader-controls` **自己就是 603px 宽的行** ⇒ 换行只发生在"直接子元素"这一级，内层不换行就等于没换 | CSS 级：内层 `.pdf-reader-controls` 也必须 `flex-wrap` |
+| ③ | 阅读器内部 **18 个按钮 < 44×44**（头部一排 28×28） | §4.1 那条"命中区 ≥44"当初没覆盖到阅读器内部 | CSS 级：`.pdf-reader-head button` 等必须 `min-*: 44px` |
+| ④ | **目录开关物理点不到**：开关中心在设备 **y=96**（状态栏带 0..123 之内），`adb shell input tap 108 96` **什么都没发生** | 阅读器浮层 `position:fixed; inset:0` 且不给 `--sat` 让位 ⇒ 头部第一行整体落在 §4.2.1 那条"归 SystemUI"的触摸死区里 | **真实 tap**：修后点设备 (108,219) ⇒ `.pdf-outline-col` 出现在 DOM 里；同一手法点「关闭」⇒ 浮层消失且应用仍在前台 |
+
+修后真机复验（`tmp/fixture/pdfhead2.js` / `pdflayout2.js`）：
+
+```
+headButtonCount 12 · offscreen [] · smallCount 0 · closeVisible true · scrollWidth 360 == clientWidth 360
+outlineInDom false · sidebarInDom false · 页面图 x=12 w=328（right 340 ≤ 360）
+物理点 (108,219) ⇒ outlineInDom true        物理点 (972,819) ⇒ depth 1 → 0、应用仍在前台
+```
+
+**两条教训**（比修法更值得记）：
+
+1. **"加了 wrap" ≠ "不溢出了"**：CSS 级断言只能挡住"规则被删掉"，几何是否真的不溢出必须量
+   `getBoundingClientRect`。②就是"断言绿、真机仍溢出"的典型——断言查的是"有没有 wrap"，
+   而真机查的是"每个按钮的 right 是否 ≤ 视口宽"。
+2. **门禁自己的白名单也会假红**：那 8 条 PDF 断言的候选规则收集原先带一个"只收这些选择器"
+   的白名单，连着漏了 `.pdf-reader-head`、`.pdf-reader-controls`、`.pdf-reader-overlay`
+   ⇒ 三次都是"断言找不到规则 ⇒ 假红"。现在**全收**，筛选放到断言里。
 
 ## 5. iOS 环境结论（2026-09，仍然有效）
 

@@ -79,16 +79,25 @@ pub struct ImportProgress {
     pub size: u64,
 }
 
-fn ext_from_mime(mime: &str) -> &'static str {
+/// 我们"不知道这是什么"的那个 mime。`rename_attachment` 用它区分"已知类型"与"未知"。
+pub(crate) const GENERIC_MIME: &str = "application/octet-stream";
+
+/// `ext_from_mime` 的 `Option` 版：`None` = **这张表里没有**这个 mime
+/// （而不是"它就叫 `.bin`"）。`mime_and_ext` 需要区分这两件事。
+fn ext_from_mime_opt(mime: &str) -> Option<&'static str> {
     match mime {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/svg+xml" => "svg",
-        "application/pdf" => "pdf",
-        _ => "bin",
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        "application/pdf" => Some("pdf"),
+        _ => None,
     }
+}
+
+fn ext_from_mime(mime: &str) -> &'static str {
+    ext_from_mime_opt(mime).unwrap_or("bin")
 }
 
 /// Map a file path to (mime, extension) for general file attachments.
@@ -136,6 +145,67 @@ fn mime_from_path(path: &Path) -> (String, String) {
         other => other,
     };
     (mime.to_string(), if canonical.is_empty() { "bin".to_string() } else { canonical.to_string() })
+}
+
+/// 决定这次导入的 `(mime, ext)`。三层，逐层变弱——**桌面恒走 ①（或它的兜底）**，
+/// 所以桌面行为与改这行之前逐字节一致。
+///
+/// ① **扩展名表**（[`mime_from_path`]）**认得**这个扩展名时就用它。
+///    为什么它排在"系统说的 mime"前面：那张表是**我们自己的规范词汇**，
+///    前端的 `mime === "text/markdown"` / `=== "application/pdf"` / `startsWith("image/")`
+///    这些分支就是按它写的。而 `ContentResolver.getType` 可能给 `text/x-markdown`、
+///    `image/x-png` 这类**非规范写法** —— 让它抢在前面会把前端**认得的**类型换成
+///    **认不得的**，那是把 bug 换个方向（`.md` 的内置预览会消失）。
+/// ② **系统说的 mime**（Android `ContentResolver.getType(uri)`）：扩展名表**不认识**
+///    这个扩展名（含"根本没有扩展名"= Android 上那批裸 UUID）时的权威来源。
+/// ③ **内容嗅探**（[`crate::magic`]）：连系统都问不到时兜底。这一层不依赖任何 Android
+///    专属代码，所以"图片能预览、PDF 能进内置阅读器"能在本机单测里钉住。
+///
+/// 落盘扩展名 `ext` 的原则：**名字/嗅探给了就用它**（它决定
+/// `attachments/<bucket>/<hash>.<ext>` 的文件名），只有完全没有时才退到
+/// `ext_from_mime`（再不行 `bin`）。
+fn mime_and_ext(
+    src: &Path,
+    system_mime: Option<&str>,
+    sniffed: Option<crate::magic::Magic>,
+) -> (String, String) {
+    let (ext_mime, ext) = mime_from_path(src);
+
+    if ext_mime != GENERIC_MIME {
+        return (ext_mime, ext);
+    }
+    if let Some(sys_mime) = system_mime {
+        let ext = if ext == "bin" {
+            ext_from_mime(sys_mime).to_string()
+        } else {
+            ext
+        };
+        return (sys_mime.to_string(), ext);
+    }
+    if let Some(m) = sniffed {
+        return (m.mime.to_string(), m.ext.to_string());
+    }
+    (ext_mime, ext)
+}
+
+/// 改名时按新名字重算 mime（语义见 [`rename_attachment`] 的文档）。
+///
+/// 判据只有一条：**新名字认得出类型就用它，认不出就原样保留**。
+/// `mime_from_path` 认不出时给的是 `GENERIC_MIME`（`application/octet-stream`），
+/// 那一支**不写回** —— 这是"永远不降级"的全部秘密：
+///
+/// - `report.pdf` → `report`（或 `report.unknownext`）：认不出 ⇒ 保留 `application/pdf`，
+///   **PDF 阅读器不会被改名弄丢**；
+/// - `x.txt` → `x.pdf`：认得出 ⇒ `application/pdf`，改名后就能进内置阅读器；
+/// - 老数据（裸 UUID 名 + octet-stream，Android 导入那批）→ `photo.png`：认得出 ⇒ `image/png`，
+///   用户靠改名**能自救**。
+fn repaired_mime(current: &str, new_name: &str) -> String {
+    let (mime, _) = mime_from_path(Path::new(new_name));
+    if mime == GENERIC_MIME {
+        current.to_string()
+    } else {
+        mime
+    }
 }
 
 /// Stream-copy `src` to `dst` while computing SHA-256, without loading the
@@ -305,11 +375,39 @@ pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, d
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir: PathBuf = app_data_dir.join("attachments");
     let p = find_path_by_hash(&attachments_dir, &hash).ok_or("附件不存在")?;
-    let raw = std::fs::read(&p).map_err(|e| e.to_string())?;
     let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
-    let plain = crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)?;
-    std::fs::write(&dest_path, &plain).map_err(|e| format!("复制失败: {e}"))?;
-    Ok(())
+    // Android：保存对话框给的是 `content://` URI，`std::fs::write(uri)` 会 EROFS（真机实测）。
+    // 走 SaveTarget：桌面=直接写（行为不变），URI=先写缓存再整份搬进去。
+    // ⚠️ P2a/B3 复核过：`write_path()` 在**桌面**是目标本身、在 **Android URI** 目标是缓存里的
+    // 真文件路径 ⇒ 两种情况下它都是**真实文件系统路径**，`fs::copy` 都能写（见 `save_target.rs`）。
+    let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-att")?;
+    export_attachment_to(&p, target.write_path(), key.as_ref())?;
+    target.commit()
+}
+
+/// 把附件字节**以明文**落到 `write_path`。抽成纯函数就为了让"未加密 = 纯拷贝"这条能被单测钉住。
+///
+/// **P2a / B3（2026-09-15）**：未加密时磁盘上本来就是明文，原先却是
+/// `read`（整份进内存）→ `decrypt_attachment_bytes(None, …)`（透传，还是在内存里）→ `write`，
+/// **一读一写纯属白费**。这是全仓**唯一无条件**发生的整块读——导入 / 同步上传 / 同步下载
+/// 都只在"用户开了静态加密"时才整块读（见 `docs/plans/2026-09-15-attachment-sync-scope-plan.md` §2.6(2)）。
+/// 手机上"把传进去的视频导出到下载目录"当场 OOM 的就是它 ⇒ 改成 `fs::copy`（内核态拷贝，RSS 不随文件增长）。
+///
+/// ⚠️ **加密开启时仍是整块解密**，这里**不做**假优化："流式读 → 整块加密 → 流式写"并不降低
+/// 峰值内存（整块 AEAD 必然要求整个明文同时在内存里）。要真流式得改成分块 AEAD ⇒ 那是 P2b，
+/// 前提是**先真机实测是否真的 OOM**，且要兼容存量附件。
+fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
+    match key {
+        // 未加密：磁盘上就是明文 ⇒ 直接拷，别把整份读进内存。
+        None => std::fs::copy(src, write_path)
+            .map(|_| ())
+            .map_err(|e| format!("复制失败: {e}")),
+        Some(k) => {
+            let raw = std::fs::read(src).map_err(|e| e.to_string())?;
+            let plain = crate::security::decrypt_attachment_bytes(Some(k), &raw)?;
+            std::fs::write(write_path, &plain).map_err(|e| format!("复制失败: {e}"))
+        }
+    }
 }
 
 #[tauri::command]
@@ -447,13 +545,16 @@ pub fn import_attachment_files(
     for (index, p) in paths.into_iter().enumerate() {
         // Android：系统选择器给的是 `content://` URI，不是文件路径。先落成真实临时路径
         // （桌面原样返回、不做任何多余的事）；那份拷出来的临时文件随 `picked` 析构删除。
+        // 它同时会把"这是什么文件"问清楚（名字/类型，见 `picked_file` 的模块头注释）。
         let picked = crate::picked_file::materialize(&app, &p)?;
         let src = picked.path().to_path_buf();
-        let name = src
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "file".to_string());
-        let (mime, ext) = mime_from_path(&src); // ext 同时用于存储文件名与 mime
+        // ⚠️ **名字不能用 `src.file_name()` 打头**：Android 上它是我们自己的临时文件名。
+        // 改这行之前它就是**裸 UUID**，真机上列表显示成
+        // `📎41449ced-… 未整理 文件 1.8 KB` —— 那就是这条 bug 的正面。
+        // `effective_name()` 在桌面等价于 `src.file_name()`（选择器名字恒为 None）。
+        let name = picked.effective_name();
+        // mime/ext 的三层决策见 `mime_and_ext`（桌面恒走扩展名那一层，行为不变）。
+        let (mime, ext) = mime_and_ext(&src, picked.system_mime(), picked.sniffed());
 
         // tmp lives in the flat attachments dir (part files never published); the
         // final file goes into a 2-char bucket dir once the hash is known.
@@ -710,6 +811,18 @@ pub fn move_attachment(db: State<'_, Db>, id: String, new_page_id: String) -> Re
 }
 
 /// Rename an attachment's display name (bytes/hash unchanged).
+///
+/// ## mime 随不随改名变（2026-09-17 定的语义，别改回去）
+///
+/// **按新名字重算**，但只有一条判据：新名字**认得出类型**才写回（[`repaired_mime`]）。
+/// 于是两件事同时成立：
+///
+/// - `x.txt` 改成 `x.pdf` ⇒ 立刻能进内置 PDF 阅读器；老数据（裸 UUID + octet-stream）
+///   改成 `photo.png` ⇒ 用户能自救。改名这条路上"用户敲的扩展名"是**显式声明**，
+///   该被采信。
+/// - 改成一个**认不出**的名字（`report.pdf` → `report`、或改成 `.unknownext`）⇒
+///   **原样保留**原来的 mime。改名永远不会把已知类型降级成 `application/octet-stream`
+///   —— 否则把 `report.pdf` 改成 `report` 就能把 PDF 阅读器弄丢，那才是把能用的东西改坏。
 #[tauri::command]
 pub fn rename_attachment(db: State<'_, Db>, id: String, name: String) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -717,13 +830,8 @@ pub fn rename_attachment(db: State<'_, Db>, id: String, name: String) -> Result<
         return Err("名称不能为空".to_string());
     }
     let c = db.0.lock().expect("db mutex poisoned");
-    let n = c
-        .execute("UPDATE attachments SET name = ?1 WHERE id = ?2", params![name, id])
-        .map_err(|e| e.to_string())?;
-    if n == 0 {
-        return Err("附件不存在".to_string());
-    }
-    // 同步新名称到其它设备（字节/hash 不变）。
+    // 先在**同一个锁**里读出来：下面的 UPDATE 会用当前 mime 决定新 mime，
+    // 两次查询之间不能被别人插进来改掉。
     let meta = c
         .query_row(
             "SELECT page_id, hash, mime, size FROM attachments WHERE id = ?1",
@@ -732,7 +840,17 @@ pub fn rename_attachment(db: State<'_, Db>, id: String, name: String) -> Result<
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    if let Some((page_id, hash, mime, size)) = meta {
+    let Some((page_id, hash, cur_mime, size)) = meta else {
+        return Err("附件不存在".to_string());
+    };
+    let mime = repaired_mime(&cur_mime, &name);
+    c.execute(
+        "UPDATE attachments SET name = ?1, mime = ?2 WHERE id = ?3",
+        params![name, mime, id],
+    )
+    .map_err(|e| e.to_string())?;
+    // 同步新名称到其它设备（字节/hash 不变）。
+    {
         let now = now_ms();
         let payload = serde_json::json!({ "id": &id, "page_id": page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
         record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
@@ -818,3 +936,220 @@ mod read_bytes_tests {
         let _ = std::fs::remove_dir_all(&flat);
     }
 }
+
+/// **P2a / B3 的门禁**：导出（下载 / 另存为）分两条路，且**未加密那条必须是纯拷贝**。
+#[cfg(test)]
+mod export_attachment_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-att-export-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 未加密：导出的就是**逐字节相同**的原文件。
+    ///
+    /// 这条同时是"改成 `fs::copy` 之后行为没变"的判据——因为本分支原先走的是
+    /// `read` → `decrypt_attachment_bytes(None, …)`（透传）→ `write`，产物必须一模一样。
+    #[test]
+    fn unencrypted_export_is_a_byte_for_byte_copy() {
+        let dir = temp_dir("plain");
+        let src = dir.join("12d785817fcddf344ac33a36113281c27867c85b385f96771410b3ddccb3d223.mp4");
+        let dst = dir.join("out.mp4");
+        // 比一页大的内容：整块读的老实现在这里会把整份读进内存，拷贝路径不会。
+        let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&src, &payload).unwrap();
+
+        export_attachment_to(&src, &dst, None).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), payload, "未加密导出必须逐字节相同");
+        // 源文件仍在（导出是"另存一份"，不是"搬走"）。
+        assert!(src.exists(), "导出不能动源文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 加密开启：磁盘上是密文，导出的必须是**明文**（否则用户拿到一个解不开的文件）。
+    #[test]
+    fn encrypted_export_decrypts_to_plaintext() {
+        let dir = temp_dir("enc");
+        let src = dir.join("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899.pdf");
+        let dst = dir.join("out.pdf");
+        let key = [7u8; 32];
+        let plain = b"%PDF-1.7 real content";
+        // 磁盘上存密文（与 security::encrypt_attachment_bytes 的落盘格式一致）。
+        std::fs::write(&src, crate::security::encrypt_attachment_bytes(Some(&key), plain).unwrap()).unwrap();
+
+        export_attachment_to(&src, &dst, Some(&key)).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), plain, "加密导出必须解密成明文");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 「Android 导入的附件没有名字也没有类型」那条 bug 的**门禁**。
+///
+/// 真机症状：列表显示 `📎41449ced-… 未整理 文件 1.8 KB`，点它进不了内置预览
+/// （`FileManagerView`/`PageTree` 都按 `file.mime` 分支），PDF 也进不了阅读器。
+/// 这里钉住的就是**修好之后必须成立的那几件事**。
+#[cfg(test)]
+mod picked_mime_tests {
+    use super::*;
+    use crate::magic::Magic;
+
+    /// 一段真实的 PNG 开头（签名 + IHDR 长度/类型）。
+    const PNG_HEAD: &[u8] = &[
+        0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D',
+        b'R',
+    ];
+
+    /// **本 bug 的核心断言**：一个**没有扩展名**的临时文件（= Android 上那个裸 UUID），
+    /// 只要内容嗅探认出是 PNG，mime 就必须是 `image/png` —— 前端那条
+    /// `mime.startsWith("image/")` 分支才会亮，内置预览才进得去。
+    #[test]
+    fn an_extensionless_png_gets_image_png() {
+        let src = Path::new("/tmp/picked/41449ced-d44e-4d3c-8e14-7c6733ad042a");
+        let sniffed = crate::magic::sniff(PNG_HEAD);
+        assert_eq!(sniffed.map(|m| m.ext), Some("png"), "前提：这段字节确实是 PNG");
+
+        let (mime, ext) = mime_and_ext(src, None, sniffed);
+        assert_eq!(mime, "image/png");
+        assert_eq!(ext, "png");
+    }
+
+    /// 一整个 PDF 也一样要能进内置阅读器（`PageTree` 判的是 `application/pdf`）。
+    #[test]
+    fn an_extensionless_pdf_gets_application_pdf() {
+        let src = Path::new("/tmp/picked/41449ced-d44e-4d3c-8e14-7c6733ad042a");
+        let (mime, ext) = mime_and_ext(src, None, crate::magic::sniff(b"%PDF-1.7\n"));
+        assert_eq!(mime, "application/pdf");
+        assert_eq!(ext, "pdf");
+    }
+
+    /// 系统说的 mime 在**扩展名表不认识**时接手：它能认出表里没有的类型，
+    /// 而且拿不到扩展名时落盘扩展名要跟着它走（`<hash>.<ext>` 里的 `<ext>` 由这里定）。
+    #[test]
+    fn the_system_mime_takes_over_where_the_extension_table_gives_up() {
+        let bare = Path::new("/tmp/picked/41449ced");
+        assert_eq!(
+            mime_and_ext(bare, Some("image/png"), None),
+            ("image/png".to_string(), "png".to_string())
+        );
+        // 表里没有的类型（opus）也照系统说的走
+        assert_eq!(
+            mime_and_ext(bare, Some("audio/opus"), None),
+            ("audio/opus".to_string(), "bin".to_string())
+        );
+        // 表**不认识**的扩展名：mime 用系统说的，扩展名仍用名字给的那个
+        assert_eq!(
+            mime_and_ext(Path::new("/tmp/picked/x.opus"), Some("audio/opus"), None),
+            ("audio/opus".to_string(), "opus".to_string())
+        );
+        // 表认识的扩展名：与桌面同一条路
+        assert_eq!(
+            mime_and_ext(Path::new("/tmp/picked/x.webp"), Some("image/webp"), None),
+            ("image/webp".to_string(), "webp".to_string())
+        );
+    }
+
+    /// **不能把前端认得的类型换成认不得的**：`ContentResolver.getType` 会给出
+    /// `text/x-markdown` 这类非规范写法，而前端的 markdown 内置预览判的是**恰好等于**
+    /// `text/markdown`。所以扩展名表（我们自己的规范词汇）必须先说话。
+    #[test]
+    fn a_non_canonical_system_mime_must_not_replace_our_canonical_one() {
+        assert_eq!(
+            mime_and_ext(Path::new("/tmp/picked/notes.md"), Some("text/x-markdown"), None),
+            ("text/markdown".to_string(), "md".to_string())
+        );
+        assert_eq!(
+            mime_and_ext(Path::new("/tmp/picked/a.png"), Some("image/x-png"), None),
+            ("image/png".to_string(), "png".to_string())
+        );
+        assert_eq!(
+            mime_and_ext(Path::new("/tmp/picked/a.pdf"), Some("application/x-pdf"), None),
+            ("application/pdf".to_string(), "pdf".to_string())
+        );
+    }
+
+    /// **桌面逐字节不变**的门禁：没有系统答案、没有嗅探时，走的必须是原来那条
+    /// 扩展名表 —— 逐个类型对一遍，防止有人以后把优先级改错。
+    #[test]
+    fn without_any_android_layer_the_extension_table_still_decides() {
+        for (path, mime, ext) in [
+            ("/tmp/a.png", "image/png", "png"),
+            ("/tmp/a.jpeg", "image/jpeg", "jpg"),
+            ("/tmp/a.zip", "application/zip", "zip"),
+            ("/tmp/a.md", "text/markdown", "md"),
+            ("/tmp/a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+            // 认不出来的扩展名与**没有**扩展名：都是 octet-stream + bin（与今天一致）
+            ("/tmp/a.unknownext", "application/octet-stream", "unknownext"),
+            ("/tmp/41449ced-d44e-4d3c-8e14-7c6733ad042a", "application/octet-stream", "bin"),
+        ] {
+            assert_eq!(
+                mime_and_ext(Path::new(path), None, None),
+                (mime.to_string(), ext.to_string()),
+                "{path}"
+            );
+        }
+    }
+
+    /// 嗅探只有在**完全没有扩展名**时才允许开口：有扩展名时它不得推翻扩展名表
+    /// （否则同一个 hash 的老数据会从 `<hash>.bin` 漂到 `<hash>.png`，多出孤儿文件）。
+    #[test]
+    fn sniffing_never_overrides_a_real_extension() {
+        let sniffed = Some(Magic { mime: "image/png", ext: "png" });
+        assert_eq!(
+            mime_and_ext(Path::new("/tmp/a.pdf"), None, sniffed),
+            ("application/pdf".to_string(), "pdf".to_string())
+        );
+    }
+
+    /// 改名那条语义（见 [`rename_attachment`] 的文档）：**按新名字重算，但永不降级**。
+    #[test]
+    fn renaming_recomputes_from_the_new_name_but_never_downgrades() {
+        // ① 老数据（Android 导入那批：名字是裸 UUID、mime 是 octet-stream）改名成 .png ⇒ 救回来
+        assert_eq!(repaired_mime(GENERIC_MIME, "photo.png"), "image/png");
+        assert_eq!(repaired_mime(GENERIC_MIME, "photo.jpeg"), "image/jpeg");
+        // ② 已知类型改成另一个**认得**的扩展名 ⇒ 采信用户敲的那个（改名 .txt→.pdf 之后
+        //    要能进内置 PDF 阅读器，这是这条语义存在的理由）
+        assert_eq!(repaired_mime("text/plain", "notes.pdf"), "application/pdf");
+        assert_eq!(repaired_mime("text/markdown", "readme.md"), "text/markdown");
+        // ③ **永不降级**：新名字认不出类型时原样保留 —— 否则 `report.pdf` 改成 `report`
+        //    就能把 PDF 阅读器弄丢，那是把能用的东西改坏
+        assert_eq!(repaired_mime("application/pdf", "report"), "application/pdf");
+        assert_eq!(repaired_mime("image/png", "whatever.unknownext"), "image/png");
+        assert_eq!(repaired_mime("application/pdf", "41449ced-d44e"), "application/pdf");
+        // ④ 认不出 → 仍然认不出：维持"不知道"，不编
+        assert_eq!(repaired_mime(GENERIC_MIME, "file.unknownext"), GENERIC_MIME);
+    }
+
+    /// `sniff_file` 要真的读盘（`materialize` 用它给无扩展名的临时文件补扩展名）。
+    #[test]
+    fn sniff_file_reads_from_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-sniff-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 名字是裸 UUID、没有扩展名 —— 与 Android 上落下来的那个临时文件同形
+        let bare = dir.join("41449ced-d44e-4d3c-8e14-7c6733ad042a");
+        std::fs::write(&bare, PNG_HEAD).unwrap();
+        assert_eq!(crate::magic::sniff_file(&bare).map(|m| m.mime), Some("image/png"));
+
+        // 读不到的文件返回 None，不 panic（导入路径上"问不到"不能变成"导入失败"）
+        assert_eq!(crate::magic::sniff_file(&dir.join("nope")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+

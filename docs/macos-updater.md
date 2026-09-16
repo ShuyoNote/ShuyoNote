@@ -172,6 +172,21 @@ node scripts/release.mjs --no-build
   （否则 mac 上表现为"能下载、装不上"）；相关测试见 `scripts/lib/releaseArtifacts.test.mjs`
   的 `macOS 更新通道` 一组（已做变异验证：把偏好改回 dmg 该组立刻变红）。
 
+> ⚠️ **如果打的是 universal 包**（`tauri build --target universal-apple-darwin`，产物名形如
+> `ShuyoNote_<版本>_universal.dmg`）：`release.mjs` 会把它**同时**写进 `darwin-aarch64` 与
+> `darwin-x86_64` 两个键（2026-09-15 修）。为什么必须这样：更新器是**按平台键找条目**的，
+> 只占 `darwin-x86_64` 的话，Apple Silicon 机器的清单里**根本没有** `darwin-aarch64`
+> ⇒ 表现为"检查更新什么都不发生"，**不报任何错**。
+> 判据在 `scripts/lib/releaseArtifacts.test.mjs`（`platformKeysFor` 与 `manifestPicks` 各有用例；
+> 变异自证：把 `manifestPicks` 改回按主键归组 ⇒ 该用例红）。
+> 出包方式二选一即可：要么分别出 `x64`/`aarch64` 两个 dmg（各占各的键），要么出一个 universal dmg（占两个键）。
+>
+> ⚠️ **注意架构覆盖**：`release.yml` 的 `macos-latest` runner 是 **arm64**，默认只出
+> `..._aarch64.dmg` ⇒ 清单里只有 `darwin-aarch64` ⇒ **Intel Mac 收不到更新**（同样是静默的）。
+> 要覆盖 Intel，就在同一个 job 里加一次 `--target x86_64-apple-darwin`（产出 `..._x64.dmg`，
+> 与 aarch64 那份各占一个键），或直接出一个 universal dmg。**这是产品决定**（要不要支持 Intel Mac），
+> 不是脚本能替你定的——所以这里只把两条路的代价写清楚，不做强制。
+
 ## 六、CI（方案 A：GitHub Actions）
 
 ### 6.1 自检（**不需要任何密钥**，已经在跑）
@@ -224,6 +239,14 @@ identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。
    `spctl -a -vvv ShuyoNote.app` 应显示 `accepted, source=Notarized Developer ID`。
 7. 打 `v*` tag → CI 出三平台 + Android；再用 `release.mjs --no-build` 发 GitCode。
 8. mac 上装一次确认 Gatekeeper 不拦，再测「检查更新」。
+
+> **动手前两条（2026-09-15 的教训，别省）**：
+> - **先 `git pull` 再干活**：v1.91.0 那次事故就是"用旧 checkout 发版"——`release.yml` 少了两步
+>   Android 壳适配层注入，打出来的 APK 装上直接闪退，而 CI 全绿。旧分支/旧拷贝发版是同一类风险。
+> - **打 tag 前跑 `pnpm release:preflight`**：它一条命令查六件事，其中"`origin/dev` 是否已进 `main`"
+>   与"tag 是否已被占用"都是发 1.91.0 时真卡住过的地方。发布后跑 `pnpm check:release-state`。
+>   取 CI 产物用 `pnpm fetch:release-artifacts --tag vX.Y.Z --stage`（分片并行 + 续传 + 校验 +
+>   自动验 APK 字节）。详见 [RELEASING.md](RELEASING.md) ④⑤⑥。
 
 ## 相关文件
 - `scripts/lib/releaseArtifacts.mjs` —— 产物收集 / 平台键 / 清单偏好（含 macOS 的 `.app.tar.gz` 规则与门禁）

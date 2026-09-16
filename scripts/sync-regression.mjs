@@ -11,6 +11,8 @@ const arg = (name, def) => {
 };
 const SERVER = (arg("--server", "http://127.0.0.1:8787") || "").replace(/\/+$/, "");
 const CODE = arg("--code", "SHUYOTEST");
+/** 个人/无账户部署（K1/K2）用：直接拿服务端签发的 `sk_` 密钥，跳过注册/登录。 */
+const DEVICE_KEY = arg("--device-key", "");
 const BASE = `${SERVER}/spaces`;
 
 let pass = 0, fail = 0;
@@ -29,27 +31,44 @@ async function main() {
   const suffix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const email = `sync-reg-${suffix}@test.local`;
   const password = "syncpass" + Math.random().toString(36).slice(2, 10);
-  console.log(`\n[同步一致性回归] server=${SERVER}  user=${email}`);
+  console.log(`\n[同步一致性回归] server=${SERVER}  ${DEVICE_KEY ? "auth=设备密钥（个人/无账户）" : `user=${email}`}`);
 
   // 0. health
   const h = await req("GET", `${SERVER}/health`);
   ok(h.status === 200 && /\bok\b/.test(h.text), "服务端 /health=ok");
 
-  // 1. register
-  const reg = await req("POST", `${SERVER}/auth/register`, { body: { email, password, display: "sync-reg", register_code: CODE } });
+  // 1+2. 认证与空间：两条路二选一
+  //
+  //   · 默认（账号制 / 团队版）：注册 → 拿 token → 建空间；
+  //   · `--device-key sk_…`（个人/无账户部署，K1/K2）：**没有注册这一步** —— 客户端拿服务端
+  //     签发的一把 key 就连上了；空间由服务端侧用 CLI 建好（`--issue-device-key`），这里问出来即可。
+  //     这条路正是官网「个人自建同步 ¥199 一次性买断」那一档的实际用法，所以必须有自动化判据
+  //     —— 光有服务端单测证明不了"客户端这条链路真的能连上"。
   let token;
-  try { token = JSON.parse(reg.text)?.token; } catch {}
-  if (!token) {
-    // 无邀请码的服务器：用空码重试。
-    const reg2 = await req("POST", `${SERVER}/auth/register`, { body: { email, password, display: "sync-reg", register_code: "" } });
-    token = JSON.parse(reg2.text)?.token;
-  }
-  ok(Boolean(token), "注册成功并取得 token");
+  let spaceId;
+  if (DEVICE_KEY) {
+    token = DEVICE_KEY;
+    const listRes = await req("GET", `${SERVER}/spaces`, { token });
+    const list = (() => { try { return JSON.parse(listRes.text)?.spaces ?? []; } catch { return []; } })();
+    const sp = list[0];
+    spaceId = sp?.id;
+    ok(Boolean(token), "使用服务端签发的设备密钥（无注册、无登录）");
+    ok(Boolean(spaceId), "密钥能列出自己的空间");
+    ok(sp?.role === "owner", `密钥在该空间的身份是 owner（实测 ${sp?.role ?? "无"}）——「持钥即拥有」`);
+  } else {
+    const reg = await req("POST", `${SERVER}/auth/register`, { body: { email, password, display: "sync-reg", register_code: CODE } });
+    try { token = JSON.parse(reg.text)?.token; } catch {}
+    if (!token) {
+      // 无邀请码的服务器：用空码重试。
+      const reg2 = await req("POST", `${SERVER}/auth/register`, { body: { email, password, display: "sync-reg", register_code: "" } });
+      token = JSON.parse(reg2.text)?.token;
+    }
+    ok(Boolean(token), "注册成功并取得 token");
 
-  // 2. create space
-  const sp = JSON.parse((await req("POST", `${SERVER}/spaces`, { token, body: { name: "回归空间" } })).text);
-  const spaceId = sp?.id;
-  ok(Boolean(spaceId), "创建组织空间");
+    const sp = JSON.parse((await req("POST", `${SERVER}/spaces`, { token, body: { name: "回归空间" } })).text);
+    spaceId = sp?.id;
+    ok(Boolean(spaceId), "创建组织空间");
+  }
 
   // 3. device A push a set of changes (pages + attachment metadata)
   const devA = "dev-" + randomUUID().slice(0, 8);

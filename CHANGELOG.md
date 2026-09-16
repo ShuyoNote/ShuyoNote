@@ -4,6 +4,236 @@
 
 ## [Unreleased]
 
+### 安全
+
+- **发布自检脚本会把 GitHub token 打进日志**（2026-09-16 发 1.91.3 时当场踩到）。
+  `scripts/check-release-state.mjs` 用 `execFileSync("curl.exe", ["-H", "Authorization: Bearer ghp_…"])`
+  取 Release 信息，curl 一失败，Node 抛出的 message 里**带着整条 argv**，那句
+  `ok(false, …e.message…)` 就把 token 原样打进了终端（在 CI 上就是公开日志）。
+  修法：新增 `scripts/lib/redact.mjs`（`redactSecrets`，覆盖 `Bearer …`、`ghp_/gho_/ghs_/ghu_/ghr_`、
+  `github_pat_`、`token=/access_token=/private_token=`、URL 里的 `user:pass@`），
+  打外部命令错误前一律先过它；`scripts/lib/redact.test.mjs` 六条判据（含那次泄漏的**原样错误串**，
+  以及"正常日志不许被抹花"）。`scripts/release.mjs` 的 gitcode 请求错误只带状态码与 URL，
+  并在注释里写明"不要把 headers 塞进 message"的理由。
+  ⚠️ **已经在日志里露过的那把 token 要轮换**——抹的是以后，抹不掉已经写出去的那次。
+
+## [1.91.3] - 2026-09-16
+
+> 开着加密重启不再崩溃；口令锁 UX 补齐（忘记口令的说法、立即锁定立刻切屏）
+
+### 新增
+
+- **macOS 打包有了每次 push 的自检**：`.github/workflows/macos.yml` 在 `macos-latest` 上打一个
+  **未签名**的 `.app + .dmg`（不碰任何密钥、不发布、不挂 tag），再用新增的
+  `scripts/check-macos-bundle.mjs`（`pnpm check:macos-bundle`）断言四件事——
+  `CFBundleIdentifier` 与 `tauri.conf.json` 一致、版本号与 `package.json` 一致、
+  **`CFBundleURLTypes` 里注册了 `shuyonote` 深链**（本机还会真的去问 LaunchServices 认领了哪些 scheme）、
+  以及 dmg 是本版本的那一个。这几条错了打包**不会报错**，只会在用户端以"身份变了 / 版本号不对 /
+  点链接没反应"的形式晚很久才暴露。
+  脚本自己踩过一次坑并留了回归用例：产物 plist 里 `CFBundleURLTypes` 是**数组套数组**，
+  按"先匹配外层再找内层"的写法会停在**内层** `</array>` 上、把"注册好了"误报成"没注册"。
+  11 条单测（做过变异验证）。
+
+- **跨机器多端同步会合测试（Windows ⇄ Mac，服务器在 Mac）已实测通过**（2026-09-15）：
+  新增 `scripts/sync-multidevice.mjs`（两端各跑一次、无需约定先后：写标记 → 等对方的页 →
+  **互改对方的页**再等回改 ⇒ 验的是"就地更新也双向到达"，不只是"新页能看见"）+ 手册
+  [sync-multidevice-test.md](docs/sync-multidevice-test.md)（含跨网段的 SSH 隧道方案与四种失败原因）。
+  实测（账号制：各自注册、Windows 建空间并把 Mac 加成 `editor`，**无任何密钥跨机器传递**）：
+  两端各 `pass: 6 / fail: 0`、`peerSeen`/`bidirectional` 均 `true`；顺带确认两台机器在同一网段
+  （局域网直连与公网隧道**两条都通**）。仍未做：**真客户端 GUI 那一步没人点**（Mac 侧无 GUI 自动化），
+  已如实记进服务端仓 `SESSION_CONTINUE.md` §13.4。
+
+### 修复
+
+
+- **`Android (build)` 连续两次红在 `Setup Android SDK`（不是我们的代码）**：2026-09-15 起
+  `android-actions/setup-android@v3` 在 Google 侧改包后**必失败**——上游 issue #537（当天停止提供
+  `sdkmanager` 的 `tools` 包 ⇒ `Failed to find package 'tools'`）与 #536（commandlinetools 下载 URL
+  变更 ⇒ 直接 404）。它挂在这一步时后面十几步**全部 skip**，看起来像"我们的代码坏了"；
+  判据是"同一 workflow 上一个提交还是绿的 + 时间点与上游 issue 吻合"。
+  改法：**不再用这个 action**，直接用 ubuntu runner 镜像自带的 SDK（`ANDROID_HOME` / `ANDROID_SDK_ROOT`
+  由镜像设好，见 actions/runner-images 的 Ubuntu2404-Readme），并加三条断言——SDK 根存在、
+  `sdkmanager` 找得到（`latest` 与版本号目录都认）、否则**明确报错并列出目录**。
+  `release.yml` 的 Android job 同改：不改的话下一次发版出不了 APK，而 `release.mjs` 缺 APK 会硬失败。
+  本机用假 SDK 树验过四种输入：只有 `latest` ✓ / 只有版本号目录 `16.0` ✓ / 完全没有 → 明确失败 ✓ /
+  连环境变量都没有 → 明确失败 ✓。
+
+- **macOS 更新通道会指向 dmg ⇒「能下载、装不上」**（发 macOS 版之前必须先修的这条）。
+  依据：`tauri-plugin-updater` 2.10.1 的 macOS `install_inner()` 直接 `GzDecoder` + `tar::Archive`
+  解包 `.app.tar.gz`（docstring 也写明期望 `[AppName]_[version]_x64.app.tar.gz`），
+  给它 dmg（连 gzip 都不是）会解包失败；而 `tauri-bundler` 生成的正是
+  `ShuyoNote.app.tar.gz`（**不带版本号、不带架构**）。
+  改动：`scripts/lib/releaseArtifacts.mjs` 收 `.app.tar.gz`（`bundle/macos/` 一并遍历）、
+  `MANIFEST_PREFERENCE` 把 `app.tar.gz` 排在 `dmg` 之前（dmg 照发，只用于人工下载安装）、
+  架构从同批次 dmg 推（推不出来就报错、不猜）、**有 dmg 却没有 `.app.tar.gz` 时硬失败**。
+  测试见 `scripts/lib/releaseArtifacts.test.mjs` 的「macOS 更新通道」一组（已做变异验证）；
+  拿到证书后的操作步骤见 [docs/macos-updater.md](docs/macos-updater.md) §二。
+
+- **口令锁的「解锁 / 锁定 UX + 忘记口令」补齐（E2）**，并修掉它盖住的那个**必崩路径**。
+  两者是同一次动作，因为**不修那个崩溃，这块屏根本到不了用户眼前**：
+
+  - **修掉「开着加密重启 = 崩溃屏」**（真事故，本轮发现）。`App` 里的锁定闸门原先是一句
+    **早退**，而它排在七八个 hooks **之前**：首帧状态未知（`enc === null`）不算锁定、这一帧跑了
+    全部 hooks；状态回来后的第二帧早退，只跑其中一部分 ⇒ React 抛
+    `Rendered fewer hooks than expected`，被根部 `ErrorBoundary` 接住，用户看到的是**崩溃屏**。
+    也就是说 **E1 那道锁定屏在这条最常见的路径上一次都没出现过**（真机只验了设置页里的开关，
+    没验过"重启"，所以一直没暴露）。现在闸门与外壳**拆成两个组件**：`App` 自己只有一个 hook、
+    分支只决定渲染哪个组件；锁定态下读库的外壳**根本不挂载**（比"挂起来再挡住"更干净）。
+  - **状态只有一份**：新增 `src/lib/vault.ts`（`enabled`/`locked`/`ready` + 订阅 + 五个动作）
+    与 `src/hooks/useVault.ts`。此前 App 和设置页各自持有一个 `useState` 副本，于是
+    **在设置页点「立即锁定」界面不会切屏**，用户继续看着已经读不出来的内容、同步被拒却不知道
+    为什么。现在锁定立刻切到锁定屏，解锁后外壳全新挂载、重新读一遍页面。
+  - **锁定屏给忘记口令的人一条诚实的出路**：连错 3 次自动摊开「忘记口令？」，内容照代码写实——
+    **没有找回流程**；**同步到服务器的那份也打不开**（内核里同步载荷用的就是这把会话密钥，
+    `security::key_if_enabled`）；**唯一可能是"开启加密之前"导出的明文备份**；没有那样的备份
+    就永久取不回。同时给了「显示/隐藏」口令、输错即清空并回焦、错误计数。
+  - **开启加密多一道硬确认**：必须勾选「我已保管好口令，并知道丢了找不回」才能点开启
+    （全应用里唯一"丢了就真没了"的操作），并提示若想留后路要**在开启加密之前**导出备份
+    （开启后导出的备份同样是密文，一样要口令）。
+  - **测试与变异验证**：`src/vaultGate.test.ts`（7 例，直接渲染真 `App`，断言锁定启动得到
+    锁定屏、外壳不挂载、**没有任何 hooks 顺序报错**；另有运行中锁定、解锁、失败不改状态、
+    问不到内核按未开启兜底）与 `src/components/lockScreen.test.ts`（6 例）。两条都做过变异：
+    把 `App.tsx` 换回旧版 ⇒ 7 例里 **5 例红**、并复现出那条 `Rendered fewer hooks`；
+    把"错 3 次自动摊开"和"输错清空"分别拿掉 ⇒ 恰好对应用例红。
+  - **顺手把它变成门禁**（同一类错这是第二次：1.85.1 那次是命令面板白屏）：
+    `scripts/check-hook-order.mjs`（`pnpm check:hook-order`，自测 `--self-test`）扫全部
+    `.ts/.tsx`，报"同一个函数里 `return` 之后还有 hooks"。带自测——**两次真事故的原始写法必须判红**、
+    三种正确写法必须放过；另做交叉验证——同一份 `App.tsx`，修复后 0 处、修复前 1 处。
+    它**不是语法树**（本仓 TypeScript 7 是原生编译器、没有 JS API，也没有可用的解析器依赖），
+    是按 token + 花括号层级的启发式，边界写在脚本头注里；"hooks 放在条件里"那一种本门禁不查。
+    已接进 `pnpm build`。
+  - **仍未做（如实记）**：真机复验。以上都是渲染层判据（真 `App` + 真状态中枢），
+    **没有**在真机上跑一遍"开启加密 → 重启 → 解锁"（Android 上还要覆盖 SQLCipher 重开库）。
+    这一版（1.91.3）是**第一个带上这个修复的安装包**：修好的代码此前只在 `dev`，
+    2026-09-16 随 `merge: dev 合入 main`（`62bc733`）进 `main` 后打了 `v1.91.3`；
+    **已发布的 1.91.0 / 1.91.1 / 1.91.2 里这条崩溃路径仍然存在**（三个 tag 逐个查过那句早退都在）。
+
+- **macOS universal 包会让 Apple Silicon 收不到更新**（2026-09-15 发现；macOS 版尚未启用，
+  属于"一启用就会踩"的坑；修复随这一版走）。
+  `platformKeyFor` 只按 `aarch64|arm64` 判断 dmg 归哪个平台键，于是
+  `…_universal.dmg`（`tauri build --target universal-apple-darwin` 的产物）被归到
+  **`darwin-x86_64` 一个键**，清单里就没有 `darwin-aarch64` ⇒ 更新器按平台键找不到条目，
+  表现为"检查更新什么都不发生"、**且不报任何错**。
+  修法：新增 `platformKeysFor()`（返回**全部**键），universal dmg 同时占 `darwin-aarch64`
+  与 `darwin-x86_64`；`manifestPicks` 改用它归组；`platformKeyFor` 保持旧语义（取主键）。
+  判据：`scripts/lib/releaseArtifacts.test.mjs` 新增 dmg 三种情形 + `manifestPicks` 两个用例
+  ——**此前这个文件里一个 dmg 用例都没有**（macOS 通道等于没判据）；
+  变异自证：把 `manifestPicks` 改回按主键归组 ⇒ 新用例红。
+  见 [macos-updater.md](docs/macos-updater.md) 五。
+
+## [1.91.2] - 2026-09-15
+
+> 修「设置里加了邮箱账号、聚合邮箱不及时更新」；并把发版工具链补齐（打 tag 前前置检查 / 一条命令取产物 / 验 APK 产物 / 发布后自检 / 两条 Android 流水线的步骤一致性门禁）。
+
+### 新增
+- **`scripts/release-preflight.mjs`（打 tag 前的前置检查）**（2026-09-15）：`pnpm release:preflight`。
+  一次查六件事：① 在 `main` 上且已跟踪文件没有未提交改动（未跟踪文件只提醒）；
+  ② 版本号六处互相一致；③ CHANGELOG 有 `## [<版本>]` 段、`[Unreleased]` 仍在、结构校验通过；
+  ④ tag `v<版本>` 本地与**两个远端**都没有（复用已发布 tag ⇒ 资产覆盖 ⇒「旧件冒充新件」）；
+  ⑤ **`origin/dev` 已是 `main` 的祖先**——runbook ④ 的硬前提，2026-09-15 发 1.91.0 时就卡在这
+  （推到一半才发现 dev 还有 3 个提交没进来）；⑥ 两个远端都可达。
+  远端命令**先按环境跑、失败再显式绕开代理重试**并报出走哪条路（这台机器的 `HTTP(S)_PROXY`
+  指向本地 127.0.0.1:7897，那代理不一定开着，报错看着像"远端不可达"）。
+  离线可 `--skip-remote`；`--version` 可预演还没 bump 的版本。见 [RELEASING.md](docs/RELEASING.md) ④。
+
+- **`scripts/fetch-release-artifacts.mjs`（取 CI 产物并落位，一条命令）**（2026-09-15）：
+  `pnpm fetch:release-artifacts --tag v1.91.1 --stage`（或 `--run <id>`）。它从 Release 流水线
+  的 artifact 里把 `bundle-*` 与 `android-release-apk` 取回来、**按 API 给的 digest 校验整包
+  sha256**、零依赖解包，并按 `release.mjs` 期望的目录落位（`--stage`）。取到 APK 后**立刻**
+  跑 `check-apk-contents.mjs` 验字节。实现上用 Node 自己走完：分片并行（GitHub 单连接实测
+  ~40KB/s）+ 断点续传（中断重跑接着下）+ 解包复用 `scripts/lib/zip.mjs`。
+  为什么要有它：这一步原先全手工，2026-09-15 发 1.91.1 时踩了三个坑（连接太慢超时、分片断了
+  要重下、拼装辅助 `.ps1` 因无 BOM 的 UTF-8 中文在 PowerShell 5.1 里解析失败）。
+  见 [RELEASING.md](docs/RELEASING.md) ⑤。
+
+- **`scripts/lib/zip.mjs`（零依赖 ZIP 读取）**（2026-09-15）：`listZipEntries` / `readZipEntry` /
+  `extractZip`。自己读中央目录（EOCD 回扫 + 固定头解析），用 Node 自带 `zlib.inflateRawSync`
+  解 deflate；不支持 ZIP64 时**明确报错**而不是给错数据。给 `check-apk-contents` 与
+  `fetch-release-artifacts` 共用（同一份实现，别再抄第二份）。
+
+- **`scripts/check-apk-contents.mjs`（验 APK 产物，一条命令，零依赖）**（2026-09-15）：
+  `pnpm check:apk <apk 文件>`。翻 APK 字节验五件事——dex 里有 `ShuyoFsPlugin` /
+  `__SHUYONOTE_INSETS__` / `__SHUYONOTE_BACK__` / `installApk`（每条对应一个真实能力，
+  缺第一个就是 **v1.91.0 那种装上闪退**）、ABI 恰好 arm64-v8a、含 apksigner 签名块。
+  自己读 ZIP 中央目录（Node 自带 zlib），不指望 `unzip`/`strings` 在不在，Windows/Linux/CI 一致。
+  CI 的 `release.yml` 现在**调用同一个脚本**（单一事实来源），本地也能拿它验 CI artifact 与
+  **线上那一份**。变异自证：1.91.0 的坏发版件 ⇒ **4 项红**逐条点名；1.91.1 的好包 ⇒ 7 项全绿。
+  见 [RELEASING.md](docs/RELEASING.md) §9.1。
+
+- **`scripts/check-release-state.mjs`（发布后自检，一条命令）**（2026-09-15）：`pnpm check:release-state`。
+  一次核对：通道版本 = 仓库版本；每个平台键的 url 是绝对 https 且 signature 非空
+  （android 必须是 `sha256:<64 hex>`）；每个产物 URL 真的可达（`-r 0-0` 取 1 字节探活——
+  **不能**用 HEAD，gitcode 对 HEAD 一律 401）；**通道里 android 的 sha256 = GitHub Release 上
+  那份 `.apk.sha256`**；两个 Web 入口的 `version.json` = 当前版本。历史上这些全靠手工看，
+  出过"主站静默停在 1.84.5"和"线上 APK 是坏的（装上闪退）而版本号自检全绿"两种事故。
+  网络失败与"真的不符"分开报（取不到 `.sha256` 只打印"跳过（网络原因）"），
+  它**不进 `pnpm build`**（要对线上发请求），是发版当天的手工命令。详见 [RELEASING.md](docs/RELEASING.md) §⑥。
+
+- **`scripts/check-release-parity.mjs`（两条 Android 流水线的步骤一致性门禁）**（2026-09-15）：
+  `pnpm check:release-parity`，已串进 `pnpm build`。它把 `android.yml`（自检包）与
+  `release.yml` 的 `android` job 的 `- name:` 归一化后逐一比对，**只出现在一边的步骤必须
+  落进脚本里那张显式允许表并写明理由**，否则红；豁免表里写了而实际不存在的条目也会红
+  （防止表腐化）。存在的理由就是 v1.91.0 那次闪退：自检包有的注入步骤，发版件漏了，
+  两条流水线的 CI 全绿，直到用户装上才发现。变异自证：删掉那两步 ⇒ **3 条红**并逐条点名。
+  见 [RELEASING.md](docs/RELEASING.md) §9.1。
+
+### 修复
+- **「设置里加了邮箱账号，聚合邮箱不及时更新账户」**（2026-09-15 用户报障）。
+  根因是**状态归属错了**：设置（`SettingsDialog` 邮箱区）与邮箱面板（`EmailPanel`）
+  **各持一份 `useState` 账号副本，各自只在自己挂载时读一次后端**。
+  于是「在设置里加账号」只改了后端与设置自己那份，**已经挂载的面板并不知情**——
+  受影响的不止"少一个账号"，而是一整串：账号下拉、来源账号小标、多账号筛选、
+  未读角标、定时收取的 `auto_fetch` 过滤，以及**活动账号**（upsert 会插到首位，面板那份还是旧的）。
+  最扎眼的一种：**面板挂载时一个账号都没有，用户去设置里加完回来，它仍显示「去配置邮箱账号」**。
+  - 修法：账号列表收敛到 `store/emailPanel` 作为**单一数据源**
+    （`accounts` / `accountsLoaded` / `reloadAccounts` / `patchAccount`），
+    并把「写后端 + 重读列表」合成 store 的两个动作 `saveAccount` / `removeAccount`——
+    **只要这个动作还散在组件里，就总有人写成"只改自己那份 state"，而跨组件同步正是靠它完成的**。
+    设置侧三个变更入口（保存 / 删除 / 设为活动账号）全部改走 store。
+  - 顺带：新增账号后**立刻重拉一次聚合流**（按 `accountsSig` 变化触发），
+    否则"账号加上了但看不到它的信"同样属于没及时更新；首次不拉，避免刚开面板就拉两遍。
+  - 顺带收敛：`accountKey`（`host|username` 小写）原先在 `EmailPanel` 与 `SettingsDialog`
+    **各写了一份完全相同的实现**，而 store 又需要第三份——三份同逻辑的键函数只会静默分叉，
+    统一到 `src/lib/emailAccount.ts`。
+  - 测试新建 `src/components/EmailPanel.test.ts`（6 例；**邮箱功能此前零测试**）：
+    ① store 契约（reload 后订阅者读到新列表 / patch 只改匹配项）；
+    ② 增删账号的两个动作会推动列表；③ **回归主体**——不重挂载面板、只换 store 的列表，
+    面板必须跟着变（空态消失、多账号筛选器出现）。
+    **变异自证**：把面板的账号列表冻结成"挂载时那一份"（等价旧写法）⇒ 后两例立刻红，
+    报错正是用户看到的那句「去配置邮箱账号」；其余 4 例不受影响（它们不依赖面板渲染）。
+    全量 **69 文件 / 647 例全过**，`tsc --noEmit` 通过。
+
+## [1.91.1] - 2026-09-15
+
+> 修掉 1.91.0 的**发版 APK 装上就闪退**（用户报"安装了，闪退"）。只影响 Android 发版件；
+> 桌面与 Web 不受影响，1.91.0 的内容全在。
+
+### 修复
+- **Android 发版 APK 启动即崩（`ClassNotFoundException: cn.shuyo.shuyonote.ShuyoFsPlugin`）**。
+  根因不是代码，是**发版流水线漏了一步**：`android.yml`（自检包）里有
+  `pnpm android:mobile-shell`（把 `ShuyoFsPlugin.kt`、inset 桥、返回键处理注入 `gen/`），
+  而 `release.yml`（发版件）**没有**这两步 ⇒ 打出来的 APK 里根本没有那个类，
+  启动时 `register_android_plugin` 直接抛异常 → SIGABRT，**装完就打不开**
+  （顺带还少了状态栏 inset 桥与返回键先关浮层）。
+  自检包一直是好的，所以 **CI 全绿**——正是 runbook §9.1"自检包 ≠ 发版件"要防的那类事。
+  真机证据：`adb logcat -b crash` 的 `Caused by: java.lang.ClassNotFoundException: …ShuyoFsPlugin`；
+  产物级对照（同一判据）：**发版件 dex 里 `ShuyoFsPlugin` 命中 0 / 自检包命中 1**。
+  修法：`release.yml` 的 android job 补上注入与 `--check`（与 `android.yml` 逐字一致），
+  并**新增一条产物级断言**——构建后直接翻已签名 APK 的 dex，要求
+  `ShuyoFsPlugin`、`__SHUYONOTE_INSETS__`、`__SHUYONOTE_BACK__`、`installApk` 四个字符串都在，
+  缺任何一个直接失败。为什么断言在产物字节上：源码级 `--check` 只能证明"写进了 gen/"，
+  证明不了"进包了 + R8 没删没改名"，而这次恰恰是后者。
+  1.91.0 的 APK 资产**不覆盖**（保留原样，避免"旧件冒充新件"），发 1.91.1 修掉。
+  详见 [MOBILE.md](docs/MOBILE.md) §2.6 与 [RELEASING.md](docs/RELEASING.md) §9.1。
+
+## [1.91.0] - 2026-09-15
+
+> **移动端可用性收口**：这一版把"手机上真的用得了"这件事做完——**PDF 在手机上从打不开到能看能点**
+> （4.3.2 的引擎补齐 + 4.3.4/4.3.5 的版面五处）、**保存/导出全部可用**（4.3.1 的 `content://` 写侧）、
+> **选择器导入不再丢文件名与 MIME**、**首次有应用内更新**（下载 + sha256 校验 + 交给系统安装器），
+> 以及**主界面可见的同步入口**。全部在 Mate 40 / Android 12 上真机逐项验过，判据与数字见
+> [MOBILE.md](docs/MOBILE.md) §2.6 / §4.3。桌面端行为不变。
+
 > **「Android 真机复验」这一轮**（2026-09-15）：上一轮的移动端适配在真机（Mate 40 / Android 12）上
 > 量出 **5 个问题**，本轮逐条修掉（补验时又抓到**第 6 个**：版本历史弹层**漏登记**返回栈
 > ⇒ 按返回键直接退出应用，而当时所有检查都是绿的——见下面「修复」末条与
@@ -18,17 +248,6 @@
 > **真机验收仍未做**，见本节末尾的"仍未做"。
 
 ### 新增
-
-- **macOS 打包有了每次 push 的自检**：`.github/workflows/macos.yml` 在 `macos-latest` 上打一个
-  **未签名**的 `.app + .dmg`（不碰任何密钥、不发布、不挂 tag），再用新增的
-  `scripts/check-macos-bundle.mjs`（`pnpm check:macos-bundle`）断言四件事——
-  `CFBundleIdentifier` 与 `tauri.conf.json` 一致、版本号与 `package.json` 一致、
-  **`CFBundleURLTypes` 里注册了 `shuyonote` 深链**（本机还会真的去问 LaunchServices 认领了哪些 scheme）、
-  以及 dmg 是本版本的那一个。这几条错了打包**不会报错**，只会在用户端以"身份变了 / 版本号不对 /
-  点链接没反应"的形式晚很久才暴露。
-  脚本自己踩过一次坑并留了回归用例：产物 plist 里 `CFBundleURLTypes` 是**数组套数组**，
-  按"先匹配外层再找内层"的写法会停在**内层** `</array>` 上、把"注册好了"误报成"没注册"。
-  11 条单测（做过变异验证）。
 
 - `scripts/android-mobile-shell.mjs`：把 Android 壳适配层（窗口 inset 桥 + 返回键回调）
   **脚本化注入** `gen/android/**/MainActivity.kt`（`gen/` 不入库，手改不可复现），
@@ -103,41 +322,138 @@
   豁免清单每次运行都打印（5 类：宿主子浮层 / 视图内联浮层 / 非可关闭浮层 / 未纳入几何验收 / **同类缺口**）。
   见 [MOBILE.md](docs/MOBILE.md) §4.1.4。
 
+- **Android 应用内更新：下载 + 校验 + 交给系统安装器**（2026-09-15）。此前手机上只能"跳发布页手动下载"：
+  应用内拿到清单里 `android-aarch64` 的地址后就 `openExternal` 交给浏览器/DownloadManager，
+  用户还得自己去文件管理器点安装。现在两步都在应用内：
+  ① `download_android_update(url, sha256)` —— Rust 侧 reqwest 流式下到**应用缓存**（`updates/`），
+  **边下边算 sha256**，进度经 `android-update-progress` 事件回给界面；三道自保：只收 https、
+  指纹形状必须合法（64 hex）、**校验不通过就删文件**；同一指纹已存在则跳过重下。
+  ② `install_android_update(path)` —— 经 `FileProvider` 换成 `content://`（`file://` 从 Android 7 起抛
+  `FileUriExposedException`），`ACTION_VIEW` + APK 的 mime 拉起**系统安装器**。**刻意不做静默安装**：
+  Android 8+ 要用户先给本应用开「安装未知应用」，选择权在用户。清单里没有指纹（老清单）时界面
+  退回「手动下载 / 前往发布页」，两条路并存。
+  注：Android 通道**不发 minisign**，所以 sha256 校验是这条链上唯一的完整性判据（`updates.rs` 有专门
+  单测钉住指纹形状的校验）。
+  门禁：Kotlin/manifest/白名单都在 `scripts/android-mobile-shell.mjs` 里注入，`--check` 同时核 4 样
+  **加上** Rust↔Kotlin 的每一个命令名（不再只看第一个）。本机实证：
+  `:app:compileUniversalDebugKotlin` 与 `:app:minifyUniversalReleaseWithR8` 均 BUILD SUCCESSFUL、
+  manifest 注入后 XML 仍合法、R8 的 `usage.txt` 没有我们的类（没被删）、`mapping.txt` 里类名与
+  `installApk` 未改名。详见 [MOBILE.md](docs/MOBILE.md) §2.6。
+
 ### 修复
 
-- **universal 的 macOS 包只占一个平台键 ⇒ 另一架构静默收不到更新**（这条修复曾在 `dev → main`
-  的合并里被整体丢掉，现已按原意重建，并与「清单指向 `.app.tar.gz`」那条**合并**成一套规则）。
-  `tauri build --target universal-apple-darwin` 产出 `…_universal.dmg`，它在 Intel 与 Apple Silicon
-  上都能跑，但 `platformKeyFor` 只按 `aarch64|arm64` 判断 ⇒ 被归到**一个**键 ⇒ 清单里缺另一个键 ⇒
-  更新器按平台键找条目、找不到就是"无更新"，**不报任何错**。
-  改法：新增 `platformKeysFor(name)` 返回**全部**键（universal dmg ⇒ 两个 darwin 键；同批次的
-  `.app.tar.gz` 跟着占同样两个键，两个键指向同一 url/签名），归组与清单都按全部键走。
-  判据：`scripts/lib/releaseArtifacts.test.mjs`「macOS 更新通道」一组（含 universal 一物两键、
-  漏了 `.app.tar.gz` 时**两个键都要报缺**、多个 dmg 时架构无法判定则报错不猜）；
-  **变异验证**：把 universal 那两处改回单键 ⇒ 3 条用例变红。
+- **README 与安装包文案的 OCR 声明与代码相反**（"离线 OCR"其实**首次要联网一次**）。
+  用户照 README 理解，会以为装完就能在断网状态下直接用 OCR 识别扫描件。
+  代码是明确的：`src/lib/ocr.ts:54-71` + `scripts/copy-tesseract-assets.mjs:69-95` ——
+  两个语言包共 **29.6 MiB**，因 Android 上会被**装两遍**（APK `assets/` 一份 + Tauri 嵌进
+  `.so` 的前端副本又一份）而**改为运行时按需下载 + IndexedDB 缓存**，
+  故正确表述是：**识别在本机完成、不上传也不调云端，但语言包首次使用时需联网下载一次（约 30 MB），
+  之后永久离线可用**；完全离线发行版须 `SHUYONOTE_OCR_BUNDLE=1` 与
+  `VITE_TESSERACT_LANG_PATH=/ocr/tessdata` **一起**设。
+  **上一轮只改对了应用内帮助页与 `docs/development.md`，漏了这几处**，本次一并改齐：
+  `README.md`（8 处：顶部卖点、截图说明、特性总览、PDF 特性条、技术栈表、开发说明、里程碑勾选）、
+  **`src-tauri/tauri.conf.json` 的 `shortDescription` / `longDescription`**（安装包与应用商店文案，
+  `longDescription` 原先写"完全离线的 OCR 文字识别"，最容易被当成承诺）、
+  `docs/roadmap.md` ×2、`docs/README.md` 索引行、`docs/SHUYONOTE_STATE.md` 真机验收清单。
+  `docs/plans/2026-08-30-pdf-reader-ai-plan.md` §4 属**历史设计记录**——**不改写原文**，
+  只在其上加一个"已被 2026-09-13 改动取代、勿据此判断现状"的更正框。
+  - 顺带补上帮助页「能离线用吗？」漏掉的这个例外（原文写"仅 AI / 同步 / 检查更新需联网"，
+    OCR 首次下载语言包同样要联网）。
+  - 顺带更正 `src/lib/aiOutline.ts` 的注释：它写着 `generateOutlineFromOcr`"作为无视觉模型时的
+    回退"，但**该函数全仓只有定义、没有任何调用点**——回退从未接线，未配视觉模型时不会走到它。
+    保留实现，注释已如实标注"当前无调用点"（接线或删除另行决定）。
+  - 自查方式：全仓按 `离线 OCR|彻底离线|免联网|离线 tesseract` grep，逐条回到代码行号核对；
+    剩余命中只有 `CHANGELOG.md` 自身的历史条目（历史不改写）。
+- **窄屏下 PDF 阅读器的目录栏/批注栏把正文挤出屏幕**（真机：360×792 时目录栏仍 240px 常驻在左、
+  批注栏并排且右侧被裁，页面图 `x=99 / 宽 306` ⇒ **右边溢出屏幕**；"打得开"与"能看"是两件事）。
+  修法同 §4.1 那 19 层浮层：窄**或**矮视口下两栏改成**盖在正文上的抽屉**（`position:absolute` +
+  贴左/贴右 + `min(300px,86vw)` + 阴影，拖宽把手藏掉），**默认收起**，正文区吃整宽。
+  ⚠️ 两处必须一起改：CSS 定抽屉宽度，所以 `PdfReader` 在抽屉形态下**不能写内联 `width`**
+  （内联优先级更高，会把抽屉顶回 240px 的列）。新增判据：CSS 级 4 条断言（含"规则必须挂在
+  `max-width:768px, max-height:520px` 那条查询里"——只写窄屏的话横屏手机又回到并排）+
+  `subscribeOverlayViewport` 单测 2 条（两条查询都要订阅，挡"竖屏转横屏不更新"）。
+  变异自证：去掉 `position:absolute` ⇒ 3 条红；矮视口那条改成订阅窄屏 ⇒ 2 条红。
+  详见 [MOBILE.md](docs/MOBILE.md) §4.3.4。
+- **窄屏下 PDF 阅读器的头部工具条/批注工具行被裁在屏外，连「关闭」都点不到**
+  （真机连量到三处，都是同一次装机逐步暴露出来的）：
+  ① 头部内容 **730px** 宽，外层 `.pdf-reader` 是 `overflow:hidden` ⇒ 放大 / 还原窗口 /
+  显示批注侧栏 / 提问 / 护眼 / 导出带批注副本 / **关闭**（x=686..730）整排被裁在屏外，
+  屏幕上根本没有"关闭"这个入口，只能靠 Android 返回键；批注工具行 489px 同理。
+  ② 只让 `.pdf-reader-head` 换行**不够**：它里面的 `.pdf-reader-controls` 自己就是个
+  **603px** 宽的行（换行只发生在直接子元素这一级）⇒ 内层也要 `flex-wrap`，并让标题让位
+  （`flex:0 1 auto; max-width:42%`）。③ 阅读器内部按钮 **18 个 < 44×44**（头部一排 28×28）⇒ 补 44。
+- **【手机功能整个不可用】浮层形态的 PDF 阅读器没让开系统栏 ⇒ 目录开关落在触摸死区里，
+  物理点不到**（真机：目录开关中心在设备 y=96，而状态栏带是 0..123；
+  `adb shell input tap 108 96` **什么都没发生**）。这正是 §4.2.1 那条"状态栏那一条带的触摸
+  按设计归 SystemUI"——阅读器浮层是 `fixed; inset:0` 且不给 `--sat` 让位，于是头部第一行整体
+  在死区里；而"目录栏默认收起"是本轮刚做的改动 ⇒ 手机上**根本打不开目录**。
+  修法：给浮层形态补 `padding: var(--sat) var(--sar) max(var(--sab),--kb) var(--sal)`，
+  并用 `:not(.main > …)` 排除内联形态（横屏，外壳已让过位）避免重复。
+  **判据必须用真实 tap**：修后 `adb shell input tap 108 219` ⇒ `.pdf-outline-col` 出现在 DOM 里；
+  同一手法物理点「关闭」⇒ 浮层消失且应用仍在前台。
+  详见 [MOBILE.md](docs/MOBILE.md) §4.3.4。
 
-- **`Android (build)` 连续两次红在 `Setup Android SDK`（不是我们的代码）**：2026-09-15 起
-  `android-actions/setup-android@v3` 在 Google 侧改包后**必失败**——上游 issue #537（当天停止提供
-  `sdkmanager` 的 `tools` 包 ⇒ `Failed to find package 'tools'`）与 #536（commandlinetools 下载 URL
-  变更 ⇒ 直接 404）。它挂在这一步时后面十几步**全部 skip**，看起来像"我们的代码坏了"；
-  判据是"同一 workflow 上一个提交还是绿的 + 时间点与上游 issue 吻合"。
-  改法：**不再用这个 action**，直接用 ubuntu runner 镜像自带的 SDK（`ANDROID_HOME` / `ANDROID_SDK_ROOT`
-  由镜像设好，见 actions/runner-images 的 Ubuntu2404-Readme），并加三条断言——SDK 根存在、
-  `sdkmanager` 找得到（`latest` 与版本号目录都认）、否则**明确报错并列出目录**。
-  `release.yml` 的 Android job 同改：不改的话下一次发版出不了 APK，而 `release.mjs` 缺 APK 会硬失败。
-  本机用假 SDK 树验过四种输入：只有 `latest` ✓ / 只有版本号目录 `16.0` ✓ / 完全没有 → 明确失败 ✓ /
-  连环境变量都没有 → 明确失败 ✓。
+- **【手机功能整个不可用】Android 上"保存到用户选的位置"一律失败**（真机：设置 → 空间 →
+  导出当前空间 → 保存 ⇒ 红字 `空间导出失败：Read-only file system (os error 30)`，
+  而且 Downloads 里留下一个 **0 字节**的 `space-复验素材-….zip`）。
+  根因是 `content://` URI 被当路径用：Android 的**保存**对话框（`ACTION_CREATE_DOCUMENT`）
+  和打开对话框一样只给 URI（`DialogPlugin.kt::saveFileDialogResult`），而
+  `export_workspace` / `export_backup` / `copy_attachment` / `write_text_file` /
+  `write_binary_file` 全都是 `PathBuf::from(...)` + `File::create`。报 EROFS 不是权限问题：
+  `Path::new("content://com.android.providers…")` 是个**相对路径**（第一段是 `content:`），
+  相对进程 CWD —— Android 上 CWD 是 `/`，只读。后果是手机上**导出空间 / 导出备份 /
+  下载附件 / 导出 HTML / 导出模板 / 导出标注副本**六个入口全废（备份导不出去，属数据安全问题）。
+  **修法**：新增 `src-tauri/src/save_target.rs`（`picked_file` 的写侧孪生兄弟）——
+  桌面=直接写路径（**逐字节不变**），URI 目标=**先写缓存中转文件、写完再整份流式拷进 URI**
+  （`tauri-plugin-fs` 的 `Fs::open` + `write(true).truncate(true)`）。之所以不直接往 URI 里
+  流式生成 zip：`zip::ZipWriter` 需要 `Write + Seek`，而 `content://` 只能顺序写，
+  且写到一半失败会在用户文件里留半个包。中途失败由 `Drop` 清掉中转文件，用户原始数据一字不动。
+  详见 [MOBILE.md](docs/MOBILE.md) §4.3.1。
+- **【手机功能整个不可用】Android 上打开任何 PDF 都失败**（真机：`这份 PDF 没能打开：
+  Promise.withResolvers is not a function`；用一份**本机 pdf.js 能正常解析的 4 页 PDF**
+  作对照，先排除素材问题）。
+  根因是**引擎版本错配**：`Promise.withResolvers` 要 Chrome **119+**、`AbortSignal.any` 要
+  **116+**，而这台设备的系统 WebView 停在 **114**（华为不随 Play 更新；`navigator.userAgent`
+  实测 `Chrome/114.0.5735.196`）。pdfjs-dist 4.8 在 `pdf.mjs` 里有 **32 处**
+  `Promise.withResolvers`，worker 里另有 **13 处**，`AbortSignal.any` 也在关键路径上。
+  桌面 Chrome/Edge 早就支持 ⇒ 典型的"CI 绿、桌面对、真机死"。
+  **修法**：新增 `public/es-polyfills.js`（幂等、**绝不覆盖已有实现**），在 `index.html` 里
+  用同步脚本**先于任何模块**加载；worker 是另一个 JS 上下文、页面上的 polyfill 到不了它，
+  所以再加 `public/pdfjs-worker-shim.mjs`（先动态 `import` 补齐层、**再**加载真 worker ——
+  这个顺序就是垫片存在的全部理由）并由 `pdfjsEngine` 把 `workerSrc` 指向它。
+  **不选降级 pdf.js**：它的 legacy 构建只转译语法，实测同样调用这两个 API（33 处）。
+  详见 [MOBILE.md](docs/MOBILE.md) §4.3.2。
 
-- **macOS 更新通道会指向 dmg ⇒「能下载、装不上」**（发 macOS 版之前必须先修的这条）。
-  依据：`tauri-plugin-updater` 2.10.1 的 macOS `install_inner()` 直接 `GzDecoder` + `tar::Archive`
-  解包 `.app.tar.gz`（docstring 也写明期望 `[AppName]_[version]_x64.app.tar.gz`），
-  给它 dmg（连 gzip 都不是）会解包失败；而 `tauri-bundler` 生成的正是
-  `ShuyoNote.app.tar.gz`（**不带版本号、不带架构**）。
-  改动：`scripts/lib/releaseArtifacts.mjs` 收 `.app.tar.gz`（`bundle/macos/` 一并遍历）、
-  `MANIFEST_PREFERENCE` 把 `app.tar.gz` 排在 `dmg` 之前（dmg 照发，只用于人工下载安装）、
-  架构从同批次 dmg 推（推不出来就报错、不猜）、**有 dmg 却没有 `.app.tar.gz` 时硬失败**。
-  测试见 `scripts/lib/releaseArtifacts.test.mjs` 的「macOS 更新通道」一组（已做变异验证）；
-  拿到证书后的操作步骤见 [docs/macos-updater.md](docs/macos-updater.md) §二。
+- **Android：经系统文件选择器导入的附件，显示名与 MIME 同时丢失**（真机：列表显示成
+  `📎41449ced-d44e-4d3c-8e14-7c6733ad042a 未整理 文件 1.8 KB`）。
+  根因是一条**只丢元数据、不报错**的链：`tauri-plugin-dialog` 的 Android 实现
+  （`DialogPlugin.kt::createPickFilesResult`）只把 `uri.toString()` 交给 Rust，
+  于是 `picked_file::materialize()` 把选中文件拷成**裸 UUID、无扩展名**的临时文件；
+  而 `attachments.rs` 拿 `src.file_name()` 当附件名、拿 `mime_from_path()`（**只看扩展名**）
+  定 mime ⇒ 名字是 UUID、mime 是 `application/octet-stream`。后果不止难看：
+  `FileManagerView` / `PageTree` 都按 `file.mime` 分支，这类附件**永远进不了内置文件预览
+  与 PDF 阅读器**（`image/*`、`application/pdf`、`text/markdown` 三个分支全不命中），
+  掉到 `opener.openPath()` 也失败。
+  **修法分三层，逐层变弱**（桌面一层都不走 ⇒ 行为逐字节不变）：
+  ① **问系统**：新增本地 Tauri 插件（`src-tauri/src/android_fs.rs` +
+  `scripts/android-mobile-shell.mjs` 注入的 `ShuyoFsPlugin.kt`），Rust 侧经
+  `api.register_android_plugin(...)` / `run_mobile_plugin(...)` 调
+  `ContentResolver.query(OpenableColumns.DISPLAY_NAME)` 与 `getType(uri)` ——
+  名字**只有** Android 运行时知道（URI 尾段在 MediaStore/Downloads 上是 `image:1234`
+  这类 id，不是名字）；
+  ② **URI 尾段启发**（`picked_file::name_from_uri`，纯函数 + 单测）：外置存储那条
+  （`primary%3ADownload%2Fphoto.png`）能把真名恢复出来；
+  ③ **按内容嗅探**（新模块 `src-tauri/src/magic.rs`，魔数）：连名字都没有时也把类型认出来，
+  于是"图片能预览、PDF 能进内置阅读器"**不依赖任何 Android 专属代码**，也能在本机单测里钉住。
+  顺带修掉同一条链上另一处哑火：**临时文件名带上正确扩展名** —— `plugins.rs` 判断
+  "是不是 `.zip` 插件包"时用的是 `source_path`，Android 上那是
+  `content://…%3A1000000042`，`ends_with(".zip")` 恒为假，手机上装 zip 插件包**必然**
+  报"只支持 .zip 插件包"；现在判据走 `picked.effective_name()`（桌面等价，行为不变）。
+  另：`rename_attachment` 现在会**按新名字重算 mime**（判据只有一条：新名字认得出类型才写回）
+  —— `x.txt` 改成 `x.pdf` 立刻能进内置阅读器，老数据（裸 UUID + octet-stream）改成 `photo.png`
+  也能自救；而改成**认不出**的名字（`report.pdf` → `report`）**原样保留**，
+  所以改名永远不会把已知类型降级成 `application/octet-stream`（否则把 `report.pdf` 改成
+  `report` 就能把 PDF 阅读器弄丢）。详见 [MOBILE.md](docs/MOBILE.md) §2.2.2。
 
 - **【最严重】顶部被状态栏压住 + 顶部约 41 CSS px 是触摸死区**（真机：标题与系统时间叠字，
   `adb shell input tap` 打在 y≤123 设备 px 时**0 个 DOM 事件**、y=130 时 100+ 个，
@@ -212,48 +528,101 @@
   （注释掉也算没登记——门禁因此还补了一条"注释里的登记不算登记"）；
   新建一个不登记的浮层组件 ⇒ 报同一个红；登记了却不加进 `OVERLAYS` ⇒ 报"这条登记在 OVERLAYS 里找不到对应的一层"；
   把 `OVERLAYS` 里某个类名改名 ⇒ 报"幽灵条目"。
-  **仍未做（如实记）**：该层的窄屏形态没纳入几何验收——实测 360×640 下 `.history-popover`
+  **仍未做（如实记）**：该层的窄屏形态当初没纳入几何验收——实测 360×640 下 `.history-popover`
   左边缘 = **−6px**（越界 6px），它是 `position:absolute` 的 320px 锚定浮层、窄屏没走
-  `is-sheet` 形态，要纳入得先改形态（已在门禁的豁免表里写明，属未验证项）。
+  `is-sheet` 形态（已在门禁的豁免表里写明，属未验证项）。
+  ⇒ **同一轮的第二遍已修掉并纳入几何验收**，见下面「第 7 个问题」那条。
 
-- **口令锁的「解锁 / 锁定 UX + 忘记口令」补齐（E2）**，并修掉它盖住的那个**必崩路径**。
-  两者是同一次动作，因为**不修那个崩溃，这块屏根本到不了用户眼前**：
+- **浮层登记门禁查出的三处同类缺口：各接一条 `useOverlayLayer`**（2026-09-15 第二遍）。
+  上一轮的门禁把 `.pdf-reader-overlay`（浮层形态）、插件声明式视图浮层、文件预览浮层记成 `gap`
+  并在每次运行时 ⚠️ 打印；本轮逐条修掉，**且只在它们确实以"覆盖层"身份出现时才登记**：
+  `PdfReader` 用 `open && !inline`（`inline` 时它就是内容区的一种视图，登记进去会让返回键白吃一次按键）、
+  `PluginViewOverlay` 用"有视图 + 落点是 `overlay`"（⚠️ store 里的 `open` 是**动作**不是布尔开关，
+  原代码那个 `!open` 判断一直是空转）、`FilePreviewDialog` 用 `target != null`。
+  真实 Chromium 取证（360×640）：三层各自 打开 ⇒ `depth` **0→1**、`ids` 报出对应 id、
+  `handle()` 返回 **true**（真布尔）、层**真的从 DOM 消失**（不是只把栈弹空）。
+  **反证**（1280×800）：PDF 阅读器是 `.main` 里的内容区视图 ⇒ `depth` 仍为 **0**；
+  落点是 `rail` 的插件视图不由 `PluginViewOverlay` 渲染 ⇒ 也不登记（登记只跟着"覆盖层身份"走）。
+  门禁里那三条 `gap` 相应撤掉（`gap` 类别保留、当前为 0），改记为 B 判据下的
+  `EXEMPT_FROM_MOBILE_PASS`：三层各需要真实的 PDF / 装了视图声明的插件 / 真实附件才打得开，
+  几何验收仍属**未验证项**（不假装验过）。
 
-  - **修掉「开着加密重启 = 崩溃屏」**（真事故，本轮发现）。`App` 里的锁定闸门原先是一句
-    **早退**，而它排在七八个 hooks **之前**：首帧状态未知（`enc === null`）不算锁定、这一帧跑了
-    全部 hooks；状态回来后的第二帧早退，只跑其中一部分 ⇒ React 抛
-    `Rendered fewer hooks than expected`，被根部 `ErrorBoundary` 接住，用户看到的是**崩溃屏**。
-    也就是说 **E1 那道锁定屏在这条最常见的路径上一次都没出现过**（真机只验了设置页里的开关，
-    没验过"重启"，所以一直没暴露）。现在闸门与外壳**拆成两个组件**：`App` 自己只有一个 hook、
-    分支只决定渲染哪个组件；锁定态下读库的外壳**根本不挂载**（比"挂起来再挡住"更干净）。
-  - **状态只有一份**：新增 `src/lib/vault.ts`（`enabled`/`locked`/`ready` + 订阅 + 五个动作）
-    与 `src/hooks/useVault.ts`。此前 App 和设置页各自持有一个 `useState` 副本，于是
-    **在设置页点「立即锁定」界面不会切屏**，用户继续看着已经读不出来的内容、同步被拒却不知道
-    为什么。现在锁定立刻切到锁定屏，解锁后外壳全新挂载、重新读一遍页面。
-  - **锁定屏给忘记口令的人一条诚实的出路**：连错 3 次自动摊开「忘记口令？」，内容照代码写实——
-    **没有找回流程**；**同步到服务器的那份也打不开**（内核里同步载荷用的就是这把会话密钥，
-    `security::key_if_enabled`）；**唯一可能是"开启加密之前"导出的明文备份**；没有那样的备份
-    就永久取不回。同时给了「显示/隐藏」口令、输错即清空并回焦、错误计数。
-  - **开启加密多一道硬确认**：必须勾选「我已保管好口令，并知道丢了找不回」才能点开启
-    （全应用里唯一"丢了就真没了"的操作），并提示若想留后路要**在开启加密之前**导出备份
-    （开启后导出的备份同样是密文，一样要口令）。
-  - **测试与变异验证**：`src/vaultGate.test.ts`（7 例，直接渲染真 `App`，断言锁定启动得到
-    锁定屏、外壳不挂载、**没有任何 hooks 顺序报错**；另有运行中锁定、解锁、失败不改状态、
-    问不到内核按未开启兜底）与 `src/components/lockScreen.test.ts`（6 例）。两条都做过变异：
-    把 `App.tsx` 换回旧版 ⇒ 7 例里 **5 例红**、并复现出那条 `Rendered fewer hooks`；
-    把"错 3 次自动摊开"和"输错清空"分别拿掉 ⇒ 恰好对应用例红。
-  - **顺手把它变成门禁**（同一类错这是第二次：1.85.1 那次是命令面板白屏）：
-    `scripts/check-hook-order.mjs`（`pnpm check:hook-order`，自测 `--self-test`）扫全部
-    `.ts/.tsx`，报"同一个函数里 `return` 之后还有 hooks"。带自测——**两次真事故的原始写法必须判红**、
-    三种正确写法必须放过；另做交叉验证——同一份 `App.tsx`，修复后 0 处、修复前 1 处。
-    它**不是语法树**（本仓 TypeScript 7 是原生编译器、没有 JS API，也没有可用的解析器依赖），
-    是按 token + 花括号层级的启发式，边界写在脚本头注里；"hooks 放在条件里"那一种本门禁不查。
-    已接进 `pnpm build`（在 dev 上）。
-  - **仍未做（如实记）**：真机复验。以上都是渲染层判据（真 `App` + 真状态中枢），
-    **没有**在真机上跑一遍"开启加密 → 重启 → 解锁"（Android 上还要覆盖 SQLCipher 重开库）。
-    另外**这个修复目前只在 dev**：`main` 上仍是旧的 `App.tsx`，也就是**已发布的 1.91.x 里这条
-    崩溃路径仍然存在**，要等 dev 合进 main 才带上（`pnpm check:hook-order` 现在会在 main 上
-    直接报出这一处，属真阳性）。
+- **【真机复验第 7 个】窄屏 `.history-popover` 左边缘 −6px（越界）**（2026-09-15 第二遍）。
+  根因：它是 `position: absolute; right: 0` 的 **320px 锚定浮层**，窄屏**没走** §4.1.3 的
+  `is-sheet` 形态——360px 视口上工具条那个按钮的右边缘离屏左边不足 320px，于是直接越界。
+  改法照已有浮层：改用 `usePopover`（JS 侧窄屏不锚定、返回空坐标 + `is-sheet`）
+  + `App.css` 末尾那段 `is-sheet` 铺底 + 滚动锁（`useOverlayScrollLock`，与搜索/回收站/同步同一条）；
+  顺带把"点击外部关闭"交给 `usePopover`（原来是自己挂的一份 `document mousedown`）。
+  **纳入 `OVERLAYS` 并在两档视口真的量到**：360×640 ⇒ `x 0..360 / y 538..640`（改前左边缘 **−6px**）、
+  390×844 ⇒ `x 0..390 / y 742..844`；两档都断言 `class` 里带 `is-sheet`（钉住 JS 分支）、
+  四边在视口内、`.note-scroll` 被锁、触摸拖 300px 背景不动。门禁里它那条豁免同时撤掉。
+  验证：`pnpm check:overlays`（25 通过 / 0 失败）、`pnpm build`、`npx tsc --noEmit`、
+  `npx vitest run`（67 文件 / 630 用例全过）、`pnpm test:mobile-overlays`（真实 Chromium，
+  3 视口 × 20 层 = **873 通过 / 0 失败**），以及 check-changelog / check-doc-links /
+  check-versions / check-workflow-yaml 全绿。
+
+  **仍未做（如实记）**：本轮为"证明登记真的生效"而在浏览器里打开这三层时**顺带量到**一处
+  同族问题——`.fm-preview-overlay` 的 `left: calc(--activity-w + --sidebar-w)` 在窄屏没被覆盖
+  （`--sidebar-w` 是**桌面**侧栏宽度，窄屏侧栏已收成抽屉，但变量仍是 240px）⇒ 360×640 实测
+  这个文件预览浮层只有 **72px 宽**（= 360 − 48 竖条 − 240 侧栏）。它与"窄屏浮层不适配"是同一类，
+  但改它要连带窄屏 CSS（让开 `--sat/--sab/--kb`）、滚动锁与 44×44 命中区
+  （`.fm-preview-close` 也不在窄屏那条清单里）——当时判为"属独立一轮，本轮未动"，**现已修**：
+  见下面那条「窄屏第 8 个」（并已同步更新 [MOBILE.md](docs/MOBILE.md) §4.1.4）。
+
+- **【窄屏第 8 个】窄屏文件预览浮层只有 72px 宽（`left` 仍按桌面侧栏宽度算）**（2026-09-15 第三遍）。
+  根因：`.fm-preview-overlay` 的基础规则是 `left: calc(var(--activity-w) + var(--sidebar-w))`——
+  它是**桌面**的"避开左竖条 + 侧栏"的内容区浮层，而**窄屏的侧栏早已收成抽屉**，
+  `--sidebar-w` 却没人改、仍是 240px ⇒ 360px 视口上 `left = 48 + 240 = 288`，
+  浮层只剩 **72px 宽**（实测 **72×640**）。与 `.set-dialog{min-width:640px}` 是**同一类**：
+  "功能不可用，而且不报错"——文件预览在手机上等于打不开。
+  改法照 §4.1.1／§4.1.2 的既有硬约束：窄屏走「全屏 + 内部滚动」，
+  让位方式与 `.set-overlay` 一致（**给遮罩加 padding**：`--sat / --sar / max(--sab,--kb) / --sal`，
+  一处同时管住状态栏、手势条、软键盘与左右安全区）；内容区 `overscroll-behavior: contain`；
+  图片预览那组按钮 ≥44×44；并补上这一族里**唯一漏掉**的 `useOverlayScrollLock`
+  （实测只开着它时锁计数 = **0**，浮层开着还能把背景正文拖走）。
+
+- **浮层几何验收补上「铺满」这条断言——旧的「四边在视口内」挡不住被压窄**（2026-09-15 第三遍）。
+  把 `filePreview` 加进 `OVERLAYS` 后跑一遍：**912 条断言全部通过，而浮层只有 72px 宽**——
+  因为它的 `x 288..360` 四边**全都在视口里**。于是新增判据 (1b)：标了 `fullscreen: true` 的层
+  （§4.1.1 的"全屏 + 内部滚动"那一族：设置 / 存储 / 插件管理 / 命令面板 / 公式 / 文件预览 /
+  目录 / AI / 评论）必须**遮罩横向铺满视口、盒子横向铺满遮罩内容盒**
+  （安全区就写在遮罩的 padding 上，脚本不用另抄一遍那些变量）。
+  变异自证：把 `left` 改回 `--sidebar-w` 依赖 ⇒ `✗ 全屏层的遮罩横向铺满视口（root x 288..360）`，
+  **327 通过 / 1 失败**；改回后三档视口 **966 通过 / 0 失败**。
+  同一遍还抓到一条**假绿**：`closeAllOverlays()` 从来没关过 `optional` 的
+  `.markdown-import-overlay`（它不吃 Escape、也不在触发器表里），它组件里的滚动锁于是
+  **永久留着一把**，后面每一层的"外壳被锁"都是被这把泄漏的锁满足的——现在会把它关掉。
+
+- **`filePreview` 撤掉移动端几何验收豁免**（2026-09-15 第三遍）。上一轮记的理由是
+  "需要一份真实的附件（`target` 非空）才渲染"——**这句是错的**：`useFilePreview.open()` 收的
+  就是一份 `AttachmentMeta` **元数据**，浮层完全由它渲染、不读文件（要读字节的只是 `.md` 分支）。
+  所以它现在真的进了 `OVERLAYS`，并在 **360×640 / 390×844 / 792×360** 三档上量到几何
+  （360×640 ⇒ `x 0..360 / y 0..640`；390×844 ⇒ `x 0..390 / y 0..844`）。
+  `EXEMPT_FROM_MOBILE_PASS` 里只剩 `pdfReader` / `pluginView`（它们确实需要一份真实 PDF /
+  带视图声明的插件实例），仍是**未验证项**。
+
+- **`editorInputShortcuts.test.ts` 的时序 flake 根治（不是加重试）**（2026-09-15 第三遍）。
+  现象：用例「菜单开着时 ↓ 换选中项、Enter 插入 [[标题]]」三次全量里红过一次
+  （`expected '[[页面甲]]' to contain '[[页面乙]]'`），单独跑又 3/3 全绿。
+  复现：把**全量**并跑两路、连跑 3 轮（6 次全量）⇒ 第 3 轮抓到 **1 次红**。
+  根因**不是"慢"，是等错了东西**（两个窗口）：① **commit 与被动副作用之间**——`commit` 是同步的
+  ⇒ DOM 已渲染成"第二项 active"、菜单也确实是两项，而 ↑/↓/Enter 的处理函数注册在插件 `useEffect`
+  里、闭包带着当时的 `sel` 与 `matches`（后者**每帧都是新数组**，所以那个 effect 每帧都会注销再注册），
+  **被动副作用在 commit 之后才跑**——这中间按键，实测抓到过两种后果：`matches` 还是上一帧的空数组
+  ⇒ `Math.min(sel+1, -1)` = −1（两项都不再 active）；或 `sel` 还是 0 ⇒ Enter 插进去的是「页面甲」。
+  （同一次复现抓到的另一个落点是 `Ctrl+F 后应当出现查找条`，同一个写法：**派发事件 → 睡一个 tick → 断言 DOM**。）
+  ② `setTimeout(0)` 与 React 的调度宏任务（`MessageChannel`）**没有先后保证**，
+  单跑几乎总是 React 先跑完，整仓 67 个文件并跑时就会翻过来——所以它"单跑不红、全量偶尔红"。
+  修法：把"派发事件 → 睡一个 tick → 断言"一律换成**等条件本身**——
+  等 UI 用 `vi.waitFor`（反复让出事件循环直到 DOM 条件成立），
+  等"这一跳引起的渲染 + 被动副作用都跑完"用新增的 `settled(fn)`（内部是 React 的 `act`，
+  它把 Scheduler 换成 act 队列，所以作用域内排队的渲染与副作用会在返回前被冲干净，**确定**、不靠运气）。
+  ⚠️ 一个中途踩到的坑值得记：`act` **只认在它作用域内排队的工作**，所以**必须连"打字"一起包**
+  （`typeChars` 每个字符一次）——只包按键的话，窗口不会消失、只会**前移**：
+  实测那样改完红点从 `Enter 应当插入 [[页面乙]]` 移到了 `↓ 之后选中第二项`（报的正是 `matches` 旧闭包）。
+  判据：改后全量并跑 **12 次** + 该文件单跑 **20 次** 全绿；并用**产品变异**自证测试仍有牙
+  （把 `PageLinkSuggestPlugin` 的 Enter 改回永远取 `matches[0]` ⇒ 复现出**一模一样**的
+  `expected '[[页面甲]]' to contain '[[页面乙]]'`）。产品逻辑一行没动。
 
 - **`check-changelog` 门禁不再要求 `[Unreleased]` 段为空**（2026-09-14）。首版门禁把
   "`[Unreleased]` 必须为空"写成了硬约束，这是**误读 Keep a Changelog**——`[Unreleased]` 的用途

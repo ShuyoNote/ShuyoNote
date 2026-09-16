@@ -33,6 +33,28 @@ pnpm run build        # check-versions + tsc + vite build
 ```
 
 ## ④ 提交 + Tag
+**打 tag 之前先跑 `pnpm release:preflight`**（`scripts/release-preflight.mjs`）。它一次查六件事，
+全是"人常常想当然、而机器一眼能看出来"的：
+
+| # | 查什么 | 不成立时会发生什么 |
+|---|---|---|
+| ① | 在 `main` 上、已跟踪文件没有未提交改动（未跟踪文件只提醒） | 发出去的东西里有没提交的改动 |
+| ② | 版本号六处互相一致（`check-versions`） | 各处版本不一致，装上去显示错的版本 |
+| ③ | CHANGELOG 有 `## [<版本>]` 段、`[Unreleased]` 仍在、结构校验通过 | 发布说明空着 / 下一版没落点 |
+| ④ | tag `v<版本>` 本地与**两个远端**都没有 | 复用已发布的 tag ⇒ 资产覆盖 ⇒「旧件冒充新件」 |
+| ⑤ | **`origin/dev` 已是 `main` 的祖先**（runbook ④ 的硬前提） | 2026-09-15 发 1.91.0 时就卡在这：推到一半发现 dev 还有 3 个提交没进来 |
+| ⑥ | `origin`（gitcode）与 `github` 都可达 | 推一半失败 |
+
+> ⑤⑥ 需要联网：离线可用 `--skip-remote` 跳过（会明确打印跳过了什么）。
+> 远端命令**先按环境跑、失败再显式绕开代理重试**，并如实报出走的哪条路——
+> 这台机器的 `HTTP(S)_PROXY` 指向本地 127.0.0.1:7897，那个代理不一定开着，
+> 报出来的是 `Failed to connect to 127.0.0.1 port 7897`，看着像"远端不可达"（其实要绕过代理）。
+
+```bash
+pnpm release:preflight                # 退出码非 0 就别打 tag
+pnpm release:preflight --version 1.92.0   # 预演还没 bump 的版本（会提示 package.json 还是旧的）
+```
+
 ```bash
 git add -A
 git commit -m "release: X.Y.Z(版本号 bump + CHANGELOG)"
@@ -56,6 +78,27 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 >   ⇒ 镜像与更新通道还停在旧版本、用户收不到新版。
 > 两条都不是"可有可无"：一个决定**能不能出包**，一个决定**用户能不能收到**。
 
+> **推 GitHub 推不上去时（本机实测过三次，2026-09-15）**：这台机器的 `github.com` DNS 会被污染成
+> `127.0.0.1`，所以：
+> 1. **首选 SSH over 443**（最稳，实测可用）：
+>    ```powershell
+>    git -c core.sshCommand="ssh -p 443 -o HostName=ssh.github.com -i C:/Users/cnzen/.ssh/id_ed25519_fengjt007 -o StrictHostKeyChecking=no -o BatchMode=yes" push github main
+>    ```
+>    （`~/.ssh/config` 里的 `Host github-fengjt` 把 `HostName` 指向了 `github.com`，所以要在这里
+>    **覆盖** `HostName=ssh.github.com`；key 就是那个别名用的同一把。`ssh -p 443 git@ssh.github.com`
+>    能通就说明这条路可用。）
+> 2. 备选：HTTPS + 钉住 IP（IP 会变，且可能**连接被重置**）：
+>    ```powershell
+>    git -c http.proxy= -c https.proxy= -c http.curloptResolve=github.com:443:140.82.114.3 push https://github.com/ShuyoNote/ShuyoNote.git main
+>    ```
+>    可用 IP 先用 `curl.exe -s -o NUL -w "%{http_code}" --resolve github.com:443:<ip> https://github.com/` 探一下
+>    （实测 `20.205.243.166` 与 `140.82.114.3` 会**轮流**不通）。
+> 3. `api.github.com` **不**受影响（DNS 正常），查 CI 状态/下载 artifact 用 `curl` 直接打 API 即可。
+
+> ⚠️ **别连着推**：`ci.yml` 有 `concurrency: cancel-in-progress: true`，每推一次就取消在跑的那一轮，
+> 而 Rust job 是最长的一棒 ⇒ 推得越勤，"CI 绿"这个信号越不会出现（Android 构建同理，且它更慢）。
+> 等一轮**跑完**再推下一轮；查状态时 **CI / Android (build) / Deploy Web 三个都要看**。
+
 ## ⑤ 平台构建
 
 ### 多平台（推荐：GitHub Actions）
@@ -72,6 +115,24 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 产物上传到 GitHub Release（`softprops` 未用，`release` job 用 curl+GitHub API 只挂安装包）。仓库 Secrets：`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（必填），macOS 另需 `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD`/`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`。
 
 **⚠️ GitHub Release 里没有 `.sig`**：`release` job 显式只挑 `.exe/.dmg/.deb/.AppImage`。要发 GitCode（更新通道需要签名）就得从 **run artifacts** 取，两个 build job 上传的 `bundle-<platform>` 含完整 `bundle/` 目录（含 `.sig`，保留 7 天）：
+
+**一条命令（推荐）**：
+
+```bash
+pnpm fetch:release-artifacts --tag v1.91.1 --stage
+# 或指定 run：pnpm fetch:release-artifacts --run 34919151353 --stage
+```
+
+`scripts/fetch-release-artifacts.mjs` 做四件事：**分片并行**下载（GitHub 单连接实测 ~40KB/s，
+8 片并行才现实）、**断点续传**（中断后重跑接着下，不重下已完成的分片）、按 API 给的
+`digest` **校验整包 sha256**、零依赖解包（`scripts/lib/zip.mjs`）。取到 APK 后**立刻**跑
+`check-apk-contents.mjs` 验字节（v1.91.0 闪退的产物级判据）。`--stage` 会把
+nsis/deb/appimage 复制进 `src-tauri/target/release/bundle/`，随后 ⑥ 的 `--no-build` 直接可用。
+最后它会打印出下一步该跑的那条 `release.mjs` 命令。
+
+> 为什么不用下面那段手工脚本：2026-09-15 发 1.91.1 时手工做踩了三个坑（GitHub 单连接太慢、
+> 分片被中断后重下、拼装用的 `.ps1` 因无 BOM 的 UTF-8 中文在 PowerShell 5.1 里解析失败）。
+> 手工版留着当参考/兜底：
 
 ```bash
 # 需要 GitHub token（artifacts 下载要鉴权，匿名 401）+ jq；RUN 取该 tag 对应的 run id
@@ -116,6 +177,25 @@ $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$HOME\.tauri\shuyonote.key")
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyonote.key.pw").Trim()
 pnpm tauri build      # 产出 setup.exe + .sig
 ```
+
+> **换一台（新的）Windows 机器之前先跑 `pnpm check:win-build-env`**（2026-09-16 加）。
+> 它逐条问硬前置，并写明**缺了会怎样**——这几条都不会给出清楚的报错：
+>
+> | 前置 | 缺了的表现 |
+> |---|---|
+> | Node ≥ 20 / pnpm | 各种解析错（`corepack enable` 可补 pnpm） |
+> | `rustc` + 目标 `x86_64-pc-windows-msvc` | 出不了桌面包（Windows 要用 MSVC 目标） |
+> | **MSVC 链接器 `link.exe` 在 PATH** | 报 `link.exe not found`。装 VS 2022 Build Tools 的
+>   「使用 C++ 的桌面开发」，并在**已加载 vcvars 的**命令行里构建（普通 pwsh 里 `where link.exe` 找不到） |
+> | **OpenSSL**（`OPENSSL_DIR` 或默认安装路径） | 在**链接期**炸 `LNK2019 无法解析的外部符号`：
+>   `rusqlite` 用 `bundled-sqlcipher`，要链 OpenSSL。两条装法：① 装 OpenSSL-Win64 到默认路径
+>   （`openssl-sys` 会自动认 `C:\Program Files\OpenSSL-Win64`）；② 像 CI 那样
+>   `vcpkg install openssl:x64-windows-static-md` 并设 `OPENSSL_DIR`（见 `.github/workflows/release.yml` 那一步） |
+> | **`~/.tauri/shuyonote.key` + `.pw`** | 构建能过但**产不出 `.sig`** ⇒ 更新清单里该平台没 `signature`
+>   ⇒ 用户端**整份**清单解析失败（桌面的更新一起挂）。密钥**带外**从既有机器拷，绝不入库 |
+>
+> 可选：`~/.minisign/shuyonote.key`（发布者私钥）——没有则发版时**明确跳过**第一方插件片段。
+> Android 发版件**不要在这台机器上建**：一律从 CI 取（见 §9 开头）。
 
 ## ⑥ 发布到 GitCode（更新通道）
 ```bash
@@ -166,6 +246,21 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 > 于是没有任何真实输入能证明"线上有、本次没有 → 会红"这条检查真的会拦——不会被触发的门禁等于没有。
 
 **发布后自检**（自动检查之外的兜底）：拉 `https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json`，确认 `version` 已是新版本，且各平台 `signature` 与该 release 上的同名 `.sig` **逐字符一致**。
+
+上面这句现在有命令了 —— **`pnpm check:release-state`**（`scripts/check-release-state.mjs`）。
+它一次核对五件事，全部是"能挡住真实事故"的：
+
+| 检查 | 挡住的是 |
+|---|---|
+| 通道 `version` = `package.json` 版本 | "发了但通道没更新"（用户永远收不到） |
+| 每个平台键的 `url` 是绝对 https、`signature` 非空；android 必须是 `sha256:<64 hex>` | 少一个字段 ⇒ `tauri-plugin-updater` 解析**整份清单**失败 ⇒ 桌面更新通道一起挂 |
+| 每个产物 URL 真的可达（`-r 0-0` 取 1 字节，**不用 HEAD**：gitcode 对 HEAD 一律 401） | 通道指向 404 的包 |
+| **通道里 android 的 `sha256` = GitHub Release 上那份 `.apk.sha256`** | "通道指向的字节根本不是我们记录过指纹的那个"（发错件/传串了） |
+| 两个 Web 入口的 `version.json` = 当前版本 | "主站静默停在旧版本"（历史事故：主站 1.84.5、Pages 1.89.0） |
+
+> 网络失败与"真的不符"**分开报**：取不到 `.sha256` 时打印 `· 跳过（网络原因）`，
+> 只有真的读到指纹且不一致才红 —— 否则 GitHub 抽风会被误当成"发错包了"。
+> 它**不进 `pnpm build`**（要对线上发请求，不适合构建期跑），是发版当天的手工命令。
 
 ## ⑦ Web 版（**必做**，两个入口都要）
 
@@ -347,6 +442,37 @@ scripts/**                         # pnpm build 里串着门禁脚本，改它�
 两条流水线的签名步骤**逐字一致**：base64 落 `release.jks` → `zipalign -f -p 4` →
 `apksigner sign`（口令只走 `env:`，不落文件、不进命令行）→ `apksigner verify --print-certs` →
 实测指纹与硬编码常量比对 → 不一致 `exit 1`；Secrets 缺失也**显式报错**，不会退化成"发个未签名包出去"。
+
+> [!] **⚠️ 2026-09-15 实证：这两条流水线曾经"步骤不一致"，代价是 v1.91.0 装上就闪退。**
+>
+> `android.yml` 比 `release.yml` 的 android job **多了两步**：
+> `pnpm android:mobile-shell`（把 `ShuyoFsPlugin.kt` / inset 桥 / 返回键处理注入 `gen/`）与
+> `pnpm android:mobile-shell --check`。`release.yml` 少了它们 ⇒ 发版 APK 里**没有那个类**，
+> 启动时 `register_android_plugin` 抛 `ClassNotFoundException` → SIGABRT，
+> **用户从 1.90.2 应用内更新到 1.91.0 之后直接打不开**（报"安装了，闪退"）。
+> 自检包一直是好的 ⇒ 两条流水线的 CI 全绿 ⇒ 谁也没发现。
+>
+> 三条判据（事后补的，都是机器可跑的）：
+> 1. **步骤清单对齐** —— 已经变成门禁：`pnpm check:release-parity`
+>    （`scripts/check-release-parity.mjs`，串在 `pnpm build` 里）。
+>    它把两个 android job 的 `- name:` 归一化后逐一比对，**任何只出现在一边的步骤都必须
+>    落在脚本里那张显式允许表里并写明理由**，否则 push 时就红；表里写了但实际不存在的条目
+>    也会红（防止豁免表腐化成"看着豁免过、其实早没了"）。
+>    变异自证：把 `pnpm android:mobile-shell` 那两步从 `release.yml` 删掉 ⇒ **3 条红**，
+>    逐条点名缺的步骤名（等于复现 v1.91.0）。
+> 2. **产物级断言**（已进 `release.yml`，命令是 `scripts/check-apk-contents.mjs`）：
+>    签名后翻 APK 字节，要求 dex 里有 `ShuyoFsPlugin` / `__SHUYONOTE_INSETS__` /
+>    `__SHUYONOTE_BACK__` / `installApk`，并且 ABI 恰为 arm64-v8a、含 apksigner 签名块，
+>    缺一个就 `exit 1`。源码级 `--check` 只能证明"写进了 gen/"，**证明不了"进包了 + R8 没删没改名"**。
+>    本地同一命令：**`pnpm check:apk <apk 文件>`**（用来验 CI artifact 或**线上那一份**）。
+>    它零依赖（自己读 ZIP 中央目录 + Node 的 zlib），Windows/Linux/CI 行为一致。
+>    变异自证：拿 v1.91.0 那个坏发版件跑 ⇒ **4 项红**并逐条点名缺的能力；1.91.1 的好包 ⇒ 7 项全绿。
+> 3. **发版前真机装一次发版件**（不是自检包）：这次就是"发版件从没被装上过"才漏的。
+>    同日对照（同一判据）：发版件 dex 命中 **0**、自检包命中 **1**。
+>
+> 附带一条：**已发布的 Release 资产不覆盖**（"旧件冒充新件"是明令禁止的），
+> 所以修法只能是发 1.91.1；而已经装坏的用户**打不开应用**，也就用不了应用内更新 ⇒
+> 这一版必须让用户手动装一次（发布页/Release 附件）。
 
 ### 9.2 发版时的判据：怎么确认"这次发的包是对的"
 

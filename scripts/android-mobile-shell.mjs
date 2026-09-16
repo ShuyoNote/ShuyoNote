@@ -83,6 +83,18 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const JAVA_DIR = join(ROOT, 'src-tauri/gen/android/app/src/main/java/cn/shuyo/shuyonote')
 const MAIN_ACTIVITY = join(JAVA_DIR, 'MainActivity.kt')
+/** 问系统「这个 content:// URI 叫什么 / 是什么类型」的本地 Tauri 插件（Rust 侧在
+ *  `src-tauri/src/android_fs.rs`）。 */
+const SHUYO_FS_PLUGIN = join(JAVA_DIR, 'ShuyoFsPlugin.kt')
+/** Proguard 规则：R8 开着（`isMinifyEnabled = true`），而 `app/` 下的 `**`/*.pro`
+ *  会被 `proguardFiles(fileTree(".")...)` 自动收走。 */
+const PRO_FILE = join(ROOT, 'src-tauri/gen/android/app/shuyo-fs.pro')
+/** Rust 侧那位"调用点"：脚本要从它里面读出类名/命令名，与 Kotlin 对齐。 */
+const RUST_ANDROID_FS = join(ROOT, 'src-tauri/src/android_fs.rs')
+/** AndroidManifest：应用内更新要往里面加 `REQUEST_INSTALL_PACKAGES` 与 FileProvider。 */
+const MANIFEST = join(ROOT, 'src-tauri/gen/android/app/src/main/AndroidManifest.xml')
+/** FileProvider 的白名单路径（APK 落在应用缓存里，所以 `<cache-path>` 就够）。 */
+const FILE_PATHS_XML = join(ROOT, 'src-tauri/gen/android/app/src/main/res/xml/shuyo_file_paths.xml')
 
 /** 页面侧桥名（与 `src/lib/overlayStack.ts` / `src/lib/viewportInsets.ts` 同一个字符串）。 */
 const INSETS_FN = '__SHUYONOTE_INSETS__'
@@ -243,13 +255,302 @@ class MainActivity : TauriActivity() {
 }
 `
 
-// ---------------------------------------------------------------- 注入
+// ------------------------------------------------- Android：文件选择器的"名字/类型"插件
+
+// 真机症状（2026-09-17）：经系统文件选择器导入的附件显示成
+//   📎41449ced-d44e-4d3c-8e14-7c6733ad042a  未整理  文件  1.8 KB
+// 名字和 mime 同时丢 —— 因为 `tauri-plugin-dialog` 的 Android 实现只把
+// `uri.toString()` 交出来（`DialogPlugin.kt::createPickFilesResult`），Rust 侧
+// 于是把选中文件拷成**裸 UUID、无扩展名**的临时文件，而下游 `mime_from_path`
+// **只看扩展名** ⇒ octet-stream ⇒ 前端的 `file.mime` 分支全都进不去
+// （内置文件预览 / PDF 阅读器 / 照片墙），掉到 `opener.openPath()` 也失败。
+//
+// URI 尾段救不了：外置存储那条是 `primary%3ADownload%2Fphoto.png`（能解出真名），
+// 但 MediaStore/Downloads 给的是 `image%3A1234` / `msf%3A1000000042` —— **那是 id**。
+// 名字只有 `ContentResolver.query(OpenableColumns.DISPLAY_NAME)` 知道，
+// mime 只有 `ContentResolver.getType(uri)` 知道，**两者都只在 Android 运行时里**。
+//
+// 所以这里注入一个正经的本地 Tauri 插件（与 tauri-plugin-fs/-opener/-dialog 同一套
+// 机制），Rust 侧 `api.register_android_plugin(...)` + `run_mobile_plugin(...)` 调用。
+const SHUYO_FS_PLUGIN_KT = `package cn.shuyo.shuyonote
+
+import android.app.Activity
+import android.content.ContentResolver
+import android.content.Context
+import android.content.Intent
+import android.database.Cursor
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
+import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
+import app.tauri.plugin.Plugin
+import java.io.File
+
+${MARK}
+//
+// 这个文件是**生成物**：内容在 scripts/android-mobile-shell.mjs 里，每次构建覆盖写。
+// 直接改 gen/ 不会进库（gen/ 在 .gitignore 里），下次 CI init 就没了。
+//
+// 它只回答一个问题：**系统选择器给的这个 content:// URI 叫什么名字、是什么类型**。
+// 调用方是 Rust：src-tauri/src/android_fs.rs（类名与命令名两边必须对得上，
+// scripts/android-mobile-shell.mjs --check 会把这两边一起核）。
+//
+// 失败一律**返回空串**，绝不抛出去：拿不到名字不该让导入失败 —— Rust 侧会依次
+// 退回"URI 尾段启发"与"按内容嗅探（magic bytes）"。
+@InvokeArg
+class PickedFileInfoArgs {
+  lateinit var uri: String
+}
+
+@InvokeArg
+class InstallApkArgs {
+  lateinit var path: String
+}
+
+@TauriPlugin
+class ShuyoFsPlugin(private val activity: Activity) : Plugin(activity) {
+
+  @Command
+  fun pickedFileInfo(invoke: Invoke) {
+    val args = invoke.parseArgs(PickedFileInfoArgs::class.java)
+    val resolver = activity.contentResolver
+    val res = JSObject()
+    res.put("name", displayName(resolver, args.uri))
+    res.put("mime", mimeType(resolver, args.uri))
+    invoke.resolve(res)
+  }
+
+  /**
+   * C2 网络闸门：当前网络的**传输类型**。
+   *
+   * 只回答"现在是不是 Wi-Fi"，**不做任何猜测**——不用 UA、不看平台名。
+   * 拿不到就回 unknown，由前端按"不确定 ⇒ **不**自动拉取"处理（fail-safe）。
+   *
+   * ⚠️ 这段注释里**不要写反引号**：整个 Kotlin 源是 JS 模板字符串里的一段，
+   * 反引号会把模板提前截断（这次就踩了一次，脚本直接 SyntaxError）。
+   */
+  @Command
+  fun networkType(invoke: Invoke) {
+    val res = JSObject()
+    res.put("kind", currentNetworkKind())
+    invoke.resolve(res)
+  }
+
+  /**
+   * 传输类型：wifi / cellular / ethernet / other / none / unknown。
+   *
+   * 与 displayName 同样的理由刻意写笨，而且它**已经在本机验过能编**
+   * （gradlew :app:compileUniversalDebugKotlin，2026-09-15）。
+   * 任何异常都退化成 unknown，绝不抛出去。
+   */
+  private fun currentNetworkKind(): String {
+    try {
+      val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+      val net = cm.activeNetwork
+      if (net == null) return "none"
+      val caps = cm.getNetworkCapabilities(net)
+      if (caps == null) return "none"
+      if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return "wifi"
+      if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return "cellular"
+      if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet"
+      return "other"
+    } catch (e: Exception) {
+      return "unknown"
+    }
+  }
+
+  /**
+   * OpenableColumns.DISPLAY_NAME —— **原始文件名**，这是唯一可靠来源。
+   *
+   * 刻意用最笨的写法（不用 use/非局部返回）：这段 Kotlin 要 Android SDK/NDK 才编得了，
+   * 而**整个 Android app 在本机构建不出来**（卡在 Rust 侧的 OpenSSL 源码构建，见
+   * .github/workflows/android.yml 顶部的说明）——所以宁可啰嗦也不要巧妙。
+   *
+   * ⚠️ 更正（2026-09-15）：**单编这段 Kotlin 本机是可以的**（本机有 SDK/NDK/JDK17）：
+   *   cd src-tauri/gen/android && gradlew.bat :app:compileUniversalDebugKotlin
+   * C2 的 networkType 就是这么验的（BUILD SUCCESSFUL）。原来的注释写成"本机编不了"，
+   * 把"整个 app 编不了"和"这段 Kotlin 编不了"混为一谈了。
+   * （⚠️ 本文件是 JS 模板字符串，注释里**不许出现反引号**——会把模板提前截断。）
+   */
+  private fun displayName(resolver: ContentResolver, raw: String): String {
+    if (!raw.startsWith("content://")) return ""
+    var out = ""
+    var cursor: Cursor? = null
+    try {
+      cursor = resolver.query(
+        Uri.parse(raw),
+        arrayOf(OpenableColumns.DISPLAY_NAME),
+        null,
+        null,
+        null,
+      )
+      if (cursor != null && cursor.moveToFirst()) {
+        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (idx >= 0) {
+          val value = cursor.getString(idx)
+          if (value != null) out = value
+        }
+      }
+    } catch (e: Exception) {
+      out = ""
+    } finally {
+      try {
+        cursor?.close()
+      } catch (e: Exception) {
+        // 关不掉就算了，别让它盖住真正的结果。
+      }
+    }
+    return out
+  }
+
+  /** ContentResolver.getType —— provider 自己声明的 mime，比我们那张扩展名表权威。 */
+  private fun mimeType(resolver: ContentResolver, raw: String): String {
+    if (!raw.startsWith("content://")) return ""
+    return try {
+      val t = resolver.getType(Uri.parse(raw))
+      if (t == null) "" else t
+    } catch (e: Exception) {
+      ""
+    }
+  }
+
+  /**
+   * 应用内更新的第二步：把下好的 APK 交给**系统安装器**。
+   *
+   * 三条必须守住的：
+   *  · 路径要经 FileProvider 换成 content:// —— file:// 从 Android 7 起直接抛
+   *    FileUriExposedException；authority 必须与 AndroidManifest 里那个 provider 一致
+   *    （脚本注入时用的是 \`\${applicationId}.fileprovider\`，这里用 packageName 拼，两者相同）。
+   *  · 只 \`startActivity(ACTION_VIEW)\`，**不做静默安装**：Android 8 起"从应用里装 APK"
+   *    要用户给本应用开「安装未知应用」，那个确认界面是系统的，选择权留给用户。
+   *  · 失败要把原因回给 Rust（前端据此给"前往发布页"的退路），不要静默什么都不发生。
+   */
+  @Command
+  fun installApk(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(InstallApkArgs::class.java)
+      val file = File(args.path)
+      if (!file.exists()) {
+        invoke.reject("安装包不存在：\${args.path}")
+        return
+      }
+      val uri = FileProvider.getUriForFile(activity, activity.packageName + ".fileprovider", file)
+      val intent = Intent(Intent.ACTION_VIEW)
+      intent.setDataAndType(uri, "application/vnd.android.package-archive")
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      activity.startActivity(intent)
+      invoke.resolve(JSObject())
+    } catch (e: Exception) {
+      invoke.reject(e.message ?: "拉起系统安装器失败")
+    }
+  }
+}
+`
+
+// ⚠️ **R8 是开着的**（`gen/android/app/build.gradle.kts` 的 `isMinifyEnabled = true`），
+// 而这个类**只被 JNI/反射按名字调用**（Rust 侧 FindClass + `PluginManager` 反射找
+// `@Command` 方法），R8 看不到任何 Java 静态引用 ⇒ 会把它当死代码删掉或改名，
+// 运行时直接 ClassNotFoundException / "Plugin shuyo-fs not initialized"。
+// **漏了这段就是"CI 绿、真机 release 炸"**（与 rustls-platform-verifier 那条同源，
+// 见 scripts/android-platform-verifier.mjs）。
+const PROGUARD = `# 我们自己注入的 Android 壳插件（scripts/android-mobile-shell.mjs 生成）。
+# 只被 JNI/反射按名字调用，必须 keep，否则 release（R8 开着）上找不到类/方法。
+-keep class cn.shuyo.shuyonote.ShuyoFsPlugin { *; }
+-keep class cn.shuyo.shuyonote.PickedFileInfoArgs { *; }
+-keep class cn.shuyo.shuyonote.InstallApkArgs { *; }
+# tauri 的注解与"被注解的方法/字段"是反射的入口。
+-keep class app.tauri.annotation.** { *; }
+-keepclassmembers class * { @app.tauri.annotation.Command <methods>; }
+-keepclassmembers class * { @app.tauri.annotation.InvokeArg <fields>; }
+`
 
 if (!existsSync(join(ROOT, 'src-tauri/gen/android/app'))) {
   fail(
     `找不到 src-tauri/gen/android/app\n` +
       '  gen/ 是生成物（不入库），所以这一步必须在 `pnpm tauri android init` **之后**跑。',
   )
+}
+
+// ---------------------------------------------------------------- 应用内更新（APK 安装）
+
+/**
+ * AndroidManifest 的两处注入（应用内更新要拉起系统安装器）：
+ *  · `REQUEST_INSTALL_PACKAGES` 权限——Android 8 起"从应用里装 APK"需要它；
+ *    真正装不装仍由用户决定（系统会让你先给本应用开「安装未知应用」）。
+ *  · `FileProvider`——APK 必须以 `content://` 交出去（`file://` 从 Android 7 起抛
+ *    `FileUriExposedException`）。authority 用 `${applicationId}.fileprovider`，
+ *    与 Kotlin 侧 `activity.packageName + ".fileprovider"` 一致。
+ *
+ * 为什么用"找不到才插"而不是"整份覆盖写"：manifest 里有 tauri 生成的一堆节点
+ * （activity/usesCleartextTraffic 等），我们只该往里加东西，不该重写别人的。
+ */
+const FILE_PATHS = `<?xml version="1.0" encoding="utf-8"?>
+<!-- APK 落在应用缓存目录（app_cache_dir/updates/），所以 cache-path 就够。
+     这份白名单是 FileProvider 允许分享出去的路径**范围**：写宽了等于把私有目录
+     整个暴露给任何拿到 URI 的应用，所以只列真正用到的那一个。 -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="updates" path="updates/" />
+</paths>
+`
+
+function injectManifest() {
+  if (!existsSync(MANIFEST)) {
+    fail(`找不到 ${MANIFEST}\n  gen/ 是生成物，这一步必须在 \`pnpm tauri android init\` **之后**跑。`)
+  }
+  let xml = readFileSync(MANIFEST, 'utf8')
+  let changed = false
+  if (!xml.includes('android.permission.REQUEST_INSTALL_PACKAGES')) {
+    xml = xml.replace(
+      /<manifest([^>]*)>/,
+      (m, attrs) =>
+        `<manifest${attrs}>\n` +
+        '    <!-- 应用内更新：把下好的 APK 交给系统安装器（见 docs/MOBILE.md §2.5）。\n' +
+        '         装不装由用户决定——Android 8+ 还会要求用户给本应用开「安装未知应用」。 -->\n' +
+        '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
+    )
+    changed = true
+  }
+  // C2 网络闸门（2026-09-15）：读当前网络类型要 `ACCESS_NETWORK_STATE`。
+  // ⚠️ 它是**普通权限**（normal）——安装即授予，**不弹窗、不需要运行时申请**，
+  // 所以这里只加声明，不碰 `MainActivity` 的权限请求流程。
+  if (!xml.includes('android.permission.ACCESS_NETWORK_STATE')) {
+    xml = xml.replace(
+      /<manifest([^>]*)>/,
+      (m, attrs) =>
+        `<manifest${attrs}>\n` +
+        '    <!-- C2 网络闸门：读当前网络类型（是不是 Wi-Fi）要这个权限。\n' +
+        '         它是普通权限——安装即授予，不会弹窗。 -->\n' +
+        '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+    )
+    changed = true
+  }
+  if (!xml.includes('shuyo_file_paths')) {
+    xml = xml.replace(
+      /<\/application>/,
+      '        <!-- APK 经 FileProvider 换成 content://（file:// 从 Android 7 起会抛 FileUriExposedException）。\n' +
+        '             authority 必须与 ShuyoFsPlugin.installApk 里拼的那个一致。 -->\n' +
+        '        <provider\n' +
+        '            android:name="androidx.core.content.FileProvider"\n' +
+        '            android:authorities="${applicationId}.fileprovider"\n' +
+        '            android:exported="false"\n' +
+        '            android:grantUriPermissions="true">\n' +
+        '            <meta-data\n' +
+        '                android:name="android.support.FILE_PROVIDER_PATHS"\n' +
+        '                android:resource="@xml/shuyo_file_paths" />\n' +
+        '        </provider>\n' +
+        '    </application>',
+    )
+    changed = true
+  }
+  if (changed) writeFileSync(MANIFEST, xml, 'utf8')
+  return changed
 }
 
 if (CHECK_ONLY) {
@@ -270,6 +571,97 @@ if (CHECK_ONLY) {
   if (!kt.includes('.trim(\'"\')')) {
     fail('返回键回调没有按 "true" 判定 —— 返回值会被当成"永远关掉了浮层"，返回键再也退不出应用')
   }
+
+  // ---- 文件选择器插件：类 + .pro + 调用点，三样一起把关 ----
+  //
+  // 这一段存在的理由是**它坏起来只有真机 release 看得见**：
+  //   · Kotlin 类没注入 ⇒ Rust 侧 `register_android_plugin` 直接 FindClass 失败；
+  //   · 少一个 `@Command` 方法 ⇒ `run_mobile_plugin` 回"命令不存在"；
+  //   · 少了 .pro ⇒ debug/CI 全绿，**release 上才** ClassNotFoundException（R8 删了它）；
+  //   · 两边名字对不上（改了 Kotlin 忘了改 Rust）⇒ 编译全过，运行时静默退化成
+  //     "问不到名字"（表现就是这条 bug 原样复发）。
+  if (!existsSync(SHUYO_FS_PLUGIN)) {
+    fail(`缺少 ${SHUYO_FS_PLUGIN}（应排在 \`pnpm android:mobile-shell\` 之后）`)
+  }
+  const fsKt = readFileSync(SHUYO_FS_PLUGIN, 'utf8')
+  for (const [needle, why] of [
+    ['@TauriPlugin', '没有 @TauriPlugin 注解 ⇒ PluginManager 不认这个类'],
+    ['@InvokeArg', '没有 @InvokeArg ⇒ Kotlin 侧 parseArgs 反序列化不出 uri'],
+    ['OpenableColumns.DISPLAY_NAME', '没有查 DISPLAY_NAME ⇒ 原始文件名还是拿不到（这条 bug 的一半）'],
+    ['getType(', '没有 ContentResolver.getType ⇒ mime 拿不到'],
+    // 应用内更新第二步：没有这段，前端就只能让用户自己去文件管理器点安装。
+    ['FileProvider.getUriForFile', '没有 FileProvider ⇒ 交出去的是 file://，Android 7+ 抛 FileUriExposedException'],
+    ['application/vnd.android.package-archive', '拉安装器的 intent 类型不对 ⇒ 系统不知道这是个 APK'],
+    // C2 网络闸门：没有这段就只剩"猜"，而"猜"是我们明确拒绝的（见 platform/index.ts 的告警）。
+    ['ConnectivityManager', '没有 ConnectivityManager ⇒ 拿不到真实网络类型（C2 会退化成"永远 unknown"）'],
+    ['TRANSPORT_WIFI', '没有判 TRANSPORT_WIFI ⇒ 分不出 Wi-Fi 与蜂窝'],
+  ]) {
+    if (!fsKt.includes(needle)) fail(`${SHUYO_FS_PLUGIN} 缺少 \`${needle}\`：${why}`)
+  }
+
+  // **两边名字对齐**：Rust 侧声明了类名与每个命令名，Kotlin 侧必须真的存在同名类/方法。
+  // 这是唯一能挡住"改了一边忘了另一边"的机器判据。
+  // ⚠️ 命令可能不止一个（pickedFileInfo / installApk），所以要**全量**比对，
+  //    只 `match` 第一个的话，"新加的那个命令忘了写 Kotlin"会被漏掉。
+  if (!existsSync(RUST_ANDROID_FS)) fail(`缺少 ${RUST_ANDROID_FS}（Rust 侧的调用点）`)
+  const rust = readFileSync(RUST_ANDROID_FS, 'utf8')
+  const className = (rust.match(/PLUGIN_CLASS:\s*&str\s*=\s*"([A-Za-z0-9_]+)"/) || [])[1]
+  if (!className) fail(`${RUST_ANDROID_FS} 里读不到 PLUGIN_CLASS（Rust 与 Kotlin 的类名要对齐）`)
+  if (!fsKt.includes(`class ${className}`)) {
+    fail(`Kotlin 里没有 \`class ${className}\` —— 与 Rust 侧 PLUGIN_CLASS 对不上`)
+  }
+  const allRust = readFileSync(join(ROOT, 'src-tauri/src/updates.rs'), 'utf8') + rust
+  const commands = [...allRust.matchAll(/run_mobile_plugin::<[^>]+>\("([A-Za-z0-9_]+)"/g)].map((m) => m[1])
+  if (commands.length === 0) fail('读不到任何 `run_mobile_plugin("<命令名>"` —— Rust 侧没有调用点？')
+  for (const cmd of new Set(commands)) {
+    if (!fsKt.includes(`fun ${cmd}(`)) {
+      fail(`Kotlin 里没有 \`fun ${cmd}(\` —— 与 Rust 侧 run_mobile_plugin 的命令名对不上`)
+    }
+    if (!fsKt.includes(`@Command\n  fun ${cmd}(`)) {
+      fail(`\`${cmd}\` 前面少了 @Command —— PluginManager 只登记被注解的方法`)
+    }
+  }
+
+  // 注入点那个包名也要与 Rust 侧一致（写错包名 = FindClass 失败）
+  const pkg = (rust.match(/PLUGIN_IDENTIFIER:\s*&str\s*=\s*"([a-z0-9_.]+)"/) || [])[1]
+  if (!pkg) fail(`${RUST_ANDROID_FS} 里读不到 PLUGIN_IDENTIFIER`)
+  if (!fsKt.startsWith(`package ${pkg}`)) {
+    fail(`${SHUYO_FS_PLUGIN} 的 package 必须是 ${pkg}（与 Rust 侧 PLUGIN_IDENTIFIER 一致）`)
+  }
+
+  // `.pro`：R8 开着，漏了就是"CI 绿、release 真机炸"。
+  if (!existsSync(PRO_FILE)) {
+    fail(`缺少 ${PRO_FILE} —— release 开了 R8，没有 keep 规则会把这个只被反射调用的类删掉`)
+  }
+  const pro = readFileSync(PRO_FILE, 'utf8')
+  for (const [needle, why] of [
+    [`-keep class ${pkg}.${className} { *; }`, '这个类只被 JNI/反射按名字调用，不 keep 会被删/改名'],
+    [`-keep class ${pkg}.InstallApkArgs { *; }`, '安装参数类同理（R8 改名后 parseArgs 反序列化不出来）'],
+    ['@app.tauri.annotation.Command', '@Command 方法是反射入口，方法名不能被 R8 改掉'],
+    ['@app.tauri.annotation.InvokeArg', '@InvokeArg 的字段是反射入口'],
+  ]) {
+    if (!pro.includes(needle)) fail(`${PRO_FILE} 缺少 \`${needle}\`：${why}`)
+  }
+
+  // ---- 应用内更新：manifest 权限 + FileProvider + 白名单路径 ----
+  // 这三样缺任何一个，手机上"下载完点安装"都会失败，而且**只有真机能发现**
+  // （CI 编译得过、桌面上根本不走这条路）。
+  if (!existsSync(MANIFEST)) fail(`缺少 ${MANIFEST}`)
+  const man = readFileSync(MANIFEST, 'utf8')
+  for (const [needle, why] of [
+    ['android.permission.REQUEST_INSTALL_PACKAGES', 'Android 8+ 从应用里装 APK 需要这个权限'],
+    ['android.permission.ACCESS_NETWORK_STATE', 'C2 网络闸门读网络类型要它（普通权限，不弹窗）'],
+    ['androidx.core.content.FileProvider', '没有 FileProvider ⇒ APK 只能以 file:// 交出去，Android 7+ 直接抛异常'],
+    ['android:authorities="${applicationId}.fileprovider"', 'FileProvider 的 authority 与 Kotlin 侧拼的那个必须一致'],
+    ['@xml/shuyo_file_paths', 'FileProvider 没有路径白名单 ⇒ getUriForFile 抛 IllegalArgumentException'],
+  ]) {
+    if (!man.includes(needle)) fail(`${MANIFEST} 缺少 \`${needle}\`：${why}`)
+  }
+  if (!existsSync(FILE_PATHS_XML)) fail(`缺少 ${FILE_PATHS_XML}（FileProvider 的路径白名单）`)
+  if (!readFileSync(FILE_PATHS_XML, 'utf8').includes('cache-path')) {
+    fail(`${FILE_PATHS_XML} 里没有 <cache-path> —— APK 下在应用缓存目录，不在白名单里就分享不出去`)
+  }
+
   console.log('✅ Android 壳适配层已注入（--check）')
   process.exit(0)
 }
@@ -280,6 +672,20 @@ mkdirSync(JAVA_DIR, { recursive: true })
 // 不让手工改动留在 gen/ 里。
 writeFileSync(MAIN_ACTIVITY, MAIN_ACTIVITY_KT, 'utf8')
 console.log(`已写入 Android 壳适配层（inset 桥 + 返回键）→ ${MAIN_ACTIVITY}`)
+
+// 选择器插件（Kotlin）+ 它的 Proguard 规则：同样是**整份覆盖写**的生成物。
+writeFileSync(SHUYO_FS_PLUGIN, SHUYO_FS_PLUGIN_KT, 'utf8')
+console.log(`已写入 Android 选择器插件（DISPLAY_NAME + getType）→ ${SHUYO_FS_PLUGIN}`)
+writeFileSync(PRO_FILE, PROGUARD, 'utf8')
+console.log(`已写入 Proguard 规则（R8 keep）→ ${PRO_FILE}`)
+
+// 应用内更新的两处 manifest 注入 + FileProvider 白名单（找不到才插，不重写别人的节点）
+const manifestChanged = injectManifest()
+mkdirSync(dirname(FILE_PATHS_XML), { recursive: true })
+writeFileSync(FILE_PATHS_XML, FILE_PATHS, 'utf8')
+console.log(`已写入 FileProvider 白名单 → ${FILE_PATHS_XML}`)
+console.log(`AndroidManifest 注入（权限 + FileProvider）：${manifestChanged ? '本次写入' : '已存在，未改动'}`)
+
 
 // ---------------------------------------------------------------- 真机断言
 

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.90.2-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.91.3-blue" alt="version">
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.50-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -38,7 +38,7 @@
 ## 为什么选 ShuyoNote
 
 - **数据是你自己的**：数据全部保存在本机 SQLite，离线可用、无需注册、无云端依赖；支持 Markdown 导出 / 整库备份 / 单空间导出，随时带走。**本地优先、数据主权**是它的根。
-- **不只是笔记，是知识工作台**：块编辑器 + 属性数据库（8 视图：表格 / 画廊 / 看板 / **日历** / 时间轴 / 目录 / **原生甘特图**）+ 块级引用 / 关系图 + 双向链接；内置 **PDF 批注 · 离线 OCR · AI 视觉识别 · AI 目录**。
+- **不只是笔记，是知识工作台**：块编辑器 + 属性数据库（8 视图：表格 / 画廊 / 看板 / **日历** / 时间轴 / 目录 / **原生甘特图**）+ 块级引用 / 关系图 + 双向链接；内置 **PDF 批注 · 本地 OCR · AI 视觉识别 · AI 目录**。
 - **内置网盘**：文件夹即网盘——批量上传超大文件（流式）、文件管理页（类型 / 大小 / 时间）、文件引用到页面（文件卡片 / 系统打开）、同名文件历史版本；内容寻址去重存储。
 - **安全可靠，不只是"记一下"**：自动保存 + 版本历史（可回滚）+ 回收站；**端到端加密**（Argon2id + XChaCha20-Poly1305，口令解锁/锁定）；存储管理 / 清理。
 - **AI 可选、本地优先**：可接本地 Ollama / OpenAI 兼容端点，**默认关闭**（隐私）；语义检索 + 流式内联起草 + 侧边栏问答 + 思考过程流式。
@@ -58,10 +58,10 @@
 <p align="center"><b>块级关系图</b></p>
 <p align="center"><img src="docs/media/screenshot-graph.png" alt="块级关系图" width="640" /></p>
 
-<p align="center"><b>PDF 阅读 · 批注 · 离线 OCR · AI</b></p>
-<p align="center"><img src="docs/media/screenshot-pdf.png" alt="PDF 阅读 · 批注 · 离线 OCR · AI" width="640" /></p>
+<p align="center"><b>PDF 阅读 · 批注 · 本地 OCR · AI</b></p>
+<p align="center"><img src="docs/media/screenshot-pdf.png" alt="PDF 阅读 · 批注 · 本地 OCR · AI" width="640" /></p>
 
-> 数据库（表格 / 看板 / 画廊 / 日历 / 时间轴 / 目录 / 甘特图）、块级引用 / 关系图、PDF 批注 · 离线 OCR · AI 视觉识别、AI 助手 / 内联起草、全局搜索 · 语义检索、公式、绘图——详见下方特性。
+> 数据库（表格 / 看板 / 画廊 / 日历 / 时间轴 / 目录 / 甘特图）、块级引用 / 关系图、PDF 批注 · 本地 OCR · AI 视觉识别、AI 助手 / 内联起草、全局搜索 · 语义检索、公式、绘图——详见下方特性。
 
 ## 快速开始
 
@@ -115,8 +115,8 @@ pnpm dev:web          # 浏览器（Web 平台，独立 5173）
 ### PDF 阅读
 - **完整 PDF 阅读器**：内置打开 PDF（点击附件/文件树直达），近全屏阅读器 + **整篇连续滚动（虚拟化）** + 左侧目录树 / 右侧批注侧栏 + 键盘导航（←/→/↑/↓ 平滑） + PageUp/PageDown 翻页 + 缩放下拉（适配页宽/页面/内容/实际 + 百分比阶梯）+ **护眼模式**（柔光/暖黄/夜间/淡绿多档位，暖色纸底 + 页图降蓝/柔光）。
 - **页面批注**：高亮（有文本层精确划词）/ 画笔 / 便签（钉 + 内容气泡，按住即拖、双击编辑）/ 区域标注；选中标注 → 摘录成块（带 `pdf://` 回链）/ AI 帮读 / 复制引用 / 删除；撤销；右侧批注侧栏（类型筛选、按页、点击精准定位、及时刷新）。
-- **扫描版 OCR / AI 识别**：无文本层时点「OCR 识别本页」用**本地离线 tesseract**（双语完整模型，免联网），或点「AI 识别」把页图直接给**视觉大模型**（更准）；识别结果在居中可缩放弹层显示，可**朗读 / 复制全部 / 写入便签**。
-- **AI 一键生成目录**：扫描版无内置目录时，从当前页往后逐页用**视觉大模型**看页识别章节标题+页码，一键生成**可点击跳转的目录**（进度 / 取消 / 缓存）。
+- **扫描版 OCR / AI 识别**：无文本层时点「OCR 识别本页」用**本地 tesseract 识别**（中英双语完整模型，识别在本机完成、不上传也不调云端；⚠️ **语言包约 30 MB 默认不随包分发，首次使用需联网下载一次**，之后由 tesseract 的 IndexedDB 缓存复用、离线可用），或点「AI 识别」把页图直接给**视觉大模型**（更准）；识别结果在居中可缩放弹层显示，可**朗读 / 复制全部 / 写入便签**。
+- **AI 一键生成目录**：扫描版无内置目录时，从当前页往后逐页用**视觉大模型**看页识别章节标题+页码（页码为 PDF 物理页），一键生成**可点击跳转的目录**（进度 / 取消 / 缓存）。
 - **系统朗读**：顶部「朗读本页」（有文本层读全文；扫描版先识别再听），识别结果也可朗读。
 
 ### 知识组织
@@ -262,7 +262,7 @@ flowchart TB
 | 插件 | boa_engine（受限 JS 运行时）+ 白名单 API |
 | 附件 | 内容寻址（SHA-256 去重）；Web 侧存 IndexedDB `blobStore` |
 | PDF 渲染/批注 | pdf.js（Web）+ MuPDF（桌面 native，`mupdf-sys`）+ 坐标归一化 `pdfAnnotation` 纯函数 | `src/lib/pdf*.ts`、`src-tauri/pdf_native.rs` |
-| OCR / AI 识别 | 离线 tesseract.js（`ocr.ts`，本地双语完整模型）+ 视觉大模型（`ai/ocrVision.ts`） | `src/lib/ocr.ts`、`src/lib/ai/ocrVision.ts` |
+| OCR / AI 识别 | tesseract.js 本地识别（`ocr.ts`，语言包按需下载 + IndexedDB 缓存）+ 视觉大模型（`ai/ocrVision.ts`） | `src/lib/ocr.ts`、`src/lib/ai/ocrVision.ts` |
 | 朗读 / 目录 | Web Speech 朗读（`speech.ts`）+ AI 生成目录（`aiOutline.ts` + `pdfOutlineGen.ts`） | `src/lib/speech.ts`、`src/lib/aiOutline.ts` |
 
 ## 开发环境要求
@@ -283,7 +283,7 @@ pnpm tauri build   # 打包桌面安装包
 
 产物位于 `src-tauri/target/release/`。
 
-> `dev`/`build` 前会自动运行 `scripts/copy-pdfjs-assets.mjs` 与 `scripts/copy-tesseract-assets.mjs`（PDF CJK 资源 + tesseract 离线 OCR 双语完整模型分别拷到 `public/pdfjs`、`public/ocr`，均为生成物、不入库）；`pnpm install` 后即可离线使用 OCR。
+> `dev`/`build` 前会自动运行 `scripts/copy-pdfjs-assets.mjs` 与 `scripts/copy-tesseract-assets.mjs`（PDF CJK 资源 + tesseract 的 worker/core 分别拷到 `public/pdfjs`、`public/ocr`，均为生成物、不入库）；**语言包（中英约 30 MB）默认不拷**，运行时按需下载并写入缓存，因此**首次使用 OCR 需联网一次**。要做完全离线的发行版：`SHUYONOTE_OCR_BUNDLE=1 pnpm build` 并**同时**设 `VITE_TESSERACT_LANG_PATH=/ocr/tessdata`（两者必须一起设，只设一半会被 `check-ocr-assets` 拦下）。
 
 ## 多设备同步
 
@@ -380,7 +380,7 @@ ShuyoNote/
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
-| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草 / PDF 批注 / PDF 连续滚动 / PDF 阅读器 + OCR/AI 增强（含护眼·离线 OCR·视觉识别·AI 目录·朗读）/ 公式（M26）/ 帮助系统（M25）** |
+| [docs/plans/*](docs/plans/) | 各功能方案：块引用 / 属性数据库 / 多空间 / 模板 / 插件 / 网盘 / 数据库透镜 / 存储清理 / 工作空间 CRUD / 物理隔离 / 跨平台 / Web 打磨 / **薄 Agent AI / 内联 AI 起草 / PDF 批注 / PDF 连续滚动 / PDF 阅读器 + OCR/AI 增强（含护眼·本地 OCR·视觉识别·AI 目录·朗读）/ 公式（M26）/ 帮助系统（M25）** |
 | [design/README.md](design/README.md) | UI/UX 设计交付索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
 
@@ -426,7 +426,7 @@ ShuyoNote/
 - [x] **AI 增强（薄 Agent）**（M17：语义工具 + 受限宿主 + 草稿确认 + 隐私开关，默认关，见 [方案](docs/plans/2026-08-24-thin-agent-interface-plan.md)）
 - [x] **内联 AI 起草**（M18：空行空格唤起随光标浮层 + 上下文自适应下拉 + 流式创作 + 完成/关闭，见 [方案](docs/plans/2026-08-24-inline-ai-draft-plan.md)；M19 织网 / M20 模板变量+语义检索 / M21 wiki 导出 / M22 绘图 / M23 Excalidraw 高级均已达标）
 - [x] **PDF 阅读/批注**（M24 阶段1/3：内置阅读器 + 连续滚动 + 高亮/画笔/便签 + 摘录成块（`pdf://` 回链）+ AI 帮读 + 对整篇 PDF 提问；见 [方案](docs/plans/2026-08-27-pdf-annotation-plan.md)）
-- [x] **PDF 阅读体验 + OCR/AI 增强**（护眼多档位 / OCR 彻底离线 / AI 视觉识别 / **AI 一键生成目录（视觉优先、带层级、可范围）** / 系统朗读 / 识别结果弹层；见 [落地文档](docs/plans/2026-08-30-pdf-reader-ai-plan.md)）
+- [x] **PDF 阅读体验 + OCR/AI 增强**（护眼多档位 / OCR 本地识别、语言包首次联网 / AI 视觉识别 / **AI 一键生成目录（视觉优先、带层级、可范围）** / 系统朗读 / 识别结果弹层；见 [落地文档](docs/plans/2026-08-30-pdf-reader-ai-plan.md)）
 - [x] **跨平台架构（M16 全端通吃）**：平台无关核心 + 可插拔平台壳 → 浏览器 PWA / 鸿蒙 ArkWeb（可插拔壳）；**安卓 / iOS 走 Tauri 原生壳**（同一份 Rust 内核）
 - [ ] **Android 移动端**：Tauri 原生壳；**CI 已跑通**——`.github/workflows/android.yml` 出自检包、`.github/workflows/release.yml` 出对外发版件，**两者都用正式密钥签名并硬比对指纹**（见 [RELEASING.md](docs/RELEASING.md) §⑨），arm64 APK **53.41 MiB**（156.7 → 53.41，该数字量的是 CI 的未签名包，目标 55–70 MiB 已达成）；真机自 2026-09-13 起已多轮跑通/复验（首次 HUAWEI Mate 40 `OCE-AN10` / Android 12），差**逐条真机验收 / 上架材料**，见 移动端上线计划（已移入私有仓库 `shuyonote-sync-server` 的 `docs/android-launch-plan.md`） 与 [移动端路线](docs/MOBILE.md)。iOS 随后（那台 Mac 的工具链需先解决）。
 

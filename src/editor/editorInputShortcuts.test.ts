@@ -12,7 +12,7 @@
 // 与 `insertShortcut.test.ts` 分工：那边是 Ctrl+Alt 那一组（要真 KEY_DOWN_COMMAND），
 // 这边是"靠输入或 document 监听"的那些。
 import { describe, expect, it, vi } from "vitest";
-import React from "react";
+import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 
@@ -101,21 +101,95 @@ function seed(editor: LexicalEditor, text = "") {
   );
 }
 
-/** 像用户那样**一个字一个字**地输入（一次提交一个字符）。 */
+/** 像用户那样**一个字一个字**地输入（一次提交一个字符）。
+ *
+ *  ⚠️ 每个字符都走 `settled`，**不是**"打完再等一个 tick"：编辑器 update 会
+ *  **同步**跑插件的 update listener，而 listener 里是 React `setState`
+ *  （`setQuery` / `setOpen` / `setSel`）。这一跳必须**当场**连同它带出的被动副作用
+ *  一起做完——否则"下一次按键"就可能落到还没被换掉的**旧闭包**上
+ *  （比如 `matches` 还是上一帧的空数组 ⇒ `Math.min(sel+1, -1)` = −1，
+ *  两项都不再 active）。这正是本文件 flake 的成因，见下面 `settled` 那段说明。 */
 async function typeChars(editor: LexicalEditor, text: string) {
   for (const ch of text) {
-    editor.update(
-      () => {
-        const sel = $getSelection();
-        if ($isRangeSelection(sel)) sel.insertText(ch);
-      },
-      { discrete: true },
-    );
-    await tick();
+    await settled(() => {
+      editor.update(
+        () => {
+          const sel = $getSelection();
+          if ($isRangeSelection(sel)) sel.insertText(ch);
+        },
+        { discrete: true },
+      );
+    });
   }
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+/**
+ * ⚠️ **别用"睡一个固定时长"（`await new Promise(r => setTimeout(r, 0))`）去等
+ * "React 把 UI 画出来了 / 副作用跑完了"**（这正是本文件此前 flake 的根因）。
+ *
+ * 这一条曾经三次全量里红过一次，报的是
+ * `expected '[[页面甲]]' to contain '[[页面乙]]'`；单独跑这个文件又 3/3 全绿。
+ * 根因**不是"慢"，是等错了东西**，而且有**两个**不同的窗口：
+ *
+ *   1. **commit 与被动副作用之间**。`commit` 是同步的 ⇒ DOM 已经渲染成"第二项 active"；
+ *      而 ↑/↓/Enter 的处理函数注册在插件 `useEffect` 里、闭包带着当时的 `sel` 与
+ *      `matches`（后者**每帧都是新数组**，所以那个 effect 每帧都会注销再注册），
+ *      **被动副作用在 commit 之后才跑**。这中间有一小段窗口：DOM 说"选中第二项"、
+ *      菜单也确实是两项，而 `KEY_DOWN_COMMAND` 上挂的还是**上一版闭包**——
+ *      实测抓到过两种后果：`matches` 还是上一帧的空数组 ⇒ `Math.min(sel+1, -1)` = −1
+ *      （两项都不再 active）；或 `sel` 还是 0 ⇒ Enter 插进去的是「页面甲」。
+ *      同一次复现抓到的另一个落点是 `Ctrl+F 后应当出现查找条`
+ *      （同一个写法：**派发事件 → 睡一个 tick → 断言 DOM**）。
+ *   2. **`setTimeout(0)` 与 React 的调度宏任务没有先后保证**。React 用 Scheduler
+ *      （DOM 环境下是 `MessageChannel`）冲渲染与副作用，`setTimeout(0)` 是另一条宏任务队列；
+ *      单跑这个文件时几乎总是 React 先跑完，整仓 67 个文件并跑、CPU 争用时就会翻过来——
+ *      所以它"单跑不红、全量偶尔红"。
+ *
+ * 修法**不是加重试、也不是多睡一会儿**：多睡只是把窗口推小，没有消除它。
+ * 现在的两条等法都等**条件本身**：
+ *
+ *   · 等 UI → `vi.waitFor(() => expect(<DOM 条件>))`，它反复让出事件循环直到条件成立；
+ *   · 等"这次按键引起的渲染 + 被动副作用都跑完" → `settled(fn)`（内部用 React 的 `act`）。
+ *
+ * `act()` 把 **Scheduler 换成 act 队列**，所以在它作用域内排队的渲染与副作用
+ * 会在它返回前被冲干净——这是**确定的**，跑多少次结果都一样（见下面 `settled`）。
+ *
+ * ⚠️ **`settled` 必须包住**每一次**会改 React 状态**的动作——不只是按键，还有**打字**
+ * （`typeChars` 每个字符一次）。原因就是 `act` 的工作方式：它只认**在它作用域内排队**的
+ * 工作，作用域开始**之前**就已经挂在 React 调度队列上的那些它管不着。
+ * 于是"只包按键、不包打字"反而会把窗口挪到更早的那一跳上——实测：这样改完，
+ * 红点从 `Enter 应当插入 [[页面乙]]` **前移**到了 `↓ 之后选中第二项`，
+ * 报的正是 `matches` 那一版旧闭包。包住整条链之后，任何一次按键看到的都一定是
+ * "最新一帧 + 它的副作用已经跑完"。
+ */
+
+/**
+ * 跑一段"会改 React 状态"的动作，并**等 React 把这次改动整条链做完**
+ * （渲染 → commit → 被动副作用）再返回，返回 `fn` 的返回值。
+ *
+ * 为什么是 `act` 而不是"再睡一个 tick"：`act` 是 React 官方的"等它做完"原语，
+ * 它把这期间排队的调度回调收进自己的队列并在返回前冲干净；而一次渲染的 `commit`
+ * 开头又会先把**之前挂起**的被动副作用冲掉——所以只要包住"触发那一次渲染"的一跳，
+ * 整条链就是干净的。固定时长只是赌博，窗口小不等于没有（本文件就是活证据）。
+ * **它不是重试**：断言一个字没改，跑几次都走同一条路径。
+ *
+ * `IS_REACT_ACT_ENVIRONMENT` 只在这一次调用期间置真（React 只在这时为真才走 act 队列；
+ * 常开会让本文件里那些**刻意不在 act 里**的更新被 React 打一堆 act 警告）。
+ */
+async function settled<T>(fn: () => T): Promise<T> {
+  const g = globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const prev = g.IS_REACT_ACT_ENVIRONMENT;
+  let out!: T;
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+  try {
+    await act(async () => {
+      out = fn();
+    });
+  } finally {
+    g.IS_REACT_ACT_ENVIRONMENT = prev;
+  }
+  return out;
+}
 
 /** 在编辑器里按一次键（走真的 KEY_DOWN_COMMAND，和用户按键是同一个入口）。 */
 function pressKey(editor: LexicalEditor, key: string) {
@@ -182,8 +256,8 @@ describe("基础组「编辑器内」：斜杠菜单", () => {
     seed(editor);
     expect(document.querySelector(".slash-menu"), "还没输入时不该有菜单").toBeNull();
     await typeChars(editor, s.keys.join(""));
-    await tick();
-    expect(document.querySelector(".slash-menu"), "输入 / 后应当弹出菜单").not.toBeNull();
+    // 等**条件**（菜单真的渲染出来），不是"睡一个 tick 再赌它画完了"。
+    await vi.waitFor(() => expect(document.querySelector(".slash-menu"), "输入 / 后应当弹出菜单").not.toBeNull());
 
     flushSync(() => root.unmount());
   });
@@ -197,7 +271,7 @@ describe("基础组「编辑器内」：斜杠菜单", () => {
 
     seed(editor);
     await typeChars(editor, "/");
-    await tick();
+    await vi.waitFor(() => expect(document.querySelector(".slash-group"), "菜单里应当有分组标题").not.toBeNull());
     const heads = Array.from(document.querySelectorAll(".slash-group")).map((n) => n.textContent ?? "");
     expect(heads.length, "菜单里应当有分组标题").toBeGreaterThan(0);
     expect([...new Set(heads)], `分组标题重复了：${JSON.stringify(heads)}`).toEqual(heads);
@@ -214,8 +288,11 @@ describe("导航组「编辑器内」：Ctrl+F 查找", () => {
 
     expect(document.querySelector(".find-bar")).toBeNull();
     const e = new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true, cancelable: true });
-    document.body.dispatchEvent(e);
-    await tick();
+    // ⚠️ 这一处**全量复现时真的红过**（同一次 flake 的另一个落点，报的是
+    // `Ctrl+F 后应当出现查找条`）：`FindPlugin` 的 keydown 监听也挂在 `useEffect` 里，
+    // 派发事件之后只睡一个 tick 并不保证"监听已注册 + React 已 commit"。
+    // 用 `settled` 把这次派发引起的整条链跑完再断言。
+    await settled(() => document.body.dispatchEvent(e));
     expect(document.querySelector(".find-bar"), "Ctrl+F 后应当出现查找条").not.toBeNull();
     expect(e.defaultPrevented, "拦下浏览器自带的查找").toBe(true);
 
@@ -238,21 +315,29 @@ describe("「[[」链接建议菜单：键盘操作（同一条优先级坑）",
 
     seed(editor);
     await typeChars(editor, "[[页"); // 空查询不出候选（suggestPageLinks 对空串直接返回 []），所以带一个字
-    await tick();
+    // 等**候选真的渲染出来**（而不是"睡一个 tick"）：菜单是 React 渲染的，
+    // 事件已派发 ≠ DOM 已提交。
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll(".page-link-suggest-item").length, "应当出现候选").toBeGreaterThan(1),
+    );
     const items = Array.from(document.querySelectorAll(".page-link-suggest-item"));
-    expect(items.length, "应当出现候选").toBeGreaterThan(1);
     expect(items[0].className, "默认选中第一项").toContain("active");
 
-    const down = pressKey(editor, "ArrowDown");
-    await tick();
+    // ⚠️ ↓ / Enter 都用 `settled`：**必须**等这次按键引起的渲染**与被动副作用**
+    // 都跑完再按下一个键。否则 DOM 已经显示"第二项 active"，而
+    // `KEY_DOWN_COMMAND` 上挂的还是上一版闭包（`sel = 0`）⇒ Enter 插进去的是「页面甲」。
+    // 这就是那条 `expected '[[页面甲]]' to contain '[[页面乙]]'` 的成因。
+    const down = await settled(() => pressKey(editor, "ArrowDown"));
     const after = Array.from(document.querySelectorAll(".page-link-suggest-item"));
     expect(down.prevented, "↓ 应当被菜单认领").toBe(true);
     expect(after[1].className, "↓ 之后选中第二项").toContain("active");
 
-    const enter = pressKey(editor, "Enter");
-    await tick();
+    const enter = await settled(() => pressKey(editor, "Enter"));
     expect(enter.prevented, "Enter 应当被菜单认领（否则会变成换行）").toBe(true);
-    expect(first(editor).text, "Enter 应当插入 [[标题]]").toContain("[[页面乙]]");
+    // 插入是编辑器自己的一次 update（Lexical 走微任务提交），也按条件等，不按 tick 等。
+    await vi.waitFor(() =>
+      expect(first(editor).text, "Enter 应当插入 [[标题]]").toContain("[[页面乙]]"),
+    );
 
     flushSync(() => root.unmount());
   });
@@ -265,23 +350,21 @@ describe("AI 组：空行按空格", () => {
     const { editor, el, root } = setup([React.createElement(AiSpaceTriggerPlugin)]);
 
     // 事件必须真的发生在编辑器里（插件用 root.contains(target) 守门），所以派发到 contentEditable。
+    // 同样用 `settled`：插件的监听挂在 `useEffect` 里，派发之后要等注册/渲染这一条链跑完。
     const pressSpace = () => {
       const e = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
-      el.dispatchEvent(e);
-      return e;
+      return settled(() => el.dispatchEvent(e)).then(() => e);
     };
 
     seed(editor);
     useEditorStore.setState({ aiBarOpen: false });
-    const blank = pressSpace();
-    await tick();
+    const blank = await pressSpace();
     expect(useEditorStore.getState().aiBarOpen, "空行按空格应当打开 AI 起草").toBe(true);
     expect(blank.defaultPrevented, "空格被 AI 接管，不能再往文档里插空格").toBe(true);
 
     seed(editor, "已经有字了");
     useEditorStore.setState({ aiBarOpen: false });
-    const typed = pressSpace();
-    await tick();
+    const typed = await pressSpace();
     expect(useEditorStore.getState().aiBarOpen, "有字的行不能抢空格").toBe(false);
     expect(typed.defaultPrevented, "正常输入空格不能被吃掉").toBe(false);
 

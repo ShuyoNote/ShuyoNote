@@ -16,15 +16,15 @@
 |------|----|--------|------|------|
 | U1 | **空间切换器带身份标签**（品牌色圆点 + 服务器简称） | ✅ P0 | sync_profiles（✅） | §4.2①；每工作空间行显示其同步身份小标签 |
 | U2 | **当前同步目标 pill**（页头/空间行显示「正在以 公司@server 同步」） | ✅ P0 | U1 | §4.2②；避免误认账户 |
-| U3 | **SyncPanel「登录 → 拿 token」+「列出我加入的空间 → 下拉绑定」** | ✅ P0 | sync-server `/auth/login`,`/spaces`（✅） | 替代手敲 token / space_id。注：Web 端 `set_sync_profile` 仍是 stub，登录/拉取可用但保存需桌面端。 |
+| U3 | **SyncPanel「登录 → 拿 token」+「列出我加入的空间 → 下拉绑定」** | ✅ P0 | sync-server `/auth/login`,`/spaces`（✅） | 替代手敲 token / space_id。注：Web 端 `set_sync_profile` **是有实现的**（`web.ts:2540`，含登出清 token、记登录邮箱）；但**Web 版不提供多设备同步**（产品决定 2026-09-15：配置入口在非 Tauri 平台置灰）⇒ 在 Web 上这一步走不到。 |
 | U4 | **账户中心看板**（按服务器分组列身份 + 挂载空间；管理非切换） | ✅ P1 | U1/U3 | §4.2④ |
 
 ## 3. 个人密钥鉴权（服务端，P1）—— §3「密钥=拥有权」
 
 | 编号 | 项 | 优先级 | 依赖 | 说明 |
 |------|----|--------|------|------|
-| K1 | 服务端「个人/无账户」：给机主**签发/作废一个 `device key`**（Bearer 式或 E2E 密钥对），无需用户表 | P1 | sync-server auth（✅） | 「持钥即拥有该服务器空间」 |
-| K2 | 客户端「用密钥连个人服务器」流程（SyncPanel 输入/粘贴密钥） | P1 | K1 | 等价现有 `token`，来源=服务端发钥 |
+| K1 | ✅ **服务端签发/作废 `device key`**（Bearer 式，无需用户表）：`sk_` 明文只返回一次、库里只存 SHA-256 指纹、作用域一个空间；认下后以合成主体 `device:<key_id>` 写一行 owner 成员 ⇒ 19 个 `require_space` 调用点零改动；第一把由 CLI 发（`--issue-device-key`），之后可用它走 HTTP 再签发/作废 | ✅ P1 | sync-server auth（✅） | 「持钥即拥有该服务器空间」。2026-09-15 落地，schema **v14**；接口 `GET/POST /spaces/{id}/device-keys` + `.../revoke`（都需 `admin`）；单测 4 条 + 真服务端 curl 端到端验过（发钥→owner 身份→再签→作废后 401）。见私有仓 `docs/api.md`「设备密钥」与 `docs/SYNC_SERVER_STATE.md` 的 K1 小节 |
+| K2 | ✅ 客户端「用密钥连个人服务器」：SyncPanel 的「高级：手动填令牌 / 设备密钥」直接贴 `sk_…`（**不需要注册/登录**），文案与提示已写清"服务端 CLI 签发、只显示一次、丢了重签"；`scripts/sync-regression.mjs` 新增 `--device-key` 模式（跳过注册，改为问出空间并断言身份是 `owner`），并由服务端仓 CI 自动跑 | ✅ P1 | K1（✅） | 等价现有 `token`，来源=服务端发钥。2026-09-15 本机实测：设备密钥 **15 通过 / 0 失败**，账号制那条路 **14 / 0** 无回归 |
 
 ## 4. 本地静置加密（P1/P2，较大）—— §5 at-rest
 
