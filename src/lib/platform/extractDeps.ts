@@ -12,6 +12,8 @@
 // - 让 `pipeline.ts` 自己 import 平台来注入：双向依赖（Mac 与 AMD 起初都主张这条，AMD 后来撤回了）；
 // - 让各调用点自己拼 `deps`：同一抽取器在不同路径下行为不同（有 deps / 没 deps），那是最难查的一类 bug。
 
+import { chunkSegments, type ChunkOwner } from "../extract/chunk";
+import type { ChunkStore } from "../extract/chunkStore";
 import { extractAndStore, type ExtractOutcome } from "../extract/pipeline";
 import type { AttachmentTextStore } from "../extract/store";
 import type { ExtractDeps, RasterizedPage } from "../extract/types";
@@ -56,18 +58,32 @@ export function attachmentDeps(attId: string, opts: AttachmentDepsOptions = {}):
 export interface ExtractAttachmentResult {
   meta: AttachmentMeta;
   outcome: ExtractOutcome;
+  /** 本次落库的块数（0 表示没有可切分的文本）。 */
+  chunks: number;
+}
+
+/** 抽取入口要用的两个派生库。 */
+export interface ExtractAttachmentStores {
+  /** `attachment_text`（P1）。 */
+  text: AttachmentTextStore;
+  /** `chunks`（P2）。传了就**顺手分块**，两个派生层不会漂移。 */
+  chunks: ChunkStore;
 }
 
 /**
- * **唯一入口**：按 attachmentId 取字节 → 构造 deps → 抽取并落库。
+ * **唯一入口**：按 attachmentId 取字节 → 构造 deps → 抽取落库 → **顺手分块**。
  *
- * `store` 由调用方传入：平台门面并没有暴露 `SqliteStore`（那是应用层持有的），
+ * `stores` 由调用方传入：平台门面并没有暴露 `SqliteStore`（那是应用层持有的），
  * 与其为了这一个函数把 store 塞进 `Platform` 接口（要同时改 web/tauri/mobile 三个实现），
  * 不如显式传参 —— **显式依赖比扩大接口便宜**。
+ *
+ * **为什么把分块也放在这里**：分块的输入是"已落库的段"（见下），
+ * 若让调用方各自在抽取后记得调一次分块，迟早会出现"文本更新了、块没更新"的漂移 ——
+ * 而那种漂移**检索侧看不出来**（搜到的是旧块，还以为是最新的）。
  */
 export async function extractAttachment(
   attId: string,
-  store: AttachmentTextStore,
+  stores: ExtractAttachmentStores,
   opts: AttachmentDepsOptions = {},
 ): Promise<ExtractAttachmentResult> {
   // 两步都走平台自己的命令面（桌面走原生命令、Web 走自家实现），抽取层不需要知道这些
@@ -81,8 +97,25 @@ export async function extractAttachment(
     filename: meta.name,
     mime: meta.mime,
     hash: meta.hash,
-    store,
+    store: stores.text,
     deps: attachmentDeps(attId, opts),
   });
-  return { meta, outcome };
+
+  // ---- 分块 ----
+  // 切的是**已落库的段**（而不是刚抽出来的 `r.segments`）：落库时管道层做了归一化（§15.9），
+  // 从库里读回来切，块文本与检索侧的文本**必然是同一份**。
+  const owner: ChunkOwner = { kind: "attachment", attId };
+  const shouldChunk =
+    outcome.status === "stored" ||
+    // 文本没变（cached）但**块是空的** ⇒ 补切一次。
+    // 这条是给"分块能力上线之前就已经抽好的附件"用的：否则它们会永远没有块，
+    // 而每次调用都重切又没必要（块 id/hash 稳定，重切是幂等但白做功）。
+    (outcome.status === "cached" && stores.chunks.chunksOf(owner).length === 0);
+
+  if (!shouldChunk) return { meta, outcome, chunks: stores.chunks.chunksOf(owner).length };
+
+  const segments = stores.text.segmentsOf(attId).map((r) => ({ text: r.text, loc: r.loc }));
+  const chunks = chunkSegments(owner, segments);
+  stores.chunks.replace(owner, chunks);
+  return { meta, outcome, chunks: chunks.length };
 }

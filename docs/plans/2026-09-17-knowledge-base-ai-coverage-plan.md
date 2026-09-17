@@ -675,15 +675,21 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
 >   `pdfRender.renderPdfPage(attId, pageIndex, scale)` 上（**字段名映射 `bytes` → `rgba`**；
 >   缩放比例**原样透传抽取器给的值**，平台不另立一套口径；**刻意忽略 `bytes` 参数**——
 >   闭包里就有 attId，这与契约注释里"允许忽略 bytes"一致）；
-> - `extractAttachment(attId, store)` —— 走平台命令面两步（`get_attachment` → `read_attachment_bytes`）
->   取到 meta 与字节，再调 `extractAndStore`。**`filename`/`mime`/`hash` 全部取自 meta，不自编**，
+> - `extractAttachment(attId, stores, opts)` —— 走平台命令面两步（`get_attachment` → `read_attachment_bytes`）
+>   取到 meta 与字节，再调 `extractAndStore`，然后**顺手分块**（见下）。**`filename`/`mime`/`hash` 全部取自 meta，不自编**，
 >   于是"内容变了要重抽"这条缓存口径**自然接上**（有判据）。
+> - ⚠️ **签名在 P2 落地时改过一次**（`store` → `stores: {text, chunks}`）：本函数现在是
+>   "抽取 → 落文本 → 分块"的**唯一入口**。**为什么把分块也放这里**：分块的输入是**已落库的段**
+>   （要经过 §15.9 的归一化才是检索侧那一份），若让调用方各自记得在抽取后调一次分块，
+>   迟早出现"文本更新了、块没更新"的漂移 —— 而那种漂移**检索侧看不出来**（搜到的是旧块，还以为是最新的）。
+>   分块时机：`stored` 时切；`cached` 且**块为空**时补切一次（给"分块能力上线前就已抽好的附件"），
+>   `cached` 且已有块时**不重切**（三条都有判据）。抽取失败时**不动已有块**（与"失败不毁旧数据"同一口径）。
 > - **`vision` 是一个明确的洞，不是遗漏**：`Platform` 目前只有
 >   `executor/dialog/opener/event/asset/webview/pdfRender/community`，**没有模型驱动这一层**，
 >   而"图片/音视频走远程 API 还是本机推理"正是 **§13 待拍板第 7 项** ⇒
 >   `attachmentDeps` 不带 `vision` 时**根本不设这个键**（不是设成 undefined），
 >   让 `cost:"gpu"` 的抽取器按契约走 `provider_error`，**不在这里编一个假实现充数**。
-> - `extractAttachment` 的 `store` 由**调用方传入**：平台门面没有暴露 `SqliteStore`，
+> - `extractAttachment` 的 `stores` 由**调用方传入**：平台门面没有暴露 `SqliteStore`，
 >   为了一个函数去扩 `Platform` 接口要同时改 web/tauri/mobile 三个实现 —— **显式依赖比扩大接口便宜**。
 
 **两条配套（都已落地）**：

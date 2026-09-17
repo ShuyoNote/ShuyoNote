@@ -13,6 +13,7 @@ import initSqlJs from "sql.js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { DERIVED_SCHEMA_DDL } from "../extract/schema";
+import { createChunkStore } from "../extract/chunkStore";
 import { createAttachmentTextStore, type SqlRunner } from "../extract/store";
 import { setWasmBytesProvider } from "./sqliteStore";
 import type { Platform } from "./types";
@@ -53,9 +54,11 @@ async function realStore() {
       return out;
     },
   };
-  const store = createAttachmentTextStore(runner);
-  store.ensureSchema(DERIVED_SCHEMA_DDL);
-  return store;
+  const text = createAttachmentTextStore(runner);
+  text.ensureSchema(DERIVED_SCHEMA_DDL);
+  const chunks = createChunkStore(runner);
+  chunks.ensureSchema(DERIVED_SCHEMA_DDL);
+  return { text, chunks };
 }
 
 /** 造一份最小合法 docx（不引二进制样张）。 */
@@ -166,16 +169,16 @@ describe("extractAttachment —— 抽取的唯一入口（假平台 + 真 sqlit
       }),
     );
 
-    const store = await realStore();
-    const { meta, outcome } = await extractAttachment("att-1", store);
+    const stores = await realStore();
+    const { meta, outcome } = await extractAttachment("att-1", stores);
 
     expect(seen).toEqual(["get_attachment", "read_attachment_bytes"]);
     expect(meta.name).toBe("报告.docx");
     expect(outcome).toMatchObject({ status: "stored", extractor: "ooxml.docx@1" });
-    const rows = store.segmentsOf("att-1");
+    const rows = stores.text.segmentsOf("att-1");
     expect(rows.map((r) => r.text)).toEqual(["季度总结"]);
     // hash 取自 meta ⇒ 内容没变时第二次是 cached（缓存失效口径真的接上了）
-    const second = await extractAttachment("att-1", store);
+    const second = await extractAttachment("att-1", stores);
     expect(second.outcome.status).toBe("cached");
   });
 
@@ -194,14 +197,14 @@ describe("extractAttachment —— 抽取的唯一入口（假平台 + 真 sqlit
       }),
     );
 
-    const store = await realStore();
-    await extractAttachment("a", store);
-    expect(store.segmentsOf("a").map((r) => r.text)).toEqual(["第一版"]);
+    const stores = await realStore();
+    await extractAttachment("a", stores);
+    expect(stores.text.segmentsOf("a").map((r) => r.text)).toEqual(["第一版"]);
 
     hash = "H2";
-    const again = await extractAttachment("a", store);
+    const again = await extractAttachment("a", stores);
     expect(again.outcome.status).toBe("stored"); // 不是 cached
-    expect(store.segmentsOf("a").map((r) => r.text)).toEqual(["第二版"]);
+    expect(stores.text.segmentsOf("a").map((r) => r.text)).toEqual(["第二版"]);
   });
 
   it("平台读不到附件时**抛出**（这是调用方的错，不该被伪装成抽取失败）", async () => {
@@ -214,12 +217,118 @@ describe("extractAttachment —— 抽取的唯一入口（假平台 + 真 sqlit
         },
       }),
     );
-    const store = await realStore();
-    await expect(extractAttachment("nope", store)).rejects.toThrow("附件不存在");
+    const stores = await realStore();
+    await expect(extractAttachment("nope", stores)).rejects.toThrow("附件不存在");
   });
 });
 
 // 一条"这个文件的断言确实在跑"的自证（避免全部用例因筛条件写错而静默跳过）
+// ---------------------------------------------------------------- 顺手分块
+
+/** 假平台：附件内容由 `content()` 决定（便于在同一个用例里切换"内容变了/没变"）。 */
+function platformWith(content: () => { hash: string; bytes: Uint8Array; name?: string }) {
+  return fakePlatform({
+    executor: {
+      invoke: (async (cmd: string) => {
+        const c = content();
+        if (cmd === "get_attachment") {
+          return { id: "a", name: c.name ?? "长文.docx", hash: c.hash, mime: "", size: 1, path: "" };
+        }
+        return c.bytes.buffer;
+      }) as Platform["executor"]["invoke"],
+    },
+  });
+}
+
+const longText = (n: number) =>
+  Array.from({ length: n }, (_, i) => `第${i}条讲了预算与差旅报销的具体规定。`).join("");
+
+describe("extractAttachment 顺手分块（让「文本」与「块」不会漂移）", () => {
+  it("抽取即产生块，且切的是**落库后**的文本（归一化之后的那份）", async () => {
+    setPlatform(platformWith(() => ({ hash: "H", bytes: tinyDocx(longText(150)) })));
+    const stores = await realStore();
+    const r = await extractAttachment("a", stores);
+
+    expect(r.outcome.status).toBe("stored");
+    expect(r.chunks).toBeGreaterThan(1); // 长文确实被切了
+    const owner = { kind: "attachment" as const, attId: "a" };
+    expect(stores.chunks.chunksOf(owner)).toHaveLength(r.chunks);
+  });
+
+  it("内容变了 ⇒ 块被**整体替换**，不留孤儿块", async () => {
+    let hash = "H1";
+    let text = longText(150);
+    setPlatform(platformWith(() => ({ hash, bytes: tinyDocx(text) })));
+    const stores = await realStore();
+    const owner = { kind: "attachment" as const, attId: "a" };
+
+    const before = await extractAttachment("a", stores);
+    expect(before.chunks).toBeGreaterThan(1);
+
+    hash = "H2";
+    text = "只剩一句话了。";
+    const after = await extractAttachment("a", stores);
+
+    expect(after.outcome.status).toBe("stored");
+    expect(after.chunks).toBe(1);
+    expect(stores.chunks.chunksOf(owner)).toHaveLength(1); // 旧的多块已被删掉
+    expect(stores.chunks.chunksOf(owner)[0].text).toContain("只剩一句话");
+  });
+
+  it("**cached 且已有块 ⇒ 不重切**（每次调用都重切是白做功）", async () => {
+    setPlatform(platformWith(() => ({ hash: "H", bytes: tinyDocx(longText(150)) })));
+    const stores = await realStore();
+    const owner = { kind: "attachment" as const, attId: "a" };
+
+    await extractAttachment("a", stores);
+    // 用记数包装观察第二次是否真的没再写
+    let replaces = 0;
+    const counting = {
+      ...stores.chunks,
+      replace: (
+        o: typeof owner,
+        c: Parameters<typeof stores.chunks.replace>[1],
+      ) => {
+        replaces++;
+        stores.chunks.replace(o, c);
+      },
+    };
+
+    const second = await extractAttachment("a", { text: stores.text, chunks: counting });
+    expect(second.outcome.status).toBe("cached");
+    expect(replaces).toBe(0);
+  });
+
+  it("**cached 但没有块 ⇒ 补切一次**（给「分块能力上线之前就抽好的附件」）", async () => {
+    setPlatform(platformWith(() => ({ hash: "H", bytes: tinyDocx(longText(150)) })));
+    const stores = await realStore();
+    const owner = { kind: "attachment" as const, attId: "a" };
+
+    await extractAttachment("a", stores);
+    stores.chunks.remove(owner); // 模拟"文本在库里、块还没生成过"
+    expect(stores.chunks.chunksOf(owner)).toHaveLength(0);
+
+    const again = await extractAttachment("a", stores);
+    expect(again.outcome.status).toBe("cached"); // 文本没变，没重抽
+    expect(again.chunks).toBeGreaterThan(1); // 但块补上了
+    expect(stores.chunks.chunksOf(owner)).toHaveLength(again.chunks);
+  });
+
+  it("抽取失败时**不动已有块**（与「失败不毁旧数据」同一条口径）", async () => {
+    setPlatform(platformWith(() => ({ hash: "H", bytes: tinyDocx("正常内容。") })));
+    const stores = await realStore();
+    const owner = { kind: "attachment" as const, attId: "a" };
+    await extractAttachment("a", stores);
+    const good = stores.chunks.chunksOf(owner).length;
+
+    // 换成不是 zip 的字节 ⇒ 不会走 stored
+    setPlatform(platformWith(() => ({ hash: "H2", bytes: new Uint8Array([1, 2, 3]) })));
+    const bad = await extractAttachment("a", stores);
+    expect(bad.outcome.status).not.toBe("stored");
+    expect(stores.chunks.chunksOf(owner)).toHaveLength(good); // 旧块还在
+  });
+});
+
 describe("自证", () => {
   it("平台门面确实是可替换的（否则上面那些用例测的是真平台）", () => {
     const marker = fakePlatform();
