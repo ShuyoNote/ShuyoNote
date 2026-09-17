@@ -685,7 +685,7 @@ pub struct ChunkHit {
 ///
 /// 不归一化的后果和页面级一样、但更难查：会出现"**全库搜得到、块搜搜不到**"
 /// （`blocks.rs` 上已经踩过一次同类的坑）。
-fn prepare_chunk_query(raw: &str) -> String {
+pub(crate) fn prepare_chunk_query(raw: &str) -> String {
     crate::textnorm::normalize_for_match(raw.trim())
 }
 
@@ -818,7 +818,7 @@ fn read_chunk_vectors(
     out
 }
 
-fn search_chunks_in_conn(
+pub(crate) fn search_chunks_in_conn(
     c: &Connection,
     query: &str,
     limit: usize,

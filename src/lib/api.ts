@@ -421,6 +421,9 @@ export const api = {
     invoke("get_page_blocks", { pageId }),
   searchBlocks: (query: string) =>
     invoke("search_blocks", { query }),
+  /** 块级检索（只读）：命中带 pageId/attId/loc，用于回链到原文位置。 */
+  searchChunks: (query: string, limit = 10) =>
+    invoke("search_chunks", { args: { query, limit } }),
   listBlockBacklinks: (pageId: string) =>
     invoke("list_block_backlinks", { pageId }),
   getGraph: () => invoke("get_graph"),

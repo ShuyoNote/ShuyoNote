@@ -1840,6 +1840,21 @@ fn cap_files_list(page_id: Option<&str>) -> CapResult {
     })
 }
 
+/// `files.search`：在**已抽取的文件内容**里做块级检索（只读）。
+///
+/// 与界面搜索同一套口径：①查询先归一元（`prepare_chunk_query`，兼容表意字）；
+/// ②只读 `chunks` / `chunk_embeddings`；③老库没有 `chunks` 表 ⇒ 空数组（不是错误）。
+/// 返回的每条带 `pageId`/`attId`/`loc` —— 插件拿到命中后要能**回链到原文位置**。
+fn cap_files_search(query: &str, limit: i64) -> CapResult {
+    let q = crate::search::prepare_chunk_query(query);
+    if q.is_empty() {
+        return Err("bad_args: query 不能为空".to_string());
+    }
+    let lim = limit.clamp(1, 100) as usize;
+    let hits = with_read_conn(|c| crate::search::search_chunks_in_conn(c, &q, lim, None, None))?;
+    serde_json::to_value(&hits).map_err(|e| format!("internal: {e}"))
+}
+
 /// 把一条草稿塞进本次执行（同 key 只留一条，避免插件在循环里刷屏）。
 fn push_draft(key: String, summary: String, payload: serde_json::Value) {
     RUN_STATE.with(|s| {
@@ -2056,6 +2071,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
+        "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
@@ -7159,6 +7175,49 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(files[0]["name"], "周报.pdf");
         assert_eq!(files[0]["size"], 1024);
         assert!(files[0].get("content").is_none(), "只能给元数据，不给字节");
+
+        // ---- files.search（块级检索，只读）----
+        // ① 老库/没迁移过 `chunks` ⇒ **空数组**，不是报错（向前兼容；这条先验，避免"缺表就炸"）
+        let empty = call(&st, "files.search", r#"{"query":"进展"}"#).unwrap();
+        assert_eq!(empty.as_array().unwrap().len(), 0, "没有 chunks 表时应为空，而不是报错");
+
+        // ② 播种两个块（模拟"抽取→切块"之后的库）：附件块 + 页面块，各有自己的 loc
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute_batch(
+                "CREATE TABLE IF NOT EXISTS chunks (
+                   id TEXT PRIMARY KEY, page_id TEXT, att_id TEXT, ord INTEGER NOT NULL,
+                   loc TEXT NOT NULL DEFAULT '', lang TEXT NOT NULL DEFAULT '',
+                   text TEXT NOT NULL, hash TEXT NOT NULL
+                 );",
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash)
+                 VALUES ('att:a1#0', NULL, 'a1', 0, 'p.3', '', '周报里提到本周进展', 'h1')",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash)
+                 VALUES ('page:p2#0', 'p2', NULL, 0, 'L1', '', '读书笔记', 'h2')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let hits = call(&st, "files.search", r#"{"query":"进展"}"#).unwrap();
+        let arr = hits.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "只应命中含关键词的块：{arr:?}");
+        assert_eq!(arr[0]["chunkId"], "att:a1#0");
+        assert_eq!(arr[0]["attId"], "a1");
+        assert_eq!(arr[0]["pageId"], serde_json::Value::Null);
+        // 回链三件套：loc 必须原样带出来（页号/行号/时间码由写入侧决定，能力层不猜）
+        assert_eq!(arr[0]["loc"], "p.3");
+        assert!(arr[0]["snippet"].as_str().unwrap().contains("进展"));
+
+        // ③ 空查询 ⇒ **参数错误**（绝不允许"返回全库"这种"看起来有结果"的坏法）
+        assert!(call(&st, "files.search", r#"{"query":"   "}"#).is_err(), "空查询必须是参数错误");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

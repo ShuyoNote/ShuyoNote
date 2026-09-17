@@ -125,6 +125,16 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     };
   },
 
+  "files.search": async (args) => {
+    const query = String(args.query ?? "").trim();
+    if (!query) return { ok: false, error: "files.search 需要 query" };
+    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(100, args.limit) : 10;
+    const hits = await api.searchChunks(query, limit);
+    // 原样透出（pageId/attId/loc 就是回链三件套）：这一层**不加工**，
+    // 免得 AI 与插件看到两种形状 —— 加工（拼标题、去重）属于调用方的展示逻辑。
+    return { ok: true, hits };
+  },
+
   "pages.create": async (args) => {
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.create 需要 title" };

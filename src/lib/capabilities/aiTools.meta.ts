@@ -77,6 +77,19 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: false,
   },
   {
+    id: "files.search",
+    description: "在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "query": { type: "string" },
+      "limit": { type: "number" },
+      },
+      required: ["query"],
+    },
+    isWrite: false,
+  },
+  {
     id: "pages.create",
     description: "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
     argsSchema: {
