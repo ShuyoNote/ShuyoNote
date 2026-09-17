@@ -30,10 +30,20 @@
 //! 进程级只建一次 `Pdfium`、**永不释放**，且**渲染全程持缓存锁**——当年 MuPDF 那两个最阴的坑
 //! （反复重建全局上下文崩 Windows、库本身非线程安全）因此不会重踩。
 //!
+//! ## ⚠️ P2 接线时必须做的三件事（AMD 复核提出，2026-09-17）
+//!
+//! 1. **两套缓存互斥淘汰**：MuPDF 与 PDFium 的缓存**用同一个 key（内容 hash）**，
+//!    接线后可能同时持有同一份文档 ⇒ 内存翻倍而两侧 LRU 互不知情。切引擎时对该 key 调 [`forget`]，
+//!    或统一成一个带 `engine` 标签的缓存。**这是复核里最被强调的一处。**
+//! 2. **删掉模块级 `#![allow(dead_code)]` 并加门禁**（grep 断言本文件不再有它）——
+//!    "临时"最常见的归宿是常设。
+//! 3. **口令对齐**：本模块走 `load_pdf_from_byte_vec(bytes, None)`，`None` 是**口令**。
+//!    已核实 MuPDF 那条的调用点（`commands.rs:590`）**也只传 4 个参数、没有口令**
+//!    ⇒ 两条**都不支持带口令的 PDF**，属对齐。将来要支持就**两条一起加**。
+//!
 //! ## ⚠️ 临时：`allow(dead_code)`
 //!
-//! P1 只交付模块，**还没有调用方**（分派在 P2）。这个模块级 allow 是过渡措施，
-//! **P2 把 `commands.rs` 接上之后必须删掉**——否则它会把以后真正的死代码一起盖住。
+//! P1 只交付模块，**还没有调用方**（分派在 P2）。这个模块级 allow 是过渡措施，见上面第 2 条。
 
 #![allow(dead_code)]
 
@@ -43,10 +53,20 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-/// 与前端 `pdfNativePage.ts` 的 `MAX_PAGE_PIXELS` **同值**（40,000,000）：
-/// 前端那道闸门在"发命令之前"，这里这道在"碰画布之前"。两条都要有——
-/// 前端挡得住正常路径，Rust 侧挡得住被绕过的路径（方案 §3 第 6 条）。
-const MAX_PAGE_PIXELS: i64 = 40_000_000;
+/// 一页最多渲染多少像素。**按平台分档**（AMD 复核第 2 条）：
+/// 40,000,000 px × 4 B = **160 MB/页**，还要再加 crate 内部 bitmap 的副本——
+/// 桌面可接受，**Android 上很危险**（1.6 GB 内存的机器两页并排就 320 MB）。
+/// 移动端取 16M px（≈64 MB/页）作为安全默认。
+///
+/// 与前端的关系：`pdfNativePage.ts` 的 `MAX_PAGE_PIXELS` 是**请求侧**闸门，
+/// 这里是**执行侧**、也是更严的那一道。P4 打包时前端也应按平台取同一个值（已记进方案待办）。
+const fn max_page_pixels() -> i64 {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        16_000_000
+    } else {
+        40_000_000
+    }
+}
 
 /// 文档缓存上限。一个 `PdfDocument` 里**含整份 PDF 字节的副本**（见模块头第 2 条），
 /// 所以不能无界增长；按"最久未用"淘汰。
@@ -75,21 +95,28 @@ fn doc_cache() -> &'static Mutex<HashMap<String, CachedDocument>> {
 ///
 /// 优先级：**环境变量**（联调/测试用）→ **可执行文件同目录**（发行包形态，由打包步骤把
 /// `pdfium.dll`/`libpdfium.so`/`libpdfium.dylib` 放到那里，方案 §4 的"首次启动即可渲染"）→
-/// **仅 debug 构建**再回退到仓库内的 `src-tauri/vendor/pdfium/<平台>/bin`，方便本地开发。
-/// 三者都找不到时由 [`shared_pdfium`] 报出**带路径的可操作错误**。
+/// **macOS 的 `.app/Contents/Frameworks`**（AMD 复核第 7 条：macOS 动态库的常规位置，
+/// 且要一起签名/公证）→ **仅 debug 构建**再回退到仓库内的 `src-tauri/vendor/pdfium/<平台>/bin`。
+/// 都找不到时由 [`shared_pdfium`] 报出**带路径的可操作错误**。
 fn library_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("SHUYONOTE_PDFIUM_DIR") {
         if !dir.trim().is_empty() {
             return PathBuf::from(dir);
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.to_path_buf();
-            // 发行包：库就在可执行文件旁边。找不到时继续往下试（别在这儿直接失败，
-            // 否则 debug 构建永远走不到 vendor 回退）。
-            if Pdfium::pdfium_platform_library_name_at_path(&candidate).exists() {
-                return candidate;
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+    if let Some(dir) = &exe_dir {
+        if Pdfium::pdfium_platform_library_name_at_path(dir).exists() {
+            return dir.clone();
+        }
+        // macOS 的 .app 束：可执行文件在 Contents/MacOS/，动态库按惯例在 Contents/Frameworks/。
+        #[cfg(target_os = "macos")]
+        {
+            let frameworks = dir.join("../Frameworks");
+            if Pdfium::pdfium_platform_library_name_at_path(&frameworks).exists() {
+                return frameworks;
             }
         }
     }
@@ -115,10 +142,7 @@ fn library_dir() -> PathBuf {
         }
     }
     // 最后回退到可执行文件目录，让错误信息里的路径有意义。
-    std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
+    exe_dir.unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// 拿到进程级 PDFium 实例；首次调用时绑定动态库。
@@ -147,54 +171,106 @@ fn shared_pdfium() -> Result<&'static Pdfium, String> {
 }
 
 /// 该 PDF 是否已在本模块的缓存里（与 MuPDF 那条同名同义，P2 分派时按引擎各查各的）。
+///
+/// ⚠️ **用 `try_lock`，拿不到锁就返回 `false`**（AMD 复核第 1 条）：`false` 在这里是**安全方向**——
+/// 调用方（`commands.rs:581`）会去读字节再传进来，而渲染侧命中缓存后会忽略这些字节，只是多一次 I/O；
+/// 反过来在拿不到锁时返回 `true`，会让调用方传**空字节**，而那在渲染侧是**必须报错**的路径。
+/// 这样一次大页渲染就不会把所有状态查询堵在锁上。
 pub fn has_document(cache_key: &str) -> bool {
-    doc_cache()
-        .lock()
-        .map(|c| c.contains_key(cache_key))
-        .unwrap_or(false)
+    match doc_cache().try_lock() {
+        Ok(c) => c.contains_key(cache_key),
+        Err(_) => false,
+    }
 }
 
-/// 把某一页渲染成**紧凑 RGBA**（`width * height * 4`，无行填充）＋ 尺寸。
+/// 把某一页渲染成**紧凑 RGBA**（`width * height * 4`，无行填充）＋ 尺寸（借用版）。
 ///
 /// `scale` 与 MuPDF 路径同义：**相对页面自然尺寸的倍率**。
 /// 与 MuPDF 那条的差别只有一个——**不返回 `stride`**：PDFium 的输出本来就紧凑，无需 `compact_rgba`。
+///
+/// 若调用方**已经不再需要**这份字节，用 [`render_page_owned`] 可以省掉一次整文件拷贝（AMD 复核第 4 条）。
 pub fn render_page(
     cache_key: &str,
     bytes: &[u8],
     page_index: usize,
     scale: f32,
 ) -> Result<(Vec<u8>, usize, usize), String> {
-    let pdfium = shared_pdfium()?;
-    // 渲染全程持锁：PDFium 的文档对象不是为并发渲染设计的（与 MuPDF 那条同一取舍）。
     let mut cache = doc_cache()
         .lock()
         .map_err(|_| "PDFium 文档缓存锁已中毒".to_string())?;
-
-    if !cache.contains_key(cache_key) {
+    let entry = ensure_cached(&mut cache, cache_key, || {
+        // 调用方的约定是：缓存命中时传空 bytes（省掉一次解密+整文件读，见 commands.rs:579-585）。
+        // 走到这里说明"以为命中但实际没有"——必须显式报出来，不能拿空缓冲去开文档。
         if bytes.is_empty() {
-            // 调用方的约定是：缓存命中时传空 bytes（省掉一次解密+整文件读，见 commands.rs:579-585）。
-            // 走到这里说明"以为命中但实际没有"——必须显式报出来，不能拿空缓冲去开文档。
-            return Err(format!(
-                "PDFium: 文档 {cache_key} 不在缓存中，但调用方传了空字节（应先查 has_document）"
-            ));
+            return Err(empty_bytes_error(cache_key));
         }
-        // `to_vec()` 这一次拷贝是必要的：crate 要**拥有**这份字节（模块头第 2 条），
-        // 而调用方给的是借用。副本与文档同寿命，随缓存淘汰一起释放。
+        // 这一次拷贝是必要的：crate 要**拥有**这份字节（模块头第 2 条），而调用方给的是借用。
+        Ok(bytes.to_vec())
+    })?;
+    render_entry(entry, page_index, scale)
+}
+
+/// 同 [`render_page`]，但**吃掉调用方的 `Vec`**，省掉整份 PDF 的拷贝（借用版做不到这一点）。
+///
+/// P2 分派时优先用这个：那条分支拿到字节之后本来就不再需要它了。
+pub fn render_page_owned(
+    cache_key: &str,
+    bytes: Vec<u8>,
+    page_index: usize,
+    scale: f32,
+) -> Result<(Vec<u8>, usize, usize), String> {
+    let mut cache = doc_cache()
+        .lock()
+        .map_err(|_| "PDFium 文档缓存锁已中毒".to_string())?;
+    let entry = ensure_cached(&mut cache, cache_key, move || {
+        if bytes.is_empty() {
+            return Err(empty_bytes_error(cache_key));
+        }
+        Ok(bytes)
+    })?;
+    render_entry(entry, page_index, scale)
+}
+
+fn empty_bytes_error(cache_key: &str) -> String {
+    format!("PDFium: 文档 {cache_key} 不在缓存中，但调用方传了空字节（应先查 has_document）")
+}
+
+/// 丢掉某个 key 的缓存文档（**P2 切引擎时用它做互斥淘汰**，见模块头 P2 第 1 条）。
+pub fn forget(cache_key: &str) {
+    if let Ok(mut cache) = doc_cache().lock() {
+        cache.remove(cache_key);
+    }
+}
+
+/// 清空整个文档缓存（诊断/测试用）。
+pub fn clear() {
+    if let Ok(mut cache) = doc_cache().lock() {
+        cache.clear();
+    }
+}
+
+/// 确保文档在缓存里，并返回它的引用。`load` **只在未命中时**调用。
+fn ensure_cached<'a>(
+    cache: &'a mut HashMap<String, CachedDocument>,
+    cache_key: &str,
+    load: impl FnOnce() -> Result<Vec<u8>, String>,
+) -> Result<&'a CachedDocument, String> {
+    if !cache.contains_key(cache_key) {
+        let bytes = load()?;
+        let pdfium = shared_pdfium()?;
         let doc = pdfium
-            .load_pdf_from_byte_vec(bytes.to_vec(), None)
+            .load_pdf_from_byte_vec(bytes, None)
             .map_err(|e| format!("PDFium 打开 PDF 失败（{cache_key}）：{e}"))?;
-        evict_if_needed(&mut cache);
+        evict_if_needed(cache);
         let tick = TICK.fetch_add(1, Ordering::Relaxed);
         cache.insert(cache_key.to_string(), CachedDocument { doc, tick });
     } else if let Some(entry) = cache.get_mut(cache_key) {
         // 命中即刷新"最久未用"的标记。
         entry.tick = TICK.fetch_add(1, Ordering::Relaxed);
     }
-
-    let entry = cache
+    cache
         .get(cache_key)
-        .ok_or_else(|| format!("PDFium 缓存插入后取不到 {cache_key}"))?;
-    render_entry(entry, page_index, scale)
+        .ok_or_else(|| format!("PDFium 缓存插入后取不到 {cache_key}"))
 }
 
 /// 淘汰到上限以内（最久未用的先走）。
@@ -244,13 +320,8 @@ fn render_entry(
     let width_px = (page.width().value as f64 * scale as f64).round().max(1.0);
     let height_px = (page.height().value as f64 * scale as f64).round().max(1.0);
 
-    // ⚠️ **碰画布之前**先挡：与前端 `MAX_PAGE_PIXELS` 同值的防御闸门。
-    let pixels = width_px * height_px;
-    if pixels > MAX_PAGE_PIXELS as f64 {
-        return Err(format!(
-            "PDFium: 页面像素数 {pixels}（{width_px}×{height_px}）超过上限 {MAX_PAGE_PIXELS}，scale={scale}"
-        ));
-    }
+    // ⚠️ **第一道闸门：碰画布之前**。错误信息里带上"要多少 MB"，运维排障时直接受益（复核第 2 条）。
+    check_pixel_budget(width_px, height_px, scale, "渲染前")?;
     let target_width = width_px as i32;
     let target_height = height_px as i32;
 
@@ -263,6 +334,11 @@ fn render_entry(
 
     let w = bitmap.width() as usize;
     let h = bitmap.height() as usize;
+
+    // ⚠️ **第二道闸门：渲染之后**（复核第 3 条）。零成本的纵深——
+    // 万一 PDFium 返回了比请求更大的位图，内存虽已分配，但**不许再往上传**。
+    check_pixel_budget(w as f64, h as f64, scale, "渲染后")?;
+
     // 这里**不做**通道转换与去填充：`as_rgba_bytes()` 已经输出紧凑 RGBA（模块头第 1 条）。
     let rgba = bitmap.as_rgba_bytes();
     let expect = w * h * 4;
@@ -274,4 +350,19 @@ fn render_entry(
         ));
     }
     Ok((rgba, w, h))
+}
+
+/// 像素预算闸门：`width × height` 与 `max_page_pixels()` 比较，超了就报出**总量与 MB**。
+fn check_pixel_budget(width: f64, height: f64, scale: f32, stage: &str) -> Result<(), String> {
+    let pixels = width * height;
+    let limit = max_page_pixels() as f64;
+    if pixels > limit {
+        let need_mb = (pixels * 4.0) / (1024.0 * 1024.0);
+        let limit_mb = (limit * 4.0) / (1024.0 * 1024.0);
+        return Err(format!(
+            "PDFium: {stage}页面像素数 {pixels}（{width}×{height}，scale={scale}）超过上限 {limit}，\
+             该页约需 {need_mb:.0} MB 而上限约 {limit_mb:.0} MB"
+        ));
+    }
+    Ok(())
 }
