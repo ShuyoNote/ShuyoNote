@@ -1,4 +1,5 @@
 import { semanticScore } from "../searchSemantic";
+import { normalizeForMatch } from "../extract/normalize";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
@@ -1716,7 +1717,11 @@ function makeInvoke(store: SqliteStore) {
     // ---- Search (SQL LIKE over title + text) ----
     if (cmd === "search") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
-      const query = String(req.query ?? a.query ?? "");
+      // 查询侧归一化（契约 §15.9）：与**存储侧**（`pipeline.ts` 落库前）同口径折兼容表意字。
+      // 不折的后果：抽取层把「康熙部首 ⼀(U+2F00)」折成了「一」，用户从 PDF 里粘一个兼容形来搜
+      // 就是**搜不到**（索引归一了、查询没归一）。归一化放在入口，下面排序/双字符语义/查询向量
+      // 全部用同一份 —— 漏一处就会变成"某些入口搜不到"。
+      const query = normalizeForMatch(String(req.query ?? a.query ?? ""));
       const lim = Number(req.limit ?? a.limit ?? 50);
       const wsId = getWs()?.id ?? getActiveWsId();
       if (!query) return [] as T;
@@ -1802,7 +1807,8 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "search_blocks") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
-      const query = String(req.query ?? a.query ?? "").toLowerCase();
+      // 与上面 `search` 同口径（块搜索也是查询入口；少了这一步会变成"全库搜得到、块搜搜不到"）
+      const query = normalizeForMatch(String(req.query ?? a.query ?? "")).toLowerCase();
       if (!query) return [] as T;
       const rows = store.query("SELECT id, title, content_json, content_text FROM pages WHERE deleted_at IS NULL AND (LOWER(content_text) LIKE ? OR LOWER(title) LIKE ?)", [`%${query}%`, `%${query}%`]);
       const out = [];

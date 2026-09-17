@@ -425,10 +425,23 @@ async fn search_semantic_async(
         .collect())
 }
 
+/// 命令入口的查询准备：trim → 属性过滤 → **查询侧归一化**（契约 §15.9）。
+///
+/// 为什么归一化在这一层、而不是在 `search_in_conn` 里：下游拿到的是**同一份**文本 ——
+/// 分词、FTS/LIKE、snippet 高亮、以及查询向量。任何一处漏掉都会变成"某些入口搜不到"，
+/// 而那种不一致最难查（单跑那条路径还是绿的）。
+///
+/// 为什么要归一化：抽取层在落库前会把「康熙部首 ⼀(U+2F00)」折成「一」，
+/// 用户从 PDF 里粘一个兼容形来搜，若不折就是**搜不到**（索引归一了、查询没归一）。
+fn prepare_query(raw: &str) -> (String, Vec<(String, String)>) {
+    let (text, filters) = parse_prop_filters(raw.trim());
+    (crate::textnorm::normalize_for_match(&text), filters)
+}
+
 #[tauri::command]
 pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchResult>, String> {
     let limit = args.limit.unwrap_or(50).min(200);
-    let (text, filters) = parse_prop_filters(args.query.trim());
+    let (text, filters) = prepare_query(&args.query);
     if text.is_empty() && filters.is_empty() {
         return Ok(vec![]);
     }
@@ -650,6 +663,50 @@ mod tests {
         assert!((cosine_sim(&[1.0, 0.0], &[0.0, 1.0])).abs() < 1e-6);
         assert!((cosine_sim(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0]) - 1.0).abs() < 1e-6);
         assert_eq!(cosine_sim(&[], &[1.0]), 0.0);
+    }
+
+    /// 入口归一化：用户从 PDF 粘来的兼容形必须被折成统一表意字。
+    #[test]
+    fn prepare_query_folds_compat_ideographs() {
+        let (text, _) = prepare_query("  第\u{2F00}段  ");
+        assert_eq!(text, "第一段");
+        // 属性过滤那一段不能被归一化搞坏（它有自己的语法：`prop:名称=值`；
+        // 注意过滤器里的值**不折** —— 它是属性值，不是检索文本）
+        let (text, filters) = prepare_query("第\u{2F00}段 prop:状态=进行中");
+        assert_eq!(text, "第一段");
+        assert_eq!(filters, vec![("状态".to_string(), "进行中".to_string())]);
+    }
+
+    /// **先证伪再修**的端到端：正文里存的是折叠后的「第一段」，用户粘兼容形来搜 ——
+    /// 不归一化搜不到（先断言这条），走入口归一化就搜得到（再断言这条）。
+    /// 用真 SQLite 的 LIKE 路径跑：`search_like` 就是"<3 字走 LIKE"那条分支的实现。
+    #[test]
+    fn compat_ideograph_query_matches_folded_body_end_to_end() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws1', '空间一');
+             CREATE TABLE pages (
+               id TEXT PRIMARY KEY, workspace_id TEXT, title TEXT,
+               content_text TEXT, updated_at INTEGER, deleted_at INTEGER
+             );
+             INSERT INTO pages VALUES ('p1', 'ws1', '题目', '第一段，第二段。', 1, NULL);",
+        )
+        .unwrap();
+
+        let raw = "第\u{2F00}段"; // 兼容形：康熙部首 ⼀
+        assert!(
+            search_like(&c, raw, 10).unwrap().is_empty(),
+            "原样查询居然命中了 —— 那这条 e2e 就证明不了任何事（先证伪这一步失效）"
+        );
+
+        let (folded, _) = prepare_query(raw);
+        let hits = search_like(&c, &folded, 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "p1");
+        // snippet 也必须能找到（否则高亮在已折叠的正文里落空）
+        assert!(hits[0].snippet.contains("第一段"), "snippet={}", hits[0].snippet);
     }
 
     #[test]

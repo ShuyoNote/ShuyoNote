@@ -284,7 +284,9 @@ pub fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<PageBlo
 #[tauri::command]
 pub fn search_blocks(db: State<'_, Db>, query: String) -> Result<Vec<SearchBlock>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    let q = query.trim().to_string();
+    // 查询侧归一化（§15.9）：与 `search.rs` 同一口径 —— 块搜索也是查询入口，
+    // 少了这一步会变成"全库搜得到、块搜搜不到"这种最难查的不一致。
+    let q = crate::textnorm::normalize_for_match(query.trim());
     if q.is_empty() {
         return Ok(vec![]);
     }
