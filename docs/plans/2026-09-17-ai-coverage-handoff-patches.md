@@ -69,8 +69,27 @@
 
 ## 2. 草案 ①：`files.read`（**依赖 ③**）
 
-**为什么不能省**：现在 AI 唯一能看到附件的途径是 `files.list`，而它**明确"不含文件字节"**。
-P1 把文本抽出来了、P2 把块切好了，但**AI 读不到它** —— 这正是 P1 交付里"`pages.search` 与嵌入链同时命中派生文本；新增 `files.read`"那一句。
+**为什么不能省**：AI 现在唯一的附件途径是 `files.list`（**明确"不含文件字节"**）与 `files.search`
+（只回**片段**）。⇒ "搜得到片段，但没法把某个附件的正文整段读出来"。
+P1 把文本抽出来了、P2 把块切好了，但 **AI 读不到它** —— 这正是 P1 交付清单里那句"新增 `files.read`"。
+
+**⚠️ 这条草案已在 2026-09-17 更新：`files.search` 已由 Mac 侧落地，它就是这个功能的现成模板。**
+下表是我**读代码核到的**实际落点（不是推测），照它逐层加一处即可：
+
+| 层 | `files.search` 的落点（模板） | `files.read` 对应要加什么 |
+|---|---|---|
+| 注册表（单一事实源） | `capabilities/capabilities.json`（`files.search` 条目，`since: "1.1.0"`、`permission: "read:files"`、`ai: true`） | 一条 `files.read` 条目（见"改动 1"） |
+| 生成物 | 跑 `node scripts/gen-capabilities.mjs`（会写 `plugin-api-shim.js` / `capabilities_gen.rs` / 类型包 / 作者文档 / `aiTools.meta.ts`） | 同上，重新生成 |
+| 前端适配 | `src/lib/capabilities/frontend.ts:128` | 同文件加 `"files.read"` 适配器（改动 2） |
+| api 层 | `src/lib/api.ts:425` `searchChunks` | 加 `readAttachmentText`（改动 3） |
+| 命令面 | `src/lib/platform/commands.ts:374` `search_chunks` | 加 `read_attachment_text`（改动 3） |
+| Web 实现 | `web.ts` 里的同名分支 | 同构加一处（**我没有逐行读它，请以文件为准**） |
+| Rust 能力 fn | `src-tauri/src/plugins.rs:1848` `fn cap_files_search(query, limit) -> CapResult` | 加 `cap_files_read`（改动 4） |
+| Rust dispatch | `plugins.rs:2074` `"files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),` | 加一行 arm（改动 4） |
+| **Rust 读取** | **复用** `search.rs:821` 的 `search_chunks_in_conn` | ⚠️ **这是唯一"新东西"**：需要一个按 `attId` 读 `attachment_text` 的函数（改动 4） |
+
+> **一句话**：八层里七层是照抄，**唯一要新写的是 Rust 侧那个 reader**。这也是为什么它值一条草案
+> 而不是一句"你去加个 files.read 吧"。
 
 **改动 1 —— 注册表条目**（`permission` 复用既有的 `read:files`；我实测过它存在且被 `files.list` 使用）：
 
@@ -120,14 +139,55 @@ P1 把文本抽出来了、P2 把块切好了，但**AI 读不到它** —— �
 },
 ```
 
-**改动 3 / 4**：`plugins.rs` 加 `cap_files_read` + dispatch arm；`node scripts/gen-capabilities.mjs`；
-`node scripts/check-capabilities.mjs`。
+**改动 3 —— `api.ts` + `commands.ts`**（照 `searchChunks` / `search_chunks` 的形状）：
+
+```ts
+// api.ts（紧邻 searchChunks）
+readAttachmentText: (id: string, offset = 0, limit = 200) =>
+  invoke("read_attachment_text", { args: { id, offset, limit } }),
+
+// commands.ts
+/** 读某个附件的派生文本（**只读** `attachment_text`）。⚠️ 分页：一篇 PDF 可能有上千段，
+ *  一次性返回会撑爆模型上下文 —— 所以带 offset/limit，并如实回报 total/truncated。 */
+read_attachment_text: {
+  args: { args: { id: string; offset?: number; limit?: number } };
+  result: { segments: { kind: string; text: string; loc: string }[]; total: number } | null;
+};
+```
+
+**改动 4 —— `plugins.rs` 两处 + 一个新的 Rust reader**：
+
+```rust
+// 与 cap_files_search 同构：只读、走活动空间
+fn cap_files_read(id: &str, offset: i64, limit: i64) -> CapResult {
+    if id.is_empty() { return Err("bad_args: id 不能为空".to_string()); }
+    let (off, lim) = (offset.max(0) as usize, limit.clamp(1, 1000) as usize);
+    // ⚠️ 这个函数是**本草案唯一的新东西**（`search.rs` 里没有按 att_id 读的现成函数）：
+    //    它应当 `ORDER BY seq` 读 `attachment_text`，并**返回 total**（总段数）——
+    //    没有 total 就没法告诉调用方"你只看到了一部分"（§15.10 的同一条原则）。
+    let page = with_read_conn(|c| crate::search::read_attachment_text_in_conn(c, id, off, lim))?;
+    serde_json::to_value(&page).map_err(|e| format!("internal: {e}"))
+}
+
+// dispatch（紧邻 files.search 那行）
+"files.read" => cap_files_read(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 200)),
+```
+
+⚠️ **`arg_*` 的准确取值函数与 `CapResult` 的形状以 `plugins.rs` 现有写作为准**（我是从 `cap_files_search`
+那一行读到的这三个名字，**没有读遍该文件**）。`read_attachment_text_in_conn` 是**我建议的新函数**，
+需要在 `search.rs` 里新写（或放进合适的位置）—— 请以实现时的结构为准。
 
 **验收**：
-- 抽过的附件：`segments` 与库里 `attachment_text` 的行**逐字一致**（含 `kind` / `loc`）；
-- **没抽过的附件**：`segments: []` + `note`（**不是** `ok:false` —— "没内容"与"调用失败"要分开，同 §15.10 的口径）；
+- 抽过的附件：`segments` 与库里 `attachment_text` 的行**逐字一致**（含 `kind` / `loc`，且 `ORDER BY seq`）；
+- **没抽过的附件**：`segments: []` + `total: 0` + `note`（**不是** `ok:false` —— "没内容"与"调用失败"要分开，同 §15.10 的口径）；
 - 不存在的 id：`file: null`；
-- 门禁双绿。
+- **分页**：`offset=limit` 夹到 1..1000、越界 offset ⇒ 空数组 + 真实 `total`（**不报错**，且**绝不返回全库**）；
+- **老库没有 `attachment_text` 表 ⇒ 空数组 + total 0（不是报错）** —— 照 `files.search` 那条"缺表向前兼容"判据的写法；
+- 生成物一致 + `check-capabilities` + `check-web-commands` 双绿 + `cargo test`。
+
+**我验证到什么程度**：上表的落点是**读代码核到的**（注册表条目原文、`frontend.ts:128`、`api.ts:425`、
+`commands.ts:374`、`plugins.rs:1848`/`:2074`、`search.rs:821`）。**我没有写这个功能、也没有编译过 Rust**
+（本机跑不了 `cargo test`）—— 所以 Rust 部分请以文件为准，TS 部分可照抄。
 
 ## 3. 草案 ②：`files.search`（**依赖 ③ + ④ 的检索侧**）
 
