@@ -12,6 +12,7 @@
 //    让旧行自己暴露成"过期"，下次 `needsExtract` 仍然为真、仍会重试；而如果失败就删，
 //    一次**瞬时**的 `provider_error` 会把之前辛苦抽好的文本毁掉。
 
+import { normalizeForStore } from "./normalize";
 import { candidates, REGISTRY } from "./registry";
 import type { AttachmentTextStore } from "./store";
 import type {
@@ -82,12 +83,18 @@ export async function extractAndStore(
       deps,
     });
     if (r.ok) {
-      opts.store.replace(opts.attId, ex.id, opts.hash, r.segments, now);
+      // **归一化只在这一处施加**（§15.3-10）：抽取器把"格式 → 段"做好，
+      // 检索口径（NFKC 折叠兼容形，如「康熙部首 ⼀」→「一」）在这里统一收口 ——
+      // 这样 FTS / 嵌入 / AI 读到的都是同一份，**下游不可能忘**。
+      const normalized = r.segments.map((s) =>
+        s.text === normalizeForStore(s.text) ? s : { ...s, text: normalizeForStore(s.text) },
+      );
+      opts.store.replace(opts.attId, ex.id, opts.hash, normalized, now);
       return {
         status: "stored",
         extractor: ex.id,
-        segments: r.segments.length,
-        kinds: r.segments.map((s) => s.kind),
+        segments: normalized.length,
+        kinds: normalized.map((s) => s.kind),
       };
     }
     last = { code: r.code, message: r.message };
