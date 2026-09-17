@@ -1823,6 +1823,76 @@ function makeInvoke(store: SqliteStore) {
       }
       return out as T;
     }
+    // ---- Chunk-level search (只读；与桌面 `search.rs::search_chunks` 同口径) ----
+    if (cmd === "search_chunks") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      // 查询侧归一化：与 `search` 分支**同一口径**（不归一化会出现"全库搜得到、块搜搜不到"）
+      const query = normalizeForMatch(String(req.query ?? a.query ?? "")).trim();
+      if (!query) return [] as T;
+      const lim = Math.min(100, Number(req.limit ?? a.limit ?? 20));
+      // 老库/没迁移过 `chunks` ⇒ 空结果（与桌面同口径：不是错误，也不该抛）
+      const hasChunks = store.query("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'").length > 0;
+      if (!hasChunks) return [] as T;
+
+      type ChunkRow = { id: string; page_id: string | null; att_id: string | null; ord: number; loc: string; text: string; hash: string };
+      const rows = store.query<ChunkRow>("SELECT id, page_id, att_id, ord, loc, text, hash FROM chunks");
+      // 关键词排序**复用页面检索那套打分**（`rankPagesForSearch`）—— 块没有标题，所以标题传空串。
+      // 刻意不另写一套打分：两套打分口径迟早会漂移，而"漂移"在检索里表现为"某类内容排不上来"，
+      // 极难定位。
+      const ranked = rankPagesForSearch(
+        query,
+        rows.map((r) => ({ id: r.id, title: "", content_text: r.text, updated_at: 0 })),
+      );
+
+      // 可选向量加分（有界的，不主导关键词）—— 与桌面 `CHUNK_VECTOR_BONUS` 同一个思路。
+      // 任何失败都静默退回关键词（与页面检索那条路同口径：搜索不许因为嵌入服务挂了就报错）。
+      const CHUNK_VECTOR_BONUS = 6;
+      const bonus = new Map<string, number>();
+      const embedCfg = readEmbedConfig();
+      if (embedCfg) {
+        try {
+          const queryVec = await embedText(query, embedCfg);
+          if (queryVec && queryVec.length) {
+            const hashById = new Map(rows.map((r) => [r.id, r.hash]));
+            const embRows = store.query<{ chunk_id: string; model: string; vector: string; hash: string }>(
+              "SELECT chunk_id, model, vector, hash FROM chunk_embeddings",
+            );
+            for (const e of embRows) {
+              // ⚠️ 两道闸：模型要一致，`hash` 要与**块自己的 hash** 一致 —— 后者防的是
+              // "块内容改了、向量还是旧的"（`hash` 这一列存在的理由就是它）。
+              if (e.model !== embedCfg.model) continue;
+              if (!e.hash || e.hash !== hashById.get(e.chunk_id)) continue;
+              try {
+                const v = JSON.parse(e.vector) as number[];
+                if (Array.isArray(v) && v.length) bonus.set(e.chunk_id, CHUNK_VECTOR_BONUS * cosineSim(queryVec, v));
+              } catch {
+                /* 坏向量按没有处理 */
+              }
+            }
+          }
+        } catch {
+          /* 嵌入失败 ⇒ 退回关键词 */
+        }
+      }
+
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      return ranked
+        .map((r) => ({ r, score: r.score + (bonus.get(r.id) ?? 0) }))
+        .sort((x, y) => y.score - x.score || String(x.r.id).localeCompare(String(y.r.id)))
+        .slice(0, lim)
+        .map(({ r, score }) => {
+          const row = byId.get(r.id)!;
+          return {
+            chunkId: row.id,
+            pageId: row.page_id,
+            attId: row.att_id,
+            ord: row.ord,
+            loc: row.loc,
+            snippet: truncateChars((row.text ?? "").trim(), 120),
+            score,
+          };
+        }) as T;
+    }
     if (cmd === "get_page_blocks") {
       const pageId = String(a.pageId ?? a.page_id ?? "");
       const rows = store.query("SELECT content_json FROM pages WHERE id = ? AND deleted_at IS NULL", [pageId]);

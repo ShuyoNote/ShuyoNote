@@ -478,6 +478,7 @@ pub fn run() {
             commands::delete_page,
             commands::move_page,
             search::search,
+            search::search_chunks,
             sync::get_sync_config,
             sync::set_sync_config,
             sync::sync_now,

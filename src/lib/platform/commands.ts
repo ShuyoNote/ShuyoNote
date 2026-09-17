@@ -58,6 +58,23 @@ import type {
   PluginApproval,
 } from "../../types";
 
+/**
+ * 块级检索的一条命中（与 Rust `search::ChunkHit` **同形**：序列化走 camelCase）。
+ *
+ * 为什么两类 owner 各占一个字段：块可以属于**页面**（`page:<id>`）或**附件**（`att:<id>`），
+ * 消费方（AI 工具、将来的块级 UI）必须能回链到其中之一 —— 塞一个 `owner` 字符串让调用方自己拆
+ * 只会在两个平台里长出两种拆法。
+ */
+export interface ChunkHit {
+  chunkId: string;
+  pageId: string | null;
+  attId: string | null;
+  ord: number;
+  loc: string;
+  snippet: string;
+  score: number;
+}
+
 export interface SyncConfig {
   server_url: string;
   token: string;
@@ -351,6 +368,13 @@ export interface CommandMap {
   // ---- Search / Blocks / Graph ----
   search: { args: { args: { query: string; limit: number; all_spaces: boolean; embedding: unknown } }; result: SearchResult[] };
   search_blocks: { args: { query: string }; result: SearchBlock[] };
+  /** 块级检索（**只读**）—— 桌面 `search.rs::search_chunks`、web 里的同名分支；
+   *  接口与判据见信箱 `2026-09-17-retrieval-query-normalization.reply-1`。
+   *  只读 `chunks` / `chunk_embeddings`（不写、不改 DDL）。 */
+  search_chunks: {
+    args: { args: { query: string; limit?: number; embedding?: unknown } };
+    result: ChunkHit[];
+  };
   get_page_blocks: { args: { pageId: string }; result: PageBlock[] };
   get_backlinks: { args: { id: string }; result: PageMeta[] };
   resolve_block: { args: { blockId: string }; result: BlockInfo };
