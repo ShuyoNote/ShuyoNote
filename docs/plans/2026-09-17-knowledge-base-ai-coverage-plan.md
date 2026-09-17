@@ -153,7 +153,6 @@ CREATE TABLE IF NOT EXISTS attachment_text (
   PRIMARY KEY (att_id, extractor, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_attachment_text_src ON attachment_text(att_id, src_hash);
-```
 
 -- ③ 分块：页面块与附件块统一进这一张表，检索不再按「页」为单位
 CREATE TABLE IF NOT EXISTS chunks (
