@@ -247,6 +247,30 @@ function extractDocx(input: ExtractInput): ExtractResult {
         if (text) segments.push({ kind: "table", text, loc: "" });
       }
     }
+
+    // 脚注 / 尾注：它们在**独立 part**，正文里只有 `<w:footnoteReference w:id="N"/>` 这样的引用。
+    // 制度文件里脚注常是真内容（引用依据、补充说明），只读 document.xml 会把它整块丢掉。
+    // 这里按 part 顺序追加，`loc` 带上"脚注 N"以便回看时对得上。
+    for (const [part, label] of [
+      ["word/footnotes.xml", "脚注"],
+      ["word/endnotes.xml", "尾注"],
+    ] as const) {
+      const notes = partXml(files, part);
+      if (!notes) continue;
+      for (const note of allByLocalName(notes, part.includes("foot") ? "footnote" : "endnote")) {
+        const id = note.getAttributeNS("*", "id") ?? note.getAttribute("w:id") ?? "";
+        // id 0 / -1 是**分隔符与延续分隔符**（Word 的内部标记），不是内容
+        if (id === "0" || id === "-1" || id === "") continue;
+        const text = normalizeText(
+          allByLocalName(note, "p")
+            .map((p) => runText(p))
+            .filter((s) => s.length > 0)
+            .join("\n"),
+        );
+        if (text) segments.push({ kind: "text", text, loc: `${label} ${id}` });
+      }
+    }
+
     return finish(DOCX_ID, segments);
   } catch (e) {
     return classifyFailure(DOCX_ID, input, e);

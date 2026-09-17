@@ -365,6 +365,34 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["text"], contains: ["正文"] },
   },
   {
+    id: "ooxml/docx-脚注与尾注",
+    pins:
+      "脚注/尾注在**独立 part**（`word/footnotes.xml` / `endnotes.xml`），正文里只有引用" +
+      "（`<w:footnoteReference w:id=\"3\"/>`）⇒ 只读 `document.xml` 会把它们**整块丢掉**。" +
+      "另：**id 0 / -1 是 Word 的分隔符标记，不是内容**，必须排除",
+    extractor: "ooxml.docx@1",
+    filename: "带脚注.docx",
+    mime: "",
+    make: () =>
+      zipOf({
+        "word/document.xml": `<w:document ${W_NS}><w:body><w:p><w:r><w:t>正文引用了脚注</w:t></w:r></w:p></w:body></w:document>`,
+        "word/footnotes.xml": `<w:footnotes ${W_NS}>` +
+          `<w:footnote w:id="-1"><w:p><w:r><w:t>分隔符</w:t></w:r></w:p></w:footnote>` +
+          `<w:footnote w:id="0"><w:p><w:r><w:t>延续分隔符</w:t></w:r></w:p></w:footnote>` +
+          `<w:footnote w:id="3"><w:p><w:r><w:t>依据：财会〔2026〕12 号</w:t></w:r></w:p></w:footnote>` +
+          `</w:footnotes>`,
+        "word/endnotes.xml": `<w:endnotes ${W_NS}>` +
+          `<w:endnote w:id="2"><w:p><w:r><w:t>尾注：见附件三</w:t></w:r></w:p></w:endnote>` +
+          `</w:endnotes>`,
+      }),
+    expect: {
+      ok: true,
+      kinds: ["text", "text", "text"],
+      contains: ["正文引用了脚注", "依据：财会〔2026〕12 号", "尾注：见附件三"],
+      locs: ["", "脚注 3", "尾注 2"],
+    },
+  },
+  {
     id: "ooxml/docx-修订与域代码不入正文",
     pins:
       "`<w:delText>`（修订模式**已删除**的文字）与 `<w:instrText>`（域代码，如 `PAGE \\* MERGEFORMAT`）" +
