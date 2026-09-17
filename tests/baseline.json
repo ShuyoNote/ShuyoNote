@@ -24,6 +24,7 @@
       "check-pdfjs-shim",
       "check-plugin-hosting",
       "check-ps1-ascii",
+      "check-sys-deps",
       "check-versions",
       "check-web-commands",
       "check-workflow-yaml"
@@ -51,6 +52,7 @@
       "mobile-overlays"
     ],
     "rust": [
+      "check-sys-deps-linux",
       "rust-plugins-alone",
       "rust-test"
     ],

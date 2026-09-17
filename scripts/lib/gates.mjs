@@ -71,6 +71,17 @@ export const GATES = [
   { id: "check-ocr-assets", group: "contract", label: "OCR 资源清单", cmd: "node scripts/check-ocr-assets.mjs" },
   { id: "check-deep-link", group: "contract", label: "deep-link 交付通道", cmd: "node scripts/check-deep-link.mjs" },
   { id: "check-plugin-hosting", group: "contract", label: "插件托管", cmd: "node scripts/check-plugin-hosting.mjs" },
+  {
+    id: "check-sys-deps",
+    group: "contract",
+    label: "构建期依赖登记 / 本机工具链（以 CI 配方为准）",
+    // ⚠️ 这里**故意不带 `deb`**：Linux 的 deb 实查要求 Tauri 那套系统包在位，而本组跑在
+    // `checks` job（ubuntu-latest，**不装** Tauri 依赖）⇒ 带上它第一条 push 就会红，且红得没道理。
+    // deb 实查挂 rust 组的 `check-sys-deps-linux`，那条跑在装了依赖的 `rust-tests` job 里。
+    cmd: "node scripts/check-sys-deps.mjs --checks registration,toolchain",
+    incident:
+      "两类真事故各一条：①2026-09-17 发版机清构建期依赖（libssl-dev）⇒ 社区端 openssl-sys 编译失败；②同日 15:51 本机 Xcode 27 装完许可未接受 ⇒ git/python3/cc/xcrun 全线不可用（notarytool 一条探针就能提前发现）",
+  },
 
   // ---- smoke ----
   { id: "tsc", group: "smoke", label: "类型检查（tsc --noEmit）", cmd: "pnpm exec tsc --noEmit" },
@@ -171,6 +182,16 @@ export const GATES = [
     counters: "cargo",
     baseline: true,
     incident: "2026-09-13：某测试依赖进程级 APP_DATA_DIR ⇒ 单跑必红、全量反而绿，改一行只跑一条时极易误判",
+  },
+  {
+    id: "check-sys-deps-linux",
+    group: "rust",
+    label: "构建期系统依赖（dpkg 实查，与本组 CI job 的 apt 配方同源）",
+    // 为什么挂在 rust 组：这是**唯一**会编译整个 Rust 工作区的 job，也就是唯一该要求
+    // 「Tauri 那套系统包在位」的地方。本机 macOS/Windows 上这条会显式打印「未实查」而不是装绿。
+    cmd: "node scripts/check-sys-deps.mjs --checks registration,deb",
+    incident:
+      "2026-09-17：发布机把 libssl-dev 当「客户端专用」清掉 ⇒ openssl-sys 构建失败。判据不是「表里写了什么」，而是「CI 配方装的包这台机器有没有」——表里的硬判据必须能在 ci.yml 的 Linux system deps 步里找到，否则门禁自己就是假话",
   },
 
   // ---- artifact（需先打一个真包；缺环境变量时显式跳过，绝不冒充通过）----
