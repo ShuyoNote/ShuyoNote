@@ -1,4 +1,5 @@
 import { semanticScore } from "../searchSemantic";
+import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
@@ -426,7 +427,9 @@ function backlinkRefMatches(text: string, title: string): boolean {
 }
 
 function truncateChars(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + "…" : s;
+  // ⚠️ 按**码点**截断（原先 `s.slice(0, n)` 会把 emoji 的代理对切成一半 ⇒ 用户看到 "a�…"）。
+  // 口径集中在 `src/lib/textSnippet.ts`（有判据钉住"不许切出孤立代理"）。
+  return truncateByCodePoints(s, n);
 }
 
 // Lightweight relevance tokenizer: split into ASCII words + CJK bigrams so both

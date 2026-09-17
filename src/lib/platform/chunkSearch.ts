@@ -9,6 +9,7 @@
 // 因为算它要读用户的嵌入配置、调模型（`web.ts` 那层的职责），而这一步不该混进"读块、排序"里。
 // 这样也顺手让"向量那半"变成了可单独验的纯输入（一个 Map）。
 
+import { truncateByCodePoints } from "../textSnippet";
 import type { DerivedTextQuery } from "./derivedText";
 
 export interface ChunkHitDto {
@@ -46,7 +47,8 @@ export type RankFn = (
   rows: { id: string; title: string; content_text: string; updated_at: number }[],
 ) => { id: string; score: number }[];
 
-const truncate = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+// ⚠️ 按**码点**截断（`truncateByCodePoints`）：`slice` 会把 emoji 的代理对切成一半，
+///  用户看到 "a�…"。这条口径集中在 `textSnippet.ts`（有判据）。
 
 /**
  * 块级检索：读 `chunks`（两类 owner 都在同一张表里）→ 关键词排序 → 叠加调用方给的向量加分 → 截断。
@@ -93,7 +95,7 @@ export function searchChunksVia(
         attId: row.att_id,
         ord: row.ord,
         loc: row.loc,
-        snippet: truncate((row.text ?? "").trim(), SNIPPET_LEN),
+        snippet: truncateByCodePoints((row.text ?? "").trim(), SNIPPET_LEN),
         score,
       };
     });
