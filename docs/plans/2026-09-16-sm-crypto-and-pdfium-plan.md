@@ -233,7 +233,14 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 |---|---|
 | **A · 国密** | `src-tauri/src/crypto.rs`、`src-tauri/src/security.rs`、`src/lib/vault.ts`、迁移与 fixture |
 | **B · PDFium** | `src-tauri/src/pdf_native.rs`、`src/lib/pdfNativePage.ts`（如格式需调整）、打包配置、对拍脚本 |
-| **交界（必须串行）** | `Cargo.toml` / `Cargo.lock`（两边都要加依赖）——约定：**先落 A 的依赖并合并，B 再基于最新 main 落**；或各在分支上、合并时由一人统一处理冲突 |
+| **交界（`Cargo.toml` / `Cargo.lock`）** | 两边都要加依赖 —— 约定（**2026-09-17 更新**）：**各自分支开发，合并时由一人统一处理冲突**；~~先落 A 再落 B~~ 的硬串行**已取消**（国密依赖在 P3、与 `pdfium-render` 无关，硬等会白等几周） |
+
+> **谁做哪一块：见[国密落地方案 §9.1](2026-09-16-sm-crypto-full-plan.md)（2026-09-17 定）**——
+> **Mac = P0 密文版本化 ＋ P1 应用层 ＋ Apple 后端切换**（能跑 `cargo test`）；
+> **AMD = P2 库级 ＋ P3 provider 补丁**（WSL2 能跑测试）；
+> **Windows = PDFium 全线 ＋ Tongsuo 的 MSVC 构建**（唯一有 Windows 构建链的一侧）。
+> 另定：**macOS 的库级国密放第二波**（应用层在 macOS 照样生效）。
+> 关键澄清：**应用层走 RustCrypto（纯 Rust）、库级走 Tongsuo（C）**⇒ Mac 不再被构建链阻塞（依据与其代价见落地方案 §0-F）。
 
 **git 纪律（有历史教训）**：
 

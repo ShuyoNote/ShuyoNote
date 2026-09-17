@@ -20,8 +20,12 @@
 | **C** | **算法标识除了密文头，还要落到「空间状态 ＋ 同步载荷」** | 老端才能在**整空间/同步之前**明确拒绝并提示升级，而不是逐条解密失败、让用户以为**数据坏了** | `EncryptionStatus` 加算法字段；空间元数据记录本空间算法；同步载荷带标识；服务端**不用改**（只转发密文） |
 | **D** | **PBKDF2 迭代次数与口令下限：先压测、再写死 ＋ 加门禁断言** | 国密**无内存硬化**（§2 已记为确定的安全降级），这一处是**唯一**的补偿手段，最容易被敷衍掉 | 压测目标：中端机解锁 **< 1 秒**；结果写成一个常量，并加断言防止后人随手改小 |
 | **E** | **主干国密路径 = feature 门控（`--features sm-crypto`）＋ 一条常开的国密 CI job** | 默认构建不被 Tongsuo/Perl 构建链风险绑架（外部贡献者前置不变）；代价是官方默认包不含国密，国密版另发 | 主干加 feature；**必须有那条常开 job**，否则国密路径会变成"没人编、坏了也没人知道"的死代码；见[利弊与跨平台 §7.1](2026-09-17-sm-crypto-tradeoff.md) |
+| **F** | **应用层 AEAD 的实现来源 = RustCrypto（纯 Rust `sm3`/`sm4`/`cbc`/`hmac`）；库级 provider 仍走 Tongsuo（C）** | ① **解耦**：应用层不再等构建链，Mac 不被 Windows/AMD 的 Tongsuo 构建阻塞；② **跨端一致性更好**：应用层是跨设备互通的关键路径，纯 Rust 让**全平台同一份实现**，不存在"某平台编进了不同 provider"（§5.1 那个 Apple/CommonCrypto 的坑只影响库级）；③ 代价（**两份 SM4 实现**）是**可测的**；④ 削弱 Apple 后端问题的影响面 | 必须加**跨实现一致性用例**：GM/T 0002/0004 标准向量 + RustCrypto 与 Tongsuo 两侧对同一明文产出可互解（§4 第 5 条已要求）；文档里如实写"两份实现" |
 
 > ⚠️ **A 是唯一"发布后改不动"的一条**：密文头一旦随发布出去，就被所有既有数据复制了。B 的 EtM 细节若实现错，是"看起来能用但可被篡改"——这两条都要有测试向量钉住（§7）。
+>
+> **F 推翻了 §3 里"应用层也统一走 Tongsuo"的原建议**（那条建议的出发点是"一套实现"，但它把纯 Rust 的应用层绑到了 C 构建链上）。
+> 现在改为**按层分工**：**C 层用 Tongsuo，Rust 层用 RustCrypto**，两者用标准向量对拍钉住。
 
 ---
 
@@ -232,7 +236,28 @@
 |---|---|
 | **国密（A）** | `src-tauri/src/crypto.rs`、`src-tauri/src/security.rs`、`src/lib/vault.ts`、`libsqlite3-sys` provider 补丁、迁移与 fixture |
 | PDFium（B） | `src-tauri/src/pdf_native.rs`、打包配置、对拍脚本（见 [PDFium 方案](2026-09-16-pdfium-engine-plan.md)） |
-| **交界（串行）** | `Cargo.toml` / `Cargo.lock`：**先落 A 的依赖并合并，B 再基于最新 main 落**（或各自分支、合并时一人统一处理） |
+| **交界（`Cargo.toml` / `Cargo.lock`）** | **各自分支开发，合并时由一人统一处理冲突**（2026-09-17 明确：**不做"先 A 后 B"的硬阻塞**——国密的依赖在 P3，而 PDFium 的 `pdfium-render` 与之无关，硬串行会白等几周） |
+
+### 9.1 三台机器的分工（**2026-09-17 定**，按机器能力排，不按人头）
+
+| 模块 | 谁 | 依据（实测） | 依赖 / 何时能动 |
+|---|---|---|---|
+| **国密 P0** 密文版本化（纯 Rust） | **Mac** | 要能跑 `cargo test` 才能闭环（写＋测＋fixture）；**Windows 本机跑不了**（`0xc0000139`） | 无 —— **立刻能动** |
+| **国密 P1** 应用层 SM4 三条路径 ＋ 双读 ＋ 回归 | **Mac** | 同上；且 **F 裁定后不再依赖 Tongsuo 构建链** ⇒ 可全程并行 | P0 |
+| **国密 P2** SQLCipher KDF/HMAC 换 SM3 系 | **AMD** | 库级改动必须在能跑测试的环境验（WSL2 302 条） | P0 |
+| **国密 P3** SM4 页加密 provider ＋ Tongsuo 构建 | **AMD 出补丁 / Windows 出 MSVC 构建** | provider 是 C 层、在 Linux 侧验证最顺；但"Tongsuo 在 MSVC 上编得过"只有 Windows 能验（第一关 Perl ＋ Configure） | P2；**接口先定**：补丁文件 ＋ 版本钉死，Windows 消费 |
+| **Apple 后端切换**（CommonCrypto → Tongsuo） | **Mac** | 只有它摸得到那台机的 Xcode/Perl/Homebrew 状况 | **第二波**（见下），是 macOS 库级国密的硬前置 |
+| **PDFium P1–P3** 新模块 / 分派 / 对拍 | **Windows** | dll 已落盘、MSVC 能编能出包 | 无 —— **立刻能动**（分支 `feat/pdfium-engine`） |
+| **PDFium 对拍报告** | **三边各跑自己平台** | 同一份样本集，各平台各自出结论 | H 决定的样本集 |
+| **PDFium 多平台校验和**（§0.2-G） | **谁的平台谁补** | 要从 GitHub 下载，而**本机 DNS 被污染、出站受限** ⇒ 网络顺的那侧更快 | `fetch-pdfium.mjs` 已有 |
+| **打包 P4** | Windows 包 / macOS 公证 / Linux·Android | 各平台自己 | P1–P3 |
+
+**排期裁定：macOS 的库级国密放第二波**（不进首批交付）。理由：它是**唯一**需要为 Apple 单独解决"构建 ＋ 后端切换"的平台，
+而首批交付的主战场是 Windows／信创桌面／Android。**应用层国密在 macOS 上照样生效**（附件/导出/同步载荷都是 SM4，F 裁定后是纯 Rust）
+⇒ 边界表按平台分列即可，不用含糊。
+
+⚠️ **验收纪律（硬要求）**：**Windows 跑不了 `cargo test`，所以 Windows 侧的改动必须由 AMD 或 Mac 复核**——
+"在我这边编过了"不等于"测过了"，更不等于"能打开国密库"。
 
 **git 纪律**：❌ 禁止 `git add -A`（本仓库有并发会话，曾误提交他人 WIP）；✅ 只 `git add <自己的文件>`，提交前对 `git status --porcelain`。
 
