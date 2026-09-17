@@ -197,6 +197,50 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 ## 8. 分步落地（每步独立交付价值，顺序不可颠倒）
 
+### 8.0 现状台账（**一处看全**，2026-09-17 15:3x）
+
+> **为什么要有这一节**：进展原先散在 P1 / P2 / §15.8 各处的引用块里（**五处**），
+> 接手的人要翻五处才能拼出全貌 —— 而"全貌"恰恰是接手时第一件需要的东西。
+> 这里只做**索引**：每行的"判据"列指到测试文件，"细节"在对应章节的引用块里（那些仍是原始记录）。
+
+**已落地（全部在 TS 侧 ⇒ 都能在 Windows 上自验）**
+
+| 能力 | 位置 | 判据 |
+|---|---|---|
+| 抽取器契约 v1（§15，含 deps / 归一化 / 覆盖度三处增补） | `src/lib/extract/types.ts` | `conformance.test.ts` |
+| OOXML：docx / xlsx / pptx | `extract/ooxml.ts` | `ooxml.test.ts`（含 4 处"真实文档类"修正） |
+| 纯文本 txt/md/csv/json | `extract/text.ts` | `fixtures.ts` 4 条 |
+| HTML（清脚本 + 块级分段） | `extract/html.ts` | `fixtures.ts` 2 条 |
+| 图片 OCR 骨架（gpu / provider_error） | `extract/image.ts` | `image.test.ts` |
+| **PDF 文本层**（Mac 侧） | `extract/pdf.ts` | `pdf.test.ts` |
+| **PDF 扫描 / 混合文档**（Mac 侧，只对空页烧视觉） | `extract/pdf.ts` | `pdf-ocr.test.ts` |
+| 派生表 DDL **单一事实源** | `extract/schema.ts` | `store.test.ts` |
+| `attachment_text` 存储 + 调度（**含覆盖度规则**） | `extract/store.ts` / `pipeline.ts` | `store.test.ts` / `coverage.test.ts` |
+| 归一化（管道层一处、窄口径） | `extract/normalize.ts` | `normalize.test.ts` |
+| **P2 前半：分块 + 块存储** | `extract/chunk.ts` / `chunkStore.ts` | `chunk.test.ts` |
+| 平台接线：`deps` 唯一构造点 + 抽取唯一入口（**顺手分块**） | `platform/extractDeps.ts` | `extractDeps.test.ts` |
+| 共用夹具集 + 一致性跑器（5 条防漂移护栏） | `extract/fixtures.ts` / `conformance.test.ts` | 自身 |
+| 真样张冒烟跑器（`EXTRACT_SAMPLES=<目录>`，不配则跳过） | `extract/realSamples.test.ts` | 自身 |
+| 抽取层隔离断言 + `deps` 能力登记表（**编译期穷尽性**） | `extract/isolated.test.ts` / `depsCatalog.ts` | 自身 |
+| PNG 编码器（纯 JS，两平台共用） | `pngEncode.ts` | `pngEncode.test.ts` |
+| Web 平台合并写收口（501 次全库快照 → 1 次） | `platform/sqliteStore.ts` | `extract/platformWiring.test.ts` |
+| **Web 端 PDF 渲染桩补完**（Mac 侧，真 Chromium 实测） | `platform/web.ts` | Mac 侧 |
+
+**未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
+
+| 未做项 | 卡在哪 | 归谁 |
+|---|---|---|
+| Rust 侧建表与调用（`db.rs`） | **本机不能自验**（§12.1） | 需 Mac / AMD 复核 |
+| 检索侧：块级嵌入写入 / BM25+向量混合 / `files.search` / **查询侧归一化** | 同上（Rust） | **Mac（2026-09-17 已认领）** |
+| `files.read` 工具 | 改 `capabilities.json` ⇒ 连带 `plugins.rs` + 重新生成 + 过门禁，**本机不能自验** | 待可复核环境 |
+| `ooxml.legacy@1`（旧 `.doc` / `.xls`） | 需 LibreOffice headless，**本机没装** | 未定 |
+| `av.transcript@1`（音视频） | 等 **§13 第 7 项**拍板（远程 API vs 本机推理） | **AMD 独占** |
+| `image.caption`（VLM 语义描述） | P3；§13 第 2 项 | 未定 |
+| 应用侧「开始索引」触发与进度 | 未做 | 未定 |
+
+**故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
+（docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
+
 ### P1 —— 附件文本抽取 ＋ 派生表 ＋ 接进现有检索与工具
 
 **交付**：docx / xlsx / pptx / PDF / txt / 图片(OCR) 的文本抽取；`attachment_text` 落库；`pages.search` 与嵌入链同时命中派生文本；新增 `files.read` 工具。
