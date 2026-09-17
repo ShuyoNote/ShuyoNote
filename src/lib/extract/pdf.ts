@@ -21,7 +21,15 @@ import * as pdfjs from "pdfjs-dist";
 
 import { ensurePdfjsWorkerSrc } from "../pdfEngine/pdfjsWorker";
 
-import { fail, ok, type ExtractInput, type ExtractResult, type ExtractedSegment, type Extractor } from "./types";
+import {
+  fail,
+  ok,
+  type ExtractCoverage,
+  type ExtractInput,
+  type ExtractResult,
+  type ExtractedSegment,
+  type Extractor,
+} from "./types";
 
 const ID = "pdf.text@1";
 
@@ -134,6 +142,29 @@ export async function readPdfPages(
   return { ok: true, value: { totalPages, pages, emptyPages } };
 }
 
+/** 页读取结果 → 覆盖度（`null` = 完整覆盖，此时**不传** `coverage`，与"省略即完整"的契约一致）。
+ *
+ *  两类缺口都要报：① **没有文本层的页**（混合文档里的扫描插页）；② **被上限截断的页**。
+ *  `gapIndexes` 是 **0 基**（契约规定），而页码是 1 基 —— 只在这一处转换。 */
+function coverageOf(read: PdfPageRead): ExtractCoverage | null {
+  const readPages = read.pages.length;
+  const truncated = read.totalPages > readPages;
+  const gaps = read.emptyPages.map((n) => n - 1);
+  if (truncated) {
+    for (let i = readPages; i < read.totalPages; i++) gaps.push(i);
+  }
+  if (gaps.length === 0) return null;
+
+  const parts: string[] = [];
+  if (read.emptyPages.length > 0) parts.push(`${read.emptyPages.length} 页没有文本层`);
+  if (truncated) parts.push(`超过单次上限 ${MAX_PAGES} 页，只读到 p.${readPages}（源 ${read.totalPages} 页）`);
+  return {
+    complete: false,
+    gapIndexes: gaps,
+    note: parts.join("；"),
+  };
+}
+
 export const pdfTextExtractor: Extractor = {
   id: ID,
   mimes: ["application/pdf"],
@@ -154,6 +185,11 @@ export const pdfTextExtractor: Extractor = {
       // 扫描件走这条路：**不是失败**，是"这个抽取器没内容可给"，交给 pdf.ocr。
       return fail(ID, "empty", `PDF 共 ${read.value.totalPages} 页，但没有文本层（扫描件？交给 pdf.ocr）`);
     }
-    return ok(ID, segments);
+    // **覆盖度**（契约 2026-09-17 增补）：`ok` 不等于"抽全了"。
+    // 本文档跳过空页 ⇒ 报 `complete: false` + 缺口页号，调度器据此**再试下一个候选**
+    //（`pdf.ocr`），并按"谁缺口少用谁"替换 —— 这才是混合文档（正文是文字、中间夹扫描页）
+    // 不再静默丢页的那条路。不报覆盖度，`pipeline` 会以为抽完了，那几页就永远没有内容。
+    const coverage = coverageOf(read.value);
+    return coverage ? ok(ID, segments, coverage) : ok(ID, segments);
   },
 };
