@@ -59,6 +59,7 @@ mod sync;
 mod tags;
 mod templates;
 mod tempdir;
+mod textnorm;
 mod titlebar;
 mod trash;
 mod updates;
