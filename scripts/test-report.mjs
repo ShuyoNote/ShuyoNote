@@ -270,6 +270,40 @@ async function runGate(gate) {
 
 // 跑一次（可能由多条命令组成，如 `pnpm build:web` + `check-web-build`）：
 // 任一条失败即整条门禁失败，且**不继续往下跑**——后续命令依赖前者的产物。
+
+/**
+ * 从门禁自己写下的**机器可读报告**里补出"哪几条用例红了"。
+ *
+ * 为什么需要（2026-09-17 实测）：`vitest` 门禁用的是 `--reporter=json --outputFile=…`，
+ * **stdout 上没有 `✗ …` 那种行**可以解析 ⇒ `extractFailures(output)` 是空的 ⇒ 报告与 CI 注解
+ * 都只能说得出"vitest 红了"，说不出是哪条用例 —— 而"哪条"正是唯一有用的信息。
+ * 报告文件就在 tmp 目录里（这一次运行还没被清掉），读它即可。
+ *
+ * ⚠️ 只能在此处读：`test-report.mjs` 结尾会把整个 tmp 目录删掉，
+ * 所以**事后**（例如 CI 里下一个步骤）再想读就已经没有了 —— 第一次写注解步骤时就踩了这个。
+ */
+function failedCasesFromJsonReport(gate, results) {
+  const out = [];
+  for (const r of results) {
+    const m = /--outputFile=(\S+)/.exec(String(r.cmdline ?? ""));
+    if (!m || !existsSync(m[1])) continue;
+    let j;
+    try {
+      j = JSON.parse(readFileSync(m[1], "utf8"));
+    } catch {
+      continue;
+    }
+    for (const file of j.testResults ?? []) {
+      for (const a of file.assertionResults ?? []) {
+        if (a.status !== "failed") continue;
+        const first = String((a.failureMessages ?? [])[0] ?? "").split("\n")[0].trim();
+        out.push(`✗ ${(a.fullName || a.title || "?").trim()} 〔${String(file.name ?? "").split("/").slice(-2).join("/")}〕${first ? ` — ${first}` : ""}`);
+      }
+    }
+  }
+  return out;
+}
+
 async function runGateOnce(gate) {
   const cmds = Array.isArray(gate.cmd) ? gate.cmd : [gate.cmd];
   const results = [];
@@ -285,7 +319,9 @@ async function runGateOnce(gate) {
     status: results.every((r) => r.status === "passed") ? "passed" : "failed",
     durationMs: results.reduce((a, r) => a + r.durationMs, 0),
     counts: countsForGate(gate, output, readTmpJson),
-    failures: extractFailures(output),
+    // stdout 行 + 机器可读报告**取并集**：前者覆盖 "✗ …" 那种输出，后者覆盖 JSON reporter
+    // （那种门禁的 stdout 里一条失败行都没有，见 failedCasesFromJsonReport 的注释）。
+    failures: [...new Set([...extractFailures(output), ...failedCasesFromJsonReport(gate, results)])].slice(0, 25),
     commands: results.map((r) => ({ cmdline: r.cmdline, status: r.status, code: r.code })),
   };
 }
