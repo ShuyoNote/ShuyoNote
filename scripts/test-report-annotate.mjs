@@ -12,7 +12,7 @@
 // 用法：`node scripts/test-report-annotate.mjs <报告.json>`（CI 里紧跟门禁步骤，`if: failure()` 调用）
 // 退出码：**永远 0**——它只报告，不改变结论（红还是红，由原步骤决定）。
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /** 注解消息里不放换行（GitHub 的注解是单行；多行会被截断成半句）。 */
@@ -37,6 +37,43 @@ try {
   process.exit(0);
 }
 
+
+/**
+ * 从门禁命令里找**机器可读的测试报告**（vitest 的 `--outputFile=<path>`），把失败用例逐条报出来。
+ *
+ * 为什么需要（2026-09-17 实测）：CI 上 `vitest` 红了，注解里只有"vitest 命令退出 1"，
+ * 而 `report.failures` 是**空的** —— 因为门禁用的是 `--reporter=json --outputFile=…`，
+ * stdout 上根本没有 `✗ …` 那种行可以解析。于是"哪条用例红了"仍然看不到，还得再猜一轮。
+ * ⇒ 报告文件就在磁盘上，直接读它。这条让**以后每一次** vitest 红都能自己说出用例名。
+ */
+function vitestFailures(gate) {
+  const out = [];
+  for (const c of gate.commands ?? []) {
+    const m = /--outputFile=(\S+)/.exec(String(c.cmdline ?? ""));
+    if (!m) continue;
+    const path = m[1];
+    if (!existsSync(path)) {
+      out.push(`（报告文件不存在：${path}）`);
+      continue;
+    }
+    let j;
+    try {
+      j = JSON.parse(readFileSync(path, "utf8"));
+    } catch (err) {
+      out.push(`（报告解析失败：${path}：${err.message}）`);
+      continue;
+    }
+    for (const file of j.testResults ?? []) {
+      for (const a of file.assertionResults ?? []) {
+        if (a.status !== "failed") continue;
+        const msg = oneLine((a.failureMessages ?? []).map((x) => String(x).split("\n")[0]).join(" ｜ "), 300);
+        out.push(`${(a.fullName || a.title || "?").trim()} 〔${String(file.name ?? "").split("/").slice(-2).join("/")}〕${msg ? ` — ${msg}` : ""}`);
+      }
+    }
+  }
+  return out;
+}
+
 const results = Array.isArray(report.results) ? report.results : [];
 const failed = results.filter((r) => r.status === "failed");
 const skipped = results.filter((r) => r.status === "skipped");
@@ -50,6 +87,11 @@ for (const r of failed) {
     .filter(Boolean)
     .join(" · ");
   annotate(`门禁红了：${r.id}`, `（分组 ${r.group}）${r.label ?? ""} ${detail}`);
+
+  // 逐条报出失败用例（见 `vitestFailures()` 的注释：门禁用 JSON reporter 时 stdout 里没有失败行）。
+  const cases = vitestFailures(r);
+  for (const c of cases.slice(0, 8)) annotate(`失败用例：${r.id}`, oneLine(c, 500));
+  if (cases.length > 8) annotate(`失败用例：${r.id}`, `还有 ${cases.length - 8} 条未列出（报告文件里有全部）`);
 }
 
 for (const v of report.baselineViolations ?? []) {
