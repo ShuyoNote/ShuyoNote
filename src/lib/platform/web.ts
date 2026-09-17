@@ -1,5 +1,6 @@
 import { semanticScore } from "../searchSemantic";
 import { normalizeForMatch } from "../extract/normalize";
+import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
@@ -1894,33 +1895,18 @@ function makeInvoke(store: SqliteStore) {
         }) as T;
     }
     // ---- Attachment derived text (只读 attachment_text；与桌面 `read_attachment_text` 同语义) ----
+    // 逻辑在 `derivedText.ts`（**平台无关的那半**）—— 抽出去的理由见那个文件的注释：
+    // 写在这里的话，测试拿不到本文件私有的 store，于是这条分支只能有"契约级覆盖"。
     if (cmd === "read_attachment_text") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
       const id = String(req.id ?? a.id ?? "");
-      if (!id) throw new Error("bad_args: id 不能为空");
-      const offset = Math.max(0, Number(req.offset ?? a.offset ?? 0) || 0);
-      const limit = Math.min(1000, Math.max(1, Number(req.limit ?? a.limit ?? 200) || 200));
-
-      // 附件不存在 ⇒ null（"不存在"与"还没抽过"必须分开，后者见下面那两条 return）
-      const att = store.query("SELECT id FROM attachments WHERE id = ?", [id]);
-      if (att.length === 0) return null as T;
-
-      const hasTable = store.query("SELECT name FROM sqlite_master WHERE type='table' AND name='attachment_text'").length > 0;
-      if (!hasTable) return { segments: [], total: 0, truncated: false } as T;
-
-      const total = Number(
-        (store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachment_text WHERE att_id = ?", [id])[0]?.n ?? 0),
-      );
-      const rows = store.query<{ extractor: string; kind: string; text: string; loc: string }>(
-        `SELECT extractor, kind, text, loc FROM attachment_text
-         WHERE att_id = ? ORDER BY extractor ASC, seq ASC LIMIT ? OFFSET ?`,
-        [id, limit, offset],
-      );
-      return {
-        segments: rows.map((r) => ({ extractor: r.extractor, kind: r.kind, text: r.text, loc: r.loc })),
-        total,
-        truncated: offset + rows.length < total,
-      } as T;
+      if (!id.trim()) throw new Error("bad_args: id 不能为空");
+      return readAttachmentTextVia(
+        store as unknown as DerivedTextQuery,
+        id,
+        Number(req.offset ?? a.offset ?? 0),
+        Number(req.limit ?? a.limit ?? 200),
+      ) as T;
     }
     if (cmd === "get_page_blocks") {
       const pageId = String(a.pageId ?? a.page_id ?? "");
