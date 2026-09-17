@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_GROUPS, GATES, GROUP_ORDER, gateSetOf } from "./lib/gates.mjs";
 import {
   baselineViolations,
+  extractSkips,
   countsForGate,
   extractFailures,
   markdownReport,
@@ -322,6 +323,8 @@ async function runGateOnce(gate) {
     // stdout 行 + 机器可读报告**取并集**：前者覆盖 "✗ …" 那种输出，后者覆盖 JSON reporter
     // （那种门禁的 stdout 里一条失败行都没有，见 failedCasesFromJsonReport 的注释）。
     failures: [...new Set([...extractFailures(output), ...failedCasesFromJsonReport(gate, results)])].slice(0, 25),
+    // 门禁**自报跳过**的条目（绿也可能"少跑了几条"）：见 report-core 里 extractSkips 的注释。
+    skips: extractSkips(output),
     commands: results.map((r) => ({ cmdline: r.cmdline, status: r.status, code: r.code })),
   };
 }
@@ -415,6 +418,9 @@ const report = {
     reason: r.reason || "",
     counts: r.counts || null,
     failures: r.failures || [],
+    // ⚠️ 显式列出来：报告对象是**逐字段**构造的，漏一个字段就等于那个信息不存在
+    //（第一版就漏了它：`skips` 在结果里算了，却没进报告 ⇒ `--json` 里看不到）。
+    skips: r.skips || [],
     incident: r.incident || "",
     durationMs: r.durationMs,
     attempts: r.attempts || 1,

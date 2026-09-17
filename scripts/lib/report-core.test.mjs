@@ -14,6 +14,7 @@ import {
   countsFromSmokeJson,
   countsFromVitestJson,
   extractFailures,
+  extractSkips,
   markdownReport,
   mergeBaselineCounts,
   summaryLine,
@@ -354,6 +355,32 @@ describe("汇总 markdown（markdownReport）", () => {
     expect(md).toContain("### 基线违规");
     expect(md).toContain("### 外部执行");
     expect(md).toContain("sync-regression");
+  });
+
+  it("**门禁自报跳过**要进报告：绿的门禁也可能少跑了几条（`extractSkips`）", () => {
+    const out = [
+      "  ✓ 三条都跑到了",
+      "  ⏭ Linux deb 实查：本机没有 dpkg ⇒ 未实查",
+      "  ! 没找到插件入口（界面文案可能变了），跳过这一项",
+      "  · 注释里出现「跳过」两个字不该被当成跳过（行首标记才认）",
+      "  详情：这一行中间有跳过但不是判据",
+    ].join("\n");
+    const skips = extractSkips(out);
+    // 只认行首标记 ⇒ 后两行不该进来（否则报告里全是噪声，等于没报）
+    expect(skips).toHaveLength(2);
+    expect(skips[0]).toContain("未实查");
+    expect(skips[1]).toContain("跳过这一项");
+    // 空输出 ⇒ 空数组（不是 null/undefined：下游要能 `.length`）
+    expect(extractSkips("")).toEqual([]);
+  });
+
+  it("自报跳过会出现在 markdown 摘要里（否则它只活在 JSON 里，没人看）", () => {
+    const md = markdownReport({
+      ...base,
+      results: [{ ...base.results[0], skips: ["⏭ 依赖缺失，跳过这一项"] }],
+    });
+    expect(md).toContain("门禁自报跳过");
+    expect(md).toContain("依赖缺失");
   });
 
   it("靠重试才通过的单独列出来（flake 不许被抹平）", () => {

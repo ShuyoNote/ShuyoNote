@@ -105,6 +105,15 @@ for (const v of report.baselineViolations ?? []) {
   }
 }
 
+// 门禁**自报跳过**的条目：绿的门禁也可能少跑了几条，而那种"少"没有别的地方会说出来。
+const selfSkipped = results.filter((r) => (r.skips?.length ?? 0) > 0);
+for (const r of selfSkipped) {
+  annotate(
+    `判据自报跳过：${r.id}`,
+    oneLine((r.skips ?? []).slice(0, 4).join(" ｜ "), 600),
+  );
+}
+
 // 一条汇总：一眼能看出"红的是哪几条 / 跳过了什么"（跳过也要报，否则"没跑"会被当成"通过"）。
 annotate(
   failed.length ? `门禁失败汇总（${failed.length} 条）` : "门禁步骤失败，但没有失败的门禁条目",
@@ -112,6 +121,7 @@ annotate(
     [
       failed.length ? `失败：${failed.map((r) => r.id).join(", ")}` : "",
       skipped.length ? `跳过：${skipped.map((r) => `${r.id}（${r.reason ?? ""}）`).join(", ")}` : "",
+      selfSkipped.length ? `自报跳过：${selfSkipped.map((r) => `${r.id}×${r.skips.length}`).join(", ")}` : "",
       `共 ${results.length} 条门禁；平台 ${report.platform ?? "?"}；node ${report.node ?? "?"}`,
     ]
       .filter(Boolean)

@@ -67,6 +67,27 @@ export function countsForGate(gate, output, readJson) {
   return countsFromOutput(output);
 }
 
+/**
+ * **自报跳过**：门禁自己在输出里说"这一项跳过了"（`⏭ …` / `! …跳过…` / `skip …`）。
+ *
+ * 为什么要单独收出来（2026-09-17 的教训）：`check-web-build` 在 CI 上把两条断言**静默跳过**了，
+ * 表现为"断言数 8→6"，而报告里**只有基线那一句"数字降了"**——原因的线索（那句 `! 跳过这一项`）
+ * 从来没进过报告，于是排查只能靠猜。⇒ 把"跳过了什么"变成报告与 CI 注解里的一等公民：
+ * **绿的门禁也可能"少跑了几条"**，而那件事必须看得见。
+ *
+ * 只认**行首**的标记，避免把正文里的"跳过"二字（注释、日志）也收进来。
+ */
+export function extractSkips(output) {
+  const out = [];
+  for (const line of (output || "").split(/\r?\n/)) {
+    if (/^\s*(\u23ed|!|\u2717?\s*skip|SKIP\b)/.test(line) || /^\s*(?:!|\u23ed)[^\n]*跳过/.test(line)) {
+      const t = line.trim();
+      if (t) out.push(t);
+    }
+  }
+  return out.slice(0, 10);
+}
+
 // 失败明细：只在输出里找"明确的失败行"，最多留 25 条（够定位，不至于把报告撑爆）。
 export function extractFailures(output) {
   const out = [];
@@ -135,7 +156,11 @@ export function summaryLine(report) {
   const verdict = report.ok ? "门禁全绿" : "门禁存在失败";
   const totalCounts = report.results.reduce((a, r) => a + (r.counts?.total || 0), 0);
   const skipped = report.results.filter((r) => r.status === "skipped").length;
-  return `${verdict}：${parts.join("、")}；合计 ${totalCounts} 条断言/用例${skipped ? `（${skipped} 条显式跳过）` : ""}。`;
+  // "门禁自报跳过"与"整条门禁被跳过"是两件事：前者是"绿但少跑了几条"，更隐蔽，所以也报出来。
+  const innerSkips = report.results.reduce((n, r) => n + (r.skips?.length ?? 0), 0);
+  return `${verdict}：${parts.join("、")}；合计 ${totalCounts} 条断言/用例${skipped ? `（${skipped} 条显式跳过）` : ""}${
+    innerSkips ? `（另有 ${innerSkips} 条判据自报跳过）` : ""
+  }。`;
 }
 
 // 外部套件状态的回写（P1：让"不在本仓库跑的套件"在公开侧可见且**可更新**）。
@@ -270,6 +295,14 @@ export function markdownReport(report) {  const lines = [];
     for (const r of retried) lines.push(`- \`${r.id}\`：第 ${r.attempts} 次才通过（flake 信号，别让它烂在那里）`);
     lines.push("");
   }
+  const selfSkipped = report.results.filter((r) => (r.skips?.length ?? 0) > 0);
+  if (selfSkipped.length) {
+    lines.push("", "### 门禁自报跳过（**绿也可能少跑了几条**）");
+    for (const r of selfSkipped) {
+      for (const t of r.skips.slice(0, 3)) lines.push(`- \`${r.id}\`：${t}`);
+    }
+  }
+
   const skipped = report.results.filter((r) => r.status === "skipped");
   if (skipped.length) {
     lines.push("### 显式跳过（不是通过）");
