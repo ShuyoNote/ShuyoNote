@@ -11,6 +11,7 @@ import {
 } from "lexical";
 import type { JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
+import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
 
 export type SerializedVideoNode = Spread<
   { src: string; hash?: string | null; mime?: string | null },
@@ -72,6 +73,11 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
     const element = document.createElement("video");
     element.setAttribute("src", this.__src);
     element.setAttribute("controls", "true");
+    // 与 ImageNode 同理：`__src` 是应用专有 URL，导出时必须内联（见 lib/exportInline）。
+    if (this.__hash) {
+      element.setAttribute(EXPORT_HASH_ATTR, this.__hash);
+      if (this.__mime) element.setAttribute(EXPORT_MIME_ATTR, this.__mime);
+    }
     return { element };
   }
 

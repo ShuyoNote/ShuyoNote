@@ -16,6 +16,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { platform } from "../../lib/platform";
 import { api } from "../../lib/api";
 import { inputDialog } from "../../store/input";
+import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
 
 export type SerializedWebBookmarkNode = Spread<
   { url: string; title: string; description: string; siteName: string; imageHash: string; imageMime: string },
@@ -91,10 +92,57 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
   }
 
   exportDOM(_editor: LexicalEditor): DOMExportOutput {
-    const element = document.createElement("div");
-    element.setAttribute("data-webbookmark", this.__url);
-    element.textContent = this.__url;
-    return { element };
+    // 导出的是**卡片本身**，不是一个裸链接。
+    //
+    // 原来这里只输出 `<div data-webbookmark="url">url</div>`，于是导出件（HTML 与 PDF）
+    // 里标题、摘要、站点名、缩略图**全部丢失** —— 用户看到的就是"空的网页标签"。
+    // 这里按编辑器里那套 class 产出同样的结构，样式由 `lib/print.ts` 的 BASE_CSS 提供
+    // （导出件是独立文档，拿不到应用 CSS）。
+    const card = document.createElement("div");
+    card.className = "webbookmark-card";
+    card.setAttribute("data-webbookmark", this.__url);
+
+    if (this.__imageHash) {
+      const thumb = document.createElement("div");
+      thumb.className = "webbookmark-thumb";
+      const img = document.createElement("img");
+      img.setAttribute("alt", "");
+      // 缩略图同样是内容寻址附件（编辑期靠 api.attachmentPath + convertFileSrc 解析），
+      // 导出时留线索交给 lib/exportInline 内联。
+      img.setAttribute(EXPORT_HASH_ATTR, this.__imageHash);
+      if (this.__imageMime) img.setAttribute(EXPORT_MIME_ATTR, this.__imageMime);
+      thumb.appendChild(img);
+      card.appendChild(thumb);
+    }
+
+    const body = document.createElement("div");
+    body.className = "webbookmark-body";
+
+    const title = document.createElement("div");
+    title.className = "webbookmark-title";
+    const link = document.createElement("a");
+    link.setAttribute("href", this.__url);
+    link.textContent = this.__title || this.__url;
+    title.appendChild(link);
+    body.appendChild(title);
+
+    if (this.__description) {
+      const desc = document.createElement("div");
+      desc.className = "webbookmark-desc";
+      desc.textContent = this.__description;
+      body.appendChild(desc);
+    }
+
+    const site = document.createElement("div");
+    site.className = "webbookmark-site";
+    const domain = document.createElement("span");
+    domain.className = "webbookmark-domain";
+    domain.textContent = this.__siteName || this.__url;
+    site.appendChild(domain);
+    body.appendChild(site);
+
+    card.appendChild(body);
+    return { element: card };
   }
 
   exportJSON(): SerializedWebBookmarkNode {
