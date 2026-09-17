@@ -211,6 +211,11 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >   `<w:pPr><w:tabs><w:tab w:pos="720"/></w:tabs>` 是**制表位定义**不是制表符，一路下钻会把 `\t` 灌进正文；
 >   ③ `<w:delText>`（修订删除的文字）与 `<w:instrText>`（域代码）原来只是**偶然**没被抽到
 >   （localName 恰好不叫 `t`），现已改成**显式排除**。三条各有一条夹具钉住。
+>   **pptx 又抓到两处同类缺口（同样是"静默丢内容"，不报错只是少了）**：
+>   ④ 幻灯片里的**表格不是 `<p:sp>`**，而是 `<p:graphicFrame><a:tbl>` ⇒ 只取 `p:sp` 会把**整张表丢掉**；
+>   ⑤ **演讲者备注**在独立 part `ppt/notesSlides/notesSlideN.xml`，且 **N 与幻灯片编号不是同一个编号**
+>      （靠 `_rels` 关联）⇒ 按编号猜会把备注**贴到错的幻灯片上**，那比不抽更糟（回链会指错）。
+>      两条各有一条夹具，备注那条的编号**故意不同**（备注 9 属于 slide 1）以防实现走捷径。
 > - **图片 OCR 抽取器已实现**：`src/lib/extract/image.ts`（`image.ocr@1`），`cost: gpu` ——
 >   它同时是契约 **§15.3-7**「未注入 `deps.vision` 必须立刻 `provider_error`、不许自建网络」的活样板
 >   （该条此前既无实现也无测试，等于空头承诺）。**第二档（VLM 语义描述 → `caption`）按 §13 待拍板第 2 项

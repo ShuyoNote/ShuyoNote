@@ -396,6 +396,64 @@ function shapeText(sp: Element): string {
   return paras.join("\n");
 }
 
+/**
+ * **表格**文本（`<p:graphicFrame><a:tbl>`）——单元格 `\t`、行 `\n`（与 docx 表格同一口径）。
+ *
+ * 为什么必须单独处理：幻灯片里的表格**不是 `<p:sp>`**，它是 `<p:graphicFrame>` 里的 `<a:tbl>`。
+ * 只取 `p:sp` 会把整张表**静默丢掉**（不报错、只是内容少了）——这正是"真实文档 vs 合成夹具"的典型缺口。
+ */
+function graphicFrameText(fr: Element): string {
+  const rows: string[] = [];
+  for (const tr of allByLocalName(fr, "tr")) {
+    const cells: string[] = [];
+    for (const tc of allByLocalName(tr, "tc")) {
+      const t = allByLocalName(tc, "p")
+        .map((p) => runText(p))
+        .filter((s) => s.length > 0)
+        .join(" ");
+      cells.push(t.replace(/[\t\n]+/g, " "));
+    }
+    rows.push(cells.join("\t"));
+  }
+  return rows.join("\n");
+}
+
+/**
+ * 演讲者备注 part 的路径 → 它属于第几张幻灯片。
+ *
+ * 为什么不能按编号猜：`notesSlideN.xml` 的 N **与幻灯片的 N 不是同一个编号**，
+ * 二者靠关系文件（`ppt/notesSlides/_rels/notesSlideN.xml.rels` → `../slides/slideM.xml`）关联。
+ * 按编号猜会把备注贴到错的幻灯片上——那比不抽更糟（回链会指错）。
+ */
+function notesBySlide(files: Record<string, Uint8Array>): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const path of Object.keys(files)) {
+    const m = /^ppt\/notesSlides\/notesSlide(\d+)\.xml$/.exec(path);
+    if (!m) continue;
+    const rels = partXml(files, `ppt/notesSlides/_rels/notesSlide${m[1]}.xml.rels`);
+    if (!rels) continue;
+    let slideN: number | null = null;
+    for (const rel of allByLocalName(rels, "Relationship")) {
+      const target = rel.getAttribute("Target") ?? "";
+      const tm = /slides\/slide(\d+)\.xml$/.exec(target);
+      if (tm) {
+        slideN = Number(tm[1]);
+        break;
+      }
+    }
+    if (slideN === null) continue;
+    const doc = partXml(files, path);
+    if (!doc) continue;
+    const text = normalizeText(
+      allByLocalName(doc, "sp")
+        .map((sp) => shapeText(sp))
+        .join("\n"),
+    );
+    if (text) out.set(slideN, text);
+  }
+  return out;
+}
+
 function extractPptx(input: ExtractInput): ExtractResult {
   let files: Record<string, Uint8Array>;
   try {
@@ -408,14 +466,16 @@ function extractPptx(input: ExtractInput): ExtractResult {
     if (parts.length === 0) {
       return fail(PPTX_ID, "unsupported", "zip 里没有 ppt/slides/slideN.xml（不是 pptx）");
     }
+    const notes = notesBySlide(files);
     const segments: ExtractedSegment[] = [];
     for (const { path, n } of parts) {
       const doc = partXml(files, path);
       if (!doc) continue;
       const loc = `slide ${n}`;
       const shapes = allByLocalName(doc, "sp");
+      const frames = allByLocalName(doc, "graphicFrame");
 
-      // 先出标题（契约 §15.2：pptx 标题占位符 → heading），再出正文。
+      // 先出标题（契约 §15.2：pptx 标题占位符 → heading），再出正文（形状 + 表格）。
       const titleText = shapes
         .filter(isTitleShape)
         .map((sp) => shapeText(sp))
@@ -423,13 +483,17 @@ function extractPptx(input: ExtractInput): ExtractResult {
       const title = normalizeText(titleText);
       if (title) segments.push({ kind: "heading", text: title, loc });
 
-      const body = normalizeText(
-        shapes
-          .filter((sp) => !isTitleShape(sp))
-          .map((sp) => shapeText(sp))
-          .join("\n"),
-      );
+      const bodyParts = [
+        ...shapes.filter((sp) => !isTitleShape(sp)).map((sp) => shapeText(sp)),
+        ...frames.map((fr) => graphicFrameText(fr)),
+      ];
+      const body = normalizeText(bodyParts.join("\n"));
       if (body) segments.push({ kind: "slide", text: body, loc });
+
+      // 演讲者备注：**独立成段**（它不是幻灯片"页面"上的内容，混进 body 会污染版面语义）。
+      // loc 带上标记，便于回看时区分。
+      const note = notes.get(n);
+      if (note) segments.push({ kind: "text", text: note, loc: `${loc} 备注` });
     }
     return finish(PPTX_ID, segments);
   } catch (e) {

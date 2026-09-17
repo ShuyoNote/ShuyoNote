@@ -251,6 +251,51 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["slide"], contains: ["上\n下"] },
   },
   {
+    id: "ooxml/pptx-表格",
+    pins:
+      "幻灯片里的**表格不是 `<p:sp>` 而是 `<p:graphicFrame><a:tbl>`** ⇒ 只取 `sp` 会把整张表**静默丢掉**" +
+      "（不报错、只是内容少了）。单元格 `\\t`、行 `\\n`，与 docx 表格同一口径",
+    extractor: "ooxml.pptx@1",
+    filename: "表格.pptx",
+    mime: "",
+    make: () =>
+      zipOf({
+        "ppt/slides/slide1.xml":
+          `<p:sld ${P_NS}><p:cSld><p:spTree>` +
+          `<p:graphicFrame><a:graphic><a:graphicData><a:tbl>` +
+          `<a:tr><a:tc><a:txBody><a:p><a:r><a:t>项目</a:t></a:r></a:p></a:txBody></a:tc>` +
+          `<a:tc><a:txBody><a:p><a:r><a:t>金额</a:t></a:r></a:p></a:txBody></a:tc></a:tr>` +
+          `<a:tr><a:tc><a:txBody><a:p><a:r><a:t>差旅</a:t></a:r></a:p></a:txBody></a:tc>` +
+          `<a:tc><a:txBody><a:p><a:r><a:t>1200</a:t></a:r></a:p></a:txBody></a:tc></a:tr>` +
+          `</a:tbl></a:graphicData></a:graphic></p:graphicFrame>` +
+          `</p:spTree></p:cSld></p:sld>`,
+      }),
+    expect: { ok: true, kinds: ["slide"], contains: ["项目\t金额", "差旅\t1200"] },
+  },
+  {
+    id: "ooxml/pptx-演讲者备注",
+    pins:
+      "备注在**独立 part** `ppt/notesSlides/notesSlideN.xml`，且 **N 与幻灯片编号不是同一个编号**" +
+      "（靠 `_rels` 关联）⇒ 按编号猜会把备注贴到错的幻灯片、回链就指错了。这里断言它**独立成段**、" +
+      "`loc` 带「备注」标记",
+    extractor: "ooxml.pptx@1",
+    filename: "备注.pptx",
+    mime: "",
+    make: () =>
+      zipOf({
+        "ppt/slides/slide1.xml": `<p:sld ${P_NS}><p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>季度回顾</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+        "ppt/notesSlides/notesSlide9.xml": `<p:notes ${P_NS}><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>记得强调留存率</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>`,
+        // 关键：备注 9 属于 slide 1（编号故意不同，防止实现按编号猜）
+        "ppt/notesSlides/_rels/notesSlide9.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="notesSlide" Target="../slides/slide1.xml"/></Relationships>`,
+      }),
+    expect: {
+      ok: true,
+      kinds: ["heading", "text"],
+      contains: ["季度回顾", "记得强调留存率"],
+      locs: ["slide 1", "slide 1 备注"],
+    },
+  },
+  {
     id: "ooxml/pptx-标题与正文",
     pins: "标题占位符→heading、其余→slide；`loc = slide <n>`",
     extractor: "ooxml.pptx@1",
