@@ -15,7 +15,7 @@ vi.mock("./api", () => ({
 }));
 
 import { api } from "./api";
-import { indexPage } from "./indexPage";
+import { indexPage, indexUnfiled } from "./indexPage";
 import { DERIVED_SCHEMA_DDL } from "./extract/schema";
 import { createAttachmentTextStore, type SqlRunner } from "./extract/store";
 import { createChunkStore } from "./extract/chunkStore";
@@ -211,5 +211,43 @@ describe("indexPage：把一个页面索引完整", () => {
     setActivePlatform(platformWith({}, {}));
     const s = await stores();
     await expect(indexPage("nope", s)).rejects.toThrow("页面不存在");
+  });
+});
+
+describe("indexUnfiled：把「未整理」的附件也索引掉（否则报告指着一个补不掉的缺口）", () => {
+  it("**只取未整理那一批**（`listPageAttachments(null)`），并如实汇总", async () => {
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(listed(["u1", "u2"]));
+    setActivePlatform(platformWith({}, { u1: docx("散件一"), u2: new Uint8Array([9, 9]) }));
+
+    const s = await stores();
+    const r = await indexUnfiled(s);
+
+    expect(r.attachments).toHaveLength(2);
+    expect(r.attachments.find((a) => a.attId === "u1")?.status).toBe("stored");
+    expect(r.summary).toContain("未整理附件 2 个");
+    expect(s.chunks.chunksOf({ kind: "attachment", attId: "u1" }).length).toBeGreaterThan(0);
+
+    // 取材的是"未整理"那一路 —— 与覆盖报告的取材口径一致（否则报告说缺、这里索引不到）
+    const calls = (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBeNull();
+  });
+
+  it("重复调用便宜：第二次是 cached", async () => {
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(listed(["u1"]));
+    setActivePlatform(platformWith({}, { u1: docx("散件") }));
+    const s = await stores();
+    await indexUnfiled(s);
+    const again = await indexUnfiled(s);
+    expect(again.attachments[0].status).toBe("cached");
+  });
+
+  it("空库（没有未整理附件）⇒ 不报错、摘要说 0", async () => {
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    setActivePlatform(platformWith({}, {}));
+    const s = await stores();
+    const r = await indexUnfiled(s);
+    expect(r.attachments).toEqual([]);
+    expect(r.summary).toContain("0 个");
   });
 });
