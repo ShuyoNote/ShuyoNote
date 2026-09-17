@@ -23,6 +23,7 @@ on:
 
 jobs:
   build-linux:
+    name: Linux 安装包
     runs-on: ubuntu-24
     steps:
       - name: Checkout
