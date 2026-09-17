@@ -222,18 +222,29 @@ try {
     // 插件管理的入口在「设置」里：设置（竖条上的 icon，aria-label="设置"）
     // → 左侧「插件」那一栏 → 卡片里的「打开插件管理」。三步都要点，少一步就找不到按钮。
     const openedSettings = await clickStep("设置", /^设置$|^Settings$/i);
-    const clickedPlugins = openedSettings && (await clickStep("插件", /^插件/));
+    // ⚠️ **必须双语**：这一栏的文案来自 i18n（`settings.plugins` ⇒ zh「插件」/ en「Plugins」），
+    //    而 CI 的 Chromium 默认 `navigator.language = en-US` ⇒ `src/i18n/index.ts` 选 `en`
+    //    ⇒ 只认中文的匹配器在 CI 上永远找不到这一栏。2026-09-17 实测：本机加 `--lang=en-US`
+    //    能**逐字复现** CI 的现象（6 通过 / 0 失败 + 同一条 ✗ 诊断）。
+    //    （下面「管理插件」「打开插件管理」是组件里硬编码的中文，不随语言变；真被 i18n 化那天，
+    //      "不许静默跳过"那条判据会把断言数掉下去，而不是悄悄少跑两条。）
+    //    ⚠️ 这里**不能**写 `/^Plugins\b/`：按钮的 textContent 是「标签 + 提示」**连写**
+    //    （`PluginsEnable/disable extensions`），`s` 与 `E` 之间没有词边界 ⇒ `\b` 永远不匹配。
+    //    （第一次就栽在这——写的时候以为在匹配一个单词。）
+    const clickedPlugins = openedSettings && (await clickStep("插件", /^插件|^Plugins/i));
     // 两个入口都认：卡片里的「打开插件管理」与设置页头部的「管理插件」
     // （界面在收拾信息层级，按钮文案可能变；这里不该因为换个词就红）
     const openedManager =
       clickedPlugins && ((await clickStep("打开插件管理", /打开插件管理/)) || (await clickStep("管理插件", /管理插件/)));
     await sleep(400);
     const text = document.body.textContent || "";
-    const labels = Array.from(document.querySelectorAll("button"))
-      .map(labelOf)
-      .filter(Boolean)
-      .slice(0, 40)
-      .join(" | ");
+    // ⚠️ 打印**头 25 + 尾 25**：只打印前 N 个会恰好把"我们要找的那个按钮"截掉
+    //（2026-09-17 实测：只打前 40 个时，英文的「Plugins」正好被截在名单之外，
+    //  于是我又多猜了一轮）。截断不能把证据一起截掉。
+    const all = Array.from(document.querySelectorAll("button")).map(labelOf).filter(Boolean);
+    const head = all.slice(0, 25);
+    const tail = all.length > 50 ? all.slice(-25) : all.slice(25);
+    const labels = `${head.join(" | ")}${tail.length ? ` …（共 ${all.length} 个）… ${tail.join(" | ")}` : ""}`;
     return {
       found: Boolean(openedSettings && openedManager),
       opened: /插件管理/.test(text),
@@ -251,7 +262,7 @@ try {
     //（上面那段注释就是这次的真实经过）。`✗` 开头的行会被 `test-report.mjs` 的
     // `extractFailures` 收进报告、并被 CI 注解带出来 ⇒ 下一次红自带原因与现场。
     console.error(`  ✗ 插件入口没走到（${pluginsOk.steps.join("；")}）—— 这会让 2 条断言被跳过，基线会报退步`);
-    console.error(`  ✗ 现场按钮文案（前 40 个）：${pluginsOk.labels.slice(0, 400)}`);
+    console.error(`  ✗ 现场按钮文案（前 40 个）：${pluginsOk.labels.slice(0, 1200)}`);
   }
 
   if (SHOTS) {
