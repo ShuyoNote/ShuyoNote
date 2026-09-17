@@ -57,9 +57,18 @@ jobs:
           echo "$KEYCHAIN_PASS" > "$HOME/KC_PASS"
           security create-keychain -p "$KEYCHAIN_PASS" build.keychain
           security import "$CERT" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # ⚠️ 这一行**不能少**（2026-09-17 Mac 侧核出、并在本机预演里实测）：`import` 只把证书放进 ACL，
+          # 而 CI 是**无人值守**环境 —— 没有这一行，`codesign` 会因为拿不到钥匙串项而卡在授权上，
+          # 或者报 `errSecInternalComponent`。Tauri 官方 macOS 签名模板里就是这一行
+          # （v2.tauri.app/distribute/sign/macos：`security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k …`）。
+          # 本机预演（自签证书 + 临时钥匙串、批量脚本里无人值守）加了这一行 ⇒ `codesign` 直接签成、无任何弹窗。
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security list-keychains -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
+          # 自检：把身份**打出来**。证书没导进去 / 名字不对时，这一步就红在"导入"而不是
+          # 十几分钟后红在"签名"，省下一轮排查（本机预演时也用它确认过身份可被 codesign 使用）。
+          security find-identity -v -p codesigning build.keychain
           echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD" >> "$GITHUB_ENV"
           # 让 Xcode 找到该 keychain（避免 "User interaction is not allowed"）
           /usr/bin/xcodebuild -runFirstLaunch >/dev/null 2>&1 || true
