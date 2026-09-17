@@ -241,6 +241,25 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 **故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
 （docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
 
+#### 8.0.1 交付自检（2026-09-17，`ce66f97`）
+
+**我不把"做完了"写成一句声称 —— 下面是可复核的数字与命令**：
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 台账引用是否名副其实 | 对台账里 29 个文件路径逐个 `Test-Path` | **29/29 存在**（这道检查**当场抓到过 1 个错路径**：`platformWiring.test.ts` 其实在 `extract/` 下） |
+| 类型 | `npx tsc --noEmit` | **0 错** |
+| 测试 | `npx vitest run` | **101 文件 / 1011 通过 + 1 跳过 / 0 失败**（跳过的是真样张跑器，没配 `EXTRACT_SAMPLES`，**设计如此**） |
+| 文档链接 | `node scripts/check-doc-links.mjs` | 113 个 .md / **620 条相对链接全部可达** |
+| 能力注册表 | `node scripts/check-capabilities.mjs` | 22 条能力 / 12 项权限 / **生成物 9 个文件一致**（本轮只动了 TS，没碰注册表） |
+| **全部门禁组** | `node scripts/test-report.mjs --group contract,smoke,sync,plugin` | **22 条门禁全过，失败 0 / 跳过 0**（含 smoke-web 350/350、two-device-sync 14/14、plugin 组） |
+| 仓库状态 | `git status --porcelain` + 与 origin 比对 | 两仓（`ShuyoNote` / 信箱仓）**工作区干净且与 origin 一致** |
+
+> ⚠️ **自检的边界**：以上全部是 **Windows 上能跑的**。方案里"未做"的那三项
+> （Rust 侧 / 能力注册表那条链）**不在其中** —— 它们的判据只能由能跑 `cargo test` 的机器给出（见 §8.1）。
+> 换句话说：**这份自检证明的是"我认领的那半边"，不是"整个方案"。**
+
+
 ### 8.1 被「**本机不能自验**」卡住的三项 —— 附施工单（给能跑 `cargo test` 的那一侧）
 
 > 📄 **可套用的补丁草案在同目录的 [`2026-09-17-ai-coverage-handoff-patches.md`](2026-09-17-ai-coverage-handoff-patches.md)**
