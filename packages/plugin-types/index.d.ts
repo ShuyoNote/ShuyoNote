@@ -186,6 +186,10 @@ export interface PluginApi {
    * 返回：[{id, name, mime, size}]，**不含字节**
    */
     list(pageId?: string): { id: string; name: string; mime: string; size: number }[];
+  /** 检索文件内容（块级）（权限 `read:files`；1.1.0 起）
+   * 返回：块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）
+   */
+    search(query: string, limit?: number): { chunkId: string; pageId: string | null; attId: string | null; ord: number; loc: string; snippet: string; score: number }[];
   /** 把内容保存成文件（用户选位置）（权限 `export:files`；1.0.0 起）
    * 返回：{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写
    */

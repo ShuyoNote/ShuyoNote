@@ -32,6 +32,7 @@ var api = {
   },
   files: {
     list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); },
+    search: function(query, limit) { return __capCall("files.search", { query: query === undefined ? undefined : String(query), limit: limit === undefined ? 10 : Number(limit) }); },
     export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); }
   },
   editor: {

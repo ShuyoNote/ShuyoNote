@@ -110,6 +110,7 @@ register({
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
 | `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
+| `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `blocks.append` | `api.blocks.append(text, pageId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
@@ -200,6 +201,16 @@ register({
 - 返回：[{id, name, mime, size}]，**不含字节**
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略则用当前打开的页面
+
+### `files.search` — 检索文件内容（块级）
+
+- 调用：`api.files.search(query, limit)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）
+- 参数：
+  - `query`: `string` —— 检索词（与界面搜索同一口径：兼容表意字会先归一）
+  - `limit`: `number`（可选），默认 `10` —— 最多返回多少条命中（1–100）
 
 ### `editor.insertText` — 向当前页插入纯文本
 
