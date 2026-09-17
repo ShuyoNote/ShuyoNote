@@ -244,15 +244,70 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 - [ ] 全流程：`cargo check` / `npx tsc --noEmit` / `node scripts/smoke-web.mjs` 无回归；新增的 `ai: true` 工具通过 `scripts/check-capabilities.mjs` 门禁。
 - [ ] 隐私：默认配置下（无云端 provider）**抓包无出网**。
 
-## 12. 待拍板
+## 12. 分工与协作纪律（三台机器：Windows / macOS / AMD）
+
+> 本条沿用仓库既有先例：[国密方案 §9 / §9.1](2026-09-16-sm-crypto-full-plan.md) 的三机分工——**按机器能力排，不按人头**。
+
+### 12.1 一条硬前提：Windows 跑不了 `cargo test`
+
+`docs/plans/2026-09-16-sm-crypto-full-plan.md:294` 已记录（2026-09-17 实测）：
+
+> ⚠️ **验收纪律（硬要求）**：**Windows 跑不了 `cargo test`**（`0xc0000139`），所以 Windows 侧的改动必须由 AMD 或 Mac 复核——"在我这边编过了"不等于"测过了"，更不等于"能打开"。
+
+而本方案的 P1/P2 改动**主要落在 Rust 与共享层**：`db.rs`（1020 行）/ `search.rs`（737）/ `attachments.rs`（994）/ `sqliteStore.ts`（438）/ `web.ts`（3388）/ `capabilities.json`（1040）。
+
+⇒ **不拉 AMD 或 Mac，P1 无法闭环验收。** 这不是"人多力量大"，是**这台机器做不了那件事**。
+
+### 12.2 归属（按模块，尽量文件零重叠）
+
+| 归属 | 范围（文件） |
+|---|---|
+| **抽取层（新增）** | 抽取器模块，每个格式一族、纯函数 `bytes → text`；**不碰 `db.rs` / `search.rs`** |
+| **派生表与迁移** | `src-tauri/src/db.rs`、`src/lib/platform/sqliteStore.ts`（建表 + 照 `:492-499` 的 `pragma_table_info` 守卫式迁移） |
+| **检索链路** | `src-tauri/src/search.rs`、`src/lib/semanticEmbed.ts`、`src/lib/platform/web.ts`（分块检索分支） |
+| **能力注册** | `capabilities/capabilities.json`、`src/lib/capabilities/frontend.ts` |
+| **⚠️ 交界（串行点）** | **`db.rs` 的表结构**与 **`capabilities.json` 的工具契约**是全局交界：**各自分支开发，合并时由一人统一处理冲突**（照 sm-crypto §9 的做法） |
+
+### 12.3 可并行的两条轴（且各有兜底）
+
+**轴 1 —— 格式抽取器分家。** 每个抽取器是纯函数、彼此零共享，是**唯一干净的并行轴**：
+`OOXML 一族（docx/xlsx/pptx）` / `PDF + 扫描件一族` / `图片一族` /（P3）`视频音频一族`。
+
+**轴 2 —— 平台同构。** `scripts/check-web-commands.mjs` 强制三向一致（Rust 有 → `web.ts` 必须实现；Rust 有 → `CommandMap` 必须声明；CommandMap 有 → 桌面必须注册，或显式登记为「Web 专属」）⇒ `files.read` / `files.search` **必须写两遍**，可分两台各写一侧，**跑偏会被门禁抓住**。
+
+> ⚠️ **前置：接口必须先冻结，冻结之后才分。** 要冻的是：抽取器签名 / `kind` 枚举 / `loc_hint` 格式 / 错误语义 / `extractor` 版本号。
+> **接口没冻就分三份 = 三套各自能跑、但合不到一起的实现。**
+
+### 12.4 分工表（**待机器规格确认后填空**）
+
+| 模块 | 谁 | 依据 | 依赖 |
+|---|---|---|---|
+| **接口冻结** | 一台独占 | 并行的前置，**不能省** | 无 —— 立刻能动 |
+| **格式抽取器** | 分家（§12.3 轴 1） | 纯函数、零共享 | 接口冻结 |
+| **平台同构**（Rust 侧 / `web.ts` 侧） | 两台各一侧 | `check-web-commands.mjs` 兜底 | 接口冻结 |
+| **集成 + 检索链路** | **一台独占串行** | 唯一的串行点（`db.rs` / `search.rs` / `web.ts` / `capabilities.json` 全在此） | 抽取器就绪 |
+| **Rust 侧测试复核** | **AMD 或 Mac（硬需求）** | 见 §12.1 | 随时 |
+| **全库抽取实跑** | **⚠️ 待 GPU 规格确认** | VLM 抽图 + ASR 抽音轨是**算力活**；Windows 本机仅 6GB 显存，是全链最弱一环 | 接口冻结 |
+
+> **P2（分块 + 块级嵌入）不分家**：它是耦合最紧的地基（同时改 `db.rs` / `search.rs` / `semanticEmbed.ts` / `web.ts`），**等 P1 合并落地后再议**。
+> **不要为并行而并行**：仓库里 sm-crypto 那次敢分，是因为模块边界清楚（`crypto.rs`/`security.rs` vs `pdf_native.rs`，文件零重叠）；本方案的耦合面大得多，硬分就是三台机器轮流解冲突。
+
+### 12.5 协作纪律（三条，必须一并生效）
+
+- ❌ **禁止 `git add -A`** —— 本仓库有并发会话，**曾误提交他人 WIP**；✅ 只 `git add <自己的文件>`，提交前对 `git status --porcelain`。（出处：sm-crypto-full-plan §9.1 末）
+- ✅ **"编过了"不等于"测过了"**：Rust 侧改动必须由**能跑 `cargo test`** 的机器复核（§12.1）。
+- ✅ **同一组夹具跑三份实现**：格式抽取器分家后，三份实现共用一组夹具（同一批样张 → 期望文本），否则会退化成"三套都能跑但结果不一致"。
+
+## 13. 待拍板
 
 1. **P1 的格式优先级**：先做 OOXML（docx/xlsx/pptx，纯 Rust/TS 解析）还是先接 LibreOffice headless（一次覆盖旧格式但引入外部依赖）？
 2. **图片的第二档（VLM 描述）要不要进 P1**，还是只做 OCR、描述留到 P3？
 3. **派生文本是否允许用户查看/编辑**（排查抽取质量时有用，但会变成"第二份真相"）。
 4. **视频/音频是否本机跑**（whisper.cpp 类）还是明确"暂不支持"。
 5. **分块参数**（大小/重叠）是否要按语言区分（中英混排）。
+6. **三台机器的 GPU / 显存规格** —— 决定"全库抽取"这项**算力劳动**放哪台机器跑（见 §12.4）。这是部署决策，不是分工偏好。
 
-## 13. 结论
+## 14. 结论
 
 用户要的「全部纳入」**不是换一个更大的模型能解决的**——瓶颈在检索面而不是模型能力。正解是**把多模态内容降维成文本、汇进统一的可检索层**：
 
