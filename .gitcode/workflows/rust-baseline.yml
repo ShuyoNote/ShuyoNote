@@ -1,0 +1,94 @@
+name: rust-baseline
+
+# 手动触发：只为**产出 rust 组的可信读数**（本机 Windows 上跑不了 cargo test ——
+# 测试二进制加载期即异常退出，见 docs/TESTING.md 的"已知边界"）。
+#
+# 为什么单独一个文件，而不是塞进 ci.yml：GitCode 侧 rust 组要装 webkit2gtk 一整套系统依赖，
+# 成本高于收益，所以它**不做**推送门禁；但"给 rust 组建基线"确实需要一次 Linux 运行。
+# 用独立的 workflow_dispatch 文件可以避开 GitCode 对 **job 级 if** 的语义依赖。
+#
+# 用法：
+#   1. 在 GitCode 仓库「Actions」页左侧选中本 workflow → 右侧 Run workflow → 选分支 → Run；
+#   2. 等作业跑完，下载产物 rust-report.json；
+#   3. node scripts/test-report.mjs --baseline-from rust-report.json
+#      （读数值写进 tests/baseline.json；要让它**被校验**，还需在 scripts/lib/gates.mjs
+#        给对应门禁补上 baseline: true —— 契约由人显式决定，脚本不擅自改。）
+#
+# ⚠️ GitCode 的一处行为（官方文档「手动触发流水线」的 FAQ 原文）：
+#   「workflow 的 on 字段**仅有** workflow_dispatch 事件时，yml 文件需要在**默认分支**下
+#     才会生成对应 workflow。」
+#   也就是说：本文件只有 workflow_dispatch ⇒ 在它进入默认分支（main）之前，Actions 页里
+#   **看不到**它、自然也没有 Run workflow 按钮。两条可行路径：
+#     · 先把本分支合进 dev → main（推荐：合并后再手动跑一次，顺手把读数并进基线）；
+#     · 或在 on 下临时加一个 push 触发（跑完删掉）——不推荐常驻。
+#
+# ⚠️ 2026-09-16：本文件已通过 GitCode 自己的
+#    POST /api/v8/repos/:owner/:repo/actions/workflows/validate   （valid=true）
+# 与 ci.yml 同一组平台约束：runs-on 白名单、每个 step 必须有合法 name、action 用 actions/xxx@vN。
+# 仍未在 GitCode runner 上实跑过（本机没有 GitCode runner）。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rust-baseline:
+    name: cargo test 产出读数
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm and npm mirror
+        run: |
+          npm config set registry https://registry.npmmirror.com
+          npm install -g pnpm@10
+
+      - name: Install rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cargo mirror (rsproxy)
+        run: |
+          mkdir -p ~/.cargo
+          printf '[source.crates-io]\nreplace-with = "rsproxy-sparse"\n[source.rsproxy-sparse]\nregistry = "sparse+https://rsproxy.cn/index/"\n' > ~/.cargo/config.toml
+
+      - name: Install system deps
+        # 这个 crate 在 Linux 上要链 webkit2gtk + bundled-sqlcipher 用的 OpenSSL +
+        # mupdf 的 bindgen (libclang)，少一个都编译不过。runner 是 ubuntu-latest，
+        # 所以 apt 在先；万一镜像不同再回退 dnf。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils \
+          || sudo dnf install -y gcc gcc-c++ make file wget curl \
+            webkit2gtk4.1-devel gtk3-devel librsvg2-devel openssl-devel clang libclang-devel xdg-utils
+
+      - name: Install frontend deps
+        run: |
+          cd repo_workspace 2>/dev/null || true
+          pnpm install --no-frozen-lockfile
+
+      - name: cargo test
+        # 这一步红不红不影响产出：报告在退出前就已落盘（见 scripts/test-report.mjs），
+        # 读数是否存在、是否可信由下一步的产物与 --baseline-from 的输出决定。
+        run: |
+          cd repo_workspace 2>/dev/null || true
+          node scripts/test-report.mjs --group rust --json rust-report.json --summary rust-summary.md
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-baseline-report
+          path: |
+            rust-report.json
+            rust-summary.md
+            repo_workspace/rust-report.json
+            repo_workspace/rust-summary.md

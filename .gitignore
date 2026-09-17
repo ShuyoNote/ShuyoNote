@@ -84,3 +84,8 @@ roundtrip.sh
 regcfg.sh
 .req.json
 .sync-verify-tmp/
+
+# 回归门禁的产物（scripts/test-report.mjs）：报告是给人看/给 CI 传的，不进仓库
+.test-report-tmp/
+.test-report-out/
+test-report-*.json

@@ -1,0 +1,24 @@
+{
+  "note": "需要在别的仓库 / 环境里执行、因而**不在本仓库 CI 里**的回归套件。登记在这里只有一个目的：让覆盖边界公开可见——'没跑'和'跑了且通过'必须能被区分，否则读者会把空白当成绿。",
+  "howToUpdate": "服务端仓库的 CI 跑完后用 scripts/external-suite-status.mjs 回写（id 稳定，status 只接受 passed/failed/unknown），再对公开仓库开 PR。手写 status 一定会腐烂，别手写。",
+  "suites": [
+    {
+      "id": "sync-regression",
+      "name": "sync-regression（同步一致性集成回归，需真实服务端二进制）",
+      "where": "shuyonote-sync-server 仓库 CI（客户端仓库故意不跑：这里没有可构建的同步服务端）",
+      "status": "本仓库不可见——最近状态见服务端仓库 CI"
+    },
+    {
+      "id": "sync-collab-regression",
+      "name": "sync-collab-regression（多人协作 / outbox 增量回归）",
+      "where": "shuyonote-sync-server 仓库 CI",
+      "status": "本仓库不可见——最近状态见服务端仓库 CI"
+    },
+    {
+      "id": "manual-device-acceptance",
+      "name": "真机手动验收（Android 开加密→重启→解锁；macOS 公证与自动更新）",
+      "where": "人工，按 docs/ 下的验收清单执行",
+      "status": "人工执行，结果记在 CHANGELOG 与对应验收清单里"
+    }
+  ]
+}

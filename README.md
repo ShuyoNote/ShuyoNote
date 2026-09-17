@@ -11,6 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.91.3-blue" alt="version">
+  <a href="https://github.com/ShuyoNote/ShuyoNote/actions/workflows/ci.yml"><img src="https://github.com/ShuyoNote/ShuyoNote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.50-3370ff" alt="lexical">
   <img src="https://img.shields.io/badge/Rust-1.94+-orange" alt="rust">
@@ -377,6 +378,7 @@ ShuyoNote/
 | [docs/plugin-first-plugin.md](docs/plugin-first-plugin.md) | **20 行写第一个插件**：脚手架 → manifest 与权限 → 第一个命令 → 装进应用 → 发布（含 [`plugin-index.json` 规范](docs/plugin-index-spec.md)、[开发者政策](docs/plugin-policy.md)） |
 | [docs/roadmap.md](docs/roadmap.md) | 演进路线图与里程碑规划（M1–M26 大部分已达成 + M16 跨平台/Web；**M17 薄 Agent AI / M18 内联起草 / M24 PDF 批注与 OCR-AI 增强 / M25 帮助系统 / M26 公式** 已达成；M27 团队版规划中；**移动端（安卓/iOS）即将推出**；M11.10 / M11.11 已评估未做，带启动闸门：见 [插件体系进化方案](docs/plans/2026-09-10-plugin-evolution-plan.md)） |
 | [docs/development.md](docs/development.md) | **开发指南**：运行 / 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / 约定 / 常见坑 |
+| [docs/TESTING.md](docs/TESTING.md) | **回归测试体系**：门禁总表（每条挡什么事故）/ 本地 `pnpm verify` / 断言数基线 `tests/baseline.json` / 结果公开在哪（step summary + artifact）/ **覆盖边界**（哪些套件不在此仓库跑） |
 | [docs/positioning.md](docs/positioning.md) | 产品定位陈述、目标用户与差异化 |
 | [docs/compare-obsidian-siyuan-shuyonote.md](docs/compare-obsidian-siyuan-shuyonote.md) | Obsidian / 思源笔记 / ShuyoNote 三方对比与定位 |
 | [docs/compare-flowus-wolai-notion-shuyonote.md](docs/compare-flowus-wolai-notion-shuyonote.md) | FlowUs / Wolai / Notion / ShuyoNote 四方对比与定位 |
