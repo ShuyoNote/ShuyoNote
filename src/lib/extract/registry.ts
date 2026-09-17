@@ -9,6 +9,7 @@
 import { imageOcrExtractor } from "./image";
 import { pdfTextExtractor } from "./pdf";
 import { OOXML_EXTRACTORS } from "./ooxml";
+import { textExtractor } from "./text";
 import type { Extractor } from "./types";
 
 /** 去掉 mime 参数并按小写归一：`Text/Plain; charset=utf-8` → `text/plain`。 */
@@ -98,8 +99,9 @@ export function pickExtractor(
  * P1 进度（2026-09-17）：
  *  - ✅ OOXML 一族（`ooxml.docx@1` / `ooxml.xlsx@1` / `ooxml.pptx@1`），cost=cpu
  *  - ✅ 图片 OCR（`image.ocr@1`），cost=gpu —— 也是契约 §15.3-7 那条不变量的活样板
- *  - ⏳ 待补：`pdf.text`（复用 pdfium/pdf.js 文本层，**应排在 `pdf.ocr` 前面**）、`pdf.ocr`、
- *    `image.caption`（VLM 语义描述，方案 §13 待拍板第 2 项默认留到 P3）、
+ *  - ✅ 纯文本（`text.plain@1`）—— 补上"txt/md/csv 直读"那一行（真样张跑器发现整目录 `.md` 全是
+ *    `no_extractor` 才补的）
+ *  - ⏳ 待补：`pdf.ocr`、`image.caption`（VLM 语义描述，方案 §13 待拍板第 2 项默认留到 P3）、
  *    `ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
  */
 export const REGISTRY: readonly Extractor[] = [
@@ -107,4 +109,6 @@ export const REGISTRY: readonly Extractor[] = [
   imageOcrExtractor,
   // ⚠️ 顺序即优先级：pdf.text 必须排在 pdf.ocr **前面**（先试便宜的文本层，抽不到才上视觉）
   pdfTextExtractor,
+  // 纯文本放最后：它的 `text/*` 与扩展名都不与上面几族重叠，放最后是为将来"更具体的纯文本子类"留位
+  textExtractor,
 ];

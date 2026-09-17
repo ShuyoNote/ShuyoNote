@@ -471,6 +471,53 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["transcript"], contains: [], locs: ["00:00:00"] },
     planned: true,
   },
+
+  // ===== 纯文本（Windows；**真样张跑器发现整目录 `.md` 全是 no_extractor** 之后补的）=====
+  {
+    id: "text/markdown-标题与段落",
+    pins:
+      "标题行**自己起一段**（真实 markdown 里标题后常无空行；只按空行切会把「标题+正文」合成一块、" +
+      "整块标成 heading，正文的类型就丢了）；`loc` = `L<块首行号>`，行号是纯文本唯一稳定的定位",
+    extractor: "text.plain@1",
+    filename: "说明.md",
+    mime: "text/markdown",
+    make: () => strToU8("# 标题\n正文一\n\n## 二级\n正文二\n"),
+    expect: {
+      ok: true,
+      kinds: ["heading", "text", "heading", "text"],
+      contains: ["# 标题", "正文一", "## 二级", "正文二"],
+      locs: ["L1", "L2", "L4", "L5"],
+    },
+  },
+  {
+    id: "text/csv",
+    pins: "csv/tsv 也是纯文本，整篇一段即可（列语义不归抽取层管）",
+    extractor: "text.plain@1",
+    filename: "值班表.csv",
+    mime: "text/csv",
+    make: () => strToU8("姓名,班次\n张三,早班\n"),
+    expect: { ok: true, kinds: ["text"], contains: ["姓名,班次", "张三,早班"], locs: ["L1"] },
+  },
+  {
+    id: "text/空文件",
+    pins: "空（或只有空白）⇒ `empty`，不是失败",
+    extractor: "text.plain@1",
+    filename: "空.txt",
+    mime: "text/plain",
+    make: () => strToU8("   \n\n  \n"),
+    expect: { ok: false, code: "empty" },
+  },
+  {
+    id: "text/含-NUL-的二进制",
+    pins:
+      "误命名成 `.txt` 的二进制（前 8KB 含 NUL）⇒ `unsupported`。" +
+      "**绝不能抽成乱码**——那会把二进制噪声灌进检索索引，而且看不出是错的",
+    extractor: "text.plain@1",
+    filename: "其实是二进制.txt",
+    mime: "text/plain",
+    make: () => new Uint8Array([0x68, 0x69, 0x00, 0x01, 0x02, 0x03]),
+    expect: { ok: false, code: "unsupported" },
+  },
 ];
 
 /** 按目标抽取器分组（跑器与"是否还有 planned 未落地"检查都用它）。 */
