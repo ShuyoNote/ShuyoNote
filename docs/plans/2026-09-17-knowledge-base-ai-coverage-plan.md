@@ -383,6 +383,22 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
   34 条 `plugins::tests::*` 全部失败，看起来像"34 条红"，其实是命令用错。测试自己就印了正确的提示。
   **正确命令是 `cargo test`（不加 `--lib`）**。这条值得单列：它已经浪费过一轮排查（并产出了一份错误结论）。
 - ✅ **同一组夹具跑三份实现**：格式抽取器分家后，三份实现共用一组夹具（同一批样张 → 期望文本），否则会退化成"三套都能跑但结果不一致"。
+- ⚠️ **一个会话 = 一份 clone / worktree**（2026-09-17 事故后新增，三方已确认）：
+  `reset` / `stash` / `index` 是**全局状态**，两个会话共用一份工作树 ⇒ 必出事故。
+  **真实事故**：本机把 `dev` **reset 过了已推送的 `6242299`**，于是"已提交过的内容"在工作区里
+  看起来像"未提交改动" —— 此时一次 `git commit -a` 就会产生重复补丁，一次 `git reset --hard` 就会**真的丢掉它**
+  （本地 HEAD 已不含它，只剩 origin 上有）。
+  **机器判据**（比"小心"可靠，Mac/AMD 各自提了一条，合并如下）：
+  ```bash
+  git status -sb            # 出现 [behind N] 且工作区同时有改动 ⇒ 先停下，不要 add/commit
+  git log --oneline origin/<branch> -- $(git diff --name-only) | head
+  #   有输出 ⇒ 这些改动**已经在 origin 上**了，此时**绝不要 commit**
+  ```
+  **destructive 操作前先把工作区差异落成仓库外的 patch**（`git diff HEAD > x.patch`）——
+  本次事故没造成损失，靠的就是这一步。
+  > 三方核对结果（2026-09-17）：Mac / AMD 都在**各自机器**上、都确认选 A；⇒ 那次 reset
+  > **发生在本机**，即本机确实有 **≥2 个会话共用一个工作树**（`5e3bff3` 与 `0dff4e0` 两个不同身份都在本机提交过）。
+  > **根治只能靠"另一个会话搬到自己的 worktree"**（AMD 那边就是 4 个 worktree 共用一个 `.git` 的做法）。
 
 ## 13. 待拍板
 
