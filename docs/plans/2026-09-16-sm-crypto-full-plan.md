@@ -126,7 +126,9 @@
 | 算法自证 | **GM/T 0002 SM4 向量**（ECB 无填充）= `681edf34d206965e86b3e94f536e4246` **逐字一致**；**SM3("abc")** = `66c7f0f4…4ba8e0` **一致**；SM4-CBC 往返一致 |
 | SM4 模式齐备 | CBC / CCM / CFB / CTR / ECB / GCM / OFB / XTS **全在**（含 OID：SM4-GCM `1.2.156.10197.1.104.8`、CCM `.104.9`、ECB `.104.1`） |
 | ⚠️ **不要过度解读的** | **TLCP 协议层没验**（`openssl ciphers -tlcp` 无输出）—— 这只证明**算法原语**可用，**不能当成"TLCP 可用"**；SM2 只验了密钥生成，不作为结论 |
-| Android 交叉编译 | ❌ **还没做**（AMD 那台没有 NDK）—— 那正是历史上卡过的一关，**P3 的 Android 侧仍是未知** |
+| **Android 交叉编译** | ✅ **成功**（`android-arm64=ok`，API 24，**NDK r29**，make 9 秒；产物 `lib/{libcrypto.a,libssl.a,libcrypto.so,libssl.so}` 与 `bin/openssl` 确认是 ELF aarch64）——**历史上卡过的那一关过了**。⚠️ **两个坑**：① **只认 `ANDROID_NDK_ROOT`**（`Configurations/15-android.conf`），只设 `ANDROID_NDK_HOME` 会死在 `$ANDROID_NDK_ROOT is not defined` ⇒ **三个都设**（`ROOT`/`HOME`/`NDK`）；② **安装目录：Linux 是 `lib64/`、Android 是 `lib/`**（按 Linux 经验找会误判成"没产出"） |
+| ⚠️ **Android 的边界（别读成"跑得起来"）** | **交叉编译成功 ≠ 能执行**：Android 可执行体要 `/system/bin/linker64`，NDK sysroot 里没有 ⇒ qemu 起不来。**但这不是当前阻塞项**：真正的验收是**Android 真机跑应用**（§7「Android 真机回归」：口令 → 加密 → 重启解锁 → 读写），**不为"替代自证"去做模拟器或静态链接** |
+| ⚠️ **NDK 版本口径** | 本地实测用 r29 = `29.0.14206865`，仓库 pin 的是 `29.0.13846066`（差一个小修订）⇒ **"能交叉编译"成立，但不能声称与 CI 逐字一致** |
 
 ### 需要改的点（A 路线）
 
