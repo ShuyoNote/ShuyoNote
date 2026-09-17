@@ -130,6 +130,44 @@
 | ⚠️ **Android 的边界（别读成"跑得起来"）** | **交叉编译成功 ≠ 能执行**：Android 可执行体要 `/system/bin/linker64`，NDK sysroot 里没有 ⇒ qemu 起不来。**但这不是当前阻塞项**：真正的验收是**Android 真机跑应用**（§7「Android 真机回归」：口令 → 加密 → 重启解锁 → 读写），**不为"替代自证"去做模拟器或静态链接** |
 | ⚠️ **NDK 版本口径** | 本地实测用 r29 = `29.0.14206865`，仓库 pin 的是 `29.0.13846066`（差一个小修订）⇒ **"能交叉编译"成立，但不能声称与 CI 逐字一致** |
 
+### 3.1 ⚠️ P2 与 P3 是**同一条** provider 补丁线（2026-09-17 AMD 实测，**改排期**）
+
+**被推翻的前提**：原方案把 P2 写成「改 PRAGMA 就能把 KDF/HMAC 换成 SM3 系」——**不成立**。
+AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.2 MB）翻了一遍：
+
+| 事实 | 值 |
+|---|---|
+| 全文件 SM3 命中 | **0**（`SM3` / `sm3` / `EVP_sm3` 各 0 次） |
+| `cipher_hmac_algorithm` 可取值 | 只有 `HMAC_SHA1 / HMAC_SHA256 / HMAC_SHA512` |
+| `cipher_kdf_algorithm` 可取值 | 只有 `PBKDF2_HMAC_SHA1 / SHA256 / SHA512` |
+
+⇒ **PRAGMA 层根本没有 SM3 这个取值**，它背后是**编译期 provider**（`sqlcipher_provider` 结构体，L109372 起：
+`hmac` / `kdf` / `cipher` / `get_hmac_sz` 全是回调）。
+**要上 SM3 必须动 provider，而 P3 的 SM4 页加密也动同一个结构体** ⇒ **P2/P3 合并为一条补丁线**（§6）。
+
+**四处必改**（行号取自 0.38.2 的 `sqlite3.c`）：
+
+| # | 位置 | 改什么 |
+|---|---|---|
+| 1 | L109358-109370 附近 `*_LABEL` 宏 ＋ 枚举 | 新增 `SQLCIPHER_HMAC_SM3_LABEL "HMAC_SM3"` / `SQLCIPHER_PBKDF2_HMAC_SM3_LABEL "PBKDF2_HMAC_SM3"` 与对应枚举 |
+| 2 | **L112304+**（`cipher_hmac_algorithm` 解析/回显）、**L112350+**（`cipher_kdf_algorithm`） | 各加一个 SM3 分支 ＋ 回显分支 |
+| 3 | **L113641**（`get_hmac_sz` → 返回 **32**）、**L113961-113976**（`kdf`：`PKCS5_PBKDF2_HMAC(..., EVP_sm3(), ...)`）、**L114074**（`hmac`：`HMAC(EVP_sm3(), …)`） | SM3 分支 |
+| 4 | 页加密 `cipher` 回调（P3） | SM4-CBC（**这里才需要 Tongsuo/OpenSSL 的 `EVP_sm4_cbc`**）——与第 3 项同一文件、同一结构体 |
+
+**应用侧要同步改（纯 Rust，可并行）**：
+
+1. **开库 PRAGMA**：全仓现在只有一条 `PRAGMA key = "x'<hex>'"`（`security.rs:128`），**没有任何 `cipher_*` 设定**
+   ⇒ 吃的是 SQLCipher 默认（PBKDF2-HMAC-SHA512 / HMAC-SHA512 / 256000 迭代）。
+   P2 要**显式**写 `PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SM3;`（新库），并保留旧库的 SHA512 读取路径。
+2. ⚠️ **P0 是硬前置（AMD 复核后确认"真的硬"，不是"最好有"）**：KDF/HMAC 一换，**旧库连页 HMAC 都验不过**——
+   不是"读出乱码"，而是**直接打不开**。⇒ 必须走 `sqlcipher_export()` 重写库，或**按库记录算法**——
+   **P0 的密文头/版本号正是干这个的**。
+3. **迭代数**（§0-D）仍留空：AMD 的夹具**故意不断言迭代数**，只断言「给定 key/iv/明文的字节一致性」⇒ P2 落地时**夹具不需要改**。
+
+**P2 交付时 AMD 承诺提供的验收**：对拍夹具（已在信箱 `gm-conformance/`）、**旧库→新库迁移用例**（要真跑 `cargo test`，正好在他那台）、
+以及 **provider 反向验证门禁**——断言**编出来的二进制里 SQLCipher 真的用上了 SM3**（不是"独立 openssl 命令行能用"），
+这条与 §7 的「断言实际 provider」是同一件事。
+
 ### 需要改的点（A 路线）
 
 1. **新增 provider**：SM4-CBC 页加密 ＋ HMAC-SM3 页 MAC ＋ PBKDF2-HMAC-SM3 派生；
@@ -239,8 +277,7 @@
 |---|---|---|---|
 | **P0** | **密文格式版本化**（`crypto.rs` + 迁移分派 + fixture） | **1 人日** | 无 —— **建议立刻做**，与档位无关、不改算法行为 |
 | **P1** | 应用层 SM4：附件 / 导出包 / 同步载荷三条路径 ＋ 双读 ＋ 回归 | 2–3 人日 | P0 |
-| **P2** | SQLCipher 侧：KDF 与 HMAC 换 SM3 系（枚举 + build 侧开放选择） | 1–2 人日 | P0 |
-| **P3** | **页加密 SM4 provider**（Tongsuo ＋ 薄补丁 ＋ 跨算法迁移验证） | 3–5 人日 | P2 |
+| **P2＋P3**（**2026-09-17 合并为一条线**，见 §3.1） | **provider 补丁线：SM3 先、SM4 后** —— 同一文件 `sqlcipher/sqlite3.c`、同一 `sqlcipher_provider` 结构体；分两次提交，但**同一分支、同一人** | 4–7 人日 | **P0（硬前置）** |
 | **P4** | 传输层：**走路径 2（已定，2026-09-17）** ⇒ 无新开发，只把 §5.3 的边界表写进交付说明。路径 3 暂缓，重启条件见 §5.2 | **≈0**（原 1 人日 / 1–2 周） | ✅ 已定 |
 | **P5** | 全链路真机验收 ＋ **老数据可读回归** ＋ 文档 | 1–2 人日 | P1–P4 |
 
