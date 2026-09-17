@@ -6,13 +6,14 @@
 // `2026-09-17-pdf-ocr-rasterizer-gap.reply-9`）。**与形状无关**的行为（页选择、页码、上限、
 // 失败传播、依赖缺失）在这里先钉住；裁定落地后，`fixtures.ts` 里补一条正向夹具，那一条会成为三轴共用口径。
 //
-// ⚠️ 因此本文件里凡是标注「A 方案形状」的假光栅化，注入的是**待裁定**的形状
-// （多带 `bytes` + `mime`）。它测的是**本抽取器的逻辑**（选哪些页、页码怎么给、失败怎么报），
-// 换形状时只需要改这个假实现，不需要改断言。
+// 形状已裁定（§15.8 第 1b 条：`rasterize` 直出**编码图**）⇒ 正向路径一律用**共享假 deps**
+// （`testing/fakeDeps.ts` 的 `fakeRasterize` 产出合法 PNG、用生产同一个编码器；`fakeVision` 确定性返回）。
+// 这里只保留一个**平台违约**用的假实现（裸 RGBA），钉"违约时不许把裸像素塞给 vision"。
 
 import { describe, expect, it } from "vitest";
 
 import { pdfPages } from "./fixtures";
+import { depsOf, fakeRasterize, fakeVision } from "./testing/fakeDeps";
 import { pdfOcrExtractor } from "./pdfOcr";
 import type { ExtractDeps, ExtractInput, RasterizedPage } from "./types";
 
@@ -20,27 +21,6 @@ const MIME = "application/pdf";
 
 function inputOf(bytes: Uint8Array, deps: ExtractDeps = {}): ExtractInput {
   return { bytes, filename: "扫描件.pdf", mime: MIME, hash: "h1", deps };
-}
-
-/** 假光栅化：**A 方案形状**（返回编码图 + mime）。记录调用，便于断言"只渲染了空页"。 */
-function encodedRasterize(opts: { pages: number; rejectOn?: readonly number[] } = { pages: 1 }) {
-  const calls: { pageIndex: number; scale: number }[] = [];
-  const fn: NonNullable<ExtractDeps["rasterize"]> = async (_bytes, pageIndex, scale) => {
-    calls.push({ pageIndex, scale });
-    if (opts.rejectOn?.includes(pageIndex) || pageIndex < 0 || pageIndex >= opts.pages) {
-      throw new Error(`渲染第 ${pageIndex} 页失败`);
-    }
-    // 编码图：形状是待裁定的那一种（`bytes` + `mime`）；`rgba` 留着满足当前类型。
-    const page = {
-      rgba: new Uint8Array(0),
-      width: 2,
-      height: 2,
-      bytes: new Uint8Array([pageIndex + 1, 0x89, 0x50]),
-      mime: "image/png",
-    };
-    return page as unknown as RasterizedPage;
-  };
-  return { fn, calls };
 }
 
 /** 假光栅化：**裸 RGBA** —— 如今这是**平台违约**的形状。
@@ -55,15 +35,6 @@ function rgbaRasterize(pages = 1) {
     calls.push(pageIndex);
     if (pageIndex >= pages) throw new Error("越界");
     return { rgba: new Uint8Array(16), width: 2, height: 2 } as unknown as RasterizedPage;
-  };
-  return { fn, calls };
-}
-
-function fakeVision(reply: string | ((prompt: string) => string)) {
-  const calls: { prompt: string; byteLength: number; mime: string }[] = [];
-  const fn: NonNullable<ExtractDeps["vision"]> = async (prompt, image, mime) => {
-    calls.push({ prompt, byteLength: image.length, mime });
-    return typeof reply === "function" ? reply(prompt) : reply;
   };
   return { fn, calls };
 }
@@ -107,11 +78,15 @@ describe("pdf.ocr@1 · 依赖缺失（§15.3-7 的活样板）", () => {
   });
 });
 
-describe("pdf.ocr@1 · 页图交给视觉通道的形状（**待裁定的契约缺口**）", () => {
-  it("平台只给裸 RGBA ⇒ provider_error 并说明缺「RGBA → 编码图」这一步（**不猜形状、也不把裸像素塞给 vision**）", async () => {
+describe("pdf.ocr@1 · 页图交给视觉通道的形状（已裁定为**编码图**；这里钉的是违约防御）", () => {
+  it("平台违约只给裸 RGBA ⇒ provider_error（**不许把裸像素塞给 vision**：适配器只能靠猜尺寸编码）", async () => {
     const raster = rgbaRasterize(1);
     const vision = fakeVision("不该被调用");
-    const r = await pdfOcrExtractor.extract(inputOf(scanPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    // 这一条用的是**本地**的裸 RGBA 假实现（不是共享 `fakeRasterize`：后者按契约产出编码图）
+    // ⇒ 直接组装 deps，不走 `depsOf()` 的共享形状。
+    const r = await pdfOcrExtractor.extract(
+      inputOf(scanPdf(), { rasterize: raster.fn, vision: vision.fn }),
+    );
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe("provider_error");
@@ -125,9 +100,9 @@ describe("pdf.ocr@1 · 页图交给视觉通道的形状（**待裁定的契约�
 
 describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => {
   it("混合文档：文字页出 `text`、扫描页出 `ocr`，页码**各自正确**、顺序与文档一致", async () => {
-    const raster = encodedRasterize({ pages: 3 });
+    const raster = fakeRasterize({ pages: 3 });
     const vision = fakeVision(() => "OCR 出来的那一页");
-    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), depsOf({ rasterize: raster, vision })));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.segments.map((s) => s.kind)).toEqual(["text", "ocr", "text"]);
@@ -136,9 +111,9 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
   });
 
   it("**只对没有文本层的页做视觉**：三页里只有 p.2 是图 ⇒ 只渲染一次、只调一次模型（页码 0 基 = 1）", async () => {
-    const raster = encodedRasterize({ pages: 3 });
+    const raster = fakeRasterize({ pages: 3 });
     const vision = fakeVision("字");
-    await pdfOcrExtractor.extract(inputOf(mixedPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    await pdfOcrExtractor.extract(inputOf(mixedPdf(), depsOf({ rasterize: raster, vision })));
     // 有文本层的页再烧一次 VLM 是**纯浪费**：混合文档里这是数量级差别
     expect(raster.calls.map((c) => c.pageIndex)).toEqual([1]);
     expect(raster.calls[0].scale).toBeGreaterThan(1); // 视觉要清晰度，不能按 1 倍（72dpi）渲染
@@ -147,9 +122,9 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
   });
 
   it("整篇都有文本层 ⇒ **一次视觉都不调**（走这条路说明调度器选错了候选，但结果不能错）", async () => {
-    const raster = encodedRasterize({ pages: 1 });
+    const raster = fakeRasterize({ pages: 1 });
     const vision = fakeVision("不该被调用");
-    const r = await pdfOcrExtractor.extract(inputOf(textPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    const r = await pdfOcrExtractor.extract(inputOf(textPdf(), depsOf({ rasterize: raster, vision })));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.segments.map((s) => s.kind)).toEqual(["text"]);
@@ -158,7 +133,7 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
   });
 
   it("单页没认出字 ⇒ 那一页不出段，但**不**把整篇判成失败（整页是照片是正常的）", async () => {
-    const raster = encodedRasterize({ pages: 3 });
+    const raster = fakeRasterize({ pages: 3 });
     const vision = fakeVision(() => "字");
     const r = await pdfOcrExtractor.extract(
       inputOf(pdfPages([{ text: "", graphics: true }, { text: "X" }, { text: "", graphics: true }]), {
@@ -172,9 +147,9 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
   });
 
   it("覆盖度：混合文档里 `pdf.ocr` 是**完整**覆盖（文字页给文本、扫描页给 OCR）⇒ 不传 coverage", async () => {
-    const raster = encodedRasterize({ pages: 3 });
+    const raster = fakeRasterize({ pages: 3 });
     const vision = fakeVision(() => "OCR 的字");
-    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), depsOf({ rasterize: raster, vision })));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     // 省略 coverage = 完整覆盖（契约口径）。这一条正是"混合文档不再静默丢页"的另一半：
@@ -183,7 +158,7 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
   });
 
   it("覆盖度：视觉对某一页没得到文字 ⇒ 记成缺口（覆盖度说的是「有没有内容」，不是「调用成没成功」）", async () => {
-    const raster = encodedRasterize({ pages: 2 });
+    const raster = fakeRasterize({ pages: 2 });
     let n = 0;
     const vision = fakeVision(() => (n++ === 0 ? "" : "第二页的字"));
     const r = await pdfOcrExtractor.extract(
@@ -200,9 +175,9 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
   });
 
   it("整篇都没得出文字 ⇒ empty（不是失败：抽取器认这种输入，只是没内容）", async () => {
-    const raster = encodedRasterize({ pages: 1 });
+    const raster = fakeRasterize({ pages: 1 });
     const vision = fakeVision("");
-    const r = await pdfOcrExtractor.extract(inputOf(scanPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    const r = await pdfOcrExtractor.extract(inputOf(scanPdf(), depsOf({ rasterize: raster, vision })));
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe("empty");
@@ -211,9 +186,9 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
 
 describe("pdf.ocr@1 · 失败传播：**不落半份**", () => {
   it("某一页光栅化失败 ⇒ provider_error 且带上页码（不是 internal、不是静默跳过那一页）", async () => {
-    const raster = encodedRasterize({ pages: 3, rejectOn: [1] });
+    const raster = fakeRasterize({ pages: 3, rejectOn: [1] });
     const vision = fakeVision("字");
-    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), depsOf({ rasterize: raster, vision })));
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe("provider_error");
@@ -221,10 +196,11 @@ describe("pdf.ocr@1 · 失败传播：**不落半份**", () => {
   });
 
   it("视觉模型抛异常 ⇒ provider_error 且带上页码（异常必须转成错误码，不穿透）", async () => {
-    const raster = encodedRasterize({ pages: 3 });
+    const raster = fakeRasterize({ pages: 3 });
     const vision: NonNullable<ExtractDeps["vision"]> = async () => {
       throw new Error("连接模型超时");
     };
+    // 手写的裸函数不是 `FakeVision` 形状 ⇒ 同样直接组装 deps
     const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), { rasterize: raster.fn, vision }));
     expect(r.ok).toBe(false);
     if (r.ok) return;
@@ -235,7 +211,7 @@ describe("pdf.ocr@1 · 失败传播：**不落半份**", () => {
 
   it("需要视觉的页超过上限 ⇒ **落已抽到的 + 用 coverage 标注缺口**（不再是整体失败）", async () => {
     const pages = 201; // MAX_OCR_PAGES = 200
-    const raster = encodedRasterize({ pages });
+    const raster = fakeRasterize({ pages });
     const vision = fakeVision(() => "字");
     const r = await pdfOcrExtractor.extract(
       inputOf(pdfPages(Array.from({ length: pages }, () => ({ text: "", graphics: true }))), {
