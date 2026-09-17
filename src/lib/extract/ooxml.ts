@@ -80,11 +80,58 @@ function directChildren(el: Element, localName: string): Element[] {
   return Array.from(el.children).filter((c) => c.localName === localName);
 }
 
-/** 拼接元素内所有 `<*:t>` 的文本（跨 run 合并，不插空格——OOXML 的 run 是样式切分，不是词切分）。 */
+/**
+ * 拼接一个段落/单元格里的文本，**按文档顺序**处理段内元素。
+ *
+ * 为什么不能简单地"取所有 `<w:t>` 拼起来"（那是我第一版的做法，**对真实文档是错的**）：
+ *  - `<w:br/>`（段内换行）与 `<w:tab/>`（段内制表）**没有文本内容**，
+ *    只取 `w:t` 会把它们整段丢掉 ⇒ **两行被黏成一行、对齐文本丢列位**。真实文档里极常见。
+ *  - `<w:delText>`（修订模式下**已删除**的文字）与 `<w:instrText>`（域代码，如 `PAGE \* MERGEFORMAT`）
+ *    **都不是正文**。第一版是因为它们的 localName 恰好不叫 `t` 才没被抽到——那是**偶然正确**；
+ *    这里改成显式排除，免得以后有人改了匹配方式就悄悄把它们抽进来。
+ *  - ⚠️ 必须跳过**属性块**（`w:pPr` / `w:rPr` / …）：`<w:pPr><w:tabs><w:tab w:pos="720"/></w:tabs></w:pPr>`
+ *    是**制表位定义**、不是制表符。若一路下钻，它们会被当成 `\t` 灌进正文（改这一版时差点踩到的坑）。
+ */
 function runText(el: Element): string {
-  return allByLocalName(el, "t")
-    .map((t) => t.textContent ?? "")
-    .join("");
+  let out = "";
+  const visit = (node: Element): void => {
+    for (const child of Array.from(node.children)) {
+      switch (child.localName) {
+        // 属性块：整块跳过（里面的 w:tab 是制表位定义，不是制表符）
+        case "pPr":
+        case "rPr":
+        case "tblPr":
+        case "trPr":
+        case "tcPr":
+        case "sectPr":
+          break;
+        case "t":
+          out += child.textContent ?? "";
+          break;
+        case "br":
+        case "cr":
+          out += "\n";
+          break;
+        case "tab":
+          out += "\t";
+          break;
+        case "noBreakHyphen":
+          out += "-";
+          break;
+        case "softHyphen":
+          break;
+        // 显式排除：修订删除的文字与域代码都不是正文
+        case "delText":
+        case "delInstrText":
+        case "instrText":
+          break;
+        default:
+          visit(child);
+      }
+    }
+  };
+  visit(el);
+  return out;
 }
 
 /** 段文本归一：CRLF→LF、去行尾空白、压掉连续空行。**不做 trim 以外的改写**（保确定性）。 */

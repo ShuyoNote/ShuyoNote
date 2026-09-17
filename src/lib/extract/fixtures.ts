@@ -198,6 +198,52 @@ export const FIXTURES: readonly ExtractFixture[] = [
     make: () => zipOf({ "foo.txt": "x" }),
     expect: { ok: false, code: "unsupported" },
   },
+  {
+    id: "ooxml/docx-段内换行与制表",
+    pins:
+      "`<w:br/>`→换行、`<w:tab/>`→制表符。**这两个没有文本内容**，只取 `w:t` 会整段丢掉 ⇒ " +
+      "两行被黏成一行、对齐文本丢列位（真实文档里极常见）",
+    extractor: "ooxml.docx@1",
+    filename: "换行.docx",
+    mime: "",
+    make: () =>
+      docxBody(
+        `<w:p><w:r><w:t>第一行</w:t><w:br/><w:t>第二行</w:t></w:r>` +
+          `<w:r><w:tab/><w:t>列2</w:t></w:r></w:p>`,
+      ),
+    expect: { ok: true, kinds: ["text"], contains: ["第一行\n第二行", "\t列2"] },
+  },
+  {
+    id: "ooxml/docx-制表位定义不算制表符",
+    pins:
+      "`<w:pPr><w:tabs><w:tab w:pos=\"720\"/></w:tabs></w:pPr>` 是**制表位定义**、不是制表符。" +
+      "遍历时若一路下钻属性块，会把一堆 `\\t` 灌进正文",
+    extractor: "ooxml.docx@1",
+    filename: "制表位.docx",
+    mime: "",
+    make: () =>
+      docxBody(
+        `<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="left" w:pos="1440"/></w:tabs></w:pPr>` +
+          `<w:r><w:t>正文</w:t></w:r></w:p>`,
+      ),
+    expect: { ok: true, kinds: ["text"], contains: ["正文"] },
+  },
+  {
+    id: "ooxml/docx-修订与域代码不入正文",
+    pins:
+      "`<w:delText>`（修订模式**已删除**的文字）与 `<w:instrText>`（域代码，如 `PAGE \\* MERGEFORMAT`）" +
+      "都不是正文。第一版是**偶然**没抽到（localName 恰好不叫 `t`）；这条把它变成**显式**保证",
+    extractor: "ooxml.docx@1",
+    filename: "修订.docx",
+    mime: "",
+    make: () =>
+      docxBody(
+        `<w:p><w:r><w:t>保留的</w:t></w:r>` +
+          `<w:del><w:r><w:delText>删掉的旧话</w:delText></w:r></w:del>` +
+          `<w:r><w:instrText>PAGE \\* MERGEFORMAT</w:instrText><w:t>3</w:t></w:r></w:p>`,
+      ),
+    expect: { ok: true, kinds: ["text"], contains: ["保留的", "3"] },
+  },
 
   // ===== 图片（Windows 已实现骨架 `image.ocr@1`；实跑调优归 AMD）=====
   {
