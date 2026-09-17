@@ -34,10 +34,11 @@ import {
 
 const ID = "pdf.ocr@1";
 
-/** 视觉调用的页数上限（**防御性**，不是成本口径）：超过就拒绝落半份并报错。
+/** 视觉调用的页数上限（**防御性**，不是成本口径）：撞上就**停止继续抽，并把剩下的页如实记成缺口**。
  *
  *  ⚠️ 200 取"正常扫描件够得到、病态文档够不到"：一页一次模型调用（**要钱**），
- *  但真正的成本闸门应该在调度器/成本口径那一层（§13），不该由抽取器偷偷截断内容。 */
+ *  但真正的成本闸门应该在调度器/成本口径那一层（§13）；这里只兜住"别把一次抽取变成几百次调用"。
+ *  撞上限**不是失败**（覆盖度会如实标注），下游据此知道"这不是全文"。 */
 export const MAX_OCR_PAGES = 200;
 
 /** 光栅化倍率（相对 PDF 默认 72dpi）：2 ⇒ 约 144dpi。
@@ -52,16 +53,17 @@ interface PageImage {
 }
 
 /**
- * ⚠️ **契约缺口（2026-09-17，已提给契约所有者，见信箱 `2026-09-17-pdf-ocr-rasterizer-gap.reply-9`）**：
+ * 一页光栅化结果 → 视觉通道载荷，并**防御平台违约**。
  *
- * - `deps.rasterize` 按契约给的是**裸 RGBA + 宽高**；
- * - `deps.vision(prompt, image, mime)` 要的是**编码图** —— 平台侧真正的视觉通道
- *   `src/lib/ai/ocrVision.ts` 只吃 `data:image/…;base64,…`（`image_url.url` / ollama `images:[b64]`）；
- * - 中间那一步（RGBA → PNG）**只能由平台做**（要 canvas / 原生库，正是 `isolated.test.ts` 禁的那类）。
+ * 契约已于 2026-09-17 裁定为 **A 方案**：`deps.rasterize` 直接产出**编码图**
+ * （`RasterizedPage = { bytes, mime, width, height }`，§15.8 第 1b 条；平台侧在
+ * `attachmentDeps.rasterize` 里用纯 JS 的 `rgbaToPng` 编码 —— Web 与桌面共用一份）。
+ * 也就是说**正常情况下这里只是取字段**。
  *
- * 所以这里**不猜**：只有当平台给出的页图**自带 mime**（即"光栅化直接产出编码图"这一裁定落地）时
- * 才把图交给视觉通道；否则报 `provider_error` 并把缺的那一步说清楚 ——
- * 这比"把裸 RGBA 塞进 `vision` 让它在适配器里崩成一句难懂的话"（或者更糟：让适配器去猜尺寸）好。
+ * 但"平台给了裸 RGBA / 忘了带 mime"这种违约在运行时仍可能发生（类型只能约束本仓的调用点），
+ * 而后果很脏：裸像素喂给 `vision`，适配器要么崩成一句难懂的话，要么**去猜尺寸**。
+ * 所以这里保留运行时校验：不符合形状就 `provider_error` 并说清是哪一步缺了 ——
+ * 这正是 `pdf-ocr.test.ts` 里那条"平台违约"判据要钉的行为。
  */
 function toVisionImage(page: RasterizedPage): PageImage | { missing: string } {
   const p = page as RasterizedPage & { bytes?: unknown; mime?: unknown };
@@ -70,9 +72,9 @@ function toVisionImage(page: RasterizedPage): PageImage | { missing: string } {
   }
   return {
     missing:
-      "平台只给了裸 RGBA（+宽高），而视觉通道要的是**编码图**（OCR 通道只吃 data URL）——"
-      + "中间缺「RGBA → PNG」这一步，而它在抽取层做不了（要 canvas / 原生库）。"
-      + "这一条已提给契约所有者（信箱 2026-09-17-pdf-ocr-rasterizer-gap.reply-9）",
+      "平台给的页图不是**编码图**（缺 `bytes`/`mime`，只给了裸 RGBA？）—— 契约要求 `rasterize` "
+      + "直接产出编码图（§15.8 第 1b 条）。抽取层不自己编码（要 canvas / 原生库，那正是隔离断言禁的那类），"
+      + "也不把裸像素塞给视觉通道（适配器只能靠猜尺寸）",
   };
 }
 
