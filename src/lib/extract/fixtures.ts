@@ -301,6 +301,19 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["text"], contains: ["parens ( and )"], locs: ["p.1"] },
   },
   {
+    // 正向那条（注入 vision 后出 kind=ocr、loc=p.<n>）等契约裁定「像素从哪来」之后再补：
+    // 抽取器要拿到页面像素，而 ExtractDeps 目前只有 vision
+    //（详见信箱 2026-09-17-pdf-ocr-rasterizer-gap.md）。
+    id: "pdf/扫描件走视觉通道（未注入 vision）",
+    pins: "§15.3-7 的不变量：没有 deps.vision 就必须立刻 provider_error、**绝不自建网络**（与 image.ocr 同一条底线）",
+    extractor: "pdf.ocr@1",
+    filename: "扫描件.pdf",
+    mime: "application/pdf",
+    make: () => pdfOf("", { withText: false }),
+    expect: { ok: false, code: "provider_error" },
+    planned: true,
+  },
+  {
     id: "image/有字",
     pins: "VLM 返回文字 ⇒ `kind: ocr`、`loc` 为空（单张图没有页/时间码的概念）",
     extractor: "image.ocr@1",
