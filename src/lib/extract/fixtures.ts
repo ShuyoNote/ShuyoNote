@@ -23,6 +23,41 @@ export function zipOf(files: Record<string, string>): Uint8Array {
   return zipSync(entries);
 }
 
+/**
+ * 造一个最小 PDF 夹具（一页），同样不在仓库里留二进制样张。
+ *
+ * `withText: false` 造的是**只有图形、没有任何文本算子**的页 —— 也就是"扫描件"在结构上的等价物
+ * （文字被画成像素，没有可抽的文本层）。这正是 PDF 这一轴最要紧的分支：`pdf.text` 抽不到时
+ * **必须**返回 `empty`（而不是 `corrupt` 或抛异常），调度器才会按候选列表去试 `pdf.ocr`。
+ *
+ * 交叉引用表按规范写全（偏移量真算），所以它是**合法 PDF**，不是"靠解析器容错才过"的假样本。
+ */
+export function pdfOf(text: string, opts: { withText?: boolean } = {}): Uint8Array {
+  const withText = opts.withText ?? true;
+  const content = withText
+    ? `BT /F1 24 Tf 20 100 Td (${text.replace(/[()\\]/g, (c) => `\\${c}`)}) Tj ET\n`
+    : `0 0 1 rg 20 20 100 100 re f\n`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R " +
+      "/Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((body, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefAt = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) out += `${String(off).padStart(10, "0")} 00000 n \n`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+
 export type FixtureExpectation =
   | {
       ok: true;
@@ -175,16 +210,18 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: false, code: "provider_error" },
   },
 
-  // ===== 待实现（`planned`）：先立期望，实现一落地就自动开始跑 =====
+  // ===== PDF + 扫描件（Mac 侧轴；`pdf.text@1` 已落地，故不再标 planned） =====
   {
     id: "pdf/文本层",
     pins: "一页一段、`loc = p.<n>`；**页序必须稳定**（回链靠它）",
     extractor: "pdf.text@1",
     filename: "制度.pdf",
     mime: "application/pdf",
-    make: () => new Uint8Array(0),
-    expect: { ok: true, kinds: ["text"], contains: [], locs: ["p.1"] },
-    planned: true,
+    // ⚠️ 样张用 **ASCII**：这是 Helvetica（Type1 简单字体）的最小 PDF，字串按单字节编码写进内容流，
+    //    塞 UTF-8 的中文会被解析成乱码 —— 那不是抽取器的 bug，是**样张本身不合法**。
+    //    中文（内嵌字体 + ToUnicode）走真实现场验证：见本仓 docs 里那条「真 PDF 复验」记录。
+    make: () => pdfOf("Chapter One of the Rules"),
+    expect: { ok: true, kinds: ["text"], contains: ["Chapter One"], locs: ["p.1"] },
   },
   {
     id: "pdf/扫描件（无文本层）",
@@ -192,9 +229,30 @@ export const FIXTURES: readonly ExtractFixture[] = [
     extractor: "pdf.text@1",
     filename: "扫描件.pdf",
     mime: "application/pdf",
-    make: () => new Uint8Array(0),
+    make: () => pdfOf("", { withText: false }),
     expect: { ok: false, code: "empty" },
-    planned: true,
+  },
+  {
+    id: "pdf/不是 PDF（换了扩展名）",
+    pins: "字节开头没有 `%PDF-` ⇒ `unsupported`，让调度器换别的抽取器（而不是报 corrupt 吓人）",
+    extractor: "pdf.text@1",
+    filename: "假装.pdf",
+    mime: "application/pdf",
+    make: () => new TextEncoder().encode("这不是 PDF，只是扩展名叫 .pdf\n"),
+    expect: { ok: false, code: "unsupported" },
+  },
+  {
+    id: "pdf/文本层里的括号与反斜杠",
+    pins: "PDF 字符串转义（`\\(` `\\)` `\\\\`）不能把正文搞坏——夹具自带转义，抽取结果要还原成原文",
+    extractor: "pdf.text@1",
+    filename: "转义.pdf",
+    mime: "application/pdf",
+    // ⚠️ 断言只钉**转义那一小段**，不钉整串：这个最小 PDF 用 Helvetica 且**没有字体度量数据**
+    //    （测试环境取不到 LiberationSans），pdf.js 在长串上会**截断**（实测："parens ( and ) he"）。
+    //    那是**样张/测试环境**的限制，不是抽取器的问题——真 PDF（Chrome 生成、字体内嵌）抽得完整，
+    //    见本轴的真实现场复验记录。这里要钉的是"\\\\( \\\\) 转义不会把正文搞坏"，前缀足够。
+    make: () => pdfOf("parens ( and ) and backslash \\ here"),
+    expect: { ok: true, kinds: ["text"], contains: ["parens ( and )"], locs: ["p.1"] },
   },
   {
     id: "image/有字",

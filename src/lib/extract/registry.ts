@@ -7,6 +7,7 @@
 //     否则一个"扩展名沾边但 mime 更准"的抽取器会抢在正确的那一个前面。
 
 import { imageOcrExtractor } from "./image";
+import { pdfTextExtractor } from "./pdf";
 import { OOXML_EXTRACTORS } from "./ooxml";
 import type { Extractor } from "./types";
 
@@ -101,4 +102,9 @@ export function pickExtractor(
  *    `image.caption`（VLM 语义描述，方案 §13 待拍板第 2 项默认留到 P3）、
  *    `ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
  */
-export const REGISTRY: readonly Extractor[] = [...OOXML_EXTRACTORS, imageOcrExtractor];
+export const REGISTRY: readonly Extractor[] = [
+  ...OOXML_EXTRACTORS,
+  imageOcrExtractor,
+  // ⚠️ 顺序即优先级：pdf.text 必须排在 pdf.ocr **前面**（先试便宜的文本层，抽不到才上视觉）
+  pdfTextExtractor,
+];
