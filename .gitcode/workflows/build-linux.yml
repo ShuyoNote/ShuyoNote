@@ -1,9 +1,20 @@
 name: build-linux
 
-# GitCode 流水线（默认 EulerOS/Linux runner）。打 tag v* 时自动构建 Linux 包（.deb + .AppImage）。
-# ⚠️ GitCode 流水线只有 Linux runner，无法构建 Windows/macOS——三平台自动发请用 GitHub Actions（见 .github/workflows/release.yml）。
+# GitCode 流水线（Linux runner）。打 tag v* 时构建 Linux 包（.deb + .AppImage）。
+# ⚠️ GitCode 流水线只有 Linux runner，无法构建 Windows/macOS——三平台自动发布用 GitHub Actions
+# （见 .github/workflows/release.yml）。
 # 启用：在 gitcode 仓库「Pipeline」页创建/启用（或 push 后自动识别 .gitcode/workflows/*.yml）。打 tag 触发。
-# 需要仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD（Linux 更新器签名，未配会打包失败）。
+#
+# ⚠️ 这个文件 2026-09-17 之前**是坏的、且从没跑过**（据实记录，别再让它变成"看着是活的"）：
+#   · GitCode 校验接口判 valid=false，4 条：runs-on 取值不在允许列表、steps[0] 没有 name、
+#     steps[2] 的 name 里有 `+`（字符集不允许）、`checkout-action@0.0.1` 这种简写不被认；
+#   · `/actions/artifacts` 里 **0 个 artifact** ⇒ 它从未产出过任何东西。
+#   按平台三条约束改正（见下），并已用同一接口复验 valid=true。
+#
+# 需要仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY + TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# （Linux 更新器的 .sig 签名；**未配会打包失败**——这是 GitCode 侧唯一的失败来源）。
+# 注意：本仓的正式发版**不依赖**这条流水线（GitHub Actions 出包 → release.mjs 上传到 gitcode release），
+# 它只是 GitCode 侧的一条备份构建路径。
 
 on:
   push:
@@ -12,16 +23,18 @@ on:
 
 jobs:
   build-linux:
-    runs-on: euleros-2.10.1
+    name: Linux 安装包
+    runs-on: ubuntu-24
     steps:
-      - uses: checkout-action@0.0.1
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Node
-        uses: setup-node@0.0.1
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install pnpm + npm mirror
+      - name: Install pnpm and npm mirror
         run: |
           npm config set registry https://registry.npmmirror.com
           npm install -g pnpm@latest
@@ -33,7 +46,7 @@ jobs:
 
       - name: Install Tauri Linux system deps
         run: |
-          # openEuler 用 dnf；若为 Ubuntu 系改用 apt-get。二者都可，兜底。
+          # ubuntu-24 走 apt；若在 openEuler 系 runner 上，dnf 那条会先生效（两者都留，兜底）。
           sudo dnf install -y gcc gcc-c++ make file wget curl \
             webkit2gtk4.1-devel gtk3-devel librsvg2-devel \
             openssl-devel clang libclang-devel xdg-utils 2>/dev/null || \
@@ -56,7 +69,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload artifacts
-        uses: upload-artifact@0.0.1
+        uses: actions/upload-artifact@v4
         with:
           name: shuyonote-linux
           path: repo_workspace/src-tauri/target/release/bundle/
