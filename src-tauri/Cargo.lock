@@ -2532,6 +2532,7 @@ dependencies = [
  "icu_provider",
  "smallvec",
  "utf16_iter",
+ "utf8_iter",
  "write16",
  "zerovec",
 ]
@@ -4917,6 +4918,7 @@ dependencies = [
  "encoding_rs",
  "futures-util",
  "hex",
+ "icu_normalizer",
  "jni 0.22.4",
  "libc",
  "mailparse",

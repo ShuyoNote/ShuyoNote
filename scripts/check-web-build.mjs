@@ -188,33 +188,69 @@ try {
   }
 
   // 插件管理那一屏（这一版的主战场）：能打开、且"从索引安装"在里面
+  //
+  // ⚠️ 这一步**必须等元素出现**，不能用固定 sleep：CI 的 2 核 runner 上三步点击之间固定
+  // 等 500–700ms 常常不够 ⇒ 后面的 `found` 为 false ⇒ 下面两条断言**静默跳过** ⇒
+  // 断言数从 8 掉到 6 ⇒ 基线报"退步"（2026-09-17 CI 实测：Linux 上就是这么红的，
+  // 而红的信息只有"从 8 降到 6"，说不出原因）。改成等元素 + 失败时如实报告现场。
   const pluginsOk = await page.evaluate(async () => {
-    const clickByText = (re) => {
-      const btn = Array.from(document.querySelectorAll("button")).find((b) => {
-        const label = (b.getAttribute("aria-label") || "").trim();
-        const text = (b.textContent || "").trim();
-        return re.test(label) || re.test(text);
-      });
-      if (!btn) return false;
-      btn.click();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const labelOf = (b) => `${b.getAttribute("aria-label") || ""} ${b.textContent || ""}`.trim();
+    const findBtn = (re) => Array.from(document.querySelectorAll("button")).find((b) => re.test(labelOf(b)));
+    /** 等目标按钮出现（最多 6s）——比固定 sleep 稳得多，也不再让"慢"表现成"静默跳过"。 */
+    const waitFor = async (re, timeoutMs = 6000) => {
+      const t0 = Date.now();
+      for (;;) {
+        const b = findBtn(re);
+        if (b) return b;
+        if (Date.now() - t0 > timeoutMs) return null;
+        await sleep(100);
+      }
+    };
+    const steps = [];
+    const clickStep = async (name, re) => {
+      const b = await waitFor(re);
+      if (!b) {
+        steps.push(`${name}=找不到`);
+        return false;
+      }
+      b.click();
+      steps.push(`${name}=已点`);
+      await sleep(200);
       return true;
     };
     // 插件管理的入口在「设置」里：设置（竖条上的 icon，aria-label="设置"）
     // → 左侧「插件」那一栏 → 卡片里的「打开插件管理」。三步都要点，少一步就找不到按钮。
-    const openedSettings = clickByText(/^设置$|^Settings$/i);
-    await new Promise((r) => setTimeout(r, 700));
-    clickByText(/^插件/);
-    await new Promise((r) => setTimeout(r, 500));
+    const openedSettings = await clickStep("设置", /^设置$|^Settings$/i);
+    // ⚠️ **必须双语**：这一栏的文案来自 i18n（`settings.plugins` ⇒ zh「插件」/ en「Plugins」），
+    //    而 CI 的 Chromium 默认 `navigator.language = en-US` ⇒ `src/i18n/index.ts` 选 `en`
+    //    ⇒ 只认中文的匹配器在 CI 上永远找不到这一栏。2026-09-17 实测：本机加 `--lang=en-US`
+    //    能**逐字复现** CI 的现象（6 通过 / 0 失败 + 同一条 ✗ 诊断）。
+    //    （下面「管理插件」「打开插件管理」是组件里硬编码的中文，不随语言变；真被 i18n 化那天，
+    //      "不许静默跳过"那条判据会把断言数掉下去，而不是悄悄少跑两条。）
+    //    ⚠️ 这里**不能**写 `/^Plugins\b/`：按钮的 textContent 是「标签 + 提示」**连写**
+    //    （`PluginsEnable/disable extensions`），`s` 与 `E` 之间没有词边界 ⇒ `\b` 永远不匹配。
+    //    （第一次就栽在这——写的时候以为在匹配一个单词。）
+    const clickedPlugins = openedSettings && (await clickStep("插件", /^插件|^Plugins/i));
     // 两个入口都认：卡片里的「打开插件管理」与设置页头部的「管理插件」
     // （界面在收拾信息层级，按钮文案可能变；这里不该因为换个词就红）
-    const openedManager = clickByText(/打开插件管理/) || clickByText(/管理插件/);
-    await new Promise((r) => setTimeout(r, 700));
+    const openedManager =
+      clickedPlugins && ((await clickStep("打开插件管理", /打开插件管理/)) || (await clickStep("管理插件", /管理插件/)));
+    await sleep(400);
     const text = document.body.textContent || "";
+    // ⚠️ 打印**头 25 + 尾 25**：只打印前 N 个会恰好把"我们要找的那个按钮"截掉
+    //（2026-09-17 实测：只打前 40 个时，英文的「Plugins」正好被截在名单之外，
+    //  于是我又多猜了一轮）。截断不能把证据一起截掉。
+    const all = Array.from(document.querySelectorAll("button")).map(labelOf).filter(Boolean);
+    const head = all.slice(0, 25);
+    const tail = all.length > 50 ? all.slice(-25) : all.slice(25);
+    const labels = `${head.join(" | ")}${tail.length ? ` …（共 ${all.length} 个）… ${tail.join(" | ")}` : ""}`;
     return {
-      found: openedSettings && openedManager,
+      found: Boolean(openedSettings && openedManager),
       opened: /插件管理/.test(text),
-      hasIndex: /从索引安装/.test(text),
       hasWebNote: /Web 版不支持磁盘插件/.test(text),
+      steps,
+      labels,
     };
   });
   if (pluginsOk.found) {
@@ -222,7 +258,11 @@ try {
     // Web 平台按设计不显示"从索引安装"面板（没有磁盘插件运行时），必须显示那句说明
     ok(pluginsOk.hasWebNote, "Web 版明确说明「不支持磁盘插件」，而不是装作能用");
   } else {
-    console.error("  ! 没找到插件入口（界面文案可能变了），跳过这一项");
+    // ⚠️ **不许静默跳过**：跳过会让断言数掉下去，而基线只会说"数字降了"、说不出原因
+    //（上面那段注释就是这次的真实经过）。`✗` 开头的行会被 `test-report.mjs` 的
+    // `extractFailures` 收进报告、并被 CI 注解带出来 ⇒ 下一次红自带原因与现场。
+    console.error(`  ✗ 插件入口没走到（${pluginsOk.steps.join("；")}）—— 这会让 2 条断言被跳过，基线会报退步`);
+    console.error(`  ✗ 现场按钮文案（前 40 个）：${pluginsOk.labels.slice(0, 1200)}`);
   }
 
   if (SHOTS) {

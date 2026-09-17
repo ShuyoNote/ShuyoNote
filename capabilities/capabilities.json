@@ -409,6 +409,83 @@
       "ai": true
     },
     {
+      "id": "files.search",
+      "title": "检索文件内容（块级）",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:files",
+      "since": "1.1.0",
+      "jsPath": [
+        "files",
+        "search"
+      ],
+      "args": [
+        {
+          "name": "query",
+          "type": "string",
+          "required": true,
+          "desc": "检索词（与界面搜索同一口径：兼容表意字会先归一）"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 10,
+          "desc": "最多返回多少条命中（1–100）"
+        }
+      ],
+      "returns": {
+        "type": "array",
+        "ts": "{ chunkId: string; pageId: string | null; attId: string | null; ord: number; loc: string; snippet: string; score: number }[]",
+        "desc": "块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）"
+      },
+      "rust": "cap_files_search",
+      "desc": "在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。",
+      "ai": true
+    },
+    {
+      "id": "files.read",
+      "title": "读取附件派生文本",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:files",
+      "since": "1.1.0",
+      "jsPath": [
+        "files",
+        "read"
+      ],
+      "args": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "desc": "附件 id"
+        },
+        {
+          "name": "offset",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "desc": "从第几段开始（默认 0）"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 200,
+          "desc": "最多返回多少段（上限 1000）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ segments: { extractor: string; kind: string; text: string; loc: string }[]; total: number; truncated: boolean } | null",
+        "desc": "派生文本段 + 总段数；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）"
+      },
+      "rust": "cap_files_read",
+      "desc": "读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。",
+      "ai": true
+    },
+    {
       "id": "editor.insertText",
       "title": "向当前页插入纯文本",
       "kind": "write",

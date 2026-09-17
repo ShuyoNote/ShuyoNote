@@ -27,6 +27,25 @@
 > **F 推翻了 §3 里"应用层也统一走 Tongsuo"的原建议**（那条建议的出发点是"一套实现"，但它把纯 Rust 的应用层绑到了 C 构建链上）。
 > 现在改为**按层分工**：**C 层用 Tongsuo，Rust 层用 RustCrypto**，两者用标准向量对拍钉住。
 
+### 0.1 套件常量表（**这是接口，不是实现细节** —— 2026-09-17 定，AMD 提的）
+
+理由是 AMD 那句话：**既然要"两份 SM4 实现"，"用哪个模式"就不再是实现细节**。
+一处定义、处处引用（实现 / 对拍夹具 / 验收清单），**不许各写一份**。
+
+| 项 | **钉死的值** | 依据 |
+|---|---|---|
+| **套件** | **SM4-CBC ＋ HMAC-SM3（encrypt-then-MAC）** | §0-B。⚠️ **不是 GCM / CCM** —— 早先文档里"或 SM4-GCM"那句**已作废** |
+| 分组 / 模式 | SM4-CBC，块 **16 字节** | GM/T 0002 |
+| 填充 | **PKCS#7**（CBC 必需，整块填充） | — |
+| IV | **16 字节随机**，随密文一起存（**不保密**）；**同一密钥下不得复用** | — |
+| MAC | **HMAC-SM3**，tag **32 字节** | GM/T 0004 |
+| **MAC 覆盖范围** | **版本头 ＋ IV ＋ 密文**；**encrypt-then-MAC，先验后解** | §0-B。漏掉版本头会让降级攻击可行 |
+| 密钥 | **两个独立密钥**（加密 key / MAC key），**不得同一个** | §0-B |
+| KDF | **PBKDF2-HMAC-SM3**；盐 **16 字节**；输出 **64 字节 → 前 32 加密 / 后 32 MAC**；**迭代次数待压测后写死**（§0-D） | §0-D |
+| 密文头 | **2 字节**（1B magic ＋ 1B 版本）；文本路径整体 base64、二进制路径直接用 | §0-A |
+| 实现来源 | 应用层 **RustCrypto**；库级 **Tongsuo**；**双向对拍是验收项** | §0-F |
+| RustCrypto 侧可用性（**2026-09-17 实测**） | `sm4 0.6.0`、`cbc 0.2.1`（含 `block-padding`）、`sm3 0.5.0`、`hmac 0.13.0` **全在**（`cargo add --dry-run`） | 回答 AMD 的"先确认 crate 齐不齐" |
+
 ---
 
 ## 1. 范围
@@ -95,6 +114,60 @@
 
 > 若后续发现 Rust 侧 FFI 成本不可接受，应用层可退回 RustCrypto，但**必须与库级实现做标准向量对拍**，并把"两份实现"写进文档。
 
+### Tongsuo 构建情报（**AMD 实测，2026-09-17** —— P3 直接用）
+
+| 项 | 实测结果 |
+|---|---|
+| **Linux 构建** | ✅ **成功，13 秒**（`-j32`，2086 个编译单元）⇒ **"Perl + Configure"那一关在 Linux 上不是问题**（历史上卡过的是 Android 的精简 Perl） |
+| 版本 | Tongsuo **8.5.0-pre2**（OpenSSL 3.5.4 底），源 = **Gitee 镜像** commit `540603a3` |
+| ⚠️ **源码别从 GitHub 取** | **两侧的 GitHub 都不通**（Windows 是 DNS 污染、AMD 那台 443 直连失败）⇒ **统一用 Gitee 镜像** `https://gitee.com/mirrors/Tongsuo.git`（实测可用，`8.2-stable` 等分支在） |
+| ⚠️ **安装路径** | `./Configure --prefix=<p> no-tests && make -j && make install_sw`；**装到 `<p>/lib64/`，不是 `lib/`**（AMD 第一次就栽在这） |
+| ⚠️ **运行期** | Linux 要 `LD_LIBRARY_PATH=<p>/lib64`，Windows 是 `PATH`；否则会去链系统的 `libssl.so.3` |
+| 算法自证 | **GM/T 0002 SM4 向量**（ECB 无填充）= `681edf34d206965e86b3e94f536e4246` **逐字一致**；**SM3("abc")** = `66c7f0f4…4ba8e0` **一致**；SM4-CBC 往返一致 |
+| SM4 模式齐备 | CBC / CCM / CFB / CTR / ECB / GCM / OFB / XTS **全在**（含 OID：SM4-GCM `1.2.156.10197.1.104.8`、CCM `.104.9`、ECB `.104.1`） |
+| ⚠️ **不要过度解读的** | **TLCP 协议层没验**（`openssl ciphers -tlcp` 无输出）—— 这只证明**算法原语**可用，**不能当成"TLCP 可用"**；SM2 只验了密钥生成，不作为结论 |
+| **Android 交叉编译** | ✅ **成功**（`android-arm64=ok`，API 24，**NDK r29**，make 9 秒；产物 `lib/{libcrypto.a,libssl.a,libcrypto.so,libssl.so}` 与 `bin/openssl` 确认是 ELF aarch64）——**历史上卡过的那一关过了**。⚠️ **两个坑**：① **只认 `ANDROID_NDK_ROOT`**（`Configurations/15-android.conf`），只设 `ANDROID_NDK_HOME` 会死在 `$ANDROID_NDK_ROOT is not defined` ⇒ **三个都设**（`ROOT`/`HOME`/`NDK`）；② **安装目录：Linux 是 `lib64/`、Android 是 `lib/`**（按 Linux 经验找会误判成"没产出"） |
+| ⚠️ **Android 的边界（别读成"跑得起来"）** | **交叉编译成功 ≠ 能执行**：Android 可执行体要 `/system/bin/linker64`，NDK sysroot 里没有 ⇒ qemu 起不来。**但这不是当前阻塞项**：真正的验收是**Android 真机跑应用**（§7「Android 真机回归」：口令 → 加密 → 重启解锁 → 读写），**不为"替代自证"去做模拟器或静态链接** |
+| ⚠️ **NDK 版本口径** | 本地实测用 r29 = `29.0.14206865`，仓库 pin 的是 `29.0.13846066`（差一个小修订）⇒ **"能交叉编译"成立，但不能声称与 CI 逐字一致** |
+
+### 3.1 ⚠️ P2 与 P3 是**同一条** provider 补丁线（2026-09-17 AMD 实测，**改排期**）
+
+**被推翻的前提**：原方案把 P2 写成「改 PRAGMA 就能把 KDF/HMAC 换成 SM3 系」——**不成立**。
+AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.2 MB）翻了一遍：
+
+| 事实 | 值 |
+|---|---|
+| 全文件 SM3 命中 | **0**（`SM3` / `sm3` / `EVP_sm3` 各 0 次） |
+| `cipher_hmac_algorithm` 可取值 | 只有 `HMAC_SHA1 / HMAC_SHA256 / HMAC_SHA512` |
+| `cipher_kdf_algorithm` 可取值 | 只有 `PBKDF2_HMAC_SHA1 / SHA256 / SHA512` |
+
+⇒ **PRAGMA 层根本没有 SM3 这个取值**，它背后是**编译期 provider**（`sqlcipher_provider` 结构体，L109372 起：
+`hmac` / `kdf` / `cipher` / `get_hmac_sz` 全是回调）。
+**要上 SM3 必须动 provider，而 P3 的 SM4 页加密也动同一个结构体** ⇒ **P2/P3 合并为一条补丁线**（§6）。
+
+**四处必改**（行号取自 0.38.2 的 `sqlite3.c`）：
+
+| # | 位置 | 改什么 |
+|---|---|---|
+| 1 | L109358-109370 附近 `*_LABEL` 宏 ＋ 枚举 | 新增 `SQLCIPHER_HMAC_SM3_LABEL "HMAC_SM3"` / `SQLCIPHER_PBKDF2_HMAC_SM3_LABEL "PBKDF2_HMAC_SM3"` 与对应枚举 |
+| 2 | **L112304+**（`cipher_hmac_algorithm` 解析/回显）、**L112350+**（`cipher_kdf_algorithm`） | 各加一个 SM3 分支 ＋ 回显分支 |
+| 3 | **L113641**（`get_hmac_sz` → 返回 **32**）、**L113961-113976**（`kdf`：`PKCS5_PBKDF2_HMAC(..., EVP_sm3(), ...)`）、**L114074**（`hmac`：`HMAC(EVP_sm3(), …)`） | SM3 分支 |
+| 4 | 页加密 `cipher` 回调（P3） | SM4-CBC（**这里才需要 Tongsuo/OpenSSL 的 `EVP_sm4_cbc`**）——与第 3 项同一文件、同一结构体 |
+
+**应用侧要同步改（纯 Rust，可并行）**：
+
+1. **开库 PRAGMA**：全仓现在只有一条 `PRAGMA key = "x'<hex>'"`（`security.rs:128`），**没有任何 `cipher_*` 设定**
+   ⇒ 吃的是 SQLCipher 默认（PBKDF2-HMAC-SHA512 / HMAC-SHA512 / 256000 迭代）。
+   P2 要**显式**写 `PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SM3;`（新库），并保留旧库的 SHA512 读取路径。
+2. ⚠️ **P0 是硬前置（AMD 复核后确认"真的硬"，不是"最好有"）**：KDF/HMAC 一换，**旧库连页 HMAC 都验不过**——
+   不是"读出乱码"，而是**直接打不开**。⇒ 必须走 `sqlcipher_export()` 重写库，或**按库记录算法**——
+   **P0 的密文头/版本号正是干这个的**。
+3. **迭代数**（§0-D）仍留空：AMD 的夹具**故意不断言迭代数**，只断言「给定 key/iv/明文的字节一致性」⇒ P2 落地时**夹具不需要改**。
+
+**P2 交付时 AMD 承诺提供的验收**：对拍夹具（已在信箱 `gm-conformance/`）、**旧库→新库迁移用例**（要真跑 `cargo test`，正好在他那台）、
+以及 **provider 反向验证门禁**——断言**编出来的二进制里 SQLCipher 真的用上了 SM3**（不是"独立 openssl 命令行能用"），
+这条与 §7 的「断言实际 provider」是同一件事。
+
 ### 需要改的点（A 路线）
 
 1. **新增 provider**：SM4-CBC 页加密 ＋ HMAC-SM3 页 MAC ＋ PBKDF2-HMAC-SM3 派生；
@@ -127,7 +200,22 @@
    **遇到不认识的版本/算法要明确报错，不许当成"数据损坏"**（同步侧同理：整空间层面就拒绝并提示升级，见 §0-C）；
 3. **后台重写**（可中断/可恢复/带进度）：附件逐个重加密、导出包新写用新算法、**空间库按 §3 迁移**；
 4. **回归 fixture**：用**当前版本生成的加密库与加密附件**做固定样本，断言"新版本仍能打开"——这是唯一能防"把老用户数据锁死"的手段；
-5. **测试向量**：SM3（GM/T 0004）、SM4（GM/T 0002）用**标准测试向量**断言；再加一条**跨语言一致性**用例（Rust 加密 ↔ 服务端/前端解密），防两侧实现漂移；
+5. ✅ **测试向量（Linux 侧已实做，2026-09-17，AMD）**：SM3（GM/T 0004）、SM4（GM/T 0002）用**标准测试向量**断言；再加一条**跨实现一致性**用例（RustCrypto ↔ Tongsuo），防两侧实现漂移。
+   夹具在信箱仓 `gm-conformance/{Cargo.toml, src/main.rs, driver.sh}`（两侧可直接取）。**实测 ALL PASS 8/8**：
+   SM4-ECB 标准向量**三方一致**（RustCrypto = Tongsuo = `681edf34…4246`）、SM3("abc") 一致、
+   RustCrypto→Tongsuo 解密一致、**Tongsuo→RustCrypto 解密明文一致且两侧密文逐字节相同**（CBC+PKCS#7 下的最强证据）、
+   HMAC-SM3 tag 一致（32 字节）。
+   > ⚠️ 夹具里的口径（照 §0.1）：套件 SM4-CBC ＋ HMAC-SM3、PKCS#7 填充、IV 16B；
+   > **加密/MAC 用同一把密钥只是为了证算法一致**，真正的 EtM 组装（**两把独立密钥 ＋ 版本头‖IV‖密文**）由 P1/P2 的调用方负责；
+   > **迭代数没有进断言**（§0-D 留空，先压测再写死）。
+   >
+   > **三个会白折腾半小时的 crate/shell 坑**（AMD 实测）：
+   > ① `sm4 0.6`/`cbc 0.2.1` 解析到 **`cipher 0.5.2`**（不是 0.4）⇒ 带填充的辅助方法是
+   > **`encrypt_padded_vec::<P>()` / `decrypt_padded_vec::<P>()`（没有 `_mut`）**，且分别在
+   > **`BlockModeEncrypt` / `BlockModeDecrypt`** 两个 trait 上；
+   > ② **`new_from_slice` 在 `KeyInit` 上、不在 `Mac` 上**（写 `<HmacSm3 as Mac>::new_from_slice` 会报 **E0576**）；
+   > ③ **`sh`(dash) 的 `printf` 不展开 `\xHH`** ⇒ 造二进制向量要用 `printf '%s' <hex> | xxd -r -p`，
+   > 否则输入变成超长字符串，**对面会算出一个"看起来合理"的错误答案**（第一版就栽在这，SM4-ECB 出来 48 字节）；
 6. **`ENC_VERIFY` sentinel**（`crypto.rs:16`）必须支持"按旧算法校验 → 用新算法重写"，否则老用户卡在解锁这一步。
 
 ---
@@ -189,8 +277,7 @@
 |---|---|---|---|
 | **P0** | **密文格式版本化**（`crypto.rs` + 迁移分派 + fixture） | **1 人日** | 无 —— **建议立刻做**，与档位无关、不改算法行为 |
 | **P1** | 应用层 SM4：附件 / 导出包 / 同步载荷三条路径 ＋ 双读 ＋ 回归 | 2–3 人日 | P0 |
-| **P2** | SQLCipher 侧：KDF 与 HMAC 换 SM3 系（枚举 + build 侧开放选择） | 1–2 人日 | P0 |
-| **P3** | **页加密 SM4 provider**（Tongsuo ＋ 薄补丁 ＋ 跨算法迁移验证） | 3–5 人日 | P2 |
+| **P2＋P3**（**2026-09-17 合并为一条线**，见 §3.1） | **provider 补丁线：SM3 先、SM4 后** —— 同一文件 `sqlcipher/sqlite3.c`、同一 `sqlcipher_provider` 结构体；分两次提交，但**同一分支、同一人** | 4–7 人日 | **P0（硬前置）** |
 | **P4** | 传输层：**走路径 2（已定，2026-09-17）** ⇒ 无新开发，只把 §5.3 的边界表写进交付说明。路径 3 暂缓，重启条件见 §5.2 | **≈0**（原 1 人日 / 1–2 周） | ✅ 已定 |
 | **P5** | 全链路真机验收 ＋ **老数据可读回归** ＋ 文档 | 1–2 人日 | P1–P4 |
 

@@ -364,4 +364,58 @@ mod tests {
             "url": "https://e/x.apk", "signature": format!("sha256:{}", "AB".repeat(32)) } } });
         assert!(android_entry(&upper).1.is_some());
     }
+
+    /// 线上清单验收（**默认不跑**）：`cargo test --lib live_manifest -- --ignored --nocapture`
+    ///
+    /// 为什么值得单独有这一条：**「darwin 的清单指向 dmg」这个 bug 在任何单测里都不会现形** ——
+    /// 它只有把清单**发出去之后**才成立，用户端表现为"检查更新能看到新版、下载也成功、但装不上"
+    /// （更新器在 macOS 上只解 `.app.tar.gz`）。发布期门禁（`scripts/release-manifest.test.mjs`）
+    /// 管的是"即将发出去的那份"；这一条管的是**线上正在服务的那份**。
+    ///
+    /// 线上暂时没有 darwin 键（macOS 通道未启用，见 `docs/macos-updater.md`）时**打印一行并放过**，
+    /// 不算失败 —— 否则在通道启用前这条判据一直红着，就会被当成"常态红"而失效。
+    #[tokio::test]
+    #[ignore]
+    async fn live_manifest_darwin_points_at_the_app_tarball() {
+        // 允许用环境变量换一个清单地址：这样能对着**本地假清单**做变异验证
+        //（"清单指向 dmg 时这条判据必须红"），不必等真出事。与 plugin_index/community 那些
+        // live 判据同一套做法：默认走线上，要验门禁就指到本地。
+        let url = std::env::var("SHUYONOTE_LIVE_MANIFEST").unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string());
+        let body = reqwest::get(&url)
+            .await
+            .expect("抓线上 latest.json 失败（网络？）")
+            .text()
+            .await
+            .expect("读 body 失败");
+        let manifest: serde_json::Value = serde_json::from_str(&body).expect("线上 latest.json 不是合法 JSON");
+        let platforms = manifest
+            .get("platforms")
+            .and_then(|p| p.as_object())
+            .expect("线上清单没有 platforms 对象 —— 桌面端的更新会**整份**解析失败");
+
+        let darwin: Vec<(&String, &serde_json::Value)> =
+            platforms.iter().filter(|(k, _)| k.starts_with("darwin")).collect();
+        if darwin.is_empty() {
+            println!("线上清单暂无 darwin 键（macOS 通道尚未启用）—— 跳过，不算失败");
+            return;
+        }
+        println!("线上清单 version={:?}", manifest.get("version"));
+        for (key, entry) in &darwin {
+            let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let sig = entry.get("signature").and_then(|v| v.as_str()).unwrap_or("");
+            println!("  {key} → {url}");
+            assert!(
+                url.ends_with(".app.tar.gz"),
+                "{key} 的 URL 不是 .app.tar.gz：{url}\n  ⇒ macOS 用户会「能下载、装不上」（更新器只解 .app.tar.gz）"
+            );
+            assert!(!sig.trim().is_empty(), "{key} 的 signature 为空：缺了它整份清单解析失败");
+        }
+        // universal 包一物两键：要么两个 darwin 键都在，要么都不在（只写一个 = 另一架构静默收不到更新）
+        let has_aarch64 = platforms.contains_key("darwin-aarch64");
+        let has_x64 = platforms.contains_key("darwin-x86_64");
+        assert!(
+            has_aarch64 == has_x64,
+            "darwin 两个键必须成对出现（universal 一物两键）：aarch64={has_aarch64} x86_64={has_x64}"
+        );
+    }
 }

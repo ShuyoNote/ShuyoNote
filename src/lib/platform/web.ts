@@ -1,4 +1,8 @@
 import { semanticScore } from "../searchSemantic";
+import { truncateByCodePoints } from "../textSnippet";
+import { normalizeForMatch } from "../extract/normalize";
+import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
+import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
@@ -31,6 +35,7 @@ import { useSyncStatus } from "../../store/syncStatus";
 import { unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { createOllamaTransport, createOpenAICompatTransport, testOllamaConnection, testOpenAICompatConnection } from "../ai/llm";
+import { renderPdfjsPageToRgba, type PdfjsRenderLike } from "../pdfEngine/pdfjsRaster";
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -422,7 +427,9 @@ function backlinkRefMatches(text: string, title: string): boolean {
 }
 
 function truncateChars(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + "…" : s;
+  // ⚠️ 按**码点**截断（原先 `s.slice(0, n)` 会把 emoji 的代理对切成一半 ⇒ 用户看到 "a�…"）。
+  // 口径集中在 `src/lib/textSnippet.ts`（有判据钉住"不许切出孤立代理"）。
+  return truncateByCodePoints(s, n);
 }
 
 // Lightweight relevance tokenizer: split into ASCII words + CJK bigrams so both
@@ -1715,7 +1722,11 @@ function makeInvoke(store: SqliteStore) {
     // ---- Search (SQL LIKE over title + text) ----
     if (cmd === "search") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
-      const query = String(req.query ?? a.query ?? "");
+      // 查询侧归一化（契约 §15.9）：与**存储侧**（`pipeline.ts` 落库前）同口径折兼容表意字。
+      // 不折的后果：抽取层把「康熙部首 ⼀(U+2F00)」折成了「一」，用户从 PDF 里粘一个兼容形来搜
+      // 就是**搜不到**（索引归一了、查询没归一）。归一化放在入口，下面排序/双字符语义/查询向量
+      // 全部用同一份 —— 漏一处就会变成"某些入口搜不到"。
+      const query = normalizeForMatch(String(req.query ?? a.query ?? ""));
       const lim = Number(req.limit ?? a.limit ?? 50);
       const wsId = getWs()?.id ?? getActiveWsId();
       if (!query) return [] as T;
@@ -1801,7 +1812,8 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "search_blocks") {
       const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
-      const query = String(req.query ?? a.query ?? "").toLowerCase();
+      // 与上面 `search` 同口径（块搜索也是查询入口；少了这一步会变成"全库搜得到、块搜搜不到"）
+      const query = normalizeForMatch(String(req.query ?? a.query ?? "")).toLowerCase();
       if (!query) return [] as T;
       const rows = store.query("SELECT id, title, content_json, content_text FROM pages WHERE deleted_at IS NULL AND (LOWER(content_text) LIKE ? OR LOWER(title) LIKE ?)", [`%${query}%`, `%${query}%`]);
       const out = [];
@@ -1815,6 +1827,69 @@ function makeInvoke(store: SqliteStore) {
         }
       }
       return out as T;
+    }
+    // ---- Chunk-level search (只读；与桌面 `search.rs::search_chunks` 同口径) ----
+    if (cmd === "search_chunks") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      // 查询侧归一化：与 `search` 分支**同一口径**（不归一化会出现"全库搜得到、块搜搜不到"）
+      const query = normalizeForMatch(String(req.query ?? a.query ?? "")).trim();
+      if (!query) return [] as T;
+      const lim = Number(req.limit ?? a.limit ?? 20);
+
+      // 向量加分（可选、有界、失败静默退回关键词）—— 这段留在平台层，因为它要读用户的嵌入配置、
+      // 调模型；"读块 + 排序"那半在 `chunkSearch.ts`（于是它能被真 store 驱动着测）。
+      let bonus: Map<string, number> | undefined;
+      const embedCfg = readEmbedConfig();
+      if (embedCfg) {
+        try {
+          const rows = store.query<{ id: string; hash: string }>("SELECT id, hash FROM chunks");
+          const queryVec = await embedText(query, embedCfg);
+          if (queryVec && queryVec.length && rows.length) {
+            const hashById = new Map(rows.map((r) => [r.id, r.hash]));
+            bonus = new Map();
+            const embRows = store.query<{ chunk_id: string; model: string; vector: string; hash: string }>(
+              "SELECT chunk_id, model, vector, hash FROM chunk_embeddings",
+            );
+            for (const e of embRows) {
+              // ⚠️ 两道闸：模型要一致，`hash` 要与**块自己的 hash** 一致 —— 后者防的是
+              // "块内容改了、向量还是旧的"（`hash` 这一列存在的理由就是它）。
+              if (e.model !== embedCfg.model) continue;
+              if (!e.hash || e.hash !== hashById.get(e.chunk_id)) continue;
+              try {
+                const v = JSON.parse(e.vector) as number[];
+                if (Array.isArray(v) && v.length) bonus.set(e.chunk_id, CHUNK_VECTOR_BONUS * cosineSim(queryVec, v));
+              } catch {
+                /* 坏向量按没有处理 */
+              }
+            }
+          }
+        } catch {
+          /* 嵌入失败 ⇒ 退回关键词 */
+        }
+      }
+
+      return searchChunksVia(
+        store as unknown as DerivedTextQuery,
+        query,
+        lim,
+        rankPagesForSearch as unknown as RankFn,
+        bonus,
+      ) as T;
+    }
+
+    // ---- Attachment derived text (只读 attachment_text；与桌面 `read_attachment_text` 同语义) ----
+    // 逻辑在 `derivedText.ts`（**平台无关的那半**）—— 抽出去的理由见那个文件的注释：
+    // 写在这里的话，测试拿不到本文件私有的 store，于是这条分支只能有"契约级覆盖"。
+    if (cmd === "read_attachment_text") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      const id = String(req.id ?? a.id ?? "");
+      if (!id.trim()) throw new Error("bad_args: id 不能为空");
+      return readAttachmentTextVia(
+        store as unknown as DerivedTextQuery,
+        id,
+        Number(req.offset ?? a.offset ?? 0),
+        Number(req.limit ?? a.limit ?? 200),
+      ) as T;
     }
     if (cmd === "get_page_blocks") {
       const pageId = String(a.pageId ?? a.page_id ?? "");
@@ -3598,9 +3673,22 @@ export function createWebPlatform(): Platform {
       },
     },
     pdfRender: {
-      renderPdfPage: async () => {
-        // Web has no native engine; the reader falls back to pdf.js.
-        throw new Error("native pdf render not available on web");
+      renderPdfPage: async (attachmentId, pageIndex, scale) => {
+        // Web 没有原生引擎，但**有能力**：平台层本来就允许有 DOM，用 pdf.js + canvas 渲染。
+        // （抽取层的 `pdf.ocr` 需要"页 → 像素"时就走这里；那份判断见信箱
+        //  2026-09-17-pdf-ocr-rasterizer-gap.reply-1.md：桩补在平台层，不塞进抽取层。）
+        //
+        const att = await invokeWhenReady<{ hash: string }>("get_attachment", { id: attachmentId });
+        const raw = await invokeWhenReady<number[] | Uint8Array>("read_attachment_bytes", { hash: att.hash });
+        const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+
+        // ⚠️ pdf.js 必须**动态**引入：阅读器是懒加载它的（见 PdfReader 的注释），
+        //    静态引入会把 pdf.js 拖进首屏包。
+        const pdfjs = (await import("pdfjs-dist")) as unknown as PdfjsRenderLike;
+        // 渲染核在 src/lib/pdfEngine/pdfjsRaster.ts —— 抽出去是为了让
+        // scripts/check-pdf-raster-web.mjs 能在**真 Chromium** 里直接跑**这段发货代码**，
+        // 而不是在检查脚本里复制一遍操作序列（那只能证明"复制品是对的"）。
+        return await renderPdfjsPageToRgba(pdfjs, bytes, pageIndex, scale);
       },
       nativeAvailable: () => false,
     },

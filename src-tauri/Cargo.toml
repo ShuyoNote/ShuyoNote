@@ -23,6 +23,10 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher", "backup"] }
+# 查询侧归一化（§15.9）：只折「兼容表意字」用的 NFKC 数据。
+# ⚠️ 它**已经在 Cargo.lock 里**（2.0.1，由 idna/url 那条链带进来）⇒ 这里只是把它提成直接依赖，
+#    没有新增下载、也没有多一份数据表。选它而不是 unicode-normalization：后者本仓 lock 里没有。
+icu_normalizer = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }

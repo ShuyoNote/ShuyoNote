@@ -30,6 +30,8 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "blocks.list", kind: "read", scope: "current-space", permission: Some("read:pages"), since: "1.0.0", mediate: "-", rust: "cap_blocks_list" },
     Capability { id: "backlinks.list", kind: "read", scope: "current-space", permission: Some("read:backlinks"), since: "1.0.0", mediate: "-", rust: "cap_backlinks_list" },
     Capability { id: "files.list", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.0.0", mediate: "-", rust: "cap_files_list" },
+    Capability { id: "files.search", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.1.0", mediate: "-", rust: "cap_files_search" },
+    Capability { id: "files.read", kind: "read", scope: "current-space", permission: Some("read:files"), since: "1.1.0", mediate: "-", rust: "cap_files_read" },
     Capability { id: "editor.insertText", kind: "write", scope: "current-space", permission: Some("write:page.current"), since: "1.0.0", mediate: "immediate", rust: "cap_editor_insert_text" },
     Capability { id: "pages.create", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_create" },
     Capability { id: "blocks.append", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_blocks_append" },

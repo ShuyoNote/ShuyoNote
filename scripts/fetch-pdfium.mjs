@@ -41,18 +41,50 @@ const RELEASE_BASE = `https://github.com/bblanchon/pdfium-binaries/releases/down
  * 平台 → { asset, sha256 }。
  * `sha256` 必须由**实测**填入（`--print-sha256`），为 null 时脚本**硬失败**——
  * 宁可让人补一次校验和，也不要"悄悄下载一个来路不明的二进制"。
+ *
+ * ⚠️ **补校验和的正确取法（2026-09-17 实测踩出来的，别再按"下载完就记哈希"做）**：
+ * 本机网络下 curl 会被 `--max-time` 截断，而**截断的文件照样算得出哈希**——
+ * 直接记下去就等于把一个**错的校验和**写进仓库，之后所有人都会"校验通过"地拿到坏包。
+ * 正确顺序是**先拿权威哈希，再校验下载**：
+ *   1) 取同 release 里的 `pdfium-attestation.json`（Sigstore/DSSE 信封）；
+ *   2) 解开 `dsseEnvelope.payload`（base64 → in-toto Statement v1），
+ *      `subject[].digest.sha256` **就是权威哈希表**（含全部平台）；
+ *   3) 下载后与之比对，不符就删掉重下。
+ * 实测：`android-arm64` / `mac-univ` 首取即一致；**`linux-x64` / `win-arm64` 首取被截断**
+ * （1,144,208 / 1,898,626 字节，都是残缺文件），重下才对；`win-x64` 的既有值也与溯源一致
+ * ⇒ **这套核对本身是可靠的**，四个平台的哈希都经它验证过。
  */
 const PLATFORMS = {
   "win-x64": {
     asset: "pdfium-win-x64.tgz",
-    // 2026-09-16 实测（3,733,154 字节，与 GitHub release API 报告的资产大小一致）
+    // 2026-09-16 实测 3,733,154 字节（与 GitHub release API 报告的资产大小一致）
     sha256: "73cc0de638ac2095e7445bf56a38200a5b7c7ca0e9f4ba144598f2457377ac08",
     lib: "bin/pdfium.dll",
   },
-  "win-arm64": { asset: "pdfium-win-arm64.tgz", sha256: null, lib: "bin/pdfium.dll" },
-  "linux-x64": { asset: "pdfium-linux-x64.tgz", sha256: null, lib: "lib/libpdfium.so" },
-  "mac-univ": { asset: "pdfium-mac-univ.tgz", sha256: null, lib: "lib/libpdfium.dylib" },
-  "android-arm64": { asset: "pdfium-android-arm64.tgz", sha256: null, lib: "lib/libpdfium.so" },
+  "win-arm64": {
+    asset: "pdfium-win-arm64.tgz",
+    // 2026-09-17 实测 3,522,432 字节（经 attestation 交叉核对）
+    sha256: "d3035d4d2cacac6ecd1a2ece197a3d702a1b2a58466276b9f870b8cb278a9d84",
+    lib: "bin/pdfium.dll",
+  },
+  "linux-x64": {
+    asset: "pdfium-linux-x64.tgz",
+    // 2026-09-17 实测 3,644,759 字节（经 attestation 交叉核对）
+    sha256: "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d",
+    lib: "lib/libpdfium.so",
+  },
+  "mac-univ": {
+    asset: "pdfium-mac-univ.tgz",
+    // 2026-09-17 实测 7,006,774 字节（经 attestation 交叉核对）
+    sha256: "df451a413c3609585e84a4a91110a9bc889cff05fe3b2db0ed817c9e90c3f7d3",
+    lib: "lib/libpdfium.dylib",
+  },
+  "android-arm64": {
+    asset: "pdfium-android-arm64.tgz",
+    // 2026-09-17 实测 3,321,706 字节（经 attestation 交叉核对）
+    sha256: "16d23bb86c4188d59326dc509938f59df3c417ecfdd3d2ca2f160dc5bd49a839",
+    lib: "lib/libpdfium.so",
+  },
 };
 
 function detectPlatform() {
@@ -107,7 +139,13 @@ if (!platform || !PLATFORMS[platform]) {
 }
 const spec = PLATFORMS[platform];
 const outDir = join(OUT_ROOT, platform);
-const libPath = join(outDir, spec.lib.replace(/\//g, "\\"));
+// ⚠️ **不要**把 `spec.lib` 里的 `/` 换成 `\`：`lib` 是**包内**的 POSIX 路径
+// （`lib/libpdfium.dylib` / `lib/libpdfium.so`），`node:path` 的 `join` 会按当前平台处理分隔符。
+// 2026-09-17 在 macOS 上实测到后果：原来那版 `join(outDir, spec.lib.replace(/\//g, "\\"))`
+// 在 POSIX 上会得到一个**带字面反斜杠**的路径 `…/mac-univ/lib\libpdfium.dylib` ⇒ `existsSync` 恒假
+// ⇒ 收尾那行打印「完成：…（0 字节）」（其实文件有 15,219,824 字节），`--check` 也会误报"缺少"。
+// Windows 上因为反斜杠恰好是对的，所以这个 bug 只在 macOS/Linux 露头。
+const libPath = join(outDir, spec.lib);
 
 if (flag("--check")) {
   if (!existsSync(libPath)) {

@@ -1,7 +1,7 @@
 use crate::db::Db;
 use crate::models::SearchResult;
 use rusqlite::{params, Connection};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::State;
 
@@ -425,10 +425,23 @@ async fn search_semantic_async(
         .collect())
 }
 
+/// 命令入口的查询准备：trim → 属性过滤 → **查询侧归一化**（契约 §15.9）。
+///
+/// 为什么归一化在这一层、而不是在 `search_in_conn` 里：下游拿到的是**同一份**文本 ——
+/// 分词、FTS/LIKE、snippet 高亮、以及查询向量。任何一处漏掉都会变成"某些入口搜不到"，
+/// 而那种不一致最难查（单跑那条路径还是绿的）。
+///
+/// 为什么要归一化：抽取层在落库前会把「康熙部首 ⼀(U+2F00)」折成「一」，
+/// 用户从 PDF 里粘一个兼容形来搜，若不折就是**搜不到**（索引归一了、查询没归一）。
+fn prepare_query(raw: &str) -> (String, Vec<(String, String)>) {
+    let (text, filters) = parse_prop_filters(raw.trim());
+    (crate::textnorm::normalize_for_match(&text), filters)
+}
+
 #[tauri::command]
 pub async fn search(db: State<'_, Db>, args: SearchArgs) -> Result<Vec<SearchResult>, String> {
     let limit = args.limit.unwrap_or(50).min(200);
-    let (text, filters) = parse_prop_filters(args.query.trim());
+    let (text, filters) = prepare_query(&args.query);
     if text.is_empty() && filters.is_empty() {
         return Ok(vec![]);
     }
@@ -623,6 +636,367 @@ fn search_like(
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+
+// ---------------------------------------------------------------------------
+// 块级检索（**只读**）—— 接口与判据见信箱 `2026-09-17-retrieval-query-normalization.reply-1`。
+//
+// 为什么第一片只做"读"：`chunks` / `chunk_embeddings` 的**写入**语义已经在 TS 侧收口
+// （`id = <ownerKey>#<ord>` 稳定、`hash = fnv1a32(text)`、整体替换不留孤儿），而读能立刻产生价值
+// （AI 的 `files.search`、块级召回）。所以：
+//   · **不动 DDL**（真 BM25 要一张 FTS5 表 + 同步触发器，而 schema 在两处：TS `extract/schema.ts` 与
+//     本文件所在的桌面库 —— 那是共享改动，得契约所有者点头；这版先用"关键词覆盖 + 向量"的混合分）；
+//   · **不写 `chunk_embeddings`**（"什么时候嵌、用哪个模型配置"是另一条口径）；
+//   · `chunks` 表不存在（老库/没迁移）⇒ **空结果**，不报红（向前兼容）。
+// ---------------------------------------------------------------------------
+
+const CHUNK_LIMIT_DEFAULT: usize = 20;
+const CHUNK_LIMIT_MAX: usize = 100;
+/// 向量加分上限：**不主导**关键词（与页面级的 `VECTOR_BONUS` 同一个思路）。
+const CHUNK_VECTOR_BONUS: f32 = 6.0;
+/// 片段长度（与页面级 `build_like_snippet` 的调用口径一致）。
+const CHUNK_SNIPPET_LEN: usize = 120;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchChunksArgs {
+    pub query: String,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// 与 `search` 同一个类型：前端传（用户配了嵌入模型才有）。不给 ⇒ 纯关键词。
+    #[serde(default)]
+    pub embedding: Option<EmbedCfg>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkHit {
+    pub chunk_id: String,
+    /// 两类 owner 各占一个字段（`page:<pageId>` 与 `att:<attId>`）—— 消费方要能回链，
+    /// 所以**两个都带出来**，而不是塞一个 `owner` 字符串让调用方自己拆。
+    pub page_id: Option<String>,
+    pub att_id: Option<String>,
+    pub ord: i64,
+    pub loc: String,
+    pub snippet: String,
+    pub score: f64,
+}
+
+/// 块级查询的准备：trim + **查询侧归一化**（与 `prepare_query` 同口径）。
+///
+/// 不归一化的后果和页面级一样、但更难查：会出现"**全库搜得到、块搜搜不到**"
+/// （`blocks.rs` 上已经踩过一次同类的坑）。
+pub(crate) fn prepare_chunk_query(raw: &str) -> String {
+    crate::textnorm::normalize_for_match(raw.trim())
+}
+
+/// `sqlite_master` 里有没有这张表（老库可能还没迁移；缺表要**当空结果**，不是错误）。
+fn table_exists(c: &Connection, name: &str) -> bool {
+    c.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![name],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
+/// `chunk_embeddings` 里那条向量**能不能用**：模型必须一致，且 `hash` 必须与**块自己的 hash** 一致。
+///
+/// 抽成纯函数就是为了能直接测这条规则本身 —— hash 对不上却仍用那条向量，等于"改了内容还在用旧向量"，
+/// 而那正是 `hash` 这一列存在的理由。
+fn chunk_vector_usable(row_model: &str, row_hash: &str, chunk_hash: &str, want_model: &str) -> bool {
+    row_model == want_model && !row_hash.is_empty() && row_hash == chunk_hash
+}
+
+struct ChunkRow {
+    id: String,
+    page_id: Option<String>,
+    att_id: Option<String>,
+    ord: i64,
+    loc: String,
+    text: String,
+    hash: String,
+}
+
+fn read_chunks(c: &Connection) -> Result<Vec<ChunkRow>, String> {
+    if !table_exists(c, "chunks") {
+        return Ok(Vec::new());
+    }
+    let mut stmt = c
+        .prepare("SELECT id, page_id, att_id, ord, loc, text, hash FROM chunks")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(ChunkRow {
+                id: r.get(0)?,
+                page_id: r.get(1)?,
+                att_id: r.get(2)?,
+                ord: r.get(3)?,
+                loc: r.get(4)?,
+                text: r.get(5)?,
+                hash: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// 纯排序：关键词覆盖分（复用页面级同一个 `keyword_score`）+ **有界**向量加分。
+///
+/// 关键词为 0 的块**不进结果**（否则每个查询都会把全库块带回来）。排序稳定：同分按
+/// `(page_id, att_id, ord)` 兜底 —— 否则同一查询两次调用顺序可能不同，测试必然 flake。
+fn rank_chunks(
+    query: &str,
+    rows: Vec<ChunkRow>,
+    vectors: &std::collections::HashMap<String, Vec<f32>>,
+    query_vec: Option<&[f32]>,
+) -> Vec<(ChunkRow, f32)> {
+    let mut scored: Vec<(ChunkRow, f32)> = Vec::new();
+    for row in rows {
+        let kw = keyword_score(query, "", &row.text);
+        let mut score = kw;
+        if let (Some(qv), Some(cv)) = (query_vec, vectors.get(&row.id)) {
+            if kw > 0.0 {
+                score += CHUNK_VECTOR_BONUS * cosine_sim(qv, cv);
+            }
+        }
+        if score <= 0.0 {
+            continue;
+        }
+        scored.push((row, score));
+    }
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.page_id.cmp(&b.0.page_id))
+            .then_with(|| a.0.att_id.cmp(&b.0.att_id))
+            .then_with(|| a.0.ord.cmp(&b.0.ord))
+            .then_with(|| a.0.id.cmp(&b.0.id))
+    });
+    scored
+}
+
+/// 读 `chunk_embeddings`（表在就全读；用不到的行直接丢掉，`chunk_vector_usable` 决定）。
+fn read_chunk_vectors(
+    c: &Connection,
+    rows: &[ChunkRow],
+    model: Option<&str>,
+) -> std::collections::HashMap<String, Vec<f32>> {
+    let mut out = std::collections::HashMap::new();
+    let Some(model) = model else { return out };
+    if !table_exists(c, "chunk_embeddings") {
+        return out;
+    }
+    let by_id: std::collections::HashMap<&str, &str> =
+        rows.iter().map(|r| (r.id.as_str(), r.hash.as_str())).collect();
+    let Ok(mut stmt) = c.prepare("SELECT chunk_id, model, vector, hash FROM chunk_embeddings") else {
+        return out;
+    };
+    let Ok(iter) = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+        ))
+    }) else {
+        return out;
+    };
+    for row in iter.flatten() {
+        let (id, row_model, vec_s, row_hash) = row;
+        let Some(chunk_hash) = by_id.get(id.as_str()) else { continue };
+        if !chunk_vector_usable(&row_model, &row_hash, chunk_hash, model) {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Vec<f32>>(&vec_s) {
+            if !v.is_empty() {
+                out.insert(id, v);
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn search_chunks_in_conn(
+    c: &Connection,
+    query: &str,
+    limit: usize,
+    query_vec: Option<&[f32]>,
+    model: Option<&str>,
+) -> Result<Vec<ChunkHit>, String> {
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = read_chunks(c)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let vectors = read_chunk_vectors(c, &rows, model);
+    let hits = rank_chunks(query, rows, &vectors, query_vec);
+    Ok(hits
+        .into_iter()
+        .take(limit)
+        .map(|(row, score)| ChunkHit {
+            chunk_id: row.id.clone(),
+            page_id: row.page_id.clone(),
+            att_id: row.att_id.clone(),
+            ord: row.ord,
+            loc: row.loc.clone(),
+            snippet: build_like_snippet(&row.text, query, CHUNK_SNIPPET_LEN),
+            score: score as f64,
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// 附件**派生文本**的读取（分页）—— 能力面 `files.read` 用（见信箱 reply-17 承接的草案）。
+//
+// 为什么放在 `search.rs`：这一族（`chunks` / `attachment_text`）都是"派生文本"，
+// 而块级检索的读函数也在这里；放在一处，两个读者共用同一张表的口径（列名、`extractor` 语义、缺表处理）。
+//
+// ⚠️ 三条刻意的取舍：
+//  1. **只给派生文本，不给原文字节** —— 派生文本是"只读、可重建、以原件为准"的缓存（§6.1）；
+//     字节是另一类风险（体积/隐私/沙箱），要做成单独能力单独评审。
+//  2. **"不存在" 与 "还没抽过" 必须分开**：前者 `None`（调用方回 `null`），后者空数组 + total 0。
+//     合成一种（都返回空）就会让 AI 把"还没索引"读成"文件里没有"。
+//  3. **多抽取器的行不替调用方挑一个**：`replace()` 是**按 (att_id, extractor)** 整体替换的
+//     ⇒ 换过抽取器时旧行会与新的并存。这里按 `(extractor, seq)` 全列出来，并把 `extractor` 一并带出
+//     —— 替调用方挑，就是静默丢内容（§15.10 同一条原则）。
+// ---------------------------------------------------------------------------
+
+/// 一页派生文本的上限（与注册表里 `limit` 的 desc 一致）。
+pub(crate) const MAX_ATT_TEXT_LIMIT: usize = 1000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentTextSegment {
+    /// 哪条抽取器产出的这一段（换过抽取器时，同一附件会有两组行）。
+    pub extractor: String,
+    pub kind: String,
+    pub text: String,
+    pub loc: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentTextPage {
+    pub segments: Vec<AttachmentTextSegment>,
+    /// **总段数**（不是本页条数）：没有它，调用方没法知道"自己只看到了一部分"。
+    pub total: i64,
+    pub truncated: bool,
+}
+
+/// 读某个附件的派生文本（分页）。
+///
+/// 返回值语义（调用方按此回 `null` / 空数组）：
+/// - `Ok(None)`：**这个附件不存在**（`attachments` 里没有它）；
+/// - `Ok(Some(page))` 且 `segments` 为空：存在，但**还没有派生文本**（没抽过 / 没有抽取器认领 / 抽取失败）
+///   —— 这是"没内容"，不是错误。
+pub(crate) fn read_attachment_text_in_conn(
+    c: &Connection,
+    att_id: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Option<AttachmentTextPage>, String> {
+    let exists: Option<String> = c
+        .query_row("SELECT id FROM attachments WHERE id = ?1", params![att_id], |r| r.get(0))
+        .ok();
+    if exists.is_none() {
+        return Ok(None);
+    }
+    if !table_exists(c, "attachment_text") {
+        // 老库没迁移过这张表 ⇒ 与"还没抽过"同一种答复（不是错误）
+        return Ok(Some(AttachmentTextPage { segments: Vec::new(), total: 0, truncated: false }));
+    }
+
+    let total: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM attachment_text WHERE att_id = ?1",
+            params![att_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut stmt = c
+        .prepare(
+            "SELECT extractor, kind, text, loc FROM attachment_text
+             WHERE att_id = ?1 ORDER BY extractor ASC, seq ASC LIMIT ?2 OFFSET ?3",
+        )
+        .map_err(|e| e.to_string())?;
+    let segments = stmt
+        .query_map(params![att_id, limit as i64, offset as i64], |r| {
+            Ok(AttachmentTextSegment {
+                extractor: r.get(0)?,
+                kind: r.get(1)?,
+                text: r.get(2)?,
+                loc: r.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let truncated = (offset as i64 + segments.len() as i64) < total;
+    Ok(Some(AttachmentTextPage { segments, total, truncated }))
+}
+
+/// `read_attachment_text` 的参数（命令面；能力面走 `plugins.rs::cap_files_read`，同一条读函数）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadAttachmentTextArgs {
+    pub id: String,
+    #[serde(default)]
+    pub offset: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// 命令面：读附件的派生文本（只读、分页）。
+///
+/// ⚠️ 与能力面（`cap_files_read`）**共用同一个读函数** —— 两处各写一份 SQL 就会长出两种语义
+/// （一处按 `(extractor, seq)` 排序、另一处忘了排序 ⇒ 段落顺序不同却没人发现）。
+/// 两面的差别只在"谁做权限/空间判定"：命令面拿的是主连接（活动空间），能力面走 `with_read_conn`。
+#[tauri::command]
+pub async fn read_attachment_text(
+    db: State<'_, Db>,
+    args: ReadAttachmentTextArgs,
+) -> Result<Option<AttachmentTextPage>, String> {
+    if args.id.trim().is_empty() {
+        return Err("bad_args: id 不能为空".to_string());
+    }
+    let off = args.offset.unwrap_or(0).max(0) as usize;
+    let lim = args.limit.unwrap_or(200).clamp(1, MAX_ATT_TEXT_LIMIT as i64) as usize;
+    let c = db.0.lock().expect("db mutex poisoned");
+    read_attachment_text_in_conn(&c, &args.id, off, lim)
+}
+
+/// 块级检索命令（只读）。
+///
+/// ⚠️ 三处刻意的选择：①查询先归一化再分派；②嵌入在**取锁之前**算完（不跨 await 持 `MutexGuard`）；
+/// ③嵌入没配/调用失败 ⇒ 静默退回关键词（与页面级 `search_semantic_async` 同口径，绝不因此报错）。
+#[tauri::command]
+pub async fn search_chunks(
+    db: State<'_, Db>,
+    args: SearchChunksArgs,
+) -> Result<Vec<ChunkHit>, String> {
+    let query = prepare_chunk_query(&args.query);
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = args.limit.unwrap_or(CHUNK_LIMIT_DEFAULT).min(CHUNK_LIMIT_MAX);
+
+    let mut query_vec: Option<Vec<f32>> = None;
+    let mut model: Option<String> = None;
+    if let Some(cfg) = args.embedding.as_ref() {
+        model = Some(cfg.model.clone());
+        query_vec = embed_text(cfg, &query).await.unwrap_or(None);
+    }
+
+    let c = db.0.lock().expect("db mutex poisoned");
+    search_chunks_in_conn(&c, &query, limit, query_vec.as_deref(), model.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,6 +1024,50 @@ mod tests {
         assert!((cosine_sim(&[1.0, 0.0], &[0.0, 1.0])).abs() < 1e-6);
         assert!((cosine_sim(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0]) - 1.0).abs() < 1e-6);
         assert_eq!(cosine_sim(&[], &[1.0]), 0.0);
+    }
+
+    /// 入口归一化：用户从 PDF 粘来的兼容形必须被折成统一表意字。
+    #[test]
+    fn prepare_query_folds_compat_ideographs() {
+        let (text, _) = prepare_query("  第\u{2F00}段  ");
+        assert_eq!(text, "第一段");
+        // 属性过滤那一段不能被归一化搞坏（它有自己的语法：`prop:名称=值`；
+        // 注意过滤器里的值**不折** —— 它是属性值，不是检索文本）
+        let (text, filters) = prepare_query("第\u{2F00}段 prop:状态=进行中");
+        assert_eq!(text, "第一段");
+        assert_eq!(filters, vec![("状态".to_string(), "进行中".to_string())]);
+    }
+
+    /// **先证伪再修**的端到端：正文里存的是折叠后的「第一段」，用户粘兼容形来搜 ——
+    /// 不归一化搜不到（先断言这条），走入口归一化就搜得到（再断言这条）。
+    /// 用真 SQLite 的 LIKE 路径跑：`search_like` 就是"<3 字走 LIKE"那条分支的实现。
+    #[test]
+    fn compat_ideograph_query_matches_folded_body_end_to_end() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws1', '空间一');
+             CREATE TABLE pages (
+               id TEXT PRIMARY KEY, workspace_id TEXT, title TEXT,
+               content_text TEXT, updated_at INTEGER, deleted_at INTEGER
+             );
+             INSERT INTO pages VALUES ('p1', 'ws1', '题目', '第一段，第二段。', 1, NULL);",
+        )
+        .unwrap();
+
+        let raw = "第\u{2F00}段"; // 兼容形：康熙部首 ⼀
+        assert!(
+            search_like(&c, raw, 10).unwrap().is_empty(),
+            "原样查询居然命中了 —— 那这条 e2e 就证明不了任何事（先证伪这一步失效）"
+        );
+
+        let (folded, _) = prepare_query(raw);
+        let hits = search_like(&c, &folded, 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "p1");
+        // snippet 也必须能找到（否则高亮在已折叠的正文里落空）
+        assert!(hits[0].snippet.contains("第一段"), "snippet={}", hits[0].snippet);
     }
 
     #[test]
@@ -788,5 +1206,135 @@ mod tests {
                 assert!(i > sem, "{} should rank below the semantic hit", name);
             }
         }
+    }
+
+    // ---- 块级检索（只读）：接口与判据见信箱 2026-09-17-retrieval-query-normalization.reply-1 ----
+
+    /// 查 chunk 用的最小库：`chunks` + `chunk_embeddings`（与 TS 侧 DDL 同形的那几列）。
+    fn chunks_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE chunks (
+               id TEXT PRIMARY KEY, page_id TEXT, att_id TEXT, ord INTEGER NOT NULL,
+               loc TEXT NOT NULL DEFAULT '', lang TEXT NOT NULL DEFAULT '',
+               text TEXT NOT NULL, hash TEXT NOT NULL
+             );
+             CREATE TABLE chunk_embeddings (
+               chunk_id TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL,
+               vector TEXT NOT NULL, hash TEXT NOT NULL, updated_at INTEGER NOT NULL,
+               PRIMARY KEY (chunk_id, model)
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn add_chunk(c: &Connection, id: &str, page: Option<&str>, att: Option<&str>, ord: i64, loc: &str, text: &str, hash: &str) {
+        c.execute(
+            "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7)",
+            params![id, page, att, ord, loc, text, hash],
+        )
+        .unwrap();
+    }
+
+    /// `hash` 对不上就不能用那条向量 —— 否则"改了内容还在用旧向量"，而 `hash` 这列的存在就是为了防这个。
+    #[test]
+    fn chunk_vector_is_rejected_when_model_or_hash_disagrees() {
+        assert!(chunk_vector_usable("m1", "abc", "abc", "m1"));
+        assert!(!chunk_vector_usable("m1", "abc", "abc", "m2"), "模型换了就不能用旧向量");
+        assert!(!chunk_vector_usable("m1", "abc", "def", "m1"), "块内容变了（hash 变）就不能用旧向量");
+        assert!(!chunk_vector_usable("m1", "", "abc", "m1"), "空 hash 视为不可用");
+    }
+
+    /// 查询侧归一化与页面级同口径（否则会"全库搜得到、块搜搜不到"）。
+    #[test]
+    fn chunk_query_is_normalized_like_page_search() {
+        assert_eq!(prepare_chunk_query("  第\u{2F00}段  "), "第一段");
+    }
+
+    /// 两类 owner 都要能命中，且都要把回链信息带出来。
+    #[test]
+    fn chunk_search_hits_both_owners_and_carries_backlinks() {
+        let c = chunks_conn();
+        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会纪要：本周排期", "h1");
+        add_chunk(&c, "att:a1#0", None, Some("a1"), 0, "p.3", "扫描件里的周会纪要", "h2");
+        add_chunk(&c, "page:p2#0", Some("p2"), None, 0, "L1", "与此无关的内容", "h3");
+
+        let hits = search_chunks_in_conn(&c, "周会纪要", 10, None, None).unwrap();
+        assert_eq!(hits.len(), 2, "无关的块不该进结果：{:#?}", hits.iter().map(|h| &h.chunk_id).collect::<Vec<_>>());
+        let page_hit = hits.iter().find(|h| h.chunk_id == "page:p1#0").unwrap();
+        assert_eq!(page_hit.page_id.as_deref(), Some("p1"));
+        assert_eq!(page_hit.att_id, None);
+        assert_eq!(page_hit.loc, "L1");
+        let att_hit = hits.iter().find(|h| h.chunk_id == "att:a1#0").unwrap();
+        assert_eq!(att_hit.att_id.as_deref(), Some("a1"));
+        assert_eq!(att_hit.loc, "p.3");
+        assert!(!page_hit.snippet.is_empty());
+    }
+
+    /// 兼容表意字：库里存的是折叠后的「第一段」，用兼容形查也要命中（与页面级同一口径）。
+    #[test]
+    fn chunk_search_matches_compat_ideograph_query() {
+        let c = chunks_conn();
+        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "第一段，第二段。", "h1");
+        // 先证伪：不归一化的查询搜不到
+        assert!(search_chunks_in_conn(&c, "第\u{2F00}段", 10, None, None).unwrap().is_empty());
+        // 走入口归一化后能搜到
+        let q = prepare_chunk_query("第\u{2F00}段");
+        assert_eq!(search_chunks_in_conn(&c, &q, 10, None, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn chunk_search_empty_query_or_missing_table_is_empty_not_error() {
+        let c = chunks_conn();
+        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会纪要", "h1");
+        assert!(search_chunks_in_conn(&c, "", 10, None, None).unwrap().is_empty());
+
+        // 老库没迁移过 `chunks` ⇒ 空结果（向前兼容），不是报错
+        let bare = Connection::open_in_memory().unwrap();
+        assert!(search_chunks_in_conn(&bare, "周会纪要", 10, None, None).unwrap().is_empty());
+    }
+
+    /// 过期的向量（hash 对不上）**不许**影响排序：结果必须与"纯关键词"完全一致。
+    #[test]
+    fn stale_chunk_vector_does_not_change_ranking() {
+        let c = chunks_conn();
+        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会纪要", "h1");
+        add_chunk(&c, "page:p2#0", Some("p2"), None, 0, "L1", "周会", "h2");
+        let kw_only: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None).unwrap().into_iter().map(|h| h.chunk_id).collect();
+
+        // 给 p2 塞一条"很相似"的向量，但 hash 是**旧的**
+        c.execute(
+            "INSERT INTO chunk_embeddings (chunk_id, model, dim, vector, hash, updated_at) VALUES (?1, ?2, 3, ?3, ?4, 0)",
+            params!["page:p2#0", "m1", "[1.0,0.0,0.0]", "stale-hash"],
+        )
+        .unwrap();
+        let with_stale: Vec<String> = search_chunks_in_conn(&c, "周会", 10, Some(&[1.0, 0.0, 0.0]), Some("m1"))
+            .unwrap()
+            .into_iter()
+            .map(|h| h.chunk_id)
+            .collect();
+        assert_eq!(kw_only, with_stale, "hash 对不上的向量不该被采用");
+
+        // 反过来：hash 一致时，向量加分应当生效（否则这条判据证明不了任何事）
+        c.execute("UPDATE chunk_embeddings SET hash = 'h2' WHERE chunk_id = 'page:p2#0'", []).unwrap();
+        let hits = search_chunks_in_conn(&c, "周会", 10, Some(&[1.0, 0.0, 0.0]), Some("m1")).unwrap();
+        let p2 = hits.iter().find(|h| h.chunk_id == "page:p2#0").unwrap();
+        let p1 = hits.iter().find(|h| h.chunk_id == "page:p1#0").unwrap();
+        assert!(p2.score > p1.score, "hash 一致时向量加分要生效：p2={} p1={}", p2.score, p1.score);
+    }
+
+    /// 同分时顺序必须稳定（否则测试会 flake、UI 也会看到顺序忽变）。
+    #[test]
+    fn chunk_ranking_is_stable_on_ties() {
+        let c = chunks_conn();
+        add_chunk(&c, "page:p2#0", Some("p2"), None, 0, "L1", "周会", "h1");
+        add_chunk(&c, "page:p1#0", Some("p1"), None, 0, "L1", "周会", "h2");
+        add_chunk(&c, "page:p1#1", Some("p1"), None, 1, "L2", "周会", "h3");
+        let a: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None).unwrap().into_iter().map(|h| h.chunk_id).collect();
+        let b: Vec<String> = search_chunks_in_conn(&c, "周会", 10, None, None).unwrap().into_iter().map(|h| h.chunk_id).collect();
+        assert_eq!(a, b);
+        // 同分按 (page_id, ord) 兜底
+        assert_eq!(a, vec!["page:p1#0".to_string(), "page:p1#1".to_string(), "page:p2#0".to_string()]);
     }
 }
