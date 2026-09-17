@@ -465,18 +465,20 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["text"], contains: ["parens ( and )"], locs: ["p.1"] },
   },
   {
-    // 正向那条（注入 vision 后出 kind=ocr、loc=p.<n>）等契约裁定「像素从哪来」之后再补：
-    // 抽取器要拿到页面像素，而 ExtractDeps 目前只有 vision
-    //（详见信箱 2026-09-17-pdf-ocr-rasterizer-gap.md）。
-    id: "pdf/扫描件走视觉通道（未注入 vision）",
-    pins: "§15.3-7 的不变量：没有 deps.vision 就必须立刻 provider_error、**绝不自建网络**（与 image.ocr 同一条底线）",
+    id: "pdf/扫描件走视觉通道（未注入依赖）",
+    pins: "§15.3-7 的不变量：没有 deps.rasterize / deps.vision 就必须立刻 provider_error、**绝不自建渲染与网络**（与 image.ocr 同一条底线）",
     extractor: "pdf.ocr@1",
     filename: "扫描件.pdf",
     mime: "application/pdf",
     make: () => pdfOf("", { withText: false }),
     expect: { ok: false, code: "provider_error" },
-    planned: true,
   },
+  // ⚠️ `pdf.ocr@1` 的**正向**夹具（混合文档：文字页出 `kind=text`、扫描页出 `kind=ocr`、页码各自正确）
+  //    故意**还没进这份共用夹具**：它必须先有"页图怎么交给视觉通道"的裁定，而契约现在给的是裸 RGBA、
+  //    视觉通道要的是编码图 —— 中间那一步的落点未定（信箱 2026-09-17-pdf-ocr-rasterizer-gap.reply-9）。
+  //    共用夹具是**三台机器共用的口径**，不能先塞一个我们自己发明的形状进去（那会让别的实现照着一个
+  //    还没裁定的形状写）。裁定前，页选择 / 页码 / 上限 / 失败传播这些**与形状无关**的行为由
+  //    `pdf-ocr.test.ts` 钉住；裁定后这里补一条正向夹具（形状一落地，它就自动开始跑）。
   {
     id: "pdf/多页-页序",
     pins: "**页序**是回链的命根子：一页一段、`loc` 从 `p.1` 连到 `p.3`、顺序与文档一致（单页夹具看不出顺序问题）",

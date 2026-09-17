@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FIXTURES, fixturesFor } from "./fixtures";
-import { pickExtractor, REGISTRY } from "./registry";
+import { candidates, REGISTRY } from "./registry";
 
 describe("共用夹具集 · 一致性（这些是「防漂移」护栏，不是内容断言）", () => {
   it("夹具 id 唯一", () => {
@@ -34,16 +34,27 @@ describe("共用夹具集 · 一致性（这些是「防漂移」护栏，不是
     expect(bare).toEqual([]);
   });
 
-  it("路由：每个**已实现**夹具的 (mime, filename) 必须被 pickExtractor 路由到它声明的抽取器", () => {
+  // ⚠️ 这条原来是"`pickExtractor(...)` 必须**等于**夹具声明的抽取器"——对**第二个**候选抽取器
+  //    永远为假（契约 §15.4 明说一个格式允许多个抽取器：`pdf.text@1` 抽空了才轮到 `pdf.ocr@1`）。
+  //    改成"必须出现在**候选列表**里"：它仍然能抓住"mime/扩展名写错 ⇒ 根本轮不到它"这类真问题，
+  //    而不会因为"它不是第一个"误红。顺序本身另有一条不变量盯着（见下一条）。
+  it("路由：每个**已实现**夹具的 (mime, filename) 必须把它的抽取器放进**候选列表**（多抽取器格式允许不是第一个）", () => {
     const wrong: string[] = [];
     for (const f of FIXTURES) {
       if (f.planned) continue;
-      const picked = pickExtractor(f.mime, f.filename, REGISTRY);
-      if (picked?.id !== f.extractor) {
-        wrong.push(`${f.id}: 期望 ${f.extractor}，实际 ${picked?.id ?? "null"}`);
+      const list = candidates(f.mime, f.filename, REGISTRY);
+      if (!list.some((e) => e.id === f.extractor)) {
+        wrong.push(`${f.id}: 期望 ${f.extractor} 出现在候选里，实际 ${list.map((e) => e.id).join(" > ") || "（空）"}`);
       }
     }
     expect(wrong).toEqual([]);
+  });
+
+  it("**顺序即优先级**：同一格式的多个抽取器必须「便宜的在前」（PDF：先文本层、后视觉）", () => {
+    // registry.ts 的注释声称"顺序即优先级"，而这条声称此前**没有任何判据**——
+    // 谁把 pdf.ocr 挪到 pdf.text 前面，扫描件之外的所有 PDF 都会先烧一遍视觉调用，且没人会发现。
+    const list = candidates("application/pdf", "任意.pdf", REGISTRY).map((e) => e.id);
+    expect(list).toEqual(["pdf.text@1", "pdf.ocr@1"]);
   });
 });
 
