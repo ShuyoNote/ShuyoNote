@@ -31,6 +31,8 @@ const REQUIRED_GATE_IDS = [
   "check-overlay-registry",
   "check-ps1-ascii",
   "check-pdfjs-shim",
+  "check-sys-deps",
+  "check-sys-deps-linux",
   "tsc",
   "vitest",
   "smoke-web",
