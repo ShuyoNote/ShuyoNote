@@ -13,9 +13,9 @@
 //      这里**刻意重复**引擎那三行而不 import 引擎：引擎会拉进 canvas 渲染那一套，
 //      而文本层抽取既不需要渲染，也不该让测试被渲染依赖拖住。
 
-import { pathToFileURL } from "node:url";
-
 import * as pdfjs from "pdfjs-dist";
+
+import { ensurePdfjsWorkerSrc } from "../pdfEngine/pdfjsWorker";
 
 import { fail, ok, type ExtractInput, type ExtractResult, type ExtractedSegment, type Extractor } from "./types";
 
@@ -24,29 +24,10 @@ const ID = "pdf.text@1";
 /** 防御性上限：畸形 PDF 声称有百万页时，不要在这里把进程拖死（超出的页不抽，并在段里标注）。 */
 const MAX_PAGES = 2000;
 
-let workerConfigured = false;
-
+/** pdf.js 的 worker 配置抽到了 src/lib/pdfEngine/pdfjsWorker.ts（三个调用方共一处，含"垫片/真 worker/测试"
+ *  三种情形的判断与版本号缓存失效）——这里只调用它，避免第三份副本。 */
 function ensurePdfjsWorker(): void {
-  if (workerConfigured) return;
-  const opts = pdfjs.GlobalWorkerOptions as { workerSrc?: string };
-  const viteMode = (import.meta as unknown as { env?: { MODE?: string } }).env?.MODE;
-  const inBrowser = typeof document !== "undefined" && typeof window !== "undefined";
-
-  if (inBrowser && viteMode !== "test") {
-    // 浏览器 / Android WebView：走我们自己的垫片（WebView 缺 Promise.withResolvers 等），
-    // 与 src/lib/pdfEngine/pdfjsEngine.ts 的写法保持一致。
-    const real = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).href;
-    const shim = new URL("pdfjs-worker-shim.mjs", document.baseURI).href;
-    opts.workerSrc = `${shim}?real=${encodeURIComponent(real)}`;
-  } else {
-    // 测试运行器（vitest 也有 `document`，但没有那个垫片文件，且 ESM 加载器只认 file:/data:）
-    // 与任何非 DOM 环境：直接把 workerSrc 指到 node_modules 里的 worker 文件。
-    // 这里用 `process.cwd()` 而不是 `import.meta.url`：Vite 在测试里会把 `new URL(…)` 解析成 http 资源，
-    // 而 Node 的默认 ESM 加载器**不接受 http 协议**（实测报错原文：
-    //   Only URLs with a scheme in: file and data are supported … Received protocol 'http:'）。
-    opts.workerSrc = pathToFileURL(`${process.cwd()}/node_modules/pdfjs-dist/build/pdf.worker.min.mjs`).href;
-  }
-  workerConfigured = true;
+  ensurePdfjsWorkerSrc(pdfjs);
 }
 
 /** 一页的文本项 → 纯文本。**保留换行、压掉行内多余空白**：CJK 里逐字拼接会被空格切开，
