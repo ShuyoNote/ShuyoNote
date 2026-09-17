@@ -42,6 +42,47 @@ export function findForbiddenImports(src: string): { spec: string; why: string }
   return out;
 }
 
+
+/** `ai/` 目录里**能出网**的模块 —— **自动算，不手抄**。
+ *
+ * 起因（2026-09-17）：用户定了红线「**抽取不得用远程 provider**」，而隔离断言当时只禁了
+ * platform / tauri / tesseract / canvas —— **`ai/**` 不在其中**，也就是说
+ * `pdf.ocr` 完全可以 `import { ocrWithVision } from "../ai/ocrVision"` 而**没有任何判据会红**
+ * （`image.ts` 的注释里写着"契约禁止抽取层自建网络栈"，但那只是一句话）。
+ *
+ * 为什么不手抄一份清单：清单会腐烂（新增一个网络模块 → 清单不更新 → 判据恒真）。
+ * 这里改成**从源码算**：
+ *   ① 含 `fetch(` / `coreFetch` / `coreHttp` 的模块 = 直接能出网；
+ *   ② **import 了①的模块**（在 `ai/` 内闭环）= 间接能出网；
+ * 判据再去禁"抽取层 import 这个闭包里的任何模块" ⇒ **新增网络模块会自动被覆盖**（判据当场红，
+ * 提醒把它加进抽取层的禁区），而不是悄悄漏过去。
+ */
+export function networkModulesInAi(dir: string): string[] {
+  const files = readdirSync(dir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"));
+  const src = new Map<string, string>();
+  for (const n of files) src.set(n, readFileSync(join(dir, n), "utf8"));
+
+  const flagged = new Set<string>();
+  for (const [n, code] of src) {
+    if (/\bfetch\s*\(|\bcoreFetch\b|\bcoreHttp\b/.test(code)) flagged.add(n);
+  }
+  // 闭包：只要 import 了已标记的模块（同目录下的相对 import），它也能出网
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [n, code] of src) {
+      if (flagged.has(n)) continue;
+      for (const m of code.matchAll(/from\s+["']\.\/([A-Za-z0-9_-]+)["']/g)) {
+        if (flagged.has(`${m[1]}.ts`)) {
+          flagged.add(n);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return [...flagged].sort();
+}
+
 /** 递归列出生产代码（排除测试文件与 `testing/` 夹具目录）。 */
 function productionFiles(dir: string): string[] {
   const out: string[] = [];
@@ -73,6 +114,34 @@ describe("抽取层隔离（源码级）", () => {
     // 它能在 Node 跑，Mac 侧 `pdf.text@1` 正用它做文本抽取；被禁的是**渲染**（走 deps.rasterize）。
     // 后人若想把它加回禁止清单，这条会红，提醒先读上面 FORBIDDEN 的注释。
     expect(findForbiddenImports(`import * as pdfjs from "pdfjs-dist";`)).toEqual([]);
+  });
+
+  it("**红线**：抽取层不得 import 任何「能出网」的 ai 模块（用户 2026-09-17 定的：抽取不出网）", () => {
+    const nets = networkModulesInAi(join(process.cwd(), "src/lib/ai"));
+    // 自证：算不出来（比如目录写错、marker 改了）就红 —— 否则这条判据会**恒真**
+    expect(nets.length, `没算到任何网络模块，扫描器可能坏了`).toBeGreaterThan(0);
+    expect(nets).toContain("ocrVision.ts");
+
+    const offenders: string[] = [];
+    for (const f of productionFiles(EXTRACT_DIR)) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/from\s+["']([^"']*\/ai\/[A-Za-z0-9_-]+)["']/g)) {
+        const base = m[1].split("/").pop()!;
+        if (nets.includes(`${base}.ts`)) {
+          offenders.push(`${relative(EXTRACT_DIR, f)} → ${m[1]}（红线：抽取不得出网；该模块能发网络请求，必须走 deps 注入）`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("这条红线的判据**自己也会咬人**（用合成 import 验证，别让它恒真）", () => {
+    const synth = `import { ocrWithVision } from "../ai/ocrVision";`;
+    const nets = networkModulesInAi(join(process.cwd(), "src/lib/ai"));
+    const hit = [...synth.matchAll(/from\s+["']([^"']*\/ai\/[A-Za-z0-9_-]+)["']/g)]
+      .map((m) => m[1].split("/").pop()!)
+      .filter((b) => nets.includes(`${b}.ts`));
+    expect(hit).toEqual(["ocrVision"]);
   });
 
   it("生产代码里不得出现平台 / 渲染 / OCR 依赖", () => {
