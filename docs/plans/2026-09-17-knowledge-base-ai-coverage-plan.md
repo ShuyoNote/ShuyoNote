@@ -649,6 +649,22 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
 `extractAttachment(...)` 是唯一入口。**这是平台层的实现义务，写进契约。**
 **什么会让我改口**：谁能给出一条"应用侧无法经由平台 wrapper 构造 deps"的真实调用路径，我立刻采纳 pipeline 注入。
 
+> ✅ **该义务已兑现**（`src/lib/platform/extractDeps.ts`）：
+> - `attachmentDeps(attId, {vision?})` —— 把 `rasterize` 接到平台驱动
+>   `pdfRender.renderPdfPage(attId, pageIndex, scale)` 上（**字段名映射 `bytes` → `rgba`**；
+>   缩放比例**原样透传抽取器给的值**，平台不另立一套口径；**刻意忽略 `bytes` 参数**——
+>   闭包里就有 attId，这与契约注释里"允许忽略 bytes"一致）；
+> - `extractAttachment(attId, store)` —— 走平台命令面两步（`get_attachment` → `read_attachment_bytes`）
+>   取到 meta 与字节，再调 `extractAndStore`。**`filename`/`mime`/`hash` 全部取自 meta，不自编**，
+>   于是"内容变了要重抽"这条缓存口径**自然接上**（有判据）。
+> - **`vision` 是一个明确的洞，不是遗漏**：`Platform` 目前只有
+>   `executor/dialog/opener/event/asset/webview/pdfRender/community`，**没有模型驱动这一层**，
+>   而"图片/音视频走远程 API 还是本机推理"正是 **§13 待拍板第 7 项** ⇒
+>   `attachmentDeps` 不带 `vision` 时**根本不设这个键**（不是设成 undefined），
+>   让 `cost:"gpu"` 的抽取器按契约走 `provider_error`，**不在这里编一个假实现充数**。
+> - `extractAttachment` 的 `store` 由**调用方传入**：平台门面没有暴露 `SqliteStore`，
+>   为了一个函数去扩 `Platform` 接口要同时改 web/tauri/mobile 三个实现 —— **显式依赖比扩大接口便宜**。
+
 **两条配套（都已落地）**：
 - **源码级断言** `src/lib/extract/isolated.test.ts`：生产代码**禁止** import `src/lib/platform/**`、
   `@tauri-apps/**`、`tesseract.js`、`canvas` 系。**并有"扫描器本身有效"的自证**（用合成代码验证命中）。这条断言存在，是"驳回 pipeline 注入"这个理由**可执行的形式**——否则下一个人顺手 import 一下就悄悄破了。
