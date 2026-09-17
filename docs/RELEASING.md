@@ -72,8 +72,9 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 
 > **为什么 tag 必须两个远端都推**（`origin` = gitcode、`github` = GitHub，两个是**各自独立的仓库**）：
 > - **只推 gitcode ⇒ 发版流程不触发**：`release.yml` 是 **GitHub Actions** 的工作流，只有 **GitHub
->   这个仓库收到 tag** 时才会跑（gitcode 上跑的是另一套 `.gitcode/workflows/build-linux.yml`，
->   只出 Linux 包）⇒ 多平台构建（含 Android 发版件）**根本不会开始**；
+>   这个仓库收到 tag** 时才会跑（gitcode 上另有一套 `.gitcode/workflows/build-linux.yml`，
+>   本意是只出 Linux 包；**它 2026-09-17 之前是坏的、从未跑过**，见 ④ 里的更正）
+>   ⇒ 多平台构建（含 Android 发版件）**根本不会开始**；
 > - **只推 github ⇒ gitcode 上没有这个 tag**：而 gitcode 是应用内「检查更新」与下载通道（见文首）
 >   ⇒ 镜像与更新通道还停在旧版本、用户收不到新版。
 > 两条都不是"可有可无"：一个决定**能不能出包**，一个决定**用户能不能收到**。
@@ -544,6 +545,14 @@ adb shell am start -a android.intent.action.VIEW -d "shuyonote://test/new-page?t
 2. **只推 `github` 远端**：`git push github v1.90.1-rc1`。**不要推 gitcode**——gitcode 上有**另一套**
    同样在 `v*` tag 上触发的流水线（`.gitcode/workflows/build-linux.yml`，Linux 的
    `.deb` + `.AppImage`），推过去只会白跑一轮与本轮验证无关的构建。
+   > ⚠️ **更正（2026-09-17）**：那条 GitCode 流水线**在 09-17 之前是坏的、且从未跑过**——
+   > GitCode 自己的校验接口判它 `valid=false`（4 条：`runs-on` 取值不在允许列表、某个 step 没有
+   > `name`、某个 step 名里有 `+`、`checkout-action@0.0.1` 这种简写不被认），而
+   > `/actions/artifacts` 里**0 个 artifact**（即从未产出）。已按平台约束改正并**用同一接口复验
+   > `valid=true`**。所以上面那句"白跑一轮"在 09-17 之前并不成立（它压根没被调度），
+   > **从下一个 tag 起才成立**。这条流水线也不在发版路径上（GitHub Actions 出包 → `release.mjs`
+   > 上传到 gitcode release），它只是 GitCode 侧的一条备份构建；它需要 GitCode 仓库配
+   > `TAURI_SIGNING_PRIVATE_KEY`(+`_PASSWORD`)，没配就会在签名那步失败。
 3. **跑完必须删 tag 与 Release，而且先等 run 结束再删**：run 不会因为 tag 被删而停止——
    若在它跑完前就把 Release 删了，`release` job 之后还会把它建回来（等于白删一次）。
 4. **删除后复核 404，`run` 记录保留**（run 记录是这次的证据，别一起清掉）。
