@@ -9,6 +9,8 @@
 //
 // NOTE: the Web Platform's executor still routes through this store, so it's
 // genuinely SQLite-backed, not a fake.
+import { DERIVED_SCHEMA_DDL } from "../extract/schema";
+import { createAttachmentTextStore } from "../extract/store";
 import type { SqlValue, Database, SqlJsModule } from "./sqljs-types";
 
 type InitSqlJs = (config?: {
@@ -349,6 +351,15 @@ export class SqliteStore {
         value TEXT NOT NULL
       );
     `);
+    // 派生文本层（「全库 AI 覆盖」方案 §6.1）：`attachment_text` / `chunks` / `chunk_embeddings`。
+    //
+    // **DDL 不在这里重抄一遍**，而是从 `src/lib/extract/schema.ts` 取——那是 TS 侧的单一事实源。
+    // 理由（见方案 §6.1）：桌面（Rust `db.rs`）与 Web 都要建这三张表，**两份 DDL 漂移的后果是
+    // "同一份数据在两个平台上读不出来"，而且不会有任何编译期报错**。
+    //
+    // 分层上这是"平台层 import 了功能模块"，看着略反常；但按仓库既有做法，表结构本来就集中声明在
+    // 这个 migrate() 里（`page_embeddings` 就是这样）。为了不出现"TS 里也写两份"，选择 import 而非复制。
+    for (const stmt of DERIVED_SCHEMA_DDL) this.db.run(stmt);
     // P6.1「每空间开关」：老浏览器库补列。**`DEFAULT 1` 是有意的**——升级不能静默改变
     // 同步范围（见 docs/plans/2026-09-15-attachment-on-demand-plan.md §五.4）。
     try {
@@ -431,6 +442,24 @@ export class SqliteStore {
     } catch {
       /* ignore */
     }
+  }
+
+  /** 派生文本存储（「全库 AI 覆盖」P1）。表已由上面的 migrate() 建好。
+   *
+   *  ⚠️ **成本警告（批量抽取前必读）**：本类的 `run()` **每写一条就 `db.export()` 全库快照**
+   *  （`persist()`，见下）。而 `AttachmentTextStore.replace()` 是"一次 DELETE + N 次 INSERT"，
+   *  于是一份抽出 500 段的文档会产生 **501 次全库快照** —— 全库抽取时这是**平方级**开销。
+   *
+   *  ⇒ **量产前必须先做批量提交**（把 `replace()` 包成一次写、或给本类加一个"延迟 persist"的区间），
+   *    再把它接到"开始索引"的批处理里。这条已记进方案 §7 的集成风险。
+   *  目前**只用于小规模与测试**。 */
+  derivedTextStore() {
+    if (!this.db) throw new Error("SqliteStore not initialized");
+    return createAttachmentTextStore({
+      run: (sql, params = []) => this.run(sql, params as SqlValue[]),
+      query: <T = Record<string, unknown>>(sql: string, params: readonly unknown[] = []) =>
+        this.query<T>(sql, params as SqlValue[]),
+    });
   }
 
   /** Run a mutation; persist the DB snapshot after. */
