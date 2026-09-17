@@ -9,6 +9,7 @@
 // into the platform layer (circular-import risk).
 
 import { coreFetch } from "./coreHttp";
+import { fnv1a32 } from "./hash";
 
 export interface EmbedConfig {
   provider: "ollama" | "openai";
@@ -151,13 +152,10 @@ export function embeddingText(title: string, content: string): string {
 }
 
 /** Deterministic FNV-1a (32-bit) hash of a string, used to detect content drift
- *  so a changed page re-embeds once and then hits the cache. */
+ *  so a changed page re-embeds once and then hits the cache.
+ *
+ *  **实现已移到 `src/lib/hash.ts`**（分块嵌入要用同一个口径）——这里保留这个名字与行为，
+ *  只是为了不动既有调用点。新代码请直接用 `fnv1a32`。 */
 export function embedHash(text: string): string {
-  const s = String(text ?? "");
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(36);
+  return fnv1a32(text);
 }
