@@ -14,6 +14,7 @@
 
 import { strToU8, zipSync } from "fflate";
 
+import { depsOf, fakeRasterize, fakeVision } from "./testing/fakeDeps";
 import type { ExtractDeps, ExtractErrorCode, SegmentKind } from "./types";
 
 /** 造一个 zip 夹具（OOXML 是 zip + XML；这样仓库里不必留二进制样张）。 */
@@ -473,12 +474,21 @@ export const FIXTURES: readonly ExtractFixture[] = [
     make: () => pdfOf("", { withText: false }),
     expect: { ok: false, code: "provider_error" },
   },
-  // ⚠️ `pdf.ocr@1` 的**正向**夹具（混合文档：文字页出 `kind=text`、扫描页出 `kind=ocr`、页码各自正确）
-  //    故意**还没进这份共用夹具**：它必须先有"页图怎么交给视觉通道"的裁定，而契约现在给的是裸 RGBA、
-  //    视觉通道要的是编码图 —— 中间那一步的落点未定（信箱 2026-09-17-pdf-ocr-rasterizer-gap.reply-9）。
-  //    共用夹具是**三台机器共用的口径**，不能先塞一个我们自己发明的形状进去（那会让别的实现照着一个
-  //    还没裁定的形状写）。裁定前，页选择 / 页码 / 上限 / 失败传播这些**与形状无关**的行为由
-  //    `pdf-ocr.test.ts` 钉住；裁定后这里补一条正向夹具（形状一落地，它就自动开始跑）。
+  {
+    // 正向那条：A 方案（`rasterize` 直出**编码图**）落地后补上 —— 共用夹具是三台机器共用的口径，
+    // 所以它用**共享假 deps**（`fakeRasterize` 产出合法 PNG、用生产同一个编码器；`fakeVision` 确定性返回）。
+    // ⚠️ 这条钉的是**混合文档**（正文是文字、中间夹扫描页）：文字页出 `text`、扫描页出 `ocr`，
+    //    页码各自正确、顺序不乱；而且**只有空页**被光栅化/调模型（`pdf.ocr` 自带文本层，
+    //    对"正文是文字、插页是扫描"的文档白烧一遍 VLM 是数量级浪费）。
+    id: "pdf/混合文档：文字页与扫描页各出对应的段",
+    pins: "混合文档 ⇒ 文字页 `kind=text`、扫描页 `kind=ocr`，`loc` 各自正确（p.1 / p.2 / p.3），顺序与文档一致",
+    extractor: "pdf.ocr@1",
+    filename: "混排扫描.pdf",
+    mime: "application/pdf",
+    make: () => pdfPages([{ text: "First" }, { text: "", graphics: true }, { text: "Third" }]),
+    deps: depsOf({ rasterize: fakeRasterize({ pages: 3 }), vision: fakeVision("扫描页认出来的字") }),
+    expect: { ok: true, kinds: ["text", "ocr", "text"], contains: ["First", "Third", "扫描页认出来的字"], locs: ["p.1", "p.2", "p.3"] },
+  },
   {
     id: "pdf/多页-页序",
     pins: "**页序**是回链的命根子：一页一段、`loc` 从 `p.1` 连到 `p.3`、顺序与文档一致（单页夹具看不出顺序问题）",
