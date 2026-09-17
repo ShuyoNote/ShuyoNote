@@ -139,7 +139,13 @@ if (!platform || !PLATFORMS[platform]) {
 }
 const spec = PLATFORMS[platform];
 const outDir = join(OUT_ROOT, platform);
-const libPath = join(outDir, spec.lib.replace(/\//g, "\\"));
+// ⚠️ **不要**把 `spec.lib` 里的 `/` 换成 `\`：`lib` 是**包内**的 POSIX 路径
+// （`lib/libpdfium.dylib` / `lib/libpdfium.so`），`node:path` 的 `join` 会按当前平台处理分隔符。
+// 2026-09-17 在 macOS 上实测到后果：原来那版 `join(outDir, spec.lib.replace(/\//g, "\\"))`
+// 在 POSIX 上会得到一个**带字面反斜杠**的路径 `…/mac-univ/lib\libpdfium.dylib` ⇒ `existsSync` 恒假
+// ⇒ 收尾那行打印「完成：…（0 字节）」（其实文件有 15,219,824 字节），`--check` 也会误报"缺少"。
+// Windows 上因为反斜杠恰好是对的，所以这个 bug 只在 macOS/Linux 露头。
+const libPath = join(outDir, spec.lib);
 
 if (flag("--check")) {
   if (!existsSync(libPath)) {

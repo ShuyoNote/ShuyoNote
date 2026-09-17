@@ -439,7 +439,35 @@ git diff --stat origin/<目标分支> <你的分支>
    `git log --oneline origin/<目标分支>..<你的分支> -- <该文件>`，而不是看哪边"更新"；
 3. **合完立刻复核**：`git diff --stat <合并前> <合并后>` 应当**只包含你预期的文件**。
 
-### 10.5 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
+### 10.5 交叉验证：**报告必须写明被验的 commit，且跑之前先核 HEAD**（2026-09-17 加，AMD 侧实战踩出来的）
+
+跨机器验证（"我这边编过不算，要你那台也编过"）有一个**几乎必然发生**的假绿：
+
+```bash
+# ❌ 这样很容易在**旧提交**上跑出一个漂亮的绿
+gh pr checkout ...        # 或 git fetch <remote> <branch>
+cargo check --lib         # 1.57s Finished —— 看着挺好，其实分支没更新
+```
+
+AMD 实测的成因：`git fetch` 被 **`refusing to fetch into branch 'refs/heads/<branch>' checked out at …`** 挡下
+（本地正检出该分支时，git 拒绝直接把远端推进来），**分支其实没更新**，于是检查在旧提交上跑完并"成功"。
+
+**规矩（三条，都不花时间）**：
+
+1. **报告里必须带被验的 commit**（短 hash 即可）——"我跑了，过了"不是结论，`47495fd7 = ok` 才是；
+2. **跑之前先核 HEAD**：`git rev-parse --short HEAD` 与对方给的 commit 对上再跑；
+3. **别用会静默不更新的拉取方式**：改用取到临时引用再落：
+   ```bash
+   git fetch <remote> <branch>
+   git reset --hard FETCH_HEAD     # 或 git switch --detach FETCH_HEAD
+   git rev-parse --short HEAD      # ← 确认是对方要验的那个
+   ```
+   另外**看耗时**：**增量 1–3 秒的 "Finished" 往往意味着"没编新东西"**，值得回头核一眼 HEAD。
+
+> 与 §10.4 是同一类病：**都是"看起来完成了、其实基线或对象不是你以为的那个"**。
+> §10.4 治"拿旧分支当基线"，这条治"在旧提交上验证"。
+
+### 10.6 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
 
 如实记下，因为它是"要恢复中转形态"这件事的由来：
 
