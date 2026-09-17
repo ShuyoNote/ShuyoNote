@@ -63,6 +63,12 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
 # via src/pdf_native.rs.
 mupdf-sys = "0.8.0"
+# PDFium（P1，2026-09-17 开工）：**只做光栅化的替换**，MuPDF 路径保留（P2 才按运行时开关分派）。
+# 选 `pdfium-render` 而不是自己 FFI 的理由（spike 实测，见 docs/plans/2026-09-16-pdfium-engine-plan.md §0）：
+# 它用**预生成绑定 ＋ libloading 动态加载**，构建期不跑 bindgen ⇒ 不会重演上面 mupdf 那个 `max_align_t` 坑。
+# ⚠️ `pdfium_7881` 要**显式钉住**（不跟 `pdfium_latest`）：库与绑定的版本必须锁死，避免漂移。
+# `thread_safe` 让我们可以在全局 Mutex 下跨线程用同一个 Pdfium 实例。
+pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe"] }
 tauri-plugin-http = "2"
 # fs 插件：**不是给前端用的**（capabilities 里没授它权限），而是给 `picked_file` 用——
 # Android 的系统选择器返回 `content://` URI，`std::fs` 打不开，只有它的 `Fs::open` 能开
