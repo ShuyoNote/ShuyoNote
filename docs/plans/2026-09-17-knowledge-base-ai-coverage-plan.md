@@ -220,6 +220,11 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > - **纯文本抽取器已实现**：`src/lib/extract/text.ts`（`text.plain@1`，txt/md/csv/json/…）。
 >   补它的起因是**真样张跑器**：把一个真实 docs 目录指过去，**满屏 `no_extractor`、全是 `.md`**——
 >   而 §5 抽取矩阵里"txt / md / csv / json = 直读"那一行**当时并没有实现**。
+> - **HTML 抽取器已实现**：`src/lib/extract/html.ts`（`text.html@1`）—— **同一次真样张**里 `.html` 也是
+>   `no_extractor`（保存的网页很常见）。口径：**先清 `script/style/noscript/head`**（不清会把一整页 JS
+>   当正文灌进索引）、块级元素各起一段、`h1`-`h6` 标 `heading`、行内元素不单独成段。
+>   ⚠️ **注册顺序有坑**：`text.plain@1` 的 `text/*` 也匹配 `text/html`，按注册表顺序先到先得 ⇒
+>   **html 必须排在它前面**，放反了 HTML 会被当纯文本**原样读出标签**。
 > - **真样张冒烟跑器已落地**：`src/lib/extract/realSamples.test.ts`（`EXTRACT_SAMPLES=<目录>` 才跑，
 >   否则整体跳过，CI 里惰性）。它已经验到真东西：一份 **638 KB 真 PDF** 抽出 **8 段 / 6398 字**
 >   （首段是真中文）；一个真 docs 目录里的 `.md` 全部抽出（最长 **140 段 / 26939 字**），标题与正文类型交替正确。

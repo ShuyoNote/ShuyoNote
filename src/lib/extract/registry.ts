@@ -6,6 +6,7 @@
 //  2) **先整表比 mime，再整表比扩展名**（不是每个抽取器自己先比 mime 再比扩展名）。
 //     否则一个"扩展名沾边但 mime 更准"的抽取器会抢在正确的那一个前面。
 
+import { htmlExtractor } from "./html";
 import { imageOcrExtractor } from "./image";
 import { pdfTextExtractor } from "./pdf";
 import { OOXML_EXTRACTORS } from "./ooxml";
@@ -101,6 +102,7 @@ export function pickExtractor(
  *  - ✅ 图片 OCR（`image.ocr@1`），cost=gpu —— 也是契约 §15.3-7 那条不变量的活样板
  *  - ✅ 纯文本（`text.plain@1`）—— 补上"txt/md/csv 直读"那一行（真样张跑器发现整目录 `.md` 全是
  *    `no_extractor` 才补的）
+ *  - ✅ HTML（`text.html@1`）—— **同一次真样张**里 `.html` 也是 `no_extractor`（保存的网页很常见）
  *  - ⏳ 待补：`pdf.ocr`、`image.caption`（VLM 语义描述，方案 §13 待拍板第 2 项默认留到 P3）、
  *    `ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
  */
@@ -109,6 +111,9 @@ export const REGISTRY: readonly Extractor[] = [
   imageOcrExtractor,
   // ⚠️ 顺序即优先级：pdf.text 必须排在 pdf.ocr **前面**（先试便宜的文本层，抽不到才上视觉）
   pdfTextExtractor,
-  // 纯文本放最后：它的 `text/*` 与扩展名都不与上面几族重叠，放最后是为将来"更具体的纯文本子类"留位
+  // ⚠️ html 必须排在 text.plain **前面**：后者的 `text/*` 也匹配 `text/html`，
+  //    而按注册表顺序先到先得 ⇒ 放反了，HTML 会被当成纯文本**原样读出标签**。
+  htmlExtractor,
+  // 纯文本放最后：它的扩展名不与上面几族重叠，放最后是为将来"更具体的纯文本子类"留位
   textExtractor,
 ];

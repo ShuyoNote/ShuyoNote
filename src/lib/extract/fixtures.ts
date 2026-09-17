@@ -518,6 +518,41 @@ export const FIXTURES: readonly ExtractFixture[] = [
     make: () => new Uint8Array([0x68, 0x69, 0x00, 0x01, 0x02, 0x03]),
     expect: { ok: false, code: "unsupported" },
   },
+
+  // ===== HTML（Windows；与 text.plain 同一次真样张里发现的缺口）=====
+  {
+    id: "text/html-去脚本与块级分段",
+    pins:
+      "① `<script>/<style>` **必须清掉**——否则一整页 JS 会被当正文灌进索引（HTML 抽取最常见的脏数据）；" +
+      "② 块级元素各起一段、`<h1>-<h6>` 标 `heading`、行内元素（`<a>/<b>`）**不单独成段**",
+    extractor: "text.html@1",
+    filename: "页面.html",
+    mime: "text/html",
+    make: () =>
+      strToU8(
+        "<html><head><title>不该出现</title><style>p{color:red}</style></head><body>" +
+          "<h1>季度总结</h1>" +
+          "<p>正文<b>加粗</b>继续</p>" +
+          "<script>var x = '不该出现';</script>" +
+          "<ul><li>要点一</li><li>要点二</li></ul>" +
+          "</body></html>",
+      ),
+    expect: {
+      ok: true,
+      kinds: ["heading", "text", "text", "text"],
+      contains: ["季度总结", "正文加粗继续", "要点一", "要点二"],
+      locs: ["", "", "", ""],
+    },
+  },
+  {
+    id: "text/html-纯脚本页",
+    pins: "解析后没内容（纯 JS 页 / 不是 HTML）⇒ `empty`，不是失败",
+    extractor: "text.html@1",
+    filename: "空壳.html",
+    mime: "text/html",
+    make: () => strToU8("<html><body><script>app()</script></body></html>"),
+    expect: { ok: false, code: "empty" },
+  },
 ];
 
 /** 按目标抽取器分组（跑器与"是否还有 planned 未落地"检查都用它）。 */
