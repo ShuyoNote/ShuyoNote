@@ -23,6 +23,18 @@
 
 ### 新增
 
+- **发布清单的端到端门禁**（`scripts/release-manifest.test.mjs`）：真跑一遍 `release.mjs --dry-run`
+  （合成产物、不联网、跑完即清），断言写出来的 `latest.json` 里 **darwin 两个键都指向 `.app.tar.gz`**、
+  dmg 不进清单、每项 signature 非空；三条路径各一条用例（universal / 只出 aarch64 /
+  有 dmg 却没 `.app.tar.gz` 时必须非零退出）。**为什么补**：那两条 macOS 规则（清单指向 `.app.tar.gz`、
+  universal 占两个键）各自都有单元测试，但「规则 → 真清单」这最后一段路没人验——
+  2026-09-16 那条 bug 就活在这道缝里。变异验证：dmg 提前 ⇒ 红；universal 只占一键 ⇒ 红。
+
+- **三端同步合练脚本**（`scripts/sync-3way.mjs`）：三个设备（mac/windows/amd）各自的变更都进空间、
+  任一视角全量拉取都看得见三份、后加入的设备一次拉取补齐历史、重推 `(device_id, device_seq)` 幂等、
+  同页并发写服务端保留两条（合并判定在客户端，脚本里如实注明「这条只证明服务端事实」）。
+  本机实跑 12/12 全过。
+
 - **macOS 打包有了每次 push 的自检**：`.github/workflows/macos.yml` 在 `macos-latest` 上打一个
   **未签名**的 `.app + .dmg`（不碰任何密钥、不发布、不挂 tag），再用新增的
   `scripts/check-macos-bundle.mjs`（`pnpm check:macos-bundle`）断言四件事——
@@ -45,6 +57,15 @@
 
 ### 修复
 
+
+- **`fetch-pdfium.mjs` 在 macOS/Linux 上把包内路径写成了反斜杠**：脚本用了
+  `join(outDir, spec.lib.replace(/\//g, "\\"))`，把包内的 POSIX 路径（`lib/libpdfium.dylib`）
+  的斜杠换成反斜杠。Windows 上恰好是对的，POSIX 上得到 `…/mac-univ/lib\libpdfium.dylib`
+  ⇒ `existsSync` 恒假 ⇒ 收尾打印「完成：…（**0 字节**）」（真实 15,219,824 字节），
+  `--check` 更会直接报「缺少 … 先跑一次 fetch」，把已经就位的环境判成没装。
+  改为 `join(outDir, spec.lib)`（`node:path` 自己按平台处理分隔符）；新增
+  `scripts/fetch-pdfium.test.mjs`（源码级禁令 + 本机已取过时 `--check` 必须认得出来、
+  报出的字节数与磁盘一致）；变异验证：改回反斜杠写法 ⇒ 2 条红。
 
 - **`Android (build)` 连续两次红在 `Setup Android SDK`（不是我们的代码）**：2026-09-15 起
   `android-actions/setup-android@v3` 在 Google 侧改包后**必失败**——上游 issue #537（当天停止提供
