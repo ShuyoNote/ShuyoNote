@@ -28,10 +28,44 @@ export type ExtractErrorCode =
   | "provider_error" // VLM/ASR 端点不可达或未配置
   | "internal";
 
+/** 把一页渲染成 RGBA 的结果（`rasterize` 的返回）。 */
+export interface RasterizedPage {
+  rgba: Uint8Array;
+  width: number;
+  height: number;
+}
+
+/**
+ * **平台能力注入点** —— 抽取层需要"平台才会做的事"时，一律从这里注入。
+ *
+ * 三条不变量（对应 §15.3）：
+ *  1. **全部可选，且抽取器不许自己想办法**：没注入就返回 `provider_error`；
+ *     绝不自建网络客户端、不自带渲染器、不 import `src/lib/platform/**`。
+ *  2. **只能由平台层构造**（唯一的 `attachmentDeps(...)` 入口），抽取层内**禁止**平台 import ——
+ *     否则抽取层在 CI / Node / Headless 上就跑不了，而那正是它至今能做纯函数单测的前提。
+ *     有**源码级断言**守着这条（`isolated.test.ts`）。
+ *  3. **形状与原生实现对齐**：桌面 `pdfium_native::render_page(cache_key, bytes, page_index, scale)`
+ *     本来就是"bytes 进、RGBA + 宽高出"（AMD 侧查证）⇒ 这里只是薄适配，不是新增能力。
+ */
 export interface ExtractDeps {
-  /** 视觉模型调用（图片 / 视频关键帧）。**由调度器注入**，抽取器不自建网络客户端。
-   *  未注入时，`cost: "gpu"` 的抽取器必须返回 `provider_error`，不许抛（§15.3-7）。 */
+  /** 视觉模型调用（图片 / 视频关键帧 / 扫描件页）。**由平台层注入**。
+   *  未注入时，需要它的抽取器必须返回 `provider_error`，不许抛（§15.3-7）。 */
   vision?: (prompt: string, image: Uint8Array, mime: string) => Promise<string>;
+  /** 把 PDF 的某一页（0 基）渲染成 RGBA。**由平台层注入**。
+   *
+   *  为什么需要：扫描件要"页 → 像素"才能走 `vision`，而抽取器手上只有 `bytes`
+   *  （平台原有的 `renderPdfPage(attachmentId, …)` 要的是存储层 id，抽取层不该知道 id）。
+   *
+   *  ⚠️ 注入的实现**允许忽略 `bytes`**（用构造闭包时捕获的 attachmentId 走原生路径）——
+   *  这是刻意的：`bytes` 在这里的作用是"让抽取器保持输入自足、假实现能被 trivially 伪造"。
+   *
+   *  ⚠️ **Web 平台尚无实现**（`renderPdfPage` 是抛异常的桩）⇒ Web 构建下 `pdf.ocr`
+   *  **预期**返回 `provider_error`，**这是已知状态不是 bug**（补它属平台层的活，见 §15.8）。 */
+  rasterize?: (
+    bytes: Uint8Array,
+    pageIndex: number,
+    scale: number,
+  ) => Promise<RasterizedPage>;
 }
 
 export interface ExtractInput {

@@ -608,3 +608,53 @@ export function pickExtractor(
 
 1. 先改**本节**（契约）→ 2. 再改**实现** → 3. 若改的是 `id` 的版本号，同时更新 §6.1 的重跑口径与 §13 待拍板里相关项。
 **禁止**先改实现再回头补契约。
+
+### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize`**（2026-09-17 增补）
+
+起因：Mac 侧要做 `pdf.ocr`，先做了五分钟可行性核对就发现**路是堵的** —— 扫描件要"页 → 像素"，
+而契约不给它要像素的路（抽取器只有 `bytes`；平台原有的渲染入口要的是 **attachmentId**）。
+**这类事早说比写完再返工便宜**，他们没直接开写，做法是对的。
+
+**裁定（Windows 侧为契约所有者）**：
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| 1 | 加不加 `deps.rasterize` | **加**，形状用 Mac 给的那版（`(bytes, pageIndex, scale) → {rgba,width,height}`）。AMD 查到桌面 `pdfium_native::render_page(cache_key, bytes, page_index, scale)` **本来就是 bytes 进、RGBA 出** ⇒ 桌面侧是**薄适配不是新增能力** |
+| 2 | **谁注入** | ⚠️ **不是 `pipeline.ts`**（与 Mac、AMD **两人**的建议都不同，理由见下）。**由平台层构造**：平台层提供唯一的 `attachmentDeps(attId)` + 唯一入口 `extractAttachment(...)`；`pipeline.ts` 继续只**接收并透传** `deps` |
+| 3 | Web 那道桩要不要补 | ✅ **已由 Mac 侧补完并实测**（`dev=7a6df321`）：`web.ts` 的 `renderPdfPage` 从"抛异常"改成 pdf.js + canvas 真实现，**用真 Chromium 验过**（`bytes=540000 = 宽×高×4`、非空白像素 **132340** ⇒ 真的画出来了）。**我原先的"本轮不补"被事实推翻**——我当时的理由是"本机无法验证 canvas"，**错在假定了没人能验**：Mac 有真浏览器。⇒ 撤回该条 |
+
+**第 2 条为什么驳回"pipeline 注入"**（Mac 与 AMD 都主张它，所以这条要写清理由）：
+
+他们的诉求**成立**：唯一注入点才守得住"未注入 ⇒ `provider_error`"这条不变量，
+各调用点自己拼 deps 会导致"同一抽取器在不同路径下行为不同"。**这一点我认。**
+
+但**落点不对**，理由与 Mac 反对"抽取器自带 pdf.js + canvas"是**同一个**：
+一个把 DOM/canvas 拖进抽取层，一个把平台驱动（Tauri IPC / Web 驱动）拖进来，**代价相同**。
+
+> ⚠️ **我核实过一条、并且它不成立，所以不拿它当理由**：`platform/index → web → sqliteStore → extract/store`
+> 这条链确实存在，而 `extract/store` **并不反向 import pipeline** ⇒ **不构成运行时环**。
+> 我不把"会成环"写成理由——那样是拿一个没验证的断言去压两个审阅人。
+
+**真正的代价是"层间变双向依赖"**：`platform → extract` **已经存在**
+（`sqliteStore.ts:12-13` import `extract/schema` 与 `extract/store`），
+再加一条 `extract → platform` 就把它变成双向，后果是**抽取层从此拿不出去**——
+CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的单测也会被迫加载平台驱动。
+抽取层至今能在 Windows 上以 vitest 秒级跑 125 条纯函数测试，**靠的正是它不依赖平台**。
+
+⇒ **唯一性由平台层保证，不由抽取层承担**：`attachmentDeps(attId)` 是唯一构造点、
+`extractAttachment(...)` 是唯一入口。**这是平台层的实现义务，写进契约。**
+**什么会让我改口**：谁能给出一条"应用侧无法经由平台 wrapper 构造 deps"的真实调用路径，我立刻采纳 pipeline 注入。
+
+**两条配套（都已落地）**：
+- **源码级断言** `src/lib/extract/isolated.test.ts`：生产代码**禁止** import `src/lib/platform/**`、
+  `@tauri-apps/**`、`tesseract.js`、`canvas` 系。**并有"扫描器本身有效"的自证**（用合成代码验证命中）。这条断言存在，是"驳回 pipeline 注入"这个理由**可执行的形式**——否则下一个人顺手 import 一下就悄悄破了。
+  > 写这条时我自己判错过一次：第一版把 **`pdfjs-dist` 也列为禁止**，跑起来发现 **Mac 的 `pdf.text@1` 正用它做文本抽取**
+  > —— 它能在 Node 跑，**是可移植的库、不是平台依赖**；我真正要禁的是"**渲染**"，而渲染已由 `deps.rasterize` 收口。
+  > ⇒ **改测试不改他们的实现**，并**把"允许 pdfjs"也钉成一条反例断言**，免得后人又把它加回禁止清单。
+- **共享假 deps** `src/lib/extract/testing/fakeDeps.ts`（AMD 提议、三轴共用）：
+  `fakeVision` / `fakeRasterize`（**确定性**；R 通道编码页号便于反查渲染了哪一页；`rejectOn` 可模拟渲染失败）
+  / `depsOf`（**不传未注入项**，保住"未注入 ⇒ `provider_error`"的语义）。
+  各写各的假实现会长成三种口径，而这层分歧**没有任何编译期信号**。
+
+**`av.transcript` 将来也要走同一条路**（音频解码 → 又一个 `deps` 能力）。所以规则是通用的：
+**凡是"只有平台能做"的事，都加 `deps`；一律可选、一律没注入就 `provider_error`、一律不许抽取器自己想办法。**
