@@ -134,10 +134,12 @@
    - 客户明确要求「**传输层协议本身必须是国密**」（而不只是「链路上是国密密文」）；
    - 或者某项测评/招标文件直接点名 TLCP / RFC 8998。
    满足其一 ⇒ 另立文档与排期（1–2 周，含两端 ＋ 构建链），**不在本次交付内**。
-3. **原「先做 spike 定路径 3」的动作随之降级**：Tongsuo 在 MSVC 上的构建 spike **不再是主线前置**，
-   只作为「哪天要重启路径 3」时的技术预研，**不阻塞国密主线，也不阻塞 PDFium**。
-   （风险预判仍有效：Tongsuo 与 OpenSSL 同源，构建同样要 **Perl + Configure**，本项目在 Android 上
-   已因 Git-for-Windows 的精简 Perl 卡过一次，`Cargo.toml:108-109`——**真要重启路径 3 时，第一关还是它**。）
+3. **原「先做 spike 定路径 3」的动作要拆成两半**（暂缓的是后者，不是前者）：
+   - ⚠️ **Tongsuo 的构建（MSVC / Android NDK）仍在主线** —— 它是 **P3 库级 provider 的硬前置**
+     （provider 要调 Tongsuo 的 `EVP_sm4_cbc` / `HMAC(SM3)`）。**暂缓路径 3 ≠ 可以不编 Tongsuo。**
+   - ✅ **用 Tongsuo 开一条 TLCP 连接**那部分随路径 3 一起暂缓，只作「哪天要重启路径 3」的预研。
+   风险预判仍有效：Tongsuo 与 OpenSSL 同源，构建同样要 **Perl + Configure**，本项目在 Android 上
+   已因 Git-for-Windows 的精简 Perl 卡过一次（`Cargo.toml:108-109`）——**它是 P3 的第一关，别晚确认。**
 
 > 顺带一个对 iOS 的好处（见[利弊与跨平台](2026-09-17-sm-crypto-tradeoff.md) §5.2）：路径 3 要换 TLS 栈、
 > 会连带重做 Android 的 `rustls-platform-verifier`，在 iOS 上还要自管 SM2 信任链。
