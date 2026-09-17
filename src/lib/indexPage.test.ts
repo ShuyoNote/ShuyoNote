@@ -11,11 +11,11 @@ import initSqlJs from "sql.js";
 import { beforeEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api", () => ({
-  api: { listPageAttachments: vi.fn() },
+  api: { listPages: vi.fn(), listPageAttachments: vi.fn() },
 }));
 
 import { api } from "./api";
-import { indexPage, indexUnfiled } from "./indexPage";
+import { indexLibrary, indexPage, indexUnfiled } from "./indexPage";
 import { DERIVED_SCHEMA_DDL } from "./extract/schema";
 import { createAttachmentTextStore, type SqlRunner } from "./extract/store";
 import { createChunkStore } from "./extract/chunkStore";
@@ -211,6 +211,88 @@ describe("indexPage：把一个页面索引完整", () => {
     setActivePlatform(platformWith({}, {}));
     const s = await stores();
     await expect(indexPage("nope", s)).rejects.toThrow("页面不存在");
+  });
+});
+
+describe("indexLibrary：全库索引（UI 上那个「开始索引」）", () => {
+  const setPages = (ids: string[]) =>
+    (api.listPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(ids.map((id) => ({ id })));
+
+  it("逐页 + 未整理，一起汇总；块数来自一次 stats", async () => {
+    setPages(["p1", "p2"]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (pageId: string | null) => (pageId === "p1" ? listed(["a1"]) : pageId === "p2" ? [] : listed(["u1"])),
+    );
+    setActivePlatform(platformWith({ p1: "正文一。", p2: longBody(80) }, { a1: docx("附件"), u1: docx("散件") }));
+
+    const s = await stores();
+    const r = await indexLibrary(s);
+
+    expect(r.pages).toEqual({ total: 2, ok: 2, failed: 0 });
+    expect(r.attachments).toMatchObject({ total: 2, searchable: 2 });
+    expect(r.attachments.byStatus).toEqual({ stored: 2 });
+    expect(r.unfiled.attachments.map((a) => a.attId)).toEqual(["u1"]);
+    // 块总数**就是库里的真实值**（来自一次 stats，不编造分项）
+    expect(r.chunks.total).toBe(s.chunks.stats().chunks);
+    expect(r.chunks.total).toBeGreaterThan(0);
+    expect(r.summary).toContain("页面 2/2 已索引");
+  });
+
+  it("**一页坏掉不停整个库**：其余页面照常索引完，坏页进 failures", async () => {
+    setPages(["good", "bad"]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    setActivePlatform(platformWith({ good: "好的正文。" }, {})); // `bad` 不存在 ⇒ get_page 抛
+
+    const s = await stores();
+    const r = await indexLibrary(s);
+
+    expect(r.pages).toEqual({ total: 2, ok: 1, failed: 1 });
+    expect(r.failures).toEqual([{ kind: "page", id: "bad", reason: "页面不存在: bad" }]);
+    // 好页面**确实**被索引了（不是"因为有人坏就整批放弃"）
+    expect(s.chunks.chunksOf({ kind: "page", pageId: "good" }).length).toBeGreaterThan(0);
+    expect(r.summary).toContain("失败 1");
+  });
+
+  it("进度回调**单调递增且收尾到 total**（可直接驱动进度条）", async () => {
+    setPages(["p1", "p2"]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    setActivePlatform(platformWith({ p1: "甲。", p2: "乙。" }, {}));
+
+    const seen: [number, number, string][] = [];
+    const s = await stores();
+    await indexLibrary(s, { onProgress: (d, t, label) => seen.push([d, t, label]) });
+
+    expect(seen.length).toBeGreaterThanOrEqual(4); // 2 页 + 未整理 + 完成
+    expect(seen.every(([, t]) => t === 3)).toBe(true); // 2 页 + 1 步
+    const dones = seen.map(([d]) => d);
+    expect(dones).toEqual([...dones].sort((a, b) => a - b)); // 单调
+    expect(dones[dones.length - 1]).toBe(3); // 收尾
+    expect(seen[seen.length - 1][2]).toBe("完成");
+  });
+
+  it("**可重复**：第二次全是 cached / 无新写（中断后重跑几乎不花时间）", async () => {
+    setPages(["p1"]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      async (pageId: string | null) => (pageId === "p1" ? listed(["a1"]) : []),
+    );
+    setActivePlatform(platformWith({ p1: longBody(80) }, { a1: docx("附件") }));
+
+    const s = await stores();
+    await indexLibrary(s);
+    const again = await indexLibrary(s);
+
+    expect(again.attachments.byStatus).toEqual({ cached: 1 });
+    expect(again.pages).toEqual({ total: 1, ok: 1, failed: 0 });
+  });
+
+  it("空库 ⇒ 不报错（页 0/0、只有未整理那一步）", async () => {
+    setPages([]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    setActivePlatform(platformWith({}, {}));
+    const s = await stores();
+    const r = await indexLibrary(s);
+    expect(r.pages).toEqual({ total: 0, ok: 0, failed: 0 });
+    expect(r.summary).toContain("页面 0/0");
   });
 });
 

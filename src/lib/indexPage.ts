@@ -154,3 +154,99 @@ async function indexOne(
     return { attId, status: "failed", chunks: 0, code: "internal" };
   }
 }
+
+// ---------------------------------------------------------------- 全库
+
+export interface LibraryIndexReport {
+  pages: { total: number; ok: number; failed: number };
+  attachments: {
+    total: number;
+    /** 有块 = 检索面看得到。 */
+    searchable: number;
+    /** 按 `ExtractOutcome.status` 分组。 */
+    byStatus: Record<string, number>;
+  };
+  /** 库里**当前**的块总数（页面 + 附件，来自一次 `stats()`；不编造分项）。 */
+  chunks: { total: number };
+  unfiled: UnfiledIndexResult;
+  /** 明细只放有问题的（全库清单没有信息量）——与覆盖报告同一条口径。 */
+  failures: { kind: "page" | "attachment"; id: string; reason: string }[];
+  summary: string;
+}
+
+export interface IndexLibraryOptions extends IndexPageOptions {
+  /** 进度回调 `(done, total, label)`。**顺序执行** ⇒ `done` 单调递增，可直接驱动进度条。 */
+  onProgress?: (done: number, total: number, label: string) => void;
+}
+
+/**
+ * **全库索引**：列出所有页面逐个索引，再索引"未整理"的附件 —— 即 UI 上那个「开始索引」。
+ *
+ * ## 为什么是**顺序**执行
+ * 方案 §9 的架构约束：本机显存放不下「文本模型＋嵌入＋VLM」三件常驻，**抽取必须排队错峰**。
+ * 并发跑只会把内存/显存顶满，而用户感知不到"更快" —— 所以他这里**不提供并发参数**：
+ * 想快应该去解决"跑在哪台机器"（§13 第 7 项），而不是在这里加并发。
+ *
+ * ## 三条不变量
+ * 1. **一页失败不停整个库**：坏页面/坏附件都会记进 `failures`，其余的照样索引完。
+ * 2. **可重复、可中断**：每步都走 `indexPage` 的缓存判据 ⇒ 中断后重跑，已索引的部分**几乎不花时间**。
+ * 3. **只处理已导入的内容**：页面来自 `listPages`、附件来自 `listPageAttachments`，
+ *    **不遍历用户磁盘**（§10 红线）。
+ *
+ * ⚠️ **这个函数本身不做"什么时候跑"的决定**。它在页面保存路径之外，是**用户显式动作**。
+ * 把索引悄悄挂到每次保存上是有性能含义的行为改动，应由应用层按自己的节奏（去抖/空闲）调用它。
+ */
+export async function indexLibrary(
+  stores: IndexPageStores,
+  opts: IndexLibraryOptions = {},
+): Promise<LibraryIndexReport> {
+  const pageIds = (await api.listPages()).map((p) => p.id);
+  const total = pageIds.length + 1; // +1 是"未整理附件"那一步
+  const failures: LibraryIndexReport["failures"] = [];
+  const byStatus: Record<string, number> = {};
+  let attTotal = 0;
+  let attSearchable = 0;
+  let ok = 0;
+
+  const tally = (list: PageAttachmentIndex[]) => {
+    for (const a of list) {
+      attTotal++;
+      if (a.chunks > 0) attSearchable++;
+      byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
+      if (a.status === "failed") {
+        failures.push({ kind: "attachment", id: a.attId, reason: a.code ?? "failed" });
+      }
+    }
+  };
+
+  for (let i = 0; i < pageIds.length; i++) {
+    const id = pageIds[i];
+    opts.onProgress?.(i, total, `页面 ${id}`);
+    try {
+      const r = await indexPage(id, stores, opts);
+      ok++;
+      tally(r.attachments);
+    } catch (e) {
+      // 一页取不到/坏掉 ⇒ 记下来继续（否则一个坏页面会让整库索引停在半路）
+      failures.push({ kind: "page", id, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  opts.onProgress?.(pageIds.length, total, "未整理附件");
+  const unfiled = await indexUnfiled(stores, opts);
+  tally(unfiled.attachments);
+  opts.onProgress?.(total, total, "完成");
+
+  const chunks = stores.chunks.stats().chunks;
+  return {
+    pages: { total: pageIds.length, ok, failed: pageIds.length - ok },
+    attachments: { total: attTotal, searchable: attSearchable, byStatus },
+    chunks: { total: chunks },
+    unfiled,
+    failures,
+    summary:
+      `页面 ${ok}/${pageIds.length} 已索引；附件 ${attSearchable}/${attTotal} 可检索` +
+      (failures.length > 0 ? `；失败 ${failures.length}` : "") +
+      `；块 ${chunks}`,
+  };
+}
