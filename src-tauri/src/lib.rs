@@ -479,6 +479,7 @@ pub fn run() {
             commands::move_page,
             search::search,
             search::search_chunks,
+            search::read_attachment_text,
             sync::get_sync_config,
             sync::set_sync_config,
             sync::sync_now,

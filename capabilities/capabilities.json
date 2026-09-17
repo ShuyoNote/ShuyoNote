@@ -444,6 +444,48 @@
       "ai": true
     },
     {
+      "id": "files.read",
+      "title": "读取附件派生文本",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:files",
+      "since": "1.1.0",
+      "jsPath": [
+        "files",
+        "read"
+      ],
+      "args": [
+        {
+          "name": "id",
+          "type": "string",
+          "required": true,
+          "desc": "附件 id"
+        },
+        {
+          "name": "offset",
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "desc": "从第几段开始（默认 0）"
+        },
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "default": 200,
+          "desc": "最多返回多少段（上限 1000）"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ segments: { extractor: string; kind: string; text: string; loc: string }[]; total: number; truncated: boolean } | null",
+        "desc": "派生文本段 + 总段数；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）"
+      },
+      "rust": "cap_files_read",
+      "desc": "读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。",
+      "ai": true
+    },
+    {
       "id": "editor.insertText",
       "title": "向当前页插入纯文本",
       "kind": "write",

@@ -9,6 +9,7 @@ vi.mock("../api", () => ({
     getBacklinks: vi.fn(),
     listPageAttachments: vi.fn(),
     searchChunks: vi.fn(),
+    readAttachmentText: vi.fn(),
     createPage: vi.fn(),
   },
 }));
@@ -23,6 +24,7 @@ const EXPECTED = [
   "blocks.append",
   "blocks.list",
   "files.list",
+  "files.read",
   "files.search",
   "pages.create",
   "pages.get",
@@ -72,6 +74,44 @@ describe("AI 工具层 = 能力注册表（元数据）+ 前端适配表（实�
     expect(r.ok).toBe(false);
     expect(String(r.error)).toContain("files.search");
     expect(api.searchChunks).not.toHaveBeenCalled();
+  });
+
+  it("files.read：派生文本原样透出 + **必须回报 total/truncated**（AI 才知道自己只看到一部分）", async () => {
+    vi.mocked(api.readAttachmentText).mockResolvedValue({
+      segments: [{ extractor: "pdf.text@1", kind: "text", text: "第一段", loc: "p.1" }],
+      total: 7,
+      truncated: true,
+    } as never);
+
+    const r = (await getAiTool("files.read")!.run({ id: "a1" }, CTX)) as Record<string, any>;
+
+    expect(api.readAttachmentText).toHaveBeenCalledWith("a1", 0, 200);
+    expect(r.ok).toBe(true);
+    expect(r.file.segments[0].loc).toBe("p.1");
+    expect(r.file.segments[0].extractor).toBe("pdf.text@1");
+    expect(r.file.total).toBe(7);
+    expect(r.file.truncated).toBe(true);
+  });
+
+  it("files.read：**「还没抽过」与「不存在」分开回话**（否则 AI 会把没索引读成「文件里没有」）", async () => {
+    // 还没抽过：空段 + total 0 + note
+    vi.mocked(api.readAttachmentText).mockResolvedValue({ segments: [], total: 0, truncated: false } as never);
+    const empty = (await getAiTool("files.read")!.run({ id: "a1" }, CTX)) as Record<string, any>;
+    expect(empty.ok).toBe(true);
+    expect(empty.file.segments).toEqual([]);
+    expect(String(empty.file.note)).toContain("不要");
+
+    // 不存在：file: null
+    vi.mocked(api.readAttachmentText).mockResolvedValue(null as never);
+    const missing = (await getAiTool("files.read")!.run({ id: "nope" }, CTX)) as Record<string, any>;
+    expect(missing.ok).toBe(true);
+    expect(missing.file).toBeNull();
+
+    // 空 id：明确报错且不触碰 api
+    vi.mocked(api.readAttachmentText).mockClear();
+    const bad = (await getAiTool("files.read")!.run({}, CTX)) as Record<string, any>;
+    expect(bad.ok).toBe(false);
+    expect(api.readAttachmentText).not.toHaveBeenCalled();
   });
 
   it("写入类：只产出草稿，绝不直接落库", async () => {

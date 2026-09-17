@@ -1855,6 +1855,20 @@ fn cap_files_search(query: &str, limit: i64) -> CapResult {
     serde_json::to_value(&hits).map_err(|e| format!("internal: {e}"))
 }
 
+/// `files.read`：读某个附件的**派生文本**（抽取结果，**不含原文字节**）。
+///
+/// 与 `files.search` 同构：只读、走活动空间；**不存在** ⇒ `null`，**还没抽过** ⇒ `{segments: [], total: 0}`
+/// —— 两者必须分开，否则 AI 会把"还没索引"读成"文件里没有相关内容"。
+fn cap_files_read(id: &str, offset: i64, limit: i64) -> CapResult {
+    if id.trim().is_empty() {
+        return Err("bad_args: id 不能为空".to_string());
+    }
+    let off = offset.max(0) as usize;
+    let lim = limit.clamp(1, crate::search::MAX_ATT_TEXT_LIMIT as i64) as usize;
+    let page = with_read_conn(|c| crate::search::read_attachment_text_in_conn(c, id, off, lim))?;
+    serde_json::to_value(&page).map_err(|e| format!("internal: {e}"))
+}
+
 /// 把一条草稿塞进本次执行（同 key 只留一条，避免插件在循环里刷屏）。
 fn push_draft(key: String, summary: String, payload: serde_json::Value) {
     RUN_STATE.with(|s| {
@@ -2072,6 +2086,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
         "files.search" => cap_files_search(&arg_str("query")?, arg_i64("limit", 10)),
+        "files.read" => cap_files_read(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 200)),
         "files.export" => cap_files_export(&arg_str("fileName")?, &arg_str("content")?),
         "kv.get" => cap_kv_get(&arg_str("key")?, &scope_arg(&args)),
         "kv.set" => cap_kv_set(&arg_str("key")?, &arg_str("value")?, &scope_arg(&args)),
@@ -7218,6 +7233,59 @@ register({ id: "s.run", title: "结构化", run: function () {
 
         // ③ 空查询 ⇒ **参数错误**（绝不允许"返回全库"这种"看起来有结果"的坏法）
         assert!(call(&st, "files.search", r#"{"query":"   "}"#).is_err(), "空查询必须是参数错误");
+
+        // ---- files.read（附件派生文本，只读 + 分页）----
+        // ① 老库没有 `attachment_text` ⇒ **空段 + total 0**（不是报错）：与"还没抽过"同一种答复
+        let empty = call(&st, "files.read", r#"{"id":"a1"}"#).unwrap();
+        assert_eq!(empty["segments"].as_array().unwrap().len(), 0, "缺表时应当是空段");
+        assert_eq!(empty["total"], 0);
+        // 不存在的附件 ⇒ **null**（"不存在"与"还没抽过"必须分开）
+        assert!(call(&st, "files.read", r#"{"id":"nope"}"#).unwrap().is_null());
+        // 空 id ⇒ 参数错误
+        assert!(call(&st, "files.read", r#"{"id":"  "}"#).is_err());
+
+        // ② 播种两段派生文本（模拟 pdf.text@1 抽过之后）
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute_batch(
+                "CREATE TABLE IF NOT EXISTS attachment_text (
+                   att_id TEXT NOT NULL, extractor TEXT NOT NULL, seq INTEGER NOT NULL,
+                   kind TEXT NOT NULL, text TEXT NOT NULL, loc TEXT NOT NULL DEFAULT '',
+                   src_hash TEXT NOT NULL, updated_at INTEGER NOT NULL,
+                   PRIMARY KEY (att_id, extractor, seq)
+                 );",
+            )
+            .unwrap();
+            for (seq, text, loc) in [(0i64, "第一段正文", "p.1"), (1, "第二段正文", "p.2")] {
+                c.execute(
+                    "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at)
+                     VALUES ('a1','pdf.text@1',?1,'text',?2,?3,'h',0)",
+                    params![seq, text, loc],
+                )
+                .unwrap();
+            }
+        }
+        let page = call(&st, "files.read", r#"{"id":"a1"}"#).unwrap();
+        let segs = page["segments"].as_array().unwrap();
+        assert_eq!(segs.len(), 2, "两段都要读出来：{page:?}");
+        assert_eq!(page["total"], 2);
+        assert_eq!(page["truncated"], false);
+        // 逐字段核对（含 extractor 与 loc —— 回链与"哪条抽取器产出的"都要能看见）
+        assert_eq!(segs[0]["extractor"], "pdf.text@1");
+        assert_eq!(segs[0]["kind"], "text");
+        assert_eq!(segs[0]["text"], "第一段正文");
+        assert_eq!(segs[0]["loc"], "p.1");
+
+        // ③ 分页：limit=1 只回一段、**truncated=true**、total 仍是 2（调用方据此知道"只看到一部分"）
+        let one = call(&st, "files.read", r#"{"id":"a1","limit":1}"#).unwrap();
+        assert_eq!(one["segments"].as_array().unwrap().len(), 1);
+        assert_eq!(one["total"], 2, "total 是总段数，不是本页条数");
+        assert_eq!(one["truncated"], true);
+        // offset 越界 ⇒ 空段 + **真实 total**（不报错、也绝不返回全库）
+        let beyond = call(&st, "files.read", r#"{"id":"a1","offset":99}"#).unwrap();
+        assert_eq!(beyond["segments"].as_array().unwrap().len(), 0);
+        assert_eq!(beyond["total"], 2);
+        assert_eq!(beyond["truncated"], false, "越界之后没有可截断的部分");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

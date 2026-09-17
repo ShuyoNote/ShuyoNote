@@ -849,6 +849,128 @@ pub(crate) fn search_chunks_in_conn(
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// 附件**派生文本**的读取（分页）—— 能力面 `files.read` 用（见信箱 reply-17 承接的草案）。
+//
+// 为什么放在 `search.rs`：这一族（`chunks` / `attachment_text`）都是"派生文本"，
+// 而块级检索的读函数也在这里；放在一处，两个读者共用同一张表的口径（列名、`extractor` 语义、缺表处理）。
+//
+// ⚠️ 三条刻意的取舍：
+//  1. **只给派生文本，不给原文字节** —— 派生文本是"只读、可重建、以原件为准"的缓存（§6.1）；
+//     字节是另一类风险（体积/隐私/沙箱），要做成单独能力单独评审。
+//  2. **"不存在" 与 "还没抽过" 必须分开**：前者 `None`（调用方回 `null`），后者空数组 + total 0。
+//     合成一种（都返回空）就会让 AI 把"还没索引"读成"文件里没有"。
+//  3. **多抽取器的行不替调用方挑一个**：`replace()` 是**按 (att_id, extractor)** 整体替换的
+//     ⇒ 换过抽取器时旧行会与新的并存。这里按 `(extractor, seq)` 全列出来，并把 `extractor` 一并带出
+//     —— 替调用方挑，就是静默丢内容（§15.10 同一条原则）。
+// ---------------------------------------------------------------------------
+
+/// 一页派生文本的上限（与注册表里 `limit` 的 desc 一致）。
+pub(crate) const MAX_ATT_TEXT_LIMIT: usize = 1000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentTextSegment {
+    /// 哪条抽取器产出的这一段（换过抽取器时，同一附件会有两组行）。
+    pub extractor: String,
+    pub kind: String,
+    pub text: String,
+    pub loc: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentTextPage {
+    pub segments: Vec<AttachmentTextSegment>,
+    /// **总段数**（不是本页条数）：没有它，调用方没法知道"自己只看到了一部分"。
+    pub total: i64,
+    pub truncated: bool,
+}
+
+/// 读某个附件的派生文本（分页）。
+///
+/// 返回值语义（调用方按此回 `null` / 空数组）：
+/// - `Ok(None)`：**这个附件不存在**（`attachments` 里没有它）；
+/// - `Ok(Some(page))` 且 `segments` 为空：存在，但**还没有派生文本**（没抽过 / 没有抽取器认领 / 抽取失败）
+///   —— 这是"没内容"，不是错误。
+pub(crate) fn read_attachment_text_in_conn(
+    c: &Connection,
+    att_id: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Option<AttachmentTextPage>, String> {
+    let exists: Option<String> = c
+        .query_row("SELECT id FROM attachments WHERE id = ?1", params![att_id], |r| r.get(0))
+        .ok();
+    if exists.is_none() {
+        return Ok(None);
+    }
+    if !table_exists(c, "attachment_text") {
+        // 老库没迁移过这张表 ⇒ 与"还没抽过"同一种答复（不是错误）
+        return Ok(Some(AttachmentTextPage { segments: Vec::new(), total: 0, truncated: false }));
+    }
+
+    let total: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM attachment_text WHERE att_id = ?1",
+            params![att_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut stmt = c
+        .prepare(
+            "SELECT extractor, kind, text, loc FROM attachment_text
+             WHERE att_id = ?1 ORDER BY extractor ASC, seq ASC LIMIT ?2 OFFSET ?3",
+        )
+        .map_err(|e| e.to_string())?;
+    let segments = stmt
+        .query_map(params![att_id, limit as i64, offset as i64], |r| {
+            Ok(AttachmentTextSegment {
+                extractor: r.get(0)?,
+                kind: r.get(1)?,
+                text: r.get(2)?,
+                loc: r.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let truncated = (offset as i64 + segments.len() as i64) < total;
+    Ok(Some(AttachmentTextPage { segments, total, truncated }))
+}
+
+/// `read_attachment_text` 的参数（命令面；能力面走 `plugins.rs::cap_files_read`，同一条读函数）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadAttachmentTextArgs {
+    pub id: String,
+    #[serde(default)]
+    pub offset: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// 命令面：读附件的派生文本（只读、分页）。
+///
+/// ⚠️ 与能力面（`cap_files_read`）**共用同一个读函数** —— 两处各写一份 SQL 就会长出两种语义
+/// （一处按 `(extractor, seq)` 排序、另一处忘了排序 ⇒ 段落顺序不同却没人发现）。
+/// 两面的差别只在"谁做权限/空间判定"：命令面拿的是主连接（活动空间），能力面走 `with_read_conn`。
+#[tauri::command]
+pub async fn read_attachment_text(
+    db: State<'_, Db>,
+    args: ReadAttachmentTextArgs,
+) -> Result<Option<AttachmentTextPage>, String> {
+    if args.id.trim().is_empty() {
+        return Err("bad_args: id 不能为空".to_string());
+    }
+    let off = args.offset.unwrap_or(0).max(0) as usize;
+    let lim = args.limit.unwrap_or(200).clamp(1, MAX_ATT_TEXT_LIMIT as i64) as usize;
+    let c = db.0.lock().expect("db mutex poisoned");
+    read_attachment_text_in_conn(&c, &args.id, off, lim)
+}
+
 /// 块级检索命令（只读）。
 ///
 /// ⚠️ 三处刻意的选择：①查询先归一化再分派；②嵌入在**取锁之前**算完（不跨 await 持 `MutexGuard`）；

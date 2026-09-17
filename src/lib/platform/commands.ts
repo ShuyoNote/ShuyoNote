@@ -375,6 +375,18 @@ export interface CommandMap {
     args: { args: { query: string; limit?: number; embedding?: unknown } };
     result: ChunkHit[];
   };
+  /** 读某个附件的**派生文本**（只读 `attachment_text`，**不含原文字节**）。
+   *  ⚠️ 分页是必须的：一篇 PDF 可能上千段，一次性返回会撑爆模型上下文；
+   *  且必须回报 `total`，否则调用方无法知道"自己只看到了一部分"。
+   *  `null` = 附件不存在；`segments: []` + `total: 0` = 存在但还没抽过（**不是**失败）。 */
+  read_attachment_text: {
+    args: { args: { id: string; offset?: number; limit?: number } };
+    result: {
+      segments: { extractor: string; kind: string; text: string; loc: string }[];
+      total: number;
+      truncated: boolean;
+    } | null;
+  };
   get_page_blocks: { args: { pageId: string }; result: PageBlock[] };
   get_backlinks: { args: { id: string }; result: PageMeta[] };
   resolve_block: { args: { blockId: string }; result: BlockInfo };

@@ -135,6 +135,34 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return { ok: true, hits };
   },
 
+  "files.read": async (args) => {
+    const id = String(args.id ?? "");
+    if (!id) return { ok: false, error: "files.read 需要 id" };
+    const offset = typeof args.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 0;
+    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(1000, Math.floor(args.limit)) : 200;
+    const page = await api.readAttachmentText(id, offset, limit);
+    // ⚠️ **不存在**（null）与**还没抽过**（segments 空）必须分开回话：
+    //    合成一种，AI 就会把"还没索引"读成"文件里没有相关内容" —— 与 §15.10 用 ExtractCoverage
+    //    防的是同一件事，只是发生在 AI 工具面。
+    if (page === null) return { ok: true, file: null };
+    return {
+      ok: true,
+      file: {
+        id,
+        segments: page.segments.map((r) => ({ extractor: r.extractor, kind: r.kind, text: r.text, loc: r.loc })),
+        total: page.total,
+        truncated: page.truncated,
+        ...(page.segments.length === 0
+          ? {
+              note:
+                "该附件没有派生文本：可能没有抽取器认领这种格式、抽取失败、或还没跑过抽取。" +
+                "**不要**据此断言文件里没有相关内容。",
+            }
+          : {}),
+      },
+    };
+  },
+
   "pages.create": async (args) => {
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.create 需要 title" };

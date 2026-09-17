@@ -33,6 +33,7 @@ var api = {
   files: {
     list: function(pageId) { return __capCall("files.list", { pageId: pageId === undefined ? undefined : String(pageId) }); },
     search: function(query, limit) { return __capCall("files.search", { query: query === undefined ? undefined : String(query), limit: limit === undefined ? 10 : Number(limit) }); },
+    read: function(id, offset, limit) { return __capCall("files.read", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 200 : Number(limit) }); },
     export: function(fileName, content) { return __capCall("files.export", { fileName: fileName === undefined ? undefined : String(fileName), content: content === undefined ? undefined : String(content) }); }
   },
   editor: {

@@ -111,6 +111,7 @@ register({
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
 | `files.list` | `api.files.list(pageId)` | `read:files` | `current-space` | — | array | 1.0.0 |
 | `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
+| `files.read` | `api.files.read(id, offset, limit)` | `read:files` | `current-space` | — | object | 1.1.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
 | `pages.create` | `api.pages.create(title, content, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `blocks.append` | `api.blocks.append(text, pageId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
@@ -211,6 +212,17 @@ register({
 - 参数：
   - `query`: `string` —— 检索词（与界面搜索同一口径：兼容表意字会先归一）
   - `limit`: `number`（可选），默认 `10` —— 最多返回多少条命中（1–100）
+
+### `files.read` — 读取附件派生文本
+
+- 调用：`api.files.read(id, offset, limit)`
+- 权限：`read:files`
+- scope：`current-space`
+- 返回：派生文本段 + 总段数；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）
+- 参数：
+  - `id`: `string` —— 附件 id
+  - `offset`: `number`（可选），默认 `0` —— 从第几段开始（默认 0）
+  - `limit`: `number`（可选），默认 `200` —— 最多返回多少段（上限 1000）
 
 ### `editor.insertText` — 向当前页插入纯文本
 

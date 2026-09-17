@@ -1893,6 +1893,35 @@ function makeInvoke(store: SqliteStore) {
           };
         }) as T;
     }
+    // ---- Attachment derived text (只读 attachment_text；与桌面 `read_attachment_text` 同语义) ----
+    if (cmd === "read_attachment_text") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      const id = String(req.id ?? a.id ?? "");
+      if (!id) throw new Error("bad_args: id 不能为空");
+      const offset = Math.max(0, Number(req.offset ?? a.offset ?? 0) || 0);
+      const limit = Math.min(1000, Math.max(1, Number(req.limit ?? a.limit ?? 200) || 200));
+
+      // 附件不存在 ⇒ null（"不存在"与"还没抽过"必须分开，后者见下面那两条 return）
+      const att = store.query("SELECT id FROM attachments WHERE id = ?", [id]);
+      if (att.length === 0) return null as T;
+
+      const hasTable = store.query("SELECT name FROM sqlite_master WHERE type='table' AND name='attachment_text'").length > 0;
+      if (!hasTable) return { segments: [], total: 0, truncated: false } as T;
+
+      const total = Number(
+        (store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachment_text WHERE att_id = ?", [id])[0]?.n ?? 0),
+      );
+      const rows = store.query<{ extractor: string; kind: string; text: string; loc: string }>(
+        `SELECT extractor, kind, text, loc FROM attachment_text
+         WHERE att_id = ? ORDER BY extractor ASC, seq ASC LIMIT ? OFFSET ?`,
+        [id, limit, offset],
+      );
+      return {
+        segments: rows.map((r) => ({ extractor: r.extractor, kind: r.kind, text: r.text, loc: r.loc })),
+        total,
+        truncated: offset + rows.length < total,
+      } as T;
+    }
     if (cmd === "get_page_blocks") {
       const pageId = String(a.pageId ?? a.page_id ?? "");
       const rows = store.query("SELECT content_json FROM pages WHERE id = ? AND deleted_at IS NULL", [pageId]);
