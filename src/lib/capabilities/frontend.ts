@@ -46,6 +46,17 @@ function targetPage(args: Record<string, unknown>, ctx?: AdapterContext): string
   return ctx?.currentPageId ?? "";
 }
 
+/**
+ * `pages.get` 返回正文的**上限**（字）。
+ *
+ * ⚠️ 这个上限本身是既有行为（防止一页几万字把模型上下文撑爆），**没有改**。
+ * 改的是"截断时**说不说**"——见 `pages.get` 实现里的注释。
+ * 真正去掉这个上限需要给工具加 `offset`/`limit` 参数，而那要改
+ * `capabilities/capabilities.json` 并重新生成（生成器会写出 `src-tauri/src/capabilities_gen.rs`）
+ * ⇒ **Rust 侧不能在本机自验**，属"待可复核环境"的活（方案 §8.0 未做表）。
+ */
+const PAGE_TEXT_LIMIT = 6000;
+
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.search": async (args) => {
     const query = String(args.q ?? "");
@@ -61,12 +72,31 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     const p = await api.getPage(id);
     if (!p) return { ok: false, error: `未找到页面 ${id}` };
     const text = (p.content_text ?? "").trim();
+    const total = text.length;
+    const truncated = total > PAGE_TEXT_LIMIT;
+
+    // ⚠️ **"成功"不等于"读全了"** —— 与抽取层的 `ExtractCoverage` 同一条原则（方案 §15.10）。
+    // 原先截断后只在末尾补一个 `…`，有两个问题：
+    //  ① **有歧义**：原文本身可能就以省略号结尾，模型分不清哪个是我们加的；
+    //  ② **没信号**：模型看到 6000 字会以为"这就是整页"，然后自信地总结一个片段。
+    // ⇒ 现在**不再改写文本**（返回的就是原文的忠实前缀），截断与否由**显式字段**说明，
+    //    并且**直接告诉模型下一步该做什么**（否则它拿到"已截断"也不知道怎么办）。
     return {
       ok: true,
       page: {
         id: p.id,
         title: p.title,
-        content_text: text.length > 6000 ? `${text.slice(0, 6000)}…` : text,
+        content_text: truncated ? text.slice(0, PAGE_TEXT_LIMIT) : text,
+        truncated,
+        chars_total: total,
+        chars_returned: truncated ? PAGE_TEXT_LIMIT : total,
+        ...(truncated
+          ? {
+              note:
+                `内容已截断：该页正文共 ${total} 字，这里只返回了前 ${PAGE_TEXT_LIMIT} 字。` +
+                `**不要据此以为读完了整页**；请先 pages.search 定位相关段落，再用 blocks.list 逐块读。`,
+            }
+          : {}),
       },
     };
   },
@@ -92,6 +122,44 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return {
       ok: true,
       files: files.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size })),
+    };
+  },
+
+  "files.search": async (args) => {
+    const query = String(args.query ?? "").trim();
+    if (!query) return { ok: false, error: "files.search 需要 query" };
+    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(100, args.limit) : 10;
+    const hits = await api.searchChunks(query, limit);
+    // 原样透出（pageId/attId/loc 就是回链三件套）：这一层**不加工**，
+    // 免得 AI 与插件看到两种形状 —— 加工（拼标题、去重）属于调用方的展示逻辑。
+    return { ok: true, hits };
+  },
+
+  "files.read": async (args) => {
+    const id = String(args.id ?? "");
+    if (!id) return { ok: false, error: "files.read 需要 id" };
+    const offset = typeof args.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 0;
+    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(1000, Math.floor(args.limit)) : 200;
+    const page = await api.readAttachmentText(id, offset, limit);
+    // ⚠️ **不存在**（null）与**还没抽过**（segments 空）必须分开回话：
+    //    合成一种，AI 就会把"还没索引"读成"文件里没有相关内容" —— 与 §15.10 用 ExtractCoverage
+    //    防的是同一件事，只是发生在 AI 工具面。
+    if (page === null) return { ok: true, file: null };
+    return {
+      ok: true,
+      file: {
+        id,
+        segments: page.segments.map((r) => ({ extractor: r.extractor, kind: r.kind, text: r.text, loc: r.loc })),
+        total: page.total,
+        truncated: page.truncated,
+        ...(page.segments.length === 0
+          ? {
+              note:
+                "该附件没有派生文本：可能没有抽取器认领这种格式、抽取失败、或还没跑过抽取。" +
+                "**不要**据此断言文件里没有相关内容。",
+            }
+          : {}),
+      },
     };
   },
 

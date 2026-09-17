@@ -11,8 +11,9 @@
 //   pnpm release:preflight            # 用 package.json 的版本
 //   pnpm release:preflight --skip-remote   # 离线：跳过远端可达性与 dev 祖先检查
 // 退出码非 0 就别打 tag。
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { summaryLine } from "./lib/report-core.mjs";
 
 const argOf = (f) => {
   const i = process.argv.indexOf(f);
@@ -143,6 +144,56 @@ if (!SKIP_REMOTE) {
   }
 } else {
   console.log("\n⑤⑥ 已按 --skip-remote 跳过（dev 祖先检查 + 远端可达）");
+}
+
+// ---- 7. 回归门禁的最近一次报告 ----
+// 为什么加这一条："CI 全绿"此前只靠人眼看 Actions 页面——而**看的是哪一次**常常说不清
+// （推送后、打 tag 前又改过东西的情形真实发生过）。这里读机器可读的报告：有收据才放行，
+// 红了就别打 tag。报告的生成方式见 docs/TESTING.md（本地 `pnpm verify:all`，或把 CI artifact
+// 落到 .test-report-out/ 下；也可以直接用 TEST_REPORT_JSON 指一份）。
+console.log("\n⑦ 回归门禁（读最近一次 test-report 报告）");
+{
+  const dir = ".test-report-out";
+  const candidates = [
+    process.env.TEST_REPORT_JSON,
+    "test-report-checks.json",
+    "test-report-browser.json",
+    "test-report-mobile.json",
+    "test-report-rust.json",
+    "test-report-artifact.json",
+  ].filter((f) => f && existsSync(f));
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir)) if (f.endsWith(".json")) candidates.push(`${dir}/${f}`);
+  }
+  // 取"门禁条数最多、同条数取最新"的那一份（CI 每个 job 一份报告，本地综合跑会写一份更全的）。
+  let best = null;
+  for (const f of candidates) {
+    try {
+      const j = JSON.parse(readFileSync(f, "utf8"));
+      if (!Array.isArray(j.results)) continue;
+      const at = Date.parse(j.startedAt || "") || 0;
+      if (!best || j.results.length > best.j.results.length || (j.results.length === best.j.results.length && at > best.at)) {
+        best = { f, j, at };
+      }
+    } catch {
+      /* 不是报告文件就跳过 */
+    }
+  }
+  if (!best) {
+    warn("没有找到门禁报告——发版前先 `pnpm verify:all`（或把 CI artifact 落到 .test-report-out/ 下）");
+  } else {
+    const ageMin = Math.round((Date.now() - (Date.parse(best.j.startedAt || "") || Date.now())) / 60000);
+    const reds = best.j.results.filter((r) => r.status === "failed").map((r) => r.id);
+    const skips = best.j.results.filter((r) => r.status === "skipped").map((r) => r.id);
+    ok(
+      reds.length === 0,
+      `${best.f}：${reds.length === 0 ? "全绿" : "有失败"}（${best.j.results.length} 条门禁，${ageMin} 分钟前）`,
+      reds.length ? `失败：${reds.join(", ")}——先修再发` : undefined,
+    );
+    if (ageMin > 24 * 60) warn(`报告的年龄 ${Math.round(ageMin / 60)} 小时——发版前重跑一轮更稳妥`);
+    if (skips.length) warn(`报告里有显式跳过：${skips.join(", ")}（跳过不等于通过）`);
+    console.log(`  · ${summaryLine(best.j)}`);
+  }
 }
 
 // ---- 结论 ----

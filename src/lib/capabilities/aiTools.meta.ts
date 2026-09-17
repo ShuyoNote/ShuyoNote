@@ -77,6 +77,33 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     isWrite: false,
   },
   {
+    id: "files.search",
+    description: "在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "query": { type: "string" },
+      "limit": { type: "number" },
+      },
+      required: ["query"],
+    },
+    isWrite: false,
+  },
+  {
+    id: "files.read",
+    description: "读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "id": { type: "string" },
+      "offset": { type: "number" },
+      "limit": { type: "number" },
+      },
+      required: ["id"],
+    },
+    isWrite: false,
+  },
+  {
     id: "pages.create",
     description: "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
     argsSchema: {

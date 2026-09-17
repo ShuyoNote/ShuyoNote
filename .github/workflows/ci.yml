@@ -11,6 +11,14 @@ name: CI
 #
 # 需要服务端的集成脚本（sync-regression / sync-collab-regression）**不在这里**：
 # 它们要一个跑着的同步服务端，放在服务端仓库的 CI 里——那边能直接构建二进制。
+# 这份边界登记在 `tests/external-suites.json`，并会出现在每次的汇总摘要里——
+# "没跑"和"跑了且通过"必须能被区分，否则读者会把空白当成绿。
+#
+# 结果公开（2026-09-16 起）：门禁清单搬进 `scripts/lib/gates.mjs`（本地 `pnpm verify`
+# 与 CI 共用同一份，不再靠人照 YAML 手抄），每轮跑完由 `scripts/test-report.mjs`
+# 写 **$GITHUB_STEP_SUMMARY**（人可读表格）并落 JSON 报告作为 artifact（机器可读、可追溯）。
+# 断言数下限由 `tests/baseline.json` 校验：调低它等于删断言，会让 CI 红。
+# 门禁总表与"每条挡什么事故"见 `docs/TESTING.md`。
 
 on:
   push:
@@ -25,6 +33,12 @@ on:
     # 覆盖。那条长期特性分支 `feat/android-mobile` 同理不必列为基线——把它列为基线只对"往那条
     # 临时分支开的 PR"生效，没有价值（该分支已于 2026-09-14 合并后删除）。
     branches: [main, dev]
+  schedule:
+    # 定时回归：push/PR 只能挡住"本次改动引入的红"，挡不住**依赖漂移**——上游 npm 包、
+    # rust 工具链、Chromium 版本自己变了，仓库一行没改也会坏。每天 UTC 18:00（北京 02:00）
+    # 跑一轮，绿的记录落在 run 历史与 artifact 里；红的时候 GitHub 会按默认通知规则提醒。
+    # 刻意**不**引入第三方 action 去自动开 issue：多一个供应链依赖，与"结果可核验"无关。
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -49,89 +63,54 @@ jobs:
       - name: 安装依赖
         run: pnpm install --no-frozen-lockfile
 
-      - name: 类型检查
-        run: npx tsc --noEmit
+      - name: 回归门禁（contract + smoke + sync + plugin）
+        # 门禁清单在 `scripts/lib/gates.mjs`——本地 `pnpm verify` 与这一步**同源**，
+        # 不再靠人照着 YAML 手抄（抄漏一条没人会发现）。每条门禁"挡什么事故"写在注册表里，
+        # 总表与覆盖边界见 `docs/TESTING.md`。
+        #
+        # ⚠️ 自指边界（原样保留，这条很重要）：它只能挡住**别的** workflow 文件被改坏。
+        # 如果坏掉的正是 `ci.yml` 自己，这个文件根本编译不过 ⇒ workflow 不会被调度 ⇒
+        # 这一步也不会被执行 ⇒ **任何写在仓库里的自检都救不了自指**（`pnpm build` 同理，
+        # 它只在 CI 之外由人触发）。这种自指只能靠**外部观察**发现：run 名显示为**文件路径**
+        # 而不是 `name: CI`、job 数为 0、且无视 branches 过滤——2026-09-12 起 49 次 push 全红
+        # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
+        run: node scripts/test-report.mjs --group contract,smoke,sync,plugin --json test-report-checks.json
 
-      - name: 单元测试（vitest）
-        run: pnpm test
+      - name: 失败时把「哪条门禁红了」变成注解（日志要鉴权时唯一的证据通道）
+        # 为什么需要它（2026-09-17 的教训）：CI 在默认组连红三次，而**没人能说出是哪条门禁**——
+        # 步骤日志与 artifact 都要鉴权，注解是空的，于是红只变成了"又红了"。团队为此白花了半天。
+        # 这一步把失败的门禁逐条打成 `::error::`：工作流命令产生的注解得**无需鉴权**就能读到
+        # （`/repos/{owner}/{repo}/check-runs/{id}/annotations`），失败证据从此有地方落。
+        #
+        # ⚠️ 只报告、不改变结论：`if: failure()` 且末尾 `exit 0`，红还是原来的红。
+        if: failure()
+        run: node scripts/test-report-annotate.mjs test-report-checks.json
 
-      - name: 冒烟测试（web 平台行为的事实标准）
-        run: node scripts/smoke-web.mjs
-
-      - name: Windows 脚本编码（.ps1 必须纯 ASCII 或带 BOM）
-        # PowerShell 5.1 读无 BOM 的 UTF-8 会按 ANSI 解码：中文变乱码**并且整个脚本解析失败**，
-        # 2026-09-11 在 Windows 侧实际踩到（一个脚本报了 9 处"语法错误"，其实只是编码）。
-        run: node scripts/check-ps1-ascii.mjs
-
-      - name: PDF 重复加载验收（真实 Chromium + 真实引擎）
-        # 挡的是"这份 PDF 没能打开 / The object can not be cloned."：pdf.js 会**接管**
-        # 传入的 buffer，而 React StrictMode 让加载 effect 跑两遍——第二次交出去的是
-        # 已 detach 的 buffer。单元测试摸不到这条（要真的 worker + 真的 transfer）。
-        run: node scripts/check-pdf-reload.mjs
-
-      - name: pdf.js worker 垫片验收（顺序不变量，裸 Node）
-        # 挡的是"手机（老 WebView）上打不开任何 PDF"：worker 是**另一个 JS 上下文**，
-        # 补齐层必须由垫片在 worker 内部先装一次，而这次 install 的顺序最容易被一次
-        # "顺手整理"破坏（把动态 import 改成顶层 import ⇒ 被提升到 polyfill 之前，
-        # 代码照样跑、review 看不出来、只有老 WebView 上死）。裸 Node 里删掉原生 API
-        # 就能复现那个处境，不需要真机也不需要 15 分钟一轮 CI。
-        run: node scripts/check-pdfjs-worker-shim.mjs
-
-      - name: 面板布局验收（真实 Chromium 量几何）
-        # 挡的是"文字被挤成一条竖柱"这类：单元测试看不见（happy-dom 不做布局）、
-        # 类型检查看不见，只有打开看一眼才发现——而这一步最容易被跳过。
-        run: node scripts/check-panel-layout.mjs
-
-      - name: Web 构建产物自检（真实 Chromium）
+      - name: 回归门禁（browser：真实 Chromium + 构建产物）
         # 冒烟跑的是 dev server，跑不到"**构建产物**能不能打开"这件事。而 Web 版是每次推
         # main 自动部署的（Pages），构建成功 ≠ 打开能用：v1.84.1 踩过一次，按静态引用过滤
         # 删旧文件，把 sql.js 的 wasm / pdf worker 这类运行时才加载的资源删了——页面照开、
         # DB 初始化失败、所有查询报错。这条在 CI 里先兜住。
-        run: |
-          pnpm build:web
-          node scripts/check-web-build.mjs
+        run: node scripts/test-report.mjs --group browser --json test-report-browser.json
 
-      - name: 同步一致性（两设备并发，真实 applyChange + 真实 sql.js）
-        run: node scripts/verify-two-device-sync.mjs
+      - name: 失败时把「哪条门禁红了」变成注解（browser 组）
+        # 与上面默认组那条同一个理由；这一条的**紧迫性还是它自己证明的**：
+        # 2026-09-17 修好默认组之后，browser 组立刻从"被跳过"变成"真红"——
+        # 也就是说它在之前每一次红里都是**被前一步掩盖**的，谁都没看到。诊断通道必须覆盖每一步，
+        # 否则"哪一步先红"决定了我们能不能看见后面的红。
+        if: failure()
+        run: node scripts/test-report-annotate.mjs test-report-browser.json
 
-      - name: 示例插件（类型检查 + 作者 CLI 校验）
-        # 这两条是「只看文档就能写出插件」的机器化验收：类型包必须能让脚本式插件
-        # 通过 tsc，CLI 必须认得出示例里的权限与 API 版本。
-        run: |
-          pnpm check:examples
-          for d in examples/plugins/*/; do
-            node scripts/plugin-cli.mjs validate "$d"
-          done
-          # 脚手架冒烟：生成的起点必须**当场**能过作者 CLI（它自己会跑一遍校验，
-          # 不通过就非零退出）——"跟着文档走第一步就卡住"是最伤的。
-          node scripts/plugin-new.mjs ci-smoke-plugin /tmp/plugin-new-smoke
-
-      - name: 版本 / CHANGELOG / 命令契约 / 能力注册表 / 文档链接 / 浮层登记
-        # workflow YAML 门禁为什么放在**这一档**（而不是只留在 `pnpm build` 链里）：
-        # 仓库里除本文件外的 workflow 都带 `paths:` 过滤（`android.yml` 只认它自己的文件与
-        # 构建输入），所以"只改坏 `.github/workflows/` 下**别的**文件"时，一个 job 都不会被
-        # 调度——门禁再准也没机会执行。本文件每次 push 都跑、没有 `paths`，由它来兜这个缺口。
-        #
-        # ⚠️ 自指边界（这条很重要，别当成万能）：它只能挡住**别的** workflow 文件被改坏。
-        # 如果坏掉的正是 `ci.yml` 自己，这个文件根本编译不过 ⇒ workflow 不会被调度 ⇒
-        # 下面这行也不会被执行 ⇒ **任何写在仓库里的自检都救不了自指**（`pnpm build` 同理，
-        # 它只在 CI 之外由人触发）。这种自指只能靠**外部观察**发现：run 名显示为**文件路径**
-        # 而不是 `name: CI`、job 数为 0、且无视 branches 过滤——2026-09-12 起 49 次 push 全红
-        # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
-        #
-        # 浮层登记门禁（2026-09-15 加）：枚举仓库里**渲染 `*-overlay` / `*-popover` 容器的组件**，
-        # 要求每个要么登记进返回栈（`useOverlayLayer`）且在移动端 `OVERLAYS` 里被量到，
-        # 要么在脚本内**显式豁免**并给出理由。加它是因为真机复验抓到的第 6 个问题
-        # （版本历史弹层没登记 ⇒ 返回键直接退出应用）**正是"手写清单漏一项"**这一类：
-        # 清单和实现对不上时，缺的那一方永远不会自己暴露。
-        run: |
-          node scripts/check-versions.mjs
-          node scripts/check-changelog.mjs
-          node scripts/check-web-commands.mjs
-          node scripts/check-capabilities.mjs
-          node scripts/check-doc-links.mjs
-          node scripts/check-workflow-yaml.mjs
-          node scripts/check-overlay-registry.mjs
+      - name: 上传回归报告（机器可读）
+        # `if: always()`：报告在**失败那一轮**最有价值——否则"红了但没有证据"。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-checks
+          path: |
+            test-report-checks.json
+            test-report-browser.json
+          retention-days: 30
 
   mobile-layout:
     name: 移动端布局验收（真实 Chromium）
@@ -167,10 +146,7 @@ jobs:
           cat /tmp/webdev.log
           exit 1
 
-      - name: 布局验收
-        run: node scripts/verify-mobile-layout.mjs
-
-      # 浮层/弹窗验收：接着上面那条跑，同一个 dev server。
+      # 浮层/弹窗验收接着上一条跑，同一个 dev server。
       # 挡的是三类"功能直接不可用、而且都不报错"的坏法：
       #   · `.set-dialog{min-width:640px}` 压过 `max-width` ⇒ 设置面板**关不上**；
       #   · 窄屏收起的竖条带 `transform`、成了 `position:fixed` 浮层的包含块 ⇒
@@ -178,8 +154,16 @@ jobs:
       #   · 没有滚动锁 ⇒ 浮层打开时手指拖背景把正文拖走（锁 body 无效，
       #     真正滚的是 `.note-scroll`）。
       # 视口两档（360x640 / 390x844）+ 一档桌面：后者防"窄屏规则把桌面也改成弹层"。
-      - name: 浮层 / 弹窗验收
-        run: node scripts/verify-mobile-overlays.mjs
+      - name: 移动端布局 + 浮层验收（真实 Chromium）
+        run: node scripts/test-report.mjs --group mobile --json test-report-mobile.json
+
+      - name: 上传回归报告（机器可读）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-mobile
+          path: test-report-mobile.json
+          retention-days: 30
 
       - name: 失败时输出 dev server 日志
         if: failure()
@@ -216,21 +200,25 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
 
-      - name: 单元测试 + 集成测试（cargo test）
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Rust 测试（cargo test，含宿主子进程集成测试）
+        # 门禁清单在 `scripts/lib/gates.mjs` 的 rust 组：全量 `cargo test` + 插件模块**单独再跑一遍**
+        # （2026-09-13 那类缺陷：某测试依赖进程级 APP_DATA_DIR ⇒ 单跑必红、全量反而绿，
+        # 改一行只跑一条时极易误判；修法是测试自给自足，这条门禁防它回来）。
+        #
+        # ⚠️ 一条必须留在这里的教训：那条命令含行尾冒号（`--lib plugins::`）——YAML 的 plain scalar
+        # 不允许以 `:` 结尾。若有人把它抄回本文件的 `run:` 且不加引号，整个 workflow 文件编译不过；
+        # GitHub 对这种错误**不给行号、不给日志**，只产出一条 0 个 job 的红色 run（run 名是文件路径
+        # 而不是 `name: CI`）——2026-09-12 起 49 次 push 全红、连纯文档提交也红，就是这一行。
+        # 现在它跑在 .mjs 里，绕开了 YAML 标量规则；`check-workflow-yaml` 另有窄规则兜底。
+        run: node scripts/test-report.mjs --group rust --json test-report-rust.json
 
-      - name: 插件测试必须能**单独跑**（挡住"只有全量跑才绿"的测试）
-        # 2026-09-13 修掉的那一类缺陷：`settings_get_is_null_when_unset_and_errors_on_undeclared_keys`
-        # 要写 meta.db，而库路径来自**进程级** `APP_DATA_DIR`——那个只由 `db::init` 设置。
-        # 于是它**单跑必红、全量跑反而绿**（别的测试碰巧先 init 过）。
-        # 这类测试最费时间：改一行、只跑一条、看到一个红，会以为是自己刚改坏的。
-        # 上面那步全量跑**永远不会**暴露它，所以这里把插件模块单独再跑一遍。
-        # 修法是测试侧自给自足（`db::ensure_test_app_data_dir()`），这条门禁防它回来。
-        # ⚠️ 这个值必须**整个**加引号：YAML 的 plain scalar 不允许以 `:` 结尾，`plugins::`
-        # 行尾那个冒号会被当成 mapping 指示符 → 整个 workflow 文件编译不过。GitHub 对这种
-        # 错误**不给行号、不给日志**，只产出一条 0 个 job 的红色 run（run 名是文件路径而不是
-        # 上面的 `name: CI`）——2026-09-12 起 49 次 push 全红、连纯文档提交也红，就是这一行。
-        run: "cargo test --manifest-path src-tauri/Cargo.toml --lib plugins::"
+      - name: 上传回归报告（机器可读）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-rust
+          path: test-report-rust.json
+          retention-days: 30
 
       # 外部产物的验收：**我们打出来的包、我们签出来的索引，应用真正的解析器与校验器认不认**。
       # 两段分别在别处有测试（打包工具在 JS 侧、解析/校验在 Rust 侧），但"接起来"那段
@@ -254,24 +242,29 @@ jobs:
             --out "$RUNNER_TEMP/frag" \
             --ephemeral-key
 
-      - name: 用应用真解析器 / 真校验器验收它
-        # 应用版本要取**当前**那个：片段里的 `minAppVersion` 就是它，填个小版本会让
-        # "可安装"这条断言变成"需要应用 X+"——我第一次就填了 1.0.0，本地演练当场抓出来。
-        run: |
-          APP_VERSION="$(node -p "require('./package.json').version")"
-          SHUYONOTE_INDEX_APP_VERSION="$APP_VERSION" \
-            cargo test --manifest-path src-tauri/Cargo.toml --lib external_index -- --ignored --nocapture
-          cargo test --manifest-path src-tauri/Cargo.toml --lib external_package -- --ignored --nocapture
+      - name: 应用版本进环境（片段里的 minAppVersion 就是它）
+        # 取**当前**那个：填个小版本会让"可安装"这条断言变成"需要应用 X+"——
+        # 我第一次就填了 1.0.0，本地演练当场抓出来。
+        run: echo "SHUYONOTE_INDEX_APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: 外部产物验收（应用真解析器 / 真校验器）+ 打包不依赖系统 zip
+        # 走注册表的 artifact 组：`--strict` 让"缺环境变量"按**失败**计——没跑不许冒充通过。
+        # 其中 `plugin-fragment-no-zip` 挡的是回来路：打包**不许**再依赖命令行的 `zip`
+        # （Windows 上没有它，那边 `pnpm test` 红过三条）。
         env:
           SHUYONOTE_INDEX_FIXTURE: ${{ runner.temp }}/frag/plugin-index.preview.json
           SHUYONOTE_PKG_ZIP: ${{ runner.temp }}/frag/md-outline-1.0.0.zip
           SHUYONOTE_PKG_SIG: ${{ runner.temp }}/frag/md-outline-1.0.0.zip.minisig
           SHUYONOTE_PKG_PUB: ${{ runner.temp }}/frag/publisher.pub
+        run: node scripts/test-report.mjs --group artifact --strict --json test-report-artifact.json
 
-      # 顺手挡住回来路：打包**不许**再依赖命令行的 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条）
-      - name: 打包工具不许依赖系统 zip
-        run: |
-          if grep -nE 'execFileSync\("zip"|execSync\("zip' scripts/plugin-fragment.mjs; then
-            echo "::error::plugin-fragment.mjs 又用命令行 zip 了——Windows 上没有它，请用 fflate"
-            exit 1
-          fi
+      - name: 上传回归报告（机器可读）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-artifact
+          path: test-report-artifact.json
+          retention-days: 30
+
+      # 打包不许依赖命令行 `zip` 的那条门禁已搬进注册表（artifact 组的 `plugin-fragment-no-zip`，
+      # 见 scripts/lib/gates.mjs）——它在 Windows 上跑得动，不像这里的 grep 只认 Linux。

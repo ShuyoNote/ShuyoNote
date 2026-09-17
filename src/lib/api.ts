@@ -421,6 +421,12 @@ export const api = {
     invoke("get_page_blocks", { pageId }),
   searchBlocks: (query: string) =>
     invoke("search_blocks", { query }),
+  /** 块级检索（只读）：命中带 pageId/attId/loc，用于回链到原文位置。 */
+  searchChunks: (query: string, limit = 10) =>
+    invoke("search_chunks", { args: { query, limit } }),
+  /** 读附件的派生文本（只读、分页；**不含原文字节**）。`null` = 附件不存在。 */
+  readAttachmentText: (id: string, offset = 0, limit = 200) =>
+    invoke("read_attachment_text", { args: { id, offset, limit } }),
   listBlockBacklinks: (pageId: string) =>
     invoke("list_block_backlinks", { pageId }),
   getGraph: () => invoke("get_graph"),

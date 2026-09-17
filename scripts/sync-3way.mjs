@@ -83,6 +83,16 @@ async function main() {
     console.log(`  · 使用给定空间 ${spaceId}`);
   }
 
+  // ⚠️ **每一轮都要用新的 device_id**（`RUN` 后缀）。
+  // 为什么（2026-09-17 实测）：第一版写死了 `dev-mac`/`dev-windows`/`dev-amd` + 固定的 `device_seq`，
+  // 于是**第一次跑 12/12 全绿，第二次跑全红** —— 服务端按 `(device_id, device_seq)` 正确地去重了，
+  // 而我这边把它当成"推失败"（`accepted=0`）。**只能跑一次的合练不是可复现判据**，
+  // 而"可复现"恰恰是这条合练存在的理由。加个 run 后缀之后，幂等那条判据也才是**真的**在验幂等
+  //（同一 run 内重推才算重推；拿上一轮的 seq 去推，验的是缓存而不是幂等）。
+  const RUN = `r${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const devId = (role) => `dev-${role}-${RUN}`;
+  console.log(`  · 本轮 runId=${RUN}（每轮唯一，避免被服务端的 (device_id, device_seq) 去重挡掉）`);
+
   // ① 三个角色各自推一页（各用自己的 device_id）
   const pages = {};
   for (const [i, role] of ROLES.entries()) {
@@ -92,7 +102,7 @@ async function main() {
       method: "POST",
       token,
       body: {
-        device_id: `dev-${role}`,
+        device_id: devId(role),
         space_id: spaceId,
         changes: [
           {
@@ -135,7 +145,7 @@ async function main() {
     method: "POST",
     token,
     body: {
-      device_id: "dev-mac",
+      device_id: devId("mac"),
       space_id: spaceId,
       changes: [
         {
@@ -154,8 +164,8 @@ async function main() {
   // ⑤ 同页并发写：服务端**存两条**（合并策略在客户端，这里只报服务端事实）
   const shared = `t3-shared-${NOW}`;
   for (const [dev, at] of [
-    ["dev-windows", NOW + 100],
-    ["dev-amd", NOW + 200],
+    [devId("windows"), NOW + 100],
+    [devId("amd"), NOW + 200],
   ]) {
     await api("/push", {
       method: "POST",

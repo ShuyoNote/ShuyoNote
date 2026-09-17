@@ -14,7 +14,7 @@
 //
 // 做法（不改生产代码、不联网、跑完就清）：
 //   ① 在 bundle 目录里放合成产物（版本取 package.json，签名文件是占位内容 —— 用 --skip-sig-verify）；
-//   ② `--dry-run --no-build --no-plugins --no-android --no-web --skip-sig-verify`；
+//   ② `--dry-run --no-build --no-plugins --no-android --no-web --skip-sig-verify --skip-tag-guard`；
 //   ③ 用 `SHUYONOTE_PREV_MANIFEST_JSON` 注入一份"线上清单"当比较基准 ⇒ **不访问网络**；
 //   ④ 断言清单内容（见各用例）；
 //   ⑤ 每个用例先清掉上一个用例的合成产物，`afterAll` 再清一次 —— **别把假产物留给下一次真发布**。
@@ -79,6 +79,9 @@ function dryRun() {
       "--no-android",
       "--no-web",
       "--skip-sig-verify",
+      // CI 的 actions/checkout **不带 tag**，而 release.mjs 有"必须有 tag 才能发布"的守卫 ——
+      // 不带这个开关，守卫会把本测试自己挡在门外（Linux 上恒红、本机有 tag 所以恒绿）。
+      "--skip-tag-guard",
     ],
     {
       cwd: root,

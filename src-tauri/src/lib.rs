@@ -59,6 +59,7 @@ mod sync;
 mod tags;
 mod templates;
 mod tempdir;
+mod textnorm;
 mod titlebar;
 mod trash;
 mod updates;
@@ -477,6 +478,8 @@ pub fn run() {
             commands::delete_page,
             commands::move_page,
             search::search,
+            search::search_chunks,
+            search::read_attachment_text,
             sync::get_sync_config,
             sync::set_sync_config,
             sync::sync_now,

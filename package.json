@@ -33,6 +33,13 @@
     "plugin:validate": "node scripts/plugin-cli.mjs validate",
     "plugin:new": "node scripts/plugin-new.mjs",
     "test": "vitest run",
+    "verify": "node scripts/test-report.mjs",
+    "verify:all": "node scripts/test-report.mjs --group contract,smoke,sync,plugin,browser",
+    "verify:rust": "node scripts/test-report.mjs --group rust",
+    "verify:list": "node scripts/test-report.mjs --list",
+    "verify:baseline": "node scripts/test-report.mjs --update-baseline",
+    "suite:status": "node scripts/external-suite-status.mjs",
+    "gitcode:validate": "node scripts/gitcode-validate.mjs",
     "test:sync": "node scripts/sync-regression.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
@@ -53,7 +60,8 @@
     "test:plugin-fragment": "vitest run scripts/plugin-fragment.test.mjs",
     "check:plugin-hosting": "node scripts/check-plugin-hosting.mjs",
     "test:live-index": "cargo test --manifest-path src-tauri/Cargo.toml --lib live_hosted_index -- --ignored --nocapture",
-    "sessions": "node scripts/session-grep.mjs"
+    "sessions": "node scripts/session-grep.mjs",
+    "check:pdf-raster-web": "node scripts/check-pdf-raster-web.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",

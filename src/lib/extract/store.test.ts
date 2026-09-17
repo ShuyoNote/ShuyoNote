@@ -184,7 +184,10 @@ describe("registry 候选", () => {
     expect(pickExtractor("", "a.docx", REGISTRY)?.id).toBe("ooxml.docx@1");
     expect(pickExtractor("", "a.xlsx", REGISTRY)?.id).toBe("ooxml.xlsx@1");
     expect(pickExtractor("", "a.pptx", REGISTRY)?.id).toBe("ooxml.pptx@1");
-    expect(pickExtractor("", "a.pdf", REGISTRY)).toBeNull();
+    // 2026-09-17：`pdf.text@1` 落地后，`.pdf` **不再**是"没人认"的扩展名（原断言写的是 toBeNull）——
+    // 「没人认」的用例改用真正没抽取器的扩展名，别让这条判据随着注册表长大而失效。
+    expect(pickExtractor("", "a.pdf", REGISTRY)?.id).toBe("pdf.text@1");
+    expect(pickExtractor("", "a.unknownext", REGISTRY)).toBeNull();
   });
 });
 

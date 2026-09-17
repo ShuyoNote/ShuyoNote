@@ -80,22 +80,72 @@ function directChildren(el: Element, localName: string): Element[] {
   return Array.from(el.children).filter((c) => c.localName === localName);
 }
 
-/** 拼接元素内所有 `<*:t>` 的文本（跨 run 合并，不插空格——OOXML 的 run 是样式切分，不是词切分）。 */
+/**
+ * 拼接一个段落/单元格里的文本，**按文档顺序**处理段内元素。
+ *
+ * 为什么不能简单地"取所有 `<w:t>` 拼起来"（那是我第一版的做法，**对真实文档是错的**）：
+ *  - `<w:br/>`（段内换行）与 `<w:tab/>`（段内制表）**没有文本内容**，
+ *    只取 `w:t` 会把它们整段丢掉 ⇒ **两行被黏成一行、对齐文本丢列位**。真实文档里极常见。
+ *  - `<w:delText>`（修订模式下**已删除**的文字）与 `<w:instrText>`（域代码，如 `PAGE \* MERGEFORMAT`）
+ *    **都不是正文**。第一版是因为它们的 localName 恰好不叫 `t` 才没被抽到——那是**偶然正确**；
+ *    这里改成显式排除，免得以后有人改了匹配方式就悄悄把它们抽进来。
+ *  - ⚠️ 必须跳过**属性块**（`w:pPr` / `w:rPr` / …）：`<w:pPr><w:tabs><w:tab w:pos="720"/></w:tabs></w:pPr>`
+ *    是**制表位定义**、不是制表符。若一路下钻，它们会被当成 `\t` 灌进正文（改这一版时差点踩到的坑）。
+ */
 function runText(el: Element): string {
-  return allByLocalName(el, "t")
-    .map((t) => t.textContent ?? "")
-    .join("");
+  let out = "";
+  const visit = (node: Element): void => {
+    for (const child of Array.from(node.children)) {
+      switch (child.localName) {
+        // 属性块：整块跳过（里面的 w:tab 是制表位定义，不是制表符）
+        case "pPr":
+        case "rPr":
+        case "tblPr":
+        case "trPr":
+        case "tcPr":
+        case "sectPr":
+          break;
+        case "t":
+          out += child.textContent ?? "";
+          break;
+        case "br":
+        case "cr":
+          out += "\n";
+          break;
+        case "tab":
+          out += "\t";
+          break;
+        case "noBreakHyphen":
+          out += "-";
+          break;
+        case "softHyphen":
+          break;
+        // 显式排除：修订删除的文字与域代码都不是正文
+        case "delText":
+        case "delInstrText":
+        case "instrText":
+          break;
+        default:
+          visit(child);
+      }
+    }
+  };
+  visit(el);
+  return out;
 }
 
 /** 段文本归一：CRLF→LF、去行尾空白、压掉连续空行。**不做 trim 以外的改写**（保确定性）。 */
 function normalizeText(s: string): string {
-  return s
+  const lines = s
     .replace(/\r\n?/g, "\n")
     .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+  // 去掉**首尾空行**，而不是 `trim()` 整个字符串：
+  // 全局 trim 会吃掉行首的制表符，而那是"这个值属于第 N 列"的列位信息（见 `columnIndex`）。
+  // 更糟的是它**只影响第一行**，于是"首行丢列位、后续行不丢"——同一份表里两套口径。
+  while (lines.length > 0 && lines[0].trim() === "") lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /** 丢掉空段，并把全空的段集合转成 `empty` 错误（契约 §15.2 的 `empty` 语义）。 */
@@ -197,6 +247,30 @@ function extractDocx(input: ExtractInput): ExtractResult {
         if (text) segments.push({ kind: "table", text, loc: "" });
       }
     }
+
+    // 脚注 / 尾注：它们在**独立 part**，正文里只有 `<w:footnoteReference w:id="N"/>` 这样的引用。
+    // 制度文件里脚注常是真内容（引用依据、补充说明），只读 document.xml 会把它整块丢掉。
+    // 这里按 part 顺序追加，`loc` 带上"脚注 N"以便回看时对得上。
+    for (const [part, label] of [
+      ["word/footnotes.xml", "脚注"],
+      ["word/endnotes.xml", "尾注"],
+    ] as const) {
+      const notes = partXml(files, part);
+      if (!notes) continue;
+      for (const note of allByLocalName(notes, part.includes("foot") ? "footnote" : "endnote")) {
+        const id = note.getAttributeNS("*", "id") ?? note.getAttribute("w:id") ?? "";
+        // id 0 / -1 是**分隔符与延续分隔符**（Word 的内部标记），不是内容
+        if (id === "0" || id === "-1" || id === "") continue;
+        const text = normalizeText(
+          allByLocalName(note, "p")
+            .map((p) => runText(p))
+            .filter((s) => s.length > 0)
+            .join("\n"),
+        );
+        if (text) segments.push({ kind: "text", text, loc: `${label} ${id}` });
+      }
+    }
+
     return finish(DOCX_ID, segments);
   } catch (e) {
     return classifyFailure(DOCX_ID, input, e);
@@ -235,12 +309,28 @@ function sharedStrings(files: Record<string, Uint8Array>): string[] {
 }
 
 /** 一个工作表的文本：行 `\n`、列 `\t`；空单元格保留位置（否则列会错位）。 */
+/**
+ * 单元格引用 → 0 基列号：`"C1"` → `2`、`"AA3"` → `26`。无法解析返回 `null`（回退到顺序）。
+ *
+ * 为什么需要它：**Excel 会省略空单元格**。若 A1/B1 为空而 C1 有值，XML 里就是
+ * `<row r="1"><c r="C1">…</c></row>` —— 按顺序塞会把 C 列的值放到第 0 列、**整行左移**，
+ * "这个值属于哪一列"就丢了。（我第一版的夹具每列都写满，**恰好测不出这一条**。）
+ */
+function columnIndex(ref: string): number | null {
+  const m = /^([A-Za-z]+)\d*$/.exec(String(ref ?? ""));
+  if (!m) return null;
+  let n = 0;
+  for (const ch of m[1].toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
 function sheetText(sheet: Document, sst: string[]): string {
   const lines: string[] = [];
   for (const row of allByLocalName(sheet, "row")) {
     const cells = directChildren(row, "c");
     if (cells.length === 0) continue;
     const parts: string[] = [];
+    let seq = 0;
     for (const c of cells) {
       const t = c.getAttribute("t") ?? "";
       let value = "";
@@ -250,11 +340,18 @@ function sheetText(sheet: Document, sst: string[]): string {
       } else {
         const v = directChildren(c, "v")[0];
         const raw = v?.textContent ?? "";
-        value = t === "s" ? (sst[Number(raw)] ?? "") : raw;
+        // t="s" 共享字符串表下标 | t="b" 布尔（Excel 显示 TRUE/FALSE，不是 1/0）
+        // t="str" 公式的字符串结果 | t="e" 错误值（#DIV/0! 之类，原样保留才是事实）
+        value =
+          t === "s" ? (sst[Number(raw)] ?? "") : t === "b" ? (raw === "1" ? "TRUE" : "FALSE") : raw;
       }
-      parts.push(value.replace(/[\t\n]+/g, " "));
+      // 按 `r` 补位（稀疏单元格）；拿不到 `r` 就退回顺序，别让整行错位
+      const idx = columnIndex(c.getAttribute("r") ?? "") ?? seq;
+      while (parts.length < idx) parts.push("");
+      parts[idx] = value.replace(/[\t\n]+/g, " ");
+      seq = idx + 1;
     }
-    // 丢掉行尾的空列，避免整行都是制表符
+    // 丢掉**行尾**空列；行首/行中的空列**保留**（那是列位信息）
     while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
     lines.push(parts.join("\t"));
   }
@@ -323,6 +420,64 @@ function shapeText(sp: Element): string {
   return paras.join("\n");
 }
 
+/**
+ * **表格**文本（`<p:graphicFrame><a:tbl>`）——单元格 `\t`、行 `\n`（与 docx 表格同一口径）。
+ *
+ * 为什么必须单独处理：幻灯片里的表格**不是 `<p:sp>`**，它是 `<p:graphicFrame>` 里的 `<a:tbl>`。
+ * 只取 `p:sp` 会把整张表**静默丢掉**（不报错、只是内容少了）——这正是"真实文档 vs 合成夹具"的典型缺口。
+ */
+function graphicFrameText(fr: Element): string {
+  const rows: string[] = [];
+  for (const tr of allByLocalName(fr, "tr")) {
+    const cells: string[] = [];
+    for (const tc of allByLocalName(tr, "tc")) {
+      const t = allByLocalName(tc, "p")
+        .map((p) => runText(p))
+        .filter((s) => s.length > 0)
+        .join(" ");
+      cells.push(t.replace(/[\t\n]+/g, " "));
+    }
+    rows.push(cells.join("\t"));
+  }
+  return rows.join("\n");
+}
+
+/**
+ * 演讲者备注 part 的路径 → 它属于第几张幻灯片。
+ *
+ * 为什么不能按编号猜：`notesSlideN.xml` 的 N **与幻灯片的 N 不是同一个编号**，
+ * 二者靠关系文件（`ppt/notesSlides/_rels/notesSlideN.xml.rels` → `../slides/slideM.xml`）关联。
+ * 按编号猜会把备注贴到错的幻灯片上——那比不抽更糟（回链会指错）。
+ */
+function notesBySlide(files: Record<string, Uint8Array>): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const path of Object.keys(files)) {
+    const m = /^ppt\/notesSlides\/notesSlide(\d+)\.xml$/.exec(path);
+    if (!m) continue;
+    const rels = partXml(files, `ppt/notesSlides/_rels/notesSlide${m[1]}.xml.rels`);
+    if (!rels) continue;
+    let slideN: number | null = null;
+    for (const rel of allByLocalName(rels, "Relationship")) {
+      const target = rel.getAttribute("Target") ?? "";
+      const tm = /slides\/slide(\d+)\.xml$/.exec(target);
+      if (tm) {
+        slideN = Number(tm[1]);
+        break;
+      }
+    }
+    if (slideN === null) continue;
+    const doc = partXml(files, path);
+    if (!doc) continue;
+    const text = normalizeText(
+      allByLocalName(doc, "sp")
+        .map((sp) => shapeText(sp))
+        .join("\n"),
+    );
+    if (text) out.set(slideN, text);
+  }
+  return out;
+}
+
 function extractPptx(input: ExtractInput): ExtractResult {
   let files: Record<string, Uint8Array>;
   try {
@@ -335,14 +490,16 @@ function extractPptx(input: ExtractInput): ExtractResult {
     if (parts.length === 0) {
       return fail(PPTX_ID, "unsupported", "zip 里没有 ppt/slides/slideN.xml（不是 pptx）");
     }
+    const notes = notesBySlide(files);
     const segments: ExtractedSegment[] = [];
     for (const { path, n } of parts) {
       const doc = partXml(files, path);
       if (!doc) continue;
       const loc = `slide ${n}`;
       const shapes = allByLocalName(doc, "sp");
+      const frames = allByLocalName(doc, "graphicFrame");
 
-      // 先出标题（契约 §15.2：pptx 标题占位符 → heading），再出正文。
+      // 先出标题（契约 §15.2：pptx 标题占位符 → heading），再出正文（形状 + 表格）。
       const titleText = shapes
         .filter(isTitleShape)
         .map((sp) => shapeText(sp))
@@ -350,13 +507,17 @@ function extractPptx(input: ExtractInput): ExtractResult {
       const title = normalizeText(titleText);
       if (title) segments.push({ kind: "heading", text: title, loc });
 
-      const body = normalizeText(
-        shapes
-          .filter((sp) => !isTitleShape(sp))
-          .map((sp) => shapeText(sp))
-          .join("\n"),
-      );
+      const bodyParts = [
+        ...shapes.filter((sp) => !isTitleShape(sp)).map((sp) => shapeText(sp)),
+        ...frames.map((fr) => graphicFrameText(fr)),
+      ];
+      const body = normalizeText(bodyParts.join("\n"));
       if (body) segments.push({ kind: "slide", text: body, loc });
+
+      // 演讲者备注：**独立成段**（它不是幻灯片"页面"上的内容，混进 body 会污染版面语义）。
+      // loc 带上标记，便于回看时区分。
+      const note = notes.get(n);
+      if (note) segments.push({ kind: "text", text: note, loc: `${loc} 备注` });
     }
     return finish(PPTX_ID, segments);
   } catch (e) {

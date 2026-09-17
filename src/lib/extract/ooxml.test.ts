@@ -290,7 +290,11 @@ describe("契约不变量（跨三个抽取器）", () => {
       const r = expectOk(await ex.extract(input(bytes, `x.${name}`)));
       for (const s of r.segments) {
         expect(s.text).not.toMatch(/<[a-zA-Z/]/);
-        expect(s.text).toBe(s.text.trim()); // 已归一
+        // 已归一：**每行行尾无空白**。但**行首的制表符要保留** —— 那是表格的列位信息
+        // （`normalizeText` 刻意只去首尾空行、不做全局 trim；见 ooxml.ts 里 columnIndex 的注释）。
+        for (const line of s.text.split("\n")) {
+          expect(line).toBe(line.replace(/[ \t]+$/, ""));
+        }
       }
     }
   });

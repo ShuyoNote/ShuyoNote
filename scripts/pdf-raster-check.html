@@ -1,0 +1,119 @@
+<!doctype html>
+<!--
+  真 Chromium 里跑 `src/lib/pdfEngine/pdfjsRaster.ts`（Web 平台层 renderPdfPage 的核）。
+
+  为什么让检查脚本加载这个页面、而不是在 Node 里 import 那段代码：
+  这条链要的正是**浏览器的 canvas**（`getContext("2d")` + `getImageData`），happy-dom / Node 里没有；
+  而"在检查脚本里把操作序列再抄一遍"只能证明**复制品**是对的。所以页面里 import 的是**发货代码本身**，
+  由 `scripts/check-pdf-raster-web.mjs` 用真 Chrome 打开并读回结果。
+
+  页面只把结果写进 `<pre id="out">`，由 Node 侧判定 —— 页面自己不做退出码。
+-->
+<meta charset="utf-8" />
+<title>pdf raster check</title>
+<!--
+  ⚠️ 这个页在 /scripts/ 下，而 pdf.js 的 worker 垫片路径是**相对 document.baseURI** 解析的
+  （`pdfjsEngine` 与 `pdfjsWorker.ts` 都这么写：Web 版部署在 shuyo.cn/app/ 这类**子路径**下，
+  只有相对文档位置才解析得对）。页面不声明 base 时，垫片会被解析到
+  /scripts/pdfjs-worker-shim.mjs —— 那个地址不存在 ⇒ pdf.js 直接报
+  "Setting up fake worker failed"（第一次跑这条门禁就撞上了）。
+
+  所以这里显式钉住根：这样**「垫片路径按 baseURI 解析」这条发货逻辑本身仍被原样测到**，
+  只是页面所在目录不再干扰它。改这个页的位置时请一起改这里。
+-->
+<base href="/" />
+<body>
+<pre id="out">running</pre>
+<script>
+  // 任何未捕获错误（含模块加载失败）也要留下线索，别让 Node 侧只看到超时。
+  window.addEventListener("error", (e) => {
+    const el = document.getElementById("out");
+    if (el) el.textContent = "RASTER_FATAL " + (e.message || String(e.error || "unknown"));
+  });
+</script>
+<script type="module">
+  import { renderPdfjsPageToRgba } from "/src/lib/pdfEngine/pdfjsRaster.ts";
+  import { pdfOf } from "/src/lib/extract/fixtures.ts";
+
+  const results = [];
+  const assert = (cond, msg) => {
+    if (!cond) throw new Error(msg);
+  };
+  async function check(name, fn) {
+    try {
+      const extra = await fn();
+      results.push({ name, ok: true, extra: extra ?? null });
+    } catch (e) {
+      results.push({ name, ok: false, error: String(e && e.message ? e.message : e) });
+    }
+  }
+
+  const pdfjs = await import("pdfjs-dist");
+
+  await check("渲染一页 → RGBA8，长度正好 = 宽×高×4，且真的画了东西", async () => {
+    const r = await renderPdfjsPageToRgba(pdfjs, pdfOf("Raster check"), 0, 1.5);
+    assert(
+      r.bytes.length === r.width * r.height * 4,
+      `字节数 ${r.bytes.length} != ${r.width * r.height * 4}（${r.width}×${r.height}）`,
+    );
+    let ink = 0;
+    for (let i = 0; i < r.bytes.length; i += 4) {
+      if (r.bytes[i] || r.bytes[i + 1] || r.bytes[i + 2]) ink += 1;
+    }
+    assert(ink > 100, `非空白像素只有 ${ink} —— 像是空画布（尺寸对但什么都没画）`);
+    return { width: r.width, height: r.height, bytes: r.bytes.length, ink };
+  });
+
+  await check("同一份字节**渲染两次**都成功（pdf.js transfer buffer 的回归）", async () => {
+    const bytes = pdfOf("Twice");
+    const a = await renderPdfjsPageToRgba(pdfjs, bytes, 0, 1);
+    const b = await renderPdfjsPageToRgba(pdfjs, bytes, 0, 1);
+    assert(a.width === b.width && a.height === b.height, "两次渲染的尺寸不同");
+    assert(bytes.byteLength > 0, "原始 Uint8Array 被 detach 了（byteLength 变 0）");
+  });
+
+  // ⚠️ 这两条**必须断言错误信息里的特征词**，不能只断言"抛了"：
+  //    变异验证时发现——把 `renderPdfjsPageToRgba` 里的 scale 校验删掉，pdf.js 自己**也会抛**
+  //    （viewport/画布尺寸不合法），于是"只断言抛错"的用例**照样绿** ⇒ 这种门禁是"为错误的理由通过"。
+  //    要钉的是**我们自己的那道校验**说了话，所以断言我们写的文案。
+  await check("scale=NaN ⇒ 必须由**我们**的校验拦下（错误里带「缩放倍率无效」）", async () => {
+    let message = "";
+    try {
+      await renderPdfjsPageToRgba(pdfjs, pdfOf("x"), 0, Number.NaN);
+    } catch (e) {
+      message = String(e && e.message ? e.message : e);
+    }
+    assert(message.length > 0, "没有抛错");
+    assert(
+      message.includes("缩放倍率无效"),
+      `抛的是别人的错（pdf.js 自己也会抛），不是我们的校验：${message.slice(0, 120)}`,
+    );
+  });
+
+  await check("pageIndex=-1 ⇒ 必须由**我们**的校验拦下（错误里带「页码无效」）", async () => {
+    let message = "";
+    try {
+      await renderPdfjsPageToRgba(pdfjs, pdfOf("x"), -1, 1);
+    } catch (e) {
+      message = String(e && e.message ? e.message : e);
+    }
+    assert(message.length > 0, "pageIndex=-1 没有抛错");
+    assert(message.includes("页码无效"), `抛的是别人的错：${message.slice(0, 120)}`);
+  });
+
+  await check("pageIndex 超出文档页数 ⇒ 必须抛错（**不**由我们拦：范围要等文档加载才知道，pdf.js 报 Invalid page request）", async () => {
+    let message = "";
+    try {
+      await renderPdfjsPageToRgba(pdfjs, pdfOf("x"), 99, 1);
+    } catch (e) {
+      message = String(e && e.message ? e.message : e);
+    }
+    // 这条**刻意只断言"抛了"**：`renderPdfjsPageToRgba` 的职责是校验**形状**（整数、非负），
+    // 范围属于文档本身的属性，只有 pdf.js 读进来才知道 ⇒ 追问"是谁抛的"在这里没有意义，
+    // 硬钉文案反而会把别人的错误信息变成我们的契约。
+    assert(message.length > 0, "pageIndex=99 没有抛错");
+  });
+
+  document.getElementById("out").textContent = "RASTER_CHECKS " + JSON.stringify(results);
+</script>
+</body>
