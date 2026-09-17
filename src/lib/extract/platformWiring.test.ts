@@ -95,3 +95,86 @@ describe("派生文本层接进 Web 平台", () => {
     ).toBe(1);
   });
 });
+
+describe("批量写收口（那条平方级开销的修复）", () => {
+  /** 数得清 save 次数的适配器 —— **用计数证明，而不是靠读代码相信**。 */
+  function countingStore() {
+    const saves: number[] = [];
+    const adapter = {
+      load: async () => null,
+      save: async (bytes: Uint8Array) => {
+        saves.push(bytes.length);
+      },
+    };
+    return { store: new SqliteStore(adapter), saves };
+  }
+
+  it("replace 500 段 ⇒ **只快照 1 次**（修复前会是 501 次）", async () => {
+    const { store, saves } = countingStore();
+    await store.init();
+    saves.length = 0; // init 自己可能有一次；只数 replace 引起的
+
+    const segs = Array.from({ length: 500 }, (_, i) => ({
+      kind: "text" as const,
+      text: `第 ${i} 段`,
+      loc: `p.${i}`,
+    }));
+    store.derivedTextStore().replace("att-bulk", "pdf.text@1", "h", segs, 1);
+    await Promise.resolve(); // persist 是 fire-and-forget，让它跑完
+
+    expect(saves.length).toBe(1);
+    expect(store.derivedTextStore().segmentsOf("att-bulk")).toHaveLength(500);
+  });
+
+  it("非事务路径仍然是每写一次就快照（行为没变，避免误伤既有代码）", async () => {
+    const { store, saves } = countingStore();
+    await store.init();
+    saves.length = 0;
+    store.run("INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at) VALUES (?,?,?,?,?,?,?,?)", [
+      "a", "x@1", 0, "text", "t", "", "h", 1,
+    ]);
+    await Promise.resolve();
+    expect(saves.length).toBe(1);
+  });
+
+  it("transaction 抛错 ⇒ **回滚**（写入不生效），且仍把快照落一次", async () => {
+    const { store, saves } = countingStore();
+    await store.init();
+    saves.length = 0;
+
+    expect(() =>
+      store.transaction(() => {
+        store.run("INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at) VALUES (?,?,?,?,?,?,?,?)", [
+          "roll", "x@1", 0, "text", "不该留下", "", "h", 1,
+        ]);
+        throw new Error("模拟中途失败");
+      }),
+    ).toThrow("模拟中途失败");
+
+    await Promise.resolve();
+    expect(
+      store.query("SELECT * FROM attachment_text WHERE att_id='roll'"),
+    ).toHaveLength(0);
+    expect(saves.length).toBe(1); // 回滚后也要落一次快照，别让磁盘停在更旧的状态
+  });
+
+  it("嵌套 transaction 只提交/快照一次（可重入）", async () => {
+    const { store, saves } = countingStore();
+    await store.init();
+    saves.length = 0;
+    store.transaction(() => {
+      store.run("INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at) VALUES (?,?,?,?,?,?,?,?)", [
+        "outer", "x@1", 0, "text", "外", "", "h", 1,
+      ]);
+      store.transaction(() => {
+        store.run("INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at) VALUES (?,?,?,?,?,?,?,?)", [
+          "inner", "x@1", 0, "text", "内", "", "h", 1,
+        ]);
+      });
+    });
+    await Promise.resolve();
+    expect(saves.length).toBe(1);
+    expect(store.query("SELECT att_id FROM attachment_text ORDER BY att_id").map((r) => (r as { att_id: string }).att_id))
+      .toEqual(["inner", "outer"]);
+  });
+});
