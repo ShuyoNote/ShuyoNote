@@ -494,7 +494,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **P2 前半：分块 + 块存储**（TS 侧） | **Windows** | 集成面，串行点 | ✅ **已完成**（P2 交付里只剩检索侧） |
 | **页面侧分块入口**（`chunkPage` / `chunkPages` / `removePageChunks`） | **Windows** | **知识库主体是页面而不是附件**，这一半不做等于只索引了少数文件 | ✅ **已完成**（`platform/pageChunks.ts`） |
 | 索引层：**`pages.get` 截断的诚实化**（纯 TS 那半） | **Windows** | "成功≠读全了"这条原则也要落到 AI 工具面 | ✅ **已完成**（去掉有歧义的 `…`，改为显式 `truncated`/`chars_total`/`note`）；**加 `offset`/`limit` 那半**见 §8.1 |
-| **索引覆盖报告**（只读、可度量） | **Windows** | "全库 AI 覆盖"这个承诺应当**可度量**，而不是假设成功 | ✅ **已完成**（`extract/coverageReport.ts`，纯函数、零平台依赖） |
+| **索引覆盖报告**（只读、可度量） | **Windows** | "全库 AI 覆盖"这个承诺应当**可度量**，而不是假设成功 | ✅ **已完成**（`extract/coverageReport.ts` 纯函数 + `libraryCoverage.ts` 应用侧取材入口）。⚠️ 取材时踩到一条**易错语义**：`api.listPageAttachments(null)` **不是"全部附件"，是"未整理（`page_id IS NULL`）"**（Rust 侧 SQL 的分支依据写得很明确）—— 只调它会**漏掉所有归属页面的附件**，而那是大多数 |
 | **图片 OCR 骨架**（`image.ocr@1`） | **Windows** | 定契约与形状 | ✅ **已完成**（实跑调优仍在 AMD，见下行） |
 | **PDF + 扫描件一族** | **Mac 独占** | Mac 有真 PDF 阅读器与 OCR 全链路可当对照；纯 CPU、能马上动 | ✅ **已完成**（`pdf.text@1` + `pdf.ocr@1`）。⚠️ **AMD 的"备选接 PDF"已于 2026-09-17 撤回** —— 两人接同一族就违反"文件零重叠"，而这条线存在的全部意义就是零重叠 |
 | **检索侧**（块级嵌入写入 / BM25+向量混合 / `files.search` / **查询侧归一化**） | **Mac**（2026-09-17 认领） | **只有它们能跑 `cargo test`**（§12.1），而这一层在 Rust | ⏳ 进行中；开工前先发"只写接口与判据"的短信（今天两次 reply 编号撞车教出来的做法） |
