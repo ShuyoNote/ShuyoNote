@@ -80,22 +80,72 @@ function directChildren(el: Element, localName: string): Element[] {
   return Array.from(el.children).filter((c) => c.localName === localName);
 }
 
-/** 拼接元素内所有 `<*:t>` 的文本（跨 run 合并，不插空格——OOXML 的 run 是样式切分，不是词切分）。 */
+/**
+ * 拼接一个段落/单元格里的文本，**按文档顺序**处理段内元素。
+ *
+ * 为什么不能简单地"取所有 `<w:t>` 拼起来"（那是我第一版的做法，**对真实文档是错的**）：
+ *  - `<w:br/>`（段内换行）与 `<w:tab/>`（段内制表）**没有文本内容**，
+ *    只取 `w:t` 会把它们整段丢掉 ⇒ **两行被黏成一行、对齐文本丢列位**。真实文档里极常见。
+ *  - `<w:delText>`（修订模式下**已删除**的文字）与 `<w:instrText>`（域代码，如 `PAGE \* MERGEFORMAT`）
+ *    **都不是正文**。第一版是因为它们的 localName 恰好不叫 `t` 才没被抽到——那是**偶然正确**；
+ *    这里改成显式排除，免得以后有人改了匹配方式就悄悄把它们抽进来。
+ *  - ⚠️ 必须跳过**属性块**（`w:pPr` / `w:rPr` / …）：`<w:pPr><w:tabs><w:tab w:pos="720"/></w:tabs></w:pPr>`
+ *    是**制表位定义**、不是制表符。若一路下钻，它们会被当成 `\t` 灌进正文（改这一版时差点踩到的坑）。
+ */
 function runText(el: Element): string {
-  return allByLocalName(el, "t")
-    .map((t) => t.textContent ?? "")
-    .join("");
+  let out = "";
+  const visit = (node: Element): void => {
+    for (const child of Array.from(node.children)) {
+      switch (child.localName) {
+        // 属性块：整块跳过（里面的 w:tab 是制表位定义，不是制表符）
+        case "pPr":
+        case "rPr":
+        case "tblPr":
+        case "trPr":
+        case "tcPr":
+        case "sectPr":
+          break;
+        case "t":
+          out += child.textContent ?? "";
+          break;
+        case "br":
+        case "cr":
+          out += "\n";
+          break;
+        case "tab":
+          out += "\t";
+          break;
+        case "noBreakHyphen":
+          out += "-";
+          break;
+        case "softHyphen":
+          break;
+        // 显式排除：修订删除的文字与域代码都不是正文
+        case "delText":
+        case "delInstrText":
+        case "instrText":
+          break;
+        default:
+          visit(child);
+      }
+    }
+  };
+  visit(el);
+  return out;
 }
 
 /** 段文本归一：CRLF→LF、去行尾空白、压掉连续空行。**不做 trim 以外的改写**（保确定性）。 */
 function normalizeText(s: string): string {
-  return s
+  const lines = s
     .replace(/\r\n?/g, "\n")
     .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+  // 去掉**首尾空行**，而不是 `trim()` 整个字符串：
+  // 全局 trim 会吃掉行首的制表符，而那是"这个值属于第 N 列"的列位信息（见 `columnIndex`）。
+  // 更糟的是它**只影响第一行**，于是"首行丢列位、后续行不丢"——同一份表里两套口径。
+  while (lines.length > 0 && lines[0].trim() === "") lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /** 丢掉空段，并把全空的段集合转成 `empty` 错误（契约 §15.2 的 `empty` 语义）。 */
@@ -235,12 +285,28 @@ function sharedStrings(files: Record<string, Uint8Array>): string[] {
 }
 
 /** 一个工作表的文本：行 `\n`、列 `\t`；空单元格保留位置（否则列会错位）。 */
+/**
+ * 单元格引用 → 0 基列号：`"C1"` → `2`、`"AA3"` → `26`。无法解析返回 `null`（回退到顺序）。
+ *
+ * 为什么需要它：**Excel 会省略空单元格**。若 A1/B1 为空而 C1 有值，XML 里就是
+ * `<row r="1"><c r="C1">…</c></row>` —— 按顺序塞会把 C 列的值放到第 0 列、**整行左移**，
+ * "这个值属于哪一列"就丢了。（我第一版的夹具每列都写满，**恰好测不出这一条**。）
+ */
+function columnIndex(ref: string): number | null {
+  const m = /^([A-Za-z]+)\d*$/.exec(String(ref ?? ""));
+  if (!m) return null;
+  let n = 0;
+  for (const ch of m[1].toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
 function sheetText(sheet: Document, sst: string[]): string {
   const lines: string[] = [];
   for (const row of allByLocalName(sheet, "row")) {
     const cells = directChildren(row, "c");
     if (cells.length === 0) continue;
     const parts: string[] = [];
+    let seq = 0;
     for (const c of cells) {
       const t = c.getAttribute("t") ?? "";
       let value = "";
@@ -250,11 +316,18 @@ function sheetText(sheet: Document, sst: string[]): string {
       } else {
         const v = directChildren(c, "v")[0];
         const raw = v?.textContent ?? "";
-        value = t === "s" ? (sst[Number(raw)] ?? "") : raw;
+        // t="s" 共享字符串表下标 | t="b" 布尔（Excel 显示 TRUE/FALSE，不是 1/0）
+        // t="str" 公式的字符串结果 | t="e" 错误值（#DIV/0! 之类，原样保留才是事实）
+        value =
+          t === "s" ? (sst[Number(raw)] ?? "") : t === "b" ? (raw === "1" ? "TRUE" : "FALSE") : raw;
       }
-      parts.push(value.replace(/[\t\n]+/g, " "));
+      // 按 `r` 补位（稀疏单元格）；拿不到 `r` 就退回顺序，别让整行错位
+      const idx = columnIndex(c.getAttribute("r") ?? "") ?? seq;
+      while (parts.length < idx) parts.push("");
+      parts[idx] = value.replace(/[\t\n]+/g, " ");
+      seq = idx + 1;
     }
-    // 丢掉行尾的空列，避免整行都是制表符
+    // 丢掉**行尾**空列；行首/行中的空列**保留**（那是列位信息）
     while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
     lines.push(parts.join("\t"));
   }

@@ -160,6 +160,50 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["sheet"], contains: ["差旅\t住宿", "合计\t\t3000"], locs: ["S预算"] },
   },
   {
+    id: "ooxml/xlsx-稀疏单元格",
+    pins:
+      "**Excel 会省略空单元格**（A/B 空、C 有值 ⇒ 只有 `<c r=\"C1\">`）。必须按 `r` 补位，" +
+      "否则 C 列的值会跑到第 0 列、整行左移（第一版夹具每列都写满，**恰好测不出这条**）",
+    extractor: "ooxml.xlsx@1",
+    filename: "稀疏.xlsx",
+    mime: "",
+    make: () =>
+      zipOf({
+        "xl/workbook.xml": `<workbook ${S_NS}><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+        "xl/_rels/workbook.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+        "xl/sharedStrings.xml": `<sst ${S_NS}><si><t>只有C列</t></si></sst>`,
+        "xl/worksheets/sheet1.xml": `<worksheet ${S_NS}><sheetData><row r="1"><c r="C1" t="s"><v>0</v></c></row></sheetData></worksheet>`,
+      }),
+    // 行首空列**保留**——那正是"这个值属于第 3 列"的信息
+    expect: { ok: true, kinds: ["sheet"], contains: ["\t\t只有C列"] },
+  },
+  {
+    id: "ooxml/xlsx-布尔单元格",
+    pins: "`t=\"b\"` 的 1/0 在 Excel 里显示为 TRUE/FALSE —— 直接输出 1/0 是失真",
+    extractor: "ooxml.xlsx@1",
+    filename: "布尔.xlsx",
+    mime: "",
+    make: () =>
+      zipOf({
+        "xl/workbook.xml": `<workbook ${S_NS}><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+        "xl/_rels/workbook.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+        "xl/worksheets/sheet1.xml": `<worksheet ${S_NS}><sheetData><row r="1"><c r="A1" t="b"><v>1</v></c><c r="B1" t="b"><v>0</v></c></row></sheetData></worksheet>`,
+      }),
+    expect: { ok: true, kinds: ["sheet"], contains: ["TRUE\tFALSE"] },
+  },
+  {
+    id: "ooxml/pptx-段内换行",
+    pins: "`<a:br/>` 与 docx 的 `<w:br/>` 同类：没有文本内容，不处理会把两行黏成一行",
+    extractor: "ooxml.pptx@1",
+    filename: "换行.pptx",
+    mime: "",
+    make: () =>
+      zipOf({
+        "ppt/slides/slide1.xml": `<p:sld ${P_NS}><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>上</a:t><a:br/><a:t>下</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`,
+      }),
+    expect: { ok: true, kinds: ["slide"], contains: ["上\n下"] },
+  },
+  {
     id: "ooxml/pptx-标题与正文",
     pins: "标题占位符→heading、其余→slide；`loc = slide <n>`",
     extractor: "ooxml.pptx@1",
@@ -197,6 +241,52 @@ export const FIXTURES: readonly ExtractFixture[] = [
     mime: "",
     make: () => zipOf({ "foo.txt": "x" }),
     expect: { ok: false, code: "unsupported" },
+  },
+  {
+    id: "ooxml/docx-段内换行与制表",
+    pins:
+      "`<w:br/>`→换行、`<w:tab/>`→制表符。**这两个没有文本内容**，只取 `w:t` 会整段丢掉 ⇒ " +
+      "两行被黏成一行、对齐文本丢列位（真实文档里极常见）",
+    extractor: "ooxml.docx@1",
+    filename: "换行.docx",
+    mime: "",
+    make: () =>
+      docxBody(
+        `<w:p><w:r><w:t>第一行</w:t><w:br/><w:t>第二行</w:t></w:r>` +
+          `<w:r><w:tab/><w:t>列2</w:t></w:r></w:p>`,
+      ),
+    expect: { ok: true, kinds: ["text"], contains: ["第一行\n第二行", "\t列2"] },
+  },
+  {
+    id: "ooxml/docx-制表位定义不算制表符",
+    pins:
+      "`<w:pPr><w:tabs><w:tab w:pos=\"720\"/></w:tabs></w:pPr>` 是**制表位定义**、不是制表符。" +
+      "遍历时若一路下钻属性块，会把一堆 `\\t` 灌进正文",
+    extractor: "ooxml.docx@1",
+    filename: "制表位.docx",
+    mime: "",
+    make: () =>
+      docxBody(
+        `<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/><w:tab w:val="left" w:pos="1440"/></w:tabs></w:pPr>` +
+          `<w:r><w:t>正文</w:t></w:r></w:p>`,
+      ),
+    expect: { ok: true, kinds: ["text"], contains: ["正文"] },
+  },
+  {
+    id: "ooxml/docx-修订与域代码不入正文",
+    pins:
+      "`<w:delText>`（修订模式**已删除**的文字）与 `<w:instrText>`（域代码，如 `PAGE \\* MERGEFORMAT`）" +
+      "都不是正文。第一版是**偶然**没抽到（localName 恰好不叫 `t`）；这条把它变成**显式**保证",
+    extractor: "ooxml.docx@1",
+    filename: "修订.docx",
+    mime: "",
+    make: () =>
+      docxBody(
+        `<w:p><w:r><w:t>保留的</w:t></w:r>` +
+          `<w:del><w:r><w:delText>删掉的旧话</w:delText></w:r></w:del>` +
+          `<w:r><w:instrText>PAGE \\* MERGEFORMAT</w:instrText><w:t>3</w:t></w:r></w:p>`,
+      ),
+    expect: { ok: true, kinds: ["text"], contains: ["保留的", "3"] },
   },
 
   // ===== 图片（Windows 已实现骨架 `image.ocr@1`；实跑调优归 AMD）=====

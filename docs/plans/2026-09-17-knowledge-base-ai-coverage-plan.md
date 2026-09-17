@@ -204,13 +204,20 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > **进展（2026-09-17）**
 > - **接口已冻结**（§15）。
 > - **OOXML 一族的抽取器已实现**：`src/lib/extract/ooxml.ts`（docx/xlsx/pptx），`cost: cpu`。
+>   **并已按"真实文档"而非"我造的最小文档"修过一轮**（这条值得单独记，因为它差点被最小夹具放过）：
+>   ① `<w:br/>`（段内换行）与 `<w:tab/>`（段内制表）**没有文本内容**，原来"只取所有 `w:t`"会把它们
+>   整段丢掉 ⇒ **两行黏成一行、对齐文本丢列位**（真实 docx 里极常见）；
+>   ② 改为按文档顺序遍历后，**必须跳过属性块**（`w:pPr`/`w:rPr`/…）——
+>   `<w:pPr><w:tabs><w:tab w:pos="720"/></w:tabs>` 是**制表位定义**不是制表符，一路下钻会把 `\t` 灌进正文；
+>   ③ `<w:delText>`（修订删除的文字）与 `<w:instrText>`（域代码）原来只是**偶然**没被抽到
+>   （localName 恰好不叫 `t`），现已改成**显式排除**。三条各有一条夹具钉住。
 > - **图片 OCR 抽取器已实现**：`src/lib/extract/image.ts`（`image.ocr@1`），`cost: gpu` ——
 >   它同时是契约 **§15.3-7**「未注入 `deps.vision` 必须立刻 `provider_error`、不许自建网络」的活样板
 >   （该条此前既无实现也无测试，等于空头承诺）。**第二档（VLM 语义描述 → `caption`）按 §13 待拍板第 2 项
 >   的默认值留到 P3**，不在 P1。
 > - **派生表与落库已实现（TS 侧）**：`src/lib/extract/schema.ts`（DDL 单一事实源）、
 >   `store.ts`（读写 + 按 `src_hash` 失效 + 整体替换）、`pipeline.ts`（候选调度与结果归类）。
-> - 五个测试文件共 **70 条**用例；**全量回归 79 文件 / 768 用例全绿**，`npx tsc --noEmit` 0 错。
+> - 五个测试文件共 **96 条**用例；**全量回归 82 文件 / 798 用例全绿**，`npx tsc --noEmit` 0 错。
 > - **仍未做**：接进 `sqliteStore.ts` / `db.rs` 的真实建表与调用（**Rust 侧需 AMD 或 Mac 复核**）、
 >   `files.read` 工具、PDF / 旧格式 / 音视频抽取器（见 §12.4 分工表）。
 >
