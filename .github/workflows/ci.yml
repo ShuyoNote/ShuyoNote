@@ -76,6 +76,16 @@ jobs:
         # 就是这个症状（完整红线说明见 `rust-tests` 那一步的 `plugins::` 注释，不重复）。
         run: node scripts/test-report.mjs --group contract,smoke,sync,plugin --json test-report-checks.json
 
+      - name: 失败时把「哪条门禁红了」变成注解（日志要鉴权时唯一的证据通道）
+        # 为什么需要它（2026-09-17 的教训）：CI 在默认组连红三次，而**没人能说出是哪条门禁**——
+        # 步骤日志与 artifact 都要鉴权，注解是空的，于是红只变成了"又红了"。团队为此白花了半天。
+        # 这一步把失败的门禁逐条打成 `::error::`：工作流命令产生的注解得**无需鉴权**就能读到
+        # （`/repos/{owner}/{repo}/check-runs/{id}/annotations`），失败证据从此有地方落。
+        #
+        # ⚠️ 只报告、不改变结论：`if: failure()` 且末尾 `exit 0`，红还是原来的红。
+        if: failure()
+        run: node scripts/test-report-annotate.mjs test-report-checks.json
+
       - name: 回归门禁（browser：真实 Chromium + 构建产物）
         # 冒烟跑的是 dev server，跑不到"**构建产物**能不能打开"这件事。而 Web 版是每次推
         # main 自动部署的（Pages），构建成功 ≠ 打开能用：v1.84.1 踩过一次，按静态引用过滤
