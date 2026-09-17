@@ -7192,7 +7192,9 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(files[0].get("content").is_none(), "只能给元数据，不给字节");
 
         // ---- files.search（块级检索，只读）----
-        // ① 老库/没迁移过 `chunks` ⇒ **空数组**，不是报错（向前兼容；这条先验，避免"缺表就炸"）
+        // ① 该空间**还没有块** ⇒ **空数组**，不是报错（0 行与"缺表"走的是同一条路；
+        //    缺表那半是防御性的：桌面库现在由 `db.rs::migrate` 建这三张表，见
+        //    `derived_schema_matches_the_ts_source_of_truth` 与 `migrate_creates_derived_tables`）
         let empty = call(&st, "files.search", r#"{"query":"进展"}"#).unwrap();
         assert_eq!(empty.as_array().unwrap().len(), 0, "没有 chunks 表时应为空，而不是报错");
 
@@ -7235,9 +7237,9 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert!(call(&st, "files.search", r#"{"query":"   "}"#).is_err(), "空查询必须是参数错误");
 
         // ---- files.read（附件派生文本，只读 + 分页）----
-        // ① 老库没有 `attachment_text` ⇒ **空段 + total 0**（不是报错）：与"还没抽过"同一种答复
+        // ① 还没有派生文本（0 行，或老库没这张表）⇒ **空段 + total 0**（不是报错）：与"还没抽过"同一种答复
         let empty = call(&st, "files.read", r#"{"id":"a1"}"#).unwrap();
-        assert_eq!(empty["segments"].as_array().unwrap().len(), 0, "缺表时应当是空段");
+        assert_eq!(empty["segments"].as_array().unwrap().len(), 0, "还没抽过时应当是空段");
         assert_eq!(empty["total"], 0);
         // 不存在的附件 ⇒ **null**（"不存在"与"还没抽过"必须分开）
         assert!(call(&st, "files.read", r#"{"id":"nope"}"#).unwrap().is_null());

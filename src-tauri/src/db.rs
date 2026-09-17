@@ -525,6 +525,59 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+
+// ---------------------------------------------------------------------------
+// 派生文本层（P1/P2）：`attachment_text` / `chunks` / `chunk_embeddings` + 三条索引。
+//
+// ⚠️ **单一事实源是 `src/lib/extract/schema.ts` 的 `DERIVED_SCHEMA_DDL`（6 条单语句）**，
+// 这里逐字照抄。为什么必须照抄而不是"各写一份"：两份 DDL 漂移的后果是
+// **同一份数据在两个平台上读不出来**，而且**不会有任何编译期报错**。
+// 防漂移的手段是判据而不是自觉：`derived_schema_matches_the_ts_source_of_truth` 会把
+// `schema.ts` 读进来逐条对文本（见本文件测试模块）。
+//
+// 三条表都是**本地派生缓存**：只读、可重建、不进同步 / 备份 / 导出（§6.1）。
+pub(crate) const DERIVED_SCHEMA_DDL: &[&str] = &[
+    r#"
+CREATE TABLE IF NOT EXISTS attachment_text (
+  att_id     TEXT    NOT NULL,
+  extractor  TEXT    NOT NULL,
+  seq        INTEGER NOT NULL,
+  kind       TEXT    NOT NULL,
+  text       TEXT    NOT NULL,
+  loc        TEXT    NOT NULL DEFAULT '',
+  src_hash   TEXT    NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (att_id, extractor, seq)
+);"#,
+    r#"
+CREATE INDEX IF NOT EXISTS idx_attachment_text_src ON attachment_text(att_id, src_hash);"#,
+    r#"
+CREATE TABLE IF NOT EXISTS chunks (
+  id       TEXT PRIMARY KEY,
+  page_id  TEXT,
+  att_id   TEXT,
+  ord      INTEGER NOT NULL,
+  loc      TEXT NOT NULL DEFAULT '',
+  lang     TEXT NOT NULL DEFAULT '',
+  text     TEXT NOT NULL,
+  hash     TEXT NOT NULL
+);"#,
+    r#"
+CREATE INDEX IF NOT EXISTS idx_chunks_page ON chunks(page_id);"#,
+    r#"
+CREATE INDEX IF NOT EXISTS idx_chunks_att ON chunks(att_id);"#,
+    r#"
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+  chunk_id   TEXT NOT NULL,
+  model      TEXT NOT NULL,
+  dim        INTEGER NOT NULL,
+  vector     TEXT NOT NULL,
+  hash       TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (chunk_id, model)
+);"#,
+];
+
 pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
@@ -780,6 +833,14 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         )?;
     }
 
+    // 派生文本层（P1/P2）：三条表 + 三条索引。幂等（`IF NOT EXISTS`）、**每条单语句** ——
+    // 与 TS 侧同一份口径（见 `DERIVED_SCHEMA_DDL` 上方的说明）。
+    // ⚠️ 这里**不能**用 `execute_batch`：那会把多条语句一起塞进去，而我们要的是"哪条失败一眼看得见哪条"
+    //（批量执行失败时 rusqlite 只给第一个错误，排查更贵）。
+    for stmt in DERIVED_SCHEMA_DDL {
+        conn.execute(stmt, [])?;
+    }
+
     // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS pdf_annotations (
@@ -974,6 +1035,68 @@ mod tests {
             std::fs::create_dir_all(&d).unwrap();
             d
         })
+    }
+
+    /// 派生文本层的 DDL **不许与 TS 侧的单一事实源漂移**。
+    ///
+    /// 为什么必须有这条判据（不是洁癖）：`attachment_text` / `chunks` / `chunk_embeddings` 在
+    /// **两个平台各建一次表**（桌面 Rust 这里、Web `sqliteStore.ts` 直接执行 TS 常量），
+    /// 而两份 DDL 漂移的后果是"**同一份数据在一个平台上读不出来**"——**没有任何编译期报错**，
+    /// 表现出来只是"检索时少了一批东西"。所以这里把 `schema.ts` 读进来逐条对文本。
+    ///
+    /// ⚠️ 顺带把"解析失败"也当红：如果 TS 侧改了写法（比如去掉反引号），
+    /// 这条判据会因"没解析出 6 条"而红，而不是**静默空转**（空扫最容易被当成没事）。
+    #[test]
+    fn derived_schema_matches_the_ts_source_of_truth() {
+        let ts = include_str!("../../src/lib/extract/schema.ts");
+        // 模板字符串体 = 反引号之间的段（schema.ts 里只有 DDL 用反引号）
+        let bodies: Vec<String> = ts
+            .split('`')
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 1)
+            .map(|(_, b)| b.trim().to_string())
+            .collect();
+        let ddl: Vec<String> = bodies
+            .into_iter()
+            .filter(|b| b.starts_with("CREATE TABLE") || b.starts_with("CREATE INDEX"))
+            .collect();
+        assert_eq!(ddl.len(), 6, "schema.ts 里应有 6 条 DDL（三条表 + 三条索引），实际解析出 {} 条：{ddl:#?}", ddl.len());
+
+        let mine: Vec<String> = DERIVED_SCHEMA_DDL.iter().map(|s| s.trim().to_string()).collect();
+        assert_eq!(mine.len(), ddl.len(), "两边的 DDL 条数不一致");
+        for (i, (a, b)) in mine.iter().zip(ddl.iter()).enumerate() {
+            assert_eq!(a, b, "第 {} 条 DDL 与 schema.ts 漂移了", i + 1);
+        }
+    }
+
+    /// `migrate()` 真的把派生表建出来了（不是"代码里写了"）。
+    #[test]
+    fn migrate_creates_derived_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn, "s1").unwrap();
+        for name in ["attachment_text", "chunks", "chunk_embeddings"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    rusqlite::params![name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "缺表：{name}");
+        }
+        // 索引也要在（否则块级检索按 page_id/att_id 过滤会退化成全表扫）
+        for name in ["idx_attachment_text_src", "idx_chunks_page", "idx_chunks_att"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    rusqlite::params![name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "缺索引：{name}");
+        }
+        // 幂等：再跑一次不报错（`IF NOT EXISTS`）
+        migrate(&conn, "s1").unwrap();
     }
 
     // E1: meta.workspaces carries the per-space at-rest encryption marker column.
