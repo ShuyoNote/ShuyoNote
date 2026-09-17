@@ -32,6 +32,53 @@ export function zipOf(files: Record<string, string>): Uint8Array {
  *
  * 交叉引用表按规范写全（偏移量真算），所以它是**合法 PDF**，不是"靠解析器容错才过"的假样本。
  */
+/** 一页的内容流：`text` 为空就只画一个方块（模拟"这一页是图，没有文本层"）。 */
+function pdfPageContent(text: string, graphics = false): string {
+  const escaped = text.replace(/[()\\]/g, (c) => `\\${c}`);
+  const draw = text.length > 0 ? `BT /F1 24 Tf 20 100 Td (${escaped}) Tj ET\n` : "";
+  return (graphics ? `0 0 1 rg 20 20 100 100 re f\n` : "") + draw;
+}
+
+/**
+ * 造一个 N 页的 PDF（同样不用二进制样张）。
+ *
+ * 为什么要多页：`pdf.text` 的定位是 `p.<n>`，而**回链全靠页序**——
+ * "一页一段、页码从 1 起、顺序与文档一致"这条只有多页夹具能钉住（单页夹具永远看不出顺序问题）。
+ * 每页可以带 `graphics: true` 来模拟"同一页里既有文字又有图"（仍应只出一段 `text`）。
+ */
+export function pdfPages(pages: readonly { text: string; graphics?: boolean }[]): Uint8Array {
+  const contents = pages.map((p) => pdfPageContent(p.text, p.graphics));
+  // 对象编号：1=Catalog，2=Pages，随后每页两个（Page + Contents），最后 1 个 Font。
+  const fontId = 3 + pages.length * 2;
+  const pageIds = pages.map((_, i) => 3 + i * 2);
+  const objects: string[] = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`,
+  ];
+  pages.forEach((_, i) => {
+    const pageId = 3 + i * 2;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents ${pageId + 1} 0 R ` +
+        `/Resources << /Font << /F1 ${fontId} 0 R >> >> >>`,
+    );
+    const c = contents[i];
+    objects.push(`<< /Length ${c.length} >>\nstream\n${c}endstream`);
+  });
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+  let out = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((body, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefAt = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) out += `${String(off).padStart(10, "0")} 00000 n \n`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+
 export function pdfOf(text: string, opts: { withText?: boolean } = {}): Uint8Array {
   const withText = opts.withText ?? true;
   const content = withText
@@ -312,6 +359,42 @@ export const FIXTURES: readonly ExtractFixture[] = [
     make: () => pdfOf("", { withText: false }),
     expect: { ok: false, code: "provider_error" },
     planned: true,
+  },
+  {
+    id: "pdf/多页-页序",
+    pins: "**页序**是回链的命根子：一页一段、`loc` 从 `p.1` 连到 `p.3`、顺序与文档一致（单页夹具看不出顺序问题）",
+    extractor: "pdf.text@1",
+    filename: "三页制度.pdf",
+    mime: "application/pdf",
+    make: () => pdfPages([{ text: "Chapter One" }, { text: "Chapter Two" }, { text: "Chapter Three" }]),
+    expect: {
+      ok: true,
+      kinds: ["text", "text", "text"],
+      contains: ["Chapter One", "Chapter Three"],
+      locs: ["p.1", "p.2", "p.3"],
+    },
+  },
+  {
+    id: "pdf/中间页无文本（图+字混排）",
+    pins: "中间那一页是图 ⇒ **只有两段**、`loc` 必须是 `p.1` 与 `p.3`（**跳号而不是顺移**，否则回链指错页）",
+    extractor: "pdf.text@1",
+    filename: "混排.pdf",
+    mime: "application/pdf",
+    make: () => pdfPages([{ text: "First" }, { text: "", graphics: true }, { text: "Third" }]),
+    expect: { ok: true, kinds: ["text", "text"], contains: ["First", "Third"], locs: ["p.1", "p.3"] },
+  },
+  {
+    // ⚠️ 样张刻意短：这个最小 PDF 没有字体度量数据（测试环境取不到 LiberationSans），
+    //    pdf.js 的文本重建在长串上会**少末尾一两个字符**（实测："Caption and figure" → "Caption and figur"，
+    //    且与 /Length 无关——delta=±2 都没变化）。那是**测试环境**的限制，真 PDF（Chrome 生成、字体内嵌）
+    //    抽得完整。所以这里只断言短串本身，别把环境限制当成抽取器的行为。
+    id: "pdf/一页里既有字又有一块图",
+    pins: "图不影响文本层：同页文字仍**只出一段**（不要把一张图拆成第二段）",
+    extractor: "pdf.text@1",
+    filename: "图文.pdf",
+    mime: "application/pdf",
+    make: () => pdfPages([{ text: "Caption", graphics: true }]),
+    expect: { ok: true, kinds: ["text"], contains: ["Caption"], locs: ["p.1"] },
   },
   {
     id: "image/有字",
