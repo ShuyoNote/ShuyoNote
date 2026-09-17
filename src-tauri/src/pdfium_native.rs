@@ -41,11 +41,12 @@
 //!    已核实 MuPDF 那条的调用点（`commands.rs:590`）**也只传 4 个参数、没有口令**
 //!    ⇒ 两条**都不支持带口令的 PDF**，属对齐。将来要支持就**两条一起加**。
 //!
-//! ## ⚠️ 临时：`allow(dead_code)`
+//! ## 调用方（P2 已接线，2026-09-17）
 //!
-//! P1 只交付模块，**还没有调用方**（分派在 P2）。这个模块级 allow 是过渡措施，见上面第 2 条。
-
-#![allow(dead_code)]
+//! 分派在 `commands.rs` 的 `render_pdf_page`：`SHUYONOTE_PDF_ENGINE=pdfium` 时走本模块。
+//! ⇒ **模块级 `#![allow(dead_code)]` 已删除**（P2 验收项之一）。
+//! 若下面还有逐项 `#[allow(dead_code)]`，那是留给**暂无调用方但有意保留**的入口
+//! （`render_page` 借用版 / `clear()` 诊断用），不是遗留物。
 
 use pdfium_render::prelude::*;
 use std::collections::HashMap;
@@ -189,6 +190,7 @@ pub fn has_document(cache_key: &str) -> bool {
 /// 与 MuPDF 那条的差别只有一个——**不返回 `stride`**：PDFium 的输出本来就紧凑，无需 `compact_rgba`。
 ///
 /// 若调用方**已经不再需要**这份字节，用 [`render_page_owned`] 可以省掉一次整文件拷贝（AMD 复核第 4 条）。
+#[allow(dead_code)] // 有意保留：借用版，给"还要复用字节"的调用方（P3 对拍脚本可能用）
 pub fn render_page(
     cache_key: &str,
     bytes: &[u8],
@@ -243,6 +245,7 @@ pub fn forget(cache_key: &str) {
 }
 
 /// 清空整个文档缓存（诊断/测试用）。
+#[allow(dead_code)] // 有意保留：诊断/测试用（清空整个文档缓存）
 pub fn clear() {
     if let Ok(mut cache) = doc_cache().lock() {
         cache.clear();

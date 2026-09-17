@@ -576,26 +576,67 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
         )
         .map_err(|e| e.to_string())?
     };
-    // 若该 PDF 的 mupdf 文档已在缓存中（doc cache 持有 PDF bytes 副本），则无需
-    // 再从磁盘遍历目录 + 读整个文件——跳过，避免反复跳转/滚动时的大 I/O。
-    let bytes = if crate::pdf_native::has_document(&hash) {
+    // ── PDF 引擎分派（P2，2026-09-17）────────────────────────────────────────
+    // **运行时开关**（方案 §0.2-F 已定：不重编就能切回 MuPDF，便于灰度与回滚）：
+    //   `SHUYONOTE_PDF_ENGINE=pdfium` ⇒ 用 PDFium；缺省或其它值 ⇒ **MuPDF（现状，默认不变）**。
+    #[derive(Clone, Copy)]
+    enum PdfEngine {
+        Mupdf,
+        Pdfium,
+    }
+    let engine = if std::env::var("SHUYONOTE_PDF_ENGINE")
+        .map(|v| v.eq_ignore_ascii_case("pdfium"))
+        .unwrap_or(false)
+    {
+        PdfEngine::Pdfium
+    } else {
+        PdfEngine::Mupdf
+    };
+    // ⚠️ **两套缓存互斥淘汰**（P2 验收项）：同一个 hash 若被两个引擎各持一份，
+    // 内存会无声翻倍而两侧 LRU 互不知情 ⇒ 切引擎时先清掉另一侧的同 key 条目。
+    match engine {
+        PdfEngine::Pdfium => crate::pdf_native::forget(&hash),
+        PdfEngine::Mupdf => crate::pdfium_native::forget(&hash),
+    }
+    // 缓存命中判断也要**按引擎各查各的**（两套缓存彼此独立）。
+    let cached = match engine {
+        PdfEngine::Mupdf => crate::pdf_native::has_document(&hash),
+        PdfEngine::Pdfium => crate::pdfium_native::has_document(&hash),
+    };
+    let bytes = if cached {
         Vec::new()
     } else {
         crate::attachments::attachment_bytes(app, db, &hash)?
     };
     let page_index = args.page_index;
     let scale = args.scale;
-    // 在阻塞线程池上执行 mupdf 栅格化，避免阻塞主（UI）线程。
-    let (rgba, w, h, stride) = tauri::async_runtime::spawn_blocking(move || {
-        unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }
-    })
+    // 在阻塞线程池上执行栅格化，避免阻塞主（UI）线程。
+    // 两条路径都**归一成紧凑 RGBA**（前端按 宽×高×4 校验字节数）：
+    //  · MuPDF 出的是带行填充的缓冲 ⇒ 还要 `compact_rgba`；
+    //  · PDFium 的 `as_rgba_bytes()` **本来就是紧凑的** ⇒ 不需要那一步（见 pdfium_native.rs 模块头第 1 条）。
+    let (compact, w, h) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(Vec<u8>, usize, usize), String> {
+            match engine {
+                PdfEngine::Mupdf => {
+                    let (rgba, w, h, stride) =
+                        unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }?;
+                    Ok((crate::pdf_native::compact_rgba(&rgba, w, h, stride)?, w, h))
+                }
+                // 用 `render_page_owned`：这条分支拿到字节之后不再需要它，省掉一次整文件拷贝。
+                PdfEngine::Pdfium => {
+                    // ⚠️ 本命令的 `page_index` 是 **i64**（沿用 MuPDF 那条的入参类型），
+                    // 而 `pdfium_native` 收 **usize** —— 这里显式转换，别靠隐式推断。
+                    let idx = usize::try_from(page_index)
+                        .map_err(|_| format!("页码 {page_index} 超出范围"))?;
+                    crate::pdfium_native::render_page_owned(&hash, bytes, idx, scale)
+                }
+            }
+        },
+    )
     .await
-    .map_err(|e| format!("render task failed: {e}"))?
-    .map_err(|e| format!("MuPDF render failed: {e}"))?;
-    // 压掉行对齐填充：前端按 宽×高×4 校验字节数，多出的填充会被判成"对不上"。
-    let compact = crate::pdf_native::compact_rgba(&rgba, w, h, stride)?;
-    let width = u32::try_from(w).map_err(|_| format!("MuPDF: 页面宽度 {w} 超出范围"))?;
-    let height = u32::try_from(h).map_err(|_| format!("MuPDF: 页面高度 {h} 超出范围"))?;
+    .map_err(|e| format!("render task failed: {e}"))??;
+    let width = u32::try_from(w).map_err(|_| format!("PDF: 页面宽度 {w} 超出范围"))?;
+    let height = u32::try_from(h).map_err(|_| format!("PDF: 页面高度 {h} 超出范围"))?;
     use base64::Engine as _;
     Ok(PdfPagePayload {
         width,
