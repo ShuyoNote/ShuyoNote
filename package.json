@@ -60,7 +60,8 @@
     "test:plugin-fragment": "vitest run scripts/plugin-fragment.test.mjs",
     "check:plugin-hosting": "node scripts/check-plugin-hosting.mjs",
     "test:live-index": "cargo test --manifest-path src-tauri/Cargo.toml --lib live_hosted_index -- --ignored --nocapture",
-    "sessions": "node scripts/session-grep.mjs"
+    "sessions": "node scripts/session-grep.mjs",
+    "check:pdf-raster-web": "node scripts/check-pdf-raster-web.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
