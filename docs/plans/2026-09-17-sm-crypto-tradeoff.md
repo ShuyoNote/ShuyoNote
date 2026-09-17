@@ -70,16 +70,31 @@
 
 ### 5.1 构建面：每个平台都要能编出 Tongsuo
 
-| 目标 | 现在怎么拿 libcrypto | 换国密后 | 风险 |
+| 目标 | 今天实际用哪套加密后端 | 换国密后 | 风险 |
 |---|---|---|---|
-| Windows (MSVC) | 预装 OpenSSL（构建要 `OPENSSL_DIR` ＋ `LIB`） | **自己编 Tongsuo**（MSVC ＋ **Perl**） | ⬆️ 高：Perl / Configure 是历史坑 |
-| macOS (universal) | 系统 OpenSSL | 自编 Tongsuo，**x86_64 ＋ arm64 两个 slice 再合并** | 中：公证签名要覆盖 dylib |
-| Linux | 系统 OpenSSL | 系统 Tongsuo 或自编 | 低 |
+| Windows (MSVC) | **OpenSSL**（vcpkg，`release.yml:81-88` 设 `OPENSSL_DIR`） | **自己编 Tongsuo**（MSVC ＋ **Perl**） | ⬆️ 高：Perl / Configure 是历史坑 |
+| macOS (universal) | ⚠️ **CommonCrypto**（`-DSQLCIPHER_CRYPTO_CC` ＋ Security.framework）——**不是** OpenSSL | **必须先显式切到 Tongsuo/OpenSSL**，再编 x86_64 ＋ arm64 两个 slice 合并 | ⬆️⬆️ 高：见下方 ⚠️；另加公证签名要覆盖 |
+| iOS | 同上（Apple 平台同一分支）——但 **iOS 整体未开始**（`MOBILE.md:35`、无 `ios.yml`） | 同 macOS；且要一并解决 Tauri iOS 工具链（`MOBILE.md` §5） | ⬆️⬆️ 高，且**不在当前交付范围** |
+| Linux | 系统 OpenSSL（`-l crypto`） | 系统 Tongsuo 或自编 | 低 |
 | Android | `bundled-sqlcipher-vendored-openssl`（NDK clang ＋ **Perl**，`Cargo.toml:110-111`） | 同一条路径换 Tongsuo | ⬆️ 高：已在精简 Perl 上栽过 |
 | Web | **无静置加密**（`web.ts:2916`） | 不涉及 | — |
 
-关键事实：**桌面是 `features = ["bundled-sqlcipher"]`（吃系统 OpenSSL），只有 Android 才是 `bundled-sqlcipher-vendored-openssl`**
-（`Cargo.toml:25` vs `:111`）⇒ 换国密 = **四条构建链都要把 OpenSSL 换成 Tongsuo**，不是改一行依赖。
+⚠️ **一个原方案没列到的坑：Apple 平台今天走的是 CommonCrypto，而它只有 AES。**
+
+- `libsqlite3-sys` 的 `build.rs:246-249`：非 vendored 且 `host`/`target` 都是 Apple 时，编译期加
+  **`-DSQLCIPHER_CRYPTO_CC`** 并链 `Security.framework` ＋ `CoreFoundation`；
+- SQLCipher 的 CC 后端是硬编码 AES 的（`sqlite3.c:114266`：`CCCryptorCreate(op, kCCAlgorithmAES128, 0, key, kCCKeySizeAES256, …)`）
+  ⇒ **CommonCrypto 没有 SM4，这个分支下根本编不进国密 provider**；
+- 而**选哪条分支只看 `OPENSSL_DIR` 有没有设**（`find_openssl_dir()` 就只读这一个环境变量，`build.rs:350`）。
+  `release.yml` 只给 Windows 设了它（注释写"mac/linux 系统自带"——**这句对 macOS 不成立**）
+  ⇒ **今天 macOS 发布件实际跑在 CommonCrypto 上**，与 Windows/Linux 不是同一套页加密实现（同为 AES-256-CBC，
+  所以数据今天仍互通，但**引入 SM4 后会变成静默的机器/平台差异**：一台编了 SM4 的库，另一台打不开）。
+
+⇒ 结论：**国密落地必须"显式钉死后端"，不能靠自动挑选**；并要有一条门禁断言实际编进去的是哪个 provider
+（否则"编过了"和"能开国密库"是两回事）。
+
+关键事实：**桌面是 `features = ["bundled-sqlcipher"]`（自己挑后端），只有 Android 才是 `bundled-sqlcipher-vendored-openssl`**
+（`Cargo.toml:25` vs `:111`）⇒ 换国密 = **四条构建链都要把加密后端换成 Tongsuo**，不是改一行依赖。
 
 ### 5.2 数据面：跨端要求「全端同时会 SM4」
 
@@ -112,12 +127,15 @@
 
 ---
 
-## 6. 三个对冲（不做就是真风险）
+## 6. 四个对冲（不做就是真风险）
 
 1. **版本化先行**（1 人日，与档位无关）：不先给密文带版本号，换算法后老数据**分不出新旧、无法双读**；
 2. **fixture 回归**：用旧版生成的加密库 / 附件当固定样本，断言新版仍能打开——唯一防「把老用户数据锁死」的手段；
 3. **Tongsuo 的 MSVC spike 先做**：成功才排路径 3；失败就退回路径 2，用书面边界表讲清
    「数据面国密 ＋ 传输层标准 TLS」，**不硬啃构建链**。
+4. **构建侧显式钉死加密后端**（2026-09-17 补）：Apple 平台默认编成 CommonCrypto（**只有 AES**，见 §5.1）
+   ⇒ 必须显式把后端指向 Tongsuo，并加一条**门禁断言实际 provider**。
+   不做这条，macOS 上会出现「构建通过、但打不开国密库」——而且**不同机器可能编出不同后端**，静默不互通。
 
 ## 7. 归属：**已定（2026-09-17）国密代码进开源主干**
 
@@ -169,3 +187,5 @@
 | 附件寻址不换 SM3 | `src-tauri/src/attachments.rs:291-292` |
 | Tongsuo 的能力面与资质口径 | [Tongsuo 官方文档·关于铜锁](https://tongsuo.netlify.app/docs/)：声明支持 **GB/T 38636-2020（TLCP）**与 **RFC 8998（TLS 1.3 ＋ SM2）**，并声明符合 **GM/T 0028** 的「软件密码模块安全一级」 |
 | Tongsuo 的许可证 = **Apache-2.0** | 上游仓库根 **`LICENSE.txt`**（OpenSSL 3.x 系命名，故没有 `LICENSE`）全文即 Apache License 2.0，2026-09-17 经 jsDelivr 镜像取回逐条核对；对照 [GitHub 许可证页](https://github.com/Tongsuo-Project/Tongsuo?tab=Apache-2.0-1-ov-file) |
+| **Apple 平台今天走 CommonCrypto（只有 AES）** | `libsqlite3-sys-0.38.2/build.rs:246-249`（Apple 分支加 `-DSQLCIPHER_CRYPTO_CC` ＋ `Security.framework`）；SQLCipher 的 CC 后端硬编码 AES（`sqlcipher/sqlite3.c:114266`）；选路只看 `OPENSSL_DIR`（`build.rs:350`），而 `release.yml:81-88` 只给 Windows 设它 |
+| **iOS 未开始、没有 iOS 构建** | `docs/MOBILE.md:35`（iOS = 未开始）＋ 同文件 §5（那台 Mac 上 Tauri iOS 工具链结论）；`.github/workflows/` 只有 `android` / `ci` / `macos` / `pages` / `release` |

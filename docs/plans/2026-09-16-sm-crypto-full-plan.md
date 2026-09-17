@@ -16,6 +16,7 @@
 | 覆盖面 | 在不在范围内 | 依据 |
 |---|---|---|
 | 桌面端（Tauri，Windows/macOS/Linux/Android） | ✅ | 加密开关与 `PRAGMA key` 都在 Rust 侧（`security.rs:126-128`） |
+| **iOS** | ⚠️ **不在此次交付范围**（未开始），**但接入时必须一并解决** | 无 `ios.yml`、`MOBILE.md:35` 记 iOS 未开始；且 Apple 平台编译期走 **CommonCrypto（只有 AES）** ⇒ 见 §3 第 5 条与[利弊与跨平台 §5.1](2026-09-17-sm-crypto-tradeoff.md) |
 | 导出包 / 整库备份 zip | ✅ | 走同一个 AEAD（`crypto.rs:62-89`） |
 | 附件静置（`attachments/`） | ✅ | E1 起附件加密，同一套原语 |
 | 同步载荷（push/pull） | ✅ | M2.2 起客户端加解密、服务端只转发密文 |
@@ -80,6 +81,14 @@
 2. **`libsqlite3-sys` 构建侧**开放 provider 选择（当前只认 `openssl` / `libtomcrypt` 两条）；
 3. **文件结构尽量不变**：16 字节 salt 头、页大小、保留区维持原样 ⇒ 迁移与备份逻辑基本可复用；
 4. 迁移沿用既有双向迁移思路（`security.rs:148-172` 的 `sqlcipher_export`），但**跨算法导出**要先验证"一条连接里能否同时打开两种 cipher"。
+5. ⚠️ **必须显式钉死加密后端（2026-09-17 补）**：`libsqlite3-sys` 在 **Apple 平台**（`host` 与 `target` 都是 Apple）且没设 `OPENSSL_DIR` 时，
+   会被编译成 **CommonCrypto 后端**（`build.rs:246-249` 加 `-DSQLCIPHER_CRYPTO_CC` ＋ 链 `Security.framework`），
+   而该后端**只有 AES**（`sqlcipher/sqlite3.c:114266` 硬编码 `kCCAlgorithmAES128`）
+   ⇒ **macOS 今天根本不在 OpenSSL 后端上**（iOS 同理），不显式切换就**编不进国密 provider**。
+   选路只看 `OPENSSL_DIR` 一个环境变量（`build.rs:350` 的 `find_openssl_dir()`），而 `release.yml:81-88` 只给 Windows 设了它
+   （该处注释"mac/linux 系统自带"**对 macOS 不成立**）。
+   ⇒ 要求：构建侧**显式指定** Tongsuo/OpenSSL 后端，并加一条**门禁断言实际编进去的是哪个 provider**
+   ——「构建通过」与「能打开国密库」是两件事。
 
 **风险与控制**：维护一份加密 provider 是**长期成本**，升级 SQLCipher 要重放补丁。控制手段：
 - 补丁**尽量薄**——只加枚举项 + 调 Tongsuo 的 `EVP_sm4_cbc` / `HMAC(SM3)`，不自己实现分组算法；
@@ -178,6 +187,7 @@
 | 误把附件 SHA-256 一起换掉 | 全库改名 + 同步标识失效 | §2 明确不换 |
 | 传输层选错路径 | 1–2 周白做 | §5 先确认口径与部署形态 |
 | Android 构建链（vendored OpenSSL/Tongsuo + NDK Perl） | 已在历史上卡过（`Cargo.toml:108-109`） | P3 阶段先用桌面验证，再单独排 Android |
+| **Apple 平台默认编成 CommonCrypto 后端（只有 AES）** | **macOS 上国密 provider 根本没被编进去**；「能编过」与「能开 SM4 库」不是一回事；同一平台不同机器可能编出不同后端 ⇒ 静默的数据不互通 | §3 第 5 条：显式设 `OPENSSL_DIR` 到 Tongsuo ＋ **门禁断言实际 provider**；验收项补一条「换后端前后旧库仍可读」 |
 
 ---
 
