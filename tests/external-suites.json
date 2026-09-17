@@ -19,6 +19,16 @@
       "name": "真机手动验收（Android 开加密→重启→解锁；macOS 公证与自动更新）",
       "where": "人工，按 docs/ 下的验收清单执行",
       "status": "人工执行，结果记在 CHANGELOG 与对应验收清单里"
+    },
+    {
+      "id": "live-online-checks",
+      "name": "线上判据（hosted 插件索引端到端 / 线上更新清单 / 社区 JSON）",
+      "where": "**要出网**，所以不进门禁：本机或 CI 手动触发 `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored`（平时它们都是 `#[ignore]`）",
+      "status": "通过（2026-09-17T06:44:32.227Z，commit af15c824，2026-09-17 本机实跑 cargo test --lib -- --ignored：5 通过 / 0 失败（hosted 插件索引端到端安装、线上更新清单、三组 fixture 相关如实跳过））",
+      "lastStatus": "passed",
+      "lastRunAt": "2026-09-17T06:44:32.227Z",
+      "lastCommit": "af15c824",
+      "lastEvidence": "2026-09-17 本机实跑 cargo test --lib -- --ignored：5 通过 / 0 失败（hosted 插件索引端到端安装、线上更新清单、三组 fixture 相关如实跳过）"
     }
   ]
 }
