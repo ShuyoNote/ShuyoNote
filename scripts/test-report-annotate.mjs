@@ -96,6 +96,13 @@ for (const r of failed) {
 
 for (const v of report.baselineViolations ?? []) {
   annotate("基线退步", oneLine(v));
+  // 基线退步的**原因**常常就在那条门禁自己的 failures 里（典型：断言被静默跳过 ⇒ 数字降了）。
+  // 只报"从 8 降到 6"等于把人送回猜谜 —— 2026-09-17 就是这么白花时间的。
+  const text = String(v ?? "");
+  const gate = results.find((r) => text.includes(r.id));
+  for (const f of (gate?.failures ?? []).slice(0, 4)) {
+    annotate(`基线退步的原因（${gate.id}）`, oneLine(f, 500));
+  }
 }
 
 // 一条汇总：一眼能看出"红的是哪几条 / 跳过了什么"（跳过也要报，否则"没跑"会被当成"通过"）。
