@@ -64,6 +64,10 @@ jobs:
           # 本机预演（自签证书 + 临时钥匙串、批量脚本里无人值守）加了这一行 ⇒ `codesign` 直接签成、无任何弹窗。
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
+          # ⚠️ 这一行是**替换**（不是追加）用户的钥匙串搜索列表。CI 上无所谓（runner 是一次性的），
+          # 但**本机照抄跑会顶掉你自己的列表** —— 2026-09-17 我为了逐行验证这段就在本机踩了：
+          # 跑完 `security list-keychains -d user` 只剩 build.keychain-db，得手动把 login 放回去。
+          # 留在 CI 里是对的（同一步的 find-identity 要认得这个 keychain），只是别在开发机上直接跑。
           security list-keychains -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASS" build.keychain
           # 自检：把身份**打出来**。证书没导进去 / 名字不对时，这一步就红在"导入"而不是
