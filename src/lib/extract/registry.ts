@@ -6,6 +6,7 @@
 //  2) **先整表比 mime，再整表比扩展名**（不是每个抽取器自己先比 mime 再比扩展名）。
 //     否则一个"扩展名沾边但 mime 更准"的抽取器会抢在正确的那一个前面。
 
+import { imageOcrExtractor } from "./image";
 import { OOXML_EXTRACTORS } from "./ooxml";
 import type { Extractor } from "./types";
 
@@ -91,8 +92,13 @@ export function pickExtractor(
 
 /** 本线 P1 的显式注册表（新增抽取器在这里登记；不要改成自动扫描）。
  *
- * P1 进度（2026-09-17）：OOXML 一族（docx / xlsx / pptx）已落地并带单测。
- * 待补：`pdf.text`（复用 pdfium/pdf.js 文本层）、`pdf.ocr`、`image.ocr` / `image.vlm`、
- * `ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）。
+ * **顺序即优先级**（同名冲突先到先得），所以把一个格式的"便宜的抽取器"排在"贵的"前面。
+ *
+ * P1 进度（2026-09-17）：
+ *  - ✅ OOXML 一族（`ooxml.docx@1` / `ooxml.xlsx@1` / `ooxml.pptx@1`），cost=cpu
+ *  - ✅ 图片 OCR（`image.ocr@1`），cost=gpu —— 也是契约 §15.3-7 那条不变量的活样板
+ *  - ⏳ 待补：`pdf.text`（复用 pdfium/pdf.js 文本层，**应排在 `pdf.ocr` 前面**）、`pdf.ocr`、
+ *    `image.caption`（VLM 语义描述，方案 §13 待拍板第 2 项默认留到 P3）、
+ *    `ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
  */
-export const REGISTRY: readonly Extractor[] = [...OOXML_EXTRACTORS];
+export const REGISTRY: readonly Extractor[] = [...OOXML_EXTRACTORS, imageOcrExtractor];

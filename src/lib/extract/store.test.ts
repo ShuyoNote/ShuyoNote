@@ -299,4 +299,52 @@ describe("extractAndStore", () => {
     // 于是"过期"由 src_hash 自己暴露：下次仍会重试，不会静默停在残缺状态
     expect(store.needsExtract("att1", "h2", ["x@1"])).toBe(true);
   });
+
+  // ---- gpu 抽取器端到端（用真的 image.ocr@1，不是假的）--------------------
+  // 契约里最容易在"最后一公里"漏掉的两条：真实注册表能否选到它、以及
+  // 没有视觉模型时**什么都不该写库**。
+
+  it("真实注册表 + 真 image.ocr@1：没配视觉模型 ⇒ provider_error，且**一行都不写**", async () => {
+    const { store } = freshStore();
+    const r = await extractAndStore({
+      ...base,
+      filename: "扫描件.png",
+      mime: "image/png",
+      store,
+      registry: REGISTRY,
+    });
+    expect(r).toMatchObject({ status: "failed", code: "provider_error", tried: ["image.ocr@1"] });
+    expect(store.segmentsOf("att1")).toHaveLength(0);
+    // 没写库 ⇒ 下次仍会重试（不会因为"试过了"就永久跳过）
+    expect(store.needsExtract("att1", "h1", ["image.ocr@1"])).toBe(true);
+  });
+
+  it("真实注册表 + 真 image.ocr@1：注入 vision 后落库，kind = ocr", async () => {
+    const { store } = freshStore();
+    const r = await extractAndStore({
+      ...base,
+      filename: "扫描件.png",
+      mime: "image/png",
+      store,
+      registry: REGISTRY,
+      deps: { vision: async () => "发票号码 001" },
+      now: 500,
+    });
+    expect(r).toMatchObject({ status: "stored", extractor: "image.ocr@1", kinds: ["ocr"] });
+    const rows = store.segmentsOf("att1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "ocr", text: "发票号码 001", loc: "", src_hash: "h1" });
+    // 第二次同 hash ⇒ cached（gpu 抽取器也不该被重复调用——那是最贵的一种浪费）
+    const again = await extractAndStore({
+      ...base,
+      filename: "扫描件.png",
+      mime: "image/png",
+      store,
+      registry: REGISTRY,
+      deps: { vision: async () => "不该被调用" },
+      now: 999,
+    });
+    expect(again).toMatchObject({ status: "cached" });
+    expect(store.segmentsOf("att1")[0].updated_at).toBe(500);
+  });
 });

@@ -194,12 +194,16 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 > **进展（2026-09-17）**
 > - **接口已冻结**（§15）。
-> - **OOXML 一族的抽取器已实现**：`src/lib/extract/ooxml.ts`（docx/xlsx/pptx）。
+> - **OOXML 一族的抽取器已实现**：`src/lib/extract/ooxml.ts`（docx/xlsx/pptx），`cost: cpu`。
+> - **图片 OCR 抽取器已实现**：`src/lib/extract/image.ts`（`image.ocr@1`），`cost: gpu` ——
+>   它同时是契约 **§15.3-7**「未注入 `deps.vision` 必须立刻 `provider_error`、不许自建网络」的活样板
+>   （该条此前既无实现也无测试，等于空头承诺）。**第二档（VLM 语义描述 → `caption`）按 §13 待拍板第 2 项
+>   的默认值留到 P3**，不在 P1。
 > - **派生表与落库已实现（TS 侧）**：`src/lib/extract/schema.ts`（DDL 单一事实源）、
 >   `store.ts`（读写 + 按 `src_hash` 失效 + 整体替换）、`pipeline.ts`（候选调度与结果归类）。
-> - 四个测试文件共 **57 条**用例；**全量回归 77 文件 / 754 用例全绿**，`npx tsc --noEmit` 0 错。
+> - 五个测试文件共 **70 条**用例；**全量回归 79 文件 / 768 用例全绿**，`npx tsc --noEmit` 0 错。
 > - **仍未做**：接进 `sqliteStore.ts` / `db.rs` 的真实建表与调用（**Rust 侧需 AMD 或 Mac 复核**）、
->   `files.read` 工具、PDF / 图片 / 旧格式 / 音视频抽取器（见 §12.4 分工表）。
+>   `files.read` 工具、PDF / 旧格式 / 音视频抽取器（见 §12.4 分工表）。
 >
 > ⚠️ **一个环境坑，记下来免得后人重踩**：**happy-dom 不支持 `getElementsByTagNameNS("*", name)` 的通配**（恒返回 0 条），
 > 而浏览器与 WebView 支持 ⇒ 用它会造成"测试绿、线上崩"或反过来。故 `ooxml.ts` 改为**手工遍历比 `localName`**，
