@@ -93,6 +93,14 @@ jobs:
         # DB 初始化失败、所有查询报错。这条在 CI 里先兜住。
         run: node scripts/test-report.mjs --group browser --json test-report-browser.json
 
+      - name: 失败时把「哪条门禁红了」变成注解（browser 组）
+        # 与上面默认组那条同一个理由；这一条的**紧迫性还是它自己证明的**：
+        # 2026-09-17 修好默认组之后，browser 组立刻从"被跳过"变成"真红"——
+        # 也就是说它在之前每一次红里都是**被前一步掩盖**的，谁都没看到。诊断通道必须覆盖每一步，
+        # 否则"哪一步先红"决定了我们能不能看见后面的红。
+        if: failure()
+        run: node scripts/test-report-annotate.mjs test-report-browser.json
+
       - name: 上传回归报告（机器可读）
         # `if: always()`：报告在**失败那一轮**最有价值——否则"红了但没有证据"。
         if: always()
