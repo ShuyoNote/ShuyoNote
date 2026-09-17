@@ -107,8 +107,36 @@ export interface ExtractedSegment {
   loc: string;
 }
 
+/**
+ * **覆盖度**：这份派生文本覆盖了原件的多少。
+ *
+ * 为什么需要它（Mac 侧在混合文档上撞出来的**静默丢内容**）：
+ * "正文是文字、中间夹了几页扫描"的 PDF 会让 `pdf.text` 返回 `ok`（它只是**跳过**空页、
+ * **不报告**有空页）⇒ 调度器以为"这个抽取器成功了"，于是 `pdf.ocr` **永远不会被调度**，
+ * 那几页**静默地没有任何内容** —— 不报错、不红，只是少了一块，而且**没有任何地方能看出来**。
+ * 真样张佐证：本机唯一一份真用户 PDF **17 页只抽出 105 个字符**（有文本层但极少）—— 不是边角情形。
+ *
+ * 它同时解决另一件事：**截断原本无处可写**。现在超过页数上限只能"静默截断"或"整体失败"；
+ * 有了覆盖度就能表达"这份派生文本只覆盖了 p.1–p.50"，而不是让下游以为抽全了。
+ */
+export interface ExtractCoverage {
+  /** `false` = 派生文本只是原件的一部分（有跳过的页 / 被上限截断）。 */
+  complete: boolean;
+  /** 明确**没有**产出内容的单元序号（0 基；页式格式就是页号）。
+   *  调度器据此决定"要不要换下一个候选再试"（见 `pipeline.ts`）。 */
+  gapIndexes?: readonly number[];
+  /** 人可读说明，例：`只覆盖 p.1–p.50（源 2000 页，超单次上限）`。 */
+  note?: string;
+}
+
 export type ExtractResult =
-  | { ok: true; extractor: string; segments: ExtractedSegment[] }
+  | {
+      ok: true;
+      extractor: string;
+      segments: ExtractedSegment[];
+      /** 省略 = 视为**完整覆盖**（向后兼容：现有抽取器一行不用改）。 */
+      coverage?: ExtractCoverage;
+    }
   | { ok: false; extractor: string; code: ExtractErrorCode; message: string };
 
 export interface Extractor {
@@ -124,9 +152,16 @@ export interface Extractor {
   extract(input: ExtractInput): Promise<ExtractResult>;
 }
 
-/** 构造成功结果的糖（保证 `extractor` 字段与实现 id 一致，避免手写漏填）。 */
-export function ok(extractor: string, segments: ExtractedSegment[]): ExtractResult {
-  return { ok: true, extractor, segments };
+/** 构造成功结果的糖（保证 `extractor` 字段与实现 id 一致，避免手写漏填）。
+ *  `coverage` 省略 = 完整覆盖（向后兼容）。 */
+export function ok(
+  extractor: string,
+  segments: ExtractedSegment[],
+  coverage?: ExtractCoverage,
+): ExtractResult {
+  return coverage === undefined
+    ? { ok: true, extractor, segments }
+    : { ok: true, extractor, segments, coverage };
 }
 
 /** 构造失败结果的糖。 */

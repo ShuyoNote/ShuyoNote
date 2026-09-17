@@ -43,13 +43,18 @@ function encodedRasterize(opts: { pages: number; rejectOn?: readonly number[] } 
   return { fn, calls };
 }
 
-/** 假光栅化：**今天的契约形状**（只有裸 RGBA + 宽高）。 */
+/** 假光栅化：**裸 RGBA** —— 如今这是**平台违约**的形状。
+ *
+ *  契约已在 2026-09-17 裁定为「`rasterize` 只产出**编码图**」
+ *  （`RasterizedPage = { bytes, mime, width, height }`，方案 §15.8 第 1b 条），
+ *  裸 RGBA 已**不在类型允许的范围内**。这里保留它并用 cast，是为了继续验
+ *  「**平台违约时不许把裸像素喂给 vision**」这条防御判据 —— 判据本身仍有价值。 */
 function rgbaRasterize(pages = 1) {
   const calls: number[] = [];
   const fn: NonNullable<ExtractDeps["rasterize"]> = async (_bytes, pageIndex) => {
     calls.push(pageIndex);
     if (pageIndex >= pages) throw new Error("越界");
-    return { rgba: new Uint8Array(16), width: 2, height: 2 };
+    return { rgba: new Uint8Array(16), width: 2, height: 2 } as unknown as RasterizedPage;
   };
   return { fn, calls };
 }

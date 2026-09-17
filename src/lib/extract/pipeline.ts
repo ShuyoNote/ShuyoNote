@@ -16,8 +16,10 @@ import { normalizeForStore } from "./normalize";
 import { candidates, REGISTRY } from "./registry";
 import type { AttachmentTextStore } from "./store";
 import type {
+  ExtractCoverage,
   ExtractDeps,
   ExtractErrorCode,
+  ExtractedSegment,
   Extractor,
   SegmentKind,
 } from "./types";
@@ -72,6 +74,8 @@ export async function extractAndStore(
 
   const tried: string[] = [];
   let last: { code: ExtractErrorCode; message: string } | null = null;
+  /** 已经成功的**不完整**结果（见下"覆盖不完整 ⇒ 换下一个再试"）。 */
+  let partial: { extractor: string; segments: ExtractedSegment[]; coverage: ExtractCoverage } | null = null;
 
   for (const ex of list) {
     tried.push(ex.id);
@@ -83,28 +87,59 @@ export async function extractAndStore(
       deps,
     });
     if (r.ok) {
-      // **归一化只在这一处施加**（§15.3-10）：抽取器把"格式 → 段"做好，
-      // 检索口径（NFKC 折叠兼容形，如「康熙部首 ⼀」→「一」）在这里统一收口 ——
-      // 这样 FTS / 嵌入 / AI 读到的都是同一份，**下游不可能忘**。
-      const normalized = r.segments.map((s) =>
-        s.text === normalizeForStore(s.text) ? s : { ...s, text: normalizeForStore(s.text) },
-      );
-      opts.store.replace(opts.attId, ex.id, opts.hash, normalized, now);
-      return {
-        status: "stored",
-        extractor: ex.id,
-        segments: normalized.length,
-        kinds: normalized.map((s) => s.kind),
-      };
+      const cov = r.coverage;
+      // **覆盖不完整 ⇒ 先别收工**（Mac 侧实测的"静默丢页"）：
+      // 混合文档（正文是文字、中间夹扫描页）会让 `pdf.text` 返回 ok 却**跳过了空页**，
+      // 于是后面的 `pdf.ocr` 永远不会被调度，那几页**静默没有内容**。
+      // 规则：**继续试下一个候选；谁更完整用谁** —— 是**整体替换**而不是"合并两段"
+      // （合并要定义"谁赢"，而替换的语义已经现成且无歧义）。
+      if (cov && cov.complete === false && !partial) {
+        partial = { extractor: ex.id, segments: r.segments, coverage: cov };
+        continue; // 给下一个候选一次机会（没有下一个时，循环结束会用 partial）
+      }
+      if (cov && cov.complete === false && partial) {
+        // 两个都不完整：留**缺口更少**的那个（相等时留先到的，保持"顺序即优先级"）
+        const better =
+          (cov.gapIndexes?.length ?? Number.POSITIVE_INFINITY) <
+          (partial.coverage.gapIndexes?.length ?? Number.POSITIVE_INFINITY);
+        if (!better) continue;
+        partial = { extractor: ex.id, segments: r.segments, coverage: cov };
+        continue;
+      }
+      // 完整覆盖 ⇒ 立即收工（顺序即优先级：第一个完整的就是它）
+      return store_(opts, ex.id, r.segments, now);
     }
     last = { code: r.code, message: r.message };
     if (!RETRYABLE.has(r.code)) break; // 换了也不会好，别浪费
   }
+
+  // 没有完整覆盖的结果，但有不完整的 ⇒ **落它**，并把"不完整"如实带到库里
+  //（宁可少而**标注清楚**，也不要整体失败什么都没留下；下游能据此知道"这不是全文"）。
+  if (partial) return store_(opts, partial.extractor, partial.segments, now);
 
   return {
     status: "failed",
     code: last?.code ?? "internal",
     message: last?.message ?? "没有候选抽取器产出结果",
     tried,
+  };
+}
+
+/** 归一化 + 落库（**归一化只在这一处施加**，见 §15.3-10）。 */
+function store_(
+  opts: ExtractAndStoreOptions,
+  extractorId: string,
+  segments: ExtractedSegment[],
+  now: number,
+): ExtractOutcome {
+  const normalized = segments.map((s) =>
+    s.text === normalizeForStore(s.text) ? s : { ...s, text: normalizeForStore(s.text) },
+  );
+  opts.store.replace(opts.attId, extractorId, opts.hash, normalized, now);
+  return {
+    status: "stored",
+    extractor: extractorId,
+    segments: normalized.length,
+    kinds: normalized.map((s) => s.kind),
   };
 }
