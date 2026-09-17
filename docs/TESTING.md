@@ -211,6 +211,35 @@ node scripts/test-report.mjs --baseline-from rust-report.json
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 
+## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
+
+**为什么单列一节**：那天默认组连红三次（`7a6df321` / `bb993251` / `6569e2b9`，其中一次还是**纯文档提交**），
+而**没有任何人能说出是哪条门禁** —— 步骤日志要鉴权、artifact 下载要鉴权，`check-runs/{id}/annotations`
+是唯一**无需鉴权**能读的通道，而它当时是**空的**（工作流从来没写过注解）。
+结果"红了"只变成一句"又红了"，三台机器（macOS 绿 / Windows 绿 / Linux 红）白猜了半天。
+
+现在这条通道是通的，顺序是：
+
+1. **看注解**（公开可读，不需要 token）：
+   ```bash
+   # 取该提交的 check run，再读它的注解
+   curl -s "https://api.github.com/repos/ShuyoNote/ShuyoNote/commits/<sha>/check-runs" | grep -o '"id": [0-9]*' | head -1
+   curl -s "https://api.github.com/repos/ShuyoNote/ShuyoNote/check-runs/<id>/annotations" | grep -o '"message": "[^"]*"' | head -20
+   ```
+   注解里会有：**哪条门禁红**、挡什么事故、命令与退出码、**失败用例名与首行信息**、
+   基线退步的**原因**、以及**被判据自报跳过**的条目（绿的门禁也可能少跑了几条）。
+2. **本地复跑同一条门禁**：`node scripts/test-report.mjs --only <gate-id>`；
+   门禁清单与 CI **同源**（`scripts/lib/gates.mjs`），所以本地跑的就是 CI 跑的那条。
+3. **仍是"本机绿、CI 红"就找环境差异**，已知的两类（都真实发生过）：
+   - **干净检出**没有的东西：git tag、未跟踪的构建产物。（`release.mjs` 的 tag 守卫就是这么咬到测试自己的。）
+   - **浏览器语言/区域**：CI 的 Chromium 是 `en-US`，而按文案匹配的判据只认中文时就会"找不到入口"。
+     复现配方：给 Chrome 加 `--lang=en-US` 再跑同一条门禁（实测能逐字复现）。
+
+> 三条规矩，都是那天用时间换来的：**①按钮/文案匹配一律双语**（或改用 `data-*`/role 选择器）；
+> **②判据宁可红、不许静默跳过**（静默跳过会被基线抓成"数字降了"，但**原因**必须自己说出来）；
+> **③诊断要打"现场"**（哪一步没走到 + 现场长什么样），而且**打印别截断证据**（只打前 N 个，
+> 要找的那个很可能正好被截掉 —— 那天就这么又猜了一轮）。
+
 ## 新增一条门禁
 
 1. 写脚本（纯 Node 优先；需要浏览器的放 `browser` 组）。
