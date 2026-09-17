@@ -663,6 +663,16 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
 **`av.transcript` 将来也要走同一条路**（音频解码 → 又一个 `deps` 能力）。所以规则是通用的：
 **凡是"只有平台能做"的事，都加 `deps`；一律可选、一律没注入就 `provider_error`、一律不许抽取器自己想办法。**
 
+**能力登记表（一处定义，防漂移）**：`src/lib/extract/depsCatalog.ts`。
+「哪些能力存在、叫什么、缺了报什么、谁注入」原先散在**契约注释 + `types.ts` + `isolated.test.ts`** 三处，
+而"同一个口径写两遍必然漂移"今天已经反复验证过（logo 的 `?v=9→11`、备份路径文档 vs `ExecStart`、
+`cargo test --lib` 用错两次）⇒ 收成一处。
+
+⚠️ **它不是"约定"，是编译期强制的**：`depsCatalog.ts` 末尾的 `_DEP_EXHAUSTIVE` 保证
+**往 `ExtractDeps` 加能力而忘了登记 ⇒ `tsc` 直接报错**（两个方向都拦）。
+**这条已做变异验证**：临时加一个没登记的 `audioDecode`，`tsc` 报
+`Property 'audioDecode' is missing in type '{}' but required in type 'Record<"audioDecode", never>'`，撤销后回到 0 错。
+
 ### 15.9 归一化口径（**窄口径**，2026-09-17 定）
 
 **问题**（Mac 侧在真 PDF 上实测）：用 Chrome 打印中文 HTML 成 PDF，抽出来的字里 `第⼀段` 用的是
