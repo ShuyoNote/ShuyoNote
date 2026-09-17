@@ -130,17 +130,22 @@
 ### 6.1 DDL（建议）
 
 ```sql
--- ② 派生文本：一份附件 × 一种抽取产物
+-- ② 派生文本：**一行 = 一个抽取段（segment）**，不是"一份附件一行"
+--    为什么按段存：段自带定位（页/单元格/时间码），是回链与块级检索的最小单位；
+--    压成"一份附件一行"会丢掉定位，P2 分块时只能靠猜。
 CREATE TABLE IF NOT EXISTS attachment_text (
   att_id     TEXT    NOT NULL,          -- attachments.id
-  kind       TEXT    NOT NULL,          -- 'pdf-text'|'pdf-ocr'|'docx'|'xlsx'|'image-ocr'|'image-vlm'|'av-asr'|...
-  text       TEXT    NOT NULL DEFAULT '',
-  loc_hint   TEXT    NOT NULL DEFAULT '', -- 定位提示（'p.'|'sheet'|'tc'|'…'，具体格式随 kind）
+  extractor  TEXT    NOT NULL,          -- 抽取器标识 + 版本（'ooxml.docx@1'）；换实现 ⇒ 可按它整批重跑
+  seq        INTEGER NOT NULL,          -- 段序号（稳定、从 0 递增）
+  kind       TEXT    NOT NULL,          -- 段类型：'text'|'heading'|'table'|'sheet'|'slide'|'ocr'|'transcript'|…
+  text       TEXT    NOT NULL,          -- 段纯文本（不含任何标记）
+  loc        TEXT    NOT NULL DEFAULT '', -- 给人看的定位：'p.12' | 'S3!B4' | '00:03:21' | 'slide 7'
   src_hash   TEXT    NOT NULL,          -- 抽取时附件的哈希（内容寻址哈希，见 attachments.rs:291）
-  extractor  TEXT    NOT NULL,          -- 抽取器标识 + 版本；换实现 ⇒ 可按 extractor 整批重跑
   updated_at INTEGER NOT NULL,
-  PRIMARY KEY (att_id, kind)
+  PRIMARY KEY (att_id, extractor, seq)
 );
+CREATE INDEX IF NOT EXISTS idx_attachment_text_src ON attachment_text(att_id, src_hash);
+```
 
 -- ③ 分块：页面块与附件块统一进这一张表，检索不再按「页」为单位
 CREATE TABLE IF NOT EXISTS chunks (
@@ -186,6 +191,15 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 ### P1 —— 附件文本抽取 ＋ 派生表 ＋ 接进现有检索与工具
 
 **交付**：docx / xlsx / pptx / PDF / txt / 图片(OCR) 的文本抽取；`attachment_text` 落库；`pages.search` 与嵌入链同时命中派生文本；新增 `files.read` 工具。
+
+> **进展（2026-09-17，首片已落地）**：**接口已冻结**（§15），且 **OOXML 一族的抽取器已实现并带单测**：
+> `src/lib/extract/types.ts`（契约）、`registry.ts`（分派 + 显式注册表）、`ooxml.ts`（docx/xlsx/pptx）、
+> 两个测试文件共 **37 条**用例。**全量回归 76 文件 / 734 用例全绿**，`npx tsc --noEmit` 0 错。
+> 仍未做：`attachment_text` 建表与落库、`files.read` 工具、PDF / 图片 / 旧格式抽取器（见 §12.4 分工表）。
+>
+> ⚠️ **一个环境坑，记下来免得后人重踩**：**happy-dom 不支持 `getElementsByTagNameNS("*", name)` 的通配**（恒返回 0 条），
+> 而浏览器与 WebView 支持 ⇒ 用它会造成"测试绿、线上崩"或反过来。故 `ooxml.ts` 改为**手工遍历比 `localName`**，
+> 三者行为一致且**与前缀无关**。
 
 **为什么先做这一步**：它**一次性补上"看不见的那一半"**，且**不改 AI 工具集的形态**（只加一个读工具）。
 
@@ -252,7 +266,8 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 `docs/plans/2026-09-16-sm-crypto-full-plan.md:294` 已记录（2026-09-17 实测）：
 
-> ⚠️ **验收纪律（硬要求）**：**Windows 跑不了 `cargo test`**（`0xc0000139`），所以 Windows 侧的改动必须由 AMD 或 Mac 复核——"在我这边编过了"不等于"测过了"，更不等于"能打开"。
+> ⚠️ **验收纪律（硬要求）**：**Windows 跑不了 `cargo test`**（`0xc0000139`，即 `STATUS_ENTRYPOINT_NOT_FOUND`），所以 Windows 侧的改动必须由 AMD 或 Mac 复核——"在我这边编过了"不等于"测过了"，更不等于"能打开"。
+> **根因**（由 `2026-09-17-division-of-labor.md` 的"发现 3"查实）：**System32 的 `libcrypto-3-x64.dll` 抢了加载**——不是配置问题，是环境层面抢 DLL，故**本机不可修**，只能靠交叉复核。
 
 而本方案的 P1/P2 改动**主要落在 Rust 与共享层**：`db.rs`（1020 行）/ `search.rs`（737）/ `attachments.rs`（994）/ `sqliteStore.ts`（438）/ `web.ts`（3388）/ `capabilities.json`（1040）。
 
@@ -275,8 +290,10 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 **轴 2 —— 平台同构。** `scripts/check-web-commands.mjs` 强制三向一致（Rust 有 → `web.ts` 必须实现；Rust 有 → `CommandMap` 必须声明；CommandMap 有 → 桌面必须注册，或显式登记为「Web 专属」）⇒ `files.read` / `files.search` **必须写两遍**，可分两台各写一侧，**跑偏会被门禁抓住**。
 
-> ⚠️ **前置：接口必须先冻结，冻结之后才分。** 要冻的是：抽取器签名 / `kind` 枚举 / `loc_hint` 格式 / 错误语义 / `extractor` 版本号。
+> ⚠️ **前置：接口必须先冻结，冻结之后才分。** 要冻的是：抽取器签名 / `kind` 枚举 / `loc` 格式 / 错误语义 / `extractor` 版本号。
 > **接口没冻就分三份 = 三套各自能跑、但合不到一起的实现。**
+>
+> ⇒ **已于 2026-09-17 冻结，契约见 [§15 附录 A](#15-附录-a抽取器接口契约冻结v1)。** 分家前请以那一节为准，不要再各自发挥。
 
 ### 12.4 分工表（**待机器规格确认后填空**）
 
@@ -316,3 +333,141 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 - **P3/P4 是长尾与可信度**。
 
 按本方案分步走，**7B 级本地模型也能拿到可用的全库问答**，因为每一步的输入都变短了。反过来，**跳过 P1/P2 直接做跨库总结，只会产出没有依据的漂亮话**。
+
+---
+
+## 15. 附录 A：抽取器接口契约（**冻结，v1**）
+
+> 冻结日期 **2026-09-17**。依据 §12.3：**接口不冻就分家 = 三套各自能跑、但合不到一起的实现**。
+> 冻结内容：**签名 / 段类型枚举 / `loc` 格式 / 错误码 / `extractor` 版本规则 / 与 DB 的映射**。
+> ⚠️ 分家开工前**以本节为准**，不要各自发挥；要改契约先回本方案改这里，再动实现。
+
+### 15.1 冻的是什么、为什么
+
+| 冻结项 | 冻成什么 | 不冻会怎样 |
+|---|---|---|
+| 抽取器签名 | `extract(ExtractInput) → Promise<ExtractResult>` | 三份实现各自返回不同形状，调度器要写三套分支 |
+| 段类型（`kind`） | 固定枚举（见下） | 检索侧无法统一展示与权重 |
+| 定位（`loc`） | **给人看的字符串**，格式按 `kind` 约定 | 回链对不上 |
+| 错误语义 | **结构化错误码，不抛异常** | 一处抛、一处吞 ⇒ 统计不出"encrypted 占比" |
+| 版本 | `id = "<family>.<format>@<n>"` | 换实现后无法整批重跑，也无法判断缓存是否可信 |
+| 与 DB 的映射 | 一行 = 一个段（`attachment_text`，见 §6.1） | 定位丢失，P2 分块只能靠猜 |
+
+### 15.2 TypeScript 契约
+
+```ts
+/** 抽取器的算力档位 —— 调度器据此排队（本机 6GB 显存放不下三件常驻，见 §9）。 */
+export type ExtractCost = "cpu" | "gpu";
+
+/** 段类型：决定检索侧如何展示与加权，也决定 loc 的格式。 */
+export type SegmentKind =
+  | "text"        // 普通正文
+  | "heading"     // 标题（docx Heading / pptx 标题占位符）
+  | "table"       // 表格（text 内用 \t 分列、\n 分行）
+  | "sheet"       // 工作表整表（loc = 'S<名或序号>'）
+  | "slide"       // 幻灯片（loc = 'slide <n>'）
+  | "ocr"         // 由图像识别得到的文字（loc = 'p.<n>' 或 ''）
+  | "caption"     // 图像/图表的语义描述（VLM 产出）
+  | "transcript"; // 音视频转写（loc = 'HH:MM:SS'）
+
+export type ExtractErrorCode =
+  | "unsupported"     // 本抽取器不认这个格式（调度器应换一个）
+  | "encrypted"       // 加密 / 口令保护
+  | "corrupt"         // 结构损坏
+  | "empty"           // 合法但抽不出内容（扫描件常见）
+  | "timeout"
+  | "provider_error"  // VLM/ASR 端点不可达或未配置
+  | "internal";
+
+export interface ExtractDeps {
+  /** 视觉模型调用（图片 / 视频关键帧）。**由调度器注入**，抽取器不自建网络客户端。
+   *  未注入时，`cost: "gpu"` 的抽取器必须返回 `provider_error`，不许抛。 */
+  vision?: (prompt: string, image: Uint8Array, mime: string) => Promise<string>;
+}
+
+export interface ExtractInput {
+  bytes: Uint8Array;
+  filename: string;
+  mime: string;
+  /** 附件内容寻址哈希（attachments.rs:291）。回写 src_hash，并用于日志关联。 */
+  hash: string;
+  deps: ExtractDeps;
+}
+
+export interface ExtractedSegment {
+  kind: SegmentKind;
+  /** **纯文本**：不含 Markdown / HTML / 任何标记。检索与嵌入直接用这一份。 */
+  text: string;
+  /** 给人看的定位：'p.12' | 'S3!B4' | 'slide 7' | '00:03:21' | ''（无定位时）。 */
+  loc: string;
+}
+
+export type ExtractResult =
+  | { ok: true;  extractor: string; segments: ExtractedSegment[] }
+  | { ok: false; extractor: string; code: ExtractErrorCode; message: string };
+
+export interface Extractor {
+  /** **稳定标识 + 版本**：'<family>.<format>@<n>'，例：'ooxml.docx@1'、'pdf.text@1'、'image.vlm@1'。
+   *  换实现 ⇒ 升 n ⇒ 可按 extractor 整批重跑（§6.1 的 extractor 列）。 */
+  readonly id: string;
+  /** 认领的 MIME（小写；可用 'application/vnd.openxmlformats-officedocument.*' 这类前缀通配）。 */
+  readonly mimes: readonly string[];
+  /** MIME 缺失/不可信时的扩展名兜底（小写，含点）。 */
+  readonly extensions: readonly string[];
+  /** 算力档位：调度器按它排队错峰。 */
+  readonly cost: ExtractCost;
+  extract(input: ExtractInput): Promise<ExtractResult>;
+}
+```
+
+### 15.3 九条不变量（实现者必须遵守，评审按这九条看）
+
+1. **抽取器只做「格式 → 带定位的段」，不做分块。** 分块是 P2 的职责；两处都切会切两遍且边界不一致。
+2. **失败返回 `{ok:false, code}`，不抛异常。** 让调度器能分类统计并决定是否换抽取器。
+3. **`text` 必须是纯文本**（无标记、无转义）。表格用 `\t` 分列、`\n` 分行，不引入 HTML 表格。
+4. **`loc` 是给人看的，不做机器解析。** 回链由页面侧的 `att://` / `pdf://#page` 负责，抽取器不管。
+5. **确定性**：同一 `bytes` + 同一 `id` ⇒ **同一输出**。否则 §6.1 的 `src_hash` 缓存语义不成立（会反复重抽）。
+6. **无副作用**：不写盘、不改全局状态；网络只经注入的 `deps.vision`。
+7. **不自建网络客户端**：`cost:"gpu"` 的抽取器在 `deps.vision` 缺失时必须立刻 `provider_error`，
+   不许"顺手"读个环境变量自己连——那会让"默认不出网"的承诺失效（§10 红线）。
+8. **`id` 带版本**，且**同一 `family.format` 的多版本可共存**（便于灰度：新版本先跑一小批比对）。
+9. **顺序稳定且从 0 递增**：`seq` 在同一 `(att_id, extractor)` 下稳定，便于增量 diff。
+
+### 15.4 注册与分派
+
+```ts
+/** 按 mime → 扩展名的顺序挑第一个认领的抽取器；都不认则 null（调度器记 unsupported）。 */
+export function pickExtractor(
+  mime: string, filename: string, registry: readonly Extractor[],
+): Extractor | null;
+```
+
+- **同名冲突先到先得**，由注册表顺序决定；注册表在代码里显式列出，**不用自动扫描**（可审计）。
+- 一个格式**允许多个抽取器**（例：PDF 有 `pdf.text@1` 与 `pdf.ocr@1`，前者失败/`empty` 时调度器再试后者）。
+  调度策略（试谁、按什么顺序、失败几次换人）**不在契约内**，属 P1 实现细节。
+
+### 15.5 与 DB 的映射（与 §6.1 对齐）
+
+| 契约字段 | `attachment_text` 列 |
+|---|---|
+| `Extractor.id` | `extractor` |
+| 段序号 | `seq`（从 0 起） |
+| `ExtractedSegment.kind` | `kind` |
+| `ExtractedSegment.text` | `text` |
+| `ExtractedSegment.loc` | `loc` |
+| `ExtractInput.hash` | `src_hash` |
+
+**失效规则**：`(att_id)` 当前 `src_hash` 与库中不一致 ⇒ 删掉该 `att_id` 的全部行重抽（按 `att_id` 整体替换，不做逐段 diff——段序在实现变更后不稳定，逐段 diff 会留下残段）。
+
+### 15.6 测试要求（分家的验收底线）
+
+- **三份实现共用同一组夹具**（§12.5）：`fixtures/<format>/<sample>.<ext>` + 期望的 `segments`（可只断言 `kind` 序列与 `text` 归一化后的关键子串，不必逐字符，避免格式细节抖动）。
+- **每个抽取器至少 4 条单测**：正常样本 / 空文件 / 损坏文件（期望 `corrupt`）/ 加密文件（期望 `encrypted`）。
+- **确定性测**：同一夹具连续抽两次，结果必须深度相等（守 §15.3-5）。
+- **`unsupported` 测**：喂一个不属于它的格式，必须返回 `unsupported` 而不是抛。
+- **`provider_error` 测**（`gpu` 类）：不注入 `deps.vision` ⇒ 必须 `provider_error`。
+
+### 15.7 本契约的变更流程
+
+1. 先改**本节**（契约）→ 2. 再改**实现** → 3. 若改的是 `id` 的版本号，同时更新 §6.1 的重跑口径与 §13 待拍板里相关项。
+**禁止**先改实现再回头补契约。
