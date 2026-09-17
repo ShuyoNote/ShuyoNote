@@ -162,7 +162,22 @@
    **遇到不认识的版本/算法要明确报错，不许当成"数据损坏"**（同步侧同理：整空间层面就拒绝并提示升级，见 §0-C）；
 3. **后台重写**（可中断/可恢复/带进度）：附件逐个重加密、导出包新写用新算法、**空间库按 §3 迁移**；
 4. **回归 fixture**：用**当前版本生成的加密库与加密附件**做固定样本，断言"新版本仍能打开"——这是唯一能防"把老用户数据锁死"的手段；
-5. **测试向量**：SM3（GM/T 0004）、SM4（GM/T 0002）用**标准测试向量**断言；再加一条**跨语言一致性**用例（Rust 加密 ↔ 服务端/前端解密），防两侧实现漂移；
+5. ✅ **测试向量（Linux 侧已实做，2026-09-17，AMD）**：SM3（GM/T 0004）、SM4（GM/T 0002）用**标准测试向量**断言；再加一条**跨实现一致性**用例（RustCrypto ↔ Tongsuo），防两侧实现漂移。
+   夹具在信箱仓 `gm-conformance/{Cargo.toml, src/main.rs, driver.sh}`（两侧可直接取）。**实测 ALL PASS 8/8**：
+   SM4-ECB 标准向量**三方一致**（RustCrypto = Tongsuo = `681edf34…4246`）、SM3("abc") 一致、
+   RustCrypto→Tongsuo 解密一致、**Tongsuo→RustCrypto 解密明文一致且两侧密文逐字节相同**（CBC+PKCS#7 下的最强证据）、
+   HMAC-SM3 tag 一致（32 字节）。
+   > ⚠️ 夹具里的口径（照 §0.1）：套件 SM4-CBC ＋ HMAC-SM3、PKCS#7 填充、IV 16B；
+   > **加密/MAC 用同一把密钥只是为了证算法一致**，真正的 EtM 组装（**两把独立密钥 ＋ 版本头‖IV‖密文**）由 P1/P2 的调用方负责；
+   > **迭代数没有进断言**（§0-D 留空，先压测再写死）。
+   >
+   > **三个会白折腾半小时的 crate/shell 坑**（AMD 实测）：
+   > ① `sm4 0.6`/`cbc 0.2.1` 解析到 **`cipher 0.5.2`**（不是 0.4）⇒ 带填充的辅助方法是
+   > **`encrypt_padded_vec::<P>()` / `decrypt_padded_vec::<P>()`（没有 `_mut`）**，且分别在
+   > **`BlockModeEncrypt` / `BlockModeDecrypt`** 两个 trait 上；
+   > ② **`new_from_slice` 在 `KeyInit` 上、不在 `Mac` 上**（写 `<HmacSm3 as Mac>::new_from_slice` 会报 **E0576**）；
+   > ③ **`sh`(dash) 的 `printf` 不展开 `\xHH`** ⇒ 造二进制向量要用 `printf '%s' <hex> | xxd -r -p`，
+   > 否则输入变成超长字符串，**对面会算出一个"看起来合理"的错误答案**（第一版就栽在这，SM4-ECB 出来 48 字节）；
 6. **`ENC_VERIFY` sentinel**（`crypto.rs:16`）必须支持"按旧算法校验 → 用新算法重写"，否则老用户卡在解锁这一步。
 
 ---
