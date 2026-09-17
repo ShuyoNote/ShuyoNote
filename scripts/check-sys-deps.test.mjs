@@ -34,12 +34,29 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 // 假 dpkg：`--version` 要能答（门禁靠它判断"这台机器能不能实查"），查询一律答"已装"。
 const fakeDpkg = join(tmp, "fake-dpkg.mjs");
+const probeLog = join(tmp, "probe.log");
 writeFileSync(
   fakeDpkg,
   [
+    'import { appendFileSync } from "node:fs";',
     "const args = process.argv.slice(2);",
+    `appendFileSync(${JSON.stringify(probeLog)}, args.join(" ") + "\\n");`,
     'if (args.includes("--version")) { console.log("dpkg-query 1.22.0 (fake)"); process.exit(0); }',
     'console.log("install ok installed");',
+    "",
+  ].join("\n"),
+);
+
+// 假 dpkg 的第二种坏法：能启动、`--version` 也答得出来，但**查包时以退出码 2 失败**
+// （dpkg 数据库损坏/被占用那类）。门禁必须把它报成"判据不可用"，**不是**"缺包"。
+const brokenDpkg = join(tmp, "broken-dpkg.mjs");
+writeFileSync(
+  brokenDpkg,
+  [
+    "const args = process.argv.slice(2);",
+    'if (args.includes("--version")) { console.log("dpkg-query 1.22.0 (broken)"); process.exit(0); }',
+    'console.error("dpkg-query: error: failed to open package info file");',
+    "process.exit(2);",
     "",
   ].join("\n"),
 );
@@ -50,10 +67,18 @@ function runWith(env, ...args) {
       cwd: root,
       env: { ...process.env, ...env },
       encoding: "utf8",
+      // 有上限 + 失败原因如实带出来：并发满载时子进程可能起不来，
+      // 那种情况下要看得见"是启动失败"，不能伪装成"判据红"。
+      timeout: 30000,
     });
     return { code: 0, stdout };
   } catch (err) {
-    return { code: err.status, stdout: String(err.stdout || ""), stderr: String(err.stderr || "") };
+    return {
+      code: err.status,
+      stdout: String(err.stdout || ""),
+      stderr: String(err.stderr || ""),
+      why: err.status == null ? `子进程未正常结束（code=${err.code || ""} signal=${err.signal || ""}）` : `exit=${err.status}`,
+    };
   }
 }
 
@@ -152,6 +177,30 @@ describe("check-sys-deps 端到端（真脚本、真锁文件、假 dpkg）", ()
       expect(r.code).toBe(0);
       expect(r.stdout).toContain("⏭ macOS 工具链探针");
     }
+  });
+
+  it("变异④（Windows 2026-09-17 报的偶发红）：探针能启动但失败 ⇒ exit 4「判据不可用」，而不是「缺包」", () => {
+    const r = runWith({ SHUYONOTE_SYSDEPS_FAKE_DPKG: brokenDpkg }, "--checks", "registration,deb");
+    // 这条钉的是"假红的形状"：并发下 fork 失败/超时/dpkg 数据库被占用时，
+    // 门禁**不能**把"没查到"说成"你没装这个包"——那会让人照着 apt 装一堆没用的东西，
+    // 或者更糟：以为"又抖了，重跑一次"，从此忽略真红。
+    expect(r.code).toBe(4);
+    expect(r.stdout).toContain("判据不可用");
+    expect(r.stdout).toContain("这不是\"缺包\"");
+    expect(r.stdout).not.toContain("apt-get install");
+    expect(r.stdout).not.toContain("✅ 全部通过");
+  });
+
+  it("同名的包只探测一次（探针数 = 进程数 = 并发下的风险面）", () => {
+    rmSync(probeLog, { force: true });
+    const r = run("--checks", "registration,deb");
+    expect(r.code).toBe(0);
+    const lines = readFileSync(probeLog, "utf8").trim().split("\n");
+    const queries = lines.filter((l) => l.includes("-W"));
+    const pkgs = queries.map((l) => l.split(" ").pop());
+    // libwebkit2gtk-4.1-dev 被 12 个 crate 声明：逐个 crate 探测会把进程数放大一个量级。
+    expect(new Set(pkgs).size, `去重失效：${queries.length} 次探测，只有 ${new Set(pkgs).size} 个不同的包`).toBe(pkgs.length);
+    expect(pkgs.length).toBeLessThanOrEqual(8);
   });
 
   it("--json 报告可解析，且带机器可读的 exit 与行数", () => {
