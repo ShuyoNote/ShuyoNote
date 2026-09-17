@@ -171,6 +171,34 @@ describe("pdf.ocr@1 · 页选择与页码（与形状无关的行为）", () => 
     expect(r.segments.map((s) => s.loc)).toEqual(["p.1", "p.2", "p.3"]);
   });
 
+  it("覆盖度：混合文档里 `pdf.ocr` 是**完整**覆盖（文字页给文本、扫描页给 OCR）⇒ 不传 coverage", async () => {
+    const raster = encodedRasterize({ pages: 3 });
+    const vision = fakeVision(() => "OCR 的字");
+    const r = await pdfOcrExtractor.extract(inputOf(mixedPdf(), { rasterize: raster.fn, vision: vision.fn }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // 省略 coverage = 完整覆盖（契约口径）。这一条正是"混合文档不再静默丢页"的另一半：
+    // 调度器看到它是完整的，就会整体替换掉 `pdf.text` 那份**有缺口**的结果。
+    expect(r.coverage).toBeUndefined();
+  });
+
+  it("覆盖度：视觉对某一页没得到文字 ⇒ 记成缺口（覆盖度说的是「有没有内容」，不是「调用成没成功」）", async () => {
+    const raster = encodedRasterize({ pages: 2 });
+    let n = 0;
+    const vision = fakeVision(() => (n++ === 0 ? "" : "第二页的字"));
+    const r = await pdfOcrExtractor.extract(
+      inputOf(pdfPages([{ text: "", graphics: true }, { text: "", graphics: true }]), {
+        rasterize: raster.fn,
+        vision: vision.fn,
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.segments.map((s) => s.loc)).toEqual(["p.2"]);
+    expect(r.coverage?.complete).toBe(false);
+    expect(r.coverage?.gapIndexes).toEqual([0]);
+  });
+
   it("整篇都没得出文字 ⇒ empty（不是失败：抽取器认这种输入，只是没内容）", async () => {
     const raster = encodedRasterize({ pages: 1 });
     const vision = fakeVision("");
@@ -205,20 +233,25 @@ describe("pdf.ocr@1 · 失败传播：**不落半份**", () => {
     expect(r.message).toContain("超时");
   });
 
-  it("需要视觉的页超过上限 ⇒ provider_error 说明上限（**不返回抽到一半的结果**：半份会被当完整内容落库）", async () => {
+  it("需要视觉的页超过上限 ⇒ **落已抽到的 + 用 coverage 标注缺口**（不再是整体失败）", async () => {
     const pages = 201; // MAX_OCR_PAGES = 200
     const raster = encodedRasterize({ pages });
-    const vision = fakeVision("字");
+    const vision = fakeVision(() => "字");
     const r = await pdfOcrExtractor.extract(
       inputOf(pdfPages(Array.from({ length: pages }, () => ({ text: "", graphics: true }))), {
         rasterize: raster.fn,
         vision: vision.fn,
       }),
     );
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.code).toBe("provider_error");
-    expect(r.message).toContain("200");
-    expect(r.message).toContain("p.201");
+    // ⚠️ 立场变过一次，这条判据跟着变：上限原先直接红（"半份会被当成全文"）；
+    //    契约补了 `ExtractCoverage` 之后，**标注出来的部分**比"什么都没有"更有用、也不会骗下游。
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.segments.length).toBe(200);
+    expect(r.coverage?.complete).toBe(false);
+    // 缺口如实列出（0 基）：第 201 页（序号 200）没做，其余没有缺口
+    expect(r.coverage?.gapIndexes).toEqual([200]);
+    expect(r.coverage?.note).toContain("上限");
+    expect(vision.calls.length).toBe(200);
   });
 });

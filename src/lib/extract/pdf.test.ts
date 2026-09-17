@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { pdfOf } from "./fixtures";
+import { pdfOf, pdfPages } from "./fixtures";
 import { pdfTextExtractor } from "./pdf";
 
 const input = (bytes: Uint8Array) => ({
@@ -28,6 +28,27 @@ describe("pdf.text@1", () => {
     const second = await pdfTextExtractor.extract(input(bytes));
     expect(second.ok, "第二次也必须成功——说明抽取器交给了 pdf.js 一份副本").toBe(true);
     expect(bytes.byteLength, "原始 Uint8Array 不应被 detach（byteLength 变 0 就是被 transfer 了）").toBeGreaterThan(0);
+  });
+
+  it("覆盖度：全部页都有文本层 ⇒ 完整覆盖（**不传** coverage，与「省略即完整」的契约一致）", async () => {
+    const r = await pdfTextExtractor.extract(input(pdfPages([{ text: "First" }, { text: "Second" }])));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.coverage).toBeUndefined();
+  });
+
+  it("覆盖度：有页没有文本层 ⇒ complete:false 且缺口是**那几页**（0 基）—— 混合文档不再静默丢页", async () => {
+    // 这条是"混合文档（正文是文字、中间夹扫描页）"能被调度器接手的前提：
+    // 报出缺口 ⇒ `pipeline` 才会再试 `pdf.ocr`，并按"谁缺口少用谁"整体替换。
+    const r = await pdfTextExtractor.extract(
+      input(pdfPages([{ text: "First" }, { text: "", graphics: true }, { text: "Third" }])),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.segments.map((s) => s.loc)).toEqual(["p.1", "p.3"]);
+    expect(r.coverage?.complete).toBe(false);
+    expect(r.coverage?.gapIndexes).toEqual([1]); // 0 基：第 2 页
+    expect(r.coverage?.note).toContain("没有文本层");
   });
 
   it("不是 PDF ⇒ unsupported（换抽取器），不是 corrupt（别吓人）", async () => {

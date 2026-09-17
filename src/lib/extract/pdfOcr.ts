@@ -10,10 +10,12 @@
 //  1. **页数不从"渲染到失败为止"猜**：`rasterize(bytes, pageIndex, scale)` 没有"页数"能力，
 //     而"渲染失败"与"文档结束"不可区分（第 3 页真失败会被当成到此为止，后面的页静默消失）。
 //     ⇒ 页数用 pdf.js 读（`readPdfPages`，与 `pdf.text` 共用；§15.8 已明确 pdfjs 允许留在抽取层）。
-//  2. **不落半份**：任一层失败（光栅化 / 视觉）或撞上页数上限 ⇒ 报 `provider_error`，
-//     **不返回"抽到一半"的结果**。因为契约里没有"部分覆盖"的位置（段是内容，不是元数据），
-//     半份结果会被下游当成完整内容落库并检索 —— 那是**静默丢页**，比红一次糟得多。
-//     （页数上限的"拒绝"会推动覆盖口径的裁定：这条已提给契约所有者。）
+//  2. **失败就红、截断就标注**：任一层失败（光栅化 / 视觉）⇒ `provider_error`（不留半份）；
+//     而**页数上限**改成"落已抽到的部分 + 用 `coverage` 如实标注缺口"。
+//     ⚠️ 这里前后立场变过一次，如实记下来：上限原先也是"直接红"（理由是"契约里没有表达部分覆盖的位置，
+//     半份会被当成全文"）。2026-09-17 契约补了 `ExtractCoverage`（`complete` / `gapIndexes` / `note`），
+//     调度器也改成"不完整就试下一个、谁缺口少用谁" ⇒ 那条理由消失了：现在**标注出来的部分**比
+//     "整体失败、什么都没有"更有用，而且不会骗下游。
 //  3. **不自建渲染、不自建网络**（§15.3-7 的活样板）：像素只从 `deps.rasterize` 来，
 //     文字只从 `deps.vision` 来；缺任何一个**立刻** `provider_error`。
 
@@ -22,6 +24,7 @@ import { looksLikePdf, readPdfPages } from "./pdf";
 import {
   fail,
   ok,
+  type ExtractCoverage,
   type ExtractInput,
   type ExtractResult,
   type ExtractedSegment,
@@ -77,6 +80,20 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** 缺口序号 → 覆盖度（`null` = 完整覆盖，此时**不传** `coverage`，与"省略即完整"的契约一致）。 */
+function coverageOf(
+  gaps: readonly number[],
+  ctx: { totalPages: number; hitCap: boolean; truncated: boolean; readPages: number },
+): ExtractCoverage | null {
+  if (gaps.length === 0) return null;
+  const parts: string[] = [];
+  if (ctx.hitCap) parts.push(`需要视觉识别的页超过单次上限 ${MAX_OCR_PAGES} 页，只处理了靠前的那些`);
+  if (ctx.truncated) parts.push(`超过页读取上限，只读到 p.${ctx.readPages}（源 ${ctx.totalPages} 页）`);
+  const noText = gaps.length - (ctx.hitCap ? 1 : 0);
+  if (noText > 0) parts.push(`${noText} 页既没有文本层、视觉也没得到文字`);
+  return { complete: false, gapIndexes: [...gaps], note: parts.join("；") };
+}
+
 async function extractPdfOcr(input: ExtractInput): Promise<ExtractResult> {
   if (!looksLikePdf(input.bytes)) return fail(ID, "unsupported", "不是 PDF：开头 1 KiB 里找不到 %PDF-");
 
@@ -95,7 +112,10 @@ async function extractPdfOcr(input: ExtractInput): Promise<ExtractResult> {
   const { pages, totalPages } = read.value;
 
   const segments: ExtractedSegment[] = [];
+  /** 没有产出内容的单元序号（**0 基**，契约口径）—— 供调度器比较"谁缺口少"。 */
+  const gaps: number[] = [];
   let ocrPages = 0;
+  let hitCap = false;
 
   for (const page of pages) {
     // 有文本层的页直接给文本：**不烧视觉调用**（混合文档里这一步省掉的是大头）
@@ -105,13 +125,10 @@ async function extractPdfOcr(input: ExtractInput): Promise<ExtractResult> {
     }
 
     if (ocrPages >= MAX_OCR_PAGES) {
-      // 见文件头第 2 条：不落半份。宁可红一次、把"要分批"这件事摆到台面上。
-      return fail(
-        ID,
-        "provider_error",
-        `需要视觉识别的页超过上限 ${MAX_OCR_PAGES} 页（本页 p.${page.page}，文档共 ${totalPages} 页）：`
-          + "当前契约没有「部分覆盖」的位置，抽一半落库会被下游当成完整内容（静默丢页）",
-      );
+      // 见文件头第 2 条：不再整体失败，改为"抽出能抽的 + 标注缺口"。
+      hitCap = true;
+      gaps.push(page.page - 1);
+      continue;
     }
 
     let rasterized: RasterizedPage;
@@ -135,15 +152,22 @@ async function extractPdfOcr(input: ExtractInput): Promise<ExtractResult> {
 
     ocrPages++;
     const text = String(raw ?? "").trim();
-    // 单页没认出字是**正常**的（整页是图/照片）⇒ 这一页不出段，不是错误。
-    // 只有"整篇一个字都没有"才归 empty（下面那句）。
+    // 单页没认出字是**正常**的（整页是图/照片）⇒ 这一页不出段、不算错误，但**要记成缺口**：
+    // 覆盖度是对"有没有内容"说的，不是对"调用有没有成功"说的。
     if (text.length > 0) segments.push({ kind: "ocr", text, loc: `p.${page.page}` });
+    else gaps.push(page.page - 1);
   }
 
   if (segments.length === 0) {
     return fail(ID, "empty", `PDF 共 ${totalPages} 页，文本层与视觉通道都没得到文字`);
   }
-  return ok(ID, segments);
+
+  // 截断（页读取上限）也算缺口：那些页我们**没读**，不能说它们没内容。
+  const truncated = totalPages > pages.length;
+  if (truncated) for (let i = pages.length; i < totalPages; i++) gaps.push(i);
+
+  const coverage = coverageOf(gaps, { totalPages, hitCap, truncated, readPages: pages.length });
+  return coverage ? ok(ID, segments, coverage) : ok(ID, segments);
 }
 
 export const pdfOcrExtractor: Extractor = {
