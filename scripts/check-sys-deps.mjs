@@ -191,24 +191,58 @@ function dpkgCmd(pkgOrFlag) {
     : { file: "dpkg-query", args: pkgOrFlag };
 }
 
+// 探针可能"没跑起来"（并发下 fork 失败、二进制不存在、卡住），这**不是**"缺包"。
+// 2026-09-17：Windows 那边全量并发跑门禁时复现过一次 —— 表现是"缺 vitals 包"式的假红。
+// 门禁假红比没有门禁更糟（人的第一反应是"又抖了，重跑一次"，真红的信号随之被忽略），
+// 所以这里把三种结果分开：installed / missing / unknown，unknown 一律按"判据不可用"报（exit 4）。
+const PROBE_TIMEOUT_MS = 20000;
+
 function runProbe({ file, args }) {
   try {
-    const out = execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    return { ok: true, out: String(out).trim() };
+    const out = execFileSync(file, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: PROBE_TIMEOUT_MS,
+    });
+    return { ok: true, out: String(out).trim(), status: 0 };
   } catch (err) {
-    return { ok: false, out: String(err.stdout || "").trim(), err: String(err.stderr || err.message).trim() };
+    return {
+      ok: false,
+      out: String(err.stdout || "").trim(),
+      err: String(err.stderr || err.message).trim(),
+      status: typeof err.status === "number" ? err.status : null,
+      spawnCode: err.code && typeof err.code === "string" ? err.code : "",
+      signal: err.signal || "",
+    };
   }
 }
 
-function dpkgAvailable() {
-  return runProbe(dpkgCmd(["--version"])).ok;
+/** `dpkg-query` 在这台机器上能不能用。
+ *
+ * 三种结果要分开（否则会静默变绿）：
+ *  - 二进制不存在（ENOENT）⇒ **正常跳过**（macOS/Windows 上就是这样）；
+ *  - 能跑 ⇒ 实查；
+ *  - 存在但跑不起来/退出非 0 ⇒ **判据不可用**（不能当成"没 dpkg 所以跳过"，那正是"没查却显示绿"）。 */
+function dpkgAvailability() {
+  const r = runProbe(dpkgCmd(["--version"]));
+  if (r.ok) return { available: true };
+  if (r.spawnCode === "ENOENT") return { available: false };
+  return { available: false, broken: `dpkg-query --version 没跑起来（status=${r.status}${r.spawnCode ? ` code=${r.spawnCode}` : ""}）：${r.err || "无输出"}` };
 }
 
-function debInstalled(pkg) {
+/** `installed` / `missing` / `unknown`（unknown = 探针本身没跑起来，不能当成"缺包"）。 */
+function debState(pkg) {
   const fake = process.env.SHUYONOTE_SYSDEPS_FAKE_MISSING;
-  if (fake && fake.split(",").map((s) => s.trim()).includes(pkg)) return false;
+  if (fake && fake.split(",").map((s) => s.trim()).includes(pkg)) return { state: "missing" };
   const r = runProbe(dpkgCmd(["-W", "-f=${Status}", pkg]));
-  return r.ok && r.out.includes("install ok installed");
+  if (r.ok) return { state: r.out.includes("install ok installed") ? "installed" : "missing" };
+  // dpkg-query 对"没装的包"的**正常**答复就是退出码 1；其它情况（ENOENT/EAGAIN/超时/信号）
+  // 都是"探针没跑起来" ⇒ unknown。
+  if (r.status === 1) return { state: "missing" };
+  return {
+    state: "unknown",
+    reason: `探针未跑起来（status=${r.status}${r.spawnCode ? ` code=${r.spawnCode}` : ""}${r.signal ? ` signal=${r.signal}` : ""}）：${r.err || "无输出"}`,
+  };
 }
 
 function probeDarwin(probe) {
@@ -241,6 +275,7 @@ function main() {
   const staleCitations = [];
   const missingHard = [];
   const missingSoft = [];
+  const probeFailures = [];
 
   // ---- 判据 1：登记完整性 + 声明依据（平台无关，任何机器上都能查） ----
   const doRegistration = wantCheck("registration");
@@ -284,22 +319,41 @@ function main() {
   if (doDeb) {
     // 判据是"**这台机器上有 dpkg 才能实查**"，不是"是不是 Linux"：这样在 WSL/容器/带 dpkg 的
     // 任何机器上都能查，而 macOS（本机常态）与 Windows 会**显式打出"没查"**，不装成绿。
-    if (!dpkgAvailable()) {
+    const dpkg = dpkgAvailability();
+    if (dpkg.broken) {
+      probeFailures.push({ deb: "dpkg-query", reason: dpkg.broken });
+    } else if (!dpkg.available) {
       debSkipped = `本机没有 dpkg-query（${platform} 上是常态）⇒ 未实查；Debian/Ubuntu 上才会实查`;
     } else {
+      // **去重后再探测**：`libwebkit2gtk-4.1-dev` 被十几个 crate 声明，逐个 crate 探测会把
+      // 子进程数放大一个量级（2026-09-17 那次并发假红就与"探针太多"有关）。
+      const wanted = new Map(); // deb → { hard: [crate], soft: [crate] }
       for (const r of rows) {
         const entry = MAP[r.crate];
         for (const d of r.debs) {
-          if (!debInstalled(d)) {
-            r.missing.push(d);
-            missingHard.push({ crate: r.crate, deb: d });
-          }
+          const w = wanted.get(d) ?? { hard: [], soft: [] };
+          w.hard.push(r.crate);
+          wanted.set(d, w);
         }
         for (const d of Object.keys(entry.soft || {})) {
-          if (!debInstalled(d)) {
-            r.softMissing.push(d);
-            missingSoft.push({ crate: r.crate, deb: d, why: entry.soft[d] });
-          }
+          const w = wanted.get(d) ?? { hard: [], soft: [] };
+          w.soft.push({ crate: r.crate, why: entry.soft[d] });
+          wanted.set(d, w);
+        }
+      }
+      for (const [d, w] of wanted) {
+        const st = debState(d);
+        if (st.state === "unknown") {
+          probeFailures.push({ deb: d, reason: st.reason });
+          continue;
+        }
+        if (st.state === "installed") continue;
+        if (w.hard.length) {
+          missingHard.push({ crate: w.hard.join("/"), deb: d });
+          for (const r of rows) if (r.debs.includes(d)) r.missing.push(d);
+        } else {
+          missingSoft.push({ crate: w.soft.map((s) => s.crate).join("/"), deb: d, why: w.soft[0]?.why ?? "" });
+          for (const r of rows) if (d in (MAP[r.crate].soft || {})) r.softMissing.push(d);
         }
       }
     }
@@ -332,18 +386,23 @@ function main() {
     staleCitations,
     missingHard,
     missingSoft,
+    probeFailures,
     probes: probes.map((p) => ({ id: p.id, ok: p.ok, out: p.out, why: p.why, incident: p.incident || "" })),
     debSkipped,
     probeSkipped,
   };
 
-  const exit = missingHard.length
-    ? 1
-    : !recipe.ok || unregistered.length || unjustified.length || staleCitations.length
-      ? 3
-      : probeFailed.length
-        ? 4
-        : 0;
+  // ⚠️ `probeFailures`（探针没跑起来）**优先于**缺包判断：探针坏了要说"判据不可用"，
+  // 不能把"没查到"冒充成"缺包"——2026-09-17 并发下那次假红就是这么来的。
+  const exit = probeFailures.length
+    ? 4
+    : missingHard.length
+      ? 1
+      : !recipe.ok || unregistered.length || unjustified.length || staleCitations.length
+        ? 3
+        : probeFailed.length
+          ? 4
+          : 0;
 
   if (asJson) {
     console.log(JSON.stringify({ ...ctx, exit }, null, 2));
@@ -385,6 +444,10 @@ function main() {
   if (doDeb) {
     if (debSkipped) {
       console.log(`⏭ Linux deb 实查：${debSkipped}`);
+    } else if (probeFailures.length) {
+      console.log(`❌ 判据不可用：${probeFailures.length} 个包的探针没跑起来（**这不是"缺包"**，别照着装）：`);
+      for (const f of probeFailures) console.log(`   ${f.deb}：${f.reason}`);
+      console.log("   常见原因：并发下 fork 失败 / 超时 / dpkg 数据库被占用。先重跑一次；稳定复现再查环境。");
     } else if (missingHard.length) {
       console.log(`❌ 缺 ${missingHard.length} 个系统包：`);
       console.log(`   Debian/Ubuntu：apt-get install -y ${[...new Set(missingHard.map((m) => m.deb))].join(" ")}`);
@@ -406,7 +469,9 @@ function main() {
     }
   }
   console.log(line);
-  const verdict = { 0: "全部通过", 1: "缺系统包", 3: "登记/证据失效", 4: "工具链探针失败" }[exit];
+  const verdict = probeFailures.length
+    ? "判据不可用（探针没跑起来）"
+    : { 0: "全部通过", 1: "缺系统包", 3: "登记/证据失效", 4: "工具链探针失败" }[exit];
   console.log(`${exit === 0 ? "✅" : "❌"} ${verdict}（exit=${exit}）`);
   process.exit(exit);
 }
