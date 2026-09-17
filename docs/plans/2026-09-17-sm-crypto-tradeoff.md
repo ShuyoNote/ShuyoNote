@@ -47,8 +47,8 @@
 2. **叙事差异化**：静置 ＋ 外发都国密，Obsidian / 思源都没有；写进交付说明好看、好讲。
 3. **构建链是复用不是新建**：Tongsuo 是 OpenSSL 分支，与现有 vendored-openssl **同源** ⇒ 不是多一条构建路径。
    这条把「弊 3」削掉一部分。
-4. **许可面不变**：Tongsuo 为 **Apache-2.0**，与 AGPL-3.0 兼容、**不引入新的 copyleft**。
-   ⚠️ 引入前按仓库 `LICENSE` 复核一次并登记进 `THIRD-PARTY-NOTICES`（2026-09-17 在本机无法在线核到 LICENSE 全文，故此处标注为待复核）。
+4. **许可面不变**：Tongsuo 为 **Apache-2.0**（上游仓库 `LICENSE.txt` 全文已核，见 §8），与 AGPL-3.0 兼容、**不引入新的 copyleft**。
+   引入时仍需登记进 `THIRD-PARTY-NOTICES`。
 
 ---
 
@@ -168,4 +168,4 @@
 | TLCP 会动到 Android 的 TLS 信任链 | `src-tauri/Cargo.toml:113-126` ＋ `src-tauri/src/tls_android.rs` |
 | 附件寻址不换 SM3 | `src-tauri/src/attachments.rs:291-292` |
 | Tongsuo 的能力面与资质口径 | [Tongsuo 官方文档·关于铜锁](https://tongsuo.netlify.app/docs/)：声明支持 **GB/T 38636-2020（TLCP）**与 **RFC 8998（TLS 1.3 ＋ SM2）**，并声明符合 **GM/T 0028** 的「软件密码模块安全一级」 |
-| Tongsuo 的许可证 | 上游仓库 `Tongsuo-Project/Tongsuo` 的 `LICENSE`（**本机 2026-09-17 未能在线核到全文，引入前复核**） |
+| Tongsuo 的许可证 = **Apache-2.0** | 上游仓库根 **`LICENSE.txt`**（OpenSSL 3.x 系命名，故没有 `LICENSE`）全文即 Apache License 2.0，2026-09-17 经 jsDelivr 镜像取回逐条核对；对照 [GitHub 许可证页](https://github.com/Tongsuo-Project/Tongsuo?tab=Apache-2.0-1-ov-file) |
