@@ -31,7 +31,7 @@ import { useSyncStatus } from "../../store/syncStatus";
 import { unzipSync, Zip, ZipDeflate } from "fflate";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { createOllamaTransport, createOpenAICompatTransport, testOllamaConnection, testOpenAICompatConnection } from "../ai/llm";
-import { ensurePdfjsWorkerSrc } from "../pdfEngine/pdfjsWorker";
+import { renderPdfjsPageToRgba, type PdfjsRenderLike } from "../pdfEngine/pdfjsRaster";
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -3604,50 +3604,17 @@ export function createWebPlatform(): Platform {
         // （抽取层的 `pdf.ocr` 需要"页 → 像素"时就走这里；那份判断见信箱
         //  2026-09-17-pdf-ocr-rasterizer-gap.reply-1.md：桩补在平台层，不塞进抽取层。）
         //
-        // 与桌面端**同口径**的先校验：NaN/Infinity 会让画布尺寸变 NaN ——
-        // WKWebView 会抛 "Value NaN is outside the range …"，Chrome 则静默画成 0×0。
-        if (!Number.isFinite(scale) || scale <= 0) {
-          throw new Error(`PDF 渲染的缩放倍率无效（scale=${String(scale)}）`);
-        }
-        if (!Number.isInteger(pageIndex) || pageIndex < 0) {
-          throw new Error(`PDF 页码无效（page_index=${String(pageIndex)}）`);
-        }
-        // 附件字节走平台自己的命令面（与 get_attachment 的读法一致：先按 id 取 hash、再按 hash 取字节）。
         const att = await invokeWhenReady<{ hash: string }>("get_attachment", { id: attachmentId });
         const raw = await invokeWhenReady<number[] | Uint8Array>("read_attachment_bytes", { hash: att.hash });
         const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
 
         // ⚠️ pdf.js 必须**动态**引入：阅读器是懒加载它的（见 PdfReader 的注释），
         //    静态引入会把 pdf.js 拖进首屏包。
-        const pdfjs = await import("pdfjs-dist");
-        ensurePdfjsWorkerSrc(pdfjs);
-        const doc = await pdfjs.getDocument({
-          // 复制一份：pdf.js 会 transfer 传进去的 buffer（同一份字节第二次用会报 clone 错误）
-          data: new Uint8Array(bytes),
-          useWorkerFetch: false,
-          isEvalSupported: false,
-          cMapUrl: "pdfjs/cmaps/",
-          cMapPacked: true,
-          standardFontDataUrl: "pdfjs/standard_fonts/",
-        }).promise;
-        try {
-          const page = await doc.getPage(pageIndex + 1);
-          const viewport = page.getViewport({ scale });
-          const width = Math.max(1, Math.ceil(viewport.width));
-          const height = Math.max(1, Math.ceil(viewport.height));
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d", { willReadFrequently: true });
-          if (!ctx) throw new Error("Web 的 2D 画布不可用，无法把 PDF 页渲染成像素");
-          await page.render({ canvasContext: ctx, viewport }).promise;
-          const img = ctx.getImageData(0, 0, width, height);
-          // 与桌面端**同一形状**：紧凑 RGBA8 + 宽高（`PdfRenderedPage`）。
-          // 阅读器会再挡一道 `bytes.length === width*height*4`，这里不制造"看起来对"的返回值。
-          return { bytes: new Uint8Array(img.data.buffer.slice(0)), width, height };
-        } finally {
-          await doc.destroy().catch(() => {});
-        }
+        const pdfjs = (await import("pdfjs-dist")) as unknown as PdfjsRenderLike;
+        // 渲染核在 src/lib/pdfEngine/pdfjsRaster.ts —— 抽出去是为了让
+        // scripts/check-pdf-raster-web.mjs 能在**真 Chromium** 里直接跑**这段发货代码**，
+        // 而不是在检查脚本里复制一遍操作序列（那只能证明"复制品是对的"）。
+        return await renderPdfjsPageToRgba(pdfjs, bytes, pageIndex, scale);
       },
       nativeAvailable: () => false,
     },
