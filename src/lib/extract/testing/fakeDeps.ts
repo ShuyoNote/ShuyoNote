@@ -7,6 +7,7 @@
 // ⚠️ **只被 `*.test.ts` import，不进生产代码路径**（`isolated.test.ts` 会扫这条）。
 // ⚠️ 两个假实现都是**确定性**的（同输入同输出）—— 否则用它们的抽取器就测不出确定性。
 
+import { rgbaToPng } from "../../pngEncode";
 import type { ExtractDeps, RasterizedPage } from "../types";
 
 export interface VisionCall {
@@ -52,8 +53,12 @@ export interface FakeRasterizeOptions {
 }
 
 /**
- * 假光栅化：返回**确定性**小位图（每页像素值 = 页号+1，便于反查"这一页到底渲染了没有"）。
+ * 假光栅化：返回**确定性的合法 PNG**（每页像素值 = 页号+1，便于反查"这一页到底渲染了没有"）。
  * `pageIndex` 越界或命中 `rejectOn` 时 reject（模拟原生渲染失败）。
+ *
+ * ⚠️ 它**用与生产同一份编码器**（`src/lib/pngEncode.ts`）—— 契约要求 `rasterize` 产出**编码图**
+ * （`vision` 只接受编码图，见 §15.8 的裁定）。假实现若自己造一份 PNG 逻辑，
+ * 就会和生产悄悄脱节，而那正是"共享假实现"要避免的事。
  */
 export function fakeRasterize(opts: FakeRasterizeOptions = {}): FakeRasterize {
   const pages = opts.pages ?? 1;
@@ -72,7 +77,12 @@ export function fakeRasterize(opts: FakeRasterizeOptions = {}): FakeRasterize {
       rgba[i * 4] = pageIndex + 1; // R 通道编码页号
       rgba[i * 4 + 3] = 255; // 不透明
     }
-    const out: RasterizedPage = { rgba, width, height };
+    const out: RasterizedPage = {
+      bytes: rgbaToPng(rgba, width, height),
+      mime: "image/png",
+      width,
+      height,
+    };
     return out;
   };
 

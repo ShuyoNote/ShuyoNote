@@ -644,7 +644,8 @@ export function pickExtractor(
 
 | # | 问题 | 裁定 |
 |---|---|---|
-| 1 | 加不加 `deps.rasterize` | **加**，形状用 Mac 给的那版（`(bytes, pageIndex, scale) → {rgba,width,height}`）。AMD 查到桌面 `pdfium_native::render_page(cache_key, bytes, page_index, scale)` **本来就是 bytes 进、RGBA 出** ⇒ 桌面侧是**薄适配不是新增能力** |
+| 1 | 加不加 `deps.rasterize` | **加**。AMD 查到桌面 `pdfium_native::render_page(cache_key, bytes, page_index, scale)` **本来就是 bytes 进、RGBA 出** ⇒ 桌面侧**入口**是薄适配 |
+| 1b | **返回值形状**（Mac 开工时撞出来的缺口，已修订） | **产出编码图**：`RasterizedPage = { bytes, mime, width, height }`（`mime` 用 `image/png`）。原先定的是 `{rgba,width,height}`，但那样**两侧都缺一步** —— `deps.vision` 只接受编码图（`src/lib/ai/ocrVision.ts` 要的是 `data:image/…;base64,…`），而"RGBA → 编码图"在抽取层做不了（要 canvas/编解码库，正是隔离断言禁的那类）。**选它而不是"保留裸 RGBA + 再加一个 encode 能力"**：① 少一个能力就少一处三轴漂移；② **裸 RGBA 要求三台机器对字节序 / 行 stride / 是否预乘 alpha 达成一致** —— 这是一类**不会报错、只会悄悄画错**的约定，且没有一处能把它测出来；PNG 没有这些自由度（要么解出对的图、要么解不开）；③ 生产里没有 `deps.rasterize` 的裸像素消费者（阅读器吃的是平台**驱动**的 `renderPdfPage`，**那条接口没改**）。实现：`src/lib/pngEncode.ts`（纯 JS：fflate `zlibSync` + 自带 CRC32），**Web 与桌面共用一份编码器**，不会出现"两套编码质量" |
 | 2 | **谁注入** | ⚠️ **不是 `pipeline.ts`**（与 Mac、AMD **两人**的建议都不同，理由见下）。**由平台层构造**：平台层提供唯一的 `attachmentDeps(attId)` + 唯一入口 `extractAttachment(...)`；`pipeline.ts` 继续只**接收并透传** `deps` |
 | 3 | Web 那道桩要不要补 | ✅ **已由 Mac 侧补完并实测**（`dev=7a6df321`）：`web.ts` 的 `renderPdfPage` 从"抛异常"改成 pdf.js + canvas 真实现，**用真 Chromium 验过**（`bytes=540000 = 宽×高×4`、非空白像素 **132340** ⇒ 真的画出来了）。**我原先的"本轮不补"被事实推翻**——我当时的理由是"本机无法验证 canvas"，**错在假定了没人能验**：Mac 有真浏览器。⇒ 撤回该条 |
 

@@ -13,6 +13,7 @@ import initSqlJs from "sql.js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { DERIVED_SCHEMA_DDL } from "../extract/schema";
+import { isPng } from "../pngEncode";
 import { createChunkStore } from "../extract/chunkStore";
 import { createAttachmentTextStore, type SqlRunner } from "../extract/store";
 import { setWasmBytesProvider } from "./sqliteStore";
@@ -92,7 +93,7 @@ afterEach(() => {
 // ---------------------------------------------------------------- 构造点
 
 describe("attachmentDeps —— deps 的唯一构造点", () => {
-  it("`rasterize` 由**平台驱动**装上，并把 `bytes` 映射成契约里的 `rgba`、页号与缩放原样透传", async () => {
+  it("`rasterize` 由**平台驱动**装上：把驱动给的**裸 RGBA 编码成图**，页号与缩放原样透传", async () => {
     const calls: { attId: string; page: number; scale: number }[] = [];
     setPlatform(
       fakePlatform({
@@ -110,7 +111,10 @@ describe("attachmentDeps —— deps 的唯一构造点", () => {
     const page = await deps.rasterize!(new Uint8Array([1, 2, 3]), 4, 3);
 
     expect(calls).toEqual([{ attId: "att-9", page: 4, scale: 3 }]); // 页号/缩放**原样**透传
-    expect(page).toEqual({ rgba: new Uint8Array([7, 7, 7, 255]), width: 1, height: 1 }); // bytes → rgba
+    // 契约要求 `rasterize` 产出**编码图**（`vision` 只接受编码图）⇒ 适配器负责编码
+    expect(page.mime).toBe("image/png");
+    expect(isPng(page.bytes)).toBe(true);
+    expect([page.width, page.height]).toEqual([1, 1]);
   });
 
   it("**不给 `vision` 时不编假实现**：gpu 抽取器据此走 provider_error（契约 §15.3-7）", () => {

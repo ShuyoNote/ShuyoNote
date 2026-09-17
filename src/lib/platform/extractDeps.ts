@@ -18,6 +18,7 @@ import { extractAndStore, type ExtractOutcome } from "../extract/pipeline";
 import type { AttachmentTextStore } from "../extract/store";
 import type { ExtractDeps, RasterizedPage } from "../extract/types";
 import type { AttachmentMeta } from "../../types";
+import { rgbaToPng } from "../pngEncode";
 import { platform } from "./index";
 
 export interface AttachmentDepsOptions {
@@ -46,9 +47,16 @@ export interface AttachmentDepsOptions {
 export function attachmentDeps(attId: string, opts: AttachmentDepsOptions = {}): ExtractDeps {
   const deps: ExtractDeps = {
     rasterize: async (_bytes, pageIndex, scale): Promise<RasterizedPage> => {
-      // ⚠️ 字段名映射：平台驱动回的是 `bytes`，契约里叫 `rgba`（同一份数据、两处命名）。
+      // 平台驱动给的是**裸 RGBA**（阅读器也吃这个，所以驱动接口不改），
+      // 而契约要求 `rasterize` 产出**编码图**（`vision` 只接受编码图）⇒ 在这里编码。
+      // 编码器是纯 JS（fflate + 自带 CRC32），Web 与桌面共用同一份，不会出现"两套编码质量"。
       const page = await platform.pdfRender.renderPdfPage(attId, pageIndex, scale);
-      return { rgba: page.bytes, width: page.width, height: page.height };
+      return {
+        bytes: rgbaToPng(page.bytes, page.width, page.height),
+        mime: "image/png",
+        width: page.width,
+        height: page.height,
+      };
     },
   };
   if (opts.vision) deps.vision = opts.vision;

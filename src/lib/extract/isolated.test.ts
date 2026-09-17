@@ -12,6 +12,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { fakeRasterize, fakeVision, depsOf } from "./testing/fakeDeps";
+import { isPng } from "../pngEncode";
 
 const EXTRACT_DIR = join(process.cwd(), "src/lib/extract");
 
@@ -97,14 +98,13 @@ describe("共享假 deps（三轴共用一套口径）", () => {
     expect(v.calls[0]).toMatchObject({ prompt: "prompt", byteLength: 3, mime: "image/png" });
   });
 
-  it("fakeRasterize 是**确定性**的，且 R 通道编码页号（便于反查渲染了哪一页）", async () => {
+  it("fakeRasterize 产出**合法 PNG**且确定性（与生产共用同一份编码器）", async () => {
     const r = fakeRasterize({ pages: 3, width: 2, height: 2 });
     const p1 = await r.fn(new Uint8Array(0), 1, 2);
-    expect([p1.width, p1.height, p1.rgba.length]).toEqual([2, 2, 16]);
-    expect(p1.rgba[0]).toBe(2); // 页号 1 ⇒ R = 2
-    expect(p1.rgba[3]).toBe(255); // 不透明
+    expect([p1.width, p1.height, p1.mime]).toEqual([2, 2, "image/png"]);
+    expect(isPng(p1.bytes)).toBe(true); // 契约要求编码图（vision 只接受编码图）
     const again = await r.fn(new Uint8Array(0), 1, 2);
-    expect(again.rgba).toEqual(p1.rgba);
+    expect(again.bytes).toEqual(p1.bytes); // 确定性
     expect(r.calls).toHaveLength(2);
   });
 

@@ -28,9 +28,28 @@ export type ExtractErrorCode =
   | "provider_error" // VLM/ASR 端点不可达或未配置
   | "internal";
 
-/** 把一页渲染成 RGBA 的结果（`rasterize` 的返回）。 */
+/**
+ * 光栅化一页的产物：**一张编码图**（不是裸 RGBA）。
+ *
+ * ⚠️ 这个形状改过一次（2026-09-17，Mac 侧开工 `pdf.ocr` 时撞出来的）：
+ * 原先定的是 `{ rgba, width, height }`（照桌面 `pdfium_native::render_page` 的裸像素来的），
+ * 但那样**两侧都缺一步**——`deps.vision` 只接受编码图
+ * （`src/lib/ai/ocrVision.ts` 要的是 `data:image/...;base64,…`），
+ * 而"RGBA → 编码图"在抽取层做不了（要 canvas / 编解码库，正是隔离断言禁的那类）。
+ *
+ * ⇒ 现在**光栅化这一步直接产出编码图**。选它而不是"保留裸 RGBA + 再加一个 encode 能力"，理由是：
+ *  1. **少一个能力就少一处三轴漂移**（能力要登记、要三边实现、要各自的假实现）；
+ *  2. **裸 RGBA 要求三台机器对字节序 / 行 stride / 是否预乘 alpha 达成一致** ——
+ *     这是一类**不会报错、只会悄悄画错**的约定，且没有一处能把它测出来。
+ *     PNG 没有这些自由度：要么解出对的图，要么解不开；
+ *  3. 生产代码里**没有 `deps.rasterize` 的裸像素消费者**（阅读器用的是平台**驱动**的
+ *     `renderPdfPage`，那是另一回事，**没有改**）。
+ */
 export interface RasterizedPage {
-  rgba: Uint8Array;
+  /** 编码后的图片字节。 */
+  bytes: Uint8Array;
+  /** 必须是 `deps.vision` 能直接接受的图片类型（实现用 `image/png`）。 */
+  mime: string;
   width: number;
   height: number;
 }
@@ -45,15 +64,17 @@ export interface RasterizedPage {
  *     否则抽取层在 CI / Node / Headless 上就跑不了，而那正是它至今能做纯函数单测的前提。
  *     有**源码级断言**守着这条（`isolated.test.ts`）。
  *  3. **形状与原生实现对齐**：桌面 `pdfium_native::render_page(cache_key, bytes, page_index, scale)`
- *     本来就是"bytes 进、RGBA + 宽高出"（AMD 侧查证）⇒ 这里只是薄适配，不是新增能力。
+ *     本来就是"bytes 进、RGBA + 宽高出"（AMD 侧查证）⇒ **入口这一侧**是薄适配；
+ *     出口之所以改成编码图，理由见 `RasterizedPage`。
  */
 export interface ExtractDeps {
   /** 视觉模型调用（图片 / 视频关键帧 / 扫描件页）。**由平台层注入**。
-   *  未注入时，需要它的抽取器必须返回 `provider_error`，不许抛（§15.3-7）。 */
+   *  未注入时，需要它的抽取器必须返回 `provider_error`，不许抛（§15.3-7）。
+   *  ⚠️ `image` 是**编码图字节**（配 `mime`），不是裸像素。 */
   vision?: (prompt: string, image: Uint8Array, mime: string) => Promise<string>;
-  /** 把 PDF 的某一页（0 基）渲染成 RGBA。**由平台层注入**。
+  /** 把 PDF 的某一页（0 基）渲染成**编码图**。**由平台层注入**。
    *
-   *  为什么需要：扫描件要"页 → 像素"才能走 `vision`，而抽取器手上只有 `bytes`
+   *  为什么需要：扫描件要"页 → 图"才能走 `vision`，而抽取器手上只有 `bytes`
    *  （平台原有的 `renderPdfPage(attachmentId, …)` 要的是存储层 id，抽取层不该知道 id）。
    *
    *  ⚠️ 注入的实现**允许忽略 `bytes`**（用构造闭包时捕获的 attachmentId 走原生路径）——
