@@ -192,14 +192,21 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 **交付**：docx / xlsx / pptx / PDF / txt / 图片(OCR) 的文本抽取；`attachment_text` 落库；`pages.search` 与嵌入链同时命中派生文本；新增 `files.read` 工具。
 
-> **进展（2026-09-17，首片已落地）**：**接口已冻结**（§15），且 **OOXML 一族的抽取器已实现并带单测**：
-> `src/lib/extract/types.ts`（契约）、`registry.ts`（分派 + 显式注册表）、`ooxml.ts`（docx/xlsx/pptx）、
-> 两个测试文件共 **37 条**用例。**全量回归 76 文件 / 734 用例全绿**，`npx tsc --noEmit` 0 错。
-> 仍未做：`attachment_text` 建表与落库、`files.read` 工具、PDF / 图片 / 旧格式抽取器（见 §12.4 分工表）。
+> **进展（2026-09-17）**
+> - **接口已冻结**（§15）。
+> - **OOXML 一族的抽取器已实现**：`src/lib/extract/ooxml.ts`（docx/xlsx/pptx）。
+> - **派生表与落库已实现（TS 侧）**：`src/lib/extract/schema.ts`（DDL 单一事实源）、
+>   `store.ts`（读写 + 按 `src_hash` 失效 + 整体替换）、`pipeline.ts`（候选调度与结果归类）。
+> - 四个测试文件共 **57 条**用例；**全量回归 77 文件 / 754 用例全绿**，`npx tsc --noEmit` 0 错。
+> - **仍未做**：接进 `sqliteStore.ts` / `db.rs` 的真实建表与调用（**Rust 侧需 AMD 或 Mac 复核**）、
+>   `files.read` 工具、PDF / 图片 / 旧格式 / 音视频抽取器（见 §12.4 分工表）。
 >
 > ⚠️ **一个环境坑，记下来免得后人重踩**：**happy-dom 不支持 `getElementsByTagNameNS("*", name)` 的通配**（恒返回 0 条），
 > 而浏览器与 WebView 支持 ⇒ 用它会造成"测试绿、线上崩"或反过来。故 `ooxml.ts` 改为**手工遍历比 `localName`**，
 > 三者行为一致且**与前缀无关**。
+>
+> ⚠️ **第二个坑**：`sql.js` 的 `run()` 只吃**单条**语句。故 `schema.ts` 里每条 DDL 都保证是单语句
+> （原先把两条 `CREATE INDEX` 写在一个串里，靠 `exec()` 才能跑——那是个隐式依赖，已拆开）。
 
 **为什么先做这一步**：它**一次性补上"看不见的那一半"**，且**不改 AI 工具集的形态**（只加一个读工具）。
 

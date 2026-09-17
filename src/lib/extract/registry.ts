@@ -44,7 +44,40 @@ function mimeMatches(declared: readonly string[], mime: string): boolean {
 }
 
 /**
- * 按「mime → 扩展名」的顺序挑第一个认领的抽取器；都不认则 null（调度器记 `unsupported`）。
+ * 按「mime → 扩展名」的顺序挑**全部**候选抽取器（保持注册表顺序、去重）。
+ *
+ * 契约 §15.4：一个格式允许多个抽取器（例：PDF 的 `pdf.text` 抽不出东西时再试 `pdf.ocr`），
+ * 所以调度器需要"候选列表"而不是"唯一一个"。**试谁、按什么顺序、什么时候换人属 P1 实现细节**，
+ * 不在契约内。
+ */
+export function candidates(
+  mime: string,
+  filename: string,
+  registry: readonly Extractor[],
+): Extractor[] {
+  const m = normalizeMime(mime);
+  const out: Extractor[] = [];
+  const seen = new Set<Extractor>();
+  for (const ex of registry) {
+    if (mimeMatches(ex.mimes, m) && !seen.has(ex)) {
+      out.push(ex);
+      seen.add(ex);
+    }
+  }
+  const ext = extensionOf(filename);
+  if (ext) {
+    for (const ex of registry) {
+      if (ex.extensions.some((e) => String(e).toLowerCase() === ext) && !seen.has(ex)) {
+        out.push(ex);
+        seen.add(ex);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 按同一顺序挑**第一个**候选；都没有则 null（调度器记 `unsupported`）。
  *
  * 同名冲突先到先得，由 `registry` 顺序决定（契约 §15.4）。
  */
@@ -53,17 +86,7 @@ export function pickExtractor(
   filename: string,
   registry: readonly Extractor[],
 ): Extractor | null {
-  const m = normalizeMime(mime);
-  for (const ex of registry) {
-    if (mimeMatches(ex.mimes, m)) return ex;
-  }
-  const ext = extensionOf(filename);
-  if (ext) {
-    for (const ex of registry) {
-      if (ex.extensions.some((e) => String(e).toLowerCase() === ext)) return ex;
-    }
-  }
-  return null;
+  return candidates(mime, filename, registry)[0] ?? null;
 }
 
 /** 本线 P1 的显式注册表（新增抽取器在这里登记；不要改成自动扫描）。
