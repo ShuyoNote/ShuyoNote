@@ -90,6 +90,20 @@ const NO_PLUGINS = process.argv.includes("--no-plugins");
 const NO_ANDROID = process.argv.includes("--no-android");
 
 // ---- 前置：git tag vX.Y.Z 必须已存在并推到远程 ----
+//
+// ⚠️ **`--skip-tag-guard`（只在 `--dry-run` 下有效）**：跳过下面两道 tag 守卫。
+// 两个真实用途：
+//   ① **预演**：tag 还没建，先看看清单会长什么样；
+//   ② **干净检出里跑端到端门禁**（`scripts/release-manifest.test.mjs`）—— CI 的 `actions/checkout`
+//      不带 tag，于是那道守卫把**测试自己**挡在门外，现象是"门禁在 CI(Linux) 恒红、在本机（有 tag）恒绿"。
+//      2026-09-17 实测：vitest 门禁在 Linux 上连红三次，根因就是这条（CI 注解点出了用例名与这句报错）。
+// 真发布（不带 `--dry-run`）**永远照旧拦** —— 两道守卫都是有原因的（tag 不存在会静默失败/不触发构建）。
+const SKIP_TAG_GUARD_REQUESTED = process.argv.includes("--skip-tag-guard") || process.env.SHUYONOTE_SKIP_TAG_GUARD === "1";
+if (SKIP_TAG_GUARD_REQUESTED && !DRY) {
+  console.error("[release] --skip-tag-guard 只在 --dry-run 下有效：真发布必须有 tag（两道守卫都是有原因的）。");
+  process.exit(1);
+}
+const SKIP_TAG_GUARD = SKIP_TAG_GUARD_REQUESTED && DRY;
 // gitcode 的 release 创建 API 用 tag_name 定位 tag；tag 不存在会「静默失败」
 // （release 未建、latest.json 不更新，客户端就查不到更新——曾实际踩坑）。
 // ⚠️ tag 必须**两个远端都推**：`origin`(gitcode) 是应用内「检查更新」与下载通道，
@@ -98,21 +112,25 @@ const NO_ANDROID = process.argv.includes("--no-android");
 // **根本不会开始**（详见 docs/RELEASING.md ④）。下面只按 origin 做前置校验，
 // 因为它是发布这一步的必需条件；github 缺 tag 不阻断发布本身，但会让发版件一个都不产出。
 // 这里在发布前尽早拦住，而不是等发布后才发现查不到更新。
-try {
-  execSync(`git rev-parse --verify --quiet refs/tags/${TAG}`, { stdio: "ignore" });
-} catch {
-  console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} && git push github ${TAG} 再发布。`);
-  process.exit(1);
-}
-try {
-  const remote = execSync(`git -c http.proxy= -c https.proxy= ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
-  if (!remote) {
-    console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
+if (SKIP_TAG_GUARD) {
+  console.warn(`[release] ⚠️ --dry-run --skip-tag-guard：跳过 tag 守卫（${TAG}）。这只用于预演与端到端门禁。`);
+} else {
+  try {
+    execSync(`git rev-parse --verify --quiet refs/tags/${TAG}`, { stdio: "ignore" });
+  } catch {
+    console.error(`[release] 本地缺少 git tag ${TAG}。请先：git tag ${TAG} && git push origin ${TAG} && git push github ${TAG} 再发布。`);
     process.exit(1);
   }
-} catch {
-  console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
-  process.exit(1);
+  try {
+    const remote = execSync(`git -c http.proxy= -c https.proxy= ls-remote --tags origin ${TAG}`, { encoding: "utf8" }).trim();
+    if (!remote) {
+      console.error(`[release] 远程缺少 git tag ${TAG}。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
+      process.exit(1);
+    }
+  } catch {
+    console.error(`[release] 无法确认远程 tag ${TAG}（网络/认证）。请先：git push origin ${TAG} && git push github ${TAG} 再发布。`);
+    process.exit(1);
+  }
 }
 
 
