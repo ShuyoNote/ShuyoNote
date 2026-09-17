@@ -241,6 +241,37 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 **故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
 （docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
 
+### 8.1 被「**本机不能自验**」卡住的三项 —— 附施工单（给能跑 `cargo test` 的那一侧）
+
+> 这三项**不是没做，是不该由我做**：它们的共同根因是 §12.1（Windows 跑不了 `cargo test`）。
+> 写成施工单而不是"待办一句话"，是因为**我每次都要重新解释一遍为什么绕开它** ——
+> 那说明缺的是**交接件**，不是决心。
+
+**① `pages.get` 支持 `offset` / `limit`（去掉 6000 字硬截断）**
+- **为什么不能只改 TS**：`pages.get` 的参数 schema 在 `capabilities/capabilities.json`（源），
+  重新生成会写出 **`src-tauri/src/capabilities_gen.rs`** ⇒ 必须有人能编译 Rust。
+- **施工单**：改 `capabilities.json` 加两个可选参数 → `node scripts/gen-capabilities.mjs` →
+  `src/lib/capabilities/frontend.ts` 的 `pages.get` 按 `offset`/`limit` 切片 →
+  `node scripts/check-capabilities.mjs` 过 → **`cargo test`**。
+- **验收**：`offset=6000&limit=6000` 拿到的第二段与原文 `slice(6000,12000)` 逐字相同；
+  越界 `offset` 返回空而不是报错；`check-capabilities` 与 `check-web-commands` 双绿。
+- ✅ **本轮已落一半（纯 TS，不需要重生成）**：截断**不再只补一个 `…`**，
+  改为显式 `truncated` / `chars_total` / `chars_returned` / `note`（并告诉模型该去 `pages.search`）。
+  理由见下"同一条原则"。
+
+**② `files.read` / `files.search` 两个 AI 工具**
+- 同一条链：`capabilities.json` → 重生成（含 `capabilities_gen.rs` + JS shim + 作者文档）→ `frontend.ts` → 门禁。
+- ⚠️ 顺带：`files.read` 应当**同时给出覆盖度**（复用 §15.10 的 `ExtractCoverage` 口径），
+  否则它会把"我没抽到"说成"文件里没有" —— 那正是 §15.10 要防的同一件事。
+
+**③ Rust 侧建表与调用（`db.rs`）**
+- `DERIVED_SCHEMA_DDL`（`extract/schema.ts`）是**单一事实源**，Rust 侧照抄并加一致性断言；
+  写入/读取路径与 `attachment_text` 的既有实现对齐（`src_hash` 失效、整体替换）。
+
+**一条贯穿三项的原则**：**"成功"不等于"读全了/抽全了"**。
+抽取层已有 `ExtractCoverage`（§15.10），本轮把同一条原则也补到了 AI 工具面（`pages.get`）。
+**新增任何"读/抽"能力时，都要先回答"没读全时怎么让下游知道"。**
+
 ### P1 —— 附件文本抽取 ＋ 派生表 ＋ 接进现有检索与工具
 
 **交付**：docx / xlsx / pptx / PDF / txt / 图片(OCR) 的文本抽取；`attachment_text` 落库；`pages.search` 与嵌入链同时命中派生文本；新增 `files.read` 工具。
@@ -462,6 +493,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **平台写入口 / `deps` 唯一构造点**（TS 侧） | **Windows** | 集成面，串行点 | ✅ **已完成**（`attachmentDeps` / `extractAttachment`，§15.8） |
 | **P2 前半：分块 + 块存储**（TS 侧） | **Windows** | 集成面，串行点 | ✅ **已完成**（P2 交付里只剩检索侧） |
 | **页面侧分块入口**（`chunkPage` / `chunkPages` / `removePageChunks`） | **Windows** | **知识库主体是页面而不是附件**，这一半不做等于只索引了少数文件 | ✅ **已完成**（`platform/pageChunks.ts`） |
+| 索引层：**`pages.get` 截断的诚实化**（纯 TS 那半） | **Windows** | "成功≠读全了"这条原则也要落到 AI 工具面 | ✅ **已完成**（去掉有歧义的 `…`，改为显式 `truncated`/`chars_total`/`note`）；**加 `offset`/`limit` 那半**见 §8.1 |
 | **图片 OCR 骨架**（`image.ocr@1`） | **Windows** | 定契约与形状 | ✅ **已完成**（实跑调优仍在 AMD，见下行） |
 | **PDF + 扫描件一族** | **Mac 独占** | Mac 有真 PDF 阅读器与 OCR 全链路可当对照；纯 CPU、能马上动 | ✅ **已完成**（`pdf.text@1` + `pdf.ocr@1`）。⚠️ **AMD 的"备选接 PDF"已于 2026-09-17 撤回** —— 两人接同一族就违反"文件零重叠"，而这条线存在的全部意义就是零重叠 |
 | **检索侧**（块级嵌入写入 / BM25+向量混合 / `files.search` / **查询侧归一化**） | **Mac**（2026-09-17 认领） | **只有它们能跑 `cargo test`**（§12.1），而这一层在 Rust | ⏳ 进行中；开工前先发"只写接口与判据"的短信（今天两次 reply 编号撞车教出来的做法） |
