@@ -28,6 +28,9 @@ mod models;
 mod net;
 mod capabilities_gen;
 mod pdf_native;
+// PDFium 光栅化（P1，2026-09-17 开工）：与 pdf_native **并存**，分派在 P2 —— 所以 P1 阶段
+// 它还没有调用方，pdfium_native.rs 里带着一个临时 `#![allow(dead_code)]`，P2 接线后删掉。
+mod pdfium_native;
 // 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
 // `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
 mod picked_file;
