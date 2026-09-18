@@ -41,7 +41,28 @@
 | **1** | 决策记录（本文件）＋ `src/editor/nodes/BlockParagraphNode.ts`（新 type 段落节点，声明 `__blockId`）＋ `src/lib/blockIdentity.ts`（两形态互转、块 ID 补种）＋ 单测 | `vitest` 新测全绿 ＋ 全量 `vitest` 不回归 ＋ `tsc --noEmit` 干净 | ✅ `7e98945`（12 条判据） |
 | **2** | 注册进 `EDITOR_NODES`；加载路径接 `toModelDoc()`、保存路径接 `toLegacyDoc()`（`Editor.tsx` / `ColumnEditor.tsx` / `emailRichNote.ts`） | 内存里是模型 type 且块 ID 稳定；写出去的产物里**一个模型 type 都没有**；全量 `vitest` 不回归 | ✅ 本提交（16 条判据，全量 1095 通过 / 1 跳过） |
 | 3 | 让**新建块**也走新 type（粘贴、markdown 导入、HTML 导入、空编辑器首段；Enter 已由 `insertNewAfter` 覆盖） | 三种创建路径各一条用例：新块的块 ID 来自**模型**而不是保存时注入 | ✅ 本提交（5 条判据，全量 1100 通过 / 1 跳过） |
-| 4 | 同类推广到其它块级类型（标题/引用/列表/代码/表格 + 18 个自有节点） | 逐类型一个判据；`--update` 收口基线只减不增 | 未开工 |
+| 4 | 同类推广到其它块级类型（标题/引用/列表/代码/表格 + 18 个自有节点） | 逐类型一个判据；`--update` 收口基线只减不增 | 🟡 **标题已完成**（`5b5de42`）；其余类型待做 |
+
+### 4.2 第 4 步的进度与两个坑
+
+**已完成：标题**（`BlockHeadingNode`：`shuyo-heading`，`tag` 与 `blockId` 都进模型；
+`insertNewAfter` 的三处内建工厂逐支换成模型工厂）。判据：升级后 type/tag/块 ID/文字都对、
+标题与段落**各归各的变换**互不误伤。
+
+**坑 1（本步抓出来的真洞）**：`BlockParagraphNode.insertNewAfter` 原先造的是**空 ID** 的模型段
+⇒ "回车新建的块"在 CRDT 平面里仍然没有稳定身份。判据当场抓出，改成**当场铸 ID**。
+⇒ **推广时每一类都要问一句：这个类自己造的节点，ID 从哪儿来？**
+
+**坑 2（下一批类型会遇到的雷）**：`SafeCodeNode` 是**同 type**（`"code"`）子类 —— 它今天能用，
+只是因为 `src/` 里**没有**任何地方调 `$createCodeNode()`。而**同 type 子类 + 内建工厂**在 0.50 会抛
+`Type code in node CodeNode does not match registered node SafeCodeNode`（本工作单 §2 实测过同一现象）。
+⇒ 推广代码块时**必须**走"新 type + 映射"这条正路；也请留意将来任何库内变压器（如 `@lexical/markdown`
+的内建 code 规则）若开始调内建工厂，就会**当场炸**。
+
+**坑 3（自己的操作事故，记下来）**：用 `Get-Content | Set-Content` 改 `Editor.tsx` 把 UTF-8 读坏了
+（中文变乱码）——正是本仓早写明的老坑。处置：`git restore` 还原后改用编辑工具重做，提交前 `git diff` 逐行确认。
+**源码改动不要过 PowerShell 文本管道。**
+
 
 ### 4.1 第 3 步的做法与遗留
 
