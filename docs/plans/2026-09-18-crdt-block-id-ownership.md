@@ -119,6 +119,30 @@ update 后没了、无报错）；`horizontalrule` 与 `callout`（ElementNode�
 （中文变乱码）——正是本仓早写明的老坑。处置：`git restore` 还原后改用编辑工具重做，提交前 `git diff` 逐行确认。
 **源码改动不要过 PowerShell 文本管道。**
 
+**坑 4（★ 最贵的一条：`vitest` 绿 **不等于** 门禁绿）**：正文派生合一
+（`543b54e`）之后，`src/lib/ai/lexical.ts` 为了"与编辑器语义统一"委托了
+`src/lib/contentText.ts`，而那一层要 `editor/config` 的**节点表**才能解析文档。
+于是**任何** `import ai/lexical` 的打包路径都被拖进整个编辑器节点图
+（excalidraw 的 `index.css`、katex 的字体、sql.js 的 wasm）——
+`scripts/smoke-web.mjs` 的 AI 核心包是 **node 侧 esbuild**：没有资源加载器，
+也解析不了 `@excalidraw/excalidraw` 的 `exports`（没有 `./index.css`）
+⇒ **62 个 error，`pnpm verify` 的 `smoke-web` 门禁红**。
+
+为什么一直没发现：我只跑了 `vitest` ＋ 收口那**一条**门禁，**没跑 `pnpm verify` 全套 23 条**。
+`vitest`（Vite/Vitest 接手 CSS 与 `?url`）与 `smoke-web`（node 侧裸 esbuild）对同一份代码的
+容忍度完全不同 ⇒ **判据必须跑在它将来真正运行的那个打包器上**。
+
+处置（分层，不是加资源桩、也不是改门禁）：
+· `src/lib/ai/lexical.ts` 回到**纯 JSON 逻辑**（文件头写清"不许 import 编辑器节点表"的事故记录）；
+· 需要编辑器语义的 `contentTextOf` 搬到 `src/lib/ai/lexicalContent.ts`，由**编辑器侧**调用方 import；
+· `pageJsonFromText` 的正文文本字段改成**按构造成本算**（`docLines().join("\n\n")`），
+  不再回头调 `deriveContentText` —— 否则又把节点表拖回来；
+· 代价是"两条算法"，所以**补一条配对判据**（`src/lib/ai/lexicalContent.test.ts`，11 条）：
+  「按构造成本算的正文文本」逐字等于「编辑器语义真派一遍同一份内容 JSON」。
+  ★ 承重证明：把 `join("\n\n")` 改成 `join("~MUTANT~")`、判据不动 ⇒ 3 条红。
+· `smoke-web` 里那条 `contentTextOf(next) === "hi a b"` **删掉** —— 它断言的正是被消灭的
+  **空格拼接老算法**（顺带说明：门禁里也会有"钉住错误行为"的判据，改语义时要连它一起改）。
+
 
 ### 4.1 第 3 步的做法与遗留
 

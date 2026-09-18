@@ -55,7 +55,7 @@ function safeRoot(contentJson: string): { root: { children: unknown[]; type: str
 
 /** 把任意文本切成"要落成块"的行：逐行 trim、去掉空行。
  *  `appendBlocksToJson` 与 `pageJsonFromText` **共用**它 —— 两处的行集合一旦不同，
- *  后者算出来的 `content_text` 就与前者造出来的文档对不上。 */
+ *  后者算出来的正文文本就与前者造出来的文档对不上。 */
 function docLines(text: string): string[] {
   return String(text ?? "")
     .split("\n")
@@ -104,10 +104,10 @@ export function cleanDraftText(text: string): string {
  * 放在这里而不是各调用方：**Lexical 的块结构只该在这一层被知道**。
  * 插件侧（Rust）只交出纯文本，落库时由这里构造 JSON。
  *
- * `content_text` 在这里**按构造成本算**（`docLines(...).join("\n\n")`），而不是回头调
+ * 这个正文文本字段在这里**按构造成本算**（`docLines(...).join("\n\n")`），而不是回头调
  * `deriveContentText` —— 因为那会把编辑器节点表拖进本模块（见文件头那条事故）。
  * 两套算法不许漂：`src/lib/ai/lexicalContent.test.ts` 用**配对判据**钉住
- * 「本函数算出的 `content_text`」逐字等于「编辑器语义派生同一份 `content_json` 的结果」，
+ * 「本函数算出的正文文本」逐字等于「编辑器语义派生同一份内容 JSON 的结果」，
  * 分隔符由 Lexical 定（根节点的元素分隔符是 `"\n\n"`），判据不写死它。
  */
 export function pageJsonFromText(

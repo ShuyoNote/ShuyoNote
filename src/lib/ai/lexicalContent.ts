@@ -27,6 +27,6 @@ import { deriveContentText } from "../contentText";
  *
  * 保留 `contentTextOf` 这个名字：调用方有多处，改名只增加 diff。
  */
-export function contentTextOf(contentJson: string): string {
-  return deriveContentText(contentJson);
+export function contentTextOf(docJson: string): string {
+  return deriveContentText(docJson);
 }
