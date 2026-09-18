@@ -7,6 +7,7 @@ import { toast } from "../store/toast";
 import { printDoc } from "../lib/print";
 import { TruncatedText } from "./TruncatedText";
 import type { AttrDef, DatabaseQuery, DatabaseRow, DbViewMeta } from "../types";
+import { fromDatetimeLocalValue, toDatetimeLocalValue } from "../lib/dateTimeValue";
 import {
   TableIcon,
   GalleryIcon,
@@ -19,11 +20,12 @@ import {
   TemplateIcon,
 } from "./icons";
 
-const TYPES = ["text", "number", "date", "checkbox", "select", "multi", "tag", "ref", "formula", "rollup"] as const;
+const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "multi", "tag", "ref", "formula", "rollup"] as const;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
   date: "日期",
+  datetime: "时间",
   checkbox: "布尔",
   select: "单选",
   multi: "多选",
@@ -1659,6 +1661,21 @@ function DbCellEditor({
           </option>
         ))}
       </select>
+    );
+  }
+  if (attr.attr_type === "datetime") {
+    // 「时间」：**选择器到秒**（`datetime-local` + `step=1`）。
+    // 值与页面属性那侧共用 `lib/dateTimeValue` 的解析/格式化 ⇒ 只有一份实现。
+    // ⚠️ 这里的**手输**路径尚未接（数据库单元格先用选择器）；要补的话应当把
+    //    PropertiesPanel 里的 `DatetimeValueEditor` 抽成共用组件，而不是在这儿再写一份。
+    return (
+      <input
+        type="datetime-local"
+        step="1"
+        className="db-input"
+        value={toDatetimeLocalValue(value)}
+        onChange={(e) => onChange(fromDatetimeLocalValue(e.target.value) ?? "")}
+      />
     );
   }
   if (attr.attr_type === "date") {
