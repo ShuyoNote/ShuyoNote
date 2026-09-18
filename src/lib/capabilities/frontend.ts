@@ -36,12 +36,6 @@ function draft(key: string, summary: string, payload: unknown): DraftResult {
 }
 
 /**
- * 省略 pageId 时用当前打开的页面（与插件侧同一语义：**宿主解析**，插件不用自己猜）。
- *
- * 当前页来自宿主传进来的 ctx —— 这里**刻意不导入 UI store**：能力层要保持薄，
- * 一旦它依赖 store，就会把整条 UI 依赖链（编辑器/公式/katex…）拖进 AI 能力层。
- */
-/**
  * 参数解析：非有限数（`undefined`/`NaN`/字符串）取默认值，**0 与负数照原样返回**。
  *
  * 为什么不写 `Number(x) || d`：`0 || d` 会得到 `d` —— 于是 `limit=0` 在 TS 侧变成"没传"，
@@ -74,6 +68,12 @@ function intArg(
   return Math.min(max, Math.max(min, Math.floor(toFiniteOr(args[name], def))));
 }
 
+/**
+ * 省略 pageId 时用当前打开的页面（与插件侧同一语义：**宿主解析**，插件不用自己猜）。
+ *
+ * 当前页来自宿主传进来的 ctx —— 这里**刻意不导入 UI store**：能力层要保持薄，
+ * 一旦它依赖 store，就会把整条 UI 依赖链（编辑器/公式/katex…）拖进 AI 能力层。
+ */
 function targetPage(args: Record<string, unknown>, ctx?: AdapterContext): string {
   const given = String(args.pageId ?? "");
   if (given) return given;
