@@ -20,11 +20,24 @@
 // `getType()` 守卫，读代码的人不用去猜 Lexical 的匹配规则。
 
 import { ParagraphNode } from "lexical";
-import { HeadingNode } from "@lexical/rich-text";
+import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 
 import { newBlockId } from "../lib/blockIdentity";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createBlockHeadingNode } from "./nodes/BlockHeadingNode";
+import { $createBlockQuoteNode } from "./nodes/BlockQuoteNode";
+
+/**
+ * 这个节点是不是**顶层块**（根的直接子节点）。
+ *
+ * 只有顶层块才有块身份（今天的 `serializeWithBlockIds` 也只遍历 `root.getChildren()`；
+ * Rust 侧 `extract_block_ids` 同样只读顶层）。嵌套块（列表项/引用/分栏里的段落）升级**类型**
+ * 但不给 ID —— 免得落盘形态里多出一片没用的 `blockId`。
+ */
+function isTopLevelBlock(node: ParagraphNode | HeadingNode | QuoteNode): boolean {
+  const parent = node.getParent();
+  return parent !== null && parent.getType() === "root";
+}
 
 /**
  * 内建段落 → 模型段落（**就地替换**，属性与子节点原样保留，新块拿到一个新的块 ID）。
@@ -33,7 +46,7 @@ import { $createBlockHeadingNode } from "./nodes/BlockHeadingNode";
  */
 export function upgradeParagraphToBlockNode(node: ParagraphNode): void {
   if (node.getType() !== "paragraph") return; // 模型段（`shuyo-paragraph`）与其它子类都不碰
-  const replacement = $createBlockParagraphNode(newBlockId());
+  const replacement = $createBlockParagraphNode(isTopLevelBlock(node) ? newBlockId() : "");
   // ⚠️ 0.50 的坑：`ElementNode.getFormat()` 返回的是**数字**（center = 2），
   //    而 `exportJSON().format` / `getFormatType()` 才是字符串 "center"。
   //    第一版抄了 `getFormat()` ⇒ 对齐样式在升级时**悄悄丢掉**（判据抓出来了）。
@@ -56,12 +69,22 @@ export function upgradeParagraphToBlockNode(node: ParagraphNode): void {
  */
 export function upgradeHeadingToBlockNode(node: HeadingNode): void {
   if (node.getType() !== "heading") return; // 模型标题（`shuyo-heading`）不碰
-  const replacement = $createBlockHeadingNode(node.getTag(), newBlockId());
+  const replacement = $createBlockHeadingNode(node.getTag(), isTopLevelBlock(node) ? newBlockId() : "");
   // ⚠️ 对齐用 `getFormatType()`（字符串）；0.50 的 `getFormat()` 返回的是**数字**（踩过一次）。
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());
   replacement.setTextFormat(node.getTextFormat());
   replacement.setTextStyle(node.getTextStyle());
+  node.replace(replacement, true);
+}
+
+/** 内建**引用** → 模型引用（第 4 步的第二个类型；`QuoteNode` 没有额外状态，所以最薄）。 */
+export function upgradeQuoteToBlockNode(node: QuoteNode): void {
+  if (node.getType() !== "quote") return; // 模型引用（`shuyo-quote`）不碰
+  const replacement = $createBlockQuoteNode(isTopLevelBlock(node) ? newBlockId() : "");
+  replacement.setFormat(node.getFormatType());
+  replacement.setIndent(node.getIndent());
+  replacement.setDirection(node.getDirection());
   node.replace(replacement, true);
 }

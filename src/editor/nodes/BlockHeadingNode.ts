@@ -52,7 +52,9 @@ export class BlockHeadingNode extends HeadingNode {
   }
 
   exportJSON(): SerializedBlockHeadingNode {
-    return { ...(super.exportJSON() as SerializedHeadingNode), blockId: this.__blockId };
+    const json = super.exportJSON() as SerializedBlockHeadingNode;
+    // 同 `BlockParagraphNode`：**空 ID 不写字段**，别让嵌套块给落盘形态添噪音。
+    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
   }
 
   getBlockId(): string {

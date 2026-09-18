@@ -73,7 +73,12 @@ export class BlockParagraphNode extends ParagraphNode {
   }
 
   exportJSON(): SerializedBlockParagraphNode {
-    return { ...super.exportJSON(), blockId: this.__blockId };
+    const json = super.exportJSON() as SerializedBlockParagraphNode;
+    // ⚠️ **空 ID 时不写这个字段**：今天的落盘形态里，只有**顶层块**才有 `blockId`
+    //（`serializeWithBlockIds` 只遍历 `root.getChildren()`）。嵌套段落（列表项/引用/分栏里的）
+    // 被变换升级成模型类型后会带一个空 ID —— 若照样写出去，落盘 JSON 就会多出一片
+    // `"blockId": ""`，破坏"写出去的形态与今天一致"这条承诺（也让 diff/体积无谓变大）。
+    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
   }
 
   /** 读块 ID（外部一律经这里，别直接摸 `__blockId`）。 */

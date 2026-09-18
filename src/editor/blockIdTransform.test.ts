@@ -6,16 +6,19 @@
 
 import { describe, expect, it } from "vitest";
 import { $createParagraphNode, $createTextNode, $getRoot, ParagraphNode, createEditor } from "lexical";
-import { $createHeadingNode, HeadingNode } from "@lexical/rich-text";
+import { $createHeadingNode, $createQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { $createTableNodeWithDimensions } from "@lexical/table";
 
 import { EDITOR_NODES } from "./config";
-import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode } from "./blockIdTransform";
+import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode, upgradeQuoteToBlockNode } from "./blockIdTransform";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
+import { toLegacyDoc } from "../lib/blockIdentity";
 
 function editorWithTransform() {
   const editor = createEditor({ nodes: EDITOR_NODES, namespace: "blockid-transform-test" });
   editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode);
   editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode);
+  editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode);
   return editor;
 }
 
@@ -137,5 +140,51 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(h.type).toBe("shuyo-heading");
     expect(p.type).toBe("shuyo-paragraph");
     expect(h.blockId).not.toBe(p.blockId); // 两块各有各的 ID
+  });
+
+  it("★ 嵌套段落（表格单元格里的）升级**类型**但**不给块 ID** ⇒ 落盘形态不添噪音", () => {
+    // ⚠️ 用表格当"嵌套"的载体：Lexical 的**列表项会把段落拆直**（列表项里直接是文本），
+    // 所以拿列表测"嵌套段落"其实测不到东西 —— 表格单元格里才是真的嵌套段落。
+    const editor = editorWithTransform();
+    editor.update(() => {
+      $getRoot().append($createTableNodeWithDimensions(1, 1, false));
+    }, { discrete: true });
+
+    /** 深度 > 1 的第一个模型段落（顶层是 table）。 */
+    const findDeep = (nodes: Array<Record<string, unknown>>, depth = 1): Record<string, unknown> | null => {
+      for (const n of nodes) {
+        if (depth > 1 && n.type === "shuyo-paragraph") return n;
+        const kids = n.children as Array<Record<string, unknown>> | undefined;
+        if (Array.isArray(kids)) {
+          const hit = findDeep(kids, depth + 1);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+
+    const deep = findDeep(rootChildren(editor));
+    expect(deep).not.toBeNull();
+    expect(deep?.type).toBe("shuyo-paragraph"); // 类型升级了
+    expect(deep?.blockId).toBeUndefined(); // 但**没有**块身份（今天只有顶层块有）
+
+    // 落盘形态里也不许冒出 `blockId` 字段（顶层是还没迁移的 table ⇒ 整份文档一个都没有）
+    const wire = toLegacyDoc(JSON.stringify({ root: { children: rootChildren(editor) } }));
+    expect(wire.includes("blockId")).toBe(false);
+  });
+
+  it("★ 引用也被升级：type 变 `shuyo-quote`、带块 ID、文字不丢", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const q = $createQuoteNode(); // 老类型（markdown 导入 `> ` / 工具栏都走它）
+      q.append($createTextNode("引用一行"));
+      $getRoot().append(q);
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-quote");
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
+    expect(JSON.stringify(kid.children)).toContain("引用一行");
   });
 });

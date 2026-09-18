@@ -19,6 +19,7 @@
 export const MODEL_TYPE_BY_LEGACY: Readonly<Record<string, string>> = {
   paragraph: "shuyo-paragraph",
   heading: "shuyo-heading",
+  quote: "shuyo-quote",
 };
 
 /** 模型 type → 老 type（`toLegacyDoc` 用）。 */

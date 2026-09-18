@@ -45,9 +45,18 @@
 
 ### 4.2 第 4 步的进度与两个坑
 
-**已完成：标题**（`BlockHeadingNode`：`shuyo-heading`，`tag` 与 `blockId` 都进模型；
-`insertNewAfter` 的三处内建工厂逐支换成模型工厂）。判据：升级后 type/tag/块 ID/文字都对、
-标题与段落**各归各的变换**互不误伤。
+**已完成：标题、引用**（`BlockHeadingNode`：`shuyo-heading`，`tag` 与 `blockId` 都进模型；
+`BlockQuoteNode`：`shuyo-quote`，最薄的一层）。两者的 `insertNewAfter` 都逐支换成模型工厂。
+
+**一条细化（本轮补的，避免落盘形态漂移）**：只有**顶层块**才有块身份 —— 嵌套段落（表格单元格/分栏/
+引用里的）**升级类型但不给 ID**，且 `exportJSON` 在 **ID 为空时不写 `blockId` 字段**。
+理由：今天的落盘形态只有顶层块带 `blockId`；若嵌套块也带一个空 ID，写出去的 JSON 会多出一片
+`"blockId": ""`，"写出去与今天一致"这条承诺就破了（也让 diff 无谓变大）。
+判据里有一条专门验它（表格里的嵌套段落类型升级、无 ID、落盘产物里一个 `blockId` 都没有）。
+
+**⚠️ 顺手纠正一个我自己的错误假设**：Lexical 的**列表项会把段落"拆直"**（`listitem` 里直接是文本，
+不是段落），所以"拿列表测嵌套段落"其实测不到嵌套 —— 判据已改用**表格单元格**。
+
 
 **坑 1（本步抓出来的真洞）**：`BlockParagraphNode.insertNewAfter` 原先造的是**空 ID** 的模型段
 ⇒ "回车新建的块"在 CRDT 平面里仍然没有稳定身份。判据当场抓出，改成**当场铸 ID**。

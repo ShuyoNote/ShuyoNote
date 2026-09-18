@@ -38,8 +38,8 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
-import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode } from "./blockIdTransform";
-import { HeadingNode } from "@lexical/rich-text";
+import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode, upgradeQuoteToBlockNode } from "./blockIdTransform";
+import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -303,6 +303,11 @@ function BlockIdPlugin({
   // 标题同理（第 4 步逐类型加，每加一个类型补一条判据）。
   useEffect(
     () => editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode),
+    [editor],
+  );
+  // 引用（第 4 步第二个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode),
     [editor],
   );
 
