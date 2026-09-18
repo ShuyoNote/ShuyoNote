@@ -16,27 +16,52 @@ import type { BlockInfo } from "../../types";
 import { useBlockCache } from "../../store/blockCache";
 import { useEditorStore } from "../../store/editor";
 import { useNotes } from "../../store/notes";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 export type SerializedBlockEmbedNode = Spread<
-  { targetId: string },
+  { targetId: string; blockId?: string },
   SerializedLexicalNode
 >;
 
 // Block-level decorator for `{{blockId}}`: a read-only mirror of the target block.
 export class BlockEmbedNode extends DecoratorNode<JSX.Element> {
+  /** ⚠️ **被引用的目标块**（序列化成 `targetId`）—— 这个名字在本类里**不是**"自己的身份" */
   __blockId: string;
+  /**
+   * **自己的**块身份。⚠️ 字段名**故意**不叫 `__blockId`：本类里 `__blockId` 已经被"引用目标"占用
+   * （`BlockRefNode` 同理）。序列化出去的字段仍是标准的 `blockId`（= 身份），两者不冲突。
+   * 只有**顶层块**才有身份（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）。
+   */
+  __selfBlockId: string;
 
   static getType(): string {
     return "blockembed";
   }
 
   static clone(node: BlockEmbedNode): BlockEmbedNode {
-    return new BlockEmbedNode(node.__blockId, node.__key);
+    return new BlockEmbedNode(node.__blockId, node.__selfBlockId, node.__key);
   }
 
-  constructor(blockId: string, key?: NodeKey) {
+  constructor(blockId: string, selfBlockId = "", key?: NodeKey) {
     super(key);
     this.__blockId = blockId;
+    this.__selfBlockId = selfBlockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    const prev = prevNode as BlockEmbedNode;
+    this.__blockId = prev.__blockId;
+    this.__selfBlockId = prev.__selfBlockId;
+  }
+
+  getBlockId(): string {
+    return this.__selfBlockId;
+  }
+
+  setBlockId(selfBlockId: string): void {
+    const writable = this.getWritable();
+    writable.__selfBlockId = selfBlockId;
   }
 
   $config() {
@@ -65,16 +90,19 @@ export class BlockEmbedNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedBlockEmbedNode {
-    return {
-      ...super.exportJSON(),
-      type: "blockembed",
-      targetId: this.__blockId,
-      version: 1,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "blockembed",
+        targetId: this.__blockId,
+        version: 1,
+      },
+      this.__selfBlockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedBlockEmbedNode): BlockEmbedNode {
-    return $createBlockEmbedNode(serializedNode.targetId);
+    return $createBlockEmbedNode(serializedNode.targetId, blockIdOf(serializedNode));
   }
 
   isInline(): false {
@@ -82,8 +110,8 @@ export class BlockEmbedNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createBlockEmbedNode(blockId: string): BlockEmbedNode {
-  return $applyNodeReplacement(new BlockEmbedNode(blockId));
+export function $createBlockEmbedNode(blockId: string, selfBlockId?: string): BlockEmbedNode {
+  return $applyNodeReplacement(new BlockEmbedNode(blockId, selfBlockId ?? ""));
 }
 
 export function $isBlockEmbedNode(node: LexicalNode | null | undefined): node is BlockEmbedNode {

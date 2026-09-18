@@ -29,6 +29,7 @@ import { $createMermaidNode, MermaidNode } from "./nodes/MermaidNode";
 import { $createImageRowNode, ImageRowNode } from "./nodes/ImageRowNode";
 import { $createImageNode, ImageNode } from "./nodes/ImageNode";
 import { $createVideoNode, VideoNode } from "./nodes/VideoNode";
+import { $createBlockEmbedNode, BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
@@ -58,6 +59,7 @@ const SELF_OWNED_FACTORIES: Array<[string, () => LexicalNode, { importJSON: (jso
   ["imageRow", () => $createImageRowNode([{ src: "a.png", alt: "a" }]), ImageRowNode as never],
   ["image", () => $createImageNode("a.png", "a"), ImageNode as never],
   ["video", () => $createVideoNode("v.mp4"), VideoNode as never],
+  ["blockembed", () => $createBlockEmbedNode("target-blk"), BlockEmbedNode as never],
 ];
 
 const rootChildren = (editor: ReturnType<typeof editorWithTransform>) =>
