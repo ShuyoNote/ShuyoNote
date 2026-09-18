@@ -13,6 +13,14 @@
 
 **合计：前端 538 处 / Rust 208 处 = 746 处，分布在 80 个文件（前端 64 / Rust 16）。**
 
+> ⚠️ **两个口径别混**（2026-09-18 收口开工后必须分开看）：
+> - **原始读数**（把每一处子串都算上，含那一层自己与测试文件）：**763 处 / 83 文件**；
+> - **门禁受约束读数**（扣掉 `LAYER_FILES` 那一层、扣掉 `*.test.ts(x)`）：**644 处 / 68 文件**。
+>
+> **收口会让"原始读数"上升**（那一层与它的判据**必须**提到这两个字段），
+> 而**受约束**那份单调下降（746 → 728 → 644）。**门禁约束的是后者** ——
+> 只看原始数会得出"收口失败"的相反结论，这正是上面那句"746 → 763"的由来。
+
 > ⚠️ **旧口径作废**：本文第一版写的是「542 处 / 26 个文件」——那是我**手工扫"主要文件"**得出的，
 > 漏了测试文件与零散命中。**以门禁读数为准**（它可复跑、可回归、只减不增）。
 > 数字变大**不是**收口变难了，而是第一版**低估**了：要收的是**接口**，不是这 746 个字符串。
@@ -73,10 +81,12 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 3. 之后每做一次相关改动，顺手把白名单里的条目挪进壳里。
 
 > ✅ **第 2 条已落地**（2026-09-18）：`scripts/check-doc-content-access.mjs` ＋ 逐文件基线
-> `scripts/doc-content-access-baseline.json`（**80 文件 / 746 处**），已登记进 `scripts/lib/gates.mjs`（contract 组）。
+> `scripts/doc-content-access-baseline.json`（受约束口径 **68 文件 / 644 处**），已登记进 `scripts/lib/gates.mjs`（contract 组）。
 > 三条规则：出现**新文件**直接引用 ⇒ 红；某文件计数**超过**基线 ⇒ 红；计数**低于**基线 ⇒ 提示下调基线
 > （`--update`，**只允许变小**；首次创建基线豁免——门禁第一次跑时正是它自己把"创建基线即上涨"抓出来的）。
-> 豁免名单（本该直接访问的那一层）在脚本的 `LAYER_FILES`：`src/lib/docContent.ts`、`src-tauri/src/doc_content.rs`。
+> **两类不参与计数**（定义处都有解释）：那一层自己（`LAYER_FILES`：`src/lib/docContent.ts`、
+> `src-tauri/src/doc_content.rs`）与**测试文件**（`*.test.ts(x)` —— 它们是**判据**不是**迁移面**；
+> 若把它们也当迁移面，唯一合规的写法是让测试绕开这两个字段，那是"为绿灯把判据写弱"）。
 
 > ⚠️ 与 P0 的关系：`write` 强制带版本号 ⇒ **接口收口最好在 P0（密文格式版本化）之后或同时做**，
 > 否则壳的签名会被 P0 再改一次。
@@ -103,7 +113,23 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 **行为等价的复核方式**：壳里那 5 条 `merge` 单测是**纯函数**测试，但**Windows 跑不了 `cargo test`**
 （`0xC0000139`）⇒ 必须由 AMD/Mac 在被验 commit 上 `cargo test --lib doc_content` 复核（分工见信箱对应回信）。
 
-**白名单**：746 → **728 处**（已 `--update` 下调，**只减不增**这条机器上是硬的）。
+**白名单**：受约束口径 746 → 728（Rust 壳）→ **644 处 / 68 文件**（前端壳 ＋ 测试文件豁免），
+每次都由 `--update` **只减不增**地下调。
+
+**✅ 第 1 条的前端一侧第一切片也已落地**：`src/lib/docContent.ts`
+（`readContent` / `writeContent` / `resolveSaveContent` / ★`shouldTakeRemote`），
+调用方改道 `platform/web.ts` 的 `applyChange`（LWW 判定）与 `save_page`（保存解析）。
+判据：`src/lib/docContent.test.ts` 14 条（真 sql.js ＋ 真平台 schema），
+外加门禁 `two-device-sync`（真 `applyChange`）**14 通过 / 0 失败**。
+前端 `web.ts` 仍有约 120 处未收（它是浏览器侧**整套命令的实现**，要按命令面分批搬）。
+
+### 7.1 顺带修掉的一个**数据丢失**缺陷（前端壳的第一次"回本"）
+
+`platform/web.ts` 的 `save_page` 原先用 `str(args.content_json ?? "")` 取内容，而**只传标题的保存**
+（改名：`store/notes.ts`、`FileManagerView.tsx` 的 `savePage({ id, title })`）**必然**走到它 ⇒
+`content_json` / `content_text` 被清成空串，且 `dirty = 1` 会把这份空内容**推到服务端**（别的设备上正文也没了）。
+桌面侧一直是保留正文的（`args.content_json.unwrap_or(cur_json)`）——**两侧语义漂移**（正是 §6 那张表里的风险）。
+⇒ 把这条语义收进那一层（`resolveSaveContent`），两侧同语义、同判据。
 
 **⏳ 还没做**（别当成收口已完成）：
 

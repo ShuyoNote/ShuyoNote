@@ -10,6 +10,10 @@
 //   2. 某文件计数**超过**基线 ⇒ **红**（说明又往里加直接访问了）；
 //   3. 计数**低于**基线 ⇒ 提示"请下调基线"（`--update`），让收口**单调收敛**。
 //
+// **两类不参与计数**（见各自定义处的注释）：
+//   · 那一层自己（`LAYER_FILES`）—— 它**本来就该**直接访问；
+//   · 测试文件（`*.test.ts(x)`）—— 它们是**判据**，不是**迁移面**。
+//
 // 用法：
 //   node scripts/check-doc-content-access.mjs            # 校验（CI / 本地门禁）
 //   node scripts/check-doc-content-access.mjs --update   # 把基线下调到当前实测（只允许变小）
@@ -30,6 +34,17 @@ const ROOTS = [
 
 /** 收口后**允许**直接访问的那一层（还没建，先占位；建成后它们本就该在名单里）。 */
 const LAYER_FILES = new Set(["src/lib/docContent.ts", "src-tauri/src/doc_content.rs"]);
+
+/**
+ * **测试文件不算"要收口的调用方"**：它们构造内容、种数据、断言行为，是**判据**而不是**迁移面**。
+ *
+ * 2026-09-18 加：给前端那一层写行为级判据时，门禁把 `src/lib/docContent.test.ts`
+ * 判成"新增文件直接引用（10 处）"而变红。两种解释里选这一个的理由：
+ * 若把测试也当迁移面，唯一的合规写法是**让测试绕开这两个字段**——
+ * 那是"为了绿灯而把判据写弱"，比红灯更糟。而且原基线里本来就有
+ * `src/lib/platform/pageChunks.test.ts`（14 处），它从来不是收口对象。
+ */
+const isTestFile = (f) => /\.test\.tsx?$/.test(f);
 
 function walk(dir, exts, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -62,7 +77,7 @@ for (const { dir, exts } of ROOTS) {
 // 根因是"豁免"只写在**校验**那一支里，**写基线**那一支不知道它豁免。
 // ⇒ 统一成这一个 `regulated`：`counts` 只是原始读数（含豁免层），受约束与入库的一律用它。
 const regulated = Object.fromEntries(
-  Object.entries(counts).filter(([f]) => !LAYER_FILES.has(f)),
+  Object.entries(counts).filter(([f]) => !LAYER_FILES.has(f) && !isTestFile(f)),
 );
 
 const hadBaseline = existsSync(BASELINE);

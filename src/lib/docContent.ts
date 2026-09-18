@@ -66,6 +66,30 @@ export function writeContent(db: ContentSql, pageId: string, content: DocContent
   );
 }
 
+/**
+ * 保存时"用新值还是**保留旧值**"的解析 —— **与桌面 `commands::save_page` 的
+ * `args.X.unwrap_or(cur.X)` 同语义**：只覆盖调用方**真的带了**的字段。
+ *
+ * ⚠️ 这条语义是**数据安全**的一部分：改名（`savePage({ id, title })`）**必须**保留正文。
+ * 桌面侧一直是这样（`unwrap_or(cur_json)`）；**Web 侧原先不是**——它用
+ * `str(args.content_json ?? "")` ⇒ 只传标题就会把 `content_json`/`content_text` **清成空串**，
+ * 且 `dirty = 1` 会把这份空内容**推到服务端**（改名 ⇒ 别处内容也没了）。
+ * 2026-09-18 修：把这条语义收进这一层，两侧都走它。
+ *
+ * 判据是 **`typeof === "string"`**（不是 `!= null`）：与桌面 `Option<String>` 的反序列化一致 ——
+ * `null`/缺省/数字/对象一律按"没带"处理，**不**把 `{}` 或 `123` 当内容写进去。
+ */
+export function resolveSaveContent(
+  cur: DocContent,
+  args: { title?: unknown; content_json?: unknown; content_text?: unknown },
+): DocContent {
+  return {
+    title: typeof args.title === "string" ? args.title : cur.title,
+    json: typeof args.content_json === "string" ? args.content_json : cur.json,
+    text: typeof args.content_text === "string" ? args.content_text : cur.text,
+  };
+}
+
 /** 合并判定用的本地读数（与 Rust 侧 `LocalState` 同形）。 */
 export interface LocalContentState {
   syncSeq: number;

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { readContent, shouldTakeRemote, writeContent, type DocContent } from "./docContent";
+import { readContent, resolveSaveContent, shouldTakeRemote, writeContent, type DocContent } from "./docContent";
 
 beforeAll(() => {
   const wasm = join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm");
@@ -90,8 +90,7 @@ describe("docContent.writeContent（唯一写入口）", () => {
   });
 });
 
-describe("docContent.shouldTakeRemote（★ 唯一的合并点：页级 LWW）", () => {
-  it("本地没有这一页 ⇒ 用远端（新建）", () => {
+describe("docContent.shouldTakeRemote（★ 唯一的合并点：页级 LWW）", () => {  it("本地没有这一页 ⇒ 用远端（新建）", () => {
     expect(shouldTakeRemote(undefined, 7)).toBe(true);
   });
 
@@ -109,5 +108,43 @@ describe("docContent.shouldTakeRemote（★ 唯一的合并点：页级 LWW）",
 
   it("没改过且落后 ⇒ 用远端", () => {
     expect(shouldTakeRemote({ syncSeq: 4, dirty: 0 }, 5)).toBe(true);
+  });
+});
+
+describe("docContent.resolveSaveContent（保存时「哪些字段真的被覆盖」）", () => {
+  it("★ 只传标题（改名）⇒ **正文一个字都不动**", () => {
+    // 这是本条语义存在的理由：Web 侧原先会把 content_json/content_text 清成空串，
+    // 而 `dirty = 1` 会把这份空内容推到服务端 ⇒ 改名 = 别处内容也没了。
+    expect(resolveSaveContent(SAMPLE, { title: "新标题" })).toEqual({
+      title: "新标题",
+      json: SAMPLE.json,
+      text: SAMPLE.text,
+    });
+  });
+
+  it("只传正文（模板中心的自动保存，没有标题）⇒ 标题保留", () => {
+    expect(resolveSaveContent(SAMPLE, { content_json: "{}", content_text: "" })).toEqual({
+      title: SAMPLE.title,
+      json: "{}",
+      text: "",
+    });
+  });
+
+  it("三个都传 ⇒ 三个都用新值（含**显式空串**也照用：那是调用方的意图）", () => {
+    expect(resolveSaveContent(SAMPLE, { title: "", content_json: "", content_text: "" })).toEqual({
+      title: "",
+      json: "",
+      text: "",
+    });
+  });
+
+  it("`null` / 数字 / 对象一律按「没带」处理（与桌面 `Option<String>` 的反序列化一致）", () => {
+    for (const junk of [null, 123, { a: 1 }, []]) {
+      expect(resolveSaveContent(SAMPLE, { title: junk, content_json: junk, content_text: junk })).toEqual(SAMPLE);
+    }
+  });
+
+  it("undefined（字段缺省）也按「没带」处理", () => {
+    expect(resolveSaveContent(SAMPLE, {})).toEqual(SAMPLE);
   });
 });

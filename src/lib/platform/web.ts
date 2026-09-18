@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote } from "../docContent";
+import { shouldTakeRemote, readContent, writeContent, resolveSaveContent } from "../docContent";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -1318,25 +1318,20 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "save_page") {
       const args = a.args ?? a;
       const id = String(args.id ?? "");
-      const p = store.query<{ id: string; title: string }>("SELECT id, title FROM pages WHERE id = ?", [id])[0];
-      if (p) {
-        // Only overwrite the title when a new one is actually provided; otherwise
-        // KEEP the existing title (matches the desktop backend's
-        // `title = args.title.unwrap_or(cur_title)`). Previously this fell back to
-        // `p.id`, so a content-only save (e.g. from the template center, whose
-        // auto-save fires with no title) renamed the page to its own UUID.
-        const newTitle = typeof args.title === "string" ? args.title : p.title;
-        const json = str(args.content_json ?? "");
-        const text = str(args.content_text ?? "");
-        // Snapshot the current content BEFORE we overwrite it (version history).
-        snapshotBeforeSave(store, id, newTitle, json, text);
-        store.run(
-          `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1
-           WHERE id = ?`,
-          [newTitle, json, text, Date.now(), id],
-        );
+      // 读出口走「文档内容」那一层（阶段 0 接口收口）；"用新值还是保留旧值"的解析也在那一层
+      // （`resolveSaveContent`，与桌面 `save_page` 的 `unwrap_or(cur)` 同语义）。
+      const cur = readContent(store, id);
+      if (cur) {
+        // ⚠️ 这里**曾经**是 `str(args.content_json ?? "")`：只传标题的保存（改名，见
+        // `store/notes.ts` / `FileManagerView.tsx` 的 `savePage({ id, title })`）会把正文
+        // **清成空串**并 `dirty = 1` 推给服务端 —— 桌面侧一直是保留正文的（`unwrap_or(cur_json)`）。
+        // 2026-09-18 对齐两侧语义，判据与用例见 `docContent.resolveSaveContent` 的注释与单测。
+        const next = resolveSaveContent(cur, args);
+        // Snapshot the current state before overwriting (version history).
+        snapshotBeforeSave(store, id, next.title, next.json, next.text);
+        writeContent(store, id, next, Date.now());
         const updatedRow = store.query("SELECT * FROM pages WHERE id = ?", [id])[0];
-        recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: newTitle, content_json: json, content_text: text, updated_at: Date.now() }, Date.now());
+        recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: next.title, content_json: next.json, content_text: next.text, updated_at: Date.now() }, Date.now());
         return updatedRow as T;
       }
       return null as T;
