@@ -65,6 +65,22 @@
 运行期抛、整个 update 失败、root 变空）。后者编译期不报，是判据抓出来的。
 ⇒ 推广**装饰型自有节点**（`ImageNode`/`VideoNode`/`DrawingNode`/`MermaidNode`/`WebBookmarkNode`…）时照这条办。
 
+**★ 判据结构也有一条坑（2026-09-18 实测，`formula`/`mermaid`）**：在**裸测试编辑器**里把
+"**应用装饰节点**"单独 append 进**空根**，它会被 Lexical 的**根规范化**换成空段落（update 内还在、
+update 后没了、无报错）；`horizontalrule` 与 `callout`（ElementNode）没这现象。
+⇒ 真编辑器里它们总与段落同处，**不是产品缺陷**；但**判据不要用"空根 + 装饰节点"这种结构** ——
+验证块身份请在 `editor.update` **内**直接验"声明字段进 JSON + 读得回来"。
+
+**★ 自有节点的注册与判据共用一份清单**：`blockIdTransform.ts` 导出
+`SELF_OWNED_BLOCK_ID_NODE_TYPES`（`Editor.tsx` 的注册循环与判据表都读它），并有一条
+"清单与判据表不许漂"的判据 ⇒ 新增一类只加一行，**漏判据会当场红**。
+
+**自有节点进度（4/…）**：`callout`/`formula`/`mermaid`/`imageRow` 已接入；
+待做：`Image`/`Video`/`Drawing`/`WebBookmark`/`AttachmentRef`/`PdfRef`/`BlockEmbed`/`ColumnsBlockNode`（块级）；
+`BlockRef`/`InlineFormula`/`PageLink`（**行内，不给身份**）；`Columns`/`Column`（容器，逐类确认）；
+`SafeCodeNode`（已被 `BlockCodeNode` 取代，不再单独加）。
+
+
 
 **一条细化（本轮补的，避免落盘形态漂移）**：只有**顶层块**才有块身份 —— 嵌套段落（表格单元格/分栏/
 引用里的）**升级类型但不给 ID**，且 `exportJSON` 在 **ID 为空时不写 `blockId` 字段**。
