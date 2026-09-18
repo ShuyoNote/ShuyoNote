@@ -36,12 +36,22 @@
 
 ## 4. 步骤（每步单独提交，都能本机验证）
 
-| # | 内容 | 判据 |
-|---|---|---|
-| **1（本次）** | 决策记录（本文件）＋ `src/editor/nodes/BlockParagraphNode.ts`（新 type 段落节点，声明 `__blockId`）＋ `src/lib/blockIdentity.ts`（两形态互转、块 ID 补种）＋ 单测 | `vitest` 新测全绿 ＋ 全量 `vitest` 不回归 ＋ `tsc --noEmit` 干净 |
-| 2 | 把 `BlockParagraphNode` 注册进 `EDITOR_NODES`，并在**加载路径**接上 `toModelDoc()`；保存路径接 `toLegacyDoc()` | 打开老页面 → 内存里是新 type 且块 ID 稳定；保存后**落盘仍是老形态**（与今天逐字节一致） |
-| 3 | 让**新建块**也走新 type（Enter 分行、粘贴、markdown 导入、模板中心…） | 三种创建路径各一条用例：新块的块 ID 来自**模型**而不是保存时注入 |
-| 4 | 同类推广到其它块级类型（标题/引用/列表/代码/表格 + 18 个自有节点） | 逐类型一个判据；`--update` 收口基线只减不增 |
+| # | 内容 | 判据 | 状态 |
+|---|---|---|---|
+| **1** | 决策记录（本文件）＋ `src/editor/nodes/BlockParagraphNode.ts`（新 type 段落节点，声明 `__blockId`）＋ `src/lib/blockIdentity.ts`（两形态互转、块 ID 补种）＋ 单测 | `vitest` 新测全绿 ＋ 全量 `vitest` 不回归 ＋ `tsc --noEmit` 干净 | ✅ `7e98945`（12 条判据） |
+| **2** | 注册进 `EDITOR_NODES`；加载路径接 `toModelDoc()`、保存路径接 `toLegacyDoc()`（`Editor.tsx` / `ColumnEditor.tsx` / `emailRichNote.ts`） | 内存里是模型 type 且块 ID 稳定；写出去的产物里**一个模型 type 都没有**；全量 `vitest` 不回归 | ✅ 本提交（16 条判据，全量 1095 通过 / 1 跳过） |
+| 3 | 让**新建块**也走新 type（粘贴、markdown 导入、模板中心；Enter 已由 `insertNewAfter` 覆盖） | 三种创建路径各一条用例：新块的块 ID 来自**模型**而不是保存时注入 | 未开工 |
+| 4 | 同类推广到其它块级类型（标题/引用/列表/代码/表格 + 18 个自有节点） | 逐类型一个判据；`--update` 收口基线只减不增 | 未开工 |
+
+### 4.1 第 2 步的**已知缺口**（写清楚，别以为是全好了）
+
+- **会话内新建的块**：Enter 分行已由 `insertNewAfter` 覆盖（新块是模型类型、带空 ID，保存时注入并留待下次加载进模型）；
+  **粘贴 / markdown 导入 / 模板中心**仍产老类型段落 ⇒ 它们的块 ID 只在保存时注入，**要到下次加载才进模型**。
+  在 CRDT 开工前必须由第 3 步补齐（否则这些块在 CRDT 平面里没有稳定身份）。
+- **`exportMarkdown.ts` 有意不接转换**：它读的是落盘形态的 `content_json`，且
+  `$convertToMarkdownString` + 应用变压器对老 type 才是既定行为；把模型 type 送进去是**额外风险**而非收益。
+- **`toModelDoc` 只给顶层块补 ID**（与今天 `serializeWithBlockIds` 语义一致）；嵌套块的块身份不在本次范围。
+
 
 ## 5. 不做 / 边界
 
@@ -52,24 +62,22 @@
 
 ## 6. 第 2 步的**接线点清单**（`grep` 出来的全部，一处都不许漏）
 
-**进**（老形态 → 编辑器状态，前面接 `toModelDoc(json, newBlockId)`）：
+**进**（老形态 → 编辑器状态，接 `toModelDoc(json, newBlockId)`）：
 
-| 位置 | 说明 |
-|---|---|
-| `src/editor/Editor.tsx:156` `parseEditorState()` | **主路径**：页面打开。后面已有 `lexicalStateValid` 归一，`toModelDoc` 接在它**之前**（先换类型再校验签名） |
-| `src/editor/Editor.tsx:177` | 同一函数里的 `probeEditor.parseEditorState` |
-| `src/editor/Editor.tsx:83` / `:96` | 另一个探测助手（看内容能不能解析） |
-| `src/editor/Editor.tsx:410` | `editorState:` 初值（用上面那个函数，通常自动覆盖） |
-| `src/components/ColumnEditor.tsx:76` / `:95` | 分栏里的子编辑器 |
-| `src/lib/exportMarkdown.ts:89` | 导出 Markdown 前建的临时编辑器 |
+| 位置 | 说明 | 第 2 步做了吗 |
+|---|---|---|
+| `src/editor/Editor.tsx:156` `parseEditorState()` | **主路径**：页面打开。接在 `lexicalStateValid` **之后**（先按老形态校验/净化，再换模型类型） | ✅ |
+| `src/editor/Editor.tsx:83` / `:96` / `:177` | 探测/救回路径：**有意不接** —— 它们只判"能不能解析"，老形态本来就是它们认识的形态 | 不接（有意） |
+| `src/components/ColumnEditor.tsx:76` / `:95` | 分栏里的子编辑器（两处：初建 + 父级改动后重放） | ✅ |
+| `src/lib/exportMarkdown.ts:89` | **有意不接**：它读落盘形态；把模型 type 送进 markdown 变压器是额外风险 | 不接（有意） |
 
-**出**（编辑器状态 → JSON，后面接 `toLegacyDoc(json)`）：
+**出**（编辑器状态 → JSON，接 `toLegacyDoc(json)`）：
 
-| 位置 | 说明 |
-|---|---|
-| `src/editor/Editor.tsx:240` `serializeWithBlockIds()` | **主路径**：保存。`toJSON()` 已经带上模型里的 `blockId`；补种逻辑保留（给未迁移类型兜底），**最后一步**过 `toLegacyDoc` |
-| `src/components/ColumnEditor.tsx:104` | 分栏保存 |
-| `src/lib/emailRichNote.ts:122` | 邮件转笔记（产物会写进 `content_json`） |
+| 位置 | 说明 | 第 2 步做了吗 |
+|---|---|---|
+| `src/editor/Editor.tsx` `serializeWithBlockIds()` | **主路径**：保存。补种逻辑保留（未迁移类型兜底），**最后一步**过 `toLegacyDoc` | ✅ |
+| `src/components/ColumnEditor.tsx` `onChange` | 分栏写回父编辑器 | ✅ |
+| `src/lib/emailRichNote.ts:122` | 邮件转笔记（产物会写进 `content_json`） | ✅（结构性保险） |
 
 **也要看**（不经编辑器、直接改 JSON 的路径，**必须保持老形态**，别把模型类型漏出去）：
 

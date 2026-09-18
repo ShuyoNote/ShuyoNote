@@ -29,6 +29,24 @@ export const LEGACY_TYPE_BY_MODEL: Readonly<Record<string, string>> = Object.fro
 export type MakeBlockId = () => string;
 
 /**
+ * 造一个块 ID（UUID v4）。**全应用只留这一份实现** —— 原先在 `Editor.tsx` 里，
+ * 现在这一层也用它，避免"两个地方各造一种 ID"。
+ *
+ * `crypto.randomUUID` 在非安全上下文（http 的 WebView）里不存在 ⇒ 回落到 `getRandomValues` 手工拼 v4。
+ */
+export function newBlockId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
  * 走一遍节点树，对**每个**遇到的对象节点做一件事。
  *
  * 只走 `children`（与 `lexicalValidate` 同一条纪律）：非节点数组（如 ImageRow 的 `items`）**不碰**，

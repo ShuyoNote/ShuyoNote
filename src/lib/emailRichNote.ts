@@ -11,6 +11,7 @@
 import { createEditor, $getRoot } from "lexical";
 import { EDITOR_NODES } from "../editor/config";
 import { $importHtml } from "../editor/htmlToLexical";
+import { toLegacyDoc } from "./blockIdentity";
 
 function makeEditor() {
   return createEditor({ nodes: EDITOR_NODES, namespace: "shuyonote-email-import" });
@@ -120,7 +121,10 @@ export function emailHtmlToLexical(html: string): { content_json: string; conten
       { discrete: true },
     );
     const json = cleanEditorState(editor.getEditorState().toJSON());
-    const content_json = JSON.stringify(json);
+    // 这一层的产物会写进页面的 `content_json` ⇒ **必须是老形态**（`paragraph` + `blockId` 字段）。
+    // 本编辑器只由 `$importHtml` 建节点（内建段落），现在本来就是老形态；这里仍过一遍
+    // `toLegacyDoc` 当**结构性保险**：将来若有人往这条路径塞内存模型节点，落盘形态不会被污染。
+    const content_json = toLegacyDoc(JSON.stringify(json));
     const content_text = extractPlainText(json);
     return { content_json, content_text };
   } catch (e) {

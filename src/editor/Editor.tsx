@@ -13,6 +13,8 @@ import { CodeExtension, CodeIndentExtension, registerCodeHighlighting } from "@l
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getRoot, $createParagraphNode, createEditor, type EditorState, type LexicalEditor } from "lexical";
+// 块身份那一层：内存模型 ⇄ 落盘/同步形态（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）
+import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } from "../lib/blockIdentity";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
@@ -165,7 +167,9 @@ function parseEditorState(contentJson: string): EditorState | null {
       console.warn("[ShuyoNote] 页面内容不可用(打开空白)。content_json 长度:", contentJson.length, "片段:", contentJson.slice(0, 300));
       return null;
     }
-    contentJson = valid;
+    // ★ 老形态（落盘/同步）→ **内存模型**：`paragraph` 换成 `shuyo-paragraph`，顶层块补齐块 ID。
+    // 顺序有意如此：**先按老形态校验/净化**（wire 格式才是我们承诺稳定的那一种），再换模型类型。
+    contentJson = toModelDoc(valid, newBlockId);
   }
   // Lexical catches a malformed node internally and routes it to the editor's
   // onError (a no-op here), returning an EMPTY state — so `probeEditor` never
@@ -205,33 +209,15 @@ function parseEditorState(contentJson: string): EditorState | null {
   }
 }
 
-// Generate a stable block id (UUID v4). Falls back to crypto.getRandomValues when
-// crypto.randomUUID is unavailable (non-secure contexts).
-function newBlockId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+// Generate a stable block id (UUID v4). 实现在 `lib/blockIdentity.ts`（全应用只留一份）。
+// 这一层还要用它做**两形态互转**：内存用 `shuyo-paragraph`（块 ID 是声明属性，CRDT 才同步得到），
+// 落盘/同步一律还原成 `paragraph` + `blockId` 字段。见 docs/plans/2026-09-18-crdt-block-id-ownership.md。
 
 // Read the persisted block ids from a serialized editor state, in top-level
 // child order (null where a block has no id yet, e.g. legacy documents).
+// ⚠️ 老形态（落盘/同步）里 `blockId` 是**注入的字段**，所以要在这里读出来 → 种进内存模型的节点上。
 function extractSeedIds(contentJson: string): (string | null)[] {
-  try {
-    const parsed = JSON.parse(contentJson);
-    const children = parsed?.root?.children;
-    if (!Array.isArray(children)) return [];
-    return children.map((c: any) =>
-      typeof c?.blockId === "string" && c.blockId.length > 0 ? (c.blockId as string) : null,
-    );
-  } catch {
-    return [];
-  }
+  return topLevelBlockIds(contentJson).map((id) => (id.length > 0 ? id : null));
 }
 
 // Serialize an editor state, injecting a stable `blockId` into every top-level
@@ -246,16 +232,22 @@ function serializeWithBlockIds(editorState: EditorState, map: Map<string, string
     if (Array.isArray(rootChildren)) {
       children.forEach((child, i) => {
         if (i >= rootChildren.length) return;
+        // 内存模型里的节点（如 `BlockParagraphNode`）自己就带块 ID（`exportJSON` 已写出）；
+        // `map` 仍是**会话内的权威**（跨重排/复制粘贴保持身份，与今天一致），
+        // 所以这里：map 没有就优先用模型里的 ID（避免每次保存都把已有 ID 换掉），最后才新造。
+        const modelId = readBlockId(json?.root?.children?.[i]);
         let id = map.get(child.getKey());
         if (!id) {
-          id = newBlockId();
+          id = modelId || newBlockId();
           map.set(child.getKey(), id);
         }
         rootChildren[i].blockId = id;
       });
     }
   });
-  return JSON.stringify(json);
+  // ★ 写出去之前**还原成老形态**：`shuyo-paragraph` → `paragraph`。
+  // 落盘/同步的 JSON 里不许出现模型 type（旧版本客户端会把未注册类型整块丢掉 = 段落全丢）。
+  return toLegacyDoc(JSON.stringify(json));
 }
 
 // Tag each top-level block's DOM element with `data-block-id` so block-reference
