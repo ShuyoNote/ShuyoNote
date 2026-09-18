@@ -143,9 +143,9 @@ export interface PluginApi {
    */
     list(limit?: number): { id: string; title: string; created_at: number; updated_at: number }[];
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
-   * 返回：{id, title, content_text, kind}；不存在返回 null
+   * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**), kind, chars_total(整页字符数), offset, limit}；不存在返回 null
    */
-    get(id: string): { id: string; title: string; content_text: string; kind: string } | null;
+    get(id: string, offset?: number, limit?: number): { id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number } | null;
   /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
    */

@@ -16,11 +16,13 @@ export interface AiCapabilityMeta {
 export const AI_TOOL_META: AiCapabilityMeta[] = [
   {
     id: "pages.get",
-    description: "读取单个页面的标题与正文纯文本。参数: id (必填)。正文过长时会截断显示。",
+    description: "读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。",
     argsSchema: {
       type: "object",
       properties: {
       "id": { type: "string" },
+      "offset": { type: "number" },
+      "limit": { type: "number" },
       },
       required: ["id"],
     },

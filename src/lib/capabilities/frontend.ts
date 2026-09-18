@@ -8,6 +8,7 @@
 // 语义要与插件侧保持一致：省略 pageId 时都用**当前打开的页面**（插件侧由宿主解析，
 // 这一侧由 notes store 解析）。
 
+import { codePointLength, sliceByCodePoints } from "../textSnippet";
 import { api } from "../api";
 import { pageJsonFromText } from "../ai/lexical";
 import type { DraftResult } from "../ai/types";
@@ -47,15 +48,14 @@ function targetPage(args: Record<string, unknown>, ctx?: AdapterContext): string
 }
 
 /**
- * `pages.get` 返回正文的**上限**（字）。
+ * `pages.get` 单次返回正文的**上限**（字，按码点）。与 Rust 侧 `MAX_PAGE_TEXT_LIMIT` 一致，
+ * 也与 `capabilities/capabilities.json` 里 `limit` 的 desc 一致。
  *
  * ⚠️ 这个上限本身是既有行为（防止一页几万字把模型上下文撑爆），**没有改**。
- * 改的是"截断时**说不说**"——见 `pages.get` 实现里的注释。
- * 真正去掉这个上限需要给工具加 `offset`/`limit` 参数，而那要改
- * `capabilities/capabilities.json` 并重新生成（生成器会写出 `src-tauri/src/capabilities_gen.rs`）
- * ⇒ **Rust 侧不能在本机自验**，属"待可复核环境"的活（方案 §8.0 未做表）。
+ * 改的是"截断时**说不说**"以及"**能不能往下翻**"——见 `pages.get` 实现里的注释。
  */
 const PAGE_TEXT_LIMIT = 6000;
+const MAX_PAGE_TEXT_LIMIT = 20_000;
 
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.search": async (args) => {
@@ -71,32 +71,52 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     if (!id) return { ok: false, error: "pages.get 需要 id" };
     const p = await api.getPage(id);
     if (!p) return { ok: false, error: `未找到页面 ${id}` };
-    const text = (p.content_text ?? "").trim();
-    const total = text.length;
-    const truncated = total > PAGE_TEXT_LIMIT;
+
+    // ⚠️ **这里刻意不再 `trim()`**（2026-09-18 改）。原因不是洁癖，是分页一旦存在，
+    // 窗口的"起点"就必须是**同一个固定字符串**：
+    //   · 桌面路径（Rust `cap_pages_get`）切的是库里原始的 `content_text`；
+    //   · 这里若先 trim，`offset=6000` 在两条路径上指向的**不是同一个字符**
+    //     ⇒ 调用方按同一条规则翻页会漏字/重字，而这种错**只在正文首尾有空白时**才出现（极难发现）。
+    // 返回忠实原文也顺带满足"截断不改写文本"的既有原则（见下）。
+    const raw = String(p.content_text ?? "");
+    const total = codePointLength(raw); // 按码点计数，emoji 不会被算成 2
+    const offset = Math.max(0, Math.floor(Number(args.offset ?? 0)) || 0);
+    const limit = Math.min(MAX_PAGE_TEXT_LIMIT, Math.max(1, Math.floor(Number(args.limit ?? PAGE_TEXT_LIMIT)) || PAGE_TEXT_LIMIT));
+    const text = sliceByCodePoints(raw, offset, limit);
+    const returned = codePointLength(text);
+    // `truncated` 的含义是"**还没读完**"（窗口没够到正文末尾），而不是"这页太长"：
+    // 翻到最后一页时它必须是 false，否则模型会以为还有内容、无限翻下去。
+    const truncated = offset + returned < total;
 
     // ⚠️ **"成功"不等于"读全了"** —— 与抽取层的 `ExtractCoverage` 同一条原则（方案 §15.10）。
     // 原先截断后只在末尾补一个 `…`，有两个问题：
     //  ① **有歧义**：原文本身可能就以省略号结尾，模型分不清哪个是我们加的；
     //  ② **没信号**：模型看到 6000 字会以为"这就是整页"，然后自信地总结一个片段。
-    // ⇒ 现在**不再改写文本**（返回的就是原文的忠实前缀），截断与否由**显式字段**说明，
+    // ⇒ 现在**不再改写文本**（返回的就是原文的忠实窗口），截断与否由**显式字段**说明，
     //    并且**直接告诉模型下一步该做什么**（否则它拿到"已截断"也不知道怎么办）。
+    const parts: string[] = [];
+    if (truncated) {
+      parts.push(
+        `内容已截断：该页正文共 ${total} 字，本次返回第 ${offset + 1}~${offset + returned} 字。` +
+          `**不要据此以为读完了整页**；继续读取请再调 pages.get 并传 offset=${offset + returned}` +
+          `（也可先 pages.search 定位相关段落，再用 blocks.list 逐块读）。`,
+      );
+    } else if (offset > 0) {
+      // 翻到末尾时也要有明确信号，否则模型分不清"读完了"和"传错 offset 拿到空串"。
+      parts.push(`本次返回第 ${offset + 1}~${offset + returned} 字，已到正文末尾（共 ${total} 字）。`);
+    }
     return {
       ok: true,
       page: {
         id: p.id,
         title: p.title,
-        content_text: truncated ? text.slice(0, PAGE_TEXT_LIMIT) : text,
+        content_text: text,
         truncated,
         chars_total: total,
-        chars_returned: truncated ? PAGE_TEXT_LIMIT : total,
-        ...(truncated
-          ? {
-              note:
-                `内容已截断：该页正文共 ${total} 字，这里只返回了前 ${PAGE_TEXT_LIMIT} 字。` +
-                `**不要据此以为读完了整页**；请先 pages.search 定位相关段落，再用 blocks.list 逐块读。`,
-            }
-          : {}),
+        offset,
+        limit,
+        chars_returned: returned,
+        ...(parts.length ? { note: parts.join("") } : {}),
       },
     };
   },

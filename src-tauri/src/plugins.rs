@@ -1601,6 +1601,10 @@ fn cap_kv_remove(key: &str, scope: &str) -> CapResult {
 /// 一个能力的实现：成功给 JSON 值（shim 侧 JSON.parse），失败给「错误码: 说明」。
 type CapResult = Result<serde_json::Value, String>;
 
+/// `pages.get` 单次返回的字符上限（与 `capabilities.json` 里 `limit` 的 desc 一致）。
+/// 为什么要上限：这是给 AI/插件读的一页正文，单次几十万字会把上下文一口气撑爆。
+const MAX_PAGE_TEXT_LIMIT: i64 = 20_000;
+
 fn cap_page_current() -> CapResult {
     Ok(serde_json::Value::String(
         RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
@@ -1662,25 +1666,47 @@ fn cap_pages_list(limit: i64) -> CapResult {
     })
 }
 
-fn cap_pages_get(id: &str) -> CapResult {
+/// `pages.get`：读一页的标题与正文。**支持分页**（`offset`/`limit`）。
+///
+/// 口径（两条都必须写清，否则调用方会算错窗口）：
+/// 1. **按 Unicode 标量（码点）计数，不是 UTF-16 码元、也不是字节** ——
+///    Rust 侧天然是 `chars()`；TS 侧对应 `Array.from()`。这样 emoji / 生僻字（代理对）
+///    **不会被切成孤立的一半**（那会让调用方看到 `a\uD83D…` 这种半个字符）。
+/// 2. 越界**不是错误**：`offset` 超过总长 ⇒ 空串 + `chars_total` 仍是真实总数
+///    （调用方据此知道"我翻过头了"，而不是以为"这页是空的"）。
+///
+/// 返回值里带 `chars_total` / `offset` / `limit` 三个读数：**只读了窗口就当整页用**是这类工具
+/// 最常见的误用，而调用方光看 `content_text` 的长度分不出"读完了"还是"被截了"。
+fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
+    let off = offset.max(0) as usize;
+    let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
     with_read_conn(|c| {
         use rusqlite::OptionalExtension;
-        let row = c
+        let row: Option<(String, String, String)> = c
             .query_row(
-                "SELECT id, title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
-                |r| {
-                    Ok(serde_json::json!({
-                        "id": r.get::<_, String>(0)?,
-                        "title": r.get::<_, String>(1)?,
-                        "content_text": r.get::<_, String>(2)?,
-                        "kind": r.get::<_, String>(3)?,
-                    }))
-                },
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(|e| format!("db_error: {e}"))?;
-        Ok(row.unwrap_or(serde_json::Value::Null))
+        let Some((title, text, kind)) = row else {
+            return Ok(serde_json::Value::Null);
+        };
+        // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
+        // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
+        let chars: Vec<char> = text.chars().collect();
+        let chars_total = chars.len();
+        let window: String = chars.iter().skip(off).take(lim).collect();
+        Ok(serde_json::json!({
+            "id": id,
+            "title": title,
+            "content_text": window,
+            "kind": kind,
+            "chars_total": chars_total,
+            "offset": off,
+            "limit": lim,
+        }))
     })
 }
 
@@ -2080,7 +2106,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "page.current" => cap_page_current(),
         "pages.count" => cap_pages_count(),
         "pages.list" => cap_pages_list(arg_i64("limit", 50)),
-        "pages.get" => cap_pages_get(&arg_str("id")?),
+        "pages.get" => cap_pages_get(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 6000)),
         "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 20)),
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
@@ -7149,6 +7175,110 @@ register({ id: "s.run", title: "结构化", run: function () {
         RUN_STATE.with(|s| *s.borrow_mut() = state.clone());
         let out = dispatch_capability(method, args)?;
         serde_json::from_str(&out).map_err(|e| e.to_string())
+    }
+
+    /// `pages.get` 分页的**跨语言**判据：与 TS 适配器读**同一份夹具**
+    /// （`tests/pages-get-window-parity.json`，TS 侧在 `src/lib/capabilities/pagesGet.test.ts`）。
+    ///
+    /// 为什么必须共用一份而不是各写各的：web 路径与桌面路径切的是**同一个页面的同一个字符串**，
+    /// 两侧口径漂移**没有编译期信号**（比如有人在 TS 侧把 `Array.from` 换回 `slice`），
+    /// 症状只是 emoji/生僻字处偶尔漏一个字——等有人发现时早就没人记得改过什么了。
+    /// 夹具里期望值只写**读数**（偏移/总数/返回数/是否还没读完），窗口内容由两侧各自与
+    /// **独立**的码点切片参照实现逐字比对：写死正文会让夹具本身变成第三份会漂移的实现。
+    #[test]
+    fn pages_get_paginates_by_code_point_like_the_ts_side() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            unit: Vec<u32>,
+            repeat: usize,
+            offset: i64,
+            limit: i64,
+            #[serde(rename = "expectOffset")]
+            expect_offset: i64,
+            #[serde(rename = "expectLimit")]
+            expect_limit: i64,
+            #[serde(rename = "expectTotal")]
+            expect_total: usize,
+            #[serde(rename = "expectReturned")]
+            expect_returned: usize,
+            #[serde(rename = "expectTruncated")]
+            expect_truncated: bool,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            #[serde(rename = "defaultLimit")]
+            default_limit: i64,
+            #[serde(rename = "limitMax")]
+            limit_max: i64,
+            cases: Vec<Case>,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/pages-get-window-parity.json"))
+                .expect("夹具必须能解析（改了结构就要同步改两侧）");
+        assert!(fixture.cases.len() >= 6, "夹具不能是空的");
+        assert_eq!(fixture.default_limit, 6000, "默认窗口与注册表 desc 必须一致");
+        assert_eq!(fixture.limit_max, MAX_PAGE_TEXT_LIMIT, "上限改了这里先红");
+
+        let (space, dir) = seed_space("pages-get-window");
+        let st = state_for_space(&space, &dir);
+        for (i, c) in fixture.cases.iter().enumerate() {
+            let unit: String = c
+                .unit
+                .iter()
+                .map(|cp| char::from_u32(*cp).expect("夹具里的码点必须合法"))
+                .collect();
+            let text = unit.repeat(c.repeat);
+            let id = format!("pk{i}");
+            {
+                let conn = crate::db::open_space_conn_at(&space, &dir).unwrap();
+                conn.execute(
+                    "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                     VALUES (?1,'s1','夹具','{}',?2,'page',?3,?3)",
+                    params![id, text, now_ms()],
+                )
+                .unwrap();
+            }
+
+            let args =
+                serde_json::json!({ "id": &id, "offset": c.offset, "limit": c.limit }).to_string();
+            let got = call(&st, "pages.get", &args).unwrap();
+
+            assert_eq!(
+                got["chars_total"].as_u64().unwrap() as usize,
+                c.expect_total,
+                "用例[{}] {}",
+                i,
+                c.name
+            );
+            assert_eq!(got["offset"].as_i64().unwrap(), c.expect_offset, "用例[{i}] offset");
+            assert_eq!(got["limit"].as_i64().unwrap(), c.expect_limit, "用例[{i}] limit");
+            let window = got["content_text"].as_str().unwrap();
+            assert_eq!(
+                window.chars().count(),
+                c.expect_returned,
+                "用例[{i}] content_text 的码点数"
+            );
+            // 参照实现独立写一遍（不用 cap_pages_get 自己那一行），否则就是拿实现验实现。
+            let reference: String = text
+                .chars()
+                .skip(c.expect_offset as usize)
+                .take(c.expect_limit as usize)
+                .collect();
+            assert_eq!(window, reference, "用例[{i}] 窗口内容必须逐字相同");
+            // `truncated` 的含义是「还没读完」：翻到末尾必须是 false，否则调用方会无限翻下去。
+            let truncated = c.expect_offset as usize + window.chars().count() < c.expect_total;
+            assert_eq!(truncated, c.expect_truncated, "用例[{i}] 是否还没读完的推导");
+        }
+
+        // 越界不报错（返回空串 + 真实总数）、页面不存在仍然 null —— 两条既有契约，分页不能顺手改掉。
+        let beyond = call(&st, "pages.get", r#"{"id":"pk4","offset":99999,"limit":10}"#).unwrap();
+        assert!(beyond["content_text"].as_str().unwrap().is_empty());
+        assert_eq!(beyond["chars_total"].as_u64().unwrap(), 100);
+        assert!(
+            call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
+            "不存在的页面仍然是 null"
+        );
     }
 
     #[test]
