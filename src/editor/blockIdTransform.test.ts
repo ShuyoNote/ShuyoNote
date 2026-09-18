@@ -13,6 +13,7 @@ import { $createListItemNode, $createListNode, ListNode } from "@lexical/list";
 
 import { EDITOR_NODES } from "./config";
 import {
+  ensureBlockIdOnTopLevelNode,
   upgradeCodeToBlockNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
@@ -21,6 +22,7 @@ import {
   upgradeQuoteToBlockNode,
   upgradeTableToBlockNode,
 } from "./blockIdTransform";
+import { $createCalloutNode, CalloutNode } from "./nodes/CalloutNode";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
 import { $createHorizontalRuleNode, HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
@@ -35,6 +37,7 @@ function editorWithTransform() {
   editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode);
   editor.registerNodeTransform(HorizontalRuleNode, upgradeHorizontalRuleToBlockNode);
   editor.registerNodeTransform(TableNode, upgradeTableToBlockNode);
+  editor.registerNodeTransform(CalloutNode, ensureBlockIdOnTopLevelNode);
   return editor;
 }
 
@@ -269,5 +272,33 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     const rows = kid.children as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2); // 两行
     expect((rows[0].children as unknown[])).toHaveLength(2); // 每行两格
+  });
+
+  it("★ 自有节点（callout）：**类型不变**、新建的顶层块拿到块 ID", () => {
+    // 自有点节与内建类型的路子不同：类就是类型 ⇒ **不需要新 type、不需要映射**，
+    // 只要类里有声明字段 + `ensureBlockIdOnTopLevelNode` 给新建的顶层块补 ID。
+    const editor = editorWithTransform();
+    editor.update(() => {
+      $getRoot().append($createCalloutNode());
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("callout"); // 类型**不变**（与内建类型不同）
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
+  });
+
+  it("自有节点的**嵌套**实例不给身份（同一条规则）", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const outer = $createCalloutNode();
+      outer.append($createCalloutNode()); // 嵌套 callout
+      $getRoot().append(outer);
+    }, { discrete: true });
+
+    const outer = rootChildren(editor)[0];
+    const inner = (outer.children as Array<Record<string, unknown>>)[0];
+    expect(typeof outer.blockId).toBe("string"); // 顶层有
+    expect(inner.blockId).toBeUndefined(); // 嵌套没有
   });
 });

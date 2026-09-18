@@ -163,3 +163,25 @@ export function upgradeTableToBlockNode(node: TableNode): void {
   replacement.setDirection(node.getDirection());
   node.replace(replacement, true);
 }
+
+/**
+ * **自有节点**（应用自己写的类型）的块身份：**不需要新 type、也不需要映射** ——
+ * 类就是类型，直接在类里加了声明字段即可；这里只负责给**新建的顶层块**补一个 ID。
+ *
+ * 为什么仍要一个变换：`$createXxxNode()` 造出来的节点 ID 是空的（不可能每个创建点都改），
+ * 而"空 ID"意味着它在 CRDT 平面里没有稳定身份。挂一条变换、只认顶层块、且**只在空 ID 时**写
+ * —— 幂等，不会把已有身份重铸。
+ */
+export function ensureBlockIdOnTopLevelNode(node: BlockIdCarrier): void {
+  const parent = node.getParent();
+  if (parent === null || parent.getType() !== "root") return; // 嵌套块不给身份
+  if (node.getBlockId().length > 0) return; // 已有身份不重铸（也是这条变换的出口条件）
+  node.setBlockId(newBlockId());
+}
+
+/** 带块身份 API 的节点（自有节点在类里实现这三个即可）。 */
+export interface BlockIdCarrier {
+  getParent(): { getType(): string } | null;
+  getBlockId(): string;
+  setBlockId(id: string): void;
+}

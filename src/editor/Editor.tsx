@@ -39,6 +39,7 @@ import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
 import {
+  ensureBlockIdOnTopLevelNode,
   upgradeCodeToBlockNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
@@ -52,6 +53,7 @@ import { ListNode } from "@lexical/list";
 import { SafeCodeNode } from "./nodes/SafeCodeNode";
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { TableNode } from "@lexical/table";
+import { CalloutNode } from "./nodes/CalloutNode";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -340,6 +342,11 @@ function BlockIdPlugin({
   // 表格（第 4 步第六个类型）。
   useEffect(
     () => editor.registerNodeTransform(TableNode, upgradeTableToBlockNode),
+    [editor],
+  );
+  // 自有节点（不需要新 type）：只给**新建的顶层块**补身份。每加一个类型补一行 + 一条判据。
+  useEffect(
+    () => editor.registerNodeTransform(CalloutNode, ensureBlockIdOnTopLevelNode),
     [editor],
   );
 
