@@ -12,9 +12,10 @@ import {
 import type { JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 export type SerializedVideoNode = Spread<
-  { src: string; hash?: string | null; mime?: string | null },
+  { src: string; hash?: string | null; mime?: string | null; blockId?: string },
   SerializedLexicalNode
 >;
 
@@ -22,20 +23,37 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   __src: string;
   __hash: string | null;
   __mime: string | null;
+  /** 块身份（只有**顶层块**才有；行内/嵌套实例不给）。 */
+  __blockId: string;
 
   static getType(): string {
     return "video";
   }
 
   static clone(node: VideoNode): VideoNode {
-    return new VideoNode(node.__src, node.__hash, node.__mime, node.__key);
+    return new VideoNode(node.__src, node.__hash, node.__mime, node.__blockId, node.__key);
   }
 
-  constructor(src: string, hash: string | null = null, mime: string | null = null, key?: NodeKey) {
+  constructor(src: string, hash: string | null = null, mime: string | null = null, blockId = "", key?: NodeKey) {
     super(key);
     this.__src = src;
     this.__hash = hash;
     this.__mime = mime;
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as VideoNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   $config() {
@@ -82,18 +100,26 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedVideoNode {
-    return {
-      ...super.exportJSON(),
-      type: "video",
-      version: 1,
-      src: this.__src,
-      hash: this.__hash ?? undefined,
-      mime: this.__mime ?? undefined,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "video",
+        version: 1,
+        src: this.__src,
+        hash: this.__hash ?? undefined,
+        mime: this.__mime ?? undefined,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedVideoNode): VideoNode {
-    return $createVideoNode(serializedNode.src, serializedNode.hash ?? null, serializedNode.mime ?? null);
+    return $createVideoNode(
+      serializedNode.src,
+      serializedNode.hash ?? null,
+      serializedNode.mime ?? null,
+      blockIdOf(serializedNode),
+    );
   }
 
   isInline(): false {
@@ -101,8 +127,13 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createVideoNode(src: string, hash?: string | null, mime?: string | null): VideoNode {
-  return $applyNodeReplacement(new VideoNode(src, hash ?? null, mime ?? null));
+export function $createVideoNode(
+  src: string,
+  hash?: string | null,
+  mime?: string | null,
+  blockId?: string,
+): VideoNode {
+  return $applyNodeReplacement(new VideoNode(src, hash ?? null, mime ?? null, blockId ?? ""));
 }
 
 export function $isVideoNode(node: LexicalNode | null | undefined): node is VideoNode {

@@ -27,6 +27,8 @@ import { $createCalloutNode, CalloutNode } from "./nodes/CalloutNode";
 import { $createFormulaNode, FormulaNode } from "./nodes/FormulaNode";
 import { $createMermaidNode, MermaidNode } from "./nodes/MermaidNode";
 import { $createImageRowNode, ImageRowNode } from "./nodes/ImageRowNode";
+import { $createImageNode, ImageNode } from "./nodes/ImageNode";
+import { $createVideoNode, VideoNode } from "./nodes/VideoNode";
 import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
@@ -54,6 +56,8 @@ const SELF_OWNED_FACTORIES: Array<[string, () => LexicalNode, { importJSON: (jso
   ["formula", () => $createFormulaNode("x^2"), FormulaNode as never],
   ["mermaid", () => $createMermaidNode("graph TD; A-->B"), MermaidNode as never],
   ["imageRow", () => $createImageRowNode([{ src: "a.png", alt: "a" }]), ImageRowNode as never],
+  ["image", () => $createImageNode("a.png", "a"), ImageNode as never],
+  ["video", () => $createVideoNode("v.mp4"), VideoNode as never],
 ];
 
 const rootChildren = (editor: ReturnType<typeof editorWithTransform>) =>

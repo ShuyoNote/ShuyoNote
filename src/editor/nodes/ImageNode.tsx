@@ -12,6 +12,7 @@ import {
 import type { CSSProperties, JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 export type SerializedImageNode = Spread<
   {
@@ -22,6 +23,7 @@ export type SerializedImageNode = Spread<
     height?: number | null;
     hash?: string | null;
     mime?: string | null;
+    blockId?: string;
   },
   SerializedLexicalNode
 >;
@@ -34,6 +36,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   __height: number | null;
   __hash: string | null;
   __mime: string | null;
+  /** 块身份（只有**顶层块**才有；行内图片 `inline=true` 与嵌套实例都不给）。 */
+  __blockId: string;
 
   static getType(): string {
     return "image";
@@ -48,6 +52,7 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       node.__height,
       node.__hash,
       node.__mime,
+      node.__blockId,
       node.__key,
     );
   }
@@ -60,6 +65,7 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     height: number | null = null,
     hash: string | null = null,
     mime: string | null = null,
+    blockId = "",
     key?: NodeKey,
   ) {
     super(key);
@@ -70,6 +76,21 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     this.__height = height;
     this.__hash = hash;
     this.__mime = mime;
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as ImageNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   $config() {
@@ -133,18 +154,21 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedImageNode {
-    return {
-      ...super.exportJSON(),
-      type: "image",
-      version: 1,
-      src: this.__src,
-      altText: this.__altText,
-      inline: this.__inline,
-      width: this.__width,
-      height: this.__height,
-      hash: this.__hash ?? undefined,
-      mime: this.__mime ?? undefined,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "image",
+        version: 1,
+        src: this.__src,
+        altText: this.__altText,
+        inline: this.__inline,
+        width: this.__width,
+        height: this.__height,
+        hash: this.__hash ?? undefined,
+        mime: this.__mime ?? undefined,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedImageNode): ImageNode {
@@ -156,6 +180,7 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       serializedNode.height ?? null,
       serializedNode.hash ?? null,
       serializedNode.mime ?? null,
+      blockIdOf(serializedNode),
     );
   }
 
@@ -172,8 +197,11 @@ export function $createImageNode(
   height: number | null = null,
   hash?: string | null,
   mime?: string | null,
+  blockId?: string,
 ): ImageNode {
-  return $applyNodeReplacement(new ImageNode(src, altText, inline, width, height, hash, mime));
+  return $applyNodeReplacement(
+    new ImageNode(src, altText, inline, width, height, hash, mime, blockId ?? ""),
+  );
 }
 
 export function $isImageNode(node: LexicalNode | null | undefined): node is ImageNode {

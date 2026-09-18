@@ -38,6 +38,8 @@ import { CalloutNode } from "./nodes/CalloutNode";
 import { FormulaNode } from "./nodes/FormulaNode";
 import { MermaidNode } from "./nodes/MermaidNode";
 import { ImageRowNode } from "./nodes/ImageRowNode";
+import { ImageNode } from "./nodes/ImageNode";
+import { VideoNode } from "./nodes/VideoNode";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -204,5 +206,7 @@ export const SELF_OWNED_BLOCK_ID_NODE_TYPES: Array<Klass<LexicalNode>> = [
   FormulaNode,
   MermaidNode,
   ImageRowNode,
+  ImageNode,
+  VideoNode,
 ];
 
