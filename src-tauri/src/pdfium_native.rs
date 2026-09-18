@@ -73,6 +73,19 @@ const fn max_page_pixels() -> i64 {
 /// 所以不能无界增长；按"最久未用"淘汰。
 const DOC_CACHE_LIMIT: usize = 4;
 
+/// **未绘制区域**的清屏色：全透明 `(0,0,0,0)`。
+///
+/// ⚠️ `pdfium-render` 的默认是**不透明白**：`PdfRenderConfig` 里 `do_clear_bitmap_before_rendering: true`
+/// ＋ `clear_color: PdfColor::WHITE`（`render_config.rs`）⇒ 渲染前会先把整张位图 `FPDFBitmap_FillRect`
+/// 刷成白，再让 PDFium 往上画。而 **MuPDF 那条走的是 `alpha=true`**（`pdf_native`）——
+/// 未绘制区域是**透明**的，由前端铺 `--surface`／护眼纸底（`App.css` 的 `.pdf-reader-stage`）。
+///
+/// ⇒ 不显式改这里，两条路的"未绘制区域语义"就不一致，P3 对拍里表现为**约 99.8% 像素不同**
+/// （AMD 2026-09-18 在 Linux 上实测：只有背景不同，归一后降到 1.2–7.6%）。
+/// 清成透明让两条路**语义一致**：切引擎对观感（含暗色 + 护眼四档）**零影响**，
+/// 且对拍比的是**内容**而不是"谁铺的底"。
+const CLEAR_COLOR_TRANSPARENT: PdfColor = PdfColor::new(0, 0, 0, 0);
+
 /// 进程级唯一的 PDFium 实例。只建一次、永不释放。
 static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
 
@@ -97,7 +110,8 @@ fn doc_cache() -> &'static Mutex<HashMap<String, CachedDocument>> {
 /// 优先级：**环境变量**（联调/测试用）→ **可执行文件同目录**（发行包形态，由打包步骤把
 /// `pdfium.dll`/`libpdfium.so`/`libpdfium.dylib` 放到那里，方案 §4 的"首次启动即可渲染"）→
 /// **macOS 的 `.app/Contents/Frameworks`**（AMD 复核第 7 条：macOS 动态库的常规位置，
-/// 且要一起签名/公证）→ **仅 debug 构建**再回退到仓库内的 `src-tauri/vendor/pdfium/<平台>/bin`。
+/// 且要一起签名/公证）→ **仅 debug 构建**再回退到仓库内的
+/// `src-tauri/vendor/pdfium/<平台>/{bin,lib}/`（目录前缀各平台不同，逐个探测，见下方注释）。
 /// 都找不到时由 [`shared_pdfium`] 报出**带路径的可操作错误**。
 fn library_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("SHUYONOTE_PDFIUM_DIR") {
@@ -123,7 +137,12 @@ fn library_dir() -> PathBuf {
     }
     #[cfg(debug_assertions)]
     {
-        // `fetch-pdfium.mjs` 把库解到 `src-tauri/vendor/pdfium/<平台>/bin/`（见该脚本与方案 §0.1）。
+        // `fetch-pdfium.mjs` 把库解到 `src-tauri/vendor/pdfium/<平台>/<spec.lib>`，而 `spec.lib` 的
+        // 目录前缀**各平台不统一**：Windows 是 `bin/pdfium.dll`，Linux / macOS / Android 是
+        // `lib/libpdfium.so|dylib`（见该脚本 `PLATFORMS` 与方案 §0.1）。
+        //
+        // ⚠️ 2026-09-18 AMD 在 Linux/macOS 实测：这里原来**写死 `bin`** ⇒ 那两个平台的 vendored 回退
+        //    **从来不会命中**（Windows 恰好就是 `bin`，所以在本机一直没暴露）。⇒ 改为按候选目录逐个探测。
         let platform = if cfg!(target_os = "windows") {
             if cfg!(target_arch = "aarch64") { "win-arm64" } else { "win-x64" }
         } else if cfg!(target_os = "macos") {
@@ -133,13 +152,19 @@ fn library_dir() -> PathBuf {
         } else {
             "linux-x64"
         };
-        let vendored = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let vendored_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("vendor")
             .join("pdfium")
-            .join(platform)
-            .join("bin");
-        if Pdfium::pdfium_platform_library_name_at_path(&vendored).exists() {
-            return vendored;
+            .join(platform);
+        for sub in ["bin", "lib", ""] {
+            let dir = if sub.is_empty() {
+                vendored_root.clone()
+            } else {
+                vendored_root.join(sub)
+            };
+            if Pdfium::pdfium_platform_library_name_at_path(&dir).exists() {
+                return dir;
+            }
         }
     }
     // 最后回退到可执行文件目录，让错误信息里的路径有意义。
@@ -330,7 +355,9 @@ fn render_entry(
 
     let config = PdfRenderConfig::new()
         .set_target_width(target_width)
-        .set_target_height(target_height);
+        .set_target_height(target_height)
+        // 未绘制区域清成**透明**，与 MuPDF 的 `alpha=true` 对齐（理由见 `CLEAR_COLOR_TRANSPARENT`）。
+        .set_clear_color(CLEAR_COLOR_TRANSPARENT);
     let bitmap = page
         .render_with_config(&config)
         .map_err(|e| format!("PDFium 渲染第 {page_index} 页失败：{e}"))?;
