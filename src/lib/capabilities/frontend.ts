@@ -36,19 +36,30 @@ function draft(key: string, summary: string, payload: unknown): DraftResult {
 }
 
 /**
- * 参数解析：非有限数（`undefined`/`NaN`/字符串）取默认值，**0 与负数照原样返回**。
+ * 数值型参数的取值口径：**只认整数（或能解析成整数的字符串），其余一律回落默认值**。
  *
- * 为什么不写 `Number(x) || d`：`0 || d` 会得到 `d` —— 于是 `limit=0` 在 TS 侧变成"没传"，
- * 而 Rust 侧的 `clamp(1, ·)` 把它夹到 1。同一个调用在两条路径上得到不同结果，
- * 且只在边界值上出现（夹具的 ★ 用例钉着它）。
+ * 这是照着 Rust 侧逐字对齐的 —— `plugins.rs` 的 `arg_i64`：
+ *
+ * ```rust
+ * args.get(name).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(default)
+ * ```
+ *
+ * 于是三件事必须一致：① `0` 与负数**是合法值**（要取默认值的是"非法值"，不是"假值"）——
+ * 写 `Number(x) || d` 会把 `0` 当成没传（这轮在四个适配器上各犯了一遍）；
+ * ② 小数**回落默认值**（Rust 的 `as_i64()` 对 `2.5` 拿不到值）—— 取地板会在 `limit: 2.5` 时
+ * 变成 TS 2 / 桌面 200；③ 数字字符串可以（`"7"` ⇒ 7，与 Rust 的 `parse()` 一致，含前置 `+`）。
  */
-function toFiniteOr(v: unknown, d: number): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
+function intOr(v: unknown, d: number): number {
+  if (typeof v === "number") return Number.isSafeInteger(v) ? v : d;
+  if (typeof v === "string" && /^[+-]?\d+$/.test(v)) {
+    const n = Number(v);
+    return Number.isSafeInteger(n) ? n : d;
+  }
+  return d;
 }
 
 /**
- * 数值型参数的**统一读法**：`默认值 → 夹取到 [min, max] → 取地板`。
+ * 数值型参数的**统一读法**：`取值（只认整数，见 intOr）→ 夹取到 [min, max]`。
  * 与 Rust 侧的 `arg_i64("<名>", 默认)` ＋ `limit.clamp(min, max)` 是同一套口径。
  *
  * 为什么必须收成一处（2026-09-18）：这轮对着注册表核对时，同一个坑在**四个适配器**上各犯了一遍 ——
@@ -65,7 +76,7 @@ function intArg(
   min: number,
   max = Number.MAX_SAFE_INTEGER,
 ): number {
-  return Math.min(max, Math.max(min, Math.floor(toFiniteOr(args[name], def))));
+  return Math.min(max, Math.max(min, intOr(args[name], def)));
 }
 
 /**

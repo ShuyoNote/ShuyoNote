@@ -97,9 +97,14 @@ describe("files.read：offset/limit 边界", () => {
     expect(seen()).toEqual([0, 1000]);
   });
 
-  it("小数 ⇒ 取地板（与 Rust 的整数语义一致，不把 2.7 传下去）", async () => {
+  it("小数 ⇒ **回落默认值**（Rust 的 `arg_i64` 用 `as_i64()`，`2.5` 拿不到值 ⇒ 默认；取地板会让两端不同）", async () => {
     await call({ id: "a1", offset: 2.7, limit: 3.9 });
-    expect(seen()).toEqual([2, 3]);
+    expect(seen()).toEqual([0, 200]);
+  });
+
+  it("整数字符串可以（`\"7\"` ⇒ 7，与 Rust 的 `parse()` 一致，也接受前置 `+`）", async () => {
+    await call({ id: "a1", offset: "5", limit: "+7" });
+    expect(seen()).toEqual([5, 7]);
   });
 
   it("附件不存在 ⇒ `file: null`（与「还没抽过」的 `segments: []` 分开，这条是既有语义）", async () => {
