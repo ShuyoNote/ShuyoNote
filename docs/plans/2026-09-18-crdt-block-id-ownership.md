@@ -75,8 +75,9 @@ update 后没了、无报错）；`horizontalrule` 与 `callout`（ElementNode�
 `SELF_OWNED_BLOCK_ID_NODE_TYPES`（`Editor.tsx` 的注册循环与判据表都读它），并有一条
 "清单与判据表不许漂"的判据 ⇒ 新增一类只加一行，**漏判据会当场红**。
 
-**自有节点进度（4/…）**：`callout`/`formula`/`mermaid`/`imageRow` 已接入；
-待做：`Image`/`Video`/`Drawing`/`WebBookmark`/`AttachmentRef`/`PdfRef`/`BlockEmbed`/`ColumnsBlockNode`（块级）；
+**自有节点进度（6/…）**：`callout`/`formula`/`mermaid`/`imageRow`/`image`/`video` 已接入
+（`ImageNode` 同为行内与块级用同一个类 —— 身份只发给顶层块，行内实例天然没有，不需要在类里分叉）；
+待做：`Drawing`/`WebBookmark`/`AttachmentRef`/`PdfRef`/`BlockEmbed`/`ColumnsBlockNode`（块级）；
 `BlockRef`/`InlineFormula`/`PageLink`（**行内，不给身份**）；`Columns`/`Column`（容器，逐类确认）；
 `SafeCodeNode`（已被 `BlockCodeNode` 取代，不再单独加）。
 
