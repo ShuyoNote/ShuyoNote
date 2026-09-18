@@ -4,8 +4,11 @@
 // 与"只有顶层块才有块身份"这条规则一致（理由见 `docs/plans/2026-09-18-crdt-block-id-ownership.md`）。
 //
 // ⚠️ `TableNode` 的状态比前面几个厚：`rowStriping` / `frozenColumnCount` / `frozenRowCount` / `colWidths`。
-// 它们**不是**都能用 getter 读出来（只有 `getRowStriping()` / `getColWidths()`），
-// 所以迁移时**不要手抄**每个字段 —— 让基类的 `updateFromJSON(serialized)` 自己吃一遍（见变换里的做法）。
+// 它们**是**有 getter 的（`getRowStriping` / `getFrozenColumns` / `getFrozenRows` / `getColWidths`），
+// 但仍**不该手抄**：字段与 setter 的对应关系、以及"哪些字段要写回"是基类的事，
+// 手抄一次就多一处会随 `@lexical/table` 升级而漂的代码。
+// （2026-09-18 AMD 复核指出：我最初这里写"frozen 两个只有 setter"，与这一版实际不符，已改。）
+// ⇒ 正确做法：拿基类的 `exportJSON()` 让**基类的 `updateFromJSON`** 自己吃一遍（见变换里的做法）。
 
 import type { NodeKey } from "lexical";
 import { TableNode, type SerializedTableNode } from "@lexical/table";

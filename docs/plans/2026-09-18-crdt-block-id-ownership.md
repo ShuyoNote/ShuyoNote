@@ -83,6 +83,16 @@ update 后没了、无报错）；`horizontalrule` 与 `callout`（ElementNode�
 ⚠️ `BlockEmbedNode` 里 `__blockId` **已被"引用目标"占用**（序列化成 `targetId`），所以它的身份字段叫
 `__selfBlockId`（序列化出去的仍是标准 `blockId`）。
 
+**判据文件与条数（2026-09-18 与 AMD 对数后的准确值）**：**五份、合计 40 条** ——
+`blockIdTransform.test.ts` 17 ＋ `blockIdentity.test.ts` 13 ＋ `blockIdentity.model.test.ts` 4 ＋
+`BlockParagraphNode.test.ts` 3 ＋ **`BlockTableNode.test.ts` 3（AMD 补：`a28c35db`，已 cherry-pick 为 `af2697c`）**；
+全量 **1130 通过 / 1 跳过（115 文件）**。
+> 那条表格判据补的是一个**真缺口**：没有它时，把 `BlockTableNode.importJSON` 里的
+> `node.updateFromJSON(...)` 删掉，**全量仍然绿**（AMD 实测）。我 cherry-pick 后**独立复现**过他这一步：
+> 3 条里 2 条红（`导出→反向构造→再导出` 与 `按 getter 读回`），第 3 条（块身份）不受影响 —— 与他的读数逐条一致。
+> 另据 AMD 复核更正一处注释：这一版 `@lexical/table` 的 frozen **是有 getter 的**
+> （`getFrozenColumns`/`getFrozenRows`），"不该手抄"的理由改为"字段与 setter 的对应关系属于基类"。
+
 
 
 **一条细化（本轮补的，避免落盘形态漂移）**：只有**顶层块**才有块身份 —— 嵌套段落（表格单元格/分栏/
