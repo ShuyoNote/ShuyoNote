@@ -12,7 +12,7 @@ import "./prismSetup";
 import { CodeExtension, CodeIndentExtension, registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getRoot, $createParagraphNode, createEditor, type EditorState, type LexicalEditor } from "lexical";
+import { $getRoot, $createParagraphNode, createEditor, ParagraphNode, type EditorState, type LexicalEditor } from "lexical";
 // 块身份那一层：内存模型 ⇄ 落盘/同步形态（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）
 import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } from "../lib/blockIdentity";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
@@ -38,6 +38,7 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
+import { upgradeParagraphToBlockNode } from "./blockIdTransform";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -290,6 +291,15 @@ function BlockIdPlugin({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
 
+  // 新建的段落（粘贴 / markdown 导入 / HTML 导入 / 空编辑器首段，以及 Lexical 内部自己造的）
+  // 一律**升级成模型段落**（`shuyo-paragraph` + 声明块 ID）：这样块 ID 来自**模型**，
+  // 而不是等到保存时才注入 JSON（那种 ID 在 CRDT 平面里没有稳定身份）。
+  // 创建段落的调用点太散，逐个改必漏 ⇒ 用节点变换一处覆盖。理由见 `blockIdTransform.ts`。
+  useEffect(
+    () => editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode),
+    [editor],
+  );
+
   // Tag DOMs on mount and on every update.
   useEffect(() => {
     tagBlockDoms(editor, map, editor.getEditorState());
@@ -431,6 +441,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <BlockRefPlugin pageId={pageId} />
         <PdfRefPlugin />
         <BlockRefSyncPlugin />
+      {/* 块身份那一层的模型节点升级（见下方 BlockIdPlugin 里的 registerNodeTransform） */}
         <BlockSelectorPlugin />
         <CodeBlockToolbar />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />

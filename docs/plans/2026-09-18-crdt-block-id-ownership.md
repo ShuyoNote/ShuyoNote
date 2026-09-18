@@ -40,17 +40,32 @@
 |---|---|---|---|
 | **1** | 决策记录（本文件）＋ `src/editor/nodes/BlockParagraphNode.ts`（新 type 段落节点，声明 `__blockId`）＋ `src/lib/blockIdentity.ts`（两形态互转、块 ID 补种）＋ 单测 | `vitest` 新测全绿 ＋ 全量 `vitest` 不回归 ＋ `tsc --noEmit` 干净 | ✅ `7e98945`（12 条判据） |
 | **2** | 注册进 `EDITOR_NODES`；加载路径接 `toModelDoc()`、保存路径接 `toLegacyDoc()`（`Editor.tsx` / `ColumnEditor.tsx` / `emailRichNote.ts`） | 内存里是模型 type 且块 ID 稳定；写出去的产物里**一个模型 type 都没有**；全量 `vitest` 不回归 | ✅ 本提交（16 条判据，全量 1095 通过 / 1 跳过） |
-| 3 | 让**新建块**也走新 type（粘贴、markdown 导入、模板中心；Enter 已由 `insertNewAfter` 覆盖） | 三种创建路径各一条用例：新块的块 ID 来自**模型**而不是保存时注入 | 未开工 |
+| 3 | 让**新建块**也走新 type（粘贴、markdown 导入、HTML 导入、空编辑器首段；Enter 已由 `insertNewAfter` 覆盖） | 三种创建路径各一条用例：新块的块 ID 来自**模型**而不是保存时注入 | ✅ 本提交（5 条判据，全量 1100 通过 / 1 跳过） |
 | 4 | 同类推广到其它块级类型（标题/引用/列表/代码/表格 + 18 个自有节点） | 逐类型一个判据；`--update` 收口基线只减不增 | 未开工 |
 
-### 4.1 第 2 步的**已知缺口**（写清楚，别以为是全好了）
+### 4.1 第 3 步的做法与遗留
 
-- **会话内新建的块**：Enter 分行已由 `insertNewAfter` 覆盖（新块是模型类型、带空 ID，保存时注入并留待下次加载进模型）；
-  **粘贴 / markdown 导入 / 模板中心**仍产老类型段落 ⇒ 它们的块 ID 只在保存时注入，**要到下次加载才进模型**。
-  在 CRDT 开工前必须由第 3 步补齐（否则这些块在 CRDT 平面里没有稳定身份）。
-- **`exportMarkdown.ts` 有意不接转换**：它读的是落盘形态的 `content_json`，且
-  `$convertToMarkdownString` + 应用变压器对老 type 才是既定行为；把模型 type 送进去是**额外风险**而非收益。
-- **`toModelDoc` 只给顶层块补 ID**（与今天 `serializeWithBlockIds` 语义一致）；嵌套块的块身份不在本次范围。
+**做法：用「节点变换」而不是逐个改调用点。** 创建段落的点太散（粘贴 / markdown 导入 / HTML 导入 /
+空编辑器首段，还有 Lexical 内部自己造的），逐个改**必漏**；挂在
+`editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode)` 上**一处覆盖全部**
+（`src/editor/blockIdTransform.ts`，注册在既有的 `BlockIdPlugin` 里 —— 它本来就是管块身份的）。
+变换对模型段**不会反复触发**（模型段 type 是 `shuyo-paragraph`，不在 `paragraph` 名下），函数里另有一道
+`getType()` 守卫。
+
+**⚠️ 0.50 的坑（第 4 步推广时会同样踩）**：`ElementNode.getFormat()` 返回的是**数字**（center = 2），
+而 `exportJSON().format` / `getFormatType()` 才是字符串 `"center"`。第一版抄了 `getFormat()`
+⇒ 对齐样式在升级时**悄悄丢掉**（被判据抓出来才修掉）。另外段落级 `textFormat/textStyle` 在
+**有子节点时**会被 `ParagraphNode.exportJSON()` 按第一个文本子节点重算（Lexical #7971 的兼容行为），
+只有**空段落**上它才是权威 —— 两条都写进了判据。
+
+**遗留（写清楚）**：
+
+- **模板中心**：`TemplateCenterView` 直接 `createPage({ content_json })` 落库、**不经编辑器** ⇒
+  它的块 ID 要等**下次加载**时由 `toModelDoc` 补种。可接受（不是编辑热路径），但 CRDT 开工前要确认
+  "新建即同步"的页也有稳定身份；
+- **嵌套块**（列表项/引用/分栏里的段落）今天就没有块身份，不在本次范围；
+- 其它块级类型（标题/引用/列表/代码/表格与 18 个自有节点）仍是老类型 ⇒ **第 4 步**。
+
 
 
 ## 5. 不做 / 边界
