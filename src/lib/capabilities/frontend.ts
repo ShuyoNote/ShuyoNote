@@ -41,6 +41,18 @@ function draft(key: string, summary: string, payload: unknown): DraftResult {
  * 当前页来自宿主传进来的 ctx —— 这里**刻意不导入 UI store**：能力层要保持薄，
  * 一旦它依赖 store，就会把整条 UI 依赖链（编辑器/公式/katex…）拖进 AI 能力层。
  */
+/**
+ * 参数解析：非有限数（`undefined`/`NaN`/字符串）取默认值，**0 与负数照原样返回**。
+ *
+ * 为什么不写 `Number(x) || d`：`0 || d` 会得到 `d` —— 于是 `limit=0` 在 TS 侧变成"没传"，
+ * 而 Rust 侧的 `clamp(1, ·)` 把它夹到 1。同一个调用在两条路径上得到不同结果，
+ * 且只在边界值上出现（夹具的 ★ 用例钉着它）。
+ */
+function toFiniteOr(v: unknown, d: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
 function targetPage(args: Record<string, unknown>, ctx?: AdapterContext): string {
   const given = String(args.pageId ?? "");
   if (given) return given;
@@ -56,6 +68,14 @@ function targetPage(args: Record<string, unknown>, ctx?: AdapterContext): string
  */
 const PAGE_TEXT_LIMIT = 6000;
 const MAX_PAGE_TEXT_LIMIT = 20_000;
+
+/**
+ * `blocks.list` 的 `limit` 默认值与上限，**必须与 Rust 侧一致**
+ * （`cap_blocks_list`: `limit.clamp(1, 500)`，注册表 `default: 100`）。
+ * 两侧不一致的症状很隐蔽：同一个页面在 Web 与桌面返回的块数不同，而调用方无从察觉。
+ */
+const BLOCKS_LIMIT_DEFAULT = 100;
+const BLOCKS_LIMIT_MAX = 500;
 
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.search": async (args) => {
@@ -80,8 +100,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     // 返回忠实原文也顺带满足"截断不改写文本"的既有原则（见下）。
     const raw = String(p.content_text ?? "");
     const total = codePointLength(raw); // 按码点计数，emoji 不会被算成 2
-    const offset = Math.max(0, Math.floor(Number(args.offset ?? 0)) || 0);
-    const limit = Math.min(MAX_PAGE_TEXT_LIMIT, Math.max(1, Math.floor(Number(args.limit ?? PAGE_TEXT_LIMIT)) || PAGE_TEXT_LIMIT));
+    // ⚠️ **别用 `|| 默认值`**：`limit=0` 是 falsy，会被换成 6000，而 Rust 侧 `limit.clamp(1, ·)`
+    // 给的是 1 ⇒ 同一个调用在两条路径上返回 6000 字与 1 字。这类"边界差一个"的坑靠 `Number.isFinite` 判。
+    const offset = Math.max(0, Math.floor(toFiniteOr(args.offset, 0)));
+    const limit = Math.min(MAX_PAGE_TEXT_LIMIT, Math.max(1, Math.floor(toFiniteOr(args.limit, PAGE_TEXT_LIMIT))));
     const text = sliceByCodePoints(raw, offset, limit);
     const returned = codePointLength(text);
     // `truncated` 的含义是"**还没读完**"（窗口没够到正文末尾），而不是"这页太长"：
@@ -121,11 +143,20 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     };
   },
 
-  "blocks.list": async (args) => {
-    const pageId = String(args.pageId ?? "");
-    if (!pageId) return { ok: false, error: "blocks.list 需要 pageId" };
+  // ⚠️ 这条适配器原本与注册表**有两处分歧**（2026-09-18 对着注册表查出并修掉）：
+  //  ① 注册表声明 `pageId` **可选**（"省略 = 当前打开的页面"），这里却当必填直接报错 ——
+  //     桌面路径（Rust `cap_blocks_list` → `target_page_or_current`）是支持省略的
+  //     ⇒ 同一段插件代码在桌面能用、在 Web 报错。改成与 `backlinks.list` 一样走 `targetPage(args, ctx)`。
+  //  ② 注册表声明 `limit`（默认 100），这里**根本没读** ⇒ Web 上"传了也没用"，
+  //     而 Rust 侧 `limit.clamp(1,500).take(limit)` 是兑现的 ⇒ 两条路径返回的块数可能不同。
+  // 这类"注册表承诺、某一侧不兑现"的分歧**没有任何编译期信号**，只能靠机器判据守
+  // （`check-capabilities` 现在会检查两侧都读了声明的参数）。
+  "blocks.list": async (args, ctx) => {
+    const pageId = targetPage(args, ctx);
+    if (!pageId) return { ok: false, error: "blocks.list 需要 pageId（省略时需要一个当前打开的页面）" };
+    const limit = Math.min(BLOCKS_LIMIT_MAX, Math.max(1, Math.floor(toFiniteOr(args.limit, BLOCKS_LIMIT_DEFAULT))));
     const blocks = await api.getPageBlocks(pageId);
-    return { ok: true, blocks: blocks.map((b) => ({ blockId: b.block_id, text: b.text })) };
+    return { ok: true, blocks: blocks.slice(0, limit).map((b) => ({ blockId: b.block_id, text: b.text })) };
   },
 
   "backlinks.list": async (args, ctx) => {

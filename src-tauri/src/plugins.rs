@@ -7422,6 +7422,41 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// `blocks.list` 的 `limit` **在 Rust 侧真的截断**（含 0/负数夹到 1、默认值、超上限）。
+    ///
+    /// 为什么要有这条：`check-capabilities` 只能验"参数有没有被读"，验不了"读来的值有没有用对"；
+    /// 而 TS 侧的同类判据（`src/lib/capabilities/blocksList.test.ts`）只能验 Web 那半边。
+    /// 这条把 Rust 侧的**数值行为**钉住，与 TS 判据成对 —— 两侧对 `limit` 的解读必须逐值相同
+    /// （尤其 `limit=0`：写 `|| 默认` 的实现在这里会返回 100/6000 而不是 1）。
+    #[test]
+    fn blocks_list_honours_limit() {
+        let (space, dir) = seed_space("blocks-limit");
+        let st = state_for_space(&space, &dir);
+        let kids: Vec<serde_json::Value> = (0..5)
+            .map(|i| serde_json::json!({ "blockId": format!("b{i}"), "text": format!("t{i}") }))
+            .collect();
+        let doc = serde_json::json!({ "root": { "children": kids } }).to_string();
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('pb','s1','多块',?1,'x','page',?2,?2)",
+                params![doc, now_ms()],
+            )
+            .unwrap();
+        }
+        for (body, want) in [
+            (r#"{"pageId":"pb","limit":3}"#, 3usize),
+            (r#"{"pageId":"pb","limit":0}"#, 1),
+            (r#"{"pageId":"pb","limit":999}"#, 5),
+            (r#"{"pageId":"pb"}"#, 5),
+        ] {
+            let n = call(&st, "blocks.list", body).unwrap().as_array().unwrap().len();
+            println!("blocks.list {body} -> {n} 块（期望 {want}）");
+            assert_eq!(n, want, "参数 {body}");
+        }
+    }
+
     #[test]
     fn blocks_list_defaults_to_the_current_page() {
         let (space, dir) = seed_space("blocks-current");

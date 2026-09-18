@@ -356,13 +356,13 @@
           "type": "number",
           "required": false,
           "default": 100,
-          "desc": "最多返回多少块"
+          "desc": "最多返回多少块（默认 100，上限 500）"
         }
       ],
       "returns": {
         "type": "array",
         "ts": "{ blockId: string; text: string }[]",
-        "desc": "[{blockId, text}]"
+        "desc": "[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit（上限 500）"
       },
       "rust": "cap_blocks_list"
     },

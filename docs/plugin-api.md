@@ -182,10 +182,10 @@ register({
 - 调用：`api.blocks.list(pageId, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{blockId, text}]
+- 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit（上限 500）
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）
-  - `limit`: `number`（可选），默认 `100` —— 最多返回多少块
+  - `limit`: `number`（可选），默认 `100` —— 最多返回多少块（默认 100，上限 500）
 
 ### `backlinks.list` — 列出反链
 

@@ -1,5 +1,5 @@
 {
-  "note": "pages.get 分页窗口的**跨语言**一致性夹具（Rust `src-tauri/src/plugins.rs::cap_pages_get` 与 TS `src/lib/capabilities/frontend.ts` 共用同一份）。三个刻意的选择：①用**十进制码点数组**描述正文（避免两侧对同一份文件的字面字符做不同解码假设，emoji 也不会被编辑器/工具链悄悄改掉）；②期望值只写**读数**（偏移/总数/返回数/是否还没读完），窗口内容由两侧各自与**独立**的码点切片参照实现逐字比对——写死正文会让夹具本身成为第三份可能漂移的实现；③`limit` 上限与默认值也写在夹具里，谁改了上限这里先红。口径：按 **Unicode 标量（码点）** 计数与切片，`offset` 越界返回空串而非报错。",
+  "note": "pages.get 分页窗口的跨语言一致性夹具（Rust src-tauri/src/plugins.rs::cap_pages_get 与 TS src/lib/capabilities/frontend.ts 共用同一份）。三个刻意的选择：①用十进制码点数组描述正文（避免两侧对同一份文件的字面字符做不同解码假设，emoji 也不会被编辑器或工具链悄悄改掉）；②期望值只写读数（偏移/总数/返回数/是否还没读完），窗口内容由两侧各自与独立的码点切片参照实现逐字比对——写死正文会让夹具本身成为第三份可能漂移的实现；③limit 上限与默认值也写在夹具里，谁改了上限这里先红。口径：按 Unicode 标量（码点）计数与切片，offset 越界返回空串而非报错，limit 夹到 [1, limitMax]（含 0 与负数 ⇒ 1，不是当成没传）。",
   "defaultLimit": 6000,
   "limitMax": 20000,
   "cases": [
@@ -80,7 +80,7 @@
       "expectTruncated": false
     },
     {
-      "name": "offset 远超过总长 ⇒ 空串，但 chars_total 仍是真实的 100（否则分不清「翻完了」和「这页是空的」）",
+      "name": "offset 远超过总长 ⇒ 空串，但 chars_total 仍是真实的 100",
       "unit": [
         30002
       ],
@@ -94,7 +94,7 @@
       "expectTruncated": false
     },
     {
-      "name": "emoji：100 个码点 / 200 个 UTF-16 码元 ⇒ chars_total 必须是 100（按码元会算成 200）",
+      "name": "emoji：100 个码点 / 200 个 UTF-16 码元 ⇒ chars_total 必须是 100",
       "unit": [
         128512
       ],
@@ -124,7 +124,7 @@
       "expectTruncated": true
     },
     {
-      "name": "limit 超过上限 ⇒ 夹到 20000（一次几十万字会把模型上下文撑爆）",
+      "name": "limit 超过上限 ⇒ 夹到 20000",
       "unit": [
         30002,
         20057
@@ -136,6 +136,48 @@
       "expectLimit": 20000,
       "expectTotal": 30000,
       "expectReturned": 20000,
+      "expectTruncated": true
+    },
+    {
+      "name": "★ limit=0 ⇒ 夹到 1（不是当成没传）—— TS 侧写 `args.limit || 默认` 会变 6000，与 Rust 的 clamp(1,·) 分道扬镳",
+      "unit": [
+        30002
+      ],
+      "repeat": 100,
+      "offset": 0,
+      "limit": 0,
+      "expectOffset": 0,
+      "expectLimit": 1,
+      "expectTotal": 100,
+      "expectReturned": 1,
+      "expectTruncated": true
+    },
+    {
+      "name": "★ limit 为负 ⇒ 同样夹到 1",
+      "unit": [
+        30002
+      ],
+      "repeat": 100,
+      "offset": 0,
+      "limit": -3,
+      "expectOffset": 0,
+      "expectLimit": 1,
+      "expectTotal": 100,
+      "expectReturned": 1,
+      "expectTruncated": true
+    },
+    {
+      "name": "★ offset 为负 ⇒ 当 0（负数偏移在两条路径上都必须是「从头开始」）",
+      "unit": [
+        30002
+      ],
+      "repeat": 100,
+      "offset": -5,
+      "limit": 10,
+      "expectOffset": 0,
+      "expectLimit": 10,
+      "expectTotal": 100,
+      "expectReturned": 10,
       "expectTruncated": true
     }
   ]

@@ -10,8 +10,8 @@
 //
 // 用法：node scripts/check-capabilities.mjs  （有问题即非零退出）
 
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRegistry, buildAll, OUTPUTS } from "./gen-capabilities.mjs";
 
@@ -25,6 +25,9 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 
 const problems = [];
 const fail = (msg) => problems.push(msg);
+
+/** TS 侧适配器的个数（只用于输出读数，便于察觉适配器被删/漏写）。 */
+let tsAdapters = 0;
 
 /**
  * 比较生成物时忽略行尾差异（CRLF vs LF）。
@@ -250,6 +253,94 @@ if (!arms) {
 // 注册表条数兜底：小于 1 说明文件被写坏了
 if (reg.capabilities.length === 0) fail("capabilities 为空");
 
+/** 去掉行注释与块注释（`//` 出现在字符串里的少数情况会让检查变松，不会误报）。 */
+const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+/**
+ * 顶层 `function name(...) { ... }` 读到的 `args.<参数名>` 集合。
+ *
+ * 为什么需要它：适配器常常不就地读参数，而是交给一处助手统一读
+ * （`blocks.list` / `backlinks.list` 都是 `targetPage(args, ctx)` 读 `args.pageId`）。
+ * 门禁若只看适配器函数体，就会把"读了、只是集中在助手"误判成"没读"——
+ * 这是我在加强版判据上第一次跑就撞到的误报。
+ */
+function helperReads(src) {
+  const out = [];
+  const re = /^function\s+(\w+)\s*\([^)]*\)[^{]*\{/gm;
+  for (const m of src.matchAll(re)) {
+    const start = m.index + m[0].length;
+    const end = src.indexOf("\n}", start); // 顶层函数以行首 `}` 结束
+    const body = stripComments(src.slice(start, end < 0 ? src.length : end));
+    const params = new Set([...body.matchAll(/\bargs\.(\w+)/g)].map((x) => x[1]));
+    if (params.size) out.push({ name: m[1], params });
+  }
+  return out;
+}
+
+// ---- TS 侧（`src/lib/capabilities/frontend.ts` 的适配器）----
+// 为什么必须两侧都查（2026-09-18 加）。原先只查 Rust 的 dispatch，于是**注册表承诺、
+// TS 侧不兑现**这类分歧完全没有信号 —— 当天就是这么漏掉的：`blocks.list` 在注册表里
+// 声明 `limit`（默认 100），Rust 侧 `limit.clamp(1,500).take(limit)` 是兑现的，
+// 而 TS 适配器**根本没读它** ⇒ 同一段插件代码在 Web 上"传了也没用"、在桌面上生效；
+// 同一个 `pageId` 声明可选（省略=当前页），TS 却当必填直接报错。
+// 这类 bug 不会让任何测试变红，只会让两个平台返回不一样的东西。
+{
+  const tsPath = join(root, "src", "lib", "capabilities", "frontend.ts");
+  const ts = existsSync(tsPath) ? readFileSync(tsPath, "utf8") : null;
+  if (ts === null) {
+    fail("找不到 src/lib/capabilities/frontend.ts（识别不了 TS 侧的参数口径）");
+  } else {
+    // 适配器函数体：从 `"pages.get": async (args) => {` 到下一个顶层键。这种粗切够用，
+    // 因为门禁只做取值形态的检查；切片错位最多让检查变松，不会误报。
+    const bodies = new Map();
+    const marks = [...ts.matchAll(/^ {2}"([\w.]+)":\s*(?:async\s*)?\(([^)]*)\)\s*=>\s*\{/gm)].map((m) => ({
+      id: m[1],
+      start: m.index + m[0].length,
+    }));
+    for (let i = 0; i < marks.length; i++) {
+      const end = i + 1 < marks.length ? marks[i + 1].start : ts.length;
+      bodies.set(marks[i].id, ts.slice(marks[i].start, end));
+    }
+    for (const c of reg.capabilities) {
+      const raw = bodies.get(c.id);
+      if (raw === undefined) continue; // 这条能力没有 Web 适配器（不是本段要管的事）
+      // ⚠️ **先剥注释**：不然"注释里提到过 limit"就能把检查骗过去 —— 我第一版就是这样，
+      // 变异测试当场证伪（把 `args.limit` 换成常量后门禁仍然绿）。判据只能看**取值形态**。
+      const body = stripComments(raw);
+      // 参数常常不是就地读的，而是交给助手统一读（如 `targetPage(args, ctx)` 读 `args.pageId`）。
+      // 门禁要顺着这一层看到真正的取值处，否则会把"读了但集中在助手"误判成"没读"。
+      const delegated = new Set();
+      for (const h of helperReads(ts)) {
+        if (!new RegExp(`\\b${h.name}\\s*\\(\\s*args\\b`).test(body)) continue;
+        for (const p of h.params) delegated.add(p);
+      }
+      for (const a of c.args ?? []) {
+        const n = a.name;
+        if (delegated.has(n)) continue; // 经助手读到
+        const forms = [
+          new RegExp(`\\bargs\\.${n}\\b`), // args.limit
+          new RegExp(`\\bargs\\[\\s*["'\`]${n}["'\`]\\s*\\]`), // args["limit"]
+          new RegExp(`\\{[^}]*\\b${n}\\b[^}]*\\}\\s*=\\s*args\\b`), // const { limit } = args
+        ];
+        if (!forms.some((re) => re.test(body))) {
+          fail(
+            `能力 ${c.id} 声明了参数 ${n}，但 TS 适配器里没有以取值形态读它` +
+              `（args.${n} / args["${n}"] / 解构 / 交给读了它的助手）—— ` +
+              `Web 上作者照文档传了也没用；Rust 侧读了不代表这一侧读了`,
+          );
+        }
+      }
+      for (const m of body.matchAll(/\bargs\.(\w+)/g)) {
+        const name = m[1];
+        if (!(c.args ?? []).some((a) => a.name === name)) {
+          fail(`能力 ${c.id} 的 TS 适配器读了参数 ${name}，但注册表没声明它（作者文档里看不到这个参数）`);
+        }
+      }
+    }
+    tsAdapters = bodies.size;
+  }
+}
+
 // ---- 输出 ----
 if (problems.length) {
   console.error("能力注册表门禁未通过：");
@@ -259,5 +350,6 @@ if (problems.length) {
 console.log(
   `能力注册表一致：${reg.capabilities.length} 条能力 / ${reg.permissions.length} 项权限 / ` +
     `${reg.legacyGlobals.length} 个兼容别名 / ${reg.errorCodes.length} 个错误码；` +
-    `API v${reg.apiVersion}；生成物 ${Object.keys(files).length} 个文件`,
+    `API v${reg.apiVersion}；生成物 ${Object.keys(files).length} 个文件；` +
+    `TS 适配器 ${tsAdapters} 个（参数口径两侧都比对）`,
 );
