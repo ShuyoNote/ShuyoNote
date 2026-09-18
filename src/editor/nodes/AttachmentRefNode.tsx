@@ -11,6 +11,7 @@ import {
 } from "lexical";
 import { platform } from "../../lib/platform";
 import { usePdfReader } from "../../store/pdfReader";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 import type { JSX } from "react";
 
 export type SerializedAttachmentRefNode = Spread<
@@ -21,6 +22,7 @@ export type SerializedAttachmentRefNode = Spread<
     mime: string;
     hash: string;
     path: string;
+    blockId?: string;
   },
   SerializedLexicalNode
 >;
@@ -79,6 +81,8 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
   __mime: string;
   __hash: string;
   __path: string;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
 
   static getType(): string {
     return "attachment-ref";
@@ -92,6 +96,7 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
       node.__mime,
       node.__hash,
       node.__path,
+      node.__blockId,
       node.__key,
     );
   }
@@ -103,6 +108,7 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
     mime = "",
     hash = "",
     path = "",
+    blockId = "",
     key?: NodeKey,
   ) {
     super(key);
@@ -112,6 +118,21 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
     this.__mime = mime;
     this.__hash = hash;
     this.__path = path;
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as AttachmentRefNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   $config() {
@@ -181,17 +202,20 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedAttachmentRefNode {
-    return {
-      ...super.exportJSON(),
-      type: "attachment-ref",
-      version: 1,
-      attachmentId: this.__attachmentId,
-      name: this.__name,
-      size: this.__size,
-      mime: this.__mime,
-      hash: this.__hash,
-      path: this.__path,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "attachment-ref",
+        version: 1,
+        attachmentId: this.__attachmentId,
+        name: this.__name,
+        size: this.__size,
+        mime: this.__mime,
+        hash: this.__hash,
+        path: this.__path,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedAttachmentRefNode): AttachmentRefNode {
@@ -202,6 +226,7 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
       serializedNode.mime ?? "",
       serializedNode.hash ?? "",
       serializedNode.path ?? "",
+      blockIdOf(serializedNode),
     );
   }
 
@@ -217,9 +242,10 @@ export function $createAttachmentRefNode(
   mime = "",
   hash = "",
   path = "",
+  blockId?: string,
 ): AttachmentRefNode {
   return $applyNodeReplacement(
-    new AttachmentRefNode(attachmentId, name, size, mime, hash, path),
+    new AttachmentRefNode(attachmentId, name, size, mime, hash, path, blockId ?? ""),
   );
 }
 

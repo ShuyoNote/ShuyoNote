@@ -17,9 +17,10 @@ import { platform } from "../../lib/platform";
 import { api } from "../../lib/api";
 import { inputDialog } from "../../store/input";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 export type SerializedWebBookmarkNode = Spread<
-  { url: string; title: string; description: string; siteName: string; imageHash: string; imageMime: string },
+  { url: string; title: string; description: string; siteName: string; imageHash: string; imageMime: string; blockId?: string },
   SerializedLexicalNode
 >;
 
@@ -32,6 +33,8 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
   __siteName: string;
   __imageHash: string;
   __imageMime: string;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
 
   static getType(): string {
     return "webbookmark";
@@ -45,6 +48,7 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
       node.__siteName,
       node.__imageHash,
       node.__imageMime,
+      node.__blockId,
       node.__key,
     );
   }
@@ -56,6 +60,7 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     siteName: string,
     imageHash: string,
     imageMime: string,
+    blockId = "",
     key?: NodeKey,
   ) {
     super(key);
@@ -65,6 +70,21 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     this.__siteName = siteName;
     this.__imageHash = imageHash;
     this.__imageMime = imageMime;
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as WebBookmarkNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   createDOM(_config: EditorConfig): HTMLElement {
@@ -146,17 +166,20 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedWebBookmarkNode {
-    return {
-      ...super.exportJSON(),
-      type: "webbookmark",
-      url: this.__url,
-      title: this.__title,
-      description: this.__description,
-      siteName: this.__siteName,
-      imageHash: this.__imageHash,
-      imageMime: this.__imageMime,
-      version: 1,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "webbookmark",
+        url: this.__url,
+        title: this.__title,
+        description: this.__description,
+        siteName: this.__siteName,
+        imageHash: this.__imageHash,
+        imageMime: this.__imageMime,
+        version: 1,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedWebBookmarkNode): WebBookmarkNode {
@@ -167,6 +190,7 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
       serializedNode.siteName,
       serializedNode.imageHash,
       serializedNode.imageMime,
+      blockIdOf(serializedNode),
     );
   }
 
@@ -182,9 +206,10 @@ export function $createWebBookmarkNode(
   siteName = "",
   imageHash = "",
   imageMime = "",
+  blockId?: string,
 ): WebBookmarkNode {
   return $applyNodeReplacement(
-    new WebBookmarkNode(url, title, description, siteName, imageHash, imageMime),
+    new WebBookmarkNode(url, title, description, siteName, imageHash, imageMime, blockId ?? ""),
   );
 }
 

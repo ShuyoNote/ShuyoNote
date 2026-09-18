@@ -30,6 +30,8 @@ import { $createImageRowNode, ImageRowNode } from "./nodes/ImageRowNode";
 import { $createImageNode, ImageNode } from "./nodes/ImageNode";
 import { $createVideoNode, VideoNode } from "./nodes/VideoNode";
 import { $createBlockEmbedNode, BlockEmbedNode } from "./nodes/BlockEmbedNode";
+import { $createWebBookmarkNode, WebBookmarkNode } from "./nodes/WebBookmarkNode";
+import { $createAttachmentRefNode, AttachmentRefNode } from "./nodes/AttachmentRefNode";
 import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
@@ -60,6 +62,8 @@ const SELF_OWNED_FACTORIES: Array<[string, () => LexicalNode, { importJSON: (jso
   ["image", () => $createImageNode("a.png", "a"), ImageNode as never],
   ["video", () => $createVideoNode("v.mp4"), VideoNode as never],
   ["blockembed", () => $createBlockEmbedNode("target-blk"), BlockEmbedNode as never],
+  ["webbookmark", () => $createWebBookmarkNode("https://shuyo.cn"), WebBookmarkNode as never],
+  ["attachment-ref", () => $createAttachmentRefNode("att-1", "年报.pdf", 1024), AttachmentRefNode as never],
 ];
 
 const rootChildren = (editor: ReturnType<typeof editorWithTransform>) =>

@@ -41,6 +41,8 @@ import { ImageRowNode } from "./nodes/ImageRowNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { BlockEmbedNode } from "./nodes/BlockEmbedNode";
+import { WebBookmarkNode } from "./nodes/WebBookmarkNode";
+import { AttachmentRefNode } from "./nodes/AttachmentRefNode";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -210,5 +212,7 @@ export const SELF_OWNED_BLOCK_ID_NODE_TYPES: Array<Klass<LexicalNode>> = [
   ImageNode,
   VideoNode,
   BlockEmbedNode,
+  WebBookmarkNode,
+  AttachmentRefNode,
 ];
 
