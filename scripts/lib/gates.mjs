@@ -68,9 +68,30 @@ export const GATES = [
     cmd: "node scripts/check-pdfjs-worker-shim.mjs",
     incident: "老 WebView 上打不开任何 PDF：补齐层必须在 worker 内先装，install 顺序最容易被'顺手整理'破坏",
   },
-  { id: "check-ocr-assets", group: "contract", label: "OCR 资源清单", cmd: "node scripts/check-ocr-assets.mjs" },
-  { id: "check-deep-link", group: "contract", label: "deep-link 交付通道", cmd: "node scripts/check-deep-link.mjs" },
-  { id: "check-plugin-hosting", group: "contract", label: "插件托管", cmd: "node scripts/check-plugin-hosting.mjs" },
+  {
+    id: "check-ocr-assets",
+    group: "contract",
+    label: "OCR 资源清单",
+    cmd: "node scripts/check-ocr-assets.mjs",
+    incident:
+      "两个方向都真发生过（或差一点）：①「整个目录全拷」⇒ tesseract.js-core 的 6 变体 × 2 形态 ≈ 43.2 MiB 里只有一份会被 worker 加载，白白多进产物 ~23.3 MiB（Android 上还会被装两遍，再多约 46 MiB）；②反过来更危险：有人为 worker.detect 打开 legacyCore，而拷贝脚本仍只放 -lstm 三档 ⇒ 本地 OCR 在真机上只报一个看不懂的加载错误，构建 / 单测 / 类型检查全都发现不了",
+  },
+  {
+    id: "check-deep-link",
+    group: "contract",
+    label: "deep-link 交付通道",
+    cmd: "node scripts/check-deep-link.mjs",
+    incident:
+      "这条链上每个断点的表现都是「什么都没发生」（点链接、应用无反应、控制台也不报错），而且四类断点都不是编译错误：scheme 写错或被删、single-instance 少了 deep-link feature（URL 被静默丢掉，窗口照常去所以看起来像解析失败）、lib.rs 忘注册插件或忘接事件、事件名前后端不一致",
+  },
+  {
+    id: "check-plugin-hosting",
+    group: "contract",
+    label: "插件托管",
+    cmd: "node scripts/check-plugin-hosting.mjs",
+    incident:
+      "应用侧门禁（external_index / external_package）验的是「文件」，而托管方要保证的是「线上那一份」能装：两类是「发布时毫无征兆、用户端才炸」—— 索引被长缓存 ⇒ 新插件永远看不到；包被 no-store 或被 CDN 改写 ⇒ 每次安装都重下几 MB（慢，但不报错）",
+  },
   {
     id: "check-sys-deps",
     group: "contract",
@@ -81,6 +102,15 @@ export const GATES = [
     cmd: "node scripts/check-sys-deps.mjs --checks registration,toolchain",
     incident:
       "两类真事故各一条：①2026-09-17 发版机清构建期依赖（libssl-dev）⇒ 社区端 openssl-sys 编译失败；②同日 15:51 本机 Xcode 27 装完许可未接受 ⇒ git/python3/cc/xcrun 全线不可用（notarytool 一条探针就能提前发现）",
+  },
+  {
+    id: "check-doc-content-access",
+    group: "contract",
+    label: "文档内容直接访问（只减不增：新文件 / 超基线即红）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、约 1 秒 ⇒ 本机默认组与 CI 的 `checks` job 都能跑。
+    cmd: "node scripts/check-doc-content-access.mjs",
+    incident:
+      "同页并发 → 全量 CRDT（路线 C）要换实现时，全仓直接摸 content_json / content_text / contentJson 的面是 746 次 / 80 个文件；不把「只经一层（read/write/merge/derive）」做成单调收敛的机器判据，收口就只能靠一次大爆炸重构，而且新写的直接访问没有任何东西会拦（今天已经有人把 542 行 / 26 文件这个错口径当成规模）",
   },
 
   // ---- smoke ----

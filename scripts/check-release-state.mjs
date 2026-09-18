@@ -16,7 +16,6 @@
 //   node scripts/check-release-state.mjs --version 1.91.1
 //   node scripts/check-release-state.mjs --skip-remote      # 只跑本地/通道检查（离线兜底）
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { redactSecrets } from "./lib/redact.mjs";
 
 const argOf = (f) => {
@@ -42,20 +41,33 @@ const ok = (cond, msg) => {
   }
 };
 
-/** curl：不抛异常，返回 { code, body }。可达性探测用 `-r 0-0`（1 字节）而不是 HEAD。 */
-function curl(url, { method = "GET", timeout = 25, retries = 2 } = {}) {
-  // ⚠️ 不要用 HEAD 探 gitcode 的产物：实测对 HEAD 一律 **401**（它只认带重定向的 GET），
-  // 用 `-r 0-0` 只取 1 字节，既跟随 302、又不真下 100MB 的 AppImage。
-  const args = ["-sS", "-L", "--max-time", String(timeout)];
-  if (retries > 0) args.push("--retry", String(retries), "--retry-all-errors", "--retry-delay", "2");
-  if (method === "HEAD") args.push("-r", "0-0");
-  args.push("-w", "\n%{http_code}", url);
-  try {
-    const out = execFileSync("curl.exe", args, { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
-    const i = out.lastIndexOf("\n");
-    return { code: Number(out.slice(i + 1).trim()), body: out.slice(0, i) };
-  } catch (e) {
-    return { code: 0, body: String(e.stdout ?? e.message) };
+/**
+ * 取一个 URL：不抛异常，返回 `{ code, body }`。
+ *
+ * ⚠️ **原先这里 spawn 的是 `curl.exe`** —— 于是在 macOS/Linux 上整条脚本的第一件事就是
+ * `spawnSync curl.exe ENOENT`，五项判据全红（2026-09-18 我在 Mac 上实测）。
+ * 而这条脚本的用途是"**发版后核一遍通道/资产/两个 Web 入口**"，偏偏 macOS 是发版机之一。
+ * ⇒ 改成 Node 自带的 `fetch`：**跨平台、没有外部依赖**，也不再需要"为了带 Authorization 头
+ * 再 spawn 一次 curl"那种绕法（那个绕法还差点把 token 打进日志，见下面 `redactSecrets` 的注释）。
+ *
+ * 可达性探测用 `Range: bytes=0-0`（1 字节）而不是 HEAD：实测 gitcode 的产物对 HEAD 一律 **401**
+ * （只认带重定向的 GET），1 字节 GET 既跟随 302、又不真下 100MB 的 AppImage。
+ */
+async function httpGet(url, { method = "GET", timeout = 25, retries = 2, headers = {} } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        headers: method === "HEAD" ? { ...headers, Range: "bytes=0-0" } : headers,
+        signal: AbortSignal.timeout(timeout * 1000),
+      });
+      const body = await res.text();
+      return { code: res.status, body };
+    } catch (e) {
+      if (attempt >= retries) return { code: 0, body: redactSecrets(String(e?.message ?? e)) };
+      await new Promise((r) => setTimeout(r, 2000));
+    }
   }
 }
 
@@ -71,7 +83,7 @@ function ghToken() {
 console.log(`[release-state] 目标版本 ${VERSION}（tag ${TAG}）`);
 
 // ---- 1. 更新通道 ----
-const chan = SKIP_REMOTE ? { code: 0, body: "" } : curl(CHANNEL, { timeout: 40 });
+const chan = SKIP_REMOTE ? { code: 0, body: "" } : await httpGet(CHANNEL, { timeout: 40 });
 let manifest = null;
 if (!SKIP_REMOTE) {
   ok(chan.code === 200, `更新通道可达（HTTP ${chan.code}）`);
@@ -95,7 +107,7 @@ if (manifest) {
     }
     if (!SKIP_REMOTE) {
       // HEAD 只探可达性，不下整包（AppImage 有 100MB）。
-      const h = curl(e.url, { method: "HEAD", timeout: 40 });
+      const h = await httpGet(e.url, { method: "HEAD", timeout: 40 });
       ok(h.code === 200 || h.code === 302 || h.code === 206, `${k}：产物 URL 可达（HTTP ${h.code}）`);
     }
   }
@@ -107,23 +119,19 @@ if (!SKIP_REMOTE) {
   if (!tk) {
     console.log("  · 跳过 GitHub Release 检查（读不到 ~/.git-credentials 里的 token）");
   } else {
-    const r = curl(`https://api.github.com/repos/${GH_REPO}/releases/tags/${TAG}`, { timeout: 30 });
-    // curl 不带自定义头，改用 node 的 https 会更好，但这里保持"只用 curl"的简单约定：
-    // 用 -H 版本单独跑一次。
-    const args = [
-      "-sS", "-L", "--max-time", "30",
-      "-H", `Authorization: Bearer ${tk}`,
-      "-H", "Accept: application/vnd.github+json",
-      `https://api.github.com/repos/${GH_REPO}/releases/tags/${TAG}`,
-    ];
+    // ⚠️ 这里**不再 spawn curl**（原来为了带 `Authorization` 头要单独 spawn 一次，
+    // 而 `execFileSync` 失败时 message 里带着整条 argv、里面有 Bearer token ——
+    // 2026-09-16 发 1.91.3 时真的把 token 打进了终端，CI 上就是公开日志。
+    // 现在换成进程内 `fetch`：**错误信息里没有 argv，token 无从泄漏**（后面仍保留 `redactSecrets` 兜底）。
+    const r = await httpGet(`https://api.github.com/repos/${GH_REPO}/releases/tags/${TAG}`, {
+      timeout: 30,
+      headers: { Authorization: `Bearer ${tk}`, Accept: "application/vnd.github+json" },
+    });
     let rel = null;
     try {
-      rel = JSON.parse(execFileSync("curl.exe", args, { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
-    } catch (e) {
-      // ⚠️ 这里必须抹一道：`execFileSync` 失败时 message 里带着整条 argv，
-      // 而 argv 里有 `Authorization: Bearer <token>`——2026-09-16 发 1.91.3 时
-      // 真的把 token 打进了终端（CI 上就是公开日志）。判据见 scripts/lib/redact.test.mjs。
-      ok(false, `取 GitHub Release ${TAG} 失败：${redactSecrets(String(e.message)).slice(0, 120)}`);
+      rel = JSON.parse(r.body);
+    } catch {
+      ok(false, `取 GitHub Release ${TAG} 失败：HTTP ${r.code} ${redactSecrets(r.body).slice(0, 120)}`);
     }
     if (rel) {
       const names = (rel.assets ?? []).map((a) => a.name);
@@ -138,7 +146,7 @@ if (!SKIP_REMOTE) {
       // **与通道互证**：通道里的 android 指纹必须等于 Release 上那份 .sha256
       const sidecar = (rel.assets ?? []).find((a) => a.name.endsWith(".apk.sha256"));
       if (sidecar && manifest?.platforms?.["android-aarch64"]?.signature) {
-        const s = curl(sidecar.browser_download_url, { timeout: 40, retries: 4 });
+        const s = await httpGet(sidecar.browser_download_url, { timeout: 40, retries: 4 });
         const want = String(manifest.platforms["android-aarch64"].signature).replace(/^sha256:/, "").toLowerCase();
         const got = (s.body.match(/[0-9a-f]{64}/i) ?? [""])[0].toLowerCase();
         if (got === "" && s.code === 0) {
@@ -159,7 +167,7 @@ if (!SKIP_REMOTE) {
 // ---- 3. 两个 Web 入口（详细版在 pnpm check:web-deploy） ----
 if (!SKIP_REMOTE) {
   for (const base of WEB_ENTRIES) {
-    const r = curl(new URL("version.json", base).href, { timeout: 25 });
+    const r = await httpGet(new URL("version.json", base).href, { timeout: 25 });
     let v = null;
     try {
       v = JSON.parse(r.body).version;

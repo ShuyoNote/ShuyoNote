@@ -421,8 +421,15 @@ export const api = {
     invoke("get_page_blocks", { pageId }),
   searchBlocks: (query: string) =>
     invoke("search_blocks", { query }),
-  /** 块级检索（只读）：命中带 pageId/attId/loc，用于回链到原文位置。 */
-  searchChunks: (query: string, limit = 10) =>
+  /**
+   * 块级检索（只读）：命中带 pageId/attId/loc，用于回链到原文位置。
+   *
+   * ⚠️ **刻意不给 `limit` 默认值**：默认值只留一处（Rust `search.rs::CHUNK_LIMIT_DEFAULT`，
+   * 与注册表 `files.search.limit` 的 default 相同）。原先这里有 `= 10` 而 Rust 命令面是 20
+   * ⇒ "作者看到 10、绕开本 wrapper 直接调命令拿到 20"，且**没有任何判据守着这两处相等**
+   * （AMD 复核时抓到的）。省略时传 `undefined`，Rust 侧 `Option<usize>` 取它自己的默认值。
+   */
+  searchChunks: (query: string, limit: number) =>
     invoke("search_chunks", { args: { query, limit } }),
   /** 读附件的派生文本（只读、分页；**不含原文字节**）。`null` = 附件不存在。 */
   readAttachmentText: (id: string, offset = 0, limit = 200) =>

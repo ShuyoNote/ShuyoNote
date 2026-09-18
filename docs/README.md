@@ -14,11 +14,15 @@
 | **身份 / 鉴权 / 加密模型（密钥 vs 账户、多空间、本地私密）** | [身份与隐私模型](identity-privacy-model.md) |
 | **身份 / 隐私落地节奏** | [身份与隐私子路线图](identity-privacy-roadmap.md) |
 | **Web 版为什么不能多设备同步** | [Web 同步能力边界](web-sync-boundary.md) |
+| **同步服务端能看到我的什么** | [同步服务端数据可见边界](sync-server-data-boundary.md) |
 | **移动端怎么适配（安卓/iOS/鸿蒙壳）** | [移动端适配](MOBILE.md) |
 | 下一步做什么 | [路线图](roadmap.md) |
 | 免费客户出口怎么做 | [免费客户出口·网站/帮助站指南](free-site-export-guide.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
+| [plans/2026-09-18-crdt-full-migration-plan.md](plans/2026-09-18-crdt-full-migration-plan.md) | **同页并发 → 全量 CRDT（路线 C）冲刺计划**：现状（页级 LWW，仓库原文）、CRDT 认真评估（不丢 ≠ 不冲突；E2EE 不阻止 CRDT）、四阶段路径、七处改动面、五条不变量与触发/退出条件 |
+| [plans/2026-09-18-crdt-spike-workorder.md](plans/2026-09-18-crdt-spike-workorder.md) | **CRDT spike 施工单**：只回答三问（JSON⇄ydoc 转换、下游等价、E2EE 加密快照），1–2 天、独立分支、不阻塞阶段 1；含「把收敛断言写在 Node 侧以便 Windows 自验」这个压周期的取舍 |
+| [plans/2026-09-18-doc-content-layer-inventory.md](plans/2026-09-18-doc-content-layer-inventory.md) | **阶段 0 · 接口收口：现状盘点与那一层的边界**：实测触点**前端 538 / Rust 208 处（80 文件，门禁口径）**；结论是要收的不是 746 处而是「写入口＋合并点＋派生输入」三处；含 read/write/merge/derive 四件事的 API 草案与"只减不增"门禁（已落地） |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
 | 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
 | 回归门禁有哪些 / 结果在哪看 | [回归测试体系](TESTING.md) |
@@ -36,6 +40,7 @@ docs/
 ├── web-sync-boundary.md # Web 版同步能力边界（为什么不支持多设备同步 + 若要做的路线）
 ├── identity-privacy-model.md # 身份/鉴权/加密模型（密钥 vs 账户、多空间、本地私密）
 ├── identity-privacy-roadmap.md # 身份/隐私落地子路线图
+├── sync-server-data-boundary.md # 同步服务端数据可见边界与威胁模型（看得见什么 / 防什么不防什么）
 ├── positioning.md       # 产品定位
 ├── design-philosophy.md # 设计哲学
 ├── free-site-export-guide.md     # 免费客户出口·网站/帮助站指南（公开向；付费客户沟通材料见私有 shuyonote-sync-server 仓库）
@@ -55,6 +60,7 @@ CHANGELOG.md             # 版本变更日志
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [realtime-collab-analysis.md](realtime-collab-analysis.md) | **实时协同（多人同页协作编辑）利弊分析**：区分「近实时」vs「块级 CRDT」两档成本；好处（对齐竞品 / 不丢内容 / 实时感知）与代价（富块难合并 / 服务端 WebSocket / 离线×实时并存 / E2E 冲突 / 非购买点核心）；分阶段建议（近期近实时、长期最小 CRDT、个人空间保留 E2E）与决策记录 |
 | [SYNC.md](SYNC.md) | **同步机制详解**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证 + 客户端侧排错（错误码）。服务端自托管部署 / 配置 / 排错见私有仓库 `docs/deploy.md` |
+| [sync-server-data-boundary.md](sync-server-data-boundary.md) | **同步服务端数据可见边界与威胁模型**：把"服务端到底能看到什么"逐项列表——两种空间的边界（个人空间开启加密后仅存密文 / 团队空间明文是刻意取舍）、每张表与附件目录存什么、逐项看得见/看不见对照、凭据（口令/设备密钥/会话 token）如何存、**防什么与明确不防什么**、可现场验证的机制（审计哈希链校验等）、**已知未闭合清单**与部署前提。客户端侧结论以 [SECURITY.md](SECURITY.md) 为准 |
 | [multi-platform-ci.md](multi-platform-ci.md) | **多平台自动构建发布（CI）**：`v*` tag 自动打 Win/mac/Linux 安装包。GitCode 流水线只有 Linux runner；GitHub Actions 有全平台。给出 `.github/workflows/release.yml`（三平台 + secrets）与 `.gitcode/workflows/build-linux.yml`（Linux），及方案 A/B/C 取舍 |
 | [macos-updater.md](macos-updater.md) | **macOS 构建 · 签名 · 公证 · 自动更新**：mac 机器一次性准备（Xcode/rust/node）、Apple Developer ID 证书 + notarization 凭据、`tauri.conf.json` updater/endpoints/pubkey 配置、mac 上打签名+公证 dmg、`release.mjs` 发布与 mac `latest.json`、CI secrets、边界（未签名无法自动更新）、Mac 到手当天清单 |
 | [RELEASING.md](RELEASING.md) | **发布流程（桌面 + Android，runbook）**：① CHANGELOG → ② 多处版本同步 → ③ 校验/构建 → ④ 提交 + tag（**tag 必须同时推 `origin`/gitcode 与 `github`**，否则 `release.yml` 不触发或镜像缺 tag）→ ⑤ GitHub Actions 多平台构建（`shuyonote://` 注册依赖 Windows 保持 `nsis`）→ ⑥ GitCode 更新通道（`release.mjs`）→ ⑦ Web 版两入口 → ⑧ CHANGELOG 连续性；含 **§9 Android 发版与验证**（自检包≠发版件、正式密钥签名 + 指纹硬比对、dry-run 约定、已知边界）与 §9.6 发版检查清单 |
