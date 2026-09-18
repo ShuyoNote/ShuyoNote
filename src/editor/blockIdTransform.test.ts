@@ -32,6 +32,8 @@ import { $createVideoNode, VideoNode } from "./nodes/VideoNode";
 import { $createBlockEmbedNode, BlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { $createWebBookmarkNode, WebBookmarkNode } from "./nodes/WebBookmarkNode";
 import { $createAttachmentRefNode, AttachmentRefNode } from "./nodes/AttachmentRefNode";
+import { $createDrawingNode, DrawingNode } from "./nodes/DrawingNode";
+import { $createColumnsBlockNode, ColumnsBlockNode } from "./nodes/ColumnsBlockNode";
 import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
@@ -64,6 +66,8 @@ const SELF_OWNED_FACTORIES: Array<[string, () => LexicalNode, { importJSON: (jso
   ["blockembed", () => $createBlockEmbedNode("target-blk"), BlockEmbedNode as never],
   ["webbookmark", () => $createWebBookmarkNode("https://shuyo.cn"), WebBookmarkNode as never],
   ["attachment-ref", () => $createAttachmentRefNode("att-1", "年报.pdf", 1024), AttachmentRefNode as never],
+  ["drawing", () => $createDrawingNode(null, null, null, null, ""), DrawingNode as never],
+  ["columnsBlock", () => $createColumnsBlockNode(), ColumnsBlockNode as never],
 ];
 
 const rootChildren = (editor: ReturnType<typeof editorWithTransform>) =>
