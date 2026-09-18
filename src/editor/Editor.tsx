@@ -38,9 +38,16 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
-import { upgradeHeadingToBlockNode, upgradeListToBlockNode, upgradeParagraphToBlockNode, upgradeQuoteToBlockNode } from "./blockIdTransform";
+import {
+  upgradeCodeToBlockNode,
+  upgradeHeadingToBlockNode,
+  upgradeListToBlockNode,
+  upgradeParagraphToBlockNode,
+  upgradeQuoteToBlockNode,
+} from "./blockIdTransform";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode } from "@lexical/list";
+import { SafeCodeNode } from "./nodes/SafeCodeNode";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -314,6 +321,11 @@ function BlockIdPlugin({
   // 列表（第 4 步第三个类型）。
   useEffect(
     () => editor.registerNodeTransform(ListNode, upgradeListToBlockNode),
+    [editor],
+  );
+  // 代码块（第 4 步第四个类型）。变换注册在 SafeCodeNode 上（它的 type 是 `"code"`）。
+  useEffect(
+    () => editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode),
     [editor],
   );
 

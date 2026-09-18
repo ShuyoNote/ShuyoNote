@@ -21,6 +21,7 @@ export const MODEL_TYPE_BY_LEGACY: Readonly<Record<string, string>> = {
   heading: "shuyo-heading",
   quote: "shuyo-quote",
   list: "shuyo-list",
+  code: "shuyo-code",
 };
 
 /** 模型 type → 老 type（`toLegacyDoc` 用）。 */

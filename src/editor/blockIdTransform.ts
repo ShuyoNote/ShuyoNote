@@ -28,6 +28,8 @@ import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createBlockHeadingNode } from "./nodes/BlockHeadingNode";
 import { $createBlockQuoteNode } from "./nodes/BlockQuoteNode";
 import { $createBlockListNode } from "./nodes/BlockListNode";
+import { $createBlockCodeNode } from "./nodes/BlockCodeNode";
+import { SafeCodeNode } from "./nodes/SafeCodeNode";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -36,7 +38,7 @@ import { $createBlockListNode } from "./nodes/BlockListNode";
  * Rust 侧 `extract_block_ids` 同样只读顶层）。嵌套块（列表项/引用/分栏里的段落）升级**类型**
  * 但不给 ID —— 免得落盘形态里多出一片没用的 `blockId`。
  */
-function isTopLevelBlock(node: ParagraphNode | HeadingNode | QuoteNode | ListNode): boolean {
+function isTopLevelBlock(node: ParagraphNode | HeadingNode | QuoteNode | ListNode | SafeCodeNode): boolean {
   const parent = node.getParent();
   return parent !== null && parent.getType() === "root";
 }
@@ -85,6 +87,23 @@ export function upgradeHeadingToBlockNode(node: HeadingNode): void {
 export function upgradeQuoteToBlockNode(node: QuoteNode): void {
   if (node.getType() !== "quote") return; // 模型引用（`shuyo-quote`）不碰
   const replacement = $createBlockQuoteNode(isTopLevelBlock(node) ? newBlockId() : "");
+  replacement.setFormat(node.getFormatType());
+  replacement.setIndent(node.getIndent());
+  replacement.setDirection(node.getDirection());
+  node.replace(replacement, true);
+}
+
+/**
+ * 内建**代码块** → 模型代码块（第 4 步第四个类型）。
+ *
+ * ⚠️ 变换注册在 `SafeCodeNode` 上（它的 type 是 `"code"`）；**语言**必须原样带过去
+ * （`language` 决定高亮规则，抄漏了代码块会退回默认语言）。顺带说明：这一支正是
+ * `SafeCodeNode` 那颗"同 type 子类"雷的解 —— 新内容从此走 `shuyo-code`，不再碰内建工厂。
+ */
+export function upgradeCodeToBlockNode(node: SafeCodeNode): void {
+  if (node.getType() !== "code") return; // 模型代码块（`shuyo-code`）不碰
+  const language = (node as unknown as { __language?: string }).__language ?? "javascript";
+  const replacement = $createBlockCodeNode(language, isTopLevelBlock(node) ? newBlockId() : "");
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());

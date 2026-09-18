@@ -12,12 +12,14 @@ import { $createListItemNode, $createListNode, ListNode } from "@lexical/list";
 
 import { EDITOR_NODES } from "./config";
 import {
+  upgradeCodeToBlockNode,
   upgradeHeadingToBlockNode,
   upgradeListToBlockNode,
   upgradeParagraphToBlockNode,
   upgradeQuoteToBlockNode,
 } from "./blockIdTransform";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
+import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
 import { toLegacyDoc } from "../lib/blockIdentity";
 
 function editorWithTransform() {
@@ -26,6 +28,7 @@ function editorWithTransform() {
   editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode);
   editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode);
   editor.registerNodeTransform(ListNode, upgradeListToBlockNode);
+  editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode);
   return editor;
 }
 
@@ -213,5 +216,23 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(typeof kid.blockId).toBe("string");
     expect((kid.blockId as string).length).toBeGreaterThan(0);
     expect(JSON.stringify(kid.children)).toContain("第五项");
+  });
+
+  it("★ 代码块也被升级：type 变 `shuyo-code`、**语言保住**、带块 ID、文字不丢", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      // ⚠️ 用应用的 `$createSafeCodeNode`（**不要**用内建 `$createCodeNode`：
+      // `SafeCodeNode` 是同 type（`"code"`）子类，内建工厂在 0.50 会抛 type/class 不匹配）。
+      const code = $createSafeCodeNode("python");
+      code.append($createTextNode("print(1)"));
+      $getRoot().append(code);
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-code");
+    expect(kid.language).toBe("python"); // 抄漏语言 ⇒ 高亮退回默认
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
+    expect(JSON.stringify(kid.children)).toContain("print(1)");
   });
 });
