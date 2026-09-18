@@ -310,6 +310,11 @@ function helperReads(src) {
 // 而 TS 适配器**根本没读它** ⇒ 同一段插件代码在 Web 上"传了也没用"、在桌面上生效；
 // 同一个 `pageId` 声明可选（省略=当前页），TS 却当必填直接报错。
 // 这类 bug 不会让任何测试变红，只会让两个平台返回不一样的东西。
+//
+// ⚠️ **这条判据是文本级的，已知会被骗**：证据必须出现在**代码**里 —— 但"出现在字符串字面量里"
+// （例如 `const x = "args.limit"`）目前也算数。真正的防线是**行为判据**（`src/lib/capabilities/*.test.ts`
+// 逐值断言默认值/夹取/边界）＋ **两侧共用同一份实现**（TS `intArg` ↔ Rust `arg_i64`+`clamp`）。
+// 记在这里是为了别把它读强：它抓的是"压根没接上"，不是"接错了"。
 {
   const tsPath = join(root, "src", "lib", "capabilities", "frontend.ts");
   const ts = existsSync(tsPath) ? readFileSync(tsPath, "utf8") : null;
