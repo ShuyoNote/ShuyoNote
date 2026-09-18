@@ -45,8 +45,13 @@
 
 ### 4.2 第 4 步的进度与两个坑
 
-**已完成：标题、引用**（`BlockHeadingNode`：`shuyo-heading`，`tag` 与 `blockId` 都进模型；
-`BlockQuoteNode`：`shuyo-quote`，最薄的一层）。两者的 `insertNewAfter` 都逐支换成模型工厂。
+**已完成：标题、引用、列表**（`BlockHeadingNode`：`shuyo-heading`；`BlockQuoteNode`：`shuyo-quote`；
+`BlockListNode`：`shuyo-list`，`listType`/`tag`/`start` 三态都进模型）。
+三者的 `insertNewAfter` 都逐支换成模型工厂（列表**有意不覆盖**：基类行为正确，它跳出来的段落由段落变换升级）。
+
+**还没做**：代码（`code` —— 注意 `SafeCodeNode` 那个同 type 子类的雷，见坑 2）、表格（`table`/`tablerow`/`tablecell`，
+其中只有**顶层 table** 需要身份）、水平线（`horizontalrule`），以及 18 个自有节点（已有声明字段，只差 `__blockId`）。
+
 
 **一条细化（本轮补的，避免落盘形态漂移）**：只有**顶层块**才有块身份 —— 嵌套段落（表格单元格/分栏/
 引用里的）**升级类型但不给 ID**，且 `exportJSON` 在 **ID 为空时不写 `blockId` 字段**。
