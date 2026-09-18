@@ -33,6 +33,22 @@
   判据：`src/lib/exportInline.test.ts`（9 条）+ `src/editor/nodes/exportDom.test.ts`（4 条，用真节点跑
   `$generateHtmlFromNodes`），并做过**变异验证**——把「留线索」那一行删掉，恰好两条断言变红。
 
+- **Windows 装包里根本没有 PDFium 运行时库**（2026-09-18，P4 打包收尾时发现）。`tauri.conf.json` 的
+  `bundle.resources` 一直是空的 ⇒ 装包只含 `shuyonote.exe`（对 09-16 出的 1.91.3 装包 `7z l` 实测：
+  7 个文件、`pdfium.dll` 命中 **0**），而 PDFium 走 `libloading` **在运行时**加载这个库 ⇒ 真机上
+  `SHUYONOTE_PDF_ENGINE=pdfium` 只会报「找不到 PDFium 动态库」。修法：新增
+  `src-tauri/tauri.windows.conf.json`，把 `vendor/pdfium/win-x64/bin/pdfium.dll` 映射成**装包根目录**的
+  `pdfium.dll`——Windows 上 Tauri 的 `resource_dir` 就等于 exe 所在目录，`pdfium_native::library_dir()`
+  正是从那里找（`tauri-build` 的 `copy_resources` 还会在**构建期**就把它拷到 exe 同级）。
+  判据（产物级、可比对）：同版本 1.91.3 的装包 `7z l` 由 7 个文件变 8 个、多出 `pdfium.dll`，
+  从装包里**解出来的** dll 与 `vendor/` 源文件 **sha256 一致**
+  （`79D4676B656CFB1ABCEA88F9ADE3B4B0826C5200382DB5F4EC72A636C598C118`）。
+  配套：`release.yml` 的 Windows 档打包前现拉这个库（二进制不入库），打包后用 `7z` 对**产物**断言
+  装包里真有 dll（把 09-16 那个没 dll 的装包换进去，这条断言当场红——已实测）；
+  `pnpm check:win-build-env` 增加这条硬前置（源文件缺失时构建直接报 `resource path … doesn't exist`）。
+  Linux/macOS 的同类打包（Linux 的 `resource_dir` 不是 exe 目录、macOS 的 `.app/Contents/Frameworks`）
+  仍在 P4 交接单里，**本机做不了、未做**。
+
 ## [1.91.3] - 2026-09-16
 
 > 开着加密重启不再崩溃；口令锁 UX 补齐（忘记口令的说法、立即锁定立刻切屏）
