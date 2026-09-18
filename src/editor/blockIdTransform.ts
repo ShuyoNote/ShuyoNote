@@ -30,6 +30,8 @@ import { $createBlockQuoteNode } from "./nodes/BlockQuoteNode";
 import { $createBlockListNode } from "./nodes/BlockListNode";
 import { $createBlockCodeNode } from "./nodes/BlockCodeNode";
 import { SafeCodeNode } from "./nodes/SafeCodeNode";
+import { $createBlockHorizontalRuleNode } from "./nodes/BlockHorizontalRuleNode";
+import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -38,7 +40,9 @@ import { SafeCodeNode } from "./nodes/SafeCodeNode";
  * Rust 侧 `extract_block_ids` 同样只读顶层）。嵌套块（列表项/引用/分栏里的段落）升级**类型**
  * 但不给 ID —— 免得落盘形态里多出一片没用的 `blockId`。
  */
-function isTopLevelBlock(node: ParagraphNode | HeadingNode | QuoteNode | ListNode | SafeCodeNode): boolean {
+function isTopLevelBlock(
+  node: ParagraphNode | HeadingNode | QuoteNode | ListNode | SafeCodeNode | HorizontalRuleNode,
+): boolean {
   const parent = node.getParent();
   return parent !== null && parent.getType() === "root";
 }
@@ -127,4 +131,14 @@ export function upgradeListToBlockNode(node: ListNode): void {
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());
   node.replace(replacement, true);
+}
+
+/** 内建**水平线** → 模型水平线（第 4 步第五个类型）。 */
+export function upgradeHorizontalRuleToBlockNode(node: HorizontalRuleNode): void {
+  if (node.getType() !== "horizontalrule") return; // 模型水平线不碰
+  // ⚠️ 水平线是 **DecoratorNode**：既没有 format/indent/direction 可抄，
+  // **也不能传 `includeChildren = true`** —— 那会抛
+  // `includeChildren should only be true for ElementNodes`（诊断实测），整个 update 失败、root 变空。
+  const replacement = $createBlockHorizontalRuleNode(isTopLevelBlock(node) ? newBlockId() : "");
+  node.replace(replacement);
 }

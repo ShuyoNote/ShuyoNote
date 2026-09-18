@@ -14,12 +14,14 @@ import { EDITOR_NODES } from "./config";
 import {
   upgradeCodeToBlockNode,
   upgradeHeadingToBlockNode,
+  upgradeHorizontalRuleToBlockNode,
   upgradeListToBlockNode,
   upgradeParagraphToBlockNode,
   upgradeQuoteToBlockNode,
 } from "./blockIdTransform";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
+import { $createHorizontalRuleNode, HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { toLegacyDoc } from "../lib/blockIdentity";
 
 function editorWithTransform() {
@@ -29,6 +31,7 @@ function editorWithTransform() {
   editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode);
   editor.registerNodeTransform(ListNode, upgradeListToBlockNode);
   editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode);
+  editor.registerNodeTransform(HorizontalRuleNode, upgradeHorizontalRuleToBlockNode);
   return editor;
 }
 
@@ -234,5 +237,17 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(typeof kid.blockId).toBe("string");
     expect((kid.blockId as string).length).toBeGreaterThan(0);
     expect(JSON.stringify(kid.children)).toContain("print(1)");
+  });
+
+  it("★ 水平线也被升级：type 变 `shuyo-horizontalrule`、带块 ID", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      $getRoot().append($createHorizontalRuleNode());
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-horizontalrule");
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
   });
 });
