@@ -86,6 +86,9 @@ for (const { dir, exts } of ROOTS) {
   if (!existsSync(dir)) continue;
   for (const file of walk(dir, exts)) {
     const rel = relative(root, file).replace(/\\/g, "/");
+    // 那一层自己**本来就该**直接访问：计数阶段就跳过（否则 `--update` 会把豁免文件写进基线，
+    // 而基线里躺着豁免文件会让"文件数下降"这个读数失去意义）。
+    if (LAYER_FILES.has(rel)) continue;
     const raw = readFileSync(file, "utf8");
     const text = productionText(rel, raw);
     if (text === null) {
