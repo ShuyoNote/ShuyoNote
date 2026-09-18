@@ -58,7 +58,7 @@
   "src/lib/platform/commands.ts": 6,
   "src/lib/platform/pageChunks.ts": 3,
   "src/lib/platform/sqliteStore.ts": 4,
-  "src/lib/platform/web.ts": 114,
+  "src/lib/platform/web.ts": 106,
   "src/lib/searchSemantic.ts": 3,
   "src/lib/wikiExport.ts": 7,
   "src/plugins/builtinCommands.ts": 5,

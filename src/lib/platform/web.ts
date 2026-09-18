@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, upsertRemoteContent } from "../docContent";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -772,24 +772,15 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
       //
       // ★ 判定本身搬进了「文档内容」那一层（`docContent.shouldTakeRemote`）——**唯一的合并点**；
       // 桌面侧的同名一层是 Rust 的 `doc_content::merge`，两份用例**逐条对应**（改一边看另一边）。
-      const localRow = store.query<{ sync_seq: number; dirty: number }>(
-        "SELECT sync_seq, dirty FROM pages WHERE id = ?", [p.id],
-      )[0];
-      const useRemote = shouldTakeRemote(
-        localRow ? { syncSeq: localRow.sync_seq, dirty: localRow.dirty } : undefined,
-        change.seq,
-      );
+      // 读数（`sync_seq`/`dirty`）与"用远端"那一笔落库也都走那一层：`localState` / `upsertRemoteContent`。
+      const local = localState(store, String(p.id));
+      const useRemote = shouldTakeRemote(local, change.seq);
       // 只在"本地有未同步改动"这一种情况下打日志（与搬运前一致：seq 更晚那种是静默的）。
-      if (localRow && localRow.dirty !== 0 && !useRemote) {
+      if (local && local.dirty !== 0 && !useRemote) {
         console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
       }
       if (useRemote) {
-        store.run(
-          `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos, sync_seq, dirty)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-           ON CONFLICT(id) DO UPDATE SET title=excluded.title, kind=excluded.kind, parent_id=excluded.parent_id, sort_order=excluded.sort_order, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, content_json=excluded.content_json, content_text=excluded.content_text, db_rule=excluded.db_rule, icon=excluded.icon, cover=excluded.cover, cover_height=excluded.cover_height, cover_pos=excluded.cover_pos, workspace_id=excluded.workspace_id, sync_seq=excluded.sync_seq, dirty=0`,
-          [p.id, p.workspace_id ?? "active", p.parent_id ?? null, p.title ?? "", p.kind ?? "page", p.sort_order ?? 0, p.created_at ?? Date.now(), p.updated_at ?? Date.now(), p.deleted_at ?? null, p.content_json ?? "{}", p.content_text ?? "", p.db_rule ?? "{}", p.icon ?? "", p.cover ?? "", p.cover_height ?? 300, p.cover_pos ?? 50, change.seq],
-        );
+        upsertRemoteContent(store, { ...p, id: String(p.id) }, change.seq);
       }
     }
     return;

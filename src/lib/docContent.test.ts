@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { readAllContents, readContent, resolveSaveContent, shouldTakeRemote, writeContent, type DocContent } from "./docContent";
+import { localState, readAllContents, readContent, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type DocContent } from "./docContent";
 
 beforeAll(() => {
   const wasm = join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm");
@@ -115,6 +115,50 @@ describe("docContent.readAllContents（批量读出口：扫全库找块的派�
     seedPage(db, "a", { title: "先插的", json: '{"root":{"children":[]}}', text: "" });
     // 只钉"返回的是插入顺序（rowid 顺序）"这一条事实；**不**钉 id 字典序，也不钉将来不许加排序。
     expect(readAllContents(db).map((r) => r.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("docContent.localState / upsertRemoteContent（合并判定的读数 ＋ 「用远端」那一笔落库）", () => {
+  it("localState：页面不存在 ⇒ undefined（判定据此走「本地没有 ⇒ 用远端」）", async () => {
+    const db = await freshDb();
+    expect(localState(db, "nope")).toBeUndefined();
+  });
+
+  it("localState：存在的页面 ⇒ 逐值给出 sync_seq / dirty", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", SAMPLE, { dirty: 1, syncSeq: 7 });
+    expect(localState(db, "p1")).toEqual({ syncSeq: 7, dirty: 1 });
+  });
+
+  it("★ upsertRemoteContent：本地没有 ⇒ 插入，且 **dirty 落 0**、sync_seq 记成远端 seq", async () => {
+    const db = await freshDb();
+    upsertRemoteContent(db, { id: "p9", title: "远端页", content_json: '{"root":{"children":[]}}', content_text: "远端正文" }, 42);
+    expect(readContent(db, "p9")).toEqual({ title: "远端页", json: '{"root":{"children":[]}}', text: "远端正文" });
+    expect(localState(db, "p9")).toEqual({ syncSeq: 42, dirty: 0 });
+  });
+
+  it("★ upsertRemoteContent：本地已有 ⇒ 覆盖内容、**dirty 归 0**（这是「远端应用」的那一笔，与 writeContent 硬写 1 成对）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "本地标题", json: "{}", text: "本地正文" }, { dirty: 1, syncSeq: 3 });
+    upsertRemoteContent(db, { id: "p1", title: "远端标题", content_json: "{}", content_text: "远端正文" }, 9);
+    expect(readContent(db, "p1")).toEqual({ title: "远端标题", json: "{}", text: "远端正文" });
+    expect(localState(db, "p1")).toEqual({ syncSeq: 9, dirty: 0 });
+  });
+
+  it("缺字段时的默认值**照搬**（`?? \"active\"` / `?? {}` / `?? 300` / `?? 50` …）——不是风格，是落库形态", async () => {
+    const db = await freshDb();
+    upsertRemoteContent(db, { id: "pz" }, 1);
+    const row = db.query<Record<string, unknown>>("SELECT * FROM pages WHERE id = ?", ["pz"])[0];
+    expect(row.workspace_id).toBe("active");
+    expect(row.kind).toBe("page");
+    expect(row.sort_order).toBe(0);
+    expect(row.deleted_at).toBeNull();
+    expect(row.content_json).toBe("{}");
+    expect(row.content_text).toBe("");
+    expect(row.db_rule).toBe("{}");
+    expect(row.cover_height).toBe(300);
+    expect(row.cover_pos).toBe(50);
+    expect(row.dirty).toBe(0);
   });
 });
 

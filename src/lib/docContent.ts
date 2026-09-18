@@ -126,6 +126,76 @@ export interface LocalContentState {
 }
 
 /**
+ * 读本地状态（合并判定的输入）—— 与 Rust 侧 `doc_content::local_state` 同一条 SQL、同一形状。
+ * 页面不存在 ⇒ `undefined`（判定把它当成"本地没有这一页 ⇒ 用远端"）。
+ */
+export function localState(db: ContentSql, pageId: string): LocalContentState | undefined {
+  const row = db.query<{ sync_seq: number; dirty: number }>(
+    "SELECT sync_seq, dirty FROM pages WHERE id = ?",
+    [pageId],
+  )[0];
+  if (!row) return undefined;
+  return { syncSeq: Number(row.sync_seq ?? 0), dirty: Number(row.dirty ?? 0) };
+}
+
+/**
+ * **远端写入口** —— 合并判定说"用远端"之后，把远端那一行落库。
+ *
+ * 与 Rust 侧 `sync::apply_upsert` 里那段 `INSERT … ON CONFLICT` 是**同一条 SQL 的两份实现**
+ * （那边还没搬进 `doc_content`，所以这里先把前端这份搬进来，两边都搬完再谈"只有一处 SQL"）。
+ *
+ * ⚠️ **逐字搬运**，包括那些"看起来可以省"的默认值（`?? "active"` / `?? {}` / `?? 300` …）：
+ * 它们决定"远端行缺字段时本地落成什么"，不是风格问题。
+ * ⚠️ **`dirty` 硬写 0**：这是把远端内容认定为"已同步"的那一笔 —— 它是**同步契约**，
+ * 与 `writeContent` 硬写 1 是一对（本地改动 vs 远端应用）。
+ */
+export interface RemotePageRow {
+  id: string;
+  workspace_id?: unknown;
+  parent_id?: unknown;
+  title?: unknown;
+  kind?: unknown;
+  sort_order?: unknown;
+  created_at?: unknown;
+  updated_at?: unknown;
+  deleted_at?: unknown;
+  content_json?: unknown;
+  content_text?: unknown;
+  db_rule?: unknown;
+  icon?: unknown;
+  cover?: unknown;
+  cover_height?: unknown;
+  cover_pos?: unknown;
+}
+
+export function upsertRemoteContent(db: ContentSql, row: RemotePageRow, remoteSeq: number): void {
+  db.run(
+    `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos, sync_seq, dirty)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     ON CONFLICT(id) DO UPDATE SET title=excluded.title, kind=excluded.kind, parent_id=excluded.parent_id, sort_order=excluded.sort_order, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, content_json=excluded.content_json, content_text=excluded.content_text, db_rule=excluded.db_rule, icon=excluded.icon, cover=excluded.cover, cover_height=excluded.cover_height, cover_pos=excluded.cover_pos, workspace_id=excluded.workspace_id, sync_seq=excluded.sync_seq, dirty=0`,
+    [
+      row.id,
+      row.workspace_id ?? "active",
+      row.parent_id ?? null,
+      row.title ?? "",
+      row.kind ?? "page",
+      row.sort_order ?? 0,
+      row.created_at ?? Date.now(),
+      row.updated_at ?? Date.now(),
+      row.deleted_at ?? null,
+      row.content_json ?? "{}",
+      row.content_text ?? "",
+      row.db_rule ?? "{}",
+      row.icon ?? "",
+      row.cover ?? "",
+      row.cover_height ?? 300,
+      row.cover_pos ?? 50,
+      remoteSeq,
+    ],
+  );
+}
+
+/**
  * ★ **合并点** —— 只有这里知道"怎么合"。
  *
  * 今天 = **页级 LWW + dirty 优先本地 + `seq` 权威**（逐字搬运自 `web.ts::applyChange`）：

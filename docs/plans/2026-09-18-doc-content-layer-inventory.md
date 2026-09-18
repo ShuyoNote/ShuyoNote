@@ -158,6 +158,35 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 而 `readContent` 带 ⇒ 搬过去会改变"软删页能否算自己的块反链"这个行为。
 那属于"顺手修"而不是"只搬不改"，**留作单独一次提交**（还得同时看桌面侧同不同语义）。
 
+**✅ 前端第三切片：合并点的**两侧**都进层（`localState` ＋ `upsertRemoteContent`）**
+
+前两切片只把**判定**（`shouldTakeRemote`）搬进了那一层，而它两侧的 SQL 还留在 `web.ts`
+（`applyChange` 里"读本地 `sync_seq`/`dirty`"与"用远端则 `INSERT … ON CONFLICT`"）。
+这一轮把两侧补齐——**这才让"同步只能经 merge"（§4 规则 4）在代码上真的成立**：
+
+| 位置 | 搬运前 | 搬运后 |
+|---|---|---|
+| 合并判定的读数 | `SELECT sync_seq, dirty FROM pages WHERE id = ?`（`applyChange` 内联） | `localState(store, id)`（与 Rust `doc_content::local_state` 同 SQL 同形状） |
+| "用远端"落库 | `INSERT … ON CONFLICT … dirty=0`（18 列，`applyChange` 内联） | `upsertRemoteContent(store, row, remoteSeq)` |
+
+两条纪律写在函数注释里：**逐字搬运**（含 `?? "active"` / `?? {}` / `?? 300` / `?? 50` 这些
+"看起来能省"的默认值 —— 它们决定远端行缺字段时本地落成什么）；**`dirty` 硬写 0** 是同步契约，
+与 `writeContent` 硬写 1 成一对（远端应用 vs 本地改动）。
+
+判据：`docContent.test.ts` **22 条**（新增 5：`localState` 两条 ＋ 插入/覆盖/默认值三条，其中
+"覆盖后 dirty 归 0"与"缺字段默认值"是这次搬运唯一可能改变行为的地方）＋ 门禁 `two-device-sync`
+**14/14**（它用**真 `applyChange`** 跑两台设备同页并发，含"时钟漂移下 dirty 保护本地"那条 ——
+这才是合并点的承重判据）。
+白名单：`web.ts` **114 → 106**，受约束口径 **604 → 596 处**（`--update` 只减不增）。
+
+**⏳ 还没做**（别当成收口已完成）：
+
+- **远端写路径**：`sync::apply_upsert` 的 `INSERT … ON CONFLICT` 与 `fetch_page` 的整行 SELECT 仍在原处
+  （前者要 `PageDetail` 的 11 个字段、后者属"页面元数据"，各值得单独一次提交）；
+  **前端这一份已经搬了**（`upsertRemoteContent`）⇒ 现在两侧是"同一条 SQL 的两份实现"，
+  下一步可以把 Rust 那份也搬进 `doc_content.rs`，两份合到同一处语义；
+- **SQL 层内联子查询**（`list_block_backlinks` 的 `(SELECT content_json …)`）加一层函数收不了。
+
 ### 7.1 顺带修掉的一个**数据丢失**缺陷（前端壳的第一次"回本"）
 
 `platform/web.ts` 的 `save_page` 原先用 `str(args.content_json ?? "")` 取内容，而**只传标题的保存**
