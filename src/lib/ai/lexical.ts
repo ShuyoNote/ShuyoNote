@@ -1,6 +1,7 @@
 // Text/Lexical helpers shared by the thin-AI tool layer. We manipulate the plain
 // Lexical JSON (root children) on the FRONTEND and reuse the existing `save_page`
 // command, so no new arbitrary backend command is introduced (minimal IPC surface).
+import { deriveContentText } from "../contentText";
 
 // Normalize arbitrary content into a Lexical paragraph node (blockId assigned by
 // callers). `text` may contain `\n` → split into multiple paragraph nodes.
@@ -58,17 +59,18 @@ export function appendBlocksToJson(contentJson: string, text: string, makeId: ()
   return JSON.stringify(doc);
 }
 
-/** Extract the plain text of a page's content JSON (for previews/snippets). */
+/**
+ * 由页面内容 JSON 取正文纯文本（预览/片段用）。
+ *
+ * ⚠️ **已改成唯一实现**（`lib/contentText.ts` 的 `deriveContentText`）：本函数原先自己 walk JSON、
+ * 用**空格**连接，而编辑器保存路径用的是 Lexical 的 `$getRoot().getTextContent()`（块间换行）
+ * ⇒ 实测 **7 个样本里 4 个两者结果不同**，也就是"谁最后保存决定了正文文本长什么样"
+ * （FTS 命中/反链片段/预览会随后台路径漂）。现在两条路径共用一套语义。
+ *
+ * 保留这个名字：调用方很多（AI 层/PDF 注释面板），改名只会增加 diff；语义已经统一。
+ */
 export function contentTextOf(contentJson: string): string {
-  const doc = safeRoot(contentJson);
-  const out: string[] = [];
-  const walk = (n: any) => {
-    if (!n || typeof n !== "object") return;
-    if (typeof n.text === "string") out.push(n.text);
-    if (Array.isArray(n.children)) n.children.forEach(walk);
-  };
-  (doc.root.children as any[]).forEach(walk);
-  return out.join(" ");
+  return deriveContentText(contentJson);
 }
 
 /** Strip markdown markers and pure-separator/HR lines so AI-drafted content can be
