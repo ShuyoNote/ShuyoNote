@@ -56,6 +56,15 @@ for (const { dir, exts } of ROOTS) {
   }
 }
 
+// ⚠️ **豁免层要从受约束计数里彻底摘掉**（不只是在校验时跳过它）。
+// 2026-09-18 实测踩到：壳（`doc_content.rs`）一落地，本文件就**再也 `--update` 不了**——
+// 它在基线里是 0、现在是 9，被当成"新增文件直接引用"而拒绝下调。
+// 根因是"豁免"只写在**校验**那一支里，**写基线**那一支不知道它豁免。
+// ⇒ 统一成这一个 `regulated`：`counts` 只是原始读数（含豁免层），受约束与入库的一律用它。
+const regulated = Object.fromEntries(
+  Object.entries(counts).filter(([f]) => !LAYER_FILES.has(f)),
+);
+
 const hadBaseline = existsSync(BASELINE);
 const baseline = hadBaseline ? JSON.parse(readFileSync(BASELINE, "utf8")) : {};
 
@@ -64,14 +73,14 @@ if (UPDATE) {
   // ⚠️ **首次创建要豁免**：基线还不存在时，每个文件都是"0 → N"，那不叫上涨，那叫 bootstrap。
   //    这一条是门禁第一次跑时自己抓出来的（它拒绝了创建基线），写下来免得后人再踩。
   const raised = hadBaseline
-    ? Object.entries(counts).filter(([f, n]) => (baseline[f] ?? 0) < n)
+    ? Object.entries(regulated).filter(([f, n]) => (baseline[f] ?? 0) < n)
     : [];
   if (raised.length) {
     console.error("✗ 拒绝上调基线（先去掉新增的直接访问）：");
     for (const [f, n] of raised) console.error(`   · ${f}: ${baseline[f] ?? 0} → ${n}`);
     process.exit(1);
   }
-  const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
+  const sorted = Object.fromEntries(Object.entries(regulated).sort(([a], [b]) => a.localeCompare(b)));
   writeFileSync(BASELINE, JSON.stringify(sorted, null, 2) + "\n", "utf8");
   const total = Object.values(sorted).reduce((a, b) => a + b, 0);
   console.log(`✓ 基线已下调：${Object.keys(sorted).length} 个文件 / ${total} 处`);
@@ -79,15 +88,14 @@ if (UPDATE) {
 }
 
 const problems = [];
-for (const [file, n] of Object.entries(counts)) {
-  if (LAYER_FILES.has(file)) continue;
+for (const [file, n] of Object.entries(regulated)) {
   const was = baseline[file];
   if (was === undefined) problems.push(`新增文件直接引用（不在基线里）：${file}（${n} 处）`);
   else if (n > was) problems.push(`直接访问变多：${file} ${was} → ${n}（收口要求只减不增）`);
 }
 
 const wasTotal = Object.values(baseline).reduce((a, b) => a + b, 0);
-const nowTotal = Object.values(counts).reduce((a, b) => a + b, 0);
+const nowTotal = Object.values(regulated).reduce((a, b) => a + b, 0);
 
 if (problems.length) {
   console.error(`✗ 文档内容直接访问门禁未通过（${problems.length} 项）：`);
@@ -99,10 +107,10 @@ if (problems.length) {
   process.exit(1);
 }
 
-const lowerable = Object.entries(baseline).filter(([f, n]) => (counts[f] ?? 0) < n);
-console.log(`✓ 文档内容直接访问：${Object.keys(counts).length} 个文件 / ${nowTotal} 处（基线 ${wasTotal} 处）`);
+const lowerable = Object.entries(baseline).filter(([f, n]) => (regulated[f] ?? 0) < n);
+console.log(`✓ 文档内容直接访问：${Object.keys(regulated).length} 个文件 / ${nowTotal} 处（基线 ${wasTotal} 处）`);
 if (lowerable.length) {
   console.log(`  ℹ️ 有 ${lowerable.length} 个文件的计数已经低于基线，可下调基线让它继续收敛：`);
-  for (const [f, n] of lowerable.slice(0, 10)) console.log(`     · ${f}: ${n} → ${counts[f] ?? 0}`);
+  for (const [f, n] of lowerable.slice(0, 10)) console.log(`     · ${f}: ${n} → ${regulated[f] ?? 0}`);
   console.log("     跑 `node scripts/check-doc-content-access.mjs --update`（只允许变小）。");
 }

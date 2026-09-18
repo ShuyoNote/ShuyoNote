@@ -88,3 +88,30 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 | 壳变成"多一层转发"而无收益 | 收益判据是**白名单只减不增**＋`merge` 的调用方零改动 |
 | 前后端两套壳语义漂移 | 两侧**同一份 API 草案**（本文件 §3）＋契约测试钉住 |
 | 一次性大重构 | 明确**不做大爆炸**：壳先行为等价，白名单逐步收敛 |
+
+## 7. 进展（2026-09-18）
+
+**✅ 第 1 条的 Rust 一侧已落地**：`src-tauri/src/doc_content.rs`（`read` / `write` / `derive` / `derive_fts` /
+`local_state` / **`merge`**），调用方已改四处：
+
+| 调用方 | 改了什么 |
+|---|---|
+| `commands::save_page` | 现状回读 → `read`；UPDATE → `write`；两处派生 → `derive`（SQL 与顺序**逐字**保留） |
+| `blocks::resolve_block` / `get_page_blocks` | 各自的 `SELECT content_json …` → `read` |
+| `sync::apply_upsert` | ★ **LWW 判定** → `doc_content::merge`（唯一的合并点）；FTS → `derive_fts` |
+
+**行为等价的复核方式**：壳里那 5 条 `merge` 单测是**纯函数**测试，但**Windows 跑不了 `cargo test`**
+（`0xC0000139`）⇒ 必须由 AMD/Mac 在被验 commit 上 `cargo test --lib doc_content` 复核（分工见信箱对应回信）。
+
+**白名单**：746 → **728 处**（已 `--update` 下调，**只减不增**这条机器上是硬的）。
+
+**⏳ 还没做**（别当成收口已完成）：
+
+- **前端一侧的壳未开始**（`src/lib/docContent.ts`）；
+- **远端写路径**：`sync::apply_upsert` 的 `INSERT … ON CONFLICT` 与 `fetch_page` 的整行 SELECT 仍在原处
+  （前者要 `PageDetail` 的 11 个字段、后者属"页面元数据"，各值得单独一次提交）；
+- **SQL 层内联子查询**（`list_block_backlinks` 的 `(SELECT content_json …)`）加一层函数收不了。
+
+**🐛 门禁自身修了一处**（这一条是壳落地时**门禁自己抓出来的**）：豁免层原先只在**校验**分支生效，
+`--update` 不认它 ⇒ 壳一落地就再也下调不了基线（`doc_content.rs` 被判成"0 → 9 的新增文件直接引用"）。
+现在 `counts`（原始读数，含豁免层）与 `regulated`（受约束/入库，摘掉豁免层）分开。

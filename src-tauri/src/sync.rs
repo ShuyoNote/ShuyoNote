@@ -132,28 +132,12 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
 // ---- remote apply (LWW) ----
 
 fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), String> {
-    // seq-based LWW + dirty-prefer-local: protects local unsynced edits (and avoids
-    // device-clock-drift mishaps). If the local page has unsynced edits (dirty=1)
-    // OR it already synced past this change's seq, keep local; otherwise accept the
-    // remote and record sync_seq.
-    let local: Option<(i64, i64)> = c
-        .query_row(
-            "SELECT sync_seq, dirty FROM pages WHERE id = ?1",
-            params![page.id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-
-    if let Some((local_seq, dirty)) = local {
-        if dirty != 0 {
-            // Local has unsynced edits → keep local (protect user's recent change).
-            return Ok(());
-        }
-        if local_seq > sync_seq {
-            // Already synced a more recent change → keep local.
-            return Ok(());
-        }
+    // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
+    // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
+    // 这里只负责"把判定结果落成 SQL"。
+    let local = crate::doc_content::local_state(c, &page.id)?;
+    if crate::doc_content::merge(local, sync_seq) == crate::doc_content::MergeDecision::KeepLocal {
+        return Ok(());
     }
 
     c.execute(
@@ -187,7 +171,8 @@ fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), 
     )
     .map_err(|e| e.to_string())?;
 
-    search::sync_fts(c, &page.id, &page.title, &page.content_text)?;
+    // 派生也只经那一层（今天远端应用只刷 FTS —— 逐字搬运，不多做）。
+    crate::doc_content::derive_fts(c, &page.id, &page.title, &page.content_text)?;
     Ok(())
 }
 

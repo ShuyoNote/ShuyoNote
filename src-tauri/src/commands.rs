@@ -373,32 +373,21 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
     let c = conn(&db);
     let now = now_ms();
 
-    // Read current values for fields not provided.
-    let (cur_title, cur_json, cur_text): (String, String, String) = c
-        .query_row(
-            "SELECT title, content_json, content_text FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-            params![args.id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
+    // Read current values for fields not provided. 走「文档内容」那一层（阶段 0 接口收口）。
+    let cur = crate::doc_content::read(&c, &args.id)?
         .ok_or_else(|| "页面不存在".to_string())?;
 
-    let title = args.title.unwrap_or(cur_title);
-    let content_json = args.content_json.unwrap_or(cur_json);
-    let content_text = args.content_text.unwrap_or(cur_text);
+    let content = crate::doc_content::DocContent {
+        title: args.title.unwrap_or(cur.title),
+        json: args.content_json.unwrap_or(cur.json),
+        text: args.content_text.unwrap_or(cur.text),
+    };
 
     // Snapshot the current state before overwriting (version history).
-    versions::snapshot_before_save(&c, &args.id, &title, &content_json, &content_text)?;
+    versions::snapshot_before_save(&c, &args.id, &content.title, &content.json, &content.text)?;
 
-    c.execute(
-        "UPDATE pages SET title = ?1, content_json = ?2, content_text = ?3, updated_at = ?4, dirty = 1 WHERE id = ?5",
-        params![title, content_json, content_text, now, args.id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    search::sync_fts(&c, &args.id, &title, &content_text)?;
-    blocks::rebuild_block_graph(&c, &args.id, &content_json, &content_text)?;
+    crate::doc_content::write(&c, &args.id, &content, now)?;
+    crate::doc_content::derive(&c, &args.id, &content)?;
 
     let page = fetch_page(&c, &args.id)?;
     sync::record_page_upsert(&c, &page)?;
