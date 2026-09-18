@@ -1,6 +1,13 @@
 # ShuyoNote 同步机制详解
 
-> 桌面（Rust）与 Web 版共用同一套同步协议，均对接 self-hosted `sync-server`（默认 `http://121.199.8.24/sync`）。
+> 桌面（Rust）与 Web 版共用同一套同步协议，均对接 self-hosted `sync-server`。
+> **服务器地址由你在「同步」面板里填**（客户端**不内置默认地址**）；官方实例是 `https://shuyo.cn/sync`，
+> 也可以指向你自己部署的实例 —— 服务端的部署 / 配置 / 排错见私有仓库 `shuyonote-sync-server` 的 `docs/deploy.md`。
+>
+> ⚠️ **订正（2026-09-18）**：这里原先写「默认 `http://121.199.8.24/sync`」，两个地方都不对 ——
+> ① **没有"默认"**：客户端代码里 `server_url` 是逐层传参、初始为空，由用户填写；
+> ② **那个地址已失效**：`http://121.199.8.24/sync/health` 实测 **404**（该 IP 的 http 端不服务 `/sync`），
+> 而 `https://shuyo.cn/sync/health` 返回 **200**。请一律使用域名形式。
 
 ## 一、整体架构
 
