@@ -77,10 +77,17 @@ const MAX_PAGE_TEXT_LIMIT = 20_000;
 const BLOCKS_LIMIT_DEFAULT = 100;
 const BLOCKS_LIMIT_MAX = 500;
 
+/** `pages.search` 的 `limit` 默认值与上限：与注册表 `default: 8`、Rust `limit.clamp(1, 100)` 一致。 */
+const SEARCH_LIMIT_DEFAULT = 8;
+const SEARCH_LIMIT_MAX = 100;
+
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.search": async (args) => {
     const query = String(args.q ?? "");
-    const limit = typeof args.limit === "number" ? args.limit : 8;
+    // ⚠️ 默认值与上限**必须与注册表和 Rust 侧逐值相同**（`check-capabilities` 会比对注册表
+    // 与 Rust 的字面默认值）。这里原先默认 8 却不夹取，而 Rust 是 `limit.clamp(1, 100)`：
+    // 传 `limit: 999` 时 Web 与桌面拿到的条数就不一样了。
+    const limit = Math.min(SEARCH_LIMIT_MAX, Math.max(1, Math.floor(toFiniteOr(args.limit, SEARCH_LIMIT_DEFAULT))));
     if (!query) return { ok: false, error: "pages.search 需要 q" };
     const rows = await api.search(query, limit, false);
     return { ok: true, pages: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.snippet })) };

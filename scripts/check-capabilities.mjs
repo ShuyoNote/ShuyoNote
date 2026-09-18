@@ -29,6 +29,9 @@ const fail = (msg) => problems.push(msg);
 /** TS 侧适配器的个数（只用于输出读数，便于察觉适配器被删/漏写）。 */
 let tsAdapters = 0;
 
+/** 有没有默认值无法机械比对（dispatch 用非字面量读法）—— 报出来但不判红。 */
+let defaultsUncompared = 0;
+
 /**
  * 比较生成物时忽略行尾差异（CRLF vs LF）。
  *
@@ -224,6 +227,29 @@ if (!arms) {
       }
     }
 
+    // **默认值口径**：注册表声明的 `default` 必须与 dispatch 里的字面默认值相同。
+    // 这条是 2026-09-18 加的，它当天就抓到一个真的：`pages.search.limit` 注册表与 AI 工具面
+    // （生成物）都写 **8**，而 dispatch 是 `arg_i64("limit", 20)` ⇒ 桌面上默认返回 20 条、Web 上 8 条，
+    // 模型看到的工具说明却是 8。这类"默认值不同"比"参数没读"更隐蔽：两边都能跑、都返回合理结果。
+    // 只比对字面量；用别的方式读默认值（如 `args.get(..).unwrap_or(..)`）时无法机械比对，
+    // 计数后在总结行里报出来（**可见但不判红**，免得把正当写法误伤）。
+    for (const a of c.args ?? []) {
+      if (a.default === undefined) continue;
+      const num = arm.match(new RegExp(`arg_i64\\("${a.name}"\\s*,\\s*(-?\\d+)`));
+      const str = arm.match(new RegExp(`arg_(?:opt_)?str\\("${a.name}"\\s*,\\s*"([^"]*)"`));
+      const lit = num ? num[1] : str ? str[1] : null;
+      if (lit === null) {
+        defaultsUncompared++;
+        continue;
+      }
+      if (String(a.default) !== lit) {
+        fail(
+          `能力 ${c.id} 的参数 ${a.name} 默认值不一致：注册表 ${JSON.stringify(a.default)} ` +
+            `vs dispatch ${JSON.stringify(lit)}（作者看到的默认值与实际行为不同）`,
+        );
+      }
+    }
+
     // desc 里逐参数的窗口：该参数名 → 下一个参数名之间，不能出现与标记相反的说法
     const desc = c.desc ?? "";
     const argNames = (c.args ?? []).map((a) => a.name);
@@ -351,5 +377,6 @@ console.log(
   `能力注册表一致：${reg.capabilities.length} 条能力 / ${reg.permissions.length} 项权限 / ` +
     `${reg.legacyGlobals.length} 个兼容别名 / ${reg.errorCodes.length} 个错误码；` +
     `API v${reg.apiVersion}；生成物 ${Object.keys(files).length} 个文件；` +
-    `TS 适配器 ${tsAdapters} 个（参数口径两侧都比对）`,
+    `TS 适配器 ${tsAdapters} 个（参数口径两侧都比对）` +
+    (defaultsUncompared ? `；另有 ${defaultsUncompared} 个默认值是非字面量读法，未自动比对（请人工看一眼）` : ""),
 );

@@ -2107,7 +2107,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "pages.count" => cap_pages_count(),
         "pages.list" => cap_pages_list(arg_i64("limit", 50)),
         "pages.get" => cap_pages_get(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 6000)),
-        "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 20)),
+        "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 8)),
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
