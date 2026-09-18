@@ -54,13 +54,30 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /** 读一份附件的字节；失败返回 null（调用方决定是留原样还是报错）。 */
-export type ReadAttachmentBytes = (hash: string) => Promise<ArrayBuffer | null>;
+export type AttachmentBytes = ArrayBuffer | Uint8Array | number[];
+export type ReadAttachmentBytes = (hash: string) => Promise<AttachmentBytes | null>;
+
+/**
+ * 归一成 `Uint8Array`。
+ *
+ * ⚠️ **必须归一**：平台返回的形状不统一（2026-09-18 实测）——Web 的
+ * `read_attachment_bytes` 是 `Array.from(bytes)`（`web.ts:2087`）⇒ **number[]**；
+ * 桌面 / executor 侧签名写 `ArrayBuffer`，而调用点自己把它标成 `number[] | Uint8Array`
+ * （`web.ts:3682`）。原来直接读 `byteLength` 判大小，对数组恒为 `undefined`
+ * ⇒ **8MB 上限在真机上不生效**（单测喂的是 ArrayBuffer，所以没抓到）。
+ */
+export function toBytes(v: AttachmentBytes): Uint8Array {
+  if (v instanceof Uint8Array) return v;
+  if (v instanceof ArrayBuffer) return new Uint8Array(v);
+  return Uint8Array.from(v);
+}
 
 const defaultReader: ReadAttachmentBytes = async (hash) => {
   try {
-    const buf = await api.readAttachmentBytes(hash);
-    if (!buf || buf.byteLength === 0) return null;
-    return buf;
+    const raw = (await api.readAttachmentBytes(hash)) as unknown as AttachmentBytes | null;
+    if (!raw) return null;
+    const bytes = toBytes(raw);
+    return bytes.length > 0 ? bytes : null;
   } catch {
     return null;
   }
@@ -91,16 +108,22 @@ export async function inlineExportMedia(
     el.removeAttribute(EXPORT_MIME_ATTR);
     if (!hash) continue;
 
-    const buf = await read(hash);
-    if (!buf) {
+    const raw = await read(hash);
+    if (!raw) {
       report.missing++;
       continue;
     }
-    if (buf.byteLength > maxBytes) {
+    // 先归一再看长度：平台可能给 number[]（见 toBytes 的注释）。
+    const bytes = toBytes(raw);
+    if (bytes.length === 0) {
+      report.missing++;
+      continue;
+    }
+    if (bytes.length > maxBytes) {
       report.tooLarge++;
       continue;
     }
-    const dataUrl = `data:${mime};base64,${bytesToBase64(new Uint8Array(buf))}`;
+    const dataUrl = `data:${mime};base64,${bytesToBase64(bytes)}`;
     el.setAttribute("src", dataUrl);
     // `srcset` 优先于 `src`，留着就等于白内联（img）；video 上无意义，一并清掉更省心。
     el.removeAttribute("srcset");

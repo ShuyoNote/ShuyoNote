@@ -12,6 +12,7 @@ import {
   EXPORT_MIME_ATTR,
   inlineExportMedia,
   MAX_INLINE_BYTES,
+  toBytes,
 } from "./exportInline";
 
 const PNG_1PX = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -80,5 +81,37 @@ describe("inlineExportMedia —— 把应用专有 URL 换成自包含的 data: 
     const html = `<img src="a" ${EXPORT_HASH_ATTR}="h1"><img src="b" ${EXPORT_HASH_ATTR}="h2">`;
     const { report } = await inlineExportMedia(html, { read: reader(PNG_1PX) });
     expect(report.inlined).toBe(2);
+  });
+
+  // ---- 平台真实返回形状（2026-09-18 实测补齐）--------------------------------
+  // web 的 read_attachment_bytes 返回 `Array.from(bytes)` ⇒ **number[]**（web.ts:2087）；
+  // 桌面侧调用点也把它标成 `number[] | Uint8Array`（web.ts:3682）。
+  // 下面四条钉住"形状不影响正确性，且体积上限照样生效"。
+
+  it("reader 返回 number[] 时同样内联（真实形状）", async () => {
+    const html = `<img src="path/x.png" ${EXPORT_HASH_ATTR}="h1" ${EXPORT_MIME_ATTR}="image/png">`;
+    const { html: out, report } = await inlineExportMedia(html, { read: async () => Array.from(PNG_1PX) });
+    expect(out).toContain('src="data:image/png;base64,iVBORw0KGgo="');
+    expect(report.inlined).toBe(1);
+  });
+
+  it("number[] 形状下 8MB 上限照样生效（原来读 byteLength 恒 undefined ⇒ 上限形同虚设）", async () => {
+    const big = new Array(MAX_INLINE_BYTES + 1).fill(65);
+    const { html: out, report } = await inlineExportMedia(`<img src="x" ${EXPORT_HASH_ATTR}="big">`, {
+      read: async () => big,
+    });
+    expect(out).toContain('src="x"');
+    expect(report).toEqual({ inlined: 0, missing: 0, tooLarge: 1 });
+  });
+
+  it("空字节算 missing（不能内联出一张空图）", async () => {
+    const { report } = await inlineExportMedia(`<img src="x" ${EXPORT_HASH_ATTR}="e">`, { read: async () => [] });
+    expect(report).toEqual({ inlined: 0, missing: 1, tooLarge: 0 });
+  });
+
+  it("toBytes 三种形状都归一", () => {
+    expect([...toBytes(PNG_1PX)]).toEqual([...PNG_1PX]);
+    expect([...toBytes(PNG_1PX.buffer.slice(0) as ArrayBuffer)]).toEqual([...PNG_1PX]);
+    expect([...toBytes(Array.from(PNG_1PX))]).toEqual([...PNG_1PX]);
   });
 });
