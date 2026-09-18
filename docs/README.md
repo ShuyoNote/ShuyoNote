@@ -20,6 +20,7 @@
 | 免费客户出口怎么做 | [免费客户出口·网站/帮助站指南](free-site-export-guide.md) |
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
+| [plans/2026-09-18-crdt-full-migration-plan.md](plans/2026-09-18-crdt-full-migration-plan.md) | **同页并发 → 全量 CRDT（路线 C）冲刺计划**：现状（页级 LWW，仓库原文）、CRDT 认真评估（不丢 ≠ 不冲突；E2EE 不阻止 CRDT）、四阶段路径、七处改动面、五条不变量与触发/退出条件 |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
 | 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
 | 回归门禁有哪些 / 结果在哪看 | [回归测试体系](TESTING.md) |
