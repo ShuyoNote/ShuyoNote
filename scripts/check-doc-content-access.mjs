@@ -1,8 +1,8 @@
 // 门禁：**「文档内容」的直接访问只许减、不许增**。
 //
 // 背景（阶段 0「接口收口」，见 docs/plans/2026-09-18-doc-content-layer-inventory.md）：
-// 今天 `content_json` / `content_text` / `contentJson` 在前端与 Rust 侧共 **542 处、26 个文件**里被直接提到。
-// 换 CRDT（或做块级 LWW）时，如果全仓都直接摸这两个字段，替换面就是 542 处；
+// 今天 `content_json` / `content_text` / `contentJson` 在前端与 Rust 侧共 **746 处、80 个文件**里被直接提到。
+// 换 CRDT（或做块级 LWW）时，如果全仓都直接摸这两个字段，替换面就是 746 处；
 // 收口的目标是让它们**只经一层**（read/write/merge/derive）。
 //
 // 做法：记一份**每文件基线计数**，规则三条：

@@ -8,33 +8,42 @@
 
 ## 1. 盘点（2026-09-18 实测，按命中数）
 
-**口径**：文件里出现 `content_json` / `content_text` / `contentJson` 的次数。
-**合计：前端 381 处 / Rust 161 处 = 542 处，分布在 26 个文件。**
+**口径**（= 门禁 `scripts/check-doc-content-access.mjs` 的口径，**唯一权威**）：扫
+`src/**/*.{ts,tsx}` 与 `src-tauri/src/**/*.rs`，数子串 `content_json` / `content_text` / `contentJson` 的出现次数。
 
-| 前端文件 | 命中 | Rust 文件 | 命中 |
+**合计：前端 538 处 / Rust 208 处 = 746 处，分布在 80 个文件（前端 64 / Rust 16）。**
+
+> ⚠️ **旧口径作废**：本文第一版写的是「542 处 / 26 个文件」——那是我**手工扫"主要文件"**得出的，
+> 漏了测试文件与零散命中。**以门禁读数为准**（它可复跑、可回归、只减不增）。
+> 数字变大**不是**收口变难了，而是第一版**低估**了：要收的是**接口**，不是这 746 个字符串。
+
+| 前端文件（Top 10） | 命中 | Rust 文件（Top 10） | 命中 |
 |---|---:|---|---:|
-| `web.ts`（Web 平台适配/命令桩） | 77 | `blocks.rs`（块 CRUD） | 30 |
-| `Editor.tsx` | 27 | `commands.rs`（命令层） | 22 |
-| `PdfAnnotationCanvas.tsx` | 15 | `plugins.rs`（插件宿主/能力） | 19 |
-| `App.tsx` | 13 | `versions.rs`（版本历史） | 15 |
-| `pageChunks.test.ts` | 13 | `search.rs`（FTS/派生） | 14 |
-| `TemplateCenterView.tsx` | 12 | `db.rs` | 12 |
-| `EmailPanel.tsx` | 12 | `workspaces.rs` | 9 |
-| `lexical.ts` | 11 | `security.rs` | 8 |
-| 其余（apply/communityImport/emailRichNote/mdPreview…） | — | `templates.rs` / `sync.rs` / `trash.rs` / `models.rs` | 8 / 6 / 4 / 4 |
+| `lib/platform/web.ts`（Web 平台适配/命令桩；**同一批命令的浏览器实现**） | 126 | `commands.rs`（命令层） | 31 |
+| `components/PdfAnnotationCanvas.tsx` | 34 | `blocks.rs`（块 CRUD） | 30 |
+| `editor/Editor.tsx` | 29 | `versions.rs`（版本历史） | 26 |
+| `components/TemplateCenterView.tsx` | 24 | `plugins.rs`（插件宿主/能力） | 21 |
+| `components/EmailPanel.tsx` | 22 | `db.rs` | 15 |
+| `App.tsx` | 18 | `search.rs`（FTS/派生） | 15 |
+| `lib/ai/lexical.ts` | 14 | `workspaces.rs` | 15 |
+| `lib/communityImport.ts` | 14 | `security.rs` | 12 |
+| `lib/platform/pageChunks.test.ts` | 14 | `templates.rs` | 10 |
+| `lib/ai/apply.ts` | 13 | `sync.rs`（**合并点**） | 9 |
+
+（余下 70 个文件各 ≤ 13 处，其中 **13 个文件只有 1 处**——这类最容易被顺手挪进壳里。）
 
 ## 2. **怎么读这张表**（关键：命中数 ≠ 要改的地方）
 
-542 处里**绝大多数是"读"**，而且分三类，代价完全不同：
+746 处里**绝大多数是"读"**，而且分三类，代价完全不同：
 
 | 类别 | 例子 | 换 CRDT 时要动吗 |
 |---|---|---|
 | **派生 / 展示 / 导出**（只读，可从合并后状态重建） | `search.rs`（FTS）、`blocks.rs` 的派生、导出、Markdown、模板、邮件转笔记 | **不必逐个改**——只要它们**从同一个"读出口"拿数据** |
-| **平台适配 / 命令桩** | `web.ts` 77 处（同一批命令的浏览器实现） | 同上（跟着接口走，不跟实现走） |
+| **平台适配 / 命令桩** | `web.ts` 126 处（同一批命令的浏览器实现） | 同上（跟着接口走，不跟实现走） |
 | **真正的写路径与合并点** | 写入命令（`blocks.rs`/`commands.rs`）＋ `sync.rs` 的合并 | ⚠️ **这才是那一层要圈的** |
 
-⇒ **结论**：要收的不是"542 处"，而是「**写入口 ＋ 合并点 ＋ 派生的输入**」这三处。
-**先把这三个口封住，542 处里的多数会自然跟着走**（因为它们本来就是"读"）。
+⇒ **结论**：要收的不是"746 处"，而是「**写入口 ＋ 合并点 ＋ 派生的输入**」这三处。
+**先把这三个口封住，746 处里的多数会自然跟着走**（因为它们本来就是"读"）。
 
 ## 3. 那一层要做的四件事（API 草案）
 
@@ -59,8 +68,15 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 
 1. **先加一层"壳"包住现有实现，行为完全不变**（纯重构、无功能改动）：前端一层 ＋ Rust 一层；
 2. **再加一条 grep 门禁**（挂进现有门禁清单）：**除该层外，新增文件不得直接引用 `content_json`/`content_text`**
-   —— 存量 542 处以**白名单**登记，**只许减不许增**（这条让"收口"变成一个**单调收敛**的过程，而不是一次大爆炸）；
+   —— 存量 **746 处（门禁口径）**以**白名单**登记，**只许减不许增**（这条让"收口"变成一个**单调收敛**的过程，
+   而不是一次大爆炸）；
 3. 之后每做一次相关改动，顺手把白名单里的条目挪进壳里。
+
+> ✅ **第 2 条已落地**（2026-09-18）：`scripts/check-doc-content-access.mjs` ＋ 逐文件基线
+> `scripts/doc-content-access-baseline.json`（**80 文件 / 746 处**），已登记进 `scripts/lib/gates.mjs`（contract 组）。
+> 三条规则：出现**新文件**直接引用 ⇒ 红；某文件计数**超过**基线 ⇒ 红；计数**低于**基线 ⇒ 提示下调基线
+> （`--update`，**只允许变小**；首次创建基线豁免——门禁第一次跑时正是它自己把"创建基线即上涨"抓出来的）。
+> 豁免名单（本该直接访问的那一层）在脚本的 `LAYER_FILES`：`src/lib/docContent.ts`、`src-tauri/src/doc_content.rs`。
 
 > ⚠️ 与 P0 的关系：`write` 强制带版本号 ⇒ **接口收口最好在 P0（密文格式版本化）之后或同时做**，
 > 否则壳的签名会被 P0 再改一次。

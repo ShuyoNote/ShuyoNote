@@ -22,7 +22,7 @@
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
 | [plans/2026-09-18-crdt-full-migration-plan.md](plans/2026-09-18-crdt-full-migration-plan.md) | **同页并发 → 全量 CRDT（路线 C）冲刺计划**：现状（页级 LWW，仓库原文）、CRDT 认真评估（不丢 ≠ 不冲突；E2EE 不阻止 CRDT）、四阶段路径、七处改动面、五条不变量与触发/退出条件 |
 | [plans/2026-09-18-crdt-spike-workorder.md](plans/2026-09-18-crdt-spike-workorder.md) | **CRDT spike 施工单**：只回答三问（JSON⇄ydoc 转换、下游等价、E2EE 加密快照），1–2 天、独立分支、不阻塞阶段 1；含「把收敛断言写在 Node 侧以便 Windows 自验」这个压周期的取舍 |
-| [plans/2026-09-18-doc-content-layer-inventory.md](plans/2026-09-18-doc-content-layer-inventory.md) | **阶段 0 · 接口收口：现状盘点与那一层的边界**：实测触点**前端 381 / Rust 161 处（26 文件）**；结论是要收的不是 542 处而是「写入口＋合并点＋派生输入」三处；含 read/write/merge/derive 四件事的 API 草案与白名单只减不增的门禁思路 |
+| [plans/2026-09-18-doc-content-layer-inventory.md](plans/2026-09-18-doc-content-layer-inventory.md) | **阶段 0 · 接口收口：现状盘点与那一层的边界**：实测触点**前端 538 / Rust 208 处（80 文件，门禁口径）**；结论是要收的不是 746 处而是「写入口＋合并点＋派生输入」三处；含 read/write/merge/derive 四件事的 API 草案与"只减不增"门禁（已落地） |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
 | 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
 | 回归门禁有哪些 / 结果在哪看 | [回归测试体系](TESTING.md) |
