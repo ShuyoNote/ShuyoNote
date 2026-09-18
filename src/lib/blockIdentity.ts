@@ -63,9 +63,9 @@ function walkNodes(root: unknown, visit: (node: Record<string, unknown>, depth: 
 }
 
 /** 解析成文档对象；解析不出来或没有 `root` 对象 ⇒ `null`（调用方原样返回输入，绝不抛）。 */
-function parseDoc(contentJson: string): { root: Record<string, unknown> } | null {
+function parseDoc(docJson: string): { root: Record<string, unknown> } | null {
   try {
-    const parsed = JSON.parse(contentJson);
+    const parsed = JSON.parse(docJson);
     const root = (parsed as Record<string, unknown> | null)?.root;
     if (!root || typeof root !== "object" || Array.isArray(root)) return null;
     return { root: root as Record<string, unknown> };
@@ -85,9 +85,9 @@ function parseDoc(contentJson: string): { root: Record<string, unknown> } | null
  *
  * 解析失败 / 没有 root ⇒ **原样返回输入**（这层在加载路径上，不能因为一条脏数据把页面打开变成崩）。
  */
-export function toModelDoc(contentJson: string, makeId: MakeBlockId): string {
-  const doc = parseDoc(contentJson);
-  if (!doc) return contentJson;
+export function toModelDoc(docJson: string, makeId: MakeBlockId): string {
+  const doc = parseDoc(docJson);
+  if (!doc) return docJson;
 
   walkNodes(doc.root, (node) => {
     const model = MODEL_TYPE_BY_LEGACY[node.type as string];
@@ -118,9 +118,9 @@ export function toModelDoc(contentJson: string, makeId: MakeBlockId): string {
  * ⚠️ 这一层**不生成** ID：模型层没补上的 ID，说明那块还没进过内存模型，
  * 由保存路径原有的补种逻辑兜底（步骤 3 的活）。这层只做形态转换，不偷偷造身份。
  */
-export function toLegacyDoc(contentJson: string): string {
-  const doc = parseDoc(contentJson);
-  if (!doc) return contentJson;
+export function toLegacyDoc(docJson: string): string {
+  const doc = parseDoc(docJson);
+  if (!doc) return docJson;
 
   walkNodes(doc.root, (node) => {
     const legacy = LEGACY_TYPE_BY_MODEL[node.type as string];
@@ -138,8 +138,8 @@ export function readBlockId(node: unknown): string {
 }
 
 /** 顶层块的块 ID（按顺序；空位用 `""` 占位）—— 与 `Editor.tsx::extractSeedIds` 同义。 */
-export function topLevelBlockIds(contentJson: string): string[] {
-  const doc = parseDoc(contentJson);
+export function topLevelBlockIds(docJson: string): string[] {
+  const doc = parseDoc(docJson);
   const children = doc?.root.children;
   if (!Array.isArray(children)) return [];
   return children.map((child) => readBlockId(child));

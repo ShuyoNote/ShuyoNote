@@ -93,7 +93,7 @@ describe("toModelDoc：落盘形态 → 内存模型", () => {
     expect(toModelDoc('{"root":[]}', makeId)).toBe('{"root":[]}');
   });
 
-  it("`{}`（应用里 content_json 的默认值）不变形 —— 空页的归一另有其人（`lexicalStateValid`）", () => {
+  it("`{}`（应用里正文 JSON 的默认值）不变形 —— 空页的归一另有其人（`lexicalStateValid`）", () => {
     expect(toModelDoc("{}", makeIdFactory())).toBe("{}");
   });
 });
