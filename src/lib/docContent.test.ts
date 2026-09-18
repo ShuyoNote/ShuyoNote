@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { readContent, resolveSaveContent, shouldTakeRemote, writeContent, type DocContent } from "./docContent";
+import { readAllContents, readContent, resolveSaveContent, shouldTakeRemote, writeContent, type DocContent } from "./docContent";
 
 beforeAll(() => {
   const wasm = join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm");
@@ -87,6 +87,34 @@ describe("docContent.writeContent（唯一写入口）", () => {
     expect(row.dirty).toBe(1);
     // ⚠️ 写内容**不动** sync_seq：它不是"已同步到哪"的读数，改了会骗过合并判定。
     expect(row.sync_seq).toBe(9);
+  });
+});
+
+describe("docContent.readAllContents（批量读出口：扫全库找块的派生读）", () => {
+  it("只回**未软删**的页面，且三列逐字返回（含 id）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "甲", json: '{"root":{"children":[]}}', text: "甲正文" });
+    seedPage(db, "p2", { title: "乙", json: '{"root":{"children":[1]}}', text: "乙正文" });
+    seedPage(db, "p3", { title: "墓碑", json: "{}", text: "不该出现" });
+    db.run("UPDATE pages SET deleted_at = 2 WHERE id = ?", ["p3"]);
+
+    const rows = readAllContents(db);
+    expect(rows.map((r) => r.id).sort()).toEqual(["p1", "p2"]);
+    const p2 = rows.find((r) => r.id === "p2")!;
+    expect(p2).toEqual({ id: "p2", title: "乙", json: '{"root":{"children":[1]}}', text: "乙正文" });
+  });
+
+  it("空库 ⇒ 空数组（不是 null：'没有页面'与'没有这一页'是两回事）", async () => {
+    const db = await freshDb();
+    expect(readAllContents(db)).toEqual([]);
+  });
+
+  it("⚠️ **没有 ORDER BY**（与搬运前逐字一致）—— `resolve_block` 依赖'第一个命中'，加排序就是行为改动", async () => {
+    const db = await freshDb();
+    seedPage(db, "b", { title: "后插的", json: '{"root":{"children":[]}}', text: "" });
+    seedPage(db, "a", { title: "先插的", json: '{"root":{"children":[]}}', text: "" });
+    // 只钉"返回的是插入顺序（rowid 顺序）"这一条事实；**不**钉 id 字典序，也不钉将来不许加排序。
+    expect(readAllContents(db).map((r) => r.id)).toEqual(["b", "a"]);
   });
 });
 

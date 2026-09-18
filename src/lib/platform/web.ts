@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, writeContent, resolveSaveContent } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent } from "../docContent";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -1888,9 +1888,10 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "get_page_blocks") {
       const pageId = String(a.pageId ?? a.page_id ?? "");
-      const rows = store.query("SELECT content_json FROM pages WHERE id = ? AND deleted_at IS NULL", [pageId]);
-      if (!rows[0]) throw new Error("页面不存在");
-      const v = parseJson(String((rows[0] as any).content_json ?? ""));
+      // 读出口只有一处（`docContent.readContent`）：谓词与原先逐字相同（`deleted_at IS NULL`）。
+      const page = readContent(store, pageId);
+      if (!page) throw new Error("页面不存在");
+      const v = parseJson(page.json);
       const blocks = rootChildren(v)
         .filter((c) => topBlockId(c))
         .map((c) => ({ block_id: topBlockId(c), text: nodeText(c).trim() }));
@@ -1913,10 +1914,11 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "resolve_block") {
       const blockId = String(a.blockId ?? a.id ?? "");
-      for (const p of store.query("SELECT id, title, content_json FROM pages WHERE deleted_at IS NULL") as any[]) {
-        if (blockTextOf(String(p.content_json ?? ""), blockId)) {
-          const snippet = snippetForBlock(String(p.content_json ?? ""), blockId);
-          const content = blockTextOf(String(p.content_json ?? ""), blockId);
+      // 扫全库找块：走批量读出口（`readAllContents`），谓词与原先逐字相同（`deleted_at IS NULL`）。
+      for (const p of readAllContents(store)) {
+        if (blockTextOf(p.json, blockId)) {
+          const snippet = snippetForBlock(p.json, blockId);
+          const content = blockTextOf(p.json, blockId);
           return { block_id: blockId, page_id: p.id, page_title: p.title, snippet, content } as T;
         }
       }
@@ -1925,17 +1927,20 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "list_block_backlinks") {
       // Block-level backlinks where the current page's blocks are referenced.
       const pageId = String(a.pageId ?? a.page_id ?? "");
+      // ⚠️ 目标页这一读**故意没走** `readContent`：它搬运前的谓词是 `WHERE id = ?`，
+      // **不带** `deleted_at IS NULL`（软删页也要能算它自己的块反链）。走那一层会改变行为，
+      // 属于"顺手修"而不是"收口"，留给单独一次提交。
       const targetJson = store.query<{ content_json: string }>("SELECT content_json FROM pages WHERE id = ?", [pageId])[0]?.content_json ?? "{}";
       const targetIds = new Set(rootChildren(parseJson(targetJson)).map(topBlockId).filter(Boolean));
       const out: any[] = [];
-      for (const p of store.query("SELECT id, title, content_json FROM pages WHERE deleted_at IS NULL") as any[]) {
+      for (const p of readAllContents(store)) {
         if (p.id === pageId) continue;
         const refs: { source: string; target: string; kind: string }[] = [];
-        const v = parseJson(String(p.content_json ?? ""));
+        const v = parseJson(p.json);
         for (const child of rootChildren(v)) collectBlockRefs(child, topBlockId(child), refs);
         for (const ref of refs) {
           if (targetIds.has(ref.target)) {
-            const sourceSnippet = snippetForBlock(String(p.content_json ?? ""), ref.source);
+            const sourceSnippet = snippetForBlock(p.json, ref.source);
             const targetSnippet = snippetForBlock(targetJson, ref.target);
             out.push({ source_page_id: p.id, source_page_title: p.title, source_block_id: ref.source, source_snippet: sourceSnippet, target_block_id: ref.target, target_snippet: targetSnippet, kind: ref.kind });
           }

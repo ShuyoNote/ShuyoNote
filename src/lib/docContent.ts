@@ -28,6 +28,11 @@ export interface DocContent {
   text: string;
 }
 
+/** 批量读出来的行：多一个 `id`（读单页时 id 是入参，不必回传）。 */
+export interface ContentRow extends DocContent {
+  id: string;
+}
+
 /** 那一层只需要这两个能力 —— 与 `SqliteStore.query/run` 同形，测试可传桩。 */
 export interface ContentSql {
   query<T>(sql: string, params?: readonly unknown[]): T[];
@@ -47,6 +52,30 @@ export function readContent(db: ContentSql, pageId: string): DocContent | null {
     json: String(row.content_json ?? ""),
     text: String(row.content_text ?? ""),
   };
+}
+
+/**
+ * **批量读出口**：所有**未软删**页面的内容（`resolve_block` / `list_block_backlinks` 这类
+ * "扫全库找块"的派生读都走它）。
+ *
+ * 为什么一次给三列而不是"按需给一列"：与 `readContent` 带 `title` 同一条理由 —— 它们**在同一行**，
+ * 拆成两个批量函数等于把全表扫两遍。代价是"只用 json 的调用方也多读了一列 text"，
+ * 这条代价是**明写**的：若将来它在真实库上成为瓶颈，就在这里加一个只读 json 的重载，
+ * 而**不是**让调用方回去自己写 `SELECT content_json`（那就把收口又破了）。
+ *
+ * ⚠️ **没有 `ORDER BY`**（与搬运前逐字一致）：`resolve_block` 依赖"第一个命中的页面"，
+ * 加排序会改变它返回哪一页 —— 那是行为改动，不属于"只搬不改"。
+ */
+export function readAllContents(db: ContentSql): ContentRow[] {
+  const rows = db.query<{ id: string; title: string; content_json: string; content_text: string }>(
+    "SELECT id, title, content_json, content_text FROM pages WHERE deleted_at IS NULL",
+  );
+  return rows.map((row) => ({
+    id: String(row.id ?? ""),
+    title: String(row.title ?? ""),
+    json: String(row.content_json ?? ""),
+    text: String(row.content_text ?? ""),
+  }));
 }
 
 /**

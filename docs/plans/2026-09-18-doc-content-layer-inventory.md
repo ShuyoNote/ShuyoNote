@@ -121,7 +121,34 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 调用方改道 `platform/web.ts` 的 `applyChange`（LWW 判定）与 `save_page`（保存解析）。
 判据：`src/lib/docContent.test.ts` 14 条（真 sql.js ＋ 真平台 schema），
 外加门禁 `two-device-sync`（真 `applyChange`）**14 通过 / 0 失败**。
-前端 `web.ts` 仍有约 120 处未收（它是浏览器侧**整套命令的实现**，要按命令面分批搬）。
+前端 `web.ts` 仍有约 114 处未收（它是浏览器侧**整套命令的实现**，要按命令面分批搬）。
+
+**✅ 前端第二切片：批量读出口 `readAllContents` ＋ 三个"扫全库找块"的命令**
+（`get_page_blocks` / `resolve_block` / `list_block_backlinks`）：
+
+| 命令 | 搬运前 | 搬运后 |
+|---|---|---|
+| `get_page_blocks` | `SELECT content_json FROM pages WHERE id = ? AND deleted_at IS NULL` | `readContent(store, pageId)`（谓词**逐字相同**） |
+| `resolve_block` | `SELECT id, title, content_json FROM pages WHERE deleted_at IS NULL`（扫全库） | `readAllContents(store)` |
+| `list_block_backlinks` | 同上（扫全库） | `readAllContents(store)` |
+
+**为什么加的是"批量读出口"而不是继续加单页函数**：这两条命令本来就是"扫全库找块"，
+逐页调 `readContent` 会变成 N 次查询。`readAllContents` 一次给三列（`title/json/text`），
+与 `readContent` 带 `title` 同一条理由 —— 它们在同一行，拆两个函数等于把全表扫两遍；
+代价（只用 `json` 的调用方也多读一列 `text`）**写在函数注释里**，将来真成瓶颈就在那一层加重载，
+**不许**让调用方回去自己写 `SELECT content_json`。
+
+**行为等价的三条**：谓词逐字相同（`deleted_at IS NULL`）、**没有加 `ORDER BY`**
+（`resolve_block` 依赖"第一个命中"，加排序就是行为改动）、`String(row.x ?? "")` 的兜底也照搬。
+判据：`docContent.test.ts` **17 条**（新增 3 条：只回未软删、空库给空数组、**钉住"没有 ORDER BY"**）
+＋ 门禁 `smoke-web` **350/350** —— 它真的走 `get_page_blocks` / `resolve_block` /
+`list_block_backlinks` 三条命令（`scripts/smoke-web.mjs:641/643/665`）。
+白名单：`web.ts` **123 → 114**，受约束口径 **644 → 635 处 / 68 文件**（`--update` 只减不增）。
+
+**⏳ 一处故意没搬（记下来，别当成漏了）**：`list_block_backlinks` 读**目标页**那一句
+（`SELECT content_json FROM pages WHERE id = ?`）**不带** `deleted_at IS NULL`，
+而 `readContent` 带 ⇒ 搬过去会改变"软删页能否算自己的块反链"这个行为。
+那属于"顺手修"而不是"只搬不改"，**留作单独一次提交**（还得同时看桌面侧同不同语义）。
 
 ### 7.1 顺带修掉的一个**数据丢失**缺陷（前端壳的第一次"回本"）
 
