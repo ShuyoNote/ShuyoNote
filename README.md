@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.91.3-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.91.4-blue" alt="version">
   <a href="https://github.com/ShuyoNote/ShuyoNote/actions/workflows/ci.yml"><img src="https://github.com/ShuyoNote/ShuyoNote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Tauri-2.x-24c8db" alt="tauri">
   <img src="https://img.shields.io/badge/Lexical-0.50-3370ff" alt="lexical">
