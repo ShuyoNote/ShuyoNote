@@ -38,8 +38,9 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
-import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode, upgradeQuoteToBlockNode } from "./blockIdTransform";
+import { upgradeHeadingToBlockNode, upgradeListToBlockNode, upgradeParagraphToBlockNode, upgradeQuoteToBlockNode } from "./blockIdTransform";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { ListNode } from "@lexical/list";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -308,6 +309,11 @@ function BlockIdPlugin({
   // 引用（第 4 步第二个类型）。
   useEffect(
     () => editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode),
+    [editor],
+  );
+  // 列表（第 4 步第三个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(ListNode, upgradeListToBlockNode),
     [editor],
   );
 

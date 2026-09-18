@@ -21,11 +21,13 @@
 
 import { ParagraphNode } from "lexical";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { ListNode } from "@lexical/list";
 
 import { newBlockId } from "../lib/blockIdentity";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createBlockHeadingNode } from "./nodes/BlockHeadingNode";
 import { $createBlockQuoteNode } from "./nodes/BlockQuoteNode";
+import { $createBlockListNode } from "./nodes/BlockListNode";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -34,7 +36,7 @@ import { $createBlockQuoteNode } from "./nodes/BlockQuoteNode";
  * Rust 侧 `extract_block_ids` 同样只读顶层）。嵌套块（列表项/引用/分栏里的段落）升级**类型**
  * 但不给 ID —— 免得落盘形态里多出一片没用的 `blockId`。
  */
-function isTopLevelBlock(node: ParagraphNode | HeadingNode | QuoteNode): boolean {
+function isTopLevelBlock(node: ParagraphNode | HeadingNode | QuoteNode | ListNode): boolean {
   const parent = node.getParent();
   return parent !== null && parent.getType() === "root";
 }
@@ -83,6 +85,25 @@ export function upgradeHeadingToBlockNode(node: HeadingNode): void {
 export function upgradeQuoteToBlockNode(node: QuoteNode): void {
   if (node.getType() !== "quote") return; // 模型引用（`shuyo-quote`）不碰
   const replacement = $createBlockQuoteNode(isTopLevelBlock(node) ? newBlockId() : "");
+  replacement.setFormat(node.getFormatType());
+  replacement.setIndent(node.getIndent());
+  replacement.setDirection(node.getDirection());
+  node.replace(replacement, true);
+}
+
+/**
+ * 内建**列表** → 模型列表（第 4 步第三个类型）。
+ *
+ * ⚠️ 三个状态一个都不能丢：`listType`（bullet/number/check）、`tag`（ul/ol）、`start`（编号起点）——
+ * `$createBlockListNode` 会按 listType 推出 tag，`start` 要显式带过去，否则"从 5 开始编号"会变回 1。
+ */
+export function upgradeListToBlockNode(node: ListNode): void {
+  if (node.getType() !== "list") return; // 模型列表（`shuyo-list`）不碰
+  const replacement = $createBlockListNode(
+    node.getListType() as "bullet" | "number" | "check",
+    node.getStart(),
+    isTopLevelBlock(node) ? newBlockId() : "",
+  );
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());

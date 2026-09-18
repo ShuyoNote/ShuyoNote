@@ -8,9 +8,15 @@ import { describe, expect, it } from "vitest";
 import { $createParagraphNode, $createTextNode, $getRoot, ParagraphNode, createEditor } from "lexical";
 import { $createHeadingNode, $createQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { $createTableNodeWithDimensions } from "@lexical/table";
+import { $createListItemNode, $createListNode, ListNode } from "@lexical/list";
 
 import { EDITOR_NODES } from "./config";
-import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode, upgradeQuoteToBlockNode } from "./blockIdTransform";
+import {
+  upgradeHeadingToBlockNode,
+  upgradeListToBlockNode,
+  upgradeParagraphToBlockNode,
+  upgradeQuoteToBlockNode,
+} from "./blockIdTransform";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { toLegacyDoc } from "../lib/blockIdentity";
 
@@ -19,6 +25,7 @@ function editorWithTransform() {
   editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode);
   editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode);
   editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode);
+  editor.registerNodeTransform(ListNode, upgradeListToBlockNode);
   return editor;
 }
 
@@ -173,8 +180,7 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(wire.includes("blockId")).toBe(false);
   });
 
-  it("★ 引用也被升级：type 变 `shuyo-quote`、带块 ID、文字不丢", () => {
-    const editor = editorWithTransform();
+  it("★ 引用也被升级：type 变 `shuyo-quote`、带块 ID、文字不丢", () => {    const editor = editorWithTransform();
     editor.update(() => {
       const q = $createQuoteNode(); // 老类型（markdown 导入 `> ` / 工具栏都走它）
       q.append($createTextNode("引用一行"));
@@ -186,5 +192,26 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(typeof kid.blockId).toBe("string");
     expect((kid.blockId as string).length).toBeGreaterThan(0);
     expect(JSON.stringify(kid.children)).toContain("引用一行");
+  });
+
+  it("★ 列表也被升级：type 变 `shuyo-list`、`listType`/`tag`/`start` 三态都保住、带块 ID", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const list = $createListNode("number"); // 老类型（markdown 的 `1. ` / 工具栏都走它）
+      list.setStart(5); // "从 5 开始编号" —— 抄漏它会静默变回 1
+      const item = $createListItemNode();
+      item.append($createTextNode("第五项"));
+      list.append(item);
+      $getRoot().append(list);
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-list");
+    expect(kid.listType).toBe("number");
+    expect(kid.tag).toBe("ol");
+    expect(kid.start).toBe(5);
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
+    expect(JSON.stringify(kid.children)).toContain("第五项");
   });
 });
