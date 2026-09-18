@@ -10,7 +10,7 @@
   "src-tauri/src/search.rs": 12,
   "src-tauri/src/security.rs": 1,
   "src-tauri/src/storage.rs": 4,
-  "src-tauri/src/sync.rs": 9,
+  "src-tauri/src/sync.rs": 1,
   "src-tauri/src/templates.rs": 10,
   "src-tauri/src/trash.rs": 5,
   "src-tauri/src/versions.rs": 26,

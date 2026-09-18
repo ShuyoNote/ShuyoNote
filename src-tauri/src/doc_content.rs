@@ -115,6 +115,54 @@ pub fn local_state(c: &Connection, page_id: &str) -> Result<Option<LocalState>, 
     .map_err(|e| e.to_string())
 }
 
+/// **远端写入口** —— 合并判定说 `TakeRemote` 之后，把远端那一行落库。
+///
+/// 与前端侧 `docContent.upsertRemoteContent` 是**同一条 SQL 的两份实现**
+/// （列集不同：前端那份还带 `db_rule/icon/cover/...`，桌面这份只落内容与结构列 ——
+/// 两侧 schema 本来就不同，**语义**必须一致：`sync_seq` 记远端的、`dirty` 硬写 0）。
+///
+/// ⚠️ **逐字搬运**自 `sync::apply_upsert`（2026-09-18 收口第三/四切片）：
+/// 连 `deleted_at = NULL`（"远端 upsert 会把墓碑掀掉"）与"不写 `created_at`"这两条都照搬 ——
+/// 它们不是风格，是同步语义。
+/// ⚠️ **`dirty` 硬写 0** 与 `write` 硬写 1 是一对（远端应用 vs 本地改动）。
+/// ⚠️ **派生不在本函数里**：调用方接着自己调 `derive_fts`（搬运前就是这样，不多做）。
+///
+/// 收的是 `&PageDetail`：远端那条路径手上的字段本来就在它里面，
+/// 为调一次函数去拆散/克隆一份可能很大的 `content_json` 不值当。
+pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq: i64) -> Result<(), String> {
+    c.execute(
+        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0)
+         ON CONFLICT(id) DO UPDATE SET
+           workspace_id = excluded.workspace_id,
+           parent_id = excluded.parent_id,
+           title = excluded.title,
+           content_json = excluded.content_json,
+           content_text = excluded.content_text,
+           kind = excluded.kind,
+           sort_order = excluded.sort_order,
+           updated_at = excluded.updated_at,
+           deleted_at = NULL,
+           sync_seq = excluded.sync_seq,
+           dirty = 0",
+        params![
+            page.id,
+            page.workspace_id,
+            page.parent_id,
+            page.title,
+            page.content_json,
+            page.content_text,
+            page.kind,
+            page.sort_order,
+            page.created_at,
+            page.updated_at,
+            sync_seq,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 合并判定：**本地留还是远端覆盖**。
 #[derive(Debug, PartialEq, Eq)]
 pub enum MergeDecision {

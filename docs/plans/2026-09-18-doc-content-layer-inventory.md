@@ -181,11 +181,26 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 
 **⏳ 还没做**（别当成收口已完成）：
 
-- **远端写路径**：`sync::apply_upsert` 的 `INSERT … ON CONFLICT` 与 `fetch_page` 的整行 SELECT 仍在原处
-  （前者要 `PageDetail` 的 11 个字段、后者属"页面元数据"，各值得单独一次提交）；
-  **前端这一份已经搬了**（`upsertRemoteContent`）⇒ 现在两侧是"同一条 SQL 的两份实现"，
-  下一步可以把 Rust 那份也搬进 `doc_content.rs`，两份合到同一处语义；
+- **远端写路径**：`sync::apply_upsert` 的 `INSERT … ON CONFLICT` 与 `fetch_page` 的整行 SELECT **仍在原处**；
+  **两侧的远端写入口都已搬**（前端 `docContent.upsertRemoteContent`、Rust `doc_content::upsert_remote`
+  —— 见下面那条），剩下的是 `fetch_page` 的整行 SELECT，它要 `cover/icon/kind/…`，
+  属"页面元数据"而不是"内容"，等元数据那一层有着落再说；
 - **SQL 层内联子查询**（`list_block_backlinks` 的 `(SELECT content_json …)`）加一层函数收不了。
+
+**✅ Rust 侧远端写入口也进层了：`doc_content::upsert_remote`**（2026-09-18）
+
+`sync::apply_upsert` 原先只把**判定**交给那一层，`INSERT … ON CONFLICT`（13 列）还写在 `sync.rs` 里。
+现在那一笔也搬进 `doc_content.rs` ⇒ **"判定 + 落库"在同一个文件里**，
+将来换 CRDT 时 `apply_upsert` 这一整条只改一处。前端那份（18 列，多 `db_rule/icon/cover/...`）
+是**同一条 SQL 的另一份实现**；两侧 schema 本就不同，**语义**必须一致：
+`sync_seq` 记远端的、`dirty` 硬写 0（与 `write` 硬写 1 成一对）。
+
+**"逐字搬运"是核过的，不是自称**：把 `HEAD:src-tauri/src/sync.rs` 里那条 SQL 与搬完之后的
+逐 token 规范化对比 ⇒ **字符串完全相同**（`params!` 的 11 个字段顺序也逐个对齐）。
+判据：`cargo check --lib` 干净（Windows 只能证"编得过"）；
+**行为**那半按老规矩请 AMD/macOS 在**被验 commit** 上跑 `cargo test --lib doc_content sync::`。
+白名单：`sync.rs` **9 → 1**，受约束口径 **593 → 585 处**。
+
 
 **✅ 顺手清掉一段死代码（并记下一个用户可见的平台差异）：`web.ts::get_graph` 的「块层」**
 
