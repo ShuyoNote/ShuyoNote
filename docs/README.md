@@ -21,6 +21,7 @@
 | 某功能的技术方案 | [方案与规划](#方案与规划-plans) |
 | 与竞品相比如何 | [竞品对比](#竞品对比) |
 | [plans/2026-09-18-crdt-full-migration-plan.md](plans/2026-09-18-crdt-full-migration-plan.md) | **同页并发 → 全量 CRDT（路线 C）冲刺计划**：现状（页级 LWW，仓库原文）、CRDT 认真评估（不丢 ≠ 不冲突；E2EE 不阻止 CRDT）、四阶段路径、七处改动面、五条不变量与触发/退出条件 |
+| [plans/2026-09-18-crdt-spike-workorder.md](plans/2026-09-18-crdt-spike-workorder.md) | **CRDT spike 施工单**：只回答三问（JSON⇄ydoc 转换、下游等价、E2EE 加密快照），1–2 天、独立分支、不阻塞阶段 1；含「把收敛断言写在 Node 侧以便 Windows 自验」这个压周期的取舍 |
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
 | 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
 | 回归门禁有哪些 / 结果在哪看 | [回归测试体系](TESTING.md) |
