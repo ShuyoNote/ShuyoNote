@@ -104,7 +104,7 @@ register({
 | `page.current` | `api.page.current()` | `read:page.current` | `current-space` | — | string | 1.0.0 |
 | `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | — | number | 1.0.0 |
 | `pages.list` | `api.pages.list(limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
-| `pages.get` | `api.pages.get(id)` | `read:pages` | `current-space` | — | object | 1.0.0 |
+| `pages.get` | `api.pages.get(id, offset, limit)` | `read:pages` | `current-space` | — | object | 1.0.0 |
 | `pages.search` | `api.pages.search(q, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
@@ -151,19 +151,21 @@ register({
 
 ### `pages.get` — 读取指定页面
 
-- 调用：`api.pages.get(id)`
+- 调用：`api.pages.get(id, offset, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：{id, title, content_text, kind}；不存在返回 null
+- 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**), kind, chars_total(整页字符数), offset, limit}；不存在返回 null
 - 参数：
   - `id`: `string` —— 页面 id
+  - `offset`: `number`（可选），默认 `0` —— 从第几个**字符**开始（默认 0；按 Unicode 标量计数，不是 UTF-16 码元）
+  - `limit`: `number`（可选），默认 `6000` —— 最多返回多少字符（默认 6000，上限 20000）
 
 ### `pages.search` — 搜索本空间页面
 
 - 调用：`api.pages.search(q, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
+- 返回：[{id, title, snippet}]；**插件面（`pages.search` 能力本身）v1 是子串匹配、不做相关度排序** —— 语义加分那条只在应用内 AI 检索路径上（`desc` 里说的那一半）
 - 参数：
   - `q`: `string` —— 关键词
   - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
@@ -180,10 +182,10 @@ register({
 - 调用：`api.blocks.list(pageId, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{blockId, text}]
+- 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit（上限 500）
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）
-  - `limit`: `number`（可选），默认 `100` —— 最多返回多少块
+  - `limit`: `number`（可选），默认 `100` —— 最多返回多少块（默认 100，上限 500）
 
 ### `backlinks.list` — 列出反链
 

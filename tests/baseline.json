@@ -17,6 +17,7 @@
       "check-changelog",
       "check-changelog-numbers",
       "check-deep-link",
+      "check-doc-content-access",
       "check-doc-links",
       "check-gitcode-workflow-rules",
       "check-ocr-assets",

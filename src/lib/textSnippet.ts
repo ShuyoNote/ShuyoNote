@@ -23,3 +23,25 @@ export function truncateByCodePoints(s: string, max: number): string {
   const cps = Array.from(text); // Array.from 按码点切，代理对不会被拆开
   return cps.length > limit ? `${cps.slice(0, limit).join("")}…` : text;
 }
+
+/**
+ * 按码点取**窗口** `[offset, offset+limit)`（与 Rust 侧的 `chars().skip().take()` 同口径）。
+ *
+ * 为什么必须是"同一个口径"而不是"各自差不多"：同一个页面在 **web 路径（本函数）** 与
+ * **桌面路径（Rust `cap_pages_get`）** 上都会被分窗口读取，两边只要差一个字符，
+ * 调用方连续两次 `pages.get` 就会**漏字或重字**（emoji/生僻字处最明显）。
+ *
+ * 越界不是错误：`offset` 超过总长返回 `""`（调用方靠 `chars_total` 判断"翻过头了"）。
+ */
+export function sliceByCodePoints(s: string, offset: number, limit: number): string {
+  const cps = Array.from(String(s ?? ""));
+  const off = Math.max(0, Math.floor(offset) || 0);
+  const lim = Math.max(0, Math.floor(limit) || 0);
+  if (lim === 0) return "";
+  return cps.slice(off, off + lim).join("");
+}
+
+/** 码点长度（`String.length` 数的是 UTF-16 码元，emoji 会被算成 2）。 */
+export function codePointLength(s: string): number {
+  return Array.from(String(s ?? "")).length;
+}
