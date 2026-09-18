@@ -45,12 +45,19 @@
 
 ### 4.2 第 4 步的进度与两个坑
 
-**已完成：标题、引用、列表**（`BlockHeadingNode`：`shuyo-heading`；`BlockQuoteNode`：`shuyo-quote`；
-`BlockListNode`：`shuyo-list`，`listType`/`tag`/`start` 三态都进模型）。
-三者的 `insertNewAfter` 都逐支换成模型工厂（列表**有意不覆盖**：基类行为正确，它跳出来的段落由段落变换升级）。
+**已完成：标题、引用、列表、代码块、水平线**（模型 type 依次为 `shuyo-heading` / `shuyo-quote` /
+`shuyo-list`（三态 `listType`/`tag`/`start` 全保）/ `shuyo-code`（✅ 顺带解掉 `SafeCodeNode` 那颗
+"同 type 子类"的雷：新内容从此走新 type，不再碰内建工厂）/ `shuyo-horizontalrule`）。
+前四者的 `insertNewAfter` 都逐支换成模型工厂（列表**有意不覆盖**：基类行为正确，它跳出来的段落由段落变换升级）。
 
-**还没做**：代码（`code` —— 注意 `SafeCodeNode` 那个同 type 子类的雷，见坑 2）、表格（`table`/`tablerow`/`tablecell`，
-其中只有**顶层 table** 需要身份）、水平线（`horizontalrule`），以及 18 个自有节点（已有声明字段，只差 `__blockId`）。
+**还没做**：表格（`table`/`tablerow`/`tablecell` —— 只有**顶层 table** 需要身份）、
+以及 18 个自有节点。
+
+**★ 一个会反复遇到的分叉（新记）**：**ElementNode 与 DecoratorNode 的升级写法不同**。
+水平线是 DecoratorNode ⇒ ① 没有 `setFormat/getFormatType/setIndent/setDirection`（tsc 会挡）；
+② **`node.replace(replacement, true)` 非法**（`includeChildren should only be true for ElementNodes`，
+运行期抛、整个 update 失败、root 变空）。后者编译期不报，是判据抓出来的。
+⇒ 推广**装饰型自有节点**（`ImageNode`/`VideoNode`/`DrawingNode`/`MermaidNode`/`WebBookmarkNode`…）时照这条办。
 
 
 **一条细化（本轮补的，避免落盘形态漂移）**：只有**顶层块**才有块身份 —— 嵌套段落（表格单元格/分栏/
