@@ -1996,29 +1996,21 @@ function makeInvoke(store: SqliteStore) {
           if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: rr.page_id, target: m[1], kind: "ref" }); }
         }
       }
+      // ⚠️ **块层图在 Web 上不存在，而且不许在这里"临时补"**（2026-09-18 清理死代码时写下）。
+      //
+      // 桌面侧 `graph.rs::get_graph` 的块层来自**派生表** `blocks`
+      // （由 `blocks::rebuild_block_graph` 维护；那张表只建在 Rust 的 schema 里，Web 侧没有）。
+      // 这里原先留着两段用 `p.content_json` 扫全库建块节点/块边的循环，但上面那条查询
+      // **根本没选 `content_json`** ⇒ 两个 `if (!p.content_json) continue;` 必然命中，
+      // `blocks` / `block_edges` **恒为空**（注释也承认"暂为空"）。
+      //
+      // 为什么**删掉**而不是"把 content_json 加回查询让它跑起来"：
+      // 那等于在平台层**自己扫内容建索引**，直接违反「派生索引只能从 derive 出」这条边界规则；
+      // 而且这是 Web 独有的实现，会让两侧的图语义又快又静地漂开。
+      // ⇒ 要恢复块层，正路是**先有 Web 侧的派生**（与 Rust 的 `blocks` 表同一份语义），
+      //    再由这里读派生结果。在那之前：**诚实地返回空，而不是假装能算**。
       const blocks: any[] = [];
       const blockEdges: any[] = [];
-      const blockIdToPage = new Map<string, string>();
-      for (const p of pages) {
-        if (!p.content_json) continue; // 查询已不拉 content_json：block 层图暂为空。
-        const v = parseJson(p.content_json);
-        const children = Array.isArray(v?.root?.children) ? v.root.children : [];
-        for (const child of children) {
-          const bid = topBlockId(child);
-          if (!bid) continue;
-          blockIdToPage.set(bid, p.id);
-          blocks.push({ id: bid, label: snippetForBlock(p.content_json, bid) || "(", page_id: p.id });
-          blockEdges.push({ source: bid, target: p.id, kind: "belongs" });
-        }
-      }
-      for (const p of pages) {
-        if (!p.content_json) continue; // 查询已不拉 content_json：block 引用边暂为空。
-        const refs: { source: string; target: string; kind: string }[] = [];
-        for (const child of rootChildren(parseJson(p.content_json))) collectBlockRefs(child, topBlockId(child) ?? "", refs);
-        for (const r of refs) {
-          if (r.source && r.target && blockIdToPage.has(r.target)) blockEdges.push({ source: r.source, target: r.target, kind: r.kind });
-        }
-      }
       return { pages: gPages, edges, blocks, block_edges: blockEdges } as T;
     }
 

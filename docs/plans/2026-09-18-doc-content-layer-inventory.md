@@ -187,6 +187,27 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
   下一步可以把 Rust 那份也搬进 `doc_content.rs`，两份合到同一处语义；
 - **SQL 层内联子查询**（`list_block_backlinks` 的 `(SELECT content_json …)`）加一层函数收不了。
 
+**✅ 顺手清掉一段死代码（并记下一个用户可见的平台差异）：`web.ts::get_graph` 的「块层」**
+
+`get_graph` 返回 `blocks` / `block_edges` 两个数组。桌面侧它们来自**派生表** `blocks`
+（`blocks::rebuild_block_graph` 维护，那张表**只建在 Rust 的 schema 里**，Web 侧没有这张表）。
+而 Web 侧原先留着两段"扫 `p.content_json` 建块节点/块边"的循环 —— 但**上面那条查询根本没选
+`content_json`** ⇒ 两个 `if (!p.content_json) continue;` 必然命中，
+**这两段从来没有执行过一次**（注释也承认"block 层图暂为空"）。本仓的门禁
+`smoke-web` 只断言了 `graph.pages`，所以它一直没被发现。
+
+**为什么删掉、而不是"把 `content_json` 加回查询让它跑起来"**：那等于在平台层**自己扫内容建索引**，
+直接违反 §4 规则 1（派生只能从 `derive` 出）；而且那是 Web 独有的实现，会让两侧的图语义静默漂开。
+⇒ 要恢复块层，正路是**先有 Web 侧的派生**（与 Rust 的 `blocks` 表同一份语义），再由 `get_graph` 读派生结果。
+
+**删掉之后守卫自动有了**：谁要是想再把 `content_json` 扫回来，`web.ts` 的计数就会**超过**收口基线
+⇒ `check-doc-content-access` 当场红（这也是"受约束口径只减不增"这条设计顺带产生的效果）。
+基线：`web.ts` 106 → 103，受约束口径 **596 → 593 处**。
+
+> ⚠️ **未解的差异（要产品/两边一起定，不是我能单方面补的）**：**Web 的图今天没有块层**
+> （`blocks: []` / `block_edges: []`），桌面有。要么补 Web 侧的派生，要么在 UI 上把"块层"
+> 对 Web 隐藏 —— **不许**在 `get_graph` 里临时扫内容凑一个。
+
 ### 7.1 顺带修掉的一个**数据丢失**缺陷（前端壳的第一次"回本"）
 
 `platform/web.ts` 的 `save_page` 原先用 `str(args.content_json ?? "")` 取内容，而**只传标题的保存**
