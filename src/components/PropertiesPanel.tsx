@@ -4,14 +4,22 @@ import { toast } from "../store/toast";
 import { usePropertyUiStore } from "../store/propertyUi";
 import type { AttrDef, PageProp } from "../types";
 import { TagRow } from "./TagBar";
+import {
+  formatDateTimeDisplay,
+  fromDatetimeLocalValue,
+  parseDateTimeInput,
+  toDatetimeLocalValue,
+} from "../lib/dateTimeValue";
 
-const TYPES = ["text", "number", "date", "checkbox", "select", "multi"] as const;
+// 「时间」= 日期 + 时刻（attr_type = "datetime"），与只到日的"日期"并列。
+const TYPES = ["text", "number", "date", "datetime", "checkbox", "select", "multi"] as const;
 // 临时停用：页面属性区的手工拖拽移动（拖拖换序）。改为 true 即可恢复。
 const DRAG_MOVE_ENABLED = false;
 const TYPE_LABELS: Record<string, string> = {
   text: "文本",
   number: "数字",
   date: "日期",
+  datetime: "时间",
   checkbox: "布尔",
   select: "单选",
   multi: "多选",
@@ -282,6 +290,79 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   );
 }
 
+/**
+ * 「时间」属性的编辑器：**选择器（带秒）＋ 手输框**两条路径。
+ *
+ * 两个刻意的取舍：
+ * 1. **手输框显示的是「给人看的形态」**（`2008年5月9日 15:30:00`），而不是存储形态
+ *    （`2008-05-09 15:30:00`）——用户要的就是能这样输入/看到；
+ * 2. **非法输入不写库**：只在框上标红提示（`prop-invalid`），不把坏值静默存进去。
+ *    存进去的话，列表/排序/导出都会带着它，事后很难查。
+ */
+function DatetimeValueEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const shown = value ? formatDateTimeDisplay(value) : "";
+  const [draft, setDraft] = useState(shown);
+  const [invalid, setInvalid] = useState(false);
+  // 外部值变化（切换页面、别的入口改了同一属性）时同步回输入框，并清掉错误态。
+  useEffect(() => {
+    setDraft(value ? formatDateTimeDisplay(value) : "");
+    setInvalid(false);
+  }, [value]);
+
+  const commit = (raw: string) => {
+    if (!raw.trim()) {
+      // 清空 = 有意删除该属性值（不走"非法"提示）。
+      setInvalid(false);
+      onChange("");
+      return;
+    }
+    const parsed = parseDateTimeInput(raw);
+    if (parsed) {
+      setInvalid(false);
+      onChange(parsed);
+    } else {
+      setInvalid(true);
+    }
+  };
+
+  return (
+    <div className="prop-datetime">
+      <input
+        type="datetime-local"
+        step="1"
+        className="prop-value"
+        title="选择日期与时间（可到秒）"
+        value={toDatetimeLocalValue(value)}
+        onChange={(e) => {
+          const parsed = fromDatetimeLocalValue(e.target.value);
+          if (parsed) onChange(parsed);
+        }}
+      />
+      <input
+        type="text"
+        className={"prop-value" + (invalid ? " is-invalid" : "")}
+        placeholder="2008年5月9日 15:30:00"
+        title="也可以直接输入：2008年5月9日 15:30:00（或 2008-5-9 15:30）"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => commit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(draft);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      {invalid && (
+        <span className="prop-invalid" title="格式或日期不合法（例如 2月30日），未保存">
+          !
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string) => void }) {
   if (prop.attr_type === "checkbox") {
     return (
@@ -304,6 +385,11 @@ function ValueEditor({ prop, onChange }: { prop: PageProp; onChange: (v: string)
         ))}
       </select>
     );
+  }
+  if (prop.attr_type === "datetime") {
+    // 两条输入路径**并存**：选择器（带秒）＋ 手输（认「2008年5月9日 15:30:00」等写法）。
+    // 两条都走 `lib/dateTimeValue` 的同一份解析/格式化，避免两边不一致。
+    return <DatetimeValueEditor value={prop.value} onChange={onChange} />;
   }
   if (prop.attr_type === "date") {
     // 日期选择器（不用手输 YYYY-MM-DD）。
