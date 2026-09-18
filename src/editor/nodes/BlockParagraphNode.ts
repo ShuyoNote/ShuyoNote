@@ -25,6 +25,7 @@
 //
 // 换句话说：**本类只活在编辑器里**。任何要写出去的地方，先过 `blockIdentity.toLegacyDoc()`。
 
+import { newBlockId } from "../../lib/blockIdentity";
 import {
   $applyNodeReplacement,
   ParagraphNode,
@@ -94,7 +95,9 @@ export class BlockParagraphNode extends ParagraphNode {
    * （不采用"先调基类、再把结果替换成本类"——那会多一次结构变更，也多一步 undo。）
    */
   insertNewAfter(_selection: RangeSelection, restoreSelection = true): BlockParagraphNode {
-    const newBlock = $createBlockParagraphNode("");
+    // ⚠️ **当场铸一个块 ID**（不是留空等保存时注入）：判据抓过这个洞 —— 留空的话，
+    // 回车新建的块在 CRDT 平面里就没有稳定身份，只能等保存时补、下次加载才进模型。
+    const newBlock = $createBlockParagraphNode(newBlockId());
     this.insertAfter(newBlock);
     if (restoreSelection) newBlock.selectStart();
     return newBlock;

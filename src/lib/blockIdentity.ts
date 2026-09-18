@@ -18,6 +18,7 @@
 /** 老 type → 模型 type（只收**块级**类型；嵌套的行内节点不动）。 */
 export const MODEL_TYPE_BY_LEGACY: Readonly<Record<string, string>> = {
   paragraph: "shuyo-paragraph",
+  heading: "shuyo-heading",
 };
 
 /** 模型 type → 老 type（`toLegacyDoc` 用）。 */

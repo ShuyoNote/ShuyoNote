@@ -6,14 +6,16 @@
 
 import { describe, expect, it } from "vitest";
 import { $createParagraphNode, $createTextNode, $getRoot, ParagraphNode, createEditor } from "lexical";
+import { $createHeadingNode, HeadingNode } from "@lexical/rich-text";
 
 import { EDITOR_NODES } from "./config";
-import { upgradeParagraphToBlockNode } from "./blockIdTransform";
+import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode } from "./blockIdTransform";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 
 function editorWithTransform() {
   const editor = createEditor({ nodes: EDITOR_NODES, namespace: "blockid-transform-test" });
   editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode);
+  editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode);
   return editor;
 }
 
@@ -103,5 +105,37 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
       $getRoot().append(p);
     }, { discrete: true });
     expect(rootChildren(editor)[0].type).toBe("shuyo-paragraph");
+  });
+
+  it("★ 标题也被升级：type 变 `shuyo-heading`、**tag 保住**、带块 ID、文字不丢", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const h = $createHeadingNode("h2"); // 老类型（markdown 导入 / 粘贴 / 工具栏都走它）
+      h.append($createTextNode("二级标题"));
+      $getRoot().append(h);
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-heading");
+    expect(kid.tag).toBe("h2"); // tag 是节点自己的状态，抄漏了 h2 会变成 h1
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
+    expect(JSON.stringify(kid.children)).toContain("二级标题");
+  });
+
+  it("标题与段落**各归各的变换**，互不误伤", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const h = $createHeadingNode("h1");
+      h.append($createTextNode("标题"));
+      const p = $createParagraphNode();
+      p.append($createTextNode("段落"));
+      $getRoot().append(h, p);
+    }, { discrete: true });
+
+    const [h, p] = rootChildren(editor);
+    expect(h.type).toBe("shuyo-heading");
+    expect(p.type).toBe("shuyo-paragraph");
+    expect(h.blockId).not.toBe(p.blockId); // 两块各有各的 ID
   });
 });

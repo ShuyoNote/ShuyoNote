@@ -20,9 +20,11 @@
 // `getType()` 守卫，读代码的人不用去猜 Lexical 的匹配规则。
 
 import { ParagraphNode } from "lexical";
+import { HeadingNode } from "@lexical/rich-text";
 
 import { newBlockId } from "../lib/blockIdentity";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
+import { $createBlockHeadingNode } from "./nodes/BlockHeadingNode";
 
 /**
  * 内建段落 → 模型段落（**就地替换**，属性与子节点原样保留，新块拿到一个新的块 ID）。
@@ -43,5 +45,23 @@ export function upgradeParagraphToBlockNode(node: ParagraphNode): void {
   replacement.setTextFormat(node.getTextFormat());
   replacement.setTextStyle(node.getTextStyle());
   // `true` = 连子节点一起搬过去（否则段落会变成空的，文字全丢）。
+  node.replace(replacement, true);
+}
+
+/**
+ * 内建**标题** → 模型标题（第 4 步的第一个类型）。
+ *
+ * 与段落同一个套路，但多一处注意：`HeadingNode` 的 tag（`h1`–`h6`）是**节点自己的状态**，
+ * 必须原样带过去（否则 h2 会变成 h1）。
+ */
+export function upgradeHeadingToBlockNode(node: HeadingNode): void {
+  if (node.getType() !== "heading") return; // 模型标题（`shuyo-heading`）不碰
+  const replacement = $createBlockHeadingNode(node.getTag(), newBlockId());
+  // ⚠️ 对齐用 `getFormatType()`（字符串）；0.50 的 `getFormat()` 返回的是**数字**（踩过一次）。
+  replacement.setFormat(node.getFormatType());
+  replacement.setIndent(node.getIndent());
+  replacement.setDirection(node.getDirection());
+  replacement.setTextFormat(node.getTextFormat());
+  replacement.setTextStyle(node.getTextStyle());
   node.replace(replacement, true);
 }

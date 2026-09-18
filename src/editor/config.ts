@@ -27,6 +27,7 @@ import { PageLinkNode } from "./nodes/PageLinkNode";
 import { FormulaNode } from "./nodes/FormulaNode";
 import { InlineFormulaNode } from "./nodes/InlineFormulaNode";
 import { BlockParagraphNode } from "./nodes/BlockParagraphNode";
+import { BlockHeadingNode } from "./nodes/BlockHeadingNode";
 
 // All node types this editor can deserialize. A serialized node whose `type` is
 // outside this set (e.g. a stray/unregistered type) is dropped by lexicalStateValid
@@ -38,6 +39,7 @@ import { BlockParagraphNode } from "./nodes/BlockParagraphNode";
 // ⇒ 写出去之前一律经 `blockIdentity.toLegacyDoc()`。背景：`docs/plans/2026-09-18-crdt-block-id-ownership.md`。
 export const EDITOR_NODES: Klass<LexicalNode>[] = [
   BlockParagraphNode,
+  BlockHeadingNode,
   HeadingNode,
   QuoteNode,
   ListNode,

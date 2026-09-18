@@ -38,7 +38,8 @@ import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
-import { upgradeParagraphToBlockNode } from "./blockIdTransform";
+import { upgradeHeadingToBlockNode, upgradeParagraphToBlockNode } from "./blockIdTransform";
+import { HeadingNode } from "@lexical/rich-text";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -297,6 +298,11 @@ function BlockIdPlugin({
   // 创建段落的调用点太散，逐个改必漏 ⇒ 用节点变换一处覆盖。理由见 `blockIdTransform.ts`。
   useEffect(
     () => editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode),
+    [editor],
+  );
+  // 标题同理（第 4 步逐类型加，每加一个类型补一条判据）。
+  useEffect(
+    () => editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode),
     [editor],
   );
 
