@@ -11,6 +11,24 @@
 //   2. 某文件计数**超过**基线 ⇒ **红**（说明又往里加直接访问了）；
 //   3. 计数**低于**基线 ⇒ 提示"请下调基线"（`--update`），让收口**单调收敛**。
 //
+// ## 口径修订 2（AMD 侧，2026-09-18）：切测试尾部改用**可证明**的规则
+//
+// 上面的"口径修订"把测试排除出计数 —— **我（AMD，本门禁的登记人）支持这条**，理由与 macOS 一致：
+// 测试夹具里 `INSERT INTO pages (... content_text ...)` 不是 CRDT 的替换面，把它算进来等于
+// "谁写测试谁红"，最后只会逼人把测试挪到扫不到的目录。
+//
+// 但其中 Rust 的切法用了**位置比例**（`#[cfg(test)] mod tests` 落在文件后半段就切到文件尾），
+// 那是**代理**不是证明，而且失效方向最坏：**只要测试模块之后还有生产代码，那段生产代码会被一起切掉**
+// ⇒ 在它里面新增直接访问**不报红**（假绿）。所以这里换成：
+//
+//   · 用一个小扫描器给文本打区域掩码（代码/行注释/块注释/字符串/字符字面量）；
+//   · 从每个 `#[cfg(test)]` 起做**花括号配对**找到该 item 的结束位置；
+//   · ★ 只有**该 item 之后只剩空白与注释**（即它真的是文件尾巴）才切；
+//   · 任何不确定（名字不认识、配对失败、后面还有东西）**一律不切**，全量计数。
+//
+// 两个方向的性质因此变成：**可能多算（假红，可见且便宜），不可能漏算（假绿）**。
+// 它也不再依赖"测试模块叫 `mod tests`"，也不依赖"测试在后半段"。
+//
 // ## 口径修订（macOS 侧，2026-09-18 —— 有异议请直接回滚这一处，理由留在协同信箱）
 //
 // **测试代码不算「生产替换面」，从计数里排除**。原口径把 `*.test.ts(x)` 与 Rust 的测试模块一起数，
@@ -22,8 +40,18 @@
 //
 // 边界（写清楚免得这条豁免被当成"随便加"）：**生产代码一处的余量都没有** ——
 // `.ts/.tsx`（非测试）与 Rust 测试模块之前的部分仍然逐字符计数、超基线即红。
-// Rust 侧的切法有个**故意的保险**：只有当 `#[cfg(test)] mod tests` 出现在文件**后半段**时才切，
-// 否则宁可不切、全量计数（免得某个中间位置的测试模块把后面的生产代码一起排除掉）。
+// （Rust 那条"位于后半个文件才切"的比例保险已被上面的口径修订 2 换成配对证明。）
+//
+// ## 撞上假红时的固定处置（避免每次都重新吵口径）
+//
+// 1. **先看是不是测试** ⇒ 测试已在计数外（上面两条口径修订），所以这一步现在通常直接排除掉；
+// 2. **再改措辞 / 参数名**（首选）：把 `contentJson: string` 这类**收 JSON 文本**的参数改成
+//    `docJson`，把注释里的字段名改成中文描述 —— 这不是绕过，那个名字本来就不该叫存储字段名；
+// 3. **口径本身不动**：token 计数是**粗粒度**代理，它分不清"参数名/注释"与"真的访问字段"，
+//    加"排除某类文件/某个目录"的豁免等于**开一个可以按目录无限扩大的洞**（今天排纯函数层、
+//    明天排视图层）。真需要豁免的只有**那一层自己**，走 `LAYER_FILES`（就两个文件，写死在下面）。
+//
+// 一句话：**判据可以粗，但不许按目录豁免**；每次假红都要在提交信息里写清"为什么这不是新增替换面"。
 //
 // 用法：
 //   node scripts/check-doc-content-access.mjs            # 校验（CI / 本地门禁）
@@ -31,6 +59,10 @@
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+// 判据（测试文件 / Rust 生产文本）在 `scripts/lib/rust-scan.mjs`，那里有自己的回归判据
+// （`rust-scan.test.mjs`）：其中的「配对证明」是给一次真实漏报立的闸 —— 旧实现按位置比例切尾部，
+// 会在「测试模块之后还有生产代码」时把生产代码一起切掉，新增的直接访问因此**不报红**。
+import { isTestFile, productionText } from "./lib/rust-scan.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = join(root, "scripts", "doc-content-access-baseline.json");
@@ -46,24 +78,7 @@ const ROOTS = [
 /** 收口后**允许**直接访问的那一层（还没建，先占位；建成后它们本就该在名单里）。 */
 const LAYER_FILES = new Set(["src/lib/docContent.ts", "src-tauri/src/doc_content.rs"]);
 
-/** TS 测试文件的判据（`--update` 会把它们的基线项一并去掉）。 */
-const isTestFile = (rel) => /\.test\.(ts|tsx|mjs|js)$/.test(rel);
-
-/** Rust 文件末尾的测试模块（`#[cfg(test)]` + `mod tests`）。 */
-const RUST_TEST_TAIL = /^#\[cfg\(test\)\]\s*\n\s*(?:pub\(crate\)\s+)?mod\s+tests\b/m;
-
-/**
- * 取"算作生产替换面"的那部分文本。返回 `null` 表示这个文件不参与计数（测试文件）。
- * 排除测试**不是**放松：生产侧一处的余量都没有。
- */
-function productionText(rel, text) {
-  if (isTestFile(rel)) return null;
-  if (!rel.endsWith(".rs")) return text;
-  const m = RUST_TEST_TAIL.exec(text);
-  // 保险：测试模块不在文件后半段就不切（宁可多算，不可漏算生产代码）。
-  if (!m || m.index < text.length * 0.5) return text;
-  return text.slice(0, m.index);
-}
+// 判据（测试文件 / Rust 生产文本）都在 `scripts/lib/rust-scan.mjs`，见文件头 import 处的说明。
 
 function walk(dir, exts, out = []) {
   for (const entry of readdirSync(dir)) {
