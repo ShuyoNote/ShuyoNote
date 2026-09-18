@@ -1676,7 +1676,7 @@ fn cap_pages_list(limit: i64) -> CapResult {
 ///    （调用方据此知道"我翻过头了"，而不是以为"这页是空的"）。
 ///
 /// 返回值里带 `chars_total` / `offset` / `limit` 三个读数：**只读了窗口就当整页用**是这类工具
-/// 最常见的误用，而调用方光看 `content_text` 的长度分不出"读完了"还是"被截了"。
+/// 最常见的误用，而调用方光看返回正文的长度分不出"读完了"还是"被截了"。
 fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
     let off = offset.max(0) as usize;
     let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
