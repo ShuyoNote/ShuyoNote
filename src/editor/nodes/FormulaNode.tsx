@@ -17,9 +17,10 @@ import { Suspense, useCallback, useEffect, useRef } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
 import { openFormulaEditor } from "../../store/formulaEditor";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 export type SerializedFormulaNode = Spread<
-  { latex: string },
+  { latex: string; blockId?: string },
   SerializedLexicalNode
 >;
 
@@ -98,18 +99,35 @@ function FormulaView({ latex, node }: { latex: string; node: FormulaNode }) {
 
 export class FormulaNode extends DecoratorNode<JSX.Element> {
   __latex: string;
+  /** 块身份（只有**顶层块**才有；见 docs/plans/2026-09-18-crdt-block-id-ownership.md）。 */
+  __blockId: string;
 
   static getType(): string {
     return "formula";
   }
 
   static clone(node: FormulaNode): FormulaNode {
-    return new FormulaNode(node.__latex, node.__key);
+    return new FormulaNode(node.__latex, node.__blockId, node.__key);
   }
 
-  constructor(latex = "", key?: NodeKey) {
+  constructor(latex = "", blockId = "", key?: NodeKey) {
     super(key);
     this.__latex = latex;
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as FormulaNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   $config() {
@@ -151,21 +169,24 @@ export class FormulaNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedFormulaNode {
-    return {
-      ...super.exportJSON(),
-      type: "formula",
-      version: 1,
-      latex: this.__latex,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "formula",
+        version: 1,
+        latex: this.__latex,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedFormulaNode): FormulaNode {
-    return $createFormulaNode(serializedNode.latex ?? "");
+    return $createFormulaNode(serializedNode.latex ?? "", blockIdOf(serializedNode));
   }
 }
 
-export function $createFormulaNode(latex: string): FormulaNode {
-  return $applyNodeReplacement(new FormulaNode(latex));
+export function $createFormulaNode(latex: string, blockId?: string): FormulaNode {
+  return $applyNodeReplacement(new FormulaNode(latex, blockId ?? ""));
 }
 
 export function $isFormulaNode(node: LexicalNode | null | undefined): node is FormulaNode {

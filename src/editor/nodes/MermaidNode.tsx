@@ -15,11 +15,13 @@ import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
 import { detectMermaidSyntax, mermaidSyntaxOptions } from "../../lib/mermaid";
 import { useResolvedTheme } from "../../store/theme";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 export type SerializedMermaidNode = Spread<
   {
     src: string;
     syntax?: string;
+    blockId?: string;
   },
   SerializedLexicalNode
 >;
@@ -31,19 +33,36 @@ const mermaidThemeRef = { current: "" };
 export class MermaidNode extends DecoratorNode<JSX.Element> {
   __src: string;
   __syntax: string;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
 
   static getType(): string {
     return "mermaid";
   }
 
   static clone(node: MermaidNode): MermaidNode {
-    return new MermaidNode(node.__src, node.__syntax, node.__key);
+    return new MermaidNode(node.__src, node.__syntax, node.__blockId, node.__key);
   }
 
-  constructor(src = "", syntax = "", key?: NodeKey) {
+  constructor(src = "", syntax = "", blockId = "", key?: NodeKey) {
     super(key);
     this.__src = src;
     this.__syntax = syntax || detectMermaidSyntax(src);
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as MermaidNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   $config() {
@@ -88,17 +107,20 @@ export class MermaidNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedMermaidNode {
-    return {
-      ...super.exportJSON(),
-      type: "mermaid",
-      version: 1,
-      src: this.__src,
-      syntax: this.__syntax,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "mermaid",
+        version: 1,
+        src: this.__src,
+        syntax: this.__syntax,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedMermaidNode): MermaidNode {
-    return $createMermaidNode(serializedNode.src ?? "", serializedNode.syntax ?? "");
+    return $createMermaidNode(serializedNode.src ?? "", serializedNode.syntax ?? "", blockIdOf(serializedNode));
   }
 }
 
@@ -249,8 +271,8 @@ function MermaidView({
   );
 }
 
-export function $createMermaidNode(src = "", syntax = ""): MermaidNode {
-  return $applyNodeReplacement(new MermaidNode(src, syntax));
+export function $createMermaidNode(src = "", syntax = "", blockId = ""): MermaidNode {
+  return $applyNodeReplacement(new MermaidNode(src, syntax, blockId));
 }
 
 export function $isMermaidNode(node: LexicalNode | null | undefined): node is MermaidNode {

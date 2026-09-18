@@ -14,6 +14,7 @@ import { $createListItemNode, $createListNode, ListNode } from "@lexical/list";
 import { EDITOR_NODES } from "./config";
 import {
   ensureBlockIdOnTopLevelNode,
+  SELF_OWNED_BLOCK_ID_NODE_TYPES,
   upgradeCodeToBlockNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
@@ -23,6 +24,10 @@ import {
   upgradeTableToBlockNode,
 } from "./blockIdTransform";
 import { $createCalloutNode, CalloutNode } from "./nodes/CalloutNode";
+import { $createFormulaNode, FormulaNode } from "./nodes/FormulaNode";
+import { $createMermaidNode, MermaidNode } from "./nodes/MermaidNode";
+import { $createImageRowNode, ImageRowNode } from "./nodes/ImageRowNode";
+import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
 import { $createHorizontalRuleNode, HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
@@ -37,9 +42,19 @@ function editorWithTransform() {
   editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode);
   editor.registerNodeTransform(HorizontalRuleNode, upgradeHorizontalRuleToBlockNode);
   editor.registerNodeTransform(TableNode, upgradeTableToBlockNode);
-  editor.registerNodeTransform(CalloutNode, ensureBlockIdOnTopLevelNode);
+  for (const node of SELF_OWNED_BLOCK_ID_NODE_TYPES) {
+    editor.registerNodeTransform(node, ensureBlockIdOnTopLevelNode);
+  }
   return editor;
 }
+
+/** 自有节点的 `[type, 造一个, 类]` 表 —— 与 `SELF_OWNED_BLOCK_ID_NODE_TYPES` 必须一致（下面有一条判据钉）。 */
+const SELF_OWNED_FACTORIES: Array<[string, () => LexicalNode, { importJSON: (json: never) => LexicalNode }]> = [
+  ["callout", () => $createCalloutNode(), CalloutNode as never],
+  ["formula", () => $createFormulaNode("x^2"), FormulaNode as never],
+  ["mermaid", () => $createMermaidNode("graph TD; A-->B"), MermaidNode as never],
+  ["imageRow", () => $createImageRowNode([{ src: "a.png", alt: "a" }]), ImageRowNode as never],
+];
 
 const rootChildren = (editor: ReturnType<typeof editorWithTransform>) =>
   (editor.getEditorState().toJSON() as { root: { children: Array<Record<string, unknown>> } }).root.children;
@@ -274,18 +289,45 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect((rows[0].children as unknown[])).toHaveLength(2); // 每行两格
   });
 
-  it("★ 自有节点（callout）：**类型不变**、新建的顶层块拿到块 ID", () => {
-    // 自有点节与内建类型的路子不同：类就是类型 ⇒ **不需要新 type、不需要映射**，
-    // 只要类里有声明字段 + `ensureBlockIdOnTopLevelNode` 给新建的顶层块补 ID。
-    const editor = editorWithTransform();
-    editor.update(() => {
-      $getRoot().append($createCalloutNode());
-    }, { discrete: true });
+  it("★ 自有节点：声明字段能进 JSON、能读回（表驱动，覆盖清单里每一类）", () => {
+    // 自有节点与内建类型的路子不同：类就是类型 ⇒ **不需要新 type、不需要映射**，
+    // 只要类里有声明字段 + JSON 读写带上它（CRDT 绑定就是靠 exportJSON/importJSON 同步的）。
+    //
+    // ⚠️ 这条**不把节点放进根**：裸测试编辑器里把一个**应用装饰节点**单独放进空根会被
+    // Lexical 的根规范化换成空段落（`formula`/`mermaid` 实测；理由与影响记在文档 §4.2）。
+    // 真编辑器里它们总是与段落同处，所以那条是"测试结构不真实"，不是产品缺陷。
+    for (const [type, make, klass] of SELF_OWNED_FACTORIES) {
+      const editor = editorWithTransform();
+      let exported: Record<string, unknown> = {};
+      let readBack = "";
+      editor.update(() => {
+        const node = make() as unknown as { setBlockId: (id: string) => void; exportJSON: () => Record<string, unknown>; getBlockId: () => string };
+        node.setBlockId("blk-x");
+        exported = node.exportJSON();
+        readBack = (klass.importJSON(exported as never) as unknown as { getBlockId: () => string }).getBlockId();
+      }, { discrete: true });
 
-    const kid = rootChildren(editor)[0];
-    expect(kid.type).toBe("callout"); // 类型**不变**（与内建类型不同）
-    expect(typeof kid.blockId).toBe("string");
-    expect((kid.blockId as string).length).toBeGreaterThan(0);
+      expect(exported.type).toBe(type); // 类型**不变**（与内建类型不同）
+      expect(exported.blockId).toBe("blk-x"); // 非空 ⇒ 写进 JSON
+      expect(readBack).toBe("blk-x"); // 读得回来
+    }
+  });
+
+  it("自有节点的**空 ID 不写字段**（嵌套实例不给身份，落盘形态不漂）", () => {
+    for (const [, make] of SELF_OWNED_FACTORIES) {
+      const editor = editorWithTransform();
+      let exported: Record<string, unknown> = {};
+      editor.update(() => {
+        exported = (make() as unknown as { exportJSON: () => Record<string, unknown> }).exportJSON();
+      }, { discrete: true });
+      expect("blockId" in exported).toBe(false);
+    }
+  });
+
+  it("★ 清单与判据表**不许漂**：注册了这个类型就必须有判据（否则将来会漏）", () => {
+    const registered = SELF_OWNED_BLOCK_ID_NODE_TYPES.map((n) => n.getType()).sort();
+    const covered = SELF_OWNED_FACTORIES.map(([type]) => type).sort();
+    expect(covered).toEqual(registered);
   });
 
   it("自有节点的**嵌套**实例不给身份（同一条规则）", () => {

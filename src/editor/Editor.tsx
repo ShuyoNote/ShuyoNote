@@ -40,6 +40,7 @@ import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
 import {
   ensureBlockIdOnTopLevelNode,
+  SELF_OWNED_BLOCK_ID_NODE_TYPES,
   upgradeCodeToBlockNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
@@ -53,7 +54,6 @@ import { ListNode } from "@lexical/list";
 import { SafeCodeNode } from "./nodes/SafeCodeNode";
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { TableNode } from "@lexical/table";
-import { CalloutNode } from "./nodes/CalloutNode";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -344,11 +344,16 @@ function BlockIdPlugin({
     () => editor.registerNodeTransform(TableNode, upgradeTableToBlockNode),
     [editor],
   );
-  // 自有节点（不需要新 type）：只给**新建的顶层块**补身份。每加一个类型补一行 + 一条判据。
-  useEffect(
-    () => editor.registerNodeTransform(CalloutNode, ensureBlockIdOnTopLevelNode),
-    [editor],
-  );
+  // 自有节点（不需要新 type）：只给**新建的顶层块**补身份。清单在 `SELF_OWNED_BLOCK_ID_NODE_TYPES`，
+  // 新增一类自有节点只要往那个数组加一行（注册与判据共用同一份清单，不会漏）。
+  useEffect(() => {
+    const disposers = SELF_OWNED_BLOCK_ID_NODE_TYPES.map((node) =>
+      editor.registerNodeTransform(node, ensureBlockIdOnTopLevelNode),
+    );
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  }, [editor]);
 
   // Tag DOMs on mount and on every update.
   useEffect(() => {

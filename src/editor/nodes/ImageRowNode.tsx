@@ -10,6 +10,7 @@ import {
   type Spread,
 } from "lexical";
 import type { CSSProperties, JSX } from "react";
+import { blockIdOf, withBlockId } from "./blockIdHelpers";
 
 // A horizontal row of images (e.g. a GitHub README's <p align="center"> shield
 // badges). Lexical's inline DecoratorNode images don't flow in a paragraph in
@@ -26,24 +27,42 @@ export interface ImageRowItem {
 export type SerializedImageRowNode = Spread<
   {
     items: ImageRowItem[];
+    blockId?: string;
   },
   SerializedLexicalNode
 >;
 
 export class ImageRowNode extends DecoratorNode<JSX.Element> {
   __items: ImageRowItem[];
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
 
   static getType(): string {
     return "imageRow";
   }
 
   static clone(node: ImageRowNode): ImageRowNode {
-    return new ImageRowNode(node.__items, node.__key);
+    return new ImageRowNode(node.__items, node.__blockId, node.__key);
   }
 
-  constructor(items: ImageRowItem[] = [], key?: NodeKey) {
+  constructor(items: ImageRowItem[] = [], blockId = "", key?: NodeKey) {
     super(key);
     this.__items = items;
+    this.__blockId = blockId;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as ImageRowNode).__blockId;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
   }
 
   $config() {
@@ -97,15 +116,18 @@ export class ImageRowNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedImageRowNode {
-    return {
-      ...super.exportJSON(),
-      type: "imageRow",
-      items: this.__items,
-    };
+    return withBlockId(
+      {
+        ...super.exportJSON(),
+        type: "imageRow",
+        items: this.__items,
+      },
+      this.__blockId,
+    );
   }
 
   static importJSON(serializedNode: SerializedImageRowNode): ImageRowNode {
-    return $createImageRowNode(serializedNode.items ?? []);
+    return $createImageRowNode(serializedNode.items ?? [], blockIdOf(serializedNode));
   }
 
   isInline(): boolean {
@@ -113,8 +135,8 @@ export class ImageRowNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createImageRowNode(items: ImageRowItem[] = []): ImageRowNode {
-  return $applyNodeReplacement(new ImageRowNode(items));
+export function $createImageRowNode(items: ImageRowItem[] = [], blockId = ""): ImageRowNode {
+  return $applyNodeReplacement(new ImageRowNode(items, blockId));
 }
 
 export function $isImageRowNode(node: LexicalNode | null | undefined): node is ImageRowNode {

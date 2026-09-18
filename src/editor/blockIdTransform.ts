@@ -19,7 +19,7 @@
 // 是 `shuyo-paragraph` ⇒ **不在同一个 type 下**，不会被本变换再次命中。函数里再加一道
 // `getType()` 守卫，读代码的人不用去猜 Lexical 的匹配规则。
 
-import { ParagraphNode } from "lexical";
+import { ParagraphNode, type LexicalNode, type Klass } from "lexical";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode } from "@lexical/list";
 
@@ -34,6 +34,10 @@ import { $createBlockHorizontalRuleNode } from "./nodes/BlockHorizontalRuleNode"
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { $createBlockTableNode } from "./nodes/BlockTableNode";
 import { TableNode } from "@lexical/table";
+import { CalloutNode } from "./nodes/CalloutNode";
+import { FormulaNode } from "./nodes/FormulaNode";
+import { MermaidNode } from "./nodes/MermaidNode";
+import { ImageRowNode } from "./nodes/ImageRowNode";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -171,12 +175,17 @@ export function upgradeTableToBlockNode(node: TableNode): void {
  * 为什么仍要一个变换：`$createXxxNode()` 造出来的节点 ID 是空的（不可能每个创建点都改），
  * 而"空 ID"意味着它在 CRDT 平面里没有稳定身份。挂一条变换、只认顶层块、且**只在空 ID 时**写
  * —— 幂等，不会把已有身份重铸。
+ *
+ * 形参收 `LexicalNode` + 鸭子类型：这样**任何一个**节点类都能直接注册进这条变换，
+ * 而某个体忘了实现 `getBlockId`/`setBlockId` 时只是被跳过（不炸、不静默给错身份）。
  */
-export function ensureBlockIdOnTopLevelNode(node: BlockIdCarrier): void {
+export function ensureBlockIdOnTopLevelNode(node: LexicalNode): void {
+  const carrier = node as unknown as Partial<BlockIdCarrier>;
+  if (typeof carrier.getBlockId !== "function" || typeof carrier.setBlockId !== "function") return;
   const parent = node.getParent();
   if (parent === null || parent.getType() !== "root") return; // 嵌套块不给身份
-  if (node.getBlockId().length > 0) return; // 已有身份不重铸（也是这条变换的出口条件）
-  node.setBlockId(newBlockId());
+  if ((carrier.getBlockId as () => string)().length > 0) return; // 已有身份不重铸（也是出口条件）
+  (carrier.setBlockId as (id: string) => void)(newBlockId());
 }
 
 /** 带块身份 API 的节点（自有节点在类里实现这三个即可）。 */
@@ -185,3 +194,15 @@ export interface BlockIdCarrier {
   getBlockId(): string;
   setBlockId(id: string): void;
 }
+
+/**
+ * **已接入块身份的自有节点**类型清单 —— 注册处（`BlockIdPlugin`）与判据都读它，
+ * 避免"加了类忘了注册 / 忘了判据"。新增一类自有节点：类里加声明字段 → 这里加一行。
+ */
+export const SELF_OWNED_BLOCK_ID_NODE_TYPES: Array<Klass<LexicalNode>> = [
+  CalloutNode,
+  FormulaNode,
+  MermaidNode,
+  ImageRowNode,
+];
+
