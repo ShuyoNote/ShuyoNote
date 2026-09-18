@@ -125,6 +125,15 @@ export const GATES = [
       "两类真事故各一条：①2026-09-17 发版机清构建期依赖（libssl-dev）⇒ 社区端 openssl-sys 编译失败；②同日 15:51 本机 Xcode 27 装完许可未接受 ⇒ git/python3/cc/xcrun 全线不可用（notarytool 一条探针就能提前发现）",
   },
   {
+    id: "check-derived-writers",
+    group: "contract",
+    label: "派生表唯一写入者（Rust 生产代码不许写 attachment_text / chunks）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒。
+    cmd: "node scripts/check-derived-writers.mjs",
+    incident:
+      "2026-09-18 spike 问题二查出**正文文本有两条派生实现**（7 个样本里 4 个结果不同，症状是搜索片段/反链随『谁最后保存』变）；同族风险是派生**表**长出第二个写入者 —— 两边各写一份时两侧测试都绿，用户看到的是同一份附件两套派生文本。Windows 裁定「写只有一处（TS 抽取管线：src/lib/extract/store.ts / chunkStore.ts）」，并要求把这条落成**可执行判据**（原话：只写在文档里的规则会漂）。Rust 侧今天确有两处 INSERT，但都在 #[cfg(test)] 里播种夹具 ⇒ 判据必须做区域判定（与 check-doc-content-access 共用 scripts/lib/rust-scan.mjs）",
+  },
+  {
     id: "check-doc-content-access",
     group: "contract",
     label: "文档内容直接访问（只减不增：新文件 / 超基线即红）",
