@@ -1,0 +1,29 @@
+{
+  "note": "数值型参数（limit/offset）的**跨语言口径夹具**：Rust 侧（src-tauri/src/plugins.rs 的 dispatch ＋ arg_i64 ＋ clamp）与 TS 侧（src/lib/capabilities/frontend.ts 的 intOr ＋ intArg）读**同一份**、逐值比。为什么需要它：默认值一致性只有门禁比字面量，而『取到什么值』这一层机器比不了——2026-09-18 这一天里 blocks.list 参数不兑现、pages.search 默认值、四个适配器的 0 处理、intArg 取地板、整数值浮点，五处分歧都是靠人肉对拍才发现的。★ 关键设计：`rawArgs` 里存的是**原始 JSON token 文本**（字符串），不是解析后的值——因为 JS 的 JSON.parse 会把 `2.0` 折成 `2`，只有保住原始文本，两侧才谈得上『同一个输入』。`ID` 是页面 id 占位符，两侧各自替换。",
+  "capability": "pages.get",
+  "defaultLimit": 6000,
+  "limitMax": 20000,
+  "cases": [
+    { "name": "整数", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":3}", "expectLimit": 3, "expectOffset": 0 },
+    { "name": "整数字符串", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"3\"}", "expectLimit": 3, "expectOffset": 0 },
+    { "name": "带正号的整数字符串", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"+7\"}", "expectLimit": 7, "expectOffset": 0 },
+    { "name": "★ 整数值浮点 2.0（JS 与 2 同值；Rust 侧必须让步才对齐）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":2.0}", "expectLimit": 2, "expectOffset": 0 },
+    { "name": "★ 整数值浮点 1000.0", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":1000.0}", "expectLimit": 1000, "expectOffset": 0 },
+    { "name": "非整数浮点 2.5 ⇒ 回落默认（两侧一致，不取地板）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":2.5}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "非整数浮点字符串 \"2.5\" ⇒ 回落默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"2.5\"}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "零 ⇒ 合法值，再被 clamp 到 1", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":0}", "expectLimit": 1, "expectOffset": 0 },
+    { "name": "负数 ⇒ clamp 到 1", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":-3}", "expectLimit": 1, "expectOffset": 0 },
+    { "name": "零字符串 ⇒ 1", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"0\"}", "expectLimit": 1, "expectOffset": 0 },
+    { "name": "非数字字符串 ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"abc\"}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "空白包裹的数字字符串 ⇒ 两侧都拒（不做 trim）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\" 7 \"}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "null ⇒ 默认（不做 JS 强制转换）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":null}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "布尔 true ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":true}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "布尔 false ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":false}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "空数组 ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":[]}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "空对象 ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":{}}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "超上限 ⇒ clamp 到上限", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":999999}", "expectLimit": 20000, "expectOffset": 0 },
+    { "name": "offset 非整数浮点 ⇒ 回落默认 0", "rawArgs": "{\"id\":\"ID\",\"offset\":2.7,\"limit\":6000}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "offset 整数字符串", "rawArgs": "{\"id\":\"ID\",\"offset\":\"3\",\"limit\":6000}", "expectLimit": 6000, "expectOffset": 3 },
+    { "name": "offset 负数 ⇒ clamp 到 0", "rawArgs": "{\"id\":\"ID\",\"offset\":-5,\"limit\":6000}", "expectLimit": 6000, "expectOffset": 0 }
+  ]
+}

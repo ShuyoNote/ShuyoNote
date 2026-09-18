@@ -649,8 +649,21 @@ fn search_like(
 //   · `chunks` 表不存在（老库/没迁移）⇒ **空结果**，不报红（向前兼容）。
 // ---------------------------------------------------------------------------
 
-const CHUNK_LIMIT_DEFAULT: usize = 20;
+/// 命令面 `search_chunks` 的 `limit` 默认值。
+///
+/// ⚠️ **必须与注册表 `files.search.limit` 的 `default` 相同（10）**：注册表是契约源头，
+/// AI 工具面与插件作者看到的都是它；这里曾经是 20，于是"作者看到 10、绕开 TS wrapper 直接调命令
+/// 拿到 20"（AMD 复核时抓到的：仓库里没有任何判据守着这三处相等）。
+const CHUNK_LIMIT_DEFAULT: usize = 10;
 const CHUNK_LIMIT_MAX: usize = 100;
+
+/// 命令面的 `limit` 口径：**与能力面 `cap_files_search` 的 `clamp(1, 100)` 一致**。
+///
+/// 抽成纯函数只为能被判据直接钉住（原来那一行 `.min(MAX)` 没有下界，`limit=0` 会返回 0 条命中，
+/// 而能力面 `0 ⇒ 1`；两面对同一个逻辑调用的边界语义不该不同）。
+fn chunk_limit_or_default(limit: Option<usize>) -> usize {
+    limit.unwrap_or(CHUNK_LIMIT_DEFAULT).clamp(1, CHUNK_LIMIT_MAX)
+}
 /// 向量加分上限：**不主导**关键词（与页面级的 `VECTOR_BONUS` 同一个思路）。
 const CHUNK_VECTOR_BONUS: f32 = 6.0;
 /// 片段长度（与页面级 `build_like_snippet` 的调用口径一致）。
@@ -984,7 +997,7 @@ pub async fn search_chunks(
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let limit = args.limit.unwrap_or(CHUNK_LIMIT_DEFAULT).min(CHUNK_LIMIT_MAX);
+    let limit = chunk_limit_or_default(args.limit);
 
     let mut query_vec: Option<Vec<f32>> = None;
     let mut model: Option<String> = None;
@@ -999,6 +1012,18 @@ pub async fn search_chunks(
 
 #[cfg(test)]
 mod tests {
+
+    /// 命令面 `limit` 的三个读数：默认值（与注册表、与 TS wrapper 相同）、下界、上界。
+    #[test]
+    fn chunk_limit_follows_the_registry_default_and_clamps_both_ends() {
+        assert_eq!(chunk_limit_or_default(None), 10, "默认值必须与注册表 files.search.limit 的 default 一致");
+        assert_eq!(chunk_limit_or_default(Some(0)), 1, "0 是合法值，夹到下界（与能力面 clamp(1,100) 一致）");
+        assert_eq!(chunk_limit_or_default(Some(1)), 1);
+        assert_eq!(chunk_limit_or_default(Some(37)), 37);
+        assert_eq!(chunk_limit_or_default(Some(CHUNK_LIMIT_MAX)), CHUNK_LIMIT_MAX);
+        assert_eq!(chunk_limit_or_default(Some(9999)), CHUNK_LIMIT_MAX, "超上限夹到上限");
+    }
+
     use super::*;
 
     #[test]

@@ -73,10 +73,20 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 3. 之后每做一次相关改动，顺手把白名单里的条目挪进壳里。
 
 > ✅ **第 2 条已落地**（2026-09-18）：`scripts/check-doc-content-access.mjs` ＋ 逐文件基线
-> `scripts/doc-content-access-baseline.json`（**80 文件 / 746 处**），已登记进 `scripts/lib/gates.mjs`（contract 组）。
+> `scripts/doc-content-access-baseline.json`（**生产面 68 文件 / 634 处**），已登记进 `scripts/lib/gates.mjs`（contract 组）。
 > 三条规则：出现**新文件**直接引用 ⇒ 红；某文件计数**超过**基线 ⇒ 红；计数**低于**基线 ⇒ 提示下调基线
 > （`--update`，**只允许变小**；首次创建基线豁免——门禁第一次跑时正是它自己把"创建基线即上涨"抓出来的）。
 > 豁免名单（本该直接访问的那一层）在脚本的 `LAYER_FILES`：`src/lib/docContent.ts`、`src-tauri/src/doc_content.rs`。
+>
+> 🔧 **口径修订（macOS 侧，2026-09-18，同日）**：**测试代码从计数里排除**（93 个 `*.test.ts(x)`
+> ＋ 24 个 Rust 文件末尾的 `#[cfg(test)] mod tests`）。原口径把测试也数进去，效果是"**谁为新功能写一条
+> 内容相关的测试，谁就红**"——门禁上线当天就撞上了：`pages.get` 加分页（`dc400c16`）在生产侧的
+> 直接访问**净增为零**（同一条 SQL 列、同一个 JSON 键），涨的 13 处全在测试与注释里。换 CRDT 时
+> 没人需要改测试夹具里 `INSERT INTO pages (... content_text ...)` 的那一列，它不是替换面。
+> 因此 **746 处 / 80 文件 → 634 处 / 68 文件**（只降不升，符合"单调收敛"）；Rust 侧切测试尾部带一个
+> **保险**：只有在 `#[cfg(test)] mod tests` 位于文件后半段时才切，否则全量计数（免得中间位置的测试模块
+> 把后面的生产代码一起排除）。**生产侧一处的余量都没有**，两处变异（TS 生产文件 +1、Rust 测试模块之前 +1）
+> 都实测判红。有异议请直接回滚这一处修改（信箱里有同日的说明信）。
 
 > ⚠️ 与 P0 的关系：`write` 强制带版本号 ⇒ **接口收口最好在 P0（密文格式版本化）之后或同时做**，
 > 否则壳的签名会被 P0 再改一次。
