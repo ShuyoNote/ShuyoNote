@@ -165,7 +165,7 @@ register({
 - 调用：`api.pages.search(q, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
+- 返回：[{id, title, snippet}]；**插件面（`pages.search` 能力本身）v1 是子串匹配、不做相关度排序** —— 语义加分那条只在应用内 AI 检索路径上（`desc` 里说的那一半）
 - 参数：
   - `q`: `string` —— 关键词
   - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
