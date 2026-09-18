@@ -347,6 +347,9 @@ function helperReads(src) {
           new RegExp(`\\bargs\\.${n}\\b`), // args.limit
           new RegExp(`\\bargs\\[\\s*["'\`]${n}["'\`]\\s*\\]`), // args["limit"]
           new RegExp(`\\{[^}]*\\b${n}\\b[^}]*\\}\\s*=\\s*args\\b`), // const { limit } = args
+          // 把**参数名**连同 args 一起交给统一读法的助手：`intArg(args, "limit", 默认, 1, 上限)`。
+          // 这是本仓 2026-09-18 之后推荐的写法（默认值/夹取/非法值只实现一次），门禁必须认它。
+          new RegExp(`\\bargs\\s*,\\s*["'\`]${n}["'\`]`),
         ];
         if (!forms.some((re) => re.test(body))) {
           fail(

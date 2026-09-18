@@ -53,6 +53,27 @@ function toFiniteOr(v: unknown, d: number): number {
   return Number.isFinite(n) ? n : d;
 }
 
+/**
+ * 数值型参数的**统一读法**：`默认值 → 夹取到 [min, max] → 取地板`。
+ * 与 Rust 侧的 `arg_i64("<名>", 默认)` ＋ `limit.clamp(min, max)` 是同一套口径。
+ *
+ * 为什么必须收成一处（2026-09-18）：这轮对着注册表核对时，同一个坑在**四个适配器**上各犯了一遍 ——
+ * 写成 `args.limit > 0 ? … : 默认` 或 `typeof args.limit === "number" ? … : 默认`，
+ * 于是 `limit=0` 在 TS 侧被当成"没传"、在 Rust 侧被 `clamp(1,·)` 夹到 1
+ * （`files.search` 10 vs 1、`files.read` 200 vs 1、`pages.get` 6000 vs 1…）。
+ * 这类分歧两边都能跑、都返回合理结果，只能靠"三处摆一起"或机器判据发现；
+ * 各自写一遍就一定会再犯，所以这里只留一个实现。
+ */
+function intArg(
+  args: Record<string, unknown>,
+  name: string,
+  def: number,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  return Math.min(max, Math.max(min, Math.floor(toFiniteOr(args[name], def))));
+}
+
 function targetPage(args: Record<string, unknown>, ctx?: AdapterContext): string {
   const given = String(args.pageId ?? "");
   if (given) return given;
@@ -81,13 +102,24 @@ const BLOCKS_LIMIT_MAX = 500;
 const SEARCH_LIMIT_DEFAULT = 8;
 const SEARCH_LIMIT_MAX = 100;
 
+/** `files.search` 的 `limit`：注册表 `default: 10`、Rust `cap_files_search` 的 `clamp(1, 100)`。 */
+const FILES_SEARCH_LIMIT_DEFAULT = 10;
+const FILES_SEARCH_LIMIT_MAX = 100;
+
+/**
+ * `files.read` 的 `offset`/`limit`：注册表 `default: 0 / 200`，
+ * Rust `cap_files_read` 的 `offset.max(0)` ＋ `limit.clamp(1, MAX_ATT_TEXT_LIMIT=1000)`。
+ */
+const FILES_READ_LIMIT_DEFAULT = 200;
+const FILES_READ_LIMIT_MAX = 1000;
+
 export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.search": async (args) => {
     const query = String(args.q ?? "");
     // ⚠️ 默认值与上限**必须与注册表和 Rust 侧逐值相同**（`check-capabilities` 会比对注册表
     // 与 Rust 的字面默认值）。这里原先默认 8 却不夹取，而 Rust 是 `limit.clamp(1, 100)`：
     // 传 `limit: 999` 时 Web 与桌面拿到的条数就不一样了。
-    const limit = Math.min(SEARCH_LIMIT_MAX, Math.max(1, Math.floor(toFiniteOr(args.limit, SEARCH_LIMIT_DEFAULT))));
+    const limit = intArg(args, "limit", SEARCH_LIMIT_DEFAULT, 1, SEARCH_LIMIT_MAX);
     if (!query) return { ok: false, error: "pages.search 需要 q" };
     const rows = await api.search(query, limit, false);
     return { ok: true, pages: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.snippet })) };
@@ -109,8 +141,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     const total = codePointLength(raw); // 按码点计数，emoji 不会被算成 2
     // ⚠️ **别用 `|| 默认值`**：`limit=0` 是 falsy，会被换成 6000，而 Rust 侧 `limit.clamp(1, ·)`
     // 给的是 1 ⇒ 同一个调用在两条路径上返回 6000 字与 1 字。这类"边界差一个"的坑靠 `Number.isFinite` 判。
-    const offset = Math.max(0, Math.floor(toFiniteOr(args.offset, 0)));
-    const limit = Math.min(MAX_PAGE_TEXT_LIMIT, Math.max(1, Math.floor(toFiniteOr(args.limit, PAGE_TEXT_LIMIT))));
+    const offset = intArg(args, "offset", 0, 0);
+    const limit = intArg(args, "limit", PAGE_TEXT_LIMIT, 1, MAX_PAGE_TEXT_LIMIT);
     const text = sliceByCodePoints(raw, offset, limit);
     const returned = codePointLength(text);
     // `truncated` 的含义是"**还没读完**"（窗口没够到正文末尾），而不是"这页太长"：
@@ -161,7 +193,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "blocks.list": async (args, ctx) => {
     const pageId = targetPage(args, ctx);
     if (!pageId) return { ok: false, error: "blocks.list 需要 pageId（省略时需要一个当前打开的页面）" };
-    const limit = Math.min(BLOCKS_LIMIT_MAX, Math.max(1, Math.floor(toFiniteOr(args.limit, BLOCKS_LIMIT_DEFAULT))));
+    const limit = intArg(args, "limit", BLOCKS_LIMIT_DEFAULT, 1, BLOCKS_LIMIT_MAX);
     const blocks = await api.getPageBlocks(pageId);
     return { ok: true, blocks: blocks.slice(0, limit).map((b) => ({ blockId: b.block_id, text: b.text })) };
   },
@@ -186,7 +218,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "files.search": async (args) => {
     const query = String(args.query ?? "").trim();
     if (!query) return { ok: false, error: "files.search 需要 query" };
-    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(100, args.limit) : 10;
+    const limit = intArg(args, "limit", FILES_SEARCH_LIMIT_DEFAULT, 1, FILES_SEARCH_LIMIT_MAX);
     const hits = await api.searchChunks(query, limit);
     // 原样透出（pageId/attId/loc 就是回链三件套）：这一层**不加工**，
     // 免得 AI 与插件看到两种形状 —— 加工（拼标题、去重）属于调用方的展示逻辑。
@@ -196,8 +228,8 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "files.read": async (args) => {
     const id = String(args.id ?? "");
     if (!id) return { ok: false, error: "files.read 需要 id" };
-    const offset = typeof args.offset === "number" && args.offset > 0 ? Math.floor(args.offset) : 0;
-    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(1000, Math.floor(args.limit)) : 200;
+    const offset = intArg(args, "offset", 0, 0);
+    const limit = intArg(args, "limit", FILES_READ_LIMIT_DEFAULT, 1, FILES_READ_LIMIT_MAX);
     const page = await api.readAttachmentText(id, offset, limit);
     // ⚠️ **不存在**（null）与**还没抽过**（segments 空）必须分开回话：
     //    合成一种，AI 就会把"还没索引"读成"文件里没有相关内容" —— 与 §15.10 用 ExtractCoverage
