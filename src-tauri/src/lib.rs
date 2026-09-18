@@ -28,9 +28,14 @@ mod models;
 mod net;
 mod capabilities_gen;
 mod pdf_native;
-// PDFium 光栅化（P1，2026-09-17 开工）：与 pdf_native **并存**，分派在 P2 —— 所以 P1 阶段
-// 它还没有调用方，pdfium_native.rs 里带着一个临时 `#![allow(dead_code)]`，P2 接线后删掉。
+// PDFium 光栅化：**P2 已接线**（`commands.rs` 按 `SHUYONOTE_PDF_ENGINE=pdfium` 分派，缺省仍是 MuPDF）
+// ⇒ 模块级 `#![allow(dead_code)]` 已随之删除（只留两处逐项 allow 并写明理由）。
 mod pdfium_native;
+// P3 对拍（**仅测试**）：两引擎渲同一页 + 比像素 + 落裸 RGBA。
+// ⚠️ 本机（Windows）跑不了 `cargo test`（0xC0000139）⇒ 这里只保证它**编得过**，
+// 结论由 AMD(WSL2)/Mac 执行后给出。
+#[cfg(test)]
+mod pdf_engine_compare;
 // 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
 // `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
 mod picked_file;
