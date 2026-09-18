@@ -2083,9 +2083,22 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         }
     };
     let arg_i64 = |name: &str, default: i64| -> i64 {
-        args.get(name)
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-            .unwrap_or(default)
+        match args.get(name) {
+            // 整数，以及**小数部分为 0 的浮点**（`2.0`）都按整数收下。
+            // 为什么这一侧必须让步：JSON 线上写 `2.0` 时，Web 侧的 `JSON.parse` 早已把它折成 `2`
+            // （JS 语言层面分不出 `2.0` 与 `2`），所以只有这里收下浮点，两端才可能取到同一个值。
+            // 真正的非整数（`2.5`）两侧都回落默认值 —— 由 `tests/numeric-arg-parity.json` 钉住。
+            Some(serde_json::Value::Number(n)) => n
+                .as_i64()
+                .or_else(|| {
+                    n.as_f64()
+                        .filter(|f| f.is_finite() && f.fract() == 0.0)
+                        .map(|f| f as i64)
+                })
+                .unwrap_or(default),
+            Some(serde_json::Value::String(s)) => s.parse::<i64>().ok().unwrap_or(default),
+            _ => default,
+        }
     };
     // kv 的 scope：默认 space（随空间加密的那一侧），显式 'app' 才落到明文 meta。
     let scope_arg = |args: &serde_json::Value| -> String {
@@ -7175,6 +7188,63 @@ register({ id: "s.run", title: "结构化", run: function () {
         RUN_STATE.with(|s| *s.borrow_mut() = state.clone());
         let out = dispatch_capability(method, args)?;
         serde_json::from_str(&out).map_err(|e| e.to_string())
+    }
+
+    /// 数值型参数的**跨语言口径**判据：与 TS 适配器读**同一份夹具**
+    /// （`tests/numeric-arg-parity.json`，TS 侧在 `src/lib/capabilities/numericArgParity.test.ts`）。
+    ///
+    /// 夹具里 `rawArgs` 存的是**原始 JSON token 文本**（字符串）—— 这一点是刻意的：
+    /// JS 的 `JSON.parse` 会把 `2.0` 折成 `2`（语言层面分不出），只有保住原始文本，
+    /// 这一侧才谈得上验"线上写的是 `2.0`"这个情形；也正因这个折叠，**只能 Rust 侧让步**。
+    #[test]
+    fn numeric_args_follow_the_shared_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            #[serde(rename = "rawArgs")]
+            raw_args: String,
+            #[serde(rename = "expectLimit")]
+            expect_limit: i64,
+            #[serde(rename = "expectOffset")]
+            expect_offset: i64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            capability: String,
+            #[serde(rename = "defaultLimit")]
+            default_limit: i64,
+            #[serde(rename = "limitMax")]
+            limit_max: i64,
+            cases: Vec<Case>,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/numeric-arg-parity.json"))
+                .expect("夹具必须能解析（改了结构就要同步改两侧）");
+        assert!(fixture.cases.len() >= 15, "夹具不能是空的");
+        assert_eq!(fixture.capability, "pages.get");
+        assert_eq!(fixture.default_limit, 6000, "默认值与注册表 desc 必须一致");
+        assert_eq!(fixture.limit_max, MAX_PAGE_TEXT_LIMIT, "上限改了这里先红");
+
+        let (space, dir) = seed_space("numeric-arg-parity");
+        let st = state_for_space(&space, &dir);
+        // 直接用种子里已有的页面 `p1`（`seed_space` 会建它）：本判据比的是**参数取值**，
+        // 与正文长短无关，所以不需要额外插页（也免得 `pages.id` 唯一约束撞车）。
+        for (i, c) in fixture.cases.iter().enumerate() {
+            let args = c.raw_args.replace("ID", "p1");
+            let got = call(&st, "pages.get", &args).unwrap();
+            assert_eq!(
+                got["limit"].as_i64().unwrap(),
+                c.expect_limit,
+                "用例[{i}] {}（limit）",
+                c.name
+            );
+            assert_eq!(
+                got["offset"].as_i64().unwrap(),
+                c.expect_offset,
+                "用例[{i}] {}（offset）",
+                c.name
+            );
+        }
     }
 
     /// `pages.get` 分页的**跨语言**判据：与 TS 适配器读**同一份夹具**
