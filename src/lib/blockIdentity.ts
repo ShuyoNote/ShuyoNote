@@ -23,6 +23,7 @@ export const MODEL_TYPE_BY_LEGACY: Readonly<Record<string, string>> = {
   list: "shuyo-list",
   code: "shuyo-code",
   horizontalrule: "shuyo-horizontalrule",
+  table: "shuyo-table",
 };
 
 /** 模型 type → 老 type（`toLegacyDoc` 用）。 */

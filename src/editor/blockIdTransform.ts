@@ -32,6 +32,8 @@ import { $createBlockCodeNode } from "./nodes/BlockCodeNode";
 import { SafeCodeNode } from "./nodes/SafeCodeNode";
 import { $createBlockHorizontalRuleNode } from "./nodes/BlockHorizontalRuleNode";
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
+import { $createBlockTableNode } from "./nodes/BlockTableNode";
+import { TableNode } from "@lexical/table";
 
 /**
  * 这个节点是不是**顶层块**（根的直接子节点）。
@@ -41,7 +43,7 @@ import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
  * 但不给 ID —— 免得落盘形态里多出一片没用的 `blockId`。
  */
 function isTopLevelBlock(
-  node: ParagraphNode | HeadingNode | QuoteNode | ListNode | SafeCodeNode | HorizontalRuleNode,
+  node: ParagraphNode | HeadingNode | QuoteNode | ListNode | SafeCodeNode | HorizontalRuleNode | TableNode,
 ): boolean {
   const parent = node.getParent();
   return parent !== null && parent.getType() === "root";
@@ -141,4 +143,23 @@ export function upgradeHorizontalRuleToBlockNode(node: HorizontalRuleNode): void
   // `includeChildren should only be true for ElementNodes`（诊断实测），整个 update 失败、root 变空。
   const replacement = $createBlockHorizontalRuleNode(isTopLevelBlock(node) ? newBlockId() : "");
   node.replace(replacement);
+}
+
+/**
+ * 内建**表格** → 模型表格（第 4 步第六个类型）。
+ *
+ * ⚠️ **不要手抄表格状态**：`TableNode` 有 `rowStriping` / `frozenColumnCount` / `frozenRowCount` /
+ * `colWidths`，而只有 `getRowStriping()` / `getColWidths()` 能读出来 —— 手抄必丢。
+ * 正确做法：拿基类的 `exportJSON()` 让**基类的 `updateFromJSON`** 自己吃一遍（它就是为这件事存在的）。
+ */
+export function upgradeTableToBlockNode(node: TableNode): void {
+  if (node.getType() !== "table") return; // 模型表格（`shuyo-table`）不碰
+  const serialized = node.exportJSON();
+  const replacement = $createBlockTableNode(isTopLevelBlock(node) ? newBlockId() : "");
+  replacement.updateFromJSON(serialized as never);
+  // 补一次通用字段（`updateFromJSON` 是否覆盖 format/indent/direction 取决于版本，双保险且幂等）。
+  replacement.setFormat(node.getFormatType());
+  replacement.setIndent(node.getIndent());
+  replacement.setDirection(node.getDirection());
+  node.replace(replacement, true);
 }

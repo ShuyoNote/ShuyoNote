@@ -32,6 +32,7 @@ import { BlockQuoteNode } from "./nodes/BlockQuoteNode";
 import { BlockListNode } from "./nodes/BlockListNode";
 import { BlockCodeNode } from "./nodes/BlockCodeNode";
 import { BlockHorizontalRuleNode } from "./nodes/BlockHorizontalRuleNode";
+import { BlockTableNode } from "./nodes/BlockTableNode";
 
 // All node types this editor can deserialize. A serialized node whose `type` is
 // outside this set (e.g. a stray/unregistered type) is dropped by lexicalStateValid
@@ -48,6 +49,7 @@ export const EDITOR_NODES: Klass<LexicalNode>[] = [
   BlockListNode,
   BlockCodeNode,
   BlockHorizontalRuleNode,
+  BlockTableNode,
   HeadingNode,
   QuoteNode,
   ListNode,

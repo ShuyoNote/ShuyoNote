@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { $createParagraphNode, $createTextNode, $getRoot, ParagraphNode, createEditor } from "lexical";
 import { $createHeadingNode, $createQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { $createTableNodeWithDimensions } from "@lexical/table";
+import { TableNode } from "@lexical/table";
 import { $createListItemNode, $createListNode, ListNode } from "@lexical/list";
 
 import { EDITOR_NODES } from "./config";
@@ -18,6 +19,7 @@ import {
   upgradeListToBlockNode,
   upgradeParagraphToBlockNode,
   upgradeQuoteToBlockNode,
+  upgradeTableToBlockNode,
 } from "./blockIdTransform";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
@@ -32,6 +34,7 @@ function editorWithTransform() {
   editor.registerNodeTransform(ListNode, upgradeListToBlockNode);
   editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode);
   editor.registerNodeTransform(HorizontalRuleNode, upgradeHorizontalRuleToBlockNode);
+  editor.registerNodeTransform(TableNode, upgradeTableToBlockNode);
   return editor;
 }
 
@@ -181,9 +184,11 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(deep?.type).toBe("shuyo-paragraph"); // 类型升级了
     expect(deep?.blockId).toBeUndefined(); // 但**没有**块身份（今天只有顶层块有）
 
-    // 落盘形态里也不许冒出 `blockId` 字段（顶层是还没迁移的 table ⇒ 整份文档一个都没有）
+    // 落盘形态里**只有顶层块**带 `blockId`（这里顶层 table 已迁移 ⇒ 恰好 1 处；
+    // 单元格里的那个段落一处都不算）。这条断言比"整份文档里没有 blockId"更耐久 ——
+    // 随着更多顶层类型迁移，"一个都没有"迟早会变成错的（表格迁移时它就红过一次）。
     const wire = toLegacyDoc(JSON.stringify({ root: { children: rootChildren(editor) } }));
-    expect(wire.includes("blockId")).toBe(false);
+    expect(wire.split('"blockId"').length - 1).toBe(1);
   });
 
   it("★ 引用也被升级：type 变 `shuyo-quote`、带块 ID、文字不丢", () => {    const editor = editorWithTransform();
@@ -249,5 +254,20 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(kid.type).toBe("shuyo-horizontalrule");
     expect(typeof kid.blockId).toBe("string");
     expect((kid.blockId as string).length).toBeGreaterThan(0);
+  });
+
+  it("★ 表格也被升级：type 变 `shuyo-table`、带块 ID、**行列结构原样**", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      $getRoot().append($createTableNodeWithDimensions(2, 2, true));
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-table");
+    expect(typeof kid.blockId).toBe("string");
+    expect((kid.blockId as string).length).toBeGreaterThan(0);
+    const rows = kid.children as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2); // 两行
+    expect((rows[0].children as unknown[])).toHaveLength(2); // 每行两格
   });
 });

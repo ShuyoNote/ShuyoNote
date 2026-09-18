@@ -45,11 +45,13 @@ import {
   upgradeListToBlockNode,
   upgradeParagraphToBlockNode,
   upgradeQuoteToBlockNode,
+  upgradeTableToBlockNode,
 } from "./blockIdTransform";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode } from "@lexical/list";
 import { SafeCodeNode } from "./nodes/SafeCodeNode";
 import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
+import { TableNode } from "@lexical/table";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -333,6 +335,11 @@ function BlockIdPlugin({
   // 水平线（第 4 步第五个类型）。
   useEffect(
     () => editor.registerNodeTransform(HorizontalRuleNode, upgradeHorizontalRuleToBlockNode),
+    [editor],
+  );
+  // 表格（第 4 步第六个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(TableNode, upgradeTableToBlockNode),
     [editor],
   );
 
