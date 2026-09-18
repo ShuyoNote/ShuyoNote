@@ -45,13 +45,19 @@
 
 ### 4.2 第 4 步的进度与两个坑
 
-**已完成：标题、引用、列表、代码块、水平线**（模型 type 依次为 `shuyo-heading` / `shuyo-quote` /
-`shuyo-list`（三态 `listType`/`tag`/`start` 全保）/ `shuyo-code`（✅ 顺带解掉 `SafeCodeNode` 那颗
-"同 type 子类"的雷：新内容从此走新 type，不再碰内建工厂）/ `shuyo-horizontalrule`）。
-前四者的 `insertNewAfter` 都逐支换成模型工厂（列表**有意不覆盖**：基类行为正确，它跳出来的段落由段落变换升级）。
+**已完成（内建块级类型全部收口）**：段落 / 标题 / 引用 / 列表 / 代码块 / 水平线 / 表格
+（模型 type：`shuyo-paragraph` / `shuyo-heading` / `shuyo-quote` / `shuyo-list` / `shuyo-code` /
+`shuyo-horizontalrule` / `shuyo-table`）。
 
-**还没做**：表格（`table`/`tablerow`/`tablecell` —— 只有**顶层 table** 需要身份）、
-以及 18 个自有节点。
+**★ 自有节点走的是另一条更轻的路（2026-09-18 摸清，`callout` 已落地）**：内建类型必须
+"新 type + 映射 + 变换"三件套（同 type 子类化内建节点在 0.50 会抛）；而**自有节点的类就是类型** ⇒
+只要 ①类里加声明字段（import/export/clone/afterCloneFrom）②`exportJSON` 空 ID 不写字段
+③一条 `ensureBlockIdOnTopLevelNode` 变换（只认顶层、只在空 ID 时写，幂等）。
+**不需要**新 type / 映射 / `toLegacyDoc` 还原。剩余 17 个自有节点照此办理，其中：
+- **装饰型**（`Image/Video/Drawing/Mermaid/WebBookmark/ImageRow` 等）按 §4.2 末条办（不传 `includeChildren`、无 format 系列方法）；
+- **行内节点**（`BlockRefNode`/`InlineFormulaNode`/`PageLinkNode`）**本来就不是块级，不给身份**；
+- `ColumnsNode`/`ColumnNode` 是容器，需逐类确认它是不是顶层块。
+
 
 **★ 一个会反复遇到的分叉（新记）**：**ElementNode 与 DecoratorNode 的升级写法不同**。
 水平线是 DecoratorNode ⇒ ① 没有 `setFormat/getFormatType/setIndent/setDirection`（tsc 会挡）；
