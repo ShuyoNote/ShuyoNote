@@ -828,7 +828,9 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
       )
       .join("");
     const body = `<h1>${title || "数据库"}</h1><div class="db-count">共 ${rows.length} 行</div><table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
-    printDoc(body, { title });
+    // printDoc 现在是异步的（打印前要等图片/字体就绪，见 lib/print.ts）——
+    // 这里不需要等它，但不能让 float 的 Promise 逃逸成未处理拒绝。
+    void printDoc(body, { title });
   };
 
   // 保存数据库为模板：连同列定义(database_json)一起存入「我的模板」。

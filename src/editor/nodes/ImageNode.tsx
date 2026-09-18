@@ -11,6 +11,7 @@ import {
 } from "lexical";
 import type { CSSProperties, JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
+import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
 
 export type SerializedImageNode = Spread<
   {
@@ -120,6 +121,14 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     const element = document.createElement("img");
     element.setAttribute("src", this.__src);
     element.setAttribute("alt", this.__altText);
+    // ⚠️ 只写 `__src` 是不够的：桌面端它是 `attachment://localhost/…`（应用专有协议），
+    // Web 端是裸文件路径——**离开应用都不是有效 URL**，所以导出的 HTML/PDF 里图片是空的。
+    // 这里留下"这份图是内容寻址附件"的线索，由 `lib/exportInline` 统一读字节 → 内联 data: URL
+    // （它是异步的，而 exportDOM 必须同步，所以不能在这里直接读）。
+    if (this.__hash) {
+      element.setAttribute(EXPORT_HASH_ATTR, this.__hash);
+      if (this.__mime) element.setAttribute(EXPORT_MIME_ATTR, this.__mime);
+    }
     return { element };
   }
 

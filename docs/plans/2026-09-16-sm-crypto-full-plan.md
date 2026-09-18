@@ -332,7 +332,7 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
 | **国密 P0** 密文版本化（纯 Rust） | **Mac** | 要能跑 `cargo test` 才能闭环（写＋测＋fixture）；**Windows 本机跑不了**（`0xc0000139`） | 无 —— **立刻能动** |
 | **国密 P1** 应用层 SM4 三条路径 ＋ 双读 ＋ 回归 | **Mac** | 同上；且 **F 裁定后不再依赖 Tongsuo 构建链** ⇒ 可全程并行 | P0 |
 | **国密 P2** SQLCipher KDF/HMAC 换 SM3 系 | **AMD** | 库级改动必须在能跑测试的环境验（WSL2 302 条） | P0 |
-| **国密 P3** SM4 页加密 provider ＋ Tongsuo 构建 | **AMD 出补丁 / Windows 出 MSVC 构建** | provider 是 C 层、在 Linux 侧验证最顺；但"Tongsuo 在 MSVC 上编得过"只有 Windows 能验（第一关 Perl ＋ Configure） | P2；**接口先定**：补丁文件 ＋ 版本钉死，Windows 消费 |
+| **国密 P3** SM4 页加密 provider ＋ Tongsuo 构建 | **AMD 全包（provider 补丁 ＋ Linux/Android/MSVC 三侧构建，2026-09-17 起）** | provider 是 C 层、在 Linux 侧验证最顺；MSVC 侧**已移交 AMD**（owner 决定；Windows 不改本机系统环境）。Windows 侧已探明的前置：**Git for Windows 那个精简 Perl 就是第一关**（本项目在 Android 上已被它卡过）、`cl`/`nmake` 不在 PATH（要先 `vcvars64`）、**无 nasm**（否则要 `no-asm`）、源码走 **Gitee** | P2；**接口先定**：补丁文件 ＋ 版本钉死，Windows 消费 |
 | **Apple 后端切换**（CommonCrypto → Tongsuo） | **Mac** | 只有它摸得到那台机的 Xcode/Perl/Homebrew 状况 | **第二波**（见下），是 macOS 库级国密的硬前置 |
 | **PDFium P1–P3** 新模块 / 分派 / 对拍 | **Windows** | dll 已落盘、MSVC 能编能出包 | 无 —— **立刻能动**（分支 `feat/pdfium-engine`） |
 | **PDFium 对拍报告** | **三边各跑自己平台** | 同一份样本集，各平台各自出结论 | H 决定的样本集 |

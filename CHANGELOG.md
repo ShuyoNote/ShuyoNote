@@ -17,6 +17,22 @@
   并在注释里写明"不要把 headers 塞进 message"的理由。
   ⚠️ **已经在日志里露过的那把 token 要轮换**——抹的是以后，抹不掉已经写出去的那次。
 
+### 修复
+
+- **导出 HTML / PDF 时图片与网址书签是空的**（2026-09-17 用户实测报告）。**两个独立缺陷**：
+  ① 导出只抄节点里存下的 `src` —— 桌面端它是应用专有协议 `attachment://localhost/…`、Web 端是
+  裸文件路径；编辑期能显示靠的是渲染时另外解析（`MediaResolver`：`hash` → blobStore → blob URL），
+  而 `exportDOM` 没有这一步 ⇒ 另存的 `.html` 与打印出的 PDF 里图片都是空白；
+  ② 打印是 `doc.write(html) → print()` 一路同步，**图片还没解码就打了快照**，另加 1.2 秒就撤 iframe
+  （WebView 的打印对话框是异步的，太早撤会把没渲染完的内容一起带走）。
+  修法：媒体节点（图片/视频/书签缩略图）在 `exportDOM` 里留下 `data-export-hash` 线索，新增
+  `src/lib/exportInline.ts` 统一在生成 HTML 之后读字节（`api.readAttachmentBytes`）**内联成 `data:` URL**
+  （超过 8MB 的不内联并如实回报）；`printHTML` 打印前等 `img` 解码与 `fonts.ready`（每张各带超时兜底）；
+  网址书签的 `exportDOM` 从「只输出一串 URL」改成输出**真正的卡片**（标题/摘要/站点/链接/缩略图），
+  `BASE_CSS` 自带卡片样式（导出件是独立文档，拿不到应用 CSS）。
+  判据：`src/lib/exportInline.test.ts`（9 条）+ `src/editor/nodes/exportDom.test.ts`（4 条，用真节点跑
+  `$generateHtmlFromNodes`），并做过**变异验证**——把「留线索」那一行删掉，恰好两条断言变红。
+
 ## [1.91.3] - 2026-09-16
 
 > 开着加密重启不再崩溃；口令锁 UX 补齐（忘记口令的说法、立即锁定立刻切屏）

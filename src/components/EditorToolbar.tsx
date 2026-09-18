@@ -14,6 +14,7 @@ import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { docHtml, printDoc } from "../lib/print";
+import { inlineExportMedia } from "../lib/exportInline";
 
 function triggerFind() {
   // The find bar listens for Ctrl+F on document; simulate it.
@@ -69,14 +70,24 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         filters: [{ name: "HTML", extensions: ["html"] }],
       });
       if (!path) return;
-      let html = "";
+      let body = "";
+      let title = "未命名";
       editor.read(() => {
-        const body = $generateHtmlFromNodes(editor);
-        const title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
-        html = docHtml(body, { title });
+        body = $generateHtmlFromNodes(editor);
+        title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
       });
+      // 先把 body 里的图片/缩略图内联成 data: URL，**再**包成完整文档 ——
+      // 反过来会把 <head>/<style> 丢掉（`inlineExportMedia` 只处理片段、返回片段）。
+      const { html: inlinedBody, report } = await inlineExportMedia(body);
+      const html = docHtml(inlinedBody, { title });
       await api.writeTextFile(path, html);
-      toast("已导出 HTML", "success");
+      if (report.missing > 0) {
+        toast(`已导出 HTML（${report.missing} 张图片的字节不在本机，未能内联）`, "info");
+      } else if (report.tooLarge > 0) {
+        toast(`已导出 HTML（${report.tooLarge} 个附件超过 8MB，未内联）`, "info");
+      } else {
+        toast("已导出 HTML", "success");
+      }
     } catch (e) {
       toast(`导出失败：${e}`, "error");
     }
@@ -84,11 +95,23 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
 
   const exportPdf = () => {
     if (!editor) return;
+    let body = "";
+    let title = "未命名";
     editor.read(() => {
-      const body = $generateHtmlFromNodes(editor);
-      const title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
-      printDoc(body, { title });
+      body = $generateHtmlFromNodes(editor);
+      title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
     });
+    // 两步都是必须的：
+    //   ① 内联媒体 —— 打印是一次性快照，`attachment://` 取不到就是空白；
+    //   ② 等图片就绪再开打印对话框（这一步在 printDoc 里做）。
+    void (async () => {
+      try {
+        const { html: inlined } = await inlineExportMedia(body);
+        await printDoc(inlined, { title });
+      } catch (e) {
+        toast(`导出失败：${e}`, "error");
+      }
+    })();
   };
 
   const importMarkdown = () => setImporting(true);
