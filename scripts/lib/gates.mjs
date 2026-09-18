@@ -68,9 +68,30 @@ export const GATES = [
     cmd: "node scripts/check-pdfjs-worker-shim.mjs",
     incident: "老 WebView 上打不开任何 PDF：补齐层必须在 worker 内先装，install 顺序最容易被'顺手整理'破坏",
   },
-  { id: "check-ocr-assets", group: "contract", label: "OCR 资源清单", cmd: "node scripts/check-ocr-assets.mjs" },
-  { id: "check-deep-link", group: "contract", label: "deep-link 交付通道", cmd: "node scripts/check-deep-link.mjs" },
-  { id: "check-plugin-hosting", group: "contract", label: "插件托管", cmd: "node scripts/check-plugin-hosting.mjs" },
+  {
+    id: "check-ocr-assets",
+    group: "contract",
+    label: "OCR 资源清单",
+    cmd: "node scripts/check-ocr-assets.mjs",
+    incident:
+      "两个方向都真发生过（或差一点）：①「整个目录全拷」⇒ tesseract.js-core 的 6 变体 × 2 形态 ≈ 43.2 MiB 里只有一份会被 worker 加载，白白多进产物 ~23.3 MiB（Android 上还会被装两遍，再多约 46 MiB）；②反过来更危险：有人为 worker.detect 打开 legacyCore，而拷贝脚本仍只放 -lstm 三档 ⇒ 本地 OCR 在真机上只报一个看不懂的加载错误，构建 / 单测 / 类型检查全都发现不了",
+  },
+  {
+    id: "check-deep-link",
+    group: "contract",
+    label: "deep-link 交付通道",
+    cmd: "node scripts/check-deep-link.mjs",
+    incident:
+      "这条链上每个断点的表现都是「什么都没发生」（点链接、应用无反应、控制台也不报错），而且四类断点都不是编译错误：scheme 写错或被删、single-instance 少了 deep-link feature（URL 被静默丢掉，窗口照常去所以看起来像解析失败）、lib.rs 忘注册插件或忘接事件、事件名前后端不一致",
+  },
+  {
+    id: "check-plugin-hosting",
+    group: "contract",
+    label: "插件托管",
+    cmd: "node scripts/check-plugin-hosting.mjs",
+    incident:
+      "应用侧门禁（external_index / external_package）验的是「文件」，而托管方要保证的是「线上那一份」能装：两类是「发布时毫无征兆、用户端才炸」—— 索引被长缓存 ⇒ 新插件永远看不到；包被 no-store 或被 CDN 改写 ⇒ 每次安装都重下几 MB（慢，但不报错）",
+  },
   {
     id: "check-sys-deps",
     group: "contract",
