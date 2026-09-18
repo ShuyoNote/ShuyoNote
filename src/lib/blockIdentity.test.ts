@@ -70,8 +70,36 @@ describe("toModelDoc：落盘形态 → 内存模型", () => {
     expect(model.root.children[0].blockId).toBe("blk-1"); // 顶层 list 被补种
   });
 
-  it("只走 `children`：非节点数组（如 ImageRow 的 items）一个字都不动", () => {
-    const items = JSON.stringify({
+  it("★ **只有顶层块补 ID**：嵌套段落（表格单元格里的）类型换了、但**不给身份**", () => {
+    // 这一条是**第二层**判据（AMD 在 `reply-1` 里建议的）：第一层在 `blockIdTransform.test.ts`
+    // 用真编辑器验变换；这一条纯函数级再钉一次同样的承诺 —— 万一哪天有人重命名/删掉那条用例，
+    // "嵌套块不许有身份"这条仍然有人守（它是**落盘形态不漂移**的前提）。
+    const nested = JSON.stringify({
+      root: {
+        children: [
+          {
+            children: [
+              {
+                children: [
+                  { children: [], direction: "ltr", format: "", indent: 0, type: "paragraph", version: 1 },
+                ],
+                colSpan: 1, headerState: 0, rowSpan: 1, type: "tablecell", version: 1, width: 1,
+              },
+            ],
+            type: "tablerow", version: 1,
+          },
+        ],
+        direction: "ltr", format: "", indent: 0, type: "table", version: 1,
+      },
+    });
+    const model = JSON.parse(toModelDoc(nested, makeIdFactory()));
+    const cellPara = model.root.children[0].children[0].children[0];
+    expect(cellPara.type).toBe("shuyo-paragraph"); // 类型照换（模型里统一）
+    expect(cellPara.blockId).toBeUndefined(); // 但**不**补身份
+    expect(model.root.children[0].blockId).toBe("blk-1"); // 顶层 table 才补
+  });
+
+  it("只走 `children`：非节点数组（如 ImageRow 的 items）一个字都不动", () => {    const items = JSON.stringify({
       root: {
         children: [{
           children: [],
