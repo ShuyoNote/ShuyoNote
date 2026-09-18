@@ -41,7 +41,7 @@
 | **1** | 决策记录（本文件）＋ `src/editor/nodes/BlockParagraphNode.ts`（新 type 段落节点，声明 `__blockId`）＋ `src/lib/blockIdentity.ts`（两形态互转、块 ID 补种）＋ 单测 | `vitest` 新测全绿 ＋ 全量 `vitest` 不回归 ＋ `tsc --noEmit` 干净 | ✅ `7e98945`（12 条判据） |
 | **2** | 注册进 `EDITOR_NODES`；加载路径接 `toModelDoc()`、保存路径接 `toLegacyDoc()`（`Editor.tsx` / `ColumnEditor.tsx` / `emailRichNote.ts`） | 内存里是模型 type 且块 ID 稳定；写出去的产物里**一个模型 type 都没有**；全量 `vitest` 不回归 | ✅ 本提交（16 条判据，全量 1095 通过 / 1 跳过） |
 | 3 | 让**新建块**也走新 type（粘贴、markdown 导入、HTML 导入、空编辑器首段；Enter 已由 `insertNewAfter` 覆盖） | 三种创建路径各一条用例：新块的块 ID 来自**模型**而不是保存时注入 | ✅ 本提交（5 条判据，全量 1100 通过 / 1 跳过） |
-| 4 | 同类推广到其它块级类型（标题/引用/列表/代码/表格 + 18 个自有节点） | 逐类型一个判据；`--update` 收口基线只减不增 | 🟡 **标题已完成**（`5b5de42`）；其余类型待做 |
+| 4 | 同类推广到其它块级类型（内建 7 类 ＋ 自有 11 类） | 逐类型一个判据；`--update` 收口基线只减不增 | ✅ **已完成**（`5b5de42` 起，最后一批 `4343f72`） |
 
 ### 4.2 第 4 步的进度与两个坑
 
@@ -75,11 +75,13 @@ update 后没了、无报错）；`horizontalrule` 与 `callout`（ElementNode�
 `SELF_OWNED_BLOCK_ID_NODE_TYPES`（`Editor.tsx` 的注册循环与判据表都读它），并有一条
 "清单与判据表不许漂"的判据 ⇒ 新增一类只加一行，**漏判据会当场红**。
 
-**自有节点进度（6/…）**：`callout`/`formula`/`mermaid`/`imageRow`/`image`/`video` 已接入
-（`ImageNode` 同为行内与块级用同一个类 —— 身份只发给顶层块，行内实例天然没有，不需要在类里分叉）；
-待做：`Drawing`/`WebBookmark`/`AttachmentRef`/`PdfRef`/`BlockEmbed`/`ColumnsBlockNode`（块级）；
-`BlockRef`/`InlineFormula`/`PageLink`（**行内，不给身份**）；`Columns`/`Column`（容器，逐类确认）；
-`SafeCodeNode`（已被 `BlockCodeNode` 取代，不再单独加）。
+**自有节点进度（11/11，块级部分铺完）**：`callout` / `formula` / `mermaid` / `imageRow` / `image` /
+`video` / `blockembed` / `webbookmark` / `attachment-ref` / `drawing` / `columnsBlock` 已接入。
+**刻意不给身份**（不是漏）：行内节点 `BlockRef` / `InlineFormula` / `PageLink` / `PdfRef`
+（父节点不是 root ⇒ `ensureBlockIdOnTopLevelNode` 天然不触发）；`SafeCodeNode` 已被 `BlockCodeNode` 取代；
+`ColumnsNode`/`ColumnNode` 是 `columnsBlock` 内部的旧路径。
+⚠️ `BlockEmbedNode` 里 `__blockId` **已被"引用目标"占用**（序列化成 `targetId`），所以它的身份字段叫
+`__selfBlockId`（序列化出去的仍是标准 `blockId`）。
 
 
 
