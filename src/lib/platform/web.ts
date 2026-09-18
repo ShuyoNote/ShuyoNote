@@ -2,6 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
+import { shouldTakeRemote } from "../docContent";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -768,21 +769,20 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
       // seq-based LWW + dirty-prefer-local（对齐桌面 sync.rs::apply_upsert，见
       // plans/2026-09-09-sync-seq-lww.md）：本地有未同步改动(dirty=1)或已同步到
       // 更晚 seq，则保留本地；否则接受远端并记录 sync_seq。
-      const useRemote = (() => {
-        const local = store.query<{ sync_seq: number; dirty: number }>(
-          "SELECT sync_seq, dirty FROM pages WHERE id = ?", [p.id],
-        )[0];
-        if (!local) return true; // 本地没有 → 插入（新建）
-        if (local.dirty !== 0) {
-          console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
-          return false;
-        }
-        if (local.sync_seq > change.seq) {
-          // 已同步到更晚的变更 → 保留本地。
-          return false;
-        }
-        return true; // 远端更新（seq 更大且本地无未同步改动）→ 用远端
-      })();
+      //
+      // ★ 判定本身搬进了「文档内容」那一层（`docContent.shouldTakeRemote`）——**唯一的合并点**；
+      // 桌面侧的同名一层是 Rust 的 `doc_content::merge`，两份用例**逐条对应**（改一边看另一边）。
+      const localRow = store.query<{ sync_seq: number; dirty: number }>(
+        "SELECT sync_seq, dirty FROM pages WHERE id = ?", [p.id],
+      )[0];
+      const useRemote = shouldTakeRemote(
+        localRow ? { syncSeq: localRow.sync_seq, dirty: localRow.dirty } : undefined,
+        change.seq,
+      );
+      // 只在"本地有未同步改动"这一种情况下打日志（与搬运前一致：seq 更晚那种是静默的）。
+      if (localRow && localRow.dirty !== 0 && !useRemote) {
+        console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
+      }
       if (useRemote) {
         store.run(
           `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos, sync_seq, dirty)
