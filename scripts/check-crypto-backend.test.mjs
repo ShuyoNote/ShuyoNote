@@ -8,7 +8,15 @@
 // 夹具取自真实 `target/*/build/libsqlite3-sys-*/output` 的节选（不是手写简化版）。
 
 import { describe, expect, it } from "vitest";
-import { classifyOutput, decide, expectedFromEnv, PLATFORM_DEFAULT } from "./check-crypto-backend.mjs";
+import {
+  classifyOutput,
+  decide,
+  expectedFromEnv,
+  PLATFORM_DEFAULT,
+  platformOfOutput,
+  selectForHost,
+  targetDirOf,
+} from "./check-crypto-backend.mjs";
 
 /** macOS 默认（Apple）后端：CommonCrypto + Security.framework。 */
 const OUT_MACOS_CC = [
@@ -120,6 +128,37 @@ describe("decide：三种状态分得清", () => {
     });
     expect(r.problems).toEqual([]);
     expect(r.notices.join("\n")).toContain("更旧");
+  });
+});
+
+describe("★ 平台过滤（AMD 2026-09-19 在 WSL 上抓到的「绿得不是它声称的那件事」）", () => {
+  it("认平台：Windows 产物（盘符+反斜杠）⇒ win32；Unix 产物 ⇒ unix", () => {
+    expect(platformOfOutput(OUT_WINDOWS)).toBe("win32");
+    expect(platformOfOutput(OUT_MACOS_CC)).toBe("unix");
+    expect(platformOfOutput(OUT_UNIX_TONGSUO)).toBe("unix");
+  });
+
+  it("在 Linux 上只挑 unix 那份 ——**不许**拿 Windows 的产物报 ✓", () => {
+    const win = { profile: "release", entry: "libsqlite3-sys-win", kind: "openssl", platform: "win32", mtime: 99 };
+    const nix = { profile: "debug", entry: "libsqlite3-sys-nix", kind: "commoncrypto", platform: "unix", mtime: 1 };
+    // 注意：Windows 那份 mtime 更新 —— 旧版就是被"最新胜出"带偏的
+    const picked = selectForHost([win, nix], "linux");
+    expect(picked.map((x) => x.entry)).toEqual(["libsqlite3-sys-nix"]);
+    expect(selectForHost([win, nix], "win32").map((x) => x.entry)).toEqual(["libsqlite3-sys-win"]);
+  });
+
+  it("只有别的平台的产物 ⇒ 过滤后为空（main 会报「未实查」，不是 ✓）", () => {
+    const win = { profile: "release", entry: "libsqlite3-sys-win", kind: "openssl", platform: "win32", mtime: 99 };
+    expect(selectForHost([win], "linux")).toEqual([]);
+  });
+
+  it("认 `CARGO_TARGET_DIR`（目标是重定向过的机器上，旧版会去读仓库里那份错的）", () => {
+    expect(targetDirOf({ CARGO_TARGET_DIR: "/home/tester/shuyonote-target" })).toBe(
+      "/home/tester/shuyonote-target",
+    );
+    expect(targetDirOf({})).toContain("src-tauri/target");
+    // 空白当未设（不能把空值当目录）
+    expect(targetDirOf({ CARGO_TARGET_DIR: "   " })).toContain("src-tauri/target");
   });
 });
 

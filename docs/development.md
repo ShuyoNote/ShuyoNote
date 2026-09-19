@@ -281,6 +281,17 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 `security::tests::fixture_db_written_by_the_other_provider_still_opens`（用**旧后端写下**的加密库夹具，
 见 `src-tauri/tests/sqlcipher-backend-fixture.db`）——它红了就等于**用户打不开自己的库**。
 
+### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
+
+判据读 `target/` 下的产物时，有两个默认假设**经常不成立**：① target 就在仓库里（实际很多人设了
+`CARGO_TARGET_DIR`，或 CI 用共享缓存）；② 目录里最新那份产物就是**当前平台**的（实际可能混着 Windows 的）。
+两者任一不成立，门禁就会**读到别的平台的产物并报 ✓** —— 比红更难发现，因为它长得完全正常。
+实例：`scripts/check-crypto-backend.mjs` 第一版在 WSL 上读到的是 Windows 那份，`✓ openssl`
+的 link-search 甚至写着 `Files\OpenSSL-Win64\lib`（2026-09-19，AMD 抓出）。
+
+处置：**产物判据必须（a）认 `CARGO_TARGET_DIR`，（b）按当前平台过滤，（c）过滤后只剩别的平台时报"未实查"而不是 ✓**。
+"未实查"是一个合法且必要的结论 —— 判据的名字不能比它能证明的多。
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。

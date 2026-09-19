@@ -207,8 +207,17 @@ AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**�
 
 **门禁**：`check-crypto-backend`（rust 组）—— 读 `libsqlite3-sys` 的构建产物，断言
 **实际编进去的后端 == 声明**；`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` 是国密构建的严格模式。
-三种状态分得很清：**没产物 ⇒ `!` 自报跳过**（没编过 ≠ 编错）；**最新产物 ≠ 声明 ⇒ 红**；
-**旧产物分类不同 ⇒ `!` 提示**（那是"沉默不换后端"的现场痕迹）。承重证明（本机双向实测）：
+状态分得很清：**没有本平台产物 ⇒ `!` 自报"未实查"**（没编过 ≠ 编错；只编了别的平台也算没查）；
+**最新产物 ≠ 声明 ⇒ 红**；**认不出后端 ⇒ `!` 未实查**（不装绿）；
+**旧产物分类不同 ⇒ `!` 提示**（那是"沉默不换后端"的现场痕迹）。
+
+**★ 第二个坑（AMD 2026-09-19 在 WSL 上把我抓出来的，比第一个更隐蔽）**：第一版把 target 目录写死成
+`<root>/src-tauri/target` 且"最新 mtime 胜出"。AMD 那台用 `CARGO_TARGET_DIR=/home/tester/shuyonote-target`
+（ext4，避免与 Windows 共用目标目录）⇒ 门禁**去读了仓库里那份 Windows 产物**，报出 `✓ openssl`，
+而 Linux 产物一个字没读。⇒ **"绿得不是它声称的那件事"**。已修（三条都是他建议的）：
+① 认 `CARGO_TARGET_DIR`；② 按当前平台过滤候选（Windows 产物带盘符反斜杠路径）；③ 过滤后只剩别的平台 ⇒ **未实查**。
+判据侧补了 4 条（`check-crypto-backend.test.mjs`，共 19 条），端到端也实测了三态：
+真实产物 ⇒ ✓；`CARGO_TARGET_DIR` 只含 Windows 产物 ⇒ 未实查；混合目录且 Windows 那份 mtime 更新 ⇒ **仍挑 unix 那份**。承重证明（本机双向实测）：
 产物 openssl ＋ 声明 openssl ⇒ 绿；产物 CC ＋ 声明 openssl（**正是我自己踩的那一脚**）⇒ 红并附清库命令。
 
 **库级国密的构建侧开关（2026-09-19 补）**：新增 feature **`sm-library`**（与 `sm-crypto` 分开：
@@ -235,9 +244,13 @@ AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**�
 | `4b5eceec`（⑤⑥ 落地后） | ✅ | ✅ | ✅ **success**（含 `rust-sm-crypto`、**`check-crypto-backend`**） | 当时仍在跑 |
 | `f4151be1`（已记） | — | — | — | — |
 
-⭐ `4b5eceec` 这一行多给了一条**跨平台证据**：`check-crypto-backend` 在 **Linux** 上
-（平台默认声明 = `openssl`，而 Linux 的产物就是 `openssl`）**不误报** ——
-也就是说这条门禁的"声明 vs 产物"口径不是只在 macOS 上成立。
+⚠️ **这一格我先前写过头了，此处更正**：我原话是"`check-crypto-backend` 在 Linux 上转绿 ⇒ 跨平台证据"。
+AMD 在 WSL 上用同一条门禁实测后指出：**在 target 目录被重定向或与别的平台共用时，它会读错平台的产物** ——
+他那台的 `✓` 报的其实是**仓库里那份 Windows 产物**（link-search 还是 `Files\OpenSSL-Win64\lib`），
+**Linux 产物一个字都没读**。也就是说：那一格绿**绿得不是它声称的那件事**（比红更难发现）。
+CI 那一格之所以还算数，只是因为 runner 上 `CARGO_TARGET_DIR` 没改、且只有 Linux 产物 ——
+**是环境帮了忙，不是判据本身站得住**。修法见下（认 `CARGO_TARGET_DIR` ＋ 按平台过滤 ＋ 只剩别的平台 ⇒ 未实查），
+修完这条才真的有资格跨平台说话。
 
 ⇒ **`rust-sm-crypto` 的第一条 CI 读数（Linux）就是绿的**，也正是 AMD 建基线所需的那份读数来源。
 

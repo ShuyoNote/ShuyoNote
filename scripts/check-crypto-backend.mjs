@@ -24,6 +24,19 @@
 //   · **认不出后端**（如 vendored-openssl 分支不打印任何标记）⇒ `!` 自报"未实查"，**不冒充通过**；
 //   · **存在更旧、且分类不同的产物** ⇒ `!` 提示（这正是"沉默不换后端"的现场痕迹）。
 //
+// ## ★ 第二个坑（AMD 2026-09-19 在 WSL 上实测把我抓出来的，比第一个更隐蔽）
+//
+// 第一版把 target 目录**写死**成 `<root>/src-tauri/target`，并且"最新 mtime 胜出"。AMD 那台把 WSL 的
+// 构建放在 `CARGO_TARGET_DIR=/home/tester/shuyonote-target`（ext4，避免与 Windows 共用目标目录），
+// 于是这条门禁**去读了仓库里那份 Windows 产物**，报出 `✓ openssl`（link-search 还是
+// `Files\OpenSSL-Win64\lib`）—— 而它真正该读的 Linux 产物**一个字都没读**。
+// ⇒ **"绿得不是它声称的那件事"**：它说"编译期实查"，实际查的是**另一个平台**的构建。
+//
+// 修法（三条，都是 AMD 建议的）：
+//   ① 认 `CARGO_TARGET_DIR`（没设才回落到 `<root>/src-tauri/target`）；
+//   ② 按**当前平台**过滤候选（Windows 产物的 `output` 里是 `C:\…` 这种路径）；
+//   ③ 过滤后**只剩别的平台的候选** ⇒ 报「未实查」，**不是** ✓。
+//
 // 声明来源：`SHUYONOTE_EXPECT_CRYPTO_BACKEND`（`commoncrypto` / `openssl`），
 // 不设则按平台默认（见 `PLATFORM_DEFAULT`）。分类与判定都是导出的纯函数，单测见
 // `scripts/check-crypto-backend.test.mjs`。
@@ -33,7 +46,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const targetDir = join(root, "src-tauri", "target");
+
+/** target 目录：**认 `CARGO_TARGET_DIR`**（AMD 那台就是这么重定向的），没设才回落到仓库内那份。 */
+export function targetDirOf(env) {
+  const raw = (env.CARGO_TARGET_DIR || "").trim();
+  return raw ? resolve(raw) : join(root, "src-tauri", "target");
+}
 
 // 各平台**今天**默认会编出什么（不是我们希望的，是实测的）：
 //   · darwin：无 OPENSSL_DIR ⇒ CommonCrypto（只有 AES）。**这是 P2/P3 的前置缺口**：
@@ -78,10 +96,33 @@ export function classifyOutput(text) {
   return { kind: "no-marker", detail: "没有任何后端标记（vendored-openssl 分支就是这样）" };
 }
 
+/**
+ * 从 `output` 的内容猜**这份产物是哪个平台编的**（纯函数）。
+ *
+ * 判据只用一件事：路径形态。Windows 的 `cc`/cargo 会打出 `C:\…` 这种带盘符的反斜杠路径，
+ * Unix 侧是 `/…`。⚠️ 我们**不**试图区分 darwin 与 linux（同一份 output 分不出来，也没必要 ——
+ * 它们的分类口径相同）；这里要挡的只是"**在 Linux 上读到 Windows 的产物**"那种最隐蔽的错。
+ */
+export function platformOfOutput(text) {
+  if (/[A-Za-z]:[\\/]/.test(text)) return "win32";
+  if (/cargo:(?:include|rustc-link-search|rerun-if-changed)=\//.test(text)) return "unix";
+  return "unknown";
+}
+
+/**
+ * 挑出**属于当前平台**的候选（AMD 的 ②③ 两条）。
+ * `hostPlatform` 用 `process.platform`；Windows ⇒ 只要 win32 那份，其余平台 ⇒ 只要 unix 那份。
+ * 过滤后为空 ⇒ 由 `main` 报「未实查」，**绝不**拿别的平台的产物冒充 ✓。
+ */
+export function selectForHost(all, hostPlatform) {
+  const want = hostPlatform === "win32" ? "win32" : "unix";
+  return all.filter((x) => x.platform === want);
+}
+
 /** 给人看的描述。 */
 export function describe(x) {
   return (
-    `${x.profile}/${x.entry} ⇒ **${x.kind}**` +
+    `${x.profile}/${x.entry}${x.platform ? `[${x.platform}]` : ""} ⇒ **${x.kind}**` +
     (x.kind === "openssl"
       ? `（link-search=${x.searchDir || "(未解析出)"}${x.tongsuo ? "，路径含 tongsuo" : ""}）`
       : "") +
@@ -150,7 +191,8 @@ export function collect(dir) {
       }
       const cls = classifyOutput(text);
       if (!cls) continue;
-      found.push({ profile, entry, outputPath, mtime: statSync(outputPath).mtimeMs, ...cls });
+      const platform = platformOfOutput(text);
+      found.push({ profile, entry, outputPath, mtime: statSync(outputPath).mtimeMs, platform, ...cls });
     }
   }
   return found.sort((a, b) => b.mtime - a.mtime);
@@ -158,14 +200,24 @@ export function collect(dir) {
 
 export function main() {
   const expected = expectedFromEnv(process.env, process.platform);
-  const all = collect(targetDir);
+  const dir = targetDirOf(process.env);
+  const raw = collect(dir);
+  const all = selectForHost(raw, process.platform);
+  const skipped = raw.length - all.length;
 
   if (all.length === 0) {
     console.error(
-      "! 未找到 SQLCipher 的构建产物 ⇒ 未实查（先跑一次 `cargo build --manifest-path src-tauri/Cargo.toml`；" +
-        "本机没编过就下结论等于装绿）",
+      `! 未找到**本平台（${process.platform}）**的 SQLCipher 构建产物 ⇒ 未实查` +
+        (skipped ? `（略过了 ${skipped} 份别的平台的产物 —— 它们证明不了本平台的构建）` : "") +
+        `；target=${dir}（认 CARGO_TARGET_DIR）；先跑一次 ` +
+        "`cargo build --manifest-path src-tauri/Cargo.toml` —— 本机没编过、或只编了别的平台，都等于没查",
     );
     process.exit(0);
+  }
+  if (skipped) {
+    console.error(
+      `! 略过 ${skipped} 份**别的平台**的产物（它们的分类与本平台无关；不略过就会报出"绿得不是它声称的那件事"）`,
+    );
   }
 
   const { problems, notices } = decide({ all, expected });
