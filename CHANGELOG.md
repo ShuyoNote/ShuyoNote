@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.91.5] - 2026-09-19
+
 ### 安全
 
 - **发布自检脚本会把 GitHub token 打进日志**（2026-09-16 发 1.91.3 时当场踩到）。
@@ -128,6 +130,24 @@
   `pnpm check:win-build-env` 增加这条硬前置（源文件缺失时构建直接报 `resource path … doesn't exist`）。
   Linux/macOS 的同类打包（Linux 的 `resource_dir` 不是 exe 目录、macOS 的 `.app/Contents/Frameworks`）
   仍在 P4 交接单里，**本机做不了、未做**。
+
+- **macOS 装包同样没有带上 PDFium 运行时库**（2026-09-19，P4 的 macOS 那格；与上面那条 Windows 缺陷同一类）。
+  修法：新增平台专用配置 `src-tauri/tauri.macos.conf.json`，把 `vendor/pdfium/mac-univ/lib/libpdfium.dylib`
+  映射进 `.app/Contents/Frameworks`（macOS 动态库的常规位置，且要一起签名/公证）；`macos.yml` 增加取库步骤，
+  `scripts/check-macos-bundle.mjs` 对**产物**断言 dylib 真的在包里（含自带单测）。
+  ⚠️ macOS 更新通道仍因缺 Apple 签名/公证凭据未启用（与本条无关）⇒ 这一格只到"装包带库 ＋ 产物断言"。
+
+### 其它
+
+- **PDFium 引擎随包提供（灰度第一步）——默认仍是 MuPDF**。这次把"装了库却用不起来"的缺口补上了：
+  Windows（`tauri.windows.conf.json`）与 macOS（`tauri.macos.conf.json`）的装包都会带上各平台的 PDFium 运行库，
+  CI 对**产物**断言库真的在包里。要试用：`SHUYONOTE_PDF_ENGINE=pdfium`（不设就是原来的 MuPDF，随时切回）。
+  Linux / Android 的同类打包**未做**；**默认引擎本轮不切**，因为渲染等价的覆盖面还不够（见下一条）。
+- **PDFium ↔ MuPDF P3 对拍报告落进仓库**（被验 commit `23985ef`，在 WSL2 Ubuntu 上跑）：四个自制样本
+  （印刷体 / 旋转页 / 超大页 / 透明底）硬判据 **4/4**（RGB 逐像素最大差 0–1，阈值 8；超阈像素 0.000%，阈值 0.5%）
+  ＋**目视 4/4**；报告与四张左右对照图见
+  [docs/plans/2026-09-19-pdfium-p3-report.md](docs/plans/2026-09-19-pdfium-p3-report.md)。
+  ⚠️ **中文与扫描件样本未覆盖**、非 Windows 平台未跑对拍、真机目视未做。
 
 ## [1.91.4] - 2026-09-18
 
