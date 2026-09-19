@@ -12,6 +12,9 @@ cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 ecb = { version = "0.2", features = ["alloc", "block-padding"] }
 sm3 = "0.5"
 hmac = "0.13"
+# T5（PBKDF2-HMAC-SM3 跨实现）要用它 —— 版本与主 crate 的 `sm-crypto` feature 同代（0.13），
+# feature 也刻意与主 crate 一致（不写 features = 用默认，与 `crypto_sm.rs` 的 `pbkdf2_hmac::<Sm3>` 同一条路）
+pbkdf2 = "0.13"
 hex = "0.4"
 
 # 夹具要的是"能跑就行"，但 SM4/SM3 在 debug 下慢得没必要

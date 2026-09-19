@@ -20,6 +20,9 @@
 //   T1 Tongsuo 自己命中同样的标准向量
 //   T2/T3 双向互解：RustCrypto 加密 → Tongsuo 解密；Tongsuo 加密 → RustCrypto 解密
 //   T4 两侧密文**逐字节相同**（CBC+PKCS#7 下应当如此）+ HMAC-SM3 两侧一致
+//   T5 PBKDF2-HMAC-SM3 跨实现（2026-09-19 加入）：同口令/同盐/20 万轮/输出 64 字节逐字节相同；
+//      并钉住"**SM4 取前 16 字节**、**MAC 取后 32 字节**"这两条口径（取错就是跨设备互相解不开，
+//      而它没有任何编译期信号、本机单测也照绿 —— 这正是这条线最该防的漂移）
 //
 // 用法：node scripts/check-gm-conformance.mjs
 //   需要 Tongsuo 的那几条：设 `SHUYONOTE_TONGSUO_OPENSSL=/path/to/openssl`（Tongsuo 的 CLI），
@@ -47,8 +50,10 @@ const skips = [];
 let ran = 0;
 // 「空跑即红」的下限**随 Tongsuo 是否参与而变**（不是拍一个固定数）：
 //   · Tongsuo 缺席 ⇒ 3 个用例（R1/R2 标准向量合并算 1、R3 往返、R4 HMAC）
-//   · Tongsuo 在场 ⇒ 再加 5 个（Tongsuo 自己命中标准向量 2 条 ＋ 双向互解 2 条 ＋ 密文/HMAC 一致 1 条）
-// 固定下限的坏处：设 3 时"Tongsuo 分支整段被删掉"也照样绿；设 8 时无 Tongsuo 的机器永远红。
+//   · Tongsuo 在场 ⇒ 12 个用例（R 三个 ＋ T1 两条标准向量 ＋ T2/T3 双向互解各一 ＋ T4 密文一致/HMAC 一致
+//     ＋ T5 的 KDF 一致 / SM4 取前 16 / MAC 取后 32 三条）
+// 固定下限的坏处：设 3 时"Tongsuo 分支整段被删掉"也照样绿；设 12 时无 Tongsuo 的机器永远红。
+// ⚠️ 这个数**按上面 `ran++` 的条数逐条数出来的**（不是估的）：R 3 ＋ T1 2 ＋ T2 1 ＋ T3 1 ＋ T4 2 ＋ T5 3 = 12。
 let minCases = 3;
 
 const fail = (msg) => problems.push(msg);
@@ -169,12 +174,12 @@ try {
   const tongsuoOk = openssl ? probeSm4Cbc(openssl) : false;
   if (!tongsuoOk) {
     skips.push(
-      `跨实现对拍 5 项跳过（Tongsuo 标准向量 2 ＋ 双向互解 2 ＋ 密文/HMAC 一致 1）：` +
+      `跨实现对拍 9 项跳过（T1 标准向量 2 ＋ T2/T3 双向互解 2 ＋ T4 密文一致/HMAC 一致 2 ＋ T5 KDF 口径 3）：` +
         `未提供 ${openssl ? "可用的" : ""}Tongsuo —— 设 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl 后重跑` +
         `（R1–R4 已覆盖"实现没被改坏"；本门禁**刻意不**自动用系统 openssl，理由见脚本里那一节注释）`,
     );
   } else {
-    minCases = 8;
+    minCases = 12;
     // T1：Tongsuo 自己命中同样的标准向量
     const vecFile = join(tmp, "vec.bin");
     writeFileSync(vecFile, Buffer.from(KEY, "hex"));
@@ -214,6 +219,62 @@ try {
     ran++;
     const macTonHex = macTon ? String(macTon).trim().split(/\s+/).pop() : null;
     if (!macRust || macRust !== macTonHex) fail(`HMAC-SM3 两侧不一致：RustCrypto ${macRust} vs Tongsuo ${macTonHex}`);
+
+    // ---- T5：PBKDF2-HMAC-SM3 跨实现 + 两条拆key口径（2026-09-19 加入，macOS 侧提出）----
+    //
+    // 参数是**对方信里钉死的那一组**（同口令 / 同 16 字节盐 / 20 万轮 / 输出 64 字节），
+    // 所以这条用例同时也是"口径 1"的取证：两侧的 KDF 输出必须逐字节相同。
+    const T5_PASS = "a-typical-passphrase";
+    const T5_SALT = "5a".repeat(16);
+    const T5_ITERS = 200_000;
+    const T5_LEN = 64;
+    const kdfRust = gm(["kdf", T5_PASS, T5_SALT, String(T5_ITERS), String(T5_LEN)]);
+    const kdfTon = ossl(openssl, [
+      "kdf",
+      "-keylen", String(T5_LEN),
+      "-kdfopt", "digest:SM3",
+      "-kdfopt", `pass:${T5_PASS}`,
+      "-kdfopt", `hexsalt:${T5_SALT}`,
+      "-kdfopt", `iter:${T5_ITERS}`,
+      "PBKDF2",
+    ]);
+    ran++;
+    // Tongsuo 的 `kdf` 输出是 `AA:BB:…` 形式 ⇒ 去分隔符再比（比的是字节，不是打印格式）
+    const kdfTonHex = kdfTon ? String(kdfTon).replace(/[\s:]/g, "").toLowerCase() : null;
+    if (!kdfRust || kdfRust.length !== T5_LEN * 2) {
+      fail(`T5①：夹具 KDF 输出长度不对（${kdfRust ? kdfRust.length : "无输出"} 字符，期望 ${T5_LEN * 2}）`);
+    } else if (kdfTonHex !== kdfRust) {
+      fail(
+        `T5①：PBKDF2-HMAC-SM3 两侧不一致 —— RustCrypto ${kdfRust.slice(0, 32)}… vs Tongsuo ${
+          kdfTonHex ? kdfTonHex.slice(0, 32) + "…" : "(无输出)"
+        }`,
+      );
+    }
+    // ② 口径 1：SM4 的密钥 = KDF 输出的**前 16 字节**（不是前 32 —— SM4 是 128 位）
+    ran++;
+    const sm4KeyDerived = kdfRust ? kdfRust.slice(0, 32) : null;
+    const ctRustDerived = sm4KeyDerived ? gm(["enc", sm4KeyDerived, IV, ptFile]) : null;
+    const ctTonDerived = sm4KeyDerived
+      ? ossl(openssl, ["enc", "-sm4-cbc", "-K", sm4KeyDerived, "-iv", IV, "-in", ptFile])
+      : null;
+    if (!ctRustDerived || !ctTonDerived) {
+      fail("T5②：用 KDF 前 16 字节当 SM4 密钥的 CBC 加密没有输出");
+    } else if (hex(ctTonDerived) !== ctRustDerived) {
+      fail(
+        `T5②：「SM4 取前 16 字节」两侧密文不同 —— Tongsuo ${hex(ctTonDerived).slice(0, 32)}… vs RustCrypto ${ctRustDerived.slice(0, 32)}…`,
+      );
+    }
+    // ③ 口径 1 的另一半：HMAC-SM3 的密钥 = KDF 输出的**后 32 字节**
+    ran++;
+    const macKeyDerived = kdfRust ? kdfRust.slice(64, 128) : null;
+    const macRustDerived = macKeyDerived ? gm(["hmac", macKeyDerived, macFile]) : null;
+    const macTonDerived = macKeyDerived
+      ? ossl(openssl, ["dgst", "-sm3", "-mac", "HMAC", "-macopt", `hexkey:${macKeyDerived}`, macFile])
+      : null;
+    const macTonDerivedHex = macTonDerived ? String(macTonDerived).trim().split(/\s+/).pop() : null;
+    if (!macRustDerived || macRustDerived !== macTonDerivedHex) {
+      fail(`T5③：「MAC 取后 32 字节」两侧不一致 —— RustCrypto ${macRustDerived} vs Tongsuo ${macTonDerivedHex}`);
+    }
   }
 } finally {
   rmSync(tmp, { recursive: true, force: true });
@@ -232,13 +293,21 @@ console.log(
   `gm-conformance: ✅ 通过 —— 跑成 ${ran} 个用例${skips.length ? "（另有跨实现对拍跳过，见上面的 ! 行）" : "（含跨实现对拍）"}`,
 );
 console.log(`  R1/R2 GM/T 0002+0004 标准向量 · R3 SM4-CBC+PKCS#7 往返 · R4 HMAC-SM3 确定性`);
-if (skips.length === 0) console.log(`  T1–T4 Tongsuo 对拍：标准向量 / 双向互解 / 密文逐字节相同 / HMAC 一致`);
+if (skips.length === 0) console.log(`  T1–T5 Tongsuo 对拍：标准向量 / 双向互解 / 密文逐字节相同 / HMAC 一致 / PBKDF2-HMAC-SM3 与拆 key 口径`);
 
 /** 探一下这个 openssl 有没有 sm4-cbc（系统自带的 OpenSSL 通常**没有** —— 那正是要 Tongsuo 的原因）。 */
 function probeSm4Cbc(openssl) {
   try {
-    const probe = Buffer.from("0123456789abcdef", "hex");
-    const out = execFileSync(openssl, ["enc", "-sm4-ecb", "-K", KEY, "-nopad", "-in", "/dev/stdin"], {
+    // ⚠️⚠️ **16 字节 = SM4 一个块**，不是 16 个十六进制**字符**。
+    //    2026-09-19：这里原写成 `Buffer.from("0123456789abcdef", "hex")`（8 字节），
+    //    `-nopad` 下必然 "data not multiple of block length" ⇒ 探针**恒假** ⇒
+    //    **整段 T 分支静默跳过**，而门禁照样绿（打印成"跑成 3 个用例（另有对拍跳过）"）。
+    //    这个 bug 是 2026-09-19 我拿真 Tongsuo（WSL2 构建）跑这条门禁时当场发现的 ——
+    //    也就是说：跨平台驱动重写之后，T 分支**一次都没真跑过**。这正是本文件自己反复警告的
+    //    "失败得像成功"，所以修完必须有一条读数：修前 3 个用例、修后 12 个。
+    const probe = Buffer.from(KEY, "hex");
+    // 不给 `-in` ⇒ enc 读 stdin（原来写 `-in /dev/stdin`，Windows 上没有这个路径）
+    const out = execFileSync(openssl, ["enc", "-sm4-ecb", "-K", KEY, "-nopad"], {
       input: probe,
       encoding: "buffer",
       stdio: ["pipe", "pipe", "pipe"],

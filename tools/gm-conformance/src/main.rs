@@ -109,6 +109,20 @@ fn main() {
             m.update(&data);
             println!("{}", hex::encode(m.finalize().into_bytes()));
         }
+        "kdf" => {
+            // kdf <passphrase> <salt_hex> <iters> <out_len_hex_bytes> → PBKDF2-HMAC-SM3 输出（十六进制）
+            //
+            // 为什么要有它（T5，2026-09-19 macOS 侧提出）：两侧的 KDF 输出必须**逐字节相同** ——
+            // 它是"跨设备读不出对方数据"这类漂移最上游的一环，而且改一位都不报错、只是解不开。
+            // 迭代数**不从常量读**（这里是夹具，按参数算）：这样驱动侧改参数不用改夹具。
+            let pass = arg(2);
+            let salt = hexb(&arg(3));
+            let iters: u32 = arg(4).parse().expect("iters 必须是整数");
+            let out_len: usize = arg(5).parse().expect("out_len 必须是整数");
+            let mut out = vec![0u8; out_len];
+            pbkdf2::pbkdf2_hmac::<Sm3>(pass.as_bytes(), &salt, iters, &mut out);
+            println!("{}", hex::encode(out));
+        }
         _ => {
             eprintln!("未知子命令 {cmd:?}；用法见文件头注释");
             std::process::exit(2);
