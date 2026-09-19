@@ -33,6 +33,19 @@
   判据：`src/lib/exportInline.test.ts`（9 条）+ `src/editor/nodes/exportDom.test.ts`（4 条，用真节点跑
   `$generateHtmlFromNodes`），并做过**变异验证**——把「留线索」那一行删掉，恰好两条断言变红。
 
+- **聚合收件箱的文件夹名显示成乱码**（2026-09-19 用户截图报告）：下拉里四项是
+  `&V4NXpPcuTvY-` / `&XfJSIJZkkK5O9g-` / `&XfJT0ZAB-` / `&g0l6Pw-`，而第五项「收件箱」正常。
+  根因：IMAP 协议里**非 ASCII 的 mailbox 名只能用 modified UTF-7 传**（`&` + base64(UTF-16BE) + `-`，
+  base64 字母表用 `,` 代 `/`），而 `folderDisplay()` 那张 `FOLDER_ZH` 表只认 ASCII 名（inbox/sent/drafts…）
+  ⇒ 中文邮箱的 UTF-7 名匹配不上、原样漏到界面上；「收件箱」正常只是因为它在协议层就叫 `INBOX`。
+  修法：新增 `src/lib/imapUtf7.ts` 的 `decodeImapUtf7()`（手写 base64→UTF-16BE；坏数据一律原样返回，
+  渲染路径不抛；`&-` 按 RFC 解成字面量 `&`），`folderDisplay()` 改成"先解码、再查表、查不到显示解码名"。
+  **只动显示**：回给后端的仍是原始名（`SELECT` 要的就是协议层名字）。
+  判据：`src/lib/imapUtf7.test.ts` 5 条 —— 截图里那四个串 + RFC 3501 §5.1.3 的两个官方例子
+  （`&ZeVnLIqe-`→日本語、`~peter/mail/&U,BTFw-/&ZeVnLIqe-`→`~peter/mail/台北/日本語`）+ ASCII/空串原样 +
+  `&-` 字面量 + 四种坏数据原样；期望值用独立实现（Python base64 + utf-16-be）反推并 round-trip 校验过。
+  **变异验证**：去掉解码器里 `,`→`/` 那一行 ⇒ RFC 那条立刻变红，按字节还原后 5/5 复绿。
+
 ## [1.91.3] - 2026-09-16
 
 > 开着加密重启不再崩溃；口令锁 UX 补齐（忘记口令的说法、立即锁定立刻切屏）

@@ -8,6 +8,7 @@ import { emailSupported, platform } from "../lib/platform";
 // 账号唯一键：**别在本文件里再定义一份**——它曾与 SettingsDialog 各写一份完全相同的实现，
 // 而 store 又需要第三份，三份同逻辑的键函数只会静默分叉。统一在 lib/emailAccount.ts。
 import { accountKey } from "../lib/emailAccount";
+import { decodeImapUtf7 } from "../lib/imapUtf7";
 import { useEmailPanel } from "../store/emailPanel";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
@@ -128,6 +129,12 @@ function fmtListTime(m: EmailMeta): string {
 
 // 文件夹显示名：把常见的英文 IMAP 文件夹名映射成中文，其余保留原始名。
 // IMAP 标准特殊用途文件夹名（INBOX 及各 Inbox/Sent/Drafts/Trash/Junk 等大小写变体）。
+//
+// ⚠️ 先解 **modified UTF-7** 再查表：IMAP 协议里非 ASCII 的 mailbox 名只能那样传，
+// 中文邮箱（QQ/163/企业邮箱）的「垃圾邮件 / 已删除邮件 / 已发送 / 草稿」到这儿是
+// `&V4NXPpCuTvY-` / `&XfJSIJZkkK5O9g-` / `&XfJT0ZAB-` / `&g0l6Pw-` ——
+// 不解码就直接显示成乱码（用户截图里那一幕）。**只影响显示**：
+// 回给后端的仍是原始名（`SELECT` 要的是协议层名字）。
 const FOLDER_ZH: Record<string, string> = {
   inbox: "收件箱",
   "deleted messages": "已删除",
@@ -147,8 +154,9 @@ const FOLDER_ZH: Record<string, string> = {
   "important": "重要",
 };
 function folderDisplay(name: string): string {
-  const key = name.trim().toLowerCase();
-  return FOLDER_ZH[key] ?? name;
+  const decoded = decodeImapUtf7(name);
+  const key = decoded.trim().toLowerCase();
+  return FOLDER_ZH[key] ?? decoded;
 }
 
 // 用 DOMPurify 白名单消毒邮件 HTML（去 script/iframe/事件属性/javascript: 协议等）。
