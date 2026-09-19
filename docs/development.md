@@ -141,8 +141,8 @@ pnpm test                             # 期望 "N passed"
 # 2. 冒烟测试（web 平台行为事实标准，断言数随功能增长）
 node scripts/smoke-web.mjs            # 期望 "N passed, 0 failed"
 
-# 3. 类型检查
-npx tsc --noEmit
+# 3. 类型检查（**别用 `npx tsc`** —— 理由见下面的「工具坑」第 1 条）
+pnpm exec tsc --noEmit
 
 # 4. 前端构建
 pnpm build                            # check-versions + tsc + check-web-commands + vite build
@@ -164,6 +164,42 @@ pnpm check:android-mobile-shell       # 期望 "✅ …（--check）"
 
 # 10. 浮层登记门禁（加了/改了任何浮层组件都要跑；纯静态，秒级）
 pnpm check:overlays                   # 期望 "22 通过 / 0 失败"
+
+
+## 工具坑：**"失败得像成功"**的那几种（2026-09-19 汇总）
+
+这几条的共同点：**它们不报错**，或者报出来长得像别的东西。见到就按这里的处置做，别先怀疑自己的改动。
+
+### 1. `npx <工具>` 在 `.bin` 缺失时**会从 registry 装一个同名包**
+
+`.bin` 不完整时（例如有人正在重装 `node_modules`），`npx tsc --noEmit` **不会说"找不到 tsc"**，
+而是装一个叫 `tsc` 的同名包（`tsc@2.0.3` 是个专门提醒人别 `npm i -g tsc` 的占位包）：
+
+```
+npm warn exec The following package was not found and will be installed: tsc@2.0.3
+This is not the tsc command you are looking for      ← 退出码看着还是 0
+```
+
+**两处实测**：Windows 侧在**共享检出重装 `node_modules` 期间**撞到（`@esbuild/win32-x64`、`tinyexec`
+也跟着缺）；macOS 侧在**全新 worktree 还没 `pnpm install`** 时撞到同一句。
+⇒ 处置：动手前先确认工具在（`node_modules/.bin/vitest`、`node_modules/typescript/lib/tsc.js`），
+命令用 `pnpm exec <工具>` 或直接点名入口（`node node_modules/typescript/bin/tsc --noEmit`）。
+
+### 2. 别把"版本号高"当成假包 —— 判断假包看 `bin`/`lib`，不看版本
+
+本仓 `package.json` 里 `typescript` 就是 **`~7.0.2`**（TS 7 是原生编译器，`tsc --noEmit` 跑 **0.7 秒**是正常的，
+不是"没干活"）。我看到 `Version 7.0.2` 时先怀疑了假包，是**误报**。
+真要判断：看 `node_modules/<包>/package.json` 的 `bin` 指向与 `lib/` 是否齐全，
+以及 `node_modules/.bin/<工具>` 是不是指向它。
+
+### 3. 共享 `node_modules` 在"有人重装"的那几分钟对**所有人**不可用
+
+症状是**缺依赖形状的红**（`@esbuild/win32-x64` 缺失、`tinyexec` 找不到），
+很像"这台机器坏了"而不是"有人在装东西"。⇒ 见到这类红先看环境，别先怀疑代码；
+**要重装请先在信箱说一句**（约几分钟），和我们对"占用端口/共享库"的做法一致。
+另：worktree 里用软链共享主检出 `node_modules` 还会让 Vite 的 `server.fs.allow` 拒绝
+`sql.js` 的 wasm（报 `Denied ID …sql-wasm.wasm?url`，22 个文件假红）⇒
+**worktree 里跑前端测试要就地 `pnpm install --frozen-lockfile --prefer-offline`**（约 3 秒）。
 ```
 
 > **`check:overlays`（`scripts/check-overlay-registry.mjs`，也串在 `pnpm build` 与 CI 的静态检查那一档）**
