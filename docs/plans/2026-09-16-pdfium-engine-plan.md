@@ -141,14 +141,37 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
       —— ✅ **样本集已定（2026-09-17）**：**写生成脚本 ＋ 少量产物入库**（自制样本无版权风险、结论可复现，见 §0.2-H）
       —— ✅ **四样本已对拍（2026-09-19）**：印刷体 `text` / 旋转 `rotate90` / 超大页 `a0-large` / 透明底 `alpha`，
       硬判据 4/4 ＋ 目视 4/4 ⇒ 报告 [2026-09-19-pdfium-p3-report.md](2026-09-19-pdfium-p3-report.md)。
-      ⚠️ **中文与扫描件样本仍未实现**（生成脚本自己声明未覆盖、不拿近似样本充数）⇒ 本项**尚未完全达成**。
+      —— ✅ **两份独立读数**（2026-09-19）：同一被验 commit `23985ef`，Windows 侧 WSL2 与 AMD 侧各自独立复现，
+      **数字逐格一致**（RGB 最大差 0/0/1/1、超阈 0.000%、`语义不一致` 四份全零）；目视也是两份
+      （本轮 4 张对照图已入库 `docs/media/pdfium-p3-compare/`，AMD 侧 7 张 PNG 留档在信箱 `pdfium-p3/visual-check-23985eff/`）。
+      ⚠️ **中文与扫描件样本仍未实现**（生成脚本自己声明未覆盖、不拿近似样本充数）⇒ 本项**尚未完全达成**（其余四类已达成）。
 - [ ] **性能不退化**：单页耗时对比记录在案（PDFium 不得明显慢于 MuPDF；扫描件通常更快）
       —— ✅ 读数见 [P3 报告 §五](2026-09-19-pdfium-p3-report.md)（对拍模块本身没有耗时口径，用临时探针补的；探针未入库）
-- [ ] **契约不变**：`parseNativePageResponse` 与前端零改动即可工作
+- [ ] **契约不变**：`parseNativePageResponse` 与前端零改动即可工作 —— ✅ 前端零改动（P2 那条分派本来就只动 Rust 侧）
 - [ ] **回滚可用**：一键切回 MuPDF，不需要改前端、不需要回滚数据
+      —— ✅ `SHUYONOTE_PDF_ENGINE=mupdf`：**显式匹配**（大小写/首尾空格不敏感），有判据钉住；
+      另有一条 `assert_ne!(DEFAULT, Mupdf)` 保证"回滚不是回滚到同一个东西"。不需要新版、不需要动数据。
+      ⚠️ **可观测口径**：阅读器对"原生渲染失败"有一条 pdf.js 回退（见 §5 末两行）⇒ 判断"切没切成功"要看
+      **控制台有没有 `native page render failed, falling back to pdf.js`**，而不是"页面能不能出来"。
 - [ ] **打包**：每个平台的安装包**首次启动即可渲染**（动态库随包、路径正确、macOS 过公证、Android 进 `jniLibs`）
-- [ ] **真机**：桌面（Windows + 至少一个其它平台）＋ Android 真机各跑一遍
+      —— Windows ✅ `tauri.windows.conf.json`（1.91.5 起）。本轮独立复核三条：`7z l` 命中 `pdfium.dll`（时间戳=源文件）、
+      静默安装后 dll 与 exe 同级、该 dll `LoadLibraryW` 成功且 `FPDF_InitLibraryWithConfig`/`FPDF_LoadDocument` 都在；
+      并做了**运行时 A/B**（藏库 ⇒ 控制台出现 pdf.js 回退日志；库在位 ⇒ 无该日志且正常渲染）。
+      —— macOS ⚠️ 配置已随包（`tauri.macos.conf.json` → `.app/Contents/Frameworks`，含方向修复 `4c6f83c`），
+      但**真出包/公证读数仍缺**（归 Mac）。
+      —— Linux ✅ 代码已在 dev（`library_dir()` 的 `resource_dir()` 探测 + `tauri.linux.conf.json` + CI 取库 +
+      产物断言 `check-linux-bundle`）；**1.91.6 起 Linux 包会真的带库**（上一版 1.91.5 的 deb 解包实测：无 `libpdfium`）。
+      —— Android ❌ **无 `jniLibs`** ⇒ 走 pdf.js 回退（发布说明已点名）。
+- [ ] **真机**：桌面（Windows + 至少一个其它平台）＋ Android 真机各跑一遍 —— ❌ **仍未做**；
+      Windows 侧只有自动化验证（含上面那次运行时 A/B），**不是人手签字**。
 - [ ] 既有门禁全绿（`tsc`、`pnpm test`、`check:web-commands`、`cargo check --all-targets`）
+      —— ✅ 本机：`cargo check --all-targets` 0 错 0 告警、`tsc` 0、vitest 1174 通过 / 1 跳过、`pnpm verify` **23/23**。
+      ⚠️ **CI 的「Rust 测试」任务在 Linux 上红**（`pdf_engine_compare::pdfium_matches_mupdf_on_fixtures` 需要动态库，
+      而 CI 的测试任务不取库）⇒ 这**不是**本轮翻转引入的（`1efd696` 与 dev `97583c5` 上同样红），
+      但它意味着"CI 全绿"目前**不成立**：缺库时应显式跳过并打印原因，或给该任务加 `fetch-pdfium` 步骤。
+
+> **P5 状态（2026-09-19）**：**默认引擎已切 PDFium**（`7247739`，owner 批准，随 **1.91.6** 发布）。
+> 回滚杠杆见上（`SHUYONOTE_PDF_ENGINE=mupdf`）。**"删 MuPDF"这一步没做** —— 按 §2 的 P5，等灰度一个发布周期后再评估。
 
 ---
 
@@ -162,6 +185,8 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 | 渲染结果与 MuPDF 有差异 | 用户可见 | P3 对拍，先出报告再切默认 |
 | 位图格式/通道顺序搞错 | 颜色错乱（**"能显示但不对"**） | Rust 侧转换 + 单测钉住通道顺序（红绿蓝各写一个已知值断言） |
 | 与国密工作流并发改 `Cargo.toml` | 冲突 | 串行：**先落国密的依赖，PDFium 再基于最新 main 落**（见国密方案 §9） |
+| **原生引擎失败会被 pdf.js 静默顶上**（2026-09-19 实测） | "切了默认、其实在用 pdf.js"**界面上不可见**：`PdfReader.tsx:122` 有刻意的回退，只在控制台留 `native page render failed, falling back to pdf.js` | ① 发布说明里对"装包没带库"的平台**点名**（当前是 Android）；② 灰度期的观测口径就用那条日志，别用"页面能不能出来" |
+| `pdfium_matches_mupdf_on_fixtures` 依赖动态库 | CI 的「Rust 测试」任务在跑测机器上**红**（缺库 ⇒ 该测试失败）⇒ "CI 全绿"不成立 | 缺库时**显式跳过并打印原因**（而不是判失败），或给该测试任务加一步 `fetch-pdfium`（谁认领都行） |
 
 ---
 

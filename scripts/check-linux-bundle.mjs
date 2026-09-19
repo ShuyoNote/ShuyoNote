@@ -43,10 +43,15 @@ export const PDFIUM_LIB = "libpdfium.so";
  * 跨版本变过一次；**层数**才是我们真正依赖的性质（`resource_dir()` 给的就是那一层）。
  */
 export function isResourceDirLibPath(entry) {
-  const parts = String(entry)
+  let parts = String(entry)
     .replace(/^\.\//, "")
     .split("/")
     .filter((p) => p.length > 0);
+  // ⚠️ AppImage 的清单来自 `--appimage-extract` 展开的目录，**第一段是 squashfs 的根名**
+  //（`squashfs-root/usr/lib/<一段>/libpdfium.so`）。那是"打包容器的根"，不是包内路径的一部分，
+  // 所以要比层数之前先摘掉它 —— 2026-09-19 的 CI 就是被这一点误判成"位置不对"的
+  //（库其实位置正确：`usr/lib/ShuyoNote/libpdfium.so`）。
+  if (parts[0] === "squashfs-root") parts = parts.slice(1);
   return parts.length === 4 && parts[0] === "usr" && parts[1] === "lib" && parts[3] === PDFIUM_LIB;
 }
 
@@ -116,13 +121,19 @@ function sha256File(p) {
   return existsSync(p) ? createHash("sha256").update(readFileSync(p)).digest("hex") : null;
 }
 
-/** `dpkg-deb -c` 的每一行形如 `-rw-r--r-- root/root 1234 2026-.. ./usr/lib/x/y`。 */
+/** `dpkg-deb -c` 的每一行形如 `-rw-r--r-- root/root 1234 2026-.. ..:.. <路径>`。
+ *
+ *  ⚠️ **路径前缀不是稳定的**：老 dpkg 输出 `./usr/...`，**dpkg 1.22.x 输出 `usr/...`（没有 `./`）**。
+ *  2026-09-19 的 CI 假红就是这里 —— 旧实现的正则写死了 `(\.\/.*)`，于是在 1.22 上**一行都匹配不上**，
+ *  返回空数组，被上层当成"deb 里没有库"（**把读数失败说成了事实**）。
+ *  现在只按"前 5 个字段 + 其余整段当作路径"来切，前缀有没有都认。
+ */
 export function parseDpkgDebList(output) {
   return String(output)
     .split(/\r?\n/)
     .map((line) => {
-      const m = /^\S+\s+\S+\s+\d+\s+\S+\s+\S+\s+(\.\/.*)$/.exec(line.trim());
-      return m ? m[1] : null;
+      const m = /^(?:\S+\s+){5}(.+)$/.exec(line.trim());
+      return m ? m[1].trim() : null;
     })
     .filter(Boolean);
 }
@@ -155,6 +166,16 @@ function main() {
       process.exit(1);
     }
     libPathsInDeb = parseDpkgDebList(listing).filter((p) => p.endsWith(`/${PDFIUM_LIB}`) || p.endsWith(PDFIUM_LIB));
+    // ⚠️ 防线：**读出来了行、却一条路径都没解析出来** ⇒ 那是解析器不认识这个格式，
+    // 不是"包里没有库"。把这两种情况分开报 —— 2026-09-19 的 CI 假红就是被混为一谈的。
+    if (libPathsInDeb.length === 0 && parseDpkgDebList(listing).length === 0 && listing.trim() !== "") {
+      console.error(
+        "[check-linux-bundle] ❌ `dpkg-deb -c` 有输出但**一条路径都没解析出来** —— 格式不认识（解析器的问题），" +
+          "这条**没验过**；不要把「没读到」当成「包里没有」。前 3 行原样：\n" +
+          listing.split(/\r?\n/).slice(0, 3).map((l) => "    " + l).join("\n"),
+      );
+      process.exit(2);
+    }
     if (libPathsInDeb.length > 0) {
       const tmp = mkdtempSync(join(tmpdir(), "linux-bundle-"));
       try {

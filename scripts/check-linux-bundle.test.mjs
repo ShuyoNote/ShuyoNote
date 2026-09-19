@@ -22,6 +22,15 @@ describe("isResourceDirLibPath（资源目录**根**那一层）", () => {
     expect(isResourceDirLibPath("usr/lib/cn.shuyo.shuyonote/libpdfium.so")).toBe(true);
   });
 
+  it("接受 AppImage 展开目录里的同一条路径（squashfs 根名不算一层）", () => {
+    // 2026-09-19 的 CI 假红就是这条：`--appimage-extract` 展开后第一段是 `squashfs-root`，
+    // 库其实在正确位置，却被判成"位置不对"。
+    expect(isResourceDirLibPath("./squashfs-root/usr/lib/ShuyoNote/libpdfium.so")).toBe(true);
+    expect(isResourceDirLibPath("squashfs-root/usr/lib/cn.shuyo.shuyonote/libpdfium.so")).toBe(true);
+    // 但深一层仍然要拒（摘掉 squashfs 根之后剩 5 段）
+    expect(isResourceDirLibPath("./squashfs-root/usr/lib/ShuyoNote/resources/libpdfium.so")).toBe(false);
+  });
+
   it("拒绝深一层（这正是会漏掉的那种错）", () => {
     expect(isResourceDirLibPath("./usr/lib/ShuyoNote/resources/libpdfium.so")).toBe(false);
     expect(isResourceDirLibPath("./usr/lib/ShuyoNote/bin/libpdfium.so")).toBe(false);
@@ -80,6 +89,18 @@ describe("checkLinuxBundle", () => {
 });
 
 describe("parseDpkgDebList", () => {
+  it("★ dpkg 1.22 的输出**不带 `./` 前缀**也要认（2026-09-19 CI 假红的根因）", () => {
+    // 真实输出（dpkg-deb 1.22.6，2026-09-19 在本机 WSL 实测）：
+    const out = [
+      "-rwxr-xr-x 0/0         7645184 2026-09-19 13:20 usr/lib/ShuyoNote/libpdfium.so",
+      "-rwxr-xr-x 0/0        63857120 2026-09-19 13:20 usr/bin/shuyonote",
+    ].join("\n");
+    expect(parseDpkgDebList(out)).toEqual(["usr/lib/ShuyoNote/libpdfium.so", "usr/bin/shuyonote"]);
+    expect(isResourceDirLibPath("usr/lib/ShuyoNote/libpdfium.so")).toBe(true);
+    // 整条断言要因此**变绿** —— 而不是把"解析不出路径"报成"包里没有库"
+    expect(checkLinuxBundle({ ...OK, libPathsInDeb: ["usr/lib/ShuyoNote/libpdfium.so"] })).toEqual([]);
+  });
+
   it("从 dpkg-deb -c 的真实输出里取出路径", () => {
     const out = [
       "drwxr-xr-x root/root         0 2026-09-19 11:00 ./",
