@@ -1,5 +1,5 @@
 use crate::db::{now_ms, Db};
-use crate::models::AttachmentMeta;
+use crate::models::{AttachmentMeta, AttachmentRow};
 use crate::sync::record_change;
 use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -629,17 +629,20 @@ pub fn list_page_attachments(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     page_id: Option<String>,
-) -> Result<Vec<AttachmentMeta>, String> {
+) -> Result<Vec<AttachmentRow>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
 
     let c = db.0.lock().expect("db mutex poisoned");
     // `page_id = NULL` 永远不成立，所以「空间根下的未整理文件」必须走 IS NULL 分支。
+    //
+    // `created_at` 从 2026-09-19 起**选出来**：文件管理表里有「创建时间 / 上次修改时间」两列，
+    // 而附件行这两列此前是前端写死的 `"—"`（用户截图报的"时间全是 —"就是这个）。
     let sql = if page_id.is_some() {
-        "SELECT id, name, hash, mime, size FROM attachments
+        "SELECT id, name, hash, mime, size, created_at FROM attachments
          WHERE page_id = ?1 ORDER BY created_at DESC"
     } else {
-        "SELECT id, name, hash, mime, size FROM attachments
+        "SELECT id, name, hash, mime, size, created_at FROM attachments
          WHERE page_id IS NULL ORDER BY created_at DESC"
     };
     let mut stmt = c.prepare(sql).map_err(|e| e.to_string())?;
@@ -650,6 +653,7 @@ pub fn list_page_attachments(
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
             row.get::<_, i64>(4)?,
+            row.get::<_, i64>(5)?,
         ))
     };
     let rows = match &page_id {
@@ -660,13 +664,88 @@ pub fn list_page_attachments(
 
     let mut out = Vec::new();
     for r in rows {
-        let (id, name, hash, mime, size) = r.map_err(|e| e.to_string())?;
+        let (id, name, hash, mime, size, created_at) = r.map_err(|e| e.to_string())?;
         let path = find_path_by_hash(&attachments_dir, &hash)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
-        out.push(AttachmentMeta { id, name, hash, mime, size, path });
+        let meta = AttachmentMeta { id, name, hash, mime, size, path };
+        out.push(attachment_row(meta, created_at));
     }
     Ok(out)
+}
+
+/// 组装文件管理的一行：`created_at` 直接来自 DB；`mtime` 取 **`meta.path` 指向的本地文件**的修改时间，
+/// **取不到就是 0**（未下载 / 路径为空 / 是目录），前端据此显示「—」。
+///
+/// 抽成纯函数是为了**可测**：`list_page_attachments` 需要 `tauri::AppHandle`，单元测试里造不出来，
+/// 而"哪来的时间戳、取不到给什么"正是这条判据真正承重的地方。
+fn attachment_row(meta: AttachmentMeta, created_at: i64) -> AttachmentRow {
+    let mtime = if meta.path.is_empty() {
+        0
+    } else {
+        std::fs::metadata(&meta.path)
+            // **只认常规文件**：路径不存在、是目录、权限不足 ⇒ 一律 0（目录的 mtime 不是"这份附件的修改时间"）
+            .ok()
+            .filter(|m| m.is_file())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    };
+    AttachmentRow { meta, created_at, mtime }
+}
+
+/// 文件管理那两列时间的口径判据（**跑不了 `cargo test` 的机器请交给能跑的那两台复核**，
+/// 见 `docs/` 里"Windows 跑不了 cargo test"那条纪律）。
+#[cfg(test)]
+mod attachment_row_tests {
+    use super::*;
+
+    fn meta(path: &str) -> AttachmentMeta {
+        AttachmentMeta {
+            id: "a1".into(),
+            name: "营业执照扫描件.png".into(),
+            hash: "h".into(),
+            mime: "image/png".into(),
+            size: 395 * 1024,
+            path: path.into(),
+        }
+    }
+
+    /// - `created_at` **总是**来自 DB（该列 NOT NULL）⇒ 任何一行都该带出来；
+    /// - `mtime` 只反映**本地常规文件**：未下载（path 为空）/ 路径不是文件 ⇒ 0
+    ///   （前端显示「—」，**不许**拿 created_at 冒充"上次修改时间"）；本地有文件 ⇒ 正的毫秒时间戳。
+    #[test]
+    fn attachment_row_carries_db_created_at_and_only_local_file_mtime() {
+        // ① 未下载：path 为空
+        let row = attachment_row(meta(""), 1_700_000_000_000);
+        assert_eq!(row.created_at, 1_700_000_000_000, "created_at 来自 DB，永远有");
+        assert_eq!(row.mtime, 0, "未下载没有本地 mtime ⇒ 0（前端显示「—」）");
+        assert_eq!(row.meta.name, "营业执照扫描件.png", "meta 字段要原样带出来");
+
+        // ② 路径存在但不是文件（目录）：也不能把目录的 mtime 当成附件的
+        let dir = std::env::temp_dir();
+        assert_eq!(
+            attachment_row(meta(&dir.to_string_lossy()), 1).mtime,
+            0,
+            "目录不是附件：取不到文件 mtime ⇒ 0"
+        );
+
+        // ③ 本地真的有文件 ⇒ 给出正的 mtime
+        let f = std::env::temp_dir().join(format!(
+            "shuyonote-attachment-row-{}-{}.bin",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&f, b"x").unwrap();
+        let row = attachment_row(meta(&f.to_string_lossy()), 42);
+        assert_eq!(row.created_at, 42);
+        assert!(row.mtime > 0, "本地存在的文件应给出 mtime，实际 {}", row.mtime);
+        let _ = std::fs::remove_file(&f);
+    }
 }
 
 /// M24 — list every PDF attachment across all pages (for the command palette's

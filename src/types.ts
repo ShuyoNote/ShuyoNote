@@ -54,6 +54,16 @@ export interface AttachmentMeta {
   mime: string;
   size: number;
   path: string;
+  /**
+   * 只有**文件管理列表**（`listPageAttachments`）会带这两个字段（后端是 `AttachmentRow`，
+   * 用 `#[serde(flatten)]` 包住 `AttachmentMeta`，所以其余字段形状一个字节不变）：
+   * - `created_at`：DB 里 `attachments.created_at`（毫秒），**总是有值**；
+   * - `mtime`：**本地文件**的修改时间（毫秒）；字节还没下载到本机时是 **0** ⇒ 界面显示「—」。
+   *
+   * 其它命令（导入 / 解析单条 / PDF 列表…）不带，所以是可选的。
+   */
+  created_at?: number;
+  mtime?: number;
 }
 
 export interface BoardColumn {

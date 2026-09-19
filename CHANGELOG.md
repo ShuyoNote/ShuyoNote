@@ -33,6 +33,19 @@
   判据：`src/lib/exportInline.test.ts`（9 条）+ `src/editor/nodes/exportDom.test.ts`（4 条，用真节点跑
   `$generateHtmlFromNodes`），并做过**变异验证**——把「留线索」那一行删掉，恰好两条断言变红。
 
+- **文件管理里附件的「创建时间 / 上次修改时间」永远是「—」**（2026-09-19 用户截图报告）：
+  表格有这两列，但**附件行**的两个值在 `FileManagerView.tsx` 里是**写死的 `"—"`**
+  —— 而 DB 里 `attachments.created_at` 一直有（`INTEGER NOT NULL`），只是**从没进过 payload**。
+  修法：后端新增 `models::AttachmentRow`（用 `#[serde(flatten)]` 包住 `AttachmentMeta`，线上形状
+  **向后兼容**、只是多两个字段），`list_page_attachments` 把 `created_at` 选出来，并顺带给出**本地文件
+  mtime**；前端 `AttachmentMeta` 加两个**可选**字段，两列改成
+  `created: fmtDate(created_at)` / `updated: fmtDate(mtime ?? 0)`。
+  ⚠️ 表里**没有 `updated_at`**，所以「上次修改时间」只能是**本地副本**的修改时间：**未下载的行如实显示「—」**，
+  **不拿 `created_at` 冒充**（`fmtDate(0)` ⇒ "—"）。这是刻意的 —— 截图里那个文件正是「未下载」。
+  判据：`attachments.rs::attachment_row_tests`（未下载 ⇒ `mtime=0` 且 `created_at` 照旧带出；
+  路径是目录/不存在 ⇒ `0`；本地有文件 ⇒ `mtime>0`）。**Rust 测试本机跑不了**（`0xC0000139`，本仓纪律）
+  ⇒ 只声明"编得过"（`cargo check --all-targets`），行为正确性交能跑测试的两台按被验 commit 复核。
+
 - **聚合收件箱的文件夹名显示成乱码**（2026-09-19 用户截图报告）：下拉里四项是
   `&V4NXpPcuTvY-` / `&XfJSIJZkkK5O9g-` / `&XfJT0ZAB-` / `&g0l6Pw-`，而第五项「收件箱」正常。
   根因：IMAP 协议里**非 ASCII 的 mailbox 名只能用 modified UTF-7 传**（`&` + base64(UTF-16BE) + `-`，

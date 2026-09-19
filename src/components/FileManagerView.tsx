@@ -413,8 +413,13 @@ export function FileManagerView() {
         kind: "file",
         name: g.current.name,
         size: formatSize(g.current.size),
-        updated: "—",
-        created: "—",
+        // 两列时间的口径（2026-09-19，用户截图报"时间全是 —"）：
+        //  - **创建时间** = DB 的 `attachments.created_at`（`listPageAttachments` 现在会带出来）；
+        //  - **上次修改时间** = **本地文件**的 mtime（`mtime`）；表里没有 `updated_at`，
+        //    所以未下载的行**如实**显示「—」，**不拿 created_at 冒充**（`fmtDate(0)` ⇒ "—"）。
+        // 旧后端（不带这两个字段）时两个都是 undefined ⇒ 同样是「—」，不会崩。
+        updated: fmtDate(g.current.mtime ?? 0),
+        created: fmtDate(g.current.created_at ?? 0),
         file: g.current,
         versions: g.versions,
       });
