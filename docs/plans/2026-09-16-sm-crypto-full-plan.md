@@ -232,6 +232,12 @@ AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**�
 | `f4151be1`（上一轮） | ✅ | ✅ | ✅ **success** | ✅ / ✅ —— **5/5 全绿** |
 | `ba7d889a` | ✅ | ✅ | ❌ **failure**：`rust-sm-crypto`（真红，见下） | 当时仍在跑 |
 | `4c0ef41b`（修复后） | ✅ | ✅ | ✅ **success**（**含 `rust-sm-crypto`**） | 该 commit 只触发 3 个 job（未改打包面） |
+| `4b5eceec`（⑤⑥ 落地后） | ✅ | ✅ | ✅ **success**（含 `rust-sm-crypto`、**`check-crypto-backend`**） | 当时仍在跑 |
+| `f4151be1`（已记） | — | — | — | — |
+
+⭐ `4b5eceec` 这一行多给了一条**跨平台证据**：`check-crypto-backend` 在 **Linux** 上
+（平台默认声明 = `openssl`，而 Linux 的产物就是 `openssl`）**不误报** ——
+也就是说这条门禁的"声明 vs 产物"口径不是只在 macOS 上成立。
 
 ⇒ **`rust-sm-crypto` 的第一条 CI 读数（Linux）就是绿的**，也正是 AMD 建基线所需的那份读数来源。
 
