@@ -21,6 +21,7 @@
 //   node scripts/check-macos-bundle.mjs <bundle 目录>
 // 退出码：0 = 全部通过；非 0 = 有问题（逐条打印原因）。
 
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -54,7 +55,20 @@ export function plistSchemes(xml) {
  * 纯函数形式的断言（便于单测；不做任何 IO）。
  * @returns {string[]} problems，空数组表示通过
  */
-export function checkBundle({ appExists, isDirectory, plistXml, expectedIdentifier, expectedVersion, dmgNames }) {
+/** 打包产物里 PDFium 该在的位置（**与 Rust 侧 `pdfium_native::library_dir()` 的搜索顺序一致**）。 */
+export const PDFIUM_IN_BUNDLE = "Contents/Frameworks/libpdfium.dylib";
+
+export function checkBundle({
+  appExists,
+  isDirectory,
+  plistXml,
+  expectedIdentifier,
+  expectedVersion,
+  dmgNames,
+  pdfiumBundleSha = null,
+  pdfiumVendorSha = null,
+  pdfiumVendorExists = true,
+}) {
   const problems = [];
   if (!appExists) {
     problems.push("没有找到 ShuyoNote.app —— 打包这一步根本没产出 .app（`--bundles` 里漏了 app？）");
@@ -80,6 +94,28 @@ export function checkBundle({ appExists, isDirectory, plistXml, expectedIdentifi
   if (!schemes.includes("shuyonote")) {
     problems.push(
       `Info.plist 没有注册 shuyonote 深链协议（当前是 [${schemes.join(", ")}]）——macOS 上点 shuyonote:// 链接不会被路由到本应用`,
+    );
+  }
+
+  // ★ PDFium 运行时必须在包里（2026-09-19 加，macOS 侧）：
+  // 它是 `libloading` **运行时**加载的（`src-tauri/src/pdfium_native.rs`），库不在包里时
+  // 装完不会立刻报错，而是在用户端 `SHUYONOTE_PDF_ENGINE=pdfium` 时才变成「找不到 PDFium 动态库」。
+  // 映射写在 `src-tauri/tauri.macos.conf.json`（平台专用，不动共享的 tauri.conf.json），
+  // 源文件由 `node scripts/fetch-pdfium.mjs` 现拉（二进制不入库）。P5 把默认引擎切成 PDFium 之后，
+  // 这条不再是"可选"，而是 macOS 用户能不能开 PDF 的前提。
+  if (!pdfiumVendorExists) {
+    problems.push(
+      `vendor 里没有 mac-univ 的 PDFium（先跑 node scripts/fetch-pdfium.mjs --platform mac-univ）—— 这是**前置缺失**，不是产物问题`,
+    );
+  } else if (!pdfiumBundleSha) {
+    problems.push(
+      `${PDFIUM_IN_BUNDLE} 不在包里 —— macOS 上 SHUYONOTE_PDF_ENGINE=pdfium 会报「找不到 PDFium 动态库」` +
+        `（映射见 src-tauri/tauri.macos.conf.json；库由 node scripts/fetch-pdfium.mjs 现拉）`,
+    );
+  } else if (pdfiumVendorSha && pdfiumBundleSha !== pdfiumVendorSha) {
+    problems.push(
+      `包里的 libpdfium.dylib 与 vendor 源文件 sha256 不一致（${pdfiumBundleSha.slice(0, 12)}… vs ${pdfiumVendorSha.slice(0, 12)}…）` +
+        `—— 拷错了，或拿到的是上一次构建的产物`,
     );
   }
 
@@ -124,6 +160,14 @@ function main() {
   const dmgDir = join(bundleDir, "dmg");
 
   const dmgNames = existsSync(dmgDir) ? readdirSync(dmgDir).filter((n) => n.endsWith(".dmg")) : [];
+
+  // PDFium：产物里的那份 vs vendor 里的源文件（逐字节比哈希，不看大小 —— 大小相同也可能是别的库）
+  const sha256 = (p) => (existsSync(p) ? createHash("sha256").update(readFileSync(p)).digest("hex") : null);
+  const bundleLib = join(appPath, PDFIUM_IN_BUNDLE);
+  const vendorLib = join(root, "src-tauri", "vendor", "pdfium", "mac-univ", "lib", "libpdfium.dylib");
+  const pdfiumBundleSha = sha256(bundleLib);
+  const pdfiumVendorSha = sha256(vendorLib);
+
   const problems = checkBundle({
     appExists: existsSync(appPath),
     isDirectory: existsSync(appPath) && statSync(appPath).isDirectory(),
@@ -131,6 +175,9 @@ function main() {
     expectedIdentifier: conf.identifier,
     expectedVersion: version,
     dmgNames,
+    pdfiumBundleSha,
+    pdfiumVendorSha,
+    pdfiumVendorExists: existsSync(vendorLib),
   });
 
   // 再问一次系统（能问就问；问不了不算失败，但要如实说明）。
@@ -142,6 +189,10 @@ function main() {
   console.log(`[check-macos-bundle] bundle=${bundleDir}`);
   console.log(`  版本 ${version} · identifier ${conf.identifier} · dmg ${dmgNames.join("、") || "(无)"}`);
   console.log(`  系统认领的 scheme：${claimed === null ? "(本机问不到，跳过)" : claimed.join("、") || "(无)"}`);
+  console.log(
+    `  PDFium：${pdfiumBundleSha ? `${PDFIUM_IN_BUNDLE}（${pdfiumBundleSha.slice(0, 12)}…）` : "(不在包里)"}` +
+      ` · vendor 源：${pdfiumVendorSha ? pdfiumVendorSha.slice(0, 12) + "…" : "(缺)"}`,
+  );
   if (problems.length > 0) {
     console.error("[check-macos-bundle] ❌ 不通过：");
     for (const p of problems) console.error(`  - ${p}`);

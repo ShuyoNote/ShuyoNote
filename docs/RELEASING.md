@@ -108,6 +108,14 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 - `windows-latest` → `.exe (nsis)`
 - `macos-latest` → `.dmg/.app`（**待 Apple secrets 后启用**）
 
+> **macOS 档另有两条 PDFium 相关步骤（2026-09-19 加）**：打包前先
+> `node scripts/fetch-pdfium.mjs --platform mac-univ` 现拉 `libpdfium.dylib`（二进制**不入库**），
+> `src-tauri/tauri.macos.conf.json` 把它映射成包里的 **`Contents/Frameworks/libpdfium.dylib`**
+> —— 那个位置正是 Rust 侧 `pdfium_native::library_dir()` 在 macOS 上会去找的（`Contents/Resources`
+> **不是**它的搜索路径，所以不能用 `bundle.resources`）。打包后用
+> `pnpm check:macos-bundle` 对**产物**断言：库在不在、以及它与 `vendor/` 里那份的 **sha256 是否一致**
+> （大小相同也可能是别的库）。macos.yml 里已有取库步骤；`check:macos-bundle` 在 CI 的 macOS job 里跑。
+>
 > **Windows 档另有两条 PDFium 相关步骤（2026-09-18 加）**：打包前先
 > `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉 `pdfium.dll`（二进制**不入库**，
 > `.gitignore` 里有 `src-tauri/vendor/pdfium/`；`src-tauri/tauri.windows.conf.json` 把它映射成
