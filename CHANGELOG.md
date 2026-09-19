@@ -23,6 +23,18 @@
      `native page render failed, falling back to pdf.js`）；
   ③ macOS 的真出包/公证读数、以及"装一次、开一个 PDF"的真机人工项仍缺。
 
+### 修复
+
+- **Linux 装包没有带上 PDFium 运行时库**（与 Windows 那笔同类）：新增 `library_dir()` 的 Tauri `resource_dir()`
+  探测（Linux 的 `resource_dir` **不等于** exe 目录）+ 平台专用 `src-tauri/tauri.linux.conf.json`；
+  `release.yml` 的 Linux 档打包前现拉库、打包后对**产物**断言（`scripts/check-linux-bundle.mjs`）。
+  ⚠️ **同日更正（CI 实测，2026-09-19）——这条在本版并未达成**：那套映射**没有**让库真的进包，
+  产物级断言在本版构建里**当场红**：`libpdfium.so` **不在 deb 里**、且在 AppImage 里位置不对
+  （`./squashfs-root/usr/lib/ShuyoNote/libpdfium.so`）⇒ Linux job 失败、**Linux 产物没有上传**。
+  ⇒ 结论：**Linux 仍会由阅读器的 pdf.js 回退顶上**；**更新通道因此暂停在 1.91.5**
+  （不能发一份缺 `linux-x86_64` 的清单，否则 Linux 用户会收不到更新）。修好映射后随下一版再发。
+  （断言本身是对的 —— 它把"看起来配了映射、实际没进包"这件事当场拦住，这正是它存在的意义。）
+
 ## [1.91.5] - 2026-09-19
 
 ### 安全
