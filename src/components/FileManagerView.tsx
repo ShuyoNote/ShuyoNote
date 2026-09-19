@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "../lib/platform";
 import { useNotes } from "../store/notes";
@@ -15,6 +15,12 @@ import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon } from "./icons";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
+import {
+  FM_VIEW_KEY,
+  defaultFileView,
+  readSavedFileView,
+  type FileViewMode,
+} from "../lib/fileManagerView";
 
 // 右键菜单用的内联 SVG（打开 / 改名）。
 const OpenIcon = ({ size = 14 }: { size?: number }) => (
@@ -118,11 +124,26 @@ export function FileManagerView() {
   const [versionTarget, setVersionTarget] = useState<AttachmentMeta | null>(null);
   const [progress, setProgress] = useState<{ name: string; percent: number } | null>(null);
   const importingRef = useRef(false);
-  const [viewMode, setViewMode] = useState<"list" | "grid">(
-    () => (localStorage.getItem("shuyonote:fmView") as "list" | "grid") || "list",
-  );
-  const setView = (v: "list" | "grid") => {
-    try { localStorage.setItem("shuyonote:fmView", v); } catch { /* ignore */ }
+  // 视图默认值：用户**显式选过**就永远听他的；没选过才按真实容器宽决定
+  //（策略与依据全在 lib/fileManagerView.ts，这里只负责喂它两个事实）。
+  const [savedView] = useState(() => readSavedFileView(localStorage.getItem(FM_VIEW_KEY)));
+  const [viewMode, setViewMode] = useState<FileViewMode>(() => savedView ?? "list");
+  // 只在"用户没选过"时自动决定，且**只决定一次**：手动切回表格后不许被窗口宽度抢回去。
+  const autoDecidedRef = useRef(savedView !== null);
+  const viewRootRef = useRef<HTMLDivElement>(null);
+  // 用 layout effect（浏览器首次绘制**之前**）量取容器真实宽度，避免"先画表格再跳卡片"的闪动。
+  useLayoutEffect(() => {
+    if (autoDecidedRef.current) return;
+    const w = viewRootRef.current?.clientWidth ?? 0;
+    // 量不到（未挂载 / 隐藏）就先不动，保持既有默认表格。
+    if (w > 0) {
+      setViewMode(defaultFileView(null, w));
+      autoDecidedRef.current = true;
+    }
+    // 有意只跑一次：进入时的宽度决定形态，之后的缩放不强制切换（用户的显式选择优先）。
+  }, []);
+  const setView = (v: FileViewMode) => {
+    try { localStorage.setItem(FM_VIEW_KEY, v); } catch { /* ignore */ }
     setViewMode(v);
   };
   // 网格视图内容预览：pageId -> content_text（按需拉取，避免全列表带正文）。
@@ -669,7 +690,7 @@ export function FileManagerView() {
   };
 
   return (
-    <div className="file-manager">
+    <div className="file-manager" ref={viewRootRef}>
       <div className="file-manager-head">
         <div className="file-manager-title-block">
           <span className="file-manager-bigicon">

@@ -19,6 +19,22 @@
 
 ### 修复
 
+- **文件管理：窄窗口的默认视图改成卡片**（2026-09-19，承接下面那条"压字"）。
+  上一条解决了"压字"，但表格在窄窗口里仍要靠横向滚动才读得全；而文件管理本来就有卡片视图，
+  卡片列数本来就跟宽度走（`repeat(auto-fill, minmax(gridSize, 1fr))`）——
+  所以只需让窄窗口**默认**落到卡片，不必把 `<table>` 再双份渲染成卡片
+  （两种做法的利弊与工作量对比见当天的分析：便宜约一个数量级）。
+  策略收在 `src/lib/fileManagerView.ts`（纯函数）：**用户显式选过就永远听他的**；没选过才看容器宽，
+  ≥ 表格 `min-width` 用表格，否则卡片；量不到宽度保持既有默认表格。
+  组件用 `useLayoutEffect` 在**首次绘制之前**量根容器自身宽度
+  （App.tsx 里有 7 个 `.main`，靠选择器猜容器是错的，所以用 ref 量自己），
+  只自动决定一次，且**绝不写回 `localStorage`** —— 写一次就会把用户永久钉在卡片视图。
+  判据在 `src/lib/fileManagerView.test.ts`：策略矩阵 + 「断点常量与 `App.css` 里
+  `.file-manager-table` 的 `min-width` 逐字一致」防漂移 + 接线形状。
+  四条接线变异（删 ref / 绕过策略硬编码 / 去掉"只决定一次"闸门 / 退化成视口宽）逐一实测均红。
+  诚实边界：接线那部分是**读源码的形状保护**，不是端到端（本仓没有组件渲染基建，
+  无 testing-library、无 `.test.tsx`）；`tsc --noEmit` 0 错。
+
 - **Web 版（浏览器 / WebView 外壳）里「改名」会把正文清空**（2026-09-18 读代码时发现，顺手修）。
   `platform/web.ts` 的 `save_page` 用 `str(args.content_json ?? "")` 取内容 ⇒ 只传标题的保存
   （`store/notes.ts` 与 `FileManagerView.tsx` 的 `savePage({ id, title })`）会把 `content_json` /
