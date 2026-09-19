@@ -21,6 +21,36 @@ export function countsFromOutput(output) {
   return null;
 }
 
+/**
+ * 「基线太旧」的**提示**（不是失败）—— 与 `baselineViolations` 分工不同：
+ *
+ * - `baselineViolations` 管「读数**下降**」⇒ **红**（那是硬约束：不许偷偷删断言）；
+ * - 本函数管「下界**太旧**」⇒ 只是一条 `!`（`report-core` 本来就把自报提示收成一等公民）。
+ *
+ * 为什么不能把"太旧"也判红（2026-09-19 与 macOS 侧确认）：读数上涨是**正常事**，
+ * 判红就等于逼人每加一批测试都改基线，最后大家会习惯性 `--update-baseline`，
+ * **护栏反而失效**。而"下界低到没有意义"（例如 vitest 记着 746、当前 1299）确实需要有人知道，
+ * 所以它是提示：后果不同，处置也不同。
+ */
+export function staleBaselineNotices({ results, baseline, thresholdPct = 80 }) {
+  const out = [];
+  for (const r of results) {
+    if (!r.baseline) continue;
+    const expected = baseline?.counts?.[r.id];
+    const actual = r.counts?.total;
+    if (typeof expected !== "number" || typeof actual !== "number") continue;
+    if (actual <= 0 || expected >= actual) continue; // 不旧（或读数没解析出来）就不提
+    const pct = Math.round((expected / actual) * 100);
+    if (pct < thresholdPct) {
+      out.push(
+        `\`${r.id}\` 的基线 ${expected} 只有当前读数 ${actual} 的 ${pct}%`
+          + `（阈值 ${thresholdPct}%）—— 这条「只增不减」实际上拦不住什么，建议 --update-baseline 抬到实际值`,
+      );
+    }
+  }
+  return out;
+}
+
 export function countsFromVitestJson(j) {
   if (!j || typeof j !== "object") return null;
   if (typeof j.numTotalTests !== "number") return null;
@@ -326,6 +356,11 @@ export function markdownReport(report) {  const lines = [];
     for (const r of selfSkipped) {
       for (const t of r.skips.slice(0, 3)) lines.push(`- \`${r.id}\`：${t}`);
     }
+  }
+  // 「下界太旧」的提示：不是失败，所以与失败/跳过分开列（CI 摘要里也要能看到）
+  if (report.baselineNotices?.length) {
+    lines.push("", "### ! 基线提示（下界太旧，**不是**失败）");
+    for (const n of report.baselineNotices) lines.push(`- ${n}`);
   }
 
   const skipped = report.results.filter((r) => r.status === "skipped");

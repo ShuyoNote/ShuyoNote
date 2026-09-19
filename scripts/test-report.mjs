@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_GROUPS, GATES, GROUP_ORDER, gateSetOf } from "./lib/gates.mjs";
-import { baselineViolations, countsForGate, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, summaryLine } from "./lib/report-core.mjs";
+import { baselineViolations, countsForGate, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, staleBaselineNotices, summaryLine } from "./lib/report-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmpDir = join(root, ".test-report-tmp");
@@ -71,7 +71,8 @@ if (LIST) {
 }
 
 // 从别处跑出来的报告（CI artifact）并入基线：**不跑任何门禁**，只写 tests/baseline.json。
-// 典型用途：rust 组只在 Linux CI 上有可信读数（本机 Windows 上测试二进制加载期就异常退出，
+// 典型用途：rust 组的**全量**读数只在 Linux CI 上有可信读数（Windows 本机可用
+// scripts/win-cargo-test.ps1 跑 lib 目标，但 `plugins::` 那 34 条要真宿主进程；
 // 见 docs/TESTING.md 的"已知边界"）。用法：
 //   node scripts/test-report.mjs --baseline-from rust-report.json
 const baselineFrom = argValue("--baseline-from");
@@ -375,6 +376,10 @@ violations.push(
   ...baselineViolations({ results, baseline, currentGates: GATES, updateBaseline: UPDATE_BASELINE }),
 );
 
+// 基线**太旧**的提示（不是失败）：见 `staleBaselineNotices` 的注释 ——
+// 「读数下降」红、「下界太旧」只提示，两件事的后果不同，别混成一条。
+const baselineNotices = UPDATE_BASELINE ? [] : staleBaselineNotices({ results, baseline });
+
 // 写基线：只记**这次真正跑出来**的读数（跳过的门禁不写，避免把 null 当基线）。
 if (UPDATE_BASELINE) {
   const counts = { ...(baseline.counts || {}) };
@@ -422,6 +427,8 @@ const report = {
     commands: r.commands || [],
   })),
   baselineViolations: violations,
+  // 显式进报告：提示也要能在 `--json` 里被读到（否则"终端一闪而过"就等于不存在）
+  baselineNotices,
   externalSuites: readExternalSuites(),
 };
 const failedCount = report.results.filter((r) => r.status === "failed").length;
@@ -435,6 +442,7 @@ for (const r of report.results) {
   console.log(`${icon} ${r.id.padEnd(22)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s${counts}`);
 }
 for (const v of violations) console.log(`❌ 基线：${v}`);
+for (const n of baselineNotices) console.log(`! 基线提示：${n}`);
 console.log(
   `\n${report.ok ? "全部通过" : "存在失败"}：${report.results.length} 条门禁，失败 ${failedCount} 条，跳过 ${skippedCount} 条，`
     + `总耗时 ${(totalMs / 1000).toFixed(1)}s`,

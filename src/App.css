@@ -15579,6 +15579,18 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   background: var(--hover);
 }
+/* 「跨库总结」：挨着「新会话」放左边，模型名继续靠右（footer 是 space-between） */
+.ai-footer-summary {
+  margin-right: auto;
+}
+.ai-footer-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ai-footer-btn:disabled:hover {
+  color: var(--text-dim);
+  background: transparent;
+}
 .ai-footer-model {
   font-size: 11px;
   color: var(--text-faint);

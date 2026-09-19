@@ -141,10 +141,47 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
     })
 }
 
+/// **仍被引用的附件 hash** —— 附件字节是**全局共享**的内容寻址目录（所有空间同一份），
+/// 所以"这个字节还有没有人用"必须**跨全部空间**来问，而且**不许 join `pages`**。
+///
+/// ⚠️ 这两点是 2026-09-19 社区缺陷帖 #6（GitCode issue #6）的根因：
+///   · 旧口径 ①（`clear_trash`）：删完行后在**当前空间**里 `SELECT COUNT(*) FROM attachments WHERE hash=?`
+///     ⇒ 别的空间还在引用同一 hash 时，也一样被判成孤儿 ⇒ **字节被删、那边的行还在**；
+///   · 旧口径 ②（`purge_deleted_workspaces`）：`attachments a JOIN pages p ON p.id = a.page_id`
+///     ⇒ 内连接**漏掉** `page_id IS NULL`（根目录文件）与"页已不在"的历史行 ⇒ 同样误判成孤儿。
+/// 结果是对方空间出现「**行在字节不在**」：界面显示「未下载」，而如果那个空间没配同步
+/// （服务器上也没有），就**永久不可恢复**。
+///
+/// 判据只有一句：`SELECT DISTINCT hash FROM attachments`（**不 join、不按 page 过滤**）。
+pub(crate) fn referenced_hashes(conns: &[rusqlite::Connection]) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    for c in conns {
+        if let Ok(mut stmt) = c.prepare("SELECT DISTINCT hash FROM attachments") {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                set.extend(rows.flatten());
+            }
+        }
+    }
+    set
+}
+
+/// 生产路径：把**所有**空间库连接拿过来（含回收站里的空间 —— 它们的行还在，字节就还在被引用）。
+fn all_referenced_hashes(meta: &rusqlite::Connection) -> std::collections::HashSet<String> {
+    let ids: Vec<String> = meta
+        .prepare("SELECT id FROM meta.workspaces")
+        .and_then(|mut s| {
+            s.query_map([], |r| r.get::<_, String>(0))
+                .map(|rows| rows.flatten().collect::<Vec<String>>())
+        })
+        .unwrap_or_default();
+    let conns: Vec<rusqlite::Connection> =
+        ids.iter().filter_map(|sid| crate::db::open_space_conn(sid).ok()).collect();
+    referenced_hashes(&conns)
+}
+
 /// M14.2 — Permanently delete trash (soft-deleted pages) and release their bytes.
 #[tauri::command]
-pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
 
     // Collect trash page ids + candidate hashes while locked.
@@ -206,18 +243,12 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
     }
 
     // Determine which hashes are now orphaned (no longer referenced) before releasing the lock.
+    // ⚠️ **跨全部空间**来问（见 `referenced_hashes` 的注释）：只查当前空间会把**别的空间**
+    // 仍在引用的字节当成孤儿删掉 ⇒ 那边出现「行在字节不在」（2026-09-19 缺陷帖 #6）。
     let orphaned: std::collections::HashSet<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let mut set = std::collections::HashSet::new();
-        for hash in &hashes {
-            let n: i64 = c
-                .query_row("SELECT COUNT(*) FROM attachments WHERE hash = ?1", params![hash], |r| r.get(0))
-                .unwrap_or(0);
-            if n == 0 {
-                set.insert(hash.clone());
-            }
-        }
-        set
+        let still_referenced = all_referenced_hashes(&c);
+        hashes.iter().filter(|h| !still_referenced.contains(*h)).cloned().collect()
     };
 
     // Release bytes off the main thread (no DB needed).
@@ -383,7 +414,9 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
             // Collect this space's referenced hashes by opening its DB (read-only intent).
             if let Ok(conn) = crate::db::open_space_conn(sid) {
                 if let Ok(mut stmt) = conn.prepare(
-                    "SELECT DISTINCT a.hash FROM attachments a JOIN pages p ON p.id = a.page_id",
+                    // ⚠️ 不 join `pages`：内连接会漏掉 `page_id IS NULL`（根目录文件）与
+                    // "页已不在"的历史行，那些字节会被当成孤儿（2026-09-19 缺陷帖 #6）。
+                    "SELECT DISTINCT hash FROM attachments",
                 ) {
                     if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                         for h in rows.flatten() {
@@ -440,7 +473,9 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     for sid in remaining_ids {
         if let Ok(conn) = crate::db::open_space_conn(&sid) {
             if let Ok(mut stmt) = conn.prepare(
-                "SELECT DISTINCT a.hash FROM attachments a JOIN pages p ON p.id = a.page_id",
+                // ⚠️ 不 join `pages`（同 `referenced_hashes` 的注释）：漏掉 `page_id IS NULL`
+                // 与"页已不在"的行 ⇒ 那些字节被别的空间仍在引用也被当孤儿删（缺陷帖 #6）。
+                "SELECT DISTINCT hash FROM attachments",
             ) {
                 if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                     referenced_remaining.extend(rows.flatten());
@@ -521,5 +556,36 @@ mod tests {
 
         let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0);
+    }
+
+    /// 判据（2026-09-19 缺陷帖 #6 / GitCode issue #6）：**"谁还被引用"必须跨空间、且不看 `pages`**。
+    ///
+    /// 反例（这条判据要能抓住）：把口径换成 `attachments a JOIN pages p ON p.id = a.page_id`，
+    /// 下面两条"页不可解析"的行都会从集合里消失 ⇒ 它们的字节会被当成孤儿删掉，
+    /// 而**另一侧空间的行还在** ⇒ 用户看到「行在字节不在」。
+    #[test]
+    fn referenced_hashes_counts_rows_whose_page_is_gone_or_null() {
+        const H: &str = "f2534c73fa62c0a6e0e5b6c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
+        // 空间 A：附件行指向一个**不存在**的页（页被永久删除后的残留 / 历史脏数据）
+        let a = Connection::open_in_memory().unwrap();
+        migrate(&a, "a").unwrap();
+        a.execute(
+            "INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) \
+             VALUES ('x1','gone','n',?1,'image/png',1,1)",
+            params![H],
+        )
+        .unwrap();
+        // 空间 B：同一个 hash，page_id 为空（根目录文件）
+        let b = Connection::open_in_memory().unwrap();
+        migrate(&b, "b").unwrap();
+        b.execute(
+            "INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) \
+             VALUES ('x2',NULL,'n',?1,'image/png',1,1)",
+            params![H],
+        )
+        .unwrap();
+
+        let set = referenced_hashes(&[a, b]);
+        assert!(set.contains(H), "跨空间 + 页不可解析都必须算被引用：{set:?}");
     }
 }

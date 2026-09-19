@@ -260,6 +260,14 @@ pub struct SyncItem {
     pub title: String,    // human-readable name (page title, etc.), best-effort
 }
 
+/// 整批预扫：这批变更里**有没有本机构建解不开的密文版本**（§0-C）。
+///
+/// 抽成独立函数是为了能单测（`prescan_payload_formats_refuses_the_whole_batch`）——
+/// 它必须在应用循环**之前**调用，这一点由调用点的位置保证（见 `do_pull`）。
+fn prescan_payload_formats(changes: &[IncomingChange]) -> Result<(), String> {
+    security::ensure_payloads_supported(changes.iter().filter_map(|c| c.payload.as_deref()))
+}
+
 /// Best-effort human-readable name for a change payload (page title, etc.).
 fn item_title(entity: &str, payload: Option<&String>) -> String {
     if entity == "page" && payload.is_some() {
@@ -1366,6 +1374,11 @@ async fn do_pull(
     }
     let body: PullResponse = resp.json().await.map_err(|e| e.to_string())?;
 
+    // ★ §0-C：**动手之前**把整批载荷的密文版本过一遍 —— 只要有一段本构建解不开就整批拒绝
+    //   （返回 Err ⇒ 下面一条都不应用、游标不推进）。逐条 decrypt 失败会**应用一半**，
+    //   而用户看到的是"同步了一部分、剩下的老报错"，真正原因却是"这版应用读不了那个空间的数据"。
+    prescan_payload_formats(&body.changes)?;
+
     let mut max_pulled = last_pulled;
     let mut count: usize = 0;
     let mut items: Vec<SyncItem> = Vec::new();
@@ -1829,7 +1842,7 @@ async fn download_one_attachment(
     token: &str,
     item: &RemoteAttachment,
     attachments_dir: &Path,
-    session_key: Option<&[u8; 32]>,
+    session_key: Option<&crate::crypto::AppKeys>,
     db: &State<'_, Db>,
 ) -> Result<i64, String> {
     let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
@@ -2441,6 +2454,45 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §0-C：**整批预扫**——这批变更里只要有一段本构建解不开，就要在应用**之前**整批拒绝。
+    ///
+    /// 为什么值得单独一条判据：逐条 `decrypt` 失败会**应用一半**（游标停在中途），
+    /// 用户看到的是"同步了一部分、剩下老报错"，而真正原因是"这版应用读不了那个空间的数据"。
+    /// 判据只覆盖这个**纯函数**的语义；"必须在应用循环之前调用"由 `do_pull` 里的调用点位置保证
+    /// （⚠️ 诚实边界：这里没有起真服务端做端到端，属真机/集成验收）。
+    #[test]
+    fn prescan_payload_formats_refuses_the_whole_batch() {
+        let ch = |payload: Option<String>| IncomingChange {
+            seq: 1,
+            entity: "page".to_string(),
+            entity_id: "p1".to_string(),
+            op: "upsert".to_string(),
+            payload,
+            updated_at: 1,
+        };
+        // 明文载荷（加密未开）：一律放行
+        assert!(prescan_payload_formats(&[ch(Some(r#"{"id":"p1"}"#.to_string()))]).is_ok());
+        // 没有载荷（delete 之类）：放行
+        assert!(prescan_payload_formats(&[ch(None)]).is_ok());
+
+        let keys = crate::crypto::derive_app_keys("pw", &crate::crypto::random_salt()).unwrap();
+        let v1 = crate::crypto::encrypt_str("ok", &crate::crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        assert!(prescan_payload_formats(&[ch(Some(v1.clone()))]).is_ok(), "v1 载荷应当放行");
+
+        // 伪造一段 v2（本构建解不开）：**一批里只要有一段**就必须整批拒绝
+        let mut blob = crate::crypto::b64_decode(&v1).unwrap();
+        blob[1] = crate::crypto::VERSION_SM4;
+        let v2 = crate::crypto::b64_encode(&blob);
+        let batch = [ch(Some(v1)), ch(Some(v2)), ch(None)];
+        if cfg!(feature = "sm-crypto") {
+            assert!(prescan_payload_formats(&batch).is_ok(), "国密构建读得了 v2，不该拦");
+        } else {
+            let err = prescan_payload_formats(&batch).unwrap_err();
+            assert!(err.contains("整批拒绝"), "错误要说清'一条都没应用'：{err}");
+            assert!(err.contains("国密版"), "错误要可操作：{err}");
+        }
+    }
 
     /// 复刻生产布局：main 为空间库，meta 作为 ATTACH 库承载 workspaces/sync_profiles。
     ///

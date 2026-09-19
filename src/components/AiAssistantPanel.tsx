@@ -43,6 +43,7 @@ export function AiAssistantPanel() {
     dismiss,
     clearResult,
     resetError,
+    summarizeLibrary,
   } = useAiStore();
   const open = useRightPanel((s) => s.ai);
   useOverlayScrollLock(open);
@@ -276,6 +277,19 @@ export function AiAssistantPanel() {
         {config.enabled && (
           <div className="ai-footer">
             <button className="ai-footer-btn" onClick={newConversation} title="开始一段新对话">＋ 新会话</button>
+            <button
+              className="ai-footer-btn ai-footer-summary"
+              disabled={running}
+              title="把整个库里已索引的内容分批总结成一条条带回链的笔记（先点「开始索引」把内容索引好；框里有字就把它当问题）"
+              onClick={() => {
+                const q = prompt.trim();
+                if (running) return;
+                setPrompt("");
+                void summarizeLibrary(q || undefined);
+              }}
+            >
+              跨库总结
+            </button>
             <span className="ai-footer-model" title="当前模型">{config.model}</span>
           </div>
         )}

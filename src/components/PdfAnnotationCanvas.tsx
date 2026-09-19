@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { createPortal } from "react-dom";
 import { stickyEditRegion } from "../lib/pdfLayout";
 import { api } from "../lib/api";
-import { type PdfAnnotation, annPxBox, normCoords, pageToBlock, pdfRef } from "../lib/pdfAnnotation";
+import { type PdfAnnotation, annPxBox, normCoords, pageToBlock, pdfRef, removeAnnotation } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
 import { ocrRecognize, OCR_PAGE_SCALE } from "../lib/ocr";
 import { useAiStore } from "../store/ai";
@@ -36,6 +36,12 @@ interface Props {
   textItems?: TextItemLike[] | null;
   focusTarget?: { pageIndex: number; ann: PdfAnnotation } | null;
   onFocusConsumed?: () => void;
+  /**
+   * B6 反向同步（缺陷帖 #8）：右侧栏删掉一条批注后，本页要立刻把它从阅读区去掉。
+   * 形态与 focusTarget 一致——一次性目标 + 消费回调，只有页码匹配的那一页消费它。
+   */
+  deleteTarget?: { pageIndex: number; annId: string } | null;
+  onDeleteConsumed?: () => void;
   /** 受控工具选择（由顶部工具栏共享）。 */
   tool: AnnotTool;
   onToolChange: (t: AnnotTool) => void;
@@ -74,7 +80,7 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
 // 高亮/矩形按 box 的 x0..x1；墨迹按 points 包围盒。统一走 pdfAnnotation 的 annPxBox，
 // 让屏幕 SVG 与「导出带批注副本」的 canvas 渲染共用同一套几何。以下注释保留示意。
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, tool, onToolChange, registerController, onStateChange, onChanged, renderPage }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, deleteTarget, onDeleteConsumed, tool, onToolChange, registerController, onStateChange, onChanged, renderPage }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
@@ -139,6 +145,21 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       onFocusConsumed?.();
     }
   }, [focusTarget, pageIndex, onFocusConsumed, W, H]);
+
+  /**
+   * B6 反向同步（缺陷帖 #8，2026-09-19）：右侧栏删除只改了父级的 records 与服务端记录，
+   * 而本页的 `annotations` **只在 attachmentId/pageIndex 变化时**才加载（见上面那条 effect）
+   * ⇒ 阅读区会继续画出这条已经不存在的批注。这里消费一次性 target，把本页状态同步成
+   * 「删掉它的版本」；复用已被单测覆盖的纯函数 `removeAnnotation`，不另写一份过滤逻辑。
+   * 顶部工具栏的批注计数由下面那条 `[annotations, …]` effect 自动刷新。
+   */
+  useEffect(() => {
+    if (!deleteTarget) return;
+    if (deleteTarget.pageIndex !== pageIndex) return;
+    setAnnotations((prev) => removeAnnotation({ pageIndex, annotations: prev }, deleteTarget.annId).annotations);
+    setSelected((prev) => (prev === deleteTarget.annId ? null : prev));
+    onDeleteConsumed?.();
+  }, [deleteTarget, pageIndex, onDeleteConsumed]);
 
   const runOcr = async () => {
     if (ocrBusyRef.current) return;

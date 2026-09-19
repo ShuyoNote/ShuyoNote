@@ -41,10 +41,270 @@
 | MAC | **HMAC-SM3**，tag **32 字节** | GM/T 0004 |
 | **MAC 覆盖范围** | **版本头 ＋ IV ＋ 密文**；**encrypt-then-MAC，先验后解** | §0-B。漏掉版本头会让降级攻击可行 |
 | 密钥 | **两个独立密钥**（加密 key / MAC key），**不得同一个** | §0-B |
-| KDF | **PBKDF2-HMAC-SM3**；盐 **16 字节**；输出 **64 字节 → 前 32 加密 / 后 32 MAC**；**迭代次数待压测后写死**（§0-D） | §0-D |
+| KDF | **PBKDF2-HMAC-SM3**；盐 **16 字节**；输出 **64 字节 → 前 16 加密 / 后 32 MAC**（⚠️ 2026-09-19 更正：SM4 是 **128 位**密钥，原来写的「前 32 加密」不成立；**输出长度仍是 64 字节**，见 §0.2 口径 1）；**迭代次数 = 200000**（已压测写死，§0.2） | §0-D、§0.2 |
 | 密文头 | **2 字节**（1B magic ＋ 1B 版本）；文本路径整体 base64、二进制路径直接用 | §0-A |
 | 实现来源 | 应用层 **RustCrypto**；库级 **Tongsuo**；**双向对拍是验收项** | §0-F |
 | RustCrypto 侧可用性（**2026-09-17 实测**） | `sm4 0.6.0`、`cbc 0.2.1`（含 `block-padding`）、`sm3 0.5.0`、`hmac 0.13.0` **全在**（`cargo add --dry-run`） | 回答 AMD 的"先确认 crate 齐不齐" |
+
+> ⚠️ **历史记录**：上表那一格原来写的是"**前 32** 加密"，P1 落地时发现它与"SM4"不能同时成立
+> （SM4 是 **128 位 = 16 字节**密钥）⇒ 已**直接改格**（而不是只写在注里：只读表不读注的人会拿走旧口径，
+> 而这条口径错了的症状正是"跨设备互相解不开"）。取法是"**64 字节输出不变、SM4 取前 16 字节**" ——
+> 保留 64 字节是为了**两侧逐字节可比**（Tongsuo 侧同一句 `PKCS5_PBKDF2_HMAC(..., EVP_sm3(), 64, out)`），
+> 改输出长度会让对拍失去意义。详见 §0.2 口径 1，判据见 T5② 与 `crypto_sm` 的黄金向量用例。
+
+---
+
+## 0.2 P1 落地记录（2026-09-19，Mac）
+
+P1 = **应用层 SM4**（§6 表），交付形态是**编译期 feature `sm-crypto`**（§0-E）；默认包字节不变。
+
+**密文格式 v2（落盘布局，`MAGIC=0x53`）**
+
+```text
+offset 0      : 0x53                      magic
+offset 1      : 0x02                      版本 2 = 国密
+offset 2..18  : iv(16)                    SM4-CBC 的 IV，随机、不保密、同密钥不复用
+offset 18..N  : SM4-CBC + PKCS#7 密文     长度必为 16 的整数倍（PKCS#7 整块填充）
+最后 32 字节  : HMAC-SM3 tag              覆盖 **前 N 字节全部**（含 magic+version+iv）
+```
+
+**两处常量表没写、P1 必须自己钉死的口径**（都会影响跨实现对拍，已同步信箱）：
+
+1. **SM4 密钥 = KDF 输出的前 16 字节**（而不是"前 32"）：见上面那条 ⚠️。
+   多出来的 16 字节不参与运算；`enc[16..32]` 纯粹是"输出 64 字节"这条接口的副产物。
+2. **tag 放在尾部**：§0.1 只钉了"覆盖范围"，没钉位置。选尾部的理由：EtM 的自然写法是
+   "先算完密文再算 MAC"，且**先验后解**时不依赖任何长度假设。
+
+**版本分派（`crypto::decrypt`，双读 + 三条边界）**
+
+| 头 | 走向 | 备注 |
+|---|---|---|
+| `0x53 0x01` | v1 XChaCha20-Poly1305（P0 起默认） | 用 `legacy` 密钥 |
+| `0x53 0x02` | v2 国密 | 用 `sm.enc/sm.mac`；无国密实现或无密钥 ⇒ **可操作**报错（不装成"数据损坏"） |
+| 无头 / 其它 | **先按 v0 试**（P0 之前的 `nonce‖ct`） | 撞头（首两字节恰好是 magic+版本号，概率 1/65536）必须仍可读 |
+| `0x53 0x03+` | 明确报"请升级再打开" | 老端读新密文的唯一正确姿势（§0-C） |
+
+**密钥材料**：`crypto::AppKeys { legacy, sm: Option<SmKeys{enc,mac}> }`，由 `derive_app_keys` 一次派生：
+
+- `legacy` = **Argon2id**（口径**不许动**）：它同时是 SQLCipher 的 `PRAGMA key` 原始密钥，
+  且是 v0/v1 双读的钥匙 ⇒ 国密构建里也**必须**是同一个值（`security.rs` 有用例钉住这一点）；
+- `sm` = **PBKDF2-HMAC-SM3**（§0.1 那条），只喂应用层 AEAD。
+- 两条 KDF 复用同一个 16 字节盐：域不同（Argon2id / PBKDF2-HMAC-SM3），复用不引入额外风险。
+
+**§0-D 压测读数（这就是"写死"的依据）**
+
+```text
+cargo test --release --features sm-crypto --lib -- --ignored --nocapture kdf_cost
+Apple M4 Max（macOS 15，release）
+Argon2id（默认参数）        ：    19.7 ms
+PBKDF2-HMAC-SM3   50000 轮  ：    32.5 ms
+PBKDF2-HMAC-SM3  100000 轮  ：    50.6 ms
+PBKDF2-HMAC-SM3  200000 轮  ：    91.8 ms
+PBKDF2-HMAC-SM3  400000 轮  ：   183.6 ms   （≈4.6 ms / 万轮，线性区）
+```
+
+**取值：`SM_KDF_ROUNDS = 200_000`**（`crypto_sm.rs` 一个常量，配 `kdf_rounds_are_the_pinned_value` 断言防改小）。
+本机解锁合计 ≈ **112 ms**；按单核性能比（M4 Max ≈ 中端 SoC 的 4–6 倍）**外推**中端机 ≈ **0.4–0.7 s**，
+落在 §0-D 的"< 1 秒"内且留了一倍余量。
+
+> ⚠️ **诚实标注两件事**：
+> ① 上面那个中端机数字是**外推**，不是设备实测 —— 真机读数属于 Android/Windows 真机验收（§7），**未完成**；
+> ② 20 万轮**低于** OWASP 对 PBKDF2-SHA256 的 600k 建议。理由是本方案的硬约束是"中端机 < 1 秒"，
+> 且应用层 AEAD 之上还有 SQLCipher 自己的 256000 轮 PBKDF2-HMAC-SHA512。若甲方要求对齐 OWASP，
+> 需要先拿到真机读数、并接受解锁可能 > 1 秒 —— **这是一个可以被推翻的决定**，不是既成事实。
+
+**三条路径（§7 验收项逐条勾，都在 `--features sm-crypto` 下有用例）**
+
+| 路径 | 入口 | 用例 |
+|---|---|---|
+| 附件静置（含同步上传/下载） | `security::encrypt/decrypt_attachment_bytes` | `security::tests::national_crypto_covers_all_three_paths_…` |
+| 同步载荷 | `security::encrypt/decrypt_payload` | 同上 |
+| 导出附件副本（导出包里那条读路径） | `attachments::export_attachment_to` | `attachments::export_attachment_tests::encrypted_export_under_national_crypto_…` |
+
+**跨实现对拍在 macOS 上真跑（2026-09-19，本轮补）**
+
+```text
+# 先编 Tongsuo（见 §3 表里新加的那一行；装到 <p>/lib）
+SHUYONOTE_TONGSUO_OPENSSL=$HOME/tongsuo-macos/install/bin/openssl node scripts/check-gm-conformance.mjs
+  对拍另一方：Tongsuo: Tongsuo 8.5.0-pre2 (Library: Tongsuo 8.5.0-pre2) / OpenSSL 3.5.4
+gm-conformance: ✅ 通过 —— 跑成 12 个用例（含跨实现对拍）
+  T1–T5 Tongsuo 对拍：标准向量 / 双向互解 / 密文逐字节相同 / HMAC 一致 / PBKDF2-HMAC-SM3 与拆 key 口径
+```
+
+⇒ **④ 的 macOS 那一半取证完成**：Tongsuo 自己命中 GM/T 0002/0004 标准向量；两个方向都解得开对方的密文；
+**两侧密文逐字节相同**（CBC＋PKCS#7 下的最强证据）；HMAC-SM3 tag 一致。与 AMD 的 Linux 读数同源同 commit。
+
+> 合并说明（2026-09-19）：本节最初按 **9/9** 写（T1–T4 ＋ R1–R4）。同一天 AMD 在 dev 上
+> （`748d6233`）**独立发现了同一个 8 字节探针 bug**，并补了 **T5 = PBKDF2-HMAC-SM3 跨实现 ＋
+> 「SM4 取前 16 字节 / MAC 取后 32 字节」两条拆 key 口径**（正好是本轮信里请他们确认的那两条 ——
+> 也就是说口径 1 现在**由可执行判据回答**，不靠回信承诺）。合并后 macOS 侧复跑 = **12/12**。
+
+**KDF 黄金向量（两侧独立产出、逐字节相同 ⇒ 谁都能拿去钉）**
+
+```text
+参数：pass=a-typical-passphrase  salt=5a×16  iters=200000  out_len=64
+KDF ：b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad9
+      9c3469e8dc977dd3fd159ef69d41d39742a54f140e932498e5b5c069fb0861d4
+⇒ SM4 密钥 = 前 16 字节  b5623ce8682771b65b7d72a9c0b707ad
+⇒ MAC 密钥 = 后 32 字节  d99c3469e8dc977dd3fd159ef69d41d39742a54f140e932498e5b5c069fb0861d4
+```
+
+这条向量是 **AMD 用真 Tongsuo 的 CLI 产出的**，本机再用自家 `tools/gm-conformance kdf` **复算一遍、
+逐字节相同**才写进 `crypto_sm::tests::kdf_golden_vector_and_key_slicing`（两侧独立产出，不是抄数）。
+
+**为什么非要有它**（AMD 2026-09-19 提出、本机实测确认）：T5 只证明"给同一个输入时两侧一致"，
+证明不了"**应用里那两行切片取的是哪 16 个字节**"。承重证明（本机跑的变异）：
+把 `sm4_key()` 从 `enc[..16]` 改成 `enc[16..32]`，**往返／确定性／EtM 那 8 条全绿**，
+**只有这条黄金向量红** —— 也就是说没有它，改错切片会一路静默，而症状是跨设备互解失败。
+
+> ★ **这一跑顺带抓出一个我自己的判据缺陷（值得写下来）**：Tongsuo 探针原来喂的是 **8 字节**明文给
+> `-nopad` 的 SM4-ECB —— 8 不是分组整数倍 ⇒ openssl 退出码非 0 ⇒ 探针**恒 false** ⇒
+> **T1–T4 永远走"跳过"那一支**。后果不是红，而是"给了 Tongsuo 也照样绿并自报跳过"：
+> 判据看着在岗，其实从来没开过火（而这台机器上一直没编 Tongsuo，所以谁都没发现）。
+> 修了两处：① 探针喂**恰好一个分组**（就是标准向量那 16 字节）并断言等于期望密文；
+> ② **指名了 `SHUYONOTE_TONGSUO_OPENSSL` 却用不了 ⇒ 红，不是跳过** —— 这两件事后果完全不同
+> （没给路径＝这台机器没装；给了却打不开＝这一路判据失效），后者伪装成跳过时人会以为"对拍有了"。
+> 三种状态都实测过：不设变量 3/3 绿并自报跳过；指名 `/nonexistent/openssl` 与 `/bin/cat` 各**红**
+> （报错直接点出"这不是跳过"）；指名真 Tongsuo 12/12 绿。
+> 另：探针**证不出对方身份** —— macOS 自带的 LibreSSL `/usr/bin/openssl` 也把 9 条全过了
+> （它也有 SM4）。所以门禁现在会把**对拍另一方的版本行**打出来，让读数可复核，而不是靠名字。
+
+**§0-C 最后两条落地（2026-09-19，Mac）**
+
+§0-C 的原文要求是"算法标识除了密文头，还要落到**空间状态 ＋ 同步载荷**"，
+目的只有一个：**老端在整空间/同步之前就明确拒绝并提示升级**，而不是逐条解密失败、让用户以为数据坏了。
+落法（**不动服务端、不动线格式** —— 标识本来就藏在密文头里，缺的是"**动手之前**去看它"）：
+
+| 机制 | 实现 | 判据 |
+|---|---|---|
+| 不解密就能读版本 | `crypto::peek_format` / `format_supported` / `unsupported_format_error` | `crypto::tests::peek_format_reads_the_header_without_a_key`（三格：无头/v1/v2 ＋ 未来版本 ＋ 非密文） |
+| **同步整批拒绝** | `security::ensure_payloads_supported`；`sync.rs::do_pull` 在**应用循环之前**调 `prescan_payload_formats` | `sync::tests::prescan_payload_formats_refuses_the_whole_batch`（一批里夹一段 v2 ⇒ 整批 Err；明文/无载荷放行） |
+| **空间级标识** | `meta.workspaces.cipher_format`（幂等迁移）＋ `space_format()` / `ensure_space_format_supported()`，并在 **`sync_gate`** 里挡住 | `db::tests::meta_migrate_adds_cipher_format_to_an_old_meta_db`、`security::tests::space_guard_refuses_v2_in_the_default_build`／`…allows_v2_in_the_sm_build` |
+| **附件拒绝**（★ 堵住一个**安静损坏**） | `decrypt_attachment_bytes` **先看头**：认得出但本构建解不开的版本 ⇒ **拒绝**，不再"解不开就当明文" | `security::tests::attachment_bytes_of_an_unsupported_format_are_refused_not_passed_through` |
+
+> ★ **附件那条是本轮最值得记的**：旧的"解不开 ⇒ 透传"逻辑对**明文附件**是对的（加密未开时存的就是明文），
+> 但对"**本构建读不了的密文**"是灾难 —— 它会把密文当明文交给上层，**安静地写出一个损坏的文件**，
+> 比报错更坏。所以改成："看着就是我们的密文、但版本解不开" ⇒ 拒绝并说清换哪个版本；
+> "认得出的版本但解不开（口令不同）"与"根本不是密文" ⇒ 维持老的透传语义（不许把老行为改坏）。
+
+> ⚠️ **诚实边界**：`prescan` 的判据只覆盖那个**纯函数**的语义；"必须在应用循环之前调用"由
+> `do_pull` 里的调用点位置保证，**没有起真服务端做端到端**（属真机/集成验收）。附件的同类判据
+> 也只在默认构建下断言"拒绝"，国密构建下的"放行"由 cfg 的另一半覆盖。
+
+**⑤ 的当前状态（本轮实测，不是转述方案的判断）**
+
+`src-tauri/target/release/build/libsqlite3-sys-*/output` 里写着 `cargo:rustc-link-lib=framework=Security`
+⇒ **macOS 上 SQLCipher 现在编的确实是 CommonCrypto 后端**（Apple 那套只有 AES），
+方案 §3 第 5 条那句在**本机本构建**上成立。
+
+### ⑤-1 换后端（2026-09-19 落地，含一个**必须写下来的坑**）
+
+**坑（本条的真正价值）**：方案说"选路只看 `OPENSSL_DIR` 一个环境变量"——**选路逻辑**是这样，
+但**只设它没用**：`libsqlite3-sys` 的 `build.rs` 只为 `SQLITE_MAX_*` / `LIBSQLITE3_FLAGS` /
+`SQLCIPHER_{INCLUDE,LIB}_DIR` 这些声明了 `rerun-if-env-changed`，**没有为 `OPENSSL_DIR` 声明** ⇒
+cargo 认为"环境没变" ⇒ **构建脚本根本不重跑**。实测现场（本机）：
+
+```text
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test …   ⇒ 编译通过、测试全绿
+产物 target/debug/build/libsqlite3-sys-*/output       ⇒ **仍然是 framework=Security**（CommonCrypto）
+```
+
+⇒ **"设了环境变量" ≠ "换了后端"**。必须逼构建脚本重跑：
+
+```text
+cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo build --lib --manifest-path src-tauri/Cargo.toml
+node scripts/check-crypto-backend.mjs        # 拿产物说话，不看你设了什么
+# 期望：✓ … ⇒ **openssl**（link-search=…/tongsuo-macos/install/lib，路径含 tongsuo）
+```
+
+**兼容性（换后端最容易出事的地方）**：SQLCipher 的页加密参数（PBKDF2-HMAC-SHA512 轮数 /
+AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**既有库仍应可读** —— 但这是判断，
+不是证据，所以有夹具：`src-tauri/tests/sqlcipher-backend-fixture.db` 是 **2026-09-19 由 macOS 默认
+（CommonCrypto）后端真实写下**的加密库（生成器 `security::tests::gen_backend_fixture`，key = `0x07 × 32`）。
+判据 `security::tests::fixture_db_written_by_the_other_provider_still_opens` 断言：**两行内容逐字相同、
+且还能继续写**。读数（2026-09-19）：在 **Tongsuo/OpenSSL 后端**下 `cargo test --lib security::` = **14/14 通过**
+（含上面这条 ＋ `encrypted_db_roundtrip_and_sniff` / `convert_space_db_*` / `full_loop_enable_restart_unlock_readable_disable`）
+⇒ **换后端前后旧库仍可读**这条验收项**取证完成**。
+
+**门禁**：`check-crypto-backend`（rust 组）—— 读 `libsqlite3-sys` 的构建产物，断言
+**实际编进去的后端 == 声明**；`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` 是国密构建的严格模式。
+状态分得很清：**没有本平台产物 ⇒ `!` 自报"未实查"**（没编过 ≠ 编错；只编了别的平台也算没查）；
+**最新产物 ≠ 声明 ⇒ 红**；**认不出后端 ⇒ `!` 未实查**（不装绿）；
+**旧产物分类不同 ⇒ `!` 提示**（那是"沉默不换后端"的现场痕迹）。
+
+**★ 第二个坑（AMD 2026-09-19 在 WSL 上把我抓出来的，比第一个更隐蔽）**：第一版把 target 目录写死成
+`<root>/src-tauri/target` 且"最新 mtime 胜出"。AMD 那台用 `CARGO_TARGET_DIR=/home/tester/shuyonote-target`
+（ext4，避免与 Windows 共用目标目录）⇒ 门禁**去读了仓库里那份 Windows 产物**，报出 `✓ openssl`，
+而 Linux 产物一个字没读。⇒ **"绿得不是它声称的那件事"**。已修（三条都是他建议的）：
+① 认 `CARGO_TARGET_DIR`；② 按当前平台过滤候选（Windows 产物带盘符反斜杠路径）；③ 过滤后只剩别的平台 ⇒ **未实查**。
+判据侧补了 4 条（`check-crypto-backend.test.mjs`，共 19 条），端到端也实测了三态：
+真实产物 ⇒ ✓；`CARGO_TARGET_DIR` 只含 Windows 产物 ⇒ 未实查；混合目录且 Windows 那份 mtime 更新 ⇒ **仍挑 unix 那份**。承重证明（本机双向实测）：
+产物 openssl ＋ 声明 openssl ⇒ 绿；产物 CC ＋ 声明 openssl（**正是我自己踩的那一脚**）⇒ 红并附清库命令。
+
+**库级国密的构建侧开关（2026-09-19 补）**：新增 feature **`sm-library`**（与 `sm-crypto` 分开：
+应用层不吃构建链，库级才吃）。打开它 ⇒ `src-tauri/build.rs` **fail-fast**：
+没给 `OPENSSL_DIR` 就**当场构建失败**，并把 Tongsuo 构建 ＋ `cargo clean -p libsqlite3-sys` 的完整修法打进报错里。
+三种状态实测：① 不带 `sm-library` ⇒ 默认构建照旧（后端 CC，符合声明）；② 带 `sm-library` 不给 `OPENSSL_DIR`
+⇒ 当场失败；③ 带 `sm-library` ＋ `OPENSSL_DIR=<Tongsuo>`（clean 后）⇒ 编过，门禁确认后端为 **openssl**。
+> 这条的设计理由：**"没给 OPENSSL_DIR"本身不会报错**，它只是安静地编出一个没有国密算法的库 ——
+> 库级国密版不能有这种结局（要么显式指定、要么当场死）。
+
+**⚠️ 明确没做、以及为什么**：**没有**把 macOS 的**默认**构建翻到 Tongsuo。两个理由：
+① 翻了就等于要求**每个 macOS 开发者与默认 CI**都先编一份 Tongsuo —— 与 §0-E「国密版另发、默认包不背构建链风险」直接冲突；
+② 库级 SM4/SM3 的 provider 补丁（P2/P3）**还没落地**，此时翻默认**用户可见行为零变化**，只多一个
+`libcrypto.3.dylib` 的打包/签名/公证负担。⇒ 正确形态是**国密版 macOS 构建显式设 `OPENSSL_DIR` 并用本门禁的严格模式断言**；
+这件事与 P2/P3 一起做（**归属**：构建侧与门禁＝本侧；provider 补丁＝AMD）。
+
+**CI 读数（GitHub check-runs API，2026-09-19 配额恢复后取到）**
+
+| commit | checks（单测/冒烟/契约） | mobile | Rust job | build-macos / android |
+|---|---|---|---|---|
+| `f4151be1`（上一轮） | ✅ | ✅ | ✅ **success** | ✅ / ✅ —— **5/5 全绿** |
+| `ba7d889a` | ✅ | ✅ | ❌ **failure**：`rust-sm-crypto`（真红，见下） | 当时仍在跑 |
+| `4c0ef41b`（修复后） | ✅ | ✅ | ✅ **success**（**含 `rust-sm-crypto`**） | 该 commit 只触发 3 个 job（未改打包面） |
+| `4b5eceec`（⑤⑥ 落地后） | ✅ | ✅ | ✅ **success**（含 `rust-sm-crypto`、**`check-crypto-backend`**） | 当时仍在跑 |
+| `f4151be1`（已记） | — | — | — | — |
+
+⚠️ **这一格我先前写过头了，此处更正**：我原话是"`check-crypto-backend` 在 Linux 上转绿 ⇒ 跨平台证据"。
+AMD 在 WSL 上用同一条门禁实测后指出：**在 target 目录被重定向或与别的平台共用时，它会读错平台的产物** ——
+他那台的 `✓` 报的其实是**仓库里那份 Windows 产物**（link-search 还是 `Files\OpenSSL-Win64\lib`），
+**Linux 产物一个字都没读**。也就是说：那一格绿**绿得不是它声称的那件事**（比红更难发现）。
+CI 那一格之所以还算数，只是因为 runner 上 `CARGO_TARGET_DIR` 没改、且只有 Linux 产物 ——
+**是环境帮了忙，不是判据本身站得住**。修法见下（认 `CARGO_TARGET_DIR` ＋ 按平台过滤 ＋ 只剩别的平台 ⇒ 未实查），
+修完这条才真的有资格跨平台说话。
+
+⇒ **`rust-sm-crypto` 的第一条 CI 读数（Linux）就是绿的**，也正是 AMD 建基线所需的那份读数来源。
+
+`f4151be1` 全绿这件事本身很重要：它是上一轮那三处修复（P3 对拍缺库**响亮跳过** ＋ CI 取库 ＋
+cargo 类门禁的失败证据通道）的**收官证据** —— 在那之前 rust job 从 `97583c57` 起连红四次。
+⚠️ **一处不许含糊的**：同一批注解显示当时**两条**门禁一起红（`rust-test` 与 `rust-plugins-alone`），
+而 `rust-test` 的根因（缺 PDFium 库）已由"修完即绿"证到；**`rust-plugins-alone`（`cargo test --lib plugins::`
+在 Linux 上 101）的机制至今没有直接证据**（本机 macOS 含缺库状态都是 117/0，plugins 测试里也 grep 不到
+PDFium 依赖）—— 现在的状态是"**跟着一起绿了**"，不是"查清了"。要收口它，得等它再红一次并拿到输出尾巴注解。
+
+**`rust-sm-crypto` 这条新门禁的 CI 证据（含它第一次就抓到的真问题）**：它在 rust 组里，所以 CI 的 rust job
+自动跑它（§0-E 要的"常开 job"，不需要另加 workflow）。它**第一次上 CI 就红了**，而那条红是**真的**：
+
+- 注解指名 `rust-sm-crypto`，失败明细 5 条 `security::` 用例；⚠️ **同样用例在默认构建里是绿的**
+  ⇒ 与算法无关，是**测试隔离**问题；
+- 根因：`security.rs` 测试的 7 处临时目录名是 `{pid}_{now_ms()}`（**毫秒**分辨率），而 `temp_ws()`
+  开头就 `remove_dir_all` ⇒ 两个测试落在同一毫秒时，B 删掉 A 的库文件、且两边**共用一个 meta.db**
+  ⇒ A 写了 `ENC_ENABLED=1`，B 的"未开启"用例读到"已开启"，一串跟着红；
+- 复现方式是关键（**"调两次"是绿的，只有并发才红**）：8 线程 `Barrier` 同时进 `temp_ws()` ⇒ 改前 **5/5 红**、
+  改后 3/3 绿；该探针留成常开判据 `temp_dirs_are_unique_under_concurrency`；
+- 修法：`uniq_tmp(tag)` = `{pid}_{now_ms}_{AtomicU32 序号}`（保留 pid+毫秒便于事后定位）。
+  读数：`rust-sm-crypto` **376/376**、`rust-test` **364/364**。
+
+⇒ 这是"常开门禁"**自己挣回成本**的一例：这条测试隔离缺陷在默认构建下**永远不会露头**
+（`clippy`/`tsc`/默认单测全绿），只有"把国密那一支也编出来跑"才会撞上。
+
+**仍然不在 P1 范围（下一轮 / 别人的格子）**
+
+- §0-C 的**另外两条**：空间元数据记录本空间算法、同步载荷带算法标识（状态字段已加：`EncryptionStatus.format/algorithm`）；
+- 库级页加密/HMAC 换 SM3 系（P2-P3，AMD 的 provider 补丁线）；
+- macOS 库级 Tongsuo＋切掉 CommonCrypto 默认（§3 第 5 条）；
+- 真机验收（§7 后两条）与"用旧版生成的加密库/附件在新版打开"的**端到端**回归。
 
 ---
 
@@ -119,6 +379,7 @@
 | 项 | 实测结果 |
 |---|---|
 | **Linux 构建** | ✅ **成功，13 秒**（`-j32`，2086 个编译单元）⇒ **"Perl + Configure"那一关在 Linux 上不是问题**（历史上卡过的是 Android 的精简 Perl） |
+| **macOS 构建（2026-09-19，Mac 实测，补）** | ✅ **成功**：`git clone --depth 1 https://gitee.com/mirrors/Tongsuo.git`（Gitee 镜像可达；克隆到源码 commit **`540603a3`**，与 AMD Linux 侧**同一个 commit**）⇒ `./Configure --prefix=<p> no-tests && make -j8 && make install_sw`。`openssl version` = **`Tongsuo 8.5.0-pre2`（底层 OpenSSL 3.5.4）**；SM3("abc") 命中 GM/T 0004 向量。⚠️ **安装目录 macOS 是 `<p>/lib`**（Linux 是 `lib64/`、Android 是 `lib/`）—— 三个平台三种，别照抄；二进制带 `@rpath` 到 `<p>/lib`（本机不用设 `DYLD_LIBRARY_PATH` 也能跑）。用它跑对拍：`SHUYONOTE_TONGSUO_OPENSSL=<p>/bin/openssl node scripts/check-gm-conformance.mjs` ⇒ **12/12（含 T1–T5 跨实现）** |
 | 版本 | Tongsuo **8.5.0-pre2**（OpenSSL 3.5.4 底），源 = **Gitee 镜像** commit `540603a3` |
 | ⚠️ **源码别从 GitHub 取** | **两侧的 GitHub 都不通**（Windows 是 DNS 污染、AMD 那台 443 直连失败）⇒ **统一用 Gitee 镜像** `https://gitee.com/mirrors/Tongsuo.git`（实测可用，`8.2-stable` 等分支在） |
 | ⚠️ **安装路径** | `./Configure --prefix=<p> no-tests && make -j && make install_sw`；**装到 `<p>/lib64/`，不是 `lib/`**（AMD 第一次就栽在这） |
@@ -287,19 +548,47 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
 
 ## 7. 验收标准
 
-- [ ] **老数据可读**：用旧版生成的加密库 + 加密附件，新版能正常打开（fixture 钉住）
+> 状态更新（2026-09-19，Mac，dev `f4151be1` 之后）：打勾 = **有可执行判据且当前绿**（命令附在行内），
+> 半勾 = 只完成了一半（写清缺哪一半）。**真机/端到端那几条一律不勾** —— 本机单测绿不等于真机绿。
+
+- [x] **老数据可读**（**单测层**）：`crypto-legacy-v0.json` 金标夹具 3 格（文本/撞头/二进制）＋
+      `legacy_headerless_data_still_reads` ＋ `legacy_data_whose_first_two_bytes_look_like_the_header_still_reads`
+      （P1 起对 **v1 与 v2** 两个版本号各验一遍）—— `cargo test --lib crypto::`
+      ⚠️ **端到端那半没做**：用旧版**真的**生成一个加密库 ＋ 加密附件再拿新版打开，属真机验收。
 - [ ] 新装用户：口令 → 加密 → 重启解锁 → 读写正常（**桌面真机**，不只看单测）
 - [ ] 加密开关双向迁移（开→关、关→开）数据不丢
-- [ ] 附件 / 导出包 / 同步载荷**三条路径全覆盖**（逐条勾，不许漏）
+- [x] 附件 / 导出包 / 同步载荷**三条路径全覆盖**（**应用层 AEAD 层**）：`security::tests::national_crypto_covers_all_three_paths_…`
+      ＋ `attachments::export_attachment_tests::encrypted_export_under_national_crypto_…`
+      （都只在 `--features sm-crypto` 下编，由 `rust-sm-crypto` 这条常开门禁跑）
 - [ ] 页加密确为 SM4（直接读文件头/用错算法打开应失败，而不是"看起来能用"）
-- [ ] SM3 / SM4 标准测试向量通过 ＋ 跨语言一致性通过
-- [ ] 锁定态不读库（`vault.ts` 既有约束不回退）
+- [x] SM3 / SM4 标准测试向量通过（**RustCrypto 侧**）：`crypto_sm::tests::sm4_primitive_matches_the_gmt_0002_vector`
+      ＋ `sm3_primitive_matches_the_gmt_0004_vector`；跨实现一致性见下一行
+- [x] **跨语言一致性**：常开门禁 `gm-conformance`；macOS 上编出 Tongsuo（commit `540603a3`）后
+      **12/12 全绿含 T1–T5**（标准向量 / 双向互解 / **两侧密文逐字节相同** / HMAC 一致 /
+      **PBKDF2-HMAC-SM3 与拆 key 口径**）；
+      不设 `SHUYONOTE_TONGSUO_OPENSSL` 的机器上仍是 3 条 ＋ 自报跳过（**指名却用不了则判红**）
+- [x] 锁定态不读库（`vault.ts` 既有约束不回退）：`security::tests::lock_gates_key_and_sync` 仍绿
 - [ ] Android 真机回归（SQLCipher/OpenSSL 在 Android 上是另一条构建链，见 `Cargo.toml:102-111`）
-- [ ] **格式头有测试向量钉住**：2 字节头的编码/分派、以及「无头 = 版本 0」的判定（§0-A）
-- [ ] **EtM 正确性有测试**：MAC 覆盖版本头 ＋ IV ＋ 密文；**篡改任一处都必须先失败、且不解密**（§0-B）
-- [ ] **未知算法明确拒绝**：老端读新密文/同步载荷时给出"请升级客户端"，**不是"数据损坏"**（§0-C）
-- [ ] **KDF 迭代有断言**：常量写死 ＋ 门禁防止被改小；压测记录（中端机解锁 < 1 秒）在案（§0-D）
-- [ ] **构建门禁断言实际加密后端**：确认编进去的是 Tongsuo/OpenSSL 而不是 Apple 的 CommonCrypto（§3 第 5 条）
+- [x] **格式头有测试向量钉住**：2 字节头的编码/分派、以及「无头 = 版本 0」的判定（§0-A）
+      —— `new_ciphertext_carries_the_version_header_on_both_paths` ＋ 撞头回退两条
+- [x] **EtM 正确性有测试**：MAC 覆盖版本头 ＋ IV ＋ 密文；**篡改任一处都必须先失败、且不解密**（§0-B）
+      —— `crypto_sm::tests::tampering_anywhere_fails_before_decrypting` ＋ `encryption_and_mac_keys_are_not_interchangeable`
+- [x] **未知算法明确拒绝**：老端读新密文/同步载荷时给出"请升级客户端"，**不是"数据损坏"**（§0-C）
+      —— `unknown_future_version_gets_an_actionable_error` ＋ 默认构建读 v2 的 `…rejects_v2_with_an_actionable_error`
+      ✅ **§0-C 全落**（2026-09-19 补）：状态字段 `EncryptionStatus.format/algorithm`；
+      **空间元数据**记录本空间算法（`meta.workspaces.cipher_format` ＋ 幂等迁移 ＋ `space_format()`）；
+      **同步载荷与附件**的版本**不解密就能读**（`crypto::peek_format`），并做**整批拒绝**与
+      **附件拒绝**（见下）
+- [x] **KDF 迭代有断言**：常量写死 ＋ 断言防止被改小（`kdf_rounds_are_the_pinned_value`）；
+      压测记录在 §0.2（本机 ≈112 ms 解锁；**中端机数字是外推、非实测**，见 §0.2 的两条诚实标注）（§0-D）
+- [x] **构建门禁断言实际加密后端**（§3 第 5 条）：`check-crypto-backend` 已落地（rust 组），
+      按**产物**断言"实际后端 == 声明"；两个方向都实测过（产物 openssl＋声明 openssl ⇒ 绿；
+      产物 CC＋声明 openssl ⇒ 红并附 `cargo clean -p libsqlite3-sys` 的修法）——
+      ⚠️ 它同时钉住了那条坑：**只设 `OPENSSL_DIR` 不会换后端**（build.rs 没声明 `rerun-if-env-changed`）
+- [~] **macOS 默认切掉 CommonCrypto**：**换后端已证明可行且与既有库兼容**（Tongsuo 后端下
+      `security::` 14/14，含 CommonCrypto 写下的夹具仍可读写），
+      ❌ 但**默认没翻**（与 §0-E「国密另发」冲突、且 P2/P3 provider 未落地）⇒ 正确形态是
+      **国密版 macOS 构建显式 `OPENSSL_DIR` ＋ 本门禁严格模式**，与 P2/P3 一起做
 
 ---
 

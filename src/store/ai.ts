@@ -10,6 +10,9 @@ import {
   type ProviderConfig,
 } from "../lib/ai/llm";
 import { createBackendStreamingTransport } from "../lib/ai/transport";
+import { runLibrarySummary, summaryDraftEntry } from "../lib/ai/librarySummaryRun";
+import { summarizerFromTransport } from "../lib/ai/librarySummary";
+import { platform } from "../lib/platform";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
 import { useRightPanel } from "./rightPanel";
@@ -65,6 +68,8 @@ interface AiState {
   setOpen: (open: boolean) => void;
   update: (patch: Partial<AiConfig>) => void;
   run: (prompt: string) => Promise<void>;
+  /** 「跨库总结」：取材 → 分批总结（强制回链）→ 结果进对话 + 一条「插成块」草稿。 */
+  summarizeLibrary: (question?: string) => Promise<void>;
   stop: () => void;
   confirm: (key: string) => Promise<void>;
   dismiss: (key: string) => void;
@@ -250,6 +255,74 @@ export const useAiStore = create<AiState>((set, get) => ({
       timer = null;
       buffered = "";
       set({ running: false, error: String((e as Error)?.message ?? e), currentPrompt: "" });
+    }
+  },
+
+  /**
+   * 「跨库总结」（P4）：**不是**对话循环的一条捷径 —— 它走 `runLibrarySummary`，
+   * 分批读库里**已索引**的内容，每条结论强制带回链，结果：
+   *  - 正文进对话（和普通回答一样显示）；
+   *  - 另给一条 `append_block` **草稿**（用户点「应用」才写进当前页）。
+   *
+   * 为什么用同一套草稿机制而不是直接写库：与 AI 工具面同一条边界（写操作需确认）。
+   * 为什么没有当前页就不给草稿：**不替用户挑一个页面写进去**。
+   */
+  summarizeLibrary: async (question?: string) => {
+    if (get().running) return;
+    const { config } = get();
+    if (!config.enabled) {
+      set({ error: "AI 功能未启用，请先在设置中开启并配置模型。" });
+      useRightPanel.getState().openAi(true);
+      return;
+    }
+    if (!useEntitlements.getState().consume("draft" as Aicap)) {
+      set({ error: `${capLabel("draft")}暂时不可用，请稍后再试。` });
+      return;
+    }
+    const q = String(question ?? "").trim();
+    const seq = ++runSeq;
+    const notes = useNotes.getState();
+    set({ running: true, error: null, reply: "", currentPrompt: q || "跨库总结", thinking: "", activity: [] });
+    try {
+      const transport = IS_WEB
+        ? createProviderTransport(config as ProviderConfig)
+        : createBackendStreamingTransport(config as ProviderConfig);
+      const r = await runLibrarySummary({
+        platform,
+        summarize: summarizerFromTransport(transport, 1024),
+        ...(q ? { question: q } : {}),
+        // 进度直接进气泡：分批跑本地模型要几十秒到几分钟，没有进度用户会以为卡死
+        onProgress: (done, total) => {
+          if (seq !== runSeq) return;
+          set({ reply: `正在读第 ${done}/${total} 批…` });
+        },
+      });
+      if (seq !== runSeq) return; // stop() 或更新的 run 让这次结果作废
+      if (!r.ok) {
+        set({ running: false, reply: "", currentPrompt: "", error: r.reason });
+        return;
+      }
+      const draft = summaryDraftEntry(r.summary, notes.currentId);
+      const history = q
+        ? [...get().history, { role: "user" as const, content: q }, { role: "assistant" as const, content: r.summary.markdown }]
+        : [...get().history, { role: "assistant" as const, content: r.summary.markdown }];
+      const historyCapped = history.slice(-HISTORY_LIMIT);
+      saveHistory(historyCapped);
+      set({
+        running: false,
+        reply: r.summary.markdown,
+        drafts: draft ? [draft, ...get().drafts] : get().drafts,
+        history: historyCapped,
+        activity: [
+          { tool: "library.summary", note: r.note },
+          ...(draft ? [] : [{ tool: "library.summary", note: "没有打开的页面，所以没有给「插成块」的草稿（总结不自己挑页面写）" }]),
+        ],
+        currentPrompt: "",
+        error: null,
+      });
+    } catch (e) {
+      if (seq !== runSeq) return;
+      set({ running: false, currentPrompt: "", error: String((e as Error)?.message ?? e) });
     }
   },
 

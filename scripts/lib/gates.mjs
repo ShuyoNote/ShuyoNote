@@ -193,9 +193,11 @@ export const GATES = [
   // ---- rust ----
   // 读数（`counters: "cargo"`）**已在 Linux 侧实测并入** tests/baseline.json：
   //   rust-test 310 / rust-plugins-alone 114（2026-09-16，dev=dc7fa13b，WSL2 Ubuntu 24.04）。
-  // 本机 Windows 跑不了它们（测试二进制加载期 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND`，见
-  // docs/TESTING.md 的"已知边界"），所以本机 `pnpm verify:rust` 会红——那是**环境**问题；
-  // 权威执行地是 Linux（CI / 本机 WSL）。基线校验只比较**跑通过**的门禁，本机红不产生假违规。
+  // 本机 Windows 可以用 scripts/win-cargo-test.ps1 跑 **lib 目标**（cargo 生成的测试 exe 没有
+  // 应用清单，加载器因此绑到旧 comctl32 ⇒ 0xC0000139；脚本注入 v6 清单后再跑）。但它只覆盖单测，
+  // 不含要真宿主进程的 `plugins::` 那 34 条，整组仍以 Linux（CI / 本机 WSL）为准，见
+  // docs/TESTING.md 的"已知边界"。所以本机 `pnpm verify:rust` 仍可能红——那是**能力**问题；
+  // 基线校验只比较**跑通过**的门禁，本机红不产生假违规。
   {
     id: "rust-test",
     group: "rust",
@@ -222,6 +224,41 @@ export const GATES = [
     cmd: "node scripts/check-gm-conformance.mjs",
     incident:
       "国密这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo，见方案 §0-F）——两份漂移的后果是「跨设备读不出对方的数据」，而它没有任何编译期信号、本机单测也照绿。夹具来自 AMD 2026-09-17（信箱仓 gm-conformance），2026-09-19 搬进本仓：去 target/、驱动重写成跨平台 Node（原 driver.sh 是 Linux 专用：stat -c/sha256sum/$HOME/tongsuo-build）、Tongsuo 缺席自报跳过；并加「空跑即红」下限——固定下限会漏掉「Tongsuo 分支整段被删」，所以下限随 Tongsuo 是否参与而变（3 或 8）",
+  },
+  {
+    id: "rust-sm-crypto",
+    group: "rust",
+    label: "国密应用层（SM4-CBC ＋ HMAC-SM3）：编译 ＋ 全量单测（--features sm-crypto）",
+    // 为什么必须**常开**（方案 §0-E 的原话："必须有那条常开 job，否则国密路径会变成
+    // 「没人编、坏了也没人知道」的死代码"）：国密代码整段在 `#[cfg(feature = "sm-crypto")]` 后面，
+    // 默认构建**一行都不编**，所以默认 CI 全绿**证明不了**国密那半边还能用。
+    //
+    // 跑全量（不带 `--lib`）是刻意的：镜像 `rust-test` 的口径，这样"国密版"与"默认版"跑的是同一套
+    // 用例集合，差别只在 feature —— 否则"国密版少跑了一半用例"这种事没人会发现。
+    cmd: "cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto",
+    counters: "cargo",
+    // ✅ 2026-09-19 起标 `baseline: true`：读数值取自 **Linux**（WSL2/Ubuntu，与既有 rust-test 基线同一台），
+    // 读数 **376/376**（mac 侧钉 KDF 黄金向量那一笔之后在 Linux 上的重新读数；建基线时是 374，
+    // 当时与 macOS 独立跑出的 374/374 **逐值相同** ⇒ 这套用例没有平台条件差异）。
+    // 并入流程（CI 出报告后）：
+    //   node scripts/test-report.mjs --baseline-from rust-report.json
+    // 之后的护栏是"**只增不减**"：用例数掉下来会红（`baselineViolations`）；承重证明见
+    // `.tools/rust-baseline-mutation.mjs`（把基线抬到 400 ⇒ 当场红，还原后绿）。
+    // ⚠️ 别拿本机 Windows 的数去建基线：Windows 上测试二进制加载期就异常退出（见 docs/TESTING.md）。
+    baseline: true,
+    incident:
+      "国密这一支一旦没人编就会腐烂：默认包不含国密（§0-E），而 `--features sm-crypto` 若编译不过/单测红，本机与 CI 都不会有任何信号。2026-09-19 建这条 job 时顺带钉住两件事：① 库级密钥必须仍是 Argon2 legacy 那 32 字节（被国密密钥顶替 = 既有加密库全部打不开）；② 国密构建仍必须读得出 v0/v1 老密文（双读）",
+  },
+  {
+    id: "check-crypto-backend",
+    group: "rust",
+    label: "SQLCipher 的加密后端与声明一致（构建期实查，不是看环境变量）",
+    // 为什么挂在 rust 组、且排在 cargo 类门禁后面：它读的是**构建产物**里 libsqlite3-sys 的 `output`
+    // （`-DSQLCIPHER_CRYPTO_CC` / `link-lib=dylib=crypto`），所以必须先把东西编出来才查得到；
+    // 没有产物时**自报跳过**（"没编过"不等于"编错了"）。
+    cmd: "node scripts/check-crypto-backend.mjs",
+    incident:
+      "2026-09-19（本门禁作者本人踩的）：按方案 §3 第 5 条设了 OPENSSL_DIR=<Tongsuo> 跑 cargo test —— 编译通过、测试全绿、产物里**仍然是 framework=Security（CommonCrypto）**。原因是 libsqlite3-sys 的 build.rs **没有**为 OPENSSL_DIR 声明 rerun-if-env-changed ⇒ cargo 认为环境没变 ⇒ 构建脚本根本没重跑。⇒「设了环境变量」≠「换了后端」，必须 cargo clean -p libsqlite3-sys。这条门禁就是拿产物说话：声明与实际不一致就红（本机两种方向都实测过），旧产物分类不同只提示不判红。⚠️ macOS 今天默认仍是 CommonCrypto（Apple 那支只有 AES）⇒ 平台声明里 darwin 现写 commoncrypto，等 P2/P3 的 provider 补丁落地时随构建配置一起改成 openssl",
   },
   {
     id: "check-sys-deps-linux",

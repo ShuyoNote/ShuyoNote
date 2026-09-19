@@ -262,6 +262,36 @@ run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console
 >
 > 行为测试在 `src/editor/insertShortcut.test.ts`（真编辑器 + 真 `dispatchCommand`）、`src/editor/editorInputShortcuts.test.ts`（Markdown 行首语法逐字输入、`/`、Ctrl+F、空行空格）、`src/components/overlayShortcuts.test.ts`（Ctrl+K、Esc）、`src/hooks/globalShortcuts.test.ts`；闸门 `src/lib/shortcutCoverage.test.ts` 要求清单**每一条都指到一个真存在的用例**（映射表里的用例标题必须真在 `it(...)` 里），并扫出 `src/editor/plugins` 下 EDITOR 档的 `KEY_DOWN_COMMAND` 注册与「插件分支 ⟷ 文档」的双向差异。**加/改快捷键时，这四处要一起动。**
 
+### 5. 设了 `OPENSSL_DIR` 却**没换加密后端**（macOS/国密，2026-09-19 实测）
+
+给 `libsqlite3-sys`（SQLCipher）换加密后端靠 `OPENSSL_DIR`。但**只设它没有用**：
+该 crate 的 `build.rs` 只为 `SQLITE_MAX_*` / `LIBSQLITE3_FLAGS` / `SQLCIPHER_{INCLUDE,LIB}_DIR`
+这些声明了 `rerun-if-env-changed`，**没有为 `OPENSSL_DIR` 声明** ⇒ cargo 认为"环境没变" ⇒
+**构建脚本根本不重跑**，产物还是旧后端。症状是**"失败得像成功"的典型**：编译通过、测试全绿、
+你以为换过了，其实一行都没换。
+
+```bash
+cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml   # ← 逼它重跑，这步不能省
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo build --lib --manifest-path src-tauri/Cargo.toml
+node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你设了什么环境变量
+```
+
+`check-crypto-backend` 的三种状态分得很清：没产物 ⇒ `!` 自报跳过；最新产物 ≠ 声明 ⇒ 红（附上面那条清库命令）；
+存在更旧且分类不同的产物 ⇒ `!` 提示（那正是"沉默不换后端"留下的痕迹）。换后端顺带要过
+`security::tests::fixture_db_written_by_the_other_provider_still_opens`（用**旧后端写下**的加密库夹具，
+见 `src-tauri/tests/sqlcipher-backend-fixture.db`）——它红了就等于**用户打不开自己的库**。
+
+### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
+
+判据读 `target/` 下的产物时，有两个默认假设**经常不成立**：① target 就在仓库里（实际很多人设了
+`CARGO_TARGET_DIR`，或 CI 用共享缓存）；② 目录里最新那份产物就是**当前平台**的（实际可能混着 Windows 的）。
+两者任一不成立，门禁就会**读到别的平台的产物并报 ✓** —— 比红更难发现，因为它长得完全正常。
+实例：`scripts/check-crypto-backend.mjs` 第一版在 WSL 上读到的是 Windows 那份，`✓ openssl`
+的 link-search 甚至写着 `Files\OpenSSL-Win64\lib`（2026-09-19，AMD 抓出）。
+
+处置：**产物判据必须（a）认 `CARGO_TARGET_DIR`，（b）按当前平台过滤，（c）过滤后只剩别的平台时报"未实查"而不是 ✓**。
+"未实查"是一个合法且必要的结论 —— 判据的名字不能比它能证明的多。
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。

@@ -346,7 +346,22 @@ export interface CommandMap {
 
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };
-  encryption_status: { args: undefined; result: { enabled: boolean; locked: boolean } };
+  // `format` / `algorithm`：本会话写新数据用的密文版本与稳定算法名（§0-C 的算法标识）。
+  // 默认构建恒为 1="xchacha20-poly1305"；国密构建（`--features sm-crypto`）为 2="sm4-cbc+hmac-sm3"。
+  // `space_format` / `space_algorithm`：**当前活动空间**记录在案的密文版本与算法名（0/空串 = 未记录）。
+  // §0-C：算法标识要落到空间状态上 —— 界面/诊断得能说出「这个空间的数据是哪一版」，
+  // 而不是等到读到某一条才发现读不了。
+  encryption_status: {
+    args: undefined;
+    result: {
+      enabled: boolean;
+      locked: boolean;
+      format: number;
+      algorithm: string;
+      space_format: number;
+      space_algorithm: string;
+    };
+  };
   lock_encryption: { args: undefined; result: void };
   unlock_encryption: { args: { passphrase: string }; result: void };
   disable_encryption: { args: undefined; result: void };
