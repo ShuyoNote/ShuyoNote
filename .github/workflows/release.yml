@@ -101,6 +101,16 @@ jobs:
           "OPENSSL_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: 取 PDFium 运行时（Windows 装包要带的 pdfium.dll）
+        # 2026-09-18 加。`tauri.windows.conf.json` 把 `src-tauri/vendor/pdfium/win-x64/bin/pdfium.dll`
+        # 映射成**装包根目录**的 `pdfium.dll`（Windows 上 Tauri 的 `resource_dir` 就等于 exe 所在目录，
+        # `pdfium_native::library_dir()` 正是从那里找）。
+        # 这个 dll **不进 git**（`.gitignore` 里 `src-tauri/vendor/pdfium/`，二进制不入库），所以必须在
+        # 打包前现拉：映射的源文件不存在时 `tauri-build` 的 `copy_resources` 会直接报
+        # `resource path … doesn't exist`（构建脚本期）把整条构建判红，而不是产出一个少个 dll 的包。
+        if: matrix.platform == 'windows-latest'
+        run: node scripts/fetch-pdfium.mjs --platform win-x64
+
       - name: 交付通道协议门禁（shuyonote://）
         # 这条**必须在打包之前**跑，而且不能只靠 `pnpm tauri build` 里 beforeBuildCommand 那一串：
         # 协议注册是唯一一处"配置错了不会编译失败、只在装完之后表现为点链接没反应"的地方。
@@ -125,6 +135,36 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: 装包确实带上了 pdfium.dll（Windows 档）
+        # 与 Linux 档那条 deb 断言同一个道理：**产物级**判据。源码级只能证明"配置里写了映射"，
+        # 证明不了"装包里真有那个 dll"。缺了它，用户端只有 `SHUYONOTE_PDF_ENGINE=pdfium` 时会
+        # 报「找不到 PDFium 动态库」（默认引擎仍是 MuPDF，所以现在不致命）；等 P5 把 PDFium
+        # 变成默认，这一条就是"开得了 PDF / 开不了 PDF"的区别。NSIS 是自解压格式，`7z l` 能
+        # 列出里面的载荷（Windows runner 预装 7-Zip）。
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $dll = 'src-tauri/target/release/pdfium.dll'
+          if (-not (Test-Path $dll)) {
+            throw "release 目录里没有 pdfium.dll（$dll）—— build.rs 的资源拷贝没发生？"
+          }
+          "✓ exe 同级有 pdfium.dll：$((Get-Item $dll).Length) 字节"
+
+          $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
+          if (-not (Test-Path $sevenZip)) {
+            $found = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+            if (-not $found) { throw "找不到 7z.exe，读不了 NSIS 装包的载荷（runner 预装 7-Zip；换镜像了就补上）" }
+            $sevenZip = $found
+          }
+          $setup = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*.exe' | Select-Object -First 1
+          if (-not $setup) { throw "没找到 NSIS 装包（src-tauri/target/release/bundle/nsis/*.exe）" }
+          $list = & $sevenZip l $setup.FullName
+          $list | Select-String 'pdfium'
+          if (-not ($list -match 'pdfium\.dll')) {
+            throw "装包里没有 pdfium.dll（$($setup.Name)）—— 用户机器上 PDFium 引擎会找不到库"
+          }
+          "✓ 装包里有 pdfium.dll：$($setup.Name)"
 
       - name: 发布的包确实注册了 shuyonote:// 协议（Linux 档）
         # 为什么只在这一档做**产物级**断言：Linux 的注册是 deb 里那个 .desktop 的
