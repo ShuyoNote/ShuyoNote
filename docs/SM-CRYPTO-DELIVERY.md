@@ -48,7 +48,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 平台 | 应用层 SM4（附件/导出/同步载荷） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
 |---|---|---|---|---|---|
-| **macOS** | ✅ | ❌ **仍是 CommonCrypto（只有 AES）** | Tongsuo **已在本机构建**（commit `540603a3`）；切后端**已证明可行且与既有库兼容** | 本侧 | 应用层 ✅；库级 🔶 机制已备 |
+| **macOS** | ✅ | ❌ **仍是 CommonCrypto（只有 AES）** | Tongsuo **已在本机构建**（commit `540603a3`）；切后端**已证明可行且与既有库兼容**；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；库级 🔶 机制已备 |
 | **Windows** | ✅（纯 Rust，全平台同一份实现） | ❌ | **MSVC 版 Tongsuo 未构建**（P3 第一关） | **Windows 侧** | 应用层：本机跑不了 `cargo test`（`0xC0000139`）⇒ 行为由 Linux/CI 证 |
 | **Linux** | ✅ | ❌ | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
 | **Android** | ✅（纯 Rust） | ❌ | Tongsuo 交叉编译**已被 AMD 证过**（NDK r29）；真机验收未做 | 真机＝**人手** | ❌ 未取证 |
@@ -99,15 +99,17 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 ```bash
 # ① 构建/单测（应用层完全体；各平台一致）
-cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto     # ← 本版国密的开关（§0-E）
+cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto     # ← 应用层国密的开关（§0-E）
 
 # ② 跨实现对拍：需要一份真 Tongsuo 的 CLI
 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl node scripts/check-gm-conformance.mjs
 #   本机没有 Tongsuo ⇒ 那 9 项自报跳过（不装绿）；**指名了却用不了 ⇒ 判红**
 
 # ③ macOS 库级接缝（国密版构建；默认构建不做这一步）
+#    `sm-library` 打开 ⇒ 没给 OPENSSL_DIR 会**当场失败**（build.rs 的 fail-fast），不留"静默没有国密"的结局
 cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml    # ← 这一步不能省，理由见 ④
-OPENSSL_DIR=$HOME/tongsuo-macos/install cargo build --lib --manifest-path src-tauri/Cargo.toml
+OPENSSL_DIR=$HOME/tongsuo-macos/install \
+  cargo build --lib --features sm-library --manifest-path src-tauri/Cargo.toml
 node scripts/check-crypto-backend.mjs                                 # ← 拿产物说话
 
 # ④ 门禁：默认组 / rust 组（含国密两条）

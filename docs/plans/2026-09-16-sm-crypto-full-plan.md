@@ -211,6 +211,14 @@ AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**�
 **旧产物分类不同 ⇒ `!` 提示**（那是"沉默不换后端"的现场痕迹）。承重证明（本机双向实测）：
 产物 openssl ＋ 声明 openssl ⇒ 绿；产物 CC ＋ 声明 openssl（**正是我自己踩的那一脚**）⇒ 红并附清库命令。
 
+**库级国密的构建侧开关（2026-09-19 补）**：新增 feature **`sm-library`**（与 `sm-crypto` 分开：
+应用层不吃构建链，库级才吃）。打开它 ⇒ `src-tauri/build.rs` **fail-fast**：
+没给 `OPENSSL_DIR` 就**当场构建失败**，并把 Tongsuo 构建 ＋ `cargo clean -p libsqlite3-sys` 的完整修法打进报错里。
+三种状态实测：① 不带 `sm-library` ⇒ 默认构建照旧（后端 CC，符合声明）；② 带 `sm-library` 不给 `OPENSSL_DIR`
+⇒ 当场失败；③ 带 `sm-library` ＋ `OPENSSL_DIR=<Tongsuo>`（clean 后）⇒ 编过，门禁确认后端为 **openssl**。
+> 这条的设计理由：**"没给 OPENSSL_DIR"本身不会报错**，它只是安静地编出一个没有国密算法的库 ——
+> 库级国密版不能有这种结局（要么显式指定、要么当场死）。
+
 **⚠️ 明确没做、以及为什么**：**没有**把 macOS 的**默认**构建翻到 Tongsuo。两个理由：
 ① 翻了就等于要求**每个 macOS 开发者与默认 CI**都先编一份 Tongsuo —— 与 §0-E「国密版另发、默认包不背构建链风险」直接冲突；
 ② 库级 SM4/SM3 的 provider 补丁（P2/P3）**还没落地**，此时翻默认**用户可见行为零变化**，只多一个
