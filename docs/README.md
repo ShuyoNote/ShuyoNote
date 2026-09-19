@@ -221,6 +221,7 @@ CHANGELOG.md             # 版本变更日志
 | 文档 | 内容 |
 |---|---|
 | [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
+| [SM-CRYPTO-DELIVERY.md](SM-CRYPTO-DELIVERY.md) | **国密（SM 系列）交付说明 · 按平台分列**：交付文本要照抄的**边界声明**（数据面国密／传输层标准 TLS／控制面与摘要不换，别写成"全链路国密"）＋ 密文格式 v0/v1/v2 与套件常量 ＋ **跨实现黄金向量** ＋ 各平台现状矩阵（应用层 vs 库级一列分得清）＋ 已取证清单（每条带判据与读数）＋ 未取证清单（写明归属：provider＝AMD、MSVC＝Windows、真机＝人手）＋ 构建/验证命令（含 `OPENSSL_DIR` 与 `cargo clean -p libsqlite3-sys` 那个坑）＋ 升级运维须知 |
 | [TESTING.md](TESTING.md) | **回归测试体系**：门禁清单的单一事实来源（`scripts/lib/gates.mjs`）/ `pnpm verify` 一键本地验收 / 断言数基线 `tests/baseline.json`（只增不减是硬校验）/ 结果公开在 step summary 与 artifact / **覆盖边界**（`sync-*-regression` 在私有服务端仓库、GitCode 只跑纯 Node 组） |
 
 ## 社区互动（社区接入）
