@@ -1,5 +1,15 @@
 // 库级国密 provider 的**运行期反向验证**（P2/P3 那一半里属于 AMD 的那半）。
 //
+// ⚠️ `allow(dead_code)` 是**显式的、有期限的**：本模块今天只有判据（`#[cfg(test)]`）与探针在用 ——
+// P2 的接线（`security.rs` 开库路径上调用 `configure_gm_cipher()` / `read_gm_cipher_status()`）还没落。
+// 不加这一行，`cargo check --lib` 会为它报 **8 条 never used 告警**，把真正的告警淹掉；
+// 而"我声称零警告"这种话一旦对不上账，后面所有读数都要打折 —— 这次正是被抓到的：
+// macOS 侧独立跑 `cargo check --lib --tests` 数到 8 条 `gm_provider::*`
+// （见 `2026-09-19-gm-p1-application-layer.reply-6.md`；我那条"零警告"是从一次 grep 读数里来的，
+//  而那次 grep 在 `&&` 链里、输出为空被我当成了"没有告警"——**空输出与零命中是两件事**）。
+// ⇒ **P2 接线落地那天把这一行删掉**（那时它不再是死代码）。
+#![allow(dead_code)]
+//
 // 为什么要有这个模块（与 mac 在 `2026-09-19-gm-p1-application-layer.reply-2.md` §七 对齐的分法）：
 //   · **构建期**（mac 出）：编进去的到底是哪个后端 —— 由构建脚本决定（macOS 现在实测是 CommonCrypto）；
 //   · **运行期**（本模块）：SM3/SM4 到底有没有被 SQLCipher **真的走通** —— 链接进来 ≠ 被用上。
