@@ -241,3 +241,15 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 **🐛 门禁自身修了一处**（这一条是壳落地时**门禁自己抓出来的**）：豁免层原先只在**校验**分支生效，
 `--update` 不认它 ⇒ 壳一落地就再也下调不了基线（`doc_content.rs` 被判成"0 → 9 的新增文件直接引用"）。
 现在 `counts`（原始读数，含豁免层）与 `regulated`（受约束/入库，摘掉豁免层）分开。
+
+### 7.2 记一笔：`get_page_blocks` 多读了一列（**观察，不在收口期做**）
+
+来源：macOS 侧对 `feat/doc-content-layer @4a85bbb8` 的复核（信 `2026-09-18-doc-content-layer-rust-shell.reply-1.md` §三）。
+
+`doc_content::read` 一次取三列（`title` / `content_json` / `content_text`），而 `blocks::get_page_blocks`
+**只用 `json`** ⇒ 每次"取这一页的块列表"都会**多读一列 `content_text`**（正文纯文本，可能几十 KB），
+而这个入口**打开页面就会走到**。
+
+- **语义上没问题** —— 收口期保持"纯搬运"是有意的（`read` 是三列一起取，与搬运前逐字一致）；
+- 后续可加 `read_json_only`（或让 `read` 接"要哪几列"）—— **属性能优化，排在收口之后**；
+- 记在这里的唯一目的：**别让它变成"以后没人知道这里多读了一列"**。
