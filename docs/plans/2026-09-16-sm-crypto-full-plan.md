@@ -250,7 +250,9 @@ AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**�
 > 这条的设计理由：**"没给 OPENSSL_DIR"本身不会报错**，它只是安静地编出一个没有国密算法的库 ——
 > 库级国密版不能有这种结局（要么显式指定、要么当场死）。
 
-**⚠️ 明确没做、以及为什么**：**没有**把 macOS 的**默认**构建翻到 Tongsuo。两个理由：
+**⚠️ 已拍板：macOS 的默认构建不翻到 Tongsuo（owner，2026-09-19，选项 A）**，
+维持"默认包＝Apple CommonCrypto ＋ 国密版另发"（§0-E 的形态）；改判触发条件写在 §7 对应项里。
+当时的判断依据（现已成为定论，保留以供复核）：**没有**把 macOS 的**默认**构建翻到 Tongsuo。两个理由：
 ① 翻了就等于要求**每个 macOS 开发者与默认 CI**都先编一份 Tongsuo —— 与 §0-E「国密版另发、默认包不背构建链风险」直接冲突；
 ② 库级 SM4/SM3 的 provider 补丁（P2/P3）**还没落地**，此时翻默认**用户可见行为零变化**，只多一个
 `libcrypto.3.dylib` 的打包/签名/公证负担。⇒ 正确形态是**国密版 macOS 构建显式设 `OPENSSL_DIR` 并用本门禁的严格模式断言**；
@@ -585,10 +587,17 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
       按**产物**断言"实际后端 == 声明"；两个方向都实测过（产物 openssl＋声明 openssl ⇒ 绿；
       产物 CC＋声明 openssl ⇒ 红并附 `cargo clean -p libsqlite3-sys` 的修法）——
       ⚠️ 它同时钉住了那条坑：**只设 `OPENSSL_DIR` 不会换后端**（build.rs 没声明 `rerun-if-env-changed`）
-- [~] **macOS 默认切掉 CommonCrypto**：**换后端已证明可行且与既有库兼容**（Tongsuo 后端下
-      `security::` 14/14，含 CommonCrypto 写下的夹具仍可读写），
-      ❌ 但**默认没翻**（与 §0-E「国密另发」冲突、且 P2/P3 provider 未落地）⇒ 正确形态是
-      **国密版 macOS 构建显式 `OPENSSL_DIR` ＋ 本门禁严格模式**，与 P2/P3 一起做
+- [x] **「macOS 默认要不要切掉 CommonCrypto」——已拍板（owner，2026-09-19）：不切。**
+      维持"**默认包走 Apple CommonCrypto、国密版另发**"（＝ §0-E 的形态）。
+      依据（三条都已取证）：① 换后端**可行且与既有库兼容**（Tongsuo 后端下 `security::` 14/14，
+      含 CommonCrypto 写下的夹具仍可读写）；② 但今天翻默认**用户可见行为零变化**（页加密仍 AES、
+      页 HMAC 仍 SHA512、库 KDF 仍 PBKDF2-SHA512），唯一实质收益是"给 P2/P3 铺路"；
+      ③ 代价却是**发行链**（dylib 打包/`@rpath`/签名/公证：Tongsuo 那份 `libcrypto.3.dylib` 的
+      install_name 实测是**绝对路径**，只在我这台机器上成立）＋ **全员构建前置**（每个 macOS 开发者
+      与默认 CI 都要先有 Tongsuo）。
+      ⇒ 国密版的正确形态＝**显式 `OPENSSL_DIR` ＋ `sm-library` fail-fast ＋ `check-crypto-backend` 严格模式**。
+      **改判触发条件**（写死，免得靠回忆）：client 要求「**装机即国密**」、或重启**路径 3（TLCP/RFC 8998）**
+      （那时 Tongsuo 反正要进构建）、或双 provider 维护成本被证明高于打包成本。
 
 ---
 

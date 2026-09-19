@@ -90,7 +90,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | Android 真机（口令→加密→重启解锁→读写） | **人手** | 真机 |
 | 桌面真机：新装加密 / 重启解锁 / 加密开关双向迁移不丢数据 | **人手** | 真机 |
 | 端到端"旧版库 ＋ 旧版附件 → 新版打开" | **人手** | 真机（本版只有单测层的跨后端夹具与 v0 金标夹具） |
-| **macOS 默认切掉 CommonCrypto** | 本侧（刻意未做） | 与 P2/P3 一起做：翻了默认＝要求每个 macOS 开发者与默认 CI 都先编 Tongsuo，与 §0-E「国密版另发」冲突，且此刻**用户可见行为零变化**、只多一个 dylib 的打包/签名/公证负担。国密版构建的正确形态＝显式 `OPENSSL_DIR` ＋ `check-crypto-backend` 严格模式 |
+| **macOS 默认切掉 CommonCrypto** | **已拍板：不切**（owner，2026-09-19，选项 A） | 维持"**默认包＝Apple CommonCrypto ＋ 国密版另发**"（方案 §0-E 的形态）。依据：翻了默认＝要求每个 macOS 开发者与默认 CI 都先编 Tongsuo，而此刻**用户可见行为零变化**（页加密仍 AES、页 HMAC 仍 SHA512、库 KDF 仍 PBKDF2-SHA512），只多一个 dylib 的打包/`@rpath`/签名/公证负担。⇒ 国密版的正确形态＝显式 `OPENSSL_DIR` ＋ `sm-library` fail-fast ＋ `check-crypto-backend` 严格模式。**改判触发条件**：① client 要求「装机即国密」② 重启路径 3（TLCP/RFC 8998，那时 Tongsuo 反正要进构建）③ 双 provider 维护成本高于打包成本 |
 | 传输层国密（TLCP / RFC 8998） | 未排期 | 方案 §5.2 的重启条件：客户明确要求"传输层协议本身必须是国密"，或招标点名 TLCP |
 | 更新包 / 插件索引签名换 SM2 | **不做**（已决定） | 见 §一 |
 
@@ -106,7 +106,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto     # ← �
 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl node scripts/check-gm-conformance.mjs
 #   本机没有 Tongsuo ⇒ 那 9 项自报跳过（不装绿）；**指名了却用不了 ⇒ 判红**
 
-# ③ macOS 库级接缝（国密版构建；默认构建不做这一步）
+# ③ macOS 库级接缝（**只对国密版**；默认包按拍板维持 CommonCrypto，不会被这一步影响）
 #    `sm-library` 打开 ⇒ 没给 OPENSSL_DIR 会**当场失败**（build.rs 的 fail-fast），不留"静默没有国密"的结局
 cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml    # ← 这一步不能省，理由见 ④
 OPENSSL_DIR=$HOME/tongsuo-macos/install \

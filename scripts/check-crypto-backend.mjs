@@ -53,9 +53,12 @@ export function targetDirOf(env) {
   return raw ? resolve(raw) : join(root, "src-tauri", "target");
 }
 
-// 各平台**今天**默认会编出什么（不是我们希望的，是实测的）：
-//   · darwin：无 OPENSSL_DIR ⇒ CommonCrypto（只有 AES）。**这是 P2/P3 的前置缺口**：
-//     等 AMD 的 provider 补丁线落地时，这里要跟着改成 "openssl"，并让 macOS 的国密版构建显式给 OPENSSL_DIR。
+// 各平台**默认**会编出什么（不是我们希望的，是实测的）：
+//   · darwin：无 OPENSSL_DIR ⇒ CommonCrypto（只有 AES）。**这是刻意的、且已拍板**（owner 2026-09-19，
+//     选项 A）：默认包不背 Tongsuo 的构建链与发行链，库级国密走"国密版"——那次构建显式给
+//     `OPENSSL_DIR`，并用 `SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` 让本门禁进严格模式。
+//     ⚠️ **不要**因为"provider 补丁还没落地"就把这里改成 "openssl"：改判有明确触发条件（客户要"装机即国密"、
+//     或重启路径 3 TLCP），写在 docs/SM-CRYPTO-DELIVERY.md §五 与方案 §7；改之前那一整套发行链工作要先做完。
 //   · linux：build.rs 的最后一支是 `link-lib=dylib=crypto`（系统 OpenSSL）⇒ openssl。
 //   · win32：release.yml 已经显式设 OPENSSL_DIR ⇒ openssl（打的库名是 `libcrypto`）。
 export const PLATFORM_DEFAULT = { darwin: "commoncrypto", linux: "openssl", win32: "openssl" };
