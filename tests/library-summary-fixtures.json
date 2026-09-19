@@ -1,0 +1,52 @@
+{
+  "_comment": "P4「跨库总结 + 强制回链」的夹具：场景驱动。每条 = 一组来源 + 一个**脚本化模型输出** + 期望。判据在 src/lib/ai/librarySummary.test.ts，它按这里的 expect 逐条断言。加场景就加在这里，不改测试代码。",
+  "scenarios": [
+    {
+      "id": "正常：每条结论都带回链 ⇒ 全部留下",
+      "sources": [
+        { "ref": "[[季度总结]]", "kind": "page", "label": "季度总结", "text": "本季度营收 1200 万，主要来自企业版。" },
+        { "ref": "pdf://att-pdf-1#2", "kind": "pdf-page", "label": "年报.pdf 第 3 页", "text": "第 3 页：研发投入 300 万，占营收 25%。" }
+      ],
+      "scripted": [
+        "## 要点\n- 本季度营收 1200 万 [[季度总结]]\n- 研发投入占营收 25% pdf://att-pdf-1#2"
+      ],
+      "expect": { "markdownContains": ["1200 万", "pdf://att-pdf-1#2"], "refs": ["[[季度总结]]", "pdf://att-pdf-1#2"], "droppedUnreferenced": 0, "droppedInventedRefs": 0, "notFound": false }
+    },
+    {
+      "id": "没有回链的结论行 ⇒ 丢掉并计数（不许「看起来有出处」）",
+      "sources": [
+        { "ref": "[[会议纪要]]", "kind": "page", "label": "会议纪要", "text": "决定下季度上线移动端。" }
+      ],
+      "scripted": [
+        "## 要点\n- 下季度上线移动端 [[会议纪要]]\n- 团队士气很高（这句没有出处，应被丢弃）"
+      ],
+      "expect": { "markdownContains": ["上线移动端"], "markdownNotContains": ["士气很高"], "refs": ["[[会议纪要]]"], "droppedUnreferenced": 1, "droppedInventedRefs": 0, "notFound": false }
+    },
+    {
+      "id": "★ 编造回链 ⇒ 丢掉并单独计数（比没有回链更坏：它看起来有出处）",
+      "sources": [
+        { "ref": "att://att-9", "kind": "attachment", "label": "预算.xlsx", "text": "差旅预算 8 万。" }
+      ],
+      "scripted": [
+        "- 差旅预算 8 万 att://att-9\n- 另有市场预算 20 万 blk-not-in-this-batch"
+      ],
+      "expect": { "markdownContains": ["att://att-9"], "markdownNotContains": ["blk-not-in-this-batch"], "refs": ["att://att-9"], "droppedUnreferenced": 0, "droppedInventedRefs": 1, "notFound": false }
+    },
+    {
+      "id": "模型说查不到 ⇒ 明确呈现，不编造",
+      "sources": [
+        { "ref": "[[菜谱]]", "kind": "page", "label": "菜谱", "text": "番茄炒蛋的做法。" }
+      ],
+      "scripted": ["查不到：本批材料里没有与问题相关的内容"],
+      "expect": { "markdownContains": ["查不到"], "refs": [], "droppedUnreferenced": 0, "droppedInventedRefs": 0, "notFound": true }
+    },
+    {
+      "id": "空库 ⇒ 一次都不打模型、直接说查不到",
+      "sources": [
+        { "ref": "[[空页]]", "kind": "page", "label": "空页", "text": "   " }
+      ],
+      "scripted": [],
+      "expect": { "markdownContains": ["查不到"], "refs": [], "calls": 0, "notFound": true }
+    }
+  ]
+}
