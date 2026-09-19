@@ -14,7 +14,7 @@ static LOCKED: AtomicBool = AtomicBool::new(false);
 /// Session-held derived key (NOT persisted at rest). Populated on enable/unlock,
 /// cleared on lock/disable. This is the E1 "密钥不落盘" core: the passphrase-derived
 /// key only lives in this process's memory, never written to disk.
-static SESSION_KEY: Mutex<Option<[u8; 32]>> = Mutex::new(None);
+static SESSION_KEY: Mutex<Option<crypto::AppKeys>> = Mutex::new(None);
 
 /// Constant encrypted as the verify sentinel so `unlock_encryption` can validate
 /// the passphrase without persisting the key at rest.
@@ -48,9 +48,12 @@ pub(crate) fn session_has_key() -> bool {
     SESSION_KEY.lock().map(|s| s.is_some()).unwrap_or(false)
 }
 
-/// Read the session-held derived key (if encryption is on and session currently unlocked).
+/// Read the session-held **key material** (if encryption is on and the session is unlocked).
 /// No longer reads any persisted key — this is the E1 "密钥不落盘" guarantee.
-pub fn key_if_enabled(c: &Connection) -> Option<[u8; 32]> {
+///
+/// 返回**整套**材料（`crypto::AppKeys`）而不是裸 32 字节：国密构建下应用层 AEAD 需要两把
+/// 独立密钥（§0-B），而 `legacy` 那一把仍在里面 —— 它既给 v0/v1 双读，也是 SQLCipher 的 `PRAGMA key`。
+pub fn key_if_enabled(c: &Connection) -> Option<crypto::AppKeys> {
     if !encryption_enabled(c) || LOCKED.load(Ordering::SeqCst) {
         return None;
     }
@@ -61,24 +64,25 @@ pub fn key_if_enabled(c: &Connection) -> Option<[u8; 32]> {
 /// Returns the raw 32-byte key regardless of the locked flag; callers gate on
 /// [`encryption_enabled`] + lock state themselves.
 pub fn session_key() -> Option<[u8; 32]> {
-    *SESSION_KEY.lock().ok()?
+    SESSION_KEY.lock().ok()?.map(|k| k.legacy)
 }
 
 /// Encrypt attachment BYTES at rest using the session key, ONLY when encryption is on
 /// and the session is unlocked. When off (or locked) this passes the bytes through
 /// unchanged, so existing plaintext attachments keep working and new ones are stored
 /// plainly until encryption is enabled.
-pub fn encrypt_attachment_bytes(key: Option<&[u8; 32]>, data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn encrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> Result<Vec<u8>, String> {
     match key {
         Some(k) => crypto::encrypt(data, k),
         None => Ok(data.to_vec()),
     }
 }
 
-/// Decrypt attachment bytes read back from disk. When a key is present, tries to decrypt
-/// (ciphertext = `nonce(24)||ct`); if it fails the bytes were plaintext (pre-encryption
-/// data or encryption was off when saved), so they are returned unchanged.
-pub fn decrypt_attachment_bytes(key: Option<&[u8; 32]>, data: &[u8]) -> Result<Vec<u8>, String> {
+/// Decrypt attachment bytes read back from disk. When key material is present, tries to
+/// decrypt (**双读**：v0 无头 / v1 XChaCha20 / v2 国密，由密文头分派); if it fails the bytes
+/// were plaintext (pre-encryption data, or encryption was off when saved), so they are
+/// returned unchanged.
+pub fn decrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> Result<Vec<u8>, String> {
     match key {
         Some(k) => match crypto::decrypt(data, k) {
             Ok(pt) => Ok(pt),
@@ -399,8 +403,10 @@ pub(crate) fn set_encryption_impl(
         return Err("口令至少 8 位".to_string());
     }
     let salt = crypto::random_salt();
-    let key = crypto::derive_key(&passphrase, &salt)?;
-    let verify = crypto::encrypt_str(VERIFY_MSG, &key)?;
+    // 整套密钥材料（legacy ＋ 国密那一对）。字符串/二进制两条路径共用 `keys`，所以
+    // 「口令验证哨兵」与「附件/同步载荷」写下的是**同一版**密文。
+    let keys = crypto::derive_app_keys(&passphrase, &salt)?;
+    let verify = crypto::encrypt_str(VERIFY_MSG, &keys)?;
 
     // Config lives in meta (plaintext) so a fresh locked launch can still derive the
     // key before the (now-encrypted) space DB is readable.
@@ -411,11 +417,12 @@ pub(crate) fn set_encryption_impl(
     // NOTE: `ENC_KEY` is intentionally NOT persisted — the derived key is only held
     // in this session (SESSION_KEY). At-rest protection comes from the SQLCipher
     // space DBs encrypted below with the same key.
-    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(key);
+    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(keys);
     LOCKED.store(false, Ordering::SeqCst);
 
     // Convert every non-active space to disk-encrypted (active handled last via swap).
-    let non_active = match convert_all_spaces(conn, app_data_dir, true, Some(&key)) {
+    // ⚠️ 库级（SQLCipher）用的仍是 `legacy[..]` 那 32 字节 —— 库级换 KDF 是 P2-P3 的事。
+    let non_active = match convert_all_spaces(conn, app_data_dir, true, Some(&keys.legacy)) {
         Ok(v) => v,
         Err(e) => {
             rollback_encryption_config(conn);
@@ -433,7 +440,7 @@ pub(crate) fn set_encryption_impl(
     // Swap out the active connection, convert its file, then re-open it keyed.
     let active_path = space_db_path(app_data_dir, &active);
     let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
-    if let Err(e) = convert_space_db(&active_path, true, Some(&key)) {
+    if let Err(e) = convert_space_db(&active_path, true, Some(&keys.legacy)) {
         // convert_space_db is safe: it restored the plaintext source on failure.
         let _ = crate::db::reopen_space_at(conn, &active, app_data_dir);
         rollback_encryption_config(conn);
@@ -467,15 +474,23 @@ pub fn sync_gate(c: &Connection) -> Result<(), String> {
 pub struct EncryptionStatus {
     pub enabled: bool,
     pub locked: bool,
+    /// **本会话写新数据用的密文版本**（§0-C：算法标识不能只藏在密文里，状态上也要有一份）。
+    /// 解锁着 ⇒ 手上这套密钥材料真正会写出来的版本；锁着/未开启 ⇒ 本构建的默认写入版本。
+    pub format: u8,
+    /// 上一条的**稳定算法名**（`crypto::format_name`，单一定义处）。
+    pub algorithm: String,
 }
 
 #[tauri::command]
 pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     let c = conn(&db);
-    Ok(EncryptionStatus {
-        enabled: encryption_enabled(&c),
-        locked: LOCKED.load(Ordering::SeqCst),
-    })
+    let enabled = encryption_enabled(&c);
+    let locked = LOCKED.load(Ordering::SeqCst);
+    let format = match key_if_enabled(&c) {
+        Some(k) => crypto::active_format(&k),
+        None => crypto::CURRENT_FORMAT,
+    };
+    Ok(EncryptionStatus { enabled, locked, format, algorithm: crypto::format_name(format).to_string() })
 }
 
 /// Lock the session: drop the session key, mark locked, and CLOSE the active space
@@ -514,14 +529,16 @@ pub(crate) fn unlock_encryption_impl(
     }
     let salt_b64 = sync::get_meta_state(conn, crypto::ENC_SALT).ok_or("加密状态缺失".to_string())?;
     let salt = crypto::b64_decode(&salt_b64).map_err(|e| format!("盐值无效: {e}"))?;
-    let key = crypto::derive_key(&passphrase, &salt)?;
+    let keys = crypto::derive_app_keys(&passphrase, &salt)?;
     let verify = sync::get_meta_state(conn, crypto::ENC_VERIFY).ok_or("加密状态缺失".to_string())?;
-    let msg = crypto::decrypt_str(&verify, &key).map_err(|_| "口令不正确".to_string())?;
+    // ★ 哨兵按**自己的密文头**分派 ⇒ 在国密构建里解开老（v1）哨兵靠的是双读，
+    //   而不是"猜口令" —— 口令对不对与"这段是哪一版"是两件事。
+    let msg = crypto::decrypt_str(&verify, &keys).map_err(|_| "口令不正确".to_string())?;
     if msg != VERIFY_MSG {
         return Err("口令不正确".to_string());
     }
     let active = crate::workspaces::active_workspace_id(conn)?;
-    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(key);
+    *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(keys);
     LOCKED.store(false, Ordering::SeqCst);
     // Re-open the active space DB keyed — without this PRAGMA key the app would fail to
     // read it after a locked restart.
@@ -539,7 +556,9 @@ pub fn unlock_encryption(db: State<Db>, passphrase: String) -> Result<(), String
 /// Disable app encryption: decrypt every space DB back to plaintext, clear the meta flag
 /// + markers, and clear the session key. Requires an unlocked session (the key to decrypt).
 pub(crate) fn disable_encryption_impl(conn: &mut Connection, app_data_dir: &Path) -> Result<(), String> {
-    let key = *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())?;
+    let keys = *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())?;
+    // 库级（SQLCipher）只用 legacy 那 32 字节；国密那一对是应用层载荷用的，换成它库就打不开了。
+    let key = keys.map(|k| k.legacy);
     if !encryption_enabled(conn) {
         return Err("未开启端到端加密".to_string());
     }
@@ -652,14 +671,14 @@ mod tests {
     #[test]
     fn attachment_bytes_encrypt_decrypt_roundtrip() {
         let salt = crypto::random_salt();
-        let key = crypto::derive_key("hunter2", &salt).unwrap();
+        let key = crypto::AppKeys::legacy_only(crypto::derive_key("hunter2", &salt).unwrap());
         let plain = b"some attachment bytes \x00\x01\x02";
         let enc = encrypt_attachment_bytes(Some(&key), plain).unwrap();
         assert_ne!(enc, plain);
         let dec = decrypt_attachment_bytes(Some(&key), &enc).unwrap();
         assert_eq!(dec, plain);
         // Wrong key -> decrypt fails -> raw ciphertext passthrough (never corrupts).
-        let wrong = crypto::derive_key("wrong", &salt).unwrap();
+        let wrong = crypto::AppKeys::legacy_only(crypto::derive_key("wrong", &salt).unwrap());
         let dec2 = decrypt_attachment_bytes(Some(&wrong), &enc).unwrap();
         assert_eq!(dec2, enc);
         // No key (encryption off/locked) -> passthrough.
@@ -711,7 +730,7 @@ mod tests {
             assert!(c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
         }
         // Right key via key_space_conn (session key) reads.
-        *SESSION_KEY.lock().unwrap() = Some(key);
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
         {
             let c = Connection::open(&encp).unwrap();
             key_space_conn(&c, &encp).unwrap();
@@ -747,7 +766,7 @@ mod tests {
         let key = crypto::derive_key("hunter2", &salt).unwrap();
         // Encrypt in place.
         convert_space_db(&space, true, Some(&key)).unwrap();
-        *SESSION_KEY.lock().unwrap() = Some(key);
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
         assert!(space_db_is_encrypted(&space));
         // Reopen with the session key (the open-point path the app uses) and read rows.
         {
@@ -801,7 +820,7 @@ mod tests {
         // Converting an already-encrypted file back to "encrypted" is a no-op.
         convert_space_db(&space, true, Some(&key)).unwrap();
         assert!(space_db_is_encrypted(&space));
-        *SESSION_KEY.lock().unwrap() = Some(key);
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
         let c = Connection::open(&space).unwrap();
         key_space_conn(&c, &space).unwrap();
         let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
@@ -919,7 +938,7 @@ mod tests {
         let key = crypto::derive_key("hunter2", &salt).unwrap();
         // Encrypt the space at rest, then open it via the cross-space path (keyed).
         convert_space_db(&space_path, true, Some(&key)).unwrap();
-        *SESSION_KEY.lock().unwrap() = Some(key);
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
         let conn = crate::db::open_space_conn_at("default", &dir).unwrap();
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
@@ -976,15 +995,18 @@ mod tests {
     }
 
     // Enable encryption in meta (not the space DB) and populate the session key/unlock.
-    fn enable_meta(c: &Connection, pass: &str) -> [u8; 32] {
+    fn enable_meta(c: &Connection, pass: &str) -> crypto::AppKeys {
         let salt = crypto::random_salt();
         let key = crypto::derive_key(pass, &salt).unwrap();
         sync::set_meta_state(c, crypto::ENC_SALT, &crypto::b64_encode(&salt)).unwrap();
-        sync::set_meta_state(c, crypto::ENC_VERIFY, &crypto::encrypt_str(VERIFY_MSG, &key).unwrap()).unwrap();
+        // ⚠️ 这里刻意用 `legacy_only`：本测试组盯的是 SQLCipher/库级与既有 v1 口径，
+        //    "国密构建下三条路径也走 v2"由 crypto.rs 与下面那条 cfg 用例负责，别把两件事混在一起。
+        let keys = crypto::AppKeys::legacy_only(key);
+        sync::set_meta_state(c, crypto::ENC_VERIFY, &crypto::encrypt_str(VERIFY_MSG, &keys).unwrap()).unwrap();
         sync::set_meta_state(c, crypto::ENC_ENABLED, "1").unwrap();
-        *SESSION_KEY.lock().unwrap() = Some(key);
+        *SESSION_KEY.lock().unwrap() = Some(keys);
         LOCKED.store(false, Ordering::SeqCst);
-        key
+        keys
     }
 
     #[test]
@@ -1013,8 +1035,8 @@ mod tests {
     #[test]
     fn verify_sentinel_roundtrip() {
         let salt = crypto::random_salt();
-        let key = crypto::derive_key("correct-horse", &salt).unwrap();
-        let wrong = crypto::derive_key("wrong-pass", &salt).unwrap();
+        let key = crypto::AppKeys::legacy_only(crypto::derive_key("correct-horse", &salt).unwrap());
+        let wrong = crypto::AppKeys::legacy_only(crypto::derive_key("wrong-pass", &salt).unwrap());
         let sentinel = crypto::encrypt_str(VERIFY_MSG, &key).unwrap();
         assert_eq!(crypto::decrypt_str(&sentinel, &key).unwrap(), VERIFY_MSG);
         assert!(crypto::decrypt_str(&sentinel, &wrong).is_err());
@@ -1035,6 +1057,64 @@ mod tests {
         LOCKED.store(false, Ordering::SeqCst);
         assert!(key_if_enabled(&c).is_some());
         assert!(sync_gate(&c).is_ok());
+    }
+
+    // ── P1：国密构建下"三条路径"都真的走 SM4（§7 验收：附件 / 导出包 / 同步载荷逐条勾）──
+    //
+    // ⚠️ 这一组**只在 `--features sm-crypto` 下编**。它盯的是"路径覆盖"，不是算法本身
+    //    （算法由 `crypto_sm` 的 GM/T 向量用例与对拍门禁盯）。三条路径都从**同一个** `AppKeys`
+    //    入口进出 —— 这也正是"漏一条就是一半国密"最容易发生的地方。
+    #[cfg(feature = "sm-crypto")]
+    #[test]
+    fn national_crypto_covers_all_three_paths_and_keeps_the_library_key_unchanged() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let (_t, c) = temp_ws();
+        // 用**真**派生（不是 legacy_only）⇒ 手里有国密那一对密钥，写出去的就是 v2。
+        let salt = crypto::random_salt();
+        let keys = crypto::derive_app_keys("supersecret", &salt).unwrap();
+        assert!(keys.sm.is_some(), "国密构建的会话密钥里必须有国密那一对");
+        sync::set_meta_state(&c, crypto::ENC_SALT, &crypto::b64_encode(&salt)).unwrap();
+        sync::set_meta_state(&c, crypto::ENC_VERIFY, &crypto::encrypt_str(VERIFY_MSG, &keys).unwrap()).unwrap();
+        sync::set_meta_state(&c, crypto::ENC_ENABLED, "1").unwrap();
+        *SESSION_KEY.lock().unwrap() = Some(keys);
+        LOCKED.store(false, Ordering::SeqCst);
+
+        // ★ 库级（SQLCipher 的 `PRAGMA key`）**必须仍是 legacy 那 32 字节**：
+        //   一换，所有既有加密库当场打不开 —— 这是 P1 最贵的回归，比"少覆盖一条路径"更严重。
+        assert_eq!(
+            session_key(),
+            Some(keys.legacy),
+            "库级密钥被国密密钥顶替了 —— 既有加密库会全部打不开（库级换 KDF 是 P2-P3 的事）"
+        );
+
+        // ① 附件静置（含同步上传/下载共用的那条入口）
+        let att = b"attachment bytes for the national-crypto path";
+        let enc = encrypt_attachment_bytes(Some(&keys), att).unwrap();
+        assert_eq!(&enc[..2], &[crypto::MAGIC, crypto::VERSION_SM4], "附件没写成国密");
+        assert_eq!(decrypt_attachment_bytes(Some(&keys), &enc).unwrap(), att);
+
+        // ② 同步载荷（上线时走的就是它）
+        let payload = r#"{"id":"p1","content_text":"国密同步载荷"}"#;
+        let wire = encrypt_payload(&c, payload).unwrap();
+        let wire_bytes = crypto::b64_decode(&wire).unwrap();
+        assert_eq!(&wire_bytes[..2], &[crypto::MAGIC, crypto::VERSION_SM4], "同步载荷没写成国密");
+        assert_eq!(decrypt_payload(&c, &wire).unwrap(), payload);
+
+        // ③ 导出包里的附件（读出来给人 = 走解密那条），以及"整库备份/导出"用的库级迁移
+        //    仍然拿 legacy 密钥 —— 这一条由上面 `session_key()` 的断言守着。
+        assert_eq!(
+            crypto::decrypt(&wire_bytes, &keys).unwrap(),
+            payload.as_bytes(),
+            "v2 载荷必须能被同一个 AppKeys 解开（字符串/二进制两条路径同一套编码）"
+        );
+
+        // ④ 双读：老（v1）哨兵在国密构建里也解得开 —— 老用户升到国密版不会卡在解锁这一步。
+        let old_sentinel = crypto::encrypt_str(VERIFY_MSG, &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        assert_eq!(
+            crypto::decrypt_str(&old_sentinel, &keys).unwrap(),
+            VERIFY_MSG,
+            "国密构建解不开 v1 哨兵 ⇒ 老用户升级后卡在解锁屏（§4 第 6 条）"
+        );
     }
 
     // A raw SQLCipher key (x'hex') created on one connection is readable on a fresh

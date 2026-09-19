@@ -346,7 +346,12 @@ export interface CommandMap {
 
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };
-  encryption_status: { args: undefined; result: { enabled: boolean; locked: boolean } };
+  // `format` / `algorithm`：本会话写新数据用的密文版本与稳定算法名（§0-C 的算法标识）。
+  // 默认构建恒为 1="xchacha20-poly1305"；国密构建（`--features sm-crypto`）为 2="sm4-cbc+hmac-sm3"。
+  encryption_status: {
+    args: undefined;
+    result: { enabled: boolean; locked: boolean; format: number; algorithm: string };
+  };
   lock_encryption: { args: undefined; result: void };
   unlock_encryption: { args: { passphrase: string }; result: void };
   disable_encryption: { args: undefined; result: void };

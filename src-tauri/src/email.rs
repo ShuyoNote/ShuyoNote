@@ -1139,7 +1139,7 @@ fn load_accounts(path: &std::path::Path) -> Result<Vec<EmailAccountArgs>, String
 /// 对账号列表按会话密钥加密密码后写盘。
 fn save_accounts(
     path: &std::path::Path,
-    key: Option<&[u8; 32]>,
+    key: Option<&crate::crypto::AppKeys>,
     accounts: &[EmailAccountArgs],
 ) -> Result<(), String> {
     if let Some(p) = path.parent() {
@@ -1159,7 +1159,7 @@ fn save_accounts(
 }
 
 /// 解密账号列表的密码（配合会话密钥）。
-fn decrypt_accounts(key: Option<&[u8; 32]>, mut accounts: Vec<EmailAccountArgs>) -> Vec<EmailAccountArgs> {
+fn decrypt_accounts(key: Option<&crate::crypto::AppKeys>, mut accounts: Vec<EmailAccountArgs>) -> Vec<EmailAccountArgs> {
     if let Some(k) = key {
         for a in accounts.iter_mut() {
             if let Ok(p) = crate::crypto::decrypt_str(&a.password, k) {
@@ -1175,7 +1175,7 @@ fn decrypt_accounts(key: Option<&[u8; 32]>, mut accounts: Vec<EmailAccountArgs>)
     accounts
 }
 
-fn session_key(db: &State<'_, Db>) -> Option<[u8; 32]> {
+fn session_key(db: &State<'_, Db>) -> Option<crate::crypto::AppKeys> {
     crate::security::key_if_enabled(&db.0.lock().expect("db mutex poisoned"))
 }
 

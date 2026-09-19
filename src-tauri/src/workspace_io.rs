@@ -288,7 +288,8 @@ pub async fn import_workspace(
         let c = db.0.lock().expect("db mutex poisoned");
         match crate::security::key_if_enabled(&c) {
             Some(k) => {
-                crate::security::convert_space_db(&target_db, true, Some(&k))?;
+                // 库级（SQLCipher）用 legacy 那 32 字节。
+                crate::security::convert_space_db(&target_db, true, Some(&k.legacy))?;
                 true
             }
             None => false,

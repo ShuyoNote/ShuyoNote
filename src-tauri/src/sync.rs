@@ -1829,7 +1829,7 @@ async fn download_one_attachment(
     token: &str,
     item: &RemoteAttachment,
     attachments_dir: &Path,
-    session_key: Option<&[u8; 32]>,
+    session_key: Option<&crate::crypto::AppKeys>,
     db: &State<'_, Db>,
 ) -> Result<i64, String> {
     let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));

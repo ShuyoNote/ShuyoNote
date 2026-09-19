@@ -217,6 +217,10 @@ fn library_dir() -> PathBuf {
 /// 判据遇到"库不在"时应当**响亮自报跳过**（`! …跳过…`，报告器会收成一等公民），
 /// 而不是把 `cargo test` 判红 —— 后者会让"缺一个开发期二进制"看起来像"代码坏了"，
 /// 而真红了以后没人分得清是哪一种（2026-09-19 rust job 就是这么红的）。
+///
+/// `#[cfg(test)]`：当前唯一调用点是 P3 对拍那条 `#[test]`。不加会在非测试构建里报
+/// "never used"（2026-09-19 复核时发现并修：非测试 lib 目标确实是会warn 的，只看 `--tests` 会漏）。
+#[cfg(test)]
 pub fn library_preflight() -> Result<(), String> {
     let dir = library_dir();
     let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);

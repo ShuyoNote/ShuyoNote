@@ -396,7 +396,7 @@ pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, d
 /// ⚠️ **加密开启时仍是整块解密**，这里**不做**假优化："流式读 → 整块加密 → 流式写"并不降低
 /// 峰值内存（整块 AEAD 必然要求整个明文同时在内存里）。要真流式得改成分块 AEAD ⇒ 那是 P2b，
 /// 前提是**先真机实测是否真的 OOM**，且要兼容存量附件。
-fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
+fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypto::AppKeys>) -> Result<(), String> {
     match key {
         // 未加密：磁盘上就是明文 ⇒ 直接拷，别把整份读进内存。
         None => std::fs::copy(src, write_path)
@@ -1061,7 +1061,7 @@ mod export_attachment_tests {
         let dir = temp_dir("enc");
         let src = dir.join("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899.pdf");
         let dst = dir.join("out.pdf");
-        let key = [7u8; 32];
+        let key = crate::crypto::AppKeys::legacy_only([7u8; 32]);
         let plain = b"%PDF-1.7 real content";
         // 磁盘上存密文（与 security::encrypt_attachment_bytes 的落盘格式一致）。
         std::fs::write(&src, crate::security::encrypt_attachment_bytes(Some(&key), plain).unwrap()).unwrap();
@@ -1069,6 +1069,32 @@ mod export_attachment_tests {
         export_attachment_to(&src, &dst, Some(&key)).unwrap();
 
         assert_eq!(std::fs::read(&dst).unwrap(), plain, "加密导出必须解密成明文");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 国密构建（`--features sm-crypto`）：磁盘上那份是 **v2（SM4-CBC ＋ HMAC-SM3）**，
+    /// 导出的仍必须逐字节是**明文**。"导出包"这条路径最容易漏 —— 它读的是同一份文件，
+    /// 但走的是"解密出来给人"（`export_attachment_to`），与附件预览不是同一段代码。
+    #[cfg(feature = "sm-crypto")]
+    #[test]
+    fn encrypted_export_under_national_crypto_decrypts_to_plaintext() {
+        let dir = temp_dir("enc-sm");
+        let src = dir.join("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff.pdf");
+        let dst = dir.join("out.pdf");
+        let keys = crate::crypto::derive_app_keys("pw", &crate::crypto::random_salt()).unwrap();
+        assert!(keys.sm.is_some(), "国密构建下派生出来必须有国密密钥");
+        let plain = b"%PDF-1.7 national crypto content";
+        let on_disk = crate::security::encrypt_attachment_bytes(Some(&keys), plain).unwrap();
+        assert_eq!(
+            &on_disk[..2],
+            &[crate::crypto::MAGIC, crate::crypto::VERSION_SM4],
+            "落盘的那份没写成国密 ⇒ 这条用例根本没测到国密路径"
+        );
+        std::fs::write(&src, &on_disk).unwrap();
+
+        export_attachment_to(&src, &dst, Some(&keys)).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), plain, "国密导出必须解密成明文");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

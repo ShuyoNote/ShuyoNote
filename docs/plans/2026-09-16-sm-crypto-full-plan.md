@@ -46,6 +46,87 @@
 | 实现来源 | 应用层 **RustCrypto**；库级 **Tongsuo**；**双向对拍是验收项** | §0-F |
 | RustCrypto 侧可用性（**2026-09-17 实测**） | `sm4 0.6.0`、`cbc 0.2.1`（含 `block-padding`）、`sm3 0.5.0`、`hmac 0.13.0` **全在**（`cargo add --dry-run`） | 回答 AMD 的"先确认 crate 齐不齐" |
 
+> ⚠️ **上表"前 32 加密"这一格 P1 落地时发现是写错的**（SM4 是 **128 位 = 16 字节**密钥，不是 32 字节），
+> 已按"**64 字节输出不变、SM4 取前 16 字节**"落地 —— 保留 64 字节是为了**两侧逐字节可比**
+> （Tongsuo 侧同一句 `PKCS5_PBKDF2_HMAC(..., EVP_sm3(), 64, out)`），改输出长度会让对拍失去意义。
+> 详见 §0.2「P1 落地记录」。
+
+---
+
+## 0.2 P1 落地记录（2026-09-19，Mac）
+
+P1 = **应用层 SM4**（§6 表），交付形态是**编译期 feature `sm-crypto`**（§0-E）；默认包字节不变。
+
+**密文格式 v2（落盘布局，`MAGIC=0x53`）**
+
+```text
+offset 0      : 0x53                      magic
+offset 1      : 0x02                      版本 2 = 国密
+offset 2..18  : iv(16)                    SM4-CBC 的 IV，随机、不保密、同密钥不复用
+offset 18..N  : SM4-CBC + PKCS#7 密文     长度必为 16 的整数倍（PKCS#7 整块填充）
+最后 32 字节  : HMAC-SM3 tag              覆盖 **前 N 字节全部**（含 magic+version+iv）
+```
+
+**两处常量表没写、P1 必须自己钉死的口径**（都会影响跨实现对拍，已同步信箱）：
+
+1. **SM4 密钥 = KDF 输出的前 16 字节**（而不是"前 32"）：见上面那条 ⚠️。
+   多出来的 16 字节不参与运算；`enc[16..32]` 纯粹是"输出 64 字节"这条接口的副产物。
+2. **tag 放在尾部**：§0.1 只钉了"覆盖范围"，没钉位置。选尾部的理由：EtM 的自然写法是
+   "先算完密文再算 MAC"，且**先验后解**时不依赖任何长度假设。
+
+**版本分派（`crypto::decrypt`，双读 + 三条边界）**
+
+| 头 | 走向 | 备注 |
+|---|---|---|
+| `0x53 0x01` | v1 XChaCha20-Poly1305（P0 起默认） | 用 `legacy` 密钥 |
+| `0x53 0x02` | v2 国密 | 用 `sm.enc/sm.mac`；无国密实现或无密钥 ⇒ **可操作**报错（不装成"数据损坏"） |
+| 无头 / 其它 | **先按 v0 试**（P0 之前的 `nonce‖ct`） | 撞头（首两字节恰好是 magic+版本号，概率 1/65536）必须仍可读 |
+| `0x53 0x03+` | 明确报"请升级再打开" | 老端读新密文的唯一正确姿势（§0-C） |
+
+**密钥材料**：`crypto::AppKeys { legacy, sm: Option<SmKeys{enc,mac}> }`，由 `derive_app_keys` 一次派生：
+
+- `legacy` = **Argon2id**（口径**不许动**）：它同时是 SQLCipher 的 `PRAGMA key` 原始密钥，
+  且是 v0/v1 双读的钥匙 ⇒ 国密构建里也**必须**是同一个值（`security.rs` 有用例钉住这一点）；
+- `sm` = **PBKDF2-HMAC-SM3**（§0.1 那条），只喂应用层 AEAD。
+- 两条 KDF 复用同一个 16 字节盐：域不同（Argon2id / PBKDF2-HMAC-SM3），复用不引入额外风险。
+
+**§0-D 压测读数（这就是"写死"的依据）**
+
+```text
+cargo test --release --features sm-crypto --lib -- --ignored --nocapture kdf_cost
+Apple M4 Max（macOS 15，release）
+Argon2id（默认参数）        ：    19.7 ms
+PBKDF2-HMAC-SM3   50000 轮  ：    32.5 ms
+PBKDF2-HMAC-SM3  100000 轮  ：    50.6 ms
+PBKDF2-HMAC-SM3  200000 轮  ：    91.8 ms
+PBKDF2-HMAC-SM3  400000 轮  ：   183.6 ms   （≈4.6 ms / 万轮，线性区）
+```
+
+**取值：`SM_KDF_ROUNDS = 200_000`**（`crypto_sm.rs` 一个常量，配 `kdf_rounds_are_the_pinned_value` 断言防改小）。
+本机解锁合计 ≈ **112 ms**；按单核性能比（M4 Max ≈ 中端 SoC 的 4–6 倍）**外推**中端机 ≈ **0.4–0.7 s**，
+落在 §0-D 的"< 1 秒"内且留了一倍余量。
+
+> ⚠️ **诚实标注两件事**：
+> ① 上面那个中端机数字是**外推**，不是设备实测 —— 真机读数属于 Android/Windows 真机验收（§7），**未完成**；
+> ② 20 万轮**低于** OWASP 对 PBKDF2-SHA256 的 600k 建议。理由是本方案的硬约束是"中端机 < 1 秒"，
+> 且应用层 AEAD 之上还有 SQLCipher 自己的 256000 轮 PBKDF2-HMAC-SHA512。若甲方要求对齐 OWASP，
+> 需要先拿到真机读数、并接受解锁可能 > 1 秒 —— **这是一个可以被推翻的决定**，不是既成事实。
+
+**三条路径（§7 验收项逐条勾，都在 `--features sm-crypto` 下有用例）**
+
+| 路径 | 入口 | 用例 |
+|---|---|---|
+| 附件静置（含同步上传/下载） | `security::encrypt/decrypt_attachment_bytes` | `security::tests::national_crypto_covers_all_three_paths_…` |
+| 同步载荷 | `security::encrypt/decrypt_payload` | 同上 |
+| 导出附件副本（导出包里那条读路径） | `attachments::export_attachment_to` | `attachments::export_attachment_tests::encrypted_export_under_national_crypto_…` |
+
+**仍然不在 P1 范围（下一轮 / 别人的格子）**
+
+- §0-C 的**另外两条**：空间元数据记录本空间算法、同步载荷带算法标识（状态字段已加：`EncryptionStatus.format/algorithm`）；
+- 库级页加密/HMAC 换 SM3 系（P2-P3，AMD 的 provider 补丁线）；
+- macOS 库级 Tongsuo＋切掉 CommonCrypto 默认（§3 第 5 条）；
+- 真机验收（§7 后两条）与"用旧版生成的加密库/附件在新版打开"的**端到端**回归。
+
 ---
 
 ## 1. 范围
@@ -287,18 +368,35 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
 
 ## 7. 验收标准
 
-- [ ] **老数据可读**：用旧版生成的加密库 + 加密附件，新版能正常打开（fixture 钉住）
+> 状态更新（2026-09-19，Mac，dev `f4151be1` 之后）：打勾 = **有可执行判据且当前绿**（命令附在行内），
+> 半勾 = 只完成了一半（写清缺哪一半）。**真机/端到端那几条一律不勾** —— 本机单测绿不等于真机绿。
+
+- [x] **老数据可读**（**单测层**）：`crypto-legacy-v0.json` 金标夹具 3 格（文本/撞头/二进制）＋
+      `legacy_headerless_data_still_reads` ＋ `legacy_data_whose_first_two_bytes_look_like_the_header_still_reads`
+      （P1 起对 **v1 与 v2** 两个版本号各验一遍）—— `cargo test --lib crypto::`
+      ⚠️ **端到端那半没做**：用旧版**真的**生成一个加密库 ＋ 加密附件再拿新版打开，属真机验收。
 - [ ] 新装用户：口令 → 加密 → 重启解锁 → 读写正常（**桌面真机**，不只看单测）
 - [ ] 加密开关双向迁移（开→关、关→开）数据不丢
-- [ ] 附件 / 导出包 / 同步载荷**三条路径全覆盖**（逐条勾，不许漏）
+- [x] 附件 / 导出包 / 同步载荷**三条路径全覆盖**（**应用层 AEAD 层**）：`security::tests::national_crypto_covers_all_three_paths_…`
+      ＋ `attachments::export_attachment_tests::encrypted_export_under_national_crypto_…`
+      （都只在 `--features sm-crypto` 下编，由 `rust-sm-crypto` 这条常开门禁跑）
 - [ ] 页加密确为 SM4（直接读文件头/用错算法打开应失败，而不是"看起来能用"）
-- [ ] SM3 / SM4 标准测试向量通过 ＋ 跨语言一致性通过
-- [ ] 锁定态不读库（`vault.ts` 既有约束不回退）
+- [x] SM3 / SM4 标准测试向量通过（**RustCrypto 侧**）：`crypto_sm::tests::sm4_primitive_matches_the_gmt_0002_vector`
+      ＋ `sm3_primitive_matches_the_gmt_0004_vector`；跨实现一致性见下一行
+- [~] **跨语言一致性**：夹具已搬进本仓并有常开门禁 `gm-conformance`（RustCrypto 侧 R1–R4 恒跑、**空跑即红**），
+      ❌ 但 **Tongsuo 那一半在 macOS 上从没跑过**（本机没有 Tongsuo，门禁自报跳过）⇒ 双向互解仍未在 Mac 取证
+- [x] 锁定态不读库（`vault.ts` 既有约束不回退）：`security::tests::lock_gates_key_and_sync` 仍绿
 - [ ] Android 真机回归（SQLCipher/OpenSSL 在 Android 上是另一条构建链，见 `Cargo.toml:102-111`）
-- [ ] **格式头有测试向量钉住**：2 字节头的编码/分派、以及「无头 = 版本 0」的判定（§0-A）
-- [ ] **EtM 正确性有测试**：MAC 覆盖版本头 ＋ IV ＋ 密文；**篡改任一处都必须先失败、且不解密**（§0-B）
-- [ ] **未知算法明确拒绝**：老端读新密文/同步载荷时给出"请升级客户端"，**不是"数据损坏"**（§0-C）
-- [ ] **KDF 迭代有断言**：常量写死 ＋ 门禁防止被改小；压测记录（中端机解锁 < 1 秒）在案（§0-D）
+- [x] **格式头有测试向量钉住**：2 字节头的编码/分派、以及「无头 = 版本 0」的判定（§0-A）
+      —— `new_ciphertext_carries_the_version_header_on_both_paths` ＋ 撞头回退两条
+- [x] **EtM 正确性有测试**：MAC 覆盖版本头 ＋ IV ＋ 密文；**篡改任一处都必须先失败、且不解密**（§0-B）
+      —— `crypto_sm::tests::tampering_anywhere_fails_before_decrypting` ＋ `encryption_and_mac_keys_are_not_interchangeable`
+- [x] **未知算法明确拒绝**：老端读新密文/同步载荷时给出"请升级客户端"，**不是"数据损坏"**（§0-C）
+      —— `unknown_future_version_gets_an_actionable_error` ＋ 默认构建读 v2 的 `…rejects_v2_with_an_actionable_error`
+      ⚠️ §0-C 的另两条（**空间元数据**记录本空间算法、**同步载荷**带标识）**未做**；状态字段那条已加
+      （`EncryptionStatus.format/algorithm`）
+- [x] **KDF 迭代有断言**：常量写死 ＋ 断言防止被改小（`kdf_rounds_are_the_pinned_value`）；
+      压测记录在 §0.2（本机 ≈112 ms 解锁；**中端机数字是外推、非实测**，见 §0.2 的两条诚实标注）（§0-D）
 - [ ] **构建门禁断言实际加密后端**：确认编进去的是 Tongsuo/OpenSSL 而不是 Apple 的 CommonCrypto（§3 第 5 条）
 
 ---

@@ -224,6 +224,25 @@ export const GATES = [
       "国密这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo，见方案 §0-F）——两份漂移的后果是「跨设备读不出对方的数据」，而它没有任何编译期信号、本机单测也照绿。夹具来自 AMD 2026-09-17（信箱仓 gm-conformance），2026-09-19 搬进本仓：去 target/、驱动重写成跨平台 Node（原 driver.sh 是 Linux 专用：stat -c/sha256sum/$HOME/tongsuo-build）、Tongsuo 缺席自报跳过；并加「空跑即红」下限——固定下限会漏掉「Tongsuo 分支整段被删」，所以下限随 Tongsuo 是否参与而变（3 或 8）",
   },
   {
+    id: "rust-sm-crypto",
+    group: "rust",
+    label: "国密应用层（SM4-CBC ＋ HMAC-SM3）：编译 ＋ 全量单测（--features sm-crypto）",
+    // 为什么必须**常开**（方案 §0-E 的原话："必须有那条常开 job，否则国密路径会变成
+    // 「没人编、坏了也没人知道」的死代码"）：国密代码整段在 `#[cfg(feature = "sm-crypto")]` 后面，
+    // 默认构建**一行都不编**，所以默认 CI 全绿**证明不了**国密那半边还能用。
+    //
+    // 跑全量（不带 `--lib`）是刻意的：镜像 `rust-test` 的口径，这样"国密版"与"默认版"跑的是同一套
+    // 用例集合，差别只在 feature —— 否则"国密版少跑了一半用例"这种事没人会发现。
+    cmd: "cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto",
+    counters: "cargo",
+    // ⚠️ 暂**不**标 `baseline: true`：读数值必须取自 **Linux**（本组既有基线就是 WSL2/Ubuntu 记的，
+    // 本机 macOS 的用例数可能不同，照抄会把 CI 判成"用例数下降"）。等 CI 出报告后：
+    //   node scripts/test-report.mjs --baseline-from rust-report.json
+    // 再把这里改成 true —— 在那之前它只是"常开"，还没有"只增不减"的护栏。
+    incident:
+      "国密这一支一旦没人编就会腐烂：默认包不含国密（§0-E），而 `--features sm-crypto` 若编译不过/单测红，本机与 CI 都不会有任何信号。2026-09-19 建这条 job 时顺带钉住两件事：① 库级密钥必须仍是 Argon2 legacy 那 32 字节（被国密密钥顶替 = 既有加密库全部打不开）；② 国密构建仍必须读得出 v0/v1 老密文（双读）",
+  },
+  {
     id: "check-sys-deps-linux",
     group: "rust",
     label: "构建期系统依赖（dpkg 实查，与本组 CI job 的 apt 配方同源）",

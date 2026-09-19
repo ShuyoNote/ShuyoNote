@@ -7,6 +7,10 @@ mod blocks;
 mod bookmark;
 mod commands;
 mod crypto;
+// 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **只在 `--features sm-crypto` 下编译**（方案 §0-E）。
+// 默认包里它整个不存在 ⇒ 默认构建既不多编一个 crate，也不可能写出 v2 密文。
+#[cfg(feature = "sm-crypto")]
+mod crypto_sm;
 mod database;
 mod db;
 mod disk;

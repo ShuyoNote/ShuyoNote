@@ -2979,7 +2979,11 @@ export function makeInvoke(store: SqliteStore) {
     }
 
     // ---- Encryption ----
-    if (cmd === "encryption_status") return { enabled: false, locked: false } as T;
+    // Web 形态没有静态加密（`web.ts` 的 set/lock/unlock/disable 都是空实现）：报"未开启"，
+    // 算法字段与本构建的默认写入版本一致（v1 = XChaCha20），别写成国密。
+    if (cmd === "encryption_status") {
+      return { enabled: false, locked: false, format: 1, algorithm: "xchacha20-poly1305" } as T;
+    }
     if (cmd === "set_encryption" || cmd === "lock_encryption" || cmd === "unlock_encryption" || cmd === "disable_encryption") {
       return undefined as T;
     }
