@@ -20,6 +20,7 @@
 import { api } from "./api";
 import { toast } from "./../store/toast";
 import { useSpaceStore } from "./../store/space";
+import { attachmentFetchHint } from "./attachmentFetchHint";
 
 /**
  * 确保这个 hash 的字节在本机可用。**已经在本机就直接返回 `true`，不发任何请求。**
@@ -60,7 +61,9 @@ async function ensureAttachmentBytesOnce(hash: string): Promise<boolean> {
     toast("已从服务器取回文件", "success");
     return true;
   } catch (e) {
-    toast(`取回文件失败：${e}`, "error");
+    // 原文进 `attachmentFetchHint` 分类：**"取不回"与"暂时取不回"要给不同的下一步**
+    // （2026-09-19 社区缺陷帖 #6：404 那类再点一次永远不会成功，界面不该暗示可以重试）。
+    toast(attachmentFetchHint(e), "error");
     return false;
   }
 }

@@ -15,6 +15,7 @@ import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon } from "./icons";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
+import { attachmentFetchHint } from "../lib/attachmentFetchHint";
 import {
   FM_VIEW_KEY,
   defaultFileView,
@@ -222,7 +223,9 @@ export function FileManagerView() {
       toast(`已下载「${f.name}」`, "success");
       return true;
     } catch (e) {
-      toast(`下载失败：${e}`, "error");
+      // 与打开路径共用同一套分类（`attachmentFetchHint`）："取不回"要说清怎么办，
+      // 不能一律甩一句原文（2026-09-19 社区缺陷帖 #6）。
+      toast(attachmentFetchHint(e), "error");
       return false;
     } finally {
       setFetching(null);
