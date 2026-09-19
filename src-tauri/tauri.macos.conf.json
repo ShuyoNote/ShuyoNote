@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "macOS": {
+      "files": {
+        "vendor/pdfium/mac-univ/lib/libpdfium.dylib": "Frameworks/libpdfium.dylib"
+      }
+    }
+  }
+}

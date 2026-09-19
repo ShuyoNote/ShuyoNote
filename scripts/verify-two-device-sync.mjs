@@ -46,7 +46,7 @@ await esbuild.build({
 });
 
 const mod = await import(pathToFileURL(outfile).href + "?v=" + Date.now());
-const { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter, applyChange } = mod;
+const { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter, applyChange, makeInvoke } = mod;
 
 // ---- 2. 注入 sql.js wasm 字节 + 内存 adapter（Node 环境）----
 const wasmPath = require.resolve("sql.js/dist/sql-wasm.wasm");
@@ -208,6 +208,45 @@ async function main() {
   const seenA3 = new Map(); seenA3.set(P2, 4);
   pullFromServer(A2, seenA3);
   ok(getRow(A2, P2).title === "A2版", `时钟漂移下 A 保留本地「A2版」（dirty 保护），实际=${getRow(A2, P2).title}`);
+
+  // =========== 场景 G：恢复历史版本后的本地改动必须被 dirty 保护（2026-09-19 裁定 (a)）===========
+  // 承重判据：`restore_version` 必须置 `dirty = 1`。不置 1 时，"恢复后、推送前"收到远端会把这次
+  // 恢复**静默冲掉**（最终靠 outbox 收敛，但用户会看到内容闪回、且没有任何提示）。
+  // 这条判据打的是**真实的命令路径**（`makeInvoke` → `restore_version`），不是在脚本里重演 restore 逻辑。
+  console.log("\n场景 G：恢复历史版本 → 推送前收到远端 ⇒ 恢复的内容不被冲掉");
+  const G = await newDevice();
+  const invokeG = makeInvoke(G);
+  const PR = "page-restore";
+  localCreate(G, PR, "当前内容(v3)", "当前内容(v3)");
+  const seqG = pushToServer(G, PR, "devG", "当前内容(v3)", "当前内容(v3)"); // 已同步、dirty=0
+  ok(getRow(G, PR).dirty === 0, "G 建页并 push 后 dirty=0（可被远端覆盖的基线状态）");
+  // 造一条历史版本（真实路径下由 snapshotBeforeSave 产生；这里插一行等价的历史行）
+  G.run(
+    "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at) VALUES (?,?,?,?,?,?)",
+    ["ver-1", PR, "旧标题(v1)", "{}", "旧内容(v1)", Date.now()],
+  );
+  await invokeG("restore_version", { versionId: "ver-1" });
+  ok(getRow(G, PR).content_text === "旧内容(v1)", "恢复后本地内容 = 旧内容(v1)");
+  ok(getRow(G, PR).dirty === 1, "★ 恢复后 dirty=1（恢复 = 一次本地未推送改动）");
+  const vcount = G.query("SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", [PR])[0].n;
+  ok(vcount === 2, `恢复前的内容已进快照（历史行数应为 2：历史行 + 恢复前快照），实际=${vcount}`);
+  // 推送**之前**，远端来了一条更新的版本（另一台设备改的）
+  const seqRemote = ++serverSeq;
+  serverView.set(PR, {
+    seq: seqRemote, title: "远端新标题", content_text: "远端新内容",
+    updated_at: Date.now(), from_device: "devX", workspace_id: "ws1",
+  });
+  pullFromServer(G, new Map([[PR, seqG]]));
+  ok(getRow(G, PR).content_text === "旧内容(v1)", "★ 推送前收到远端 ⇒ 恢复的内容不被冲掉（dirty 保护）");
+  ok(getRow(G, PR).dirty === 1, "且仍 dirty=1（本次 pull 未消费该远端）");
+  // 反向：push 之后（dirty=0）同一条远端必须能正常覆盖 —— dirty 是"保护未推送的改动"，不是"永久锁住"
+  pushToServer(G, PR, "devG", getRow(G, PR).title, getRow(G, PR).content_text);
+  serverView.set(PR, {
+    seq: ++serverSeq, title: "远端更新", content_text: "远端更新内容",
+    updated_at: Date.now(), from_device: "devX", workspace_id: "ws1",
+  });
+  pullFromServer(G, new Map([[PR, seqRemote]]));
+  ok(getRow(G, PR).content_text === "远端更新内容", "push 后 dirty=0 ⇒ 后续远端正常覆盖（保护不是永久锁死）");
 
   // =========== 汇总 ===========
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);

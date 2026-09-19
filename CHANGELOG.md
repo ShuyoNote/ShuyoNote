@@ -4,6 +4,131 @@
 
 ## [Unreleased]
 
+### 安全
+
+- **发布自检脚本会把 GitHub token 打进日志**（2026-09-16 发 1.91.3 时当场踩到）。
+  `scripts/check-release-state.mjs` 用 `execFileSync("curl.exe", ["-H", "Authorization: Bearer ghp_…"])`
+  取 Release 信息，curl 一失败，Node 抛出的 message 里**带着整条 argv**，那句
+  `ok(false, …e.message…)` 就把 token 原样打进了终端（在 CI 上就是公开日志）。
+  修法：新增 `scripts/lib/redact.mjs`（`redactSecrets`，覆盖 `Bearer …`、`ghp_/gho_/ghs_/ghu_/ghr_`、
+  `github_pat_`、`token=/access_token=/private_token=`、URL 里的 `user:pass@`），
+  打外部命令错误前一律先过它；`scripts/lib/redact.test.mjs` 六条判据（含那次泄漏的**原样错误串**，
+  以及"正常日志不许被抹花"）。`scripts/release.mjs` 的 gitcode 请求错误只带状态码与 URL，
+  并在注释里写明"不要把 headers 塞进 message"的理由。
+  ⚠️ **已经在日志里露过的那把 token 要轮换**——抹的是以后，抹不掉已经写出去的那次。
+
+### 修复
+
+- **文件管理「类型」列的「文件」被拆成「文/件」**（2026-09-19 用户截图报告；**上一条并没有解决它**）。
+  上一条给表格设了 `min-width` 兜底，那只保证"表格不缩到下限以下"——表格被内容撑到 min-content 时，
+  列宽怎么分是另一回事：`.fm-name-col` 有 `min-width`、`.fm-size-col` 与两个日期列都有 `nowrap`，
+  **只有「类型」列没有**，于是所有缺口都压给它；而 CJK 的 min-content 只有一个字宽 ⇒ 一字一行。
+  触发条件是"表格 min-content 超过下限"，**不是**"窗口特别窄"：真实应用里注入长不可断文件名后，
+  窗口 1100 就已经是 2 行（用户数据里那行 `bookmark-<32 位十六进制>` 就是这样的名字）。
+  修法：`.fm-kind-col` 加 `white-space: nowrap` —— 缺口再也压不动它，表格要么放得下、要么横向滚。
+  判据：`scripts/check-panel-layout.mjs` 的夹具改用**长不可断文件名**制造缺口，并新增
+  「缺口必须真的落到列宽上」的前置条件。旧夹具只有短名字，那点溢出被横滚吸收，
+  这条判据一直是**假绿**——所以这次把"量它的场景也要 assert"补上了。
+  另外把「类型列宽 ≥ 某数字」改成判**性质**（字有没有被夹掉）：那个数字是照旧假夹具校准的，
+  缺口一出现就误报。变异验证：去掉 `nowrap` ⇒ 「类型」2 行 + 声明变 `normal`（两红）；
+  把夹具长名字改短 ⇒ 前置条件红（假绿那条路被钉住）。
+
+- **文件管理：窄窗口的默认视图改成卡片**（2026-09-19，承接下面那条"压字"）。
+  上一条解决了"压字"，但表格在窄窗口里仍要靠横向滚动才读得全；而文件管理本来就有卡片视图，
+  卡片列数本来就跟宽度走（`repeat(auto-fill, minmax(gridSize, 1fr))`）——
+  所以只需让窄窗口**默认**落到卡片，不必把 `<table>` 再双份渲染成卡片
+  （两种做法的利弊与工作量对比见当天的分析：便宜约一个数量级）。
+  策略收在 `src/lib/fileManagerView.ts`（纯函数）：**用户显式选过就永远听他的**；没选过才看容器宽，
+  ≥ 表格 `min-width` 用表格，否则卡片；量不到宽度保持既有默认表格。
+  组件用 `useLayoutEffect` 在**首次绘制之前**量根容器自身宽度
+  （App.tsx 里有 7 个 `.main`，靠选择器猜容器是错的，所以用 ref 量自己），
+  只自动决定一次，且**绝不写回 `localStorage`** —— 写一次就会把用户永久钉在卡片视图。
+  判据在 `src/lib/fileManagerView.test.ts`：策略矩阵 + 「断点常量与 `App.css` 里
+  `.file-manager-table` 的 `min-width` 逐字一致」防漂移 + 接线形状。
+  四条接线变异（删 ref / 绕过策略硬编码 / 去掉"只决定一次"闸门 / 退化成视口宽）逐一实测均红。
+  诚实边界：接线那部分是**读源码的形状保护**，不是端到端（本仓没有组件渲染基建，
+  无 testing-library、无 `.test.tsx`）；`tsc --noEmit` 0 错。
+
+- **Web 版（浏览器 / WebView 外壳）里「改名」会把正文清空**（2026-09-18 读代码时发现，顺手修）。
+  `platform/web.ts` 的 `save_page` 用 `str(args.content_json ?? "")` 取内容 ⇒ 只传标题的保存
+  （`store/notes.ts` 与 `FileManagerView.tsx` 的 `savePage({ id, title })`）会把 `content_json` /
+  `content_text` **清成空串**，而且带着 `dirty = 1` **推到服务端**（别的设备上正文也跟着没了）；
+  桌面侧一直是保留正文的（`args.content_json.unwrap_or(cur_json)`）。
+  修法：把这条语义收进「文档内容」那一层 —— `src/lib/docContent.ts::resolveSaveContent`，
+  与桌面同语义（**只覆盖调用方真的带了的字段**；`null` / 数字 / 对象一律按"没带"处理），
+  Web 的保存路径改走它。判据：`src/lib/docContent.test.ts` 14 条（含"只传标题 ⇒ 正文一个字都不动"、
+  `write` 写 `dirty = 1` 但**不动** `sync_seq`、LWW 5 条与 Rust 侧 `doc_content.rs` 逐条对应）。
+
+- **导出 HTML / PDF 时图片与网址书签是空的**（2026-09-17 用户实测报告）。**两个独立缺陷**：
+  ① 导出只抄节点里存下的 `src` —— 桌面端它是应用专有协议 `attachment://localhost/…`、Web 端是
+  裸文件路径；编辑期能显示靠的是渲染时另外解析（`MediaResolver`：`hash` → blobStore → blob URL），
+  而 `exportDOM` 没有这一步 ⇒ 另存的 `.html` 与打印出的 PDF 里图片都是空白；
+  ② 打印是 `doc.write(html) → print()` 一路同步，**图片还没解码就打了快照**，另加 1.2 秒就撤 iframe
+  （WebView 的打印对话框是异步的，太早撤会把没渲染完的内容一起带走）。
+  修法：媒体节点（图片/视频/书签缩略图）在 `exportDOM` 里留下 `data-export-hash` 线索，新增
+  `src/lib/exportInline.ts` 统一在生成 HTML 之后读字节（`api.readAttachmentBytes`）**内联成 `data:` URL**
+  （超过 8MB 的不内联并如实回报）；`printHTML` 打印前等 `img` 解码与 `fonts.ready`（每张各带超时兜底）；
+  网址书签的 `exportDOM` 从「只输出一串 URL」改成输出**真正的卡片**（标题/摘要/站点/链接/缩略图），
+  `BASE_CSS` 自带卡片样式（导出件是独立文档，拿不到应用 CSS）。
+  判据：`src/lib/exportInline.test.ts`（9 条）+ `src/editor/nodes/exportDom.test.ts`（4 条，用真节点跑
+  `$generateHtmlFromNodes`），并做过**变异验证**——把「留线索」那一行删掉，恰好两条断言变红。
+
+- **文件管理里附件的「创建时间 / 上次修改时间」永远是「—」**（2026-09-19 用户截图报告）：
+  表格有这两列，但**附件行**的两个值在 `FileManagerView.tsx` 里是**写死的 `"—"`**
+  —— 而 DB 里 `attachments.created_at` 一直有（`INTEGER NOT NULL`），只是**从没进过 payload**。
+  修法：后端新增 `models::AttachmentRow`（用 `#[serde(flatten)]` 包住 `AttachmentMeta`，线上形状
+  **向后兼容**、只是多两个字段），`list_page_attachments` 把 `created_at` 选出来，并顺带给出**本地文件
+  mtime**；前端 `AttachmentMeta` 加两个**可选**字段，两列改成
+  `created: fmtDate(created_at)` / `updated: fmtDate(mtime ?? 0)`。
+  ⚠️ 表里**没有 `updated_at`**，所以「上次修改时间」只能是**本地副本**的修改时间：**未下载的行如实显示「—」**，
+  **不拿 `created_at` 冒充**（`fmtDate(0)` ⇒ "—"）。这是刻意的 —— 截图里那个文件正是「未下载」。
+  判据：`attachments.rs::attachment_row_tests`（未下载 ⇒ `mtime=0` 且 `created_at` 照旧带出；
+  路径是目录/不存在 ⇒ `0`；本地有文件 ⇒ `mtime>0`）。**Rust 测试本机跑不了**（`0xC0000139`，本仓纪律）
+  ⇒ 只声明"编得过"（`cargo check --all-targets`），行为正确性交能跑测试的两台按被验 commit 复核。
+
+- **文件管理在窄窗口下"压字"**（2026-09-19 用户截图报告）：标题被拆成「文件管/理」、
+  按钮被拆成「新建文件/夹」、**「类型」格里的「文件」被压成一字一行**。根因是这套布局**完全没有响应式规则**：
+  `.file-manager-head` / `.file-manager-actions` / `.file-manager-toolbar` 都是不换行的 flex，
+  表格 `width:100%` 又没有列宽下限 ⇒ 窄窗口下先把按钮/标题挤断行，再把表格列挤到比内容还窄。
+  修法：① `head`/`actions`/`toolbar` 加 `flex-wrap`（装不下就**整块换行**，不压字），
+  标题与按钮 `white-space: nowrap`；② 表格容器 `overflow: auto` + 表格 `min-width: 780px`
+  ⇒ 装不下就**横向滚动**，而不是把列挤扁；③ `@media (max-width: 900px)` 收紧边距与标题字号
+  （830px 窗口里可用宽度 798 ≥ 780，**不用横滚就放得下**）。
+  判据：`scripts/check-panel-layout.mjs` 新增「文件管理」一段，在 **560px**（真会挤）、<!-- 豁免：560px 是断点宽度，不是门禁断言数 -->
+  830px（用户那个窗口）、1280px（宽屏）三档用真实 Chromium 量几何 —— 标题/按钮/「类型」格的**行盒数**、
+  「类型」列宽、表格宽、页面横向溢出。**变异验证**：去掉 `min-width` ⇒ 「类型」列 2 行 + 列宽 44px +
+  表格 661px（三条红）；去掉 head/actions 的 `flex-wrap` ⇒ 标题 4 行（红）；只去掉按钮的 `nowrap` ⇒ 仍绿
+  （那行是冗余保险，已在门禁注释里写明，不当成"验过的东西"）。
+
+- **聚合收件箱的文件夹名显示成乱码**（2026-09-19 用户截图报告）：下拉里四项是
+  `&V4NXpPcuTvY-` / `&XfJSIJZkkK5O9g-` / `&XfJT0ZAB-` / `&g0l6Pw-`，而第五项「收件箱」正常。
+  根因：IMAP 协议里**非 ASCII 的 mailbox 名只能用 modified UTF-7 传**（`&` + base64(UTF-16BE) + `-`，
+  base64 字母表用 `,` 代 `/`），而 `folderDisplay()` 那张 `FOLDER_ZH` 表只认 ASCII 名（inbox/sent/drafts…）
+  ⇒ 中文邮箱的 UTF-7 名匹配不上、原样漏到界面上；「收件箱」正常只是因为它在协议层就叫 `INBOX`。
+  修法：新增 `src/lib/imapUtf7.ts` 的 `decodeImapUtf7()`（手写 base64→UTF-16BE；坏数据一律原样返回，
+  渲染路径不抛；`&-` 按 RFC 解成字面量 `&`），`folderDisplay()` 改成"先解码、再查表、查不到显示解码名"。
+  **只动显示**：回给后端的仍是原始名（`SELECT` 要的就是协议层名字）。
+  判据：`src/lib/imapUtf7.test.ts` 5 条 —— 截图里那四个串 + RFC 3501 §5.1.3 的两个官方例子
+  （`&ZeVnLIqe-`→日本語、`~peter/mail/&U,BTFw-/&ZeVnLIqe-`→`~peter/mail/台北/日本語`）+ ASCII/空串原样 +
+  `&-` 字面量 + 四种坏数据原样；期望值用独立实现（Python base64 + utf-16-be）反推并 round-trip 校验过。
+  **变异验证**：去掉解码器里 `,`→`/` 那一行 ⇒ RFC 那条立刻变红，按字节还原后 5/5 复绿。
+
+- **Windows 装包里根本没有 PDFium 运行时库**（2026-09-18，P4 打包收尾时发现）。`tauri.conf.json` 的
+  `bundle.resources` 一直是空的 ⇒ 装包只含 `shuyonote.exe`（对 09-16 出的 1.91.3 装包 `7z l` 实测：
+  7 个文件、`pdfium.dll` 命中 **0**），而 PDFium 走 `libloading` **在运行时**加载这个库 ⇒ 真机上
+  `SHUYONOTE_PDF_ENGINE=pdfium` 只会报「找不到 PDFium 动态库」。修法：新增
+  `src-tauri/tauri.windows.conf.json`，把 `vendor/pdfium/win-x64/bin/pdfium.dll` 映射成**装包根目录**的
+  `pdfium.dll`——Windows 上 Tauri 的 `resource_dir` 就等于 exe 所在目录，`pdfium_native::library_dir()`
+  正是从那里找（`tauri-build` 的 `copy_resources` 还会在**构建期**就把它拷到 exe 同级）。
+  判据（产物级、可比对）：同版本 1.91.3 的装包 `7z l` 由 7 个文件变 8 个、多出 `pdfium.dll`，
+  从装包里**解出来的** dll 与 `vendor/` 源文件 **sha256 一致**
+  （`79D4676B656CFB1ABCEA88F9ADE3B4B0826C5200382DB5F4EC72A636C598C118`）。
+  配套：`release.yml` 的 Windows 档打包前现拉这个库（二进制不入库），打包后用 `7z` 对**产物**断言
+  装包里真有 dll（把 09-16 那个没 dll 的装包换进去，这条断言当场红——已实测）；
+  `pnpm check:win-build-env` 增加这条硬前置（源文件缺失时构建直接报 `resource path … doesn't exist`）。
+  Linux/macOS 的同类打包（Linux 的 `resource_dir` 不是 exe 目录、macOS 的 `.app/Contents/Frameworks`）
+  仍在 P4 交接单里，**本机做不了、未做**。
+
 ## [1.91.4] - 2026-09-18
 
 > 导出修好了：图片与网址书签不再空；顺带把「发布自检脚本会把 token 打进日志」收进这一版

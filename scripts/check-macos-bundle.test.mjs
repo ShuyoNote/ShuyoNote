@@ -46,6 +46,10 @@ const okArgs = (extra = {}) => ({
   expectedIdentifier: "cn.shuyo.shuyonote",
   expectedVersion: "1.90.2",
   dmgNames: ["ShuyoNote_1.90.2_aarch64.dmg"],
+  // PDFium：默认给"两边都在且哈希一致"的健康形态（失败形态见下面三条用例）
+  pdfiumBundleSha: "a".repeat(64),
+  pdfiumVendorSha: "a".repeat(64),
+  pdfiumVendorExists: true,
   ...extra,
 });
 
@@ -120,5 +124,27 @@ describe("checkBundle", () => {
   it("dmg 缺失或版本不对 → 报错", () => {
     expect(checkBundle(okArgs({ dmgNames: [] })).join()).toMatch(/没有 dmg/);
     expect(checkBundle(okArgs({ dmgNames: ["ShuyoNote_1.90.1_aarch64.dmg"] })).join()).toMatch(/没有版本号 1\.90\.2/);
+  });
+
+  // ★ PDFium（2026-09-19 加，macOS 侧）：它是运行时 dlopen 的，库不在包里时**装完不报错**，
+  // 要到用户端 `SHUYONOTE_PDF_ENGINE=pdfium` 才变成「找不到 PDFium 动态库」——正是"失败得很晚"那一类。
+  it("包里没有 libpdfium.dylib → 报错（说清映射位置与取库命令）", () => {
+    const problems = checkBundle(okArgs({ pdfiumBundleSha: null })).join();
+    expect(problems).toMatch(/Contents\/Frameworks\/libpdfium\.dylib 不在包里/);
+    expect(problems).toMatch(/tauri\.macos\.conf\.json/);
+    expect(problems).toMatch(/fetch-pdfium/);
+  });
+
+  it("包里的库与 vendor 源文件哈希不一致 → 报错（拷错了或是上次的产物）", () => {
+    const problems = checkBundle(okArgs({ pdfiumBundleSha: "b".repeat(64) })).join();
+    expect(problems).toMatch(/与 vendor 源文件 sha256 不一致/);
+    expect(problems).toMatch(/aaaaaaaaaaaa… vs bbbbbbbbbbbb…|bbbbbbbbbbbb… vs aaaaaaaaaaaa…/);
+  });
+
+  it("vendor 里没有库 → 报**前置缺失**（别把它说成产物问题）", () => {
+    const problems = checkBundle(okArgs({ pdfiumBundleSha: null, pdfiumVendorExists: false })).join();
+    expect(problems).toMatch(/vendor 里没有 mac-univ 的 PDFium/);
+    expect(problems).toMatch(/前置缺失/);
+    expect(problems).not.toMatch(/不在包里/);
   });
 });

@@ -10,6 +10,10 @@ mod crypto;
 mod database;
 mod db;
 mod disk;
+// 「文档内容」那一层（read/write/merge/derive）：阶段 0「接口收口」的壳，**行为等价**。
+// 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
+// 见 `docs/plans/2026-09-18-doc-content-layer-inventory.md`。
+mod doc_content;
 // 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
 // Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
 // 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，
@@ -28,6 +32,14 @@ mod models;
 mod net;
 mod capabilities_gen;
 mod pdf_native;
+// PDFium 光栅化：**P2 已接线**（`commands.rs` 按 `SHUYONOTE_PDF_ENGINE=pdfium` 分派，缺省仍是 MuPDF）
+// ⇒ 模块级 `#![allow(dead_code)]` 已随之删除（只留两处逐项 allow 并写明理由）。
+mod pdfium_native;
+// P3 对拍（**仅测试**）：两引擎渲同一页 + 比像素 + 落裸 RGBA。
+// ⚠️ 本机（Windows）跑不了 `cargo test`（0xC0000139）⇒ 这里只保证它**编得过**，
+// 结论由 AMD(WSL2)/Mac 执行后给出。
+#[cfg(test)]
+mod pdf_engine_compare;
 // 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
 // `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
 mod picked_file;

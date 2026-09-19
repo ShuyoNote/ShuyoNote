@@ -8,12 +8,14 @@
 // 所以这里主动问，并明确写出"缺了会怎样"。
 //
 // 用法：node scripts/check-windows-build-env.mjs
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const WIN = process.platform === "win32";
 const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const rows = [];
 const add = (name, ok, detail, consequence) => rows.push({ name, ok, detail, consequence });
@@ -122,6 +124,29 @@ add(
     "。修法二选一：① 用 vcpkg 的 openssl:x64-windows-static-md（CI 就是这么做的）；" +
     "② `$env:LIB = \"C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MD;$env:LIB\"`（本机实测这条能出包）",
 );
+
+// ---- PDFium 运行时（Windows 装包必须把它带出去） —— 2026-09-18 补 ----
+// ⚠️ 实测（1.90.2 的 NSIS 装包 `7z l` 结果）：`tauri.conf.json` 里 `bundle.resources` 是**空的**，
+// 所以装包只含 `shuyonote.exe`——而 PDF 引擎要 `pdfium.dll`。Windows 上 Tauri 的 `resource_dir`
+// 就等于 exe 所在目录，`pdfium_native::library_dir()` 正是从那里找，所以现在由
+// `tauri.windows.conf.json` 把 `vendor/pdfium/win-x64/bin/pdfium.dll` 映射成装包根目录的 `pdfium.dll`。
+// 源文件**不进 git**（`scripts/fetch-pdfium.mjs` 现拉），所以必须自检：映射的源文件不存在时
+// 打包会直接停下，而不是产出一个"悄悄少个 dll"的包。
+if (WIN) {
+  const pdfiumDll = join(root, "src-tauri", "vendor", "pdfium", "win-x64", "bin", "pdfium.dll");
+  const pdfiumOk = existsSync(pdfiumDll);
+  add(
+    "PDFium 运行时 pdfium.dll（装包要带）",
+    pdfiumOk,
+    pdfiumOk
+      ? `有（${Math.round(statSync(pdfiumDll).size / 1024)} KB）`
+      : "没找到，先 `node scripts/fetch-pdfium.mjs --platform win-x64`",
+    "缺了 `cargo build` / `pnpm tauri build` 会**当场停下**：`tauri-build` 的 `copy_resources` 报 " +
+      "「resource path … doesn't exist」（`tauri-utils::Error::ResourcePathNotFound`，出在**构建脚本期**而非打包期）。" +
+      "缺了它的后果：装包里没有 pdfium.dll ⇒ 用户端只有 `SHUYONOTE_PDF_ENGINE=pdfium` 时报「找不到 PDFium 动态库」" +
+      "（默认引擎仍是 MuPDF，暂不致命；P5 换默认后就致命了）。源文件由 `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉，不进 git",
+  );
+}
 
 // ---- 更新器签名密钥（产出 .sig） ----
 const key = join(home, ".tauri", "shuyonote.key");

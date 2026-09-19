@@ -127,6 +127,24 @@ pub struct AttachmentMeta {
     pub path: String,
 }
 
+/// 文件管理**列表**用的一行：`AttachmentMeta` 的全部字段（`#[serde(flatten)]`，线上形状**向后兼容**，
+/// 只是多两个）＋ 表格里那两列时间。
+///
+/// 为什么单开一个结构而不往 `AttachmentMeta` 上加字段：后者有 **9 处构造点**
+/// （导入 / 重命名 / 解析单条 / PDF 列表 / 保存图片…），只为"文件管理这两列"去动 9 处既没必要、
+/// 也更容易在**跑不了 `cargo test`** 的机器上引入低级错。`flatten` 让前端不必改既有的
+/// `AttachmentMeta` 类型（新增字段可选），其它命令的返回形状也一个字节不变。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AttachmentRow {
+    #[serde(flatten)]
+    pub meta: AttachmentMeta,
+    /// DB 里 `attachments.created_at`（毫秒）。**总是有值**（该列 NOT NULL）。
+    pub created_at: i64,
+    /// **本地文件**的 mtime（毫秒）。字节还没下载到本机时是 **0**，前端据此显示「—」——
+    /// 表里没有 `updated_at`，所以这一列只能**说实话**：本地副本的修改时间，没有就是没有。
+    pub mtime: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tag {
     pub id: String,

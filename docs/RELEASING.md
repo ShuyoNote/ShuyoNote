@@ -108,6 +108,20 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 - `windows-latest` → `.exe (nsis)`
 - `macos-latest` → `.dmg/.app`（**待 Apple secrets 后启用**）
 
+> **macOS 档另有两条 PDFium 相关步骤（2026-09-19 加）**：打包前先
+> `node scripts/fetch-pdfium.mjs --platform mac-univ` 现拉 `libpdfium.dylib`（二进制**不入库**），
+> `src-tauri/tauri.macos.conf.json` 把它映射成包里的 **`Contents/Frameworks/libpdfium.dylib`**
+> —— 那个位置正是 Rust 侧 `pdfium_native::library_dir()` 在 macOS 上会去找的（`Contents/Resources`
+> **不是**它的搜索路径，所以不能用 `bundle.resources`）。打包后用
+> `pnpm check:macos-bundle` 对**产物**断言：库在不在、以及它与 `vendor/` 里那份的 **sha256 是否一致**
+> （大小相同也可能是别的库）。macos.yml 里已有取库步骤；`check:macos-bundle` 在 CI 的 macOS job 里跑。
+>
+> **Windows 档另有两条 PDFium 相关步骤（2026-09-18 加）**：打包前先
+> `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉 `pdfium.dll`（二进制**不入库**，
+> `.gitignore` 里有 `src-tauri/vendor/pdfium/`；`src-tauri/tauri.windows.conf.json` 把它映射成
+> 装包根目录的 `pdfium.dll`），打包后再用 `7z l` 对**产物**断言装包里真有这个 dll。
+> 细节与原因见 §"本机（Windows 签名构建）"。
+
 > **另有 `.github/workflows/macos.yml`（不发布、不需密钥）**：命中构建输入路径时在 macOS runner 上
 > 打一个**未签名**的 `.app + .dmg`，再用 `pnpm check:macos-bundle` 断言
 > identifier / 版本号 / `shuyonote` 深链 scheme / dmg 都在。它的价值是让"macOS 打包"在
@@ -180,6 +194,8 @@ $env:LIB = "C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD;$env:LIB"
 # ② 更新器签名密钥（产出 .sig）
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content -Raw "$HOME\.tauri\shuyonote.key").Trim()
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyonote.key.pw").Trim()
+# ③ PDFium 运行时：装包要把 pdfium.dll 放在 exe 同级（源文件不进 git；缺席则**构建脚本期**即失败）
+node scripts/fetch-pdfium.mjs --check --platform win-x64   # 报「缺少」就跑一次：node scripts/fetch-pdfium.mjs --platform win-x64
 pnpm tauri build --bundles nsis   # 产出 bundle/nsis/ShuyoNote_<版本>_x64-setup.exe + 同名 .sig
 ```
 
@@ -203,6 +219,7 @@ pnpm tauri build --bundles nsis   # 产出 bundle/nsis/ShuyoNote_<版本>_x64-se
 > | `rustc` + 目标 `x86_64-pc-windows-msvc` | 出不了桌面包（Windows 要用 MSVC 目标） |
 > | VS 2022 Build Tools 的 C++ 工作负载 | 报 `link.exe not found`（**不在 PATH 上不算问题**，见上表） |
 > | **`OPENSSL_DIR` + 库路径**（本机用 OpenSSL-Win64，CI 用 vcpkg） | 先 panic，再 `LNK1181`（见上表） |
+> | **`vendor/pdfium/win-x64/bin/pdfium.dll`**（PDFium 运行时，2026-09-18 加） | `cargo build` / `pnpm tauri build` **当场停下**：`tauri-build` 的 `copy_resources` 报「resource path … doesn't exist」（`tauri-utils::Error::ResourcePathNotFound`，出在构建脚本期）。缺了它的后果：装包里没有 `pdfium.dll` ⇒ 用户端只有 `SHUYONOTE_PDF_ENGINE=pdfium` 时报「找不到 PDFium 动态库」（默认引擎仍是 MuPDF，暂不致命；P5 换默认后就致命）。源文件不进 git，`node scripts/fetch-pdfium.mjs --platform win-x64` 现拉 |
 > | **`~/.tauri/shuyonote.key` + `.pw`** | 构建能过但**产不出 `.sig`** ⇒ 更新清单里该平台没 `signature`
 >   ⇒ 用户端**整份**清单解析失败（桌面的更新一起挂）。密钥**带外**从既有机器拷，绝不入库 |
 >

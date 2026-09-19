@@ -132,62 +132,21 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
 // ---- remote apply (LWW) ----
 
 fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), String> {
-    // seq-based LWW + dirty-prefer-local: protects local unsynced edits (and avoids
-    // device-clock-drift mishaps). If the local page has unsynced edits (dirty=1)
-    // OR it already synced past this change's seq, keep local; otherwise accept the
-    // remote and record sync_seq.
-    let local: Option<(i64, i64)> = c
-        .query_row(
-            "SELECT sync_seq, dirty FROM pages WHERE id = ?1",
-            params![page.id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-
-    if let Some((local_seq, dirty)) = local {
-        if dirty != 0 {
-            // Local has unsynced edits → keep local (protect user's recent change).
-            return Ok(());
-        }
-        if local_seq > sync_seq {
-            // Already synced a more recent change → keep local.
-            return Ok(());
-        }
+    // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
+    // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
+    let local = crate::doc_content::local_state(c, &page.id)?;
+    if crate::doc_content::merge(local, sync_seq) == crate::doc_content::MergeDecision::KeepLocal {
+        return Ok(());
     }
 
-    c.execute(
-        "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0)
-         ON CONFLICT(id) DO UPDATE SET
-           workspace_id = excluded.workspace_id,
-           parent_id = excluded.parent_id,
-           title = excluded.title,
-           content_json = excluded.content_json,
-           content_text = excluded.content_text,
-           kind = excluded.kind,
-           sort_order = excluded.sort_order,
-           updated_at = excluded.updated_at,
-           deleted_at = NULL,
-           sync_seq = excluded.sync_seq,
-           dirty = 0",
-        params![
-            page.id,
-            page.workspace_id,
-            page.parent_id,
-            page.title,
-            page.content_json,
-            page.content_text,
-            page.kind,
-            page.sort_order,
-            page.created_at,
-            page.updated_at,
-            sync_seq,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+    // 「用远端」那一笔落库也走那一层（`doc_content::upsert_remote`）——
+    // 于是**判定与落库在同一个文件里**，将来换 CRDT 时这一整条只改一处。
+    // 前端侧的同名一份是 `docContent.upsertRemoteContent`（两侧 SQL 的列集本就不同，
+    // 语义必须一致：`sync_seq` 记远端的、`dirty` 硬写 0）。
+    crate::doc_content::upsert_remote(c, page, sync_seq)?;
 
-    search::sync_fts(c, &page.id, &page.title, &page.content_text)?;
+    // 派生也只经那一层（今天远端应用只刷 FTS —— 逐字搬运，不多做）。
+    crate::doc_content::derive_fts(c, &page.id, &page.title, &page.content_text)?;
     Ok(())
 }
 

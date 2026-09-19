@@ -75,6 +75,16 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
 
+      - name: 取 PDFium 运行时（macOS）
+        # 二进制**不入库**（`.gitignore` 里有 `src-tauri/vendor/pdfium/`），而
+        # `src-tauri/tauri.macos.conf.json` 把 `vendor/pdfium/mac-univ/lib/libpdfium.dylib`
+        # 映射成包里的 `Contents/Frameworks/libpdfium.dylib`（Rust 侧 `pdfium_native::library_dir()`
+        # 的搜索顺序里有它就够）。所以**必须先取库再打包**；`--check` 先看一眼，缺了才下载。
+        # 同一个坑 Windows 侧已经吃过一次：装包里没有 pdfium.dll ⇒ 真机上只有
+        # `SHUYONOTE_PDF_ENGINE=pdfium` 时才报「找不到 PDFium 动态库」，而那时代码已经发出去了。
+        run: |
+          node scripts/fetch-pdfium.mjs --check --platform mac-univ || node scripts/fetch-pdfium.mjs --platform mac-univ
+
       - name: 打包未签名的 .app + .dmg
         # `tauri build` 会先跑 `beforeBuildCommand`（= `pnpm build`，里面串着仓库门禁），
         # 再编 Rust、再打包——所以这一步同时也是一道构建门禁。

@@ -143,11 +143,11 @@ export interface PluginApi {
    */
     list(limit?: number): { id: string; title: string; created_at: number; updated_at: number }[];
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
-   * 返回：{id, title, content_text, kind}；不存在返回 null
+   * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**), kind, chars_total(整页字符数), offset, limit}；不存在返回 null
    */
-    get(id: string): { id: string; title: string; content_text: string; kind: string } | null;
+    get(id: string, offset?: number, limit?: number): { id: string; title: string; content_text: string; kind: string; chars_total: number; offset: number; limit: number } | null;
   /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
-   * 返回：[{id, title, snippet}]；v1 是子串匹配，不做相关度排序
+   * 返回：[{id, title, snippet}]；**插件面（`pages.search` 能力本身）v1 是子串匹配、不做相关度排序** —— 语义加分那条只在应用内 AI 检索路径上（`desc` 里说的那一半）
    */
     search(q: string, limit?: number): { id: string; title: string; snippet: string }[];
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
@@ -167,7 +167,7 @@ export interface PluginApi {
   };
   blocks: {
   /** 列出页面块（权限 `read:pages`；1.0.0 起）
-   * 返回：[{blockId, text}]
+   * 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit，但**上限 500 是硬上限：超过 500 块的页面，能力面拿不到后面的部分**。将来要「读全 + 有信号」，走**新增能力** `blocks.listPage`（返回 {blocks,total,truncated}）；**`blocks.list` 的形状不变**（插件面正在动，契约变更与校验加强同时落地会分不清谁的锅）
    */
     list(pageId?: string, limit?: number): { blockId: string; text: string }[];
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）

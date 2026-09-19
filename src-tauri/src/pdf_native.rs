@@ -110,6 +110,16 @@ pub fn has_document(cache_key: &str) -> bool {
     doc_cache().lock().map(|c| c.contains_key(cache_key)).unwrap_or(false)
 }
 
+/// 丢掉某个 key 的缓存文档。**P2 的「引擎互斥淘汰」要用它**：
+/// MuPDF 与 PDFium 两套缓存用**同一个 `cache_key`（内容 hash）**，切引擎时若不清另一侧，
+/// 同一份文档会被两份缓存同时持有 ⇒ **内存翻倍，而两侧 LRU 互不知情**
+/// （AMD 复核 8 条里最被强调的一处，见 `pdfium_native.rs` 模块头的 P2 第 1 条）。
+pub fn forget(cache_key: &str) {
+    if let Ok(mut cache) = doc_cache().lock() {
+        cache.remove(cache_key);
+    }
+}
+
 /// Owns a page + pixmap for a single render, freeing them on drop. The doc and
 /// its source buffer are owned by the process-wide doc cache (`CachedDocument`),
 /// which outlives any single render.

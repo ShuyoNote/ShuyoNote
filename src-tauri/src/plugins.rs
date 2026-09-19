@@ -1601,6 +1601,10 @@ fn cap_kv_remove(key: &str, scope: &str) -> CapResult {
 /// 一个能力的实现：成功给 JSON 值（shim 侧 JSON.parse），失败给「错误码: 说明」。
 type CapResult = Result<serde_json::Value, String>;
 
+/// `pages.get` 单次返回的字符上限（与 `capabilities.json` 里 `limit` 的 desc 一致）。
+/// 为什么要上限：这是给 AI/插件读的一页正文，单次几十万字会把上下文一口气撑爆。
+const MAX_PAGE_TEXT_LIMIT: i64 = 20_000;
+
 fn cap_page_current() -> CapResult {
     Ok(serde_json::Value::String(
         RUN_STATE.with(|s| s.borrow().current_page_json.clone()),
@@ -1662,25 +1666,47 @@ fn cap_pages_list(limit: i64) -> CapResult {
     })
 }
 
-fn cap_pages_get(id: &str) -> CapResult {
+/// `pages.get`：读一页的标题与正文。**支持分页**（`offset`/`limit`）。
+///
+/// 口径（两条都必须写清，否则调用方会算错窗口）：
+/// 1. **按 Unicode 标量（码点）计数，不是 UTF-16 码元、也不是字节** ——
+///    Rust 侧天然是 `chars()`；TS 侧对应 `Array.from()`。这样 emoji / 生僻字（代理对）
+///    **不会被切成孤立的一半**（那会让调用方看到 `a\uD83D…` 这种半个字符）。
+/// 2. 越界**不是错误**：`offset` 超过总长 ⇒ 空串 + `chars_total` 仍是真实总数
+///    （调用方据此知道"我翻过头了"，而不是以为"这页是空的"）。
+///
+/// 返回值里带 `chars_total` / `offset` / `limit` 三个读数：**只读了窗口就当整页用**是这类工具
+/// 最常见的误用，而调用方光看返回正文的长度分不出"读完了"还是"被截了"。
+fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
+    let off = offset.max(0) as usize;
+    let lim = limit.clamp(1, MAX_PAGE_TEXT_LIMIT) as usize;
     with_read_conn(|c| {
         use rusqlite::OptionalExtension;
-        let row = c
+        let row: Option<(String, String, String)> = c
             .query_row(
-                "SELECT id, title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT title, content_text, kind FROM pages WHERE id = ?1 AND deleted_at IS NULL",
                 params![id],
-                |r| {
-                    Ok(serde_json::json!({
-                        "id": r.get::<_, String>(0)?,
-                        "title": r.get::<_, String>(1)?,
-                        "content_text": r.get::<_, String>(2)?,
-                        "kind": r.get::<_, String>(3)?,
-                    }))
-                },
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(|e| format!("db_error: {e}"))?;
-        Ok(row.unwrap_or(serde_json::Value::Null))
+        let Some((title, text, kind)) = row else {
+            return Ok(serde_json::Value::Null);
+        };
+        // ⚠️ 先收成 `Vec<char>` 再切：`skip/take` 按**字符**走，与 TS 侧的 `Array.from` 同口径。
+        // （若按字节切，中文会被切坏；若按 UTF-16 码元切，emoji 会被切坏 —— 两种都试过是错的。）
+        let chars: Vec<char> = text.chars().collect();
+        let chars_total = chars.len();
+        let window: String = chars.iter().skip(off).take(lim).collect();
+        Ok(serde_json::json!({
+            "id": id,
+            "title": title,
+            "content_text": window,
+            "kind": kind,
+            "chars_total": chars_total,
+            "offset": off,
+            "limit": lim,
+        }))
     })
 }
 
@@ -2057,9 +2083,22 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         }
     };
     let arg_i64 = |name: &str, default: i64| -> i64 {
-        args.get(name)
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-            .unwrap_or(default)
+        match args.get(name) {
+            // 整数，以及**小数部分为 0 的浮点**（`2.0`）都按整数收下。
+            // 为什么这一侧必须让步：JSON 线上写 `2.0` 时，Web 侧的 `JSON.parse` 早已把它折成 `2`
+            // （JS 语言层面分不出 `2.0` 与 `2`），所以只有这里收下浮点，两端才可能取到同一个值。
+            // 真正的非整数（`2.5`）两侧都回落默认值 —— 由 `tests/numeric-arg-parity.json` 钉住。
+            Some(serde_json::Value::Number(n)) => n
+                .as_i64()
+                .or_else(|| {
+                    n.as_f64()
+                        .filter(|f| f.is_finite() && f.fract() == 0.0)
+                        .map(|f| f as i64)
+                })
+                .unwrap_or(default),
+            Some(serde_json::Value::String(s)) => s.parse::<i64>().ok().unwrap_or(default),
+            _ => default,
+        }
     };
     // kv 的 scope：默认 space（随空间加密的那一侧），显式 'app' 才落到明文 meta。
     let scope_arg = |args: &serde_json::Value| -> String {
@@ -2080,8 +2119,8 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         "page.current" => cap_page_current(),
         "pages.count" => cap_pages_count(),
         "pages.list" => cap_pages_list(arg_i64("limit", 50)),
-        "pages.get" => cap_pages_get(&arg_str("id")?),
-        "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 20)),
+        "pages.get" => cap_pages_get(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 6000)),
+        "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 8)),
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
@@ -7151,6 +7190,190 @@ register({ id: "s.run", title: "结构化", run: function () {
         serde_json::from_str(&out).map_err(|e| e.to_string())
     }
 
+    /// 数值型参数的**跨语言口径**判据：与 TS 适配器读**同一份夹具**
+    /// （`tests/numeric-arg-parity.json`，TS 侧在 `src/lib/capabilities/numericArgParity.test.ts`）。
+    ///
+    /// 夹具里 `rawArgs` 存的是**原始 JSON token 文本**（字符串）—— 这一点是刻意的：
+    /// JS 的 `JSON.parse` 会把 `2.0` 折成 `2`（语言层面分不出），只有保住原始文本，
+    /// 这一侧才谈得上验"线上写的是 `2.0`"这个情形；也正因这个折叠，**只能 Rust 侧让步**。
+    #[test]
+    fn numeric_args_follow_the_shared_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            #[serde(rename = "rawArgs")]
+            raw_args: String,
+            #[serde(rename = "expectLimit")]
+            expect_limit: i64,
+            #[serde(rename = "expectOffset")]
+            expect_offset: i64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            capability: String,
+            #[serde(rename = "defaultLimit")]
+            default_limit: i64,
+            #[serde(rename = "limitMax")]
+            limit_max: i64,
+            cases: Vec<Case>,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/numeric-arg-parity.json"))
+                .expect("夹具必须能解析（改了结构就要同步改两侧）");
+        assert!(fixture.cases.len() >= 15, "夹具不能是空的");
+        assert_eq!(fixture.capability, "pages.get");
+        assert_eq!(fixture.default_limit, 6000, "默认值与注册表 desc 必须一致");
+        assert_eq!(fixture.limit_max, MAX_PAGE_TEXT_LIMIT, "上限改了这里先红");
+
+        let (space, dir) = seed_space("numeric-arg-parity");
+        let st = state_for_space(&space, &dir);
+        // 直接用种子里已有的页面 `p1`（`seed_space` 会建它）：本判据比的是**参数取值**，
+        // 与正文长短无关，所以不需要额外插页（也免得 `pages.id` 唯一约束撞车）。
+        for (i, c) in fixture.cases.iter().enumerate() {
+            let args = c.raw_args.replace("ID", "p1");
+            let got = call(&st, "pages.get", &args).unwrap();
+            assert_eq!(
+                got["limit"].as_i64().unwrap(),
+                c.expect_limit,
+                "用例[{i}] {}（limit）",
+                c.name
+            );
+            assert_eq!(
+                got["offset"].as_i64().unwrap(),
+                c.expect_offset,
+                "用例[{i}] {}（offset）",
+                c.name
+            );
+        }
+    }
+
+    /// `pages.get` 分页的**跨语言**判据：与 TS 适配器读**同一份夹具**
+    /// （`tests/pages-get-window-parity.json`，TS 侧在 `src/lib/capabilities/pagesGet.test.ts`）。
+    ///
+    /// 为什么必须共用一份而不是各写各的：web 路径与桌面路径切的是**同一个页面的同一个字符串**，
+    /// 两侧口径漂移**没有编译期信号**（比如有人在 TS 侧把 `Array.from` 换回 `slice`），
+    /// 症状只是 emoji/生僻字处偶尔漏一个字——等有人发现时早就没人记得改过什么了。
+    /// 夹具里期望值只写**读数**（偏移/总数/返回数/是否还没读完），窗口内容由两侧各自与
+    /// **独立**的码点切片参照实现逐字比对：写死正文会让夹具本身变成第三份会漂移的实现。
+    #[test]
+    fn pages_get_paginates_by_code_point_like_the_ts_side() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            // 下面这些对「expectMissing」用例不适用（那种用例只想钉"参数原样传下去"），
+            // 所以都带 `#[serde(default)]` —— 夹具是**两侧共用**的结构，加一种用例类型时
+            // 另一侧不该因为"字段没填"就解析失败。
+            #[serde(default)]
+            unit: Vec<u32>,
+            #[serde(default)]
+            repeat: usize,
+            #[serde(default)]
+            offset: i64,
+            #[serde(default)]
+            limit: i64,
+            #[serde(default, rename = "expectOffset")]
+            expect_offset: i64,
+            #[serde(default, rename = "expectLimit")]
+            expect_limit: i64,
+            #[serde(default, rename = "expectTotal")]
+            expect_total: usize,
+            #[serde(default, rename = "expectReturned")]
+            expect_returned: usize,
+            #[serde(default, rename = "expectTruncated")]
+            expect_truncated: bool,
+            /// `true` ⇒ 这条用例验的是「参数原样传下去（不 trim/不归一）」，期望**查不到**（null）。
+            #[serde(default, rename = "expectMissing")]
+            expect_missing: bool,
+            #[serde(default, rename = "idProbe")]
+            id_probe: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            #[serde(rename = "defaultLimit")]
+            default_limit: i64,
+            #[serde(rename = "limitMax")]
+            limit_max: i64,
+            cases: Vec<Case>,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/pages-get-window-parity.json"))
+                .expect("夹具必须能解析（改了结构就要同步改两侧）");
+        assert!(fixture.cases.len() >= 6, "夹具不能是空的");
+        assert_eq!(fixture.default_limit, 6000, "默认窗口与注册表 desc 必须一致");
+        assert_eq!(fixture.limit_max, MAX_PAGE_TEXT_LIMIT, "上限改了这里先红");
+
+        let (space, dir) = seed_space("pages-get-window");
+        let st = state_for_space(&space, &dir);
+        for (i, c) in fixture.cases.iter().enumerate() {
+            let unit: String = c
+                .unit
+                .iter()
+                .map(|cp| char::from_u32(*cp).expect("夹具里的码点必须合法"))
+                .collect();
+            let text = unit.repeat(c.repeat);
+            if c.expect_missing {
+                // 参数原样传下去 ⇒ 带空格的 / 大小写不同的 id 都查不到（不 trim、不归一）。
+                let args = serde_json::json!({ "id": c.id_probe, "offset": 0, "limit": 10 }).to_string();
+                let got = call(&st, "pages.get", &args).unwrap();
+                assert!(
+                    got.is_null(),
+                    "用例[{i}] {}：`id` 不该被 trim/归一（期望查不到，实际拿到 {got}）",
+                    c.name
+                );
+                continue;
+            }
+            let id = format!("pk{i}");
+            {
+                let conn = crate::db::open_space_conn_at(&space, &dir).unwrap();
+                conn.execute(
+                    "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                     VALUES (?1,'s1','夹具','{}',?2,'page',?3,?3)",
+                    params![id, text, now_ms()],
+                )
+                .unwrap();
+            }
+
+            let args =
+                serde_json::json!({ "id": &id, "offset": c.offset, "limit": c.limit }).to_string();
+            let got = call(&st, "pages.get", &args).unwrap();
+
+            assert_eq!(
+                got["chars_total"].as_u64().unwrap() as usize,
+                c.expect_total,
+                "用例[{}] {}",
+                i,
+                c.name
+            );
+            assert_eq!(got["offset"].as_i64().unwrap(), c.expect_offset, "用例[{i}] offset");
+            assert_eq!(got["limit"].as_i64().unwrap(), c.expect_limit, "用例[{i}] limit");
+            let window = got["content_text"].as_str().unwrap();
+            assert_eq!(
+                window.chars().count(),
+                c.expect_returned,
+                "用例[{i}] content_text 的码点数"
+            );
+            // 参照实现独立写一遍（不用 cap_pages_get 自己那一行），否则就是拿实现验实现。
+            let reference: String = text
+                .chars()
+                .skip(c.expect_offset as usize)
+                .take(c.expect_limit as usize)
+                .collect();
+            assert_eq!(window, reference, "用例[{i}] 窗口内容必须逐字相同");
+            // `truncated` 的含义是「还没读完」：翻到末尾必须是 false，否则调用方会无限翻下去。
+            let truncated = c.expect_offset as usize + window.chars().count() < c.expect_total;
+            assert_eq!(truncated, c.expect_truncated, "用例[{i}] 是否还没读完的推导");
+        }
+
+        // 越界不报错（返回空串 + 真实总数）、页面不存在仍然 null —— 两条既有契约，分页不能顺手改掉。
+        let beyond = call(&st, "pages.get", r#"{"id":"pk4","offset":99999,"limit":10}"#).unwrap();
+        assert!(beyond["content_text"].as_str().unwrap().is_empty());
+        assert_eq!(beyond["chars_total"].as_u64().unwrap(), 100);
+        assert!(
+            call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
+            "不存在的页面仍然是 null"
+        );
+    }
+
     #[test]
     fn read_capabilities_query_the_active_space() {
         let (space, dir) = seed_space("read-caps");
@@ -7290,6 +7513,41 @@ register({ id: "s.run", title: "结构化", run: function () {
         assert_eq!(beyond["truncated"], false, "越界之后没有可截断的部分");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `blocks.list` 的 `limit` **在 Rust 侧真的截断**（含 0/负数夹到 1、默认值、超上限）。
+    ///
+    /// 为什么要有这条：`check-capabilities` 只能验"参数有没有被读"，验不了"读来的值有没有用对"；
+    /// 而 TS 侧的同类判据（`src/lib/capabilities/blocksList.test.ts`）只能验 Web 那半边。
+    /// 这条把 Rust 侧的**数值行为**钉住，与 TS 判据成对 —— 两侧对 `limit` 的解读必须逐值相同
+    /// （尤其 `limit=0`：写 `|| 默认` 的实现在这里会返回 100/6000 而不是 1）。
+    #[test]
+    fn blocks_list_honours_limit() {
+        let (space, dir) = seed_space("blocks-limit");
+        let st = state_for_space(&space, &dir);
+        let kids: Vec<serde_json::Value> = (0..5)
+            .map(|i| serde_json::json!({ "blockId": format!("b{i}"), "text": format!("t{i}") }))
+            .collect();
+        let doc = serde_json::json!({ "root": { "children": kids } }).to_string();
+        {
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('pb','s1','多块',?1,'x','page',?2,?2)",
+                params![doc, now_ms()],
+            )
+            .unwrap();
+        }
+        for (body, want) in [
+            (r#"{"pageId":"pb","limit":3}"#, 3usize),
+            (r#"{"pageId":"pb","limit":0}"#, 1),
+            (r#"{"pageId":"pb","limit":999}"#, 5),
+            (r#"{"pageId":"pb"}"#, 5),
+        ] {
+            let n = call(&st, "blocks.list", body).unwrap().as_array().unwrap().len();
+            println!("blocks.list {body} -> {n} 块（期望 {want}）");
+            assert_eq!(n, want, "参数 {body}");
+        }
     }
 
     #[test]

@@ -16,11 +16,13 @@ export interface AiCapabilityMeta {
 export const AI_TOOL_META: AiCapabilityMeta[] = [
   {
     id: "pages.get",
-    description: "读取单个页面的标题与正文纯文本。参数: id (必填)。正文过长时会截断显示。",
+    description: "读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。",
     argsSchema: {
       type: "object",
       properties: {
       "id": { type: "string" },
+      "offset": { type: "number" },
+      "limit": { type: "number" },
       },
       required: ["id"],
     },
@@ -28,7 +30,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.search",
-    description: "在本空间检索页面（关键词匹配 + 语义相近，意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
+    description: "在本空间检索页面（关键词匹配；应用内 AI 检索会叠加本地嵌入的语义加分，配了嵌入模型时意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。",
     argsSchema: {
       type: "object",
       properties: {

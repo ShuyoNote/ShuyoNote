@@ -649,8 +649,27 @@ fn search_like(
 //   · `chunks` 表不存在（老库/没迁移）⇒ **空结果**，不报红（向前兼容）。
 // ---------------------------------------------------------------------------
 
+/// 命令面 `search_chunks` 的 `limit` 默认值。
+///
+/// ⚠️ **这是"命令面"（UI 与直接调用）的默认值，与能力面 `files.search` 的默认值（10，注册表）
+/// 是**两个面各自的契约**，刻意不互相"对齐"** —— Windows 裁定（2026-09-18）：
+/// "两个面、两拨用户，各自在注册表/文档写清即可；别再把它对齐，那会把人在看的列表变得太短"
+/// （同一条裁定也适用于 `pages.search`：能力面 8/100 与 UI 命令面 50/200）。
+///
+/// 历史：AMD 2026-09-18 发现"注册表 10 / TS wrapper 10 / 这里 20"三处不同**且没有判据守着**。
+/// 处置：① 默认值各自写在**一处**并写明归属（本常量＝命令面；`intArg(args,"limit",10,…)`＝能力面）；
+/// ② 真正会出事的是**下界**（原来只有 `.min(MAX)`，`limit=0` 返回 0 条，而能力面是 1）⇒ 已补 `clamp`。
 const CHUNK_LIMIT_DEFAULT: usize = 20;
 const CHUNK_LIMIT_MAX: usize = 100;
+
+/// 命令面的 `limit` 口径：默认 20（见上面的裁定），**两端都夹取**（与能力面同一条夹取语义，
+/// 但默认值是两个面各自的契约）。
+///
+/// 抽成纯函数只为能被判据直接钉住（原来那一行 `.min(MAX)` 没有下界，`limit=0` 会返回 0 条命中，
+/// 而能力面 `0 ⇒ 1`；两面对同一个逻辑调用的边界语义不该不同）。
+fn chunk_limit_or_default(limit: Option<usize>) -> usize {
+    limit.unwrap_or(CHUNK_LIMIT_DEFAULT).clamp(1, CHUNK_LIMIT_MAX)
+}
 /// 向量加分上限：**不主导**关键词（与页面级的 `VECTOR_BONUS` 同一个思路）。
 const CHUNK_VECTOR_BONUS: f32 = 6.0;
 /// 片段长度（与页面级 `build_like_snippet` 的调用口径一致）。
@@ -984,7 +1003,7 @@ pub async fn search_chunks(
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let limit = args.limit.unwrap_or(CHUNK_LIMIT_DEFAULT).min(CHUNK_LIMIT_MAX);
+    let limit = chunk_limit_or_default(args.limit);
 
     let mut query_vec: Option<Vec<f32>> = None;
     let mut model: Option<String> = None;
@@ -999,6 +1018,22 @@ pub async fn search_chunks(
 
 #[cfg(test)]
 mod tests {
+
+    /// 命令面 `limit` 的三个读数：默认值（命令面自己的 20）、下界、上界。
+    #[test]
+    fn chunk_limit_follows_the_registry_default_and_clamps_both_ends() {
+        assert_eq!(
+            chunk_limit_or_default(None),
+            20,
+            "命令面默认值（不是注册表那个 10 —— 两个面各自的契约，见 CHUNK_LIMIT_DEFAULT 的注释）"
+        );
+        assert_eq!(chunk_limit_or_default(Some(0)), 1, "0 是合法值，夹到下界（与能力面 clamp(1,100) 一致）");
+        assert_eq!(chunk_limit_or_default(Some(1)), 1);
+        assert_eq!(chunk_limit_or_default(Some(37)), 37);
+        assert_eq!(chunk_limit_or_default(Some(CHUNK_LIMIT_MAX)), CHUNK_LIMIT_MAX);
+        assert_eq!(chunk_limit_or_default(Some(9999)), CHUNK_LIMIT_MAX, "超上限夹到上限");
+    }
+
     use super::*;
 
     #[test]
