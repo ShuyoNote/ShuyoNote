@@ -212,6 +212,14 @@ jobs:
         # 现在它跑在 .mjs 里，绕开了 YAML 标量规则；`check-workflow-yaml` 另有窄规则兜底。
         run: node scripts/test-report.mjs --group rust --json test-report-rust.json
 
+      - name: 失败时把「哪条门禁红了」变成注解（rust 组）
+        # 与默认组/浏览器组那两步**同一个理由**，而这一步的必要性是它自己证明的（2026-09-19）：
+        # rust 组改成红之后，注解是空的、日志要 admin ⇒ 只能看到"exit code 1"，
+        # **说不出是哪条门禁**（当时实际是新增的门禁在 Linux 上自动打开了"跨实现"分支）。
+        # 诊断通道必须覆盖每一步，否则"哪一步先红"决定了我们能不能看见后面的红。
+        if: failure()
+        run: node scripts/test-report-annotate.mjs test-report-rust.json
+
       - name: 上传回归报告（机器可读）
         if: always()
         uses: actions/upload-artifact@v4

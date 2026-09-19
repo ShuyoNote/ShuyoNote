@@ -156,13 +156,22 @@ try {
     if (mac1 !== mac2) fail("HMAC-SM3 同输入两次结果不同（实现里有非确定因素？）");
   }
 
-  // ---- Tongsuo（可选）----
-  const openssl = process.env.SHUYONOTE_TONGSUO_OPENSSL || whichOpenssl();
+  // ---- Tongsuo（可选，**必须显式给路径**）----
+  //
+  // ⚠️ 为什么**不**自动探测 PATH 上的 `openssl`（2026-09-19 被 CI 教育的）：
+  //   ① 判据的意图是"跟**随包发的那份 Tongsuo** 对拍" —— 它是应用库级真正用的 provider；
+  //   ② 自动探测会让**同一条门禁在不同平台的语义不同**：macOS 的 LibreSSL 探不到（跳过），
+  //      而 Ubuntu 的 OpenSSL 3 **自带 SM4** ⇒ 那一支会自动打开，于是"本机绿"与"CI 红"分叉，
+  //      而且红的原因与代码无关（第三份实现介入了对拍）。这正是这一路最忌讳的"门禁自己制造惊喜"。
+  //   ③ 系统 OpenSSL 是**第三份** SM4 实现；拿它当"另一方"会把判据的名字变成假话。
+  // ⇒ 只认 `SHUYONOTE_TONGSUO_OPENSSL`（显式、可复核、与"装了 Tongsuo 的机器"一一对应）。
+  const openssl = process.env.SHUYONOTE_TONGSUO_OPENSSL || null;
   const tongsuoOk = openssl ? probeSm4Cbc(openssl) : false;
   if (!tongsuoOk) {
     skips.push(
-      `Tongsuo 未提供（或它的 openssl 不带 sm4-cbc）⇒ 跨实现对拍 5 项跳过（Tongsuo 标准向量 2 ＋ 双向互解 2 ＋ 密文/HMAC 一致 1）：` +
-        `设置 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl 后可跑（R1–R4 已覆盖"实现没被改坏"）`,
+      `跨实现对拍 5 项跳过（Tongsuo 标准向量 2 ＋ 双向互解 2 ＋ 密文/HMAC 一致 1）：` +
+        `未提供 ${openssl ? "可用的" : ""}Tongsuo —— 设 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl 后重跑` +
+        `（R1–R4 已覆盖"实现没被改坏"；本门禁**刻意不**自动用系统 openssl，理由见脚本里那一节注释）`,
     );
   } else {
     minCases = 8;
@@ -224,15 +233,6 @@ console.log(
 );
 console.log(`  R1/R2 GM/T 0002+0004 标准向量 · R3 SM4-CBC+PKCS#7 往返 · R4 HMAC-SM3 确定性`);
 if (skips.length === 0) console.log(`  T1–T4 Tongsuo 对拍：标准向量 / 双向互解 / 密文逐字节相同 / HMAC 一致`);
-
-/** PATH 上能找到 `openssl` 就用它（但下面还会探它到底支不支持 sm4-cbc）。 */
-function whichOpenssl() {
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    const p = join(dir, "openssl");
-    if (dir && existsSync(p)) return p;
-  }
-  return null;
-}
 
 /** 探一下这个 openssl 有没有 sm4-cbc（系统自带的 OpenSSL 通常**没有** —— 那正是要 Tongsuo 的原因）。 */
 function probeSm4Cbc(openssl) {
