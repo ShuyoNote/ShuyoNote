@@ -4,25 +4,55 @@
 
 ## [Unreleased]
 
+## [1.91.9] - 2026-09-19
+
+### 修复
+
+- **Linux 档"装包里真有 `libpdfium.so`"这条产物级判据，判法改对了** —— 1.91.6 / 1.91.7 / 1.91.8 三连红都卡在这一步，
+  而红的是**断言自己**（产物一直是好的）：它要求 AppImage 里那份与 vendor 源 **sha256 一致**，而这**做不到** ——
+  linuxdeploy 对 AppDir 里 `usr/lib` 下**每个** ELF 都会**无条件** `patchelf --set-rpath`
+  （`linuxdeploy/src/core/appdir.cpp` 的 `deployDependenciesForExistingFiles()`：即使 rpath 已等于目标值也照样执行），
+  我们当**资源**带进去的库因此被打上 `RUNPATH=$ORIGIN`。实测（同一个 vendor 文件、同一版 linuxdeploy）：
+  vendor 7645184 字节 `f728930966f5…`（无 RUNPATH）↔ 包里 7664592 字节 `eb19d385c398…`
+  （+`RUNPATH=$ORIGIN`，`.dynstr` +8 字节），而**动态符号表 783/783、段集合逐名相同、非 RUNPATH 的动态表条目逐条相同**。
+  改法：AppImage 档改成**结构比对** —— 动态表除 RUNPATH 外逐条相同、且 RUNPATH 只允许"源没有、包里补 `$ORIGIN`"；
+  动态符号表（名字/类型/绑定/大小）多重集相同；**源那份的段一个都不能少**（这条咬 strip）；**不比源小、且不超过源 +256 KiB**
+  （这条咬截断 / 插桩 / 换成了另一个库）。deb 档**不变**（deb 是纯 ar+tar，没人动过字节 ⇒ 仍钉 sha256 一致）。
+  单测 14 → 30 条。证据：把本机那份 AppDir 真打成 111 MB 的 `.AppImage` 跑完整脚本 ⇒ **通过**（exit 0）；
+  把 `strip` 过的库塞回去重打 ⇒ **红**（exit 1，逐条报"少了 `.symtab`/`.strtab`"＋"比源小"）；截断 / 尾部加 1 MB /
+  换成 `libz.so.1` 也全红。
+  ⚠️ **订正**：1.91.8 里我把这条字节差异诊断成"linuxdeploy 默认 strip 所有 ELF"并加了 `NO_STRIP=1` —— **那是错的**
+  （`NO_STRIP` 挡得住 strip，挡不住 patchelf），所以 1.91.8 照旧红。本机**去掉** `NO_STRIP` 重打一次，
+  AppDir 里那份仍是 `eb19d385c398…`，与 CI 带 `NO_STRIP` 时**逐字节相同** ⇒ 这条环境变量对本判据没有作用，
+  留着只是让"不比源小"更稳（`release.yml` 的注释已按实情改写）。
+- **`cargo test` 的 P3 对拍改成"缺库时响亮跳过"**（不再把没取到 PDFium 动态库的机器判红），CI 的 rust job 改成
+  **先取库再跑** —— 于是"CI 在 dev 上一直红"的那条也修掉了（那是"判据没错、但环境没准备好"被记成了失败）。
+
+### 新增
+
+- **AI 索引（检索 / 派生层）第一批接线**：派生层的**桌面运输通道**（`derived_apply` / `derived_query`，
+  带跨语言夹具契约 `tests/derived-transport-ops.json`）、桌面 `store` 适配器与**桌面路径端到端**
+  （索引在桌面真的填进去了）、平台装配 `platform.derivedStores()`（桌面接命令面、Web 接自家 store）、
+  以及应用侧**「开始索引」**（触发 ＋ 进度 ＋ 报告）。
+  ⚠️ **如实边界**：这是**进行中**的一批（按 a / b,c / 3a / 3 分批提交），两端都接上线且有单测与端到端，
+  但**索引质量与召回还没有评测读数** —— 这一版不宣称"检索好用"，只宣称"通路通了、可继续在上面做"。
+
+### 其它
+
+- **更新通道补发**：1.91.6 / 1.91.7 / 1.91.8 都因 Linux 那格缺产物而把通道**停在 1.91.5**
+  （不能发一份缺平台的清单，否则那部分用户收不到更新）；本版三平台产物齐了才发。
+- 文档门禁 `check-doc-links` 补一条**表形态**判据（「快速导航」左列不许出现文件路径），并修掉被它污染的那几行。
+
 ## [1.91.8] - 2026-09-19
 
 ### 修复
 
-- **AppImage 里那份 `libpdfium.so` 被 linuxdeploy strip 掉**，于是"包里那份 == 源那份"这条产物级判据在 AppImage 上不成立
-  （1.91.7 的 CI 因此红 ⇒ 又没上传 Linux 产物）。定性有两条独立观察：① 本机真打一次 AppImage 时，
-  `linuxdeploy` 铺好的 `ShuyoNote.AppDir/usr/lib/ShuyoNote/libpdfium.so` 与 vendor 源**逐字节一致**
-  （7645184 字节、sha256 相同、`.symtab` 仍在）；② 但那次 linuxdeploy 没跑完（缺 `xdg-mime`），
-  而 CI 上跑完了 ⇒ 成品里那份字节不同。⇒ 差异只能来自 linuxdeploy 的 **默认 strip**。
-  修法：**别 strip**。因为主二进制本来就被 `[profile.release] strip = true` 处理过、且 Windows/macOS 不走 linuxdeploy，
-  所以关掉它只多出 PDFium 这**一个库**的符号（约 1–2 MB），换来 AppImage 也能做 **sha256 对源比对** ——
-  比"只看大小"那种弱判据值得。`release.yml` 的 `Build bundles` 步加 `NO_STRIP: "1"`。
+- **本版没有发布**（Linux job 在"装包确实带上了 libpdfium.so"那一步红、产物没上传 ⇒ 通道仍停在 1.91.5）。
+  ⚠️ **2026-09-19 订正**：本条原来写的是"AppImage 里那份 `libpdfium.so` 被 linuxdeploy strip 掉，
+  加 `NO_STRIP=1` 即可" —— **诊断是错的**（`NO_STRIP` 挡得住 strip，挡不住 patchelf），所以本版照旧红。
+  真因与判法订正见 [1.91.9]：字节差异来自 linuxdeploy 对 AppDir 里每个 ELF **无条件** `patchelf --set-rpath`
+  （被打上 `RUNPATH=$ORIGIN`），而**不是** strip —— 实测动态符号 783/783、段集合完全相同。
   （同批还修了这条断言的两处解析 bug：deb 少认 `./` 前缀、AppImage 多算 `squashfs-root` 一段 —— 见 1.91.7。）
-  ⇒ 本版起**三平台产物齐发**（也就把 1.91.6 那笔"默认引擎切成 PDFium"真正送到各平台用户）。
-
-### 其它
-
-- **更新通道一起补发**：1.91.6 与 1.91.7 都因 Linux 那格缺产物而把通道**停在 1.91.5**
-  （不能发一份缺平台的清单，否则那部分用户收不到更新）；本版三平台齐了才发。
 
 ## [1.91.7] - 2026-09-19
 
