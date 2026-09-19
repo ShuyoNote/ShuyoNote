@@ -71,7 +71,8 @@ if (LIST) {
 }
 
 // 从别处跑出来的报告（CI artifact）并入基线：**不跑任何门禁**，只写 tests/baseline.json。
-// 典型用途：rust 组只在 Linux CI 上有可信读数（本机 Windows 上测试二进制加载期就异常退出，
+// 典型用途：rust 组的**全量**读数只在 Linux CI 上有可信读数（Windows 本机可用
+// scripts/win-cargo-test.ps1 跑 lib 目标，但 `plugins::` 那 34 条要真宿主进程；
 // 见 docs/TESTING.md 的"已知边界"）。用法：
 //   node scripts/test-report.mjs --baseline-from rust-report.json
 const baselineFrom = argValue("--baseline-from");
