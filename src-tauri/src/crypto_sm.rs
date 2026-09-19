@@ -220,6 +220,38 @@ mod tests {
         assert!(decrypt(&ct, &mac, &enc).is_err(), "两把密钥互换后竟然能解开");
     }
 
+    /// ★★ **KDF 黄金向量（跨实现双方都产出过这一串 64 字节）**。
+    ///
+    /// 为什么非要它、T5 不够：T5 证明的是「**给同一个输入时两侧一致**」，证明不了
+    /// 「**应用里那两行切片取的是哪 16 个字节**」—— 把 `sm4_key()` 从 `enc[..16]` 改成 `enc[16..32]`，
+    /// 往返、确定性、EtM 那几条**全都照绿**（加解密对称），而后果是**跨设备读不出对方的数据**。
+    /// 所以要有一条把"KDF 输出 → 取哪一段"直接钉死的判据。
+    ///
+    /// 来源：AMD 2026-09-19 信里给的 Tongsuo CLI 读数，本机用自家 `gm-conformance kdf` 复算
+    /// **逐字节相同**才写进来（两侧独立产出，不是把对方的数抄一遍）。
+    /// 参数：口令 `a-typical-passphrase`、盐 `5a`×16、**20 万轮**、输出 64 字节。
+    #[test]
+    fn kdf_golden_vector_and_key_slicing() {
+        const PASS: &str = "a-typical-passphrase";
+        const SALT: [u8; 16] = [0x5a; 16];
+        const EXPECT64: &str = "b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad99c3469e8dc977dd3fd159ef69d41d39742a54f140e932498e5b5c069fb0861d4";
+        assert_eq!(EXPECT64.len(), SM_KDF_OUT_LEN * 2, "黄金向量长度与 KDF 输出口径不一致");
+
+        let (enc, mac) = derive_keys(PASS, &SALT);
+        let joined = format!("{}{}", hex::encode(enc), hex::encode(mac));
+        assert_eq!(joined, EXPECT64, "64 字节 KDF 输出与跨实现黄金向量不一致 —— 跨设备会互相解不开");
+
+        // 口径 1：**SM4 用前 16 字节**（不是前 32、也不是后 16）。这条挡的正是"改切片不红"的缺口。
+        assert_eq!(
+            hex::encode(sm4_key(&enc)),
+            &EXPECT64[..SM4_KEY_LEN * 2],
+            "SM4 密钥取的不是 KDF 输出的**前 16 字节**（口径 1 被改坏 ⇒ 跨设备互解失败）"
+        );
+        // MAC 用后 32 字节（§0.1）；两把独立密钥不得相同。
+        assert_eq!(hex::encode(mac), &EXPECT64[SM_KDF_OUT_LEN * 2 - 64..], "MAC 密钥不是 KDF 输出的后 32 字节");
+        assert_ne!(enc, mac, "两把密钥相同 —— EtM 的独立性没了");
+    }
+
     /// 同一明文两次加密 ⇒ **密文不同**（IV 随机），但都能解开。
     #[test]
     fn iv_is_fresh_per_encryption() {
