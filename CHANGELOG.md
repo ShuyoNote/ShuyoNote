@@ -64,7 +64,7 @@
   标题与按钮 `white-space: nowrap`；② 表格容器 `overflow: auto` + 表格 `min-width: 780px`
   ⇒ 装不下就**横向滚动**，而不是把列挤扁；③ `@media (max-width: 900px)` 收紧边距与标题字号
   （830px 窗口里可用宽度 798 ≥ 780，**不用横滚就放得下**）。
-  判据：`scripts/check-panel-layout.mjs` 新增「文件管理」一段，在 **560px**（真会挤）、
+  判据：`scripts/check-panel-layout.mjs` 新增「文件管理」一段，在 **560px**（真会挤）、<!-- 豁免：560px 是断点宽度，不是门禁断言数 -->
   830px（用户那个窗口）、1280px（宽屏）三档用真实 Chromium 量几何 —— 标题/按钮/「类型」格的**行盒数**、
   「类型」列宽、表格宽、页面横向溢出。**变异验证**：去掉 `min-width` ⇒ 「类型」列 2 行 + 列宽 44px +
   表格 661px（三条红）；去掉 head/actions 的 `flex-wrap` ⇒ 标题 4 行（红）；只去掉按钮的 `nowrap` ⇒ 仍绿
