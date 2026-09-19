@@ -5,7 +5,7 @@
 // 早先用裸 `(\d+)/(\d+)` 兜底解析读数，把 `check-plugin-hosting.mjs` 输出里的进度数字
 // 当成了 "2280/4560 断言" 写进汇总表。下面 "绝不把无关数字当断言数" 那条就是它的回归用例。
 import { describe, expect, it } from "vitest";
-import { baselineViolations, changelogNumberMismatches, countsForGate, countsFromCargoOutput, countsFromOutput, countsFromSmokeJson, countsFromVitestJson, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, summaryLine, upsertSuiteStatus } from "./report-core.mjs";
+import { baselineViolations, changelogNumberMismatches, countsForGate, countsFromCargoOutput, countsFromOutput, countsFromSmokeJson, countsFromVitestJson, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, staleBaselineNotices, summaryLine, upsertSuiteStatus } from "./report-core.mjs";
 
 describe("读数解析（countsFromOutput）", () => {
   it("认仓库的中文汇总格式：[结果] N 通过 / M 失败", () => {
@@ -147,6 +147,57 @@ describe("基线判定（baselineViolations）", () => {
   it("--update-baseline 时不产生任何违规（这一轮就是要重写基线）", () => {
     const results = [{ id: "smoke-web", baseline: true, status: "passed", counts: { total: 1 } }];
     expect(baselineViolations({ results, baseline, currentGates: [], updateBaseline: true })).toEqual([]);
+  });
+});
+
+describe("基线太旧的提示（staleBaselineNotices：**提示**，不是失败）", () => {
+  it("★ 下界远低于当前读数 ⇒ 出一条提示（点名百分比与建议）", () => {
+    // 真实案例：tests/baseline.json 里 vitest 记着 746，而当前读数是 1299（57%）
+    const n = staleBaselineNotices({
+      results: [{ id: "vitest", baseline: true, status: "passed", counts: { total: 1299 } }],
+      baseline: { counts: { vitest: 746 } },
+    });
+    expect(n).toHaveLength(1);
+    expect(n[0]).toContain("746");
+    expect(n[0]).toContain("1299");
+    expect(n[0]).toContain("57%");
+    expect(n[0]).toContain("--update-baseline");
+  });
+
+  it("下界接近当前读数 ⇒ 不提示（80% 是「够不够用」的界线，不是「完不完美」）", () => {
+    const n = staleBaselineNotices({
+      results: [{ id: "smoke-web", baseline: true, status: "passed", counts: { total: 352 } }],
+      baseline: { counts: { "smoke-web": 350 } },
+    });
+    expect(n).toEqual([]);
+  });
+
+  it("阈值可调：90% 时 80% 的比值也会被提示", () => {
+    const args = {
+      results: [{ id: "smoke-web", baseline: true, status: "passed", counts: { total: 100 } }],
+      baseline: { counts: { "smoke-web": 80 } },
+    };
+    expect(staleBaselineNotices(args)).toEqual([]); // 80% 不小于默认阈值
+    expect(staleBaselineNotices({ ...args, thresholdPct: 90 })).toHaveLength(1);
+  });
+
+  it("没标 baseline / 没读数 / 读数下降 ⇒ 都不在这里报（下降那条归 baselineViolations 管）", () => {
+    const base = { counts: { a: 10, b: 10, c: 100 } };
+    expect(staleBaselineNotices({ results: [{ id: "a", baseline: false, status: "passed", counts: { total: 999 } }], baseline: base })).toEqual([]);
+    expect(staleBaselineNotices({ results: [{ id: "b", baseline: true, status: "passed", counts: null }], baseline: base })).toEqual([]);
+    // 读数下降：不在本函数报（否则会与"红"重复，读者会以为有两类失败）。
+    // ⚠️ 这一条**必须把阈值调到 >100%** 才真的承重：默认 80% 时，下降会让比值 >100%，
+    //    光靠比值判断就已经排除了 ⇒ 「expected >= actual 显式排除」那行看起来绿其实是摆设
+    //    （变异证明当场抓到了这一点：去掉那行，默认阈值下 46 条全绿）。
+    expect(staleBaselineNotices({ results: [{ id: "c", baseline: true, status: "passed", counts: { total: 50 } }], baseline: base })).toEqual([]);
+    expect(
+      staleBaselineNotices({
+        results: [{ id: "c", baseline: true, status: "passed", counts: { total: 50 } }],
+        baseline: base,
+        thresholdPct: 250,
+      }),
+      "阈值 >100% 时，「下降」也必须被显式排除挡住（否则它会伪装成「下界太旧」）",
+    ).toEqual([]);
   });
 });
 
