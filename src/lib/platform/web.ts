@@ -2,6 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, upsertRemoteContent } from "../docContent";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -768,28 +769,18 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
       // seq-based LWW + dirty-prefer-local（对齐桌面 sync.rs::apply_upsert，见
       // plans/2026-09-09-sync-seq-lww.md）：本地有未同步改动(dirty=1)或已同步到
       // 更晚 seq，则保留本地；否则接受远端并记录 sync_seq。
-      const useRemote = (() => {
-        const local = store.query<{ sync_seq: number; dirty: number }>(
-          "SELECT sync_seq, dirty FROM pages WHERE id = ?", [p.id],
-        )[0];
-        if (!local) return true; // 本地没有 → 插入（新建）
-        if (local.dirty !== 0) {
-          console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
-          return false;
-        }
-        if (local.sync_seq > change.seq) {
-          // 已同步到更晚的变更 → 保留本地。
-          return false;
-        }
-        return true; // 远端更新（seq 更大且本地无未同步改动）→ 用远端
-      })();
+      //
+      // ★ 判定本身搬进了「文档内容」那一层（`docContent.shouldTakeRemote`）——**唯一的合并点**；
+      // 桌面侧的同名一层是 Rust 的 `doc_content::merge`，两份用例**逐条对应**（改一边看另一边）。
+      // 读数（`sync_seq`/`dirty`）与"用远端"那一笔落库也都走那一层：`localState` / `upsertRemoteContent`。
+      const local = localState(store, String(p.id));
+      const useRemote = shouldTakeRemote(local, change.seq);
+      // 只在"本地有未同步改动"这一种情况下打日志（与搬运前一致：seq 更晚那种是静默的）。
+      if (local && local.dirty !== 0 && !useRemote) {
+        console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
+      }
       if (useRemote) {
-        store.run(
-          `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, db_rule, icon, cover, cover_height, cover_pos, sync_seq, dirty)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-           ON CONFLICT(id) DO UPDATE SET title=excluded.title, kind=excluded.kind, parent_id=excluded.parent_id, sort_order=excluded.sort_order, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at, content_json=excluded.content_json, content_text=excluded.content_text, db_rule=excluded.db_rule, icon=excluded.icon, cover=excluded.cover, cover_height=excluded.cover_height, cover_pos=excluded.cover_pos, workspace_id=excluded.workspace_id, sync_seq=excluded.sync_seq, dirty=0`,
-          [p.id, p.workspace_id ?? "active", p.parent_id ?? null, p.title ?? "", p.kind ?? "page", p.sort_order ?? 0, p.created_at ?? Date.now(), p.updated_at ?? Date.now(), p.deleted_at ?? null, p.content_json ?? "{}", p.content_text ?? "", p.db_rule ?? "{}", p.icon ?? "", p.cover ?? "", p.cover_height ?? 300, p.cover_pos ?? 50, change.seq],
-        );
+        upsertRemoteContent(store, { ...p, id: String(p.id) }, change.seq);
       }
     }
     return;
@@ -1161,7 +1152,10 @@ async function migrateAttachmentHashesToSha256(store: SqliteStore): Promise<void
   } catch { /* 迁移失败不阻塞启动 */ }
 }
 
-function makeInvoke(store: SqliteStore) {
+// 导出是给验收脚本用的（`scripts/verify-two-device-sync.mjs` 要打**真实的命令路径**
+// ——`restore_version` 的效果必须由它本身产生，而不是脚本里自己重演一遍 restore 逻辑）
+// ——与 `applyChange` 的导出来源相同。
+export function makeInvoke(store: SqliteStore) {
   // The live store represents the ACTIVE workspace only (snapshot isolation — see
   // bootSpaces in getSharedStore). Workspace list/active/id come from the catalog.
   // Each workspace's own DB snapshot carries a single `workspaces` row for itself,
@@ -1318,25 +1312,20 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "save_page") {
       const args = a.args ?? a;
       const id = String(args.id ?? "");
-      const p = store.query<{ id: string; title: string }>("SELECT id, title FROM pages WHERE id = ?", [id])[0];
-      if (p) {
-        // Only overwrite the title when a new one is actually provided; otherwise
-        // KEEP the existing title (matches the desktop backend's
-        // `title = args.title.unwrap_or(cur_title)`). Previously this fell back to
-        // `p.id`, so a content-only save (e.g. from the template center, whose
-        // auto-save fires with no title) renamed the page to its own UUID.
-        const newTitle = typeof args.title === "string" ? args.title : p.title;
-        const json = str(args.content_json ?? "");
-        const text = str(args.content_text ?? "");
-        // Snapshot the current content BEFORE we overwrite it (version history).
-        snapshotBeforeSave(store, id, newTitle, json, text);
-        store.run(
-          `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1
-           WHERE id = ?`,
-          [newTitle, json, text, Date.now(), id],
-        );
+      // 读出口走「文档内容」那一层（阶段 0 接口收口）；"用新值还是保留旧值"的解析也在那一层
+      // （`resolveSaveContent`，与桌面 `save_page` 的 `unwrap_or(cur)` 同语义）。
+      const cur = readContent(store, id);
+      if (cur) {
+        // ⚠️ 这里**曾经**是 `str(args.content_json ?? "")`：只传标题的保存（改名，见
+        // `store/notes.ts` / `FileManagerView.tsx` 的 `savePage({ id, title })`）会把正文
+        // **清成空串**并 `dirty = 1` 推给服务端 —— 桌面侧一直是保留正文的（`unwrap_or(cur_json)`）。
+        // 2026-09-18 对齐两侧语义，判据与用例见 `docContent.resolveSaveContent` 的注释与单测。
+        const next = resolveSaveContent(cur, args);
+        // Snapshot the current state before overwriting (version history).
+        snapshotBeforeSave(store, id, next.title, next.json, next.text);
+        writeContent(store, id, next, Date.now());
         const updatedRow = store.query("SELECT * FROM pages WHERE id = ?", [id])[0];
-        recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: newTitle, content_json: json, content_text: text, updated_at: Date.now() }, Date.now());
+        recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: next.title, content_json: next.json, content_text: next.text, updated_at: Date.now() }, Date.now());
         return updatedRow as T;
       }
       return null as T;
@@ -1893,9 +1882,10 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "get_page_blocks") {
       const pageId = String(a.pageId ?? a.page_id ?? "");
-      const rows = store.query("SELECT content_json FROM pages WHERE id = ? AND deleted_at IS NULL", [pageId]);
-      if (!rows[0]) throw new Error("页面不存在");
-      const v = parseJson(String((rows[0] as any).content_json ?? ""));
+      // 读出口只有一处（`docContent.readContent`）：谓词与原先逐字相同（`deleted_at IS NULL`）。
+      const page = readContent(store, pageId);
+      if (!page) throw new Error("页面不存在");
+      const v = parseJson(page.json);
       const blocks = rootChildren(v)
         .filter((c) => topBlockId(c))
         .map((c) => ({ block_id: topBlockId(c), text: nodeText(c).trim() }));
@@ -1918,10 +1908,11 @@ function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "resolve_block") {
       const blockId = String(a.blockId ?? a.id ?? "");
-      for (const p of store.query("SELECT id, title, content_json FROM pages WHERE deleted_at IS NULL") as any[]) {
-        if (blockTextOf(String(p.content_json ?? ""), blockId)) {
-          const snippet = snippetForBlock(String(p.content_json ?? ""), blockId);
-          const content = blockTextOf(String(p.content_json ?? ""), blockId);
+      // 扫全库找块：走批量读出口（`readAllContents`），谓词与原先逐字相同（`deleted_at IS NULL`）。
+      for (const p of readAllContents(store)) {
+        if (blockTextOf(p.json, blockId)) {
+          const snippet = snippetForBlock(p.json, blockId);
+          const content = blockTextOf(p.json, blockId);
           return { block_id: blockId, page_id: p.id, page_title: p.title, snippet, content } as T;
         }
       }
@@ -1930,17 +1921,20 @@ function makeInvoke(store: SqliteStore) {
     if (cmd === "list_block_backlinks") {
       // Block-level backlinks where the current page's blocks are referenced.
       const pageId = String(a.pageId ?? a.page_id ?? "");
+      // ⚠️ 目标页这一读**故意没走** `readContent`：它搬运前的谓词是 `WHERE id = ?`，
+      // **不带** `deleted_at IS NULL`（软删页也要能算它自己的块反链）。走那一层会改变行为，
+      // 属于"顺手修"而不是"收口"，留给单独一次提交。
       const targetJson = store.query<{ content_json: string }>("SELECT content_json FROM pages WHERE id = ?", [pageId])[0]?.content_json ?? "{}";
       const targetIds = new Set(rootChildren(parseJson(targetJson)).map(topBlockId).filter(Boolean));
       const out: any[] = [];
-      for (const p of store.query("SELECT id, title, content_json FROM pages WHERE deleted_at IS NULL") as any[]) {
+      for (const p of readAllContents(store)) {
         if (p.id === pageId) continue;
         const refs: { source: string; target: string; kind: string }[] = [];
-        const v = parseJson(String(p.content_json ?? ""));
+        const v = parseJson(p.json);
         for (const child of rootChildren(v)) collectBlockRefs(child, topBlockId(child), refs);
         for (const ref of refs) {
           if (targetIds.has(ref.target)) {
-            const sourceSnippet = snippetForBlock(String(p.content_json ?? ""), ref.source);
+            const sourceSnippet = snippetForBlock(p.json, ref.source);
             const targetSnippet = snippetForBlock(targetJson, ref.target);
             out.push({ source_page_id: p.id, source_page_title: p.title, source_block_id: ref.source, source_snippet: sourceSnippet, target_block_id: ref.target, target_snippet: targetSnippet, kind: ref.kind });
           }
@@ -2005,30 +1999,25 @@ function makeInvoke(store: SqliteStore) {
           if (!edgeSet.has(key)) { edgeSet.add(key); edges.push({ source: rr.page_id, target: m[1], kind: "ref" }); }
         }
       }
+      // ⚠️ **块层图在 Web 上不存在，而且不许在这里"临时补"**（2026-09-18 清理死代码时写下）。
+      //
+      // 桌面侧 `graph.rs::get_graph` 的块层来自**派生表** `blocks`
+      // （由 `blocks::rebuild_block_graph` 维护；那张表只建在 Rust 的 schema 里，Web 侧没有）。
+      // 这里原先留着两段用 `p.content_json` 扫全库建块节点/块边的循环，但上面那条查询
+      // **根本没选 `content_json`** ⇒ 两个 `if (!p.content_json) continue;` 必然命中，
+      // `blocks` / `block_edges` **恒为空**（注释也承认"暂为空"）。
+      //
+      // 为什么**删掉**而不是"把 content_json 加回查询让它跑起来"：
+      // 那等于在平台层**自己扫内容建索引**，直接违反「派生索引只能从 derive 出」这条边界规则；
+      // 而且这是 Web 独有的实现，会让两侧的图语义又快又静地漂开。
+      // ⇒ 要恢复块层，正路是**先有 Web 侧的派生**（与 Rust 的 `blocks` 表同一份语义），
+      //    再由这里读派生结果。在那之前：**诚实地返回空，而不是假装能算**。
       const blocks: any[] = [];
       const blockEdges: any[] = [];
-      const blockIdToPage = new Map<string, string>();
-      for (const p of pages) {
-        if (!p.content_json) continue; // 查询已不拉 content_json：block 层图暂为空。
-        const v = parseJson(p.content_json);
-        const children = Array.isArray(v?.root?.children) ? v.root.children : [];
-        for (const child of children) {
-          const bid = topBlockId(child);
-          if (!bid) continue;
-          blockIdToPage.set(bid, p.id);
-          blocks.push({ id: bid, label: snippetForBlock(p.content_json, bid) || "(", page_id: p.id });
-          blockEdges.push({ source: bid, target: p.id, kind: "belongs" });
-        }
-      }
-      for (const p of pages) {
-        if (!p.content_json) continue; // 查询已不拉 content_json：block 引用边暂为空。
-        const refs: { source: string; target: string; kind: string }[] = [];
-        for (const child of rootChildren(parseJson(p.content_json))) collectBlockRefs(child, topBlockId(child) ?? "", refs);
-        for (const r of refs) {
-          if (r.source && r.target && blockIdToPage.has(r.target)) blockEdges.push({ source: r.source, target: r.target, kind: r.kind });
-        }
-      }
-      return { pages: gPages, edges, blocks, block_edges: blockEdges } as T;
+      // ★ 显式**声明**这个平台给不出块层（字段说明见 `GraphData`）。
+      // 只说"空数组"是不够的：UI 没法把"平台不支持"与"这个空间没有块引用"分开，
+      // 于是"块级"开关在 Web 上会打开一个永远空的图（`GraphView` 现在据这个字段禁用开关）。
+      return { pages: gPages, edges, blocks, block_edges: blockEdges, blocks_supported: false } as T;
     }
 
     // ---- Attachments (bytes in IndexedDB blob store; SQLite holds metadata only,
@@ -3089,12 +3078,19 @@ function makeInvoke(store: SqliteStore) {
       if (!r) throw new Error("版本不存在");
       // Preserve the CURRENT content before overwriting, so a restore is
       // reversible (deduped against the newest snapshot). Matches desktop.
+      // ⚠️ 活性谓词与 `readContent` 一致（`deleted_at IS NULL`）：**恢复只对活页**
+      // ——要给已软删的页面恢复内容，应先把页面还原出来（2026-09-19 跨机裁定"统一到活页"）。
       const cur = store.query<{ title: string; content_json: string; content_text: string }>(
-        "SELECT title, content_json, content_text FROM pages WHERE id = ?",
+        "SELECT title, content_json, content_text FROM pages WHERE id = ? AND deleted_at IS NULL",
         [r.page_id],
       )[0];
-      if (cur) snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
-      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ? WHERE id = ?", [
+      if (!cur) throw new Error("页面不存在或已删除（先还原页面，再恢复它的历史版本）");
+      snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
+      // `dirty = 1`：恢复版本是**用户自己刚做的动作**，与 `writeContent` 硬写 1、
+      // `upsertRemoteContent` 硬写 0 成对。不置 1 时，"恢复后、推送前"的某次 pull 会
+      // **静默把这次恢复冲掉**（最终虽收敛，但用户会看到内容闪回且没有任何提示）。
+      // 2026-09-19 裁定 (a)：两侧同时改 —— Rust `versions.rs::restore_version` 同批。
+      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1 WHERE id = ?", [
         r.title, r.content_json, r.content_text, Date.now(), r.page_id,
       ]);
       const restored = store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0];

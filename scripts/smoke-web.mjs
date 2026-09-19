@@ -539,6 +539,43 @@ const cols = await invoke("query_database", {});
 assert("query_database has columns+rows arrays", Array.isArray(cols?.columns) && Array.isArray(cols?.rows));
 const graph = await invoke("get_graph", {});
 assert("get_graph has page nodes", Array.isArray(graph?.pages) && graph.pages.length >= 1, `${graph?.pages?.length} node(s)`);
+// ⚠️ **块层在 Web 侧恒为空 —— 这条断言是故意写成"必须为空"的**（2026-09-19，Mac 侧接 Windows 的请求）。
+//
+// 背景：桌面的图有块节点/块边（来自**派生表** `blocks`，由 `blocks::rebuild_block_graph` 维护），
+// 而那张表**只建在 Rust 的 schema 里**（`src-tauri/src/db.rs`），Web 侧没有 ⇒ `get_graph` 的
+// `blocks`/`block_edges` 在 Web 上恒为空。原先 Web 侧还留着两段"扫 `p.content_json` 建块图"的循环，
+// 但上面那条查询**根本没选 `content_json`** ⇒ 两个 `continue` 必然命中 ⇒ **那两段从未执行过一次**；
+// 而这里原先只断言 `graph.pages` ⇒ 死代码与"看不见的差异"互相掩护了很久。
+//
+// 现在删掉了死代码，并把差异**写成判据**：它同时钉住两件事 ——
+//   ① 差异存在（不是坏了）；② 差异被记录（不是忘了）。
+// 将来有人实现 Web 块层，这里会红 —— 那时**改这条断言并更新指向的排期项**，而不是删掉它。
+// 排期：`docs/plans/2026-09-18-doc-content-layer-inventory.md`（Web 块层属功能活，排在 CRDT 阶段 0 之后）。
+//
+// ★ **2026-09-19 升级成"声明式"**（AMD 在 `doc-content-layer-slice4-5.reply-1` §四 提的取向，
+//   与上面那条"必须为空"**并存**，不是取代）：光钉"空"会把**现状**锁住 ——
+//   而真正要钉的是"**平台给不出块层时必须显式声明**"（`blocks_supported: false`）。
+//   两者分工：
+//     · 「恒为空」= 今天的**证据**（差异确实存在，不是我们搞坏了）；
+//     · 「必须声明不支持」= 今天的**契约**（UI 据此禁用开关，用户不再点开一个空图）。
+//   实现 Web 块层时，两条都要改：`blocks_supported` 翻 `true`（Rust/TS 两侧）+ 这里改断言。
+{
+  const blocks = graph?.blocks;
+  const blockEdges = graph?.block_edges;
+  assert(
+    "★ get_graph 的块层在 Web 侧恒为空（已知差异，非 bug）",
+    Array.isArray(blocks) && blocks.length === 0 && Array.isArray(blockEdges) && blockEdges.length === 0,
+    `blocks=${Array.isArray(blocks) ? blocks.length : typeof blocks} block_edges=${Array.isArray(blockEdges) ? blockEdges.length : typeof blockEdges}`,
+  );
+  // ★ 声明式那条：空数组**必须**伴随"本平台不支持"的显式声明。
+  // 没有它，UI 分不出「平台不支持」与「这个空间没有块引用」⇒ `GraphView` 的"块级"开关
+  // 在 Web 上会打开一个永远空的图（这就是原先的用户可见症状）。
+  assert(
+    "★ 平台给不出块层时必须**显式声明**（Web: blocks_supported === false）",
+    graph?.blocks_supported === false,
+    `blocks_supported=${JSON.stringify(graph?.blocks_supported)}`,
+  );
+}
 const stats = await invoke("storage_stats", {});
 assert("storage_stats is object", typeof stats === "object" && stats !== null);
 assert("storage_stats has real db_bytes (>0)", typeof stats?.db_bytes === "number" && stats.db_bytes > 0, `${stats?.db_bytes}`);

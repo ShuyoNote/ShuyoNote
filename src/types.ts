@@ -586,6 +586,19 @@ export interface GraphData {
   edges: GraphEdge[];
   blocks: GraphBlock[];
   block_edges: GraphEdge[];
+  /**
+   * 这个**平台**能不能提供块层 —— 桌面：来自派生表 `blocks`（`blocks::rebuild_block_graph` 维护）⇒ `true`；
+   * Web：那张表**只建在 Rust 的 schema 里**（`src-tauri/src/db.rs`）⇒ `false`。
+   *
+   * 为什么要一个显式声明，而不是"给个空数组了事"：空数组让 UI **分不出**两种情况 ——
+   * 「这个平台不支持块层」与「这个空间里确实没有块引用」。实测后果：`GraphView` 的"块级"开关
+   * 原先只看 `blocks.length` ⇒ **Web 上用户能点开一个永远空的块层图，且没有任何提示**。
+   * ⇒ 平台给不出块层时**必须在这里说"不支持"**，由 UI 决定禁用/隐藏。
+   *
+   * ⚠️ 它是**契约**，不是读数：将来 Web 侧做出块层派生时，要**同时**把它翻成 `true`
+   * （`scripts/smoke-web.mjs` 的块层断言会逼着一起改）。
+   */
+  blocks_supported: boolean;
 }
 
 export interface AttrDef {

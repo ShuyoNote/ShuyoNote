@@ -19,6 +19,16 @@
 
 ### 修复
 
+- **Web 版（浏览器 / WebView 外壳）里「改名」会把正文清空**（2026-09-18 读代码时发现，顺手修）。
+  `platform/web.ts` 的 `save_page` 用 `str(args.content_json ?? "")` 取内容 ⇒ 只传标题的保存
+  （`store/notes.ts` 与 `FileManagerView.tsx` 的 `savePage({ id, title })`）会把 `content_json` /
+  `content_text` **清成空串**，而且带着 `dirty = 1` **推到服务端**（别的设备上正文也跟着没了）；
+  桌面侧一直是保留正文的（`args.content_json.unwrap_or(cur_json)`）。
+  修法：把这条语义收进「文档内容」那一层 —— `src/lib/docContent.ts::resolveSaveContent`，
+  与桌面同语义（**只覆盖调用方真的带了的字段**；`null` / 数字 / 对象一律按"没带"处理），
+  Web 的保存路径改走它。判据：`src/lib/docContent.test.ts` 14 条（含"只传标题 ⇒ 正文一个字都不动"、
+  `write` 写 `dirty = 1` 但**不动** `sync_seq`、LWW 5 条与 Rust 侧 `doc_content.rs` 逐条对应）。
+
 - **导出 HTML / PDF 时图片与网址书签是空的**（2026-09-17 用户实测报告）。**两个独立缺陷**：
   ① 导出只抄节点里存下的 `src` —— 桌面端它是应用专有协议 `attachment://localhost/…`、Web 端是
   裸文件路径；编辑期能显示靠的是渲染时另外解析（`MediaResolver`：`hash` → blobStore → blob URL），
