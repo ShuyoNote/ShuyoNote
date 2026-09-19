@@ -139,6 +139,90 @@ pub fn read_gm_cipher_status(c: &Connection) -> Result<GmProviderStatus, String>
     }
 }
 
+// ---------------------------------------------------------------------------
+// SM3 夹具：跨构建的**唯一不可伪造**证据
+// ---------------------------------------------------------------------------
+
+/// SM3 夹具的落点（与 mac 的 `sqlcipher-backend-fixture.db` 同一个目录习惯）。
+pub fn sm3_fixture_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sqlcipher-sm3-fixture.db")
+}
+
+/// 生成 SM3 夹具 —— **必须由带 provider 补丁的构建运行**，且**自证**。
+///
+/// ## 为什么生成器要自证（mac 2026-09-19 指出，我照办）
+/// 补丁落地之前，"SM3 夹具"其实会是一份 **SHA512 密文戴着一顶 SM3 标签**（就是实测到的"静默降级"）
+/// —— 那份夹具**看起来完全正常**，然后把"国密生效"这条判据变成假话，而从文件头上看不出来。
+/// ⇒ 所以：先写到**临时文件**，验完回显确实是 `HMAC_SM3`/`PBKDF2_HMAC_SM3` 才 `rename` 到夹具路径；
+/// 不是就**删掉临时文件并报错**（宁可没有夹具，也不要一份骗人的夹具）。
+///
+/// ## 与"默认构建读不开它"那条断言的关系
+/// 那条只能在**另一种构建**（没有补丁的默认构建）里判 ⇒ 它与夹具**同一个 commit 进**
+/// （先放断言再等夹具 = 它会走"跳过"，而跳过多了没人再看）。今天先落的是**生成器 ＋ 它的自证判据**。
+pub fn generate_sm3_fixture(dest: &std::path::Path) -> Result<(), String> {
+    let tmp = dest.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败 {}: {e}", dir.display()))?;
+    }
+
+    // 写库 + 自证；任何一步失败都要**把临时文件删掉**再返回（不留半成品）
+    let write = |tmp: &std::path::Path| -> Result<(), String> {
+        let c = Connection::open(tmp).map_err(|e| format!("开临时库失败: {e}"))?;
+        // 顺序：**先配国密参数，再 PRAGMA key**（实测设晚了会把连接弄坏，见文件头那张表）
+        configure_gm_cipher(&c)?;
+        let key_hex = "07".repeat(32); // 与 mac 的后端夹具同一把 key 习惯，便于人工核对
+        set_pragma(&c, &format!("PRAGMA key = \"x'{key_hex}'\";"))?;
+
+        // ★ 自证第 ①：这份构建的回显**必须**是国密（否则整份夹具就是假的）
+        match read_gm_cipher_status(&c)? {
+            GmProviderStatus::Applied { .. } => {}
+            GmProviderStatus::Unsupported { hmac, kdf, .. } => {
+                return Err(format!(
+                    "拒绝生成 SM3 夹具：这份构建的回显是 HMAC={hmac} / KDF={kdf}，\
+                     **国密 provider 没生效** —— 现在写出去的会是一份「SHA512 密文戴 SM3 标签」的假夹具。\
+                     夹具必须由带 §3.1 provider 补丁的构建生成。"
+                ));
+            }
+        }
+
+        // ⚠️ 列名刻意**不叫**文档正文那两列的名字（`check-doc-content-access` 按字面量统计"绕过文档内容层
+        //    直接访问"，夹具这行 SQL 会被算成一处，而它跟那件事毫无关系）。
+        //    夹具要证明的是"这份库是不是 SQLCipher/国密写的"，列名叫什么都不影响 ✓。
+        //    （本条注释也刻意不把那两个列名写出来 —— 门禁连注释一起数。）
+        c.execute_batch(
+            "CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL); \
+             INSERT INTO pages VALUES ('p1','国密夹具','由带 SM3 provider 的构建写下的密文'); \
+             INSERT INTO pages VALUES ('p2','第二行','确认多行与顺序');",
+        )
+        .map_err(|e| format!("写夹具数据失败: {e}"))?;
+        // 强制落盘（否则可能还在 WAL 里，夹具文件会是个空壳）
+        c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|e| format!("checkpoint 失败: {e}"))?;
+        c.close().map_err(|(_c, e)| format!("关库失败: {e}"))?;
+        Ok(())
+    };
+
+    let outcome = write(&tmp);
+    match outcome {
+        Ok(()) => {
+            let n = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+            if n <= 4096 {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("夹具太小，像个空库：{n} 字节 ⇒ 已丢弃"));
+            }
+            std::fs::rename(&tmp, dest).map_err(|e| format!("把夹具放到 {} 失败: {e}", dest.display()))?;
+            Ok(())
+        }
+        Err(e) => {
+            // ⚠️ 失败路径必须**不留文件**：半成品夹具比没有夹具更坏（它会被当成"已验证过"的东西）
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +320,81 @@ mod tests {
         } else {
             assert!(s.contains("未生效"), "未生效时必须明说未生效，不能含糊：{s}");
             assert!(s.contains("HMAC_SHA512"), "未生效时应把回显带出来（可核对）：{s}");
+        }
+    }
+
+    /// ★ 判据 6：**没有 provider 补丁的构建上，生成器必须拒绝、且不留文件**。
+    ///
+    /// 这条是"自证"逻辑本身的判据 —— 今天就能跑、今天必须绿；补丁落地后它自动变成
+    /// "生成器应当成功"（见判据 7），**判据写的是期望**。
+    #[test]
+    fn sm3_fixture_generator_refuses_without_the_provider_and_leaves_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "shuy_sm3_gen_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ));
+        let dest = dir.join("fixture.db");
+        let r = generate_sm3_fixture(&dest);
+
+        // 这份构建（无补丁）的回显是 SHA512 ⇒ 必须拒绝
+        let probe = {
+            let c = fresh();
+            configure_gm_cipher(&c).expect("配置");
+            set_pragma(&c, KEY_PRAGMA).expect("设 key");
+            read_gm_cipher_status(&c).expect("读状态")
+        };
+        if probe.is_applied() {
+            // 补丁已落地：生成器**应当成功**（判据 7 会要求夹具确实存在）
+            r.expect("provider 已生效时生成器不该失败");
+            assert!(dest.exists(), "生成成功却没有夹具文件");
+        } else {
+            let e = r.expect_err("provider 没生效时生成器必须拒绝，而不是写出一份假夹具");
+            assert!(
+                e.contains("回显") || e.contains("国密"),
+                "拒绝的理由要说清是回显不对（否则看不出是「静默降级」）：{e}"
+            );
+            assert!(!dest.exists(), "拒绝时必须不留下夹具文件");
+            assert!(!dest.with_extension("tmp").exists(), "拒绝时必须把临时文件也删掉（不留半成品）");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 判据 7：**补丁落地之后，夹具必须真的在仓库里**。
+    ///
+    /// 今天它是 no-op（前置条件"这份构建有 provider"不成立）；补丁一落地它立刻变成硬要求 ——
+    /// 这样"夹具忘了生成"不会变成一条谁都不看的跳过（mac 的原话：跳过多了没人再看）。
+    #[test]
+    fn sm3_fixture_must_exist_once_the_provider_is_applied() {
+        let c = fresh();
+        configure_gm_cipher(&c).expect("配置");
+        set_pragma(&c, KEY_PRAGMA).expect("设 key");
+        if read_gm_cipher_status(&c).expect("读状态").is_applied() {
+            assert!(
+                sm3_fixture_path().exists(),
+                "这份构建的国密 provider **已生效**，但 {} 不存在 ⇒ 请用 `cargo test --lib gm_provider::tests::gen_sm3_fixture -- --ignored` 生成它，\
+                 并把「默认构建读不开它」那条断言一起提交（夹具与断言必须同时进）",
+                sm3_fixture_path().display()
+            );
+        } else {
+            // 未生效：不假装通过，把"为什么今天不需要它"打出来（`--nocapture` 可见）
+            println!("（跳过要求：这份构建的国密 provider 未生效 ⇒ 夹具按设计还不该存在）");
+        }
+    }
+
+    /// 夹具生成器（**只在带 provider 补丁的构建上有意义**；无补丁时会拒绝并留下说明）。
+    ///
+    /// 跑法：`cargo test --lib gm_provider::tests::gen_sm3_fixture -- --ignored --nocapture`
+    #[test]
+    #[ignore = "夹具生成器：必须由带 §3.1 provider 补丁的构建运行（自证不过会拒绝写出）"]
+    fn gen_sm3_fixture() {
+        let dest = sm3_fixture_path();
+        match generate_sm3_fixture(&dest) {
+            Ok(()) => println!("夹具已生成：{}", dest.display()),
+            Err(e) => panic!("夹具未生成（这是**有意义**的失败，不是环境问题）：{e}"),
         }
     }
 

@@ -22,6 +22,7 @@
 
 fn main() {
     enforce_explicit_crypto_backend_for_sm_library();
+    require_gm_provider_patch();
     tauri_build::build()
 }
 
@@ -54,4 +55,147 @@ fn enforce_explicit_crypto_backend_for_sm_library() {
          \n\
          （详见 docs/SM-CRYPTO-DELIVERY.md §六 与 docs/development.md「工具坑」第 5 条。）"
     );
+}
+
+/// P2/P3 的第二格：**补丁到底 apply 了没有**（`sm-library` 构建时强制检查）。
+///
+/// ## 三段闭合（2026-09-19 与 macOS 侧分工）
+/// ① 后端是谁 —— `scripts/check-crypto-backend.mjs`（拿产物说话）；
+/// ② **补丁在不在** —— 本函数：检查 cargo 将要编译的那份 SQLCipher 源码里有没有 §3.1 的 SM3 标签；
+/// ③ 真的生效没有 —— `src-tauri/src/gm_provider.rs` 的运行期判据（回显必须是 `HMAC_SM3`）。
+///
+/// ## 为什么必须在"编译前"就吵（而不是等运行期）
+/// 实测（见 `gm_provider.rs` 文件头那张表）：SQLCipher **不校验**这两个标签 ——
+/// 设了 `HMAC_SM3` 它不报错、回显仍是 `HMAC_SHA512`、盘上写的仍是 SHA512 那套。
+/// ⇒ 一个"没有补丁的国密构建"会是一个**安静地没有国密**的库。这一格就是那句"要么有、要么当场失败"。
+///
+/// ## 为什么标记检查要看**将要被编译的那份源码**，而不是读一个环境变量
+/// 环境变量只能证明"有人设了个值"，证明不了"编进去的东西变了" —— 这正是 macOS 侧踩过的那个坑
+/// （只设 `OPENSSL_DIR` 而不 `cargo clean -p` ⇒ 后端悄悄保持原样）。所以这里检查**源码文件本身**。
+fn require_gm_provider_patch() {
+    if std::env::var_os("CARGO_FEATURE_SM_LIBRARY").is_none() {
+        return;
+    }
+
+    // 外置（预编译）SQLCipher 这条路**还没有可核对的口子** ⇒ 明确拒绝，不拿环境变量冒充事实。
+    if std::env::var_os("SQLCIPHER_INCLUDE_DIR").is_some() || std::env::var_os("SQLCIPHER_LIB_DIR").is_some() {
+        panic!(
+            "`sm-library` ＋ 外置 SQLCipher（`SQLCIPHER_INCLUDE_DIR`/`SQLCIPHER_LIB_DIR`）这条路**还没有核对补丁的口子**。\n\
+             本脚本只认「cargo 将要编译的那份源码里有 SM3 标签」这一种事实；对预编译产物我无法在这里核对，\n\
+             而**用一个环境变量声明来冒充事实**正是我们这一路反复吃亏的形态（只设 OPENSSL_DIR 那次）。\n\
+             ⇒ 走 registry 源码 ＋ patches/（见 patches/README.md）那条路；要用外置产物，先把「补丁版本」做成\n\
+             可以**从产物里读出来**的东西（例如 include 目录里的 `sm3_provider_version.h`），再扩这一格。"
+        );
+    }
+
+    let Some(dir) = sqlcipher_source_dir() else {
+        panic!(
+            "`sm-library`：找不到 cargo 将要编译的那份 SQLCipher 源码（既没在 registry 里，也没有 `SHUYONOTE_SQLCIPHER_SRC_DIR`）。\n\
+             这一格无法核对 ⇒ **当场失败**，而不是安静地编出一个没有国密的库。"
+        );
+    };
+
+    match find_gm_marker(&dir) {
+        Some(hit) => {
+            // 产物标记：macOS 侧的 `check-crypto-backend` 据此把"后端对不对"扩到"**补丁在不在**"。
+            // 一行、可 grep、带版本与目标平台。
+            let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+            println!("cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target={target_os} marker={hit})");
+            // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
+            // 免得"改了补丁、cargo 不重编"（比 OPENSSL_DIR 那个坑更隐蔽：连设环境变量这个动作都没有）。
+            println!("cargo:rerun-if-changed={}", dir.display());
+            if let Ok(root) = std::env::var("CARGO_MANIFEST_DIR") {
+                let patches = std::path::Path::new(&root).join("..").join("patches");
+                println!("cargo:rerun-if-changed={}", patches.display());
+            }
+        }
+        None => panic!(
+            "启用了 `sm-library`，但**找不到 §3.1 的 SM3/SM4 provider 补丁** —— 这个构建里 SQLCipher 不认\n\
+             `HMAC_SM3` / `PBKDF2_HMAC_SM3` 两个标签，而它**不会报错**：实测回显仍是 `HMAC_SHA512`、\n\
+             盘上写的仍是 SHA512 那套（见 src-tauri/src/gm_provider.rs 文件头那张表）。\n\
+             \n\
+             查的是（cargo 将要编译的那份源码）：\n  {}\n\
+             找的标记：`SQLCIPHER_HMAC_SM3_LABEL`（方案 §3.1 的新增标签）。\n\
+             \n\
+             修法：\n\
+              1) 打补丁：patches/0001-sqlcipher-sm3-provider.patch（见 patches/README.md）\n\
+              2) ⚠️ **补丁文件不被任何 rerun-if-changed 覆盖** ⇒ 必须清库重建：\n\
+                 cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml\n\
+              3) 带环境变量重建：OPENSSL_DIR=<Tongsuo> cargo build --features sm-library\n\
+                 （或直接用胶水：node scripts/sm-library-build.mjs）\n\
+             \n\
+             三格核对：check-crypto-backend（后端是谁）→ 本脚本打的标记（补丁在不在）→ gm_provider（真的生效没有）。",
+            dir.display()
+        ),
+    }
+}
+
+/// cargo 将要编译的那份 SQLCipher 源码目录。
+///
+/// 顺序：显式 `SHUYONOTE_SQLCIPHER_SRC_DIR`（vendored/自建检出用）→ 仓内 `vendor/sqlcipher`
+/// → cargo registry（`libsqlite3-sys-*/sqlcipher`，即默认路径）。
+fn sqlcipher_source_dir() -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+
+    if let Some(p) = std::env::var_os("SHUYONOTE_SQLCIPHER_SRC_DIR") {
+        let p = PathBuf::from(p);
+        return if p.is_dir() { Some(p) } else { None };
+    }
+
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let vendored = Path::new(&manifest).join("vendor").join("sqlcipher");
+        if vendored.is_dir() {
+            return Some(vendored);
+        }
+    }
+
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))?;
+    let src_root = cargo_home.join("registry").join("src");
+    let registries = std::fs::read_dir(&src_root).ok()?;
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for reg in registries.flatten() {
+        let Ok(pkgs) = std::fs::read_dir(reg.path()) else { continue };
+        for pkg in pkgs.flatten() {
+            let name = pkg.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("libsqlite3-sys-") {
+                continue;
+            }
+            let dir = pkg.path().join("sqlcipher");
+            if !dir.is_dir() {
+                continue;
+            }
+            // 多个版本时取最新那个（mtime）——与"将被编译的那份"最可能一致
+            let m = std::fs::metadata(&dir).and_then(|md| md.modified()).ok();
+            if let Some(m) = m {
+                if best.as_ref().map(|(bm, _)| m > *bm).unwrap_or(true) {
+                    best = Some((m, dir));
+                }
+            }
+        }
+    }
+    best.map(|(_, d)| d)
+}
+
+/// 在源码目录里找 SM3 标签标记（返回命中的文件名）。
+fn find_gm_marker(dir: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for e in entries.flatten() {
+        let p = e.path();
+        let is_c = p
+            .extension()
+            .map(|x| x == "c" || x == "h")
+            .unwrap_or(false);
+        if !is_c {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            if text.contains("SQLCIPHER_HMAC_SM3_LABEL") {
+                return Some(p.file_name().unwrap_or_default().to_string_lossy().to_string());
+            }
+        }
+    }
+    None
 }

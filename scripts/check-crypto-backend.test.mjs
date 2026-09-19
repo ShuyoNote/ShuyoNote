@@ -8,6 +8,7 @@
 // 夹具取自真实 `target/*/build/libsqlite3-sys-*/output` 的节选（不是手写简化版）。
 
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import {
   classifyOutput,
   decide,
@@ -153,12 +154,16 @@ describe("★ 平台过滤（AMD 2026-09-19 在 WSL 上抓到的「绿得不是�
   });
 
   it("认 `CARGO_TARGET_DIR`（目标是重定向过的机器上，旧版会去读仓库里那份错的）", () => {
-    expect(targetDirOf({ CARGO_TARGET_DIR: "/home/tester/shuyonote-target" })).toBe(
-      "/home/tester/shuyonote-target",
-    );
-    expect(targetDirOf({})).toContain("src-tauri/target");
+    // ⚠️ **不能写死 POSIX 字面量**（2026-09-19 AMD 在 Windows 上跑到这条时红的）：
+    //    `targetDirOf` 走 `resolve()`，Windows 上 `resolve("/home/tester/x")` = `C:\home\tester\x`
+    //    ⇒ 断言"归一化后就是它"（与实现同一口径），下面两处也把分隔符归一化后再比子串。
+    //    这条判据的**意图**是"环境变量压过仓库默认"，平台路径形态不该参与。
+    const norm = (s) => s.replace(/\\/g, "/");
+    const p = "/home/tester/shuyonote-target";
+    expect(norm(targetDirOf({ CARGO_TARGET_DIR: p }))).toBe(norm(resolve(p)));
+    expect(norm(targetDirOf({}))).toContain("src-tauri/target");
     // 空白当未设（不能把空值当目录）
-    expect(targetDirOf({ CARGO_TARGET_DIR: "   " })).toContain("src-tauri/target");
+    expect(norm(targetDirOf({ CARGO_TARGET_DIR: "   " }))).toContain("src-tauri/target");
   });
 });
 
