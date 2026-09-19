@@ -192,6 +192,32 @@ This is not the tsc command you are looking for      ← 退出码看着还是 0
 真要判断：看 `node_modules/<包>/package.json` 的 `bin` 指向与 `lib/` 是否齐全，
 以及 `node_modules/.bin/<工具>` 是不是指向它。
 
+### 4. 在 DSH 会怀里跑"按 `argv[0]` 推自己是谁"的 CLI 包装会**启动即歪**（macOS 实测）
+
+DSH 桌面版把 Node 内嵌在 Helper 里跑，于是被它启动的进程里
+`process.argv[0]` / `process.argv0` / `process.execPath` **全都是**
+`/Applications/DSH Desktop.app/Contents/Frameworks/DSH Desktop Helper.app/Contents/MacOS/DSH Desktop Helper`。
+后果不是一个参数被吞，而是**启动阶段就错**：
+
+```
+$ pnpm tauri build --bundles app          # 连 `tauri --version` 也一样
+error: unrecognized subcommand '/Applications/DSH Desktop.app/Contents/Frameworks/DSH Desktop Helper.app/Contents/MacOS/DSH Desktop Helper'
+Usage: cargo-tauri [OPTIONS] <COMMAND>
+```
+
+原因：`@tauri-apps/cli/tauri.js` 用 `process.argv` 推 bin 名（`binStem` 匹配 `/node|nodejs|bun/…`），
+拿到 Helper 路径后推不出 bin 名，就把那个路径原样传给了下游的 `cargo`。
+
+**处置（本机已验证可用）**：绕开 JS 包装，直接调它的程序化入口 ——
+
+```js
+const { run } = require('@tauri-apps/cli/main.js')   // 注意：用 CJS；ESM 里 require 需 createRequire
+run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console.error(e); process.exit(1) })
+```
+
+用这个 runner 跑 `build --bundles app,dmg` 一切正常（本机的 `.app`/`.dmg` 就是这么产出的）。
+`npx` / `pnpm exec` 不一定中招（它们的 shim 多走一层 shell），但**任何**只信 `argv[0]` 的包装在会怀里都危险。
+
 ### 3. 共享 `node_modules` 在"有人重装"的那几分钟对**所有人**不可用
 
 症状是**缺依赖形状的红**（`@esbuild/win32-x64` 缺失、`tinyexec` 找不到），
