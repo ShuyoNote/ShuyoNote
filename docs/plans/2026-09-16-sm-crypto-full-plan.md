@@ -176,6 +176,36 @@ KDF ：b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad9
 方案 §3 第 5 条那句在**本机本构建**上成立。⇒ 要编进国密 provider，必须显式设 `OPENSSL_DIR` 到 Tongsuo，
 并加一条"断言实际加密后端"的门禁（**未做**，属 ⑤）。
 
+**CI 读数（GitHub check-runs API，2026-09-19 配额恢复后取到）**
+
+| commit | checks（单测/冒烟/契约） | mobile | Rust job | build-macos / android |
+|---|---|---|---|---|
+| `f4151be1`（上一轮） | ✅ | ✅ | ✅ **success** | ✅ / ✅ —— **5/5 全绿** |
+| `ba7d889a`（本笔） | ✅ | ✅ | 见下 | 见下 |
+
+`f4151be1` 全绿这件事本身很重要：它是上一轮那三处修复（P3 对拍缺库**响亮跳过** ＋ CI 取库 ＋
+cargo 类门禁的失败证据通道）的**收官证据** —— 在那之前 rust job 从 `97583c57` 起连红四次。
+⚠️ **一处不许含糊的**：同一批注解显示当时**两条**门禁一起红（`rust-test` 与 `rust-plugins-alone`），
+而 `rust-test` 的根因（缺 PDFium 库）已由"修完即绿"证到；**`rust-plugins-alone`（`cargo test --lib plugins::`
+在 Linux 上 101）的机制至今没有直接证据**（本机 macOS 含缺库状态都是 117/0，plugins 测试里也 grep 不到
+PDFium 依赖）—— 现在的状态是"**跟着一起绿了**"，不是"查清了"。要收口它，得等它再红一次并拿到输出尾巴注解。
+
+**`rust-sm-crypto` 这条新门禁的 CI 证据（含它第一次就抓到的真问题）**：它在 rust 组里，所以 CI 的 rust job
+自动跑它（§0-E 要的"常开 job"，不需要另加 workflow）。它**第一次上 CI 就红了**，而那条红是**真的**：
+
+- 注解指名 `rust-sm-crypto`，失败明细 5 条 `security::` 用例；⚠️ **同样用例在默认构建里是绿的**
+  ⇒ 与算法无关，是**测试隔离**问题；
+- 根因：`security.rs` 测试的 7 处临时目录名是 `{pid}_{now_ms()}`（**毫秒**分辨率），而 `temp_ws()`
+  开头就 `remove_dir_all` ⇒ 两个测试落在同一毫秒时，B 删掉 A 的库文件、且两边**共用一个 meta.db**
+  ⇒ A 写了 `ENC_ENABLED=1`，B 的"未开启"用例读到"已开启"，一串跟着红；
+- 复现方式是关键（**"调两次"是绿的，只有并发才红**）：8 线程 `Barrier` 同时进 `temp_ws()` ⇒ 改前 **5/5 红**、
+  改后 3/3 绿；该探针留成常开判据 `temp_dirs_are_unique_under_concurrency`；
+- 修法：`uniq_tmp(tag)` = `{pid}_{now_ms}_{AtomicU32 序号}`（保留 pid+毫秒便于事后定位）。
+  读数：`rust-sm-crypto` **376/376**、`rust-test` **364/364**。
+
+⇒ 这是"常开门禁"**自己挣回成本**的一例：这条测试隔离缺陷在默认构建下**永远不会露头**
+（`clippy`/`tsc`/默认单测全绿），只有"把国密那一支也编出来跑"才会撞上。
+
 **仍然不在 P1 范围（下一轮 / 别人的格子）**
 
 - §0-C 的**另外两条**：空间元数据记录本空间算法、同步载荷带算法标识（状态字段已加：`EncryptionStatus.format/algorithm`）；
