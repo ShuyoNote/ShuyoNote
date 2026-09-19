@@ -181,7 +181,10 @@ KDF ：b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad9
 | commit | checks（单测/冒烟/契约） | mobile | Rust job | build-macos / android |
 |---|---|---|---|---|
 | `f4151be1`（上一轮） | ✅ | ✅ | ✅ **success** | ✅ / ✅ —— **5/5 全绿** |
-| `ba7d889a`（本笔） | ✅ | ✅ | 见下 | 见下 |
+| `ba7d889a` | ✅ | ✅ | ❌ **failure**：`rust-sm-crypto`（真红，见下） | 当时仍在跑 |
+| `4c0ef41b`（修复后） | ✅ | ✅ | ✅ **success**（**含 `rust-sm-crypto`**） | 该 commit 只触发 3 个 job（未改打包面） |
+
+⇒ **`rust-sm-crypto` 的第一条 CI 读数（Linux）就是绿的**，也正是 AMD 建基线所需的那份读数来源。
 
 `f4151be1` 全绿这件事本身很重要：它是上一轮那三处修复（P3 对拍缺库**响亮跳过** ＋ CI 取库 ＋
 cargo 类门禁的失败证据通道）的**收官证据** —— 在那之前 rust job 从 `97583c57` 起连红四次。
