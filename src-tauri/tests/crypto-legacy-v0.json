@@ -1,0 +1,31 @@
+{
+  "note": "国密/加密**老数据（P0 之前的无头格式 v0）**的金标夹具：这些密文是 2026-09-19 由**复刻旧实现**的临时用例真实产出的（nonce 显式指定以便固定），此后**必须永远能解开**。为什么值得单独一份夹具：P0 之后新数据带 `magic||version` 头，而老数据没有；凡是重构加解密（换 AEAD / 换 nonce 长度 / 换 KDF / P2-P3 的国密 provider）都必须先过这一份 —— 判据红了就是『用户打不开自己的旧数据』，而那种失败**在开发机上不会自己冒出来**。格式口径见 src-tauri/src/crypto.rs 的 P0 注释块（方案 §0-A）。",
+  "format": "v0（无头）: nonce(24) || XChaCha20-Poly1305 ciphertext；文本路径是 base64(同一串)",
+  "kdf": "Argon2id, 默认参数（derive_key）",
+  "passphrase": "legacy-pass",
+  "saltHex": "0102030405060708090a0b0c0d0e0f10",
+  "keyHex": "2de513ab79b1f7e62347ae78dd1139e18ff810ba8a28c2f2c0e6c1e8d93a5a81",
+  "cases": [
+    {
+      "name": "文本路径：v0 无头密文的 base64（老数据最常见的那一类）",
+      "kind": "str",
+      "nonceHex": "111111111111111111111111111111111111111111111111",
+      "cipherB64": "ERERERERERERERERERERERERERERERERcizWRNAj/rmpMD1bqm7bPYpcauNd7TJbjTwn50ATMelWg64WRQ==",
+      "expectPlaintext": "上一年写的笔记"
+    },
+    {
+      "name": "★ 首字节恰好撞上 magic+version 的老数据（1/65536）：必须靠回退仍可读，不许判成损坏",
+      "kind": "str",
+      "nonceHex": "530122222222222222222222222222222222222222222222",
+      "cipherB64": "UwEiIiIiIiIiIiIiIiIiIiIiIiIiIiIiE5BjhF5D/DKcM7/gebdFIuYqhVKmyVi2zsWnKmqT6Uj8uKUBQw==",
+      "expectPlaintext": "上一年写的笔记"
+    },
+    {
+      "name": "二进制路径：v0 无头密文的原始字节（附件/导出包/同步载荷那一路）",
+      "kind": "bytes",
+      "nonceHex": "333333333333333333333333333333333333333333333333",
+      "cipherHex": "333333333333333333333333333333333333333333333333212b6493fe32a40c2e4ad7ed14f0417819b38b1adac56df3e0bbcad97ad37f7b132f5e20de078c29987daa974030f3f0",
+      "expectPlainHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    }
+  ]
+}

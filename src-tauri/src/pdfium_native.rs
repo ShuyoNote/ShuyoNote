@@ -515,7 +515,19 @@ mod tests {
         assert_eq!(got[0], PathBuf::from("/exe/../Frameworks"));
 
         // 没有资源目录时（例如单测/CLI）不 panic，也不影响其它候选。
+        //
+        // ⚠️ 这条断言**必须分平台**（2026-09-19 修：它此前只在 macOS 上红，而 Windows 跑不了 `cargo test`、
+        // Linux CI 走的是 `not(target_os = "macos")` 那一支 ⇒ 这条红只会在 macOS 上出现，谁也没看见）。
+        // macOS 上 `Contents/Frameworks` 是从**可执行文件位置**推导出来的（`.app` 束的常规位置），
+        // 与 `resource_dir` 在不在**无关** —— 上面那条 `got[0]` 用的就是同一个推导。
         let only_exe = candidate_dirs(Some(PathBuf::from("/exe")), None, None);
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            only_exe,
+            vec![PathBuf::from("/exe/../Frameworks"), PathBuf::from("/exe")],
+            "macOS：`Contents/Frameworks` 与 resource_dir 无关，缺了它 .app 里就找不到库"
+        );
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(only_exe, vec![PathBuf::from("/exe")]);
         assert!(candidate_dirs(None, None, None).is_empty());
     }

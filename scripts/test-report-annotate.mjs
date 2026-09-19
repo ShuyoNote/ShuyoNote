@@ -87,6 +87,8 @@ for (const r of failed) {
     .filter(Boolean)
     .join(" · ");
   annotate(`门禁红了：${r.id}`, `（分组 ${r.group}）${r.label ?? ""} ${detail}`);
+  // 有输出尾巴就再补一条注解 —— 这是"日志要 admin"时唯一能带出**证据**的通道。
+  if (r.outputTail) annotate(`门禁输出尾巴：${r.id}`, oneLine(r.outputTail, 4000));
 
   // 逐条报出失败用例（见 `vitestFailures()` 的注释：门禁用 JSON reporter 时 stdout 里没有失败行）。
   const cases = vitestFailures(r);

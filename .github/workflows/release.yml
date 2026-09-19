@@ -141,6 +141,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ⚠️ **Linux 档需要这一条**：AppImage 由 linuxdeploy 打包，而它**默认会 strip 所有 ELF**，
+          # 包括我们当资源带进去的 `libpdfium.so` —— 于是 AppImage 里那份与 vendor 源**字节不同**。
+          # cargo 侧我们已经 `[profile.release] strip = true`（主二进制本来就没符号），所以关掉 linuxdeploy 的
+          # strip **只多出这一个库的符号**（约 1–2 MB），换来"包里那份 == 源那份"这条**可证**的判据
+          #（`check-linux-bundle.mjs` 对 AppImage 也做 sha256 比对）。Windows/macOS 档不受影响（不走 linuxdeploy）。
+          NO_STRIP: "1"
           # mac 公证（可选）：若不用 Apple 签名则去掉这三项
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

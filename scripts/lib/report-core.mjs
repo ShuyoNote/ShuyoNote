@@ -89,12 +89,37 @@ export function extractSkips(output) {
 }
 
 // 失败明细：只在输出里找"明确的失败行"，最多留 25 条（够定位，不至于把报告撑爆）。
+//
+// ⚠️ **必须认 cargo 的形态**（2026-09-19 加）：`cargo test` 的失败行是
+// `test some::case ... FAILED`（行首是 `test `，不是 `✗`/`FAIL`），而 panic 明细在
+// `---- some::case stdout ----` 之后。原来只认 `✗/FAIL/not ok` 开头的行 ⇒ **cargo 门禁红了以后
+// 报告与 CI 注解里一条失败明细都没有**（实测：rust 组红了只能看到 "failed(101)"，说不出是哪条用例），
+// 而那一步恰恰是"日志要 admin 权限"时唯一的证据通道。这个坑与 2026-09-17 那次"红了但没人能说出是哪条门禁"
+// 是同一族，只是这次卡在**用例**那一层。
 export function extractFailures(output) {
   const out = [];
   for (const line of (output || "").split(/\r?\n/)) {
-    if (/^\s*(\u2717|✗|FAIL|not ok)/.test(line)) out.push(line.trim());
+    const t = line.trim();
+    if (/^(\u2717|✗|FAIL|not ok)/.test(t)) out.push(t);
+    // cargo: `test foo::bar ... FAILED`
+    else if (/^test\s+\S+\s+\.\.\.\s+FAILED$/.test(t)) out.push(t);
+    // panic 的首行（`thread '…' panicked at …` 与紧随其后的断言信息各留一条足够定位）
+    else if (/^thread '.*' panicked at/.test(t)) out.push(t);
   }
   return out.slice(0, 25);
+}
+
+/**
+ * 失败门禁的**输出尾巴**（给报告与 CI 注解用）。
+ *
+ * 为什么需要它：`extractFailures` 只认"明确的失败行"，而有些红是**编译错**或工具自己换了个报错形态
+ * （2026-09-19：rust job 红了，注解只有 `failed(101)`，日志要 admin ⇒ 完全无法定位）。
+ * 留尾巴（末尾 N 行、有上限）不会撑爆报告，却能把"红了但没有证据"变成"红了且证据在手"。
+ */
+export function outputTail(output, { maxLines = 30, maxChars = 2000 } = {}) {
+  const lines = String(output ?? "").split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const tail = lines.slice(-maxLines).join("\n");
+  return tail.length > maxChars ? `…${tail.slice(-maxChars)}` : tail;
 }
 
 // 基线违规：两类，都是"静默退化"——本文件存在的意义就是把它们变成红灯。

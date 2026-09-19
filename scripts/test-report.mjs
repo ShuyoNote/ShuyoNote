@@ -29,15 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_GROUPS, GATES, GROUP_ORDER, gateSetOf } from "./lib/gates.mjs";
-import {
-  baselineViolations,
-  extractSkips,
-  countsForGate,
-  extractFailures,
-  markdownReport,
-  mergeBaselineCounts,
-  summaryLine,
-} from "./lib/report-core.mjs";
+import { baselineViolations, countsForGate, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, summaryLine } from "./lib/report-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmpDir = join(root, ".test-report-tmp");
@@ -325,6 +317,9 @@ async function runGateOnce(gate) {
     failures: [...new Set([...extractFailures(output), ...failedCasesFromJsonReport(gate, results)])].slice(0, 25),
     // 门禁**自报跳过**的条目（绿也可能"少跑了几条"）：见 report-core 里 extractSkips 的注释。
     skips: extractSkips(output),
+    // 失败时把输出尾巴也写进报告（CI 注解会带出去）：这一路吃过"红了但没有证据"的亏，
+    // 而 cargo 这类门禁的失败明细不在 stdout 的 `✗` 行里、日志又要 admin 权限。
+    outputTail: results.some((r) => r.status !== "passed") ? outputTail(output) : "",
     commands: results.map((r) => ({ cmdline: r.cmdline, status: r.status, code: r.code })),
   };
 }

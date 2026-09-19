@@ -5,21 +5,7 @@
 // 早先用裸 `(\d+)/(\d+)` 兜底解析读数，把 `check-plugin-hosting.mjs` 输出里的进度数字
 // 当成了 "2280/4560 断言" 写进汇总表。下面 "绝不把无关数字当断言数" 那条就是它的回归用例。
 import { describe, expect, it } from "vitest";
-import {
-  baselineViolations,
-  changelogNumberMismatches,
-  countsForGate,
-  countsFromCargoOutput,
-  countsFromOutput,
-  countsFromSmokeJson,
-  countsFromVitestJson,
-  extractFailures,
-  extractSkips,
-  markdownReport,
-  mergeBaselineCounts,
-  summaryLine,
-  upsertSuiteStatus,
-} from "./report-core.mjs";
+import { baselineViolations, changelogNumberMismatches, countsForGate, countsFromCargoOutput, countsFromOutput, countsFromSmokeJson, countsFromVitestJson, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, summaryLine, upsertSuiteStatus } from "./report-core.mjs";
 
 describe("读数解析（countsFromOutput）", () => {
   it("认仓库的中文汇总格式：[结果] N 通过 / M 失败", () => {
@@ -390,5 +376,33 @@ describe("汇总 markdown（markdownReport）", () => {
     });
     expect(md).toContain("靠重试才通过的");
     expect(md).toContain("第 3 次才通过");
+  });
+});
+
+// cargo 形态的失败行必须被认出来（2026-09-19 加）：rust 组红了以后，报告与 CI 注解里
+// **一条失败明细都没有**，只能看到 "failed(101)" —— 而日志要 admin 权限，那是唯一的证据通道。
+describe("extractFailures：cargo 的失败形态", () => {
+  it("`test a::b ... FAILED` 与 panic 首行都要认（不能只认 ✗/FAIL 开头）", () => {
+    const out = extractFailures(
+      [
+        "   Compiling shuyonote v1.91.3",
+        "test plugins::tests::foo ... ok",
+        "test plugins::tests::bar ... FAILED",
+        "",
+        "---- plugins::tests::bar stdout ----",
+        "thread 'plugins::tests::bar' panicked at src/plugins.rs:1:1:",
+        "assertion failed",
+      ].join("\n"),
+    );
+    expect(out.join(" | ")).toContain("test plugins::tests::bar ... FAILED");
+    expect(out.join(" | ")).toContain("panicked at");
+    expect(out).not.toContain("test plugins::tests::foo ... ok");
+  });
+
+  it("outputTail 只留尾巴且有上限（不能把整份日志塞进报告）", () => {
+    const long = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+    const t = outputTail(long, { maxLines: 5, maxChars: 30 });
+    expect(t).toContain("line 199");
+    expect(t.length).toBeLessThanOrEqual(31); // 30 + 省略号
   });
 });
