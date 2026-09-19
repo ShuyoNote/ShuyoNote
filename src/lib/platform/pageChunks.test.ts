@@ -45,7 +45,7 @@ async function realStore() {
     },
   };
   const store = createChunkStore(runner);
-  store.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await store.ensureSchema(DERIVED_SCHEMA_DDL));
   return store;
 }
 
@@ -85,7 +85,7 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
     expect(r.changed).toBe(true);
     expect(r.chunks).toBeGreaterThan(1);
 
-    const rows = store.chunksOf({ kind: "page", pageId: "p1" });
+    const rows = (await store.chunksOf({ kind: "page", pageId: "p1" }));
     expect(rows).toHaveLength(r.chunks);
     expect(rows[0].text.startsWith("差旅报销制度\n")).toBe(true);
     expect(rows[1].text.includes("差旅报销制度")).toBe(false); // 标题只挂第一块
@@ -98,13 +98,13 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
 
     const first = await chunkPage("p1", store);
     expect(first.changed).toBe(true);
-    const snapshot = store.chunksOf({ kind: "page", pageId: "p1" }).map((c) => c.hash);
+    const snapshot = (await store.chunksOf({ kind: "page", pageId: "p1" })).map((c) => c.hash);
 
     const second = await chunkPage("p1", store);
     expect(second.changed).toBe(false); // 没变 ⇒ 跳过写
     expect(second.chunks).toBe(first.chunks);
     // 而且**行本身没被动过**（不是"写了但内容一样"）
-    expect(store.chunksOf({ kind: "page", pageId: "p1" }).map((c) => c.hash)).toEqual(snapshot);
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" })).map((c) => c.hash)).toEqual(snapshot);
   });
 
   it("**内容变了 ⇒ 重切并整体替换，不留孤儿块**", async () => {
@@ -118,7 +118,7 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
     const after = await chunkPage("p1", store);
     expect(after.changed).toBe(true);
     expect(after.chunks).toBe(1);
-    expect(store.chunksOf({ kind: "page", pageId: "p1" })).toHaveLength(1);
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" }))).toHaveLength(1);
   });
 
   it("**页面被清空 ⇒ 块也被清掉**（不留下「检索得到但页面已空」的块）", async () => {
@@ -126,19 +126,19 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
     install(platformWithPages(pages));
     const store = await realStore();
     await chunkPage("p1", store);
-    expect(store.chunksOf({ kind: "page", pageId: "p1" }).length).toBeGreaterThan(0);
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" })).length).toBeGreaterThan(0);
 
     pages.p1.content_text = "   ";
     const r = await chunkPage("p1", store);
     expect(r).toMatchObject({ chunks: 0, changed: true });
-    expect(store.chunksOf({ kind: "page", pageId: "p1" })).toHaveLength(0);
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" }))).toHaveLength(0);
   });
 
   it("`title` 可由调用方覆盖（刚改过标题、还没写回库里时用）", async () => {
     install(platformWithPages({ p1: { title: "旧标题", content_text: "正文。 " } }));
     const store = await realStore();
     await chunkPage("p1", store, { title: "新标题" });
-    expect(store.chunksOf({ kind: "page", pageId: "p1" })[0].text.startsWith("新标题\n")).toBe(true);
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" }))[0].text.startsWith("新标题\n")).toBe(true);
   });
 
   it("批量：顺序执行、互不干扰；列表里的页面都会各自落库", async () => {
@@ -152,8 +152,8 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
     const out = await chunkPages(["a", "b"], store);
     expect(calls).toEqual(["a", "b"]); // 顺序，不是并发（避免一次打爆）
     expect(out.map((r) => r.pageId)).toEqual(["a", "b"]);
-    expect(store.chunksOf({ kind: "page", pageId: "a" })[0].text).toContain("甲文");
-    expect(store.chunksOf({ kind: "page", pageId: "b" })[0].text).toContain("乙文");
+    expect((await store.chunksOf({ kind: "page", pageId: "a" }))[0].text).toContain("甲文");
+    expect((await store.chunksOf({ kind: "page", pageId: "b" }))[0].text).toContain("乙文");
   });
 
   it("`removePageChunks` 清掉该页面的块（删页时用，防孤儿块）", async () => {
@@ -161,7 +161,7 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
     const store = await realStore();
     await chunkPage("p1", store);
     removePageChunks("p1", store);
-    expect(store.chunksOf({ kind: "page", pageId: "p1" })).toHaveLength(0);
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" }))).toHaveLength(0);
   });
 
   it("页面不存在时**抛出**（调用方的错，不该被伪装成「切出 0 块」）", async () => {
@@ -179,7 +179,7 @@ describe("页面侧分块（P2 的另一半：知识库主体是页面，不是�
     ]);
     await chunkPage("p1", store);
 
-    expect(store.chunksOf({ kind: "attachment", attId: "p1" })[0].text).toBe("附件文本。");
-    expect(store.chunksOf({ kind: "page", pageId: "p1" })[0].text).toContain("页面正文");
+    expect((await store.chunksOf({ kind: "attachment", attId: "p1" }))[0].text).toBe("附件文本。");
+    expect((await store.chunksOf({ kind: "page", pageId: "p1" }))[0].text).toContain("页面正文");
   });
 });

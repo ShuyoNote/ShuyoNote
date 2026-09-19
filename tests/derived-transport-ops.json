@@ -1,0 +1,40 @@
+{
+  "_comment": "派生层运输通道的跨语言夹具（Rust `derived_transport.rs` ↔ TS `lib/platform/derivedTransport.ts`）。两侧各有一半判据：TS 侧断言『构造出来的 payload 与这里逐字相同』，Rust 侧断言『这里每一条都能反序列化』。字段名必须 camelCase（serde 的 rename_all）——两边各写一份就一定会漂。",
+  "ops": [
+    {
+      "op": "replaceAttachmentText",
+      "attId": "att-1",
+      "extractor": "pdf.text@1",
+      "srcHash": "sha256:abc",
+      "now": 1758259200000,
+      "segments": [
+        { "kind": "para", "text": "第一段", "loc": "p1" },
+        { "kind": "para", "text": "第二段  with spaces", "loc": "" }
+      ]
+    },
+    { "op": "removeAttachmentText", "attId": "att-1" },
+    {
+      "op": "replaceChunks",
+      "owner": { "kind": "attachment", "attId": "att-1" },
+      "chunks": [
+        {
+          "id": "att:att-1#0",
+          "pageId": null,
+          "attId": "att-1",
+          "ord": 0,
+          "loc": "p1",
+          "lang": "zh",
+          "text": "第一块",
+          "hash": "h0"
+        }
+      ]
+    },
+    { "op": "removeChunks", "owner": { "kind": "page", "pageId": "p-1" } }
+  ],
+  "queries": [
+    { "op": "attachmentTextSegments", "attId": "att-1" },
+    { "op": "chunkRows", "owner": { "kind": "attachment", "attId": "att-1" } },
+    { "op": "chunkStats" },
+    { "op": "attachmentTextStats" }
+  ]
+}

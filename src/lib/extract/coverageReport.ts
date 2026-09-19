@@ -99,19 +99,23 @@ const DETAIL: Record<GapReason, string> = {
 
 /**
  * 算出一份覆盖报告。**只读**：不抽取、不写库。
+ *
+ * ⚠️ 是 `async`：两个 store 的读方法现在是 [`Awaitable`]（桌面侧走命令面，必然异步，见 `store.ts` 的
+ * `Awaitable` 注释）。**这里漏一个 `await` 不会报编译错**（仓库没有 `no-floating-promises`），
+ * 症状是「覆盖报告恒为 0」—— 所以配套判据是 `coverageReport.test.ts` 里那个**慢假后端**用例。
  */
-export function indexCoverage(
+export async function indexCoverage(
   subject: CoverageSubject,
   stores: CoverageStores,
   opts: CoverageOptions = {},
-): CoverageReport {
+): Promise<CoverageReport> {
   const registry = opts.registry ?? REGISTRY;
   const gaps: CoverageGap[] = [];
 
   // ---- 页面 ----
   let pageIndexed = 0;
   for (const pageId of subject.pageIds) {
-    const n = stores.chunks.chunksOf({ kind: "page", pageId }).length;
+    const n = (await stores.chunks.chunksOf({ kind: "page", pageId })).length;
     if (n > 0) {
       pageIndexed++;
       continue;
@@ -124,8 +128,8 @@ export function indexCoverage(
   let attIndexed = 0;
   const byReason: Record<string, number> = {};
   for (const att of subject.attachments) {
-    const segments = stores.text.segmentsOf(att.id).length;
-    const chunks = stores.chunks.chunksOf({ kind: "attachment", attId: att.id }).length;
+    const segments = (await stores.text.segmentsOf(att.id)).length;
+    const chunks = (await stores.chunks.chunksOf({ kind: "attachment", attId: att.id })).length;
     if (segments > 0) attExtracted++;
 
     // **"已索引"以"有没有块"为准** —— 检索面看到的是块，不是段。
@@ -151,7 +155,7 @@ export function indexCoverage(
     gaps.push({ kind: "attachment", id: att.id, reason, detail: DETAIL[reason] });
   }
 
-  const stats = stores.text.stats();
+  const stats = await stores.text.stats();
   return {
     pages: {
       total: subject.pageIds.length,
@@ -170,7 +174,7 @@ export function indexCoverage(
       segments: stats.reduce((n, s) => n + s.rows, 0),
       chars: stats.reduce((n, s) => n + s.chars, 0),
     },
-    chunks: { total: stores.chunks.stats().chunks },
+    chunks: { total: (await stores.chunks.stats()).chunks },
     gaps,
   };
 }

@@ -30,6 +30,8 @@ import { DEFAULT_COVER } from "../covers";
 import type { Platform } from "./types";
 import { getMobileBridge } from "./mobile";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
+import { createChunkStore } from "../extract/chunkStore";
+import type { SqlRunner } from "../extract/store";
 import { blobStore, contentHash } from "./blobStore";
 import { spaceStore, useSpaceCatalog } from "./spaceStore";
 import { useSyncStatus } from "../../store/syncStatus";
@@ -3595,6 +3597,17 @@ export function createWebPlatform(): Platform {
     executor: {
       invoke: <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
         invokeWhenReady<T>(cmd, args),
+    },
+    // 派生层（索引）：Web 侧 TS 直接跑 sql.js，store 实例就在本模块里
+    // （getSharedStore()），所以这里不需要任何"运输通道"。
+    // ⚠️ 与桌面实现**同一套 store 语义**（createAttachmentTextStore / createChunkStore），
+    // 差别只在底座；索引编排（indexPage/indexLibrary）两边完全共用。
+    derivedStores: async () => {
+      const store = await getSharedStore();
+      return {
+        text: store.derivedTextStore(),
+        chunks: createChunkStore(store as unknown as SqlRunner),
+      };
     },
     dialog: {
       open: async (options) => {

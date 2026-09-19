@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useAiStore } from "../store/ai";
 import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
+import { localVision } from "../lib/ai/localVision";
+import { platform } from "../lib/platform";
+import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
 import {
   AI_PRESETS,
   MODEL_OPTIONS,
@@ -49,6 +52,13 @@ export function AiSettingsForm({
   // 测试连接探测到的服务商模型列表 → 模型下拉从这取。
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+  // 「全库索引」的运行态：进度 / 结果摘要 / 一句说明（不支持的原因 or 视觉被红线拒绝的原因）。
+  const [indexing, setIndexing] = useState(false);
+  const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null);
+  const [indexSummary, setIndexSummary] = useState<string | null>(null);
+  const [indexNote, setIndexNote] = useState<string | null>(null);
+
+  const indexAvail = indexAvailability(platform);
 
   const isOpenAI = provider === "openai";
 
@@ -98,6 +108,35 @@ export function AiSettingsForm({
       setTestMsg(String((e as Error)?.message ?? e));
     } finally {
       setTesting(false);
+    }
+  };
+
+  // 「开始索引」：把整库内容变成可被 AI 检索的派生文本与块。
+  //
+  // 两件与红线有关的事，都**如实显示**而不是静默降级：
+  //  · 平台不支持（移动壳等）⇒ 按钮禁用 + 说明写清；
+  //  · 配的不是本机端点 ⇒ `localVision` 拒绝注入 `vision`，需要视觉的抽取器会走 `provider_error`
+  //    —— 那句话直接显示给用户看（"为什么这类文件没抽出来"）。
+  const runIndex = async () => {
+    setIndexing(true);
+    setIndexProgress(null);
+    setIndexSummary(null);
+    setIndexNote(null);
+    try {
+      const lv = localVision(resolved());
+      const outcome = await runLibraryIndex({
+        platform,
+        ...(lv.vision ? { vision: lv.vision } : {}),
+        onProgress: setIndexProgress,
+      });
+      if (outcome.ok) {
+        setIndexSummary(outcome.summary);
+        if (lv.refusal) setIndexNote(lv.refusal);
+      } else {
+        setIndexNote(outcome.reason);
+      }
+    } finally {
+      setIndexing(false);
     }
   };
 
@@ -276,6 +315,48 @@ export function AiSettingsForm({
                 {embedTestMsg}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* ===== 全库索引 ===== */}
+        <div className="ai-settings-group">
+          <div className="ai-settings-group-title">
+            <span>全库索引</span>
+          </div>
+
+          <p className="ai-settings-brief">
+            把已有的页面与附件抽成文本并切块 —— AI 只有索引过内容才搜得到它。
+            可以重复点：已索引的部分几乎不花时间（中断后重跑也只补没做完的）。
+          </p>
+
+          <div className="ai-settings-test">
+            <button className="ai-settings-test-btn" onClick={runIndex} disabled={indexing || !indexAvail.supported}>
+              {indexing ? "索引中…" : "开始索引"}
+            </button>
+            {indexing && indexProgress && (
+              <div className="ai-settings-test-msg">
+                {`已处理 ${indexProgress.done} / ${indexProgress.total} · ${indexProgress.label}`}
+                <div
+                  aria-hidden="true"
+                  style={{ marginTop: 6, height: 4, borderRadius: 2, background: "var(--border, #ddd)" }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.round(indexProgress.ratio * 100)}%`,
+                      height: "100%",
+                      borderRadius: 2,
+                      background: "var(--accent, #4c8bf5)",
+                      transition: "width .15s linear",
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            {indexSummary && <div className="ai-settings-test-msg ok">{indexSummary}</div>}
+            {!indexAvail.supported && (
+              <div className="ai-settings-test-msg bad">{indexAvail.reason}</div>
+            )}
+            {indexNote && <div className="ai-settings-test-msg">{indexNote}</div>}
           </div>
         </div>
       </div>

@@ -43,6 +43,7 @@ function memStore() {
     },
   };
   const store = createAttachmentTextStore(db);
+  // 这里的 store 是**同步**的 sql.js 实现（Awaitable<void> 允许同步）⇒ 不 await 也立刻生效。
   store.ensureSchema(DERIVED_SCHEMA_DDL);
   return { store, rows };
 }
@@ -59,7 +60,7 @@ function echoExtractor(text: string): Extractor {
 }
 
 describe("落库归一化（NFKC）", () => {
-  it("**康熙部首 ⇒ 常字**：`第⼀段`(U+2F00) 落库后能被 `第一段`(U+4E00) 搜到", () => {
+  it("**康熙部首 ⇒ 常字**：`第⼀段`(U+2F00) 落库后能被 `第一段`(U+4E00) 搜到", async () => {
     const kangxi = "第\u2F00段"; // 「⼀」康熙部首
     const normal = "第一段"; // 常字
     expect(kangxi).not.toBe(normal);
@@ -86,7 +87,7 @@ describe("落库归一化（NFKC）", () => {
     expect(rows[0].text).toBe("第一段 １２３"); // 康熙部首折了；**全角数字保留**（见下一条）
   });
 
-  it("**刻意不折叠全角标点/字母数字**：那是「最小惊讶」的取舍，不是遗漏", () => {
+  it("**刻意不折叠全角标点/字母数字**：那是「最小惊讶」的取舍，不是遗漏", async () => {
     // 全量 NFKC 会把 `，`(U+FF0C) 转成 `,`，而 `。`(U+3002) 不变 ⇒ 同一句里标点风格混杂。
     // 对中文文档这是**可见的质量退化**，所以只折叠兼容表意字：
     const s = "甲，乙。丙１２３ＡＢＣ";
@@ -95,12 +96,12 @@ describe("落库归一化（NFKC）", () => {
     expect(s.normalize("NFKC")).toBe("甲,乙。丙123ABC");
   });
 
-  it("不改写别的：换行 / 制表 / 中文标点 / 常见括号都不受影响", () => {
+  it("不改写别的：换行 / 制表 / 中文标点 / 常见括号都不受影响", async () => {
     const s = "甲\t乙\n丙，丁〔2026〕戊";
     expect(normalizeForStore(s)).toBe(s);
   });
 
-  it("**钉住「窄口径」的边界**：只折兼容表意字，别的一律不碰", () => {
+  it("**钉住「窄口径」的边界**：只折兼容表意字，别的一律不碰", async () => {
     // 康熙部首 → 常字（本次要修的那个）
     expect(normalizeForStore("\u2F00")).toBe("\u4E00");
     // CJK 兼容表意字 → 统一表意字

@@ -41,7 +41,23 @@ for (const m of cmTs.matchAll(/^\s{2}([a-z_0-9]+):\s*\{\s*args/gm)) {
   contractCommands.add(m[1]);
 }
 
-const missingWeb = [...rustCommands].filter((c) => !webCommands.has(c)).sort();
+// 对称的一张表：**桌面专属**命令（Rust 有、web 侧**故意不实现**）。
+//
+// 为什么需要它：方向 1 的默认规则是"Rust 有 ⇒ web.ts 必须实现"，这对绝大多数命令是对的
+// （换平台时别漏）。但有一类命令的**语义就是桌面专属** —— Web 平台有 sql.js，TS 能直接跑 SQL，
+// 根本不需要绕命令面；硬给它写一个 web 实现，只会把同一段逻辑**抄第二遍**（两边长期对齐的坑）。
+// 2026-09-19 AMD 加：派生文本层的运输通道。
+const DESKTOP_ONLY_COMMANDS = new Map([
+  [
+    "derived_apply",
+    "派生文本层（attachment_text/chunks）的**桌面运输通道**：桌面库是 SQLCipher、连接在 Rust 手里，TS 没有别的写入途径；Web 平台 TS 直接跑 sql.js，不需要这条命令（写第二份实现 = 同一段 SQL 抄两遍）。调用点按平台选实现，见 src/lib/platform/derivedStores.ts",
+  ],
+  ["derived_query", "同上（读那一半）：Web 侧直接用自家 store 读 sql.js"],
+]);
+
+const missingWeb = [...rustCommands]
+  .filter((c) => !webCommands.has(c) && !DESKTOP_ONLY_COMMANDS.has(c))
+  .sort();
 const missingContract = [...rustCommands].filter((c) => !contractCommands.has(c)).sort();
 
 // 4. 反向：CommandMap 声明了、但桌面 Rust 没注册的命令。

@@ -14,11 +14,15 @@ import {
   revealItemInDir as tauriRevealItemInDir,
 } from "@tauri-apps/plugin-opener";
 import type { Platform } from "./types";
+import { desktopDerivedStores } from "./derivedStores";
 
 export const tauriPlatform: Platform = {
   executor: {
     invoke: (cmd, args) => tauriInvoke(cmd, args),
   },
+  // 派生层（索引）的写入通道：桌面库是 SQLCipher、连接在 Rust 手里 ⇒ 只能过命令面。
+  // 适配器的语义与纪律见 ../platform/derivedStores.ts 与 Rust derived_transport.rs。
+  derivedStores: () => desktopDerivedStores({ invoke: (cmd, args) => tauriInvoke(cmd, args) }),
   dialog: {
     open: (options) => tauriDialogOpen(options),
     save: (options) => tauriDialogSave(options),

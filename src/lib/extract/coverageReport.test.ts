@@ -45,9 +45,9 @@ async function stores() {
     },
   };
   const text = createAttachmentTextStore(runner);
-  text.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await text.ensureSchema(DERIVED_SCHEMA_DDL));
   const chunks = createChunkStore(runner);
-  chunks.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await chunks.ensureSchema(DERIVED_SCHEMA_DDL));
   return { text, chunks };
 }
 
@@ -63,7 +63,7 @@ const claimsKnownAndDocx: Extractor = {
 describe("索引覆盖报告", () => {
   it("空库：什么都没有，但报告本身可用（不是抛异常）", async () => {
     const s = await stores();
-    const r = indexCoverage({ pageIds: [], attachments: [] }, s);
+    const r = (await indexCoverage({ pageIds: [], attachments: [] }, s));
     expect(r).toMatchObject({
       pages: { total: 0, indexed: 0, empty: 0 },
       attachments: { total: 0, indexed: 0, notIndexed: 0 },
@@ -74,7 +74,7 @@ describe("索引覆盖报告", () => {
 
   it("**页面空 ≠ 内容没被索引**：reason 文案必须点明「由附件侧负责」（防看报告的人去修错东西）", async () => {
     const s = await stores();
-    const r = indexCoverage({ pageIds: ["p1"], attachments: [] }, s);
+    const r = (await indexCoverage({ pageIds: ["p1"], attachments: [] }, s));
     expect(r.pages).toMatchObject({ total: 1, indexed: 0, empty: 1 });
     expect(r.gaps).toHaveLength(1);
     expect(r.gaps[0]).toMatchObject({ kind: "page", id: "p1", reason: "page_empty" });
@@ -85,7 +85,7 @@ describe("索引覆盖报告", () => {
   it("有块的页面算已索引，且**不进 gaps**", async () => {
     const s = await stores();
     s.chunks.replace({ kind: "page", pageId: "p1" }, chunkText({ kind: "page", pageId: "p1" }, "正文。"));
-    const r = indexCoverage({ pageIds: ["p1", "p2"], attachments: [] }, s);
+    const r = (await indexCoverage({ pageIds: ["p1", "p2"], attachments: [] }, s));
     expect(r.pages).toMatchObject({ total: 2, indexed: 1, empty: 1 });
     expect(r.gaps.map((g) => g.id)).toEqual(["p2"]); // 只有 p2 是缺口
   });
@@ -101,7 +101,7 @@ describe("索引覆盖报告", () => {
     // ② 没人认领（扩展名不在任何抽取器的清单里）
     // ③ 认领了但抽出来是空（库里没有任何行）
 
-    const r = indexCoverage(
+    const r = (await indexCoverage(
       {
         pageIds: [],
         attachments: [
@@ -112,7 +112,7 @@ describe("索引覆盖报告", () => {
       },
       s,
       { registry: [claimsKnownAndDocx] },
-    );
+    ));
 
     expect(r.attachments).toMatchObject({ total: 3, extracted: 1, indexed: 1, notIndexed: 2 });
     expect(r.attachments.byReason).toEqual({ no_extractor: 1, no_content: 1 });
@@ -125,7 +125,7 @@ describe("索引覆盖报告", () => {
 
   it("**拿不到 mime/filename 时不瞎猜成 `no_extractor`**（那会把「可能是空文件」说成「格式不支持」）", async () => {
     const s = await stores();
-    const r = indexCoverage({ pageIds: [], attachments: [{ id: "a" }] }, s, { registry: [] });
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a" }] }, s, { registry: [] }));
     expect(r.gaps[0].reason).toBe("no_content"); // 而不是 no_extractor
   });
 
@@ -134,7 +134,7 @@ describe("索引覆盖报告", () => {
     // 只有 attachment_text，没有 chunks —— 正是"抽取跑了、分块没跑"的状态
     s.text.replace("a1", "ooxml.docx@1", "h", [{ kind: "text", text: "有文本", loc: "" }], 1);
 
-    const r = indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.docx" }] }, s);
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.docx" }] }, s));
     expect(r.attachments).toMatchObject({ total: 1, extracted: 1, indexed: 0, notIndexed: 1 });
     expect(r.gaps[0].reason).toBe("not_chunked");
     // 文案要指出"不是抽取器的问题"，否则会被当成抽取 bug 去查
@@ -149,18 +149,18 @@ describe("索引覆盖报告", () => {
     s.text.replace("a2", "text.plain@1", "h", [{ kind: "text", text: "丁戊", loc: "" }], 1);
     s.chunks.replace({ kind: "attachment", attId: "a1" }, chunkSegments({ kind: "attachment", attId: "a1" }, [{ text: "甲乙丙", loc: "" }]));
 
-    const r = indexCoverage({ pageIds: [], attachments: [{ id: "a1" }, { id: "a2" }] }, s);
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1" }, { id: "a2" }] }, s));
     expect(r.derived).toMatchObject({ extractors: 2, segments: 2, chars: 5 });
     expect(r.chunks.total).toBe(1);
   });
 
   it("摘要是**一行**、且把三类数在一句里说清（UI/日志直接可用）", async () => {
     const s = await stores();
-    const r = indexCoverage(
+    const r = (await indexCoverage(
       { pageIds: ["p1"], attachments: [{ id: "a1", mime: "", filename: "x.docx" }] },
       s,
       { registry: [] },
-    );
+    ));
     const line = summarizeCoverage(r);
     expect(line).toContain("页面 0/1 有块");
     expect(line).toContain("附件 0/1 已索引");
@@ -171,9 +171,9 @@ describe("索引覆盖报告", () => {
   it("**只读**：调用报告不写库（不触发抽取、不改行）", async () => {
     const s = await stores();
     s.text.replace("a1", "ooxml.docx@1", "h", [{ kind: "text", text: "原文", loc: "" }], 1);
-    const before = s.text.segmentsOf("a1").map((r) => r.text);
-    indexCoverage({ pageIds: ["p1"], attachments: [{ id: "a1", mime: "", filename: "x.docx" }] }, s);
-    expect(s.text.segmentsOf("a1").map((r) => r.text)).toEqual(before);
-    expect(s.chunks.stats().chunks).toBe(0);
+    const before = (await s.text.segmentsOf("a1")).map((r) => r.text);
+    (await indexCoverage({ pageIds: ["p1"], attachments: [{ id: "a1", mime: "", filename: "x.docx" }] }, s));
+    expect((await s.text.segmentsOf("a1")).map((r) => r.text)).toEqual(before);
+    expect((await s.chunks.stats()).chunks).toBe(0);
   });
 });

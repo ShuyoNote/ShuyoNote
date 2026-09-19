@@ -19,6 +19,7 @@ import { indexLibrary, indexPage, indexUnfiled } from "./indexPage";
 import { DERIVED_SCHEMA_DDL } from "./extract/schema";
 import { createAttachmentTextStore, type SqlRunner } from "./extract/store";
 import { createChunkStore } from "./extract/chunkStore";
+import { desktopDerivedStores } from "./platform/derivedStores";
 import { setWasmBytesProvider } from "./platform/sqliteStore";
 import { setPlatform as setActivePlatform } from "./platform/index";
 import type { Platform } from "./platform/types";
@@ -54,10 +55,99 @@ async function stores() {
     },
   };
   const text = createAttachmentTextStore(runner);
-  text.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await text.ensureSchema(DERIVED_SCHEMA_DDL));
   const chunks = createChunkStore(runner);
-  chunks.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await chunks.ensureSchema(DERIVED_SCHEMA_DDL));
   return { text, chunks };
+}
+
+/**
+ * 把**同步** store 包成"每次调用都让出一个 tick"的**异步** store。
+ *
+ * 为什么需要这个假后端：`AttachmentTextStore`/`ChunkStore` 的返回类型这一轮放宽成了 `Awaitable<T>`
+ * （桌面侧走命令面、`invoke` 必然异步），而**漏写 `await`** 在 TS 里抓不住（仓库没有
+ * `no-floating-promises`）：同步实现下漏了也能跑过（值就在手边），异步实现下漏了会读到旧值/空值。
+ * ⇒ 让每次调用都真的异步，就能把"漏 await"放大成**必然可见**的差异。
+ */
+function asAsync<T extends object>(store: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(store as Record<string, unknown>)) {
+    out[k] =
+      typeof v === "function"
+        ? async (...args: unknown[]) => {
+            await new Promise((r) => setTimeout(r, 0));
+            return await (v as (...a: unknown[]) => unknown)(...args);
+          }
+        : v;
+  }
+  return out as T;
+}
+
+/**
+ * 「类 Rust 后端」：把运输层的 op **派发到已有的同步 store**（不新写一份 SQL）——
+ * 这样端到端验的是**适配器 + 编排**这一条链；Rust 侧那半另有它自己的 6 条判据
+ * （`src-tauri/src/derived_transport.rs`，真实 rusqlite + 真事务）。
+ */
+async function rustishBackend() {
+  const s = await stores();
+  /**
+   * 返回类型声明成 `DerivedInvoker["invoke"]`：`invoke` 的契约是**泛型**的
+   * （调用方按 T 收窄），所以这里用 `as` 把"按命令返回不同形状"的实现挂上去 ——
+   * 与真命令面（`platform.executor.invoke`）同一种写法。
+   */
+  const invoke = (async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (cmd === "derived_apply") {
+        const ops = (args?.ops ?? []) as {
+          op: string;
+          attId?: string;
+          extractor?: string;
+          srcHash?: string;
+          now?: number;
+          segments?: { kind: string; text: string; loc?: string }[];
+          owner?: { kind: "page"; pageId: string } | { kind: "attachment"; attId: string };
+          chunks?: { id: string; pageId?: string | null; attId?: string | null; ord: number; loc?: string; lang?: string; text: string; hash: string }[];
+        }[];
+        for (const op of ops) {
+          if (op.op === "replaceAttachmentText") {
+            s.text.replace(
+              op.attId!,
+              op.extractor!,
+              op.srcHash!,
+              (op.segments ?? []).map((x) => ({ kind: x.kind as never, text: x.text, loc: x.loc ?? "" })),
+              op.now!,
+            );
+          } else if (op.op === "removeAttachmentText") {
+            s.text.removeAttachment(op.attId!);
+          } else if (op.op === "replaceChunks") {
+            s.chunks.replace(
+              op.owner!,
+              (op.chunks ?? []).map((c) => ({
+                id: c.id,
+                pageId: c.pageId ?? null,
+                attId: c.attId ?? null,
+                ord: c.ord,
+                loc: c.loc ?? "",
+                lang: c.lang ?? "",
+                text: c.text,
+                hash: c.hash,
+              })),
+            );
+          } else if (op.op === "removeChunks") {
+            s.chunks.remove(op.owner!);
+          }
+        }
+        return { ops: ops.length, rows: 0 };
+      }
+      if (cmd === "derived_query") {
+        const q = args?.query as { op: string; attId?: string; owner?: never };
+        if (q.op === "attachmentTextSegments") return s.text.segmentsOf(q.attId!);
+        if (q.op === "chunkRows") return s.chunks.chunksOf(q.owner!);
+        if (q.op === "chunkStats") return s.chunks.stats();
+        if (q.op === "attachmentTextStats") return s.text.stats();
+      }
+      throw new Error(`假后端不认识的命令：${cmd}`);
+  }) as <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+  return { stores: s, invoke };
 }
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
@@ -129,9 +219,60 @@ describe("indexPage：把一个页面索引完整", () => {
 
     expect(r.page.chunks).toBeGreaterThan(1); // 页面正文被切了
     expect(r.attachments.map((a) => a.status)).toEqual(["stored", "stored"]);
-    expect(s.chunks.chunksOf({ kind: "page", pageId: "p1" }).length).toBe(r.page.chunks);
-    expect(s.chunks.chunksOf({ kind: "attachment", attId: "a2" }).length).toBeGreaterThan(1);
+    expect((await s.chunks.chunksOf({ kind: "page", pageId: "p1" })).length).toBe(r.page.chunks);
+    expect((await s.chunks.chunksOf({ kind: "attachment", attId: "a2" })).length).toBeGreaterThan(1);
     expect(r.summary).toContain("附件 2 个（可检索 2）");
+  });
+
+  it("★ 慢后端（异步 store，每次调用让出一个 tick）下索引结果与同步 store **逐字相同** —— 这条守「漏 await」", async () => {
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(listed(["a1"]));
+    setActivePlatform(platformWith({ p1: longBody(120) }, { a1: docx("附件一") }));
+
+    const sync = await stores();
+    const syncResult = await indexPage("p1", sync);
+
+    const delayed = await stores();
+    const asyncResult = await indexPage("p1", { text: asAsync(delayed.text), chunks: asAsync(delayed.chunks) });
+
+    // ① 对外结果一致（摘要/块数/每个附件的状态与计数）
+    expect(asyncResult.summary).toBe(syncResult.summary);
+    expect(asyncResult.page.chunks).toBe(syncResult.page.chunks);
+    expect(asyncResult.attachments).toEqual(syncResult.attachments);
+    // ② **落库状态**一致 —— 漏 await 时最典型的症状就是这里空/旧（读发生在写之前）
+    expect(await delayed.chunks.chunksOf({ kind: "page", pageId: "p1" })).toEqual(
+      await sync.chunks.chunksOf({ kind: "page", pageId: "p1" }),
+    );
+    expect((await delayed.text.segmentsOf("a1")).length).toBeGreaterThan(0);
+    expect((await delayed.chunks.chunksOf({ kind: "attachment", attId: "a1" })).length).toBeGreaterThan(0);
+  });
+
+  it("★ **桌面路径端到端**：`desktopDerivedStores` + 类 Rust 后端跑通同一个 `indexPage` —— 索引真的填进去了", async () => {
+    // 这条是「全库 AI 覆盖」在**主力平台**上的第一份端到端读数：桌面没有 sql.js，
+    // 索引只能过命令面（`derived_apply`/`derived_query`）⇒ 走的正是这条链。
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(listed(["a1"]));
+    setActivePlatform(platformWith({ p1: longBody(120) }, { a1: docx("附件一里的内容") }));
+
+    const backend = await rustishBackend();
+    const desktop = desktopDerivedStores(backend);
+
+    const r = await indexPage("p1", desktop);
+
+    expect(r.page.chunks).toBeGreaterThan(1);
+    expect(r.attachments[0].status).toBe("stored");
+    // ① 派生文本落库了（读回来，而不是只看返回值）
+    expect((await desktop.text.segmentsOf("a1")).length).toBeGreaterThan(0);
+    // ② 块也落库了，且页面块数与编排报的一致
+    expect((await desktop.chunks.chunksOf({ kind: "page", pageId: "p1" })).length).toBe(r.page.chunks);
+    expect((await desktop.chunks.stats()).chunks).toBeGreaterThan(r.page.chunks);
+    // ③ 附件块里能搜到原文（AI 的 `files.search` / `search_chunks` 走的就是这张表）
+    const attRows = await desktop.chunks.chunksOf({ kind: "attachment", attId: "a1" });
+    expect(attRows.some((c) => c.text.includes("附件一"))).toBe(true);
+    // ④ `ensureSchema` 在桌面是 no-op（表由后端/Rust migrate 保证）⇒ 用真读回的行反过来验缓存判据：
+    const segs = await desktop.text.segmentsOf("a1");
+    const ids = [...new Set(segs.map((s) => s.extractor))];
+    expect(ids.length).toBeGreaterThan(0);
+    expect(await desktop.text.needsExtract("a1", "a1", ids)).toBe(false); // 内容没变 ⇒ 不必重抽
+    expect(await desktop.text.needsExtract("a1", "换了个 hash", ids)).toBe(true); // 内容变了 ⇒ 必须重抽
   });
 
   it("**一个附件失败不拖垮整页**：其余照常索引，失败如实进结果（含错误码）", async () => {
@@ -151,7 +292,7 @@ describe("indexPage：把一个页面索引完整", () => {
     expect(gone.status).toBe("failed");
     expect(gone.code).toBe("internal");
     // 页面正文**照样**有块（不被附件拖累）
-    expect(s.chunks.chunksOf({ kind: "page", pageId: "p1" }).length).toBe(1);
+    expect((await s.chunks.chunksOf({ kind: "page", pageId: "p1" })).length).toBe(1);
   });
 
   it("**重复调用很便宜**：第二次全是 cached / 页面块 unchanged（所以保存时无脑调它即可）", async () => {
@@ -233,7 +374,7 @@ describe("indexLibrary：全库索引（UI 上那个「开始索引」）", () =
     expect(r.attachments.byStatus).toEqual({ stored: 2 });
     expect(r.unfiled.attachments.map((a) => a.attId)).toEqual(["u1"]);
     // 块总数**就是库里的真实值**（来自一次 stats，不编造分项）
-    expect(r.chunks.total).toBe(s.chunks.stats().chunks);
+    expect(r.chunks.total).toBe((await s.chunks.stats()).chunks);
     expect(r.chunks.total).toBeGreaterThan(0);
     expect(r.summary).toContain("页面 2/2 已索引");
   });
@@ -249,7 +390,7 @@ describe("indexLibrary：全库索引（UI 上那个「开始索引」）", () =
     expect(r.pages).toEqual({ total: 2, ok: 1, failed: 1 });
     expect(r.failures).toEqual([{ kind: "page", id: "bad", reason: "页面不存在: bad" }]);
     // 好页面**确实**被索引了（不是"因为有人坏就整批放弃"）
-    expect(s.chunks.chunksOf({ kind: "page", pageId: "good" }).length).toBeGreaterThan(0);
+    expect((await s.chunks.chunksOf({ kind: "page", pageId: "good" })).length).toBeGreaterThan(0);
     expect(r.summary).toContain("失败 1");
   });
 
@@ -307,7 +448,7 @@ describe("indexUnfiled：把「未整理」的附件也索引掉（否则报告�
     expect(r.attachments).toHaveLength(2);
     expect(r.attachments.find((a) => a.attId === "u1")?.status).toBe("stored");
     expect(r.summary).toContain("未整理附件 2 个");
-    expect(s.chunks.chunksOf({ kind: "attachment", attId: "u1" }).length).toBeGreaterThan(0);
+    expect((await s.chunks.chunksOf({ kind: "attachment", attId: "u1" })).length).toBeGreaterThan(0);
 
     // 取材的是"未整理"那一路 —— 与覆盖报告的取材口径一致（否则报告说缺、这里索引不到）
     const calls = (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mock.calls;

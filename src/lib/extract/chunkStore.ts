@@ -6,16 +6,16 @@
 // 源文本变了就整体重切重写、删掉多余的旧行 —— 这比"逐块 diff"简单，且不会留下孤儿向量。
 
 import type { Chunk, ChunkOwner } from "./chunk";
-import type { SqlRunner } from "./store";
+import type { Awaitable, SqlRunner } from "./store";
 
 export interface ChunkStore {
-  ensureSchema(ddl: readonly string[]): void;
+  ensureSchema(ddl: readonly string[]): Awaitable<void>;
   /** 整体替换某个 owner 的块（先删该 owner 的全部旧块）。 */
-  replace(owner: ChunkOwner, chunks: readonly Chunk[]): void;
+  replace(owner: ChunkOwner, chunks: readonly Chunk[]): Awaitable<void>;
   /** 按 ord 升序取回。 */
-  chunksOf(owner: ChunkOwner): Chunk[];
-  remove(owner: ChunkOwner): void;
-  stats(): { chunks: number };
+  chunksOf(owner: ChunkOwner): Awaitable<Chunk[]>;
+  remove(owner: ChunkOwner): Awaitable<void>;
+  stats(): Awaitable<{ chunks: number }>;
 }
 
 const COLS = "id, page_id, att_id, ord, loc, lang, text, hash";

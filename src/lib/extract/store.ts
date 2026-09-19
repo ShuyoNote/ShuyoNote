@@ -6,6 +6,20 @@
 
 import type { ExtractedSegment } from "./types";
 
+/**
+ * 「同步或异步」——派生层的两个 store 用这个类型，是为了让**同一份实现**同时服务两个平台：
+ *
+ * - **Web**：`sql.js` 是同步的 ⇒ 实现返回普通值（单测也能跑真 SQLite，不必 await）；
+ * - **桌面**：写入必须过命令面（`derived_apply`/`derived_query`，见 `platform/derivedTransport.ts`），
+ *   而 Tauri 的 `invoke` **必然异步** ⇒ 那侧的实现返回 Promise。
+ *
+ * 为什么不是"把接口直接改成 async"：那会把 17 个测试文件与既有实现一起卷进来（且同步实现被迫包一层
+ * 没有意义的 `Promise.resolve`）。放宽成并集之后，`await` 对两边都成立（`await` 非 Promise 是 no-op），
+ * 代价只是调用点必须写 `await` —— 而**忘记写**在 TS 里是抓不住的（仓库没有 `no-floating-promises`），
+ * 所以另配了一条判据：`indexPage.test.ts` 里那个"慢假后端"用例（漏 `await` ⇒ 读到空值 ⇒ 红）。
+ */
+export type Awaitable<T> = T | Promise<T>;
+
 /** 存储层需要的最小能力。两个平台的适配器各自实现这三（四）个方法即可。 */
 export interface SqlRunner {
   /** 执行一条写语句。 */
@@ -40,10 +54,10 @@ export interface ExtractStat {
 
 export interface AttachmentTextStore {
   /** 建表（幂等；DDL 来自 schema.ts 的单一事实源）。 */
-  ensureSchema(ddl: readonly string[]): void;
+  ensureSchema(ddl: readonly string[]): Awaitable<void>;
   /** 该附件是否需要对**给定的这组**抽取器（重）抽。
    *  判据：任一抽取器在库中没有行，或**它的行带的是旧 hash** ⇒ 需要。 */
-  needsExtract(attId: string, srcHash: string, extractorIds: readonly string[]): boolean;
+  needsExtract(attId: string, srcHash: string, extractorIds: readonly string[]): Awaitable<boolean>;
   /** 整体替换 `(att_id, extractor)` 的行。**不做逐段 diff** —— 实现变更后段序不稳定，
    *  逐段 diff 会留下残段（§15.5）。 */
   replace(
@@ -52,13 +66,13 @@ export interface AttachmentTextStore {
     srcHash: string,
     segments: readonly ExtractedSegment[],
     now: number,
-  ): void;
+  ): Awaitable<void>;
   /** 删掉该附件的全部派生行（附件被删，或内容变了要整体重抽）。 */
-  removeAttachment(attId: string): void;
+  removeAttachment(attId: string): Awaitable<void>;
   /** 读回某附件的全部段，按 (extractor, seq) 稳定排序。 */
-  segmentsOf(attId: string): AttachmentTextRow[];
+  segmentsOf(attId: string): Awaitable<AttachmentTextRow[]>;
   /** 观测用：按抽取器统计段数与字符数（`encrypted` 占比这类判断靠它）。 */
-  stats(): ExtractStat[];
+  stats(): Awaitable<ExtractStat[]>;
 }
 
 const COLS = "att_id, extractor, seq, kind, text, loc, src_hash, updated_at";
