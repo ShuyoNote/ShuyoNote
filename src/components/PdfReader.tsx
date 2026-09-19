@@ -204,6 +204,8 @@ function PdfContinuousPage({
   width,
   focusTarget,
   onFocusConsumed,
+  deleteTarget,
+  onDeleteConsumed,
   tool,
   onToolChange,
   registerController,
@@ -218,6 +220,9 @@ function PdfContinuousPage({
   width: number;
   focusTarget: { pageIndex: number; ann: PdfAnnotation } | null;
   onFocusConsumed: () => void;
+  /** 侧栏删掉的批注（一次性目标）：交给对应页去同步它自己的渲染状态。 */
+  deleteTarget: { pageIndex: number; annId: string } | null;
+  onDeleteConsumed: () => void;
   tool: AnnotTool;
   onToolChange: (t: AnnotTool) => void;
   registerController: (pageIndex: number, ctl: PdfPageController | null) => void;
@@ -251,6 +256,8 @@ function PdfContinuousPage({
       textItems={textItems}
       focusTarget={focusTarget}
       onFocusConsumed={onFocusConsumed}
+      deleteTarget={deleteTarget}
+      onDeleteConsumed={onDeleteConsumed}
       tool={tool}
       onToolChange={onToolChange}
       registerController={registerController}
@@ -350,6 +357,9 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const eyeWrapRef = useRef<HTMLDivElement | null>(null);
   const [annRecords, setAnnRecords] = useState<PdfAnnotationRecord[]>([]);
   const [focusTarget, setFocusTarget] = useState<{ pageIndex: number; ann: PdfAnnotation } | null>(null);
+  // B6 反向同步：侧栏删除后要通知「那一页」把批注从阅读区去掉（页内画布不会自己重载，见
+  // PdfAnnotationCanvas 里的 deleteTarget effect）。
+  const [deleteTarget, setDeleteTarget] = useState<{ pageIndex: number; annId: string } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [ready, setReady] = useState(false);
@@ -616,6 +626,9 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       r.page_index === pageIndex ? { ...r, annotations: next } : r,
     );
     setAnnRecords(updated);
+    // ★ 还必须通知页内画布：它只在 attachmentId/pageIndex 变化时加载自己的 annotations，
+    //   少了这一步，侧栏删掉了、阅读区还画着（2026-09-19 缺陷帖 #8）。
+    setDeleteTarget({ pageIndex, annId });
     void api.savePdfAnnotations(attachmentId ?? "", pageIndex, next).catch(() => {});
     toast("已删除批注", "success");
   };
@@ -1164,6 +1177,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
             data={d ?? { url: null, textItems: null, hasTextLayer: false, meta: null }}
             focusTarget={focusTarget}
             onFocusConsumed={() => setFocusTarget(null)}
+            deleteTarget={deleteTarget}
+            onDeleteConsumed={() => setDeleteTarget(null)}
             tool={tool}
             onToolChange={setTool}
             registerController={registerController}
