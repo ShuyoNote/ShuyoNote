@@ -200,6 +200,11 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
 
+      - name: 取 PDFium 运行时（Linux）
+        # P3 对拍判据需要它（`vendor/pdfium/` 不入 git）。**先取库再跑 rust 组**，
+        # 这样这一项在 CI 上是**真跑**而不是跳过；取不到就红在这一步（诚实：CI 拿不到钉死版本就该报）。
+        run: node scripts/fetch-pdfium.mjs --check --platform linux-x64 || node scripts/fetch-pdfium.mjs --platform linux-x64
+
       - name: Rust 测试（cargo test，含宿主子进程集成测试）
         # 门禁清单在 `scripts/lib/gates.mjs` 的 rust 组：全量 `cargo test` + 插件模块**单独再跑一遍**
         # （2026-09-13 那类缺陷：某测试依赖进程级 APP_DATA_DIR ⇒ 单跑必红、全量反而绿，

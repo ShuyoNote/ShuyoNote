@@ -140,6 +140,13 @@ fn render_pdfium(key: &str, bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), Str
 
 #[test]
 fn pdfium_matches_mupdf_on_fixtures() {
+    // ⚠️ 库不在 ⇒ **响亮自报跳过**，不是判红。因为那份二进制**不入 git**（`vendor/pdfium/` 被
+    //    ignore），新克隆/worktree/CI 上都可能没有；把它算成"代码红了"，会让真正的回归淹没在
+    //    "缺个开发期文件"里。CI 的 rust job 有取库步骤 ⇒ 那边会**真跑**这一项。
+    if let Err(why) = crate::pdfium_native::library_preflight() {
+        println!("! 跳过 P3 对拍：{why}");
+        return;
+    }
     let dir = fixtures_dir();
     let out = out_dir();
     fs::create_dir_all(&out).expect("建对拍输出目录");

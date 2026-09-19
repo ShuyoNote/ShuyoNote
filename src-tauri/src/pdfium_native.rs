@@ -210,6 +210,25 @@ fn library_dir() -> PathBuf {
     exe_dir.unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// **库在不在**（给判据用）：与 [`shared_pdfium`] 同一套解析，但不加载、不缓存。
+///
+/// 为什么要单独一个：PDFium 是**运行时 dlopen** 的，而库里那份二进制**不入 git**
+/// （`vendor/pdfium/` 在 `.gitignore` 里）⇒ 新克隆、worktree、CI 上都可能没有它。
+/// 判据遇到"库不在"时应当**响亮自报跳过**（`! …跳过…`，报告器会收成一等公民），
+/// 而不是把 `cargo test` 判红 —— 后者会让"缺一个开发期二进制"看起来像"代码坏了"，
+/// 而真红了以后没人分得清是哪一种（2026-09-19 rust job 就是这么红的）。
+pub fn library_preflight() -> Result<(), String> {
+    let dir = library_dir();
+    let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
+    if lib.exists() {
+        return Ok(());
+    }
+    Err(format!(
+        "找不到 PDFium 动态库：{}（开发机跑 `node scripts/fetch-pdfium.mjs`；CI 的 rust job 有取库步骤）",
+        lib.display()
+    ))
+}
+
 /// 拿到进程级 PDFium 实例；首次调用时绑定动态库。
 ///
 /// 用 `set`/`get` 而不是 `get_or_init`：绑定**可能失败**（库缺失/版本不符），
