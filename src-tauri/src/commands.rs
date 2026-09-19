@@ -565,22 +565,10 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
         )
         .map_err(|e| e.to_string())?
     };
-    // ── PDF 引擎分派（P2，2026-09-17）────────────────────────────────────────
+    // ── PDF 引擎分派（P2，2026-09-17；判据化 2026-09-19 AMD）──────────────────
     // **运行时开关**（方案 §0.2-F 已定：不重编就能切回 MuPDF，便于灰度与回滚）：
-    //   `SHUYONOTE_PDF_ENGINE=pdfium` ⇒ 用 PDFium；缺省或其它值 ⇒ **MuPDF（现状，默认不变）**。
-    #[derive(Clone, Copy)]
-    enum PdfEngine {
-        Mupdf,
-        Pdfium,
-    }
-    let engine = if std::env::var("SHUYONOTE_PDF_ENGINE")
-        .map(|v| v.eq_ignore_ascii_case("pdfium"))
-        .unwrap_or(false)
-    {
-        PdfEngine::Pdfium
-    } else {
-        PdfEngine::Mupdf
-    };
+    // 环境变量取值与默认值见 `PdfEngine::from_env_value` / `PdfEngine::DEFAULT`。
+    let engine = PdfEngine::from_env_value(std::env::var("SHUYONOTE_PDF_ENGINE").ok().as_deref());
     // ⚠️ **两套缓存互斥淘汰**（P2 验收项）：同一个 hash 若被两个引擎各持一份，
     // 内存会无声翻倍而两侧 LRU 互不知情 ⇒ 切引擎时先清掉另一侧的同 key 条目。
     match engine {
@@ -632,4 +620,78 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
         height,
         rgba_base64: base64::engine::general_purpose::STANDARD.encode(&compact),
     })
+}
+
+/// PDF 光栅化引擎（P2 的分派量）。
+///
+/// ⚠️ **这不是内部实现细节**：P5 那一步"默认换不换"就落在 [`PdfEngine::DEFAULT`] 这一行上，
+/// 而"一键切回 MuPDF"是方案 §4 的验收项之一 ⇒ 两者都必须有判据守着，不能只写在注释里
+/// （2026-09-19 AMD：原先 14 行分派写在命令函数体里、**零判据**，切默认值时没有任何东西会响）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PdfEngine {
+    Mupdf,
+    Pdfium,
+}
+
+impl PdfEngine {
+    /// **默认引擎**（P5 的切换点：改这一行 = 换默认引擎）。
+    ///
+    /// 现状（2026-09-19）：`Mupdf` —— PDFium 只在 `SHUYONOTE_PDF_ENGINE=pdfium` 时启用。
+    /// P5 灰度通过后改成 `Pdfium`，并由 `SHUYONOTE_PDF_ENGINE=mupdf` 保留一键回滚。
+    pub(crate) const DEFAULT: PdfEngine = PdfEngine::Mupdf;
+
+    /// 环境变量取值 → 引擎。**大小写与首尾空格都不敏感**；认不出的值（含空串）走
+    /// [`PdfEngine::DEFAULT`] —— 认不出就按默认走，不猜、也不报错（渲染不该因为一个
+    /// 拼错的开关而失败）。
+    pub(crate) fn from_env_value(value: Option<&str>) -> PdfEngine {
+        match value.map(str::trim) {
+            Some(v) if v.eq_ignore_ascii_case("pdfium") => PdfEngine::Pdfium,
+            Some(v) if v.eq_ignore_ascii_case("mupdf") => PdfEngine::Mupdf,
+            _ => PdfEngine::DEFAULT,
+        }
+    }
+}
+
+#[cfg(test)]
+mod pdf_engine_tests {
+    use super::PdfEngine;
+
+    /// ★ **P5 的承重判据**：默认引擎**显式**写在这里。
+    ///
+    /// 断言的是**具体**引擎（不是 `== PdfEngine::DEFAULT` 那种同义反复）——
+    /// 后者在默认值被改掉时**永远绿**，等于没判据。切换 P5 时这一行要跟着改，
+    /// 而那正是"有人动了默认值"应该留下的痕迹。
+    #[test]
+    fn unset_uses_the_documented_default_engine() {
+        assert_eq!(
+            PdfEngine::from_env_value(None),
+            PdfEngine::Mupdf,
+            "未设环境变量时的默认引擎（P5 切换点，见 PdfEngine::DEFAULT）"
+        );
+    }
+
+    /// 显式值必须胜过默认值，且**大小写/空格不敏感**（灰度时人手敲的开关）。
+    #[test]
+    fn explicit_values_win_and_are_case_insensitive() {
+        assert_eq!(PdfEngine::from_env_value(Some("pdfium")), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::from_env_value(Some("PDFium")), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::from_env_value(Some(" pdfium ")), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
+        assert_eq!(PdfEngine::from_env_value(Some("MuPDF")), PdfEngine::Mupdf);
+    }
+
+    /// 认不出的值（含空串）⇒ 默认，不报错。失败面：把 `""` 当成"显式指定了某个引擎"。
+    #[test]
+    fn unknown_or_empty_values_fall_back_to_default() {
+        for v in [Some(""), Some("   "), Some("pdf"), Some("1"), Some("true"), Some("pdfiumm")] {
+            assert_eq!(PdfEngine::from_env_value(v), PdfEngine::Mupdf, "value={v:?}");
+        }
+    }
+
+    /// 验收项"**一键切回 MuPDF**"：无论默认是哪个，显式写 `mupdf` 都必须得到 MuPDF。
+    /// 这条与默认值无关，所以它在 P5 前后**都应该绿**。
+    #[test]
+    fn explicit_mupdf_always_rolls_back() {
+        assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
+    }
 }
