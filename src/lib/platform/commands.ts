@@ -387,6 +387,18 @@ export interface CommandMap {
       truncated: boolean;
     } | null;
   };
+  /** 派生文本层的**桌面运输通道**（⚠️ **桌面专属**：Web 平台 TS 直接跑 sql.js，故 web.ts 故意不实现，
+   *  已登记在 `scripts/check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS`）。
+   *  一批写 = **一个事务**（要么全落要么一行不留）；读按 store 的读语义返回行。
+   *  纪律「**只搬不决定**」见 `src/lib/platform/derivedTransport.ts` 与 Rust `derived_transport.rs`。 */
+  derived_apply: {
+    args: { ops: unknown[] };
+    result: { ops: number; rows: number };
+  };
+  derived_query: {
+    args: { query: unknown };
+    result: unknown;
+  };
   get_page_blocks: { args: { pageId: string }; result: PageBlock[] };
   get_backlinks: { args: { id: string }; result: PageMeta[] };
   resolve_block: { args: { blockId: string }; result: BlockInfo };

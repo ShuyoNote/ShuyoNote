@@ -60,6 +60,9 @@ mod plugin_validate;
 mod plugins;
 mod properties;
 mod search;
+// 派生文本层的**唯一运输通道**（桌面）：TS 的索引代码靠它把 `attachment_text`/`chunks` 写进
+// SQLCipher 库（桌面没有别的通道；Web 那边 TS 直接跑 sql.js）。纪律见模块头注释。
+mod derived_transport;
 // Android 专属：把 TLS 证书校验交给系统证书库。**不是可选项**——不做这一步，
 // Rust 侧任何 HTTPS 一按就 panic（真机 logcat：`Expect rustls-platform-verifier to be initialized`）。
 // 为什么是个独立模块、以及为什么要在两套 jni 之间做裸指针桥接，见模块头注释。
@@ -503,6 +506,8 @@ pub fn run() {
             search::search,
             search::search_chunks,
             search::read_attachment_text,
+            derived_transport::derived_apply,
+            derived_transport::derived_query,
             sync::get_sync_config,
             sync::set_sync_config,
             sync::sync_now,
