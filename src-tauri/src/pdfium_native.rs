@@ -105,13 +105,93 @@ fn doc_cache() -> &'static Mutex<HashMap<String, CachedDocument>> {
     DOC_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// **打包后的「资源目录」**——由 `lib.rs` 的 `setup()` 在启动时登记
+/// （`app.path().resource_dir()`）。
+///
+/// 为什么需要它（2026-09-19，AMD 按 Windows 收尾单 §七.6 的实测建议落地）：
+/// Tauri 在 **Linux** 上 `resource_dir` **不等于**可执行文件目录
+/// （deb = `/usr/lib/<id>`、AppImage = `$APPDIR/usr/lib/<id>`），
+/// 而 `tauri.linux.conf.json` 正是把 `libpdfium.so` 映射进资源目录的
+/// ⇒ 只探"exe 同目录"在 Linux 发行包上**永远找不到库**。
+/// macOS 走 `bundle.macOS.frameworks`（`Contents/Frameworks`，已在候选里），Windows 上这条是重复探测（无害）。
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 登记打包资源目录（幂等：只有第一次生效；`setup()` 只跑一次）。
+pub fn set_resource_dir(dir: PathBuf) {
+    let _ = RESOURCE_DIR.set(dir);
+}
+
+/// 候选目录的**顺序**（纯函数：不读环境变量、不碰文件系统 ⇒ 判据可以直接钉顺序）。
+///
+/// 顺序 = **可执行文件同目录**（发行包形态；Windows 装包把 `pdfium.dll` 放在那里）
+/// → **macOS `.app/Contents/Frameworks`**（macOS 动态库的常规位置，且要一起签名/公证）
+/// → **打包资源目录**（Linux deb/AppImage）→ **仅 debug** 的仓库内 vendored 目录。
+fn candidate_dirs(
+    exe_dir: Option<PathBuf>,
+    resource_dir: Option<PathBuf>,
+    vendored_default: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = exe_dir {
+        // macOS 的 .app 束：可执行文件在 Contents/MacOS/，动态库按惯例在 Contents/Frameworks/。
+        #[cfg(target_os = "macos")]
+        out.push(dir.join("../Frameworks"));
+        out.push(dir);
+    }
+    if let Some(dir) = resource_dir {
+        out.push(dir);
+    }
+    // `fetch-pdfium.mjs` 把库解到 `src-tauri/vendor/pdfium/<平台>/<spec.lib>`，而 `spec.lib` 的
+    // 目录前缀**各平台不统一**：Windows 是 `bin/pdfium.dll`，Linux / macOS / Android 是
+    // `lib/libpdfium.so|dylib`（见该脚本 `PLATFORMS` 与方案 §0.1）。
+    //
+    // ⚠️ 2026-09-18 AMD 在 Linux/macOS 实测：这里原来**写死 `bin`** ⇒ 那两个平台的 vendored 回退
+    //    **从来不会命中**（Windows 恰好就是 `bin`，所以在本机一直没暴露）。⇒ 改为按候选目录逐个探测。
+    if let Some(root) = vendored_default {
+        for sub in ["bin", "lib", ""] {
+            out.push(if sub.is_empty() { root.clone() } else { root.join(sub) });
+        }
+    }
+    out
+}
+
+/// 从候选里挑第一个**真的有库**的目录（文件系统探测只在这一个函数里）。
+fn pick_library_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|dir| Pdfium::pdfium_platform_library_name_at_path(dir).exists())
+        .cloned()
+}
+
+/// 仓库内 vendored 目录（**仅 debug 构建**有意义；release 包不带 `vendor/`）。
+#[cfg(debug_assertions)]
+fn vendored_root() -> Option<PathBuf> {
+    let platform = if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "aarch64") { "win-arm64" } else { "win-x64" }
+    } else if cfg!(target_os = "macos") {
+        "mac-univ"
+    } else if cfg!(target_os = "android") {
+        "android-arm64"
+    } else {
+        "linux-x64"
+    };
+    Some(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("vendor")
+            .join("pdfium")
+            .join(platform),
+    )
+}
+
+#[cfg(not(debug_assertions))]
+fn vendored_root() -> Option<PathBuf> {
+    None
+}
+
 /// PDFium 动态库所在目录。
 ///
-/// 优先级：**环境变量**（联调/测试用）→ **可执行文件同目录**（发行包形态，由打包步骤把
-/// `pdfium.dll`/`libpdfium.so`/`libpdfium.dylib` 放到那里，方案 §4 的"首次启动即可渲染"）→
-/// **macOS 的 `.app/Contents/Frameworks`**（AMD 复核第 7 条：macOS 动态库的常规位置，
-/// 且要一起签名/公证）→ **仅 debug 构建**再回退到仓库内的
-/// `src-tauri/vendor/pdfium/<平台>/{bin,lib}/`（目录前缀各平台不同，逐个探测，见下方注释）。
+/// 优先级：**环境变量**（联调/测试用）→ 其余见 [`candidate_dirs`]（可执行文件同目录 →
+/// macOS `Contents/Frameworks` → **打包资源目录** → 仅 debug 的 vendored 目录）。
 /// 都找不到时由 [`shared_pdfium`] 报出**带路径的可操作错误**。
 fn library_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("SHUYONOTE_PDFIUM_DIR") {
@@ -122,50 +202,9 @@ fn library_dir() -> PathBuf {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(|p| p.to_path_buf()));
-    if let Some(dir) = &exe_dir {
-        if Pdfium::pdfium_platform_library_name_at_path(dir).exists() {
-            return dir.clone();
-        }
-        // macOS 的 .app 束：可执行文件在 Contents/MacOS/，动态库按惯例在 Contents/Frameworks/。
-        #[cfg(target_os = "macos")]
-        {
-            let frameworks = dir.join("../Frameworks");
-            if Pdfium::pdfium_platform_library_name_at_path(&frameworks).exists() {
-                return frameworks;
-            }
-        }
-    }
-    #[cfg(debug_assertions)]
-    {
-        // `fetch-pdfium.mjs` 把库解到 `src-tauri/vendor/pdfium/<平台>/<spec.lib>`，而 `spec.lib` 的
-        // 目录前缀**各平台不统一**：Windows 是 `bin/pdfium.dll`，Linux / macOS / Android 是
-        // `lib/libpdfium.so|dylib`（见该脚本 `PLATFORMS` 与方案 §0.1）。
-        //
-        // ⚠️ 2026-09-18 AMD 在 Linux/macOS 实测：这里原来**写死 `bin`** ⇒ 那两个平台的 vendored 回退
-        //    **从来不会命中**（Windows 恰好就是 `bin`，所以在本机一直没暴露）。⇒ 改为按候选目录逐个探测。
-        let platform = if cfg!(target_os = "windows") {
-            if cfg!(target_arch = "aarch64") { "win-arm64" } else { "win-x64" }
-        } else if cfg!(target_os = "macos") {
-            "mac-univ"
-        } else if cfg!(target_os = "android") {
-            "android-arm64"
-        } else {
-            "linux-x64"
-        };
-        let vendored_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("vendor")
-            .join("pdfium")
-            .join(platform);
-        for sub in ["bin", "lib", ""] {
-            let dir = if sub.is_empty() {
-                vendored_root.clone()
-            } else {
-                vendored_root.join(sub)
-            };
-            if Pdfium::pdfium_platform_library_name_at_path(&dir).exists() {
-                return dir;
-            }
-        }
+    let candidates = candidate_dirs(exe_dir.clone(), RESOURCE_DIR.get().cloned(), vendored_root());
+    if let Some(dir) = pick_library_dir(&candidates) {
+        return dir;
     }
     // 最后回退到可执行文件目录，让错误信息里的路径有意义。
     exe_dir.unwrap_or_else(|| PathBuf::from("."))
@@ -395,4 +434,118 @@ fn check_pixel_budget(width: f64, height: f64, scale: f32, stage: &str) -> Resul
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    /// 本平台的库文件名（`pdfium.dll` / `libpdfium.so` / `libpdfium.dylib`）——
+    /// 直接用 crate 自己的命名规则，免得判据里硬写平台分支。
+    fn lib_file_name() -> std::ffi::OsString {
+        Pdfium::pdfium_platform_library_name_at_path(Path::new("."))
+            .file_name()
+            .expect("库文件名")
+            .to_os_string()
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("shuyo-pdfium-{tag}-{}", std::process::id()))
+    }
+
+    fn dir_with_lib(tag: &str) -> PathBuf {
+        let dir = scratch(tag);
+        fs::create_dir_all(&dir).expect("建目录");
+        fs::write(dir.join(lib_file_name()), b"").expect("写占位库");
+        dir
+    }
+
+    fn dir_without_lib(tag: &str) -> PathBuf {
+        let dir = scratch(tag);
+        fs::create_dir_all(&dir).expect("建目录");
+        dir
+    }
+
+    /// 判据 1：**挑的是"真的有库"的第一个候选**，不是"第一个候选"。
+    ///
+    /// 这条守的是整个回退链的语义：任一候选目录**存在但没有库**时不许就此返回
+    /// （那会让错误信息指向一个空目录，而不是继续找）。
+    #[test]
+    fn picks_the_first_candidate_that_actually_has_the_library() {
+        let empty = dir_without_lib("empty");
+        let good = dir_with_lib("good");
+        let good2 = dir_with_lib("good2");
+
+        assert_eq!(pick_library_dir(&[empty.clone(), good.clone()]), Some(good.clone()));
+        assert_eq!(pick_library_dir(&[good.clone(), good2]), Some(good.clone()));
+        assert_eq!(pick_library_dir(&[empty.clone()]), None);
+        assert_eq!(pick_library_dir(&[]), None);
+
+        let _ = fs::remove_dir_all(&empty);
+        let _ = fs::remove_dir_all(&good);
+    }
+
+    /// 判据 2：**打包资源目录必须被探到，且排在 exe 同目录之后**。
+    ///
+    /// 失败面（这条就是为它写的）：Linux 发行包（deb/AppImage）的资源目录**不是** exe 同目录 ⇒
+    /// 少了资源目录这一项，真机上症状是「找不到 PDFium 动态库」，而 Windows 上一切正常。
+    #[test]
+    fn candidate_order_is_exe_then_resource_then_vendored() {
+        let exe = PathBuf::from("/exe");
+        let res = PathBuf::from("/res");
+        let vend = PathBuf::from("/vend");
+        let got = candidate_dirs(Some(exe.clone()), Some(res.clone()), Some(vend.clone()));
+
+        // 非 macOS：exe → 资源目录 → vendored 的三段（vendored 内部还会展开 bin/lib/根）。
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(
+            got,
+            vec![
+                exe,
+                res,
+                vend.join("bin"),
+                vend.join("lib"),
+                vend.clone()
+            ]
+        );
+        // macOS 多一项 `Contents/Frameworks`，且排在 exe 之前（那是 .app 束的常规位置）。
+        #[cfg(target_os = "macos")]
+        assert_eq!(got[0], PathBuf::from("/exe/../Frameworks"));
+
+        // 没有资源目录时（例如单测/CLI）不 panic，也不影响其它候选。
+        let only_exe = candidate_dirs(Some(PathBuf::from("/exe")), None, None);
+        assert_eq!(only_exe, vec![PathBuf::from("/exe")]);
+        assert!(candidate_dirs(None, None, None).is_empty());
+    }
+
+    /// 判据 3（**承重的那条**）：登记过的资源目录要能被**真正的 `library_dir()`** 用上。
+    ///
+    /// 为什么必须打到 `library_dir()` 而不是只测 `candidate_dirs`：**接线**（把
+    /// `RESOURCE_DIR.get()` 传进候选表）才是这一步的全部内容 —— 变异实测：把传参改成
+    /// `None`，判据 2 仍然全绿（它只测纯函数的顺序），**只有本条会红**。
+    ///
+    /// 失败面：Linux 发行包（deb/AppImage）里库不在 exe 同目录 ⇒ 少了这条接线，
+    /// 真机症状是「找不到 PDFium 动态库」。
+    #[test]
+    fn library_dir_uses_the_registered_resource_dir() {
+        // 环境变量优先级最高：它若被设了，本判据的前提就不成立（显式跳过，不假绿也不假红）。
+        if std::env::var("SHUYONOTE_PDFIUM_DIR").map(|v| !v.trim().is_empty()).unwrap_or(false) {
+            eprintln!("跳过：SHUYONOTE_PDFIUM_DIR 已设，环境变量优先于资源目录");
+            return;
+        }
+        let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
+        if let Some(d) = &exe_dir {
+            if Pdfium::pdfium_platform_library_name_at_path(d).exists() {
+                eprintln!("跳过：测试二进制同目录已有库（它排在资源目录之前）");
+                return;
+            }
+        }
+        let dir = dir_with_lib("resdir-e2e");
+        // 进程级 OnceLock 只能设一次 ⇒ 只有这一条判据调它（其余判据不碰）。
+        set_resource_dir(dir.clone());
+        assert_eq!(library_dir(), dir.clone(), "资源目录登记后 library_dir() 必须命中它");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
