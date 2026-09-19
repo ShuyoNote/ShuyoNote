@@ -110,7 +110,14 @@ export function checkLinuxBundle({
     } else if (!libPathsInAppImage.some(isResourceDirLibPath)) {
       problems.push(`${PDFIUM_LIB} 在 AppImage 里的位置不对：${libPathsInAppImage.join("、")}`);
     } else if (pdfiumAppImageSha && pdfiumVendorSha && pdfiumAppImageSha !== pdfiumVendorSha) {
-      problems.push(`AppImage 里的 ${PDFIUM_LIB} 与 vendor 源文件 sha256 不一致`);
+      problems.push(
+        `AppImage 里的 ${PDFIUM_LIB} 与 vendor 源文件 sha256 不一致` +
+          `（AppImage ${String(pdfiumAppImageSha).slice(0, 12)}… vs vendor ${String(pdfiumVendorSha).slice(0, 12)}…）` +
+          ` —— 最常见的原因是 **linuxdeploy 打包时默认会 strip 所有 ELF**（我们当资源带进去的库也会被改写字节）。` +
+          `修法：打包时设 \`NO_STRIP=1\`（见 .github/workflows/release.yml 的 Build bundles 步骤）。` +
+          `⚠️ 别把这条判据放宽成「只看大小」—— 「包里那份 == 源那份」是**可证**的，` +
+          `且 AppImage 里那份应当与 deb 里那份、与 vendor 源都一致。`,
+      );
     }
   }
 
