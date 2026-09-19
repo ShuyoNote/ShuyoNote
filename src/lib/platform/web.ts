@@ -1152,7 +1152,10 @@ async function migrateAttachmentHashesToSha256(store: SqliteStore): Promise<void
   } catch { /* 迁移失败不阻塞启动 */ }
 }
 
-function makeInvoke(store: SqliteStore) {
+// 导出是给验收脚本用的（`scripts/verify-two-device-sync.mjs` 要打**真实的命令路径**
+// ——`restore_version` 的效果必须由它本身产生，而不是脚本里自己重演一遍 restore 逻辑）
+// ——与 `applyChange` 的导出来源相同。
+export function makeInvoke(store: SqliteStore) {
   // The live store represents the ACTIVE workspace only (snapshot isolation — see
   // bootSpaces in getSharedStore). Workspace list/active/id come from the catalog.
   // Each workspace's own DB snapshot carries a single `workspaces` row for itself,
@@ -3072,12 +3075,19 @@ function makeInvoke(store: SqliteStore) {
       if (!r) throw new Error("版本不存在");
       // Preserve the CURRENT content before overwriting, so a restore is
       // reversible (deduped against the newest snapshot). Matches desktop.
+      // ⚠️ 活性谓词与 `readContent` 一致（`deleted_at IS NULL`）：**恢复只对活页**
+      // ——要给已软删的页面恢复内容，应先把页面还原出来（2026-09-19 跨机裁定"统一到活页"）。
       const cur = store.query<{ title: string; content_json: string; content_text: string }>(
-        "SELECT title, content_json, content_text FROM pages WHERE id = ?",
+        "SELECT title, content_json, content_text FROM pages WHERE id = ? AND deleted_at IS NULL",
         [r.page_id],
       )[0];
-      if (cur) snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
-      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ? WHERE id = ?", [
+      if (!cur) throw new Error("页面不存在或已删除（先还原页面，再恢复它的历史版本）");
+      snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
+      // `dirty = 1`：恢复版本是**用户自己刚做的动作**，与 `writeContent` 硬写 1、
+      // `upsertRemoteContent` 硬写 0 成对。不置 1 时，"恢复后、推送前"的某次 pull 会
+      // **静默把这次恢复冲掉**（最终虽收敛，但用户会看到内容闪回且没有任何提示）。
+      // 2026-09-19 裁定 (a)：两侧同时改 —— Rust `versions.rs::restore_version` 同批。
+      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1 WHERE id = ?", [
         r.title, r.content_json, r.content_text, Date.now(), r.page_id,
       ]);
       const restored = store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0];
