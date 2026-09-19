@@ -410,12 +410,33 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["text"], contains: ["保留的", "3"] },
   },
 
-  // ===== 图片（Windows 已实现骨架 `image.ocr@1`；实跑调优归 AMD）=====
+  // ===== 图片（第一档 `image.ocr@1` + 第二档 `image.caption@1`）=====
   {
     id: "image/没配视觉模型",
     pins: "**§15.3-7**：没有 deps.vision 必须立刻 provider_error，**不许自建网络**（默认不出网的底线）",
     extractor: "image.ocr@1",
     filename: "扫描件.png",
+    mime: "image/png",
+    make: () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    expect: { ok: false, code: "provider_error" },
+  },
+  {
+    id: "image/语义描述（第二档）",
+    pins:
+      "**兜底链的第二档**：图里没有文字时（`image.ocr@1` 判 `empty`）才轮到 `image.caption@1`；" +
+      "段类型是 `caption`、`loc` 为空；提示词由抽取器自带（抽取层不许自建网络栈）",
+    extractor: "image.caption@1",
+    filename: "照片.png",
+    mime: "image/png",
+    make: () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    deps: { vision: async () => "一只橘猫趴在键盘上，背景是书桌。" },
+    expect: { ok: true, kinds: ["caption"], contains: ["橘猫"], locs: [""] },
+  },
+  {
+    id: "image/语义描述·没配视觉模型",
+    pins: "第二档与第一档同一条红线：没有 deps.vision ⇒ provider_error，不许自己连网",
+    extractor: "image.caption@1",
+    filename: "照片.png",
     mime: "image/png",
     make: () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
     expect: { ok: false, code: "provider_error" },

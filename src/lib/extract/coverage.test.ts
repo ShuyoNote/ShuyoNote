@@ -165,3 +165,45 @@ describe("覆盖度驱动调度（静默丢页的修法）", () => {
     expect(written[0].texts).toEqual(["半份"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 「漏 await」这一族：store 的返回类型放宽成 `Awaitable<T>` 之后，同步实现（Web 的 sql.js）
+// 下漏了 `await` 照样跑过，但**桌面**（走命令面、真异步）会变成"发出去就不管"。
+// 这里用一个"每次落库都要等一个 tick"的假 store 把那个差异放大到必然可见。
+// ---------------------------------------------------------------------------
+describe("慢后端：落库是异步的（桌面形态）", () => {
+  it("★ `extractAndStore` **返回时行就已经落库** —— 这条守的是 `pipeline.ts::store_` 里那个 await", async () => {
+    const written: Written[] = [];
+    let settled = 0;
+    const store = {
+      ensureSchema: () => {},
+      needsExtract: () => true,
+      // 模拟桌面：`replace` 要过命令面 ⇒ 至少一个 tick 之后才算落库
+      replace: async (_attId: string, extractorId: string, _hash: string, segments: { text: string }[]) => {
+        await new Promise((r) => setTimeout(r, 0));
+        written.push({ extractor: extractorId, texts: segments.map((s) => s.text) });
+        settled++;
+      },
+      removeAttachment: () => {},
+      segmentsOf: () => [],
+      stats: () => [],
+    } as unknown as AttachmentTextStore;
+
+    const calls: string[] = [];
+    const out = await extractAndStore({
+      attId: "a1",
+      bytes: new Uint8Array([1]),
+      filename: "x.t",
+      mime: "application/x-test",
+      hash: "h1",
+      store,
+      registry: [fakeExtractor("ok@1", ok("ok@1", [{ kind: "text", text: "正文", loc: "" }]), calls)],
+    });
+
+    expect(out).toMatchObject({ status: "stored", extractor: "ok@1" });
+    // ⚠️ 这两条就是判据：漏 await 时 `settled` 仍是 0（写还排在队列里），
+    //    紧接着的 `needsExtract` 会读不到行 ⇒ 索引"跑完了"但库里是空的。
+    expect(settled).toBe(1);
+    expect(written).toEqual([{ extractor: "ok@1", texts: ["正文"] }]);
+  });
+});

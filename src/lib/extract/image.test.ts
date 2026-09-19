@@ -4,7 +4,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { imageOcrExtractor, OCR_PROMPT } from "./image";
+import { CAPTION_PROMPT, imageCaptionExtractor, imageOcrExtractor, OCR_PROMPT } from "./image";
+import { extractAndStore } from "./pipeline";
+import { candidates, REGISTRY } from "./registry";
+import type { AttachmentTextStore } from "./store";
 import { fail, ok, type ExtractInput, type Extractor } from "./types";
 
 /** 造一个最小的图片输入（本抽取器不解析字节，只把它们交给 vision）。 */
@@ -127,3 +130,153 @@ describe("与契约工具函数的配合", () => {
 // 类型层面的自检：extract 的返回类型必须是 ExtractResult（防止有人改成抛异常）
 const _typecheck: Extractor = imageOcrExtractor;
 void _typecheck;
+
+// ---------------------------------------------------------------------------
+// 第二档：`image.caption@1`（VLM 语义描述，2026-09-19 落地）
+//
+// 除了与 OCR 同套的"红线/不穿透/空即 empty"，这里多钉两条**只有这一档才有**的东西：
+//   1. **提示词里那条"不许推测"必须在**（否则它就变成一台编造机，而用户看不出来）；
+//   2. **调度顺序**：OCR 排在 caption 前面，且只有 OCR 判 `empty` 才轮到 caption。
+// ---------------------------------------------------------------------------
+
+/** 记录"谁的结果被落库了"的假 store（与 `coverage.test.ts` 同形；本文件要验调度顺序）。 */
+function recordingStore() {
+  const written: { extractor: string; texts: string[] }[] = [];
+  const store = {
+    ensureSchema: () => {},
+    needsExtract: () => true,
+    replace: (_attId: string, extractorId: string, _hash: string, segments: { text: string }[]) => {
+      written.push({ extractor: extractorId, texts: segments.map((s) => s.text) });
+    },
+    removeAttachment: () => {},
+    segmentsOf: () => [],
+    stats: () => [],
+  } as unknown as AttachmentTextStore;
+  return { store, written };
+}
+
+describe("image.caption@1", () => {
+  it("声明为 gpu 档、认领 image/*（与 OCR 同族）", () => {
+    expect(imageCaptionExtractor.cost).toBe("gpu");
+    expect(imageCaptionExtractor.id).toBe("image.caption@1");
+    expect(imageCaptionExtractor.mimes).toContain("image/*");
+    expect(imageCaptionExtractor.extensions).toContain(".png");
+  });
+
+  it("**没有注入 vision ⇒ 立刻 provider_error**（红线：不许自己连网）", async () => {
+    const r = await imageCaptionExtractor.extract(input({}));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe("provider_error");
+      expect(r.message).toContain("deps.vision");
+    }
+  });
+
+  it("vision 给出描述 ⇒ `caption` 段，loc 为空", async () => {
+    const { vision, calls } = spyVision("一只橘猫趴在键盘上，背景是书桌。");
+    const r = await imageCaptionExtractor.extract(input({ vision }));
+    expect(r).toMatchObject({ ok: true, extractor: "image.caption@1" });
+    if (r.ok) {
+      expect(r.segments).toEqual([{ kind: "caption", text: "一只橘猫趴在键盘上，背景是书桌。", loc: "" }]);
+    }
+    // 提示词与 mime 原样传给 vision
+    expect(calls[0].prompt).toBe(CAPTION_PROMPT);
+    expect(calls[0].mime).toBe("image/png");
+  });
+
+  it("★ 提示词必须**禁止推测**（这条是「别变成编造机」的唯一护栏）", () => {
+    // 不钉整句（措辞可以改），钉那几条**必须表达出来**的约束：
+    expect(CAPTION_PROMPT).toContain("只描述你确实看到的内容");
+    expect(CAPTION_PROMPT).toContain("不要推测");
+    expect(CAPTION_PROMPT).toContain("看不清");
+    // 且要求短（长描述会摊薄检索文本）
+    expect(CAPTION_PROMPT).toMatch(/一到两句/);
+  });
+
+  it("vision 返回空白 ⇒ empty（不是失败）", async () => {
+    const { vision } = spyVision("   ");
+    const r = await imageCaptionExtractor.extract(input({ vision }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("empty");
+  });
+
+  it("vision 抛异常 ⇒ provider_error，不穿透", async () => {
+    const vision = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    await expect(imageCaptionExtractor.extract(input({ vision }))).resolves.toMatchObject({
+      ok: false,
+      code: "provider_error",
+    });
+  });
+});
+
+describe("图片两个抽取器的**调度顺序**（兜底链）", () => {
+  it("candidates() 对一张 png 给出 [ocr, caption] —— 顺序即优先级", () => {
+    const got = candidates("image/png", "照片.png", REGISTRY).map((e) => e.id);
+    expect(got).toEqual(["image.ocr@1", "image.caption@1"]);
+  });
+
+  it("★ 端到端：图里有字 ⇒ 只有 OCR 的结果；图里没字（OCR empty）⇒ 落到 caption", async () => {
+    const ocr = (reply: string) => {
+      const { vision } = spyVision(reply);
+      return vision;
+    };
+
+    // ① 图里有字：OCR 拿到文字 ⇒ 收工，caption 不该被调用
+    {
+      const calls: string[] = [];
+      const nth = (id: string, text: string): Extractor => ({
+        id,
+        mimes: ["image/*"],
+        extensions: [".png"],
+        cost: "gpu",
+        extract: async () => {
+          calls.push(id);
+          return text ? ok(id, [{ kind: id.includes("ocr") ? "ocr" : "caption", text, loc: "" }]) : fail(id, "empty", "");
+        },
+      });
+      const { store, written } = recordingStore();
+      const out = await extractAndStore({
+        attId: "att-img",
+        bytes: new Uint8Array([1]),
+        filename: "照片.png",
+        mime: "image/png",
+        hash: "h",
+        deps: { vision: ocr("发票号码 001") },
+        registry: [imageOcrExtractor, imageCaptionExtractor],
+        store,
+      });
+      expect(out).toMatchObject({ status: "stored", extractor: "image.ocr@1" });
+      expect(written[0]?.extractor).toBe("image.ocr@1");
+      expect(calls).toEqual([]);
+      void nth;
+    }
+
+    // ② 图里没字：OCR 判 empty ⇒ 调度器换 caption
+    {
+      const { store, written } = recordingStore();
+      const seen: string[] = [];
+      const spyOn = (ex: Extractor): Extractor => ({
+        ...ex,
+        extract: async (i2: ExtractInput) => {
+          seen.push(ex.id);
+          return ex.extract(i2);
+        },
+      });
+      const out = await extractAndStore({
+        attId: "att-photo",
+        bytes: new Uint8Array([1]),
+        filename: "照片.png",
+        mime: "image/png",
+        hash: "h",
+        deps: { vision: async (prompt: string) => (prompt === CAPTION_PROMPT ? "一只猫。" : "   ") },
+        registry: [spyOn(imageOcrExtractor), spyOn(imageCaptionExtractor)],
+        store,
+      });
+      expect(seen).toEqual(["image.ocr@1", "image.caption@1"]);
+      expect(out).toMatchObject({ status: "stored", extractor: "image.caption@1" });
+      expect(written[0]).toEqual({ extractor: "image.caption@1", texts: ["一只猫。"] });
+    }
+  });
+});

@@ -7,7 +7,7 @@
 //     否则一个"扩展名沾边但 mime 更准"的抽取器会抢在正确的那一个前面。
 
 import { htmlExtractor } from "./html";
-import { imageOcrExtractor } from "./image";
+import { imageCaptionExtractor, imageOcrExtractor } from "./image";
 import { pdfTextExtractor } from "./pdf";
 import { pdfOcrExtractor } from "./pdfOcr";
 import { OOXML_EXTRACTORS } from "./ooxml";
@@ -105,12 +105,18 @@ export function pickExtractor(
  *    `no_extractor` 才补的）
  *  - ✅ HTML（`text.html@1`）—— **同一次真样张**里 `.html` 也是 `no_extractor`（保存的网页很常见）
  *  - ✅ PDF 视觉通道（`pdf.ocr@1`），cost=gpu —— 扫描件/混合文档；**只对没有文本层的页**做视觉
- *  - ⏳ 待补：`image.caption`（VLM 语义描述，方案 §13 待拍板第 2 项默认留到 P3）、
- *    `ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
+ *  - ✅ 图片语义描述（`image.caption@1`），cost=gpu —— 2026-09-19 落地；**只在 OCR 判 empty 时被调度**
+ *  - ⏳ 待补：`ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
  */
 export const REGISTRY: readonly Extractor[] = [
   ...OOXML_EXTRACTORS,
   imageOcrExtractor,
+  // ⚠️ 顺序即优先级：`image.ocr` 排在 `image.caption` **前面** —— 图里有文字就用文字
+  //    （检索要的是可命中的原文），**只有 OCR 判 `empty`（照片/纯图形）才轮到语义描述**
+  //    （调度规则见 pipeline.ts：只对 `unsupported` / `empty` 换下一个候选，§15.4）。
+  //    ⇒ 已知取舍（2026-09-19）：一张**带文字的**图今天只出 OCR 文本、不出描述。
+  //      要让两者都进库得改调度语义（"合并多个抽取器"要先定义谁赢），那是另一件事，别顺手加。
+  imageCaptionExtractor,
   // ⚠️ 顺序即优先级：pdf.text 必须排在 pdf.ocr **前面**（先试便宜的文本层，抽不到才上视觉）。
   //    调度规则见 pipeline.ts：`pdf.text` 返回 `empty` 时才会换到 `pdf.ocr`（§15.4）。
   pdfTextExtractor,
