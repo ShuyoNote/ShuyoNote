@@ -90,14 +90,14 @@ async function makeStore() {
   const SQL = await sqlModule;
   const db = new SQL.Database() as unknown as SqlJsDatabase;
   const store = createAttachmentTextStore(runnerFrom(db));
-  store.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await store.ensureSchema(DERIVED_SCHEMA_DDL));
   return store;
 }
 
 describe.skipIf(!ROOT)("真样张冒烟（EXTRACT_SAMPLES）", () => {
   const files = ROOT ? walk(ROOT) : [];
 
-  it("目录里至少有一个文件（否则是路径配错了，不是「没有样张」）", () => {
+  it("目录里至少有一个文件（否则是路径配错了，不是「没有样张」）", async () => {
     expect(files.length, `EXTRACT_SAMPLES=${ROOT} 下一个文件都没有`).toBeGreaterThan(0);
   });
 
@@ -140,7 +140,7 @@ describe.skipIf(!ROOT)("真样张冒烟（EXTRACT_SAMPLES）", () => {
         return;
       }
 
-      const segs = store.segmentsOf("sample");
+      const segs = (await store.segmentsOf("sample"));
       const chars = segs.reduce((n, r) => n + r.text.length, 0);
       const head = (segs[0]?.text ?? "").replace(/\s+/g, " ").slice(0, 60);
       // eslint-disable-next-line no-console

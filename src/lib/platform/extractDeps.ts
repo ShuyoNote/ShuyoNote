@@ -118,12 +118,14 @@ export async function extractAttachment(
     // 文本没变（cached）但**块是空的** ⇒ 补切一次。
     // 这条是给"分块能力上线之前就已经抽好的附件"用的：否则它们会永远没有块，
     // 而每次调用都重切又没必要（块 id/hash 稳定，重切是幂等但白做功）。
-    (outcome.status === "cached" && stores.chunks.chunksOf(owner).length === 0);
+    (outcome.status === "cached" && (await stores.chunks.chunksOf(owner)).length === 0);
 
-  if (!shouldChunk) return { meta, outcome, chunks: stores.chunks.chunksOf(owner).length };
+  if (!shouldChunk) return { meta, outcome, chunks: (await stores.chunks.chunksOf(owner)).length };
 
-  const segments = stores.text.segmentsOf(attId).map((r) => ({ text: r.text, loc: r.loc }));
+  // ⚠️ 下面的 `await` 不能省：桌面侧这两个方法走命令面（异步），漏掉就会**先切后读**、
+  //    甚至把空段切成空块（`chunkSegments` 拿到的是 Promise ⇒ 结构化上就错了，但只有 await 能兜住）。
+  const segments = (await stores.text.segmentsOf(attId)).map((r) => ({ text: r.text, loc: r.loc }));
   const chunks = chunkSegments(owner, segments);
-  stores.chunks.replace(owner, chunks);
+  await stores.chunks.replace(owner, chunks);
   return { meta, outcome, chunks: chunks.length };
 }

@@ -70,13 +70,13 @@ describe("派生文本层接进 Web 平台", () => {
       1000,
     );
 
-    const rows = derived.segmentsOf("att-1");
+    const rows = (await derived.segmentsOf("att-1"));
     expect(rows.map((r) => [r.seq, r.kind, r.text])).toEqual([
       [0, "heading", "季度总结"],
       [1, "text", "第一段"],
     ]);
-    expect(derived.needsExtract("att-1", "hash-a", ["ooxml.docx@1"])).toBe(false);
-    expect(derived.needsExtract("att-1", "hash-b", ["ooxml.docx@1"])).toBe(true);
+    expect((await derived.needsExtract("att-1", "hash-a", ["ooxml.docx@1"]))).toBe(false);
+    expect((await derived.needsExtract("att-1", "hash-b", ["ooxml.docx@1"]))).toBe(true);
   });
 
   it("**纪律 ①**：派生表不参与同步 —— 不在平台建的表清单里被当成业务实体（防回归哨兵）", async () => {

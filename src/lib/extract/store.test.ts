@@ -66,6 +66,7 @@ function runner(db: SqlJsDatabase): SqlRunner {
 function freshStore() {
   const db = new SQL.Database() as unknown as SqlJsDatabase;
   const store = createAttachmentTextStore(runner(db));
+  // 同步 sql.js store ⇒ 不必 await（Awaitable<void> 允许同步实现）。
   store.ensureSchema(DERIVED_SCHEMA_DDL);
   return { db, store };
 }
@@ -76,9 +77,10 @@ const SEG = [
 ];
 
 describe("schema", () => {
-  it("三张表都能建出来（DDL 是单语句、幂等）", () => {
+  it("三张表都能建出来（DDL 是单语句、幂等）", async () => {
     const { db, store } = freshStore();
-    store.ensureSchema(DERIVED_SCHEMA_DDL); // 再跑一次必须无害
+    // 同步 sql.js store ⇒ 不必 await（Awaitable<void> 允许同步实现）。
+  store.ensureSchema(DERIVED_SCHEMA_DDL); // 再跑一次必须无害
     const names = db
       .exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0]
       .values.flat()
@@ -90,10 +92,10 @@ describe("schema", () => {
 });
 
 describe("AttachmentTextStore", () => {
-  it("replace 后能读回，且 seq 从 0 连续", () => {
+  it("replace 后能读回，且 seq 从 0 连续", async () => {
     const { store } = freshStore();
     store.replace("att1", "ooxml.docx@1", "h1", SEG, 1000);
-    const rows = store.segmentsOf("att1");
+    const rows = (await store.segmentsOf("att1"));
     expect(rows.map((r) => r.seq)).toEqual([0, 1]);
     expect(rows.map((r) => r.kind)).toEqual(["heading", "text"]);
     expect(rows.map((r) => r.text)).toEqual(["季度总结", "第一段"]);
@@ -101,49 +103,49 @@ describe("AttachmentTextStore", () => {
     expect(rows.every((r) => r.updated_at === 1000)).toBe(true);
   });
 
-  it("replace 是**整体替换**：再次调用不会留下上一次的残段", () => {
+  it("replace 是**整体替换**：再次调用不会留下上一次的残段", async () => {
     const { store } = freshStore();
     store.replace("att1", "ooxml.docx@1", "h1", SEG, 1000);
     store.replace("att1", "ooxml.docx@1", "h2", [SEG[0]], 2000);
-    const rows = store.segmentsOf("att1");
+    const rows = (await store.segmentsOf("att1"));
     expect(rows).toHaveLength(1);
     expect(rows[0].src_hash).toBe("h2");
     expect(rows[0].updated_at).toBe(2000);
   });
 
-  it("needsExtract：没抽过 ⇒ true；抽过且 hash 一致 ⇒ false；hash 变了 ⇒ true", () => {
+  it("needsExtract：没抽过 ⇒ true；抽过且 hash 一致 ⇒ false；hash 变了 ⇒ true", async () => {
     const { store } = freshStore();
-    expect(store.needsExtract("att1", "h1", ["ooxml.docx@1"])).toBe(true);
+    expect((await store.needsExtract("att1", "h1", ["ooxml.docx@1"]))).toBe(true);
 
     store.replace("att1", "ooxml.docx@1", "h1", SEG, 1000);
-    expect(store.needsExtract("att1", "h1", ["ooxml.docx@1"])).toBe(false);
-    expect(store.needsExtract("att1", "h2", ["ooxml.docx@1"])).toBe(true);
+    expect((await store.needsExtract("att1", "h1", ["ooxml.docx@1"]))).toBe(false);
+    expect((await store.needsExtract("att1", "h2", ["ooxml.docx@1"]))).toBe(true);
   });
 
-  it("needsExtract：要求**每个**候选抽取器都有当前 hash 的行", () => {
+  it("needsExtract：要求**每个**候选抽取器都有当前 hash 的行", async () => {
     const { store } = freshStore();
     store.replace("att1", "pdf.text@1", "h1", SEG, 1000);
     // pdf.ocr@1 还没抽 ⇒ 仍需抽（否则会出现"换了个抽取器却没抽"的静默空洞）
-    expect(store.needsExtract("att1", "h1", ["pdf.text@1", "pdf.ocr@1"])).toBe(true);
+    expect((await store.needsExtract("att1", "h1", ["pdf.text@1", "pdf.ocr@1"]))).toBe(true);
     store.replace("att1", "pdf.ocr@1", "h1", SEG, 1000);
-    expect(store.needsExtract("att1", "h1", ["pdf.text@1", "pdf.ocr@1"])).toBe(false);
+    expect((await store.needsExtract("att1", "h1", ["pdf.text@1", "pdf.ocr@1"]))).toBe(false);
   });
 
-  it("needsExtract：空候选列表 ⇒ false（没有要抽的东西）", () => {
+  it("needsExtract：空候选列表 ⇒ false（没有要抽的东西）", async () => {
     const { store } = freshStore();
-    expect(store.needsExtract("att1", "h1", [])).toBe(false);
+    expect((await store.needsExtract("att1", "h1", []))).toBe(false);
   });
 
-  it("removeAttachment 只删该附件", () => {
+  it("removeAttachment 只删该附件", async () => {
     const { store } = freshStore();
     store.replace("att1", "x@1", "h", SEG, 1);
     store.replace("att2", "x@1", "h", SEG, 1);
-    store.removeAttachment("att1");
-    expect(store.segmentsOf("att1")).toHaveLength(0);
-    expect(store.segmentsOf("att2")).toHaveLength(2);
+    (await store.removeAttachment("att1"));
+    expect((await store.segmentsOf("att1"))).toHaveLength(0);
+    expect((await store.segmentsOf("att2"))).toHaveLength(2);
   });
 
-  it("stats 按抽取器汇总段数与字符数", () => {
+  it("stats 按抽取器汇总段数与字符数", async () => {
     const { store } = freshStore();
     store.replace("att1", "a@1", "h", SEG, 1); // 4 + 3 = 7 字
     store.replace("att2", "b@1", "h", [SEG[0]], 1); // 4 字
@@ -153,7 +155,7 @@ describe("AttachmentTextStore", () => {
     ]);
   });
 
-  it("主键约束真实生效：(att_id, extractor, seq) 重复插入被 SQLite 拒绝", () => {
+  it("主键约束真实生效：(att_id, extractor, seq) 重复插入被 SQLite 拒绝", async () => {
     const { db, store } = freshStore();
     store.replace("att1", "a@1", "h", SEG, 1);
     // 绕过 replace（它会先删）直接插入同样的主键 ⇒ 必须报错，否则"整体替换"的语义没有保障
@@ -167,7 +169,7 @@ describe("AttachmentTextStore", () => {
 });
 
 describe("registry 候选", () => {
-  it("candidates 保持顺序、含 mime 命中与扩展名命中、且去重", () => {
+  it("candidates 保持顺序、含 mime 命中与扩展名命中、且去重", async () => {
     const a: Extractor = { ...docxExtractor, id: "a@1" };
     const b: Extractor = { ...docxExtractor, id: "b@1" };
     const list = candidates("application/msword", "x.docx", [a, b]);
@@ -175,12 +177,12 @@ describe("registry 候选", () => {
     expect(list.map((e) => e.id)).toEqual(["a@1", "b@1"]);
   });
 
-  it("pickExtractor 就是 candidates[0]", () => {
+  it("pickExtractor 就是 candidates[0]", async () => {
     expect(pickExtractor("", "x.docx", REGISTRY)?.id).toBe("ooxml.docx@1");
     expect(pickExtractor("", "x.docx", REGISTRY)).toBe(candidates("", "x.docx", REGISTRY)[0]);
   });
 
-  it("真实注册表：三个 OOXML 抽取器各认自己的扩展名", () => {
+  it("真实注册表：三个 OOXML 抽取器各认自己的扩展名", async () => {
     expect(pickExtractor("", "a.docx", REGISTRY)?.id).toBe("ooxml.docx@1");
     expect(pickExtractor("", "a.xlsx", REGISTRY)?.id).toBe("ooxml.xlsx@1");
     expect(pickExtractor("", "a.pptx", REGISTRY)?.id).toBe("ooxml.pptx@1");
@@ -215,7 +217,7 @@ describe("extractAndStore", () => {
     const { store } = freshStore();
     const r = await extractAndStore({ ...base, store, registry: [fakeOk("x@1", [".docx"])] });
     expect(r).toMatchObject({ status: "stored", extractor: "x@1", segments: 1 });
-    expect(store.segmentsOf("att1")).toHaveLength(1);
+    expect((await store.segmentsOf("att1"))).toHaveLength(1);
   });
 
   it("第二次同 hash：cached，不重复写（updated_at 保持不变）", async () => {
@@ -224,7 +226,7 @@ describe("extractAndStore", () => {
     await extractAndStore({ ...base, store, registry: reg, now: 111 });
     const r = await extractAndStore({ ...base, store, registry: reg, now: 999 });
     expect(r).toMatchObject({ status: "cached" });
-    expect(store.segmentsOf("att1")[0].updated_at).toBe(111);
+    expect((await store.segmentsOf("att1"))[0].updated_at).toBe(111);
   });
 
   it("hash 变了：重抽并覆盖", async () => {
@@ -232,7 +234,7 @@ describe("extractAndStore", () => {
     const reg = [fakeOk("x@1", [".docx"])];
     await extractAndStore({ ...base, store, registry: reg, now: 111 });
     await extractAndStore({ ...base, hash: "h2", store, registry: reg, now: 222 });
-    expect(store.segmentsOf("att1")[0].src_hash).toBe("h2");
+    expect((await store.segmentsOf("att1"))[0].src_hash).toBe("h2");
   });
 
   it("没有抽取器认：no_extractor", async () => {
@@ -296,11 +298,11 @@ describe("extractAndStore", () => {
     expect(r).toMatchObject({ status: "failed", code: "provider_error" });
 
     // 旧行原样保留（仍带 h1）——
-    const rows = store.segmentsOf("att1");
+    const rows = (await store.segmentsOf("att1"));
     expect(rows).toHaveLength(1);
     expect(rows[0].src_hash).toBe("h1");
     // 于是"过期"由 src_hash 自己暴露：下次仍会重试，不会静默停在残缺状态
-    expect(store.needsExtract("att1", "h2", ["x@1"])).toBe(true);
+    expect((await store.needsExtract("att1", "h2", ["x@1"]))).toBe(true);
   });
 
   // ---- gpu 抽取器端到端（用真的 image.ocr@1，不是假的）--------------------
@@ -317,9 +319,9 @@ describe("extractAndStore", () => {
       registry: REGISTRY,
     });
     expect(r).toMatchObject({ status: "failed", code: "provider_error", tried: ["image.ocr@1"] });
-    expect(store.segmentsOf("att1")).toHaveLength(0);
+    expect((await store.segmentsOf("att1"))).toHaveLength(0);
     // 没写库 ⇒ 下次仍会重试（不会因为"试过了"就永久跳过）
-    expect(store.needsExtract("att1", "h1", ["image.ocr@1"])).toBe(true);
+    expect((await store.needsExtract("att1", "h1", ["image.ocr@1"]))).toBe(true);
   });
 
   it("真实注册表 + 真 image.ocr@1：注入 vision 后落库，kind = ocr", async () => {
@@ -334,7 +336,7 @@ describe("extractAndStore", () => {
       now: 500,
     });
     expect(r).toMatchObject({ status: "stored", extractor: "image.ocr@1", kinds: ["ocr"] });
-    const rows = store.segmentsOf("att1");
+    const rows = (await store.segmentsOf("att1"));
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ kind: "ocr", text: "发票号码 001", loc: "", src_hash: "h1" });
     // 第二次同 hash ⇒ cached（gpu 抽取器也不该被重复调用——那是最贵的一种浪费）
@@ -348,6 +350,6 @@ describe("extractAndStore", () => {
       now: 999,
     });
     expect(again).toMatchObject({ status: "cached" });
-    expect(store.segmentsOf("att1")[0].updated_at).toBe(500);
+    expect((await store.segmentsOf("att1"))[0].updated_at).toBe(500);
   });
 });

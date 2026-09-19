@@ -54,14 +54,35 @@ async function stores() {
     },
   };
   const text = createAttachmentTextStore(runner);
-  text.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await text.ensureSchema(DERIVED_SCHEMA_DDL));
   const chunks = createChunkStore(runner);
-  chunks.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await chunks.ensureSchema(DERIVED_SCHEMA_DDL));
   return { text, chunks };
 }
 
-const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
-const docx = (text: string) =>
+/**
+ * 把**同步** store 包成"每次调用都让出一个 tick"的**异步** store。
+ *
+ * 为什么需要这个假后端：`AttachmentTextStore`/`ChunkStore` 的返回类型这一轮放宽成了 `Awaitable<T>`
+ * （桌面侧走命令面、`invoke` 必然异步），而**漏写 `await`** 在 TS 里抓不住（仓库没有
+ * `no-floating-promises`）：同步实现下漏了也能跑过（值就在手边），异步实现下漏了会读到旧值/空值。
+ * ⇒ 让每次调用都真的异步，就能把"漏 await"放大成**必然可见**的差异。
+ */
+function asAsync<T extends object>(store: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(store as Record<string, unknown>)) {
+    out[k] =
+      typeof v === "function"
+        ? async (...args: unknown[]) => {
+            await new Promise((r) => setTimeout(r, 0));
+            return await (v as (...a: unknown[]) => unknown)(...args);
+          }
+        : v;
+  }
+  return out as T;
+}
+
+const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';const docx = (text: string) =>
   zipSync({
     "word/document.xml": strToU8(
       `<w:document ${W}><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`,
@@ -129,9 +150,31 @@ describe("indexPage：把一个页面索引完整", () => {
 
     expect(r.page.chunks).toBeGreaterThan(1); // 页面正文被切了
     expect(r.attachments.map((a) => a.status)).toEqual(["stored", "stored"]);
-    expect(s.chunks.chunksOf({ kind: "page", pageId: "p1" }).length).toBe(r.page.chunks);
-    expect(s.chunks.chunksOf({ kind: "attachment", attId: "a2" }).length).toBeGreaterThan(1);
+    expect((await s.chunks.chunksOf({ kind: "page", pageId: "p1" })).length).toBe(r.page.chunks);
+    expect((await s.chunks.chunksOf({ kind: "attachment", attId: "a2" })).length).toBeGreaterThan(1);
     expect(r.summary).toContain("附件 2 个（可检索 2）");
+  });
+
+  it("★ 慢后端（异步 store，每次调用让出一个 tick）下索引结果与同步 store **逐字相同** —— 这条守「漏 await」", async () => {
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(listed(["a1"]));
+    setActivePlatform(platformWith({ p1: longBody(120) }, { a1: docx("附件一") }));
+
+    const sync = await stores();
+    const syncResult = await indexPage("p1", sync);
+
+    const delayed = await stores();
+    const asyncResult = await indexPage("p1", { text: asAsync(delayed.text), chunks: asAsync(delayed.chunks) });
+
+    // ① 对外结果一致（摘要/块数/每个附件的状态与计数）
+    expect(asyncResult.summary).toBe(syncResult.summary);
+    expect(asyncResult.page.chunks).toBe(syncResult.page.chunks);
+    expect(asyncResult.attachments).toEqual(syncResult.attachments);
+    // ② **落库状态**一致 —— 漏 await 时最典型的症状就是这里空/旧（读发生在写之前）
+    expect(await delayed.chunks.chunksOf({ kind: "page", pageId: "p1" })).toEqual(
+      await sync.chunks.chunksOf({ kind: "page", pageId: "p1" }),
+    );
+    expect((await delayed.text.segmentsOf("a1")).length).toBeGreaterThan(0);
+    expect((await delayed.chunks.chunksOf({ kind: "attachment", attId: "a1" })).length).toBeGreaterThan(0);
   });
 
   it("**一个附件失败不拖垮整页**：其余照常索引，失败如实进结果（含错误码）", async () => {
@@ -151,7 +194,7 @@ describe("indexPage：把一个页面索引完整", () => {
     expect(gone.status).toBe("failed");
     expect(gone.code).toBe("internal");
     // 页面正文**照样**有块（不被附件拖累）
-    expect(s.chunks.chunksOf({ kind: "page", pageId: "p1" }).length).toBe(1);
+    expect((await s.chunks.chunksOf({ kind: "page", pageId: "p1" })).length).toBe(1);
   });
 
   it("**重复调用很便宜**：第二次全是 cached / 页面块 unchanged（所以保存时无脑调它即可）", async () => {
@@ -233,7 +276,7 @@ describe("indexLibrary：全库索引（UI 上那个「开始索引」）", () =
     expect(r.attachments.byStatus).toEqual({ stored: 2 });
     expect(r.unfiled.attachments.map((a) => a.attId)).toEqual(["u1"]);
     // 块总数**就是库里的真实值**（来自一次 stats，不编造分项）
-    expect(r.chunks.total).toBe(s.chunks.stats().chunks);
+    expect(r.chunks.total).toBe((await s.chunks.stats()).chunks);
     expect(r.chunks.total).toBeGreaterThan(0);
     expect(r.summary).toContain("页面 2/2 已索引");
   });
@@ -249,7 +292,7 @@ describe("indexLibrary：全库索引（UI 上那个「开始索引」）", () =
     expect(r.pages).toEqual({ total: 2, ok: 1, failed: 1 });
     expect(r.failures).toEqual([{ kind: "page", id: "bad", reason: "页面不存在: bad" }]);
     // 好页面**确实**被索引了（不是"因为有人坏就整批放弃"）
-    expect(s.chunks.chunksOf({ kind: "page", pageId: "good" }).length).toBeGreaterThan(0);
+    expect((await s.chunks.chunksOf({ kind: "page", pageId: "good" })).length).toBeGreaterThan(0);
     expect(r.summary).toContain("失败 1");
   });
 
@@ -307,7 +350,7 @@ describe("indexUnfiled：把「未整理」的附件也索引掉（否则报告�
     expect(r.attachments).toHaveLength(2);
     expect(r.attachments.find((a) => a.attId === "u1")?.status).toBe("stored");
     expect(r.summary).toContain("未整理附件 2 个");
-    expect(s.chunks.chunksOf({ kind: "attachment", attId: "u1" }).length).toBeGreaterThan(0);
+    expect((await s.chunks.chunksOf({ kind: "attachment", attId: "u1" })).length).toBeGreaterThan(0);
 
     // 取材的是"未整理"那一路 —— 与覆盖报告的取材口径一致（否则报告说缺、这里索引不到）
     const calls = (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mock.calls;

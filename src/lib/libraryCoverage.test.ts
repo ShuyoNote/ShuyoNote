@@ -54,9 +54,9 @@ async function stores() {
     },
   };
   const text = createAttachmentTextStore(runner);
-  text.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await text.ensureSchema(DERIVED_SCHEMA_DDL));
   const chunks = createChunkStore(runner);
-  chunks.ensureSchema(DERIVED_SCHEMA_DDL);
+  (await chunks.ensureSchema(DERIVED_SCHEMA_DDL));
   return { text, chunks };
 }
 

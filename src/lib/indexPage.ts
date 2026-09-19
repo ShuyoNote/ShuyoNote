@@ -237,7 +237,7 @@ export async function indexLibrary(
   tally(unfiled.attachments);
   opts.onProgress?.(total, total, "完成");
 
-  const chunks = stores.chunks.stats().chunks;
+  const chunks = (await stores.chunks.stats()).chunks;
   return {
     pages: { total: pageIds.length, ok, failed: pageIds.length - ok },
     attachments: { total: attTotal, searchable: attSearchable, byStatus },

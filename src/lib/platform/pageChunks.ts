@@ -54,10 +54,10 @@ export async function chunkPage(
   const title = opts.title ?? page.title ?? "";
   const next = chunkText(owner, page.content_text ?? "", title);
 
-  const stored = store.chunksOf(owner);
+  const stored = await store.chunksOf(owner);
   if (sameChunks(next, stored)) return { pageId, chunks: next.length, changed: false };
 
-  store.replace(owner, next);
+  await store.replace(owner, next);
   return { pageId, chunks: next.length, changed: true };
 }
 
