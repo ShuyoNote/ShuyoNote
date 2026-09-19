@@ -169,6 +169,28 @@ KDF ：b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad9
 > 另：探针**证不出对方身份** —— macOS 自带的 LibreSSL `/usr/bin/openssl` 也把 9 条全过了
 > （它也有 SM4）。所以门禁现在会把**对拍另一方的版本行**打出来，让读数可复核，而不是靠名字。
 
+**§0-C 最后两条落地（2026-09-19，Mac）**
+
+§0-C 的原文要求是"算法标识除了密文头，还要落到**空间状态 ＋ 同步载荷**"，
+目的只有一个：**老端在整空间/同步之前就明确拒绝并提示升级**，而不是逐条解密失败、让用户以为数据坏了。
+落法（**不动服务端、不动线格式** —— 标识本来就藏在密文头里，缺的是"**动手之前**去看它"）：
+
+| 机制 | 实现 | 判据 |
+|---|---|---|
+| 不解密就能读版本 | `crypto::peek_format` / `format_supported` / `unsupported_format_error` | `crypto::tests::peek_format_reads_the_header_without_a_key`（三格：无头/v1/v2 ＋ 未来版本 ＋ 非密文） |
+| **同步整批拒绝** | `security::ensure_payloads_supported`；`sync.rs::do_pull` 在**应用循环之前**调 `prescan_payload_formats` | `sync::tests::prescan_payload_formats_refuses_the_whole_batch`（一批里夹一段 v2 ⇒ 整批 Err；明文/无载荷放行） |
+| **空间级标识** | `meta.workspaces.cipher_format`（幂等迁移）＋ `space_format()` / `ensure_space_format_supported()`，并在 **`sync_gate`** 里挡住 | `db::tests::meta_migrate_adds_cipher_format_to_an_old_meta_db`、`security::tests::space_guard_refuses_v2_in_the_default_build`／`…allows_v2_in_the_sm_build` |
+| **附件拒绝**（★ 堵住一个**安静损坏**） | `decrypt_attachment_bytes` **先看头**：认得出但本构建解不开的版本 ⇒ **拒绝**，不再"解不开就当明文" | `security::tests::attachment_bytes_of_an_unsupported_format_are_refused_not_passed_through` |
+
+> ★ **附件那条是本轮最值得记的**：旧的"解不开 ⇒ 透传"逻辑对**明文附件**是对的（加密未开时存的就是明文），
+> 但对"**本构建读不了的密文**"是灾难 —— 它会把密文当明文交给上层，**安静地写出一个损坏的文件**，
+> 比报错更坏。所以改成："看着就是我们的密文、但版本解不开" ⇒ 拒绝并说清换哪个版本；
+> "认得出的版本但解不开（口令不同）"与"根本不是密文" ⇒ 维持老的透传语义（不许把老行为改坏）。
+
+> ⚠️ **诚实边界**：`prescan` 的判据只覆盖那个**纯函数**的语义；"必须在应用循环之前调用"由
+> `do_pull` 里的调用点位置保证，**没有起真服务端做端到端**（属真机/集成验收）。附件的同类判据
+> 也只在默认构建下断言"拒绝"，国密构建下的"放行"由 cfg 的另一半覆盖。
+
 **⑤ 的当前状态（本轮实测，不是转述方案的判断）**
 
 `src-tauri/target/release/build/libsqlite3-sys-*/output` 里写着 `cargo:rustc-link-lib=framework=Security`
@@ -553,8 +575,10 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
       —— `crypto_sm::tests::tampering_anywhere_fails_before_decrypting` ＋ `encryption_and_mac_keys_are_not_interchangeable`
 - [x] **未知算法明确拒绝**：老端读新密文/同步载荷时给出"请升级客户端"，**不是"数据损坏"**（§0-C）
       —— `unknown_future_version_gets_an_actionable_error` ＋ 默认构建读 v2 的 `…rejects_v2_with_an_actionable_error`
-      ⚠️ §0-C 的另两条（**空间元数据**记录本空间算法、**同步载荷**带标识）**未做**；状态字段那条已加
-      （`EncryptionStatus.format/algorithm`）
+      ✅ **§0-C 全落**（2026-09-19 补）：状态字段 `EncryptionStatus.format/algorithm`；
+      **空间元数据**记录本空间算法（`meta.workspaces.cipher_format` ＋ 幂等迁移 ＋ `space_format()`）；
+      **同步载荷与附件**的版本**不解密就能读**（`crypto::peek_format`），并做**整批拒绝**与
+      **附件拒绝**（见下）
 - [x] **KDF 迭代有断言**：常量写死 ＋ 断言防止被改小（`kdf_rounds_are_the_pinned_value`）；
       压测记录在 §0.2（本机 ≈112 ms 解锁；**中端机数字是外推、非实测**，见 §0.2 的两条诚实标注）（§0-D）
 - [x] **构建门禁断言实际加密后端**（§3 第 5 条）：`check-crypto-backend` 已落地（rust 组），

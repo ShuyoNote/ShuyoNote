@@ -76,6 +76,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **换加密后端前后旧库仍可读**（页加密读写回归） | `security::tests::fixture_db_written_by_the_other_provider_still_opens`（夹具 `tests/sqlcipher-backend-fixture.db` 由 **CommonCrypto 后端**写下） | Tongsuo 后端下 `security::` **14/14** |
 | 实际编进去的是哪个后端（不是看你设了什么环境变量） | `node scripts/check-crypto-backend.mjs` | 双向实测：产物 openssl＋声明 openssl ⇒ 绿；产物 CC＋声明 openssl ⇒ **红** |
 | 门禁 | `pnpm verify`（23）/ `node scripts/test-report.mjs --group rust`（**6 条**，含 `rust-sm-crypto`、`check-crypto-backend`、`gm-conformance`） | 全绿 |
+| **老端在动手之前就拒绝**（§0-C）：同步**整批拒绝**、空间级标识、附件拒绝（不是逐条失败） | `sync::tests::prescan_payload_formats_refuses_the_whole_batch`、`security::tests::space_guard_…`、`…attachment_bytes_of_an_unsupported_format_are_refused…` | ✅（默认构建拒绝 / 国密构建放行，两半都有 cfg 判据） |
 
 ---
 
@@ -127,6 +128,8 @@ pnpm verify && node scripts/test-report.mjs --group rust
 
 1. **老数据一定读得出来**：`decrypt` 按密文头分派 v0/v1/v2（无头＝v0）；认出的版本解不开时会**再按 v0 试一次**
    （那 24 字节是随机 nonce，"首两字节恰好等于 magic+版本"是**真实存在**的 1/65536）。
+   ⚠️ 但"解不开"有两种，别混：**认得出、却版本不支持** ⇒ **拒绝**（说清换哪个版本）；
+   **认得出、版本支持但口令不同**，或**根本不是密文** ⇒ 维持透传老语义。
 2. **默认包读不了 v2**：这是刻意的（§0-C）—— 报错是"**这段数据来自更新的应用版本，请升级**"，
    而不是"数据损坏"。发国密版时**必须同时告诉用户：降级回默认包打不开国密版写的数据**。
 3. **口令与密钥 / 降级**：会话密钥不落盘（沿用 E1 约束）；国密构建下**库级 `PRAGMA key` 仍是原 32 字节**

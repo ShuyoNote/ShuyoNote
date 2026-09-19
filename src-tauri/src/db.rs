@@ -312,7 +312,11 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at  INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL,
             deleted_at  INTEGER,
-            encrypted   INTEGER NOT NULL DEFAULT 0
+            encrypted   INTEGER NOT NULL DEFAULT 0,
+            -- §0-C：这个空间的数据是**哪一版密文**（0 = 未记录/明文；1 = XChaCha20；2 = 国密 v2）。
+            -- 为什么必须有它：只靠密文头，老端要**读到某一条**时才知道读不了；有了它，
+            -- 「同步之前 / 用这个空间之前」就能明确拒绝并提示升级（`security::ensure_space_format_supported`）。
+            cipher_format INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -499,6 +503,18 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     if has_enc == 0 {
         conn.execute("ALTER TABLE workspaces ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    // §0-C 的空间算法标识（幂等，老 meta.db 也要补上）。
+    let has_cipher_format: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'cipher_format'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_cipher_format == 0 {
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN cipher_format INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     // sync_history.items was added later; backfill on pre-existing meta dbs.
     let has_items: i64 = conn.query_row(
@@ -1114,6 +1130,48 @@ mod tests {
         assert_eq!(has, 1);
         // Also idempotent on re-run.
         meta_migrate(&conn).unwrap();
+    }
+
+    /// §0-C：**老 meta.db**（`workspaces` 没有 `cipher_format` 列）跑一次 `meta_migrate` 必须补上，
+    /// 且存量行的值是 **0（未记录）**——升级不能凭空说"这个空间是国密"。
+    /// 判据形态照抄下面那条 P6.1 的（先按旧形状建表 ⇒ 迁移 ⇒ 断言列在且值对）。
+    #[test]
+    fn meta_migrate_adds_cipher_format_to_an_old_meta_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 先按 §0-C 之前的形状建表（没有 cipher_format）
+        conn.execute_batch(
+            "CREATE TABLE workspaces (
+                 id TEXT PRIMARY KEY,
+                 name TEXT NOT NULL DEFAULT '',
+                 created_at INTEGER NOT NULL DEFAULT 0,
+                 updated_at INTEGER NOT NULL DEFAULT 0,
+                 deleted_at INTEGER,
+                 encrypted INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO workspaces (id, name, encrypted) VALUES ('ws', '老空间', 1);",
+        )
+        .unwrap();
+
+        meta_migrate(&conn).unwrap();
+
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'cipher_format'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has, 1, "meta_migrate 没有给 workspaces 补 cipher_format 列");
+        let v: i64 = conn
+            .query_row("SELECT cipher_format FROM workspaces WHERE id = 'ws'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 0, "存量空间必须是 0（未记录）：不能凭空断言它是哪一版密文");
+        // 幂等：再跑一次不报错，值不变。
+        meta_migrate(&conn).unwrap();
+        let again: i64 = conn
+            .query_row("SELECT cipher_format FROM workspaces WHERE id = 'ws'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(again, 0);
     }
 
     /// P6.1：老库（`sync_profiles` 没有 `sync_attachments` 列）跑一次 `meta_migrate`

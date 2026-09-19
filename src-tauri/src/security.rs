@@ -84,10 +84,21 @@ pub fn encrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> R
 /// returned unchanged.
 pub fn decrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> Result<Vec<u8>, String> {
     match key {
-        Some(k) => match crypto::decrypt(data, k) {
-            Ok(pt) => Ok(pt),
-            Err(_) => Ok(data.to_vec()), // not ciphertext -> plaintext passthrough
-        },
+        Some(k) => {
+            // ★ §0-C：**先看头**。这一段如果"看着就是密文、但版本本构建解不开"（典型：老版本应用遇到
+            // 国密版写下的 v2 附件），**必须拒绝** —— 绝不能顺着"解不开 ⇒ 当明文"的旧逻辑把**密文**
+            // 当明文交出去（那会安静地写出一个损坏的文件，是比报错更坏的结局）。
+            let version = crypto::peek_format(data);
+            if !crypto::format_supported(version) {
+                return Err(crypto::unsupported_format_error(version));
+            }
+            match crypto::decrypt(data, k) {
+                Ok(pt) => Ok(pt),
+                // 认得出的版本、但解不开 ⇒ 仍然是"不是密文/口令不同"的老语义：透传
+                //（历史行为：加密未开时存的就是明文；改这条会让既有明文附件读不出来）
+                Err(_) => Ok(data.to_vec()),
+            }
+        }
         None => Ok(data.to_vec()),
     }
 }
@@ -105,6 +116,71 @@ pub fn decrypt_payload(c: &Connection, payload: &str) -> Result<String, String> 
     match key_if_enabled(c) {
         Some(k) => crypto::decrypt_str(payload, &k),
         None => Ok(payload.to_string()),
+    }
+}
+
+/// 一段同步载荷（base64）里那段的密文版本 —— **不解密、不要密钥**。
+/// 返回 `None` = 看着不像我们写的密文（加密未开时的明文 JSON、或老的无头数据）。
+pub fn payload_format(payload: &str) -> Option<u8> {
+    let bytes = crypto::b64_decode(payload).ok()?;
+    crypto::peek_format(&bytes)
+}
+
+/// ★★ **整批拒绝**（§0-C）：这批载荷里只要有一段是本构建解不开的版本，
+/// 就**一条都不应用**，并给出可操作错误 —— 而不是逐条解密失败、让用户以为"数据坏了"。
+///
+/// 为什么必须"整批"：逐条失败会**应用一半**（游标停在中途），用户看到的是"同步了一部分、
+/// 剩下的一直报错"，而真正的原因是"这版应用读不了那个空间的数据"。
+pub fn ensure_payloads_supported<'a>(payloads: impl IntoIterator<Item = &'a str>) -> Result<(), String> {
+    let mut bad: Option<u8> = None;
+    for p in payloads {
+        // 只对"看着像我们写的密文"的载荷下结论：明文载荷 peek 出 None ⇒ 放行。
+        if let Some(v) = payload_format(p) {
+            if !crypto::format_supported(Some(v)) {
+                bad = Some(v);
+                break;
+            }
+        }
+    }
+    match bad {
+        None => Ok(()),
+        Some(v) => Err(format!(
+            "本批同步数据里有本机解不开的密文版本（{v}）：{}。已**整批拒绝**，一条都没有应用",
+            crypto::unsupported_format_error(Some(v))
+        )),
+    }
+}
+
+/// 这个空间**记录在案**的密文格式（`None` = 没记录）。§0-C："算法标识要落到空间状态上"。
+///
+/// ⚠️ 两处刻意的取舍：
+/// ① 查询失败（老库缺列等）**吞成 `None` 而不是报错** —— 这一列的来源是 `db.rs` 的幂等迁移，
+///    而"读不到"与"没记录"在**守卫**语义下都是"不该拦"（拦错会把能用的空间也锁住）；
+/// ② 因此它**不是**安全边界，只是"尽早给一句人话"的机制：真正的拒绝在解密那一层（版本不支持 ⇒ Err）。
+/// 记录的是"启用加密时本机构建写出去的那一版"，所以老端一开这个空间就能在**动手之前**判断。
+pub fn space_format(c: &Connection, space_id: &str) -> Option<u8> {
+    let v: i64 = c
+        .query_row(
+            "SELECT COALESCE(cipher_format, 0) FROM meta.workspaces WHERE id = ?1",
+            params![space_id],
+            |r| r.get(0),
+        )
+        .ok()?;
+    if v <= 0 {
+        None
+    } else {
+        Some(v as u8)
+    }
+}
+
+/// 同步/使用这个空间**之前**的守卫：记录在案的格式本机构建解不开 ⇒ 明确拒绝并提示升级（§0-C）。
+pub fn ensure_space_format_supported(c: &Connection, space_id: &str) -> Result<(), String> {
+    match space_format(c, space_id) {
+        Some(v) if !crypto::format_supported(Some(v)) => Err(format!(
+            "这个空间（{space_id}）的数据是密文版本 {v}：{}",
+            crypto::unsupported_format_error(Some(v))
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -364,9 +440,15 @@ fn reopen_keyed(c: &mut Connection, space_id: &str, app_data_dir: &Path) -> Resu
 /// path keys a connection when the file is detected as encrypted at rest (header
 /// sniff is the ground truth); the marker is explicit bookkeeping per the plan.
 pub(crate) fn set_space_encrypted_marked(c: &Connection, space_id: &str, enc: bool) -> Result<(), String> {
+    // §0-C：除了 encrypted 标记，还记下"这个空间的数据是哪一版密文"（启用时 = 本构建写出去的那版；
+    // 关闭时清 0）。**必须有这一列**：光靠密文头，老端要读到某一条时才知道读不了。
     c.execute(
-        "UPDATE meta.workspaces SET encrypted = ?1 WHERE id = ?2",
-        params![if enc { 1 } else { 0 }, space_id],
+        "UPDATE meta.workspaces SET encrypted = ?1, cipher_format = ?2 WHERE id = ?3",
+        params![
+            if enc { 1 } else { 0 },
+            if enc { crypto::CURRENT_FORMAT as i64 } else { 0 },
+            space_id
+        ],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -374,7 +456,7 @@ pub(crate) fn set_space_encrypted_marked(c: &Connection, space_id: &str, enc: bo
 
 /// Reset every workspace's encryption marker to 0 (used when rolling back).
 fn clear_all_space_markers(c: &Connection) -> Result<(), String> {
-    c.execute("UPDATE meta.workspaces SET encrypted = 0", [])
+    c.execute("UPDATE meta.workspaces SET encrypted = 0, cipher_format = 0", [])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -467,6 +549,11 @@ pub fn sync_gate(c: &Connection) -> Result<(), String> {
     if encryption_enabled(c) && LOCKED.load(Ordering::SeqCst) {
         return Err("已开启端到端加密但会话已锁定，请先解锁再同步".to_string());
     }
+    // ★ §0-C：这个空间记录在案的密文版本本构建解不开 ⇒ **同步之前**就明确拒绝，
+    //   而不是逐条解密失败（后者会被读成"数据坏了"）。
+    if let Ok(space_id) = crate::workspaces::active_workspace_id(c) {
+        ensure_space_format_supported(c, &space_id)?;
+    }
     Ok(())
 }
 
@@ -479,6 +566,12 @@ pub struct EncryptionStatus {
     pub format: u8,
     /// 上一条的**稳定算法名**（`crypto::format_name`，单一定义处）。
     pub algorithm: String,
+    /// **当前活动空间**记录在案的密文版本（0 = 未记录）。§0-C 的另一半：
+    /// 只报全局开关不够 —— 界面/诊断要能说出"**这个空间**的数据是哪一版"，
+    /// 而"读到某一条才发现读不了"正是我们要避免的那种失败。
+    pub space_format: u8,
+    /// 上一条的稳定算法名（未记录时是空串）。
+    pub space_algorithm: String,
 }
 
 #[tauri::command]
@@ -490,7 +583,23 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
         Some(k) => crypto::active_format(&k),
         None => crypto::CURRENT_FORMAT,
     };
-    Ok(EncryptionStatus { enabled, locked, format, algorithm: crypto::format_name(format).to_string() })
+    let space_format = crate::workspaces::active_workspace_id(&c)
+        .ok()
+        .as_deref()
+        .and_then(|sid| space_format(&c, sid))
+        .unwrap_or(0);
+    Ok(EncryptionStatus {
+        enabled,
+        locked,
+        format,
+        algorithm: crypto::format_name(format).to_string(),
+        space_format,
+        space_algorithm: if space_format == 0 {
+            String::new()
+        } else {
+            crypto::format_name(space_format).to_string()
+        },
+    })
 }
 
 /// Lock the session: drop the session key, mark locked, and CLOSE the active space
@@ -652,7 +761,7 @@ mod tests {
         {
             let m = Connection::open(&meta_path).unwrap();
             m.execute_batch(
-                "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0); \
+                "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0, cipher_format INTEGER NOT NULL DEFAULT 0); \
                  CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
             )
             .unwrap();
@@ -859,7 +968,7 @@ mod tests {
         {
             let m = Connection::open(&meta_path).unwrap();
             m.execute_batch(
-                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0); \
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0, cipher_format INTEGER NOT NULL DEFAULT 0); \
                  CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
             )
             .unwrap();
@@ -941,7 +1050,7 @@ mod tests {
         let meta_path = dir.join("meta.db");
         {
             let m = Connection::open(&meta_path).unwrap();
-            m.execute_batch("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0);").unwrap();
+            m.execute_batch("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0, cipher_format INTEGER NOT NULL DEFAULT 0);").unwrap();
             m.close().unwrap();
         }
         let space_path = dir.join("spaces").join("default.db");
@@ -978,7 +1087,7 @@ mod tests {
         let meta_path = dir.join("meta.db");
         {
             let m = Connection::open(&meta_path).unwrap();
-            m.execute_batch("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0); CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
+            m.execute_batch("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, encrypted INTEGER NOT NULL DEFAULT 0, cipher_format INTEGER NOT NULL DEFAULT 0); CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
             m.execute_batch("INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('default','默认空间',1,1)").unwrap();
             m.close().unwrap();
         }
@@ -1039,6 +1148,115 @@ mod tests {
         // key is only in session, never persisted anywhere.
         assert!(sync::get_state(&c, crypto::ENC_KEY).is_none());
         assert!(sync::get_meta_state(&c, crypto::ENC_KEY).is_none());
+    }
+
+    // ── §0-C：算法标识要落到「空间状态 ＋ 同步载荷」，且**动手之前**就拒绝 ──────────────
+    //
+    // 这一组盯的是"老端遇到新数据"这一类失败。它的最坏形态**不是报错**，而是：
+    //   ① 逐条解密失败 ⇒ 用户以为"数据坏了"，而且同步**应用了一半**；
+    //   ② 更糟：附件那条路的旧逻辑是"解不开 ⇒ 当明文" ⇒ 把**密文当明文**写出去（安静地损坏文件）。
+    // 判据分两半：默认构建要**拒绝**（v2 解不开），国密构建要**放行**（v2 就是它自己写的）。
+
+    /// 一段载荷的版本要能**不解密**就读出来：这是"整批拒绝"的地基。
+    #[test]
+    fn payload_format_is_readable_without_the_key() {
+        let keys = crypto::derive_app_keys("pw", &crypto::random_salt()).unwrap();
+        let v1 = crypto::encrypt_str("payload", &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        assert_eq!(payload_format(&v1), Some(crypto::VERSION_XCHACHA));
+        // 明文 JSON（加密未开时的载荷）：看着不像密文 ⇒ None ⇒ **放行**（绝不能拦）
+        assert_eq!(payload_format(r#"{"id":"p1","title":"晴"}"#), None);
+        assert_eq!(payload_format(""), None);
+    }
+
+    /// ★ 整批语义：一批里只要有一段解不开，就**一条都不应用**（返回 Err，而不是跳过那一条）。
+    #[cfg(not(feature = "sm-crypto"))]
+    #[test]
+    fn prescan_refuses_the_whole_batch_when_any_payload_is_v2() {
+        let keys = crypto::derive_app_keys("pw", &crypto::random_salt()).unwrap();
+        let v1 = crypto::encrypt_str("ok", &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        let mut v2_blob = crypto::b64_decode(&v1).unwrap();
+        v2_blob[1] = crypto::VERSION_SM4; // 伪造一段 v2（本构建解不开）
+        let v2 = crypto::b64_encode(&v2_blob);
+
+        // ① 全 v1 + 明文 ⇒ 放行
+        assert!(ensure_payloads_supported([v1.as_str(), r#"{"a":1}"#]).is_ok());
+        // ② 只要**有一段** v2 ⇒ 整批拒绝，且错误**可操作**（说清换国密版）
+        let err = ensure_payloads_supported([v1.as_str(), v2.as_str()]).unwrap_err();
+        assert!(err.contains("整批拒绝"), "错误里要说清'一条都没应用'：{err}");
+        assert!(err.contains("国密版"), "错误不可操作：{err}");
+    }
+
+    /// 国密构建遇到 v2 必须**放行**（那是它自己写的），不能一律拒绝。
+    #[cfg(feature = "sm-crypto")]
+    #[test]
+    fn prescan_allows_v2_in_the_sm_build() {
+        let keys = crypto::derive_app_keys("pw", &crypto::random_salt()).unwrap();
+        let v2 = crypto::encrypt_str("国密载荷", &keys).unwrap();
+        assert_eq!(payload_format(&v2), Some(crypto::VERSION_SM4));
+        assert!(ensure_payloads_supported([v2.as_str()]).is_ok());
+    }
+
+    /// 空间级：启用加密时**记下**这个空间的版本；关闭时清掉。
+    #[test]
+    fn space_format_is_recorded_on_enable_and_cleared_on_disable() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let (_t, c) = temp_ws();
+        assert_eq!(space_format(&c, "default"), None, "没启用时不该有记录");
+        enable_meta(&c, "supersecret");
+        set_space_encrypted_marked(&c, "default", true).unwrap();
+        assert_eq!(
+            space_format(&c, "default"),
+            Some(crypto::CURRENT_FORMAT),
+            "启用后必须记下'本构建写的是哪一版'（§0-C 的空间算法标识）"
+        );
+        set_space_encrypted_marked(&c, "default", false).unwrap();
+        assert_eq!(space_format(&c, "default"), None, "关闭后要清掉，别留下让人误判的旧值");
+    }
+
+    /// ★ 空间级守卫：**记录在案的版本本构建解不开 ⇒ 用这个空间之前就拒绝**（不是读到某条才发现）。
+    #[cfg(not(feature = "sm-crypto"))]
+    #[test]
+    fn space_guard_refuses_v2_in_the_default_build() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let (_t, c) = temp_ws();
+        // 直接写一个"国密空间"的记录（模拟：这个空间的数据是国密版写下的）
+        c.execute("UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'", [crypto::VERSION_SM4])
+            .unwrap();
+        let err = ensure_space_format_supported(&c, "default").unwrap_err();
+        assert!(err.contains("国密版"), "错误不可操作：{err}");
+        // 而且 sync_gate 会把它挡在**同步之前**
+        let gate = sync_gate(&c).unwrap_err();
+        assert!(gate.contains("国密版"), "同步前就该拒绝，而不是逐条解密失败：{gate}");
+    }
+
+    /// 国密构建下同一个空间记录必须**放行**（它自己就是写 v2 的那一版）。
+    #[cfg(feature = "sm-crypto")]
+    #[test]
+    fn space_guard_allows_v2_in_the_sm_build() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let (_t, c) = temp_ws();
+        c.execute("UPDATE meta.workspaces SET cipher_format = ?1 WHERE id = 'default'", [crypto::VERSION_SM4])
+            .unwrap();
+        assert!(ensure_space_format_supported(&c, "default").is_ok());
+        assert!(sync_gate(&c).is_ok());
+    }
+
+    /// ★★ 附件那条路的**安静损坏**：解不开的**密文**绝不能被当成明文交出去。
+    /// （旧逻辑是"解不开 ⇒ 透传"，那对"明文附件"是对的，对"本构建读不了的密文"是灾难。）
+    #[cfg(not(feature = "sm-crypto"))]
+    #[test]
+    fn attachment_bytes_of_an_unsupported_format_are_refused_not_passed_through() {
+        let keys = crypto::derive_app_keys("pw", &crypto::random_salt()).unwrap();
+        let v1 = crypto::encrypt(b"from an older build", &crypto::AppKeys::legacy_only(keys.legacy)).unwrap();
+        let mut v2 = v1.clone();
+        v2[1] = crypto::VERSION_SM4; // 伪造"国密版写下的附件"
+        let err = decrypt_attachment_bytes(Some(&keys), &v2).unwrap_err();
+        assert!(err.contains("国密版"), "必须拒绝并说清怎么办：{err}");
+        // 而**真的明文**（历史行为）仍要透传：加密未开时存的就是明文
+        assert_eq!(decrypt_attachment_bytes(Some(&keys), b"plain file bytes").unwrap(), b"plain file bytes");
+        // 认得出的版本但解不开（口令不同）也仍旧透传，别把老行为改坏
+        let wrong = crypto::derive_app_keys("other", &crypto::random_salt()).unwrap();
+        assert_eq!(decrypt_attachment_bytes(Some(&wrong), &v1).unwrap(), v1);
     }
 
     /// ★ **临时目录不许撞名**（2026-09-19 CI 红根因的常开判据）。

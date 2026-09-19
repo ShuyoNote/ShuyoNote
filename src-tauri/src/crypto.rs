@@ -165,6 +165,44 @@ pub fn active_format(keys: &AppKeys) -> u8 {
     VERSION_XCHACHA
 }
 
+/// 只读**密文头**、不解密、不需要密钥 —— 用来在"动手之前"判断这段数据是哪一版。
+///
+/// §0-C 的落地点就是它：老端要在**整空间/整批同步之前**明确拒绝，而不是逐条解密失败。
+/// 返回 `None` = "看着不像我们写的密文"（无头老数据 v0、或根本不是密文：明文 JSON、乱码……）。
+/// ⚠️ 注意 `None` **不等于**"不支持"：无头老数据永远可读（见 `decrypt` 的回退分支）。
+pub fn peek_format(data: &[u8]) -> Option<u8> {
+    if data.len() >= HEADER_LEN && data[0] == MAGIC {
+        Some(data[1])
+    } else {
+        None
+    }
+}
+
+/// 本构建能不能解开这个版本。
+///
+/// · `None`（无头/不是密文）与 `Some(0)`（"撞头"的老数据）**都算能** —— `decrypt` 有回退分支；
+/// · `v <= CURRENT_FORMAT` 能（v1 默认构建、v2 国密构建）；
+/// · 未来版本 ⇒ **不能**。默认构建遇到 v2 也在这里被挡住 ⇒ 上层可以在动手前整批拒绝。
+pub fn format_supported(version: Option<u8>) -> bool {
+    match version {
+        None => true,
+        Some(v) => v <= CURRENT_FORMAT || (v == VERSION_SM4 && cfg!(feature = "sm-crypto")),
+    }
+}
+
+/// 把"这个版本解不开"翻译成**可操作**的话（§0-C：不许说成"数据损坏"）。
+pub fn unsupported_format_error(version: Option<u8>) -> String {
+    match version {
+        Some(v) if v == VERSION_SM4 => {
+            "这段数据是国密（SM4-CBC ＋ HMAC-SM3，密文版本 2）格式，本机这版应用不含国密支持 —— 请换国密版应用后再打开".to_string()
+        }
+        Some(v) => format!(
+            "这段数据是密文版本 {v}，本机支持到 {CURRENT_FORMAT} —— 它可能来自更新的应用版本，请升级后再打开"
+        ),
+        None => "无法判断这段数据的密文版本".to_string(),
+    }
+}
+
 /// 版本号 → **稳定算法名**。只在这里定义一次：状态上报、日志、交付说明都引用它，
 /// 免得同一个算法在三处出现三种写法（"SM4-CBC+HMAC-SM3" / "sm4cbc" / "国密"）。
 pub fn format_name(format: u8) -> &'static str {
@@ -525,6 +563,48 @@ mod tests {
         // ③ 老数据 v0（P0 之前）：无头，也必须照旧读得出。
         let v0 = seal_v0(b"before P0", &keys.legacy, [11u8; NONCE_LEN]);
         assert_eq!(decrypt(&v0, &keys).unwrap(), b"before P0");
+    }
+
+    /// §0-C：**不解密就能判断版本** —— 这是"整空间/整批同步之前先拒绝"的地基。
+    /// 三格：无头（None，永远放行）/ v1 / v2；另加"未来版本"与"根本不是密文"两类。
+    #[test]
+    fn peek_format_reads_the_header_without_a_key() {
+        let keys = derive_app_keys("pw", &random_salt()).unwrap();
+        let v1 = seal_xchacha(b"x", &keys.legacy).unwrap();
+        assert_eq!(peek_format(&v1), Some(VERSION_XCHACHA));
+        // 无头老数据：不像我们写的密文 ⇒ None（**不是**"不支持"）
+        let v0 = seal_v0(b"x", &keys.legacy, [3u8; NONCE_LEN]);
+        assert_eq!(peek_format(&v0), None);
+        // 明文 JSON / 空 / 太短：同样是 None
+        assert_eq!(peek_format(br#"{"id":"p1"}"#), None);
+        assert_eq!(peek_format(&[]), None);
+        assert_eq!(peek_format(&[MAGIC]), None, "只有一个字节时不该硬读第二个");
+        // 未来版本：解得出"是哪一版"，但本构建不支持
+        let mut future = v1.clone();
+        future[1] = 9;
+        assert_eq!(peek_format(&future), Some(9));
+
+        assert!(format_supported(None), "无头老数据永远可读");
+        assert!(format_supported(Some(0)), "撞头的老数据走回退，同样放行");
+        assert!(format_supported(Some(VERSION_XCHACHA)));
+        assert_eq!(
+            format_supported(Some(VERSION_SM4)),
+            cfg!(feature = "sm-crypto"),
+            "v2 的支持与否只取决于这个构建有没有编国密"
+        );
+        assert!(!format_supported(Some(9)), "未来版本必须判为不支持");
+        // 报错必须**可操作**（点明"怎么办"），不能是"数据损坏"
+        assert!(unsupported_format_error(Some(VERSION_SM4)).contains("国密版"));
+        assert!(unsupported_format_error(Some(9)).contains("升级"));
+    }
+
+    #[cfg(feature = "sm-crypto")]
+    #[test]
+    fn sm_build_peeks_v2_as_supported() {
+        let keys = derive_app_keys("pw", &random_salt()).unwrap();
+        let v2 = encrypt(b"y", &keys).unwrap();
+        assert_eq!(peek_format(&v2), Some(VERSION_SM4));
+        assert!(format_supported(Some(VERSION_SM4)));
     }
 
     /// 国密构建下"只有 legacy 密钥"（例如某个只做老路径的调用方）⇒ 仍写 v1，
