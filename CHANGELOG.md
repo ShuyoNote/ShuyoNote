@@ -28,12 +28,17 @@
 - **Linux 装包没有带上 PDFium 运行时库**（与 Windows 那笔同类）：新增 `library_dir()` 的 Tauri `resource_dir()`
   探测（Linux 的 `resource_dir` **不等于** exe 目录）+ 平台专用 `src-tauri/tauri.linux.conf.json`；
   `release.yml` 的 Linux 档打包前现拉库、打包后对**产物**断言（`scripts/check-linux-bundle.mjs`）。
-  ⚠️ **同日更正（CI 实测，2026-09-19）——这条在本版并未达成**：那套映射**没有**让库真的进包，
-  产物级断言在本版构建里**当场红**：`libpdfium.so` **不在 deb 里**、且在 AppImage 里位置不对
-  （`./squashfs-root/usr/lib/ShuyoNote/libpdfium.so`）⇒ Linux job 失败、**Linux 产物没有上传**。
-  ⇒ 结论：**Linux 仍会由阅读器的 pdf.js 回退顶上**；**更新通道因此暂停在 1.91.5**
-  （不能发一份缺 `linux-x86_64` 的清单，否则 Linux 用户会收不到更新）。修好映射后随下一版再发。
-  （断言本身是对的 —— 它把"看起来配了映射、实际没进包"这件事当场拦住，这正是它存在的意义。）
+  ⚠️ **同日更正（2026-09-19，两轮）**：
+  ① 本版**没有发出 Linux 产物** —— CI 的 Linux job 因**它自己的产物断言**失败而没上传 artifact，
+  所以通道也被我停在了 1.91.5（缺 `linux-x86_64` 的清单不能发）。
+  ② 但**根因不是打包**：我在 WSL 里从本仓真打了一个 deb 逐条核对 ——
+  `usr/lib/ShuyoNote/libpdfium.so` 在包里、位置正是资源目录那一层、解包后 sha256 与 vendor 源**一致**
+  （`f728930966f5…`）⇒ **打包配置是对的**；两条红都能追到断言自己的解析 bug：
+  deb 那条的正则写死要求 `./` 前缀（而 `dpkg-deb` 1.22 输出不带），AppImage 那条把展开目录的
+  `squashfs-root` 当成了路径的第一段。**改的是断言**（见 `scripts/check-linux-bundle.mjs`，
+  单测 12 → 14 条，并加了「有输出却解析不出路径 ⇒ 明说没验过，别当成包里没有」的防线）。
+  修好后在本机真 deb 上跑：`libpdfium.so：deb usr/lib/ShuyoNote/libpdfium.so（f728930966f5…）⇒ ✅ 通过`
+  ⇒ 随下一版正常发出。
 
 ## [1.91.5] - 2026-09-19
 
