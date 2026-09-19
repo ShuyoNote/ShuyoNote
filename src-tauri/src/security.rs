@@ -1172,6 +1172,36 @@ mod tests {
     // A raw SQLCipher key (x'hex') created on one connection is readable on a fresh
     // connection with the same key and fails with a wrong key — the disk-encryption
     // foundation that convert_space_db builds on.
+    /// 夹具的**生成器**（默认不跑；`--ignored` 手动跑）。它刻意留在仓库里，因为夹具必须在
+    /// "**另一种后端**"下才能重新生成 —— 那是 ⑤ 的验收条件之一，别人要复现得知道怎么造。
+    ///
+    /// ⚠️ 生成时必须确认当时编进去的是哪个后端（`node scripts/check-crypto-backend.mjs`）：
+    /// 这份夹具要的是"**macOS 默认（CommonCrypto）写下的密文**"，换后端之后不要拿新后端重生成它，
+    /// 否则"换后端前后旧库仍可读"这条判据就变成了"用同一个后端验证自己"。
+    #[test]
+    #[ignore = "夹具生成器（手动跑；须核对当时编入的后端）"]
+    fn gen_backend_fixture() {
+        let hex = crypto::key_hex(&[7u8; 32]);
+        let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sqlcipher-backend-fixture.db");
+        let _ = std::fs::remove_file(&out);
+        {
+            let c = Connection::open(&out).unwrap();
+            c.execute_batch(&key_sql).unwrap();
+            c.execute_batch(
+                "CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT NOT NULL, content_text TEXT NOT NULL); \
+                 INSERT INTO pages VALUES ('p1','后端无关性夹具','由创建时的 provider 写下的密文'); \
+                 INSERT INTO pages VALUES ('p2','第二行','确认多行与顺序');",
+            )
+            .unwrap();
+            // 强制落盘（不然可能还在 WAL 里）
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        }
+        let n = std::fs::metadata(&out).unwrap().len();
+        println!("夹具已生成：{}（{n} 字节）", out.display());
+        assert!(n > 4096, "夹具太小，像个空库：{n} 字节");
+    }
+
     #[test]
     fn raw_key_open_and_read() {
         let dir = std::env::temp_dir();
@@ -1191,5 +1221,56 @@ mod tests {
             assert_eq!(v, "secret");
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// ★★ **换加密后端前后，旧库仍必须可读**（方案 §7 风险表里那条验收项）。
+    ///
+    /// 为什么这条是**硬**要求：SQLCipher 的页加密后端是**编译期**决定的（`SQLCIPHER_CRYPTO_CC`
+    /// 只有 AES；`SQLCIPHER_CRYPTO_OPENSSL` 才能接 Tongsuo 的 SM4）—— 也就是说
+    /// **`--features sm-crypto` 能不能真的用上国密，取决于这个后端有没有被换掉**。
+    /// 而后端一换，所有既有用户库里那些"用 Apple 后端写下的页"就要靠**参数逐字节一致**
+    /// （PBKDF2-HMAC-SHA512 轮数 / AES-256-CBC / 页大小 / HMAC 大小）才打得开。
+    /// 参数只要有一处不同，症状就是**用户打不开自己的数据库**，而它在开发机上不会自己冒出来。
+    ///
+    /// 夹具 `tests/sqlcipher-backend-fixture.db` 是 **2026-09-19 由 macOS 默认后端（CommonCrypto）**
+    /// 真实写下的（生成器见 `gen_backend_fixture`，key = `0x07 × 32`）。
+    /// ⇒ 在 OpenSSL/Tongsuo 后端下编译时跑这条：**能打开、且两行内容逐字相同**才算通过。
+    #[test]
+    fn fixture_db_written_by_the_other_provider_still_opens() {
+        let bytes = include_bytes!("../tests/sqlcipher-backend-fixture.db");
+        assert!(bytes.len() > 4096, "夹具不见了或太小（{} 字节）", bytes.len());
+        assert_ne!(
+            &bytes[..16],
+            b"SQLite format 3\0",
+            "夹具是**明文** SQLite —— 那样它证明不了任何后端无关性"
+        );
+        let dir = uniq_tmp("backendfix");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture.db");
+        std::fs::write(&path, bytes).unwrap();
+
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch(&format!("PRAGMA key = \"x'{}'\";", crypto::key_hex(&[7u8; 32]))).unwrap();
+        // 打不开时 SQLite 会在第一条真查询上报 "file is not a database"
+        let rows: Vec<(String, String, String)> = c
+            .prepare("SELECT id, title, content_text FROM pages ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("p1".to_string(), "后端无关性夹具".to_string(), "由创建时的 provider 写下的密文".to_string()),
+                ("p2".to_string(), "第二行".to_string(), "确认多行与顺序".to_string()),
+            ],
+            "换后端之后旧库读出来的内容不对（这条红了＝用户打不开自己的库）"
+        );
+        // 而且**能继续写**（读得开不代表写得进：页大小/HMAC 参数不一致会在写回时才炸）
+        c.execute("INSERT INTO pages VALUES ('p3','换后端之后新写的','仍然可写')", []).unwrap();
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 3, "换后端后写不进去");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

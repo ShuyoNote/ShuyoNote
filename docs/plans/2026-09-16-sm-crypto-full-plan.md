@@ -173,8 +173,49 @@ KDF ：b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad9
 
 `src-tauri/target/release/build/libsqlite3-sys-*/output` 里写着 `cargo:rustc-link-lib=framework=Security`
 ⇒ **macOS 上 SQLCipher 现在编的确实是 CommonCrypto 后端**（Apple 那套只有 AES），
-方案 §3 第 5 条那句在**本机本构建**上成立。⇒ 要编进国密 provider，必须显式设 `OPENSSL_DIR` 到 Tongsuo，
-并加一条"断言实际加密后端"的门禁（**未做**，属 ⑤）。
+方案 §3 第 5 条那句在**本机本构建**上成立。
+
+### ⑤-1 换后端（2026-09-19 落地，含一个**必须写下来的坑**）
+
+**坑（本条的真正价值）**：方案说"选路只看 `OPENSSL_DIR` 一个环境变量"——**选路逻辑**是这样，
+但**只设它没用**：`libsqlite3-sys` 的 `build.rs` 只为 `SQLITE_MAX_*` / `LIBSQLITE3_FLAGS` /
+`SQLCIPHER_{INCLUDE,LIB}_DIR` 这些声明了 `rerun-if-env-changed`，**没有为 `OPENSSL_DIR` 声明** ⇒
+cargo 认为"环境没变" ⇒ **构建脚本根本不重跑**。实测现场（本机）：
+
+```text
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test …   ⇒ 编译通过、测试全绿
+产物 target/debug/build/libsqlite3-sys-*/output       ⇒ **仍然是 framework=Security**（CommonCrypto）
+```
+
+⇒ **"设了环境变量" ≠ "换了后端"**。必须逼构建脚本重跑：
+
+```text
+cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo build --lib --manifest-path src-tauri/Cargo.toml
+node scripts/check-crypto-backend.mjs        # 拿产物说话，不看你设了什么
+# 期望：✓ … ⇒ **openssl**（link-search=…/tongsuo-macos/install/lib，路径含 tongsuo）
+```
+
+**兼容性（换后端最容易出事的地方）**：SQLCipher 的页加密参数（PBKDF2-HMAC-SHA512 轮数 /
+AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**既有库仍应可读** —— 但这是判断，
+不是证据，所以有夹具：`src-tauri/tests/sqlcipher-backend-fixture.db` 是 **2026-09-19 由 macOS 默认
+（CommonCrypto）后端真实写下**的加密库（生成器 `security::tests::gen_backend_fixture`，key = `0x07 × 32`）。
+判据 `security::tests::fixture_db_written_by_the_other_provider_still_opens` 断言：**两行内容逐字相同、
+且还能继续写**。读数（2026-09-19）：在 **Tongsuo/OpenSSL 后端**下 `cargo test --lib security::` = **14/14 通过**
+（含上面这条 ＋ `encrypted_db_roundtrip_and_sniff` / `convert_space_db_*` / `full_loop_enable_restart_unlock_readable_disable`）
+⇒ **换后端前后旧库仍可读**这条验收项**取证完成**。
+
+**门禁**：`check-crypto-backend`（rust 组）—— 读 `libsqlite3-sys` 的构建产物，断言
+**实际编进去的后端 == 声明**；`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` 是国密构建的严格模式。
+三种状态分得很清：**没产物 ⇒ `!` 自报跳过**（没编过 ≠ 编错）；**最新产物 ≠ 声明 ⇒ 红**；
+**旧产物分类不同 ⇒ `!` 提示**（那是"沉默不换后端"的现场痕迹）。承重证明（本机双向实测）：
+产物 openssl ＋ 声明 openssl ⇒ 绿；产物 CC ＋ 声明 openssl（**正是我自己踩的那一脚**）⇒ 红并附清库命令。
+
+**⚠️ 明确没做、以及为什么**：**没有**把 macOS 的**默认**构建翻到 Tongsuo。两个理由：
+① 翻了就等于要求**每个 macOS 开发者与默认 CI**都先编一份 Tongsuo —— 与 §0-E「国密版另发、默认包不背构建链风险」直接冲突；
+② 库级 SM4/SM3 的 provider 补丁（P2/P3）**还没落地**，此时翻默认**用户可见行为零变化**，只多一个
+`libcrypto.3.dylib` 的打包/签名/公证负担。⇒ 正确形态是**国密版 macOS 构建显式设 `OPENSSL_DIR` 并用本门禁的严格模式断言**；
+这件事与 P2/P3 一起做（**归属**：构建侧与门禁＝本侧；provider 补丁＝AMD）。
 
 **CI 读数（GitHub check-runs API，2026-09-19 配额恢复后取到）**
 
@@ -489,8 +530,14 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
       （`EncryptionStatus.format/algorithm`）
 - [x] **KDF 迭代有断言**：常量写死 ＋ 断言防止被改小（`kdf_rounds_are_the_pinned_value`）；
       压测记录在 §0.2（本机 ≈112 ms 解锁；**中端机数字是外推、非实测**，见 §0.2 的两条诚实标注）（§0-D）
-- [ ] **构建门禁断言实际加密后端**：确认编进去的是 Tongsuo/OpenSSL 而不是 Apple 的 CommonCrypto（§3 第 5 条）
-      —— 现状**已实测**为 CommonCrypto（build output 里有 `framework=Security`），切后端与门禁**均未做**
+- [x] **构建门禁断言实际加密后端**（§3 第 5 条）：`check-crypto-backend` 已落地（rust 组），
+      按**产物**断言"实际后端 == 声明"；两个方向都实测过（产物 openssl＋声明 openssl ⇒ 绿；
+      产物 CC＋声明 openssl ⇒ 红并附 `cargo clean -p libsqlite3-sys` 的修法）——
+      ⚠️ 它同时钉住了那条坑：**只设 `OPENSSL_DIR` 不会换后端**（build.rs 没声明 `rerun-if-env-changed`）
+- [~] **macOS 默认切掉 CommonCrypto**：**换后端已证明可行且与既有库兼容**（Tongsuo 后端下
+      `security::` 14/14，含 CommonCrypto 写下的夹具仍可读写），
+      ❌ 但**默认没翻**（与 §0-E「国密另发」冲突、且 P2/P3 provider 未落地）⇒ 正确形态是
+      **国密版 macOS 构建显式 `OPENSSL_DIR` ＋ 本门禁严格模式**，与 P2/P3 一起做
 
 ---
 

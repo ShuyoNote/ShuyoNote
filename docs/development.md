@@ -262,6 +262,25 @@ run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console
 >
 > 行为测试在 `src/editor/insertShortcut.test.ts`（真编辑器 + 真 `dispatchCommand`）、`src/editor/editorInputShortcuts.test.ts`（Markdown 行首语法逐字输入、`/`、Ctrl+F、空行空格）、`src/components/overlayShortcuts.test.ts`（Ctrl+K、Esc）、`src/hooks/globalShortcuts.test.ts`；闸门 `src/lib/shortcutCoverage.test.ts` 要求清单**每一条都指到一个真存在的用例**（映射表里的用例标题必须真在 `it(...)` 里），并扫出 `src/editor/plugins` 下 EDITOR 档的 `KEY_DOWN_COMMAND` 注册与「插件分支 ⟷ 文档」的双向差异。**加/改快捷键时，这四处要一起动。**
 
+### 5. 设了 `OPENSSL_DIR` 却**没换加密后端**（macOS/国密，2026-09-19 实测）
+
+给 `libsqlite3-sys`（SQLCipher）换加密后端靠 `OPENSSL_DIR`。但**只设它没有用**：
+该 crate 的 `build.rs` 只为 `SQLITE_MAX_*` / `LIBSQLITE3_FLAGS` / `SQLCIPHER_{INCLUDE,LIB}_DIR`
+这些声明了 `rerun-if-env-changed`，**没有为 `OPENSSL_DIR` 声明** ⇒ cargo 认为"环境没变" ⇒
+**构建脚本根本不重跑**，产物还是旧后端。症状是**"失败得像成功"的典型**：编译通过、测试全绿、
+你以为换过了，其实一行都没换。
+
+```bash
+cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml   # ← 逼它重跑，这步不能省
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo build --lib --manifest-path src-tauri/Cargo.toml
+node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你设了什么环境变量
+```
+
+`check-crypto-backend` 的三种状态分得很清：没产物 ⇒ `!` 自报跳过；最新产物 ≠ 声明 ⇒ 红（附上面那条清库命令）；
+存在更旧且分类不同的产物 ⇒ `!` 提示（那正是"沉默不换后端"留下的痕迹）。换后端顺带要过
+`security::tests::fixture_db_written_by_the_other_provider_still_opens`（用**旧后端写下**的加密库夹具，
+见 `src-tauri/tests/sqlcipher-backend-fixture.db`）——它红了就等于**用户打不开自己的库**。
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。

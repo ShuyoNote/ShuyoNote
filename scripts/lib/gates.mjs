@@ -248,6 +248,17 @@ export const GATES = [
       "国密这一支一旦没人编就会腐烂：默认包不含国密（§0-E），而 `--features sm-crypto` 若编译不过/单测红，本机与 CI 都不会有任何信号。2026-09-19 建这条 job 时顺带钉住两件事：① 库级密钥必须仍是 Argon2 legacy 那 32 字节（被国密密钥顶替 = 既有加密库全部打不开）；② 国密构建仍必须读得出 v0/v1 老密文（双读）",
   },
   {
+    id: "check-crypto-backend",
+    group: "rust",
+    label: "SQLCipher 的加密后端与声明一致（构建期实查，不是看环境变量）",
+    // 为什么挂在 rust 组、且排在 cargo 类门禁后面：它读的是**构建产物**里 libsqlite3-sys 的 `output`
+    // （`-DSQLCIPHER_CRYPTO_CC` / `link-lib=dylib=crypto`），所以必须先把东西编出来才查得到；
+    // 没有产物时**自报跳过**（"没编过"不等于"编错了"）。
+    cmd: "node scripts/check-crypto-backend.mjs",
+    incident:
+      "2026-09-19（本门禁作者本人踩的）：按方案 §3 第 5 条设了 OPENSSL_DIR=<Tongsuo> 跑 cargo test —— 编译通过、测试全绿、产物里**仍然是 framework=Security（CommonCrypto）**。原因是 libsqlite3-sys 的 build.rs **没有**为 OPENSSL_DIR 声明 rerun-if-env-changed ⇒ cargo 认为环境没变 ⇒ 构建脚本根本没重跑。⇒「设了环境变量」≠「换了后端」，必须 cargo clean -p libsqlite3-sys。这条门禁就是拿产物说话：声明与实际不一致就红（本机两种方向都实测过），旧产物分类不同只提示不判红。⚠️ macOS 今天默认仍是 CommonCrypto（Apple 那支只有 AES）⇒ 平台声明里 darwin 现写 commoncrypto，等 P2/P3 的 provider 补丁落地时随构建配置一起改成 openssl",
+  },
+  {
     id: "check-sys-deps-linux",
     group: "rust",
     label: "构建期系统依赖（dpkg 实查，与本组 CI job 的 apt 配方同源）",

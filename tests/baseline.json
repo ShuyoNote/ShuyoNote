@@ -54,6 +54,7 @@
       "mobile-overlays"
     ],
     "rust": [
+      "check-crypto-backend",
       "check-sys-deps-linux",
       "gm-conformance",
       "rust-plugins-alone",
