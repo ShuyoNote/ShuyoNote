@@ -120,6 +120,43 @@ PBKDF2-HMAC-SM3  400000 轮  ：   183.6 ms   （≈4.6 ms / 万轮，线性区�
 | 同步载荷 | `security::encrypt/decrypt_payload` | 同上 |
 | 导出附件副本（导出包里那条读路径） | `attachments::export_attachment_to` | `attachments::export_attachment_tests::encrypted_export_under_national_crypto_…` |
 
+**跨实现对拍在 macOS 上真跑（2026-09-19，本轮补）**
+
+```text
+# 先编 Tongsuo（见 §3 表里新加的那一行；装到 <p>/lib）
+SHUYONOTE_TONGSUO_OPENSSL=$HOME/tongsuo-macos/install/bin/openssl node scripts/check-gm-conformance.mjs
+  对拍另一方：Tongsuo: Tongsuo 8.5.0-pre2 (Library: Tongsuo 8.5.0-pre2) / OpenSSL 3.5.4
+gm-conformance: ✅ 通过 —— 跑成 12 个用例（含跨实现对拍）
+  T1–T5 Tongsuo 对拍：标准向量 / 双向互解 / 密文逐字节相同 / HMAC 一致 / PBKDF2-HMAC-SM3 与拆 key 口径
+```
+
+⇒ **④ 的 macOS 那一半取证完成**：Tongsuo 自己命中 GM/T 0002/0004 标准向量；两个方向都解得开对方的密文；
+**两侧密文逐字节相同**（CBC＋PKCS#7 下的最强证据）；HMAC-SM3 tag 一致。与 AMD 的 Linux 读数同源同 commit。
+
+> 合并说明（2026-09-19）：本节最初按 **9/9** 写（T1–T4 ＋ R1–R4）。同一天 AMD 在 dev 上
+> （`748d6233`）**独立发现了同一个 8 字节探针 bug**，并补了 **T5 = PBKDF2-HMAC-SM3 跨实现 ＋
+> 「SM4 取前 16 字节 / MAC 取后 32 字节」两条拆 key 口径**（正好是本轮信里请他们确认的那两条 ——
+> 也就是说口径 1 现在**由可执行判据回答**，不靠回信承诺）。合并后 macOS 侧复跑 = **12/12**。
+
+> ★ **这一跑顺带抓出一个我自己的判据缺陷（值得写下来）**：Tongsuo 探针原来喂的是 **8 字节**明文给
+> `-nopad` 的 SM4-ECB —— 8 不是分组整数倍 ⇒ openssl 退出码非 0 ⇒ 探针**恒 false** ⇒
+> **T1–T4 永远走"跳过"那一支**。后果不是红，而是"给了 Tongsuo 也照样绿并自报跳过"：
+> 判据看着在岗，其实从来没开过火（而这台机器上一直没编 Tongsuo，所以谁都没发现）。
+> 修了两处：① 探针喂**恰好一个分组**（就是标准向量那 16 字节）并断言等于期望密文；
+> ② **指名了 `SHUYONOTE_TONGSUO_OPENSSL` 却用不了 ⇒ 红，不是跳过** —— 这两件事后果完全不同
+> （没给路径＝这台机器没装；给了却打不开＝这一路判据失效），后者伪装成跳过时人会以为"对拍有了"。
+> 三种状态都实测过：不设变量 3/3 绿并自报跳过；指名 `/nonexistent/openssl` 与 `/bin/cat` 各**红**
+> （报错直接点出"这不是跳过"）；指名真 Tongsuo 12/12 绿。
+> 另：探针**证不出对方身份** —— macOS 自带的 LibreSSL `/usr/bin/openssl` 也把 9 条全过了
+> （它也有 SM4）。所以门禁现在会把**对拍另一方的版本行**打出来，让读数可复核，而不是靠名字。
+
+**⑤ 的当前状态（本轮实测，不是转述方案的判断）**
+
+`src-tauri/target/release/build/libsqlite3-sys-*/output` 里写着 `cargo:rustc-link-lib=framework=Security`
+⇒ **macOS 上 SQLCipher 现在编的确实是 CommonCrypto 后端**（Apple 那套只有 AES），
+方案 §3 第 5 条那句在**本机本构建**上成立。⇒ 要编进国密 provider，必须显式设 `OPENSSL_DIR` 到 Tongsuo，
+并加一条"断言实际加密后端"的门禁（**未做**，属 ⑤）。
+
 **仍然不在 P1 范围（下一轮 / 别人的格子）**
 
 - §0-C 的**另外两条**：空间元数据记录本空间算法、同步载荷带算法标识（状态字段已加：`EncryptionStatus.format/algorithm`）；
@@ -200,6 +237,7 @@ PBKDF2-HMAC-SM3  400000 轮  ：   183.6 ms   （≈4.6 ms / 万轮，线性区�
 | 项 | 实测结果 |
 |---|---|
 | **Linux 构建** | ✅ **成功，13 秒**（`-j32`，2086 个编译单元）⇒ **"Perl + Configure"那一关在 Linux 上不是问题**（历史上卡过的是 Android 的精简 Perl） |
+| **macOS 构建（2026-09-19，Mac 实测，补）** | ✅ **成功**：`git clone --depth 1 https://gitee.com/mirrors/Tongsuo.git`（Gitee 镜像可达；克隆到源码 commit **`540603a3`**，与 AMD Linux 侧**同一个 commit**）⇒ `./Configure --prefix=<p> no-tests && make -j8 && make install_sw`。`openssl version` = **`Tongsuo 8.5.0-pre2`（底层 OpenSSL 3.5.4）**；SM3("abc") 命中 GM/T 0004 向量。⚠️ **安装目录 macOS 是 `<p>/lib`**（Linux 是 `lib64/`、Android 是 `lib/`）—— 三个平台三种，别照抄；二进制带 `@rpath` 到 `<p>/lib`（本机不用设 `DYLD_LIBRARY_PATH` 也能跑）。用它跑对拍：`SHUYONOTE_TONGSUO_OPENSSL=<p>/bin/openssl node scripts/check-gm-conformance.mjs` ⇒ **12/12（含 T1–T5 跨实现）** |
 | 版本 | Tongsuo **8.5.0-pre2**（OpenSSL 3.5.4 底），源 = **Gitee 镜像** commit `540603a3` |
 | ⚠️ **源码别从 GitHub 取** | **两侧的 GitHub 都不通**（Windows 是 DNS 污染、AMD 那台 443 直连失败）⇒ **统一用 Gitee 镜像** `https://gitee.com/mirrors/Tongsuo.git`（实测可用，`8.2-stable` 等分支在） |
 | ⚠️ **安装路径** | `./Configure --prefix=<p> no-tests && make -j && make install_sw`；**装到 `<p>/lib64/`，不是 `lib/`**（AMD 第一次就栽在这） |
@@ -383,8 +421,10 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
 - [ ] 页加密确为 SM4（直接读文件头/用错算法打开应失败，而不是"看起来能用"）
 - [x] SM3 / SM4 标准测试向量通过（**RustCrypto 侧**）：`crypto_sm::tests::sm4_primitive_matches_the_gmt_0002_vector`
       ＋ `sm3_primitive_matches_the_gmt_0004_vector`；跨实现一致性见下一行
-- [~] **跨语言一致性**：夹具已搬进本仓并有常开门禁 `gm-conformance`（RustCrypto 侧 R1–R4 恒跑、**空跑即红**），
-      ❌ 但 **Tongsuo 那一半在 macOS 上从没跑过**（本机没有 Tongsuo，门禁自报跳过）⇒ 双向互解仍未在 Mac 取证
+- [x] **跨语言一致性**：常开门禁 `gm-conformance`；macOS 上编出 Tongsuo（commit `540603a3`）后
+      **12/12 全绿含 T1–T5**（标准向量 / 双向互解 / **两侧密文逐字节相同** / HMAC 一致 /
+      **PBKDF2-HMAC-SM3 与拆 key 口径**）；
+      不设 `SHUYONOTE_TONGSUO_OPENSSL` 的机器上仍是 3 条 ＋ 自报跳过（**指名却用不了则判红**）
 - [x] 锁定态不读库（`vault.ts` 既有约束不回退）：`security::tests::lock_gates_key_and_sync` 仍绿
 - [ ] Android 真机回归（SQLCipher/OpenSSL 在 Android 上是另一条构建链，见 `Cargo.toml:102-111`）
 - [x] **格式头有测试向量钉住**：2 字节头的编码/分派、以及「无头 = 版本 0」的判定（§0-A）
@@ -398,6 +438,7 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
 - [x] **KDF 迭代有断言**：常量写死 ＋ 断言防止被改小（`kdf_rounds_are_the_pinned_value`）；
       压测记录在 §0.2（本机 ≈112 ms 解锁；**中端机数字是外推、非实测**，见 §0.2 的两条诚实标注）（§0-D）
 - [ ] **构建门禁断言实际加密后端**：确认编进去的是 Tongsuo/OpenSSL 而不是 Apple 的 CommonCrypto（§3 第 5 条）
+      —— 现状**已实测**为 CommonCrypto（build output 里有 `framework=Security`），切后端与门禁**均未做**
 
 ---
 
