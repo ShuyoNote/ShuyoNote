@@ -636,9 +636,9 @@ pub(crate) enum PdfEngine {
 impl PdfEngine {
     /// **默认引擎**（P5 的切换点：改这一行 = 换默认引擎）。
     ///
-    /// 现状（2026-09-19）：`Mupdf` —— PDFium 只在 `SHUYONOTE_PDF_ENGINE=pdfium` 时启用。
-    /// P5 灰度通过后改成 `Pdfium`，并由 `SHUYONOTE_PDF_ENGINE=mupdf` 保留一键回滚。
-    pub(crate) const DEFAULT: PdfEngine = PdfEngine::Mupdf;
+    /// 2026-09-19：由 `Mupdf` 切成 **`Pdfium`**（PDFium 已在 dev 上、P3 对拍 4/4＋目视 4/4 通过、
+    /// Windows 装包已带库）——`SHUYONOTE_PDF_ENGINE=mupdf` 保留一键回滚。
+    pub(crate) const DEFAULT: PdfEngine = PdfEngine::Pdfium;
 
     /// 环境变量取值 → 引擎。**大小写与首尾空格都不敏感**；认不出的值（含空串）走
     /// [`PdfEngine::DEFAULT`] —— 认不出就按默认走，不猜、也不报错（渲染不该因为一个
@@ -659,13 +659,13 @@ mod pdf_engine_tests {
     /// ★ **P5 的承重判据**：默认引擎**显式**写在这里。
     ///
     /// 断言的是**具体**引擎（不是 `== PdfEngine::DEFAULT` 那种同义反复）——
-    /// 后者在默认值被改掉时**永远绿**，等于没判据。切换 P5 时这一行要跟着改，
-    /// 而那正是"有人动了默认值"应该留下的痕迹。
+    /// 后者在默认值被改掉时**永远绿**，等于没判据。**P5 切换（2026-09-19）就是改这一行**，
+    /// 而"有人动了默认值"这件事从此一定留下痕迹。
     #[test]
     fn unset_uses_the_documented_default_engine() {
         assert_eq!(
             PdfEngine::from_env_value(None),
-            PdfEngine::Mupdf,
+            PdfEngine::Pdfium,
             "未设环境变量时的默认引擎（P5 切换点，见 PdfEngine::DEFAULT）"
         );
     }
@@ -684,14 +684,17 @@ mod pdf_engine_tests {
     #[test]
     fn unknown_or_empty_values_fall_back_to_default() {
         for v in [Some(""), Some("   "), Some("pdf"), Some("1"), Some("true"), Some("pdfiumm")] {
-            assert_eq!(PdfEngine::from_env_value(v), PdfEngine::Mupdf, "value={v:?}");
+            assert_eq!(PdfEngine::from_env_value(v), PdfEngine::Pdfium, "value={v:?}");
         }
     }
 
     /// 验收项"**一键切回 MuPDF**"：无论默认是哪个，显式写 `mupdf` 都必须得到 MuPDF。
     /// 这条与默认值无关，所以它在 P5 前后**都应该绿**。
+    ///
+    /// 另断言"默认确实已经不是 MuPDF" —— 否则"回滚"这个词是空的（回滚到同一个东西）。
     #[test]
     fn explicit_mupdf_always_rolls_back() {
         assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
+        assert_ne!(PdfEngine::DEFAULT, PdfEngine::Mupdf, "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条");
     }
 }
