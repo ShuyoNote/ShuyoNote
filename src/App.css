@@ -14849,6 +14849,17 @@ p:has(> .editor-drawing-container) {
 .fm-kind-col {
   width: 88px;
   color: var(--text-faint);
+  /* ⚠️ 这一行是**承重**的，别删（2026-09-19 用户截图：「文件」被拆成「文/件」）。
+     表格在窄容器里要"减宽"，而缺口会全部落到**唯一可断行的短列**上：
+       · `.fm-name-col` 有 `min-width: 240px`、两个日期列与 `.fm-size-col` 有 `nowrap`
+         ⇒ 它们的 min-content 都绷住了；
+       · 而「文件」是 CJK，`white-space: normal` 下 **min-content 只有一个字宽**
+         ⇒ 浏览器把整张表的缺口都压给这一列，它就成了 1 字/行。
+     `nowrap` 之后这列的 min-content = 整词宽度，缺口再也压不动它：
+     表格要么放得下，要么**横向滚动**（`宁可横滚，也不压字`）。
+     触发条件不是"窗口特别窄"——只要表格 min-content 超过那个 780 下限就会发生
+     （实测：长不可断文件名 + 窗口 1100 就已经 2 行）。 */
+  white-space: nowrap;
 }
 .fm-size-col {
   width: 90px;
