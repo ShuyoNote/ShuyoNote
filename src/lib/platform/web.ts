@@ -2014,7 +2014,10 @@ export function makeInvoke(store: SqliteStore) {
       //    再由这里读派生结果。在那之前：**诚实地返回空，而不是假装能算**。
       const blocks: any[] = [];
       const blockEdges: any[] = [];
-      return { pages: gPages, edges, blocks, block_edges: blockEdges } as T;
+      // ★ 显式**声明**这个平台给不出块层（字段说明见 `GraphData`）。
+      // 只说"空数组"是不够的：UI 没法把"平台不支持"与"这个空间没有块引用"分开，
+      // 于是"块级"开关在 Web 上会打开一个永远空的图（`GraphView` 现在据这个字段禁用开关）。
+      return { pages: gPages, edges, blocks, block_edges: blockEdges, blocks_supported: false } as T;
     }
 
     // ---- Attachments (bytes in IndexedDB blob store; SQLite holds metadata only,
