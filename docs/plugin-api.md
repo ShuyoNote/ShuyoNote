@@ -182,7 +182,7 @@ register({
 - 调用：`api.blocks.list(pageId, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit（上限 500）
+- 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit，但**上限 500 是硬上限：超过 500 块的页面，能力面拿不到后面的部分**。将来要「读全 + 有信号」，走**新增能力** `blocks.listPage`（返回 {blocks,total,truncated}）；**`blocks.list` 的形状不变**（插件面正在动，契约变更与校验加强同时落地会分不清谁的锅）
 - 参数：
   - `pageId`: `string`（可选） —— 页面 id；省略 = 当前打开的页面（与 blocks.append / tags.add 一致）
   - `limit`: `number`（可选），默认 `100` —— 最多返回多少块（默认 100，上限 500）
@@ -213,7 +213,7 @@ register({
 - 返回：块级命中；pageId/attId 用来回链，loc 是原文位置（页号/行号/时间码）
 - 参数：
   - `query`: `string` —— 检索词（与界面搜索同一口径：兼容表意字会先归一）
-  - `limit`: `number`（可选），默认 `10` —— 最多返回多少条命中（1–100）
+  - `limit`: `number`（可选），默认 `10` —— 最多返回多少条命中（1–100）。**这里是能力面的默认值（10）**；UI/命令面 `search_chunks` 的默认值是 20 —— 两个面各自独立，刻意不对齐（裁定 2026-09-18）
 
 ### `files.read` — 读取附件派生文本
 

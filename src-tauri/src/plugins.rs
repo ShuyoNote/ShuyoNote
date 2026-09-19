@@ -7260,20 +7260,32 @@ register({ id: "s.run", title: "结构化", run: function () {
         #[derive(serde::Deserialize)]
         struct Case {
             name: String,
+            // 下面这些对「expectMissing」用例不适用（那种用例只想钉"参数原样传下去"），
+            // 所以都带 `#[serde(default)]` —— 夹具是**两侧共用**的结构，加一种用例类型时
+            // 另一侧不该因为"字段没填"就解析失败。
+            #[serde(default)]
             unit: Vec<u32>,
+            #[serde(default)]
             repeat: usize,
+            #[serde(default)]
             offset: i64,
+            #[serde(default)]
             limit: i64,
-            #[serde(rename = "expectOffset")]
+            #[serde(default, rename = "expectOffset")]
             expect_offset: i64,
-            #[serde(rename = "expectLimit")]
+            #[serde(default, rename = "expectLimit")]
             expect_limit: i64,
-            #[serde(rename = "expectTotal")]
+            #[serde(default, rename = "expectTotal")]
             expect_total: usize,
-            #[serde(rename = "expectReturned")]
+            #[serde(default, rename = "expectReturned")]
             expect_returned: usize,
-            #[serde(rename = "expectTruncated")]
+            #[serde(default, rename = "expectTruncated")]
             expect_truncated: bool,
+            /// `true` ⇒ 这条用例验的是「参数原样传下去（不 trim/不归一）」，期望**查不到**（null）。
+            #[serde(default, rename = "expectMissing")]
+            expect_missing: bool,
+            #[serde(default, rename = "idProbe")]
+            id_probe: String,
         }
         #[derive(serde::Deserialize)]
         struct Fixture {
@@ -7299,6 +7311,17 @@ register({ id: "s.run", title: "结构化", run: function () {
                 .map(|cp| char::from_u32(*cp).expect("夹具里的码点必须合法"))
                 .collect();
             let text = unit.repeat(c.repeat);
+            if c.expect_missing {
+                // 参数原样传下去 ⇒ 带空格的 / 大小写不同的 id 都查不到（不 trim、不归一）。
+                let args = serde_json::json!({ "id": c.id_probe, "offset": 0, "limit": 10 }).to_string();
+                let got = call(&st, "pages.get", &args).unwrap();
+                assert!(
+                    got.is_null(),
+                    "用例[{i}] {}：`id` 不该被 trim/归一（期望查不到，实际拿到 {got}）",
+                    c.name
+                );
+                continue;
+            }
             let id = format!("pk{i}");
             {
                 let conn = crate::db::open_space_conn_at(&space, &dir).unwrap();

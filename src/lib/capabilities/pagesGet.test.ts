@@ -203,6 +203,8 @@ describe("pages.get：与 Rust 侧共用的分页夹具", () => {
     expectTotal: number;
     expectReturned: number;
     expectTruncated: boolean;
+    expectMissing?: boolean;
+    idProbe?: string;
   }
   const fixture: { defaultLimit: number; limitMax: number; cases: Case[] } = JSON.parse(
     readFileSync(join(root, "tests", "pages-get-window-parity.json"), "utf8"),
@@ -216,6 +218,19 @@ describe("pages.get：与 Rust 侧共用的分页夹具", () => {
 
   for (const c of fixture.cases) {
     it(c.name, async () => {
+      // `expectMissing`：这条用例验的是**参数原样传下去**（不 trim/不归一），不是窗口 ——
+      // 所以让 page 查不到（mock 返回 null），断言"查不到"这件事本身。
+      if (c.expectMissing) {
+        (api.getPage as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+        const r = (await run()({ id: c.idProbe, offset: 0, limit: 10 }, CTX)) as unknown as {
+          ok: boolean;
+          error: string;
+        };
+        expect(r.ok).toBe(false);
+        // 关键：**原样**把 id 传给了下层（首尾空格 / 大小写都没被改写）
+        expect((api.getPage as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(c.idProbe);
+        return;
+      }
       const text = c.unit.map((cp) => String.fromCodePoint(cp)).join("").repeat(c.repeat);
       mockPage("夹具", text);
       const r = (await run()({ id: "p1", offset: c.offset, limit: c.limit }, CTX)) as unknown as {

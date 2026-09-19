@@ -167,7 +167,7 @@ export interface PluginApi {
   };
   blocks: {
   /** 列出页面块（权限 `read:pages`；1.0.0 起）
-   * 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit（上限 500）
+   * 返回：[{blockId, text}]；**超过 limit 的块会被丢掉且没有信号**（与 pages.get 的 truncated 不同）—— 要完整块列表就显式传更大的 limit，但**上限 500 是硬上限：超过 500 块的页面，能力面拿不到后面的部分**。将来要「读全 + 有信号」，走**新增能力** `blocks.listPage`（返回 {blocks,total,truncated}）；**`blocks.list` 的形状不变**（插件面正在动，契约变更与校验加强同时落地会分不清谁的锅）
    */
     list(pageId?: string, limit?: number): { blockId: string; text: string }[];
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
