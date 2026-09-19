@@ -111,6 +111,16 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: node scripts/fetch-pdfium.mjs --platform win-x64
 
+      - name: 取 PDFium 运行时（Linux 装包要带的 libpdfium.so）
+        # 2026-09-19 加（AMD）。与 Windows 档同一个理由，但 Linux 多一层讲究：库**不在 exe 同目录**
+        # （deb = `/usr/lib/<id>`、AppImage = `$APPDIR/usr/lib/<id>`），所以 `tauri.linux.conf.json`
+        # 把 `vendor/pdfium/linux-x64/lib/libpdfium.so` 映射成**资源目录根**的 `libpdfium.so`，
+        # Rust 侧 `pdfium_native::library_dir()` 在 exe 同目录之后探那里（`lib.rs` 启动时登记 `resource_dir`）。
+        # 二进制不入库（`.gitignore` 有 `src-tauri/vendor/pdfium/`）⇒ 打包前必须现拉，否则
+        # `tauri-build` 的 `copy_resources` 会以 `resource path … doesn't exist` 判红整条构建。
+        if: matrix.platform == 'ubuntu-24.04'
+        run: node scripts/fetch-pdfium.mjs --platform linux-x64
+
       - name: 交付通道协议门禁（shuyonote://）
         # 这条**必须在打包之前**跑，而且不能只靠 `pnpm tauri build` 里 beforeBuildCommand 那一串：
         # 协议注册是唯一一处"配置错了不会编译失败、只在装完之后表现为点链接没反应"的地方。
@@ -165,6 +175,16 @@ jobs:
             throw "装包里没有 pdfium.dll（$($setup.Name)）—— 用户机器上 PDFium 引擎会找不到库"
           }
           "✓ 装包里有 pdfium.dll：$($setup.Name)"
+
+      - name: 装包确实带上了 libpdfium.so（Linux 档）
+        # 2026-09-19 加（AMD）。与 Windows 档那条 7z 断言同一个道理：**产物级**判据。
+        # 源码级只能证明"配置里写了映射"，证明不了"包里有那个库、且落在资源目录那一层"。
+        # Linux 的失败面比 Windows 更隐蔽：库不在 exe 同目录，`library_dir()` 只探资源目录根
+        # ⇒ 映射到深一层（例如 `…/resources/libpdfium.so`）时 deb 里**确实有**这个文件，
+        # 只有产物里的**路径层数**能把它抓出来。P5 把默认引擎切成 PDFium 之后，
+        # 这一条就是"Linux 用户开得了 PDF / 开不了 PDF"的分界。
+        if: matrix.platform == 'ubuntu-24.04'
+        run: node scripts/check-linux-bundle.mjs
 
       - name: 发布的包确实注册了 shuyonote:// 协议（Linux 档）
         # 为什么只在这一档做**产物级**断言：Linux 的注册是 deb 里那个 .desktop 的

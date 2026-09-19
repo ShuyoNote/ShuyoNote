@@ -327,6 +327,17 @@ pub fn run() {
             // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
 
+            // PDFium 动态库在**打包形态**下的所在目录。必须在这里登记：
+            // Tauri 在 Linux 上 `resource_dir` ≠ 可执行文件目录（deb = `/usr/lib/<id>`、
+            // AppImage = `$APPDIR/usr/lib/<id>`），而库正是被 `tauri.linux.conf.json`
+            // 的 `bundle.resources` 映射进那个目录的 ⇒ 不登记的话 Linux 发行包上
+            // `library_dir()` 只会探 exe 同目录，真机症状是「找不到 PDFium 动态库」。
+            // （Windows 上是重复探测，无害；拿不到只影响"切到 PDFium"那条路，不影响启动。）
+            match app.path().resource_dir() {
+                Ok(dir) => pdfium_native::set_resource_dir(dir),
+                Err(e) => eprintln!("[pdfium] 拿不到资源目录：{e}；打包形态可能找不到 PDFium 动态库"),
+            }
+
             let app_data_dir = app.path().app_data_dir()?;
             let conn = db::init(app_data_dir).map_err(|e| {
                 eprintln!("failed to init db: {e}");

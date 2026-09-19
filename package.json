@@ -55,6 +55,7 @@
     "check:pdf-reload": "node scripts/check-pdf-reload.mjs",
     "check:pdfjs-shim": "node scripts/check-pdfjs-worker-shim.mjs",
     "check:macos-bundle": "node scripts/check-macos-bundle.mjs",
+    "check:linux-bundle": "node scripts/check-linux-bundle.mjs",
     "check:ps1-ascii": "node scripts/check-ps1-ascii.mjs",
     "check:web-deploy": "node scripts/check-web-deploy.mjs",
     "plugin:fragment": "node scripts/plugin-fragment.mjs",
