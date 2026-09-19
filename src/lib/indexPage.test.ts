@@ -19,6 +19,7 @@ import { indexLibrary, indexPage, indexUnfiled } from "./indexPage";
 import { DERIVED_SCHEMA_DDL } from "./extract/schema";
 import { createAttachmentTextStore, type SqlRunner } from "./extract/store";
 import { createChunkStore } from "./extract/chunkStore";
+import { desktopDerivedStores } from "./platform/derivedStores";
 import { setWasmBytesProvider } from "./platform/sqliteStore";
 import { setPlatform as setActivePlatform } from "./platform/index";
 import type { Platform } from "./platform/types";
@@ -82,7 +83,75 @@ function asAsync<T extends object>(store: T): T {
   return out as T;
 }
 
-const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';const docx = (text: string) =>
+/**
+ * 「类 Rust 后端」：把运输层的 op **派发到已有的同步 store**（不新写一份 SQL）——
+ * 这样端到端验的是**适配器 + 编排**这一条链；Rust 侧那半另有它自己的 6 条判据
+ * （`src-tauri/src/derived_transport.rs`，真实 rusqlite + 真事务）。
+ */
+async function rustishBackend() {
+  const s = await stores();
+  /**
+   * 返回类型声明成 `DerivedInvoker["invoke"]`：`invoke` 的契约是**泛型**的
+   * （调用方按 T 收窄），所以这里用 `as` 把"按命令返回不同形状"的实现挂上去 ——
+   * 与真命令面（`platform.executor.invoke`）同一种写法。
+   */
+  const invoke = (async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (cmd === "derived_apply") {
+        const ops = (args?.ops ?? []) as {
+          op: string;
+          attId?: string;
+          extractor?: string;
+          srcHash?: string;
+          now?: number;
+          segments?: { kind: string; text: string; loc?: string }[];
+          owner?: { kind: "page"; pageId: string } | { kind: "attachment"; attId: string };
+          chunks?: { id: string; pageId?: string | null; attId?: string | null; ord: number; loc?: string; lang?: string; text: string; hash: string }[];
+        }[];
+        for (const op of ops) {
+          if (op.op === "replaceAttachmentText") {
+            s.text.replace(
+              op.attId!,
+              op.extractor!,
+              op.srcHash!,
+              (op.segments ?? []).map((x) => ({ kind: x.kind as never, text: x.text, loc: x.loc ?? "" })),
+              op.now!,
+            );
+          } else if (op.op === "removeAttachmentText") {
+            s.text.removeAttachment(op.attId!);
+          } else if (op.op === "replaceChunks") {
+            s.chunks.replace(
+              op.owner!,
+              (op.chunks ?? []).map((c) => ({
+                id: c.id,
+                pageId: c.pageId ?? null,
+                attId: c.attId ?? null,
+                ord: c.ord,
+                loc: c.loc ?? "",
+                lang: c.lang ?? "",
+                text: c.text,
+                hash: c.hash,
+              })),
+            );
+          } else if (op.op === "removeChunks") {
+            s.chunks.remove(op.owner!);
+          }
+        }
+        return { ops: ops.length, rows: 0 };
+      }
+      if (cmd === "derived_query") {
+        const q = args?.query as { op: string; attId?: string; owner?: never };
+        if (q.op === "attachmentTextSegments") return s.text.segmentsOf(q.attId!);
+        if (q.op === "chunkRows") return s.chunks.chunksOf(q.owner!);
+        if (q.op === "chunkStats") return s.chunks.stats();
+        if (q.op === "attachmentTextStats") return s.text.stats();
+      }
+      throw new Error(`假后端不认识的命令：${cmd}`);
+  }) as <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+  return { stores: s, invoke };
+}
+
+const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+const docx = (text: string) =>
   zipSync({
     "word/document.xml": strToU8(
       `<w:document ${W}><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`,
@@ -175,6 +244,35 @@ describe("indexPage：把一个页面索引完整", () => {
     );
     expect((await delayed.text.segmentsOf("a1")).length).toBeGreaterThan(0);
     expect((await delayed.chunks.chunksOf({ kind: "attachment", attId: "a1" })).length).toBeGreaterThan(0);
+  });
+
+  it("★ **桌面路径端到端**：`desktopDerivedStores` + 类 Rust 后端跑通同一个 `indexPage` —— 索引真的填进去了", async () => {
+    // 这条是「全库 AI 覆盖」在**主力平台**上的第一份端到端读数：桌面没有 sql.js，
+    // 索引只能过命令面（`derived_apply`/`derived_query`）⇒ 走的正是这条链。
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(listed(["a1"]));
+    setActivePlatform(platformWith({ p1: longBody(120) }, { a1: docx("附件一里的内容") }));
+
+    const backend = await rustishBackend();
+    const desktop = desktopDerivedStores(backend);
+
+    const r = await indexPage("p1", desktop);
+
+    expect(r.page.chunks).toBeGreaterThan(1);
+    expect(r.attachments[0].status).toBe("stored");
+    // ① 派生文本落库了（读回来，而不是只看返回值）
+    expect((await desktop.text.segmentsOf("a1")).length).toBeGreaterThan(0);
+    // ② 块也落库了，且页面块数与编排报的一致
+    expect((await desktop.chunks.chunksOf({ kind: "page", pageId: "p1" })).length).toBe(r.page.chunks);
+    expect((await desktop.chunks.stats()).chunks).toBeGreaterThan(r.page.chunks);
+    // ③ 附件块里能搜到原文（AI 的 `files.search` / `search_chunks` 走的就是这张表）
+    const attRows = await desktop.chunks.chunksOf({ kind: "attachment", attId: "a1" });
+    expect(attRows.some((c) => c.text.includes("附件一"))).toBe(true);
+    // ④ `ensureSchema` 在桌面是 no-op（表由后端/Rust migrate 保证）⇒ 用真读回的行反过来验缓存判据：
+    const segs = await desktop.text.segmentsOf("a1");
+    const ids = [...new Set(segs.map((s) => s.extractor))];
+    expect(ids.length).toBeGreaterThan(0);
+    expect(await desktop.text.needsExtract("a1", "a1", ids)).toBe(false); // 内容没变 ⇒ 不必重抽
+    expect(await desktop.text.needsExtract("a1", "换了个 hash", ids)).toBe(true); // 内容变了 ⇒ 必须重抽
   });
 
   it("**一个附件失败不拖垮整页**：其余照常索引，失败如实进结果（含错误码）", async () => {
