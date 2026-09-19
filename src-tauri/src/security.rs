@@ -361,13 +361,23 @@ fn rebuild_space_db(
     dst.execute_batch(&format!("ATTACH DATABASE '{src_sql}' AS plain {src_key};"))
         .map_err(|e| format!("ATTACH 源库失败: {e}"))?;
 
-    // Enumerate the source's real tables (skip sqlite_* system tables and page_fts*
-    // FTS shadow tables — the latter are rebuilt below).
+    // Enumerate the source's real tables (skip sqlite_* system tables and the FTS5
+    // **virtual tables + their shadow tables** — both families are rebuilt on the target below).
+    //
+    // ⚠️⚠️ **以后再加 FTS5 表，这里必须同步加一行前缀**（2026-09-19：`chunk_fts` 就是第二次踩同一个坑）。
+    //   为什么必须排除，而不是"让它一起被拷"：FTS5 会连带建一族影子表
+    //   （`_config` / `_data` / `_docsize` / `_idx`），其中 `<表>_config` 是**单行表**（`k` 唯一）
+    //   ⇒ 逐表 `INSERT … SELECT *` 拷到第二行就撞 `UNIQUE constraint failed`，
+    //   而报错发生在**用户数据迁移路径**上（开/关加密时的就地转换），代价极高。
+    //   实测（macOS 侧 2026-09-19）：本表当初让 `security::` 8 条判据在**分支自己的基点**上就是红的。
+    //   排除之后索引不会丢：`chunks` 行被拷过去时触发器会自动维护，兜底还有读取路径上的
+    //   `search::ensure_chunk_fts()`（计数对不上就整体重建）。
     let tables: Vec<String> = {
         let mut stmt = dst
             .prepare(
                 "SELECT name FROM plain.sqlite_master WHERE type='table' \
-                 AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'page_fts%' ORDER BY name",
+                 AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'page_fts%' \
+                 AND name NOT LIKE 'chunk_fts%' ORDER BY name",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
@@ -1267,6 +1277,14 @@ mod tests {
             let s = Connection::open(&space_path).unwrap();
             crate::db::migrate(&s, "default").unwrap();
             s.execute_batch("INSERT INTO pages (id, workspace_id, title, content_text, created_at, updated_at) VALUES ('p1','default','hello','hello',1,1)").unwrap();
+            // ★ 派生层也给一行：`convert_space_db` 是**逐表拷贝**，而 `chunk_fts` 是 FTS5 虚拟表
+            //   （带一族单行影子表）⇒ 它必须被**排除**而不是被拷（见 `convert_space_db` 里那段注释）。
+            //   这一行用来验证"排除索引之后，索引本身还在"。
+            s.execute_batch(
+                "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) \
+                 VALUES ('p1#0','p1',NULL,0,'','zh','hello chunk body','h1')",
+            )
+            .unwrap();
             s.close().unwrap();
         }
         let salt = crypto::random_salt();
@@ -1277,6 +1295,17 @@ mod tests {
         let conn = crate::db::open_space_conn_at("default", &dir).unwrap();
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
+        // ★ 逐表拷贝排除索引表之后，**索引本身必须还在**（两条机制：拷 `chunks` 时触发器维护；
+        //   兜底是读取路径上的 `ensure_chunk_fts()`）。只测"不炸了"是不够的 ——
+        //   索引静默丢了的话，症状是"搜索悄悄变差"，没有任何报错。
+        let chunks_n: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0)).unwrap();
+        let indexed_n: i64 = conn.query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0)).unwrap();
+        assert_eq!(chunks_n, 1, "转换后 chunks 行数不对（拷贝漏了派生层？）");
+        assert_eq!(indexed_n, chunks_n, "转换后块级 FTS 索引与 chunks 行数不一致（索引被拷坏或丢了）");
+        let chunk_hit: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunk_fts WHERE chunk_fts MATCH 'chunk'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(chunk_hit, 1, "转换后块级全文检索查不到那行（索引没被维护/重建）");
         // Full-text search still works post-encryption (the migration rebuilds page_fts).
         let fts: i64 = conn
             .query_row("SELECT COUNT(*) FROM page_fts WHERE page_fts MATCH 'hello'", [], |r| r.get(0))
