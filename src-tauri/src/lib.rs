@@ -11,6 +11,10 @@ mod crypto;
 // 默认包里它整个不存在 ⇒ 默认构建既不多编一个 crate，也不可能写出 v2 密文。
 #[cfg(feature = "sm-crypto")]
 mod crypto_sm;
+// 库级国密 provider 的**运行期反向验证**（P2/P3 里属于 AMD 的那半；探针 + 判据）。
+// 与 mac 的分工见 `2026-09-19-gm-p1-application-layer.reply-2.md` §七：构建期出"编进去的是哪个后端"，
+// 这里出"SM3/SM4 到底有没有被 SQLCipher 真的走通"。**目前是探针阶段**（先量事实再写判据）。
+mod gm_provider;
 mod database;
 mod db;
 mod disk;
