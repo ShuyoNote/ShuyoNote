@@ -153,7 +153,8 @@ node scripts/external-suite-status.mjs --suite sync-regression --status passed \
 
 ## 把 CI 的读数并进基线（`--baseline-from`）
 
-有些门禁本机跑不了（最典型：rust 组在 Windows 上测试二进制加载期就异常退出）。CI 跑出来的
+有些门禁本机跑不了（最典型：**rust 全量组**里有 34 条 `plugins::` 用例要起真宿主进程；Windows 本机
+可以用 `scripts\win-cargo-test.ps1` 跑 **lib 目标**，但全量仍属 Linux，见下文"已知边界"）。CI 跑出来的
 JSON 报告可以直接并入基线，不用手抄数字、也不用人工算术：
 
 ```powershell
@@ -193,11 +194,25 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
-- **Windows 本机跑不了 rust 组**（2026-09-16 实测）：`cargo test` 的测试二进制在加载期以
-  `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 异常退出——app（`shuyonote.exe`）能正常跑，且它的
-  导入符号是测试二进制的**超集**，`target\debug` 下也没有抢占的 CRT/OpenSSL 副本；已排查到
-  环境层为止，**没有**为此加任何"跳过"或"忽略"开关（那会让门禁失去意义）。
-  ⇒ 权威执行地是 **Linux**：CI，或**本机 WSL2**（Ubuntu 24.04 + `build-essential` +
+- **Windows 本机跑 rust 组：要过一道 manifest 关**（2026-09-16 撞上，2026-09-19 定位）：症状是
+  `cargo test` 的测试二进制在**加载期**就以 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 退出，而
+  app（`shuyonote.exe`）能正常跑、且它的导入符号是测试二进制的**超集**。已逐条排除：缺 DLL（含
+  把 CRT/OpenSSL 副本放到 `target\debug` 和 PATH 前）、CRT 版本、PATH、OpenSSL 版本、pdfium、
+  以及沙箱本身（离开本 harness、用日程任务跑同样失败）——**不是**环境缺件。
+  根因：cargo 生成的测试 exe **没有应用清单**，加载器因此把 `comctl32` 绑到旧的 v5，而测试 exe 的
+  静态导入里有**只有 v6 才导出**的入口点。
+  修法（一条命令，仓库里不改任何被跟踪的东西）：
+  `powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1`
+  （过滤单组加 `-Filter storage::tests::`，透传参数加 `-ExtraArgs --nocapture`，只构建不跑加 `-NoRun`；
+  需要 Windows SDK 的 `mt.exe`，`OPENSSL_DIR` 未设时脚本会先提示。）
+  脚本做四件事：`cargo test --no-run --lib` → 把测试 exe 复制成**同目录、带时间戳的唯一名**副本 →
+  `mt.exe -manifest <v6> -outputresource:<copy>;1` 注入 → 跑副本并把**它的退出码原样转发**。
+  注入后用字节扫描确认清单**真的落进了副本**——否则会拿旧 exe 读出一个假绿。
+  脚本注释里记了三个坑：PS 5.1 会把 cargo 的原生 stderr 当**终止**错误（要先放宽
+  `$ErrorActionPreference`）；**复用"已经执行过"的副本路径**会让 `mt.exe` 报
+  `c101008d`（所以每次换新名字）；刚写出来的 60+ MB 副本还会被杀软短暂占住（重试 3 次）。
+  ⚠️ 这条路只覆盖 **lib 测试目标**：`rust-plugins-alone` 那 34 条要起**真宿主进程**，所以权威执行地
+  仍然是 **Linux**：CI，或**本机 WSL2**（Ubuntu 24.04 + `build-essential` +
   `libwebkit2gtk-4.1-dev` + `libssl-dev` + `libclang-dev` + rustup，源码从 `/mnt/c` 读、
   `CARGO_TARGET_DIR` 放到 ext4 避开 9p 慢盘）。两条 rust 门禁的读数**已用这条路实测并进基线**
   （`rust-test 310` / `rust-plugins-alone 114`，取自 `dev@dc7fa13b`）。

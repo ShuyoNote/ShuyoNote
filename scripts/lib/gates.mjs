@@ -193,9 +193,11 @@ export const GATES = [
   // ---- rust ----
   // 读数（`counters: "cargo"`）**已在 Linux 侧实测并入** tests/baseline.json：
   //   rust-test 310 / rust-plugins-alone 114（2026-09-16，dev=dc7fa13b，WSL2 Ubuntu 24.04）。
-  // 本机 Windows 跑不了它们（测试二进制加载期 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND`，见
-  // docs/TESTING.md 的"已知边界"），所以本机 `pnpm verify:rust` 会红——那是**环境**问题；
-  // 权威执行地是 Linux（CI / 本机 WSL）。基线校验只比较**跑通过**的门禁，本机红不产生假违规。
+  // 本机 Windows 可以用 scripts/win-cargo-test.ps1 跑 **lib 目标**（cargo 生成的测试 exe 没有
+  // 应用清单，加载器因此绑到旧 comctl32 ⇒ 0xC0000139；脚本注入 v6 清单后再跑）。但它只覆盖单测，
+  // 不含要真宿主进程的 `plugins::` 那 34 条，整组仍以 Linux（CI / 本机 WSL）为准，见
+  // docs/TESTING.md 的"已知边界"。所以本机 `pnpm verify:rust` 仍可能红——那是**能力**问题；
+  // 基线校验只比较**跑通过**的门禁，本机红不产生假违规。
   {
     id: "rust-test",
     group: "rust",
