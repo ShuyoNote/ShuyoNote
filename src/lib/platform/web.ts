@@ -3078,21 +3078,19 @@ export function makeInvoke(store: SqliteStore) {
       if (!r) throw new Error("版本不存在");
       // Preserve the CURRENT content before overwriting, so a restore is
       // reversible (deduped against the newest snapshot). Matches desktop.
-      // ⚠️ 活性谓词与 `readContent` 一致（`deleted_at IS NULL`）：**恢复只对活页**
-      // ——要给已软删的页面恢复内容，应先把页面还原出来（2026-09-19 跨机裁定"统一到活页"）。
-      const cur = store.query<{ title: string; content_json: string; content_text: string }>(
-        "SELECT title, content_json, content_text FROM pages WHERE id = ? AND deleted_at IS NULL",
-        [r.page_id],
-      )[0];
+      // ★ **页内容的读/写都走「文档内容」那一层**（阶段 0 接口收口，2026-09-19）：
+      //   · 读 = `readContent`（`SELECT title, content_json, content_text … AND deleted_at IS NULL`，
+      //     与这里原先那条 SQL **逐字相同**）⇒ **恢复只对活页**这条口径由那一层定义，不再靠注释；
+      //   · 写 = `writeContent`（`UPDATE … SET title, content_json, content_text, updated_at, dirty = 1`，
+      //     也与 2026-09-19 裁定 (a) 之后这里那条 SQL **逐字相同**）。
+      //   ⇒ 于是"恢复版本"这条路上的**判据与命令面走同一条代码路径**（`docContent.test.ts` 22 条
+      //     与 `two-device-sync` 的场景 G 都在守它），将来换 CRDT 只改那一层。
+      //   ⚠️ 两处**语义**仍留在本命令里、**不属于**那一层：① 版本不存在就抛；② 读不到活页就**拒绝**
+      //     （而不是静默跳过快照 —— 那会让 UPDATE 改写已软删的页）。
+      const cur = readContent(store, r.page_id);
       if (!cur) throw new Error("页面不存在或已删除（先还原页面，再恢复它的历史版本）");
-      snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
-      // `dirty = 1`：恢复版本是**用户自己刚做的动作**，与 `writeContent` 硬写 1、
-      // `upsertRemoteContent` 硬写 0 成对。不置 1 时，"恢复后、推送前"的某次 pull 会
-      // **静默把这次恢复冲掉**（最终虽收敛，但用户会看到内容闪回且没有任何提示）。
-      // 2026-09-19 裁定 (a)：两侧同时改 —— Rust `versions.rs::restore_version` 同批。
-      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1 WHERE id = ?", [
-        r.title, r.content_json, r.content_text, Date.now(), r.page_id,
-      ]);
+      snapshotBeforeSave(store, r.page_id, cur.title, cur.json, cur.text);
+      writeContent(store, r.page_id, { title: r.title, json: r.content_json, text: r.content_text }, Date.now());
       const restored = store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0];
       recordChange(store, "page", r.page_id, "upsert", restored ?? { id: r.page_id, title: r.title, content_json: r.content_json, content_text: r.content_text, updated_at: Date.now() }, Date.now());
       return restored as T;
