@@ -67,10 +67,28 @@ export async function extractAndStore(
   if (list.length === 0) return { status: "no_extractor" };
 
   const ids = list.map((e) => e.id);
-  // 缓存判定按**整组候选**：只要有一个还没抽（或 hash 过期）就继续，避免"换了个抽取器但没抽"。
-  if (!opts.store.needsExtract(opts.attId, opts.hash, ids)) {
-    return { status: "cached", extractor: ids[0] };
+  // 缓存判定（**2026-09-19 改成按优先级**）：
+  //
+  // · 兜底链（`pdf.text` → `pdf.ocr`、`image.ocr` → `image.caption`）里**只有一个**抽取器会落库。
+  //   原来"整组候选都必须有行"（`store.needsExtract` 的语义）会让兜底链**永不缓存** ⇒
+  //   每轮重跑最贵的那个 GPU 抽取器 —— `store.test.ts` 的"gpu 抽取器也不该被重复调用"当场变红，
+  //   那不是测试挑剔，是这条口径真错了（加 `image.caption@1` 时才暴露）。
+  // · 但也不能反过来"任一个有行就算缓存"：**新加了一个更高优先级的抽取器**时，
+  //   旧文件的当前 hash 行落在低优先级那个上，新抽取器就永远不会被跑到。
+  // ⇒ 正确口径：**当前 hash 的行落在"优先级最高的那个候选"上 ⇒ cached**；
+  //   落在更低优先级的候选上（或没有任何当前 hash 的行）⇒ 重跑。
+  //
+  // （`store.needsExtract` 保留原语义不动：本文件的"要不要跑这一组"与它的"这组是否都有行"
+  //   本来就是两个问题，所以改动面只落在本文件。）
+  const stored = new Set(
+    (await opts.store.segmentsOf(opts.attId))
+      .filter((r) => r.src_hash === opts.hash)
+      .map((r) => r.extractor),
+  );
+  if (list.findIndex((e) => stored.has(e.id)) === 0) {
+    return { status: "cached", extractor: list[0].id };
   }
+  void ids; // `ids` 仍用于下面的记录（`tried` 由循环负责），这里保留可读性
 
   const tried: string[] = [];
   let last: { code: ExtractErrorCode; message: string } | null = null;
@@ -126,16 +144,20 @@ export async function extractAndStore(
 }
 
 /** 归一化 + 落库（**归一化只在这一处施加**，见 §15.3-10）。 */
-function store_(
+async function store_(
   opts: ExtractAndStoreOptions,
   extractorId: string,
   segments: ExtractedSegment[],
   now: number,
-): ExtractOutcome {
+): Promise<ExtractOutcome> {
   const normalized = segments.map((s) =>
     s.text === normalizeForStore(s.text) ? s : { ...s, text: normalizeForStore(s.text) },
   );
-  opts.store.replace(opts.attId, extractorId, opts.hash, normalized, now);
+  // ⚠️ **这里的 `await` 不能省**（2026-09-19 补）：store 的返回类型放宽成 `Awaitable<void>` 之后，
+  // 漏掉 await 在同步实现（Web 的 sql.js）下照样跑过，但在**桌面**（走 `derived_apply` 命令面、真异步）
+  // 会变成"发出去就不管"⇒ 落库与返回**竞态**，`needsExtract` 随后可能读不到刚写的行
+  //（症状：索引"跑完了"但库里是空的）。判据见 `coverage.test.ts` 的「慢后端」用例。
+  await opts.store.replace(opts.attId, extractorId, opts.hash, normalized, now);
   return {
     status: "stored",
     extractor: extractorId,
