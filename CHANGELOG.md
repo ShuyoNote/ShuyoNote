@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [1.91.8] - 2026-09-19
+
+### 修复
+
+- **AppImage 里那份 `libpdfium.so` 被 linuxdeploy strip 掉**，于是"包里那份 == 源那份"这条产物级判据在 AppImage 上不成立
+  （1.91.7 的 CI 因此红 ⇒ 又没上传 Linux 产物）。定性有两条独立观察：① 本机真打一次 AppImage 时，
+  `linuxdeploy` 铺好的 `ShuyoNote.AppDir/usr/lib/ShuyoNote/libpdfium.so` 与 vendor 源**逐字节一致**
+  （7645184 字节、sha256 相同、`.symtab` 仍在）；② 但那次 linuxdeploy 没跑完（缺 `xdg-mime`），
+  而 CI 上跑完了 ⇒ 成品里那份字节不同。⇒ 差异只能来自 linuxdeploy 的 **默认 strip**。
+  修法：**别 strip**。因为主二进制本来就被 `[profile.release] strip = true` 处理过、且 Windows/macOS 不走 linuxdeploy，
+  所以关掉它只多出 PDFium 这**一个库**的符号（约 1–2 MB），换来 AppImage 也能做 **sha256 对源比对** ——
+  比"只看大小"那种弱判据值得。`release.yml` 的 `Build bundles` 步加 `NO_STRIP: "1"`。
+  （同批还修了这条断言的两处解析 bug：deb 少认 `./` 前缀、AppImage 多算 `squashfs-root` 一段 —— 见 1.91.7。）
+  ⇒ 本版起**三平台产物齐发**（也就把 1.91.6 那笔"默认引擎切成 PDFium"真正送到各平台用户）。
+
+### 其它
+
+- **更新通道一起补发**：1.91.6 与 1.91.7 都因 Linux 那格缺产物而把通道**停在 1.91.5**
+  （不能发一份缺平台的清单，否则那部分用户收不到更新）；本版三平台齐了才发。
+
 ## [1.91.7] - 2026-09-19
 
 ### 修复
