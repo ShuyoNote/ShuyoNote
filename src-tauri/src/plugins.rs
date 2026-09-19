@@ -2010,13 +2010,13 @@ fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
     let limit = limit.clamp(1, 500) as usize;
     let target = target_page_or_current(page_id)?;
     with_read_conn(|c| {
-        let content_json: String = c
-            .query_row(
-                "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                params![target],
-                |r| r.get(0),
-            )
-            .map_err(|_| format!("bad_args: 未找到页面 {target}"))?;
+        // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL 逐字相同。
+        //   ⚠️ 搬运前的语义是"**任何**取不到（SQL 错误 **或** 页不存在/已软删）都报同一句
+        //   `bad_args: 未找到页面`" —— 这里两段 `.map_err` 保留那条语义，不做区分。
+        let content_json: String = crate::doc_content::read(c, &target)
+            .map_err(|_| format!("bad_args: 未找到页面 {target}"))?
+            .map(|d| d.json)
+            .ok_or_else(|| format!("bad_args: 未找到页面 {target}"))?;
         let v = crate::blocks::parse_json(&content_json).map_err(|e| format!("db_error: {e}"))?;
         let blocks: Vec<serde_json::Value> = crate::blocks::root_children(&v)
             .iter()
@@ -3113,12 +3113,9 @@ pub async fn emit_plugin_event(
         let current_page_json = payload_page_id
             .as_deref()
             .and_then(|id| {
-                c.query_row(
-                    "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                    params![id],
-                    |r| r.get::<_, String>(0),
-                )
-                .ok()
+                // ★ 读出口走那一层；搬运前的 `.ok()` 会把**SQL 错误也一起吞掉**，
+                //   这里 `read(...).ok()` 保持同一条语义（不新增报错面）。
+                crate::doc_content::read(&c, id).ok().flatten().map(|d| d.json)
             })
             .unwrap_or_default();
         let read_space = c
@@ -4420,12 +4417,13 @@ pub async fn run_plugin_command(
             .map(|n| n as usize)
             .unwrap_or(0);
         let current_page_json = if let Some(id) = current_id.as_deref() {
-            c.query_row(
-                "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                params![id],
-                |r| r.get::<_, String>(0),
-            )
-            .unwrap_or_default()
+            // ★ 读出口走那一层；搬运前的 `.unwrap_or_default()` 同样会把 SQL 错误吞成空串，
+            //   这里保持同一条语义（`read(...).map(|d| d.json).unwrap_or_default()`）。
+            crate::doc_content::read(&c, id)
+                .ok()
+                .flatten()
+                .map(|d| d.json)
+                .unwrap_or_default()
         } else {
             String::new()
         };
