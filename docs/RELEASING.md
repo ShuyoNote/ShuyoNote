@@ -111,6 +111,8 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 > **macOS 档另有两条 PDFium 相关步骤（2026-09-19 加）**：打包前先
 > `node scripts/fetch-pdfium.mjs --platform mac-univ` 现拉 `libpdfium.dylib`（二进制**不入库**），
 > `src-tauri/tauri.macos.conf.json` 把它映射成包里的 **`Contents/Frameworks/libpdfium.dylib`**
+> （⚠️ `bundle.macOS.files` 的方向是 **`键 = 包内目标（相对 Contents）`、`值 = 源文件`**；写反了打包会报
+> `Failed to copy "Frameworks/…" to "vendor/…"`，那是它把值当成了源）
 > —— 那个位置正是 Rust 侧 `pdfium_native::library_dir()` 在 macOS 上会去找的（`Contents/Resources`
 > **不是**它的搜索路径，所以不能用 `bundle.resources`）。打包后用
 > `pnpm check:macos-bundle` 对**产物**断言：库在不在、以及它与 `vendor/` 里那份的 **sha256 是否一致**

@@ -3,7 +3,7 @@
   "bundle": {
     "macOS": {
       "files": {
-        "vendor/pdfium/mac-univ/lib/libpdfium.dylib": "Frameworks/libpdfium.dylib"
+        "Frameworks/libpdfium.dylib": "vendor/pdfium/mac-univ/lib/libpdfium.dylib"
       }
     }
   }
