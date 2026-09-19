@@ -612,6 +612,23 @@ mod tests {
     use crate::db;
     use rusqlite::Connection;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicU32;
+
+    /// ⚠️ **临时目录名必须"每次调用都不同"**，不能只靠 `进程号 + 毫秒`（2026-09-19 的 CI 教训）。
+    ///
+    /// 原来七个用例各自写 `shuy_xxx_{pid}_{now_ms()}`：**并发**下会撞名 —— cargo 的测试线程同时起跑时，
+    /// 两个测试可以在**同一毫秒**里各建一个同名目录，而 `temp_ws()` 开头就 `remove_dir_all`，
+    /// 于是 B 把 A 刚建好的 meta.db/space db 删掉、两边还共用同一个 meta.db
+    /// ⇒ A 写入 `ENC_ENABLED=1` 之后，B 的"未开启"用例读到"已开启"，一串用例跟着红。
+    ///
+    /// 复现（当时留的探针，改前 **5/5 必红**）：8 个线程用 `Barrier` 同时调 `temp_ws()`，去重后不足 8 个目录。
+    /// 这解释了 `rust-sm-crypto` 在 Linux CI 上红、而本机 macOS 连跑两遍全绿 —— 差别只在**线程调度**。
+    /// 序号是 `Relaxed` 就够（只要唯一，不承担同步语义）。
+    static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
+    fn uniq_tmp(tag: &str) -> PathBuf {
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("shuy_{tag}_{}_{}_{seq}", std::process::id(), db::now_ms()))
+    }
 
     // SESSION_KEY / LOCKED are process-wide statics. These tests set them, so they
     // must not run concurrently with each other (or the key_space_conn reopen in
@@ -628,7 +645,7 @@ mod tests {
     }
 
     fn temp_ws() -> (Temp, Connection) {
-        let dir = std::env::temp_dir().join(format!("shuy_e1_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("e1"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let meta_path = dir.join("meta.db");
@@ -691,7 +708,7 @@ mod tests {
     #[test]
     fn encrypted_db_roundtrip_and_sniff() {
         let _g = SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuy_sniff_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("sniff"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("default.db");
@@ -747,7 +764,7 @@ mod tests {
     #[test]
     fn convert_space_db_encrypt_back_to_readable() {
         let _g = SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuy_conv_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("conv"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let space = dir.join("default.db");
@@ -803,7 +820,7 @@ mod tests {
     #[test]
     fn convert_space_db_is_idempotent_for_already_encrypted() {
         let _g = SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuy_idem_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("idem"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let space = dir.join("default.db");
@@ -835,7 +852,7 @@ mod tests {
     #[test]
     fn full_loop_enable_restart_unlock_readable_disable() {
         let _g = SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuy_loop_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("loop"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("spaces")).unwrap();
         let meta_path = dir.join("meta.db");
@@ -918,7 +935,7 @@ mod tests {
     #[test]
     fn open_space_conn_reads_encrypted_space() {
         let _g = SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuy_osc_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("osc"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("spaces")).unwrap();
         let meta_path = dir.join("meta.db");
@@ -955,7 +972,7 @@ mod tests {
     #[test]
     fn lock_closes_connection_unlock_reopens() {
         let _g = SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuy_lock_{}_{}", std::process::id(), db::now_ms()));
+        let dir = std::env::temp_dir().join(uniq_tmp("lock"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir.join("spaces")).unwrap();
         let meta_path = dir.join("meta.db");
@@ -1022,6 +1039,41 @@ mod tests {
         // key is only in session, never persisted anywhere.
         assert!(sync::get_state(&c, crypto::ENC_KEY).is_none());
         assert!(sync::get_meta_state(&c, crypto::ENC_KEY).is_none());
+    }
+
+    /// ★ **临时目录不许撞名**（2026-09-19 CI 红根因的常开判据）。
+    ///
+    /// 这条判据的形态是**并发**（不是"调两次"）：改前用顺序调两次是**绿的** ——
+    /// 两次 `temp_ws()` 之间隔着三次 SQLite 建库，早就跨过毫秒了；只有"多个测试线程同时起跑"
+    /// 才会落在同一毫秒里。所以判据必须用 `Barrier` 让 8 个线程**同时**进 `temp_ws()`，
+    /// 否则它会给出假的安心（本机能过、CI 照红）。
+    #[test]
+    fn temp_dirs_are_unique_under_concurrency() {
+        use std::collections::HashSet;
+        use std::sync::{Arc, Barrier};
+        const N: usize = 8;
+        let barrier = Arc::new(Barrier::new(N));
+        let hs: Vec<_> = (0..N)
+            .map(|_| {
+                let b = barrier.clone();
+                std::thread::spawn(move || {
+                    b.wait();
+                    let (t, _c) = temp_ws();
+                    t._dir
+                })
+            })
+            .collect();
+        let dirs: Vec<_> = hs.into_iter().map(|h| h.join().unwrap()).collect();
+        for d in &dirs {
+            assert!(d.exists(), "临时目录应当真的建出来了：{}", d.display());
+        }
+        let uniq: HashSet<_> = dirs.iter().collect();
+        assert_eq!(
+            uniq.len(),
+            dirs.len(),
+            "并发 temp_ws() 撞名：{N} 次里只有 {} 个不同目录 —— 并发测试会互相 remove_dir_all／串库",
+            uniq.len()
+        );
     }
 
     #[test]
