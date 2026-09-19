@@ -13657,6 +13657,9 @@ p:has(> .editor-drawing-container) {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 8px;
+  /* 窄窗口：让「操作条」整块换到下一行，而不是把标题 / 按钮各挤成两行字
+     （2026-09-19 用户截图里的「文件管/理」「新建文件/夹」就是这么来的）。 */
+  flex-wrap: wrap;
 }
 
 .file-manager-title-block {
@@ -13682,12 +13685,17 @@ p:has(> .editor-drawing-container) {
   font-weight: 700;
   color: var(--text);
   margin: 0;
+  /* 中文没有词边界，默认会在**任意两个字之间**断行；标题必须整行 ——
+     装不下时由父级（.file-manager-head 的 flex-wrap）换行，而不是把标题拆开。 */
+  white-space: nowrap;
 }
 
 .file-manager-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .fm-btn {
@@ -13703,6 +13711,9 @@ p:has(> .editor-drawing-container) {
   font-size: 13px;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
+  /* 按钮文案也是中文：不许在字间断行，也不许被压窄（窄窗口下整块换行） */
+  white-space: nowrap;
+  flex: none;
 }
 .fm-btn:hover {
   background: var(--hover);
@@ -13728,6 +13739,8 @@ p:has(> .editor-drawing-container) {
   gap: 12px;
   padding: 8px 0 12px;
   border-bottom: 1px solid var(--border);
+  /* 面包屑 / 计数 / 搜索：窄窗口下各占一行，而不是三个挤在一行里互相压 */
+  flex-wrap: wrap;
 }
 
 .fm-breadcrumb {
@@ -14753,11 +14766,17 @@ p:has(> .editor-drawing-container) {
 .file-manager-table-wrap {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  /* 两个方向都能滚：窄窗口下**表格不再被挤压** —— 被挤压的后果就是「类型」格里
+     的「文件」被压成一字一行（用户截图里那一幕）。宁可横向滚，也不压字。 */
+  overflow: auto;
 }
 
 .file-manager-table {
   width: 100%;
+  /* 列宽之和的下限：比这更窄就别缩了，交给上面的容器横向滚动。
+     取 780 的依据（实测）：830px 窗口里可用宽度 = 830 − 2×16（窄档内边距）= 798 ⇒ 780 放得下、
+     不用横滚；而 560px 时它继续兜住列宽 ⇒「类型」列仍是 88px，不会把「文件」压成一字一行。 */
+  min-width: 780px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -14778,6 +14797,31 @@ p:has(> .editor-drawing-container) {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+}
+
+/* ---- 窄窗口（≤900px）：目标不是"缩得很小"，而是**不挤压** ----
+   ① 标题/按钮整行、② 表格保住列宽（缩不下就横滚）、③ 边距收紧把空间让给内容。
+   判据：`scripts/check-panel-layout.mjs` 的「文件管理」一段（真实 Chromium 量几何）。 */
+@media (max-width: 900px) {
+  .file-manager {
+    padding: 16px 16px 0;
+  }
+  .file-manager-head {
+    align-items: flex-start;
+  }
+  .file-manager-title {
+    font-size: 22px;
+  }
+  .file-manager-bigicon {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+  /* 单元格左右各收 4px：7 列共省 ≈56px，宽度 830 上下时**不用横滚就能放下** */
+  .file-manager-table th,
+  .file-manager-table td {
+    padding: 8px 10px;
+  }
 }
 .file-manager-table tbody tr {
   transition: background var(--transition-fast);

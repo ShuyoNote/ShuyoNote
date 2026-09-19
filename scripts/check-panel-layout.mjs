@@ -150,6 +150,66 @@ const FIXTURE = `
   </div>
   </div>
 </div></div>
+
+<div class="main">
+  <div class="file-manager">
+    <div class="file-manager-head">
+      <div class="file-manager-title-block">
+        <span class="file-manager-bigicon"></span>
+        <h1 class="file-manager-title">文件管理</h1>
+      </div>
+      <div class="file-manager-actions">
+        <button class="fm-btn fm-btn-danger">删除所选</button>
+        <button class="fm-btn">新建文件夹</button>
+        <button class="fm-btn">新建页面</button>
+        <button class="fm-btn">上传文件</button>
+        <button class="fm-btn">≡</button>
+        <button class="fm-btn">▦</button>
+      </div>
+    </div>
+    <div class="file-manager-toolbar">
+      <div class="fm-breadcrumb">
+        <button class="fm-crumb">全部</button>
+        <span class="fm-crumb-step">›</span>
+        <button class="fm-crumb fm-crumb-active">濮阳数友</button>
+      </div>
+      <span class="fm-count">1 个文件 · 共 395.0 KB · 1 项</span>
+      <input class="fm-search" placeholder="搜索文件..." />
+    </div>
+    <div class="file-manager-table-wrap">
+      <table class="file-manager-table">
+        <thead>
+          <tr>
+            <th class="fm-check-col"><input type="checkbox" /></th>
+            <th class="fm-name-col">文件名</th>
+            <th class="fm-kind-col">类型</th>
+            <th class="fm-size-col">大小</th>
+            <th>上次修改时间</th>
+            <th>创建时间</th>
+            <th class="fm-ops-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="fm-check-col"><input type="checkbox" /></td>
+            <td class="fm-name-col">
+              <button class="fm-name-btn">
+                <span class="fm-kind-icon"></span>
+                <span class="fm-name">营业执照扫描件（盖章）</span>
+                <span class="fm-missing-tag" title="字节还没下载到本机（在服务器上）">未下载</span>
+              </button>
+            </td>
+            <td class="fm-kind-col">文件</td>
+            <td class="fm-size-col">395.0 KB</td>
+            <td class="fm-date">—</td>
+            <td class="fm-date">2026-09-19 08:20</td>
+            <td class="fm-ops-col"><span class="fm-file-actions"><button>☁</button></span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
 `;
 
 const css = readFileSync(join(root, "src", "App.css"), "utf8");
@@ -335,6 +395,88 @@ try {
   ok(
     m.headOverflowX !== null && m.headOverflowX <= 1,
     `页眉没有横向溢出（${m.headOverflowX}px；装不下时按钮应当换行而不是溢出）`,
+  );
+
+  // ---- 文件管理：窄窗口不许"压字"，宽窗口不许出现横向滚动 ----
+  // 依据：2026-09-19 用户截图 —— 标题被拆成「文件管/理」、按钮被拆成「新建文件/夹」、
+  // 「类型」格里的「文件」被压成**一字一行**。三件都是"不报错、只是很难看"的那类：
+  // 单测里 `getBoundingClientRect` 全是 0，类型检查也看不见 —— 正是这个门禁存在的理由。
+  const fmAt = async (width) => {
+    await page.setViewport({ width, height: 800 });
+    await new Promise((r) => setTimeout(r, 150));
+    return page.evaluate(() => {
+      const lines = (el) => {
+        if (!el) return null;
+        const cs = getComputedStyle(el);
+        const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2 || 16;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+        if (!rects.length) return Math.round(el.getBoundingClientRect().height / lh);
+        const min = Math.min(...rects.map((r) => r.top));
+        return Math.max(1, new Set(rects.map((r) => Math.round((r.top - min) / lh))).size);
+      };
+      const wrap = document.querySelector(".file-manager-table-wrap");
+      const table = document.querySelector(".file-manager-table");
+      // ⚠️ 必须取 **td**：表头 th 也是 .fm-kind-col，而 th 本来就有 white-space:nowrap，
+      // 拿 th 去量会永远"1 行"、把真正会竖排的正文格子漏掉。
+      const kindTd = document.querySelector("td.fm-kind-col");
+      return {
+        titleLines: lines(document.querySelector(".file-manager-title")),
+        btnLines: [...document.querySelectorAll(".fm-btn")].map((b) => lines(b)),
+        kindLines: lines(kindTd),
+        kindWidth: kindTd ? Math.round(kindTd.getBoundingClientRect().width) : null,
+        tableWidth: table ? Math.round(table.getBoundingClientRect().width) : null,
+        wrapOverflowX: wrap ? wrap.scrollWidth - wrap.clientWidth : null,
+        pageOverflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+  };
+
+  // ⚠️ 判据要在**真会挤的宽度**上量：830px（用户截图那个窗口）本来就放得下，
+  // 拿它当靶子会得出"怎么改都通过"的假绿 —— 第一版就是这么写的，变异验证当场证伪。
+  // 所以窄档取 **560px**：7 列挤进 ~528px，没有 `min-width` 兜底时「类型」格必然竖排。
+  //
+  // 变异验证的结论（2026-09-19 实测，省下一个人重新试）：
+  //   · 去掉 `.file-manager-table { min-width }` ⇒ 「类型」列变 **2 行**（就是「文/件」）、
+  //     列宽 88→44px、表格 780→661px ⇒ **三条判据同时红**（这条是本次最承重的一行）；
+  //   · 去掉 `.file-manager-head` / `.file-manager-actions` 的 `flex-wrap`（+ 标题 nowrap）
+  //     ⇒ 标题 **4 行** ⇒ 红；
+  //   · 只去掉 `.fm-btn { white-space: nowrap }` ⇒ **仍然绿**（按钮已被"整块换行"保护）——
+  //     那一行是**冗余保险**，不是判据的承重点，别把它当成"验过的东西"。
+  const fmNarrow = await fmAt(560);
+  ok(fmNarrow.titleLines === 1, `文件管理标题整行（${fmNarrow.titleLines} 行；被拆开就是「文件管/理」）`);
+  ok(
+    fmNarrow.btnLines.every((n) => n === 1),
+    `工具条按钮都不换行（各按钮 ${fmNarrow.btnLines.join("/")} 行；「新建文件/夹」就是换行）`,
+  );
+  ok(fmNarrow.kindLines === 1, `「类型」列不竖排（${fmNarrow.kindLines} 行；2 行就是「文/件」）`);
+  ok((fmNarrow.kindWidth ?? 0) >= 56, `「类型」列没被挤扁（${fmNarrow.kindWidth}px ≥ 56）`);
+  ok((fmNarrow.tableWidth ?? 0) >= 760, `窄档下表格保住列宽（${fmNarrow.tableWidth}px ≥ 760）`);
+  ok(
+    fmNarrow.pageOverflowX <= 1,
+    `页面本身没有横向溢出（${fmNarrow.pageOverflowX}px；横向滚动只许留在表格容器里）`,
+  );
+  if (SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    await page.screenshot({ path: join(SHOTS, "file-manager-narrow-560.png"), fullPage: true });
+  }
+
+  // 用户那个窗口宽度（830）：应当**不用横滚**也放得下（靠窄档收紧的内边距）
+  const fmWindow = await fmAt(830);
+  ok(
+    (fmWindow.wrapOverflowX ?? 1) <= 1,
+    `830px 窗口下表格不用横向滚动（溢出 ${fmWindow.wrapOverflowX}px）`,
+  );
+  ok((fmWindow.kindLines ?? 2) === 1, `830px 下「类型」列仍是 1 行（${fmWindow.kindLines} 行）`);
+  if (SHOTS) {
+    await page.screenshot({ path: join(SHOTS, "file-manager-narrow.png"), fullPage: true });
+  }
+
+  const fmWide = await fmAt(1280);
+  ok(
+    (fmWide.wrapOverflowX ?? 1) <= 1,
+    `宽窗口下表格不需要横向滚动（溢出 ${fmWide.wrapOverflowX}px）`,
   );
 
   // ---- PDF 阅读器：桌面端是内容区的一种视图，不许盖住侧边栏与右栏 ----

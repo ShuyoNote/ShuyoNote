@@ -46,6 +46,20 @@
   路径是目录/不存在 ⇒ `0`；本地有文件 ⇒ `mtime>0`）。**Rust 测试本机跑不了**（`0xC0000139`，本仓纪律）
   ⇒ 只声明"编得过"（`cargo check --all-targets`），行为正确性交能跑测试的两台按被验 commit 复核。
 
+- **文件管理在窄窗口下"压字"**（2026-09-19 用户截图报告）：标题被拆成「文件管/理」、
+  按钮被拆成「新建文件/夹」、**「类型」格里的「文件」被压成一字一行**。根因是这套布局**完全没有响应式规则**：
+  `.file-manager-head` / `.file-manager-actions` / `.file-manager-toolbar` 都是不换行的 flex，
+  表格 `width:100%` 又没有列宽下限 ⇒ 窄窗口下先把按钮/标题挤断行，再把表格列挤到比内容还窄。
+  修法：① `head`/`actions`/`toolbar` 加 `flex-wrap`（装不下就**整块换行**，不压字），
+  标题与按钮 `white-space: nowrap`；② 表格容器 `overflow: auto` + 表格 `min-width: 780px`
+  ⇒ 装不下就**横向滚动**，而不是把列挤扁；③ `@media (max-width: 900px)` 收紧边距与标题字号
+  （830px 窗口里可用宽度 798 ≥ 780，**不用横滚就放得下**）。
+  判据：`scripts/check-panel-layout.mjs` 新增「文件管理」一段，在 **560px**（真会挤）、
+  830px（用户那个窗口）、1280px（宽屏）三档用真实 Chromium 量几何 —— 标题/按钮/「类型」格的**行盒数**、
+  「类型」列宽、表格宽、页面横向溢出。**变异验证**：去掉 `min-width` ⇒ 「类型」列 2 行 + 列宽 44px +
+  表格 661px（三条红）；去掉 head/actions 的 `flex-wrap` ⇒ 标题 4 行（红）；只去掉按钮的 `nowrap` ⇒ 仍绿
+  （那行是冗余保险，已在门禁注释里写明，不当成"验过的东西"）。
+
 - **聚合收件箱的文件夹名显示成乱码**（2026-09-19 用户截图报告）：下拉里四项是
   `&V4NXpPcuTvY-` / `&XfJSIJZkkK5O9g-` / `&XfJT0ZAB-` / `&g0l6Pw-`，而第五项「收件箱」正常。
   根因：IMAP 协议里**非 ASCII 的 mailbox 名只能用 modified UTF-7 传**（`&` + base64(UTF-16BE) + `-`，

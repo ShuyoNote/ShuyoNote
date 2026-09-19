@@ -929,8 +929,19 @@ export function FileManagerView() {
                   {row.kind === "file" ? "文件" : KIND_LABELS[row.kind] ?? row.kind}
                 </td>
                 <td className="fm-size-col">{row.size}</td>
-                <td className="fm-date">{row.updated}</td>
-                <td className="fm-date">{row.created}</td>
+                {/* 附件这两列的**真实含义**要挂在 title 上，别让人误读：
+                    「创建时间」= 附件入库时间（随同步走，跨设备一致）；
+                    「上次修改时间」= **本地副本**的写入时间 —— 下载回来的文件显示的是**下载时刻**，
+                    不是远端何时被改过（表里没有 updated_at）；字节还没下载时是「—」。 */}
+                <td
+                  className="fm-date"
+                  title={row.kind === "file" ? "本地副本的修改时间（未下载到本机时为「—」；下载后 ≈ 下载时刻）" : undefined}
+                >
+                  {row.updated}
+                </td>
+                <td className="fm-date" title={row.kind === "file" ? "附件入库时间（随同步走，跨设备一致）" : undefined}>
+                  {row.created}
+                </td>
                 <td className="fm-ops-col">
                   {row.kind === "file" && (
                     <span className="fm-file-actions">
