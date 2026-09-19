@@ -34,6 +34,27 @@ describe("findDerivedWrites：认得三种写法", () => {
     const text = 'let _ = ("INSERT INTO chunks", "INSERT INTO attachment_text");';
     expect(findDerivedWrites(text).length).toBe(2);
   });
+
+  it("★ 跨行写法必须抓住（`INSERT INTO` ⏎ `  chunks (…)`）—— 逐行扫会静默漏过", () => {
+    // Windows 2026-09-19 复核实测：逐行扫时这一格 exit 0（假绿）。本仓自己的长 INSERT 就爱这么折行。
+    const text = ['let sql = "INSERT INTO', '  chunks (id) VALUES (?1)";', 'c.execute(sql, []).unwrap();'].join("\n");
+    const hits = findDerivedWrites(text);
+    expect(hits).toEqual([{ table: "chunks", line: 1 }]);
+  });
+
+  it("★ 跨行 + 大写 + OR REPLACE 的组合也抓住", () => {
+    const text = ["c.execute(", '  "INSERT OR REPLACE INTO', '     attachment_text (att_id) VALUES (?1)",', "  [],", ");"].join("\n");
+    expect(findDerivedWrites(text)).toEqual([{ table: "attachment_text", line: 2 }]);
+  });
+
+  it("跨行写法下，行号报的是 `INSERT` 那一行（不是表名那一行）", () => {
+    const text = ["fn a() {}", "fn b() {}", 'let s = "REPLACE INTO', '   chunk_embeddings (id) VALUES (?1)";'].join("\n");
+    expect(findDerivedWrites(text)).toEqual([{ table: "chunk_embeddings", line: 3 }]);
+  });
+
+  it("`chunk_embeddings` 也在清单里（Windows 建议：今天两侧都没有生产写入者，加了不会红）", () => {
+    expect(findDerivedWrites('x("INSERT INTO chunk_embeddings (id)")')).toEqual([{ table: "chunk_embeddings", line: 1 }]);
+  });
 });
 
 describe("scanDerivedWriters：按文件汇总，路径带出来", () => {

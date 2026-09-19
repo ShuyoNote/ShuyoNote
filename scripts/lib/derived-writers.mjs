@@ -11,8 +11,14 @@
 //
 // 方向性约定：**宁可多算（假红，看得见），不可漏算（假绿）** —— 与 `rust-scan.mjs` 一致。
 
-/** 生产写入语句的判据（大小写不敏感；`INSERT INTO` / `INSERT OR REPLACE INTO` / `REPLACE INTO`）。 */
-export const DERIVED_TABLES = ["attachment_text", "chunks"];
+/**
+ * 生产写入语句的判据（大小写不敏感；`INSERT INTO` / `INSERT OR REPLACE INTO` / `REPLACE INTO`）。
+ *
+ * `chunk_embeddings` 也是派生表（Windows 2026-09-19 复核建议加）：它今天两侧都**没有生产写入者**
+ * （唯一那条 INSERT 在 `search.rs` 的 `#[test]` 里）⇒ 现在加进来不会红，但将来谁第一个在
+ * 生产代码里写它，就正好撞在这条规则上。零风险，所以收了。
+ */
+export const DERIVED_TABLES = ["attachment_text", "chunks", "chunk_embeddings"];
 
 const INSERT_RE = new RegExp(
   String.raw`\b(?:INSERT(?:\s+OR\s+\w+)?|REPLACE)\s+INTO\s+(${DERIVED_TABLES.join("|")})\b`,
@@ -21,17 +27,19 @@ const INSERT_RE = new RegExp(
 
 /**
  * 在一段（已剥掉测试尾部的）Rust 源码里找派生表的写入点。
- * @returns 命中列表：`{ table, line }`（行号按传入文本计，1 起）
+ * @returns 命中列表：`{ table, line }`（行号按传入文本计，1 起；报的是 `INSERT` 那一行）
+ *
+ * ⚠️ **必须逐匹配扫全文、不能逐行扫**（AMD 2026-09-19 修，Windows 复核实测出来的假绿）：
+ * 上面那条正则里的 `\s+` **本来就允许跨行**，而本仓自己的长 INSERT 恰恰爱写成多行 ——
+ * `INSERT INTO` ⏎ `  chunks (id) VALUES (…)` 这种折行**逐行扫会静默漏过**。
+ * 那是"实现把自己的正则废掉了一半"，不是设计取舍；判据见 `derived-writers.test.mjs` 的跨行用例。
  */
 export function findDerivedWrites(text) {
   const hits = [];
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    INSERT_RE.lastIndex = 0;
-    let m;
-    while ((m = INSERT_RE.exec(lines[i])) !== null) {
-      hits.push({ table: m[1].toLowerCase(), line: i + 1 });
-    }
+  const re = new RegExp(INSERT_RE.source, "gi");
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    hits.push({ table: m[1].toLowerCase(), line: text.slice(0, m.index).split("\n").length });
   }
   return hits;
 }
