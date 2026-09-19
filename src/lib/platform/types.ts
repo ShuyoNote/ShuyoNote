@@ -7,6 +7,15 @@
 // M16.0 scope: introduce the interfaces + the Tauri impl, and route every
 // existing @tauri-apps/* call through them, without changing behavior.
 
+import type { ChunkStore } from "../extract/chunkStore";
+import type { AttachmentTextStore } from "../extract/store";
+
+/** 「全库 AI 覆盖」索引要的那对 store（与 `indexPage.ts::IndexPageStores` 同形）。 */
+export interface IndexPageStores {
+  text: AttachmentTextStore;
+  chunks: ChunkStore;
+}
+
 /** The bridge used to invoke backend commands (Tauri `invoke`). */
 export interface Executor {
   invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>;
@@ -104,4 +113,14 @@ export interface Platform {
   pdfRender: PdfRenderDriver;
   /** 社区帖子抓取（桌面走原生命令；Web 走浏览器 fetch，受 CORS 约束）。 */
   community: CommunityDriver;
+  /**
+   * 派生文本层的两个 store（「全库 AI 覆盖」的索引要用）。**可选** ——
+   * 只有能写派生层的平台才实现：桌面走 `derived_apply`/`derived_query`（`derivedStores.ts`），
+   * Web 走自家 sql.js store。**没实现的平台，调用方必须把「开始索引」当成不可用**
+   * （界面不许承诺部署做不到的事）。
+   *
+   * 为什么放在 `Platform` 上、而不是让调用方自己拼：Web 的 `SqliteStore` 实例只活在
+   * `web.ts` 内部（`getSharedStore()`），外面拿不到 ⇒ 不从这里出，Web 侧永远没有 store 可用。
+   */
+  derivedStores?(): IndexPageStores | Promise<IndexPageStores>;
 }
