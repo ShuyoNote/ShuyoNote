@@ -119,34 +119,35 @@ pub(crate) fn restore_version_in_conn(c: &Connection, version_id: &str) -> Resul
     // reversible (you can go back to what you had just before restoring).
     // Dedups against the latest snapshot, so this is a no-op when the current
     // content is already the newest snapshot.
-    // ⚠️ 活性谓词与 `doc_content::read` / `readContent` 一致（`deleted_at IS NULL`）：
-    // **恢复只对活页** —— 要给已软删的页面恢复内容，应先把页面还原出来（2026-09-19 跨机裁定）。
-    // 查不到就**拒绝**（不是 `?` 冒泡 sqlite 的 "Query returned no rows"）：原来只是静默跳过快照、
-    // UPDATE 照旧改写已软删的页 ⇒ "只对活页"在代码上并不成立。错误文案与前端 `web.ts` **逐字一致**，
-    // 便于日后交叉检索两侧是不是同一条语义。
-    let (cur_title, cur_json, cur_text): (String, String, String) = c
-        .query_row(
-            "SELECT title, content_json, content_text FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-            params![page_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
+    //
+    // ★ 页内容的**读 / 写 / 派生**都走「文档内容」那一层（阶段 0 接口收口；与前端 `0b941c9` 同批）：
+    //   · 读 = `doc_content::read` —— 与这里原先那条 SQL **逐字相同**（`… AND deleted_at IS NULL`）；
+    //   · 写 = `doc_content::write` —— 与 2026-09-19 裁定 (a) 之后这里那条 SQL **逐字相同**
+    //     （`… updated_at = ?4, dirty = 1`）；
+    //   · 派生 = `doc_content::derive` —— `sync_fts` ＋ `rebuild_block_graph`，与这里原先那两句逐字对应。
+    //   ⇒ 于是"恢复版本"这条路上的**判据与命令面走同一条代码路径**
+    //     （`doc_content.rs` 的纯函数单测、`versions.rs` 的两条承重判据都在守它），
+    //     将来换 CRDT 只改那一层。
+    //   ⚠️ 两处**语义**留在本函数里、**不属于**那一层：
+    //     ① 版本不存在就报错（`版本不存在`）；
+    //     ② 读不到活页就**拒绝**（不是 `?` 冒泡 sqlite 的 "Query returned no rows"）——
+    //        那会让后面的写照旧改写已软删的页 ⇒ "只对活页"在代码上并不成立。
+    //        错误文案与前端 `web.ts` **逐字一致**，便于日后交叉检索两侧是不是同一条语义。
+    let cur = crate::doc_content::read(c, &page_id)?
         .ok_or_else(|| "页面不存在或已删除（先还原页面，再恢复它的历史版本）".to_string())?;
-    snapshot_before_save(c, &page_id, &cur_title, &cur_json, &cur_text)?;
+    snapshot_before_save(c, &page_id, &cur.title, &cur.json, &cur.text)?;
 
-    // `dirty = 1`：恢复版本是**用户自己刚做的动作**，与 `doc_content::write` 硬写 1、
-    // `upsert_remote` 硬写 0 成对。不置 1 时，"恢复后、推送前"的某次 pull 会**静默把这次恢复冲掉**
-    // （最终虽收敛，但用户会看到内容闪回且没有任何提示）—— 与这一路在修的"成功 ≠ 生效"同源。
-    // 2026-09-19 裁定 (a)：**两侧同批**改（前端半 = Windows `1db5fca`，Rust 半 = 本笔）。
-    c.execute(
-        "UPDATE pages SET title = ?1, content_json = ?2, content_text = ?3, updated_at = ?4, dirty = 1 WHERE id = ?5",
-        params![title, content_json, content_text, now, page_id],
-    )
-    .map_err(|e| e.to_string())?;
-
-    crate::search::sync_fts(c, &page_id, &title, &content_text)?;
-    crate::blocks::rebuild_block_graph(c, &page_id, &content_json, &content_text)?;
+    // `dirty = 1` 由 `doc_content::write` 负责写：恢复版本是**用户自己刚做的动作**，
+    // 与 `upsert_remote` 硬写 0 成对。不置 1 时，"恢复后、推送前"的某次 pull 会
+    // **静默把这次恢复冲掉**（最终虽收敛，但用户会看到内容闪回且没有任何提示）。
+    // 2026-09-19 裁定 (a)：**两侧同批**改（前端半 = Windows `1db5fca`，Rust 半 = macOS `c209490`）。
+    let restored = crate::doc_content::DocContent {
+        title,
+        json: content_json,
+        text: content_text,
+    };
+    crate::doc_content::write(c, &page_id, &restored, now)?;
+    crate::doc_content::derive(c, &page_id, &restored)?;
 
     let page = crate::commands::fetch_page(c, &page_id)?;
     crate::sync::record_page_upsert(c, &page)?;
