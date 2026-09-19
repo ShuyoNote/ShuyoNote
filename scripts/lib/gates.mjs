@@ -235,10 +235,15 @@ export const GATES = [
     // 用例集合，差别只在 feature —— 否则"国密版少跑了一半用例"这种事没人会发现。
     cmd: "cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto",
     counters: "cargo",
-    // ⚠️ 暂**不**标 `baseline: true`：读数值必须取自 **Linux**（本组既有基线就是 WSL2/Ubuntu 记的，
-    // 本机 macOS 的用例数可能不同，照抄会把 CI 判成"用例数下降"）。等 CI 出报告后：
+    // ✅ 2026-09-19 起标 `baseline: true`：读数值取自 **Linux**（WSL2/Ubuntu，与既有 rust-test 基线同一台），
+    // 读数 **376/376**（mac 侧钉 KDF 黄金向量那一笔之后在 Linux 上的重新读数；建基线时是 374，
+    // 当时与 macOS 独立跑出的 374/374 **逐值相同** ⇒ 这套用例没有平台条件差异）。
+    // 并入流程（CI 出报告后）：
     //   node scripts/test-report.mjs --baseline-from rust-report.json
-    // 再把这里改成 true —— 在那之前它只是"常开"，还没有"只增不减"的护栏。
+    // 之后的护栏是"**只增不减**"：用例数掉下来会红（`baselineViolations`）；承重证明见
+    // `.tools/rust-baseline-mutation.mjs`（把基线抬到 400 ⇒ 当场红，还原后绿）。
+    // ⚠️ 别拿本机 Windows 的数去建基线：Windows 上测试二进制加载期就异常退出（见 docs/TESTING.md）。
+    baseline: true,
     incident:
       "国密这一支一旦没人编就会腐烂：默认包不含国密（§0-E），而 `--features sm-crypto` 若编译不过/单测红，本机与 CI 都不会有任何信号。2026-09-19 建这条 job 时顺带钉住两件事：① 库级密钥必须仍是 Argon2 legacy 那 32 字节（被国密密钥顶替 = 既有加密库全部打不开）；② 国密构建仍必须读得出 v0/v1 老密文（双读）",
   },
