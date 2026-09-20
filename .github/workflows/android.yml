@@ -273,8 +273,25 @@ jobs:
         # 所以拦在构建期（缺 inset 桥 ⇒ 顶部又变触摸死区；缺返回键回调 ⇒ 返回键退出应用）。
         run: pnpm check:android-mobile-shell
 
+      - name: 随包 PDFium 库（Android）
+        # 为什么需要（2026-09-20 补，P4 的安卓格）：`libpdfium.so` 是 `libloading` **运行时**加载的
+        # ⇒ 包里没有它时**装完不会立刻报错**，只有用户开 PDF（P5 之后默认走 PDFium）才变成
+        # 「找不到 PDFium 动态库」⇒ 界面上是"打不开"。
+        # ⚠️ 之前仓库里**没有任何地方提到 jniLibs**（`gen/android` 是 `.gitignore` 的），
+        #    所以安卓一直**没有随包库**、PDF 静默退到 pdf.js ⇒ 这两步就是那条缺失的通路，
+        #    且必须排在 `init` 之后（jniLibs 目录属于刚生成的 gen/）。
+        run: |
+          node scripts/fetch-pdfium.mjs android-arm64
+          pnpm android:stage-pdfium
+
       - name: Build APK (arm64, unsigned)
         run: pnpm tauri android build --target aarch64 --apk --ci
+
+      - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
+        # 与 check:macos-bundle / check:linux-bundle 同一族：断言 `lib/<abi>/libpdfium.so` 在包内、
+        # 且与 vendor 那份**逐字节相同**（"文件在"和"是同一份字节"是两件事）。
+        # 判据的由来：Windows 吃过"装包里没有 pdfium.dll"、macOS 吃过"包里有但位置对不上"。
+        run: pnpm check:android-bundle
 
       - name: 用正式密钥签名 APK（让 CI 出的包直接能装到真机上验）
         # 为什么加这一步：CI 以前出的是**未签名**包，装真机前必须在本机手工
