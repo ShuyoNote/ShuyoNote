@@ -360,8 +360,11 @@
 - **库级国密 P2 落地**（`41c17b99`）：SQLCipher 的 `cipher_hmac_algorithm` / `cipher_kdf_algorithm`
   走 SM3 分支 —— C 层 provider 补丁（`patches/0001-sqlcipher-sm3-provider.patch`，打在 registry 的 `sqlite3.c`）
   ＋ `gm_provider` 运行期接线（**key 之后再设 `cipher_*`**，顺序按实测更正）。
-  macOS 上跑出**三段自证全绿**（后端=openssl／补丁在场且 `src_sha256=150bc1ee…` 与 AMD 逐字相同／跨对拍 12/12），
+  macOS 上跑出**三段自证全绿**（后端=openssl／补丁在场且 `src_sha256=150bc1ee…`（**补丁 v1**；当日 AMD
+  修正为 v2 `6ec0a114…`，见 dev `f7b32643`）与 AMD 逐字相同／跨对拍 12/12），
   运行期 `gm_provider` 判据 9 passed。**页加密仍是 AES：P3 未做**，两条路（编译期切换／加 algorithm 参数）待拍板。
+  ⚠️ **这一段说的是「国密变体构建」**（需显式 `OPENSSL_DIR` ＋ `--features sm-library`）：**本版发布的安装包是默认构建**，
+  不含库级国密（未给后端时 `build.rs` 当场失败，不会静默降级出一个「看起来是国密」的库）。
 - **国密门禁补齐三格**：`check-crypto-backend` 增加「补丁在不在」（`SHUYONOTE_EXPECT_SM_PATCH`）与**新鲜度**
   （比 `src_sha256`、不比 mtime —— 产物与源码的 mtime 之间没有因果链，治的正是"过期的真标记"）；
   `sm-library-source` 抽成**纯函数库**（CLI 与门禁 import 同一份，不写第三份解析）；
@@ -414,8 +417,13 @@
 - **决策**：macOS **默认不翻 Tongsuo**（维持 CommonCrypto，国密版另发），并写死改判触发条件。
 - **文档**：国密交付说明跟上事实（平台矩阵／已取证／未取证／命令区警告）；PDFium 方案收尾；
   `TESTING.md` 已知边界补第四条；窗口类能力口径草案 v1。
-- ⚠️ **已知边界（macOS-only）**：provider 补丁留在共享 registry 上期间，macOS 的**默认 CommonCrypto 构建**
-  会有 12＋7 条判据红（Linux／Windows 看不见；受控 A/B 的 19/0 与 9/0 已记录），缓解方式待 AMD 选定。
+- ⚠️ **已知边界（macOS-only，已于当日修复）**：补丁 **v1** 的能力门探测错常量（在没有 SM3 的 provider 上
+  连默认的 `PBKDF2-HMAC-SHA512` 也拒 ⇒ `ctx_init` 失败 ⇒ `PRAGMA key` 不认那把钥），会让**打过补丁的 macOS
+  默认 CommonCrypto 构建**出现 `security::` 7 passed / 12 failed、`gm_provider::` 2 passed / 7 failed。
+  **补丁 v2（dev `f7b32643`）已修**：在真 Apple 后端上做的受控 A/B（打过补丁 vs 原版源码，**都不给 `OPENSSL_DIR`**）
+  两臂**逐条相同**（`security::` 19 passed / 0 failed、`gm_provider::` 9 passed / 0 failed）⇒「补丁在场」对该构建
+  已是**行为中性**；`scripts/sm-library-build.mjs --revert` 可一键把共享 registry 源码还原成原版
+  （撤回后源码 sha256 逐字回到 `ea0bf0b08f688ca5…`、SM3 命中 0）。
   macOS 仍不发布（无 Apple 凭据，政策未变）。
 
 ## [1.91.10] - 2026-09-19
