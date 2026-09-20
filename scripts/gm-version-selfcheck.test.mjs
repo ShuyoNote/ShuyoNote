@@ -5,6 +5,7 @@
 // "**三段都在计划里**"与"**期望值确实被传到对应那一段**"：漏掉一段 = "只跑了一条就宣布国密版好了"，
 // 而那正是本脚本存在的理由。
 
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { legPlan } from "./gm-version-selfcheck.mjs";
 
@@ -29,9 +30,12 @@ describe("gm-version-selfcheck：三段自证的计划", () => {
     expect(leg.env.SHUYONOTE_EXPECT_SM_PATCH).toBeUndefined();
   });
 
-  it("★ 跨对拍那段必须**点名** Tongsuo（指错地方会退化成'跳过'，而跳过会被读成'对拍过了'）", () => {
+  it("★ 跨对拍那段必须**点名** Tongsuo（指错地方会退化成「跳过」，而跳过会被读成「对拍过了」）", () => {
     const leg = byId(legPlan({ ...base, expectPatch: "" }), "cross-impl");
-    expect(leg.env.SHUYONOTE_TONGSUO_OPENSSL).toBe("/opt/tongsuo/bin/openssl");
+    // ⚠️ **不要写死 POSIX 字面量**（2026-09-20 AMD 在 Windows 上跑到这条时红的）：
+    //    实现走 `join()` ⇒ Windows 上给的是 `\opt\tongsuo\bin\openssl`。
+    //    断言的**意图**是"路径是 <opensslDir>/bin/openssl"，分隔符形态不该参与 ⇒ 用同一个 `join()` 算期望。
+    expect(leg.env.SHUYONOTE_TONGSUO_OPENSSL).toBe(join("/opt/tongsuo", "bin", "openssl"));
   });
 
   it("--with-build 时构建排在最前面（先清再编那条纪律在 sm-library-build 里）", () => {
