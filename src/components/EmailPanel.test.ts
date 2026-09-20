@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   unseen: vi.fn<() => Promise<number>>(),
   saveAccount: vi.fn<() => Promise<void>>(),
   removeAccount: vi.fn<() => Promise<void>>(),
+  moveMany: vi.fn<() => Promise<number>>(),
+  getMessage: vi.fn<() => Promise<unknown>>(),
 }));
 
 vi.mock("../lib/api", () => ({
@@ -35,6 +37,8 @@ vi.mock("../lib/api", () => ({
     emailUnseenCount: mocks.unseen,
     emailSaveAccount: mocks.saveAccount,
     emailRemoveAccount: mocks.removeAccount,
+    emailMoveManyToTrash: mocks.moveMany,
+    emailGetMessage: mocks.getMessage,
   },
 }));
 
@@ -61,7 +65,8 @@ vi.mock("../store/toast", () => ({ toast: () => {} }));
 
 import { EmailPanel } from "./EmailPanel";
 import { useEmailPanel } from "../store/emailPanel";
-import type { EmailAccount } from "../lib/api";
+import { accountKey } from "../lib/emailAccount";
+import type { EmailAccount, EmailMeta } from "../lib/api";
 
 /** 一个完整形状的账号（`toAccount` 会按这些字段补全）。 */
 function acc(username: string): EmailAccount {
@@ -110,6 +115,10 @@ beforeEach(() => {
   mocks.unseen.mockReset();
   mocks.saveAccount.mockReset();
   mocks.removeAccount.mockReset();
+  mocks.moveMany.mockReset();
+  mocks.getMessage.mockReset();
+  mocks.moveMany.mockResolvedValue(0);
+  mocks.getMessage.mockResolvedValue({ text: "", html: "" });
   mocks.saveAccount.mockResolvedValue(undefined);
   mocks.removeAccount.mockResolvedValue(undefined);
   mocks.listFolders.mockResolvedValue(["INBOX"]);
@@ -220,5 +229,67 @@ describe("设置里加了账号，已挂载的邮箱面板要跟着变（2026-09
 
     expect(document.querySelector(".email-account-filter-btn")).not.toBeNull();
     expect(useEmailPanel.getState().accounts).toHaveLength(2);
+  });
+});
+
+// **「批量删除以后，重新拉取后依然出现」——2026-09-20 用户报障的回归。**
+//
+// 事故：后端 `email_move_many_to_trash` 在阿里云企业邮上一个字节都没删掉（见 email.rs 里那段
+// 注释），但命令"写进 socket 就算成功"，于是它返回 `Ok(0)`；界面**不看这个 0**，照样把选中的行
+// 从列表里拿掉、还弹一句"已删除 N 封" —— 用户一刷新，邮件全回来了。
+//
+// 这条判据盯界面这一半：**后端说删了几封，界面就只能拿掉几行**；少一封就如实报错并重新拉取。
+describe("批量删除：后端没删掉，界面不许说删掉了（2026-09-20 用户报障的回归）", () => {
+  const me = acc("a@x.com");
+  const meta = (uid: number, subject: string): EmailMeta => ({
+    uid,
+    subject,
+    from: "someone@x.com",
+    date: new Date().toUTCString(),
+    snippet: "",
+    seen: true,
+    flagged: false,
+    folder: "INBOX",
+    account: accountKey(me),
+  });
+
+  /** 挂载面板，列表里放两封邮件，并把两封都勾上。 */
+  const mountWithTwoChecked = async () => {
+    useEmailPanel.setState({ open: true, unread: 0, accounts: [me], accountsLoaded: true });
+    mocks.fetchAll.mockResolvedValue({
+      emails: [meta(1, "第一封"), meta(2, "第二封")],
+      unread: 0,
+      accounts: [accountKey(me)],
+    });
+    vi.stubGlobal("confirm", () => true);
+    mount();
+    await settle();
+    expect(document.querySelectorAll(".email-item")).toHaveLength(2);
+    document.querySelectorAll<HTMLElement>(".email-check").forEach((el) => el.click());
+    await settle();
+  };
+
+  it("后端一封都没删掉（moved=0）⇒ 两行都留着，并明说删失败", async () => {
+    await mountWithTwoChecked();
+    mocks.moveMany.mockResolvedValue(0);
+
+    document.querySelector<HTMLElement>(".email-list-head-delete")!.click();
+    await settle();
+
+    expect(mocks.moveMany).toHaveBeenCalledTimes(1);
+    // 关键：**没删掉就不能从列表里消失**（旧代码这里会变成 0 行）
+    expect(document.querySelectorAll(".email-item")).toHaveLength(2);
+    expect(document.body.textContent).toContain("只删除成功 0/2 封");
+  });
+
+  it("后端真删掉了两封（moved=2）⇒ 两行都拿掉", async () => {
+    await mountWithTwoChecked();
+    mocks.moveMany.mockResolvedValue(2);
+
+    document.querySelector<HTMLElement>(".email-list-head-delete")!.click();
+    await settle();
+
+    expect(mocks.moveMany).toHaveBeenCalledTimes(1);
+    expect(document.querySelectorAll(".email-item")).toHaveLength(0);
   });
 });

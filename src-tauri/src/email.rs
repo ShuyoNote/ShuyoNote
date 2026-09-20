@@ -37,10 +37,10 @@ pub struct EmailMeta {
 
 /// 建立到 INBOX/目标文件夹的 IMAP 会话（TCP + TLS + 登录 + SELECT）。
 /// 供各命令复用，避免重复连接代码。
-async fn open_session(
-    account: &EmailAccountArgs,
-    folder: &str,
-) -> Result<async_imap::Session<tokio_native_tls::TlsStream<tokio::net::TcpStream>>, String> {
+/// 一条已登录并已 SELECT 的 IMAP 会话。抽成别名，免得每处都抄一遍这串泛型。
+type ImapSession = async_imap::Session<tokio_native_tls::TlsStream<tokio::net::TcpStream>>;
+
+async fn open_session(account: &EmailAccountArgs, folder: &str) -> Result<ImapSession, String> {
     use tokio::net::TcpStream;
 
     let tcp = TcpStream::connect((account.host.as_str(), account.port))
@@ -687,35 +687,214 @@ pub async fn email_mark_read(args: EmailOpArgs, read: bool) -> Result<(), String
 
 /// 删除邮件：`UID MOVE` 到「已删除」文件夹（可回收）。依次尝试常见文件夹名，
 /// 都失败时回退到标记 `\Deleted` + EXPUNGE（至少从列表移除）。
-#[tauri::command]
-pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
-    use futures_util::StreamExt;
-    let mut session = open_session(&args.account, &args.folder).await?;
-    let uid = format!("{}", args.uid);
-    let candidates = ["Trash", "Deleted Messages", "Deleted Items", "垃圾箱", "已删除"];
+// ── 删除（移入回收站 / 打删除标记）────────────────────────────────────────────
+// 2026-09-20 用户报障：「批量删除以后，重新拉取后依然出现」。根因三层，都在这一小段里：
+//   ① mailbox 名在 IMAP 协议里**只能是 modified UTF-7**（RFC 3501 §5.1.3）。旧代码把
+//      `垃圾箱` / `已删除` 这类中文名**原样**发出去 —— 阿里云企业邮收到非法字节流后当场
+//      把这连接废掉（不回任何响应），于是"逐个候选名 UID MOVE"把连接赔在第 5 个候选名上，
+//      后面的回退 STORE/EXPUNGE 全落在一条死连接上，**一封都没删掉**。
+//   ② 回收站该**问服务器**（`LIST` 的 `\Trash` 特殊用途标记 / 常见叫法），而不是猜名字：
+//      阿里云企业邮的回收站叫「已删除邮件」（`&XfJSIJZkkK5O9g-`），原来那五个候选名一个都不对。
+//   ③ 命令的结束码必须**把响应流读到底**才拿得到。旧代码 `uid_store(...).await.is_ok()`
+//      只证明"命令写进了 socket"——连接已经断了也返回 Ok，于是 `moved` 是假计数，
+//      界面拿这个假计数当成功，把行删掉、刷新又回来（用户看到的那一幕）。
 
-    for trash in candidates {
-        if session.uid_mv(&uid, trash).await.is_ok() {
-            return Ok(());
+/// IMAP mailbox 名的 modified UTF-7 编码（RFC 3501 §5.1.3）：
+/// 可打印 ASCII 原样；`&` 写成 `&-`；其余按 UTF-16BE 分段 base64 后用 `&…-` 包起来（`/` → `,`）。
+fn imap_utf7_encode(name: &str) -> String {
+    fn flush(pending: &mut Vec<u16>, out: &mut String) {
+        if pending.is_empty() {
+            return;
+        }
+        let mut bytes = Vec::with_capacity(pending.len() * 2);
+        for u in pending.drain(..) {
+            bytes.extend_from_slice(&u.to_be_bytes());
+        }
+        out.push('&');
+        out.push_str(
+            &base64::engine::general_purpose::STANDARD_NO_PAD
+                .encode(&bytes)
+                .replace('/', ","),
+        );
+        out.push('-');
+    }
+
+    let mut out = String::new();
+    let mut pending: Vec<u16> = Vec::new();
+    for ch in name.chars() {
+        if ch == '&' {
+            flush(&mut pending, &mut out);
+            out.push_str("&-");
+        } else if ('\u{20}'..='\u{7e}').contains(&ch) {
+            flush(&mut pending, &mut out);
+            out.push(ch);
+        } else {
+            let mut buf = [0u16; 2];
+            pending.extend_from_slice(ch.encode_utf16(&mut buf));
+        }
+    }
+    flush(&mut pending, &mut out);
+    out
+}
+
+/// 从 `LIST` 的结果里挑回收站（纯函数，便于钉判据）。
+/// 入参是 `(协议名, 是否带 \Trash 标记)`；返回的是**协议名**，要原样回给 SELECT/MOVE/UID MOVE
+/// （**别再编一次** —— 服务器给的已经是协议层名字）。
+fn pick_trash(names: &[(String, bool)]) -> Option<String> {
+    // ① 服务器自己标了 `\Trash` 最可信（阿里云企业邮就标了，虽然它不广告 SPECIAL-USE）。
+    if let Some((name, _)) = names.iter().find(|(_, is_trash)| *is_trash) {
+        return Some(name.clone());
+    }
+    // ② 其次按常见叫法匹配：英文名不区分大小写；中文名在协议层是 UTF-7，按编码后比。
+    //    层级名也比**末段**：Gmail 的回收站叫 `[Gmail]/Trash`、Dovecot 常见 `INBOX.Trash`，
+    //    整名跟 `trash` 比永远不相等（旧代码正是这么漏的）。
+    const WANTED: [&str; 7] = [
+        "trash",
+        "deleted messages",
+        "deleted items",
+        "deleted",
+        "已删除邮件",
+        "已删除",
+        "垃圾箱",
+    ];
+    for want in WANTED {
+        for (name, _) in names {
+            let tail = name.rsplit(|c| c == '/' || c == '.').next().unwrap_or(name);
+            if name.eq_ignore_ascii_case(want)
+                || tail.eq_ignore_ascii_case(want)
+                || name == &imap_utf7_encode(want)
+                || tail == imap_utf7_encode(want)
+            {
+                return Some(name.clone());
+            }
+        }
+    }
+    None
+}
+
+/// 问服务器：回收站叫什么。问不出来就 `None`（那时走 `\Deleted` + EXPUNGE 这条通用路）。
+async fn resolve_trash(session: &mut ImapSession) -> Option<String> {
+    use futures_util::StreamExt;
+    let mut stream = session.list(None, Some("*")).await.ok()?;
+    let mut names: Vec<(String, bool)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        let Ok(name) = item else { continue };
+        let is_trash = name
+            .attributes()
+            .iter()
+            .any(|a| matches!(a, async_imap::types::NameAttribute::Trash));
+        names.push((name.name().to_string(), is_trash));
+    }
+    pick_trash(&names)
+}
+
+/// 删除一封邮件的结果：分「连接类」（重开连接还有救）与「服务器拒绝」（重试也没用）。
+enum DeleteErr {
+    Conn(String),
+    Rejected(String),
+}
+
+impl DeleteErr {
+    fn message(&self) -> String {
+        match self {
+            DeleteErr::Conn(m) | DeleteErr::Rejected(m) => m.clone(),
+        }
+    }
+}
+
+/// 连接类错误（掉了 / 读写失败）：值得重开连接再试一次。
+fn is_conn_lost(e: &async_imap::error::Error) -> bool {
+    matches!(
+        e,
+        async_imap::error::Error::ConnectionLost | async_imap::error::Error::Io(_)
+    )
+}
+
+fn delete_err(what: &str, e: async_imap::error::Error) -> DeleteErr {
+    let msg = format!("{}：{}", what, e);
+    if is_conn_lost(&e) {
+        DeleteErr::Conn(msg)
+    } else {
+        DeleteErr::Rejected(msg)
+    }
+}
+
+/// 删掉一封邮件：知道回收站且服务器支持 MOVE ⇒ MOVE 进去；否则 `\Deleted` + `UID EXPUNGE`。
+/// **每一步都把响应流读到底并检查结束状态** —— 这是 2026-09-20 那次"假成功"的关键。
+async fn delete_one(
+    session: &mut ImapSession,
+    uid: u32,
+    trash: Option<&str>,
+) -> Result<(), DeleteErr> {
+    use futures_util::StreamExt;
+
+    if let Some(folder) = trash {
+        match session.uid_mv(uid.to_string(), folder).await {
+            Ok(()) => return Ok(()),
+            Err(e) if is_conn_lost(&e) => {
+                return Err(delete_err("移动到回收站时连接中断", e));
+            }
+            // MOVE 不支持 / 目标不收（`BAD`/`NO`）→ 走通用路（连接还活着，不该白扔掉这次删除）
+            Err(_) => {}
         }
     }
 
-    // 回退：标记删除并 EXPUNGE（消费流，完成服务器端处理）。
+    // 打 `\Deleted` 标记。**流必须读到底**：结束码只有读出来才知道（旧代码在这里只看
+    // "命令写进 socket 了没有"）。作用域裹住是为了把 `session` 的可变借用在下一句前放开。
     {
         let store = session
-            .uid_store(&uid, "+FLAGS.SILENT (\\Deleted)")
+            .uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)")
             .await
-            .map_err(|e| format!("删除失败: {}", e))?;
+            .map_err(|e| delete_err("打删除标记失败", e))?;
         futures_util::pin_mut!(store);
-        while store.next().await.is_some() {}
+        while let Some(item) = store.next().await {
+            item.map_err(|e| delete_err("打删除标记失败", e))?;
+        }
     }
-    let expunge = session.expunge().await.map_err(|e| format!("删除失败: {}", e))?;
+
+    // UID EXPUNGE（RFC 4315，UIDPLUS）只清这一封；拿不到就退回 EXPUNGE
+    //（它会清掉本文件夹里**所有**带 `\Deleted` 的 —— 副作用更大，只当兜底）。
+    // 注意：这里必须先把 `match` 的结果落成一个局部变量 —— 作为函数尾表达式时，
+    // `uid_expunge` 那个借用 `session` 的临时值会活到块尾，下面就用不了 `session`（E0499）。
+    let uid_expunged = match session.uid_expunge(uid.to_string()).await {
+        Ok(expunge) => {
+            futures_util::pin_mut!(expunge);
+            while let Some(item) = expunge.next().await {
+                item.map_err(|e| delete_err("删除未生效（UID EXPUNGE 失败）", e))?;
+            }
+            true
+        }
+        Err(e) if is_conn_lost(&e) => {
+            return Err(delete_err("删除未生效（UID EXPUNGE 时连接中断）", e));
+        }
+        Err(_) => false,
+    };
+    if uid_expunged {
+        return Ok(());
+    }
+
+    let expunge = session
+        .expunge()
+        .await
+        .map_err(|e| delete_err("删除未生效（EXPUNGE 失败）", e))?;
     futures_util::pin_mut!(expunge);
-    while expunge.next().await.is_some() {}
+    while let Some(item) = expunge.next().await {
+        item.map_err(|e| delete_err("删除未生效（EXPUNGE 失败）", e))?;
+    }
     Ok(())
 }
 
-/// 批量删除邮件：一次连接对多个 UID `UID MOVE` 到「已删除」。返回成功删除的 UID 数。
+#[tauri::command]
+pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
+    let mut session = open_session(&args.account, &args.folder).await?;
+    let trash = resolve_trash(&mut session).await;
+    delete_one(&mut session, args.uid, trash.as_deref())
+        .await
+        .map_err(|e| e.message())
+}
+
+/// 批量删除邮件：一次连接搬多封（知道回收站就 MOVE，否则 `\Deleted` + `UID EXPUNGE`）。
+/// 返回**真正**删掉的封数；一封都没删掉时返回 `Err`（不再把假成功交给界面）。
 #[derive(Deserialize)]
 pub struct EmailBatchOpArgs {
     pub account: EmailAccountArgs,
@@ -727,32 +906,31 @@ pub struct EmailBatchOpArgs {
 #[tauri::command]
 pub async fn email_move_many_to_trash(args: EmailBatchOpArgs) -> Result<u32, String> {
     let mut session = open_session(&args.account, &args.folder).await?;
-    let candidates = ["Trash", "Deleted Messages", "Deleted Items", "垃圾箱", "已删除"];
-
+    let mut trash = resolve_trash(&mut session).await;
     let mut moved = 0u32;
+    let mut first_err: Option<String> = None;
+
     for uid in &args.uids {
-        let uid_str = format!("{}", uid);
-        let mut ok = false;
-        for trash in candidates {
-            if session.uid_mv(&uid_str, trash).await.is_ok() {
-                ok = true;
-                break;
+        match delete_one(&mut session, *uid, trash.as_deref()).await {
+            Ok(()) => moved += 1,
+            // 连接断了：重开一次，把这一封补上（一次断连不该让整批静默失败）
+            Err(DeleteErr::Conn(msg)) => {
+                first_err.get_or_insert(msg);
+                if let Ok(mut fresh) = open_session(&args.account, &args.folder).await {
+                    trash = resolve_trash(&mut fresh).await;
+                    if delete_one(&mut fresh, *uid, trash.as_deref()).await.is_ok() {
+                        moved += 1;
+                    }
+                }
+            }
+            Err(DeleteErr::Rejected(msg)) => {
+                first_err.get_or_insert(msg);
             }
         }
-        if !ok {
-            // 回退：标记删除并 EXPUNGE。
-            if session
-                .uid_store(&uid_str, "+FLAGS.SILENT (\\Deleted)")
-                .await
-                .is_ok()
-            {
-                let _ = session.expunge().await;
-                ok = true;
-            }
-        }
-        if ok {
-            moved += 1;
-        }
+    }
+
+    if moved == 0 && !args.uids.is_empty() {
+        return Err(first_err.unwrap_or_else(|| "服务器拒绝了这次删除（一封都没删掉）".to_string()));
     }
     Ok(moved)
 }
@@ -1576,5 +1754,207 @@ mod tests {
         assert!(stripped.contains("尊敬的濮阳数友信息科技服务有限责任公司"), "body lost: {:?}", stripped);
         assert!(stripped.contains("您的备案信息已经提交至通信管理局审核"), "body lost: {:?}", stripped);
         assert!(stripped.contains("Copyright"), "footer lost: {:?}", stripped);
+    }
+
+    /// IMAP mailbox 名的 modified UTF-7 编码。期望值**不是**我推出来的，是阿里云企业邮
+    /// `LIST "" "*"` 真回给我们的协议名（2026-09-20 现场抓的）。
+    #[test]
+    fn imap_utf7_encode_matches_what_the_real_server_sent_us() {
+        assert_eq!(imap_utf7_encode("已删除邮件"), "&XfJSIJZkkK5O9g-");
+        assert_eq!(imap_utf7_encode("垃圾邮件"), "&V4NXPpCuTvY-");
+        assert_eq!(imap_utf7_encode("已发送"), "&XfJT0ZAB-");
+        assert_eq!(imap_utf7_encode("草稿"), "&g0l6Pw-");
+        // 纯 ASCII 原样；`&` 自身按 RFC 3501 写成 `&-`
+        assert_eq!(imap_utf7_encode("INBOX"), "INBOX");
+        assert_eq!(imap_utf7_encode("a&b"), "a&-b");
+    }
+
+    /// **这条判据就是那次事故的哨兵**：发到线上的 mailbox 名一个字都不许是非 ASCII。
+    /// 旧代码把 `垃圾箱` / `已删除` 原文发出去，阿里云企业邮不认、当场废掉那条连接，
+    /// 于是整批删除静默失败 —— 用户看到的就是「删了、重新拉取又出现」。
+    #[test]
+    fn mailbox_names_on_the_wire_are_ascii_only() {
+        for name in [
+            "垃圾箱",
+            "已删除",
+            "已删除邮件",
+            "垃圾邮件",
+            "已发送",
+            "Trash",
+            "Deleted Messages",
+        ] {
+            let wire = imap_utf7_encode(name);
+            assert!(
+                wire.is_ascii(),
+                "发到线上的 mailbox 名必须全是 ASCII，收到的是 {:?}",
+                wire
+            );
+        }
+    }
+
+    #[test]
+    fn pick_trash_prefers_the_server_flag_then_common_names() {
+        // ① 服务器自己标了 \Trash ⇒ 认标记，不看名字（阿里云企业邮就标了，尽管它不广告 SPECIAL-USE）
+        let names = vec![
+            ("INBOX".to_string(), false),
+            ("&XfJSIJZkkK5O9g-".to_string(), true),
+            ("Trash".to_string(), false),
+        ];
+        assert_eq!(pick_trash(&names).as_deref(), Some("&XfJSIJZkkK5O9g-"));
+
+        // ② 没有标记时按常见叫法，英文不区分大小写
+        let names = vec![
+            ("INBOX".to_string(), false),
+            ("deleted messages".to_string(), false),
+        ];
+        assert_eq!(pick_trash(&names).as_deref(), Some("deleted messages"));
+
+        // ③ 中文名在协议层是 UTF-7，按**编码后**比（中文邮箱：QQ/163/企业邮）
+        let names = vec![
+            ("INBOX".to_string(), false),
+            ("&XfJSIJZkkK5O9g-".to_string(), false),
+        ];
+        assert_eq!(pick_trash(&names).as_deref(), Some("&XfJSIJZkkK5O9g-"));
+
+        // ③′ 层级名看**末段**：Gmail 的 `[Gmail]/Trash`、Dovecot 的 `INBOX.Trash`
+        //     （整名跟 `trash` 比永远不相等 —— 旧代码就是这么漏的）
+        let names = vec![
+            ("INBOX".to_string(), false),
+            ("[Gmail]/Trash".to_string(), false),
+        ];
+        assert_eq!(pick_trash(&names).as_deref(), Some("[Gmail]/Trash"));
+        let names = vec![
+            ("INBOX".to_string(), false),
+            ("INBOX.Deleted Items".to_string(), false),
+        ];
+        assert_eq!(pick_trash(&names).as_deref(), Some("INBOX.Deleted Items"));
+
+        // ④ 一个都不像 ⇒ None：那时走 `\Deleted` + EXPUNGE 这条通用路，**不乱猜名字**
+        let names = vec![
+            ("INBOX".to_string(), false),
+            ("&g0l6Pw-".to_string(), false),
+        ];
+        assert_eq!(pick_trash(&names), None);
+    }
+
+    /// **手动探针**（默认不跑，`#[ignore]`）：拿真账号把「批量删除 → 重新拉取」走一遍。
+    ///
+    /// 为什么非要真服务器：那次失败的方式是"服务器把连接废掉"，本地怎么 mock 都复现不了。
+    /// 2026-09-20 的 bug 就是靠它钉住的 —— 修前 `moved=0` 且邮件仍在 INBOX，修后 `moved=1` 且消失。
+    ///
+    /// 用法（凭据只从**本机已有的**账号配置读，不进仓库、不打印）：
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture probe_batch_delete
+    /// ```
+    /// 它只对自己 APPEND 进去的那封探针信下手（主题 `shuyo-probe-<时间戳>`），跑完 expunge 掉。
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_batch_delete_round_trip_on_a_real_account() {
+        use futures_util::StreamExt;
+
+        let Some(want) = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").ok() else {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        };
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all
+            .into_iter()
+            .find(|a| a.username == want)
+            .expect("账号配置里没有这个邮箱");
+
+        let subject = format!("shuyo-probe-{}", chrono::Utc::now().timestamp_millis());
+        let raw = format!(
+            "From: {u}\r\nTo: {u}\r\nSubject: {s}\r\nDate: {d}\r\nMessage-ID: <{s}@shuyo.cn>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nprobe\r\n",
+            u = account.username,
+            s = subject,
+            d = chrono::Utc::now().to_rfc2822()
+        );
+
+        // ① 往 INBOX APPEND 一封探针信，并在 FETCH 里按主题找回它的 UID
+        let uid = {
+            let mut session = open_session(&account, "INBOX")
+                .await
+                .expect("连接 INBOX 失败");
+            session
+                .append("INBOX", Some("(\\Seen)"), None, raw.as_bytes())
+                .await
+                .expect("APPEND 探针信失败");
+            let mut stream = session
+                .fetch("1:*", "(UID ENVELOPE)")
+                .await
+                .expect("FETCH 失败");
+            let mut found = None;
+            while let Some(Ok(m)) = stream.next().await {
+                if let Some(meta) = meta_from_fetch(&m, "INBOX") {
+                    if meta.subject == subject {
+                        found = Some(meta.uid);
+                    }
+                }
+            }
+            drop(stream);
+            let _ = session.logout().await;
+            found.expect("APPEND 之后没找到那封探针信")
+        };
+
+        // ② 调**真**函数（就是界面点「删除所选」时走的那条路）
+        let moved = email_move_many_to_trash(EmailBatchOpArgs {
+            account: account.clone(),
+            uids: vec![uid],
+            folder: "INBOX".to_string(),
+        })
+        .await;
+
+        // ③ 重新「拉取」：这封还在不在
+        let metas = email_fetch_inbox(EmailFetchArgs {
+            account: account.clone(),
+            folders: vec!["INBOX".to_string()],
+            limit: 0,
+            offset: 0,
+            date_from: None,
+            date_to: None,
+        })
+        .await
+        .expect("重新拉取失败");
+        let still = metas.iter().any(|m| m.uid == uid);
+        println!(
+            "PROBE account={} uid={} moved={:?} still_in_inbox={}",
+            account.username, uid, moved, still
+        );
+
+        // ④ 收尾：万一没删掉，也要把这封探针信清掉（读响应 + UID EXPUNGE），别在用户邮箱里留垃圾
+        if still {
+            if let Ok(mut s) = open_session(&account, "INBOX").await {
+                if let Ok(store) = s
+                    .uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)")
+                    .await
+                {
+                    futures_util::pin_mut!(store);
+                    while store.next().await.is_some() {}
+                }
+                if let Ok(ex) = s.uid_expunge(uid.to_string()).await {
+                    futures_util::pin_mut!(ex);
+                    while ex.next().await.is_some() {}
+                }
+                let _ = s.logout().await;
+            }
+        }
+
+        assert_eq!(
+            moved.as_ref().ok().copied(),
+            Some(1),
+            "真删掉的封数必须是 1（旧代码这里恒为 Ok(0)：命令写进了 socket 就当成功）"
+        );
+        assert!(
+            !still,
+            "批量删除后重新拉取又出现了（uid={uid}）—— 这正是用户 2026-09-20 报的那个 bug"
+        );
     }
 }
