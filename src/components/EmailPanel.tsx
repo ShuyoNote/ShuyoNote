@@ -1702,33 +1702,38 @@ export function EmailPanel() {
                           </>
                         )}
                       </div>
-                      {checked.size > 0 && (
-                        <>
-                          <button className="email-list-head-delete" disabled={busy} onClick={() => void deleteSelected()}>
-                            <TrashIcon width={12} height={12} /> 删除选中（{checked.size}）
-                          </button>
-                          <button className="email-list-head-op" disabled={busy} onClick={() => void markSelectedRead(true)}>
-                            标为已读
-                          </button>
-                          <button className="email-list-head-op" disabled={busy} onClick={() => void markSelectedRead(false)}>
-                            标为未读
-                          </button>
-                          <button className="email-list-head-op" disabled={busy} onClick={() => void saveSelectedAsNotes()}>
-                            存为笔记
-                          </button>
-                        </>
-                      )}
-                      <button
-                        className="email-list-head-count"
-                        onClick={openPicker}
-                        aria-haspopup="dialog"
-                        aria-expanded={pickerOpen}
-                      >
-                        共 {filteredList.length} 封
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="m6 9 6 6 6-6" />
-                        </svg>
-                      </button>
+                      {/* 右侧整组：宽时一行（批量按钮 + 共 N 封），窄时**整组换行**，
+                          且用 `wrap-reverse` 让「共 N 封」留在上一行右端、批量按钮掉到下一行 ——
+                          2026-09-20 用户截图：窄面板下标题被挤成竖排、按钮文字互相压住。 */}
+                      <div className="email-list-head-right">
+                        {checked.size > 0 && (
+                          <div className="email-list-head-actions">
+                            <button className="email-list-head-delete" disabled={busy} onClick={() => void deleteSelected()}>
+                              <TrashIcon width={12} height={12} /> 删除选中（{checked.size}）
+                            </button>
+                            <button className="email-list-head-op" disabled={busy} onClick={() => void markSelectedRead(true)}>
+                              标为已读
+                            </button>
+                            <button className="email-list-head-op" disabled={busy} onClick={() => void markSelectedRead(false)}>
+                              标为未读
+                            </button>
+                            <button className="email-list-head-op" disabled={busy} onClick={() => void saveSelectedAsNotes()}>
+                              存为笔记
+                            </button>
+                          </div>
+                        )}
+                        <button
+                          className="email-list-head-count"
+                          onClick={openPicker}
+                          aria-haspopup="dialog"
+                          aria-expanded={pickerOpen}
+                        >
+                          共 {filteredList.length} 封
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        </button>
+                      </div>
                       {pickerOpen && (
                         <div className="email-month-picker" ref={pickerRef} role="dialog" aria-label="选择月份">
                           <div className="email-month-picker-head">
