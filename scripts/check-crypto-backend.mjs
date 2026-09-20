@@ -71,6 +71,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // ⚠️ 源码定位/哈希**只有一份实现**（AMD 的纯函数库）——我不再写第三份，免得两侧漂移。
 import { sourceFingerprint } from "./lib/sm-library-source.mjs";
+import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -406,4 +407,4 @@ export function main() {
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) main();
+if (isMain(import.meta.url)) main();
