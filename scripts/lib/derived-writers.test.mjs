@@ -55,7 +55,34 @@ describe("findDerivedWrites：认得三种写法", () => {
   it("`chunk_embeddings` 也在清单里（Windows 建议：今天两侧都没有生产写入者，加了不会红）", () => {
     expect(findDerivedWrites('x("INSERT INTO chunk_embeddings (id)")')).toEqual([{ table: "chunk_embeddings", line: 1 }]);
   });
-});
+
+  // ★ 2026-09-20 Windows 侧复核补的两组：原实现**逐行扫** + 表名修饰没覆盖 ⇒ 都是**漏算**（假绿方向）。
+  describe("跨行与表名修饰（复核补的漏算）", () => {
+    it("★ 跨行的 SQL 必须抓到（Rust 的 r#\"…\"# 形态）", () => {
+      const text = ['let sql = r#"INSERT INTO', "    chunks (id, text) VALUES (?1, ?2)" + '"#;'].join("\n");
+      const hits = findDerivedWrites(text);
+      expect(hits).toEqual([{ table: "chunks", line: 1 }]);
+    });
+
+    it("★ 表名带 schema 前缀 / 引号 / 方括号 / Rust 转义引号，都要抓到", () => {
+      const text = [
+        'x("INSERT INTO main.chunks (id) VALUES (?1)")',
+        // Rust 源码文本里，字符串内层引号是带反斜杠的：`\"attachment_text\"`
+        'x("INSERT INTO \\"attachment_text\\" (id) VALUES (?1)")',
+        'x("INSERT INTO [chunks] (id) VALUES (?1)")',
+        "x(r#\"INSERT INTO `chunks` (id) VALUES (?1)\"#)",
+      ].join("\n");
+      const hits = findDerivedWrites(text);
+      expect(hits.map((h) => h.table)).toEqual(["chunks", "attachment_text", "chunks", "chunks"]);
+      expect(hits.map((h) => h.line)).toEqual([1, 2, 3, 4]);
+    });
+
+    it("范围**没有**放宽：`DELETE FROM` / `UPDATE` 仍不算（那是口径问题，不是漏算）", () => {
+      const text = ['x("DELETE FROM chunks WHERE id = ?1")', 'x("UPDATE attachment_text SET body = ?1")'].join("\n");
+      expect(findDerivedWrites(text)).toEqual([]);
+    });
+  });
+  });
 
 describe("scanDerivedWriters：按文件汇总，路径带出来", () => {
   it("多文件多命中", () => {
