@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [1.91.11] - 2026-09-20
+
+> 国密库级 **P2 落地**（SM3 页 MAC ＋ 库 KDF）＋ 桌面端 AI 权限解封；修掉「AI 设置按钮偏心」「聚合邮箱批量删除删不掉」
+
+### 新增
+
+- **库级国密 P2 落地**（`41c17b99`）：SQLCipher 的 `cipher_hmac_algorithm` / `cipher_kdf_algorithm`
+  走 SM3 分支 —— C 层 provider 补丁（`patches/0001-sqlcipher-sm3-provider.patch`，打在 registry 的 `sqlite3.c`）
+  ＋ `gm_provider` 运行期接线（**key 之后再设 `cipher_*`**，顺序按实测更正）。
+  macOS 上跑出**三段自证全绿**（后端=openssl／补丁在场且 `src_sha256=150bc1ee…` 与 AMD 逐字相同／跨对拍 12/12），
+  运行期 `gm_provider` 判据 9 passed。**页加密仍是 AES：P3 未做**，两条路（编译期切换／加 algorithm 参数）待拍板。
+- **国密门禁补齐三格**：`check-crypto-backend` 增加「补丁在不在」（`SHUYONOTE_EXPECT_SM_PATCH`）与**新鲜度**
+  （比 `src_sha256`、不比 mtime —— 产物与源码的 mtime 之间没有因果链，治的正是"过期的真标记"）；
+  `sm-library-source` 抽成**纯函数库**（CLI 与门禁 import 同一份，不写第三份解析）；
+  `gm-version-selfcheck.mjs` 一条命令跑齐三段自证。
+- **SM3 夹具生成器 ＋ 构建期那一格**：`sm-library` feature「要么有 SM3 补丁、要么当场失败」，
+  不再存在"看起来是国密、其实是默认后端"的中间态。
+
 ### 修复
 
 - **AI 助手页眉的齿轮（设置）按钮偏心了**（2026-09-20 用户截图：「设置按钮偏心了」）。
@@ -35,6 +53,23 @@
   （官方 HTTPS 端点，或局域网/回环上的自建模型服务走 http），固定白名单会把"填自己的地址"这条承诺作废。
   ⚠️ 边界：判据只能证明**配置形状**（作用域存在且覆盖 https/http）＋ 构建期 schema 校验；
   "打包后的桌面端真的能发出去"仍需真机复验。
+
+- **AI 视觉识别失败只说「请确认模型支持图像」**：把具体原因带出来（HTTP 状态／提供方报错原文）。
+- **SQLCipher 源码挑选按 mtime 最新 ⇒ 挑到陈旧副本**（假阴性 ＋ 假阳性）：改成 `Cargo.lock` 版本优先
+  ＋ 产物交叉核对（mtime 与"这份产物是哪次构建的"之间没有因果链）。
+- **`link-search` 在真 Windows 产物上取不到**（裸 `=`／含空格路径／不以 `lib` 结尾）。
+- **`search_chunks` 默认值 20 → 10**（对齐注册表）＋ 补下界夹取，默认值只留一处。
+- 两条**写死 POSIX 字面量**的断言（Windows 上必红；同族第二次）。
+- 一笔引入的 8 条 `never-used` 告警（显式 allow ＋ 更正"零警告"的读数）。
+
+### 其它
+
+- **决策**：macOS **默认不翻 Tongsuo**（维持 CommonCrypto，国密版另发），并写死改判触发条件。
+- **文档**：国密交付说明跟上事实（平台矩阵／已取证／未取证／命令区警告）；PDFium 方案收尾；
+  `TESTING.md` 已知边界补第四条；窗口类能力口径草案 v1。
+- ⚠️ **已知边界（macOS-only）**：provider 补丁留在共享 registry 上期间，macOS 的**默认 CommonCrypto 构建**
+  会有 12＋7 条判据红（Linux／Windows 看不见；受控 A/B 的 19/0 与 9/0 已记录），缓解方式待 AMD 选定。
+  macOS 仍不发布（无 Apple 凭据，政策未变）。
 
 ## [1.91.10] - 2026-09-19
 
