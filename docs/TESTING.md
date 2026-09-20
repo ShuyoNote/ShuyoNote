@@ -127,6 +127,11 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
    - **管道截断**：`cmd | Select-Object -First N` 会让上游拿到 `SIGPIPE` ⇒ 命令是成功的、退出码却是 1。
    ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
    再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
+4. **"合完再 rebase" = 把 merge 丢掉**（2026-09-20，AMD 实测自伤一次）：合了别人的分支（`git merge --no-ff`）
+   之后，若之后按平时习惯跑 `git pull --rebase` / `git rebase`，**rebase 默认丢弃 merge 提交** ⇒
+   那次合并**静默消失**，而推送照样成功、看不出任何异常。
+   ⇒ 纪律：**一旦产生过 merge 提交，之后的同步必须用 fetch+merge**；并且**推之前复核**
+   `git merge-base --is-ancestor <对方的 tip> HEAD`（一行、可判真假）——这条正是把"我以为合了"变成"确实合了"的那一步。
 
 
 ## 结果公开在哪
